@@ -25,6 +25,9 @@ const char* ModeName(Mode mode) noexcept;
 // partner_net Start: the HUD exists only with a link (net=1, link v2).
 void Configure(Mode mode, bool enabled) noexcept;
 bool Enabled() noexcept;  // configured, enabled and not off
+// The rescue prompt is gameplay UI: it shows with any link v2 session, also
+// when the status line mode is off (the one-PC lab default).
+bool RescueEnabled() noexcept;
 Mode GetMode() noexcept;
 // lab.ini coop_hud wins; then coop.ini hud (play only); then compact in play
 // and off in the one-PC lab (its default stays unchanged).
@@ -95,10 +98,22 @@ struct DownedView {
     std::uint16_t epoch;
     std::uint64_t publish_ms;
     bool localDown, teammateDown, inRange;
+    // Geometric 3 m approach. V2 receipts copy this from inRange. V3 can be
+    // close while the Action hold is not yet observed, so the prompt does not
+    // say "get closer" for a teammate who is already beside you.
+    // Not named near: windows.h defines that as a macro.
+    bool closeEnough;
     std::uint32_t progressMs;
+    std::uint8_t localCause, teammateCause; // 0 healthy/legacy unknown, 1 wounded, 2 asleep
+    // Stock player carry (coop_carry): 0 none, 1 the local player carries the
+    // teammate, 2 the local player is being carried. Set natively, not by Lua.
+    std::uint8_t carry;
 };
 inline constexpr std::uint64_t kDownedFreshMs = 500;
 inline constexpr std::uint32_t kReviveHoldMs = 3000;
+// Parse only a bounded V1/V2 copied receipt. No game reads or publication.
+// V1 down flags infer wounded; V2 requires a matching explicit cause.
+bool ParseDownedHud(const char* text, std::size_t size, DownedView& out) noexcept;
 void PublishDowned(const DownedView& view) noexcept;
 bool GetDowned(DownedView& out) noexcept;
 
@@ -143,12 +158,28 @@ struct Line {
     char text[kLineChars];
     char detail[kLineChars];  // full mode only ("" otherwise)
     Tone tone;
+    // Rescue prompt only: key hints "K\tlabel" separated by '\n' (drawn as key caps).
+    char keys[kLineChars];
 };
 // False and empty for stale/future/other-mission/unsupported/invalid facts,
 // healthy players, or progress that cannot belong to an in-range live reviver.
 // progress is 0..1; only teammateDown && inRange && !localDown draws a bar.
+// A healthy player near a downed teammate gets the two stock actions as key
+// hints: hold E (wake/revive, the co-op hold) and hold R (the stock carry).
 bool FormatDowned(const DownedView& view, std::uint32_t current_mission,
                   std::uint64_t now_ms, Line& out, float& progress) noexcept;
+// The same facts as a drawable state for the world-anchored rescue prompt.
+// away: outside 3 m; wait: beside them before the hold is admitted; ready:
+// hold Action now; holding/done: the hold's progress (done waits for the
+// native recovery). self_*: the local player is down.
+enum class Rescue : std::uint8_t { none, away, wait, ready, holding, done, carrying, carried, transfer, self_asleep, self_wounded };
+struct RescuePrompt {
+    Rescue state;
+    bool sleeping;   // the downed player is asleep (else wounded)
+    float progress;  // 0..1 while holding
+};
+bool ClassifyDowned(const DownedView& view, std::uint32_t current_mission, std::uint64_t now_ms, RescuePrompt& out) noexcept;
+const char* RescueName(Rescue state) noexcept;
 // The status line for `view` (`name`: the partner's display name, may be "").
 // False when nothing is shown (no view, link off).
 bool FormatLine(const LinkView& view, const char* name, Mode mode, std::uint64_t now_ms, Line& out,

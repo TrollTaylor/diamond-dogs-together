@@ -163,6 +163,10 @@ bool WindowedJson(const std::string& text) {
 }
 void GateGames(Worker& worker) {
     auto& m = worker.manifest; Require(NoListener(m.offline_port), "offline_master_port_listening");
+    if (m.runtime_profile == mgscoop::mgo_sleep_rest::profile || m.runtime_profile == mgscoop::mgo_unique_rest::profile || m.runtime_profile == mgscoop::mgo_standing_cycle::profile) {
+        const auto catalog = worker.AddPin(m.directory + "\\" + m.runtime_profile + "-catalog.json", m.At("runtime_catalog_sha256"));
+        Require(Size(worker.pins[catalog].file.value, 65536) > 0, "mgo_rest_catalog_nonempty");
+    }
     const auto qualification = worker.AddPin(m.At("probe_receipt"), m.At("probe_receipt_sha256")); Qualification seal;
     Require(ParseQualification(Read(worker.pins[qualification].file.value, 1024), worker.own_sha, GetTickCount64(), seal) && seal.run != m.run, "probe_qualification_not_current");
     std::string host_mutex;
@@ -174,7 +178,7 @@ void GateGames(Worker& worker) {
         worker.AddPin(m.At((prefix + "_exe").c_str()), m.At("exe_sha256"));
         worker.AddPin(root + "\\steam_api64.dll", m.At("steam_sha256")); worker.AddPin(root + "\\dinput8.dll", m.At("loader_sha256"));
         const auto archive = worker.AddPin(root + "\\mgs-coop\\mgs-coop-player-runtime.dat", m.At("runtime_archive_sha256"));
-        const auto archive_bytes = m.runtime_profile.empty() ? std::size_t{16333824} : mgscoop::buddy_capacity::archive_bytes;
+        const auto archive_bytes = m.runtime_archive_bytes;
         Require(Size(worker.pins[archive].file.value, archive_bytes) == archive_bytes, "runtime_catalog_archive_size");
         const auto lab = worker.AddPin(root + "\\mgs-coop\\lab.ini", m.At((prefix + "_lab_sha256").c_str()));
         const auto coop = worker.AddPin(root + "\\mgs-coop\\coop.ini", m.At((prefix + "_coop_sha256").c_str()));

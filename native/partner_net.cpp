@@ -1,6 +1,7 @@
 // Original MGS Co-op offline partner spike netcode: a second UdpTransport
 // carrying fixed-size MGSC frames, raw (legacy) or inside link v2 packets.
 #include "mgscoop/partner_net.hpp"
+#include "partner_reliable_origin.hpp"
 #include "mgscoop/partner_action_mailbox.hpp"
 
 #define WIN32_LEAN_AND_MEAN
@@ -96,6 +97,11 @@ link::ReliableSender g_rel_tx[link::kReliableChannels];
 std::uint8_t g_body[link::kLinkMaxBody];
 // Under g_lock: the reliable receivers.
 link::ReliableReceiver g_rel_rx[link::kReliableChannels];
+// g_lock protects queue provenance; any session change takes tx -> rx.
+ReliableOrigin g_rel_origin{};
+std::uint64_t g_rel_incarnation=0;
+reliable_origin::Slot g_rel_origins[link::kReliableChannels][link::kReliableWindow]{};
+
 // A receiver has a RELACK to send (avoids taking g_lock on every frame).
 volatile LONG g_relack_dirty = 0;
 volatile LONG g_tx_not_connected = 0;
@@ -782,9 +788,27 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
         AcquireSRWLockExclusive(&g_lock);
         ResetReceiveLocked();
         for (auto& rx : g_rel_rx) rx.Reset();
+        g_rel_origin={};
+        for(auto& channel:g_rel_origins)for(auto& slot:channel)slot={};
+        if(g_rel_incarnation!=UINT64_MAX){
+            g_rel_origin.incarnation=++g_rel_incarnation;
+            g_rel_origin.session=g_session.session_number();
+            g_rel_origin.peer=g_session.peer();
+            g_rel_origin.localRole=g_config.host?0u:1u;
+            g_rel_origin.peerRole=g_config.host?1u:0u;
+        }
+
         InterlockedExchange(&g_relack_dirty, 0);
         ReleaseSRWLockExclusive(&g_lock);
         InterlockedExchange(&g_look_resend, 1);
+    }
+    ReliableOrigin packetOrigin{};
+    // Delivery::data means this packet passed actual Session authentication.
+    // The copied queue identity is bound before releasing its Session lock.
+    if(delivery.data){
+        AcquireSRWLockShared(&g_lock);
+        if(reliable_origin::Valid(g_rel_origin)&&g_rel_origin.session==g_session.session_number())packetOrigin=g_rel_origin;
+        ReleaseSRWLockShared(&g_lock);
     }
     unsigned messages = 0;
     if (delivery.data && link::ValidateBody(delivery.body, delivery.size, messages)) {
@@ -830,10 +854,22 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     if (delivery.new_session && g_world.on_session) g_world.on_session(new_session);
     for (unsigned i = 0; g_world.on_datagram && i < datagram_count; ++i) g_world.on_datagram(datagrams[i].data, datagrams[i].size);
     if (rel_count) {
+        // Preserve existing world callbacks outside all locks and before
+        // reliable acceptance. Reacquire tx -> rx and compare the exact
+        // captured authenticated incarnation: a guest restart/reset during
+        // those callbacks cannot insert an old packet into new receivers.
+        AcquireSRWLockShared(&g_tx_lock);
         AcquireSRWLockExclusive(&g_lock);
-        for (unsigned i = 0; i < rel_count; ++i) g_rel_rx[rels[i].channel].Accept(rels[i].id, rels[i].payload, rels[i].size, now);
-        InterlockedExchange(&g_relack_dirty, 1);
+        if(reliable_origin::SameSession(packetOrigin,g_rel_origin)&&packetOrigin.session==g_session.session_number()){
+            for(unsigned i=0;i<rel_count;++i){const auto& rel=rels[i];
+                if(g_rel_rx[rel.channel].Accept(rel.id,rel.payload,rel.size,now))
+                    reliable_origin::Record(g_rel_origin,packetOrigin,rel.id,GetTickCount64(),
+                        g_rel_origins[rel.channel][rel.id%link::kReliableWindow]);
+            }
+            InterlockedExchange(&g_relack_dirty,1);
+        }
         ReleaseSRWLockExclusive(&g_lock);
+        ReleaseSRWLockShared(&g_tx_lock);
     }
     for (unsigned i = 0; i < frame_count; ++i) OnFrame(frames[i].data, frames[i].size, action_peer);
     // The goodbye first: the lost / reconnecting events the CLOSE caused in
@@ -1122,6 +1158,9 @@ void ArmSteamGuest(std::uint64_t host, const char (&secret)[link::kSecretChars],
     AcquireSRWLockExclusive(&g_lock);
     ResetReceiveLocked();
     for (auto& rx : g_rel_rx) rx.Reset();
+    g_rel_origin={};
+    for(auto& channel:g_rel_origins)for(auto& slot:channel)slot={};
+
     InterlockedExchange(&g_relack_dirty, 0);
     ReleaseSRWLockExclusive(&g_lock);
     const std::uint32_t session_number = g_session.session_number();
@@ -1679,10 +1718,58 @@ bool DrainReliable(std::uint8_t channel, std::uint8_t* out, std::size_t capacity
     size = 0;
     if (channel < 1 || channel >= link::kReliableChannels || !g_v2) return false;
     AcquireSRWLockExclusive(&g_lock);
+    std::uint16_t front=0;const bool hadFront=g_rel_rx[channel].FrontId(front);
     const bool drained = g_rel_rx[channel].Drain(out, capacity, size, NowMs());
-    if (drained) InterlockedExchange(&g_relack_dirty, 1);
+    if(drained){if(hadFront)g_rel_origins[channel][front%link::kReliableWindow]={};
+        InterlockedExchange(&g_relack_dirty,1);}
     ReleaseSRWLockExclusive(&g_lock);
     return drained;
+}
+
+bool CurrentReliableOrigin(ReliableOrigin& out) noexcept {
+    const DWORD error=GetLastError();out={};bool okay=false;
+    if(g_v2){
+        AcquireSRWLockShared(&g_tx_lock);
+        AcquireSRWLockShared(&g_lock);
+        okay=g_session.state()==link::LinkState::connected&&g_session.has_peer()&&
+            reliable_origin::Valid(g_rel_origin)&&g_rel_origin.session==g_session.session_number();
+        if(okay)out=g_rel_origin;
+        ReleaseSRWLockShared(&g_lock);ReleaseSRWLockShared(&g_tx_lock);
+    }
+    SetLastError(error);return okay;
+}
+link::ReliableResult SendReliableForOrigin(const ReliableOrigin& expected,std::uint8_t channel,const void* bytes,
+                                        std::size_t size,link::ReliableMode mode) noexcept {
+    const DWORD error=GetLastError();link::ReliableResult result=link::ReliableResult::not_connected;
+    if(channel<1||channel>=link::kReliableChannels)result=link::ReliableResult::bad_channel;
+    else if(size>link::kMaxReliableMessage)result=link::ReliableResult::too_large;
+    else if(g_v2&&g_running){
+        AcquireSRWLockExclusive(&g_tx_lock);AcquireSRWLockShared(&g_lock);
+        const bool same=reliable_origin::SameSession(expected,g_rel_origin)&&
+            g_rel_origin.session==g_session.session_number()&&g_session.CanSendData();
+        ReleaseSRWLockShared(&g_lock);
+        // All session/queue identity writers still need this tx lock.
+        if(same)result=g_rel_tx[channel].Queue(bytes,size,mode);
+        ReleaseSRWLockExclusive(&g_tx_lock);
+    }
+    SetLastError(error);return result;
+}
+bool DrainReliableAuthenticated(std::uint8_t channel,std::uint8_t* out,std::size_t capacity,
+                                std::size_t& size,ReliableOrigin& origin) noexcept {
+    const DWORD error=GetLastError();size=0;origin={};bool drained=false;
+    if(channel>=1&&channel<link::kReliableChannels&&g_v2){
+        AcquireSRWLockShared(&g_tx_lock);
+        AcquireSRWLockExclusive(&g_lock);
+        std::uint16_t front=0;ReliableOrigin receipt{};
+        if(g_rel_origin.session==g_session.session_number()&&g_rel_rx[channel].FrontId(front)&&
+            reliable_origin::Observe(g_rel_origin,front,g_rel_origins[channel][front%link::kReliableWindow],receipt)){
+            drained=g_rel_rx[channel].Drain(out,capacity,size,NowMs());
+            if(drained){origin=receipt;g_rel_origins[channel][front%link::kReliableWindow]={};
+                InterlockedExchange(&g_relack_dirty,1);}
+        }
+        ReleaseSRWLockExclusive(&g_lock);ReleaseSRWLockShared(&g_tx_lock);
+    }
+    SetLastError(error);return drained;
 }
 
 void Shutdown() noexcept {

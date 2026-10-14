@@ -1,0 +1,25 @@
+{
+  "frozen": true,
+  "classification": "diagnostic consumer enum name correction, explicit walk11 negative fixture; numerical filter unchanged",
+  "base_manifest_sha256": "c4edcb82037d2ba128a3d7c7bc7cd7ddadf6cd50e1e2a53aa0c8036e31472b62",
+  "compiled": false,
+  "runtime_used": false,
+  "main_modified": false,
+  "files": [
+    {
+      "path": "evidence.json",
+      "size": 2900,
+      "sha256": "2d9fcab9b3b060b6a2d4767b3f0e8fa66684e7e586d9488d9fb7f9d7108c0fa1"
+    },
+    {
+      "path": "source.diff",
+      "size": 1411,
+      "sha256": "c457a20624ab005c4635cd9b2f12d31ba601140eeb1edde4800e9a829299b449"
+    },
+    {
+      "path": "tests\\native_pose_camera_reader_tests.cpp",
+      "size": 13077,
+      "sha256": "25d54b0be5e53e2f286e046defcc24e646f9d2440477fde05cf34c8601569df8"
+    }
+  ]
+}

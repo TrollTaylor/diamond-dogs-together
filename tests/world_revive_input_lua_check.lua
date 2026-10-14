@@ -7,7 +7,7 @@ local function copy(t)
     return result
 end
 local function fixture()
-    local c = {now = 1000, sets = 0, resets = 0, native4 = 0, tx = {}, masks = {},
+    local c = {now = 1000, sets = 0, resets = 0, native4 = 0, tx = {}, masks = {}, announces = {},
         n = {ready = true, down = false, held = false, generation = 0, cause = 0, pos = {0, 0, 0}}}
     local env = setmetatable({e = {}, vars = {missionCode = 30010}, Player = {},
         Tpp = {MgsCoop = {playerPackageSelected = true}}}, {__index = _G})
@@ -21,7 +21,7 @@ local function fixture()
     W.inGame = function() return not c.outOfGame end
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op, {...}}; return true end
     W.receipt = function(text)
-        if text:match("^return 'MGS_COOP_DOWNED_HUD_V1'") then return true end
+        if text:match("^return 'MGS_COOP_DOWNED_HUD_V[123]'") then return true end
         local m, ep, cmd, gen = text:match("^return 'MGS_COOP_DOWNED_V1' %-%- (%d+) (%d+) (%d+) (%d+)$")
         check(m == '30010' and ep == '7', 'all control receipts retain exact mission and epoch')
         cmd, gen = tonumber(cmd), tonumber(gen)
@@ -53,6 +53,7 @@ local function fixture()
         if c.queueSet then c.pendingSet = true
         elseif not c.fullTable then c.masks.MgsCoopRevive = options.buttons end
     end
+    env.TppUiCommand = {AnnounceLogView = function(text) c.announces[#c.announces + 1] = text end}
     env.Player.ResetPadMask = function(options)
         if options.settingName == 'MgsCoopDowned' then c.masks.MgsCoopDowned = nil; return end
         check(options.settingName == 'MgsCoopRevive' and options.buttons == nil, 'cleanup resets only its own name')
@@ -84,13 +85,17 @@ end
 
 local c = fixture(); c.useHeld = true
 check(c.step() and c.sets == 1 and c.masks.MgsCoopRevive == 0x20, 'exact3m live teammate admits observed use hold')
-check(c.D.hud(c.now).inRange, 'revive hint appears only after native E mask is observed')
+check(c.D.hud(c.now).inRange and c.D.hud(c.now).near, 'revive hint appears only after native E mask is observed, and the 3m approach remains')
+check(#c.announces == 1 and c.announces[1] == 'Teammate wounded.',
+    'ready log is a short status without duplicate HUD action instructions')
 check(c.D.progress == 0, 'first qualified hold begins at zero elapsed')
-check(c.step(100) and c.D.progress == 100 and c.sets == 1, 'observed mask maintains hold without duplicate setters')
+check(c.step(100) and c.D.progress == 100 and c.sets == 1 and #c.announces == 1, 'observed mask maintains hold without duplicate setters or repeated prompts')
 c.useHeld = false; check(not c.step(100) and c.D.progress == 0, 'release immediately clears revive progress')
 check(c.masks.MgsCoopRevive == 0x20, 'use pickup stays suppressed throughout nearby revive eligibility')
 c.D.records[2].pos[1] = 3001
-check(not c.step() and c.masks.MgsCoopRevive == nil and not c.D.reviveMaskOwned, 'leaving3m resets and confirms absence')
+check(not c.step() and c.masks.MgsCoopRevive == nil and not c.D.reviveMaskOwned and not c.D.hud(c.now).near, 'leaving3m resets and confirms absence')
+check(#c.announces == 1 and c.announces[1] == 'Teammate wounded.',
+    'distance changes leave approach guidance to the HUD without repeating the status log')
 check(c.masks.MgsCoopDowned == nil, 'revive interaction never creates downed mask')
 
 for _, change in ipairs({
@@ -124,9 +129,12 @@ check(not c.step(50) and c.sets == 1, 'failed observation does not spam setters'
 c.fullTable = false; check(c.step(50) and c.sets == 2, 'available slot can retry and qualify')
 c = fixture(); c.useHeld = true; c.queueSet = true
 check(not c.step() and c.D.progress == 0, 'queued mask does not advance hold before observed')
-check(not c.D.hud(c.now).inRange and c.D.hud(c.now).teammateDown, 'queued mask preserves teammate guidance without advertising unsafe use hold')
+check(not c.D.hud(c.now).inRange and c.D.hud(c.now).near and c.D.hud(c.now).teammateDown, 'queued mask preserves teammate guidance without advertising unsafe use hold')
+check(#c.announces == 1 and c.announces[1] == 'Teammate wounded.',
+    'unready Action does not duplicate HUD readiness and native carry icon instructions')
 c.flush(); check(not c.step(50), 'queued installation waits bounded retry')
 c.queueSet = false; check(c.step(50), 'observed queued install qualifies after retry')
+check(#c.announces == 1, 'observed readiness does not reannounce the same wound status')
 c = fixture(); c.useHeld = true; c.masks.Cutscene = 0x20
 check(not c.step() and c.D.progress == 0 and c.masks.Cutscene == 0x20, 'all other masks retain their use restriction')
 for _, field in ipairs({'tableUnstable', 'throwObserve', 'changedGeneration', 'throwSet'}) do
@@ -171,6 +179,38 @@ c = fixture(); c.useHeld = true; check(c.step(), 'arm before non-final world sto
 for _, f in ipairs(c.W.stopHooks) do f(false) end
 check(c.masks.MgsCoopRevive == 0x20, 'non-final W1 stop preserves ongoing paired revive')
 c.invalidPlayer = true; c.D.stop(); check(c.D.reviveMaskOwned, 'invalid Player guard never claims cleanup success')
+
+-- Prompts follow cause and current native carry role, not distance alone.
+c = fixture(); c.step()
+check(#c.announces == 1 and c.announces[1] == 'Teammate wounded.', 'initial short wound announcement')
+c.D.records[2].cause = 2; c.step()
+check(#c.announces == 2 and c.announces[2] == 'Teammate asleep.',
+    'same-distance cause change replaces the wound status with sleep')
+c.n.carry = 1; c.step()
+check(c.D.hud(c.now).carry == 1 and not c.D.hud(c.now).inRange and #c.announces == 3 and
+    c.announces[3] == 'Carrying teammate.',
+    'current native carrying replaces the sleep status and stops rescue progress')
+c.step(100)
+check(#c.announces == 3, 'steady carrying does not spam the game log')
+c.n.carry = 3; c.step()
+check(c.D.hud(c.now).carry == 3 and #c.announces == 4 and c.announces[4] == 'Teammate transfer in progress.',
+    'unqualified cargo role never advertises a native Ride or Load action')
+c.n.carry = 0; c.step()
+check(c.D.hud(c.now).carry == 0 and #c.announces == 5 and c.announces[5] == 'Teammate asleep.',
+    'put down returns to the current short sleep status')
+for _, text in ipairs(c.announces) do
+    check(#text <= 32 and not text:find('Hold', 1, true) and not text:find('ACTION', 1, true) and
+        not text:find('CARRY', 1, true) and not text:find('pick', 1, true),
+        'state log stays short and never repeats rescue or native pickup instructions')
+end
+c.now = c.now + 500
+check(c.D.hud(c.now).carry == 0, 'expired copied native role cannot retain carry prompt')
+c = fixture(); c.n.carry = 1; c.step(); c.W.epoch = 8
+check(c.D.hud(c.now).carry == 0, 'new scene cannot reuse the previous carry-role prompt')
+c = fixture(); c.n.carry = 99; c.step()
+check(c.D.hud(c.now).carry == 0, 'malformed native carry role is not a UI capability')
+c = fixture(); c.step(); c.nativeUnavailable = true; c.step(100)
+check(#c.announces == 1, 'a refused native poll does not announce rescue readiness')
 
 -- Use is removed from the native button stream, while other button bits and world ownership are unchanged.
 c = fixture(); c.useHeld = true; c.step()

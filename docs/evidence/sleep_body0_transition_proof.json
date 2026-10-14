@@ -1,0 +1,80 @@
+{
+  "scope": "Exact retail offline TPP local body0 worker-only copied-save sleep transition addendum. Pure gate/reader; no native invocation, scalar write, patch, runtime or production enabling.",
+  "retail_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "composition": [
+    "Existing exact whole executable/PE gate and natural current owner admission",
+    "sleep plugin 31 complete sites/33 typed slots",
+    "sleep graph 11 complete sites/3 slots",
+    "sleep_seed_contract 7 complete function/constant sites",
+    "This addendum 24 complete code sites/11 typed slots",
+    "Existing camera-mode/partner-pad gates, typed current named mask and zero-cap receipt"
+  ],
+  "local_ui": {
+    "player_field": "P+D8 secondary U",
+    "primary": "U-20",
+    "primary_vtable_rva": "23AF6D0",
+    "secondary_vtable_rva": "23AF700",
+    "owner": "U+28=P",
+    "slot": "secondary vt268 -> FE8770",
+    "complete_leaf": "FE8770..FE87E0,112 bytes",
+    "effect": "Only U+3C0 hint ID,U+3C4 flags,U+3F0 pending,U+3F3 priority. No calls, no synchronizer reads. Not identical to separate Quiet queue FE8690 hint offsets370/374/3A0/3A3.",
+    "native_sleep_call": "12CAD3F mode5: edx5D,r8d2,r9d0,stack booleans1,0,0"
+  },
+  "local_camera": {
+    "player_field": "P+B8 secondary CAM",
+    "primary": "CAM-20",
+    "primary_vtable_rva": "23B8218",
+    "secondary_vtable_rva": "23B8250",
+    "owner": "secondary+348=P, primary+368=P",
+    "wake_effect": "11306EE/F5 may OR CAM+32C with100 before pad gate when PS2F8[id] bit11 set. Expected owned local0 presentation effect, not claimed body1-isolated."
+  },
+  "locked_pad": {
+    "owner": "PP=*(P+B0),VT23C8D40,PP280=P,sourcePP8",
+    "complete_leaf": "1205F00..1205F19,25 bytes,vt20",
+    "expression": "(source+48 !=0 ? source+48 : PP460) & ~PP28",
+    "required_aggregate": "PP28=FFFFFFFF freshly, in addition to named mask record hash6786AE0B buttonsFFFFFFFF/triggers3",
+    "consequence": "1130730 exits before PPvt90 classifier and rate/stance assistance writes while aggregate remains all bits. No classifier transitive activation is newly admitted.",
+    "release": "requireMask=false reader is supplemental post-mask read only. Caller still requires actual current v7 RetiredSample before any input unlock; never fabricate control flags."
+  },
+  "selector": {
+    "typed": "P+D0 VT22E8F00,owner+10=P",
+    "complete_leaf": "AFD550..AFD639,233 bytes,vt1D8",
+    "effect": "Read-only recovery assistance values. ProducerAFCCE0..AFD32D1613 includes ordinary local input. No interpretation as carried eligibility."
+  },
+  "request_buffer": {
+    "entry": "Already typed current body0 CS graph entry, C0 stride, count1/base0",
+    "constructor": "Full B6D980..B6E2A8 assigns entry98 atB6DDD4 and calls B6C020 atB6DDF7; stores request layer count entryB0 fromr13d atB6DB44",
+    "schema": "Plain owned header, no vtable: byte8 paramCount, dwordC stride28+24*paramCount,qword10 records. EntryB0 request layer count1..32.",
+    "records": "ConstructorB6C020..B6C0ED initializes per-layer stride. Native sleep requests layer0. Reader reads entire constructor-sized layer0 record including all three optional parameter tables, checks allocation arithmetic for declared layers, and compares request header/record identities on two reads.",
+    "requests": "CSvt170 AF2BA0 /190AF3270 call AF1C00 and B6E9F0; B6E9F0 bounded165-byte leaf writes headerflags and per-layer request record only, no engine calls or sync.",
+    "completion": "CS228 AF1F70 tailcalls graph250BA50 D8=1C70150; CS298 AF1520 and2A8AF1660 use ordinary loaded animation model duration queries. Pinned complete dispatchers, natural engine calls, no external callback ABI created by adapter."
+  },
+  "observer_abi_boundary": {
+    "enter": "Existing native sleep general-enter naturally registers12C86E0/context through CS248AF23F0->B6E550/B9ABA0. ExitCS250AF37B0->B6FB80 removes same record. Complete relevant entry/exit bodies pinned.",
+    "exact_caution": "12C86E0 RDX is an engine-supplied event interface consumed throughvt90. Do not cast it to complete sleep plugin,PS,orbody block; no new calls or fabricated event interface in this candidate. Existing shipped animation observer dispatcher remains generic engine behavior, not a new injection ABI."
+  },
+  "local0_worker_eligibility": {
+    "conclusion": "No concrete local-body0 offline synchronizer dereference was found in the pinned sleep transition methods, typed UI leaf, or locked pad recovery path. A bounded hidden copied-save local0 scalar-seed experiment can proceed only after the coordinator verifies all composed gates/current typed objects/full mask/zero-cap receipt and retains the v7 lease until coherent native retirement. This is eligibility for an isolated experiment, not demonstrated animation/recovery or production safety.",
+    "seed": "Standing1,PS44,Q1or5,mode0/requested0,nodeinactive,lifeState0,currentStun>0/max3000,current nonsleep graph and all16 loaded request hashes. CAS currentStun observed->0 thenstate34 0->2 only original owned body0 life record.",
+    "rollback": "First-CAS failure writes nothing. Second-CAS failure retains quarantined lease; repair only original exact owner still native-idle/standing with ourzeroStun. Refuse any native progression or external regeneration, keep locks and worker abort.",
+    "retirement": "Only existing owned mode5 PS19/Q84/nodeactive/state2 mayCAS state2->0. Hold mask and suppress mod Prone through mode4/5/6 and any unready/stale scene or lease condition. Two fresh mode0/requested0/inactive/state0/nonsleepgraph/not83/84/85 observations, then matching host grant; revalidate current retired sample after removing named mask before actual unlock.",
+    "watchdog": "Unready/stuck/no onset or retirement within bounded6s: retain locks, signal worker failure, finally cleanup the owned hidden processes. No forced mode/action/state escape or normal-play activation.",
+    "normal_feature": "Default gameplay continues verified immobile prone fallback. Body1 native sleep/carry remains blocked by separate camera/presentation/player UI ownership and lifecycle isolation proof. Standing guard animation parity needs actual hidden onset/rest/wake evidence."
+  },
+  "tests": {
+    "result": "PASS174 exact-code and typed transition checks",
+    "compiler": "MSVC stdc++17 /W4 /WX /O2",
+    "coverage": [
+      "Each of24 complete sites changed atfirst/middle/last and unreadablelastbyte",
+      "All11 typed slots corrupted and unreadable",
+      "Image truncated/wrap",
+      "Typed UI/CAM/PP/selector owner/vtables wrong/null/unreadable",
+      "Aggregate mask differs despite named record",
+      "Parameter stride0,1,255;last recordbyte unreadable",
+      "Layercount0/33/FFFFFFFF,valid32",
+      "Recordpointer arithmeticwrap/schema mismatch",
+      "UI/CAM/header/record allocation replacement and aggregate/schema drift"
+    ],
+    "runtime": "None from this stage."
+  }
+}

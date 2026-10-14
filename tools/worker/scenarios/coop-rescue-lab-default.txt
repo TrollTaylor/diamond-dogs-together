@@ -1,0 +1,64 @@
+# Rescue prompt and carried camera with the one-PC lab defaults (no coop_hud
+# override, as the local two-window test runs). The host's rifle downs the
+# guest; the guest sees its WOUNDED status, the host its REVIVE button; while
+# carried the guest's camera uses the pulled-back manual around camera.
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+host press 1 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 1200
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+both capture lab-wound-away
+host debug goto_carry
+wait 1500
+both capture lab-wound-near
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+both capture lab-wound-carried
+host hold w 1500
+host release
+wait 300
+guest capture lab-wound-carried-walk
+host hold r 900
+host release
+wait 3500
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+both capture lab-wound-putdown
+host hold e 1500 nowait
+wait 900
+host capture lab-wound-holding
+wait 300
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
+both capture lab-wound-revived
+state

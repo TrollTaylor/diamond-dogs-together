@@ -75,7 +75,7 @@ do
         D.pending = nil
         local d = dist(v, pose())
         if o.come then pcall(send, s.id, {id = "SetDiscoveryPlayer"}) end
-        E.last, E.routePos[route] = {position = v, mission = D.mission}, v
+        E.last, E.routePos[route] = {position = v, mission = D.mission, actor = s.id}, v
         R.menu(id, fmt("spawned %.0f %.0f %.0f %.0f", mm(v[1]), mm(v[2]), mm(v[3]), s.hash))
         local tag = R.share(2, s, mm(v[1]), mm(v[2]), mm(v[3]), 0, (o.come and 1 or 0) + (E.ignored[s.name] and 2 or 0), route)
         A.note(id, true, fmt("%s;ent=%.0f;d=%.1f;moved=%.1f;far=%d;%s;come=%d;%s;route=%s", o.prefix, s.hash, d,
@@ -157,7 +157,7 @@ do
       release()
       if come then pcall(send, s.id, {id = "SetDiscoveryPlayer"}) end
       local d, w = dist(v, pose()), s.req
-      E.last = {position = v, mission = D.mission}
+      E.last = {position = v, mission = D.mission, actor = s.id}
       R.menu(id, fmt("spawned %.0f %.0f %.0f %.0f", mm(v[1]), mm(v[2]), mm(v[3]), s.hash))
       local tag = R.share(1, s, w[1], w[2], w[3], w[4], come and 1 or 2, nil, mm(v[2]) - w[2])
       A.note(id, true, fmt("guard_here;ent=%.0f;d=%.1f;moved=%.1f;far=%d;mode=warp;come=%d;%s;frames=%d;leaf=%s", s.hash, d,

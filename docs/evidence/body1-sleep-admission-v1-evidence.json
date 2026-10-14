@@ -1,0 +1,34 @@
+{
+  "classification": "source-only admission fix; no native addresses, hooks, scalar writes or activation",
+  "base_files": [
+    {
+      "path": "native/include/mgscoop/partner_driver.hpp",
+      "sha256": "ae958120007803836223aab0bc7d74795125c04ce9e430074d8d3ef1651d1c98"
+    },
+    {
+      "path": "native/partner_driver.cpp",
+      "sha256": "40003c4ad8a9280ecd7f8e8f41d848e21cdb5477abe9112cdf717f2743e77137"
+    },
+    {
+      "path": "native/game_script_observer.cpp",
+      "sha256": "a7b6ecd7f0f2ede7419a036833fa3d27af09ab723b00964e3c0043e570c73701"
+    },
+    {
+      "path": "tests/partner_driver_tests.cpp",
+      "sha256": "d9e70a156c4e479f0a3b5d3aefd36697d21db8c28774f2f1a41dcb25f38122b2"
+    }
+  ],
+  "bug": "Research worker base partner_dm=map remains map while Tick effective active native driver sets dm=off; old observer inspected wrong setting",
+  "source_chain": [
+    "tools/worker/WorkerSessionCommon.psm1:374",
+    "native/partner_native.cpp:333",
+    "native/partner_driver.cpp:307",
+    "native/partner_driver.cpp:4980",
+    "native/game_script_observer.cpp:3299"
+  ],
+  "actual_active": "mission.native_out.active from TickNative arbiter (no mission.native_last field)",
+  "production_used": "observer NativeSleepPresentationReady invokes actual driver effective-settings helper; default native sleep stays OFF",
+  "fixtures": "19 assertions, true NativeSession fallback clip -> natural arbiter entering -> DMstop/revert -> place -> Arm -> active; cleanup/ownership/manual pending/mapper phases/refused, native leave; no caller active override",
+  "compiled": false,
+  "runtime": false
+}

@@ -20,19 +20,36 @@ What works today:
   and partner movement diagnostics. F9 closes it and restores game controls.
   Actions require supported on-foot gameplay. Guard actions use authored
   mission soldiers; arbitrary new soldiers and unloaded guns are unsupported.
-- A downed player stays in prone crawl and cannot aim or fire. Friendly sleep
-  darts use this state. To revive, close F9, stand within 3 m of your teammate
-  and HOLD the normal ACTION button (E by default) for 3 seconds. The teammate
-  being revived must be downed; the reviving player must be healthy. Both
-  games must be paired in World 3.
-- F9 > Partner / Co-op includes Downed status, Revive input status and Downed movement input to help
+- Gun injuries: a wounded player crawls slowly and cannot aim or fire.
+  Friendly sleep darts instead preserve health and use the game's own player
+  sleep, lying rest and recovery animations. A healthy teammate can wake or
+  revive: close F9, stand within 3 m and HOLD ACTION (E by default) for 3 seconds.
+  Both games must be paired in World 3. Allow the native recovery to finish.
+  A short co-op prompt shows readiness and actual hold progress.
+- Pick up a wounded or sleeping teammate with the normal CARRY hold
+  (R by default) beside them; the game's pickup icon remains visible.
+  Walk normally while carrying, and hold CARRY again to put them down.
+  Native pickup, walking, put-down and manual rescue passed hidden two-copy
+  checks. Horse loading, actual shared riding and guard-style upright sleep
+  remain unfinished. The offset-position debug mount prototype is off.
+  After 30 seconds of fresh gameplay, a sleeping teammate wakes. If carried,
+  both games put them down first, finish native recovery and restore controls.
+  This passed hidden two-copy checks; fresh two-PC Steam testing is pending.
+- F9 > Partner / Co-op includes Incapacitation status, Revive input status and Downed movement input to help
   check pairing, distance and held ACTION input. Close the menu before trying
   the revive. Hidden tests measured about half-speed local crawl and normal
   movement after revival. The hospital opening's exact animation is unavailable.
 - F9 > Partner / Co-op > Summon / recall D-Horse requests the local stock horse.
   Wait for loading and check Horse status. Close F9 and use normal controls
-  to mount when the horse is present. This does not spawn a second horse or
-  attach the remote player; two-player horse and Walker rides are unfinished.
+  to mount when the horse is present. This does not spawn a second horse,
+  attach the remote player, or arm a Walker. When the census realizes a horse
+  or Walker body, that body's position and heading are sent to the other
+  game. A Walker is moved with SetPosition. A horse is moved with SetCallHorse;
+  its goal is one metre along the census heading, which is how that command
+  writes facing. The vehicle you are driving is moved with its own SetPosition.
+  Parked vehicles stay put. The remote rider is still only the existing
+  ride-kind display. A completed revive asks the downed player to stand with
+  the game's own stance request. Teammate pickup uses the normal CARRY hold.
 - D-Dog follow status reports the shared dog position. The guest dog follows
   the host dog's position; dog attacks, spotting and health are not shared.
 - The NATIVE PARTNER (default): your partner's body is moved by the game's
@@ -53,7 +70,7 @@ What is NOT fully shared yet:
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build. The user reported partial successful two-PC play on 0.12.0. These
-  0.12.3 repairs are checked on two hidden local copies and still need a fresh
+  0.12.6 changes are checked on two hidden local copies and still need a fresh
   two-PC session; complete campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
@@ -390,12 +407,15 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
   Downed: crawl slowly; aiming and shooting are blocked. A teammate revives
   you by holding ACTION (E by default) within 3 m for 3 seconds. Close F9
   while holding ACTION. F9 > Partner / Co-op has Downed status and Revive
-  input status, plus Summon / recall D-Horse and Horse status. Wait for the
+  input status, plus read-only carry/sleep diagnostics and horse controls. Wait for the
   summoned local horse, close F9, then mount with normal game controls.
-  Two shared rideable horses and Walkers remain unfinished. The crawl uses
+  Loading a teammate onto a horse, shared horse/vehicle
+  passengers and two shared rideable horses/Walkers remain unfinished. Sleep
+  is immobile, keeps health, and wakes after 30 seconds or a teammate E hold.
+  The crawl uses
   the normal prone animation at reduced speed, not the exact hospital clip.
 
-  Partial two-PC Steam play was reported on 0.12.0. This 0.12.3 repair needs
+  Partial two-PC Steam play was reported on 0.12.0. This 0.12.6 build needs
   a fresh two-PC test; its recorded qualification uses two hidden instances.
 - Online play uses Steam's networking and Valve's relays: it needs both PCs
   online in Steam. If it does not connect, use LAN/VPN.

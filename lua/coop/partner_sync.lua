@@ -174,11 +174,28 @@ do
         if reload or (now and reloadUntil and now < reloadUntil) then flags = flags + 8 end
         return flags, gun, true
     end
+    local function publishVehicleNames()
+        -- Private-worker native preparation is the capability. Default off
+        -- returns false before any additional GameObject call is performed.
+        if frame % 8 ~= 0 then return end
+        local nonce = receipt("return 'MGS_COOP_VEHICLE_NAMES_QUERY_V1'")
+        if not integer(nonce, 1, 4294967295) then return end
+        local find = get(GameObject, "GetGameObjectId")
+        if type(find) ~= "function" then return end
+        local values = {}
+        for k = 1, 19 do
+            local name = k <= 13 and fmt("veh_lv_%04d", k - 1) or fmt("veh_trc_%04d", k - 14)
+            local ok, id = pcall(find, "TppVehicle2", name)
+            values[k] = tostring(ok and integer(id, 0, 65534) and id or 65535)
+        end
+        receipt("return 'MGS_COOP_VEHICLE_NAMES_V1' -- " .. tostring(nonce) .. " " .. table.concat(values, " "))
+    end
     local function tick()
         if not active or failed or not supported() or not api.isValid() then clearActions(); return end
         local x, y, z, ry = vars.playerPosX, vars.playerPosY, vars.playerPosZ, vars.playerRotY
         if not (within(x, 1e6) and within(y, 1e6) and within(z, 1e6) and within(ry, 36000)) then clearActions(); return end
         frame = frame + 1
+        publishVehicleNames()
         if not actionCfgDone and frame % 30 == 0 then configureActions() end
         local stance = (has(api.CRAWL) and 2) or (has(api.SQUAT) and 1) or 0
         local move = (has(api.DASH) and 3) or (has(api.RUN) and 2) or (has(api.WALK) and 1) or 0

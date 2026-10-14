@@ -1,0 +1,29 @@
+{
+  "base_manifest_sha256": "ca1010450df1f1efe4191d38292fa1ab33f3314a941373e7f89e4f9e92b412f4",
+  "base_root": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\riding\\camera-selected-filter-v4",
+  "qualification": "independent reviewer found direct E9\u2192wrapper early return bypassed camera shim validation; root requires exact actual consumer2/walk11 only",
+  "corrections": [
+    "The directly-used OwnedEntry predicate executes after both actual direct-E9 and relay-JMP endpoint resolution; camera requires identical nonzero owned stub and full exact-byte/protection validation.",
+    "Scope preserves actual job consumer and SelectedReplica refuses any value other than observed2 before reads.",
+    "First type failure reason is camera_local_view when the outer camera pair refuses."
+  ],
+  "unchanged": "All full native pins, typed sender scope, RX entry construction/lifetime, first-success/first-refusal log policy and foreign forwarding remain v4.",
+  "compiled": false,
+  "runtime_used": false,
+  "main_modified": false,
+  "fixtures": "9 additional directly-used boundary/scope assertions; source only root compiles/tests",
+  "base_files": [
+    {
+      "path": "native/native_pose_camera_reader.hpp",
+      "sha256": "b033fb5a635723cdf5223d8601f7679adf2b80f3a3b8a6b8a5a35c1e1c6c35ab"
+    },
+    {
+      "path": "native/native_pose_window_impl.inc",
+      "sha256": "d04e0e1b75f30b8702ab896d18a6a50e494989905a3b0ed45ac3dd59de3fee33"
+    },
+    {
+      "path": "tests/native_pose_camera_reader_tests.cpp",
+      "sha256": "da2ba0798022f53c367758b052140c2aef855b1783feca758085cd9efb11b25b"
+    }
+  ]
+}

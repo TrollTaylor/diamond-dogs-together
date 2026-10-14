@@ -18,7 +18,7 @@
 #endif
 
 #ifndef MGS_COOP_PROBE_VERSION
-#define MGS_COOP_PROBE_VERSION "0.12.3"
+#define MGS_COOP_PROBE_VERSION "0.12.4"
 #endif
 
 namespace {
@@ -215,6 +215,7 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD version, 
         (void)private_worker;
 #endif
         mgscoop::debug_overlay::Install();
+        InstallNativePoseWorkerEarly();
     }
     SetLastError(forwarded_error);
     return result;

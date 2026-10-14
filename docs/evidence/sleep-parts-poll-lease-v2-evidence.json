@@ -1,0 +1,41 @@
+{
+  "classification": "Worker-only actual shared/even body1-sleep no-op poll continuation; no new scalar writes, native calls, producer hooks, model transfer, or production activation",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "actual_witness_from_root": "8933dd7f75444e019e88ebe418740620: Q1800/Q1840/Pflags1A487/count2/realized2/local0/selected0/IDs0,1/pools0,1/parts3,3/bothblockmatches1/exactcaller9C2A2A; fault was outer9CD030 poll guard after seed3975; private run closed/restored63",
+  "source_base": {
+    "CMakeLists.txt": "aee65988b905245d847460a157ac144871af7b53fd3398e66b432afdd35c056c",
+    "native/native_pose_exclusion.hpp": "d8fbafd53a1c75bc21f853b489180cd8bf5b196b6c33ea1d036b245dcff07788",
+    "native/partner_input_hook.cpp": "ea164a40fec86181f21f03bd6ce86625bd44faa3031b13d9d9c5bfa1b6111ca6",
+    "native/native_pose_window_impl.inc": "5bc83c0b895576758e7c2d5964a4130363e9813f05f2f46789b422f4b39837e5",
+    "native/include/mgscoop/sleep_partner_test.hpp": "e085e4fb59811f8295b6fb3dcedd548497a142c353013eb561f8897df59528d0",
+    "native/sleep_partner_test.cpp": "60677f511545ef7cc27dae5cca28b3acb32c13fd1e1f4f717709abe411fdc55d",
+    "native/game_script_observer.cpp": "2aa15be75ccb66ca44cec097ff22166cdd8ade564bd4ff847edfbd5e762b855e"
+  },
+  "native_proof": "parts-poll-proof-v1 plus rider parts-dirty-producer-proof-v1 SHA38c983636e7990888c9a007a4dfe5ec78e882c49aa75780664a83028d98623ac; complete15 producer spans/4slots plus complete9C1F00 and9CD030 in actual startup CodeGate",
+  "source_integration": [
+    "Apply only source.diff against matched hashes; staged full existing files are review snapshots.",
+    "Copy new headers native/include/mgscoop/native_pose_sleep_parts.hpp and native/sleep_parts_policy.hpp/read.hpp/contract.hpp.",
+    "Copy tests/sleep_parts_fixture.hpp and tests/sleep_parts_tests.cpp; CMake adds single sleep_parts_tests in existing native/native_include group.",
+    "Root remains sole build/install/runtime owner; re-audit installed patch/original-reader after composition."
+  ],
+  "invariants": [
+    "Context query exists only while exact parts wrapper owns a real noncopyable read ticket from same Gate/thread/slot/serial, not a passed boolean or diagnostic status.",
+    "Real even sequence, actualP2180/P2140, exact caller9C2A2A/currentArm/typedmodel/currentconstructorbirth/allinstalledparticipants/wholeP/cache gates. Default null passive validator refuses while held.",
+    "Only actual Sleep purpose with no Carry/clear/pending/fault. Fresh accepted same cycle and fresh current retained body1 plugin/node/records/life/graph/max/phase read three times; no lease timestamp refresh.",
+    "Dedicated even target reader omits body0 allocation/status. Native original still processes body0 appearance/equipment; allowed bit0/pool0/resource changes never become target permission.",
+    "No body1 work only status3/masksbit1zero/nonlocal1/flags13set14clear, mapping actualID1 separately from pool1. No dirty flag shadow or clear, no birth invalidation on admitted poll.",
+    "Strict inner block/CS/entry/body-retire/rebind/wholeP destruction guards remain unchanged. Unknown caller, producer/pending/retarget/readtear causes original refusal or private late fault retaining lease.",
+    "Mode4/5/6 and genuine wake/idle-before-Closed intervals are freshly typed; current Target may healthy while retained same cycle recovers. Retired re-entry or max/generation/model drift refuses.",
+    "Native original LastError is restored before original and preserved through postvalidation/finally; no mutated ABI."
+  ],
+  "limitations": [
+    "No compiled test or game execution by this subagent. Root must run full audit and actual rest/wake/camera/movement acceptance.",
+    "No universal arbitrary/computed-callback producer census. Known stock12CC790/12A5810 route is excluded by actualP+A8NULL, offlinebit100clear and all-activebit2000set; unexpected route remains unsupported.",
+    "Shared tickets exclude actual body1 writers but do not mutually exclude foreign readers; no claim that reader count itself serializes all engine producers.",
+    "No production native sleep/carry permission; ordinaryOFF paths unchanged. Real guard-style visible pose, sleep/wake and later carry remain root acceptance tasks."
+  ],
+  "meaningful_fixtures": "Independent pinned control-flow effect model shows body0 update continues while target no calls/writes; body0 dirty/replacement accepted; remote dirty/status/copy/online/map/late identity/ticket/sequence refused; true preparation/seed/onset/rest/wake/idle retained, retired reentry/unknownowner/stale/max drift refused; real even singlebody reader permits body0 allocation absence but rejects target/selection/online/stance tears; actual Gate ticket lifecycle; full code/slot late-byte gates.",
+  "fixture_status": "Source staged only; not compiled or run by this subagent.",
+  "base_manifest_sha256": "f0e5adfa92b395db85e2404c570cb2ad713528723121d40f9cba053baec80d1a",
+  "v2_correction": "Only test fixture body1 packed stance address corrected181000->180100. Actual reader already checks globalP andP2180 in frozenv1; no core/consumer/policy/runtime delta."
+}

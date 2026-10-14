@@ -1,0 +1,33 @@
+{
+  "frozen": true,
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "scope": "private worker actual paired body0 carrier/body1 recipient lifetime only",
+  "native_carry_activation": false,
+  "new_native_calls": false,
+  "new_native_hooks": false,
+  "actual_lifetime_extension": "Existing12 verified actual hooks/sharedwriter domain retained. Both block/CS/entry/GO matches deny native child or whole teardown while carry purposeheld. Completed actualconstructor receipt required forbody0 plus existing body1. Acquire/current/clear only insideactualwriter with fresh pair identity and fullcode/typegate.",
+  "native_pose_recipient_only": "body1 carrier movementpurpose NOT admitted; no dualrole/parity claim",
+  "purpose_ownership": "Sleep bit1, Carry bit2. Existing Sleep Set/Clear API affects ownbit only. Carry hasnonzero serial+generation+scene receipt. One consumer retirement cannot release the other.",
+  "release_atomicity": "EndWritePublish reserves Writer(thread)|80000000 via fallibleCAS BEFORE noexcept mod-only publication. Reservation failure never changes holds. Readers remainexcluded until infallibleatomicstore0; Closed after release. Syntheticrefusal-only seam cannot grant permission.",
+  "retirement_read": "freshtypedQ-owned slab/unique bounded descriptor40stride count2; bothnativecarry14/15 queuedrequests absent; bothcarrier/recipient inactive+endbitclear, rawrecipientbinding/resource null, carrierclosure/resourcesnull, PSbit22 clear, noowncarrier callbacks. ActualEnd not called/qualified bythis check.",
+  "full_code_sources": [
+    "whole-player-lifetime-v2",
+    "pose-local-export-v3",
+    "native_pose_window_contract",
+    "carry_model_lifetime_contract",
+    "carry_model_retirement_contract",
+    "carry_plugin_contract",
+    "carry_owned_handshake_contract",
+    "carry_request_retirement_contract"
+  ],
+  "implementation_limits": [
+    "actualS0/S1/warp isolation mustpass beforeenable",
+    "no scoped varsword six-writer hooks yet",
+    "no actualpickup/drop invocation added",
+    "no cross-copy carriedbody0 adapter/protocol yet",
+    "private held scene teardown refusal is a fault requiring ownedprocess cleanup, not supported normalmissiontransition"
+  ],
+  "fixture_evidence": "sourceonly meaningful owner-purpose/gate reservefailure/reader exclusion and bounded native retirement fixtures; coordinator compiles/runs",
+  "callback_read": "Full current callbackfunction/owner/event/ref/body tuple validated; unknown owned carry callbacks/opposite participant aliases refused. Two immediate reads compare completecallback tuples; acrossframes only stablelifetime identities compare so normalstock registration can proceed. Initialcarrier0 acquisition requires>=2 actualfreecallbacks.",
+  "full_graph_fixtures": "Author completeP/GO/Q/S/vars/count/pool/block/PS408/CS/base/entry/slab/carrierrow32/recipientrow10/allocator graph, then wrongowner/alias/rebind/online/callbackbaseline/dynamiccallback mutation cases. Fixturesevidence sourceonly until coordinatorbuild."
+}

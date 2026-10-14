@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "3560409635c24376b2db4ce229c8b791",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261014-033939-50b1e531e0bb48eb9e6aa0ede9f762e3\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 10,
+  "failure": "Required scenario check failed: host require ^carryload;rec=1;t=(10(2[4-9]|[3-9][0-9])|1[1-4][0-9]{2}|15([0-2][0-9]|3[0-5]));p=[1-9] <- carryload;rec=1;t=65535;p=0;cl=0>0;veh=ffff;prompt=0;flags=0;seat=ffff,0;find=0,0,ffff;srch=0,0,ffffffff;pred=0,0,ffff",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 115571233,
+      "end": 116070302,
+      "sha256": "199bb28def0957276a367778830933756399c94e51ff87317c79599dce480405"
+    },
+    {
+      "role": "guest",
+      "start": 122553554,
+      "end": 122955408,
+      "sha256": "d3a25e0a270482a7e4fc6265a3d1a06f9e8032f2f341755de5e7257888ae6344"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Current-actor approach passed setup but original NPC predicate rejected negative facing dot before R and after R; no pickup, transfer or horse attachment accepted. All 63 protected files and real saves restored."
+}

@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/native_pose_window.hpp"
 
 namespace mgscoop::nametag_game { struct HudJobProbe; }
 namespace mgscoop::partner_input_hook {
@@ -61,6 +62,8 @@ void VtableCopies(std::uintptr_t out[kVtableCopies]) noexcept;
 // changes on every window. Lua-thread readers of PP/src retry or refuse
 // unless it is even and unchanged across their read.
 std::uint32_t WindowSeq() noexcept;
+// True on the hook thread while instance 1's deferred job runs inside its drain window.
+bool InDrainJob() noexcept;
 // Clears a recorded fault so the window may run again (MissionStart only;
 // the driver keeps its own per-mission input_faulted) and the hold history.
 void ResetFault() noexcept;

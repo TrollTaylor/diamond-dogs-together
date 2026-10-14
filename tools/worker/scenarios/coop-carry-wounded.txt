@@ -1,0 +1,95 @@
+# Wounded teammate native pickup acceptance: the host's rifle downs the
+# guest (cause 1, slow crawl), the host holds R next to them, carries them,
+# puts them down and revives them with the E hold.
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+both capture wound-before
+host press 1 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 600
+guest run downed_status
+guest expect down=1.*cause=1
+host hold rmb+lmb 1500
+host release
+wait 600
+guest run downed_status
+guest expect down=1.*cause=1
+host hold rmb+lmb 1500
+host release
+wait 1200
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+host run coop_carry_bodies
+guest run coop_carry_bodies
+both capture wound-down
+host debug goto_carry
+wait 1500
+host run position
+guest run position
+both capture wound-near
+host hold r 900
+host release
+wait 3500
+host run coop_carry_status
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host run coop_carry_mirror
+guest run coop_carry_mirror
+host run coop_carry_bodies
+host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+guest run coop_carry_bodies
+guest require carrybodies;b0=1,a2b.*b1=1,a1,ps140000c
+both capture wound-carried
+host hold w 1500
+host hold w 1500
+host release
+wait 300
+host run position
+guest run position
+host run coop_carry_bodies
+guest run coop_carry_bodies
+both capture wound-walk
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host run coop_carry_mirror
+guest run coop_carry_mirror
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+both capture wound-putdown
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
+host run coop_carry_bodies
+guest run coop_carry_bodies
+both capture wound-revived
+heldcapture guest guest w rescue-restored-own 2
+heldcapture guest host w rescue-restored-peer 1
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
+state

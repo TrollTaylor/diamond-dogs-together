@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "b04ef158e6f74fd490576bbe87be5922",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-202052-5085d3faac884567a2b3de96aa40a6ca\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 6,
+  "failure": "Required scenario check failed: host require mag=1000,1000 <- downpad;on=1;n=4755;ok=3605;caps=0;mag=0,0;id=0;thr=139496;gen=4;age=47;reason=healthy",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 101341810,
+      "end": 101678955,
+      "sha256": "e23dc9ec3765d078c880836b5cf4dce990eed0b47313c2e411f002cde994c294"
+    },
+    {
+      "role": "guest",
+      "start": 110189499,
+      "end": 110570115,
+      "sha256": "d5429f517ec75affde190889f1fb3204d41670941dbaaae7186d40e1f771b9dc"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Native reverse-role pickup/walk/drop and actual life retirement/healthy unlocked state accepted; final pad magnitude check returned0,0 and movement still requires position proof. Preserve that failure; no package or horse/MGO/riding acceptance."
+}

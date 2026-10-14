@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "run": "35fdf39046304635b1b9432c8dc76163",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-115408-443f7f3ef459439c847e165133a44f6c\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 1,
+  "failure": "Required scenario check failed: guest require posewindow;enabled=1 <- posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 81050987,
+      "end": 81172825,
+      "sha256": "7d99d1a8fdfdbbf09909378683259d47d3dcbede11c049b290fdbb633601241f"
+    },
+    {
+      "role": "guest",
+      "start": 89869828,
+      "end": 89994197,
+      "sha256": "fee0bdca86e46956594b3aec1d76bf35a936b7bbfe5c3baf591f9fb5a259e1ba"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": [
+      "posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1"
+    ]
+  },
+  "limitations": "Setup only: guest required pose window refused before cold P238 or sleep. No bilateral duration/carry acceptance."
+}

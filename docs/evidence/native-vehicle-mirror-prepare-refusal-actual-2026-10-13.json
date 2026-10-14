@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "run": "43e204f838ec4160b099eaf19c98c04a",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-231032-49a33131515a45879048f8b3b1abc90a\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 2,
+  "failure": "Required scenario check failed: host require vmirror;on=1;en=1 <- vmirror;on=1;en=0;why=off;state=0;hold=0;rx=0;tx=0;claim=0;import=0;bind=0;pose=0;nonlocal=0;ui=0",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 103856500,
+      "end": 104324735,
+      "sha256": "061ca2b5ed60901c99c338e431548df3ba9ef20418123b8077aef5938e23ebf9"
+    },
+    {
+      "role": "guest",
+      "start": 112795130,
+      "end": 113182458,
+      "sha256": "95f54e0aeb91d992d594316a5a2eec5f366a3f0c013e2869fad6df3b994f8079"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posewindow;installed=1;required=0;held=0;fault=0;born=1;windows=0;skip=0;hints=0;reason=pose_window_installed",
+      "posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1"
+    ],
+    "guest": [
+      "posewindow;installed=1;required=0;held=0;fault=0;born=1;windows=0;skip=0;hints=0;reason=pose_window_installed",
+      "posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1"
+    ]
+  },
+  "limitations": "Both vehicle mirror/protection installation preparations passed while disabled. Existing pose_window_test1 refused actual requirement, so enable correctly refused and the scenario stopped before native attachment; no riding acceptance. Horse census refused exact slot23b9ac0; bank-order trace and loaded-source snapshots were collectedreadonly. Noappend/standing/cargo enabled. Normalclose, all63 baseline paths and real saves restored."
+}

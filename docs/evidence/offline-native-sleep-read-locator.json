@@ -1,0 +1,65 @@
+{
+  "scope": "Additional exact static bounded sleep object read candidates, no runtime read/call/write or main edits. Supplements frozen offline-native-sleep-chain.json; final ownership not yet qualified.",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "pins": [
+    {
+      "rva": "0xff31a0",
+      "end": "0xff31c1",
+      "size": 33,
+      "sha256": "5DCB9F8608EDFA8CBB48E862CA7FDAFC85C15772DBED5E123132E563AF32F145",
+      "bytes": "2b5108488b81d8020000440fb604024181f8ff000000750333c0c34a8b44c110c3",
+      "meaning": "Complete current action object getter leaf; PS vt+28"
+    },
+    {
+      "rva": "0xff3180",
+      "end": "0xff3196",
+      "size": 22,
+      "sha256": "9E6C0186379C61A5E0AA52EE064FFA2EF477AC2A5B465CB30ACE2C0B0EA5494A",
+      "bytes": "8d42fe488b84c1480400004885c07502f3c38b4028c3",
+      "meaning": "Complete indexed action node state getter leaf; PS vt+38"
+    },
+    {
+      "rva": "0x12cba77",
+      "end": "0x12cbaa1",
+      "size": 42,
+      "sha256": "2BE60D0398649EE38C62607BFCF84FEAAE969651DFA448287C34BE1DDD555266",
+      "bytes": "2b4e08488b86d8020000c6040119488b45d8488b8838010000488b4160488b4818b88300000066890479",
+      "meaning": "Sleep enter writes PS action byte19 and Q action83"
+    }
+  ],
+  "slots": [
+    {
+      "slot": "0x23b0a18",
+      "target": "0xff31a0",
+      "sha256": "EA439151353E83C42E5D049B8CF10BDAE218BC8CA3356F621CF7BBA093485315"
+    },
+    {
+      "slot": "0x23b0a28",
+      "target": "0xff3180",
+      "sha256": "1E00349F1161CF1362368A20755CDE93462F1F31187CE663656319585036B442"
+    },
+    {
+      "slot": "0x23b0c98",
+      "target": "0xff31a0",
+      "sha256": "EA439151353E83C42E5D049B8CF10BDAE218BC8CA3356F621CF7BBA093485315"
+    },
+    {
+      "slot": "0x23b0ca8",
+      "target": "0xff3180",
+      "sha256": "1E00349F1161CF1362368A20755CDE93462F1F31187CE663656319585036B442"
+    }
+  ],
+  "interpretation": [
+    "Natural general sleep enter12CB990 writes per-id PS current action byte at*(PS+2D8)+(id-*(PS+8)) to19.",
+    "FF31A0 loads that current action byte and returns pointer *(PS+10+code*8), or null forFF. Hence code19 implies current sleep action candidate interface atPS+D8.",
+    "FF3180 reads node=*(PS+448+(code-2)*8), returning its stateword+28 or zero. Hence code19 implies candidate scheduler node atPS+500.",
+    "Candidate table pointer type is not yet captured. Do not assume PS+D8 is complete+10 or complete+30 without matching one of the exact four final sleep vtables and corresponding complete adjustment; enforce complete+8==body block and complete+38==PS+500 node.",
+    "Read only through already qualified current mission body block -> block+78 PS identity, valid exact id range and guarded reads. If either slot is null, wrong type, stale or has mismatched owner/node/range, stop. No global scan, factory invocation, mode mutation or callback call."
+  ],
+  "next_gate": "Using a recorded exact hidden paired body snapshot, read PS+D8 and PS+500; match final23D5C18/40/70/B0, normalize pointer to complete, verify body block/active node/current generation, then inspect record+10/+11/+14. This remains a candidate locator until those observations pass.",
+  "limitations": [
+    "PS action code19 means native sleep-action family, not guaranteed this slot exists or is realized on both current offline bodies.",
+    "Full preceding native-sleep ledger blockers, including natural recovery/wake/carry ordering and live graph0 identity, remain.",
+    "Raw sleeping guard visuals and resulting player pose not qualified."
+  ]
+}

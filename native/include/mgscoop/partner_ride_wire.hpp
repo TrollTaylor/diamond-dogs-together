@@ -35,4 +35,35 @@ struct In {
 };
 void Observe(Visibility&, const In&) noexcept;
 void Placed(Visibility&, std::uint64_t now) noexcept;
+
+// What the existing partner transform stream can drive for a mount.
+// That stream is the other player's position, heading and optional animation.
+// It has no horse-body transform, no vehicle-body transform and no walker arm.
+// rider_anchor is only the player transform already applied to the partner
+// body. It does not move a horse, write a mounted animation, invent a vehicle
+// pose, or arm a walker.
+struct StreamPose {
+    bool valid{};
+    bool anim_valid{};
+    std::uint16_t act{};
+};
+struct MountFollow {
+    bool rider_anchor{};
+    bool horse_entity{};
+    bool mounted_animation{};
+    bool vehicle_pose{};
+    bool walker_arm{};
+};
+inline MountFollow FollowStream(Kind kind, StreamPose pose) noexcept {
+    MountFollow out{};
+    if (kind == Kind::horse && pose.valid) {
+        out.rider_anchor = true;
+        // Acts 1..6 are on-foot locomotion. Any other act is unverified.
+        // Neither is a mounted-animation write.
+        if (pose.anim_valid) out.mounted_animation = false;
+    }
+    if (kind == Kind::vehicle && pose.valid) out.vehicle_pose = false;
+    if (kind == Kind::walker && pose.valid) out.walker_arm = false;
+    return out;
+}
 }

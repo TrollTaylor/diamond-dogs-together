@@ -1,0 +1,72 @@
+{
+  "schema": "mgscoop-body1-sleep-lua-chunk-v1",
+  "fix": "Move only accepted-peer bridge methods into separate existing-style do/end world_partner_sleep after world_downed. Keep16KB CMake cap unchanged.",
+  "lf_lengths": {
+    "world_downed": 15976,
+    "world_partner_sleep": 1703
+  },
+  "explanation_comments_moved_to_evidence": [
+    "-- Downed owner policy.",
+    "-- Retain controls until native sleep retires.",
+    "-- Mod-owned fallback duration, not the stock MGO sleep timer. Only fresh",
+    "-- accepted records and one exact generation can retain this host deadline."
+  ],
+  "exact_semantics": [
+    "D.hitEnabled is the same original on() predicate; freshness/sequence/generation/receive-age/receipt fields copied unchanged.",
+    "Core reset clears before capability invalidation. Tiny optional dynamic clear/publish hooks preserve exactly original lifecycle and post-poll/hostTick timing.",
+    "Adapter captures the same W.downed instance, defines methods only and never enables/holds/polls/sends native receipts at load. D.reset changes records, not object identity.",
+    "Runtime bootstrap size reservation and actual ordered copy both include the new constant. CMake reads/bounds/configures it.",
+    "Downed fixture requires actual adapter arg3 and preserves friendly arg2; world composed list and exact byte-order host_trial fixture include new chunk.",
+    "No new test name or worker allowlist change; existing audited checks own actual validation."
+  ],
+  "integration": "Apply eight narrow existing-file diffs against captured bases and add lua/coop/world_partner_sleep.lua. Preserve later root changes. Existing audited tests own validation.",
+  "validation": {
+    "compiled": false,
+    "fixtures_executed": false,
+    "main_modified": false,
+    "games_launched": false,
+    "activation": "OFF; camera presentation blocked"
+  },
+  "base_sources": [
+    {
+      "path": "lua/coop/world_downed.lua",
+      "bytes": 17731,
+      "sha256": "a5076ee56926e529d772c8e39c20902a3c4d3aa936123715cde1c197a67b15aa"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "bytes": 61178,
+      "sha256": "05fb823b2525e6a8116271428809463ef180f0ec69496af475365628c50f463b"
+    },
+    {
+      "path": "native/world_sync_source.hpp.in",
+      "bytes": 1966,
+      "sha256": "45dfb54e480bac3071ac4f9194424e3d153ff8d6888148f1db6ea3f3fab0c26e"
+    },
+    {
+      "path": "native/bootstrap_patch.cpp",
+      "bytes": 22782,
+      "sha256": "33b107b3f69b851b603d7c19d7b471ec7acfd27b34cef838611f26f3e364767a"
+    },
+    {
+      "path": "cmake/lua_checks.cmake",
+      "bytes": 19450,
+      "sha256": "9f9fdef0a517827f7405b6c8e1e8e065e4077dbabab08fbbfab2d45126ec5826"
+    },
+    {
+      "path": "tests/host_trial_patch_check.cpp",
+      "bytes": 10192,
+      "sha256": "e2f278fa65e3b2d5d74cef07ca95d32a49ee51add9b5f3f1764c90e2227d586d"
+    },
+    {
+      "path": "tests/world_downed_lua_check.lua",
+      "bytes": 48048,
+      "sha256": "3ef48f901f388e555ae8cef5a1fdfb5bc79d620b48ae1d533c3599681ca5d801"
+    },
+    {
+      "path": "tests/world_sync_lua_check.lua",
+      "bytes": 80424,
+      "sha256": "30f658eb5a078a315255393adf9fb754c18d93e93d4ec8375a25bae9a491416b"
+    }
+  ]
+}

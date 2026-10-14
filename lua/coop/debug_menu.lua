@@ -97,7 +97,7 @@ do
  function D.stop()
   if D.ammoTouched then pcall(call, Player, "SetInfiniteAmmoFromScript", false) end
   if D.weatherTouched then pcall(call, TppWeather, "CancelForceRequestWeather") end
-  for _, k in ipairs({"enemy", "player", "spawn", "buddy"}) do if D[k] then pcall(D[k].stop) end end
+  for _, k in ipairs({"enemy", "player", "spawn", "buddy", "vehicle"}) do if D[k] then pcall(D[k].stop) end end
   D.bookmarks, D.infinite, D.ammoTouched, D.weatherTouched, D.pending, D.mission = {}, false, nil, nil, nil, nil
   D.equipmentObservationMission = nil
   D.equipmentObservationFrames, D.equipmentObservationAttempts = nil, nil
@@ -146,7 +146,8 @@ do
  local WEATHER = {sunny = "SUNNY", cloudy = "CLOUDY", rainy = "RAINY", sandstorm = "SANDSTORM", foggy = "FOGGY"}
  local function run(a, id)
   local cmd = a[1]
-  for _, m in ipairs({D.player, D.spawn, D.buddy}) do
+  for _, k in ipairs({"player", "spawn", "buddy", "vehicle"}) do
+   local m = D[k]
    if m and m.handles[cmd] then return m.run(a, id) end
   end
   if cmd == "position" and #a == 1 then
@@ -289,6 +290,7 @@ do
   D.lastId = id
   D.host = get(command, "host") == true
   D.partnerPose = get(command, "pp")
+  D.carryPoint = get(command, "cp")
   local a = tokens(get(command, "text"))
   if not a then note(id, false, "command_text"); return end
   if get(command, "mission") ~= nil and get(command, "mission") ~= mission then
@@ -298,7 +300,7 @@ do
   ok, failure = pcall(function()
    if a[1] == "status" and #a == 1 then good, why = status(); return end
    good, why = guard()
-   if not good and why == "on_foot" and (a[1] == "buddy_census" or a[1] == "horse_status") and #a == 1 then good, why = mountCensus() end
+   if not good and why == "on_foot" and (a[1] == "buddy_census" or a[1] == "horse_status" or a[1] == "vehicle_seats" or a[1] == "cargo_status" or a[1] == "sleep_clock") and #a == 1 then good, why = mountCensus() end
    if good then good, why = run(a, id) end
   end)
   if not ok then

@@ -105,6 +105,22 @@ constexpr OpSpec kOps[] = {
     // Authenticated local-shooter hit: shot sequence, owner generation/status sequence, damage milli, cause(normal/sleep).
     {op::friendly_hit, "FRIENDLY_HIT", 0, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 15,
      {U32(1), U32(), U16(1), U32(0, 1000000000), U8(0, 0, 2)}},
+    // RIDE_BODY: seq, kind (1 horse, 2 walker, 3 vehicle), body id, xyz mm, heading mrad, occupied, rider.
+    // Horse and walker heading is the fourth float of the verified 16-byte census pose.
+    // Vehicle heading is the second return of TppVehicle2 GetPosition.
+    {op::ride_body, "RIDE_BODY", 1, Dir::both, Wire::reliable, 3, false, false, 9, 0, 0, 24,
+     {U16(1), U8(1, 3), U16(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-31416, 31416), U8(0, 1), U16()}},
+    // RIDE_FAST: sender tick ms, kind (3 vehicle), body id, xyz mm, heading mrad. The
+    // driver's latest vehicle pose; the receiver interpolates by sender tick.
+    {op::ride_fast, "RIDE_FAST", 1, Dir::both, Wire::datagram, 3, false, false, 7, 0, 0, 23,
+     {U32(), U8(3, 3), U16(0, 65534), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-31416, 31416)}},
+    // CARGO: seq, state (0 stop,1 transport,2 offer,3 request), xyz mm, heading mrad.
+    // Lua validates current mission/epoch, fresh offer, role and proximity.
+    {op::cargo, "CARGO", 0, Dir::both, Wire::reliable, 3, false, false, 6, 0, 0, 19,
+     {U16(1), U8(0, 3), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-31416, 31416)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},
@@ -290,7 +306,7 @@ void Core::Configure(const Config& config, std::uint64_t now_ms) noexcept {
     goto_ = Goto{};
     ctrl_head_ = ctrl_size_ = 0;
     world_head_ = world_size_ = 0;
-    digest_.valid = guest_digest_.valid = phase_vec_.valid = false;
+    digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = false;
     ClearGrants();
     out_head_ = out_size_ = peeked_ = 0;
     generation_ = 0;
@@ -557,7 +573,8 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
         return;
     }
     if (spec->wire == Wire::datagram) {
-        Slot& slot = op.code == op::digest ? digest_ : op.code == op::guest_digest ? guest_digest_ : phase_vec_;
+        Slot& slot = op.code == op::digest ? digest_ : op.code == op::guest_digest ? guest_digest_ :
+                     op.code == op::ride_fast ? ride_fast_ : phase_vec_;
         const bool ticked = op.code != op::phase_vec;
         if (ticked && slot.valid && slot.entry.epoch == op.epoch && !Newer32(U(op.v[0]), U(slot.entry.v[0]))) {
             ++stats_.stale_u;
@@ -691,7 +708,7 @@ void Core::PurgeOtherEpochs(std::uint16_t keep) noexcept {
         else ++stats_.purged;
     }
     world_size_ = kept;
-    for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_})
+    for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_, &ride_fast_})
         if (slot->valid && slot->entry.epoch != keep) {
             slot->valid = false;
             ++stats_.purged;
@@ -700,7 +717,7 @@ void Core::PurgeOtherEpochs(std::uint16_t keep) noexcept {
 
 void Core::ClearWire() noexcept {
     world_head_ = world_size_ = 0;
-    digest_.valid = guest_digest_.valid = phase_vec_.valid = false;
+    digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = false;
     ClearGrants();
     out_head_ = out_size_ = peeked_ = 0;
     ++generation_;
@@ -763,7 +780,7 @@ CfgReply Core::Cfg(std::uint32_t mission, bool start, std::uint32_t read_mission
         }
         ctrl_size_ = kept;
         world_head_ = world_size_ = 0;
-        digest_.valid = guest_digest_.valid = phase_vec_.valid = false;
+        digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = false;
         local_ = Ready{};
         have_last_ready_ = false;
         sent_epoch_ = 0;
@@ -954,7 +971,7 @@ void Core::Rx(std::uint8_t mask, std::uint32_t rtt_ms, std::uint64_t now_ms, RxR
             if (e.op == op::enemy_debug) RecordGrant(e, now_ms);
             return;
         }
-        for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_}) {
+        for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_, &ride_fast_}) {
             if (!slot->valid || slot->delivered || slot->entry.epoch != epoch_) continue;
             slot->delivered = true;
             fill(slot->entry, 1);

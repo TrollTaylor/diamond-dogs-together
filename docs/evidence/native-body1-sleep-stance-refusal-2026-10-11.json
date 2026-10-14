@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "run": "4baf4ffa722344b2880ae90a4dc12f32",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-040307-9abe2a9807de4cf0ba26a00b9772e807\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 4,
+  "failure": "Required scenario check failed: host require partnersleep;cfg=1;on=1;active=1;phase=[1-9].*mode=5;life=2;act=132;zero=1 <- partnersleep;cfg=1;on=1;active=0;phase=0;mode=0;life=0;act=5;zero=1;gen=4;reason=partner_sleep_stance_pair",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 78774212,
+      "end": 78947744,
+      "sha256": "0e12511e97f382bc5a8ca1c4cdd416e6ab0036c1f3e3a79d08f29e097c98babe"
+    },
+    {
+      "role": "guest",
+      "start": 87658588,
+      "end": 87810335,
+      "sha256": "a11e66db827bcf0b4b6a0ff892f65a493f9c99601e9a3e58ccff62a92f08c788"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "partnersleep;cfg=1;on=1;active=0;phase=0;mode=0;life=0;act=5;zero=1;gen=4;reason=partner_sleep_stance_pair",
+      "partnersleep;cfg=1;on=1;active=0;phase=0;mode=0;life=0;act=3;zero=0;gen=4;reason=partner_sleep_stance_pair",
+      "partnersleep;enabled=1;scope=private_worker",
+      "cachedpose;ready=1;local=1;s0=804.6,339.1,1636.5;s1=800.9,339.3,1639.3;vars=804.6,339.1,1636.5;gap=0.000;seq=1864",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": []
+  },
+  "limitations": "169 audited checks passed. Native window and effective DM admission passed; actual WU dart preserved guest6600HP/cause2. Body1 sleep refused before hold or scalar mutation because PS/Q stance readings disagreed; no native onset/rest or visible sleeping animation is claimed. Scoped forced cleanup restored63 protected files and real saves; no focus/system input/desktop switch."
+}

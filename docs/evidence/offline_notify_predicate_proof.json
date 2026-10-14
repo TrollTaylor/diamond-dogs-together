@@ -1,0 +1,296 @@
+{
+  "scope": "Read-only exact offline retail predicate qualification plus minimal pure policy crash shield. No native sleep, memory write, main edit, runtime, installation or Git action.",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "complete_updater": {
+    "rva": "0x11f76c0",
+    "end_exclusive": "0x11f92c5",
+    "size": 7173,
+    "sha256": "A748737EF1619DEDEC90A427168951147A3CAF5329E21B4FEA3319F84052E0D6"
+  },
+  "ungated_notify_slice": {
+    "rva": "0x11f8f7d",
+    "end_exclusive": "0x11f904b",
+    "sha256": "36B07DAA57B8B560A94091CB89504ADB10CA95BB77D4B1F74F5F63FBF09338D7",
+    "instructions": [
+      {
+        "rva": "0x11f8f7d",
+        "bytes": "837f3400",
+        "text": "cmp dword ptr [rdi + 0x34], 0"
+      },
+      {
+        "rva": "0x11f8f81",
+        "bytes": "0f84c6000000",
+        "text": "je 0x11f904d"
+      },
+      {
+        "rva": "0x11f8f87",
+        "bytes": "0f2f37",
+        "text": "comiss xmm6, dword ptr [rdi]"
+      },
+      {
+        "rva": "0x11f8f8a",
+        "bytes": "0f834c010000",
+        "text": "jae 0x11f90dc"
+      },
+      {
+        "rva": "0x11f8f90",
+        "bytes": "4584ff",
+        "text": "test r15b, r15b"
+      },
+      {
+        "rva": "0x11f8f93",
+        "bytes": "0f85b4000000",
+        "text": "jne 0x11f904d"
+      },
+      {
+        "rva": "0x11f8f99",
+        "bytes": "498b4e30",
+        "text": "mov rcx, qword ptr [r14 + 0x30]"
+      },
+      {
+        "rva": "0x11f8f9d",
+        "bytes": "0fb75324",
+        "text": "movzx edx, word ptr [rbx + 0x24]"
+      },
+      {
+        "rva": "0x11f8fa1",
+        "bytes": "488b01",
+        "text": "mov rax, qword ptr [rcx]"
+      },
+      {
+        "rva": "0x11f8fa4",
+        "bytes": "ff10",
+        "text": "call qword ptr [rax]"
+      },
+      {
+        "rva": "0x11f8fa6",
+        "bytes": "0fb7480e",
+        "text": "movzx ecx, word ptr [rax + 0xe]"
+      },
+      {
+        "rva": "0x11f8faa",
+        "bytes": "660f6ec1",
+        "text": "movd xmm0, ecx"
+      },
+      {
+        "rva": "0x11f8fae",
+        "bytes": "0f5bc0",
+        "text": "cvtdq2ps xmm0, xmm0"
+      },
+      {
+        "rva": "0x11f8fb1",
+        "bytes": "0f2fc6",
+        "text": "comiss xmm0, xmm6"
+      },
+      {
+        "rva": "0x11f8fb4",
+        "bytes": "0f8693000000",
+        "text": "jbe 0x11f904d"
+      },
+      {
+        "rva": "0x11f8fba",
+        "bytes": "498b4e30",
+        "text": "mov rcx, qword ptr [r14 + 0x30]"
+      },
+      {
+        "rva": "0x11f8fbe",
+        "bytes": "0fb75324",
+        "text": "movzx edx, word ptr [rbx + 0x24]"
+      },
+      {
+        "rva": "0x11f8fc2",
+        "bytes": "488b01",
+        "text": "mov rax, qword ptr [rcx]"
+      },
+      {
+        "rva": "0x11f8fc5",
+        "bytes": "ff10",
+        "text": "call qword ptr [rax]"
+      },
+      {
+        "rva": "0x11f8fc7",
+        "bytes": "44387b26",
+        "text": "cmp byte ptr [rbx + 0x26], r15b"
+      },
+      {
+        "rva": "0x11f8fcb",
+        "bytes": "0f857c000000",
+        "text": "jne 0x11f904d"
+      },
+      {
+        "rva": "0x11f8fd1",
+        "bytes": "f6432202",
+        "text": "test byte ptr [rbx + 0x22], 2"
+      },
+      {
+        "rva": "0x11f8fd5",
+        "bytes": "0f8472000000",
+        "text": "je 0x11f904d"
+      },
+      {
+        "rva": "0x11f8fdb",
+        "bytes": "498b4628",
+        "text": "mov rax, qword ptr [r14 + 0x28]"
+      },
+      {
+        "rva": "0x11f8fdf",
+        "bytes": "0fb74b24",
+        "text": "movzx ecx, word ptr [rbx + 0x24]"
+      },
+      {
+        "rva": "0x11f8fe3",
+        "bytes": "4c8b88a8000000",
+        "text": "mov r9, qword ptr [rax + 0xa8]"
+      },
+      {
+        "rva": "0x11f8fea",
+        "bytes": "33c0",
+        "text": "xor eax, eax"
+      },
+      {
+        "rva": "0x11f8fec",
+        "bytes": "c74540ec381cd4",
+        "text": "mov dword ptr [rbp + 0x40], 0xd41c38ec"
+      },
+      {
+        "rva": "0x11f8ff3",
+        "bytes": "48894544",
+        "text": "mov qword ptr [rbp + 0x44], rax"
+      },
+      {
+        "rva": "0x11f8ff7",
+        "bytes": "89454c",
+        "text": "mov dword ptr [rbp + 0x4c], eax"
+      },
+      {
+        "rva": "0x11f8ffa",
+        "bytes": "0fb74320",
+        "text": "movzx eax, word ptr [rbx + 0x20]"
+      },
+      {
+        "rva": "0x11f8ffe",
+        "bytes": "894544",
+        "text": "mov dword ptr [rbp + 0x44], eax"
+      },
+      {
+        "rva": "0x11f9001",
+        "bytes": "8d81bbfeffff",
+        "text": "lea eax, [rcx - 0x145]"
+      },
+      {
+        "rva": "0x11f9007",
+        "bytes": "894d48",
+        "text": "mov dword ptr [rbp + 0x48], ecx"
+      },
+      {
+        "rva": "0x11f900a",
+        "bytes": "83f807",
+        "text": "cmp eax, 7"
+      },
+      {
+        "rva": "0x11f900d",
+        "bytes": "760f",
+        "text": "jbe 0x11f901e"
+      },
+      {
+        "rva": "0x11f900f",
+        "bytes": "8d81b1feffff",
+        "text": "lea eax, [rcx - 0x14f]"
+      },
+      {
+        "rva": "0x11f9015",
+        "bytes": "83f801",
+        "text": "cmp eax, 1"
+      },
+      {
+        "rva": "0x11f9018",
+        "bytes": "7604",
+        "text": "jbe 0x11f901e"
+      },
+      {
+        "rva": "0x11f901a",
+        "bytes": "32c0",
+        "text": "xor al, al"
+      },
+      {
+        "rva": "0x11f901c",
+        "bytes": "eb02",
+        "text": "jmp 0x11f9020"
+      },
+      {
+        "rva": "0x11f901e",
+        "bytes": "b001",
+        "text": "mov al, 1"
+      },
+      {
+        "rva": "0x11f9020",
+        "bytes": "418b95b4000000",
+        "text": "mov edx, dword ptr [r13 + 0xb4]"
+      },
+      {
+        "rva": "0x11f9027",
+        "bytes": "8b742454",
+        "text": "mov esi, dword ptr [rsp + 0x54]"
+      },
+      {
+        "rva": "0x11f902b",
+        "bytes": "0fb6c0",
+        "text": "movzx eax, al"
+      },
+      {
+        "rva": "0x11f902e",
+        "bytes": "c1ea05",
+        "text": "shr edx, 5"
+      },
+      {
+        "rva": "0x11f9031",
+        "bytes": "4c8d4540",
+        "text": "lea r8, [rbp + 0x40]"
+      },
+      {
+        "rva": "0x11f9035",
+        "bytes": "498bc9",
+        "text": "mov rcx, r9"
+      },
+      {
+        "rva": "0x11f9038",
+        "bytes": "83e204",
+        "text": "and edx, 4"
+      },
+      {
+        "rva": "0x11f903b",
+        "bytes": "0bd0",
+        "text": "or edx, eax"
+      },
+      {
+        "rva": "0x11f903d",
+        "bytes": "89554c",
+        "text": "mov dword ptr [rbp + 0x4c], edx"
+      },
+      {
+        "rva": "0x11f9040",
+        "bytes": "498b01",
+        "text": "mov rax, qword ptr [r9]"
+      },
+      {
+        "rva": "0x11f9043",
+        "bytes": "8bd6",
+        "text": "mov edx, esi"
+      },
+      {
+        "rva": "0x11f9045",
+        "bytes": "ff9008010000",
+        "text": "call qword ptr [rax + 0x108]"
+      }
+    ]
+  },
+  "native_predicates": [
+    "LifeRecord+34 is nonzero (11F8F7D);positiveHP at11F8F87;not already handledr15b at11F8F90.",
+    "Damage-parameter uint16+E is positive at11F8FA6..FB4;packet bodypart+26 zero at11F8FC7..FCB;packet flag+22 bit1 set at11F8FD1..FD5.",
+    "No online-mode or synchronizer-null guard:11F8FE3 loads P+A8;11F9040 dereferences it;11F9045 virtual+108 call.",
+    "Packet+20 attacker is read only at11F8FFA and copied unconditionally into notification payload at11F8FFE; no attacker compare or range admission exists in this branch."
+  ],
+  "minimal_policy_change": "Keep exactOfflinePair, target0/1, directbit1,part0,positivefiniteStun conditions; removeattacker<=1 andattacker!=target. No authenticated logical sleep or friendly-forwarding behavior changes.",
+  "limits": "The pre-existing Calc output finite-positive-stun gate is retained; it is a conservative tested subset of the native positive weapon-parameter predicate, not proof of complete coverage for every absorbed/zero-output/special packet. This change does not authorize naturally setting life34 or enabling sleep callbacks.",
+  "caller_cooperation": "Existing Calculate independently checks UnsafeOfflineSleep after originalCalc even without active owner; when true it neutralizes actual queued packetoutputs and clears flagbits0/1, avoiding the directbit1 native branch. Main caller/comment should say exact offline player direct-stun notification rather than teammate-only."
+}

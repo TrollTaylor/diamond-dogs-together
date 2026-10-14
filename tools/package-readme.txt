@@ -1,4 +1,4 @@
-MGS Co-op 0.12.3 - native-session diagnostic development package
+MGS Co-op 0.12.4 - native-session diagnostic development package
 
 This package retains the older native-session diagnostic workflow below. Use
 the friend package and Play-Coop.bat for the current two-player play workflow.

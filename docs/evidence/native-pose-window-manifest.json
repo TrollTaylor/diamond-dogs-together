@@ -1,0 +1,106 @@
+{
+  "stage": "worker-only mandatory body1 pose window v1",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "fixture_status": "unrun; coordinator compiles and runs both CTest modes",
+  "main_modified": false,
+  "runtime_used": false,
+  "full_pin_count": 60,
+  "unique_full_pin_count": 58,
+  "max_pin_size": 6126,
+  "slot_count": 12,
+  "files": [
+    {
+      "path": "integration.json",
+      "size": 4967,
+      "sha256": "e2c236cbc727d47ca856aa27df9d273635cfac4c81eb1d25b7226d5d43aa7a62"
+    },
+    {
+      "path": "native/camera_mode_window.hpp",
+      "size": 8820,
+      "sha256": "64a348a9f14b10e9a9f0a5f0b623e58c116fe554c4f8ff99885bd69f8cd4b768"
+    },
+    {
+      "path": "native/camera_mode_window_contract.hpp",
+      "size": 42134,
+      "sha256": "318417ac8cd87d8029e45bf5ada5e76608b8909a225c229b42b696e7a1b1b8f1"
+    },
+    {
+      "path": "native/carry_model_lifetime_contract.hpp",
+      "size": 35887,
+      "sha256": "1141bb448e2f32bd9f2ea7d365363e6bd69b50a24d50f0879d2a7739ea1cfe5e"
+    },
+    {
+      "path": "native/carry_model_retirement_contract.hpp",
+      "size": 42263,
+      "sha256": "7a0204ea626603892e9ab9b59ae45ed30aa43ff31ab59a68965189fedbab3cb6"
+    },
+    {
+      "path": "native/include/mgscoop/native_pose_window.hpp",
+      "size": 3452,
+      "sha256": "cd2590cff35741d45d9b7e81016d92b1512d8bd7ea00e0b430367ddda89bc6de"
+    },
+    {
+      "path": "native/include/mgscoop/partner_input_hook.hpp",
+      "size": 20548,
+      "sha256": "db908886e0fa7e7713229c8f4c39c563d6af7c1721409f32bde6bc4106284b18"
+    },
+    {
+      "path": "native/native_pose_exclusion.hpp",
+      "size": 6265,
+      "sha256": "5561f45570e9bdd2fb8f603c4e439c949460512679c40495a2d01ce0dc563510"
+    },
+    {
+      "path": "native/native_pose_window_contract.hpp",
+      "size": 26076,
+      "sha256": "714d6e391e06768003070029524fbbbf83d395d068380a06c0b7526f6f3dbd26"
+    },
+    {
+      "path": "native/native_pose_window_impl.inc",
+      "size": 27894,
+      "sha256": "6ebc414558b35bb2f840e7f2b5ad76e0fb0d62e47891ee0e3d55d3701ba1dc4c"
+    },
+    {
+      "path": "native/partner_defer.cpp",
+      "size": 32401,
+      "sha256": "02466511e31d2582c4c655d7de4a4409a4021ad55955a4cf9c40dc020d8f55ca"
+    },
+    {
+      "path": "native/partner_input_hook.cpp",
+      "size": 133410,
+      "sha256": "11dc96176405d5c029e9a78e3c91c8660ae464bf7078a4496a79ece2362b29a3"
+    },
+    {
+      "path": "native_pose_window_evidence.json",
+      "size": 17105,
+      "sha256": "a613a130c0dcacb9f86989dd2a13f2bc8b2e7ade20b7e3cb09f02f9eee9835b1"
+    },
+    {
+      "path": "source.diff",
+      "size": 35193,
+      "sha256": "ce719362b45c5423e69adbf371ce88c4fc28ffe65d03c54fb8ead3cac38aa917"
+    },
+    {
+      "path": "tests/partner_defer_tests.cpp",
+      "size": 150480,
+      "sha256": "52051614677fd95e35836e7c4e4edb3ba885cdbf45ed300655231c371f7d5c00"
+    }
+  ],
+  "main_reference_hashes": [
+    {
+      "path": "native/partner_input_hook.cpp",
+      "sha256": "4a5910c1786fbe4f05f4d22a77a2d4d63f41a90dc556ccac500df29cb1df872f"
+    },
+    {
+      "path": "native/partner_defer.cpp",
+      "sha256": "2f9645c9766f49dec15a4747b9e5acc6c6f4bf4c8f15ff3ca12589d845ae56c4"
+    },
+    {
+      "path": "native/include/mgscoop/partner_input_hook.hpp",
+      "sha256": "4e1b89f5751fb2066db594f9e6defa6d52a68022f66f3f93416c68881c49fce1"
+    },
+    {
+      "path": "tests/partner_defer_tests.cpp",
+      "sha256": "19077ef6fa7bfb3bd22f0d2f8627377183f965760b43b81cf2a539ac716878cd"
+    }
+  ]
+}

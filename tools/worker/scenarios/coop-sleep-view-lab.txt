@@ -1,0 +1,50 @@
+# The sleeping player's own view with the one-PC lab defaults: a friendly dart
+# puts the guest to sleep; the guest should keep seeing the world (greyed by
+# the overlay) on the ground and while carried, then wake normally.
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+host press 2 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 400
+guest run downed_status
+guest require down=1.*cause=2.*lock=1.*state=asleep
+wait 6500
+both capture sleep-view-ground
+host debug goto_carry
+wait 1500
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require b1=1,a2b
+both capture sleep-view-carried
+host hold r 900
+host release
+wait 3500
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 9000
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
+both capture sleep-view-woken
+state

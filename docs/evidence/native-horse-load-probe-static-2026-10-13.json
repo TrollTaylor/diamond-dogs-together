@@ -1,0 +1,82 @@
+{
+  "binary_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "native_calls_added": 0,
+  "runtime_verified": false,
+  "base_source_sha256": "c4ce0855d87134addefb51dd4d001fe2207693a4d379d3d874cedf9a20741a10",
+  "entry_abi": "bool finder(primary* RCX,uint32 actual carrier EDX,uint16* output R8,byte UI-only R9); bool geometry(primary* RCX,uint32 actual carrier EDX,const position-record* R8)",
+  "native_continuation": "11327C0 event\u2192112B660 call1132FD1\u2192nextphaseC/actualmountrec538\u21921136C60 callback; spatialHorse search112B799 return112B79B; geometry112A230 called112B7F4",
+  "behavior": "Private observer only. Always calls originals, preserves LastError and nested TLS. No result/candidate/input replacement. Pointer fields are never printed. Root integration must add public HorseLoadLine declaration and worker observer selector.",
+  "functions": [
+    {
+      "requested": "0x112b660",
+      "root": "0x112b660",
+      "complete_chained_parts": true,
+      "parts": [
+        {
+          "begin": "0x112b660",
+          "end": "0x112b6c3",
+          "size": 99,
+          "sha256": "d10bf375a098041c3d739e0f854549fe659f6d77863b728b65e2285488f63fe7",
+          "decoded_bytes": 99,
+          "undecoded_tail": null
+        },
+        {
+          "begin": "0x112b6c3",
+          "end": "0x112b8b3",
+          "size": 496,
+          "sha256": "e32685e95f9bf69867ada2ff71846e83cfd8dcb52016993534650b9f21904e96",
+          "decoded_bytes": 496,
+          "undecoded_tail": null
+        },
+        {
+          "begin": "0x112b8b3",
+          "end": "0x112b8cb",
+          "size": 24,
+          "sha256": "7650795cd53ab48690f74d633622f2c3de598a85e92e5df9ac8322f5eb09c773",
+          "decoded_bytes": 24,
+          "undecoded_tail": null
+        },
+        {
+          "begin": "0x112b8cb",
+          "end": "0x112b96a",
+          "size": 159,
+          "sha256": "da847e35ea1bf152e243014094cfb4a3eb1e4ef3ed88a48a384eef43e6023d00",
+          "decoded_bytes": 159,
+          "undecoded_tail": null
+        }
+      ]
+    },
+    {
+      "requested": "0x112a230",
+      "root": "0x112a230",
+      "complete_chained_parts": true,
+      "parts": [
+        {
+          "begin": "0x112a230",
+          "end": "0x112a41a",
+          "size": 490,
+          "sha256": "608ce36e638968007facb1ffdc69c928ede42955b157bc6f6812b4de6f5784a6",
+          "decoded_bytes": 490,
+          "undecoded_tail": null
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "file": "horse_load_probe_contract.hpp",
+      "size": 6881,
+      "sha256": "1417203039f976c2a68c3842adfa9be14d42e3a1b1f2aabe7bb1300069302412"
+    },
+    {
+      "file": "horse_probe.diff",
+      "size": 7983,
+      "sha256": "eeb85376850991f6890bfac5f687978b77ac9f5758df8e0630c99452f6683f4a"
+    },
+    {
+      "file": "coop_carry.cpp.snapshot",
+      "size": 72094,
+      "sha256": "357dbb67cc3c288361df887bfc181bcaf5a7e2264bdb368ed5320862618c016d"
+    }
+  ]
+}

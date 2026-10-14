@@ -12,6 +12,7 @@
 #include "mgscoop/debug_actions.hpp"
 #include "mgscoop/debug_menu_ui.hpp"
 #include "mgscoop/nametag.hpp"
+#include "mgscoop/coop_hud.hpp"
 
 namespace {
 unsigned checks = 0, failures = 0, window_keys = 0;
@@ -312,6 +313,86 @@ int main() {
         tag::Shutdown();
         Check(shot() && lit(box[0], box[1], box[2], box[3], false) == 0, "window shutdown hides the tag at once");
         tag::Configure(false, true, tag::Settings{});
+        // The world-anchored rescue prompt: under a fresh name tag, else lower
+        // center. MGS_HUD_DUMP_DIR saves each state as a BMP for review.
+        {
+            namespace hud = mgscoop::coop_hud;
+            char dumpDir[MAX_PATH]{};
+            const DWORD dumpLength = GetEnvironmentVariableA("MGS_HUD_DUMP_DIR", dumpDir, ARRAYSIZE(dumpDir));
+            const auto dump = [&](const char* name) {
+                if (!dumpLength || dumpLength >= ARRAYSIZE(dumpDir) || !rgba) return;
+                char path[MAX_PATH]{};
+                if (std::snprintf(path, sizeof(path), "%s\\%s.bmp", dumpDir, name) <= 0) return;
+                FILE* out = nullptr;
+                if (fopen_s(&out, path, "wb") || !out) return;
+                const unsigned row = width * 3, pad = (4 - row % 4) % 4, image = (row + pad) * height;
+                unsigned char header[54]{'B', 'M'};
+                const unsigned fileSize = 54 + image;
+                std::memcpy(header + 2, &fileSize, 4); header[10] = 54; header[14] = 40;
+                std::memcpy(header + 18, &width, 4); std::memcpy(header + 22, &height, 4);
+                header[26] = 1; header[28] = 24; std::memcpy(header + 34, &image, 4);
+                std::fwrite(header, 1, 54, out);
+                const unsigned char zero[3]{};
+                for (unsigned y = height; y-- > 0;) {
+                    for (unsigned x = 0; x < width; ++x) {
+                        const unsigned char* px = rgba + (static_cast<std::size_t>(y) * width + x) * 4;
+                        const unsigned char bgr[3] = {px[2], px[1], px[0]};
+                        std::fwrite(bgr, 1, 3, out);
+                    }
+                    std::fwrite(zero, 1, pad, out);
+                }
+                std::fclose(out);
+            };
+            hud::Configure(hud::Mode::compact, true);
+            tag::Configure(true, true, tag::Settings{});
+            tag::Frame anchor{};
+            anchor.visible = true; anchor.ndc[0] = 0.0f; anchor.ndc[1] = 0.2f; anchor.rect[2] = anchor.rect[3] = 1.0f;
+            anchor.alpha = 1.0f; anchor.dist_m = 12.4f; strcpy_s(anchor.name, "Guest");
+            const auto publish = [&](bool down, bool close, bool range, std::uint32_t progress, std::uint8_t cause, bool self) {
+                hud::DownedView view{};
+                view.valid = true; view.mission = 30010; view.epoch = 7; view.publish_ms = GetTickCount64();
+                view.localDown = self; view.localCause = self ? cause : 0;
+                view.teammateDown = down && !self; view.teammateCause = down && !self ? cause : 0;
+                view.closeEnough = close; view.inRange = range; view.progressMs = progress;
+                hud::PublishDowned(view);
+                anchor.seq++; anchor.tick_ms = GetTickCount64(); tag::Publish(anchor);
+            };
+            const float ax = width * 0.5f, ay = height * 0.4f;
+            const float bx = width * 0.56f, by = height * 0.58f;
+            publish(true, false, false, 0, 2, false);
+            Check(shot() && lit(ax - 120, ay, ax + 120, ay + 40, false) >= 20, "away sleeper draws a status pill under the tag");
+            Check(lit(bx, by - 30, bx + 230, by + 30, false) == 0, "an away teammate offers no Action button");
+            dump("rescue_away");
+            publish(true, true, true, 0, 2, false);
+            Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 40, "ready sleeper draws the Action button beside the player");
+            dump("rescue_ready");
+            SendMessageW(hwnd, WM_KEYDOWN, 'Q', 0);
+            publish(true, true, true, 0, 2, false);
+            Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 40, "keyboard input switches to the E key cap");
+            dump("rescue_ready_keyboard");
+            publish(true, true, true, 1500, 1, false);
+            Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 60, "held revive draws the progress ring");
+            dump("rescue_holding");
+            anchor.visible = false;
+            publish(true, true, true, 0, 1, false);
+            Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 40, "an off-screen teammate keeps the same button spot");
+            dump("rescue_offscreen");
+            anchor.visible = true;
+            publish(true, false, false, 0, 2, true);
+            Check(shot() && lit(ax - 220, height * 0.30f, ax + 220, height * 0.30f + 70, false) >= 40,
+                  "the sleeping player sees a compact status above the stock icons");
+            dump("rescue_self_asleep");
+            hud::Configure(hud::Mode::off, true);
+            publish(true, true, true, 0, 2, false);
+            Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 40,
+                  "the one-PC lab default (status line off) still draws the rescue prompt");
+            hud::Configure(hud::Mode::compact, true);
+            publish(false, false, false, 0, 0, false);
+            Check(shot() && lit(0, ay + 8, static_cast<float>(width), static_cast<float>(height), false) == 0,
+                  "healthy pair draws no rescue prompt");
+            hud::Configure(hud::Mode::off, false);
+            tag::Configure(false, true, tag::Settings{});
+        }
         Release(bb_rtv);
     }
     bridge::Configure(false, true, true);

@@ -1,0 +1,19 @@
+{
+  "manifest_sha256": "c22bae5d2e07b4362d14991e5bb7a2dad5519a018cb40338982a64fee547c4fd",
+  "root_native_spans_verified": 7,
+  "full_set_source_bytes": 196,
+  "peer_reviewed": true,
+  "first_actual_refusal": "ffeb5744a5054e09a6201956035d45aa",
+  "no_new_hooks": true,
+  "no_carry_activation": true,
+  "exact_set_callers": [
+    "85c562",
+    "85c579"
+  ],
+  "compiled": true,
+  "runtime": true,
+  "audited_targets": 185,
+  "check_receipt": "20261012-113434-03423ebde80643a18cf7563bfd9be1ed",
+  "actual_run": "bde23e5f90ed4d579fead99b4bfe9b90",
+  "actual_passed_requirements": 15
+}

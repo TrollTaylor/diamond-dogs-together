@@ -1,0 +1,361 @@
+{
+  "schema": 1,
+  "scope": "offline_exact_retail_file_and_extracted_source_only",
+  "main_source_handoff": "1521529 reported by parent; agent performed no Git changes",
+  "binary": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45"
+  },
+  "runtime_verified": false,
+  "game_launches": 0,
+  "native_calls": 0,
+  "main_edits": 0,
+  "conclusion": "Normal Player2 Vehicle controller and native seat admission/removal identified. Ordinary input selects driver entry. Shared attachment is not implemented or qualified by this static evidence.",
+  "corrections": [
+    "FDB677E449F9 is specialized primary-interface QI; registered row0x23 hash is55624028B112.",
+    "Complete1244DE0 ALLOWS Player2 type0; earlier rejection claim was wrong.",
+    "Record+57 low nibble is phase-dependent: initial0/1 both admit occupancyseat0, so do not call these simultaneous seats.",
+    "B2A1B0 vtables22ED930/22ED9F0 are authored Vehicle GameObject dispatcher views, NOT global VehicleSystem admission. Rejected candidate after argument checks."
+  ],
+  "player_vehicle_controller": {
+    "factory": "1245A30 alloc0x88, returns initializer primary+10",
+    "registered_row": 35,
+    "registered_hash": "0x55624028B112",
+    "primary_qi_hash": "0xFDB677E449F9",
+    "block_primary_offset": "0x128",
+    "expected_final_vtables": {
+      "primary": "23CBEA8",
+      "primary_plus10_initializer": "23CBEE0",
+      "primary_plus30_update": "23CBF10",
+      "primary_plus48_extra": "23CBF50"
+    },
+    "back_pointer": "primary+8=current block",
+    "records": "primary+78, stride240, allocation countblock+8 from1244CB0",
+    "first_index": "*(primary+38)+24; consumer verified, metadata extent/type needs observer qualification",
+    "record_fields": {
+      "callback": "40/48",
+      "current_phase": "54",
+      "next_phase": "55",
+      "type_and_phase_dependent_entry_or_seat": "57",
+      "setup_flags": "58/59/5A/5B",
+      "latched_native_vehicle_id": "84",
+      "candidate_native_vehicle_id": "86",
+      "vehicle_variant_not_seat": "1DA",
+      "weapon_pose_subrole_not_proven_seat": "1DC"
+    },
+    "indexed_vehicle_record": "P+120[actualPlayerIndex], assigned125AD00 via typed lookup757B8EC6C179 using record+84",
+    "native_role_route": "12471B0 selects callback event6 when P+204 bit8 and (native network kind2 or actual body index!=selected local P+218); otherwise event5. Current mod transport does not establish stock Qmotion."
+  },
+  "global_vehicle_service": {
+    "singleton_pointer_rva": "2C20730",
+    "getter": "A27A50",
+    "factory": "A27DB0 alloc160 ->A24DE0 thunk ->file-resident789FE00",
+    "final_primary_vtable": "22AC8E0",
+    "admit": "vslot220=A29530",
+    "remove": "vslot228=A29470",
+    "base_metadata": "vslot168=A27260",
+    "variant_metadata": "vslot170=A27220",
+    "active_world_lookup": "BFF050 root+98 manager+2A8; observer must validate same service pointer/type",
+    "admit_arguments": "service, exact typed vehicle record pointer, checked uint8 occupancy index, checked uint16 native rider GameObjectId",
+    "admit_behavior": "mutex+88; requires record+30+index*2 emptyFFFF; stores rider; for seat0/type0 sets record+7C bit4000; bool result",
+    "remove_behavior": "mutex+88; removes matching rider only; clears seat word/bit, driver cleanup for index0",
+    "limit": "No capacity/actor validation in these native methods. Array write alone does not attach body/pose. Do not expose raw admission as a debug cheat."
+  },
+  "ordinary_entry": {
+    "query": "1246650 code-only1246EC0; rejects occupied driver at12469FE regardless of query mode",
+    "rider_eligibility": "1244DE0 allows Player2 and most classes; rejects typesA/B and soldier2 when native helper says busy",
+    "selection": "124B360 and1245820 search0..min(dynamicSeatCount-1,1)",
+    "phase1": "1251200 ->typed unit125AD00 ->CB9470 ->VehicleSystem+220",
+    "admission_index": "selection0/1 normalize to occupancyseat0; selection>=2 passes unchanged",
+    "next_phase": "selection<2 ->phase3, elsephase2",
+    "driver_phase3": "124E140; initialization124ECCC clears selection low nibble0",
+    "passenger_phase2": "1250CF0 checks actual rider array at lowNibble index, builds type/index pose and writes indexed CS transforms; natural producer for selecting>=2 still unqualified",
+    "front_passenger": "Native occupancyindex1 exists in authored NPC Lua/resources; no qualified normal Player2 entry producer identified."
+  },
+  "stock_replication": {
+    "query": "124AAB0 consumes indexed Qmotion via vslot38, requires kindbyte+8=9",
+    "fields": "Q+10 vehicleID ->record86; Q+12 phase ->record55; Q+14 lowernibble ->record57",
+    "limit": "Native IDs process-local. Kind9 alone does not prove parts/camera/ownership/lifecycle. Cannot transplant MGO offsets."
+  },
+  "local_ui_caveat": "125153E..1251773 calls P+B0 vslot10 and P+D8 vslot190 without actual player index and edits returned UI/weapon fields. Stock event6 uses a separate route. Offline body1 entry isolation remains unqualified.",
+  "smallest_next_gate": {
+    "kind": "READ-ONLY typed per-player Vehicle observer on current paired scene owner; no native admission/action forwarding",
+    "guards": [
+      "exact EXE hash plus body pins",
+      "supported paired mission, fresh owner epoch and coherent actual native bodyIDs",
+      "block128 resolves primary with all final view vtables exact, primary8=current block",
+      "current allocation count/first-index metadata typed and bounded before record read",
+      "record pointer and identity stable across two reads",
+      "P120 typed vehicle record coherent with nativeVehicleID and read-only Lua GetRiderId census"
+    ],
+    "sample": [
+      "actual native body index and selected local P218, stock role-route flags",
+      "current/next phase, packed selection, setup flags, latched/candidate vehicle IDs",
+      "dynamic metadata-derived seatcount and actual rider words",
+      "CS attachment and native ON_VEHICLE receipt separately from occupancy"
+    ],
+    "test": "Hidden solo natural driver mount/exit: compare temporary selection0/1 to settledseat0, prove local UI effects and owner receipt; repeat opposite logical host/guest role before any body1 request.",
+    "future_slice": "Authored truck spare occupancyindex>=2 is best static candidate. First qualify native request producer, pose/CS attach, camera and cleanup; host reserve logical descriptor+seat, map native body0/1 independently each peer; require mount/dismount/disconnect/mission-change receipts on BOTH copies."
+  },
+  "sync_requirements": [
+    "host authoritative logical authored vehicle descriptor and seat reservation",
+    "never transmit raw native GameObjectIds across peers",
+    "logical host/guest maps to each peer nativebody0/1 independently; each local owner remains0",
+    "vehicle physics authority, passenger pose role, mount epoch/revision, lifecycle cleanup",
+    "do not label shared from transform following or rider array writes alone"
+  ],
+  "horse_mgo_boundary": "riding-research-proof.json remains source/static candidates only: dedicated prologue VR-horse/Ocelot route, PlaceBearersHorseLeft/Right camera files and MGO strings do not prove arbitrary shared D-Horse seats or transferable offsets.",
+  "enum_correlation": {
+    "UAV_type": 26,
+    "UAV_prefix": "3400",
+    "VEHICLE_type": 50,
+    "VEHICLE_prefix": "6400",
+    "proof": "AC973E/AC9750 publishes indices from table2A7C690. UAV pointer2A7C760; VEHICLE2A7C820. Sent to carry agent to prevent actor-class misclassification."
+  },
+  "code_bodies": [
+    {
+      "file": "vehicle-target-query.json",
+      "begin": "0x1245a30",
+      "end": "0x1245aaa",
+      "length": 122,
+      "sha256": "d019f38be1ee6ff997376715d99a11fe1202a4d0d3e0ae119d667f85e6b534bb",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-update-route.json",
+      "begin": "0x124a520",
+      "end": "0x124a530",
+      "length": 16,
+      "sha256": "ae66331d7ed0ef5289d83e7477fc3e99b76f4122263664ab5ca6529cf0991981",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-owner-allocation-removal.json",
+      "begin": "0x1244cb0",
+      "end": "0x1244d37",
+      "length": 135,
+      "sha256": "95dd937e5860dea868f49fedb0954dee8d5449f4026d9e8422a97b48402f6548",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-target-query.json",
+      "begin": "0x1247e00",
+      "end": "0x1247e73",
+      "length": 115,
+      "sha256": "40496e5ffcdd4fd8ba921d322038c369da9c8d01b569e8de0d4dd93f8af63d9f",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-target-query.json",
+      "begin": "0x1246650",
+      "end": "0x1246ec0",
+      "length": 2160,
+      "sha256": "ba15071ebacdfb9325c005ed0727446a9212bbeb4aee1d2a8a647df81b0c4c96",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-owner-allocation-removal.json",
+      "begin": "0x1244de0",
+      "end": "0x1244e41",
+      "length": 97,
+      "sha256": "54355cb3b74ee98b71da5e5f31a93f01113dc3f4bc774bd9a8f5ab147640c546",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-passenger-phase2.json",
+      "begin": "0x1248160",
+      "end": "0x1248214",
+      "length": 180,
+      "sha256": "9e35a93a893a8ed1e8a2c4bb617e48380988249efdff9fc58585d042440d77af",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-registration-refs.json",
+      "begin": "0x1251200",
+      "end": "0x1251944",
+      "length": 1860,
+      "sha256": "43d183fafd3f4b2961abc61365295ab6cee7e1487f00c80d7bc0b5c0bcaec07e",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-passenger-phase2.json",
+      "begin": "0x1250cf0",
+      "end": "0x12511cc",
+      "length": 1244,
+      "sha256": "8f4aacaff4b1d62323bd02c6dbb3adcb1f5cab24fe8f2cf8fa4f41af5f2726c7",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-phases-qualified.json",
+      "begin": "0x124e140",
+      "end": "0x124fd13",
+      "length": 7123,
+      "sha256": "db778adb845df09adc087681846f2f0af073c45fd17214777583d98e37130644",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-owner-allocation-removal.json",
+      "begin": "0x124ce50",
+      "end": "0x124da68",
+      "length": 3096,
+      "sha256": "c732b9c2de32f12ef81409f336ec8c0c83ae015d4c3b495ff9c0413b9a3235db",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-unit-create.json",
+      "begin": "0x125ad00",
+      "end": "0x125ad8c",
+      "length": 140,
+      "sha256": "312c31f6aa8efed4d141b2424fc07d158055223d4cfbab112951563fff4f9fb8",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-seat-register.json",
+      "begin": "0xcb9470",
+      "end": "0xcb94ba",
+      "length": 74,
+      "sha256": "6cd4424e5791babde46fd2879950a15d6fa96e602fd740cfb52a1bff73ec69fc",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-owner-allocation-removal.json",
+      "begin": "0x1247700",
+      "end": "0x12477d9",
+      "length": 217,
+      "sha256": "8b9f7a2f70bf2e8f209c26a9470b493a75806f10ab8c30a4295a09ab46f51636",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-native-seat-admission.json",
+      "begin": "0xa29530",
+      "end": "0xa295be",
+      "length": 142,
+      "sha256": "88646a5d2ce806c780ebdf900b6334be6dba5fb5529e875e2f3c82d2e4143574",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-native-seat-admission.json",
+      "begin": "0xa29470",
+      "end": "0xa2952e",
+      "length": 190,
+      "sha256": "4ba3a28a06a5c83f40a07cb61a23ebb0287e4ca5203f711a6f1f8f294f2a3dc7",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-service-create.json",
+      "begin": "0xa27db0",
+      "end": "0xa27e2e",
+      "length": 126,
+      "sha256": "8618679e12d463d0f053ab7f4b3d986263aaa67d1f78a99292be8ce04483f3cb",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-service-constructor.json",
+      "begin": "0xa24de0",
+      "end": "0xa24de5",
+      "length": 5,
+      "sha256": "a41c264cac5cf562f537c477caea0dd91cef098c87dfab4ce2b7c29aa6dd3859",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-service-relocated-constructor.json",
+      "begin": "0x789fe00",
+      "end": "0x789ff3d",
+      "length": 317,
+      "sha256": "95fbf209b083dd6cfa56cb2cebb4f936c148c16f35c98174f7ed0f8076a9bea4",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-system-getter.json",
+      "begin": "0xa27a50",
+      "end": "0xa27a58",
+      "length": 8,
+      "sha256": "309dbc1c43eea5a489cf861e98b4605182a0b996d511257590de9a00996f3e8a",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-native-seat-admission.json",
+      "begin": "0xa27260",
+      "end": "0xa2726c",
+      "length": 12,
+      "sha256": "ca4402e804b4b5607ed5988307554ef1aef21c82f5216fc474594d13bf033f59",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-native-seat-admission.json",
+      "begin": "0xa27220",
+      "end": "0xa27259",
+      "length": 57,
+      "sha256": "8bec331bb6efaea8b6ad0b88abb1ac953eb53451ceec67236cb9ea62d9a2ecd2",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-update-route.json",
+      "begin": "0x12471b0",
+      "end": "0x124731b",
+      "length": 363,
+      "sha256": "560413ebfa378e60086cd2134f79e70996767357e817b023106c2108750efe69",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-mounted-selection.json",
+      "begin": "0x124aab0",
+      "end": "0x124abad",
+      "length": 253,
+      "sha256": "5bcfd136b63d4ddf006c2628c6a393c4e1cd434d1180a0af9da80d26c8b192aa",
+      "code_linear_decode_complete": true
+    },
+    {
+      "file": "vehicle-system-table-candidate.json",
+      "begin": "0xac96e0",
+      "end": "0xac9a89",
+      "length": 937,
+      "sha256": "e9256626e90546767c3e3b4e9a6d690cc3fa63178d7a982e31cddd3f7de584b4",
+      "code_linear_decode_complete": true
+    }
+  ],
+  "instruction_pins": [
+    {
+      "begin": "0x9bc321",
+      "end": "0x9bc35f",
+      "meaning": "registered row0x23 hash and ordinal",
+      "raw_hex": "48b812b128406255000048898518030000488d4424204889852003000044899d2803000044899d2c030000c7853003000023000000c78534030000230000",
+      "sha256": "5be4ca228639e6b41840726f658f08bafc47ce45af24dec32e609a40985d2f99"
+    },
+    {
+      "begin": "0x9bd285",
+      "end": "0x9bd2a8",
+      "meaning": "special QI and block+128 store",
+      "raw_hex": "48baf949e477b6fd000041ff50184885c074044883c0f84c8b4c243049898128010000",
+      "sha256": "be5365d1175b40b2fe583b56ce6e82fd769598410e2e17aa7dacdbc6e9f431c4"
+    },
+    {
+      "begin": "0x125182b",
+      "end": "0x125189e",
+      "meaning": "entry-side normalization to admission index and next phase",
+      "raw_hex": "0fb64b570fb6c1240f3c0272080fb6c183e00feb03418bc7440fb7c60fb6d0498bce664523c4e81a7ca6ff84c07462440fb7838400000048b879c1c68e7b75000044897b504889442430488b45004c8d4c2430488d542448488bcd4c897c2438ff50380fb64357240f3c020f92c00402884355",
+      "sha256": "af120e1d442412edc12c97b5b46ca33d5f77c2efbfd5ca3338e6111e572a0916"
+    },
+    {
+      "begin": "0x12469f4",
+      "end": "0x1246a08",
+      "meaning": "occupied-driver rejection",
+      "raw_hex": "488b442450b9ffff0000663948300f856b040000",
+      "sha256": "39f5c3f5e1d6428b5eefc2846c360d1f0b1dad705323a8c7ed7a98d24b409bcb"
+    },
+    {
+      "begin": "0x1244e2a",
+      "end": "0x1244e41",
+      "meaning": "Player2 type0 is ALLOWED",
+      "raw_hex": "6685d2740b0fb7c283c0f683f80176e9b0014883c428c3",
+      "sha256": "2eae00d13209138d3a9b94b7cfde96d48a0cd81446743ae30075f02f02d9caa0"
+    },
+    {
+      "begin": "0x124ecc8",
+      "end": "0x124ecd5",
+      "meaning": "driver callback clears entry-side low nibble",
+      "raw_hex": "c6465b01806657f033db895e5c",
+      "sha256": "152b88fd54715b4f083a51594a23713b5aa1a570432a7f5cf7c78389527e0edf"
+    }
+  ]
+}

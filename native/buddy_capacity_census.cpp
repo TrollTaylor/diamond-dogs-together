@@ -14,8 +14,9 @@ bool Compiled() noexcept {
  return false;
 #endif
 }
-const char* ReadCurrentCensus(Reader r,std::uintptr_t base,Authorization auth,const Owner& o,std::uint32_t thread,std::uint64_t now,Census& out) noexcept {
- if(!Compiled()||!auth.private_worker||!auth.offline||!auth.copied_saves||!auth.candidate_catalog||!auth.exact_executable||!auth.exact_code_pins||!r.read||!base||base>MAX-0xa01d000)return "admission";
+const char* ReadCensus(Reader r,std::uintptr_t base,Authorization auth,const Owner& o,std::uint32_t thread,std::uint64_t now,bool play,Census& out) noexcept {
+ if(!r.read||!base||base>MAX-0xa01d000||!auth.exact_executable||!auth.exact_code_pins)return "admission";
+ if(!play&&(!Compiled()||!auth.private_worker||!auth.offline||!auth.copied_saves||!auth.candidate_catalog))return "admission";
  if(!o.P||!o.generation||!o.buddy_cycle||!o.epoch||!o.thread||thread!=o.thread||!o.field_ready||!o.horse_active||o.demo_playing||o.terminating||
    (o.mission!=30010&&o.mission!=30020&&o.mission!=30050)||now<o.refreshed_ms||now-o.refreshed_ms>250)return "scope";
  std::uintptr_t P{},vt{},registry{},entry{},descriptor{},handle{},primary{},selector{},current{};
@@ -79,5 +80,11 @@ const char* ReadCurrentCensus(Reader r,std::uintptr_t base,Authorization auth,co
  if(!s.pack_token)return "pack_unknown";
  s.pack_hash=pack;
  out=s;return nullptr;
+}
+const char* ReadCurrentCensus(Reader r,std::uintptr_t base,Authorization auth,const Owner& o,std::uint32_t thread,std::uint64_t now,Census& out) noexcept {
+ return ReadCensus(r,base,auth,o,thread,now,false,out);
+}
+const char* ReadPlayPose(Reader r,std::uintptr_t base,Authorization auth,const Owner& o,std::uint32_t thread,std::uint64_t now,Census& out) noexcept {
+ return ReadCensus(r,base,auth,o,thread,now,true,out);
 }
 }

@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "1c79115b3d3f436db56f6933ae914fb6",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-200158-6e0b812bbc234d0c95f97d9cab72ba1a\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 5,
+  "failure": "Required scenario check failed: guest require b1=1,a2b <- carrybodies;b0=1,a1,ps100000c,0,rq0,0,0,0;b1=1,a84,ps100000c,0,rq15,1,0,0",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 100763348,
+      "end": 101020330,
+      "sha256": "adbf555e5b69854ec42253095e1974915e0e71c327a7a92750ae44cea17d4d05"
+    },
+    {
+      "role": "guest",
+      "start": 109531148,
+      "end": 109827907,
+      "sha256": "32c13e5176d57cbe4f3f02aba52ace417cd60704580b54aad9db919e18176b46"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Actual both-native-rest admission, reverse pickup/shoulder carry/walk/putdown verified. Test mistakenly expected carriedQ2B AFTERputdown; corrected in nextscenario. No final wake acceptance from this stopped run."
+}

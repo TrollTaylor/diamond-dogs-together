@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "run": "d13fd5d3981c43d1a4257566da3bcaa9",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-235656-b7cb924466684b3898e5a1e957d1dfb7\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 4,
+  "failure": "[host] requires fresh owned on-foot telemetry.",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 105257154,
+      "end": 105787177,
+      "sha256": "1b6ac9ed84e51cebf89e8b02b1f63a2e0087ef8237ffd1f98a84983d635ef6a7"
+    },
+    {
+      "role": "guest",
+      "start": 113954674,
+      "end": 114416601,
+      "sha256": "defb648e8f4999f59b1969099c27257d51afb5511d31dd801667c979ae0a6efc"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=608;skip=0;hints=0;reason=pose_window_captured",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": [
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=624;skip=0;hints=0;reason=pose_window_captured",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ]
+  },
+  "limitations": "Both actual C0 windows captured600+ times fault0 and private mirror activation passed. Long-range goto_vehicle then invalidated fresh actor telemetry before any vehicle entry. No shared rider acceptance. Normal owned close; installed0.12.5 and all63 protected paths restored."
+}

@@ -1,0 +1,43 @@
+{
+  "frozen": true,
+  "classification": "diagnostic-only addendum on top of held-teardown-v1",
+  "base_manifest_sha256": "61dcce33665865b617b9b351b8d463e8cce7360f6a6e5da36714b196749c1c88",
+  "compiled": false,
+  "runtime_used": false,
+  "activation": false,
+  "main_modified": false,
+  "fixture_assertions": 13,
+  "root_integration": "Apply narrow source.diff against v1; copy native/native_pose_parts_diagnostic.hpp; register tests/native_pose_parts_diagnostic_tests.cpp with existing teardown header include. No runtime gate/teardown exemption added.",
+  "files": [
+    {
+      "path": "evidence.json",
+      "size": 1125,
+      "sha256": "be97ab7cbd3be3ceee42d04874f89a7c6a5e4e915ee9ee80a245267927371df7"
+    },
+    {
+      "path": "native\\native_pose_parts_diagnostic.hpp",
+      "size": 2725,
+      "sha256": "78ad81759f3c4fb35622a1f41e33251a79858220551bed8d76b0965d8ef4b2cd"
+    },
+    {
+      "path": "native\\native_pose_window_impl.inc",
+      "size": 57247,
+      "sha256": "2802c33eea69087d5e9e446b9e295add852d919819adb5eb238f05e0f5b144db"
+    },
+    {
+      "path": "native\\partner_input_hook.cpp",
+      "size": 137412,
+      "sha256": "06bcee176a3fc30f565160fe968995241b16f8f63e825ff7edd8ce047bab3876"
+    },
+    {
+      "path": "source.diff",
+      "size": 2209,
+      "sha256": "95e287b95a4a358a3ba6088b8ea987b3b441c407d02c3c06751c0c7b6922466f"
+    },
+    {
+      "path": "tests\\native_pose_parts_diagnostic_tests.cpp",
+      "size": 3565,
+      "sha256": "15317c45e4b6f35671625f92dbc608d3cbfc2a8c111ed0e415d82f4282a2c31f"
+    }
+  ]
+}

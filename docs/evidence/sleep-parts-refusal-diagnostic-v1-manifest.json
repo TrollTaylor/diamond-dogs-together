@@ -1,0 +1,55 @@
+{
+  "classification": "Frozen diagnostic-only first actual parts-poll refusal; no admission/retirement/native mutation change",
+  "stage": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\sleep\\parts-refusal-diagnostic-v1",
+  "source_base": {
+    "native/sleep_partner_test.cpp": "50f099e2d7e27b4e021b541d1caa4a4462f83ce2d959d3d8d99495fd9b6d0b3b",
+    "native/sleep_parts_read.hpp": "353f738bdbea3bcafb7f4cb340707daafda5883fd96e32f6311cf9dddc7d5d8f",
+    "CMakeLists.txt": "abb7d43d7097b7646f2881a8a86747e29af59fd55fad785e9d59f97f0faef2cc"
+  },
+  "unchanged_permission_sha256": "328e4b119d93ea01a230b9d97bb84ad664cdc77da268a8cea760a7581dedcf51",
+  "main_modified": false,
+  "compiled": false,
+  "runtime": false,
+  "integration": [
+    "Apply source.diff against verified base",
+    "Copy native/sleep_parts_diagnostic.hpp and tests/sleep_parts_diagnostic_tests.cpp",
+    "Root owns audit entry, compile and hidden runtime"
+  ],
+  "files": [
+    {
+      "path": "CMakeLists.txt",
+      "bytes": 60535,
+      "sha256": "3762241dc3e904ed81206b5ee6459b0767c241b1c46e2d68e6caa99058a9d040"
+    },
+    {
+      "path": "evidence.json",
+      "bytes": 2198,
+      "sha256": "fc6b5d899cad6cae8733eab5a72558945ba048f683367642af688cce42782b25"
+    },
+    {
+      "path": "native/sleep_partner_test.cpp",
+      "bytes": 27528,
+      "sha256": "e03dc4b31878f011950a21c3919d4310ab33594382e4186727624fe407673baf"
+    },
+    {
+      "path": "native/sleep_parts_diagnostic.hpp",
+      "bytes": 2785,
+      "sha256": "bc8f7e885c46eee33d9d9c9d6af48216efd4eeced21f625df371e6e1146a4b89"
+    },
+    {
+      "path": "native/sleep_parts_read.hpp",
+      "bytes": 10293,
+      "sha256": "1f0dde3069d8fbc65f6b5fbd1a24d889182ce3d3bf0032b84c9f88efc427fc28"
+    },
+    {
+      "path": "source.diff",
+      "bytes": 11310,
+      "sha256": "a9cf379a7f0dc890bd947add6841f2be6edac226aa26628fae680018498d5696"
+    },
+    {
+      "path": "tests/sleep_parts_diagnostic_tests.cpp",
+      "bytes": 3296,
+      "sha256": "36d0b6d15c3884c032cd62c2c00a4c75a4bf6b9ea1b360c6d2c5390492197144"
+    }
+  ]
+}

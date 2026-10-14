@@ -1,0 +1,20 @@
+# Exact private mgo-standing-cycle profile; selection and append remain OFF.
+# This only confirms natural common binding and observes current source.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host run sleep_bank_snapshot
+host require bankTrace;on=1;fresh=1;.*ok=1,1;.*unique=1:
+guest run sleep_bank_snapshot
+guest require bankTrace;on=1;fresh=1;.*ok=1,1;.*unique=1:
+host run standing_cycle_asset_status
+host require sleepCycle;ready=1;
+guest run standing_cycle_asset_status
+guest require sleepCycle;ready=1;
+both capture standing-cycle-bank-loaded
+# The actual native_bank_slot logs must independently show the count4 bank,
+# exact hash verification and its original natural bank order on both roles.
+# No Origin3 assertion: bank loading alone cannot demonstrate selection.

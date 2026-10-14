@@ -21,8 +21,14 @@ param(
     [ValidateSet('','census','loco','gun')][string]$NativeStage='',
     # research: the Research worker build (stock46 preload+writer, optionally
     # ammo; no upper_* experiment), only with -NativeStage gun.
-    [ValidateSet('normal','research','buddy-capacity')][string]$BuildProfile='normal',
+    [ValidateSet('normal','research','buddy-capacity','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')][string]$BuildProfile='normal',
     [string]$BuddyCapacityArchive,
+    [string]$MgoSleepRestArchive,
+    [string]$MgoUniqueRestArchive,
+    [string]$MgoStandingCycleArchive,
+    [switch]$StandingLookupObserver,
+    [switch]$StandingFrameObserver,
+    [switch]$NativeActivationObserver,
     [switch]$AmmoExperiment,
     # real: fresh copies of the real saves (a pending story demo can block the
     # partner's two-player pack in Mother Base). lab: copies of each folder's
@@ -52,6 +58,7 @@ $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
 Import-Module (Join-Path $repo 'tools\lab\LabCommon.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'WorkerSessionCommon.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'NativeActivationProfile.psm1') -Force -DisableNameChecking
 $pins=Get-WorkerRuntimePins
 $build=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($BuildDirectory,$repo)) -MustExist
 if(!(Test-WorkerDescendant $build (Join-Path $repo 'build')) -or $build -ieq (Join-Path $repo 'build\native')){throw 'Use a separate worker build under build.'}
@@ -63,8 +70,15 @@ $loader=Assert-WorkerPlainPath (Join-Path $build 'dinput8.dll') -MustExist
 $loaderHash=Get-WorkerHash $loader
 if($loaderHash -ieq $BaselineLoaderSha256){throw 'Worker loader must differ from the saved normal baseline.'}
 if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
-if($BuildProfile -ceq 'research' -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
-if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cne 'research'){throw '-NativeStage gun needs -BuildProfile research (a weapon on body 1).'}
+Assert-WorkerMgoSleepRestScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoSleepRestArchive $BuddyCapacityArchive
+Assert-WorkerMgoUniqueRestScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoUniqueRestArchive $BuddyCapacityArchive $MgoSleepRestArchive
+Assert-WorkerMgoStandingCycleScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoStandingCycleArchive $BuddyCapacityArchive $MgoSleepRestArchive $MgoUniqueRestArchive
+if($BuildProfile -ceq 'mgo-standing-cycle' -and $SaveSeed -cne 'lab'){throw 'Standing cycle tests require copied lab saves.'}
+if($StandingLookupObserver -and $BuildProfile -cne 'mgo-standing-cycle'){throw '-StandingLookupObserver needs the exact standing-cycle profile.'}
+if($StandingFrameObserver -and ($BuildProfile -cne 'mgo-standing-cycle' -or !$StandingLookupObserver)){throw '-StandingFrameObserver needs the exact standing-cycle profile and -StandingLookupObserver.'}
+Assert-WorkerNativeActivationScope ([bool]$NativeActivationObserver) $BuildProfile $Mode $PartnerProfile $NativeStage $SaveSeed ([bool]$AmmoExperiment)
+if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle') -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
+if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cnotin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){throw '-NativeStage gun needs -BuildProfile research (a weapon on body 1).'}
 # Native polish lab settings: the facing governor only with the native profile, the look source A/B run only in the gun stage.
 if($Mode -ceq 'play' -and @($LabSetting|Where-Object{$_ -cmatch '(^|:)partner_native_equip_measured=1$'}).Count) {
     throw 'Measured optional equipment acceptance is lab-only.'
@@ -88,11 +102,34 @@ if($BuildProfile -ceq 'buddy-capacity'){
     Assert-WorkerHash $capacitySource $capacityPins.Archive;Assert-WorkerHash $capacityCatalogSource $capacityPins.Catalog
     if((Get-Item -LiteralPath $capacitySource).Length -ne $capacityPins.Bytes){throw 'Buddy capacity archive length differs.'}
 } elseif($BuddyCapacityArchive){throw '-BuddyCapacityArchive needs -BuildProfile buddy-capacity.'}
+if($BuildProfile -ceq 'mgo-sleep-rest'){
+    $capacityPins=Get-WorkerMgoSleepRestPins
+    $capacitySource=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($MgoSleepRestArchive,$repo)) -MustExist
+    $capacityCatalogSource=Assert-WorkerPlainPath (Join-Path ([IO.Path]::GetDirectoryName($capacitySource)) 'catalog.json') -MustExist
+    Assert-WorkerHash $capacitySource $capacityPins.Archive;Assert-WorkerHash $capacityCatalogSource $capacityPins.Catalog
+    if((Get-Item -LiteralPath $capacitySource).Length -ne $capacityPins.Bytes){throw 'MGO rest archive length differs.'}
+}
+if($BuildProfile -ceq 'mgo-unique-rest'){
+    $capacityPins=Get-WorkerMgoUniqueRestPins
+    $capacitySource=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($MgoUniqueRestArchive,$repo)) -MustExist
+    $capacityCatalogSource=Assert-WorkerPlainPath (Join-Path ([IO.Path]::GetDirectoryName($capacitySource)) 'catalog.json') -MustExist
+    Assert-WorkerHash $capacitySource $capacityPins.Archive;Assert-WorkerHash $capacityCatalogSource $capacityPins.Catalog
+    if((Get-Item -LiteralPath $capacitySource).Length -ne $capacityPins.Bytes){throw 'Unique MGO archive length differs.'}
+}
+if($BuildProfile -ceq 'mgo-standing-cycle'){
+    $capacityPins=Get-WorkerMgoStandingCyclePins
+    $capacitySource=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($MgoStandingCycleArchive,$repo)) -MustExist
+    $capacityCatalogSource=Assert-WorkerPlainPath (Join-Path ([IO.Path]::GetDirectoryName($capacitySource)) 'catalog.json') -MustExist
+    Assert-WorkerHash $capacitySource $capacityPins.Archive;Assert-WorkerHash $capacityCatalogSource $capacityPins.Catalog
+    if((Get-Item -LiteralPath $capacitySource).Length -ne $capacityPins.Bytes){throw 'Standing cycle archive length differs.'}
+}
 # The play rehearsal runs what Play-Coop can write: the clip partner or the native loco/gun profile.
 if($Mode -ceq 'play'){$null=Get-WorkerPlayPartnerSettings $PartnerProfile $NativeStage}
 $checks=Read-WorkerSessionJson ([IO.Path]::GetFullPath($CheckReceipt,$repo))
-if($BuildProfile -ceq 'research'){
-    if(!(Test-WorkerResearchReceipt $checks $build $repo $loaderHash (Get-WorkerResearchExperiments -Ammo:$AmmoExperiment))){
+if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){
+    $expectedResearch=@($(if($BuildProfile -ceq 'mgo-standing-cycle'){Get-WorkerMgoStandingCycleExperiments -LookupObserver:$StandingLookupObserver -FrameObserver:$StandingFrameObserver}elseif($BuildProfile -ceq 'mgo-unique-rest'){Get-WorkerMgoUniqueRestExperiments}else{Get-WorkerResearchExperiments -Ammo:$AmmoExperiment}))
+    $expectedResearch=@(Add-WorkerNativeActivationExperiment $expectedResearch ([bool]$NativeActivationObserver))
+    if(!(Test-WorkerResearchReceipt $checks $build $repo $loaderHash $expectedResearch)){
         throw 'Require passed Research/background ON checks with exactly the stock46 experiments (no upper_*) for this exact build and loader.'
     }
 } elseif($BuildProfile -ceq 'buddy-capacity'){
@@ -183,11 +220,12 @@ try {
         $session.runtime_profile=$capacityPins.Profile;$session.runtime_archive_sha256=$capacityPins.Archive
         $session.runtime_archive_bytes=$capacityPins.Bytes;$session.runtime_motion_count=$capacityPins.Motions
         $session.runtime_buddy_capacity=$capacityPins.Capacity;$session.runtime_catalog_sha256=$capacityPins.Catalog
-        $archive=Join-Path $runDirectory 'buddy-capacity-two-runtime.dat'
+        if($BuildProfile -cin @('mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){$session.runtime_build_profile=if($BuildProfile -ceq 'mgo-standing-cycle'){'mgo-standing-cycle'}elseif($BuildProfile -ceq 'mgo-unique-rest'){'mgo-unique-rest'}else{'research'};$session.runtime_native_stage='gun'}
+        $archive=Join-Path $runDirectory ($capacityPins.Profile+'-runtime.dat')
         [IO.File]::Copy($capacitySource,$archive,$false);Assert-WorkerHash $archive $capacityPins.Archive
         if((Get-Item -LiteralPath $archive).Length -ne $capacityPins.Bytes){throw 'Staged candidate archive length differs.'}
         $session.runtime_archive_path=$archive
-        $session.runtime_catalog_path=Join-Path $runDirectory 'buddy-capacity-catalog.json'
+        $session.runtime_catalog_path=Join-Path $runDirectory ($capacityPins.Profile+'-catalog.json')
         [IO.File]::Copy($capacityCatalogSource,$session.runtime_catalog_path,$false)
         Assert-WorkerHash $session.runtime_catalog_path $capacityPins.Catalog
         Write-WorkerSessionJson $statePath $session
@@ -328,7 +366,11 @@ try {
         probe_receipt=$qualification.QualificationPath;probe_receipt_sha256=$session.qualification_sha256;offline_master_port=[string]$raw.offline.masterPort}
     # The supervisor's gate: OfflineLab, or PlayRehearsal for the play rehearsal.
     if($Mode -ceq 'play'){$manifest['lab_mode']='play'}
-    if($runtime.Experimental){$manifest['runtime_profile']=$runtime.Profile;$manifest['runtime_buddy_capacity']='2'}
+    if($runtime.Experimental){$manifest['runtime_profile']=$runtime.Profile;$manifest['runtime_buddy_capacity']=[string]$runtime.Capacity}
+    if($runtime.Profile -cin @('mgo_sleep_rest_v1','mgo_unique_rest_v1','mgo_standing_cycle_v1')){
+        $manifest['runtime_archive_bytes']=[string]$runtime.Bytes;$manifest['runtime_catalog_sha256']=$session.runtime_catalog_sha256
+        $manifest['runtime_build_profile']=$session.runtime_build_profile;$manifest['runtime_native_stage']='gun';$manifest['lab_mode']='lab'
+    }
     foreach($role in @('host','guest')){
         $manifest[$role+'_exe']=$instances[$role].Exe;$manifest[$role+'_save_dir']=$session.roles[$role].worker_save_dir
         foreach($kind in @('lab','coop','graphics')){$manifest[$role+'_'+$kind+'_sha256']=$session.roles[$role][$kind+'_sha256']}

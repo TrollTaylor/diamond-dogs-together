@@ -1,0 +1,30 @@
+{
+  "frozen": true,
+  "activation_authorized": false,
+  "native_calls_added": false,
+  "fixtures": {
+    "compiler": "MSVC14.50.35717",
+    "flags": "/std:c++17 /EHsc /W4 /WX",
+    "passed": 32,
+    "failed": 0
+  },
+  "full_sites": 48,
+  "vtable_slots": 5,
+  "files": [
+    {
+      "name": "carry_request_payload.hpp",
+      "size": 4652,
+      "sha256": "7c24ed60a611a2dc0f880f60c93912a5d5ba46ca7da8ce66fc60fe8a4b717f5f"
+    },
+    {
+      "name": "carry_request_payload_tests.cpp",
+      "size": 3437,
+      "sha256": "90125d892988f6932102a82b9659fb7929a3f5b6f7ded18a10521cd07baa52b8"
+    },
+    {
+      "name": "carry_request_payload_evidence.json",
+      "size": 56261,
+      "sha256": "963964a3195beec5498db2190c2c5aa761f6a7589ba08a2d19f540164881d50b"
+    }
+  ]
+}

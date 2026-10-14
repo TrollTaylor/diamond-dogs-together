@@ -32,10 +32,24 @@ const char* PadRefusal(const PadScope& s) noexcept {
     if (s.batchBefore || s.batchAfter) return "batch";
     return nullptr;
 }
-PadPlan PlanPadMagnitude(float current, bool down, bool controlsApplied) noexcept {
-    if (!std::isfinite(current) || current < 0 || current > 1) return {};
-    const float target = down && controlsApplied && current > kDownedInputMagnitude ? kDownedInputMagnitude : current;
+PadPlan PlanPadMagnitude(float current, bool down, bool controlsApplied, std::uint8_t cause) noexcept {
+    if (!std::isfinite(current) || current < 0 || current > 1 || (down && cause != 1 && cause != 2)) return {};
+    const float limit = cause == 2 ? 0.f : kDownedInputMagnitude;
+    const float target = down && controlsApplied && current > limit ? limit : current;
     return {true, !SameCrawl(target, current), target};
+}
+std::uint32_t ButtonsForCause(std::uint8_t cause) noexcept {
+    return cause == 1 ? kBlockedButtons : cause == 2 ? kSleepingButtons : 0;
+}
+float IncapacitatedHealth(std::uint8_t cause, float original, float max) noexcept {
+    std::uint16_t word = 0;
+    if (!HealthWord(original, max, word) || (cause != 1 && cause != 2)) return 0;
+    return cause == 2 ? original : ProtectedHealth(max);
+}
+float RecoveredHealth(std::uint8_t cause, float original, float max) noexcept {
+    std::uint16_t word = 0;
+    if (!HealthWord(original, max, word) || (cause != 1 && cause != 2)) return 0;
+    return cause == 2 ? original : RevivedHealth(max);
 }
 CrawlOwner CheckCrawlOwner(const CrawlIdentity& bound, bool firstValid, const CrawlIdentity& first,
     bool secondValid, const CrawlIdentity& second) noexcept {

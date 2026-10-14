@@ -36,6 +36,7 @@
 #include <windows.h>
 #include <strsafe.h>
 #include <cstring>
+#include <cmath>
 #include "mgscoop/nametag_game.hpp"
 #include "mgscoop/teammate_targeting.hpp"
 #include "mgscoop/partner_input_hook.hpp"
@@ -48,6 +49,69 @@
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_reload.hpp"
 #include "partner_player_contract.hpp"
+#include <MinHook.h>
+#include <intrin.h>
+#include "mgscoop/native_pose_window.hpp"
+#include "native_pose_horse_flow.hpp"
+#include "native_pose_exclusion.hpp"
+#include "camera_mode_window.hpp"
+#include "mgscoop/coop_carry.hpp"
+#include "carry_model_lifetime_contract.hpp"
+#include "carry_model_retirement_contract.hpp"
+#include "native_pose_window_contract.hpp"
+#include "native_pose_birth.hpp"
+#include "native_pose_activation.hpp"
+#include "native_pose_birth_census.hpp"
+#include "native_pose_birth_contract.hpp"
+#include "whole_player_lifetime_contract.hpp"
+#include "whole_player_lifetime_checks.hpp"
+#include "native_pose_selected_export.hpp"
+#include "native_pose_camera_reader.hpp"
+#include "native_work_timing.hpp"
+#include "native_observer_negative_work.hpp"
+#include "native_pose_vehicle_camera_foot.hpp"
+#include "carry_vars_pair_word_window.hpp"
+#include "owned_flag_map.hpp"
+#include "native_pose_message_lifetime.hpp"
+#include "mgscoop/native_pose_local_carry_slice.hpp"
+#include "native_pose_vars_bulk_reset_contract.hpp"
+#include <new>
+#include "native_pose_reject_diagnostic.hpp"
+#include "native_pose_teardown_diagnostic.hpp"
+#include "native_pose_parts_diagnostic.hpp"
+#include "mgscoop/native_pose_sleep_parts.hpp"
+#include "sleep_parts_policy.hpp"
+#include "sleep_parts_contract.hpp"
+#include "mgscoop/native_pose_dual_parts.hpp"
+#include "dual_parts_core_policy.hpp"
+#include "dual_parts_local_profile.hpp"
+#include "dual_parts_cold_profile.hpp"
+#include "dual_parts_local_profile_contract.hpp"
+#include "native_pose_hold_owners.hpp"
+#include "native_pose_vehicle_policy.hpp"
+#include "native_pose_carry_participants.hpp"
+#include "carry_plugin_contract.hpp"
+#include "carry_owned_handshake_contract.hpp"
+#include "carry_dispatch_lifetime.hpp"
+#include "native_pose_hook_groups.hpp"
+#include "carry_op0_origin.hpp"
+#include "carry_op0_origin_contract.hpp"
+#include "mgscoop/native_pose_carry_handshake.hpp"
+#include "carry_queue_lifetime.hpp"
+#include "carry_queue_lifetime_contract.hpp"
+#include "mgscoop/native_pose_carry_queue.hpp"
+#include "mgscoop/native_pose_carry_deferred.hpp"
+#include "mgscoop/native_pose_carry_queued.hpp"
+#include "mgscoop/native_pose_carry_op2.hpp"
+#include "carry_op2_shared.hpp"
+#include "carry_op1_owned.hpp"
+#include "carry_op1_owned_contract.hpp"
+#include "carry_deferred_copy.hpp"
+#include "carry_native_queue_contract.hpp"
+#include "mgscoop/native_pose_carry_cold.hpp"
+#include "carry_p238_cold_read.hpp"
+#include "mgscoop/native_pose_dispatch_lifetime.hpp"
+#include "carry_request_retirement_contract.hpp"
 
 namespace mgscoop::partner_input_hook {
 namespace {
@@ -125,7 +189,6 @@ std::uint32_t g_consumer_last[pi::kConsumers]{};
 bool g_in_drain = false;
 pi::Injection g_drain_inj{};
 pi::Arm g_drain_arm{};
-JobCallFn g_job_fn = nullptr;
 volatile LONG g_wrap_floor = 0;   // PartnerWrap counting without an enabled Arm (census)
 volatile LONG g_wrap_native = 0;  // the enabled Arm is native
 volatile LONG g_n_frames = 0, g_n_views[3] = {0, 0, 0}, g_n_drain_windows = 0, g_n_drain_refused = 0, g_n_walk_windows = 0;
@@ -265,8 +328,18 @@ bool ReadArm(pi::Arm& out) noexcept {
     return false;
 }
 
-void BeginWindow() noexcept { InterlockedIncrement(&g_window_seq); }  // odd
-void EndWindow() noexcept { InterlockedIncrement(&g_window_seq); }    // even
+bool BeginWindow(const pi::Arm* arm=nullptr) noexcept;
+void EndWindow() noexcept;
+bool PoseOwned() noexcept;
+bool PoseRequired() noexcept;
+bool PoseHeld() noexcept;
+void PoseDispatchOriginal(void* root,std::uint32_t phase) noexcept;
+void __stdcall InputDispatchHook(void* root,std::uint32_t phase) noexcept;
+void WrapSvcActive(void*,void*,std::uint32_t) noexcept;
+void WrapSvcAll(void*,void*,std::uint32_t) noexcept;
+void WrapSvcId(void*,void*,std::uint32_t,std::uint32_t) noexcept;
+void WrapWalk7(void*,std::uint32_t) noexcept;
+void WrapWalk11(void*,std::uint32_t,std::uint32_t) noexcept;
 
 template <class T>
 T Load(std::uintptr_t a) noexcept { T v{}; std::memcpy(&v, reinterpret_cast<const void*>(a), sizeof(v)); return v; }
@@ -393,6 +466,7 @@ struct WindowOpts {
 // What a native window injects: the composed view, or Neutral() while the
 // body is placed (Arm.neutral), without the weapon gate's bits (Arm.strip).
 pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
+    if (PoseHeld()) return pi::Neutral(j);
     if (!a.native) return j;
     if (a.neutral) {
         InterlockedIncrement(&g_n_neutral);
@@ -505,7 +579,7 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save, const Window
             InterlockedIncrement(&g_n_lookcam);
         }
     }
-    if (a.p218) {
+    if (a.p218 || (o.native && PoseRequired() && PoseOwned())) {
         save.p218 = Load<std::uint32_t>(a.P + c::p_local_id);
         save.p218_saved = true;
         Store<std::uint32_t>(a.P + c::p_local_id, 1u);
@@ -651,12 +725,20 @@ struct Call {
     void* ctx;
     void* root;
     std::uint32_t a, b;
+    JobCallFn job = nullptr;
 };
 inline constexpr std::uint8_t kMainEntry = 255;
-inline constexpr std::uint8_t kJobEntry = 5;  // partner_defer's drain: g_job_fn(go = ctx, param = root)
+inline constexpr std::uint8_t kJobEntry = 5;  // partner_defer's drain: this call's job(go = ctx, param = root)
+bool PoseAllowCall(const Call& k) noexcept;
+bool PoseEnterShared(PoseSharedLease&) noexcept;
+void PoseExitShared(PoseSharedLease&) noexcept;
 void CallOriginal(const Call& k) noexcept {
+    if (!PoseAllowCall(k)) return;
+    PoseSharedLease shared{};
+    if (!PoseOwned() && !PoseEnterShared(shared)) return;
+    __try {
     switch (k.entry) {
-    case kJobEntry: g_job_fn(k.ctx, k.root); break;
+    case kJobEntry: k.job(k.ctx, k.root); break;
     case 0: g_svc_active(k.ctx, k.root, k.a); break;
     case 1: g_svc_all(k.ctx, k.root, k.a); break;
     case 2: g_svc_id(k.ctx, k.root, k.a, k.b); break;
@@ -664,6 +746,7 @@ void CallOriginal(const Call& k) noexcept {
     case 4: g_walk11(k.root, k.a, k.b); break;
     default: g_original(k.root, k.a); break;
     }
+    } __finally { PoseExitShared(shared); }
 }
 
 // The original call with the window's fields swapped in. A fatal game
@@ -680,7 +763,7 @@ void GuardedCall(const pi::Arm& a, const Save& save, const Call& k, bool detour 
                 partner_local_detour::Release();
                 partner_look_source::Withdraw();
             }
-            if (AbnormalTermination()) {
+            if (AbnormalTermination() && !PoseOwned()) {
                 g_in_drain = false;
                 SafePost(a, save, false);
                 EndWindow();
@@ -689,17 +772,22 @@ void GuardedCall(const pi::Arm& a, const Save& save, const Call& k, bool detour 
     } __except (GameFilter(GetExceptionCode())) {}
 }
 
+#include "native_pose_window_impl.inc"
+bool PoseHeld() noexcept { return PoseRequired() && g_pose_held != 0; }
+bool BeginWindow(const pi::Arm* arm) noexcept { return PoseBegin(arm); }
+void EndWindow() noexcept { PoseEnd(g_faulted == 0); }
+
 // Block 0 only (I5): the hold classifier of the local player's update is
 // logged through the log vtable copy. Validated like the window (PP identity),
 // honours g_faulted, never calls the original twice.
 void RunHoldLog(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
-    if (g_faulted || !g_vt_ready) { g_original(root, phase); return; }
+    if (g_faulted || !g_vt_ready) { PoseDispatchOriginal(root, phase); return; }
     pi::Skip skip = pi::Skip::player;
     __try { skip = ValidatePad(a); }
     __except (OwnFilter(1, GetExceptionCode())) {}
-    if (skip != pi::Skip::none) { g_original(root, phase); return; }
+    if (skip != pi::Skip::none) { PoseDispatchOriginal(root, phase); return; }
     Save save{};
-    BeginWindow();
+    if (!BeginWindow()) { PoseDispatchOriginal(root, phase); return; }
     bool swapped = false;
     __try {
         save.vt = Load<std::uintptr_t>(a.pp);
@@ -710,7 +798,7 @@ void RunHoldLog(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     if (!swapped) {
         SafePost(a, save, false);
         EndWindow();
-        g_original(root, phase);
+        PoseDispatchOriginal(root, phase);
         return;
     }
     GuardedCall(a, save, Call{kMainEntry, nullptr, root, phase, 0});
@@ -875,22 +963,22 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     // job may be running on a worker); the arbiter leaves on wrap_in_batch.
     if (a.native && partner_defer::InBatch()) {
         InterlockedIncrement(&g_w_in_batch);
-        g_original(root, phase);
+        PoseDispatchOriginal(root, phase);
         return;
     }
     pi::Skip skip = pi::Skip::player;
     bool validated = false;
     __try { skip = Validate(a, root); validated = true; }
     __except (OwnFilter(1, GetExceptionCode())) {}
-    if (!validated) { g_original(root, phase); return; }
+    if (!validated) { PoseDispatchOriginal(root, phase); return; }
     if (skip != pi::Skip::none) {
         InterlockedIncrement(&g_skips);
         InterlockedExchange(&g_last_skip, static_cast<LONG>(skip));
-        g_original(root, phase);
+        PoseDispatchOriginal(root, phase);
         return;
     }
     InterlockedIncrement(&g_windows);
-    if (a.config.mode == PartnerInput::pass) { g_inj_valid = false; g_original(root, phase); return; }
+    if (a.config.mode == PartnerInput::pass) { g_inj_valid = false; PoseDispatchOriginal(root, phase); return; }
     const std::uint64_t now_ms = NowMs();
     // One fresh injection per main window (once per frame); wrap windows
     // reuse its level only (LevelOnly), so every edge is delivered once.
@@ -936,11 +1024,12 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     const std::uint64_t t0 = NowUs();
     const pi::Injection jw = NativeView(a, j);
     Save save{};
-    BeginWindow();
+    if (!BeginWindow(&a)) return;
+    __try {
     if (!SafePre(a, jw, save, WindowOpts{true, a.native, false, 0})) {
         // The prefix was restored; block 1 still updates once this frame.
         EndWindow();
-        g_original(root, phase);
+        PoseDispatchOriginal(root, phase);
         return;
     }
     SetCurrent(jw, a.hold);
@@ -948,18 +1037,25 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     SafePost(a, save, true);
     EndWindow();
     Max(g_us_max, static_cast<LONG>(NowUs() - t0));
+    } __finally {
+        if (PoseOwned()) {
+            g_in_drain = false;
+            SafePost(a, save, false);
+            EndWindow();
+        }
+    }
 }
 
 void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedCompareExchange(&g_hook_thread, static_cast<LONG>(GetCurrentThreadId()), 0) == 0) {}
-    if (g_shutdown) { g_original(root, phase); return; }
+    if (g_shutdown) { PoseDispatchOriginal(root, phase); return; }
     if ((g_rates.applied && !g_wrap_native) || g_rates_forget) RatesIdle();
     // The aim-target mirror (partner_aim_point): restored like the rates once
     // no enabled native Arm (or no wanted target) is published.
     if (partner_aim_point::IdleDue(g_wrap_native != 0) && !partner_defer::InBatch()) partner_aim_point::Idle();
-    if (!g_arm_enabled && !g_holdlog) { g_need_resync = true; g_original(root, phase); return; }
+    if (!g_arm_enabled && !g_holdlog) { g_need_resync = true; PoseDispatchOriginal(root, phase); return; }
     pi::Arm a{};
-    if (!ReadArm(a)) { g_original(root, phase); return; }
+    if (!ReadArm(a)) { PoseDispatchOriginal(root, phase); return; }
     InterlockedExchange(&g_gen_seen, static_cast<LONG>(a.gen));
     if (InterlockedExchange(&g_reset_hist, 0)) {
         g_hist = pi::HoldHistory{};
@@ -980,10 +1076,10 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
         g_shadow_valid = false;
         g_inj_valid = false;
     }
-    if (phase != 8) { g_original(root, phase); return; }
+    if (phase != 8) { PoseDispatchOriginal(root, phase); return; }
     if (a.holdlog && reinterpret_cast<std::uintptr_t>(root) == a.root0) { RunHoldLog(a, root, phase); return; }
-    if (!a.enabled || g_faulted) { g_need_resync = true; g_original(root, phase); return; }
-    if (reinterpret_cast<std::uintptr_t>(root) != a.root1) { g_original(root, phase); return; }
+    if (!a.enabled || g_faulted) { g_need_resync = true; PoseDispatchOriginal(root, phase); return; }
+    if (reinterpret_cast<std::uintptr_t>(root) != a.root1) { PoseDispatchOriginal(root, phase); return; }
     RunWindow(a, root, phase);
 }
 
@@ -1016,7 +1112,8 @@ void RunWrapWindow(const Call& k) noexcept {
     }
     j = NativeView(a, j);
     Save save{};
-    BeginWindow();
+    if (!BeginWindow(&a)) return;
+    __try {
     if (!SafePre(a, j, save, WindowOpts{a.native ? a.local_all : true, a.native, false, 0})) {
         EndWindow();
         CallOriginal(k);
@@ -1028,6 +1125,13 @@ void RunWrapWindow(const Call& k) noexcept {
     EndWindow();
     if (k.entry < kWrapEntries) InterlockedIncrement(&g_w_windows[k.entry]);
     if (a.native) InterlockedIncrement(&g_n_walk_windows);
+    } __finally {
+        if (PoseOwned()) {
+            g_in_drain = false;
+            SafePost(a, save, false);
+            EndWindow();
+        }
+    }
 }
 
 // Native look write (aim stage): instance 1's own per-id look slot after the
@@ -1581,9 +1685,14 @@ void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_b
 }
 
 // A deferred job without a window: a fatal game code is recorded and passed on.
-void GuardedJobCall(JobCallFn job, void* go, const void* param) noexcept {
-    __try { job(go, param); }
-    __except (GameFilter(GetExceptionCode())) {}
+bool GuardedJobCall(JobCallFn job, void* go, const void* param) noexcept {
+    if (PoseOwned()) { PoseFail("pose_nested_refused_job"); return false; }
+    PoseSharedLease shared{}; if (!PoseEnterShared(shared)) return false;
+    __try {
+        __try { job(go, param); }
+        __except (GameFilter(GetExceptionCode())) {}
+    } __finally { PoseExitShared(shared); }
+    return true;
 }
 void WrapSvcActive(void* ctx, void* root, std::uint32_t phase) noexcept { WrapEnter(Call{0, ctx, root, phase, 0}); }
 void WrapSvcAll(void* ctx, void* root, std::uint32_t phase) noexcept { WrapEnter(Call{1, ctx, root, phase, 0}); }
@@ -1936,9 +2045,376 @@ const char* LookRefusalName(LookRefusal refusal) noexcept {
 
 void RegisterHudProbe(HudBeforeFn before, HudAfterFn after) noexcept { g_hud_before = before; g_hud_after = after; }
 
-bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn job, pi::Consumer consumer) noexcept {
-    g_job_fn = job;
+void RegisterNativePoseJobHooks(NativePoseBeforeFn before,NativePoseAfterFn after,NativePoseClosedFn closed) noexcept {
+ if(PoseRequired()||PoseOwned())return;g_pose_before=before;g_pose_after=after;g_pose_closed=closed;
+}
+bool RegisterNativePosePartsPollValidator(NativePosePartsPollValidator callback) noexcept {
+ if(!callback||PoseRequired()||PoseOwned()||g_pose_held||g_pose_fault)return false;
+ if(g_pose_parts_validator&&g_pose_parts_validator!=callback)return false;g_pose_parts_validator=callback;return true;
+}
+bool ReadNativePoseBirthCensus(NativePoseBirthCensus& out) noexcept {
+ out={};const DWORD incoming=GetLastError();
+ const auto finish=[&](bool ok) noexcept {SetLastError(incoming);return ok;};
+ const auto sequence=static_cast<std::uint32_t>(g_window_seq);const auto thread=GetCurrentThreadId();
+ if(g_pose_bindings.enabled||!PoseWorker()||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+    !g_ready||g_faulted||g_shutdown||PoseOwned()||InDrainJob()||(sequence&1u)||partner_defer::InBatch()||
+    !NativePoseWholePlayerLifetimeLive()||!PoseParticipantsLive())return finish(false);
+ pi::Arm arm{},again{};cp::Pair pair{},late{};auto reader=PoseReader;
+ if(!ReadArm(arm)||!arm.enabled||!arm.native||arm.holdlog||!arm.gen||!arm.rates_epoch||
+    !cp::ReadPair(reader,g_base,arm.P,pair)||pair.go!=arm.go||pair.body[1].block!=arm.blk1||pair.body[1].state!=arm.ps1)return finish(false);
+ birth::Receipt first[2]{},last[2]{};std::uint64_t epoch=0,lateEpoch=0;
+ AcquireSRWLockShared(&g_pose_birth_lock);first[0]=PoseObservedBirthLocked(0);first[1]=PoseObservedBirthLocked(1);epoch=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+ if(!native_pose_birth_census::Current(pair,first[0],first[1])||!ReadArm(again)||again.enabled!=arm.enabled||again.native!=arm.native||
+    again.holdlog!=arm.holdlog||again.gen!=arm.gen||again.rates_epoch!=arm.rates_epoch||again.P!=arm.P||again.go!=arm.go||
+    again.blk1!=arm.blk1||again.ps1!=arm.ps1||!cp::ReadPair(reader,g_base,again.P,late)||!cp::Same(pair,late)||
+    !cp::CoherentCallbacks(pair.body[0],late.body[0])||!cp::CoherentCallbacks(pair.body[1],late.body[1]))return finish(false);
+ AcquireSRWLockShared(&g_pose_birth_lock);last[0]=PoseObservedBirthLocked(0);last[1]=PoseObservedBirthLocked(1);lateEpoch=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+ if(!epoch||lateEpoch!=epoch||first[0].serial!=last[0].serial||first[1].serial!=last[1].serial||
+    !native_pose_birth_census::Current(late,last[0],last[1])||sequence!=static_cast<std::uint32_t>(g_window_seq)||
+    partner_defer::InBatch()||g_faulted||g_shutdown||!PoseWorker()||!g_pose_original_view.load(std::memory_order_acquire))return finish(false);
+ out.image=g_base;out.player=pair.player;out.data=pair.data;out.state=pair.scriptState;out.lifecycle=epoch;
+ out.generation=arm.gen;out.sceneEpoch=arm.rates_epoch;out.thread=thread;out.sequence=sequence;
+ for(unsigned k=0;k<2;++k){out.block[k]=pair.body[k].block;out.ps[k]=pair.body[k].state;out.cs[k]=pair.body[k].cs;
+    out.entry[k]=pair.body[k].entry;out.birth[k]=last[k].serial;}
+ return finish(true);
+}
+bool RegisterNativePoseDualReadObserver(NativePoseDualReadObserver callback) noexcept {
+ if(!callback||!PoseWorker()||g_shutdown||g_pose_fault)return false;
+ auto expected=static_cast<NativePoseDualReadObserver>(nullptr);
+ return g_pose_dual_read_observer.compare_exchange_strong(expected,callback,std::memory_order_acq_rel)||expected==callback;
+}
+bool ReadNativePoseSleepPartsPoll(NativePoseSleepPartsContext& out) noexcept {return PosePartsContext(out);}
+bool ReadNativePoseDualPartsPoll(NativePoseDualPartsContext& out) noexcept {return PoseDualPartsContext(out);}
+bool BindNativePoseWorker(const NativePoseWorkerBindings& bindings) noexcept {
+ if(g_pose_installed||PoseRequired()||PoseOwned())return false;
+ if(!bindings.admitted||!bindings.refuse)return false;
+ g_pose_worker=bindings;return true;
+}
+const char* InstallNativePoseWindow(const void* image,std::size_t span,bool fingerprint) noexcept {
+ return PoseInstall(image,span,fingerprint)?nullptr:g_pose_reason;
+}
+bool NativePosePrivateWorkerAdmitted() noexcept {
+ const DWORD incoming=GetLastError();
+ const bool admitted=!g_pose_bindings.enabled&&g_pose_installed&&!g_shutdown&&PoseWorker();
+ SetLastError(incoming);return admitted;
+}
+bool SetNativePoseWindowTest(bool enabled) noexcept {
+ if(!enabled)return !PoseRequired(); // never discard a retained test/feature requirement
+ if(PoseRequired())return !g_pose_fault;
+ pi::Arm a{};
+ const auto refuse=[](const char* why) noexcept {g_pose_reason=why;return false;};
+ if(!g_pose_installed)return refuse("pose_enable_not_installed");
+ if(!PoseWorker())return refuse("pose_enable_worker");
+ if(!PoseParticipantsLive())return refuse("pose_enable_participants");
+ if(!g_ready||g_faulted||g_shutdown)return refuse("pose_enable_input_state");
+ if(!ReadArm(a))return refuse("pose_enable_arm_read");
+ if(!a.enabled||!a.native)return refuse("pose_enable_native_arm");
+ if(a.cam!=PartnerInputCam::sandbox||a.holdlog)return refuse("pose_enable_camera_hold");
+ if(a.wrap!=PartnerWrap::window)return refuse("pose_enable_wrapper");
+ if(a.config.mode!=PartnerInput::net||!a.gen||!a.rates_epoch)return refuse("pose_enable_native_epoch");
+ if(static_cast<std::uint32_t>(g_hook_thread)!=GetCurrentThreadId())return refuse("pose_enable_thread");
+ if(partner_defer::InBatch()||(g_window_seq&1)||!g_pose_gate.Idle())return refuse("pose_enable_busy");
+ pi::Skip skip=pi::Skip::player;
+ __try {skip=Validate(a,reinterpret_cast<void*>(a.root1));}__except(OwnFilter(1,GetExceptionCode())){}
+ if(skip!=pi::Skip::none)return refuse("pose_enable_arm_validation");
+ NativePoseJobContext born{};if(!PoseModel(a,born)||!PoseBirthCurrent(a,born,true)){g_pose_reason="pose_actor_birth_unobserved";return false;}
+ g_pose_player=a.P;g_pose_go=a.go;g_pose_root=a.root1;g_pose_block=a.blk1;
+ g_pose_generation=a.gen;g_pose_epoch=a.rates_epoch;g_pose_thread=GetCurrentThreadId();g_pose_pool=a.pool1;
+ g_pose_test=true;MemoryBarrier();InterlockedExchange(&g_pose_required,1);g_pose_reason="pose_window_required";return true;
+}
+bool SetNativePoseVehicleFootCameraTest(bool enabled) noexcept {
+ const DWORD incoming=GetLastError();
+ const auto refuse=[&](const char* why) noexcept {
+  if(g_log){char line[256]{};if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_vehicle_foot_camera=private_refused;reason=%s;required=%ld;held=%ld;pending=%ld;sequence=%lu;production=0\r\n",
+   why,g_pose_required,g_pose_held,g_pose_clear,static_cast<unsigned long>(g_window_seq))))g_log(line);}
+  SetLastError(incoming);return false;
+ };
+ if(g_pose_bindings.enabled)return refuse("fixture_binding");
+ if(!g_pose_installed)return refuse("not_installed");
+ if(!PoseWorker())return refuse("private_worker");
+ if(g_pose_fault||g_shutdown)return refuse("fault_or_shutdown");
+ if(PoseRequired())return refuse("already_required");
+ if(PoseOwned()||g_pose_held||g_pose_clear||g_pose_owners.held||g_pose_owners.pending||g_pose_vehicle_bound)return refuse("owned_or_retained");
+ if(partner_defer::InBatch()||(g_window_seq&1)||!g_pose_gate.Idle())return refuse("native_window_busy");
+ if(!enabled){g_pose_vehicle_foot_camera_test=false;g_pose_vehicle_foot_camera_reader=nullptr;SetLastError(incoming);return true;}
+ if(!PoseParticipantsLive()){
+  if(g_log){char line[192]{};if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_vehicle_foot_camera=participant_state;h1=%u;h2=%u;armed=%u;mode_on=%u;wrap=%u;local=%u\r\n",
+   partner_defer::H1Installed()?1u:0u,partner_defer::H2Installed()?1u:0u,partner_defer::Armed()?1u:0u,
+   partner_defer::CurrentMode()==partner_defer::Mode::on?1u:0u,g_wrap_ready?1u:0u,partner_local_detour::Installed()?1u:0u)))g_log(line);}
+  return refuse("participants");
+ }
+ if(!NativePoseWholePlayerLifetimeLive())return refuse("whole_player_lifetime");
+ if(!NativePoseLocalCacheIsolationLive())return refuse("local_cache_isolation");
+ if(!PoseVehicleCodeLive()){
+  std::uintptr_t mismatch=0;const char* failed="provider";auto reader=g_pose_vehicle_bindings.readOriginal;
+  if(g_pose_vehicle_bindings.provider&&reader&&g_pose_vehicle_bindings.allocator){
+   if(!PoseRoutePatchesLive())failed="route_patch";
+   else if(!vehicle_controller_read::CodeGate(reader,g_base,0xa01d000,mismatch))failed="controller";
+   else if(!vehicle_pose_callback_contract::CodeGate(reader,g_base,0xa01d000,mismatch))failed="pose_callback";
+   else if(!route::CodeGate(reader,g_base,0xa01d000,mismatch))failed="route_code";
+   else failed="changed_during_recheck";
+  }
+  if(g_log){char line[192]{};if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_vehicle_foot_camera=code_state;stage=%s;rva=%llx\r\n",failed,static_cast<unsigned long long>(mismatch))))g_log(line);}
+  return refuse("vehicle_code_or_provider");
+ }
+ g_pose_vehicle_foot_camera_reader=g_pose_vehicle_bindings.readOriginal;
+ g_pose_vehicle_foot_camera_test=true;
+ if(g_log)g_log("pose_vehicle_foot_camera=private_ready;enabled=1;production=0\r\n");
+ SetLastError(incoming);return true;
+}
+bool RegisterNativeHorseFlowCallbacks(const NativeHorseFlowCallbacks& callbacks) noexcept {
+ const DWORD incoming=GetLastError();bool accepted=false;
+ if(g_pose_bindings.enabled||!PoseWorker()||!g_pose_installed||g_pose_fault||g_shutdown||!callbacks.before||!callbacks.after||!callbacks.refused){SetLastError(incoming);return false;}
+ AcquireSRWLockExclusive(&g_pose_horse_flow_registration);
+ const auto* existing=g_pose_horse_flow_callbacks.load(std::memory_order_acquire);
+ if(existing)accepted=existing->before==callbacks.before&&existing->after==callbacks.after&&existing->refused==callbacks.refused;
+ else{g_pose_horse_flow_storage=callbacks;g_pose_horse_flow_callbacks.store(&g_pose_horse_flow_storage,std::memory_order_release);accepted=true;}
+ ReleaseSRWLockExclusive(&g_pose_horse_flow_registration);SetLastError(incoming);return accepted;
+}
+bool ReadNativePoseOriginalCode(std::uintptr_t at,void* out,std::size_t size) noexcept {return PoseOriginalCode(at,out,size);}
+bool NativePoseRequiredForJob(void* go,std::uint32_t block) noexcept {return PoseJobRequired(go,block);}
+bool NativePoseOwnedWindow() noexcept {return PoseOwned();}
+bool NativePoseWholePlayerLifetimeLive() noexcept {
+ // Installation freezes the complete exact PE methods/slots above. This live
+ // capability additionally revalidates both actual owned entry jumps/relays.
+ // Synthetic fixtures do not impersonate installed retail lifecycle hooks.
+ if(g_pose_bindings.enabled||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+    !g_pose_delete_player||!g_pose_reset_player)return false;
+ return PosePatchOwned(g_pose_patches[9])&&PosePatchOwned(g_pose_patches[10])&&
+  g_pose_patches[9].rva==0x9bb7a0&&g_pose_patches[10].rva==0x9c2f70;
+}
+
+bool NativePoseLocalCacheIsolationLive() noexcept {
+ if(g_pose_bindings.enabled||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+    !g_pose_selected_export||g_pose_patches[11].rva!=0xff5510)return false;
+ return PosePatchOwned(g_pose_patches[11]);
+}
+
+bool ReadNativePoseOwnedJobContext(NativePoseJobContext& out) noexcept {
+ out={};const auto& c0=t_pose.context;
+ if(g_pose_bindings.enabled||!PoseOwned()||!t_pose.job||g_pose_fault||g_shutdown||!g_pose_test||!PoseWorker()||
+  partner_defer::InBatch()||GetCurrentThreadId()!=g_pose_thread||!PoseParticipantsLive()||!NativePoseWholePlayerLifetimeLive()||
+  !c0.modelReady||!c0.selectedBodyOwned||c0.selectedBody!=1||c0.generation!=g_pose_generation||c0.sceneEpoch!=g_pose_epoch||
+  c0.thread!=g_pose_thread||c0.sequence!=static_cast<std::uint32_t>(g_window_seq)||(c0.sequence&1u)==0||!PoseContextBirthCurrent(c0))return false;
+ pi::Arm a{},after{};NativePoseJobContext model=c0;std::uintptr_t pp=0,source=0,vt=0;std::uint32_t real=0,selected=0;
+ if(!ReadArm(a)||a.P!=c0.player||a.go!=c0.go||a.blk1!=c0.block||a.ps1!=c0.state||a.gen!=c0.generation||a.rates_epoch!=c0.sceneEpoch||
+  !a.enabled||!a.native||a.cam!=PartnerInputCam::sandbox||a.pp!=c0.pp||a.src!=c0.source||
+  !PoseRead(a.P+0x214,real)||real||!PoseRead(a.P+0x218,selected)||selected!=1||
+  !PoseRead(a.P+c::p_pad,pp)||pp!=c0.pp||!PoseRead(pp+c::pp_src,source)||source!=c0.source||
+  !PoseRead(pp,vt)||vt!=c0.windowPPVT||vt!=WindowVtable(a.hold)||!PoseModel(a,model)||!model.modelReady||
+  model.modelCS!=c0.modelCS||model.modelEntry!=c0.modelEntry||!PoseContextBirthCurrent(c0)||!PoseCarryPairCurrent()||
+  !ReadArm(after)||after.P!=a.P||after.go!=a.go||after.blk1!=a.blk1||after.ps1!=a.ps1||after.gen!=a.gen||after.rates_epoch!=a.rates_epoch||
+  after.pp!=a.pp||after.src!=a.src||after.hold!=a.hold||!after.enabled||!after.native||!PoseOwned()||g_pose_fault||
+  c0.sequence!=static_cast<std::uint32_t>(g_window_seq))return false;
+ out=c0;return true;
+}
+bool RequireNativePoseOwnedJob(void* go,std::uint32_t block) noexcept {
+ if(!PoseOwned())return false;
+ if(g_pose_fault||reinterpret_cast<std::uintptr_t>(go)!=g_pose_go||block!=g_pose_pool){
+  PoseFail("pose_nested_foreign_job");return false;
+ }
+ return true;
+}
+bool SetNativePoseLeaseHeld() noexcept {
+ if(!PoseOwned()||!t_pose.job||!t_pose.context.modelReady||g_pose_fault)return false;
+ if(!PoseContextBirthCurrent(t_pose.context)){PoseFail("pose_actor_birth_changed");return false;}
+ if(g_pose_held&&(g_pose_cs!=t_pose.context.modelCS||g_pose_entry!=t_pose.context.modelEntry)){
+  PoseFail("pose_held_model_changed");return false;
+ }
+ g_pose_cs=t_pose.context.modelCS;g_pose_entry=t_pose.context.modelEntry;
+ if(!holds::AddSleep(g_pose_owners))return false;InterlockedExchange(&g_pose_held,1);return true;
+}
+bool RequestNativePoseLeaseClear() noexcept {
+ if(!PoseOwned()||!t_pose.job||!g_pose_held||g_pose_fault)return false;
+ if(!holds::ClearSleep(g_pose_owners))return false;InterlockedExchange(&g_pose_clear,1);return true;
+}
+bool NativePoseVarsPairWordOwnedWindow() noexcept {
+ // Faulted cleanup keeps the exact writer and the admission established by
+ // private opt-in. It cannot promote a native callback or a replacement owner.
+ return PoseOwned()&&g_pose_test&&PoseRequired()&&GetCurrentThreadId()==g_pose_thread&&PoseVarsPatchesLive();
+}
+bool NativePoseVarsPairWordCleanupWindow(const NativePoseJobContext& c0) noexcept {
+ return NativePoseVarsPairWordOwnedWindow()&&t_pose.job&&c0.player==t_pose.context.player&&c0.go==t_pose.context.go&&
+  c0.block==t_pose.context.block&&c0.state==t_pose.context.state&&c0.modelCS==t_pose.context.modelCS&&c0.modelEntry==t_pose.context.modelEntry&&
+  c0.generation==g_pose_generation&&c0.sceneEpoch==g_pose_epoch&&c0.thread==g_pose_thread&&c0.sequence==t_pose.context.sequence&&
+  c0.birthSerial==t_pose.context.birthSerial&&PoseContextBirthCurrent(c0);
+}
+#include "carry_op0_origin_exports.inc"
+#include "carry_queue_lifetime_exports.inc"
+#include "native_pose_vehicle_exports.inc"
+#include "carry_deferred_copy_exports.inc"
+#include "carry_op1_owned_exports.inc"
+#include "carry_op2_shared_exports.inc"
+bool ReadNativePoseLocalCarrySlice(NativePoseLocalCarryContext& out) noexcept {return PoseLocalCarryQuery(out);}
+bool RunNativePoseLocalCarrySlice(const NativePoseCarryLease& lease,NativePoseLocalCarryFn fn,void* argument) noexcept {
+ if(g_pose_bindings.enabled||!fn||!lease.serial||g_pose_fault||g_shutdown||!g_pose_test||!PoseRequired()||!PoseWorker()||
+  GetCurrentThreadId()!=g_pose_thread||partner_defer::InBatch()||t_pose.opened||t_local_carry.opened||!t_pose.job||!t_pose.cleanup||
+  (g_window_seq&1)||static_cast<std::uint32_t>(g_window_seq)!=t_pose.context.sequence+1u||t_pose_pair_word_token.active()||
+  lease.serial!=g_pose_owners.carrySerial||lease.generation!=g_pose_generation||lease.sceneEpoch!=g_pose_epoch||
+  !(g_pose_owners.held&holds::carry)||(g_pose_owners.pending&holds::carry)||!g_pose_held||
+  !NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!PoseMessagePatchesLive()||!PoseVarsPatchesLive()||!PoseParticipantsLive())return false;
+ px::Admission admission{true,true,true,true,true,true,g_pose_generation,g_pose_epoch,g_pose_thread};
+ if(g_pose_gate.TryWrite(admission,t_local_carry.ticket)!=px::Status::entered)return false;
+ InterlockedIncrement(&g_window_seq);t_local_carry.opened=true;t_local_carry.context={};
+ ++g_local_carry_nonce;if(!g_local_carry_nonce)++g_local_carry_nonce;
+ t_local_carry.context.carryLease=lease;t_local_carry.context.sliceNonce=g_local_carry_nonce;
+ t_local_carry.context.sequence=static_cast<std::uint32_t>(g_window_seq);
+ NativePoseLocalCarryContext context{};bool normal=false,accepted=false,checked=false,released=false;
+ __try {
+  checked=PoseLocalCarryQuery(context);if(checked)accepted=fn(context,argument);normal=true;
+ } __finally {
+  NativePoseLocalCarryContext after{};const bool current=checked&&PoseLocalCarryQuery(after)&&SameNativePoseLocalCarrySlice(context,after);
+  const bool clean=normal&&accepted&&current&&!g_pose_fault;
+  if(!clean)PoseFail("pose_local_carry_slice_changed");
+  InterlockedIncrement(&g_window_seq);
+  released=g_pose_gate.EndWrite(g_pose_thread,g_pose_generation,g_pose_epoch,clean,true,t_local_carry.ticket);
+  if(released)t_local_carry.opened=false;else PoseFail("pose_local_carry_slice_cleanup");
+ }
+ return normal&&accepted&&released&&!g_pose_fault;
+}
+bool NativePoseCarryRecipientHeld() noexcept {return PoseOwned()&&(g_pose_owners.held&holds::carry)!=0;}
+bool NativePoseCarryRecipientLeaseCurrent(const NativePoseCarryLease& lease) noexcept {
+ if(!PoseOwned()||!t_pose.job)return false;
+ if(!lease.serial||lease.serial!=g_pose_owners.carrySerial||lease.generation!=g_pose_generation||lease.sceneEpoch!=g_pose_epoch||
+    !t_pose.context.selectedBodyOwned||t_pose.context.selectedBody!=1||
+    !(g_pose_owners.held&holds::carry)||!NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!NativePoseVarsPairWordOwnedWindow()||!PoseParticipantsLive()||!PoseMessageCurrent())return false;
+ return PoseCarryPairCurrent()&&PoseRouteCurrent();
+}
+bool ReadNativePoseCarryColdStatus(NativePoseCarryColdStatus& out) noexcept {
+ out={};const DWORD incoming=GetLastError();
+ if(g_pose_bindings.enabled||!g_pose_test||!PoseRequired()||!PoseWorker()||g_pose_fault||g_shutdown||
+  GetCurrentThreadId()!=g_pose_thread||t_pose.opened||t_local_carry.opened||partner_defer::InBatch()||
+  (g_window_seq&1)||g_pose_held||g_pose_clear||g_pose_owners.held||g_pose_owners.pending||
+  !PoseParticipantsLive()||!NativePoseWholePlayerLifetimeLive()){SetLastError(incoming);return false;}
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return false;}bool accepted=false;
+ __try {
+  const bool owned=read.tracked&&read.thread==GetCurrentThreadId()&&read.slot<32&&t_readers.serial[read.slot]==read.serial&&
+   g_pose_gate.OwnsRead(read.thread,t_readers.tickets[read.slot]);
+  std::uint64_t epoch=0;AcquireSRWLockShared(&g_pose_birth_lock);epoch=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+  pi::Arm a{},after{};route::Observation routeBefore{},routeAfter{};msg::Observation messageBefore{},messageAfter{};
+  std::uintptr_t vars=0,q=0;std::uint16_t word=0xffff,wordAfter=0xffff;std::uint32_t local=0,selected=0;
+  dual_parts_cold_profile::Stamp profileBefore{},profileAfter{};std::uint32_t profileReasonAfter=0;
+  cp::Pair modelsBefore{},modelsAfter{};carry_p238_cold_read::Observation p238Before{},p238After{};
+  NativePoseCarryColdStatus value{};value.sequence=static_cast<std::uint32_t>(g_window_seq);
+  const bool root=owned&&ReadArm(a)&&a.P==g_pose_player&&a.go==g_pose_go&&a.blk1==g_pose_block&&a.gen==g_pose_generation&&a.rates_epoch==g_pose_epoch&&
+   a.enabled&&a.native&&PoseRead(a.P+0x214,local)&&!local&&PoseRead(a.P+0x218,selected)&&!selected;
+  if(root){
+   value.local=local;value.selected=selected;value.routeReady=route::ReadPair(PoseReader,g_base,a.P,routeBefore);
+   value.routeNoWork=value.routeReady&&route::NoClassWork(routeBefore);
+   if(value.routeReady){value.routeType=0x23063f8;value.registryType=0x23073c0;value.routeMode=routeBefore.mode;value.routeFlags=routeBefore.metadataFlags;value.routeCount=routeBefore.count;value.routePending=routeBefore.pendingCount;}
+   value.messageReady=msg::ReadPair(PoseReader,g_base,a.P,messageBefore);
+   if(value.messageReady){value.messageType=0x20e9b60;value.messageKey=messageBefore.key;value.messageEnabled=messageBefore.enabled;}
+   value.varsReady=PoseRead(a.P+0x140,vars)&&vars==g_base+0x2c01360&&PoseRead(a.P+0x60,q)&&q&&PoseRead(vars+0x10e,word);
+   value.word=word;value.varsDomain=PoseVarsPatchesLive();value.messageDomain=PoseMessagePatchesLive();value.routeDomain=PoseRoutePatchesLive();
+   value.localSliceActive=false; // cold shared query is NEVER an exclusive slice
+   const bool p238Observed=cp::ReadPair(PoseReader,g_base,a.P,modelsBefore)&&carry_p238_cold_read::Observe(PoseReader,g_base,a.P,modelsBefore.body[0].cs,modelsBefore.body[1].cs,p238Before);
+   value.p238Observed=p238Observed&&p238Before.read;value.p238Typed=p238Observed&&p238Before.typed;
+   value.p238Body0=p238Observed&&p238Before.body0;value.p238Body1=p238Observed&&p238Before.body1;
+   value.p238Vt=p238Before.vtRva;value.p238Count=p238Before.count;value.p238Base=p238Before.base;value.p238Reason=p238Before.reason;
+
+   value.profileReady=dual_parts_cold_profile::Read(PoseReader,g_base,a.P,profileBefore,value.profileReason);
+   value.profileCurrent=value.profileReady&&value.profileReason==0;
+   if(value.profileReady){const auto& p=profileBefore.profile;value.profileType=p.type;value.profileParts=p.parts;value.profileCamo=p.camo;
+    value.profileAux=p.auxiliary;value.profileFace=p.face;value.profileRefresh=p.refresh;value.currentType=p.currentType;value.currentParts=p.currentParts;
+    value.currentCamo=p.currentCamo;value.currentEncoded=p.currentEncoded;value.currentAux=p.currentAux;value.currentFace=p.currentFace;value.profileSelector=p.selector;}
+   const bool p238Same=!p238Observed||(cp::ReadPair(PoseReader,g_base,a.P,modelsAfter)&&cp::Same(modelsBefore,modelsAfter)&&
+    carry_p238_cold_read::Observe(PoseReader,g_base,a.P,modelsAfter.body[0].cs,modelsAfter.body[1].cs,p238After)&&carry_p238_cold_read::Same(p238Before,p238After));
+   const bool profileSame=!value.profileReady||(dual_parts_cold_profile::Read(PoseReader,g_base,a.P,profileAfter,profileReasonAfter)&&
+    profileReasonAfter==value.profileReason&&dual_parts_cold_profile::Same(profileBefore,profileAfter));
+   const bool routeSame=!value.routeReady||(route::ReadPair(PoseReader,g_base,a.P,routeAfter)&&route::Same(routeBefore,routeAfter));
+   const bool messageSame=!value.messageReady||(msg::ReadPair(PoseReader,g_base,a.P,messageAfter)&&msg::SameLease(messageBefore,messageAfter));
+   const bool varsSame=!value.varsReady||(PoseRead(vars+0x10e,wordAfter)&&word==wordAfter);
+   AcquireSRWLockShared(&g_pose_birth_lock);const bool birthSame=epoch==g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+   if(routeSame&&messageSame&&varsSame&&profileSame&&p238Same&&birthSame&&ReadArm(after)&&after.P==a.P&&after.go==a.go&&after.blk1==a.blk1&&
+    after.gen==a.gen&&after.rates_epoch==a.rates_epoch&&value.sequence==static_cast<std::uint32_t>(g_window_seq)&&
+    g_pose_gate.OwnsRead(read.thread,t_readers.tickets[read.slot])&&!g_pose_fault){out=value;accepted=true;}
+  }
+ } __finally {PoseExitShared(read);SetLastError(incoming);}
+ return accepted&&!g_pose_fault;
+}
+bool NativePoseDispatchInterfaceLifetimeLive() noexcept {return PoseRoutePatchesLive()&&PoseParticipantsLive()&&NativePoseWholePlayerLifetimeLive();}
+bool AcquireNativePoseCarryRecipientLease(NativePoseCarryLease& out) noexcept {
+ out={};if(g_pose_bindings.enabled||!PoseOwned()||!t_pose.job||g_pose_fault||!PoseWorker()||
+   !t_pose.context.modelReady||!t_pose.context.selectedBodyOwned||t_pose.context.selectedBody!=1||
+   !NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!NativePoseVarsPairWordOwnedWindow()||!PoseParticipantsLive()||!PoseContextBirthCurrent(t_pose.context))return false;
+ if(g_pose_owners.held&holds::carry){
+  out={g_pose_owners.carrySerial,g_pose_generation,g_pose_epoch};if(NativePoseCarryRecipientLeaseCurrent(out))return true;out={};return false;
+ }
+ cp::Pair pair{};route::Observation dispatch{};ql::Owner queued{};auto read=PoseReader;
+ if(!cp::ReadPair(read,g_base,g_pose_player,pair)||pair.go!=g_pose_go||pair.body[1].block!=t_pose.context.block||
+    pair.body[1].state!=t_pose.context.state||pair.body[1].cs!=t_pose.context.modelCS||pair.body[1].entry!=t_pose.context.modelEntry||
+    !PoseCarryBirth0Current(pair,true)||pair.body[0].freeCallbacks<2||!PoseRouteCapture(pair,dispatch)||!PoseMessageCapture(pair)||!PoseQueueCapture(pair,queued))return false;
+ ++g_pose_carry_serial;if(!g_pose_carry_serial)++g_pose_carry_serial;
+ if(!holds::AddCarry(g_pose_owners,g_pose_carry_serial))return false;
+ g_pose_carry_pair=pair;g_pose_queue_owner=queued;g_pose_queue_bound=true;g_pose_route_hold=dispatch;g_pose_route_bound=true;g_pose_cs=t_pose.context.modelCS;g_pose_entry=t_pose.context.modelEntry;
+ InterlockedExchange(&g_pose_held,1);out={g_pose_carry_serial,g_pose_generation,g_pose_epoch};return true;
+}
+bool RequestNativePoseCarryRecipientLeaseClear(const NativePoseCarryLease& lease) noexcept {
+ if(!NativePoseCarryRecipientLeaseCurrent(lease))return false;auto read=PoseReader;
+ // Both typed participant phases, callback owners and Q allocation must retire.
+ // No producer/end/native call is introduced by this release check.
+ if(!cp::Retired(read,g_base,g_pose_carry_pair)||!PoseCarryPairCurrent()||!holds::ClearCarry(g_pose_owners,lease.serial))return false;
+ InterlockedExchange(&g_pose_clear,1);return true;
+}
+bool EnterNativePoseShared(PoseSharedLease& out) noexcept {return PoseEnterShared(out);}
+void ExitNativePoseShared(PoseSharedLease& out) noexcept {PoseExitShared(out);}
+NativePoseActivationStatus NativePoseActivationStatusRead() noexcept {
+ NativePoseActivationStatus out{};
+#ifdef MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER
+ out.compiled=true;
+ out.hooks=PoseActivationEligible();
+#endif
+ AcquireSRWLockShared(&g_pose_birth_lock);
+ for(unsigned id=0;id<2;++id){const auto r=PoseObservedBirthLocked(id);out.ready[id]=r.ready;out.origin[id]=static_cast<unsigned>(r.origin);out.serial[id]=r.serial;out.pending[id]=g_pose_activation_pending[id].ready;}
+ ReleaseSRWLockShared(&g_pose_birth_lock);
+ out.entered=static_cast<std::uint32_t>(g_activation_enter);out.factory=static_cast<std::uint32_t>(g_activation_factory);
+ out.staged=static_cast<std::uint32_t>(g_activation_staged);out.published=static_cast<std::uint32_t>(g_activation_published);
+ out.noop=static_cast<std::uint32_t>(g_activation_noop);out.refused=static_cast<std::uint32_t>(g_activation_refused);
+ out.invalidationEntries=static_cast<std::uint32_t>(g_activation_invalidation_entries);out.invalidated=static_cast<std::uint32_t>(g_activation_invalidated);
+ out.abnormal=static_cast<std::uint32_t>(g_activation_abnormal);
+ out.lastBody=static_cast<std::uint32_t>(g_activation_last_body);out.lastCallerRva=static_cast<std::uint32_t>(g_activation_last_caller);
+ out.lastStage=static_cast<std::uint32_t>(g_activation_last_stage);return out;
+}
+NativePoseStatus NativePoseWindowStatus() noexcept {
+ AcquireSRWLockShared(&g_pose_birth_lock);const auto born=PoseObservedBirthLocked(1);ReleaseSRWLockShared(&g_pose_birth_lock);
+ return {g_pose_installed,PoseRequired(),g_pose_held!=0,g_pose_fault!=0,PoseOwned(),
+  static_cast<std::uint32_t>(g_pose_windows),static_cast<std::uint32_t>(g_pose_suppressed),
+  static_cast<std::uint32_t>(g_pose_hints),g_pose_reason,born.ready,born.serial,
+  static_cast<std::uint32_t>(g_birth_enter),static_cast<std::uint32_t>(g_birth_ready),static_cast<std::uint32_t>(g_birth_exact),
+  static_cast<std::uint32_t>(g_birth_body1),static_cast<std::uint32_t>(g_birth_model),static_cast<std::uint32_t>(g_birth_done),
+  static_cast<std::uint32_t>(g_birth_overlap),static_cast<std::uint32_t>(g_birth_count),static_cast<std::uint32_t>(g_birth_base),
+  static_cast<std::uint32_t>(g_birth_caller),g_pose_birth_reason,static_cast<std::uint32_t>(g_pose_local_exports),
+  static_cast<std::uint32_t>(g_pose_cam_owned),static_cast<std::uint32_t>(g_pose_cam_shared),
+  static_cast<std::uint32_t>(g_pose_cam_caller),static_cast<std::uint32_t>(g_pose_cam_owner),static_cast<std::uint32_t>(g_pose_cam_body),
+  static_cast<std::uint32_t>(g_pose_cam_sender),static_cast<std::uint32_t>(g_pose_cam_filtered)};
+}
+namespace detail {
+void BindNativePoseForTest(const NativePoseTestBindings& bindings) noexcept {
+ if(PoseRequired()||PoseOwned())return;g_pose_bindings=bindings;g_pose_installed=bindings.enabled;
+}
+bool CompleteNativePoseBirthForTest(const partner_input::Arm& a) noexcept {
+ if(!g_pose_bindings.enabled||PoseRequired()||PoseOwned())return false;
+ NativePoseJobContext c0{};if(!PoseModel(a,c0))return false;
+ native_pose_birth::Completion c{};c.identity={a.P,a.blk1,a.ps1,c0.modelCS,c0.modelEntry};
+ c.installedAtEntry=c.installedAtExit=c.workerAtEntry=c.workerAtExit=c.exactCaller=c.normalReturn=c.typedPair=true;
+ c.entryThread=c.exitThread=GetCurrentThreadId();c.lifecycleEpoch=PoseBirthEpoch();return PoseRecordBirth(c);
+}
+bool ResetNativePoseForTest() noexcept {
+ if(!g_pose_bindings.enabled||PoseOwned()||g_pose_held||!g_pose_gate.Idle())return false;
+ InterlockedExchange(&g_pose_required,0);g_pose_test=false;g_pose_before=nullptr;g_pose_after=nullptr;g_pose_closed=nullptr;
+ return true;
+}
+}
+JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t block, JobCallFn job, pi::Consumer consumer) noexcept {
+    const bool required=PoseJobRequired(go,block);
     pi::Arm a{};
+    const auto refusal=[&](reject::Stage stage,const char* detail,std::uint32_t skip=UINT32_MAX) noexcept {
+        if(required){PoseRejectDiagnostic(stage,detail,&a,static_cast<std::uint32_t>(consumer),skip);InterlockedIncrement(&g_pose_suppressed);return JobWindowOutcome::suppressed;}
+        return GuardedJobCall(job,go,param)?JobWindowOutcome::legacy:JobWindowOutcome::suppressed;
+    };
     const bool have = g_ready && !g_faulted && ReadArm(a);
     const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;
     if (!armed) {
@@ -1946,8 +2422,7 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
         // (the arbiter leaves active on this; a gen change in flight is not it).
         if (have && (!a.enabled || !a.native)) InterlockedIncrement(&g_n_drain_disarmed);
         InterlockedIncrement(&g_n_drain_refused);
-        GuardedJobCall(job, go, param);
-        return false;
+        return refusal(reject::Stage::arm,"not_armed");
     }
     // A batch in flight anywhere (nested on this thread or on another thread):
     // block 0's job may be running on a worker, the shared pad must not be
@@ -1956,8 +2431,7 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
         InterlockedIncrement(&g_n_drain_in_batch);
         InterlockedIncrement(&g_w_in_batch);
         InterlockedIncrement(&g_n_drain_refused);
-        GuardedJobCall(job, go, param);
-        return false;
+        return refusal(reject::Stage::batch,"batch_live");
     }
     pi::Skip skip = pi::Skip::player;
     bool validated = false, block_ok = false;
@@ -1980,22 +2454,25 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
             InterlockedExchange(&g_last_skip, static_cast<LONG>(skip));
         }
         InterlockedIncrement(&g_n_drain_refused);
-        GuardedJobCall(job, go, param);
-        return false;
+        return refusal(reject::Stage::validate,validated?pi::SkipName(skip):"validation_fault",static_cast<std::uint32_t>(skip));
     }
     if (!block_ok) {
         InterlockedIncrement(&g_n_drain_block);
         InterlockedIncrement(&g_n_drain_refused);
-        GuardedJobCall(job, go, param);
-        return false;
+        return refusal(reject::Stage::pool,"wrong_job_pool");
     }
     pi::ConsumerView view{};
     const pi::Injection j = NativeView(a, pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
                                                           NowMs() - g_frame_ms, a.config, &view));
     InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
     const std::uint64_t t0 = NowUs();
-    Save save{};
-    BeginWindow();
+    Save save{};native_work_timing::Token timing=native_work_timing::Begin(native_work_timing::Kind::pose_begin);
+    const bool opened=BeginWindow(&a);native_work_timing::End(timing);
+    if (!opened) {
+        if(required){PoseRejectDiagnostic(reject::Stage::begin,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));return JobWindowOutcome::suppressed;}
+        return refusal(reject::Stage::begin,g_pose_reason);
+    }
+    __try {
     // isLocal always: block 1's whole update runs here (phases 0/5/6 read the
     // pad only for a local record; local=all only adds the walk windows).
     if (!a.src) {
@@ -2003,12 +2480,15 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
         InterlockedExchange(&g_r_last, static_cast<LONG>(RingRefusal::src));
         InterlockedExchange(&g_r_on, 0);
     }
-    if (!SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer)})) {
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_pre);
+    const bool pre=SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer)});
+    native_work_timing::End(timing);
+    if (!pre) {
         EndWindow();
         InterlockedIncrement(&g_n_drain_refused);
-        GuardedJobCall(job, go, param);
-        return false;
+        return refusal(reject::Stage::pre,"safe_pre_refused");
     }
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_helpers);
     SetCurrent(j, a.hold);
     g_drain_arm = a;
     g_drain_inj = j;
@@ -2040,14 +2520,27 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
         partner_look_source::Publish(a.ps1, 1, a.ps1_idx, j.look_pitch, j.look_yaw);
     // Always released (the detour and the published look) on every exit.
     const auto hud_probe = g_hud_before ? g_hud_before(a.P) : nametag_game::HudJobProbe{};
-    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, true);
+    native_work_timing::End(timing);
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_before);
+    const bool before=PoseBefore(a,save,j,consumer);native_work_timing::End(timing);
+    if (!before) {
+        PoseRejectDiagnostic(reject::Stage::before,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));
+        InterlockedIncrement(&g_pose_suppressed);g_pose_reason="pose_before_refused";return JobWindowOutcome::suppressed;
+    }
+    timing=native_work_timing::Begin(native_work_timing::Kind::native_job);
+    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
+    native_work_timing::End(timing);
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_after);
+    if (!PoseAfter()) PoseFail("pose_after_refused");
+    native_work_timing::End(timing);
     if (g_hud_after) g_hud_after(hud_probe);
     g_in_drain = false;
     if (save.rings_saved) g_ring_prev[static_cast<std::size_t>(consumer)] = j.held;
     ProbeRecord(a.rec1);
     LookProbe(a, j);
     AfterJob(a, shots_before, ammo_before);
-    SafePost(a, save, true);
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_post);
+    SafePost(a, save, true);native_work_timing::End(timing);
     EndWindow();
     std::uint32_t masks[3]{};
     std::memcpy(masks, g_priv_masks, sizeof(masks));
@@ -2056,7 +2549,21 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     InterlockedExchange(&g_d_mask30, static_cast<LONG>(masks[2]));
     InterlockedIncrement(&g_n_drain_windows);
     Max(g_us_max, static_cast<LONG>(NowUs() - t0));
-    return true;
+    return JobWindowOutcome::windowed;
+    } __finally {
+        native_work_timing::End(timing);
+        if (PoseOwned()) {
+            teammate_targeting::EndQuietJob();
+            partner_local_detour::Release();
+            partner_look_source::Withdraw();
+            g_in_drain=false;
+            SafePost(a,save,false);
+            EndWindow();
+        }
+    }
+}
+bool RunJobWindow(void* go,const void* param,std::uint32_t block,JobCallFn job,pi::Consumer consumer) noexcept {
+ return RunJobWindowOutcome(go,param,block,job,consumer)==JobWindowOutcome::windowed;
 }
 
 void PublishWrapRoots(std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept {
@@ -2125,6 +2632,7 @@ void VtableCopies(std::uintptr_t out[kVtableCopies]) noexcept {
 }
 
 std::uint32_t WindowSeq() noexcept { return static_cast<std::uint32_t>(g_window_seq); }
+bool InDrainJob() noexcept { return g_in_drain; }
 
 void ResetFault() noexcept {
     InterlockedExchange(&g_fault_phase, 0);
@@ -2139,9 +2647,13 @@ void ResetFault() noexcept {
     InterlockedExchange(&g_sl_faulted, 0);
 }
 
-void Shutdown() noexcept { InterlockedExchange(&g_shutdown, 1); }
+void Shutdown() noexcept { g_pose_gate.StopNewWriters(); InterlockedExchange(&g_shutdown, 1); }
 
 void PublishArm(const pi::Arm& arm) noexcept {
+    if (PoseRequired() && (arm.P != g_pose_player || arm.go != g_pose_go ||
+        arm.root1 != g_pose_root || arm.blk1 != g_pose_block ||
+        (arm.gen != g_pose_generation && g_pose_held) || arm.rates_epoch != g_pose_epoch || !arm.enabled || !arm.native))
+        PoseFail("pose_arm_lifetime_changed");
     InterlockedIncrement(&g_seq);  // odd
     MemoryBarrier();
     std::memcpy(const_cast<pi::Arm*>(&g_arm), &arm, sizeof(arm));

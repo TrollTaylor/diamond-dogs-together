@@ -59,7 +59,8 @@ inline constexpr std::uint8_t enemy_outcome = 0x10, req_outcome = 0x11, phase = 
 inline constexpr std::uint8_t enemy_debug = 0x22, enemy_debug_ack = 0x23;
 // Player rescue controls and host-led companion samples.
 inline constexpr std::uint8_t downed_status = 0x24, downed_commit = 0x25, revive_grant = 0x26,
-                              buddy_state = 0x27, buddy_ack = 0x28, friendly_hit = 0x29;
+                              buddy_state = 0x27, buddy_ack = 0x28, friendly_hit = 0x29, ride_body = 0x2A,
+                              cargo = 0x2B, ride_fast = 0x2C;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -353,7 +354,7 @@ private:
     unsigned ctrl_head_ = 0, ctrl_size_ = 0;
     Entry world_[kWorldQueue]{};
     unsigned world_head_ = 0, world_size_ = 0;
-    Slot digest_{}, guest_digest_{}, phase_vec_{};
+    Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{};
     Grant grants_[kGrants]{};
     std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
     OutEntry out_[kOutboundQueue]{};

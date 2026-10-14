@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "profile": "mgo_sleep_rest_v1",
+  "private_only": true,
+  "asset_selection_proved": false,
+  "stage_manifest_sha256": "45824b565658ea0de4b70519f119e04968021d6705ff1a29ad9658aac760129e",
+  "checks": {
+    "detached_powershell_fixture_count": 770,
+    "detached_powershell_passed": true,
+    "cpp_compiled": false,
+    "game_launched": false
+  },
+  "candidate_catalog": {
+    "profile": "mgo_sleep_rest_v1",
+    "archive_sha256": "0a8a13467b6782ee3e32a5b99f8c950cea9a6d8cb486faac10c0a417200bae54",
+    "archive_bytes": 26949632,
+    "catalog_sha256": "d70047206d28561d2ce8831ba0ab0311c8cb2cdb864a01373907dd4318e3f755",
+    "motions": 21,
+    "capacity": 0
+  },
+  "source_files": {
+    "native/archive_mount.cpp": {
+      "sha256": "fad20139066a0d7f36a365a403785325b84fa5c0b58be9c3d6471e180a26f2ee",
+      "bytes": 15297
+    },
+    "tools/worker/WorkerSessionCommon.psm1": {
+      "sha256": "ae1720b3c7e7617915201d97578bf9328f0e4a86f16dfec1236f75f96e978ebd",
+      "bytes": 38588
+    },
+    "tools/worker/Start-WorkerSession.ps1": {
+      "sha256": "c4945c73a97dcad1d9a29c03fadfffab6fa7577989c87e349b39abd762a3afc6",
+      "bytes": 38238
+    },
+    "tools/worker/Invoke-WorkerScenario.ps1": {
+      "sha256": "ff85f89800a5a602ef1063357c9a82561f3b6e5c839bab0683cc94623a6445ef",
+      "bytes": 63221
+    },
+    "tools/worker/worker_protocol.hpp": {
+      "sha256": "0e335f08f73415acb7018ff8c5aeaa904138479fa9312ded0c65da83d7bfc8b6",
+      "bytes": 15776
+    },
+    "tools/worker/worker_win32.hpp": {
+      "sha256": "9bc8ffd01c51a5bcc5113a894fe764065db4506a63094af17e71e790ff44cbdd",
+      "bytes": 16527
+    },
+    "tools/worker/worker_supervisor.cpp": {
+      "sha256": "ef1414b5800da41b669f49cfc1499a055d2bbe26a0668c48461c75ebef9ed245",
+      "bytes": 47718
+    },
+    "tests/worker_protocol_tests.cpp": {
+      "sha256": "2e3b415016f64d16effd225b099a9e5e89ac7cbbf034f41399ae4eb645a08fe8",
+      "bytes": 35990
+    },
+    "tests/worker_session_tests.ps1": {
+      "sha256": "094c425c58b90495b83196cd62e1a6d1fb1923743fe6a1a5bf0d7869536d9284",
+      "bytes": 102290
+    },
+    "native/include/mgscoop/mgo_sleep_rest_catalog.hpp": {
+      "sha256": "deea5857a8e7f7a5debb6571304dcfe2d1cb2370cf00156a7804ca8279aed18e",
+      "bytes": 2115
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "run": "d267c618cc414ec68a2b1574964117bb",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-224007-e7e15cdd886f40f2a200ec4ea14078fb\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 2,
+  "failure": null,
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 103277456,
+      "end": 103393844,
+      "sha256": "3a28f9113ed4071468b0c3c5d4b1a3eb1939aa0d5b49ebc9745f0201d88de78f"
+    },
+    {
+      "role": "guest",
+      "start": 112228005,
+      "end": 112346173,
+      "sha256": "fe09f4b6f3f226606cf8940dc554ef4d02e23bdad91f494e820e692f5cc06ff8"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posebirth;in=4;ready=4;caller=4;b1=2;model=2;done=2;race=0;count=1;id=1;from=0x9beaac;stage=birth_completed",
+      "posewindow;installed=1;required=0;held=0;fault=0;born=1;windows=0;skip=0;hints=0;reason=pose_window_installed"
+    ],
+    "guest": [
+      "posebirth;in=4;ready=4;caller=4;b1=2;model=2;done=2;race=0;count=1;id=1;from=0x9beaac;stage=birth_completed",
+      "posewindow;installed=1;required=0;held=0;fault=0;born=1;windows=0;skip=0;hints=0;reason=pose_window_installed"
+    ]
+  },
+  "limitations": "Read-only first common bind only. Original getter and final24C1988 engine passed on both players/copies. Actual gameplay unique bank loaded at slot17 with exact hash,32 native slots,31 empty; append refused because one native slot was already bound. No append, selected MGO animation, upright sleep, horse loading or shared riding enabled. Owned worker shutdown requested; all63 protected baseline files and real saves restored."
+}

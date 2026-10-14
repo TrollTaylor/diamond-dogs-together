@@ -1,0 +1,94 @@
+# Root-only runtime proposal. DEFAULT OFF observer; no Cargo writer or input
+# bypass. Uses existing debug setup and natural stock guard carry/load/unload.
+# Before running, reviewed passive Core/module/wiring patches must be integrated.
+labsetting debug_soldier_warp=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 240
+host run status
+host require ^status;mission=(30010|30020);guard=ok;host=1
+host run godmode 1
+guest run godmode 1
+host run horse_spawn
+host expect ^submitted_horse|^horse_selected
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656
+host run horse_cargo_pair
+host require cargoPair;ok=1;h=6656,65535,0
+host run goto_horse
+host require ^warp_position_readback;error_m=
+wait 1000
+host run spawn_enemy here
+host expect ^guard_here;ent=
+wait 3000
+host run enemy sleep nearest
+host require ^enemy_sleep;ent=.*life_readback=[02];sync=world
+wait 2000
+host run enemy info nearest
+host require ;state=2;
+host run goto_spawn 1.2
+host require ^warp_position_readback;error_m=
+wait 1000
+host run enemy info nearest
+host require ;state=2;distance_m=[01]\.[0-9]+$
+# Stock carry baseline has no mandatory spectator pose window.
+wait 2000
+host run coop_carry_horse_finder
+host hold r 1400
+host release
+wait 3500
+host run coop_carry_load
+host require ^carryload;rec=1;t=(10(2[4-9]|[3-9][0-9])|1[1-4][0-9]{2}|15([0-2][0-9]|3[0-5]));p=[1-9]
+host run coop_carry_bodies
+# Stock NPC victims have world IDs, so do not demand Player1's carried action.
+# The actual original load sender below is the decisive pickup/load check.
+host capture npc-native-carried
+host run goto_horse
+host require ^warp_position_readback;error_m=
+wait 1000
+host run coop_carry_load
+host run horse_cargo_pair
+host run coop_carry_horse_finder
+# Natural R/E are separate observations. Do not force finder flags or success.
+host hold r 1200
+host release
+wait 2500
+host run coop_carry_horse_finder
+host run horse_cargo_native
+host run horse_cargo_pair
+both capture npc-after-natural-r
+host hold e 1200
+host release
+wait 3000
+host run coop_carry_horse_finder
+host run horse_cargo_native
+host run horse_cargo_pair
+both capture npc-after-natural-e
+host run coop_carry_load
+# Record the original finder entry and actual horse cargo slot separately.
+# A fresh raw receipt is observational; it does not grant a Cargo lease.
+host run coop_carry_horse_finder
+host require horseFinder;raw=1;pair=0;
+# Keep all4 anchor columns stock; mounting/movement uses only natural inputs.
+host press e 150
+wait 2000
+host hold w 1500
+host release
+both capture npc-native-horse-moving
+host press e 150
+wait 2000
+host hold r 1400
+host release
+wait 3500
+host run coop_carry_horse_finder
+host run horse_cargo_native
+host run horse_cargo_pair
+both capture npc-native-unload
+host run coop_carry_load
+host run coop_carry_horse_finder
+host expect horseFinder;raw=[01];pair=0;
+host run godmode 0
+guest run godmode 0
+state

@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "cause": "Physical native sleep retirement can finish before the later actual mask removal/logical revive. Poll0 previously called Hold(true) again while down was stilltrue, reseeding sleep after successful wake.",
+  "repair": "exact mission/epoch/full generation wake episode persists across native retirement, actual input update and logical revive; poll never seeds, forcesprone or remasks after physical retirement; logicalexit or ownedclear resets the episode",
+  "native_guards": "native putdown, fullstunCAS, strict graph idle retirement and actual Released(raw) checks unchanged",
+  "runtime_observed": false
+}

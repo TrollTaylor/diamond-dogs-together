@@ -2246,14 +2246,46 @@ void TestHud() {
               std::strstr(prompt.text,"waiting") && !std::strstr(prompt.text,"Hold") && progress == 0,
               "downed local player sees waiting rather than an impossible revive instruction");
         d.teammateDown = true;
-        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"get closer") && progress == 0,
-              "out-of-range teammate needs approach without revive progress");
-        d.inRange = true; d.progressMs = 1500;
-        Check(hud::FormatDowned(d,30050,1500,prompt,progress) && std::strstr(prompt.text,"Action (E)") &&
-              std::strstr(prompt.text,"50%") && progress == .5f, "actual continuous hold is shown with its progress at inclusive freshness boundary");
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"get within 3 m") &&
+              !prompt.keys[0] && progress == 0,
+              "out-of-range teammate gets approach guidance without unavailable action keycaps");
+        d.teammateCause = 2;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"asleep") &&
+              !prompt.keys[0] && !std::strstr(prompt.text,"revive"), "a distant sleeping teammate keeps approach guidance, not a revive hint");
+        d.teammateCause = 0;
+        d.closeEnough = true;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"please wait") &&
+              !prompt.keys[0] && progress == 0,
+              "inside3m unobserved Action prepares; pickup is left solely to the stock carry icon");
+        d.closeEnough = false;
+        d.carry = 1;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"Carrying") &&
+              !prompt.keys[0] && !std::strstr(prompt.keys,"Load"),
+              "a copied carrier role leaves contextual put-down/loading controls to the stock prompt");
+        d.carry = 3;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.keys[0] &&
+              !std::strstr(prompt.text,"riding"), "provisional cargo does not advertise native seats or unloading");
+        d.carry = 5;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress), "unknown carry roles cannot become action prompts");
+        d.carry = 2; d.inRange = true;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.keys[0] && progress == 0,
+              "a healthy readback still being carried cannot advertise a rescue action");
+        d.carry = 4;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.keys[0],
+              "a provisional carried/cargo role cannot advertise Wake or Revive");
+        d.carry = 0;
+        d.inRange = true;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) &&
+              std::strcmp(prompt.keys,"Action\tHold to revive") == 0 && !std::strstr(prompt.keys,"Pick up"),
+              "ready rescue is concise semantic Action with no keyboard-default prose or duplicate pickup");
+        d.progressMs = 1500;
+        Check(hud::FormatDowned(d,30050,1500,prompt,progress) && std::strstr(prompt.text,"Reviving") &&
+              std::strstr(prompt.text,"50%") && std::strcmp(prompt.keys,"Action\tKeep holding") == 0 &&
+              !std::strstr(prompt.keys,"Pick up") && progress == .5f,
+              "actual hold keeps its keycap and progress while hiding the competing pickup hint");
         d.progressMs = 3000;
-        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && progress == 1.f && std::strstr(prompt.text,"100%"),
-              "completed grant pending is bounded at 100 percent");
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && progress == 1.f && std::strstr(prompt.text,"100%") && !prompt.keys[0],
+              "completed hold remains100percent but does not request more input during pending native/network recovery");
         for (const auto now : {999u,1501u}) {
             Check(!hud::FormatDowned(d,30050,now,prompt,progress) && !prompt.text[0] && progress == 0,
                   "future clock and expired facts cannot show a revive command or old progress");
@@ -2277,6 +2309,83 @@ void TestHud() {
               "both-down recovery transition retains a safe wait instruction");
         d.localDown = d.teammateDown = false;
         Check(!hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.text[0], "healthy pair clears the gameplay instruction");
+        {
+            // The world-anchored prompt states follow the same validated facts.
+            hud::DownedView r{};
+            r.valid = true; r.mission = 30050; r.epoch = 7; r.publish_ms = 1000;
+            r.teammateDown = true; r.teammateCause = 2;
+            hud::RescuePrompt rp{};
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::away && rp.sleeping, "distant sleeper is an away pill");
+            r.closeEnough = true;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::wait, "beside an unadmitted hold waits");
+            r.inRange = true;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::ready, "admitted hold offers the Action button");
+            r.progressMs = 1500;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::holding && rp.progress == .5f, "hold fills the ring");
+            r.progressMs = 3000;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::done && rp.progress == 1.f, "completed hold waits for recovery");
+            r.progressMs = 0; r.carry = 1;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::carrying, "carrier leaves controls to the stock prompt");
+            r.carry = 0; r.inRange = r.closeEnough = false; r.teammateDown = false; r.teammateCause = 0;
+            r.localDown = true; r.localCause = 1;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::self_wounded && !rp.sleeping, "wounded self status");
+            r.localCause = 2;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::self_asleep && rp.sleeping, "sleeping self status");
+            r.carry = 2;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::carried, "carried self status");
+            Check(!hud::ClassifyDowned(r,30050,1600,rp) && rp.state == hud::Rescue::none, "stale facts draw nothing");
+            Check(std::strcmp(hud::RescueName(hud::Rescue::holding),"holding") == 0, "rescue state names");
+        }
+        // Parse the natural owner's copied V2 cause, never infer sleep from pose.
+        auto parseHud = [&](const char* text) { return hud::ParseDownedHud(text, std::strlen(text), copied); };
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V1' -- 30050 7 1 0 0 0") && copied.localCause == 1,
+              "legacy down receipt infers wounded and keeps its existing prompt");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2 0") && copied.localCause == 2,
+              "explicit protected sleep is separate from wounded incapacitation");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"Asleep") &&
+              !std::strstr(prompt.text,"revive") && prompt.tone == hud::Tone::warn && progress == 0,
+              "sleeping player gets a wake instruction without a lethal down label");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 1500 0 2"), "teammate sleep progress parsed");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"Waking teammate") &&
+              std::strcmp(prompt.keys,"Action\tKeep holding") == 0 && progress == .5f,
+              "held Action wakes a sleeping teammate with real copied hold progress and persistent keycap");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 0 0 0 1 1") && copied.closeEnough && !copied.inRange &&
+              copied.teammateCause == 1, "V3 can be close enough without an observed Action hold");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && !std::strstr(prompt.text,"%") &&
+              !prompt.keys[0] && progress == 0,
+              "close-enough receipt cannot advertise Action before its native mask is observed");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 1 0 0 2 1"), "ready sleep state parsed");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strcmp(prompt.keys,"Action\tHold to wake") == 0,
+              "ready sleeper gets the concise Wake action");
+        Check(!parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 1 0 0 1 0"),
+              "a hold range without the 3m approach is refused");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 1500 0 2") && copied.closeEnough && copied.inRange,
+              "V2 still treats the hold range as the approach");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 0 0 0 0 0 0 0 0") && !copied.valid,
+              "world stop zeroes every explicit incapacity field");
+        for (const char* bad : {
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 0 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 3 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 3001 0 2",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 1 1 100 2 1",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 0 7 0 0 0 0 0 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 10010 7 1 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 0 1 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2 0 ",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2",
+                "return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 1 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2 0 1",
+                "return 'MGS_COOP_DOWNED_HUD_V1' -- 30050 7 1 0 0 0 2 0"}) {
+            Check(!parseHud(bad) && !copied.valid && copied.localCause == 0 && copied.teammateCause == 0,
+                  "malformed/stale/contradictory cause receipt cannot advertise a wake or revive action");
+        }
+        Check(!hud::ParseDownedHud(nullptr,100,copied), "null receipt refused without dereference");
+        Check(!hud::ParseDownedHud("",193,copied), "oversized receipt refused before reading");
         hud::PublishDowned({});
         Check(!hud::GetDowned(copied), "world teardown immediately clears copied downed HUD facts");
     }

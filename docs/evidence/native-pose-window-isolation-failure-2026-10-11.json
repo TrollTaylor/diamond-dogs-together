@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "run": "16ef6e653cec4874b1fa41870de6ac61",
+  "kind": "hidden-actual-isolation-failure",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-010053-47862b414ea842d38505ae792b9beffc\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "failure": "[host/guest] pivot requires telemetry within 250 milliseconds.",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 77418178,
+      "end": 77572609,
+      "sha256": "6c29aaf28a43af703767aa9631ea39b2ec7d30f821aea81de34efdded901b19a"
+    },
+    {
+      "role": "guest",
+      "start": 86471936,
+      "end": 86638544,
+      "sha256": "e542c66d546251c1e4349747dd7b8a37bc76a0f3151a2329220ed72b36fd1a7b"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "indexedpose;ready=1;v=798.1,339.4,1640.6;b0=799.9,338.1,1646.5;b1=798.1,339.4,1640.6;seq=5040",
+      "indexedpose;ready=1;v=800.5,339.3,1639.5;b0=800.0,338.9,1643.6;b1=800.5,339.3,1639.5;seq=2872",
+      "indexedpose;ready=1;v=800.9,339.3,1639.3;b0=800.9,339.3,1639.3;b1=800.9,339.3,1639.3;seq=1840",
+      "indexedpose;ready=1;v=800.9,339.3,1639.3;b0=800.9,339.3,1639.3;b1=800.9,339.3,1639.3;seq=600"
+    ],
+    "guest": [
+      "indexedpose;ready=1;v=798.1,339.4,1640.6;b0=800.7,338.3,1645.6;b1=798.1,339.4,1640.6;seq=5008",
+      "indexedpose;ready=1;v=800.5,339.3,1639.5;b0=800.9,339.3,1639.3;b1=800.5,339.3,1639.5;seq=2832",
+      "indexedpose;ready=1;v=800.9,339.3,1639.3;b0=800.9,339.3,1639.3;b1=800.9,339.3,1639.3;seq=1848",
+      "indexedpose;ready=1;v=800.9,339.3,1639.3;b0=800.9,339.3,1639.3;b1=800.9,339.3,1639.3;seq=576"
+    ]
+  },
+  "limitations": "Native local body moves independently, but script/local cached position follows body1. Sleep/carry not activated; scenario stopped before aiming on stale telemetry."
+}

@@ -1,0 +1,136 @@
+{
+  "frozen": true,
+  "base_manifest_sha256": "054ec6b2e226b3734fac16ac53248b004a62fac368de2c0437e5ad58fe210fd5",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "main_modified": false,
+  "compiled": false,
+  "runtime_used": false,
+  "actual_hooks_added": [
+    {
+      "rva": "0xff5510",
+      "abi": "void(PS*,u32actualBody)",
+      "scope": "owned private odd body1window; exactnativecallerFF2208; typedbirth/model/currentlocalP2140+selectedP2181"
+    }
+  ],
+  "native_feature_activation": false,
+  "body1_S1_producer_requires_live_verification": true,
+  "files": [
+    {
+      "path": "capability_from_v2.diff",
+      "size": 1436,
+      "sha256": "80ac9ce109953ef5b1353bfe7ca443346712580fd6df1a55ffe4a53245bbcc1f"
+    },
+    {
+      "path": "native\\camera_mode_window.hpp",
+      "size": 8820,
+      "sha256": "64a348a9f14b10e9a9f0a5f0b623e58c116fe554c4f8ff99885bd69f8cd4b768"
+    },
+    {
+      "path": "native\\camera_mode_window_contract.hpp",
+      "size": 42134,
+      "sha256": "318417ac8cd87d8029e45bf5ada5e76608b8909a225c229b42b696e7a1b1b8f1"
+    },
+    {
+      "path": "native\\carry_model_lifetime_contract.hpp",
+      "size": 35887,
+      "sha256": "1141bb448e2f32bd9f2ea7d365363e6bd69b50a24d50f0879d2a7739ea1cfe5e"
+    },
+    {
+      "path": "native\\carry_model_retirement_contract.hpp",
+      "size": 42263,
+      "sha256": "7a0204ea626603892e9ab9b59ae45ed30aa43ff31ab59a68965189fedbab3cb6"
+    },
+    {
+      "path": "native\\include\\mgscoop\\native_pose_window.hpp",
+      "size": 4341,
+      "sha256": "8aab570802170080804f8991883a4b8a9060c560e49d912585bc4daff4ad0e75"
+    },
+    {
+      "path": "native\\include\\mgscoop\\partner_input_hook.hpp",
+      "size": 20548,
+      "sha256": "db908886e0fa7e7713229c8f4c39c563d6af7c1721409f32bde6bc4106284b18"
+    },
+    {
+      "path": "native\\native_pose_birth.hpp",
+      "size": 1551,
+      "sha256": "0d88195105ba705d2556e9faec1bef512fb7c3f8b746b434d42d4c5cb99e1cc3"
+    },
+    {
+      "path": "native\\native_pose_birth_contract.hpp",
+      "size": 26497,
+      "sha256": "52dd4c5318225e5a0fe0ea7e1b3265fa8f53c21863acdbd32d2d535c1a7e71b1"
+    },
+    {
+      "path": "native\\native_pose_exclusion.hpp",
+      "size": 6265,
+      "sha256": "5561f45570e9bdd2fb8f603c4e439c949460512679c40495a2d01ce0dc563510"
+    },
+    {
+      "path": "native\\native_pose_selected_export.hpp",
+      "size": 2195,
+      "sha256": "597b7c843b2f1e04cc664ff57e79d35012336411474598f6a6441d28a476d47f"
+    },
+    {
+      "path": "native\\native_pose_selected_export_contract.hpp",
+      "size": 8162,
+      "sha256": "c93684dab49d760f43d900d8865c6e55da5a9db0ff7e7edac70f8a78aeff3d7c"
+    },
+    {
+      "path": "native\\native_pose_window_contract.hpp",
+      "size": 26076,
+      "sha256": "714d6e391e06768003070029524fbbbf83d395d068380a06c0b7526f6f3dbd26"
+    },
+    {
+      "path": "native\\native_pose_window_impl.inc",
+      "size": 41242,
+      "sha256": "40fa8b1d09fcf8d641df244b1e44dc6b322a3b7522d18112d68432851f18c9a8"
+    },
+    {
+      "path": "native\\partner_defer.cpp",
+      "size": 32401,
+      "sha256": "02466511e31d2582c4c655d7de4a4409a4021ad55955a4cf9c40dc020d8f55ca"
+    },
+    {
+      "path": "native\\partner_input_hook.cpp",
+      "size": 135958,
+      "sha256": "675d8ee65b24047a2a972f763847c3a46c84b5e5dbc72115bd7c2748eae39562"
+    },
+    {
+      "path": "native\\whole_player_lifetime_checks.hpp",
+      "size": 1295,
+      "sha256": "f189859ce616a1c3f9cb0ae66f3a7db3d07bd78b6ef7278298f3abf85a9c32fd"
+    },
+    {
+      "path": "native\\whole_player_lifetime_contract.hpp",
+      "size": 12006,
+      "sha256": "28fb9f8883a89071a2c089988f1552ff208be5dd9ebdf77c9cac87401bdd29b8"
+    },
+    {
+      "path": "selected_export_evidence.json",
+      "size": 40314,
+      "sha256": "8a1197446877e49d092155ba7e725e6a07932990b5b984695e9175b6fb437f71"
+    },
+    {
+      "path": "source.diff",
+      "size": 11103,
+      "sha256": "9155b05b967ae5c93a1790ab9b2dad492bee02873c1324d7e2b12949bebcf7de"
+    },
+    {
+      "path": "tests\\native_pose_selected_export_tests.cpp",
+      "size": 3036,
+      "sha256": "f7637fa65b89e3ae469ea97e6a1ee4628b5c0dbd26da2a0fd89d880760d2d1d2"
+    },
+    {
+      "path": "tests\\whole_player_lifetime_tests.cpp",
+      "size": 3653,
+      "sha256": "3785b922b7240dc48e92d287e7669b3cea5620518490164a2354876b8d138f61"
+    },
+    {
+      "path": "whole_player_lifetime_evidence.json",
+      "size": 57001,
+      "sha256": "6c49b4454659c49618452c0f6a69dc575e0d907e6bb3262573fb464e74b5dc29"
+    }
+  ],
+  "replaces_manifest_sha256": "839b24f6de2a9a2632af3adead350045e8c789f0892d495cb06a09e4e0f3722b",
+  "source_fix": "adds actual NativePoseLocalCacheIsolationLive query from installed trampoline and owned FF5510 entry/relay; falsein fixtures; live acceptance still separate"
+}

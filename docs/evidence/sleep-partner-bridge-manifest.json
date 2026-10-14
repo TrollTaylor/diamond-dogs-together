@@ -1,0 +1,122 @@
+{
+  "schema": "mgscoop-body1-sleep-bridge-v1",
+  "normal_default": "OFF, unchanged0.12.4 fallback",
+  "compiled": false,
+  "fixtures_executed": false,
+  "main_modified": false,
+  "runtime_activation": false,
+  "files": [
+    {
+      "path": "base.json",
+      "bytes": 1057,
+      "sha256": "d8931c6b8d4af6df9f6784da8ead81307cf8a2e22fbfcf31a32a2e28b37f0a66"
+    },
+    {
+      "path": "game_script_observer.cpp.diff",
+      "bytes": 20169,
+      "sha256": "fc7883c071e29e9484e0754f21b35c3016c7da3c2dbbccf2171dff317871f64e"
+    },
+    {
+      "path": "integration.json",
+      "bytes": 5181,
+      "sha256": "b1b2f2e3ac66025d42958f653117fe7b9ff92e0522beac4788af4c4a68b118a1"
+    },
+    {
+      "path": "lua/coop/world_downed.lua",
+      "bytes": 17731,
+      "sha256": "a5076ee56926e529d772c8e39c20902a3c4d3aa936123715cde1c197a67b15aa"
+    },
+    {
+      "path": "native/game_script_observer.cpp",
+      "bytes": 285086,
+      "sha256": "17f70770319db55f0aefe07a6d44e97b08e6b0aa03716ff748a101b2536a92ed"
+    },
+    {
+      "path": "native/include/mgscoop/partner_driver.hpp",
+      "bytes": 53186,
+      "sha256": "ae958120007803836223aab0bc7d74795125c04ce9e430074d8d3ef1651d1c98"
+    },
+    {
+      "path": "native/partner_driver.cpp",
+      "bytes": 292890,
+      "sha256": "eddac3da3806a4a37f532ecac7a43583ae1e06f9483e95cb7b0d8745a12f08aa"
+    },
+    {
+      "path": "native/sleep_partner_bridge.hpp",
+      "bytes": 4368,
+      "sha256": "6c8663dc8f053d7a453401706b332868e3e6b896c5515bdf9ff2465ad7a737fe"
+    },
+    {
+      "path": "partner_driver.cpp.diff",
+      "bytes": 1227,
+      "sha256": "ffad25c4a5952882ed3fe0045f7187a6e1e6533a5d65a416dacb2b9d6643f803"
+    },
+    {
+      "path": "partner_driver.hpp.diff",
+      "bytes": 612,
+      "sha256": "914e9401142cdd07b5f3f0b013e50a9579fdb6f173cfac985b5d4b5482a1900b"
+    },
+    {
+      "path": "partner_driver_tests.cpp.diff",
+      "bytes": 2438,
+      "sha256": "88146abb764d4fd8eb96c71c6a476f474705d5d1db9c233f463d88fe66c3d5fe"
+    },
+    {
+      "path": "tests/partner_driver_tests.cpp",
+      "bytes": 303061,
+      "sha256": "d9e70a156c4e479f0a3b5d3aefd36697d21db8c28774f2f1a41dcb25f38122b2"
+    },
+    {
+      "path": "tests/sleep_partner_bridge_tests.cpp",
+      "bytes": 5517,
+      "sha256": "8c66f09757f9ac316da3c30db49d6d95ebfbdc719e5c4bbc41540c93797a5180"
+    },
+    {
+      "path": "tests/world_downed_lua_check.lua",
+      "bytes": 48048,
+      "sha256": "3ef48f901f388e555ae8cef5a1fdfb5bc79d620b48ae1d533c3599681ca5d801"
+    },
+    {
+      "path": "world_downed.lua.diff",
+      "bytes": 3284,
+      "sha256": "a7e63a46b26ae42a810714f8923f7fbabaa686b3b717bb37cc81cb5f73f3d70f"
+    },
+    {
+      "path": "world_downed_lua_check.lua.diff",
+      "bytes": 3253,
+      "sha256": "8395d50c58897f71cf59a0eb9eb42233e36062e836c75a468146bf1cee827f57"
+    }
+  ],
+  "captured_source_bases": [
+    {
+      "path": "native/game_script_observer.cpp",
+      "sha256": "c3ceea32037b7e22016e98025df2c4c61b736911e62e9140e3c35cfc7e5dae6c",
+      "bytes": 276619
+    },
+    {
+      "path": "native/partner_driver.cpp",
+      "sha256": "90eb6050e7b7d8af4c00b71d0c5930ba93fa0ad13a3f6d8e97d5d5b902b6889f",
+      "bytes": 292687
+    },
+    {
+      "path": "native/include/mgscoop/partner_driver.hpp",
+      "sha256": "197c2d0f0b64f5a07a652b87d656ade6e8104092496ae8788fc29012c544dcf0",
+      "bytes": 53025
+    },
+    {
+      "path": "lua/coop/world_downed.lua",
+      "sha256": "741448f6a3d0a215874566b1ef4bdff0d7a3b0bb01aafff17fe8dedbf0634c0b",
+      "bytes": 16272
+    },
+    {
+      "path": "tests/partner_driver_tests.cpp",
+      "sha256": "1c5ece43af7ca746a77ec54885f50a0e6c4c0e5d8510270922e8b4d6f7c6ca6f",
+      "bytes": 301376
+    },
+    {
+      "path": "tests/world_downed_lua_check.lua",
+      "sha256": "60238ec2d12f3682407f771711b2dd36a027162bd117b76bd66e60e45b070035",
+      "bytes": 45663
+    }
+  ]
+}

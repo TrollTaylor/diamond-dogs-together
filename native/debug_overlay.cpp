@@ -64,6 +64,9 @@ std::atomic<HWND> window{nullptr};
 std::atomic<ULONGLONG> release_after{0};
 Hook present_hook{}, resize_hook{}, state_hooks[2]{}, data_hooks[2]{};
 Hook cursor_hook{}, clip_hook{}, keyboard_hook{}, pad_hook{};
+// The last local keyboard/mouse press and controller activity this game saw;
+// the rescue prompt's button glyph follows whichever came last.
+std::atomic<ULONGLONG> last_keyboard_ms{0}, last_pad_ms{0};
 #if MGS_BACKGROUND_WORKER
 enum class WorkerCounter : unsigned {
     raw_keyboard_posted,
@@ -401,10 +404,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT id, WPARAM wp, LPARAM lp) noexcept {
         F9(id == WM_KEYDOWN || id == WM_SYSKEYDOWN);
         toggle_event = debug_menu::Enabled() && Foreground();
     }
+    if (id == WM_KEYDOWN || id == WM_SYSKEYDOWN || id == WM_LBUTTONDOWN || id == WM_RBUTTONDOWN)
+        last_keyboard_ms.store(GetTickCount64(), std::memory_order_relaxed);
     if (id == WM_INPUT) {
         RAWINPUT raw{};
         UINT size = sizeof(raw);
         if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lp), RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1)) {
+            if ((raw.header.dwType == RIM_TYPEKEYBOARD && (raw.data.keyboard.Flags & RI_KEY_BREAK) == 0) ||
+                (raw.header.dwType == RIM_TYPEMOUSE && (raw.data.mouse.usButtonFlags &
+                    (RI_MOUSE_LEFT_BUTTON_DOWN | RI_MOUSE_RIGHT_BUTTON_DOWN | RI_MOUSE_MIDDLE_BUTTON_DOWN))))
+                last_keyboard_ms.store(GetTickCount64(), std::memory_order_relaxed);
             if (raw.header.dwType == RIM_TYPEKEYBOARD && raw.data.keyboard.VKey == VK_F9) {
                 F9((raw.data.keyboard.Flags & RI_KEY_BREAK) == 0);
                 toggle_event = debug_menu::Enabled() && Foreground();
@@ -855,6 +864,13 @@ PadFn PadOriginal() noexcept {
 #endif
     return reinterpret_cast<PadFn>(pad_hook.original);
 }
+bool PadActive(const XINPUT_GAMEPAD& g) noexcept {
+    return g.wButtons || g.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD || g.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD ||
+        g.sThumbLX > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || g.sThumbLX < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE ||
+        g.sThumbLY > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || g.sThumbLY < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE ||
+        g.sThumbRX > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || g.sThumbRX < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE ||
+        g.sThumbRY > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || g.sThumbRY < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE;
+}
 bool PadsReleased() noexcept {
     const auto original = PadOriginal();
     if (!original) return true;
@@ -866,12 +882,7 @@ bool PadsReleased() noexcept {
         XINPUT_STATE state{};
         if (original(i, &state) != ERROR_SUCCESS) continue;
         const auto& g = state.Gamepad;
-        if (g.wButtons || g.bLeftTrigger || g.bRightTrigger ||
-            g.sThumbLX > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || g.sThumbLX < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE ||
-            g.sThumbLY > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || g.sThumbLY < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE ||
-            g.sThumbRX > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || g.sThumbRX < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE ||
-            g.sThumbRY > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || g.sThumbRY < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE)
-            released = false;
+        if (g.wButtons || g.bLeftTrigger || g.bRightTrigger || PadActive(g)) released = false;
     }
     SetLastError(error);
     return released;
@@ -885,6 +896,7 @@ DWORD WINAPI Pad(DWORD index, XINPUT_STATE* state) noexcept {
     }
     const DWORD result = PadOriginal()(index, state);
     const DWORD error = GetLastError();
+    if (result == ERROR_SUCCESS && state && PadActive(state->Gamepad)) last_pad_ms.store(GetTickCount64(), std::memory_order_relaxed);
     if (result == ERROR_SUCCESS && state && CapturingInput()) std::memset(&state->Gamepad, 0, sizeof(state->Gamepad));
     SetLastError(error);
     return result;
@@ -958,9 +970,33 @@ void Cleanup() noexcept {
     Release(target); Release(context); Release(device);
     AcquireSRWLockExclusive(&message_lock); message_count = 0; ReleaseSRWLockExclusive(&message_lock);
 }
+// The rescue prompt's face: Windows' DIN-style Bahnschrift (closest to the
+// game's HUD lettering), else Segoe UI; null keeps the menu font.
+ImFont* hud_font = nullptr;
+void LoadHudFont(ImGuiIO& io) noexcept {
+    hud_font = nullptr;
+    wchar_t windows[MAX_PATH]{};
+    const UINT length = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
+    if (!length || length >= ARRAYSIZE(windows)) return;
+    static const wchar_t* const files[] = {L"\\Fonts\\bahnschrift.ttf", L"\\Fonts\\seguisb.ttf", L"\\Fonts\\segoeui.ttf"};
+    for (const wchar_t* file : files) {
+        wchar_t path[MAX_PATH]{};
+        char utf8[MAX_PATH * 3]{};
+        if (FAILED(StringCchCopyW(path, ARRAYSIZE(path), windows)) || FAILED(StringCchCatW(path, ARRAYSIZE(path), file))) continue;
+        const DWORD attributes = GetFileAttributesW(path);
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (!WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8, sizeof(utf8), nullptr, nullptr)) continue;
+        ImFontConfig config{};
+        config.SizePixels = 22.0f;
+        config.Flags |= ImFontFlags_NoLoadError;
+        hud_font = io.Fonts->AddFontFromFileTTF(utf8, 22.0f, &config);
+        if (hud_font) return;
+    }
+}
 // Readable defaults shared by the interactive and worker-drawn menus.
 void Style(ImGuiIO& io) noexcept {
     ImFontConfig font{}; font.SizePixels = 18.0f; io.Fonts->AddFontDefault(&font);
+    LoadHudFont(io);
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 6.0f; style.FrameRounding = 4.0f;
@@ -1080,9 +1116,9 @@ void DrawNametagLayer(const nametag::Frame& frame, nametag::RenderNote& note, co
         const auto a = static_cast<int>(alpha * 255.0f + 0.5f);
         const ImU32 text = frame.hover ? IM_COL32(170, 255, 185, a) : IM_COL32(255, 255, 255, a);
         const ImU32 shadow = IM_COL32(0, 0, 0, a * 7 / 8), plate = IM_COL32(0, 0, 0, a * 3 / 8);
-        ImFont* font = ImGui::GetFont();
-        // Whole multiples of the menu font size (18 px) stay crisp: 18 px up to 1440p, 36 px from 2160p.
-        const float size = font->LegacySize * std::fmax(1.0f, std::floor(scale + 0.25f));
+        ImFont* font = hud_font ? hud_font : ImGui::GetFont();
+        // The bitmap menu font stays crisp only at whole multiples of 18 px; the HUD face scales freely.
+        const float size = hud_font ? std::floor(19.0f * scale + 0.5f) : font->LegacySize * std::fmax(1.0f, std::floor(scale + 0.25f));
         const float tri = 6.0f * scale, cap = std::fmax(160.0f * scale, display.x * 0.3f);
         // The name is sanitized UTF-8 (at most 24 Latin-1 code points); cut whole code points with "...".
         char label[nametag::kNameBytes + 4]{};
@@ -1120,12 +1156,18 @@ struct HudFrame {
     coop_hud::Line downed_line;
     bool show_downed, downed_progress;
     float revive_progress;
+    coop_hud::RescuePrompt rescue;
+    bool show_rescue;
+    nametag::Frame tag;  // the teammate's projected name tag, when fresh
+    bool tag_fresh;
+    bool pad_glyphs;     // the controller was used after the keyboard/mouse
     const coop_hud::Toast* toasts[coop_hud::kMaxToasts];
     unsigned toast_count;
 };
 bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     f = HudFrame{};
-    if (!coop_hud::Enabled()) return false;
+    const bool statusLine = coop_hud::Enabled();
+    if (!statusLine && !coop_hud::RescueEnabled()) return false;
     const ULONGLONG now = GetTickCount64();
     coop_hud::LinkView view{};
     coop_hud::GetLink(view);
@@ -1138,7 +1180,7 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     else if (tag.name_src == nametag::NameSource::remote && tag.name[0]) StringCchCopyA(name, ARRAYSIZE(name), tag.name);
     std::uint32_t new_toasts = 0;
     coop_hud::Event events[8]{};
-    const unsigned taken = coop_hud::Take(events, 8, hud_model.cursor());
+    const unsigned taken = statusLine ? coop_hud::Take(events, 8, hud_model.cursor()) : 0;
     for (unsigned i = 0; i < taken; ++i) {
         char text[coop_hud::kToastChars]{};
         coop_hud::Tone tone{};
@@ -1155,14 +1197,25 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     }
     coop_hud::PartnerView partner{};
     coop_hud::GetPartner(partner); // copied owner publication only
-    f.show_line = coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line, &partner);
+    f.show_line = statusLine && coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line, &partner);
     coop_hud::DownedView downed{};
     coop_hud::GetDowned(downed); // copied receipt facts; never local game reads
-    f.show_downed = coop_hud::FormatDowned(downed, view.mission, now, f.downed_line, f.revive_progress);
-    f.downed_progress = f.show_downed && downed.teammateDown && downed.inRange && !downed.localDown;
-    f.toast_count = hud_model.Active(now, f.toasts, coop_hud::kMaxToasts);
-    coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
-    return f.show_line || f.show_downed || f.toast_count;
+    // A fresh downed receipt can arrive before the link line has a mission.
+    // A published link mission still has to match; another scene stays hidden.
+    const auto downedMission = view.mission ? view.mission : downed.mission;
+    f.show_downed = coop_hud::FormatDowned(downed, downedMission, now, f.downed_line, f.revive_progress);
+    f.downed_progress = f.show_downed && downed.teammateDown && downed.inRange && !downed.localDown && f.revive_progress > 0.0f;
+    f.show_rescue = coop_hud::ClassifyDowned(downed, downedMission, now, f.rescue) && f.rescue.state != coop_hud::Rescue::carrying &&
+        f.rescue.state != coop_hud::Rescue::transfer;
+    if (f.show_rescue && nametag::Take(f.tag)) {
+        const ULONGLONG tagNow = GetTickCount64();
+        f.tag_fresh = tagNow >= f.tag.tick_ms && tagNow - f.tag.tick_ms <= nametag::kStaleMs;
+    }
+    f.pad_glyphs = last_pad_ms.load(std::memory_order_relaxed) > last_keyboard_ms.load(std::memory_order_relaxed);
+    f.toast_count = statusLine ? hud_model.Active(now, f.toasts, coop_hud::kMaxToasts) : 0;
+    if (statusLine)
+        coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
+    return f.show_line || f.show_rescue || f.toast_count;
 }
 ImU32 HudColor(coop_hud::Tone tone, int alpha) noexcept {
     switch (tone) {
@@ -1171,6 +1224,116 @@ ImU32 HudColor(coop_hud::Tone tone, int alpha) noexcept {
     case coop_hud::Tone::bad: return IM_COL32(255, 120, 110, alpha);
     default: return IM_COL32(240, 240, 240, alpha);
     }
+}
+// Outlined HUD text (the game's prompts are white with a dark edge).
+void HudText(ImDrawList* list, ImFont* font, float size, ImVec2 at, ImU32 color, const char* text) noexcept {
+    const int alpha = static_cast<int>((color >> IM_COL32_A_SHIFT) & 0xFF);
+    const ImU32 edge = IM_COL32(0, 0, 0, alpha * 3 / 4);
+    const ImVec2 offsets[] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {1, 1}};
+    for (const auto& o : offsets) list->AddText(font, size, ImVec2(at.x + o.x, at.y + o.y), edge, text);
+    list->AddText(font, size, at, color, text);
+}
+// The Action button as the game would show it for this copy's last input:
+// the E key cap for keyboard/mouse, the yellow Y face button for a controller.
+// Returns the glyph radius used.
+float DrawActionGlyph(ImDrawList* list, ImFont* font, ImVec2 c, float r, bool pad, int alpha) noexcept {
+    const char* letter = pad ? "Y" : "E";
+    const float letterSize = r * 1.25f;
+    const ImVec2 ts = font->CalcTextSizeA(letterSize, FLT_MAX, 0.0f, letter);
+    if (pad) {
+        list->AddCircleFilled(c, r, IM_COL32(236, 190, 40, alpha), 32);
+        list->AddCircle(c, r, IM_COL32(20, 20, 20, alpha * 3 / 4), 32, 1.5f);
+        list->AddText(font, letterSize, ImVec2(std::floor(c.x - ts.x * 0.5f), std::floor(c.y - ts.y * 0.5f)), IM_COL32(20, 20, 20, alpha), letter);
+    } else {
+        const float h = r * 0.82f;
+        list->AddRectFilled(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), IM_COL32(16, 18, 20, alpha * 3 / 4), r * 0.22f);
+        list->AddRect(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), IM_COL32(240, 240, 240, alpha), r * 0.22f, 0, std::fmax(1.5f, r * 0.1f));
+        list->AddText(font, letterSize, ImVec2(std::floor(c.x - ts.x * 0.5f), std::floor(c.y - ts.y * 0.5f)), IM_COL32(245, 245, 245, alpha), letter);
+    }
+    return r;
+}
+// The rescue prompt: anchored under the teammate's name tag while it is on
+// screen, else lower center. A status pill with the distance when far, the
+// Action button with a radial hold ring when in range, and a short status
+// for the player who is down. Pickup keeps the stock carry icon.
+void DrawRescuePrompt(const HudFrame& f, ImDrawList* list, const ImVec2& display, float scale) noexcept {
+    using coop_hud::Rescue;
+    ImFont* font = hud_font ? hud_font : ImGui::GetFont();
+    const auto& p = f.rescue;
+    const ImU32 status = p.sleeping ? IM_COL32(255, 196, 64, 245) : IM_COL32(240, 88, 72, 245);
+    const char* word = p.sleeping ? "ASLEEP" : "WOUNDED";
+    const float mainSize = 23.0f * scale, subSize = 16.0f * scale;
+    if (p.state == Rescue::self_asleep || p.state == Rescue::self_wounded || p.state == Rescue::carried) {
+        // Asleep: the world stays visible (coop_carry blocks the stock
+        // blackout presentation); a grey wash marks it as greyed out.
+        if (p.sleeping) list->AddRectFilled(ImVec2(0, 0), display, IM_COL32(92, 92, 98, 125));
+        const char* head = p.state == Rescue::carried ? "CARRIED" : word;
+        const char* tail = p.state == Rescue::carried ? "Your teammate is carrying you" :
+            p.sleeping ? "Your teammate can wake you or carry you" : "Crawl to cover. Your teammate can revive you";
+        char distance[48]{};
+        if (f.tag_fresh && f.tag.dist_m > 0.0f && p.state != Rescue::carried)
+            StringCchPrintfA(distance, ARRAYSIZE(distance), "Teammate %.0f m", f.tag.dist_m);
+        const ImVec2 hs = font->CalcTextSizeA(mainSize, FLT_MAX, 0.0f, head);
+        const ImVec2 ts = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, tail);
+        const ImVec2 ds = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, distance);
+        // Above the stock sleep/crawl action icons at the lower center.
+        const float y = std::floor(display.y * 0.30f);
+        const ImU32 headColor = p.state == Rescue::carried ? IM_COL32(235, 235, 235, 245) : status;
+        HudText(list, font, mainSize, ImVec2(std::floor((display.x - hs.x) * 0.5f), y), headColor, head);
+        HudText(list, font, subSize, ImVec2(std::floor((display.x - ts.x) * 0.5f), y + hs.y + 2.0f * scale), IM_COL32(235, 235, 235, 235), tail);
+        if (distance[0])
+            HudText(list, font, subSize, ImVec2(std::floor((display.x - ds.x) * 0.5f), y + hs.y + ts.y + 4.0f * scale), IM_COL32(190, 190, 190, 220), distance);
+        return;
+    }
+    // Anchor: just under the name tag's head point, or lower center.
+    const bool anchored = f.tag_fresh && f.tag.visible;
+    float ax = display.x * 0.5f, ay = display.y * 0.64f;
+    if (anchored) {
+        nametag::NdcToDisplay(f.tag.rect, f.tag.ndc, display.x, display.y, ax, ay);
+        ay += 10.0f * scale;
+    }
+    const float edge = 24.0f * scale;
+    ax = std::fmin(std::fmax(ax, edge + 90.0f * scale), display.x - edge - 90.0f * scale);
+    ay = std::fmin(std::fmax(ay, edge), display.y - edge - 60.0f * scale);
+    if (p.state == Rescue::away || p.state == Rescue::wait) {
+        char text[64]{};
+        if (p.state == Rescue::away && f.tag_fresh && f.tag.dist_m > 0.0f)
+            StringCchPrintfA(text, ARRAYSIZE(text), anchored ? "%s  %.0f m" : "TEAMMATE %s  %.0f m", word, f.tag.dist_m);
+        else StringCchPrintfA(text, ARRAYSIZE(text), anchored ? "%s" : "TEAMMATE %s", word);
+        const ImVec2 ts = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, text);
+        const float dot = 4.0f * scale, padX = 8.0f * scale, padY = 3.0f * scale;
+        const float w = dot * 2.0f + 6.0f * scale + ts.x;
+        const float x = std::floor(ax - w * 0.5f), y = std::floor(ay);
+        list->AddRectFilled(ImVec2(x - padX, y - padY), ImVec2(x + w + padX, y + ts.y + padY), IM_COL32(10, 12, 14, 150), ts.y);
+        list->AddCircleFilled(ImVec2(x + dot, y + ts.y * 0.5f), dot, status, 16);
+        HudText(list, font, subSize, ImVec2(x + dot * 2.0f + 6.0f * scale, y), IM_COL32(240, 240, 240, 240), text);
+        return;
+    }
+    // ready / holding / done: [button + ring]  LABEL / HOLD. Within 3 m the
+    // teammate lies at the player's feet, where the stock Fulton/Carry icons
+    // sit; the button goes beside the player's own character instead.
+    const float r = 15.0f * scale;
+    const char* label = p.state == Rescue::ready ? (p.sleeping ? "WAKE UP" : "REVIVE") : (p.sleeping ? "WAKING UP" : "REVIVING");
+    const char* hint = p.state == Rescue::ready ? "HOLD" : p.state == Rescue::done ? "" : "KEEP HOLDING";
+    const ImVec2 ls = font->CalcTextSizeA(mainSize, FLT_MAX, 0.0f, label);
+    const ImVec2 hs = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, hint);
+    const float gap = 10.0f * scale, ring = r + 5.0f * scale;
+    const float x0 = std::floor(display.x * 0.56f), cy = std::floor(display.y * 0.58f);
+    const ImVec2 c(x0 + ring, cy);
+    list->AddCircleFilled(c, ring + 1.5f * scale, IM_COL32(10, 12, 14, 140), 40);
+    list->AddCircle(c, ring, IM_COL32(255, 255, 255, 70), 40, 3.0f * scale);
+    const float progress = p.state == Rescue::done ? 1.0f : p.state == Rescue::holding ? std::fmin(1.0f, std::fmax(0.0f, p.progress)) : 0.0f;
+    if (progress > 0.0f) {
+        constexpr float kTop = -1.5707963f, kTurn = 6.2831853f;
+        list->PathArcTo(c, ring, kTop, kTop + kTurn * progress, 48);
+        list->PathStroke(IM_COL32(250, 250, 250, 245), ImDrawFlags_None, 3.5f * scale);
+    }
+    DrawActionGlyph(list, font, c, r, f.pad_glyphs, 245);
+    const float tx = x0 + ring * 2.0f + gap;
+    const float blockH = ls.y + (hint[0] ? hs.y : 0.0f);
+    const float ty = std::floor(cy - blockH * 0.5f);
+    if (hint[0]) HudText(list, font, subSize, ImVec2(tx, ty), IM_COL32(210, 210, 210, 235), hint);
+    HudText(list, font, mainSize, ImVec2(tx, ty + (hint[0] ? hs.y : 0.0f)), IM_COL32(255, 255, 255, 250), label);
 }
 void DrawHudLayer(const HudFrame& f, const ImVec2& display) noexcept {
     ImDrawList* list = ImGui::GetBackgroundDrawList();
@@ -1192,18 +1355,7 @@ void DrawHudLayer(const HudFrame& f, const ImVec2& display) noexcept {
         right_text(f.line.text, HudColor(f.line.tone, 235), 0.0f);
         if (f.line.detail[0]) right_text(f.line.detail, IM_COL32(200, 200, 200, 220), 0.0f);
     }
-    if (f.show_downed) {
-        right_text(f.downed_line.text, HudColor(f.downed_line.tone, 245), 0.0f);
-        if (f.downed_progress) {
-            const float width = 200.0f * scale, height = 5.0f * scale;
-            const float x = display.x - margin - width;
-            list->AddRectFilled(ImVec2(x - pad, y - pad * 0.5f), ImVec2(x + width + pad, y + height + pad * 0.5f), IM_COL32(0, 0, 0, 140), 3.0f * scale);
-            list->AddRectFilled(ImVec2(x, y), ImVec2(x + width, y + height), IM_COL32(90, 90, 90, 220), 2.0f * scale);
-            if (f.revive_progress > 0.0f)
-                list->AddRectFilled(ImVec2(x, y), ImVec2(x + width * f.revive_progress, y + height), HudColor(coop_hud::Tone::good, 245), 2.0f * scale);
-            y += height + pad * 2.0f;
-        }
-    }
+    if (f.show_rescue) DrawRescuePrompt(f, list, display, scale);
     const float wrap = std::fmin(display.x * 0.4f, 620.0f * scale);
     for (unsigned i = 0; i < f.toast_count; ++i) right_text(f.toasts[i]->text, HudColor(f.toasts[i]->tone, 245), wrap);
 }
@@ -1466,7 +1618,7 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
         worker_frames::Capture(chain, worker_scenario::TakeCapture(GetTickCount64()));
         ReleaseSRWLockExclusive(&render_lock);
     }
-    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled()) &&
+    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled() || coop_hud::RescueEnabled()) &&
         !resizing.load(std::memory_order_acquire)) {
         AcquireSRWLockExclusive(&render_lock);
         if (initialized && swapchain != chain) Cleanup();
@@ -1517,7 +1669,7 @@ HRESULT STDMETHODCALLTYPE Resize(IDXGISwapChain* chain, UINT buffers, UINT width
     SetLastError(original_error); return result;
 }
 BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
-    if (!debug_menu::Enabled() && !nametag::Enabled() && !coop_hud::Enabled() && !worker_scenario::Requested()) return TRUE;
+    if (!debug_menu::Enabled() && !nametag::Enabled() && !coop_hud::Enabled() && !coop_hud::RescueEnabled() && !worker_scenario::Requested()) return TRUE;
     if (worker_scenario::Requested() && !worker_scenario::GetContext().run_id) return TRUE;
     InitializeLog();
     const MH_STATUS status = MH_Initialize();
@@ -1623,7 +1775,7 @@ WorkerInputStats GetWorkerInputStats() noexcept {
 }
 void Install() noexcept {
     const DWORD error = GetLastError();
-    if (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled() || worker_scenario::Requested())
+    if (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled() || coop_hud::RescueEnabled() || worker_scenario::Requested())
         InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
     SetLastError(error);
 }

@@ -1,0 +1,47 @@
+{
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "classification": "First held teardown and first PoseFail bounded diagnostics only; no guard relaxation/native invocation/activation",
+  "roles": {
+    "block": 1,
+    "PS": 2,
+    "CS": 4,
+    "entry": 8,
+    "wholeGO": 16,
+    "PlayerSecondary": 32
+  },
+  "proof_sources": [
+    "main/native/partner_player_contract.hpp PS408->block138P; block2295210 PS23B09F0/23B0C70 CS22E6070 layout",
+    "main/native/carry_model_lifetime_contract.hpp exact9BB260519B AF014047B B6CD605B/B6C0F0498B",
+    "main/native/carry_model_retirement_contract.hpp exact9BFC90879B 9CC850248B 9CD030chained",
+    "main/native/whole_player_lifetime_contract.hpp exact9BB7A0/9C2F70 plus resetthunk9C2F60"
+  ],
+  "native_classification": {
+    "9BB260": "block destructor, destroys per-id/model/components; refusal retained",
+    "AF0140": "CS deleting dtor; final22E6070 slot548",
+    "B6CD60": "tailJMP B6C0F0; destroys model trees/callbacks and frees entry78 allocation",
+    "9BFC90": "indexed retirement; actual ID/control and raw count/base logged, no range-based waiver",
+    "9CC850": "indexed rebind; block2295210 slotF8; raw count/base observed",
+    "9CD030": "parts update: wrapper matches GO and currently refuses even potential no-op; actualcaller receipt still pending; no allowance",
+    "9BB7A0": "wholeGO deleting dtor slotB8",
+    "9C2F70": "wholeGO reset, finalGO slot8 tail9C2F60"
+  },
+  "invariants": [
+    "Every existing required/held/refusal predicate and birth invalidation remains unchanged.",
+    "Actual hook caller captured in noinline wrapper before shared admission; incoming indexed ID/control retained.",
+    "Teardown line emitted before first PoseFail/worker Refuse; first fail line independently bounded.",
+    "Read-only pairs never change acceptance, typed false/current mismatch remain explicit.",
+    "Typed body0/1 identities compare against retained births/models. No PS138 owner assumption.",
+    "All reported caller/type/slot-function fields are bounded RVAs; no raw pointers logged.",
+    "LastError preserved around diagnostics; native wrapper ABI/original-call/finally paths unchanged."
+  ],
+  "tests": {
+    "assertions": 19,
+    "compiled": false,
+    "runtime": false
+  },
+  "limitations": [
+    "Actual first refusing hook/caller remains unobserved until root-owned private run.",
+    "No indexed no-op/destruction exception permitted from this diagnostic.",
+    "No main source edits/build/runtime by this agent."
+  ]
+}

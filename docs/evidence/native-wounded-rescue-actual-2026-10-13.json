@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "b52311eefe8d445bb0327eb0647b3570",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-160627-6e2ad4cb465c40f394fca6d128bf8f47\\receipt.json",
+  "feature_activation": true,
+  "protected_unchanged": 63,
+  "passed_checks": 8,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 96923298,
+      "end": 97270477,
+      "sha256": "2676dde63d6f9879eb3ebcce931f7ca232466ff70400efd982161b7e967b8e69"
+    },
+    {
+      "role": "guest",
+      "start": 105563682,
+      "end": 105927332,
+      "sha256": "a6d882eb6a7cfc6b8e108eda4ad3cf676ee8598a6c4a6cb40eb1f87de9c40b30"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Two hidden offline copies: rifle wounds, slow crawl, native pickup/shoulder attachment, walking, put-down, revive and restored local controls. Native horse cargo and remote internet sessions remain separately unverified."
+}

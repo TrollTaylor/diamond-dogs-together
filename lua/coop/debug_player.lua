@@ -4,7 +4,7 @@ do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local get, call, number, fmt, floor = A.get, A.call, A.number, string.format, math.floor
   local P = {handles = {heal = true, godmode = true, fulton_infinite = true, forward = true, goto_partner = true,
-    slowmo = true, time_add = true}}
+    goto_carry = true, goto_horse = true, goto_vehicle = true, slowmo = true, time_add = true}}
   D.player = P
   local function fill()
     local l, m = A.life()
@@ -92,6 +92,79 @@ do
       if math.abs(x) > 100000 or math.abs(t[2]) > 99999 or math.abs(z) > 100000 then return false, "partner_pose_bounds" end
       local ok, msg = A.warp({x, t[2] + 0.3, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok, fmt("%s;via=partner;age_ms=%d", msg, age)
+    elseif cmd == "goto_carry" and #a == 1 then
+      -- 0.9 m in front of the teammate's stock carry point (native "cp"), facing it.
+      local cp = D.carryPoint
+      if type(cp) ~= "table" then return false, "carry_point_unavailable" end
+      local t = {}
+      for i = 1, 3 do
+        local v = get(cp, i)
+        if not A.integer(v, -100000000, 100000000) then return false, "carry_point_bounds" end
+        t[i] = v / 1000
+      end
+      local me = A.pose()
+      local dx, dz = me[1] - t[1], me[3] - t[3]
+      local len = math.sqrt(dx * dx + dz * dz)
+      if len < 0.1 then dx, dz, len = 1, 0, 1 end
+      local x, z = t[1] + 0.9 * dx / len, t[3] + 0.9 * dz / len
+      local ok, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
+      return ok, fmt("%s;via=carry_point", msg)
+    elseif cmd == "goto_horse" and #a == 1 then
+      -- 1.6 m beside the local D-Horse, facing it: stock GetPosition on the
+      -- horse, else the ride pose census, else the last D-Horse call goal.
+      local W = e.MgsCoopWorld
+      local t, via
+      local okp, pos = pcall(GameObject.SendCommand, 6656, {id = "GetPosition"})
+      if okp and pos ~= nil and (type(pos) == "userdata" or type(pos) == "table") then
+        local r2, x, y, z = pcall(function() return pos:GetX(), pos:GetY(), pos:GetZ() end)
+        if r2 and A.finite(x) and A.finite(y) and A.finite(z) and (x ~= 0 or z ~= 0) then t, via = {x, y, z}, "get_position" end
+      end
+      if not t and type(W) == "table" and type(W.receipt) == "function" then
+        local ok, r = pcall(W.receipt, fmt("return 'MGS_COOP_RIDE_POSE_V1' -- %d %d 1", W.mission or 0, W.epoch or 0))
+        if ok and type(r) == "table" and r.ready == true and type(r.actors) == "table" then
+          for i = 1, #r.actors do
+            local h = r.actors[i]
+            if type(h) == "table" and h.realized == true and h.id == 6656 and A.integer(h.x, -1000000000, 1000000000) and
+              A.integer(h.y, -1000000000, 1000000000) and A.integer(h.z, -1000000000, 1000000000) then t, via = {h.x / 1000, h.y / 1000, h.z / 1000}, "census" end
+          end
+        end
+      end
+      local B = D.buddy
+      if not t and type(B) == "table" and type(B.lastGoal) == "table" then t, via = B.lastGoal, "call_goal" end
+      if not t then return false, "horse_position_unknown" end
+      local me = A.pose()
+      local dx, dz = me[1] - t[1], me[3] - t[3]
+      local len = math.sqrt(dx * dx + dz * dz)
+      if len < 0.1 then dx, dz, len = 1, 0, 1 end
+      local x, z = t[1] + 1.6 * dx / len, t[3] + 1.6 * dz / len
+      local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
+      return ok2, fmt("%s;via=%s;horse=%.2f,%.2f,%.2f", msg, via, t[1], t[2], t[3])
+    elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and a[2] == "jeep")) then
+      -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition).
+      local me, best, bestD, bestName = A.pose(), nil, nil, nil
+      local names = {}
+      for i = 0, 12 do names[#names + 1] = fmt("veh_lv_%04d", i) end
+      if a[2] ~= "jeep" then for i = 0, 5 do names[#names + 1] = fmt("veh_trc_%04d", i) end end
+      for _, name in ipairs(names) do
+        local okId, vid = pcall(GameObject.GetGameObjectId, "TppVehicle2", name)
+        if okId and type(vid) == "number" and vid >= 0 and vid < 65535 then
+          local okp, pos, rot = pcall(GameObject.SendCommand, vid, {id = "GetPosition"})
+          if okp and pos ~= nil then
+            local r2, x, y, z = pcall(function() return pos:GetX(), pos:GetY(), pos:GetZ() end)
+            if r2 and A.finite(x) and A.finite(y) and A.finite(z) then
+              local d2 = (x - me[1]) ^ 2 + (z - me[3]) ^ 2
+              if not bestD or d2 < bestD then best, bestD, bestName = {x, y, z, A.finite(rot) and rot or 0, vid}, d2, name end
+            end
+          end
+        end
+      end
+      if not best then return false, "vehicle_none" end
+      local s = best[4] + math.pi / 2
+      local x, z = best[1] + 1.9 * math.sin(s), best[3] + 1.9 * math.cos(s)
+      local W = e.MgsCoopWorld
+      if type(W) == "table" and type(W.log) == "function" then pcall(W.log, fmt("goto_vehicle;name=%s;id=%d;dist=%.0f", bestName, best[5], math.sqrt(bestD))) end
+      local ok2, msg = A.warp({x, best[2] + 0.5, z, math.deg(math.atan2(best[1] - x, best[3] - z))}, id)
+      return ok2, fmt("%s;vehicle=%s;id=%d;dist=%.0f", msg, bestName, best[5], math.sqrt(bestD))
     elseif cmd == "time_add" and #a == 2 then
       if not A.hostOnly() then return false, "host_only" end
       local s = number(a[2], -86400, 86400, true)

@@ -1371,7 +1371,7 @@ do
         local refusingReset = true
         local previousLoad = env.loadstring
         env.loadstring = function(source)
-            if starts(source, "return 'MGS_COOP_DOWNED_HUD_V1'") then
+            if starts(source, "return 'MGS_COOP_DOWNED_HUD_V1'") or starts(source, "return 'MGS_COOP_DOWNED_HUD_V2'") or starts(source, "return 'MGS_COOP_DOWNED_HUD_V3'") then
                 c.receipts[#c.receipts + 1] = source
                 return function() return true end
             end
@@ -1402,6 +1402,8 @@ do
         }
         local downedChunk = assert(loadfile(coopDir .. 'world_downed.lua'))
         setfenv(downedChunk, env); downedChunk()
+        local sleepChunk = assert(loadfile(coopDir .. 'world_partner_sleep.lua'))
+        setfenv(sleepChunk, env); sleepChunk()
         F.start(env, c); F.pair(env, c, 3)
         n.down, n.generation, n.cause = true, 1, 2
         F.tick(env, c, 1)
@@ -1465,7 +1467,7 @@ if arg[8] then
         at = at + #spliced
     end
     local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
-    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua'}) do
+    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua', 'debug_vehicle.lua'}) do
         local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
             name .. ' spliced once, byte-identical, directly after the previous chunk')
@@ -1506,6 +1508,10 @@ if arg[8] then
         setfenv(chunk, env)
         local mod = chunk()
         check(type(mod) == 'table' and type(mod.MgsCoopWorld) == 'table', 'composed module publishes e.MgsCoopWorld')
+        check(type(mod.MgsCoopWorld.downed) == 'table' and
+            type(mod.MgsCoopWorld.downed.partnerSleepPublish) == 'function' and
+            type(mod.MgsCoopWorld.downed.partnerSleepClear) == 'function',
+            'actual composed TppMain includes passive accepted-peer sleep adapter after downed')
         check(type(mod.MgsCoopDebug) == 'table' and type(mod.MgsCoopDebug.equipment) == 'table',
             'composed module publishes debug core and equipment')
         if disableDebug then

@@ -1,0 +1,76 @@
+{
+  "scope": "frozen V9 experimental copied-save body0 configured-stun planner/controls; no main changes, no game launch, no native runtime calls/writes",
+  "base_v7_manifest_sha256": "CDF5D119A0ECF08142C497E2388B669C44DECA6F5BB3ECF665DB22BE86A077EB",
+  "tests": [
+    "198 strict MSVC /std:c++17 /EHsc /W4 /WX /O2 pure lease/producer gate checks passed",
+    "160 strict MSVC pure controls/final release checks passed",
+    "13/13 complete seed/configured-max code/slot pins independently matched retail PE bytes"
+  ],
+  "retail_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "integration_files": [
+    "sleep_body0_lease.hpp",
+    "sleep_seed_contract.hpp",
+    "sleep_worker_controls.hpp",
+    "sleep_body0_lease_tests.cpp",
+    "sleep_worker_controls_tests.cpp"
+  ],
+  "integration_required": "NativeDrive empty/early-wake retirement must use sl::RetireEmpty(read.sample,read.scope.now) or capture nativeLease.maximumStunBits=sl::Bits(read.sample.maximumStun) in the manual constructor. Existing sleep_seed_contract CodeGate unchanged API, extends7\u219213sites. ReleaseSample independently checks ValidStun and SameMaximum. No C0 runtime access needed.",
+  "abi": "Sample and Scope unchanged; Lease adds uint32 maximumStunBits. Commit captures bits for both partial and full seed. Exact max drift blocks Repair/Wake/Observe/Release and holds locks/lab failure.",
+  "files": [
+    {
+      "path": "sleep_body0_lease.hpp",
+      "bytes": 11375,
+      "sha256": "3485ADAB6701C5CA103393B113311CA9313F121ECE1E858090C9EE887A4562F6"
+    },
+    {
+      "path": "sleep_seed_contract.hpp",
+      "bytes": 51040,
+      "sha256": "A94DFDD225B836C7DB6301790C1397D6C2C670201B178C82430588B0A6CE362B"
+    },
+    {
+      "path": "sleep_worker_controls.hpp",
+      "bytes": 3501,
+      "sha256": "35E946CFC2350452F1A341C64AB8A0B46424975316312D8B7CABAB491283D1F8"
+    },
+    {
+      "path": "sleep_body0_lease_tests.cpp",
+      "bytes": 13592,
+      "sha256": "A5A4E08EBC0B1DA2C2C00D8A4159037A5E743FE642CFE8A9B94183AF662CDA35"
+    },
+    {
+      "path": "sleep_worker_controls_tests.cpp",
+      "bytes": 10503,
+      "sha256": "ABDBCCDE3B7E7C65B9D84C5935EF3844EEDFF0D13807DA82140BC65611EE7489"
+    },
+    {
+      "path": "sleep_stun_config_proof.json",
+      "bytes": 5726,
+      "sha256": "9AEC7B040E6B6415969E983082C97EBC2818EEB55EF594C5CDA57FF34802A07D"
+    },
+    {
+      "path": "sleep_loaded_requests.hpp",
+      "bytes": 1907,
+      "sha256": "4D8DEC20EC6446011CD3A922C03043AAD5F2A9555C234DE940C2762C5EFF4192"
+    },
+    {
+      "path": "sleep_plugin_read.hpp",
+      "bytes": 11444,
+      "sha256": "85B770D132F2CD0B39712CDF030BC65B0FF8C4ED9F4804EA6711A25B431410C3"
+    },
+    {
+      "path": "sleep_graph_read.hpp",
+      "bytes": 7536,
+      "sha256": "3100459457B5A5E3F080063AD6E7A3735FD6292C1F158EDDE19378B141E5DA0C"
+    },
+    {
+      "path": "sleep_plugin_contract.hpp",
+      "bytes": 82481,
+      "sha256": "04657738006B0F318153AF2FD51BF6ADF031B7B435950820BC880DEDEBDAA0E5"
+    },
+    {
+      "path": "sleep_graph_contract.hpp",
+      "bytes": 28909,
+      "sha256": "D8E302F4A8C66A5C22246F6CB6BAE68A2BE38A243BEEF55133FCAC06D52E2ED7"
+    }
+  ]
+}

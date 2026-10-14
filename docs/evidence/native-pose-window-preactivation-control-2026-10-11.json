@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "run": "5a4d87b2daaa4bdb8a7bdd33409674b2",
+  "kind": "hidden-actual-preactivation-control",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-003809-8276c476779244d4b2d0cb2f96a2bfa7\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "failure": "Required scenario check failed: host require posewindow;enabled=1 <- posewindow;refused=1",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 77303957,
+      "end": 77418178,
+      "sha256": "c433a28de9cd206ebafab466ed643679f11493112ebbd63c95d20d8ed70a418f"
+    },
+    {
+      "role": "guest",
+      "start": 86340466,
+      "end": 86471936,
+      "sha256": "60cf1019061a87e902a2517bfd56e94becb5c5022fb78bc9213b99dc6cc2e1eb"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Guest warp succeeded before activation; immediate host animation-window request refused after placement. No new gameplay features activated."
+}

@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "run": "4abac84fc8a74dc7bcbfcba1fb178cad",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261014-004353-87d8b5b7e60e4c15ac851731ccd9e9f3\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 2,
+  "failure": "Required scenario check failed: host require vmirror;on=1;en=1 <- vmirror;on=1;en=0;why=off;state=0;hold=0;rx=0;tx=0;claim=0;import=0;bind=0;pose=0;nonlocal=0;ui=0",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 106349201,
+      "end": 107002917,
+      "sha256": "08c7385b4354a403e1c77c5dd4e9f938dcc1d00cfa35e74fb2e912b43b2e6b73"
+    },
+    {
+      "role": "guest",
+      "start": 114886942,
+      "end": 115368309,
+      "sha256": "70425d9e874ca4e26b174e9d4e6d91e74a41b8c59fcf3468210b9e8ca5e6e347"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posewindow;installed=1;required=0;held=0;fault=0;born=0;windows=0;skip=0;hints=0;reason=pose_enable_participants",
+      "posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1"
+    ],
+    "guest": [
+      "posewindow;installed=1;required=0;held=0;fault=0;born=0;windows=0;skip=0;hints=0;reason=pose_actor_birth_unobserved",
+      "posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1"
+    ]
+  },
+  "limitations": "Both players reached actual jeep area before test activation. Long-sector move rearmed actor lifetimes; current participant/actor-birth admission refused, so optimized mirror never enabled and performance improvement was not measured. 2checks passed1failed. No native entry or riding acceptance. Normal owned close; installed0.12.5/63protected paths/real saves restored."
+}

@@ -849,4 +849,14 @@ check(f:send('horse_spawn')[3] == 'on_foot', 'summon cannot replace an occupied 
 check(f:send('horse_status extra')[3] == 'on_foot', 'mounted status exception only accepts the exact read-only command')
 f.D.buddy.stop = function() f.buddyStopped = true end
 f.D.stop(); check(f.buddyStopped, 'mission cleanup reaches new helper')
+
+
+local v = fixture()
+v.D.vehicle = {handles = {vehicle_seats = true}, run = function(a) return true, 'vehicle_seats_routed' end}
+check(v:send('vehicle_seats')[3] == 'vehicle_seats_routed', 'vehicle reader is routed on foot')
+v.mounted = 'vehicle'
+check(v:send('vehicle_seats')[3] == 'vehicle_seats_routed', 'exact vehicle reader permits mounted posture')
+check(v:send('vehicle_seats arbitrary')[3] == 'on_foot', 'mounted vehicle read exception requires exact command')
+check(v:send('horse_spawn')[3] == 'on_foot', 'mounted read exception never permits summon')
+
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

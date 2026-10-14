@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "stage": "read-only ordinary vehicle wrapper",
+  "runtime_verified": false,
+  "compile_verified": false,
+  "main_edits": 0,
+  "native_game_calls": 0,
+  "game_launches": 0,
+  "adapted_reference": {
+    "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\native\\sleep_info.cpp",
+    "sha256": "c831a1c54f51c4a50b1ccfffb3c2a5e2957e2cc1f86e99ed0cc7b1ad4cb2fd75"
+  },
+  "files": [
+    {
+      "path": "native/vehicle_info.cpp",
+      "bytes": 9157,
+      "sha256": "fd277a2ce6371699171ffd7be6a72984aad5781563b6add0cec11e875d9036c0"
+    },
+    {
+      "path": "native/include/mgscoop/vehicle_info.hpp",
+      "bytes": 1561,
+      "sha256": "957cd5b4bc491cdfd5340abe57ccf50c75ce3c9161f846926637282e26229237"
+    }
+  ],
+  "scope_review": {
+    "finding_count_after_correction": 0,
+    "correction": "Final downed owner snapshot moved after final ReadIdentity, so a cycle change during final identity read is visible before publication.",
+    "checks": [
+      "One-time configure cannot reopen failed verification or shutdown.",
+      "Last-error preserved around all public entrypoints.",
+      "TryAcquire writer lock serializes query, one successful natural owner thread binds permanently.",
+      "Full exact retail PE+partner+vehicle gate is caller prerequisite; verified and stopped are module-owned.",
+      "Fresh paired supported scene/epoch/generation/poll precedes typed identity reads.",
+      "Two initial identities match full P/Q/S/body metadata and provider context.",
+      "Three vehicle snapshots match exact typed ownership/allocation/raw state.",
+      "Owner readiness/armed/scene/epoch/generation/down/cause matched after reads; final owner captured after final identity.",
+      "Final identity and ScopeRefusal freshness/thread/input-window/batch checks precede public field copies.",
+      "No observed pointer leaves public Reply; constant reason is module-owned.",
+      "First refusal logger emits only relative offsets, image RVAs, size/read/zero, with lifetime budget32."
+    ],
+    "static_order_assertions": "passed; no native gameplay calls or write APIs present",
+    "limits": [
+      "Static review and textual guard order checks only; no Windows compile or runtime performed by this agent.",
+      "Current natural coordinator admission is trusted; this wrapper does not supply pairing/save admission itself.",
+      "Exact one-body final vehicle allocation shape still needs private runtime qualification.",
+      "Raw phase/entry-or-seat/node-active do not demonstrate occupancy, attachment or replicated passengers."
+    ]
+  },
+  "integration": [
+    "Add vehicle_info.cpp to mgs_partner_player target only after coordinator review.",
+    "Public include path native/include/mgscoop/vehicle_info.hpp; pure helper and contract are already staged.",
+    "Combine full exact-image/partner gate and vehicle_info::CodeGate before Configure.",
+    "Observe accepts only coordinator-provided mission/epoch/admission/naturalOwnerThread.",
+    "Shutdown is a permanent latch; no activation calls supplied."
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "run": "16240b8bb6f546aa8e1df8ac8539f36e",
+  "kind": "hidden-actual-partial",
+  "receipt": "build/worker-runs/20261012-003809-8276c476779244d4b2d0cb2f96a2bfa7/receipt.json",
+  "birth_completed_both": true,
+  "required_enabled_both": true,
+  "windows_host": 448,
+  "windows_guest": 424,
+  "reported_faults": 0,
+  "reported_suppressed": 0,
+  "feature_activation": false,
+  "passed_checks": 8,
+  "failure": "Guest setup warp did not arrive/settle. Movement/aim test stopped before input.",
+  "closed": true,
+  "forced": false,
+  "protected_unchanged": 63,
+  "bounded_logs": [
+    {
+      "sha256": "44CA98DA7593D62BBB4BDDDF0590DE72253FD6C469D606A4B0D4BD16771EE061",
+      "start": 77144360,
+      "end": 77303957,
+      "role": "host"
+    },
+    {
+      "sha256": "D1A38A55DEBB252C057216E1481E895FE323634139AB8FF27C92018504907FE6",
+      "start": 86169638,
+      "end": 86340466,
+      "role": "guest"
+    }
+  ],
+  "limitations": "Window liveness only; healthy movement, local camera/position isolation, sleep and carrying not accepted."
+}

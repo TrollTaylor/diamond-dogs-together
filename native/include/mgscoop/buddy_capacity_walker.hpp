@@ -29,4 +29,6 @@ bool Compiled() noexcept;
 // Root supplies actual native scope and per-run candidate admission.
 // nullptr succeeds; failure leaves out unchanged. No cache or synthetic pending ID.
 const char* ReadCurrentCensus(Reader,std::uintptr_t,Authorization,const Owner&,std::uint32_t,std::uint64_t,Census&) noexcept;
+// Same verified walker pose read without the private-worker admission gate.
+const char* ReadPlayPose(Reader,std::uintptr_t,Authorization,const Owner&,std::uint32_t,std::uint64_t,Census&) noexcept;
 }

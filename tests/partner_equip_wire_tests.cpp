@@ -267,6 +267,25 @@ int main() {
         packed[0x232] = static_cast<std::uint16_t>((600 << 6) | 1);  // a row beyond GunBasic: skipped
         Check(ew::BaseFromTables(packed, 649, receivers, 514, 1, 69) == 0, "row out of range: skipped");
     }
+    {
+        namespace rw = mgscoop::partner_ride_wire;
+        const rw::StreamPose rider{true, true, 4};
+        const rw::StreamPose mountedAct{true, true, 40};
+        const auto horse = rw::FollowStream(rw::Kind::horse, rider);
+        Check(horse.rider_anchor && !horse.horse_entity && !horse.mounted_animation && !horse.vehicle_pose && !horse.walker_arm,
+              "a horse rider keeps the streamed player anchor and does not gain a horse body or mounted write");
+        const auto otherAct = rw::FollowStream(rw::Kind::horse, mountedAct);
+        Check(otherAct.rider_anchor && !otherAct.mounted_animation && !otherAct.horse_entity,
+              "an unverified mounted act is not written");
+        const rw::StreamPose missing{};
+        const auto absent = rw::FollowStream(rw::Kind::horse, missing);
+        Check(!absent.rider_anchor && !absent.horse_entity && !absent.mounted_animation, "no transform means no horse follow");
+        for (const auto kind : {rw::Kind::vehicle, rw::Kind::walker, rw::Kind::heli, rw::Kind::foot, rw::Kind::other}) {
+            const auto follow = rw::FollowStream(kind, rider);
+            Check(!follow.rider_anchor && !follow.horse_entity && !follow.mounted_animation && !follow.vehicle_pose && !follow.walker_arm,
+                  "vehicle, walker, helicopter and on-foot streams do not invent a mount pose");
+        }
+    }
     std::printf("%u equipment manifest checks passed: version 2 layout (types), version 1 decode, round trip, "
                 "revision/epoch/inv_slot/slot_count/reserved/type refusals, stale epoch, receiver store, field-wise change, "
                 "table index mapping, gun-type base scan\n", checks);

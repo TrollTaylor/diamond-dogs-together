@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "149197ca143346bc901fa1050ec6cbf4",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-070718-9e62e67d33a148658aaeb9c483643fe1\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 0,
+  "failure": "Required scenario check failed: host require posewindow;enabled=1 <- NO_RESULT: [host] 'pose_window_test 1' produced no final result.",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 80044490,
+      "end": 80160662,
+      "sha256": "504ffbca2778660252f62fd9d059ea0ea9282b69bbcf5d58d4c4ae8eb15509ab"
+    },
+    {
+      "role": "guest",
+      "start": 88859231,
+      "end": 88986127,
+      "sha256": "b87a060d9f86136b4eba9b4ed10c174ff3f8320a02ce09d0dfb4df151a523607"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Private opt-in first partner job refused pair-word capture; no native Sleep seed/cold status/pickup/animation acceptance. Owned shutdown restored all63 protected files and real saves. The 180 source checks passed but do not prove live wrapper safety."
+}

@@ -45,6 +45,7 @@ struct Fake {
     bool trigger_present = false, trigger_unreadable = false;
     unsigned trigger_takes = 0;
     bool focused = true;
+    bool native_pose_held = false;
     bool anim_ok = false;
     pp::Anim anim{};
     mgscoop::sync::AnimState last_submit_anim{};
@@ -3487,6 +3488,42 @@ void TestNativeOnline() {
     }
 }
 
+void TestNativeSleepPresentationAdmission() {
+    namespace pn = mgscoop::partner_native;
+    NativeSession s;
+    Check(s.driver.settings.dm == mgscoop::PartnerDm::map && !pd::NativeSleepPresentationReady(s.driver),
+          "sleep admission refuses real inactive fallback even before a clip starts");
+    Check(s.Playing() >= 0 && s.driver.mission.dm_patched && !pd::NativeSleepPresentationReady(s.driver),
+          "sleep admission refuses active fallback clip ownership");
+    Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000),
+          "sleep admission fixture performs real stop/revert/place/arm sequence");
+    Check(s.driver.mission.native_out.active && s.driver.settings.dm == mgscoop::PartnerDm::map &&
+          !s.driver.mission.dm_patched && !s.driver.mission.dmmap.owned && pd::NativeSleepPresentationReady(s.driver),
+          "actual effective native dmOFF permits sleep while base dmMAP fallback is preserved");
+    auto& m = s.driver.mission;
+    m.dm_patched = true; Check(!pd::NativeSleepPresentationReady(s.driver), "sleep refuses actual DM patch ownership"); m.dm_patched = false;
+    m.dm_revert_failed = true; Check(!pd::NativeSleepPresentationReady(s.driver), "sleep refuses failed stock DM cleanup"); m.dm_revert_failed = false;
+    m.dm_play_pending = true; Check(!pd::NativeSleepPresentationReady(s.driver), "sleep refuses pending submitted clip"); m.dm_play_pending = false;
+    s.driver.dmplay_pending = true; Check(!pd::NativeSleepPresentationReady(s.driver), "sleep refuses queued manual clip play"); s.driver.dmplay_pending = false;
+    s.driver.dmstop_pending = true; Check(!pd::NativeSleepPresentationReady(s.driver), "sleep refuses queued manual clip stop"); s.driver.dmstop_pending = false;
+    m.dmmap.owned = true; Check(!pd::NativeSleepPresentationReady(s.driver), "sleep refuses mapped clip ownership"); m.dmmap.owned = false;
+    const auto patches = s.fake.dm_patch_calls; const auto clears = s.fake.dm_clear_calls;
+    const auto plays = s.played.size();
+    for(auto phase : {mgscoop::partner_dmmap::Phase::wait, mgscoop::partner_dmmap::Phase::play_sent,
+                     mgscoop::partner_dmmap::Phase::playing, mgscoop::partner_dmmap::Phase::stop_sent,
+                     mgscoop::partner_dmmap::Phase::backoff, mgscoop::partner_dmmap::Phase::failed,
+                     mgscoop::partner_dmmap::Phase::release}) {
+        m.dmmap.phase = phase;
+        Check(!pd::NativeSleepPresentationReady(s.driver), "sleep refuses every nonidle mapper phase without cleanup calls");
+    }
+    m.dmmap.phase = mgscoop::partner_dmmap::Phase::idle;
+    Check(pd::NativeSleepPresentationReady(s.driver) && s.fake.dm_patch_calls == patches && s.fake.dm_clear_calls == clears &&
+          s.played.size() == plays && s.driver.settings.dm == mgscoop::PartnerDm::map,
+          "admission query is read-only and preserves normal clip fallback configuration");
+    s.Trigger("drive=legacy");
+    Check(s.N() && !pd::NativeSleepPresentationReady(s.driver), "actual native leave withdraws sleep admission");
+}
+
 void TestNativeEnterAndLeave() {
     namespace pn = mgscoop::partner_native;
     NativeSession s;
@@ -4949,6 +4986,23 @@ void TestNativeActionsWithWeapons() {
           "together: telemetry carries both remote groups, the local magazine and visual fire");
 }
 
+void TestNativePoseAnimationSuppression() {
+    Session s(3);s.driver.settings.anim=mgscoop::PartnerAnim::mirror;s.driver.settings.aset=mgscoop::PartnerAset::qs;
+    s.fake.anim_ok=true;s.fake.anim.act[0]=4;s.fake.anim.stance[0]=2;s.fake.anim.speed[0]=2;Loaded(s);
+    s.hooks.native_pose_suppressed=[](void* context) noexcept {return F(context).native_pose_held;};s.fake.native_pose_held=true;
+    Check(s.Tick(1)&&s.Tick(1,200)&&s.fake.Calls("anim:")==0&&s.fake.Calls("stance:")==0&&s.fake.Calls("req:")==0,
+          "retained native pose prevents normal Q animation and both stance paths");
+    Check(s.fake.submits>0,"retained native pose preserves local sender and regular receipt flow");
+    s.fake.native_pose_held=false;Check(s.Tick(1)&&s.Tick(1,200)&&s.fake.Calls("anim:")>0&&s.fake.Calls("stance:2")==1,
+          "normal animation and stance resume only after native pose holder closes");
+    Session dm(3);dm.driver.settings.dm=mgscoop::PartnerDm::on;Loaded(dm);
+    dm.hooks.native_pose_suppressed=[](void* context) noexcept {return F(context).native_pose_held;};dm.fake.native_pose_held=true;
+    dm.fake.dm.q18[0]=1;dm.fake.dm.q18[1]=1;dm.fake.dm.cam_ok=true;dm.Trigger("dmplay=3");
+    Check(dm.Tick(1)&&!(dm.reply.op&(op::dm_play|op::dm_stop))&&dm.fake.dm_patch_calls==0&&dm.fake.dm_clear_calls==0,
+          "retained native pose skips every normal DM clip patch/play/stop/clear path");
+    dm.fake.native_pose_held=false;Check(dm.Tick(1)&&dm.fake.dm_patch_calls==1&&(dm.reply.op&op::dm_play),
+          "ordinary DM path is restored after native holder retirement");
+}
 int main() {
     TestCfgAndMissionBoundaries();
     TestStageThreeTimeline();
@@ -4966,6 +5020,7 @@ int main() {
     TestInterpHookAndLost();
     TestLuaLogAndQuiet();
     TestAnimationApply();
+    TestNativePoseAnimationSuppression();
     TestAnimationGuards();
     TestTransformDrivers();
     TestFacingSmoothing();
@@ -4989,6 +5044,7 @@ int main() {
     TestDmMapRelease();
     TestDmMapInteractions();
     TestDmMapCaps();
+    TestNativeSleepPresentationAdmission();
     TestNativeEnterAndLeave();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();

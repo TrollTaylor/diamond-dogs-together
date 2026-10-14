@@ -80,13 +80,74 @@ function Get-WorkerBuddyCapacityPins {
     [ordered]@{Profile='buddy_capacity_two_v1';Archive='4B290CDDC14F1146DCE5A64A1008365D572B424B319874EF77E9496634D75EC9';Bytes=17501184;
         Catalog='4A7E7EA890ADF8F261368CD546CCFD3DBFDC4407EF6AF44AFF308B98E53D0989';Motions=21;Capacity=2}
 }
+function Get-WorkerMgoSleepRestPins {
+    [ordered]@{Profile='mgo_sleep_rest_v1';Archive='0A8A13467B6782EE3E32A5B99F8C950CEA9A6D8CB486FAAC10C0A417200BAE54';Bytes=26949632;
+        Catalog='D70047206D28561D2CE8831BA0AB0311C8CB2CDB864A01373907DD4318E3F755';Motions=21;Capacity=0}
+}
+function Get-WorkerMgoUniqueRestPins {
+    [ordered]@{Profile='mgo_unique_rest_v1';Archive='92E935BCED30DCD7A1EDA498462A375A8594241A1CFA7228026E3E346E886C25';Bytes=16360448;
+        Catalog='CD23AA3146823AF8577079009ED54CFA6F1508F2AE2E7D55E8A0B55DAB46AD51';Motions=21;Capacity=0}
+}
+function Get-WorkerMgoStandingCyclePins {
+    [ordered]@{Profile='mgo_standing_cycle_v1';Archive='882E683B296E97F355B2D2E888194D9EE2BEA3C64EE1EA93BA1654601E1C34C2';Bytes=16362496;
+        Catalog='88A1F5C70E2A0812429E2B75BB6ED55718E0AAFD9B53CBE16AA0464B4F83BAC4';Motions=21;Capacity=0}
+}
+function Assert-WorkerMgoStandingCycleScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive,[string]$OldMgoArchive,[string]$TwoRestArchive) {
+    if($BuildProfile -ceq 'mgo-standing-cycle'){
+        if($Mode -cne 'lab' -or $PartnerProfile -cne 'native' -or $NativeStage -cne 'gun' -or $Ammo -or !$Archive -or $BuddyArchive -or $OldMgoArchive -or $TwoRestArchive){
+            throw 'Standing cycle requires its exact explicit archive and copied-save native gun lab; no mixed archive, ammo or visible play.'
+        }
+    } elseif($Archive){throw '-MgoStandingCycleArchive needs -BuildProfile mgo-standing-cycle.'}
+}
+function Get-WorkerMgoStandingCycleExperiments {
+    param([switch]$LookupObserver,[switch]$FrameObserver)
+    if($FrameObserver -and !$LookupObserver){throw 'Frame observer requires the original-forward standing lookup observer.'}
+    $flags=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER')
+    if($LookupObserver){$flags+='MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER'}
+    if($FrameObserver){$flags+='MGS_LOCAL_MGO_STANDING_FRAME_OBSERVER'}
+    return $flags
+}
+function Assert-WorkerMgoUniqueRestScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive,[string]$OldMgoArchive) {
+    if($BuildProfile -ceq 'mgo-unique-rest'){
+        if($Mode -cne 'lab' -or $PartnerProfile -cne 'native' -or $NativeStage -cne 'gun' -or $Ammo -or !$Archive -or $BuddyArchive -or $OldMgoArchive){
+            throw 'Unique MGO bank requires its exact explicit archive, native gun and copied-save private lab; no mixed archive or ammo.'
+        }
+    } elseif($Archive){throw '-MgoUniqueRestArchive needs -BuildProfile mgo-unique-rest.'}
+}
+function Get-WorkerMgoUniqueRestExperiments {
+    return @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER')
+}
+function Assert-WorkerMgoSleepRestScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive) {
+    # Pure: no preparation/launch is allowed until this explicit scope passes.
+    if($BuildProfile -ceq 'mgo-sleep-rest'){
+        if($Mode -cne 'lab' -or $PartnerProfile -cne 'native' -or $NativeStage -cne 'gun' -or $Ammo -or !$Archive -or $BuddyArchive){
+            throw 'MGO rest requires its explicit archive, native gun stage and copied-save lab; no ammo or buddy archive.'
+        }
+    } elseif($Archive){throw '-MgoSleepRestArchive needs -BuildProfile mgo-sleep-rest.'}
+}
 function Get-WorkerSessionRuntimeCatalog($Session,$Pins) {
     # Pure. Older baseline sessions omit every experiment field. Partial or
     # unknown declarations never expand the archive restoration allowance.
     $keys=@('runtime_profile','runtime_archive_sha256','runtime_archive_bytes','runtime_motion_count','runtime_buddy_capacity','runtime_catalog_sha256')
     $present=@($keys|Where-Object{$Session.Contains($_)})
-    if(!$present.Count){return [ordered]@{Profile='';Archive=$Pins.Archive;Bytes=16333824;Motions=21;Capacity=0;Experimental=$false}}
-    $candidate=Get-WorkerBuddyCapacityPins
+    if(!$present.Count){
+        if($Session.Contains('runtime_build_profile') -or $Session.Contains('runtime_native_stage')){throw 'Orphan runtime experiment scope.'}
+        return [ordered]@{Profile='';Archive=$Pins.Archive;Bytes=16333824;Motions=21;Capacity=0;Experimental=$false}
+    }
+    $standing=$Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_standing_cycle_v1'
+    $unique=$Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_unique_rest_v1'
+    $mgo=$standing -or $unique -or ($Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_sleep_rest_v1')
+    $candidate=if($standing){Get-WorkerMgoStandingCyclePins}elseif($unique){Get-WorkerMgoUniqueRestPins}elseif($mgo){Get-WorkerMgoSleepRestPins}else{Get-WorkerBuddyCapacityPins}
+    $requiredBuild=if($standing){'mgo-standing-cycle'}elseif($unique){'mgo-unique-rest'}else{'research'}
+    $scopeKeys=@('runtime_build_profile','runtime_native_stage')
+    if($mgo){
+        if(@($scopeKeys|Where-Object{$Session.Contains($_)}).Count -ne 2 -or
+           $Session.runtime_build_profile -cne $requiredBuild -or $Session.runtime_native_stage -cne 'gun' -or
+           [string]$Session.runtime_archive_bytes -cne [string]$candidate.Bytes -or
+           [string]$Session.runtime_motion_count -cne '21' -or [string]$Session.runtime_buddy_capacity -cne '0'){
+            throw 'MGO rest session must retain its Research/native gun scope.'
+        }
+    } elseif(@($scopeKeys|Where-Object{$Session.Contains($_)}).Count){throw 'Runtime scope keys are only valid for the exact MGO rest profile.'}
     if($present.Count -ne $keys.Count -or $Session.runtime_profile -cne $candidate.Profile -or
        $Session.runtime_archive_sha256 -ine $candidate.Archive -or [long]$Session.runtime_archive_bytes -ne $candidate.Bytes -or
        [int]$Session.runtime_motion_count -ne $candidate.Motions -or [int]$Session.runtime_buddy_capacity -ne $candidate.Capacity -or

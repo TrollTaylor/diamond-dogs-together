@@ -17,6 +17,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "mgscoop/nametag_game.hpp"
 #include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_defer.hpp"
@@ -32,6 +33,7 @@ namespace pi = mgscoop::partner_input;
 namespace c = mgscoop::partner_player_contract;
 
 unsigned checks = 0;
+bool g_pose_nested_fixture=false,g_pose_held_gen_fixture=false;
 void Check(bool value, const char* what) {
     ++checks;
     if (!value) { std::fprintf(stderr, "failed check %u: %s\n", checks, what); std::exit(1); }
@@ -1171,6 +1173,53 @@ void TestJobWindow() {
         w->pool[0] = 0;
         Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 4, "instance 1's block: windowed");
     }
+    // A refused nested job from the pre-dispatch HUD probe keeps its own
+    // callback; it must not replace the outer drain's pending original.
+    {
+        static void* s_go = nullptr;
+        static const void* s_outer_param = nullptr;
+        static unsigned s_before = 0, s_outer = 0, s_nested = 0, s_order = 0;
+        static bool s_nested_windowed = true, s_outer_args = false, s_nested_args = false;
+        static std::uint32_t s_outer_held = 0;
+        s_go = w->go; s_before = s_outer = s_nested = s_order = 0;
+        s_nested_windowed = true; s_outer_args = s_nested_args = false; s_outer_held = 0;
+        struct CallbackOwnership {
+            static void Nested(void* go, const void* raw) noexcept {
+                ++s_nested;
+                const auto* p = static_cast<const pd::JobParam*>(raw);
+                s_nested_args = go == s_go && p && p->block == 0;
+                if (s_order == 1) s_order = 2;
+            }
+            static mgscoop::nametag_game::HudJobProbe Before(std::uintptr_t) noexcept {
+                ++s_before; s_order = 1;
+                pd::JobParam nested{0, 0, 0, 8, g_world.bits};
+                s_nested_windowed = hk::RunJobWindow(s_go, &nested, 0, &Nested, pi::Consumer::drain0);
+                return {};
+            }
+            static void Outer(void* go, const void* raw) noexcept {
+                ++s_outer;
+                s_outer_args = go == s_go && raw == s_outer_param;
+                s_outer_held = Get<std::uint32_t>(g_watch_src + 0x48);
+                if (s_order == 2) s_order = 3;
+            }
+        };
+        dispatch(w->root1, 8);  // refresh the qualified outer injection
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        s_outer_param = &param;
+        hk::RegisterHudProbe(&CallbackOwnership::Before, nullptr);
+        const bool windowed = hk::RunJobWindow(w->go, &param, 1, &CallbackOwnership::Outer, pi::Consumer::drain0);
+        hk::RegisterHudProbe(nullptr, nullptr);
+        Check(windowed && s_before == 1 && !s_nested_windowed && s_nested == 1 && s_nested_args,
+              "callback ownership: refused nested block0 executes only its own callback once");
+        Check(s_outer == 1 && s_outer_args && s_order == 3 && s_outer_held == kRemoteHeld,
+              "callback ownership: outer dispatch retains its callback, arguments and remote input");
+        Check(Get<std::uint32_t>(Addr(w->src) + 0x48) == kHostHeld &&
+                  Get<std::uintptr_t>(Addr(w->pp)) == pp_vt &&
+                  Get<std::uint32_t>(rec1 + c::rec_local) == 0x4u &&
+                  p1::detail::ReadForceForTest().id == -1,
+              "callback ownership: nested refusal does not prevent outer cleanup");
+        s_go = nullptr; s_outer_param = nullptr;
+    }
     // Never a window (main or drain) while any batch is in flight.
     {
         g_sc.window_probe = true;
@@ -2219,6 +2268,180 @@ void TestJobWindow() {
         g_hook_sample.packet.version = 3;
         g_hook_sample.packet.held = kRemoteHeld;
     }
+    // Required native-pose jobs use the actual atomic writer, C0 snapshot and
+    // existing full pad/camera Post. Synthetic callbacks add no native calls.
+    // A refused Before or invalid Arm must never run the legacy original.
+    {
+        const auto oldArm=a;
+        alignas(16) static unsigned char c0[0xc0]{}, ps[0x500]{}, cs[0x40]{}, entries[2*0xc0]{};
+        const auto iface=Addr(c0)+0x20;
+        Put<std::uintptr_t>(Addr(c0),base+0x23c74c8);
+        Put<std::uintptr_t>(iface,base+0x23c7500);
+        Put<std::uintptr_t>(iface+8,P);
+        Put<std::uint8_t>(iface+0x6d,9);
+        Put<std::uintptr_t>(base+0x23c7500+0xf8,base+0x11f6520);
+        Put<std::uintptr_t>(P+0xc0,iface);
+        Put<std::uintptr_t>(P+0xa8,0);
+        Put<std::uint32_t>(P+0x204,1);
+        Put<std::uint32_t>(P+0x208,2);
+        Put<std::uint32_t>(P+0x20c,2);
+        Put<std::uint32_t>(P+0x214,0);
+        Put<std::uint32_t>(P+c::p_local_id,0);
+        Put<std::uintptr_t>(Addr(ps),base+c::ps_vtable_alt_rva);
+        Put<std::uintptr_t>(Addr(ps)+0x138,0xdecafbad); // deliberately not a Player pointer
+        Put<std::uintptr_t>(Addr(ps)+c::ps_blk,blk1);
+        Put<std::uintptr_t>(blk1+0x138,P);
+        Put<std::uintptr_t>(blk1,base+c::block_vtable_rva);
+        Put<std::uintptr_t>(base+c::block_vtable_rva+0xf8,base+0x9cc850);
+        Put<std::uintptr_t>(blk1+c::blk_ps,Addr(ps));
+        Put<std::uintptr_t>(Addr(ps)+0x238,Addr(cs));
+        Put<std::uintptr_t>(blk1+0x10,Addr(cs));
+        Put<std::uintptr_t>(Addr(cs),base+0x22e6070);
+        Put<std::uint32_t>(Addr(cs)+8,2);
+        Put<std::uint32_t>(Addr(cs)+0xc,0);
+        Put<std::uintptr_t>(Addr(cs)+0x10,Addr(entries));
+        a.ps1=Addr(ps);a.rates_epoch=77;a.p218=false;
+        a.rates_mirror=false;a.mag_mirror=false;a.naim=mgscoop::PartnerNativeAim::off;
+        a.slot_follow=mgscoop::PartnerNativeSlot::off;
+        static std::uintptr_t s_iface=0,s_cam=0,s_P=0,s_cs=0,s_entry=0;
+        static unsigned s_before=0,s_jobs=0,s_after=0,s_closed=0,s_refusals=0;
+        static bool s_beforeAccept=true,s_setHeld=false,s_clear=false,s_closedGood=false,s_closedHeld=false,s_nestedForeign=false;
+        static bool s_beforeOwned=false,s_beforeSelected=false,s_afterOwned=false,s_closedEven=false,s_zero=false;
+        s_iface=iface;s_cam=Addr(w->cam);s_P=P;s_cs=Addr(cs);s_entry=Addr(entries)+0xc0;
+        struct PoseFixture {
+            static void Refuse(const char*) noexcept {++s_refusals;}
+            static bool Before(const hk::NativePoseJobContext& context) noexcept {
+                ++s_before;
+                s_beforeOwned=hk::NativePoseOwnedWindow()&&(context.sequence&1u)&&
+                    context.player==s_P&&context.pp==g_watch_pp&&context.source==g_watch_src&&context.windowPPVT==Get<std::uintptr_t>(g_watch_pp)&&context.modelReady&&context.modelCS==s_cs&&context.modelEntry==s_entry;
+                s_beforeSelected=context.selectedBodyOwned&&context.selectedBody==1&&
+                    Get<std::uint32_t>(s_P+c::p_local_id)==1;
+                Put<std::uint8_t>(s_iface+0x6d,4);
+                Put<std::uint8_t>(s_cam+pi::kCamRanges[0].begin,0x55);
+                if(s_setHeld&&!hk::SetNativePoseLeaseHeld())return false;
+                if(s_nestedForeign){
+                    pd::JobParam foreign{0,0,0,8,g_world.bits};
+                    reinterpret_cast<pd::detail::JobFn>(pd::detail::W50Entry())(reinterpret_cast<void*>(context.go),&foreign);
+                }
+                return s_beforeAccept;
+            }
+            static void Job(void*,const void*) noexcept {
+                ++s_jobs;s_zero=Get<std::uint32_t>(g_watch_src+0x48)==0&&Get<float>(g_watch_pp+0x10)==0.f;
+            }
+            static bool After(const hk::NativePoseJobContext&) noexcept {
+                ++s_after;s_afterOwned=hk::NativePoseOwnedWindow();
+                return !s_clear||hk::RequestNativePoseLeaseClear();
+            }
+            static void Closed(const hk::NativePoseJobContext& context,bool clean) noexcept {
+                ++s_closed;s_closedGood=clean&&!hk::NativePoseOwnedWindow()&&Get<std::uint8_t>(s_iface+0x6d)==9&&
+                    Get<std::uint32_t>(g_watch_src+0x48)==kHostHeld&&
+                    Get<std::uint32_t>(s_P+c::p_local_id)==0;
+                s_closedEven=!(context.sequence&1u);s_closedHeld=hk::NativePoseWindowStatus().held;
+            }
+        };
+        hk::detail::BindNativePoseForTest({true,&PoseFixture::Refuse});
+        hk::RegisterNativePoseJobHooks(&PoseFixture::Before,&PoseFixture::After,&PoseFixture::Closed);
+        hk::PublishArm(a);dispatch(w->root1,8);
+        Check(!hk::SetNativePoseWindowTest(true)&&!hk::NativePoseWindowStatus().required,
+              "pose: current typed actor without completed post-install birth receipt cannot opt in");
+        Check(hk::detail::CompleteNativePoseBirthForTest(a),"pose: typed birth uses PS408/block138 ownership despite unrelated PS138");
+        Check(hk::SetNativePoseWindowTest(true)&&hk::NativePoseWindowStatus().required,
+              "pose: explicit synthetic opt-in binds current owner before any native lease");
+        pd::JobParam param{1,0,0,8,g_world.bits};
+        ++a.gen;hk::PublishArm(a);dispatch(w->root1,8);
+        Check(hk::NativePoseWindowStatus().required&&!hk::NativePoseWindowStatus().faulted&&
+              !hk::NativePoseOwnedWindow()&&hk::NativePoseWindowStatus().born1,
+              "pose: inactive same-birth same-scene config generation adopts only under exclusive admission");
+        const auto initialCam=Get<std::uint8_t>(Addr(w->cam)+pi::kCamRanges[0].begin);
+        s_before=s_jobs=s_after=s_closed=s_refusals=0;s_setHeld=true;s_clear=false;
+        auto outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+        Check(outcome==hk::JobWindowOutcome::windowed&&s_before==1&&s_jobs==1&&s_after==1&&s_closed==1&&
+              s_beforeOwned&&s_beforeSelected&&s_afterOwned&&s_closedGood&&s_closedEven&&s_closedHeld&&s_refusals==0,
+              "pose: Before/Job/After run under real odd writer; Closed receives successful cleanup and retains live lease");
+        Check(Get<std::uint8_t>(Addr(w->cam)+pi::kCamRanges[0].begin)==initialCam&&
+              Get<std::uint32_t>(rec1+c::rec_local)==0x4u,
+              "pose: camera and base-local record restore before Closed");
+        Check(!hk::SetNativePoseWindowTest(false)&&!hk::detail::ResetNativePoseForTest(),
+              "pose: neither off nor fixture reset may discard a held native lease");
+        if(g_pose_held_gen_fixture){
+            const auto jobs=s_jobs;++a.gen;hk::PublishArm(a);
+            outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+            Check(outcome==hk::JobWindowOutcome::suppressed&&s_jobs==jobs&&hk::NativePoseWindowStatus().held&&
+                  hk::NativePoseWindowStatus().required&&hk::NativePoseWindowStatus().faulted&&
+                  !hk::detail::ResetNativePoseForTest(),
+                  "pose heldgen: generation drift never rebinds or releases a live feature");
+            std::printf("partner_defer held-generation checks=%u\n",checks);std::exit(0);
+        }
+        // Held phase has a remote-only neutral injection; release request is
+        // pending until cleanup, so this job itself must still see neutral.
+        s_setHeld=false;s_clear=true;s_zero=false;
+        dispatch(w->root1,8);
+        outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+        Check(outcome==hk::JobWindowOutcome::windowed&&s_zero&&s_closedGood&&s_closedEven&&!s_closedHeld&&
+              !hk::NativePoseWindowStatus().held,
+              "pose: held job reads neutral; deferred clear takes effect only after Post+C0 restore+EndWrite");
+        // Before may reject after a presentation setter; SEH-finally still
+        // restores both presentation request and host pad without Job/After.
+        s_clear=false;s_beforeAccept=false;
+        const auto jobs=s_jobs,after=s_after,closed=s_closed;
+        outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+        Check(outcome==hk::JobWindowOutcome::suppressed&&s_jobs==jobs&&s_after==after&&s_closed==closed+1&&
+              s_closedGood&&s_closedEven&&!hk::NativePoseOwnedWindow(),
+              "pose: refused Before never falls through to original; successful finally reports Closed");
+        s_beforeAccept=true;
+        // Typed C0 refusal happens before Pre and preserves the ordinary job.
+        Put<std::uintptr_t>(iface,0);
+        const auto before=s_before;
+        outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+        Check(outcome==hk::JobWindowOutcome::suppressed&&s_before==before&&s_jobs==jobs&&
+              Get<std::uint32_t>(g_watch_src+0x48)==kHostHeld,
+              "pose: typed C0 refusal suppresses mandatory job before any pad swap");
+        Put<std::uintptr_t>(iface,base+0x23c7500);
+        // Ordinary block0 jobs still forward once under a shared reader.
+        outcome=hk::RunJobWindowOutcome(w->go,&param,0,&PoseFixture::Job,pi::Consumer::drain0);
+        Check(outcome==hk::JobWindowOutcome::legacy&&s_jobs==jobs+1&&
+              Get<std::uint32_t>(g_watch_src+0x48)==kHostHeld,
+              "pose: ordinary block0 refusal preserves legacy original exactly once");
+        if(g_pose_nested_fixture){
+            const auto count=TakeCalls().size();(void)count;s_nestedForeign=true;
+            const auto originalJobs=s_jobs;
+            outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+            Check(outcome==hk::JobWindowOutcome::suppressed&&s_jobs==originalJobs&&TakeCalls().empty()&&s_refusals>0&&
+                  hk::NativePoseWindowStatus().faulted&&hk::NativePoseWindowStatus().required&&
+                  !s_closedGood&&!hk::detail::ResetNativePoseForTest(),
+                  "pose nested: body0 W50 never executes inside exclusive body1 writer; cleanup is poisoned and retained");
+            Check(Get<std::uint8_t>(iface+0x6d)==9&&Get<std::uint32_t>(g_watch_src+0x48)==kHostHeld&&
+                  Get<std::uint32_t>(P+c::p_local_id)==0,
+                  "pose nested: SEH finally still restores C0/pad/selected body before private abort");
+            std::printf("partner_defer nested-foreign checks=%u\n",checks);
+            std::exit(0); // retained fatal writer belongs to this fixture process
+        }
+        // Same P/block/config can still hide a model/PS replacement.
+        // No fresh constructor receipt means required must refuse before Pre.
+        alignas(16) static unsigned char replacedPS[0x500]{};
+        std::memcpy(replacedPS,ps,sizeof(ps));a.ps1=Addr(replacedPS);
+        Put<std::uintptr_t>(blk1+c::blk_ps,a.ps1);hk::PublishArm(a);
+        const auto jobsBeforeRebind=s_jobs;
+        outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+        Check(outcome==hk::JobWindowOutcome::suppressed&&s_jobs==jobsBeforeRebind&&
+              hk::NativePoseWindowStatus().faulted&&hk::NativePoseWindowStatus().required&&
+              !hk::NativePoseOwnedWindow(),
+              "pose: post-optin unheld PS rebind without fresh same-serial birth suppresses before original");
+        a.ps1=Addr(ps);Put<std::uintptr_t>(blk1+c::blk_ps,a.ps1);
+        // Invalidated generation must keep the requirement and suppress,
+        // rather than use its stale retained pointer in a legacy update.
+        ++a.gen;hk::PublishArm(a);
+        const auto afterLegacy=s_jobs;
+        outcome=hk::RunJobWindowOutcome(w->go,&param,1,&PoseFixture::Job,pi::Consumer::drain0);
+        Check(outcome==hk::JobWindowOutcome::suppressed&&s_jobs==afterLegacy&&s_refusals>0&&
+              hk::NativePoseWindowStatus().required&&hk::NativePoseWindowStatus().faulted,
+              "pose: generation invalidation latches private fault and never forwards unwrapped native pose");
+        Check(hk::detail::ResetNativePoseForTest(),"pose: inactive unheld synthetic reset preserves atomic domain");
+        hk::detail::BindNativePoseForTest({});hk::RegisterNativePoseJobHooks(nullptr,nullptr,nullptr);
+        a=oldArm;Put<std::uintptr_t>(blk1+c::blk_ps,0);
+        Put<std::uintptr_t>(P+0xc0,0);Put<std::uint32_t>(P+0x204,0);
+        hk::PublishArm(a);
+    }
     // The game window closes (debug_overlay WM_CLOSE -> PartnerShutdown on
     // the window thread): the thread-safe flags end every window for good
     // (last in this program: they are never cleared). Block 1's job still
@@ -2264,7 +2487,9 @@ void TestJobWindow() {
 
 } // namespace
 
-int main() {
+int main(int argc,char** argv) {
+    g_pose_nested_fixture=argc==2&&std::strcmp(argv[1],"--pose-nested-foreign")==0;
+    g_pose_held_gen_fixture=argc==2&&std::strcmp(argv[1],"--pose-held-gen-drift")==0;
     g_main_tid = GetCurrentThreadId();
     BuildThunk();
     TestPureSeams();

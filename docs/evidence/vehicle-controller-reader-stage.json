@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "runtime_verified": false,
+  "fixture_execution": "pending coordinator strict scratch compilation; no runtime qualification",
+  "native_calls": 0,
+  "game_launches": 0,
+  "main_edits": 0,
+  "api": {
+    "gate": "CodeGate(reader,image,span,mismatch); combine with coordinator exact image and partner gate",
+    "observe": "Observe(reader,freshReadOnlyScopeSampler,Reply&); sampler before/between/after reads",
+    "public_fields": [
+      "generation",
+      "actualId",
+      "vehicle",
+      "candidate",
+      "phase",
+      "nextPhase",
+      "packedEntryOrSeat",
+      "entryOrSeat",
+      "nodeActive"
+    ],
+    "forbidden_claims": [
+      "seat occupied",
+      "player mounted",
+      "body attached",
+      "camera/input valid",
+      "shared passenger implemented"
+    ],
+    "failure_labels": "constant first failure labels; player identity/provider/metadata, body0/1 block/controller/node/allocator/header/bitmap/raw-read/phase/target, alias; ReadOnce optional const char** and Observe Reply.reason"
+  },
+  "allocation_proof": "12447E0 stride240 countblock+8; one-body node fixes storage270 and records=storage+30; header describes same data, stride and count",
+  "failure_conditions": [
+    "allocation holder/header differs from exact one-body270 shape",
+    "loading/unknown scene/unpaired/no owned copied-save context",
+    "missing or replaced type/node/body/record ownership",
+    "native online bit/sync/nonzero selected local/injection or batch",
+    "changed scene/epoch/generation/current pointers/thread/input during three scope samples",
+    "wrong callback phase or target class",
+    "any unreadable source or changing raw controller fields"
+  ],
+  "files": [
+    {
+      "path": "native/vehicle_controller_read.hpp",
+      "sha256": "bb215bfa9234510d38c3cbb0b96e985c3d8e090acd0ca6dae403b80d38e4f981",
+      "bytes": 10961
+    },
+    {
+      "path": "native/vehicle_controller_contract.hpp",
+      "sha256": "e042b765c1fefab84475b029521f844de420404219d52d6e7e35b665eca2f478",
+      "bytes": 48926
+    },
+    {
+      "path": "tests/vehicle_controller_read_tests.cpp",
+      "sha256": "367877a0ebeff6ea993e5bd891517962b079cd78519d8bbc349e4a17d4854804",
+      "bytes": 12092
+    },
+    {
+      "path": "tools/vehicle_controller_sites.json",
+      "sha256": "fc82d84c63f27efe99d963e3b25dca568ab3d9f073d521fac3dfebd87a3bde0e",
+      "bytes": 24069
+    },
+    {
+      "path": "tools/generate_vehicle_controller_contract.py",
+      "sha256": "684fa149ad7711a1e446822a2c2ae7ec3ec694e28cf31aa98c88ef82becbb882",
+      "bytes": 2249
+    }
+  ],
+  "code_site_count": 17,
+  "slot_count": 9,
+  "qualification": "source-derived bounded read-only candidate; fail closed if one-body final allocation shape differs live"
+}

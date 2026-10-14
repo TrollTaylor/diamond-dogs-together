@@ -2,6 +2,7 @@
 #include "mgscoop/coop_hud.hpp"
 
 #include <atomic>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <thread>
@@ -104,6 +105,7 @@ void Configure(Mode mode, bool enabled) noexcept {
 }
 
 bool Enabled() noexcept { return g_enabled.load() && static_cast<Mode>(g_mode.load()) != Mode::off; }
+bool RescueEnabled() noexcept { return g_enabled.load(); }
 Mode GetMode() noexcept { return static_cast<Mode>(g_mode.load()); }
 
 Mode ModeFor(CoopHud lab_setting, CoopHud coop_setting, bool play) noexcept {
@@ -194,6 +196,45 @@ bool FormatPartnerJson(const PartnerView& v, std::uint32_t session, std::uint32_
     return true;
 }
 
+bool ParseDownedHud(const char* text, std::size_t size, DownedView& out) noexcept {
+    out = {};
+    constexpr char v1[] = "return 'MGS_COOP_DOWNED_HUD_V1' -- ";
+    constexpr char v2[] = "return 'MGS_COOP_DOWNED_HUD_V2' -- ";
+    constexpr char v3[] = "return 'MGS_COOP_DOWNED_HUD_V3' -- ";
+    constexpr auto length = sizeof(v1) - 1;
+    static_assert(sizeof(v1) == sizeof(v2) && sizeof(v1) == sizeof(v3));
+    if (!text || size <= length || size > 192) return false;
+    const bool version3 = std::memcmp(text, v3, length) == 0;
+    const bool explicitCause = version3 || std::memcmp(text, v2, length) == 0;
+    if (!explicitCause && std::memcmp(text, v1, length) != 0) return false;
+    const auto count = version3 ? 9u : explicitCause ? 8u : 6u;
+    const char* cursor = text + length; const char* end = text + size;
+    std::uint32_t v[9]{};
+    for (unsigned i = 0; i < count; ++i) {
+        const auto parsed = std::from_chars(cursor, end, v[i]);
+        if (parsed.ec != std::errc() || parsed.ptr == cursor) return false;
+        cursor = parsed.ptr;
+        if (i + 1 != count) { if (cursor == end || *cursor != ' ') return false; ++cursor; }
+    }
+    if (cursor != end || v[0] > 99999 || v[1] > 65535 || v[2] > 1 || v[3] > 1 ||
+        v[4] > 1 || v[5] > kReviveHoldMs || v[6] > 2 || v[7] > 2 || v[8] > 1) return false;
+    if (!explicitCause) { v[6] = v[2]; v[7] = v[3]; }
+    if (!version3) v[8] = v[4];
+    if ((v[2] != 0) != (v[6] != 0) || (v[3] != 0) != (v[7] != 0) ||
+        (v[4] && (!v[3] || v[2] || !v[8])) || (v[8] && (!v[3] || v[2])) ||
+        (v[5] && (!v[4] || !v[3] || v[2]))) return false;
+    if (!v[0]) {
+        for (unsigned i = 1; i < count; ++i) if (v[i]) return false;
+        return true;
+    }
+    if (!v[1] || (v[0] != 30010 && v[0] != 30020 && v[0] != 30050)) return false;
+    out.valid = true; out.mission = v[0]; out.epoch = static_cast<std::uint16_t>(v[1]);
+    out.localDown = v[2] != 0; out.teammateDown = v[3] != 0; out.inRange = v[4] != 0;
+    out.closeEnough = v[8] != 0;
+    out.progressMs = v[5]; out.localCause = static_cast<std::uint8_t>(v[6]); out.teammateCause = static_cast<std::uint8_t>(v[7]);
+    return true;
+}
+
 void PublishDowned(const DownedView& view) noexcept { Guard guard(g_downed_lock); g_downed = view; }
 bool GetDowned(DownedView& out) noexcept { Guard guard(g_downed_lock); out = g_downed; return out.valid; }
 bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
@@ -202,20 +243,96 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
     if (!v.valid || !v.epoch || v.mission != current_mission ||
         (v.mission != 30010 && v.mission != 30020 && v.mission != 30050) ||
         now_ms < v.publish_ms || now_ms - v.publish_ms > kDownedFreshMs || v.progressMs > kReviveHoldMs ||
+        v.carry > 4 || v.localCause > 2 || v.teammateCause > 2 || (!v.localDown && v.localCause) || (!v.teammateDown && v.teammateCause) ||
+        (v.closeEnough && (!v.teammateDown || v.localDown)) ||
         (v.inRange && (!v.teammateDown || v.localDown)) ||
         (v.progressMs && (!v.inRange || !v.teammateDown || v.localDown))) return false;
+    const bool approach = v.closeEnough || v.inRange;
+    const bool sleeping = v.teammateCause == 2;
     if (v.localDown) {
-        Print(out.text, sizeof(out.text), "Downed - waiting for your teammate to revive you");
-        out.tone = Tone::bad; return true;
+        // The sleeper sees the stock sleep screen; the wounded player crawls.
+        if (v.carry == 2) Print(out.text, sizeof(out.text), v.localCause == 2 ?
+            "Asleep - your teammate is carrying you" : "Wounded - your teammate is carrying you");
+        else Print(out.text, sizeof(out.text), v.localCause == 2 ?
+            "Asleep - waiting for your teammate to wake or carry you" :
+            "Wounded - waiting for your teammate; crawl to cover");
+        out.tone = v.localCause == 2 ? Tone::warn : Tone::bad; return true;
+    }
+    out.tone = Tone::warn;
+    const char* act = sleeping ? "wake" : "revive";
+    if (v.carry == 2) {
+        Print(out.text, sizeof(out.text), "Your teammate is carrying you");
+        return true;
+    }
+    if (v.carry == 3 || v.carry == 4) {
+        // The provisional cargo role does not prove a native horse/vehicle seat.
+        // Do not advertise mounting or unloading as an accepted game action.
+        Print(out.text, sizeof(out.text), "Teammate transfer in progress");
+        return true;
+    }
+    if (v.carry == 1) {
+        Print(out.text, sizeof(out.text), "Carrying teammate");
+        // Carry switches to loading beside mounts/vehicles. This copied role
+        // cannot prove the current native action; its stock prompt owns the hint.
+        return true;
     }
     if (!v.teammateDown) return false;
-    out.tone = Tone::warn;
-    if (!v.inRange) Print(out.text, sizeof(out.text), "Teammate down - get closer to revive");
-    else {
+    if (!approach) {
+        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep - get within 3 m" : "Teammate wounded - get within 3 m");
+    } else if (!v.inRange) {
+        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep - please wait" : "Teammate wounded - please wait");
+        // The stock world-space carry icon alone supplies the pickup action.
+        // Its reach is independent of this copied 3 m revive approach.
+    } else if (!v.progressMs) {
+        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep" : "Teammate wounded");
+        // Semantic action only: no guessed keyboard/controller button glyph.
+        Print(out.keys, sizeof(out.keys), "Action\tHold to %s", act);
+    } else {
         progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
-        Print(out.text, sizeof(out.text), "Hold Action (E) to revive teammate - %u%%", v.progressMs * 100u / kReviveHoldMs);
+        Print(out.text, sizeof(out.text), sleeping ? "Waking teammate - %u%%" : "Reviving teammate - %u%%",
+              v.progressMs * 100u / kReviveHoldMs);
+        // A completed hold is already pending; do not ask the player to keep
+        // holding through network delivery or native recovery.
+        if (v.progressMs < kReviveHoldMs) Print(out.keys, sizeof(out.keys), "Action\tKeep holding");
     }
     return true;
+}
+
+bool ClassifyDowned(const DownedView& v, std::uint32_t current_mission, std::uint64_t now_ms, RescuePrompt& out) noexcept {
+    out = {};
+    Line line{};
+    float progress = 0;
+    if (!FormatDowned(v, current_mission, now_ms, line, progress)) return false;
+    out.progress = progress;
+    if (v.localDown) {
+        out.sleeping = v.localCause == 2;
+        out.state = v.carry == 2 ? Rescue::carried : out.sleeping ? Rescue::self_asleep : Rescue::self_wounded;
+        return true;
+    }
+    out.sleeping = v.teammateCause == 2;
+    if (v.carry == 2) out.state = Rescue::carried;
+    else if (v.carry == 3 || v.carry == 4) out.state = Rescue::transfer;
+    else if (v.carry == 1) out.state = Rescue::carrying;
+    else if (!v.closeEnough && !v.inRange) out.state = Rescue::away;
+    else if (!v.inRange) out.state = Rescue::wait;
+    else if (!v.progressMs) out.state = Rescue::ready;
+    else out.state = v.progressMs >= kReviveHoldMs ? Rescue::done : Rescue::holding;
+    return true;
+}
+const char* RescueName(Rescue state) noexcept {
+    switch (state) {
+    case Rescue::away: return "away";
+    case Rescue::wait: return "wait";
+    case Rescue::ready: return "ready";
+    case Rescue::holding: return "holding";
+    case Rescue::done: return "done";
+    case Rescue::carrying: return "carrying";
+    case Rescue::carried: return "carried";
+    case Rescue::transfer: return "transfer";
+    case Rescue::self_asleep: return "self_asleep";
+    case Rescue::self_wounded: return "self_wounded";
+    default: return "none";
+    }
 }
 
 void Post(EventKind kind, std::int32_t arg, const char* text) noexcept {

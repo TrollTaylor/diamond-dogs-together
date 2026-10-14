@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "run_id": "ee66b57b580444ee83aaec2c57a0cb85",
+  "research_receipt": "build/worker-runs/20261011-194208-1f1d646a11624a568ff150beac9101c2/receipt.json",
+  "audited_checks_passed": 153,
+  "outcome": "Actual experimental local0 native sleep onset/rest and blocked input observed; wake and visible guard-style replica pose unqualified. Worker refused stale exact-window cap observation and closed safely.",
+  "query_receipts": [
+    "host sleep_info_status -> sleepnative;ready=1;gen=3;b0=0,0,68,1,0,0;b1=0,0,5,139,0,0;reason=sleep_observed",
+    "host sleep_graph_status -> sleepgraph;ready=1;b0=1871,475,0x4b4cd3a6e541,0;b1=1871,913,0x904c34eb558a,0;reason=graph_observed",
+    "guest sleep_info_status -> sleepnative;ready=1;gen=3;b0=0,0,68,1,0,0;b1=0,0,68,1,0,0;reason=sleep_observed",
+    "guest sleep_graph_status -> sleepgraph;ready=1;b0=1871,475,0x4b4cd3a6e541,0;b1=1871,913,0x904c34eb558a,0;reason=graph_observed",
+    "host carry_recipient_status -> carryrecipient;ready=1;b0=65535,0,0,0,0;b1=65535,0,0,0,0;bound=0,0;attachment=unverified;reason=recipient_observed",
+    "guest carry_recipient_status -> carryrecipient;ready=1;b0=65535,0,0,0,0;b1=65535,0,0,0,0;bound=0,0;attachment=unverified;reason=recipient_observed",
+    "host carry_request_status -> carryqueue;ready=1;b0=0,0,0;b1=0,0,0;gameplay=unverified;reason=request_observed",
+    "guest carry_request_status -> carryqueue;ready=1;b0=0,0,0;b1=0,0,0;gameplay=unverified;reason=request_observed",
+    "guest downed_status -> downed;ready=1;armed=1;down=1;gen=4;cause=2;lock=1;hp=6600,6600;epoch=3;state=asleep;reason=sleep_native_locked",
+    "guest sleep_native_state -> sleeplease;enabled=1;active=1;phase=2;stun=20.854,3300.000;seq=1920;sample=121852375;reason=sleep_native_locked",
+    "guest sleep_info_status -> sleepnative;ready=1;gen=4;b0=5,0,25,132,2,1;b1=0,0,5,139,0,0;reason=sleep_observed",
+    "guest sleep_graph_status -> sleepgraph;ready=1;b0=1871,1344,0xd7654fb0a3f2,1;b1=1871,1850,0xb8a0bf169f98,0;reason=graph_observed",
+    "guest sleep_info_status -> sleepnative;ready=1;gen=4;b0=5,0,25,132,2,1;b1=0,0,68,1,0,0;reason=sleep_observed",
+    "guest sleep_graph_status -> sleepgraph;ready=1;b0=1871,1344,0xd7654fb0a3f2,1;b1=1871,913,0x904c34eb558a,0;reason=graph_observed",
+    "guest downed_pad_status -> downpad;on=1;n=2186;ok=1090;caps=20;mag=1000,0;id=0;thr=84872;gen=4;age=16;reason=sleeping"
+  ],
+  "required_receipts": [
+    "expectation met: carryplugin;ready=1",
+    "expectation met: sleepnative;ready=1",
+    "expectation met: carrypolicy;ready=1",
+    "expectation met: carryplugin;ready=1",
+    "expectation met: sleepnative;ready=1",
+    "expectation met: carrypolicy;ready=1",
+    "expectation met: carryrecipient;ready=1",
+    "expectation met: carryrecipient;ready=1",
+    "expectation met: carryqueue;ready=1",
+    "expectation met: carryqueue;ready=1",
+    "expectation met: sleep_native_test;enabled=1",
+    "expectation met: down=1.*cause=2.*lock=1",
+    "expectation met: sleepnative;ready=1.*b0=5,",
+    "expectation met: sleepgraph;ready=1.*b0=.*,1;",
+    "expectation met: mag=[0-9]+,0;"
+  ],
+  "log_bounds": {
+    "host": {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\script-observer.log",
+      "start": 75294675,
+      "end": 75492317
+    },
+    "guest": {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\script-observer.log",
+      "start": 84285839,
+      "end": 84475837
+    }
+  },
+  "native_events": {
+    "host": [
+      "native_sleep_seed_gate=ok;rva=0x0;scope=worker_only_local0"
+    ],
+    "guest": [
+      "native_sleep_seed_gate=ok;rva=0x0;scope=worker_only_local0",
+      "downed_control=observed;command=1;reason=sleep_zero_receipt_missing",
+      "downed_control=observed;command=1;reason=sleep_seed_controls",
+      "downed_control=observed;command=1;reason=sleep_seed_controls",
+      "downed_control=observed;command=1;reason=sleep_seed_controls",
+      "downed_control=observed;command=1;reason=sleep_seed_controls",
+      "downed_control=observed;command=1;reason=sleep_seed_controls",
+      "downed_control=observed;command=1;reason=sleep_seed_controls",
+      "downed_control=observed;command=1;reason=sleep_native_lab_abort_required",
+      "downed_control=observed;command=1;reason=sleep_native_lab_abort_required",
+      "downed_control=observed;command=1;reason=sleep_native_lab_abort_required",
+      "downed_control=observed;command=1;reason=sleep_native_lab_abort_required",
+      "downed_control=observed;command=1;reason=sleep_native_lab_abort_required",
+      "downed_control=observed;command=1;reason=sleep_native_lab_abort_required"
+    ]
+  },
+  "worker_refusals": [
+    {
+      "run_id": "ee66b57b580444ee83aaec2c57a0cb85",
+      "role": "guest",
+      "pid": 81576,
+      "event": "refused",
+      "reason": "sleep_seed_controls",
+      "sequence": 37,
+      "tick_ms": 121859578,
+      "thread": 84872,
+      "api_result": 0,
+      "width": 0,
+      "height": 0,
+      "requested_flags": 0,
+      "forwarded_flags": 0,
+      "gameplay_accepted": null
+    }
+  ],
+  "interpretation": [
+    "Configured guest maximum3300 bound through lease; native local0 mode5/Qaction132/life2/nodeactive and current sleep graph hash0xd7654fb0a3f2 observed twice.",
+    "Actual W+aim+fire stimulus produced fresh magnitude1000\u21920. HP stayed6600/6600.",
+    "Both actual owned request arrays qualify and report neutral kind0 on both bodies. No carry request was issued.",
+    "Strict exact-window zero receipt became ineligible for read-only observation; sleep_seed_controls refused. The trace does not establish a memory or rendering failure.",
+    "Local native view includes stock blackout/recovery UI. Body1 replica native sleep remains disabled, so a visible standing guard-style sleeping teammate is not demonstrated.",
+    "No early wake, native retirement, carrying or passengers were tested after the capture failure."
+  ],
+  "cleanup": {
+    "closed": true,
+    "protected_files_compared": 63,
+    "protected_mismatches": [],
+    "forced": true,
+    "switch_desktop_called": false,
+    "system_input_called": false,
+    "focus_called": false,
+    "desktop_ownership_violation": false
+  }
+}

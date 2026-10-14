@@ -1,0 +1,100 @@
+{
+  "frozen": true,
+  "compiled": false,
+  "runtime": false,
+  "main_modified": false,
+  "production_activation": false,
+  "source_base": {
+    "CMakeLists.txt": "aee65988b905245d847460a157ac144871af7b53fd3398e66b432afdd35c056c",
+    "native/native_pose_exclusion.hpp": "d8fbafd53a1c75bc21f853b489180cd8bf5b196b6c33ea1d036b245dcff07788",
+    "native/partner_input_hook.cpp": "ea164a40fec86181f21f03bd6ce86625bd44faa3031b13d9d9c5bfa1b6111ca6",
+    "native/native_pose_window_impl.inc": "5bc83c0b895576758e7c2d5964a4130363e9813f05f2f46789b422f4b39837e5",
+    "native/include/mgscoop/sleep_partner_test.hpp": "e085e4fb59811f8295b6fb3dcedd548497a142c353013eb561f8897df59528d0",
+    "native/sleep_partner_test.cpp": "60677f511545ef7cc27dae5cca28b3acb32c13fd1e1f4f717709abe411fdc55d",
+    "native/game_script_observer.cpp": "2aa15be75ccb66ca44cec097ff22166cdd8ade564bd4ff847edfbd5e762b855e"
+  },
+  "files": [
+    {
+      "path": "CMakeLists.txt",
+      "size": 60506,
+      "sha256": "b5318c7b2a66b995c1bf2f264849361a833f33f592546844ece7e66d12504187"
+    },
+    {
+      "path": "evidence.json",
+      "size": 5209,
+      "sha256": "3772bcdc7f069b716cf192cfd8de5c473805d06a9af0df13c5ee4b8e785429d2"
+    },
+    {
+      "path": "fixture_from_v1.diff",
+      "size": 2609,
+      "sha256": "3ab70914ecd7ee40d656dc69bf3d071fe8de415bf58f49b5b2054f148a884c46"
+    },
+    {
+      "path": "native/game_script_observer.cpp",
+      "size": 282962,
+      "sha256": "94c78eff0e80dff3d1a0ef4965350728fa067dd1ce9e2ce794598dbede0f0ae2"
+    },
+    {
+      "path": "native/include/mgscoop/native_pose_sleep_parts.hpp",
+      "size": 754,
+      "sha256": "841671dec4bcaeee351f97c5a4763425387603a6d5ea5abe19140597cf148a72"
+    },
+    {
+      "path": "native/include/mgscoop/sleep_partner_test.hpp",
+      "size": 2149,
+      "sha256": "5de37c9c51f5ba4c3dfc20d8df86a2c1585daa749e016bba07368aaab2f164dc"
+    },
+    {
+      "path": "native/native_pose_exclusion.hpp",
+      "size": 8460,
+      "sha256": "59b4fcf8fecf51716f79f170aba09e71ea5be82c2d4416fe08be2e59b7167375"
+    },
+    {
+      "path": "native/native_pose_window_impl.inc",
+      "size": 61278,
+      "sha256": "c0cf83b65c210a21df19fa30910cfb39bbc6b4076d4b01cfc5e39bfbc3e66545"
+    },
+    {
+      "path": "native/partner_input_hook.cpp",
+      "size": 137935,
+      "sha256": "f49b3fc9b320e37565c84b3af61107eab4c95a266e64d20417e80c2366f07b93"
+    },
+    {
+      "path": "native/sleep_partner_test.cpp",
+      "size": 22985,
+      "sha256": "94a3c09447947877f565067b0f2cccbd71df62e6c877446e93440b2380b58e06"
+    },
+    {
+      "path": "native/sleep_parts_contract.hpp",
+      "size": 115512,
+      "sha256": "5cbaa0c3c5d0e0ea3ae1befa1a9e882e652fb2ea3948f51b7659d6726d61611f"
+    },
+    {
+      "path": "native/sleep_parts_policy.hpp",
+      "size": 3583,
+      "sha256": "328e4b119d93ea01a230b9d97bb84ad664cdc77da268a8cea760a7581dedcf51"
+    },
+    {
+      "path": "native/sleep_parts_read.hpp",
+      "size": 10271,
+      "sha256": "353f738bdbea3bcafb7f4cb340707daafda5883fd96e32f6311cf9dddc7d5d8f"
+    },
+    {
+      "path": "source.diff",
+      "size": 14666,
+      "sha256": "10db564416f46e9044038a44841529e64cbce3da0acf17fa30d2fcd02c9110d1"
+    },
+    {
+      "path": "tests/sleep_parts_fixture.hpp",
+      "size": 4454,
+      "sha256": "e6c7aad249c0e897a6a9cce8db00d8653ad4ed7f8aef1f325a535e824e79eb05"
+    },
+    {
+      "path": "tests/sleep_parts_tests.cpp",
+      "size": 8938,
+      "sha256": "0520112387ad3851022620a9ab4b233e47d7ffa2b1a7b50834662660dc6d6993"
+    }
+  ],
+  "integration": "source.diff only for existing files; new headers/fixture files copied exactly; root owns builds/runtime. One directly used actual shared scope/consumer proof, no cached Active permission.",
+  "base_manifest_sha256": "f0e5adfa92b395db85e2404c570cb2ad713528723121d40f9cba053baec80d1a"
+}

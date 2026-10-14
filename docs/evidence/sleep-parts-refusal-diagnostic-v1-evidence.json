@@ -1,0 +1,25 @@
+{
+  "classification": "Diagnostic-only first refusal inside actual AllowPartsPoll; native permission and game-read order unchanged",
+  "main_modified": false,
+  "compiled": false,
+  "runtime": false,
+  "source_base": {
+    "native/sleep_partner_test.cpp": "50f099e2d7e27b4e021b541d1caa4a4462f83ce2d959d3d8d99495fd9b6d0b3b",
+    "native/sleep_parts_read.hpp": "353f738bdbea3bcafb7f4cb340707daafda5883fd96e32f6311cf9dddc7d5d8f",
+    "CMakeLists.txt": "abb7d43d7097b7646f2881a8a86747e29af59fd55fad785e9d59f97f0faef2cc"
+  },
+  "exact_run": "415a166088ab4f8ba5795cde32171465 mode5/life2/Q84 normalcamera/zero-input passed; waking Q85/PSpacked11 then current idle9CD030 guardrefused; firsttrueconsumerpredicate stillunknown",
+  "log_source": {
+    "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\415a166088ab4f8ba5795cde32171465\\host-script-bounded.log",
+    "sha256": "17df1ab29c3a24576d91e15cfa5ba7e2add65f02cdbe81b7eaa45f504ba3f6ca"
+  },
+  "invariants": [
+    "Only logs actual false-return path; once per process via real atomicCompareExchange; missinglock avoids unprotected lease/Target reads.",
+    "Every original configured/worker/lifetime/fault/pause/freshness/scene/watchdog/current-sample/pair/finalscope check remains identical; diagnostic helper never grants permission.",
+    "Actual current plugin mode/request/life/PSaction/Qaction/stance/node/graph-index/hash/native-max plus phase/preparing/clear/paused/wake/nativeEntered/currentTarget fields and ages; no rawpointers.",
+    "Original sleep_parts_policy.hpp remains byteidentical; no retirement weakening or holder transition enabled.",
+    "LastError preserved;1536-byte fixedlogbuffer; constantstage/detail labels; no HUD/Lua pointer exposure."
+  ],
+  "fixtures": "32 source-only assertions covering unchanged-predicate equivalence across genuine wake/retired/missing owner/graph/max/time/refusal states; mode0 lingering candidate and mode6requested6 detailed but still refused.",
+  "root_integration": "Apply source.diff, copy new native/sleep_parts_diagnostic.hpp +tests/sleep_parts_diagnostic_tests.cpp. Full source copies reviewonly. Root owns compile/full173plusnewtarget/runtime."
+}

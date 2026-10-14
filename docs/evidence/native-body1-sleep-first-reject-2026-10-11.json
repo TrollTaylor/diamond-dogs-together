@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "run": "2774caeabd8240c2b19ba7ea840673bb",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-042952-d9710c96069e47c8a67d765b1b8646e2\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 4,
+  "failure": "[host] frame 33 was not written: missing_frame_receipt",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 79098088,
+      "end": 79248607,
+      "sha256": "88a46ba4d9c4781c814aebfc67b7aefeed2102aea6256fd261a6a71f8334c438"
+    },
+    {
+      "role": "guest",
+      "start": 87963082,
+      "end": 88115682,
+      "sha256": "7befcaa077429497ac0c9385609c33857c8e72d0207d73c34ba44e8a3ba388be"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "partnersleep;enabled=1;scope=private_worker",
+      "cachedpose;ready=1;local=1;s0=804.6,339.1,1636.5;s1=800.9,339.3,1639.3;vars=804.6,339.1,1636.5;gap=0.000;seq=1928",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": []
+  },
+  "limitations": "170 audited checks passed. ActualWU preserved6600HP and actualSleepseed/onset occurred. First rejected next window was admission withfault1 held1, sameArmgen1/currentbody0 selection and C0active0/request0; Pflags1a487 do notcontain40000. NativeSleep never reached rest/cycleacceptance. Unforced scoped cleanup restored63 protected files and saves; no focus/system input/desktop switch.",
+  "native_sleep_opt_in": true,
+  "native_sleep_seeded": true,
+  "native_sleep_cycle_accepted": false,
+  "feature_activation_scope": "normal installed release; private native sleep opt-in was executed",
+  "sleep_events": [
+    "[sleep_partner] ready=1 enabled=0 active=0 phase=0 mode=0 life=0 action=0 stance=0 zero=0 buttons=0 birth=0 gen=0 win=0 requests=0 stage=partner_sleep_configuredpartner_sleep=private_configured;enabled=0;production=0",
+    "[sleep_partner] ready=1 enabled=0 active=0 phase=0 mode=0 life=0 action=0 stance=0 zero=0 buttons=0 birth=0 gen=0 win=0 requests=0 stage=partner_sleep_offmission_boundary=runtime_enter; accepted=1 thread=2816 allocation_thread=2816 runtime_thread=2816 mission=1 phase=3",
+    "[sleep_partner] ready=1 enabled=1 active=0 phase=0 mode=0 life=0 action=0 stance=0 zero=0 buttons=0 birth=0 gen=0 win=0 requests=0 stage=partner_sleep_armedpartner_body; R=1; body_mm=800860,339262,1639299; yaw_mrad=-1047; speed_mmps=0; own_mmps=0; vel_mmps=0; heading_mrad=0; cam_mrad=-931; act=1; s=1; v=0; psw=0x11; epoch=3; snaps=0",
+    "[sleep_partner] ready=1 enabled=1 active=1 phase=1 mode=0 life=0 action=1 stance=1 zero=1 buttons=0 birth=4 gen=4 win=3459 requests=65535 stage=partner_sleep_prepare[sleep_partner] ready=1 enabled=1 active=1 phase=2 mode=0 life=0 action=1 stance=1 zero=1 buttons=0 birth=4 gen=4 win=3459 requests=0 stage=partner_sleep_seeded[sleep_partner] ready=1 enabled=1 active=1 phase=2 mode=0 life=2 action=1 stance=1 zero=1 buttons=0 birth=4 gen=4 win=3459 requests=0 stage=sleep_native_lockedteammate_aim_acquisition;mode=filter;candidate=1;owned_teammate=1;output=65535;caller=0x111e8ed;scope=local_camera;live_steering_effect=unverified",
+    "pose_reject;stage=admission;detail=pose_window_admission;consumer=4294967295;skip=4294967295;paired=1;c0=1;flags=1a487;count=2;realized=2;real=0;selected=0;active=0;request=0;seq=3464;held=1;fault=1;armowner=1;armgen=1;posegen=1;enabled=1;native=1;ready=1;inputfault=0;inj=1;batch=0",
+    "pose_reject;stage=begin;detail=pose_window_admission;consumer=1;skip=4294967295;paired=1;c0=1;flags=1a487;count=2;realized=2;real=0;selected=0;active=0;request=0;seq=3464;held=1;fault=1;armowner=1;armgen=1;posegen=1;enabled=1;native=1;ready=1;inputfault=0;inj=1;batch=0"
+  ],
+  "first_worker_refusal": {
+    "run_id": "2774caeabd8240c2b19ba7ea840673bb",
+    "role": "host",
+    "pid": 64644,
+    "event": "refused",
+    "reason": "pose_live_model_teardown",
+    "sequence": 31,
+    "tick_ms": 25527531,
+    "thread": 2816,
+    "api_result": 0,
+    "width": 0,
+    "height": 0,
+    "requested_flags": 0,
+    "forwarded_flags": 0,
+    "gameplay_accepted": null
+  },
+  "diagnosis": "First private refusal is the held model teardown guard during native onset; missing scheduled windows and health-throughput fallback are subsequent consequences. P204 alt_dispatch40000 was not present in the later paired refusal snapshot. Exact teardown method/caller remains to be diagnosed."
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "mgscoop-body1-sleep-fixture-v2",
+  "base_manifest": "5a007acacd91e87983202dba673c366a27f304f540127bd0f1404091a99258a7",
+  "fix": "Race fixture uses the declared mutation value. Q stance was already1, so hardcoded1 did not mutate the stance2 case. Existing actual graph Same compares both PS/Q stance; no native reader changes.",
+  "compiled_by_subagent": false,
+  "files": [
+    {
+      "path": "tests/sleep_partner_owned_tests.cpp",
+      "bytes": 11666,
+      "sha256": "fb3216e6900fac6b44d0e80d216370c75bf801d2e1d058a9b5cf8ef601a996ca"
+    }
+  ]
+}

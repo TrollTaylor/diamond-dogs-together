@@ -1,0 +1,38 @@
+{
+  "scope": "Offline minimal sleep-hint producer suppression proposal. No main edits/native hook/runtime. Native body1 sleep/carry remains disabled.",
+  "reference_source": {
+    "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\native\\teammate_targeting.cpp",
+    "bytes": 21584,
+    "sha256": "45b1faac2a74f3e70b9161758162e8546be1ae05f5fee7c7251017065f839136"
+  },
+  "exact_native": {
+    "producer": "FE8770..FE87E0,112 bytes SHA07DDD8BC3AB07E3B992A3280EA318BAD4146E252CB28FDD72C5F1BFA40D5165D",
+    "typed_slot": "U=P+D8 secondaryVT23AF700, slot268->FE8770; U-20VT23AF6D0,U+28=P",
+    "caller": "12CAD3F indirectcall, return12CAD45; full12CAA10..12CAF44 pinned in c0_ui_evidence.json",
+    "abi": "Microsoft x64 void(void* secondaryUI,uint16_t hint,uint32_t priority,uint8_t flag,uint8_t enable,uint8_t extra6,uint8_t extra7); full leaf uses RCX,DX,R8D,R9B and stack28/30/38. Native caller does not consume RAX.",
+    "tuple": {
+      "hint": 93,
+      "priority": 2,
+      "flag": 0,
+      "enable": 1,
+      "extra6": 0,
+      "extra7": 0
+    },
+    "effect": "The leaf has no calls and mutates only U3C0(dword),U3C4(dword),U3F0(byte),U3F3(byte) when old priority>2."
+  },
+  "implementation": [
+    "Install separate exact full-body/slot gated hook at FE8770; do not reuse original_hint/FE8690 trampoline or Quiet field offsets. Existing QueueQuietHint provides calling-convention precedent, not qualification of the new site.",
+    "Publish a retained mandatory body1 presentation lease before any native body1 pose job, with currentP/U/thread/gen/epoch/oddWindow and actual exclusion ticket. Suppression mode must not be tied to ordinary teammate_targeting enabled/quiet_mode toggles.",
+    "Exact tuple+return12CAD45 while body1 writer held: compare typed U/primary/VTable/owner/globalP/P+D8 twice, current exclusive ticket/generation/epoch/thread/window and unchanged actor identity. Use no P218local check because existing window legitimately shadows it.",
+    "On valid owned body1 proof, return without calling the producer; optional read-only before/after four-field receipt proves unchanged UI in actual hidden run. Preserve LastError.",
+    "On tuple match while mandatory body1 lease is expected but typed proof fails, record private experiment refusal and suppress rather than forwarding an unsafe producer. The ordinary Quiet implementation forwarding policy cannot be copied for mandatory native pose.",
+    "Outside exact owned body1 sleep tuple, call the original unchanged only if no mandatory lease/exclusion conflict. A nested foreign presentation caller cannot acquire permission simply because the tuple differs.",
+    "Finally withdraw body1 hint TLS scope with existing Quiet/detour/look cleanup, independently of ReadArm stopping. Scope cannot be left active across jobs or actor replacement."
+  ],
+  "advantage": "Prevents the sleep hint mutation at its producer instead of attempting four-field rollback after a shared consumer may already observe it. This narrows the UI-specific contract.",
+  "limits": [
+    "Not implemented or live verified. Does not qualify body1 sleep native callbacks, null synchronizer paths, or C0/foreign-batch/teardown exclusion.",
+    "Only this exact standing/rest sleep hint producer tuple is covered; other shared UI/camera effects must retain their own qualification.",
+    "A C0 tiny-setter suppression detour is optional and NOT qualified here: the four-byte leaf needs exact hook/trampoline/padding or vtable lifetime proof. Keep the existing typed requested-byte snapshot/restore and real promotion exclusion."
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "run": "bde23e5f90ed4d579fead99b4bfe9b90",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-113434-03423ebde80643a18cf7563bfd9be1ed\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 15,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 80813173,
+      "end": 81050987,
+      "sha256": "6250d0ae67c4ed6e61e54293c978b7390356080ab0de0a1dc1ff207e613a7f79"
+    },
+    {
+      "role": "guest",
+      "start": 89658280,
+      "end": 89869828,
+      "sha256": "5763e52decf6eb8ab91149ca16f1c0f35d56181dbcb5f232fdc8810f01acec4d"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "cachedpose;ready=1;local=1;s0=799.4,339.3,1641.1;s1=800.8,338.8,1639.2;vars=799.4,339.3,1641.1;gap=0.000;seq=14504",
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=6424;skip=0;hints=505;reason=pose_window_captured",
+      "partnersleep;cfg=1;on=1;active=0;phase=0;mode=0;life=0;act=1;zero=1;gen=4;reason=partner_sleep_retired",
+      "partnersleep;cfg=1;on=1;active=0;phase=0;mode=0;life=0;act=1;zero=1;gen=4;reason=partner_sleep_retired",
+      "cachedpose;ready=1;local=1;s0=804.6,339.1,1636.5;s1=799.6,339.3,1639.8;vars=804.6,339.1,1636.5;gap=0.000;seq=8136",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=7976",
+      "partnersleep;cfg=1;on=1;active=1;phase=3;mode=5;life=2;act=132;zero=1;gen=4;reason=sleep_native_locked",
+      "partnersleep;cfg=1;on=1;active=1;phase=3;mode=5;life=2;act=132;zero=1;gen=4;reason=sleep_native_locked",
+      "partnersleep;cfg=1;on=1;active=1;phase=3;mode=5;life=2;act=132;zero=1;gen=4;reason=sleep_native_locked",
+      "partnersleep;enabled=1;scope=private_worker"
+    ],
+    "guest": []
+  },
+  "limitations": "Private short body1 cycle; guest local0 sleep fallback, no carrying or shared riding, no clear standing pose, no fresh two-PC Steam. Includes fresh post-wake input."
+}

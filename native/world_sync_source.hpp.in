@@ -1,7 +1,8 @@
 #pragma once
 // World sync (lua/coop/world_*.lua, docs/world-sync-protocol.md): spliced in
 // this order right after partner_sync_source. Each file is one do ... end
-// block of at most 16000 bytes (CMakeLists.txt checks it: MSVC literal limit).
+// block of at most 32000 bytes; CMakeLists.txt emits a file over 16000 bytes
+// as two adjacent raw literals (the MSVC limit applies to each literal).
 constexpr char world_sync_source[] = R"MGS_WORLD(
 @MGS_WORLD_SYNC_SOURCE@
 )MGS_WORLD";
@@ -38,6 +39,12 @@ constexpr char world_recovery_source[] = R"MGS_WORLD(
 constexpr char world_downed_source[] = R"MGS_WORLD(
 @MGS_WORLD_DOWNED_SOURCE@
 )MGS_WORLD";
+constexpr char world_sleep_clock_source[] = R"MGS_WORLD(
+@MGS_WORLD_SLEEP_CLOCK_SOURCE@
+)MGS_WORLD";
+constexpr char world_partner_sleep_source[] = R"MGS_WORLD(
+@MGS_WORLD_PARTNER_SLEEP_SOURCE@
+)MGS_WORLD";
 constexpr char world_friendly_source[] = R"MGS_WORLD(
 @MGS_WORLD_FRIENDLY_SOURCE@
 )MGS_WORLD";
@@ -46,6 +53,12 @@ constexpr char world_revive_input_source[] = R"MGS_WORLD(
 )MGS_WORLD";
 constexpr char world_buddy_source[] = R"MGS_WORLD(
 @MGS_WORLD_BUDDY_SOURCE@
+)MGS_WORLD";
+constexpr char world_ride_pose_source[] = R"MGS_WORLD(
+@MGS_WORLD_RIDE_POSE_SOURCE@
+)MGS_WORLD";
+constexpr char world_horse_cargo_source[] = R"MGS_WORLD(
+@MGS_WORLD_HORSE_CARGO_SOURCE@
 )MGS_WORLD";
 constexpr char world_buddy_ride_source[] = R"MGS_WORLD(
 @MGS_WORLD_BUDDY_RIDE_SOURCE@
