@@ -19,8 +19,11 @@
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/coop_carry.hpp"
 #include "coop_passenger.hpp"
+#include "coop_vehicle_mirror.hpp"
+#include "vehicle_root_wiring.hpp"
 #include "horse_player_physical_read.hpp"
 #include "horse_cargo_native_read.hpp"
+#include "horse_cargo_pair_read.hpp"
 #include "prologue_provider_read.hpp"
 #include "mgscoop/native_pose_dual_parts.hpp"
 #include "horse_physical_profile_read.hpp"
@@ -35,6 +38,7 @@
 #include "mgscoop/native_pose_carry_cold.hpp"
 #include "sleep_partner_bridge.hpp"
 #include "sleep_motion_asset_read.hpp"
+#include "sleep_unique_bind_runtime.hpp"
 #include <bcrypt.h>
 #include "sleep_deferred_carry_proof.hpp"
 #include "sleep_queued_carry_proof.hpp"
@@ -114,6 +118,7 @@ HANDLE script_log = INVALID_HANDLE_VALUE;
 volatile LONG64 entries = 0, returns = 0;
 bool bootstrap_enabled = false;
 bool archive_mounted = false;
+wchar_t unique_bind_directory[32768]{};
 bool allocation_enabled = false;
 bool host_enabled = false;
 bool heap_test_enabled = false;
@@ -493,6 +498,13 @@ namespace psbridge=mgscoop::sleep_partner_bridge;
 psbridge::ArmOwner partner_sleep_arm{};
 psbridge::Ledger partner_sleep_records{};
 bool partner_sleep_configured=false;
+std::atomic<bool> vehicle_pose_observer{false},vehicle_wiring_prepared{false},vehicle_wiring_enabled{false};
+bool VehicleMirrorPrepare() noexcept;
+bool VehicleMirrorEnable(bool) noexcept;
+bool PartnerDrainReliableOrigin(void*,std::uint8_t,std::uint8_t*,std::size_t,std::size_t&,mgscoop::partner_net::ReliableOrigin&) noexcept;
+bool PartnerReceiveVehicle(void*,const mgscoop::partner_net::ReliableOrigin&,const std::uint8_t*,std::size_t) noexcept;
+bool PartnerVehicleAttached(void*,const pp::State&) noexcept;
+bool PartnerVehicleJob(void*,const pp::State&,const mgscoop::partner_input::Arm&) noexcept;
 bool PartnerSleepPrivate() noexcept {
  return mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&lab::SavesRedirected();
 }
@@ -503,9 +515,13 @@ void PartnerSleepResetBridge() noexcept {
  psleep::Enable(false); // queues retained wake; never discards native lease
  psleep::PublishTarget({});
 }
-bool PartnerSleepBefore(const mgscoop::partner_input_hook::NativePoseJobContext& c) noexcept {return psleep::Before(c);}
+bool PartnerSleepBefore(const mgscoop::partner_input_hook::NativePoseJobContext& c) noexcept {
+ return psleep::Before(c)&&mgscoop::coop_vehicle_mirror::Before();
+}
 bool PartnerSleepAfter(const mgscoop::partner_input_hook::NativePoseJobContext& c) noexcept {return psleep::After(c);}
-void PartnerSleepClosed(const mgscoop::partner_input_hook::NativePoseJobContext& c,bool clean) noexcept {psleep::Closed(c,clean);}
+void PartnerSleepClosed(const mgscoop::partner_input_hook::NativePoseJobContext& c,bool clean) noexcept {
+ psleep::Closed(c,clean);mgscoop::coop_vehicle_mirror::Closed(c,clean);
+}
 bool PartnerSleepCarrierSlice(psleep::CarrierSliceSnapshot& out) noexcept {
  out={};mgscoop::partner_input_hook::NativePoseLocalCarryContext current{};
  if(!mgscoop::partner_input_hook::ReadNativePoseLocalCarrySlice(current)||!current.carrySerial||current.carrySerial!=current.carryLease.serial||
@@ -545,6 +561,10 @@ bool EnsurePartnerSleepConfigured() noexcept {
  if(!PartnerSleepPrivate()||!offline_enabled||!partner_on||!partner_gate_ok||!downed_hook_ok||!game_base||!game_span||
     !status.installed||status.required||status.held||status.faulted||!ih::NativePoseWholePlayerLifetimeLive()||!ih::NativePoseLocalCacheIsolationLive())return false;
  const auto refused=[](const char* why) noexcept {mgscoop::worker_scenario::Refuse(why);};
+ if(!vehicle_pose_observer.load()){
+  if(!mgscoop::coop_passenger::RegisterNativePoseObserver(&mgscoop::coop_vehicle_mirror::NativePoseAfter))return false;
+  vehicle_pose_observer.store(true);
+ }
  if(!psleep::Configure(game_base,game_span,true,{PartnerSleepPrivate,refused},Log))return false;
  psleep::BindLifetimeQuery(&ih::NativePoseWholePlayerLifetimeLive);
  psleep::BindCarryHeldQuery(&ih::NativePoseCarryRecipientHeld);
@@ -912,7 +932,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
-    PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed};
+    PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
+    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1324,6 +1345,7 @@ bool physical_probe_prepared=false;
 bool SleepAssetLine(char*,std::size_t) noexcept;
 void PublishPhysicalDual(const mgscoop::partner_input_hook::NativePoseDualPartsContext&) noexcept;
 bool HorseCargoNativeDiagnostic(std::uint16_t,unsigned,char*,std::size_t) noexcept;
+bool HorseCargoPairDiagnostic(std::uint16_t,char*,std::size_t) noexcept;
 bool PrologueProviderLine(char*,std::size_t) noexcept;
 bool PhysicalTransformLine(char*,std::size_t) noexcept;
 
@@ -2240,10 +2262,18 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && std::strcmp(pending.text,"coop_carry_mirror")==0) {
             char status[161]{};const bool ok=mgscoop::coop_carry::MirrorLine(status,sizeof(status));
             debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"vehicle_mirror_prepare")==0) {
+            const bool ok=VehicleMirrorPrepare();char line[161]{};mgscoop::coop_vehicle_mirror::StatusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"vmirror;prepare_refused=1;requires=cold_private_worker");
+        } else if (pending.id && (std::strcmp(pending.text,"vehicle_mirror_test 1")==0||std::strcmp(pending.text,"vehicle_mirror_test 0")==0)) {
+            const bool ok=VehicleMirrorEnable(pending.text[20]=='1');char line[161]{};mgscoop::coop_vehicle_mirror::StatusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"vmirror;enable_refused=1;requires=owned_healthy_required_windows");
+        } else if (pending.id && std::strcmp(pending.text,"vehicle_mirror_status")==0) {
+            char line[161]{};const bool ok=mgscoop::coop_vehicle_mirror::StatusLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text,"passenger_prepare")==0) {
             const bool admitted=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
                 offline_enabled&&lab::SavesRedirected()&&partner_on&&partner_gate_ok&&game_base&&game_span;
-            const bool ok=admitted&&mgscoop::coop_passenger::Install(game_base,game_span,admitted,Log);
+            const bool ok=admitted&&EnsurePartnerSleepConfigured()&&mgscoop::coop_passenger::Install(game_base,game_span,admitted,Log);
             char line[161]{};mgscoop::coop_passenger::StatusLine(line,sizeof(line));
             debug::Result(pending.id,ok?1u:0u,ok?line:"passenger;prepare_refused=1");
         } else if (pending.id && (std::strcmp(pending.text,"passenger_test 1")==0||std::strcmp(pending.text,"passenger_test 0")==0)) {
@@ -2273,6 +2303,9 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && (std::strcmp(pending.text,"horse_service_native")==0||std::strcmp(pending.text,"horse_service_rows")==0)) {
             char line[161]{};const bool ok=HorseCargoNativeDiagnostic(6656,std::strcmp(pending.text,"horse_service_rows")==0?2u:1u,line,sizeof(line));
             debug::Result(pending.id,ok?1u:0u,ok?line:"horseSvc;ready=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"horse_cargo_pair")==0) {
+            char line[161]{};const bool ok=HorseCargoPairDiagnostic(6656,line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"cargoPair;ok=0;why=status_refused");
         } else if (pending.id && std::strcmp(pending.text,"horse_cargo_native")==0) {
             char line[161]{};const bool ok=HorseCargoNativeDiagnostic(6656,0,line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"horseCargo;ready=0;why=status_refused");
         } else if (pending.id && std::strcmp(pending.text,"phys_birth")==0) {
@@ -2419,6 +2452,16 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 ok?1u:0u,static_cast<unsigned long>(r.generation),unsigned(a.actualId),unsigned(a.vehicle),unsigned(a.candidate),unsigned(a.phase),unsigned(a.nextPhase),unsigned(a.entryOrSeat),
                 unsigned(b.actualId),unsigned(b.vehicle),unsigned(b.candidate),unsigned(b.phase),unsigned(b.nextPhase),unsigned(b.entryOrSeat),r.reason);
             debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && std::strcmp(pending.text,"sleep_bind_status")==0) {
+            char line[161]{};const bool ok=mgscoop::sleep_unique_bind_runtime::BindingStatus(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"sleepBind;ready=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"sleep_bind_source")==0) {
+            char line[161]{};const bool ok=mgscoop::sleep_unique_bind_runtime::SourceStatus(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"bindSource;ready=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"sleep_bank_status")==0) {
+            char line[161]{};const bool ok=mgscoop::sleep_unique_bind_runtime::BankTraceStatus(line,sizeof(line),false);
+            debug::Result(pending.id,ok?1u:0u,ok?line:"bankTrace;ok=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"sleep_bank_snapshot")==0) {
+            char line[161]{};const bool ok=mgscoop::sleep_unique_bind_runtime::BankTraceStatus(line,sizeof(line),true);
+            debug::Result(pending.id,ok?1u:0u,ok?line:"bankTrace;ok=0;why=snapshot_refused");
         } else if (pending.id && std::strcmp(pending.text,"sleep_asset_status")==0) {
             char line[161]{};const bool ok=SleepAssetLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"sleepAsset;ready=0;why=status_refused");
         } else if (pending.id && (std::strcmp(pending.text,"sleep_info_status")==0||std::strcmp(pending.text,"sleep_graph_status")==0)) {
@@ -3691,6 +3734,57 @@ bool HorseCargoNativeDiagnostic(std::uint16_t id,unsigned lineKind,char* line,st
     return finish(ready);
 }
 
+// Insert in game_script_observer.cpp after HorseCargoNativeDiagnostic.
+// Private read only; neither this function nor the reader acquires a purpose.
+bool HorseCargoPairDiagnostic(std::uint16_t id,char* line,std::size_t capacity) noexcept {
+    namespace pair=mgscoop::horse_cargo_pair_read;
+    namespace horse=mgscoop::buddy_capacity_census;
+    namespace hk=mgscoop::partner_input_hook;
+    pair::Observation observed{};observed.horse.gameId=id;const char* reason="cargo_private_scope";
+    if(!mgscoop::worker_scenario::Compiled()||!mgscoop::worker_scenario::ThreadAdmitted()||
+       !offline_enabled||!lab::SavesRedirected()||!partner_on||!partner_gate_ok||!game_base||!game_span)
+        return pair::Line(observed,false,reason,line,capacity);
+    auto original=mgscoop::vehicle_native_protection::ReadOriginal;std::uintptr_t mismatch=0;
+    if(!pair::CodeGate(original,reinterpret_cast<std::uintptr_t>(game_base),game_span,mismatch)) {
+        char why[48]{};_snprintf_s(why,sizeof(why),_TRUNCATE,"cargo_pins_%llx",static_cast<unsigned long long>(mismatch));
+        LogFormat("horse_cargo_pair_gate=refused;rva=0x%llx\r\n",static_cast<unsigned long long>(mismatch));
+        return pair::Line(observed,false,why,line,capacity);
+    }
+    const auto source=[&](pair::Current& c,const char*& why) noexcept {
+        c={};why="cargo_current_scope";
+        if(!PhysicalScope(c.carry)||gameplay_restore_pending)return false;
+        const auto world=mgscoop::world_link::GetStatus();pp::State st{};unsigned short mission=0;
+        const auto currentPair=[&](pp::State& value) noexcept {
+            return pp::ReadState(partner_addresses,value)==pp::Refusal::none&&value.P==c.carry.player&&
+                value.Q==c.carry.data&&value.S==c.carry.state&&!value.local&&!value.sync&&value.ids[0]==0&&value.ids[1]==1&&
+                pp::Realized(value,0)&&pp::Realized(value,1)&&value.parts[0]==3&&value.parts[1]==3;
+        };
+        if(!world.configured||!world.paired||!world.link_up||world.effective<3||world.epoch!=c.carry.epoch||
+           !ReadMission(mission)||mission!=c.carry.mission||!currentPair(st)||
+           !hk::ReadNativePoseBirthCensus(c.births)||!BuddySelection(c.buddySelection,c.activeBuddy))return false;
+        c.loadingGeneration=worker_loading_generation?worker_loading_generation:1u;
+        if(const char* denied=pair::Refusal(c)){why=denied;return false;}
+        const horse::Authorization auth{true,true,true,true,true,true};
+        const horse::Owner owner{c.carry.player,mission,c.loadingGeneration,c.carry.thread,1,
+            c.carry.epoch,GetTickCount64(),true,true,false,false};
+        why=horse::ReadPlayPose({nullptr,UpperPhaseRead},c.carry.image,auth,owner,c.carry.thread,GetTickCount64(),c.horse);
+        if(why)return false;
+        why="cargo_capture_scope";
+        pair::Current late=c;const auto after=mgscoop::world_link::GetStatus();pp::State latePair{};unsigned short lateMission=0;
+        if(!PhysicalScope(late.carry)||gameplay_restore_pending||!after.configured||!after.paired||!after.link_up||
+           after.effective<3||after.epoch!=world.epoch||!ReadMission(lateMission)||lateMission!=mission||!currentPair(latePair)||
+           !hk::ReadNativePoseBirthCensus(late.births)||!BuddySelection(late.buddySelection,late.activeBuddy))return false;
+        late.loadingGeneration=worker_loading_generation?worker_loading_generation:1u;
+        // PhysicalScope reads real WindowSeq/InBatch again here. No cached
+        // before value is substituted for the actual final engine window.
+        if(!pair::SameCurrent(c,late)){why="cargo_capture_changed";return false;}
+        c=late;why="cargo_current_observed";return true;
+    };
+    auto reader=[](std::uintptr_t at,void* out,std::size_t size) noexcept {return UpperPhaseRead(nullptr,at,out,size);};
+    const bool ready=pair::Observe(reader,source,id,observed,reason);
+    return pair::Line(observed,ready,reason,line,capacity);
+}
+
 // Read-only private physical diagnostics. Never supplies writer authority.
 bool PhysicalScope(mgscoop::carry_plugin_read::Scope& scope) noexcept {
     namespace hp=mgscoop::horse_player_physical_read;scope={};
@@ -3799,7 +3893,7 @@ bool PhysicalTransformLine(char* out,std::size_t capacity) noexcept {
 }
 // Cryptographic fingerprint of a bounded copied source, never raw asset output.
 bool SleepAssetHash(const unsigned char* bytes,std::size_t size,char* out) noexcept {
-    if(!bytes||!size||size>8192||!out)return false;
+    if(!bytes||!size||size>mgscoop::sleep_unique_bind::kUniqueBytes||!out)return false;
     BCRYPT_ALG_HANDLE algorithm=nullptr;BCRYPT_HASH_HANDLE digest=nullptr;unsigned char result[32]{};
     bool ok=BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0;
     if(ok)ok=BCryptCreateHash(algorithm,&digest,nullptr,0,nullptr,0,0)>=0;
@@ -3813,6 +3907,7 @@ bool SleepAssetLine(char* out,std::size_t capacity) noexcept {
     namespace ar=mgscoop::sleep_motion_asset_read;namespace sp=mgscoop::sleep_plugin_read;namespace sg=mgscoop::sleep_graph_read;
     if(!out||!capacity)return false;mgscoop::carry_plugin_read::Scope current{};
     const bool admitted=PhysicalScope(current);ar::Scope scope{};scope.privateCopiedSaveLab=admitted;
+    scope.privateUniqueRestProfile=admitted&&MountedMgoUniqueRestContext(unique_bind_directory);
     scope.owner={current.exactGate,current.admitted,current.ready,current.armed,current.batch,current.image,current.player,current.data,current.state,
         current.mission,current.ownedMission,current.generation,current.ownedGeneration,current.thread,current.ownerThread,
         current.epoch,current.ownedEpoch,current.sequenceBefore,current.sequenceAfter,current.now,current.poll};
@@ -3829,6 +3924,8 @@ bool SleepAssetLine(char* out,std::size_t capacity) noexcept {
 }
 // Runtime thread, every partner tick.
 void CoopRescueTick() noexcept {
+    // Runs cold on the ordinary coordinator tick, never from a native hook.
+    mgscoop::coop_vehicle_mirror::TickLocal();
     RefreshPhysicalProbe();
     if(!coop_rescue_configured&&coop_rescue_pending&&game_base&&game_span&&!mission_terminating){
         coop_rescue_pending=false;
@@ -3920,6 +4017,7 @@ bool SelectDownedReceipt(const char* buffer, std::size_t size, mgscoop::script_b
     return true;
 }
 bool PartnerSleepEnableAllowed() noexcept {
+ if(vehicle_wiring_enabled.load())return false;
  namespace ih=mgscoop::partner_input_hook;
  const auto pose=ih::NativePoseWindowStatus();const auto world=mgscoop::world_link::GetStatus();
  const auto now=GetTickCount64();const auto owner=mgscoop::downed_player::GetSnapshot();
@@ -3940,6 +4038,8 @@ bool PartnerSleepEnableAllowed() noexcept {
      std::fabs(p0[k]-a.slot[0][k])>=0.5f||std::fabs(p0[k]-a.vars_pos[k])>=0.5f||a.slot[0][k]!=b.slot[0][k])return false;}
  return true;
 }
+#include "vehicle_root_wiring_impl.inc"
+
 bool SelectPartnerSleepReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
  if(!world_on||!buffer||!(OnRuntimeThread()||OnTerminationThread()))return false;
  static constexpr char yes[]="return true",no[]="return false";
@@ -3986,6 +4086,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(SelectEquipPreloadReceipt(buffer,size,name,replacement)) return true;
     if(SelectEquipmentObservationReceipt(buffer,size,name,replacement)) return true;
     if(SelectActionEventsReceipt(buffer,size,name,replacement)) return true;
+    if(SelectVehicleNamesReceipt(buffer,size,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
@@ -4476,6 +4577,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
         if (script_log != INVALID_HANDLE_VALUE) {
             game_base=base;
             game_span=span;
+            if(FAILED(StringCchCopyW(unique_bind_directory,ARRAYSIZE(unique_bind_directory),directory)))unique_bind_directory[0]=0;
             // Lab observability setup (docs/lab-protocol.md). Entirely inert
             // unless lab.ini is present and enabled; with no lab.ini nothing
             // below runs and the loader behaves exactly as before.
@@ -4729,6 +4831,18 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
 void InstallNativePoseWorkerEarly() noexcept {
 #if MGS_BACKGROUND_WORKER
     const DWORD error=GetLastError();
+    // Initial private worker callback after initialized retail/file/save/desktop
+    // admission, before passive native-pose hooks or any actor first common bind.
+    // A cold first-bind receipt is read-only and never creates scene authority.
+    if(game_base&&game_span&&unique_bind_directory[0]&&MountedMgoUniqueRestContext(unique_bind_directory)){
+        const auto current=[]() noexcept {const auto& c=mgscoop::GetLabConfig();return
+            mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+            c.mode==mgscoop::LabMode::lab&&offline_enabled&&partner_on&&partner_gate_ok&&lab::SavesRedirected();};
+        const bool prepared=mgscoop::sleep_unique_bind_runtime::Prepare(reinterpret_cast<std::uintptr_t>(game_base),game_span,
+            unique_bind_directory,{partner_gate_ok,offline_enabled,lab::SavesRedirected(),current},Log);
+        LogFormat("unique_bind_early=%s;observer_only=1;append=0;effective_selection=unverified\r\n",prepared?"prepared":"refused");
+        if(!prepared)mgscoop::worker_scenario::Refuse("unique_bind_initial_observer_install");
+    }
     if(mgscoop::partner_input_hook::NativePoseWindowStatus().installed){EnsurePartnerSleepConfigured();SetLastError(error);return;}
     if (mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::ThreadAdmitted() &&
         offline_enabled && partner_on && partner_gate_ok && game_base && game_span &&

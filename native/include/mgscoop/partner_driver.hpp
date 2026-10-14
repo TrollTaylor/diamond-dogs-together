@@ -35,6 +35,7 @@
 #include "mgscoop/partner_facing.hpp"
 #include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_aim.hpp"
@@ -315,6 +316,13 @@ struct Hooks {
     bool (*peer_input_v6)(void* context) noexcept = nullptr;
     // Private native-pose lease: no normal stance/animation/DM command may override it.
     bool (*native_pose_suppressed)(void* context) noexcept = nullptr;
+    // Actual payload+origin dequeued together; old hooks remain optional.
+    bool (*drain_reliable_origin)(void*,std::uint8_t,std::uint8_t*,std::size_t,std::size_t&,partner_net::ReliableOrigin&) noexcept = nullptr;
+    bool (*receive_vehicle)(void*,const partner_net::ReliableOrigin&,const std::uint8_t*,std::size_t) noexcept = nullptr;
+    bool (*native_vehicle_attached)(void*,const partner_player::State&) noexcept = nullptr;
+    // Fresh mount intent or current native cleanup lease, matched to the
+    // existing Arm. Keeps that Arm; never creates a new admission.
+    bool (*native_vehicle_job)(void*,const partner_player::State&,const partner_input::Arm&) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -563,6 +571,7 @@ struct Mission {
     bool hold_stripped; // live remote HOLD refused by the effective native mask/gate
     bool dash_fix;
     bool carry_hold; // instance 1 is in the stock carried state (coop_carry): recon holds
+    bool vehicle_job; // current verified demand keeps native Arm until original exit
     partner_native::DashState dash;
     std::uint32_t recon_in_age_ms;
     std::int32_t recon_in_r;       // x1000

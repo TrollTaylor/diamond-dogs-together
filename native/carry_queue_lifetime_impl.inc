@@ -21,6 +21,11 @@ bool PoseQueuePatchesLive()noexcept{
  for(unsigned n=0;n<groups::queueCount;++n)if(!PosePatchOwned(g_pose_patches[groups::queueFirst+n]))return false;
  std::uintptr_t mismatch=0;return PoseQueueCode(mismatch);
 }
+bool PoseVehicleQueueCurrent()noexcept{
+ if(!g_pose_vehicle_bound||!(g_pose_owners.held&holds::vehicle)||!PoseQueuePatchesLive())return false;
+ ql::Owner fresh{};auto reader=PoseReader;return ql::ReadOwner(reader,g_base,g_pose_player,fresh)&&
+ ql::Same(g_pose_vehicle_hold.queue,fresh)&&fresh.data==g_pose_vehicle_hold.pair.data;
+}
 bool PoseQueueCurrent()noexcept{
  if(!g_pose_queue_bound||!(g_pose_owners.held&holds::carry)||!PoseQueuePatchesLive())return false;
  ql::Owner fresh{};auto reader=PoseReader;return ql::ReadOwner(reader,g_base,g_pose_player,fresh)&&ql::Same(g_pose_queue_owner,fresh)&&fresh.data==g_pose_carry_pair.data;
@@ -30,17 +35,28 @@ bool PoseQueueCapture(const cp::Pair& pair,ql::Owner& out)noexcept{
  auto reader=PoseReader;return ql::ReadOwner(reader,g_base,pair.player,out)&&out.data==pair.data;
 }
 bool PoseQueueAdmit(std::uintptr_t object,bool genericFree)noexcept{
- if(!(g_pose_owners.held&holds::carry))return true;
+ if(!(g_pose_owners.held&(holds::carry|holds::vehicle)))return true;
  // The caller already owns a real writer/shared ticket. Retained state is
  // never inspected on a pre-admission path and remains held on all refusals.
- if(!PoseQueueCurrent()){PoseFail("pose_carry_q_owner_changed");return false;}
- if(genericFree){auto reader=PoseReader;if(!ql::ForeignFree(reader,g_base,object,g_pose_queue_owner)){
-   PoseFail("pose_carry_q_allocator_disposal");return false;}return true;}
- if(ql::ProtectedRange(g_pose_queue_owner,object,0x220)){PoseFail("pose_carry_q_lifecycle");return false;}return true;
+ const bool vehicle=(g_pose_owners.held&holds::vehicle)!=0;
+ const auto& held=vehicle?g_pose_vehicle_hold.queue:g_pose_queue_owner;
+ if(!(vehicle?PoseVehicleQueueCurrent():PoseQueueCurrent())){PoseFail(vehicle?"pose_vehicle_q_owner_changed":"pose_carry_q_owner_changed");return false;}
+ if(genericFree){
+  if(vehicle){NativePoseVehicleGuardBinding retained{};
+   retained.retained=g_pose_vehicle_owner;retained.protection=g_pose_vehicle_protection;
+   retained.purposes=g_pose_owners.held;retained.pending=g_pose_owners.pending;
+   if(!g_pose_vehicle_bindings.allocator||g_pose_vehicle_bindings.allocator(retained,object)!=NativePoseVehicleAllocatorDisposition::unchanged){
+    PoseFail("pose_vehicle_allocator_disposal");return false;
+   }
+  }
+  auto reader=PoseReader;if(!ql::ForeignFree(reader,g_base,object,held)){
+   PoseFail(vehicle?"pose_vehicle_q_allocator_disposal":"pose_carry_q_allocator_disposal");return false;}return true;}
+ if(ql::ProtectedRange(held,object,0x220)){PoseFail(vehicle?"pose_vehicle_q_lifecycle":"pose_carry_q_lifecycle");return false;}return true;
 }
 bool PoseQueueAfter()noexcept{
- if(!(g_pose_owners.held&holds::carry))return true;
- if(!PoseQueueCurrent()){PoseFail("pose_carry_q_post_owner_changed");return false;}return !g_pose_fault;
+ if(!(g_pose_owners.held&(holds::carry|holds::vehicle)))return true;
+ const bool vehicle=(g_pose_owners.held&holds::vehicle)!=0;
+ if(!(vehicle?PoseVehicleQueueCurrent():PoseQueueCurrent())){PoseFail(vehicle?"pose_vehicle_q_post_owner_changed":"pose_carry_q_post_owner_changed");return false;}return !g_pose_fault;
 }
 void* PoseQueueCtor(void* object)noexcept{
  const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* returned=object;

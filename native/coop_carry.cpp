@@ -11,6 +11,9 @@
 #include <cstring>
 #include "mgscoop/coop_carry.hpp"
 #include "coop_carry_wire.hpp"
+#include "coop_carry_original_view.hpp"
+#include "coop_carry_presentation_setter.hpp"
+#include "coop_carry_original_view_contract.hpp"
 #include "horse_load_probe_contract.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_input_hook.hpp"
@@ -128,6 +131,67 @@ void EmitF(const char* format, ...) noexcept {
     const int n = _vsnprintf_s(line, sizeof(line), _TRUNCATE, format, args);
     va_end(args);
     if (n > 0 || line[0]) Emit(line);
+}
+
+// Insert after EmitF, before SHA256. All native wrappers below are unchanged.
+namespace view=coop_carry_original_view;
+SRWLOCK g_originalViewLock=SRWLOCK_INIT;
+view::Book g_originalView{}; // Never cleared on a partial module install.
+void BindOriginalView(std::uintptr_t image,std::size_t span) noexcept {
+    LastErrorState error;AcquireSRWLockExclusive(&g_originalViewLock);
+    view::Bind(g_originalView,image,span);ReleaseSRWLockExclusive(&g_originalViewLock);
+}
+MH_STATUS OwnedCreateHook(unsigned index,std::uintptr_t rva,void* detour,void** original) noexcept {
+    LastErrorState error;
+    const unsigned char* expected=nullptr;
+    for(const auto& head:coop_carry_original_view_contract::heads)if(head.index==index&&head.rva==rva)expected=head.bytes;
+    auto read=ReadBytes;AcquireSRWLockExclusive(&g_originalViewLock);
+    view::Capture(read,g_originalView,index,view::Kind::detour,g_base+rva,reinterpret_cast<std::uintptr_t>(detour),expected,5);
+    ReleaseSRWLockExclusive(&g_originalViewLock);error.Restore();
+    const auto status=MH_CreateHook(reinterpret_cast<void*>(g_base+rva),detour,original);error.Capture();
+    if(status==MH_OK&&original&&index<view::count){AcquireSRWLockExclusive(&g_originalViewLock);
+        auto& p=g_originalView.patches[index];p.created=true;p.trampoline=reinterpret_cast<std::uintptr_t>(*original);
+        ReleaseSRWLockExclusive(&g_originalViewLock);}
+    return status;
+}
+MH_STATUS OwnedEnableHook(unsigned index,std::uintptr_t rva) noexcept {
+    LastErrorState error;error.Restore();const auto status=MH_EnableHook(reinterpret_cast<void*>(g_base+rva));error.Capture();
+    if(status==MH_OK){auto read=ReadBytes;AcquireSRWLockExclusive(&g_originalViewLock);
+        view::Activated(read,g_originalView,index);ReleaseSRWLockExclusive(&g_originalViewLock);}
+    return status;
+}
+MH_STATUS OwnedDisableHook(unsigned index,std::uintptr_t rva) noexcept {
+    LastErrorState error;error.Restore();const auto status=MH_DisableHook(reinterpret_cast<void*>(g_base+rva));error.Capture();
+    if(status==MH_OK){auto read=ReadBytes;AcquireSRWLockExclusive(&g_originalViewLock);
+        view::Restored(read,g_originalView,index);ReleaseSRWLockExclusive(&g_originalViewLock);}
+    return status;
+}
+MH_STATUS OwnedRemoveHook(unsigned index,std::uintptr_t rva) noexcept {
+    LastErrorState error;error.Restore();const auto status=MH_RemoveHook(reinterpret_cast<void*>(g_base+rva));error.Capture();
+    if(status==MH_OK){auto read=ReadBytes;AcquireSRWLockExclusive(&g_originalViewLock);
+        if(view::Restored(read,g_originalView,index)&&index<view::count)g_originalView.patches[index].created=false;
+        ReleaseSRWLockExclusive(&g_originalViewLock);}
+    return status;
+}
+const char* OwnedPatchQword(unsigned index,std::uintptr_t slot,std::uintptr_t expected,std::uintptr_t replacement) noexcept {
+    LastErrorState error;auto read=ReadBytes;AcquireSRWLockExclusive(&g_originalViewLock);
+    view::Capture(read,g_originalView,index,view::Kind::pointer,slot,replacement,&expected,8);
+    ReleaseSRWLockExclusive(&g_originalViewLock);error.Restore();
+    const char* why=near_code::PatchQword(reinterpret_cast<void*>(slot),expected,replacement);error.Capture();
+    // protect_restore means the CAS succeeded but restoring page protection
+    // failed. The original caller still receives that exact failure result.
+    if(!why||std::strcmp(why,"protect_restore")==0){AcquireSRWLockExclusive(&g_originalViewLock);
+        view::Activated(read,g_originalView,index,&replacement);ReleaseSRWLockExclusive(&g_originalViewLock);}
+    return why;
+}
+void OwnedCaptureWake(const unsigned char* actualBefore) noexcept {
+    LastErrorState error;auto read=ReadBytes;AcquireSRWLockExclusive(&g_originalViewLock);
+    view::Capture(read,g_originalView,view::autoWake,view::Kind::bytes,g_base+0x1127372,0,actualBefore,6);
+    ReleaseSRWLockExclusive(&g_originalViewLock);
+}
+void OwnedSealWake(const unsigned char* actualAfter) noexcept {
+    LastErrorState error;auto read=ReadBytes;AcquireSRWLockExclusive(&g_originalViewLock);
+    view::Activated(read,g_originalView,view::autoWake,actualAfter);ReleaseSRWLockExclusive(&g_originalViewLock);
 }
 
 // --- Minimal SHA-256 for the exact-byte gate (portable, no dependency) ---
@@ -534,15 +598,15 @@ bool PinHorseLoadProbe() noexcept {
 }
 bool InstallHorseLoadProbe() noexcept {
     if(!worker_scenario::Compiled()||!PinHorseLoadProbe())return false;
-    if(MH_CreateHook(reinterpret_cast<void*>(g_base+kHorseLoadFind),reinterpret_cast<void*>(&HookHorseLoadFind),reinterpret_cast<void**>(&g_horseLoadFind))!=MH_OK)return false;
-    if(MH_CreateHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry),reinterpret_cast<void*>(&HookHorseLoadGeometry),reinterpret_cast<void**>(&g_horseLoadGeometry))!=MH_OK){
-        MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));return false;
+    if(OwnedCreateHook(view::horseFind,kHorseLoadFind,reinterpret_cast<void*>(&HookHorseLoadFind),reinterpret_cast<void**>(&g_horseLoadFind))!=MH_OK)return false;
+    if(OwnedCreateHook(view::horseGeometry,kHorseLoadGeometry,reinterpret_cast<void*>(&HookHorseLoadGeometry),reinterpret_cast<void**>(&g_horseLoadGeometry))!=MH_OK){
+        OwnedRemoveHook(view::horseFind,kHorseLoadFind);return false;
     }
-    if(MH_EnableHook(reinterpret_cast<void*>(g_base+kHorseLoadFind))!=MH_OK){
-        MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry));MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));return false;
+    if(OwnedEnableHook(view::horseFind,kHorseLoadFind)!=MH_OK){
+        OwnedRemoveHook(view::horseGeometry,kHorseLoadGeometry);OwnedRemoveHook(view::horseFind,kHorseLoadFind);return false;
     }
-    if(MH_EnableHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry))!=MH_OK){
-        MH_DisableHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry));MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));return false;
+    if(OwnedEnableHook(view::horseGeometry,kHorseLoadGeometry)!=MH_OK){
+        OwnedDisableHook(view::horseFind,kHorseLoadFind);OwnedRemoveHook(view::horseGeometry,kHorseLoadGeometry);OwnedRemoveHook(view::horseFind,kHorseLoadFind);return false;
     }
     g_horseLoadProbeInstalled=true;return true;
 }
@@ -658,7 +722,7 @@ bool InstallSearchTrace() noexcept {
         !Read(x + 0x10, object) || !object || !Read(object, vt) || !vt || !Read(vt, fn) || !fn) { Emit("coop_carry=search_trace_refused; reason=chain\r\n"); return false; }
     if (vt < g_base || vt - g_base >= kImageSpan || fn < g_base || fn - g_base >= 0x208d000) { Emit("coop_carry=search_trace_refused; reason=range\r\n"); return false; }
     g_search = reinterpret_cast<SearchFn>(fn); g_searchSlot = vt; g_searchFn = fn;
-    if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(vt), fn, reinterpret_cast<std::uintptr_t>(&HookSearch))) {
+    if (const char* why = OwnedPatchQword(view::search,vt,fn, reinterpret_cast<std::uintptr_t>(&HookSearch))) {
         EmitF("coop_carry=search_trace_refused; reason=patch_%s\r\n", why); return false;
     }
     EmitF("coop_carry=search_trace_installed; vt=0x%llx; fn=0x%llx\r\n", static_cast<unsigned long long>(vt - g_base), static_cast<unsigned long long>(fn - g_base));
@@ -670,30 +734,30 @@ bool InstallSearchTrace() noexcept {
 bool InstallTrace() noexcept {
     const MH_STATUS init = MH_Initialize();
     if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) { Emit("coop_carry=trace_refused; reason=minhook\r\n"); return false; }
-    if (MH_CreateHook(reinterpret_cast<void*>(g_base + kProducer), reinterpret_cast<void*>(&HookProducer), reinterpret_cast<void**>(&g_producer)) != MH_OK ||
-        MH_EnableHook(reinterpret_cast<void*>(g_base + kProducer)) != MH_OK) { Emit("coop_carry=trace_refused; reason=producer_hook\r\n"); return false; }
+    if (OwnedCreateHook(view::producer,kProducer, reinterpret_cast<void*>(&HookProducer), reinterpret_cast<void**>(&g_producer)) != MH_OK ||
+        OwnedEnableHook(view::producer,kProducer) != MH_OK) { Emit("coop_carry=trace_refused; reason=producer_hook\r\n"); return false; }
     if (worker_scenario::Compiled()) {
         Emit(InstallHorseLoadProbe()?"coop_carry=horse_probe_installed\r\n":"coop_carry=horse_probe_refused\r\n");
-        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kCarryPoint), reinterpret_cast<void*>(&HookCarryPoint), reinterpret_cast<void**>(&g_carryPoint)) == MH_OK)
-            MH_EnableHook(reinterpret_cast<void*>(g_base + kCarryPoint));
-        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kRaycast), reinterpret_cast<void*>(&HookRaycast), reinterpret_cast<void**>(&g_raycast)) == MH_OK)
-            MH_EnableHook(reinterpret_cast<void*>(g_base + kRaycast));
-        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kPredicate), reinterpret_cast<void*>(&HookPredicate), reinterpret_cast<void**>(&g_predicate)) == MH_OK)
-            MH_EnableHook(reinterpret_cast<void*>(g_base + kPredicate));
-        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kLoadPred), reinterpret_cast<void*>(&HookLoadPred), reinterpret_cast<void**>(&g_loadPred)) == MH_OK)
-            MH_EnableHook(reinterpret_cast<void*>(g_base + kLoadPred));
-        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kLoadFind), reinterpret_cast<void*>(&HookLoadFind), reinterpret_cast<void**>(&g_loadFind)) == MH_OK)
-            MH_EnableHook(reinterpret_cast<void*>(g_base + kLoadFind));
+        if (OwnedCreateHook(view::carryPoint,kCarryPoint, reinterpret_cast<void*>(&HookCarryPoint), reinterpret_cast<void**>(&g_carryPoint)) == MH_OK)
+            OwnedEnableHook(view::carryPoint,kCarryPoint);
+        if (OwnedCreateHook(view::raycast,kRaycast, reinterpret_cast<void*>(&HookRaycast), reinterpret_cast<void**>(&g_raycast)) == MH_OK)
+            OwnedEnableHook(view::raycast,kRaycast);
+        if (OwnedCreateHook(view::predicate,kPredicate, reinterpret_cast<void*>(&HookPredicate), reinterpret_cast<void**>(&g_predicate)) == MH_OK)
+            OwnedEnableHook(view::predicate,kPredicate);
+        if (OwnedCreateHook(view::loadPredicate,kLoadPred, reinterpret_cast<void*>(&HookLoadPred), reinterpret_cast<void**>(&g_loadPred)) == MH_OK)
+            OwnedEnableHook(view::loadPredicate,kLoadPred);
+        if (OwnedCreateHook(view::loadFind,kLoadFind, reinterpret_cast<void*>(&HookLoadFind), reinterpret_cast<void**>(&g_loadFind)) == MH_OK)
+            OwnedEnableHook(view::loadFind,kLoadFind);
         std::uintptr_t dispatchSlot = 0;
         g_dispatch = reinterpret_cast<DispatchFn>(g_base + kDispatch);
         if (Read(g_base + kDispatchSlot, dispatchSlot) && dispatchSlot == g_base + kDispatch)
-            near_code::PatchQword(reinterpret_cast<void*>(g_base + kDispatchSlot), g_base + kDispatch, reinterpret_cast<std::uintptr_t>(&HookDispatch));
+            OwnedPatchQword(view::dispatch,g_base+kDispatchSlot,g_base+kDispatch, reinterpret_cast<std::uintptr_t>(&HookDispatch));
     }
     g_init = reinterpret_cast<InitFn>(g_base + kInitThunk);
     for (const auto slot : kInitSlots) {
         std::uintptr_t now = 0;
         if (!Read(g_base + slot, now) || now != g_base + kInitThunk) { EmitF("coop_carry=trace_refused; reason=init_slot_%llx\r\n", static_cast<unsigned long long>(slot)); continue; }
-        if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(g_base + slot), g_base + kInitThunk, reinterpret_cast<std::uintptr_t>(&HookInit)))
+        if (const char* why = OwnedPatchQword(slot==kInitSlots[0]?view::init0:view::init1,g_base+slot,g_base+kInitThunk, reinterpret_cast<std::uintptr_t>(&HookInit)))
             EmitF("coop_carry=trace_refused; reason=init_%s\r\n", why);
     }
     InstallSearchTrace();
@@ -742,7 +806,7 @@ bool InstallModeGuard() noexcept {
     for (const auto slot : kModeSlots) {
         std::uintptr_t value = 0;
         if (!Read(g_base + slot, value) || value != g_base + kSetMode) continue;
-        if (!near_code::PatchQword(reinterpret_cast<void*>(g_base + slot), g_base + kSetMode, reinterpret_cast<std::uintptr_t>(&HookSetMode))) any = true;
+        if (!OwnedPatchQword(slot==kModeSlots[0]?view::mode0:view::mode1,g_base+slot,g_base+kSetMode, reinterpret_cast<std::uintptr_t>(&HookSetMode))) any = true;
     }
     Emit(any ? "coop_carry=mode_guard_installed\r\n" : "coop_carry=mode_guard_refused; reason=slots\r\n");
     return any;
@@ -781,12 +845,14 @@ bool PatchAutoWake() noexcept {
     if (!ReadBytes(g_base + kAutoWakeSite - 5, now, sizeof(now))) return false;
     if (std::memcmp(now + 5, kAutoWakeAfter, sizeof(kAutoWakeAfter)) == 0) return true;
     if (std::memcmp(now, kAutoWakeBefore, sizeof(kAutoWakeBefore)) != 0) return false;
+    OwnedCaptureWake(now+5);
     void* site = reinterpret_cast<void*>(g_base + kAutoWakeSite);
     DWORD previous = 0, ignored = 0;
     if (!VirtualProtect(site, sizeof(kAutoWakeAfter), PAGE_EXECUTE_READWRITE, &previous)) return false;
     std::memcpy(site, kAutoWakeAfter, sizeof(kAutoWakeAfter));
     VirtualProtect(site, sizeof(kAutoWakeAfter), previous, &ignored);
     FlushInstructionCache(GetCurrentProcess(), site, sizeof(kAutoWakeAfter));
+    OwnedSealWake(kAutoWakeAfter);
     return true;
 }
 
@@ -816,6 +882,7 @@ bool Install(const void* image, std::size_t span, Log log) noexcept {
     if (!image || span < kImageSpan) return false;
     g_base = reinterpret_cast<std::uintptr_t>(image);
     g_log = log;
+    BindOriginalView(g_base,span);
     std::uintptr_t slot = 0, submitSlot = 0, kind15Slot0 = 0;
     const bool gate = GateBytes(kProviderIsSet, kProviderIsSetBytes, sizeof(kProviderIsSetBytes)) &&
         GateBytes(kProducerSite, kProducerBytes, sizeof(kProducerBytes)) && GateOp0() &&
@@ -832,12 +899,12 @@ bool Install(const void* image, std::size_t span, Log log) noexcept {
     if (!gate) { Emit("coop_carry=refused; reason=code_gate\r\n"); g_base = 0; return false; }
     g_isSet = reinterpret_cast<IsSetFn>(g_base + kProviderIsSet);
     g_op0 = reinterpret_cast<Op0Fn>(g_base + kOp0);
-    if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(g_base + kProviderSlot0), g_base + kProviderIsSet,
+    if (const char* why = OwnedPatchQword(view::provider,g_base+kProviderSlot0,g_base+kProviderIsSet,
                                                 reinterpret_cast<std::uintptr_t>(&HookIsSet))) {
         EmitF("coop_carry=refused; reason=provider_patch_%s\r\n", why); g_base = 0; return false;
     }
     for (const auto s : kRecipientSlots) {
-        if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(g_base + s), g_base + kOp0, reinterpret_cast<std::uintptr_t>(&HookOp0))) {
+        if (const char* why = OwnedPatchQword(s==kRecipientSlots[0]?view::recipient0:view::recipient1,g_base+s,g_base+kOp0, reinterpret_cast<std::uintptr_t>(&HookOp0))) {
             EmitF("coop_carry=refused; reason=recipient_patch_%s\r\n", why);
         }
     }
@@ -977,6 +1044,23 @@ void Tick() noexcept {
           w.rPtr ? "bound" : "none", g_modeBlocked.load(), g_forceCleared.load());
 }
 bool Installed() noexcept { return g_installed; }
+// Caller already filled output through earlier original-view layers. This
+// layer reads only raw current memory and captured carry ownership receipts.
+bool OverlayOriginal(std::uintptr_t at,void* output,std::size_t size) noexcept {
+    LastErrorState error;auto read=ReadBytes;AcquireSRWLockShared(&g_originalViewLock);
+    const bool result=view::Overlay(read,g_originalView,at,output,size);
+    ReleaseSRWLockShared(&g_originalViewLock);return result;
+}
+
+bool ReadPresentationSetter(std::uintptr_t image,std::uintptr_t slot,std::uintptr_t actual,
+                            camera_mode_setter::Receipt& out) noexcept {
+    LastErrorState error;out={};auto reader=ReadBytes;
+    AcquireSRWLockShared(&g_originalViewLock);
+    const bool result=coop_carry_presentation_setter::Read(reader,g_originalView,image,slot,actual,
+        reinterpret_cast<std::uintptr_t>(&HookSetMode),reinterpret_cast<std::uintptr_t>(g_setMode),out);
+    ReleaseSRWLockShared(&g_originalViewLock);return result;
+}
+
 void SetMode(unsigned mode) noexcept {
     const unsigned m = mode > kAnyDowned ? kAnyDowned : mode;
     if (g_mode.exchange(m) != m) EmitF("coop_carry=mode; mode=%u\r\n", m);

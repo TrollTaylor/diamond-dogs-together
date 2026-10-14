@@ -84,6 +84,20 @@ function Get-WorkerMgoSleepRestPins {
     [ordered]@{Profile='mgo_sleep_rest_v1';Archive='0A8A13467B6782EE3E32A5B99F8C950CEA9A6D8CB486FAAC10C0A417200BAE54';Bytes=26949632;
         Catalog='D70047206D28561D2CE8831BA0AB0311C8CB2CDB864A01373907DD4318E3F755';Motions=21;Capacity=0}
 }
+function Get-WorkerMgoUniqueRestPins {
+    [ordered]@{Profile='mgo_unique_rest_v1';Archive='92E935BCED30DCD7A1EDA498462A375A8594241A1CFA7228026E3E346E886C25';Bytes=16360448;
+        Catalog='CD23AA3146823AF8577079009ED54CFA6F1508F2AE2E7D55E8A0B55DAB46AD51';Motions=21;Capacity=0}
+}
+function Assert-WorkerMgoUniqueRestScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive,[string]$OldMgoArchive) {
+    if($BuildProfile -ceq 'mgo-unique-rest'){
+        if($Mode -cne 'lab' -or $PartnerProfile -cne 'native' -or $NativeStage -cne 'gun' -or $Ammo -or !$Archive -or $BuddyArchive -or $OldMgoArchive){
+            throw 'Unique MGO bank requires its exact explicit archive, native gun and copied-save private lab; no mixed archive or ammo.'
+        }
+    } elseif($Archive){throw '-MgoUniqueRestArchive needs -BuildProfile mgo-unique-rest.'}
+}
+function Get-WorkerMgoUniqueRestExperiments {
+    return @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER')
+}
 function Assert-WorkerMgoSleepRestScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive) {
     # Pure: no preparation/launch is allowed until this explicit scope passes.
     if($BuildProfile -ceq 'mgo-sleep-rest'){
@@ -101,12 +115,14 @@ function Get-WorkerSessionRuntimeCatalog($Session,$Pins) {
         if($Session.Contains('runtime_build_profile') -or $Session.Contains('runtime_native_stage')){throw 'Orphan runtime experiment scope.'}
         return [ordered]@{Profile='';Archive=$Pins.Archive;Bytes=16333824;Motions=21;Capacity=0;Experimental=$false}
     }
-    $mgo=$Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_sleep_rest_v1'
-    $candidate=if($mgo){Get-WorkerMgoSleepRestPins}else{Get-WorkerBuddyCapacityPins}
+    $unique=$Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_unique_rest_v1'
+    $mgo=$unique -or ($Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_sleep_rest_v1')
+    $candidate=if($unique){Get-WorkerMgoUniqueRestPins}elseif($mgo){Get-WorkerMgoSleepRestPins}else{Get-WorkerBuddyCapacityPins}
+    $requiredBuild=if($unique){'mgo-unique-rest'}else{'research'}
     $scopeKeys=@('runtime_build_profile','runtime_native_stage')
     if($mgo){
         if(@($scopeKeys|Where-Object{$Session.Contains($_)}).Count -ne 2 -or
-           $Session.runtime_build_profile -cne 'research' -or $Session.runtime_native_stage -cne 'gun' -or
+           $Session.runtime_build_profile -cne $requiredBuild -or $Session.runtime_native_stage -cne 'gun' -or
            [string]$Session.runtime_archive_bytes -cne [string]$candidate.Bytes -or
            [string]$Session.runtime_motion_count -cne '21' -or [string]$Session.runtime_buddy_capacity -cne '0'){
             throw 'MGO rest session must retain its Research/native gun scope.'

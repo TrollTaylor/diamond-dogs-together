@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/native_pose_vehicle.hpp"
 namespace mgscoop::partner_input_hook {
 enum class JobWindowOutcome : std::uint8_t { windowed,legacy,suppressed };
 struct NativePoseJobContext {

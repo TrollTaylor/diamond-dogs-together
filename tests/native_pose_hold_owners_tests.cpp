@@ -4,9 +4,9 @@
 namespace h=mgscoop::native_pose_hold_owners;
 int main(){unsigned n=0,f=0;auto C=[&](bool v,const char* x)noexcept{++n;if(!v){++f;std::cerr<<x<<"\n";}};h::Owners o{};
  C(!h::ClearSleep(o),"no sleep hold cannot clear");C(!h::AddCarry(o,0),"zero lease refused");
- C(h::AddSleep(o)&&o.held==h::sleep,"sleep acquire");C(h::AddCarry(o,8)&&o.held==h::all,"dual purpose acquire");
+ C(h::AddSleep(o)&&o.held==h::sleep,"sleep acquire");C(h::AddCarry(o,8)&&o.held==(h::sleep|h::carry),"dual purpose acquire");
  C(!h::AddCarry(o,9)&&o.carrySerial==8,"foreign carry cannot replace active owner");
- C(h::ClearSleep(o),"sleep can request own retirement");C(!h::Closed(o,false)&&o.held==h::all,"failed cleanup retains both");
+ C(h::ClearSleep(o),"sleep can request own retirement");C(!h::Closed(o,false)&&o.held==(h::sleep|h::carry),"failed cleanup retains both");
  C(!h::Closed(o,true)&&o.held==h::carry&&o.carrySerial==8,"sleep retirement cannot release carry");
  C(!h::ClearCarry(o,9)&&!o.pending,"foreign lease cannot clear carry");C(h::ClearCarry(o,8),"owned carry clear");
  C(!h::Closed(o,false)&&o.held==h::carry&&o.carrySerial==8,"failed carry cleanup retains exact lease");

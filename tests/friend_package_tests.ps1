@@ -728,7 +728,7 @@ try {
     $packages = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $packages.Count 1 'one friend package staged'
     $pkg = $packages[0].FullName
-    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.5-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
+    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.6-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
     $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Play-Offline-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'Share-Save.bat', 'scripts/Share-Save.ps1', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
         'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
@@ -746,7 +746,7 @@ try {
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Play-Offline-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the six double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.5|friend-play' 'package manifest identity'
+    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.6|friend-play' 'package manifest identity'
     # A matching override still packages the receipt's immutable checked copy.
     Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)" 'release_receipt|Release' 'friend build always records the Release receipt'
     Assert-Equal $manifest.build.receipt ([IO.Path]::GetRelativePath($projectRoot, $receiptPath)) 'package.json records the supplied matching receipt'
@@ -897,7 +897,7 @@ try {
         }
     } finally { $localZip.Dispose() }
     $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
-    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.5', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
+    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.6', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
     }
     foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }

@@ -41,7 +41,7 @@ inline bool Callbacks(std::uintptr_t image,const cp::Pair& models,const vc::Obse
    if(cb.owner!=control.primary){if(cb.function==image+0x124a530)return false;continue;}
    if(cb.function!=image+0x124a530||cb.body!=id||cb.refs<1)return false;
    const auto key=cb.event&0xffffffffffffULL;
-   const unsigned bit=key==0x62bcc8f4fcb6ULL?1u:key==0x73cf7bf9301dULL?2u:0u;
+   const unsigned bit=key==0x95558436a7c8ULL?1u:key==0x376fd458e70aULL?2u:0u;
    if(!bit||(out.eventMask[id]&bit))return false;
    ++out.present[id];out.eventMask[id]|=bit;out.retired[id]=false;
   }

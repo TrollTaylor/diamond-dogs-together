@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <cstring>
 #include "mgscoop/partner_driver.hpp"
+#include "vehicle_mirror_state.hpp"
 #include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
@@ -1556,12 +1557,29 @@ void SendHiddenLocalInput(Driver& d, const Hooks& h, const pp::State& st, const 
     SendLocalInput(d, h, st, set, tick, clock, true);
 }
 
+bool VehicleJobCurrent(const Driver& d,const Hooks& h,const pp::State& st,bool terminating) noexcept {
+    const auto& m=d.mission;
+    return !terminating&&!m.input_faulted&&!m.native_disabled&&m.input_armed&&m.have_arm&&m.native_out.active&&
+        m.native_defer_armed&&d.settings.drive==PartnerDrive::native&&h.native_vehicle_job&&
+        h.native_vehicle_job(h.context,st,m.last_arm);
+}
+bool VehicleAttached(const Hooks& h,const pp::State& st) noexcept {
+    return h.native_vehicle_attached&&h.native_vehicle_attached(h.context,st);
+}
 void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
                const Clock& clock, bool terminating, bool parts_loaded, bool pose_valid, const partner::Pose& pose, bool relink,
                bool anim_ok, const pp::Anim& anim, const sync::AnimState& remote_anim, std::uint32_t& ops, InputTick& out) noexcept {
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
     (void)parts_loaded;
+    // A real current lease (including phase6 cleanup after wire expiry), or
+    // fresh authenticated mount intent, keeps the exact already-admitted Arm.
+    // Hook composition still expires stale input; no drive sample is refreshed.
+    if(VehicleJobCurrent(d,h,st,terminating)){
+        SendLocalInput(d,h,st,set,tick,clock,false);
+        out.suppress_fallback=VehicleAttached(h,st);
+        return;
+    }
     // Diagnostic P+0x218 window: pending request, then auto-expiry. Hazardous
     // (P+0x218 is paired with P+0x214 / the local block P+0x58, e.g. 0x11AD05D
     // and 0xFE8F85): it needs the lab key and the camera sandbox.
@@ -1950,13 +1968,21 @@ void EmitNative(Mission& m, const Hooks& h, LogCap& cap, const char* head, const
 // Reliable channel 2 (equipment manifest): drained every tick in every drive
 // mode so the sender's window never stalls; the receiver only stores it.
 void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
-    if (!h.drain_reliable) return;
+    if (!h.drain_reliable && !h.drain_reliable_origin) return;
     Mission& m = d.mission;
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
     for (unsigned i = 0; i < 32; ++i) {
         std::uint8_t message[128]{};
         std::size_t size = 0;
-        if (!h.drain_reliable(h.context, partner_equip_wire::kChannel, message, sizeof(message), size)) break;
+        partner_net::ReliableOrigin origin{};
+        const bool authenticated=h.drain_reliable_origin!=nullptr;
+        const bool drained=authenticated?h.drain_reliable_origin(h.context,partner_equip_wire::kChannel,message,sizeof(message),size,origin):
+            h.drain_reliable(h.context,partner_equip_wire::kChannel,message,sizeof(message),size);
+        if(!drained)break;
+        if(size==vehicle_mirror_state::wireSize&&message[0]=='V'){
+            if(authenticated&&h.receive_vehicle)h.receive_vehicle(h.context,origin,message,size);
+            continue;
+        }
         // Teammate carry events (coop_carry, first byte 0x4B) share channel 2.
         if (coop_carry::IsCarryMessage(message, size)) {
             coop_carry::Receive(message, size);
@@ -2840,6 +2866,10 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     Mission& m = d.mission;
     const Settings& set = d.settings;
     const std::uint64_t now = clock.now_ms;
+    // Vehicle demand has its own source-expiry/exit machine. Do not let the
+    // foot arbiter destroy its native job, Arm or physical callback lifecycle.
+    // Faulted/replaced owners fail VehicleJobCurrent and use normal refusal.
+    if(VehicleJobCurrent(d,h,st,terminating))return;
     const bool configured = set.drive == PartnerDrive::native;
     const PartnerDefer defer = EffectivePartnerDefer(set.drive, set.defer);
     // Statistics: the deferral (process totals) and the hook's wrap/native parts.
@@ -4300,9 +4330,16 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.facing_source_body = local_body;
         EmitCapped(m.facing_cap, h, "partner_facing", "partner_facing=source; yaw=%s\r\n", local_body ? "body" : "vars");
     }
-    const bool free_roam_net = set.source == PartnerSource::net &&
+    const bool vehicle_job=VehicleJobCurrent(d,h,st,terminating);
+    const bool vehicle_attached=VehicleAttached(h,st);
+    if(m.vehicle_job&&!vehicle_job){
+        d.recon_place_request=partner_recon::PlaceReason::rearm;
+        m.recon_active=m.recon_have_out=false;m.hybrid_placed=false;
+    }
+    m.vehicle_job=vehicle_job;
+    const bool free_roam_net = !vehicle_job&&set.source == PartnerSource::net &&
                                (m.mission_code == 30010 || m.mission_code == 30020);
-    const bool ride_guard = set.source == PartnerSource::net && set.nride == PartnerNativeRide::hide;
+    const bool ride_guard = !vehicle_job&&set.source == PartnerSource::net && set.nride == PartnerNativeRide::hide;
     if (ride_guard) {
         namespace rw = partner_ride_wire;
         if (m.recon_have_out && (m.recon_out.events & partner_recon::Event::placed_ok) &&
@@ -4463,7 +4500,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // partner_lost=hide (lab-tested only; freeze, the default, holds the pose
     // with dm speed 0 and stays realized): after kLostHideMs of a lost net
     // sample the realize bits are cleared; the next live sample re-realizes.
-    if (set.source == PartnerSource::net && lab.partner_lost == PartnerLost::hide) {
+    if (!vehicle_job&&set.source == PartnerSource::net && lab.partner_lost == PartnerLost::hide) {
         if (sample_status == pose::Status::live) {
             m.lost_since_ms = 0;
             if (m.lost_hidden) {
@@ -4524,7 +4561,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     const bool realized = pp::Realized(st, partner::partner_index);
     const bool parts_loaded = realized && st.parts[1] == c::parts_loaded_state;
-    const bool transform = PartnerApplyIsTransform(set.apply);
+    const bool transform = !vehicle_attached&&PartnerApplyIsTransform(set.apply);
     // The body readback first: with apply=input the slot publishes it.
     if ((transform || set.apply == PartnerApply::input) && parts_loaded && h.read_body) {
         m.body_ok = h.read_body(h.context, st, m.body_pos, m.body_quat);
@@ -4556,7 +4593,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (m.facing.valid) {
         m.facing.valid = false;  // the next applied tick snaps (first)
     }
-    const bool slot = partner::WritesSlot(set.stage, set.apply, pose_valid);
+    const bool slot = !vehicle_attached&&partner::WritesSlot(set.stage, set.apply, pose_valid);
     if (slot) {
         float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
                          static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(body_pose.yaw_mrad / 1000.0)};
@@ -4645,7 +4682,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (!anim_dm) {
         m.anim_dm_logged = false;
     }
-    const bool native_pose_held = h.native_pose_suppressed && h.native_pose_suppressed(h.context);
+    const bool native_pose_held = vehicle_attached||(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
     const bool anim_needed = !native_pose_held && set.anim != PartnerAnim::off && set.stage >= 3 && !m.dmmap.owned;
     if (anim_needed) {
         const sync::AnimState src = set.anim == PartnerAnim::mirror ? local_anim : remote_anim;
@@ -5010,12 +5047,12 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const Settings set_levers = EffectiveSettings(d.settings, m.native_out.active);
     TickInput(d, h, lab, st, set_levers, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);
-    TickDm(d, h, st, set_levers, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
+    if(!vehicle_attached)TickDm(d, h, st, set_levers, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
     // apply=input without an armed window falls back to the proven Lua Warp
     // every tick (refused, faulted, install refused, input=off, stage < 3),
     // except while the reconciliation places/verifies the body itself.
     const partner::Pose reply_pose = itick.pose_override ? itick.pose : pose;
-    if (set_levers.apply == PartnerApply::input && (!m.input_armed || m.input_neutral) && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
+    if (!vehicle_attached&&set_levers.apply == PartnerApply::input && (!m.input_armed || m.input_neutral) && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
         (!free_roam_net || parts_loaded)) {
         if (!(extra_ops & partner::op::warp)) {
             extra_ops |= partner::op::warp;
@@ -5030,12 +5067,12 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     BodyLine(d, h, st, set_levers, tick, clock, parts_loaded);
     // dm=map loss attribution: this reply's look ops and Warp, seen next tick.
-    const std::uint32_t final_ops = ops | extra_ops;
+    const std::uint32_t final_ops = VehicleAttached(h,st)?((ops|extra_ops)&~partner::op::warp):(ops|extra_ops);
     m.dmmap_prev_warp = (final_ops & partner::op::warp) != 0;
     m.dmmap_prev_look = (final_ops & partner::op::set_parts_explicit) != 0 ||
                         ((final_ops & partner::op::copy_parts) && !(tick.luaflags & partner::luaflag::parts_copied)) ||
                         (final_ops & partner::op::set_all_active) != 0;
-    reply = partner::Reply{ops | extra_ops, partner::partner_index, reply_pose.x_mm, reply_pose.y_mm, reply_pose.z_mm,
+    reply = partner::Reply{final_ops, partner::partner_index, reply_pose.x_mm, reply_pose.y_mm, reply_pose.z_mm,
                            reply_pose.yaw_mrad, status, age_ms, (ops & partner::op::set_parts_explicit) ? apply_look : partner::Look{},
                            gani};
     return true;

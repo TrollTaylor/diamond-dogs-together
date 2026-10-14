@@ -6,6 +6,11 @@
 
 namespace mgscoop::coop_passenger {
 using Log = void (*)(const char*) noexcept;
+// Internal native observer and code-view layer only. Neither opts into a
+// passenger, acquires an owner or changes native geometry/admission.
+using NativePoseObserver=void(*)(std::uintptr_t primary,unsigned body,std::uintptr_t record,std::uintptr_t exactCaller) noexcept;
+bool RegisterNativePoseObserver(NativePoseObserver) noexcept; // immutable before install
+bool OverlayOriginal(std::uintptr_t at,void* bytes,std::size_t size) noexcept; // pure acyclic layer
 // Private worker prototype. Only natural local-body0 entry is adapted. The
 // stock selector, entry animation, physical admission, attachment and exit run
 // unchanged. No node, occupancy, transform or global-online field is written.

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <limits>
 #include "camera_mode_window_contract.hpp"
+#include "mgscoop/camera_mode_setter.hpp"
 namespace mgscoop::camera_mode_window {
 // Internal owned-window lease only. Every boolean comes from the existing
 // validated natural body1 RunJobWindow, never Lua/public callers. The caller
@@ -15,6 +16,8 @@ struct Scope {
  bool batch=false,stopping=false,faulted=false;
  std::uintptr_t image=0,player=0;
  std::uint32_t thread=0,ownerThread=0,generation=0,sceneEpoch=0,windowSequence=0;
+ // Bound only by the actual core's compiled carry module, never Lua/config.
+ camera_mode_setter::Provider presentationSetter=nullptr;
 };
 inline bool Range(std::uintptr_t p,std::size_t n) noexcept {return p&&n&&p<=std::numeric_limits<std::uintptr_t>::max()-n;}
 inline bool Aligned(std::uintptr_t p) noexcept {return p&&!(p&7u);}
@@ -31,21 +34,28 @@ inline const char* ScopeRefusal(const Scope& s,bool capturing) noexcept {
  return nullptr;
 }
 inline bool SameScope(const Scope& a,const Scope& b,bool capturing) noexcept {
- return !ScopeRefusal(b,capturing)&&a.image==b.image&&a.player==b.player&&a.thread==b.thread&&a.ownerThread==b.ownerThread&&a.generation==b.generation&&a.sceneEpoch==b.sceneEpoch&&a.windowSequence==b.windowSequence;
+ return !ScopeRefusal(b,capturing)&&a.image==b.image&&a.player==b.player&&a.thread==b.thread&&a.ownerThread==b.ownerThread&&a.generation==b.generation&&a.sceneEpoch==b.sceneEpoch&&a.windowSequence==b.windowSequence&&a.presentationSetter==b.presentationSetter;
 }
 // Full PE hash and existing partner gate remain prerequisites. This additional
 // gate compares complete C0 ranges/explicit leaves and exact relocated slots.
-template<class Reader> bool CodeGate(Reader& r,std::uintptr_t base,std::size_t span,std::uintptr_t& mismatch) noexcept {
+template<class Reader> bool CodeGate(Reader& r,std::uintptr_t base,std::size_t span,std::uintptr_t& mismatch,
+                                    camera_mode_setter::Provider setter=nullptr) noexcept {
  mismatch=0;if(!Range(base,span))return false;unsigned char bytes[8192]{};
  for(const auto& s:camera_mode_window_contract::sites){
   if(s.rva>span||s.size>span-s.rva||s.size>sizeof(bytes)||!r(base+s.rva,bytes,s.size)||std::memcmp(bytes,s.bytes,s.size)){mismatch=s.rva;return false;}
  }
  for(const auto& s:camera_mode_window_contract::slots){const auto off=s.vtable_rva+s.offset;std::uintptr_t v=0;
-  if(off>span||sizeof(v)>span-off||s.target_rva>=span||!Get(r,base+off,v)||v!=base+s.target_rva){mismatch=off;return false;}
+  if(off>span||sizeof(v)>span-off||s.target_rva>=span||!Get(r,base+off,v)){mismatch=off;return false;}
+  if(v!=base+s.target_rva){camera_mode_setter::Receipt owned{};std::uintptr_t late=0;
+   // Only the exact current carry presentation slot can compose. Every
+   // other relocated virtual target retains its original equality check.
+   if(off!=0x23c75f8||s.target_rva!=0x11f6520||!setter||!setter(base,base+off,v,owned)||
+    !camera_mode_setter::Valid(owned,base,base+off,v)||!Get(r,base+off,late)||late!=v){mismatch=off;return false;}
+  }
  }return true;
 }
-struct Identity {std::uintptr_t primary=0,interface=0;std::uint8_t requested=0;};
-inline bool SameOwner(const Identity& a,const Identity& b) noexcept {return a.primary==b.primary&&a.interface==b.interface;}
+struct Identity {std::uintptr_t primary=0,interface=0;std::uint8_t requested=0;camera_mode_setter::Receipt setter{};};
+inline bool SameOwner(const Identity& a,const Identity& b) noexcept {return a.primary==b.primary&&a.interface==b.interface&&camera_mode_setter::Same(a.setter,b.setter);}
 // Never reads or writes interface+6C (the active mode). This reads the typed
 // owner and requested byte only; it does not call any engine method.
 template<class Reader> bool ReadIdentity(Reader& r,const Scope& s,Identity& out,const char*& reason) noexcept {
@@ -58,7 +68,17 @@ template<class Reader> bool ReadIdentity(Reader& r,const Scope& s,Identity& out,
  out.primary=out.interface-0x20;
  if(!Range(out.primary,0xa8)||!Get(r,out.primary,v)||v!=s.image+0x23c74c8||!Get(r,out.interface,v)||v!=s.image+0x23c7500){reason="c0_type";return false;}
  if(!Get(r,out.interface+8,v)||v!=s.player){reason="c0_owner";return false;}
- if(!Get(r,s.image+0x23c7500+0xf8,v)||v!=s.image+0x11f6520){reason="c0_setter_slot";return false;}
+ const auto setterSlot=s.image+0x23c7500+0xf8;
+ if(!Get(r,setterSlot,v)){reason="c0_setter_slot";return false;}
+ if(v==s.image+0x11f6520){out.setter={camera_mode_setter::Kind::native,s.image,setterSlot,v,v,0};}
+ else if(!s.presentationSetter||!s.presentationSetter(s.image,setterSlot,v,out.setter)||
+         !camera_mode_setter::Valid(out.setter,s.image,setterSlot,v)){
+  reason="c0_setter_slot";return false;
+ }
+ // Preserve the actual installed pointer. Never replace a raw slot with an
+ // alleged original value; captured serial/pointer must survive restoration.
+ std::uintptr_t currentSetter=0;
+ if(!Get(r,setterSlot,currentSetter)||currentSetter!=v){reason="c0_setter_changed";return false;}
  if(!Get(r,out.interface+0x6d,out.requested)){reason="c0_request_read";return false;}
  return true;
 }

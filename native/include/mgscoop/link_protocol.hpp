@@ -346,6 +346,9 @@ public:
     // Copies the next in-order message out; false when none is ready (or it
     // does not fit `capacity`, in which case it stays).
     bool Drain(std::uint8_t* out, std::size_t capacity, std::size_t& size, std::uint64_t now_ms) noexcept;
+    // Actual stored in-order head, read under the receiver owner's lock.
+    // No dequeue or timestamp conversion. Used to bind queue provenance.
+    bool FrontId(std::uint16_t& id) const noexcept;
     // RELACK fields: every id before next_expected is stored; bit i => id
     // next_expected+1+i stored; free_slots = window slots not holding a message.
     void AckState(std::uint16_t& next_expected, std::uint32_t& bits, std::uint8_t& free_slots) const noexcept;

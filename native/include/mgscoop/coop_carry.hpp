@@ -15,6 +15,7 @@
 // See docs/STATUS.md.
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/camera_mode_setter.hpp"
 
 namespace mgscoop::coop_carry {
 
@@ -28,6 +29,13 @@ enum : unsigned { kOff = 0, kSleeping = 1, kAnyDowned = 2 };
 // Verifies the exact code/vtable bytes and patches the two vtable slots once.
 bool Install(const void* image, std::size_t span, Log log) noexcept;
 bool Installed() noexcept;
+// Pure captured owned-patch overlay, including partial installations.
+// Does not invoke any earlier code-view reader, native method or mutation.
+bool OverlayOriginal(std::uintptr_t at,void* output,std::size_t size) noexcept;
+// Current typed presentation-slot ownership only, no call or substitution.
+// Proves this module's actual slot receipt and untouched native setter ABI.
+bool ReadPresentationSetter(std::uintptr_t image,std::uintptr_t slot,std::uintptr_t actual,
+                            camera_mode_setter::Receipt&) noexcept;
 // Co-op link (reliable channel 2): the carrier's machine announces pickup and
 // put-down; the other machine mirrors them on its replica of the carrier.
 void SetSender(bool (*send)(const std::uint8_t*, std::size_t) noexcept) noexcept;

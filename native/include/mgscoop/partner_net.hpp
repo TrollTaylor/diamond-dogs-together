@@ -221,6 +221,28 @@ void PublishPackState(std::uint32_t refused_mission) noexcept;
 // flag and retries next tick. Never blocks on I/O, never allocates.
 link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::size_t size, link::ReliableMode mode) noexcept;
 bool DrainReliable(std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept;
+// Actual authenticated queue provenance, captured with its payload under
+// tx -> rx locks. `incarnation` never reuses Session::Start's local counter.
+// `peer` is the endpoint at the authenticated commit, retained across valid
+// same-key address rebinding. It is not reconstructed from GetLinkInfo.
+// acceptedTick is GetTickCount64 at actual stored insertion; NowMs is QPC
+// and is never converted or used to freshen queued vehicle messages.
+struct ReliableOrigin {
+    std::uint64_t incarnation=0, acceptedTick=0;
+    std::uint32_t session=0;
+    lab::Endpoint peer{};
+    std::uint16_t message=0;
+    std::uint8_t localRole=0, peerRole=1;
+};
+bool CurrentReliableOrigin(ReliableOrigin&) noexcept; // real current connected session + queue
+// Compare the native producer's expected incarnation under the same actual
+// tx -> rx locks used for enqueue; no read/send race can transplant an old
+// mount into a newly committed channel. Existing SendReliable is unchanged.
+link::ReliableResult SendReliableForOrigin(const ReliableOrigin&,std::uint8_t channel,const void* bytes,
+                                        std::size_t size,link::ReliableMode) noexcept;
+bool DrainReliableAuthenticated(std::uint8_t channel,std::uint8_t* out,std::size_t capacity,
+                                std::size_t& size,ReliableOrigin&) noexcept;
+
 
 // World sync (docs/world-sync-protocol.md). All callbacks run on the transport's
 // receive thread with no partner_net lock held; null hooks = today's behaviour.

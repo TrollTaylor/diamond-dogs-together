@@ -2,6 +2,7 @@
 // Original foregroundless worker wire protocol. Pure parsers: no OS/game calls.
 #include "mgscoop/buddy_capacity_catalog.hpp"
 #include "mgscoop/mgo_sleep_rest_catalog.hpp"
+#include "mgscoop/mgo_unique_rest_catalog.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,7 @@ namespace mgsworker {
 inline constexpr char kRetailExeSha[] = "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45";
 inline constexpr char kRetailSteamSha[] = "08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A";
 inline constexpr char kBaselineArchiveSha[] = "87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96";
+inline bool BuddyCapacityCompiled() noexcept { return mgscoop::buddy_capacity::compiled; }
 inline constexpr std::size_t kMaxManifest = 16384;
 inline constexpr std::uint64_t kQualificationAgeMs = 3600000;
 
@@ -134,7 +136,15 @@ inline bool ParseManifest(const std::string& text, Manifest& out, std::string& r
         keys.emplace_back("runtime_motion_count");
         const bool has_profile = m.values.count("runtime_profile") != 0;
         const bool has_capacity = m.values.count("runtime_buddy_capacity") != 0;
-        if (get("runtime_profile") == mgscoop::mgo_sleep_rest::profile) {
+        if (get("runtime_profile") == mgscoop::mgo_unique_rest::profile) {
+            if (!mgscoop::mgo_unique_rest::Compiled() || !has_profile || !has_capacity || get("runtime_buddy_capacity") != "0" ||
+                !EqualFold(get("runtime_archive_sha256"), mgscoop::mgo_unique_rest::archive_sha) ||
+                get("runtime_archive_bytes") != "16360448" || !EqualFold(get("runtime_catalog_sha256"), mgscoop::mgo_unique_rest::catalog_sha) ||
+                get("runtime_build_profile") != "mgo-unique-rest" || get("runtime_native_stage") != "gun" || get("lab_mode") != "lab")
+                return fail("manifest_mgo_unique_rest_catalog_pin");
+            m.runtime_profile = get("runtime_profile"); m.runtime_archive_bytes = mgscoop::mgo_unique_rest::archive_bytes;
+            for (const auto* key : {"runtime_profile", "runtime_buddy_capacity", "runtime_archive_bytes", "runtime_catalog_sha256", "runtime_build_profile", "runtime_native_stage"}) keys.emplace_back(key);
+        } else if (get("runtime_profile") == mgscoop::mgo_sleep_rest::profile) {
             if (!mgscoop::mgo_sleep_rest::Compiled() || !has_profile || !has_capacity || get("runtime_buddy_capacity") != "0" ||
                 !EqualFold(get("runtime_archive_sha256"), mgscoop::mgo_sleep_rest::archive_sha) ||
                 get("runtime_archive_bytes") != "26949632" || !EqualFold(get("runtime_catalog_sha256"), mgscoop::mgo_sleep_rest::catalog_sha) ||
@@ -143,7 +153,7 @@ inline bool ParseManifest(const std::string& text, Manifest& out, std::string& r
             m.runtime_profile = get("runtime_profile"); m.runtime_archive_bytes = mgscoop::mgo_sleep_rest::archive_bytes;
             for (const auto* key : {"runtime_profile", "runtime_buddy_capacity", "runtime_archive_bytes", "runtime_catalog_sha256", "runtime_build_profile", "runtime_native_stage"}) keys.emplace_back(key);
         } else if (has_profile || has_capacity) {
-            if (!mgscoop::buddy_capacity::compiled || !has_profile || !has_capacity ||
+            if (!BuddyCapacityCompiled() || !has_profile || !has_capacity ||
                 get("runtime_profile") != mgscoop::buddy_capacity::profile || get("runtime_buddy_capacity") != "2" ||
                 !EqualFold(get("runtime_archive_sha256"), mgscoop::buddy_capacity::archive_sha) || get("lab_mode") == "play")
                 return fail("manifest_buddy_capacity_catalog_pin");

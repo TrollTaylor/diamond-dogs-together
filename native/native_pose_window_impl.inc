@@ -29,6 +29,16 @@ detail::NativePoseTestBindings g_pose_bindings{};
 NativePoseWorkerBindings g_pose_worker{};
 holds::Owners g_pose_owners{};cp::Pair g_pose_carry_pair{};
 std::uint64_t g_pose_carry_serial=0,g_pose_carry_birth0=0;
+namespace vehicle_core=native_pose_vehicle_policy;
+vehicle_core::Snapshot g_pose_vehicle_hold{};
+NativePoseVehicleOwnership g_pose_vehicle_owner{};
+NativePoseVehicleProtection g_pose_vehicle_protection{};
+NativePoseVehicleProtectionBindings g_pose_vehicle_bindings{};
+std::uint64_t g_pose_vehicle_serial=0;bool g_pose_vehicle_bound=false;
+std::atomic<const char*> g_pose_vehicle_reason{"vehicle_unbound"};
+bool PoseVehiclePairCurrent() noexcept;
+bool PoseVehiclePartsContext(NativePoseVehiclePartsContext&) noexcept;
+void PoseVehiclePublishClear() noexcept;
 route::Observation g_pose_route_hold{};bool g_pose_route_bound=false;
 bool PoseRoutePatchesLive() noexcept;
 msg::Observation g_pose_message_hold{};bool g_pose_message_bound=false;
@@ -178,7 +188,8 @@ cw::Scope PoseScope() noexcept {
  s.nativeSandbox=g_pose_test;s.serialized=PoseOwned();s.batch=partner_defer::InBatch();
  s.stopping=g_shutdown!=0;s.faulted=g_pose_fault!=0;s.image=g_base;s.player=g_pose_player;
  s.thread=GetCurrentThreadId();s.ownerThread=g_pose_thread;s.generation=g_pose_generation;s.sceneEpoch=g_pose_epoch;
- s.windowSequence=static_cast<std::uint32_t>(g_window_seq);return s;
+ s.windowSequence=static_cast<std::uint32_t>(g_window_seq);
+ s.presentationSetter=&coop_carry::ReadPresentationSetter;return s;
 }
 bool PoseModel(const pi::Arm& a,NativePoseJobContext& c0,const char** failure=nullptr,unsigned actualId=1) noexcept {
  const auto stage=[&](const char* why) noexcept {if(failure)*failure=why;};
@@ -334,6 +345,7 @@ void PoseDualPartsRefusalLog() noexcept {
    static_cast<unsigned>(g_window_seq),g_pose_held?1u:0u,g_pose_fault?1u:0u,GetCurrentThreadId())))g_log(line);
  }SetLastError(incoming);
 }
+#include "native_pose_vehicle_impl.inc"
 namespace reject=native_pose_reject_diagnostic;
 volatile LONG g_pose_reject_logged=0;
 void PoseRejectDiagnostic(reject::Stage stage,const char* detail,const pi::Arm* arm,
@@ -461,9 +473,12 @@ void PoseEnd(bool postComplete) noexcept {
  InterlockedIncrement(&g_window_seq);const auto context=t_pose.context;t_pose.opened=false;
  const bool released=g_pose_gate.EndWritePublish(g_pose_thread,g_pose_generation,g_pose_epoch,clean,true,t_pose.writer,[]()noexcept{
   if(g_pose_clear){
+   const bool hadVehicle=(g_pose_owners.held&holds::vehicle)!=0;
    const bool carryClosed=holds::Closed(g_pose_owners,true);
+   const bool vehicleClosed=hadVehicle&&!(g_pose_owners.held&holds::vehicle);
    InterlockedExchange(&g_pose_held,g_pose_owners.held?1:0);InterlockedExchange(&g_pose_clear,0);
    if(!g_pose_owners.held)g_pose_cs=g_pose_entry=0;
+   if(vehicleClosed)PoseVehiclePublishClear();
    if(carryClosed){PoseQueuePublishClear();g_pose_carry_pair={};g_pose_carry_birth0=0;g_pose_message_hold={};g_pose_message_bound=false;g_pose_route_hold={};g_pose_route_bound=false;}
   }
  });
@@ -515,6 +530,7 @@ bool PoseBefore(const pi::Arm& a,const Save& save,const pi::Injection& j,pi::Con
  t_pose.context.consumer=consumer;t_pose.context.held=j.held;t_pose.context.press=j.edge_press;
  t_pose.context.release=j.edge_release;t_pose.context.magnitude=static_cast<float>(j.mag);t_pose.job=true;
  if(!PosePairWordBefore())return false;
+ if(!PoseVehiclePairCurrent()){PoseFail("pose_vehicle_pair_changed");return false;}
  const bool accepted=!g_pose_before||g_pose_before(t_pose.context);
  return accepted&&!g_pose_fault;
 }
@@ -533,6 +549,7 @@ bool PoseAfter() noexcept {
  if(!PoseOwned())return !g_pose_fault;
  bool accepted=!g_pose_fault;
  if(accepted&&!PoseCarryPairCurrent()){PoseFail("pose_carry_pair_changed");accepted=false;}
+ if(accepted&&!PoseVehiclePairCurrent()){PoseFail("pose_vehicle_pair_changed");accepted=false;}
  if(accepted&&g_pose_after)accepted=g_pose_after(t_pose.context)&&!g_pose_fault;
  if(!PosePairWordRestore()){PoseFail("pose_pair_word_restore");accepted=false;}
  return accepted&&!g_pose_fault;
@@ -542,7 +559,7 @@ bool PoseVarsNativeOwner(void* object,std::uint32_t id,bool phase) noexcept {
  // A local0 sender must run in its own qualified unshadowed operation.
  // Writing its result into body1 shadow would lose local0 gameplay state.
  cp::Pair current{};auto read=PoseReader;if(!cp::ReadPair(read,g_base,g_pose_player,current))return false;
- if(!PoseCarryPairCurrent())return false;
+ if(!PoseCarryPairCurrent()||!PoseVehiclePairCurrent())return false;
  return reinterpret_cast<std::uintptr_t>(object)==current.body[id].carrier+(phase?0x30u:0u);
 }
 void PoseVarsMessage(void* object,std::uint32_t id,void* result,const void* message) noexcept {
@@ -852,7 +869,8 @@ __declspec(noinline) void* PoseRouteCtor(void* object,void* owner) noexcept {
  PoseTraceNestedGlobal("PoseRouteCtor",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
  __try {SetLastError(incoming);
-  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::interface_ctor,reinterpret_cast<std::uintptr_t>(object),reinterpret_cast<std::uintptr_t>(owner)))PoseFail("pose_retained_dispatch_interface_ctor");
+  if(PoseVehicleRegistryRefuses(0xbf4690,reinterpret_cast<std::uintptr_t>(object),reinterpret_cast<std::uintptr_t>(owner)))PoseFail("pose_vehicle_registry_lifecycle");
+  else if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::interface_ctor,reinterpret_cast<std::uintptr_t>(object),reinterpret_cast<std::uintptr_t>(owner)))PoseFail("pose_retained_dispatch_interface_ctor");
   else result=g_pose_route_ctor(object,owner);outgoing=GetLastError();
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
  return result;
@@ -862,7 +880,8 @@ __declspec(noinline) void* PoseRouteDelete(void* object,unsigned flags) noexcept
  PoseTraceNestedGlobal("PoseRouteDelete",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
  __try {SetLastError(incoming);
-  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::interface_delete,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_interface_delete");
+  if(PoseVehicleRegistryRefuses(0xbf4a80,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_vehicle_registry_lifecycle");
+  else if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::interface_delete,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_interface_delete");
   else result=g_pose_route_delete(object,flags);outgoing=GetLastError();
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
  return result;
@@ -872,7 +891,8 @@ __declspec(noinline) void* PoseRegistryCtor(void* object) noexcept {
  PoseTraceNestedGlobal("PoseRegistryCtor",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
  __try {SetLastError(incoming);
-  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_ctor,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_ctor");
+  if(PoseVehicleRegistryRefuses(0xbf8a20,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_vehicle_registry_lifecycle");
+  else if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_ctor,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_ctor");
   else result=g_pose_registry_ctor(object);outgoing=GetLastError();
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
  return result;
@@ -882,7 +902,8 @@ __declspec(noinline) void PoseRegistryDestroy(void* object) noexcept {
  PoseTraceNestedGlobal("PoseRegistryDestroy",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
  __try {SetLastError(incoming);
-  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_destruct,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_destruct");
+  if(PoseVehicleRegistryRefuses(0xbf8c10,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_vehicle_registry_lifecycle");
+  else if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_destruct,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_destruct");
   else g_pose_registry_destroy(object);outgoing=GetLastError();
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
@@ -891,7 +912,8 @@ __declspec(noinline) void* PoseRegistryDelete(void* object,unsigned flags) noexc
  PoseTraceNestedGlobal("PoseRegistryDelete",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
  __try {SetLastError(incoming);
-  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_delete,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_delete");
+  if(PoseVehicleRegistryRefuses(0xbf8f20,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_vehicle_registry_lifecycle");
+  else if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_delete,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_delete");
   else result=g_pose_registry_delete(object,flags);outgoing=GetLastError();
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
  return result;
@@ -901,7 +923,8 @@ __declspec(noinline) void PoseRegistryReplace() noexcept {
  PoseTraceNestedGlobal("PoseRegistryReplace",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
  __try {SetLastError(incoming);
-  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_replace,0))PoseFail("pose_retained_dispatch_registry_replace");
+  if(PoseVehicleRegistryRefuses(0xbf9060,0))PoseFail("pose_vehicle_registry_lifecycle");
+  else if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_replace,0))PoseFail("pose_retained_dispatch_registry_replace");
   else g_pose_registry_replace();outgoing=GetLastError();
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
@@ -910,7 +933,8 @@ __declspec(noinline) void PoseRouteClassRegister(void* object) noexcept {
  PoseTraceNestedGlobal("PoseRouteClassRegister",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
  __try {SetLastError(incoming);
-  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::class_register,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_class_register");
+  if(PoseVehicleRegistryRefuses(0xbf91b0,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_vehicle_registry_lifecycle");
+  else if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::class_register,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_class_register");
   else g_pose_route_class_register(object);outgoing=GetLastError();
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
@@ -920,9 +944,13 @@ __declspec(noinline) void PoseRouteClassUpdate(void* object) noexcept {
  if(!PoseEnterShared(read)){SetLastError(incoming);return;}
  __try {
   const bool held=PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::class_update,reinterpret_cast<std::uintptr_t>(object));
-  if(held&&!PoseRouteCurrent())PoseFail("pose_retained_dispatch_class_work");
+  const bool vehicleHeld=g_pose_vehicle_bound&&g_pose_owners.held==holds::vehicle&&
+   reinterpret_cast<std::uintptr_t>(object)==g_pose_vehicle_protection.registryHolder;
+  if(vehicleHeld&&!PoseVehicleRegistryClassCurrent(read))PoseFail("pose_vehicle_registry_class_work");
+  else if(held&&!PoseRouteCurrent())PoseFail("pose_retained_dispatch_class_work");
   else {
    SetLastError(incoming);g_pose_route_class_update(object);outgoing=GetLastError();
+   if(vehicleHeld&&!PoseVehicleRegistryClassCurrent(read))PoseFail("pose_vehicle_registry_class_changed");
    if(held&&!PoseRouteCurrent())PoseFail("pose_dispatch_class_changed");
   }
  } __finally {PoseExitShared(read);SetLastError(outgoing);}
@@ -945,6 +973,7 @@ void PoseTeardownDiagnostic(std::uintptr_t object,unsigned kind,std::uint32_t ho
  expected[1]={g_pose_player,g_pose_block,0,g_pose_cs,g_pose_entry,1};
  if(partnerBirth.ready&&partnerBirth.identity.block==g_pose_block)expected[1].state=partnerBirth.identity.state;
  if(g_pose_owners.held&holds::carry){for(unsigned id=0;id<2;++id){const auto& b=g_pose_carry_pair.body[id];expected[id]={g_pose_carry_pair.player,b.block,b.state,b.cs,b.entry,id};}}
+ if(g_pose_owners.held&holds::vehicle){for(unsigned id=0;id<2;++id){const auto& b=g_pose_vehicle_hold.pair.body[id];expected[id]={g_pose_vehicle_hold.pair.player,b.block,b.state,b.cs,b.entry,id};}}
  td::Snapshot snapshot{};auto reader=PoseReader;const bool paired=td::Pair(reader,g_base,object,hook,expected,snapshot);
  if(hook==0x9cd030){native_pose_parts_diagnostic::Witness parts{};
   const bool partsPair=native_pose_parts_diagnostic::Pair(reader,g_base,object,expected,parts);char partsLine[512]{};
@@ -970,7 +999,8 @@ bool PoseDestroyRefused(std::uintptr_t object,unsigned kind,std::uint32_t hook,s
  PoseInvalidateBirth(object,kind);
  if(!PoseRequired()||!g_pose_held)return false;
  const bool own=(kind==0?object==g_pose_block:kind==1?object==g_pose_cs:kind==2?object==g_pose_entry:object==g_pose_go)||
-     ((g_pose_owners.held&holds::carry)&&cp::MatchesTeardown(g_pose_carry_pair,object,kind));
+     ((g_pose_owners.held&holds::carry)&&cp::MatchesTeardown(g_pose_carry_pair,object,kind))||
+     ((g_pose_owners.held&holds::vehicle)&&cp::MatchesTeardown(g_pose_vehicle_hold.pair,object,kind));
  if(own){PoseTeardownDiagnostic(object,kind,hook,caller,argument,auxiliary,localBirth,partnerBirth);PoseFail("pose_live_model_teardown");return true;}return false;
 }
 // These entries execute before native whole-owner release. Child block guards
@@ -1079,6 +1109,20 @@ __declspec(noinline) void PoseApplyParts(void* object) noexcept {
      if(current&&same&&module){const auto observe=g_pose_dual_read_observer.load(std::memory_order_acquire);if(observe)observe(after);}
      SetLastError(outgoing);
     }else {PoseDualPartsRefusalLog();PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX);}
+   }
+  }else if(retained&&g_pose_owners.held==holds::vehicle){
+   if(t_parts.read)PoseFail("pose_vehicle_parts_reentrant");
+   else{
+    t_parts={&read,reinterpret_cast<std::uintptr_t>(object),caller};
+    NativePoseVehiclePartsContext before{},pre{},after{};
+    const bool admitted=PoseVehiclePartsContext(before)&&PoseVehiclePartsContext(pre)&&vehicle_core::SameParts(before,pre);
+    if(admitted){
+     // Exact both-body no-work and local0 desired/current profile are freshly
+     // proved. Original native processing runs with no dirty-bit shadow.
+     SetLastError(incoming);g_pose_parts(object);outgoing=GetLastError();
+     if(!PoseVehiclePartsContext(after)||!vehicle_core::SameParts(pre,after))PoseFail("pose_vehicle_parts_late_changed");
+     SetLastError(outgoing);
+    }else PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX);
    }
   }else if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX))g_pose_parts(object);
   outgoing=GetLastError();
@@ -1257,7 +1301,7 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
  if(!PoseDeferredCode(mismatch)||!PoseDeferredPinImport()){g_pose_reason="pose_carry_deferred_setter_or_import";return false;}
  if(!dual_parts_local_profile_contract::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_dual_profile_full_code";return false;}
  if(!sleep_parts_contract::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_parts_full_code";return false;}
- if(!cw::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_code_c0";return false;}
+ if(!cw::CodeGate(reader,g_base,span,mismatch,&coop_carry::ReadPresentationSetter)){g_pose_reason="pose_code_c0";return false;}
  if(!route::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_dispatch_lifetime_code";return false;}
  unsigned char bytes[8192]{};
  for(const auto& s:native_pose_window_contract::sites){

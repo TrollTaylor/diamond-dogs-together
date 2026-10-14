@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include "coop_passenger.hpp"
+#include "vehicle_mirror_hook_read.hpp"
 #include "vehicle_registry_read.hpp"
 #include "vehicle_resource_lifetime.hpp"
 #include "vehicle_cleanup_camera_read.hpp"
@@ -128,9 +129,13 @@ std::atomic<const char*> g_scopeReason{"never"},g_tickReason{"never"};
 std::atomic<std::uint32_t> g_stockChecks{0},g_stockAccepted{0},g_stockTarget{0xffff},g_stockQuery{0xff};
 std::atomic<std::uint32_t> g_stockNearest{0},g_stockFirst{4},g_stockLast{4},g_stockResult{4};
 SRWLOCK g_lock=SRWLOCK_INIT;detail::Lease g_lease{};
-struct HookPin {std::uintptr_t rva;unsigned char head[16]{};};
-HookPin g_hooks[]={{kCanExec,{}},{kNearest,{}},{kPhase1,{}},{kPose,{}},{kExit,{}}};
+namespace hooks=vehicle_mirror_hook_read;
+hooks::Hook g_hooks[5]{};unsigned char g_originalHeads[5][16]{};
+NativePoseObserver g_poseObserver=nullptr;
+
 std::uint32_t g_gatewayDisp=0;void* g_gateway=nullptr;
+std::size_t g_gatewayLength=0;unsigned char g_gatewayBytes[512]{};
+
 thread_local unsigned t_canDepth=0,t_phaseDepth=0;
 thread_local std::uintptr_t t_primary=0,t_descriptor=0,t_phasePrimary=0;
 thread_local std::uint32_t t_body=0xffffffffu,t_phaseBody=0xffffffffu;
@@ -157,12 +162,14 @@ bool Gate() noexcept {
  return vehicle_controller_read::CodeGate(reader,g_base,g_span,mismatch);
 }
 bool PatchesLive() noexcept {
- if(!g_installed.load()||!g_gateway)return false;
- unsigned char head[16]{};
- for(const auto& hook:g_hooks)if(!ReadBytes(g_base+hook.rva,head,sizeof(head))||std::memcmp(head,hook.head,sizeof(head)))return false;
- unsigned char jcc[6]{};std::uint32_t disp=0;
- if(!ReadBytes(g_base+kJcc,jcc,sizeof(jcc))||jcc[0]!=0x0f||jcc[1]!=0x85)return false;
- std::memcpy(&disp,jcc+2,4);return disp==g_gatewayDisp;
+ if(!g_installed.load()||!g_gateway||!g_gatewayLength||g_gatewayLength>sizeof(g_gatewayBytes))return false;
+ auto read=ReadBytes;for(const auto& hook:g_hooks)if(!hooks::Live(read,g_base,hook))return false;
+ unsigned char jcc[6]{},gateway[512]{};std::uint32_t disp=0;
+ if(!ReadBytes(g_base+kJcc,jcc,sizeof(jcc))||jcc[0]!=0x0f||jcc[1]!=0x85||
+  !ReadBytes(reinterpret_cast<std::uintptr_t>(g_gateway),gateway,g_gatewayLength)||
+  std::memcmp(gateway,g_gatewayBytes,g_gatewayLength))return false;
+ std::memcpy(&disp,jcc+2,4);std::int32_t signedDisp=0;std::memcpy(&signedDisp,&disp,4);
+ return disp==g_gatewayDisp&&g_base+kJccNext+static_cast<std::intptr_t>(signedDisp)==reinterpret_cast<std::uintptr_t>(g_gateway);
 }
 struct Current {
  downed_player::Snapshot owner{};partner_player::State player{};
@@ -314,7 +321,10 @@ __declspec(noinline) void HookPhase1(void* self,std::uint32_t body,std::uint32_t
  SetLastError(after);
 }
 __declspec(noinline) void HookPose(void* self,std::uint32_t body,void* record) noexcept {
- const DWORD entry=GetLastError();SetLastError(entry);g_pose(self,body,record);const DWORD after=GetLastError();
+ const DWORD entry=GetLastError();const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+ SetLastError(entry);g_pose(self,body,record);const DWORD after=GetLastError();
+ if(g_poseObserver)g_poseObserver(reinterpret_cast<std::uintptr_t>(self),body,reinterpret_cast<std::uintptr_t>(record),caller);
+
  if(!body){Current current{};detail::Lease lease{};
   if(CurrentScope(current)&&LoadLease(lease)&&lease.committed&&CurrentLease(lease,current)){
    const auto& b=current.controller.body[0];detail::Unit unit{};std::uintptr_t map=0,attached=0;
@@ -347,7 +357,9 @@ bool InstallGateway() noexcept {
  const unsigned char expected[]={0x0f,0x85,0x6b,0x04,0,0};if(std::memcmp(raw,expected,sizeof(raw)))return false;
  void* buffer=near_code::AllocateNear(g_base+kJccNext,4096);if(!buffer)return false;
  const auto length=detail::BuildGateway(static_cast<unsigned char*>(buffer),4096,reinterpret_cast<std::uintptr_t>(&OccupiedGateway),g_base+kJccNext,g_base+kJccFail);
- DWORD prior=0;if(!length||!VirtualProtect(buffer,4096,PAGE_EXECUTE_READ,&prior)){VirtualFree(buffer,0,MEM_RELEASE);return false;}
+ if(!length||length>sizeof(g_gatewayBytes)){VirtualFree(buffer,0,MEM_RELEASE);return false;}
+ std::memcpy(g_gatewayBytes,buffer,length);g_gatewayLength=length;
+ DWORD prior=0;if(!VirtualProtect(buffer,4096,PAGE_EXECUTE_READ,&prior)){VirtualFree(buffer,0,MEM_RELEASE);return false;}
  FlushInstructionCache(GetCurrentProcess(),buffer,length);
  std::int32_t displacement=0;if(!near_code::Rel32(g_base+kJccNext,reinterpret_cast<std::uintptr_t>(buffer),displacement)){VirtualFree(buffer,0,MEM_RELEASE);return false;}
  const auto value=static_cast<std::uint32_t>(displacement);
@@ -361,6 +373,19 @@ bool InstallGateway() noexcept {
 }
 } // namespace
 
+bool RegisterNativePoseObserver(NativePoseObserver observer) noexcept {
+ const Preserve preserve;if(!observer||g_base||g_installed.load())return false;
+ if(g_poseObserver)return g_poseObserver==observer;g_poseObserver=observer;return true;
+}
+bool OverlayOriginal(std::uintptr_t at,void* output,std::size_t size) noexcept {
+ const Preserve preserve;if(!output||!detail::Range(at,size))return false;
+ if(!g_installed.load())return true;if(!PatchesLive())return false;auto read=ReadBytes;
+ if(!hooks::Overlay(read,g_base,g_hooks,g_originalHeads,at,output,size))return false;
+ const auto begin=g_base+kJcc+2,end=begin+4,low=at>begin?at:begin,high=at+size<end?at+size:end;
+ if(low<high){unsigned char original[4]{};const auto displacement=kOriginalDisp;std::memcpy(original,&displacement,4);
+  std::memcpy(static_cast<unsigned char*>(output)+low-at,original+low-begin,high-low);}
+ return PatchesLive();
+}
 bool Install(const void* image,std::size_t span,bool accepted,Log log) noexcept {
  const Preserve preserve;if(g_installed.load())return true;
  if(g_base||!accepted||!image||span<0xa01d000||!worker_scenario::Compiled())return false;
@@ -369,6 +394,9 @@ bool Install(const void* image,std::size_t span,bool accepted,Log log) noexcept 
  const auto status=MH_Initialize();if(status!=MH_OK&&status!=MH_ERROR_ALREADY_INITIALIZED)return false;
  void* wrappers[]={reinterpret_cast<void*>(&HookCanExec),reinterpret_cast<void*>(&HookNearest),reinterpret_cast<void*>(&HookPhase1),reinterpret_cast<void*>(&HookPose),reinterpret_cast<void*>(&HookExit)};
  void** originals[]={reinterpret_cast<void**>(&g_canExec),reinterpret_cast<void**>(&g_nearest),reinterpret_cast<void**>(&g_phase1),reinterpret_cast<void**>(&g_pose),reinterpret_cast<void**>(&g_exit)};
+ const std::uintptr_t rvas[]={kCanExec,kNearest,kPhase1,kPose,kExit};
+ for(unsigned i=0;i<5;++i){g_hooks[i].rva=rvas[i];g_hooks[i].detour=reinterpret_cast<std::uintptr_t>(wrappers[i]);
+  if(!partner_input_hook::ReadNativePoseOriginalCode(g_base+rvas[i],g_originalHeads[i],16))return false;}
  unsigned made=0;for(;made<5;++made)if(MH_CreateHook(reinterpret_cast<void*>(g_base+g_hooks[made].rva),wrappers[made],originals[made])!=MH_OK)break;
  if(made!=5){while(made)MH_RemoveHook(reinterpret_cast<void*>(g_base+g_hooks[--made].rva));return false;}
  // The gate is installed first while its callback is strictly disabled. It
@@ -378,7 +406,9 @@ bool Install(const void* image,std::size_t span,bool accepted,Log log) noexcept 
  unsigned enabled=0;for(;enabled<5;++enabled)if(MH_EnableHook(reinterpret_cast<void*>(g_base+g_hooks[enabled].rva))!=MH_OK)break;
  if(enabled!=5){for(unsigned i=0;i<enabled;++i)MH_DisableHook(reinterpret_cast<void*>(g_base+g_hooks[i].rva));
   for(auto& hook:g_hooks)MH_RemoveHook(reinterpret_cast<void*>(g_base+hook.rva));return false;}
- for(auto& hook:g_hooks)if(!ReadBytes(g_base+hook.rva,hook.head,sizeof(hook.head)))return false;
+ auto read=ReadBytes;for(unsigned i=0;i<5;++i){g_hooks[i].trampoline=reinterpret_cast<std::uintptr_t>(*originals[i]);
+  if(!hooks::Seal(read,g_base,g_hooks[i]))return false;}
+
  g_installed.store(true);Emit("coop_passenger=installed; enabled=0; body=0\r\n");return true;
 }
 void Tick(std::uint32_t mission,std::uint16_t epoch,bool admission) noexcept {

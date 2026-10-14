@@ -90,9 +90,10 @@ param(
     # Native puppet (docs/native-puppet.md 13): census|loco|gun (default loco).
     [ValidateSet('','census','loco','gun')][string]$NativeStage='',
     # research: the stock46 Research worker build (gun stage only).
-    [ValidateSet('normal','research','buddy-capacity','mgo-sleep-rest')][string]$BuildProfile='normal',
+    [ValidateSet('normal','research','buddy-capacity','mgo-sleep-rest','mgo-unique-rest')][string]$BuildProfile='normal',
     [string]$BuddyCapacityArchive,
     [string]$MgoSleepRestArchive,
+    [string]$MgoUniqueRestArchive,
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # Optional quality preset, applied only to this run's fresh role save copies.
@@ -114,11 +115,12 @@ Import-Module (Join-Path $worker 'WorkerSessionCommon.psm1') -Force -DisableName
 Import-Module (Join-Path $repo 'tools\lab\WorldSync.psm1') -Force -DisableNameChecking
 if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
 Assert-WorkerMgoSleepRestScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoSleepRestArchive $BuddyCapacityArchive
-if($BuildProfile -cin @('research','mgo-sleep-rest') -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
-if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cnotin @('research','mgo-sleep-rest')){throw '-NativeStage gun needs -BuildProfile research.'}
+Assert-WorkerMgoUniqueRestScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoUniqueRestArchive $BuddyCapacityArchive $MgoSleepRestArchive
+if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest') -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
+if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cnotin @('research','mgo-sleep-rest','mgo-unique-rest')){throw '-NativeStage gun needs -BuildProfile research.'}
 $researchExperiments=@()
-if($BuildProfile -cin @('research','mgo-sleep-rest')){
-    $researchExperiments=@(Get-WorkerResearchExperiments -Ammo:$AmmoExperiment)
+if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest')){
+    $researchExperiments=if($BuildProfile -ceq 'mgo-unique-rest'){@(Get-WorkerMgoUniqueRestExperiments)}else{@(Get-WorkerResearchExperiments -Ammo:$AmmoExperiment)}
     $build=Get-WorkerResearchBuildDirectory $repo $researchExperiments
 } elseif($BuildProfile -ceq 'buddy-capacity'){
     if($Mode -cne 'lab' -or $AmmoExperiment -or !($PartnerProfile -ceq 'native' -and $NativeStage -cin @('census','loco')) -or !$BuddyCapacityArchive){
@@ -201,7 +203,7 @@ if(!$BaselineLoaderSha256){
     $BaselineLoaderSha256=[string]$record.dll_sha256
 }
 if(!$CheckReceipt){
-    $out=if($BuildProfile -cin @('research','buddy-capacity','mgo-sleep-rest')){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker 2>&1)}
+    $out=if($BuildProfile -cin @('research','buddy-capacity','mgo-sleep-rest','mgo-unique-rest')){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker 2>&1)}
         else{@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -EnableBackgroundWorker 2>&1)}
     $CheckReceipt=@($out|ForEach-Object{[string]$_}|Select-String -Pattern 'Worker check receipt: (.+receipt\.json)'|ForEach-Object{$_.Matches[0].Groups[1].Value})[-1]
     if(!$CheckReceipt){throw "Worker checks produced no receipt:`n$($out -join "`n")"}
@@ -209,7 +211,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -BuddyCapacityArchive $BuddyCapacityArchive -MgoSleepRestArchive $MgoSleepRestArchive -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -BuddyCapacityArchive $BuddyCapacityArchive -MgoSleepRestArchive $MgoSleepRestArchive -MgoUniqueRestArchive $MgoUniqueRestArchive -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId

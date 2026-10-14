@@ -70,7 +70,7 @@ What is NOT fully shared yet:
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build. The user reported partial successful two-PC play on 0.12.0. These
-  0.12.5 changes are checked on two hidden local copies and still need a fresh
+  0.12.6 changes are checked on two hidden local copies and still need a fresh
   two-PC session; complete campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
@@ -415,7 +415,7 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
   The crawl uses
   the normal prone animation at reduced speed, not the exact hospital clip.
 
-  Partial two-PC Steam play was reported on 0.12.0. This 0.12.5 build needs
+  Partial two-PC Steam play was reported on 0.12.0. This 0.12.6 build needs
   a fresh two-PC test; its recorded qualification uses two hidden instances.
 - Online play uses Steam's networking and Valve's relays: it needs both PCs
   online in Steam. If it does not connect, use LAN/VPN.

@@ -54,6 +54,7 @@
 #include "mgscoop/native_pose_window.hpp"
 #include "native_pose_exclusion.hpp"
 #include "camera_mode_window.hpp"
+#include "mgscoop/coop_carry.hpp"
 #include "carry_model_lifetime_contract.hpp"
 #include "carry_model_retirement_contract.hpp"
 #include "native_pose_window_contract.hpp"
@@ -82,6 +83,7 @@
 #include "dual_parts_cold_profile.hpp"
 #include "dual_parts_local_profile_contract.hpp"
 #include "native_pose_hold_owners.hpp"
+#include "native_pose_vehicle_policy.hpp"
 #include "native_pose_carry_participants.hpp"
 #include "carry_plugin_contract.hpp"
 #include "carry_owned_handshake_contract.hpp"
@@ -2090,14 +2092,21 @@ bool SetNativePoseWindowTest(bool enabled) noexcept {
  if(!enabled)return !PoseRequired(); // never discard a retained test/feature requirement
  if(PoseRequired())return !g_pose_fault;
  pi::Arm a{};
- if(!g_pose_installed||!PoseWorker()||!PoseParticipantsLive()||!g_ready||g_faulted||g_shutdown||!ReadArm(a)||
-    !a.enabled||!a.native||a.cam!=PartnerInputCam::sandbox||a.holdlog||
-    a.wrap!=PartnerWrap::window||a.config.mode!=PartnerInput::net||!a.gen||!a.rates_epoch||
-    static_cast<std::uint32_t>(g_hook_thread)!=GetCurrentThreadId()||partner_defer::InBatch()||
-    (g_window_seq&1)||!g_pose_gate.Idle())return false;
+ const auto refuse=[](const char* why) noexcept {g_pose_reason=why;return false;};
+ if(!g_pose_installed)return refuse("pose_enable_not_installed");
+ if(!PoseWorker())return refuse("pose_enable_worker");
+ if(!PoseParticipantsLive())return refuse("pose_enable_participants");
+ if(!g_ready||g_faulted||g_shutdown)return refuse("pose_enable_input_state");
+ if(!ReadArm(a))return refuse("pose_enable_arm_read");
+ if(!a.enabled||!a.native)return refuse("pose_enable_native_arm");
+ if(a.cam!=PartnerInputCam::sandbox||a.holdlog)return refuse("pose_enable_camera_hold");
+ if(a.wrap!=PartnerWrap::window)return refuse("pose_enable_wrapper");
+ if(a.config.mode!=PartnerInput::net||!a.gen||!a.rates_epoch)return refuse("pose_enable_native_epoch");
+ if(static_cast<std::uint32_t>(g_hook_thread)!=GetCurrentThreadId())return refuse("pose_enable_thread");
+ if(partner_defer::InBatch()||(g_window_seq&1)||!g_pose_gate.Idle())return refuse("pose_enable_busy");
  pi::Skip skip=pi::Skip::player;
  __try {skip=Validate(a,reinterpret_cast<void*>(a.root1));}__except(OwnFilter(1,GetExceptionCode())){}
- if(skip!=pi::Skip::none)return false;
+ if(skip!=pi::Skip::none)return refuse("pose_enable_arm_validation");
  NativePoseJobContext born{};if(!PoseModel(a,born)||!PoseBirthCurrent(a,born,true)){g_pose_reason="pose_actor_birth_unobserved";return false;}
  g_pose_player=a.P;g_pose_go=a.go;g_pose_root=a.root1;g_pose_block=a.blk1;
  g_pose_generation=a.gen;g_pose_epoch=a.rates_epoch;g_pose_thread=GetCurrentThreadId();g_pose_pool=a.pool1;
@@ -2173,6 +2182,7 @@ bool NativePoseVarsPairWordCleanupWindow(const NativePoseJobContext& c0) noexcep
 }
 #include "carry_op0_origin_exports.inc"
 #include "carry_queue_lifetime_exports.inc"
+#include "native_pose_vehicle_exports.inc"
 #include "carry_deferred_copy_exports.inc"
 #include "carry_op1_owned_exports.inc"
 #include "carry_op2_shared_exports.inc"

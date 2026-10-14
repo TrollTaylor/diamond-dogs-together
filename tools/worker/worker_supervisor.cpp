@@ -163,8 +163,8 @@ bool WindowedJson(const std::string& text) {
 }
 void GateGames(Worker& worker) {
     auto& m = worker.manifest; Require(NoListener(m.offline_port), "offline_master_port_listening");
-    if (m.runtime_profile == mgscoop::mgo_sleep_rest::profile) {
-        const auto catalog = worker.AddPin(m.directory + "\\mgo_sleep_rest_v1-catalog.json", m.At("runtime_catalog_sha256"));
+    if (m.runtime_profile == mgscoop::mgo_sleep_rest::profile || m.runtime_profile == mgscoop::mgo_unique_rest::profile) {
+        const auto catalog = worker.AddPin(m.directory + "\\" + m.runtime_profile + "-catalog.json", m.At("runtime_catalog_sha256"));
         Require(Size(worker.pins[catalog].file.value, 65536) > 0, "mgo_rest_catalog_nonempty");
     }
     const auto qualification = worker.AddPin(m.At("probe_receipt"), m.At("probe_receipt_sha256")); Qualification seal;

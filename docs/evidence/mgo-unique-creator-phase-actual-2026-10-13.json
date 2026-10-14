@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "32b88f212ea443ea8d0a8e323ca9cbec",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-220025-b08ca627f21b4456bf8e4454aaeec14e\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 0,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 103050365,
+      "end": 103162519,
+      "sha256": "9955389dbfc4d1a9f0b5acae54424cea1f407f310da005f6e83cb4f53fb09539"
+    },
+    {
+      "role": "guest",
+      "start": 111994438,
+      "end": 112108663,
+      "sha256": "a7d234d44d8c148ec6eeb246f981046e3a446fe44a90374153161170453d1bbb"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Actual first common bind happens with modelpart0 on both players and both copies. Logical ID/pool, event/table/array records match; completed-modelpart3 assumption refused. Getter/banks not yet qualified, append remainedOFF. Owned normalshutdown restored all63 current0.12.5 protected paths and real saves."
+}

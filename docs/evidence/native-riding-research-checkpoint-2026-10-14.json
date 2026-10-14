@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "source_candidate": "0.12.6",
+  "installed_release": "0.12.5",
+  "research_receipt": "20261013-235656-b7cb924466684b3898e5a1e957d1dfb7",
+  "audited_tests": 238,
+  "all_passed": true,
+  "runtime_camera_composition": "d13fd5d3981c43d1a4257566da3bcaa9",
+  "runtime_initial_bank": "d6228c5577264f60a47e18b98f350e73",
+  "runtime_carried_horse_source": "2d94f36436244667b475b3583cd6d01a",
+  "normal_riding_activation": false,
+  "guard_standing_sleep_activation": false,
+  "shared_riding_acceptance": false,
+  "protected_paths_restored": 63,
+  "limitations": [
+    "Vehicle cost fallback prevented entry; optimize cold idle checks and retest before accepting a rider.",
+    "Stock bank still wins natural sleep selection. Unique archive loading does not establish animation reuse.",
+    "Horse remains empty and player remains shoulder-carried after load attempt; no cargo writer accepted.",
+    "Local two-copy evidence does not replace fresh two-PC Steam acceptance."
+  ]
+}

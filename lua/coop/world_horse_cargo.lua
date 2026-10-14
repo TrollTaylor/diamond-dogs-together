@@ -188,7 +188,7 @@ local function offTick(now, d, other, me)
     if C.pullSince and now - C.pullSince >= 1000 then
       C.state,C.awake,C.pullSince,C.unloadSince,C.ownerGeneration="carrier",false,nil,nil,other.generation
       native(true, false, false)
-      
+
       log("carrier;pulled=1;mount=" .. tostring(C.mount))
     end
     return
@@ -297,7 +297,7 @@ W.handlers[OP] = function(v)
       C.mount = mounted() and HORSE or drivenVehicle()
       C.state,C.awake,C.unloadSince,C.ownerGeneration="carrier",true,nil,other.generation
       native(true, false, false)
-      
+
       log("carrier;awake=1")
     end
     return

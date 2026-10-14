@@ -13,3 +13,6 @@ bool MountedBuddyCapacity() noexcept;
 bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
                         void (*log)(const char*) noexcept,
                         bool allow_experimental = false) noexcept;
+
+// Private unique bank archive identity only; does not prove native selection.
+bool MountedMgoUniqueRestContext(const wchar_t* directory) noexcept;

@@ -590,6 +590,13 @@ bool ReliableReceiver::Accept(std::uint16_t id, const std::uint8_t* payload, std
     return true;
 }
 
+bool ReliableReceiver::FrontId(std::uint16_t& id) const noexcept {
+    id = 0;
+    if (!slots_[drain_head_ % kReliableWindow].stored) return false;
+    id = drain_head_;
+    return true;
+}
+
 bool ReliableReceiver::Drain(std::uint8_t* out, std::size_t capacity, std::size_t& size, std::uint64_t now_ms) noexcept {
     size = 0;
     Slot& slot = slots_[drain_head_ % kReliableWindow];

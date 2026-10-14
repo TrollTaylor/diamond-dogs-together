@@ -5,6 +5,7 @@
 #include <cstring>
 #include "sleep_graph_read.hpp"
 #include "sleep_motion_asset_contract.hpp"
+#include "sleep_unique_bind.hpp"
 namespace mgscoop::sleep_motion_asset_read {
 namespace sg=sleep_graph_read;namespace sp=sleep_plugin_read;
 enum class Origin : unsigned {none,tpp,mgo_reconstruction};
@@ -25,7 +26,7 @@ struct Asset {
  char sha256[65]{};
 };
 struct Reply {bool ready=false,selected=false;Asset body[2];const char* reason="disabled";};
-struct Scope {sp::Scope owner;bool codeGate=false,privateCopiedSaveLab=false;};
+struct Scope {sp::Scope owner;bool codeGate=false,privateCopiedSaveLab=false,privateUniqueRestProfile=false;};
 inline const Pin* ForGraph(std::uint64_t hash) noexcept {for(const auto& p:pins)if(p.graph==hash)return &p;return nullptr;}
 template<class Reader> bool CodeGate(Reader& r,std::uintptr_t image,std::size_t span,std::uintptr_t& mismatch) noexcept {
  mismatch=0;unsigned char bytes[1024]{};
@@ -39,7 +40,7 @@ template<class Reader> bool CodeGate(Reader& r,std::uintptr_t image,std::size_t 
 }
 // Caller supplies a bounded cryptographic SHA256(buffer,count,char[65]) -> bool.
 // Do not replace it with a pointer/address or graph-ID acceptance check.
-template<class Reader,class Hasher> bool FromGraph(Reader& r,Hasher& hash,std::uintptr_t image,const sg::Graph& g,Asset& out,const char** refusal=nullptr) noexcept {
+template<class Reader,class Hasher> bool FromGraph(Reader& r,Hasher& hash,std::uintptr_t image,const sg::Graph& g,Asset& out,const char** refusal=nullptr,bool privateUniqueRestProfile=false) noexcept {
  out={};const auto why=[&](const char* s) noexcept {if(refusal)*refusal=s;};
  if(!g.currentNode)return true;const auto* pin=ForGraph(g.stateHash);if(!pin)return true;
  Asset base{};std::uint16_t maximumSlot=0;std::uintptr_t vt=0;
@@ -74,8 +75,8 @@ template<class Reader,class Hasher> bool FromGraph(Reader& r,Hasher& hash,std::u
   std::uintptr_t array=0,loaded=0;std::uint32_t count=0;std::uint8_t loadKind=0;
   if(!sp::Get(r,a.source+0x20,kind)||(kind&15u)!=3||!sp::Get(r,a.source+0x22,frames)||
      !sp::Get(r,a.source+8,a.bank)||!sp::Aligned(a.bank,8)||!sp::Get(r,a.bank,vt)||vt!=image+0x24c2890||
-     !sp::Get(r,a.bank+0x40,loadKind)||loadKind!=2||!sp::Get(r,a.bank+0x84,count)||count!=1285||
-     !sp::Get(r,a.bank+0x88,array)||!sp::Aligned(array,8)||!sp::Get(r,a.source+0x24,a.index)||a.index!=pin->index||
+     !sp::Get(r,a.bank+0x40,loadKind)||loadKind!=2||!sp::Get(r,a.bank+0x84,count)||(count!=1285&&!(count==2&&privateUniqueRestProfile))||
+     !sp::Get(r,a.bank+0x88,array)||!sp::Aligned(array,8)||!sp::Get(r,a.source+0x24,a.index)||a.index!=(count==2?(pin->graph==0xd7654fb0a3f2ull?1u:0u):pin->index)||
      a.source!=array+std::uintptr_t(a.index)*0x28||!sp::Get(r,a.bank+0x98,a.blob)||!sp::Aligned(a.blob,16)||
      !sp::Get(r,a.bank+0x60,loaded)||loaded!=a.blob)return false;
   std::uint32_t signature=0,fileCount=0;std::uint16_t flags=0;
@@ -83,10 +84,15 @@ template<class Reader,class Hasher> bool FromGraph(Reader& r,Hasher& hash,std::u
      !sp::Get(r,a.blob+0x12,flags)||!(flags&0x1000u))return false;
   unsigned char header[32]{};
   if(!r(a.blob+0x20+std::uintptr_t(a.index)*0x20,header,sizeof(header)))return false;
-  const bool original=!std::memcmp(header,pin->originalHeader,sizeof(header)),patched=!std::memcmp(header,pin->patchedHeader,sizeof(header));
+  const bool unique=count==2;
+  if(unique){
+   std::uintptr_t uniqueBlob=0,uniqueSources=0;std::uint64_t uniqueIdentity=0;
+   if(!sleep_unique_bind::UniqueBank(r,hash,image,a.bank,uniqueBlob,uniqueSources,uniqueIdentity)||uniqueBlob!=a.blob||uniqueSources!=array){why("asset_unique_bank_hash_changed");return false;}
+  }
+  const bool original=!unique&&!std::memcmp(header,pin->originalHeader,sizeof(header)),patched=unique?!std::memcmp(header,sleep_unique_bind::kUniqueEntryHeader[a.index],sizeof(header)):!std::memcmp(header,pin->patchedHeader,sizeof(header));
   if(!original&&!patched){why("asset_unknown_header");return false;}
   std::memcpy(&a.offset,header+8,4);a.size=original?pin->originalSize:pin->patchedSize;
-  if(!a.offset||a.offset>kBlobCeiling||!a.size||a.size>kMainCeiling||a.size>kBlobCeiling-a.offset||!sp::Range(a.blob,a.offset+a.size))return false;
+  if(!a.offset||a.offset>(unique?sleep_unique_bind::kUniqueBytes:kBlobCeiling)||!a.size||a.size>kMainCeiling||a.size>(unique?sleep_unique_bind::kUniqueBytes:kBlobCeiling)-a.offset||!sp::Range(a.blob,a.offset+a.size))return false;
   a.main=a.blob+a.offset;unsigned char bytes[kMainCeiling]{};std::uint32_t actualFrames=0;
   if(!r(a.main,bytes,a.size)||!hash(bytes,a.size,a.sha256)||a.sha256[64])return false;
   std::memcpy(&actualFrames,bytes,4);if(actualFrames!=frames)return false;
@@ -110,9 +116,9 @@ template<class Reader,class Hasher> bool ReadPair(Reader& r,Hasher& hash,const S
  if(const auto* why=sp::ScopeRefusal(s.owner)){reply.reason=why;return false;}
  sg::Observation a{},b{};Asset first[2]{},second[2]{};const char* why="asset_graph";
  if(!sg::ReadOnce(r,s.owner,a,&why)){reply.reason=why;return false;}
- for(unsigned k=0;k<2;++k)if(!FromGraph(r,hash,s.owner.image,a.graph[k],first[k],&why)){reply.reason=why;return false;}
+ for(unsigned k=0;k<2;++k)if(!FromGraph(r,hash,s.owner.image,a.graph[k],first[k],&why,s.privateUniqueRestProfile)){reply.reason=why;return false;}
  if(!sg::ReadOnce(r,s.owner,b,&why)||!sg::Same(a,b)){reply.reason="asset_graph_changed";return false;}
- for(unsigned k=0;k<2;++k)if(!FromGraph(r,hash,s.owner.image,b.graph[k],second[k],&why)||!Same(first[k],second[k])){reply.reason="asset_source_changed";return false;}
+ for(unsigned k=0;k<2;++k)if(!FromGraph(r,hash,s.owner.image,b.graph[k],second[k],&why,s.privateUniqueRestProfile)||!Same(first[k],second[k])){reply.reason="asset_source_changed";return false;}
  for(unsigned k=0;k<2;++k){reply.body[k]=second[k];reply.selected=reply.selected||second[k].origin!=Origin::none;}
  reply.ready=true;reply.reason=reply.selected?"asset_selected_payload_verified":"asset_no_selected_rest_source";return true;
  #endif

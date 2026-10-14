@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "2d94f36436244667b475b3583cd6d01a",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-235656-b7cb924466684b3898e5a1e957d1dfb7\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 3,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 105787177,
+      "end": 106349201,
+      "sha256": "8e3bc573d86f7bf63d3c9ee022b12184647f5122142847109fca569c2769f236"
+    },
+    {
+      "role": "guest",
+      "start": 114416601,
+      "end": 114886942,
+      "sha256": "2b5517b6c83a5bf334912e0e62c6d67cd28050214f3b1246c332b141a7bc5bf9"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Actual friendly dart/6600HP and both native shoulder-carry tuples passed3 checks; host Horse/Player census stayed fresh near horse. Guest horse summon correctly refused player_downed, so guest Horse census unavailable. R near horse did NOT attach cargo or put down: both remained carried. Capture label native-putdown is only a scenario label, not acceptance. Horse writer remained OFF. Normal owned close and all63 protected paths restored."
+}

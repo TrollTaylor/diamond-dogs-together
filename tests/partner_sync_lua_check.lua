@@ -39,6 +39,7 @@ local function fixture(options)
     local c = {cfg = true, reply = nil, receipts = {}, ticks = {}, logs = {}, stops = 0, calls = {}, warps = {},
                status = {}, valid = true, localIndex = 0, order = {}, now = 100}
     c.actionCfg, c.actionQueries, c.actionClears, c.actions, c.actionAccepted = options.actionCfg, 0, 0, {}, true
+    c.vehicleQueries, c.vehicleLookups, c.vehiclePublications = 0, {}, {}
     if options.cfg ~= nil then c.cfg = options.cfg end
     local env = {e = {}, Tpp = {MgsCoop = newCoop(options.mission or 30050, options.selected)},
         vars = {missionCode = options.mission or 30050, playerPosX = 1.5, playerPosY = 0.25, playerPosZ = -3.0,
@@ -75,6 +76,14 @@ local function fixture(options)
         check(type(source) == 'string' and #source <= (starts(source, ACTION_TICK) and 512 or 200), 'bounded receipt: ' .. tostring(source))
         c.receipts[#c.receipts + 1] = source
         if options.compileFail then return nil, 'fixture compile failure' end
+        if source == "return 'MGS_COOP_VEHICLE_NAMES_QUERY_V1'" then
+            c.vehicleQueries = c.vehicleQueries + 1
+            return function() return options.vehicleNonce or false end
+        end
+        if starts(source, "return 'MGS_COOP_VEHICLE_NAMES_V1' -- ") then
+            c.vehiclePublications[#c.vehiclePublications + 1] = source
+            return function() return true end
+        end
         if source == CFG then
             return function()
                 if options.cfgThrow then error(sentinel) end
@@ -145,6 +154,12 @@ local function fixture(options)
         if c.sendThrow then error('send failed') end
         c.warps[#c.warps + 1] = {id = id, command = command}
     end}
+    env.GameObject.GetGameObjectId = function(kind, name)
+        c.vehicleLookups[#c.vehicleLookups + 1] = {kind, name}
+        if options.vehicleFail and #c.vehicleLookups == 2 then error('lookup unavailable') end
+        if options.vehicleBad and #c.vehicleLookups == 3 then return 65536 end
+        return 25600 + #c.vehicleLookups - 1
+    end
     for _, path in ipairs(options.missing or {}) do remove(env, path) end
     if options.strictPlayer then
         -- A binding table that raises on unknown keys (like a strict userdata).
@@ -929,6 +944,28 @@ if arg[2] then
     local stop, terminating = index(r.receipts, STOP), index(r.receipts, "return 'MGS_COOP_MISSION_TERMINATING_V1'")
     check(stop ~= nil and count(r.receipts, STOP) == 1 and terminating ~= nil and terminating < stop,
         'one STOP, after the session lifecycle terminating receipt')
+end
+
+do
+    local env, c = fixture()
+    call(env, 'OnMissionGameStart'); update(env, 24)
+    check(c.vehicleQueries == 3 and #c.vehicleLookups == 0 and #c.vehiclePublications == 0, 'default off performs no vehicle lookup')
+    env, c = fixture({vehicleNonce = 7})
+    call(env, 'OnMissionGameStart'); update(env, 7)
+    check(c.vehicleQueries == 0 and #c.vehicleLookups == 0, 'bounded ordinary Lua cadence')
+    update(env, 1)
+    check(#c.vehicleLookups == 19 and #c.vehiclePublications == 1, 'ordinary update publishes exactly nineteen local names')
+    for k, lookup in ipairs(c.vehicleLookups) do
+        local name = k <= 13 and string.format('veh_lv_%04d', k - 1) or string.format('veh_trc_%04d', k - 14)
+        check(lookup[1] == 'TppVehicle2' and lookup[2] == name, 'exact authored local name ' .. tostring(k))
+    end
+    check(c.vehiclePublications[1]:match(' %-%- 7 25600 25601 25602') ~= nil, 'native challenge returned unchanged')
+    env, c = fixture({vehicleNonce = 8, vehicleFail = true, vehicleBad = true})
+    call(env, 'OnMissionGameStart'); update(env, 8)
+    check(#c.vehiclePublications == 1 and c.vehiclePublications[1]:match(' %-%- 8 25600 65535 65535') ~= nil, 'missing/invalid names publish absent sentinel without stopping foot sync')
+    check(#c.ticks == 8, 'failed name lookup preserves ordinary movement callbacks')
+    call(env, 'OnTerminate'); update(env, 16)
+    check(c.vehicleQueries == 1, 'no vehicle lookups after termination')
 end
 
 print(checks .. ' partner sync Lua checks passed: inactive unless CFG is true, strict tick format, op bits 1/2/4/8/16/32/64, ' ..

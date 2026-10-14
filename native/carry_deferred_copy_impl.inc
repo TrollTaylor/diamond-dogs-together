@@ -96,17 +96,20 @@ bool PoseDeferredCopyRequest()noexcept{
   }
  }__finally{t_deferred_copy=saved;SetLastError(outgoing);}return completed&&!g_pose_fault;
 }
+#include "native_pose_vehicle_queue_impl.inc"
 void* PoseQueueSetter(void* object,std::uint32_t actual,const void* payload)noexcept{
  const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* returned=nullptr;
  // The mod transaction uses the retained trampoline. Native held index1
  // setters have no offline qualified producer and cannot overwrite the lease.
  if(PoseOwned()){
+  if(g_pose_owners.held&holds::vehicle){PoseFail("pose_vehicle_owned_native_queue_setter");SetLastError(incoming);return returned;}
   if(g_pose_owners.held&holds::carry){PoseFail("pose_carry_owned_native_queue_setter");SetLastError(incoming);return returned;}
   SetLastError(incoming);return g_pose_queue_setter(object,actual,payload);
  }
  PoseSharedLease ticket{};if(!PoseEnterShared(ticket)){SetLastError(incoming);return returned;}
  __try{
-  if(!ticket.tracked||!(g_pose_owners.held&holds::carry)){SetLastError(incoming);returned=g_pose_queue_setter(object,actual,payload);outgoing=GetLastError();}
+  if(g_pose_owners.held&holds::vehicle)PoseVehicleStockLocalQueue(object,actual,payload,ticket,returned,outgoing);
+  else if(!ticket.tracked||!(g_pose_owners.held&holds::carry)){SetLastError(incoming);returned=g_pose_queue_setter(object,actual,payload);outgoing=GetLastError();}
   else{
    // Initial narrow slice admits only stock local0's known pure-size payload;
    // never arbitrary virtual size getters or foreign Q instances while held.

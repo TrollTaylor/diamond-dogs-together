@@ -28,8 +28,8 @@ struct Models {
    control.body[id].primary=0x50000+id*0x1000;pair.body[id].callbackCount=2;pair.body[id].freeCallbacks=2;}
  }
  void Mount(unsigned id){auto& b=pair.body[id];b.freeCallbacks=0;
-  b.callbacks[0]={Rig::image+0x124a530,control.body[id].primary,0x62bcc8f4fcb6ULL,1,id};
-  b.callbacks[1]={Rig::image+0x124a530,control.body[id].primary,0x73cf7bf9301dULL,1,id};}
+  b.callbacks[0]={Rig::image+0x124a530,control.body[id].primary,0x95558436a7c8ULL,1,id};
+  b.callbacks[1]={Rig::image+0x124a530,control.body[id].primary,0x376fd458e70aULL,1,id};}
  bool Read(life::CallbackCensus& out){return life::Callbacks(Rig::image,pair,control,out);}
 };
 struct UIRig {
@@ -56,12 +56,16 @@ int main(){life::Allocation a{},b{};Rig r;
  r=Rig{};r.m.Put(Rig::primary+0x70,std::uint64_t(0x1000));r.m.Put(Rig::primary+0x78,std::uint64_t(0x1000));Check(!r.Read(b),"records cannot lie outside retained slab");
  r=Rig{};r.m.Put(Rig::bitsHeader+8,Rig::bitmap+4);Check(!r.Read(b),"current bitmap alias must match native query");
  Models models;life::CallbackCensus c{};
+ Models oldPayload;oldPayload.Mount(1);oldPayload.pair.body[1].callbacks[0].event=0x62bcc8f4fcb6ULL;
+ Check(!oldPayload.Read(c),"descriptor payload is not the registered event key");
+ oldPayload=Models{};oldPayload.Mount(1);oldPayload.pair.body[1].callbacks[1].event=0x73cf7bf9301dULL;
+ Check(!oldPayload.Read(c),"second descriptor payload is not the registered event key");
  Check(models.Read(c)&&life::Retired(c,0)&&life::Retired(c,1),"unmounted callbacks retired without native invocation");
  models.Mount(0);Check(models.Read(c)&&c.present[0]==2&&c.eventMask[0]==3&&life::Retired(c,1),"stock native driver callback pair classified");
  models.Mount(1);Check(models.Read(c)&&c.present[1]==2&&c.eventMask[1]==3,"actual body1 callback pair independently owned");
  models=Models{};models.Mount(1);models.pair.body[1].callbacks[0].owner=models.control.body[0].primary;Check(!models.Read(c),"cross body owner refuses");
  models=Models{};models.Mount(1);models.pair.body[1].callbacks[0].body=0;Check(!models.Read(c),"wrong actual body refuses");
- models=Models{};models.Mount(1);models.pair.body[1].callbacks[1].event=0x62bcc8f4fcb6ULL;Check(!models.Read(c),"duplicate callback event refuses");
+ models=Models{};models.Mount(1);models.pair.body[1].callbacks[1].event=0x95558436a7c8ULL;Check(!models.Read(c),"duplicate callback event refuses");
  models=Models{};models.Mount(1);models.pair.body[1].callbacks[0].function+=0x10;Check(!models.Read(c),"unknown callback on retained controller refuses");
  models=Models{};models.Mount(1);models.pair.body[1].callbacks[0].event|=0xabcd000000000000ULL;Check(models.Read(c),"native low48 event matching preserved");
  models=Models{};models.Mount(1);models.pair.body[1].callbacks[0].owner+=0x100;Check(!models.Read(c),"vehicle thunk with unrelated owner refuses");
