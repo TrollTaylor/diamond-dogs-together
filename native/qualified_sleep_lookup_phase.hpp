@@ -1,5 +1,6 @@
 #pragma once
 #include "qualified_sleep_lookup_observer.hpp"
+#include "native_work_timing.hpp"
 namespace mgscoop::qualified_sleep_lookup_observer {
 inline bool Relative(std::uint32_t field,std::int32_t displacement,std::size_t n,std::uint32_t& out) noexcept {
  const auto sum=std::int64_t(field)+displacement;if(sum<0||sum>0x400000||n>0x400000-std::size_t(sum))return false;out=static_cast<std::uint32_t>(sum);return true;
@@ -9,6 +10,7 @@ inline bool Relative(std::uint32_t field,std::int32_t displacement,std::size_t n
 // a standing episode. Missing/replaced graph remains graphObserved=false.
 struct NativePhaseReader {
  template<class R> void operator()(R& r,std::uintptr_t image,const Owner& owner,Phase& out) const noexcept {
+  native_work_timing::Scope measured(native_work_timing::Kind::lookup_phase);
   out={};if(!owner.known)return;Phase p{};std::uintptr_t vt=0,parent=0,iface=0,bitmap=0,actionBytes=0,lives=0,actions=0;
   std::uint32_t base=0,count=0,bits=0;std::int32_t adjustment=0;
   if(!Get(r,owner.record+0x78,p.ps)||!Aligned(p.ps,8)||!Get(r,p.ps,vt)||(vt!=image+0x23b09f0&&vt!=image+0x23b0c70)||

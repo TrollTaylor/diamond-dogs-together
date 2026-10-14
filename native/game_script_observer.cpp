@@ -42,6 +42,8 @@
 #include "sleep_standing_cycle_asset.hpp"
 #include "sleep_unique_bind_runtime.hpp"
 #include "qualified_sleep_lookup_runtime.hpp"
+#include "native_motion_frame_runtime.hpp"
+#include "native_work_timing.hpp"
 #include <bcrypt.h>
 #include "sleep_deferred_carry_proof.hpp"
 #include "sleep_queued_carry_proof.hpp"
@@ -2285,6 +2287,11 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && (std::strcmp(pending.text,"vehicle_mirror_test 1")==0||std::strcmp(pending.text,"vehicle_mirror_test 0")==0)) {
             const bool ok=VehicleMirrorEnable(pending.text[20]=='1');char line[161]{};mgscoop::coop_vehicle_mirror::StatusLine(line,sizeof(line));
             debug::Result(pending.id,ok?1u:0u,ok?line:"vmirror;enable_refused=1;requires=owned_healthy_required_windows");
+        } else if (pending.id && std::strcmp(pending.text,"vehicle_foot_camera_test 1")==0) {
+            const bool admitted=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+                offline_enabled&&lab::SavesRedirected()&&PartnerSleepPrivate()&&OnRuntimeThread();
+            const bool ok=admitted&&mgscoop::partner_input_hook::SetNativePoseVehicleFootCameraTest(true);
+            debug::Result(pending.id,ok?1u:0u,ok?"vfoot;enabled=1;production=0":"vfoot;enabled=0;refused=1;details=private_log");
         } else if (pending.id && std::strcmp(pending.text,"vehicle_mirror_status")==0) {
             char line[161]{};const bool ok=mgscoop::coop_vehicle_mirror::StatusLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text,"passenger_prepare")==0) {
@@ -2376,6 +2383,12 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             hp::Observation observed{};pr::Profile a{},b{};
             const bool ready=admitted&&gate&&hp::Observe(reader,scope,observed)&&pr::Observe(reader,scope.image,observed.body[0],a)&&pr::Observe(reader,scope.image,observed.body[1],b);
             char line[161]{};const bool ok=pr::Line(a,b,ready,line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"charProfile;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_npc_predicate")==0) {
+            char line[161]{};const bool ok=mgscoop::coop_carry::NpcPredicateLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"carryNpcGate;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_horse_finder")==0) {
+            char line[161]{};const bool ok=mgscoop::coop_carry::HorseFinderLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"horseFinder;status_refused=1");
         } else if (pending.id && std::strcmp(pending.text,"coop_carry_horse_gate")==0) {
             char line[161]{};const bool ok=mgscoop::coop_carry::HorseGateLine(line,sizeof(line));
             debug::Result(pending.id,ok?1u:0u,ok?line:"horseGate;status_refused=1");
@@ -2486,6 +2499,20 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && std::strcmp(pending.text,"sleep_bank_snapshot")==0) {
             char line[161]{};const bool ok=mgscoop::sleep_unique_bind_runtime::BankTraceStatus(line,sizeof(line),true);
             debug::Result(pending.id,ok?1u:0u,ok?line:"bankTrace;ok=0;why=snapshot_refused");
+        } else if (pending.id && std::strncmp(pending.text,"native_timing_mask ",19)==0) {
+            char* end=nullptr;const auto mask=std::strtoull(pending.text+19,&end,10);
+            const bool admitted=end&&end!=pending.text+19&&!*end&&mgscoop::worker_scenario::Compiled()&&
+                mgscoop::worker_scenario::ThreadAdmitted()&&offline_enabled&&lab::SavesRedirected()&&PartnerSleepPrivate()&&OnRuntimeThread();
+            const bool ok=admitted&&mgscoop::native_work_timing::Configure(mask,false);
+            debug::Result(pending.id,ok?1u:0u,ok?"nwork;configured=1;cycles=0;production=0":"nwork;configure_refused=1");
+        } else if (pending.id && std::strncmp(pending.text,"native_timing_status ",21)==0) {
+            char* end=nullptr;const auto index=std::strtoul(pending.text+21,&end,10);char line[240]{};
+            const bool ok=end&&end!=pending.text+21&&!*end&&index<mgscoop::native_work_timing::count&&
+                mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+                mgscoop::native_work_timing::Line(static_cast<mgscoop::native_work_timing::Kind>(index),line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"nwork;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"standing_frame_status")==0) {
+            char line[161]{};const bool ok=mgscoop::native_motion_frame_runtime::Status(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"sleepFrame;on=0;why=status_refused");
         } else if (pending.id && std::strcmp(pending.text,"standing_cycle_asset_status")==0) {
             char line[161]{};const bool ok=StandingCycleAssetLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"sleepCycle;ready=0;why=status_refused");
         } else if (pending.id && std::strcmp(pending.text,"sleep_asset_status")==0) {
@@ -4899,6 +4926,19 @@ void InstallNativePoseWorkerEarly() noexcept {
             unique_bind_directory,{partner_gate_ok,offline_enabled,lab::SavesRedirected(),current,MountedMgoStandingCycleContext,mgscoop::vehicle_native_protection::ReadOriginal},Log);
         LogFormat("sleep_lookup_early=%s;original_forward_only=1;selection=0;append=0\r\n",prepared?"prepared":"refused");
         if(!prepared)mgscoop::worker_scenario::Refuse("standing_lookup_observer_install");
+    }
+#endif
+#if defined(MGS_LOCAL_MGO_STANDING_FRAME_OBSERVER)
+    // Observe the original native callback lifetime; no job/selection lease.
+    // A natural stack is retained only as bounded diagnostics, never authority.
+    if(game_base&&game_span&&unique_bind_directory[0]&&MountedMgoStandingCycleContext(unique_bind_directory)){
+        const auto current=[]() noexcept {const auto& c=mgscoop::GetLabConfig();return
+            mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+            c.mode==mgscoop::LabMode::lab&&offline_enabled&&partner_on&&partner_gate_ok&&lab::SavesRedirected();};
+        const bool prepared=mgscoop::native_motion_frame_runtime::Prepare(reinterpret_cast<std::uintptr_t>(game_base),game_span,
+            unique_bind_directory,{partner_gate_ok,offline_enabled,lab::SavesRedirected(),current,MountedMgoStandingCycleContext,mgscoop::vehicle_native_protection::ReadOriginal,mgscoop::partner_input_hook::ReadNativePoseBirthCensus},Log);
+        LogFormat("sleep_frame_early=%s;original_forward_only=1;selection=0;lease=0;job_fence=unknown\r\n",prepared?"prepared":"refused");
+        if(!prepared)mgscoop::worker_scenario::Refuse("standing_frame_observer_install");
     }
 #endif
     if(mgscoop::partner_input_hook::NativePoseWindowStatus().installed){EnsurePartnerSleepConfigured();SetLastError(error);return;}

@@ -67,6 +67,8 @@
 #include "whole_player_lifetime_checks.hpp"
 #include "native_pose_selected_export.hpp"
 #include "native_pose_camera_reader.hpp"
+#include "native_work_timing.hpp"
+#include "native_observer_negative_work.hpp"
 #include "native_pose_vehicle_camera_foot.hpp"
 #include "carry_vars_pair_word_window.hpp"
 #include "owned_flag_map.hpp"
@@ -2091,6 +2093,11 @@ bool BindNativePoseWorker(const NativePoseWorkerBindings& bindings) noexcept {
 const char* InstallNativePoseWindow(const void* image,std::size_t span,bool fingerprint) noexcept {
  return PoseInstall(image,span,fingerprint)?nullptr:g_pose_reason;
 }
+bool NativePosePrivateWorkerAdmitted() noexcept {
+ const DWORD incoming=GetLastError();
+ const bool admitted=!g_pose_bindings.enabled&&g_pose_installed&&!g_shutdown&&PoseWorker();
+ SetLastError(incoming);return admitted;
+}
 bool SetNativePoseWindowTest(bool enabled) noexcept {
  if(!enabled)return !PoseRequired(); // never discard a retained test/feature requirement
  if(PoseRequired())return !g_pose_fault;
@@ -2116,21 +2123,47 @@ bool SetNativePoseWindowTest(bool enabled) noexcept {
  g_pose_test=true;MemoryBarrier();InterlockedExchange(&g_pose_required,1);g_pose_reason="pose_window_required";return true;
 }
 bool SetNativePoseVehicleFootCameraTest(bool enabled) noexcept {
- const DWORD incoming=GetLastError();bool accepted=false;
- // Separate private opt-in before mandatory windows or any purpose. Production
- // stays off; no caller-supplied state grants an owned suppression.
- if(!g_pose_bindings.enabled&&g_pose_installed&&PoseWorker()&&!g_pose_fault&&!g_shutdown&&
-    !PoseRequired()&&!PoseOwned()&&!g_pose_held&&!g_pose_clear&&!g_pose_owners.held&&!g_pose_owners.pending&&
-    !g_pose_vehicle_bound&&!partner_defer::InBatch()&&!(g_window_seq&1)&&g_pose_gate.Idle()){
-  if(!enabled){g_pose_vehicle_foot_camera_test=false;g_pose_vehicle_foot_camera_reader=nullptr;accepted=true;}
-  else if(PoseParticipantsLive()&&NativePoseWholePlayerLifetimeLive()&&NativePoseLocalCacheIsolationLive()&&
-          PoseVehicleCodeLive()){
-   g_pose_vehicle_foot_camera_reader=g_pose_vehicle_bindings.readOriginal;
-   g_pose_vehicle_foot_camera_test=true;accepted=true;
-   if(g_log)g_log("pose_vehicle_foot_camera=private_ready;enabled=1;production=0\r\n");
-  }
+ const DWORD incoming=GetLastError();
+ const auto refuse=[&](const char* why) noexcept {
+  if(g_log){char line[256]{};if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_vehicle_foot_camera=private_refused;reason=%s;required=%ld;held=%ld;pending=%ld;sequence=%lu;production=0\r\n",
+   why,g_pose_required,g_pose_held,g_pose_clear,static_cast<unsigned long>(g_window_seq))))g_log(line);}
+  SetLastError(incoming);return false;
+ };
+ if(g_pose_bindings.enabled)return refuse("fixture_binding");
+ if(!g_pose_installed)return refuse("not_installed");
+ if(!PoseWorker())return refuse("private_worker");
+ if(g_pose_fault||g_shutdown)return refuse("fault_or_shutdown");
+ if(PoseRequired())return refuse("already_required");
+ if(PoseOwned()||g_pose_held||g_pose_clear||g_pose_owners.held||g_pose_owners.pending||g_pose_vehicle_bound)return refuse("owned_or_retained");
+ if(partner_defer::InBatch()||(g_window_seq&1)||!g_pose_gate.Idle())return refuse("native_window_busy");
+ if(!enabled){g_pose_vehicle_foot_camera_test=false;g_pose_vehicle_foot_camera_reader=nullptr;SetLastError(incoming);return true;}
+ if(!PoseParticipantsLive()){
+  if(g_log){char line[192]{};if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_vehicle_foot_camera=participant_state;h1=%u;h2=%u;armed=%u;mode_on=%u;wrap=%u;local=%u\r\n",
+   partner_defer::H1Installed()?1u:0u,partner_defer::H2Installed()?1u:0u,partner_defer::Armed()?1u:0u,
+   partner_defer::CurrentMode()==partner_defer::Mode::on?1u:0u,g_wrap_ready?1u:0u,partner_local_detour::Installed()?1u:0u)))g_log(line);}
+  return refuse("participants");
  }
- SetLastError(incoming);return accepted;
+ if(!NativePoseWholePlayerLifetimeLive())return refuse("whole_player_lifetime");
+ if(!NativePoseLocalCacheIsolationLive())return refuse("local_cache_isolation");
+ if(!PoseVehicleCodeLive()){
+  std::uintptr_t mismatch=0;const char* failed="provider";auto reader=g_pose_vehicle_bindings.readOriginal;
+  if(g_pose_vehicle_bindings.provider&&reader&&g_pose_vehicle_bindings.allocator){
+   if(!PoseRoutePatchesLive())failed="route_patch";
+   else if(!vehicle_controller_read::CodeGate(reader,g_base,0xa01d000,mismatch))failed="controller";
+   else if(!vehicle_pose_callback_contract::CodeGate(reader,g_base,0xa01d000,mismatch))failed="pose_callback";
+   else if(!route::CodeGate(reader,g_base,0xa01d000,mismatch))failed="route_code";
+   else failed="changed_during_recheck";
+  }
+  if(g_log){char line[192]{};if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_vehicle_foot_camera=code_state;stage=%s;rva=%llx\r\n",failed,static_cast<unsigned long long>(mismatch))))g_log(line);}
+  return refuse("vehicle_code_or_provider");
+ }
+ g_pose_vehicle_foot_camera_reader=g_pose_vehicle_bindings.readOriginal;
+ g_pose_vehicle_foot_camera_test=true;
+ if(g_log)g_log("pose_vehicle_foot_camera=private_ready;enabled=1;production=0\r\n");
+ SetLastError(incoming);return true;
 }
 bool RegisterNativeHorseFlowCallbacks(const NativeHorseFlowCallbacks& callbacks) noexcept {
  const DWORD incoming=GetLastError();bool accepted=false;
@@ -2433,8 +2466,9 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
                                                           NowMs() - g_frame_ms, a.config, &view));
     InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
     const std::uint64_t t0 = NowUs();
-    Save save{};
-    if (!BeginWindow(&a)) {
+    Save save{};native_work_timing::Token timing=native_work_timing::Begin(native_work_timing::Kind::pose_begin);
+    const bool opened=BeginWindow(&a);native_work_timing::End(timing);
+    if (!opened) {
         if(required){PoseRejectDiagnostic(reject::Stage::begin,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));return JobWindowOutcome::suppressed;}
         return refusal(reject::Stage::begin,g_pose_reason);
     }
@@ -2446,11 +2480,15 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         InterlockedExchange(&g_r_last, static_cast<LONG>(RingRefusal::src));
         InterlockedExchange(&g_r_on, 0);
     }
-    if (!SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer)})) {
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_pre);
+    const bool pre=SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer)});
+    native_work_timing::End(timing);
+    if (!pre) {
         EndWindow();
         InterlockedIncrement(&g_n_drain_refused);
         return refusal(reject::Stage::pre,"safe_pre_refused");
     }
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_helpers);
     SetCurrent(j, a.hold);
     g_drain_arm = a;
     g_drain_inj = j;
@@ -2482,19 +2520,27 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         partner_look_source::Publish(a.ps1, 1, a.ps1_idx, j.look_pitch, j.look_yaw);
     // Always released (the detour and the published look) on every exit.
     const auto hud_probe = g_hud_before ? g_hud_before(a.P) : nametag_game::HudJobProbe{};
-    if (!PoseBefore(a,save,j,consumer)) {
+    native_work_timing::End(timing);
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_before);
+    const bool before=PoseBefore(a,save,j,consumer);native_work_timing::End(timing);
+    if (!before) {
         PoseRejectDiagnostic(reject::Stage::before,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));
         InterlockedIncrement(&g_pose_suppressed);g_pose_reason="pose_before_refused";return JobWindowOutcome::suppressed;
     }
+    timing=native_work_timing::Begin(native_work_timing::Kind::native_job);
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
+    native_work_timing::End(timing);
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_after);
     if (!PoseAfter()) PoseFail("pose_after_refused");
+    native_work_timing::End(timing);
     if (g_hud_after) g_hud_after(hud_probe);
     g_in_drain = false;
     if (save.rings_saved) g_ring_prev[static_cast<std::size_t>(consumer)] = j.held;
     ProbeRecord(a.rec1);
     LookProbe(a, j);
     AfterJob(a, shots_before, ammo_before);
-    SafePost(a, save, true);
+    timing=native_work_timing::Begin(native_work_timing::Kind::pose_post);
+    SafePost(a, save, true);native_work_timing::End(timing);
     EndWindow();
     std::uint32_t masks[3]{};
     std::memcpy(masks, g_priv_masks, sizeof(masks));
@@ -2505,6 +2551,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     Max(g_us_max, static_cast<LONG>(NowUs() - t0));
     return JobWindowOutcome::windowed;
     } __finally {
+        native_work_timing::End(timing);
         if (PoseOwned()) {
             teammate_targeting::EndQuietJob();
             partner_local_detour::Release();

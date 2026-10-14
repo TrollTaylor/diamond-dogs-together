@@ -8,6 +8,7 @@
 #include "vehicle_native_protection.hpp"
 #include "sleep_unique_bind_runtime.hpp"
 #include "qualified_sleep_lookup_runtime.hpp"
+#include "native_motion_frame_runtime.hpp"
 #include "coop_vehicle_mirror.hpp"
 #include "mgscoop/coop_carry.hpp"
 #include "vehicle_native_protection_read.hpp"
@@ -416,6 +417,7 @@ bool ReadOriginal(Word at,void* out,std::size_t size)noexcept {
  if(okay)okay=coop_vehicle_mirror::OverlayOriginal(at,out,size);
  if(okay)okay=sleep_unique_bind_runtime::OverlayOriginal(at,out,size);
  if(okay)okay=qualified_sleep_lookup_runtime::OverlayOriginal(at,out,size);
+ if(okay)okay=native_motion_frame_runtime::OverlayOriginal(at,out,size);
  SetLastError(error);return okay;
 }
 bool Install(const void* image,std::size_t span,bool accepted,const Bindings& bindings)noexcept {

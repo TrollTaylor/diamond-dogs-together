@@ -331,8 +331,10 @@ for _, downHost in ipairs({false, true}) do
         'either healthy player can still complete a fresh revive after exact native rearm')
 end
 
--- Release, moving out of range, losing native protection, a time reversal and
--- a paused owner all reset elapsed time rather than adding separated holds.
+-- MGO down rules: a brief release or step out of range drains the revive at
+-- the fill rate instead of restarting it; the same reviver resumes from what
+-- is left. Losing native protection, a time reversal, stale status and a
+-- paused owner still reset elapsed time rather than adding separated holds.
 for _, interruption in ipairs({'release', 'range', 'stale', 'pause', 'time', 'native'}) do
     a, b = pair(); down(b); a.native.held = true
     for _ = 1, 20 do step(a, b, 100) end
@@ -344,12 +346,27 @@ for _, interruption in ipairs({'release', 'range', 'stale', 'pause', 'time', 'na
     elseif interruption == 'pause' then a.inGame = false; step(a, b, 100); a.inGame = true
     elseif interruption == 'time' then a.now, b.now = a.now - 200, b.now - 200; step(a, b, 0)
     else a.failLock = true; down(a); step(a, b, 100); a.failLock = false; a.native.down, a.native.cause = false, 0 end
-    check(a.D.progress == 0 and not b.revived, 'interruption resets hold: ' .. interruption)
-    if interruption ~= 'native' then
+    check(a.D.progress == 0 and not b.revived, 'an interrupted hold shows no progress while released: ' .. interruption)
+    if interruption == 'release' or interruption == 'range' then
+        step(a, b, 100)
+        check(a.D.progress >= 1700 and a.D.progress <= 1900 and not b.revived, 'resumed hold keeps the drained remainder: ' .. interruption)
+        for _ = 1, 13 do step(a, b, 100) end
+        check(b.revived == 1, 'a resumed hold completes from the remainder: ' .. interruption)
+    elseif interruption ~= 'native' then
         for _ = 1, 14 do step(a, b, 100) end
         check(not b.revived, 'separated holds cannot accumulate: ' .. interruption)
     end
 end
+-- A gap at least as long as the progress drains it completely.
+a, b = pair(); down(b); a.native.held = true
+for _ = 1, 15 do step(a, b, 100) end
+a.native.held = false
+for _ = 1, 17 do step(a, b, 100) end
+a.native.held = true
+step(a, b, 100)
+check(a.D.progress <= 100 and not b.revived, 'a long release drains the revive to zero')
+for _ = 1, 20 do step(a, b, 100) end
+check(not b.revived, 'a drained revive needs a fresh full hold')
 
 -- Wire evidence cannot be refreshed by a duplicate or stale sequence, and
 -- observing a normal body cannot self-authorize a revive.

@@ -32,6 +32,9 @@ std::uint32_t mission = 0, ownerThread = 0, baselineButtons = 0, baselineTrigger
 std::uint16_t epoch = 0;
 std::uintptr_t ownedP = 0, ownedQ = 0, ownedLife = 0, ownedVars = 0;
 std::uint64_t lastPoll = 0, downAt = 0, lastControls = 0;
+// MGO's down rules give a revived player a short InvincibleTime.
+constexpr std::uint64_t kReviveGraceMs = 3000;
+std::uint64_t revivedAt = 0;
 float originalHealth = 0, maximumHealth = 0, observedLife = 0;
 bool configuredOnce = false, configurePending = false, pendingPassed = false, shutdownPending = false;
 partner_player::Addresses pendingAddresses{};
@@ -533,7 +536,7 @@ bool Clear(bool restore) noexcept {
     armed = false; controlsApplied = false; cycle.down = false; cycle.cause = 0; friendlyRecovery = {};
     stockRelease.LogicalExit(true);
     hitHead = hitCount = 0; incomingSerial = 0; observedLife = maximumHealth = 0;
-    ownedP = ownedQ = ownedLife = ownedVars = 0; mission = ownerThread = 0; epoch = 0; lastPoll = downAt = lastControls = 0;
+    ownedP = ownedQ = ownedLife = ownedVars = 0; mission = ownerThread = 0; epoch = 0; lastPoll = downAt = lastControls = revivedAt = 0;
     ForgetNativeRetired();
     return true;
 }
@@ -723,6 +726,7 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         partner_player::State again{}; std::uintptr_t againRec = 0; float againCur = 0, againMax = 0;
         if (!Owned(again, againRec, againCur, againMax) || !StoreLife(againRec, detail::RecoveredHealth(cycle.cause, originalHealth, againMax))) return finish(false, "health");
         friendlyRecovery = {}; detail::Revive(cycle, generation); controlsApplied = false; downAt = lastControls = 0;
+        revivedAt = GetTickCount64();
         stockRelease.LogicalExit(!cycle.down);
         ForgetNativeRetired();
         out.down = false; out.cause = 0; out.applied = true;
@@ -879,7 +883,9 @@ bool CaptureHit(std::uintptr_t P, std::uint32_t id, std::uint8_t cause) noexcept
 bool IsProtected(std::uintptr_t P, std::uint32_t id) noexcept {
     AcquireSRWLockShared(&lock);
     partner_player::State s{}; std::uintptr_t record = 0; float cur = 0, max = 0;
-    const bool ok = cycle.down && !failed && detail::FreshScope(GetTickCount64(), lastPoll) &&
+    const auto now = GetTickCount64();
+    const bool grace = !cycle.down && revivedAt && now >= revivedAt && now - revivedAt < kReviveGraceMs;
+    const bool ok = (cycle.down || grace) && !failed && detail::FreshScope(now, lastPoll) &&
         id == 0 && P == ownedP && Owned(s, record, cur, max);
     ReleaseSRWLockShared(&lock); return ok;
 }

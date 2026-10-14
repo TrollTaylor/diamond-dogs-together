@@ -3,14 +3,20 @@
 -- SetCallHorse. Its consumer writes heading as atan2(goal.x-start.x, goal.z-start.z),
 -- so the goal is one metre along the census heading. A vehicle uses TppVehicle2
 -- GetPosition and SetPosition. Neither call mounts, dismounts, or arms.
+-- The driven vehicle streams RIDE_FAST datagrams at 20 Hz; the other game
+-- renders it 100 ms behind the newest sender tick and places it every frame.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
-local R = {realized = {}, occupied = {}, poses = {}, seq = 0, nextSend = 0, nextRefresh = 0}
+local R = {realized = {}, occupied = {}, poses = {}, seq = 0, nextSend = 0, nextRefresh = 0,
+    fast = {send = {next = 0}, tracks = {}, closed = {}, applied = 0}}
 W.ridePose = R
-local OP = 42
+local OP, FAST = 42, 44
 W.OP.RIDE_BODY = OP
+W.OP.RIDE_FAST = FAST
 local floor = math.floor
+local SEND_MS, DELAY_MS, EXTRAPOLATE_MS, STALE_MS, CLOSED_MS = 50, 100, 200, 1500, 500
+local JUMP_MM, MAX_SAMPLES = 30000, 32
 local function integer(n, lo, hi)
     return type(n) == "number" and n == floor(n) and n >= lo and n <= hi
 end
@@ -33,6 +39,67 @@ end
 function R.headingGoal(x, y, z, yaw)
     return x + math.sin(yaw), y, z + math.cos(yaw)
 end
+
+-- Fast vehicle track (pure): sender ticks are u32 ms; the receiver keeps
+-- the smallest observed receive-minus-send offset, rising slowly with drift.
+function R.angleLerp(a, b, f)
+    local d = (b - a) % 6283.1853
+    if d > 3141.5927 then d = d - 6283.1853 end
+    local v = a + d * f
+    if v > 3141.5927 then v = v - 6283.1853 elseif v < -3141.5927 then v = v + 6283.1853 end
+    return v
+end
+function R.trackPush(track, now, t, x, y, z, yaw)
+    if type(track) ~= "table" or not integer(t, 0, 4294967295) then return false end
+    local unwrapped
+    if track.raw == nil then
+        unwrapped = t
+    else
+        local delta = (t - track.raw) % 4294967296
+        if delta == 0 or delta >= 2147483648 then return false end
+        unwrapped = track.time + delta
+    end
+    local samples = track.samples
+    local last = samples[#samples]
+    if last and (unwrapped - last.t <= 100 and (math.abs(x - last.x) > JUMP_MM or math.abs(z - last.z) > JUMP_MM)) then
+        samples = {}
+        track.samples = samples
+    end
+    track.raw, track.time = t, unwrapped
+    samples[#samples + 1] = {t = unwrapped, x = x, y = y, z = z, yaw = yaw}
+    if #samples > MAX_SAMPLES then table.remove(samples, 1) end
+    local offset = now - unwrapped
+    if track.offset == nil or offset < track.offset then track.offset = offset
+    else track.offset = track.offset + (offset - track.offset) * 0.02 end
+    track.received = now
+    return true
+end
+function R.trackPose(track, now)
+    local samples = type(track) == "table" and track.samples
+    if not samples or #samples == 0 or track.offset == nil then return nil, nil, nil, nil, "empty" end
+    local rt = now - track.offset - DELAY_MS
+    local first, last = samples[1], samples[#samples]
+    if rt <= first.t then return first.x, first.y, first.z, first.yaw, "hold" end
+    if rt >= last.t then
+        local late = rt - last.t
+        if late > STALE_MS then return nil, nil, nil, nil, "stale" end
+        local prev = samples[#samples - 1]
+        if not prev or late > EXTRAPOLATE_MS or last.t <= prev.t then return last.x, last.y, last.z, last.yaw, "hold" end
+        local f = late / (last.t - prev.t)
+        return last.x + (last.x - prev.x) * f, last.y + (last.y - prev.y) * f, last.z + (last.z - prev.z) * f,
+            R.angleLerp(last.yaw, last.yaw + (last.yaw - prev.yaw), f), "extrapolate"
+    end
+    for i = #samples - 1, 1, -1 do
+        local a = samples[i]
+        if a.t <= rt then
+            local b = samples[i + 1]
+            local f = (rt - a.t) / (b.t - a.t)
+            return a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f, R.angleLerp(a.yaw, b.yaw, f), "interpolate"
+        end
+    end
+    return first.x, first.y, first.z, first.yaw, "hold"
+end
+
 local function census(kind)
     if type(W.receipt) ~= "function" or not integer(W.mission, 30010, 30050) or not integer(W.epoch, 1, 65535) then return end
     local ok, result = pcall(W.receipt, string.format("return 'MGS_COOP_RIDE_POSE_V1' -- %d %d %d", W.mission, W.epoch, kind))
@@ -58,15 +125,17 @@ function R.refresh()
             end
         end
     end
-    R.readVehicle()
+    local id = R.fast.localId
+    if id then R.realized[id], R.occupied[id] = true, true end
 end
 local function milli(value)
-    if type(value) ~= "number" then return nil end
+    if type(value) ~= "number" or value ~= value then return nil end
     local n = floor(value * 1000 + (value >= 0 and 0.5 or -0.5))
     if n < -1000000000 or n > 1000000000 then return nil end
     return n
 end
-function R.readVehicle()
+-- The vehicle the local player currently rides, or nil.
+function R.localVehicle()
     if type(PlayerInfo) ~= "table" or type(PlayerInfo.OrCheckStatus) ~= "function" then return end
     if type(PlayerStatus) ~= "table" or type(vars) ~= "table" or type(Tpp) ~= "table" or type(Tpp.IsVehicle) ~= "function" then return end
     local riding, id = false, nil
@@ -77,19 +146,28 @@ function R.readVehicle()
     if not riding or not integer(id, 0, 65534) or horse(id) or walker(id) then return end
     local typed = false
     pcall(function() typed = Tpp.IsVehicle(id) == true end)
-    if not typed then return end
+    if typed then return id end
+end
+-- Vehicle pose in mm / mrad from TppVehicle2 GetPosition.
+function R.vehiclePose(id)
     local api = W.api
     if type(api) ~= "table" or type(api.send) ~= "function" then return end
     local ok, pos, rot = pcall(api.send, id, {id = "GetPosition"})
-    if not ok or type(pos) ~= "table" and type(pos) ~= "userdata" or type(pos.GetX) ~= "function" then return end
+    if not ok or type(pos) ~= "table" and type(pos) ~= "userdata" then return end
     local read, x, y, z = pcall(function() return pos:GetX(), pos:GetY(), pos:GetZ() end)
     local xm, ym, zm = read and milli(x), read and milli(y), read and milli(z)
     if not xm or not ym or not zm then return end
     local yaw = type(rot) == "number" and milli(rot) or 0
     if not yaw or yaw < -31416 or yaw > 31416 then yaw = 0 end
-    R.realized[id] = true
-    R.occupied[id] = true
-    R.poses[id] = {id = id, kind = 3, x = xm, y = ym, z = zm, yaw = yaw, occupied = 1, rider = 0}
+    return xm, ym, zm, yaw
+end
+function R.place(id, x, y, z, yaw)
+    local api = W.api
+    if type(api) ~= "table" or type(api.send) ~= "function" or type(api.buddyVector) ~= "function" then return false end
+    local made, point = pcall(api.buddyVector, x / 1000, y / 1000, z / 1000)
+    if not made or not point then return false end
+    local ok, result = pcall(api.send, id, {id = "SetPosition", position = point, rotY = yaw / 1000})
+    return ok and result ~= false
 end
 function R.move(pose, command, field)
     local api = W.api
@@ -100,13 +178,8 @@ function R.move(pose, command, field)
         local ok, result = pcall(api.send, pose.id, {id = "SetPosition", pos = {x, y, z}, rotY = yaw})
         return ok and result ~= false
     end
+    if command == "SetPosition" then return R.place(pose.id, pose.x, pose.y, pose.z, pose.yaw) end
     if type(api.buddyVector) ~= "function" then return false end
-    if command == "SetPosition" then
-        local made, point = pcall(api.buddyVector, x, y, z)
-        if not made or not point then return false end
-        local ok, result = pcall(api.send, pose.id, {id = "SetPosition", position = point, rotY = yaw})
-        return ok and result ~= false
-    end
     local gx, gy, gz = R.headingGoal(x, y, z, yaw)
     local made, start = pcall(api.buddyVector, x, y, z)
     local madeGoal, goal = pcall(api.buddyVector, gx, gy, gz)
@@ -122,17 +195,88 @@ function R.send(now)
         if W.tx(OP, seq, pose.kind, pose.id, pose.x, pose.y, pose.z, pose.yaw, pose.occupied, pose.rider) then R.seq = seq end
     end
 end
+-- Driver side: stream the ridden vehicle; one reliable final pose after exit.
+function R.fastSend(now)
+    local s = R.fast.send
+    local id = R.localVehicle()
+    R.fast.localId = id
+    if not W.paired or not W.eff or W.eff < 3 or type(W.tx) ~= "function" then s.id = nil; return end
+    if not id then
+        if s.id then
+            local x, y, z, yaw = R.vehiclePose(s.id)
+            if x then
+                local seq = R.seq % 65535 + 1
+                if W.tx(OP, seq, 3, s.id, x, y, z, yaw, 0, 65535) then R.seq = seq end
+            end
+            s.id = nil
+        end
+        return
+    end
+    if s.id ~= id then s.id, s.next = id, 0 end
+    if now < s.next then return end
+    s.next = now + SEND_MS
+    local x, y, z, yaw = R.vehiclePose(id)
+    if x and W.tx(FAST, W.tick32(now), 3, id, x, y, z, yaw) then R.fast.sent = (R.fast.sent or 0) + 1 end
+end
+-- One line every 2 s while a track or a stream is live (rate evidence).
+local function logFast(now)
+    local f = R.fast
+    if type(W.log) ~= "function" or now < (f.logAt or 0) then return end
+    f.logAt = now + 2000
+    local tracks, state, samples = 0, "none", 0
+    for _, t in pairs(f.tracks) do tracks, state, samples = tracks + 1, t.state or state, #t.samples end
+    if tracks == 0 and (f.sent or 0) == (f.loggedSent or 0) then return end
+    f.loggedSent = f.sent or 0
+    W.log(string.format("event=ride_fast;tracks=%d;applied=%d;sent=%d;state=%s;samples=%d", tracks, f.applied, f.sent or 0, state, samples))
+end
+-- Passenger/observer side: place each live track every frame.
+function R.fastApply(now)
+    for id, track in pairs(R.fast.tracks) do
+        local x, y, z, yaw, state = R.trackPose(track, now)
+        if not x then
+            R.fast.tracks[id] = nil
+        elseif id ~= R.fast.localId then
+            local a = track.applied
+            if not a or math.abs(a[1] - x) >= 1 or math.abs(a[2] - y) >= 1 or math.abs(a[3] - z) >= 1 or math.abs(a[4] - yaw) >= 1 then
+                if R.place(id, x, y, z, yaw) then
+                    track.applied = {x, y, z, yaw}
+                    track.state = state
+                    R.fast.applied = R.fast.applied + 1
+                end
+            end
+        end
+    end
+end
+local function isVehicle(id)
+    if type(Tpp) ~= "table" or type(Tpp.IsVehicle) ~= "function" then return false end
+    local ok, yes = pcall(Tpp.IsVehicle, id)
+    return ok and yes == true
+end
 W.handlers[OP] = function(v)
     if not W.paired or not W.eff or W.eff < 3 or type(v) ~= "table" or #v ~= 9 then return end
     local pose = {id = v[3], kind = v[2], x = v[4], y = v[5], z = v[6], yaw = v[7], occupied = v[8], rider = v[9]}
-    local isVehicle = false
-    if pose.kind == 3 and type(Tpp) == "table" and type(Tpp.IsVehicle) == "function" then
-        local ok, yes = pcall(Tpp.IsVehicle, pose.id)
-        isVehicle = ok and yes == true
+    local vehicle = pose.kind == 3 and isVehicle(pose.id)
+    if vehicle then
+        R.fast.tracks[pose.id] = nil
+        R.fast.closed[pose.id] = W.now and W.now() or 0
     end
-    local decision = R.admit(pose, R.realized, isVehicle)
+    local decision = R.admit(pose, R.realized, vehicle)
     if decision.action ~= "apply" then return end
     R.move(pose, decision.command, decision.field)
+end
+W.handlers[FAST] = function(v)
+    if not W.paired or not W.eff or W.eff < 3 or type(v) ~= "table" or #v ~= 7 or v[2] ~= 3 then return end
+    local id, now = v[3], W.now and W.now() or 0
+    if not integer(id, 0, 65534) or horse(id) or walker(id) then return end
+    local closed = R.fast.closed[id]
+    if closed and now - closed < CLOSED_MS then return end
+    local track = R.fast.tracks[id]
+    if not track then
+        if not isVehicle(id) then return end
+        track = {samples = {}}
+        R.fast.tracks[id] = track
+    end
+    R.trackPush(track, now, v[1], v[4], v[5], v[6], v[7])
 end
 local tick = W.tick
 function W.tick(...)
@@ -143,6 +287,13 @@ function W.tick(...)
     end
     if tick then tick(...) end
     R.send(now)
+    if W.paired and W.eff and W.eff >= 3 then
+        R.fastSend(now)
+        R.fastApply(now)
+        logFast(now)
+    else
+        R.fast.tracks, R.fast.send.id = {}, nil
+    end
 end
 end
 end

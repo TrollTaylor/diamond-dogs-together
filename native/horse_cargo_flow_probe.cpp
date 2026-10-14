@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <atomic>
 #include "horse_cargo_flow_probe.hpp"
+#include "native_work_timing.hpp"
 #include "horse_cargo_natural_flow.hpp"
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/world_link.hpp"
@@ -23,6 +24,7 @@ bool Buddy(std::uintptr_t base,std::uintptr_t& control,std::uint8_t& active) noe
   nf::cr::Get(raw,control+0x175,active)&&active==1&&nf::cr::Get(raw,control+0x17f,pending)&&!pending;
 }
 bool Capture(const hk::NativeHorseFlowOwner& owner,const hk::NativeHorseFlowCall& call,nf::Sample& out,const char*& why) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::horse_capture);
  out={};out.owner=owner;why="horse_flow_private";const auto now=GetTickCount64();
  if(!prepared.load(std::memory_order_acquire)||!worker_scenario::Compiled()||!worker_scenario::ThreadAdmitted()||
     owner.births.image!=image||owner.births.thread!=GetCurrentThreadId()||!owner.at||now<owner.at||now-owner.at>250||

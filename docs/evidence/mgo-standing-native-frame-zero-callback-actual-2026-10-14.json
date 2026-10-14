@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "run": "b8721082fc5549d99d313ef740f3287e",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261014-033939-50b1e531e0bb48eb9e6aa0ede9f762e3\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 6,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 114320713,
+      "end": 114863436,
+      "sha256": "be724ea5349832336eb43f39f02f4d7773aafed5553d359058e3473fb868233f"
+    },
+    {
+      "role": "guest",
+      "start": 121527068,
+      "end": 121974466,
+      "sha256": "30ec132f60c3824b2cc376852958774b8ba47b4cd73280e3a5a4aba09e914bdb"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posebirth;in=4;ready=4;caller=4;b1=2;model=2;done=2;race=0;count=1;id=1;from=0x9beaac;stage=birth_completed"
+    ],
+    "guest": [
+      "posebirth;in=4;ready=4;caller=4;b1=2;model=2;done=2;race=0;count=1;id=1;from=0x9beaac;stage=birth_completed"
+    ]
+  },
+  "limitations": "Six scenario requirements passed: explicitframeobserverON bothcopies, natural sleep dart and stockrest main/end, teammatewake preserving6600HP. Observerreported0calls/0samples throughout, so AF2F90 callback path not witnessed and no dispatcher/fence/selection authority qualified. On1 isinstallation only. All63protectedpaths andreal saves restored."
+}

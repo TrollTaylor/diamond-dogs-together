@@ -222,13 +222,19 @@ do
       if not p then return false, "camp_position_unavailable" end
       if math.abs(p[1] + 3) > 100000 or math.abs(p[2] + .5) > 100000 then return false, "camp_position_bounds" end
       return A.warp({p[1] + 3, p[2] + .5, p[3], pose()[4]}, id)
-    elseif cmd == "goto_spawn" and (#a == 1 or #a == 2) then
-      local distance = #a == 2 and number(a[2], 1, 5, false) or 3
-      if not distance then return false, "spawn_distance_args" end
+    elseif cmd == "goto_spawn" and (#a >= 1 and #a <= 3) then
+      local distance = #a >= 2 and number(a[2], 1, 5, false) or 3
+      local yaw = #a == 3 and number(a[3], -360, 360, false) or (#a == 2 and -90 or pose()[4])
+      if not distance or not yaw then return false, "spawn_distance_args" end
       local last = E.last
       if not last or last.mission ~= D.mission then return false, "spawn_position_unavailable" end
       local p = last.position
-      return A.warp({p[1] + distance, p[2] + .5, p[3], #a == 2 and -90 or pose()[4]}, id)
+      if #a >= 2 then
+        if not integer(last.actor, 0, 65534) then return false, "spawn_actor_unavailable" end
+        p = position({id = last.actor})
+        if not p then return false, "spawn_current_position_unavailable" end
+      end
+      return A.warp({p[1] + distance, p[2] + .5, p[3], yaw}, id)
     elseif cmd == "enemy_enable" or cmd == "enemy_disable" then
       if #a ~= 2 then return false, "enemy_args" end
       if not hostOnly() then return false, "host_only" end

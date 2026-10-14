@@ -11,6 +11,24 @@ struct Observation {
 };
 inline bool Range(std::uintptr_t p,std::size_t n)noexcept{return p&&n&&p<=std::numeric_limits<std::uintptr_t>::max()-n;}
 template<class R,class T>bool Read(R& r,std::uintptr_t p,T& v)noexcept{return Range(p,sizeof(v))&&r(p,&v,sizeof(v));}
+// Only this one dispatcher slot is also owned by the actual carry adapter.
+// The runtime supplies the compiled coop_carry::OverlayOriginal leaf, whose
+// process-lifetime Book proves its real installed pointer and positive serial
+// under the shared receipt lock. No composed provider/native callback is called.
+// All other route slots stay raw. Data readers (ReadOnce/ReadPair) stay raw too.
+template<class R,class O>bool SlotLive(R& raw,O overlay,std::uintptr_t image,
+ const carry_dispatch_lifetime_contract::Slot& slot) noexcept {
+ if(!Range(image,0xa01d000)||slot.rva>0xa01d000||sizeof(std::uintptr_t)>0xa01d000-slot.rva||
+    slot.target>=0xa01d000)return false;
+ const auto at=image+slot.rva,expected=image+slot.target;
+ std::uintptr_t first=0;if(!Read(raw,at,first))return false;
+ if(slot.rva!=0x23b8df8||slot.target!=0x11268b0)return first==expected;
+ std::uintptr_t viewed=first,last=0;
+ if(first!=expected&&(!overlay(at,&viewed,sizeof(viewed))||viewed!=expected))return false;
+ // Overlay does its own locked before/after live Book proof. This final raw
+ // observation additionally binds the caller's first qword to the same slot.
+ return Read(raw,at,last)&&last==first;
+}
 template<class R>bool CodeGate(R& r,std::uintptr_t image,std::size_t span,std::uintptr_t& mismatch)noexcept {
  mismatch=0;if(!Range(image,span))return false;unsigned char bytes[8192]{};
  for(const auto& s:carry_dispatch_lifetime_contract::sites){if(s.rva>span||s.size>span-s.rva||s.size>sizeof(bytes)||!r(image+s.rva,bytes,s.size)||std::memcmp(bytes,s.bytes,s.size)){mismatch=s.rva;return false;}}

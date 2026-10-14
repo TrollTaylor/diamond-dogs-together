@@ -85,7 +85,6 @@ bool VehicleMirrorPrepare() noexcept {
   !vm::Install(game_base,game_span,true,{VehicleLink,VehicleResolve,VehicleSend,mgscoop::vehicle_native_protection::ReadOriginal},Log)||
   !mgscoop::vehicle_native_protection::Install(game_base,game_span,true,{vm::ReadUIEvent9Receipt,
     [](const char* why) noexcept{mgscoop::worker_scenario::Refuse(why);}}))return false;
- if(!vi::SetNativePoseVehicleFootCameraTest(true))return false;
  vehicle_wiring_prepared.store(true);return true;
 }
 bool VehicleMirrorEnable(bool on) noexcept {

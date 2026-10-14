@@ -2309,6 +2309,33 @@ void TestHud() {
               "both-down recovery transition retains a safe wait instruction");
         d.localDown = d.teammateDown = false;
         Check(!hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.text[0], "healthy pair clears the gameplay instruction");
+        {
+            // The world-anchored prompt states follow the same validated facts.
+            hud::DownedView r{};
+            r.valid = true; r.mission = 30050; r.epoch = 7; r.publish_ms = 1000;
+            r.teammateDown = true; r.teammateCause = 2;
+            hud::RescuePrompt rp{};
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::away && rp.sleeping, "distant sleeper is an away pill");
+            r.closeEnough = true;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::wait, "beside an unadmitted hold waits");
+            r.inRange = true;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::ready, "admitted hold offers the Action button");
+            r.progressMs = 1500;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::holding && rp.progress == .5f, "hold fills the ring");
+            r.progressMs = 3000;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::done && rp.progress == 1.f, "completed hold waits for recovery");
+            r.progressMs = 0; r.carry = 1;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::carrying, "carrier leaves controls to the stock prompt");
+            r.carry = 0; r.inRange = r.closeEnough = false; r.teammateDown = false; r.teammateCause = 0;
+            r.localDown = true; r.localCause = 1;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::self_wounded && !rp.sleeping, "wounded self status");
+            r.localCause = 2;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::self_asleep && rp.sleeping, "sleeping self status");
+            r.carry = 2;
+            Check(hud::ClassifyDowned(r,30050,1200,rp) && rp.state == hud::Rescue::carried, "carried self status");
+            Check(!hud::ClassifyDowned(r,30050,1600,rp) && rp.state == hud::Rescue::none, "stale facts draw nothing");
+            Check(std::strcmp(hud::RescueName(hud::Rescue::holding),"holding") == 0, "rescue state names");
+        }
         // Parse the natural owner's copied V2 cause, never infer sleep from pose.
         auto parseHud = [&](const char* text) { return hud::ParseDownedHud(text, std::strlen(text), copied); };
         Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V1' -- 30050 7 1 0 0 0") && copied.localCause == 1,

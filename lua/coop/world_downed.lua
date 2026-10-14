@@ -72,6 +72,23 @@ local function publishHud(h)
 end
 local function resetHold()
   D.holdAt,D.holdGeneration,D.holdActor,D.target,D.progress=nil,nil,nil,0,0
+  D.decay=nil
+end
+-- MGO's down rules drain an interrupted revive instead of restarting it: the
+-- same reviver resuming on the same downed generation keeps what is left.
+local function releaseHold(now)
+  local decay
+  if D.holdAt and D.progress > 0 and D.target ~= 0 then
+    decay={target=D.target,generation=D.holdGeneration,actor=D.holdActor,progress=D.progress,at=now}
+  end
+  resetHold()
+  D.decay=decay
+end
+local function resumedProgress(now,targetRole,target,actor)
+  local d=D.decay
+  if not d or d.target ~= targetRole or d.generation ~= target.generation or d.actor ~= actor.generation or
+    type(now) ~= "number" or now ~= now or now < d.at then return 0 end
+  return math.max(0, d.progress - (now - d.at))
 end
 local function clockTime(n)
   return type(n)=="number" and n==n and n>=0 and n<=9007199254740991
@@ -283,10 +300,12 @@ local function hostTick(now)
   if targetRole == 0 then resetHold(); return end
   local target,actor=D.records[targetRole],D.records[3 - targetRole]
   if actor.down or not actor.held or actor.targetGeneration ~= target.generation or not distance(actor, target) then
-    resetHold(); return
+    releaseHold(now); return
   end
   if D.target ~= targetRole or D.holdGeneration ~= target.generation or D.holdActor ~= actor.generation then
-    D.holdAt,D.holdGeneration,D.holdActor=now,target.generation,actor.generation
+    local resumed=resumedProgress(now,targetRole,target,actor)
+    D.decay=nil
+    D.holdAt,D.holdGeneration,D.holdActor=now - resumed,target.generation,actor.generation
   end
   D.target,D.progress=targetRole,math.min(HOLD,math.max(0,floor(now - D.holdAt)))
   if D.progress >= HOLD and grant(targetRole, target.generation) then resetHold() end

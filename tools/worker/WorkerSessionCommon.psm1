@@ -100,9 +100,11 @@ function Assert-WorkerMgoStandingCycleScope([string]$BuildProfile,[string]$Mode,
     } elseif($Archive){throw '-MgoStandingCycleArchive needs -BuildProfile mgo-standing-cycle.'}
 }
 function Get-WorkerMgoStandingCycleExperiments {
-    param([switch]$LookupObserver)
+    param([switch]$LookupObserver,[switch]$FrameObserver)
+    if($FrameObserver -and !$LookupObserver){throw 'Frame observer requires the original-forward standing lookup observer.'}
     $flags=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER')
     if($LookupObserver){$flags+='MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER'}
+    if($FrameObserver){$flags+='MGS_LOCAL_MGO_STANDING_FRAME_OBSERVER'}
     return $flags
 }
 function Assert-WorkerMgoUniqueRestScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive,[string]$OldMgoArchive) {

@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <cstring>
 #include "qualified_sleep_lookup_runtime.hpp"
+#include "native_work_timing.hpp"
+#include "native_motion_frame_runtime.hpp"
+#include "native_motion_stack_observer.hpp"
 #include "qualified_sleep_lookup_phase.hpp"
 #include "qualified_sleep_lookup_contract.hpp"
 #include "coop_carry_original_view.hpp"
@@ -25,7 +28,7 @@ struct Cache {q::Owner owner{};q::Path path=q::Path::raw;std::uint64_t inputHash
 struct Runtime {
  std::uintptr_t image=0;std::size_t span=0;wchar_t directory[32768]{};Authorization authorization{};Log log=nullptr;
  Raw raw=nullptr;Setup setup=nullptr;bool gate=false;volatile LONG installed=0,exposed=0;
- volatile LONG64 rawCalls=0,setupCalls=0,uncovered=0,suppressed=0,fullSamples=0,logs=0,unknown=0;
+ volatile LONG64 rawCalls=0,setupCalls=0,uncovered=0,suppressed=0,fullSamples=0,logs=0,unknown=0,setupStacks=0;
  SRWLOCK bookLock=SRWLOCK_INIT,cacheLock=SRWLOCK_INIT;view::Book book{};Cache cache[32]{};q::Owner lastOwner[2]{};
 };
 Runtime runtime;thread_local bool inHook=false;
@@ -35,7 +38,8 @@ struct Reader {bool operator()(std::uintptr_t at,void* out,std::size_t n) noexce
 bool HeadsLive() noexcept {
  Reader read{};bool okay=false;if(TryAcquireSRWLockShared(&runtime.bookLock)){okay=view::Live(read,runtime.book,runtime.book.patches[0])&&view::Live(read,runtime.book,runtime.book.patches[1]);ReleaseSRWLockShared(&runtime.bookLock);}return okay;
 }
-q::Gate Gate() noexcept {q::ErrorPreserve preserve{};q::Gate g{};g.image=runtime.image;g.exactPe=runtime.authorization.exactRetailPe;g.fullCode=runtime.gate;
+q::Gate Gate() noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::lookup_gate);q::ErrorPreserve preserve{};q::Gate g{};g.image=runtime.image;g.exactPe=runtime.authorization.exactRetailPe;g.fullCode=runtime.gate;
  g.privateCurrent=InterlockedCompareExchange(&runtime.installed,0,0)==1&&runtime.authorization.privateWorkerCurrent&&runtime.authorization.privateWorkerCurrent()&&HeadsLive();
  g.copiedSaveLab=runtime.authorization.copiedSaveLab;g.standingCycleProfile=g.privateCurrent&&runtime.authorization.profileCurrent&&runtime.authorization.profileCurrent(runtime.directory);return g;}
 std::uint64_t Mix(std::uint64_t h,std::uint64_t x) noexcept{return (h^x)*1099511628211ull;}
@@ -66,6 +70,7 @@ bool SameCheapPhase(const q::Owner& owner) noexcept {
 // This hash detects a changed ACTUAL returned source before deciding whether
 // another full post-only diagnostic is needed. It grants no source ownership.
 bool OutputKey(const q::Event& e,std::uintptr_t raw,bool setup,std::uint64_t& hash) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::lookup_output);
  Reader r{};hash=1469598103934665603ull;std::uintptr_t viewAt=0;std::int32_t n=1,index=0;
  if(e.path==q::Path::setup){if(!setup)return false;if(!q::Get(r,e.spec+0x200,n)||n<0||n>int(q::kSpecs)||!q::Get(r,e.destination+0x48,index)||(index!=0&&index!=1)||!q::Get(r,e.destination+std::uintptr_t(index)*0x20,viewAt)||!q::Aligned(viewAt,8))return false;}
  for(int i=0;i<n;++i){std::uintptr_t source=raw,main=0,end=0,bank=0,blob=0;
@@ -76,6 +81,7 @@ bool OutputKey(const q::Event& e,std::uintptr_t raw,bool setup,std::uint64_t& ha
  }return true;
 }
 void Report(const q::Receipt& receipt,std::uintptr_t key,std::uint64_t input) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::lookup_report);
  q::ErrorPreserve error{};const auto& a=receipt.after.inputObserved?receipt.after:receipt.before;
  const auto& owner=a.owner;std::uint64_t output=0;OutputKey(receipt.event,receipt.rawResult,receipt.setupResult,output);
  bool duplicate=false;
@@ -96,6 +102,23 @@ void Report(const q::Receipt& receipt,std::uintptr_t key,std::uint64_t input) no
   static_cast<unsigned long long>(owner.player),static_cast<unsigned long long>(owner.record),static_cast<unsigned long long>(owner.engine),static_cast<unsigned long long>(receipt.event.engine),static_cast<unsigned long long>(receipt.event.destination),static_cast<unsigned long long>(receipt.event.spec),static_cast<unsigned long long>(receipt.event.context),static_cast<unsigned long long>(owner.banks),a.specCount,a.specLayer,
   unsigned(phase.mode),unsigned(phase.request),unsigned(phase.counter),static_cast<unsigned long long>(phase.callback?phase.callback-runtime.image:0),static_cast<unsigned long long>(phase.rememberedGraph),static_cast<unsigned long long>(phase.currentGraph),
   phase.observed?1u:0u,phase.graphObserved?1u:0u,pre.observed?1u:0u,unsigned(pre.mode),unsigned(pre.request),unsigned(pre.counter),static_cast<unsigned long long>(pre.rememberedGraph),static_cast<unsigned long long>(pre.currentGraph),unsigned(phase.qAction),phase.life,static_cast<unsigned long long>(receipt.rawResult),receipt.setupResult?1u:0u,receipt.identityStable?1u:0u,receipt.afterOnly?1u:0u,a.outputObserved?1u:0u,a.reason);runtime.log(line);
+ // Capture the true original setup stack independently of AF2F90. This
+ // remains inside its existing native invocation; no detached job or lease.
+ native_motion_stack_observer::SetupInput stackInput{};Reader stackReader{};
+ if(native_motion_stack_observer::SetupStackInput(stackReader,runtime.image,receipt.event,stackInput)&&InterlockedIncrement64(&runtime.setupStacks)<=64){
+  void* stack[12]{};const auto count=CaptureStackBackTrace(0,ARRAYSIZE(stack),stack,nullptr);
+  for(unsigned i=0;i<count;++i){const auto pc=reinterpret_cast<std::uintptr_t>(stack[i]);const bool retail=pc>=runtime.image&&pc-runtime.image<runtime.span;char row[500]{};
+   StringCchPrintfA(row,ARRAYSIZE(row),"sleep_lookup=actual_setup_stack;snapshot=%llu;index=%u;pc=%llx;retail=%u;rva=%llx;from=1a6d88d;full_id=%llx;body=%u;owner_known=%u;phase_observed=%u;mode=%u;counter=%u;original_job_retention=unknown;selection=0;lease=0;append=0\r\n",
+    static_cast<unsigned long long>(snapshot),i,static_cast<unsigned long long>(pc),retail?1u:0u,static_cast<unsigned long long>(retail?pc-runtime.image:0),static_cast<unsigned long long>(stackInput.fullMotion),owner.body,owner.known?1u:0u,phase.observed?1u:0u,unsigned(phase.mode),unsigned(phase.counter));runtime.log(row);}
+ }
+ native_motion_frame_runtime::Current nativeFrame{};
+ if(native_motion_frame_runtime::ReadCurrent(nativeFrame)){
+  const auto& frame=nativeFrame.frame;char row[650]{};
+  const bool engineMatch=frame.typedCurrent&&owner.known&&frame.owner.engine==owner.engine&&frame.engineArgument==owner.engine;
+  StringCchPrintfA(row,ARRAYSIZE(row),"sleep_lookup=nested_callback;snapshot=%llu;path=%s;frame_serial=%llu;callback_caller=%llx;frame_cs=%llx;frame_row=%llx;frame_engine=%llx;frame_motion=%llx;engine_match=%u;birth_match=%u;original_job_retention=unknown;selection=0;lease=0\r\n",
+   static_cast<unsigned long long>(snapshot),receipt.event.path==q::Path::raw?"raw":"setup",static_cast<unsigned long long>(nativeFrame.serial),static_cast<unsigned long long>(frame.event.caller-runtime.image),
+   static_cast<unsigned long long>(frame.event.cs),static_cast<unsigned long long>(frame.rowArgument),static_cast<unsigned long long>(frame.engineArgument),static_cast<unsigned long long>(frame.payloadSecondary),engineMatch?1u:0u,nativeFrame.birthMatches?1u:0u);runtime.log(row);
+ }
  if(a.inputObserved)for(unsigned i=0;i<unsigned(a.specCount);++i){const auto& s=a.selected[i];char row[900]{};
   StringCchPrintfA(row,ARRAYSIZE(row),"sleep_lookup=original_source;snapshot=%llu;path=%s;body=%u;spec_index=%u;full_id=%llx;covered=%u;observed=%u;bank_bound=%u;slot=%u;source_index=%u;descriptor=%llx;bank=%llx;blob=%llx;file_identity=%llx;bank_count=%u;gani=%llx;master=%llx;main=%llx;end=%llx;selection=0;payload_hash=unverified\r\n",
    static_cast<unsigned long long>(snapshot),receipt.event.path==q::Path::raw?"raw":"setup",owner.body,i,static_cast<unsigned long long>(a.ids[i]),a.covered[i]?1u:0u,s.observed?1u:0u,s.bankBound?1u:0u,s.slot,s.index,
@@ -108,8 +131,12 @@ void Report(const q::Receipt& receipt,std::uintptr_t key,std::uint64_t input) no
  }
 }
 bool Begin(const q::Event& e,std::uintptr_t& key,std::uint64_t& input,Cache& cached,bool& full) noexcept {
- q::ErrorPreserve preserve{};full=false;if(!InputKey(e,key,input)){InterlockedIncrement64(&runtime.uncovered);return false;}
+ native_work_timing::Scope measured(native_work_timing::Kind::lookup_begin);
+ q::ErrorPreserve preserve{};full=false;
+ // Exact callsite is a cheap negative observer filter. Foreign setup specs
+ // cannot produce observations, so do not dereference/scan them first.
  if(!q::Natural({true,true,true,true,true,false,runtime.image},e))return false;
+ if(!InputKey(e,key,input)){InterlockedIncrement64(&runtime.uncovered);return false;}
  q::Owner phaseOwner{};const bool have=ReadCache(e,key,input,cached,phaseOwner);
  full=!have||!SameCheapPhase(phaseOwner);
  if(full&&InterlockedIncrement64(&runtime.fullSamples)>256){InterlockedIncrement64(&runtime.suppressed);return false;}return true;
@@ -121,6 +148,7 @@ void AfterOnly(const q::Event& e,std::uintptr_t raw,bool setup,std::uintptr_t ke
  Reader read{};q::NativePhaseReader phase{};const auto g=Gate();q::Input(read,phase,g,e,receipt.after);q::CurrentResult(read,g,e,raw,setup,receipt.after);Report(receipt,key,input);
 }
 __declspec(noinline) std::uintptr_t RawHook(std::uintptr_t engine,std::uint64_t id) {
+ native_work_timing::Scope measured(native_work_timing::Kind::lookup_hook);
  if(inHook||q::inObserver)return runtime.raw(engine,id);HookLease lease{};InterlockedIncrement64(&runtime.rawCalls);
  q::Event event{};event.engine=engine;event.id=id;event.returnAddress=reinterpret_cast<std::uintptr_t>(_ReturnAddress());std::uintptr_t key=0;std::uint64_t input=0;Cache cache{};bool full=false;
  if(!Begin(event,key,input,cache,full))return runtime.raw(engine,id);
@@ -128,6 +156,7 @@ __declspec(noinline) std::uintptr_t RawHook(std::uintptr_t engine,std::uint64_t 
  Reader read{};q::NativePhaseReader phase{};const auto gate=Gate();auto report=[&](const q::Receipt& receipt) noexcept {Report(receipt,key,input);};return q::RawForward(runtime.raw,read,phase,report,gate,event);
 }
 __declspec(noinline) bool SetupHook(std::uintptr_t destination,std::uintptr_t spec,std::uintptr_t arg3,std::uintptr_t arg4,std::uintptr_t context) {
+ native_work_timing::Scope measured(native_work_timing::Kind::lookup_hook);
  if(inHook||q::inObserver)return runtime.setup(destination,spec,arg3,arg4,context);HookLease lease{};InterlockedIncrement64(&runtime.setupCalls);
  q::Event event{};event.path=q::Path::setup;event.destination=destination;event.spec=spec;event.arg3=arg3;event.arg4=arg4;event.context=context;event.returnAddress=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  std::uintptr_t key=0;std::uint64_t input=0;Cache cache{};bool full=false;if(!Begin(event,key,input,cache,full))return runtime.setup(destination,spec,arg3,arg4,context);

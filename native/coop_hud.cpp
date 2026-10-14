@@ -297,6 +297,43 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
     return true;
 }
 
+bool ClassifyDowned(const DownedView& v, std::uint32_t current_mission, std::uint64_t now_ms, RescuePrompt& out) noexcept {
+    out = {};
+    Line line{};
+    float progress = 0;
+    if (!FormatDowned(v, current_mission, now_ms, line, progress)) return false;
+    out.progress = progress;
+    if (v.localDown) {
+        out.sleeping = v.localCause == 2;
+        out.state = v.carry == 2 ? Rescue::carried : out.sleeping ? Rescue::self_asleep : Rescue::self_wounded;
+        return true;
+    }
+    out.sleeping = v.teammateCause == 2;
+    if (v.carry == 2) out.state = Rescue::carried;
+    else if (v.carry == 3 || v.carry == 4) out.state = Rescue::transfer;
+    else if (v.carry == 1) out.state = Rescue::carrying;
+    else if (!v.closeEnough && !v.inRange) out.state = Rescue::away;
+    else if (!v.inRange) out.state = Rescue::wait;
+    else if (!v.progressMs) out.state = Rescue::ready;
+    else out.state = v.progressMs >= kReviveHoldMs ? Rescue::done : Rescue::holding;
+    return true;
+}
+const char* RescueName(Rescue state) noexcept {
+    switch (state) {
+    case Rescue::away: return "away";
+    case Rescue::wait: return "wait";
+    case Rescue::ready: return "ready";
+    case Rescue::holding: return "holding";
+    case Rescue::done: return "done";
+    case Rescue::carrying: return "carrying";
+    case Rescue::carried: return "carried";
+    case Rescue::transfer: return "transfer";
+    case Rescue::self_asleep: return "self_asleep";
+    case Rescue::self_wounded: return "self_wounded";
+    default: return "none";
+    }
+}
+
 void Post(EventKind kind, std::int32_t arg, const char* text) noexcept {
     Event e{};
     e.kind = kind;

@@ -1,7 +1,8 @@
 #pragma once
 // World sync (lua/coop/world_*.lua, docs/world-sync-protocol.md): spliced in
 // this order right after partner_sync_source. Each file is one do ... end
-// block of at most 16000 bytes (CMakeLists.txt checks it: MSVC literal limit).
+// block of at most 32000 bytes; CMakeLists.txt emits a file over 16000 bytes
+// as two adjacent raw literals (the MSVC limit applies to each literal).
 constexpr char world_sync_source[] = R"MGS_WORLD(
 @MGS_WORLD_SYNC_SOURCE@
 )MGS_WORLD";

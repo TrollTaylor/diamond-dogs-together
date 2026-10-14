@@ -37,6 +37,7 @@ std::atomic<std::uint64_t> naturalLast[2]{};
 std::uint32_t NaturalWindow() noexcept{return partner_input_hook::WindowSeq();}
 bool NaturalBatch() noexcept{return partner_defer::InBatch();}
 void ObserveNatural(const cb::RawWindow& raw) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::horse_natural);
  unsigned body=2;for(unsigned k=0;k<2;++k)if(raw.self&&raw.self==naturalSelf[k].load(std::memory_order_acquire))body=k;
  if(body>1)return;
  const auto now=GetTickCount64();auto previous=naturalLast[body].load(std::memory_order_acquire);

@@ -88,6 +88,10 @@ bool SelectorLine(char* out, std::size_t capacity) noexcept;
 bool LoadLine(char* out, std::size_t capacity) noexcept;
 bool HorseLoadLine(char* out, std::size_t capacity) noexcept;
 bool HorseGateLine(char* out, std::size_t capacity) noexcept;
+// Raw actual finder-entry/after flags; no paired owner/writer permission.
+bool HorseFinderLine(char* out, std::size_t capacity) noexcept;
+// Raw original NPC predicate source matrix/target/AL; no paired permission.
+bool NpcPredicateLine(char* out, std::size_t capacity) noexcept;
 
 // Instance 1 (the teammate's body on this machine) is carried by the local
 // player or being picked up/put down: its transform belongs to the native

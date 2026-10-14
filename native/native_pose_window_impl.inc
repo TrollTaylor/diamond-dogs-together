@@ -464,6 +464,7 @@ bool PosePairWordBefore() noexcept {
  return true;
 }
 void PoseEnd(bool postComplete) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::pose_end);
  if(!t_pose.opened){InterlockedIncrement(&g_window_seq);return;}
  const bool pairRestored=PosePairWordRestore();if(!pairRestored)PoseFail("pose_pair_word_cleanup");
  bool restored=false;cw::Reply receipt{};
@@ -699,6 +700,7 @@ bool PoseFlagMapSetScope(const PoseFlagMapSetContinuation& token,const NativePos
 }
 
 bool PoseOwnedFlagMap(void* object,std::uint32_t key,std::uint64_t value,bool insert,owned_flag_map::Origin origin,std::uint32_t& result,DWORD incoming,DWORD& outgoing) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::vars_map);
  namespace fm=owned_flag_map;NativePoseJobContext before{},after{};msg::Observation protectedBefore{},protectedAfter{};
  fm::Observation original{},expected{},observed{};auto reader=PoseReader;std::uintptr_t mismatch=0;
  const auto refuse=[&](const char* stage) noexcept {
@@ -1192,7 +1194,11 @@ bool PoseRoutePatchesLive() noexcept {
  if(g_pose_bindings.enabled||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
  !g_pose_route_ctor||!g_pose_route_delete||!g_pose_registry_ctor||!g_pose_registry_destroy||!g_pose_registry_delete||!g_pose_registry_replace||!g_pose_route_class_update||!g_pose_route_class_register)return false;
  for(unsigned i=0;i<carry_dispatch_lifetime_contract::hookCount;++i)if(g_pose_patches[groups::routeFirst+i].rva!=carry_dispatch_lifetime_contract::hookRvas[i]||!PosePatchOwned(g_pose_patches[groups::routeFirst+i]))return false;
- for(const auto& slot:carry_dispatch_lifetime_contract::slots){std::uintptr_t value=0;if(!PoseRead(g_base+slot.rva,value)||value!=g_base+slot.target)return false;}
+ // Recognize only the carry adapter's real recipient pointer receipt. Do not
+ // change the eight core hook ownership checks above or originalize data.
+ auto raw=PoseReader;
+ for(const auto& slot:carry_dispatch_lifetime_contract::slots)
+  if(!route::SlotLive(raw,&coop_carry::OverlayOriginal,g_base,slot))return false;
  return true;
 }
 
@@ -1212,6 +1218,7 @@ bool PoseMessagePatchesLive() noexcept {
  return true;
 }
 bool PoseOriginalCode(std::uintptr_t at,void* out,std::size_t size) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::original_view);
  if(!at||!size||at>UINTPTR_MAX-size||!PoseReader(at,out,size))return false;
  // The early input hook owns only this call's four displacement bytes.
  // Require its current E8, exact rel32-to-owned-stub and FF25-to-our-wrapper.

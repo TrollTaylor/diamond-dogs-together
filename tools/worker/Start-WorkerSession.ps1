@@ -27,6 +27,7 @@ param(
     [string]$MgoUniqueRestArchive,
     [string]$MgoStandingCycleArchive,
     [switch]$StandingLookupObserver,
+    [switch]$StandingFrameObserver,
     [switch]$NativeActivationObserver,
     [switch]$AmmoExperiment,
     # real: fresh copies of the real saves (a pending story demo can block the
@@ -74,6 +75,7 @@ Assert-WorkerMgoUniqueRestScope $BuildProfile $Mode $PartnerProfile $NativeStage
 Assert-WorkerMgoStandingCycleScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoStandingCycleArchive $BuddyCapacityArchive $MgoSleepRestArchive $MgoUniqueRestArchive
 if($BuildProfile -ceq 'mgo-standing-cycle' -and $SaveSeed -cne 'lab'){throw 'Standing cycle tests require copied lab saves.'}
 if($StandingLookupObserver -and $BuildProfile -cne 'mgo-standing-cycle'){throw '-StandingLookupObserver needs the exact standing-cycle profile.'}
+if($StandingFrameObserver -and ($BuildProfile -cne 'mgo-standing-cycle' -or !$StandingLookupObserver)){throw '-StandingFrameObserver needs the exact standing-cycle profile and -StandingLookupObserver.'}
 Assert-WorkerNativeActivationScope ([bool]$NativeActivationObserver) $BuildProfile $Mode $PartnerProfile $NativeStage $SaveSeed ([bool]$AmmoExperiment)
 if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle') -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
 if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cnotin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){throw '-NativeStage gun needs -BuildProfile research (a weapon on body 1).'}
@@ -125,7 +127,7 @@ if($BuildProfile -ceq 'mgo-standing-cycle'){
 if($Mode -ceq 'play'){$null=Get-WorkerPlayPartnerSettings $PartnerProfile $NativeStage}
 $checks=Read-WorkerSessionJson ([IO.Path]::GetFullPath($CheckReceipt,$repo))
 if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){
-    $expectedResearch=@($(if($BuildProfile -ceq 'mgo-standing-cycle'){Get-WorkerMgoStandingCycleExperiments -LookupObserver:$StandingLookupObserver}elseif($BuildProfile -ceq 'mgo-unique-rest'){Get-WorkerMgoUniqueRestExperiments}else{Get-WorkerResearchExperiments -Ammo:$AmmoExperiment}))
+    $expectedResearch=@($(if($BuildProfile -ceq 'mgo-standing-cycle'){Get-WorkerMgoStandingCycleExperiments -LookupObserver:$StandingLookupObserver -FrameObserver:$StandingFrameObserver}elseif($BuildProfile -ceq 'mgo-unique-rest'){Get-WorkerMgoUniqueRestExperiments}else{Get-WorkerResearchExperiments -Ammo:$AmmoExperiment}))
     $expectedResearch=@(Add-WorkerNativeActivationExperiment $expectedResearch ([bool]$NativeActivationObserver))
     if(!(Test-WorkerResearchReceipt $checks $build $repo $loaderHash $expectedResearch)){
         throw 'Require passed Research/background ON checks with exactly the stock46 experiments (no upper_*) for this exact build and loader.'

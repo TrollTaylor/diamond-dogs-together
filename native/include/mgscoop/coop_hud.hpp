@@ -165,6 +165,18 @@ struct Line {
 // hints: hold E (wake/revive, the co-op hold) and hold R (the stock carry).
 bool FormatDowned(const DownedView& view, std::uint32_t current_mission,
                   std::uint64_t now_ms, Line& out, float& progress) noexcept;
+// The same facts as a drawable state for the world-anchored rescue prompt.
+// away: outside 3 m; wait: beside them before the hold is admitted; ready:
+// hold Action now; holding/done: the hold's progress (done waits for the
+// native recovery). self_*: the local player is down.
+enum class Rescue : std::uint8_t { none, away, wait, ready, holding, done, carrying, carried, transfer, self_asleep, self_wounded };
+struct RescuePrompt {
+    Rescue state;
+    bool sleeping;   // the downed player is asleep (else wounded)
+    float progress;  // 0..1 while holding
+};
+bool ClassifyDowned(const DownedView& view, std::uint32_t current_mission, std::uint64_t now_ms, RescuePrompt& out) noexcept;
+const char* RescueName(Rescue state) noexcept;
 // The status line for `view` (`name`: the partner's display name, may be "").
 // False when nothing is shown (no view, link off).
 bool FormatLine(const LinkView& view, const char* name, Mode mode, std::uint64_t now_ms, Line& out,

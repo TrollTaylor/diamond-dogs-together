@@ -96,6 +96,7 @@ param(
     [string]$MgoUniqueRestArchive,
     [string]$MgoStandingCycleArchive,
     [switch]$StandingLookupObserver,
+    [switch]$StandingFrameObserver,
     [switch]$NativeActivationObserver,
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
@@ -123,12 +124,13 @@ Assert-WorkerMgoUniqueRestScope $BuildProfile $Mode $PartnerProfile $NativeStage
 Assert-WorkerMgoStandingCycleScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoStandingCycleArchive $BuddyCapacityArchive $MgoSleepRestArchive $MgoUniqueRestArchive
 if($BuildProfile -ceq 'mgo-standing-cycle' -and $SaveSeed -cne 'lab'){throw 'Standing cycle tests require copied lab saves.'}
 if($StandingLookupObserver -and $BuildProfile -cne 'mgo-standing-cycle'){throw '-StandingLookupObserver needs the exact standing-cycle profile.'}
+if($StandingFrameObserver -and ($BuildProfile -cne 'mgo-standing-cycle' -or !$StandingLookupObserver)){throw '-StandingFrameObserver needs the exact standing-cycle profile and -StandingLookupObserver.'}
 Assert-WorkerNativeActivationScope ([bool]$NativeActivationObserver) $BuildProfile $Mode $PartnerProfile $NativeStage $SaveSeed ([bool]$AmmoExperiment)
 if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle') -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
 if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cnotin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){throw '-NativeStage gun needs -BuildProfile research.'}
 $researchExperiments=@()
 if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){
-    $researchExperiments=if($BuildProfile -ceq 'mgo-standing-cycle'){@(Get-WorkerMgoStandingCycleExperiments -LookupObserver:$StandingLookupObserver)}elseif($BuildProfile -ceq 'mgo-unique-rest'){@(Get-WorkerMgoUniqueRestExperiments)}else{@(Get-WorkerResearchExperiments -Ammo:$AmmoExperiment)}
+    $researchExperiments=if($BuildProfile -ceq 'mgo-standing-cycle'){@(Get-WorkerMgoStandingCycleExperiments -LookupObserver:$StandingLookupObserver -FrameObserver:$StandingFrameObserver)}elseif($BuildProfile -ceq 'mgo-unique-rest'){@(Get-WorkerMgoUniqueRestExperiments)}else{@(Get-WorkerResearchExperiments -Ammo:$AmmoExperiment)}
     $researchExperiments=@(Add-WorkerNativeActivationExperiment $researchExperiments ([bool]$NativeActivationObserver))
     $build=Get-WorkerResearchBuildDirectory $repo $researchExperiments
 } elseif($BuildProfile -ceq 'buddy-capacity'){
@@ -221,7 +223,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -BuddyCapacityArchive $BuddyCapacityArchive -MgoSleepRestArchive $MgoSleepRestArchive -MgoUniqueRestArchive $MgoUniqueRestArchive -MgoStandingCycleArchive $MgoStandingCycleArchive -StandingLookupObserver:$StandingLookupObserver -NativeActivationObserver:$NativeActivationObserver -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -BuddyCapacityArchive $BuddyCapacityArchive -MgoSleepRestArchive $MgoSleepRestArchive -MgoUniqueRestArchive $MgoUniqueRestArchive -MgoStandingCycleArchive $MgoStandingCycleArchive -StandingLookupObserver:$StandingLookupObserver -StandingFrameObserver:$StandingFrameObserver -NativeActivationObserver:$NativeActivationObserver -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId

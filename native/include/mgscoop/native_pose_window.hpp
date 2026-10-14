@@ -32,6 +32,9 @@ const char* InstallNativePoseWindow(const void* image,std::size_t span,bool full
 // Worker/private/copied-save only. True opts into mandatory body1 windows.
 // Off cannot discard a live test/feature requirement: restart owned lab process.
 bool SetNativePoseWindowTest(bool enabled) noexcept;
+// Private observer admission through the already registered worker callback.
+// This is not an actor, lifetime, shared-read or mutation permission.
+bool NativePosePrivateWorkerAdmitted() noexcept;
 // Separate private-worker negative camera leaf filter, OFF by default. Set only
 // before mandatory windows/purposes, after the genuine vehicle code provider.
 // It never grants a native camera call or counts an unexecuted job as healthy.

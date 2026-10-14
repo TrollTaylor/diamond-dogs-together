@@ -40,6 +40,7 @@ struct ActivationFactoryFrame {activation::ActivationCompletion* completion=null
 thread_local ActivationFactoryFrame t_activation_factory;
 volatile LONG64 g_activation_frame_serial=0;std::uint64_t g_activation_operation_serial=0;
 bool PoseActivationEligible() noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::activation_eligible);
  return !g_pose_bindings.enabled&&g_pose_installed&&g_pose_original_view.load(std::memory_order_acquire)&&
   !g_pose_fault&&!g_shutdown&&PoseWorker()&&PoseActivationHooksLive();
 }
@@ -97,6 +98,7 @@ bool PoseActivationFinal(const activation::Pending& pending,activation::FinalCom
  out.parts3=true;out.bit14=true;out.pairedNativeResourceClosure=true;return true;
 }
 void PoseActivationFinishFrame(bool normal) noexcept {
+ native_work_timing::Scope measured(native_work_timing::Kind::activation_final);
  for(unsigned id=0;id<2;++id){activation::Pending pending{};
   if(!(t_activation_parts.stagedMask&(1u<<id)))continue;
   AcquireSRWLockShared(&g_pose_birth_lock);pending=g_pose_activation_pending[id];ReleaseSRWLockShared(&g_pose_birth_lock);
@@ -119,6 +121,7 @@ void PoseActivationFinishFrame(bool normal) noexcept {
 }
 void PoseActivationPartsOriginal(void* object) noexcept {
  const DWORD incoming=GetLastError();DWORD outgoing=incoming;bool normal=false;
+ auto measured=native_work_timing::Begin(native_work_timing::Kind::activation_parts);
  const auto previous=t_activation_parts;const auto previousFactory=t_activation_factory;
  t_activation_parts={};t_activation_factory={};
  // Parts polling is frequent; full-body gates run only at installation and
@@ -135,7 +138,7 @@ void PoseActivationPartsOriginal(void* object) noexcept {
  __try {SetLastError(incoming);g_pose_parts(object);outgoing=GetLastError();normal=true;}
  __finally {
   if(t_activation_parts.original){if(!normal)InterlockedIncrement(&g_activation_abnormal);PoseActivationFinishFrame(normal);}
-  t_activation_parts=previous;t_activation_factory=previousFactory;SetLastError(outgoing);
+  t_activation_parts=previous;t_activation_factory=previousFactory;SetLastError(outgoing);native_work_timing::End(measured);
  }
 }
 __declspec(noinline) std::int32_t* PoseActivationFactory(void* entry,std::int32_t* output,void* payload) noexcept {
@@ -163,12 +166,14 @@ __declspec(noinline) std::uint8_t PoseActivateBody(void* block,std::uint32_t id,
  const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());const auto previous=t_activation_factory;
  InterlockedExchange(&g_activation_last_body,id<=1?static_cast<LONG>(id):-1);
  InterlockedExchange(&g_activation_last_caller,caller>=g_base&&caller-g_base<0xa01d000?static_cast<LONG>(caller-g_base):0);
- completion.body=id;completion.threadBefore=GetCurrentThreadId();completion.lifecycleEpoch=PoseBirthEpoch();
+ completion.body=id;completion.threadBefore=GetCurrentThreadId();
  completion.partsGo=t_activation_parts.go;completion.frame=t_activation_parts.serial;
  completion.exactActivationCaller=caller==g_base+native_pose_activation_contract::activationReturn;
- completion.installedBefore=PoseActivationEligible();completion.workerBefore=completion.installedBefore;
- const bool candidate=completion.installedBefore&&completion.exactActivationCaller&&t_activation_parts.original&&
-  t_activation_parts.thread==completion.threadBefore&&PoseActivationIdentity(reinterpret_cast<std::uintptr_t>(block),id,
+ const bool framed=native_observer_negative_work::ActivationCandidate(completion.exactActivationCaller,
+  t_activation_parts.original,t_activation_parts.thread==completion.threadBefore,id);
+ completion.lifecycleEpoch=framed?PoseBirthEpoch():0;
+ completion.installedBefore=framed&&PoseActivationEligible();completion.workerBefore=completion.installedBefore;
+ const bool candidate=framed&&completion.installedBefore&&PoseActivationIdentity(reinterpret_cast<std::uintptr_t>(block),id,
    completion.before,completion.rowBefore,completion.bit14Before)&&completion.partsGo==completion.before.player-0x20;
  InterlockedExchange(&g_activation_last_stage,!completion.installedBefore?1:!completion.exactActivationCaller?2:!t_activation_parts.original?3:!candidate?4:6);
  if(candidate){AcquireSRWLockExclusive(&g_pose_birth_lock);++g_activation_operation_serial;if(!g_activation_operation_serial)++g_activation_operation_serial;
@@ -178,8 +183,15 @@ __declspec(noinline) std::uint8_t PoseActivateBody(void* block,std::uint32_t id,
   outgoing=GetLastError();normal=true;}
  __finally {
   t_activation_factory=previous;completion.normalReturn=normal;completion.alTrue=result==1;
-  completion.threadAfter=GetCurrentThreadId();completion.installedAfter=PoseActivationEligible();completion.workerAfter=completion.installedAfter;
-  if(candidate&&normal&&completion.alTrue&&PoseActivationIdentity(reinterpret_cast<std::uintptr_t>(block),id,
+  completion.threadAfter=GetCurrentThreadId();
+  const bool inspectAfter=native_observer_negative_work::ActivationAfter(candidate,normal,completion.alTrue,completion.factoryCalls);
+  completion.installedAfter=inspectAfter&&PoseActivationEligible();completion.workerAfter=completion.installedAfter;
+  if(candidate&&normal&&completion.alTrue&&!completion.factoryCalls){
+   // No factory witness can publish a resource birth. Do not pretend this is
+   // a qualified post-call no-op or synthesize a new identity/receipt.
+   InterlockedExchange(&g_activation_last_stage,13);
+   auto noWitness=native_work_timing::Begin(native_work_timing::Kind::activation_no_witness);native_work_timing::End(noWitness);
+  }else if(inspectAfter&&PoseActivationIdentity(reinterpret_cast<std::uintptr_t>(block),id,
    completion.after,completion.rowAfter,completion.bit14After)){
    AcquireSRWLockExclusive(&g_pose_birth_lock);
    const auto pending=activation::Stage(completion,g_pose_birth_epoch);

@@ -15,6 +15,8 @@
 #include "coop_carry_presentation_setter.hpp"
 #include "coop_carry_original_view_contract.hpp"
 #include "horse_load_probe_contract.hpp"
+#include "horse_finder_entry_read.hpp"
+#include "npc_pickup_entry_read.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -390,13 +392,25 @@ __declspec(noinline) bool HookRaycast(void* plugin, std::uint32_t carrier, const
     }
     return blocked;
 }
+namespace npe=npc_pickup_entry_read;
+SRWLOCK g_npcPredicateLock=SRWLOCK_INIT;npe::Snapshot g_npcPredicateSnapshot{};
 __declspec(noinline) bool HookPredicate(void* plugin, std::uint32_t carrier, const float* pos, std::uint16_t id, void* out) noexcept {
     LastErrorState error;
+    npe::Snapshot snap{};const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    const auto raw=[](std::uintptr_t at,void* bytes,std::size_t size)noexcept{return ReadBytes(at,bytes,size);};
+    const bool npc=worker_scenario::Compiled()&&partner_input_hook::NativePosePrivateWorkerAdmitted()&&carrier==0&&(id&0xfe00u)==0x400u;
+    snap.callerRva=caller>=g_base&&caller-g_base<=UINT32_MAX?static_cast<std::uint32_t>(caller-g_base):0;
+    const bool entry=npc&&npe::Read(raw,g_base,reinterpret_cast<std::uintptr_t>(plugin),carrier,id,reinterpret_cast<std::uintptr_t>(pos),snap.before);
     g_predCalls.fetch_add(1, std::memory_order_relaxed);
     const bool player = (id & 0x1ffu) < 2u && (id & 0xfe00u) == 0;
     t_inPlayerPredicate = player;
     error.Restore();
     bool ok = g_predicate(plugin, carrier, pos, id, out);
+    if(npc){
+        error.Capture();snap.al=ok;snap.at=GetTickCount64();snap.raw=entry&&
+            npe::Read(raw,g_base,reinterpret_cast<std::uintptr_t>(plugin),carrier,id,reinterpret_cast<std::uintptr_t>(pos),snap.after)&&npe::SameSource(snap.before,snap.after);
+        AcquireSRWLockExclusive(&g_npcPredicateLock);g_npcPredicateSnapshot=snap;ReleaseSRWLockExclusive(&g_npcPredicateLock);error.Restore();
+    }
     if(player&&g_mode.load(std::memory_order_relaxed)==kAnyDowned&&!(g_carryable.load(std::memory_order_relaxed)&(1u<<id)))ok=false;
     t_inPlayerPredicate = false;
     error.Capture();
@@ -565,13 +579,25 @@ std::atomic<std::uint32_t> g_horseGeomCalls{0},g_horseGeomOk{0};
 std::atomic<std::uint32_t> g_horseFindFlag{0xff};
 std::atomic<std::uint32_t> g_horseSearchCalls{0},g_horseSearchCount{0},g_horseSearchIds{0xffffffffu};
 bool g_horseLoadProbeInstalled=false;
+namespace hfe=horse_finder_entry_read;
+SRWLOCK g_horseFinderLock=SRWLOCK_INIT;hfe::Snapshot g_horseFinderSnapshot{};
 __declspec(noinline) bool HookHorseLoadFind(void* self,std::uint32_t id,void* out,std::uint8_t flag) noexcept {
     const DWORD incoming=GetLastError();DWORD outgoing=incoming;
     const bool previous=t_horseLoadFindActive;const auto previousCarrier=t_horseLoadFindCarrier;
+    hfe::Snapshot snapshot{};const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    const auto raw=[](std::uintptr_t at,void* bytes,std::size_t size)noexcept{return ReadBytes(at,bytes,size);};
+    snapshot.input=flag;snapshot.callerRva=caller>=g_base&&caller-g_base<=UINT32_MAX?static_cast<std::uint32_t>(caller-g_base):0;
+    const bool observe=worker_scenario::Compiled()&&partner_input_hook::NativePosePrivateWorkerAdmitted();
+    const bool entryRead=observe&&id==0&&snapshot.callerRva==0x1132fd6&&hfe::Read(raw,g_base,reinterpret_cast<std::uintptr_t>(self),id,snapshot.before);
     t_horseLoadFindActive=true;t_horseLoadFindCarrier=id;
     bool ok=false;
     __try {SetLastError(incoming);ok=g_horseLoadFind(self,id,out,flag);outgoing=GetLastError();}
     __finally {const DWORD error=GetLastError();t_horseLoadFindActive=previous;t_horseLoadFindCarrier=previousCarrier;SetLastError(error);}
+    if(observe&&id==0&&snapshot.callerRva==0x1132fd6){
+        snapshot.al=ok;snapshot.at=GetTickCount64();snapshot.read=entryRead&&
+            hfe::Read(raw,g_base,reinterpret_cast<std::uintptr_t>(self),id,snapshot.after)&&hfe::SameSource(snapshot.before,snapshot.after);
+        AcquireSRWLockExclusive(&g_horseFinderLock);g_horseFinderSnapshot=snapshot;ReleaseSRWLockExclusive(&g_horseFinderLock);
+    }
     if(id==0){
         g_horseFindFlag.store(flag,std::memory_order_relaxed);
         g_horseFindCalls.fetch_add(1,std::memory_order_relaxed);
@@ -1163,6 +1189,16 @@ bool HorseLoadLine(char* out,std::size_t capacity) noexcept {
     return n>=0&&static_cast<std::size_t>(n)<capacity;
 }
 // Outside-window observation only; this is not a native mutation gate.
+bool NpcPredicateLine(char* out,std::size_t capacity) noexcept {
+    LastErrorState preserve;npe::Snapshot snap{};
+    AcquireSRWLockShared(&g_npcPredicateLock);snap=g_npcPredicateSnapshot;ReleaseSRWLockShared(&g_npcPredicateLock);
+    return npe::Line(snap,GetTickCount64(),out,capacity);
+}
+bool HorseFinderLine(char* out,std::size_t capacity) noexcept {
+    LastErrorState preserve;hfe::Snapshot copy{};
+    AcquireSRWLockShared(&g_horseFinderLock);copy=g_horseFinderSnapshot;ReleaseSRWLockShared(&g_horseFinderLock);
+    return hfe::Line(copy,GetTickCount64(),out,capacity);
+}
 bool HorseGateLine(char* out,std::size_t capacity) noexcept {
     if(!out||!capacity)return false;
     const auto c=CarrierRecord(0);

@@ -37,7 +37,7 @@ try {
     $normal = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ''
     $background = Get-WorkerPlan $fixture 'Normal' 'Release' @() $true ''
     $research = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false ''
-    Check ($normal.flags.Count -eq 18 -and @($normal.flags.Values | Where-Object { $_ -cne 'OFF' }).Count -eq 0) 'normal explicitly disables all 17 local experiments and the separate worker'
+    Check ($normal.flags.Count -eq 19 -and @($normal.flags.Values | Where-Object { $_ -cne 'OFF' }).Count -eq 0) 'normal explicitly disables all 18 local experiments and the separate worker'
     Check ($background.flags.MGS_BACKGROUND_WORKER -ceq 'ON' -and @($background.flags.Keys | Where-Object { $_ -like 'MGS_LOCAL_*' -and $background.flags[$_] -cne 'OFF' }).Count -eq 0) 'background opt-in cannot enable research flags'
     Check ($research.flags.MGS_LOCAL_ACTION_EVENTS -ceq 'ON' -and @($research.flags.Values | Where-Object { $_ -ceq 'ON' }).Count -eq 1) 'research enables exactly the named option'
     $capacity = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_BUDDY_CAPACITY_TEST') $true ''
