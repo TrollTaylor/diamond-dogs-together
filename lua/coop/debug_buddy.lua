@@ -39,6 +39,47 @@ do
   return fmt("horse;selected=%s;available=%d;actor0=%d;localMounted=%d;nativeCount=unverified;remoteRider=unverified;arrival=%s;retry=%s",r.name,r.exists and 1 or 0,r.actor,r.mounted and 1 or 0,
    r.kind==1 and r.exists and r.mounted and "mounted" or "unverified",r.mounted and "none" or "Recall")
  end
+ -- Without a deployed buddy the buddy block is not loaded and CallBuddy has
+ -- nothing to call. Deploy D-Horse the way the retail free-roam scripts do:
+ -- reserve the horse at its spawn point, then load the block.
+ local function deployHorse(id)
+  local W=get(e,"MgsCoopWorld");local api=get(W,"api")
+  local reserve,load=get(TppBuddy2BlockController,"ReserveCallBuddy"),get(TppBuddy2BlockController,"Load")
+  local horse,normal=get(BuddyType,"HORSE"),get(BuddyInitStatus,"NORMAL")
+  if type(reserve)~="function" or type(load)~="function" or not A.integer(horse,0,255) or not A.integer(normal,0,255) or
+   type(get(api,"buddyVector"))~="function" or type(get(W,"now"))~="function" then return false,"buddy_block_inactive" end
+  local can=get(TppBuddyService,"CanSortieBuddyType")
+  if type(can)=="function" then
+   local ok,yes=pcall(can,horse)
+   if ok and yes==false then return false,"horse_not_unlocked" end
+  end
+  local down=get(W,"downed")
+  if get(down,"maskOwned") or get(down,"nativePending") then return false,"player_downed" end
+  local now=W.now()
+  if not A.finite(now) or now<0 then return false,"buddy_clock" end
+  if now<S.nextCall then return false,"horse_cooldown" end
+  local p=A.pose();local rad=((p[4]+180)%360-180)*math.pi/180
+  local x,y,z=p[1]+4*math.cos(rad),p[2],p[3]-4*math.sin(rad)
+  if not A.finite(x) or not A.finite(y) or not A.finite(z) or math.abs(x)>999996 or math.abs(y)>999996 or math.abs(z)>999996 then return false,"horse_position" end
+  local made,v=pcall(api.buddyVector,x,y,z)
+  if not made or not v then return false,"horse_vector" end
+  S.nextCall=now+2000
+  if not pcall(reserve,horse,normal,v,rad) then return false,"horse_reserve_refused" end
+  if not pcall(load) then return false,"horse_block_load_refused" end
+  pcall(function() vars.buddyType=horse end)
+  local q={kind="spawn",id=id,mission=D.mission,frames=0}
+  q.poll=function()
+   local current,owner,why=context()
+   if not current and why=="buddy_block_inactive" and q.frames<900 then return end
+   if not current then D.pending=nil;A.note(id,false,why or "buddy_context_changed");return end
+   local s,why=sample(current)
+   if not s then D.pending=nil;A.note(id,false,why);return end
+   if s.kind==1 and s.exists then D.pending=nil;A.note(id,true,"horse_deployed;"..report(s))
+   elseif q.frames>=900 then D.pending=nil;A.note(id,false,"horse_load_timeout;"..report(s)) end
+  end
+  D.pending=q
+  return true,"submitted_horse_deploy;block=loading;arrival=unverified;close_F9;mount=normal_action"
+ end
  function S.run(a,id)
   local cmd=a[1]
   if cmd=="cargo_test" and #a==2 and (a[2]=="0" or a[2]=="1") then
@@ -60,7 +101,9 @@ do
    return ok and type(line)=="string" and #line<=160,ok and line or "cargo_status_refused"
   end
   if #a~=1 or (cmd~="horse_spawn" and cmd~="horse_status") then return false,"horse_args" end
-  local W,B,why=context();if not W then return false,why end
+  local W,B,why=context()
+  if not W and why=="buddy_block_inactive" and cmd=="horse_spawn" then return deployHorse(id) end
+  if not W then return false,why end
   local r,why=sample(W);if not r then return false,why end
   if cmd=="horse_status" then return true,report(r) end
   if r.mounted then return false,"horse_already_mounted" end

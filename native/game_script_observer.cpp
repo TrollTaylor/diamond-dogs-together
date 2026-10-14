@@ -4034,6 +4034,7 @@ void CoopRescueTick() noexcept {
         localReady,state.known&&team_state.receipt.version2);
     mgscoop::coop_carry::SetCarryable((peerReady&&mgscoop::coop_carry::PeerCarryReady()?2u:0u)|(localReady?1u:0u));
     mgscoop::coop_carry::SetLocalAwakeDown(localDown&&local.cause==1);
+    mgscoop::coop_carry::SetLocalAsleep(localDown&&local.cause==2);
     // A carried teammate who was woken or revived is put down (stock put-down).
     if(state.known&&state.putDown&&mgscoop::coop_carry::CarryRole()==1&&mgscoop::coop_carry::RequestLocalPutDown()){
         static std::uint64_t logged=0;

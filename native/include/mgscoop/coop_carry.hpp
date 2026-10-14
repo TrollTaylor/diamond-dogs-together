@@ -108,6 +108,8 @@ unsigned HudRole() noexcept;
 unsigned CarryRole() noexcept;
 // The local player is down but awake (wounded): keep the normal view while carried.
 void SetLocalAwakeDown(bool awake) noexcept;
+// The local player is asleep: keep the world visible instead of the stock blackout.
+void SetLocalAsleep(bool asleep) noexcept;
 // The stock put-down request for the local carrier (RequestCarryOff's write).
 bool RequestLocalPutDown() noexcept;
 // Current native flags/actions, paired twice; unknown is never detached.

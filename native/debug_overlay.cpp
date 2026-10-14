@@ -1166,7 +1166,8 @@ struct HudFrame {
 };
 bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     f = HudFrame{};
-    if (!coop_hud::Enabled()) return false;
+    const bool statusLine = coop_hud::Enabled();
+    if (!statusLine && !coop_hud::RescueEnabled()) return false;
     const ULONGLONG now = GetTickCount64();
     coop_hud::LinkView view{};
     coop_hud::GetLink(view);
@@ -1179,7 +1180,7 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     else if (tag.name_src == nametag::NameSource::remote && tag.name[0]) StringCchCopyA(name, ARRAYSIZE(name), tag.name);
     std::uint32_t new_toasts = 0;
     coop_hud::Event events[8]{};
-    const unsigned taken = coop_hud::Take(events, 8, hud_model.cursor());
+    const unsigned taken = statusLine ? coop_hud::Take(events, 8, hud_model.cursor()) : 0;
     for (unsigned i = 0; i < taken; ++i) {
         char text[coop_hud::kToastChars]{};
         coop_hud::Tone tone{};
@@ -1196,7 +1197,7 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     }
     coop_hud::PartnerView partner{};
     coop_hud::GetPartner(partner); // copied owner publication only
-    f.show_line = coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line, &partner);
+    f.show_line = statusLine && coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line, &partner);
     coop_hud::DownedView downed{};
     coop_hud::GetDowned(downed); // copied receipt facts; never local game reads
     // A fresh downed receipt can arrive before the link line has a mission.
@@ -1211,8 +1212,9 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
         f.tag_fresh = tagNow >= f.tag.tick_ms && tagNow - f.tag.tick_ms <= nametag::kStaleMs;
     }
     f.pad_glyphs = last_pad_ms.load(std::memory_order_relaxed) > last_keyboard_ms.load(std::memory_order_relaxed);
-    f.toast_count = hud_model.Active(now, f.toasts, coop_hud::kMaxToasts);
-    coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
+    f.toast_count = statusLine ? hud_model.Active(now, f.toasts, coop_hud::kMaxToasts) : 0;
+    if (statusLine)
+        coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
     return f.show_line || f.show_rescue || f.toast_count;
 }
 ImU32 HudColor(coop_hud::Tone tone, int alpha) noexcept {
@@ -1262,6 +1264,9 @@ void DrawRescuePrompt(const HudFrame& f, ImDrawList* list, const ImVec2& display
     const char* word = p.sleeping ? "ASLEEP" : "WOUNDED";
     const float mainSize = 23.0f * scale, subSize = 16.0f * scale;
     if (p.state == Rescue::self_asleep || p.state == Rescue::self_wounded || p.state == Rescue::carried) {
+        // Asleep: the world stays visible (coop_carry blocks the stock
+        // blackout presentation); a grey wash marks it as greyed out.
+        if (p.sleeping) list->AddRectFilled(ImVec2(0, 0), display, IM_COL32(92, 92, 98, 125));
         const char* head = p.state == Rescue::carried ? "CARRIED" : word;
         const char* tail = p.state == Rescue::carried ? "Your teammate is carrying you" :
             p.sleeping ? "Your teammate can wake you or carry you" : "Crawl to cover. Your teammate can revive you";
@@ -1613,7 +1618,7 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
         worker_frames::Capture(chain, worker_scenario::TakeCapture(GetTickCount64()));
         ReleaseSRWLockExclusive(&render_lock);
     }
-    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled()) &&
+    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled() || coop_hud::RescueEnabled()) &&
         !resizing.load(std::memory_order_acquire)) {
         AcquireSRWLockExclusive(&render_lock);
         if (initialized && swapchain != chain) Cleanup();
@@ -1664,7 +1669,7 @@ HRESULT STDMETHODCALLTYPE Resize(IDXGISwapChain* chain, UINT buffers, UINT width
     SetLastError(original_error); return result;
 }
 BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
-    if (!debug_menu::Enabled() && !nametag::Enabled() && !coop_hud::Enabled() && !worker_scenario::Requested()) return TRUE;
+    if (!debug_menu::Enabled() && !nametag::Enabled() && !coop_hud::Enabled() && !coop_hud::RescueEnabled() && !worker_scenario::Requested()) return TRUE;
     if (worker_scenario::Requested() && !worker_scenario::GetContext().run_id) return TRUE;
     InitializeLog();
     const MH_STATUS status = MH_Initialize();
@@ -1770,7 +1775,7 @@ WorkerInputStats GetWorkerInputStats() noexcept {
 }
 void Install() noexcept {
     const DWORD error = GetLastError();
-    if (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled() || worker_scenario::Requested())
+    if (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled() || coop_hud::RescueEnabled() || worker_scenario::Requested())
         InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
     SetLastError(error);
 }

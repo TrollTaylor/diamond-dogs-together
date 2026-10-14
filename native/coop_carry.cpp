@@ -804,7 +804,7 @@ constexpr unsigned char kSetModeBytes[] = {0x88, 0x51, 0x6d, 0xc3};
 using SetModeFn = void (*)(void*, std::uint8_t);
 SetModeFn g_setMode = nullptr;
 std::atomic<std::uint32_t> g_modeBlocked{0}, g_modePassed{0}, g_lastBlockedMode{0};
-std::atomic<bool> g_localAwakeDown{false};
+std::atomic<bool> g_localAwakeDown{false}, g_localAsleep{false};
 bool LocalBodyCarried() noexcept;
 __declspec(noinline) void HookSetMode(void* iface, std::uint8_t mode) noexcept {
     if (g_installed && partner_input_hook::InDrainJob()) {
@@ -815,6 +815,13 @@ __declspec(noinline) void HookSetMode(void* iface, std::uint8_t mode) noexcept {
     // A wounded (awake) local player keeps the normal view while carried; the
     // stock carried presentation (mode 4) is the unconscious player's blackout.
     if (g_installed && mode && g_localAwakeDown.load(std::memory_order_relaxed) && LocalBodyCarried()) {
+        g_modeBlocked.fetch_add(1, std::memory_order_relaxed);
+        g_lastBlockedMode.store(mode, std::memory_order_relaxed);
+        return;
+    }
+    // A sleeping local player keeps seeing the world (the overlay dims it)
+    // instead of the stock unconscious blackout, on the ground or carried.
+    if (g_installed && mode && g_localAsleep.load(std::memory_order_relaxed)) {
         g_modeBlocked.fetch_add(1, std::memory_order_relaxed);
         g_lastBlockedMode.store(mode, std::memory_order_relaxed);
         return;
@@ -1232,6 +1239,7 @@ bool CarryPoint(unsigned id, float (&out)[3]) noexcept {
     return true;
 }
 void SetLocalAwakeDown(bool awake) noexcept { g_localAwakeDown.store(awake, std::memory_order_relaxed); }
+void SetLocalAsleep(bool asleep) noexcept { g_localAsleep.store(asleep, std::memory_order_relaxed); }
 bool RequestLocalPutDown() noexcept {
     if (!g_installed || !BodyCarrying(0)) return false;
     std::uintptr_t P = 0, Q = 0, rec = 0; bool online = true; std::uint32_t flags0 = 0, flags1 = 0;

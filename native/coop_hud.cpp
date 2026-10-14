@@ -105,6 +105,7 @@ void Configure(Mode mode, bool enabled) noexcept {
 }
 
 bool Enabled() noexcept { return g_enabled.load() && static_cast<Mode>(g_mode.load()) != Mode::off; }
+bool RescueEnabled() noexcept { return g_enabled.load(); }
 Mode GetMode() noexcept { return static_cast<Mode>(g_mode.load()); }
 
 Mode ModeFor(CoopHud lab_setting, CoopHud coop_setting, bool play) noexcept {

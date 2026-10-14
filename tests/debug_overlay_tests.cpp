@@ -382,6 +382,11 @@ int main() {
             Check(shot() && lit(ax - 220, height * 0.30f, ax + 220, height * 0.30f + 70, false) >= 40,
                   "the sleeping player sees a compact status above the stock icons");
             dump("rescue_self_asleep");
+            hud::Configure(hud::Mode::off, true);
+            publish(true, true, true, 0, 2, false);
+            Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 40,
+                  "the one-PC lab default (status line off) still draws the rescue prompt");
+            hud::Configure(hud::Mode::compact, true);
             publish(false, false, false, 0, 0, false);
             Check(shot() && lit(0, ay + 8, static_cast<float>(width), static_cast<float>(height), false) == 0,
                   "healthy pair draws no rescue prompt");

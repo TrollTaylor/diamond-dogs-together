@@ -25,6 +25,9 @@ const char* ModeName(Mode mode) noexcept;
 // partner_net Start: the HUD exists only with a link (net=1, link v2).
 void Configure(Mode mode, bool enabled) noexcept;
 bool Enabled() noexcept;  // configured, enabled and not off
+// The rescue prompt is gameplay UI: it shows with any link v2 session, also
+// when the status line mode is off (the one-PC lab default).
+bool RescueEnabled() noexcept;
 Mode GetMode() noexcept;
 // lab.ini coop_hud wins; then coop.ini hud (play only); then compact in play
 // and off in the one-PC lab (its default stays unchanged).
