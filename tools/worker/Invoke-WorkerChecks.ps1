@@ -31,7 +31,7 @@ Import-Module (Join-Path $PSScriptRoot 'WorkerSource.psm1') -Force -DisableNameC
 
 function Get-WorkerExperiments {
     return @(
-        'MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER', 'MGS_LOCAL_BUDDY_CAPACITY_TEST', 'MGS_LOCAL_GUN_PRELOAD_TEST', 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',
+        'MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER', 'MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER', 'MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER', 'MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER', 'MGS_LOCAL_BUDDY_CAPACITY_TEST', 'MGS_LOCAL_GUN_PRELOAD_TEST', 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',
         'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST', 'MGS_LOCAL_STOCK46_AMMO_TEST',
         'MGS_LOCAL_ACTION_EVENTS', 'MGS_LOCAL_UPPER_END_OBSERVE',
         'MGS_LOCAL_UPPER_PHASE_OBSERVE', 'MGS_LOCAL_UPPER_MANUAL_IDLE',
@@ -51,7 +51,7 @@ function Get-WorkerTests {
         'equipment_stock_contract_tests', 'equipment_stock_writer_tests',
         'client_session_request_tests', 'heap_trial_tests', 'lab_config_tests', 'lab_status_tests',
         'link_protocol_tests', 'link_session_tests', 'link_crypto_tests', 'world_wire_tests', 'world_receipt_tests',
-        'buddy_pose_tests', 'buddy_ride_read_off_tests', 'buddy_ride_read_on_tests', 'ride_player_observer_tests', 'carry_info_tests', 'carry_plugin_tests', 'carry_provider_tests', 'sleep_plugin_tests', 'sleep_graph_tests', 'vehicle_controller_read_tests', 'camera_mode_window_tests', 'camera_mode_carry_composition_tests', 'carry_request_payload_tests', 'sleep_body0_lease_tests', 'carry_owned_handshake_tests', 'sleep_body0_transition_tests', 'sleep_worker_controls_tests', 'carry_request_retirement_tests', 'carry_request_retirement_read_tests', 'carry_queued_abort_tests', 'carry_cold_rollback_tests', 'native_pose_exclusion_tests', 'native_pose_birth_tests', 'whole_player_lifetime_tests', 'carry_model_preflight_tests', 'native_pose_selected_export_tests', 'native_pose_hold_owners_tests', 'native_pose_carry_participants_tests', 'native_pose_carry_retirement_tests', 'native_pose_camera_reader_tests', 'native_pose_reject_diagnostic_tests', 'native_pose_teardown_diagnostic_tests', 'native_pose_parts_diagnostic_tests', 'sleep_partner_bridge_tests', 'sleep_partner_lease_tests', 'sleep_partner_owned_tests', 'sleep_parts_tests', 'sleep_parts_diagnostic_tests', 'sleep_recovery_tests', 'sleep_carry_context_tests', 'sleep_rest_maintenance_tests', 'sleep_body0_rest_tests', 'stock_sleep_release_tests', 'coop_carry_wire_tests', 'coop_carry_original_view_tests', 'native_pose_birth_census_tests', 'native_pose_vehicle_core_tests', 'sleep_native_bank_trace_off_tests', 'sleep_native_bank_trace_on_tests', 'vehicle_root_wiring_tests', 'vehicle_driver_wiring_tests', 'vehicle_native_protection_tests', 'vehicle_mirror_tests', 'vehicle_mirror_hook_tests', 'vehicle_mirror_close_tests', 'reliable_origin_tests', 'prologue_provider_tests', 'vehicle_lifetime_read_tests', 'vehicle_resource_lifetime_tests', 'vehicle_cleanup_camera_read_tests', 'horse_cargo_native_tests', 'horse_player_cargo_bridge_tests', 'horse_cargo_pair_tests', 'horse_physical_natural_tests', 'vehicle_registry_read_tests', 'mgo_unique_rest_profile_off_tests','mgo_unique_rest_profile_on_tests','sleep_unique_bind_off_tests','sleep_unique_bind_on_tests','sleep_unique_bind_wrapper_off_tests','sleep_unique_bind_wrapper_on_tests','sleep_unique_asset_read_tests','sleep_motion_asset_read_tests', 'engine_census_tests', 'coop_team_wake_tests', 'horse_owned_cargo_tests', 'horse_player_physical_tests', 'coop_passenger_tests', 'coop_sleep_policy_tests', 'sleep_deferred_carry_tests', 'sleep_queued_carry_tests', 'player_tree_closure_tests', 'carry_target_service_tests', 'carry_vars_pair_word_tests', 'native_pose_message_lifetime_tests', 'native_pose_local_carry_slice_tests', 'carry_dispatch_lifetime_tests', 'native_pose_hook_groups_tests', 'dual_parts_tests', 'dual_parts_cold_profile_tests', 'owned_flag_map_tests', 'carry_op0_origin_tests', 'carry_queue_lifetime_tests', 'carry_p238_cold_read_tests', 'carry_deferred_copy_tests', 'carry_op1_owned_tests', 'carry_op2_shared_tests', 'row4_storage_tests', 'buddy_capacity_census_off_tests', 'buddy_capacity_census_on_tests', 'buddy_capacity_walker_off_tests', 'buddy_capacity_walker_on_tests', 'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
+        'buddy_pose_tests', 'buddy_ride_read_off_tests', 'buddy_ride_read_on_tests', 'ride_player_observer_tests', 'carry_info_tests', 'carry_plugin_tests', 'carry_provider_tests', 'sleep_plugin_tests', 'sleep_graph_tests', 'vehicle_controller_read_tests', 'camera_mode_window_tests', 'camera_mode_carry_composition_tests', 'carry_request_payload_tests', 'sleep_body0_lease_tests', 'carry_owned_handshake_tests', 'sleep_body0_transition_tests', 'sleep_worker_controls_tests', 'carry_request_retirement_tests', 'carry_request_retirement_read_tests', 'carry_queued_abort_tests', 'carry_cold_rollback_tests', 'native_pose_exclusion_tests', 'native_pose_birth_tests', 'native_pose_activation_tests', 'whole_player_lifetime_tests', 'carry_model_preflight_tests', 'native_pose_selected_export_tests', 'native_pose_hold_owners_tests', 'native_pose_carry_participants_tests', 'native_pose_carry_retirement_tests', 'native_pose_camera_reader_tests', 'vehicle_entry_camera_tests', 'native_pose_reject_diagnostic_tests', 'native_pose_teardown_diagnostic_tests', 'native_pose_parts_diagnostic_tests', 'sleep_partner_bridge_tests', 'sleep_partner_lease_tests', 'sleep_partner_owned_tests', 'sleep_parts_tests', 'sleep_parts_diagnostic_tests', 'sleep_recovery_tests', 'sleep_carry_context_tests', 'sleep_rest_maintenance_tests', 'sleep_body0_rest_tests', 'stock_sleep_release_tests', 'coop_carry_wire_tests', 'coop_carry_original_view_tests', 'native_pose_birth_census_tests', 'native_pose_vehicle_core_tests', 'sleep_native_bank_trace_off_tests', 'sleep_native_bank_trace_on_tests', 'vehicle_root_wiring_tests', 'vehicle_driver_wiring_tests', 'vehicle_native_protection_tests', 'vehicle_mirror_idle_work_tests', 'vehicle_native_protection_gate_tests', 'vehicle_mirror_tests', 'vehicle_mirror_hook_tests', 'vehicle_mirror_close_tests', 'reliable_origin_tests', 'prologue_provider_tests', 'vehicle_lifetime_read_tests', 'vehicle_resource_lifetime_tests', 'vehicle_cleanup_camera_read_tests', 'horse_cargo_native_tests', 'horse_player_cargo_bridge_tests', 'horse_cargo_pair_tests', 'horse_cargo_natural_flow_tests', 'horse_physical_natural_tests', 'vehicle_registry_read_tests', 'qualified_sleep_lookup_observer_tests','mgo_standing_cycle_profile_off_tests','mgo_standing_cycle_profile_on_tests','sleep_standing_cycle_asset_off_tests','sleep_standing_cycle_asset_on_tests','mgo_unique_rest_profile_off_tests','mgo_unique_rest_profile_on_tests','sleep_unique_bind_off_tests','sleep_unique_bind_on_tests','sleep_unique_bind_wrapper_off_tests','sleep_unique_bind_wrapper_on_tests','sleep_unique_asset_read_tests','sleep_motion_asset_read_tests', 'engine_census_tests', 'coop_team_wake_tests', 'horse_owned_cargo_tests', 'horse_player_physical_tests', 'coop_passenger_tests', 'coop_sleep_policy_tests', 'sleep_deferred_carry_tests', 'sleep_queued_carry_tests', 'player_tree_closure_tests', 'carry_target_service_tests', 'carry_vars_pair_word_tests', 'native_pose_message_lifetime_tests', 'native_pose_local_carry_slice_tests', 'carry_dispatch_lifetime_tests', 'native_pose_hook_groups_tests', 'dual_parts_tests', 'dual_parts_cold_profile_tests', 'owned_flag_map_tests', 'carry_op0_origin_tests', 'carry_queue_lifetime_tests', 'carry_p238_cold_read_tests', 'carry_deferred_copy_tests', 'carry_op1_owned_tests', 'carry_op2_shared_tests', 'row4_storage_tests', 'buddy_capacity_census_off_tests', 'buddy_capacity_census_on_tests', 'buddy_capacity_walker_off_tests', 'buddy_capacity_walker_on_tests', 'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
         'pose_interp_tests', 'partner_source_turns_tests', 'partner_action_events_tests',
         'partner_action_link_tests', 'partner_upper_pipeline_tests', 'client_reset_tests',
         'session_tests', 'import_table_tests', 'steam_runtime_tests', 'steam_lifecycle_tests',
@@ -69,7 +69,7 @@ function Get-WorkerTests {
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_protocol_capacity_off_tests', 'worker_protocol_capacity_on_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
-        'build_profile_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests',
+        'build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests',
         'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
@@ -126,12 +126,29 @@ function Get-WorkerPlan {
     if ($enabled.Contains('MGS_LOCAL_BUDDY_CAPACITY_TEST') -and (!$Background -or $SelectedProfile -cne 'Research')) {
         throw 'Buddy capacity requires an explicit Research/background ON build'
     }
+    if ($enabled.Contains('MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER')) {
+        $base=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')
+        $allowed=@($base)+@('MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER','MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER','MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER','MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER')
+        if (!$Background -or $SelectedProfile -cne 'Research' -or @($base|Where-Object{!$enabled.Contains($_)}).Count -or @($enabled|Where-Object{$_ -cnotin $allowed}).Count) {
+            throw 'Activation observer requires explicit Research/background ON stock46 base plus only qualified optional MGO observers.'
+        }
+    }
     if ($enabled.Contains('MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER')) {
         $expected=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER')
+        if($enabled.Contains('MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER')){$expected+='MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER'}
         if (!$Background -or $SelectedProfile -cne 'Research' -or $enabled.Count -ne $expected.Count -or @($expected|Where-Object{!$enabled.Contains($_)}).Count) {
             throw 'Unique MGO observer requires exact Research/background ON stock46-only observer flags; append remains OFF'
         }
     }
+    if ($enabled.Contains('MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER')) {
+        $expected=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER')
+        if($enabled.Contains('MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER')){$expected+='MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER'}
+        if($enabled.Contains('MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER')){$expected+='MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER'}
+        if (!$Background -or $SelectedProfile -cne 'Research' -or $enabled.Count -ne $expected.Count -or @($expected|Where-Object{!$enabled.Contains($_)}).Count) {
+            throw 'Standing cycle observer requires exact Research/background ON stock46-only observer flags; append remains OFF'
+        }
+    }
+    if($enabled.Contains('MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER') -and !$enabled.Contains('MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER')){throw 'Lookup observer requires the exact standing-cycle profile.'}
     if ($enabled.Contains('MGS_LOCAL_BUDDY_CAPACITY_TEST') -and $enabled.Contains('MGS_LOCAL_GUN_PRELOAD_TEST')) {
         throw 'Buddy capacity cannot combine alternate archive catalogs'
     }
@@ -218,7 +235,7 @@ function Assert-WorkerInventory {
         $test = $byName[$name]
         $command = @($test.command)
         if (!$command.Count) { throw "Missing audited command: $name" }
-        if ($name -cin @('build_profile_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests')) {
+        if ($name -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests')) {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
                 [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $name + '.ps1'))) {

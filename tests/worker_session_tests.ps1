@@ -1067,12 +1067,12 @@ try {
  Assert-True ($call.Count -eq 1) 'graphics: one real Start invocation'
  & {
   $worker='C:\fixture';$build='C:\fixture';$CheckReceipt='C:\fixture';$BaselineLoaderSha256='A'*64
-  $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$BuddyCapacityArchive='';$MgoSleepRestArchive='';$MgoUniqueRestArchive='';$AmmoExperiment=$false
+  $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$BuddyCapacityArchive='';$MgoSleepRestArchive='';$MgoUniqueRestArchive='';$AmmoExperiment=$false;$MgoStandingCycleArchive='';$StandingLookupObserver=$false;$NativeActivationObserver=$false
   $SaveSeed='lab';$LabSetting=@();$Mode='lab';$WanSim='off'
   function Join-Path([string]$Path,[string]$ChildPath){Assert-True ($ChildPath -ceq 'Start-WorkerSession.ps1') 'graphics: recorded Start only';return 'Graphics-RecordStart'}
   function Graphics-RecordStart {
    param($BuildDirectory,$CheckReceipt,$BaselineLoaderSha256,$TimeoutSec,$ReadyTimeoutSec,$PartnerProfile,$NativeStage,$BuildProfile,
-    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive,$MgoSleepRestArchive,$MgoUniqueRestArchive)
+    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive,$MgoSleepRestArchive,$MgoUniqueRestArchive,$MgoStandingCycleArchive,[switch]$StandingLookupObserver,[switch]$NativeActivationObserver)
    return $GraphicsQuality
   }
   $GraphicsQuality='preserve';Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'preserve') 'graphics: real invocation forwards default'

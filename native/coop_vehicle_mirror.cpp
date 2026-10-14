@@ -12,6 +12,7 @@
 #include "vehicle_registry_read.hpp"
 #include "vehicle_mirror_hook_read.hpp"
 #include "vehicle_mirror_close_read.hpp"
+#include "vehicle_mirror_idle_work.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -367,10 +368,24 @@ bool ReceiveAuthenticated(const state::Link& messageLink,const unsigned char* by
  ReleaseSRWLockExclusive(&g_inboxLock);
  if(accepted)g_rx.fetch_add(1);return accepted;
 }
+vehicle_mirror_idle_work::Duty CurrentDuty() noexcept {
+ vehicle_mirror_idle_work::Duty duty{};duty.phase=g_lease.phase;duty.purpose=g_purpose.serial;duty.leasePurpose=g_lease.purpose;
+ duty.clearing=g_clearing;duty.retained=g_vehicleRetained;duty.exitPending=g_lease.exitPending;
+ duty.releaseRequested=g_lease.releaseRequested;duty.posePurpose=g_posePurpose;duty.poseMount=g_poseMount;
+ duty.invalid=g_stopped.load()||!g_installed.load()||!g_installSerial.load();
+ AcquireSRWLockShared(&g_replyLock);duty.reply=g_reply.attached||g_reply.lease.serial||g_reply.exiting;ReleaseSRWLockShared(&g_replyLock);
+ return duty;
+}
 bool Before() noexcept {
  const Preserve preserve;if(!g_enabled.load())return true;if(g_clearing)return true;
  state::Inbox inbox{};Frame before{};
  const bool inboxRead=InboxCopy(inbox);
+ // No native admission/exit/call can occur without a current purpose or a
+ // fresh captured mount demand. The native writer serializes module duty;
+ // busy mailbox or any retained/partial duty always takes the full path.
+ if(!vehicle_mirror_idle_work::FrameRequired(CurrentDuty(),ph::NativePoseVehicleHeld(),inboxRead,inbox,GetTickCount64())){
+  g_reason.store("idle");return true;
+ }
  if(!ReadFrame(before,g_purpose.serial!=0)){g_reason.store("owned_native_frame");return false;}
  if(!g_purpose.serial){
   if(!inboxRead||!before.stateScope.driveCurrent||!state::Same(before.link,inbox.link)||
@@ -456,23 +471,22 @@ bool ReadReplicaRide(ReplicaRide& out) noexcept {
  out=reply;out.driveAuthorized=drive;out.exiting=reply.exiting||owner.phase[1]==6;return true;
 }
 bool ReadNativeDemand(NativeDemand& out) noexcept {
- const Preserve preserve;out={};if(!g_enabled.load()||g_stopped.load()||!worker_scenario::ThreadAdmitted()||
-  !PatchesLive()||!vehicle_native_protection::ProtectionLive())return false;
- // Enter the real shared domain. Guard retention alone is never permission
- // to retain a job; ReadOwnership independently proves current native owners.
- if(ph::NativePoseVehicleHeld()){
-  ph::PoseSharedLease ticket{};if(!ph::EnterNativePoseShared(ticket))return false;
-  ph::NativePoseVehicleOwnership a{},b{};
-  const bool current=ph::ReadNativePoseVehicleOwnership(a,&ticket)&&g_purpose.serial&&g_vehicleRetained&&
-   a.lease.serial==g_purpose.serial&&a.lease.generation==g_purpose.generation&&a.lease.sceneEpoch==g_purpose.sceneEpoch&&
-   a.vehicle==g_retainedVehicle.vehicle&&a.purposes==4u&&!a.pending&&
-   a.thread==GetCurrentThreadId()&&ph::ReadNativePoseVehicleOwnership(b,&ticket)&&
-   b.lease.serial==a.lease.serial&&b.lease.generation==a.lease.generation&&b.lease.sceneEpoch==a.lease.sceneEpoch&&
-   b.player==a.player&&b.data==a.data&&b.state==a.state&&b.block[1]==a.block[1]&&b.pool[1]==a.pool[1]&&
-   b.birth[0]==a.birth[0]&&b.birth[1]==a.birth[1]&&b.birthLifecycle==a.birthLifecycle&&b.sequence==a.sequence&&
-   b.phase[1]==a.phase[1]&&b.nextPhase[1]==a.nextPhase[1]&&b.currentVehicle[1]==a.currentVehicle[1]&&
-   b.nativeBinding[1]==a.nativeBinding[1]&&b.seat[1]==a.seat[1]&&b.purposes==a.purposes&&b.pending==a.pending;
-  ph::ExitNativePoseShared(ticket);if(!current)return false;
+ const Preserve preserve;out={};if(!g_enabled.load()||g_stopped.load()||!worker_scenario::ThreadAdmitted())return false;
+ // NativePoseVehicleHeld is an owned-writer predicate and cannot classify
+ // a cold coordinator read. Enter the genuine core shared domain first.
+ ph::PoseSharedLease shared{};const ph::PoseSharedLease* ticket=nullptr;
+ if(!ph::NativePoseOwnedWindow()){
+  if(!ph::EnterNativePoseShared(shared)||!shared.tracked)return false;ticket=&shared;
+ }
+ struct CloseShared {ph::PoseSharedLease& held;~CloseShared(){if(held.tracked)ph::ExitNativePoseShared(held);}} close{shared};
+ const auto duty=CurrentDuty();state::Inbox observed{};const bool mailbox=InboxCopy(observed);
+ if(!vehicle_mirror_idle_work::FrameRequired(duty,ph::NativePoseVehicleHeld(),mailbox,observed,GetTickCount64()))return false;
+ if(!PatchesLive()||!vehicle_native_protection::ProtectionLive())return false;
+ // Guard retention alone is never permission. The actual current core
+ // ownership API independently proves both births and native resources.
+ if(duty.purpose){
+  ph::NativePoseVehicleOwnership b{};auto current=ph::ReadNativePoseVehicleOwnership;
+  if(!g_vehicleRetained||!vehicle_mirror_idle_work::ReadRetained(current,ticket,g_purpose,g_retainedVehicle.vehicle,GetCurrentThreadId(),b))return false;
   out.retained=true;out.lease=b.lease;out.player=b.player;out.data=b.data;out.state=b.state;
   out.block=b.block[1];out.birth=b.birth[1];out.generation=b.lease.generation;out.sceneEpoch=b.lease.sceneEpoch;
   out.pool=static_cast<std::uint8_t>(b.pool[1]);return true;

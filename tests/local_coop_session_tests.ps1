@@ -234,6 +234,209 @@ try {
     Assert-Throws { Set-LocalCoopSessionFile -Session $session -Role host -Name lab.ini -Bytes ([byte[]]@(7)) } 'both game' 'activation refuses a running game before mutation'
     & $module { Remove-Item -LiteralPath Function:Get-GameProcessInDirectory }
     Assert-Equal (Restore-LocalCoopSession $session).State 'off' 'normal helper restored after running-game fixture'
+    # Actual Win32 replacement locks, inert files only. The wait hook makes race boundaries
+    # deterministic; native File.Replace still produces the first real failure.
+    $atomicRoot = Join-Path $fixture 'atomic'
+    $null = New-Item -ItemType Directory -Path $atomicRoot
+    function New-AtomicControl([string]$Name, [string]$Action, [IO.FileShare]$Sharing = [IO.FileShare]::Read) {
+        $dir = Join-Path $atomicRoot $Name
+        $null = New-Item -ItemType Directory -Path $dir
+        $path = Join-Path $dir 'session.json'
+        [IO.File]::WriteAllBytes($path, [byte[]]@(1, 2, 3))
+        $access = if ($Sharing -eq [IO.FileShare]::Read) { [IO.FileAccess]::Read } else { [IO.FileAccess]::ReadWrite }
+        $held = New-Object IO.FileStream($path, [IO.FileMode]::Open, $access, $Sharing)
+        return [pscustomobject]@{ Path = $path; Directory = $dir; Action = $Action; Held = $held;
+            Attempts = 0; Waits = 0; Errors = (New-Object Collections.Generic.List[int]); Backup = ''; Temporary = ''; Retained = '' }
+    }
+    function Set-AtomicControl($Control) {
+        & $module {
+            param($Control)
+            $script:AtomicTest = $Control
+            $script:AtomicOriginalReplace = (Get-Command Invoke-LocalCoopAtomicReplace -CommandType Function).ScriptBlock
+            function script:Invoke-LocalCoopAtomicReplace {
+                param([string]$Temporary, [string]$Path, [string]$Backup)
+                $script:AtomicTest.Attempts++
+                $script:AtomicTest.Backup = $Backup; $script:AtomicTest.Temporary = $Temporary
+                if ($script:AtomicTest.Action -ceq 'removeOnce' -and $script:AtomicTest.Attempts -eq 1) {
+                    throw (New-Object IO.IOException -ArgumentList 'Injected documented unchanged-name Win32 result1175', (-2147024896 + 1175))
+                }
+                if ($script:AtomicTest.Action -like 'partial*') {
+                    $script:AtomicTest.Held.Dispose()
+                    [IO.File]::Move($Path, $Backup)
+                    if ($script:AtomicTest.Action -ceq 'partialForeign') { [IO.File]::WriteAllBytes($Path, [byte[]]@(99)) }
+                    if ($script:AtomicTest.Action -ceq 'partialDirectory') { $null = New-Item -ItemType Directory -Path $Path }
+                    $code = if ($script:AtomicTest.Action -ceq 'partialAbsent') { 1176 } else { 1177 }
+                    throw (New-Object IO.IOException -ArgumentList ('Injected documented partial Win32 result ' + $code), (-2147024896 + $code))
+                }
+                try {
+                    & $script:AtomicOriginalReplace -Temporary $Temporary -Path $Path -Backup $Backup
+                    if ($script:AtomicTest.Action -ceq 'backupChanged') { [IO.File]::WriteAllBytes($Backup, [byte[]]@(66)) }
+                }
+                catch {
+                    $cause = $_.Exception
+                    while ($cause.InnerException) { $cause = $cause.InnerException }
+                    $script:AtomicTest.Errors.Add(($cause.HResult -band 65535))
+                    throw
+                }
+            }
+            function script:Start-Sleep {
+                param([int]$Milliseconds)
+                $script:AtomicTest.Waits++
+                if ($script:AtomicTest.Waits -eq 1) {
+                    switch -CaseSensitive ($script:AtomicTest.Action) {
+                        'release' { $script:AtomicTest.Held.Dispose() }
+                        'change' {
+                            $script:AtomicTest.Held.SetLength(0)
+                            $script:AtomicTest.Held.Write([byte[]]@(99), 0, 1); $script:AtomicTest.Held.Flush($true)
+                            $script:AtomicTest.Held.Dispose()
+                        }
+                        'replaceSame' {
+                            $script:AtomicTest.Held.Dispose()
+                            $script:AtomicTest.Retained = $script:AtomicTest.Path + '.old'
+                            [IO.File]::Move($script:AtomicTest.Path, $script:AtomicTest.Retained)
+                            [IO.File]::WriteAllBytes($script:AtomicTest.Path, [byte[]]@(1, 2, 3))
+                        }
+                        'disappear' {
+                            $script:AtomicTest.Held.Dispose()
+                            $script:AtomicTest.Retained = $script:AtomicTest.Path + '.old'
+                            [IO.File]::Move($script:AtomicTest.Path, $script:AtomicTest.Retained)
+                        }
+                        'changeTemp' {
+                            [IO.File]::WriteAllBytes($script:AtomicTest.Temporary, [byte[]]@(88))
+                            $script:AtomicTest.Held.Dispose()
+                        }
+                        'replaceTempSame' {
+                            $script:AtomicTest.Retained = $script:AtomicTest.Temporary + '.old'
+                            [IO.File]::Move($script:AtomicTest.Temporary, $script:AtomicTest.Retained)
+                            [IO.File]::WriteAllBytes($script:AtomicTest.Temporary, [byte[]]@(4, 5, 6))
+                            $script:AtomicTest.Held.Dispose()
+                        }
+                    }
+                }
+                Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds $Milliseconds
+            }
+        } $Control
+    }
+    function Clear-AtomicControl($Control) {
+        $Control.Held.Dispose()
+        & $module {
+            Remove-Item -LiteralPath Function:Start-Sleep
+            Set-Item -Path Function:script:Invoke-LocalCoopAtomicReplace -Value $script:AtomicOriginalReplace
+            Remove-Variable AtomicTest, AtomicOriginalReplace -Scope Script
+        }
+    }
+    function Write-AtomicControl($Control) {
+        & $module { param($Path, $Root); Write-LocalCoopAtomicBytes -Path $Path -Bytes ([byte[]]@(4, 5, 6)) -StopAt $Root } $Control.Path $atomicRoot
+    }
+    foreach ($code in @(32, 33, 1175, 5, 87, 1176, 1177, 1392)) {
+        $exception = New-Object IO.IOException -ArgumentList ('fixture ' + $code), (-2147024896 + $code)
+        $retry = & $module { param($Exception); Test-LocalCoopAtomicRetryError -Exception $Exception } $exception
+        Assert-Equal $retry ($code -in @(32, 33, 1175)) "only documented safe Win32 retry code $code"
+    }
+    $foreignFacility = New-Object IO.IOException -ArgumentList 'foreign facility same low code', (-2146238432)
+    Assert-Equal ($foreignFacility.HResult -band 65535) 32 'foreign-facility fixture really has the same low sharing error code'
+    Assert-True (!(& $module { param($Exception); Test-LocalCoopAtomicRetryError -Exception $Exception } $foreignFacility)) 'matching low error bits from another facility have no retry authority'
+    $control = New-AtomicControl 'release' 'release'
+    Set-AtomicControl $control
+    try {
+        Write-AtomicControl $control
+        Assert-Equal $control.Attempts 2 'real held file succeeds on one bounded retry after release'
+        Assert-Equal $control.Waits 1 'actual sharing failure schedules one wait'
+        Assert-Equal $control.Errors.Count 1 'native File.Replace actually failed once'
+        Assert-True ($control.Errors[0] -in @(32, 33, 1175)) 'actual Windows failure is in the documented safe retry set'
+        $observedAtomicLockError = $control.Errors[0]
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Path))) 'BAUG' 'verified replacement contents after lock release'
+        Assert-Equal @(Get-ChildItem -LiteralPath $control.Directory -File).Count 1 'successful replacement cleans only owned temporary and original backup'
+    } finally { Clear-AtomicControl $control }
+    $control = New-AtomicControl 'removeOnce' 'removeOnce'
+    $control.Held.Dispose()
+    Set-AtomicControl $control
+    try {
+        Write-AtomicControl $control
+        Assert-Equal $control.Attempts 2 'documented unchanged-name1175 fixture retries once then uses real native replacement'
+        Assert-Equal $control.Waits 1 '1175 fixture gets one bounded wait'
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Path))) 'BAUG' '1175 retry fixture commits verified intended bytes'
+        Assert-Equal @(Get-ChildItem -LiteralPath $control.Directory -File).Count 1 '1175 retry fixture cleans only owned files'
+    } finally { Clear-AtomicControl $control }
+    $control = New-AtomicControl 'noBeforeWitness' 'exhaust' ([IO.FileShare]::None)
+    Set-AtomicControl $control
+    try {
+        Assert-Throws { Write-AtomicControl $control } 'Atomic write failed' 'unreadable target has no before-hash retry authority'
+        Assert-Equal $control.Attempts 0 'unreadable target never reaches native replacement'
+        Assert-Equal $control.Waits 0 'unreadable target never waits and later adopts new bytes'
+        $control.Held.Dispose()
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Path))) 'AQID' 'unreadable original remains intact'
+        Assert-Equal @(Get-ChildItem -LiteralPath $control.Directory -File).Count 1 'missing before-witness creates no orphan temporary'
+    } finally { Clear-AtomicControl $control }
+    $control = New-AtomicControl 'backupChanged' 'backupChanged'
+    $control.Held.Dispose()
+    Set-AtomicControl $control
+    try {
+        Write-AtomicControl $control
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Path))) 'BAUG' 'real committed target remains verified when saved backup changes'
+        Assert-Equal ([IO.File]::ReadAllBytes($control.Backup)[0]) 66 'successful cleanup never deletes changed backup bytes'
+        Assert-Equal $control.Attempts 1 'backup mutation needs no replacement retry'
+    } finally { Clear-AtomicControl $control }
+    $control = New-AtomicControl 'exhaust' 'exhaust'
+    Set-AtomicControl $control
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        Assert-Throws { Write-AtomicControl $control } 'Atomic write failed' 'persistent native lock fails closed'
+        Assert-True ($control.Attempts -ge 1 -and $control.Attempts -le 10) 'retry attempt count is bounded by attempt or deadline exhaustion'
+        Assert-Equal $control.Waits ($control.Attempts - 1) 'persistent lock never waits after its final refused attempt'
+        $observedAtomicExhaustAttempts = $control.Attempts
+        Assert-True ($clock.ElapsedMilliseconds -lt 5000) 'native exhaustion completes without an unbounded wait'
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Path))) 'AQID' 'exhaustion preserves original bytes'
+        Assert-Equal @(Get-ChildItem -LiteralPath $control.Directory -File).Count 1 'exhaustion cleans owned temporary without removing target'
+    } finally { Clear-AtomicControl $control }
+    foreach ($action in @('change', 'replaceSame', 'disappear', 'changeTemp', 'replaceTempSame')) {
+        $control = New-AtomicControl $action $action ([IO.FileShare]::ReadWrite)
+        Set-AtomicControl $control
+        try {
+            Assert-Throws { Write-AtomicControl $control } 'Atomic write failed' "$action during retry is refused"
+            Assert-Equal $control.Attempts 1 "$action never gets a second native replacement call"
+            if ($action -ceq 'disappear') {
+                Assert-True (!(Test-Path -LiteralPath $control.Path)) 'disappeared target never changes to absent-create fallback'
+                Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Retained))) 'AQID' 'moved old target remains intact'
+            } else {
+                $expected = if ($action -ceq 'change') { 'Yw==' } else { 'AQID' }
+                Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Path))) $expected "$action preserves current target"
+            }
+            if ($action -in @('changeTemp', 'replaceTempSame')) {
+                $expected = if ($action -ceq 'changeTemp') { 'WA==' } else { 'BAUG' }
+                Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Temporary))) $expected "$action cleanup preserves foreign temporary identity or bytes"
+            } else { Assert-True (!(Test-Path -LiteralPath $control.Temporary)) "$action cleans the unchanged owned temporary" }
+        } finally { Clear-AtomicControl $control }
+    }
+    foreach ($action in @('partialAbsent', 'partialForeign', 'partialDirectory')) {
+        $control = New-AtomicControl $action $action
+        Set-AtomicControl $control
+        try {
+            $expected = if ($action -ceq 'partialAbsent') { 'verified original restored' } else { 'backup retained for recovery: ' }
+            Assert-Throws { Write-AtomicControl $control } $expected "$action reports concrete rollback or retained backup"
+            Assert-Equal $control.Attempts 1 "$action never retries a partial replacement result"
+            Assert-Equal $control.Waits 0 "$action never waits after an unsafe native result"
+            Assert-True (!(Test-Path -LiteralPath $control.Temporary)) "$action cleans unchanged owned temporary"
+            if ($action -ceq 'partialAbsent') {
+                Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Path))) 'AQID' 'absent target rollback restores original bytes'
+                Assert-True (!(Test-Path -LiteralPath $control.Backup)) 'successful rollback consumes only its original backup'
+            } else {
+                Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($control.Backup))) 'AQID' "$action retains original bytes for recovery"
+                if ($action -ceq 'partialForeign') { Assert-Equal ([IO.File]::ReadAllBytes($control.Path)[0]) 99 'rollback never overwrites a foreign target' }
+                else { Assert-True (Test-Path -LiteralPath $control.Path -PathType Container) 'rollback never removes a foreign directory' }
+            }
+        } finally { Clear-AtomicControl $control }
+    }
+    $path = Join-Path $atomicRoot 'strict-existing'
+    [IO.File]::WriteAllBytes($path, [byte[]]@(7))
+    Assert-Throws { & $module { param($Path, $Root); Write-LocalCoopAtomicBytes -Path $Path -Bytes ([byte[]]@(8)) -StopAt $Root -RequireAbsent } $path $atomicRoot } 'Atomic write failed' 'RequireAbsent never replaces an existing target'
+    Assert-Equal ([IO.File]::ReadAllBytes($path)[0]) 7 'RequireAbsent keeps existing bytes'
+    Assert-Equal @(Get-ChildItem -LiteralPath $atomicRoot -File -Filter '*.tmp').Count 0 'strict-create failure cleans its own temporary'
+    $path = Join-Path $atomicRoot 'strict-new'
+    & $module { param($Path, $Root); Write-LocalCoopAtomicBytes -Path $Path -Bytes ([byte[]]@(8)) -StopAt $Root -RequireAbsent } $path $atomicRoot
+    Assert-Equal ([IO.File]::ReadAllBytes($path)[0]) 8 'RequireAbsent still creates a genuinely absent file'
+    Write-Host "Atomic lock evidence: actual Win32 error=$observedAtomicLockError, release attempts=2, persistent attempts=$observedAtomicExhaustAttempts;1175/1176/1177 cases are explicit fault fixtures."
+
     Write-Host "PASS $script:checks local co-op session checks (PowerShell $($PSVersionTable.PSVersion), inert fixtures only)."
 } finally {
     $resolvedFixture = [IO.Path]::GetFullPath($fixture)

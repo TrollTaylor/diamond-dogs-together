@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "run": "2b07b89318e0423aa6d42375821e345f",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261014-014800-88b9ee95b3274e83ab9d412d82974c83\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 9,
+  "failure": "Required scenario check failed: host require ^warp_position_readback;error_m=.*;via=.*;horse= <- warp_position_readback;error_m=0.003",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 110609534,
+      "end": 111088446,
+      "sha256": "36cfe529ca65f7e342a88f7fe7d25c83f3542c473a339a3776afe3b1e88998c6"
+    },
+    {
+      "role": "guest",
+      "start": 118392034,
+      "end": 118793088,
+      "sha256": "aec45f7243191cd256f59efb4ca95e4403fc423cb95d76e79df6e026edc7c226"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=864;skip=0;hints=0;reason=pose_window_captured",
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=80;skip=0;hints=0;reason=pose_window_captured",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": [
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=816;skip=0;hints=0;reason=pose_window_captured",
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=52;skip=0;hints=0;reason=pose_window_captured",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ]
+  },
+  "limitations": "Eight setup/native-window checks passed before a test-only result expectation was too strict. Correct no-argument goto_horse succeeded with warp_position_readback,error0.003, but its asynchronous final response omits the earlier via/horse suffix, so the harness stopped before guardpickup. No stockload/unload orPlayercargo effect is qualified. All63protectedpaths restored."
+}

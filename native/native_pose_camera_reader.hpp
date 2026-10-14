@@ -59,11 +59,11 @@ inline bool SliceReady(const Slice& s)noexcept {
   s.generation&&s.epoch&&s.thread&&s.thread==s.ownerThread&&(s.sequence&1u)&&s.sequence==s.contextSequence&&s.birthSerial;
 }
 struct SenderWitness {Witness camera{};std::uintptr_t driver=0,primary=0,body=0,phaseFunction=0;std::int32_t adjustment=0;};
-template<class R>bool SenderOnce(R& r,std::uintptr_t image,std::uintptr_t player,std::uintptr_t block,std::uintptr_t camera,
- std::uintptr_t sender,SenderWitness& out,const char** reason=nullptr)noexcept {
+template<class R>bool SenderOnceExactMode(R& r,std::uintptr_t image,std::uintptr_t player,std::uintptr_t block,std::uintptr_t camera,
+ std::uintptr_t sender,std::uint32_t exactMode,SenderWitness& out,const char** reason=nullptr)noexcept {
  out={};const auto stage=[&](const char* text)noexcept{if(reason)*reason=text;};stage("camera_local_view");
  if(!Pair(r,image,player,camera,out.camera)||out.camera.realLocal!=0||out.camera.selected!=1||
-    out.camera.target!=0||out.camera.targetSelected!=0||out.camera.mode!=0)return false;
+    out.camera.target!=0||out.camera.targetSelected!=0||out.camera.mode!=exactMode)return false;
  std::uintptr_t p=0,vt=0,ids=0,pools=0,slots=0,blocks=0;std::uint32_t n=0,flags=0;std::uint16_t id=0;std::uint8_t pool=0;
  stage("camera_sender_block");
  if(player>UINTPTR_MAX-0x380||!block||block>UINTPTR_MAX-0x140||(block&7u)||!Read(r,player+0x204,flags)||!(flags&1u)||(flags&0x100u)||
@@ -89,6 +89,12 @@ template<class R>bool SenderOnce(R& r,std::uintptr_t image,std::uintptr_t player
  // The producer defines only function8+signed adjustment4. Padding12 is
  // deliberately not sampled or interpreted as another adjustment.
  stage("camera_selected_replica");return true;
+}
+// Existing on-foot acceptance remains mode0. An independently qualified negative
+// leaf filter may require a different exact mode; this does not authorize a call.
+template<class R>bool SenderOnce(R& r,std::uintptr_t image,std::uintptr_t player,std::uintptr_t block,std::uintptr_t camera,
+ std::uintptr_t sender,SenderWitness& out,const char** reason=nullptr)noexcept {
+ return SenderOnceExactMode(r,image,player,block,camera,sender,0,out,reason);
 }
 inline bool SameSender(const SenderWitness& a,const SenderWitness& b)noexcept {
  return Same(a.camera,b.camera)&&a.driver==b.driver&&a.primary==b.primary&&a.body==b.body&&a.phaseFunction==b.phaseFunction&&a.adjustment==b.adjustment;

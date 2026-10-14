@@ -16,3 +16,6 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
 
 // Private unique bank archive identity only; does not prove native selection.
 bool MountedMgoUniqueRestContext(const wchar_t* directory) noexcept;
+
+// Separate authenticated private standing-cycle archive; no selection authority.
+bool MountedMgoStandingCycleContext(const wchar_t* directory) noexcept;

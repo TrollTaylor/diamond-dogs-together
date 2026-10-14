@@ -32,7 +32,10 @@ if ($DisableLocalExperiments -and $ReleaseGun) { throw 'Use either -DisableLocal
 $releaseGunExperiments = @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST', 'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST')
 if ($DisableLocalExperiments -or $ReleaseGun) {
     $localExperiments = @(
+        'MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER',
         'MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER',
+        'MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER',
+        'MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER',
         'MGS_LOCAL_BUDDY_CAPACITY_TEST',
         'MGS_LOCAL_GUN_PRELOAD_TEST',
         'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',

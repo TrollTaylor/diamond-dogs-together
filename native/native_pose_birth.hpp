@@ -13,7 +13,8 @@ struct Completion {
  bool exactCaller=false,normalReturn=false,typedPair=false;
  std::uint32_t entryThread=0,exitThread=0;std::uint64_t lifecycleEpoch=0;
 };
-struct Receipt {Identity identity{};std::uint32_t thread=0;std::uint64_t serial=0;bool ready=false;};
+enum class Origin : std::uint8_t { constructor=0,actorActivation=1 };
+struct Receipt {Identity identity{};std::uint32_t thread=0;std::uint64_t serial=0;bool ready=false;Origin origin=Origin::constructor;};
 inline Receipt Complete(const Completion& c,std::uint64_t serial,std::uint64_t currentEpoch) noexcept {
  if(!serial||!c.lifecycleEpoch||c.lifecycleEpoch!=currentEpoch||!c.installedAtEntry||!c.installedAtExit||!c.workerAtEntry||!c.workerAtExit||
     !c.exactCaller||!c.normalReturn||!c.typedPair||!c.entryThread||c.entryThread!=c.exitThread||

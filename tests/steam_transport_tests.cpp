@@ -2260,8 +2260,8 @@ void TestHud() {
         d.closeEnough = false;
         d.carry = 1;
         Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"Carrying") &&
-              std::strstr(prompt.keys,"Carry\tHold to put down") && !std::strstr(prompt.keys,"Load"),
-              "a carrier sees Put down without unqualified horse loading");
+              !prompt.keys[0] && !std::strstr(prompt.keys,"Load"),
+              "a copied carrier role leaves contextual put-down/loading controls to the stock prompt");
         d.carry = 3;
         Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.keys[0] &&
               !std::strstr(prompt.text,"riding"), "provisional cargo does not advertise native seats or unloading");

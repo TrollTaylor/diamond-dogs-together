@@ -221,7 +221,7 @@ inline std::vector<wchar_t> Environment(const Manifest& manifest, const std::str
         if (!manifest.runtime_profile.empty()) {
             entries[L"MGS_WORKER_RUNTIME_PROFILE"] = Wide(manifest.runtime_profile);
             entries[L"MGS_WORKER_BUDDY_CAPACITY"] = Wide(std::to_string(manifest.runtime_buddy_capacity));
-            if (manifest.runtime_profile == mgscoop::mgo_sleep_rest::profile || manifest.runtime_profile == mgscoop::mgo_unique_rest::profile) {
+            if (manifest.runtime_profile == mgscoop::mgo_sleep_rest::profile || manifest.runtime_profile == mgscoop::mgo_unique_rest::profile || manifest.runtime_profile == mgscoop::mgo_standing_cycle::profile) {
                 Require((role == "host" || role == "guest") && EqualFold(game_dir, Parent(manifest.At((role + "_exe").c_str()))), "mgo_rest_role_game_pair");
                 entries[L"MGS_WORKER_ARCHIVE_BYTES"] = Wide(manifest.At("runtime_archive_bytes"));
                 entries[L"MGS_WORKER_CATALOG_SHA256"] = Wide(manifest.At("runtime_catalog_sha256"));

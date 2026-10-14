@@ -3,6 +3,7 @@
 #include "mgscoop/buddy_capacity_catalog.hpp"
 #include "mgscoop/mgo_sleep_rest_catalog.hpp"
 #include "mgscoop/mgo_unique_rest_catalog.hpp"
+#include "mgscoop/mgo_standing_cycle_catalog.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -136,7 +137,15 @@ inline bool ParseManifest(const std::string& text, Manifest& out, std::string& r
         keys.emplace_back("runtime_motion_count");
         const bool has_profile = m.values.count("runtime_profile") != 0;
         const bool has_capacity = m.values.count("runtime_buddy_capacity") != 0;
-        if (get("runtime_profile") == mgscoop::mgo_unique_rest::profile) {
+        if (get("runtime_profile") == mgscoop::mgo_standing_cycle::profile) {
+            if (!mgscoop::mgo_standing_cycle::Compiled() || !has_profile || !has_capacity || get("runtime_buddy_capacity") != "0" ||
+                !EqualFold(get("runtime_archive_sha256"), mgscoop::mgo_standing_cycle::archive_sha) ||
+                get("runtime_archive_bytes") != "16362496" || !EqualFold(get("runtime_catalog_sha256"), mgscoop::mgo_standing_cycle::catalog_sha) ||
+                get("runtime_build_profile") != "mgo-standing-cycle" || get("runtime_native_stage") != "gun" || get("lab_mode") != "lab")
+                return fail("manifest_mgo_standing_cycle_catalog_pin");
+            m.runtime_profile = get("runtime_profile"); m.runtime_archive_bytes = mgscoop::mgo_standing_cycle::archive_bytes;
+            for (const auto* key : {"runtime_profile", "runtime_buddy_capacity", "runtime_archive_bytes", "runtime_catalog_sha256", "runtime_build_profile", "runtime_native_stage"}) keys.emplace_back(key);
+        } else if (get("runtime_profile") == mgscoop::mgo_unique_rest::profile) {
             if (!mgscoop::mgo_unique_rest::Compiled() || !has_profile || !has_capacity || get("runtime_buddy_capacity") != "0" ||
                 !EqualFold(get("runtime_archive_sha256"), mgscoop::mgo_unique_rest::archive_sha) ||
                 get("runtime_archive_bytes") != "16360448" || !EqualFold(get("runtime_catalog_sha256"), mgscoop::mgo_unique_rest::catalog_sha) ||

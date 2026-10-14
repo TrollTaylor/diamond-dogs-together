@@ -40,7 +40,7 @@ bool PoseVehicleReadBase(vehicle_core::Snapshot& out,const PoseSharedLease* tick
  out.pair.go!=arm.go||out.pair.body[1].block!=arm.blk1||out.pair.body[1].state!=arm.ps1||
  !carry_queue_lifetime::ReadOwner(reader,g_base,arm.P,out.queue)||out.queue.data!=out.pair.data||
  out.queue.snapshot!=out.pair.scriptState)return false;
- AcquireSRWLockShared(&g_pose_birth_lock);out.births[0]=g_pose_birth0;out.births[1]=g_pose_birth;
+ AcquireSRWLockShared(&g_pose_birth_lock);out.births[0]=PoseObservedBirthLocked(0);out.births[1]=PoseObservedBirthLocked(1);
  out.lifecycle=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
  g_pose_vehicle_reason.store("vehicle_both_births",std::memory_order_release);
  if(!vehicle_core::BirthsCurrent(out)||out.births[1].serial!=g_pose_bound_birth)return false;

@@ -271,8 +271,8 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
     }
     if (v.carry == 1) {
         Print(out.text, sizeof(out.text), "Carrying teammate");
-        // Semantic control names; the game's bindings remain authoritative.
-        Print(out.keys, sizeof(out.keys), "Carry\tHold to put down");
+        // Carry switches to loading beside mounts/vehicles. This copied role
+        // cannot prove the current native action; its stock prompt owns the hint.
         return true;
     }
     if (!v.teammateDown) return false;

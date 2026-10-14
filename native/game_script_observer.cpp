@@ -24,6 +24,7 @@
 #include "horse_player_physical_read.hpp"
 #include "horse_cargo_native_read.hpp"
 #include "horse_cargo_pair_read.hpp"
+#include "horse_cargo_flow_probe.hpp"
 #include "prologue_provider_read.hpp"
 #include "mgscoop/native_pose_dual_parts.hpp"
 #include "horse_physical_profile_read.hpp"
@@ -38,7 +39,9 @@
 #include "mgscoop/native_pose_carry_cold.hpp"
 #include "sleep_partner_bridge.hpp"
 #include "sleep_motion_asset_read.hpp"
+#include "sleep_standing_cycle_asset.hpp"
 #include "sleep_unique_bind_runtime.hpp"
+#include "qualified_sleep_lookup_runtime.hpp"
 #include <bcrypt.h>
 #include "sleep_deferred_carry_proof.hpp"
 #include "sleep_queued_carry_proof.hpp"
@@ -1343,6 +1346,7 @@ bool PhysicalCallbackSample(void*,const mgscoop::horse_physical_callback_probe::
 void RefreshPhysicalProbe() noexcept;
 bool physical_probe_prepared=false;
 bool SleepAssetLine(char*,std::size_t) noexcept;
+bool StandingCycleAssetLine(char*,std::size_t) noexcept;
 void PublishPhysicalDual(const mgscoop::partner_input_hook::NativePoseDualPartsContext&) noexcept;
 bool HorseCargoNativeDiagnostic(std::uint16_t,unsigned,char*,std::size_t) noexcept;
 bool HorseCargoPairDiagnostic(std::uint16_t,char*,std::size_t) noexcept;
@@ -2193,6 +2197,19 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 (unsigned long)r.cameraOwnedOwnerMatched,(unsigned long)r.cameraOwnedBody,(unsigned long)r.cameraOwnedSenderMatched,
                 (unsigned long)r.cameraOwnedFiltered,r.faulted?1u:0u,(unsigned long)r.localExportsSuppressed);
             debug::Result(pending.id,r.installed?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"pose_activation_source_status")==0) {
+            const auto r=mgscoop::partner_input_hook::NativePoseActivationStatusRead();char status[161]{};
+            StringCchPrintfA(status,ARRAYSIZE(status),"actsource;stage=%u;body=%u;caller=%x;origin=%u,%u;serial=%llu,%llu;q=%u,%u;clear=%u;entry=%u",
+                r.lastStage,r.lastBody,r.lastCallerRva,r.origin[0],r.origin[1],static_cast<unsigned long long>(r.serial[0]),
+                static_cast<unsigned long long>(r.serial[1]),r.pending[0]?1u:0u,r.pending[1]?1u:0u,r.invalidated,r.invalidationEntries);
+            debug::Result(pending.id,r.compiled&&r.hooks?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"pose_activation_status")==0) {
+            const auto r=mgscoop::partner_input_hook::NativePoseActivationStatusRead();char status[161]{};
+            StringCchPrintfA(status,ARRAYSIZE(status),"actbirth;on=%u;hooks=%u;r=%u,%u;o=%u,%u;s=%llu,%llu;in=%u;f=%u;p=%u;done=%u;no=%u;ref=%u;inv=%u,%u;ab=%u;q=%u,%u",
+                r.compiled?1u:0u,r.hooks?1u:0u,r.ready[0]?1u:0u,r.ready[1]?1u:0u,r.origin[0],r.origin[1],
+                static_cast<unsigned long long>(r.serial[0]),static_cast<unsigned long long>(r.serial[1]),r.entered,r.factory,r.staged,r.published,
+                r.noop,r.refused,r.invalidationEntries,r.invalidated,r.abnormal,r.pending[0]?1u:0u,r.pending[1]?1u:0u);
+            debug::Result(pending.id,r.compiled&&r.hooks?1u:0u,status);
         } else if (pending.id && std::strcmp(pending.text,"pose_birth_status")==0) {
             const auto r=mgscoop::partner_input_hook::NativePoseWindowStatus();char status[161]{};
             StringCchPrintfA(status,ARRAYSIZE(status),"posebirth;in=%lu;ready=%lu;caller=%lu;b1=%lu;model=%lu;done=%lu;race=%lu;count=%lu;id=%lu;from=0x%lx;stage=%s",
@@ -2303,6 +2320,13 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && (std::strcmp(pending.text,"horse_service_native")==0||std::strcmp(pending.text,"horse_service_rows")==0)) {
             char line[161]{};const bool ok=HorseCargoNativeDiagnostic(6656,std::strcmp(pending.text,"horse_service_rows")==0?2u:1u,line,sizeof(line));
             debug::Result(pending.id,ok?1u:0u,ok?line:"horseSvc;ready=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"horse_flow_prepare")==0) {
+            const bool admitted=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted();
+            const bool ready=admitted&&mgscoop::horse_cargo_flow_probe::Prepare(reinterpret_cast<std::uintptr_t>(game_base),game_span);
+            debug::Result(pending.id,ready?1u:0u,ready?"horseFlow;prepared=1;writer=off":"horseFlow;prepared=0;writer=off");
+        } else if (pending.id && std::strcmp(pending.text,"horse_flow")==0) {
+            char line[161]{};const bool ready=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&mgscoop::horse_cargo_flow_probe::Line(line,sizeof(line));
+            debug::Result(pending.id,ready?1u:0u,ready?line:"horseFlow;read=0;why=private_admission");
         } else if (pending.id && std::strcmp(pending.text,"horse_cargo_pair")==0) {
             char line[161]{};const bool ok=HorseCargoPairDiagnostic(6656,line,sizeof(line));
             debug::Result(pending.id,ok?1u:0u,ok?line:"cargoPair;ok=0;why=status_refused");
@@ -2462,6 +2486,8 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && std::strcmp(pending.text,"sleep_bank_snapshot")==0) {
             char line[161]{};const bool ok=mgscoop::sleep_unique_bind_runtime::BankTraceStatus(line,sizeof(line),true);
             debug::Result(pending.id,ok?1u:0u,ok?line:"bankTrace;ok=0;why=snapshot_refused");
+        } else if (pending.id && std::strcmp(pending.text,"standing_cycle_asset_status")==0) {
+            char line[161]{};const bool ok=StandingCycleAssetLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"sleepCycle;ready=0;why=status_refused");
         } else if (pending.id && std::strcmp(pending.text,"sleep_asset_status")==0) {
             char line[161]{};const bool ok=SleepAssetLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"sleepAsset;ready=0;why=status_refused");
         } else if (pending.id && (std::strcmp(pending.text,"sleep_info_status")==0||std::strcmp(pending.text,"sleep_graph_status")==0)) {
@@ -3893,7 +3919,7 @@ bool PhysicalTransformLine(char* out,std::size_t capacity) noexcept {
 }
 // Cryptographic fingerprint of a bounded copied source, never raw asset output.
 bool SleepAssetHash(const unsigned char* bytes,std::size_t size,char* out) noexcept {
-    if(!bytes||!size||size>mgscoop::sleep_unique_bind::kUniqueBytes||!out)return false;
+    if(!bytes||!size||size>mgscoop::sleep_standing_cycle_asset::kMainCeiling||!out)return false;
     BCRYPT_ALG_HANDLE algorithm=nullptr;BCRYPT_HASH_HANDLE digest=nullptr;unsigned char result[32]{};
     bool ok=BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0;
     if(ok)ok=BCryptCreateHash(algorithm,&digest,nullptr,0,nullptr,0,0)>=0;
@@ -3918,6 +3944,25 @@ bool SleepAssetLine(char* out,std::size_t capacity) noexcept {
         ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),bytes,size,&done)&&done==size;};
     auto hasher=SleepAssetHash;ar::Reply reply{};ar::ReadPair(reader,hasher,scope,reply);
     const int n=std::snprintf(out,capacity,"sleepAsset;ready=%u;sel=%u;b0=%u,%u,%llx;b1=%u,%u,%llx;why=%s",reply.ready?1u:0u,reply.selected?1u:0u,
+        unsigned(reply.body[0].origin),reply.body[0].index,static_cast<unsigned long long>(reply.body[0].motion),
+        unsigned(reply.body[1].origin),reply.body[1].index,static_cast<unsigned long long>(reply.body[1].motion),reply.reason);
+    return n>=0&&static_cast<std::size_t>(n)<capacity;
+}
+bool StandingCycleAssetLine(char* out,std::size_t capacity) noexcept {
+    namespace ar=mgscoop::sleep_standing_cycle_asset;namespace sp=mgscoop::sleep_plugin_read;namespace sg=mgscoop::sleep_graph_read;
+    if(!out||!capacity)return false;mgscoop::carry_plugin_read::Scope current{};
+    const bool admitted=PhysicalScope(current);ar::Scope scope{};scope.privateCopiedSaveLab=admitted;
+    scope.exactStandingProfile=admitted&&MountedMgoStandingCycleContext(unique_bind_directory);
+    scope.owner={current.exactGate,current.admitted,current.ready,current.armed,current.batch,current.image,current.player,current.data,current.state,
+        current.mission,current.ownedMission,current.generation,current.ownedGeneration,current.thread,current.ownerThread,
+        current.epoch,current.ownedEpoch,current.sequenceBefore,current.sequenceAfter,current.now,current.poll};
+    auto code=mgscoop::partner_input_hook::ReadNativePoseOriginalCode;std::uintptr_t mismatch=0;
+    scope.owner.exactGate=admitted&&sp::CodeGate(code,current.image,game_span,mismatch)&&sg::CodeGate(code,current.image,game_span,mismatch);
+    scope.codeGate=scope.owner.exactGate&&ar::CodeGate(code,current.image,game_span,mismatch);
+    auto reader=[](std::uintptr_t at,void* bytes,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+        ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),bytes,size,&done)&&done==size;};
+    auto hasher=SleepAssetHash;ar::Reply reply{};ar::ReadPair(reader,hasher,scope,reply);
+    const int n=std::snprintf(out,capacity,"sleepCycle;ready=%u;sel=%u;b0=%u,%u,%llx;b1=%u,%u,%llx;why=%s",reply.ready?1u:0u,reply.selected?1u:0u,
         unsigned(reply.body[0].origin),reply.body[0].index,static_cast<unsigned long long>(reply.body[0].motion),
         unsigned(reply.body[1].origin),reply.body[1].index,static_cast<unsigned long long>(reply.body[1].motion),reply.reason);
     return n>=0&&static_cast<std::size_t>(n)<capacity;
@@ -4834,7 +4879,7 @@ void InstallNativePoseWorkerEarly() noexcept {
     // Initial private worker callback after initialized retail/file/save/desktop
     // admission, before passive native-pose hooks or any actor first common bind.
     // A cold first-bind receipt is read-only and never creates scene authority.
-    if(game_base&&game_span&&unique_bind_directory[0]&&MountedMgoUniqueRestContext(unique_bind_directory)){
+    if(game_base&&game_span&&unique_bind_directory[0]&&(MountedMgoUniqueRestContext(unique_bind_directory)||MountedMgoStandingCycleContext(unique_bind_directory))){
         const auto current=[]() noexcept {const auto& c=mgscoop::GetLabConfig();return
             mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
             c.mode==mgscoop::LabMode::lab&&offline_enabled&&partner_on&&partner_gate_ok&&lab::SavesRedirected();};
@@ -4843,6 +4888,19 @@ void InstallNativePoseWorkerEarly() noexcept {
         LogFormat("unique_bind_early=%s;observer_only=1;append=0;effective_selection=unverified\r\n",prepared?"prepared":"refused");
         if(!prepared)mgscoop::worker_scenario::Refuse("unique_bind_initial_observer_install");
     }
+#if defined(MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER)
+    // Separate explicitly admitted OFF experiment. Native calls always forward;
+    // cold typed owner receipts never create a gameplay/native-window lease.
+    if(game_base&&game_span&&unique_bind_directory[0]&&MountedMgoStandingCycleContext(unique_bind_directory)){
+        const auto current=[]() noexcept {const auto& c=mgscoop::GetLabConfig();return
+            mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+            c.mode==mgscoop::LabMode::lab&&offline_enabled&&partner_on&&partner_gate_ok&&lab::SavesRedirected();};
+        const bool prepared=mgscoop::qualified_sleep_lookup_runtime::Prepare(reinterpret_cast<std::uintptr_t>(game_base),game_span,
+            unique_bind_directory,{partner_gate_ok,offline_enabled,lab::SavesRedirected(),current,MountedMgoStandingCycleContext,mgscoop::vehicle_native_protection::ReadOriginal},Log);
+        LogFormat("sleep_lookup_early=%s;original_forward_only=1;selection=0;append=0\r\n",prepared?"prepared":"refused");
+        if(!prepared)mgscoop::worker_scenario::Refuse("standing_lookup_observer_install");
+    }
+#endif
     if(mgscoop::partner_input_hook::NativePoseWindowStatus().installed){EnsurePartnerSleepConfigured();SetLastError(error);return;}
     if (mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::ThreadAdmitted() &&
         offline_enabled && partner_on && partner_gate_ok && game_base && game_span &&

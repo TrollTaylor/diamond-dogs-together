@@ -2,6 +2,7 @@
 // Strict, read-only natural bank receipts. This API has no append callable,
 // eligibility bit, gameplay epoch conversion, cache operation or game writer.
 #include "sleep_unique_bind.hpp"
+#include "sleep_standing_cycle_asset.hpp"
 #include "sleep_native_bank_trace_contract.hpp"
 namespace mgscoop::sleep_native_bank_trace {
 namespace ub=sleep_unique_bind;namespace b=ub::base;
@@ -83,6 +84,9 @@ template<class Reader,class Hasher> bool ReadBank(Reader& r,Hasher& hash,std::ui
  }
  if(out.count==2){std::uintptr_t blob=0,sources=0;std::uint64_t identity=0;
   out.uniqueVerified=ub::UniqueBank(r,hash,image,pointer,blob,sources,identity)&&blob==out.blob&&sources==out.sources&&identity==out.fileIdentity;
+ }
+ if(out.count==4){std::uintptr_t blob=0,sources=0;std::uint64_t identity=0;
+  out.uniqueVerified=sleep_standing_cycle_asset::VerifyBank(r,hash,image,pointer,blob,sources,identity)&&blob==out.blob&&sources==out.sources&&identity==out.fileIdentity;
  }return true;
 }
 template<class Reader,class Hasher> bool ReadOnce(Reader& r,Hasher& hash,const ub::Scope& s,const ub::Event& e,Phase phase,Snapshot& out,const char*& why) noexcept {

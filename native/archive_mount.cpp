@@ -13,6 +13,7 @@
 #include "mgscoop/buddy_capacity_catalog.hpp"
 #include "mgscoop/mgo_sleep_rest_catalog.hpp"
 #include "mgscoop/mgo_unique_rest_catalog.hpp"
+#include "mgscoop/mgo_standing_cycle_catalog.hpp"
 
 namespace {
 constexpr std::size_t mount_rva = 0x48e20, mount_size = 0x16c;
@@ -28,6 +29,7 @@ volatile LONG attempted = 0;
 volatile LONG mounted_motion_count = 0;
 volatile LONG mounted_buddy_capacity = 0;
 volatile LONG mounted_mgo_unique_rest = 0;
+volatile LONG mounted_mgo_standing_cycle = 0;
 char archive_path[32768]{};
 constexpr char mount_name[] = "mgs_coop_player_runtime_v1";
 
@@ -139,6 +141,29 @@ bool WorkerMgoUniqueRestContext(const wchar_t* directory) noexcept {
     return hidden;
 }
 #endif
+#if defined(MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER)
+bool WorkerMgoStandingCycleContext(const wchar_t* directory) noexcept {
+    wchar_t run[33]{}, role[8]{}, desktop[128]{}, game[32768]{}, profile[64]{}, digest[65]{}, catalog[65]{};
+    wchar_t bytes[16]{}, motions[8]{}, capacity[8]{}, mode[8]{}, build[32]{}, stage[8]{};
+    if (!WorkerEnvironment(L"MGS_WORKER_RUN_ID", run) || !WorkerEnvironment(L"MGS_WORKER_ROLE", role) ||
+        !WorkerEnvironment(L"MGS_WORKER_DESKTOP", desktop) || !WorkerEnvironment(L"MGS_WORKER_GAME_DIR", game) ||
+        !WorkerEnvironment(L"MGS_WORKER_RUNTIME_PROFILE", profile) || !WorkerEnvironment(L"MGS_WORKER_ARCHIVE_SHA256", digest) ||
+        !WorkerEnvironment(L"MGS_WORKER_CATALOG_SHA256", catalog) || !WorkerEnvironment(L"MGS_WORKER_ARCHIVE_BYTES", bytes) ||
+        !WorkerEnvironment(L"MGS_WORKER_MOTION_COUNT", motions) || !WorkerEnvironment(L"MGS_WORKER_BUDDY_CAPACITY", capacity) ||
+        !WorkerEnvironment(L"MGS_WORKER_LAB_MODE", mode) || !WorkerEnvironment(L"MGS_WORKER_BUILD_PROFILE", build) ||
+        !WorkerEnvironment(L"MGS_WORKER_NATIVE_STAGE", stage) ||
+        !mgscoop::mgo_standing_cycle::ContextMatches({run, role, desktop, game, directory, profile, digest, catalog, bytes, motions, capacity, mode, build, stage})) return false;
+    wchar_t actual[128]{}, input_name[128]{}; DWORD needed = 0;
+    if (!GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME, actual, sizeof(actual), &needed) ||
+        needed == 0 || needed > sizeof(actual) || wcscmp(actual, desktop)) return false;
+    HDESK input = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+    if (!input) return false;
+    const bool hidden = GetUserObjectInformationW(input, UOI_NAME, input_name, sizeof(input_name), &needed) != FALSE &&
+        needed > 0 && needed <= sizeof(input_name) && wcscmp(input_name, desktop) != 0;
+    CloseDesktop(input);
+    return hidden;
+}
+#endif
 #endif
 #endif
 bool CodeMatches(void* base, std::size_t span) noexcept {
@@ -190,6 +215,7 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
     bool buddy_capacity = false;
     bool mgo_rest = false;
     bool mgo_unique_rest = false;
+    bool mgo_standing_cycle = false;
     if (size_read && size.QuadPart == static_cast<LONGLONG>(mgscoop::buddy_capacity::superseded_archive_bytes)) {
         CloseHandle(file);
         log("archive_mount=refused; reason=superseded_buddy_capacity; bytes=16659456; required_bytes=17501184\r\n");
@@ -217,6 +243,13 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
         mgo_unique_rest = true;
     }
 #endif
+#if defined(MGS_BACKGROUND_WORKER) && defined(MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER)
+    if (allow_experimental && size_read && size.QuadPart == static_cast<LONGLONG>(mgscoop::mgo_standing_cycle::archive_bytes) && WorkerMgoStandingCycleContext(directory)) {
+        expected_digest = mgscoop::mgo_standing_cycle::archive_sha;
+        expected_size = static_cast<DWORD>(mgscoop::mgo_standing_cycle::archive_bytes);
+        mgo_standing_cycle = true;
+    }
+#endif
 #if defined(MGS_LOCAL_GUN_PRELOAD_TEST)
     if (allow_experimental && size_read && size.QuadPart == experimental_archive_size) {
         expected_digest = experimental_archive_digest;
@@ -231,7 +264,8 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
         log("archive_mount=refused; reason=missing_or_changed_archive\r\n"); return false;
     }
     CloseHandle(file);
-    log(mgo_unique_rest ? "archive_mount=verified; profile=mgo_unique_rest_v1; direct_motion_count=21; native_sleep_bank=2; effective_selection=unverified\r\n" :
+    log(mgo_standing_cycle ? "archive_mount=verified; profile=mgo_standing_cycle_v1; direct_motion_count=21; native_sleep_bank=4; selection_authority=0; effective_selection=unverified\r\n" :
+        mgo_unique_rest ? "archive_mount=verified; profile=mgo_unique_rest_v1; direct_motion_count=21; native_sleep_bank=2; effective_selection=unverified\r\n" :
         mgo_rest ? "archive_mount=verified; profile=mgo_sleep_rest_v1; motion_count=21; buddy_capacity=0; resident_selection=unverified\r\n" :
         buddy_capacity ? "archive_mount=verified; profile=buddy_capacity_two_v1; buddy_capacity=2; horse_fpkd=00,03,02_0,02_1,02_2,05,04; walker_fpkd=wg2_00; live_allocation=unverified\r\n" :
         experimental ? "archive_mount=verified; profile=local_gun_preload_test\r\n"
@@ -260,6 +294,7 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
         InterlockedExchange(&mounted_motion_count, experimental ? 31 : 21);
         InterlockedExchange(&mounted_buddy_capacity, buddy_capacity ? 1 : 0);
         InterlockedExchange(&mounted_mgo_unique_rest, mgo_unique_rest ? 1 : 0);
+        InterlockedExchange(&mounted_mgo_standing_cycle, mgo_standing_cycle ? 1 : 0);
     }
     return ready;
 }
@@ -268,6 +303,14 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
 bool MountedMgoUniqueRestContext(const wchar_t* directory) noexcept {
 #if defined(MGS_BACKGROUND_WORKER) && defined(MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER)
     return directory && InterlockedCompareExchange(&mounted_mgo_unique_rest,0,0)==1 && WorkerMgoUniqueRestContext(directory);
+#else
+    (void)directory;return false;
+#endif
+}
+
+bool MountedMgoStandingCycleContext(const wchar_t* directory) noexcept {
+#if defined(MGS_BACKGROUND_WORKER) && defined(MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER)
+    return directory && InterlockedCompareExchange(&mounted_mgo_standing_cycle,0,0)==1 && WorkerMgoStandingCycleContext(directory);
 #else
     (void)directory;return false;
 #endif

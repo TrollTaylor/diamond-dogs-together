@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "99d244a11a624814b8e92d5174ca34e8",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261014-013138-83a55029943048898f9b182046aaf2bb\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 4,
+  "failure": null,
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 107944055,
+      "end": 108356507,
+      "sha256": "e90f611c769d026f7125029c6ee9b14a0780edc0e6ef936ddbc049d6a80ed686"
+    },
+    {
+      "role": "guest",
+      "start": 116127907,
+      "end": 116459339,
+      "sha256": "7abb1b02ff81affd7768a468301c3e48809e8257d14a304f8d4ed579d5bcf6be"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Four scenario requirements passed on both actual hidden copies. Separate four-entry bank loaded through native common binding and was recognized by current owner snapshots; no candidate selected animation, onset, wake, carry or vehicle effect is qualified by this bank-only test. Normal installed0.12.5 and all63 protected paths restored. Wrapper LASTEXITCODE was stale after owned shutdown; authoritative scenario Failure is null."
+}

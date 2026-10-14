@@ -37,7 +37,7 @@ try {
     $normal = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ''
     $background = Get-WorkerPlan $fixture 'Normal' 'Release' @() $true ''
     $research = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false ''
-    Check ($normal.flags.Count -eq 15 -and @($normal.flags.Values | Where-Object { $_ -cne 'OFF' }).Count -eq 0) 'normal explicitly disables all 14 local experiments and the separate worker'
+    Check ($normal.flags.Count -eq 18 -and @($normal.flags.Values | Where-Object { $_ -cne 'OFF' }).Count -eq 0) 'normal explicitly disables all 17 local experiments and the separate worker'
     Check ($background.flags.MGS_BACKGROUND_WORKER -ceq 'ON' -and @($background.flags.Keys | Where-Object { $_ -like 'MGS_LOCAL_*' -and $background.flags[$_] -cne 'OFF' }).Count -eq 0) 'background opt-in cannot enable research flags'
     Check ($research.flags.MGS_LOCAL_ACTION_EVENTS -ceq 'ON' -and @($research.flags.Values | Where-Object { $_ -ceq 'ON' }).Count -eq 1) 'research enables exactly the named option'
     $capacity = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_BUDDY_CAPACITY_TEST') $true ''
@@ -52,6 +52,19 @@ try {
     Refuses {Get-WorkerPlan $fixture 'Research' 'Release' $uniqueFlags $false ''} 'exact Research/background'
     Refuses {Get-WorkerPlan $fixture 'Research' 'Release' ($uniqueFlags+@('MGS_LOCAL_ACTION_EVENTS')) $true ''} 'exact Research/background'
     Refuses {Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_MGO_UNIQUE_REST_BIND') $true ''} 'Unknown'
+    $activationFlags=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER')
+    $activation=Get-WorkerPlan $fixture 'Research' 'Release' $activationFlags $true ''
+    Check ($activation.flags.MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER -ceq 'ON' -and @($activation.flags.Values|Where-Object{$_ -ceq 'ON'}).Count -eq 5) 'native activation is explicitly selected with exact private gun base'
+    Refuses {Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER') $true ''} 'activation'
+    Refuses {Get-WorkerPlan $fixture 'Research' 'Release' $activationFlags $false ''} 'activation'
+    $standingFlags=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER')
+    $standing=Get-WorkerPlan $fixture 'Research' 'Release' $standingFlags $true ''
+    Check ($standing.flags.MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER -ceq 'ON' -and $standing.flags.MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER -ceq 'OFF' -and @($standing.flags.Values|Where-Object{$_ -ceq 'ON'}).Count -eq 5) 'standing bank profile keeps native lookup observer OFF'
+    $lookup=Get-WorkerPlan $fixture 'Research' 'Release' ($standingFlags+@('MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER')) $true ''
+    Check ($lookup.flags.MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER -ceq 'ON' -and @($lookup.flags.Values|Where-Object{$_ -ceq 'ON'}).Count -eq 6 -and $lookup.build_directory -cne $standing.build_directory) 'explicit lookup uses a distinct five-experiment private cache'
+    Refuses {Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER') $true ''} 'exact standing-cycle profile'
+    Refuses {Get-WorkerPlan $fixture 'Research' 'Release' $standingFlags $false ''} 'exact Research/background'
+    Refuses {Get-WorkerPlan $fixture 'Research' 'Release' ($standingFlags+@('MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER')) $true ''} 'exact Research/background'
 
     Check ($normal.tests -ccontains 'worker_protocol_capacity_off_tests' -and $normal.tests -ccontains 'worker_protocol_capacity_on_tests') 'both capacity admission/refusal fixtures are audited'
     Check ($normal.build_directory -ine $background.build_directory -and $normal.build_directory -ine $research.build_directory) 'profiles use separate default caches'

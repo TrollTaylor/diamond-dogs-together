@@ -88,6 +88,23 @@ function Get-WorkerMgoUniqueRestPins {
     [ordered]@{Profile='mgo_unique_rest_v1';Archive='92E935BCED30DCD7A1EDA498462A375A8594241A1CFA7228026E3E346E886C25';Bytes=16360448;
         Catalog='CD23AA3146823AF8577079009ED54CFA6F1508F2AE2E7D55E8A0B55DAB46AD51';Motions=21;Capacity=0}
 }
+function Get-WorkerMgoStandingCyclePins {
+    [ordered]@{Profile='mgo_standing_cycle_v1';Archive='882E683B296E97F355B2D2E888194D9EE2BEA3C64EE1EA93BA1654601E1C34C2';Bytes=16362496;
+        Catalog='88A1F5C70E2A0812429E2B75BB6ED55718E0AAFD9B53CBE16AA0464B4F83BAC4';Motions=21;Capacity=0}
+}
+function Assert-WorkerMgoStandingCycleScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive,[string]$OldMgoArchive,[string]$TwoRestArchive) {
+    if($BuildProfile -ceq 'mgo-standing-cycle'){
+        if($Mode -cne 'lab' -or $PartnerProfile -cne 'native' -or $NativeStage -cne 'gun' -or $Ammo -or !$Archive -or $BuddyArchive -or $OldMgoArchive -or $TwoRestArchive){
+            throw 'Standing cycle requires its exact explicit archive and copied-save native gun lab; no mixed archive, ammo or visible play.'
+        }
+    } elseif($Archive){throw '-MgoStandingCycleArchive needs -BuildProfile mgo-standing-cycle.'}
+}
+function Get-WorkerMgoStandingCycleExperiments {
+    param([switch]$LookupObserver)
+    $flags=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER')
+    if($LookupObserver){$flags+='MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER'}
+    return $flags
+}
 function Assert-WorkerMgoUniqueRestScope([string]$BuildProfile,[string]$Mode,[string]$PartnerProfile,[string]$NativeStage,[bool]$Ammo,[string]$Archive,[string]$BuddyArchive,[string]$OldMgoArchive) {
     if($BuildProfile -ceq 'mgo-unique-rest'){
         if($Mode -cne 'lab' -or $PartnerProfile -cne 'native' -or $NativeStage -cne 'gun' -or $Ammo -or !$Archive -or $BuddyArchive -or $OldMgoArchive){
@@ -115,10 +132,11 @@ function Get-WorkerSessionRuntimeCatalog($Session,$Pins) {
         if($Session.Contains('runtime_build_profile') -or $Session.Contains('runtime_native_stage')){throw 'Orphan runtime experiment scope.'}
         return [ordered]@{Profile='';Archive=$Pins.Archive;Bytes=16333824;Motions=21;Capacity=0;Experimental=$false}
     }
+    $standing=$Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_standing_cycle_v1'
     $unique=$Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_unique_rest_v1'
-    $mgo=$unique -or ($Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_sleep_rest_v1')
-    $candidate=if($unique){Get-WorkerMgoUniqueRestPins}elseif($mgo){Get-WorkerMgoSleepRestPins}else{Get-WorkerBuddyCapacityPins}
-    $requiredBuild=if($unique){'mgo-unique-rest'}else{'research'}
+    $mgo=$standing -or $unique -or ($Session.Contains('runtime_profile') -and $Session.runtime_profile -ceq 'mgo_sleep_rest_v1')
+    $candidate=if($standing){Get-WorkerMgoStandingCyclePins}elseif($unique){Get-WorkerMgoUniqueRestPins}elseif($mgo){Get-WorkerMgoSleepRestPins}else{Get-WorkerBuddyCapacityPins}
+    $requiredBuild=if($standing){'mgo-standing-cycle'}elseif($unique){'mgo-unique-rest'}else{'research'}
     $scopeKeys=@('runtime_build_profile','runtime_native_stage')
     if($mgo){
         if(@($scopeKeys|Where-Object{$Session.Contains($_)}).Count -ne 2 -or

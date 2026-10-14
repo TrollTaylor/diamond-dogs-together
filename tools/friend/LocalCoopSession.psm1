@@ -94,20 +94,196 @@ function Assert-LocalCoopSession {
     }
 }
 
+function Initialize-LocalCoopAtomicIdentity {
+    # Metadata pins keep the captured file IDs alive without holding read/write/delete access.
+    if ('MgsCoopLocal.AtomicIdentityV1' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using Microsoft.Win32.SafeHandles;
+namespace MgsCoopLocal {
+public sealed class AtomicIdentityV1 : IDisposable {
+    [StructLayout(LayoutKind.Sequential)]
+    struct Info {
+        public uint Attributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME Created, Accessed, Written;
+        public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct Disposition { [MarshalAs(UnmanagedType.Bool)] public bool Delete; }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security,
+        uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool GetFileInformationByHandle(SafeFileHandle handle, out Info info);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind,
+        ref Disposition info, uint bytes);
+    readonly SafeFileHandle pin;
+    public readonly string Identity, Hash;
+    AtomicIdentityV1(SafeFileHandle handle, string identity, string hash) {
+        pin=handle; Identity=identity; Hash=hash;
+    }
+    static SafeFileHandle Open(string path, uint access, uint share) {
+        string full=Path.GetFullPath(path);
+        if (!full.StartsWith(@"\\?\", StringComparison.Ordinal))
+            full=full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\"+full.Substring(2) : @"\\?\"+full;
+        var handle=CreateFileW(full, access, share, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+        if (!handle.IsInvalid) return handle;
+        int error=Marshal.GetLastWin32Error(); handle.Dispose();
+        throw new Win32Exception(error, "Atomic file open failed: "+path);
+    }
+    static Info ReadInfo(SafeFileHandle handle) {
+        Info info;
+        if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if ((info.Attributes & 0x410) != 0 || info.Links != 1 || (info.IndexHigh==0 && info.IndexLow==0))
+            throw new IOException("Atomic file identity is not a single ordinary file.");
+        return info;
+    }
+    static string Id(Info info) {
+        return info.Volume.ToString("X8")+":"+info.IndexHigh.ToString("X8")+":"+info.IndexLow.ToString("X8");
+    }
+    static string Digest(FileStream stream) {
+        using (var sha=SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
+    }
+    static string ReadDigest(FileStream stream, out string identity) {
+        Info before=ReadInfo(stream.SafeFileHandle);
+        string hash=Digest(stream);
+        Info after=ReadInfo(stream.SafeFileHandle);
+        if (Id(before)!=Id(after) || before.SizeHigh!=after.SizeHigh || before.SizeLow!=after.SizeLow ||
+            before.Written.dwHighDateTime!=after.Written.dwHighDateTime ||
+            before.Written.dwLowDateTime!=after.Written.dwLowDateTime)
+            throw new IOException("Atomic file changed during its ownership read.");
+        identity=Id(after); return hash;
+    }
+    public static AtomicIdentityV1 Capture(string path, string knownHash) {
+        var handle=Open(path, 0, 7);
+        try {
+            string identity=Id(ReadInfo(handle));
+            string hash=knownHash;
+            if (String.IsNullOrEmpty(hash)) {
+                using (var read=new FileStream(Open(path, 0x80000000, 7), FileAccess.Read)) {
+                    string actual; hash=ReadDigest(read, out actual);
+                    if (actual!=identity) throw new IOException("Atomic file identity changed during capture.");
+                }
+            }
+            return new AtomicIdentityV1(handle, identity, hash);
+        } catch { handle.Dispose(); throw; }
+    }
+    public bool Matches(string path) {
+        using (var read=new FileStream(Open(path, 0x80000000, 7), FileAccess.Read)) {
+            string actual; string hash=ReadDigest(read, out actual);
+            return actual==Identity && hash==Hash;
+        }
+    }
+    public bool DeleteOwned(string path) {
+        // Delete through the verified handle, never by a name that can change after comparison.
+        using (var read=new FileStream(Open(path, 0x80010000, 0), FileAccess.Read)) {
+            string actual; string hash=ReadDigest(read, out actual);
+            if (actual!=Identity || hash!=Hash) return false;
+            var disposition=new Disposition { Delete=true };
+            if (!SetFileInformationByHandle(read.SafeFileHandle, 4, ref disposition,
+                (uint)Marshal.SizeOf(typeof(Disposition)))) throw new Win32Exception(Marshal.GetLastWin32Error());
+            return true;
+        }
+    }
+    public void Dispose() { pin.Dispose(); }
+}
+}
+'@
+}
+
+function Test-LocalCoopAtomicRetryError {
+    param([Parameter(Mandatory)][Exception]$Exception)
+    $cause = $Exception
+    while ($cause -and !($cause -is [IO.IOException])) { $cause = $cause.InnerException }
+    if (!$cause -or (($cause.HResult -band 2147418112) -ne 458752)) { return $false }
+    # Win32 sharing/lock violations and ERROR_UNABLE_TO_REMOVE_REPLACED preserve both names.
+    # 1176/1177 can already have moved the old file; permissions and unknown failures never retry.
+    return (($cause.HResult -band 65535) -in @(32, 33, 1175))
+}
+
+function Invoke-LocalCoopAtomicReplace {
+    param([string]$Temporary, [string]$Path, [string]$Backup)
+    [IO.File]::Replace($Temporary, $Path, $Backup)
+}
+
 function Write-LocalCoopAtomicBytes {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes, [Parameter(Mandatory)][string]$StopAt, [switch]$RequireAbsent)
     Assert-NoReparsePoint -Path $Path -StopAt $StopAt
     if (Test-Path -LiteralPath $Path -PathType Container) { throw "A directory occupies the target file: $Path" }
+    Initialize-LocalCoopAtomicIdentity
     $temporary = $Path + '.local-' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $backup = $temporary + '.bak'
+    $targetReceipt = $null; $tempReceipt = $null; $committed = $false
     Assert-NoReparsePoint -Path $temporary -StopAt $StopAt
+    Assert-NoReparsePoint -Path $backup -StopAt $StopAt
     try {
+        # Capture the before-hash before any wait. A target that cannot be read has no retry authority.
+        if (!$RequireAbsent -and (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            $targetReceipt = [MgsCoopLocal.AtomicIdentityV1]::Capture($Path, $null)
+        }
         $stream = New-Object IO.FileStream($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-        try { $stream.Write($Bytes, 0, $Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-        Assert-NoReparsePoint -Path $Path -StopAt $StopAt
-        if (!$RequireAbsent -and (Test-Path -LiteralPath $Path -PathType Leaf)) { [IO.File]::Replace($temporary, $Path, [System.Management.Automation.Language.NullString]::Value) }
-        else { [IO.File]::Move($temporary, $Path) }
+        try {
+            $tempReceipt = [MgsCoopLocal.AtomicIdentityV1]::Capture($temporary, (Get-LocalCoopBytesHash -Bytes $Bytes))
+            $stream.Write($Bytes, 0, $Bytes.Length); $stream.Flush($true)
+        } finally { $stream.Dispose() }
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            Assert-NoReparsePoint -Path $Path -StopAt $StopAt
+            Assert-NoReparsePoint -Path $temporary -StopAt $StopAt
+            Assert-NoReparsePoint -Path $backup -StopAt $StopAt
+            if (!$tempReceipt.Matches($temporary)) { throw 'Atomic temporary file identity or bytes changed; refusing replacement.' }
+            if ($targetReceipt) {
+                if (!$targetReceipt.Matches($Path)) { throw 'Atomic target identity or before-hash changed; refusing replacement.' }
+                if (Test-Path -LiteralPath $backup) { throw 'An unexpected atomic backup exists; refusing replacement.' }
+                try { Invoke-LocalCoopAtomicReplace -Temporary $temporary -Path $Path -Backup $backup }
+                catch {
+                    if (!(Test-LocalCoopAtomicRetryError -Exception $_.Exception) -or $attempt -ge 9 -or $timer.ElapsedMilliseconds -ge 1500) { throw }
+                    # Next attempt must prove the same old target and same owned temporary again.
+                    Start-Sleep -Milliseconds 100
+                    continue
+                }
+            } else {
+                # Strict single-shot create. Never change to replacement if another writer creates the target.
+                [IO.File]::Move($temporary, $Path)
+            }
+            if (!$tempReceipt.Matches($Path)) { throw 'Atomic committed file identity or bytes changed; preserving its backup.' }
+            $committed = $true
+            break
+        }
+    } catch {
+        $failure = $_.Exception
+        $recovery = "no backup was produced; original target needs inspection: $Path"
+        if ($targetReceipt -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
+            $recovery = "backup retained for recovery: $backup"
+            try {
+                Assert-NoReparsePoint -Path $backup -StopAt $StopAt
+                Assert-NoReparsePoint -Path $Path -StopAt $StopAt
+                $originalSaved = $targetReceipt.Matches($backup)
+                if (!$originalSaved) { $recovery = "backup identity or bytes changed; retained for inspection: $backup" }
+                if ($originalSaved -and !(Test-Path -LiteralPath $Path)) {
+                    # Roll back only the verified original, only to an absent name. Move cannot overwrite.
+                    [IO.File]::Move($backup, $Path)
+                    if (!$targetReceipt.Matches($Path)) { throw 'Atomic rollback identity changed.' }
+                    $recovery = 'verified original restored after partial replacement failure'
+                }
+            } catch { $recovery += "; rollback refused: $($_.Exception.Message)" }
+        }
+        throw (New-Object IO.IOException -ArgumentList ("Atomic write failed; $recovery. $($failure.Message)"), $failure)
     } finally {
-        if (Test-Path -LiteralPath $temporary -PathType Leaf) { Remove-Item -LiteralPath $temporary -Force }
+        if ($tempReceipt -and (Test-Path -LiteralPath $temporary -PathType Leaf)) {
+            try { $null = $tempReceipt.DeleteOwned($temporary) } catch { Write-Warning "Owned atomic temporary could not be cleaned: $temporary ($($_.Exception.Message))" }
+        }
+        # Only a verified commit permits deleting the exact saved original. Partial native failures keep it.
+        if ($committed -and $targetReceipt -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
+            try { $null = $targetReceipt.DeleteOwned($backup) } catch { Write-Warning "Owned atomic backup could not be cleaned: $backup ($($_.Exception.Message))" }
+        }
+        if ($tempReceipt) { $tempReceipt.Dispose() }
+        if ($targetReceipt) { $targetReceipt.Dispose() }
     }
 }
 

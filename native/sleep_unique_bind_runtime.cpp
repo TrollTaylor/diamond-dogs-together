@@ -11,21 +11,23 @@
 #include <climits>
 #include "sleep_unique_bind_runtime.hpp"
 #include "sleep_unique_bind_adapter.hpp"
+#include "coop_carry_original_view.hpp"
 #include "mgscoop/archive_mount.hpp"
-#if defined(MGS_BACKGROUND_WORKER) && defined(MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER)
+#if defined(MGS_BACKGROUND_WORKER) && (defined(MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER) || defined(MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER))
 #include "MinHook.h"
 #endif
 namespace mgscoop::sleep_unique_bind_runtime {
 namespace ub=sleep_unique_bind;namespace an=sleep_unique_bind_native;
 namespace bt=sleep_native_bank_trace;
-namespace raw=sleep_raw_constructor_trace;
-#if defined(MGS_BACKGROUND_WORKER) && defined(MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER)
+namespace raw=sleep_raw_constructor_trace;namespace ownview=coop_carry_original_view;
+#if defined(MGS_BACKGROUND_WORKER) && (defined(MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER) || defined(MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER))
 namespace {
 struct Runtime {
  std::uintptr_t image=0;std::size_t span=0;wchar_t directory[32768]{};
  Authorization authorization{};Log log=nullptr;an::Configuration adapter{};
  unsigned char commonPatch[32]{},appendPatch[32]{};
  bool exactGate=false;volatile LONG installed=0;volatile LONG64 invocation=0;
+ SRWLOCK originalBookLock=SRWLOCK_INIT;ownview::Book originalBook{};volatile LONG originalExposed=0;
  SRWLOCK statusLock=SRWLOCK_INIT;ub::Reply last[2]{};ub::Event events[2]{};
  unsigned seen[2]{};const char* reason="never";
  bt::Receipt traceLast[2]{};unsigned traceSeen[2]{};
@@ -36,7 +38,7 @@ bool Read(void*,std::uintptr_t at,void* out,std::size_t n) noexcept {
  SetLastError(error);return ok;
 }
 bool Hash(void*,const void* bytes,std::size_t n,char* out) noexcept {
- if(!bytes||!n||n>ub::kUniqueBytes||!out)return false;
+ if(!bytes||!n||n>sleep_standing_cycle_asset::kMainCeiling||!out)return false;
  BCRYPT_ALG_HANDLE algorithm=nullptr;BCRYPT_HASH_HANDLE hash=nullptr;unsigned char digest[32]{};
  bool ok=BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0;
  if(ok)ok=BCryptCreateHash(algorithm,&hash,nullptr,0,nullptr,0,0)>=0;
@@ -54,7 +56,7 @@ bool HooksOwned() noexcept {
 }
 bool CurrentPrivate() noexcept {
  const DWORD error=GetLastError();const bool ok=runtime.exactGate&&runtime.authorization.privateWorkerCurrent&&runtime.authorization.privateWorkerCurrent()&&
-  MountedMgoUniqueRestContext(runtime.directory)&&HooksOwned();
+  (MountedMgoUniqueRestContext(runtime.directory)||MountedMgoStandingCycleContext(runtime.directory))&&HooksOwned();
  SetLastError(error);return ok;
 }
 bool Scope(void*,const ub::Event& event,ub::Scope& out) noexcept {
@@ -227,12 +229,17 @@ bool Status(char* out,std::size_t n,bool source) noexcept {
 }
 bool Prepare(std::uintptr_t image,std::size_t span,const wchar_t* directory,const Authorization& auth,Log log) noexcept {
  if(Prepared())return runtime.image==image&&CurrentPrivate();
- if(!image||!span||!directory||!log||!auth.exactRetailPe||!auth.offline||!auth.copiedSaveLab||!auth.privateWorkerCurrent||!auth.privateWorkerCurrent()||!MountedMgoUniqueRestContext(directory))return false;
+ if(InterlockedCompareExchange(&runtime.originalExposed,0,0))return false;
+ if(!image||!span||!directory||!log||!auth.exactRetailPe||!auth.offline||!auth.copiedSaveLab||!auth.privateWorkerCurrent||!auth.privateWorkerCurrent()||!(MountedMgoUniqueRestContext(directory)||MountedMgoStandingCycleContext(directory)))return false;
  auto bounded=[](std::uintptr_t at,void* out,std::size_t n)noexcept{return Read(nullptr,at,out,n);};std::uintptr_t mismatch=0;
  if(!ub::CodeGate(bounded,image,span,mismatch)){char line[160]{};StringCchPrintfA(line,ARRAYSIZE(line),"unique_bind=refused;stage=immutable_pre_hook_gate;rva=%llx;append=0\r\n",static_cast<unsigned long long>(mismatch));log(line);return false;}
  if(!bt::CodeGate(bounded,image,span,mismatch)){char line[180]{};StringCchPrintfA(line,ARRAYSIZE(line),"unique_bind=refused;stage=natural_bank_trace_whole_caller_gate;rva=%llx;append=0\r\n",static_cast<unsigned long long>(mismatch));log(line);return false;}
  if(FAILED(StringCchCopyW(runtime.directory,ARRAYSIZE(runtime.directory),directory)))return false;
  runtime.image=image;runtime.span=span;runtime.authorization=auth;runtime.log=log;runtime.exactGate=true;
+ auto rawRead=[](std::uintptr_t at,void* out,std::size_t n)noexcept{return Read(nullptr,at,out,n);};
+ if(!ownview::Bind(runtime.originalBook,image,span)||
+    !ownview::Capture(rawRead,runtime.originalBook,0,ownview::Kind::detour,image+0x9bb960,reinterpret_cast<std::uintptr_t>(&an::CommonBindHook),sleep_unique_bind_contract::bytes_0,5)||
+    !ownview::Capture(rawRead,runtime.originalBook,1,ownview::Kind::detour,image+0x1a6b8f0,reinterpret_cast<std::uintptr_t>(&an::AddMtarHook),sleep_unique_bind_contract::bytes_2,5))return false;
  const MH_STATUS initialized=MH_Initialize();if(initialized!=MH_OK&&initialized!=MH_ERROR_ALREADY_INITIALIZED)return false;
  void* common=reinterpret_cast<void*>(image+0x9bb960);void* append=reinterpret_cast<void*>(image+0x1a6b8f0);
  if(MH_CreateHook(common,reinterpret_cast<void*>(&an::CommonBindHook),reinterpret_cast<void**>(&runtime.adapter.originalCommon))!=MH_OK)return false;
@@ -242,17 +249,31 @@ bool Prepare(std::uintptr_t image,std::size_t span,const wchar_t* directory,cons
  runtime.adapter.rawConstructorScope=RawConstructorScope;
  runtime.adapter.privateInstallationAdmitted=true;runtime.adapter.observeOnly=true;
  if(!an::Configure(&runtime.adapter)){MH_RemoveHook(append);MH_RemoveHook(common);return false;}
+ runtime.originalBook.patches[0].created=runtime.originalBook.patches[1].created=true;
+ runtime.originalBook.patches[0].trampoline=reinterpret_cast<std::uintptr_t>(runtime.adapter.originalCommon);
+ runtime.originalBook.patches[1].trampoline=reinterpret_cast<std::uintptr_t>(runtime.adapter.originalAppend);
  // No engine calls are made. Enabling the exact native appender first ensures
  // a natural common invocation cannot bypass observation once its hook is on.
  if(MH_EnableHook(append)!=MH_OK){an::Unconfigure();MH_RemoveHook(append);MH_RemoveHook(common);return false;}
- if(MH_EnableHook(common)!=MH_OK){MH_DisableHook(append);an::Unconfigure();MH_RemoveHook(append);MH_RemoveHook(common);return false;}
- if(!Read(nullptr,image+0x9bb960,runtime.commonPatch,sizeof(runtime.commonPatch))||!Read(nullptr,image+0x1a6b8f0,runtime.appendPatch,sizeof(runtime.appendPatch))){
-  MH_DisableHook(common);MH_DisableHook(append);an::Unconfigure();MH_RemoveHook(append);MH_RemoveHook(common);return false;
- }
+ // Once a native entry is exposed, retain every original, relay and receipt
+ // until the private process exits, including partial install failures.
+ InterlockedExchange(&runtime.originalExposed,1);
+ AcquireSRWLockExclusive(&runtime.originalBookLock);const bool appendProof=ownview::Activated(rawRead,runtime.originalBook,1);ReleaseSRWLockExclusive(&runtime.originalBookLock);
+ if(!appendProof||MH_EnableHook(common)!=MH_OK)return false;
+ AcquireSRWLockExclusive(&runtime.originalBookLock);const bool commonProof=ownview::Activated(rawRead,runtime.originalBook,0);ReleaseSRWLockExclusive(&runtime.originalBookLock);
+ if(!commonProof||!Read(nullptr,image+0x9bb960,runtime.commonPatch,sizeof(runtime.commonPatch))||!Read(nullptr,image+0x1a6b8f0,runtime.appendPatch,sizeof(runtime.appendPatch)))return false;
  InterlockedExchange(&runtime.installed,1);
- log("unique_bind=observer_installed;scope=exact_private_mgo_unique_rest_v1;cold_scene_diagnostic=1;natural_callsite=9bb9fa;append=0;cache_changes=0;effective_selection=unverified\r\n");return true;
+ log(MountedMgoStandingCycleContext(directory)?
+  "unique_bind=observer_installed;scope=exact_private_mgo_standing_cycle_v1;cold_scene_diagnostic=1;natural_callsite=9bb9fa;native_sleep_bank=4;append=0;selection_authority=0;effective_selection=unverified\r\n":
+  "unique_bind=observer_installed;scope=exact_private_mgo_unique_rest_v1;cold_scene_diagnostic=1;natural_callsite=9bb9fa;append=0;cache_changes=0;effective_selection=unverified\r\n");return true;
 }
 bool Prepared() noexcept {return InterlockedCompareExchange(&runtime.installed,0,0)==1;}
+bool OverlayOriginal(std::uintptr_t at,void* out,std::size_t n) noexcept {
+ const DWORD error=GetLastError();auto raw=[](std::uintptr_t a,void* b,std::size_t k)noexcept{return Read(nullptr,a,b,k);};
+ if(!TryAcquireSRWLockShared(&runtime.originalBookLock)){SetLastError(error);return false;}
+ const bool okay=ownview::Overlay(raw,runtime.originalBook,at,out,n);ReleaseSRWLockShared(&runtime.originalBookLock);SetLastError(error);return okay;
+}
+
 bool SourceStatus(char* out,std::size_t n) noexcept {return Status(out,n,true);}
 bool BindingStatus(char* out,std::size_t n) noexcept {return Status(out,n,false);}
 bool BankTraceStatus(char* out,std::size_t n,bool fresh) noexcept {
@@ -287,6 +308,7 @@ bool BankTraceStatus(char* out,std::size_t n,bool fresh) noexcept {
 #else
 bool Prepare(std::uintptr_t,std::size_t,const wchar_t*,const Authorization&,Log) noexcept {return false;}
 bool Prepared() noexcept {return false;}
+bool OverlayOriginal(std::uintptr_t,void*,std::size_t) noexcept {return true;}
 bool SourceStatus(char* out,std::size_t n) noexcept {return out&&n&&SUCCEEDED(StringCchCopyA(out,n,"bindSource;on=0;why=private_unique_observer_compiled_off"));}
 bool BindingStatus(char* out,std::size_t n) noexcept {return out&&n&&SUCCEEDED(StringCchCopyA(out,n,"sleepBind;on=0;append=0;why=private_unique_observer_compiled_off"));}
 bool BankTraceStatus(char* out,std::size_t n,bool) noexcept {return out&&n&&SUCCEEDED(StringCchCopyA(out,n,"bankTrace;on=0;append_authority=0;why=private_unique_observer_compiled_off"));}

@@ -5,6 +5,7 @@ namespace cw=camera_mode_window;
 namespace birth=native_pose_birth;
 namespace sx=native_pose_selected_export;
 namespace pcam=native_pose_camera_reader;
+namespace vfoot=native_pose_vehicle_camera_foot;
 namespace vw=carry_vars_pair_word_window;
 namespace msg=native_pose_message_lifetime;
 namespace holds=native_pose_hold_owners;
@@ -17,6 +18,9 @@ px::Gate g_pose_gate;
 std::atomic<bool> g_pose_installed{false},g_pose_original_view{false};bool g_pose_test=false;
 volatile LONG g_pose_required=0,g_pose_fault=0,g_pose_held=0,g_pose_clear=0;
 volatile LONG g_pose_windows=0,g_pose_suppressed=0,g_pose_hints=0,g_pose_local_exports=0;
+bool g_pose_vehicle_foot_camera_test=false;
+decltype(NativePoseVehicleProtectionBindings::readOriginal) g_pose_vehicle_foot_camera_reader=nullptr;
+volatile LONG g_pose_cam_vehicle_foot_filtered=0;
 volatile LONG g_pose_cam_owned=0,g_pose_cam_shared=0,g_pose_cam_caller=0,g_pose_cam_owner=0,g_pose_cam_body=-1,g_pose_cam_sender=0,g_pose_cam_filtered=0,g_pose_cam_refused=0;
 std::uintptr_t g_pose_player=0,g_pose_go=0,g_pose_root=0,g_pose_block=0;
 std::uint32_t g_pose_generation=0,g_pose_epoch=0,g_pose_thread=0,g_pose_pool=0;
@@ -222,6 +226,7 @@ bool PoseParticipantsLive() noexcept;
 std::uint64_t PoseBirthEpoch() noexcept {
  AcquireSRWLockShared(&g_pose_birth_lock);const auto epoch=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);return epoch;
 }
+#include "native_pose_activation_impl.inc"
 bool PoseRecordBirth(const birth::Completion& c,unsigned actualId=1) noexcept {
  AcquireSRWLockExclusive(&g_pose_birth_lock);++g_pose_birth_serial;if(!g_pose_birth_serial)++g_pose_birth_serial;
  const auto receipt=birth::Complete(c,g_pose_birth_serial,g_pose_birth_epoch);if(receipt.ready&&actualId<=1)(actualId?g_pose_birth:g_pose_birth0)=receipt;
@@ -231,10 +236,11 @@ void PoseInvalidateBirth(std::uintptr_t at,unsigned kind) noexcept {
  AcquireSRWLockExclusive(&g_pose_birth_lock);++g_pose_birth_epoch;if(!g_pose_birth_epoch)++g_pose_birth_epoch;
  if(birth::InvalidatedBy(g_pose_birth,at,kind))g_pose_birth={};
  if(birth::InvalidatedBy(g_pose_birth0,at,kind))g_pose_birth0={};
+ PoseInvalidateActivationLocked(at,kind);
  ReleaseSRWLockExclusive(&g_pose_birth_lock);
 }
 bool PoseBirthCurrent(const pi::Arm& a,const NativePoseJobContext& c0,bool bind=false) noexcept {
- AcquireSRWLockShared(&g_pose_birth_lock);const auto saved=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);
+ AcquireSRWLockShared(&g_pose_birth_lock);const auto saved=PoseObservedBirthLocked(1);ReleaseSRWLockShared(&g_pose_birth_lock);
  const bool current=birth::Current(saved,{a.P,a.blk1,a.ps1,c0.modelCS,c0.modelEntry});
  if(current&&bind)g_pose_bound_birth=saved.serial;
  return current&&(bind||saved.serial==g_pose_bound_birth);
@@ -299,7 +305,7 @@ bool PoseDualPartsContext(NativePoseDualPartsContext& out) noexcept {
  if(!cp::ReadPair(reader,g_base,arm.P,pair)||!cp::Same(pair,g_pose_carry_pair)||pair.go!=g_pose_go||
  pair.body[1].block!=arm.blk1||pair.body[1].state!=arm.ps1||pair.body[1].cs!=g_pose_cs||pair.body[1].entry!=g_pose_entry)return false;
  birth::Receipt birth0{},birth1{};
- AcquireSRWLockShared(&g_pose_birth_lock);birth0=g_pose_birth0;birth1=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);
+ AcquireSRWLockShared(&g_pose_birth_lock);birth0=PoseObservedBirthLocked(0);birth1=PoseObservedBirthLocked(1);ReleaseSRWLockShared(&g_pose_birth_lock);
  const auto birthsMatch=[&](const cp::Pair& value) noexcept {return dual_parts::BirthsCurrent(value,birth0,birth1,born0,born1);};
  t_dual_parts_reason="dual_both_births";if(!birthsMatch(pair))return false;
  native_pose_teardown_diagnostic::Model expected[2]{};
@@ -318,7 +324,7 @@ bool PoseDualPartsContext(NativePoseDualPartsContext& out) noexcept {
  !cp::CoherentCallbacks(pair.body[0],afterPair.body[0])||!cp::CoherentCallbacks(pair.body[1],afterPair.body[1])||
  !local_profile::ReadPair(reader,g_base,afterPair,afterProfile)||!local_profile::Same(profile,afterProfile)||
  !native_pose_parts_diagnostic::Pair(reader,g_base,g_pose_go,expected,late)||!dual_parts::NoWork(late)||!native_pose_parts_diagnostic::Same(w,late))return false;
- t_dual_parts_reason="dual_late_scope";AcquireSRWLockShared(&g_pose_birth_lock);fresh0=g_pose_birth0;fresh1=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);
+ t_dual_parts_reason="dual_late_scope";AcquireSRWLockShared(&g_pose_birth_lock);fresh0=PoseObservedBirthLocked(0);fresh1=PoseObservedBirthLocked(1);ReleaseSRWLockShared(&g_pose_birth_lock);
  if(fresh0.serial!=born0||fresh1.serial!=born1||!birth::Current(fresh0,birth0.identity)||!birth::Current(fresh1,birth1.identity)||
  !dual_parts::BirthsCurrent(afterPair,fresh0,fresh1,born0,born1)||static_cast<std::uint32_t>(g_window_seq)!=seq||partner_defer::InBatch()||
  !g_pose_gate.OwnsRead(tid,t_readers.tickets[ticket->slot])||t_readers.serial[ticket->slot]!=ticket->serial||
@@ -535,7 +541,7 @@ bool PoseBefore(const pi::Arm& a,const Save& save,const pi::Injection& j,pi::Con
  return accepted&&!g_pose_fault;
 }
 bool PoseCarryBirth0Current(const cp::Pair& pair,bool bind=false) noexcept {
- AcquireSRWLockShared(&g_pose_birth_lock);const auto saved=g_pose_birth0;ReleaseSRWLockShared(&g_pose_birth_lock);
+ AcquireSRWLockShared(&g_pose_birth_lock);const auto saved=PoseObservedBirthLocked(0);ReleaseSRWLockShared(&g_pose_birth_lock);
  const auto& b=pair.body[0];const bool current=birth::Current(saved,{pair.player,b.block,b.state,b.cs,b.entry});
  if(current&&bind)g_pose_carry_birth0=saved.serial;return current&&(bind||saved.serial==g_pose_carry_birth0);
 }
@@ -812,16 +818,37 @@ __declspec(noinline) void PoseCameraFrame(void* object,std::uint32_t incomingBod
   scope.thread=GetCurrentThreadId();scope.ownerThread=g_pose_thread;scope.sequence=static_cast<std::uint32_t>(g_window_seq);
   scope.contextSequence=t_pose.context.sequence;scope.birthSerial=t_pose.context.birthSerial;
   pcam::SenderWitness source{};const char* stage=matched?"camera_selected_scope":"camera_local_view";
-  const bool filtered=matched&&pcam::SelectedReplica(reader,scope,g_base,caller,incomingBody,t_pose.context.player,t_pose.context.block,
+  const bool normalFiltered=matched&&pcam::SelectedReplica(reader,scope,g_base,caller,incomingBody,t_pose.context.player,t_pose.context.block,
       reinterpret_cast<std::uintptr_t>(object),senderPrimary,source,&stage);
+  bool footFiltered=false;
+  if(!normalFiltered&&matched&&witness.mode==4&&g_pose_vehicle_foot_camera_test){
+   // An exact negative leaf filter. Do not skip the native job, manufacture
+   // execution health, admit a camera method, or borrow a retained guard lease.
+   auto sample=[&]()noexcept {
+    vfoot::Scope s{};s.camera=scope;s.enabled=g_pose_vehicle_foot_camera_test;
+    s.exactNative=!g_pose_bindings.enabled&&g_pose_installed&&g_pose_original_view.load(std::memory_order_acquire)&&
+       g_pose_vehicle_foot_camera_reader&&g_pose_vehicle_foot_camera_reader==g_pose_vehicle_bindings.readOriginal;
+    s.held=g_pose_held!=0||g_pose_owners.held!=0;s.pending=g_pose_clear!=0||g_pose_owners.pending!=0;
+    s.retained=g_pose_vehicle_bound;s.stopping=g_shutdown!=0;s.camera.owned=PoseOwned();
+    s.camera.birthCurrent=PoseContextBirthCurrent(t_pose.context);s.camera.fault=g_pose_fault!=0;
+    s.camera.sequence=static_cast<std::uint32_t>(g_window_seq);s.camera.contextSequence=t_pose.context.sequence;
+    s.camera.sameLease=t_pose.context.generation==g_pose_generation&&t_pose.context.sceneEpoch==g_pose_epoch&&
+        t_pose.context.thread==g_pose_thread&&t_pose.context.birthSerial==g_pose_bound_birth;
+    return s;
+   };
+   vfoot::Receipt foot{};footFiltered=vfoot::Filter(reader,sample,g_base,caller,incomingBody,t_pose.context.player,
+      t_pose.context.block,reinterpret_cast<std::uintptr_t>(object),senderPrimary,foot,&stage);
+  }
+  const bool filtered=normalFiltered||footFiltered;
   InterlockedExchange(&g_pose_cam_sender,filtered?1:0);
   const LONG filteredCall=filtered?InterlockedIncrement(&g_pose_cam_filtered):0;
+  const LONG footFilteredCall=footFiltered?InterlockedIncrement(&g_pose_cam_vehicle_foot_filtered):0;
   const LONG refusedCall=filtered?0:InterlockedIncrement(&g_pose_cam_refused);
-  if(((filtered&&filteredCall==1)||(!filtered&&refusedCall==1))&&g_log){
+  if(((filtered&&filteredCall==1)||(footFiltered&&footFilteredCall==1)||(!filtered&&refusedCall==1))&&g_log){
    char line[384]{};
    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
       "pose_camera=%s; caller_rva=0x%08x; typed=%u; real=%u; selected=%u; target380=%u; selected384=%u; mode20c=%u; sequence=%u; odd=%u; consumer=%u; body_known=%u; incoming_body=%u; sender=%u; stage=%s\r\n",
-      filtered?"selected_replica_filtered":"owned_refusal",within?static_cast<unsigned>(caller-g_base):0u,matched?1u:0u,
+      footFiltered?"vehicle_foot_filtered":filtered?"selected_replica_filtered":"owned_refusal",within?static_cast<unsigned>(caller-g_base):0u,matched?1u:0u,
       witness.realLocal,witness.selected,witness.target,witness.targetSelected,witness.mode,
       static_cast<unsigned>(g_window_seq),static_cast<unsigned>(g_window_seq)&1u,
       static_cast<unsigned>(t_pose.context.consumer),indexed.known?1u:0u,indexed.body,filtered?1u:0u,stage)))g_log(line);
@@ -995,7 +1022,7 @@ void PoseTeardownDiagnostic(std::uintptr_t object,unsigned kind,std::uint32_t ho
 }
 bool PoseDestroyRefused(std::uintptr_t object,unsigned kind,std::uint32_t hook,std::uintptr_t caller,std::uint32_t argument=UINT32_MAX,std::uint32_t auxiliary=UINT32_MAX) noexcept {
  birth::Receipt localBirth{},partnerBirth{};
- if(PoseRequired()&&g_pose_held){AcquireSRWLockShared(&g_pose_birth_lock);localBirth=g_pose_birth0;partnerBirth=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);}
+ if(PoseRequired()&&g_pose_held){AcquireSRWLockShared(&g_pose_birth_lock);localBirth=PoseObservedBirthLocked(0);partnerBirth=PoseObservedBirthLocked(1);ReleaseSRWLockShared(&g_pose_birth_lock);}
  PoseInvalidateBirth(object,kind);
  if(!PoseRequired()||!g_pose_held)return false;
  const bool own=(kind==0?object==g_pose_block:kind==1?object==g_pose_cs:kind==2?object==g_pose_entry:object==g_pose_go)||
@@ -1009,13 +1036,14 @@ void PoseInvalidateWholeBirth(std::uintptr_t go) noexcept {
  AcquireSRWLockExclusive(&g_pose_birth_lock);
  whole_player_lifetime_checks::InvalidateWhole(g_pose_birth,g_pose_birth_epoch,go);
  if(g_pose_birth0.ready&&g_pose_birth0.identity.player>=0x20&&g_pose_birth0.identity.player-0x20==go)g_pose_birth0={};
+ PoseInvalidateActivationLocked(go,4);
  ReleaseSRWLockExclusive(&g_pose_birth_lock);
 }
 bool PoseWholePlayerRefused(std::uintptr_t go,std::uint32_t hook,std::uintptr_t caller,std::uint32_t argument) noexcept {
  // The shared reader must already be held: otherwise a writer could publish a
  // held lease between an early test and the original's first mutation.
  const bool retained=PoseRequired()&&g_pose_held&&go==g_pose_go;
- birth::Receipt localBirth{},partnerBirth{};if(retained){AcquireSRWLockShared(&g_pose_birth_lock);localBirth=g_pose_birth0;partnerBirth=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);}
+ birth::Receipt localBirth{},partnerBirth{};if(retained){AcquireSRWLockShared(&g_pose_birth_lock);localBirth=PoseObservedBirthLocked(0);partnerBirth=PoseObservedBirthLocked(1);ReleaseSRWLockShared(&g_pose_birth_lock);}
  PoseInvalidateWholeBirth(go);
  if(retained){PoseTeardownDiagnostic(go,3,hook,caller,argument,UINT32_MAX,localBirth,partnerBirth);PoseFail("pose_live_whole_player_teardown");return true;}
  return false;
@@ -1079,7 +1107,7 @@ __declspec(noinline) void PoseApplyParts(void* object) noexcept {
     if(admitted){
      // No native dirty-bit clearing/shadow or birth invalidation. Exact current
      // target branch does no work; original preserves all local0 processing.
-     SetLastError(incoming);g_pose_parts(object);outgoing=GetLastError();
+     SetLastError(incoming);PoseActivationPartsOriginal(object);outgoing=GetLastError();
      if(!PosePartsContext(after)||!parts_policy::Same(pre,after)||!g_pose_parts_validator())
       PoseFail("pose_parts_late_target_changed");
      SetLastError(outgoing); // preserve the native original through proof reads
@@ -1098,7 +1126,7 @@ __declspec(noinline) void PoseApplyParts(void* object) noexcept {
      }
     }
     if(admitted){
-     SetLastError(incoming);g_pose_parts(object);outgoing=GetLastError();
+     SetLastError(incoming);PoseActivationPartsOriginal(object);outgoing=GetLastError();
      const bool current=PoseDualPartsContext(after);
      const bool same=current&&SameNativePoseDualPartsPoll(pre,after);
      const bool module=same&&g_pose_parts_validator();
@@ -1119,12 +1147,12 @@ __declspec(noinline) void PoseApplyParts(void* object) noexcept {
     if(admitted){
      // Exact both-body no-work and local0 desired/current profile are freshly
      // proved. Original native processing runs with no dirty-bit shadow.
-     SetLastError(incoming);g_pose_parts(object);outgoing=GetLastError();
+     SetLastError(incoming);PoseActivationPartsOriginal(object);outgoing=GetLastError();
      if(!PoseVehiclePartsContext(after)||!vehicle_core::SameParts(pre,after))PoseFail("pose_vehicle_parts_late_changed");
      SetLastError(outgoing);
     }else PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX);
    }
-  }else if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX))g_pose_parts(object);
+  }else if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX))PoseActivationPartsOriginal(object);
   outgoing=GetLastError();
  }
  __finally {t_parts={};PoseExitShared(read);SetLastError(outgoing);}
@@ -1271,7 +1299,18 @@ __declspec(noinline) void* PoseConstructBlock(void* object,void* descriptor,void
   PoseExitShared(read);SetLastError(outgoing);
  }return result;
 }
+#ifdef MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER
+bool PoseActivationHooksLive() noexcept {
+ if(!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire))return false;
+ for(unsigned n=0;n<groups::activationCount;++n){const auto& p=g_pose_patches[groups::activationFirst+n];
+  if(p.rva!=groups::expected[groups::activationFirst+n]||!PosePatchOwned(p))return false;
+ }return g_pose_activate&&g_pose_activation_factory;
+}
+#endif
 bool PosePinnedPrefix(std::uintptr_t rva,unsigned char (&out)[5]) noexcept {
+#ifdef MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER
+ for(const auto& s:native_pose_activation_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
+#endif
  for(const auto& site:carry_native_queue_contract::sites)if(site.rva==rva&&site.size>=5){std::memcpy(out,site.bytes,5);return true;}
  for(const auto& site:carry_queue_lifetime_contract::sites)if(site.rva==rva&&site.size>=5){std::memcpy(out,site.bytes,5);return true;}
  for(const auto& site:carry_op0_origin_contract::sites)if(site.rva==rva&&site.size>=5){std::memcpy(out,site.bytes,5);return true;}
@@ -1295,6 +1334,9 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
  std::uintptr_t currentPlayer=0;
  if(!PoseRead(g_base+c::player_slot_rva,currentPlayer)||currentPlayer){g_pose_reason="pose_install_requires_player_absent";return false;}
  auto reader=PoseOriginalCode;std::uintptr_t mismatch=0;
+#ifdef MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER
+ if(!activation::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_activation_full_code_or_slot";return false;}
+#endif
  if(span<0xa01d000||!PoseCarryOriginCode(mismatch)){g_pose_reason="pose_carry_origin_full_code";return false;}
  if(!PoseQueueCode(mismatch)){g_pose_reason="pose_carry_q_lifetime_code";return false;}
  if(!PoseQueuedCode(mismatch)){g_pose_reason="pose_carry_op1_full_code";return false;}
@@ -1391,11 +1433,16 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
   {0xfe0260,reinterpret_cast<void*>(&PoseQueueRelease),reinterpret_cast<void**>(&g_pose_queue_release)},
   {0xfdffc0,reinterpret_cast<void*>(&PoseQueueFree),reinterpret_cast<void**>(&g_pose_queue_free)},
   {0x5c4910,reinterpret_cast<void*>(&PoseQueueAllocatorFree),reinterpret_cast<void**>(&g_pose_queue_allocator_free)},
-  {0xfe00d0,reinterpret_cast<void*>(&PoseQueueSetter),reinterpret_cast<void**>(&g_pose_queue_setter)}};
+  {0xfe00d0,reinterpret_cast<void*>(&PoseQueueSetter),reinterpret_cast<void**>(&g_pose_queue_setter)}
+#ifdef MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER
+  ,{0x9cb200,reinterpret_cast<void*>(&PoseActivateBody),reinterpret_cast<void**>(&g_pose_activate)}
+  ,{0xb6c8f0,reinterpret_cast<void*>(&PoseActivationFactory),reinterpret_cast<void**>(&g_pose_activation_factory)}
+#endif
+ };
 
  constexpr auto hookCount=sizeof(hooks)/sizeof(hooks[0]);
  static_assert(hookCount==sizeof(g_pose_patches)/sizeof(g_pose_patches[0]),"every actual hook needs a prefix ownership receipt");
- static_assert(hookCount==groups::total,"preserve13core+7vars+8provider+8route+2origin+8queue+1setter");
+ static_assert(hookCount==groups::total,"preserve existing groups plus optional activation hooks");
  if(!groups::ValidateOrder([&](std::size_t n) noexcept {return hooks[n].rva;}))return false;
  if(!route::InitializeHookReceipts(hooks,g_pose_patches,
   [](std::uintptr_t rva,unsigned char (&bytes)[5]) noexcept {return PosePinnedPrefix(rva,bytes);},

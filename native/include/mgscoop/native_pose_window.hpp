@@ -32,6 +32,10 @@ const char* InstallNativePoseWindow(const void* image,std::size_t span,bool full
 // Worker/private/copied-save only. True opts into mandatory body1 windows.
 // Off cannot discard a live test/feature requirement: restart owned lab process.
 bool SetNativePoseWindowTest(bool enabled) noexcept;
+// Separate private-worker negative camera leaf filter, OFF by default. Set only
+// before mandatory windows/purposes, after the genuine vehicle code provider.
+// It never grants a native camera call or counts an unexecuted job as healthy.
+bool SetNativePoseVehicleFootCameraTest(bool enabled) noexcept;
 // Actual bytes first; overlay only verified owned entry-JMP bytes from frozen
 // contracts. Patch/relay drift returns false; all other bytes stay actual.
 bool ReadNativePoseOriginalCode(std::uintptr_t at,void* out,std::size_t size) noexcept;
@@ -91,6 +95,16 @@ struct NativePoseDualPartsContext;
 // This callback grants no writer, native-call, or lease-release authority.
 using NativePoseDualReadObserver=void(*)(const NativePoseDualPartsContext&) noexcept;
 bool RegisterNativePoseDualReadObserver(NativePoseDualReadObserver) noexcept;
+// Cold diagnostics only; origin0 is 9C3CD0 constructor, origin1 is an actual
+// completed 9CB200 actor activation. Ready alone grants no native window.
+struct NativePoseActivationStatus {
+ bool compiled=false,hooks=false,ready[2]{},pending[2]{};
+ unsigned origin[2]{};std::uint64_t serial[2]{};
+ std::uint32_t entered=0,factory=0,staged=0,published=0,noop=0,refused=0;
+ std::uint32_t invalidationEntries=0,invalidated=0,abnormal=0;
+ std::uint32_t lastBody=UINT32_MAX,lastCallerRva=0,lastStage=0;
+};
+NativePoseActivationStatus NativePoseActivationStatusRead() noexcept;
 NativePoseStatus NativePoseWindowStatus() noexcept;
 namespace detail {
 struct NativePoseTestBindings {bool enabled=false;void(*refuse)(const char*) noexcept=nullptr;};

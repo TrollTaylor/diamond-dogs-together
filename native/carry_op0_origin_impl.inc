@@ -49,7 +49,7 @@ bool PoseCarryNativeRest(const cp::Pair& pair)noexcept{
  return true;
 }
 bool PoseOp0BothBirthsCurrent(const cp::Pair& pair)noexcept{
- birth::Receipt current0{},current1{};AcquireSRWLockShared(&g_pose_birth_lock);current0=g_pose_birth0;current1=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);
+ birth::Receipt current0{},current1{};AcquireSRWLockShared(&g_pose_birth_lock);current0=PoseObservedBirthLocked(0);current1=PoseObservedBirthLocked(1);ReleaseSRWLockShared(&g_pose_birth_lock);
  return dual_parts::BirthsCurrent(pair,current0,current1,g_pose_carry_birth0,g_pose_bound_birth);
 }
 bool PoseSubmittedCarryQuery(NativePoseSubmittedCarryContext& out)noexcept{
@@ -83,6 +83,48 @@ bool PoseSubmittedCarryQuery(NativePoseSubmittedCarryContext& out)noexcept{
  out.carrySerial=g_pose_owners.carrySerial;out.sharedSerial=t_carry_op0.ticket->serial;out.submitNonce=g_pose_force_a_submit_nonce;
  out.submittedAt=g_pose_force_a_submitted_at;out.sleepHeld=true;out.carryHeld=true;out.submittedSleep=g_pose_force_a_sleep;return true;
 }
+// Insert inside actual core anonymous namespace BEFORE PoseCarryDispatch,
+// after existing PoseCarrySharedTicket/ReadArm/participants/birth helpers.
+// Observes its REAL shared reader; never substitutes a Lua or writer scope.
+std::atomic<const NativeHorseFlowCallbacks*> g_pose_horse_flow_callbacks{nullptr};
+NativeHorseFlowCallbacks g_pose_horse_flow_storage{};
+SRWLOCK g_pose_horse_flow_registration=SRWLOCK_INIT;
+bool PoseHorseFlowOwner(const PoseSharedLease& ticket,NativeHorseFlowOwner& out) noexcept {
+    out={};const DWORD incoming=GetLastError();
+    const auto finish=[&](bool ok) noexcept {SetLastError(incoming);return ok;};
+    const auto sequence=static_cast<std::uint32_t>(g_window_seq);const auto thread=GetCurrentThreadId();
+    if(g_pose_bindings.enabled||!PoseWorker()||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+       g_pose_fault||g_faulted||g_shutdown||PoseOwned()||(sequence&1u)||partner_defer::InBatch()||
+       !PoseCarrySharedTicket(&ticket)||!NativePoseWholePlayerLifetimeLive()||!PoseParticipantsLive()||!PoseRoutePatchesLive())return finish(false);
+    pi::Arm arm{},lateArm{};cp::Pair first{},last{};auto reader=PoseReader;
+    if(!ReadArm(arm)||!arm.enabled||!arm.native||arm.holdlog||!arm.gen||!arm.rates_epoch||
+       !cp::ReadPair(reader,g_base,arm.P,first)||first.go!=arm.go||first.body[1].block!=arm.blk1||first.body[1].state!=arm.ps1)return finish(false);
+    birth::Receipt births[2]{},lateBirths[2]{};std::uint64_t lifecycle=0,lateLifecycle=0;
+    AcquireSRWLockShared(&g_pose_birth_lock);births[0]=PoseObservedBirthLocked(0);births[1]=PoseObservedBirthLocked(1);lifecycle=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+    if(!lifecycle||!native_pose_birth_census::Current(first,births[0],births[1])||
+       !ReadArm(lateArm)||lateArm.enabled!=arm.enabled||lateArm.native!=arm.native||lateArm.holdlog!=arm.holdlog||
+       lateArm.gen!=arm.gen||lateArm.rates_epoch!=arm.rates_epoch||lateArm.P!=arm.P||lateArm.go!=arm.go||
+       lateArm.blk1!=arm.blk1||lateArm.ps1!=arm.ps1||!cp::ReadPair(reader,g_base,arm.P,last)||!cp::Same(first,last)||
+       !cp::CoherentCallbacks(first.body[0],last.body[0])||!cp::CoherentCallbacks(first.body[1],last.body[1]))return finish(false);
+    AcquireSRWLockShared(&g_pose_birth_lock);lateBirths[0]=PoseObservedBirthLocked(0);lateBirths[1]=PoseObservedBirthLocked(1);lateLifecycle=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+    if(lifecycle!=lateLifecycle||births[0].serial!=lateBirths[0].serial||births[1].serial!=lateBirths[1].serial||
+       !native_pose_birth_census::Current(last,lateBirths[0],lateBirths[1])||sequence!=static_cast<std::uint32_t>(g_window_seq)||
+       partner_defer::InBatch()||!PoseCarrySharedTicket(&ticket)||g_pose_fault||g_faulted||g_shutdown)return finish(false);
+    auto& b=out.births;b.image=g_base;b.player=first.player;b.data=first.data;b.state=first.scriptState;
+    b.lifecycle=lifecycle;b.generation=arm.gen;b.sceneEpoch=arm.rates_epoch;b.thread=thread;b.sequence=sequence;
+    for(unsigned k=0;k<2;++k){b.birth[k]=births[k].serial;b.block[k]=first.body[k].block;b.ps[k]=first.body[k].state;
+        b.cs[k]=first.body[k].cs;b.entry[k]=first.body[k].entry;out.carrierRecord[k]=first.body[k].carrierRecords;out.recipientRecord[k]=first.body[k].recipientRecords;}
+    out.sharedSerial=ticket.serial;out.at=GetTickCount64();return finish(true);
+}
+bool PoseHorseFlowPeek(std::uintptr_t caller,std::uint32_t target,void* message) noexcept {
+    // Cheap filter first: no heavy current-pair sampler for unrelated enemy,
+    // scene, ordinary Player or Vehicle messages passing through this entry.
+    if((target>>9)!=13||(caller!=g_base+0x1136f57&&caller!=g_base+0x113a814))return false;
+    std::uint64_t hash=0;std::uint32_t kind=0;const auto at=reinterpret_cast<std::uintptr_t>(message);
+    return PoseRead(at,hash)&&hash==0x5167c60042b5ull&&PoseRead(at+12,kind)&&
+        (caller==g_base+0x1136f57?kind==1:kind==2);
+}
+
 std::int32_t* PoseCarryDispatch(void* service,std::int32_t* result,std::uint32_t actual,void* message)noexcept{
  const DWORD incoming=GetLastError();DWORD outgoing=incoming;auto* returned=result;
  const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
@@ -110,7 +152,17 @@ std::int32_t* PoseCarryDispatch(void* service,std::int32_t* result,std::uint32_t
   else{
    if(route==cop::Route::origin)t_carry_source={&read,reinterpret_cast<std::uintptr_t>(service),caller,
     reinterpret_cast<std::uintptr_t>(message),reinterpret_cast<std::uintptr_t>(result),actual};
+   const auto* horseFlow=g_pose_horse_flow_callbacks.load(std::memory_order_acquire);
+   NativeHorseFlowOwner horseBefore{};const NativeHorseFlowCall horseCall{caller,reinterpret_cast<std::uintptr_t>(service),
+    reinterpret_cast<std::uintptr_t>(message),reinterpret_cast<std::uintptr_t>(result),0,actual};
+   const bool horseCandidate=horseFlow&&horseFlow->before&&horseFlow->after&&horseFlow->refused&&PoseHorseFlowPeek(caller,actual,message);
+   const bool horseObserved=horseCandidate&&PoseHorseFlowOwner(read,horseBefore);
+   if(horseObserved)horseFlow->before(horseBefore,horseCall);
+   else if(horseCandidate)horseFlow->refused(horseCall);
    SetLastError(incoming);returned=g_pose_carry_dispatch(service,result,actual,message);outgoing=GetLastError();
+   if(horseObserved){NativeHorseFlowOwner horseAfter{};auto completed=horseCall;completed.returned=reinterpret_cast<std::uintptr_t>(returned);
+    const bool horseCurrent=PoseHorseFlowOwner(read,horseAfter);horseFlow->after(horseCurrent?&horseAfter:nullptr,completed);SetLastError(outgoing);}
+
    if(route==cop::Route::origin&&returned!=result)PoseFail("pose_carry_dispatch_result");
   }
   }

@@ -6,10 +6,13 @@
 #include <cstdio>
 #include <cstring>
 #include "vehicle_native_protection.hpp"
+#include "sleep_unique_bind_runtime.hpp"
+#include "qualified_sleep_lookup_runtime.hpp"
 #include "coop_vehicle_mirror.hpp"
 #include "mgscoop/coop_carry.hpp"
 #include "vehicle_native_protection_read.hpp"
 #include "vehicle_native_protection_contract.hpp"
+#include "vehicle_native_protection_gate_read.hpp"
 #include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/worker_scenario.hpp"
 #include "MinHook.h"
@@ -72,12 +75,10 @@ bool CoreHeadsLive()noexcept {
  return true;
 }
 bool Gate()noexcept {
- unsigned char bytes[256]{};
- for(const auto& s:c::sites){if(s.rva>g_span||s.size>g_span-s.rva)return false;
-  for(std::size_t off=0;off<s.size;){const auto n=s.size-off<sizeof(bytes)?s.size-off:sizeof(bytes);
-   if(!ReadOriginal(g_image+s.rva+off,bytes,n)||std::memcmp(bytes,s.bytes+off,n))return false;off+=n;}}
- for(const auto& slot:c::slots){Word target=0;if(!Bytes(g_image+slot.rva,&target,8)||target!=g_image+slot.target)return false;}
- return true;
+ auto original=ReadOriginal;auto raw=Bytes;
+ // Full pinned spans are still checked on every invocation; one bounded
+ // read per small function avoids repeatedly rebuilding the original view.
+ return vehicle_native_protection_gate_read::Gate(original,raw,g_image,g_span);
 }
 void Fault(const char* why)noexcept {g_reason.store(why);g_refused.fetch_add(1);if(g_bindings.fault)g_bindings.fault(why);}
 struct Domain {ph::PoseSharedLease shared{};ph::NativePoseVehicleGuardBinding binding{};bool entered=false,guard=false;};
@@ -413,6 +414,8 @@ bool ReadOriginal(Word at,void* out,std::size_t size)noexcept {
    if(at<end&&begin<at+size){if(!HookLive(h)){okay=false;break;}const auto lo=at>begin?at:begin,hi=at+size<end?at+size:end;
     std::memcpy(bytes+(lo-at),h.original+(lo-begin),hi-lo);}}}
  if(okay)okay=coop_vehicle_mirror::OverlayOriginal(at,out,size);
+ if(okay)okay=sleep_unique_bind_runtime::OverlayOriginal(at,out,size);
+ if(okay)okay=qualified_sleep_lookup_runtime::OverlayOriginal(at,out,size);
  SetLastError(error);return okay;
 }
 bool Install(const void* image,std::size_t span,bool accepted,const Bindings& bindings)noexcept {
