@@ -7,6 +7,7 @@
 #define DIRECTINPUT_VERSION 0x0800
 #include <windows.h>
 #include <d3d11.h>
+#include <d3dcompiler.h>
 #include <dxgi.h>
 #include <dinput.h>
 #include <xinput.h>
@@ -947,6 +948,7 @@ bool InputHooks() noexcept {
 }
 
 template<class T> void Release(T*& value) noexcept { if (value) value->Release(); value = nullptr; }
+void ReleaseSleepFilter() noexcept;
 bool CreateTarget(IDXGISwapChain* chain) noexcept {
     ID3D11Texture2D* buffer = nullptr;
     if (FAILED(chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&buffer)))) return false;
@@ -967,7 +969,7 @@ void Cleanup() noexcept {
         ImGui::DestroyContext(gui);
     }
     gui = nullptr; initialized = false; swapchain = nullptr;
-    Release(target); Release(context); Release(device);
+    ReleaseSleepFilter(); Release(target); Release(context); Release(device);
     AcquireSRWLockExclusive(&message_lock); message_count = 0; ReleaseSRWLockExclusive(&message_lock);
 }
 // The rescue prompt's face: Windows' DIN-style Bahnschrift (closest to the
@@ -1252,6 +1254,118 @@ float DrawActionGlyph(ImDrawList* list, ImFont* font, ImVec2 c, float r, bool pa
     }
     return r;
 }
+// The sleeper's view: the finished game frame redrawn as dark greyscale with
+// a soft vignette, from an ImGui draw callback so the backend restores its
+// state and the HUD that follows stays in colour.
+ID3D11Texture2D* sleep_copy = nullptr;
+ID3D11ShaderResourceView* sleep_view = nullptr;
+ID3D11VertexShader* sleep_vs = nullptr;
+ID3D11PixelShader* sleep_ps[2]{};
+bool sleep_refused = false, sleep_logged = false;
+// An sRGB frame reads and writes linear light; the SRGB variant darkens in
+// display space so the result looks equally dark on either format.
+constexpr char kSleepShader[] = R"(
+Texture2D frame : register(t0);
+float4 vs(uint id : SV_VertexID) : SV_Position {
+    float2 p = float2((id << 1) & 2, id & 2);
+    return float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
+}
+float4 ps(float4 pos : SV_Position) : SV_Target {
+    uint w, h; frame.GetDimensions(w, h);
+    float3 c = frame.Load(int3(pos.xy, 0)).rgb;
+#if SRGB
+    c = pow(c, 1.0 / 2.2);
+#endif
+    float grey = dot(c, float3(0.299, 0.587, 0.114));
+    float2 d = pos.xy / float2(w, h) - 0.5;
+    float edge = saturate(1.0 - dot(d, d) * 1.6);
+    float v = grey * 0.5 * (0.55 + 0.45 * edge);
+#if SRGB
+    v = pow(v, 2.2);
+#endif
+    return float4(v.xxx, 1.0);
+}
+)";
+bool SrgbFormat(DXGI_FORMAT format) noexcept {
+    return format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+}
+void ReleaseSleepCopy() noexcept { Release(sleep_view); Release(sleep_copy); }
+void ReleaseSleepFilter() noexcept {
+    ReleaseSleepCopy(); Release(sleep_vs); Release(sleep_ps[0]); Release(sleep_ps[1]); sleep_refused = sleep_logged = false;
+}
+bool SleepFilterReady() noexcept {
+    if (sleep_refused || !device) return false;
+    if (sleep_vs && sleep_ps[0] && sleep_ps[1]) return true;
+    const D3D_SHADER_MACRO linear[] = {{"SRGB", "0"}, {nullptr, nullptr}}, srgb[] = {{"SRGB", "1"}, {nullptr, nullptr}};
+    ID3DBlob* vs = nullptr; ID3DBlob* ps[2]{};
+    const bool ok =
+        SUCCEEDED(D3DCompile(kSleepShader, sizeof(kSleepShader) - 1, "sleep_view", linear, nullptr, "vs", "vs_4_0", 0, 0, &vs, nullptr)) &&
+        SUCCEEDED(D3DCompile(kSleepShader, sizeof(kSleepShader) - 1, "sleep_view", linear, nullptr, "ps", "ps_4_0", 0, 0, &ps[0], nullptr)) &&
+        SUCCEEDED(D3DCompile(kSleepShader, sizeof(kSleepShader) - 1, "sleep_view", srgb, nullptr, "ps", "ps_4_0", 0, 0, &ps[1], nullptr)) &&
+        SUCCEEDED(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &sleep_vs)) &&
+        SUCCEEDED(device->CreatePixelShader(ps[0]->GetBufferPointer(), ps[0]->GetBufferSize(), nullptr, &sleep_ps[0])) &&
+        SUCCEEDED(device->CreatePixelShader(ps[1]->GetBufferPointer(), ps[1]->GetBufferSize(), nullptr, &sleep_ps[1]));
+    Release(vs); Release(ps[0]); Release(ps[1]);
+    if (!ok) {
+        Release(sleep_vs); Release(sleep_ps[0]); Release(sleep_ps[1]); sleep_refused = true;
+        Log("overlay=sleep_view_refused; fallback=dark_wash\r\n");
+    }
+    return ok;
+}
+void SleepFilter(const ImDrawList*, const ImDrawCmd*) noexcept {
+    if (!target || !context || !sleep_vs || !sleep_ps[0] || !sleep_ps[1]) return;
+    ID3D11Resource* resource = nullptr; ID3D11Texture2D* back = nullptr;
+    target->GetResource(&resource);
+    if (!resource || FAILED(resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back)))) { Release(resource); return; }
+    Release(resource);
+    D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
+    if (sleep_copy) {
+        D3D11_TEXTURE2D_DESC have{}; sleep_copy->GetDesc(&have);
+        if (have.Width != desc.Width || have.Height != desc.Height || have.Format != desc.Format) ReleaseSleepCopy();
+    }
+    if (!sleep_copy) {
+        D3D11_TEXTURE2D_DESC copy = desc;
+        copy.MipLevels = copy.ArraySize = 1; copy.SampleDesc = {1, 0};
+        copy.Usage = D3D11_USAGE_DEFAULT; copy.BindFlags = D3D11_BIND_SHADER_RESOURCE; copy.CPUAccessFlags = copy.MiscFlags = 0;
+        if (FAILED(device->CreateTexture2D(&copy, nullptr, &sleep_copy)) || FAILED(device->CreateShaderResourceView(sleep_copy, nullptr, &sleep_view))) {
+            ReleaseSleepCopy(); sleep_refused = true; back->Release();
+            Log("overlay=sleep_view_refused; reason=frame_copy; fallback=dark_wash\r\n");
+            return;
+        }
+    }
+    if (desc.SampleDesc.Count > 1) context->ResolveSubresource(sleep_copy, 0, back, 0, desc.Format);
+    else context->CopyResource(sleep_copy, back);
+    back->Release();
+    const bool srgb = SrgbFormat(desc.Format);
+    if (!sleep_logged) {
+        sleep_logged = true;
+        char line[128]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "overlay=sleep_view; format=%u; srgb=%u; samples=%u\r\n",
+            static_cast<unsigned>(desc.Format), srgb ? 1u : 0u, desc.SampleDesc.Count))) Log(line);
+    }
+    const D3D11_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(desc.Width), static_cast<float>(desc.Height), 0.0f, 1.0f};
+    const D3D11_RECT all{0, 0, static_cast<LONG>(desc.Width), static_cast<LONG>(desc.Height)};
+    context->RSSetViewports(1, &viewport); context->RSSetScissorRects(1, &all);
+    context->IASetInputLayout(nullptr); context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->VSSetShader(sleep_vs, nullptr, 0); context->PSSetShader(sleep_ps[srgb ? 1 : 0], nullptr, 0);
+    context->PSSetShaderResources(0, 1, &sleep_view);
+    context->Draw(3, 0);
+    ID3D11ShaderResourceView* none = nullptr;
+    context->PSSetShaderResources(0, 1, &none);
+}
+// Queued first in the frame, so the name tag and HUD draw over it in colour.
+void DrawSleeperView(const HudFrame& f, const ImVec2& display) noexcept {
+    using coop_hud::Rescue;
+    const auto& p = f.rescue;
+    if (!f.show_rescue || !p.sleeping || (p.state != Rescue::self_asleep && p.state != Rescue::carried)) return;
+    ImDrawList* list = ImGui::GetBackgroundDrawList();
+    if (SleepFilterReady()) {
+        list->AddCallback(&SleepFilter, nullptr);
+        list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+    } else {
+        list->AddRectFilled(ImVec2(0, 0), display, IM_COL32(8, 8, 10, 170));
+    }
+}
 // The rescue prompt: anchored under the teammate's name tag while it is on
 // screen, else lower center. A status pill with the distance when far, the
 // Action button with a radial hold ring when in range, and a short status
@@ -1264,9 +1378,8 @@ void DrawRescuePrompt(const HudFrame& f, ImDrawList* list, const ImVec2& display
     const char* word = p.sleeping ? "ASLEEP" : "WOUNDED";
     const float mainSize = 23.0f * scale, subSize = 16.0f * scale;
     if (p.state == Rescue::self_asleep || p.state == Rescue::self_wounded || p.state == Rescue::carried) {
-        // Asleep: the world stays visible (coop_carry blocks the stock
-        // blackout presentation); a grey wash marks it as greyed out.
-        if (p.sleeping) list->AddRectFilled(ImVec2(0, 0), display, IM_COL32(92, 92, 98, 125));
+        // Asleep, the world stays visible (coop_carry blocks the stock
+        // blackout presentation) under DrawSleeperView's dark greyscale.
         const char* head = p.state == Rescue::carried ? "CARRIED" : word;
         const char* tail = p.state == Rescue::carried ? "Your teammate is carrying you" :
             p.sleeping ? "Your teammate can wake you or carry you" : "Crawl to cover. Your teammate can revive you";
@@ -1422,6 +1535,7 @@ void Draw(UINT bb_w, UINT bb_h) noexcept {
     const bool sized = bb_w && bb_h;
     if (!now_open && sized) io.DisplaySize = ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h));
     ImGui::NewFrame();
+    if (hud) DrawSleeperView(hud_frame, sized ? ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h)) : io.DisplaySize);
     if (tag) DrawNametagLayer(tag_frame, tag_note, sized ? ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h)) : io.DisplaySize);
     if (hud) DrawHudLayer(hud_frame, sized ? ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h)) : io.DisplaySize);
     if (!now_open && !tag && !hud) { ImGui::EndFrame(); return; }
@@ -1449,7 +1563,7 @@ void WorkerRelease() noexcept {
         ImGui::DestroyContext(gui);
     }
     gui = nullptr; initialized = false; swapchain = nullptr; worker_clock = {};
-    Release(target); Release(context); Release(device);
+    ReleaseSleepFilter(); Release(target); Release(context); Release(device);
 }
 bool WorkerInitialize(IDXGISwapChain* chain) noexcept {
     DXGI_SWAP_CHAIN_DESC desc{};
@@ -1487,6 +1601,7 @@ void WorkerDraw(IDXGISwapChain* chain, bool menu, const nametag::Frame* tag_fram
     worker_clock = now;
     io.MouseDrawCursor = false;
     ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
+    if (hud) DrawSleeperView(*hud, io.DisplaySize);
     if (tag_frame) DrawNametagLayer(*tag_frame, tag_note, io.DisplaySize);
     if (hud) DrawHudLayer(*hud, io.DisplaySize);
     if (menu) DrawMenu();

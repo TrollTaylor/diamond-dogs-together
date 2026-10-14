@@ -382,6 +382,30 @@ int main() {
             Check(shot() && lit(ax - 220, height * 0.30f, ax + 220, height * 0.30f + 70, false) >= 40,
                   "the sleeping player sees a compact status above the stock icons");
             dump("rescue_self_asleep");
+            // Over a coloured world the sleeper's view turns dark greyscale with
+            // darker edges; the status drawn after it keeps its colour.
+            const float world[4] = {0.2f, 0.7f, 0.3f, 1.0f};
+            const auto shotOn = [&](const float* color) {
+                ctx->ClearRenderTargetView(bb_rtv, color);
+                ui::CaptureNextFrameForTest();
+                return SUCCEEDED(chain->Present(0, 0)) && ui::CapturedFrameForTest(rgba, width, height) && width && height;
+            };
+            const auto pixel = [&](float x, float y) {
+                return rgba + (static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)) * 4;
+            };
+            const auto grey = [](const unsigned char* px) {
+                const int lo = (std::min)(px[0], (std::min)(px[1], px[2])), hi = (std::max)(px[0], (std::max)(px[1], px[2]));
+                return hi - lo <= 6;
+            };
+            Check(shotOn(world), "sleeping frame over a coloured world");
+            const unsigned char* corner = pixel(8, 8);
+            const unsigned char* low = pixel(width * 0.5f, height * 0.9f);
+            Check(grey(corner) && grey(low), "the sleeper's world is greyscale");
+            Check(low[1] < 100 && corner[1] < low[1], "the sleeper's world is dark, darker at the edges");
+            Check(lit(ax - 220, height * 0.30f, ax + 220, height * 0.30f + 70, false) >= 40, "the sleeper's status stays bright over it");
+            dump("rescue_self_asleep_world");
+            publish(true, false, false, 0, 2, false);
+            Check(shotOn(world) && pixel(8, 8)[1] > pixel(8, 8)[0] + 60, "a healthy player's world keeps its colour");
             hud::Configure(hud::Mode::off, true);
             publish(true, true, true, 0, 2, false);
             Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 40,
