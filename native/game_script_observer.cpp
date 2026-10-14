@@ -4866,7 +4866,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 // configures the overlay layer before the overlay installs (nametag=ready|refused).
                 mgscoop::nametag_game::Install({base, span, Log, partner_on && partner_gate_ok, labc.role != mgscoop::LabRole::guest, &labc,
                     &mgscoop::GetCoopConfig(), SteamLocalPersonaName});
-                mgscoop::teammate_targeting::Install(game_base,game_span,Log);
+                mgscoop::teammate_targeting::Install(game_base,game_span,Log,mgscoop::worker_scenario::Compiled());
             }
             if (mgscoop::character::ReceiptsActive(host_create_enabled, client_enabled, offline_enabled)) {
                 // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.

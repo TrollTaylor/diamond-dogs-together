@@ -27,10 +27,13 @@ struct Classification {
     int category{};
 };
 struct ClassificationExpected {std::uintptr_t caller, ui_vtable, primary_vtable, p_vtable;};
-inline bool OwnedClassification(const Classification& s,const ClassificationExpected& e) noexcept {
+inline bool OwnedChain(const Classification& s,const ClassificationExpected& e) noexcept {
     return s.primary && s.ui==s.primary+0x20 && s.p && s.owner==s.p && s.p_ui==s.ui &&
-        s.caller==e.caller && s.ui_vtable==e.ui_vtable && s.primary_vtable==e.primary_vtable && s.p_vtable==e.p_vtable &&
+        s.ui_vtable==e.ui_vtable && s.primary_vtable==e.primary_vtable && s.p_vtable==e.p_vtable &&
         (s.flags&1) && !(s.flags&0x100) && s.count==2 && s.local==0 && s.ids[0]==0 && s.ids[1]==1;
+}
+inline bool OwnedClassification(const Classification& s,const ClassificationExpected& e) noexcept {
+    return s.caller==e.caller && OwnedChain(s,e);
 }
 inline bool OwnedTeammate(const Classification& s,const ClassificationExpected& e) noexcept {
     return OwnedClassification(s,e) && s.candidate==s.ids[1];
@@ -54,6 +57,15 @@ inline bool OwnedQuietHint(const QuietHint& q,const ClassificationExpected& e) n
 }
 inline bool SuppressQuietHint(const QuietHint& q,const ClassificationExpected& e,bool filter) noexcept {
     return filter && OwnedQuietHint(q,e);
+}
+// The shared UI prompt queues have no owner gate, so instance 1's own prompts
+// (the sleep struggle guide among them) reach the local HUD. Any request queued
+// from inside the validated instance-1 job is the partner's, whatever its caller.
+inline bool OwnedPartnerPrompt(const QuietHint& q,const ClassificationExpected& e) noexcept {
+    return q.armed && q.thread && q.thread==q.owner_thread && q.job_id==1 && OwnedChain(q.owner,e);
+}
+inline bool SuppressPartnerPrompt(const QuietHint& q,const ClassificationExpected& e,bool filter) noexcept {
+    return filter && OwnedPartnerPrompt(q,e);
 }
 struct CensusStamp {
     std::uint16_t hit{0xffff}, ray{0xffff};
