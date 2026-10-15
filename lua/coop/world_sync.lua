@@ -31,6 +31,12 @@ do
   function W.log(text)
     W.receipt(PRE .. "LOG_V1' -- " .. sub(gsub(tostring(text), "[^%w_=:,.;%-]", "_"), 1, 160))
   end
+  -- NOTE: a native on-screen note (code a b, unsigned integers); true only when native handled it.
+  function W.note(code, a, b)
+    local c, x, y = W.n(code), W.n(a), W.n(b)
+    if not (c and x and y) or code < 0 or a < 0 or b < 0 then return false end
+    return W.receipt(PRE .. "NOTE_V1' -- " .. c .. " " .. x .. " " .. y) == true
+  end
   function W.now() return W.api.time() * 1000 end
   function W.tick32(now) return floor(now) % 4294967296 end
   -- An integer for a receipt, or nil (the op is then not sent).
@@ -71,6 +77,14 @@ do
     local r = {W.receipt(PRE .. "CFG_V1' -- " .. text .. " " .. phase)}
     if type(r[1]) ~= "number" then return {0} end
     return r
+  end
+  -- The partner's scene from CFG r[9..11]; nil from an older loader. wait is the raw pair-wait code.
+  function W.peer()
+    local r = W.cfg(W.get(vars, "missionCode"), 0)
+    if type(r[11]) ~= "number" then return nil end
+    local session = r[4] == 1 and type(r[8]) == "number" and r[8] > 0 and r[8] or nil
+    return {mission = r[9] or 0, level = r[10] or 0, wait = r[11], session = session,
+      linked = session ~= nil and (r[11] == 0 or r[11] >= 7)}
   end
   function W.inGame() return W.api.checkState() == true end
   function W.bind()

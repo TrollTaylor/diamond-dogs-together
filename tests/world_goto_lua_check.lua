@@ -13,7 +13,7 @@ local function setup()
  f30050_sequence={ReserveMissionClear=function()c.calls=c.calls+1 end}
  W.cfg=function()return {3,1,1,c.link,7,0,1,c.session}end
  W.get=function(t,k)return t and t[k]end;W.inGame=function()return c.ready end
- W.tx=function()c.ack=c.ack+1 end;W.log=function(s)c.logs[#c.logs+1]=s end
+ W.tx=function(_,_,result)c.ack=c.ack+1;c.result=result end;W.log=function(s)c.logs[#c.logs+1]=s end
  assert(loadfile(path))();c.W=W
  function c.arm(step,now)W.handlers[1]({step,30020,0},now)end
  function c.tick(now)W.paired=c.paired;W.go.tick(now)end
@@ -27,9 +27,26 @@ for _,step in ipairs{1,2}do
  check(c.logs[#c.logs]:find("reason=timeout",1,true),"bounded cancellation receipt")
  c.tick(999999);check(c.calls==0,"nil cancelled request safe")
 end
-local c=setup();c.arm(2,0);c.ready=true;c.seq="Seq_Game_MainGame";c.tick(59999)
-check(c.calls==0 and c.W.gt~=nil,"late unpaired ACC remains pending inside lease")
-c.paired=true;c.tick(60000);check(c.calls==0 and c.W.gt==nil,"late pair cannot deploy after native wait deadline")
+-- Step 2 no longer waits for pairing itself: the follow sortie hold decides.
+local c=setup();c.arm(2,0);c.ready=true;c.seq="Seq_Game_MainGame";c.tick(1)
+check(c.calls==2 and c.ack==0 and c.W.gt~=nil,"unpaired step 2 calls the sortie without a goto pre-wait")
+c.tick(2);check(c.W.gt==nil and c.ack==1 and c.result==1,"unheld sortie reads back at once")
+local function held()
+ local h=setup()
+ TppMission.OnEndMissionPreparation=function()h.calls=h.calls+1;h.W.follow.hostDeploy={}end
+ h.arm(2,0);h.ready=true;h.seq="Seq_Game_MainGame";h.tick(1);h.tick(2)
+ return h
+end
+c=held()
+check(c.calls==2 and c.W.gt~=nil and c.ack==1 and c.result==2 and c.logs[#c.logs]=="event=goto;step=2;result=waiting;reason=held",
+ "a held sortie keeps step 2 pending with one held GOTO_ACK 2")
+c.tick(60000);c.tick(60001)
+check(c.calls==2 and c.W.gt~=nil and c.ack==1,"held: no readback, no second ACK, no 60 s timeout")
+c.W.follow.hostDeploy=nil;c.tick(60002)
+check(c.W.gt==nil and c.ack==2 and c.result==1 and c.calls==2,"the released hold reads back on the next tick")
+c=held();c.tick(149999);check(c.W.gt~=nil and c.ack==1,"held step 2 pending inside 150 s")
+c.tick(150000)
+check(c.W.gt==nil and c.ack==1 and c.calls==2 and c.logs[#c.logs]:find("reason=timeout",1,true),"a hold older than 150 s is cancelled")
 for _,change in ipairs{"session","down","unknown","clock"}do
  c=setup();c.arm(2,100);local old=c.W.gt
  if change=="session" then c.session=18 elseif change=="down" then c.link=0 elseif change=="unknown"then c.session=0 end

@@ -48,7 +48,7 @@ local function fixture(options)
     options = options or {}
     local c = {receipts = {}, tx = {}, logs = {}, rx = {}, calls = {}, time = 100, life = {}, recovered = {}, phase = {},
         pos = {}, inGame = true, missionStart = true, demo = false, order = {}, txReply = nil, seq = 'Seq_Game_MainGame',
-        flags = 3, original = {}}
+        flags = 3, original = {}, peer = options.peer}
     local mission = options.mission or 30010
     local defs = options.defs or {cp_a = {'sol_a1', 'sol_a2', 'sol_a3', lrrpVehicle = 'veh_x', lrrpTravelPlan = 'travel_x'},
         cp_b = {'sol_b1', 'sol_b2', 'sol_b3'}, quest_cp = {'sol_q1', 'sol_q2'}}
@@ -100,8 +100,20 @@ local function fixture(options)
             check(m ~= nil, 'CFG args ' .. source)
             if phase == '1' then c.cfgStarts = (c.cfgStarts or 0) + 1 else c.cfgQueries = (c.cfgQueries or 0) + 1 end
             return function()
+                local p = c.peer
+                if p then
+                    -- A join-fix loader: session, then remote_mission, remote_level and the raw pair-wait code.
+                    return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, p.session or 7, p.mission, p.level, p.wait
+                end
                 return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0, options.mode or 1
             end
+        elseif starts(source, PRE .. "NOTE_V1'") then
+            check(body:match('^%d+ %d+ %d+$'), 'NOTE integers only: ' .. body)
+            for n in body:gmatch('%S+') do check(n == '0' or not n:find('^0'), 'NOTE no leading zeros: ' .. n) end
+            c.notes = c.notes or {}
+            c.notes[#c.notes + 1] = body
+            return function() return true end
         elseif starts(source, PRE .. "TX_V1'") then
             check(body:match('^[%-%d][%-%d ]*$') and not body:find('  ') and not body:find('e') and not body:find('%.'),
                 'TX integers only: ' .. body)
@@ -319,6 +331,40 @@ do
     F.tick(env, c, 1)
     check(has(c.logs, 'event=commit;ent=' .. string.format('%.0f', u32('sol_a1')) .. ';state=5;ver=1;actor=host'), 'committed')
     check(#F.tx(c, OP.OUTCOME) == 0 and has(c.logs, 'event=bad_value;op=16;field=9') and W.active, 'NaN position: not sent, still active')
+end
+
+-- 2b. NOTE receipts and the partner view (CFG r[9..11]; docs/join-fix-phase1-spec.md K1/K16).
+do
+    local env, c = fixture({role = 1})
+    F.start(env, c)
+    local W = c.W
+    local before = #c.receipts
+    check(W.note(2, 30010, 0) == true and c.receipts[#c.receipts] == "return 'MGS_COOP_WORLD_NOTE_V1' -- 2 30010 0" and
+        #c.receipts == before + 1, 'W.note sends exactly one NOTE receipt and returns true')
+    check(W.note(3, 4294967295, 4) == true and c.notes[#c.notes] == '3 4294967295 4', 'W.note formats u32 without exponent')
+    before = #c.receipts
+    check(W.note(2, -1, 0) == false and W.note(2, 1.5, 0) == false and W.note(-1, 1, 1) == false and W.note(2, nil, 0) == false and
+        W.note(2, 0 / 0, 0) == false and W.note(2, 1, 4294967296) == false and #c.receipts == before,
+        'W.note sends nothing for a negative, fractional, missing or oversized value')
+    check(W.peer() == nil, 'W.peer is nil with the 7-value CFG of an older loader')
+    local env2, c2 = fixture({role = 1, peer = {mission = 30010, level = 3, wait = 9}})
+    F.start(env2, c2)
+    local p = c2.W.peer()
+    check(p and p.mission == 30010 and p.level == 3 and p.wait == 9 and p.session == 7 and p.linked == true,
+        'W.peer reads remote mission, level, raw wait and the session')
+    c2.peer = {mission = 0, level = 3, wait = 3}
+    p = c2.W.peer()
+    check(p and p.mission == 0 and p.wait == 3 and p.linked == false, 'no HELLO yet: not linked')
+    for _, wait in ipairs({0, 7, 8, 10}) do
+        c2.peer = {mission = 30010, level = 3, wait = wait}
+        check(c2.W.peer().linked == true, 'linked for raw wait ' .. wait)
+    end
+    c2.peer = {mission = 30010, level = 3, wait = 9, link = 0, session = 0}
+    p = c2.W.peer()
+    check(p.session == nil and p.linked == false, 'link down: no session, not linked')
+    local env3, c3 = fixture({role = 1, literal = true})
+    F.start(env3, c3)
+    check(c3.W.peer() == nil and c3.W.note(1, 40010, 0) == false, 'literal receipts: no peer view, note not handled')
 end
 
 -- 3. The observer: original first, arguments and returns passed through, RESEND skipped.

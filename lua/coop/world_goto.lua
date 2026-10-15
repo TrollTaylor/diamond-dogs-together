@@ -4,7 +4,9 @@
 -- Step 1 (30050): f30050_sequence.ReserveMissionClear(), the heli boarding
 -- (SetNextMBDemo clears a queued MB demo, then ReserveMissionClear
 -- RIDE_ON_HELICOPTER -> MTBS_HELI). Step 2 (ACC 40050): the sortie's own
--- SelectNextMissionHeliStartRoute and OnEndMissionPreparation(CURRENT). Each
+-- SelectNextMissionHeliStartRoute and OnEndMissionPreparation(CURRENT); it does
+-- not wait for pairing: the follow sortie hold decides (step 2 stays pending
+-- while held, 150 s cap). Each
 -- step is reported with GOTO_ACK (2 waiting, 1 reserved, 0 refused). Lab only:
 -- native arms it only from world.trigger in lab mode, Lua refuses it unless
 -- the CFG mode is 1.
@@ -43,7 +45,8 @@ do
             if not g then return end
             local age = now - g.since
             local live = session()
-            local why = age < 0 and "clock_reset" or age >= (g.step == 1 and 30000 or 60000) and "timeout"
+            -- Step 2 held by the follow sortie hold (at most 120 s) gets 150 s.
+            local why = age < 0 and "clock_reset" or age >= (g.step == 1 and 30000 or g.held and 150000 or 60000) and "timeout"
                 or g.session ~= nil and (g.session == 0 or live ~= g.session) and "session"
             if why then
                 -- ACK has no request ID. A late refusal ACK could cancel a
@@ -53,6 +56,11 @@ do
                 return
             end
             if g.check then
+                -- The follow wrapper holds the sortie until the partner can come or it gives up.
+                if W.follow and W.follow.hostDeploy then
+                    if not g.held then g.held = true; ack(g, 2, "waiting;reason=held") end
+                    return
+                end
                 W.gt = nil
                 local ok = W.get(svars, "mis_isDefiniteMissionClear") == true
                 return ack(g, ok and 1 or 0, ok and "reserved" or "refused;reason=readback")
@@ -81,10 +89,6 @@ do
             end
             local seq = W.get(TppSequence, "GetCurrentSequenceName")
             if type(seq) == "function" and seq() == "Seq_Game_MainGame" and W.inGame() and now - W.t0 >= 3000 then
-                if W.follow and W.follow.enabled and W.host and not W.paired then
-                    if not g.waiting then g.waiting = true; ack(g, 2, "waiting") end
-                    return
-                end
                 if TppMission.IsHelicopterSpace(vars.missionCode) ~= true or W.get(gvars, "mis_nextMissionCodeForEmergency") ~= 0 then
                     W.gt = nil
                     return ack(g, 0, "refused;reason=not_heli_space")
