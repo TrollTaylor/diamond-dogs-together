@@ -175,7 +175,10 @@ recursively, and request.json first. At Configure the glue removes every
 `<8 hex>.partial` folder this way and a request.json whose pid is not this
 process (or that does not parse); a foreign file keeps its folder. The guest
 reads applied.json for toast G10 when it was written at most 30 minutes before
-this process started.
+(or 5 minutes after) this process started. Play-Coop starts the guest again
+with `save_handoff=off` (one handoff per session), so a guest disabled by
+`off` still reads it: it logs `save_handoff=applied_seen`, posts G10 and
+publishes the `applied` token.
 
 ## States
 
@@ -217,7 +220,12 @@ Neither is a play refusal. `stage` transfers and stages but never writes
 request.json and never exits (worker check R2). The transfer configures only
 with `net=1`, link v2, redirected saves, world >= 1 and a handoff folder that
 fits; otherwise `save_handoff=disabled; reason=off|legacy_link|saves|world_off|path`.
-The travel lock bit works with `save_handoff=off`.
+The travel lock bit works with `save_handoff=off`. A disabled guest whose
+lock may apply (world on, effective `travel_lock`) still publishes an
+available F9 view with the `off` token, so the Shared save section shows the
+off line and the Travel lock checkbox. NOTE 9 carries a=0 from Lua (CFG r[12]
+has no percent); `world_link::HandleNote` fills in the native transfer
+percent.
 
 ## Native glue (save_handoff.cpp)
 

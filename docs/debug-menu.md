@@ -150,7 +150,10 @@ is kept, but no partner body shows until you pair), otherwise `partner_applied`.
 **Shared save** (automatic save handoff, [save-handoff.md](save-handoff.md)): shown
 right after **Online** while save sharing is configured in this session (lab.ini
 `save_handoff=stage|scene|always`, written by Play-Coop `-SaveHandoff`, in a world-sync
-link v2 session with redirected saves); hidden otherwise. It reads copied state only
+link v2 session with redirected saves). With save sharing off it is still shown to a
+joiner whose travel lock may apply (world sync on), with the `off` line and the Travel
+lock checkbox, and in the session Play-Coop restarts after a handoff (`applied`);
+hidden otherwise. It reads copied state only
 (`save_handoff_state`) and sends no command, so it works at the title screen and in
 the helicopter as well. One status line:
 
