@@ -24,8 +24,8 @@ const ActionDef* Actions(std::size_t& count) noexcept;
 const ActionDef* FindAction(const char* id) noexcept;
 // Every word must match (case-insensitive) label, command, keywords or category name.
 std::size_t SearchActions(const char* query, const ActionDef** out, std::size_t capacity) noexcept;
-// nullptr when available, else one of: gameplay host_only position no_spawn no_camp
-// no_routes partner_pose bookmark_empty clip_unavailable selection.
+// nullptr when available, else one of: mission gameplay host_only position no_spawn
+// no_camp no_routes partner_elsewhere partner_pose bookmark_empty clip_unavailable selection.
 const char* DisabledReason(const ActionDef& action, const debug_menu::Snapshot& s, bool has_selection) noexcept;
 bool PartnerPoseReady(const debug_menu::Snapshot& s) noexcept;
 const char* CategoryName(Category value) noexcept;
