@@ -362,7 +362,11 @@ nothing else changes (native stays active).
 
 ## 7. Checks run
 
-Release `-ReleaseGun` build and the full CTest suite in this worktree; the fixtures added or extended:
+`tools/build.ps1 -Configuration Release -ReleaseGun -BuildDirectory build/native` in this worktree:
+build passed, CTest 248/248 passed (friend_package_tests and lab_scripts_tests included). The
+composed/game-input Lua checks (`partner_sync_composed_lua_check` and the other "SKIPPED (missing
+interpreter or game input)" ones) are not registered in a worktree without the extracted game files;
+they run in the main checkout. The fixtures added or extended:
 `partner_recon_tests`, `partner_act_log_tests` (new), `partner_dm_overlay_tests` (new),
 `partner_native_tests`, `partner_receipt_tests`, `lab_config_tests`, `partner_driver_tests`,
 `partner_sync_lua_check`, `debug_menu_lua_check`, `lab_scripts_tests`, `worker_session_tests`.
