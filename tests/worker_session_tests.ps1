@@ -1292,8 +1292,8 @@ try {
         $applyLog=[Collections.Generic.List[hashtable]]::new();$importMode=[pscustomobject]@{mode='ok'}
         function Import-Module {param([Parameter(ValueFromRemainingArguments)]$Rest) $applyLog.Add(@{module=($Rest -join ' ')})}
         function Import-CoopProgressFiles {
-            param([string]$StageRoot,[string]$SaveDir,[string]$ReplacedRoot,[string]$Suffix,[hashtable]$Marker)
-            $applyLog.Add(@{stage=$StageRoot;save=$SaveDir;replaced=$ReplacedRoot;suffix=$Suffix;source=$Marker.Source;files=@($Marker.Files).Count;exported=$Marker.ExportedUtc})
+            param([string]$StageRoot,[string]$SaveDir,[string]$ReplacedRoot,[string]$Suffix,[hashtable]$Marker,[object[]]$Manifest)
+            $applyLog.Add(@{stage=$StageRoot;save=$SaveDir;replaced=$ReplacedRoot;suffix=$Suffix;source=$Marker.Source;files=@($Marker.Files).Count;exported=$Marker.ExportedUtc;manifest=@($Manifest).Count})
             if($importMode.mode -ceq 'throw'){throw 'fixture import refused'}
             $new=$SaveDir+'-new';Copy-Item -LiteralPath $SaveDir -Destination $new -Recurse
             foreach($sub in '287700\local','remote'){
@@ -1318,7 +1318,7 @@ try {
         $result=Invoke-ScenarioHandoffApply $pending
         $call=@($applyLog|Where-Object{$_.ContainsKey('stage')})[-1]
         Assert-True ($call.stage -ceq $h.Stage -and $call.save -ceq $h.Saves -and $call.replaced -ceq (Join-Path $run 'guest-saves-replaced') -and $call.suffix -ceq '-before-handoff' -and
-            $call.source -ceq 'handoff' -and $call.files -eq 3 -and $call.exported -ceq '2026-10-15T12:05:00Z') 'Import-CoopProgressFiles gets the run paths, -before-handoff and the handoff marker'
+            $call.source -ceq 'handoff' -and $call.files -eq 3 -and $call.manifest -eq 3 -and $call.exported -ceq '2026-10-15T12:05:00Z') 'Import-CoopProgressFiles gets the run paths, -before-handoff, the handoff marker and the staged manifest'
         Assert-True ($result.applied -and !$result.failure -and $expectFailures.Count -eq 0 -and $expectations.Count -eq 6) ('the apply checks all pass: '+($expectFailures -join ' | '))
         Assert-True ($result.marker_source -ceq 'handoff' -and $result.aside.EndsWith('-before-handoff') -and @($result.after.progress.Keys).Count -eq 3 -and
             (Test-ScenarioSameMap $pending.before.progress $result.aside_progress)) 'scenario.json HandoffApply holds after, aside and its old progress'

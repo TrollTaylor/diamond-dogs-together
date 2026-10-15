@@ -403,17 +403,18 @@ try {
     $handoffPaths = Get-InstancePaths -GameDirectory 'C:\Games\MGS_TPP'
     Assert-Equal "$($handoffPaths.CoopSavesHandoff)|$($handoffPaths.CoopSavesReplaced)|$($handoffPaths.LinkRejoin)" 'C:\Games\MGS_TPP\mgs-coop\coop-saves-handoff|C:\Games\MGS_TPP\mgs-coop\coop-saves-replaced|C:\Games\MGS_TPP\mgs-coop\link-rejoin.txt' 'instance paths of the save handoff'
     if ($IniCheck) {
-        # The loader parses both keys once its save handoff side is in (lab_config): then the texts are clean.
+        # The loader parses both keys (lab_config, P2-11): the texts are clean and
+        # give the policy and the effective travel lock (absent = on in play).
         $probeHandoff = Join-Path $fixture 'probe-handoff-lab.ini'
         [IO.File]::WriteAllText($probeHandoff, "enabled=1`nrole=guest`nsave_handoff=scene`ntravel_lock=0`n")
         $handoffKeys = [string](Invoke-IniCheck lab $probeHandoff)['unknown_keys'] -eq '0'
-        if ($handoffKeys) {
-            foreach ($case in @(@('scene', $sceneIni), @('lock', $lockIni))) {
-                $file = Join-Path $fixture "play-$($case[0])-lab.ini"; [IO.File]::WriteAllText($file, $case[1], $utf8)
-                $n = Invoke-IniCheck lab $file
-                Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|play|0x0|0/0' "native: play lab.ini with the $($case[0]) keys is clean"
-            }
-        } else { Write-Output 'save_handoff missing: native save handoff key cross-checks skipped' }
+        Assert-True $handoffKeys 'native: lab.ini save_handoff and travel_lock are known keys'
+        foreach ($case in @(@('scene', $sceneIni, 'scene|1'), @('lock', $lockIni, 'off|0'))) {
+            $file = Join-Path $fixture "play-$($case[0])-lab.ini"; [IO.File]::WriteAllText($file, $case[1], $utf8)
+            $n = Invoke-IniCheck lab $file
+            Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|play|0x0|0/0' "native: play lab.ini with the $($case[0]) keys is clean"
+            Assert-Equal "$($n['save_handoff'])|$($n['travel_lock'])" $case[2] "native: play lab.ini with the $($case[0]) keys parses them"
+        }
     }
     # Non-ASCII save_dir: UTF-8 bytes, never '?'.
     $uniSave = 'D:\Jeux Vid' + [char]0x00E9 + 'o\MGS_TPP\mgs-coop\coop-saves'
@@ -689,13 +690,17 @@ try {
     Assert-Throws { Get-CoopHandoffSetSha256 -Entries @([pscustomobject]@{ entry = $slotRows[0].entry; bytes = 1; sha256 = 'XYZ' }) } 'Invalid SHA-256' 'set hash: a malformed hash'
     Assert-Throws { Get-CoopHandoffSetSha256 -Entries @() } 'No save handoff file' 'set hash: no file'
     $setFixture = Join-Path $projectRoot 'tests/fixtures/handoff-set.json'
-    if (Test-Path -LiteralPath $setFixture -PathType Leaf) {
-        $setVector = Get-Content -LiteralPath $setFixture -Raw | ConvertFrom-Json
-        $setRows = @(Get-FriendProperty $setVector 'entries' (Get-FriendProperty $setVector 'files' @()))
-        $setExpected = [string](Get-FriendProperty $setVector 'set_sha256' (Get-FriendProperty $setVector 'expected' ''))
-        Assert-True ($setRows.Count -ge 1 -and $setExpected -cmatch '^[0-9A-Fa-f]{64}$') 'tests/fixtures/handoff-set.json has rows and an expected set_sha256'
-        Assert-Equal (Get-CoopHandoffSetSha256 -Entries $setRows) $setExpected.ToUpperInvariant() 'Get-CoopHandoffSetSha256 equals tests/fixtures/handoff-set.json'
-    } else { Write-Output 'tests/fixtures/handoff-set.json missing: the shared set-hash vector check skipped (the golden vectors above passed)' }
+    Assert-True (Test-Path -LiteralPath $setFixture -PathType Leaf) 'tests/fixtures/handoff-set.json exists'
+    $setVector = Get-Content -LiteralPath $setFixture -Raw | ConvertFrom-Json
+    $setRows = @(Get-FriendProperty $setVector 'entries' (Get-FriendProperty $setVector 'files' @()))
+    $setExpected = [string](Get-FriendProperty $setVector 'set_sha256' (Get-FriendProperty $setVector 'expected' ''))
+    Assert-True ($setRows.Count -eq 6 -and $setExpected -cmatch '^[0-9A-F]{64}$') 'tests/fixtures/handoff-set.json has six rows and an expected set_sha256'
+    Assert-Equal (Get-CoopHandoffSetSha256 -Entries $setRows) $setExpected 'Get-CoopHandoffSetSha256 equals tests/fixtures/handoff-set.json'
+    foreach ($subset in @(Get-FriendProperty $setVector 'subsets' @())) {
+        $want = @(Get-FriendProperty $subset 'slots' @() | ForEach-Object { [int]$_ })
+        $rows = @($setRows | Where-Object { $want -contains [int](Get-FriendProperty $_ 'slot' -1) })
+        Assert-Equal (Get-CoopHandoffSetSha256 -Entries $rows) ([string](Get-FriendProperty $subset 'set_sha256' '')) "Get-CoopHandoffSetSha256 equals the fixture subset $($want -join ',')"
+    }
     # Online play: how each PC shows the partner body (link-status.json partner_drive/_reason, remote_drive/_reason).
     $nativeStatus = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"saves":"redirected"', '"saves":"redirected","partner_drive":"native","partner_reason":"ok","remote_drive":"clips","remote_reason":"thread"'))
     Assert-Equal (Format-CoopStatusLine -Status $nativeStatus -Role host -NowUtc $now) ('[HOST] link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look native; you on the other PC: clips (' + (Get-CoopPartnerReasonText -Reason thread) + ') | mission 30050') 'status line: native here, clips on the other PC with the reason'
@@ -2696,10 +2701,8 @@ try {
         $uniLabCopy = Join-Path $fixture 'uni-lab.ini'
         Copy-Item -LiteralPath $unp.LabIni -Destination $uniLabCopy
         $n = Invoke-IniCheck lab $uniLabCopy
-        # Play-Coop writes save_handoff=scene: one unknown key until the loader parses it.
-        $unknownExpected = '1/0'
-        if ($handoffKeys) { $unknownExpected = '0/0' }
-        Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" "1|play|0x0|$unknownExpected" 'native: play lab.ini with a UTF-8 save_dir accepted'
+        # Play-Coop writes save_handoff=scene, a key the loader parses.
+        Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])|$($n['save_handoff'])" '1|play|0x0|0/0|scene' 'native: play lab.ini with a UTF-8 save_dir accepted'
         Assert-Equal $n['save_dir'] (Join-Path $unp.Mod 'coop-saves') 'native: UTF-8 save_dir kept'
     }
     $r = Invoke-Friend (Join-Path $uniStage 'scripts/Play-Coop.ps1') @('-GameDirectory', $uniGame, '-Cleanup', '-NonInteractive')

@@ -1146,7 +1146,7 @@ function Invoke-ScenarioHandoffApply($Pending){
         Import-Module (Join-Path $repo 'tools\friend\FriendCommon.psm1') -Force -DisableNameChecking
         if(!(Get-Command Import-CoopProgressFiles -ErrorAction SilentlyContinue)){throw 'Import-CoopProgressFiles is not available in tools/friend/FriendCommon.psm1.'}
         $marker=@{Source='handoff';ExportedUtc=[string]$Pending.created_utc;Files=@($Pending.files)}
-        $returned=@(Import-CoopProgressFiles -StageRoot $Pending.stage -SaveDir $Pending.save_dir -ReplacedRoot $Pending.replaced_root -Suffix '-before-handoff' -Marker $marker)
+        $returned=@(Import-CoopProgressFiles -StageRoot $Pending.stage -SaveDir $Pending.save_dir -ReplacedRoot $Pending.replaced_root -Suffix '-before-handoff' -Marker $marker -Manifest @($Pending.files))
         $Pending.applied=$true
         $Pending.aside=[string](@($returned|Where-Object{$_ -is [string] -and $_})|Select-Object -Last 1)
     }catch{
