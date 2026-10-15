@@ -3727,9 +3727,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.fire_shot_drains = n.fire_shot_drains;
         t.fire_modes = n.fire_modes;
         if (set.nfire == PartnerNativeFire::visual && !m.fire_refusal && m.weapon_gate != partner_slots::Gate::match)
-            CopyText(t.fire_refused, sizeof(t.fire_refused), m.weapon_gate == partner_slots::Gate::mismatch    ? "weapon_mismatch"
-                                                             : m.weapon_gate == partner_slots::Gate::switching ? "weapon_switch"
-                                                                                                               : "weapon_type");
+            CopyText(t.fire_refused, sizeof(t.fire_refused), m.weapon_gate == partner_slots::Gate::mismatch      ? "weapon_mismatch"
+                                                             : m.weapon_gate == partner_slots::Gate::switching   ? "weapon_switch"
+                                                             : m.weapon_gate == partner_slots::Gate::unsupported ? "weapon_unsup"
+                                                                                                                 : "weapon_type");
+        // Anim round 1: the auto-fire stop strips FIRE with any gate.
+        if (set.nfire == PartnerNativeFire::visual && !m.fire_refusal && m.dry_strip && m.weapon_gate == partner_slots::Gate::match)
+            CopyText(t.fire_refused, sizeof(t.fire_refused), "remote_dry");
         CopyText(t.weapon_gate, sizeof(t.weapon_gate), partner_slots::GateName(m.weapon_gate));
         t.body_type = m.body_type;
         t.body_switching = m.body_switching;

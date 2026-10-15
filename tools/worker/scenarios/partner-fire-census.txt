@@ -1,0 +1,113 @@
+# Fire / projectile census (docs/anim-round1-weapons.md "Census"): who creates the bullets, noises, projectiles,
+# rocket punches, thrown and placed objects in each world, with which owner id, and what the partner body shows
+# while the remote holds a support weapon (the unsupported-equipment gate, A1). Read-only on both machines: the
+# census records RequestBullet (0xD32C60), AddNoise (0x515270) and four forwarding service slots (class-3 projectile
+# 0x1337760, rocket punch 0x1337920, thrown 0x15E0230, placed 0xFCCD80) for EVERY owner, the local instance 0 included,
+# without changing the owner-1 bullet/noise filters.
+# Run (coordinator only, hidden worker, the gun stage):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-fire-census.txt -PartnerProfile native -NativeStage gun -BuildProfile research
+# Static proof first: python tools/generate_partner_contract.py --check (554 sites, 113 slots).
+# Stimulus: the lab save's own loadout. "debug support" lists vars.supportWeapons[0..7] (read-only); "debug slot support
+# N" selects support entry N through the retail Player.SetCurrentSlot (the same API the UI uses); "debug slot hand 0" the
+# bionic arm; "debug slot back 0" / "debug slot hip 0" return to a gun. Grenades: RMB aims the arc, LMB throws. Placed
+# weapons (C4, mines, decoys): LMB places. Entries the save lacks only make the matching section a no-op (report the
+# "support;ids=" line). infinite_ammo keeps the support counts.
+# Expected (the HOST throws; its own instance is 0, the guest's partner on the host is instance 1):
+#  both:    partner_fire_census=on; projectile=live; rocket=live; thrown=live; placed=live once the bullet filter
+#           installed (partner_fire=installed ...); a slot_refused line names a refused slot (report it; the bullet filter
+#           and the gate keep working).
+#  fire:    host: partner_fire_census=bullet; owner=0x0; owner_index=0; owner_type=0; id=<bullet id>; ...; dropped=0 and
+#           partner_fire_census=noise; owner=0x0; ...; dropped=0 per shot; guest: partner_fire_census=bullet; owner=0x1;
+#           ...; dropped=1 for the partner's visual shots (never dropped=1 with owner 0x0).
+#  support-select (guest, viewing the host's partner): partner_weapon=unsupported; remote_slot=3; remote_equip=<the
+#           grenade id, e.g. 354>; type=12; reason=slot; body_equip=<body 1's gun>; strip=0x58, partner_weapon_ctx; remote_slot=3;
+#           remote_equip=..; type=12; ...; gate=unsupported; unsupported=slot; strip=0x58, partner_slot=refused; reason=other;
+#           target=3, captures: weapon.gate "unsupported", input strip_bits 0x58.
+#  support-aim / throw (guest frames): the partner does NOT raise its rifle while the host aims the grenade arc
+#           (the old artefact: rifle aimed, G:810328); partner_aim_intent=off; ...; refusal=gate; ...; gate=unsupported.
+#  throw (host log): partner_fire_census=thrown; owner=0x0; owner_index=0; ...; id=<grenade equip in the low 11 bits>
+#           (the throw goes to gm+0x200, NOT RequestBullet: no bullet line with that id); then the explosion's
+#           noise/bullet lines with their owners (report them: the explosion path is not yet located). The guest log has
+#           NO partner_fire_census=thrown; owner=0x1 (body 1 never throws while unsupported).
+#  place (host log, when entry 1 is a placed weapon): partner_fire_census=placed; owner=0x0; id=<C4/mine/decoy equip>.
+#  hand (host log, a rocket-arm save only): partner_fire_census=rocket; owner=0x0 on the punch; the guest:
+#           partner_weapon=unsupported; remote_slot=6; ...; type=14; reason=slot; strip=0x58.
+#  back-to-gun: guest partner_weapon=unsupported_end; ...; strip=0x0 (or the gate's own verdict), partner_aim_intent=on;
+#           source=pad when the host aims again, FIRE live again.
+#  summary: partner_fire_census=summary; bullets=..; noises=..; projectiles=..; rockets=..; thrown=..; placed=..; ...;
+#           slots=live,live,live,live in both logs (skipped/lost > 0 only under the 20 lines/s budget).
+#  always:  native.mode active, fallbacks 0, faults 0; leak.shot_leaks 0, leak.ammo_leaks 0; no partner_input=fault line.
+labsetting partner_fire_census=1
+labsetting debug_soldier_warp=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+host debug infinite_ammo 1
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 5 3
+both capture start
+# Arbiter entry, the manifest exchange and the writer; the census slots install with the bullet filter.
+wait 6000
+both capture census-idle
+host debug support
+# --- The host fires its gun (owner 0 bullets and noise on the host, owner 1 visual shots on the guest) --------------
+host hold rmb 1500 nowait
+wait 500
+host hold rmb+lmb 120 nowait
+guest burst fire 4 120
+host release
+wait 1500
+# --- Support entry 0 (a grenade in the lab loadout) -------------------------------------------------------------------
+host debug slot support 0
+wait 1500
+guest burst support-select 3 250
+host hold rmb 1500 nowait
+guest burst support-aim 4 200
+host hold rmb+lmb 150 nowait
+guest burst throw 6 200
+host release
+wait 4000
+both capture throw-after
+# --- Support entry 1 (C4, a mine or a decoy when the loadout has one): placed objects -------------------------------
+host debug slot support 1
+wait 1500
+guest burst place-select 3 250
+host hold lmb 150 nowait
+guest burst place 6 200
+host release
+wait 3000
+both capture place-after
+# --- The bionic arm (hand slot 6): a rocket punch only with a rocket arm ---------------------------------------------
+host debug slot hand 0
+wait 1500
+guest burst hand-select 3 250
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+lmb 150 nowait
+guest burst hand-use 5 200
+host release
+wait 2000
+# --- Back to the back-slot gun: the gate clears, the aim intent and FIRE come back -------------------------------------
+host debug slot back 0
+wait 2000
+host hold rmb 1500 nowait
+wait 500
+host hold rmb+lmb 120 nowait
+guest burst back-to-gun 4 150
+host release
+wait 1500
+# --- The guest fires: owner 1 bullets dropped on the host, its own owner 0 on the guest --------------------------------
+guest hold rmb 1500 nowait
+wait 500
+guest hold rmb+lmb 120 nowait
+host burst g-fire 4 120
+guest release
+wait 2000
+both capture end
