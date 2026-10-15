@@ -244,7 +244,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         }
         if (set.seat_exit == PartnerRideSeatExit::getoff) s.entry |= partner::seat_entry::get_off;
         s.plays = s.stops = 0;
-        s.confirmed = s.next_sent = s.latch_exit = false;
+        s.confirmed = s.next_sent = s.latch_exit = s.lua_refused = false;
         s.exit_reason = nullptr;
         s.far_since_ms = s.status_ms = s.issue_ms = s.confirm_ms = 0;
         SeatGo(s, SeatPhase::release, now);

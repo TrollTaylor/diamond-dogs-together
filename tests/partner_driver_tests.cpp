@@ -5131,6 +5131,18 @@ void TestRideSeat() {
         Check(s.fake.seat_reverts >= 2, "mission end reverts the dwords");
     }
     {
+        // Mission start while the remote already drives: the hidden body is placed,
+        // realized by the existing flow, then seated (no 500 ms landing proof).
+        SeatSession s;
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(s.Step(50) && s.driver.mission.visibility.seated && !s.driver.mission.visibility.hidden && s.fake.Writes("slot") == 1 &&
+                  s.reply.op == 0, "seated at once: placed at the remote's seated pose");
+        Check(s.Step(50) && s.driver.mission.bits_set && s.fake.seat_arms == 0, "realized by the existing flow before the seat starts");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        Check(s.Step(50) && (s.reply.op & op::ride_seat) && s.fake.seat_arms == 1, "then seated");
+    }
+    {
         // Get-off: exit=getoff appends the GetOff entry; act 112 advances to it (GoNext).
         SeatSession s(mgscoop::PartnerRideSeatExit::getoff);
         s.Show();
