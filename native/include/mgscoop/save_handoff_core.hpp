@@ -12,6 +12,7 @@
 // next one. A report may queue more actions; the same drain loop runs them.
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/link_crypto.hpp"
 #include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/save_handoff_wire.hpp"
 
@@ -34,6 +35,10 @@ inline constexpr std::uint64_t kExitFreshMs = 1500;       // Lua report freshnes
 inline constexpr std::uint64_t kPhaseFreshMs = 3000;      // Lua report freshness for phase/story (older: unknown)
 inline constexpr std::uint64_t kSettleBindMs = 30000;     // in-game settle bind window (30010/30020/30050)
 inline constexpr std::uint64_t kBadMsgLogMs = 10000;      // "save_handoff=bad_msg" at most this often
+inline constexpr std::uint64_t kRehashMs = 2000;          // re-hash the on-disk set this often (the glue skips unchanged files)
+inline constexpr std::uint64_t kHashTimeoutMs = 10000;    // a hash_set / snapshot without its report may be asked again
+inline constexpr std::uint64_t kRetryGapMs = 2000;        // host: after a failed transfer, before the next OFFER
+inline constexpr std::uint64_t kContinueBindMs = 60000;   // a Continue bind gives up when no two equal reads came within this
 inline constexpr unsigned kMaxOffersPerSet = 3;           // per set per link session
 inline constexpr unsigned kChunksPerTick = 4;             // new CHUNKs per Tick ...
 inline constexpr unsigned kMaxQueued = 16;                // ... while ReliableQueued(4) is below this
@@ -56,7 +61,8 @@ struct Report {
     wire::Story story;      // str_storySequence class
     bool saving;            // TppScriptVars.IsSavingOrLoading()
     bool ingame;
-    std::uint64_t at_ms;    // when the receipt arrived (caller clock)
+    std::uint64_t at_ms;    // when the receipt arrived (caller clock; 0 = the OnLua now_ms). Feeding the same
+                            // report again with the same at_ms is harmless.
 };
 // op 3 DECLINE reasons (Lua a=1, F9 Keep my own save = 2).
 enum class DeclineSource : std::uint8_t { second_continue = 1, f9 = 2 };
@@ -210,7 +216,9 @@ struct Snapshot {
 enum class ActionKind : std::uint8_t {
     none,
     send,              // partner_net::SendReliable(kChannel, data, size, latest ? latest : append); report OnSendResult
-    hash_set,          // hash the on-disk set; report OnSetHashed (later ticks)
+                       // (latest only for a STATE that follows a STATE: latest replaces ANY unsent message)
+    hash_set,          // hash the on-disk set; report OnSetHashed (later ticks). Idempotent: a repeat while one is
+                       // in progress (asked again after kHashTimeoutMs) may be merged into it
     snapshot,          // host: read the current set into memory; report OnSnapshotRead (later ticks)
     release_snapshot,  // host: free the snapshot memory (no report)
     stage_write,       // guest: data[0..size) at `offset` of `slot` in <xfer>.partial; report OnStageDone
@@ -219,7 +227,8 @@ enum class ActionKind : std::uint8_t {
     write_request,     // guest: request.json = FormatRequest(request()) (last); report OnStageDone
     write_rejoin,      // guest: link-rejoin.txt when partner_net::BuildGuestJoinCode succeeds (no report)
     write_provenance,  // provenance.json = provenance().Format (WriteFileAtomic; no report)
-    delete_stage,      // guest: request.json first, then xfer's known names and empty folders; report OnStageDone
+    delete_stage,      // guest: request.json first, then the known names and empty folders of <xfer>.partial and
+                       // <xfer> (whichever exists); report OnStageDone
     post_exit,         // guest: EnumWindows + PostMessageW(WM_CLOSE); report OnExitPosted
     toast,             // coop_hud::Post(EventKind::save_handoff, code, "<a> <b>") (no report)
     log,               // log text + "; t_ms=N" (no report)
@@ -248,6 +257,7 @@ struct Stats {
     wire::Decode last_bad;
     std::uint32_t offers, chunks_sent, chunks_received;
     std::uint32_t dropped_actions;    // ring overflow (a bug)
+    std::uint32_t stale;              // messages of an older transfer (expected after an abort; not logged)
 };
 
 struct Config {
@@ -264,6 +274,7 @@ struct Config {
     std::uint32_t (*random_u32)() noexcept = nullptr;
 };
 
+// About 90 KB (the Action ring): keep it in static storage, not on a stack.
 class Core {
 public:
     Core() noexcept = default;
@@ -320,14 +331,150 @@ public:
 
 private:
     // Track A owns the private layout; it is not part of the contract.
+    enum class HostPhase : std::uint8_t { idle, snapshot, offered, sending, end_sent, done };
+    enum class GuestPhase : std::uint8_t { idle, receiving, finishing, staged, countdown, exiting };
+    struct Machine {
+        // Link.
+        bool linked = false;
+        std::uint32_t session = 0;
+        bool build_known = false, build_ok = false;
+        char remote_build[kBuildChars] = {};
+        bool shutdown = false;
+        // The Lua report and the observer boundaries.
+        bool have_report = false;
+        Report report{};
+        bool partner_mission = false, terminating = false;
+        // The own on-disk set.
+        SetInfo set{};
+        bool set_known = false, set_seen = false;
+        std::uint64_t set_at = 0;
+        bool hash_pending = false;
+        std::uint64_t hash_at = 0;
+        // P2-8 (a) Continue bind: two equal reads at least kSnapshotGapMs apart.
+        bool cb_active = false, cb_first = false;
+        std::uint32_t cb_target = 0;
+        std::uint64_t cb_at = 0, cb_first_at = 0;
+        std::uint8_t cb_set[wire::kShaSize] = {};
+        // P2-8 (b) settle bind.
+        bool st_active = false, st_have = false, st_bound = false;
+        std::uint32_t st_mission = 0;
+        std::uint64_t st_set_at = 0;
+        std::uint8_t st_set[wire::kShaSize] = {};
+        // The peer's STATE (this link session).
+        bool peer_seen = false;
+        wire::State peer{};
+        bool peer_logged = false;
+        wire::State peer_log{};
+        // Our STATE.
+        bool state_force = true, state_sent = false;
+        // ReliableMode::latest replaces the newest unsent message of ANY kind
+        // (link_protocol ReliableSender::Queue), so a STATE uses it only when
+        // the previous send of this core was a STATE that was not refused.
+        bool last_send_state = false;
+        std::uint64_t state_at = 0;
+        std::uint8_t state_last[wire::kStateSize] = {};
+        std::uint64_t bad_log_at = 0;
+        bool bad_logged = false;
+        // The transfer (both roles).
+        std::uint32_t xfer = 0, xfer_seq = 0;
+        wire::Offer offer{};
+        std::uint8_t offers_set[wire::kShaSize] = {};
+        unsigned offers = 0;              // per set per link session (host: sent, guest: received)
+        bool sticky = false;              // the token stays until the next transfer starts
+        std::uint8_t toasted = 0xFF;      // the refusal / wait reason already toasted this session
+        // Host.
+        HostPhase host = HostPhase::idle;
+        wire::Elig elig = wire::Elig::unknown;
+        bool snap_held = false;
+        Snapshot snap{};
+        std::uint64_t snap_at = 0;
+        std::uint8_t snap_set[wire::kShaSize] = {};
+        std::uint32_t snap_mission = 0;
+        std::uint8_t want_mask = 0;
+        std::uint32_t want_total = 0;
+        unsigned cur_file = 0;
+        std::uint32_t cur_off = 0;
+        std::uint64_t sent_bytes = 0;
+        std::uint64_t phase_at = 0, retry_at = 0;
+        bool stop = false;                // no more OFFERs of stop_set this session (a DECLINE)
+        std::uint8_t stop_set[wire::kShaSize] = {};
+        // Guest.
+        GuestPhase guest = GuestPhase::idle;
+        bool declined = false;            // Lua op 3 / F9: for the rest of the process
+        bool need_known = false, need_logged = false;
+        std::uint8_t need = 0;
+        NeedWhy need_why = NeedWhy::off;
+        unsigned file = 0;
+        std::uint32_t file_off = 0;
+        link::Sha256 file_hash{};
+        std::uint64_t recv_bytes = 0, recv_at = 0, last_chunk = 0;
+        unsigned progress_logged = 0;     // 25 / 50 / 75 / 100 steps already logged
+        bool stage_ok = false;
+        std::uint32_t stage_xfer = 0;
+        bool request_written = false, result_sent = false, result_retry = false;
+        std::uint64_t countdown_at = 0, lost_at = 0;
+        bool title_lost = false;
+        unsigned g2_left = 0;
+        bool exit_posted = false, exit_window = false, exit_slow = false;
+        std::uint64_t exit_at = 0;
+        bool applied = false;
+    };
+
+    Action* Emit(ActionKind kind) noexcept;
+    void Log(const char* format, ...) noexcept;
+    void PostToast(save_handoff_state::Toast code, std::uint32_t a, std::uint32_t b) noexcept;
+    bool Send(const wire::Message& message) noexcept;
+    void SendSmall(wire::Kind kind, std::uint32_t xfer, std::uint8_t value, std::uint8_t reason) noexcept;
+    void SetToken(save_handoff_state::Token token, std::uint8_t why) noexcept;
+    void Flush() noexcept;
+    void UtcNow(char (&out)[kUtcCapacity]) const noexcept;
+    std::uint32_t NextXfer() noexcept;
+    bool Fresh(std::uint64_t now_ms, std::uint64_t limit_ms) const noexcept;
+    std::uint32_t OwnBound() const noexcept;
+    wire::State BuildState(std::uint64_t now_ms) const noexcept;
+    void Bind(const std::uint8_t (&set)[wire::kShaSize], std::uint32_t mission, Source source) noexcept;
+    void TickState(std::uint64_t now_ms) noexcept;
+    void TickHash(std::uint64_t now_ms) noexcept;
+    void CountOffer(const std::uint8_t (&set)[wire::kShaSize]) noexcept;
+    unsigned OffersFor(const std::uint8_t (&set)[wire::kShaSize]) const noexcept;
+    // Host.
+    void HostTick(std::uint64_t now_ms, unsigned queued) noexcept;
+    bool GuestWants() const noexcept;
+    void HostRest() noexcept;
+    void StartOffer(std::uint64_t now_ms) noexcept;
+    void ReleaseSnapshot() noexcept;
+    void HostFail(wire::Fail fail, wire::AbortReason abort, std::uint64_t now_ms) noexcept;
+    void HostEnd(save_handoff_state::Token token, std::uint8_t why, bool stop) noexcept;
+    void HostMessage(const wire::Message& message, std::uint64_t now_ms) noexcept;
+    void RewindTo(std::uint8_t slot, std::uint32_t offset) noexcept;
+    // Guest.
+    void GuestTick(std::uint64_t now_ms) noexcept;
+    void GuestNeedUpdate(std::uint64_t now_ms) noexcept;
+    void GuestRest() noexcept;
+    void GuestMessage(const wire::Message& message, std::uint64_t now_ms) noexcept;
+    void GuestOffer(const wire::Message& message, std::uint64_t now_ms) noexcept;
+    void GuestChunk(const wire::Message& message, std::uint64_t now_ms) noexcept;
+    void GuestEnd(const wire::Message& message, std::uint64_t now_ms) noexcept;
+    void GuestDecline(wire::DeclineReason reason, std::uint32_t xfer) noexcept;
+    void GuestFail(wire::Fail fail, wire::Kind tell, std::uint64_t now_ms) noexcept;
+    void GuestDropPartial(const char* why) noexcept;
+    void GuestAbortStage(wire::AbortReason reason, std::uint64_t now_ms) noexcept;
+    void StageCommitted(std::uint64_t now_ms) noexcept;
+    void DoExit(std::uint64_t now_ms) noexcept;
+
     Config config_{};
     save_handoff_state::View view_{};
+    save_handoff_state::View published_{};
+    bool published_once_ = false;
     Provenance provenance_{};
     Manifest manifest_{};
     Request request_{};
     Stats stats_{};
+    Machine m_{};
     Action ring_[kActionCapacity]{};
     std::size_t head_ = 0, count_ = 0;
+    ActionKind awaiting_ = ActionKind::none;  // the popped action whose OnStageDone is due
+    std::uint32_t awaiting_xfer_ = 0;
 };
 
 }  // namespace mgscoop::save_handoff_core

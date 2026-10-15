@@ -28,8 +28,8 @@
 //   6 END     12 B (host -> guest)  [8..11] total u32
 //   7 RESULT  12 B (guest -> host)  [8] ResultStatus [9] Fail (0 unless failed) [10..11] 0
 //   8 ABORT   12 B (either)         [8] AbortReason [9..11] 0
-// A violation is dropped and counted; the glue logs
-// "save_handoff=bad_msg; why=<DecodeName>" at most once per 10 s.
+// A violation is dropped and counted; the core (save_handoff_core) queues the
+// log "save_handoff=bad_msg; why=<DecodeName>" at most once per 10 s.
 #include <cstddef>
 #include <cstdint>
 
@@ -52,6 +52,7 @@ inline constexpr std::size_t kOfferMaxSize = kOfferBaseSize + kOfferEntrySize * 
 inline constexpr std::size_t kSmallSize = 12;                   // WANT, DECLINE, END, RESULT, ABORT
 inline constexpr std::size_t kChunkHeaderSize = 16;
 inline constexpr std::size_t kMaxMessage = kChunkHeaderSize + kChunk;  // 1016 (<= link kMaxReliableMessage 1024)
+inline constexpr std::uint32_t kMaxMission = 99999;             // STATE mission / bound_mission, OFFER bound_mission
 
 // The first build that speaks channel 4: no channel-4 byte is sent unless the
 // link peer's remote_build passes RemoteBuildAtLeast(kHandoffMin*) (P2-4).
@@ -186,16 +187,20 @@ struct Message {
 // Encodes `message` (the member `kind` names) with the exact P2-5 layout.
 // Returns the size (<= kMaxMessage), or 0 (nothing written) when a field is
 // out of range (the same rules Decode enforces) or capacity is too small.
+// CHUNK copies len payload bytes from chunk.payload (it may alias out + 16).
 std::size_t Encode(const Message& message, std::uint8_t* out, std::size_t capacity) noexcept;
 
 // Strict decode. short_: fewer than kHeaderSize bytes; magic; version; kind:
 // unknown kind or flags != 0; size: not the exact size of the kind (OFFER
 // 52 + 40n, CHUNK 16 + len); bounds: a field out of range (xfer 0 on a kind
-// other than STATE or nonzero on STATE; an enum value out of range; n outside
-// 1..6; unsorted or duplicate slots; slot > 5; size 0 or > kMaxFileBytes;
-// total > kMaxTotal or not equal to the sum; neither slot 0 nor 1; CHUNK len 0
-// or > kChunk; a WANT mask of 0 or with bits above 5; a nonzero reserved or
-// pad byte). `out` is written only on ok.
+// other than STATE or nonzero on STATE; an enum value out of range; a mission
+// above kMaxMission; set_known 0 with a nonzero set; n outside 1..6 (checked
+// before the size); unsorted or duplicate slots; slot > 5; size 0 or >
+// kMaxFileBytes; total > kMaxTotal or not equal to the sum; neither slot 0
+// nor 1; CHUNK len 0 or > kChunk (checked before the size) or offset + len >
+// kMaxFileBytes; END total 0 or > kMaxTotal; a WANT mask of 0 or with bits
+// above 5; RESULT reason nonzero unless failed, zero when failed, or above the
+// last Fail; a nonzero reserved or pad byte). `out` is written only on ok.
 enum class Decode : std::uint8_t { ok, short_, magic, version, kind, size, bounds };
 const char* DecodeName(Decode result) noexcept;  // ok, short, magic, version, kind, size, bounds
 Decode DecodeMessage(const std::uint8_t* data, std::size_t size, Message& out) noexcept;
