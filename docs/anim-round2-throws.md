@@ -342,3 +342,16 @@ publication, the thrown filter, the equip preconditions and the pins).
 | Key off changed Round 1 | `partner_support_policy::Request(key, ...)` is false with the key off; NativeView and the drain use it, so `partner_native_support=0` returns the Round 1 mask (fixture: every slot/strip with the key off; `Strip(mask,false,false,false)==mask`). |
 | Fixture type matrix not wired | `Ready()` reports the decoded descriptor type and the gate admits only that decoded 12 (`x.type` is no longer hard-coded). A synthetic Capture/Match image for type 13 is not added: `Capture` reads about thirty pinned native chains, and the type-13 refusal is covered by `Refusal()` (fixture) plus the decoded-type gate. |
 | Scenario could not detect a viewer overwrite or a count change | After each throw the guest's exact lab-seed counts are `require`d; a new phase has the guest aim its own grenade (its arc on screen) while the host aims and throws, with `viewer-arc-*` captures, then the counts are required again. |
+
+### Hidden run after the fixes: `ea93a2e38edf41d780f1ce275d1b0f40` (passed)
+
+Same command as above, from `e8ebb94`. Closed / BaselineRestored / RealSavesUnchanged, no
+ExpectFailures; every `guest require support;...;counts=12,16383,12,8,12,12,8,8` passed: after the
+grenade throw, after the magazine throw and after the viewer-arc phase. Guest log:
+`partner_support=equip` for 354 (`handle=00022c4c`) and 349 (`00022bac`), `armed; reason=throw` /
+`throw_release`, every `stock_check; ...; changed=0` (three episodes), thrown filter
+`dropped=317; preview_dropped=314; passed=80` (the 80 forwarded requests are the guest's own arc previews
+while it aimed its own grenade), guard `hits=2040` across `windows=6920`. Idle refusals logged 6 lines
+instead of the earlier ~70. Frames (contact sheet `C:/Users/taylo/AppData/Local/Temp/mgs-caps/support2/sheet.png`):
+the host body's grenade and magazine throws (wind-up, release, follow-through) and the guest holding its
+own HAND GRENADE (12) with its arc while the partner throws beside it.
