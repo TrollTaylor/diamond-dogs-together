@@ -21,7 +21,11 @@ waitgameplay guest 240
 guest worldtrigger world=0
 wait 3000
 host worldtrigger goto=30020
+# Nothing presses Space here, so the ACC load waits on its "Resume Game" tips screen until the
+# game continues by itself (about 60 s; run 468ab156: the hold began 64 s after the goto). Capture
+# about 90 s after the goto: inside the 120 s hold whether the load continued early or late.
 wait 60000
+wait 30000
 host capture heli-hold
 waitmission host 30020 300
 waitgameplay host 120
