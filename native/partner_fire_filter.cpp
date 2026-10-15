@@ -29,16 +29,34 @@ detail::NoiseFn g_noise_original = nullptr;
 detail::NoiseFn g_noise_test_original = nullptr;
 volatile LONG g_noise_dropped = 0, g_noise_passed = 0, g_noise_last_owner = 0xFFFF;
 // Anim round 1: the census ring (any thread writes, the driver drains) and the
-// projectile census slot.
+// forwarding census slots (projectile, rocket, thrown, placed).
 volatile LONG g_census_on = 0;
-volatile LONG g_c_seq = 0, g_c_bullets = 0, g_c_noises = 0, g_c_projectiles = 0;
+volatile LONG g_c_seq = 0, g_c_bullets = 0, g_c_noises = 0;
+volatile LONG g_c_kind[kCensusSlots]{};
 CensusEntry g_c_ring[kCensusRing]{};
-volatile LONG g_proj_installed = 0;
-bool g_proj_ready = false;
-const char* g_proj_refusal = nullptr;
-detail::ProjectileFn g_proj_original = nullptr;
-detail::ProjectileFn g_proj_test_original = nullptr;
-std::uintptr_t g_proj_base = 0;
+// One forwarding slot: the request function, its live and base iface vtables
+// and slot offset (contract-pinned), the request fields the census reads.
+struct CensusSlot {
+    CensusKind kind;
+    const char* name;
+    std::uintptr_t target_rva, live_rva, base_rva;
+    std::size_t offset, id, aux;
+};
+constexpr CensusSlot kSlots[kCensusSlots] = {
+    {CensusKind::projectile, "projectile", c::proj_request_rva, c::proj_slot_live_rva, c::proj_slot_base_rva, 0, c::proj_id, c::proj_aux},
+    {CensusKind::rocket, "rocket", c::rocket_request_rva, c::proj_slot_live_rva, c::proj_slot_base_rva, c::rocket_slot, c::rocket_id, c::rocket_aux},
+    {CensusKind::thrown, "thrown", c::thrown_request_rva, c::thrown_slot_live_rva, c::thrown_slot_base_rva, c::thrown_slot, c::thrown_id,
+     c::thrown_aux},
+    {CensusKind::placed, "placed", c::placed_request_rva, c::placed_slot_live_rva, c::placed_slot_base_rva, c::placed_slot, c::placed_id,
+     c::placed_aux},
+};
+static_assert(c::proj_owner == c::req_owner, "every census request keeps the owner at +0x32");
+volatile LONG g_slot_installed = 0;  // the slots are tried once per process (with the census on)
+bool g_slot_ready[kCensusSlots]{};
+const char* g_slot_refusal[kCensusSlots]{};
+detail::ProjectileFn g_slot_original[kCensusSlots]{};
+detail::ProjectileFn g_slot_test_original[kCensusSlots]{};
+std::uintptr_t g_slot_base = 0;
 
 void Record(CensusKind kind, bool dropped, bool fields_ok, std::uint16_t owner, std::uint16_t id, std::uint8_t b0, std::uint8_t b1,
             std::uint8_t b2, std::uint16_t aux) noexcept {
@@ -137,71 +155,79 @@ void NoiseHook(void* self, const void* record) noexcept {
 }
 std::uintptr_t NoiseHookAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&NoiseHook); }
 
-// The projectile census hook (any thread): records the request and forwards
-// it unchanged; never drops (the projectile filter is round 2).
-void* ProjectileHook(void* iface, const void* request) noexcept {
+// A census slot hook (any thread): records the request (the owner at +0x32,
+// the slot's id and aux words) and forwards it unchanged, the return value
+// included; never drops (the filters are round 2). The four request functions
+// take (this, request) only (contract: their prologues use rcx and rdx).
+template <unsigned I>
+void* SlotHook(void* iface, const void* request) noexcept {
     if (g_census_on) {
         std::uint16_t owner = 0xFFFF, id = 0, aux = 0;
-        const bool ok = ReadRecord(request, c::proj_owner, &owner, sizeof(owner)) && ReadRecord(request, c::proj_id, &id, sizeof(id)) &&
-                        ReadRecord(request, c::proj_aux, &aux, sizeof(aux));
-        InterlockedIncrement(&g_c_projectiles);
-        Record(CensusKind::projectile, false, ok, owner, id, 0, 0, 0, aux);
+        const bool ok = ReadRecord(request, c::req_owner, &owner, sizeof(owner)) && ReadRecord(request, kSlots[I].id, &id, sizeof(id)) &&
+                        ReadRecord(request, kSlots[I].aux, &aux, sizeof(aux));
+        InterlockedIncrement(&g_c_kind[I]);
+        Record(kSlots[I].kind, false, ok, owner, id, 0, 0, 0, aux);
     }
-    const detail::ProjectileFn original = g_proj_test_original ? g_proj_test_original : g_proj_original;
+    const detail::ProjectileFn original = g_slot_test_original[I] ? g_slot_test_original[I] : g_slot_original[I];
     return original ? original(iface, request) : nullptr;
 }
-std::uintptr_t ProjectileHookAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&ProjectileHook); }
-const c::Site* ProjectileSite() noexcept {
+constexpr detail::ProjectileFn kSlotHooks[kCensusSlots] = {&SlotHook<0>, &SlotHook<1>, &SlotHook<2>, &SlotHook<3>};
+const c::Site* SiteAt(std::uintptr_t rva) noexcept {
     for (const c::Site& s : c::code_sites)
-        if (s.rva == c::proj_request_rva) return &s;
+        if (s.rva == rva) return &s;
     return nullptr;
 }
-// Once per process, only with the census on: the live and the base iface
-// vtable slot 0 (0x23E2D50, 0x23E2BD0) hold 0x1337760 (prologue checked);
-// each is exchanged with one locked qword exchange; the first is swapped back
-// when the second fails.
-void InstallProjectileCensus(std::uintptr_t base, LogFn log) noexcept {
-    if (InterlockedCompareExchange(&g_proj_installed, 1, 0) != 0) return;
-    const std::uintptr_t target = base + c::proj_request_rva;
-    const std::uintptr_t live = base + c::proj_slot_live_rva, dying = base + c::proj_slot_base_rva;
-    const c::Site* site = ProjectileSite();
+// One slot: the target's prologue (contract bytes) and both vtable slots
+// holding it, then one locked qword exchange each (the live slot first, swapped
+// back when the base slot fails). nullptr or the static refusal.
+const char* InstallSlot(std::uintptr_t base, unsigned i) noexcept {
+    const CensusSlot& k = kSlots[i];
+    const std::uintptr_t target = base + k.target_rva;
+    const std::uintptr_t live = base + k.live_rva + k.offset, dying = base + k.base_rva + k.offset;
+    const c::Site* site = SiteAt(k.target_rva);
     unsigned char prologue[sizeof(c::Site::bytes)]{};
     std::uintptr_t live_value = 0, dying_value = 0;
-    const char* result = nullptr;
-    if (!base || !site || !Read(target, prologue, site->size) || std::memcmp(prologue, site->bytes, site->size) != 0) result = "bytes";
-    else if (!ReadValue(live, live_value) || live_value != target) result = "slot_live";
-    else if (!ReadValue(dying, dying_value) || dying_value != target) result = "slot_base";
-    else {
-        g_proj_original = reinterpret_cast<detail::ProjectileFn>(target);
-        const std::uintptr_t hook = ProjectileHookAddress();
-        if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(live), target, hook))
-            if (std::strcmp(why, "protect_restore") != 0) result = why;
-        if (!result)
-            if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(dying), target, hook))
-                if (std::strcmp(why, "protect_restore") != 0) {
-                    result = why;
-                    near_code::PatchQword(reinterpret_cast<void*>(live), hook, target);
-                }
-    }
-    g_proj_refusal = result;
-    g_proj_base = base;
-    if (!result) g_proj_ready = true;
-    if (log) {
+    if (!base || !site || !Read(target, prologue, site->size) || std::memcmp(prologue, site->bytes, site->size) != 0) return "bytes";
+    if (!ReadValue(live, live_value) || live_value != target) return "slot_live";
+    if (!ReadValue(dying, dying_value) || dying_value != target) return "slot_base";
+    g_slot_original[i] = reinterpret_cast<detail::ProjectileFn>(target);
+    const auto hook = reinterpret_cast<std::uintptr_t>(kSlotHooks[i]);
+    if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(live), target, hook))
+        if (std::strcmp(why, "protect_restore") != 0) return why;
+    if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(dying), target, hook))
+        if (std::strcmp(why, "protect_restore") != 0) {
+            near_code::PatchQword(reinterpret_cast<void*>(live), hook, target);
+            return why;
+        }
+    return nullptr;
+}
+// Once per process, only with the census on (Install's first call after it).
+void InstallCensusSlots(std::uintptr_t base, LogFn log) noexcept {
+    if (InterlockedCompareExchange(&g_slot_installed, 1, 0) != 0) return;
+    g_slot_base = base;
+    for (unsigned i = 0; i < kCensusSlots; ++i) {
+        g_slot_refusal[i] = InstallSlot(base, i);
+        g_slot_ready[i] = g_slot_refusal[i] == nullptr;
+        if (!log) continue;
         char line[224]{};
-        if (g_proj_ready)
+        if (g_slot_ready[i])
             StringCchPrintfA(line, ARRAYSIZE(line),
-                             "partner_fire_census=projectile_installed; slots=0x23e2d50,0x23e2bd0; target=0x1337760; owner_field=0x32; "
-                             "forwards=all\r\n");
+                             "partner_fire_census=slot_installed; kind=%s; slots=0x%llx+0x%llx,0x%llx+0x%llx; target=0x%llx; owner_field=0x32; "
+                             "forwards=all\r\n",
+                             kSlots[i].name, static_cast<unsigned long long>(kSlots[i].live_rva), static_cast<unsigned long long>(kSlots[i].offset),
+                             static_cast<unsigned long long>(kSlots[i].base_rva), static_cast<unsigned long long>(kSlots[i].offset),
+                             static_cast<unsigned long long>(kSlots[i].target_rva));
         else
-            StringCchPrintfA(line, ARRAYSIZE(line), "partner_fire_census=projectile_refused; reason=%s\r\n", result);
+            StringCchPrintfA(line, ARRAYSIZE(line), "partner_fire_census=slot_refused; kind=%s; reason=%s\r\n", kSlots[i].name, g_slot_refusal[i]);
         log(line);
     }
 }
-bool ProjectileLive(std::uintptr_t base) noexcept {
-    if (!g_proj_ready) return false;
+bool SlotLive(std::uintptr_t base, unsigned i) noexcept {
+    if (!g_slot_ready[i]) return false;
     std::uintptr_t live = 0, dying = 0;
-    return ReadValue(base + c::proj_slot_live_rva, live) && ReadValue(base + c::proj_slot_base_rva, dying) &&
-           live == ProjectileHookAddress() && dying == ProjectileHookAddress();
+    const auto hook = reinterpret_cast<std::uintptr_t>(kSlotHooks[i]);
+    return ReadValue(base + kSlots[i].live_rva + kSlots[i].offset, live) && ReadValue(base + kSlots[i].base_rva + kSlots[i].offset, dying) &&
+           live == hook && dying == hook;
 }
 } // namespace
 
@@ -229,27 +255,31 @@ void ResetForTest() noexcept {
     InterlockedExchange(&g_c_seq, 0);
     InterlockedExchange(&g_c_bullets, 0);
     InterlockedExchange(&g_c_noises, 0);
-    InterlockedExchange(&g_c_projectiles, 0);
+    for (unsigned i = 0; i < kCensusSlots; ++i) {
+        InterlockedExchange(&g_c_kind[i], 0);
+        g_slot_ready[i] = false;
+        g_slot_refusal[i] = nullptr;
+        g_slot_original[i] = nullptr;
+    }
     std::memset(g_c_ring, 0, sizeof(g_c_ring));
-    InterlockedExchange(&g_proj_installed, 0);
-    g_proj_ready = false;
-    g_proj_refusal = nullptr;
-    g_proj_original = nullptr;
-    g_proj_base = 0;
+    InterlockedExchange(&g_slot_installed, 0);
+    g_slot_base = 0;
 }
 void SetOriginalForTest(RequestFn original) noexcept { g_test_original = original; }
 NoiseFn NoiseHookEntry() noexcept { return &NoiseHook; }
 void SetNoiseOriginalForTest(NoiseFn original) noexcept { g_noise_test_original = original; }
-ProjectileFn ProjectileHookEntry() noexcept { return &ProjectileHook; }
-void SetProjectileOriginalForTest(ProjectileFn original) noexcept { g_proj_test_original = original; }
+ProjectileFn SlotHookEntry(unsigned slot) noexcept { return slot < kCensusSlots ? kSlotHooks[slot] : nullptr; }
+void SetSlotOriginalForTest(unsigned slot, ProjectileFn original) noexcept {
+    if (slot < kCensusSlots) g_slot_test_original[slot] = original;
+}
 void RecordForTest(CensusKind kind, bool dropped, std::uint16_t owner, std::uint16_t id) noexcept {
     Record(kind, dropped, true, owner, id, 0, 0, 0, 0);
 }
 } // namespace detail
 
 const char* Install(const void* base_ptr, LogFn log) noexcept {
-    // Anim round 1: the projectile census slot comes with the bullet filter, only with the census on.
-    if (g_census_on && base_ptr) InstallProjectileCensus(reinterpret_cast<std::uintptr_t>(base_ptr), log);
+    // Anim round 1: the census slots come with the bullet filter, only with the census on.
+    if (g_census_on && base_ptr) InstallCensusSlots(reinterpret_cast<std::uintptr_t>(base_ptr), log);
     if (InterlockedCompareExchange(&g_installed, 1, 0) != 0) return g_ready ? nullptr : "disabled";
     const DWORD error = GetLastError();
     const auto base = reinterpret_cast<std::uintptr_t>(base_ptr);
@@ -386,6 +416,9 @@ const char* CensusKindName(CensusKind kind) noexcept {
     switch (kind) {
     case CensusKind::noise: return "noise";
     case CensusKind::projectile: return "projectile";
+    case CensusKind::rocket: return "rocket";
+    case CensusKind::thrown: return "thrown";
+    case CensusKind::placed: return "placed";
     default: return "bullet";
     }
 }
@@ -421,12 +454,14 @@ std::size_t DrainCensus(std::uint32_t& cursor, CensusEntry* out, std::size_t max
 
 void ReadCensusTotals(CensusTotals& out) noexcept {
     out = CensusTotals{};
-    out.projectile_installed = g_proj_ready;
-    out.projectile_live = g_proj_base && ProjectileLive(g_proj_base);
-    out.projectile_refusal = g_proj_refusal;
+    for (unsigned i = 0; i < kCensusSlots; ++i) {
+        out.slot_installed[i] = g_slot_ready[i];
+        out.slot_live[i] = g_slot_base && SlotLive(g_slot_base, i);
+        out.slot_refusal[i] = g_slot_refusal[i];
+        out.slot_requests[i] = static_cast<std::uint32_t>(g_c_kind[i]);
+    }
     out.bullets = static_cast<std::uint32_t>(g_c_bullets);
     out.noises = static_cast<std::uint32_t>(g_c_noises);
-    out.projectiles = static_cast<std::uint32_t>(g_c_projectiles);
     out.recorded = static_cast<std::uint32_t>(g_c_seq);
 }
 

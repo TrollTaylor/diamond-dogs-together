@@ -280,40 +280,73 @@ void TestFireFilter() {
 
 // Anim round 1 (docs/anim-round1-weapons.md): the fire/projectile census. The
 // bullet hook records every request with its owner and record fields before its
-// own verdict; with the census on, Install also swaps the projectile service
-// slots (live 0x23E2D50, base 0x23E2BD0) to a forwarding census hook.
-unsigned g_proj_forwarded = 0;
-void* FakeProjectileRequest(void* iface, const void*) noexcept {
-    ++g_proj_forwarded;
+// own verdict; with the census on, Install also swaps four forwarding slots
+// (projectile, rocket, thrown, placed) in their services' live and base iface
+// vtables.
+unsigned g_slot_forwarded[ff::kCensusSlots]{};
+template <unsigned I>
+void* FakeSlotRequest(void* iface, const void*) noexcept {
+    ++g_slot_forwarded[I];
     return iface;
 }
+struct SlotSpec {
+    std::uintptr_t target, live, base;
+    std::size_t offset, id, aux;
+};
+const SlotSpec kSlotSpecs[ff::kCensusSlots] = {
+    {pc::proj_request_rva, pc::proj_slot_live_rva, pc::proj_slot_base_rva, 0, pc::proj_id, pc::proj_aux},
+    {pc::rocket_request_rva, pc::proj_slot_live_rva, pc::proj_slot_base_rva, pc::rocket_slot, pc::rocket_id, pc::rocket_aux},
+    {pc::thrown_request_rva, pc::thrown_slot_live_rva, pc::thrown_slot_base_rva, pc::thrown_slot, pc::thrown_id, pc::thrown_aux},
+    {pc::placed_request_rva, pc::placed_slot_live_rva, pc::placed_slot_base_rva, pc::placed_slot, pc::placed_id, pc::placed_aux},
+};
+void PrepareCensusSlots(FireImage& img) {
+    for (const SlotSpec& k : kSlotSpecs) {
+        for (const auto& s : pc::code_sites)
+            if (s.rva == k.target) std::memcpy(img.mem + s.rva, s.bytes, s.size);
+        const std::uintptr_t t = img.base + k.target;
+        std::memcpy(img.mem + k.live + k.offset, &t, 8);
+        std::memcpy(img.mem + k.base + k.offset, &t, 8);
+    }
+}
 void TestFireCensus() {
+    static_assert(ff::kCensusSlots == 4, "projectile, rocket, thrown, placed");
     {
         FireImage img;
+        Check(img.span > pc::thrown_slot_live_rva + 0x10 && img.span > pc::placed_slot_live_rva + 0x50, "the synthetic image spans the slots");
         ff::detail::ResetForTest();
-        for (const auto& s : pc::code_sites)
-            if (s.rva == pc::proj_request_rva) std::memcpy(img.mem + s.rva, s.bytes, s.size);
-        const std::uintptr_t proj = img.base + pc::proj_request_rva;
-        std::memcpy(img.mem + pc::proj_slot_live_rva, &proj, 8);
-        std::memcpy(img.mem + pc::proj_slot_base_rva, &proj, 8);
+        PrepareCensusSlots(img);
         ff::detail::SetOriginalForTest(&FakeRequestBullet);
-        ff::detail::SetProjectileOriginalForTest(&FakeProjectileRequest);
-        // Census off: Install leaves the projectile slots alone.
+        ff::detail::SetSlotOriginalForTest(0, &FakeSlotRequest<0>);
+        ff::detail::SetSlotOriginalForTest(1, &FakeSlotRequest<1>);
+        ff::detail::SetSlotOriginalForTest(2, &FakeSlotRequest<2>);
+        ff::detail::SetSlotOriginalForTest(3, &FakeSlotRequest<3>);
+        // Census off: Install leaves the census slots alone.
         g_fire_log.clear();
-        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr && img.Slot(pc::proj_slot_live_rva) == proj &&
-                  g_fire_log.find("partner_fire_census") == std::string::npos, "census off: the projectile slots untouched");
+        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr &&
+                  img.Slot(pc::proj_slot_live_rva) == img.base + pc::proj_request_rva &&
+                  g_fire_log.find("partner_fire_census") == std::string::npos, "census off: the census slots untouched");
         ff::SetCensus(true);
         Check(ff::CensusOn() && ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr, "census on: the next install call");
-        const auto phook = reinterpret_cast<std::uintptr_t>(ff::detail::ProjectileHookEntry());
-        Check(img.Slot(pc::proj_slot_live_rva) == phook && img.Slot(pc::proj_slot_base_rva) == phook &&
-                  g_fire_log.find("partner_fire_census=projectile_installed; slots=0x23e2d50,0x23e2bd0; target=0x1337760; owner_field=0x32") !=
-                      std::string::npos, "census on: both projectile slots hold the forwarding census hook");
+        for (unsigned i = 0; i < ff::kCensusSlots; ++i) {
+            const auto hook = reinterpret_cast<std::uintptr_t>(ff::detail::SlotHookEntry(i));
+            Check(img.Slot(kSlotSpecs[i].live + kSlotSpecs[i].offset) == hook && img.Slot(kSlotSpecs[i].base + kSlotSpecs[i].offset) == hook,
+                  "census on: both vtable slots of every census slot hold its hook");
+        }
+        Check(g_fire_log.find("partner_fire_census=slot_installed; kind=projectile; slots=0x23e2d50+0x0,0x23e2bd0+0x0; target=0x1337760; "
+                              "owner_field=0x32") != std::string::npos &&
+                  g_fire_log.find("partner_fire_census=slot_installed; kind=thrown; slots=0x2429ad0+0x8,0x24299a0+0x8; target=0x15e0230") !=
+                      std::string::npos &&
+                  g_fire_log.find("kind=placed; slots=0x23a9fd0+0x48,0x23a9d20+0x48; target=0xfccd80") != std::string::npos &&
+                  g_fire_log.find("kind=rocket; slots=0x23e2d50+0x58,0x23e2bd0+0x58; target=0x1337920") != std::string::npos,
+              "census on: one installed line per slot");
+        // The bullet filter's own slots are not the projectile slot 0 (another vtable): untouched by the census.
         ff::CensusTotals t{};
         ff::ReadCensusTotals(t);
-        Check(t.projectile_installed && t.projectile_live && !t.projectile_refusal, "census totals: installed and live");
+        for (unsigned i = 0; i < ff::kCensusSlots; ++i)
+            Check(t.slot_installed[i] && t.slot_live[i] && !t.slot_refusal[i], "census totals: every slot installed and live");
         std::uint32_t cursor = 0, lost = 0;
-        ff::CensusEntry e[8]{};
-        Check(ff::DrainCensus(cursor, e, 8, lost) == 0 && lost == 0, "nothing recorded yet");
+        ff::CensusEntry e[16]{};
+        Check(ff::DrainCensus(cursor, e, 16, lost) == 0 && lost == 0, "nothing recorded yet");
         // A bullet of the local instance (owner 0) and of instance 1 (owner 1, armed: dropped).
         Check(ff::Arm(1), "armed for instance 1");
         const auto shot = [&](std::uint16_t owner, std::uint16_t id, std::uint8_t kind) {
@@ -328,27 +361,31 @@ void TestFireCensus() {
         g_forwarded = 0;
         Check(shot(0, 0x123, 7) == reinterpret_cast<void*>(0x1234) && shot(1, 0x124, 7) == nullptr && g_forwarded == 1,
               "census: the filter's verdicts are unchanged (owner 0 forwarded, owner 1 dropped)");
-        // A class-3 projectile request: the owner at +0x32, the id at +0x2E; forwarded with its return value.
-        alignas(16) unsigned char request[0x50]{};
-        const std::uint16_t powner = 1, pid = 0x77, paux = 9;
-        std::memcpy(request + pc::proj_owner, &powner, 2);
-        std::memcpy(request + pc::proj_id, &pid, 2);
-        std::memcpy(request + pc::proj_aux, &paux, 2);
-        g_proj_forwarded = 0;
-        Check(reinterpret_cast<ff::detail::ProjectileFn>(img.Slot(pc::proj_slot_live_rva))(reinterpret_cast<void*>(0x4321), request) ==
-                      reinterpret_cast<void*>(0x4321) && g_proj_forwarded == 1,
-              "the projectile census forwards every request (rax included), owner 1 too");
+        // One request per census slot (owner 1: the census never drops); each forwards with its return value.
+        for (unsigned i = 0; i < ff::kCensusSlots; ++i) {
+            alignas(16) unsigned char request[0x50]{};
+            const std::uint16_t owner = 1, id = static_cast<std::uint16_t>(0x70 + i), aux = static_cast<std::uint16_t>(9 + i);
+            std::memcpy(request + pc::req_owner, &owner, 2);
+            std::memcpy(request + kSlotSpecs[i].id, &id, 2);
+            std::memcpy(request + kSlotSpecs[i].aux, &aux, 2);
+            g_slot_forwarded[i] = 0;
+            const auto fn = reinterpret_cast<ff::detail::ProjectileFn>(img.Slot(kSlotSpecs[i].live + kSlotSpecs[i].offset));
+            Check(fn(reinterpret_cast<void*>(0x4321), request) == reinterpret_cast<void*>(0x4321) && g_slot_forwarded[i] == 1,
+                  "a census slot forwards every request (rax included), owner 1 too");
+        }
         ff::detail::RecordForTest(ff::CensusKind::noise, false, 0, 0x45);
-        const std::size_t n = ff::DrainCensus(cursor, e, 8, lost);
-        Check(n == 4 && lost == 0 && cursor == 4, "four entries drained in order");
+        const std::size_t n = ff::DrainCensus(cursor, e, 16, lost);
+        Check(n == 7 && lost == 0 && cursor == 7, "seven entries drained in order");
         Check(e[0].kind == ff::CensusKind::bullet && e[0].owner == 0 && e[0].id == 0x123 && e[0].b0 == 7 && e[0].b1 == 2 && e[0].b2 == 4 &&
                   !e[0].dropped && e[0].fields_ok && e[0].thread == GetCurrentThreadId() && e[0].seq == 1,
               "bullet entry: owner 0, bullet id, kind/sub/flags, forwarded");
         Check(e[1].kind == ff::CensusKind::bullet && e[1].owner == 1 && e[1].dropped, "bullet entry: owner 1 dropped");
-        Check(e[2].kind == ff::CensusKind::projectile && e[2].owner == 1 && e[2].id == 0x77 && e[2].aux == 9 && !e[2].dropped,
-              "projectile entry: owner 1 (never dropped by the census)");
-        Check(e[3].kind == ff::CensusKind::noise && e[3].id == 0x45 && std::strcmp(ff::CensusKindName(e[3].kind), "noise") == 0,
-              "noise entry");
+        const ff::CensusKind kinds[4] = {ff::CensusKind::projectile, ff::CensusKind::rocket, ff::CensusKind::thrown, ff::CensusKind::placed};
+        for (unsigned i = 0; i < 4; ++i)
+            Check(e[2 + i].kind == kinds[i] && e[2 + i].owner == 1 && e[2 + i].id == 0x70 + i && e[2 + i].aux == 9 + i && !e[2 + i].dropped &&
+                      e[2 + i].fields_ok, "census slot entry: kind, owner +0x32, id and aux fields (never dropped)");
+        Check(e[6].kind == ff::CensusKind::noise && e[6].id == 0x45 && std::strcmp(ff::CensusKindName(ff::CensusKind::thrown), "thrown") == 0 &&
+                  std::strcmp(ff::CensusKindName(ff::CensusKind::placed), "placed") == 0, "noise entry, names");
         // Overrun: older entries are lost, never torn.
         for (unsigned i = 0; i < ff::kCensusRing + 44; ++i) ff::detail::RecordForTest(ff::CensusKind::bullet, false, 0, static_cast<std::uint16_t>(i));
         ff::CensusEntry big[ff::kCensusRing]{};
@@ -362,43 +399,40 @@ void TestFireCensus() {
               "an overrun drains the newest ring and counts the lost ones");
         ff::CensusTotals t2{};
         ff::ReadCensusTotals(t2);
-        Check(t2.bullets == 2 && t2.projectiles == 1 && t2.recorded == 4 + ff::kCensusRing + 44, "census totals count the hooks' records");
+        Check(t2.bullets == 2 && t2.slot_requests[0] == 1 && t2.slot_requests[2] == 1 && t2.recorded == 7 + ff::kCensusRing + 44,
+              "census totals count the hooks' records");
         ff::SetCensus(false);
         shot(0, 1, 1);
-        Check(ff::DrainCensus(cursor, e, 8, lost) == 0, "census off: nothing recorded");
+        Check(ff::DrainCensus(cursor, e, 16, lost) == 0, "census off: nothing recorded");
         ff::Disarm();
         ff::detail::SetOriginalForTest(nullptr);
-        ff::detail::SetProjectileOriginalForTest(nullptr);
+        for (unsigned i = 0; i < ff::kCensusSlots; ++i) ff::detail::SetSlotOriginalForTest(i, nullptr);
         ff::detail::ResetForTest();
     }
     {
-        // A changed projectile prologue: refused, the slots untouched; the bullet filter still installs.
+        // A changed thrown-request prologue: that slot refuses (untouched), the others install, the bullet filter too.
         FireImage img;
         ff::detail::ResetForTest();
-        for (const auto& s : pc::code_sites)
-            if (s.rva == pc::proj_request_rva) std::memcpy(img.mem + s.rva, s.bytes, s.size);
-        const std::uintptr_t proj = img.base + pc::proj_request_rva;
-        std::memcpy(img.mem + pc::proj_slot_live_rva, &proj, 8);
-        std::memcpy(img.mem + pc::proj_slot_base_rva, &proj, 8);
-        img.mem[pc::proj_request_rva + 2] ^= 1;
+        PrepareCensusSlots(img);
+        img.mem[pc::thrown_request_rva + 2] ^= 1;
+        // A placed base slot not holding the request: refused before any swap.
+        const std::uintptr_t other = img.base + 0x3000;
+        std::memcpy(img.mem + pc::placed_slot_base_rva + pc::placed_slot, &other, 8);
         ff::SetCensus(true);
         g_fire_log.clear();
-        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr && img.Slot(pc::proj_slot_live_rva) == proj &&
-                  img.Slot(pc::proj_slot_base_rva) == proj &&
-                  g_fire_log.find("partner_fire_census=projectile_refused; reason=bytes") != std::string::npos,
-              "projectile prologue mismatch: refused, untouched, the bullet filter installed");
+        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr, "the bullet filter installs");
+        Check(img.Slot(pc::thrown_slot_live_rva + pc::thrown_slot) == img.base + pc::thrown_request_rva &&
+                  g_fire_log.find("partner_fire_census=slot_refused; kind=thrown; reason=bytes") != std::string::npos,
+              "thrown prologue mismatch: refused, untouched");
+        Check(img.Slot(pc::placed_slot_live_rva + pc::placed_slot) == img.base + pc::placed_request_rva &&
+                  img.Slot(pc::placed_slot_base_rva + pc::placed_slot) == other &&
+                  g_fire_log.find("partner_fire_census=slot_refused; kind=placed; reason=slot_base") != std::string::npos,
+              "a placed base slot without the request: refused before any swap");
         ff::CensusTotals t{};
         ff::ReadCensusTotals(t);
-        Check(!t.projectile_installed && t.projectile_refusal && std::strcmp(t.projectile_refusal, "bytes") == 0, "census totals: the refusal");
-        // The base slot not holding the request: refused, the live slot swapped back.
-        ff::detail::ResetForTest();
-        img.mem[pc::proj_request_rva + 2] ^= 1;
-        const std::uintptr_t other = img.base + 0x3000;
-        std::memcpy(img.mem + pc::proj_slot_base_rva, &other, 8);
-        ff::SetCensus(true);
-        ff::Install(reinterpret_cast<void*>(img.base), &FireLog);
-        Check(img.Slot(pc::proj_slot_live_rva) == proj && img.Slot(pc::proj_slot_base_rva) == other,
-              "a base slot without the request: refused before any swap");
+        Check(t.slot_installed[0] && t.slot_installed[1] && !t.slot_installed[2] && !t.slot_installed[3] &&
+                  std::strcmp(t.slot_refusal[2], "bytes") == 0 && std::strcmp(t.slot_refusal[3], "slot_base") == 0,
+              "census totals: per-slot verdicts");
         ff::SetCensus(false);
         ff::detail::ResetForTest();
     }

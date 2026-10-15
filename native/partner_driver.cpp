@@ -2763,18 +2763,23 @@ void TickFireCensus(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     if (!set.fire_census) return;
     ff::CensusTotals t{};
     ff::ReadCensusTotals(t);
-    if (!m.census_install_logged && (t.projectile_installed || t.projectile_refusal)) {
+    // The four forwarding slots (projectile, rocket, thrown, placed): one line once they were tried.
+    const auto slot = [&t](unsigned i) noexcept {
+        return t.slot_installed[i] ? (t.slot_live[i] ? "live" : "lost") : t.slot_refusal[i] ? t.slot_refusal[i] : "off";
+    };
+    bool tried = false;
+    for (unsigned i = 0; i < ff::kCensusSlots; ++i) tried = tried || t.slot_installed[i] || t.slot_refusal[i];
+    if (!m.census_install_logged && tried) {
         m.census_install_logged = true;
-        EmitFormat(h, "partner_fire_census=on; projectile=%s; reason=%s\r\n", t.projectile_installed ? "installed" : "refused",
-                   t.projectile_refusal ? t.projectile_refusal : "none");
+        EmitFormat(h, "partner_fire_census=on; projectile=%s; rocket=%s; thrown=%s; placed=%s\r\n", slot(0), slot(1), slot(2), slot(3));
     }
     if (!m.census_second_ms || now - m.census_second_ms >= 1000) {
         if (m.census_second_ms && (m.census_skipped || m.census_lost) && m.census_lines < kCensusLineCap) {
             ++m.census_lines;
-            EmitFormat(h, "partner_fire_census=summary; bullets=%u; noises=%u; projectiles=%u; recorded=%u; skipped=%u; lost=%u; "
-                          "projectile_slot=%s\r\n",
-                       t.bullets, t.noises, t.projectiles, t.recorded, m.census_skipped, m.census_lost,
-                       t.projectile_live ? "live" : t.projectile_installed ? "lost" : "off");
+            EmitFormat(h, "partner_fire_census=summary; bullets=%u; noises=%u; projectiles=%u; rockets=%u; thrown=%u; placed=%u; "
+                          "recorded=%u; skipped=%u; lost=%u; slots=%s,%s,%s,%s\r\n",
+                       t.bullets, t.noises, t.slot_requests[0], t.slot_requests[1], t.slot_requests[2], t.slot_requests[3], t.recorded,
+                       m.census_skipped, m.census_lost, slot(0), slot(1), slot(2), slot(3));
             m.census_skipped = m.census_lost = 0;
         }
         m.census_second_ms = now ? now : 1;
