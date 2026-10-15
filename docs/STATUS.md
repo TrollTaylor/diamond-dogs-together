@@ -16,6 +16,12 @@ guest's own 80 arc previews forwarded). The review (`docs/evidence/rea-throws-20
 guard only covered drain-window jobs; it now covers every body-1 job. Full ReleaseGun CTest 273/273. History of the
 blocked attempts and the REA/Ghidra audit: [the throw design](anim-round2-throws.md).
 
+Installed: package `mgs-coop-friend-0.12.6-20261015T233337Z-8ec568ed` (Release receipt
+`20261015-233107-b5f9df5644f04116ac88dfccedbfeb00`, 263 audited tests, ZIP SHA-256 `c01d8cd9...5ae4`) in both owned
+copies, loader SHA-256 `76cb0e89...65b2` (host through `Install-Coop.ps1 -Role Host -Character snake`, guest through the
+owned `install.ps1`); both executables, both Steam DLLs and all 17 save-folder files (13 real saves) hash-identical
+before and after; no game launched. The version stays 0.12.6, so both players need this same package.
+
 GPT's original note (v1, before the review): `wp/anim-throws` implements `partner_native_support=1` for type-12
 slot-3 equipment. A scoped stock guard, thrown-service entry owner filter,
 non-local native equipment writer/follower and per-window input gate isolate body 1;
