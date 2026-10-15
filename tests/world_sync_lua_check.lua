@@ -101,6 +101,11 @@ local function fixture(options)
             if phase == '1' then c.cfgStarts = (c.cfgStarts or 0) + 1 else c.cfgQueries = (c.cfgQueries or 0) + 1 end
             return function()
                 local p = c.peer
+                if p and p.lock ~= nil then
+                    -- A join-fix phase-2 loader: also the save handoff code r[12] and the travel lock r[13].
+                    return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, p.session or 7, p.mission, p.level, p.wait, p.handoff or 0, p.lock
+                end
                 if p then
                     -- A join-fix loader: session, then remote_mission, remote_level and the raw pair-wait code.
                     return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
@@ -113,6 +118,13 @@ local function fixture(options)
             for n in body:gmatch('%S+') do check(n == '0' or not n:find('^0'), 'NOTE no leading zeros: ' .. n) end
             c.notes = c.notes or {}
             c.notes[#c.notes + 1] = body
+            return function() return true end
+        elseif starts(source, PRE .. "SAVE_V1'") then
+            -- The save handoff report (join-fix phase 2 P2-2): exactly six unsigned integers.
+            check(body and body:match('^%d+ %d+ %d+ %d+ %d+ %d+$'), 'SAVE_V1 six unsigned integers: ' .. source)
+            for n in body:gmatch('%d+') do check(n == '0' or not n:find('^0'), 'SAVE_V1 no leading zeros: ' .. n) end
+            c.saves = c.saves or {}
+            c.saves[#c.saves + 1] = body
             return function() return true end
         elseif starts(source, PRE .. "TX_V1'") then
             check(body:match('^[%-%d][%-%d ]*$') and not body:find('  ') and not body:find('e') and not body:find('%.'),
@@ -1514,6 +1526,49 @@ do
         check(#c.receipts == beforeReceipts and resets == beforeResets and #c.rx == beforeRx + 1,
             reason .. ': completed inactive cleanup is inert')
     end
+end
+-- 16c. Join-fix phase 2: world_handoff with the real world_sync and world_follow
+-- (CFG r[12..13] through W.cfg/W.peer, SAVE_V1 through W.receipt, the title lock note).
+do
+    local coopDir = assert(FILES[1]:match('^(.*[/\])'), 'world chunk directory')
+    local function titleGuest(peer)
+        local env, c = fixture({role = 2, mission = 40050, peer = peer})
+        env.gvars.ini_isTitleMode, env.gvars.str_storySequence = true, 200
+        env.TppDefine.STORY_SEQUENCE = {CLEARD_ESCAPE_THE_HOSPITAL = 100, CLEARD_RECUE_MILLER = 110, CLEARD_TO_MATHER_BASE = 120}
+        env.TppScriptVars = {IsSavingOrLoading = function() return c.saving == true end}
+        c.continues = 0
+        env.TppMission.ExecuteContinueFromCheckPoint = function() c.continues = c.continues + 1 end
+        for _, name in ipairs({'world_follow_seed.lua', 'world_follow.lua', 'world_handoff.lua'}) do
+            local chunk = assert(loadfile(coopDir .. name)); setfenv(chunk, env); chunk()
+        end
+        F.start(env, c)
+        return env, c
+    end
+    local env, c = titleGuest({mission = 30010, level = 3, wait = 9, handoff = 0, lock = 1})
+    check(type(c.W.handoff) == 'table' and c.W.follow.replayHold == c.W.handoff.replayHold, 'world_handoff installs on the real world table')
+    F.tick(env, c, 1)
+    check(c.saves and #c.saves == 1 and c.saves[1] == '1 40050 1 2 0 0', 'the real tick sends REPORT through the strict SAVE_V1 grammar')
+    c.saving = true
+    F.tick(env, c, 8)
+    check(#c.saves == 2 and c.saves[2] == '1 40050 1 2 1 0', 'a change is reported after 250 ms')
+    env.TppMission.ExecuteContinueFromCheckPoint()
+    check(c.continues == 0 and c.notes[#c.notes] == '7 30010 1' and
+        has(c.logs, 'event=handoff;step=lock;fn=ExecuteContinueFromCheckPoint;kind=4;target=40050;host=30010;decision=refuse'),
+        'the real CFG r[13]=1 locks the title Continue (note 7 b=1)')
+    c.peer.lock = 0
+    env.TppMission.ExecuteContinueFromCheckPoint()
+    check(c.continues == 1, 'r[13]=0 from the real CFG: allowed')
+    c.peer.lock, c.peer.handoff = 1, 3
+    c.time = c.time + 250
+    check(c.W.handoff.replayHold() == true and has(c.logs, 'event=handoff;step=replay_hold;code=3'), 'r[12]=3: the title replay hold')
+    local env2, c2 = titleGuest({mission = 30010, level = 3, wait = 9})
+    env2.TppMission.ExecuteContinueFromCheckPoint()
+    F.tick(env2, c2, 1)
+    check(c2.continues == 1 and c2.W.handoff.replayHold() == false and #c2.saves == 1,
+        'an 11-value CFG (older loader): no lock, no replay hold, the report still sent')
+    check(not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 2 3 4 5") and not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 02 3 4 5 6") and
+        not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 -2 3 4 5 6") and not pcall(env.loadstring, PRE .. "BOGUS_V1' -- 1"),
+        'the native stub refuses a malformed SAVE_V1 and still errors on an unknown receipt')
 end
 -- The world and debug chunks inside the composed TppMain (exact splice;
 -- inert with literal native receipts).

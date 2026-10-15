@@ -678,4 +678,30 @@ old.env.TppMission.OnEndMissionPreparation(2, nil)
 check(old.F.hostDeploy and called(old, 'deploy') == 0, 'no W.peer: the legacy hold')
 old.W.paired = true; old.F.tick(old.time)
 check(called(old, 'deploy') == 1, 'no W.note: released without errors')
+-- Join-fix phase 2 C6: world_handoff's title replay hold (F.replayHold) keeps a queued
+-- transition; the 120 s timeout still refuses it (docs/join-fix-phase2-spec.md).
+local function heldReplay()
+    local c = fixture(2)
+    send(c, OP.TRANSITION, {1, 1, 30050, 40050, 6, 10, 0, 2, 0, 0, 8})
+    seedStream(c, 40050, 1)
+    c.hold = true
+    c.F.replayHold = function() c.holdCalls = (c.holdCalls or 0) + 1; return c.hold end
+    return c
+end
+local held = heldReplay()
+held.F.tick(held.time); held.time = held.time + 60000; held.F.tick(held.time)
+check(#held.F.queue == 1 and not held.F.current and #held.calls == 0 and held.holdCalls == 2,
+    'a replay hold keeps the queued transition without vanilla calls')
+held.hold = false; held.F.tick(held.time)
+check(held.F.current and held.calls[1] == 'clear' and held.tx[#held.tx].op == OP.FOLLOW_ACK and held.tx[#held.tx].v[3] == 1,
+    'replay hold false: the replay runs')
+local expired = heldReplay()
+expired.time = expired.time + 120001; expired.F.tick(expired.time)
+check(#expired.F.queue == 0 and expired.tx[#expired.tx].op == OP.FOLLOW_ACK and expired.tx[#expired.tx].v[3] == 0 and
+    #expired.calls == 0 and not expired.holdCalls and logged(expired, 'step=refused;reason=timeout'),
+    'the 120 s timeout still refuses a held transition with FOLLOW_ACK 0')
+local idleHold = fixture(2)
+idleHold.F.replayHold = function() idleHold.holdCalls = (idleHold.holdCalls or 0) + 1; return true end
+idleHold.F.tick(idleHold.time)
+check(not idleHold.holdCalls, 'no queued transition: the hold is never asked')
 print('world_follow_lua_check: ' .. checks .. ' checks passed')

@@ -1,6 +1,7 @@
 -- W3 startup Continue against exact extracted game function bodies. The engine
 -- records calls; no game, real save, external service or transport is used.
--- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua, world_follow_seed.lua, extracted TppPlayer.lua.
+-- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua, world_follow_seed.lua, extracted TppPlayer.lua,
+-- world_handoff.lua (join-fix phase 2: composed after world_follow, as in the splice).
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local function read(path) local f = assert(io.open(path, 'rb')); local s = f:read('*a'); f:close(); return s end
@@ -92,7 +93,7 @@ local function fixture(host, target, level, active, deploy)
         c.restores = (c.restores or 0) + 1
         c.restoreTitle = {env.gvars.ini_isTitleMode, env.gvars.ini_isReturnToTitle, env.gvars.isContinueFromTitle}
         env.svars.ply_isUsedPlayerInitialAction = host
-        local m = host and target or 40020
+        local m = host and target or c.ownTarget or 40020
         env.vars.missionCode, env.vars.locationCode = m, locations[m]
         if host then
             env.vars.initialPlayerFlag = 1
@@ -156,7 +157,12 @@ local function fixture(host, target, level, active, deploy)
         epoch = 7, paired = true, eff = 3, isStarted = true}
     env.e.MgsCoopWorld = W
     W.get = function(t, k) return t and t[k] end
-    W.cfg = function() return {c.configLevel, c.configRole or W.role, 1, c.link or 1, 7, 0, 1, c.session or 55} end
+    W.cfg = function()
+        local r = {c.configLevel, c.configRole or W.role, 1, c.link or 1, 7, 0, 1, c.session or 55}
+        -- A phase-2 loader (partner scene r[9..11], handoff r[12], lock r[13]) only when a test sets c.lock.
+        if c.lock ~= nil then r[9], r[10], r[11], r[12], r[13] = 30010, 3, 9, c.handoff or 0, c.lock end
+        return r
+    end
     W.h = function() return 444 end
     W.now = function() return c.time end
     W.inGame = function() return false end
@@ -164,12 +170,23 @@ local function fixture(host, target, level, active, deploy)
     W.log = function(text) c.logs[#c.logs + 1] = text end
     W.fail = function(text) c.failure = text; W.active = false end
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op = op, v = {...}}; return true end
+    -- SAVE_V1 receipts (world_handoff): recorded as integer lists.
+    c.saves = {}
+    W.n = function(v) if type(v) == 'number' and v == math.floor(v) and v >= 0 and v < 4294967296 then return string.format('%.0f', v) end end
+    W.receipt = function(source)
+        local body = assert(source:match("^return 'MGS_COOP_WORLD_SAVE_V1' %-%- (%d+ %d+ %d+ %d+ %d+ %d+)$"), source)
+        local v = {}
+        for n in body:gmatch('%d+') do v[#v + 1] = tonumber(n) end
+        c.saves[#c.saves + 1] = v
+        return true
+    end
     -- NOTE recorder; W.peer stays nil (an older loader: the legacy follow behaviour).
     c.notes = {}
     W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end
     compile('local W=e.MgsCoopWorld\nlocal OP=W.OP\n' .. stopSource)
     compile(read(arg[4]))
     compile(read(arg[1]))
+    compile(read(assert(arg[6], 'world_handoff.lua argument')))
     W.follow.install({level or 3, W.role})
     for _, f in ipairs(W.startHooks) do f() end
     for _, f in ipairs(W.pairedHooks) do f(false) end
@@ -408,4 +425,45 @@ for _, case in ipairs({{10020, 0, 10020}, {30020, 50050, 50050}}) do
         #d.notes == 2 and d.notes[2][1] == 3 and d.notes[2][3] == 3 and d.F.pass == nil,
         'exact-game deploy to ' .. case[3] .. ': chosen again, the vanilla clear is reserved')
 end
+-- Join-fix phase 2 (world_handoff composed): the host's real title Continue reports
+-- its restored checkpoint target (SAVE op 2, the provenance binding).
+local reporter = fixture(true, 30050)
+hostContinue(reporter)
+local continues = {}
+for _, v in ipairs(reporter.saves) do if v[1] == 2 then continues[#continues + 1] = v end end
+check(#continues == 1 and continues[1][2] == 30050 and continues[1][3] == 0 and continues[1][5] == 0 and continues[1][6] == 0,
+    'actual host Continue sends one SAVE op 2 with the restored checkpoint mission')
+-- An unarmed, linked guest at a 40050 title with the host in 30010: the actual
+-- ExecuteContinueFromCheckPoint is refused before any vanilla side effect, and
+-- the same Continue 2 s later runs the vanilla path on its own save.
+local function lockedGuest()
+    local g = fixture(false, 30050)
+    g.W.paired, g.F.armed = false, false
+    g.W.mission, g.env.vars.missionCode, g.env.vars.locationCode = 40050, 40050, 50
+    g.env.gvars.ini_isTitleMode, g.env.gvars.ini_isReturnToTitle = true, true
+    for _, f in ipairs(g.W.startHooks) do f() end
+    g.lock, g.ownTarget = 1, 30050
+    g.W.peer = function() return {mission = 30010, level = 3, wait = 9, linked = true, session = 55} end
+    return g
+end
+local locked = lockedGuest()
+check(locked.env.TppMission.ExecuteContinueFromCheckPoint() == nil and not locked.restores and not locked.env.mvars.mis_loadRequest and
+    not locked.loaded and #locked.engine == 0 and locked.env.gvars.usingNormalMissionSlot == false and
+    #locked.notes == 1 and locked.notes[1][1] == 7 and locked.notes[1][2] == 30010 and locked.notes[1][3] == 1,
+    'locked guest title Continue: refused before VarRestore, load or any vanilla state change (note 7 b=1)')
+check(#locked.tx == 0, 'the refusal sends no world op')
+locked.time = locked.time + 2000
+locked.env.TppMission.ExecuteContinueFromCheckPoint()
+local request = locked.env.mvars.mis_loadRequest
+check(locked.restores == 1 and request and request.nextMission == 30050 and locked.env.vars.missionCode == 30050,
+    'the repeat 2 s later runs the vanilla Continue into its own checkpoint')
+local continued, landing
+for _, v in ipairs(locked.saves) do if v[1] == 2 then continued = v end end
+for _, v in ipairs(locked.notes) do if v[1] == 11 then landing = v end end
+check(continued and continued[2] == 30050 and continued[3] == 1 and landing and landing[2] == 30050 and landing[3] == 30010,
+    'its title Continue reports op 2 (title=1) and warns that it lands away from the host (note 11)')
+local unlocked = lockedGuest()
+unlocked.lock = 0
+unlocked.env.TppMission.ExecuteContinueFromCheckPoint()
+check(unlocked.restores == 1 and #unlocked.notes == 0, 'travel lock off (r13=0): the vanilla Continue runs at once')
 print(checks .. ' exact-game W3 Continue/load checks passed; no game')
