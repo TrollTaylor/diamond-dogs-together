@@ -172,6 +172,7 @@ bool ForEachPair(const char* text, std::size_t length, Visit visit) noexcept {
 bool ParseRound2SupportKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (!Equals(key, "partner_native_support")) return false;
     ok = ParseBool(value, result.partner_native_support);
+    if (ok) result.partner_native_support_given = true;
     return true;
 }
 
@@ -1311,6 +1312,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // after hidden run 8ca5da4a converged 3018 -> 2035 ms against the remote's
     // 2020 ms); the census stays as named.
     if (!c.partner_native_unsupported_given) c.partner_native_unsupported = gun;
+    // Anim round 2: native partner throws (docs/anim-round2-throws.md) follow the
+    // gun profile in lab mode only (the local two-window test), after hidden runs
+    // aaa2a0e0 and ea93a2e3; play mode never admits them, named keys win.
+    if (!c.partner_native_support_given) c.partner_native_support = gun && c.mode == LabMode::lab;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;

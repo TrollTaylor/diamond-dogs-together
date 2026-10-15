@@ -487,6 +487,7 @@ struct LabConfig {
     bool partner_fire_census = false;
     // Native type-12 support throws are an explicit experiment; no profile enables them.
     bool partner_native_support = false;
+    bool partner_native_support_given = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;

@@ -1,6 +1,22 @@
-## October 15, 2026: native partner thrown support v1 (private branch)
+## October 15, 2026: native partner grenade throws (lab / local test)
 
-`wp/anim-throws` implements default-off `partner_native_support=1` for type-12
+**Your teammate's body now throws grenades.** When the other player equips a thrown support item (EQP type 12:
+grenades, smoke/stun/sleep grenades, empty magazines), aims and throws, their body on your screen holds the item and
+plays its own native throw (wind-up, release, follow-through). Nothing is spawned on your side and your grenade counts
+never change: a scoped stock guard puts the partner body on the game's own non-consuming remote-player branch, and an
+owner filter at the thrown service's entry drops every request (real throw and arc preview) owned by the partner body.
+Placed items (C4, mines) and the bionic arm still lower the gun (they write shared game state). This is on by default in
+the lab/local two-window test (`partner_native_support`, the native gun profile in lab mode); two-PC play mode does not
+admit it yet.
+
+Hidden runs: `aaa2a0e0df66419e8d026f029417f3da` (GPT's v1: both throws visible, 229 partner requests dropped, none
+passed, guest counts unchanged) and, after the review fixes, `ea93a2e38edf41d780f1ce275d1b0f40` (the guest's exact
+counts required unchanged after every throw and while it aimed its own grenade; 317 partner requests dropped, the
+guest's own 80 arc previews forwarded). The review (`docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md`) found the
+guard only covered drain-window jobs; it now covers every body-1 job. Full ReleaseGun CTest 273/273. History of the
+blocked attempts and the REA/Ghidra audit: [the throw design](anim-round2-throws.md).
+
+GPT's original note (v1, before the review): `wp/anim-throws` implements `partner_native_support=1` for type-12
 slot-3 equipment. A scoped stock guard, thrown-service entry owner filter,
 non-local native equipment writer/follower and per-window input gate isolate body 1;
 read-only support/inventory checks latch it off on a change. Placed equipment and
@@ -11,8 +27,7 @@ Static contract verification passed for executable 1.0.15.4 SHA-256
 ReleaseGun build and all **253/253 CTest tests** passed, including the friend-package
 fixture. Results, patch bytes and the prepared scenario are recorded in
 [the throw design](anim-round2-throws.md).
-No hidden gameplay run, merge, package or install: animation, counts and item
-visibility remain unverified. Installed 0.12.6 behavior is unchanged.
+(Superseded: the hidden runs above verified animation, counts and item visibility.)
 
 ## October 15, 2026: the remote driver is drawn seated; partner weapon and stance fixes
 

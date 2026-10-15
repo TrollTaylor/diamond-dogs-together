@@ -15,8 +15,9 @@ Placed equipment (type 13), items and slot 6 remain unsupported. RELOAD, ACTION
 modes 28..42 perform the body animation; this implementation does not substitute
 motions or generate a second real grenade.
 
-- `partner_native_support=0|1` is the only new setting, default **0** in every
-  profile. Its independent parser helper avoids the main MSVC nesting limit.
+- `partner_native_support=0|1` is the only new setting. Default: **on for the native gun
+  profile in lab mode** (the local two-window test, after hidden runs `aaa2a0e0` and `ea93a2e3`),
+  off everywhere else; a named key always wins (`partner_native_support_given`). Its independent parser helper avoids the main MSVC nesting limit.
   Admission additionally requires lab mode, redirected copied saves, the ordinary
   native gun/body admission, current owner/lifetime and a fresh v4 Equip plus v5
   current slot/gun group. Friend/play mode does not admit it.
