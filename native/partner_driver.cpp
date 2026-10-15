@@ -3017,6 +3017,7 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     in.mode = set.noverlay;
     if (pending) in.debug = d.overlay_request;
     in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
+    in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
     in.native_clear = !m.native_out.active && !m.input_armed && !m.native_defer_armed;
     in.map_idle = m.dmmap.phase == pdm::Phase::idle && !m.dmmap.owned;
     in.patched = m.dm_patched;

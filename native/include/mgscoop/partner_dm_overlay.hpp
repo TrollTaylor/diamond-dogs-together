@@ -105,6 +105,9 @@ struct In {
     // stage, parts, range, ride, carry, vehicle, pose_lease, fault,
     // patch_failed, dm_revert_failed, apply, body_state).
     const char* blocked;
+    // Body 1 is still there (loaded, not ride/range hidden, not terminating):
+    // without it a blocked overlay gives up without a (global) DM_STOP.
+    bool body_present;
     bool native_clear;  // the native drive is not active, its window and deferral disarmed
     bool map_idle;      // dm=map owns no clip and is not releasing one
     bool patched;       // the comparator patch is applied

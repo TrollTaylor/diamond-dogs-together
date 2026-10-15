@@ -133,6 +133,7 @@ struct Game {
         in.q18[1] = 1;
         in.body_valid = true;
         in.body_act = 1;
+        in.body_present = true;
     }
     pdo::Out Step(std::uint32_t dt = 33) {
         now += dt;
@@ -335,6 +336,17 @@ void TestUnconsumedAndLost() {
         g.Step();
         Check(g.out.stop && Is(g.out.reason, "carry"), "blocked while playing: stop");
     }
+    {
+        // The body went away (a ride hide unrealized it, q18[1] may read stale 139): no global stop, abort.
+        Game g;
+        g.Debug("stateCBoxIdle", true, 30000);
+        g.Run(200);
+        g.in.blocked = "ride";
+        g.in.body_present = false;
+        g.Step();
+        Check(!g.out.stop && Is(g.out.event, "abort") && Is(g.out.reason, "ride") && !pdo::Active(g.s) && g.stops_sent == 0,
+              "body gone while playing: abort without DM_STOP");
+    }
 }
 
 void TestMapFlow() {
@@ -395,6 +407,27 @@ void TestMapFlow() {
     d.in.remote_act = 55;
     d.Run(1000);
     Check(!pdo::Active(d.s), "debug mode: no map");
+    // A map loop the game keeps ending: replayed once, then not restarted while the remote stays in the act.
+    Game l;
+    l.in.mode = PartnerNativeOverlay::map;
+    l.in.remote_valid = true;
+    l.in.remote_act = 77;
+    l.Run(600);
+    Check(l.s.phase == pdo::Phase::playing && l.plays == 1, "map loop playing");
+    l.in.q18[1] = 1;
+    l.Step();
+    l.Run(200);
+    Check(l.s.phase == pdo::Phase::playing && l.plays == 2, "map loop replayed once");
+    l.in.q18[1] = 1;
+    l.Step();
+    Check(Is(l.out.event, "lost") && !pdo::Active(l.s), "map loop lost again: released");
+    l.Run(2000);
+    Check(!pdo::Active(l.s) && l.plays == 2, "no restart for the same remote episode (no suspend/resume thrash)");
+    l.in.remote_act = 1;
+    l.Run(400);
+    l.in.remote_act = 77;
+    l.Run(600);
+    Check(pdo::Active(l.s) && l.plays == 3, "a new remote episode starts again");
     // Stale remote while mapped: map_exit.
     Game s;
     s.in.mode = PartnerNativeOverlay::map;

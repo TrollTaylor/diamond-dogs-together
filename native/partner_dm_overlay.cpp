@@ -185,6 +185,9 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     // stays the overlay's (no dm=map play before the native drive is back).
     const auto finish = [&](const char* what, const char* why) noexcept {
         event(what, why, Ms(s.start_ms, now));
+        // A map overlay never restarts for the same remote episode (no
+        // suspend/resume thrash): the remote must leave or change the act.
+        if (s.source == Source::map) s.done_index = s.index;
         s.phase = Phase::idle;
         s.cooldown_until = now + p.cooldown_ms;
         s.stop_reason = nullptr;
@@ -326,6 +329,13 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         break;
     case Phase::playing: {
         o.suspend = o.owns_dm = true;
+        if (in.blocked && !in.body_present) {
+            // The body went away (ride/range hide, unloaded): no global Stop
+            // that could outlive our DM and end the next one.
+            ++s.aborts;
+            finish("abort", in.blocked);
+            break;
+        }
         if (in.blocked && !s.stop_reason) s.stop_reason = in.blocked;
         if (!s.stop_reason && now >= s.deadline_ms) s.stop_reason = "timeout";
         // The game ended the DM: a one-shot finished; a loop is replayed once.
@@ -338,7 +348,6 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
                 event("lost", "replay", Ms(s.playing_ms, now));
                 break;
             }
-            if (!s.loop && s.source == Source::map) s.done_index = s.index;
             if (s.loop) ++s.losts; else ++s.finishes;
             finish(s.loop ? "lost" : "finished", s.stop_reason ? s.stop_reason : "ended");
             break;
@@ -369,6 +378,11 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     }
     case Phase::stop_sent:
         o.suspend = o.owns_dm = true;
+        if (in.blocked && !in.body_present) {
+            ++s.aborts;
+            finish("abort", in.blocked);
+            break;
+        }
         if (in.dm_ok && in.q18[1] != kDmAct) {
             if (s.switching && s.next_index != kNone && !in.blocked && map_mode) {
                 // Switch: the next entry plays without returning to native.
