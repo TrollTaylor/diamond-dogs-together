@@ -529,10 +529,43 @@ try {
     foreach ($reason in 'proto_mismatch', 'mode_mismatch', 'role_mismatch', 'secret_missing', 'secret_bad_char', 'crypto', 'no_peer_addr', 'transport_bind', 'transport_socket', 'something_new') {
         Assert-True ([bool](Get-CoopLinkReasonText -Reason $reason)) "sentence for $reason"
     }
-    Assert-True ((Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text '{"v":1,"state":"connecting"}') -Role guest) -ceq '[JOIN] link=connecting | partner=none | mission 0 - Partner body unavailable in this mission; use Mother Base or free roam.') 'a sparse status still formats (StrictMode-safe)'
+    Assert-True ((Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text '{"v":1,"state":"connecting"}') -Role guest) -ceq '[JOIN] link=connecting | partner=none | mission 0') 'a sparse status still formats (StrictMode-safe)'
     foreach ($freeMission in @(30010, 30020)) {
         $elsewhere.mission = $freeMission
         Assert-True ((Format-CoopStatusLine -Status $elsewhere -Role host -NowUtc $now).EndsWith("mission $freeMission")) 'free roam does not send the player back to Mother Base'
+    }
+    # A loading screen, the start screen and the helicopters are no "mission without a body" (K20).
+    foreach ($quietMission in @(40050, 1, 40010, 40020)) {
+        $quiet = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', ('"mission":' + $quietMission)))
+        Assert-True ((Format-CoopStatusLine -Status $quiet -Role host -NowUtc $now).EndsWith("| mission $quietMission")) "no partner body suffix at mission $quietMission"
+    }
+    # The world-sync keys of link-status.json (link-protocol.md 7.2): the partner's settled mission.
+    $worldKeys = ',"world":3,"paired":0,"partner_mission":30010,"pair_wait":"different_mission","progress":"ok","time_utc"'
+    $apart = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":10020').Replace(',"time_utc"', $worldKeys))
+    Assert-Equal (Format-CoopStatusLine -Status $apart -Role host -NowUtc $now) '[HOST] link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look | mission 10020 - your partner is in Afghanistan free roam. Different missions never pair: meet in the same Mother Base, free roam or helicopter.' 'different missions: where the partner is and the pairing rule'
+    $apartConnecting = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"state":"connected"', '"state":"connecting"').Replace('"mission":30050', '"mission":10020').Replace(',"time_utc"', $worldKeys))
+    $apartLine = Format-CoopStatusLine -Status $apartConnecting -Role host -NowUtc $now
+    Assert-True (!$apartLine.Contains('your partner is in') -and $apartLine.EndsWith('| mission 10020 - Partner body unavailable in this mission; use Mother Base or free roam.')) 'not connected: no different-missions explanation'
+    $settling = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":40050').Replace(',"time_utc"', $worldKeys.Replace('"different_mission"', '"settling"')))
+    Assert-True ((Format-CoopStatusLine -Status $settling -Role host -NowUtc $now).EndsWith('| mission 40050')) 'settling: no explanation yet'
+    $storyStart = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":40010').Replace(',"time_utc"', ',"world":3,"paired":0,"partner_mission":0,"pair_wait":"no_hello","progress":"story_start","time_utc"'))
+    Assert-True ((Format-CoopStatusLine -Status $storyStart -Role host -NowUtc $now).EndsWith('| mission 40010 Your co-op save is at the story start: quit, then import your partner''s save with Share-Save.bat (option I).')) 'story start: the Share-Save sentence'
+    $storyApart = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":10020').Replace(',"time_utc"', $worldKeys.Replace('"progress":"ok"', '"progress":"story_start"')))
+    Assert-True ((Format-CoopStatusLine -Status $storyApart -Role host -NowUtc $now).EndsWith('free roam or helicopter. Your co-op save is at the story start: quit, then import your partner''s save with Share-Save.bat (option I).')) 'story start follows the different-missions explanation'
+    # The guest whose host restarted hosting: the old code is refused (bad_code, unverified).
+    $staleText = $statusText.Replace('"role":"host","state":"connected","reason":"","verified":1', '"role":"guest","state":"reconnecting","reason":"bad_code","verified":0').Replace('"saves":"redirected"', '"saves":"redirected","left":1')
+    $staleLine = Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text $staleText) -Role guest -NowUtc $now
+    Assert-True ($staleLine.Contains(' - the host restarted with a new code: paste it in F9 > Partner / Co-op > Online') -and !$staleLine.Contains('the host left')) 'guest: the host restarted with a new code'
+    Assert-True ((Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text $staleText.Replace('"verified":0', '"verified":1')) -Role guest -NowUtc $now).Contains(' - the host left; waiting for them to come back')) 'guest: a verified bad_code keeps the left clause'
+    Assert-True ((Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text $staleText.Replace('"reason":"bad_code"', '"reason":"busy"')) -Role guest -NowUtc $now).Contains(' - the host left; waiting for them to come back')) 'guest: another reason keeps the left clause'
+    $hostStale = Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text $staleText) -Role host -NowUtc $now
+    Assert-True ($hostStale.Contains(' - your friend left; waiting for them to come back') -and !$hostStale.Contains('restarted with a new code')) 'host: the left clause is unchanged'
+    # Mission names (the long table shared with native coop_text::FormatMission, K11).
+    foreach ($row in @(@(0, 'a loading screen'), @(1, 'the start screen'), @(30010, 'Afghanistan free roam'), @(30020, 'Africa free roam'), @(30050, 'Mother Base'),
+            @(40010, 'the Afghanistan helicopter'), @(40020, 'the Africa helicopter'), @(40050, 'the Mother Base helicopter'), @(10000, 'story mission 10000'),
+            @(10020, 'story mission 10020'), @(11043, 'story mission 11043'), @(11999, 'story mission 11999'), @(12000, 'mission 12000'), @(12345, 'mission 12345'),
+            @(9999, 'mission 9999'), @(4294967295, 'mission 4294967295'))) {
+        Assert-Equal (Get-CoopMissionName -Mission $row[0]) $row[1] "mission name $($row[0])"
     }
     # Online play: how each PC shows the partner body (link-status.json partner_drive/_reason, remote_drive/_reason).
     $nativeStatus = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"saves":"redirected"', '"saves":"redirected","partner_drive":"native","partner_reason":"ok","remote_drive":"clips","remote_reason":"thread"'))
@@ -628,6 +661,40 @@ try {
     $tail = Limit-TextTail -Text (("line`n") * 100) -MaxChars 50
     Assert-True ($tail.StartsWith('[... ') -and $tail.Length -lt 100) 'tail limited with a note'
     Assert-Equal (Get-TextFromLastMarker -Text "x`nMGS Co-op script adapter 0.12.0; b`ny`n" -Marker 'MGS Co-op script adapter') "MGS Co-op script adapter 0.12.0; b`ny`n" 'from the last adapter start'
+    $sessions = "partial`nMGS Co-op script adapter A`na`nMGS Co-op script adapter B`nb`nMGS Co-op script adapter C`nc`nMGS Co-op script adapter D`nd`n"
+    Assert-Equal (Get-TextFromLastMarkers -Text $sessions -Marker 'MGS Co-op script adapter' -Count 3) "MGS Co-op script adapter B`nb`nMGS Co-op script adapter C`nc`nMGS Co-op script adapter D`nd`n" 'from the 3rd-last adapter start'
+    Assert-Equal (Get-TextFromLastMarkers -Text $sessions -Marker 'MGS Co-op script adapter' -Count 1) (Get-TextFromLastMarker -Text $sessions -Marker 'MGS Co-op script adapter') 'Count 1 is the last start'
+    Assert-Equal (Get-TextFromLastMarkers -Text $sessions -Marker 'MGS Co-op script adapter' -Count 5) $sessions 'fewer starts than asked: the whole text'
+    Assert-Equal (Get-TextFromLastMarkers -Text "x`nMGS Co-op script adapter; MGS Co-op script adapter`ny`n" -Marker 'MGS Co-op script adapter' -Count 2) "x`nMGS Co-op script adapter; MGS Co-op script adapter`ny`n" 'two matches on one line count once'
+    Assert-Equal (Get-TextFromLastMarkers -Text "MGS Co-op script adapter A`na`nMGS Co-op script adapter B`n" -Marker 'MGS Co-op script adapter' -Count 2) "MGS Co-op script adapter A`na`nMGS Co-op script adapter B`n" 'a start on the first line'
+    Assert-Equal (Get-TextFromLastMarkers -Text '' -Marker 'MGS Co-op script adapter' -Count 3) '' 'empty text'
+    # Share-Save import detection (K18): a valid marker wins, else the newest set-aside folder by name.
+    $infoRoot = Join-Path $fixture 'import-info'
+    $infoSaves = Join-Path $infoRoot 'coop-saves'
+    $infoReplaced = Join-Path $infoRoot 'coop-saves-replaced'
+    $null = New-Item -ItemType Directory -Path $infoSaves -Force
+    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced)) 'no marker, no set-aside folder: not imported'
+    $null = New-Item -ItemType Directory -Path (Join-Path $infoReplaced '20261009-171000-before-import'), (Join-Path $infoReplaced '20261015-155533'), (Join-Path $infoReplaced 'notes')
+    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced)) 'a later Install-Coop reseed: not imported'
+    $null = New-Item -ItemType Directory -Path (Join-Path $infoReplaced '20261016-090000-before-import')
+    $info = Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced
+    Assert-Equal "$($info.Source)|$($info.Imported)|$([IO.Path]::GetFileName($info.Folder))" 'folder|2026-10-16 09:00|20261016-090000-before-import' 'the newest folder is an import'
+    $null = New-Item -ItemType Directory -Path (Join-Path $infoReplaced '20261016-093000-before-handoff')
+    Assert-Equal (Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced).Source 'folder' 'a handoff counts as an import (Phase 2)'
+    $null = New-Item -ItemType Directory -Path (Join-Path $infoReplaced '20261016-100000-before-restore')
+    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced)) 'after a Share-Save [R]: not imported'
+    $importedAt = [DateTime]::new(2026, 10, 16, 8, 30, 0, [DateTimeKind]::Utc)
+    $markerText = New-FriendImportMarkerText -Source 'share-save' -ExportedUtc '2026-10-16T08:00:00.0000000Z' -Files @([pscustomobject]@{ entry = '287700/local/TPP_GAME_DATA0'; bytes = 42; sha256 = 'abc' }) -ImportedUtc $importedAt
+    $markerJson = $markerText | ConvertFrom-Json
+    $markerExported = $markerJson.exported_utc
+    if ($markerExported -is [DateTime]) { $markerExported = $markerExported.ToUniversalTime().ToString('o') }
+    Assert-Equal "$($markerJson.format)|$($markerJson.v)|$($markerJson.source)|$markerExported|$(@($markerJson.files).Count)|$($markerJson.files[0].entry)|$($markerJson.files[0].bytes)|$($markerJson.files[0].sha256)" 'mgs-coop-imported-progress|1|share-save|2026-10-16T08:00:00.0000000Z|1|287700/local/TPP_GAME_DATA0|42|ABC' 'import marker fields (K18)'
+    Assert-True ($markerText.Contains('"imported_utc":') -and $markerText.Contains('2026-10-16T08:30:00Z') -and $markerText -cnotmatch '[^\x00-\x7F]') 'import marker time and ASCII'
+    [IO.File]::WriteAllText((Join-Path $infoSaves 'imported-progress.json'), $markerText)
+    $info = Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced
+    Assert-Equal "$($info.Source)|$($info.Imported)|$([IO.Path]::GetFileName($info.MarkerPath))" ('marker|' + $importedAt.ToLocalTime().ToString('yyyy-MM-dd HH:mm') + '|imported-progress.json') 'a valid marker wins'
+    [IO.File]::WriteAllText((Join-Path $infoSaves 'imported-progress.json'), '{"format":"something-else","v":1}')
+    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced)) 'an invalid marker falls back to the folders'
 
     # ------------------------------------------------------------ firewall report and elevated command (pure)
     $report = Format-CoopFirewallReport -Rules @(
@@ -899,7 +966,8 @@ try {
         }
     } finally { $localZip.Dispose() }
     $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
-    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.6', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
+    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.6', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves',
+            'Share-Save.bat', 'SAME PROGRESS FOR BOTH') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
     }
     foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }
@@ -1027,6 +1095,93 @@ try {
     $js = Get-Content -LiteralPath (Join-Path $jp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
     Assert-Equal "$($js.role_hint)|$($js.character)" 'Join|quiet' 'joiner defaults to Quiet'
     Assert-PassThrough $jp 'join install'
+
+    # ------------------------------------------------------------ Share-Save (same progress for both; docs/two-pc-play.md)
+    # The host exports its co-op copy, the joiner imports it (with the import
+    # marker, K18) and restores its own copy again. The real saves are never touched.
+    $shareSave = Join-Path $stage 'scripts/Share-Save.ps1'
+    $shareOut = Join-Path $fixture 'share-out'
+    $null = New-Item -ItemType Directory -Path $shareOut
+    $joinCoop = Join-Path $jp.Mod 'coop-saves'
+    $joinLocal = Join-Path $joinCoop '287700/local'
+    $joinReplaced = Join-Path $jp.Mod 'coop-saves-replaced'
+    $joinOwnData = [IO.File]::ReadAllBytes((Join-Path $joinLocal 'TPP_GAME_DATA0'))
+    [IO.File]::WriteAllText((Join-Path $joinLocal 'TPP_GAME_DATA0'), 'join own early progress')
+    [IO.File]::WriteAllText((Join-Path $joinLocal 'TPP_CONFIG_DATA'), 'join own settings')
+    $hostCoopBefore = Get-TreeHashes $hostSaveDir
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $hostGame, '-Mode', 'Export', '-NonInteractive', '-OutputDirectory', $shareOut)
+    Assert-Equal $r.Exit 0 "Share-Save export: $($r.Raw)"
+    $shareZips = @(Get-ChildItem -LiteralPath $shareOut -Filter 'mgs-coop-save-*.zip')
+    Assert-Equal $shareZips.Count 1 'Share-Save export writes one zip'
+    Assert-Equal (Get-TreeHashes $hostSaveDir) $hostCoopBefore 'Share-Save export only reads the co-op copy'
+    $shareZip = [IO.Compression.ZipFile]::OpenRead($shareZips[0].FullName)
+    try {
+        $reader = [IO.StreamReader]::new($shareZip.GetEntry('share-save.json').Open())
+        try { $shareManifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+    } finally { $shareZip.Dispose() }
+    $manifestRows = (@($shareManifest.files) | ForEach-Object { "$($_.entry)|$($_.bytes)|$(([string]$_.sha256).ToUpperInvariant())" } | Sort-Object) -join ','
+    Assert-True ($manifestRows.Contains('287700/local/TPP_GAME_DATA0|') -and !$manifestRows.Contains('CONFIG')) 'the export carries the progress files only'
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $joinGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
+    Assert-Equal $r.Exit 0 "Share-Save import: $($r.Raw)"
+    Assert-True (Has $r 'Keep the zip: if this copy is ever replaced, import it again.') 'import: keep the zip'
+    $joinMarker = Join-Path $joinCoop 'imported-progress.json'
+    $importMarker = [IO.File]::ReadAllText($joinMarker) | ConvertFrom-Json
+    Assert-Equal "$($importMarker.format)|$($importMarker.v)|$($importMarker.source)" 'mgs-coop-imported-progress|1|share-save' 'import: the marker is written into the new copy'
+    $markerRows = (@($importMarker.files) | ForEach-Object { "$($_.entry)|$($_.bytes)|$($_.sha256)" } | Sort-Object) -join ','
+    Assert-Equal $markerRows $manifestRows 'import: the marker hashes equal the zip manifest'
+    Assert-True (![IO.File]::ReadAllText($joinMarker).Contains('fixture save')) 'import: the marker holds no save bytes'
+    Assert-Equal (Get-Sha256 (Join-Path $joinLocal 'TPP_GAME_DATA0')) (Get-Sha256 (Join-Path $hostSaveDir '287700/local/TPP_GAME_DATA0')) 'import: the partner''s progress is in the co-op copy'
+    Assert-Equal ([IO.File]::ReadAllText((Join-Path $joinLocal 'TPP_CONFIG_DATA'))) 'join own settings' 'import: own settings kept'
+    Assert-Equal @(Get-ChildItem -LiteralPath $joinReplaced -Directory -Filter '*-before-import').Count 1 'import: the previous copy is kept aside'
+    Assert-Equal (Get-FriendImportedSaveInfo -SaveDir $joinCoop -ReplacedRoot $joinReplaced).Source 'marker' 'import: detected by its marker'
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $joinGame, '-Mode', 'Restore', '-NonInteractive')
+    Assert-Equal $r.Exit 0 "Share-Save restore: $($r.Raw)"
+    $restoreAside = @(Get-ChildItem -LiteralPath $joinReplaced -Directory -Filter '*-before-restore')
+    Assert-True (!(Test-Path -LiteralPath $joinMarker) -and $restoreAside.Count -eq 1 -and (Test-Path -LiteralPath (Join-Path $restoreAside[0].FullName 'imported-progress.json'))) 'restore: the marker is moved aside with the imported copy'
+    Assert-Equal ([IO.File]::ReadAllText((Join-Path $joinLocal 'TPP_GAME_DATA0'))) 'join own early progress' 'restore: the own copy is back'
+    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $joinCoop -ReplacedRoot $joinReplaced)) 'restore: the copy no longer counts as imported'
+    [IO.File]::WriteAllBytes((Join-Path $joinLocal 'TPP_GAME_DATA0'), $joinOwnData)
+    Remove-Item -LiteralPath (Join-Path $joinLocal 'TPP_CONFIG_DATA')
+    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'Share-Save never touches the real saves'
+
+    # The reseed guard (Install-Coop): a copy that holds the partner's imported
+    # progress is replaced only after two answers; the marker leaves with it.
+    $impGame = New-GameFixture 'imported'
+    $ip = Get-InstancePaths -GameDirectory $impGame
+    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-Equal $r.Exit 0 "install for the reseed guard: $($r.Raw)"
+    $impCoop = Join-Path $ip.Mod 'coop-saves'
+    $impReplaced = Join-Path $ip.Mod 'coop-saves-replaced'
+    $impMarker = Join-Path $impCoop 'imported-progress.json'
+    [IO.File]::WriteAllText((Join-Path $impCoop '287700/local/TPP_GAME_DATA0'), 'own early progress')
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $impGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
+    Assert-Equal $r.Exit 0 "import for the reseed guard: $($r.Raw)"
+    $importedTree = Get-TreeHashes $impCoop
+    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'Your co-op save copy holds your partner''s progress (imported with Share-Save on') -and
+        (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).')) "non-interactive reinstall keeps an imported copy: $($r.Text)"
+    Assert-Equal (Get-TreeHashes $impCoop) $importedTree 'non-interactive reinstall: copy and marker unchanged'
+    $r = Invoke-FriendAnswers $install @('-GameDirectory', $impGame, '-SteamPath', $steam, '-SkipNetworkReport') @('1', '', 'y', 'y', 'KEEP')
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'removes that progress from co-op games (it is only moved aside; Share-Save [R] cannot bring it back)') -and
+        (Has $r 'Kept the co-op save copy with your partner''s progress.')) "prompted reinstall, KEEP: $($r.Text)"
+    Assert-Equal (Get-TreeHashes $impCoop) $importedTree 'KEEP: copy and marker unchanged'
+    $r = Invoke-FriendAnswers $install @('-GameDirectory', $impGame, '-SteamPath', $steam, '-SkipNetworkReport') @('1', '', 'y', 'y', 'REPLACE')
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'To play on it again, import your partner''s zip again with Share-Save.bat (option I).')) "prompted reinstall, REPLACE: $($r.Text)"
+    Assert-True (!(Test-Path -LiteralPath $impMarker)) 'REPLACE: no marker in the fresh copy'
+    Assert-Equal ([IO.File]::ReadAllText((Join-Path $impCoop '287700/local/TPP_GAME_DATA0'))) 'fixture save 287700/local/TPP_GAME_DATA0' 'REPLACE: a fresh copy of the real save'
+    $movedMarkers = @(Get-ChildItem -LiteralPath $impReplaced -Directory | Where-Object { $_.Name -cmatch '^[0-9]{8}-[0-9]{6}(-[0-9]+)?$' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'imported-progress.json')) })
+    Assert-Equal $movedMarkers.Count 1 'REPLACE: the marker moved to coop-saves-replaced\<stamp> with the imported copy'
+    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced)) 'REPLACE: the fresh copy is not imported'
+    # An import made before the marker existed: the newest '-before-import' folder counts the same way.
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $impGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
+    Assert-Equal $r.Exit 0 "second import for the folder fallback: $($r.Raw)"
+    Remove-Item -LiteralPath $impMarker
+    Assert-Equal (Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced).Source 'folder' 'folder fallback: detected without a marker'
+    $fallbackTree = Get-TreeHashes $impCoop
+    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).')) "folder fallback keeps the copy: $($r.Text)"
+    Assert-Equal (Get-TreeHashes $impCoop) $fallbackTree 'folder fallback: copy unchanged'
+    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'reseed guard: real saves untouched'
 
     # ------------------------------------------------------------ packaged local two-window flow
     # Dedicated inert copies: only the host uses the friend installer; the
@@ -1603,7 +1758,7 @@ try {
     $secretOnDisk = 'ZZZZZZZZZZZZZZZZZZZZ'
     [IO.File]::WriteAllText($hp.LinkSecret, "$secretOnDisk`r`n")
     $hostCode = New-CoopJoinCode -Secret $s7 -HostName '203.0.113.7'
-    [IO.File]::WriteAllText((Join-Path $hp.Mod 'script-observer.log'), "`r`nMGS Co-op script adapter 0.12.0; first run`r`nfirst_session_secret_line`r`n`r`nMGS Co-op script adapter 0.12.0; executable_fingerprint=accepted`r`nmode=offline_v1; x`r`nplay=active; role=host; partner=1; refused=0x0`r`nlink=connected; session=1; peer=203.0.113.7:51234; rtt_ms=40; remote_build=0.12.0`r`npasted $hostCode and " + $hostCode.ToLowerInvariant() + "`r`nlobby=76561198012345678 path=C:\Users\Alice\AppData\x exe 1.0.15.4`r`n")
+    [IO.File]::WriteAllText((Join-Path $hp.Mod 'script-observer.log'), "`r`nMGS Co-op script adapter 0.12.0; first run`r`nfirst_session_secret_line`r`n`r`nMGS Co-op script adapter 0.12.0; second run`r`nsecond_session_line`r`nMGS Co-op script adapter 0.12.0; third run`r`nthird_session_line`r`n`r`nMGS Co-op script adapter 0.12.0; executable_fingerprint=accepted`r`nmode=offline_v1; x`r`nplay=active; role=host; partner=1; refused=0x0`r`nlink=connected; session=1; peer=203.0.113.7:51234; rtt_ms=40; remote_build=0.12.0`r`npasted $hostCode and " + $hostCode.ToLowerInvariant() + "`r`nlobby=76561198012345678 path=C:\Users\Alice\AppData\x exe 1.0.15.4`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'probe.log'), ((1..40000 | ForEach-Object { "probe line $_ steam=76561197960265735" }) -join "`r`n") + "`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'early.log'), "early=start; version=0.12.0; lab=1; role=host`r`nsaves=redirected; dir=$hostSaveDir`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'link-status.json'), '{"v":1,"pid":1,"state":"connected","peer":"203.0.113.7:51234","mission":30050}')
@@ -1617,7 +1772,7 @@ try {
     $extract = Join-Path $fixture 'collected'
     Expand-Archive -LiteralPath $zips[0].FullName -DestinationPath $extract
     $collected = @(Get-ChildItem -LiteralPath $extract -Directory)[0].FullName
-    foreach ($n in 'summary.txt', 'script-observer.log', 'probe.log', 'early.log', 'link-status.json', 'play-session.json', 'probe-install.json', 'friend-install.json') {
+    foreach ($n in 'summary.txt', 'script-observer.log', 'probe.log', 'early.log', 'link-status.json', 'play-session.json', 'probe-install.json', 'friend-install.json', 'coop-saves.txt') {
         Assert-True (Test-Path -LiteralPath (Join-Path $collected $n) -PathType Leaf) "collected $n"
     }
     Assert-True (!(Test-Path -LiteralPath (Join-Path $collected 'link-secret.txt'))) 'link-secret.txt is never collected'
@@ -1626,8 +1781,16 @@ try {
     Assert-True ($everything.Contains('MGS1-<redacted>') -and $everything.Contains('peer=203.0.x.x:51234') -and $everything.Contains('"peer":"203.0.x.x:51234"') -and $everything.Contains('1.0.15.4')) 'codes redacted, public peers masked, versions kept'
     Assert-True ($everything -notmatch '(?<![0-9])7656119[0-9]{10}(?![0-9])' -and !$everything.Contains('Alice')) 'no complete SteamID or user name'
     $observer = [IO.File]::ReadAllText((Join-Path $collected 'script-observer.log'))
-    Assert-True ($observer.StartsWith('MGS Co-op script adapter 0.12.0; executable_fingerprint') -and !$observer.Contains('first_session_secret_line')) 'script-observer.log from the last adapter start'
+    Assert-True ($observer.StartsWith('MGS Co-op script adapter 0.12.0; second run') -and $observer.Contains('third_session_line') -and $observer.Contains('executable_fingerprint=accepted') -and
+        !$observer.Contains('first_session_secret_line')) 'script-observer.log: the last 3 sessions (from the 3rd-last adapter start)'
+    # The co-op save folders: names, sizes and times, never contents (K19).
+    $saveListing = [IO.File]::ReadAllText((Join-Path $collected 'coop-saves.txt'))
+    Assert-True ($saveListing.StartsWith("# MGS Co-op save folders: names, sizes and times only (no save contents)`r`n# path`tbytes|dir`tlast_write_utc`r`n")) 'coop-saves.txt header'
+    Assert-True ($saveListing -cmatch "(?m)^coop-saves/287700/local/COOP_PROGRESS`t[0-9]+`t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\r?$" -and
+        $saveListing -cmatch "(?m)^coop-saves/287700/local`tdir`t") 'coop-saves.txt lists files with sizes and folders'
+    Assert-True (!$saveListing.Contains('progress made in the co-op copy') -and !$saveListing.Contains('fixture save') -and !$saveListing.Contains($hostGame)) 'coop-saves.txt holds no save contents and no absolute path'
     $summary = [IO.File]::ReadAllText((Join-Path $collected 'summary.txt'))
+    Assert-True ($summary -cmatch 'coop_saves=files=[0-9]+; import_marker=absent; newest_replaced=') 'summary: the co-op save state'
     Assert-True ($summary.Contains('real_saves=UNCHANGED') -and $summary.Contains('mgsvtpp.exe sha256=' + $exeHash) -and $summary.Contains('matches_install_record=True') -and $summary.Contains('play_session=off; role=host') -and $summary.Contains('link_secret_present=True (never collected)')) 'summary: save check, hashes, play session, link secret not collected'
     Remove-Item -LiteralPath $hp.LinkSecret
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'collecting logs reads the saves only'

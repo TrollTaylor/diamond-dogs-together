@@ -48,7 +48,7 @@ Import-Module (Resolve-Piece 'FriendCommon.psm1' 'FriendCommon.psm1') -Force -Di
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $PackageDirectory = Split-Path -Parent $scriptRoot
-$interactive = !$NonInteractive -and [Environment]::UserInteractive
+$interactive = Test-FriendInteractive -NonInteractive:$NonInteractive
 
 # The files that carry progress (taken from the friend) and the subfolders of
 # the co-op save copy (Install-Coop's Copy-SaveSeed layout).
@@ -140,9 +140,19 @@ if ($Mode -eq 'Export') {
             try { $w.Write(($manifest | ConvertTo-Json -Depth 5)) } finally { $w.Dispose() }
         } finally { $zip.Dispose() }
     } finally { $stream.Dispose() }
-    # Re-read what was written: every hash must match the source.
+    # Re-read what was written: every entry's hash must match the manifest.
     $check = [IO.Compression.ZipFile]::OpenRead($zipOut)
-    try { if (@($check.Entries).Count -ne $files.Count + 1) { throw 'The written zip is incomplete.' } } finally { $check.Dispose() }
+    try {
+        if (@($check.Entries).Count -ne $files.Count + 1) { throw 'The written zip is incomplete.' }
+        foreach ($m in $manifestFiles) {
+            $e = $check.GetEntry([string]$m.entry)
+            if (!$e) { throw "The written zip is incomplete ($($m.entry) is missing)." }
+            $s = $e.Open()
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $hash = [BitConverter]::ToString($sha.ComputeHash($s)).Replace('-', '') } finally { $sha.Dispose(); $s.Dispose() }
+            if ($hash -ne [string]$m.sha256) { throw "The written zip is damaged ($($m.entry) differs from the save file). Export again." }
+        }
+    } finally { $check.Dispose() }
     Section 'Done'
     Write-Host "Exported $($files.Count) save files to:"
     Write-Host "     $zipOut" -ForegroundColor Green
@@ -201,6 +211,8 @@ try {
     foreach ($m in @($manifest.files)) { $want[[string]$m.entry] = $m }
     $null = New-Item -ItemType Directory -Path $stage
     $taken = 0
+    # What was really taken (the import marker lists these, never the bytes).
+    $importedFiles = New-Object Collections.Generic.List[object]
     foreach ($e in @($zip.Entries)) {
         if ($e.FullName -eq 'share-save.json') { continue }
         $parts = $e.FullName.Split('/')
@@ -214,6 +226,7 @@ try {
         $null = New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force
         [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dest, $false)
         if ((Get-FileSha $dest) -ne ([string]$m.sha256).ToUpperInvariant()) { throw "$($e.FullName) is damaged (hash mismatch). Ask your friend to export again. Nothing was changed." }
+        $importedFiles.Add([pscustomobject]@{ entry = $e.FullName; bytes = [Int64]$e.Length; sha256 = ([string]$m.sha256).ToUpperInvariant() })
         $taken++
     }
     if (!(Test-Path -LiteralPath (Join-Path $stage '287700\local\TPP_GAME_DATA0')) -and !(Test-Path -LiteralPath (Join-Path $stage '287700\local\TPP_GAME_DATA1'))) {
@@ -224,7 +237,12 @@ try {
     throw
 } finally { $zip.Dispose() }
 
-$exported = [string](Get-FriendProperty $manifest 'exported_utc' 'unknown')
+$exportedValue = Get-FriendProperty $manifest 'exported_utc' ''
+# PowerShell 7's ConvertFrom-Json returns a DateTime; Windows PowerShell 5.1 keeps the text.
+if ($exportedValue -is [DateTime]) { $exportedValue = $exportedValue.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture) }
+$exportedValue = [string]$exportedValue
+$exported = $exportedValue
+if (!$exported) { $exported = 'unknown' }
 Write-Host "Friend's save: $taken progress files, exported $exported (UTC)."
 Write-Host 'Your current co-op copy is kept aside; your own settings stay; your real saves are not touched.'
 if ($interactive -and (Ask 'Use this progress for co-op now? [Y/n]') -match '^(n|no)$') {
@@ -243,6 +261,10 @@ try {
         $from = Join-Path $stage $sub
         if (Test-Path -LiteralPath $from) { foreach ($f in @(Get-ChildItem -LiteralPath $from -File -Force)) { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $target $f.Name) } }
     }
+    # The import marker (names, sizes and hashes; no save bytes) travels with the
+    # new copy: Install-Coop asks twice before it replaces this copy, and [R]
+    # moves it aside together with the imported progress.
+    Write-FriendTextFile -Path (Join-Path $newDir 'imported-progress.json') -Text (New-FriendImportMarkerText -Source 'share-save' -ExportedUtc $exportedValue -Files $importedFiles.ToArray())
     $aside = Move-CurrentAside '-before-import'
     try { Move-Item -LiteralPath $newDir -Destination $saveDir }
     catch { Move-Item -LiteralPath $aside -Destination $saveDir; throw }
@@ -254,4 +276,5 @@ Section 'Done'
 Write-Host "Your co-op save copy now has your friend's progress. Your previous copy is kept at:"
 Write-Host "     $aside"
 Write-Host 'Start Play-Coop.bat as usual. If the game does not accept the save, run Share-Save.bat and choose [R].'
+Write-Host 'Keep the zip: if this copy is ever replaced, import it again.'
 exit 0

@@ -1077,6 +1077,24 @@ function Get-CoopValue {
     return $Default
 }
 
+function Get-CoopMissionName {
+    # Pure: a player-facing name for a mission number (link-status "partner_mission").
+    # The same long table as native/coop_reason_text.cpp FormatMission.
+    param([UInt32]$Mission)
+    switch ($Mission) {
+        0 { return 'a loading screen' }
+        1 { return 'the start screen' }
+        30010 { return 'Afghanistan free roam' }
+        30020 { return 'Africa free roam' }
+        30050 { return 'Mother Base' }
+        40010 { return 'the Afghanistan helicopter' }
+        40020 { return 'the Africa helicopter' }
+        40050 { return 'the Mother Base helicopter' }
+    }
+    if ($Mission -ge 10000 -and $Mission -le 11999) { return "story mission $Mission" }
+    return "mission $Mission"
+}
+
 function Format-CoopStatusLine {
     # Pure: the launcher's one-line status from link-status.json (spec 9.2 step 5),
     # for example "[HOST] link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look | mission 30050".
@@ -1115,7 +1133,11 @@ function Format-CoopStatusLine {
     }
     # The partner said goodbye (a link CLOSE), and the guest's Steam failure reason (1252).
     if ([int](Get-CoopValue $Status 'left' 0) -and $state -ne 'connected') {
-        if ($Role -eq 'host') { $text += ' - your friend left; waiting for them to come back' } else { $text += ' - the host left; waiting for them to come back' }
+        if ($Role -eq 'host') { $text += ' - your friend left; waiting for them to come back' }
+        elseif ($reason -eq 'bad_code' -and [int](Get-CoopValue $Status 'verified' 1) -eq 0) {
+            # The host came back with a new code (every Host run makes one): the old one never works again.
+            $text += ' - the host restarted with a new code: paste it in F9 > Partner / Co-op > Online'
+        } else { $text += ' - the host left; waiting for them to come back' }
     }
     $steamEnd = [int](Get-CoopValue $Status 'steam_end' 0)
     if ($steamEnd -and $state -ne 'connected') { $text += ' (Steam: ' + (Get-CoopSteamEndText -End $steamEnd) + ')' }
@@ -1157,9 +1179,21 @@ function Format-CoopStatusLine {
     elseif ($remoteDrive -eq 'clips' -or $remoteDrive -eq 'off') {
         $partner += '; you on the other PC: clips (' + (Get-CoopPartnerReasonText -Reason ([string](Get-CoopValue $Status 'remote_reason' ''))) + ')'
     }
+    # The world-sync keys (link-protocol.md 7.2; absent in older documents): the partner's
+    # settled mission when the two games are in different missions, and the story-start warning.
     $mission = [UInt32](Get-CoopValue $Status 'mission' 0)
     $missionText = 'mission ' + $mission
-    if ($mission -notin $script:CoopPartnerMissions) { $missionText += ' - Partner body unavailable in this mission; use Mother Base or free roam.' }
+    $partnerMission = [UInt32](Get-CoopValue $Status 'partner_mission' 0)
+    $wait = [string](Get-CoopValue $Status 'pair_wait' '')
+    if ($state -eq 'connected' -and $wait -eq 'different_mission' -and $partnerMission -ne 0) {
+        $missionText += ' - your partner is in ' + (Get-CoopMissionName $partnerMission) + '. Different missions never pair: meet in the same Mother Base, free roam or helicopter.'
+    } elseif ($mission -notin @(0, 1, 40010, 40020, 40050) -and $mission -notin $script:CoopPartnerMissions) {
+        # Not at a loading screen, the title or a helicopter: a scene without a partner body.
+        $missionText += ' - Partner body unavailable in this mission; use Mother Base or free roam.'
+    }
+    if ([string](Get-CoopValue $Status 'progress' '') -eq 'story_start') {
+        $missionText += ' Your co-op save is at the story start: quit, then import your partner''s save with Share-Save.bat (option I).'
+    }
     return "$text | $partner | $missionText"
 }
 

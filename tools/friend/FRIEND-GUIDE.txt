@@ -92,8 +92,9 @@ Two ways to connect:
   other dinput8.dll, no Infinite Heaven/SnakeBite changes). The installer
   checks the game files and stops if they are not the original ones.
 - Saves that can "Continue" into the same supported scene: Mother Base,
-  Afghanistan/Africa free roam, or the corresponding ACC. Play normally
-  first if needed; each installer copies its player's save independently.
+  Afghanistan/Africa free roam, or the corresponding helicopter. The easiest
+  way: one player shares their save with Share-Save.bat (section 3, SAME
+  PROGRESS FOR BOTH). Each installer copies its own player's save.
 - Steam running and logged in with your own account.
 - The file mgs-coop-player-runtime.dat. It is not in this ZIP; read
   RUNTIME-ARCHIVE.txt to see where it comes from.
@@ -136,6 +137,8 @@ are renamed *.online-old-<time> and not used again).
 3. PLAY (every time)
 --------------------
 IN SHORT (online):
+ - Before the first game: if your saves are at different points of the
+   story, share one with Share-Save.bat (SAME PROGRESS FOR BOTH below).
  - Host: Play-Coop.bat, press O, send the code it shows (or invite your
    friend in the game: F9 > Partner / Co-op > Online > Invite a friend).
  - Friend: start Play-Coop.bat FIRST, press J, paste the code (or press
@@ -267,6 +270,23 @@ PARTNER BODY (native by default):
    then choose O, J or L as usual. Only your game switches to the clips; the
    other player can still use the native partner for your body.
 
+SAME PROGRESS FOR BOTH (Share-Save; do this before your first game):
+ - Co-op only pairs when both games are in the same Mother Base, free roam
+   or helicopter. A save at the very start of the story (just after the
+   hospital) always Continues into a story mission that co-op cannot join.
+ - The player whose save already reaches Mother Base and free roam: quit
+   MGSV, double-click Share-Save.bat and press E. It saves
+   mgs-coop-save-<time>.zip on the Desktop. Send that file to the other
+   player.
+ - The other player: quit MGSV, double-click Share-Save.bat, press I and
+   drag the zip into the window. Your own co-op copy is kept aside, and
+   Share-Save.bat [R] brings it back. Your real saves are never touched.
+ - Keep the zip. If Install-Coop.bat later asks to replace your co-op save
+   copy, answer N; if it was replaced anyway, import the zip again.
+ - MGSV saves may be tied to the Steam account. If the game does not accept
+   the imported save (an error, or a new game at the title), run
+   Share-Save.bat and press R.
+
 EXPERIMENTAL SHARED WORLD (enabled by default):
  - A normal double-click enables World 3. To choose the level explicitly,
    open Command Prompt in the extracted package folder on BOTH PCs:
@@ -276,6 +296,9 @@ EXPERIMENTAL SHARED WORLD (enabled by default):
    saved scenes do not bootstrap automatically. Once paired, the host chooses
    travel, Continue/restart and abort; the guest follows. Press Space on each
    game's loading-tip screen when asked.
+ - The host's helicopter waits up to 2 minutes for a partner who can come
+   and says so on screen; choose the deployment again to fly alone. With no
+   partner connected, or the partner in another mission, it leaves at once.
  - Enemy sync waits for a matching readable host snapshot after reload;
    unloaded areas may delay it. Existing terminal guest enemies are never
    revived. Story missions and full campaign progression remain unsupported.
@@ -345,7 +368,18 @@ The Play-Coop status line explains most problems:
   they can join again with the same code while your game keeps running.
 - "Your friend runs mgs-coop X; you run Y": both must install the same
   package version.
-- "Partner body unavailable in this mission": meet in Mother Base or free roam.
+- "Different missions never pair" (Play-Coop) or "partner in ..." (in game):
+  your partner is in another mission. Meet in the same Mother Base, free
+  roam or helicopter. If one game always Continues into a story mission,
+  share a save (section 3, SAME PROGRESS FOR BOTH).
+- "Partner body unavailable in this mission": you are in a story mission;
+  meet in Mother Base or free roam.
+- "Your co-op save is at the story start": see section 3, SAME PROGRESS FOR
+  BOTH.
+- "the host restarted with a new code" / "[the host has a new code]": paste
+  the host's new code in F9 > Partner / Co-op > Online; your game can keep
+  running.
+- "That code was not used": you are already connected or connecting.
 - "game not responding": the game hangs or is in a loading screen for a long
   time; wait, or restart both games.
 - A RED banner "Co-op did NOT start and save protection is NOT active" means
@@ -367,6 +401,9 @@ The Play-Coop status line explains most problems:
   mod loaded but inactive. Progress does NOT carry over between the two: what
   you do in co-op stays in the copy, and the copy does not see later normal
   progress.
+- Share-Save.bat (section 3) copies progress between the two players' co-op
+  copies only. Install-Coop.bat asks twice before it replaces a co-op copy
+  that holds your partner's imported progress: answer N to keep it.
 - When you stop playing co-op, run Uninstall-Coop.bat (section 9).
 
 
