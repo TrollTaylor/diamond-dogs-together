@@ -122,6 +122,9 @@ mgs_add_lua_check(world_buddy_ride_lua_check "${_mgs_coop}/world_buddy_ride.lua"
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
 mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
+# Join-fix phase 2 track C: the save report, travel lock, warnings and replay hold
+# (spliced right after world_follow.lua; loaded after the seed and follow chunks).
+mgs_add_lua_check(world_handoff_lua_check "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 mgs_add_lua_check(world_goto_lua_check "${_mgs_coop}/world_goto.lua")
 mgs_add_lua_check(world_align_lua_check "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_enemy.lua"
   "${_mgs_coop}/world_outcome.lua" "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_probe.lua"
@@ -175,7 +178,8 @@ mgs_find_game_input(_mgs_tpp_mission "respawn-scripts-20260910/package-00.lua"
 mgs_find_game_input(_mgs_world_tpp_player "startup-script-inspection-20260909/package-01.lua"
   7407bd41dd82913edfe9ef7fbb344f443adc7399d42f86c7798ba6b02c94e5b9)
 if(_mgs_tpp_mission AND _mgs_tpp_main AND _mgs_world_tpp_player)
-  mgs_add_lua_check(world_follow_game_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_tpp_mission}" "${_mgs_tpp_main}" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_world_tpp_player}")
+  mgs_add_lua_check(world_follow_game_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_tpp_mission}" "${_mgs_tpp_main}" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_world_tpp_player}"
+    "${_mgs_coop}/world_handoff.lua")
 endif()
 mgs_find_game_input(_mgs_debug_clock "debug-api-source-audit-20261006/lib/TppClock.lua"
   12a3f7b1af62af4d74149aa7220af56b13c8502ea6b28d714f1875467794fc32)
@@ -266,7 +270,7 @@ if(MGS_LOCAL_BUDDY_CAPACITY_TEST)
   list(APPEND _mgs_buddy_ride_composed "${_mgs_coop}/world_buddy_ride.lua")
 endif()
 mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
-  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua"
+  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua"
   "${_mgs_coop}/world_downed.lua" "${_mgs_coop}/world_sleep_clock.lua" "${_mgs_coop}/world_partner_sleep.lua" "${_mgs_coop}/world_revive_input.lua" "${_mgs_coop}/world_friendly.lua" "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_ride_pose.lua" "${_mgs_coop}/world_horse_cargo.lua"
   ${_mgs_buddy_ride_composed} "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua")
 mgs_add_patch_check(mission_trace_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")

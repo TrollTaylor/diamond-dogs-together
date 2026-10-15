@@ -274,6 +274,7 @@ if now - t.since > 120000 then
     table.remove(F.queue, 1); F.last = t[1]; F.seeds[t[1]] = nil
     W.tx(OP.FOLLOW_ACK, t[1], W.mission, 0); log("step=refused;reason=timeout"); return
 end
+if F.replayHold and F.replayHold() then return end
 if W.mission ~= t[3] or ((t[2] ~= 2 and t[2] ~= 3 and t[2] ~= 4) and not W.inGame()) or (t.retryAt and now < t.retryAt) then return end
 local demo = W.get(DemoDaemon, "IsDemoPlaying")
 if type(demo) == "function" and demo() == true then return end
