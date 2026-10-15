@@ -114,6 +114,44 @@ Next visual attempt should not use driver yaw for the watcher. Need a view from 
 plaza side of `veh_lv_0000` (host jeep ~577, 320, 1157) that is not through a wall,
 and a landing path that can follow after seat owns body 1. Identify 9728.
 
+## Seat visual proof (Claude, 2026-10-15) and the default flip
+
+**Run 8b8e5bbc, reconsidered.** The guest in these lab saves is not Quiet: `coop.ini
+character=quiet` falls back to the bald DD soldier, and the guest's own frames show that body
+(`guest-seat-entered`: the bald soldier from behind; `guest-seat-rev-entered`: the bald soldier
+driving the jeep, D-Dog in the passenger seat). So the bald body in the host's
+`seat-rev-entered` / `seat-rev-drive-04` frames **is the guest's partner body**, seated in the
+jeep's driver seat with its hands on the wheel, and still seated after the jeep moved
+(zoomed crops in `scratchpad/anim/host-seat-rev-*-zoom.png`). That is the reverse-direction
+proof (the host sees the guest driving).
+
+**Rider 9728 is D-Dog.** `0x2600` = `TppBuddyDog2` (`lua/coop/world_buddy.lua:84-86`,
+`native/buddy_pose.cpp:15`). The lab saves have D-Dog deployed, and the stock buddy jumps into
+the jeep's passenger seat (native seat 1) whenever its owner drives, on that owner's copy only.
+`riders=0,9728,65535,65535; localSeat=1` = the driver plus D-Dog.
+
+**Run 77d24c5e (plaza watcher).** `coop-vehicle-seat.txt` now teleports the guest to the Wakh
+Sind plaza `(585.0, 323.1, 1176.9)` facing -90 (toward -x, the placebehind convention) *after*
+the host boards, with a plain `debug teleport` (no `Wait-ViewerLanding`, which needs a partner
+pose that seat mode owns). Closed / BaselineRestored / RealSavesUnchanged. Frames
+(PNG copies in `C:/Users/taylo/AppData/Local/Temp/mgs-caps/seat3/`):
+- `guest-seat-drive-a-08`: the jeep arriving from the alley with **Snake (the host, "Taylor")
+  seated in the driver seat**, hands on the wheel, motion-blurred while moving;
+- `guest-seat-plaza-parked`: the same, parked, seated pose sharp;
+- `guest-seat-exiting-04` / `guest-seat-exited`: Snake climbs out of the driver seat, then
+  stands beside the jeep.
+
+The reverse half stopped at `guest require vehicle;id=` (`vehicle_not_riding`): guards went
+into combat ("Soviet CP: Entering combat status") and knocked the guest watcher down despite
+`godmode 1` (`lethal_unprotected`), so it could not board. That is a test-setup failure, not a
+seat failure; 8b8e5bbc already covers that direction.
+
+**Default flipped.** `kPartnerNativeRideDriven = PartnerNativeRide::seat`
+(`native/include/mgscoop/lab_config.hpp`, assertion in `tests/lab_config_tests.cpp`). Still not
+runtime-tested: T5 (the viewer driving its own vehicle while the partner's seat DM enters and
+ends; the skips are designed for it), seat 1/2/3 (passengers), trucks, Africa (30020) names,
+and get-in/get-off chaining (`partner_ride_seat_enter=getin`, `partner_ride_seat_exit=getoff`).
+
 ## Not run
 
 - `coop-vehicle-seat-manual.txt` (T1/T4/T5 seat_dm)

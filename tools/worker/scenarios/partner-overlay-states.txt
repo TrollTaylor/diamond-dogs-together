@@ -25,6 +25,7 @@ title 200
 wait 4000
 waitgameplay host 120
 waitgameplay guest 240
+both debug godmode 1
 stance host stand
 stance guest stand
 host debug time 43200

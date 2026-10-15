@@ -44,11 +44,22 @@ wait 3500
 host run vehicle_seats
 host require vehicle;id=
 host run vehicle_names
+# Watch from the Wakh Sind plaza, not from the driver's yaw (b8102e6e and
+# 8b8e5bbc looked into a wall from behind the jeep's start at (576,320,1157)).
+# Run 8b8e5bbc's reverse half proved (585.0, 320.1, 1176.9) has a clear view of
+# the plaza where the jeep arrives (578.5, 320.8, 1176.9); face -90 = toward -x
+# (placebehind convention: forward = (sin yaw, cos yaw)). A plain debug teleport:
+# Wait-ViewerLanding would refuse because seat mode owns body 1.
+guest debug teleport 585.000 323.100 1176.900 -90.000
+wait 3000
 both capture seat-entered
 host hold w 1500 nowait
 guest burst seat-drive-a 8 150
 host hold w 1500 nowait
 guest burst seat-drive-b 8 150
+host release
+wait 1500
+guest capture seat-plaza-parked
 host hold w+a 1500 nowait
 guest burst seat-turn-left 8 150
 host hold w+d 1500 nowait

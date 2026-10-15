@@ -43,6 +43,9 @@ title 200
 wait 4000
 waitgameplay host 120
 waitgameplay guest 240
+# godmode: the seat run 77d24c5e showed Wakh Sind guards downing a watcher despite
+# lab defaults; the census needs both players standing for the whole sequence.
+both debug godmode 1
 stance host stand
 stance guest stand
 host debug time 43200

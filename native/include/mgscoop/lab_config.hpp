@@ -198,9 +198,11 @@ enum class PartnerNativeReloadRate : std::uint8_t { off, adapt };
 // vehicle (a targeted direct motion on body 1, partner_ride_seat); everything
 // else (heli, horse, walker, APC/tank, unnamed vehicles, stale) still hides.
 enum class PartnerNativeRide : std::uint8_t { off, hide, seat };
-// The driven native stages' default (ResolveWeaponDefaults). Flipping the
-// release default to the seated driver is this one line (hide -> seat).
-inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide::hide;
+// The driven native stages' default (ResolveWeaponDefaults): the seated
+// driver, flipped from hide after hidden runs 8b8e5bbc (the guest seated on the
+// host screen) and 77d24c5e (the host seated on the guest screen) captured the
+// remote body in the jeep's driver seat while it drove and parked.
+inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide::seat;
 // partner_native_ride=seat: how the seat direct motion starts (direct: the
 // seated loop at once; getin: the seat's finite get-on state, then the loop,
 // only while the remote is entering) and ends (stop: RequestToStopDirectMotion;

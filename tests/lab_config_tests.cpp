@@ -804,7 +804,7 @@ int main() {
         const auto rawRide = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=on\n");
         const auto censusRide = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=census\npartner_native_gun=1\n");
         Check(rawRide.partner_native_ride == mgscoop::kPartnerNativeRideDriven && censusRide.partner_native_ride == PartnerNativeRide::off &&
-              !censusRide.partner_native_ride_given, "raw driven offline/loco stage hides; census never inherits hide");
+              !censusRide.partner_native_ride_given, "raw driven offline/loco stage takes the driven ride default; census never inherits it");
         const auto badRide = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_ride=on\n");
         const auto namedBadRide = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_ride=off\npartner_native_ride=on\n");
         Check(badRide.invalid_values == 1 && !badRide.partner_native_ride_given && badRide.partner_native_ride == mgscoop::kPartnerNativeRideDriven &&
@@ -814,7 +814,7 @@ int main() {
         Check(badSeat.invalid_values == 3 && badSeat.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::direct &&
               badSeat.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::stop && badSeat.partner_native_ride == PartnerNativeRide::off,
               "invalid seat enter/exit/ride values refuse and keep the defaults");
-        Check(mgscoop::kPartnerNativeRideDriven == PartnerNativeRide::hide, "the driven default stays hide until the seat test passes");
+        Check(mgscoop::kPartnerNativeRideDriven == PartnerNativeRide::seat, "the driven default draws the remote seated (hidden runs 8b8e5bbc, 77d24c5e)");
         Check(std::strcmp(mgscoop::PartnerNativeRideName(PartnerNativeRide::seat),"seat")==0 &&
               std::strcmp(mgscoop::PartnerNativeRideName(PartnerNativeRide::off),"off")==0 &&
               std::strcmp(mgscoop::PartnerRideSeatEnterName(mgscoop::PartnerRideSeatEnter::getin),"getin")==0 &&
