@@ -325,6 +325,9 @@ DWORD WINAPI WriterThread(void* parameter) {
         const auto& data = (i & 1) ? b : a;
         if (write(state->proxy, "TPP_GAME_DATA", data.data(), static_cast<std::int32_t>(data.size()))) InterlockedIncrement(&state->writes);
         else InterlockedIncrement(&state->failures);
+        // A writer that never pauses can starve the reader on an SRW lock
+        // (no fairness); the game writes a save at most a few times a minute.
+        Sleep(1);
     }
     return 0;
 }
@@ -362,13 +365,17 @@ void TestRemoteSnapshot() {
     unsigned char back[8]{};
     Check(read(proxy, "TPP_GAME_DATA", back, sizeof(back)) == 5, "the game's own read still works");
     // Two threads: the game writes alternating 64 KB / 68 KB files while the
-    // snapshot reads 1000 times; every read is one whole version.
+    // snapshot reads (at least 1000 reads and 200 writes, at most 60 s);
+    // every read is one whole version.
     WriterState state{proxy, 0, 0, 0};
     HANDLE thread = CreateThread(nullptr, 0, &WriterThread, &state, 0, nullptr);
     Check(thread != nullptr, "writer thread");
     unsigned whole = 0, refused = 0;
-    for (unsigned i = 0; i < 1000; ++i) {
-        if (!save::read_remote_snapshot("TPP_GAME_DATA", buffer.data(), buffer.size(), size)) {
+    const ULONGLONG until = GetTickCount64() + 60000;  // bounded on a loaded machine
+    while ((whole + refused < 1000 || state.writes < 200) && GetTickCount64() < until) {
+        const bool got = save::read_remote_snapshot("TPP_GAME_DATA", buffer.data(), buffer.size(), size);
+        SwitchToThread();  // let the writer in between reads
+        if (!got) {
             ++refused;
             continue;
         }
@@ -388,7 +395,7 @@ void TestRemoteSnapshot() {
     std::printf("remote snapshot: %u whole reads, %u refused, %ld game writes, %ld failed\n", whole, refused,
                 static_cast<long>(state.writes), static_cast<long>(state.failures));
     Check(state.failures == 0, "a snapshot never makes the game's write fail");
-    Check(state.writes > 0 && whole + refused == 1000 && whole > 0, "both threads ran");
+    Check(state.writes >= 200 && whole >= 1000, "both threads ran, interleaved");
     // Clean up exactly what this test created.
     char path[MAX_PATH]{};
     std::snprintf(path, sizeof(path), "%s\\remote\\TPP_GAME_DATA", dir);
