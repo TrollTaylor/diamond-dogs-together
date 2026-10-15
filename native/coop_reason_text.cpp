@@ -169,4 +169,94 @@ bool FormatNoBody(const char* scene, char* out, std::size_t capacity) noexcept {
                 reloads ? "It returns when the scene reloads normally." : "Please send Collect-Logs.");
 }
 
+namespace {
+// The fixed mission names (long, short); story and other missions are numbered.
+struct MissionText {
+    std::uint32_t mission;
+    const char* long_name;
+    const char* short_name;
+};
+const MissionText kMissions[] = {
+    {0, "a loading screen", "loading"},
+    {1, "the start screen", "start screen"},
+    {30010, "Afghanistan free roam", "Afghanistan"},
+    {30020, "Africa free roam", "Africa"},
+    {30050, "Mother Base", "Mother Base"},
+    {40010, "the Afghanistan helicopter", "Afghanistan heli"},
+    {40020, "the Africa helicopter", "Africa heli"},
+    {40050, "the Mother Base helicopter", "Mother Base heli"},
+};
+bool NameMission(std::uint32_t mission, bool long_name, char* out, std::size_t capacity) noexcept {
+    for (const auto& m : kMissions)
+        if (m.mission == mission) return Put(out, capacity, long_name ? m.long_name : m.short_name);
+    const unsigned value = static_cast<unsigned>(mission);
+    if (mission >= 10000 && mission <= 11999) return PutF(out, capacity, "story mission %u", value);
+    return PutF(out, capacity, "mission %u", value);
+}
+}  // namespace
+
+bool FormatMission(std::uint32_t mission, char* out, std::size_t capacity) noexcept {
+    return NameMission(mission, true, out, capacity);
+}
+
+bool FormatMissionShort(std::uint32_t mission, char* out, std::size_t capacity) noexcept {
+    return NameMission(mission, false, out, capacity);
+}
+
+const char* PairWaitName(std::uint8_t code) noexcept {
+    static const char* const kNames[] = {"paired",     "off",           "no_link",        "no_hello",          "remote_off", "remote_saves",
+                                         "same_role",  "local_loading", "remote_loading", "different_mission", "epoch",      "settling"};
+    return code < sizeof(kNames) / sizeof(kNames[0]) ? kNames[code] : "unknown";
+}
+
+bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint32_t partner, std::uint32_t local, char* out,
+                     std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    out[0] = 0;
+    char first[32]{}, second[32]{};
+    switch (code) {
+    case 16:  // MISMATCH{a=local mission, b=partner mission}
+        if (!FormatMission(b, first, sizeof(first)) || !FormatMission(a, second, sizeof(second))) return false;
+        return PutF(out, capacity,
+                    "Your partner is in %s; you are in %s. Co-op only pairs when you are both in the same Mother Base, free roam or "
+                    "helicopter.",
+                    first, second);
+    case 1:  // PROGRESS{a=title mission, b=1 story start}
+        if (b != 1) return false;
+        return Put(out, capacity,
+                   "Your co-op save is at the story start, so Continue goes to a story mission that co-op cannot join. Quit and import "
+                   "your partner's save with Share-Save.bat (option I).");
+    case 2:  // HELI_WAIT{a=target}
+        if (partner != 0 && partner != local) {
+            if (!FormatMission(partner, first, sizeof(first))) return false;
+            return PutF(out, capacity,
+                        "Waiting up to 2 min for your partner (now in %s) to reach this helicopter. Choose the deployment again to fly "
+                        "alone.",
+                        first);
+        }
+        return Put(out, capacity,
+                   "Waiting up to 2 min for your partner to reach this helicopter. Choose the deployment again to fly alone.");
+    case 3:  // HELI_ALONE{a=target, b=reason}
+        switch (b) {
+        case 1: return Put(out, capacity, "No co-op partner can come on this flight: flying alone.");
+        case 2:
+            if (partner == 0)
+                return Put(out, capacity,
+                           "Flying alone: your partner is in another mission. Meet in the same Mother Base or free roam to play together.");
+            if (!FormatMission(partner, first, sizeof(first))) return false;
+            return PutF(out, capacity, "Flying alone: your partner is in %s. Meet in the same Mother Base or free roam to play together.",
+                        first);
+        case 3: return Put(out, capacity, "Flying alone, as you chose the deployment again.");
+        case 4: return Put(out, capacity, "Your partner did not reach this helicopter within 2 min: flying alone.");
+        default: return Put(out, capacity, "Flying alone.");
+        }
+    case 4:  // HELI_REFUSED{a=target}
+        return Put(out, capacity,
+                   "Your partner cannot follow you there: co-op travel only goes to Mother Base and free roam. Choose the same "
+                   "destination again within 30 s to go alone.");
+    default:  // 5..15 reserved or unknown: no toast
+        return false;
+    }
+}
+
 }  // namespace mgscoop::coop_text

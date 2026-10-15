@@ -4,7 +4,10 @@
 // Producers post copied data only: partner_net's transport thread publishes a
 // LinkView (state, route, round trip, reason, the partner's goodbye, the
 // Steam end reason) and posts events (connected, lost, reconnected, partner
-// left, refused, version mismatch, Steam unavailable); the Steam owner pass
+// left, refused, version mismatch, Steam unavailable, a pasted code ignored
+// while connected or connecting); world_link posts world_note (the world
+// sync notes: helicopter hold, different missions, story-start save);
+// the Steam owner pass
 // posts invite_sent, the script observer no_body (a partner mission started
 // on a pack list the player package selection refused, docs/two-pc-play.md
 // "In game") and the F9 panel code_copied (the HUD is hidden while the

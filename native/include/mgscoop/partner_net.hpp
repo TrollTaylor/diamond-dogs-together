@@ -293,9 +293,10 @@ struct SteamInfo {
     char dispatch_reason[24];
     std::int32_t steam_end;
     bool left;
-    // Guest: ArmSteamGuest bumps join_seq on every pasted-code decision;
-    // join_result is that decision (0 none, 1 joined, 2 ignored because
-    // already connected or connecting, 3 the own code).
+    // Guest: ArmSteamGuest bumps join_seq on every pasted-code or invite
+    // decision; join_result is that decision (0 none, 1 joined, 2 ignored
+    // because already connected or connecting, 3 the own code). Copied even
+    // when Steam is not active (steam_online's F9 Online result).
     std::uint32_t join_seq{};
     std::uint8_t join_result{};
 };

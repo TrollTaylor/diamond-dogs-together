@@ -68,9 +68,14 @@ inline constexpr std::uint32_t kMacBudgetPerSec = 500;
 // a flood from other addresses cannot starve its reconnect.
 inline constexpr std::uint32_t kGuestMacPerSec = 16;
 inline constexpr unsigned kSeenRing = 32;
-inline constexpr unsigned kPendingSlots = 2;
 // The guest accepts a WELCOME echoing any of its last kGuestNonces HELLO nonces.
 inline constexpr unsigned kGuestNonces = 4;
+// Host: one pending WELCOME per HELLO the guest may still answer. A slow relay
+// can deliver a burst of the guest's queued HELLOs at once; the guest commits
+// on the first matching WELCOME, so the host must still hold the slot for that
+// oldest HELLO when its CONFIRM arrives (with 2 slots, the 3rd and 4th HELLO
+// evicted it: wrong_session, no session). Memory only: no wire change.
+inline constexpr unsigned kPendingSlots = kGuestNonces;
 
 struct SessionConfig {
     Role role = Role::guest;

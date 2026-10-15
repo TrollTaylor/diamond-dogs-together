@@ -86,6 +86,24 @@ const char* RouteText(const LinkView& v) noexcept {
 std::uint64_t DownMs(const LinkView& v, std::uint64_t now_ms) noexcept {
     return v.down_ms + (now_ms >= v.publish_ms ? now_ms - v.publish_ms : 0);
 }
+
+// A world_note event text (PostWorldNote): exactly four unsigned decimal
+// values, single spaces, no sign, no leading zero, nothing after them.
+bool ParseNoteText(const char* text, std::uint32_t (&out)[4]) noexcept {
+    const char* cursor = text;
+    const char* end = text + std::strlen(text);
+    for (unsigned i = 0; i < 4; ++i) {
+        if (cursor == end || *cursor < '0' || *cursor > '9' || (*cursor == '0' && cursor + 1 != end && cursor[1] != ' ')) return false;
+        const auto parsed = std::from_chars(cursor, end, out[i]);
+        if (parsed.ec != std::errc() || parsed.ptr == cursor) return false;
+        cursor = parsed.ptr;
+        if (i + 1 != 4) {
+            if (cursor == end || *cursor != ' ') return false;
+            ++cursor;
+        }
+    }
+    return cursor == end;
+}
 }  // namespace
 
 const char* ModeName(Mode mode) noexcept {
@@ -345,6 +363,13 @@ void Post(EventKind kind, std::int32_t arg, const char* text) noexcept {
     g_events[e.sequence % kEvents] = e;
 }
 
+void PostWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint32_t partner, std::uint32_t local) noexcept {
+    char text[48]{};  // at most 4 x 10 digits and 3 spaces
+    std::snprintf(text, sizeof(text), "%u %u %u %u", static_cast<unsigned>(a), static_cast<unsigned>(b), static_cast<unsigned>(partner),
+                  static_cast<unsigned>(local));
+    Post(EventKind::world_note, code, text);
+}
+
 unsigned Take(Event* out, unsigned max, std::uint32_t& cursor) noexcept {
     if (!out || !max) return 0;
     unsigned n = 0;
@@ -375,8 +400,15 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
     case LinkState::connected:
         if (partner) {
             const auto current = CurrentPartner(*partner, v.session, v.mission, now_ms);
-            Print(t, n, "CO-OP [connected] %.24s - %s %u ms | %s; gun %s", who, RouteText(v), v.rtt_ms,
-                  PartnerDriveName(current.drive), PartnerGunText(current.gun));
+            // Different missions (the settled pair-wait code 9, never 11
+            // settling) replace a loading partner view: there is no body to wait for.
+            char where[24]{};
+            if (v.pair_wait == 9 && v.partner_mission && current.drive == PartnerDrive::loading &&
+                coop_text::FormatMissionShort(v.partner_mission, where, sizeof(where)))
+                Print(t, n, "CO-OP [connected] %.24s - %s %u ms | partner in %s", who, RouteText(v), v.rtt_ms, where);
+            else
+                Print(t, n, "CO-OP [connected] %.24s - %s %u ms | %s; gun %s", who, RouteText(v), v.rtt_ms,
+                      PartnerDriveName(current.drive), PartnerGunText(current.gun));
         } else Print(t, n, "CO-OP [connected] %s - %s %u ms", who, RouteText(v), v.rtt_ms);
         out.tone = Tone::good;
         break;
@@ -408,7 +440,11 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
         out.tone = v.steam_end || v.reason[0] ? Tone::warn : Tone::info;
         break;
     case LinkState::reconnecting:
-        if (v.left) Print(t, n, "CO-OP [the host left] waiting for them to come back (%u s)", secs);
+        // The host came back with a new code: its unauthenticated bad_code
+        // answer to the old one (a goodbye was received first).
+        if (v.left && std::strcmp(v.reason, "bad_code") == 0 && !v.verified)
+            Print(t, n, "CO-OP [the host has a new code] paste it in F9 > Partner / Co-op > Online");
+        else if (v.left) Print(t, n, "CO-OP [the host left] waiting for them to come back (%u s)", secs);
         else Print(t, n, "CO-OP [reconnecting %u s]", secs);
         out.tone = Tone::warn;
         break;
@@ -486,6 +522,17 @@ bool FormatToast(const Event& e, const LinkView& v, const char* name, char* out,
     case EventKind::no_body:
         tone = Tone::warn;
         return coop_text::FormatNoBody(e.text, out, capacity) && out[0];
+    case EventKind::world_note: {
+        std::uint32_t f[4]{};  // a, b, partner, local
+        if (e.arg < 0 || e.arg > 255 || !ParseNoteText(e.text, f)) return false;
+        const auto code = static_cast<std::uint8_t>(e.arg);
+        tone = code == 2 ? Tone::info : code == 3 ? (f[1] == 2 || f[1] == 4 ? Tone::warn : Tone::info) : Tone::warn;
+        return coop_text::FormatWorldNote(code, f[0], f[1], f[2], f[3], out, capacity) && out[0];
+    }
+    case EventKind::join_ignored:
+        Print(out, capacity, "That code was not used: you are already connected or connecting to a host.");
+        tone = Tone::warn;
+        return true;
     }
     return false;
 }

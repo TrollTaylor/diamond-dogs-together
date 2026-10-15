@@ -318,7 +318,8 @@ UNAUTH REJECT(`bad_code`) per second in total. A
 valid HELLO is checked for proto, mode, role and (play) build, then: an Ng of
 a committed session is a replay; while `connected` a HELLO from another
 endpoint gets REJECT(`busy`); the Ng of a pending slot gets the same WELCOME
-again; otherwise a pending slot (2, oldest replaced) and a WELCOME. A CONFIRM
+again; otherwise a pending slot (4, one per nonce the guest still accepts;
+oldest replaced) and a WELCOME. A CONFIRM
 or DATA of a pending sid from that slot's endpoint with a valid K_g2h tag
 commits (at most one commit per 2 s): the endpoint is locked, the Ng goes into
 a 32-entry seen ring, the receive state is reset and an empty DATA is sent at
@@ -464,10 +465,31 @@ this order:
 
 Since the Steam transport, four keys come before `time_utc` (also on UDP):
 `"transport":"udp|steam","route":"relay|direct|unknown|none","accepting":0|1,"steam":"ok|acquiring|off|<reason>"`.
-With steam, `peer` is `"steam:...1234"` and `local_port` is 0. The buffer is
-768 bytes. Two more keys follow them (steam-online.md 20.7/20.8):
+With steam, `peer` is `"steam:...1234"` and `local_port` is 0. Two more keys
+follow them (steam-online.md 20.7/20.8):
 `"steam_end":<ESteamNetConnectionEnd, 0 none>,"left":0|1` (the guest's last
 Steam session failure while not connected; the partner's CLOSE).
+
+World sync (join-fix phase 1): five keys follow `"left"`, still before
+`time_utc`, in this order:
+`"world":0-3,"paired":0|1,"partner_mission":<u32>,"pair_wait":"<name>","progress":"unknown|ok|story_start"`.
+They come from `partner_net::PublishWorldState`, which `world_link` calls
+after every idle tick, Configure and NOTE receipt (atomics only).
+- `world` is the local world level (0 world sync off).
+- `pair_wait` is the published pair-wait code by name (world-sync-protocol.md):
+  `paired`, `off`, `no_link`, `no_hello`, `remote_off`, `remote_saves`,
+  `same_role`, `local_loading`, `remote_loading`, `different_mission`,
+  `epoch`, `settling` (another value `unknown`). Different missions read
+  `settling` for the first 15 s, then `different_mission`.
+- `progress` is the title-helicopter save check (`story_start`: the co-op
+  save Continues into the story start).
+- Gating: world level 0 gives `"paired":0,"partner_mission":0,"pair_wait":"off"`;
+  a `state` other than `connected` gives `"paired":0,"partner_mission":0,"pair_wait":"no_link"`;
+  otherwise the published values. `progress` is never gated.
+
+`mission` stays the local mission and every earlier key keeps its place.
+FormatStatus builds the line in a 1024-byte buffer (the worst case is about
+950 bytes) and writes nothing when it would not fit.
 
 `state`: `off|disabled|listening|connecting|handshake|connected|reconnecting|lost|rejected|waiting`
 (`waiting`: a Steam guest without a host);

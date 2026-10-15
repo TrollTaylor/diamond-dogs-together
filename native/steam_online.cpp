@@ -641,6 +641,16 @@ void PlayPass(std::uint64_t now) noexcept {
                                    : "Steam networking is off; restart the game or use a LAN/VPN code.");
         link::SecureZero(pasted, sizeof(pasted));
     }
+    // The transport thread's decision on that code (or an invite): a code it
+    // did not use replaces "Code submitted; joining...".
+    static std::uint32_t last_join_seq = 0;
+    if (info.join_seq != last_join_seq) {
+        last_join_seq = info.join_seq;
+        if (info.join_result == 2)
+            StringCchCopyA(g_last_result, ARRAYSIZE(g_last_result), "That code was not used: you are already connected or connecting.");
+        else if (info.join_result == 3)
+            StringCchCopyA(g_last_result, ARRAYSIZE(g_last_result), "That code is your own; ask your friend for theirs.");
+    }
     if (g_phase != kReady || !info.active) {
         PublishOnline(info, now);
         return;
