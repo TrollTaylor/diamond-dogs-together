@@ -278,6 +278,132 @@ void TestFireFilter() {
     }
 }
 
+// Anim round 1 (docs/anim-round1-weapons.md): the fire/projectile census. The
+// bullet hook records every request with its owner and record fields before its
+// own verdict; with the census on, Install also swaps the projectile service
+// slots (live 0x23E2D50, base 0x23E2BD0) to a forwarding census hook.
+unsigned g_proj_forwarded = 0;
+void* FakeProjectileRequest(void* iface, const void*) noexcept {
+    ++g_proj_forwarded;
+    return iface;
+}
+void TestFireCensus() {
+    {
+        FireImage img;
+        ff::detail::ResetForTest();
+        for (const auto& s : pc::code_sites)
+            if (s.rva == pc::proj_request_rva) std::memcpy(img.mem + s.rva, s.bytes, s.size);
+        const std::uintptr_t proj = img.base + pc::proj_request_rva;
+        std::memcpy(img.mem + pc::proj_slot_live_rva, &proj, 8);
+        std::memcpy(img.mem + pc::proj_slot_base_rva, &proj, 8);
+        ff::detail::SetOriginalForTest(&FakeRequestBullet);
+        ff::detail::SetProjectileOriginalForTest(&FakeProjectileRequest);
+        // Census off: Install leaves the projectile slots alone.
+        g_fire_log.clear();
+        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr && img.Slot(pc::proj_slot_live_rva) == proj &&
+                  g_fire_log.find("partner_fire_census") == std::string::npos, "census off: the projectile slots untouched");
+        ff::SetCensus(true);
+        Check(ff::CensusOn() && ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr, "census on: the next install call");
+        const auto phook = reinterpret_cast<std::uintptr_t>(ff::detail::ProjectileHookEntry());
+        Check(img.Slot(pc::proj_slot_live_rva) == phook && img.Slot(pc::proj_slot_base_rva) == phook &&
+                  g_fire_log.find("partner_fire_census=projectile_installed; slots=0x23e2d50,0x23e2bd0; target=0x1337760; owner_field=0x32") !=
+                      std::string::npos, "census on: both projectile slots hold the forwarding census hook");
+        ff::CensusTotals t{};
+        ff::ReadCensusTotals(t);
+        Check(t.projectile_installed && t.projectile_live && !t.projectile_refusal, "census totals: installed and live");
+        std::uint32_t cursor = 0, lost = 0;
+        ff::CensusEntry e[8]{};
+        Check(ff::DrainCensus(cursor, e, 8, lost) == 0 && lost == 0, "nothing recorded yet");
+        // A bullet of the local instance (owner 0) and of instance 1 (owner 1, armed: dropped).
+        Check(ff::Arm(1), "armed for instance 1");
+        const auto shot = [&](std::uint16_t owner, std::uint16_t id, std::uint8_t kind) {
+            alignas(16) unsigned char record[0x60]{};
+            std::memcpy(record + pc::shot_owner, &owner, 2);
+            std::memcpy(record + pc::shot_bullet_id, &id, 2);
+            record[pc::shot_kind] = kind;
+            record[pc::shot_sub] = 2;
+            record[pc::shot_flags] = 4;
+            return reinterpret_cast<ff::detail::RequestFn>(img.Slot(pc::fire_slot_live_rva))(reinterpret_cast<void*>(0x1234), record);
+        };
+        g_forwarded = 0;
+        Check(shot(0, 0x123, 7) == reinterpret_cast<void*>(0x1234) && shot(1, 0x124, 7) == nullptr && g_forwarded == 1,
+              "census: the filter's verdicts are unchanged (owner 0 forwarded, owner 1 dropped)");
+        // A class-3 projectile request: the owner at +0x32, the id at +0x2E; forwarded with its return value.
+        alignas(16) unsigned char request[0x50]{};
+        const std::uint16_t powner = 1, pid = 0x77, paux = 9;
+        std::memcpy(request + pc::proj_owner, &powner, 2);
+        std::memcpy(request + pc::proj_id, &pid, 2);
+        std::memcpy(request + pc::proj_aux, &paux, 2);
+        g_proj_forwarded = 0;
+        Check(reinterpret_cast<ff::detail::ProjectileFn>(img.Slot(pc::proj_slot_live_rva))(reinterpret_cast<void*>(0x4321), request) ==
+                      reinterpret_cast<void*>(0x4321) && g_proj_forwarded == 1,
+              "the projectile census forwards every request (rax included), owner 1 too");
+        ff::detail::RecordForTest(ff::CensusKind::noise, false, 0, 0x45);
+        const std::size_t n = ff::DrainCensus(cursor, e, 8, lost);
+        Check(n == 4 && lost == 0 && cursor == 4, "four entries drained in order");
+        Check(e[0].kind == ff::CensusKind::bullet && e[0].owner == 0 && e[0].id == 0x123 && e[0].b0 == 7 && e[0].b1 == 2 && e[0].b2 == 4 &&
+                  !e[0].dropped && e[0].fields_ok && e[0].thread == GetCurrentThreadId() && e[0].seq == 1,
+              "bullet entry: owner 0, bullet id, kind/sub/flags, forwarded");
+        Check(e[1].kind == ff::CensusKind::bullet && e[1].owner == 1 && e[1].dropped, "bullet entry: owner 1 dropped");
+        Check(e[2].kind == ff::CensusKind::projectile && e[2].owner == 1 && e[2].id == 0x77 && e[2].aux == 9 && !e[2].dropped,
+              "projectile entry: owner 1 (never dropped by the census)");
+        Check(e[3].kind == ff::CensusKind::noise && e[3].id == 0x45 && std::strcmp(ff::CensusKindName(e[3].kind), "noise") == 0,
+              "noise entry");
+        // Overrun: older entries are lost, never torn.
+        for (unsigned i = 0; i < ff::kCensusRing + 44; ++i) ff::detail::RecordForTest(ff::CensusKind::bullet, false, 0, static_cast<std::uint16_t>(i));
+        ff::CensusEntry big[ff::kCensusRing]{};
+        std::size_t got = 0;
+        std::uint32_t lost_total = 0;
+        for (int k = 0; k < 8; ++k) {
+            got += ff::DrainCensus(cursor, big, ff::kCensusRing, lost);
+            lost_total += lost;
+        }
+        Check(lost_total == 44 && got == ff::kCensusRing && big[ff::kCensusRing - 1].id == ff::kCensusRing + 43,
+              "an overrun drains the newest ring and counts the lost ones");
+        ff::CensusTotals t2{};
+        ff::ReadCensusTotals(t2);
+        Check(t2.bullets == 2 && t2.projectiles == 1 && t2.recorded == 4 + ff::kCensusRing + 44, "census totals count the hooks' records");
+        ff::SetCensus(false);
+        shot(0, 1, 1);
+        Check(ff::DrainCensus(cursor, e, 8, lost) == 0, "census off: nothing recorded");
+        ff::Disarm();
+        ff::detail::SetOriginalForTest(nullptr);
+        ff::detail::SetProjectileOriginalForTest(nullptr);
+        ff::detail::ResetForTest();
+    }
+    {
+        // A changed projectile prologue: refused, the slots untouched; the bullet filter still installs.
+        FireImage img;
+        ff::detail::ResetForTest();
+        for (const auto& s : pc::code_sites)
+            if (s.rva == pc::proj_request_rva) std::memcpy(img.mem + s.rva, s.bytes, s.size);
+        const std::uintptr_t proj = img.base + pc::proj_request_rva;
+        std::memcpy(img.mem + pc::proj_slot_live_rva, &proj, 8);
+        std::memcpy(img.mem + pc::proj_slot_base_rva, &proj, 8);
+        img.mem[pc::proj_request_rva + 2] ^= 1;
+        ff::SetCensus(true);
+        g_fire_log.clear();
+        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr && img.Slot(pc::proj_slot_live_rva) == proj &&
+                  img.Slot(pc::proj_slot_base_rva) == proj &&
+                  g_fire_log.find("partner_fire_census=projectile_refused; reason=bytes") != std::string::npos,
+              "projectile prologue mismatch: refused, untouched, the bullet filter installed");
+        ff::CensusTotals t{};
+        ff::ReadCensusTotals(t);
+        Check(!t.projectile_installed && t.projectile_refusal && std::strcmp(t.projectile_refusal, "bytes") == 0, "census totals: the refusal");
+        // The base slot not holding the request: refused, the live slot swapped back.
+        ff::detail::ResetForTest();
+        img.mem[pc::proj_request_rva + 2] ^= 1;
+        const std::uintptr_t other = img.base + 0x3000;
+        std::memcpy(img.mem + pc::proj_slot_base_rva, &other, 8);
+        ff::SetCensus(true);
+        ff::Install(reinterpret_cast<void*>(img.base), &FireLog);
+        Check(img.Slot(pc::proj_slot_live_rva) == proj && img.Slot(pc::proj_slot_base_rva) == other,
+              "a base slot without the request: refused before any swap");
+        ff::SetCensus(false);
+        ff::detail::ResetForTest();
+    }
+}
+
 // Native polish F3: the shot noise filter (AddNoise 0x515270 through slot 0 of
 // the noise iface vtable 0x21876A8; the record keeps its owner at +0x12).
 unsigned g_noise_forwarded = 0;
@@ -500,6 +626,7 @@ void TestLookSource() {
 
 int main() {
     TestFireFilter();
+    TestFireCensus();
     TestNoiseFilter();
     TestLookSource();
     TestStubBytes();
@@ -511,7 +638,7 @@ int main() {
     TestRetargetCall();
     std::printf("%u partner input hook checks passed: stub bytes, rel32 reach/cache-line, dispatch-block gate "
                 "(mismatch + retargeted rel32), locked dword CAS (success/refusal/split), key-manager slot map, "
-                "data qword swap, fire filter (prologue/slot refusals, install, owner filter, stats, live check, census), noise filter, "
+                "data qword swap, fire filter (prologue/slot refusals, install, owner filter, stats, live check, census), fire/projectile census (ring, verdicts unchanged, forwarding projectile slots, refusals), noise filter, "
                 "look source (stub/unwind bytes, refusals, install, publish/skip/thread/vtable/withdraw, unwind through the stub)\n", checks);
     return 0;
 }

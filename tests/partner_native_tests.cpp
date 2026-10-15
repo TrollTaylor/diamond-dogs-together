@@ -1950,6 +1950,7 @@ int main() {
                 "refusals), weapons (capacity, magazine, CanReload, reload gate, magazine mirror), online play (network leaves "
                 "without latch, quality-gated re-entry, quiet remote, flap guard, remote_caps, hold=net, link quality, reason "
                 "codes, native.net JSON, capability message), aim parity, reload and switch (event machine, freeze rule, sender "
-                "counters, slot plan, weapon gate)\n", checks);
+                "counters, slot plan, weapon gate), anim round 1 (unsupported gate, aim intent gate, frame rule and edges, auto-fire "
+                "stop, reload queue, rate learning, rec+0x3E8 rule)\n", checks);
     return 0;
 }

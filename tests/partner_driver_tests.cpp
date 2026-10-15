@@ -5003,6 +5003,140 @@ void TestNativePoseAnimationSuppression() {
     dm.fake.native_pose_held=false;Check(dm.Tick(1)&&dm.fake.dm_patch_calls==1&&(dm.reply.op&op::dm_play),
           "ordinary DM path is restored after native holder retirement");
 }
+// Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported gate and
+// its lines, the aim intent's Arm fields, the auto-fire stop, the reload rate
+// factor in the Arm, partner_weapon_ctx and partner_native_gun past the old cap.
+void TestAnimRound1Weapons() {
+    namespace pn = mgscoop::partner_native;
+    namespace pi = mgscoop::partner_input;
+    NativeSession s;
+    SetVisualFire(s);
+    s.driver.settings.nunsupported = true;
+    s.driver.settings.ndry = true;
+    s.driver.settings.naim_intent = mgscoop::PartnerNativeAimIntent::state;
+    s.driver.settings.nreload = mgscoop::PartnerNativeReload::event;
+    s.fake.gun.fields.equip = 46;
+    s.fake.gun.fields.cap = 9;
+    s.fake.gun.fields.mag = 3;
+    s.fake.gun.mode_cur = 7;
+    s.fake.equip_types[46] = 4;
+    s.fake.equip_types[354] = 12;  // EQP_SWP_Grenade_G04 (EQP_TYPE_Throwing)
+    s.fake.equip_types[516] = 14;  // EQP_HAND_JEHUTY (EQP_TYPE_AttackArm)
+    s.fake.latest.packet.version = 5;
+    s.fake.latest.packet.xflags = pi::XFlag::Equip | pi::XFlag::Mag;
+    s.fake.latest.packet.gun_equip = 46;
+    s.fake.latest.packet.mag = 20;
+    s.fake.latest.packet.mag_cap = 30;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming;
+    s.fake.latest.packet.gun_mode = 7;
+    s.fake.latest.packet.inv_slot = 1;
+    s.fake.sample.anim_valid = true;
+    s.fake.sample.act = 11;
+    Check(s.Until(pn::Mode::active, 9000) && s.driver.settings.fire_live, "anim weapons: active with visual fire");
+    s.N();
+    Check(s.fake.arms.back().strip == 0 && s.fake.arms.back().aim_intent && s.fake.arms.back().aim_act_until_ms > s.now &&
+              s.fake.arms.back().reload_rate_k == 0.0f && s.driver.mission.aim_refusal == mgscoop::partner_slots::AimRefusal::none,
+          "match, slot 1, aim act: the Arm carries the aim intent (no rate factor with reload_rate=off)");
+    Check(s.fake.Containing("partner_aim_intent=on; source=flag; refusal=none; remote_act=11; act_aim=1;") >= 1,
+          "partner_aim_intent: on, the v5 flag");
+    // The remote selects a grenade (slot 3, equip 354, type 12): HOLD|FIRE|RELOAD stripped, no aim intent.
+    s.fake.latest.packet.inv_slot = 3;
+    s.fake.latest.packet.gun_equip = 354;
+    s.N();
+    Check(s.fake.arms.back().strip == 0x58u && !s.fake.arms.back().aim_intent &&
+              s.fake.Has("partner_weapon=unsupported; remote_slot=3; remote_equip=354; type=12; reason=slot; body_equip=46; strip=0x58\r\n") &&
+              s.fake.Containing("partner_weapon=mismatch") == 0,
+          "a grenade in the remote's hands: unsupported (0x58), logged once, no mismatch line");
+    for (int i = 0; i < 5; ++i) s.N();
+    Check(s.fake.Containing("partner_weapon=unsupported;") == 1, "the unsupported line only on change");
+    // The bionic arm (slot 6, equip 516, type 14): a new key.
+    s.fake.latest.packet.inv_slot = 6;
+    s.fake.latest.packet.gun_equip = 516;
+    s.N();
+    Check(s.fake.arms.back().strip == 0x58u &&
+              s.fake.Has("partner_weapon=unsupported; remote_slot=6; remote_equip=516; type=14; reason=slot; body_equip=46; strip=0x58\r\n"),
+          "the bionic arm: unsupported");
+    // A v4-style remote without the slot: the type alone decides.
+    s.fake.latest.packet.inv_slot = 0xFF;
+    s.N();
+    Check(s.fake.arms.back().strip == 0x58u && s.fake.Containing("reason=type;") == 1, "no live slot: the in-hand type decides");
+    // Back to the rifle in slot 1.
+    s.fake.latest.packet.inv_slot = 1;
+    s.fake.latest.packet.gun_equip = 46;
+    s.N();
+    Check(s.fake.arms.back().strip == 0 && s.fake.arms.back().aim_intent && s.fake.Containing("partner_weapon=unsupported_end;") == 1,
+          "back to the rifle: nothing stripped, the intent back");
+    // The key off: the old verdicts (mismatch strips FIRE|RELOAD only).
+    s.driver.settings.nunsupported = false;
+    s.fake.latest.packet.inv_slot = 3;
+    s.fake.latest.packet.gun_equip = 354;
+    s.N();
+    Check(s.fake.arms.back().strip == 0x50u && s.driver.mission.weapon_mismatch, "partner_native_unsupported=0: the old mismatch strip");
+    s.driver.settings.nunsupported = true;
+    s.fake.latest.packet.inv_slot = 1;
+    s.fake.latest.packet.gun_equip = 46;
+    s.N();
+    // The aim act leaves the aim family and the flag clears: no act deadline.
+    s.fake.sample.act = 1;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand;
+    s.N();
+    Check(s.fake.arms.back().aim_intent && s.fake.arms.back().aim_act_until_ms == 0, "no aim act: no act deadline in the Arm");
+    // A blocked act (being carried, 43): the gate refuses.
+    s.fake.sample.act = 43;
+    s.N();
+    Check(!s.fake.arms.back().aim_intent && s.driver.mission.aim_refusal == mgscoop::partner_slots::AimRefusal::act,
+          "a carried remote: no aim intent");
+    s.fake.sample.act = 1;
+    // pad: never an intent.
+    s.driver.settings.naim_intent = mgscoop::PartnerNativeAimIntent::pad;
+    s.N();
+    Check(!s.fake.arms.back().aim_intent && s.driver.mission.aim_refusal == mgscoop::partner_slots::AimRefusal::off, "aim_intent=pad: off");
+    s.driver.settings.naim_intent = mgscoop::PartnerNativeAimIntent::state;
+    // The auto-fire stop: the remote's magazine reaches 0 while it holds the trigger.
+    s.fake.latest.packet.mag = 0;
+    s.N(16);
+    Check(!(s.fake.arms.back().strip & 0x10u), "the last round's sample: FIRE still passes");
+    s.N(40);
+    s.N(40);
+    Check((s.fake.arms.back().strip & 0x10u) && s.driver.mission.dry_strip &&
+              s.fake.Containing("partner_fire=dry_stop; remote_mag=0; remote_cap=30; reason=remote_empty; stops=1;") == 1,
+          "dry after the grace: FIRE stripped, logged");
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Reloading;
+    s.fake.latest.packet.gun_mode = 11;
+    s.N();
+    Check(!(s.fake.arms.back().strip & 0x10u) && s.fake.Containing("partner_fire=dry_clear; remote_mag=0; remote_cap=30; reason=reload;") == 1,
+          "a reload clears the stop");
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand;
+    s.fake.latest.packet.gun_mode = 7;
+    s.fake.latest.packet.mag = 30;
+    s.N();
+    Check(!(s.fake.arms.back().strip & 0x10u), "a full magazine: FIRE passes");
+    // The reload rate factor reaches the Arm only with adapt.
+    s.driver.settings.nreload_rate = mgscoop::PartnerNativeReloadRate::adapt;
+    s.N();
+    Check(s.fake.arms.back().reload_rate_k == 1.0f, "reload_rate=adapt: k (1 before any pair) in the Arm");
+    s.driver.mission.rate_adapt.latched = true;
+    s.N();
+    Check(s.fake.arms.back().reload_rate_k == 0.0f, "a latched adaptation writes nothing");
+    // partner_weapon_ctx: one line per change, at most every kWeaponCtxMs.
+    const std::size_t ctx = s.fake.Containing("partner_weapon_ctx;");
+    Check(ctx >= 4 && s.fake.Containing("partner_weapon_ctx; remote_slot=3; remote_equip=354; type=12;") >= 1,
+          "partner_weapon_ctx lines for the switches");
+    for (int i = 0; i < 10; ++i) s.N();
+    Check(s.fake.Containing("partner_weapon_ctx;") == ctx, "no change: no ctx line");
+    // partner_native_gun: change lines keep coming past the old 64-line cap.
+    for (int i = 0; i < 200; ++i) {
+        s.fake.gun.gun3c0 ^= 0x40000u;
+        s.N(120);
+    }
+    Check(s.fake.Containing("partner_native_gun;") > 200 && s.fake.Containing("partner_native_gun=capped") == 0,
+          "partner_native_gun: no blind spot after 64 changes");
+    s.fake.gun.gun3c0 ^= 0x40000u; s.N(20);
+    const std::size_t before = s.fake.Containing("partner_native_gun;");
+    s.fake.gun.gun3c0 ^= 0x40000u; s.N(20);
+    Check(s.fake.Containing("partner_native_gun;") == before, "a change within kNativeGunChangeMs coalesces");
+}
+
 int main() {
     TestCfgAndMissionBoundaries();
     TestStageThreeTimeline();
@@ -5059,6 +5193,7 @@ int main() {
     TestNativePolish();
     TestMovementRecovery();
     TestNativeReloadSwitch();
+    TestAnimRound1Weapons();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
@@ -5070,7 +5205,8 @@ int main() {
                 "polish: neutral placement, unwindowed leave, facing governor (turn, contest/latch, in-batch), noise gate, weapon gate, "
                 "look source install, v4 pad mode and equip; aim parity: target publication, override, telemetry, ring, 1 Hz line; "
                 "reload and switch: v5 negotiation (also from a clip sender), reload event machine, sample strip, slot follower, "
-                "generalized gate); "
+                "generalized gate); anim round 1 weapons (unsupported gate, aim intent Arm, auto-fire stop, rate factor, "
+                "weapon ctx, native gun lines); "
                 "no game\n", checks);
     return 0;
 }
