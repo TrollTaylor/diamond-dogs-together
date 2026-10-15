@@ -523,8 +523,27 @@ for offset, name in ipairs({
     check(#c.calls == mark + 1 and c.calls[#c.calls] == "dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/" .. name .. ".gani" and
         c.dmLoop == false, "receiver probe " .. id .. " exact path/instance and finite playback")
 end
+-- DM overlay lever (docs/anim-round1-actions.md): 64 + 32 * loop + index plays OVERLAY[index].
+for _, case in ipairs({{64, 'stateDamageBigFront', false}, {64 + 32 + 7, 'stateEludeIdle', true}, {64 + 4, 'stateDead', false},
+    {64 + 32 + 12, 'stateStandIdleLeft', true},
+    {64 + 32 + 20, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapdam/snapdam_p_die_idl.gani', true},
+    {64 + 21, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_s_fal_lp_l.gani', false}}) do
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, case[1]}
+    mark = #c.calls
+    update(env)
+    check(#c.calls == mark + 1 and c.calls[#c.calls] == 'dmplay:1:' .. case[2] and c.dmLoop == case[3] and
+        hasLog(c, 'event=dm_overlay;index=' .. ((case[1] - 64) % 32) .. ';loop=' .. (case[3] and 1 or 0)),
+        'overlay reply ' .. case[1] .. ' plays ' .. case[2])
+end
+for _, bad in ipairs({64 + 22, 64 + 32 + 22, 127}) do
+    local notes = count(c.logs, 'event=dm_refused;reason=bad_overlay')
+    mark = #c.calls
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}
+    update(env)
+    check(#c.calls == mark and count(c.logs, 'event=dm_refused;reason=bad_overlay') == notes + 1, 'overlay beyond the catalogue refused: ' .. bad)
+end
 -- bad gani index refused (31 = partner::max_gani + 1).
-for _, bad in ipairs({31, -1, 1.5, '3'}) do
+for _, bad in ipairs({31, -1, 1.5, '3', 63, 128}) do
     local notes = count(c.logs, 'event=dm_refused;reason=bad_gani')
     mark = #c.calls
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}

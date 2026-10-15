@@ -360,6 +360,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
             ok = ParsePartnerNativeRide(value.data, value.size, result.partner_native_ride);
             if (ok) result.partner_native_ride_given = true;
         }
+        else if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
+        else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -1308,6 +1310,24 @@ bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRid
     const Slice s{text, size};
     if (Equals(s, "off")) out = PartnerNativeRide::off;
     else if (Equals(s, "hide")) out = PartnerNativeRide::hide;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept {
+    switch (value) {
+    case PartnerNativeOverlay::debug: return "debug";
+    case PartnerNativeOverlay::map: return "map";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeOverlay::off;
+    else if (Equals(s, "debug")) out = PartnerNativeOverlay::debug;
+    else if (Equals(s, "map")) out = PartnerNativeOverlay::map;
     else return false;
     return true;
 }

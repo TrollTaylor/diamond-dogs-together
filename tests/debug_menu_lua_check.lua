@@ -217,6 +217,22 @@ check(c:send('clear_enemies 50')[3]:find('submitted=1;dead_readback=0', 1, true)
 check(c:send('partner stage=3 apply=xform look=net dm=map')[3] == 'partner_applied' and c:count('partner') == 1, 'partner action dispatched only after owner guard')
 c.partnerRefuse = true
 check(c:send('partner stage=3')[3] == 'partner_refused', 'native partner refusal explicit')
+-- Round-1 actions (docs/anim-round1-actions.md): the DM overlay debug commands dispatch native partner one-shots.
+local ov = fixture()
+check(ov:send('overlay_state stateEludeIdle 1 2500')[3] == 'overlay_queued;state=stateEludeIdle' and ov:count('partner') == 1 and
+    ov.calls[#ov.calls][2] == 'overlay=stateEludeIdle oloop=1 oms=2500', 'overlay_state dispatches overlay/oloop/oms')
+check(ov:send('overlay_state stateDead loop 0')[3] == 'overlay_queued;state=stateDead' and ov.calls[#ov.calls][2] == 'overlay=stateDead oloop=0',
+    'overlay_state loop keyword')
+check(ov:send('overlay_state stateCBoxIdle')[3] == 'overlay_queued;state=stateCBoxIdle' and ov.calls[#ov.calls][2] == 'overlay=stateCBoxIdle',
+    'overlay_state with the name only')
+check(ov:send('overlay_stop')[3] == 'overlay_stop_queued' and ov.calls[#ov.calls][2] == 'overlay=stop', 'overlay_stop')
+local overlayCalls = ov:count('partner')
+for _, bad in ipairs({'overlay_state', 'overlay_state bad-name', 'overlay_state stateDead 2', 'overlay_state stateDead 1 99',
+    'overlay_state stateDead 1 60001', 'overlay_state stateDead 1 500 7', 'overlay_stop now'}) do
+    check(ov:send(bad)[2] == 0 and ov:count('partner') == overlayCalls, 'overlay args refused locally: ' .. bad)
+end
+ov.partnerRefuse = true
+check(ov:send('overlay_state stateDead')[3] == 'overlay_refused', 'overlay native refusal explicit')
 local controls = fixture()
 local function partnerPreset(text)
     local n = controls:count('partner')

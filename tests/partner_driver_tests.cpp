@@ -5003,7 +5003,147 @@ void TestNativePoseAnimationSuppression() {
     dm.fake.native_pose_held=false;Check(dm.Tick(1)&&dm.fake.dm_patch_calls==1&&(dm.reply.op&op::dm_play),
           "ordinary DM path is restored after native holder retirement");
 }
+// Round-1 actions track (docs/anim-round1-actions.md): the native stance
+// window and its gun gate, the act census lines, the dropped pad presses and
+// the DM overlay lever (suspend without a fallback, play, stop, re-entry).
+bool CameraSkipArmed(void*) noexcept { return true; }
+void TestRound1Actions() {
+    namespace pn = mgscoop::partner_native;
+    namespace pdo = mgscoop::partner_dm_overlay;
+    const auto idle = [](NativeSession& s) {
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 1; s.fake.sample.anim_stance = 1;
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 1; s.fake.anim.stance[1] = 1;
+    };
+    {   // The native stance window: a lost crouch edge is fixed within ~0.65 s (the gun stage).
+        NativeSession s;
+        idle(s);
+        s.driver.settings.ngun = true;
+        Check(s.Until(pn::Mode::active, 9000), "stance: active");
+        for (int i = 0; i < 40; ++i) s.N();
+        s.fake.lines.clear();
+        s.fake.sample.anim_stance = 2;  // the guest crouched; body 1 missed the edge
+        for (int i = 0; i < 15; ++i) s.N();
+        Check(s.fake.Count("partner_recon=stance_fix;") == 0, "native stance: no fix before the window");
+        for (int i = 0; i < 10; ++i) s.N();
+        Check(s.fake.Count("partner_recon=stance_fix; remote=2; body=1; via=tap;") == 1 && s.fake.Containing("; after_ms=") == 1,
+              "native stance: one tap within ~650 ms (not 2 s)");
+        // The remote aims (the gun stage): the next mismatch waits with reason=gun.
+        s.fake.anim.stance[1] = 2;
+        for (int i = 0; i < 40; ++i) s.N();
+        s.fake.lines.clear();
+        s.fake.sample.flags = mgscoop::sync::ActionFlag::Aiming;
+        s.fake.sample.anim_stance = 1;
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.Count("partner_recon=stance_fix;") == 0 && s.fake.Count("partner_recon=stance_wait; reason=gun; remote=1; body=2;") == 1,
+              "native stance: the remote's aim holds the fix (stance_wait reason=gun, once)");
+        s.fake.sample.flags = 0;
+        for (int i = 0; i < 5; ++i) s.N();
+        Check(s.fake.Count("partner_recon=stance_fix; remote=1; body=2; via=tap;") == 1, "native stance: fixed once the aim ended");
+    }
+    {   // The act census: edge lines with family names and the match latency.
+        NativeSession s;
+        idle(s);
+        Check(s.Until(pn::Mode::active, 9000), "census: active");
+        for (int i = 0; i < 5; ++i) s.N();
+        s.fake.lines.clear();
+        s.fake.sample.act = 57;
+        s.N();
+        Check(s.fake.Count("partner_act; t=") == 1 &&
+              s.fake.Containing("; edge=remote; remote=57(dive); body=1(stand_idle); match_ms=pending\r\n") == 1, "census: remote edge");
+        s.N();
+        s.fake.anim.act[1] = 57;
+        s.N();
+        Check(s.fake.Containing("; edge=body; remote=57(dive); body=57(dive); match_ms=66\r\n") == 1, "census: body matched after 66 ms");
+        s.fake.sample.act = 6;
+        s.N();
+        s.fake.sample.act = 1;
+        s.N();
+        Check(s.fake.Containing("; edge=miss; remote=6(prone_crawl); body=57(dive); match_ms=miss; held_ms=33\r\n") == 1, "census: a missed act");
+        // The remote presses ACTION and CQC (masked): one partner_pad_dropped line within a second.
+        s.fake.lines.clear();
+        s.fake.latest.seq = 500; s.fake.latest.packet.version = 6; s.fake.latest.packet.edge_seq = 9; s.fake.latest.packet.w50 = 0x20;
+        s.N();
+        s.fake.latest.seq = 501; s.fake.latest.packet.edge_seq = 10; s.fake.latest.packet.w50 = 0x8000;
+        s.N();
+        s.fake.latest.packet.edge_seq = 0; s.fake.latest.packet.w50 = 0;
+        for (int i = 0; i < 35; ++i) s.N();
+        Check(s.fake.Count("partner_pad_dropped; action=1; stock=0; call=0; subject=0; weapon=0; cqc=1;") == 1 &&
+              s.fake.Containing("; native=1\r\n") == 1, "census: dropped ACTION and CQC presses, native window");
+        // partner_act_log=0: no census lines.
+        s.driver.settings.act_log = false;
+        s.fake.lines.clear();
+        s.fake.sample.act = 2;
+        for (int i = 0; i < 5; ++i) s.N();
+        Check(s.fake.Count("partner_act") == 0, "census off: nothing");
+    }
+    {   // The DM overlay (debug): suspend native without a fallback, play the named state, stop, re-enter at once.
+        NativeSession s;
+        idle(s);
+        s.driver.settings.noverlay = mgscoop::PartnerNativeOverlay::debug;
+        Check(s.Until(pn::Mode::active, 9000), "overlay: active first");
+        const std::uint32_t fallbacks = s.driver.mission.native.fallbacks;
+        const std::size_t clips = s.played.size();
+        s.fake.lines.clear();
+        s.Trigger("overlay=stateEludeIdle oloop=1 oms=1500");
+        Check(s.fake.Has("partner_overlay=queued; state=stateEludeIdle; loop=1; ms=1500; setting=debug\r\n"), "overlay: queued");
+        int gani = -1;
+        for (int i = 0; i < 30 && gani < 0; ++i) {
+            s.N();
+            if (s.reply.op & op::dm_play) gani = s.reply.gani;
+        }
+        Check(gani == 64 + 32 + pdo::Find("stateEludeIdle", 14), "overlay: DM_PLAY with the overlay reply code (64 + 32 + index)");
+        Check(s.fake.Containing("partner_overlay=request; state=stateEludeIdle; loop=1; source=debug;") == 1 &&
+                  s.fake.Containing("partner_overlay=native; mode=leaving; reason=overlay") == 1 &&
+                  s.fake.Count("partner_native=leaving") == 0 && s.driver.mission.native.fallbacks == fallbacks &&
+                  s.driver.mission.dm_patched && !s.driver.mission.input_armed && !s.driver.mission.native_defer_armed,
+              "overlay: native suspended on the overlay cap (no fallback), patched, window and deferral disarmed");
+        s.N();
+        Check(s.fake.Containing("partner_overlay=playing; state=stateEludeIdle;") == 1, "overlay: playing confirmed");
+        const std::size_t xforms = s.fake.Calls("xform:");
+        for (int i = 0; i < 10; ++i) s.N();
+        Check(s.fake.Calls("xform:") >= xforms + 10 && s.played.size() == clips + 1, "overlay: placed by xform every tick; no dm=map clip");
+        Check(s.UntilStop(2000), "overlay: DM_STOP at the timeout");
+        Check(s.Until(pn::Mode::active, 3000), "overlay: native active again");
+        Check(s.fake.Containing("partner_overlay=released; state=stateEludeIdle;") == 1 &&
+                  s.fake.Containing("partner_overlay=native; mode=entering; reason=resume") == 1 &&
+                  s.fake.Count("partner_native=entering") == 0 && s.driver.mission.native.fallbacks == fallbacks &&
+                  s.driver.mission.native.suspends == 1 && !s.driver.mission.dm_patched && s.driver.mission.input_armed,
+              "overlay: released; native re-entered at once (resume), no fallback, patch reverted, window armed");
+        // The camera connect refusal, and the camera-skip hook point.
+        s.fake.lines.clear();
+        s.fake.dm.cam1f0 = 0x8800000000006400ull;
+        s.fake.dm.cam200 = 1;
+        s.Trigger("overlay=stateDamageBigFront oms=3000");
+        const std::size_t played = s.played.size();
+        for (int i = 0; i < 30; ++i) s.N();
+        Check(s.played.size() == played && s.fake.Containing("partner_overlay=deferred; state=stateDamageBigFront;") == 1 &&
+                  s.fake.Containing("reason=cam_connect") >= 1, "overlay: cam_connect refused (deferred) without a camera-skip module");
+        s.hooks.dm_camera_skip_armed = CameraSkipArmed;
+        for (int i = 0; i < 3; ++i) s.N();
+        Check(s.played.size() == played + 1 && s.played.back() == 64 + pdo::Find("stateDamageBigFront", 19),
+              "overlay: plays once a camera-skip module is armed (hook point)");
+        s.hooks.dm_camera_skip_armed = nullptr;
+        s.fake.dm.cam1f0 = 0;
+        s.fake.dm.cam200 = 0;
+        s.Trigger("overlay=stop");
+        for (int i = 0; i < 60; ++i) s.N();
+        Check(s.fake.Containing("partner_overlay=released; state=stateDamageBigFront;") == 1 && s.Until(pn::Mode::active, 3000),
+              "overlay_stop: released, native again");
+    }
+    {   // partner_native_overlay=off (the default): the debug command is refused, native untouched.
+        NativeSession s;
+        idle(s);
+        Check(s.Until(pn::Mode::active, 9000), "overlay off: active");
+        s.Trigger("overlay=stateDead");
+        for (int i = 0; i < 10; ++i) s.N();
+        Check(s.fake.Containing("partner_overlay=refused; state=stateDead;") == 1 && s.fake.Containing("reason=setting_off") == 1 &&
+                  s.driver.mission.native_out.mode == pn::Mode::active && !s.driver.mission.overlay_out.suspend,
+              "overlay off: refused, native stays active");
+    }
+}
+
 int main() {
+    TestRound1Actions();
     TestCfgAndMissionBoundaries();
     TestStageThreeTimeline();
     TestTriggerStopAndTeardown();
@@ -5070,7 +5210,9 @@ int main() {
                 "polish: neutral placement, unwindowed leave, facing governor (turn, contest/latch, in-batch), noise gate, weapon gate, "
                 "look source install, v4 pad mode and equip; aim parity: target publication, override, telemetry, ring, 1 Hz line; "
                 "reload and switch: v5 negotiation (also from a clip sender), reload event machine, sample strip, slot follower, "
-                "generalized gate); "
+                "generalized gate); round-1 actions (native stance window and its gun gate, act census edges/match/miss, dropped pad "
+                "presses, DM overlay suspend without a fallback, play, xform placement, timeout stop, resume, cam_connect refusal and "
+                "the camera-skip hook, overlay_stop, setting off); "
                 "no game\n", checks);
     return 0;
 }

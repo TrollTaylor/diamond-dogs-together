@@ -24,6 +24,14 @@ do
         -- Manual finite probes only; exact receiver MTAR paths, layering unverified.
         GMP .. "snaphg00/snaphg00_s_fre.gani", GMP .. "snapar00/snapar00_aw1_s_fre.gani",
         GMP .. "snapar01/snapar01_aw0_s_fre.gani", GMP .. "snapsr02/snapsr02_s_fre2.gani", GMP .. "snapsr02/snapsr02_s_fre_rld.gani"}
+    -- DM overlay lever (docs/anim-round1-actions.md): reply values 64..127 are
+    -- 64 + 32 * loop + index into OVERLAY, in the native partner_dm_overlay
+    -- catalogue order (graph-0 states, then resident clips; append only).
+    local OVERLAY = {[0] = "stateDamageBigFront", "stateDamageBigBack", "stateDamageBigLeft", "stateDamageBigRight", "stateDead",
+        "stateCBoxIdle", "stateCBoxMove", "stateEludeIdle", "stateClimbIdle", "stateClimbMoveFront", "stateClimbMoveBack",
+        "stateClimbIdleR", "stateStandIdleLeft", "stateSquatIdleLeft", "stateCqcDeath", "statePutDown", "stateFultonStart",
+        "stateLedgeDrop", "stateCrawlSupineIdle", GMP .. "snapdam/snapdam_s_fre.gani", GMP .. "snapdam/snapdam_p_die_idl.gani",
+        DMP .. "snapnon_s_fal_lp_l.gani"}
     local function receipt(source)
         local chunk = loadstring(source)
         if type(chunk) ~= "function" then return nil end
@@ -258,10 +266,19 @@ do
         if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
         -- MIRROR_OFF (extension): native ends the F3c diagnostic after at most 10 s.
         if op % 128 >= 64 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", false) then note("event=mirror_off") end
-        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..30; partner::max_gani);
+        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..30; partner::max_gani,
+        -- or 64..127 for an OVERLAY entry);
         -- after SET_PARTS, before WARP. Needs the native comparator patch.
         if op % 256 >= 128 then
-            if integer(dg, 0, 30) and GANI[dg] ~= nil then
+            if integer(dg, 64, 127) then
+                local k = dg - 64
+                local entry = OVERLAY[k % 32]
+                if entry == nil then
+                    note("event=dm_refused;reason=bad_overlay")
+                elseif call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {entry, k >= 32, "", "", "", true}}) then
+                    note("event=dm_overlay;index=" .. (k % 32) .. ";loop=" .. (k >= 32 and 1 or 0))
+                end
+            elseif integer(dg, 0, 30) and GANI[dg] ~= nil then
                 -- Resident turn clips 13..20 are finite transitions, not loops.
                 if call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {GANI[dg], dg <= 12 or dg == 21, "", "", "", true}}) then
                     note("event=dm_play;gani=" .. dg)

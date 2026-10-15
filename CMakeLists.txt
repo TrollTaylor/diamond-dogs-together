@@ -188,6 +188,19 @@ foreach(_mgs_partner_test buddy_pose_tests partner_receipt_tests partner_input_t
   endif()
   add_test(NAME ${_mgs_partner_test} COMMAND ${_mgs_partner_test})
 endforeach()
+# Round-1 actions track (docs/anim-round1-actions.md): the act census telemetry
+# and the DirectMotion overlay lever, pure and portable like the partner core.
+target_sources(mgs_coop_core PRIVATE native/partner_act_log.cpp native/partner_dm_overlay.cpp)
+foreach(_mgs_actions_test partner_act_log_tests partner_dm_overlay_tests)
+  add_executable(${_mgs_actions_test} tests/${_mgs_actions_test}.cpp)
+  target_link_libraries(${_mgs_actions_test} PRIVATE mgs_coop_core)
+  if(MSVC)
+    target_compile_options(${_mgs_actions_test} PRIVATE /W4 /WX)
+  endif()
+endforeach()
+add_test(NAME partner_act_log_tests COMMAND partner_act_log_tests)
+# The overlay catalogue must match partner_sync.lua OVERLAY (order and strings).
+add_test(NAME partner_dm_overlay_tests COMMAND partner_dm_overlay_tests "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/partner_sync.lua")
 add_executable(client_reset_tests tests/client_reset_tests.cpp)
 target_include_directories(client_reset_tests PRIVATE native/include)
 if(MSVC)

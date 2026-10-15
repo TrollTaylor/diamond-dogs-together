@@ -780,6 +780,25 @@ int main() {
         Check(std::strcmp(mgscoop::PartnerNativeRideName(mgscoop::PartnerNativeRide::hide),"hide")==0 &&
               std::strcmp(mgscoop::PartnerNativeEquipSharedName(mgscoop::PartnerNativeEquipShared::prefer),"prefer")==0,
               "weapons4 and ride names");
+        // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
+        // default, in every profile; both keys are explicit only.
+        {
+            const auto gunDefault = Lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
+            Check(def.partner_native_overlay == mgscoop::PartnerNativeOverlay::off && def.partner_act_log &&
+                  gunDefault.partner_native_overlay == mgscoop::PartnerNativeOverlay::off && gunDefault.partner_act_log,
+                  "overlay off and act census on by default (gun profile too)");
+            const auto debugOverlay = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_overlay=debug\npartner_act_log=0\n");
+            const auto mapOverlay = Lab("enabled=1\nrole=host\npartner_native_overlay=map\n");
+            Check(debugOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::debug && !debugOverlay.partner_act_log &&
+                  mapOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::map && debugOverlay.invalid_values == 0,
+                  "overlay debug/map and act census off parse");
+            const auto badOverlay = Lab("enabled=1\nrole=host\npartner_native_overlay=on\npartner_act_log=maybe\n");
+            Check(badOverlay.invalid_values == 2 && badOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::off &&
+                  badOverlay.partner_act_log, "invalid overlay/act census values refused, defaults kept");
+            Check(std::strcmp(mgscoop::PartnerNativeOverlayName(mgscoop::PartnerNativeOverlay::map),"map")==0 &&
+                  std::strcmp(mgscoop::PartnerNativeOverlayName(mgscoop::PartnerNativeOverlay::debug),"debug")==0 &&
+                  std::strcmp(mgscoop::PartnerNativeOverlayName(mgscoop::PartnerNativeOverlay::off),"off")==0, "overlay names");
+        }
         const auto gunNamed = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\npartner_native_reload=mirror\n"
                                   "partner_native_slot=off\npartner_native_equip=stock46\n");
         Check(gunNamed.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&

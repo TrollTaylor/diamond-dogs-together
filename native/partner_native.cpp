@@ -28,6 +28,7 @@ const char* InstallReason(const char* why) noexcept {
 const char* EnterBlocker(const State& s, const In& in, const Params& p) noexcept {
     if (s.dm_latch) return "dm_revert_failed";
     if (in.visibility_reason) return in.visibility_reason;
+    if (in.suspend_reason) return in.suspend_reason;
     if (!in.defer_on) return "defer_census";
     if (in.install_refusal) return InstallReason(in.install_refusal);
     if (!in.installed_h0 || !in.installed_wrap || !in.installed_h2 || !in.installed_h1 || !in.installed_p1) return "not_installed";
@@ -55,6 +56,7 @@ const char* HardLeave(const In& in) noexcept {
     if (!in.defer_on) return "defer_off";
     if (in.terminating) return "terminating";
     if (in.visibility_reason) return in.visibility_reason;
+    if (in.suspend_reason) return in.suspend_reason;
     if (in.faulted) return "faulted";
     if (!in.live_h0 || !in.live_h1 || !in.live_h2 || !in.live_p1) return "hook_lost";
     if (!in.thread_ok) return "thread";
@@ -85,6 +87,8 @@ double Clamp(double v, double lo, double hi) noexcept {
     if (v > hi) return hi;
     return v;
 }
+
+bool SameReason(const char* a, const char* b) noexcept { return a && b && (a == b || std::strcmp(a, b) == 0); }
 
 // The online flap guard: network leaves within the window.
 std::uint32_t RecentNetLeaves(const State& s, std::uint64_t now, std::uint32_t window_ms) noexcept {
@@ -155,6 +159,19 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         s.left_ms = now;
         s.left_reason = why;
         s.quiet = false;
+        s.ready = false;
+        s.enter_step = 0;
+        s.resumed = false;
+        // A suspend (In::suspend_reason) counts nothing: no fallback, no latch,
+        // no network leave; fallback re-enters as soon as it clears.
+        if (SameReason(why, in.suspend_reason)) {
+            s.suspended = true;
+            ++s.suspends;
+            s.left_net = false;
+            o.suspend_cycle = true;
+            return;
+        }
+        s.suspended = false;
         // Online: a network reason never counts toward the mission latch.
         s.left_net = (p.online || in.visibility_reason != nullptr) && NetReason(why);
         if (s.left_net) {
@@ -188,11 +205,15 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
             break;
         }
         const char* blocker = EnterBlocker(s, in, p);
+        // Suspended: only the suspend itself keeps the immediate re-entry; any
+        // other blocker meanwhile restores the normal cooldown and hold.
+        if (s.suspended && blocker && !SameReason(blocker, in.suspend_reason)) s.suspended = false;
+        if (s.suspended && blocker) o.suspend_cycle = true;
         const std::uint32_t cooldown = p.online && s.left_net ? p.net_cooldown_ms : p.cooldown_ms;
-        if (!blocker && s.left && now - s.left_ms < cooldown) blocker = "cooldown";
+        if (!blocker && !s.suspended && s.left && now - s.left_ms < cooldown) blocker = "cooldown";
         // Online: after a network leave the link quality must hold first; a
         // flapping link keeps the clips until it held much longer.
-        if (!blocker && p.online && s.flap) {
+        if (!blocker && !s.suspended && p.online && s.flap) {
             if (in.quality_good_ms >= p.flap_good_ms) {
                 s.flap = false;
                 s.net_count = 0;
@@ -206,21 +227,29 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
             s.reason = blocker;
             break;
         }
-        if (!s.ready) {
-            s.ready = true;
-            s.ready_since_ms = now;
+        if (s.suspended) {
+            // The suspend cleared: re-enter at once (no cooldown, no settling hold).
+            s.suspended = false;
+            s.resumed = true;
+            go(Mode::entering, "resume");
+        } else {
+            if (!s.ready) {
+                s.ready = true;
+                s.ready_since_ms = now;
+            }
+            if (now - s.ready_since_ms < p.enter_hold_ms) {
+                s.reason = "settling";
+                break;
+            }
+            go(Mode::entering, "ok");
+            if (s.left_net) ++s.net_reentries;
         }
-        if (now - s.ready_since_ms < p.enter_hold_ms) {
-            s.reason = "settling";
-            break;
-        }
-        go(Mode::entering, "ok");
-        if (s.left_net) ++s.net_reentries;
         s.enter_step = 0;
         s.step_since_ms = now;
         [[fallthrough]];
     }
     case Mode::entering: {
+        if (s.resumed) o.suspend_cycle = true;
         if (const char* why = HardLeave(in)) {
             leave(why);
             break;
@@ -240,6 +269,7 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
             go(Mode::active, "ok");
             o.req_defer_arm = true;
             ResetWindows(s, now);
+            s.resumed = false;
             break;
         }
         if (step <= 2 && now - s.since_ms >= p.dm_timeout_ms) leave("enter_timeout_dm");
@@ -309,6 +339,7 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         break;
     }
     case Mode::leaving:
+        if (s.suspended) o.suspend_cycle = true;
         if (s.dm_latch) go(Mode::latched, "dm_revert_failed");
         else if (s.fallbacks >= p.latch_fallbacks) go(Mode::latched, s.reason);
         else if (!in.configured) go(Mode::off, "legacy");
