@@ -284,7 +284,7 @@ private:
 };
 
 // --- Reliable ordered channel (docs/link-protocol.md "Reliable channel").
-inline constexpr unsigned kReliableChannels = 4;  // 0 reserved (link), 1 world (reserved), 2..3 game
+inline constexpr unsigned kReliableChannels = 5;  // 0 link, 1 world, 2..3 game, 4 save handoff
 inline constexpr std::size_t kMaxReliableMessage = 1024;
 inline constexpr unsigned kReliableWindow = 32;
 inline constexpr std::size_t kRetransmitBudgetBytes = 2400;  // retransmitted payload per 20 ms tick

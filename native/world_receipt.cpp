@@ -64,6 +64,7 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Prefixed(source, size, log_prefix)) return Receipt::log;
     if (Prefixed(source, size, warp_prefix)) return Receipt::warp;
     if (Prefixed(source, size, note_prefix)) return Receipt::note;
+    if (Prefixed(source, size, save_prefix)) return Receipt::save;
     return Receipt::none;
 }
 
@@ -149,11 +150,49 @@ bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::ui
     return true;
 }
 
+bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint32_t& a, std::uint32_t& b, std::uint32_t& c,
+               std::uint32_t& d, std::uint32_t& e) noexcept {
+    if (!source || !Prefixed(source, size, save_prefix) || size > max_receipt) return false;
+    const char* p = source + sizeof(save_prefix) - 1;
+    const char* end = source + size;
+    std::int64_t v[6]{};
+    for (unsigned i = 0; i < 6; ++i) {
+        if (i) {
+            if (p >= end || *p != ' ') return false;
+            ++p;
+        }
+        if (!Token(p, end, v[i]) || v[i] < 0) return false;
+    }
+    if (p != end) return false;
+    // P2-2 ranges per op.
+    switch (v[0]) {
+    case 1:  // REPORT mission title story saving ingame
+        if (v[1] > 99999 || v[2] > 1 || v[3] > 2 || v[4] > 1 || v[5] > 1) return false;
+        break;
+    case 2:  // CONTINUE target title story 0 0
+        if (v[1] < 1 || v[1] > 99999 || v[2] > 1 || v[3] > 2 || v[4] != 0 || v[5] != 0) return false;
+        break;
+    case 3:  // DECLINE reason 0 0 0 0
+        if (v[1] < 1 || v[1] > 2 || v[2] != 0 || v[3] != 0 || v[4] != 0 || v[5] != 0) return false;
+        break;
+    default:
+        return false;
+    }
+    op = static_cast<std::uint8_t>(v[0]);
+    a = static_cast<std::uint32_t>(v[1]);
+    b = static_cast<std::uint32_t>(v[2]);
+    c = static_cast<std::uint32_t>(v[3]);
+    d = static_cast<std::uint32_t>(v[4]);
+    e = static_cast<std::uint32_t>(v[5]);
+    return true;
+}
+
 std::size_t FormatCfgReply(const CfgReply& r, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return 0;
-    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
+    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
                                 unsigned(r.proto), unsigned(r.link), unsigned(r.epoch), unsigned(r.probe), unsigned(r.mode),
-                                unsigned(r.session), unsigned(r.remote_mission), unsigned(r.remote_level), unsigned(r.wait));
+                                unsigned(r.session), unsigned(r.remote_mission), unsigned(r.remote_level), unsigned(r.wait),
+                                unsigned(r.handoff), unsigned(r.lock));
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
     return static_cast<std::size_t>(n);
 }

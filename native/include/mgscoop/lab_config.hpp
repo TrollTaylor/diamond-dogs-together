@@ -610,6 +610,9 @@ const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
 const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
 const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
+// The effective travel lock (P2-11): the lab.ini travel_lock when given,
+// otherwise on in play and off in lab.
+bool EffectiveTravelLock(const LabConfig& config) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
 bool ParseNametagCrosshair(const char* text, std::size_t size, NametagCrosshair& out) noexcept;

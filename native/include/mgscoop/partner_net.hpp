@@ -196,6 +196,9 @@ const char* LinkStateName(LinkState state) noexcept;
 struct LinkInfo {
     LinkState state;
     std::uint32_t session, rtt_ms, jitter_ms, interp_ms, loss_permille;
+    // The peer's HELLO/WELCOME build ("0.13.0+c07d0a2", NUL-terminated; ""
+    // before a handshake). The save handoff gates channel 4 on it (P2-4).
+    char remote_build[link::kBuildSize + 1];
 };
 // Game-thread snapshot (seqlock read; never blocks). state off without v2.
 LinkInfo GetLinkInfo() noexcept;
@@ -228,7 +231,8 @@ struct WorldView {
     std::uint8_t progress;
 };
 void PublishWorldState(const WorldView& view) noexcept;
-// Reliable ordered channels 1..3 (1 = world, reserved; 2..3 = game). Session
+// Reliable ordered channels 1..4 (1 = world; 2..3 = game; 4 = save handoff,
+// sent and drained only by save_handoff.cpp through HandoffHooks). Session
 // scoped: a new handshake clears them on both sides (LinkInfo.session bumps)
 // and callers send their state again. On `full` the caller keeps its dirty
 // flag and retries next tick. Never blocks on I/O, never allocates.

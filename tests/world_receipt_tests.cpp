@@ -73,17 +73,22 @@ void Cfg() {
           "strict CFG");
     world::CfgReply r{3, 2, 1, 1, 65535, 15, 1, 4294967295u};
     char out[world::reply_capacity];
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0") == 0,
-          "CFG first seven fields preserved, unsigned session appended, then remote mission, remote level and wait");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0,0,0") == 0,
+          "CFG first seven fields preserved, unsigned session appended, then remote mission, remote level, wait, handoff and lock");
     r.link = 0; r.session = 0;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0") == 0, "disconnected CFG session zero");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0,0,0") == 0, "disconnected CFG session zero");
     r.link = 1; r.session = 7; r.remote_mission = 30010; r.remote_level = 3; r.wait = 9;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,0,0") == 0,
           "the partner's mission, its world level and the raw pair-wait code are r[9..11]");
-    r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255") == 0 &&
+    // Save handoff (join-fix phase 2 P2-1): r[12] the handoff code, r[13] the travel lock.
+    r.handoff = 3; r.lock = 1;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1") == 0,
+          "the handoff code and the travel lock are r[12..13]");
+    r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255") == 0 &&
               std::strlen(out) < world::reply_capacity,
           "the widest CFG reply fits");
+    r.handoff = 0; r.lock = 0;
     char tiny[16];
     Check(!world::FormatCfgReply(r, tiny, sizeof(tiny)) && tiny[0] == 0, "CFG insufficient buffer produces no partial reply");
 }
@@ -112,6 +117,44 @@ void Note() {
     Check(code == 9 && a == 9 && b == 9, "outputs untouched on failure");
     const std::string other = "return 'MGS_COOP_WORLD_WARP_V1' -- 1 2 3";
     Check(!world::ParseNote(other.data(), other.size(), code, a, b) && !world::ParseNote(nullptr, 3, code, a, b), "other receipts");
+}
+
+// The save handoff report (join-fix phase 2 P2-2): exactly 6 integers with
+// per-op ranges.
+void Save() {
+    Check(Kind("return 'MGS_COOP_WORLD_SAVE_V1' -- 1 40050 1 2 0 0") == world::Receipt::save, "SAVE_V1 classifies");
+    const std::string ok = "return 'MGS_COOP_WORLD_SAVE_V1' -- 1 40050 1 2 0 0";
+    Check(world::Classify(ok.data(), ok.size(), "return 'MGS_COOP_WORLD_SAVE_V1' -- 1 40050 1 2 0 1") == world::Receipt::none,
+          "save name != source");
+    Check(Kind("return 'MGS_COOP_WORLD_SAVE_V1' -- ") == world::Receipt::none, "a save prefix without args");
+    std::uint8_t op = 0;
+    std::uint32_t a = 0, b = 0, c = 0, d = 0, e = 0;
+    const auto parse = [&](const char* tail) {
+        const std::string s = std::string(world::save_prefix) + tail;
+        return world::ParseSave(s.data(), s.size(), op, a, b, c, d, e);
+    };
+    Check(parse("1 40050 1 2 0 0") && op == 1 && a == 40050 && b == 1 && c == 2 && d == 0 && e == 0, "REPORT at the title");
+    Check(parse("2 30010 1 2 0 0") && op == 2 && a == 30010 && b == 1 && c == 2, "CONTINUE into 30010");
+    Check(parse("3 1 0 0 0 0") && op == 3 && a == 1 && b == 0, "DECLINE second continue");
+    Check(parse("3 2 0 0 0 0") && op == 3 && a == 2, "DECLINE f9");
+    Check(parse("1 0 0 0 1 1") && op == 1 && a == 0 && d == 1 && e == 1, "REPORT mission 0, saving, in game");
+    Check(parse("1 99999 0 1 0 1") && a == 99999 && c == 1, "REPORT bounds");
+    op = 9; a = b = c = d = e = 9;
+    Check(!parse("1 40050 1 2 0") && !parse("1 40050 1 2 0 0 0"), "5 or 7 tokens");
+    Check(!parse("01 40050 1 2 0 0") && !parse("1 040050 1 2 0 0") && !parse("1 40050 1 2 0 00"), "leading zeros");
+    Check(!parse("-1 40050 1 2 0 0") && !parse("1 -1 1 2 0 0") && !parse("1 40050 -0 2 0 0") && !parse("+1 40050 1 2 0 0"), "signs");
+    Check(!parse("4 0 0 0 0 0") && !parse("0 0 0 0 0 0"), "op 4 and op 0");
+    Check(!parse("1 40050 1 3 0 0") && !parse("2 30010 1 3 0 0"), "story 3");
+    Check(!parse("1 100000 1 2 0 0") && !parse("2 100000 1 2 0 0") && !parse("2 0 1 2 0 0"), "mission range");
+    Check(!parse("1 40050  1 2 0 0") && !parse("1 40050 1 2 0 0 ") && !parse(" 1 40050 1 2 0 0") && !parse(""), "spacing");
+    Check(!parse("1 40050 2 2 0 0") && !parse("1 40050 1 2 2 0") && !parse("1 40050 1 2 0 2"), "flags 0|1");
+    Check(!parse("2 30010 1 2 1 0") && !parse("2 30010 1 2 0 1") && !parse("2 30010 2 2 0 0"), "CONTINUE d=e=0, title 0|1");
+    Check(!parse("3 0 0 0 0 0") && !parse("3 3 0 0 0 0") && !parse("3 1 1 0 0 0") && !parse("3 1 0 0 0 1"), "DECLINE reason 1|2, zeros");
+    Check(!parse("1 4294967296 1 2 0 0") && !parse("1 40050 1 2 0 0x"), "overflow and junk");
+    Check(op == 9 && a == 9 && b == 9 && c == 9 && d == 9 && e == 9, "outputs untouched on failure");
+    const std::string other = "return 'MGS_COOP_WORLD_NOTE_V1' -- 1 2 3";
+    Check(!world::ParseSave(other.data(), other.size(), op, a, b, c, d, e) && !world::ParseSave(nullptr, 3, op, a, b, c, d, e),
+          "other receipts");
 }
 
 void TxParse() {
@@ -264,6 +307,7 @@ int main() {
     Triggers();
     Warp();
     Note();
+    Save();
     std::printf("world_receipt_tests: %u checks passed\n", checks);
     return 0;
 }

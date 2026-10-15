@@ -55,16 +55,19 @@ Status GetStatus() noexcept;
 const partner_net::WorldHooks* Hooks() noexcept;
 
 // Receipt handlers (under the observer's receipt lock; the observer checks the
-// thread first). nullptr leaves the receipt literal.
+// thread first). nullptr leaves the receipt literal. HandleCfg fills the
+// reply's r[12..13] from save_handoff::LuaCode and LockAllowed (P2-1).
 const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_mission, bool terminating) noexcept;
 const char* HandleTx(const char* source, std::size_t size) noexcept;
 const char* HandleRx(const char* source, std::size_t size, std::uint32_t read_mission, bool terminating) noexcept;
 const char* HandleLog(const char* source, std::size_t size) noexcept;
 // NOTE_V1 (runtime or termination thread only; the observer checks): rate
-// gated (world::NoteGate), logs world=note, posts the known codes 1..4 as a
+// gated (world::NoteGate), logs world=note, posts the known codes 1..12 as a
 // coop_hud world note after releasing the world lock (code 1 records the
-// title progress and posts only for a story start). "return true" for codes
-// 1..4, "return false" for 5..15, nullptr when malformed or not configured.
+// title progress and posts only for a story start, and not while
+// save_handoff::GuestHandoffActive). "return true" for codes 1..12 (5..12:
+// join-fix phase 2 P2-3), "return false" for 13..15, nullptr when malformed or
+// not configured.
 const char* HandleNote(const char* source, std::size_t size) noexcept;
 
 // Guest spawn sync: the grant world::Core recorded for ENEMY_DEBUG `seq` in the

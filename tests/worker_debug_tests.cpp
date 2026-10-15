@@ -3,6 +3,7 @@
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/nametag_core.hpp"
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/steam_online_state.hpp"
 #include <cctype>
 #include <cmath>
@@ -442,6 +443,32 @@ int main() {
         char small[16];
         if(!check(hud::FormatJson(hud::GetTelemetry(),small,sizeof(small))==0 && small[0]==0))return 1;
         hud::ResetForTest();
+    }
+    // Save handoff keys (join-fix phase 2 B9): inserted after world_pair_wait
+    // with a trailing comma; every token keeps the document valid JSON.
+    {
+        namespace hs=mgscoop::save_handoff_state;
+        hs::ResetForTest();
+        char out[128]{};
+        const hs::View off=hs::Get();
+        std::size_t n=FormatHandoffJson(off,out,sizeof(out));
+        std::string doc="{\"schema\":2,\"world_pair_wait\":1,"+std::string(out,n)+"\"remote_action_flags\":0}";
+        if(!check(n>0 && ValidJson(doc) && doc.find(",\"world_pair_wait\":1,\"handoff\":\"off\",\"handoff_pct\":0,\"travel_unlocked\":0,\"remote_action_flags\"")!=std::string::npos))return 1;
+        for(std::uint8_t token=0;token<hs::kTokenCount;++token){
+            hs::View v{};v.available=true;v.token=token;v.pct=static_cast<std::uint8_t>(token*6);
+            hs::Publish(v);hs::SetTravelUnlocked((token&1)!=0);
+            n=FormatHandoffJson(hs::Get(),out,sizeof(out));
+            doc="{\"schema\":2,"+std::string(out,n)+"\"end\":0}";
+            const std::string want=std::string("\"handoff\":\"")+hs::TokenName(token)+"\",\"handoff_pct\":"+std::to_string(token*6)+
+                ",\"travel_unlocked\":"+std::to_string(token&1)+",";
+            if(!check(n>0 && ValidJson(doc) && std::string(out,n)==want))return 1;
+        }
+        hs::View big{};big.token=200;big.pct=250;
+        n=FormatHandoffJson(big,out,sizeof(out));
+        if(!check(std::string(out,n)=="\"handoff\":\"off\",\"handoff_pct\":100,\"travel_unlocked\":0,"))return 1;
+        char small[16];
+        if(!check(FormatHandoffJson(off,small,sizeof(small))==0 && small[0]==0))return 1;
+        hs::ResetForTest();
     }
     // The checker itself rejects the classic writer slips.
     for(const char* bad:{"{\"a\":1,}","{\"a\":1","{\"a\":[1,2}","{\"a\":01}","{\"a\":\"x\ny\"}","{\"a\":1}}","{\"a\":nul}",

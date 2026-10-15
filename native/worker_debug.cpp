@@ -9,6 +9,7 @@
 #include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/steam_online_state.hpp"
 
 namespace mgscoop::worker_debug {
@@ -383,6 +384,15 @@ std::size_t FormatNativeJson(const partner_native::Telemetry& telemetry, char* o
     if(!j.ok){out[0]=0;return 0;}
     return j.used;
 }
+std::size_t FormatHandoffJson(const save_handoff_state::View& view, char* out, std::size_t capacity) noexcept {
+    if(!out || !capacity) return 0;
+    // TokenName gives unique ASCII names (no escaping); an unknown token reads "off".
+    Json j{out,capacity};
+    j.Add("\"handoff\":\"%s\",\"handoff_pct\":%u,\"travel_unlocked\":%u,",save_handoff_state::TokenName(view.token),
+        static_cast<unsigned>(view.pct>100?100:view.pct),view.travel_unlocked?1u:0u);
+    if(!j.ok){out[0]=0;return 0;}
+    return j.used;
+}
 }
 
 #if defined(_WIN32) && defined(MGS_BACKGROUND_WORKER) && MGS_BACKGROUND_WORKER
@@ -409,8 +419,13 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
         c.run_id,c.role,c.pid,c.process_start_filetime,GetTickCount64(),last_sequence,accepted_sequence,Bool(last_queued));
     j.Add("\"mission\":%u,\"generation\":%u,\"enabled\":%s,\"offline\":%s,\"saves_redirected\":%s,\"gameplay_ready\":%s,\"terminating\":%s,\"realized\":%s,\"body_valid\":%s,\"pose_valid\":%s,",
         s.mission,s.generation,Bool(s.enabled),Bool(s.offline),Bool(s.saves_redirected),Bool(s.gameplay_ready),Bool(s.terminating),Bool(s.realized),Bool(s.body_valid),Bool(s.pose_valid));
-    j.Add("\"world_level\":%u,\"world_paired\":%s,\"world_effective\":%u,\"world_partner_mission\":%u,\"world_pair_wait\":%u,\"remote_action_flags\":%u,\"remote_equip\":%u,\"remote_act\":%u,\"mapped_clip\":%u,\"motion_count\":%u,\"remote_age_ms\":%u,",
-        s.world_level,Bool(s.world_paired),s.world_effective,s.world_partner_mission,s.world_pair_wait,s.remote_action_flags,s.remote_equip,s.remote_act,s.mapped_clip,s.motion_count,s.remote_age_ms);
+    j.Add("\"world_level\":%u,\"world_paired\":%s,\"world_effective\":%u,\"world_partner_mission\":%u,\"world_pair_wait\":%u,",
+        s.world_level,Bool(s.world_paired),s.world_effective,s.world_partner_mission,s.world_pair_wait);
+    // Save handoff (join-fix phase 2 B9): the shared UI state, after world_pair_wait.
+    char handoff_json[96]{};
+    if(FormatHandoffJson(save_handoff_state::Get(),handoff_json,sizeof(handoff_json)))j.Add("%s",handoff_json);
+    j.Add("\"remote_action_flags\":%u,\"remote_equip\":%u,\"remote_act\":%u,\"mapped_clip\":%u,\"motion_count\":%u,\"remote_age_ms\":%u,",
+        s.remote_action_flags,s.remote_equip,s.remote_act,s.mapped_clip,s.motion_count,s.remote_age_ms);
     j.Add("\"local_anim_valid\":%s,\"local_act\":%u,\"local_anim_stance\":%u,\"local_anim_speed\":%u,\"remote_anim_valid\":%s,\"remote_stance\":%u,\"remote_anim_stance\":%u,\"remote_anim_speed\":%u,\"dm_stance\":%u,\"dm_move\":%u,\"dm_phase\":",
         Bool(s.local_anim_valid),s.local_act,s.local_anim_stance,s.local_anim_speed,Bool(s.remote_anim_valid),s.remote_stance,s.remote_anim_stance,s.remote_anim_speed,s.dm_stance,s.dm_move);
     j.String(s.dm_phase,sizeof(s.dm_phase));j.Add(",\"local_yaw_valid\":%s,\"player_yaw\":",Bool(s.local_yaw_valid));j.Float(s.player_yaw);
