@@ -10,6 +10,7 @@
 #include <bcrypt.h>
 #include <strsafe.h>
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/link_crypto.hpp"
@@ -108,6 +109,12 @@ volatile LONG g_tx_not_connected = 0;
 volatile LONG g_link_state = static_cast<LONG>(link::LinkState::off);
 volatile LONG g_applied_interp = 100;
 volatile LONG g_partner_shown = 0, g_partner_look = 0, g_partner_mission = 0;
+// World sync (PublishWorldState): level bits 0-1, paired bit 2, the published
+// pair-wait code bits 4-7, progress bits 8-9; the partner's mission apart.
+volatile LONG g_world_state = 0x10 /*pair_wait 1 off*/, g_world_partner = 0;
+// Steam guest: the last pasted-code decision, join_seq << 8 | join_result
+// (ArmSteamGuest on the transport thread; GetSteamInfo).
+volatile LONG g_join = 0;
 // Online play: drive | reason << 8 | remote drive << 16 | remote reason << 24 (PublishNativeState).
 volatile LONG g_native_state = 0;
 // The partner mission whose pack list was refused (PublishPackState; 0 none).
@@ -540,6 +547,18 @@ void LogEvent(const link::Event& e, std::uint64_t now_ms) noexcept {
     }
 }
 
+// The published world sync view (PublishWorldState; atomics, any thread).
+WorldView ReadWorld() noexcept {
+    const auto packed = static_cast<std::uint32_t>(g_world_state);
+    WorldView w{};
+    w.level = static_cast<std::uint8_t>(packed & 0x3u);
+    w.paired = (packed & 0x4u) != 0;
+    w.pair_wait = static_cast<std::uint8_t>((packed >> 4) & 0xFu);
+    w.progress = static_cast<std::uint8_t>((packed >> 8) & 0x3u);
+    w.partner_mission = static_cast<std::uint32_t>(g_world_partner);
+    return w;
+}
+
 // The in-game status line's view of the link (transport thread; at most
 // every 100 ms or on a state change).
 void PublishHud(const LinkSnapshot& s, link::LinkState state, std::uint64_t now) noexcept {
@@ -578,6 +597,12 @@ void PublishHud(const LinkSnapshot& s, link::LinkState state, std::uint64_t now)
         v.code_ready = g_host_secret_valid && g_steam.ready() && !g_shutdown;
         ReleaseSRWLockShared(&g_secret_lock);
     }
+    // World sync: the HUD names the partner's mission only while connected.
+    const WorldView world = ReadWorld();
+    v.world_level = world.level;
+    v.pair_wait = world.pair_wait;
+    v.world_paired = world.paired;
+    v.partner_mission = state == link::LinkState::connected ? world.partner_mission : 0;
     v.publish_ms = GetTickCount64();
     coop_hud::PublishLink(v);
 }
@@ -636,6 +661,27 @@ const char* PartnerStatusName() noexcept {
     return status == pose::Status::none ? "none" : pose::StatusName(status);
 }
 
+// link-status world keys with a trailing comma (docs/link-protocol.md 7.2):
+// level 0 is "off" and a link that is not connected "no_link", both unpaired
+// with no partner mission; otherwise the published values.
+bool FormatWorldJson(link::LinkState state, char* out, std::size_t capacity) noexcept {
+    WorldView w = ReadWorld();
+    if (!w.level) {
+        w.paired = false;
+        w.partner_mission = 0;
+        w.pair_wait = 1;  // off
+    } else if (state != link::LinkState::connected) {
+        w.paired = false;
+        w.partner_mission = 0;
+        w.pair_wait = 2;  // no_link
+    }
+    const char* progress = w.progress == 1 ? "ok" : w.progress == 2 ? "story_start" : "unknown";
+    return SUCCEEDED(StringCchPrintfA(out, capacity,
+                                      "\"world\":%u,\"paired\":%u,\"partner_mission\":%lu,\"pair_wait\":\"%s\",\"progress\":\"%s\",",
+                                      static_cast<unsigned>(w.level), w.paired ? 1u : 0u, static_cast<unsigned long>(w.partner_mission),
+                                      coop_text::PairWaitName(w.pair_wait), progress));
+}
+
 // link-status.json: one ASCII line, keys in the documented order.
 bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::size_t capacity, bool with_time) noexcept {
     char peer[24]{};
@@ -678,12 +724,15 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
     if (!coop_hud::FormatPartnerJson(partner, s.session,
         no_body || state != link::LinkState::connected ? 0u : static_cast<std::uint32_t>(g_partner_mission),
         GetTickCount64(), partner_status, sizeof(partner_status))) return false;
+    // World sync (docs/link-protocol.md 7.2), appended after the transport keys.
+    char world[128]{};
+    if (!FormatWorldJson(state, world, sizeof(world))) return false;
     return SUCCEEDED(StringCchPrintfA(out, capacity,
         "{\"v\":1,\"pid\":%lu,\"mode\":\"%s\",\"role\":\"%s\",\"state\":\"%s\",\"reason\":\"%s\",\"verified\":%u,\"session\":%u,"
         "\"peer\":\"%s\",\"local_port\":%u,\"rtt_ms\":%u,\"jitter_ms\":%u,\"loss_permille\":%u,\"resend\":%u,"
         "\"tx_Bps\":%u,\"rx_Bps\":%u,\"interp_ms\":%u,\"remote_build\":%s,\"partner\":\"%s\",\"partner_shown\":%u,"
         "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",\"partner_drive\":\"%s\",\"partner_reason\":\"%s\",\"remote_drive\":\"%s\","
-        "\"remote_reason\":\"%s\",%s%s\"time_utc\":%s}\n",
+        "\"remote_reason\":\"%s\",%s%s%s\"time_utc\":%s}\n",
         GetCurrentProcessId(), g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", link::LinkStateName(state), reason,
         verified ? 1u : 0u, s.session, peer, static_cast<unsigned>(g_ops->local_port()), s.rtt_ms, s.jitter_ms,
         s.loss_permille, s.resend, g_tx_bps, g_rx_bps, static_cast<unsigned>(EffectiveInterpMs(g_config.interp_ms)), build, PartnerStatusName(),
@@ -692,7 +741,7 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
         no_body ? "off" : partner_native_net::DriveName(static_cast<partner_native_net::Drive>(native & 0xFFu)),
         no_body ? "no_body_pack" : partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 8)),
         partner_native_net::DriveName(static_cast<partner_native_net::Drive>((native >> 16) & 0xFFu)),
-        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 24)), partner_status, transport, time_utc));
+        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 24)), partner_status, transport, world, time_utc));
 }
 
 void WriteStatus(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_ms) noexcept {
@@ -1122,6 +1171,14 @@ void StartLink() noexcept {
 }
 
 // ------------------------------------------------------------ Steam online
+// One pasted-code (or invite) decision for the F9 Online result (SteamInfo
+// join_seq / join_result): 1 joined, 2 ignored (busy), 3 the own code. The
+// transport thread is the only writer.
+void NoteJoin(std::uint8_t result) noexcept {
+    const auto seq = (static_cast<std::uint32_t>(g_join) >> 8) + 1u;
+    InterlockedExchange(&g_join, static_cast<LONG>(((seq & 0xFFFFFFu) << 8) | result));
+}
+
 // The Steam guest's arm (8.2): on the transport thread, only while waiting or
 // rejected. Derives K_psk, restarts the session for the new host under
 // g_tx_lock with the same receive/reliable reset as a new session, then
@@ -1139,10 +1196,13 @@ void ArmSteamGuest(std::uint64_t host, const char (&secret)[link::kSecretChars],
                           (current == link::LinkState::connecting || current == link::LinkState::reconnecting));
     if (!armable) {
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join_ignored; reason=busy; via=%s\r\n", via))) Log(line);
+        coop_hud::Post(coop_hud::EventKind::join_ignored, 0, via);
+        NoteJoin(2);
         return;
     }
     if (host == g_config.steam_self) {
         Log("steam=join_refused; reason=peer_is_self\r\n");
+        NoteJoin(3);
         return;
     }
     link::SessionConfig session{};
@@ -1178,6 +1238,7 @@ void ArmSteamGuest(std::uint64_t host, const char (&secret)[link::kSecretChars],
     steam_code::FormatPeer(host, peer);
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join; via=%s; host=%s\r\n", via, peer))) Log(line);
     coop_hud::Post(coop_hud::EventKind::joining, lstrcmpA(via, "invite") == 0 ? 1 : 0, peer);
+    NoteJoin(1);
 }
 
 // Transport thread, every LinkIdle (both roles): a 1252 the function pointer
@@ -1676,6 +1737,14 @@ void PublishPackState(std::uint32_t refused_mission) noexcept {
     InterlockedExchange(&g_pack_refused_mission, static_cast<LONG>(refused_mission));
 }
 
+void PublishWorldState(const WorldView& view) noexcept {
+    const std::uint32_t packed = (static_cast<std::uint32_t>(view.level) & 0x3u) | (view.paired ? 0x4u : 0u) |
+                                 ((static_cast<std::uint32_t>(view.pair_wait) & 0xFu) << 4) |
+                                 ((static_cast<std::uint32_t>(view.progress) & 0x3u) << 8);
+    InterlockedExchange(&g_world_partner, static_cast<LONG>(view.partner_mission));
+    InterlockedExchange(&g_world_state, static_cast<LONG>(packed));
+}
+
 link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::size_t size, link::ReliableMode mode) noexcept {
     if (channel < 1 || channel >= link::kReliableChannels) return link::ReliableResult::bad_channel;
     if (size > link::kMaxReliableMessage) return link::ReliableResult::too_large;
@@ -1784,6 +1853,9 @@ void Shutdown() noexcept {
 
 SteamInfo GetSteamInfo() noexcept {
     SteamInfo info{};
+    const auto join = static_cast<std::uint32_t>(g_join);  // one atomic: a consistent pair
+    info.join_seq = join >> 8;
+    info.join_result = static_cast<std::uint8_t>(join & 0xFFu);
     info.active = g_use_steam && g_running;
     if (!info.active) return info;
     info.ready = g_steam_ready != 0 && g_steam.ready() && !g_steam.faulted();

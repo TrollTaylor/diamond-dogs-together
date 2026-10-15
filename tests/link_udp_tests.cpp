@@ -534,10 +534,40 @@ void PartnerNetV2() {
     Check(WaitFor([&] { const auto t = ReadText(status); return t.find("no_body_pack") == std::string::npos; }, 3000),
           "a refusal for another mission does not apply");
     net::PublishPackState(0);
+    // World sync keys (docs/link-protocol.md 7.2): after the transport block, before time_utc.
+    Check(WaitFor([&] {
+              return ReadText(status).find("\"left\":0,\"world\":0,\"paired\":0,\"partner_mission\":0,\"pair_wait\":\"off\","
+                                           "\"progress\":\"unknown\",\"time_utc\"") != std::string::npos;
+          }, 3000), "world keys default to off before any publication");
+    net::PublishWorldState({3, false, 30010, 9, 2});
+    Check(WaitFor([&] {
+              return ReadText(status).find("\"world\":3,\"paired\":0,\"partner_mission\":30010,\"pair_wait\":\"different_mission\","
+                                           "\"progress\":\"story_start\",\"time_utc\"") != std::string::npos;
+          }, 3000), "PublishWorldState reaches the status file before time_utc");
+    {
+        const std::string doc = ReadText(status);
+        Check(doc.find("\"partner_shown\":1,\"look\":1,\"mission\":30050") != std::string::npos && doc.size() < 1024,
+              "the local mission key is unchanged and the document fits 1024 bytes");
+    }
+    net::PublishWorldState({3, true, 30050, 0, 1});
+    Check(WaitFor([&] {
+              return ReadText(status).find("\"world\":3,\"paired\":1,\"partner_mission\":30050,\"pair_wait\":\"paired\",\"progress\":\"ok\",") !=
+                     std::string::npos;
+          }, 3000), "paired world state");
+    net::PublishWorldState({0, true, 30010, 9, 1});
+    Check(WaitFor([&] {
+              return ReadText(status).find("\"world\":0,\"paired\":0,\"partner_mission\":0,\"pair_wait\":\"off\",\"progress\":\"ok\",") !=
+                     std::string::npos;
+          }, 3000), "world level 0 is gated to off");
+    net::PublishWorldState({3, false, 30010, 9, 0});
     // The guest goes away: lost at 3 s; a held pose then reads lost (freeze).
     g_guest.transport.stop();
     Check(WaitFor([] { return net::GetLinkInfo().state == link::LinkState::lost; }, 5000), "host lost");
     Check(WaitFor([] { return Logged("link=lost; after_ms="); }), "link=lost line");
+    Check(WaitFor([&] {
+              return ReadText(status).find("\"world\":3,\"paired\":0,\"partner_mission\":0,\"pair_wait\":\"no_link\",\"progress\":\"unknown\",") !=
+                     std::string::npos;
+          }, 3000), "a link that is not connected is gated to no_link");
     const auto held = net::SampleRemote(0);
     Check(held.valid && held.status == mgscoop::pose::Status::lost && held.x == 4.0f, "freeze: the held pose reads lost");
     Check(!net::SubmitLocal(tick, mgscoop::sync::AnimState{}) || true, "SubmitLocal while lost does not block");

@@ -187,13 +187,18 @@ bool PartnerPoseReady(const debug_menu::Snapshot& s) noexcept {
 }
 const char* DisabledReason(const ActionDef& a, const debug_menu::Snapshot& s, bool has_selection) noexcept {
     // UI-only rows (no command) work outside gameplay; everything sent waits for it.
+    // In a story mission or the helicopter that wait never ends: say so.
+    if (a.command && s.enabled && !s.terminating && !s.gameplay_ready && s.mission && !MissionName(s.mission)) return "mission";
     if (a.command && (!s.enabled || !s.gameplay_ready || s.terminating)) return "gameplay";
     if ((a.flags & kHostOnly) && !s.host) return "host_only";
     if ((a.flags & kNeedsPose) && !s.pose_valid) return "position";
     if ((a.flags & kNeedsSpawn) && !s.enemy_spawn_valid) return "no_spawn";
     if ((a.flags & kNeedsCamp) && !s.enemy_camp_count) return "no_camp";
     if ((a.flags & kNeedsRoutes) && !s.enemy_route_count) return "no_routes";
-    if ((a.flags & kNeedsPartner) && !PartnerPoseReady(s)) return "partner_pose";
+    // world_pair_wait is the settled code: 9 different_mission (never 11 settling).
+    if ((a.flags & kNeedsPartner) && !PartnerPoseReady(s))
+        return (!s.world_paired && s.world_pair_wait == 9 && s.world_partner_mission && s.world_partner_mission != s.mission)
+                   ? "partner_elsewhere" : "partner_pose";
     if ((a.flags & kNeedsBookmark) && !s.bookmark_mask) return "bookmark_empty";
     if ((a.flags & kNeedsClip) && !s.motion_count) return "clip_unavailable";
     if ((a.flags & kNeedsSelection) && !has_selection) return "selection";

@@ -2183,6 +2183,33 @@ void TestHud() {
         Check(hud::CurrentPartner(p, 7, 30050, 2000).valid, "one-second freshness boundary is inclusive");
         Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 2001, line, &p) &&
               std::strstr(line.text, "| loading; gun unavailable"), "HUD refuses a stale cached partner view");
+        // World sync: the partner in another mission (settled code 9) replaces a loading view.
+        v.pair_wait = 9; v.partner_mission = 10020;
+        Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 2001, line, &p) &&
+              std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms | partner in story mission 10020") == 0 &&
+              line.tone == hud::Tone::good, "different missions: the partner's short mission name replaces a loading view");
+        {
+            hud::PartnerView fresh = p;
+            fresh.gun = hud::PartnerGun::match;
+            Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 1200, line, &fresh) &&
+                  std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms | native; gun matched") == 0,
+                  "pair_wait 9 with a fresh native partner view keeps the partner status");
+        }
+        Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 2001, line) &&
+              std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms") == 0, "no partner view: today's line");
+        v.pair_wait = 11;
+        Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 2001, line, &p) &&
+              std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms | loading; gun unavailable") == 0,
+              "settling (11) keeps today's text");
+        v.pair_wait = 9; v.partner_mission = 0;
+        Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 2001, line, &p) &&
+              std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms | loading; gun unavailable") == 0,
+              "an unknown partner mission keeps today's text");
+        v.partner_mission = 40050;
+        Check(hud::FormatLine(v, "A_partner_name_that_is_much_longer_than_the_compact_line", hud::Mode::compact, 2001, line, &p) &&
+              std::strcmp(line.text, "CO-OP [connected] A_partner_name_that_is_m - Steam relay 61 ms | partner in Mother Base heli") == 0 &&
+              std::strlen(line.text) < sizeof(line.text), "a long name keeps the bounded partner-in suffix");
+        v.pair_wait = 0; v.partner_mission = 0;
         char status[192]{}, tiny[8]{};
         Check(hud::FormatPartnerJson(p, 7, 30050, 1200, status, sizeof(status)) &&
               std::strcmp(status, "\"partner_view\":\"native\",\"partner_gun\":\"substitute\",\"partner_gun_present\":1,\"partner_view_fresh\":1,") == 0,
@@ -2216,6 +2243,29 @@ void TestHud() {
     v.publish_ms = 1000;
     Check(hud::FormatLine(v, "", hud::Mode::compact, 1500, line) && std::strcmp(line.text, "CO-OP [reconnecting 8 s]") == 0 && line.tone == hud::Tone::warn,
           "reconnecting seconds");
+    // The host left and came back with a new code: its unverified bad_code answer.
+    v.left = true;
+    v.verified = false;
+    std::snprintf(v.reason, sizeof(v.reason), "bad_code");
+    Check(hud::FormatLine(v, "", hud::Mode::compact, 1500, line) &&
+              std::strcmp(line.text, "CO-OP [the host has a new code] paste it in F9 > Partner / Co-op > Online") == 0 &&
+              line.tone == hud::Tone::warn,
+          "the host has a new code");
+    v.verified = true;
+    Check(hud::FormatLine(v, "", hud::Mode::compact, 1500, line) &&
+              std::strcmp(line.text, "CO-OP [the host left] waiting for them to come back (8 s)") == 0,
+          "a verified bad_code keeps the host-left text");
+    v.verified = false;
+    std::snprintf(v.reason, sizeof(v.reason), "busy");
+    Check(hud::FormatLine(v, "", hud::Mode::compact, 1500, line) &&
+              std::strcmp(line.text, "CO-OP [the host left] waiting for them to come back (8 s)") == 0,
+          "another reason keeps the host-left text");
+    v.left = false;
+    v.reason[0] = 0;
+    std::snprintf(v.reason, sizeof(v.reason), "bad_code");
+    Check(hud::FormatLine(v, "", hud::Mode::compact, 1500, line) && std::strcmp(line.text, "CO-OP [reconnecting 8 s]") == 0,
+          "bad_code without a goodbye keeps the reconnecting text");
+    v.reason[0] = 0;
     v.state = static_cast<std::uint8_t>(link::LinkState::rejected);
     std::snprintf(v.reason, sizeof(v.reason), "bad_code");
     Check(hud::FormatLine(v, "", hud::Mode::compact, 0, line) && std::strcmp(line.text, "CO-OP [refused] wrong code?") == 0 && line.tone == hud::Tone::bad,
@@ -2437,6 +2487,155 @@ void TestHud() {
         }
         char small[16]{};
         Check(!mgscoop::coop_text::FormatNoBody("hangar", small, sizeof(small)) && small[0] == 0, "no_body: a short buffer stays empty");
+    }
+    // World sync texts (coop_text): mission names, pair-wait names, note sentences.
+    {
+        namespace text = mgscoop::coop_text;
+        const struct {
+            std::uint32_t mission;
+            const char* long_name;
+            const char* short_name;
+        } missions[] = {
+            {0, "a loading screen", "loading"},
+            {1, "the start screen", "start screen"},
+            {30010, "Afghanistan free roam", "Afghanistan"},
+            {30020, "Africa free roam", "Africa"},
+            {30050, "Mother Base", "Mother Base"},
+            {40010, "the Afghanistan helicopter", "Afghanistan heli"},
+            {40020, "the Africa helicopter", "Africa heli"},
+            {40050, "the Mother Base helicopter", "Mother Base heli"},
+            {10020, "story mission 10020", "story mission 10020"},
+            {11043, "story mission 11043", "story mission 11043"},
+            {12345, "mission 12345", "mission 12345"},
+            {9999, "mission 9999", "mission 9999"},
+            {4294967295u, "mission 4294967295", "mission 4294967295"},
+        };
+        char name[64]{};
+        for (const auto& m : missions) {
+            Check(text::FormatMission(m.mission, name, sizeof(name)) && std::strcmp(name, m.long_name) == 0, "FormatMission long names");
+            Check(text::FormatMissionShort(m.mission, name, sizeof(name)) && std::strcmp(name, m.short_name) == 0 && std::strlen(name) <= 22,
+                  "FormatMissionShort names (<= 22 chars)");
+        }
+        char tiny[8]{};
+        Check(!text::FormatMission(40050, tiny, sizeof(tiny)) && tiny[0] == 0 && !text::FormatMissionShort(10020, tiny, sizeof(tiny)) &&
+                  tiny[0] == 0 && !text::FormatMission(1, nullptr, 0),
+              "mission names: a short buffer stays empty");
+        const char* const waits[] = {"paired",     "off",           "no_link",        "no_hello",          "remote_off", "remote_saves",
+                                     "same_role",  "local_loading", "remote_loading", "different_mission", "epoch",      "settling"};
+        for (unsigned i = 0; i < 12; ++i)
+            Check(std::strcmp(text::PairWaitName(static_cast<std::uint8_t>(i)), waits[i]) == 0, "PairWaitName table");
+        Check(std::strcmp(text::PairWaitName(12), "unknown") == 0 && std::strcmp(text::PairWaitName(200), "unknown") == 0,
+              "PairWaitName: any other value is unknown");
+        const struct {
+            std::uint8_t code;
+            std::uint32_t a, b, partner, local;
+            const char* sentence;
+        } notes[] = {
+            {16, 30050, 30010, 30010, 30050,
+             "Your partner is in Afghanistan free roam; you are in Mother Base. Co-op only pairs when you are both in the same Mother "
+             "Base, free roam or helicopter."},
+            {1, 40010, 1, 0, 40010,
+             "Your co-op save is at the story start, so Continue goes to a story mission that co-op cannot join. Quit and import your "
+             "partner's save with Share-Save.bat (option I)."},
+            {2, 30010, 0, 30050, 40050,
+             "Waiting up to 2 min for your partner (now in Mother Base) to reach this helicopter. Choose the deployment again to fly "
+             "alone."},
+            {2, 30010, 0, 40050, 40050,
+             "Waiting up to 2 min for your partner to reach this helicopter. Choose the deployment again to fly alone."},
+            {2, 30010, 0, 0, 40050,
+             "Waiting up to 2 min for your partner to reach this helicopter. Choose the deployment again to fly alone."},
+            {3, 30020, 1, 0, 40050, "No co-op partner can come on this flight: flying alone."},
+            {3, 30020, 2, 10020, 40050,
+             "Flying alone: your partner is in story mission 10020. Meet in the same Mother Base or free roam to play together."},
+            {3, 30020, 2, 0, 40050,
+             "Flying alone: your partner is in another mission. Meet in the same Mother Base or free roam to play together."},
+            {3, 30020, 3, 40050, 40050, "Flying alone, as you chose the deployment again."},
+            {3, 30020, 4, 30050, 40050, "Your partner did not reach this helicopter within 2 min: flying alone."},
+            {3, 30020, 0, 0, 40050, "Flying alone."},
+            {3, 30020, 9, 0, 40050, "Flying alone."},
+            {4, 10020, 0, 30050, 30050,
+             "Your partner cannot follow you there: co-op travel only goes to Mother Base and free roam. Choose the same destination "
+             "again within 30 s to go alone."},
+        };
+        char sentence[hud::kToastChars]{};
+        for (const auto& note : notes)
+            Check(text::FormatWorldNote(note.code, note.a, note.b, note.partner, note.local, sentence, sizeof(sentence)) &&
+                      std::strcmp(sentence, note.sentence) == 0,
+                  "FormatWorldNote exact sentences");
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{5}, std::uint8_t{6}, std::uint8_t{7}, std::uint8_t{15},
+                                        std::uint8_t{17}, std::uint8_t{255}})
+            Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
+                  "FormatWorldNote: reserved and unknown codes have no toast");
+        Check(!text::FormatWorldNote(1, 40010, 0, 0, 40010, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "FormatWorldNote: PROGRESS without the story start has no toast");
+        Check(text::FormatWorldNote(16, 40010, 40050, 40050, 40010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence,
+                              "Your partner is in the Mother Base helicopter; you are in the Afghanistan helicopter. Co-op only pairs when "
+                              "you are both in the same Mother Base, free roam or helicopter.") == 0 &&
+                  std::strlen(sentence) < hud::kToastChars,
+              "the longest note (two helicopter names) fits a toast");
+        Check(text::FormatWorldNote(16, 4294967295u, 4294967295u, 0, 0, sentence, sizeof(sentence)) &&
+                  std::strlen(sentence) < hud::kToastChars,
+              "the longest numbered note fits a toast");
+        char short_note[40]{};
+        Check(!text::FormatWorldNote(4, 10020, 0, 0, 0, short_note, sizeof(short_note)) && short_note[0] == 0 &&
+                  !text::FormatWorldNote(2, 30010, 0, 30050, 40050, short_note, sizeof(short_note)) && short_note[0] == 0 &&
+                  !text::FormatWorldNote(16, 30050, 30010, 30010, 30050, nullptr, 0),
+              "FormatWorldNote: a short buffer stays empty");
+    }
+    // World sync and join toasts (PostWorldNote, join_ignored).
+    {
+        hud::PostWorldNote(2, 30010, 0, 30050, 40050);
+        hud::Post(hud::EventKind::join_ignored, 0, "code");
+        hud::PostWorldNote(16, 30050, 30010, 30010, 30050);
+        hud::PostWorldNote(3, 30020, 4, 30050, 40050);
+        hud::PostWorldNote(3, 30020, 3, 40050, 40050);
+        hud::PostWorldNote(1, 40010, 0, 0, 40010);
+        hud::PostWorldNote(7, 1, 1, 0, 0);
+        hud::Event notes[8]{};
+        const unsigned taken = hud::Take(notes, 8, model.cursor());
+        Check(taken == 7 && notes[0].kind == hud::EventKind::world_note && notes[0].arg == 2 &&
+                  std::strcmp(notes[0].text, "30010 0 30050 40050") == 0 && notes[1].kind == hud::EventKind::join_ignored,
+              "PostWorldNote packs the code and four decimal values");
+        char toast[hud::kToastChars]{};
+        hud::Tone tone = hud::Tone::bad;
+        Check(hud::FormatToast(notes[0], v, "Snake_Fan", toast, sizeof(toast), tone) &&
+                  std::strcmp(toast,
+                              "Waiting up to 2 min for your partner (now in Mother Base) to reach this helicopter. Choose the deployment "
+                              "again to fly alone.") == 0 &&
+                  tone == hud::Tone::info,
+              "heli_wait toast names the partner's mission");
+        Check(hud::FormatToast(notes[1], v, "Snake_Fan", toast, sizeof(toast), tone) &&
+                  std::strcmp(toast, "That code was not used: you are already connected or connecting to a host.") == 0 &&
+                  tone == hud::Tone::warn,
+              "join_ignored toast");
+        Check(hud::FormatToast(notes[2], v, "Snake_Fan", toast, sizeof(toast), tone) &&
+                  std::strncmp(toast, "Your partner is in Afghanistan free roam; you are in Mother Base.", 65) == 0 &&
+                  tone == hud::Tone::warn,
+              "mismatch toast (warn)");
+        Check(hud::FormatToast(notes[3], v, "Snake_Fan", toast, sizeof(toast), tone) && tone == hud::Tone::warn &&
+                  hud::FormatToast(notes[4], v, "Snake_Fan", toast, sizeof(toast), tone) && tone == hud::Tone::info,
+              "heli_alone tone: warn for timeout or partner elsewhere, info otherwise");
+        Check(!hud::FormatToast(notes[5], v, "Snake_Fan", toast, sizeof(toast), tone) && toast[0] == 0 &&
+                  !hud::FormatToast(notes[6], v, "Snake_Fan", toast, sizeof(toast), tone) && toast[0] == 0,
+              "no toast for PROGRESS b=0 or an unknown code");
+        hud::Event bad = notes[0];
+        for (const char* malformed : {"30010 0 30050", "30010 0 30050 40050 ", "30010  0 30050 40050", "-1 0 30050 40050",
+                                      "030010 0 30050 40050", "30010 0 30050 4294967296", "30010 0 30050 x", ""}) {
+            std::snprintf(bad.text, sizeof(bad.text), "%s", malformed);
+            Check(!hud::FormatToast(bad, v, "Snake_Fan", toast, sizeof(toast), tone), "a malformed world_note text has no toast");
+        }
+        bad = notes[0];
+        bad.arg = 258;
+        Check(!hud::FormatToast(bad, v, "Snake_Fan", toast, sizeof(toast), tone), "a world_note code above 255 has no toast");
+        // A repeated identical note (world_link re-posts the hold every 3 s) extends one toast.
+        hud::Model notes_model;
+        notes_model.OnEvent(notes[0], v, "Snake_Fan", 20000);
+        notes_model.OnEvent(notes[0], v, "Snake_Fan", 23000);
+        const hud::Toast* active[hud::kMaxToasts]{};
+        Check(notes_model.Active(23000, active, hud::kMaxToasts) == 1 && active[0]->until_ms == 23000 + hud::kToastMs &&
+                  active[0]->tone == hud::Tone::info,
+              "a repeated identical world_note extends one toast");
     }
     // Telemetry for state.json and hud_status.
     hud::NoteFrame(&line, "Connected", false, 3, 3, 500);

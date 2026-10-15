@@ -16,6 +16,7 @@
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/steam_online_state.hpp"
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/coop_reason_text.hpp"
 
 namespace mgscoop::debug_menu_ui {
 namespace {
@@ -163,6 +164,8 @@ const char* ReasonText(const char* reason) noexcept {
     struct Entry { const char* code; const char* text; };
     static const Entry entries[] = {
         {"gameplay", "Waiting for supported on-foot gameplay (no loading, demo, vehicle or game over)."},
+        {"mission", "F9 commands work only in Mother Base and Afghanistan/Africa free roam, not in story missions or the helicopter."},
+        {"partner_elsewhere", "Your partner is in another mission. Meet in the same Mother Base or free roam first."},
         {"host_only", "Host only: use the host's menu."},
         {"position", "Your position is not readable yet."},
         {"no_spawn", "No spawned guard confirmed yet."},
@@ -383,7 +386,16 @@ void Header(const Snapshot& s) noexcept {
     const bool up = std::strcmp(s.link_state, "connected") == 0;
     if (up) Segment(kGreen, "| Link up %u ms %.1f%% loss", s.rtt_ms, s.loss_permille / 10.0f);
     else Segment(kGrey, "| Link %s", LinkWord(s));
-    Segment(s.world_paired ? kGreen : kGrey, "| World L%u %s", s.world_effective, s.world_paired ? "paired" : "waiting");
+    // World sync: paired, the partner in another mission (the settled code 9),
+    // or the pair-wait reason (world_wire pair_wait names).
+    char partner_mission[24]{};
+    const auto wait = static_cast<std::uint8_t>(s.world_pair_wait > 255 ? 255 : s.world_pair_wait);
+    if (!s.world_configured) Segment(kGrey, "| World off");
+    else if (s.world_paired) Segment(kGreen, "| World L%u paired", s.world_effective);
+    else if (wait == 9 && s.world_partner_mission &&
+             coop_text::FormatMissionShort(s.world_partner_mission, partner_mission, sizeof(partner_mission)))
+        Segment(kAmber, "| World L%u: partner in %s", s.world_level, partner_mission);
+    else Segment(kGrey, "| World L%u waiting (%s)", s.world_level, coop_text::PairWaitName(wait));
     if (s.realized) Segment(kGreen, "| Partner visible clip %u age %u ms", s.mapped_clip, s.remote_age_ms);
     else Segment(kGrey, "| Partner hidden");
     // Line 2: pending state, active toggles and telemetry age.
@@ -669,6 +681,15 @@ void Partner(const Snapshot& s) noexcept {
         s.loss_permille / 10.0f, s.interp_ms);
     ImGui::Text("Partner %s   appearance %s   range %s   pose age %u ms", s.realized ? "visible" : "hidden",
         s.parts_loaded ? "loaded" : "pending", s.range_hidden ? "too far" : "near", s.remote_age_ms);
+    if (!s.world_paired && s.world_pair_wait == 9 && s.world_partner_mission && s.world_partner_mission != s.mission) {
+        char elsewhere[256]{};
+        if (coop_text::FormatWorldNote(16, s.mission, s.world_partner_mission, s.world_partner_mission, s.mission, elsewhere,
+                                       sizeof(elsewhere))) {
+            ImGui::PushStyleColor(ImGuiCol_Text, kAmber);
+            ImGui::TextWrapped("%s", elsewhere);
+            ImGui::PopStyleColor();
+        }
+    }
     if (s.remote_valid) {
         ImGui::Text("Remote X %.2f Y %.2f Z %.2f   yaw %.1f", s.remote_pos[0], s.remote_pos[1], s.remote_pos[2], s.remote_yaw);
         if (s.body_valid) ImGui::Text("Body error %.3f m   heading error %.1f deg", s.position_error_m, s.heading_error_deg);
@@ -753,8 +774,17 @@ void Partner(const Snapshot& s) noexcept {
 void World(const Snapshot& s) noexcept {
     char clock[16]{};
     act::FormatClock(clock, sizeof(clock), s.game_clock_s % 86400);
+    char handshake[40]{};
+    if (s.world_paired) Copy(handshake, "paired");
+    else std::snprintf(handshake, sizeof(handshake), "waiting (%s)",
+                       coop_text::PairWaitName(static_cast<std::uint8_t>(s.world_pair_wait > 255 ? 255 : s.world_pair_wait)));
     ImGui::Text("Clock %s   world level %u   active level %u   handshake %s / link %s", clock, s.world_level, s.world_effective,
-        s.world_paired ? "paired" : "waiting", s.world_link_up ? "connected" : "disconnected");
+        handshake, s.world_link_up ? "connected" : "disconnected");
+    if (s.world_partner_mission) {
+        char partner_mission[32]{};
+        if (coop_text::FormatMission(s.world_partner_mission, partner_mission, sizeof(partner_mission)))
+            ImGui::Text("Partner mission %u (%s)   partner world level %u", s.world_partner_mission, partner_mission, s.world_remote_level);
+    }
     Heading("Time");
     const char* times[] = {"world_time_dawn", "world_time_noon", "world_time_dusk", "world_time_midnight", "world_time_add_1h"};
     for (int i = 0; i < 5; ++i) { if (i) ImGui::SameLine(); Row(times[i], s, {nullptr, 150.0f}); }

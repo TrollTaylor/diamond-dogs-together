@@ -27,7 +27,13 @@ from the menu thread.
 1. **Header** (always visible):
    - `HOST` or `GUEST`, mission (`30010 Afghanistan`, `30020 Africa`, `30050 Mother Base`),
      mission generation, then `READY` (green) or `WAITING: <reason>` (amber), link,
-     world level and partner state.
+     world sync and partner state.
+   - World sync: `| World L3 paired` (green), `| World L3: partner in <short name>`
+     (amber: the partner is in another mission, for example `story mission 10020` or
+     `Mother Base heli`; shown after 15 s in different missions), `| World L3 waiting
+     (<reason>)` (grey; `no_link`, `no_hello`, `remote_off`, `remote_saves`,
+     `same_role`, `local_loading`, `remote_loading`, `epoch`, `settling`, ...) or
+     `| World off`.
    - Second line: `Pending: warp #12 (frame 34)` or `Idle`, the queue length, the active
      toggles (Auto-heal, Infinite ammo, Fulton, Slowmo) and the telemetry age. The age
      turns amber after 1 s: the game thread is paused, loading or in a menu.
@@ -45,7 +51,11 @@ Every button shows its result next to it (green ok, amber pending, red refused) 
 20 seconds. Hovering a button shows what it does, its exact text command, whether it
 is **Host only**, **Local only** or **Syncs to guest**, and "unverified in this build"
 when the game API has no recorded live check. A greyed button says why when hovered
-(for example "Host only" or "Set a destination first").
+(for example "Host only" or "Set a destination first"). Two reasons name the scene:
+`mission` ("F9 commands work only in Mother Base and Afghanistan/Africa free roam, not
+in story missions or the helicopter.") while a story mission or the helicopter has no
+supported gameplay, and `partner_elsewhere` on Go to partner ("Your partner is in
+another mission. Meet in the same Mother Base or free roam first.").
 
 Commands sent while another action is still running (a teleport waiting for its
 position readback, a guard placement) wait in a 16-slot queue and run afterwards;
@@ -120,6 +130,12 @@ and the host's changes reach the guest's copy of that soldier (see **Spawn sync*
 ### Partner / Co-op
 
 Link, pose and animation readout (remote pose only once the partner has sent one).
+While the partner is in another mission (not paired, pair-wait `different_mission`),
+an amber sentence comes before the pose lines: "Your partner is in <their mission>; you
+are in <yours>. Co-op only pairs when you are both in the same Mother Base, free roam or
+helicopter." The `partner ...` commands (Show / Hide, the presets, Apply modes) answer
+`partner_applied;partner=not_paired` while world sync is on but not paired (the setting
+is kept, but no partner body shows until you pair), otherwise `partner_applied`.
 
 | Button | Command |
 |---|---|
@@ -144,11 +160,15 @@ player sees your movement slowed.
 
 ### World (host only)
 
-Clock, world level and handshake. Dawn / Noon / Dusk / Midnight (`time 21600`,
-`time 43200`, `time 64800`, `time 0`), +1 hour (`time_add 3600`), HH:MM Set time
-(`time s`), weather Sunny / Cloudy / Rainy / Sandstorm / Foggy / Auto
-(`weather <name>`; Foggy is hidden in Africa). Time and weather follow to the guest
-at world level 3 (results end in `sync=world`).
+Clock, world level and handshake (`handshake paired` or `handshake waiting
+(<reason>)`, the pair-wait names of the header), then, once the partner's mission is
+known, `Partner mission <n> (<name>)   partner world level <n>`. Dawn / Noon / Dusk /
+Midnight (`time 21600`, `time 43200`, `time 64800`, `time 0`), +1 hour
+(`time_add 3600`), HH:MM Set time (`time s`), weather Sunny / Cloudy / Rainy /
+Sandstorm / Foggy / Auto (`weather <name>`; Foggy is hidden in Africa). Time and weather
+follow to the guest at world level 3. The time readback and weather results end in
+`sync=world` only when the clock is synced (paired in a Mother Base or free-roam
+scene), otherwise `sync=none`.
 
 ### Tools
 
@@ -364,6 +384,8 @@ native=..; err_m=..; frames=..`, `event=place_div; ...` and
   kill, sleep, faint, Fulton, Clear nearby and the phase use the world outcome
   ledger (`sync=world` once outcome sync is on); placements and come / ignore /
   notice / disable / enable add `;seq=<n>` (spawn sync) or `;why=<reason>`.
+  Time and weather end in `sync=world` (`time_readback;sync=world`) only when the
+  clock is synced (paired in a Mother Base or free-roam scene), else `sync=none`.
 
 ## Text grammar
 
