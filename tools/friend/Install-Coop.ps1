@@ -323,12 +323,14 @@ if ($alreadySeeded -and !$reseed) {
     $copyFiles = @(Get-ChildItem -LiteralPath $saveDir -File -Recurse -Force | Sort-Object LastWriteTime -Descending)
     $copyAge = 'unknown'
     if ($copyFiles.Count) { $copyAge = $copyFiles[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
-    # A copy that holds the partner's progress (Share-Save import) is never
-    # replaced silently: a reseed would put this player's own (maybe earlier)
-    # real save back, and Share-Save [R] cannot bring the import back.
+    # A copy that holds the partner's progress (Share-Save import or the
+    # automatic save handoff) is never replaced silently: a reseed would put
+    # this player's own (maybe earlier) real save back, and Share-Save [R]
+    # cannot bring the import back.
     $imported = Get-FriendImportedSaveInfo -SaveDir $saveDir -ReplacedRoot (Join-Path $paths.Mod 'coop-saves-replaced')
     if ($imported) {
-        Write-Host "Your co-op save copy holds your partner's progress (imported with Share-Save on $($imported.Imported))." -ForegroundColor Yellow
+        if ($imported.Kind -eq 'handoff') { Write-Host "Your co-op save copy holds your partner's save (automatic save handoff on $($imported.Imported))." -ForegroundColor Yellow }
+        else { Write-Host "Your co-op save copy holds your partner's progress (imported with Share-Save on $($imported.Imported))." -ForegroundColor Yellow }
         Write-Host 'Replacing it with a fresh copy of your real save removes that progress from co-op games (it is only moved aside; Share-Save [R] cannot bring it back).' -ForegroundColor Yellow
         if ($interactive) {
             $reseed = ((Ask 'Replace it anyway? [y/N]') -match '^(y|yes)$') -and ((Ask 'Type REPLACE to confirm (anything else keeps your partner''s progress)') -ceq 'REPLACE')
@@ -355,9 +357,14 @@ if ($seed.Seeded) {
     # The import marker describes the progress that was just moved aside: it goes with it.
     $importMarker = Join-Path $saveDir 'imported-progress.json'
     if (Test-Path -LiteralPath $importMarker -PathType Leaf) {
+        $markerSource = [string](Get-FriendProperty (Read-FriendJson $importMarker) 'source' '')
         $null = New-Item -ItemType Directory -Path $seedArchive -Force
         Move-Item -LiteralPath $importMarker -Destination (Join-Path $seedArchive 'imported-progress.json')
-        Write-Host "Your partner's imported progress was moved to $seedArchive. To play on it again, import your partner's zip again with Share-Save.bat (option I)." -ForegroundColor Yellow
+        if ($markerSource -ceq 'handoff') {
+            Write-Host "Your partner's save (automatic save handoff) was moved to $seedArchive. Joining your partner again copies their save once more." -ForegroundColor Yellow
+        } else {
+            Write-Host "Your partner's imported progress was moved to $seedArchive. To play on it again, import your partner's zip again with Share-Save.bat (option I)." -ForegroundColor Yellow
+        }
     }
 } else { Write-Host "Co-op save copy kept from the earlier install: $saveDir" }
 

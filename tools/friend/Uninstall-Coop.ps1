@@ -4,7 +4,11 @@ MGS Co-op uninstaller (two-PC play package). Double-click Uninstall-Coop.bat, or
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Uninstall-Coop.ps1 -GameDirectory "<MGSV folder>" -NonInteractive -Yes
 
   0. Switches off a Play-Coop session that did not end cleanly (only the
-     files whose SHA-256 still matches play-session.json are deleted).
+     files whose SHA-256 still matches play-session.json are deleted), and
+     removes what an unfinished automatic save handoff left: link-rejoin.txt
+     (a join code) and, in mgs-coop\coop-saves-handoff, request.json and the
+     staged copies of the partner's save (by their known file names only;
+     provenance.json and applied.json stay, coop-saves-replaced is never touched).
   1. Restores the loader state from before each friend install, through the
      package's owned rollback (scripts\install.ps1 -Action Restore). Only the
      install states that Install-Coop recorded in friend-install.json are
@@ -21,7 +25,8 @@ MGS Co-op uninstaller (two-PC play package). Double-click Uninstall-Coop.bat, or
      real saves; it prints how to restore them if they differ.
   4. Offers (default No) to remove the Windows Firewall rule that Play-Coop
      added (administrator prompt).
-Nothing else is deleted: backups, the co-op save copy and logs stay in <game>\mgs-coop.
+Nothing else is deleted: backups, the co-op save copy, the copies kept aside
+(coop-saves-replaced) and logs stay in <game>\mgs-coop.
 #>
 [CmdletBinding()]
 param(
@@ -110,6 +115,10 @@ if ($leftover.Ran) {
     Section 'Step 0: switching off the last Play-Coop session'
     Write-Host ('Removed: ' + (@($leftover.Removed) -join ', '))
     foreach ($m in @($leftover.Messages)) { Write-Host $m -ForegroundColor Yellow }
+}
+$staleHandoff = Remove-CoopStaleHandoff -GameRoot $gameRoot
+if (@($staleHandoff.Removed).Count) {
+    Write-Host ('Removed what an unfinished automatic save handoff left: ' + (@($staleHandoff.Removed) -join ', '))
 }
 
 # ---------------------------------------------------------------- 1: loader

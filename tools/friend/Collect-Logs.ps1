@@ -10,10 +10,13 @@ Included (bounded, read-only, the game may still be running):
   lab-status.json, link-status.json, play-session.json, lab.ini, coop.ini,
   script-observe.enabled, probe-install.json, client-host.txt,
   host-steamid.txt and friend-install.json, coop-saves.txt (the co-op save
-  folders: names, sizes and times only, never save contents), plus
-  summary.txt with versions, file hashes, the co-op save state and the real
-  save check. Never included: link-secret.txt (the link key), steam-join.ini
-  and any save file. SteamIDs are masked except their last 4
+  folders: names, sizes and times only, never save contents), the automatic
+  save handoff's coop-saves-handoff\provenance.json, applied.json and
+  request.json (as handoff-*.json; set hashes and missions, no save bytes),
+  plus summary.txt with versions, file hashes, the co-op save state, the save
+  handoff state and the real save check. Never included: link-secret.txt (the
+  link key), link-rejoin.txt (a join code), steam-join.ini and any save file.
+  SteamIDs are masked except their last 4
   digits; Steam account folder numbers and the Windows user name in paths are
   removed; join codes (MGS1-... and MGS2-...) and invite strings
   (+mgscoop_join ...) are replaced and public IPv4 addresses after peer=,
@@ -107,10 +110,18 @@ try {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $row[0]) -MaxBytes ([Math]::Min($MaxLogBytes, [int]$row[1]))
         if ($text) { Save $row[0] $text; $included.Add($row[0]) } else { $missing.Add($row[0]) }
     }
-    # Allow-list. link-secret.txt (the link key) and steam-join.ini are never collected.
+    # Allow-list. link-secret.txt (the link key), link-rejoin.txt (a join code) and steam-join.ini are never collected.
     foreach ($name in @('lab-status.json', 'link-status.json', 'play-session.json', 'lab.ini', 'coop.ini', 'script-observe.enabled', 'probe-install.json', 'client-host.txt', 'host-steamid.txt', 'friend-install.json')) {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $name) -MaxBytes 65536
         if ($text) { Save $name $text; $included.Add($name) } else { $missing.Add($name) }
+    }
+    # The automatic save handoff's records (set hashes, missions, times; no save
+    # bytes, no secret), only when present and at most 64 KB each.
+    foreach ($name in @('provenance.json', 'applied.json', 'request.json')) {
+        $path = Join-Path $paths.CoopSavesHandoff $name
+        if (!(Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path -Force).Length -gt 65536) { continue }
+        $text = Read-FriendFileTail -Path $path -MaxBytes 65536
+        if ($text) { Save ('handoff-' + $name) $text; $included.Add('handoff-' + $name) }
     }
     # The co-op save folders (which copy is active, what was replaced or imported):
     # relative names, sizes and times only; no save file is read or collected.
@@ -159,6 +170,12 @@ try {
             if ($d.Name -cmatch '^[0-9]{8}-[0-9]{6}' -and ($newestReplaced -eq 'none' -or [string]::CompareOrdinal($d.Name, $newestReplaced) -gt 0)) { $newestReplaced = $d.Name }
         }
     }
+    # The automatic save handoff: the session's state and the copies it moved aside.
+    $handoffState = 'none'
+    $playHandoff = Get-FriendProperty $playSession 'handoff' $null
+    if ($playHandoff) { $handoffState = [string](Get-FriendProperty $playHandoff 'state' 'none') }
+    if (!$handoffState) { $handoffState = 'none' }
+    $asidesHandoff = @(Get-CoopProgressBackups -ReplacedRoot $replacedRoot | Where-Object { $_.Kind -eq 'handoff' }).Count
     $lines = @(
         'MGS Co-op log collection',
         ('collected_local=' + [DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss zzz')),
@@ -176,6 +193,7 @@ try {
         ('mgs-coop-player-runtime.dat sha256=' + $archive + '; expected=' + ($archive -eq $expectArchive.ToUpperInvariant())),
         ('real_saves=' + $saveCheck),
         ('coop_saves=files=' + $coopSaveFiles + '; import_marker=' + $importMarkerState + '; newest_replaced=' + $newestReplaced),
+        ('handoff=' + $handoffState + '; asides_handoff=' + $asidesHandoff),
         ('windows=' + $os + '; powershell=' + $PSVersionTable.PSVersion.ToString()),
         ('included=' + ($included -join ',')),
         ('missing=' + ($missing -join ',')),

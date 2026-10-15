@@ -138,7 +138,9 @@ are renamed *.online-old-<time> and not used again).
 --------------------
 IN SHORT (online):
  - Before the first game: if your saves are at different points of the
-   story, share one with Share-Save.bat (SAME PROGRESS FOR BOTH below).
+   story, the joiner gets the host's save by itself (SAME PROGRESS
+   AUTOMATICALLY below), or share one with Share-Save.bat (SAME PROGRESS FOR
+   BOTH below).
  - Host: Play-Coop.bat, press O, send the code it shows (or invite your
    friend in the game: F9 > Partner / Co-op > Online > Invite a friend).
  - Friend: start Play-Coop.bat FIRST, press J, paste the code (or press
@@ -287,6 +289,24 @@ SAME PROGRESS FOR BOTH (Share-Save; do this before your first game):
    the imported save (an error, or a new game at the title), run
    Share-Save.bat and press R.
 
+SAME PROGRESS AUTOMATICALLY (save handoff):
+ - When you JOIN and your co-op save would start somewhere other than the
+   host's (or is in the story opening), the host's save is copied to you at
+   the title screen and MGSV restarts once on it (about a minute; Play-Coop
+   does it, keep its window open).
+ - The host's save is only shared once it continues into Mother Base or
+   free roam, never from the story opening. If the host's save is still in
+   the story opening, the player whose save reaches Mother Base should host.
+ - The game counts down 10 seconds at the title screen before it restarts.
+   Press Continue twice, or F9 > Partner / Co-op > Shared save >
+   Keep my own save, to keep yours.
+ - Your own co-op copy is kept: Share-Save.bat [R] brings it back. Play-Coop
+   -SaveHandoff off turns this off; start it from Command Prompt in the
+   extracted package folder with
+        Play-Coop.bat -SaveHandoff off
+ - Only the co-op save copy changes; your real saves are never touched. It
+   happens at most once per Play-Coop start.
+
 EXPERIMENTAL SHARED WORLD (enabled by default):
  - A normal double-click enables World 3. To choose the level explicitly,
    open Command Prompt in the extracted package folder on BOTH PCs:
@@ -299,6 +319,12 @@ EXPERIMENTAL SHARED WORLD (enabled by default):
  - The host's helicopter waits up to 2 minutes for a partner who can come
    and says so on screen; choose the deployment again to fly alone. With no
    partner connected, or the partner in another mission, it leaves at once.
+ - TRAVEL LOCK: While connected, the joiner follows the host. If the joiner
+   tries to go somewhere else, a message names where the host is; doing the
+   same again within 10-30 seconds travels alone. A held take-off leaves
+   alone after 2 minutes. F9 > Partner / Co-op > Travel lock turns it off for
+   the session; Play-Coop -TravelLock off turns it off:
+        Play-Coop.bat -TravelLock off
  - Enemy sync waits for a matching readable host snapshot after reload;
    unloaded areas may delay it. Existing terminal guest enemies are never
    revived. Story missions and full campaign progression remain unsupported.
@@ -376,6 +402,20 @@ The Play-Coop status line explains most problems:
   meet in Mother Base or free roam.
 - "Your co-op save is at the story start": see section 3, SAME PROGRESS FOR
   BOTH.
+- "waiting for the host's save", "getting the host's save", "host save
+  ready, MGSV restarts" (joiner) or "sending your save to your friend",
+  "your friend is restarting on your save" (host): the automatic save
+  handoff (section 3, SAME PROGRESS AUTOMATICALLY). Keep both games and
+  Play-Coop windows open; the joiner's MGSV quits and starts again once.
+- "save not shared": the host's save is still in the story opening or
+  continues into a mission co-op cannot join. The host goes to Mother Base
+  or free roam first, or the player whose save reaches Mother Base hosts.
+- "Steam did not start MGSV again": start MGS V from Steam yourself within
+  5 minutes; co-op stays on until then.
+- "The host's save was already applied once this session": the joiner got
+  the host's save once already; quit and start Play-Coop again if needed.
+- "The host is in ... do the same again ... to travel alone" (in game): the
+  TRAVEL LOCK (section 3, EXPERIMENTAL SHARED WORLD).
 - "the host restarted with a new code" / "[the host has a new code]": paste
   the host's new code in F9 > Partner / Co-op > Online; your game can keep
   running.
@@ -404,6 +444,10 @@ The Play-Coop status line explains most problems:
 - Share-Save.bat (section 3) copies progress between the two players' co-op
   copies only. Install-Coop.bat asks twice before it replaces a co-op copy
   that holds your partner's imported progress: answer N to keep it.
+- The automatic save handoff (section 3) replaces only the joiner's co-op
+  copy; the old copy is kept in mgs-coop\coop-saves-replaced, and
+  Share-Save.bat [R] also undoes an automatic handoff (it brings back the
+  copy the last import or automatic save handoff replaced).
 - When you stop playing co-op, run Uninstall-Coop.bat (section 9).
 
 
