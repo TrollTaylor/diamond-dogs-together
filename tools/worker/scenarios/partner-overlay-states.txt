@@ -33,8 +33,11 @@ host debug weather sunny
 wait 3000
 resetpose host
 stance host stand
-placebehind guest host 4 3
-wait 5000
+# The watcher lies prone 7 m back: standing 4 m behind, its own body hid the partner (run cf395755).
+placebehind guest host 7 2
+wait 3000
+stance guest prone
+wait 3000
 both capture overlay-start
 # --- Damage (one-shots; the map plays Front for remote acts 29/75/76) ---------------------------------------
 guest run overlay_state stateDamageBigFront 0 2500
@@ -104,8 +107,10 @@ wait 1500
 guest capture ov-stopped
 # Expected: partner_overlay=stop; reason=debug ... released; reason=debug; native back to active (resume).
 # --- The reverse direction: the host plays two states on its body 1 (the guest's puppet, Quiet in the lab) -------
-placebehind host guest 4 3
-wait 4000
+placebehind host guest 7 2
+wait 3000
+stance host prone
+wait 2000
 host run overlay_state stateDamageBigFront 0 2500
 wait 600
 host capture ov-rev-damage

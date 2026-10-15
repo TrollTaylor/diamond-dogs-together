@@ -54,7 +54,10 @@ host debug infinite_ammo 1
 wait 3000
 resetpose host
 stance host stand
-placebehind guest host 5 3
+# Prone watcher 7 m back so its own body does not hide the partner (run 204b5d54).
+placebehind guest host 7 2
+wait 2000
+stance guest prone
 both capture start
 # Arbiter entry, the manifest exchange and the writer; the census slots install with the bullet filter.
 wait 6000

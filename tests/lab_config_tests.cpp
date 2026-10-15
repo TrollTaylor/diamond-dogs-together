@@ -751,8 +751,8 @@ int main() {
         // and the state aim intent follow the gun profile; the reload rate and the census stay as named.
         Check(gunProfile.partner_native_unsupported && gunProfile.partner_native_dry_stop &&
                   gunProfile.partner_native_aim_intent == mgscoop::PartnerNativeAimIntent::state &&
-                  gunProfile.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::off && !gunProfile.partner_fire_census,
-              "anim weapons: gun profile defaults unsupported/dry on, aim intent state, rate off, census off");
+                  gunProfile.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::adapt && !gunProfile.partner_fire_census,
+              "anim weapons: gun profile defaults unsupported/dry on, aim intent state, rate adapt, census off");
         Check(!def.partner_native_unsupported && !def.partner_native_dry_stop &&
                   def.partner_native_aim_intent == mgscoop::PartnerNativeAimIntent::pad &&
                   def.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::off && !def.partner_fire_census,
