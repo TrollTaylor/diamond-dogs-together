@@ -1,0 +1,74 @@
+{
+  "comment": "Shared P2-6 set-hash vectors (docs/join-fix-phase2-spec.md). Each file's bytes are exactly content_ascii (ASCII, no BOM, no newline). set_sha256 = SHA-256 over the present slots in ascending order, each contributing u8 slot, u32 size (little-endian) and the raw 32-byte file SHA-256; hex is upper case like Get-FileHash. Consumers: tests/save_handoff_wire_tests.cpp (SetSha256), tests/save_handoff_io_tests.cpp (glue hashing of real files) and tests/friend_package_tests.ps1 (Get-CoopHandoffSetSha256).",
+  "format": "mgs-coop-handoff-set-fixture",
+  "v": 1,
+  "files": [
+    {
+      "slot": 0,
+      "entry": "287700/local/TPP_GAME_DATA0",
+      "content_ascii": "MGS-COOP handoff fixture slot 0 TPP_GAME_DATA0. MGS-COOP handoff fixture slot 0 TPP_GAME_DATA0.",
+      "bytes": 95,
+      "sha256": "31DCA2E5EA2964ED027AA269A8410E9B0709B5E63A6BA0CAF692A980A2E3B9D3"
+    },
+    {
+      "slot": 1,
+      "entry": "287700/local/TPP_GAME_DATA1",
+      "content_ascii": "MGS-COOP handoff fixture slot 1 TPP_GAME_DATA1. MGS-COOP handoff fixture slot 1 TPP_GAME_DATA1. MGS-COOP handoff fixture slot 1 TPP_GAME_DATA1.",
+      "bytes": 143,
+      "sha256": "9B7188A2078FE522029A691961AF0840D9CC06CEB94247EB2ED0396569F31982"
+    },
+    {
+      "slot": 2,
+      "entry": "287700/local/PERSONAL_DATA0",
+      "content_ascii": "MGS-COOP handoff fixture slot 2 PERSONAL_DATA0. MGS-COOP handoff fixture slot 2 PERSONAL_DATA0. MGS-COOP handoff fixture slot 2 PERSONAL_DATA0. MGS-COOP handoff fixture slot 2 PERSONAL_DATA0.",
+      "bytes": 191,
+      "sha256": "E8B99805834E226353DA7E0C72A4089D595056094950B87184E96926C7912F17"
+    },
+    {
+      "slot": 3,
+      "entry": "287700/local/PERSONAL_DATA1",
+      "content_ascii": "MGS-COOP handoff fixture slot 3 PERSONAL_DATA1. MGS-COOP handoff fixture slot 3 PERSONAL_DATA1. MGS-COOP handoff fixture slot 3 PERSONAL_DATA1. MGS-COOP handoff fixture slot 3 PERSONAL_DATA1. MGS-COOP handoff fixture slot 3 PERSONAL_DATA1.",
+      "bytes": 239,
+      "sha256": "FCDA942B29CAC342ADBBFB62784392FDF1437AFCCAD956BEF82198CC6F4C630C"
+    },
+    {
+      "slot": 4,
+      "entry": "remote/TPP_GAME_DATA",
+      "content_ascii": "MGS-COOP handoff fixture slot 4 TPP_GAME_DATA. MGS-COOP handoff fixture slot 4 TPP_GAME_DATA. MGS-COOP handoff fixture slot 4 TPP_GAME_DATA. MGS-COOP handoff fixture slot 4 TPP_GAME_DATA. MGS-COOP handoff fixture slot 4 TPP_GAME_DATA. MGS-COOP handoff fixture slot 4 TPP_GAME_DATA.",
+      "bytes": 281,
+      "sha256": "5081A6E361F04D146F459F00EF4D89874BB224FC2DE37A6A9605661DDF00FA27"
+    },
+    {
+      "slot": 5,
+      "entry": "remote/PERSONAL_DATA",
+      "content_ascii": "MGS-COOP handoff fixture slot 5 PERSONAL_DATA. MGS-COOP handoff fixture slot 5 PERSONAL_DATA. MGS-COOP handoff fixture slot 5 PERSONAL_DATA. MGS-COOP handoff fixture slot 5 PERSONAL_DATA. MGS-COOP handoff fixture slot 5 PERSONAL_DATA. MGS-COOP handoff fixture slot 5 PERSONAL_DATA. MGS-COOP handoff fixture slot 5 PERSONAL_DATA.",
+      "bytes": 328,
+      "sha256": "957C249A44FD2B57ED00DD8346FE09F547C8F899D9909B12F7F002C845351DF0"
+    }
+  ],
+  "set_sha256": "E74EC59D755613FD70BE8967E7185F56D1B1FB81A49CF3E1D3B7207ADFC7B531",
+  "subsets": [
+    {
+      "slots": [
+        0,
+        4
+      ],
+      "set_sha256": "0CA0AD5F95E2053412C9DF4190D37C7B0F6E9F9CDCF1CE4BC77911F78D651950"
+    },
+    {
+      "slots": [
+        1
+      ],
+      "set_sha256": "E5803482DBF5ADE57394E6BB5C88063A12EBA8FE484CDBB9E191854F0850B908"
+    },
+    {
+      "slots": [
+        0,
+        1,
+        4,
+        5
+      ],
+      "set_sha256": "A86F9EE11C3DDFC84444B713474DBF7E126C0515A37D647C2B608A3A9BC1C859"
+    }
+  ]
+}
