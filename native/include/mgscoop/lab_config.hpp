@@ -485,6 +485,8 @@ struct LabConfig {
     PartnerNativeReloadRate partner_native_reload_rate = PartnerNativeReloadRate::off;
     bool partner_native_reload_rate_given = false;
     bool partner_fire_census = false;
+    // Native type-12 support throws are an explicit experiment; no profile enables them.
+    bool partner_native_support = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;

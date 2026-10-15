@@ -683,6 +683,15 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_equip -Value manifest)/$(ConvertTo-LabPartnerValue -Key partner_native_equip -Value substitute)" 'manifest/substitute' 'equip enums'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_equip -Value any } 'stock46|manifest|substitute' 'equip values'
 
+    # Native type-12 support must be explicitly named and is serialized as a bool.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_support -Value $true)/$(ConvertTo-LabPartnerValue -Key partner_native_support -Value 0)" '1/0' 'native support bool values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_support -Value 2 } '0 or 1' 'native support invalid bool refused'
+    $supportJson = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_support = 1 })
+    Assert-Equal $supportJson['partner_native_support'] '1' 'native support short JSON name'
+    $supportOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_support=0', 'guest:partner_native_support=1') -Role guest
+    Assert-Equal $supportOverride['partner_native_support'] '1' 'native support role override'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_support')) 'native gun JSON never auto-emits support'
+
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_words -Value rp0) 'rp0' 'partner_input_words'

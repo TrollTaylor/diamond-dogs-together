@@ -324,6 +324,8 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_aim_intent'; Json = 'native_aim_intent'; Kind = 'enum'; Values = @('pad', 'state') },
     @{ Key = 'partner_native_reload_rate'; Json = 'native_reload_rate'; Kind = 'enum'; Values = @('off', 'adapt') },
     @{ Key = 'partner_fire_census'; Json = 'fire_census'; Kind = 'bool' },
+    # Native thrown support (type 12 only), default off in every profile.
+    @{ Key = 'partner_native_support'; Json = 'native_support'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

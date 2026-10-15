@@ -1,0 +1,83 @@
+# Native partner type-12 throws v1; coordinator only, hidden worker and copied lab saves.
+# Executable: mgsvtpp.exe 1.0.15.4, SHA-256 pinned by the partner contract; no visible launch.
+# Static/fixture results do not prove throw visuals or stock isolation: retain the run id, logs and frames.
+# Run after the coordinator takes the verification lock and completes ReleaseGun/CTest/contract checks:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-native.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# Expected lab support ids: 354,349,395,411,366,370,378,388 (entry 0 grenade; entry 1 empty magazine).
+# Counts use the local retail Player.GetAmmoStockBySlot(SUPPORT, subIndex), read-only. Infinite ammo is OFF.
+# Compare host/guest support;ids=...;counts=...;active=... before and after each throw: the guest counts and
+# both loadouts stay identical; host stock drops only for its own thrown items (including magazine stock
+# semantics reported by the game). Do not interpret a missing/na count as a verified unchanged count.
+# Expected lines (on the guest, viewing the host as body 1):
+#   partner_support=guard; slot=3; equip=0; type=12; reason=installed (then per-second guard totals)
+#   partner_support=equip|follow|armed; slot=3; equip=354|349; type=12; reason=...
+#   partner_support=filtered; ... owner=0x1 ... preview and real requests dropped BEFORE the entry runs.
+#   partner_support=stock_check; ...; changed=0 after each body-1 throw episode; no stock leak latch.
+#   partner_support=...; rec240=... at throw time: retain for the unresolved vt+0x160 handle call.
+#   partner_fire_census=thrown; owner=0x1; ...; dropped=1 for preview and throw; never owner 0 dropped.
+#   partner_fire_census=summary / the 1 Hz filter summary includes support drop counters.
+# On the host, owner 0 thrown requests pass (dropped=0), and only its own stock is spent.
+# Captures: guest grenade-aim / grenade-throw and magazine-aim / magazine-throw show body 1 holding its
+# own support item and playing native throw-family modes 28..42. Its preview never replaces the local arc.
+# Back-to-gun capture shows the existing gun follower/aim still works. Always retain refusals/faults;
+# any partner_support=refused or stock_check changed=1 means the corresponding path is NOT accepted.
+# Residual risk: an unwindowed/refused block-1 frame is unguarded; the stock latch is only a backstop.
+labsetting partner_native_support=1
+labsetting partner_fire_census=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug infinite_ammo 0
+guest debug infinite_ammo 0
+stance host stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+# Keep the viewer low and out of the partner's silhouette.
+placebehind guest host 7 2
+wait 2000
+stance guest prone
+both capture start
+wait 6000
+host run support
+host require support;ids=354,349,395,411,366,370,378,388;counts=[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+;active=
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+;active=
+# --- Grenade 354: hold, arc-preview census, then native throw --------------------------------------------
+host debug slot support 0
+wait 1500
+guest burst grenade-select 3 200
+host hold rmb 1500 nowait
+guest burst grenade-aim 4 150
+host hold rmb+lmb 150 nowait
+guest burst grenade-throw 8 150
+host release
+wait 4000
+both capture grenade-after
+host run support
+guest run support
+# --- Empty magazine 349: same native throw family, including its own preview -----------------------------
+host debug slot support 1
+wait 1500
+guest burst magazine-select 3 200
+host hold rmb 1500 nowait
+guest burst magazine-aim 4 150
+host hold rmb+lmb 150 nowait
+guest burst magazine-throw 8 150
+host release
+wait 2000
+both capture magazine-after
+host run support
+guest run support
+# --- Return to a resident gun and verify native aim still follows ----------------------------------------
+host debug slot back 0
+wait 2000
+host hold rmb 1500 nowait
+guest burst back-to-gun 4 150
+host release
+wait 1500
+both capture end

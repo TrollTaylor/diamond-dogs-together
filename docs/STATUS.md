@@ -1,3 +1,19 @@
+## October 15, 2026: native partner thrown support v1 (private branch)
+
+`wp/anim-throws` implements default-off `partner_native_support=1` for type-12
+slot-3 equipment. A scoped stock guard, thrown-service entry owner filter,
+non-local native equipment writer/follower and per-window input gate isolate body 1;
+read-only support/inventory checks latch it off on a change. Placed equipment and
+arms remain unsupported. The explicit p218 diagnostic and required private
+whole-player pose window refuse support because they violate its non-local audit.
+Static contract verification passed for executable 1.0.15.4 SHA-256
+`085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
+ReleaseGun build and all **253/253 CTest tests** passed, including the friend-package
+fixture. Results, patch bytes and the prepared scenario are recorded in
+[the throw design](anim-round2-throws.md).
+No hidden gameplay run, merge, package or install: animation, counts and item
+visibility remain unverified. Installed 0.12.6 behavior is unchanged.
+
 ## October 15, 2026: the remote driver is drawn seated; partner weapon and stance fixes
 
 **Driver in the seat.** A teammate driving a light vehicle or truck in Afghanistan or Africa free roam is now drawn in the driver's seat of the viewer's own copy of that vehicle (`partner_native_ride=seat`, the new driven default). The receiver keeps the partner body realized and plays a targeted direct motion on it, the engine's own seat mechanism that retail mission s10150 uses for Snake's jeep ride: `{{"coopRide",1},{"stateVehicleFrontLeftLoop",true,"veh_lv_0000","CNP_ppos_c","MTP_GLOBAL_C",true}}`. The engine re-anchors the body to the vehicle copy's seat matrix every frame (`0x1198770` -> `0xB7AF90` -> `PS+0x270`), so it follows the vehicle that `RIDE_FAST` moves. Four reversible code dwords are armed only for the seat episode: the anchor's seat index (`0x119883C`) and three skips over the direct-motion camera-connect stores (`0x1198D56`, `0x1198D81`, `0x11992E9`), so neither the seat's entry nor its end touches the viewer's own camera connect. The sender adds the vehicle id, native seat (from `GetRiderId`) and a PlayerStatus bitmask to its receipt; the ride wire is v2 (v1 still accepted). Heli, horse, D-Walker, APC/tank, unnamed vehicles and stale rides still hide. Hidden runs: `8b8e5bbc2acc4b2a967da44aa1aaab6f` (the guest's body seated in the jeep's driver seat on the host screen, hands on the wheel, while it drives) and `77d24c5e1ac74552a55450a7b0307966` (watched from the Wakh Sind plaza: Snake seated while the jeep drives in and parks, then climbing out); the body tracks the remote's seated pose to about 1 mm (`partner_ride_seat=status; ...; err_mm=1`). Rider `9728` in the census is D-Dog (`TppBuddyDog2`), who rides in his owner's passenger seat on the owner's copy. Not yet tested: both players driving at once, passenger seats, trucks, Africa vehicle names, the optional get-in/get-off chaining.

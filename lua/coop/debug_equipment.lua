@@ -111,13 +111,18 @@ do
             if call(TppPickable, "DropItem", item) == false then return false, "pickup_refused" end
             return true, "submitted_pickup;number=" .. a[3] .. ";spawn_count_unverified"
         elseif cmd == "support" and #a == 1 then
-            -- Read-only: the support weapon ids (vars.supportWeapons[0..7]).
-            local ids = {}
+            -- Read-only: local support ids and each entry's stock through the retail getter.
+            local ids, counts = {}, {}
+            local native = get(PlayerSlotType, "SUPPORT")
+            local readable = integer(native, 0, 15) and type(get(Player, "GetAmmoStockBySlot")) == "function"
             for i = 0, 7 do
                 local v = get(get(vars, "supportWeapons"), i)
                 ids[i + 1] = integer(v, 0, 65535) and fmt("%.0f", v) or "na"
+                local ok, count = false, nil
+                if readable then ok, count = pcall(call, Player, "GetAmmoStockBySlot", native, i) end
+                counts[i + 1] = ok and integer(count, 0, 65535) and fmt("%.0f", count) or "na"
             end
-            return true, "support;ids=" .. table.concat(ids, ",") .. ";active=" .. active()
+            return true, "support;ids=" .. table.concat(ids, ",") .. ";counts=" .. table.concat(counts, ",") .. ";active=" .. active()
         elseif cmd == "slot" and #a == 3 then
             -- The retail slot selection (Player.SetCurrentSlot, the local player's
             -- equip controller vt+0x10) for the fire census: support/item/hand too.

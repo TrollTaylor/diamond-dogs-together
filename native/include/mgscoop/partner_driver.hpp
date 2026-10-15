@@ -350,6 +350,7 @@ struct Hooks {
     // a non-zero local camera connect (CAM+0x1F0/+0x200); null or false keeps
     // the cam_connect refusal. Nothing in this track arms one.
     bool (*dm_camera_skip_armed)(void* context) noexcept = nullptr;
+    bool (*support_ready)(void*,const partner_player::State&,std::uint16_t equip) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -428,6 +429,7 @@ struct Settings {
     // filter is installed, live and armed for instance 1 and its gun is a gun
     // class. EffectiveSettings passes FIRE only with nfire=visual and this.
     bool fire_live;
+    bool support_live; // current type-12 support gate, independent of an earlier gun class
     std::uint32_t steer_deg, trim_pct;
     PartnerNativeRates nrates;
     // The facing governor mode (partner_recon FaceMode while native) and the
@@ -452,6 +454,7 @@ struct Settings {
     // partner_native_unsupported, _dry_stop, _aim_intent, _reload_rate,
     // partner_fire_census).
     bool nunsupported, ndry;
+    bool nsupport; // lab-only native thrown equipment (type 12), default off
     PartnerNativeAimIntent naim_intent;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;

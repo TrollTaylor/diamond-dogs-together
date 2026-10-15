@@ -168,6 +168,13 @@ bool ForEachPair(const char* text, std::size_t length, Visit visit) noexcept {
     return true;
 }
 
+// Keep round-2 support outside the main parser chain (MSVC nesting limit).
+bool ParseRound2SupportKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (!Equals(key, "partner_native_support")) return false;
+    ok = ParseBool(value, result.partner_native_support);
+    return true;
+}
+
 // The round-1 actions track's keys (docs/anim-round1-actions.md): true when
 // `key` is one of them (`ok` then says whether its value parsed).
 bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
@@ -225,8 +232,9 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
-        // Anim round 1 keys: separate chains (the one below is at MSVC's block nesting limit).
-        if (ParseAnimWeaponsKey(key, value, result, ok) || ParseRound1ActionsKey(key, value, result, ok)) {
+        // Separate key helpers: the main chain is at MSVC's block nesting limit.
+        if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
+            ParseRound1ActionsKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }

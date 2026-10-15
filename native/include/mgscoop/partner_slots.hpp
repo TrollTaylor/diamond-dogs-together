@@ -93,7 +93,7 @@ bool BulletType(std::uint8_t type) noexcept;
 // shield): HOLD, FIRE and RELOAD are stripped so the partner no longer raises
 // its old gun while the remote aims a grenade. Computed by the driver before
 // Judge; it wins over every other verdict.
-enum class Gate : std::uint8_t { match, mismatch, switching, projectile, standin, unsupported };
+enum class Gate : std::uint8_t { match, mismatch, switching, projectile, standin, unsupported, support };
 const char* GateName(Gate gate) noexcept;
 struct GateIn {
     std::uint32_t remote_equip, remote_base, body_equip;

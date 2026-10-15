@@ -83,6 +83,7 @@ const char* GateName(Gate gate) noexcept {
     case Gate::projectile: return "projectile";
     case Gate::standin: return "standin";
     case Gate::unsupported: return "unsupported";
+    case Gate::support: return "support";
     default: return "match";
     }
 }
@@ -100,6 +101,7 @@ std::uint32_t StripBits(Gate gate) noexcept {
     case Gate::mismatch:
     case Gate::switching: return partner_native::kPadFire | partner_native::kPadReload;
     case Gate::projectile: return partner_native::kPadFire;
+    case Gate::support: return partner_native::kPadReload;
     case Gate::unsupported: return partner_pad::kHold | partner_native::kPadFire | partner_native::kPadReload;
     default: return 0u;
     }
@@ -146,8 +148,8 @@ const char* AimRefusalName(AimRefusal value) noexcept {
 
 AimRefusal AimGate(const AimGateIn& in) noexcept {
     if (!in.enabled) return AimRefusal::off;
-    if (!in.judged || (in.gate != Gate::match && in.gate != Gate::standin)) return AimRefusal::gate;
-    if (!in.slot_valid || in.slot > 2) return AimRefusal::slot;
+    if (!in.judged || (in.gate != Gate::match && in.gate != Gate::standin && in.gate != Gate::support)) return AimRefusal::gate;
+    if (!in.slot_valid || (in.gate == Gate::support ? in.slot != 3 : in.slot > 2)) return AimRefusal::slot;
     if (in.sleeping) return AimRefusal::sleep;
     if (in.carried) return AimRefusal::carried;
     if (in.hidden) return AimRefusal::hidden;

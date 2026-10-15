@@ -49,6 +49,10 @@
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_reload.hpp"
 #include "mgscoop/partner_slots.hpp"
+#include "mgscoop/partner_support_guard.hpp"
+#include "mgscoop/partner_support_equip.hpp"
+#include "mgscoop/partner_support_policy.hpp"
+#include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_pad_bits.hpp"
 #include "partner_player_contract.hpp"
 #include <MinHook.h>
@@ -189,6 +193,12 @@ std::uint32_t g_frame_id = 0;
 std::uint64_t g_frame_ms = 0;
 std::uint32_t g_consumer_last[pi::kConsumers]{};
 bool g_in_drain = false;
+volatile LONG g_support_leak=0, g_support_reset=1;
+unsigned g_support_lines=0;
+bool g_support_episode=false, g_support_released=false;
+std::uint32_t g_support_episode_stock=0;
+std::uint32_t ReadSupportDigest() noexcept;
+bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept;
 pi::Injection g_drain_inj{};
 pi::Arm g_drain_arm{};
 volatile LONG g_wrap_floor = 0;   // PartnerWrap counting without an enabled Arm (census)
@@ -484,10 +494,13 @@ pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
         InterlockedIncrement(&g_n_neutral);
         return pi::Neutral(j);
     }
-    if (a.strip) {
+    const bool support_request=(j.slot_valid && j.inv_slot>2) || (a.native_support && a.strip==partner_native::kPadReload);
+    const std::uint32_t strip=partner_support_policy::Strip(a.strip,support_request,a.native_support,
+        support_request && SupportAdmitted(a,j));
+    if (strip) {
         InterlockedIncrement(&g_n_strip);
-        InterlockedExchange(&g_n_strip_bits, static_cast<LONG>(a.strip));
-        return pi::Strip(j, a.strip);
+        InterlockedExchange(&g_n_strip_bits, static_cast<LONG>(strip));
+        return pi::Strip(j, strip);
     }
     return j;
 }
@@ -1578,6 +1591,13 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
         g_sl_ep_reason = -1;
     }
     InterlockedExchange(&g_sl_target, static_cast<LONG>(target));
+    if (target==3 && a.native_support && j.equip_valid && !g_support_leak &&
+        partner_support_guard::Armed(a.P,1) && partner_fire_filter::ThrownPatchLive(reinterpret_cast<const void*>(g_base)) &&
+        partner_fire_filter::ThrownArmed(1)) {
+        const char* why=partner_support_equip::Follow(g_base,c::image_span,a.P,a.blk1,j.equip,g_log);
+        SlotVerdict(why ? SlotRefusal::plan : SlotRefusal::none);
+        return;
+    }
     if (target > 2) { SlotVerdict(SlotRefusal::other); return; }
     // The body slot for the remote's slot: itself, or the plan's stand-in (weapons4).
     const std::uint32_t body_target = (a.standin_mask & (1u << target)) ? a.standin_slot[target] : target;
@@ -1759,6 +1779,82 @@ std::uint32_t ReadAmmoDigest() noexcept {
     for (const unsigned char b : block) h = (h ^ b) * 16777619u;
     return h ? h : 1u;
 }
+// A separate exact table digest is read-only. All 46 support-stock words are
+// covered, including entries beyond the eight displayed loadout slots.
+std::uint32_t ReadSupportDigest() noexcept {
+    unsigned char bytes[46*2]{}; bool ok=false;
+    __try { const auto vars=Load<std::uintptr_t>(g_base+c::vars_slot_rva);
+        if(vars){std::memcpy(bytes,reinterpret_cast<const void*>(vars+0x614),sizeof(bytes));ok=true;}
+    } __except(ProbeFilter(GetExceptionCode())) {}
+    if(!ok)return 0;
+    std::uint32_t h=2166136261u;for(const auto b:bytes)h=(h^b)*16777619u;
+    return h?h:1;
+}
+void SupportLine(const char* kind,const pi::Injection& j,const char* why,std::uint32_t handle=0) noexcept {
+    if(!g_log || g_support_lines>=512)return;
+    ++g_support_lines;char line[256]{};
+    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+        "partner_support=%s; slot=%u; equip=%u; type=12; reason=%s; rec240=0x%x\r\n",
+        kind,unsigned(j.inv_slot),unsigned(j.equip),why,handle)))g_log(line);
+}
+bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
+    namespace sp=partner_support_policy;
+    sp::GateIn x{};x.enabled=a.native_support && !a.p218 && !PoseRequired() && static_cast<std::uint32_t>(g_hook_thread)==GetCurrentThreadId();x.latched=g_support_leak!=0;
+    x.guard_installed=partner_support_guard::Live();x.guard_armed=partner_support_guard::Armed(a.P,1);
+    x.filter_live=partner_fire_filter::ThrownPatchLive(reinterpret_cast<const void*>(g_base));
+    x.filter_armed=partner_fire_filter::ThrownArmed(1);
+    x.live=j.live;x.stale=j.stale;x.gun_valid=j.gun_valid;x.p218_window=a.p218 || PoseRequired();
+    x.slot_valid=j.slot_valid;x.slot=j.inv_slot;x.equip_valid=j.equip_valid;x.equip=j.equip;
+    x.type=12;
+    // Ready rechecks the actual type, row, handle, owner, restriction and observer lease.
+    if(x.enabled && !x.latched && x.slot_valid && x.slot==3 && x.equip_valid && x.equip>0 && x.equip<0x800) {
+        x.body_ready=partner_support_equip::Ready(g_base,a.P,a.blk1,j.equip);
+        __try {
+            x.record_ready=a.gun_rec && a.gun_prim &&
+                Load<std::uintptr_t>(a.gun_prim)==g_base+c::gun_prim_vt_rva &&
+                Load<std::uintptr_t>(a.gun_prim+c::prim_blk)==a.blk1 &&
+                Load<std::uintptr_t>(a.gun_prim+c::prim_gun_rec)==a.gun_rec &&
+                Load<std::uint16_t>(a.gun_rec+c::gun_equip)==j.equip &&
+                Load<std::uint8_t>(a.gun_rec+c::gun_slot_hand)==3 &&
+                !(Load<std::uint32_t>(a.gun_rec+c::gun_flags)&c::gun3c0_switch);
+        } __except(ProbeFilter(GetExceptionCode())) {}
+        if(!ReadSupportDigest())x.body_ready=false;
+    }
+    return sp::Admit(x);
+}
+bool SupportThrowing(const pi::Arm& a,const pi::Injection& j,std::uint32_t& handle) noexcept {
+    bool mode=false;
+    __try { if(a.gun_rec){handle=Load<std::uint32_t>(a.gun_rec+0x240);
+        mode=partner_support_policy::ThrowMode(Load<std::uint8_t>(a.gun_rec+c::gun_mode_cur));}
+    } __except(ProbeFilter(GetExceptionCode())) {}
+    return mode || (a.native_support && j.slot_valid && j.inv_slot==3 && (j.held&(partner_pad::kHold|partner_native::kPadFire)));
+}
+void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,std::uint32_t ammo_before) noexcept {
+    const auto after=ReadSupportDigest();const auto ammo_after=ReadAmmoDigest();
+    std::uint32_t handle=0;const bool active=SupportThrowing(a,j,handle);
+    if(active && !g_support_episode){g_support_episode=true;g_support_episode_stock=before;
+        SupportLine("armed",j,"throw",handle);}
+    partner_support_policy::StockLatch latch{g_support_leak!=0};
+    bool changed=partner_support_policy::CheckStock(latch,before!=0,after!=0,before,after);
+    changed=partner_support_policy::CheckStock(latch,ammo_before!=0,ammo_after!=0,ammo_before,ammo_after)||changed;
+    changed=partner_support_policy::CheckStock(latch,g_support_episode && g_support_episode_stock!=0,after!=0,
+        g_support_episode_stock,after)||changed;
+    bool released=false;
+    __try {released=a.gun_rec && Load<std::uint8_t>(a.gun_rec+c::gun_mode_cur)==37 &&
+        Load<std::uint8_t>(a.gun_rec+0x2C2)==2;} __except(ProbeFilter(GetExceptionCode())) {}
+    const bool release_edge=released && !g_support_released;g_support_released=released;
+    if(release_edge)SupportLine("armed",j,"throw_release",handle);
+    if((changed && !g_support_leak) || release_edge || (g_support_episode && !active)) {
+        if(g_log && g_support_lines<512){++g_support_lines;char line[192]{};
+            if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+                "partner_support=stock_check; slot=%u; equip=%u; type=12; reason=%s; changed=%u; before=0x%x; after=0x%x\r\n",
+                unsigned(j.inv_slot),unsigned(j.equip),changed?"stock_leak":(!before || !after)?"stock_unread":release_edge?"throw_release":"episode_end",changed?1u:0u,
+                g_support_episode_stock?g_support_episode_stock:before,after)))g_log(line);}
+    }
+    if(changed && InterlockedExchange(&g_support_leak,1)==0)SupportLine("refused",j,"stock_leak_mission_latched",handle);
+    if(!active){g_support_episode=false;g_support_episode_stock=0;}
+}
+
 // After the job: the leak verdicts and whether instance 1's reload request is set.
 void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_before) noexcept {
     const std::uint32_t shots = ReadShotCount();
@@ -2536,6 +2632,9 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         if(required){PoseRejectDiagnostic(stage,detail,&a,static_cast<std::uint32_t>(consumer),skip);InterlockedIncrement(&g_pose_suppressed);return JobWindowOutcome::suppressed;}
         return GuardedJobCall(job,go,param)?JobWindowOutcome::legacy:JobWindowOutcome::suppressed;
     };
+    if(InterlockedExchange(&g_support_reset,0)){
+        g_support_episode=false;g_support_released=false;g_support_episode_stock=0;g_support_lines=0;
+    }
     const bool have = g_ready && !g_faulted && ReadArm(a);
     const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;
     if (!armed) {
@@ -2582,14 +2681,20 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         InterlockedIncrement(&g_n_drain_refused);
         return refusal(reject::Stage::pool,"wrong_job_pool");
     }
+    // Acquire before injecting support bits. A refused/nested guard lease
+    // leaves its inputs unsupported for this very job, even with an old Arm.
+    const bool support_window=static_cast<std::uint32_t>(g_hook_thread)==GetCurrentThreadId() && partner_support_guard::Enter(a.P,1);
     pi::ConsumerView view{};
-    const pi::Injection j = NativeView(a, pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
+    pi::Injection j = NativeView(a, pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
                                                           NowMs() - g_frame_ms, a.config, &view));
+    if(!support_window && ((j.slot_valid && j.inv_slot>2) || (a.native_support && a.strip==partner_native::kPadReload)))
+        j=pi::Strip(j,0x8078u);
     InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
     const std::uint64_t t0 = NowUs();
     Save save{};native_work_timing::Token timing=native_work_timing::Begin(native_work_timing::Kind::pose_begin);
     const bool opened=BeginWindow(&a);native_work_timing::End(timing);
     if (!opened) {
+        if(support_window)partner_support_guard::Leave();
         if(required){PoseRejectDiagnostic(reject::Stage::begin,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));return JobWindowOutcome::suppressed;}
         return refusal(reject::Stage::begin,g_pose_reason);
     }
@@ -2631,6 +2736,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     partner_aim_point::Step(a.P, NowMs());
     const std::uint32_t shots_before = ReadShotCount();
     const std::uint32_t ammo_before = ReadAmmoDigest();
+    const std::uint32_t support_before = a.native_support || g_support_episode ? ReadSupportDigest() : 0;
     // Phase 1 picks its pad-sampling branch by id == P+0x218: instance 1 (id 1,
     // validated: ids[1] == 1) takes it for this job only, on this thread.
     const bool detour = partner_local_detour::Installed();
@@ -2651,6 +2757,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     }
     timing=native_work_timing::Begin(native_work_timing::Kind::native_job);
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
+    if(support_window)partner_support_guard::Leave();
     native_work_timing::End(timing);
     timing=native_work_timing::Begin(native_work_timing::Kind::pose_after);
     if (!PoseAfter()) PoseFail("pose_after_refused");
@@ -2661,6 +2768,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     ProbeRecord(a.rec1);
     LookProbe(a, j);
     AfterJob(a, shots_before, ammo_before);
+    if(a.native_support || g_support_episode)SupportCheck(a,j,support_before,ammo_before);
     timing=native_work_timing::Begin(native_work_timing::Kind::pose_post);
     SafePost(a, save, true);native_work_timing::End(timing);
     EndWindow();
@@ -2673,6 +2781,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     Max(g_us_max, static_cast<LONG>(NowUs() - t0));
     return JobWindowOutcome::windowed;
     } __finally {
+        if(support_window)partner_support_guard::Leave();
         native_work_timing::End(timing);
         if (PoseOwned()) {
             teammate_targeting::EndQuietJob();
@@ -2756,7 +2865,10 @@ void VtableCopies(std::uintptr_t out[kVtableCopies]) noexcept {
 std::uint32_t WindowSeq() noexcept { return static_cast<std::uint32_t>(g_window_seq); }
 bool InDrainJob() noexcept { return g_in_drain; }
 
+bool NativeSupportLatchedOff() noexcept {return g_support_leak!=0;}
 void ResetFault() noexcept {
+    InterlockedExchange(&g_support_leak,0);
+    InterlockedExchange(&g_support_reset,1);
     InterlockedExchange(&g_fault_phase, 0);
     InterlockedExchange(&g_fault_code, 0);
     InterlockedExchange(&g_faulted, 0);

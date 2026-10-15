@@ -1,8 +1,154 @@
-# Anim round 2, track B (native throws, places, arm): BLOCKED
+# Anim round 2: native partner throws, v1
 
-Branch `wp/anim-throws` (base `ea0ea33`). Status: **blocked, nothing to merge, do not schedule its hidden test**
-(`partner-support-native.txt` does not exist and the `partner_native_support` key was not added).
-Static analysis of `mgsvtpp.exe` 1.0.15.4 only; all addresses are RVAs. No code changed in this round.
+Branch `wp/anim-throws`, based on `766746a5e950e69ad3afd9da945e3e273cd77be3`.
+Status (2026-10-15): **implemented, default off; ReleaseGun build and all 253 CTest
+checks passed; no hidden-gameplay run, no release package or installation**. Earlier blocked attempts below
+are historical; the user subsequently requested this bounded type-12 implementation.
+
+## v1 design and admission
+
+Only thrown support equipment (EQP type 12, slot 3) may receive native HOLD/FIRE.
+Placed equipment (type 13), items and slot 6 remain unsupported. RELOAD, ACTION
+(0x20) and CQC (0x8000) never pass through support admission. The original native
+modes 28..42 perform the body animation; this implementation does not substitute
+motions or generate a second real grenade.
+
+- `partner_native_support=0|1` is the only new setting, default **0** in every
+  profile. Its independent parser helper avoids the main MSVC nesting limit.
+  Admission additionally requires lab mode, redirected copied saves, the ordinary
+  native gun/body admission, current owner/lifetime and a fresh v4 Equip plus v5
+  current slot/gun group. Friend/play mode does not admit it.
+- `partner_support_guard` installs once. The seven-byte load at `0x108C8E5`
+  becomes a short jump through the verified eight-byte int3 padding beginning
+  **0x108C888**, then a near stub. Correct displacement is **EB A1**, not EB 9F.
+  The stub repeats `mov eax,[r9+0x204]`, then takes `0x108C8FC` only for id 1,
+  the armed P, the TEB thread of the current native drain, support class 2/3 and
+  the armed key. Every other call resumes at `0x108C8EC`. The remote branch sets
+  counts to 0xFFFF and rec+0x3C0 bit 29, excluding mode 37's stock writes.
+  One locked dword publishes the redirect within a cache line. Byte mismatch,
+  fingerprint mismatch, allocation/protection/exchange failures refuse it.
+- The thrown-service owner filter swaps both vt+8 slots before `0x15E0230`
+  can execute. Full u16 owner +0x32 equal to armed player 1 returns 0. This drops
+  both real requests and preview requests (+0x3E bit 0), before the copy into
+  the shared service+0x100 record. Owner 0, soldiers and every other owner forward
+  unchanged. Installed filters persist to cover already queued requests.
+- `ObserveEquipmentTick` calls ChangeEquip `0x11AC2E0` only on its existing
+  runtime owner. It verifies P+0x214 != 1, P+0x218 != 1, Y+0x30 != 1,
+  P+0x70[1] == 1, a live pool/block, zero restriction predicate, equip < 0x800
+  of type 12, a bounded sub-index and flags bit 2 set/bit 4 clear. It verifies
+  all existing `equipment_stock_writer::PinsIntact` SHA-256 bodies before a call,
+  rereads its lease, then verifies the returned row/handle and unchanged local
+  row, handles, metadata and inventory vars. Uncertain outcomes latch the writer.
+  The drain's extended SlotFollow uses native SetCurrentSlot for support with
+  the same checks; the old data-only gun path is never used for slot 3.
+- Admission rechecks the current row/handle, gun record/equip, guard/filter and
+  stock latch for every native consumer. A refused guard Enter strips support
+  inputs for that very job. Stale frames or absent valid gun groups refuse.
+  Support fire has its own current admission and does not depend on a previously
+  observed class-1 gun. While support is enabled, the older unsupported-equipment
+  diagnostic cannot weaken placed-item or arm refusals.
+  The private required whole-player pose window implicitly sets P+0x218=1;
+  **support refuses that mode**, as well as the explicit diagnostic p218 setting.
+- Before/after body-1 jobs, read-only digests cover the support-count table
+  vars+0x614 (46 u16s) and existing vars+0x548..0x670 inventory block. An episode
+  baseline also covers the entire aim/throw episode. A changed digest latches
+  support off until the next mission reset. This deliberately conservative
+  backstop can also disable support if the viewer legitimately spends support
+  stock while the remote is aiming; simultaneous local support use needs its
+  own future attribution test. Unread stock cannot admit a new support input.
+  `rec+0x240` is logged at episode entry and the observed native release edge.
+
+## Patch bytes and contract pins
+
+Inspected executable (read only): `D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe`,
+version 1.0.15.4, SHA-256
+`085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
+The generator currently verifies **589 code sites and 122 vtable slots**, including
+all previous reference/containment assertions.
+
+| RVA | Original bytes | Enabled in-memory bytes |
+|---|---|---|
+| 0x108C888 (padding) | CC CC CC CC CC CC CC CC | E9 d0 d1 d2 d3 CC CC CC; signed rel32 d = stub - (base+0x108C88D) |
+| 0x108C8E5 (7-byte load) | 41 8B 81 04 02 00 00 | EB A1 CC CC 02 00 00; only the first dword changes atomically |
+| 0x2429AD8 (live thrown vt+8) | 30 02 5E 41 01 00 00 00 | little-endian u64 address of SlotHook<2> |
+| 0x24299A8 (base thrown vt+8) | 30 02 5E 41 01 00 00 00 | little-endian u64 address of SlotHook<2> |
+
+Stub/ASLR addresses are process-specific; literal displacement and hook-pointer
+bytes cannot be reported without an admitted runtime. No patch was applied to the
+installed game or its on-disk EXE. The padding patch is prepared before the locked
+load-site publication; neither patch is removed during process lifetime.
+
+New pins cover the stock function/padding/load/continuations and its remote return,
+thrown preview copy/null return, rec+0x240 callback sites, ChangeEquip/restriction,
+SetCurrentSlot and every audited equip callee. The existing full-body SHA pins
+remain authoritative for calls (see `equipment_stock_writer_pins.hpp`).
+
+## Hidden scenario and expected receipts
+
+`tools/worker/scenarios/partner-support-native.txt` enables support and fire census,
+sets both local debug god modes, places the prone guest 7 m behind/2 m beside the
+host, and captures aim/throw bursts for grenade 354 and magazine 349. It reads each
+copy's support counts before and after each throw and returns the host to a gun.
+The guest's counts must remain unchanged; the host spends only its own throws.
+
+Coordinator only, under the shared `mgs-coop-verify.lock`, with no other worker:
+
+```powershell
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-native.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+```
+
+A run needs separate permission to make the worker's transient owned installation
+changes: this handoff explicitly prohibited writes under `D:\Games` and installation.
+No visible launch, Computer Use or real-save access is authorized.
+
+Expected (independently capped families):
+
+```text
+partner_support=guard; slot=3; equip=0; type=12; reason=installed
+partner_support=equip|follow|armed|refused|filtered; slot=3; equip=354|349; type=12; reason=...
+partner_support=armed; ...; reason=throw_release; rec240=0x...
+partner_support=stock_check; ...; changed=0
+partner_support=refused; ...; reason=stock_leak_mission_latched
+partner_fire_filter=summary; kind=thrown; ...; dropped=...; preview_dropped=...
+partner_support=guard; ...; hits=...; refused=...; windows=...
+```
+
+## Verification and open items
+
+Pure fixtures cover guard id/class/P/thread/window/key, full-owner matching with
+preview and soldier/local owners, equip refusal preconditions, slot/type gate matrix,
+freshness, support pad mask and the stock latch. A synthetic executable fixture runs
+our generated stock stub on local test buffers, including another real OS thread;
+it does not run retail game code. A synthetic vtable fixture proves partner previews
+never reach the fake shared-record writer while other owners retain their return.
+Final verification: `pwsh -NoProfile -File tools/build.ps1 -Configuration Release
+-ReleaseGun -BuildDirectory build/native` passed: **253/253 CTest tests**, 334.86 s.
+The friend-package fixture passed 1207 checks (no final lock flake). New fixtures:
+765 support policy checks, 43 synthetic stock-stub checks, 39 equipment-precondition
+checks and 21 thrown-filter/preview checks. The integrated driver suite passed
+7603 checks, configuration 782 and debug Lua 18886. A driver regression covers
+support without the historical gun-class latch, lost safety admission, the legacy
+diagnostic, key off, placed equipment, arms and returning to an ordinary gun.
+
+`python tools/generate_partner_contract.py --check` passed for all 589 sites and
+122 slots. Preserved local outputs (ignored build artifacts):
+`build/native/support-v1-20261015-final-build.log`,
+`build/native/support-v1-20261015-LastTest.log`, and
+`build/native/support-v1-20261015-contract.log`.
+Built loader SHA-256:
+`2571072e250f491d5f265640ffd77f992e5a6bf4b6ad3ebf00e727206b74b82b`.
+This loader was not installed. These checks are source, policy and synthetic
+execution evidence; they are not retail gameplay or two-PC acceptance.
+
+Still unproved: native throw animation/item visibility, guest burst frames,
+viewer arc-preview continuity/counts, rec+0x240 handle behavior, grenade-to-magazine
+and return-to-gun visuals, both roles, and two-PC gameplay. Unwindowed or refused
+block-1 jobs do not receive the stock guard; persistent owner filtering and the
+stock latch are backstops, not a proof that such jobs cannot spend stock. Existing
+four unopened helpers and the per-item vt+0x160 call remain the audit's bounded
+unknowns. Placed types, arms, full campaign and progression remain outside v1.
+
+## Historical blocked attempts
 
 ## Why it is blocked
 
