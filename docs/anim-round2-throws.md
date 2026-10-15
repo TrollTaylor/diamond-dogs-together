@@ -134,3 +134,37 @@ scenario or build changed. Static results from before the stop (not yet pinned):
   `0x1339CF0` through `0x10951A0`. **All of slot 6 stays Gate::unsupported** (the camera part is the camera agent's area).
 - **Still unchecked (the blocked step):** shared plugin fields / camera writes in modes 28..47 for instance 1, the slot-3
   equip callees above, and modes 54..56.
+
+## REA/Ghidra audit (2026-10-15, user-suggested route): the scope that is safe to build
+
+At the user's suggestion the remaining static analysis was done with the REA CLI over Ghidra 12.1.3 (read-only,
+per-function decompilation; no custom scanners). Full notes: `docs/evidence/rea-throws-2026-10-15/{throw,place,equip}-audit.md`.
+No safety classifier stopped these runs.
+
+- **Throw family (modes 28..42; table initializer `0x1420252F0`: 28/29 = `0x1089190` hold hub, 30/31 = `0x1087FC0`,
+  32 = `0x1088A20` draw/holster, 33/34 = `0x108A680`, 35/36 = `0x10896B0`, 37 = `0x1087210`, 38 = `0x1068C00`,
+  39 = `0x1088530`, 40 = `0x108A130`, 41/42 = `0x1089BA0`).** Under the guard (rec+0x3C0 bit 29) mode 37 op 10 skips
+  every stock/ctl/message write. No opened throw code writes the camera P+0xB8, plugin fields, globals or the HUD; all
+  other stores go to rec, stack requests or id-indexed slots. Body 1's throw aim *reads* the viewer's camera offline
+  (`0x1042F80`, `0x1093620`): a direction coupling, not a write.
+- **The preview slot.** `0x1061D90` posts an arc-preview request (+0x3E bit 0, owner +0x32 = id) every op-10 tick for
+  any id offline; `0x15E0230` copies previews into ONE shared record at thrown-service+0x100 (`0x15E023A..0x15E0257`).
+  **The owner filter must run at the `0x15E0230` entry**, before the preview branch, so body 1 neither creates a real
+  object nor overwrites the viewer's preview.
+- **Unresolved, to be watched at runtime:** `[plugin+0x60] vt+0x160(rec+0x240, flag)` at `0x1087C05`, `0x10880D3`,
+  `0x108AA91` (likely a per-item "pin pulled" toggle keyed by body 1's own equipment handle in rec+0x240), and
+  `G vt+8` on message `0xB6F952A5` in modes 28/32/43/45. Four helpers have no Ghidra function
+  (`0x105F8A0`, `0x103AE60`, `0x103A460`, `0x108FAD0`).
+- **Place family (43..47).** Placing and detonating are local-only for id 1 (confirmed), but mode 46 op 1 writes the
+  shared `plugin+0x350` bit 3 and `plugin+0x3E8` for any id offline (`0x107BD64..0x107BD8B`). **Placed types (13) stay
+  Gate::unsupported.**
+- **Arms (slot 6).** Mode 53 writes shared plugin and camera state. **Slot 6 stays Gate::unsupported.**
+- **Equip (slot 3, type 12/13).** ChangeEquip `0x11AC2E0` for id 1 writes only instance 1's row, its inventory
+  entries `Y+0x40/0x50[1*7+3]` and one entry of the shared non-gun handle ring; vars, the shared stock, HUD and
+  instance 0 are untouched provided P+0x214 != 1, **P+0x218 != 1** (the lower writer `0x1209EC0` tests P+0x218, so the
+  lab p218 window must stay off), Y+0x30 != 1, P+0x70[1] == 1, P+0x78[1] != 0xFF, the restriction predicate
+  `0x1156640` is 0, flag bit 2 set and bit 4 clear. The model binder `0xB0C720` does nothing for slots 3/6.
+
+**Build scope (v1):** thrown support weapons only (type 12: grenades, smoke, stun, sleep gas, magazines): stock guard
++ thrown owner filter at the entry + slot-3 type-12 equip/follow + gate; placed types and arms keep Round 1's
+`Gate::unsupported`.
