@@ -747,6 +747,31 @@ int main() {
         const auto weapons4Bad=Lab("enabled=1\nrole=host\npartner_native_equip_shared=all\npartner_native_standin=yes\n"
                                   "partner_native_equip_measured=all\npartner_native_ride=on\n");
         Check(weapons4Bad.invalid_values==4,"invalid weapons4 and ride values refuse");
+        // Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported gate, the auto-fire stop
+        // and the state aim intent follow the gun profile; the reload rate and the census stay as named.
+        Check(gunProfile.partner_native_unsupported && gunProfile.partner_native_dry_stop &&
+                  gunProfile.partner_native_aim_intent == mgscoop::PartnerNativeAimIntent::state &&
+                  gunProfile.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::off && !gunProfile.partner_fire_census,
+              "anim weapons: gun profile defaults unsupported/dry on, aim intent state, rate off, census off");
+        Check(!def.partner_native_unsupported && !def.partner_native_dry_stop &&
+                  def.partner_native_aim_intent == mgscoop::PartnerNativeAimIntent::pad &&
+                  def.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::off && !def.partner_fire_census,
+              "anim weapons: off outside the gun profile");
+        const auto animNamed = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\npartner_native_unsupported=0\n"
+                                   "partner_native_dry_stop=0\npartner_native_aim_intent=pad\npartner_native_reload_rate=adapt\npartner_fire_census=1\n");
+        Check(animNamed.invalid_values == 0 && !animNamed.partner_native_unsupported && !animNamed.partner_native_dry_stop &&
+                  animNamed.partner_native_aim_intent == mgscoop::PartnerNativeAimIntent::pad &&
+                  animNamed.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::adapt && animNamed.partner_fire_census,
+              "anim weapons: named keys are preserved over the gun profile");
+        const auto animLoco = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=0\npartner_native_aim_intent=state\n");
+        Check(animLoco.partner_native_aim_intent == mgscoop::PartnerNativeAimIntent::state && !animLoco.partner_native_unsupported,
+              "anim weapons: a named aim intent outside the gun profile");
+        const auto animBad = Lab("enabled=1\nrole=host\npartner_native_unsupported=2\npartner_native_dry_stop=maybe\n"
+                                 "partner_native_aim_intent=on\npartner_native_reload_rate=fast\npartner_fire_census=2\n");
+        Check(animBad.invalid_values == 5 && animBad.unknown_keys == 0, "anim weapons: invalid values refuse (known keys)");
+        Check(std::strcmp(mgscoop::PartnerNativeAimIntentName(mgscoop::PartnerNativeAimIntent::state), "state") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeReloadRateName(mgscoop::PartnerNativeReloadRate::adapt), "adapt") == 0,
+              "anim weapons: names");
         // A visibility default follows actual native driving, not just a gun
         // toggle. The parser's final resolver preserves explicit keys in any order.
         Check(def.partner_native_ride == PartnerNativeRide::off && !def.partner_native_ride_given,
@@ -826,6 +851,9 @@ int main() {
               "play refuses a lone defer key too");
         const auto playLegacy = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_drive=legacy\npartner_native_gun=1\n");
         Check(playLegacy.play_refused == 0 && playLegacy.invalid_values == 0, "play keeps an explicit legacy drive");
+        const auto playCensus = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_fire_census=1\npartner_native_reload_rate=adapt\n");
+        Check(!playCensus.partner_fire_census && playCensus.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::adapt,
+              "play: the fire census is lab only; the reload rate key is kept");
         Check(kPlayRefusedNativeDrive == 0x20000 && kPlayRefusedNativeDrive == (kPlayRefusedDebugSoldierWarp << 1), "native refusal bit");
         // Every play refusal is its own bit (no two refusals share one).
         const std::uint32_t play_refusal_bits[] = {kPlayRefusedLoopback, kPlayRefusedSelfSteamId, kPlayRefusedPeerSteamId, kPlayRefusedSelfName,

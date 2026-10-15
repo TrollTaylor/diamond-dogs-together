@@ -110,6 +110,26 @@ do
             if not ok then return false, "pickup_constructor_error;vector_type=" .. type(Vector3) end
             if call(TppPickable, "DropItem", item) == false then return false, "pickup_refused" end
             return true, "submitted_pickup;number=" .. a[3] .. ";spawn_count_unverified"
+        elseif cmd == "support" and #a == 1 then
+            -- Read-only: the support weapon ids (vars.supportWeapons[0..7]).
+            local ids = {}
+            for i = 0, 7 do
+                local v = get(get(vars, "supportWeapons"), i)
+                ids[i + 1] = integer(v, 0, 65535) and fmt("%.0f", v) or "na"
+            end
+            return true, "support;ids=" .. table.concat(ids, ",") .. ";active=" .. active()
+        elseif cmd == "slot" and #a == 3 then
+            -- The retail slot selection (Player.SetCurrentSlot, the local player's
+            -- equip controller vt+0x10) for the fire census: support/item/hand too.
+            local key = ({hip = "PRIMARY_1", back = "PRIMARY_2", secondary = "SECONDARY", support = "SUPPORT", item = "ITEM",
+                hand = "HAND"})[a[2]]
+            local sub = number(a[3], 0, 7, true)
+            local native = key and get(PlayerSlotType, key)
+            if not key or not sub then return false, "slot_args" end
+            if not integer(native, 0, 15) then return false, "slot_type_unavailable" end
+            if type(get(Player, "SetCurrentSlot")) ~= "function" then return false, "missing_SetCurrentSlot" end
+            if call(Player, "SetCurrentSlot", {slotType = native, subIndex = sub}) == false then return false, "slot_refused" end
+            return true, fmt("submitted_slot;slot=%s;native=%.0f;sub=%.0f;active=%s", a[2], native, sub, active())
         end
         return false, "command_args"
     end

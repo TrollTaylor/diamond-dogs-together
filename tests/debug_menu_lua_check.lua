@@ -40,7 +40,9 @@ local function fixture(options)
         check((slot == 5 or slot == 7 or slot == 9) and sub == 0, 'native slot enum, not vars slot index')
         return c.stock, c.stockSub
     end}
-    env.PlayerSlotType = {PRIMARY_1 = 5, PRIMARY_2 = 7, SECONDARY = 9}
+    env.PlayerSlotType = {PRIMARY_1 = 5, PRIMARY_2 = 7, SECONDARY = 9, SUPPORT = 11, ITEM = 12, HAND = 14}
+    env.Player.SetCurrentSlot = function(a) record('slot', a); if c.slotRefuse then return false end; env.vars.currentInventorySlot = a.slotType end
+    env.vars.supportWeapons = {[0] = 354, [1] = 391, [2] = 0}
     env.DemoDaemon = {IsDemoPlaying = function() return c.demo or false end}
     env.TppMission = {CheckMissionState = function() return not c.loading end, IsMissionStart = function() return not c.ended end}
     env.Tpp = {IsHelicopter = function(v) return c.heli or false end}
@@ -203,6 +205,18 @@ for _, pair in ipairs({{'hip', 301}, {'back', 8}, {'secondary', 101}}) do
     check(c.calls[#c.calls][2].equipId == pair[2] and c.calls[#c.calls][2].number == 2, 'pickup resolves actual ' .. pair[1] .. ' slot')
 end
 check(c:send('weapon secondary EQP_WP_10004')[3] == 'weapon_not_resident', 'new nonresident weapon cannot bypass loading')
+-- Anim round 1 (fire census stimulus): the support ids (read-only) and the retail slot selection.
+local supportCalls = #c.calls
+check(c:send('support')[3] == 'support;ids=354,391,0,na,na,na,na,na;active=1' and #c.calls == supportCalls, 'support ids read-only')
+check(c:send('slot support 1')[3] == 'submitted_slot;slot=support;native=11;sub=1;active=11', 'slot selection submits the retail API')
+local sl = c.calls[#c.calls]
+check(sl[1] == 'slot' and sl[2].slotType == 11 and sl[2].subIndex == 1, 'SetCurrentSlot schema: slotType by name, subIndex')
+check(c:send('slot hand 0')[2] == 1 and c.calls[#c.calls][2].slotType == 14, 'hand slot by name')
+check(c:send('slot support 8')[3] == 'slot_args' and c:send('slot grenade 0')[3] == 'slot_args', 'slot refusals')
+c.slotRefuse = true
+check(c:send('slot back 0')[3] == 'slot_refused', 'a refused selection is reported')
+c.slotRefuse = nil
+check(c:send('slot hip 0')[2] == 1, 'back to the hip slot')
 check(c:send('time 86399')[2] == 1 and c.env.vars.clock == 86399, 'clock boundary')
 check(c:send('weather rainy')[2] == 1 and c:count('weather') == 1, 'weather submits exact API')
 check(c:send('weather auto')[2] == 1 and c:count('weather_auto') == 1, 'weather cancel')

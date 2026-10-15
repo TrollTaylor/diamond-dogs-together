@@ -180,7 +180,7 @@ do
    if call(Player, "SetInfiniteAmmoFromScript", n == 1) == false then return false, "ammo_refused" end
    D.infinite = n == 1
    return true, "infinite_ammo_" .. a[2]
-  elseif cmd == "inventory" or cmd == "weapon" or cmd == "drop_item" then
+  elseif cmd == "inventory" or cmd == "weapon" or cmd == "drop_item" or cmd == "support" or cmd == "slot" then
    if not D.equipment then return false, "equipment_unavailable" end
    return D.equipment.run(a, id)
   elseif cmd == "time" and #a == 2 then

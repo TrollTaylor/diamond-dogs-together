@@ -313,6 +313,14 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_equip_measured'; Json = 'native_equip_measured'; Kind = 'bool' },
     @{ Key = 'partner_native_standin'; Json = 'native_standin'; Kind = 'enum'; Values = @('off', 'on') },
     @{ Key = 'partner_native_ride'; Json = 'native_ride'; Kind = 'enum'; Values = @('off', 'hide') },
+    # Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported-equipment gate and the auto-fire stop
+    # (on with the gun profile), the aim intent (state with the gun profile), the reload rate (off unless set)
+    # and the read-only fire/projectile census (lab only, default 0).
+    @{ Key = 'partner_native_unsupported'; Json = 'native_unsupported'; Kind = 'bool' },
+    @{ Key = 'partner_native_dry_stop'; Json = 'native_dry_stop'; Kind = 'bool' },
+    @{ Key = 'partner_native_aim_intent'; Json = 'native_aim_intent'; Kind = 'enum'; Values = @('pad', 'state') },
+    @{ Key = 'partner_native_reload_rate'; Json = 'native_reload_rate'; Kind = 'enum'; Values = @('off', 'adapt') },
+    @{ Key = 'partner_fire_census'; Json = 'fire_census'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.
