@@ -173,6 +173,29 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
     return ParseLabConfig(text, length, out, LabParseOptions{});
 }
 
+namespace {
+// Anim round 1 weapons (docs/anim-round1-weapons.md): true when key is one of
+// them (ok: the value parsed).
+bool ParseAnimWeaponsKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_native_unsupported")) {
+        ok = ParseBool(value, result.partner_native_unsupported);
+        if (ok) result.partner_native_unsupported_given = true;
+    } else if (Equals(key, "partner_native_dry_stop")) {
+        ok = ParseBool(value, result.partner_native_dry_stop);
+        if (ok) result.partner_native_dry_stop_given = true;
+    } else if (Equals(key, "partner_native_aim_intent")) {
+        ok = ParsePartnerNativeAimIntent(value.data, value.size, result.partner_native_aim_intent);
+        if (ok) result.partner_native_aim_intent_given = true;
+    } else if (Equals(key, "partner_native_reload_rate")) {
+        ok = ParsePartnerNativeReloadRate(value.data, value.size, result.partner_native_reload_rate);
+    } else if (Equals(key, "partner_fire_census")) {
+        ok = ParseBool(value, result.partner_fire_census);
+    } else {
+        return false;
+    }
+    return true;
+}
+} // namespace
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const LabParseOptions& options) noexcept {
     LabConfig result{};
     bool enabled = false;
@@ -191,6 +214,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
+        // Anim round 1 weapons keys (outside the chain below: MSVC's block nesting limit).
+        if (ParseAnimWeaponsKey(key, value, result, ok)) {
+            if (!ok) ++result.invalid_values;
+            return;
+        }
         if (Equals(key, "enabled")) ok = ParseBool(value, enabled);
         else if (Equals(key, "role")) {
             if (Equals(value, "host")) result.role = LabRole::host;
@@ -1259,6 +1287,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.partner_native_equip_shared_given)
         c.partner_native_equip_shared = gun ? PartnerNativeEquipShared::on : PartnerNativeEquipShared::off;
     if (!c.partner_native_standin_given) c.partner_native_standin = gun ? PartnerNativeStandin::on : PartnerNativeStandin::off;
+    // Anim round 1: the unsupported gate, the auto-fire stop and the state-driven
+    // aim intent follow the gun profile; the reload rate and the census stay as named.
+    if (!c.partner_native_unsupported_given) c.partner_native_unsupported = gun;
+    if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
+    if (!c.partner_native_aim_intent_given)
+        c.partner_native_aim_intent = gun ? PartnerNativeAimIntent::state : PartnerNativeAimIntent::pad;
     // Only a driven native stage gets the default. Census/off never owns the
     // body; explicit off/hide remains authoritative in either lab or play.
     if (!c.partner_native_ride_given)
@@ -1267,6 +1301,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (c.mode == LabMode::play) {
         if (c.partner_native_equip_shared == PartnerNativeEquipShared::prefer) c.partner_native_equip_shared = PartnerNativeEquipShared::on;
         c.partner_native_equip_measured = false;
+        // The fire census is a lab measurement (it swaps a forwarding census slot).
+        c.partner_fire_census = false;
     }
 }
 
@@ -1297,6 +1333,32 @@ bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNative
     const Slice s{text, size};
     if (Equals(s, "off")) out = PartnerNativeStandin::off;
     else if (Equals(s, "on")) out = PartnerNativeStandin::on;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeAimIntentName(PartnerNativeAimIntent value) noexcept {
+    return value == PartnerNativeAimIntent::state ? "state" : "pad";
+}
+
+bool ParsePartnerNativeAimIntent(const char* text, std::size_t size, PartnerNativeAimIntent& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "pad")) out = PartnerNativeAimIntent::pad;
+    else if (Equals(s, "state")) out = PartnerNativeAimIntent::state;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept {
+    return value == PartnerNativeReloadRate::adapt ? "adapt" : "off";
+}
+
+bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNativeReloadRate& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeReloadRate::off;
+    else if (Equals(s, "adapt")) out = PartnerNativeReloadRate::adapt;
     else return false;
     return true;
 }

@@ -48,6 +48,8 @@
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_reload.hpp"
+#include "mgscoop/partner_slots.hpp"
+#include "mgscoop/partner_pad_bits.hpp"
 #include "partner_player_contract.hpp"
 #include <MinHook.h>
 #include <intrin.h>
@@ -241,6 +243,16 @@ volatile LONG g_n_neutral = 0, g_n_strip = 0, g_n_strip_bits = 0, g_n_drain_disa
 // reconciles and rec+0x3E8 writes (atomics for the driver); hook thread only:
 // the pending reconcile and last accepted slot live in g_mag_history.
 volatile LONG g_m_reload_seen = 0, g_m_frozen = 0, g_m_reconciles = 0, g_m_3e8 = 0;
+// Anim round 1 (docs/anim-round1-weapons.md): rec+0x3E8 rewrites for a slot
+// change / a base above the capacity; the aim intent's main windows by source;
+// the reload rate write (hook thread only: g_rt_on/g_rt_native/g_rt_target, the
+// reload the factor applies to and its rates).
+volatile LONG g_m_3e8_slot = 0, g_m_3e8_cap = 0;
+volatile LONG g_ai_flag = 0, g_ai_act = 0, g_ai_pad = 0, g_ai_last = 0;
+volatile LONG g_rt_reloads = 0, g_rt_writes = 0, g_rt_refused = 0, g_rt_last = 0, g_rt_faulted = 0;
+volatile LONG g_rt_native_milli = 0, g_rt_written_milli = 0;
+bool g_rt_on = false;
+float g_rt_native = 0.0f, g_rt_target = 0.0f;
 // The post-phase-1 probe (R1).
 volatile LONG g_p1_b20 = 0, g_p1_b24 = 0, g_p1_shots = 0, g_p1_modes = 0, g_p1_mode = 0;
 // The slot follower (W4): statistics (atomics) and the episode it acts in
@@ -999,7 +1011,28 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     }
     g_last_compose_ms = now_ms;
     const std::uint32_t overlay_bits = pi::StepOverlay(g_tap, a.tap_seq, a.tap_bits, a.press_bits, a.press_until_ms, now_ms);
-    const pi::Injection j = pi::Compose(a.config, s, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge, a.native ? a.steer_rad : 0.0,
+    // Anim round 1: the state-driven aim intent. A live sample whose remote aims
+    // (v5 Aiming, or the driver's aim act) without its own HOLD gets HOLD in its
+    // held word, so Compose derives the edges, the level and the PP+0x27C latch
+    // exactly as for a held RMB; it drops in the first window after the flag and
+    // the act cleared (g_prev keeps the received sample unchanged).
+    pi::Sample sc = s;
+    if (a.native && a.config.mode == PartnerInput::net) {
+        partner_slots::AimFrameIn fi{};
+        fi.gate_ok = a.aim_intent;
+        fi.live = s.valid && s.age_ms <= a.config.stale_ms;
+        fi.pad_hold = (s.packet.held & partner_pad::kHold) != 0;
+        fi.v5_valid = s.packet.version >= 5 && (s.packet.gun_flags & pi::GunFlag::Valid) != 0;
+        fi.v5_aiming = (s.packet.gun_flags & pi::GunFlag::Aiming) != 0;
+        fi.act_aim = a.aim_act_until_ms && now_ms < a.aim_act_until_ms;
+        const partner_slots::AimSource src = partner_slots::AimFrame(fi);
+        if (partner_slots::AimAdds(src)) sc.packet.held |= partner_pad::kHold;
+        if (src == partner_slots::AimSource::flag) InterlockedIncrement(&g_ai_flag);
+        else if (src == partner_slots::AimSource::act) InterlockedIncrement(&g_ai_act);
+        else if (src == partner_slots::AimSource::pad) InterlockedIncrement(&g_ai_pad);
+        InterlockedExchange(&g_ai_last, static_cast<LONG>(src));
+    }
+    const pi::Injection j = pi::Compose(a.config, sc, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge, a.native ? a.steer_rad : 0.0,
                                         a.native && a.mag_scale > 0.0 ? a.mag_scale : 1.0);
     if (j.hist_reset) g_hist = pi::HoldHistory{};
     if (!j.hist_freeze) pi::HoldPush(g_hist, j.held);
@@ -1461,10 +1494,15 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
                     }
                     // R4: the reconcile also sets the completion's base (0x1054AC1 /
                     // 0x107833C: rec+0x3E8, the non-local magazine shadow), so a
-                    // later completion starts from the mirrored magazine.
-                    if (reconcile && Load<std::uint16_t>(a.gun_rec + c::gun_m3e8) != target) {
+                    // later completion starts from the mirrored magazine. Anim
+                    // round 1: so does a slot change and a base above the capacity
+                    // of the weapon in hand (partner_native::ShadowRewrite).
+                    const std::uint16_t shadow = Load<std::uint16_t>(a.gun_rec + c::gun_m3e8);
+                    if (partner_native::ShadowRewrite(reconcile, attempt.slot_changed, shadow, cap) && shadow != target) {
                         Store<std::uint16_t>(a.gun_rec + c::gun_m3e8, static_cast<std::uint16_t>(target));
                         InterlockedIncrement(&g_m_3e8);
+                        if (attempt.slot_changed) InterlockedIncrement(&g_m_3e8_slot);
+                        else if (!reconcile) InterlockedIncrement(&g_m_3e8_cap);
                         wrote = true;
                     }
                 }
@@ -1619,6 +1657,78 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
     }
     if (wrote) InterlockedIncrement(&g_sl_writes);
     SlotVerdict(why);
+}
+// --- Anim round 1: the reload rate (partner_native_reload_rate=adapt) ------------
+// Drain window, before block 1's job, on the thread of its gun update. While
+// instance 1's gun record is in a reload mode (11/12) its rec+0x310 (the rate
+// the reload enter stored from the per-id provider, 0x10778F0/0x1077922;
+// contract-pinned: the only writers inside the reload handler are the enter and
+// the exit's 1.0 at 0x10790D9) becomes partner_reload::RateTarget(native, k):
+// the first look at a reload records the native rate; a value that is neither
+// the native nor the last write is a new enter (a queued reload). The motion
+// segments the per-frame op 0 requests afterwards (0x107A550 -> 0x1059620,
+// motion vt+0x1C8) play at it; the enter's first segment keeps the native rate
+// (the driver's k learns from the measured lengths). Never outside 11/12 (the
+// exit resets the field), never with another prim chain, a non-gun class or an
+// out-of-range native rate; a fault turns it off until MissionStart.
+static_assert(c::gun_rate == 0x310, "the reload rate field");
+int RateWriteFilter(DWORD code) noexcept {
+    if (!IsAccessFault(code)) return EXCEPTION_CONTINUE_SEARCH;
+    if (InterlockedExchange(&g_rt_faulted, 1) == 0 && g_log) {
+        char line[128]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_input=fault; phase=rate; code=0x%08x; reload_rate=disabled\r\n", code)))
+            g_log(line);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+void RateRefused(RateRefusal why) noexcept {
+    InterlockedIncrement(&g_rt_refused);
+    InterlockedExchange(&g_rt_last, static_cast<LONG>(why));
+}
+void MirrorRate(const pi::Arm& a) noexcept {
+    if (!(a.reload_rate_k > 0.0f) || !a.gun_prim || !a.gun_rec || g_rt_faulted) {
+        g_rt_on = false;
+        InterlockedExchange(&g_rt_last, static_cast<LONG>(g_rt_faulted ? RateRefusal::fault : RateRefusal::off));
+        return;
+    }
+    __try {
+        if (Load<std::uintptr_t>(a.gun_prim) != g_base + c::gun_prim_vt_rva || Load<std::uintptr_t>(a.gun_prim + c::prim_blk) != a.blk1 ||
+            Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) != a.gun_rec) {
+            g_rt_on = false;
+            RateRefused(RateRefusal::prim);
+            return;
+        }
+        if (!partner_reload::ReloadMode(Load<std::uint8_t>(a.gun_rec + c::gun_mode_cur))) { g_rt_on = false; return; }
+        if (partner_native::GunClass(Load<std::uint32_t>(a.gun_rec + c::gun_flags27c)) != c::gun_class_gun) {
+            g_rt_on = false;
+            RateRefused(RateRefusal::cls);
+            return;
+        }
+        const float cur = Load<float>(a.gun_rec + c::gun_rate);
+        if (!g_rt_on || (cur != g_rt_target && cur != g_rt_native)) {
+            // A new reload: the enter's native rate.
+            if (!partner_reload::RateNativeOk(cur)) {
+                g_rt_on = false;
+                RateRefused(RateRefusal::native);
+                return;
+            }
+            g_rt_native = cur;
+            g_rt_on = true;
+            InterlockedIncrement(&g_rt_reloads);
+            InterlockedExchange(&g_rt_native_milli, static_cast<LONG>(cur * 1000.0f));
+        }
+        const float target = partner_reload::RateTarget(g_rt_native, a.reload_rate_k);
+        g_rt_target = target;
+        if (cur != target) {
+            Store<float>(a.gun_rec + c::gun_rate, target);
+            InterlockedIncrement(&g_rt_writes);
+            InterlockedExchange(&g_rt_written_milli, static_cast<LONG>(target * 1000.0f));
+        }
+        InterlockedExchange(&g_rt_last, static_cast<LONG>(RateRefusal::none));
+    } __except (RateWriteFilter(GetExceptionCode())) {
+        g_rt_on = false;
+        InterlockedExchange(&g_rt_last, static_cast<LONG>(RateRefusal::fault));
+    }
 }
 // vars.playerShootCountInMission (read-only leak evidence; 0xFFFFFFFF unread).
 std::uint32_t ReadShotCount() noexcept {
@@ -1986,6 +2096,17 @@ const char* MagRefusalName(MagRefusal refusal) noexcept {
     case MagRefusal::store: return "store";
     case MagRefusal::reload: return "reload";
     default: return "none";
+    }
+}
+
+const char* RateRefusalName(RateRefusal refusal) noexcept {
+    switch (refusal) {
+    case RateRefusal::none: return "none";
+    case RateRefusal::prim: return "prim";
+    case RateRefusal::cls: return "cls";
+    case RateRefusal::native: return "native";
+    case RateRefusal::fault: return "fault";
+    default: return "off";
     }
 }
 
@@ -2503,6 +2624,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     // Native weapons: the magazine mirror on this thread, before the gun
     // update reads it, and the viewer's shoot count around the job.
     MirrorMag(a, j);
+    MirrorRate(a);
     SlotFollow(a, j);
     // Aim parity: instance 1's network aim slot Q+0x10[1] gets the remote's
     // aim target before its gun update builds the aim point from it.
@@ -2645,6 +2767,7 @@ void ResetFault() noexcept {
     InterlockedExchange(&g_m_faulted, 0);
     InterlockedExchange(&g_m_leak, 0);
     InterlockedExchange(&g_sl_faulted, 0);
+    InterlockedExchange(&g_rt_faulted, 0);
 }
 
 void Shutdown() noexcept { g_pose_gate.StopNewWriters(); InterlockedExchange(&g_shutdown, 1); }
@@ -2797,6 +2920,19 @@ void DrainStats(Stats& out) noexcept {
     n.mag_frozen = static_cast<std::uint32_t>(g_m_frozen);
     n.mag_reconciles = static_cast<std::uint32_t>(g_m_reconciles);
     n.mag_m3e8_writes = static_cast<std::uint32_t>(g_m_3e8);
+    n.mag_m3e8_slot = static_cast<std::uint32_t>(g_m_3e8_slot);
+    n.mag_m3e8_cap = static_cast<std::uint32_t>(g_m_3e8_cap);
+    n.aim_added_flag = static_cast<std::uint32_t>(g_ai_flag);
+    n.aim_added_act = static_cast<std::uint32_t>(g_ai_act);
+    n.aim_pad_windows = static_cast<std::uint32_t>(g_ai_pad);
+    n.aim_last_source = static_cast<std::uint8_t>(g_ai_last);
+    n.rate_reloads = static_cast<std::uint32_t>(g_rt_reloads);
+    n.rate_writes = static_cast<std::uint32_t>(g_rt_writes);
+    n.rate_refused = static_cast<std::uint32_t>(g_rt_refused);
+    n.rate_last = static_cast<std::uint8_t>(g_rt_last);
+    n.rate_native_milli = static_cast<std::int32_t>(g_rt_native_milli);
+    n.rate_written_milli = static_cast<std::int32_t>(g_rt_written_milli);
+    n.rate_faulted = g_rt_faulted != 0;
     n.p1_b20 = static_cast<std::uint32_t>(g_p1_b20);
     n.p1_b24 = static_cast<std::uint32_t>(g_p1_b24);
     n.p1_shots = static_cast<std::uint32_t>(g_p1_shots);

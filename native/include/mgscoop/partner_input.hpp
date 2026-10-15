@@ -528,6 +528,15 @@ struct Arm {
     // itself (the follower's own empty/plan/mismatch checks decide).
     std::uint8_t standin_mask;
     std::uint8_t standin_slot[3];
+    // Anim round 1 (docs/anim-round1-weapons.md; not compared by SameArm): the
+    // state-driven aim intent (aim_intent: the driver's partner_slots AimGate
+    // passed with partner_native_aim_intent=state; aim_act_until_ms: the
+    // remote's act is an aim act, honoured until then, so a stale Arm drops it)
+    // adds HOLD to a native window's live sample (partner_slots AimFrame), and
+    // the reload rate factor (partner_reload RateTarget; 0: no rate write).
+    bool aim_intent;
+    std::uint64_t aim_act_until_ms;
+    float reload_rate_k;
 };
 
 // Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.

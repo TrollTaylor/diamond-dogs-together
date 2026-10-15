@@ -141,16 +141,21 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_aimpt=look','host:partner_native_aimpt=point','partner_native_net=online','partner_input_edge_repeats=5',
     'steam_selftest_fn=1','coop_hud=compact',
     # the seated vehicle rider (docs/anim-round1-seat.md)
-    'partner_native_ride=seat','guest:partner_ride_seat_enter=getin','partner_ride_seat_exit=getoff','partner_native_ride=hide')){
+    'partner_native_ride=seat','guest:partner_ride_seat_enter=getin','partner_ride_seat_exit=getoff','partner_native_ride=hide',
+    # anim round 1 weapons (docs/anim-round1-weapons.md)
+    'partner_fire_census=1','partner_native_aim_intent=pad','guest:partner_native_reload_rate=adapt','partner_native_unsupported=0',
+    'host:partner_native_dry_stop=1','partner_native_aim_intent=state','partner_native_reload_rate=off')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
 }
 foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_native_reload=','partner_native_equip=any','partner_native_equip=','partner_native_gun=0',
-    'partner_native_ride=drive','partner_ride_seat_exit=jump','partner_ride_seat_enter=')){
+    'partner_native_ride=drive','partner_ride_seat_exit=jump','partner_ride_seat_enter=',
+    'partner_fire_census=2','partner_native_aim_intent=on','partner_native_reload_rate=fast','partner_native_unsupported=yes')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 $lineMatch=[regex]::Match($scenarioText,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)")
 Assert-True ($lineMatch.Success) 'the scenario labsetting regex'
-foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partner_native_slot=call','labsetting partner_native_equip=manifest')){
+foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partner_native_slot=call','labsetting partner_native_equip=manifest',
+        'labsetting partner_fire_census=1','labsetting host partner_native_aim_intent=state','labsetting partner_native_reload_rate=adapt')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'

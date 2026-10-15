@@ -653,6 +653,71 @@ SITES = [
     (0x1E03790, '488d0509fde800c3', 'alias table getter: lea rax, 0x2C934A0; ret'),
     (0xA3C5B0, '488d05394c0302c3', 'equipment resource getter: lea rax, 0x2A711F0; ret'),
 ]
+# --- Anim round 1, weapons (docs/anim-round1-weapons.md) ------------------------------------
+# The reload rate rec+0x310 (partner_native_reload_rate=adapt): the reload handler 0x1077840 (modes 11/12) op 1
+# stores the per-id provider's answer *(*(P+0x138)+0x130) vt+0x28(id, 6) at its enter, doubles it with the per-id
+# status bit 26 (*(P+0x78)+0x280)[id - base]+0xC, and its op 2 (the exit) writes 1.0; the motion segment requests
+# 0x1059620 / 0x10596B0 pass the current value by value to the motion controller vt+0x1C8; op 0 (every frame)
+# requests the later segments through 0x1059620 (0x107A550). The hook writes only inside modes 11/12.
+SITES += [
+    (0x10778C8, '488b823801000041b806000000418bd7488b88300100000f29b42490000000488b01ff5028418bcff30f118710030000',
+     'reload enter (op 1): rec+0x310 = provider vt+0x28(id, 6) (store at 0x10778F0, the native reload rate)'),
+    (0x1077903, '488b828002000048c1e1058b54010cc1ea1af6c2017410f30f59052e250301f30f118710030000',
+     'reload enter: per-id status bit 26 doubles rec+0x310 (store at 0x1077922)'),
+    (0x10790D9, 'c787100300000000803f', 'reload exit (op 2): rec+0x310 = 1.0'),
+    (0x1059666, '92b8010000488b4f60448b8b7c020000f30f1093100300004c8b018b934002000041c1e9094180e10141ff90c80100',
+     'motion segment 0x1059620: motion vt+0x1C8(rec+0x240, rec+0x310 by value)'),
+    (0x10596F6, '92b8010000488b4f60448b8b7c020000f30f1093100300004c8b018b934402000041c1e9094180e10141ff90c80100',
+     'motion segment 0x10596B0: motion vt+0x1C8(rec+0x244, rec+0x310 by value)'),
+    (0x107A541, '4c8d45774c8bcfba02000000498bcee8cbf0fdff', 'reload op 0 (per frame): a later segment through 0x1059620'),
+    # Fire census (partner_fire_census=1, read-only): the RequestBullet record fields 0x1302F50 fills before the
+    # call (+0x2E the bullet id u16 from the equip parameters +0x74/+0x76, +0x30 / +0x31 bytes, +0x32 flags).
+    (0x1303170, '84ff7407410fb74676eb05410fb746746689472e4584ff7407410fb6467deb05410fb6467c884730',
+     'model group shot: record+0x2E = the bullet id (+0x76/+0x74), record+0x30 = the kind byte (+0x7D/+0x7C)'),
+    # The class-3 projectile request (0x13030B7: shot class 3 -> 0x1303450): the request on the stack at rbp-0x70
+    # carries the shot record's owner at +0x32 and goes to *(*(*(0xBFF050())+0x98)+0x210) vt+0 (rax unused after).
+    (0x13035A6, '488b8e80000000668955be0fb7d2488b01ff1083f80a7515488b8e800000000fb755be488b01ff5008668945be0fb7472a',
+     'projectile request: +0x2E = the projectile id (equip parameter +0x30/+0x32, remapped by group+0x80)'),
+    (0x13035D3, '0fb7472a668945c20fb7472c668945c4', 'projectile request: +0x32 = shot record+0x2A (the owner), +0x34 = record+0x2C'),
+    (0x1303680, 'e8cbb98fff488d5590488b8898000000488b891002000048894c2468488b01ff10',
+     'projectile request: gm+0x210 vt+0 (rcx = the service iface, rdx = the request rbp-0x70)'),
+    (0x1337760, '48895c2408574883ec20488bfa488bd9e8db788cff', 'projectile service request 0x1337760 (iface vt+0) prologue'),
+    (0x133648A, '488d0587c80a01488903488d05b5c80a0148894320',
+     'projectile service factory: +0 = 0x23E2D18, the live iface +0x20 = 0x23E2D50 (slot 0 = 0x1337760)'),
+    (0x1336065, '488d7920488d0560cb0a01488907488d0506cc0a0148894128488d052bcc0a0148894138e8c28f8cff488b88980000004839b910020000750b48c7811002000000000000',
+     'projectile service dtor: iface +0x20 = 0x23E2BD0; gm+0x210 cleared if it is this iface'),
+    # The rocket punch (gun mode 53, 0x107FA30): the request at rsp+0x40 gets the owner id & 0x1FF at +0x32 and goes to
+    # the projectile service's vt+0x58 = 0x1337920 (slot 11; rax unused after the call).
+    (0x1080624, 'b9ff0100006623c16689442472e81aeab7ff488d542440488b8898000000488b9910020000488bcb488b03ff5058',
+     'rocket punch request: +0x32 = id & 0x1FF (rsp+0x72), gm+0x210 vt+0x58 with rdx = rsp+0x40'),
+    (0x1337920, '48895c24084889742410574883ec50488b8180000000488bf9488bf2', 'projectile service vt+0x58 0x1337920 prologue (this, request)'),
+    # Thrown objects (gun mode 37 0x1087210 and its helper 0x1061D90): the request gets the owner id & 0x1FF at +0x32
+    # and goes to gm+0x200 vt+8 = 0x15E0230; skipped only for an online non-local id (P+0x204 bit 8 and id != P+0x218).
+    (0x1061DF9, 'b9ff0100004c89b424b00000000f29b424a00000000f57f60f2975c70f2975e70fb7c741b8ffff000041beff0700006623c166448945f766448945ff668945f9',
+     'throw request 0x1061D90: +0x32 = id & 0x1FF (rbp-7; base rbp-0x39)'),
+    (0x1061F06, 'e845d1b9ff488d55c7488b8898000000488b8900020000488b01ff5008', 'throw request 0x1061D90: gm+0x200 vt+8 with rdx = rbp-0x39'),
+    (0x10879BF, '488b8a380100008b8104020000c1e808a80174083bb918020000751780bbc202000000750e448bc7488bd3498bcee89ea3fdff',
+     'throw (mode 37): 0x1061D90 skipped only online for a non-local id'),
+    (0x1087A27, '498b56084c8b8238010000418b8004020000c1e808a801740d413bb8180200000f8567030000',
+     'throw (mode 37): the main request skipped only online for a non-local id'),
+    (0x1087A93, '41bdff010000668945c30fb7c741b9ffff00006644894db7664123c5668945b9',
+     'throw (mode 37): +0x32 = id & 0x1FF (rbp-0x47; base rbp-0x79)'),
+    (0x1087BD8, 'e87374b7ff488d5587488b8898000000488b8900020000488b01ff5008', 'throw (mode 37): gm+0x200 vt+8 with rdx = rbp-0x79'),
+    (0x15E0230, '48895c2418574883ec20f6423e01488bfa488bd9', 'thrown-object service vt+8 0x15E0230 prologue (this, request)'),
+    (0x15DE2AA, '488d05efb7e400488903488d0515b8e40048894320', 'thrown-object service factory: the live iface +0x20 = 0x2429AD0'),
+    (0x15DDF9B, '488d05ceb9e400488901488d7920488d05f0b9e400488907488d0576bae40048894150488d058bbae40048894160e8821062ff488b88980000004839b900020000750b48c7810002000000000000',
+     'thrown-object service dtor: iface +0x20 = 0x24299A0; gm+0x200 cleared if it is this iface'),
+    # Placed objects (gun mode 46 0x107BAC0, rbp = rsp+0x100): the request at rsp+0x60 gets the equip at +0x30 and the
+    # owner id & 0x1FF at +0x32 and goes to gm+0x208 vt+0x48 = 0xFCCD80.
+    (0x107BAC0, '4c8bdc55535657415441554156488d6c24b04881ec50010000', 'place (mode 46) frame: rbp = rsp + 0x100'),
+    (0x107C7DC, '498b4608b9ff0100004c8ba0380100000fb7874c020000668945900fb7c64c8965f06623c166894592',
+     'place (mode 46): +0x30 = rec+0x24C (rbp-0x70), +0x32 = id & 0x1FF (rbp-0x6E)'),
+    (0x107CA18, 'e83326b8ff488d542460488b8898000000488b8908020000488b01ff5048', 'place (mode 46): gm+0x208 vt+0x48 with rdx = rsp+0x60'),
+    (0xFCCD80, '48895c24084889742410574883ec20488bd9488b89b0010000', 'placed-object service vt+0x48 0xFCCD80 prologue (this, request)'),
+    (0xFC79DA, '488d05b7253e01488903488d05e5253e0148894320', 'placed-object service factory: the live iface +0x20 = 0x23A9FD0'),
+    (0xFC52DB, '488d050e4a3e01488901488d7920488d05304a3e01488907488d05364b3e0148894140488d05bb4b3e0148894150e8429dc3ff488b88980000004839b908020000750b48c7810802000000000000',
+     'placed-object service dtor: iface +0x20 = 0x23A9D20; gm+0x208 cleared if it is this iface'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -768,6 +833,17 @@ SLOTS = [
     (0x23C1720, 0x38, 0x11AD240, 'equip ctl vt+0x38 = GetCurrentEquipSlot (row+0x36 & 0xF)'),
     (0x23C1720, 0x40, 0x11AD210, 'equip ctl vt+0x40 = the active weapon slot getter'),
     (0x23C1720, 0x48, 0x11AF930, 'equip ctl vt+0x48 = the active weapon slot setter (activation)'),
+]
+    # --- Anim round 1: the projectile service iface (gm+0x210), census only (forwards every call).
+SLOTS += [
+    (0x23E2D50, 0x00, 0x1337760, 'projectile service live iface vtable slot 0 = request (fire census slot, forwards)'),
+    (0x23E2BD0, 0x00, 0x1337760, 'projectile service base/destroying iface vtable slot 0 = request (fire census slot, forwards)'),
+    (0x23E2D50, 0x58, 0x1337920, 'projectile service live iface vt+0x58 = the rocket punch request (fire census slot)'),
+    (0x23E2BD0, 0x58, 0x1337920, 'projectile service base iface vt+0x58 = the rocket punch request (fire census slot)'),
+    (0x2429AD0, 0x08, 0x15E0230, 'thrown-object service live iface vt+8 = request (fire census slot)'),
+    (0x24299A0, 0x08, 0x15E0230, 'thrown-object service base iface vt+8 = request (fire census slot)'),
+    (0x23A9FD0, 0x48, 0xFCCD80, 'placed-object service live iface vt+0x48 = request (fire census slot)'),
+    (0x23A9D20, 0x48, 0xFCCD80, 'placed-object service base iface vt+0x48 = request (fire census slot)'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 
@@ -1428,6 +1504,61 @@ def ride_seat_assertions():
 
 
 failures += ride_seat_assertions()
+
+
+def anim_round1_assertions():
+    """Anim round 1 weapons: the reload rate writers, the census record fields, the projectile service slot."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    # Inside the reload handler 0x1077840 (op table 0x107A5D0, its last op ends before the table) the only stores to
+    # [r+0x310] are the enter's provider value, its doubling and the exit's 1.0.
+    stores = []
+    for i in md.disasm(rd(0x1077840, 0x107A5D0 - 0x1077840), IB + 0x1077840):
+        if i.op_str.startswith('dword ptr [r') and '+ 0x310]' in i.op_str.split(',')[0] and i.mnemonic in ('mov', 'movss'):
+            stores.append(i.address - IB)
+    need(stores == [0x10778F0, 0x1077922, 0x10790D9], f'reload handler rec+0x310 stores: {[hex(x) for x in stores]}')
+    ops = jump_table(0x107A5D0, 13)
+    need(ops[0] == 0x1079FD0 and ops[1] == 0x10778C8 and ops[2] == 0x107903C, f'reload ops 0/1/2: {[hex(x) for x in ops[:3]]}')
+    need(0x107A555 + struct.unpack('<i', rd(0x107A551, 4))[0] == 0x1059620, 'op 0 calls the segment request 0x1059620')
+    need(0x1079FD0 <= 0x107A550 < 0x107A5B2, 'the 0x1059620 call lies in op 0')
+    need(0x10778EA + 3 == 0x10778ED and rd(0x10778EA, 3) == bytes.fromhex('ff5028'), 'the provider call vt+0x28 precedes the store')
+    need(rd(0x1077919, 1) == b'\x10', 'the doubling is skipped without the status bit (je 0x107792A)')
+    # The projectile service: iface vtable slot 0 in read-only image data, aligned, nowhere else; no direct caller.
+    need(all(section_of(v) == '.edata' and v % 8 == 0 for v in (0x23E2BD0, 0x23E2D50)),
+         'the projectile iface vtables lie in read-only .edata, aligned')
+    need(qword_hits(0x1337760) == [0x23E2BD0, 0x23E2D50],
+         f'0x1337760 is only slot 0 of 0x23E2BD0 / 0x23E2D50: {[hex(x) for x in qword_hits(0x1337760)]}')
+    need(lea_rip_refs(0x23E2D50) == [0x1336494] and lea_rip_refs(0x23E2BD0) == [0x1336069],
+         f'the iface vtables are stored by the factory / the dtor only: {[hex(x) for x in lea_rip_refs(0x23E2D50)]}')
+    need(rel_refs(0x1337760) == [], f'0x1337760 has no direct caller: {[hex(x) for x in rel_refs(0x1337760)]}')
+    need(rip_target(0x1336069, 7) == 0x23E2BD0 and rip_target(0x133605B, 7) == 0x23E2B98, 'the dtor stores the iface vtable at +0x20')
+    need(0x13036A1 + 0 == 0x13036A1 and rd(0x13036A1, 5) == bytes.fromhex('b817040000'), 'the projectile request call ignores rax')
+    need(0x1303685 + 0 == 0x1303685 and rd(0x1303685, 4) == bytes.fromhex('488d5590'), 'rdx = rbp-0x70 (the request base)')
+    # The rocket / thrown / placed request slots: each target only in its base and live iface vtables (read-only,
+    # aligned), no direct caller, the factories and dtors store those vtables, and gm+0x200 / +0x208 are the services.
+    for target, vts in ((0x1337920, (0x23E2BD0 + 0x58, 0x23E2D50 + 0x58)), (0x15E0230, (0x24299A0 + 8, 0x2429AD0 + 8)),
+                        (0xFCCD80, (0x23A9D20 + 0x48, 0x23A9FD0 + 0x48))):
+        need(qword_hits(target) == list(vts), f'{target:#x} only in {[hex(v) for v in vts]}: {[hex(x) for x in qword_hits(target)]}')
+        need(rel_refs(target) == [], f'{target:#x} has no direct caller: {[hex(x) for x in rel_refs(target)]}')
+        need(all(section_of(v) == '.edata' and v % 8 == 0 for v in vts), f'{target:#x} slots lie in read-only .edata, aligned')
+    need(rip_target(0x15DE2B4, 7) == 0x2429AD0 and rip_target(0x15DDFA9, 7) == 0x24299A0, 'thrown service: live and base iface vtables')
+    need(rip_target(0xFC79E4, 7) == 0x23A9FD0 and rip_target(0xFC52E9, 7) == 0x23A9D20, 'placed service: live and base iface vtables')
+    # The request builders: the owner store and the service call lie in the same frame (no push/sub between them).
+    for lo, hi in ((0x1061E35, 0x1061F20), (0x1087AAF, 0x1087BF2), (0x107C801, 0x107CA33), (0x108062C, 0x108064F)):
+        bad = [i for i in md.disasm(rd(lo, hi - lo), IB + lo) if i.mnemonic in ('push', 'pop') or
+               (i.mnemonic in ('sub', 'add') and i.op_str.startswith('rsp'))]
+        need(bad == [], f'the request frame {lo:#x}..{hi:#x} keeps rsp: {[hex(i.address - IB) for i in bad]}')
+    # The census record fields: written before the RequestBullet calls of the same shot (0x13031C8 / 0x13031FA).
+    need(0x1303180 < 0x13031C8 and 0x1303195 < 0x13031C8, 'record+0x2E/+0x30 are filled before RequestBullet')
+    return out
+
+
+failures += anim_round1_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1747,6 +1878,28 @@ w('inline constexpr std::uintptr_t equip_ctl_vt_rva=0x23c1720, set_current_slot_
 w('inline constexpr std::size_t ctl_player=0x18, ctl_inventory=0x8, q_equip_rows=0xc0, q_equip_dirty=0x17c, equip_row_stride=0x3a;')
 w('inline constexpr std::size_t equip_row_current=0x0, equip_row_slots=0x2, equip_row_nibble=0x36, inv_handles=0x40;')
 w('inline constexpr std::uint32_t equip_id_mask=0x7ff, handle_empty_hi=0xffff, handle_type_mask=0x1f, handle_equip_shift=5;')
+w('// --- Anim round 1, weapons (docs/anim-round1-weapons.md) --------------------------------------')
+w('// rec+0x310: the reload rate (enter 0x10778f0 = provider vt+0x28(id, 6), x2 at 0x1077922; exit 0x10790d9 = 1.0); the')
+w('// motion segment requests 0x1059620/0x10596b0 read it by value (op 0 per frame: 0x107a550). Written by the hook only')
+w('// inside modes 11/12 (partner_native_reload_rate=adapt).')
+w('inline constexpr std::size_t gun_rate=0x310;')
+w('// Fire census (read-only): RequestBullet record +0x2e bullet id (u16), +0x30 kind, +0x31 sub, +0x32 flags; the noise')
+w('// record {pos, u8 kind +0x10, u8 flags +0x11, u16 owner +0x12}.')
+w('inline constexpr std::size_t shot_bullet_id=0x2e, shot_kind=0x30, shot_sub=0x31, shot_flags=0x32, noise_kind=0x10;')
+w('// The class-3 projectile request (0x1303450): *(*(svc+0x98)+0x210) vt+0 = 0x1337760 (iface vtable slot 0,')
+w('// read-only data, no direct caller); request +0x2e the projectile id, +0x32 the owner (shot record +0x2a), +0x34.')
+w('// The factory 0x1336440 stores the live iface vtable 0x23e2d50 at +0x20; 0x23e2bd0 is the base (dtor) iface vtable.')
+w('inline constexpr std::uintptr_t proj_slot_live_rva=0x23e2d50, proj_slot_base_rva=0x23e2bd0, proj_request_rva=0x1337760;')
+w('inline constexpr std::size_t gm_projectiles=0x210, proj_id=0x2e, proj_owner=0x32, proj_aux=0x34;')
+w('// The rocket punch (gun mode 53): the projectile service vt+0x58 = 0x1337920, request +0x32 the owner (id & 0x1ff).')
+w('// Thrown objects (gun mode 37, helper 0x1061d90): gm+0x200 vt+8 = 0x15e0230 (live iface vtable 0x2429ad0, base 0x24299a0),')
+w('// request +0x32 the owner, +0x3c the equip (low 11 bits), +0x3e flags. Placed objects (gun mode 46): gm+0x208 vt+0x48 =')
+w('// 0xfccd80 (live 0x23a9fd0, base 0x23a9d20), request +0x30 the equip, +0x32 the owner, +0x3c flags.')
+w('inline constexpr std::uintptr_t rocket_request_rva=0x1337920, thrown_request_rva=0x15e0230, placed_request_rva=0xfccd80;')
+w('inline constexpr std::uintptr_t thrown_slot_live_rva=0x2429ad0, thrown_slot_base_rva=0x24299a0;')
+w('inline constexpr std::uintptr_t placed_slot_live_rva=0x23a9fd0, placed_slot_base_rva=0x23a9d20;')
+w('inline constexpr std::size_t rocket_slot=0x58, thrown_slot=0x8, placed_slot=0x48, gm_thrown=0x200, gm_placed=0x208;')
+w('inline constexpr std::size_t req_owner=0x32, rocket_id=0x2c, rocket_aux=0x3e, thrown_id=0x3c, thrown_aux=0x3e, placed_id=0x30, placed_aux=0x3c;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

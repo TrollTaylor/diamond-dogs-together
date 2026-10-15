@@ -142,6 +142,16 @@ inline constexpr unsigned kNativeLineCap = 3600;   // partner_defer / partner_na
 inline constexpr unsigned kNativeEventCap = 64;    // transitions, enter steps, gun changes, manifests
 inline constexpr std::uint64_t kNativeMatchWindowMs = 10000;
 inline constexpr std::uint64_t kAimMatchMs = 300;
+// Anim round 1 weapons (docs/anim-round1-weapons.md): line cadences and caps.
+inline constexpr std::uint64_t kWeaponCtxMs = 100;          // partner_weapon_ctx: at most 10 lines/s, no cap
+inline constexpr std::uint64_t kNativeGunChangeMs = 100;    // partner_native_gun change lines
+inline constexpr unsigned kNativeGunChangeCap = 3600;
+inline constexpr std::uint64_t kAimIntentLineMs = 100;      // partner_aim_intent change lines
+inline constexpr unsigned kAimIntentLineCap = 2000;
+inline constexpr unsigned kAnimWeaponCap = 256;             // partner_weapon=unsupported / dry / rate lines (each family)
+inline constexpr unsigned kCensusLinesPerSecond = 20;       // partner_fire_census per-request lines
+inline constexpr unsigned kCensusLineCap = 4000;
+inline constexpr std::uint64_t kAimActHoldMs = 150;         // the Arm's aim act expiry (a stale Arm drops it)
 inline constexpr std::uint64_t kAimReadMs = 250;
 // What the observer reports about the native installs (H0 input hook, wraps,
 // H2, H1, and the phase-1 local detour P1, installed with defer=on).
@@ -426,6 +436,13 @@ struct Settings {
     PartnerRideSeatExit seat_exit;    // nride=seat: stop or get-off advance
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
+    // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
+    // partner_native_unsupported, _dry_stop, _aim_intent, _reload_rate,
+    // partner_fire_census).
+    bool nunsupported, ndry;
+    PartnerNativeAimIntent naim_intent;
+    PartnerNativeReloadRate nreload_rate;
+    bool fire_census;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file enables the native drive
@@ -896,6 +913,58 @@ struct Mission {
     std::uint64_t weapon_ms_at;
     std::uint32_t standin_ms, absent_ms;
     std::uint8_t body_gun_mode;
+    // --- Anim round 1 weapons (docs/anim-round1-weapons.md).
+    // The remote's v4 magazine of the latest live sample (auto-fire stop).
+    bool remote_mag_ok;
+    std::uint16_t remote_mag, remote_mag_cap;
+    // A1: the unsupported-equipment verdict (partner_slots JudgeUnsupported),
+    // the remote's in-hand equip type (kNull unread; read once per equip) and
+    // the last logged key (own cap).
+    partner_slots::Unsupported unsupported;
+    std::int32_t remote_equip_type;
+    std::int32_t remote_type_equip;     // the equip remote_equip_type belongs to (kNull: none)
+    std::uint64_t unsupported_key;
+    bool unsupported_logged;
+    LogCap unsupported_cap;
+    // State-driven aim intent: the driver's gate (partner_slots AimGate), the
+    // remote's act is an aim act (live pose), the last logged key and the hook
+    // totals at the last line (own cap, change lines at most every kAimIntentLineMs).
+    partner_slots::AimRefusal aim_refusal;
+    bool aim_gate_ok, aim_act;
+    std::uint64_t aim_intent_key, aim_intent_ms;
+    bool aim_intent_logged;
+    unsigned aim_intent_lines;
+    // Auto-fire stop (partner_slots DryStep) and its lines.
+    partner_slots::DryState dry;
+    bool dry_strip;
+    LogCap dry_cap;
+    // Reload rate adaptation (partner_reload RateLearn) and its lines.
+    partner_reload::RateAdapt rate_adapt;
+    LogCap rate_cap;
+    // partner_weapon_ctx: one line per change of the weapon context, at most
+    // every kWeaponCtxMs (later changes coalesce into the next line; no cap).
+    std::uint64_t ctx_key, ctx_ms, ctx_seen_key;
+    bool ctx_have;
+    unsigned ctx_changes;
+    // The mirror's rec+0x3E8 rewrites for a slot change / a base above the
+    // capacity (hook totals at the last partner_reload=shadow line; own cap).
+    std::uint32_t shadow_slot_logged, shadow_cap_logged;
+    bool shadow_logged;
+    LogCap shadow_cap;
+    // The anim round 1 weapon settings line (once per mission with the gun stage).
+    bool anim_settings_logged;
+    // partner_native_gun change lines: own cap, at most every kNativeGunChangeMs
+    // (later changes counted in the next line's changes=).
+    std::uint64_t native_gun_change_ms;
+    unsigned native_gun_change_lines, native_gun_changes;
+    // The fire/projectile census (partner_fire_census=1): the ring cursor, the
+    // per-second budget and mission totals of its lines.
+    std::uint32_t census_cursor;
+    bool census_cursor_ok;
+    std::uint64_t census_second_ms;
+    unsigned census_second_lines, census_lines;
+    std::uint32_t census_lost, census_skipped;
+    bool census_install_logged;
 };
 
 struct Driver {
