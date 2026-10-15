@@ -138,9 +138,9 @@ Unsupported JudgeUnsupported(const UnsupportedIn& in) noexcept;
 // move, 17/19/20 prone and supine aim. Act 18 is not an aim state.
 inline constexpr bool AimAct(std::uint16_t act) noexcept { return (act >= 11 && act <= 17) || act == 19 || act == 20; }
 // Remote acts in which a synthesized HOLD is refused: dead/dying 40/41,
-// carried 42..44, stun/faint 79..83, down 84..89, helicopter 97..108,
-// vehicle 109..112 and 121, horse 122, D-Walker 123..126, sleep 131..133,
-// direct motion 139.
+// carried 42..44, the life/down family 61/63, knockdown and recovery 75/76,
+// stun/faint 79..83, down 84..89, helicopter 97..108, vehicle 109..112 and
+// 121, horse 122, D-Walker 123..126, sleep 131..133, direct motion 139.
 bool AimBlockedAct(std::uint16_t act) noexcept;
 
 // State-driven aim intent (critic P0.5/4.6; partner_native_aim_intent). The

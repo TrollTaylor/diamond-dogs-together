@@ -132,7 +132,7 @@ while waiting.
 - Driver gate (`AimGate`, every tick, `TickAimIntent`): `partner_native_aim_intent=state` with the gun stage, the weapon
   gate `match` or `standin` (body 1 showed a gun), the remote's live v5 slot 0..2, not sleeping (the partner sleep
   owner), not carried (`coop_carry`), not hidden (ride guard), not riding (ride wire kind != foot), and the remote's
-  act not dead/carried/stun/down/heli/vehicle/horse/walker/sleep/DM. Refusal names:
+  act not dead/carried/knocked down/stun/down/heli/vehicle/horse/walker/sleep/DM (`AimBlockedAct`). Refusal names:
   `off|gate|slot|sleep|carried|hidden|ride|act`.
 - Arm fields (not compared by `SameArm`): `aim_intent` (the gate passed) and `aim_act_until_ms` (now + 150 ms while the
   remote's act is an aim act; a stale Arm drops it).

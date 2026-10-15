@@ -125,8 +125,9 @@ Unsupported JudgeUnsupported(const UnsupportedIn& in) noexcept {
 }
 
 bool AimBlockedAct(std::uint16_t act) noexcept {
-    return act == 40 || act == 41 || (act >= 42 && act <= 44) || (act >= 79 && act <= 89) || (act >= 97 && act <= 112) ||
-           act == 121 || (act >= 122 && act <= 126) || (act >= 131 && act <= 133) || act == 139;
+    return act == 40 || act == 41 || (act >= 42 && act <= 44) || act == 61 || act == 63 || act == 75 || act == 76 ||
+           (act >= 79 && act <= 89) || (act >= 97 && act <= 112) || act == 121 || (act >= 122 && act <= 126) ||
+           (act >= 131 && act <= 133) || act == 139;
 }
 
 const char* AimRefusalName(AimRefusal value) noexcept {

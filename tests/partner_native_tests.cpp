@@ -1687,6 +1687,7 @@ void TestAnimAimIntent() {
     }
     Check(ps::AimBlockedAct(40) && ps::AimBlockedAct(43) && ps::AimBlockedAct(82) && ps::AimBlockedAct(100) && ps::AimBlockedAct(111) &&
               ps::AimBlockedAct(122) && ps::AimBlockedAct(125) && ps::AimBlockedAct(132) && ps::AimBlockedAct(139) &&
+              ps::AimBlockedAct(61) && ps::AimBlockedAct(75) && !ps::AimBlockedAct(29) &&
               !ps::AimBlockedAct(1) && !ps::AimBlockedAct(11) && !ps::AimBlockedAct(57),
           "dead, carried, stun, heli, vehicle, horse, walker, sleep, DM acts block; loco and aim acts do not");
     ps::AimGateIn g{};
