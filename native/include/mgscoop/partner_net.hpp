@@ -215,6 +215,19 @@ void PublishNativeState(std::uint8_t drive, std::uint8_t reason, std::uint8_t re
 // it equals the published partner mission, link-status.json reports
 // partner_drive "off" and partner_reason "no_body_pack" (no partner body).
 void PublishPackState(std::uint32_t refused_mission) noexcept;
+// World sync as link-status.json, the HUD and F9 report it (world_link
+// publishes it; docs/link-protocol.md 7.2): the local world level 0..3,
+// paired, the partner's mission (0 unknown), the published pair-wait code
+// (world_wire pair_wait; 11 settling) and the title progress (0 unknown,
+// 1 ok, 2 story_start). Any thread, atomics only, never blocks.
+struct WorldView {
+    std::uint8_t level;
+    bool paired;
+    std::uint32_t partner_mission;
+    std::uint8_t pair_wait;
+    std::uint8_t progress;
+};
+void PublishWorldState(const WorldView& view) noexcept;
 // Reliable ordered channels 1..3 (1 = world, reserved; 2..3 = game). Session
 // scoped: a new handshake clears them on both sides (LinkInfo.session bumps)
 // and callers send their state again. On `full` the caller keeps its dirty
@@ -280,6 +293,11 @@ struct SteamInfo {
     char dispatch_reason[24];
     std::int32_t steam_end;
     bool left;
+    // Guest: ArmSteamGuest bumps join_seq on every pasted-code decision;
+    // join_result is that decision (0 none, 1 joined, 2 ignored because
+    // already connected or connecting, 3 the own code).
+    std::uint32_t join_seq{};
+    std::uint8_t join_result{};
 };
 SteamInfo GetSteamInfo() noexcept;
 // Host: the F9 Accept joins toggle (atomic; the transport reads it).

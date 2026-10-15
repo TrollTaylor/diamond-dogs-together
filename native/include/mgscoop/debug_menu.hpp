@@ -44,6 +44,9 @@ struct Snapshot {
     bool world_configured{}, world_paired{}, world_link_up{}, enemy_spawn_valid{};
     bool remote_valid{}, enemy_camps_loaded{}, god_mode{}, fulton_infinite{}, slowmo_active{}, overlay_open{};
     std::uint32_t world_effective{}, enemy_camp_count{}, enemy_route_count{}, enemy_spawn_hash{};
+    // world_link::Status: the partner's mission (0 unknown), its world level
+    // and the published pair-wait code (world_wire pair_wait; 1 off).
+    std::uint32_t world_partner_mission{}, world_remote_level{}, world_pair_wait{1};
     std::uint32_t remote_action_flags{}, remote_equip{}, remote_act{}, mapped_clip{};
     bool local_anim_valid{}, remote_anim_valid{}, local_yaw_valid{};
     std::uint32_t local_act{}, local_anim_stance{}, local_anim_speed{};

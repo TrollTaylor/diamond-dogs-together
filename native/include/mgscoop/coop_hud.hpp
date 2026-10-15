@@ -51,6 +51,13 @@ struct LinkView {
     char own_build[24];
     std::uint64_t publish_ms;  // GetTickCount64 at publish
     std::uint32_t session, mission; // refuse views from a previous link/mission
+    // World sync (partner_net::PublishWorldState); zero keeps today's line:
+    // the local world level, the published pair-wait code (world_wire
+    // pair_wait; 9 different_mission, 11 settling), paired, and the partner's
+    // mission (0 unknown or not connected).
+    std::uint8_t world_level{}, pair_wait{};
+    bool world_paired{};
+    std::uint32_t partner_mission{};
 };
 void PublishLink(const LinkView& view) noexcept;
 bool GetLink(LinkView& out) noexcept;
@@ -131,7 +138,9 @@ enum class EventKind : std::uint8_t {
     joining,       // text: the masked host, arg: 1 from an invite
     join_refused,  // text: the parser status
     code_copied,
-    no_body        // arg: the mission, text: the refused pack's scene (partner::PackSceneName)
+    no_body,       // arg: the mission, text: the refused pack's scene (partner::PackSceneName)
+    world_note,    // arg: the note code, text: "<a> <b> <partner> <local>" in decimal (PostWorldNote)
+    join_ignored   // text: via (a pasted code while already connected or connecting)
 };
 struct Event {
     EventKind kind;
@@ -140,6 +149,10 @@ struct Event {
     std::uint32_t sequence;
 };
 void Post(EventKind kind, std::int32_t arg, const char* text) noexcept;
+// A world sync note (docs/world-sync-protocol.md NOTE codes) as a world_note
+// event; the sentence is coop_text::FormatWorldNote's. Any thread.
+void PostWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint32_t partner,
+                   std::uint32_t local) noexcept;
 // Copies the events newer than `cursor` (oldest first) and advances it.
 unsigned Take(Event* out, unsigned max, std::uint32_t& cursor) noexcept;
 
