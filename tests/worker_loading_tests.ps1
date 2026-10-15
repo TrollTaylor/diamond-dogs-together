@@ -251,6 +251,79 @@ foreach($case in 'heli','other','onfoot','acc'){
 }
 Set-Item -LiteralPath 'Function:\Read-RoleRaw' -Value $readRoleBody
 $c.states=@{};$c.advance=@{};$continueRequirements=@{}
+# titlemenu and title <role> (docs/join-fix-phase2-spec.md P2-19): the actual helper
+# bodies with a recorded clock, state.json/loading.json timeline and input queue.
+foreach($name in 'Get-ScenarioTitleMenuAction','Invoke-ScenarioTitleMenu','Invoke-ScenarioTitle','Get-ScenarioStepRoles'){
+ $f=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))
+ Check ($f.Count -eq 1) ('actual title helper '+$name);. ([scriptblock]::Create($f[0].Extent.Text))
+}
+function New-TitleState([string]$Role,[int]$Mission){return @{run_id=$runId;role=$Role;mission=$Mission;tick_ms=1;gameplay_ready=$false}}
+function New-TitleLoading([string]$Role,[int]$Mission,[string]$Phase){return @{run_id=$runId;role=$Role;mission=$Mission;phase=$Phase;generation=2}}
+Check ((Get-ScenarioTitleMenuAction 'guest' $null $null) -ceq 'press') 'titlemenu presses at boot before any state.json'
+Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' 0) $null) -ceq 'press') 'titlemenu presses at mission 0'
+Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' 1) (New-TitleLoading 'guest' 1 'running')) -ceq 'press') 'titlemenu presses in mission 1'
+Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' 1) (New-TitleLoading 'guest' 1 'terminating')) -ceq 'press') 'titlemenu presses while mission 1 ends'
+foreach($m in 40010,40020,40050){
+ foreach($phase in 'unavailable','initialized','terminating'){
+  Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' 1) (New-TitleLoading 'guest' $m $phase)) -ceq 'wait') ("a loading title $m ($phase) stops the presses")
+ }
+ Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' 1) (New-TitleLoading 'guest' $m 'running')) -ceq 'done') ("a running title $m ends titlemenu")
+ Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' $m) $null) -ceq 'done') ("state.json title $m ends titlemenu")
+}
+foreach($case in @(@((New-TitleState 'guest' 30010),$null),@((New-TitleState 'guest' 1),(New-TitleLoading 'guest' 30010 'unavailable')),@((New-TitleState 'guest' 10020),$null))){
+ $threw=$false;try{$null=Get-ScenarioTitleMenuAction 'guest' $case[0] $case[1]}catch{$threw=$_.Exception.Message -clike '*left the boot screens*'}
+ Check $threw 'titlemenu refuses a role that passed the title'
+}
+$foreign=New-TitleState 'guest' 1;$foreign.run_id='f'*32
+Check ((Get-ScenarioTitleMenuAction 'guest' $foreign $null) -ceq 'wait') 'a foreign state.json never earns an Enter'
+Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'host' 1) $null) -ceq 'wait') 'another role''s state.json never earns an Enter'
+$foreignLoading=New-TitleLoading 'guest' 40050 'running';$foreignLoading.run_id='f'*32
+Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' 1) $foreignLoading) -ceq 'press') 'a foreign loading.json cannot end titlemenu'
+# Timeline: the host already sits at its title; the guest is in mission 1 until its
+# 40050 allocation starts at +7 s and runs at +17 s.
+$readRoleBody=${function:Read-RoleRaw}
+$t0=[int64]500000
+function Read-RoleRaw([string]$Role){
+ if($Role -ceq 'host'){return (New-TitleState 'host' 40050)}
+ return (New-TitleState 'guest' 1)
+}
+function Read-RoleLoadingRaw([string]$Role){
+ if($Role -ceq 'host'){return (New-TitleLoading 'host' 40050 'running')}
+ $at=$c.now-$t0
+ if($c.case -ceq 'stuck'){return (New-TitleLoading 'guest' 1 'running')}
+ if($at -lt 7000){return (New-TitleLoading 'guest' 1 'running')}
+ if($at -lt 17000){return (New-TitleLoading 'guest' 40050 'initialized')}
+ return (New-TitleLoading 'guest' 40050 'running')
+}
+$c.now=$t0;$c.case='pass';$c.commands.Clear()
+Invoke-ScenarioTitleMenu @('host','guest') 60
+$presses=@($c.commands|Where-Object{$_.operation -ceq 'press'})
+Check ($presses.Count -eq 3 -and @($presses|Where-Object{$_.role -cne 'guest' -or $_.args.Keys -cne 'enter' -or $_.args.DurationMs -ne 120}).Count -eq 0) 'titlemenu presses only the booting guest, Enter 120 ms'
+Check (@($presses|Where-Object{$_.tick-$t0 -ge 7000}).Count -eq 0) 'no Enter once loading.json names the title'
+Check ($c.now-$t0 -ge 17000 -and $c.now-$t0 -le 21000) 'titlemenu returns once the guest title runs'
+$c.now=$t0;$c.case='stuck';$c.commands.Clear()
+$threw=$false;try{Invoke-ScenarioTitleMenu @('guest') 10}catch{$threw=$_.Exception.Message -clike '*did not reach a title*'}
+Check ($threw -and $c.commands.Count -le 5) 'titlemenu times out with bounded presses'
+$c.case='pass'
+function Read-RoleRaw([string]$Role){return (New-TitleState $Role 30010)}
+function Read-RoleLoadingRaw([string]$Role){return $null}
+$c.commands.Clear();$threw=$false;try{Invoke-ScenarioTitleMenu @('guest') 10}catch{$threw=$true}
+Check ($threw -and $c.commands.Count -eq 0) 'titlemenu never presses a role already past its title'
+# title <role>: the old loop for one role; title alone still drives both.
+$titleReady=@{host=[int64]0;guest=[int64]0}
+function Read-RoleState([string]$Role){return [pscustomobject]@{mission=30010;gameplay_ready=($c.now -ge $titleReady[$Role]);generation=3}}
+$c.now=$t0;$c.commands.Clear();$titleReady=@{host=$t0+60000;guest=$t0+7000}
+Invoke-ScenarioTitle @(Get-ScenarioStepRoles @('title','guest','200')) 200
+Check ($c.commands.Count -eq 3 -and @($c.commands|Where-Object{$_.role -cne 'guest'}).Count -eq 0) 'title guest presses the guest only'
+$c.now=$t0;$c.commands.Clear();$titleReady=@{host=$t0+4000;guest=$t0+7000}
+Invoke-ScenarioTitle @(Get-ScenarioStepRoles @('title')) 240
+Check (@($c.commands|Where-Object{$_.role -ceq 'host'}).Count -eq 2 -and @($c.commands|Where-Object{$_.role -ceq 'guest'}).Count -eq 3) 'title still presses each pending role'
+$c.now=$t0;$c.commands.Clear();$titleReady=@{host=$t0+600000;guest=$t0+600000}
+Invoke-ScenarioTitle @('host') 10
+Check ($c.commands.Count -eq 4 -and $c.now-$t0 -ge 10000) 'title gives up at its timeout like before (no throw)'
+Set-Item -LiteralPath 'Function:\Read-RoleRaw' -Value $readRoleBody
+Remove-Item function:Read-RoleLoadingRaw
+Remove-Item function:Read-RoleState
 # Source-level lifecycle contract: publication uses existing accepted return
 # and revocation precedes runtime entry; the pure native fixture tests delivery.
 $native=[IO.File]::ReadAllText((Join-Path $RepoRoot 'native/game_script_observer.cpp'))

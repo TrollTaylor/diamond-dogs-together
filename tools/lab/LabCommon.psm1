@@ -357,6 +357,11 @@ $script:LabPartnerKeys = @(
     @{ Key = 'net_reorder_permille'; Json = 'net_reorder_permille'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_reorder_ms'; Json = 'net_reorder_ms'; Kind = 'int'; Min = 1; Max = 500 },
     @{ Key = 'net_seed'; Json = 'net_seed'; Kind = 'u32'; Min = 1 },
+    # Join-fix phase 2 (docs/join-fix-phase2-spec.md P2-11): the save handoff
+    # (absent = off; stage only in hidden worker runs) and the guest travel lock
+    # (absent = 1 in play, 0 in the lab). Written only when set.
+    @{ Key = 'save_handoff'; Json = 'save_handoff'; Kind = 'enum'; Values = @('off', 'stage', 'scene', 'always') },
+    @{ Key = 'travel_lock'; Json = 'travel_lock'; Kind = 'bool' },
     # World sync (docs/world-sync-protocol.md): 0 = inert (the default; never
     # written then), 1 plumbing, 2 enemies + alert, 3 clock/weather + travel/recovery. The probe
     # is a lab experiment (Play-OfflineCoop -WorldProbe, world.trigger).

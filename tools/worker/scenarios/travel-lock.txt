@@ -1,0 +1,22 @@
+# Guest travel lock with its escape (docs/join-fix-phase2-spec.md track C, hidden check R6):
+# the host Continues into Mother Base (30010) while the guest (real-save copy) waits at its
+# own 40050 title. The guest's first Continue is refused softly (note 7 b=1: the host is
+# elsewhere); the same press again within 10 s goes alone into the guest's own save.
+# This also answers whether a swallowed title Continue can be pressed again.
+# Run (coordinator only, hidden worker):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/travel-lock.txt -SaveSeed lab -GuestSaveSeed real -LabSetting travel_lock=1 -LabSetting save_handoff=off -GraphicsQuality low
+# Evidence:
+#  - guest script-observer.log: world_lua=event=handoff; step=lock; ...; decision=refuse with
+#    world=note; code=7; ...; b=1, and the guest is still at 40050 4 s later;
+#  - then decision=repeat and the guest reaches 30050 (its own save).
+#  - Closed, BaselineRestored and RealSavesUnchanged true.
+titlemenu both 240
+title host 240
+waitmission host 30010 300
+guest press enter
+waitlog guest 'world_lua=event=handoff; step=lock; .*decision=refuse' 20
+wait 4000
+expectstate guest mission ^40050$
+guest press enter
+waitlog guest 'decision=repeat' 20
+waitmission guest 30050 300

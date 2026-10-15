@@ -1,0 +1,24 @@
+# Save handoff transfer and staging without an exit (docs/join-fix-phase2-spec.md P2-4..P2-9,
+# hidden checks R2 and R3). The host Continues into Mother Base (30010) and binds its save
+# set; the guest stays at its own title (40050, real-save copy) and receives the host's set
+# over link channel 4 into run\guest-saves-handoff. save_handoff=stage never writes
+# request.json and never exits.
+# Run (coordinator only, hidden worker):
+#   R2 lab link:  pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-stage.txt -SaveSeed lab -GuestSaveSeed real -LabSetting save_handoff=stage -GraphicsQuality low
+#   R3 play link: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -GuestSaveSeed real -LabSetting save_handoff=stage -ScenarioPath tools/worker/scenarios/handoff-stage.txt -GraphicsQuality low
+# Evidence:
+#  - host script-observer.log: save_handoff=provenance; set=...; mission=30010; source=continue|settle,
+#    then save_handoff=offer; xfer=...; files=...; bytes=...
+#  - guest: save_handoff=need; need=1; why=location and save_handoff=staged; xfer=...; files=...; bytes=...
+#    (R3 also: save_handoff=configured; role=...; channel=4 in both logs).
+#  - run\guest-saves-handoff\<xfer>\ hashes equal its handoff.json, which equals the host's progress
+#    files at offer time; run\guest-saves is unchanged; no request.json (stage mode).
+#  - no world=drop or overflow; world=stats bad_op=0.
+#  - scenario.json: Expectations met; Closed, BaselineRestored and RealSavesUnchanged true.
+titlemenu both 240
+title host 240
+waitlog host 'save_handoff=provenance; .*mission=30010' 120
+waitlog host 'save_handoff=offer; ' 60
+waitlog guest 'save_handoff=staged; ' 90
+expectstate guest mission ^40050$
+expectstate guest handoff ^staged$
