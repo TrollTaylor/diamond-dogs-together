@@ -1191,6 +1191,16 @@ bool AppliedForThisStart(const core::Applied& applied, std::uint64_t process_sta
     if (at > process_start + 300 * kTicksPerSecond) return false;
     return at >= process_start || process_start - at <= 1800 * kTicksPerSecond;
 }
+
+// The guest's <save_dir>-handoff\applied.json when the tooling wrote it for
+// this process start (toast G10, token applied).
+bool ReadApplied(const io::Dirs& dirs, std::uint64_t process_start, core::Applied& out) noexcept {
+    wchar_t path[io::kPathChars]{};
+    std::size_t size = 0;
+    out = core::Applied{};
+    return io::HandoffFile(dirs, L"applied.json", path, io::kPathChars) && io::ReadText(path, g_text, sizeof(g_text), size) &&
+           core::ParseApplied(g_text, size, out) && AppliedForThisStart(out, process_start);
+}
 }  // namespace
 
 bool Configure(const Config& config) noexcept {
@@ -1209,6 +1219,30 @@ bool Configure(const Config& config) noexcept {
     if (reason) {
         LogDisabled(config.log, reason);
         partner_net::PublishHandoffState(static_cast<std::uint8_t>(hstate::Token::off), 0);
+        // F9 Partner / Co-op > Shared save stays reachable for a guest whose
+        // travel lock may still apply (world on): the "off" status line and the
+        // Travel lock checkbox, the lock's UI escape (P2-14, U4).
+        hstate::View off{};
+        off.available = config.role == 2 && config.travel_lock && config.world_on;
+        off.role = static_cast<std::uint8_t>(g_role);
+        off.token = static_cast<std::uint8_t>(hstate::Token::off);
+        // Play-Coop relaunches the guest after an applied handoff with
+        // save_handoff=off (one handoff per session, P2-17): applied.json still
+        // gives toast G10 and the applied token in that session.
+        core::Applied applied{};
+        char start_utc[core::kUtcCapacity]{};
+        if (config.mode == SaveHandoff::off && config.role == 2 && io::MakeDirs(config.save_dir, config.directory, dirs) &&
+            ReadApplied(dirs, ProcessStart(start_utc), applied)) {
+            char hex[wire::kShaHexChars + 1]{};
+            wire::FormatShaHex(applied.set, hex);
+            char text[64]{};
+            if (SUCCEEDED(StringCchPrintfA(text, ARRAYSIZE(text), "save_handoff=applied_seen; set=%.8s", hex))) Write(text, Now());
+            coop_hud::PostSaveHandoff(static_cast<std::uint8_t>(hstate::Toast::g10_applied), 0, 0);
+            off.available = true;
+            off.token = static_cast<std::uint8_t>(hstate::Token::applied);
+            partner_net::PublishHandoffState(off.token, 0);
+        }
+        hstate::Publish(off);
         return false;
     }
     g_dirs = dirs;
@@ -1238,14 +1272,8 @@ bool Configure(const Config& config) noexcept {
         if (io::ReadText(path, g_text, sizeof(g_text), size)) g_core.LoadProvenance(g_text, size);
         else if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES) g_core.LoadProvenance("", 0);  // unreadable: rewritten
     }
-    if (config.role == 2 && io::HandoffFile(g_dirs, L"applied.json", path, io::kPathChars) &&
-        io::ReadText(path, g_text, sizeof(g_text), size)) {
-        core::Applied applied{};
-        if (core::ParseApplied(g_text, size, applied) && AppliedForThisStart(applied, process_start)) {
-            g_applied = applied;
-            g_applied_pending = true;  // toast G10 from the first hook tick (the HUD runs by then)
-        }
-    }
+    if (config.role == 2 && ReadApplied(g_dirs, process_start, g_applied))
+        g_applied_pending = true;  // toast G10 from the first hook tick (the HUD runs by then)
     char line[160]{};
     if (g_log && SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "save_handoff=configured; role=%s; mode=%s; channel=4; dir=ok; t_ms=%llu\r\n",
                                            config.role == 2 ? "guest" : "host", wire::ModeName(g_policy),

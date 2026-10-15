@@ -10,6 +10,7 @@
 #include "mgscoop/coop_hud.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/save_handoff.hpp"
+#include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/world_wire.hpp"
 
@@ -335,6 +336,9 @@ const char* HandleNote(const char* source, std::size_t size) noexcept {
     std::uint8_t code = 0;
     std::uint32_t a = 0, b = 0;
     if (!world::ParseNote(source, size, code, a, b)) return nullptr;
+    // Note 9 (CONTINUE_DURING_HANDOFF, P2-3 a=pct): Lua has no transfer percent
+    // (CFG r[12] is only the code), so the native one is used.
+    if (code == 9 && a == 0) a = save_handoff_state::Get().pct;
     static constexpr char yes[] = "return true";
     static constexpr char no[] = "return false";
     // 1 PROGRESS, 2 HELI_WAIT, 3 HELI_ALONE, 4 HELI_REFUSED; join-fix phase 2

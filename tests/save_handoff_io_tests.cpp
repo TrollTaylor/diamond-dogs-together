@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/save_handoff.hpp"
 #include "mgscoop/save_handoff_state.hpp"
@@ -501,6 +502,9 @@ void ModuleGates(const io::Dirs& dirs) {
         Check(!module::Configure(k) && !module::Configured() && Logged(c.line), "a disabled reason is logged");
         Check(module::LuaCode(0) == 0 && !module::GuestHandoffActive(), "off: r[12] 0");
         Check(module::LockAllowed() == 1, "the travel lock still applies to a guest with save_handoff off");
+        const hs::View off = hs::Get();
+        Check(off.available == c.world && off.role == 2 && off.token == static_cast<std::uint8_t>(hs::Token::off),
+              "disabled: F9 Shared save (off line, Travel lock) only while the guest's world lock may apply");
         const char* reply = Lua("1 40050 1 2 0 0");
         Check(reply && std::strcmp(reply, "return false") == 0, "SAVE while off: return false");
     }
@@ -513,11 +517,50 @@ void ModuleGates(const io::Dirs& dirs) {
     host.role = 1;
     module::Configure(host);
     Check(module::LockAllowed() == 0, "never for the host");
+    Check(!hs::Get().available, "disabled host: no F9 Shared save section");
     module::ResetForTest();
     module::Config unlocked = config;
     unlocked.travel_lock = false;
     module::Configure(unlocked);
     Check(module::LockAllowed() == 0, "lab.ini travel_lock=0");
+    Check(!hs::Get().available, "disabled guest without the lock: no F9 Shared save section");
+
+    // The Play-Coop relaunch after an applied handoff runs with save_handoff=off:
+    // applied.json (written for this process start) still gives G10 and the token.
+    {
+        const fs::path applied = fs::path(dirs.handoff) / "applied.json";
+        SYSTEMTIME st{};
+        GetSystemTime(&st);
+        char text[320]{};
+        std::snprintf(text, sizeof(text),
+                      "{\r\n    \"format\":  \"mgs-coop-save-handoff-applied\",\r\n    \"v\":  1,\r\n    \"set_sha256\":  \"%s\",\r\n"
+                      "    \"applied_utc\":  \"%04u-%02u-%02uT%02u:%02u:%02uZ\",\r\n    \"aside\":  \"20261015-120100-before-handoff\"\r\n}\n",
+                      "AB42AF5A00000000000000000000000000000000000000000000000000000001", st.wYear, st.wMonth, st.wDay, st.wHour,
+                      st.wMinute, st.wSecond);
+        WriteFileBytes(applied, std::vector<std::uint8_t>(text, text + std::strlen(text)));
+        std::uint32_t cursor = 0;
+        mgscoop::coop_hud::Event events[64]{};
+        while (mgscoop::coop_hud::Take(events, 64, cursor) == 64) {}
+        module::ResetForTest();
+        g_line_count = 0;
+        Check(!module::Configure(config) && Logged("save_handoff=disabled; reason=off") && Logged("save_handoff=applied_seen; set=AB42AF5A"),
+              "save_handoff=off guest: applied.json is still seen");
+        const hs::View view = hs::Get();
+        Check(view.available && view.token == static_cast<std::uint8_t>(hs::Token::applied), "the applied token reaches F9");
+        const unsigned taken = mgscoop::coop_hud::Take(events, 64, cursor);
+        bool g10 = false;
+        for (unsigned i = 0; i < taken; ++i)
+            g10 = g10 || (events[i].kind == mgscoop::coop_hud::EventKind::save_handoff &&
+                          events[i].arg == static_cast<std::int32_t>(hs::Toast::g10_applied) && std::strcmp(events[i].text, "0 0") == 0);
+        Check(g10, "toast G10 is posted");
+        module::ResetForTest();
+        module::Config host_off = config;
+        host_off.role = 1;
+        g_line_count = 0;
+        module::Configure(host_off);
+        Check(!Logged("save_handoff=applied_seen"), "never for the host");
+        fs::remove(applied);
+    }
 
     // Configured (guest, scene): leftovers cleaned, the receipt rate gate.
     module::ResetForTest();
@@ -550,6 +593,45 @@ void ModuleGates(const io::Dirs& dirs) {
     module::ResetForTest();
     hs::ResetForTest();
 }
+
+// The shared P2-6 vectors (tests/fixtures/handoff-set.json, track A): the glue
+// hashing the six fixture files on disk gives the fixture's set_sha256, the
+// value the wire tests and Get-CoopHandoffSetSha256 also check. Reconfigures
+// the save redirect to the fixture tree (run last).
+void FixtureSet() {
+    const std::vector<std::uint8_t> raw = ReadFileBytes(fs::path(MGS_HANDOFF_SET_JSON));
+    const std::string doc(raw.begin(), raw.end());
+    Check(!doc.empty(), "tests/fixtures/handoff-set.json reads");
+    const fs::path saves = g_root / "fixture-saves";
+    std::size_t pos = 0;
+    for (std::uint8_t s = 0; s < wire::kSlots; ++s) {
+        static constexpr char key[] = "\"content_ascii\": \"";
+        pos = doc.find(key, pos);
+        Check(pos != std::string::npos, "fixture file content");
+        pos += sizeof(key) - 1;
+        const std::size_t end = doc.find('"', pos);
+        Check(end != std::string::npos, "fixture file content ends");
+        WriteFileBytes(saves / wire::SlotPath(s), std::vector<std::uint8_t>(doc.begin() + static_cast<std::ptrdiff_t>(pos),
+                                                                            doc.begin() + static_cast<std::ptrdiff_t>(end)));
+        pos = end;
+    }
+    static constexpr char set_key[] = "\"set_sha256\": \"";
+    std::size_t at = doc.find(set_key);  // the first one is the whole set's (the subsets follow it)
+    Check(at != std::string::npos && at + sizeof(set_key) - 1 + wire::kShaHexChars <= doc.size(), "fixture set_sha256");
+    at += sizeof(set_key) - 1;
+    const std::string expected = doc.substr(at, wire::kShaHexChars);
+    mgscoop::lab::save::reset_for_test();
+    mgscoop::lab::save::configure(saves.string().c_str());
+    io::Dirs dirs{};
+    Check(io::MakeDirs(saves.string().c_str(), nullptr, dirs), "fixture save folder");
+    io::HashCache cache{};
+    core::SetInfo info{};
+    Check(io::HashSetNow(dirs, cache, info) && info.ok && info.stable && !info.unexpected && info.n == wire::kSlots,
+          "the six fixture files hash as a set");
+    char hex[wire::kShaHexChars + 1]{};
+    wire::FormatShaHex(info.set, hex);
+    Check(expected == hex, "the glue's set hash equals tests/fixtures/handoff-set.json set_sha256");
+}
 }  // namespace
 
 int main() {
@@ -573,6 +655,7 @@ int main() {
     Rejoin(dirs);
     ExitWindow();
     ModuleGates(dirs);
+    FixtureSet();
     mgscoop::lab::save::reset_for_test();
     // Only this test's own temporary tree.
     std::error_code ignored;
