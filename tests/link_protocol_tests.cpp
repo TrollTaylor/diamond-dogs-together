@@ -399,8 +399,8 @@ void ReliableStress() {
     ba.rng.s ^= 2;
     const unsigned total = 10000;
     unsigned queued = 0, received = 0;
-    std::uint32_t expected_next[link::kReliableChannels] = {0, 0, 0, 0};
-    std::uint32_t queued_per_channel[link::kReliableChannels] = {0, 0, 0, 0};
+    std::uint32_t expected_next[link::kReliableChannels] = {};
+    std::uint32_t queued_per_channel[link::kReliableChannels] = {};
     std::size_t max_retransmit_tick = 0;
     std::uint64_t now = 0;
     for (; now < 3600000 && received < total; now += 20) {
@@ -521,16 +521,18 @@ void ReliableUnits() {
 }
 
 void Packer() {
-    // The maximum mix: a 76-byte input FRAME, three RELACKs and full reliable windows.
+    // The maximum mix: a 76-byte input FRAME, three RELACKs and full reliable
+    // windows on the game channels 1..3 (channel 4, the save handoff, has its
+    // own pacing check in Channel4PacksLast).
     static link::ReliableSender senders[link::kReliableChannels];
     for (auto& s : senders) s.Reset();
     std::uint8_t payload[link::kMaxReliableMessage]{};
-    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch)
+    for (unsigned ch = 1; ch < 4; ++ch)
         for (unsigned i = 0; i < link::kReliableWindow; ++i)
             Check(senders[ch].Queue(payload, link::kMaxReliableMessage - i, link::ReliableMode::append) == link::ReliableResult::queued,
                   "queue max");
     link::RelAckState acks[link::kReliableChannels]{};
-    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch) acks[ch] = link::RelAckState{true, 32, 1, 0xFFFFFFFFu};
+    for (unsigned ch = 1; ch < 4; ++ch) acks[ch] = link::RelAckState{true, 32, 1, 0xFFFFFFFFu};
     const std::uint8_t frame[76] = {0x4D};
     for (int round = 0; round < 200; ++round) {
         std::uint8_t body[link::kLinkMaxBody];
@@ -596,12 +598,12 @@ void Datagrams() {
     static link::ReliableSender senders[link::kReliableChannels];
     for (auto& s : senders) s.Reset();
     std::uint8_t big[link::kMaxReliableMessage]{};
-    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch)
+    for (unsigned ch = 1; ch < 4; ++ch)
         for (unsigned i = 0; i < 4; ++i)
             Check(senders[ch].Queue(big, link::kMaxReliableMessage - i, link::ReliableMode::append) == link::ReliableResult::queued,
                   "queue");
     link::RelAckState acks[link::kReliableChannels]{};
-    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch) acks[ch] = link::RelAckState{true, 32, 1, 0};
+    for (unsigned ch = 1; ch < 4; ++ch) acks[ch] = link::RelAckState{true, 32, 1, 0};
     const std::size_t first = link::EncodeDatagram(1, payload, link::kMaxDatagramPayload, data, sizeof(data));
     for (int round = 0; round < 50; ++round) {
         std::uint8_t body[link::kLinkMaxBody];
@@ -661,6 +663,63 @@ void Datagrams() {
     while (old.Next(m)) frames += m.type == static_cast<std::uint8_t>(link::MsgType::frame) ? 1u : 0u;
     Check(frames == 1, "the old dispatcher still finds the FRAME after an unknown type");
 }
+
+// Channel 4 (the save handoff, join-fix phase 2 P2-4): ascending pack order
+// keeps it behind every first transmission of channels 1..3, and its RELACK
+// rides in the same fixed order.
+void Channel4PacksLast() {
+    Check(link::kReliableChannels == 5, "reliable channels 1..4 (0 link, 4 save handoff)");
+    static link::ReliableSender senders[link::kReliableChannels];
+    for (auto& s : senders) s.Reset();
+    std::uint8_t payload[link::kMaxReliableMessage]{};
+    unsigned queued = 0;
+    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch)
+        for (unsigned i = 0; i < 6; ++i) {
+            payload[0] = static_cast<std::uint8_t>(ch);
+            const std::size_t size = ch == 4 ? 1016 : 200 + 40 * i;
+            Check(senders[ch].Queue(payload, size, link::ReliableMode::append) == link::ReliableResult::queued, "queue on channels 1..4");
+            ++queued;
+        }
+    link::RelAckState acks[link::kReliableChannels]{};
+    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch) acks[ch] = link::RelAckState{true, 32, static_cast<std::uint16_t>(ch), 0};
+    unsigned packed = 0, channel4_bodies = 0;
+    for (int round = 0; round < 64 && packed < queued; ++round) {
+        std::uint8_t body[link::kLinkMaxBody];
+        link::BodyWriter writer(body, sizeof(body));
+        std::size_t budget = link::kRetransmitBudgetBytes;
+        Check(link::PackBody(writer, nullptr, 0, round ? nullptr : acks, senders, 0, 250, budget), "packed");
+        Check(writer.size() <= link::kLinkMaxBody, "within 1148 bytes");
+        link::MessageReader reader(body, writer.size());
+        link::Message m{};
+        unsigned last_channel = 0, relacks = 0, last_relack = 0;
+        bool has4 = false;
+        while (reader.Next(m)) {
+            link::ReliableMsg r{};
+            link::RelAckMsg a{};
+            if (link::DecodeReliable(m, r)) {
+                Check(r.channel >= 1 && r.channel <= 4 && r.channel >= last_channel, "reliable messages in ascending channel order");
+                Check(r.payload[0] == r.channel, "payload of its channel");
+                last_channel = r.channel;
+                has4 = has4 || r.channel == 4;
+                ++packed;
+            } else if (link::DecodeRelAck(m, a)) {
+                Check(a.channel > last_relack && last_channel == 0, "RELACKs of channels 1..4 first, in order");
+                last_relack = a.channel;
+                ++relacks;
+            }
+        }
+        if (!round) Check(relacks == 4, "a RELACK for each of channels 1..4");
+        if (has4) {
+            ++channel4_bodies;
+            // Never ahead of a first transmission of channels 1..3.
+            for (unsigned ch = 1; ch < 4; ++ch) {
+                link::ReliableSender::Pick pick{};
+                Check(!senders[ch].NextDue(0, 250, 0, pick), "channels 1..3 had nothing unsent left");
+            }
+        }
+    }
+    Check(packed == queued && channel4_bodies >= 1, "every message packed, channel 4 last");
+}
 } // namespace
 
 int main() {
@@ -674,6 +733,7 @@ int main() {
     ReliableStress();
     Packer();
     Datagrams();
+    Channel4PacksLast();
     std::printf("link_protocol_tests: %u checks passed\n", checks);
     return 0;
 }

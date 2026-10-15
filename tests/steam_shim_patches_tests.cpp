@@ -1,11 +1,20 @@
 // Unit tests for the co-op lab's pure decision helpers: mutex rename, XInput
-// routing, save-path mapping, wire decode, loss schedule and endpoint filter.
+// routing, save-path mapping, wire decode, loss schedule and endpoint filter,
+// plus the save handoff's redirect helpers (local and handoff paths, the
+// remote snapshot read under concurrent game writes).
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #include "mgscoop/early_patches.hpp"
+#include "mgscoop/steam_abi.hpp"
+#include "mgscoop/steam_identity.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/save_redirect.hpp"
 #include "mgscoop/udp_transport.hpp"
 #include "mgscoop/steam_net_abi.hpp"
 #include "steam_shim_contract.hpp"
+#include <algorithm>
+#include <string>
 #include <vector>
 
 #include <cstdio>
@@ -246,6 +255,154 @@ void TestSaveDirFits() {
     Check(save_dir_fits(dir), "trailing separator not counted");
 }
 
+// Save handoff (join-fix phase 2 B3): <save_dir>\287700\local\<name> with the
+// remote name rules, and <save_dir>-handoff within the 248-character budget.
+void TestHandoffPaths() {
+    using namespace mgscoop::lab::save;
+    char buf[520];
+    Check(format_local_path("D:\\lab\\saves", "TPP_GAME_DATA0", buf, sizeof(buf)) &&
+              std::strcmp(buf, "D:\\lab\\saves\\287700\\local\\TPP_GAME_DATA0") == 0,
+          "local slot path");
+    Check(format_local_path("D:\\lab\\saves\\\\", "PERSONAL_DATA1", buf, sizeof(buf)) &&
+              std::strcmp(buf, "D:\\lab\\saves\\287700\\local\\PERSONAL_DATA1") == 0,
+          "local path trims trailing separators");
+    for (const char* bad : {"..", ".", "a\\b", "a/b", "C:evil", "", "..\\TPP_GAME_DATA0"}) {
+        buf[0] = 'x';
+        buf[1] = 0;
+        Check(!format_local_path("D:\\lab\\saves", bad, buf, sizeof(buf)) && buf[0] == 0, "local traversal refused");
+    }
+    Check(!format_local_path("D:\\lab\\saves", nullptr, buf, sizeof(buf)) && !format_local_path("", "TPP_GAME_DATA0", buf, sizeof(buf)) &&
+              !format_local_path("\\\\", "TPP_GAME_DATA0", buf, sizeof(buf)),
+          "local path needs a name and a save_dir");
+    char tiny[24];
+    Check(!format_local_path("D:\\lab\\saves", "TPP_GAME_DATA0", tiny, sizeof(tiny)) && tiny[0] == 0, "local path overflow");
+
+    Check(format_handoff_dir("D:\\Games\\MGS_TPP\\mgs-coop\\coop-saves", buf, sizeof(buf)) &&
+              std::strcmp(buf, "D:\\Games\\MGS_TPP\\mgs-coop\\coop-saves-handoff") == 0,
+          "handoff dir is <save_dir>-handoff");
+    Check(format_handoff_dir("D:\\run\\guest-saves\\/\\", buf, sizeof(buf)) && std::strcmp(buf, "D:\\run\\guest-saves-handoff") == 0,
+          "handoff dir trims trailing separators");
+    Check(!format_handoff_dir("", buf, sizeof(buf)) && !format_handoff_dir(nullptr, buf, sizeof(buf)) &&
+              !format_handoff_dir("\\", buf, sizeof(buf)),
+          "handoff dir needs a save_dir");
+    // The longest staged path (the folder plus kHandoffLongestTail) stays below 248.
+    Check(kHandoffLongestTail == std::strlen("\\00000000.partial\\287700\\local\\TPP_GAME_DATA0.mgs-coop-"
+                                             "00000000000000000000000000000000.tmp"),
+          "the tooling's longest staged name");
+    const std::size_t longest = kHandoffPathLimit - 1 - kHandoffLongestTail - (sizeof(kHandoffSuffix) - 1);
+    std::string dir = "D:\\" + std::string(longest - 3, 'a');
+    Check(dir.size() == longest && format_handoff_dir(dir.c_str(), buf, sizeof(buf)) &&
+              std::strlen(buf) + kHandoffLongestTail == kHandoffPathLimit - 1,
+          "the longest accepted save_dir");
+    Check(format_handoff_dir((dir + "\\").c_str(), buf, sizeof(buf)), "a trailing separator is not counted");
+    dir += 'a';
+    buf[0] = 'x';
+    buf[1] = 0;
+    Check(!format_handoff_dir(dir.c_str(), buf, sizeof(buf)) && buf[0] == 0, "one more character is refused");
+    char small[16];
+    Check(!format_handoff_dir("D:\\lab\\saves", small, sizeof(small)) && small[0] == 0, "handoff dir overflow");
+}
+
+// read_remote_snapshot under concurrent game writes: the redirect's I/O lock
+// makes the snapshot see whole files only, and the game's exclusive write never
+// fails because a snapshot holds the file open.
+struct FakeStorage {
+    const void** vtable;
+};
+std::uintptr_t MGSCOOP_STEAM_CALL GenericStorageSlot(void*) noexcept { return 0; }
+using FileWriteFn = bool(MGSCOOP_STEAM_CALL*)(void*, const char*, const void*, std::int32_t);
+using FileReadFn = std::int32_t(MGSCOOP_STEAM_CALL*)(void*, const char*, void*, std::int32_t);
+struct WriterState {
+    void* proxy;
+    volatile LONG stop;
+    volatile LONG writes, failures;
+};
+DWORD WINAPI WriterThread(void* parameter) {
+    auto* state = static_cast<WriterState*>(parameter);
+    static std::vector<unsigned char> a(65536, 0xA5), b(65536 + 4096, 0x5B);
+    const auto write = reinterpret_cast<FileWriteFn>((*static_cast<void* const* const*>(state->proxy))[mgscoop::steam::storage_slot::FileWrite]);
+    for (unsigned i = 0; !state->stop; ++i) {
+        const auto& data = (i & 1) ? b : a;
+        if (write(state->proxy, "TPP_GAME_DATA", data.data(), static_cast<std::int32_t>(data.size()))) InterlockedIncrement(&state->writes);
+        else InterlockedIncrement(&state->failures);
+    }
+    return 0;
+}
+void TestRemoteSnapshot() {
+    namespace save = mgscoop::lab::save;
+    save::reset_for_test();
+    char temp[MAX_PATH]{};
+    Check(GetTempPathA(MAX_PATH, temp) > 0, "temp path");
+    char dir[MAX_PATH]{};
+    std::snprintf(dir, sizeof(dir), "%smgscoop-snapshot-test-%lu", temp, GetCurrentProcessId());
+    std::vector<unsigned char> buffer(1 << 20);
+    std::size_t size = 7;
+    Check(!save::read_remote_snapshot("TPP_GAME_DATA", buffer.data(), buffer.size(), size) && size == 0, "not configured: refused");
+    save::configure(dir);
+    Check(save::configured(), "save redirect configured");
+    char current[MAX_PATH]{};
+    Check(save::current_save_dir(current, sizeof(current)) && std::strcmp(current, dir) == 0, "current_save_dir");
+    char tiny[4];
+    Check(!save::current_save_dir(tiny, sizeof(tiny)) && tiny[0] == 0, "current_save_dir overflow");
+    static const void* vt[mgscoop::steam::storage_slot::kCount];
+    for (auto& entry : vt) entry = reinterpret_cast<const void*>(&GenericStorageSlot);
+    static FakeStorage storage{vt};
+    void* proxy = save::wrap_remote_storage(&storage);
+    Check(proxy && proxy != &storage, "storage proxy");
+    const auto write = reinterpret_cast<FileWriteFn>((*static_cast<void* const* const*>(proxy))[mgscoop::steam::storage_slot::FileWrite]);
+    const auto read = reinterpret_cast<FileReadFn>((*static_cast<void* const* const*>(proxy))[mgscoop::steam::storage_slot::FileRead]);
+    Check(!save::read_remote_snapshot("TPP_GAME_DATA", buffer.data(), buffer.size(), size), "a missing file is refused");
+    const unsigned char hello[5] = {'h', 'e', 'l', 'l', 'o'};
+    Check(write(proxy, "TPP_GAME_DATA", hello, 5), "game write");
+    Check(save::read_remote_snapshot("TPP_GAME_DATA", buffer.data(), buffer.size(), size) && size == 5 && std::memcmp(buffer.data(), hello, 5) == 0,
+          "snapshot of a whole file");
+    Check(!save::read_remote_snapshot("TPP_GAME_DATA", buffer.data(), 4, size) && size == 0, "a file larger than the buffer is refused");
+    Check(!save::read_remote_snapshot("..\\x", buffer.data(), buffer.size(), size) && !save::read_remote_snapshot(nullptr, buffer.data(), 8, size),
+          "unsafe names refused");
+    unsigned char back[8]{};
+    Check(read(proxy, "TPP_GAME_DATA", back, sizeof(back)) == 5, "the game's own read still works");
+    // Two threads: the game writes alternating 64 KB / 68 KB files while the
+    // snapshot reads 1000 times; every read is one whole version.
+    WriterState state{proxy, 0, 0, 0};
+    HANDLE thread = CreateThread(nullptr, 0, &WriterThread, &state, 0, nullptr);
+    Check(thread != nullptr, "writer thread");
+    unsigned whole = 0, refused = 0;
+    for (unsigned i = 0; i < 1000; ++i) {
+        if (!save::read_remote_snapshot("TPP_GAME_DATA", buffer.data(), buffer.size(), size)) {
+            ++refused;
+            continue;
+        }
+        const bool a = size == 65536 && std::all_of(buffer.begin(), buffer.begin() + 65536, [](unsigned char c) { return c == 0xA5; });
+        const bool b = size == 65536 + 4096 &&
+                       std::all_of(buffer.begin(), buffer.begin() + 65536 + 4096, [](unsigned char c) { return c == 0x5B; });
+        const bool first = size == 5;  // before the writer's first write
+        if (!(a || b || first)) {
+            std::fprintf(stderr, "torn snapshot: size %zu\n", size);
+            Check(false, "a snapshot never returns torn bytes");
+        }
+        ++whole;
+    }
+    InterlockedExchange(&state.stop, 1);
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+    std::printf("remote snapshot: %u whole reads, %u refused, %ld game writes, %ld failed\n", whole, refused,
+                static_cast<long>(state.writes), static_cast<long>(state.failures));
+    Check(state.failures == 0, "a snapshot never makes the game's write fail");
+    Check(state.writes > 0 && whole + refused == 1000 && whole > 0, "both threads ran");
+    // Clean up exactly what this test created.
+    char path[MAX_PATH]{};
+    std::snprintf(path, sizeof(path), "%s\\remote\\TPP_GAME_DATA", dir);
+    DeleteFileA(path);
+    std::snprintf(path, sizeof(path), "%s\\remote", dir);
+    RemoveDirectoryA(path);
+    std::snprintf(path, sizeof(path), "%s\\287700\\local", dir);
+    RemoveDirectoryA(path);
+    std::snprintf(path, sizeof(path), "%s\\287700", dir);
+    RemoveDirectoryA(path);
+    RemoveDirectoryA(dir);
+    save::reset_for_test();
+}
+
 void TestEndpointFilter() {
     using namespace mgscoop::lab;
     // Two-PC play: the early.log play line and the save-redirect state.
@@ -360,6 +517,8 @@ int main() {
     TestMasterUrl();
     TestMutexBlocker();
     TestSaveDirFits();
+    TestHandoffPaths();
+    TestRemoteSnapshot();
     TestInitWrapper();
     std::printf("steam_shim_patches_tests: %u checks passed\n", g_checks);
     return 0;

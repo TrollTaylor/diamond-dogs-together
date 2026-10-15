@@ -602,6 +602,47 @@ int main() {
               playProbe.invalid_values == 1,
           "play refuses world_probe");
     Check(kPlayRefusedWorldProbe == 0x8000, "world_probe refusal bit");
+    // Automatic save handoff and the guest travel lock (join-fix phase 2 P2-11):
+    // save_handoff absent = off, travel_lock absent = 1 in play and 0 in lab;
+    // neither is a play refusal.
+    {
+        const auto absent = Lab("enabled=1\nrole=guest\nworld=3\n");
+        Check(absent.save_handoff == SaveHandoff::off && !absent.save_handoff_given && absent.travel_lock == kTravelLockAbsent &&
+                  absent.invalid_values == 0 && absent.unknown_keys == 0,
+              "save_handoff absent is off, travel_lock absent");
+        Check(!EffectiveTravelLock(absent), "travel lock defaults off in lab");
+        const auto playAbsent = Lab("enabled=1\nmode=play\nrole=guest\n" + saves + "net=1\nnet_peer_addr=192.168.1.20\nworld=3\n");
+        Check(playAbsent.mode == LabMode::play && playAbsent.travel_lock == kTravelLockAbsent && EffectiveTravelLock(playAbsent) &&
+                  playAbsent.save_handoff == SaveHandoff::off,
+              "travel lock defaults on in play");
+        const char* modes[] = {"off", "stage", "scene", "always"};
+        for (unsigned i = 0; i < 4; ++i) {
+            const auto c = Lab(std::string("enabled=1\nrole=guest\nsave_handoff=") + modes[i] + "\n");
+            Check(static_cast<unsigned>(c.save_handoff) == i && c.save_handoff_given && c.invalid_values == 0 &&
+                      std::strcmp(SaveHandoffName(c.save_handoff), modes[i]) == 0,
+                  "save_handoff values round trip");
+        }
+        const auto badHandoff = Lab("enabled=1\nrole=guest\nsave_handoff=auto\ntravel_lock=2\n");
+        Check(badHandoff.save_handoff == SaveHandoff::off && !badHandoff.save_handoff_given && badHandoff.travel_lock == kTravelLockAbsent &&
+                  badHandoff.invalid_values == 2,
+              "save_handoff=auto and travel_lock=2 are invalid values");
+        const auto lockOn = Lab("enabled=1\nrole=guest\ntravel_lock=1\n");
+        Check(lockOn.travel_lock == 1 && EffectiveTravelLock(lockOn) && lockOn.invalid_values == 0, "travel_lock=1 in lab");
+        const auto playOff = Lab("enabled=1\nmode=play\nrole=guest\n" + saves +
+                                 "net=1\nnet_peer_addr=192.168.1.20\nworld=3\nsave_handoff=scene\ntravel_lock=0\n");
+        Check(playOff.travel_lock == 0 && !EffectiveTravelLock(playOff) && playOff.save_handoff == SaveHandoff::scene &&
+                  playOff.play_refused == 0 && playOff.invalid_values == 0 && playOff.unknown_keys == 0,
+              "play keeps save_handoff and travel_lock=0 without a refusal bit");
+        const auto playAlways = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\nsave_handoff=always\ntravel_lock=1\n");
+        Check(playAlways.save_handoff == SaveHandoff::always && playAlways.travel_lock == 1 && playAlways.play_refused == 0 &&
+                  playAlways.invalid_values == 0,
+              "play host with save_handoff=always");
+        SaveHandoff parsed = SaveHandoff::scene;
+        Check(ParseSaveHandoff("stage", 5, parsed) && parsed == SaveHandoff::stage && !ParseSaveHandoff("Stage", 5, parsed) &&
+                  !ParseSaveHandoff("", 0, parsed) && !ParseSaveHandoff(nullptr, 3, parsed) && parsed == SaveHandoff::stage,
+              "save_handoff spellings are exact");
+        Check(static_cast<unsigned>(SaveHandoff::always) == 3, "SaveHandoff matches save_handoff_wire::Mode");
+    }
     // Debug "Spawn enemy here" native placement: lab-only, default off.
     Check(!Lab("enabled=1\nrole=host\n").debug_soldier_warp, "debug_soldier_warp defaults off");
     const auto warpOn = Lab("enabled=1\nrole=host\ndebug_soldier_warp=1\n");

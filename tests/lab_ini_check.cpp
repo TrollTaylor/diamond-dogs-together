@@ -139,6 +139,8 @@ int main(int argc, char** argv) {
         // Section 20 and the in-game status line.
         std::printf("net_steam_dispatch=%s\nsteam_selftest_fn=%d\ncoop_hud=%s\n", mgscoop::SteamDispatchName(c.net_steam_dispatch),
                     c.steam_selftest_fn ? 1 : 0, mgscoop::CoopHudName(c.coop_hud));
+        // Automatic save handoff (join-fix phase 2 P2-11): the policy and the effective travel lock.
+        std::printf("save_handoff=%s\ntravel_lock=%d\n", mgscoop::SaveHandoffName(c.save_handoff), mgscoop::EffectiveTravelLock(c) ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

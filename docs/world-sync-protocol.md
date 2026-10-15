@@ -230,17 +230,18 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 
 | Receipt | Source | Reply | Threads |
 |---|---|---|---|
-| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait` (11 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader) | query any; start runtime, not terminating |
+| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait,handoff,lock` (13 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Join-fix phase 2: r[12] the save handoff code (0 none/off/host, 1 wait_host, 2 receiving, 3 staged or countdown, 4 exiting, 5 kept, 6 failed or refused; Lua `pending` = 1..4, `busy` = 2..4) and r[13] the travel lock (1 when it may apply: the effective `lab.ini` `travel_lock`, the F9 unlock not set, guest role; else 0), both filled by `world_link::HandleCfg` after the core from the save handoff's published state. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader and a missing r[12]/r[13] as 0) | query any; start runtime, not terminating |
 | TX | `return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>` | `return 1` / `return 0,<reason>`: 1 syntax, 2 unknown_op, 3 bad_args, 4 wrong_role, 5 not_paired, 6 queue_full, 7 disabled, 8 lab_only | runtime; MISSION_END also termination |
 | RX | `return 'MGS_COOP_WORLD_RX_V1' -- <mask>` (1 control; 3 control, world, U slots) | `return queue,op,v...` or empty `return 0,0,flags,qctrl,qworld,epoch` (flags 1 link, 2 paired, 4 resync_needed, 8 level0) | runtime |
 | LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; at most 200 lines per 10 s, then `world=log_cap`) | runtime or termination |
 | WARP | `return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>` (guest spawn sync) | `return {r=,h=,leaf=}` or `return {refused="<reason>"}`: one native placement of the grant the core recorded when the guest's RX popped ENEMY_DEBUG `seq` (kind warp/correct, same epoch, at most 15 s old); the target never comes from Lua ([debug-menu.md](debug-menu.md) "Spawn sync") | runtime |
-| NOTE | `return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>` (code 1..15; a, b 0..4294967295, no sign) | `return true` (handled, or skipped by the rate gate) or `return false` (a code with no meaning yet: 5..15; 5 travel_locked and 6 host_continue_unsupported are reserved). Codes: 1 PROGRESS{a title-mode ACC mission, b 1 story start, 0 not}, 2 HELI_WAIT{a target, 0}, 3 HELI_ALONE{a target, b reason 1 no_partner, 2 partner_elsewhere, 3 repeat, 4 timeout}, 4 HELI_REFUSED{a unsupported target or nextMissionId, 0}; native alone posts 16 MISMATCH{a local, b partner mission} (section 3). Rate gate per code: the same (a, b) posts at most once per 1 s and logs `world=note; code=; a=; b=; partner=; t_ms=` at most once per 10 s (`world=note; code=; result=unknown; t_ms=` for 5..15). Code 1 records the title progress (b 1 story_start, else ok) and posts only for b 1; 2..4 post a toast with the partner's and the local mission. Lua ignores the result | runtime or termination |
+| NOTE | `return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>` (code 1..15; a, b 0..4294967295, no sign) | `return true` (handled, or skipped by the rate gate) or `return false` (a code with no meaning yet: 13..15). Codes: 1 PROGRESS{a title-mode ACC mission, b 1 story start, 0 not}, 2 HELI_WAIT{a target, 0}, 3 HELI_ALONE{a target, b reason 1 no_partner, 2 partner_elsewhere, 3 repeat, 4 timeout}, 4 HELI_REFUSED{a unsupported target or nextMissionId, 0}; join-fix phase 2: 5 TRAVEL_LOCKED{a host mission, b target}, 6 HOST_PARTNER_CANNOT_JOIN{a target, b partner mission}, 7 TITLE_CONTINUE_LOCKED{a host mission, b 1 location_differs, 2 story_start, 3 waiting_for_host_save}, 8 TRAVEL_ALONE{a target, b 1 repeat, 2 f9_unlock, 3 timeout}, 9 CONTINUE_DURING_HANDOFF{a pct 0..100, 0}, 10 HANDOFF_KEPT_OWN{0, 0}, 11 GUEST_LANDING_ELSEWHERE{a target, b host mission}, 12 SORTIE_HELD{a target, b host mission}; native alone posts 16 MISMATCH{a local, b partner mission} (section 3). Rate gate per code: the same (a, b) posts at most once per 1 s and logs `world=note; code=; a=; b=; partner=; t_ms=` at most once per 10 s (`world=note; code=; result=unknown; t_ms=` for 13..15). Code 1 records the title progress (b 1 story_start, else ok) and posts only for b 1, and not while a save handoff runs for this guest (`save_handoff::GuestHandoffActive`: guest, `save_handoff=scene` or `always`, a host STATE seen; the handoff toasts replace it, the log line stays); 2..12 post a toast with the partner's and the local mission (sentences in `coop_text::FormatWorldNote`). Lua ignores the result | runtime or termination |
+| SAVE | `return 'MGS_COOP_WORLD_SAVE_V1' -- <op> <a> <b> <c> <d> <e>` (exactly 6 integers, no sign; join-fix phase 2, [save-handoff.md](save-handoff.md)): op 1 REPORT{a mission 0..99999, b title 0/1, c story 0 unknown, 1 opening, 2 open, d saving 0/1, e ingame 0/1}, sent on any change, otherwise every 1000 ms while active; op 2 CONTINUE{a target 1..99999 (vars.missionCode at ReservePlayerLoadingPosition k==4), b title, c story, 0, 0}; op 3 DECLINE{a 1 second_continue or 2 f9, 0, 0, 0, 0} | `return true` (accepted), `return false` (the module is off, or rate-gated: more than 4 per second; a DECLINE is never rate-gated), the literal when malformed. `save_handoff::HandleLua` only parses and stores (the report in a seqlock, CONTINUE and DECLINE in a small mailbox) for the link thread. Lua ignores the result | runtime |
 
 Exact classification (name == source, NUL-free, at most 240 bytes). Integers
 only: an optional `-` (i32 fields), no `+`, no leading zeros, no `-0`, no `.`,
 single spaces; u32 up to 4294967295. Replies fit 224 bytes (17 values). TX,
-RX, LOG, WARP and NOTE are quiet (no entry/return lines); CFG logs like any receipt. A
+RX, LOG, WARP, NOTE and SAVE are quiet (no entry/return lines); CFG logs like any receipt. A
 refused receipt stays literal and Lua treats it as inactive or not sent.
 
 ## 6. Configuration and the trigger
@@ -834,7 +835,9 @@ without extra CFG queries when no pending transaction exists.
 
 Initial pairing still requires both copies in the same supported scene.
 Joining with copied saves in different ACC/location scenes has no W3
-bootstrap route yet; bring both copies to the same scene before following.
+bootstrap route; bring both copies to the same scene before following, or
+let the automatic save handoff (join-fix phase 2, below) give the guest the
+host's save.
 Each copy sees why it is not paired (section 3, pair-wait reason): CFG r[9..11]
 give Lua the partner's mission, its world level and the raw reason
 (`W.peer()`), and a different-missions pair that lasts 15 s shows one
@@ -872,6 +875,34 @@ again 1-30 s later goes alone (NOTE 3 b=3); with no partner who could come
 it is allowed at once (NOTE 3 b=1 or 2). Midmission Reload and
 ReturnToMission are still refused before supported host paths change
 vanilla state.
+
+**Save handoff and travel lock (join-fix phase 2).** The design and the
+native side are in [save-handoff.md](save-handoff.md); the Lua chunk is
+`lua/coop/world_handoff.lua`, spliced right after `world_follow.lua`. It
+reports the save state with the SAVE receipt (section 5) and reads CFG
+r[12] (handoff code) and r[13] (travel lock). The travel lock wraps
+`ReserveMissionClear`, `AbortMission`, `AbortMissionByMenu`,
+`ContinueFromCheckPoint`, `ExecuteContinueFromCheckPoint`,
+`OnEndMissionPreparation` and `e.ReservePlayerLoadingPosition` below
+world_follow's armed-guest suppression (armed guests never reach it). It
+applies only to an unarmed, linked guest (r[13] 1) whose host is at level 3
+in a supported mission other than 1 and not loading (`W.peer()`); the host's
+mission, any helicopter (4xxxx), restart, reload and return to title are
+always allowed, and it is inert while a transition is replayed or queued.
+A title Continue is refused softly (NOTE 7) when the guest's title location
+differs from the host's, when its save is at the story start, or while a
+handoff is pending (NOTE 9 while busy); pressing again within 10 s goes
+alone (NOTE 8 b=1; while a handoff is pending this also sends SAVE op 3 and
+NOTE 10). A sortie is held with its arguments (NOTE 12, re-posted every 3 s)
+and released by choosing it again, by the F9 Travel lock checkbox (r[13]
+drops to 0; NOTE 8 b=2), after 120 s (NOTE 8 b=3) or when it turns into a
+follow. An iDroid ReserveMissionClear is refused (NOTE 5) and a repeat within
+1-30 s goes alone. The host is warned (NOTE 6) when it loads into a mission
+the partner cannot join; the guest is warned (NOTE 11) when its Continue
+lands elsewhere. The replay hold: while a handoff is pending at the title
+(r[12] 1..4) the guest's follow replay waits (the 120 s queue timeout still
+refuses the TRANSITION with FOLLOW_ACK 0). Lua log lines:
+`event=handoff;step=report|lock|warn|replay_hold;...`.
 
 **Guest arm.** Guest exits, hot-zone clear, abort and menu choices are
 suppressed while W3 is armed; exit requests are logged and explicitly

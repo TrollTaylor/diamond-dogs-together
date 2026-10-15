@@ -177,6 +177,22 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     else return false;
     return true;
 }
+// Automatic save handoff and the guest travel lock (join-fix phase 2 P2-11):
+// save_handoff=off|stage|scene|always and travel_lock=0|1. Neither is a play
+// refusal; the effective travel lock is EffectiveTravelLock.
+bool ParseSaveHandoffKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "save_handoff")) {
+        ok = ParseSaveHandoff(value.data, value.size, result.save_handoff);
+        if (ok) result.save_handoff_given = true;
+    } else if (Equals(key, "travel_lock")) {
+        bool lock = false;
+        ok = ParseBool(value, lock);
+        if (ok) result.travel_lock = lock ? 1 : 0;
+    } else {
+        return false;
+    }
+    return true;
+}
 } // namespace
 
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
@@ -225,8 +241,10 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
-        // Anim round 1 keys: separate chains (the one below is at MSVC's block nesting limit).
-        if (ParseAnimWeaponsKey(key, value, result, ok) || ParseRound1ActionsKey(key, value, result, ok)) {
+        // Anim round 1 and save handoff keys: separate chains (the one below is
+        // at MSVC's block nesting limit).
+        if (ParseAnimWeaponsKey(key, value, result, ok) || ParseRound1ActionsKey(key, value, result, ok) ||
+            ParseSaveHandoffKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -808,6 +826,27 @@ bool ParseCoopHud(const char* text, std::size_t size, CoopHud& out) noexcept {
     else if (Equals(s, "off") || Equals(s, "0")) out = CoopHud::off;
     else return false;
     return true;
+}
+const char* SaveHandoffName(SaveHandoff value) noexcept {
+    switch (value) {
+    case SaveHandoff::stage: return "stage";
+    case SaveHandoff::scene: return "scene";
+    case SaveHandoff::always: return "always";
+    default: return "off";
+    }
+}
+bool ParseSaveHandoff(const char* text, std::size_t size, SaveHandoff& out) noexcept {
+    const Slice s{text, text ? size : 0};
+    if (Equals(s, "off")) out = SaveHandoff::off;
+    else if (Equals(s, "stage")) out = SaveHandoff::stage;
+    else if (Equals(s, "scene")) out = SaveHandoff::scene;
+    else if (Equals(s, "always")) out = SaveHandoff::always;
+    else return false;
+    return true;
+}
+bool EffectiveTravelLock(const LabConfig& config) noexcept {
+    if (config.travel_lock != kTravelLockAbsent) return config.travel_lock != 0;
+    return config.mode == LabMode::play;
 }
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }

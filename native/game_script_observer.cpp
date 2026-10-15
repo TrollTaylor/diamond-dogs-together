@@ -103,6 +103,8 @@
 #include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/world_link.hpp"
+#include "mgscoop/save_handoff.hpp"
+#include "mgscoop/save_redirect.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/soldier_warp.hpp"
@@ -1223,6 +1225,9 @@ void PartnerShutdown() noexcept {
     mgscoop::sleep_info::Shutdown();
     mgscoop::vehicle_info::Shutdown();
     mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
+    // Save handoff (docs/save-handoff.md): flags only; the hook thread sends
+    // ABORT shutdown when mid-transfer and frees the snapshot.
+    mgscoop::save_handoff::Shutdown();
     // Steam online exit hygiene (docs/steam-online.md C11): flags only. The
     // transport thread sends one CLOSE, closes the peer session and parks;
     // the owner context clears the guest beacon once and stops calling Steam.
@@ -1263,6 +1268,30 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
+}
+
+// Automatic save handoff install (docs/save-handoff.md; after ConfigureWorld,
+// before partner_net::Start). Always records the role and the travel lock
+// (CFG r[13]); the transfer configures only with lab.ini save_handoff set,
+// link v2, redirected saves and world on. Logs save_handoff=configured or
+// save_handoff=disabled; the hooks are set only when configured.
+void ConfigureSaveHandoff(const mgscoop::LabConfig& labc, const wchar_t* directory) noexcept {
+    char save_dir[260]{};
+    if (!lab::save::current_save_dir(save_dir, sizeof(save_dir))) save_dir[0] = 0;
+    mgscoop::save_handoff::Config handoff{};
+    handoff.role = labc.role == mgscoop::LabRole::guest ? 2 : 1;
+    handoff.mode = labc.save_handoff;
+    handoff.play = labc.mode == mgscoop::LabMode::play;
+    handoff.net = labc.net;
+    handoff.link_v2 = labc.net_link == mgscoop::NetLink::v2;
+    handoff.saves_redirected = lab::SavesRedirected();
+    handoff.world_on = world_on;
+    handoff.travel_lock = mgscoop::EffectiveTravelLock(labc);
+    handoff.steam_wait = labc.net_steam_wait;
+    handoff.save_dir = save_dir;
+    handoff.directory = directory;
+    handoff.log = Log;
+    if (mgscoop::save_handoff::Configure(handoff)) mgscoop::partner_net::SetHandoffHooks(mgscoop::save_handoff::Hooks());
 }
 
 const char* HandlePartnerCfg() noexcept {
@@ -3136,6 +3165,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
                 mission_terminating=false;
                 mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; PartnerMissionStart(allocation_mission);
                 if(world_on) mgscoop::world_link::MissionRuntime(allocation_mission);
+                mgscoop::save_handoff::NoteMission(allocation_mission,false);
             }
             else RestoreGameplayRules();
         }
@@ -3156,6 +3186,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             mission_phase=MissionPhase::idle; allocation_thread=0;
             PartnerMissionEnd();
             if(world_on) mgscoop::world_link::LocalMissionEnd();
+            mgscoop::save_handoff::NoteMission(0,true);
         }
     } else return false;
     static constexpr char yes[]="return true",no[]="return false";
@@ -3354,8 +3385,9 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
 // TX on the runtime thread (MISSION_END also on the termination thread), RX
 // on the runtime thread, LOG on the runtime or termination thread, WARP (guest
 // spawn sync) on the runtime thread, NOTE (on-screen world notes) on the
-// runtime or termination thread. A refused receipt stays literal (Lua
-// treats it as inactive or not sent).
+// runtime or termination thread, SAVE (the save handoff report, join-fix
+// phase 2 P2-2) on the runtime thread only. A refused receipt stays literal
+// (Lua treats it as inactive or not sent).
 bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::size_t size, const char* name, LONG64 count,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace world=mgscoop::world;
@@ -3380,6 +3412,8 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
         if(OnRuntimeThread()) reply=GuestWarpReceipt(buffer,size);  // ParseWarp checks the prefix itself
     } else if(kind==world::Receipt::note) {
         if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleNote(buffer,size);
+    } else if(kind==world::Receipt::save) {
+        if(OnRuntimeThread()) reply=mgscoop::save_handoff::HandleLua(buffer,size);
     }
     if(reply) replacement={reply,std::strlen(reply)};
     world_quiet=kind!=world::Receipt::cfg;
@@ -4845,6 +4879,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     }
                     if (labc.net) {
                         ConfigureWorld(labc, directory);
+                        ConfigureSaveHandoff(labc, directory);
                         mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
                                                          labc.net_latency_ms, labc.net_loss_permille, Log};
                         net.link_v2 = labc.net_link == mgscoop::NetLink::v2;

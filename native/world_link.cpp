@@ -9,6 +9,7 @@
 #include <strsafe.h>
 #include "mgscoop/coop_hud.hpp"
 #include "mgscoop/lab_status.hpp"
+#include "mgscoop/save_handoff.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/world_wire.hpp"
 
@@ -259,6 +260,10 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
         Locked lock;
         reply = g_core.Cfg(mission, phase == 1, read_mission, now);
     }
+    // Save handoff (P2-1): r[12] the handoff code, r[13] the travel lock,
+    // from the published atomics after the pure core (outside the world lock).
+    reply.handoff = save_handoff::LuaCode(now);
+    reply.lock = save_handoff::LockAllowed();
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }
@@ -332,9 +337,11 @@ const char* HandleNote(const char* source, std::size_t size) noexcept {
     if (!world::ParseNote(source, size, code, a, b)) return nullptr;
     static constexpr char yes[] = "return true";
     static constexpr char no[] = "return false";
-    // 1 PROGRESS, 2 HELI_WAIT, 3 HELI_ALONE, 4 HELI_REFUSED; 5..15 have no
-    // meaning yet (5 travel_locked and 6 host_continue_unsupported reserved).
-    const bool known = code >= 1 && code <= 4;
+    // 1 PROGRESS, 2 HELI_WAIT, 3 HELI_ALONE, 4 HELI_REFUSED; join-fix phase 2
+    // (P2-3): 5 TRAVEL_LOCKED, 6 HOST_PARTNER_CANNOT_JOIN, 7 TITLE_CONTINUE_LOCKED,
+    // 8 TRAVEL_ALONE, 9 CONTINUE_DURING_HANDOFF, 10 HANDOFF_KEPT_OWN,
+    // 11 GUEST_LANDING_ELSEWHERE, 12 SORTIE_HELD; 13..15 have no meaning yet.
+    const bool known = code >= 1 && code <= 12;
     const std::uint64_t now = partner_net::NowMs();
     std::uint32_t partner = 0, local = 0;
     bool post = false, log = false;
@@ -357,7 +364,10 @@ const char* HandleNote(const char* source, std::size_t size) noexcept {
                                      static_cast<unsigned long long>(now));
         if (SUCCEEDED(formatted)) Write(line);
     }
-    if (post && known && (code != 1 || b == 1)) coop_hud::PostWorldNote(code, a, b, partner, local);
+    // Code 1 toasts only a story start, and not while a save handoff runs for
+    // this guest (the handoff toasts replace it; the log line stays).
+    const bool story_toast = code != 1 || (b == 1 && !save_handoff::GuestHandoffActive());
+    if (post && known && story_toast) coop_hud::PostWorldNote(code, a, b, partner, local);
     PublishWorld(now);
     return known ? yes : no;
 }
