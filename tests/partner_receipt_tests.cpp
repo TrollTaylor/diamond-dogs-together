@@ -2,6 +2,7 @@
 // and log formatting, trigger grammar, stage policy and pose math. Pure; no
 // game or Win32 calls.
 #include "mgscoop/partner_receipt.hpp"
+#include "mgscoop/partner_dm_overlay.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -541,6 +542,19 @@ int main() {
         Check(!TriggerOk("nreload=tap") && !TriggerOk("nslot=on") && !TriggerOk("rtap=0") && !TriggerOk("rtap=2") &&
                   !TriggerOk("rtap=1 rtap=1") && !TriggerOk("nreload=raw nreload=event"),
               "bad reload/slot values and repeats");
+        // Round-1 actions: the DM overlay debug one-shots (overlay_state / overlay_stop).
+        Check(TriggerText("overlay=stateEludeIdle oloop=1 oms=2500", tg) && tg.overlay && !tg.overlay_stop &&
+                  tg.overlay_index == mgscoop::partner_dm_overlay::Find("stateEludeIdle", 14) && tg.has_oloop && tg.oloop && tg.has_oms &&
+                  tg.oms == 2500,
+              "overlay start with loop and ms");
+        Check(TriggerText("overlay=snapdam_s_fre", tg) && tg.overlay && !tg.has_oloop && !tg.has_oms && TriggerText("overlay=stop", tg) &&
+                  tg.overlay_stop && !tg.overlay,
+              "overlay without options; overlay stop");
+        Check(!TriggerOk("overlay=stateGunHold") && !TriggerOk("overlay=statedead") && !TriggerOk("overlay=") &&
+                  !TriggerOk("overlay=stateDead overlay=stop") && !TriggerOk("overlay=stop oms=500") && !TriggerOk("oloop=1") &&
+                  !TriggerOk("overlay=stateDead oms=99") && !TriggerOk("overlay=stateDead oms=60001") && !TriggerOk("overlay=stateDead oloop=2") &&
+                  !TriggerOk("overlay=stateDead oloop=1 oloop=0"),
+              "bad overlay names (graph 2, case), options without a start, ranges and repeats refused");
         // A long trigger within the 255-byte limit (not every token at once).
         const std::string longest =
             "stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox "

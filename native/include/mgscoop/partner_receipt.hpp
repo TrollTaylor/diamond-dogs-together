@@ -232,6 +232,8 @@ std::size_t FormatLogLine(const char* source, std::size_t size, char* out, std::
 //   | hold=none|pass|own|net | recon=off|track|pin | align=<-50..150>
 //   | slot=remote|body|none | runaway=pin|disarm|off | wrap=off|census|window
 //   | place=1   (one-shot: a new placement)
+// Round-1 actions (docs/anim-round1-actions.md "DM overlay"):
+//   | overlay=<partner_dm_overlay entry>|stop | oloop=0|1 | oms=<100..60000>   (one-shots)
 // Decimal values have no leading zeros. "stop" must be alone. Anything else
 // (unknown token, repeat, empty) is refused.
 inline constexpr std::size_t max_trigger = 255;
@@ -329,6 +331,15 @@ struct Trigger {
     bool has_nslot;
     PartnerNativeSlot nslot;
     bool rtap;
+    // Round-1 actions (docs/anim-round1-actions.md "DM overlay"; the debug
+    // commands overlay_state / overlay_stop): overlay=<partner_dm_overlay
+    // catalogue entry>|stop, and with an entry oloop=0|1 (default: the entry's)
+    // and oms=<100..60000> (default 3000). One-shots.
+    bool overlay, overlay_stop;
+    std::uint8_t overlay_index;
+    bool has_oloop, oloop;
+    bool has_oms;
+    std::uint32_t oms;
 };
 bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 

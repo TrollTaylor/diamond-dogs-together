@@ -112,7 +112,14 @@ struct In {
     std::uint32_t quality_good_ms;
     bool remote_caps_refused;
     const char* visibility_reason;  // qualified ride/air/dead guard; null normally
+    // A suspend sub-mode (docs/anim-round1-actions.md "DM overlay"): while set,
+    // entering/active leave and fallback stays blocked with this reason, but
+    // the leave counts no fallback (no latch) and, once it clears, fallback
+    // re-enters at once (no cooldown, no settling hold) unless another blocker
+    // showed up meanwhile. kSuspendOverlay is the DM overlay lever's reason.
+    const char* suspend_reason;
 };
+inline constexpr char kSuspendOverlay[] = "overlay";
 
 struct Out {
     Mode mode;
@@ -126,6 +133,10 @@ struct Out {
     bool req_dmmap_rearm;    // leaving: then dm=map
     bool req_epoch;          // leaving: body epoch ++
     const char* enter_step;  // entering: "dm_stop" | "dm_revert" | "place" | "armed" when it changes, else nullptr
+    // This step belongs to a suspend cycle (the suspend leave, its fallback, or
+    // the immediate re-entry through active): the driver logs it on the
+    // suspending lever's own cap instead of the transition cap.
+    bool suspend_cycle;
 };
 
 struct State {
@@ -156,6 +167,10 @@ struct State {
     std::uint8_t net_count;
     std::uint32_t net_leaves, hard_leaves, net_reentries, quiet_episodes;
     const char* last_net_reason;    // static; nullptr before any
+    // Suspend sub-mode: left for In::suspend_reason (re-enter at once when it
+    // clears), resuming (entering after a suspend, until active), suspends.
+    bool suspended, resumed;
+    std::uint32_t suspends;
 };
 
 // MissionStart: fallback (configured) or off; per-mission counters cleared.

@@ -32,6 +32,8 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_dmmap.hpp"
+#include "mgscoop/partner_act_log.hpp"
+#include "mgscoop/partner_dm_overlay.hpp"
 #include "mgscoop/partner_facing.hpp"
 #include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
@@ -128,6 +130,10 @@ inline constexpr unsigned kDmMapSwitchCap = 600;
 // partner_lost=hide (lab-tested only): the realize bits are cleared after the
 // net sample has been lost this long; the next live sample re-realizes.
 inline constexpr std::uint64_t kLostHideMs = 10000;
+// Round-1 actions track (docs/anim-round1-actions.md): the DM overlay's own
+// line cap per mission (partner_overlay=..., then "partner_overlay=capped").
+// The act census lines have their own caps (partner_act_log).
+inline constexpr unsigned kOverlayLogCap = 400;
 // Drained input-hook statistics (mirror of partner_input_hook::Stats).
 struct InputStats {
     partner_input::WindowStats window;
@@ -338,6 +344,12 @@ struct Hooks {
     // Arms the four partner_ride_seat dwords for `seat` (true: armed) / reverts them.
     bool (*ride_seat_arm)(void* context, std::uint8_t seat) noexcept = nullptr;
     void (*ride_seat_revert)(void* context, const char* reason) noexcept = nullptr;
+    // Round-1 actions (docs/anim-round1-actions.md "DM overlay"): the hook
+    // point of a camera-skip module (the DM entry/End camera-connect stores
+    // skipped while armed). While it returns true the DM overlay may play with
+    // a non-zero local camera connect (CAM+0x1F0/+0x200); null or false keeps
+    // the cam_connect refusal. Nothing in this track arms one.
+    bool (*dm_camera_skip_armed)(void* context) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -458,6 +470,10 @@ struct Settings {
     std::uint32_t stall_ms;
     PartnerNativeHold nhold;
     std::uint32_t edge_repeats;
+    // Round-1 actions track: the DM overlay lever and the act census lines.
+    PartnerNativeOverlay noverlay;
+    bool act_log;
+    bool stance_fast;  // the native stance window (partner_native_stance_fast)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -965,6 +981,15 @@ struct Mission {
     unsigned census_second_lines, census_lines;
     std::uint32_t census_lost, census_skipped;
     bool census_install_logged;
+    // --- Round-1 actions track (docs/anim-round1-actions.md).
+    // The act census (log only) and the remote's dropped pad presses.
+    partner_act_log::ActState act_log;
+    partner_act_log::PadState pad_census;
+    // The DM overlay lever: its machine, the last step (the next tick's native
+    // suspend reason) and its line cap.
+    partner_dm_overlay::State overlay;
+    partner_dm_overlay::Out overlay_out;
+    LogCap overlay_cap;
 };
 
 struct Driver {
@@ -992,6 +1017,10 @@ struct Driver {
     std::uint32_t tap_seq;
     // rtap=1: one test reload tap through the event machine on the next native tick.
     bool rtap_pending;
+    // Round-1 actions: the DM overlay debug one-shot (overlay=, oloop=, oms=),
+    // applied on the next tick.
+    bool overlay_pending;
+    partner_dm_overlay::Request overlay_request;
     // Round 4: a placement requested by a trigger (place=1, or a change of
     // apply/input/source), consumed by the next reconciliation step.
     partner_recon::PlaceReason recon_place_request;

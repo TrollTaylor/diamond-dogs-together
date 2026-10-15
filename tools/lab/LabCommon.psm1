@@ -324,6 +324,11 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_aim_intent'; Json = 'native_aim_intent'; Kind = 'enum'; Values = @('pad', 'state') },
     @{ Key = 'partner_native_reload_rate'; Json = 'native_reload_rate'; Kind = 'enum'; Values = @('off', 'adapt') },
     @{ Key = 'partner_fire_census'; Json = 'fire_census'; Kind = 'bool' },
+    # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
+    # (off natively) and the act census lines (on natively); written only when set.
+    @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },
+    @{ Key = 'partner_act_log'; Json = 'act_log'; Kind = 'bool' },
+    @{ Key = 'partner_native_stance_fast'; Json = 'native_stance_fast'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

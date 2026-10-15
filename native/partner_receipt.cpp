@@ -1,5 +1,6 @@
 // Original MGS Co-op offline partner spike receipt helpers (pure, portable).
 #include "mgscoop/partner_receipt.hpp"
+#include "mgscoop/partner_dm_overlay.hpp"
 #include <cmath>
 #include <cstring>
 
@@ -502,6 +503,23 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
             bool on = false;
             if (result.rtap || !ParseFlag(token + value_at, length - value_at, on) || !on) return false;
             result.rtap = true;
+        } else if (StartsToken(token, length, "overlay=", value_at)) {
+            // Round-1 actions (docs/anim-round1-actions.md): overlay=<catalogue entry>|stop.
+            if (result.overlay || result.overlay_stop) return false;
+            if (EqualsToken(token + value_at, length - value_at, "stop")) {
+                result.overlay_stop = true;
+            } else {
+                const std::uint8_t index = partner_dm_overlay::Find(token + value_at, length - value_at);
+                if (index == partner_dm_overlay::kNone) return false;
+                result.overlay = true;
+                result.overlay_index = index;
+            }
+        } else if (StartsToken(token, length, "oloop=", value_at)) {
+            if (result.has_oloop || !ParseFlag(token + value_at, length - value_at, result.oloop)) return false;
+            result.has_oloop = true;
+        } else if (StartsToken(token, length, "oms=", value_at)) {
+            if (result.has_oms || !ParseDec(token + value_at, length - value_at, 100, 60000, result.oms)) return false;
+            result.has_oms = true;
         } else if (StartsToken(token, length, "steer=", value_at)) {
             if (result.has_steer || !ParseDec(token + value_at, length - value_at, 0, kPartnerNativeSteerMaxDeg, result.steer_deg))
                 return false;
@@ -511,6 +529,8 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
         }
     }
     if (tokens == 0 || (result.stop && tokens != 1)) return false;
+    // oloop= / oms= only qualify an overlay start.
+    if ((result.has_oloop || result.has_oms) && !result.overlay) return false;
     out = result;
     return true;
 }

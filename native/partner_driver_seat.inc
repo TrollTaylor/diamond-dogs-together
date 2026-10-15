@@ -297,6 +297,11 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             if (now - s.phase_ms >= kSeatReleaseMs * 2) SeatRefuse(m, h, "dm_read", now);
             break;
         }
+        if (pdo::Active(m.overlay)) {
+            // A DM overlay stops its own clip (OverlayBlocked: seat) before the seat stops anything.
+            if (now - s.phase_ms >= kSeatExitMs) SeatRefuse(m, h, "overlay", now);
+            break;
+        }
         if (body_dm) {
             // A dm=map clip (or any DM) on body 1 is stopped first; Stop is
             // global, so never while the viewer's own DM runs.

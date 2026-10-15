@@ -208,6 +208,11 @@ inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide:
 // advances to it with RequestToGoNextDirectMotion, falling back to stop).
 enum class PartnerRideSeatEnter : std::uint8_t { direct, getin };
 enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
+// Round-1 actions track (docs/anim-round1-actions.md "DM overlay"): the
+// DirectMotion overlay lever for graph-0 action states on body 1: off (the
+// default), debug (only the debug commands overlay_state / overlay_stop) or
+// map (also the remote-act map: damage, death, box, ledge hang, ladder).
+enum class PartnerNativeOverlay : std::uint8_t { off, debug, map };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -481,6 +486,13 @@ struct LabConfig {
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;
     PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::stop;
+    // Round-1 actions track: the DM overlay lever (off) and the act census
+    // telemetry (partner_act / partner_pad_dropped lines, log only; on).
+    PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
+    bool partner_act_log = true;
+    // The native stance level fix: 1 = the round-1 window (500 ms behind the
+    // guards, partner_recon NativeParams), 0 = the previous 2 s rule.
+    bool partner_native_stance_fast = true;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute
@@ -578,6 +590,7 @@ const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept;
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
 const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
 const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
+const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
@@ -638,6 +651,7 @@ bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNat
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
 bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
 bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
+bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.
 void ResolveWeaponDefaults(LabConfig& config) noexcept;

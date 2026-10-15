@@ -15,6 +15,7 @@
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/coop_carry.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
+#include "mgscoop/coop_hud.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_driver {
@@ -1100,8 +1101,35 @@ pr::Params ReconParams(const Settings& set) noexcept {
     if (set.native_active) {
         p = pr::NativeParams(p, FaceModeFor(set.nface));
         p.recon = PartnerRecon::track;
+        if (!set.stance_fast) {
+            // partner_native_stance_fast=0: the previous stance rule (2 s, no guards).
+            const pr::Params legacy{};
+            p.stance_fix_ms = legacy.stance_fix_ms;
+            p.stance_fix_gap_ms = legacy.stance_fix_gap_ms;
+            p.stance_pad_quiet_ms = p.stance_body_stable_ms = p.stance_settle_ms = p.stance_state_settle_ms = 0;
+        }
     }
     return p;
+}
+
+// Stance level guards (docs/anim-round1-actions.md, partner_recon Params
+// stance_*): the native gun stage and a carry hold the corrective STANCE input
+// (a stance change cancels a reload, a weapon change or an aim), and a downed
+// remote (the coop_hud teammate view, copied from the world Lua owner) is
+// mirrored lying. Static reasons; nullptr while nothing holds it.
+const char* StanceBlock(const Mission& m, const Settings& set, std::uint8_t remote_flags) noexcept {
+    if (!set.native_active) return nullptr;
+    if (m.carry_hold) return "carry";
+    if (!set.ngun) return nullptr;
+    if (m.reload_out.hold || m.reload_out.reconcile) return "reload";
+    if (m.body_switching) return "switch";
+    if (m.remote_v5 && (m.remote_gun_flags & (pin::GunFlag::Aiming | pin::GunFlag::Reloading | pin::GunFlag::Changing))) return "gun";
+    if (remote_flags & (sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading)) return "gun";
+    return nullptr;
+}
+bool RemoteDowned(std::uint64_t tick_ms) noexcept {
+    coop_hud::DownedView v{};
+    return coop_hud::GetDowned(v) && v.teammateDown && tick_ms >= v.publish_ms && tick_ms - v.publish_ms <= 1500;
 }
 
 // One reconciliation step from this tick's observations.
@@ -1144,6 +1172,7 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     m.recon_pose_age_ms = 0;
     std::uint8_t remote_speed = remote_anim.speed;
     bool remote_sprinting = remote_speed == 3;
+    std::uint8_t remote_action_flags = 0;  // sync::ActionFlag of the sampled remote pose (stance guards)
     if (set.source == PartnerSource::net) {
         const std::uint32_t delay = pr::AlignedDelayMs(in.input_net && latest_ok, in.in_age_ms, set.align_ms);
         const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
@@ -1168,6 +1197,7 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
         in.remote_stance = sample.anim_stance;
         remote_speed = sample.anim_speed;
         remote_sprinting = (sample.flags & sync::ActionFlag::Sprinting) != 0;
+        remote_action_flags = sample.flags;
     } else {
         in.target_ok = pose_valid;
         in.target[0] = pose.x_mm; in.target[1] = pose.y_mm; in.target[2] = pose.z_mm;
@@ -1183,6 +1213,14 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.body_anim_ok = anim_ok;
     in.body_act = anim_ok ? anim.act[1] : 0;
     in.body_stance = anim_ok ? anim.stance[1] : 0;
+    // Stance level guards: STANCE in the remote's live input (held, its "now"
+    // word, the edge set, a short tap or a long hold), the gun/carry gate and a
+    // downed remote (native only; the legacy rule has no guards).
+    in.stance_pad = latest_ok && latest.age_ms <= set.stale_ms &&
+                    ((latest.packet.held | latest.packet.w4c | latest.packet.w50 | latest.packet.tap12 | latest.packet.long12) &
+                     kStanceBit) != 0;
+    in.stance_block = set.stance_fast ? StanceBlock(m, set, remote_action_flags) : nullptr;
+    in.remote_downed = set.native_active && set.stance_fast && RemoteDowned(clock.tick_ms);
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
     pnat::DashIn di{};
     di.now_ms = in.now_ms;
@@ -1281,6 +1319,9 @@ void LogReconEvents(Driver& d, const Hooks& h, const Settings& set, const pr::Ou
     if (ev & pr::Event::stance_mismatch)
         EmitRecon(m, h, kRcStance, "partner_recon=stance_mismatch; remote=%u; body=%u; ms=%u\r\n", unsigned(m.recon.stance_applied),
                   anim_ok ? unsigned(anim.stance[1]) : 0u, r.mismatch_ms);
+    if (ev & pr::Event::stance_wait)
+        EmitRecon(m, h, kRcStance, "partner_recon=stance_wait; reason=%s; remote=%u; body=%u; ms=%u\r\n", r.fix_wait ? r.fix_wait : "none",
+                  unsigned(r.fix_remote), unsigned(r.fix_body), r.mismatch_ms);
     if (ev & pr::Event::yaw) EmitRecon(m, h, kRcYaw, "partner_recon=yaw; err_mrad=%d\r\n", Mm(r.yaw_err_mrad));
     if (ev & pr::Event::stop_check)
         EmitRecon(m, h, kRcStop, "partner_recon=stop_check; ok=%u; ms=%u; v_free_mmps=%d\r\n", r.stop_ok == 1 ? 1u : 0u, r.stop_ms,
@@ -1781,9 +1822,9 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
                 BumpTap(d, m, kStanceBit, now);
             }
             ++m.recon_fixes;
-            EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; remote=%u; body=%u; via=%s; ms=%u; fixes=%u\r\n",
+            EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; remote=%u; body=%u; via=%s; ms=%u; fixes=%u; after_ms=%u\r\n",
                       unsigned(ro.report.fix_remote), unsigned(ro.report.fix_body), pr::StanceFixName(ro.stance_fix),
-                      hold ? kStanceFixHoldMs : static_cast<std::uint32_t>(pin::kTapFrames), m.recon_fixes);
+                      hold ? kStanceFixHoldMs : static_cast<std::uint32_t>(pin::kTapFrames), m.recon_fixes, ro.report.mismatch_ms);
         }
     }
     if (m.dash_fix && arm_now && set.native_active && !m.hold_stripped &&
@@ -3156,6 +3197,185 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
         Emit(h, line);
 }
 
+// --- Round-1 actions track (docs/anim-round1-actions.md) --------------------
+// The act census (log only) and the DM overlay lever. Their call sites: Tick
+// (TickActLog before the ride/range guards; TickOverlay in front of TickDm),
+// TickNative (the overlay's suspend reason and its transition lines),
+// ApplyTrigger (the overlay one-shots), Configure/MissionStart/MissionEnd.
+namespace pal = mgscoop::partner_act_log;
+namespace pdo = mgscoop::partner_dm_overlay;
+
+// partner_overlay=... lines: their own cap (kOverlayLogCap per mission).
+void EmitOverlay(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    if (m.overlay_cap.lines >= kOverlayLogCap) {
+        if (!m.overlay_cap.capped) {
+            m.overlay_cap.capped = true;
+            EmitFormat(h, "partner_overlay=capped; limit=%u\r\n", kOverlayLogCap);
+        }
+        return;
+    }
+    char line[384]{};
+    va_list arguments;
+    va_start(arguments, format);
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    va_end(arguments);
+    if (SUCCEEDED(result)) {
+        ++m.overlay_cap.lines;
+        Emit(h, line);
+    }
+}
+
+// The act census (log only; partner_act_log): an edge line for every change of
+// the remote's act (the interpolated sample's anim extension) and of body 1's
+// act, and per second the remote's pad presses body 1's window did not pass
+// (`mask`: this tick's effective input mask). Runs before the ride and range
+// guards, so a hidden rider's acts are logged too.
+void TickActLog(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock, bool anim_ok, const pp::Anim& anim,
+                const sync::AnimState& remote_anim, bool remote_live, std::uint32_t mask) noexcept {
+    Mission& m = d.mission;
+    if (!d.settings.act_log) return;
+    pal::ActIn ai{};
+    ai.now_ms = clock.now_ms;
+    ai.tick_ms = clock.tick_ms;
+    ai.remote_valid = remote_live && (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    ai.remote_act = remote_anim.act;
+    ai.body_valid = anim_ok && pp::Realized(st, partner::partner_index);
+    ai.body_act = anim_ok ? anim.act[1] : 0;
+    const pal::ActOut ao = pal::Step(m.act_log, ai);
+    char line[256]{};
+    for (unsigned i = 0; i < ao.count; ++i)
+        if (pal::FormatLine(ao.lines[i], line, sizeof(line))) Emit(h, line);
+    if (ao.capped_now) EmitFormat(h, "partner_act=capped; limit=%u\r\n", pal::kActLineCap);
+    if (ao.summary && pal::FormatSummary(ao, line, sizeof(line))) Emit(h, line);
+    // The remote's dropped presses (its input frames' edge sets, before this copy's mask).
+    pin::Sample latest{};
+    const bool latest_ok = h.latest_input && h.latest_input(h.context, latest) && latest.valid;
+    const bool armed = m.input_armed && !m.input_neutral;
+    const bool native = armed && m.native_out.active && d.settings.drive == PartnerDrive::native;
+    pal::PadIn pi{};
+    pi.now_ms = clock.now_ms;
+    pi.valid = latest_ok && latest.age_ms <= d.settings.stale_ms;
+    pi.seq = latest.seq;
+    pi.version = latest.packet.version;
+    pi.held = latest.packet.held;
+    pi.press = latest.packet.w50;
+    pi.edge_seq = latest.packet.edge_seq;
+    pi.mask = armed ? mask & ~(native ? m.weapon_strip : 0u) : 0u;
+    pi.native = native;
+    const pal::PadOut po = pal::PadStep(m.pad_census, pi);
+    if (po.line && pal::FormatPad(po, line, sizeof(line))) Emit(h, line);
+    if (po.capped_now) EmitFormat(h, "partner_pad_dropped=capped; limit=%u\r\n", pal::kPadLineCap);
+}
+
+// The DM overlay's eligibility (a static reason, or nullptr): body 1 loaded and
+// on foot under the driver, apply=xform (the lever's placement), no carry,
+// ride or range hide, private pose lease, fault or DM latch, and body 1 not in
+// a state another mirror owns (sleep, carry, carried, dead).
+const char* OverlayBlocked(const Driver& d, const Hooks& h, const pp::State& st, bool terminating, bool parts_loaded, bool anim_ok,
+                           const pp::Anim& anim) noexcept {
+    const Mission& m = d.mission;
+    const Settings& set = d.settings;
+    if (terminating) return "terminating";
+    if (set.stage < 3) return "stage";
+    if (!parts_loaded) return "parts";
+    if (m.range_hidden) return "range";
+    if (m.visibility.hidden || m.visibility_logged) return "ride";
+    if (m.carry_hold || mgscoop::coop_carry::PartnerCarryHold()) return "carry";
+    if (m.vehicle_job || VehicleAttached(h, st)) return "vehicle";
+    if (m.ride_seated) return "seat";
+    if (h.native_pose_suppressed && h.native_pose_suppressed(h.context)) return "pose_lease";
+    if (m.native_disabled || m.input_faulted) return "fault";
+    if (m.dm_patch_failed) return "patch_failed";
+    if (m.dm_revert_failed) return "dm_revert_failed";
+    if (!PartnerApplyIsTransform(set.apply)) return "apply";
+    if (anim_ok && anim.act[1] != c::q18_dm_act && partner_recon::StateAct(anim.act[1])) return "body_state";
+    return nullptr;
+}
+
+// The DM overlay lever (partner_dm_overlay): one step and its effects (the
+// patch, DM_PLAY/DM_STOP into `ops`, the unconsumed clear, its lines).
+// Returns whether TickDm stays out this tick; release_map: run TickDm with
+// dm=off first (dm=map releases its clip before the overlay patches).
+bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock, bool terminating, bool parts_loaded, bool anim_ok,
+                 const pp::Anim& anim, const sync::AnimState& remote_anim, bool remote_live, std::int32_t remote_y_mm,
+                 const partner::Tick& tick, std::uint32_t tick_ops, std::uint32_t& ops, std::uint8_t& gani, bool& release_map) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    release_map = false;
+    const bool pending = d.overlay_pending;
+    d.overlay_pending = false;
+    if (set.noverlay == PartnerNativeOverlay::off && !pending && !pdo::Active(m.overlay)) {
+        m.overlay_out = pdo::Out{};
+        return false;
+    }
+    const std::uint64_t now = clock.now_ms;
+    pdo::In in{};
+    in.now_ms = now;
+    in.mode = set.noverlay;
+    if (pending) in.debug = d.overlay_request;
+    in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
+    in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
+    in.native_clear = !m.native_out.active && !m.input_armed && !m.native_defer_armed;
+    in.map_idle = m.dmmap.phase == pdm::Phase::idle && !m.dmmap.owned;
+    in.patched = m.dm_patched;
+    pp::DmState dm{};
+    if (h.dm_targets && h.read_dm) {
+        pp::DmTargets targets{};
+        h.dm_targets(h.context, st, targets);
+        in.dm_ok = h.read_dm(h.context, st, targets, dm);
+    }
+    in.q18[0] = dm.q18[0];
+    in.q18[1] = dm.q18[1];
+    in.g388 = dm.g388;
+    in.rec18 = dm.rec18;
+    in.cam_ok = dm.cam_ok;
+    in.cam1f0 = dm.cam1f0;
+    in.cam200 = dm.cam200;
+    in.cam_skip = h.dm_camera_skip_armed && h.dm_camera_skip_armed(h.context);
+    in.reply_busy = (tick_ops & (partner::op::warp | partner::op::set_parts_explicit | partner::op::set_all_active)) != 0 ||
+                    ((tick_ops & partner::op::copy_parts) && !(tick.luaflags & partner::luaflag::parts_copied)) || m.look_verify;
+    in.remote_valid = remote_live && (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    in.remote_act = remote_anim.act;
+    in.remote_y_mm = remote_y_mm;
+    in.body_valid = anim_ok;
+    in.body_act = anim_ok ? anim.act[1] : 0;
+    const pdo::Out o = pdo::Step(m.overlay, in);
+    m.overlay_out = o;
+    if (o.patch && !m.dm_patched && h.dm_patch && !terminating) {
+        m.dm_patched = h.dm_patch(h.context, true, "overlay");
+        if (!m.dm_patched) m.dm_patch_failed = true;
+    }
+    if (o.play) {
+        ops |= partner::op::dm_play;
+        gani = o.reply_code;
+        m.dm_play_ms = now;
+        m.dm_pending_gani = o.reply_code;
+    }
+    if (o.stop) ops |= partner::op::dm_stop;
+    if (o.clear_pending && h.dm_clear_pending && h.dm_clear_pending(h.context)) Emit(h, "partner_dm=cleared_pending\r\n");
+    // Our request is pending only between DM_PLAY and its confirmation (RevertDm clears it then).
+    if (o.owns_dm) m.dm_play_pending = m.overlay.phase == pdo::Phase::play_sent;
+    if (o.event) {
+        const pdo::Entry* e = pdo::At(o.index);
+        char extra[96]{};
+        if (o.play) StringCchPrintfA(extra, ARRAYSIZE(extra), "; gani=%u", unsigned(o.reply_code));
+        else if (std::strcmp(o.event, "playing") == 0)
+            StringCchPrintfA(extra, ARRAYSIZE(extra), "; rec18=0x%llx; code_match=%u; rec248=0x%02x", static_cast<unsigned long long>(dm.rec18),
+                             o.code_match ? 1u : 0u, unsigned(dm.rec248));
+        else if (std::strcmp(o.event, "deferred") == 0 || std::strcmp(o.event, "conflict") == 0)
+            StringCchPrintfA(extra, ARRAYSIZE(extra), "; cam1f0=0x%llx; cam200=%u; g388=0x%02x", static_cast<unsigned long long>(dm.cam1f0),
+                             dm.cam200, unsigned(dm.g388));
+        EmitOverlay(m, h,
+                    "partner_overlay=%s; state=%s; loop=%u; source=%s; reason=%s; ms=%u; phase=%s; native=%s; remote_act=%u; body_act=%u; "
+                    "q18=0x%x,0x%x%s\r\n",
+                    o.event, e ? e->name : "none", o.loop ? 1u : 0u, pdo::SourceName(o.source), o.reason ? o.reason : "none", o.ms,
+                    pdo::PhaseName(m.overlay.phase), pnat::ModeName(m.native_out.mode), unsigned(remote_anim.act),
+                    anim_ok ? unsigned(anim.act[1]) : 0u, unsigned(dm.q18[0]), unsigned(dm.q18[1]), extra);
+    }
+    release_map = o.release_map;
+    return o.owns_dm;
+}
+
 void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const partner::Tick& tick, const Clock& clock,
                 bool terminating, bool realized, bool parts_loaded, bool anim_ok, const pp::Anim& anim,
                 const sync::AnimState& remote_anim, std::uint32_t remote_flags, std::uint32_t remote_equip, bool pose_live) noexcept {
@@ -3301,6 +3521,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     } else {
         m.runaway_since_ms = 0;
     }
+    // Round-1 actions: the DM overlay suspends the drive (partner_dm_overlay;
+    // no fallback counted, no latch, no re-entry hold).
+    in.suspend_reason = m.overlay_out.suspend ? pnat::kSuspendOverlay : nullptr;
     const pnat::Mode before = m.native.mode;
     const pnat::Out out = pnat::Step(m.native, in, params);
     m.native_out = out;
@@ -3321,7 +3544,11 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     }
     // drive=legacy again (trigger): nothing native stays published.
     if (!configured && !out.active) WithdrawNativeTargets(m, h);
-    if (out.transition && configured) {
+    if (out.transition && configured && out.suspend_cycle) {
+        // A DM overlay suspend/resume: on the overlay's cap (the transition cap stays for real leaves).
+        EmitOverlay(m, h, "partner_overlay=native; mode=%s; reason=%s; suspends=%u\r\n", pnat::ModeName(out.mode),
+                    out.reason ? out.reason : "none", m.native.suspends);
+    } else if (out.transition && configured) {
         EmitNative(m, h, m.native_cap, "partner_native", "partner_native=%s; reason=%s; fallbacks=%u; since_ms=%u\r\n",
                    pnat::ModeName(out.mode), out.reason ? out.reason : "none", m.native.fallbacks, Clamp32(now - m.native.since_ms));
         if (out.mode == pnat::Mode::latched && !m.native_latched_logged) {
@@ -3329,7 +3556,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
             EmitFormat(h, "partner_native=latched; reason=%s; fallbacks=%u\r\n", out.reason ? out.reason : "none", m.native.fallbacks);
         }
     }
-    if (out.enter_step)
+    if (out.enter_step && out.suspend_cycle)
+        EmitOverlay(m, h, "partner_overlay=native; step=%s; ms=%u\r\n", out.enter_step, Clamp32(now - m.native.since_ms));
+    else if (out.enter_step)
         EmitNative(m, h, m.native_enter_cap, "partner_native_enter", "partner_native=enter; step=%s; ms=%u\r\n", out.enter_step,
                    Clamp32(now - m.native.since_ms));
     (void)before;
@@ -4230,6 +4459,10 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.stall_ms = lab.partner_native_stall_ms;
     d.settings.nhold = lab.partner_native_hold;
     d.settings.edge_repeats = lab.partner_input_edge_repeats;
+    // Round-1 actions track (docs/anim-round1-actions.md).
+    d.settings.noverlay = lab.partner_native_overlay;
+    d.settings.act_log = lab.partner_act_log;
+    d.settings.stance_fast = lab.partner_native_stance_fast;
     // Play never calls SetCurrentSlot itself (docs/native-puppet.md "Release gating"): the
     // setting the telemetry reports is the one that runs (BuildArm downgrades it again).
     if (d.settings.play_mode && d.settings.nslot == PartnerNativeSlot::call) d.settings.nslot = PartnerNativeSlot::write;
@@ -4238,6 +4471,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     partner_dmmap::Reset(d.mission.dmmap);
     partner_native::Reset(d.mission.native, d.settings.drive == PartnerDrive::native);
     d.mission.mag_scale = 1.0;
+    partner_dm_overlay::Reset(d.mission.overlay);
 }
 
 void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcept {
@@ -4299,6 +4533,12 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     d.tap_pending = d.press_pending = d.dmplay_pending = d.dmstop_pending = d.p218_pending = false;
     d.input_census_pending = d.dm_census_pending = false;
     d.rtap_pending = false;
+    // Round-1 actions: the DM overlay starts idle; an enabled lever says so once per mission.
+    partner_dm_overlay::Reset(d.mission.overlay);
+    d.overlay_pending = false;
+    if (d.settings.noverlay != PartnerNativeOverlay::off)
+        EmitFormat(h, "partner_actions=configured; overlay=%s; act_log=%u\r\n", PartnerNativeOverlayName(d.settings.noverlay),
+               d.settings.act_log ? 1u : 0u);
     if (!h.take_trigger) return;
     char text[partner::max_trigger + 1]{};
     std::size_t length = 0;
@@ -4326,6 +4566,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     d.mirror_pending = false;
     d.census_pending = false;
     d.tap_pending = d.press_pending = d.dmplay_pending = d.dmstop_pending = d.p218_pending = false;
+    d.overlay_pending = false;
 }
 
 bool Cfg(Driver& d, const Hooks& h, const char* precheck, std::uint64_t now_ms) noexcept {
@@ -4391,6 +4632,7 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     d.mirror_pending = false;
     d.census_pending = false;
     d.tap_pending = d.press_pending = d.dmplay_pending = d.dmstop_pending = d.p218_pending = false;
+    d.overlay_pending = false;
     EmitFormat(h, "partner_stop; cleared=%u; teardown=%s\r\n", cleared, PartnerTeardownName(teardown));
 }
 
@@ -4543,6 +4785,20 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_p218) { d.p218_pending = true; d.p218_on = trigger.p218; }
     if (stage >= 1 && trigger.dmplay) { d.dmplay_pending = true; d.dmplay_gani = trigger.dmplay_gani; }
     if (trigger.dmstop) d.dmstop_pending = true;
+    // Round-1 actions: the DM overlay debug one-shots (overlay_state / overlay_stop), applied on the next tick.
+    if (trigger.overlay || trigger.overlay_stop) {
+        const partner_dm_overlay::Entry* entry = partner_dm_overlay::At(trigger.overlay_index);
+        d.overlay_pending = true;
+        d.overlay_request = partner_dm_overlay::Request{};
+        d.overlay_request.start = trigger.overlay;
+        d.overlay_request.stop = trigger.overlay_stop;
+        d.overlay_request.index = trigger.overlay ? trigger.overlay_index : partner_dm_overlay::kNone;
+        d.overlay_request.loop = trigger.has_oloop ? trigger.oloop : (entry && entry->loop);
+        d.overlay_request.ms = trigger.has_oms ? trigger.oms : 0u;
+        EmitOverlay(m, h, "partner_overlay=queued; state=%s; loop=%u; ms=%u; setting=%s\r\n",
+                    trigger.overlay_stop ? "stop" : (entry ? entry->name : "none"), d.overlay_request.loop ? 1u : 0u, d.overlay_request.ms,
+                    PartnerNativeOverlayName(d.settings.noverlay));
+    }
     if (stage >= 1) {
         if (trigger.parts_explicit) {
             // look=copy: one SET_PARTS with the local look (F3b); otherwise the
@@ -4766,6 +5022,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.facing_source_body = local_body;
         EmitCapped(m.facing_cap, h, "partner_facing", "partner_facing=source; yaw=%s\r\n", local_body ? "body" : "vars");
     }
+    // Round-1 actions: the act census (log only), before the ride/range guards.
+    TickActLog(d, h, st, clock, anim_ok, anim, remote_anim, set.source == PartnerSource::net && sample_status == pose::Status::live,
+               set.input_mask);
     const bool vehicle_job=VehicleJobCurrent(d,h,st,terminating);
     const bool vehicle_attached=VehicleAttached(h,st);
     if(m.vehicle_job&&!vehicle_job){
@@ -5537,7 +5796,20 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const Settings set_levers = EffectiveSettings(d.settings, m.native_out.active);
     TickInput(d, h, lab, st, set_levers, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);
-    if(!body_attached)TickDm(d, h, st, set_levers, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
+    // Round-1 actions: the DM overlay lever owns the DM while it runs; dm=map
+    // stands down (TickDm with dm=off only to release a clip it still owns).
+    // A seat episode blocks the overlay (OverlayBlocked: seat), so one already
+    // playing winds itself down before the seat takes the DM.
+    bool overlay_release_map = false;
+    const bool overlay_dm = !vehicle_attached &&
+        TickOverlay(d, h, st, clock, terminating, parts_loaded, anim_ok, anim, remote_anim,
+                    set.source == PartnerSource::net && sample_status == pose::Status::live, pose_valid ? pose.y_mm : 0, tick, ops | extra_ops,
+                    extra_ops, gani, overlay_release_map);
+    if (!body_attached && (!overlay_dm || overlay_release_map)) {
+        Settings dm_levers = set_levers;
+        if (overlay_release_map) dm_levers.dm = PartnerDm::off;
+        TickDm(d, h, st, dm_levers, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
+    }
     // apply=input without an armed window falls back to the proven Lua Warp
     // every tick (refused, faulted, install refused, input=off, stage < 3),
     // except while the reconciliation places/verifies the body itself.

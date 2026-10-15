@@ -1899,7 +1899,120 @@ void TestAnimShadow() {
               !pn::ShadowRewrite(false, false, 4, 11), "the base is rewritten on a reconcile, a slot change and above the capacity");
 }
 
+// The suspend sub-mode (docs/anim-round1-actions.md "DM overlay"): the DM
+// overlay suspends the drive without a fallback, a latch or a re-entry hold.
+void TestSuspend() {
+    pn::State s{};
+    pn::Reset(s, true);
+    std::uint64_t t = Activate(s, 1000);
+    for (unsigned episode = 0; episode < 6; ++episode) {
+        pn::In in = Healthy(++t);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Out o = pn::Step(s, in);
+        Check(LeaveRequests(o) && Is(o.reason, "overlay") && o.suspend_cycle && s.fallbacks == 0 && s.hard_leaves == 0 && s.net_leaves == 0,
+              "suspend: leaving (defer, window, dm=map rearm, epoch) without a fallback");
+        in.now_ms = ++t;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay") && o.suspend_cycle && o.transition, "suspend: fallback, suspend cycle");
+        for (int i = 0; i < 30; ++i) {
+            in.now_ms = (t += 100);
+            o = pn::Step(s, in);
+        }
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay") && !o.transition, "suspended: blocked with the overlay reason");
+        // The overlay released: re-enter at once (no cooldown, no 2 s settling); the window was disarmed: place step.
+        in = Ready(++t);
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::entering && Is(o.reason, "resume") && o.suspend_cycle && o.transition && Is(o.enter_step, "place") &&
+              o.req_defer_arm, "resume: entering at once (place step, deferral first)");
+        in.window_armed = in.recon_placed = true;
+        in.now_ms = ++t;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::active && o.suspend_cycle && !s.resumed, "resume: active, still on the suspend cycle");
+        in = Healthy(++t);
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::active && !o.suspend_cycle, "steady active: not a suspend cycle");
+        t += 100;
+    }
+    Check(s.fallbacks == 0 && s.suspends == 6 && s.mode == pn::Mode::active, "six suspends: never latched, never counted");
+    // Another blocker during the suspend restores the normal cooldown and settling hold.
+    {
+        pn::In in = Healthy(++t);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Step(s, in);
+        in.now_ms = ++t;
+        pn::Step(s, in);
+        in.link_live = false;
+        in.now_ms = ++t;
+        pn::Out o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay"), "suspend reason first");
+        in.suspend_reason = nullptr;
+        in.now_ms = ++t;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "link") && !s.suspended, "another blocker: the suspend shortcut is gone");
+        in = Ready(++t);
+        in.window_armed = in.recon_placed = true;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "cooldown"), "normal cooldown again");
+        bool entered = false;
+        std::uint64_t at = 0;
+        for (int i = 0; i < 100 && !entered; ++i) {
+            in.now_ms = (t += 100);
+            o = pn::Step(s, in);
+            if (o.mode != pn::Mode::fallback) { entered = true; at = t; }
+        }
+        Check(entered && at - s.left_ms >= 5000, "re-entry after the cooldown and the settling hold");
+    }
+    // A suspend from entering leaves without counting either.
+    {
+        pn::State e{};
+        pn::Reset(e, true);
+        std::uint64_t now = 1000;
+        pn::Out o{};
+        for (; now < 10000 && o.mode != pn::Mode::entering; now += 100) o = pn::Step(e, Ready(now));
+        Check(o.mode == pn::Mode::entering, "entering");
+        pn::In in = Ready(now);
+        in.suspend_reason = pn::kSuspendOverlay;
+        o = pn::Step(e, in);
+        Check(LeaveRequests(o) && e.fallbacks == 0 && e.suspended, "suspend while entering: no fallback counted");
+    }
+    // A suspend never latches, whatever the latch threshold says.
+    {
+        pn::State z{};
+        pn::Reset(z, true);
+        pn::Params strict{};
+        strict.latch_fallbacks = 0;
+        std::uint64_t now = 1000;
+        pn::Out o{};
+        for (; now < 10000 && o.mode != pn::Mode::active; now += 100) {
+            pn::In in = Ready(now);
+            in.window_armed = in.recon_placed = true;
+            o = pn::Step(z, in, strict);
+        }
+        Check(o.mode == pn::Mode::active, "strict latch: active");
+        pn::In in = Healthy(now);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Step(z, in, strict);
+        in.now_ms = now + 1;
+        o = pn::Step(z, in, strict);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay"), "a suspend never latches");
+    }
+    // A suspend while already in fallback (the drive was not active) keeps the normal hold.
+    {
+        pn::State f{};
+        pn::Reset(f, true);
+        pn::In in = Ready(1000);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Out o = pn::Step(f, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay") && !f.suspended && !o.suspend_cycle, "fallback blocked by the overlay");
+        in.suspend_reason = nullptr;
+        in.now_ms = 1100;
+        o = pn::Step(f, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "settling"), "not suspended by us: the normal settling hold");
+    }
+}
+
 int main() {
+    TestSuspend();
     for (const char* visibilityWhy : {"ride", "ride_stale", "air", "dead"}) {
         pn::State visibilityState{}; pn::Reset(visibilityState, true);
         for (unsigned episode=0; episode<6; ++episode) {
