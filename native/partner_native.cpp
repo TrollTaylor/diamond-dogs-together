@@ -340,7 +340,9 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     }
     case Mode::leaving:
         if (s.suspended) o.suspend_cycle = true;
-        if (s.dm_latch) go(Mode::latched, "dm_revert_failed");
+        // A suspend never latches (whatever the mission's earlier fallbacks).
+        if (s.suspended && in.configured && !s.dm_latch) go(Mode::fallback, s.reason);
+        else if (s.dm_latch) go(Mode::latched, "dm_revert_failed");
         else if (s.fallbacks >= p.latch_fallbacks) go(Mode::latched, s.reason);
         else if (!in.configured) go(Mode::off, "legacy");
         else go(Mode::fallback, s.reason);

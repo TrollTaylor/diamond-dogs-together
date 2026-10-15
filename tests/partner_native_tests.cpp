@@ -1728,6 +1728,27 @@ void TestSuspend() {
         o = pn::Step(e, in);
         Check(LeaveRequests(o) && e.fallbacks == 0 && e.suspended, "suspend while entering: no fallback counted");
     }
+    // A suspend never latches, whatever the latch threshold says.
+    {
+        pn::State z{};
+        pn::Reset(z, true);
+        pn::Params strict{};
+        strict.latch_fallbacks = 0;
+        std::uint64_t now = 1000;
+        pn::Out o{};
+        for (; now < 10000 && o.mode != pn::Mode::active; now += 100) {
+            pn::In in = Ready(now);
+            in.window_armed = in.recon_placed = true;
+            o = pn::Step(z, in, strict);
+        }
+        Check(o.mode == pn::Mode::active, "strict latch: active");
+        pn::In in = Healthy(now);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Step(z, in, strict);
+        in.now_ms = now + 1;
+        o = pn::Step(z, in, strict);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay"), "a suspend never latches");
+    }
     // A suspend while already in fallback (the drive was not active) keeps the normal hold.
     {
         pn::State f{};
