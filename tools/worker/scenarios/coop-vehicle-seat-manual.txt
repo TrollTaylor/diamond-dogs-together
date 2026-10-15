@@ -29,42 +29,35 @@ placebehind host guest 6 -0.7
 wait 4000
 host debug goto_vehicle jeep
 wait 4000
+placebehind guest host 6 0
+wait 2500
+guest run vehicle_names
 host press e 150
 wait 3500
 host run vehicle_seats
 host require vehicle;id=
-placebehind guest host 6 0
-wait 1500
-guest run vehicle_names
 guest run seat_dm stateVehicleBackLeftLoop 2 veh_lv_0000
 wait 1500
-placebehind guest host 6 0
 both capture manual-seat2-parked
 host hold w 1500 nowait
-placebehind guest host 6 0
 guest burst manual-seat2-drive 8 150
 host hold w+a 1500 nowait
-placebehind guest host 6 0
 guest burst manual-seat2-turn 8 150
 host release
 wait 1500
 guest run seat_dm stop
 wait 2000
-placebehind guest host 6 0
 guest capture manual-seat2-stopped
 guest run seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000
 wait 1500
 host hold w 1500 nowait
-placebehind guest host 6 0
 guest burst manual-seat0-drive 8 150
 host release
 wait 1000
 guest run seat_dm stop
 wait 2000
-placebehind guest host 6 0
 guest run seat_dm stateVehicleFrontRightLoop 1 veh_lv_0000
 wait 1500
-placebehind guest host 6 0
 guest capture manual-seat1
 guest run seat_dm stop
 wait 2000

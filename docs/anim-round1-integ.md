@@ -69,15 +69,19 @@ empty jeep.
 So: **the seat flow ran; the camera was not on the jeep; do not treat this as a visual
 pass or fail of the seated mesh.**
 
-## Scenario fix (this integ commit)
+## Scenario fix
 
 `coop-vehicle-seat.txt` and `coop-vehicle-seat-manual.txt`:
 
-- `godmode 1`
-- only the driver `goto_vehicle`; watcher stays put until after enter
-- `placebehind <watcher> <driver> 6 0` **after** enter and before every burst
+- `godmode 1`; only the driver `goto_vehicle`
+- `placebehind <watcher> <driver> 6 0` **before** board (host still on foot at the jeep)
 - `require vehicle;id=` so a missed board stops the scenario
 - reverse half starts with `heal` + `godmode 1`
+
+Do **not** `placebehind` after the driver is seated. Run `76dea383` did that and
+`Wait-ViewerLanding` threw `[guest] viewer landing starts without a valid partner
+pose` (seat mode owns body 1, so `realized/body_valid/pose_valid` is false). A later
+follow-cam would need a landing check that only uses the viewer's local position.
 
 Re-run the auto scenario with the same Invoke-WorkerScenario line. Judge from the
 **guest** `seat-entered` / `seat-drive-*` frames: Snake seated in the jeep, nametag
