@@ -229,8 +229,18 @@ check(c.life[7] == 255, 'unknown soldier not mutated')
 c.deferDead = true
 check(c:send('clear_enemies 50')[3]:find('submitted=1;dead_readback=0', 1, true), 'dead nearest skipped and submitted batch does not fake readback')
 check(c:send('partner stage=3 apply=xform look=net dm=map')[3] == 'partner_applied' and c:count('partner') == 1, 'partner action dispatched only after owner guard')
+c.env.e.MgsCoopWorld = {level = 3, active = true, paired = false}
+check(c:send('partner stage=3')[3] == 'partner_applied;partner=not_paired', 'world sync on but unpaired: applied, partner not paired')
+c.env.e.MgsCoopWorld = {level = 3, active = true, paired = true}
+check(c:send('partner stage=3')[3] == 'partner_applied', 'paired world: plain applied')
+for _, w in ipairs({{level = 0}, {level = 3, active = false, paired = false}}) do
+    c.env.e.MgsCoopWorld = w
+    check(c:send('partner stage=3')[3] == 'partner_applied', 'world sync off or inactive: plain applied')
+end
+c.env.e.MgsCoopWorld = {level = 3, active = true, paired = false}
 c.partnerRefuse = true
 check(c:send('partner stage=3')[3] == 'partner_refused', 'native partner refusal explicit')
+c.env.e.MgsCoopWorld = nil
 -- Round-1 actions (docs/anim-round1-actions.md): the DM overlay debug commands dispatch native partner one-shots.
 local ov = fixture()
 check(ov:send('overlay_state stateEludeIdle 1 2500')[3] == 'overlay_queued;state=stateEludeIdle' and ov:count('partner') == 1 and
@@ -638,8 +648,14 @@ check(math.abs(w.pos[1] - 18) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and ma
 f = fixture(); check(f:send('goto_partner', {pp = {1e9, 0, 0, 40}})[3] == 'partner_pose_bounds', 'partner pose bounds')
 f = fixture(); f.env.vars.clock = 86000
 check(f:send('time_add 1000')[3] == 'time_readback;sync=none' and f.env.vars.clock == 600, 'time_add wraps')
-f.env.e.MgsCoopWorld = {paired = true, eff = 3}
+f.env.e.MgsCoopWorld = {paired = true, eff = 3, env = {clockOn = function() return true end}}
 check(f:send('time 43200')[3] == 'time_readback;sync=world', 'clock sync tag at world level 3')
+f.env.e.MgsCoopWorld = {paired = true, eff = 3, env = {clockOn = function() return false end}}
+check(f:send('time 43200')[3] == 'time_readback;sync=none', 'paired without a synced clock (helicopter) reads back sync=none')
+f.env.e.MgsCoopWorld = {paired = false, eff = 3, env = {clockOn = function() return true end}}
+check(f:send('time 43200')[3] == 'time_readback;sync=none', 'unpaired reads back sync=none')
+f.env.e.MgsCoopWorld = {paired = true, eff = 3}
+check(f:send('time 43200')[3] == 'time_readback;sync=none', 'no env clock state reads back sync=none')
 check(fixture({host = false}):send('time_add 60')[3] == 'host_only', 'guest time_add refused')
 -- spawn_enemy here / closest / route
 local function guardsFixture(options)

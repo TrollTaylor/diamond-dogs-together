@@ -154,6 +154,9 @@ local function fixture(host, target, level, active)
     W.log = function(text) c.logs[#c.logs + 1] = text end
     W.fail = function(text) c.failure = text; W.active = false end
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op = op, v = {...}}; return true end
+    -- NOTE recorder; W.peer stays nil (an older loader: the legacy follow behaviour).
+    c.notes = {}
+    W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end
     compile('local W=e.MgsCoopWorld\nlocal OP=W.OP\n' .. stopSource)
     compile(read(arg[4]))
     compile(read(arg[1]))

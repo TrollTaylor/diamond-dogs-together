@@ -107,11 +107,11 @@ do
   return D.host == true
  end
  -- Sync tag: read-only view of the world link. Enemy outcomes need W1;
- -- clock/weather follow at an active world level of 3.
+ -- clock/weather only while the clock is synced (W.env.clockOn).
  local function sync(kind)
   local W = get(e, "MgsCoopWorld")
-  local eff = tonumber(get(W, "eff")) or 0
-  local on = get(W, "paired") == true and (kind == "env" and eff >= 3 or kind ~= "env" and get(W, "w1") == true)
+  local f = get(get(W, "env"), "clockOn")
+  local on = get(W, "paired") == true and (kind == "env" and type(f) == "function" and f() == true or kind ~= "env" and get(W, "w1") == true)
   return on and "sync=world" or "sync=none"
  end
  local function pose()
@@ -239,7 +239,9 @@ do
    local payload = table.concat(fields, " ")
    if #payload > 160 then return false, "partner_args" end
    local ok = receipt("return 'MGS_COOP_DEBUG_PARTNER_V1' -- " .. fmt("%.0f %s", id, payload)) == true
-   return ok, ok and "partner_applied" or "partner_refused"
+   local Wd = get(e, "MgsCoopWorld")
+   local lone = ok and (tonumber(get(Wd, "level")) or 0) >= 1 and get(Wd, "active") == true and get(Wd, "paired") ~= true
+   return ok, ok and (lone and "partner_applied;partner=not_paired" or "partner_applied") or "partner_refused"
   end
   return false, "command_args"
  end
