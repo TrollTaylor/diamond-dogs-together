@@ -1739,6 +1739,9 @@ void PublishDebugSnapshot() noexcept {
     snapshot.world_paired = world_status.paired;
     snapshot.world_link_up = world_status.link_up;
     snapshot.world_effective = world_status.effective;
+    snapshot.world_partner_mission = world_status.remote_mission;
+    snapshot.world_pair_wait = world_status.pair_wait;
+    snapshot.world_remote_level = world_status.remote_level;
     snapshot.realized = mission.realized;
     snapshot.parts_loaded = mission.parts_loaded;
     snapshot.range_hidden = mission.range_hidden;
@@ -3350,7 +3353,8 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
 // runs on any thread, CFG start on the runtime thread before termination,
 // TX on the runtime thread (MISSION_END also on the termination thread), RX
 // on the runtime thread, LOG on the runtime or termination thread, WARP (guest
-// spawn sync) on the runtime thread. A refused receipt stays literal (Lua
+// spawn sync) on the runtime thread, NOTE (on-screen world notes) on the
+// runtime or termination thread. A refused receipt stays literal (Lua
 // treats it as inactive or not sent).
 bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::size_t size, const char* name, LONG64 count,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
@@ -3374,6 +3378,8 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
     } else if(kind==world::Receipt::warp) {
         // Lua owner thread only; every other gate is in the handler.
         if(OnRuntimeThread()) reply=GuestWarpReceipt(buffer,size);  // ParseWarp checks the prefix itself
+    } else if(kind==world::Receipt::note) {
+        if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleNote(buffer,size);
     }
     if(reply) replacement={reply,std::strlen(reply)};
     world_quiet=kind!=world::Receipt::cfg;
