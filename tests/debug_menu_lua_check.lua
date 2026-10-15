@@ -858,5 +858,13 @@ v.mounted = 'vehicle'
 check(v:send('vehicle_seats')[3] == 'vehicle_seats_routed', 'exact vehicle reader permits mounted posture')
 check(v:send('vehicle_seats arbitrary')[3] == 'on_foot', 'mounted vehicle read exception requires exact command')
 check(v:send('horse_spawn')[3] == 'on_foot', 'mounted read exception never permits summon')
+-- The seated rider levers (docs/anim-round1-seat.md) also run while the viewer drives.
+v.D.vehicle = {handles = {vehicle_seats = true, vehicle_names = true, seat_dm = true}, run = function(a) return true, a[1] .. '_routed' end}
+check(v:send('vehicle_names')[3] == 'vehicle_names_routed', 'vehicle names readable while mounted')
+check(v:send('seat_dm stop')[3] == 'seat_dm_routed', 'seat_dm stop while mounted')
+check(v:send('seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000')[3] == 'seat_dm_routed', 'seat_dm while mounted')
+check(v:send('vehicle_names extra')[3] == 'on_foot', 'vehicle names exception requires the exact command')
+check(v:send('seat_dm a b c d')[3] == 'on_foot', 'seat_dm exception is bounded to its arguments')
+check(v:send('seat_dm')[3] == 'on_foot', 'seat_dm without arguments is not admitted while mounted')
 
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

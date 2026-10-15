@@ -312,7 +312,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_equip_shared'; Json = 'native_equip_shared'; Kind = 'enum'; Values = @('off', 'on', 'prefer') },
     @{ Key = 'partner_native_equip_measured'; Json = 'native_equip_measured'; Kind = 'bool' },
     @{ Key = 'partner_native_standin'; Json = 'native_standin'; Kind = 'enum'; Values = @('off', 'on') },
-    @{ Key = 'partner_native_ride'; Json = 'native_ride'; Kind = 'enum'; Values = @('off', 'hide') },
+    @{ Key = 'partner_native_ride'; Json = 'native_ride'; Kind = 'enum'; Values = @('off', 'hide', 'seat') },
+    # The seated vehicle rider (docs/anim-round1-seat.md): how the seat direct motion starts and ends.
+    @{ Key = 'partner_ride_seat_enter'; Json = 'ride_seat_enter'; Kind = 'enum'; Values = @('direct', 'getin') },
+    @{ Key = 'partner_ride_seat_exit'; Json = 'ride_seat_exit'; Kind = 'enum'; Values = @('stop', 'getoff') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

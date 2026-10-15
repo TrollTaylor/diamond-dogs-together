@@ -1,0 +1,90 @@
+# The seated vehicle rider (docs/anim-round1-seat.md, partner_native_ride=seat).
+# The host drives the nearest authored jeep (veh_lv_*) while the guest watches:
+# the guest must draw the host SEATED in its own copy of that jeep (driver seat,
+# following it while it drives straight and turns), then standing beside it
+# after the host gets out. Then the roles reverse (the host watches the guest
+# drive the same jeep; Quiet seated on the host screen).
+# Expected (guest script-observer.log, first half; host log, second half):
+#   partner_ride=rx; kind=2; rev=..; epoch=..; v=2; seat=0; vehicle=256xx      (once per state change)
+#   partner_ride=seat_show; vehicle=256xx; seat=0
+#   partner_ride_seat=start; vehicle=256xx; seat=0; entry=0; enter=direct; exit=stop; remote_act=1xx
+#   partner_ride_seat_patch=applied; seat=0; sites=0x119883c,0x1198d56,0x1198d81,0x11992e9; seat_dword=0x00b04130
+#   partner_ride_seat=armed; vehicle=256xx; seat=0; ...; cam1f0=0x0; cam200=0
+#   partner_ride_seat=play; vehicle=256xx; seat=0; ...
+#   partner_lua=event=ride_seat; id=256xx; seat=0; name=veh_lv_00xx; state=stateVehicleFrontLeftLoop; entry=0
+#   partner_ride_seat=confirmed; vehicle=256xx; seat=0; state=0x489157d7d94f; ...
+#   partner_ride_seat=status; phase=seated; ...; q18=0x..,0x8b; ...; err_mm=<small>   (1 Hz)
+#   partner_ride_seat=exit_request; ...; reason=getoff_act|foot; via=stop
+#   partner_ride_seat_patch=reverted; reason=getoff_act|foot
+#   partner_ride_seat=exit; ...; confirmed=1; ...
+# A refusal names its reason instead (partner_ride_seat=refused; ...; reason=lua_refused
+# with partner_lua=event=ride_seat_refused; id=..; seat=..; reason=no_name for an
+# unnamed vehicle): the partner then hides exactly as partner_native_ride=hide.
+# Variants: add "labsetting partner_ride_seat_exit=getoff" (GetOff played at act 112)
+# or "labsetting partner_ride_seat_enter=getin" (GetOn when caught entering).
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+placebehind guest host 14 5
+wait 2500
+guest run vehicle_names
+both capture seat-before
+host press e 150
+wait 3500
+host run vehicle_seats
+host run vehicle_names
+both capture seat-entered
+host hold w 1500 nowait
+guest burst seat-drive-a 8 150
+host hold w 1500 nowait
+guest burst seat-drive-b 8 150
+host hold w+a 1500 nowait
+guest burst seat-turn-left 8 150
+host hold w+d 1500 nowait
+guest burst seat-turn-right 8 150
+host hold w 1500
+host release
+wait 2500
+both capture seat-stopped
+host press e 150
+guest burst seat-exiting 8 300
+wait 2500
+both capture seat-exited
+state
+# Roles reversed: the guest drives the same jeep, the host watches Quiet seated.
+guest debug goto_vehicle jeep
+wait 3000
+placebehind host guest 14 5
+wait 2500
+both capture seat-rev-before
+guest press e 150
+wait 3500
+guest run vehicle_seats
+both capture seat-rev-entered
+guest hold w 1500 nowait
+host burst seat-rev-drive 8 150
+guest hold w+a 1500 nowait
+host burst seat-rev-turn 8 150
+guest hold w 1500
+guest release
+wait 2500
+both capture seat-rev-stopped
+guest press e 150
+host burst seat-rev-exiting 8 300
+wait 2500
+both capture seat-rev-exited
+state

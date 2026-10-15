@@ -904,6 +904,7 @@ void TestOnline() {
     const pn::Params p = pn::OnlineParams();
     Check(p.online && p.stale_hold_ms == 1500 && p.link_hold_ms == 1500 && p.cooldown_ms == 5000 && p.latch_fallbacks == 3,
           "online params: 1.5 s stale/link holds, the hard latch unchanged");
+    Check(pn::NetReason("seat") && pn::NetReason("ride") && pn::NetReason("air"), "the seated rider leaves like a ride (no latch)");
     Check(pn::NetReason("net_input") && pn::NetReason("net_link") && pn::NetReason("net_quiet") && pn::NetReason("range_hidden") &&
               pn::NetReason("unrealized") && !pn::NetReason("thread") && !pn::NetReason("cost") && !pn::NetReason("input_stale") &&
               !pn::NetReason(nullptr), "network reasons");

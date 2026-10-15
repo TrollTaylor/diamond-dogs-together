@@ -323,6 +323,11 @@ struct Hooks {
     // Fresh mount intent or current native cleanup lease, matched to the
     // existing Arm. Keeps that Arm; never creates a new admission.
     bool (*native_vehicle_job)(void*,const partner_player::State&,const partner_input::Arm&) noexcept = nullptr;
+    // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md;
+    // any null: the seat refuses with reason=unavailable and the ride hides as before).
+    // Arms the four partner_ride_seat dwords for `seat` (true: armed) / reverts them.
+    bool (*ride_seat_arm)(void* context, std::uint8_t seat) noexcept = nullptr;
+    void (*ride_seat_revert)(void* context, const char* reason) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -330,6 +335,20 @@ inline constexpr std::uint64_t kInputV5ProbeMs = 2000;
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
 inline constexpr unsigned kWeaponEventCap = 64;        // fire gate transitions, manifests sent, apply verdicts
+// The seated vehicle rider (docs/anim-round1-seat.md): the play is re-issued
+// after kSeatConfirmMs unconfirmed (at most kSeatPlays per episode); a stop is
+// re-sent after kSeatStopMs and given up (patches reverted anyway) after
+// kSeatExitMs (kSeatNextMs for the GetOff advance); the body farther than
+// kSeatFarMm from the remote's streamed seated pose for kSeatFarMs falls back
+// to hide; get-in only within kSeatGetInMs of the vehicle kind; the 1 Hz
+// partner_ride_seat=status line and the event lines have their own caps.
+inline constexpr std::uint64_t kSeatConfirmMs = 2000, kSeatStopMs = 1000, kSeatExitMs = 3000, kSeatNextMs = 4000;
+inline constexpr std::uint64_t kSeatFarMs = 1000, kSeatGetInMs = 1500, kSeatStatusMs = 1000, kSeatReleaseMs = 1500;
+inline constexpr std::uint32_t kSeatFarMm = 3000;
+inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
+// The seat flow's phases (Mission::seat.phase).
+enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle };
+const char* SeatPhaseName(SeatPhase phase) noexcept;
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
 // GetTickCount64 (the probe's t_ms, comparable with the other log lines).
@@ -403,6 +422,8 @@ struct Settings {
     // What body 1 carries (lab.ini partner_native_equip; the observer runs the writers).
     PartnerNativeEquip nequip;
     PartnerNativeRide nride;  // qualified visibility policy; off until live acceptance
+    PartnerRideSeatEnter seat_enter;  // nride=seat: direct loop or get-in chain
+    PartnerRideSeatExit seat_exit;    // nride=seat: stop or get-off advance
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Set only in the effective copy: the native settings apply this tick.
@@ -437,7 +458,43 @@ struct Mission {
     bool range_hidden, range_needs_place;
     LogCap range_cap;
     partner_ride_wire::Visibility visibility;
-    LogCap ride_cap;
+    LogCap ride_cap;       // partner_ride=rx (on a state/revision change only)
+    LogCap ride_vis_cap;   // partner_ride=hide|foot_stable|seat_show
+    // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md).
+    struct Seat {
+        SeatPhase phase;
+        bool manual;                 // the debug seat_dm lever owns the DM (Lua issued it)
+        bool armed;                  // partner_ride_seat dwords armed by us
+        bool confirmed;              // body 1 plays a seated state of `seat`
+        bool next_sent;              // the exit advanced to GetOff (RequestToGoNextDirectMotion)
+        bool lua_refused;            // Lua refused the current request (LuaLog event=ride_seat_refused)
+        std::uint16_t vehicle;       // the episode's vehicle GameObject id and native seat
+        std::uint8_t seat;
+        std::uint8_t entry;          // partner::seat_entry bits of the played chain
+        std::uint8_t loop_entry;     // the loop's index in that chain
+        unsigned plays, stops;
+        std::uint64_t phase_ms, issue_ms, confirm_ms, far_since_ms, status_ms;
+        const char* exit_reason;
+        bool latch_exit;             // the exit blocks this (vehicle, seat) until the ride changes
+        // A (vehicle, seat) refused or ended this ride: seat mode is off for it
+        // (it hides) until the remote's ride state leaves it.
+        bool blocked;
+        std::uint16_t block_vehicle;
+        std::uint8_t block_seat;
+        const char* block_reason;
+        // When the received ride became this vehicle (the get-in window).
+        std::uint64_t vehicle_since_ms;
+        std::uint16_t vehicle_rev;
+        bool vehicle_live;
+    } seat;
+    bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
+    LogCap seat_cap;       // partner_ride_seat event lines
+    unsigned seat_status_lines;
+    bool seat_status_capped;
+    // The local PlayerStatus census of the receipt's st= (logged on change).
+    bool status_have;
+    std::uint16_t status_bits;
+    LogCap status_cap;
     const char* visibility_logged;
     std::uint64_t visibility_place_try_ms;
     std::uint64_t start_ms, ticks;
@@ -909,6 +966,10 @@ struct Driver {
     // its sends (the mission's weapon_cap may be spent by then).
     LogCap equip_tx_cap;
     partner_ride_wire::Store ride_rx;
+    // The last logged received ride state (partner_ride=rx on a change only).
+    partner_ride_wire::Packet ride_rx_logged;
+    bool ride_rx_logged_have;
+    std::uint32_t ride_rx_logged_epoch;
     partner_ride_wire::Packet ride_tx;
     bool ride_tx_have, ride_tx_dirty;
     std::uint32_t ride_tx_epoch;
@@ -943,6 +1004,12 @@ void MissionEnd(Driver& driver, const Hooks& hooks) noexcept;
 bool Cfg(Driver& driver, const Hooks& hooks, const char* precheck, std::uint64_t now_ms) noexcept;
 // LOG receipt: "partner_lua=<payload>", at most kLuaLogCap per mission.
 void LuaLog(Driver& driver, const Hooks& hooks, const char* source, std::size_t size) noexcept;
+// SEAT receipt (the debug seat_dm lever, docs/anim-round1-seat.md): arm=true
+// arms the seat dwords for (seat, vehicle) on a realized, DM-idle body 1 and
+// hands body 1 to a manual seat (Lua then plays its own DM); arm=false ends it
+// (Lua stops the DM; the patches revert once DM End ran). True when accepted.
+bool SeatManual(Driver& driver, const Hooks& hooks, bool arm, std::uint8_t seat, std::uint16_t vehicle, std::uint64_t now_ms,
+                bool terminating) noexcept;
 // STOP receipt (allowed while terminating): clears our bits when
 // teardown=clear, restores the policy byte, drops pending one-shots, stops
 // ticking and logs partner_stop.

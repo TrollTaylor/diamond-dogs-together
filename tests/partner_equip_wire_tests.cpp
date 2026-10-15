@@ -96,7 +96,10 @@ int main() {
         in.lease_live=true; in.jump=true; rw::Observe(vis,in); Check(!vis.have_sample, "teleport discontinuity clears proof"); in.jump=false;
         vis={}; in.kind=rw::Kind::foot; in.body_act=25; in.remote_act=1; in.body_valid=true; in.y=5; in.body_y=1;
         in.now_ms=4000; rw::Placed(vis,3900); rw::Observe(vis,in);
-        Check(vis.hidden && vis.air && std::strcmp(vis.reason,"air")==0, "post-placement fall mismatch over2m hides");
+        Check(!vis.hidden && !vis.air && vis.air_pending, "one post-placement fall frame (a teleport Warp) is only an air candidate");
+        in.now_ms=4249; rw::Observe(vis,in); Check(!vis.air && !vis.hidden, "the candidate must hold kAirHoldMs");
+        in.now_ms=4250; rw::Observe(vis,in);
+        Check(vis.hidden && vis.air && std::strcmp(vis.reason,"air")==0, "post-placement fall mismatch over2m held 250ms hides");
         in.body_act=25; in.now_ms=8000; rw::Observe(vis,in); Check(vis.air && vis.hidden, "air act stays unplaceable after window");
         in.body_act=1; rw::Observe(vis,in); Check(!vis.air && vis.hidden, "changed body act still waits fresh stability");
         vis={}; in.body_act=40; in.sender_ms=9000; in.now_ms=9000; in.rearmed=false;
@@ -107,6 +110,108 @@ int main() {
         Check(!vis.hidden, "dead re-show allows placement then next-tick realization");
         in.rearmed=true; in.sender_ms=9700; rw::Observe(vis,in);
         Check(vis.hidden && vis.dead_locked, "persistent dead act after rearm locks rest of mission");
+    }
+    {
+        // The air candidate that ends before kAirHoldMs (the Warp's few frames) never hides.
+        namespace rw = mgscoop::partner_ride_wire;
+        rw::Visibility v{}; rw::In in{};
+        in.fresh = in.time_valid = in.anim_valid = in.body_anim_valid = in.body_valid = in.lease_live = true;
+        in.remote_act = 1; in.y = 5; in.body_y = 1; in.body_act = 25; in.now_ms = 1000;
+        rw::Placed(v, 950); rw::Observe(v, in);
+        in.now_ms = 1100; in.body_act = 1; rw::Observe(v, in);
+        Check(!v.air_pending && !v.air && !v.hidden, "a broken candidate resets");
+        in.now_ms = 1150; in.body_act = 25; rw::Observe(v, in); in.now_ms = 1350; rw::Observe(v, in);
+        Check(!v.air && !v.hidden, "the hold restarts after a reset");
+        in.now_ms = 1400; rw::Observe(v, in); Check(v.air && v.hidden, "a restarted hold of 250ms hides");
+        // The remote's own fall or landing is never air; outside the 1.5s window neither.
+        v = {}; in.remote_act = 25; in.now_ms = 1000; rw::Placed(v, 950); rw::Observe(v, in); in.now_ms = 1400; rw::Observe(v, in);
+        Check(!v.air && !v.air_pending, "remote falling too");
+        v = {}; in.remote_act = 1; in.now_ms = 3000; rw::Placed(v, 1000); rw::Observe(v, in); in.now_ms = 3400; rw::Observe(v, in);
+        Check(!v.air, "outside the placement window");
+    }
+    {
+        // Ride wire v2 (docs/anim-round1-seat.md): seat and vehicle for a vehicle only.
+        namespace rw = mgscoop::partner_ride_wire;
+        rw::Packet p{rw::Kind::vehicle, 7, 0x01020304u}, out{};
+        p.seat = 1; p.vehicle = 25608;
+        std::uint8_t b[rw::kSize]{};
+        Check(rw::VersionFor(p) == 2 && rw::Encode(p, b) && b[0] == 0x52 && b[1] == 2 && b[2] == 2 && b[3] == 1 && b[4] == 7 && b[5] == 0 &&
+                  b[6] == 0x08 && b[7] == 0x64 && b[8] == 4 && b[11] == 1, "v2 layout: seat byte 3, vehicle LE16 bytes 6..7");
+        Check(rw::Decode(b, sizeof(b), out) && out.version == 2 && out.kind == rw::Kind::vehicle && out.seat == 1 && out.vehicle == 25608 &&
+                  out.revision == 7 && out.sender_ms == 0x01020304u, "v2 round trip");
+        p.seat = rw::kSeatUnknown;
+        Check(rw::Encode(p, b) && b[1] == 2 && b[3] == 0xFF && rw::Decode(b, sizeof(b), out) && out.seat == rw::kSeatUnknown &&
+                  out.vehicle == 25608, "v2 unknown seat, known vehicle");
+        p.vehicle = rw::kVehicleUnknown;
+        Check(rw::VersionFor(p) == 1 && rw::Encode(p, b) && b[1] == 1 && b[3] == 0 && b[6] == 0 && b[7] == 0 && rw::Decode(b, sizeof(b), out) &&
+                  out.version == 1 && out.seat == rw::kSeatUnknown && out.vehicle == rw::kVehicleUnknown,
+              "a vehicle without seat or id stays v1 (an old receiver reads it)");
+        p.seat = 2; p.kind = rw::Kind::horse;
+        Check(rw::VersionFor(p) == 1 && rw::Encode(p, b) && b[1] == 1 && b[3] == 0, "only a vehicle carries a seat");
+        p.kind = rw::Kind::vehicle; p.seat = 9; p.vehicle = 25608;
+        Check(!rw::Encode(p, b), "seat 9 is not encodable");
+        // v2 refusals.
+        p.seat = 3; rw::Encode(p, b);
+        std::uint8_t bad[rw::kSize]{};
+        std::memcpy(bad, b, sizeof(b)); bad[3] = 4; Check(!rw::Decode(bad, sizeof(bad), out), "v2 seat 4 refused");
+        std::memcpy(bad, b, sizeof(b)); bad[3] = 0xFE; Check(!rw::Decode(bad, sizeof(bad), out), "v2 seat 0xFE refused");
+        std::memcpy(bad, b, sizeof(b)); bad[2] = 0; Check(!rw::Decode(bad, sizeof(bad), out), "v2 foot with a seat refused");
+        std::memcpy(bad, b, sizeof(b)); bad[2] = 0; bad[3] = 0xFF; Check(!rw::Decode(bad, sizeof(bad), out), "v2 foot with a vehicle refused");
+        std::memcpy(bad, b, sizeof(b)); bad[2] = 0; bad[3] = 0xFF; bad[6] = bad[7] = 0xFF;
+        Check(rw::Decode(bad, sizeof(bad), out) && out.kind == rw::Kind::foot && out.version == 2, "v2 foot without seat or vehicle decodes");
+        std::memcpy(bad, b, sizeof(b)); bad[1] = 3; Check(!rw::Decode(bad, sizeof(bad), out), "version 3 refused");
+        std::memcpy(bad, b, sizeof(b)); bad[1] = 0; Check(!rw::Decode(bad, sizeof(bad), out), "version 0 refused");
+        std::memcpy(bad, b, sizeof(b)); bad[4] = bad[5] = 0; Check(!rw::Decode(bad, sizeof(bad), out), "v2 revision 0 refused");
+        // Store: a same-revision seat or vehicle change is stale; a new revision is accepted.
+        rw::Store s{};
+        p.seat = 0; p.vehicle = 25608; p.revision = 10; p.sender_ms = 100; rw::Encode(p, b);
+        Check(rw::Accept(s, b, sizeof(b), 3, 1000) && s.packet.seat == 0, "v2 accepted");
+        p.seat = 1; p.sender_ms = 200; rw::Encode(p, b);
+        Check(!rw::Accept(s, b, sizeof(b), 3, 1100) && s.stale == 1, "same revision, other seat: stale");
+        p.seat = 0; p.vehicle = 25609; rw::Encode(p, b);
+        Check(!rw::Accept(s, b, sizeof(b), 3, 1100) && s.stale == 2, "same revision, other vehicle: stale");
+        p.vehicle = 25608; rw::Encode(p, b);
+        Check(rw::Accept(s, b, sizeof(b), 3, 1200), "same revision heartbeat accepted");
+        p.revision = 11; p.seat = 1; p.sender_ms = 300; rw::Encode(p, b);
+        Check(rw::Accept(s, b, sizeof(b), 3, 1300) && s.packet.seat == 1, "seat change with a new revision");
+        Check(rw::SeatUsable(0, 25608) && rw::SeatUsable(3, 25600) && !rw::SeatUsable(4, 25608) && !rw::SeatUsable(0, 0xFFFF) &&
+                  !rw::SeatUsable(0, 6656) && !rw::SeatUsable(0, 22529) && !rw::SeatUsable(rw::kSeatUnknown, 25608),
+              "a usable seat is 0..3 in a vehicle-type id (never a horse 6656 or walker 22529)");
+    }
+    {
+        // Observe in seat mode: a live vehicle ride in a usable seat is seated, not hidden.
+        namespace rw = mgscoop::partner_ride_wire;
+        rw::Visibility v{}; v.hidden = true; v.reason = "ride_stale";
+        rw::In in{};
+        in.fresh = in.time_valid = in.anim_valid = in.body_anim_valid = in.lease_live = true;
+        in.ride_have = in.ride_live = true; in.kind = rw::Kind::vehicle; in.remote_act = 111; in.now_ms = 1000; in.sender_ms = 1000;
+        in.seat_mode = true; in.seat = 0; in.vehicle = 25608;
+        rw::Observe(v, in);
+        Check(v.seated && !v.hidden && !v.reason, "seated is shown at once (no landing proof)");
+        in.seat_mode = false; rw::Observe(v, in);
+        Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride") == 0, "seat mode off: the vehicle ride hides");
+        in.seat_mode = true; in.seat = rw::kSeatUnknown; rw::Observe(v, in);
+        Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride") == 0, "an unknown seat hides");
+        in.seat = 1; in.vehicle = 6656; rw::Observe(v, in);
+        Check(!v.seated && v.hidden, "a non-vehicle id hides");
+        in.vehicle = 25608; in.kind = rw::Kind::horse; rw::Observe(v, in);
+        Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride") == 0, "a horse still hides in seat mode");
+        in.kind = rw::Kind::vehicle; rw::Observe(v, in); Check(v.seated && !v.hidden, "back to seated");
+        in.remote_act = 97; rw::Observe(v, in);
+        Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride") == 0, "act 97 (heli boarding) hides, even seated");
+        in.remote_act = 111; rw::Observe(v, in); Check(v.seated, "seated again");
+        in.ride_live = false; rw::Observe(v, in);
+        Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride_stale") == 0, "a stale ride lease hides");
+        in.ride_live = true; in.lease_live = false; rw::Observe(v, in);
+        Check(!v.seated && v.hidden, "a dead link hides");
+        in.lease_live = true; rw::Observe(v, in); Check(v.seated && !v.hidden, "seated after the link returns");
+        in.body_act = 40; in.rearmed = true; v.dead_retry = true; rw::Observe(v, in);
+        Check(!v.seated && v.hidden && std::strcmp(v.reason, "dead") == 0, "a locked dead body never seats");
+        // Foot after seated: not hidden (the seat flow's exit owns the body until DM End).
+        v = {}; in.body_act = 139; in.rearmed = false; in.kind = rw::Kind::vehicle; rw::Observe(v, in); Check(v.seated, "seated with the DM act");
+        in.kind = rw::Kind::foot; in.remote_act = 1; rw::Observe(v, in);
+        Check(!v.seated && !v.hidden, "a remote back on foot is neither seated nor hidden");
+        Check(rw::kHeliActFirst == 97 && rw::kHeliActLast == 108, "heli acts 97..108");
     }
     {
         namespace rw = mgscoop::partner_ride_wire;

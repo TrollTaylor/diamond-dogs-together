@@ -1,0 +1,64 @@
+# The seated vehicle rider's manual lever (docs/anim-round1-seat.md, critic.md 5.7
+# T1/T4/T5): with partner_native_ride=off the guest's partner body stays realized
+# while the host drives; the guest debug seat_dm puts it into a seat of its own
+# jeep copy by hand. First the retail-exact rear-left seat (seat byte 2), then the
+# driver (0) and the front passenger (1, the 0xB799C0 seat-1 remap may draw it in
+# the driver seat), then with the guest also driving its own jeep (its camera
+# connect must survive the partner DM entry and End: compare cam1f0/cam200 in the
+# partner_ride_seat=armed / dm / status lines).
+# The locator below is the nearest authored jeep of this spawn (veh_lv_0000 =
+# 25608 in the earlier runs); "guest run vehicle_names" and "host run
+# vehicle_seats" print the names and the driven id: adjust the locator if they differ.
+# Expected per seat_dm: partner_ride_seat=armed; ...; reason=manual, then
+# partner_ride_seat=confirmed; ...; manual=1 and the status lines; seat_dm stop:
+# partner_ride_seat=exit_request; ...; reason=manual_stop; via=lua, then
+# partner_ride_seat_patch=reverted; reason=manual_stop.
+labsetting partner_native_ride=off
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+placebehind guest host 14 5
+wait 2500
+guest run vehicle_names
+host press e 150
+wait 3500
+host run vehicle_seats
+guest run seat_dm stateVehicleBackLeftLoop 2 veh_lv_0000
+wait 1500
+both capture manual-seat2-parked
+host hold w 1500 nowait
+guest burst manual-seat2-drive 8 150
+host hold w+a 1500 nowait
+guest burst manual-seat2-turn 8 150
+host release
+wait 1500
+guest run seat_dm stop
+wait 2000
+guest capture manual-seat2-stopped
+guest run seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000
+wait 1500
+host hold w 1500 nowait
+guest burst manual-seat0-drive 8 150
+host release
+wait 1000
+guest run seat_dm stop
+wait 2000
+guest run seat_dm stateVehicleFrontRightLoop 1 veh_lv_0000
+wait 1500
+guest capture manual-seat1
+guest run seat_dm stop
+wait 2000
+state

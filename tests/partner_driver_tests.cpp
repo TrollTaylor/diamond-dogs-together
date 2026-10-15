@@ -176,6 +176,11 @@ struct Fake {
     // Input frame v5 negotiation: the peer was seen sending v5 (partner_net::PeerSendsInputV5).
     bool peer_v5 = true;
     bool peer_v6 = false;
+    // The seated vehicle rider's dwords (partner_ride_seat).
+    unsigned seat_arms = 0, seat_reverts = 0;
+    bool seat_arm_ok = true;
+    int seat_armed = -1;
+    std::string seat_revert_reason;
 
     Fake() {
         Ready();
@@ -5003,6 +5008,331 @@ void TestNativePoseAnimationSuppression() {
     dm.fake.native_pose_held=false;Check(dm.Tick(1)&&dm.fake.dm_patch_calls==1&&(dm.reply.op&op::dm_play),
           "ordinary DM path is restored after native holder retirement");
 }
+
+// --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md).
+bool HookRideSeatArm(void* context, std::uint8_t seat) noexcept {
+    Fake& f = F(context);
+    ++f.seat_arms;
+    if (!f.seat_arm_ok) return false;
+    f.seat_armed = seat;
+    f.native_order.push_back("seat_arm");
+    return true;
+}
+void HookRideSeatRevert(void* context, const char* reason) noexcept {
+    Fake& f = F(context);
+    ++f.seat_reverts;
+    if (f.seat_armed >= 0) f.seat_revert_reason = reason ? reason : "";
+    f.seat_armed = -1;
+}
+struct SeatSession : Session {
+    std::uint16_t ride_rev = 0;
+    bool ride_sent = false;
+    mgscoop::partner_ride_wire::Kind ride_kind{};
+    std::uint8_t ride_seat = 0xFF;
+    std::uint16_t ride_vehicle = 0xFFFF;
+    explicit SeatSession(mgscoop::PartnerRideSeatExit exit = mgscoop::PartnerRideSeatExit::stop,
+                         mgscoop::PartnerRideSeatEnter enter = mgscoop::PartnerRideSeatEnter::direct,
+                         mgscoop::PartnerNativeRide ride = mgscoop::PartnerNativeRide::seat, std::uint32_t mission = 30010)
+        : Session(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net, mission) {
+        AddNativeHooks(hooks);
+        hooks.send_reliable_append = HookSendReliable;
+        hooks.ride_seat_arm = HookRideSeatArm;
+        hooks.ride_seat_revert = HookRideSeatRevert;
+        lab.partner_native_ride = ride;
+        driver.settings.nride = ride;
+        driver.settings.seat_exit = exit;
+        driver.settings.seat_enter = enter;
+        pd::MissionStart(driver, hooks, mission);
+        Check(pd::Cfg(driver, hooks, nullptr, now), "seat CFG after mission reset");
+        auto& s = fake.sample;
+        s.valid = s.time_valid = s.anim_valid = true; s.status = mgscoop::pose::Status::live;
+        s.x = 1.0f; s.y = 2.0f; s.z = 4.0f; s.act = 1; s.sender_ms = 1000; s.generation = 1;
+        fake.body_ok = true; fake.body_pos[0] = 1.0f; fake.body_pos[1] = 2.0f; fake.body_pos[2] = 4.0f;
+        fake.lines.clear();
+    }
+    void Ride(mgscoop::partner_ride_wire::Kind kind, std::uint8_t seat = 0xFF, std::uint16_t vehicle = 0xFFFF, bool bump = true) {
+        namespace rw = mgscoop::partner_ride_wire;
+        if (bump) ++ride_rev;
+        ride_sent = true; ride_kind = kind; ride_seat = seat; ride_vehicle = vehicle;
+        rw::Packet p{kind, ride_rev, static_cast<std::uint32_t>(now)};
+        p.seat = seat; p.vehicle = vehicle;
+        std::uint8_t bytes[rw::kSize]{};
+        Check(rw::Encode(p, bytes), "ride encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+    }
+    // One remote frame: the sample advances its sender clock.
+    // A long step carries the sender's ride heartbeat (same revision) like the 2 s cadence.
+    bool Step(std::uint64_t ms = 33) {
+        fake.sample.sender_ms += static_cast<std::int64_t>(ms);
+        if (ms >= 500 && ride_sent) { now += 1; Ride(ride_kind, ride_seat, ride_vehicle, false); now -= 1; }
+        return Tick(1, ms);
+    }
+    // The body on foot, realized and loaded (the remote on foot next to the viewer).
+    void Show() {
+        for (unsigned i = 0; i < 60 && !driver.mission.bits_set; ++i) Step(50);
+        Check(driver.mission.bits_set, "free roam placement realizes");
+        fake.Realize(true); fake.state.parts[1] = 3;
+        Check(Step() && driver.mission.realized, "body realized");
+    }
+    void Playing(std::uint64_t state) {
+        fake.dm.q18[1] = c::q18_dm_act; fake.dm.rec_ok = true; fake.dm.rec248 = 0x16; fake.dm.rec18 = state; fake.dm.rec1a0 = 0;
+        fake.dm.g388 = 0;
+    }
+    void Ended() { fake.dm.q18[1] = 1; fake.dm.rec248 = 0; fake.dm.g388 = 0; }
+};
+
+void TestRideSeat() {
+    namespace rw = mgscoop::partner_ride_wire;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full, kBackLeftLoop = 0xc40b38a1a985ull;
+    {
+        // Enter, confirm, hold, exit on foot (stop), revert after DM End, re-show.
+        SeatSession s;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        const auto slots = s.fake.Writes("slot");
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_vehicle == 25608 && s.reply.seat == 0 &&
+                  s.reply.seat_action == partner::seat_action::play && s.reply.seat_entry == 0 && !(s.reply.op & ~op::ride_seat),
+              "a vehicle ride in seat 0 plays the seat DM (RIDE_SEAT only)");
+        Check(s.fake.seat_arms == 1 && s.fake.seat_armed == 0 && s.fake.dm_patched && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.fake.Containing("partner_ride_seat=armed; vehicle=25608; seat=0;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=play; vehicle=25608; seat=0;") == 1 && s.fake.Containing("partner_ride=seat_show") == 1,
+              "comparator and seat dwords armed before the play");
+        Check(!s.driver.mission.input_armed && !s.driver.mission.native_defer_armed && s.driver.mission.realized &&
+                  s.driver.mission.parts_loaded, "native drive blocked; the realized body stays published (nametag)");
+        Check(s.Step() && s.reply.op == 0 && s.driver.mission.seat.plays == 1, "no re-issue before the confirmation window");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.reply.op == 0 && s.driver.mission.seat.confirmed &&
+                  s.fake.Containing("partner_ride_seat=confirmed; vehicle=25608; seat=0; state=0x489157d7d94f;") == 1,
+              "the record's seated state confirms");
+        const auto calls = s.fake.calls.size();
+        for (unsigned i = 0; i < 60; ++i) Check(s.Step(), "seated ticks");
+        Check(s.fake.calls.size() == calls && s.fake.Writes("slot") == slots && s.reply.op == 0 && s.fake.Writes("clear") == 0 &&
+                  s.fake.Containing("partner_ride_seat=status; phase=seated; vehicle=25608; seat=0; confirmed=1;") >= 1,
+              "seated: no xform, slot, Warp or bits changes; 1 Hz status");
+        // Heartbeats do not spend the rx cap.
+        const auto rx = s.fake.Containing("partner_ride=rx;");
+        s.Ride(rw::Kind::vehicle, 0, 25608, false); Check(s.Step(), "heartbeat");
+        Check(s.fake.Containing("partner_ride=rx;") == rx, "same-revision heartbeat is not logged");
+        // The remote leaves: stop, wait for DM End, revert, re-show.
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && s.reply.op == op::dm_stop && s.driver.mission.seat.phase == pd::SeatPhase::exit && s.fake.seat_armed == 0,
+              "kind foot stops the DM; the dwords stay until DM End");
+        Check(s.Step() && s.reply.op == 0 && s.fake.seat_armed == 0, "no repeated stop inside the stop window");
+        s.Ended();
+        Check(s.Step() && s.fake.seat_armed == -1 && s.fake.seat_revert_reason == "foot" && s.fake.Writes("clear") == 1 &&
+                  !s.driver.mission.bits_set && s.driver.mission.range_needs_place && s.driver.mission.seat.phase == pd::SeatPhase::idle &&
+                  s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=foot; via=stop; confirmed=1;") == 1,
+              "after DM End the dwords revert and the body goes through the re-show flow");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Step() && s.fake.Writes("slot") == slots + 1, "re-placed on foot");
+        Check(s.Step() && s.driver.mission.bits_set, "re-realized");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(s.fake.seat_reverts >= 2, "mission end reverts the dwords");
+    }
+    {
+        // Mission start while the remote already drives: the hidden body is placed,
+        // realized by the existing flow, then seated (no 500 ms landing proof).
+        SeatSession s;
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(s.Step(50) && s.driver.mission.visibility.seated && !s.driver.mission.visibility.hidden && s.fake.Writes("slot") == 1 &&
+                  s.reply.op == 0, "seated at once: placed at the remote's seated pose");
+        Check(s.Step(50) && s.driver.mission.bits_set && s.fake.seat_arms == 0, "realized by the existing flow before the seat starts");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        Check(s.Step(50) && (s.reply.op & op::ride_seat) && s.fake.seat_arms == 1, "then seated");
+    }
+    {
+        // Get-off: exit=getoff appends the GetOff entry; act 112 advances to it (GoNext).
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 2, 25609);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 2 && s.reply.seat_entry == partner::seat_entry::get_off,
+              "the chain ends with GetOff");
+        s.Playing(kBackLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed, "rear-left confirmed");
+        s.fake.sample.act = 112;
+        Check(s.Step() && s.reply.op == op::ride_seat && s.reply.seat_action == partner::seat_action::next && s.driver.mission.seat.next_sent,
+              "remote act 112 advances to GetOff");
+        Check(s.Step() && s.reply.op == 0, "the GetOff plays out");
+        s.Ended();
+        Check(s.Step() && s.fake.seat_armed == -1 && s.fake.seat_revert_reason == "getoff_act" &&
+                  s.fake.Containing("reason=getoff_act; via=getoff;") == 1 && s.driver.mission.seat.blocked,
+              "GetOff end reverts; the episode's (vehicle, seat) is latched");
+        Check(s.Step() && s.driver.mission.visibility.hidden && !s.driver.mission.visibility.seated,
+              "the latched seat hides until the ride changes");
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.seat.blocked, "foot clears the latch");
+    }
+    {
+        // A GetOff advance that is not consumed falls back to stop.
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(s.Step(), "play");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed, "confirmed");
+        s.fake.sample.act = 112;
+        Check(s.Step() && s.reply.seat_action == partner::seat_action::next, "next");
+        Check(s.Step(4000) && s.reply.op == op::dm_stop, "unconsumed GetOff advance stops after kSeatNextMs");
+    }
+    {
+        // Get-in: within kSeatGetInMs of the vehicle kind the chain starts with GetOn.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::getin);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 1, 25608);
+        Check(s.Step() && s.reply.seat == 1 && s.reply.seat_entry == partner::seat_entry::get_on && s.driver.mission.seat.loop_entry == 1,
+              "get-in prepends GetOn");
+        s.Playing(0x00f3b0882fd1ull);  // stateVehicleGetOnFrontRight
+        Check(s.Step() && s.driver.mission.seat.confirmed, "the GetOn state confirms seat 1");
+    }
+    {
+        // Unconfirmed: re-issued up to kSeatPlays, then refused and latched (hides).
+        SeatSession s;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(s.Step() && s.driver.mission.seat.plays == 1, "first play");
+        Check(s.Step(2000) && s.driver.mission.seat.phase == pd::SeatPhase::arm, "unconfirmed after 2s");
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.driver.mission.seat.plays == 2 && s.fake.seat_arms == 1, "re-issued, dwords kept");
+        Check(s.Step(2000) && s.Step() && s.driver.mission.seat.plays == 3, "third play");
+        Check(s.Step(2000) && s.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=0; name=-; state=-; reason=unconfirmed;") == 1,
+              "refused after three unconfirmed plays");
+        Check(s.Step() && s.fake.seat_armed == -1 && s.driver.mission.seat.blocked && s.driver.mission.seat.phase == pd::SeatPhase::idle,
+              "settled and latched");
+        Check(s.Step() && s.driver.mission.visibility.hidden, "the refused vehicle hides");
+    }
+    {
+        // A Lua refusal (no locator name) ends the request at once.
+        SeatSession s;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_vehicle == 25600, "play for an unnamed vehicle");
+        const std::string note = std::string(partner::log_prefix) + "event=ride_seat_refused;id=25600;seat=0;reason=no_name";
+        pd::LuaLog(s.driver, s.hooks, note.data(), note.size());
+        Check(s.driver.mission.seat.lua_refused, "the note marks the request");
+        Check(s.Step() && s.fake.Containing("reason=lua_refused") >= 1 && s.fake.seat_armed == -1 && s.driver.mission.seat.blocked,
+              "refused and reverted on the next tick");
+        const std::string other = std::string(partner::log_prefix) + "event=ride_seat_refused;id=25601;seat=0;reason=no_name";
+        pd::LuaLog(s.driver, s.hooks, other.data(), other.size());
+        Check(!s.driver.mission.seat.lua_refused, "another vehicle's refusal is ignored");
+    }
+    {
+        // A dm=map clip on body 1 is released first; the viewer's own DM blocks the arm.
+        SeatSession s;
+        s.Show();
+        s.fake.dm.q18[1] = c::q18_dm_act; s.fake.dm.rec18 = 0x81582ffa24b9ull;
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(s.Step() && s.reply.op == op::dm_stop && s.driver.mission.seat.phase == pd::SeatPhase::release && s.fake.seat_arms == 0,
+              "release stops the clip before arming");
+        s.Ended(); s.fake.dm.q18[0] = c::q18_dm_act;
+        Check(s.Step() && s.reply.op == 0 && s.fake.seat_arms == 0 && s.driver.mission.seat.phase == pd::SeatPhase::arm,
+              "the viewer's own DM holds the arm");
+        s.fake.dm.q18[0] = 1;
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.fake.seat_arms == 1, "armed once the viewer's DM ended");
+    }
+    {
+        // Sanity: the anchored body far from the remote's seated pose for 1s falls back to hide.
+        SeatSession s;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(s.Step(), "play");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed, "confirmed");
+        s.fake.body_pos[0] = 9.0f;
+        Check(s.Step() && s.driver.mission.seat.far_since_ms != 0, "far observed");
+        Check(s.Step(500) && s.driver.mission.seat.phase == pd::SeatPhase::seated, "far for 0.5s: still seated");
+        Check(s.Step(600) && s.fake.Containing("partner_ride=seat_far; vehicle=25608; seat=0;") == 1 && s.reply.op == op::dm_stop,
+              "far for 1.1s: seat_far, stop");
+        s.Ended();
+        Check(s.Step() && s.driver.mission.seat.blocked && s.fake.seat_armed == -1, "far latches the seat");
+    }
+    {
+        // Refusals and scope: a patch refusal, Mother Base, nride=hide, a vehicle change.
+        SeatSession s;
+        s.fake.seat_arm_ok = false;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(s.Step() && s.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=0; name=-; state=-; reason=seat_patch;") == 1 &&
+                  !(s.reply.op & op::ride_seat) && s.driver.mission.seat.blocked, "a refused seat patch never plays");
+        SeatSession mb(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb.fake.Realize(true); mb.fake.state.parts[1] = 3; mb.driver.mission.bits_set = true;
+        mb.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(mb.Step() && !(mb.reply.op & op::ride_seat) && mb.driver.mission.visibility.hidden && mb.fake.seat_arms == 0,
+              "Mother Base never seats (vehicle rides hide)");
+        SeatSession hide(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
+        hide.Show();
+        hide.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(hide.Step() && hide.driver.mission.visibility.hidden && hide.fake.seat_arms == 0 && hide.fake.Writes("clear") == 1,
+              "nride=hide keeps the proven hide");
+        SeatSession change;
+        change.Show();
+        change.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(change.Step(), "play");
+        change.Playing(kFrontLeftLoop);
+        Check(change.Step() && change.driver.mission.seat.confirmed, "confirmed");
+        change.Ride(rw::Kind::vehicle, 1, 25608);
+        Check(change.Step() && change.reply.op == op::dm_stop && change.driver.mission.seat.exit_reason &&
+                  std::strcmp(change.driver.mission.seat.exit_reason, "vehicle_change") == 0, "a seat change exits");
+        change.Ended();
+        Check(change.Step() && !change.driver.mission.seat.blocked && change.fake.seat_armed == -1, "a seat change does not latch");
+        // An unknown seat or a horse in seat mode hides.
+        change.Ride(rw::Kind::vehicle, 0xFF, 25608);
+        Check(change.Step() && change.driver.mission.visibility.hidden, "unknown seat hides");
+    }
+    {
+        // The debug seat_dm lever: manual arm with nride=off, confirm, stop.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::off);
+        s.Show();
+        Check(!pd::SeatManual(s.driver, s.hooks, true, 2, 6656, s.now, false) && s.fake.Containing("reason=vehicle_type") == 1,
+              "a horse id is refused");
+        s.fake.dm.q18[0] = c::q18_dm_act;
+        Check(!pd::SeatManual(s.driver, s.hooks, true, 2, 25608, s.now, false) && s.fake.Containing("reason=busy") == 1, "a running DM refuses");
+        s.fake.dm.q18[0] = 1;
+        Check(!pd::SeatManual(s.driver, s.hooks, false, 0, 0, s.now, false) && s.fake.Containing("reason=not_manual") == 1, "stop without arm");
+        Check(pd::SeatManual(s.driver, s.hooks, true, 2, 25608, s.now, false) && s.fake.seat_armed == 2 && s.driver.mission.seat.manual &&
+                  s.fake.Containing("partner_ride_seat=armed; vehicle=25608; seat=2; name=lua; state=lua; reason=manual;") == 1,
+              "manual arm");
+        s.Playing(kBackLeftLoop);
+        Check(s.Step() && s.reply.op == 0 && s.driver.mission.seat.confirmed, "the manual DM confirms (any state)");
+        Check(pd::SeatManual(s.driver, s.hooks, false, 0, 0, s.now, false) && s.driver.mission.seat.phase == pd::SeatPhase::exit,
+              "manual stop");
+        Check(s.Step() && s.reply.op == 0, "Lua stops it first");
+        Check(s.Step(1100) && s.reply.op == op::dm_stop, "native backs the stop up");
+        s.Ended();
+        Check(s.Step() && s.fake.seat_armed == -1 && s.fake.seat_revert_reason == "manual_stop" && !s.driver.mission.seat.blocked,
+              "manual exit reverts without a latch");
+        SeatSession mb(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::off, 30050);
+        Check(!pd::SeatManual(mb.driver, mb.hooks, true, 0, 25608, mb.now, false) && mb.fake.Containing("reason=mission") == 1,
+              "the lever is free-roam only");
+    }
+    {
+        // Sender: v2 for a vehicle with a seat, a seat change is a new revision; status census on change.
+        Session sender(0);
+        AddNativeHooks(sender.hooks); sender.hooks.send_reliable_append = HookSendReliable;
+        auto send = [&](const char* suffix, std::uint64_t step) {
+            sender.now += step;
+            const auto source = TickSource(++sender.frame, 0) + " 0 0" + suffix;
+            return pd::Tick(sender.driver, sender.hooks, sender.lab, source.data(), source.size(), pd::Clock{sender.now, sender.now}, false,
+                            sender.reply);
+        };
+        auto last = [&]() {
+            rw::Packet out{};
+            for (const auto& item : sender.fake.reliable_sent) if (rw::IsRide(item.data(), item.size())) rw::Decode(item.data(), item.size(), out);
+            return out;
+        };
+        Check(send(" ride=2 veh=25608 seat=0 st=0x400", 1) && last().version == 2 && last().seat == 0 && last().vehicle == 25608 &&
+                  last().kind == rw::Kind::vehicle, "vehicle ride sends v2");
+        Check(sender.fake.Containing("partner_status=local; st=0x400; names=on_vehicle; ride=2; vehicle=25608; seat=0") == 1, "status census");
+        const auto revision = last().revision;
+        Check(send(" ride=2 veh=25608 seat=1 st=0x400", 1) && last().seat == 1 && last().revision == revision + 1 &&
+                  sender.fake.Containing("partner_status=local;") == 1, "seat change: new revision; unchanged status not logged");
+        Check(send(" ride=0 st=0x1", 1) && last().version == 1 && last().kind == rw::Kind::foot && last().seat == rw::kSeatUnknown &&
+                  sender.fake.Containing("partner_status=local; st=0x1; names=binocle;") == 1, "foot sends v1; binoculars logged");
+        Check(send(" ride=2 veh=65535 seat=255", 1) && last().version == 1 && last().kind == rw::Kind::vehicle,
+              "an unknown vehicle and seat keep v1");
+    }
+}
+
 int main() {
     TestCfgAndMissionBoundaries();
     TestStageThreeTimeline();
@@ -5015,6 +5345,7 @@ int main() {
     TestForceExistsAndPolicy();
     TestFreeRoamRange();
     TestRideVisibility();
+    TestRideSeat();
     TestHiddenLocalSender();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();

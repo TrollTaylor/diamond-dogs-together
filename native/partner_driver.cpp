@@ -14,6 +14,7 @@
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/coop_carry.hpp"
+#include "mgscoop/partner_ride_seat.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_driver {
@@ -1990,8 +1991,16 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
         }
         if (partner_ride_wire::IsRide(message, size)) {
             if (partner_ride_wire::Accept(d.ride_rx, message, size, epoch, now)) {
-                EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=rx; kind=%u; rev=%u; epoch=%u\r\n",
-                           unsigned(d.ride_rx.packet.kind), unsigned(d.ride_rx.packet.revision), epoch);
+                // Heartbeats repeat the revision: only a new state or revision is logged.
+                const auto& p = d.ride_rx.packet;
+                if (!d.ride_rx_logged_have || d.ride_rx_logged_epoch != epoch || d.ride_rx_logged.revision != p.revision ||
+                    !partner_ride_wire::SameState(d.ride_rx_logged, p)) {
+                    d.ride_rx_logged = p;
+                    d.ride_rx_logged_have = true;
+                    d.ride_rx_logged_epoch = epoch;
+                    EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=rx; kind=%u; rev=%u; epoch=%u; v=%u; seat=%u; vehicle=%u\r\n",
+                               unsigned(p.kind), unsigned(p.revision), epoch, unsigned(p.version), unsigned(p.seat), unsigned(p.vehicle));
+                }
             } else if (!d.ride_invalid_logged && (d.ride_rx.invalid || d.ride_rx.stale)) {
                 d.ride_invalid_logged = true;
                 Emit(h, "partner_ride=refused; reason=packet_or_session\r\n");
@@ -2049,8 +2058,17 @@ void SendRide(Driver& d, const Hooks& h, const partner::Tick& tick, std::uint64_
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
     if (!epoch || !(h.link_live && h.link_live(h.context))) return;
     const auto kind = static_cast<rw::Kind>(tick.ride_kind);
-    if (!d.ride_tx_have || d.ride_tx.kind != kind) {
-        d.ride_tx.kind = kind;
+    // Version 2 (a vehicle's native seat and GameObject id) only for a vehicle;
+    // a seat or vehicle change is a new revision, sent at once.
+    rw::Packet want = d.ride_tx;
+    want.kind = kind;
+    const bool vehicle = kind == rw::Kind::vehicle && tick.has_vehicle;
+    want.seat = vehicle && tick.seat <= rw::kSeatMax ? tick.seat : rw::kSeatUnknown;
+    want.vehicle = vehicle && tick.vehicle != rw::kVehicleUnknown ? tick.vehicle : rw::kVehicleUnknown;
+    if (!d.ride_tx_have || !rw::SameState(d.ride_tx, want)) {
+        d.ride_tx.kind = want.kind;
+        d.ride_tx.seat = want.seat;
+        d.ride_tx.vehicle = want.vehicle;
         d.ride_tx.revision = static_cast<std::uint16_t>(d.ride_tx.revision + 1);
         if (!d.ride_tx.revision) d.ride_tx.revision = 1;
         d.ride_tx_have = d.ride_tx_dirty = true;
@@ -3739,7 +3757,79 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     e.warp = m.dmmap_prev_warp;
     pnat::Push(t.ring, e);
 }
+
+#include "partner_driver_seat.inc"
 } // namespace
+
+const char* SeatPhaseName(SeatPhase phase) noexcept {
+    switch (phase) {
+    case SeatPhase::release: return "release";
+    case SeatPhase::arm: return "arm";
+    case SeatPhase::play: return "play";
+    case SeatPhase::seated: return "seated";
+    case SeatPhase::exit: return "exit";
+    case SeatPhase::settle: return "settle";
+    default: return "idle";
+    }
+}
+
+bool SeatManual(Driver& d, const Hooks& h, bool arm, std::uint8_t seat, std::uint16_t vehicle, std::uint64_t now,
+                bool terminating) noexcept {
+    Mission& m = d.mission;
+    auto& s = m.seat;
+    const auto refuse = [&](const char* reason) noexcept {
+        EmitSeat(m, h, "partner_ride_seat=refused; vehicle=%u; seat=%u; name=-; state=-; reason=%s; manual=1\r\n", unsigned(vehicle),
+                 unsigned(seat), reason);
+        return false;
+    };
+    if (!arm) {
+        if (!s.manual || s.phase == SeatPhase::idle) return refuse("not_manual");
+        SeatExit(m, h, "manual_stop", false, now);
+        EmitSeat(m, h, "partner_ride_seat=exit_request; vehicle=%u; seat=%u; reason=manual_stop; via=lua\r\n", unsigned(s.vehicle),
+                 unsigned(s.seat));
+        return true;
+    }
+    if (terminating) return refuse("terminating");
+    if (!m.cfg_ready || m.stopped) return refuse("inactive");
+    if (!SeatMission(m.mission_code)) return refuse("mission");
+    if (d.settings.stage < 3 || d.settings.source != PartnerSource::net) return refuse("stage");
+    if (!SeatHooks(h) || !h.read_state) return refuse("unavailable");
+    if (h.native_pose_suppressed && h.native_pose_suppressed(h.context)) return refuse("native_pose");
+    if (s.phase != SeatPhase::idle) return refuse("busy");
+    if (seat > partner_ride_wire::kSeatMax || (vehicle >> 9) != partner_ride_wire::kVehicleType) return refuse("vehicle_type");
+    pp::State st{};
+    if (h.read_state(h.context, st) != pp::Refusal::none) return refuse("state");
+    if (!pp::Realized(st, partner::partner_index) || st.parts[1] != c::parts_loaded_state || !m.bits_set) return refuse("unrealized");
+    pp::DmTargets targets{};
+    pp::DmState dm{};
+    h.dm_targets(h.context, st, targets);
+    if (!h.read_dm(h.context, st, targets, dm)) return refuse("dm_read");
+    if (dm.q18[0] == c::q18_dm_act || dm.q18[1] == c::q18_dm_act || (dm.g388 & 0x3C)) return refuse("busy");
+    if (m.dmmap.owned || m.dmmap.phase != pdm::Phase::idle) pdm::Forget(m.dmmap);
+    SeatOwnBody(d, h, now);
+    if (!m.dm_patched) {
+        m.dm_patched = h.dm_patch(h.context, true, "seat");
+        if (!m.dm_patched) { m.dm_patch_failed = true; return refuse("dm_patch"); }
+    }
+    if (!h.ride_seat_arm(h.context, seat)) return refuse("seat_patch");
+    s.manual = true;
+    s.armed = true;
+    s.vehicle = vehicle;
+    s.seat = seat;
+    s.entry = 0;
+    s.loop_entry = 0;
+    s.plays = 1;
+    s.stops = 0;
+    s.confirmed = s.next_sent = s.latch_exit = s.lua_refused = false;
+    s.exit_reason = nullptr;
+    s.far_since_ms = s.status_ms = s.confirm_ms = 0;
+    s.issue_ms = now;
+    SeatGo(s, SeatPhase::seated, now);
+    m.ride_seated = true;
+    EmitSeat(m, h, "partner_ride_seat=armed; vehicle=%u; seat=%u; name=lua; state=lua; reason=manual; cam1f0=0x%llx; cam200=%u\r\n",
+             unsigned(vehicle), unsigned(seat), static_cast<unsigned long long>(dm.cam1f0), dm.cam200);
+    return true;
+}
 
 bool NativeSleepPresentationReady(const Driver& d) noexcept {
     const auto& m = d.mission;
@@ -3813,6 +3903,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nslot = lab.partner_native_slot;
     d.settings.nequip = lab.partner_native_equip;
     d.settings.nride = lab.partner_native_ride;
+    d.settings.seat_enter = lab.partner_ride_seat_enter;
+    d.settings.seat_exit = lab.partner_ride_seat_exit;
     d.settings.nstandin = lab.partner_native_standin;
 
     d.settings.play_mode = lab.mode == LabMode::play;
@@ -3850,6 +3942,8 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (!++d.rates_epoch) d.rates_epoch = 1;
     DisarmInput(d, h, "mission_start");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
+    // The seat dwords never outlive a mission (a missed MissionEnd included).
+    if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_start");
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
@@ -3872,8 +3966,8 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     d.mission.mission_code = mission_code;
     d.mission.range_hidden = mission_code == 30010 || mission_code == 30020;
     d.mission.range_needs_place = d.mission.range_hidden ||
-        (d.settings.source == PartnerSource::net && d.settings.nride == PartnerNativeRide::hide);
-    if (d.settings.nride == PartnerNativeRide::hide && d.settings.source == PartnerSource::net) {
+        (d.settings.source == PartnerSource::net && d.settings.nride != PartnerNativeRide::off);
+    if (d.settings.nride != PartnerNativeRide::off && d.settings.source == PartnerSource::net) {
         d.mission.visibility.hidden = true;
         d.mission.visibility.reason = "ride_stale";
     }
@@ -3907,6 +4001,10 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     if (h.forget_rates) h.forget_rates(h.context, d.rates_epoch);
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
+    if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_end");
+    d.mission.seat.armed = false;
+    d.mission.seat.phase = SeatPhase::idle;
+    d.mission.ride_seated = false;
     d.mission.cfg_ready = false;
     d.parts_explicit_pending = false;
     d.mirror_pending = false;
@@ -3942,6 +4040,11 @@ bool Cfg(Driver& d, const Hooks& h, const char* precheck, std::uint64_t now_ms) 
 
 void LuaLog(Driver& d, const Hooks& h, const char* source, std::size_t size) noexcept {
     Mission& m = d.mission;
+    std::uint16_t refused_vehicle = 0;
+    std::uint8_t refused_seat = 0;
+    if (partner::ParseSeatRefusal(source, size, refused_vehicle, refused_seat) && m.seat.phase != SeatPhase::idle && !m.seat.manual &&
+        refused_vehicle == m.seat.vehicle && refused_seat == m.seat.seat)
+        m.seat.lua_refused = true;
     if (m.lua_logs >= kLuaLogCap) {
         if (!m.lua_logs_capped) {
             m.lua_logs_capped = true;
@@ -3960,6 +4063,10 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     unsigned cleared = 0;
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
+    if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
+    m.seat.armed = false;
+    m.seat.phase = SeatPhase::idle;
+    m.ride_seated = false;
     if (teardown == PartnerTeardown::clear && ClearBits(d, h, "stop", terminating)) cleared = 1;
     RestorePolicy(d, h, terminating);
     m.stopped = true;
@@ -4145,7 +4252,7 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
         // Back at stage 3, the bits again wait for a freshly applied pose.
         m.pose_applied = false;
         if (d.settings.source == PartnerSource::net && (m.mission_code == 30010 || m.mission_code == 30020 ||
-            d.settings.nride == PartnerNativeRide::hide))
+            d.settings.nride != PartnerNativeRide::off))
             m.range_needs_place = true;
     }
 }
@@ -4188,6 +4295,19 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     ++m.ticks;
     const std::uint64_t now = clock.now_ms;
     if (m.ticks % kTriggerPollTicks == 0) PollTrigger(d, h, terminating);
+    // The local PlayerStatus census (receipt st=, docs/anim-round1-seat.md): logged on change.
+    if (tick.has_ride) {
+        const std::uint16_t bits = tick.has_status ? tick.status : 0;
+        if (!m.status_have || bits != m.status_bits) {
+            m.status_have = true;
+            m.status_bits = bits;
+            char names[160]{};
+            partner::FormatStatusBits(bits, names, sizeof(names));
+            EmitCapped(m.status_cap, h, "partner_status", "partner_status=local; st=0x%x; names=%s; ride=%u; vehicle=%u; seat=%u\r\n",
+                       unsigned(bits), names[0] ? names : "?", unsigned(tick.ride_kind), tick.has_vehicle ? unsigned(tick.vehicle) : 65535u,
+                       tick.has_vehicle ? unsigned(tick.seat) : 255u);
+        }
+    }
     pp::State st{};
     const pp::Refusal refusal = h.read_state(h.context, st);
     if (refusal != pp::Refusal::none) {
@@ -4339,7 +4459,13 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     m.vehicle_job=vehicle_job;
     const bool free_roam_net = !vehicle_job&&set.source == PartnerSource::net &&
                                (m.mission_code == 30010 || m.mission_code == 30020);
-    const bool ride_guard = !vehicle_job&&set.source == PartnerSource::net && set.nride == PartnerNativeRide::hide;
+    const bool ride_guard = !vehicle_job&&set.source == PartnerSource::net && set.nride != PartnerNativeRide::off;
+    // partner_native_ride=seat (docs/anim-round1-seat.md): free roam only, every hook present, no private pose lease.
+    const bool seat_capable = ride_guard && set.nride == PartnerNativeRide::seat && SeatMission(m.mission_code) && SeatHooks(h) &&
+                              !(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
+    const std::uint32_t ride_epoch = h.link_session ? h.link_session(h.context) : 0;
+    const bool ride_live = d.ride_rx.have && d.ride_rx.epoch == ride_epoch && partner_ride_wire::Live(d.ride_rx, ride_epoch, now);
+    SeatObserveRide(m.seat, ride_live, d.ride_rx.packet, now);
     if (ride_guard) {
         namespace rw = partner_ride_wire;
         if (m.recon_have_out && (m.recon_out.events & partner_recon::Event::placed_ok) &&
@@ -4361,6 +4487,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         vi.ride_have = d.ride_rx.have && d.ride_rx.epoch == epoch;
         vi.ride_live = rw::Live(d.ride_rx, epoch, now);
         vi.kind = d.ride_rx.packet.kind;
+        vi.seat_mode = seat_capable && !SeatBlocked(m.seat, d.ride_rx.packet);
+        vi.seat = d.ride_rx.packet.seat;
+        vi.vehicle = d.ride_rx.packet.vehicle;
         vi.lease_live = epoch && h.link_live && h.link_live(h.context);
         vi.rearmed = m.bits_set;
         vi.now_ms = now;
@@ -4384,6 +4513,48 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         const std::uint32_t distance = pose_valid ? partner::DistanceMm(pose.x_mm, pose.y_mm, pose.z_mm,
                                                                          tick.x_mm, tick.y_mm, tick.z_mm) : UINT32_MAX;
         const bool fresh = pose_valid && sample_status == pose::Status::live;
+        // The seated vehicle rider owns body 1 while active (before the range
+        // and ride hides: its exit stops the DM and reverts the dwords first).
+        if (m.seat.phase != SeatPhase::idle || (seat_capable && m.visibility.seated)) {
+            SeatTickIn sin{};
+            sin.capable = seat_capable;
+            sin.seated = m.visibility.seated;
+            sin.ride_live = ride_live;
+            sin.kind = d.ride_rx.packet.kind;
+            sin.ride_seat = d.ride_rx.packet.seat;
+            sin.ride_vehicle = d.ride_rx.packet.vehicle;
+            sin.lease_live = ride_epoch && h.link_live && h.link_live(h.context);
+            sin.remote_anim_valid = visibility_sample.valid && visibility_sample.anim_valid;
+            sin.remote_act = visibility_sample.act;
+            sin.pose_valid = pose_valid;
+            sin.pose = pose;
+            sin.realized = pp::Realized(st, partner::partner_index);
+            sin.parts_loaded = sin.realized && st.parts[1] == c::parts_loaded_state;
+            sin.distance_mm = distance;
+            sin.now = now;
+            sin.terminating = terminating;
+            const SeatTickOut seat_out = TickSeat(d, h, st, sin);
+            if (seat_out.own) {
+                // The deferred reply (the local sender continues), the seat's
+                // ops only, and the body's real readiness (nametag).
+                const bool realized_now = sin.realized, parts_now = sin.parts_loaded;
+                if (h.submit_local) h.submit_local(h.context, sent, local_anim);
+                SendHiddenLocalInput(d, h, st, set, tick, clock, terminating);
+                if (h.submit_look && looks_ok && st.local < 2 && st.parts[st.local] == c::parts_loaded_state)
+                    h.submit_look(h.context, looks.look[st.local]);
+                Probe(d, h, st, clock);
+                SeatReportRealized(m, h, realized_now, parts_now, now);
+                m.body_ok = false;
+                reply = partner::Reply{seat_out.ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad,
+                                       status, age_ms, partner::Look{}, 0};
+                reply.seat_vehicle = seat_out.vehicle;
+                reply.seat = seat_out.seat;
+                reply.seat_action = seat_out.action;
+                reply.seat_entry = seat_out.entry;
+                return true;
+            }
+        }
+        m.ride_seated = false;
         if (free_roam_net && !m.range_hidden && pose_valid && distance >= 200000) {
             partner_upper_probe::Clear("range_hidden");
             m.range_hidden = m.range_needs_place = true;
@@ -4413,7 +4584,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             if (m.bits_set) ClearBits(d, h, why, terminating);
             if (why != m.visibility_logged) {
                 m.visibility_logged = why;
-                EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=hide; reason=%s; act=%u; body_act=%u\r\n",
+                EmitCapped(m.ride_vis_cap, h, "partner_ride", "partner_ride=hide; reason=%s; act=%u; body_act=%u\r\n",
                            why, unsigned(visibility_sample.act), anim_ok ? unsigned(anim.act[1]) : 0u);
             }
             m.tele.configured = set.drive == PartnerDrive::native;
@@ -4426,11 +4597,13 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             d.settings.fire_live = false;
             if (!m.visibility.hidden && !m.bits_set && !m.dm_patched) {
                 m.visibility_logged = nullptr;
-                EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=foot_stable; next=place\r\n");
+                EmitCapped(m.ride_vis_cap, h, "partner_ride", m.visibility.seated ? "partner_ride=seat_show; next=place\r\n"
+                                                                                  : "partner_ride=foot_stable; next=place\r\n");
             }
         } else if (ride_guard && m.visibility_logged) {
             m.visibility_logged = nullptr;
-            EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=foot_stable; next=place\r\n");
+            EmitCapped(m.ride_vis_cap, h, "partner_ride", m.visibility.seated ? "partner_ride=seat_show; next=place\r\n"
+                                                                              : "partner_ride=foot_stable; next=place\r\n");
         }
         if (m.range_hidden) {
             DisarmInput(d, h, "range_hidden");
@@ -4561,7 +4734,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     const bool realized = pp::Realized(st, partner::partner_index);
     const bool parts_loaded = realized && st.parts[1] == c::parts_loaded_state;
-    const bool transform = !vehicle_attached&&PartnerApplyIsTransform(set.apply);
+    const bool body_attached = vehicle_attached || m.ride_seated;
+    const bool transform = !body_attached&&PartnerApplyIsTransform(set.apply);
     // The body readback first: with apply=input the slot publishes it.
     if ((transform || set.apply == PartnerApply::input) && parts_loaded && h.read_body) {
         m.body_ok = h.read_body(h.context, st, m.body_pos, m.body_quat);
@@ -4593,7 +4767,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (m.facing.valid) {
         m.facing.valid = false;  // the next applied tick snaps (first)
     }
-    const bool slot = !vehicle_attached&&partner::WritesSlot(set.stage, set.apply, pose_valid);
+    const bool slot = !body_attached&&partner::WritesSlot(set.stage, set.apply, pose_valid);
     if (slot) {
         float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
                          static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(body_pose.yaw_mrad / 1000.0)};
@@ -4682,7 +4856,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (!anim_dm) {
         m.anim_dm_logged = false;
     }
-    const bool native_pose_held = vehicle_attached||(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
+    const bool native_pose_held = body_attached||(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
     const bool anim_needed = !native_pose_held && set.anim != PartnerAnim::off && set.stage >= 3 && !m.dmmap.owned;
     if (anim_needed) {
         const sync::AnimState src = set.anim == PartnerAnim::mirror ? local_anim : remote_anim;
@@ -5047,12 +5221,12 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const Settings set_levers = EffectiveSettings(d.settings, m.native_out.active);
     TickInput(d, h, lab, st, set_levers, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);
-    if(!vehicle_attached)TickDm(d, h, st, set_levers, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
+    if(!body_attached)TickDm(d, h, st, set_levers, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
     // apply=input without an armed window falls back to the proven Lua Warp
     // every tick (refused, faulted, install refused, input=off, stage < 3),
     // except while the reconciliation places/verifies the body itself.
     const partner::Pose reply_pose = itick.pose_override ? itick.pose : pose;
-    if (!vehicle_attached&&set_levers.apply == PartnerApply::input && (!m.input_armed || m.input_neutral) && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
+    if (!body_attached&&set_levers.apply == PartnerApply::input && (!m.input_armed || m.input_neutral) && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
         (!free_roam_net || parts_loaded)) {
         if (!(extra_ops & partner::op::warp)) {
             extra_ops |= partner::op::warp;
@@ -5067,7 +5241,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     BodyLine(d, h, st, set_levers, tick, clock, parts_loaded);
     // dm=map loss attribution: this reply's look ops and Warp, seen next tick.
-    const std::uint32_t final_ops = VehicleAttached(h,st)?((ops|extra_ops)&~partner::op::warp):(ops|extra_ops);
+    const std::uint32_t final_ops = (VehicleAttached(h,st) || m.ride_seated)?((ops|extra_ops)&~partner::op::warp):(ops|extra_ops);
     m.dmmap_prev_warp = (final_ops & partner::op::warp) != 0;
     m.dmmap_prev_look = (final_ops & partner::op::set_parts_explicit) != 0 ||
                         ((final_ops & partner::op::copy_parts) && !(tick.luaflags & partner::luaflag::parts_copied)) ||

@@ -200,6 +200,23 @@ SITES = [
     (0x1198D9D, '48c744244000000000488b442440c7820002000000000000', 'DM entry, no locator: CAM+0x1F0 = 0 and CAM+0x200 = 0'),
     (0x11992E9, '488981f00100004489b100020000', 'DM End writes CAM+0x1F0 = 0 and CAM+0x200 = 0 (any id)'),
     (0x11992FB, '80a088030000c3', 'DM End clears the pending g+0x388 bits 0x3C (global)'),
+    # The seated vehicle rider (partner_ride_seat, docs/anim-round1-seat.md, critic.md 5.2): the
+    # anchor 0x1198770 and entry playback 0x1198CC0 bodies, the DM End camera stores, the phase-6
+    # apply and the seat matrix 0xB7AF90 (seat-1 remap in 0xB799C0) the four patch dwords rely on.
+    (0x1198770, '48895c2418555657488d6c24e04881ec20010000488b05a50b9b014833c4488945b00fb699a0010000b8ffff0000488bf10fb7bc59c0000000663bf87507b001e9c5000000', 'DM anchor 0x1198770: entry target id; 0xFFFF -> true'),
+    (0x11987B5, '488b9cd9d00000004c89b42448010000440fb7f76641c1ee09e87d68a6ff488b8898000000664183fe320f85b4000000', 'DM anchor: CNP hash, type = id >> 9, vehicle type 50'),
+    (0x11987E5, '488b89a802000033c041b9ff010000488945a0488b014c8d45a0488d542420664423cfff50188338000f85ce02000048b8ffffffffffff00004823d848b851e228daca2c0000483bd80f85ae020000', 'DM anchor: vehicle service vt+0x18 lookup; CNP_ppos_c only'),
+    (0x1198834, '488b4da0488d54243041b002e84b279eff0f28000f2986600100000f2848100f298e700100000f2840200f2986800100000f2848300f298e90010000', 'DM anchor: 0xB7AF90(unit, out, seat imm 2) -> rec+0x160..0x19F (ride seat dword 0x119883C)'),
+    (0x1198870, 'b0014c8bb42448010000488b4db04833cce8bad28600488b9c24500100004881c4200100005f5e5dc3664183fe0475d0', 'DM anchor: return; a target of neither type 50 nor 4 returns true without an anchor'),
+    (0x1198CC0, '40574883ec3048c7442420feffffff48895c24484889742458488bf9488b41388bda2b58244869db50020000480359680fb6b3a00100000fb6841eb8000000', 'DM entry playback 0x1198CC0: rec and entry flags'),
+    (0x1198CFF, 'a802745fa808750e4c8b4cf3384c8b05bdd29301eb084533c94c8b44f378e81e040000', 'DM entry playback: locator flag 2; named state flag 8 -> 0x1199140(rec+0x78[i])'),
+    (0x1198D22, '488b4708488b8838010000488b91b80000000fb78473c000000048b9ffffffffffffff074823c148b90000000000000088480bc1c7820002000001000000eb53', 'DM entry, locator: CAM loads and stores (ride seat skip 0x1198D56 -> 0x1198DBC)'),
+    (0x1198D62, 'a808750e4c8b4cf3384c8b0556d29301eb084533c94c8b44f378e8bf030000488b4708488b8838010000488b91b8000000488d4424404889442450', 'DM entry, no locator: 0x1199140 then CAM (ride seat skip 0x1198D81 -> 0x1198DBC)'),
+    (0x1198DBC, '488b5c2448488b7424584883c4305fc3', 'DM entry playback epilogue (both entry skips land here; no rax/rdx use)'),
+    (0x11992C3, '488b46d8488b9038010000488b8ab8000000488d44246048894424704c89742460488b442460488981f00100004489b100020000488b424880a088030000c3', 'DM End: rdx = P+0x138 object, CAM stores, then [rdx+0x48] (ride seat skip 0x11992E9 -> 0x11992F7)'),
+    (0x1199508, 'f68418b8000000027444488b41080f2883600100008bce488b50782b4a08488b8270020000488b14c80f2942100f288b700100000f294a200f2883800100000f2942300f288b900100000f294a40', 'DM phase 6: a locator entry copies rec+0x160..0x19F to *(PS+0x270)[id]+0x10..0x4F'),
+    (0xB7AF90, '488bc44889580848897010574881ecf00000000f2970e80f2978d8440f2940c8488bf2488d542420410fb6d8488bf9440f2948b8440f2950a8e8b22b9eff488d542460440fb6c3488bcfe8e1e9ffff', 'seat world matrix 0xB7AF90(unit, out, seat): 0x55DB80 world x 0xB799C0 seat'),
+    (0xB79A3F, '4080ff017515b900fe0000400fb6ff66854e32b9000000000f44f9', '0xB799C0: seat 1 -> 0 unless word(unit+0x32) & 0xFE00 (ride seat caveat)'),
     # p218 diagnostic hazards: P+0x218 is paired with P+0x214 / the local block P+0x58.
     (0x11AD05D, '3b9018020000', 'cmp id, [P+0x218] ...'), (0x11AD072, '8bb014020000', '... then index [P+0x214] (host index 0)'),
     (0xFE8F85, '488b48588b9018020000', 'local block *(P+0x58)->vt+0x20 called with id [P+0x218]'),
@@ -1378,6 +1395,39 @@ def weapons3_assertions():
 
 
 failures += weapons3_assertions()
+
+
+def ride_seat_assertions():
+    """The seated vehicle rider's four reversible dwords (partner_ride_seat, docs/anim-round1-seat.md)."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    need(rel_refs(0x1198770) == [0x119980C], f'DM anchor 0x1198770 called only from phase 0 0x119980C: {[hex(x) for x in rel_refs(0x1198770)]}')
+    need(rel_refs(0x1198CC0) == [0x1199566], f'DM entry playback called only from phase 6 0x1199566: {[hex(x) for x in rel_refs(0x1198CC0)]}')
+    need(rel_refs(0x1199140) == [0x1198D1D, 0x1198D7C], f'0x1199140 called only by both playback paths: {[hex(x) for x in rel_refs(0x1199140)]}')
+    need(rd(0x119956B, 7) == bytes.fromhex('0fb68348020000'), 'the playback caller overwrites rax at once (no return value used)')
+    need(rd(0x119883C, 4) == bytes.fromhex('3041b002'), 'seat dword 0x119883C: lea tail 0x30 + mov r8b, 2')
+    for site, size in ((0x119883C, 4), (0x1198D56, 4), (0x1198D81, 4), (0x11992E9, 4)):
+        need((site & 63) + size <= 64, f'patch dword {site:#x} inside one cache line')
+    # Each skip is a jmp rel8 from inside the function to its own later instruction.
+    need(0x1198D56 + 2 + 0x64 == 0x1198DBC and 0x1198D81 + 2 + 0x39 == 0x1198DBC and 0x11992E9 + 2 + 0x0C == 0x11992F7,
+         'skip displacements 0x64 / 0x39 / 0x0C reach 0x1198DBC / 0x1198DBC / 0x11992F7')
+    funcs = runtime_functions()
+    play = [f for f in funcs if f[0] <= 0x1198CC0 < f[1]]
+    end = [f for f in funcs if f[0] <= 0x11992C3 < f[1]]
+    need(len(play) == 1 and play[0][0] == 0x1198CC0 and play[0][1] >= 0x1198DCC, f'0x1198CC0 is one function through 0x1198DCC: {play}')
+    need(len(end) == 1 and end[0][1] >= 0x1199302, f'one function covers the DM End stores 0x11992C3..0x1199302: {end}')
+    # No branch lands inside the replaced or skipped spans.
+    local = linear_branch_targets(0x1198CC0, 0x1198DCC) + linear_branch_targets(0x1199220, 0x119932A)
+    for lo, hi in ((0x1198D57, 0x1198D60), (0x1198D82, 0x1198D85), (0x11992EA, 0x11992F7), (0x119883D, 0x1198840)):
+        inside = [t for t in local if lo <= t < hi] + branch_refs(lo, hi)
+        need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
+    return out
+
+
+failures += ride_seat_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1512,6 +1562,15 @@ w('inline constexpr std::size_t q_act=0x18;  // u16 *(Q+0x18)[i]; 0x8b = direct 
 w('inline constexpr std::uint16_t q18_dm_act=0x8b;')
 w('inline constexpr std::uintptr_t dm_patch_rva=0x1198e25, dm_patch_block_rva=0x1198e12;')
 w('inline constexpr std::uint32_t dm_patch_old=0xc7440f44, dm_patch_new=0x00401f0f;  // little-endian dwords of 44 0f 44 c7 / 0f 1f 40 00')
+w('// The seated vehicle rider (partner_ride_seat): little-endian dwords, original -> patched.')
+w('inline constexpr std::uintptr_t ride_seat_rva=0x119883c, ride_cam_play_rva=0x1198d56, ride_cam_plain_rva=0x1198d81, ride_cam_end_rva=0x11992e9;')
+w('inline constexpr std::uint32_t ride_seat_old=0x02b04130, ride_seat_base=0x00b04130;  // 30 41 b0 02 / 30 41 b0 <seat>')
+w('inline constexpr std::uint32_t ride_cam_play_old=0x020082c7, ride_cam_play_new=0x020064eb;  // c7 82 00 02 / eb 64 00 02 (jmp 0x1198dbc)')
+w('inline constexpr std::uint32_t ride_cam_plain_old=0x08478b48, ride_cam_plain_new=0x084739eb;  // 48 8b 47 08 / eb 39 47 08 (jmp 0x1198dbc)')
+w('inline constexpr std::uint32_t ride_cam_end_old=0xf0818948, ride_cam_end_new=0xf0810ceb;  // 48 89 81 f0 / eb 0c 81 f0 (jmp 0x11992f7)')
+w('// The contract blocks partner_ride_seat re-checks before every write (code_sites rvas).')
+w('inline constexpr std::uintptr_t ride_seat_blocks[]={0x1198770,0x11987b5,0x11987e5,0x1198834,0x1198870,0x1198cc0,0x1198cff,')
+w('    0x1198d22,0x1198d62,0x1198d9d,0x1198db5,0x1198dbc,0x11992c3,0x1199508};')
 w('// Parts: the requested (descriptor) look of slot s is *(u64*)(M+0x1100+8*s) (0x9b442d).')
 w('inline constexpr std::size_t x_req_look=0x1100;')
 w('// --- Round 4 (docs/partner-anim-appearance.md "Round 4") -------------------')

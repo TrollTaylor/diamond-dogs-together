@@ -756,8 +756,10 @@ int main() {
             for (const char* profile : {"loco", "gun"}) {
                 const std::string profileKey = std::string("partner_native_profile=") + profile + "\n";
                 const auto autoRide = Lab(prefix + profileKey);
-                Check(autoRide.partner_native_ride == PartnerNativeRide::hide && !autoRide.partner_native_ride_given &&
+                Check(autoRide.partner_native_ride == mgscoop::kPartnerNativeRideDriven && !autoRide.partner_native_ride_given &&
                       autoRide.partner_input_defer == PartnerDefer::on, "driven native profile defaults ride hide in lab/play");
+                Check(autoRide.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::direct &&
+                      autoRide.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::stop, "seat enter/exit defaults direct/stop");
                 for (const bool keyFirst : {false, true}) {
                     const auto off = Lab(prefix + (keyFirst ? "partner_native_ride=off\n" + profileKey : profileKey + "partner_native_ride=off\n"));
                     Check(off.partner_native_ride == PartnerNativeRide::off && off.partner_native_ride_given,
@@ -765,18 +767,35 @@ int main() {
                     const auto hide = Lab(prefix + (keyFirst ? "partner_native_ride=hide\n" + profileKey : profileKey + "partner_native_ride=hide\n"));
                     Check(hide.partner_native_ride == PartnerNativeRide::hide && hide.partner_native_ride_given,
                           "explicit ride hide is admitted before/after either native profile in lab/play");
+                    const auto seat = Lab(prefix + (keyFirst ? "partner_native_ride=seat\npartner_ride_seat_enter=getin\n" + profileKey
+                                                             : profileKey + "partner_native_ride=seat\npartner_ride_seat_exit=getoff\n"));
+                    Check(seat.invalid_values == 0 && seat.partner_native_ride == PartnerNativeRide::seat && seat.partner_native_ride_given &&
+                          seat.partner_ride_seat_enter == (keyFirst ? mgscoop::PartnerRideSeatEnter::getin : mgscoop::PartnerRideSeatEnter::direct) &&
+                          seat.partner_ride_seat_exit == (keyFirst ? mgscoop::PartnerRideSeatExit::stop : mgscoop::PartnerRideSeatExit::getoff),
+                          "explicit ride seat and the seat enter/exit keys are admitted in lab/play");
                 }
             }
         }
         const auto rawRide = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=on\n");
         const auto censusRide = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=census\npartner_native_gun=1\n");
-        Check(rawRide.partner_native_ride == PartnerNativeRide::hide && censusRide.partner_native_ride == PartnerNativeRide::off &&
+        Check(rawRide.partner_native_ride == mgscoop::kPartnerNativeRideDriven && censusRide.partner_native_ride == PartnerNativeRide::off &&
               !censusRide.partner_native_ride_given, "raw driven offline/loco stage hides; census never inherits hide");
         const auto badRide = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_ride=on\n");
         const auto namedBadRide = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_ride=off\npartner_native_ride=on\n");
-        Check(badRide.invalid_values == 1 && !badRide.partner_native_ride_given && badRide.partner_native_ride == PartnerNativeRide::hide &&
+        Check(badRide.invalid_values == 1 && !badRide.partner_native_ride_given && badRide.partner_native_ride == mgscoop::kPartnerNativeRideDriven &&
               namedBadRide.invalid_values == 1 && namedBadRide.partner_native_ride_given && namedBadRide.partner_native_ride == PartnerNativeRide::off,
               "invalid ride value inherits default but cannot erase a valid explicit off");
+        const auto badSeat = Lab("enabled=1\nrole=host\npartner_ride_seat_enter=walk\npartner_ride_seat_exit=jump\npartner_native_ride=Seat\n");
+        Check(badSeat.invalid_values == 3 && badSeat.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::direct &&
+              badSeat.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::stop && badSeat.partner_native_ride == PartnerNativeRide::off,
+              "invalid seat enter/exit/ride values refuse and keep the defaults");
+        Check(mgscoop::kPartnerNativeRideDriven == PartnerNativeRide::hide, "the driven default stays hide until the seat test passes");
+        Check(std::strcmp(mgscoop::PartnerNativeRideName(PartnerNativeRide::seat),"seat")==0 &&
+              std::strcmp(mgscoop::PartnerNativeRideName(PartnerNativeRide::off),"off")==0 &&
+              std::strcmp(mgscoop::PartnerRideSeatEnterName(mgscoop::PartnerRideSeatEnter::getin),"getin")==0 &&
+              std::strcmp(mgscoop::PartnerRideSeatEnterName(mgscoop::PartnerRideSeatEnter::direct),"direct")==0 &&
+              std::strcmp(mgscoop::PartnerRideSeatExitName(mgscoop::PartnerRideSeatExit::getoff),"getoff")==0 &&
+              std::strcmp(mgscoop::PartnerRideSeatExitName(mgscoop::PartnerRideSeatExit::stop),"stop")==0, "seat names");
         Check(std::strcmp(mgscoop::PartnerNativeRideName(mgscoop::PartnerNativeRide::hide),"hide")==0 &&
               std::strcmp(mgscoop::PartnerNativeEquipSharedName(mgscoop::PartnerNativeEquipShared::prefer),"prefer")==0,
               "weapons4 and ride names");
