@@ -45,6 +45,73 @@ Keep the zip: if the copy is ever replaced, import it again. MGSV saves may
 be tied to the Steam account; if the game refuses the imported save, `[R]`
 restores the previous copy.
 
+## Save handoff (same progress automatically)
+
+Join-fix phase 2 ([save-handoff.md](save-handoff.md) has the wire format and
+the loader side; FRIEND-GUIDE.txt section 3 "SAME PROGRESS AUTOMATICALLY"
+the player words). With `Play-Coop -SaveHandoff scene` (the default) a
+joiner whose co-op save cannot meet the host (its story is not open, it
+Continues into a mission co-op cannot join, or its title helicopter is in
+another region) gets the host's save over link channel 4 at the title
+screen, and MGSV restarts once on it:
+
+1. The host's save is offered only once it is bound to Mother Base or free
+   roam (a Continue into 30010/30020/30050 or their helicopters, or 30 s in
+   free roam/Mother Base) and its story is open; never from the story
+   opening. The guest stages it in `mgs-coop\coop-saves-handoff\<xfer>`
+   (verified against `handoff.json`), writes `request.json` last, counts
+   down 10 s at the title (Continue twice or F9 > Partner / Co-op > Shared
+   save > Keep my own save declines) and closes its own window (WM_CLOSE).
+   A waiting Steam guest also writes `link-rejoin.txt` (the join code it was
+   armed with; never collected, removed at once).
+2. After the game process exited, `Invoke-CoopHandoffAfterExit`
+   (FriendCommon.psm1) runs in the Play-Coop window, or in the hidden
+   helper when the window is gone (the helper defers to a live window for
+   20 s). Under the per-folder mutex it checks the request (format, the
+   exited game's pid and start time, created after the session start and
+   under 30 min old, no links, the staged files exactly as `handoff.json`
+   lists them and their P2-6 set hash), claims it in `play-session.json`
+   (`handoff.state` `applying`), applies it with `Import-CoopProgressFiles`
+   (the Share-Save import core: settings kept, old progress files dropped,
+   marker `imported-progress.json` with `source` `handoff`, the old copy to
+   `coop-saves-replaced\<time>-before-handoff`, rollback on failure),
+   writes `applied.json`, writes `lab.ini` again with `save_handoff=off` (a
+   waiting Steam guest with `link-rejoin.txt` gets `net_peer_steam` and
+   `link-secret.txt`), recording every new hash before its write, deletes
+   the request, the stage and `link-rejoin.txt`, and sets `relaunching`
+   with `count` 1.
+3. `Start-CoopRelaunch` starts `steam://rungameid/287700` 5 s later, only
+   while the session is active and every recorded co-op file (marker
+   exactly `offline-v1`) is in place with its hash: a restart never starts
+   plain MGSV on the real saves. Play-Coop waits for the new game (once more
+   at 60 s, a manual-start line at 120 s, co-op off after 300 s), marks
+   `relaunched` and continues with the start evidence and the status line.
+4. Cleanup guard (P2-17): while `handoff.state` is `applying` or
+   `relaunching`, the claim is under 300 s old and its claimant runs,
+   `Invoke-CoopPlayCleanup` does nothing ("a save handoff restart is in
+   progress"); `-Force` (`Play-Coop -Cleanup`, a restart deadline) skips it.
+   The helper waits for a pending restart (180 s, longer while the window
+   waits) instead of switching co-op off.
+
+One handoff per Play-Coop start: a second request is deleted
+(`handoff.state` `limit`). Play-Coop's preflight and Uninstall-Coop remove
+an unapplied request, staged folders (known file names only) and
+`link-rejoin.txt`; `provenance.json` and `applied.json` stay and
+`coop-saves-replaced` is never touched. `Share-Save.bat [R]` restores the
+newest of `-before-import` and `-before-handoff`; Install-Coop's reseed
+guard names "your partner's save (automatic save handoff on <date>)".
+`-SaveHandoff always` hands off whenever the saves differ; `-SaveHandoff off`
+writes `save_handoff=off`. `-TravelLock off` writes `travel_lock=0` (the
+joiner may travel without the host).
+
+Play-Coop console lines: "MGSV closed to load the host's save.", "Applying
+the host's save (<n> files, <kb> KB)...", "Your previous co-op save is kept
+at mgs-coop\coop-saves-replaced\<time>-before-handoff (Share-Save.bat [R]
+brings it back).", "Starting MGSV again with the same join code...", "MGSV
+restarted (process <pid>)."; when the helper applies: "The background
+helper is restarting MGSV with the host's save..."; on failure "Could not
+apply the host's save: <reason>. Your co-op save is unchanged.".
+
 ## Quick start (online, the user and a friend)
 
 The flow both players follow (FRIEND-GUIDE.txt section 3 says the same in
@@ -134,7 +201,7 @@ and its ZIP (`package.json` flavor `friend-play`):
 | `Play-Offline-Coop.bat` | shortcut to `Play-Coop.ps1 -LocalTest`, preserving caller arguments |
 | `Uninstall-Coop.bat` | switch a leftover session off, restore the previous loader, check the real saves |
 | `Collect-Logs.bat` | logs ZIP on the Desktop (redacted) |
-| `Share-Save.bat` | export the co-op copy's progress as a zip, import a partner's zip, or restore the copy an import replaced |
+| `Share-Save.bat` | export the co-op copy's progress as a zip, import a partner's zip, or restore the copy an import or automatic save handoff replaced |
 | `scripts/` | player scripts, `FriendCommon.psm1`, `CoopPlay.psm1`, `LocalCoopSession.psm1`, `LocalCoopWindows.psm1`, `install.ps1` |
 | `FRIEND-GUIDE.txt`, `RUNTIME-ARCHIVE.txt` | player documentation |
 
@@ -236,7 +303,14 @@ start from Steam is plain MGSV on the real saves.
      shown.
    - `progress` `story_start` (the co-op copy's title helicopter is at the
      story start) appends "Your co-op save is at the story start: quit, then
-     import your partner's save with Share-Save.bat (option I)."
+     import your partner's save with Share-Save.bat (option I)." (not while
+     the save handoff waits for or gets the host's save).
+   - The save handoff (link-status `handoff`/`handoff_pct`; absent = off)
+     adds one segment before the mission (`Get-CoopHandoffText`): guest
+     " | waiting for the host's save", " | getting the host's save 40%",
+     " | host save ready, MGSV restarts"; host " | sending your save to
+     your friend 40%", " | your friend is restarting on your save"; both
+     " | save not shared: <reason>". A changed token prints one sentence.
    - A guest whose host left (`left`=1, not connected) and whose reconnect is
      refused with an unverified `bad_code` shows "the host restarted with a
      new code: paste it in F9 > Partner / Co-op > Online" instead of "the
@@ -271,6 +345,8 @@ partner_interp=auto
 <Get-PlayPartnerDefaults: Play-OfflineCoop's effective dm=map partner keys under the shipped lab.json>
 partner_input_send=1
 partner_native_profile=gun          (Play-Coop -Partner native, the default; absent with -Partner clips)
+save_handoff=scene                  (Play-Coop -SaveHandoff scene|always|off; off after a handoff)
+travel_lock=0                       (only with Play-Coop -TravelLock off)
 world=3
 ```
 
@@ -391,7 +467,11 @@ section 20.9) is drawn top-right while F9 is closed and hidden during demos:
 copy/invite`, `CO-OP [joining 12 s] host not answering`, `CO-OP [<partner>
 left] waiting for them to come back`, `CO-OP [the host has a new code] paste
 it in F9 > Partner / Co-op > Online` (a guest whose host restarted hosting),
-`CO-OP [refused] wrong code?` or `CO-OP [off] Steam offline`. Toasts (4 s)
+`CO-OP [refused] wrong code?` or `CO-OP [off] Steam offline`; during a save
+handoff `CO-OP [connected] <name> - <route> <rtt> ms | getting host save
+<pct>%` (or `sending your save <pct>%` on the host), `CO-OP [connected]
+<name> | host save ready - MGSV restarts` and, on the host, `CO-OP [<name>
+restarting] loading your save - waiting for them`. Toasts (4 s)
 announce connected, reconnected, lost, left, refused, version mismatch and
 Steam failures in the same plain words as Play-Coop, plus the world notes:
 the partner in another mission ("Your partner is in <name>; you are in

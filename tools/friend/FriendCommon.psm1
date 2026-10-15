@@ -10,7 +10,9 @@
 # Imports tools/CoopPlay.psm1 (packaged next to this file in scripts\) and
 # re-exports it, so the friend scripts import only this module.
 # Pure helpers are unit tested by tests/friend_package_tests.ps1. Nothing here
-# launches the game or Steam, and no helper writes below Steam\userdata.
+# launches the game or Steam, except Start-CoopRelaunch (MGSV again through
+# Steam after an automatic save handoff, only with every co-op file in place;
+# never with MGS_COOP_TEST_NO_LAUNCH=1), and no helper writes below Steam\userdata.
 # Firewall and router changes happen only in the opt-in steps of Play-Coop.ps1
 # and Uninstall-Coop.ps1, never here.
 Set-StrictMode -Version Latest
@@ -86,7 +88,12 @@ $script:FixedPathSuffixes = @(
     # Rename-FriendFile / before-friend copies.
     '\mgs-coop\script-observe.enabled.disabled-00000000-000000-99',
     '\mgs-coop\friend-install.json.uninstalled-00000000-000000-99',
-    '\mgs-coop\script-observe.enabled.before-friend-00000000-000000'
+    '\mgs-coop\script-observe.enabled.before-friend-00000000-000000',
+    # The automatic save handoff (docs/save-handoff.md): a staged progress
+    # file's temp copy (Remove-CoopStaleHandoff deletes leftovers) and a
+    # settings file of a co-op copy moved aside before a handoff.
+    ('\mgs-coop\coop-saves-handoff\00000000.partial\287700\local\TPP_GAME_DATA0.mgs-coop-' + ('0' * 32) + '.tmp'),
+    '\mgs-coop\coop-saves-replaced\00000000-000000-99-before-handoff\287700\local\TPP_GRAPHICS_CONFIG'
 )
 
 function Get-FriendPathLengthProblem {
@@ -517,9 +524,13 @@ function Get-FriendSaveBaselines {
 }
 
 function Get-FriendProperty {
-    # StrictMode-safe optional property read.
+    # StrictMode-safe optional property read (an object read from JSON, or a table).
     param($Object, [Parameter(Mandatory)][string]$Name, $Default = $null)
     if ($null -eq $Object) { return $Default }
+    if ($Object -is [Collections.IDictionary]) {
+        if (([Collections.IDictionary]$Object).Contains($Name) -and $null -ne $Object[$Name]) { return $Object[$Name] }
+        return $Default
+    }
     $p = $Object.PSObject.Properties[$Name]
     if ($p -and $null -ne $p.Value) { return $p.Value }
     return $Default
@@ -553,7 +564,8 @@ function Get-FriendImportedSaveInfo {
     # marker in $SaveDir wins; otherwise the newest coop-saves-replaced folder
     # (by name, <yyyyMMdd-HHmmss>...) counts when Share-Save left it aside as
     # '-before-import' (or '-before-handoff'). Returns $null or
-    # @{ Source = 'marker'|'folder'; Imported = 'yyyy-MM-dd HH:mm' (local time); MarkerPath; Folder }.
+    # @{ Source = 'marker'|'folder'; Imported = 'yyyy-MM-dd HH:mm' (local time); MarkerPath; Folder;
+    #    Kind = 'share-save'|'handoff' (the marker's source, or the folder suffix) }.
     param([Parameter(Mandatory)][string]$SaveDir, [Parameter(Mandatory)][string]$ReplacedRoot)
     $markerPath = Join-Path $SaveDir $script:ImportMarkerName
     $marker = Read-FriendJson $markerPath
@@ -567,7 +579,9 @@ function Get-FriendImportedSaveInfo {
         elseif ([DateTime]::TryParse([string]$value, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$when)) {
             $imported = $when.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
         }
-        return [pscustomobject]@{ Source = 'marker'; Imported = $imported; MarkerPath = $markerPath; Folder = $null }
+        $kind = 'share-save'
+        if ([string](Get-FriendProperty $marker 'source' '') -ceq 'handoff') { $kind = 'handoff' }
+        return [pscustomobject]@{ Source = 'marker'; Imported = $imported; MarkerPath = $markerPath; Folder = $null; Kind = $kind }
     }
     if (!(Test-Path -LiteralPath $ReplacedRoot -PathType Container)) { return $null }
     $newest = $null
@@ -583,7 +597,9 @@ function Get-FriendImportedSaveInfo {
     if ([DateTime]::TryParseExact($name.Substring(0, 15), 'yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$stamp)) {
         $imported = $stamp.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
     }
-    return [pscustomobject]@{ Source = 'folder'; Imported = $imported; MarkerPath = $null; Folder = $newest.FullName }
+    $kind = 'share-save'
+    if ($name.EndsWith('-before-handoff', [StringComparison]::Ordinal)) { $kind = 'handoff' }
+    return [pscustomobject]@{ Source = 'folder'; Imported = $imported; MarkerPath = $null; Folder = $newest.FullName; Kind = $kind }
 }
 
 function Get-FriendSaveListing {
@@ -591,6 +607,7 @@ function Get-FriendSaveListing {
     # (coop-saves.txt): names, sizes and UTC times only, never file contents.
     # Rows: "<path relative to mgs-coop, '/'><TAB><bytes>|dir<TAB><last write UTC>",
     # one per folder and file under coop-saves, coop-saves-replaced,
+    # coop-saves-handoff (the save handoff's staging, provenance and request),
     # local-test-saves, save-import-* and coop-saves-new-*; at most $MaxEntries
     # rows, then "# truncated: N more". Links are listed, never followed.
     param([Parameter(Mandatory)][string]$ModDirectory, [ValidateRange(1, 100000)][int]$MaxEntries = 500)
@@ -600,7 +617,7 @@ function Get-FriendSaveListing {
     if (!(Test-Path -LiteralPath $ModDirectory -PathType Container)) { return $lines.ToArray() }
     $culture = [Globalization.CultureInfo]::InvariantCulture
     $roots = New-Object Collections.Generic.List[object]
-    foreach ($name in @('coop-saves', 'coop-saves-replaced', 'local-test-saves')) {
+    foreach ($name in @('coop-saves', 'coop-saves-replaced', 'coop-saves-handoff', 'local-test-saves')) {
         $dir = Join-Path $ModDirectory $name
         if (Test-Path -LiteralPath $dir -PathType Container) { $roots.Add((Get-Item -LiteralPath $dir -Force)) }
     }
@@ -632,6 +649,300 @@ function Get-FriendSaveListing {
     }
     if ($more) { $lines.Add('# truncated: ' + $more + ' more') }
     return $lines.ToArray()
+}
+
+# ---------------------------------------------------------------------------
+# Progress files: the Share-Save import core, shared with the automatic save
+# handoff (docs/save-handoff.md) and the hidden worker's applyhandoff step
+# ---------------------------------------------------------------------------
+
+# The files that carry progress (taken from the partner) and the subfolders of
+# a co-op save copy (Install-Coop's Copy-SaveSeed layout). Settings files
+# (TPP_CONFIG_DATA*, TPP_GRAPHICS_CONFIG, MGO_GAME_DATA*) are never taken.
+$script:ProgressPattern = '^(TPP_GAME_DATA[0-9]?|PERSONAL_DATA[0-9]?)$'
+$script:ProgressSubdirs = @('287700\local', 'remote')
+$script:MaxProgressFileBytes = 4MB
+# P2-6: the save handoff slot table (slot = index) and its size limit.
+$script:HandoffSlots = @('287700/local/TPP_GAME_DATA0', '287700/local/TPP_GAME_DATA1', '287700/local/PERSONAL_DATA0',
+    '287700/local/PERSONAL_DATA1', 'remote/TPP_GAME_DATA', 'remote/PERSONAL_DATA')
+$script:HandoffMaxTotalBytes = 8MB
+# The temp copy of a progress file that the loader's atomic write may leave in
+# a stage (deleted with its stage, never read).
+$script:HandoffTempPattern = '^(TPP_GAME_DATA[0-9]?|PERSONAL_DATA[0-9]?)\.mgs-coop-[0-9A-Fa-f]{32}\.tmp$'
+
+function Get-CoopProgressPattern { return $script:ProgressPattern }
+
+function Get-CoopHandoffSlots { return $script:HandoffSlots }
+
+function ConvertTo-CoopUtcTime {
+    # A JSON time (text, or the DateTime that PowerShell 7's ConvertFrom-Json
+    # makes of it) -> UTC DateTime, or $null.
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [DateTime]) { return $Value.ToUniversalTime() }
+    $text = [string]$Value
+    if (!$text) { return $null }
+    $t = [DateTime]::MinValue
+    $styles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal
+    if ([DateTime]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$t)) { return $t }
+    return $null
+}
+
+function Get-CoopUtcText {
+    # A JSON time as round-trip UTC text ('' when absent or unreadable).
+    param($Value)
+    $t = ConvertTo-CoopUtcTime $Value
+    if ($null -eq $t) { return '' }
+    return $t.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Test-CoopProgressStage {
+    # Checks a staged progress tree: <StageRoot>\287700\local\<name> and
+    # <StageRoot>\remote\<name> only, names matching the progress pattern,
+    # 1 byte to 4 MB each, TPP_GAME_DATA0 or TPP_GAME_DATA1 present, no
+    # filesystem link (a handoff.json at the root is allowed). With -Manifest
+    # (rows with entry, bytes, sha256: share-save.json / handoff.json "files")
+    # the staged files must be exactly the listed ones with those sizes and
+    # SHA-256. Never throws for a bad stage. Returns @{ Ok; Problem (a sentence
+    # for the player); Files = @(@{ entry; bytes; sha256; Path }) in slot
+    # order; Bytes }.
+    param([Parameter(Mandatory)][string]$StageRoot, [AllowNull()][object[]]$Manifest = $null)
+    $result = [pscustomobject]@{ Ok = $false; Problem = ''; Files = @(); Bytes = [Int64]0 }
+    try {
+        if (!(Test-Path -LiteralPath $StageRoot -PathType Container)) { $result.Problem = 'The save to import is missing.'; return $result }
+        $root = [IO.Path]::GetFullPath($StageRoot).TrimEnd('\', '/')
+        Assert-NoReparsePoint -Path $root -StopAt (Split-Path -Parent $root)
+        foreach ($item in @(Get-ChildItem -LiteralPath $root -Force)) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { $result.Problem = "Filesystem links are not supported here: $($item.Name)."; return $result }
+            $isDir = [bool]($item.Attributes -band [IO.FileAttributes]::Directory)
+            if (!$isDir -and $item.Name -ceq 'handoff.json') { continue }
+            if (!$isDir -or ($item.Name -cne '287700' -and $item.Name -cne 'remote')) { $result.Problem = "Unexpected file in the save: $($item.Name)."; return $result }
+        }
+        $appDir = Join-Path $root '287700'
+        if (Test-Path -LiteralPath $appDir) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $appDir -Force)) {
+                if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { $result.Problem = "Filesystem links are not supported here: 287700/$($item.Name)."; return $result }
+                if (!($item.Attributes -band [IO.FileAttributes]::Directory) -or $item.Name -cne 'local') { $result.Problem = "Unexpected file in the save: 287700/$($item.Name)."; return $result }
+            }
+        }
+        $rows = New-Object Collections.Generic.List[object]
+        foreach ($sub in $script:ProgressSubdirs) {
+            $dir = Join-Path $root $sub
+            if (!(Test-Path -LiteralPath $dir)) { continue }
+            foreach ($f in @(Get-ChildItem -LiteralPath $dir -Force)) {
+                $entry = $sub.Replace('\', '/') + '/' + $f.Name
+                if ($f.Attributes -band [IO.FileAttributes]::ReparsePoint) { $result.Problem = "Filesystem links are not supported here: $entry."; return $result }
+                if (($f.Attributes -band [IO.FileAttributes]::Directory) -or $f.Name -cnotmatch $script:ProgressPattern) { $result.Problem = "Unexpected file in the save: $entry."; return $result }
+                if ($f.Length -le 0 -or $f.Length -gt $script:MaxProgressFileBytes) { $result.Problem = "Unexpected save file size: $entry."; return $result }
+                $rows.Add([pscustomobject]@{ entry = $entry; bytes = [Int64]$f.Length; sha256 = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToUpperInvariant(); Path = $f.FullName })
+            }
+        }
+        $sorted = @($rows.ToArray() | Sort-Object -Property @{ Expression = { [Array]::IndexOf($script:HandoffSlots, $_.entry) } }, @{ Expression = 'entry' })
+        if (!@($sorted | Where-Object { $_.entry -ceq '287700/local/TPP_GAME_DATA0' -or $_.entry -ceq '287700/local/TPP_GAME_DATA1' }).Count) {
+            $result.Problem = 'The save has no TPP_GAME_DATA file.'
+            return $result
+        }
+        if ($null -ne $Manifest) {
+            $want = New-Object 'Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+            foreach ($m in @($Manifest)) {
+                $e = [string](Get-FriendProperty $m 'entry' '')
+                if (!$e -or $want.ContainsKey($e)) { $result.Problem = "The save's file list is invalid ($e)."; return $result }
+                $want[$e] = $m
+            }
+            foreach ($r in $sorted) {
+                if (!$want.ContainsKey($r.entry)) { $result.Problem = "The save's file list does not name $($r.entry)."; return $result }
+                $m = $want[$r.entry]
+                $listed = Get-FriendProperty $m 'bytes' $null
+                if ($null -ne $listed -and [Int64]$listed -ne $r.bytes) { $result.Problem = "$($r.entry) has another size than its file list says."; return $result }
+                if (([string](Get-FriendProperty $m 'sha256' '')).ToUpperInvariant() -cne $r.sha256) { $result.Problem = "$($r.entry) is damaged (hash mismatch)."; return $result }
+            }
+            foreach ($e in @($want.Keys)) {
+                if (!@($sorted | Where-Object { $_.entry -ceq $e }).Count) { $result.Problem = "$e is missing from the save."; return $result }
+            }
+        }
+        $total = [Int64]0
+        foreach ($r in $sorted) { $total += $r.bytes }
+        $result.Files = $sorted
+        $result.Bytes = $total
+        $result.Ok = $true
+    } catch {
+        $result.Ok = $false
+        $result.Problem = $_.Exception.Message
+    }
+    return $result
+}
+
+function Remove-CoopProgressStage {
+    # Deletes a staged progress tree by its known names only: handoff.json, the
+    # progress files (and the loader's temp copies of them) in 287700\local and
+    # remote, then each folder once it is empty. Anything else stays, and so do
+    # its folders; a filesystem link is never followed. $true when the stage
+    # folder is gone.
+    param([Parameter(Mandatory)][string]$StageRoot)
+    if (!(Test-Path -LiteralPath $StageRoot -PathType Container)) { return $true }
+    $root = [IO.Path]::GetFullPath($StageRoot).TrimEnd('\', '/')
+    Assert-NoReparsePoint -Path $root -StopAt (Split-Path -Parent $root)
+    foreach ($sub in $script:ProgressSubdirs) {
+        $dir = Join-Path $root $sub
+        if (!(Test-Path -LiteralPath $dir -PathType Container)) { continue }
+        $linked = $false
+        $cursor = $dir
+        while ($cursor.Length -gt $root.Length) {
+            if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { $linked = $true; break }
+            $cursor = Split-Path -Parent $cursor
+        }
+        if ($linked) { continue }
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Force)) {
+            if ($f.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            if ($f.Name -cmatch $script:ProgressPattern -or $f.Name -cmatch $script:HandoffTempPattern) { Remove-Item -LiteralPath $f.FullName -Force }
+        }
+    }
+    $manifest = Join-Path $root 'handoff.json'
+    if (Test-Path -LiteralPath $manifest -PathType Leaf) { Remove-Item -LiteralPath $manifest -Force }
+    foreach ($d in @((Join-Path $root '287700\local'), (Join-Path $root '287700'), (Join-Path $root 'remote'), $root)) {
+        if (!(Test-Path -LiteralPath $d -PathType Container)) { continue }
+        $item = Get-Item -LiteralPath $d -Force
+        if (!($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and !@(Get-ChildItem -LiteralPath $d -Force).Count) { Remove-Item -LiteralPath $d -Force }
+    }
+    return !(Test-Path -LiteralPath $root)
+}
+
+function Get-CoopProgressBackups {
+    # The co-op copies Share-Save [I] and the automatic save handoff moved aside
+    # (<ReplacedRoot>\<yyyyMMdd-HHmmss>[-n]-before-import|-before-handoff),
+    # newest first (by the time in the name, then n). Rows: @{ Path; Name;
+    # Kind = 'import'|'handoff' }.
+    param([Parameter(Mandatory)][string]$ReplacedRoot)
+    if (!(Test-Path -LiteralPath $ReplacedRoot -PathType Container)) { return @() }
+    $rows = New-Object Collections.Generic.List[object]
+    foreach ($d in @(Get-ChildItem -LiteralPath $ReplacedRoot -Directory -Force)) {
+        $m = [regex]::Match($d.Name, '^([0-9]{8})-([0-9]{6})(?:-([0-9]{1,4}))?-before-(import|handoff)$')
+        if (!$m.Success) { continue }
+        $n = 0
+        if ($m.Groups[3].Success) { $n = [int]$m.Groups[3].Value }
+        $key = [decimal]($m.Groups[1].Value + $m.Groups[2].Value) * 10000 + $n
+        $rows.Add([pscustomobject]@{ Path = $d.FullName; Name = $d.Name; Kind = $m.Groups[4].Value; Key = $key })
+    }
+    return @($rows.ToArray() | Sort-Object -Property Key -Descending | ForEach-Object { [pscustomobject]@{ Path = $_.Path; Name = $_.Name; Kind = $_.Kind } })
+}
+
+function Import-CoopProgressFiles {
+    # Puts the progress files of a checked stage into a co-op save copy (the
+    # Share-Save [I] core; the automatic save handoff and the worker's
+    # applyhandoff use it too). The new copy is built as a sibling of $SaveDir
+    # (<leaf>-new-<time>): the current copy (its settings files kept) without
+    # its old progress files plus the staged ones, and the import marker
+    # (imported-progress.json, K18; $Marker: Source = share-save|handoff,
+    # optional ExportedUtc). Then the current copy moves to
+    # <ReplacedRoot>\<time><Suffix> and the new copy is renamed in; a failure
+    # moves the old copy back. Nothing is deleted from the old copy. With
+    # -Manifest the stage must match it (Test-CoopProgressStage). The stage is
+    # removed by its known names afterwards unless -KeepStage. Returns the path
+    # the old copy was moved to.
+    param([Parameter(Mandatory)][string]$StageRoot, [Parameter(Mandatory)][string]$SaveDir, [Parameter(Mandatory)][string]$ReplacedRoot,
+        [Parameter(Mandatory)][ValidateSet('-before-import', '-before-handoff')][string]$Suffix, [Parameter(Mandatory)][hashtable]$Marker,
+        [AllowNull()][object[]]$Manifest = $null, [switch]$KeepStage,
+        # Tests only: runs with the new copy's path right before it is renamed in.
+        [scriptblock]$TestBeforeFinalMove = $null)
+    $source = [string]$Marker['Source']
+    if ($source -cne 'share-save' -and $source -cne 'handoff') { throw "Unknown import source: $source" }
+    $check = Test-CoopProgressStage -StageRoot $StageRoot -Manifest $Manifest
+    if (!$check.Ok) { throw $check.Problem }
+    $SaveDir = [IO.Path]::GetFullPath($SaveDir).TrimEnd('\', '/')
+    $ReplacedRoot = [IO.Path]::GetFullPath($ReplacedRoot).TrimEnd('\', '/')
+    $parent = Split-Path -Parent $SaveDir
+    if (!(Test-Path -LiteralPath $SaveDir -PathType Container)) { throw "The co-op save copy is missing: $SaveDir" }
+    Assert-NoReparsePoint -Path $SaveDir -StopAt $parent
+    foreach ($item in @(Get-ChildItem -LiteralPath $SaveDir -Recurse -Force)) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Filesystem links are not supported here: $($item.FullName)" }
+    }
+    if (Test-Path -LiteralPath $ReplacedRoot) { Assert-NoReparsePoint -Path $ReplacedRoot -StopAt (Split-Path -Parent $ReplacedRoot) }
+    $stamp = Get-FriendStamp
+    $leaf = Split-Path -Leaf $SaveDir
+    $newDir = Join-Path $parent ($leaf + '-new-' + $stamp)
+    $n = 1
+    while (Test-Path -LiteralPath $newDir) { $newDir = Join-Path $parent ($leaf + '-new-' + $stamp + '-' + $n); $n++ }
+    $aside = $null
+    try {
+        Copy-Item -LiteralPath $SaveDir -Destination $newDir -Recurse
+        foreach ($sub in $script:ProgressSubdirs) {
+            $target = Join-Path $newDir $sub
+            $null = New-Item -ItemType Directory -Path $target -Force
+            # The old progress files go, so a slot the partner does not have cannot mix two players' progress.
+            foreach ($old in @(Get-ChildItem -LiteralPath $target -File -Force | Where-Object { $_.Name -cmatch $script:ProgressPattern })) { Remove-Item -LiteralPath $old.FullName -Force }
+        }
+        foreach ($f in @($check.Files)) {
+            $destination = Join-Path $newDir ([string]$f.entry).Replace('/', '\')
+            [IO.File]::Copy([string]$f.Path, $destination, $false)
+            if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -cne $f.sha256) { throw "$($f.entry) changed while it was copied." }
+        }
+        # The import marker (names, sizes and hashes; no save bytes) travels with the
+        # new copy: Install-Coop asks twice before it replaces this copy, and [R]
+        # moves it aside together with the imported progress.
+        $markerFiles = @($check.Files | ForEach-Object { [pscustomobject]@{ entry = $_.entry; bytes = $_.bytes; sha256 = $_.sha256 } })
+        Write-FriendTextFile -Path (Join-Path $newDir $script:ImportMarkerName) -Text (New-FriendImportMarkerText -Source $source -ExportedUtc ([string]$Marker['ExportedUtc']) -Files $markerFiles)
+        $null = New-Item -ItemType Directory -Path $ReplacedRoot -Force
+        $aside = Join-Path $ReplacedRoot ($stamp + $Suffix)
+        $n = 1
+        while (Test-Path -LiteralPath $aside) { $aside = Join-Path $ReplacedRoot ($stamp + '-' + $n + $Suffix); $n++ }
+        # Directory.Move never moves into an existing folder.
+        [IO.Directory]::Move($SaveDir, $aside)
+        try {
+            if ($TestBeforeFinalMove) { & $TestBeforeFinalMove $newDir }
+            [IO.Directory]::Move($newDir, $SaveDir)
+        } catch {
+            $failure = $_
+            if (Test-Path -LiteralPath $SaveDir) { throw ("The new co-op save copy could not be put in place and $SaveDir exists again; your previous copy is kept at $aside. (" + $failure.Exception.Message + ')') }
+            [IO.Directory]::Move($aside, $SaveDir)
+            $aside = $null
+            throw $failure
+        }
+    } finally {
+        if (Test-Path -LiteralPath $newDir) { try { Remove-Item -LiteralPath $newDir -Recurse -Force } catch { } }
+    }
+    if (!$KeepStage) { $null = Remove-CoopProgressStage -StageRoot $StageRoot }
+    return $aside
+}
+
+function Get-CoopHandoffSetSha256 {
+    # P2-6: the set hash of save handoff progress files. $Entries: rows with
+    # entry ('287700/local/TPP_GAME_DATA0' .. 'remote/PERSONAL_DATA') or slot
+    # (0..5), bytes (or size) and sha256 (64 hex). SHA-256 over the present
+    # slots in ascending order, each contributing u8 slot, u32 size
+    # (little-endian) and the 32 raw bytes of the file's SHA-256; upper-case hex
+    # like Get-FileHash. Throws for an unknown entry, a duplicate slot, a size
+    # outside 1 byte..4 MB or a malformed hash.
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Entries)
+    $bySlot = @{}
+    foreach ($e in @($Entries)) {
+        $name = [string](Get-FriendProperty $e 'entry' '')
+        $slot = -1
+        if ($name) { $slot = [Array]::IndexOf($script:HandoffSlots, $name) }
+        else {
+            $raw = Get-FriendProperty $e 'slot' $null
+            if ($null -ne $raw) { $slot = [int]$raw }
+        }
+        if ($slot -lt 0 -or $slot -ge $script:HandoffSlots.Count) { throw "Not a save handoff file: $name" }
+        if ($bySlot.ContainsKey($slot)) { throw "Duplicate save handoff file: $($script:HandoffSlots[$slot])" }
+        $size = Get-FriendProperty $e 'bytes' (Get-FriendProperty $e 'size' $null)
+        if ($null -eq $size -or [Int64]$size -le 0 -or [Int64]$size -gt $script:MaxProgressFileBytes) { throw "Invalid size of $($script:HandoffSlots[$slot])." }
+        $hex = [string](Get-FriendProperty $e 'sha256' '')
+        if ($hex -cnotmatch '^[0-9A-Fa-f]{64}$') { throw "Invalid SHA-256 of $($script:HandoffSlots[$slot])." }
+        $bySlot[$slot] = @([Int64]$size, $hex)
+    }
+    if (!$bySlot.Count) { throw 'No save handoff file.' }
+    $buffer = New-Object IO.MemoryStream
+    try {
+        for ($slot = 0; $slot -lt $script:HandoffSlots.Count; $slot++) {
+            if (!$bySlot.ContainsKey($slot)) { continue }
+            $buffer.WriteByte([byte]$slot)
+            $size = [Int64]$bySlot[$slot][0]
+            for ($i = 0; $i -lt 4; $i++) { $buffer.WriteByte([byte](($size -shr (8 * $i)) -band 0xFF)) }
+            $hex = [string]$bySlot[$slot][1]
+            for ($i = 0; $i -lt 32; $i++) { $buffer.WriteByte([Convert]::ToByte($hex.Substring($i * 2, 2), 16)) }
+        }
+        return Get-CoopTextSha256 -Bytes $buffer.ToArray()
+    } finally { $buffer.Dispose() }
 }
 
 # ---------------------------------------------------------------------------
@@ -687,15 +998,16 @@ function Use-CoopPlayMutex {
 }
 
 function Test-CoopProcessAlive {
-    # True when process $Id runs and (with $StartUtc) started at that time (1 s).
-    param([int]$Id, [string]$StartUtc = '')
+    # True when process $Id runs and (with $StartUtc: round-trip UTC text, or the
+    # DateTime PowerShell 7's ConvertFrom-Json makes of it) started at that time (1 s).
+    param([int]$Id, $StartUtc = '')
     if ($Id -le 0) { return $false }
     $p = Get-Process -Id $Id -ErrorAction SilentlyContinue
     if (!$p) { return $false }
-    if (!$StartUtc) { return $true }
-    $want = [DateTime]::MinValue
-    if (![DateTime]::TryParse($StartUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$want)) { return $true }
-    try { return [Math]::Abs(($p.StartTime.ToUniversalTime() - $want.ToUniversalTime()).TotalSeconds) -lt 1 } catch { return $true }
+    if ($null -eq $StartUtc -or ($StartUtc -is [string] -and !$StartUtc)) { return $true }
+    $want = ConvertTo-CoopUtcTime $StartUtc
+    if ($null -eq $want) { return $true }
+    try { return [Math]::Abs(($p.StartTime.ToUniversalTime() - $want).TotalSeconds) -lt 1 } catch { return $true }
 }
 
 function Test-CoopPlaySessionLive {
@@ -706,9 +1018,9 @@ function Test-CoopPlaySessionLive {
     $s = Read-CoopPlaySession -GameRoot $GameRoot
     if (!$s -or [string](Get-FriendProperty $s 'state' '') -ne 'active') { return $false }
     $launcher = [int](Get-FriendProperty $s 'launcher_pid' 0)
-    if ($launcher -ne $PID -and (Test-CoopProcessAlive -Id $launcher -StartUtc ([string](Get-FriendProperty $s 'launcher_start_utc' '')))) { return $true }
+    if ($launcher -ne $PID -and (Test-CoopProcessAlive -Id $launcher -StartUtc (Get-FriendProperty $s 'launcher_start_utc' ''))) { return $true }
     $watchdog = [int](Get-FriendProperty $s 'watchdog_pid' 0)
-    return ($watchdog -ne $PID -and (Test-CoopProcessAlive -Id $watchdog -StartUtc ([string](Get-FriendProperty $s 'watchdog_start_utc' ''))))
+    return ($watchdog -ne $PID -and (Test-CoopProcessAlive -Id $watchdog -StartUtc (Get-FriendProperty $s 'watchdog_start_utc' '')))
 }
 
 function Get-CoopProcessStartUtc {
@@ -772,25 +1084,36 @@ function Invoke-CoopPlayCleanup {
     # matches play-session.json (the marker only when it is exactly offline-v1),
     # then removes a recorded UPnP mapping, clears the clipboard if it still
     # holds the code, and sets the session state to off. A changed file is kept
-    # and reported. Returns @{ Ran; Removed; Kept; Messages }.
-    param([Parameter(Mandatory)][string]$GameRoot, [switch]$SkipUpnp)
+    # and reported. A file's hash may also be its prev_sha256 (the lab.ini a
+    # save handoff rewrote). P2-17 guard: while a save handoff restart is
+    # claimed (Test-CoopHandoffClaimLive) it does nothing (Ran=$false, message
+    # 'a save handoff restart is in progress'): the game Steam starts again
+    # must find the co-op files. -Force (Play-Coop -Cleanup, a restart deadline)
+    # skips the guard. Returns @{ Ran; Removed; Kept; Messages }.
+    param([Parameter(Mandatory)][string]$GameRoot, [switch]$SkipUpnp, [switch]$Force)
     $result = [pscustomobject]@{ Ran = $false; Removed = @(); Kept = @(); Messages = @() }
     $paths = Get-InstancePaths -GameDirectory $GameRoot
     if (!(Test-Path -LiteralPath $paths.PlaySession -PathType Leaf)) { return $result }
     Use-CoopPlayMutex -GameRoot $GameRoot -Script {
         $session = Read-CoopPlaySession -GameRoot $GameRoot
         if (!$session -or [string](Get-FriendProperty $session 'state' '') -ne 'active') { return }
+        if (!$Force -and (Test-CoopHandoffClaimLive -Session $session)) { $result.Messages += @('a save handoff restart is in progress'); return }
         $result.Ran = $true
         Assert-NoReparsePoint -Path $paths.Mod -StopAt $paths.Game
         $records = @{}
-        foreach ($f in @(Get-FriendProperty $session 'files' @())) { $records[[string](Get-FriendProperty $f 'name' '')] = ([string](Get-FriendProperty $f 'sha256' '')).ToUpperInvariant() }
+        foreach ($f in @(Get-FriendProperty $session 'files' @())) {
+            $hashes = @(([string](Get-FriendProperty $f 'sha256' '')).ToUpperInvariant())
+            $previous = ([string](Get-FriendProperty $f 'prev_sha256' '')).ToUpperInvariant()
+            if ($previous) { $hashes += @($previous) }
+            $records[[string](Get-FriendProperty $f 'name' '')] = $hashes
+        }
         foreach ($name in @('script-observe.enabled', 'coop.ini', 'lab.ini', 'link-secret.txt')) {
             if (!$records.ContainsKey($name)) { continue }
             $path = Join-Path $paths.Mod $name
             if (!(Test-Path -LiteralPath $path)) { continue }
             Assert-NoReparsePoint -Path $path -StopAt $paths.Game
             $bytes = [IO.File]::ReadAllBytes($path)
-            $ours = (Get-CoopTextSha256 -Bytes $bytes) -ceq $records[$name]
+            $ours = @($records[$name]) -ccontains (Get-CoopTextSha256 -Bytes $bytes)
             if ($name -eq 'script-observe.enabled' -and [Text.Encoding]::ASCII.GetString($bytes) -cne "offline-v1`n") { $ours = $false }
             if ($ours) {
                 Remove-Item -LiteralPath $path -Force
@@ -824,15 +1147,506 @@ function Start-CoopWatchdog {
     $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { $exe = (Get-Process -Id $PID).Path }
     $command = '"' + $exe + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $ScriptPath + '" -GameDirectory "' + $GameRoot + '" -Watch ' + $SessionId
+    # tests/friend_package_tests.ps1: a helper created through WMI does not inherit
+    # this environment, so the no-launch switch travels on its command line.
+    $testArgs = @()
+    if ($env:MGS_COOP_TEST_NO_LAUNCH -eq '1') { $command += ' -TestNoLaunch'; $testArgs = @('-TestNoLaunch') }
     try {
         $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [UInt16]0 }
         $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $command; CurrentDirectory = $GameRoot; ProcessStartupInformation = $startup } -ErrorAction Stop
         if ([int]$r.ReturnValue -eq 0) { return [int]$r.ProcessId }
     } catch { }
     try {
-        $p = Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $ScriptPath + '"'), '-GameDirectory', ('"' + $GameRoot + '"'), '-Watch', $SessionId) -WindowStyle Hidden -PassThru
+        $p = Start-Process -FilePath $exe -ArgumentList (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $ScriptPath + '"'), '-GameDirectory', ('"' + $GameRoot + '"'), '-Watch', $SessionId) + $testArgs) -WindowStyle Hidden -PassThru
         return [int]$p.Id
     } catch { return 0 }
+}
+
+# ---------------------------------------------------------------------------
+# The automatic save handoff after the guest's game exits (docs/save-handoff.md,
+# docs/two-pc-play.md "Save handoff"): claim, apply, relaunch, stale leftovers
+# ---------------------------------------------------------------------------
+
+function Update-CoopPlaySession {
+    # Read-modify-write of play-session.json under the play mutex: $Update gets
+    # the active session as an ordered table and changes it in place. With
+    # -SessionId only that session. Returns the saved table, or $null when no
+    # such session is active.
+    param([Parameter(Mandatory)][string]$GameRoot, [Parameter(Mandatory)][scriptblock]$Update, [string]$SessionId = '')
+    $updateSessionBox = @{ Table = $null }
+    Use-CoopPlayMutex -GameRoot $GameRoot -Script {
+        $s = Read-CoopPlaySession -GameRoot $GameRoot
+        if (!$s -or [string](Get-FriendProperty $s 'state' '') -ne 'active') { return }
+        if ($SessionId -and [string](Get-FriendProperty $s 'session_id' '') -cne $SessionId) { return }
+        $t = ConvertTo-CoopSessionTable -Session $s
+        & $Update $t
+        Save-CoopPlaySession -GameRoot $GameRoot -Session $t
+        $updateSessionBox.Table = $t
+    }
+    return $updateSessionBox.Table
+}
+
+function ConvertTo-CoopHandoffTable {
+    # play-session.json "handoff" (P2-17; an object read from JSON, a table, or
+    # absent) -> an ordered table with every field; times as round-trip UTC text.
+    param($Handoff)
+    $t = [ordered]@{ state = ''; claimed_by_pid = 0; claimed_start_utc = ''; claimed_utc = ''; xfer = ''; set_sha256 = ''; count = 0; aside = ''; message = '' }
+    if ($null -eq $Handoff) { return $t }
+    foreach ($k in @($t.Keys)) {
+        $v = $null
+        if ($Handoff -is [Collections.IDictionary]) { if (([Collections.IDictionary]$Handoff).Contains($k)) { $v = $Handoff[$k] } }
+        else { $v = Get-FriendProperty $Handoff $k $null }
+        if ($null -ne $v) { $t[$k] = $v }
+    }
+    $t['state'] = [string]$t['state']
+    $t['claimed_by_pid'] = [int]$t['claimed_by_pid']
+    $t['count'] = [int]$t['count']
+    foreach ($k in @('claimed_start_utc', 'claimed_utc')) { $t[$k] = Get-CoopUtcText $t[$k] }
+    return $t
+}
+
+function Get-CoopSessionHandoff {
+    # The handoff table of a play-session.json object or table (never $null).
+    param($Session)
+    if ($null -eq $Session) { return (ConvertTo-CoopHandoffTable $null) }
+    if ($Session -is [Collections.IDictionary]) {
+        if (([Collections.IDictionary]$Session).Contains('handoff')) { return (ConvertTo-CoopHandoffTable $Session['handoff']) }
+        return (ConvertTo-CoopHandoffTable $null)
+    }
+    return (ConvertTo-CoopHandoffTable (Get-FriendProperty $Session 'handoff' $null))
+}
+
+function Test-CoopHandoffClaimLive {
+    # P2-17: true while a save handoff restart is claimed: handoff.state
+    # applying or relaunching, the claim under 300 s old and its claimant (pid
+    # and start time) alive. Invoke-CoopPlayCleanup then does nothing.
+    param($Session, [DateTime]$NowUtc = [DateTime]::UtcNow)
+    $h = Get-CoopSessionHandoff $Session
+    if ($h.state -cne 'applying' -and $h.state -cne 'relaunching') { return $false }
+    $claimed = ConvertTo-CoopUtcTime $h.claimed_utc
+    if ($null -eq $claimed -or ($NowUtc - $claimed).TotalSeconds -ge 300) { return $false }
+    return (Test-CoopProcessAlive -Id $h.claimed_by_pid -StartUtc $h.claimed_start_utc)
+}
+
+function Test-CoopHandoffPending {
+    # True while a game started again for a save handoff may still appear: the
+    # handoff is relaunching (whoever claimed it; Steam may still be starting
+    # the game) or applying with a live claimant, claimed under 300 s ago. The
+    # watchdog then waits for that game instead of switching co-op off.
+    param($Session, [DateTime]$NowUtc = [DateTime]::UtcNow)
+    $h = Get-CoopSessionHandoff $Session
+    $claimed = ConvertTo-CoopUtcTime $h.claimed_utc
+    if ($null -eq $claimed -or ($NowUtc - $claimed).TotalSeconds -ge 300) { return $false }
+    if ($h.state -ceq 'relaunching') { return $true }
+    return ($h.state -ceq 'applying' -and (Test-CoopProcessAlive -Id $h.claimed_by_pid -StartUtc $h.claimed_start_utc))
+}
+
+function Get-CoopHandoffRequest {
+    # The guest's handoff request (P2-9: <coop-saves-handoff>\request.json, the
+    # loader writes it last) for the game that just exited. Status: none (no
+    # request.json), ok, or invalid (Problem says why). ok needs: format and v;
+    # pid and process start (within 2 s) equal to the exited game; created_utc
+    # after the session start (2 s slack) and under 30 min old; no filesystem link; mode
+    # scene or always; the staged folder <xfer> whose handoff.json names the same
+    # xfer and set; the staged files exactly as handoff.json lists them
+    # (Test-CoopProgressStage) with a recomputed set hash equal to set_sha256.
+    param([Parameter(Mandatory)][string]$HandoffDir, [int]$ExpectedPid = 0, [AllowNull()]$ExpectedStartUtc = '',
+        [AllowNull()]$SessionStartedUtc = $null, [DateTime]$NowUtc = [DateTime]::UtcNow)
+    $result = [pscustomobject]@{ Status = 'none'; Problem = ''; RequestPath = ''; StageDir = ''; Xfer = ''; SetSha256 = ''; Mode = ''; Rejoin = $false
+        CreatedUtc = ''; Files = @(); Bytes = [Int64]0; HostMission = 0 }
+    $requestPath = Join-Path $HandoffDir 'request.json'
+    $result.RequestPath = $requestPath
+    if (!(Test-Path -LiteralPath $requestPath)) { return $result }
+    $result.Status = 'invalid'
+    try {
+        Assert-NoReparsePoint -Path $requestPath -StopAt (Split-Path -Parent $HandoffDir)
+        if (!(Test-Path -LiteralPath $requestPath -PathType Leaf) -or (Get-Item -LiteralPath $requestPath -Force).Length -gt 65536) { $result.Problem = 'the request is not a small file'; return $result }
+        $req = Read-FriendJson $requestPath
+        if (!$req -or [string](Get-FriendProperty $req 'format' '') -cne 'mgs-coop-save-handoff-request' -or [string](Get-FriendProperty $req 'v' '') -cne '1') { $result.Problem = 'the request has an unknown format'; return $result }
+        $xfer = [string](Get-FriendProperty $req 'xfer' '')
+        $set = [string](Get-FriendProperty $req 'set_sha256' '')
+        $mode = [string](Get-FriendProperty $req 'mode' '')
+        $rejoin = [string](Get-FriendProperty $req 'rejoin' '0')
+        if ($xfer -cnotmatch '^[0-9A-Fa-f]{8}$' -or $xfer -ceq '00000000' -or $set -cnotmatch '^[0-9A-Fa-f]{64}$' -or ($mode -cne 'scene' -and $mode -cne 'always') -or ($rejoin -cne '0' -and $rejoin -cne '1')) {
+            $result.Problem = 'the request is malformed'
+            return $result
+        }
+        $reqPid = [Int64](Get-FriendProperty $req 'pid' 0)
+        if ($ExpectedPid -le 0 -or $reqPid -ne $ExpectedPid) { $result.Problem = 'the request belongs to another game start'; return $result }
+        $reqStart = ConvertTo-CoopUtcTime (Get-FriendProperty $req 'process_start_utc' $null)
+        $exitedStart = ConvertTo-CoopUtcTime $ExpectedStartUtc
+        if ($null -eq $reqStart -or $null -eq $exitedStart -or [Math]::Abs(($reqStart - $exitedStart).TotalSeconds) -ge 2) { $result.Problem = 'the request belongs to another game start'; return $result }
+        $created = ConvertTo-CoopUtcTime (Get-FriendProperty $req 'created_utc' $null)
+        $started = ConvertTo-CoopUtcTime $SessionStartedUtc
+        # (2 s of slack: the loader may write whole seconds.)
+        if ($null -eq $created -or ($NowUtc - $created).TotalMinutes -ge 30 -or ($created - $NowUtc).TotalSeconds -gt 60 -or ($null -ne $started -and $created -lt $started.AddSeconds(-2))) {
+            $result.Problem = 'the request is too old'
+            return $result
+        }
+        $stage = Join-Path $HandoffDir $xfer
+        if (!(Test-Path -LiteralPath $stage -PathType Container)) { $result.Problem = 'the staged save is missing'; return $result }
+        Assert-NoReparsePoint -Path $stage -StopAt (Split-Path -Parent $HandoffDir)
+        $manifestPath = Join-Path $stage 'handoff.json'
+        if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf) -or (Get-Item -LiteralPath $manifestPath -Force).Length -gt 65536) { $result.Problem = 'the staged save has no file list'; return $result }
+        $manifest = Read-FriendJson $manifestPath
+        if (!$manifest -or [string](Get-FriendProperty $manifest 'format' '') -cne 'mgs-coop-save-handoff' -or [string](Get-FriendProperty $manifest 'v' '') -cne '1' -or
+            ![string]::Equals([string](Get-FriendProperty $manifest 'xfer' ''), $xfer, [StringComparison]::OrdinalIgnoreCase) -or
+            ![string]::Equals([string](Get-FriendProperty $manifest 'set_sha256' ''), $set, [StringComparison]::OrdinalIgnoreCase)) {
+            $result.Problem = 'the staged file list does not match the request'
+            return $result
+        }
+        $check = Test-CoopProgressStage -StageRoot $stage -Manifest @(Get-FriendProperty $manifest 'files' @())
+        if (!$check.Ok) { $result.Problem = $check.Problem; return $result }
+        if ($check.Bytes -gt $script:HandoffMaxTotalBytes) { $result.Problem = 'the staged save is too large'; return $result }
+        if ((Get-CoopHandoffSetSha256 -Entries $check.Files) -cne $set.ToUpperInvariant()) { $result.Problem = 'the staged files do not match the offered save'; return $result }
+        $result.Status = 'ok'
+        $result.StageDir = $stage
+        $result.Xfer = $xfer.ToUpperInvariant()
+        $result.SetSha256 = $set.ToUpperInvariant()
+        $result.Mode = $mode
+        $result.Rejoin = $rejoin -ceq '1'
+        $result.CreatedUtc = $created.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+        $result.Files = $check.Files
+        $result.Bytes = $check.Bytes
+        $result.HostMission = [int](Get-FriendProperty $manifest 'host_mission' 0)
+    } catch {
+        $result.Status = 'invalid'
+        $result.Problem = $_.Exception.Message
+    }
+    return $result
+}
+
+function Get-CoopLabIniArguments {
+    # The New-CoopPlayLabIniText arguments of play-session.json "lab" (the
+    # parameters Play-Coop wrote lab.ini with). Throws when the record is
+    # incomplete.
+    param([AllowNull()]$Lab)
+    if ($null -eq $Lab) { throw 'the session does not record its lab.ini settings' }
+    $role = [string](Get-FriendProperty $Lab 'role' '')
+    $saveDir = [string](Get-FriendProperty $Lab 'save_dir' '')
+    $transport = [string](Get-FriendProperty $Lab 'transport' 'udp')
+    if (($role -cne 'host' -and $role -cne 'guest') -or !$saveDir) { throw 'the session does not record its lab.ini settings' }
+    $a = @{ Role = $role; SaveDir = $saveDir; World = [int](Get-FriendProperty $Lab 'world' 3); Transport = $transport
+        Partner = [string](Get-FriendProperty $Lab 'partner' 'native'); SaveHandoff = [string](Get-FriendProperty $Lab 'save_handoff' '')
+        TravelLock = [string](Get-FriendProperty $Lab 'travel_lock' '') }
+    if ($transport -ceq 'steam') {
+        $a['SteamSelf'] = [string](Get-FriendProperty $Lab 'steam_self' '')
+        $peer = [string](Get-FriendProperty $Lab 'steam_peer' '')
+        if ($peer) { $a['SteamPeer'] = $peer }
+        if ([bool](Get-FriendProperty $Lab 'steam_wait' $false)) { $a['SteamWait'] = $true }
+        $dispatch = [string](Get-FriendProperty $Lab 'steam_dispatch' '')
+        if ($dispatch) { $a['SteamDispatch'] = $dispatch }
+    } else {
+        $a['Port'] = [int](Get-FriendProperty $Lab 'port' 47830)
+        $peer = [string](Get-FriendProperty $Lab 'peer' '')
+        if ($peer) { $a['PeerAddress'] = $peer }
+    }
+    return $a
+}
+
+function Write-CoopAtomicBytes {
+    # Writes $Bytes next to $Path and moves the temp file in (replacing $Path when it exists).
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][byte[]]$Bytes)
+    $temp = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    [IO.File]::WriteAllBytes($temp, $Bytes)
+    try {
+        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+        else { [IO.File]::Move($temp, $Path) }
+    } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}
+
+function Start-CoopRelaunch {
+    # Starts MGSV again through Steam for a claimed save handoff - only while the
+    # session is active and relaunching, every co-op file it recorded is in
+    # place with its recorded hash (the marker exactly offline-v1) and no game
+    # runs from the folder, all checked under the play mutex: a relaunch never
+    # starts plain MGSV on the real saves. MGS_COOP_TEST_NO_LAUNCH=1 (tests)
+    # checks everything and starts nothing. Returns @{ Ok; Problem; Started }.
+    param([Parameter(Mandatory)][string]$GameRoot)
+    $out = [pscustomobject]@{ Ok = $false; Problem = ''; Started = $false }
+    $paths = Get-InstancePaths -GameDirectory $GameRoot
+    Use-CoopPlayMutex -GameRoot $GameRoot -Script {
+        $s = Read-CoopPlaySession -GameRoot $GameRoot
+        if (!$s -or [string](Get-FriendProperty $s 'state' '') -ne 'active') { $out.Problem = 'co-op was switched off in the meantime'; return }
+        if ((Get-CoopSessionHandoff $s).state -cne 'relaunching') { $out.Problem = 'no restart for the host''s save is pending'; return }
+        if (@(Get-GameProcessInDirectory -Directory $paths.Game).Count) { $out.Ok = $true; return }
+        $records = @{}
+        foreach ($f in @(Get-FriendProperty $s 'files' @())) { $records[[string](Get-FriendProperty $f 'name' '')] = ([string](Get-FriendProperty $f 'sha256' '')).ToUpperInvariant() }
+        foreach ($name in @('lab.ini', 'coop.ini', 'script-observe.enabled')) {
+            if (!$records.ContainsKey($name)) { $out.Problem = "the session does not own $name"; return }
+        }
+        foreach ($name in @($records.Keys)) {
+            $path = Join-Path $paths.Mod $name
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { $out.Problem = "mgs-coop\$name is missing"; return }
+            Assert-NoReparsePoint -Path $path -StopAt $paths.Game
+            $bytes = [IO.File]::ReadAllBytes($path)
+            if ((Get-CoopTextSha256 -Bytes $bytes) -cne $records[$name]) { $out.Problem = "mgs-coop\$name changed"; return }
+            if ($name -ceq 'script-observe.enabled' -and [Text.Encoding]::ASCII.GetString($bytes) -cne "offline-v1`n") { $out.Problem = 'the co-op marker changed'; return }
+        }
+        if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1') {
+            Start-Process 'steam://rungameid/287700'
+            $out.Started = $true
+        }
+        $out.Ok = $true
+    }
+    return $out
+}
+
+function Set-CoopPlayGame {
+    # Records the running game (game_pid, game_start_utc) in the active
+    # session; a handoff that is relaunching becomes relaunched (its restart
+    # arrived). Returns $true when that happened.
+    param([Parameter(Mandatory)][string]$GameRoot, [Parameter(Mandatory)][int]$GamePid, [string]$GameStartUtc = '', [string]$SessionId = '')
+    $playGameBox = @{ Relaunched = $false }
+    $null = Update-CoopPlaySession -GameRoot $GameRoot -SessionId $SessionId -Update {
+        param($t)
+        $t['game_pid'] = $GamePid
+        $t['game_start_utc'] = $GameStartUtc
+        $h = Get-CoopSessionHandoff $t
+        if ($h.state -ceq 'relaunching') {
+            $h['state'] = 'relaunched'
+            $t['handoff'] = $h
+            $playGameBox.Relaunched = $true
+        }
+    }
+    return $playGameBox.Relaunched
+}
+
+function Invoke-CoopHandoffAfterExit {
+    # P2-18 D3: after the guest's game exited, applies a valid save handoff
+    # request and starts MGSV again (docs/two-pc-play.md "Save handoff"). The
+    # console and the watchdog both call it; the play mutex and the claim in
+    # play-session.json "handoff" make exactly one of them apply. Under the mutex:
+    #   session not active or not a guest, or the exited game unknown: none;
+    #   a live claimant other than this process (applying/relaunching): claimed_by_other;
+    #   watchdog with a live console (-LauncherAlive) within 20 s of the exit: deferred
+    #   (before the request is read: the console's view of the game wins);
+    #   no request.json: none; an invalid one is deleted with its stage: stale;
+    #   handoff.count >= 1: the request is deleted, state limit: limit;
+    #   else claim (state applying), Import-CoopProgressFiles -Suffix -before-handoff
+    #   (marker source handoff), applied.json, lab.ini again with save_handoff=off
+    #   (a waiting Steam guest with link-rejoin.txt gets net_peer_steam and
+    #   link-secret.txt), each new hash recorded before its write, request,
+    #   stage and link-rejoin.txt deleted, state relaunching, count 1.
+    # Then (outside the mutex) 5 s for Steam, and Start-CoopRelaunch. Any failure:
+    # state failed, no relaunch: failed (the caller switches co-op off).
+    # Returns @{ Action = none|deferred|relaunched|claimed_by_other|limit|stale|failed;
+    # Messages; Aside (the folder name below coop-saves-replaced); Files; Bytes }.
+    param([Parameter(Mandatory)][string]$GameRoot, [int]$ExitedPid = 0, [AllowNull()]$ExitedStartUtc = '',
+        [Parameter(Mandatory)][ValidateSet('console', 'watchdog')][string]$Owner, [switch]$LauncherAlive,
+        # When the caller first saw the game gone (the watchdog's defer window); default now.
+        [AllowNull()]$ExitSeenUtc = $null)
+    $result = [pscustomobject]@{ Action = 'none'; Messages = @(); Aside = ''; Files = 0; Bytes = [Int64]0 }
+    $paths = Get-InstancePaths -GameDirectory $GameRoot
+    if (!(Test-Path -LiteralPath $paths.PlaySession -PathType Leaf)) { return $result }
+    $first = Read-CoopPlaySession -GameRoot $GameRoot
+    if (!$first -or [string](Get-FriendProperty $first 'state' '') -ne 'active' -or [string](Get-FriendProperty $first 'role' '') -ne 'guest') { return $result }
+    # Without the exited game's pid nothing can be checked (and nothing is deleted).
+    if ($ExitedPid -le 0) { return $result }
+    # The files are applied only once no game runs from the folder (at most 30 s).
+    $wait = [DateTime]::UtcNow.AddSeconds(30)
+    while (@(Get-GameProcessInDirectory -Directory $paths.Game).Count) {
+        if ([DateTime]::UtcNow -ge $wait) { $result.Action = 'deferred'; $result.Messages = @('MGSV is still running from this folder.'); return $result }
+        Start-Sleep -Milliseconds 500
+    }
+    $seen = ConvertTo-CoopUtcTime $ExitSeenUtc
+    if ($null -eq $seen) { $seen = [DateTime]::UtcNow }
+    $state = @{ Launch = $false; Imported = $false }
+    Use-CoopPlayMutex -GameRoot $GameRoot -Script {
+        $session = Read-CoopPlaySession -GameRoot $GameRoot
+        if (!$session -or [string](Get-FriendProperty $session 'state' '') -ne 'active' -or [string](Get-FriendProperty $session 'role' '') -ne 'guest') { return }
+        $handoff = Get-CoopSessionHandoff $session
+        if (($handoff.state -ceq 'applying' -or $handoff.state -ceq 'relaunching') -and $handoff.claimed_by_pid -ne $PID -and
+            (Test-CoopHandoffClaimLive -Session $session)) {
+            $result.Action = 'claimed_by_other'
+            $result.Messages = @("The background helper is restarting MGSV with the host's save...")
+            return
+        }
+        if ($Owner -ceq 'watchdog' -and $LauncherAlive -and ([DateTime]::UtcNow - $seen).TotalSeconds -lt 20) { $result.Action = 'deferred'; return }
+        $req = Get-CoopHandoffRequest -HandoffDir $paths.CoopSavesHandoff -ExpectedPid $ExitedPid -ExpectedStartUtc $ExitedStartUtc -SessionStartedUtc (Get-FriendProperty $session 'started_utc' $null)
+        if ($req.Status -ceq 'none') { return }
+        $table = ConvertTo-CoopSessionTable -Session $session
+        if ($req.Status -cne 'ok') {
+            # The request and the stage it names go (never applied later by mistake).
+            $staleXfer = ''
+            try { $staleXfer = [string](Get-FriendProperty (Read-FriendJson $req.RequestPath) 'xfer' '') } catch { $staleXfer = '' }
+            Remove-Item -LiteralPath $req.RequestPath -Force -ErrorAction SilentlyContinue
+            if ($staleXfer -cmatch '^[0-9A-Fa-f]{8}$') {
+                try { $null = Remove-CoopProgressStage -StageRoot (Join-Path $paths.CoopSavesHandoff $staleXfer) } catch { }
+            }
+            $result.Action = 'stale'
+            $result.Messages = @("A host save that does not belong to this game start was not applied and was removed ($($req.Problem)).")
+            return
+        }
+        if ($handoff.count -ge 1) {
+            Remove-Item -LiteralPath $req.RequestPath -Force
+            $null = Remove-CoopProgressStage -StageRoot $req.StageDir
+            $handoff['state'] = 'limit'
+            $handoff['message'] = 'a second host save in one session was not applied'
+            $table['handoff'] = $handoff
+            Save-CoopPlaySession -GameRoot $GameRoot -Session $table
+            $result.Action = 'limit'
+            $result.Messages = @("The host's save was already applied once this session; the newer one was not used.")
+            return
+        }
+        $now = [DateTime]::UtcNow.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+        $claim = [ordered]@{ state = 'applying'; claimed_by_pid = $PID; claimed_start_utc = (Get-CoopProcessStartUtc -Id $PID); claimed_utc = $now
+            xfer = $req.Xfer; set_sha256 = $req.SetSha256; count = 0; aside = ''; message = '' }
+        $table['handoff'] = $claim
+        Save-CoopPlaySession -GameRoot $GameRoot -Session $table
+        try {
+            Assert-NoReparsePoint -Path $paths.Mod -StopAt $paths.Game
+            # lab.ini must still be the one Play-Coop wrote from the recorded settings.
+            $files = @(Get-FriendProperty $session 'files' @())
+            $labRow = @($files | Where-Object { [string](Get-FriendProperty $_ 'name' '') -ceq 'lab.ini' })
+            if ($labRow.Count -ne 1) { throw 'the session does not own lab.ini' }
+            $labArgs = Get-CoopLabIniArguments -Lab (Get-FriendProperty $session 'lab' $null)
+            $oldText = New-CoopPlayLabIniText @labArgs
+            $oldHash = Get-CoopTextSha256 -Bytes ($script:Utf8NoBom.GetBytes($oldText))
+            Assert-NoReparsePoint -Path $paths.LabIni -StopAt $paths.Game
+            if (!(Test-Path -LiteralPath $paths.LabIni -PathType Leaf) -or (Get-CoopTextSha256 -Bytes ([IO.File]::ReadAllBytes($paths.LabIni))) -cne $oldHash -or
+                ([string](Get-FriendProperty $labRow[0] 'sha256' '')).ToUpperInvariant() -cne $oldHash) {
+                throw 'mgs-coop\lab.ini changed after Play-Coop wrote it'
+            }
+            $aside = Import-CoopProgressFiles -StageRoot $req.StageDir -SaveDir $paths.CoopSaves -ReplacedRoot $paths.CoopSavesReplaced -Suffix '-before-handoff' `
+                -Marker @{ Source = 'handoff'; ExportedUtc = $req.CreatedUtc } -Manifest @($req.Files)
+            $state.Imported = $true
+            $result.Aside = Split-Path -Leaf $aside
+            $result.Files = @($req.Files).Count
+            $result.Bytes = $req.Bytes
+            $claim['aside'] = $result.Aside
+            $applied = [ordered]@{ format = 'mgs-coop-save-handoff-applied'; v = 1; set_sha256 = $req.SetSha256
+                applied_utc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture); aside = $result.Aside }
+            Write-FriendTextFile -Path (Join-Path $paths.CoopSavesHandoff 'applied.json') -Text (($applied | ConvertTo-Json -Depth 3) + "`n")
+            # lab.ini again: no second handoff in this session (save_handoff=off); a
+            # waiting Steam guest rejoins the host it was armed with (link-rejoin.txt).
+            $newArgs = @{}
+            foreach ($k in $labArgs.Keys) { $newArgs[$k] = $labArgs[$k] }
+            $newArgs['SaveHandoff'] = 'off'
+            $secretBytes = $null
+            if ($newArgs['Transport'] -ceq 'steam' -and $newArgs.ContainsKey('SteamWait') -and (Test-Path -LiteralPath $paths.LinkRejoin)) {
+                Assert-NoReparsePoint -Path $paths.LinkRejoin -StopAt $paths.Game
+                $rejoinText = ''
+                if ((Get-Item -LiteralPath $paths.LinkRejoin -Force).Length -le 512) { $rejoinText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($paths.LinkRejoin)) }
+                $code = ConvertFrom-CoopSteamJoinCode $rejoinText
+                if ($code.Status -ceq 'ok' -and $code.SteamId -cne [string]$newArgs['SteamSelf'] -and !(Test-Path -LiteralPath $paths.LinkSecret)) {
+                    $newArgs.Remove('SteamWait')
+                    $newArgs['SteamPeer'] = $code.SteamId
+                    $secretBytes = [Text.Encoding]::ASCII.GetBytes($code.Secret + "`r`n")
+                }
+            }
+            $newBytes = $script:Utf8NoBom.GetBytes((New-CoopPlayLabIniText @newArgs))
+            # Recorded before the writes: a crash in between still leaves owned files
+            # (cleanup accepts the old lab.ini hash too).
+            $rows = New-Object Collections.Generic.List[object]
+            foreach ($f in $files) {
+                $name = [string](Get-FriendProperty $f 'name' '')
+                if ($name -ceq 'lab.ini') { $rows.Add([ordered]@{ name = 'lab.ini'; sha256 = (Get-CoopTextSha256 -Bytes $newBytes); prev_sha256 = $oldHash }) }
+                else { $rows.Add($f) }
+            }
+            if ($secretBytes) { $rows.Add([ordered]@{ name = 'link-secret.txt'; sha256 = (Get-CoopTextSha256 -Bytes $secretBytes) }) }
+            $table['files'] = $rows.ToArray()
+            $labRecord = [ordered]@{}
+            foreach ($p in (Get-FriendProperty $session 'lab' $null).PSObject.Properties) { $labRecord[$p.Name] = $p.Value }
+            $labRecord['save_handoff'] = 'off'
+            if ($secretBytes) { $labRecord['steam_wait'] = $false; $labRecord['steam_peer'] = [string]$newArgs['SteamPeer'] }
+            $table['lab'] = $labRecord
+            Save-CoopPlaySession -GameRoot $GameRoot -Session $table
+            if ($secretBytes) {
+                $temp = $paths.LinkSecret + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+                [IO.File]::WriteAllBytes($temp, $secretBytes)
+                [IO.File]::Move($temp, $paths.LinkSecret)
+            }
+            Write-CoopAtomicBytes -Path $paths.LabIni -Bytes $newBytes
+            if (Test-Path -LiteralPath $paths.LinkRejoin) { Remove-Item -LiteralPath $paths.LinkRejoin -Force }
+            Remove-Item -LiteralPath $req.RequestPath -Force
+            $null = Remove-CoopProgressStage -StageRoot $req.StageDir
+            $claim['state'] = 'relaunching'
+            $claim['count'] = 1
+            $table['handoff'] = $claim
+            Save-CoopPlaySession -GameRoot $GameRoot -Session $table
+            $state.Launch = $true
+        } catch {
+            $reason = $_.Exception.Message
+            $claim['state'] = 'failed'
+            $claim['message'] = $reason
+            $table['handoff'] = $claim
+            try { Save-CoopPlaySession -GameRoot $GameRoot -Session $table } catch { }
+            # Never applied twice: the request goes (a stage stays for the next Play-Coop to remove).
+            Remove-Item -LiteralPath $req.RequestPath -Force -ErrorAction SilentlyContinue
+            $result.Action = 'failed'
+            if ($state.Imported) {
+                $result.Messages = @("The host's save was applied, but MGSV could not be started again: $reason. Start Play-Coop.bat again; your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($result.Aside) (Share-Save.bat [R] brings it back).")
+            } else {
+                $result.Messages = @("Could not apply the host's save: $reason. Your co-op save is unchanged.")
+            }
+        }
+    }
+    if (!$state.Launch) { return $result }
+    # Steam needs a moment after the game exits before it starts it again.
+    $delay = 5
+    $override = 0
+    if ($env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC -and [int]::TryParse($env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC, [ref]$override) -and $override -ge 0) { $delay = $override }
+    if ($delay -gt 0) { Start-Sleep -Seconds $delay }
+    $launch = $null
+    try { $launch = Start-CoopRelaunch -GameRoot $GameRoot } catch { $launch = [pscustomobject]@{ Ok = $false; Problem = $_.Exception.Message; Started = $false } }
+    if ($launch.Ok) { $result.Action = 'relaunched'; return $result }
+    $reason = [string]$launch.Problem
+    try {
+        $null = Update-CoopPlaySession -GameRoot $GameRoot -Update {
+            param($t)
+            $h = Get-CoopSessionHandoff $t
+            if ($h.state -ceq 'relaunching' -and $h.claimed_by_pid -eq $PID) { $h['state'] = 'failed'; $h['message'] = $reason; $t['handoff'] = $h }
+        }
+    } catch { }
+    $result.Action = 'failed'
+    $result.Messages = @("The host's save was applied, but MGSV could not be started again: $reason. Start Play-Coop.bat again; your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($result.Aside) (Share-Save.bat [R] brings it back).")
+    return $result
+}
+
+function Remove-CoopStaleHandoff {
+    # Play-Coop's preflight and Uninstall-Coop: removes what a save handoff of an
+    # earlier session left - request.json, the staged and *.partial folders (by
+    # their known file names only) and link-rejoin.txt (it holds a join code) -
+    # unless a Play-Coop session is live, a handoff claim is live or MGSV runs
+    # from the folder. provenance.json and applied.json stay; coop-saves-replaced
+    # is never touched. Returns @{ Removed = @(paths below mgs-coop); Messages }.
+    param([Parameter(Mandatory)][string]$GameRoot)
+    $result = [pscustomobject]@{ Removed = @(); Messages = @() }
+    $paths = Get-InstancePaths -GameDirectory $GameRoot
+    if (!(Test-Path -LiteralPath $paths.Mod -PathType Container)) { return $result }
+    if (Test-CoopPlaySessionLive -GameRoot $GameRoot) { return $result }
+    if (@(Get-GameProcessInDirectory -Directory $paths.Game).Count) { return $result }
+    Use-CoopPlayMutex -GameRoot $GameRoot -Script {
+        $s = Read-CoopPlaySession -GameRoot $GameRoot
+        if ($s -and [string](Get-FriendProperty $s 'state' '') -eq 'active' -and (Test-CoopHandoffClaimLive -Session $s)) { return }
+        Assert-NoReparsePoint -Path $paths.Mod -StopAt $paths.Game
+        $notApplied = $false
+        if (Test-Path -LiteralPath $paths.LinkRejoin -PathType Leaf) {
+            Assert-NoReparsePoint -Path $paths.LinkRejoin -StopAt $paths.Game
+            Remove-Item -LiteralPath $paths.LinkRejoin -Force
+            $result.Removed += @('link-rejoin.txt')
+        }
+        $dir = $paths.CoopSavesHandoff
+        if (Test-Path -LiteralPath $dir -PathType Container) {
+            Assert-NoReparsePoint -Path $dir -StopAt $paths.Game
+            $request = Join-Path $dir 'request.json'
+            if (Test-Path -LiteralPath $request -PathType Leaf) {
+                Remove-Item -LiteralPath $request -Force
+                $result.Removed += @('coop-saves-handoff/request.json')
+                $notApplied = $true
+            }
+            foreach ($d in @(Get-ChildItem -LiteralPath $dir -Directory -Force)) {
+                if ($d.Name -cnotmatch '^[0-9A-Fa-f]{8}(\.partial)?$' -or ($d.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+                if (Remove-CoopProgressStage -StageRoot $d.FullName) {
+                    $result.Removed += @('coop-saves-handoff/' + $d.Name)
+                    if (!$d.Name.EndsWith('.partial', [StringComparison]::Ordinal)) { $notApplied = $true }
+                }
+            }
+        }
+        if ($notApplied) { $result.Messages += @('A host save from an earlier session was not applied and was removed.') }
+    }
+    return $result
 }
 
 # ---------------------------------------------------------------------------

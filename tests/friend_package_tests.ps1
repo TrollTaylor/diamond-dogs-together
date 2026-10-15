@@ -30,6 +30,9 @@ if (!(Test-Path -LiteralPath $winPs -PathType Leaf)) {
     $winPs = $pwshPath
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
+# The package version tools/package.ps1 stamps into package.json, the folder name and the guide.
+$packageVersion = [regex]::Match([IO.File]::ReadAllText((Join-Path $projectRoot 'tools/package.ps1')), "(?m)^\`$version='([0-9]+\.[0-9]+\.[0-9]+)'").Groups[1].Value
+if (!$packageVersion) { throw 'tools/package.ps1 names no $version' }
 
 function Assert-True([bool]$Condition, [string]$Message) {
     $script:checks++
@@ -104,6 +107,43 @@ function Get-TreeHashes([string]$Root) {
     foreach ($f in @(Get-ChildItem -LiteralPath $Root -File -Recurse -Force | Sort-Object FullName)) { $rows[$f.FullName] = Get-Sha256 $f.FullName }
     return ($rows.Keys | ForEach-Object { $_ + '=' + $rows[$_] }) -join "`n"
 }
+function Get-RelativeTreeHashes([string]$Root) {
+    # The files below $Root as "<relative path>=<SHA-256>" lines (a folder moved elsewhere compares equal).
+    $full = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $rows = foreach ($f in @(Get-ChildItem -LiteralPath $Root -File -Recurse -Force | Sort-Object FullName)) { $f.FullName.Substring($full.Length + 1) + '=' + (Get-Sha256 $f.FullName) }
+    return (@($rows) -join "`n")
+}
+function New-HandoffStage([string]$HandoffDir, [string]$Xfer, [hashtable]$Files) {
+    # A host save staged as the loader leaves it (P2-9): <xfer>\<entries> and handoff.json.
+    $stage = Join-Path $HandoffDir $Xfer
+    Assert-InFixture $stage
+    $rows = @()
+    foreach ($entry in @($Files.Keys | Sort-Object { [Array]::IndexOf(@(Get-CoopHandoffSlots), $_) })) {
+        $path = Join-Path $stage ([string]$entry).Replace('/', '\')
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
+        [IO.File]::WriteAllText($path, [string]$Files[$entry])
+        $rows += [pscustomobject]@{ entry = [string]$entry; bytes = (Get-Item -LiteralPath $path).Length; sha256 = (Get-Sha256 $path) }
+    }
+    $set = Get-CoopHandoffSetSha256 -Entries $rows
+    $manifest = [ordered]@{ format = 'mgs-coop-save-handoff'; v = 1; xfer = $Xfer.Replace('.partial', ''); created_utc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); host_build = 'fixture'
+        host_mission = 30010; set_sha256 = $set; files = $rows }
+    [IO.File]::WriteAllText((Join-Path $stage 'handoff.json'), ($manifest | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
+    return [pscustomobject]@{ Stage = $stage; Set = $set; Rows = $rows; Xfer = $Xfer }
+}
+function New-HandoffRequest([string]$HandoffDir, $Stage, [int]$GamePid, [string]$StartUtc, $CreatedUtc = $null, [int]$Rejoin = 0) {
+    # request.json, written last by the loader (P2-9).
+    if ($null -eq $CreatedUtc) { $CreatedUtc = [DateTime]::UtcNow }
+    $req = [ordered]@{ format = 'mgs-coop-save-handoff-request'; v = 1; pid = $GamePid; process_start_utc = $StartUtc; xfer = $Stage.Xfer; set_sha256 = $Stage.Set
+        mode = 'scene'; rejoin = $Rejoin; created_utc = ([DateTime]$CreatedUtc).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
+    $path = Join-Path $HandoffDir 'request.json'
+    [IO.File]::WriteAllText($path, ($req | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+    return $path
+}
+function Get-HandoffField($Paths, [string]$Name) {
+    # play-session.json "handoff".<Name> ('' while absent; StrictMode-safe).
+    $h = Get-FriendProperty (Get-SessionJson $Paths) 'handoff' $null
+    return [string](Get-FriendProperty $h $Name '')
+}
 function New-GameFixture([string]$Name) {
     $game = Join-Path $fixture "games/$Name"
     Assert-InFixture $game
@@ -157,6 +197,8 @@ try {
     # ------------------------------------------------------------ native link keys (merge gate)
     $linkKeys = $false
     $steamKeys = $false
+    # Whether the loader parses save_handoff/travel_lock yet (the native save handoff side).
+    $handoffKeys = $false
     if ($IniCheck) {
         $probeIni = Join-Path $fixture 'probe-lab.ini'
         [IO.File]::WriteAllText($probeIni, "enabled=1`nrole=host`n")
@@ -181,11 +223,12 @@ try {
     Assert-True ($null -ne (Get-FriendSaveDirProblem ('C:\' + ('a' * 220)))) 'save_dir over 213 bytes refused'
     Assert-True ($null -ne (Get-FriendSaveDirProblem ("C:\x`tz"))) 'control characters refused'
     Assert-True ($null -ne (Get-FriendSaveDirProblem 'relative\saves')) 'relative save_dir refused'
-    # Installer paths: the longest fixed one is the runtime archive temp file
-    # (<game> + 83 characters); a save file name can make the backup longer.
-    Assert-True ($null -eq (Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 173)))) 'game path of 176 characters: installer paths fit 259'
-    Assert-True ((Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 174))).Contains('too long')) 'game path of 177 characters refused'
-    Assert-True ((Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 173)) -SaveFiles @('287700/local/TPP_GRAPHICS_CONFIG')).Contains('too long')) 'a long save file name makes the backup path too long'
+    # Installer paths: the longest fixed one is a save handoff stage's temp file
+    # (<game> + 119 characters); a save file name can make the backup longer.
+    Assert-True ($null -eq (Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 137)))) 'game path of 140 characters: installer and save handoff paths fit 259'
+    Assert-True ((Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 138))).Contains('too long')) 'game path of 141 characters refused (the save handoff temp file)'
+    Assert-True ($null -eq (Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 137)) -SaveFiles @('287700/local/TPP_GRAPHICS_CONFIG'))) 'the usual save file names fit at 140 characters'
+    Assert-True ((Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 137)) -SaveFiles @('287700/local/' + ('X' * 100))).Contains('too long')) 'a long save file name makes the backup path too long'
     Assert-Equal (ConvertTo-FriendRoleName "host-v3`n") 'host' 'marker host'
     Assert-Equal (ConvertTo-FriendRoleName "client-v1`n") 'join' 'marker join'
     Assert-Equal (ConvertTo-FriendRoleName "client-check-v1`n") 'diagnostic' 'marker diagnostic'
@@ -345,6 +388,32 @@ try {
         $file = Join-Path $fixture 'hud-coop.ini'; [IO.File]::WriteAllText($file, $hudCoop, [Text.UTF8Encoding]::new($false))
         $n = Invoke-IniCheck coop $file
         if ($n.ContainsKey('hud')) { Assert-Equal "$($n['hud'])|$($n['unknown_keys'])/$($n['invalid_values'])" 'off|0/0' 'native: coop.ini hud' }
+    }
+    # The automatic save handoff and the travel lock (docs/two-pc-play.md "Save handoff"): one
+    # line each just before the world line; without the parameters the text above, byte for byte.
+    Assert-Equal (New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Port 47830 -SaveHandoff '' -TravelLock '') $hostIni 'no -SaveHandoff/-TravelLock: the default text byte for byte'
+    Assert-Equal (New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Port 47830 -TravelLock on) $hostIni '-TravelLock on writes nothing (the play default)'
+    $sceneIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Port 47831 -PeerAddress '203.0.113.7' -SaveHandoff scene
+    Assert-Equal $sceneIni ($guestIni.Replace("world=3`n", "save_handoff=scene`nworld=3`n")) '-SaveHandoff scene: exactly save_handoff=scene before the world line'
+    $lockIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Port 47831 -PeerAddress '203.0.113.7' -SaveHandoff Off -TravelLock off
+    Assert-Equal $lockIni ($guestIni.Replace("world=3`n", "save_handoff=off`ntravel_lock=0`nworld=3`n")) '-SaveHandoff off -TravelLock off: lower case, before the world line'
+    Assert-True ((New-CoopPlayLabIniText -Role host -SaveDir $saveDir -World 0 -SaveHandoff always -TravelLock off).EndsWith("partner_native_profile=gun`nsave_handoff=always`ntravel_lock=0`n")) '-World 0: the two keys end the text'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -SaveHandoff sometimes } '' '-SaveHandoff validated'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -TravelLock maybe } '' '-TravelLock validated'
+    $handoffPaths = Get-InstancePaths -GameDirectory 'C:\Games\MGS_TPP'
+    Assert-Equal "$($handoffPaths.CoopSavesHandoff)|$($handoffPaths.CoopSavesReplaced)|$($handoffPaths.LinkRejoin)" 'C:\Games\MGS_TPP\mgs-coop\coop-saves-handoff|C:\Games\MGS_TPP\mgs-coop\coop-saves-replaced|C:\Games\MGS_TPP\mgs-coop\link-rejoin.txt' 'instance paths of the save handoff'
+    if ($IniCheck) {
+        # The loader parses both keys once its save handoff side is in (lab_config): then the texts are clean.
+        $probeHandoff = Join-Path $fixture 'probe-handoff-lab.ini'
+        [IO.File]::WriteAllText($probeHandoff, "enabled=1`nrole=guest`nsave_handoff=scene`ntravel_lock=0`n")
+        $handoffKeys = [string](Invoke-IniCheck lab $probeHandoff)['unknown_keys'] -eq '0'
+        if ($handoffKeys) {
+            foreach ($case in @(@('scene', $sceneIni), @('lock', $lockIni))) {
+                $file = Join-Path $fixture "play-$($case[0])-lab.ini"; [IO.File]::WriteAllText($file, $case[1], $utf8)
+                $n = Invoke-IniCheck lab $file
+                Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|play|0x0|0/0' "native: play lab.ini with the $($case[0]) keys is clean"
+            }
+        } else { Write-Output 'save_handoff missing: native save handoff key cross-checks skipped' }
     }
     # Non-ASCII save_dir: UTF-8 bytes, never '?'.
     $uniSave = 'D:\Jeux Vid' + [char]0x00E9 + 'o\MGS_TPP\mgs-coop\coop-saves'
@@ -567,6 +636,66 @@ try {
             @(9999, 'mission 9999'), @(4294967295, 'mission 4294967295'))) {
         Assert-Equal (Get-CoopMissionName -Mission $row[0]) $row[1] "mission name $($row[0])"
     }
+    # The automatic save handoff in the status line (link-status "handoff"/"handoff_pct", P2-13;
+    # absent = off): one segment before the mission, and one sentence per token change.
+    foreach ($row in @(
+            @('guest', 'wait_host', 0, " | waiting for the host's save"), @('guest', 'receiving', 40, " | getting the host's save 40%"),
+            @('guest', 'staged', 100, ' | host save ready, MGSV restarts'), @('guest', 'countdown', 100, ' | host save ready, MGSV restarts'),
+            @('guest', 'exiting', 100, ' | host save ready, MGSV restarts'), @('host', 'offered', 0, ' | sending your save to your friend 0%'),
+            @('host', 'sending', 75, ' | sending your save to your friend 75%'), @('host', 'partner_staged', 100, ' | your friend is restarting on your save'),
+            @('host', 'partner_restarting', 0, ' | your friend is restarting on your save'), @('guest', 'kept', 0, ' | save not shared: you kept your own save'),
+            @('host', 'kept', 0, ' | save not shared: your friend kept their own save'), @('guest', 'failed', 0, ' | save not shared: the transfer failed'),
+            @('host', 'failed', 0, ' | save not shared: the transfer failed'), @('guest', 'applied', 0, " | playing on the host's save"),
+            @('guest', 'refused', 0, " | save not shared: the host's save does not continue into Mother Base or free roam yet"),
+            @('host', 'refused', 0, ' | save not shared: your save does not continue into Mother Base or free roam yet'))) {
+        $ht = Get-CoopHandoffText -Token $row[1] -Pct $row[2] -Role $row[0]
+        Assert-Equal $ht.Segment $row[3] "handoff segment: $($row[0]) $($row[1])"
+        Assert-True ([bool]$ht.Line -and $ht.Line -cnotmatch '[^\x20-\x7E]') "handoff sentence: $($row[0]) $($row[1])"
+        $tag = '[JOIN]'
+        if ($row[0] -eq 'host') { $tag = '[HOST]' }
+        $handoffStatus = ConvertFrom-CoopStatusText -Text ($statusText.Replace(',"time_utc"', (',"handoff":"' + $row[1] + '","handoff_pct":' + $row[2] + ',"time_utc"')))
+        Assert-Equal (Format-CoopStatusLine -Status $handoffStatus -Role $row[0] -NowUtc $now) ($tag + ' link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look' + $row[3] + ' | mission 30050') "status line with the handoff token $($row[1]) ($($row[0]))"
+    }
+    Assert-Equal (Get-CoopHandoffText -Token 'receiving' -Pct 250 -Role guest).Segment " | getting the host's save 100%" 'handoff percentage clamped to 100'
+    Assert-True ((Get-CoopHandoffText -Token 'partner_restarting' -Role host).Line.StartsWith('Your friend is restarting MGSV on your save (about a minute).')) 'host sentence while the friend restarts'
+    foreach ($quietToken in 'off', 'idle', 'same', 'something_new', '') {
+        $ht = Get-CoopHandoffText -Token $quietToken -Role guest
+        Assert-True ($ht.Segment -ceq '' -and $ht.Line -ceq '') "no handoff text for '$quietToken'"
+        $quietStatus = ConvertFrom-CoopStatusText -Text ($statusText.Replace(',"time_utc"', (',"handoff":"' + $quietToken + '","handoff_pct":0,"time_utc"')))
+        Assert-Equal (Format-CoopStatusLine -Status $quietStatus -Role host -NowUtc $now) (Format-CoopStatusLine -Status $st -Role host -NowUtc $now) "handoff '$quietToken' keeps the line without the keys"
+    }
+    # While the joiner waits for or gets the host's save, the Share-Save sentence would point the wrong way.
+    foreach ($busy in 'wait_host', 'receiving', 'staged', 'countdown', 'exiting') {
+        $busyStatus = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":40010').Replace(',"time_utc"', (',"world":3,"paired":0,"partner_mission":0,"pair_wait":"no_hello","progress":"story_start","handoff":"' + $busy + '","handoff_pct":10,"time_utc"')))
+        $busyLine = Format-CoopStatusLine -Status $busyStatus -Role guest -NowUtc $now
+        Assert-True (!$busyLine.Contains('Share-Save.bat') -and $busyLine.EndsWith('| mission 40010')) "no Share-Save sentence while the handoff is $busy"
+    }
+    $keptStory = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":40010').Replace(',"time_utc"', ',"world":3,"paired":0,"partner_mission":0,"pair_wait":"no_hello","progress":"story_start","handoff":"kept","handoff_pct":0,"time_utc"'))
+    Assert-True ((Format-CoopStatusLine -Status $keptStory -Role guest -NowUtc $now).EndsWith('| save not shared: you kept your own save | mission 40010 Your co-op save is at the story start: quit, then import your partner''s save with Share-Save.bat (option I).')) 'a kept own save keeps the Share-Save sentence'
+    # The P2-6 set hash (golden vectors computed independently; tests/fixtures/handoff-set.json
+    # is the vector shared with the native tests).
+    $slotRows = @(for ($i = 0; $i -lt 6; $i++) {
+            [pscustomobject]@{ entry = (Get-CoopHandoffSlots)[$i]; bytes = 1000 * ($i + 1) + $i; sha256 = (Get-CoopTextSha256 -Bytes ([Text.Encoding]::ASCII.GetBytes("slot$i"))) }
+        })
+    Assert-Equal ((Get-CoopHandoffSlots) -join ',') '287700/local/TPP_GAME_DATA0,287700/local/TPP_GAME_DATA1,287700/local/PERSONAL_DATA0,287700/local/PERSONAL_DATA1,remote/TPP_GAME_DATA,remote/PERSONAL_DATA' 'the P2-6 slot table'
+    Assert-Equal $slotRows[0].sha256 '4C4B4A1F341A258DB6343A420E19828162ACC54084240949ACA5A919C9100378' 'set hash vector: the file hash of slot 0'
+    Assert-Equal (Get-CoopHandoffSetSha256 -Entries $slotRows) 'AB42AF5AF964DB2E1B9E273CF7802D6C0390078C545919B607D93CEC3CE7F2E5' 'set hash: all six slots'
+    Assert-Equal (Get-CoopHandoffSetSha256 -Entries @($slotRows[5], $slotRows[1])) '8FE00587663109D28A030C7E74F1472B545798D6C6A31E58BEC2F3B4C981FD1D' 'set hash: slots 1 and 5, any input order'
+    Assert-Equal (Get-CoopHandoffSetSha256 -Entries @([pscustomobject]@{ slot = 5; size = 6005; sha256 = $slotRows[5].sha256 }, [pscustomobject]@{ slot = 1; size = 2001; sha256 = $slotRows[1].sha256.ToLowerInvariant() })) '8FE00587663109D28A030C7E74F1472B545798D6C6A31E58BEC2F3B4C981FD1D' 'set hash: slot and size rows, lower-case hex'
+    Assert-Throws { Get-CoopHandoffSetSha256 -Entries @([pscustomobject]@{ entry = '287700/local/TPP_GAME_DATA2'; bytes = 1; sha256 = $slotRows[0].sha256 }) } 'Not a save handoff file' 'set hash: a name outside the slot table'
+    Assert-Throws { Get-CoopHandoffSetSha256 -Entries @($slotRows[0], $slotRows[0]) } 'Duplicate' 'set hash: a duplicate slot'
+    Assert-Throws { Get-CoopHandoffSetSha256 -Entries @([pscustomobject]@{ entry = $slotRows[0].entry; bytes = 0; sha256 = $slotRows[0].sha256 }) } 'Invalid size' 'set hash: size 0'
+    Assert-Throws { Get-CoopHandoffSetSha256 -Entries @([pscustomobject]@{ entry = $slotRows[0].entry; bytes = 4MB + 1; sha256 = $slotRows[0].sha256 }) } 'Invalid size' 'set hash: 4 MB + 1'
+    Assert-Throws { Get-CoopHandoffSetSha256 -Entries @([pscustomobject]@{ entry = $slotRows[0].entry; bytes = 1; sha256 = 'XYZ' }) } 'Invalid SHA-256' 'set hash: a malformed hash'
+    Assert-Throws { Get-CoopHandoffSetSha256 -Entries @() } 'No save handoff file' 'set hash: no file'
+    $setFixture = Join-Path $projectRoot 'tests/fixtures/handoff-set.json'
+    if (Test-Path -LiteralPath $setFixture -PathType Leaf) {
+        $setVector = Get-Content -LiteralPath $setFixture -Raw | ConvertFrom-Json
+        $setRows = @(Get-FriendProperty $setVector 'entries' (Get-FriendProperty $setVector 'files' @()))
+        $setExpected = [string](Get-FriendProperty $setVector 'set_sha256' (Get-FriendProperty $setVector 'expected' ''))
+        Assert-True ($setRows.Count -ge 1 -and $setExpected -cmatch '^[0-9A-Fa-f]{64}$') 'tests/fixtures/handoff-set.json has rows and an expected set_sha256'
+        Assert-Equal (Get-CoopHandoffSetSha256 -Entries $setRows) $setExpected.ToUpperInvariant() 'Get-CoopHandoffSetSha256 equals tests/fixtures/handoff-set.json'
+    } else { Write-Output 'tests/fixtures/handoff-set.json missing: the shared set-hash vector check skipped (the golden vectors above passed)' }
     # Online play: how each PC shows the partner body (link-status.json partner_drive/_reason, remote_drive/_reason).
     $nativeStatus = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"saves":"redirected"', '"saves":"redirected","partner_drive":"native","partner_reason":"ok","remote_drive":"clips","remote_reason":"thread"'))
     Assert-Equal (Format-CoopStatusLine -Status $nativeStatus -Role host -NowUtc $now) ('[HOST] link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look native; you on the other PC: clips (' + (Get-CoopPartnerReasonText -Reason thread) + ') | mission 30050') 'status line: native here, clips on the other PC with the reason'
@@ -695,6 +824,77 @@ try {
     Assert-Equal "$($info.Source)|$($info.Imported)|$([IO.Path]::GetFileName($info.MarkerPath))" ('marker|' + $importedAt.ToLocalTime().ToString('yyyy-MM-dd HH:mm') + '|imported-progress.json') 'a valid marker wins'
     [IO.File]::WriteAllText((Join-Path $infoSaves 'imported-progress.json'), '{"format":"something-else","v":1}')
     Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced)) 'an invalid marker falls back to the folders'
+    Assert-Equal $info.Kind 'share-save' 'a Share-Save marker is an import'
+    [IO.File]::WriteAllText((Join-Path $infoSaves 'imported-progress.json'), (New-FriendImportMarkerText -Source 'handoff' -Files @()))
+    Assert-Equal "$((Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced).Source)|$((Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced).Kind)" 'marker|handoff' 'a handoff marker names the save handoff'
+    Remove-Item -LiteralPath (Join-Path $infoSaves 'imported-progress.json')
+    $null = New-Item -ItemType Directory -Path (Join-Path $infoReplaced '20261016-110000-before-handoff')
+    Assert-Equal "$((Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced).Source)|$((Get-FriendImportedSaveInfo -SaveDir $infoSaves -ReplacedRoot $infoReplaced).Kind)" 'folder|handoff' 'a newest -before-handoff folder names the save handoff'
+    # The copies Share-Save [I] and the save handoff moved aside, newest first (Share-Save [R]).
+    $orderRoot = Join-Path $fixture 'backups-order'
+    foreach ($name in '20261016-090000-before-import', '20261016-090000-1-before-import', '20261016-093000-before-handoff', '20261015-235959-before-handoff', '20261017-000000-before-restore', 'notes', '20261018-000000') {
+        $null = New-Item -ItemType Directory -Path (Join-Path $orderRoot $name) -Force
+    }
+    Assert-Equal ((@(Get-CoopProgressBackups -ReplacedRoot $orderRoot) | ForEach-Object { "$($_.Name)/$($_.Kind)" }) -join ',') '20261016-093000-before-handoff/handoff,20261016-090000-1-before-import/import,20261016-090000-before-import/import,20261015-235959-before-handoff/handoff' 'progress backups: both suffixes, newest first'
+    Assert-Equal @(Get-CoopProgressBackups -ReplacedRoot (Join-Path $fixture 'no-such-replaced')).Count 0 'no replaced folder: no backups'
+    # Test-CoopProgressStage (P2-18): a staged progress tree, alone or against its file list.
+    $stageChecks = Join-Path $fixture 'stage-checks'
+    function New-StageFixture([string]$Name, [hashtable]$Files) {
+        $dir = Join-Path $stageChecks $Name
+        Assert-InFixture $dir
+        foreach ($k in $Files.Keys) {
+            $p = Join-Path $dir $k
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $p) -Force
+            [IO.File]::WriteAllText($p, [string]$Files[$k])
+        }
+        return $dir
+    }
+    $goodStage = New-StageFixture 'good' @{ '287700\local\TPP_GAME_DATA0' = 'host progress 0'; '287700\local\PERSONAL_DATA0' = 'host personal 0'; 'remote\TPP_GAME_DATA' = 'host remote'; 'handoff.json' = '{}' }
+    $goodCheck = Test-CoopProgressStage -StageRoot $goodStage
+    Assert-True ($goodCheck.Ok -and $goodCheck.Bytes -eq 41) "a good stage passes (handoff.json at its root is allowed): $($goodCheck.Problem)"
+    Assert-Equal ((@($goodCheck.Files) | ForEach-Object { $_.entry }) -join ',') '287700/local/TPP_GAME_DATA0,287700/local/PERSONAL_DATA0,remote/TPP_GAME_DATA' 'stage files in slot order'
+    $goodList = @($goodCheck.Files | ForEach-Object { [pscustomobject]@{ entry = $_.entry; bytes = $_.bytes; sha256 = $_.sha256 } })
+    Assert-True (Test-CoopProgressStage -StageRoot $goodStage -Manifest $goodList).Ok 'a stage equal to its file list passes'
+    $badList = @($goodList | ForEach-Object { [pscustomobject]@{ entry = $_.entry; bytes = $_.bytes; sha256 = $_.sha256 } })
+    $badList[1].sha256 = '0' * 64
+    Assert-True ((Test-CoopProgressStage -StageRoot $goodStage -Manifest $badList).Problem -ceq '287700/local/PERSONAL_DATA0 is damaged (hash mismatch).') 'stage: a hash mismatch'
+    Assert-True ((Test-CoopProgressStage -StageRoot $goodStage -Manifest @($goodList[0], $goodList[2])).Problem -ceq "The save's file list does not name 287700/local/PERSONAL_DATA0.") 'stage: a file the list does not name (set mismatch)'
+    Assert-True ((Test-CoopProgressStage -StageRoot $goodStage -Manifest (@($goodList) + @([pscustomobject]@{ entry = 'remote/PERSONAL_DATA'; bytes = 1; sha256 = '0' * 64 }))).Problem -ceq 'remote/PERSONAL_DATA is missing from the save.') 'stage: a listed file is missing (set mismatch)'
+    $sizeList = @($goodList | ForEach-Object { [pscustomobject]@{ entry = $_.entry; bytes = $_.bytes; sha256 = $_.sha256 } })
+    $sizeList[0].bytes = 99
+    Assert-True ((Test-CoopProgressStage -StageRoot $goodStage -Manifest $sizeList).Problem.Contains('another size')) 'stage: a size mismatch'
+    foreach ($case in @(
+            @('bad-name', @{ '287700\local\TPP_GAME_DATA0' = 'x'; '287700\local\TPP_CONFIG_DATA' = 'settings' }, 'Unexpected file in the save: 287700/local/TPP_CONFIG_DATA.'),
+            @('lower-case', @{ '287700\local\TPP_GAME_DATA0' = 'x'; 'remote\tpp_game_data' = 'y' }, 'Unexpected file in the save: remote/tpp_game_data.'),
+            @('root-file', @{ '287700\local\TPP_GAME_DATA0' = 'x'; 'notes.txt' = 'n' }, 'Unexpected file in the save: notes.txt.'),
+            @('other-dir', @{ '287700\local\TPP_GAME_DATA0' = 'x'; '287700\remote\TPP_GAME_DATA' = 'y' }, 'Unexpected file in the save: 287700/remote.'),
+            @('empty-file', @{ '287700\local\TPP_GAME_DATA0' = '' }, 'Unexpected save file size: 287700/local/TPP_GAME_DATA0.'),
+            @('no-game-data', @{ '287700\local\PERSONAL_DATA0' = 'p'; 'remote\TPP_GAME_DATA' = 'r' }, 'The save has no TPP_GAME_DATA file.'))) {
+        $dir = New-StageFixture $case[0] $case[1]
+        $check = Test-CoopProgressStage -StageRoot $dir
+        Assert-True (!$check.Ok -and $check.Problem -ceq $case[2]) "stage refused ($($case[0])): $($check.Problem)"
+    }
+    $bigStage = New-StageFixture 'oversize' @{ '287700\local\TPP_GAME_DATA0' = 'x' }
+    $bigStream = [IO.File]::Create((Join-Path $bigStage '287700\local\TPP_GAME_DATA1'))
+    try { $bigStream.SetLength(4MB + 1) } finally { $bigStream.Dispose() }
+    Assert-True ((Test-CoopProgressStage -StageRoot $bigStage).Problem -ceq 'Unexpected save file size: 287700/local/TPP_GAME_DATA1.') 'stage refused: a file over 4 MB'
+    Assert-True ((Test-CoopProgressStage -StageRoot (Join-Path $stageChecks 'absent')).Problem -ceq 'The save to import is missing.') 'stage refused: no folder'
+    $linkStage = New-StageFixture 'linked' @{ '287700\local\TPP_GAME_DATA0' = 'x' }
+    $linkTarget = New-StageFixture 'link-target' @{ 'TPP_GAME_DATA' = 'outside' }
+    $stageLink = Join-Path $linkStage 'remote'
+    try {
+        $null = New-Item -ItemType Junction -Path $stageLink -Target $linkTarget
+        Assert-True ((Test-CoopProgressStage -StageRoot $linkStage).Problem -ceq 'Filesystem links are not supported here: remote.') 'stage refused: a filesystem link'
+        Assert-True (!(Remove-CoopProgressStage -StageRoot $linkStage) -and (Test-Path -LiteralPath (Join-Path $linkTarget 'TPP_GAME_DATA'))) 'stage removal never follows a link'
+    } finally {
+        if (Test-Path -LiteralPath $stageLink) { [IO.Directory]::Delete($stageLink) }
+    }
+    # Removal by known names: the stage files, handoff.json and the loader's temp copies go; anything else stays with its folders.
+    $tempName = 'TPP_GAME_DATA0.mgs-coop-' + ('0123456789abcdef' * 2) + '.tmp'
+    $removeStage = New-StageFixture 'remove' @{ '287700\local\TPP_GAME_DATA0' = 'x'; ('287700\local\' + $tempName) = 't'; 'remote\TPP_GAME_DATA' = 'r'; 'handoff.json' = '{}' }
+    Assert-True ((Remove-CoopProgressStage -StageRoot $removeStage) -and !(Test-Path -LiteralPath $removeStage)) 'a stage is removed by its known names'
+    $keepStage = New-StageFixture 'keep' @{ '287700\local\TPP_GAME_DATA0' = 'x'; 'remote\NOTES.txt' = 'not ours' }
+    Assert-True (!(Remove-CoopProgressStage -StageRoot $keepStage) -and (Test-Path -LiteralPath (Join-Path $keepStage 'remote\NOTES.txt')) -and !(Test-Path -LiteralPath (Join-Path $keepStage '287700'))) 'an unknown file stays with its folders'
 
     # ------------------------------------------------------------ firewall report and elevated command (pure)
     $report = Format-CoopFirewallReport -Rules @(
@@ -712,6 +912,14 @@ try {
     Assert-True ($playText.Contains('[ValidateRange(0, 3)][int]$World = 3') -and
         $playText.Contains('New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World') -and
         $playText.Contains('World sync level $World (experimental)')) 'Play-Coop -World 0..3 (default 3) reaches lab.ini and is announced'
+    Assert-Equal ([regex]::Matches($playText, [regex]::Escape('-Partner $Partner -SaveHandoff $SaveHandoff -TravelLock $TravelLock')).Count) 2 'both lab.ini calls get -SaveHandoff and -TravelLock'
+    Assert-True ($playText.Contains("[ValidateSet('scene', 'always', 'off')][string]`$SaveHandoff = 'scene'") -and $playText.Contains("[ValidateSet('on', 'off')][string]`$TravelLock = 'on'")) 'Play-Coop -SaveHandoff (default scene) and -TravelLock (default on)'
+    $supported = [regex]::Match($playText, "SupportedLoaderVersions = @\(([^)]*)\)").Groups[1].Value
+    Assert-True ($supported.Contains("'$packageVersion'") -and $supported.Contains("'0.13.0'")) 'Play-Coop supports this package version and the phase-2 loader 0.13.0'
+    $shareText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/Share-Save.ps1'))
+    Assert-True ($shareText.Contains("'  [R] Restore the co-op copy the last import or automatic save handoff replaced'")) 'Share-Save menu names the save handoff for [R]'
+    $collectText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/Collect-Logs.ps1'))
+    Assert-True ($collectText.Contains('link-rejoin.txt (a join code)') -and !$collectText.Contains("'link-rejoin.txt'")) 'Collect-Logs names link-rejoin.txt as never collected and never reads it'
     Assert-True ($playText.Contains("`$display = 'mgs-coop play'") -and !$playText.Contains('mgs-coop play UDP')) 'one fixed firewall rule name: a later [F] on another port replaces the earlier rule'
     $fixedScript = New-CoopFirewallScript -Port 47900 -ExePath $quoteExe -DisplayName 'mgs-coop play'
     Assert-True ($fixedScript.Contains("Get-NetFirewallRule -DisplayName 'mgs-coop play' -ErrorAction SilentlyContinue | Remove-NetFirewallRule") -and
@@ -797,7 +1005,7 @@ try {
     $packages = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $packages.Count 1 'one friend package staged'
     $pkg = $packages[0].FullName
-    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.6-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
+    Assert-True ($packages[0].Name -cmatch ('^mgs-coop-friend-' + [regex]::Escape($packageVersion) + '-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$')) 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
     $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Play-Offline-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'Share-Save.bat', 'scripts/Share-Save.ps1', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
         'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
@@ -815,7 +1023,7 @@ try {
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Play-Offline-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the six double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.6|friend-play' 'package manifest identity'
+    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" "mgs-coop-local-package|$packageVersion|friend-play" 'package manifest identity'
     # A matching override still packages the receipt's immutable checked copy.
     Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)" 'release_receipt|Release' 'friend build always records the Release receipt'
     Assert-Equal $manifest.build.receipt ([IO.Path]::GetRelativePath($projectRoot, $receiptPath)) 'package.json records the supplied matching receipt'
@@ -966,8 +1174,8 @@ try {
         }
     } finally { $localZip.Dispose() }
     $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
-    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.6', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves',
-            'Share-Save.bat', 'SAME PROGRESS FOR BOTH') {
+    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', "Version $packageVersion", 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves',
+            'Share-Save.bat', 'SAME PROGRESS FOR BOTH', 'SAME PROGRESS AUTOMATICALLY', '-SaveHandoff off', 'TRAVEL LOCK', '-TravelLock off', 'Keep my own save') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
     }
     # Section 8 describes everything the logs ZIP holds (Collect-Logs coop-saves.txt, 3 sessions).
@@ -1185,6 +1393,260 @@ try {
     Remove-Item -LiteralPath (Join-Path $joinLocal 'TPP_CONFIG_DATA')
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'Share-Save never touches the real saves'
 
+    # ------------------------------------------------------------ the import core with a save handoff stage (Import-CoopProgressFiles, P2-18)
+    $coreGame = New-GameFixture 'handoff-core'
+    $kp = Get-InstancePaths -GameDirectory $coreGame
+    $r = Invoke-Friend $install (@('-GameDirectory', $coreGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-Equal $r.Exit 0 "install for the import core: $($r.Raw)"
+    $coreLocal = Join-Path $kp.CoopSaves '287700\local'
+    foreach ($f in @(@('TPP_GAME_DATA0', 'core own progress'), @('PERSONAL_DATA1', 'core own old personal slot'), @('TPP_CONFIG_DATA', 'core own settings'), @('TPP_GRAPHICS_CONFIG', 'core own graphics'))) {
+        [IO.File]::WriteAllText((Join-Path $coreLocal $f[0]), $f[1])
+    }
+    # An older copy an import moved aside: [R] restores the newer handoff copy first.
+    $olderImport = Join-Path $kp.CoopSavesReplaced '20000101-000000-before-import'
+    $null = New-Item -ItemType Directory -Path (Join-Path $olderImport '287700\local') -Force
+    [IO.File]::WriteAllText((Join-Path $olderImport '287700\local\TPP_GAME_DATA0'), 'an old imported copy')
+    $coreBefore = Get-RelativeTreeHashes $kp.CoopSaves
+    $coreStage = New-HandoffStage $kp.CoopSavesHandoff '7A8B9CAD' @{ '287700/local/TPP_GAME_DATA0' = 'host progress 0'; '287700/local/PERSONAL_DATA0' = 'host personal 0'; 'remote/TPP_GAME_DATA' = 'host remote' }
+    $coreAside = Import-CoopProgressFiles -StageRoot $coreStage.Stage -SaveDir $kp.CoopSaves -ReplacedRoot $kp.CoopSavesReplaced -Suffix '-before-handoff' `
+        -Marker @{ Source = 'handoff'; ExportedUtc = '2026-10-15T12:00:00Z' } -Manifest $coreStage.Rows
+    Assert-True ((Split-Path -Parent $coreAside) -eq $kp.CoopSavesReplaced -and (Split-Path -Leaf $coreAside) -cmatch '^[0-9]{8}-[0-9]{6}(-[0-9]+)?-before-handoff$') "the old copy goes to coop-saves-replaced\<stamp>-before-handoff: $coreAside"
+    Assert-Equal (Get-RelativeTreeHashes $coreAside) $coreBefore 'the aside folder holds the old tree'
+    foreach ($row in $coreStage.Rows) { Assert-Equal (Get-Sha256 (Join-Path $kp.CoopSaves $row.entry.Replace('/', '\'))) $row.sha256 "progress replaced: $($row.entry)" }
+    Assert-True ([IO.File]::ReadAllText((Join-Path $coreLocal 'TPP_CONFIG_DATA')) -ceq 'core own settings' -and [IO.File]::ReadAllText((Join-Path $coreLocal 'TPP_GRAPHICS_CONFIG')) -ceq 'core own graphics') 'settings are kept'
+    Assert-True (!(Test-Path -LiteralPath (Join-Path $coreLocal 'PERSONAL_DATA1'))) 'an extra old PERSONAL_DATA is dropped'
+    $coreMarker = Get-Content -LiteralPath (Join-Path $kp.CoopSaves 'imported-progress.json') -Raw | ConvertFrom-Json
+    Assert-Equal "$($coreMarker.source)|$((@($coreMarker.files) | ForEach-Object { $_.entry }) -join ',')" 'handoff|287700/local/TPP_GAME_DATA0,287700/local/PERSONAL_DATA0,remote/TPP_GAME_DATA' 'the marker says handoff and lists the files'
+    Assert-True (!(Test-Path -LiteralPath $coreStage.Stage) -and !@(Get-ChildItem -LiteralPath $kp.Mod -Directory -Filter 'coop-saves-new-*').Count) 'the stage is removed and no new copy is left over'
+    $coreInfo = Get-FriendImportedSaveInfo -SaveDir $kp.CoopSaves -ReplacedRoot $kp.CoopSavesReplaced
+    Assert-Equal "$($coreInfo.Source)|$($coreInfo.Kind)" 'marker|handoff' 'the copy counts as a save handoff'
+    # Rollback: the final rename fails (a handle is held on a file of the new copy); the current copy is put back.
+    $afterHandoff = Get-RelativeTreeHashes $kp.CoopSaves
+    $asidesBefore = @(Get-ChildItem -LiteralPath $kp.CoopSavesReplaced -Directory).Count
+    $rollStage = New-HandoffStage $kp.CoopSavesHandoff '8B9CADBE' @{ '287700/local/TPP_GAME_DATA0' = 'never applied' }
+    $script:heldCopy = $null
+    try {
+        Assert-Throws { Import-CoopProgressFiles -StageRoot $rollStage.Stage -SaveDir $kp.CoopSaves -ReplacedRoot $kp.CoopSavesReplaced -Suffix '-before-handoff' -Marker @{ Source = 'handoff' } -Manifest $rollStage.Rows `
+                -TestBeforeFinalMove { param($newCopy) $script:heldCopy = [IO.FileStream]::new((Join-Path $newCopy '287700\local\TPP_GAME_DATA0'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read) } } '' 'a blocked final rename fails'
+    } finally { if ($script:heldCopy) { $script:heldCopy.Dispose() } }
+    Assert-Equal (Get-RelativeTreeHashes $kp.CoopSaves) $afterHandoff 'rollback: the current copy is back unchanged'
+    Assert-Equal @(Get-ChildItem -LiteralPath $kp.CoopSavesReplaced -Directory).Count $asidesBefore 'rollback: no aside folder is left behind'
+    Assert-True (Test-Path -LiteralPath (Join-Path $rollStage.Stage 'handoff.json')) 'a failed import keeps its stage'
+    foreach ($left in @(Get-ChildItem -LiteralPath $kp.Mod -Directory -Filter 'coop-saves-new-*')) { Assert-InFixture $left.FullName; Remove-Item -LiteralPath $left.FullName -Recurse -Force }
+    Assert-True (Remove-CoopProgressStage -StageRoot $rollStage.Stage) 'the stage is removed by its known names'
+    Assert-Throws { Import-CoopProgressFiles -StageRoot $rollStage.Stage -SaveDir $kp.CoopSaves -ReplacedRoot $kp.CoopSavesReplaced -Suffix '-before-handoff' -Marker @{ Source = 'handoff' } } 'missing' 'a missing stage is refused'
+    Assert-Equal (Get-RelativeTreeHashes $kp.CoopSaves) $afterHandoff 'a refused stage changes nothing'
+    # Share-Save [R] restores the newest of -before-import and -before-handoff and names which one.
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $coreGame, '-Mode', 'Restore', '-NonInteractive')
+    Assert-True ($r.Exit -eq 0 -and (Has $r "Restoring the co-op save copy kept before the automatic save handoff at $coreAside")) "[R] picks the newer handoff copy: $($r.Raw)"
+    Assert-Equal (Get-RelativeTreeHashes $kp.CoopSaves) $coreBefore '[R] brings back the copy from before the handoff'
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $coreGame, '-Mode', 'Restore', '-NonInteractive')
+    Assert-True ($r.Exit -eq 0 -and (Has $r "Restoring the co-op save copy kept before the import at $olderImport")) "[R] again: the older import copy: $($r.Raw)"
+    Assert-Equal ([IO.File]::ReadAllText((Join-Path $coreLocal 'TPP_GAME_DATA0'))) 'an old imported copy' '[R] again restored the import copy'
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $coreGame, '-Mode', 'Restore', '-NonInteractive')
+    Assert-Refused $r 'No co-op save copy from before an import or an automatic save handoff was found' '[R] with nothing left changes nothing'
+    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'the import core never touches the real saves'
+
+    # ------------------------------------------------------------ the save handoff after the joiner's game exits (Invoke-CoopHandoffAfterExit, P2-17/18)
+    # In-process on fixture folders: no game runs, and MGS_COOP_TEST_NO_LAUNCH=1 checks every
+    # file a restart needs but starts nothing.
+    $guestSteamId = Get-CoopSteamId64 -ActiveUser 97000002
+    $hostSteamId = Get-CoopSteamId64 -ActiveUser 97000001
+    function New-HandoffSession([string]$Name, [switch]$SteamWait) {
+        # A joiner's active Play-Coop session as Play-Coop leaves it (lab.ini from the recorded
+        # settings, every file's hash recorded first) with its own co-op copy.
+        $g = New-GameFixture $Name
+        $gp = Get-InstancePaths -GameDirectory $g
+        foreach ($f in @(@('287700\local\TPP_GAME_DATA0', 'own progress'), @('287700\local\PERSONAL_DATA1', 'own old personal slot'), @('287700\local\TPP_CONFIG_DATA', 'own settings'), @('remote\TPP_GAME_DATA', 'own remote'))) {
+            $p = Join-Path $gp.CoopSaves $f[0]
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $p) -Force
+            [IO.File]::WriteAllText($p, $f[1])
+        }
+        $lab = [ordered]@{ role = 'guest'; save_dir = $gp.CoopSaves; transport = 'udp'; port = 47831; peer = '192.0.2.44'; world = 3; partner = 'native'
+            steam_self = ''; steam_peer = ''; steam_wait = $false; steam_dispatch = ''; save_handoff = 'scene'; travel_lock = 'on' }
+        if ($SteamWait) {
+            $lab.transport = 'steam'; $lab.peer = ''; $lab.steam_self = $guestSteamId; $lab.steam_wait = $true
+            $labText = New-CoopPlayLabIniText -Role guest -SaveDir $gp.CoopSaves -Transport steam -SteamSelf $guestSteamId -SteamWait -SaveHandoff scene -TravelLock on
+        } else {
+            $labText = New-CoopPlayLabIniText -Role guest -SaveDir $gp.CoopSaves -Port 47831 -PeerAddress '192.0.2.44' -SaveHandoff scene -TravelLock on
+        }
+        $writes = New-Object Collections.Generic.List[object]
+        $writes.Add([pscustomobject]@{ Name = 'lab.ini'; Bytes = $utf8.GetBytes($labText) })
+        if (!$SteamWait) { $writes.Add([pscustomobject]@{ Name = 'link-secret.txt'; Bytes = [Text.Encoding]::ASCII.GetBytes("$s7`r`n") }) }
+        $writes.Add([pscustomobject]@{ Name = 'coop.ini'; Bytes = $utf8.GetBytes((New-CoopPlayCoopIniText -Character quiet)) })
+        $writes.Add([pscustomobject]@{ Name = 'script-observe.enabled'; Bytes = [Text.Encoding]::ASCII.GetBytes("offline-v1`n") })
+        $rows = @()
+        foreach ($w in $writes) {
+            [IO.File]::WriteAllBytes((Join-Path $gp.Mod $w.Name), [byte[]]$w.Bytes)
+            $rows += [ordered]@{ name = $w.Name; sha256 = (Get-CoopTextSha256 -Bytes ([byte[]]$w.Bytes)) }
+        }
+        Save-CoopPlaySession -GameRoot $g -Session ([ordered]@{ v = 2; state = 'active'; role = 'guest'; port = 47831; started_utc = [DateTime]::UtcNow.AddMinutes(-10).ToString('o')
+                launcher_pid = 0; launcher_start_utc = ''; watchdog_pid = 0; watchdog_start_utc = ''; session_id = [Guid]::NewGuid().ToString('N'); transport = $lab.transport
+                files = $rows; upnp = [ordered]@{ added = $false; port = 0 }; clip_sha256 = ''; lab = $lab })
+        return $gp
+    }
+    $exitedStart = '2026-10-15T11:59:00.0000000Z'
+    $env:MGS_COOP_TEST_NO_LAUNCH = '1'
+    $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '0'
+    $sleeper = $null
+    try {
+        # 1. A valid request is applied: lab.ini again with save_handoff=off (its new hash recorded),
+        #    the session stays active with handoff.count=1 and every co-op file in place.
+        $hA = New-HandoffSession 'handoff-apply'
+        $ownA = Get-RelativeTreeHashes $hA.CoopSaves
+        $stA = New-HandoffStage $hA.CoopSavesHandoff '0A1B2C3D' @{ '287700/local/TPP_GAME_DATA0' = 'host progress 0'; '287700/local/PERSONAL_DATA0' = 'host personal 0'; 'remote/TPP_GAME_DATA' = 'host remote' }
+        $null = New-HandoffRequest $hA.CoopSavesHandoff $stA 4242 '2026-10-15T11:59:00Z'
+        $labBefore = [IO.File]::ReadAllText($hA.LabIni)
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hA.Game -ExitedPid 4242 -ExitedStartUtc $exitedStart -Owner console
+        Assert-Equal "$($res.Action)|$($res.Files)|$($res.Bytes)" 'relaunched|3|41' "a valid request is applied: $(@($res.Messages) -join ' ')"
+        $sA = Get-SessionJson $hA
+        Assert-Equal "$($sA.state)|$($sA.handoff.state)|$($sA.handoff.count)|$($sA.handoff.xfer)|$($sA.handoff.set_sha256)|$($sA.handoff.claimed_by_pid)|$($sA.handoff.aside)" "active|relaunching|1|0A1B2C3D|$($stA.Set)|$PID|$($res.Aside)" 'the session: active, relaunching, count 1, the claim'
+        Assert-Equal ([IO.File]::ReadAllText($hA.LabIni)) $labBefore.Replace("save_handoff=scene`n", "save_handoff=off`n") 'lab.ini again with save_handoff=off'
+        $labRowA = @($sA.files | Where-Object { $_.name -eq 'lab.ini' })[0]
+        Assert-Equal "$($labRowA.sha256)|$($labRowA.prev_sha256)" "$(Get-Sha256 $hA.LabIni)|$(Get-CoopTextSha256 -Bytes $utf8.GetBytes($labBefore))" 'the new lab.ini hash is recorded (the old one as prev_sha256)'
+        Assert-Equal $sA.lab.save_handoff 'off' 'the recorded settings say save_handoff=off'
+        Assert-Equal (Get-PlayFilesPresent $hA) 4 'all four co-op files stay for the restart'
+        foreach ($row in $stA.Rows) { Assert-Equal (Get-Sha256 (Join-Path $hA.CoopSaves $row.entry.Replace('/', '\'))) $row.sha256 "the host's $($row.entry) is in the co-op copy" }
+        Assert-True ([IO.File]::ReadAllText((Join-Path $hA.CoopSaves '287700\local\TPP_CONFIG_DATA')) -ceq 'own settings' -and !(Test-Path -LiteralPath (Join-Path $hA.CoopSaves '287700\local\PERSONAL_DATA1'))) 'own settings kept, the old extra progress slot dropped'
+        Assert-True ($res.Aside -cmatch '^[0-9]{8}-[0-9]{6}(-[0-9]+)?-before-handoff$' -and (Get-RelativeTreeHashes (Join-Path $hA.CoopSavesReplaced $res.Aside)) -eq $ownA) 'the own copy is kept whole in coop-saves-replaced\<stamp>-before-handoff'
+        Assert-Equal (Get-Content -LiteralPath (Join-Path $hA.CoopSaves 'imported-progress.json') -Raw | ConvertFrom-Json).source 'handoff' 'the import marker says handoff'
+        $appliedA = Get-Content -LiteralPath (Join-Path $hA.CoopSavesHandoff 'applied.json') -Raw | ConvertFrom-Json
+        Assert-Equal "$($appliedA.format)|$($appliedA.v)|$($appliedA.set_sha256)|$($appliedA.aside)" "mgs-coop-save-handoff-applied|1|$($stA.Set)|$($res.Aside)" 'applied.json'
+        Assert-True (!(Test-Path -LiteralPath (Join-Path $hA.CoopSavesHandoff 'request.json')) -and !(Test-Path -LiteralPath $stA.Stage)) 'the request and the stage are gone'
+        # 2. The cleanup guard: a live claim keeps every file.
+        $guard = Invoke-CoopPlayCleanup -GameRoot $hA.Game
+        Assert-True (!$guard.Ran -and (@($guard.Messages) -join '|') -ceq 'a save handoff restart is in progress' -and (Get-PlayFilesPresent $hA) -eq 4 -and (Get-SessionJson $hA).state -eq 'active') 'cleanup during the restart does nothing'
+        Assert-True ((Test-CoopHandoffClaimLive -Session (Get-SessionJson $hA)) -and (Test-CoopHandoffPending -Session (Get-SessionJson $hA))) 'the claim is live and the restart pending'
+        # A second request in the same session: limit.
+        $stA2 = New-HandoffStage $hA.CoopSavesHandoff '0A1B2C3E' @{ '287700/local/TPP_GAME_DATA0' = 'host progress later' }
+        $null = New-HandoffRequest $hA.CoopSavesHandoff $stA2 4343 '2026-10-15T12:10:00Z'
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hA.Game -ExitedPid 4343 -ExitedStartUtc '2026-10-15T12:10:00Z' -Owner console
+        Assert-True ($res.Action -eq 'limit' -and (@($res.Messages) -join ' ') -ceq "The host's save was already applied once this session; the newer one was not used.") "a second handoff in one session: limit ($($res.Action))"
+        Assert-True (!(Test-Path -LiteralPath (Join-Path $hA.CoopSavesHandoff 'request.json')) -and !(Test-Path -LiteralPath $stA2.Stage) -and (Get-HandoffField $hA 'state') -eq 'limit' -and (Get-HandoffField $hA 'count') -eq '1') 'limit: request and stage deleted, state limit, count stays 1'
+        $done = Invoke-CoopPlayCleanup -GameRoot $hA.Game
+        Assert-True ($done.Ran -and (Get-PlayFilesPresent $hA) -eq 0 -and (Get-SessionJson $hA).state -eq 'off' -and (Test-Path -LiteralPath (Join-Path $hA.CoopSavesHandoff 'applied.json'))) 'without a live claim the cleanup removes every play file (the new lab.ini hash); applied.json stays'
+        # -Force skips the guard.
+        $hF = New-HandoffSession 'handoff-force'
+        $stF = New-HandoffStage $hF.CoopSavesHandoff '1A2B3C4D' @{ '287700/local/TPP_GAME_DATA0' = 'host progress f' }
+        $null = New-HandoffRequest $hF.CoopSavesHandoff $stF 4444 '2026-10-15T11:59:00Z'
+        Assert-Equal (Invoke-CoopHandoffAfterExit -GameRoot $hF.Game -ExitedPid 4444 -ExitedStartUtc $exitedStart -Owner console).Action 'relaunched' 'a second fixture applies'
+        Assert-True (!(Invoke-CoopPlayCleanup -GameRoot $hF.Game).Ran) 'the guard holds'
+        $forced = Invoke-CoopPlayCleanup -GameRoot $hF.Game -Force
+        Assert-True ($forced.Ran -and (Get-PlayFilesPresent $hF) -eq 0 -and (Get-SessionJson $hF).state -eq 'off') '-Force cleans up every play file during a claim'
+        # A lab.ini still holding the old text (a crash between the record and the write) is ours as well.
+        $hG = New-HandoffSession 'handoff-prev'
+        $stG = New-HandoffStage $hG.CoopSavesHandoff '2B3C4D5E' @{ '287700/local/TPP_GAME_DATA0' = 'host progress g' }
+        $null = New-HandoffRequest $hG.CoopSavesHandoff $stG 4545 '2026-10-15T11:59:00Z'
+        $labG = [IO.File]::ReadAllBytes($hG.LabIni)
+        Assert-Equal (Invoke-CoopHandoffAfterExit -GameRoot $hG.Game -ExitedPid 4545 -ExitedStartUtc $exitedStart -Owner console).Action 'relaunched' 'a third fixture applies'
+        [IO.File]::WriteAllBytes($hG.LabIni, $labG)
+        $prevClean = Invoke-CoopPlayCleanup -GameRoot $hG.Game -Force
+        Assert-True ($prevClean.Ran -and (@($prevClean.Removed) -contains 'lab.ini') -and (Get-PlayFilesPresent $hG) -eq 0) 'the cleanup accepts the old lab.ini hash (prev_sha256)'
+
+        # 3. A waiting Steam joiner with link-rejoin.txt: net_peer_steam and link-secret.txt, both hashes recorded.
+        $hB = New-HandoffSession 'handoff-rejoin' -SteamWait
+        $rejoinSecret = 'ABCDE12345FGHJK67890'
+        [IO.File]::WriteAllText($hB.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinSecret -SteamId $hostSteamId) + "`r`n")
+        $stB = New-HandoffStage $hB.CoopSavesHandoff '1B2C3D4E' @{ '287700/local/TPP_GAME_DATA1' = 'host progress 1' }
+        $null = New-HandoffRequest $hB.CoopSavesHandoff $stB 5151 '2026-10-15T11:59:00Z' -Rejoin 1
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hB.Game -ExitedPid 5151 -ExitedStartUtc $exitedStart -Owner console
+        Assert-Equal $res.Action 'relaunched' "a waiting Steam joiner: applied ($(@($res.Messages) -join ' '))"
+        Assert-Equal ([IO.File]::ReadAllText($hB.LabIni)) (New-CoopPlayLabIniText -Role guest -SaveDir $hB.CoopSaves -Transport steam -SteamSelf $guestSteamId -SteamPeer $hostSteamId -SaveHandoff off) 'the rejoin lab.ini names the host (net_peer_steam), no net_steam_wait'
+        Assert-Equal ([IO.File]::ReadAllText($hB.LinkSecret)) "$rejoinSecret`r`n" 'link-secret.txt from link-rejoin.txt'
+        $sB = Get-SessionJson $hB
+        Assert-Equal "$((@($sB.files | Where-Object { $_.name -eq 'lab.ini' })[0]).sha256)|$((@($sB.files | Where-Object { $_.name -eq 'link-secret.txt' })[0]).sha256)" "$(Get-Sha256 $hB.LabIni)|$(Get-Sha256 $hB.LinkSecret)" 'both new hashes are recorded'
+        Assert-True (!(Test-Path -LiteralPath $hB.LinkRejoin) -and ![IO.File]::ReadAllText($hB.PlaySession).Contains($rejoinSecret)) 'link-rejoin.txt is deleted; no secret in play-session.json'
+        Assert-Equal "$($sB.lab.steam_wait)|$($sB.lab.steam_peer)|$($sB.lab.save_handoff)" "False|$hostSteamId|off" 'the recorded settings name the host'
+        # A dead claimant lifts the guard: the cleanup removes the four files, link-secret.txt included.
+        $deadProc = Start-Process -FilePath $env:ComSpec -ArgumentList '/c', 'exit' -WindowStyle Hidden -PassThru
+        $deadProc.WaitForExit()
+        $deadTable = ConvertTo-CoopSessionTable -Session $sB
+        $deadHandoff = ConvertTo-CoopHandoffTable $sB.handoff
+        $deadHandoff['claimed_by_pid'] = $deadProc.Id
+        $deadTable['handoff'] = $deadHandoff
+        Save-CoopPlaySession -GameRoot $hB.Game -Session $deadTable
+        $c = Invoke-CoopPlayCleanup -GameRoot $hB.Game
+        Assert-True ($c.Ran -and (Get-PlayFilesPresent $hB) -eq 0 -and (@($c.Removed) -contains 'link-secret.txt')) "a dead claimant: the cleanup removes every play file ($(@($c.Removed) -join ','))"
+
+        # 4. Other processes: a live claimant elsewhere, the watchdog's 20 s defer, the restarted game.
+        $hC = New-HandoffSession 'handoff-claims'
+        $stC = New-HandoffStage $hC.CoopSavesHandoff '2C3D4E5F' @{ '287700/local/TPP_GAME_DATA0' = 'host progress c' }
+        $null = New-HandoffRequest $hC.CoopSavesHandoff $stC 6161 '2026-10-15T11:59:00Z'
+        $sleeper = Start-Process -FilePath $winPs -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 300' -WindowStyle Hidden -PassThru
+        $claimTable = ConvertTo-CoopSessionTable -Session (Get-SessionJson $hC)
+        $claimTable['handoff'] = [ordered]@{ state = 'applying'; claimed_by_pid = $sleeper.Id; claimed_start_utc = (Get-CoopProcessStartUtc -Id $sleeper.Id); claimed_utc = [DateTime]::UtcNow.ToString('o')
+            xfer = '2C3D4E5F'; set_sha256 = $stC.Set; count = 0; aside = ''; message = '' }
+        Save-CoopPlaySession -GameRoot $hC.Game -Session $claimTable
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hC.Game -ExitedPid 6161 -ExitedStartUtc $exitedStart -Owner console
+        Assert-True ($res.Action -eq 'claimed_by_other' -and (Test-Path -LiteralPath (Join-Path $hC.CoopSavesHandoff 'request.json'))) "a live claimant elsewhere: claimed_by_other ($($res.Action))"
+        Assert-True (!(Invoke-CoopPlayCleanup -GameRoot $hC.Game).Ran -and (Get-PlayFilesPresent $hC) -eq 4) 'the cleanup refuses while another process applies'
+        Assert-True (Test-CoopHandoffPending -Session (Get-SessionJson $hC)) 'applying with a live claimant is pending'
+        Stop-Process -Id $sleeper.Id -Force
+        $null = $sleeper.WaitForExit(5000)
+        Assert-True (!(Test-CoopHandoffPending -Session (Get-SessionJson $hC)) -and !(Test-CoopHandoffClaimLive -Session (Get-SessionJson $hC))) 'applying with a dead claimant: neither pending nor live'
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hC.Game -ExitedPid 6161 -ExitedStartUtc $exitedStart -Owner watchdog -LauncherAlive -ExitSeenUtc ([DateTime]::UtcNow)
+        Assert-True ($res.Action -eq 'deferred' -and (Test-Path -LiteralPath (Join-Path $hC.CoopSavesHandoff 'request.json'))) "a watchdog with the launcher alive defers ($($res.Action))"
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hC.Game -ExitedPid 6161 -ExitedStartUtc $exitedStart -Owner watchdog -LauncherAlive -ExitSeenUtc ([DateTime]::UtcNow.AddSeconds(-25))
+        Assert-Equal $res.Action 'relaunched' 'the watchdog applies when the live launcher did not act within 20 s'
+        Assert-True (Set-CoopPlayGame -GameRoot $hC.Game -GamePid 7171 -GameStartUtc '2026-10-15T12:05:00Z') 'the restarted game marks the handoff relaunched'
+        Assert-Equal "$(Get-HandoffField $hC 'state')|$((Get-SessionJson $hC).game_pid)" 'relaunched|7171' 'state relaunched, the new game recorded'
+        Assert-True (!(Test-CoopHandoffPending -Session (Get-SessionJson $hC)) -and (Invoke-CoopPlayCleanup -GameRoot $hC.Game).Ran -and (Get-PlayFilesPresent $hC) -eq 0) 'after the restarted game the cleanup runs'
+
+        # 5. Stale requests (another game start, too old, a changed stage): deleted with their stage, nothing applied.
+        $hD = New-HandoffSession 'handoff-stale'
+        $treeD = Get-RelativeTreeHashes $hD.CoopSaves
+        foreach ($case in @(@('pid', 8182, '2026-10-15T11:59:00Z', 0), @('start', 8181, '2026-10-15T11:58:00Z', 0), @('age', 8181, '2026-10-15T11:59:00Z', -31), @('stage', 8181, '2026-10-15T11:59:00Z', 0))) {
+            $stD = New-HandoffStage $hD.CoopSavesHandoff '3D4E5F60' @{ '287700/local/TPP_GAME_DATA0' = 'host progress d' }
+            $null = New-HandoffRequest $hD.CoopSavesHandoff $stD $case[1] $case[2] ([DateTime]::UtcNow.AddMinutes($case[3]))
+            if ($case[0] -eq 'stage') { [IO.File]::WriteAllText((Join-Path $stD.Stage '287700\local\TPP_GAME_DATA0'), 'host progress X') }
+            $res = Invoke-CoopHandoffAfterExit -GameRoot $hD.Game -ExitedPid 8181 -ExitedStartUtc $exitedStart -Owner console
+            Assert-True ($res.Action -eq 'stale' -and !(Test-Path -LiteralPath (Join-Path $hD.CoopSavesHandoff 'request.json')) -and !(Test-Path -LiteralPath $stD.Stage)) "a stale request ($($case[0])): deleted with its stage ($($res.Action): $(@($res.Messages) -join ' '))"
+        }
+        Assert-True ((Get-RelativeTreeHashes $hD.CoopSaves) -eq $treeD -and (Get-SessionJson $hD).state -eq 'active' -and (Get-PlayFilesPresent $hD) -eq 4) 'stale requests change neither the co-op copy nor the session'
+        Assert-Equal (Invoke-CoopHandoffAfterExit -GameRoot $hD.Game -ExitedPid 8181 -ExitedStartUtc $exitedStart -Owner console).Action 'none' 'no request: none'
+
+        # 6. A failure before the apply (lab.ini changed): nothing applied, the request goes, state failed.
+        $hE = New-HandoffSession 'handoff-fail'
+        $treeE = Get-RelativeTreeHashes $hE.CoopSaves
+        [IO.File]::AppendAllText($hE.LabIni, "partner_lost=hide`n")
+        $stE = New-HandoffStage $hE.CoopSavesHandoff '4E5F6071' @{ '287700/local/TPP_GAME_DATA0' = 'host progress e' }
+        $null = New-HandoffRequest $hE.CoopSavesHandoff $stE 9191 '2026-10-15T11:59:00Z'
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hE.Game -ExitedPid 9191 -ExitedStartUtc $exitedStart -Owner console
+        Assert-Equal "$($res.Action)|$(@($res.Messages) -join ' ')" "failed|Could not apply the host's save: mgs-coop\lab.ini changed after Play-Coop wrote it. Your co-op save is unchanged." 'a failure is reported'
+        Assert-True ((Get-RelativeTreeHashes $hE.CoopSaves) -eq $treeE -and !(Test-Path -LiteralPath (Join-Path $hE.CoopSavesHandoff 'request.json')) -and (Get-HandoffField $hE 'state') -eq 'failed') 'a failure: the co-op copy unchanged, the request deleted, state failed'
+        Assert-True (!(Test-CoopHandoffClaimLive -Session (Get-SessionJson $hE))) 'a failed handoff holds no claim (the caller cleans up)'
+        # What an unfinished handoff leaves is removed by the next Play-Coop (not while a session is live).
+        $null = Invoke-CoopPlayCleanup -GameRoot $hE.Game
+        [IO.File]::WriteAllText($hE.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinSecret -SteamId $hostSteamId) + "`r`n")
+        $null = New-HandoffStage $hE.CoopSavesHandoff '5F607182.partial' @{ '287700/local/TPP_GAME_DATA0' = 'half a host save' }
+        $null = New-HandoffRequest $hE.CoopSavesHandoff $stE 9292 '2026-10-15T11:59:00Z'
+        [IO.File]::WriteAllText((Join-Path $hE.CoopSavesHandoff 'provenance.json'), '{"format":"mgs-coop-save-provenance","v":1,"entries":[]}')
+        [IO.File]::WriteAllText((Join-Path $hE.CoopSavesHandoff 'notes.txt'), 'not ours')
+        $stale = Remove-CoopStaleHandoff -GameRoot $hE.Game
+        Assert-Equal ((@($stale.Removed) | Sort-Object) -join ',') 'coop-saves-handoff/4E5F6071,coop-saves-handoff/5F607182.partial,coop-saves-handoff/request.json,link-rejoin.txt' 'stale handoff files removed'
+        Assert-Equal (@($stale.Messages) -join '|') 'A host save from an earlier session was not applied and was removed.' 'the preflight sentence'
+        Assert-True ((Test-Path -LiteralPath (Join-Path $hE.CoopSavesHandoff 'provenance.json')) -and (Test-Path -LiteralPath (Join-Path $hE.CoopSavesHandoff 'notes.txt'))) 'provenance.json and unknown files stay'
+        Assert-Equal @((Remove-CoopStaleHandoff -GameRoot $hE.Game).Removed).Count 0 'nothing left to remove'
+        # A host session is never handed off.
+        $hH = New-HandoffSession 'handoff-host'
+        $hostTable = ConvertTo-CoopSessionTable -Session (Get-SessionJson $hH)
+        $hostTable['role'] = 'host'
+        Save-CoopPlaySession -GameRoot $hH.Game -Session $hostTable
+        $stH = New-HandoffStage $hH.CoopSavesHandoff '6F708193' @{ '287700/local/TPP_GAME_DATA0' = 'never' }
+        $null = New-HandoffRequest $hH.CoopSavesHandoff $stH 9393 '2026-10-15T11:59:00Z'
+        Assert-True ((Invoke-CoopHandoffAfterExit -GameRoot $hH.Game -ExitedPid 9393 -ExitedStartUtc $exitedStart -Owner console).Action -eq 'none' -and (Test-Path -LiteralPath $stH.Stage)) 'a host session: none'
+        # A live session (its launcher runs) keeps its handoff files.
+        $sleeper = Start-Process -FilePath $winPs -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 120' -WindowStyle Hidden -PassThru
+        $hostTable['launcher_pid'] = $sleeper.Id
+        $hostTable['launcher_start_utc'] = Get-CoopProcessStartUtc -Id $sleeper.Id
+        Save-CoopPlaySession -GameRoot $hH.Game -Session $hostTable
+        Assert-True (@((Remove-CoopStaleHandoff -GameRoot $hH.Game).Removed).Count -eq 0 -and (Test-Path -LiteralPath $stH.Stage)) 'a live session keeps its handoff files'
+    } finally {
+        Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
+        Remove-Item Env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC -ErrorAction SilentlyContinue
+        if ($sleeper -and !$sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue }
+    }
+
     # The reseed guard (Install-Coop): a copy that holds the partner's imported
     # progress is replaced only after two answers; the marker leaves with it.
     $impGame = New-GameFixture 'imported'
@@ -1236,6 +1698,23 @@ try {
     Assert-True ($r.Exit -eq 0 -and (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).') -and
         !(Has $r 'A co-op save copy from an earlier test exists')) "first install after an uninstall keeps an imported copy: $($r.Text)"
     Assert-Equal (Get-TreeHashes $impCoop) $uninstalledTree 'first install after an uninstall: copy and marker unchanged'
+    # An automatic save handoff is guarded the same way; the prompt names the partner's save.
+    Remove-Item -LiteralPath $impMarker
+    $futureHandoff = Join-Path $impReplaced '20991231-235959-before-handoff'
+    $null = New-Item -ItemType Directory -Path $futureHandoff
+    Assert-Equal "$((Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced).Kind)" 'handoff' 'a newest -before-handoff folder is detected'
+    $handoffTree = Get-TreeHashes $impCoop
+    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r "Your co-op save copy holds your partner's save (automatic save handoff on 2099-12-31 23:59).") -and
+        (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).')) "install keeps a copy from an automatic save handoff: $($r.Text)"
+    Assert-Equal (Get-TreeHashes $impCoop) $handoffTree 'the handoff copy is unchanged'
+    $r = Invoke-FriendAnswers $install @('-GameDirectory', $impGame, '-SteamPath', $steam, '-SkipNetworkReport') @('1', '', 'y', 'y', 'KEEP')
+    Assert-True ($r.Exit -eq 0 -and (Has $r "Your co-op save copy holds your partner's save (automatic save handoff on") -and (Has $r 'Kept the co-op save copy with your partner''s progress.')) "prompted reinstall with a handoff copy, KEEP: $($r.Text)"
+    Assert-Equal (Get-TreeHashes $impCoop) $handoffTree 'KEEP: the handoff copy is unchanged'
+    Remove-Item -LiteralPath $futureHandoff
+    [IO.File]::WriteAllText($impMarker, (New-FriendImportMarkerText -Source 'handoff' -Files @()))
+    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r "Your co-op save copy holds your partner's save (automatic save handoff on")) "a handoff marker is detected too: $($r.Text)"
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'reseed guard: real saves untouched'
 
     # ------------------------------------------------------------ packaged local two-window flow
@@ -1551,7 +2030,7 @@ try {
     Assert-Equal ([regex]::Matches($r.Raw, [regex]::Escape($code)).Count) 1 'the code (the secret) is shown once, to the host'
     Assert-True (!$r.Raw.Contains($parsedCode.Secret)) 'the bare secret is never printed'
     Assert-True ((Has $r 'Mother Base') -and (Has $r 'Tailscale')) 'host guidance: Mother Base only, VPN recommended'
-    Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Port 47835) 'host play lab.ini'
+    Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Port 47835 -SaveHandoff scene) 'host play lab.ini (save_handoff=scene by default)'
     Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($hp.LinkSecret))) ([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($parsedCode.Secret + "`r`n"))) 'link-secret.txt: the code''s secret + CRLF (ASCII)'
     Assert-Equal ([IO.File]::ReadAllText($hp.CoopIni)) (New-CoopPlayCoopIniText -Character quiet) 'play coop.ini: closed master port, the installed character'
     Assert-Equal ([IO.File]::ReadAllText($hp.Marker)) "offline-v1`n" 'marker offline-v1'
@@ -1579,7 +2058,10 @@ try {
     foreach ($a in $joinAnswers) { $printed = $printed.Replace($a, '') }
     Assert-True (!$printed.Contains($s7) -and !$printed.ToUpperInvariant().Contains('7K3QZ')) 'the joiner never prints the secret'
     $jSaveDir = Join-Path $jp.Mod 'coop-saves'
-    Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDir -Port 47831 -PeerAddress '192.0.2.44') 'guest play lab.ini (listen 0, peer address and port from the code)'
+    Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDir -Port 47831 -PeerAddress '192.0.2.44' -SaveHandoff scene) 'guest play lab.ini (listen 0, peer address and port from the code)'
+    Assert-True (Has $r "Save sharing: if your co-op save starts somewhere else than the host's, you get the host's save at the title screen and MGSV restarts once (your own copy is kept; Share-Save.bat [R]). -SaveHandoff off turns this off.") 'the joiner is told about the automatic save handoff'
+    $joinLab = (Get-SessionJson $jp).lab
+    Assert-Equal "$($joinLab.role)|$($joinLab.transport)|$($joinLab.port)|$($joinLab.peer)|$($joinLab.world)|$($joinLab.partner)|$($joinLab.save_handoff)|$($joinLab.travel_lock)" 'guest|udp|47831|192.0.2.44|3|native|scene|on' 'play-session.json records the lab.ini settings'
     Assert-Equal ([IO.File]::ReadAllText($jp.LinkSecret)) "$s7`r`n" 'guest link secret from the code'
     Assert-Equal ([IO.File]::ReadAllText($jp.CoopIni)) (New-CoopPlayCoopIniText -Character quiet) 'guest coop.ini: Quiet'
     # Deactivation keeps a file that changed after Play-Coop wrote it.
@@ -1687,7 +2169,7 @@ try {
         Assert-Equal "$($steamParsed.Status)|$($steamParsed.SteamId)" "ok|$hostSteam" 'the code names this Steam account'
         Assert-Equal ([regex]::Matches($r.Raw, [regex]::Escape($steamMatch.Value)).Count) 1 'the online code is shown once'
         Assert-True ((Has $r 'F9 -> Partner / Co-op -> Online -> Invite') -and !(Has $r 'Tailscale') -and !(Has $r 'api.ipify.org') -and !(Has $r 'UPnP') -and !(Has $r 'Firewall rule')) 'online host: invite hint; no VPN, public IP, UPnP or firewall steps'
-        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Transport steam -SteamSelf $hostSteam) 'online host lab.ini'
+        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Transport steam -SteamSelf $hostSteam -SaveHandoff scene) 'online host lab.ini'
         Assert-Equal ([IO.File]::ReadAllText($hp.LinkSecret)) "$($steamParsed.Secret)`r`n" 'online host link secret = the code''s secret'
         $session = Get-SessionJson $hp
         Assert-Equal "$($session.role)|$($session.transport)|$(@($session.files | ForEach-Object { $_.name }) -join ',')" 'host|steam|lab.ini,link-secret.txt,coop.ini,script-observe.enabled' 'online host session'
@@ -1700,14 +2182,16 @@ try {
         $jSaveDirOnline = Join-Path $jp.Mod 'coop-saves'
         $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @(' ' + $steamMatch.Value.ToLowerInvariant() + ' ') -NoWatchdog
         Assert-True ($r.Exit -eq 0 -and (Has $r ('Code OK: host Steam account ...' + $hostSteam.Substring(13)))) "online join with a code: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamPeer $hostSteam) 'online guest lab.ini'
+        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamPeer $hostSteam -SaveHandoff scene) 'online guest lab.ini'
         Assert-Equal ([IO.File]::ReadAllText($jp.LinkSecret)) "$($steamParsed.Secret)`r`n" 'online guest secret from the code'
         $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
         Assert-PassThrough $jp 'online join cleanup'
         # Wait for an invite (Enter): no secret is written.
         $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @('') -NoWatchdog
         Assert-True ($r.Exit -eq 0 -and (Has $r 'Waiting for an invite')) "online join waits for an invite: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamWait) 'waiting guest lab.ini'
+        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamWait -SaveHandoff scene) 'waiting guest lab.ini'
+        $waitLab = (Get-SessionJson $jp).lab
+        Assert-Equal "$($waitLab.transport)|$($waitLab.steam_self)|$($waitLab.steam_peer)|$($waitLab.steam_wait)|$($waitLab.peer)" "steam|$guestSteam||True|" 'a waiting guest records steam_wait (the save handoff rejoin needs it)'
         Assert-True (!(Test-Path -LiteralPath $jp.LinkSecret)) 'a waiting guest has no link secret'
         Assert-Equal (@((Get-SessionJson $jp).files | ForEach-Object { $_.name }) -join ',') 'lab.ini,coop.ini,script-observe.enabled' 'waiting guest session files'
         $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
@@ -1720,7 +2204,7 @@ try {
         # An MGS1 code in Join online joins over LAN/VPN.
         $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @($joinCode) -NoWatchdog
         Assert-True ($r.Exit -eq 0 -and (Has $r 'joining over the LAN/VPN link')) "MGS1 falls through to LAN/VPN: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Port 47831 -PeerAddress '192.0.2.44') 'MGS1 in Join online: the UDP lab.ini'
+        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Port 47831 -PeerAddress '192.0.2.44' -SaveHandoff scene) 'MGS1 in Join online: the UDP lab.ini'
         $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
         # The menu: O hosts online; L then H is the LAN/VPN host; Q changes nothing.
         $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '97000001'
@@ -1729,7 +2213,7 @@ try {
         $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
         $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-HostAddress', '192.0.2.10') @('L', 'H') -NoWatchdog
         Assert-True ($r.Exit -eq 0 -and (Has $r 'Host or Join?') -and [regex]::IsMatch($r.Raw, 'MGS1-[0-9A-Z]{5}-')) "menu L, H: the LAN/VPN host: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Port 47830) 'menu L, H: UDP lab.ini unchanged'
+        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Port 47830 -SaveHandoff scene) 'menu L, H: UDP lab.ini unchanged'
         $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
         Assert-PassThrough $hp 'menu cleanup'
         $r = Invoke-Play $play @('-GameDirectory', $hostGame) @('Q') -NoWatchdog
@@ -1807,6 +2291,139 @@ try {
             @('play=refused; reason=saves_not_redirected; refused=0x0') ($liveStatus.Replace('"state":"connected"', '"state":"off"')) 'save protection is NOT active'
         Assert-True ($out.Contains('Co-op did NOT start and save protection is NOT active: this game is normal offline play on your REAL saves. Quit MGSV now if you do not want that.')) 'launcher: the red banner when the saves are not redirected'
         Assert-True ((Get-PlayFilesPresent $hp) -eq 0) 'launcher: cleanup after the refused start as well'
+
+        # The automatic save handoff through the whole launcher (a joiner, docs/two-pc-play.md
+        # "Save handoff"): the stand-in game stages the host's save (handoff.json, then
+        # request.json with its own pid and start) and exits; Play-Coop applies it and starts
+        # MGSV again with no cleanup in between, attaches to a second stand-in and switches
+        # co-op off only after that one exits. Steam is never started (MGS_COOP_TEST_NO_LAUNCH=1).
+        function Start-StandIn([string]$Game) {
+            $exe = Join-Path $Game 'mgsvtpp.exe'
+            Copy-Item -LiteralPath $FakeProcess -Destination $exe -Force
+            $standInPort = 0
+            foreach ($i in 1..50) { $candidate = Get-Random -Minimum 49152 -Maximum 65000; if (Test-LocalPortFree -Port $candidate) { $standInPort = $candidate; break } }
+            return (Start-Process -FilePath $exe -ArgumentList '-standalone', '-listenAddr', "127.0.0.1:$standInPort" -WorkingDirectory $Game -PassThru)
+        }
+        function Stop-StandIn($Process) { if ($Process -and !$Process.HasExited) { Stop-Process -Id $Process.Id -Force; $null = $Process.WaitForExit(5000) } }
+        function Get-StandInStartUtc($Process) { return $Process.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
+        function Add-StandInEvidence($Paths) {
+            [IO.File]::AppendAllText((Join-Path $Paths.Mod 'early.log'), "early=start; version=$packageVersion`r`nsaves=redirected; dir=$($Paths.CoopSaves)`r`nplay=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected`r`n")
+            [IO.File]::AppendAllText((Join-Path $Paths.Mod 'steam-observer.log'), "master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate`r`n")
+            [IO.File]::AppendAllText((Join-Path $Paths.Mod 'script-observer.log'), "play=active; role=guest; partner=1; refused=0x0`r`n")
+        }
+        $hoGame = New-GameFixture 'handoff-launch'
+        $hop = Get-InstancePaths -GameDirectory $hoGame
+        $r = Invoke-Friend $install (@('-GameDirectory', $hoGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
+        Assert-Equal $r.Exit 0 "install for the handoff launcher test: $($r.Raw)"
+        $hoRealExe = [IO.File]::ReadAllBytes($hop.Exe)
+        $hoIn = Join-Path $fixture 'handoff-launch-in.txt'; $hoOut = Join-Path $fixture 'handoff-launch-out.txt'; $hoErr = Join-Path $fixture 'handoff-launch-err.txt'
+        [IO.File]::WriteAllText($hoIn, "$joinCode`r`n`r`n`r`n")
+        $env:MGS_COOP_TEST_INTERACTIVE = '1'; $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_NO_WATCHDOG = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'
+        $savedModulePath = $env:PSModulePath
+        $env:PSModulePath = ''
+        try {
+            $hoLauncher = Start-Process -FilePath $winPs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $play + '"'), '-GameDirectory', ('"' + $hoGame + '"'), '-Role', 'Join') `
+                -RedirectStandardInput $hoIn -RedirectStandardOutput $hoOut -RedirectStandardError $hoErr -NoNewWindow -PassThru
+        } finally {
+            $env:PSModulePath = $savedModulePath
+            foreach ($v in 'MGS_COOP_TEST_INTERACTIVE', 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_NO_WATCHDOG', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+        }
+        $hoRead = { if (Test-Path -LiteralPath $hoOut) { Read-SharedText -Path $hoOut } else { '' } }
+        $standIn1 = $null; $standIn2 = $null
+        try {
+            Assert-True (Wait-Until { (& $hoRead).Contains('Waiting for MGSV') } 90) "[handoff] the launcher waits for the game: $(& $hoRead)"
+            $hoOwnBefore = Get-RelativeTreeHashes $hop.CoopSaves
+            $standIn1 = Start-StandIn $hoGame
+            Assert-True (Wait-Until { (& $hoRead).Contains('MGSV started') } 30) '[handoff] the launcher sees the first game'
+            Add-StandInEvidence $hop
+            $hoStatus = '{"v":1,"pid":@PID@,"mode":"play","role":"guest","state":"connected","reason":"","verified":1,"session":1,"peer":"192.0.2.44:47831","local_port":0,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":40050,"saves":"redirected","handoff":"countdown","handoff_pct":100,"time_utc":"@NOW@"}'
+            [IO.File]::WriteAllText($hop.LinkStatus, $hoStatus.Replace('@PID@', [string]$standIn1.Id).Replace('@NOW@', [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')))
+            Assert-True (Wait-Until { $t = & $hoRead; $t.Contains('| host save ready, MGSV restarts | mission 40050') -and $t.Contains("Host's save ready: MGSV restarts at the title screen") } 30) "[handoff] the status segment and the one-time sentence: $(& $hoRead)"
+            # The stand-in stages the host's save, writes its request last and exits.
+            $hoStage = New-HandoffStage $hop.CoopSavesHandoff '9CADBECF' @{ '287700/local/TPP_GAME_DATA0' = 'host progress for the launcher'; 'remote/TPP_GAME_DATA' = 'host remote for the launcher' }
+            $null = New-HandoffRequest $hop.CoopSavesHandoff $hoStage $standIn1.Id (Get-StandInStartUtc $standIn1)
+            Stop-StandIn $standIn1
+            Assert-True (Wait-Until { (& $hoRead).Contains('Starting MGSV again with the same join code...') } 60) "[handoff] the launcher applies and restarts: $(& $hoRead)"
+            $hoText = & $hoRead
+            Assert-True ($hoText.Contains("MGSV closed to load the host's save.") -and $hoText.Contains("Applying the host's save (2 files, 1 KB)...") -and
+                [regex]::IsMatch($hoText, 'Your previous co-op save is kept at mgs-coop\\coop-saves-replaced\\[0-9]{8}-[0-9]{6}(-[0-9]+)?-before-handoff \(Share-Save\.bat \[R\] brings it back\)\.') -and
+                !$hoText.Contains('MGSV exited.')) "[handoff] the restart lines and no exit line: $hoText"
+            Assert-True ((Get-PlayFilesPresent $hop) -eq 4) '[handoff] no cleanup in between: all four co-op files stay'
+            $hoSession = Get-SessionJson $hop
+            Assert-Equal "$($hoSession.state)|$(Get-HandoffField $hop 'state')|$(Get-HandoffField $hop 'count')|$(Get-HandoffField $hop 'claimed_by_pid')" "active|relaunching|1|$($hoLauncher.Id)" '[handoff] the launcher claimed and restarted'
+            Assert-True ([IO.File]::ReadAllText($hop.LabIni).Contains("save_handoff=off`n") -and (@($hoSession.files | Where-Object { $_.name -eq 'lab.ini' })[0]).sha256 -eq (Get-Sha256 $hop.LabIni)) '[handoff] lab.ini again with save_handoff=off, its hash recorded'
+            foreach ($row in $hoStage.Rows) { Assert-Equal (Get-Sha256 (Join-Path $hop.CoopSaves $row.entry.Replace('/', '\'))) $row.sha256 "[handoff] the host's $($row.entry) is in the co-op copy" }
+            $hoAside = @(Get-CoopProgressBackups -ReplacedRoot $hop.CoopSavesReplaced | Where-Object { $_.Kind -eq 'handoff' })
+            Assert-True ($hoAside.Count -eq 1 -and (Get-RelativeTreeHashes $hoAside[0].Path) -eq $hoOwnBefore) '[handoff] the own copy is kept aside'
+            # Steam would start MGSV now: the second stand-in.
+            $standIn2 = Start-StandIn $hoGame
+            Assert-True (Wait-Until { (& $hoRead).Contains("MGSV restarted (process $($standIn2.Id)).") } 30) "[handoff] the launcher attaches to the restarted game: $(& $hoRead)"
+            Add-StandInEvidence $hop
+            Assert-True (Wait-Until { (Get-HandoffField $hop 'state') -eq 'relaunched' -and [int](Get-FriendProperty (Get-SessionJson $hop) 'game_pid' 0) -eq $standIn2.Id } 15) '[handoff] state relaunched with the new game recorded'
+            [IO.File]::WriteAllText($hop.LinkStatus, $hoStatus.Replace('"handoff":"countdown","handoff_pct":100', '"handoff":"applied","handoff_pct":0').Replace('"mission":40050', '"mission":30010').Replace('@PID@', [string]$standIn2.Id).Replace('@NOW@', [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')))
+            Assert-True (Wait-Until { (& $hoRead).Contains("| playing on the host's save | mission 30010") } 30) "[handoff] the status line after the restart: $(& $hoRead)"
+            Assert-True ((Get-PlayFilesPresent $hop) -eq 4) '[handoff] co-op stays on while the restarted game runs'
+            Stop-StandIn $standIn2
+            Assert-True ($hoLauncher.WaitForExit(60000)) '[handoff] the launcher ends when the restarted game exits'
+            $hoText = & $hoRead
+            Assert-True ($hoText.Contains('MGSV exited.') -and (Get-PlayFilesPresent $hop) -eq 0 -and (Get-SessionJson $hop).state -eq 'off') "[handoff] 'MGSV exited.' and the cleanup after the second game: $hoText"
+        } finally {
+            Stop-StandIn $standIn1; Stop-StandIn $standIn2
+            if (!$hoLauncher.HasExited) { Stop-Process -Id $hoLauncher.Id -Force -ErrorAction SilentlyContinue }
+            [IO.File]::WriteAllBytes($hop.Exe, $hoRealExe)
+        }
+
+        # The same with the window gone (-Watch): the helper applies, waits for the restarted game
+        # and switches co-op off only after that one exits.
+        $wdGame = New-GameFixture 'handoff-watch'
+        $wdp = Get-InstancePaths -GameDirectory $wdGame
+        $r = Invoke-Friend $install (@('-GameDirectory', $wdGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
+        Assert-Equal $r.Exit 0 "install for the handoff helper test: $($r.Raw)"
+        $wdRealExe = [IO.File]::ReadAllBytes($wdp.Exe)
+        $r = Invoke-Play $play @('-GameDirectory', $wdGame, '-Role', 'Join') @($joinCode) -NoWatchdog
+        Assert-Equal $r.Exit 0 "activation for the handoff helper test (the window closes right after it): $($r.Raw)"
+        $wdSessionId = [string](Get-SessionJson $wdp).session_id
+        $standIn1 = $null; $standIn2 = $null; $wdHelper = $null
+        try {
+            $standIn1 = Start-StandIn $wdGame
+            # Started like Start-CoopWatchdog's command (Start-Process keeps this test's environment).
+            $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'; $env:MGS_COOP_TEST_RESTART_WAIT_SEC = '120'
+            $savedModulePath = $env:PSModulePath
+            $env:PSModulePath = ''
+            try {
+                $wdHelper = Start-Process -FilePath $winPs -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $play + '"'), '-GameDirectory', ('"' + $wdGame + '"'), '-Watch', $wdSessionId, '-TestNoLaunch') -WindowStyle Hidden -PassThru
+            } finally {
+                $env:PSModulePath = $savedModulePath
+                foreach ($v in 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC', 'MGS_COOP_TEST_RESTART_WAIT_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+            }
+            $watchdogs.Add($wdHelper.Id)
+            $wdHelperStart = Get-CoopProcessStartUtc -Id $wdHelper.Id
+            $null = Update-CoopPlaySession -GameRoot $wdGame -Update { param($t) $t['watchdog_pid'] = $wdHelper.Id; $t['watchdog_start_utc'] = $wdHelperStart }
+            Assert-True (Wait-Until { [int](Get-FriendProperty (Get-SessionJson $wdp) 'game_pid' 0) -eq $standIn1.Id } 30) '[helper] the helper records the running game'
+            $wdOwnBefore = Get-RelativeTreeHashes $wdp.CoopSaves
+            $wdStage = New-HandoffStage $wdp.CoopSavesHandoff 'ADBECFD0' @{ '287700/local/TPP_GAME_DATA0' = 'host progress for the helper' }
+            $null = New-HandoffRequest $wdp.CoopSavesHandoff $wdStage $standIn1.Id (Get-StandInStartUtc $standIn1)
+            Stop-StandIn $standIn1
+            Assert-True (Wait-Until { (Get-HandoffField $wdp 'state') -eq 'relaunching' -and (Get-HandoffField $wdp 'count') -eq '1' } 60) "[helper] the helper applies the host's save: $([IO.File]::ReadAllText($wdp.PlaySession))"
+            Assert-Equal (Get-HandoffField $wdp 'claimed_by_pid') ([string]$wdHelper.Id) '[helper] the helper claimed it'
+            Assert-True ([IO.File]::ReadAllText($wdp.LabIni).Contains("save_handoff=off`n") -and (Get-Sha256 (Join-Path $wdp.CoopSaves '287700\local\TPP_GAME_DATA0')) -eq $wdStage.Rows[0].sha256) "[helper] applied: lab.ini and the host's progress"
+            $wdAside = @(Get-CoopProgressBackups -ReplacedRoot $wdp.CoopSavesReplaced | Where-Object { $_.Kind -eq 'handoff' })
+            Assert-True ($wdAside.Count -eq 1 -and (Get-RelativeTreeHashes $wdAside[0].Path) -eq $wdOwnBefore) '[helper] the own copy is kept aside'
+            Start-Sleep -Seconds 6
+            Assert-True ((Get-PlayFilesPresent $wdp) -eq 4 -and !$wdHelper.HasExited) '[helper] while the restart is pending, co-op stays on and the helper waits'
+            $standIn2 = Start-StandIn $wdGame
+            Assert-True (Wait-Until { (Get-HandoffField $wdp 'state') -eq 'relaunched' -and [int](Get-FriendProperty (Get-SessionJson $wdp) 'game_pid' 0) -eq $standIn2.Id } 30) '[helper] the restarted game is recorded (relaunched)'
+            Start-Sleep -Seconds 4
+            Assert-True ((Get-PlayFilesPresent $wdp) -eq 4 -and !$wdHelper.HasExited) '[helper] co-op stays on while the restarted game runs'
+            Stop-StandIn $standIn2
+            Assert-True (Wait-Until { (Get-PlayFilesPresent $wdp) -eq 0 -and (Get-SessionJson $wdp).state -eq 'off' } 45) '[helper] co-op is switched off after the restarted game exits'
+            Assert-True ($wdHelper.WaitForExit(15000)) '[helper] the helper exits after its cleanup'
+        } finally {
+            Stop-StandIn $standIn1; Stop-StandIn $standIn2
+            if ($wdHelper -and !$wdHelper.HasExited) { Stop-Process -Id $wdHelper.Id -Force -ErrorAction SilentlyContinue }
+            [IO.File]::WriteAllBytes($wdp.Exe, $wdRealExe)
+        }
+        Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'the save handoff launcher tests never touch the real saves'
     } else { Write-Warning 'lab_fake_process not supplied; the helper''s game-exit path and the launcher are not tested.' }
 
     # ------------------------------------------------------------ Collect-Logs
@@ -1817,6 +2434,16 @@ try {
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'probe.log'), ((1..40000 | ForEach-Object { "probe line $_ steam=76561197960265735" }) -join "`r`n") + "`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'early.log'), "early=start; version=0.12.0; lab=1; role=host`r`nsaves=redirected; dir=$hostSaveDir`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'link-status.json'), '{"v":1,"pid":1,"state":"connected","peer":"203.0.113.7:51234","mission":30050}')
+    # The automatic save handoff's records are collected; link-rejoin.txt (a join code) never is.
+    $rejoinOnDisk = 'QQQQQRRRRRSSSSSTTTTT'
+    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198058195100') + "`r`n")
+    $null = New-Item -ItemType Directory -Path $hp.CoopSavesHandoff -Force
+    [IO.File]::WriteAllText((Join-Path $hp.CoopSavesHandoff 'provenance.json'), '{"format":"mgs-coop-save-provenance","v":1,"entries":[{"set":"' + ('A' * 64) + '","mission":30010,"source":"continue","utc":"2026-10-15T12:00:00Z"}]}')
+    [IO.File]::WriteAllText((Join-Path $hp.CoopSavesHandoff 'applied.json'), '{"format":"mgs-coop-save-handoff-applied","v":1,"set_sha256":"' + ('B' * 64) + '","applied_utc":"2026-10-15T12:01:00Z","aside":"20000101-000000-before-handoff"}')
+    $collectStage = New-HandoffStage $hp.CoopSavesHandoff '6A7B8C9D' @{ '287700/local/TPP_GAME_DATA0' = 'staged host progress, never collected' }
+    $null = New-HandoffRequest $hp.CoopSavesHandoff $collectStage 4242 '2026-10-15T11:59:00Z'
+    $handoffAside = Join-Path $hp.CoopSavesReplaced '20000101-000000-before-handoff'
+    $null = New-Item -ItemType Directory -Path $handoffAside -Force
     $outDir = Join-Path $fixture 'desktop'
     $null = New-Item -ItemType Directory -Path $outDir
     $r = Invoke-Friend $collect @('-GameDirectory', $hostGame, '-OutputDirectory', $outDir, '-NonInteractive', '-MaxLogBytes', '65536')
@@ -1832,8 +2459,11 @@ try {
         Assert-True (Test-Path -LiteralPath (Join-Path $collected $n) -PathType Leaf) "collected $n"
     }
     Assert-True (!(Test-Path -LiteralPath (Join-Path $collected 'link-secret.txt'))) 'link-secret.txt is never collected'
+    foreach ($n in 'handoff-provenance.json', 'handoff-applied.json', 'handoff-request.json') { Assert-True (Test-Path -LiteralPath (Join-Path $collected $n) -PathType Leaf) "collected $n" }
+    Assert-True (!@(Get-ChildItem -LiteralPath $collected -File | Where-Object { $_.Name -like '*rejoin*' -or $_.Name -like 'TPP_GAME_DATA*' }).Count) 'link-rejoin.txt and staged save files are never collected'
     $everything = (Get-ChildItem -LiteralPath $collected -File | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
     Assert-True (!$everything.Contains($secretOnDisk) -and !$everything.ToUpperInvariant().Contains('7K3QZ')) 'neither the link key nor a pasted code is in the logs ZIP'
+    Assert-True (!$everything.Contains($rejoinOnDisk) -and !$everything.Contains('staged host progress')) 'neither the rejoin code nor staged save bytes are in the logs ZIP'
     Assert-True ($everything.Contains('MGS1-<redacted>') -and $everything.Contains('peer=203.0.x.x:51234') -and $everything.Contains('"peer":"203.0.x.x:51234"') -and $everything.Contains('1.0.15.4')) 'codes redacted, public peers masked, versions kept'
     Assert-True ($everything -notmatch '(?<![0-9])7656119[0-9]{10}(?![0-9])' -and !$everything.Contains('Alice')) 'no complete SteamID or user name'
     $observer = [IO.File]::ReadAllText((Join-Path $collected 'script-observer.log'))
@@ -1845,8 +2475,11 @@ try {
     Assert-True ($saveListing -cmatch "(?m)^coop-saves/287700/local/COOP_PROGRESS`t[0-9]+`t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\r?$" -and
         $saveListing -cmatch "(?m)^coop-saves/287700/local`tdir`t") 'coop-saves.txt lists files with sizes and folders'
     Assert-True (!$saveListing.Contains('progress made in the co-op copy') -and !$saveListing.Contains('fixture save') -and !$saveListing.Contains($hostGame)) 'coop-saves.txt holds no save contents and no absolute path'
+    Assert-True ($saveListing -cmatch "(?m)^coop-saves-handoff`tdir`t" -and $saveListing -cmatch "(?m)^coop-saves-handoff/6A7B8C9D/287700/local/TPP_GAME_DATA0`t[0-9]+`t" -and
+        $saveListing -cmatch "(?m)^coop-saves-handoff/request.json`t[0-9]+`t" -and !$saveListing.Contains('staged host progress')) 'coop-saves.txt lists coop-saves-handoff (names and sizes only)'
     $summary = [IO.File]::ReadAllText((Join-Path $collected 'summary.txt'))
     Assert-True ($summary -cmatch 'coop_saves=files=[0-9]+; import_marker=absent; newest_replaced=') 'summary: the co-op save state'
+    Assert-True ($summary.Contains('handoff=none; asides_handoff=1')) 'summary: the save handoff state and its asides'
     Assert-True ($summary.Contains('real_saves=UNCHANGED') -and $summary.Contains('mgsvtpp.exe sha256=' + $exeHash) -and $summary.Contains('matches_install_record=True') -and $summary.Contains('play_session=off; role=host') -and $summary.Contains('link_secret_present=True (never collected)')) 'summary: save check, hashes, play session, link secret not collected'
     Remove-Item -LiteralPath $hp.LinkSecret
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'collecting logs reads the saves only'
@@ -1905,12 +2538,21 @@ try {
         Start-Sleep -Milliseconds 300
         [IO.File]::WriteAllBytes($hp.Exe, $realExe)
     } else { Write-Warning 'lab_fake_process not supplied; running-game refusal not tested.' }
-    # Uninstall switches off an active play session first.
+    # Uninstall switches off an active play session first. (The Play-Coop preflight first
+    # removes what an unapplied save handoff left: request, stage and link-rejoin.txt.)
     $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
     Assert-Equal $r.Exit 0 "activation before the uninstall: $($r.Raw)"
+    Assert-True ((Has $r 'A host save from an earlier session was not applied and was removed.') -and !(Test-Path -LiteralPath $hp.LinkRejoin) -and
+        !(Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'request.json')) -and !(Test-Path -LiteralPath $collectStage.Stage) -and
+        (Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'provenance.json')) -and (Test-Path -LiteralPath $handoffAside)) "Play-Coop removes an unapplied save handoff first: $($r.Text)"
+    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198058195100') + "`r`n")
+    $uninstallStage = New-HandoffStage $hp.CoopSavesHandoff '7B8C9DAE.partial' @{ '287700/local/TPP_GAME_DATA0' = 'half a host save' }
     $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
     Assert-Equal $r.Exit 0 "host uninstall succeeds: $($r.Raw)"
     Assert-True ((Has $r 'Step 0: switching off the last Play-Coop session') -and (Has $r 'restored 2 install state(s)') -and (Has $r 'UNCHANGED')) 'play session switched off, both installs undone, saves verified'
+    Assert-True (!(Test-Path -LiteralPath $hp.LinkRejoin) -and !(Test-Path -LiteralPath $uninstallStage.Stage) -and (Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'provenance.json')) -and
+        (Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'applied.json')) -and (Test-Path -LiteralPath $handoffAside) -and (Has $r 'link-rejoin.txt')) "uninstall removes link-rejoin.txt and staged handoff files, keeps provenance, applied and coop-saves-replaced: $($r.Text)"
+    Remove-Item -LiteralPath $handoffAside
     Assert-True (-not (Test-Path -LiteralPath $hp.Loader) -and -not (Test-Path -LiteralPath $hp.Record)) 'loader and record removed (none before)'
     Assert-PassThrough $hp 'after the uninstall'
     Assert-Equal @(Get-ChildItem -LiteralPath $hp.Mod -Filter 'friend-install.json.uninstalled-*').Count 1 'install record retired'
@@ -2046,7 +2688,7 @@ try {
     $r = Invoke-Play (Join-Path $uniStage 'scripts/Play-Coop.ps1') @('-GameDirectory', $uniGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
     Assert-Equal $r.Exit 0 "non-ASCII: Play-Coop host: $($r.Raw)"
     $uniLabBytes = [IO.File]::ReadAllBytes($unp.LabIni)
-    Assert-Equal ([Text.Encoding]::UTF8.GetString($uniLabBytes)) (New-CoopPlayLabIniText -Role host -SaveDir (Join-Path $unp.Mod 'coop-saves') -Port 47830) 'non-ASCII: play lab.ini save_dir in UTF-8'
+    Assert-Equal ([Text.Encoding]::UTF8.GetString($uniLabBytes)) (New-CoopPlayLabIniText -Role host -SaveDir (Join-Path $unp.Mod 'coop-saves') -Port 47830 -SaveHandoff scene) 'non-ASCII: play lab.ini save_dir in UTF-8'
     Assert-True ($uniLabBytes[0] -ne 0xEF -and @($uniLabBytes | Where-Object { $_ -eq 0x3F }).Count -eq 0) 'non-ASCII: no BOM and no ? in the play lab.ini'
     if ($linkKeys) {
         # The native helper opens its argument with the ANSI API: check a copy
@@ -2054,7 +2696,10 @@ try {
         $uniLabCopy = Join-Path $fixture 'uni-lab.ini'
         Copy-Item -LiteralPath $unp.LabIni -Destination $uniLabCopy
         $n = Invoke-IniCheck lab $uniLabCopy
-        Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|play|0x0|0/0' 'native: play lab.ini with a UTF-8 save_dir accepted'
+        # Play-Coop writes save_handoff=scene: one unknown key until the loader parses it.
+        $unknownExpected = '1/0'
+        if ($handoffKeys) { $unknownExpected = '0/0' }
+        Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" "1|play|0x0|$unknownExpected" 'native: play lab.ini with a UTF-8 save_dir accepted'
         Assert-Equal $n['save_dir'] (Join-Path $unp.Mod 'coop-saves') 'native: UTF-8 save_dir kept'
     }
     $r = Invoke-Friend (Join-Path $uniStage 'scripts/Play-Coop.ps1') @('-GameDirectory', $uniGame, '-Cleanup', '-NonInteractive')
