@@ -199,6 +199,10 @@ struct CfgReply {
     // the raw pair-wait code (Core::pair_wait; never settling).
     std::uint32_t remote_mission;
     std::uint8_t remote_level, wait;
+    // Save handoff (join-fix phase 2 P2-1), filled only by world_link::HandleCfg
+    // after Core::Cfg (which leaves them 0): r[12] the save_handoff_state::LuaCode
+    // and r[13] the travel lock (1 may apply, else 0).
+    std::uint8_t handoff, lock;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

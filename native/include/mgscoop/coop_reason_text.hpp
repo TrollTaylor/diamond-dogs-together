@@ -55,4 +55,13 @@ const char* PairWaitName(std::uint8_t code) noexcept;
 bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint32_t partner, std::uint32_t local,
                      char* out, std::size_t capacity) noexcept;
 
+// The toast sentence for an automatic save handoff event (docs/save-handoff.md;
+// `code` is a save_handoff_state::Toast, G1..G10 = 1..10 and H1..H7 = 21..27,
+// with `a` / `b` as listed there: kb, seconds, a mission or a
+// save_handoff_wire::Fail). `partner` is the partner's display name ("" gives
+// "your partner"); mission names come from FormatMission. ASCII, at most 199
+// characters. False for an unknown code or when `out` is too small.
+bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, const char* partner, char* out,
+                       std::size_t capacity) noexcept;
+
 }  // namespace mgscoop::coop_text

@@ -61,6 +61,9 @@ struct LinkView {
     std::uint8_t world_level{}, pair_wait{};
     bool world_paired{};
     std::uint32_t partner_mission{};
+    // Save handoff (partner_net::PublishHandoffState; join-fix phase 2 P2-15):
+    // the save_handoff_state::Token and its percent; zero keeps today's line.
+    std::uint8_t handoff{}, handoff_pct{};
 };
 void PublishLink(const LinkView& view) noexcept;
 bool GetLink(LinkView& out) noexcept;
@@ -143,7 +146,8 @@ enum class EventKind : std::uint8_t {
     code_copied,
     no_body,       // arg: the mission, text: the refused pack's scene (partner::PackSceneName)
     world_note,    // arg: the note code, text: "<a> <b> <partner> <local>" in decimal (PostWorldNote)
-    join_ignored   // text: via (a pasted code while already connected or connecting)
+    join_ignored,  // text: via (a pasted code while already connected or connecting)
+    save_handoff   // arg: save_handoff_state::Toast code, text: "<a> <b>" in decimal (coop_text::FormatSaveHandoff)
 };
 struct Event {
     EventKind kind;

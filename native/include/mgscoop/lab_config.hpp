@@ -312,6 +312,15 @@ bool ParseSteamDispatch(const char* text, std::size_t size, SteamDispatch& out) 
 enum class CoopHud : std::uint8_t { unset, compact, full, off };
 const char* CoopHudName(CoopHud value) noexcept;
 bool ParseCoopHud(const char* text, std::size_t size, CoopHud& out) noexcept;
+// Automatic save handoff (docs/save-handoff.md; join-fix phase 2 P2-11):
+// lab.ini save_handoff=off|stage|scene|always (absent = off; Play-Coop writes
+// it explicitly; stage transfers and stages but never requests a restart) and
+// travel_lock=0|1 (absent: 1 in play, 0 in lab). Neither is a play refusal.
+// The order matches save_handoff_wire::Mode.
+enum class SaveHandoff : std::uint8_t { off, stage, scene, always };
+const char* SaveHandoffName(SaveHandoff value) noexcept;
+bool ParseSaveHandoff(const char* text, std::size_t size, SaveHandoff& out) noexcept;
+inline constexpr std::uint8_t kTravelLockAbsent = 0xFF;
 // World sync lab probes (docs/world-sync-protocol.md "Probes"): lab.ini
 // world_probe and the world.trigger key. The ids are the wire probeId of
 // PROBE_SYNC and the Lua probe number, in this order.
@@ -522,6 +531,12 @@ struct LabConfig {
     // only (play forces none and sets kPlayRefusedWorldProbe).
     std::uint32_t world = 0;
     WorldProbe world_probe = WorldProbe::none;
+    // Automatic save handoff and the guest travel lock (P2-11): save_handoff
+    // absent = off; travel_lock 0|1, kTravelLockAbsent when not named (the
+    // effective value is then 1 in play and 0 in lab).
+    SaveHandoff save_handoff = SaveHandoff::off;
+    bool save_handoff_given = false;
+    std::uint8_t travel_lock = kTravelLockAbsent;
     // Debug "Spawn enemy here" native placement (native/soldier_warp.cpp): the
     // engine set-transform message to one soldier. Lab qualification only; play
     // forces it off (kPlayRefusedDebugSoldierWarp).

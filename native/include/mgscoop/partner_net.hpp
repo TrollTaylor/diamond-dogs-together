@@ -269,6 +269,28 @@ void SetWorldHooks(const WorldHooks* hooks) noexcept;     // install time, befor
 // Game or receive thread; not_connected / too_large / bad_channel as SendReliable.
 link::ReliableResult SendDatagram(std::uint8_t channel, const void* bytes, std::size_t size) noexcept;
 
+// Automatic save handoff (docs/save-handoff.md; join-fix phase 2 P2-12). Only
+// save_handoff.cpp sends on reliable channel 4 or drains it, from these hooks.
+// All callbacks run on the receive or transport thread with no partner_net
+// lock held; null hooks = today's behaviour.
+struct HandoffHooks {
+    void (*on_idle)(std::uint64_t now_ms) noexcept;      // after g_world.on_idle at the end of LinkIdle
+    void (*on_session)(std::uint32_t session) noexcept;  // after each g_world.on_session (new session, ArmSteamGuest)
+    void (*on_peer_close)() noexcept;                    // after the CLOSE handling, outside the locks
+};
+void SetHandoffHooks(const HandoffHooks* hooks) noexcept;  // install time, before Start
+// Messages queued and not yet acknowledged on a reliable channel (g_tx_lock);
+// 0 for an unknown channel or before Start.
+unsigned ReliableQueued(std::uint8_t channel) noexcept;
+// Guest: the MGS2 join code it was armed with (secret-bearing: the caller
+// clears its buffer). True only for a Steam guest that started waiting
+// (net_steam_wait) and was then armed by an invite or an F9 paste; zeroed at
+// shutdown.
+bool BuildGuestJoinCode(char* out, std::size_t capacity) noexcept;
+// link-status.json "handoff" (save_handoff_state::Token) and "handoff_pct"
+// (0..100), also copied into the HUD LinkView. Any thread, atomics only.
+void PublishHandoffState(std::uint8_t token, std::uint8_t pct) noexcept;
+
 // --- Steam online (docs/steam-online.md 7.6, 8.2, 8.3, 10). Inert on UDP.
 // Window-close shutdown flag (any thread, flags only): the Steam transport
 // sends one link CLOSE, closes the peer session and makes no further Steam

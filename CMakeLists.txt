@@ -126,7 +126,7 @@ if(MSVC)
   target_compile_options(heap_trial_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME heap_trial_tests COMMAND heap_trial_tests)
-add_library(mgs_coop_core native/session.cpp native/protocol.cpp native/import_table.cpp native/steam_runtime.cpp native/steam_lifecycle.cpp native/typed_payload.cpp native/input_receiver.cpp native/steam_packets.cpp native/player_sync.cpp native/lab_config.cpp native/lab_status.cpp native/partner_receipt.cpp native/partner_input.cpp native/partner_native.cpp native/downed_damage_policy.cpp native/downed_player_policy.cpp native/buddy_pose.cpp native/partner_reload.cpp native/partner_slots.cpp native/partner_rates.cpp native/partner_equip_wire.cpp native/partner_ride_wire.cpp native/partner_caps_wire.cpp native/partner_native_net.cpp native/partner_recon.cpp native/partner_dmmap.cpp native/pose_interp.cpp native/link_crypto.cpp native/link_protocol.cpp native/link_session.cpp native/world_wire.cpp native/world_receipt.cpp native/steam_join_code.cpp native/steam_net_gates.cpp native/coop_reason_text.cpp native/coop_hud.cpp native/partner_aim.cpp)
+add_library(mgs_coop_core native/session.cpp native/protocol.cpp native/import_table.cpp native/steam_runtime.cpp native/steam_lifecycle.cpp native/typed_payload.cpp native/input_receiver.cpp native/steam_packets.cpp native/player_sync.cpp native/lab_config.cpp native/lab_status.cpp native/partner_receipt.cpp native/partner_input.cpp native/partner_native.cpp native/downed_damage_policy.cpp native/downed_player_policy.cpp native/buddy_pose.cpp native/partner_reload.cpp native/partner_slots.cpp native/partner_rates.cpp native/partner_equip_wire.cpp native/partner_ride_wire.cpp native/partner_caps_wire.cpp native/partner_native_net.cpp native/partner_recon.cpp native/partner_dmmap.cpp native/pose_interp.cpp native/link_crypto.cpp native/link_protocol.cpp native/link_session.cpp native/world_wire.cpp native/world_receipt.cpp native/steam_join_code.cpp native/steam_net_gates.cpp native/coop_reason_text.cpp native/coop_hud.cpp native/partner_aim.cpp native/save_handoff_wire.cpp native/save_handoff_core.cpp native/save_handoff_state.cpp)
 target_include_directories(mgs_coop_core PUBLIC native/include)
 # The hidden worker's one-PC play rehearsal (lab_config LabParseOptions):
 # only background-worker builds let GetLabConfig accept play_rehearsal=1.
@@ -178,6 +178,16 @@ foreach(_mgs_world_test world_wire_tests world_receipt_tests)
     target_compile_options(${_mgs_world_test} PRIVATE /W4 /WX)
   endif()
   add_test(NAME ${_mgs_world_test} COMMAND ${_mgs_world_test})
+endforeach()
+# Automatic save handoff (docs/save-handoff.md, join-fix phase 2): the
+# channel-4 codec, the slot table and set hash, and the host/guest core.
+foreach(_mgs_handoff_test save_handoff_wire_tests save_handoff_core_tests)
+  add_executable(${_mgs_handoff_test} tests/${_mgs_handoff_test}.cpp)
+  target_link_libraries(${_mgs_handoff_test} PRIVATE mgs_coop_core)
+  if(MSVC)
+    target_compile_options(${_mgs_handoff_test} PRIVATE /W4 /WX)
+  endif()
+  add_test(NAME ${_mgs_handoff_test} COMMAND ${_mgs_handoff_test})
 endforeach()
 # Offline partner spike (docs/offline-partner-spike-plan.md): portable receipts, input logic and interpolation.
 foreach(_mgs_partner_test buddy_pose_tests partner_receipt_tests partner_input_tests partner_native_tests partner_equip_wire_tests partner_recon_tests partner_dmmap_tests pose_interp_tests partner_source_turns_tests partner_action_events_tests partner_action_link_tests partner_upper_pipeline_tests)
@@ -349,7 +359,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # World sync (docs/world-sync-protocol.md): each chunk at most 32000 bytes
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
   # split at a line break, so each literal stays under the MSVC literal limit.
-  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")
@@ -438,7 +448,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # Co-op single-PC lab shim: DllMain-early patches, loopback ISteamNetworking
   # emulator, fake identity, save isolation, synthetic callbacks and UDP
   # transport. Provides win_import_patch for the probe (so it is compiled once).
-  add_library(mgs_coop_lab STATIC native/early_patches.cpp native/steam_identity.cpp native/save_redirect.cpp native/steam_callbacks.cpp native/steam_loopback.cpp native/udp_transport.cpp native/win_import_patch.cpp native/partner_net.cpp native/world_link.cpp native/steam_transport.cpp native/steam_net_callbacks.cpp native/steam_net_dispatch.cpp native/steam_link_harness.cpp)
+  add_library(mgs_coop_lab STATIC native/early_patches.cpp native/steam_identity.cpp native/save_redirect.cpp native/steam_callbacks.cpp native/steam_loopback.cpp native/udp_transport.cpp native/win_import_patch.cpp native/partner_net.cpp native/world_link.cpp native/steam_transport.cpp native/steam_net_callbacks.cpp native/steam_net_dispatch.cpp native/steam_link_harness.cpp native/save_handoff.cpp)
   target_include_directories(mgs_coop_lab PUBLIC native/include PRIVATE native)
   target_link_libraries(mgs_coop_lab PUBLIC mgs_coop_core PRIVATE ws2_32 bcrypt)
   target_compile_options(mgs_coop_lab PRIVATE /W4 /WX)
@@ -452,6 +462,13 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_link_libraries(link_udp_tests PRIVATE mgs_coop_lab ws2_32)
   target_compile_options(link_udp_tests PRIVATE /W4 /WX)
   add_test(NAME link_udp_tests COMMAND link_udp_tests)
+  # Automatic save handoff glue (join-fix phase 2): file actions against fake
+  # save trees in a temporary folder under the build directory.
+  add_executable(save_handoff_io_tests tests/save_handoff_io_tests.cpp)
+  target_include_directories(save_handoff_io_tests PRIVATE native)
+  target_link_libraries(save_handoff_io_tests PRIVATE mgs_coop_lab mgs_coop_core ws2_32 bcrypt)
+  target_compile_options(save_handoff_io_tests PRIVATE /W4 /WX)
+  add_test(NAME save_handoff_io_tests COMMAND save_handoff_io_tests)
   add_executable(steam_loopback_tests tests/steam_loopback_tests.cpp)
   target_include_directories(steam_loopback_tests PRIVATE native)
   target_link_libraries(steam_loopback_tests PRIVATE mgs_coop_lab ws2_32)
