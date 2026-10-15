@@ -1406,6 +1406,36 @@ do
     check(not c7.W.active and has(c7.logs, 'event=inactive;reason=missing_required;names=Fox.StrCode32'), 'a missing required binding')
 end
 
+-- 16b. A held host sortie (W.follow.hostDeploy) still ends while world sync is
+-- inactive (world level 0, W.fail), but never one from an ended mission (OnTerminate).
+do
+    for _, cause in ipairs({'level0', 'error'}) do
+        local env, c = fixture({role = 1})
+        F.start(env, c)
+        local holds, holdArgs, ticks = 0, nil, 0
+        c.W.follow = {hostDeploy = {}, tick = function() ticks = ticks + 1 end,
+            hold = function(...) holds = holds + 1; holdArgs = select('#', ...) end}
+        F.tick(env, c, 1)
+        check(ticks == 1 and holds == 0, cause .. ': while active, the follow tick owns the hold')
+        if cause == 'error' then
+            c.W.enemy.tick = function() error('boom') end
+        else
+            F.push(c, 0, OP.UNPAIRED, 5); F.push(c, 0, OP.LEVEL, 0)
+        end
+        F.tick(env, c, 1)
+        check(not c.W.active and c.W.isStarted and ticks == 1 and holds == 0, cause .. ': inactive and still started')
+        F.tick(env, c, 1)
+        check(holds == 1 and holdArgs == 0 and ticks == 1, cause .. ': the inactive update releases the held sortie')
+        c.W.follow.hostDeploy = nil
+        F.tick(env, c, 2)
+        check(holds == 1, cause .. ': nothing held, no call')
+        c.W.follow.hostDeploy = {}
+        F.call(env, 'OnTerminate')
+        F.tick(env, c, 2)
+        check(not c.W.isStarted and holds == 1, cause .. ': a hold left from an ended mission is never released')
+    end
+end
+
 -- The real world wrapper must retry owned downed cleanup after it becomes
 -- inactive, while leaving RX, simulation and other stop hooks alone.
 do

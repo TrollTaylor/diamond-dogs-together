@@ -191,6 +191,7 @@ Write-Host ''
 Write-Host "Saved: $zipPath ($([Math]::Round($size / 1024)) KB)" -ForegroundColor Green
 Write-Host 'Send this ZIP file to the person who gave you the package. SteamIDs inside are masked'
 Write-Host 'except their last 4 digits, join codes and public addresses are masked, and the link key is'
-Write-Host 'not included. You can open the ZIP to check what it contains.'
+Write-Host 'not included. Co-op save folders are listed by name, size and time only; no save file is'
+Write-Host 'included. You can open the ZIP to check what it contains.'
 Write-Output $zipPath
 exit 0

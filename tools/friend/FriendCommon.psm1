@@ -415,6 +415,56 @@ function New-FriendZip {
     } finally { $stream.Dispose() }
 }
 
+function Assert-FriendShareZip {
+    # Share-Save export check: re-reads $ZipPath; it must hold exactly the
+    # $ManifestFiles entries (entry, sha256) plus share-save.json, and every
+    # entry's SHA-256 must match the manifest. Throws otherwise.
+    param([Parameter(Mandatory)][string]$ZipPath, [Parameter(Mandatory)][object[]]$ManifestFiles)
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $check = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        if (@($check.Entries).Count -ne $ManifestFiles.Count + 1 -or !$check.GetEntry('share-save.json')) { throw 'The written zip is incomplete.' }
+        foreach ($m in $ManifestFiles) {
+            $e = $check.GetEntry([string]$m.entry)
+            if (!$e) { throw "The written zip is incomplete ($($m.entry) is missing)." }
+            $s = $e.Open()
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $hash = [BitConverter]::ToString($sha.ComputeHash($s)).Replace('-', '') } finally { $sha.Dispose(); $s.Dispose() }
+            if ($hash -ne ([string]$m.sha256).ToUpperInvariant()) { throw "The written zip is damaged ($($m.entry) differs from the save file). Export again." }
+        }
+    } finally { $check.Dispose() }
+}
+
+function Write-FriendShareZip {
+    # Share-Save export: writes $Files (Path, Entry) and share-save.json
+    # ($ManifestText) to a NEW zip at $ZipPath, then checks it with
+    # Assert-FriendShareZip. A failed write or check deletes that zip, so only
+    # verified exports are left behind; a file already at $ZipPath is never touched.
+    param([Parameter(Mandatory)][string]$ZipPath, [Parameter(Mandatory)][object[]]$Files,
+        [Parameter(Mandatory)][object[]]$ManifestFiles, [Parameter(Mandatory)][string]$ManifestText)
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    # Outside the cleanup: if this fails, the file at $ZipPath is not ours.
+    $stream = [IO.File]::Open($ZipPath, [IO.FileMode]::CreateNew)
+    try {
+        try {
+            $zip = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create)
+            try {
+                foreach ($f in $Files) { [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, [string]$f.Path, [string]$f.Entry) }
+                $entry = $zip.CreateEntry('share-save.json')
+                $w = New-Object IO.StreamWriter($entry.Open(), $script:Utf8NoBom)
+                try { $w.Write($ManifestText) } finally { $w.Dispose() }
+            } finally { $zip.Dispose() }
+        } finally { $stream.Dispose() }
+        Assert-FriendShareZip -ZipPath $ZipPath -ManifestFiles $ManifestFiles
+    } catch {
+        # A failed export must not leave a zip that looks finished.
+        Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
 function Get-FriendFileSha256 {
     param([Parameter(Mandatory)][string]$Path)
     if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }

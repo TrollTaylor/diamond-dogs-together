@@ -15,12 +15,18 @@ local stopSource = slice(read(worldPath), 'function W.stop(final)', '-- Control 
 local continueSource = slice(missionSource, 'function e.ExecuteContinueFromCheckPoint(', 'function e.IncrementRetryCount(')
 local loadSource = slice(missionSource, 'function e.RequestLoad(', 'function e.ExecuteReload(')
 local reserveSource = slice(mainSource, 'function e.ReservePlayerLoadingPosition(', 'function e.OnReload(')
+-- The sortie deploy: the vanilla OnEndMissionPreparation (and GoToEmergencyMission)
+-- reserve their clear through e.ReserveMissionClear, which world_follow wraps.
+local deploySource = slice(missionSource, 'function e.ReserveMissionClear(', 'function e.MissionGameEnd(') ..
+    slice(missionSource, 'function e.OnEndMissionPreparation(', 'function e.GetNextMissionCodeForEmergency(') ..
+    slice(missionSource, 'function e.GoToEmergencyMission(', 'function e.RequestLoad(') ..
+    slice(missionSource, 'function e.SetNextMissionCodeForMissionClear(', 'function e.GetNextMissionCodeForMissionClear(')
 local allocationTitleSource = slice(mainSource, 'if gvars.ini_isTitleMode then', 'TppUiCommand.ExcludeNonPermissionContents()')
 local initialActionSource = slice(read(arg[5]), 'if(gvars.ply_initialPlayerState==TppDefine.INITIAL_PLAYER_STATE.RIDEON_HELICOPTER)',
     'mvars.ply_locationStationTable={}')
 local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13, REJECT = 4, MISSION_END = 7}
 local locations = {[30010] = 10, [40010] = 10, [30020] = 20, [40020] = 20, [30050] = 50, [40050] = 50}
-local function fixture(host, target, level, active)
+local function fixture(host, target, level, active, deploy)
     local c = {time = 1000, tx = {}, logs = {}, chunkChecks = {}, engine = {}, stages = {}, configLevel = level or 3}
     local env = setmetatable({}, {__index = _G})
     local function noop() end
@@ -138,6 +144,10 @@ local function fixture(host, target, level, active)
         local chunk = assert(loadstring(text)); setfenv(chunk, env); chunk()
     end
     compile('local e=TppMission\n' .. continueSource .. loadSource)
+    if deploy then
+        env.TppDefine.MISSION_CLEAR_TYPE, env.TppDefine.STORY_MISSION_CLUSTER_ID = {FROM_HELISPACE = 3}, {}
+        compile('local e=TppMission\n' .. deploySource)
+    end
     compile('local e=TppMain\n' .. reserveSource)
     compile('function TppMain.TestAllocationTitleContext(n)\n' .. allocationTitleSource .. '\nend')
     compile('function TppPlayer.TestInitialAction(a)\nlocal i=GameObject.GetGameObjectId\nlocal n=GameObject.NULL_ID\n' .. initialActionSource .. '\nend')
@@ -382,4 +392,20 @@ check(not beforeReplay.F.current and not beforeReplay.restores and not beforeRep
 beforeReplay.link = 1; beforeReplay.F.tick(beforeReplay.time)
 check(beforeReplay.F.current and beforeReplay.F.current.session == 55 and beforeReplay.restores == 1,
     'first replay binds the current native session after link returns')
+-- A story or emergency destination chosen again (docs/join-fix-phase1-spec.md C5): the
+-- exact vanilla deploy reserves its own clear through the wrapped e.ReserveMissionClear.
+for _, case in ipairs({{10020, 0, 10020}, {30020, 50050, 50050}}) do
+    local d = fixture(true, 30020, 3, true, true)
+    local g = d.env.gvars
+    g.mis_nextMissionCodeForMissionClear, g.mis_nextMissionCodeForEmergency, g.mis_nextMissionStartRouteForEmergency = case[1], case[2], 77
+    d.env.TppMission.OnEndMissionPreparation(5, nil)
+    check(d.env.mvars.mis_isReserveMissionClear == nil and #d.notes == 1 and d.notes[1][1] == 4 and d.notes[1][2] == case[1],
+        'exact-game deploy to ' .. case[3] .. ': the first choice is refused')
+    d.time = d.time + 1500
+    d.env.TppMission.OnEndMissionPreparation(5, nil)
+    check(d.env.mvars.mis_isReserveMissionClear == true and d.env.svars.mis_isDefiniteMissionClear == true and
+        g.mis_nextMissionCodeForMissionClear == case[3] and d.env.svars.mis_missionClearType == 3 and d.env.mvars.mis_selectedDeployTime == 5 and
+        #d.notes == 2 and d.notes[2][1] == 3 and d.notes[2][3] == 3 and d.F.pass == nil,
+        'exact-game deploy to ' .. case[3] .. ': chosen again, the vanilla clear is reserved')
+end
 print(checks .. ' exact-game W3 Continue/load checks passed; no game')

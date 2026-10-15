@@ -970,6 +970,10 @@ try {
             'Share-Save.bat', 'SAME PROGRESS FOR BOTH') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
     }
+    # Section 8 describes everything the logs ZIP holds (Collect-Logs coop-saves.txt, 3 sessions).
+    $logsSection = $guide.Substring($guide.IndexOf('8. COLLECT AND SEND THE LOGS'), $guide.IndexOf('9. UNINSTALL') - $guide.IndexOf('8. COLLECT AND SEND THE LOGS')) -replace '\s+', ' '
+    Assert-True ($logsSection.Contains('a list of the co-op save folders (file names, sizes and times only, never save contents)') -and
+        $logsSection.Contains('the script log covers your last 3 game starts')) 'guide section 8 names the save-folder list and the 3 game starts'
     foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }
     $statusExample = [regex]::Match($guide, '\[HOST\] link=connected[^\r\n]+').Value
     Assert-Equal $statusExample (Format-CoopStatusLine -Status $st -Role host -NowUtc $now) 'the guide quotes the launcher status line exactly'
@@ -1121,6 +1125,43 @@ try {
     } finally { $shareZip.Dispose() }
     $manifestRows = (@($shareManifest.files) | ForEach-Object { "$($_.entry)|$($_.bytes)|$(([string]$_.sha256).ToUpperInvariant())" } | Sort-Object) -join ','
     Assert-True ($manifestRows.Contains('287700/local/TPP_GAME_DATA0|') -and !$manifestRows.Contains('CONFIG')) 'the export carries the progress files only'
+    # The export re-check (Assert-FriendShareZip) and its cleanup (Write-FriendShareZip):
+    # a damaged or partial export never stays behind; a same-named file is never ours to delete.
+    $shareRows = @($shareManifest.files)
+    Assert-FriendShareZip -ZipPath $shareZips[0].FullName -ManifestFiles $shareRows
+    $checkDir = Join-Path $fixture 'share-check'
+    $null = New-Item -ItemType Directory -Path $checkDir
+    $tampered = Join-Path $checkDir 'tampered.zip'
+    Copy-Item -LiteralPath $shareZips[0].FullName -Destination $tampered
+    $tamperZip = [IO.Compression.ZipFile]::Open($tampered, [IO.Compression.ZipArchiveMode]::Update)
+    try {
+        $tamperZip.GetEntry('287700/local/TPP_GAME_DATA0').Delete()
+        $tamperWriter = [IO.StreamWriter]::new($tamperZip.CreateEntry('287700/local/TPP_GAME_DATA0').Open())
+        try { $tamperWriter.Write('other bytes') } finally { $tamperWriter.Dispose() }
+    } finally { $tamperZip.Dispose() }
+    Assert-Throws { Assert-FriendShareZip -ZipPath $tampered -ManifestFiles $shareRows } 'differs from the save file' 'export check: a rewritten entry is damage'
+    $incomplete = Join-Path $checkDir 'incomplete.zip'
+    Copy-Item -LiteralPath $shareZips[0].FullName -Destination $incomplete
+    $tamperZip = [IO.Compression.ZipFile]::Open($incomplete, [IO.Compression.ZipArchiveMode]::Update)
+    try { $tamperZip.GetEntry('287700/local/TPP_GAME_DATA0').Delete() } finally { $tamperZip.Dispose() }
+    Assert-Throws { Assert-FriendShareZip -ZipPath $incomplete -ManifestFiles $shareRows } 'The written zip is incomplete' 'export check: a missing entry'
+    $exportSource = Join-Path $hostSaveDir '287700/local/TPP_GAME_DATA0'
+    $exportFiles = @([pscustomobject]@{ Path = $exportSource; Entry = '287700/local/TPP_GAME_DATA0' })
+    $goodRows = @([ordered]@{ entry = '287700/local/TPP_GAME_DATA0'; bytes = 1; sha256 = (Get-Sha256 $exportSource) })
+    $badRows = @([ordered]@{ entry = '287700/local/TPP_GAME_DATA0'; bytes = 1; sha256 = ('0' * 64) })
+    $verified = Join-Path $checkDir 'mgs-coop-save-verified.zip'
+    Write-FriendShareZip -ZipPath $verified -Files $exportFiles -ManifestFiles $goodRows -ManifestText '{"format":"mgs-coop-save-share"}'
+    Assert-True (Test-Path -LiteralPath $verified -PathType Leaf) 'export: a verified zip stays'
+    $damaged = Join-Path $checkDir 'mgs-coop-save-damaged.zip'
+    Assert-Throws { Write-FriendShareZip -ZipPath $damaged -Files $exportFiles -ManifestFiles $badRows -ManifestText '{}' } 'differs from the save file' 'export: a hash mismatch fails'
+    Assert-True (!(Test-Path -LiteralPath $damaged)) 'export: the damaged zip is deleted'
+    $partial = Join-Path $checkDir 'mgs-coop-save-partial.zip'
+    $missingFiles = @([pscustomobject]@{ Path = (Join-Path $checkDir 'NO_SUCH_SAVE'); Entry = '287700/local/TPP_GAME_DATA0' })
+    Assert-Throws { Write-FriendShareZip -ZipPath $partial -Files $missingFiles -ManifestFiles $goodRows -ManifestText '{}' } '' 'export: a write error fails'
+    Assert-True (!(Test-Path -LiteralPath $partial)) 'export: the partial zip is deleted'
+    $verifiedHash = Get-Sha256 $verified
+    Assert-Throws { Write-FriendShareZip -ZipPath $verified -Files $exportFiles -ManifestFiles $badRows -ManifestText '{}' } '' 'export: an existing file is refused'
+    Assert-Equal (Get-Sha256 $verified) $verifiedHash 'export: a file of the same name is never deleted'
     $r = Invoke-Friend $shareSave @('-GameDirectory', $joinGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
     Assert-Equal $r.Exit 0 "Share-Save import: $($r.Raw)"
     Assert-True (Has $r 'Keep the zip: if this copy is ever replaced, import it again.') 'import: keep the zip'
@@ -1181,6 +1222,20 @@ try {
     $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
     Assert-True ($r.Exit -eq 0 -and (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).')) "folder fallback keeps the copy: $($r.Text)"
     Assert-Equal (Get-TreeHashes $impCoop) $fallbackTree 'folder fallback: copy unchanged'
+    # The first install after Uninstall-Coop (no active install record, which otherwise
+    # always reseeds) keeps an imported copy the same way.
+    $r = Invoke-Friend $shareSave @('-GameDirectory', $impGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
+    Assert-Equal $r.Exit 0 "import before the uninstall: $($r.Raw)"
+    Assert-Equal (Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced).Source 'marker' 'import before the uninstall: detected by its marker'
+    $uninstalledTree = Get-TreeHashes $impCoop
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $impGame, '-NonInteractive', '-Yes')
+    Assert-Equal $r.Exit 0 "uninstall with an imported copy: $($r.Raw)"
+    Assert-True (!(Test-Path -LiteralPath (Join-Path $ip.Mod 'friend-install.json'))) 'uninstall: no active install record'
+    Assert-Equal (Get-TreeHashes $impCoop) $uninstalledTree 'uninstall keeps the imported copy and its marker'
+    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).') -and
+        !(Has $r 'A co-op save copy from an earlier test exists')) "first install after an uninstall keeps an imported copy: $($r.Text)"
+    Assert-Equal (Get-TreeHashes $impCoop) $uninstalledTree 'first install after an uninstall: copy and marker unchanged'
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'reseed guard: real saves untouched'
 
     # ------------------------------------------------------------ packaged local two-window flow
@@ -1766,6 +1821,7 @@ try {
     $null = New-Item -ItemType Directory -Path $outDir
     $r = Invoke-Friend $collect @('-GameDirectory', $hostGame, '-OutputDirectory', $outDir, '-NonInteractive', '-MaxLogBytes', '65536')
     Assert-Equal $r.Exit 0 "collect logs succeeds: $($r.Raw)"
+    Assert-True (Has $r 'Co-op save folders are listed by name, size and time only; no save file is included.') 'collect logs: the closing text names the save-folder list'
     $zips = @(Get-ChildItem -LiteralPath $outDir -Filter '*.zip')
     Assert-True ($zips.Count -eq 1 -and $zips[0].Name -cmatch '^mgs-coop-logs-host-[0-9]{8}-[0-9]{6}\.zip$') 'zip named by the last play role and time'
     Assert-True ($zips[0].Length -lt 400KB) 'zip size bounded'
@@ -1796,6 +1852,39 @@ try {
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'collecting logs reads the saves only'
     $batOut = '' | & cmd.exe /c (Join-Path $stage 'Collect-Logs.bat') -GameDirectory $joinGame -OutputDirectory $outDir -NonInteractive 2>&1 | Out-String
     Assert-True ($LASTEXITCODE -eq 0 -and @(Get-ChildItem -LiteralPath $outDir -Filter 'mgs-coop-logs-join-*.zip').Count -eq 1) "Collect-Logs.bat works: $batOut"
+    # The save listing itself (K19): the row cap with its truncation line; a link is listed, never followed.
+    $listMod = [IO.Path]::GetFullPath((Join-Path $fixture 'listing\mgs-coop'))
+    $listOutside = [IO.Path]::GetFullPath((Join-Path $fixture 'listing\outside'))
+    $listLink = Join-Path $listMod 'coop-saves-replaced\link'
+    foreach ($path in @($listMod, $listOutside, $listLink)) { Assert-InFixture $path }
+    foreach ($name in 'F1', 'F2', 'F3', 'F4') {
+        $path = Join-Path $listMod "coop-saves\287700\local\$name"
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
+        [IO.File]::WriteAllText($path, "listing fixture $name")
+    }
+    $null = New-Item -ItemType Directory -Path (Join-Path $listMod 'coop-saves-replaced'), $listOutside -Force
+    [IO.File]::WriteAllText((Join-Path $listOutside 'LINKTARGET'), 'outside the save folders')
+    try {
+        $null = New-Item -ItemType Junction -Path $listLink -Target $listOutside
+        $fullListing = @(Get-FriendSaveListing -ModDirectory $listMod)
+        Assert-Equal $fullListing.Count 11 'listing: 2 header lines and 9 rows (4 folders, 4 files, the link)'
+        Assert-Equal @($fullListing | Where-Object { $_ -cmatch "^coop-saves-replaced/link`tdir`t" }).Count 1 'listing: the link is one dir row'
+        Assert-True (!@($fullListing | Where-Object { $_.StartsWith('coop-saves-replaced/link/') }).Count -and !($fullListing -join "`n").Contains('LINKTARGET')) 'listing: the link is never followed'
+        Assert-True (!($fullListing -join "`n").Contains('# truncated')) 'listing: no truncation line under the cap'
+        $capped = @(Get-FriendSaveListing -ModDirectory $listMod -MaxEntries 3)
+        Assert-Equal $capped.Count 6 'capped listing: 2 header lines, 3 rows and the truncation line'
+        Assert-Equal (($capped[0..4]) -join "`n") (($fullListing[0..4]) -join "`n") 'capped listing: the first rows in order'
+        Assert-Equal $capped[5] '# truncated: 6 more' 'capped listing: the truncation line counts the rest'
+    } finally {
+        # Remove only the owned junction before the no-links fixture cleanup; never recurse into its target.
+        if (Test-Path -LiteralPath $listLink) {
+            $link = Get-Item -LiteralPath $listLink -Force
+            if (!($link.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $link.LinkType -cne 'Junction' -or
+                $link.ResolveLinkTarget($true).FullName -cne $listOutside) { throw 'Listing junction cleanup ownership changed' }
+            [IO.Directory]::Delete($listLink)
+        }
+    }
+    Assert-True (Test-Path -LiteralPath (Join-Path $listOutside 'LINKTARGET') -PathType Leaf) 'listing: the link target is untouched'
 
     # ------------------------------------------------------------ Uninstall
     if ($FakeProcess) {

@@ -221,35 +221,40 @@ local ok, ready = pcall(F.applySeeds, F.current)
 if not ok then W.fail(ready) end
 return ok and ready
 end
+-- The held host sortie: released when paired, when nobody can come, after 120 s,
+-- or when world sync stops (LEVEL 0, W.fail: world_sync calls this while inactive).
+function F.hold(now)
+local hd = F.hostDeploy
+if not hd then return end
+now = now or W.now()
+if hd.mission ~= W.mission or not W.host then
+    F.hostDeploy = nil
+    log(fmt("step=deploy_held;reason=stale;mission=%s", tostring(hd.mission)))
+elseif W.paired or not F.enabled or not W.active then
+    F.hostDeploy = nil
+    local live = W.active and F.enabled
+    F.deploying = live and W.paired and W.eff >= 3 or false
+    if not live then log(fmt("step=deploy_alone;reason=disabled;target=%s", tostring(hd.target))) end
+    run(F.originalDeploy, unpack(hd, 1, hd.n))
+elseif now - hd.checkAt >= 500 then
+    hd.checkAt = now
+    local why = F.alone() or (now - hd.at >= 120000 and 4 or nil)
+    if why then
+        F.hostDeploy = nil
+        solo(why, hd.target)
+        run(F.originalDeploy, unpack(hd, 1, hd.n))
+    elseif now - hd.notedAt >= 3000 then
+        hd.notedAt = now; note(2, hd.target, 0)
+    end
+end
+end
 function F.tick(now)
 -- Title helicopter with a story-start save: repeat the note every 15 s.
 local T = F.title
 if T and T.story and now - T.at >= 15000 then
     if W.get(gvars, "ini_isTitleMode") ~= true then F.title = nil else T.at = now; note(1, T.mission, 1) end
 end
--- The held host sortie: released when paired, when nobody can come, or after 120 s.
-local hd = F.hostDeploy
-if hd then
-    if hd.mission ~= W.mission or not W.host then
-        F.hostDeploy = nil
-        log(fmt("step=deploy_held;reason=stale;mission=%s", tostring(hd.mission)))
-    elseif W.paired or not F.enabled then
-        F.hostDeploy = nil
-        F.deploying = F.enabled and W.paired and W.eff >= 3
-        if not F.enabled then log(fmt("step=deploy_alone;reason=disabled;target=%s", tostring(hd.target))) end
-        run(F.originalDeploy, unpack(hd, 1, hd.n))
-    elseif now - hd.checkAt >= 500 then
-        hd.checkAt = now
-        local why = F.alone() or (now - hd.at >= 120000 and 4 or nil)
-        if why then
-            F.hostDeploy = nil
-            solo(why, hd.target)
-            run(F.originalDeploy, unpack(hd, 1, hd.n))
-        elseif now - hd.notedAt >= 3000 then
-            hd.notedAt = now; note(2, hd.target, 0)
-        end
-    end
-end
+F.hold(now)
 if not on() then return end
 if W.host then F.pump(); return end
 -- Sticky arm: an idle armed guest disarms after 120 s unpaired, or at once
@@ -368,7 +373,7 @@ for name, spec in pairs(suppressed) do
             if on() and W.host and (name == "Reload" or name == "ExecuteReload" or name == "ReturnToMission") then
                 log("step=refused;reason=unsupported_reload"); return
             end
-            if on() and W.host and (name == "ReserveMissionClear" or name == "AbortMission") then
+            if on() and W.host and not F.pass and (name == "ReserveMissionClear" or name == "AbortMission") then
                 local args = (...)
                 if type(args) == "table" and args.nextMissionId and not SUPPORTED[args.nextMissionId] and
                     refuse(args.nextMissionId, "step=refused;reason=unsupported_mission") then
@@ -382,8 +387,21 @@ for name, spec in pairs(suppressed) do
         end
     end
 end
-F.originalDeploy = W.get(TppMission, "OnEndMissionPreparation")
-if type(F.originalDeploy) == "function" then
+local vanillaDeploy = W.get(TppMission, "OnEndMissionPreparation")
+if type(vanillaDeploy) == "function" then
+    -- Every path that runs the vanilla deploy has already allowed this sortie:
+    -- its own ReserveMissionClear (GoToEmergencyMission's too) passes the
+    -- unsupported-destination refusal (F.pass, restored afterwards).
+    local function passed(saved, ok, ...)
+        F.pass = saved
+        if not ok then error((...), 0) end
+        return ...
+    end
+    F.originalDeploy = function(...)
+        local saved = F.pass
+        F.pass = true
+        return passed(saved, pcall(vanillaDeploy, ...))
+    end
     TppMission.OnEndMissionPreparation = function(...)
         if guest() then F.request(6); return end
         if on() and W.host then

@@ -40,8 +40,11 @@ param(
     # else the only account with MGSV saves).
     [UInt32]$SteamAccountId = 0,
     # Replace an existing co-op save copy with a fresh copy of the real save
-    # (the previous copy is moved aside, never deleted). A first install (no
-    # active friend install, also after Uninstall-Coop) always does this.
+    # (the previous copy is moved aside, never deleted), also a copy that holds
+    # a partner's Share-Save import (no extra question). Without this switch a
+    # first install (no active friend install, also after Uninstall-Coop)
+    # reseeds too, unless the copy holds a partner's import: then it asks twice,
+    # and -NonInteractive keeps the copy.
     [switch]$ReseedSaves,
     # Accepted for compatibility, no effect: a reinstall only reports real save
     # changes since the first backup (normal play writes the real saves).

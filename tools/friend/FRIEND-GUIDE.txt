@@ -414,9 +414,11 @@ The Play-Coop status line explains most problems:
  3. It saves mgs-coop-logs-host-<time>.zip (or -join-) on your Desktop.
     Send that file to the person who gave you this package.
 The ZIP contains only the mod's own log and settings files from the
-"mgs-coop" folder plus a summary of file versions. Join codes (MGS1 and
-MGS2), invite strings, the link key and public IP addresses are not in it
-(they are removed or masked), SteamIDs
+"mgs-coop" folder (the script log covers your last 3 game starts), a list
+of the co-op save folders (file names, sizes and times only, never save
+contents) and a summary of file versions and save checks. Join codes (MGS1
+and MGS2), invite strings, the link key and public IP addresses are not in
+it (they are removed or masked), SteamIDs
 are masked except their last 4 digits, and your Windows user name is removed
 from paths. You can open the ZIP to check what is in it.
 

@@ -130,29 +130,9 @@ if ($Mode -eq 'Export') {
     $zipOut = Join-Path $OutputDirectory ('mgs-coop-save-' + (Get-FriendStamp) + '.zip')
     $manifestFiles = @(foreach ($f in $files) { [ordered]@{ entry = $f.Entry; bytes = $f.Bytes; sha256 = (Get-FileSha $f.Path) } })
     $manifest = [ordered]@{ format = $formatName; v = 1; exported_utc = [DateTime]::UtcNow.ToString('o'); files = $manifestFiles }
-    $stream = [IO.File]::Open($zipOut, [IO.FileMode]::CreateNew)
-    try {
-        $zip = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create)
-        try {
-            foreach ($f in $files) { [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.Path, $f.Entry) }
-            $entry = $zip.CreateEntry('share-save.json')
-            $w = New-Object IO.StreamWriter($entry.Open(), (New-Object Text.UTF8Encoding $false))
-            try { $w.Write(($manifest | ConvertTo-Json -Depth 5)) } finally { $w.Dispose() }
-        } finally { $zip.Dispose() }
-    } finally { $stream.Dispose() }
-    # Re-read what was written: every entry's hash must match the manifest.
-    $check = [IO.Compression.ZipFile]::OpenRead($zipOut)
-    try {
-        if (@($check.Entries).Count -ne $files.Count + 1) { throw 'The written zip is incomplete.' }
-        foreach ($m in $manifestFiles) {
-            $e = $check.GetEntry([string]$m.entry)
-            if (!$e) { throw "The written zip is incomplete ($($m.entry) is missing)." }
-            $s = $e.Open()
-            $sha = [Security.Cryptography.SHA256]::Create()
-            try { $hash = [BitConverter]::ToString($sha.ComputeHash($s)).Replace('-', '') } finally { $sha.Dispose(); $s.Dispose() }
-            if ($hash -ne [string]$m.sha256) { throw "The written zip is damaged ($($m.entry) differs from the save file). Export again." }
-        }
-    } finally { $check.Dispose() }
+    # Writes the zip, then re-reads it: every entry's hash must match the manifest.
+    # A failed export deletes its zip, so only verified exports stay on the Desktop.
+    Write-FriendShareZip -ZipPath $zipOut -Files $files.ToArray() -ManifestFiles $manifestFiles -ManifestText ($manifest | ConvertTo-Json -Depth 5)
     Section 'Done'
     Write-Host "Exported $($files.Count) save files to:"
     Write-Host "     $zipOut" -ForegroundColor Green

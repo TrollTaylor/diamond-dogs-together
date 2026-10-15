@@ -32,7 +32,17 @@ local function fixture(role, level)
         ReserveMissionClear = function(t) c.clear = t; record('clear'); return c.refuse ~= true end,
         AbortMission = function(t) c.abort = t; record('abort') end,
         SelectNextMissionHeliStartRoute = function(m, route) c.route = route; c.next = m; record('route') end,
-        OnEndMissionPreparation = function(t, cluster) c.deploy = t; c.cluster = cluster; record('deploy') end,
+        OnEndMissionPreparation = function(t, cluster)
+            c.deploy = t; c.cluster = cluster; record('deploy')
+            if c.deployError then error(c.deployError, 0) end
+            -- c.nested: game-shaped (TppMission.lua OnEndMissionPreparation / GoToEmergencyMission),
+            -- the clear goes through the (wrapped) TppMission.ReserveMissionClear.
+            if c.nested then
+                local emergency = env.gvars.mis_nextMissionCodeForEmergency
+                env.TppMission.ReserveMissionClear{missionClearType = 3, nextClusterId = cluster,
+                    nextMissionId = (emergency and emergency ~= 0) and emergency or env.gvars.mis_nextMissionCodeForMissionClear}
+            end
+        end,
         Load = function(m) record('load'); c.loaded = m; c.seedAtLoad = env.gvars.solface_groupNumber end,
         LoadWithChunkCheck = function() record('load_check'); env.TppMission.Load(env.mvars.mis_loadRequest.nextMission); env.mvars.mis_loadRequest = nil end,
         ReserveMissionClearOnRideOnHelicopter = function() record('heli') end,
@@ -454,12 +464,28 @@ for _, f in ipairs(lost.W.unpairedHooks) do f(1) end
 check(lost.F.hostDeploy, 'link-session unpair keeps the hold for the tick')
 lost.link = 0; lost.time = lost.time + 500; lost.F.tick(lost.time)
 check(called(lost, 'deploy') == 1 and noted(lost, 3, 30020, 1) == 1, 'link loss releases alone')
+-- World level 0 pushes UNPAIRED 5 and LEVEL 0 together: W.active is false and F.tick
+-- no longer runs, so world_sync's inactive update releases the hold through F.hold.
 local off2 = heli()
 off2.env.TppMission.OnEndMissionPreparation(2, nil)
 for _, f in ipairs(off2.W.unpairedHooks) do f(5) end
-off2.F.tick(off2.time)
-check(called(off2, 'deploy') == 1 and not off2.F.deploying and logged(off2, 'step=deploy_alone;reason=disabled;target=30020') and
-    noted(off2, 3) == 0, 'world level 0 releases the held sortie without a note')
+off2.W.active = false
+off2.F.hold()
+check(called(off2, 'deploy') == 1 and off2.F.deploying == false and off2.F.hostDeploy == nil and
+    logged(off2, 'step=deploy_alone;reason=disabled;target=30020') and noted(off2, 3) == 0,
+    'world level 0 releases the held sortie without a note')
+-- W.fail during a hold (F.enabled still true), even right after pairing: released, never a kind-6 follow.
+local failedHold = heli()
+failedHold.env.TppMission.OnEndMissionPreparation(2, nil)
+failedHold.W.paired, failedHold.W.eff = true, 3
+failedHold.W.fail('module error')
+check(failedHold.F.enabled and not failedHold.W.active and called(failedHold, 'deploy') == 0, 'W.fail keeps the hold for the inactive update')
+failedHold.F.hold(failedHold.time)
+check(called(failedHold, 'deploy') == 1 and failedHold.deploy == 2 and failedHold.F.deploying == false and failedHold.F.hostDeploy == nil and
+    logged(failedHold, 'step=deploy_alone;reason=disabled;target=30020') and noted(failedHold, 3) == 0,
+    'W.fail during a hold releases it once without enabling travel')
+failedHold.F.hold(failedHold.time + 1000)
+check(called(failedHold, 'deploy') == 1, 'released once')
 -- Unsupported destination: refused once with a note, allowed when chosen again 1-30 s later.
 local s1 = fixture(1)
 s1.env.gvars.mis_nextMissionCodeForMissionClear = 10020
@@ -513,6 +539,56 @@ check(called(r2, 'abort') == 1 and noted(r2, 3, 10020, 1) == 1, 'abort to a stor
 local r3 = fixture(1)
 r3.env.TppMission.ReserveMissionClear{nextMissionId = 30020}
 check(called(r3, 'clear') == 1 and #r3.notes == 0, 'supported destinations are untouched')
+-- The vanilla deploy reserves its clear through the wrapped ReserveMissionClear
+-- (GoToEmergencyMission too): once the sortie is allowed, that inner clear passes.
+local function logCount(c, text)
+    local n = 0
+    for _, s in ipairs(c.logs) do if s:find(text, 1, true) then n = n + 1 end end
+    return n
+end
+local n1 = heli(10020); n1.W.paired, n1.nested = true, true
+n1.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(n1, 'deploy') == 0 and called(n1, 'clear') == 0 and #n1.notes == 1 and noted(n1, 4, 10020, 0) == 1,
+    'game-shaped deploy, paired: the first story choice is refused')
+n1.time = n1.time + 1500
+n1.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(n1, 'deploy') == 1 and called(n1, 'clear') == 1 and n1.clear.nextMissionId == 10020 and n1.clear.nextClusterId == 2 and
+    #n1.notes == 2 and n1.notes[1][1] == 4 and n1.notes[2][1] == 3 and n1.notes[2][2] == 10020 and n1.notes[2][3] == 3 and
+    n1.F.pass == nil and not n1.F.deploying, 'chosen again: the vanilla deploy and its inner clear run, notes 4 then 3')
+local n2 = heli(30010); n2.W.paired, n2.nested = true, true
+n2.env.gvars.mis_nextMissionCodeForEmergency = 50050
+n2.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(n2, 'clear') == 0 and noted(n2, 4, 30010, 0) == 1, 'game-shaped emergency: refused first')
+n2.time = n2.time + 1500
+n2.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(n2, 'deploy') == 1 and called(n2, 'clear') == 1 and n2.clear.nextMissionId == 50050 and #n2.notes == 2,
+    'emergency chosen again: the inner clear to the emergency mission runs')
+local n3 = heli(10020); n3.link, n3.nested = 0, true
+n3.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(n3, 'deploy') == 1 and called(n3, 'clear') == 1 and #n3.notes == 1 and noted(n3, 3, 10020, 1) == 1 and
+    logCount(n3, 'step=deploy_alone') == 1, 'nobody can come: one note and one deploy_alone line')
+local n4 = heli(30010); n4.nested = true
+n4.peer = {mission = 40050, level = 3, wait = 10, linked = true, session = 55}
+n4.env.TppMission.OnEndMissionPreparation(1, 2)
+check(n4.F.hostDeploy and called(n4, 'deploy') == 0 and noted(n4, 2, 30010, 0) == 1, 'partner in this helicopter: held')
+n4.env.gvars.mis_nextMissionCodeForMissionClear = 10020
+n4.time = n4.time + 1500
+n4.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(n4, 'deploy') == 1 and called(n4, 'clear') == 1 and n4.clear.nextMissionId == 10020 and n4.F.hostDeploy == nil and
+    noted(n4, 3, 10020, 3) == 1 and noted(n4, 4) == 0, 'held, then a story destination chosen: the repeat press leaves with it')
+local n5 = heli(); n5.nested = true
+n5.env.TppMission.OnEndMissionPreparation(2, nil)
+n5.W.paired = true; n5.F.tick(n5.time)
+check(called(n5, 'clear') == 1 and n5.clear.nextMissionId == 30020 and n5.F.deploying == true and n5.F.pass == nil,
+    'a released hold runs the inner clear (supported target) and restores the pass flag')
+check(r1.env.TppMission.ReserveMissionClear{nextMissionId = 10020} == false and called(r1, 'clear') == 1,
+    'outside the vanilla deploy the iDroid refusal still applies')
+local boom = heli(10020); boom.deployError = 'vanilla failure'
+local okBoom, errBoom = pcall(boom.F.originalDeploy, 1, 2)
+check(not okBoom and errBoom == 'vanilla failure' and boom.F.pass == nil and called(boom, 'deploy') == 1,
+    'a vanilla deploy error is re-raised unchanged and the pass flag is restored')
+check(boom.env.TppMission.ReserveMissionClear{nextMissionId = 10020} == false and called(boom, 'clear') == 0,
+    'after the error the refusal applies again')
 -- The sticky guest arm.
 local function armedGuest()
     local c = fixture(2)
