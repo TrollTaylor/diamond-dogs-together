@@ -644,6 +644,7 @@ try {
     if ($banner) { Write-Host ''; Write-Host $banner -ForegroundColor White -BackgroundColor DarkRed; Write-Host '' }
 
     # ---------------------------------------------------------------- status
+    Write-Host 'Not in the same place? Both games must Continue into the same Mother Base or free roam; Share-Save.bat gives both players the same progress (FRIEND-GUIDE.txt section 3).'
     Write-Host 'Meet in Mother Base or Afghanistan/Africa free roam. [Q] closes this window (co-op stays on until MGSV exits).'
     $last = ''
     $bannerAt = [DateTime]::UtcNow

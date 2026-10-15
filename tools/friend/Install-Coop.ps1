@@ -320,7 +320,20 @@ if ($alreadySeeded -and !$reseed) {
     $copyFiles = @(Get-ChildItem -LiteralPath $saveDir -File -Recurse -Force | Sort-Object LastWriteTime -Descending)
     $copyAge = 'unknown'
     if ($copyFiles.Count) { $copyAge = $copyFiles[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
-    if (!$state) {
+    # A copy that holds the partner's progress (Share-Save import) is never
+    # replaced silently: a reseed would put this player's own (maybe earlier)
+    # real save back, and Share-Save [R] cannot bring the import back.
+    $imported = Get-FriendImportedSaveInfo -SaveDir $saveDir -ReplacedRoot (Join-Path $paths.Mod 'coop-saves-replaced')
+    if ($imported) {
+        Write-Host "Your co-op save copy holds your partner's progress (imported with Share-Save on $($imported.Imported))." -ForegroundColor Yellow
+        Write-Host 'Replacing it with a fresh copy of your real save removes that progress from co-op games (it is only moved aside; Share-Save [R] cannot bring it back).' -ForegroundColor Yellow
+        if ($interactive) {
+            $reseed = ((Ask 'Replace it anyway? [y/N]') -match '^(y|yes)$') -and ((Ask 'Type REPLACE to confirm (anything else keeps your partner''s progress)') -ceq 'REPLACE')
+            if (!$reseed) { Write-Host 'Kept the co-op save copy with your partner''s progress.' }
+        } else {
+            Write-Host 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).'
+        }
+    } elseif (!$state) {
         # No active friend install (first install, or after Uninstall-Coop): the
         # copy is left over from an earlier test and may be far older than the
         # real save, while the game uses the normal online service.
@@ -336,6 +349,13 @@ $seed = Copy-SaveSeed -BackupDirectory $backupDir -SaveDir $saveDir -Reseed:$res
 if ($seed.Seeded) {
     Write-Host "Co-op save copy created: $saveDir ($($seed.Files) files)"
     if ($alreadySeeded) { Write-Host "The previous copy was moved to $seedArchive" }
+    # The import marker describes the progress that was just moved aside: it goes with it.
+    $importMarker = Join-Path $saveDir 'imported-progress.json'
+    if (Test-Path -LiteralPath $importMarker -PathType Leaf) {
+        $null = New-Item -ItemType Directory -Path $seedArchive -Force
+        Move-Item -LiteralPath $importMarker -Destination (Join-Path $seedArchive 'imported-progress.json')
+        Write-Host "Your partner's imported progress was moved to $seedArchive. To play on it again, import your partner's zip again with Share-Save.bat (option I)." -ForegroundColor Yellow
+    }
 } else { Write-Host "Co-op save copy kept from the earlier install: $saveDir" }
 
 # ---------------------------------------------------------------- 6: install
@@ -508,5 +528,6 @@ Write-Host 'does not carry over between the two. Run Uninstall-Coop.bat when you
 Write-Host ''
 Write-Host 'Next: both players double-click Play-Coop.bat. The host chooses [O] for Steam online and sends the join code'
 Write-Host 'over chat; the other chooses [J] and pastes it. Then both load the same supported free-roam scene.'
+Write-Host 'Different progress? Share one save first with Share-Save.bat (FRIEND-GUIDE.txt section 3).'
 Write-Host 'See FRIEND-GUIDE.txt for Steam online and the optional LAN/VPN setup.'
 exit 0

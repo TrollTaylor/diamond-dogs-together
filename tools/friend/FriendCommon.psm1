@@ -220,6 +220,29 @@ function Get-TextFromLastMarker {
     return $Text.Substring($lineStart + 1)
 }
 
+function Get-TextFromLastMarkers {
+    # Pure: $Text from the start of the $Count-th last line that contains
+    # $Marker (the whole text when fewer lines contain it).
+    param([AllowNull()][AllowEmptyString()][string]$Text, [Parameter(Mandatory)][string]$Marker, [ValidateRange(1, 1000)][int]$Count = 1)
+    if (!$Text) { return '' }
+    $from = $Text.Length - 1
+    $found = 0
+    while ($from -ge 0) {
+        $at = $Text.LastIndexOf($Marker, $from, [StringComparison]::Ordinal)
+        if ($at -lt 0) { break }
+        $lineStart = $Text.LastIndexOf("`n", $at, [StringComparison]::Ordinal)
+        $found++
+        if ($found -ge $Count) {
+            if ($lineStart -lt 0) { return $Text }
+            return $Text.Substring($lineStart + 1)
+        }
+        # The next match must be on an earlier line.
+        if ($lineStart -lt 1) { break }
+        $from = $lineStart - 1
+    }
+    return $Text
+}
+
 function Limit-TextTail {
     # Pure: at most $MaxChars characters from the end of $Text, starting on a
     # line boundary, with a note when something was dropped.
@@ -450,6 +473,115 @@ function Get-FriendProperty {
     $p = $Object.PSObject.Properties[$Name]
     if ($p -and $null -ne $p.Value) { return $p.Value }
     return $Default
+}
+
+# ---------------------------------------------------------------------------
+# The co-op save copy: imported progress and the folder listing
+# ---------------------------------------------------------------------------
+
+$script:ImportMarkerName = 'imported-progress.json'
+$script:ImportMarkerFormat = 'mgs-coop-imported-progress'
+
+function New-FriendImportMarkerText {
+    # Pure: the import marker (<coop-saves>\imported-progress.json) that
+    # Share-Save writes into the new copy. It holds names, sizes and hashes,
+    # never save bytes. $Files: objects with entry, bytes and sha256.
+    param([Parameter(Mandatory)][ValidateSet('share-save', 'handoff')][string]$Source, [string]$ExportedUtc = '', [object[]]$Files = @(), [DateTime]$ImportedUtc = [DateTime]::UtcNow)
+    $rows = @(foreach ($f in @($Files)) {
+            [ordered]@{ entry = [string](Get-FriendProperty $f 'entry' ''); bytes = [Int64](Get-FriendProperty $f 'bytes' 0); sha256 = ([string](Get-FriendProperty $f 'sha256' '')).ToUpperInvariant() }
+        })
+    $marker = [ordered]@{
+        format = $script:ImportMarkerFormat; v = 1; source = $Source
+        imported_utc = $ImportedUtc.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture)
+        exported_utc = $ExportedUtc; files = $rows
+    }
+    return (($marker | ConvertTo-Json -Depth 5) + "`n")
+}
+
+function Get-FriendImportedSaveInfo {
+    # Whether the co-op save copy holds a partner's imported progress: a valid
+    # marker in $SaveDir wins; otherwise the newest coop-saves-replaced folder
+    # (by name, <yyyyMMdd-HHmmss>...) counts when Share-Save left it aside as
+    # '-before-import' (or '-before-handoff'). Returns $null or
+    # @{ Source = 'marker'|'folder'; Imported = 'yyyy-MM-dd HH:mm' (local time); MarkerPath; Folder }.
+    param([Parameter(Mandatory)][string]$SaveDir, [Parameter(Mandatory)][string]$ReplacedRoot)
+    $markerPath = Join-Path $SaveDir $script:ImportMarkerName
+    $marker = Read-FriendJson $markerPath
+    if ($marker -and [string](Get-FriendProperty $marker 'format' '') -ceq $script:ImportMarkerFormat) {
+        $imported = 'an unknown date'
+        $value = Get-FriendProperty $marker 'imported_utc' ''
+        $when = [DateTime]::MinValue
+        $styles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal
+        # PowerShell 7's ConvertFrom-Json already returns a DateTime; 5.1 keeps the text.
+        if ($value -is [DateTime]) { $imported = $value.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }
+        elseif ([DateTime]::TryParse([string]$value, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$when)) {
+            $imported = $when.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+        }
+        return [pscustomobject]@{ Source = 'marker'; Imported = $imported; MarkerPath = $markerPath; Folder = $null }
+    }
+    if (!(Test-Path -LiteralPath $ReplacedRoot -PathType Container)) { return $null }
+    $newest = $null
+    foreach ($d in @(Get-ChildItem -LiteralPath $ReplacedRoot -Directory -Force)) {
+        if ($d.Name -cnotmatch '^[0-9]{8}-[0-9]{6}') { continue }
+        if ($null -eq $newest -or [string]::CompareOrdinal($d.Name, $newest.Name) -gt 0) { $newest = $d }
+    }
+    if ($null -eq $newest) { return $null }
+    $name = $newest.Name
+    if (!$name.EndsWith('-before-import', [StringComparison]::Ordinal) -and !$name.EndsWith('-before-handoff', [StringComparison]::Ordinal)) { return $null }
+    $stamp = [DateTime]::MinValue
+    $imported = 'an unknown date'
+    if ([DateTime]::TryParseExact($name.Substring(0, 15), 'yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$stamp)) {
+        $imported = $stamp.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+    }
+    return [pscustomobject]@{ Source = 'folder'; Imported = $imported; MarkerPath = $null; Folder = $newest.FullName }
+}
+
+function Get-FriendSaveListing {
+    # The co-op save folders below <game>\mgs-coop for Collect-Logs
+    # (coop-saves.txt): names, sizes and UTC times only, never file contents.
+    # Rows: "<path relative to mgs-coop, '/'><TAB><bytes>|dir<TAB><last write UTC>",
+    # one per folder and file under coop-saves, coop-saves-replaced,
+    # local-test-saves, save-import-* and coop-saves-new-*; at most $MaxEntries
+    # rows, then "# truncated: N more". Links are listed, never followed.
+    param([Parameter(Mandatory)][string]$ModDirectory, [ValidateRange(1, 100000)][int]$MaxEntries = 500)
+    $lines = New-Object Collections.Generic.List[string]
+    $lines.Add('# MGS Co-op save folders: names, sizes and times only (no save contents)')
+    $lines.Add("# path`tbytes|dir`tlast_write_utc")
+    if (!(Test-Path -LiteralPath $ModDirectory -PathType Container)) { return $lines.ToArray() }
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $roots = New-Object Collections.Generic.List[object]
+    foreach ($name in @('coop-saves', 'coop-saves-replaced', 'local-test-saves')) {
+        $dir = Join-Path $ModDirectory $name
+        if (Test-Path -LiteralPath $dir -PathType Container) { $roots.Add((Get-Item -LiteralPath $dir -Force)) }
+    }
+    foreach ($pattern in @('save-import-*', 'coop-saves-new-*')) {
+        foreach ($d in @(Get-ChildItem -LiteralPath $ModDirectory -Directory -Force -Filter $pattern | Sort-Object Name)) { $roots.Add($d) }
+    }
+    $rows = 0
+    $more = 0
+    # Depth-first, sorted by name; the stack holds @(item, relative path).
+    $stack = New-Object Collections.Generic.Stack[object]
+    for ($i = $roots.Count - 1; $i -ge 0; $i--) { $stack.Push(@($roots[$i], $roots[$i].Name)) }
+    while ($stack.Count) {
+        $entry = $stack.Pop()
+        $item = $entry[0]
+        $relative = [string]$entry[1]
+        $isDir = [bool]($item.Attributes -band [IO.FileAttributes]::Directory)
+        if ($rows -ge $MaxEntries) { $more++ }
+        else {
+            $size = 'dir'
+            if (!$isDir) { $size = [string]$item.Length }
+            $lines.Add($relative + "`t" + $size + "`t" + $item.LastWriteTimeUtc.ToString('yyyy-MM-ddTHH:mm:ssZ', $culture))
+            $rows++
+        }
+        if ($isDir -and !($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            $children = @()
+            try { $children = @(Get-ChildItem -LiteralPath $item.FullName -Force | Sort-Object Name -CaseSensitive) } catch { $children = @() }
+            for ($i = $children.Count - 1; $i -ge 0; $i--) { $stack.Push(@($children[$i], ($relative + '/' + $children[$i].Name))) }
+        }
+    }
+    if ($more) { $lines.Add('# truncated: ' + $more + ' more') }
+    return $lines.ToArray()
 }
 
 # ---------------------------------------------------------------------------

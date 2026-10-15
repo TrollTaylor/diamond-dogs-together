@@ -16,6 +16,35 @@ The player-facing guide is `tools/friend/FRIEND-GUIDE.txt` (shipped in the
 friend ZIP). This page describes the tooling (PART T) and the files it relies
 on.
 
+## Same progress first (Share-Save)
+
+Co-op only pairs when both games are in the same supported scene (Mother
+Base, Afghanistan or Africa free roam, or the matching helicopter). Each
+installer copies its own player's real save, so two players at different
+points of the story never meet: a save at the story start
+(`CLEARD_ESCAPE_THE_HOSPITAL`) always Continues into story mission 10020,
+which co-op cannot join. Before the first game (FRIEND-GUIDE.txt section 3,
+"SAME PROGRESS FOR BOTH"):
+
+1. The player whose co-op copy reaches Mother Base and free roam quits MGSV
+   and runs `Share-Save.bat`, `[E]`: `mgs-coop-save-<time>.zip` on the
+   Desktop (the progress files `TPP_GAME_DATA*`/`PERSONAL_DATA*` of the co-op
+   copy plus `share-save.json` with their sizes and SHA-256; the export
+   re-reads every entry against that manifest).
+2. The other player quits MGSV and runs `Share-Save.bat`, `[I]`, and drags
+   the zip in. The new copy is the current one (settings kept) with the
+   partner's progress files; the old copy goes to
+   `mgs-coop\coop-saves-replaced\<time>-before-import`, and `[R]` brings it
+   back. The real saves are never read or written.
+3. The import writes `coop-saves\imported-progress.json` into the new copy
+   (`{"format":"mgs-coop-imported-progress","v":1,"source":"share-save",
+   "imported_utc":..,"exported_utc":..,"files":[{"entry","bytes","sha256"}]}`;
+   no save bytes). `Install-Coop` reads it (see "Install: pass-through").
+
+Keep the zip: if the copy is ever replaced, import it again. MGSV saves may
+be tied to the Steam account; if the game refuses the imported save, `[R]`
+restores the previous copy.
+
 ## Quick start (online, the user and a friend)
 
 The flow both players follow (FRIEND-GUIDE.txt section 3 says the same in
@@ -105,6 +134,7 @@ and its ZIP (`package.json` flavor `friend-play`):
 | `Play-Offline-Coop.bat` | shortcut to `Play-Coop.ps1 -LocalTest`, preserving caller arguments |
 | `Uninstall-Coop.bat` | switch a leftover session off, restore the previous loader, check the real saves |
 | `Collect-Logs.bat` | logs ZIP on the Desktop (redacted) |
+| `Share-Save.bat` | export the co-op copy's progress as a zip, import a partner's zip, or restore the copy an import replaced |
 | `scripts/` | player scripts, `FriendCommon.psm1`, `CoopPlay.psm1`, `LocalCoopSession.psm1`, `LocalCoopWindows.psm1`, `install.ps1` |
 | `FRIEND-GUIDE.txt`, `RUNTIME-ARCHIVE.txt` | player documentation |
 
@@ -135,6 +165,17 @@ start from Steam is plain MGSV on the real saves.
 - A read-only firewall and network-profile report (`Get-NetFirewallApplicationFilter`,
   `Get-NetConnectionProfile`) explains Block rules and Public networks;
   nothing is changed.
+- Reseed guard: before it replaces an existing co-op copy,
+  `Get-FriendImportedSaveInfo` checks whether the copy holds a partner's
+  imported progress: a valid `coop-saves\imported-progress.json` wins;
+  without one, the newest `coop-saves-replaced\<yyyyMMdd-HHmmss>...` folder
+  (by name) counts when it ends with `-before-import` (or `-before-handoff`).
+  The installer then says so and asks `Replace it anyway? [y/N]` followed by
+  `Type REPLACE to confirm`; `-NonInteractive` keeps the copy (also on the
+  first install after an Uninstall, which otherwise always reseeds) and names
+  `-ReseedSaves`. When a copy is reseeded, the marker moves with it to
+  `coop-saves-replaced\<time>\imported-progress.json`, so it never describes
+  the fresh copy. `Copy-SaveSeed` itself is unchanged.
 
 ## Play-Coop
 
@@ -178,9 +219,31 @@ start from Steam is plain MGSV on the real saves.
    `play=active`. `play=refused; reason=saves_not_redirected` or no
    `saves=redirected` shows a red banner (normal offline play on the REAL
    saves); a missing `play=` line with redirected saves means the loader is too
-   old. Then one status line per second from `link-status.json` (pid checked,
-   older than 15 s = "game not responding", outside 30050/30010/30020 =
-   "Partner body unavailable in this mission").
+   old. Before the loop it prints one hint ("Not in the same place? Both
+   games must Continue into the same Mother Base or free roam; Share-Save.bat
+   gives both players the same progress"). Then one status line per second
+   from `link-status.json` (`Format-CoopStatusLine`):
+   - pid checked; older than 15 s = "game not responding".
+   - Different missions (`state` connected, `pair_wait` `different_mission`
+     and a nonzero `partner_mission`; the loader publishes this only after
+     the two missions stayed different for 15 s): `mission N - your partner
+     is in <name>. Different missions never pair: meet in the same Mother
+     Base, free roam or helicopter.` (`Get-CoopMissionName`, the same long
+     names as `coop_text::FormatMission`).
+   - Otherwise a mission other than 30050/30010/30020 adds "Partner body
+     unavailable in this mission", except at a loading screen (0), the start
+     screen (1) and the helicopters (40010/40020/40050), where it is not
+     shown.
+   - `progress` `story_start` (the co-op copy's title helicopter is at the
+     story start) appends "Your co-op save is at the story start: quit, then
+     import your partner's save with Share-Save.bat (option I)."
+   - A guest whose host left (`left`=1, not connected) and whose reconnect is
+     refused with an unverified `bad_code` shows "the host restarted with a
+     new code: paste it in F9 > Partner / Co-op > Online" instead of "the
+     host left".
+   - Documents without the world keys (older loaders) keep the older
+     wording, except that missions 0, 1 and 4xxxx no longer get the body
+     suffix.
 6. **Deactivate** (game exit, `[Q]` before the launch, Ctrl+C, the watchdog,
    the next Play-Coop, Install, Uninstall, `Play-Coop.ps1 -Cleanup`): marker,
    `coop.ini`, `lab.ini`, `link-secret.txt`, each deleted only while its hash
@@ -227,8 +290,19 @@ Play-Coop.bat -World 3
 Choose Host on one PC and Join on the other. Both copies must first enter
 the same supported scene (Mother Base, Afghanistan/Africa free roam, or its
 corresponding ACC) so they can pair; different saved scenes do not bootstrap
-automatically. After pairing, the host controls supported travel and recovery.
-The launcher keeps the existing co-op save copy between sessions.
+automatically (see "Same progress first"). After pairing, the host controls
+supported travel and recovery. The launcher keeps the existing co-op save
+copy between sessions.
+
+Helicopter hold: when the host chooses a deployment, its helicopter waits
+only while a partner can come (linked at level 3 and in this scene, loading,
+or still replaying the host's last transition). The wait is shown on screen
+("Waiting up to 2 min for your partner ..."), ends after 120 s or when the
+host chooses the deployment again (1 s debounce), and is dropped on a
+mission change. With no partner connected, or the partner in another
+mission, the host leaves at once ("Flying alone ..."). An unsupported or
+emergency destination is refused once with a note and allowed when chosen
+again within 1-30 s (or at once when no partner can come).
 
 `Play-Coop.ps1 -World 1..3` adds `world=N` to the play `lab.ini` (default 3;
 explicit `-World 0` writes no world key and shares partner movement): 1 plumbing only, 2 shared enemy
@@ -311,11 +385,20 @@ posts requests; the loader's owner context makes the Steam calls.
 The co-op status line (`coop_hud`, [steam-online.md](steam-online.md)
 section 20.9) is drawn top-right while F9 is closed and hidden during demos:
 `CO-OP [connected] <partner> - Steam relay 61 ms` (`LAN/VPN` on UDP),
-`CO-OP [waiting] code ready - F9 to copy/invite`, `CO-OP [joining 12 s] host
-not answering`, `CO-OP [<partner> left] waiting for them to come back`,
+`CO-OP [connected] <partner> - Steam relay 61 ms | partner in <short name>`
+(the two games are in different missions, settled for 15 s, for example
+`partner in story mission 10020`), `CO-OP [waiting] code ready - F9 to
+copy/invite`, `CO-OP [joining 12 s] host not answering`, `CO-OP [<partner>
+left] waiting for them to come back`, `CO-OP [the host has a new code] paste
+it in F9 > Partner / Co-op > Online` (a guest whose host restarted hosting),
 `CO-OP [refused] wrong code?` or `CO-OP [off] Steam offline`. Toasts (4 s)
 announce connected, reconnected, lost, left, refused, version mismatch and
-Steam failures in the same plain words as Play-Coop. coop.ini `hud=compact`
+Steam failures in the same plain words as Play-Coop, plus the world notes:
+the partner in another mission ("Your partner is in <name>; you are in
+<name>. Co-op only pairs when ..."), a co-op save at the story start, the
+host's helicopter waiting for the partner or flying alone, an unsupported
+destination, and "That code was not used: you are already connected or
+connecting to a host." for a second join code. coop.ini `hud=compact`
 (the default in play), `hud=full` (adds rtt/jitter/loss/build) or `hud=off`
 (Play-Coop writes coop.ini for each session: `-Hud compact|full|off`); a
 lab.ini `coop_hud` wins. The one-PC lab keeps it off unless `coop_hud` is
@@ -471,7 +554,15 @@ the host shows one code per address, all with the same secret.
 ## Logs
 
 `Collect-Logs.ps1` adds `link-status.json` and `play-session.json` to its
-allow-list and never collects `link-secret.txt` or `steam-join.ini`. Every
+allow-list and never collects `link-secret.txt`, `steam-join.ini` or any save
+file. `script-observer.log` keeps the last 3 sessions (from the 3rd-last
+`MGS Co-op script adapter` line, at most 3 x `-MaxLogBytes` characters).
+`coop-saves.txt` lists the co-op save folders (`coop-saves`,
+`coop-saves-replaced`, `local-test-saves`, `save-import-*`,
+`coop-saves-new-*`): one `path<TAB>bytes|dir<TAB>last_write_utc` row per
+folder and file, paths relative to `mgs-coop`, at most 500 rows, names,
+sizes and times only. `summary.txt` adds `coop_saves=files=<n>;
+import_marker=present|absent; newest_replaced=<name|none>`. Every
 collected text is redacted: join codes
 (`(?i)MGS[12][\s-]*(?:[0-9A-Z][\s-]*){22}(?:@\S+)?`), invite strings
 (`\+mgscoop_join\s+\S+`), public
