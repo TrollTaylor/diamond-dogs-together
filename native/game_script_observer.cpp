@@ -94,6 +94,7 @@
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
+#include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
 #include "mgscoop/partner_upper_phase_observer.hpp"
@@ -887,6 +888,13 @@ bool PartnerDmPatch(void*, bool on, const char* reason) noexcept {
     else mgscoop::partner_dm_patch::Revert(game_base, Log, reason);
     return mgscoop::partner_dm_patch::Patched();
 }
+// The seated vehicle rider's four dwords (partner_ride_seat; docs/anim-round1-seat.md).
+bool PartnerRideSeatArm(void*, std::uint8_t seat) noexcept {
+    return game_base && mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log);
+}
+void PartnerRideSeatRevert(void*, const char* reason) noexcept {
+    if (game_base) mgscoop::partner_ride_seat::Revert(game_base, game_span, Log, reason);
+}
 bool PartnerDmClearPending(void*) noexcept {
     bool cleared = false;
     mgscoop::partner_player::ClearDmPending(partner_addresses, mission_terminating, cleared);
@@ -938,7 +946,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
-    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob};
+    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1276,6 +1284,17 @@ const char* HandlePartnerLog(const char* buffer, std::size_t size) noexcept {
     return yes;
 }
 
+// The debug seat_dm lever (lua/coop/debug_vehicle.lua): arm or end the manual seat.
+const char* HandlePartnerSeat(const char* buffer, std::size_t size) noexcept {
+    static constexpr char yes[]="return true";
+    static constexpr char no[]="return false";
+    if (!OnRuntimeThread()) return nullptr;
+    partner::SeatRequest request{};
+    if (!partner::ParseSeatReceipt(buffer, size, request)) return no;
+    return pd::SeatManual(partner_driver, partner_hooks, request.arm, request.seat, request.vehicle, mgscoop::partner_net::NowMs(),
+                          mission_terminating) ? yes : no;
+}
+
 const char* HandlePartnerStop() noexcept {
     static constexpr char yes[]="return true";
     // Sent from OnTerminate after MISSION_TERMINATING: allowed while terminating.
@@ -1365,7 +1384,7 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply)) {
         ClearUpperEndOwner(); mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{}); return nullptr;
     }
-    if(PartnerSleepSuppressed(nullptr))reply.op&=~(partner::op::dm_play|partner::op::dm_stop);
+    if(PartnerSleepSuppressed(nullptr))reply.op&=~(partner::op::dm_play|partner::op::dm_stop|partner::op::ride_seat);
     CoopRescueTick();
     mgscoop::coop_carry::Tick();
     mgscoop::coop_sleep::Tick();
@@ -3313,6 +3332,7 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
     case partner::Receipt::cfg: reply = HandlePartnerCfg(); break;
     case partner::Receipt::log: reply = HandlePartnerLog(buffer, size); break;
     case partner::Receipt::stop: reply = HandlePartnerStop(); break;
+    case partner::Receipt::seat: reply = HandlePartnerSeat(buffer, size); break;
     default: break;
     }
     if (reply) replacement = {reply, std::strlen(reply)};

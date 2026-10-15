@@ -105,7 +105,9 @@ Params OnlineParams() noexcept {
 
 bool NetReason(const char* reason) noexcept {
     if (!reason) return false;
-    static const char* const kNet[] = {"net_input", "net_link", "net_quiet", "range_hidden", "unrealized", "ride", "ride_stale", "air", "dead"};
+    // seat: the seated vehicle rider owns body 1 (partner_native_ride=seat), a visibility leave like ride.
+    static const char* const kNet[] = {"net_input", "net_link", "net_quiet", "range_hidden", "unrealized", "ride", "ride_stale", "air", "dead",
+                                       "seat"};
     for (const char* n : kNet)
         if (std::strcmp(reason, n) == 0) return true;
     return false;

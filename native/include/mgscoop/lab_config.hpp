@@ -181,7 +181,21 @@ enum class PartnerNativeStandin : std::uint8_t { off, on };
 // Remote riding/deployment body visibility: driven native loco/gun stages
 // default to hide in lab and play. Explicit off restores the prior visibility;
 // hiding and stable on-foot recovery do not render a mounted partner body.
-enum class PartnerNativeRide : std::uint8_t { off, hide };
+// seat (docs/anim-round1-seat.md): a remote driving or riding a light vehicle
+// or truck in 30010/30020 is drawn seated in the receiver's copy of that
+// vehicle (a targeted direct motion on body 1, partner_ride_seat); everything
+// else (heli, horse, walker, APC/tank, unnamed vehicles, stale) still hides.
+enum class PartnerNativeRide : std::uint8_t { off, hide, seat };
+// The driven native stages' default (ResolveWeaponDefaults). Flipping the
+// release default to the seated driver is this one line (hide -> seat).
+inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide::hide;
+// partner_native_ride=seat: how the seat direct motion starts (direct: the
+// seated loop at once; getin: the seat's finite get-on state, then the loop,
+// only while the remote is entering) and ends (stop: RequestToStopDirectMotion;
+// getoff: the chain carries the seat's finite get-off state and the exit
+// advances to it with RequestToGoNextDirectMotion, falling back to stop).
+enum class PartnerRideSeatEnter : std::uint8_t { direct, getin };
+enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -439,6 +453,8 @@ struct LabConfig {
     PartnerNativeStandin partner_native_standin = PartnerNativeStandin::off;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
+    PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;
+    PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::stop;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute
@@ -532,6 +548,8 @@ const char* PartnerNativeEquipName(PartnerNativeEquip value) noexcept;
 const char* PartnerNativeEquipSharedName(PartnerNativeEquipShared value) noexcept;
 const char* PartnerNativeStandinName(PartnerNativeStandin value) noexcept;
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
+const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
+const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
@@ -588,6 +606,8 @@ bool ParsePartnerNativeEquip(const char* text, std::size_t size, PartnerNativeEq
 bool ParsePartnerNativeEquipShared(const char* text, std::size_t size, PartnerNativeEquipShared& out) noexcept;
 bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNativeStandin& out) noexcept;
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
+bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
+bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.
 void ResolveWeaponDefaults(LabConfig& config) noexcept;

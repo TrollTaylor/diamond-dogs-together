@@ -126,7 +126,72 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Exact(source, size, stop_source)) return Receipt::stop;
     if (Prefixed(source, size, tick_prefix)) return Receipt::tick;
     if (Prefixed(source, size, log_prefix)) return Receipt::log;
+    if (Prefixed(source, size, seat_prefix)) return Receipt::seat;
     return Receipt::none;
+}
+
+namespace {
+// " <key>=" then a strict unsigned decimal in [min, max]; advances p.
+bool NamedValue(const char*& p, const char* end, const char* key, std::int64_t min, std::int64_t max, std::int32_t& out) noexcept {
+    const std::size_t length = std::strlen(key);
+    if (end - p < static_cast<std::ptrdiff_t>(length + 2) || *p != ' ' || std::memcmp(p + 1, key, length) != 0 || p[1 + length] != '=')
+        return false;
+    const char* q = p + 2 + length;
+    if (q < end && *q == '-') return false;
+    if (!ParseInt(q, end, min, max, out)) return false;
+    p = q;
+    return true;
+}
+} // namespace
+
+std::size_t FormatStatusBits(std::uint16_t bits, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return 0;
+    out[0] = 0;
+    static const char* const kNames[] = {"binocle", "subject", "cbox", "cbox_evade", "trash_box", "trash_box_half_open", "behind",
+                                         "carry", "cqc_continuous", "on_horse", "on_vehicle", "on_helicopter"};
+    std::size_t at = 0;
+    bool ok = true;
+    for (unsigned i = 0; ok && i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
+        if (!(bits & (1u << i))) continue;
+        if (at) ok = Append(out, capacity, at, ",", 1);
+        if (ok) ok = Append(out, capacity, at, kNames[i], std::strlen(kNames[i]));
+    }
+    if (ok && !at) ok = Append(out, capacity, at, "none", 4);
+    if (!ok) { out[0] = 0; return 0; }
+    return at;
+}
+
+bool ParseSeatRefusal(const char* source, std::size_t size, std::uint16_t& vehicle, std::uint8_t& seat) noexcept {
+    constexpr std::size_t skip = sizeof(log_prefix) - 1;
+    constexpr char head[] = "event=ride_seat_refused;id=";
+    constexpr std::size_t head_size = sizeof(head) - 1;
+    if (!source || size <= skip + head_size || size > max_receipt || std::memcmp(source, log_prefix, skip) != 0 ||
+        std::memcmp(source + skip, head, head_size) != 0) return false;
+    const char* p = source + skip + head_size;
+    const char* end = source + size;
+    std::int32_t v = 0, s = 0;
+    if (!ParseInt(p, end, 0, 65534, v)) return false;
+    constexpr char seat_key[] = ";seat=";
+    if (end - p < static_cast<std::ptrdiff_t>(sizeof(seat_key)) || std::memcmp(p, seat_key, sizeof(seat_key) - 1) != 0) return false;
+    p += sizeof(seat_key) - 1;
+    if (!ParseInt(p, end, 0, 3, s) || p == end || *p != ';') return false;
+    vehicle = static_cast<std::uint16_t>(v);
+    seat = static_cast<std::uint8_t>(s);
+    return true;
+}
+
+bool ParseSeatReceipt(const char* source, std::size_t size, SeatRequest& out) noexcept {
+    constexpr std::size_t skip = sizeof(seat_prefix) - 1;
+    if (!source || size <= skip || size > max_receipt || std::memcmp(source, seat_prefix, skip) != 0) return false;
+    const char* p = source + skip;
+    const char* end = source + size;
+    if (end - p == 4 && std::memcmp(p, "stop", 4) == 0) { out = SeatRequest{false, 0, 0}; return true; }
+    if (end - p < 4 || std::memcmp(p, "arm ", 4) != 0) return false;
+    p += 4;
+    std::int32_t seat = 0, vehicle = 0;
+    if (!ParseInt(p, end, 0, 3, seat) || p == end || *p++ != ' ' || !ParseInt(p, end, 0, 65534, vehicle) || p != end) return false;
+    out = SeatRequest{true, static_cast<std::uint8_t>(seat), static_cast<std::uint16_t>(vehicle)};
+    return true;
 }
 
 bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
@@ -155,11 +220,33 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
         constexpr std::uint8_t gun_flags = sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading;
         if (action_flags & ~gun_flags) return false;
     }
-    bool has_ride = false;
-    std::uint8_t ride_kind = 0;
+    bool has_ride = false, has_vehicle = false, has_status = false;
+    std::uint8_t ride_kind = 0, seat = 0xFF;
+    std::uint16_t vehicle = 0xFFFF, status = 0;
     if (p != end) {
-        if (end-p != 7 || std::memcmp(p, " ride=", 6) != 0 || p[6] < '0' || p[6] > '5') return false;
-        has_ride = true; ride_kind = static_cast<std::uint8_t>(p[6]-'0'); p = end;
+        // " ride=N" (one digit 0..5), then optionally " veh=V seat=S", then
+        // optionally " st=0xH"; nothing else, in this order only.
+        if (end-p < 7 || std::memcmp(p, " ride=", 6) != 0 || p[6] < '0' || p[6] > '5' || (end-p > 7 && p[7] != ' ')) return false;
+        has_ride = true; ride_kind = static_cast<std::uint8_t>(p[6]-'0'); p += 7;
+        std::int32_t v = 0, s = 0;
+        if (p != end && end-p > 5 && std::memcmp(p, " veh=", 5) == 0) {
+            if (!NamedValue(p, end, "veh", 0, 65535, v) || !NamedValue(p, end, "seat", 0, 255, s) || (s > 3 && s != 255)) return false;
+            has_vehicle = true; vehicle = static_cast<std::uint16_t>(v); seat = static_cast<std::uint8_t>(s);
+        }
+        if (p != end) {
+            // " st=0x" + 1..3 lowercase hex digits, no leading zero (except "0x0"), at most status_bit::all.
+            if (end-p < 7 || end-p > 9 || std::memcmp(p, " st=0x", 6) != 0 || (end-p > 7 && p[6] == '0')) return false;
+            std::uint32_t bits = 0;
+            for (const char* q = p + 6; q < end; ++q) {
+                const char c = *q;
+                const std::uint32_t digit = (c >= '0' && c <= '9') ? static_cast<std::uint32_t>(c - '0')
+                                          : (c >= 'a' && c <= 'f') ? static_cast<std::uint32_t>(c - 'a' + 10) : 0x100u;
+                if (digit > 15) return false;
+                bits = (bits << 4) | digit;
+            }
+            if (bits > status_bit::all) return false;
+            has_status = true; status = static_cast<std::uint16_t>(bits); p = end;
+        }
     }
     Tick parsed{};
     parsed.frame = values[0];
@@ -171,6 +258,8 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
     parsed.action_flags = static_cast<std::uint8_t>(action_flags);
     parsed.equip_id = static_cast<std::uint16_t>(equip_id);
     parsed.has_ride = has_ride; parsed.ride_kind = ride_kind;
+    parsed.has_vehicle = has_vehicle; parsed.vehicle = vehicle; parsed.seat = seat;
+    parsed.has_status = has_status; parsed.status = status;
     out = parsed;
     return true;
 }
@@ -181,11 +270,13 @@ std::size_t FormatReply(const Reply& reply, char* out, std::size_t capacity) noe
     std::size_t at = 0;
     const bool look = (reply.op & op::set_parts_explicit) != 0;
     const bool dm = (reply.op & op::dm_play) != 0;
-    const std::int64_t values[14] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
+    const bool seat = (reply.op & op::ride_seat) != 0;
+    const std::int64_t values[18] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
                                      static_cast<std::int64_t>(reply.status), reply.age_ms, look ? reply.look.type : 0,
                                      look ? reply.look.parts : 0, look ? reply.look.camo : 0, look ? reply.look.hand : 0,
-                                     look ? reply.look.face : 0, reply.gani};
-    const unsigned count = dm ? 14u : look ? 13u : 8u;
+                                     look ? reply.look.face : 0, dm ? reply.gani : 0, reply.seat_vehicle, reply.seat,
+                                     reply.seat_action, reply.seat_entry};
+    const unsigned count = seat ? 18u : dm ? 14u : look ? 13u : 8u;
     bool ok = Append(out, capacity, at, "return ", 7);
     for (unsigned i = 0; ok && i < count; ++i) ok = (i == 0 || Append(out, capacity, at, ",", 1)) && AppendInt(out, capacity, at, values[i]);
     if (!ok) { out[0] = 0; return 0; }

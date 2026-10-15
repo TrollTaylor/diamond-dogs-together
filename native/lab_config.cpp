@@ -360,6 +360,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
             ok = ParsePartnerNativeRide(value.data, value.size, result.partner_native_ride);
             if (ok) result.partner_native_ride_given = true;
         }
+        else if (Equals(key, "partner_ride_seat_enter")) ok = ParsePartnerRideSeatEnter(value.data, value.size, result.partner_ride_seat_enter);
+        else if (Equals(key, "partner_ride_seat_exit")) ok = ParsePartnerRideSeatExit(value.data, value.size, result.partner_ride_seat_exit);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -1261,7 +1263,7 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // body; explicit off/hide remains authoritative in either lab or play.
     if (!c.partner_native_ride_given)
         c.partner_native_ride = c.partner_drive == PartnerDrive::native && c.partner_input_defer == PartnerDefer::on
-                                    ? PartnerNativeRide::hide : PartnerNativeRide::off;
+                                    ? kPartnerNativeRideDriven : PartnerNativeRide::off;
     if (c.mode == LabMode::play) {
         if (c.partner_native_equip_shared == PartnerNativeEquipShared::prefer) c.partner_native_equip_shared = PartnerNativeEquipShared::on;
         c.partner_native_equip_measured = false;
@@ -1300,7 +1302,7 @@ bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNative
 }
 
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept {
-    return value == PartnerNativeRide::hide ? "hide" : "off";
+    return value == PartnerNativeRide::hide ? "hide" : value == PartnerNativeRide::seat ? "seat" : "off";
 }
 
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept {
@@ -1308,6 +1310,33 @@ bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRid
     const Slice s{text, size};
     if (Equals(s, "off")) out = PartnerNativeRide::off;
     else if (Equals(s, "hide")) out = PartnerNativeRide::hide;
+    else if (Equals(s, "seat")) out = PartnerNativeRide::seat;
+    else return false;
+    return true;
+}
+
+const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept {
+    return value == PartnerRideSeatEnter::getin ? "getin" : "direct";
+}
+
+bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "direct")) out = PartnerRideSeatEnter::direct;
+    else if (Equals(s, "getin")) out = PartnerRideSeatEnter::getin;
+    else return false;
+    return true;
+}
+
+const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept {
+    return value == PartnerRideSeatExit::getoff ? "getoff" : "stop";
+}
+
+bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "stop")) out = PartnerRideSeatExit::stop;
+    else if (Equals(s, "getoff")) out = PartnerRideSeatExit::getoff;
     else return false;
     return true;
 }
