@@ -91,6 +91,7 @@ inline constexpr std::uint32_t face_snap = 1u << 21;      // the settle snap
 inline constexpr std::uint32_t face_contest = 1u << 22;   // the game rotated the body after our write (backoff)
 inline constexpr std::uint32_t face_latched = 1u << 23;   // repeated contests: the governor is off for face_latch_ms
 inline constexpr std::uint32_t place_yaw_fix = 1u << 24;  // verify: the placed body's yaw was off, one xform at the placed yaw
+inline constexpr std::uint32_t stance_wait = 1u << 25;    // a due stance fix waits on a guard (Report fix_wait; once per guard and episode)
 }
 
 // A corrective stance input the driver injects through the tap/press overlay.
@@ -200,6 +201,19 @@ struct Params {
     // stance_fix_gap_ms.
     bool stance_fix = true;
     std::uint32_t stance_fix_ms = 2000, stance_fix_gap_ms = 2000;
+    // Stance fix guards (0 = off: the round-4 rule). A due fix never fights a
+    // stance change already in flight; it waits (Report fix_wait) while
+    //   - In::stance_block names a driver gate (the gun stage, a carry);
+    //   - In::remote_downed and the remote's level is not prone ("downed": a
+    //     downed remote is mirrored lying; its own stand-up runs natively);
+    //   - stance_pad_quiet_ms: the remote's live input showed STANCE (held,
+    //     pressed, its edge set) within this long: body 1 got that input too;
+    //   - stance_body_stable_ms: body 1's own stance changed within this long;
+    //   - stance_state_settle_ms: either act was a sleep, carry, carried, dead
+    //     or DM act (StateAct) within this long (their native exits run first);
+    //   - stance_settle_ms: either act was outside 1..6 within this long (dive
+    //     57, evade 27/58, hop 28, fall/land 25/26, aim 11..20).
+    std::uint32_t stance_pad_quiet_ms = 0, stance_body_stable_ms = 0, stance_settle_ms = 0, stance_state_settle_ms = 0;
     // Placement.
     std::uint32_t place_ok_mm = 500, place_tries = 3, place_retry_ms = 250, place_fail_retry_ms = 5000, settle_ms = 700;
     // Input staleness (net input).
@@ -256,6 +270,13 @@ struct In {
     std::uint16_t remote_act;
     std::uint8_t remote_stance;
     bool hold_stripped{}; // raw remote HOLD, but this native pad refuses HOLD
+    // Stance fix guards (Params stance_*): the remote's live input carries
+    // STANCE this tick; a driver gate holding the corrective input (static
+    // reason: "gun", "reload", "switch", "carry"; nullptr: none); the remote
+    // is downed (coop_hud teammate view).
+    bool stance_pad{};
+    const char* stance_block{};
+    bool remote_downed{};
 };
 
 struct Report {
@@ -297,7 +318,10 @@ struct Report {
     double dv_mmps;             // |v_free - v_remote|
     bool input_pin;             // pinned because the net input is stale
     std::uint32_t input_pin_ms; // how long the input pin lasted (input_pin_end)
-    std::uint8_t fix_body, fix_remote;  // stance_fix: body and remote stance
+    std::uint8_t fix_body, fix_remote;  // stance_fix / stance_wait: body and remote stance
+    // stance_wait: the guard holding a due fix (static: the In::stance_block
+    // reason, "downed", "pad", "body", "state", "settle"), else nullptr.
+    const char* fix_wait;
     // Facing governor: its state and why it is not acting (static), the
     // error target - body, the target and body yaw (mrad), the body's own yaw
     // rate (deg/s, readback minus our writes), and its counters since Reset.
@@ -385,6 +409,12 @@ struct State {
     std::uint64_t stance_since, suspend_until, dead_until, mismatch_since;
     bool mismatch_logged;
     std::uint64_t last_stance_fix_ms;
+    // Stance fix guards: when the remote's input last showed STANCE, body 1's
+    // stance last changed (from body_stance_seen), either act was last outside
+    // 1..6 / a StateAct; the guard last reported (stance_wait, change-only).
+    std::uint64_t stance_pad_ms, body_stance_ms, nonloco_ms, state_act_ms;
+    std::uint8_t body_stance_seen;
+    const char* stance_wait;
     // Stop check.
     double prev_r;
     bool stop_pending;
@@ -442,9 +472,16 @@ Out Step(State& state, const In& in, const Params& params) noexcept;
 // 1500) mm/s (prone 150..400) and a 1200 ms stop grace for the idle runaway.
 // The facing governor (FaceMode::idle unless `face` says otherwise),
 // neutral placements, the placement yaw check (10 degrees) and the windowed
-// teleport (3 m in 200 ms). Everything else stays `base`.
+// teleport (3 m in 200 ms). The stance level fix (docs/anim-round1-actions.md):
+// a mismatch held 500 ms (not 2 s) asks for the corrective input, at most every
+// 1000 ms, behind the guards (STANCE input quiet 400 ms, body stance stable
+// 300 ms, 800 ms after a non-locomotion act, 2000 ms after a StateAct).
+// Everything else stays `base`.
 
 Params NativeParams(const Params& base, FaceMode face = FaceMode::idle) noexcept;
+// Acts whose own native exit runs before a stance fix (stance_state_settle_ms):
+// carry 39, dead/dying 40/41, carried 42..44, sleep 131..133, DM 139.
+bool StateAct(std::uint16_t act) noexcept;
 
 // Helpers (also used by tests): wrap radians to (-pi, pi]; the exponential
 // smoothing factor 1 - exp(-dt/tau).

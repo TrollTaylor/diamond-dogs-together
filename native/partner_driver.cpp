@@ -14,6 +14,7 @@
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/coop_carry.hpp"
+#include "mgscoop/coop_hud.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_driver {
@@ -1098,6 +1099,26 @@ pr::Params ReconParams(const Settings& set) noexcept {
     return p;
 }
 
+// Stance level guards (docs/anim-round1-actions.md, partner_recon Params
+// stance_*): the native gun stage and a carry hold the corrective STANCE input
+// (a stance change cancels a reload, a weapon change or an aim), and a downed
+// remote (the coop_hud teammate view, copied from the world Lua owner) is
+// mirrored lying. Static reasons; nullptr while nothing holds it.
+const char* StanceBlock(const Mission& m, const Settings& set, std::uint8_t remote_flags) noexcept {
+    if (!set.native_active) return nullptr;
+    if (m.carry_hold) return "carry";
+    if (!set.ngun) return nullptr;
+    if (m.reload_out.hold || m.reload_out.reconcile) return "reload";
+    if (m.body_switching) return "switch";
+    if (m.remote_v5 && (m.remote_gun_flags & (pin::GunFlag::Aiming | pin::GunFlag::Reloading | pin::GunFlag::Changing))) return "gun";
+    if (remote_flags & (sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading)) return "gun";
+    return nullptr;
+}
+bool RemoteDowned(std::uint64_t tick_ms) noexcept {
+    coop_hud::DownedView v{};
+    return coop_hud::GetDowned(v) && v.teammateDown && tick_ms >= v.publish_ms && tick_ms - v.publish_ms <= 1500;
+}
+
 // One reconciliation step from this tick's observations.
 pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool armable, bool pose_valid,
                   const partner::Pose& pose, bool relink, bool anim_ok, const pp::Anim& anim, const sync::AnimState& remote_anim) noexcept {
@@ -1138,6 +1159,7 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     m.recon_pose_age_ms = 0;
     std::uint8_t remote_speed = remote_anim.speed;
     bool remote_sprinting = remote_speed == 3;
+    std::uint8_t remote_action_flags = 0;  // sync::ActionFlag of the sampled remote pose (stance guards)
     if (set.source == PartnerSource::net) {
         const std::uint32_t delay = pr::AlignedDelayMs(in.input_net && latest_ok, in.in_age_ms, set.align_ms);
         const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
@@ -1162,6 +1184,7 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
         in.remote_stance = sample.anim_stance;
         remote_speed = sample.anim_speed;
         remote_sprinting = (sample.flags & sync::ActionFlag::Sprinting) != 0;
+        remote_action_flags = sample.flags;
     } else {
         in.target_ok = pose_valid;
         in.target[0] = pose.x_mm; in.target[1] = pose.y_mm; in.target[2] = pose.z_mm;
@@ -1177,6 +1200,14 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.body_anim_ok = anim_ok;
     in.body_act = anim_ok ? anim.act[1] : 0;
     in.body_stance = anim_ok ? anim.stance[1] : 0;
+    // Stance level guards: STANCE in the remote's live input (held, its "now"
+    // word, the edge set, a short tap or a long hold), the gun/carry gate and a
+    // downed remote (native only; the legacy rule has no guards).
+    in.stance_pad = latest_ok && latest.age_ms <= set.stale_ms &&
+                    ((latest.packet.held | latest.packet.w4c | latest.packet.w50 | latest.packet.tap12 | latest.packet.long12) &
+                     kStanceBit) != 0;
+    in.stance_block = StanceBlock(m, set, remote_action_flags);
+    in.remote_downed = set.native_active && RemoteDowned(clock.tick_ms);
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
     pnat::DashIn di{};
     di.now_ms = in.now_ms;
@@ -1275,6 +1306,9 @@ void LogReconEvents(Driver& d, const Hooks& h, const Settings& set, const pr::Ou
     if (ev & pr::Event::stance_mismatch)
         EmitRecon(m, h, kRcStance, "partner_recon=stance_mismatch; remote=%u; body=%u; ms=%u\r\n", unsigned(m.recon.stance_applied),
                   anim_ok ? unsigned(anim.stance[1]) : 0u, r.mismatch_ms);
+    if (ev & pr::Event::stance_wait)
+        EmitRecon(m, h, kRcStance, "partner_recon=stance_wait; reason=%s; remote=%u; body=%u; ms=%u\r\n", r.fix_wait ? r.fix_wait : "none",
+                  unsigned(r.fix_remote), unsigned(r.fix_body), r.mismatch_ms);
     if (ev & pr::Event::yaw) EmitRecon(m, h, kRcYaw, "partner_recon=yaw; err_mrad=%d\r\n", Mm(r.yaw_err_mrad));
     if (ev & pr::Event::stop_check)
         EmitRecon(m, h, kRcStop, "partner_recon=stop_check; ok=%u; ms=%u; v_free_mmps=%d\r\n", r.stop_ok == 1 ? 1u : 0u, r.stop_ms,
@@ -1775,9 +1809,9 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
                 BumpTap(d, m, kStanceBit, now);
             }
             ++m.recon_fixes;
-            EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; remote=%u; body=%u; via=%s; ms=%u; fixes=%u\r\n",
+            EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; remote=%u; body=%u; via=%s; ms=%u; fixes=%u; after_ms=%u\r\n",
                       unsigned(ro.report.fix_remote), unsigned(ro.report.fix_body), pr::StanceFixName(ro.stance_fix),
-                      hold ? kStanceFixHoldMs : static_cast<std::uint32_t>(pin::kTapFrames), m.recon_fixes);
+                      hold ? kStanceFixHoldMs : static_cast<std::uint32_t>(pin::kTapFrames), m.recon_fixes, ro.report.mismatch_ms);
         }
     }
     if (m.dash_fix && arm_now && set.native_active && !m.hold_stripped &&
