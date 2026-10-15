@@ -767,12 +767,8 @@ int main() {
                     const auto hide = Lab(prefix + (keyFirst ? "partner_native_ride=hide\n" + profileKey : profileKey + "partner_native_ride=hide\n"));
                     Check(hide.partner_native_ride == PartnerNativeRide::hide && hide.partner_native_ride_given,
                           "explicit ride hide is admitted before/after either native profile in lab/play");
-                    const auto seat = Lab(prefix + (keyFirst ? "partner_native_ride=seat
-partner_ride_seat_enter=getin
-" + profileKey
-                                                             : profileKey + "partner_native_ride=seat
-partner_ride_seat_exit=getoff
-"));
+                    const auto seat = Lab(prefix + (keyFirst ? "partner_native_ride=seat\npartner_ride_seat_enter=getin\n" + profileKey
+                                                             : profileKey + "partner_native_ride=seat\npartner_ride_seat_exit=getoff\n"));
                     Check(seat.invalid_values == 0 && seat.partner_native_ride == PartnerNativeRide::seat && seat.partner_native_ride_given &&
                           seat.partner_ride_seat_enter == (keyFirst ? mgscoop::PartnerRideSeatEnter::getin : mgscoop::PartnerRideSeatEnter::direct) &&
                           seat.partner_ride_seat_exit == (keyFirst ? mgscoop::PartnerRideSeatExit::stop : mgscoop::PartnerRideSeatExit::getoff),
@@ -789,12 +785,7 @@ partner_ride_seat_exit=getoff
         Check(badRide.invalid_values == 1 && !badRide.partner_native_ride_given && badRide.partner_native_ride == mgscoop::kPartnerNativeRideDriven &&
               namedBadRide.invalid_values == 1 && namedBadRide.partner_native_ride_given && namedBadRide.partner_native_ride == PartnerNativeRide::off,
               "invalid ride value inherits default but cannot erase a valid explicit off");
-        const auto badSeat = Lab("enabled=1
-role=host
-partner_ride_seat_enter=walk
-partner_ride_seat_exit=jump
-partner_native_ride=Seat
-");
+        const auto badSeat = Lab("enabled=1\nrole=host\npartner_ride_seat_enter=walk\npartner_ride_seat_exit=jump\npartner_native_ride=Seat\n");
         Check(badSeat.invalid_values == 3 && badSeat.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::direct &&
               badSeat.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::stop && badSeat.partner_native_ride == PartnerNativeRide::off,
               "invalid seat enter/exit/ride values refuse and keep the defaults");

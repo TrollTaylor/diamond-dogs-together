@@ -760,6 +760,11 @@ try {
     Assert-Equal ($repairOverrides['partner_native_ride']) 'hide' 'private worker accepts bounded deployment visibility setting'
     Assert-Equal ($repairOverrides['partner_native_equip_shared']) 'on' 'shared weapon setting reaches prepared lab.ini'
     Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'partner_native_ride=drive' -Role host } 'allowed:' 'unknown deployment mode refused'
+    $seatOverrides=ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_ride=seat','partner_ride_seat_enter=getin','partner_ride_seat_exit=getoff') -Role guest
+    Assert-Equal ($seatOverrides['partner_native_ride']) 'seat' 'the seated vehicle rider is a bounded ride setting'
+    Assert-Equal ($seatOverrides['partner_ride_seat_enter']) 'getin' 'seat enter setting'
+    Assert-Equal ($seatOverrides['partner_ride_seat_exit']) 'getoff' 'seat exit setting'
+    Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'partner_ride_seat_exit=jump' -Role host } 'allowed:' 'unknown seat exit refused'
     $e7 = Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items 'guest:net_latency_ms=100,guest:net_loss_permille=200' -Role guest)
     $e7i = ConvertFrom-IniText (New-LabIniFromSettings -Settings $e7)
     Assert-Equal "$($e7i['net_latency_ms'])/$($e7i['net_loss_permille'])/$($e7i['partner_stage'])" '100/200/0' 'E7 impairment written for the guest'

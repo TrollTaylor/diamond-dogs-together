@@ -94,4 +94,50 @@ c=F();c.env.vars.playerVehicleGameObjectId=65535;ok,msg=c:run();check(not ok and
 c=F();c.errorRead=true;ok,msg=c:run();check(not ok and msg=="vehicle_binding"and c.reads==1,"protected native Lua error refuses")
 c=F();c.lookupError=true;ok,msg=c:run("veh_auth");check(not ok and msg=="vehicle_binding"and c.reads==0,"lookup errors refuse before seat reader")
 c=F();c.V.stop();ok,msg=c:run();check(ok and c.reads==2,"stop owns no state to restore and next read has fresh identity")
+-- The seated rider levers (docs/anim-round1-seat.md): vehicle_names and seat_dm.
+local function G()
+ local c=F()
+ c.ids={veh_lv_0000=25608,veh_lv_0001=25609,veh_lv_0002=25610,veh_lv_0005=25613,veh_trc_0000=25621,veh_trc_0001=25622,horse_0000=6656,veh_walker=22529}
+ c.receipts,c.seatOk,c.plays,c.stops,c.names={},true,{},0,{}
+ c.env.GameObject.GetGameObjectId=function(t,n)
+  check(t=="TppVehicle2","vehicle type lookups only");c.lookups=c.lookups+1;c.names[#c.names+1]=n;return c.ids[n] or 65535
+ end
+ c.D.api.receipt=function(text)c.receipts[#c.receipts+1]=text;return c.seatOk end
+ c.env.Player.RequestToPlayDirectMotion=function(t)c.plays[#c.plays+1]=t end
+ c.env.Player.RequestToStopDirectMotion=function()c.stops=c.stops+1 end
+ c.env.e.MgsCoopPartnerRideSeat=function()return 25608,0 end
+ return c
+end
+local function lever(c,text)local a={};for w in text:gmatch("%S+")do a[#a+1]=w end;return c.V.run(a,3)end
+c=G();ok,msg=lever(c,"vehicle_names")
+check(ok and msg=="vehicle_names;lv=0-2@25608,5@25613;trc=0-1@25621;local=25608;seat=0" and c.lookups==48 and c.reads==0,
+ "vehicle names: runs of consecutive ids, the local vehicle and seat "..tostring(msg))
+c=G();c.env.e.MgsCoopPartnerRideSeat=nil;c.ids={};ok,msg=lever(c,"vehicle_names")
+check(ok and msg=="vehicle_names;lv=none;trc=none;local=65535;seat=255","no authored vehicle resolves")
+c=G();ok,msg=lever(c,"vehicle_names extra");check(not ok and msg=="vehicle_args" and c.lookups==0,"vehicle names takes no argument")
+c=G();ok,msg=lever(c,"seat_dm stateVehicleBackLeftLoop 2 veh_lv_0000")
+local p=c.plays[1]
+check(ok and msg=="seat_dm;id=25608;seat=2;name=veh_lv_0000;state=stateVehicleBackLeftLoop" and
+ c.receipts[1]=="return 'MGS_COOP_PARTNER_SEAT_V1' -- arm 2 25608" and #c.plays==1 and p[1][1]=="coopRide" and p[1][2]==1 and
+ p[2][1]=="stateVehicleBackLeftLoop" and p[2][2]==true and p[2][3]=="veh_lv_0000" and p[2][4]=="CNP_ppos_c" and p[2][5]=="MTP_GLOBAL_C" and
+ p[2][6]==true and p[3]==nil,"seat_dm arms natively, then plays the targeted seated state on body 1")
+c=G();c.seatOk=false;ok,msg=lever(c,"seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000")
+check(not ok and msg=="seat_dm_refused" and #c.plays==0 and #c.receipts==1,"a native refusal plays nothing")
+for _,bad in ipairs({"seat_dm stateVehicleFrontLeftLoop 0 horse_0000","seat_dm stateVehicleFrontLeftLoop 0 veh_walker",
+ "seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0031"})do
+ c=G();ok,msg=lever(c,bad);check(not ok and msg=="seat_dm_locator" and #c.receipts==0 and #c.plays==0,"never a horse, walker or unresolved locator: "..bad)
+end
+for _,bad in ipairs({"seat_dm stateDirectPlayRideRearLeftSeatOnVehicle 2 veh_lv_0000","seat_dm stateVehicleFrontLeftLoop 4 veh_lv_0000",
+ "seat_dm stateVehicleFrontLeftLoop 0","seat_dm vehicleFrontLeftLoop 0 veh_lv_0000","seat_dm stateVehicleFrontLeftLoop 0 veh/lv",
+ "seat_dm stateVehicleFrontLeftLoop 01 veh_lv_0000","seat_dm state_x 0 veh_lv_0000","seat_dm stop now"})do
+ c=G();ok,msg=lever(c,bad);check(not ok and msg=="seat_dm_args" and c.lookups==0 and #c.receipts==0,"strict seat_dm arguments: "..bad)
+end
+c=G();c.env.vars.missionCode=30050;c.W.mission=30050;c.D.mission=30050;c.W.MISSIONS[30050]={}
+ok,msg=lever(c,"seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000")
+check(not ok and msg=="seat_dm_mission" and #c.receipts==0,"seat_dm is free-roam only")
+c=G();ok,msg=lever(c,"seat_dm stop")
+check(ok and msg=="seat_dm=stop" and c.stops==1 and c.receipts[1]=="return 'MGS_COOP_PARTNER_SEAT_V1' -- stop","seat_dm stop")
+c=G();c.seatOk=false;ok,msg=lever(c,"seat_dm stop");check(not ok and msg=="seat_dm_stop_refused" and c.stops==1,"stop refused natively")
+c=G();c.env.Player.RequestToPlayDirectMotion=nil;ok,msg=lever(c,"seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000")
+check(not ok and msg=="vehicle_binding","a missing DM binding is a binding refusal")
 print("debug_vehicle_lua_check: "..checks.." checks PASS")
