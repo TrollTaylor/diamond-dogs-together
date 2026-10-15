@@ -26,6 +26,7 @@
 #include "mgscoop/coop_hud.hpp"
 #include "mgscoop/partner_slots.hpp"
 #include "mgscoop/coop_reason_text.hpp"
+#include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/link_session.hpp"
 #include "mgscoop/steam_join_code.hpp"
@@ -2562,8 +2563,9 @@ void TestHud() {
             Check(text::FormatWorldNote(note.code, note.a, note.b, note.partner, note.local, sentence, sizeof(sentence)) &&
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{5}, std::uint8_t{6}, std::uint8_t{7}, std::uint8_t{15},
-                                        std::uint8_t{17}, std::uint8_t{255}})
+        // Codes 5..12 have sentences since join-fix phase 2 (below); 13..15 stay reserved.
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{13}, std::uint8_t{14}, std::uint8_t{15}, std::uint8_t{17},
+                                        std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
         Check(!text::FormatWorldNote(1, 40010, 0, 0, 40010, sentence, sizeof(sentence)) && sentence[0] == 0,
@@ -2591,7 +2593,7 @@ void TestHud() {
         hud::PostWorldNote(3, 30020, 4, 30050, 40050);
         hud::PostWorldNote(3, 30020, 3, 40050, 40050);
         hud::PostWorldNote(1, 40010, 0, 0, 40010);
-        hud::PostWorldNote(7, 1, 1, 0, 0);
+        hud::PostWorldNote(13, 1, 1, 0, 0);  // reserved (7 has a sentence since join-fix phase 2)
         hud::Event notes[8]{};
         const unsigned taken = hud::Take(notes, 8, model.cursor());
         Check(taken == 7 && notes[0].kind == hud::EventKind::world_note && notes[0].arg == 2 &&
@@ -2647,6 +2649,415 @@ void TestHud() {
           "hud_status line");
     hud::ResetForTest();
 }
+
+// An exact text check that prints both texts when they differ.
+void CheckText(bool ok, const char* actual, const char* expected, const char* what) {
+    if (!ok || std::strcmp(actual, expected) != 0)
+        std::fprintf(stderr, "  ok=%d\n  got:      \"%s\"\n  expected: \"%s\"\n", ok ? 1 : 0, actual, expected);
+    Check(ok && std::strcmp(actual, expected) == 0, what);
+}
+bool PrintableAscii(const char* text) {
+    for (const char* c = text; *c; ++c)
+        if (static_cast<unsigned char>(*c) < 0x20 || static_cast<unsigned char>(*c) >= 0x7F) return false;
+    return true;
+}
+
+// Automatic save handoff presentation (join-fix phase 2 track U, P2-15): the
+// status line, the save_handoff toasts, the world notes 5..12 and the F9
+// Shared save status line (docs/save-handoff.md, docs/debug-menu.md).
+void TestSaveHandoffHud() {
+    namespace hud = mgscoop::coop_hud;
+    namespace text = mgscoop::coop_text;
+    namespace hs = mgscoop::save_handoff_state;
+    using T = hs::Token;
+    hud::ResetForTest();
+    hud::Configure(hud::Mode::compact, true);
+    const auto token = [](T t) { return static_cast<std::uint8_t>(t); };
+    hud::LinkView v{};
+    v.valid = true;
+    v.state = static_cast<std::uint8_t>(link::LinkState::connected);
+    v.steam = true;
+    v.play = true;
+    v.route = static_cast<std::uint8_t>(sn::Route::relay);
+    v.rtt_ms = 61;
+    std::snprintf(v.own_build, sizeof(v.own_build), "0.13.0+f64a8e9");
+    hud::Line line{};
+    hud::PartnerView loading{};  // no fresh partner view: "loading; gun unavailable"
+
+    // ---- Status line. Tokens without a line of their own keep today's text.
+    for (const T t : {T::off, T::idle, T::same, T::wait_host, T::offered, T::partner_staged, T::partner_restarting, T::kept, T::refused,
+                      T::failed, T::applied}) {
+        v.handoff = token(t);
+        v.handoff_pct = 42;
+        CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms",
+                  "handoff tokens without a HUD line keep the connected line");
+        CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line, &loading), line.text,
+                  "CO-OP [connected] Snake_Fan - Steam relay 61 ms | loading; gun unavailable",
+                  "handoff tokens without a HUD line keep the partner status");
+    }
+    v.handoff = token(T::receiving);
+    v.handoff_pct = 42;
+    CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text,
+              "CO-OP [connected] Snake_Fan - Steam relay 61 ms | getting host save 42%", "guest receiving 42%");
+    Check(line.tone == hud::Tone::good && line.detail[0] == 0, "receiving: connected tone, no detail in compact");
+    CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line, &loading), line.text,
+              "CO-OP [connected] Snake_Fan - Steam relay 61 ms | getting host save 42%", "receiving replaces the partner status");
+    CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::full, 0, line), line.text,
+              "CO-OP [connected] Snake_Fan - Steam relay 61 ms | getting host save 42%", "receiving in full mode");
+    Check(std::strncmp(line.detail, "rtt 61 ms | jitter 0 ms | loss 0.0% | 0.13.0+f64a8e9", 52) == 0, "full mode keeps the detail line");
+    v.host = true;
+    v.handoff = token(T::sending);
+    v.handoff_pct = 7;
+    CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line, &loading), line.text,
+              "CO-OP [connected] Snake_Fan - Steam relay 61 ms | sending your save 7%", "host sending 7%");
+    v.handoff_pct = 250;
+    CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text,
+              "CO-OP [connected] Snake_Fan - Steam relay 61 ms | sending your save 100%", "the percent stops at 100");
+    v.host = false;
+    for (const T t : {T::staged, T::countdown, T::exiting}) {
+        v.handoff = token(t);
+        CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line, &loading), line.text,
+                  "CO-OP [connected] Snake_Fan | host save ready - MGSV restarts", "guest staged / countdown / exiting");
+    }
+    CheckText(hud::FormatLine(v, "A_partner_name_that_is_much_longer_than_the_compact_line", hud::Mode::compact, 0, line), line.text,
+              "CO-OP [connected] A_partner_name_that_is_m | host save ready - MGSV restarts", "a long name is cut at 24");
+    std::snprintf(v.peer, sizeof(v.peer), "steam:...1234");
+    CheckText(hud::FormatLine(v, "", hud::Mode::compact, 0, line), line.text, "CO-OP [connected] steam:...1234 | host save ready - MGSV restarts",
+              "no name: the masked peer");
+    v.peer[0] = 0;
+    v.handoff = token(T::receiving);
+    v.handoff_pct = 100;
+    v.rtt_ms = 0xFFFFFFFFu;
+    Check(hud::FormatLine(v, "A_partner_name_that_is_much_longer_than_the_compact_line", hud::Mode::compact, 0, line) &&
+              std::strlen(line.text) < sizeof(line.text) &&
+              std::strcmp(line.text, "CO-OP [connected] A_partner_name_that_is_m - Steam relay 4294967295 ms | getting host save 100%") == 0,
+          "the longest receiving line fits");
+    v.rtt_ms = 61;
+    // The host: the guest closed MGSV to restart on the host's save.
+    v.host = true;
+    v.left = true;
+    v.handoff = token(T::partner_restarting);
+    for (const auto state : {link::LinkState::lost, link::LinkState::listening}) {
+        v.state = static_cast<std::uint8_t>(state);
+        CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text,
+                  "CO-OP [Snake_Fan restarting] loading your save - waiting for them", "host: partner left + partner_restarting");
+        Check(line.tone == hud::Tone::info, "partner restarting is info");
+        CheckText(hud::FormatLine(v, "", hud::Mode::compact, 0, line), line.text,
+                  "CO-OP [your friend restarting] loading your save - waiting for them", "unnamed partner restarting");
+    }
+    CheckText(hud::FormatLine(v, "A_partner_name_that_is_much_longer_than_the_compact_line", hud::Mode::compact, 0, line), line.text,
+              "CO-OP [A_partner_name_that_is_m restarting] loading your save - waiting for them", "restarting: a long name is cut at 24");
+    v.handoff = token(T::partner_staged);
+    CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text, "CO-OP [Snake_Fan left] waiting for them to come back",
+              "left without partner_restarting keeps the left line");
+    v.handoff = token(T::partner_restarting);
+    v.left = false;
+    v.state = static_cast<std::uint8_t>(link::LinkState::lost);
+    v.down_ms = 3000;
+    v.publish_ms = 0;
+    CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text, "CO-OP [partner lost 3 s] waiting for them to come back",
+              "lost without a goodbye keeps the lost line");
+    v.down_ms = 0;
+    v.state = static_cast<std::uint8_t>(link::LinkState::connected);
+    v.handoff = 0;
+    v.handoff_pct = 0;
+
+    // ---- Toasts (EventKind::save_handoff, text "<a> <b>").
+    const struct {
+        std::uint8_t code;
+        std::uint32_t a;
+        const char* partner;
+        hud::Tone tone;
+        const char* sentence;
+    } toasts[] = {
+        {1, 594, "Snake_Fan", hud::Tone::info,
+         "Getting the host's save (594 KB) so you both start in the same place. Your own co-op save is kept (Share-Save.bat [R] brings it "
+         "back)."},
+        {2, 7, "Snake_Fan", hud::Tone::info,
+         "Host's save ready. MGSV restarts in 7 s and Play-Coop starts it again on the host's save. Press Continue twice to keep your own "
+         "save."},
+        {3, 0, "Snake_Fan", hud::Tone::info, "Host's save stored for a test; it is not applied."},
+        {4, 0, "Snake_Fan", hud::Tone::info,
+         "Your save starts somewhere other than the host's. Once the host is in Mother Base or free roam, their save is copied to you and "
+         "MGSV restarts once."},
+        {5, 0, "Snake_Fan", hud::Tone::warn,
+         "The host's save is still in the story opening, so it is not shared. The player whose save reaches Mother Base should host."},
+        {6, 10020, "Snake_Fan", hud::Tone::warn,
+         "The host's save continues into story mission 10020, which co-op cannot join. The host should go to Mother Base or free roam "
+         "first."},
+        {6, 0, "Snake_Fan", hud::Tone::warn,
+         "The host's save continues into a mission, which co-op cannot join. The host should go to Mother Base or free roam first."},
+        {7, 5, "Snake_Fan", hud::Tone::warn, "Getting the host's save failed (the connection dropped). Nothing was changed."},
+        {7, 1, "Snake_Fan", hud::Tone::warn, "Getting the host's save failed (the copy did not match the host's files). Nothing was changed."},
+        {7, 99, "Snake_Fan", hud::Tone::warn, "Getting the host's save failed (unknown error). Nothing was changed."},
+        {8, 0, "Snake_Fan", hud::Tone::info, "You kept your own save for this session."},
+        {9, 0, "Snake_Fan", hud::Tone::warn,
+         "Host's save ready: quit MGSV (title menu > Exit) and Play-Coop starts it again on the host's save."},
+        {10, 0, "Snake_Fan", hud::Tone::info, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
+        {21, 0, "Snake_Fan", hud::Tone::info, "Sending your save to Snake_Fan so you both start in the same place."},
+        {21, 0, "", hud::Tone::info, "Sending your save to your partner so you both start in the same place."},
+        {22, 30010, "Snake_Fan", hud::Tone::info,
+         "Snake_Fan is restarting MGSV on your save (about a minute). Wait here; they arrive in Afghanistan free roam."},
+        {22, 30010, "", hud::Tone::info,
+         "Your partner is restarting MGSV on your save (about a minute). Wait here; they arrive in Afghanistan free roam."},
+        {22, 0, "Snake_Fan", hud::Tone::info, "Snake_Fan is restarting MGSV on your save (about a minute). Wait here for them."},
+        {23, 0, "Snake_Fan", hud::Tone::info,
+         "Snake_Fan's save starts somewhere else. Go to Mother Base or free roam: your save is then copied to them."},
+        {23, 0, "", hud::Tone::info,
+         "Your partner's save starts somewhere else. Go to Mother Base or free roam: your save is then copied to them."},
+        {24, 0, "Snake_Fan", hud::Tone::warn,
+         "Your save is still in the story opening, so it is not shared. Let Snake_Fan host if their save reaches Mother Base."},
+        {24, 0, "", hud::Tone::warn,
+         "Your save is still in the story opening, so it is not shared. Let your partner host if their save reaches Mother Base."},
+        {25, 0, "Snake_Fan", hud::Tone::info, "Snake_Fan kept their own save."},
+        {25, 0, "", hud::Tone::info, "Your partner kept their own save."},
+        {26, 3, "Snake_Fan", hud::Tone::warn, "Sending your save failed (not enough disk space). Use Share-Save.bat instead."},
+        {27, 10020, "Snake_Fan", hud::Tone::warn,
+         "Your save continues into story mission 10020, which co-op cannot join. Go to Mother Base or free roam first."},
+    };
+    char toast[hud::kToastChars]{};
+    hud::Tone tone = hud::Tone::bad;
+    for (const auto& c : toasts) {
+        hud::Event e{};
+        e.kind = hud::EventKind::save_handoff;
+        e.arg = c.code;
+        std::snprintf(e.text, sizeof(e.text), "%u 0", static_cast<unsigned>(c.a));
+        tone = hud::Tone::bad;
+        CheckText(hud::FormatToast(e, v, c.partner, toast, sizeof(toast), tone), toast, c.sentence, "save_handoff toast exact sentence");
+        Check(tone == c.tone, "save_handoff toast tone");
+    }
+    // Every code, any values, any partner: at most 199 printable ASCII
+    // characters, no leftover '%', and the mission is named when given.
+    const std::uint8_t codes[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 21, 22, 23, 24, 25, 26, 27};
+    const std::uint32_t values[] = {0, 1, 5, 12, 594, 8192, 10020, 30010, 40010, 40050, 4294967295u};
+    const char* const partners[] = {"", "Snake_Fan", "A_partner_name_that_is_much_longer_than_any_line", "Name\xC3\xA9\x01%s"};
+    for (const auto code : codes)
+        for (const auto a : values)
+            for (const char* partner : partners) {
+                hud::Event e{};
+                e.kind = hud::EventKind::save_handoff;
+                e.arg = code;
+                std::snprintf(e.text, sizeof(e.text), "%u 4294967295", static_cast<unsigned>(a));
+                Check(hud::FormatToast(e, v, partner, toast, sizeof(toast), tone) && std::strlen(toast) <= 199 && PrintableAscii(toast),
+                      "every save_handoff toast is at most 199 printable ASCII characters");
+                if (!std::strchr(partner, '%')) Check(!std::strchr(toast, '%'), "no save_handoff toast has a leftover '%'");
+                if ((code == 6 || code == 22 || code == 27) && a == 40010)
+                    Check(std::strstr(toast, "the Afghanistan helicopter") != nullptr, "save_handoff toasts name the mission");
+            }
+    // The partner name is used verbatim (bounded, non-ASCII as '?'), never as a format.
+    {
+        char out[hud::kToastChars]{};
+        CheckText(text::FormatSaveHandoff(25, 0, 0, "Name\xC3\xA9\x01%s", out, sizeof(out)), out, "Name???%s kept their own save.",
+                  "a partner name is bounded printable ASCII");
+        CheckText(text::FormatSaveHandoff(25, 0, 0, "A_partner_name_that_is_much_longer_than_any_line", out, sizeof(out)), out,
+                  "A_partner_name_that_is_m kept their own save.", "a partner name is cut at 24");
+        CheckText(text::FormatSaveHandoff(25, 0, 0, nullptr, out, sizeof(out)), out, "Your partner kept their own save.", "no partner name");
+        char tiny[16]{};
+        Check(!text::FormatSaveHandoff(1, 594, 0, "", tiny, sizeof(tiny)) && tiny[0] == 0 && !text::FormatSaveHandoff(8, 0, 0, "", nullptr, 0),
+              "FormatSaveHandoff: a short buffer stays empty");
+    }
+    for (const int code : {0, 11, 20, 28, 255}) {
+        hud::Event e{};
+        e.kind = hud::EventKind::save_handoff;
+        e.arg = code;
+        std::snprintf(e.text, sizeof(e.text), "1 0");
+        Check(!hud::FormatToast(e, v, "Snake_Fan", toast, sizeof(toast), tone) && toast[0] == 0, "unknown save_handoff codes have no toast");
+    }
+    for (const char* malformed : {"594", "594 0 0", "594  0", "0594 0", "-1 0", "594 0 ", " 594 0", "594 x", "4294967296 0", ""}) {
+        hud::Event e{};
+        e.kind = hud::EventKind::save_handoff;
+        e.arg = 1;
+        std::snprintf(e.text, sizeof(e.text), "%s", malformed);
+        Check(!hud::FormatToast(e, v, "Snake_Fan", toast, sizeof(toast), tone), "a malformed save_handoff text has no toast");
+    }
+    {
+        hud::Event e{};
+        e.kind = hud::EventKind::save_handoff;
+        e.arg = 256 + 1;
+        std::snprintf(e.text, sizeof(e.text), "594 0");
+        Check(!hud::FormatToast(e, v, "Snake_Fan", toast, sizeof(toast), tone), "a save_handoff code above 255 has no toast");
+    }
+    // PostSaveHandoff packs the code and two decimal values; the countdown,
+    // re-posted every second, updates one toast instead of stacking.
+    {
+        hud::Model model;
+        hud::Event drained[16]{};
+        while (hud::Take(drained, 16, model.cursor()) == 16) {
+        }
+        hud::PostSaveHandoff(1, 594, 0);
+        hud::PostSaveHandoff(2, 10, 0);
+        hud::PostSaveHandoff(2, 9, 0);
+        hud::PostSaveHandoff(22, 30010, 4294967295u);
+        hud::Event events[8]{};
+        const unsigned taken = hud::Take(events, 8, model.cursor());
+        Check(taken == 4 && events[0].kind == hud::EventKind::save_handoff && events[0].arg == 1 && std::strcmp(events[0].text, "594 0") == 0 &&
+                  events[2].arg == 2 && std::strcmp(events[2].text, "9 0") == 0 && events[3].arg == 22 &&
+                  std::strcmp(events[3].text, "30010 4294967295") == 0,
+              "PostSaveHandoff packs the code and two decimal values");
+        model.OnEvent(events[0], v, "Snake_Fan", 10000);
+        model.OnEvent(events[1], v, "Snake_Fan", 10000);
+        model.OnEvent(events[2], v, "Snake_Fan", 11000);
+        const hud::Toast* active[hud::kMaxToasts]{};
+        Check(model.Active(11000, active, hud::kMaxToasts) == 2, "the countdown re-post updates its toast (G1 + one G2)");
+        CheckText(true, active[0]->text,
+                  "Host's save ready. MGSV restarts in 9 s and Play-Coop starts it again on the host's save. Press Continue twice to keep your "
+                  "own save.",
+                  "the newest countdown text replaces the older one");
+        Check(active[0]->until_ms == 11000 + hud::kToastMs && std::strncmp(active[1]->text, "Getting the host's save (594 KB)", 32) == 0,
+              "the updated countdown toast lasts 4 s from its re-post");
+        model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 11500);
+        model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 11600);
+        Check(model.Active(11600, active, hud::kMaxToasts) == 3, "an identical toast is still extended, other sentences stack");
+    }
+
+    // ---- World notes 5..12 (travel lock and save handoff, P2-3).
+    const struct {
+        std::uint8_t code;
+        std::uint32_t a, b;
+        hud::Tone tone;
+        const char* sentence;
+    } notes[] = {
+        {5, 30050, 10020, hud::Tone::warn,
+         "The host is in Mother Base. Go there or to a helicopter, or do the same again within 30 s to travel alone."},
+        {6, 10020, 30050, hud::Tone::warn,
+         "Your partner cannot join story mission 10020 (no co-op there). Meet in Mother Base, free roam or the helicopter."},
+        {7, 30010, 1, hud::Tone::warn,
+         "The host is in Afghanistan free roam, but your save continues elsewhere. Press Continue again within 10 s to play alone."},
+        {7, 30010, 2, hud::Tone::warn,
+         "Your save is at the story start; the host cannot join it. Press Continue again within 10 s to play it anyway."},
+        {7, 30010, 3, hud::Tone::warn,
+         "The host's save is copied to you once they are in Mother Base or free roam. Press Continue again within 10 s to play your own "
+         "save."},
+        {8, 30020, 1, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
+        {8, 30020, 2, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
+        {8, 30020, 3, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
+        {9, 42, 0, hud::Tone::warn,
+         "Getting the host's save (42%); MGSV restarts on it. Press Continue again within 10 s to keep your own save."},
+        {10, 0, 0, hud::Tone::info, "Keeping your own save for this session."},
+        {11, 10020, 30010, hud::Tone::warn,
+         "You are loading story mission 10020; the host is in Afghanistan free roam. Meet in a helicopter, Mother Base or free roam."},
+        {12, 30020, 40010, hud::Tone::warn,
+         "The host is in the Afghanistan helicopter. Choose that destination, or choose this one again to fly alone (it leaves alone after "
+         "2 min)."},
+    };
+    char sentence[hud::kToastChars]{};
+    std::uint32_t note_cursor = 0;
+    {
+        hud::Event drained[16]{};
+        while (hud::Take(drained, 16, note_cursor) == 16) {
+        }
+    }
+    for (const auto& note : notes) {
+        CheckText(text::FormatWorldNote(note.code, note.a, note.b, 0, 0, sentence, sizeof(sentence)), sentence, note.sentence,
+                  "FormatWorldNote 5..12 exact sentences");
+        hud::PostWorldNote(note.code, note.a, note.b, 30010, 40050);
+        hud::Event e{};
+        Check(hud::Take(&e, 1, note_cursor) == 1 && e.kind == hud::EventKind::world_note && e.arg == note.code, "world_note 5..12 posted");
+        tone = hud::Tone::bad;
+        CheckText(hud::FormatToast(e, v, "Snake_Fan", toast, sizeof(toast), tone), toast, note.sentence, "world_note 5..12 toasts");
+        Check(tone == note.tone, "world_note 5..12 tones: travelling alone and keeping the own save are info");
+    }
+    for (const std::uint32_t b : {0u, 4u, 255u})
+        Check(!text::FormatWorldNote(7, 30010, b, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "TITLE_CONTINUE_LOCKED needs b = 1..3");
+    Check(!text::FormatWorldNote(9, 101, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0 &&
+              text::FormatWorldNote(9, 100, 0, 0, 0, sentence, sizeof(sentence)) && std::strstr(sentence, "(100%)"),
+          "CONTINUE_DURING_HANDOFF needs a percent 0..100");
+    for (const std::uint8_t code : {std::uint8_t{13}, std::uint8_t{14}, std::uint8_t{15}})
+        Check(!text::FormatWorldNote(code, 30010, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "FormatWorldNote: code 13 (and the reserved 14, 15) returns false");
+    Check(text::FormatWorldNote(11, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
+              text::FormatWorldNote(12, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
+              text::FormatWorldNote(5, 4294967295u, 4294967295u, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars,
+          "the longest notes 5..12 fit a toast");
+    {
+        char short_note[40]{};
+        Check(!text::FormatWorldNote(5, 30050, 0, 0, 0, short_note, sizeof(short_note)) && short_note[0] == 0 &&
+                  !text::FormatWorldNote(10, 0, 0, 0, 0, short_note, 8) && short_note[0] == 0,
+              "notes 5..12: a short buffer stays empty");
+    }
+
+    // ---- Reason phrases and the F9 Shared save line.
+    const char* const fails[] = {"unknown error",
+                                 "the copy did not match the host's files",
+                                 "the files could not be written",
+                                 "not enough disk space",
+                                 "the transfer stalled",
+                                 "the connection dropped",
+                                 "an unexpected message",
+                                 "the save changed while it was read",
+                                 "the title screen was left",
+                                 "no answer in time",
+                                 "the game is closing",
+                                 "the host's file list was not valid",
+                                 "your partner could not store it"};
+    for (unsigned i = 0; i < sizeof(fails) / sizeof(fails[0]); ++i)
+        Check(std::strcmp(text::SaveHandoffFailText(static_cast<std::uint8_t>(i)), fails[i]) == 0, "SaveHandoffFailText table");
+    Check(std::strcmp(text::SaveHandoffFailText(13), "unknown error") == 0 && std::strcmp(text::SaveHandoffFailText(255), "unknown error") == 0,
+          "SaveHandoffFailText: a newer code is an unknown error");
+    const char* const eligs[] = {"it is not checked yet",
+                                 "it is ready",
+                                 "it is still in the story opening",
+                                 "its story progress is not known yet",
+                                 "it is not yet known to continue into Mother Base or free roam",
+                                 "it continues into a mission co-op cannot join",
+                                 "the game is saving",
+                                 "the save folder holds extra save files",
+                                 "the save files are too large",
+                                 "save sharing is off"};
+    for (unsigned i = 0; i < sizeof(eligs) / sizeof(eligs[0]); ++i)
+        Check(std::strcmp(text::SaveHandoffEligText(static_cast<std::uint8_t>(i)), eligs[i]) == 0, "SaveHandoffEligText table");
+    Check(std::strcmp(text::SaveHandoffEligText(10), "it is not checked yet") == 0, "SaveHandoffEligText: a newer code");
+    const struct {
+        std::uint8_t role;
+        T token;
+        std::uint8_t pct, why;
+        std::uint32_t seconds;
+        const char* line;
+    } lines[] = {
+        {2, T::off, 0, 0, 0, "Automatic save sharing is off (Play-Coop -SaveHandoff off)."},
+        {2, T::idle, 0, 0, 0, "Your save matches the host's place; nothing to share."},
+        {2, T::same, 0, 0, 0, "Your save matches the host's place; nothing to share."},
+        {2, T::wait_host, 0, 0, 0, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you."},
+        {2, T::receiving, 42, 0, 0, "Receiving the host's save: 42% of 594 KB."},
+        {2, T::receiving, 230, 0, 0, "Receiving the host's save: 100% of 594 KB."},
+        {2, T::staged, 100, 0, 0, "Host's save received and checked (594 KB)."},
+        {2, T::countdown, 100, 0, 7,
+         "Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Share-Save.bat [R])."},
+        {2, T::countdown, 100, 0, 0, "Host's save ready: MGSV restarts now. Your current co-op save is kept aside (Share-Save.bat [R])."},
+        {2, T::exiting, 100, 0, 0, "MGSV is closing to load the host's save; Play-Coop starts it again."},
+        {2, T::kept, 0, 5, 0, "You kept your own save for this session."},
+        {2, T::refused, 0, 2, 0, "The host's save cannot be shared: it is still in the story opening."},
+        {2, T::failed, 0, 5, 0, "Getting the host's save failed: the connection dropped. Nothing was changed."},
+        {2, T::applied, 0, 0, 0, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
+        {1, T::idle, 0, 0, 0, "Your save matches your partner's place; nothing to share."},
+        {1, T::offered, 0, 0, 0, "Offering your save to your partner."},
+        {1, T::sending, 7, 0, 0, "Sending your save: 7%"},
+        {1, T::partner_staged, 100, 0, 0, "Your partner received your save."},
+        {1, T::partner_restarting, 100, 0, 0, "Your partner is restarting on your save."},
+        {1, T::kept, 0, 5, 0, "Your partner kept their own save."},
+        {1, T::refused, 0, 5, 0, "Your save cannot be shared: it continues into a mission co-op cannot join."},
+        {1, T::failed, 0, 9, 0, "Sending your save failed: no answer in time."},
+    };
+    char status[hud::kToastChars]{};
+    for (const auto& l : lines)
+        CheckText(text::FormatSaveHandoffStatus(l.role, token(l.token), l.pct, l.why, 608012, l.seconds, status, sizeof(status)), status, l.line,
+                  "F9 Shared save status line");
+    for (unsigned t = 0; t <= 255; ++t)
+        for (const std::uint8_t role : {std::uint8_t{0}, std::uint8_t{1}, std::uint8_t{2}})
+            Check(text::FormatSaveHandoffStatus(role, static_cast<std::uint8_t>(t), 255, 255, 0xFFFFFFFFu, 0xFFFFFFFFu, status, sizeof(status)) &&
+                      status[0] && std::strlen(status) <= 199 && PrintableAscii(status),
+                  "every F9 Shared save line is bounded ASCII");
+    CheckText(text::FormatSaveHandoffStatus(2, 16, 0, 0, 0, 0, status, sizeof(status)), status,
+              "Automatic save sharing is off (Play-Coop -SaveHandoff off).", "an unknown token reads as off");
+    {
+        char tiny[12]{};
+        Check(!text::FormatSaveHandoffStatus(2, token(T::receiving), 42, 0, 608012, 0, tiny, sizeof(tiny)) && tiny[0] == 0 &&
+                  !text::FormatSaveHandoffStatus(2, token(T::kept), 0, 0, 0, 0, nullptr, 0),
+              "FormatSaveHandoffStatus: a short buffer stays empty");
+    }
+    hud::ResetForTest();
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -2681,6 +3092,7 @@ int main(int argc, char** argv) {
     Check(reasons != nullptr, "usage: steam_transport_tests <tests/fixtures/link-reasons.json>");
     TestReasonVectors(reasons);
     TestHud();
+    TestSaveHandoffHud();
     Check(g_allocated == g_released, "every fake message freed exactly once");
     std::printf("steam_transport_tests: %u checks passed\n", g_checks);
     return 0;

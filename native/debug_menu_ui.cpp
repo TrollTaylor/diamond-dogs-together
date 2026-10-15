@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include "imgui.h"
@@ -17,6 +18,8 @@
 #include "mgscoop/steam_online_state.hpp"
 #include "mgscoop/coop_hud.hpp"
 #include "mgscoop/coop_reason_text.hpp"
+#include "mgscoop/save_handoff_state.hpp"
+#include "mgscoop/save_handoff_wire.hpp"
 
 namespace mgscoop::debug_menu_ui {
 namespace {
@@ -66,8 +69,26 @@ struct State {
     int page_key{-1};
     const ActionDef* drawn[160]{};
     std::size_t drawn_count{};
+    // Shared save countdown (Partner / Co-op): the HUD events seen by this menu,
+    // the newest G2 "restarts in N s" toast and when the countdown was first seen.
+    std::uint32_t handoff_cursor{}, countdown_left{};
+    ULONGLONG countdown_at{}, countdown_seen{};
 };
 State ui{};
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+// What the Shared save section drew in the latest frame (debug_overlay_tests).
+struct SharedSaveTest {
+    bool drawn;
+    char status[coop_hud::kToastChars];
+    bool keep_drawn, keep_enabled, lock_drawn, lock_checked;
+    float keep[4], lock[4];
+};
+SharedSaveTest shared_test{};
+void NoteItemRect(float (&rect)[4]) noexcept {
+    const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    rect[0] = min.x; rect[1] = min.y; rect[2] = max.x; rect[3] = max.y;
+}
+#endif
 
 const char* const kApplyValues[] = {"xform", "warp", "hybrid", "input"};
 const char* const kApplyNames[] = {"Transform", "Warp", "Hybrid", "Input"};
@@ -674,8 +695,101 @@ void Online() noexcept {
     if (o.last_result[0]) ImGui::TextWrapped("%s", o.last_result);
     ImGui::Spacing();
 }
+// Seconds left on the guest's restart countdown: the newest G2 toast ("MGSV
+// restarts in N s", re-posted every second; this menu reads the HUD events
+// with its own cursor and takes nothing from the HUD), else 10 s from when the
+// menu first saw the countdown.
+void TrackCountdown(const save_handoff_state::View& v, ULONGLONG now) noexcept {
+    coop_hud::Event events[8]{};
+    unsigned taken = 0;
+    do {
+        taken = coop_hud::Take(events, 8, ui.handoff_cursor);
+        for (unsigned i = 0; i < taken; ++i) {
+            const auto& e = events[i];
+            if (e.kind != coop_hud::EventKind::save_handoff ||
+                e.arg != static_cast<std::int32_t>(save_handoff_state::Toast::g2_countdown) || e.text[0] < '0' || e.text[0] > '9')
+                continue;
+            char* end = nullptr;
+            const unsigned long left = std::strtoul(e.text, &end, 10);
+            if (end == e.text || *end != ' ' || left > 60) continue;
+            ui.countdown_left = static_cast<std::uint32_t>(left);
+            ui.countdown_at = now;
+        }
+    } while (taken == 8);
+    if (v.token != static_cast<std::uint8_t>(save_handoff_state::Token::countdown)) {
+        ui.countdown_at = ui.countdown_seen = 0;
+        return;
+    }
+    if (!ui.countdown_seen) ui.countdown_seen = now;
+}
+std::uint32_t CountdownLeft(ULONGLONG now) noexcept {
+    if (ui.countdown_at) {
+        const auto elapsed = static_cast<std::uint32_t>((now - ui.countdown_at) / 1000);
+        return ui.countdown_left > elapsed ? ui.countdown_left - elapsed : 0;
+    }
+    const ULONGLONG elapsed = ui.countdown_seen ? now - ui.countdown_seen : 0;
+    return elapsed >= 10000 ? 0 : static_cast<std::uint32_t>((10000 - elapsed + 999) / 1000);
+}
+// Partner / Co-op -> Shared save (automatic save handoff; docs/save-handoff.md):
+// copied save_handoff_state only, shown while the module is configured. The
+// button and the checkbox are UI-only requests (no command, so the gameplay
+// gate never applies): they work at the title and in the helicopter.
+void SharedSave() noexcept {
+    namespace hs = save_handoff_state;
+    const hs::View v = hs::Get();
+    const ULONGLONG now = GetTickCount64();
+    if (!v.available) return;
+    if (!ImGui::CollapsingHeader("Shared save", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    char status[coop_hud::kToastChars]{};
+    coop_text::FormatSaveHandoffStatus(v.role, v.token, v.pct, v.why, v.bytes, CountdownLeft(now), status, sizeof(status));
+    const auto token = static_cast<hs::Token>(v.token);
+    const ImVec4 color = token == hs::Token::refused || token == hs::Token::failed ? kRed
+                       : token == hs::Token::wait_host || token == hs::Token::countdown || token == hs::Token::exiting ||
+                                 token == hs::Token::partner_restarting
+                           ? kAmber
+                       : token == hs::Token::off || token == hs::Token::kept ? kGrey
+                                                                              : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    ImGui::PushStyleColor(ImGuiCol_Text, color);
+    ImGui::TextWrapped("%s", status);
+    ImGui::PopStyleColor();
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+    shared_test.drawn = true;
+    Copy(shared_test.status, status);
+#endif
+    // The host shares its own save: keeping a save and the travel lock are the guest's.
+    if (v.role != static_cast<std::uint8_t>(save_handoff_wire::Role::host)) {
+        ImGui::BeginDisabled(!v.can_keep);
+        if (ImGui::Button("Keep my own save")) {
+            hs::RequestKeepOwnSave();
+            debug_menu::SetLastUiAction("handoff_keep");
+        }
+        ImGui::EndDisabled();
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+        shared_test.keep_drawn = true;
+        shared_test.keep_enabled = v.can_keep;
+        NoteItemRect(shared_test.keep);
+#endif
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", v.can_keep ? "Do not use the host's save this session: MGSV does not restart and your co-op save stays."
+                                               : "Available while the host's save is on its way or ready.");
+        bool locked = !hs::TravelUnlocked();
+        if (ImGui::Checkbox("Travel lock (you follow the host's travel)", &locked)) {
+            hs::SetTravelUnlocked(!locked);
+            debug_menu::SetLastUiAction(locked ? "travel_lock" : "travel_unlock");
+        }
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+        shared_test.lock_drawn = true;
+        shared_test.lock_checked = locked;
+        NoteItemRect(shared_test.lock);
+#endif
+        ImGui::SetItemTooltip("While on, choosing a destination other than the host's asks first; choosing it again goes alone. "
+                              "Off: travel freely for the rest of this session.");
+    }
+    ImGui::Spacing();
+}
 void Partner(const Snapshot& s) noexcept {
     Online();
+    SharedSave();
     const bool up = std::strcmp(s.link_state, "connected") == 0;
     ImGui::Text("Link %s   RTT %u ms   jitter %u ms   loss %.1f%%   interpolation %u ms", LinkWord(s), s.rtt_ms, s.jitter_ms,
         s.loss_permille / 10.0f, s.interp_ms);
@@ -967,6 +1081,11 @@ void AutoRefresh(const Snapshot& s) noexcept {
 bool Draw(const Options& options) noexcept {
     ui.worker = options.worker;
     ui.drawn_count = 0;
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+    shared_test = SharedSaveTest{};
+#endif
+    // Every menu frame, whichever page is shown (Partner / Co-op > Shared save).
+    TrackCountdown(save_handoff_state::Get(), GetTickCount64());
     const auto s = debug_menu::GetSnapshot();
     if (ui.confirm.action && Now() >= ui.confirm.expires) ui.confirm = {};
     if (ui.press.active && ++ui.press.frames == 1) { ui.category = ui.press.action->category; ui.search[0] = 0; }
@@ -1062,4 +1181,25 @@ bool RowDrawnForTest(const char* action_id) noexcept {
     for (std::size_t i = 0; i < ui.drawn_count; ++i) if (std::strcmp(ui.drawn[i]->id, action_id) == 0) return true;
     return false;
 }
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+// Test-only (debug_overlay_tests declares these; debug_menu_ui.hpp is shared):
+// the Shared save section of the latest drawn frame. The status line, or false
+// when the section was not drawn.
+bool SharedSaveStatusForTest(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    std::snprintf(out, capacity, "%s", shared_test.drawn ? shared_test.status : "");
+    return shared_test.drawn;
+}
+// item 0: 'Keep my own save' (state = enabled), 1: the Travel lock checkbox
+// (state = checked); rect = its screen rectangle {x0, y0, x1, y1}. False when
+// it was not drawn.
+bool SharedSaveItemForTest(int item, float (&rect)[4], bool& state) noexcept {
+    const bool keep = item == 0;
+    if (!(keep ? shared_test.keep_drawn : shared_test.lock_drawn)) return false;
+    const float* from = keep ? shared_test.keep : shared_test.lock;
+    for (int i = 0; i < 4; ++i) rect[i] = from[i];
+    state = keep ? shared_test.keep_enabled : shared_test.lock_checked;
+    return true;
+}
+#endif
 } // namespace mgscoop::debug_menu_ui

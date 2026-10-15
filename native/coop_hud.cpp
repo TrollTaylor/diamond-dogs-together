@@ -10,6 +10,7 @@
 #include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/link_session.hpp"
 #include "mgscoop/partner_slots.hpp"
+#include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/steam_net_abi.hpp"
 
 namespace mgscoop::coop_hud {
@@ -87,22 +88,55 @@ std::uint64_t DownMs(const LinkView& v, std::uint64_t now_ms) noexcept {
     return v.down_ms + (now_ms >= v.publish_ms ? now_ms - v.publish_ms : 0);
 }
 
-// A world_note event text (PostWorldNote): exactly four unsigned decimal
-// values, single spaces, no sign, no leading zero, nothing after them.
-bool ParseNoteText(const char* text, std::uint32_t (&out)[4]) noexcept {
+// A world_note event text (PostWorldNote, four values) or a save_handoff one
+// (PostSaveHandoff, two values): exactly N unsigned decimal values, single
+// spaces, no sign, no leading zero, nothing after them.
+template <unsigned N>
+bool ParseEventValues(const char* text, std::uint32_t (&out)[N]) noexcept {
     const char* cursor = text;
     const char* end = text + std::strlen(text);
-    for (unsigned i = 0; i < 4; ++i) {
+    for (unsigned i = 0; i < N; ++i) {
         if (cursor == end || *cursor < '0' || *cursor > '9' || (*cursor == '0' && cursor + 1 != end && cursor[1] != ' ')) return false;
         const auto parsed = std::from_chars(cursor, end, out[i]);
         if (parsed.ec != std::errc() || parsed.ptr == cursor) return false;
         cursor = parsed.ptr;
-        if (i + 1 != 4) {
+        if (i + 1 != N) {
             if (cursor == end || *cursor != ' ') return false;
             ++cursor;
         }
     }
     return cursor == end;
+}
+
+// Save handoff toast tones (P2-15): G5/G6/G7/G9 and H4/H6/H7 warn, the rest info.
+Tone SaveHandoffTone(std::uint8_t code) noexcept {
+    switch (static_cast<save_handoff_state::Toast>(code)) {
+    case save_handoff_state::Toast::g5_host_story_opening:
+    case save_handoff_state::Toast::g6_host_unsupported:
+    case save_handoff_state::Toast::g7_failed:
+    case save_handoff_state::Toast::g9_quit_manually:
+    case save_handoff_state::Toast::h4_story_opening:
+    case save_handoff_state::Toast::h6_failed:
+    case save_handoff_state::Toast::h7_unsupported: return Tone::warn;
+    default: return Tone::info;
+    }
+}
+
+// Two toast texts that differ only in their numbers (each run of digits counts
+// as equal): the newer replaces the older (a countdown, a percent, a size).
+bool SameApartFromNumbers(const char* a, const char* b) noexcept {
+    const auto digit = [](char c) noexcept { return c >= '0' && c <= '9'; };
+    while (*a && *b) {
+        if (digit(*a) && digit(*b)) {
+            while (digit(*a)) ++a;
+            while (digit(*b)) ++b;
+            continue;
+        }
+        if (*a != *b) return false;
+        ++a;
+        ++b;
+    }
+    return !*a && !*b;
 }
 }  // namespace
 
@@ -370,6 +404,12 @@ void PostWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uin
     Post(EventKind::world_note, code, text);
 }
 
+void PostSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b) noexcept {
+    char text[48]{};  // at most 2 x 10 digits and 1 space
+    std::snprintf(text, sizeof(text), "%u %u", static_cast<unsigned>(a), static_cast<unsigned>(b));
+    Post(EventKind::save_handoff, code, text);
+}
+
 unsigned Take(Event* out, unsigned max, std::uint32_t& cursor) noexcept {
     if (!out || !max) return 0;
     unsigned n = 0;
@@ -396,9 +436,20 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
     const auto secs = static_cast<unsigned>(DownMs(v, now_ms) / 1000);
     char* t = out.text;
     const std::size_t n = sizeof(out.text);
+    // A save handoff in progress (partner_net::PublishHandoffState; 0 off keeps today's lines).
+    using HandoffToken = save_handoff_state::Token;
+    const auto handoff = static_cast<HandoffToken>(v.handoff);
+    const unsigned handoff_pct = v.handoff_pct > 100 ? 100u : v.handoff_pct;
     switch (state) {
     case LinkState::connected:
-        if (partner) {
+        if (handoff == HandoffToken::receiving || handoff == HandoffToken::sending) {
+            Print(t, n,
+                  handoff == HandoffToken::receiving ? "CO-OP [connected] %.24s - %s %u ms | getting host save %u%%"
+                                                     : "CO-OP [connected] %.24s - %s %u ms | sending your save %u%%",
+                  who, RouteText(v), v.rtt_ms, handoff_pct);
+        } else if (handoff == HandoffToken::staged || handoff == HandoffToken::countdown || handoff == HandoffToken::exiting) {
+            Print(t, n, "CO-OP [connected] %.24s | host save ready - MGSV restarts", who);
+        } else if (partner) {
             const auto current = CurrentPartner(*partner, v.session, v.mission, now_ms);
             // Different missions (the settled pair-wait code 9, never 11
             // settling) replace a loading partner view: there is no body to wait for.
@@ -413,7 +464,11 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
         out.tone = Tone::good;
         break;
     case LinkState::listening:
-        if (v.left) {
+        if (v.left && handoff == HandoffToken::partner_restarting) {
+            // The guest closed MGSV to restart on the host's save (P2-10).
+            Print(t, n, "CO-OP [%.24s restarting] loading your save - waiting for them", named ? name : "your friend");
+            out.tone = Tone::info;
+        } else if (v.left) {
             Print(t, n, "CO-OP [%s left] waiting for them to come back", named ? name : "your friend");
             out.tone = Tone::warn;
         } else if (v.steam && !v.accepting) {
@@ -428,6 +483,11 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
         }
         break;
     case LinkState::lost:
+        if (v.left && handoff == HandoffToken::partner_restarting) {
+            Print(t, n, "CO-OP [%.24s restarting] loading your save - waiting for them", named ? name : "your friend");
+            out.tone = Tone::info;
+            break;
+        }
         if (v.left) Print(t, n, "CO-OP [%s left] waiting for them to come back", named ? name : "your friend");
         else Print(t, n, "CO-OP [partner lost %u s] waiting for them to come back", secs);
         out.tone = Tone::warn;
@@ -524,15 +584,26 @@ bool FormatToast(const Event& e, const LinkView& v, const char* name, char* out,
         return coop_text::FormatNoBody(e.text, out, capacity) && out[0];
     case EventKind::world_note: {
         std::uint32_t f[4]{};  // a, b, partner, local
-        if (e.arg < 0 || e.arg > 255 || !ParseNoteText(e.text, f)) return false;
+        if (e.arg < 0 || e.arg > 255 || !ParseEventValues(e.text, f)) return false;
         const auto code = static_cast<std::uint8_t>(e.arg);
-        tone = code == 2 ? Tone::info : code == 3 ? (f[1] == 2 || f[1] == 4 ? Tone::warn : Tone::info) : Tone::warn;
+        // Info: the helicopter hold, a chosen solo flight, travelling alone and
+        // keeping the own save (confirmations); warn: everything else.
+        tone = code == 2 || code == 8 || code == 10 ? Tone::info
+             : code == 3                            ? (f[1] == 2 || f[1] == 4 ? Tone::warn : Tone::info)
+                                                    : Tone::warn;
         return coop_text::FormatWorldNote(code, f[0], f[1], f[2], f[3], out, capacity) && out[0];
     }
     case EventKind::join_ignored:
         Print(out, capacity, "That code was not used: you are already connected or connecting to a host.");
         tone = Tone::warn;
         return true;
+    case EventKind::save_handoff: {
+        std::uint32_t f[2]{};  // a, b
+        if (e.arg < 0 || e.arg > 255 || !ParseEventValues(e.text, f)) return false;
+        const auto code = static_cast<std::uint8_t>(e.arg);
+        tone = SaveHandoffTone(code);
+        return coop_text::FormatSaveHandoff(code, f[0], f[1], named ? name : "", out, capacity) && out[0];
+    }
     }
     return false;
 }
@@ -541,6 +612,15 @@ void Model::Add(const char* text, Tone tone, std::uint64_t now_ms) noexcept {
     if (!text || !text[0]) return;
     for (auto& t : toasts_)
         if (t.until_ms > now_ms && std::strcmp(t.text, text) == 0) {
+            t.until_ms = now_ms + kToastMs;
+            return;
+        }
+    // The same sentence with new numbers (the save handoff countdown is
+    // re-posted every second): update that toast instead of stacking another.
+    for (auto& t : toasts_)
+        if (t.until_ms > now_ms && SameApartFromNumbers(t.text, text)) {
+            Copy(t.text, text);
+            t.tone = tone;
             t.until_ms = now_ms + kToastMs;
             return;
         }
