@@ -152,6 +152,47 @@ runtime-tested: T5 (the viewer driving its own vehicle while the partner's seat 
 ends; the skips are designed for it), seat 1/2/3 (passengers), trucks, Africa (30020) names,
 and get-in/get-off chaining (`partner_ride_seat_enter=getin`, `partner_ride_seat_exit=getoff`).
 
+## Weapons and actions hidden tests (Claude, 2026-10-15)
+
+All runs: `-PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab`, Closed /
+BaselineRestored / RealSavesUnchanged, no ExpectFailures. Per-run log slices were cut with
+`scratchpad/anim/runslice.py` (the game-folder `script-observer.log`, by the role pids in
+`<run>/{host,guest}.state.json`).
+
+- **Fire census `204b5d54`** (`partner-fire-census.txt`). Guest: `partner_weapon=unsupported;
+  remote_slot=3; remote_equip=354; type=12; reason=slot; ...; strip=0x58` for the grenade, the same for
+  the magazine 349 and for the Hand of Jehuty 516 (`remote_slot=6; type=14`), `unsupported_end` back on
+  the rifle; FIRE live again (`partner_fire_census=bullet; owner=0x1; ...; dropped=1`). Host census: the
+  grenade throw went through the **thrown** slot (vt+8 -> `0x15E0230`) 59 logged / 113 counted calls,
+  `owner=0x0; id=354; aux=1`; no thrown/placed/projectile line with `owner=0x1` anywhere. Support sub 1
+  was the magazine, so `placed` (C4) and the launcher slots were not exercised. The frames were useless
+  (the standing watcher 5 m behind hid the host); the scenario now lays the watcher prone 7 m back.
+- **Weapons `6163920a`** (`partner-native-weapons.txt`, defaults). The 3E8 shadow is rewritten on every
+  switch and never exceeds the capacity (`partner_reload=shadow; reason=slot; ...; mag=10; cap=11;
+  m3e8=10`; the handgun reload completes at 11/11, the old 41/11 is gone). Auto-fire stop:
+  `partner_fire=dry_stop; remote_mag=0; ...; reason=remote_empty` then `dry_clear; ...; reason=reload`.
+  Aim intent: `partner_aim_intent=on; source=act; remote_act=11; ...; pad_hold=0` with `added_act`
+  growing. Reload length stayed 1.5x (3018 vs 2019 ms; handgun 1854 vs 1252) with the rate off.
+- **Weapons + `partner_native_reload_rate=adapt` `8ca5da4a`**: body/remote reload ms 3018/2022 ->
+  2285/2018 -> 2082/2034 -> 2051/2034 -> 2035/2018, handgun 1242/1223; `k_milli` 1000 -> 1500, writes
+  only while mode 11/12, `refused=0; faulted=0`, no `latched`. **adapt is now the gun-profile default**
+  (`ResolveWeaponDefaults`; `partner_native_reload_rate_given` keeps a named key authoritative).
+- **Traversal census `5b7221a6`** (`partner-traversal-census.txt`). `partner_act` edges: crouch 8/8,
+  prone 6/6, dive 3/3, stand-move 3/3, fall/land matched at the edge; one `stance_fix` (stand -> prone,
+  `after_ms=1853`, after a `stance_wait; reason=state`), two misses (one crouch, one crawl).
+  `partner_pad_dropped; action=1` after the E presses. No vault/ledge/ladder spot exists in the scenario,
+  so those act ids are still unverified.
+- **Overlay states `873d7197`** (`partner-overlay-states.txt`, `partner_native_overlay=debug`; the first
+  run `cf395755` was occluded the same way and the watcher is now prone 7 m back). Every request played
+  (body act 139) and resumed native without a fallback latch. Frames
+  (`C:/Users/taylo/AppData/Local/Temp/mgs-caps/overlay2/zoom.png`): `stateDamageBigFront` a real
+  stagger then recovery; `stateEludeIdle` the ledge-hang arms-up pose; `stateClimbIdle` /
+  `stateClimbMoveFront` ladder poses; the clip `snapdam_p_die_idl` lying on the ground;
+  `stateCBoxIdle`/`Move` a crouch with no box model (the item is not equipped on body 1);
+  **`stateDead` shows nothing** (standing idle through its 2 s) - map death to the clip, not the state.
+  `code_match=0` at the 16 ms `playing` sample is a sampling-time artifact, not a refusal. The overlay
+  default stays **off** (user decision).
+
 ## Not run
 
 - `coop-vehicle-seat-manual.txt` (T1/T4/T5 seat_dm)

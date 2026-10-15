@@ -22,7 +22,7 @@ Nothing in this track touches camera code (`coop_carry*`, `teammate_targeting*`,
 | 2 | State-driven aim intent (HOLD from v5 Aiming / the remote's aim act) | `state` | `partner_native_aim_intent=state\|pad` |
 | 3a | `rec+0x3E8` rewritten on every slot change and whenever it exceeds the capacity | always (mirror) | none (part of the mirror) |
 | 3b | Reload start during a brief mismatch/switch: queued, replayed once matched | always (`reload=event`) | none (part of the event machine) |
-| 3c | Reload duration parity: adaptive `rec+0x310` write | **off** | `partner_native_reload_rate=off\|adapt` |
+| 3c | Reload duration parity: adaptive `rec+0x310` write | adapt (since hidden run 8ca5da4a, 2026-10-15) | `partner_native_reload_rate=off\|adapt` |
 | 4 | Auto-fire stop when the remote's magazine is dry | on | `partner_native_dry_stop=0\|1` |
 | 5 | Fire/projectile/thrown/placed census (read-only) | **off** (lab only; play forces 0) | `partner_fire_census=0\|1` |
 | 6 | Static RE: throw/place/arm creation sites and the Round-2 plan | report | section 7 |

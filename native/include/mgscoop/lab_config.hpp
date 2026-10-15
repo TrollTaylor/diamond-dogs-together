@@ -483,6 +483,7 @@ struct LabConfig {
     PartnerNativeAimIntent partner_native_aim_intent = PartnerNativeAimIntent::pad;
     bool partner_native_aim_intent_given = false;
     PartnerNativeReloadRate partner_native_reload_rate = PartnerNativeReloadRate::off;
+    bool partner_native_reload_rate_given = false;
     bool partner_fire_census = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;

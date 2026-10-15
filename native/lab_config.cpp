@@ -198,6 +198,7 @@ bool ParseAnimWeaponsKey(Slice key, Slice value, LabConfig& result, bool& ok) no
         if (ok) result.partner_native_aim_intent_given = true;
     } else if (Equals(key, "partner_native_reload_rate")) {
         ok = ParsePartnerNativeReloadRate(value.data, value.size, result.partner_native_reload_rate);
+        if (ok) result.partner_native_reload_rate_given = true;
     } else if (Equals(key, "partner_fire_census")) {
         ok = ParseBool(value, result.partner_fire_census);
     } else {
@@ -1297,9 +1298,13 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.partner_native_equip_shared_given)
         c.partner_native_equip_shared = gun ? PartnerNativeEquipShared::on : PartnerNativeEquipShared::off;
     if (!c.partner_native_standin_given) c.partner_native_standin = gun ? PartnerNativeStandin::on : PartnerNativeStandin::off;
-    // Anim round 1: the unsupported gate, the auto-fire stop and the state-driven
-    // aim intent follow the gun profile; the reload rate and the census stay as named.
+    // Anim round 1: the unsupported gate, the auto-fire stop, the state-driven
+    // aim intent and the adaptive reload rate follow the gun profile (the rate
+    // after hidden run 8ca5da4a converged 3018 -> 2035 ms against the remote's
+    // 2020 ms); the census stays as named.
     if (!c.partner_native_unsupported_given) c.partner_native_unsupported = gun;
+    if (!c.partner_native_reload_rate_given)
+        c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
     if (!c.partner_native_aim_intent_given)
         c.partner_native_aim_intent = gun ? PartnerNativeAimIntent::state : PartnerNativeAimIntent::pad;
