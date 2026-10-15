@@ -24,11 +24,21 @@ int main(){
  for(unsigned i=0;i<10;++i){auto x=good;switch(i){case 0:x.enabled=false;break;case 1:x.latched=true;break;case 2:x.guard_installed=false;break;case 3:x.guard_armed=false;break;case 4:x.filter_live=false;break;case 5:x.filter_armed=false;break;case 6:x.slot_valid=false;break;case 7:x.equip_valid=false;break;case 8:x.body_ready=false;break;default:x.record_ready=false;}
   check(!sp::Admit(x),"missing safety owner refuses");}
  for(unsigned equip: {0u,0x800u,0xFFFFu}){auto x=good;x.equip=static_cast<std::uint16_t>(equip);check(!sp::Admit(x),"equip range");}
- for(unsigned id=0;id<4;++id)for(unsigned cls=0;cls<8;++cls)for(unsigned thread=0;thread<3;++thread)for(unsigned window=0;window<2;++window){
-  const bool expected=id==1 && (cls==2 || cls==3) && thread==1 && window;
-  check(sg::detail::ShouldForce(id,cls,0x1234,0x1234,1,thread,window!=0,true)==expected,"guard policy matrix");}
- check(!sg::detail::ShouldForce(1,2,0x1234,0x5678,1,1,true,true),"wrong P");
- check(!sg::detail::ShouldForce(1,2,0x1234,0x1234,1,1,true,false),"key off");
+ for(unsigned id=0;id<4;++id)for(unsigned cls=0;cls<8;++cls){
+  const bool expected=id==1 && (cls==2 || cls==3);
+  check(sg::detail::ShouldForce(id,cls,0x1234,0x1234,true)==expected,"guard policy matrix (no window/thread input)");}
+ check(!sg::detail::ShouldForce(1,2,0x1234,0x5678,true),"wrong P");
+ check(!sg::detail::ShouldForce(1,2,0,0,true),"unarmed P");
+ check(!sg::detail::ShouldForce(1,2,0x1234,0x1234,false),"key off");
+ // Key off is Round 1: no frame is a support request, whatever the slot or strip.
+ for(unsigned slot=0;slot<16;++slot)for(unsigned valid=0;valid<2;++valid)for(std::uint32_t strip: {0u,0x40u,0x50u,0x58u}){
+  check(!sp::Request(false,valid!=0,static_cast<std::uint8_t>(slot),strip),"key off never requests support");
+  check(sp::Request(true,valid!=0,static_cast<std::uint8_t>(slot),strip)==((valid && slot>2) || strip==0x40u),"key on request matrix");}
+ // Key off and no request: Strip returns the driver's Round 1 mask unchanged (incl. unsupported=0's empty mask).
+ for(std::uint32_t mask: {0u,0x10u,0x50u,0x58u})check(sp::Strip(mask,false,false,false)==mask,"key off strip is the Round 1 mask");
+ for(unsigned mode=0;mode<256;++mode)for(unsigned sw=0;sw<2;++sw){
+  const bool busy=sw || mode==0xFF || mode==8 || mode==11 || mode==12 || (mode>=28 && mode<=42);
+  check(sp::BodyBusy(static_cast<std::uint8_t>(mode),sw!=0)==busy,"body busy matrix");}
  for(unsigned owner: {0u,1u,2u,0x201u,0xFFFFu})for(unsigned preview=0;preview<2;++preview){
   (void)preview;check(sf::detail::Drops(1,static_cast<std::uint16_t>(owner))==(owner==1),"full owner incl preview, zero and soldiers");}
  se::Preconditions p{};p.enabled=p.owner=p.gates=p.body_ready=p.safety_ready=true;p.player_flags=1;p.local=0;p.local_id=0;p.inventory_local=0;p.body_id=1;p.equip=354;p.pool=2;p.type=12;p.sub=0;p.restriction=0;

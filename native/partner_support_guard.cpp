@@ -72,11 +72,12 @@ void BuildStub(unsigned char (&s)[kStubSize], std::uintptr_t state,
         0x51,0x50,                                      // 07 push rcx; push rax (loaded eax)
         0x48,0xB9,0,0,0,0,0,0,0,0,                     // 09 mov rcx,state
         0x41,0x83,0xF8,0x01,0x75,0x4C,                 // 13 cmp r8d,1; jne done
-        0x83,0x39,0x01,0x75,0x43,                      // 19 cmp dword [rcx],1; jne refused
+        0x0F,0x1F,0x44,0,0,                            // 19 nop5 (was the drain-window test: the guard
+                                                        //    now covers every body-1 job, review-1ca3ce6)
         0x83,0x79,0x18,0x01,0x75,0x3D,                 // 1E cmp dword [rcx+0x18],1; jne refused (key)
         0x4C,0x3B,0x49,0x10,0x75,0x37,                 // 24 cmp r9,[rcx+0x10]; jne refused
-        0x65,0x8B,0x04,0x25,0x48,0,0,0,                // 2A mov eax,gs:[0x48] (TEB thread)
-        0x3B,0x41,0x08,0x75,0x2A,                      // 32 cmp eax,[rcx+8]; jne refused
+        0x0F,0x1F,0x84,0,0,0,0,0,                      // 2A nop8 (was the TEB thread read)
+        0x0F,0x1F,0x44,0,0,                            // 32 nop5 (was the drain-thread compare)
         0x8B,0x82,0x7C,0x02,0,0,                       // 37 mov eax,[rdx+0x27C]
         0xC1,0xE8,0x06,0x83,0xE0,0x07,                 // 3D shr eax,6; and eax,7
         0x83,0xF8,0x02,0x74,0x05,                      // 43 cmp eax,2; je force
@@ -165,8 +166,11 @@ bool Live() noexcept {
 }
 bool Arm(std::uintptr_t p, std::uint32_t id) noexcept {
     if (!p || id != 1 || !g_ready || !Live()) { Disarm(); return false; }
-    if (Atomic(g_key) && static_cast<std::uintptr_t>(Atomic64(g_armed_p)) == p) return true;
+    if (Atomic(g_key) && static_cast<std::uintptr_t>(Atomic64(g_armed_p)) == p &&
+        static_cast<std::uintptr_t>(Atomic64(g_state.p)) == p) return true;
     Disarm(); InterlockedExchange64(&g_armed_p, static_cast<LONG64>(p));
+    // The stub compares r9 with state.p: publish P before the key.
+    InterlockedExchange64(&g_state.p, static_cast<LONG64>(p));
     InterlockedExchange(&g_key, 1); return true;
 }
 bool Armed(std::uintptr_t p, std::uint32_t id) noexcept {
@@ -174,7 +178,7 @@ bool Armed(std::uintptr_t p, std::uint32_t id) noexcept {
 }
 void Disarm() noexcept {
     InterlockedExchange(&g_state.id, -1); // Close before withdrawing identity/key.
-    InterlockedExchange(&g_key, 0); InterlockedExchange64(&g_armed_p, 0);
+    InterlockedExchange(&g_key, 0); InterlockedExchange64(&g_state.p, 0); InterlockedExchange64(&g_armed_p, 0);
     InterlockedExchange(&g_window_thread, 0);
 }
 bool Enter(std::uintptr_t p, std::uint32_t id) noexcept {
@@ -183,9 +187,10 @@ bool Enter(std::uintptr_t p, std::uint32_t id) noexcept {
     if (InterlockedCompareExchange(&g_window_thread, thread, 0) != 0) {
         InterlockedIncrement(&g_state.refused); return false;
     }
-    InterlockedExchange64(&g_state.p, static_cast<LONG64>(p));
+    // Telemetry only: the stub no longer reads the window flag or the thread;
+    // state.p is owned by Arm.
     InterlockedExchange(&g_state.tid, thread);
-    InterlockedExchange(&g_state.id, 1); // Last: publishes key + P + thread + drain window.
+    InterlockedExchange(&g_state.id, 1);
     InterlockedIncrement(&g_windows); return true;
 }
 void Leave() noexcept {

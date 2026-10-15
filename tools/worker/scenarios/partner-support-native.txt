@@ -21,7 +21,8 @@
 # own support item and playing native throw-family modes 28..42. Its preview never replaces the local arc.
 # Back-to-gun capture shows the existing gun follower/aim still works. Always retain refusals/faults;
 # any partner_support=refused or stock_check changed=1 means the corresponding path is NOT accepted.
-# Residual risk: an unwindowed/refused block-1 frame is unguarded; the stock latch is only a backstop.
+# The guard forces the non-consuming branch in every body-1 job (not only drain windows; review-1ca3ce6),
+# so a refused/unwindowed frame is covered too; the slot-3 stock latch remains a backstop.
 labsetting partner_native_support=1
 labsetting partner_fire_census=1
 title 200
@@ -60,6 +61,8 @@ wait 4000
 both capture grenade-after
 host run support
 guest run support
+# The lab seed's guest counts (run aaa2a0e0): any change after a body-1 throw fails the run.
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
 # --- Empty magazine 349: same native throw family, including its own preview -----------------------------
 host debug slot support 1
 wait 1500
@@ -73,6 +76,26 @@ wait 2000
 both capture magazine-after
 host run support
 guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+# --- Viewer arc: the guest aims its OWN grenade (its arc preview on screen) while the host throws ---------
+# The partner's preview must not replace the guest's own arc (the owner filter runs at the 0x15E0230 entry).
+host debug slot support 0
+guest debug slot support 0
+wait 1500
+stance guest stand
+wait 1000
+guest hold rmb 1500 nowait
+host hold rmb 1500 nowait
+guest burst viewer-arc-aim 3 150
+host hold rmb+lmb 150 nowait
+guest burst viewer-arc-throw 6 150
+host release
+guest release
+wait 3000
+guest debug slot back 0
+wait 1500
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
 # --- Return to a resident gun and verify native aim still follows ----------------------------------------
 host debug slot back 0
 wait 2000

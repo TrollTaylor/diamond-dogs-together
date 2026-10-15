@@ -1,9 +1,11 @@
 # Anim round 2: native partner throws, v1
 
 Branch `wp/anim-throws`, based on `766746a5e950e69ad3afd9da945e3e273cd77be3`.
-Status (2026-10-15): **implemented, default off; ReleaseGun build and all 253 CTest
-checks passed; no hidden-gameplay run, no release package or installation**. Earlier blocked attempts below
-are historical; the user subsequently requested this bounded type-12 implementation.
+Status (2026-10-15): **implemented, default off.** Hidden run `aaa2a0e0` passed (the host body
+natively threw grenade 354 and magazine 349 on the guest screen; all 229 owner-1 thrown requests
+dropped, none passed; the guest's stock unchanged); the review findings in
+`docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md` are fixed below ("Fixes after
+review-1ca3ce6"). No release package or installation. Earlier blocked attempts below are historical.
 
 ## v1 design and admission
 
@@ -21,9 +23,11 @@ motions or generate a second real grenade.
 - `partner_support_guard` installs once. The seven-byte load at `0x108C8E5`
   becomes a short jump through the verified eight-byte int3 padding beginning
   **0x108C888**, then a near stub. Correct displacement is **EB A1**, not EB 9F.
-  The stub repeats `mov eax,[r9+0x204]`, then takes `0x108C8FC` only for id 1,
-  the armed P, the TEB thread of the current native drain, support class 2/3 and
-  the armed key. Every other call resumes at `0x108C8EC`. The remote branch sets
+  The stub repeats `mov eax,[r9+0x204]`, then takes `0x108C8FC` for id 1, the
+  armed P (published by Arm), support class 2/3 and the armed key, in **every**
+  body-1 job: drain window and thread are no longer conditions (review-1ca3ce6:
+  refused, unwindowed and pass-through jobs were unguarded). Input admission
+  stays window-bound in the hook. Every other call resumes at `0x108C8EC`. The remote branch sets
   counts to 0xFFFF and rec+0x3C0 bit 29, excluding mode 37's stock writes.
   One locked dword publishes the redirect within a cache line. Byte mismatch,
   fingerprint mismatch, allocation/protection/exchange failures refuse it.
@@ -38,7 +42,11 @@ motions or generate a second real grenade.
   of type 12, a bounded sub-index and flags bit 2 set/bit 4 clear. It verifies
   all existing `equipment_stock_writer::PinsIntact` SHA-256 bodies before a call,
   rereads its lease, then verifies the returned row/handle and unchanged local
-  row, handles, metadata and inventory vars. Uncertain outcomes latch the writer.
+  row, handles, metadata and inventory vars. Uncertain outcomes latch the writer
+  for the rest of the mission (not reset by a re-realize) and close the drain's
+  admission through `partner_input_hook::LatchNativeSupportOff`. Neither the
+  writer nor the follower runs while body 1 is busy (`partner_support_policy::BodyBusy`:
+  unread mode, switch bit, modes 8/11/12 or the throw family 28..42).
   The drain's extended SlotFollow uses native SetCurrentSlot for support with
   the same checks; the old data-only gun path is never used for slot 3.
 - Admission rechecks the current row/handle, gun record/equip, guard/filter and
@@ -51,11 +59,13 @@ motions or generate a second real grenade.
   **support refuses that mode**, as well as the explicit diagnostic p218 setting.
 - Before/after body-1 jobs, read-only digests cover the support-count table
   vars+0x614 (46 u16s) and existing vars+0x548..0x670 inventory block. An episode
-  baseline also covers the entire aim/throw episode. A changed digest latches
-  support off until the next mission reset. This deliberately conservative
-  backstop can also disable support if the viewer legitimately spends support
-  stock while the remote is aiming; simultaneous local support use needs its
-  own future attribution test. Unread stock cannot admit a new support input.
+  baseline covers only the eight slot-3 stock words (k = 6..13, vars+0x620..0x62F)
+  across the aim/throw episode, so the viewer's own reload or ammo pickup no
+  longer latches support off; a change logs `partner_support=stock_index; k=..`.
+  A changed digest latches support off until the next mission reset. The viewer
+  throwing its own support item during the remote's episode still latches (the
+  stock table is shared, so the two cannot be told apart). Unread stock cannot
+  admit a new support input.
   `rec+0x240` is logged at episode entry and the observed native release edge.
 
 ## Patch bytes and contract pins
@@ -142,7 +152,8 @@ execution evidence; they are not retail gameplay or two-PC acceptance.
 
 Still unproved: native throw animation/item visibility, guest burst frames,
 viewer arc-preview continuity/counts, rec+0x240 handle behavior, grenade-to-magazine
-and return-to-gun visuals, both roles, and two-PC gameplay. Unwindowed or refused
+and return-to-gun visuals, both roles, and two-PC gameplay. (Superseded by the guard
+fix below: every body-1 job is guarded now.) Unwindowed or refused
 block-1 jobs do not receive the stock guard; persistent owner filtering and the
 stock latch are backstops, not a proof that such jobs cannot spend stock. Existing
 four unopened helpers and the per-item vt+0x160 call remain the audit's bounded
@@ -314,3 +325,20 @@ No safety classifier stopped these runs.
 **Build scope (v1):** thrown support weapons only (type 12: grenades, smoke, stun, sleep gas, magazines): stock guard
 + thrown owner filter at the entry + slot-3 type-12 equip/follow + gate; placed types and arms keep Round 1's
 `Gate::unsupported`.
+
+## Fixes after review-1ca3ce6 (Claude, 2026-10-15)
+
+Findings: `docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md` (two reviewer lenses, eight
+gameplay findings and two native ones; the native lens confirmed the stub bytes, registers, flags,
+publication, the thrown filter, the equip preconditions and the pins).
+
+| Finding | Fix |
+|---|---|
+| **Major: guard only in windowed drain jobs** | The stub's window test (offset 0x19) and TEB-thread read/compare (0x2A, 0x32) are replaced by same-length NOPs, so every offset and jump stays as pinned; Arm publishes the armed P into the stub state before the key, Disarm withdraws the key first. `ShouldForce` has no window/thread inputs. The fixture now executes the stub with a wrong thread id, outside a window and on another OS thread (all forced), a cleared P and a class-1 gun (both original). |
+| Episode digest too broad | The episode baseline/compare use the eight slot-3 stock words only (`ReadSupportSlotDigest`), with the changed index logged; the per-job full compares are unchanged. |
+| Idle receipts fill the cap | Idle refusals (slot/off/admission/body_busy) log only on a reason change under a 64-line cap; equip/follow/other outcomes have their own 512-line cap; the mission latch line bypasses the hook's line cap. |
+| Uncertain latch reset by re-realize | `g_uncertain` resets only on a mission change; the observer also latches the hook (`writer_uncertain_mission_latched`). |
+| No busy gate for equip/follow | `partner_support_policy::BodyBusy` (unread mode, switching, 8/11/12, 28..42) refuses Observe (`body_busy`) and the drain's slot-3 follow (`SlotRefusal::mode`). A per-equip dispatch cap is not added: a failed dispatch already latches the writer for the mission, and a successful one makes the next Match pass. |
+| Key off changed Round 1 | `partner_support_policy::Request(key, ...)` is false with the key off; NativeView and the drain use it, so `partner_native_support=0` returns the Round 1 mask (fixture: every slot/strip with the key off; `Strip(mask,false,false,false)==mask`). |
+| Fixture type matrix not wired | `Ready()` reports the decoded descriptor type and the gate admits only that decoded 12 (`x.type` is no longer hard-coded). A synthetic Capture/Match image for type 13 is not added: `Capture` reads about thirty pinned native chains, and the type-13 refusal is covered by `Refusal()` (fixture) plus the decoded-type gate. |
+| Scenario could not detect a viewer overwrite or a count change | After each throw the guest's exact lab-seed counts are `require`d; a new phase has the guest aim its own grenade (its arc on screen) while the host aims and throws, with `viewer-arc-*` captures, then the counts are required again. |

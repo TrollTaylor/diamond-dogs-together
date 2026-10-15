@@ -59,8 +59,11 @@ void TestPatch() {
           static_cast<std::intptr_t>(c::support_stock_pad_rva), "EB A1 reaches verified padding");
     Check(!mgscoop::near_code::CrossesCacheLine(reinterpret_cast<std::uintptr_t>(image) + c::support_stock_load_rva, 4),
           "dword stays in one cache line");
+    g::Stats stats0{};
     Check(!g::Arm(0x1234, 0) && !g::Armed(0x1234), "instance zero can never arm");
     Check(g::Arm(0x1234) && g::Armed(0x1234), "key authorizes only partner P");
+    g::ReadStats(stats0);
+    Check(stats0.armed && !stats0.in_window, "armed without any drain window (Arm publishes P)");
     Check(!g::Enter(0x5678) && !g::Enter(0x1234, 0), "wrong P/id window refused");
     Check(g::Enter(0x1234), "native drain window opens");
     g::Stats stats{};
@@ -120,18 +123,24 @@ void TestStub() {
     Check(stub(nullptr, rec, 0, player) == original && stub(nullptr, rec, 2, player) == original, "real stub player id matrix");
     Check(stub(nullptr, rec, 0x401, player) == original, "real stub full soldier id preserved");
     Check(stub(nullptr, rec, 1, other) == original, "real stub requires armed P");
+    // review-1ca3ce6: the guard covers every body-1 job, not only the drain:
+    // neither the window flag nor the thread may refuse the protection.
     state.tid ^= 1;
-    Check(stub(nullptr, rec, 1, player) == original, "real stub TEB thread refusal");
+    Check(stub(nullptr, rec, 1, player) == forced, "real stub guards a job on a non-drain thread id");
     state.tid ^= 1; state.id = -1;
-    Check(stub(nullptr, rec, 1, player) == original, "real stub outside drain");
+    Check(stub(nullptr, rec, 1, player) == forced, "real stub guards outside a drain window");
     state.id = 1; state.key = 0;
     Check(stub(nullptr, rec, 1, player) == original, "real stub independent key off");
-    state.key = 1;
-    std::uint32_t foreign_value = forced;
+    state.key = 1; state.p = 0;
+    Check(stub(nullptr, rec, 1, player) == original, "real stub requires a published armed P");
+    state.p = static_cast<LONG64>(reinterpret_cast<std::uintptr_t>(player));
+    std::uint32_t foreign_value = original;
     std::thread foreign([&] { foreign_value = stub(nullptr, rec, 1, player); });
     foreign.join();
-    Check(foreign_value == original, "real stub another OS thread refuses");
-    Check(state.hits == 2 && state.refused >= 11, "real stub hit and refusal counters");
+    Check(foreign_value == forced, "real stub guards a body-1 job on another OS thread");
+    Put(rec + 0x27C, 1u << 6);
+    Check(stub(nullptr, rec, 1, player) == original, "real stub never forces a class-1 gun (magazine mirror)");
+    Check(state.hits == 5 && state.refused == 10, "real stub hit and refusal counters");
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 } // namespace

@@ -68,6 +68,8 @@ bool InDrainJob() noexcept;
 // the driver keeps its own per-mission input_faulted) and the hold history.
 void ResetFault() noexcept;
 bool NativeSupportLatchedOff() noexcept;
+// The equip writer's mission-scoped uncertainty also closes drain admission.
+void LatchNativeSupportOff() noexcept;
 
 // The driver publishes this each tick (seqlock: odd, copy, even). Copied by
 // value; pointers are read inside the hook under SEH and re-validated.

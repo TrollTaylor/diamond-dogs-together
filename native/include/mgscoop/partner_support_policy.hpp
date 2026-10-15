@@ -19,6 +19,19 @@ constexpr std::uint32_t Strip(std::uint32_t mask,bool request,bool key,bool admi
  return mask;
 }
 constexpr bool ThrowMode(std::uint8_t mode) noexcept { return mode>=28 && mode<=42; }
+// Whether a native window treats this frame as a support request. With the
+// key off it is always false, so Round 1's weapon gate alone decides what the
+// window strips, exactly as before support existed (review-1ca3ce6).
+// 0x40 is RELOAD: the driver strips it alone for an admitted support slot.
+constexpr bool Request(bool key,bool slot_valid,std::uint8_t slot,std::uint32_t strip) noexcept {
+ return key && ((slot_valid && slot>2) || strip==0x40u);
+}
+// Body 1 may not be (re)equipped or have its slot followed while its gun mode
+// is unread (0xFF), switching, reloading (8/11/12) or in the throw family:
+// the old slot-3 handle may still be referenced by the running throw.
+constexpr bool BodyBusy(std::uint8_t mode,bool switching) noexcept {
+ return switching || mode==0xFF || mode==8 || mode==11 || mode==12 || ThrowMode(mode);
+}
 struct StockLatch { bool off=false; };
 // An unread before/after refuses admission; only actual changed evidence latches.
 constexpr bool CheckStock(StockLatch& s,bool before_ok,bool after_ok,std::uint32_t before,std::uint32_t after) noexcept {

@@ -95,6 +95,7 @@
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_support_equip.hpp"
 #include "mgscoop/partner_support_guard.hpp"
+#include "mgscoop/partner_support_policy.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
@@ -1730,6 +1731,8 @@ void ObserveNativeSupport() noexcept {
     context.owner=OnRuntimeThread();context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
     context.pins_intact=mgscoop::equipment_stock_writer::PinsIntact;
     context.mission=partner_mission;context.realize_gen=mission.realize_gen;context.now_ms=mgscoop::partner_net::NowMs();
+    // Never (re)equip slot 3 through a switch, a reload or a running throw.
+    context.body_busy=mgscoop::partner_support_policy::BodyBusy(mission.body_gun_mode,mission.body_switching);
     unsigned short current_mission=0;
     context.gates=context.enabled && PartnerGunPiecesWanted() && offline_enabled && lab_active && lab::SavesRedirected() &&
         partner_on && partner_gate_ok && allocation_enabled && archive_mounted && host_source_selected &&
@@ -1763,6 +1766,12 @@ void ObserveNativeSupport() noexcept {
     // Protective patches remain armed across slot/key changes, and after the
     // stock latch: already queued or unwindowed body-1 work may still finish.
     se::Observe(context,Log);
+    // A mission-scoped uncertain writer outcome also closes the drain's admission.
+    if(se::Uncertain() && !mgscoop::partner_input_hook::NativeSupportLatchedOff()) {
+        mgscoop::partner_input_hook::LatchNativeSupportOff();
+        LogFormat("partner_support=refused; slot=3; equip=%u; type=12; reason=writer_uncertain_mission_latched\r\n",
+            unsigned(context.equip));
+    }
     ff::Stats totals{};ff::ReadStats(game_base,totals);
     sg::Stats guard_totals{};sg::ReadStats(guard_totals);
     static std::uint32_t summary_mission=0,summary_drop=0,summary_hits=0,summary_refused=0;

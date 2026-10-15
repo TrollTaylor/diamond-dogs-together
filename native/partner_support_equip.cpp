@@ -18,7 +18,7 @@ Context g_context{};
 std::uint32_t g_owned=0,g_owned_mission=0,g_owned_gen=0;
 std::uintptr_t g_owned_player=0,g_owned_block=0;
 bool g_uncertain=false;
-unsigned g_lines=0;
+unsigned g_lines=0,g_key_lines=0;
 std::uint64_t g_log_ms=0;
 const char* g_reason=nullptr;
 bool Read(std::uintptr_t address,void* out,std::size_t size) noexcept {
@@ -127,11 +127,22 @@ bool SameLocal(const Snapshot& a,const Snapshot& b) noexcept {
     for(unsigned i=0;i<7;++i) if(i!=3 && a.remote_handles[i]!=b.remote_handles[i]) return false;
     return true;
 }
+bool IdleReason(const char* reason) noexcept {
+    return reason && (!std::strcmp(reason,"slot") || !std::strcmp(reason,"off") || !std::strcmp(reason,"admission") ||
+                      !std::strcmp(reason,"body_busy"));
+}
+// Idle reasons (the normal not-holding-a-grenade states) log only when the
+// reason changes, under their own small cap; equip/follow outcomes and every
+// other refusal keep a separate cap so they are never crowded out.
 void Receipt(LogFn log,const Context& x,const Snapshot& s,const char* phase,const char* reason,std::int32_t result=INT32_MIN) noexcept {
-    if(!log || g_lines>=256) return;
+    if(!log) return;
+    const bool idle=std::strcmp(phase,"refused")==0 && IdleReason(reason);
     const bool repeated=g_reason && reason && std::strcmp(g_reason,reason)==0;
-    if(repeated && x.now_ms>=g_log_ms && x.now_ms-g_log_ms<1000) return;
-    g_log_ms=x.now_ms;g_reason=reason;++g_lines;
+    if(idle && repeated) return;
+    if(!idle && repeated && x.now_ms>=g_log_ms && x.now_ms-g_log_ms<1000) return;
+    unsigned& lines=idle ? g_lines : g_key_lines;
+    if(lines>=(idle ? 64u : 512u)) return;
+    g_log_ms=x.now_ms;g_reason=reason;++lines;
     char line[448]{};
     StringCchPrintfA(line,ARRAYSIZE(line),
         "partner_support=%s; slot=%u; equip=%u; type=%u; reason=%s; instance=1; handle=%08x; body_slot=%u; sub=%u; result=%d; mission=%u; gen=%u; rec_handle_risk=unresolved\r\n",
@@ -161,9 +172,13 @@ bool ContextFor(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,s
 void Observe(const Context& x,LogFn log) noexcept {
     if(!TryAcquireSRWLockExclusive(&g_lock)) return;
     g_context=x;
+    // The uncertain latch is mission-scoped (review-1ca3ce6): a re-realize of
+    // the body must not re-arm a writer whose last call may have touched the
+    // viewer's state. Ownership of the allocated handle follows the body.
+    if(g_owned_mission!=x.mission) {g_uncertain=false;g_lines=0;g_key_lines=0;g_reason=nullptr;}
     if(g_owned_mission!=x.mission || (x.player && x.remote_block &&
        (g_owned_gen!=x.realize_gen || g_owned_player!=x.player || g_owned_block!=x.remote_block))) {
-        g_owned=0;g_uncertain=false;g_lines=0;g_reason=nullptr;
+        g_owned=0;
         g_owned_mission=x.mission;g_owned_gen=x.realize_gen;g_owned_player=x.player;g_owned_block=x.remote_block;
     }
     if(!x.enabled) {ReleaseSRWLockExclusive(&g_lock);return;}
@@ -174,6 +189,7 @@ void Observe(const Context& x,LogFn log) noexcept {
         // native slot follower activate it instead of re-dispatching.
         ReleaseSRWLockExclusive(&g_lock);return;
     }
+    if(!why && x.body_busy) why="body_busy";
     if(!why && !Empty(before.handle) && before.handle!=g_owned) why="foreign_handle";
     if(!why && !Empty(before.handle)) {
         std::array<std::uint8_t,6> meta{};
@@ -203,11 +219,18 @@ void Observe(const Context& x,LogFn log) noexcept {
     Receipt(log,x,before,why ? "refused" : "equip",why ? why : "ok",result);
     ReleaseSRWLockExclusive(&g_lock);
 }
-bool Ready(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip) noexcept {
+bool Ready(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,std::uint8_t* decoded_type) noexcept {
+    if(decoded_type) *decoded_type=0;
     if(!TryAcquireSRWLockShared(&g_lock)) return false;
     Context x{};Snapshot s{};
     const bool ready=ContextFor(base,player,block,equip,x) && !Capture(x,s) && !Match(s,true);
+    if(decoded_type) *decoded_type=s.p.type;
     ReleaseSRWLockShared(&g_lock);return ready;
+}
+bool Uncertain() noexcept {
+    if(!TryAcquireSRWLockShared(&g_lock)) return false;
+    const bool uncertain=g_uncertain;
+    ReleaseSRWLockShared(&g_lock);return uncertain;
 }
 const char* Follow(std::uintptr_t base,std::size_t span,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,LogFn log) noexcept {
     if(!TryAcquireSRWLockExclusive(&g_lock)) return "busy";
