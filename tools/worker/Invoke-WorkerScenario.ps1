@@ -308,13 +308,13 @@ function Send-Step([string]$Role,[hashtable]$Arguments){
 function Read-RoleRaw([string]$Role){
     try{Get-Content -LiteralPath (Join-Path $run "$Role.state.json") -Raw|ConvertFrom-Json -AsHashtable}catch{$null}
 }
-function Read-RoleLoading([string]$Role){
+function Read-RoleLoading([string]$Role,[string]$Phase='initialized'){
     try{
         $path=Join-Path $run "$Role.loading.json"
         $file=Get-Item -LiteralPath $path -Force
         if($file.Length -gt 1024 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $null}
         $s=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json -AsHashtable
-        if($s['run_id'] -cne $runId -or $s['role'] -cne $Role -or $s['phase'] -cne 'initialized' -or
+        if($s['run_id'] -cne $runId -or $s['role'] -cne $Role -or $s['phase'] -cne $Phase -or
            $s['mission'] -notin 30010,30020,30050,40010,40020,40050 -or ![uint32]$s['generation']){return $null}
         return $s
     }catch{return $null}
@@ -373,9 +373,13 @@ function Read-ContinueGenerations {
     return $captured
 }
 function Wait-ScenarioMission([string]$Role,[int]$Mission,[int]$TimeoutSec){
+    # Helicopter space (40010/40020/40050) never reports on-foot gameplay_ready, so
+    # its arrival is the owned loading metadata entering the runtime phase for that
+    # mission (runtime_enter), after the same guarded resume passed its tips screen.
+    $heli=$Mission -ge 40000
     $limit=(Get-ScenarioTick)+1000*$TimeoutSec;$arrived=$false
     do{
-        $s=Read-RoleRaw $Role;$now=Get-ScenarioTick;$generation=[uint32]0
+        $s=if($heli){Read-RoleLoading $Role 'running'}else{Read-RoleRaw $Role};$now=Get-ScenarioTick;$generation=[uint32]0
         $validGeneration=$s -and $s.ContainsKey('generation') -and
             [string]$s['generation'] -cmatch '^[1-9][0-9]{0,9}$' -and
             [uint32]::TryParse([string]$s['generation'],[ref]$generation)
@@ -383,9 +387,9 @@ function Wait-ScenarioMission([string]$Role,[int]$Mission,[int]$TimeoutSec){
             $continueRequirements[$Role].mission -ne $Mission -or
             ($validGeneration -and $generation -gt $continueRequirements[$Role].generation)
         if($s -and $s['run_id'] -ceq $runId -and $s['role'] -ceq $Role -and
-            [int]$s['mission'] -eq $Mission -and $s['gameplay_ready'] -and !$s['terminating'] -and
+            [int]$s['mission'] -eq $Mission -and ($heli -or ($s['gameplay_ready'] -and !$s['terminating'])) -and
             $validGeneration -and $newAllocation -and
-            $s.ContainsKey('tick_ms') -and [int64]$s['tick_ms'] -le $now -and $now-[int64]$s['tick_ms'] -le 1000){
+            $s.ContainsKey('tick_ms') -and [int64]$s['tick_ms'] -le $now -and ($heli -or $now-[int64]$s['tick_ms'] -le 1000)){
             $null=$continueRequirements.Remove($Role);$arrived=$true;break
         }
         Resume-TripLoading
