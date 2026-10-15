@@ -39,6 +39,26 @@ function Assert-WorkerConfigSnapshotPreflight($Snapshot,[string]$Game,[string]$R
 function Invoke-WorkerPackageRestore([string]$Repo,[string]$Game,[string]$Package,[string]$Role) {
     & (Join-Path $Repo 'tools\package-install.ps1') -Action Restore -GameDirectory $Game -PackageDirectory $Package -NoPrompt | ForEach-Object {Write-Host "[$Role] $_"}
 }
+# A role whose game left on its own before Stop (Invoke-WorkerScenario
+# "waitexit" records roles.<role>.exited with the exact lease it saw end).
+# Such a role needs no shutdown: no process means nothing to close. If its old
+# PID now names another process, that process is not ours and is left alone.
+# Every other child keeps the strict lease rule (a reused PID refuses cleanup).
+function Test-WorkerRoleExited($Session,$Child) {
+    $role=[string]$Child.role
+    if(!$Session.roles.Contains($role)){return $false}
+    $row=$Session.roles[$role]
+    if(!($row -is [Collections.IDictionary]) -or !$row.Contains('exited') -or !$row['exited']){return $false}
+    $exited=$row['exited']
+    return [long]$exited['pid'] -eq [long]$Child.pid -and [string]$exited['creation_filetime'] -ceq [string]$Child.creation_filetime
+}
+function Get-WorkerStopChildProcess($Session,$Child) {
+    try{return Get-WorkerLeasedProcess $Child}
+    catch{
+        if(Test-WorkerRoleExited $Session $Child){return $null}
+        throw
+    }
+}
 function Get-WorkerRealSaveComparison($RealSaves) {
     # The manifest reader returns one wrapped row-array. Direct assignment
     # preserves its per-file rows; another @(...call...) would nest it again.
@@ -92,7 +112,7 @@ function Invoke-WorkerRestoreOwnedSession($Session,[string]$Run,[string]$Repo,$P
 if($session.archive_sha256 -ine $pins.Archive -or $session.baseline_sha256 -cnotmatch '^[0-9A-Fa-f]{64}$' -or $session.candidate_sha256 -cnotmatch '^[0-9A-Fa-f]{64}$'){throw 'Worker session package pins differ.'}
 $mutex=[Threading.Mutex]::new($false,'Local\MGSCoopBackgroundSession');$lockOwned=$false;$leased=$null
 $report=[ordered]@{schema=1;run_id=$runId;run_dir=$run;started_utc=[DateTime]::UtcNow.ToString('o');status='closing';
-    supervisor_closed=$false;forced_supervisor_termination=$false;forced_job_termination=$false;supervisor_reason=$null;supervisor_error=0;owned_children_closed=$false;world_trigger_removed=0;roles=[ordered]@{};real_saves_unchanged=$false;
+    supervisor_closed=$false;forced_supervisor_termination=$false;forced_job_termination=$false;supervisor_reason=$null;supervisor_error=0;owned_children_closed=$false;world_trigger_removed=0;exited_roles=@();roles=[ordered]@{};real_saves_unchanged=$false;
     failure=$null;worker_isolation_failed=$false;system_input_called=$false;focus_called=$false;desktop_switched=$false;gameplay_validated=$false}
 try {
     try{$lockOwned=$mutex.WaitOne([TimeSpan]::FromSeconds(30))}catch [Threading.AbandonedMutexException]{$mutex.ReleaseMutex();throw 'Background coordinator lock was abandoned; refusing unreviewed cleanup.'}
@@ -136,7 +156,8 @@ try {
         if($child.role -cnotin @('host','guest') -or !$session.roles.Contains($child.role)){throw 'Unknown worker child in session receipt.'}
         $expectedExe=Join-Path $session.roles[$child.role].game 'mgsvtpp.exe'
         if($child.exe -ine $expectedExe -or $child.sha256 -ine $pins.Exe){throw 'Owned child image lease differs.'}
-        $childProcess=Get-WorkerLeasedProcess $child
+        if(Test-WorkerRoleExited $session $child){$report.exited_roles+=@([string]$child.role)}
+        $childProcess=Get-WorkerStopChildProcess $session $child
         if($childProcess) {try{if(!$childProcess.WaitForExit(5000)){throw 'Owned game survived the supervisor job closure; restoration is blocked.'}}finally{$childProcess.Dispose()}}
     }
     foreach($role in $session.roles.Keys) {
@@ -155,7 +176,8 @@ try {
     Write-Host "Owned private worker closed; normal baseline and real-save hashes verified: $run"
     [pscustomobject]@{RunDirectory=$run;Closed=$true;BaselineRestored=$true;RealSavesUnchanged=$true;
         Forced=($report.forced_supervisor_termination -or $report.forced_job_termination);
-        IsolationFailed=$report.worker_isolation_failed;SupervisorReason=$report.supervisor_reason;SupervisorError=$report.supervisor_error}
+        IsolationFailed=$report.worker_isolation_failed;SupervisorReason=$report.supervisor_reason;SupervisorError=$report.supervisor_error;
+        ExitedRoles=@($report.exited_roles)}
 } catch {
     $report.status='cleanup_refused';$report.failure=$_.Exception.Message
     $session.status='cleanup_refused';$session.cleanup_failure=$report.failure

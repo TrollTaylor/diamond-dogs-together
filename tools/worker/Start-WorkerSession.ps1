@@ -35,14 +35,21 @@ param(
     # existing Play-OfflineCoop lab saves (read only), the state earlier live
     # runs used. The real saves are backed up and re-checked either way.
     [ValidateSet('real','lab')][string]$SaveSeed='real',
+    # Per-role seeds (docs/join-fix-phase2-spec.md P2-19): '' takes -SaveSeed.
+    # -GuestSaveSeedRun <runId> seeds the guest from that earlier, closed run's
+    # guest-saves\{287700,remote} (read only; the second session of the save
+    # handoff restart proof). It excludes -GuestSaveSeed.
+    [ValidateSet('','real','lab')][string]$HostSaveSeed='',
+    [ValidateSet('','real','lab')][string]$GuestSaveSeed='',
+    [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$GuestSaveSeedRun='',
     # Optional quality preset, applied only to this run's fresh role save copies.
     [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
     # Extra lab.ini keys for this run: allow-listed lab experiments, the facing
     # A/B keys, the name tag keys, the Steam self-test, the online-play A/B
-    # keys and the reload/switch/writer A/B keys (Invoke-WorkerScenario
-    # "labsetting" lines); key=value for both copies, host:key=value /
-    # guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01])$')][string[]]$LabSetting=@(),
+    # keys, the reload/switch/writer A/B keys and the join-fix phase 2
+    # save_handoff / travel_lock keys (Invoke-WorkerScenario "labsetting"
+    # lines); key=value for both copies, host:key=value / guest:key=value for one.
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01])$')][string[]]$LabSetting=@(),
     # lab: the one-PC lab (OfflineLab). play: the play rehearsal: both copies
     # run mode=play exactly as Play-Coop writes it, moved onto 127.0.0.1 with
     # the worker-only play_rehearsal=1, the real identity and a fresh link
@@ -59,6 +66,35 @@ $repo=[IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRo
 Import-Module (Join-Path $repo 'tools\lab\LabCommon.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'WorkerSessionCommon.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'NativeActivationProfile.psm1') -Force -DisableNameChecking
+# -GuestSaveSeedRun: the guest save copy of one earlier, closed worker run under
+# <repo>\build\worker-runtime (the Stop-WorkerSession run-id/path pattern). It is
+# only read: links, more than 4096 entries or oversized files refuse before any
+# copy, and its 287700\local must hold a TPP_GAME_DATA file. Returns the folder.
+function Get-WorkerSeedRunSaves([string]$Repo,[string]$SeedRunId,[string]$CurrentRunId) {
+    if(!(Test-WorkerRunId $SeedRunId) -or $SeedRunId -ceq $CurrentRunId){throw '-GuestSaveSeedRun must name one earlier worker run id.'}
+    $root=Join-Path $Repo 'build\worker-runtime'
+    $seedRun=Assert-WorkerPlainPath (Join-Path $root $SeedRunId) -MustExist
+    if([IO.Path]::GetDirectoryName($seedRun) -ine $root){throw '-GuestSaveSeedRun must name one exact worker-runtime run directory.'}
+    $seedSession=Read-WorkerSessionJson (Join-Path $seedRun 'session.json')
+    if([string]$seedSession['run_id'] -cne $SeedRunId -or [string]$seedSession['status'] -cne 'closed'){throw '-GuestSaveSeedRun must name a closed worker run (its session.json status).'}
+    $saves=Assert-WorkerPlainPath (Join-Path $seedRun 'guest-saves') -MustExist
+    foreach($sub in @('287700\local','remote')){if(!(Test-Path -LiteralPath (Join-Path $saves $sub) -PathType Container)){throw "Seed run guest save copy is missing $sub."}}
+    $rows=@(Get-WorkerCopyInventory $saves)
+    if(!@($rows|Where-Object{[string]$_['path'] -cmatch '^287700\\local\\TPP_GAME_DATA[0-9]?$'}).Count){throw 'Seed run guest save copy has no TPP_GAME_DATA file.'}
+    return $saves
+}
+# The seed of each role: -HostSaveSeed / -GuestSaveSeed ('' = -SaveSeed), or 'run' for -GuestSaveSeedRun.
+function Get-WorkerRoleSeeds([string]$SaveSeed,[string]$HostSaveSeed,[string]$GuestSaveSeed,[string]$GuestSaveSeedRun) {
+    if($GuestSaveSeedRun -and $GuestSaveSeed){throw '-GuestSaveSeedRun excludes -GuestSaveSeed.'}
+    if($GuestSaveSeedRun -and !(Test-WorkerRunId $GuestSaveSeedRun)){throw '-GuestSaveSeedRun must be one exact lower-case worker run id.'}
+    $hostSeed=if($HostSaveSeed){$HostSaveSeed}else{$SaveSeed}
+    $guestSeed=if($GuestSaveSeedRun){'run'}elseif($GuestSaveSeed){$GuestSaveSeed}else{$SaveSeed}
+    foreach($value in @($hostSeed,$guestSeed)){if($value -cnotin @('real','lab','run')){throw "Unknown save seed: $value"}}
+    return @{host=$hostSeed;guest=$guestSeed}
+}
+$roleSeeds=Get-WorkerRoleSeeds $SaveSeed $HostSaveSeed $GuestSaveSeed $GuestSaveSeedRun
+# Refuse a wrong seed run before any probe, staging or install work.
+if($roleSeeds.guest -ceq 'run'){$null=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun ''}
 $pins=Get-WorkerRuntimePins
 $build=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($BuildDirectory,$repo)) -MustExist
 if(!(Test-WorkerDescendant $build (Join-Path $repo 'build')) -or $build -ieq (Join-Path $repo 'build\native')){throw 'Use a separate worker build under build.'}
@@ -74,6 +110,7 @@ Assert-WorkerMgoSleepRestScope $BuildProfile $Mode $PartnerProfile $NativeStage 
 Assert-WorkerMgoUniqueRestScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoUniqueRestArchive $BuddyCapacityArchive $MgoSleepRestArchive
 Assert-WorkerMgoStandingCycleScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoStandingCycleArchive $BuddyCapacityArchive $MgoSleepRestArchive $MgoUniqueRestArchive
 if($BuildProfile -ceq 'mgo-standing-cycle' -and $SaveSeed -cne 'lab'){throw 'Standing cycle tests require copied lab saves.'}
+if(($BuildProfile -ceq 'mgo-standing-cycle' -or $NativeActivationObserver) -and ($roleSeeds.host -cne 'lab' -or $roleSeeds.guest -cne 'lab')){throw 'Standing cycle and native activation tests require copied lab saves for both roles.'}
 if($StandingLookupObserver -and $BuildProfile -cne 'mgo-standing-cycle'){throw '-StandingLookupObserver needs the exact standing-cycle profile.'}
 if($StandingFrameObserver -and ($BuildProfile -cne 'mgo-standing-cycle' -or !$StandingLookupObserver)){throw '-StandingFrameObserver needs the exact standing-cycle profile and -StandingLookupObserver.'}
 Assert-WorkerNativeActivationScope ([bool]$NativeActivationObserver) $BuildProfile $Mode $PartnerProfile $NativeStage $SaveSeed ([bool]$AmmoExperiment)
@@ -209,6 +246,7 @@ try {
     $session=[ordered]@{schema=1;run_id=$runId;run_dir=$runDirectory;repo=$repo;build_directory=$build;status='staging';
         started_utc=[DateTime]::UtcNow.ToString('o');failure=$null;supervisor=$null;owned_processes=@();
         candidate_sha256=$loaderHash;baseline_sha256=$BaselineLoaderSha256;archive_sha256=$pins.Archive;lab_settings=@($LabSetting);mode=$Mode;wan_sim=$WanSim;graphics_quality=$GraphicsQuality.ToLowerInvariant();
+        save_seeds=[ordered]@{host=$roleSeeds.host;guest=$roleSeeds.guest;guest_run=$(if($GuestSaveSeedRun){$GuestSaveSeedRun}else{$null})};
         check_receipt=[IO.Path]::GetFullPath($CheckReceipt,$repo);check_receipt_sha256=Get-WorkerHash ([IO.Path]::GetFullPath($CheckReceipt,$repo));
         qualification=$qualification.QualificationPath;qualification_sha256=Get-WorkerHash $qualification.QualificationPath;
         prepare_started=$false;prepare_completed=$false;configuration=$null;real_saves=[ordered]@{root=$identity.UserData;before=$beforeSaves};
@@ -314,16 +352,25 @@ try {
         $null=Assert-WorkerPlainPath $saveRoot
         $row.worker_save_dir=$saveRoot
         Assert-WorkerHash (Join-Path $freshBackup 'manifest.json') $session.real_saves.backup_manifest_sha256
-        if($SaveSeed -ceq 'lab'){
+        $roleSeed=$roleSeeds[$role]
+        if($roleSeed -ceq 'lab'){
             $labSaves=Assert-WorkerPlainPath $p.SaveDir -MustExist
             foreach($sub in @('287700\local','remote')){if(!(Test-Path -LiteralPath (Join-Path $labSaves $sub) -PathType Container)){throw "Lab save copy is missing $sub in $labSaves."}}
             $null=New-Item -ItemType Directory -Path $saveRoot
             foreach($sub in @('287700','remote')){Copy-Item -LiteralPath (Join-Path $labSaves $sub) -Destination $saveRoot -Recurse}
             $seed=[pscustomobject]@{Seeded=$true;Files=@(Get-ChildItem -LiteralPath $saveRoot -Recurse -File).Count}
+        } elseif($roleSeed -ceq 'run'){
+            # The guest only (Get-WorkerRoleSeeds): an earlier closed run's guest copy, read only.
+            $seedRunSaves=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun $runId
+            $null=New-Item -ItemType Directory -Path $saveRoot
+            foreach($sub in @('287700','remote')){Copy-Item -LiteralPath (Join-Path $seedRunSaves $sub) -Destination $saveRoot -Recurse}
+            $seed=[pscustomobject]@{Seeded=$true;Files=@(Get-ChildItem -LiteralPath $saveRoot -Recurse -File).Count}
         } else {
             $seed=Copy-SaveSeed -BackupDirectory $freshBackup -SaveDir $saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'
         }
         if(!$seed.Seeded -or !$seed.Files){throw 'Fresh worker save copy was not seeded from the verified backup.'}
+        $row.save_seed_kind=$roleSeed
+        $row.save_seed_run=if($roleSeed -ceq 'run'){$GuestSaveSeedRun}else{$null}
         $row.save_seed=@(Get-WorkerCopyInventory $saveRoot)
         $row.mutex_suffix='worker_'+$role+'_'+$runId.Substring(0,8)
         $text=Set-WorkerIniValue (Read-WorkerBoundedText $p.LabIni) 'save_dir' $saveRoot
