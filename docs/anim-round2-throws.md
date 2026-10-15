@@ -97,3 +97,40 @@ catch it (`partner_weapon=fire_reload_off; reason=ammo_leak`). Worth a look by t
    approval or another approach chosen by the user.
 2. Qualify a slot-3/6 ChangeEquip writer for instance 1 that does not touch the shared support stock.
 3. Then add the owner filters (`partner_native_support`, default off), gates and telemetry, with these pins.
+
+## Attempt 2 (2026-10-15, after the user approved the native route): blocked again
+
+The user approved option (a) (the native route with the stock-guard patch). The implementer was stopped by a safety
+classifier while writing a read-only static capstone scan (`scratchpad/anim/throws3/writes.py`, listing memory writes
+and camera/P loads in gun modes 28..47 reachable for instance 1). Per the rules it stopped; no code, contract, key,
+scenario or build changed. Static results from before the stop (not yet pinned):
+
+- **Stock guard design.** `0x108C8C0` (only caller: gun phase 0 at `0x103E08C`; rcx plugin, rdx rec, r8d id; r9 = P
+  from `[[rcx+8]+0x138]` at `0x108C8D7`). Its remote branch only writes qword `[rec+0x25C] = -1` (counts 0xFFFF) and
+  `[rec+0x3C0] |= 0x20000000` (bit 29), then returns. Proposed site: the dword at `0x108C8E5` of
+  `mov eax,[r9+0x204]` (`41 8b 81 04 02 00 00`) -> `eb 9f cc cc` (jmp rel8 to the int3 padding `0x108C888..0x108C88F`,
+  then a near stub). The stub must re-execute the load and force the branch only for (id 1, P, the hook thread,
+  support class `(rec+0x27C>>6)&7` in {2,3}); for a class-1 gun the remote branch would overwrite the magazine mirror.
+- **Closure.** A whole-image direct-call graph plus ctl-tagged vtable calls gives 47 stock-reaching functions (ctl
+  slots vt+0xB8 `0x11AF530`, vt+0xC0 `0x11AF490`, vt+0x100 `0x11AF0B0`). With the local bit clear, the online bit
+  clear and bit 29 set, no handler of modes 28..47 or 52..56 reaches a stock write (without the guard the method finds
+  mode 37's own setter call at `0x1087CF0`). Stock layout: store vt+0x88 `0xEE9050` reads `Y+0x98[k]`, vt+0x78
+  `0xEE9730` writes it, the setter also writes `[ctl+0x20]+0x614+2k`; vt+0x68 `0xEE90A0` maps slot 3 to k = 6+sub,
+  slot 4 to 0xE+sub, slot 6 to 5.
+- **0x10589E0** (class-1 ammo setter) cannot be reached by a support-class record of id 1 (bit 19 is set only by
+  `0x1059B3F` for the bit-20 0x42B..0x42E guns; `0x108BD40` clears it before activation).
+- **Drop values.** `0x15E0230` returns 0 when its pool is empty (`0x15E02B5`), so 0 is safe. `0x1337760` always
+  returns the pool object (through `0x1336110`), so 0 is outside its return domain, but the six known callers
+  (`0x130369F`, `0xBD6B19`, `0xBDF09E`, `0x1942D17`, `0xBDDF02`->`0xBDCE4E`, `0x1726248`) never dereference it.
+- **Equip path, slot 3, non-local id.** SetCurrentSlot `0x11AFA80` writes Q+0x17C, row+0x36/0x37 and
+  row+0 = row[0xC+2*sub], then ctl vt+0xA0 `0x11B0700` -> vt+0x18 `0x11B0900` -> Y vt+8 `0xEE9880` (allocates the
+  handle into `Y+0x40[id*stride+3]`, light path for non-gun types) plus the block notify (blk vt+0x180 -> vt+0x20);
+  these callees are not yet qualified. ctl vt+0x98 `0x11AFF30` writes row+0xC+2*sub per id (vars+0x584 only for the
+  local id); vt+0x90 `0x11AD420` is a pure read; vt+0x1F0 `0x11B1B60` (non-local) calls vt+0xA0(6) and vt+0x98, and
+  maps ids outside 515..521 to 519.
+- **Rocket arms are not visual-only (correction).** Mode 53 (`0x107FA30`) op 3 sets rec+0x2C2 = 3 and the shared plugin
+  field `[r14+0x350]` bit 7 for any id; op 4 in state 3 queries the rocket service (vt+0x68 `0x1339700`) and can set
+  `[r14+0x350] |= 0x200`, write the viewer's camera P+0xB8 (+0x234, +0x2DC, vt+0x128 twice) or reach projectile vt+0x70
+  `0x1339CF0` through `0x10951A0`. **All of slot 6 stays Gate::unsupported** (the camera part is the camera agent's area).
+- **Still unchecked (the blocked step):** shared plugin fields / camera writes in modes 28..47 for instance 1, the slot-3
+  equip callees above, and modes 54..56.
