@@ -435,6 +435,7 @@ struct Settings {
     // Round-1 actions track: the DM overlay lever and the act census lines.
     PartnerNativeOverlay noverlay;
     bool act_log;
+    bool stance_fast;  // the native stance window (partner_native_stance_fast)
 };
 
 // A capped change-only log family (one per experiment head).

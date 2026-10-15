@@ -1095,6 +1095,13 @@ pr::Params ReconParams(const Settings& set) noexcept {
     if (set.native_active) {
         p = pr::NativeParams(p, FaceModeFor(set.nface));
         p.recon = PartnerRecon::track;
+        if (!set.stance_fast) {
+            // partner_native_stance_fast=0: the previous stance rule (2 s, no guards).
+            const pr::Params legacy{};
+            p.stance_fix_ms = legacy.stance_fix_ms;
+            p.stance_fix_gap_ms = legacy.stance_fix_gap_ms;
+            p.stance_pad_quiet_ms = p.stance_body_stable_ms = p.stance_settle_ms = p.stance_state_settle_ms = 0;
+        }
     }
     return p;
 }
@@ -1206,8 +1213,8 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.stance_pad = latest_ok && latest.age_ms <= set.stale_ms &&
                     ((latest.packet.held | latest.packet.w4c | latest.packet.w50 | latest.packet.tap12 | latest.packet.long12) &
                      kStanceBit) != 0;
-    in.stance_block = StanceBlock(m, set, remote_action_flags);
-    in.remote_downed = set.native_active && RemoteDowned(clock.tick_ms);
+    in.stance_block = set.stance_fast ? StanceBlock(m, set, remote_action_flags) : nullptr;
+    in.remote_downed = set.native_active && set.stance_fast && RemoteDowned(clock.tick_ms);
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
     pnat::DashIn di{};
     di.now_ms = in.now_ms;
@@ -4045,6 +4052,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // Round-1 actions track (docs/anim-round1-actions.md).
     d.settings.noverlay = lab.partner_native_overlay;
     d.settings.act_log = lab.partner_act_log;
+    d.settings.stance_fast = lab.partner_native_stance_fast;
     // Play never calls SetCurrentSlot itself (docs/native-puppet.md "Release gating"): the
     // setting the telemetry reports is the one that runs (BuildArm downgrades it again).
     if (d.settings.play_mode && d.settings.nslot == PartnerNativeSlot::call) d.settings.nslot = PartnerNativeSlot::write;

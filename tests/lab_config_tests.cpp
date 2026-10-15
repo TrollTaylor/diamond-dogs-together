@@ -789,6 +789,9 @@ int main() {
                   "overlay off and act census on by default (gun profile too)");
             const auto debugOverlay = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_overlay=debug\npartner_act_log=0\n");
             const auto mapOverlay = Lab("enabled=1\nrole=host\npartner_native_overlay=map\n");
+            Check(def.partner_native_stance_fast && gunDefault.partner_native_stance_fast &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_stance_fast=0\n").partner_native_stance_fast,
+                  "the native stance window is on by default; partner_native_stance_fast=0 restores the 2 s rule");
             Check(debugOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::debug && !debugOverlay.partner_act_log &&
                   mapOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::map && debugOverlay.invalid_values == 0,
                   "overlay debug/map and act census off parse");

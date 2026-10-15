@@ -5040,6 +5040,19 @@ void TestRound1Actions() {
         for (int i = 0; i < 5; ++i) s.N();
         Check(s.fake.Count("partner_recon=stance_fix; remote=1; body=2; via=tap;") == 1, "native stance: fixed once the aim ended");
     }
+    {   // partner_native_stance_fast=0: the previous 2 s rule.
+        NativeSession s;
+        idle(s);
+        s.driver.settings.stance_fast = false;
+        Check(s.Until(pn::Mode::active, 9000), "stance legacy: active");
+        for (int i = 0; i < 40; ++i) s.N();
+        s.fake.lines.clear();
+        s.fake.sample.anim_stance = 2;
+        for (int i = 0; i < 50; ++i) s.N();
+        Check(s.fake.Count("partner_recon=stance_fix;") == 0, "stance legacy: no fix before 2 s");
+        for (int i = 0; i < 25; ++i) s.N();
+        Check(s.fake.Count("partner_recon=stance_fix; remote=2; body=1; via=tap;") == 1, "stance legacy: the fix after 2 s");
+    }
     {   // The act census: edge lines with family names and the match latency.
         NativeSession s;
         idle(s);

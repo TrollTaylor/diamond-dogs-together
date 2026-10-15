@@ -167,6 +167,16 @@ bool ForEachPair(const char* text, std::size_t length, Visit visit) noexcept {
     }
     return true;
 }
+
+// The round-1 actions track's keys (docs/anim-round1-actions.md): true when
+// `key` is one of them (`ok` then says whether its value parsed).
+bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
+    else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
+    else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
+    else return false;
+    return true;
+}
 } // namespace
 
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
@@ -191,6 +201,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
+        // Round-1 actions track keys first: a separate chain (the one below is at MSVC's nesting limit).
+        if (ParseRound1ActionsKey(key, value, result, ok)) {
+            if (!ok) ++result.invalid_values;
+            return;
+        }
         if (Equals(key, "enabled")) ok = ParseBool(value, enabled);
         else if (Equals(key, "role")) {
             if (Equals(value, "host")) result.role = LabRole::host;
@@ -360,8 +375,6 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
             ok = ParsePartnerNativeRide(value.data, value.size, result.partner_native_ride);
             if (ok) result.partner_native_ride_given = true;
         }
-        else if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
-        else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))

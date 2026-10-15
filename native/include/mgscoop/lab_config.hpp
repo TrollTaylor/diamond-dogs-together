@@ -448,6 +448,9 @@ struct LabConfig {
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
     bool partner_act_log = true;
+    // The native stance level fix: 1 = the round-1 window (500 ms behind the
+    // guards, partner_recon NativeParams), 0 = the previous 2 s rule.
+    bool partner_native_stance_fast = true;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute

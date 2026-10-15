@@ -1,0 +1,117 @@
+# Round-1 actions track (docs/anim-round1-actions.md "Hidden tests" H3): the DM overlay lever plays each
+# catalogue state on body 1 through the debug command, both players standing on foot.
+# Run (hidden worker, coordinator only; the overlay needs no gun, the loco stage runs on the normal worker build):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-overlay-states.txt -PartnerProfile native -NativeStage loco
+#   (or -NativeStage gun -BuildProfile research for the user's gun profile; the expected lines are the same).
+# The guest runs overlay_state: its body 1 (the host's puppet) plays the state; the guest films it from 4 m behind and
+# 3 m to the side. The host stands still (idle remote), so the native drive is active before each request.
+# Expected lines, guest script-observer.log, for each state S (index i, loop L):
+#   partner_overlay=queued; state=S; loop=L; ms=<ms>; setting=debug
+#   partner_overlay=request; state=S; loop=L; source=debug; reason=debug; ms=<ms>; phase=suspend; native=active; ...
+#   partner_overlay=native; mode=leaving; reason=overlay; suspends=<n>   then   partner_overlay=native; mode=fallback; reason=overlay
+#   partner_dm=patched; rva=0x1198e25; old=440f44c7; new=0f1f4000
+#   partner_overlay=play; state=S; ...; gani=<64 + 32*L + i>      partner_lua=event=dm_overlay; index=<i>; loop=<L>
+#   partner_overlay=playing; state=S; ...; q18=0x1,0x8b; rec18=0x<code>; code_match=<1 for a named state>; rec248=0x..
+#   a one-shot: partner_overlay=finished; reason=ended (the graph left the state) or stop; reason=timeout
+#   a loop:     partner_overlay=stop; reason=timeout  then  partner_overlay=released; reason=timeout
+#   partner_overlay=native; mode=entering; reason=resume ... step=place ... mode=active; reason=ok
+#   never: partner_native=leaving / partner_native=fallback / partner_native=latched for these cycles (fallbacks unchanged)
+# What each frame should show (T12 in the critic's list): the named state's pose on body 1 at the host's position.
+# A state that ends at once (finished after < 300 ms) or shows the idle pose answers T12 "transitions out at once".
+# Record per state: played_ms (the finished/released ms), code_match, and the frame.
+labsetting partner_native_overlay=debug
+labsetting partner_act_log=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 4 3
+wait 5000
+both capture overlay-start
+# --- Damage (one-shots; the map plays Front for remote acts 29/75/76) ---------------------------------------
+guest run overlay_state stateDamageBigFront 0 2500
+guest expect ^overlay_queued;state=stateDamageBigFront$
+wait 600
+guest burst ov-damage-front 3 300
+wait 3000
+guest run overlay_state stateDamageBigBack 0 2500
+wait 600
+guest burst ov-damage-back 3 300
+wait 3000
+guest run overlay_state stateDamageBigLeft 0 2500
+wait 600
+guest capture ov-damage-left
+wait 3000
+guest run overlay_state stateDamageBigRight 0 2500
+wait 600
+guest capture ov-damage-right
+wait 3000
+# --- Death (the map: remote acts 40/41) ---------------------------------------------------------------------
+guest run overlay_state stateDead 0 3000
+wait 800
+guest burst ov-dead 3 500
+wait 3000
+# --- Cardboard box (loops; remote acts 77/78) ----------------------------------------------------------------
+guest run overlay_state stateCBoxIdle 1 2500
+wait 700
+guest capture ov-cbox-idle
+wait 3000
+guest run overlay_state stateCBoxMove 1 2500
+wait 700
+guest capture ov-cbox-move
+wait 3000
+# --- Ledge hang (loop; remote acts 54..56): body 1 stays on the ground here, so the pose floats at ground level
+guest run overlay_state stateEludeIdle 1 2500
+wait 700
+guest capture ov-elude-idle
+wait 3000
+# --- Ladder (loops; remote acts 21/23) ------------------------------------------------------------------------
+guest run overlay_state stateClimbIdle 1 2500
+wait 700
+guest capture ov-climb-idle
+wait 3000
+guest run overlay_state stateClimbMoveFront 1 2500
+wait 700
+guest burst ov-climb-up 2 400
+wait 3000
+guest run overlay_state stateClimbMoveBack 1 2500
+wait 700
+guest capture ov-climb-down
+wait 3000
+# --- Controls: a DM-proven graph-0 state and a resident clip path --------------------------------------------
+guest run overlay_state stateSquatIdleLeft 1 2000
+wait 700
+guest capture ov-control-squat
+wait 2500
+guest run overlay_state snapdam_p_die_idl 1 2000
+wait 700
+guest capture ov-clip-die-idle
+wait 2500
+# --- overlay_stop before the timeout ---------------------------------------------------------------------------
+guest run overlay_state stateCBoxIdle 1 20000
+wait 1200
+guest run overlay_stop
+guest expect ^overlay_stop_queued$
+wait 1500
+guest capture ov-stopped
+# Expected: partner_overlay=stop; reason=debug ... released; reason=debug; native back to active (resume).
+# --- The reverse direction: the host plays two states on its body 1 (the guest's puppet, Quiet in the lab) -------
+placebehind host guest 4 3
+wait 4000
+host run overlay_state stateDamageBigFront 0 2500
+wait 600
+host capture ov-rev-damage
+wait 3000
+host run overlay_state stateCBoxIdle 1 2500
+wait 700
+host capture ov-rev-cbox
+wait 3000
+both capture overlay-end
+state
