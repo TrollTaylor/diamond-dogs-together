@@ -5118,6 +5118,15 @@ void TestAnimRound1Weapons() {
     s.driver.mission.rate_adapt.latched = true;
     s.N();
     Check(s.fake.arms.back().reload_rate_k == 0.0f, "a latched adaptation writes nothing");
+    // The mirror's rec+0x3E8 rewrite at a slot change: one partner_reload=shadow line per new write.
+    s.fake.stats.native.mag_m3e8_slot = 1;
+    s.N();
+    Check(s.fake.Containing("partner_reload=shadow; reason=slot; slot_writes=1; cap_writes=0;") == 1, "the shadow rewrite at a slot change is logged");
+    s.N();
+    Check(s.fake.Containing("partner_reload=shadow;") == 1, "no new rewrite: no new line");
+    s.fake.stats.native.mag_m3e8_cap = 1;
+    s.N();
+    Check(s.fake.Containing("partner_reload=shadow; reason=cap; slot_writes=1; cap_writes=1;") == 1, "a base above the capacity is logged");
     // partner_weapon_ctx: one line per change, at most every kWeaponCtxMs.
     const std::size_t ctx = s.fake.Containing("partner_weapon_ctx;");
     Check(ctx >= 4 && s.fake.Containing("partner_weapon_ctx; remote_slot=3; remote_equip=354; type=12;") >= 1,

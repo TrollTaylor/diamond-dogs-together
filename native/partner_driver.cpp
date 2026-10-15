@@ -2716,10 +2716,25 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
 // and equip, the gate), at most every kWeaponCtxMs; the changes in between are
 // counted in the next line (no cap: bounded by the change rate).
 void TickWeaponCtx(Driver& d, const Hooks& h, const sync::AnimState& remote_anim, bool pose_live, bool gun_ok, const pp::Gun1& gun,
-                   std::uint64_t now) noexcept {
+                   const partner_input_hook::NativeStats& ns, std::uint64_t now) noexcept {
     Mission& m = d.mission;
     const Settings& set = d.settings;
     if (!set.ngun) return;
+    // The completion base rewrites (a slot change, a base above the capacity): one line per new write.
+    if (!m.shadow_logged) {
+        m.shadow_logged = true;
+        m.shadow_slot_logged = ns.mag_m3e8_slot;
+        m.shadow_cap_logged = ns.mag_m3e8_cap;
+    } else if (ns.mag_m3e8_slot != m.shadow_slot_logged || ns.mag_m3e8_cap != m.shadow_cap_logged) {
+        const bool slot = ns.mag_m3e8_slot != m.shadow_slot_logged;
+        m.shadow_slot_logged = ns.mag_m3e8_slot;
+        m.shadow_cap_logged = ns.mag_m3e8_cap;
+        EmitNativeN(h, m.shadow_cap, kAnimWeaponCap, "partner_reload_shadow",
+                    "partner_reload=shadow; reason=%s; slot_writes=%u; cap_writes=%u; body_slot=%u; mag=%u; cap=%u; m3e8=%u\r\n",
+                    slot ? "slot" : "cap", ns.mag_m3e8_slot, ns.mag_m3e8_cap, gun_ok && gun.fields_ok ? unsigned(gun.slot) : 0xFFu,
+                    gun_ok && gun.fields_ok ? pnat::GunMagazine(gun.fields) : 0u, gun_ok && gun.fields_ok ? pnat::GunCapacity(gun.fields) : 0u,
+                    gun_ok ? unsigned(gun.m3e8) : 0u);
+    }
     const unsigned act = pose_live && (remote_anim.flags & sync::AnimFlag::Valid) ? unsigned(remote_anim.act) : 0u;
     const unsigned act_key = act >= 1 && act <= 6 ? 0u : act;
     const unsigned body_slot = m.slots1_ok ? unsigned(m.slots1.nibble & 0xFu) : 0xFFu;
@@ -3389,7 +3404,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         // Anim round 1: the aim intent's gate, the weapon context line, the census
         // and the reload rate the hook applied (at body 1's reload exit).
         TickAimIntent(d, h, latest_ok, latest, remote_anim, pose_live, is.native, now);
-        TickWeaponCtx(d, h, remote_anim, pose_live, gun_ok, gun, now);
+        TickWeaponCtx(d, h, remote_anim, pose_live, gun_ok, gun, is.native, now);
         TickFireCensus(d, h, now);
         if (set.ngun && set.nreload_rate == PartnerNativeReloadRate::adapt && m.reload_out.body_event &&
             std::strcmp(m.reload_out.body_event, "body_exit") == 0)

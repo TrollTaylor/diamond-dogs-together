@@ -889,6 +889,11 @@ struct Mission {
     std::uint64_t ctx_key, ctx_ms, ctx_seen_key;
     bool ctx_have;
     unsigned ctx_changes;
+    // The mirror's rec+0x3E8 rewrites for a slot change / a base above the
+    // capacity (hook totals at the last partner_reload=shadow line; own cap).
+    std::uint32_t shadow_slot_logged, shadow_cap_logged;
+    bool shadow_logged;
+    LogCap shadow_cap;
     // partner_native_gun change lines: own cap, at most every kNativeGunChangeMs
     // (later changes counted in the next line's changes=).
     std::uint64_t native_gun_change_ms;
