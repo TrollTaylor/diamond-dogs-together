@@ -28,6 +28,7 @@ stance guest stand
 placebehind host guest 6 -0.7
 wait 4000
 host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
 wait 4000
 placebehind guest host 6 0
 wait 2500

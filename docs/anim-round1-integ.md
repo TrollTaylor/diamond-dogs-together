@@ -73,15 +73,15 @@ pass or fail of the seated mesh.**
 
 `coop-vehicle-seat.txt` and `coop-vehicle-seat-manual.txt`:
 
-- `godmode 1`; only the driver `goto_vehicle`
-- `placebehind <watcher> <driver> 6 0` **before** board (host still on foot at the jeep)
+- `godmode 1`
+- **both** `goto_vehicle` first (partner pose is invalid across the spawn-to-jeep
+  gap; run after 2a9c264 threw `viewer landing starts without a valid partner pose`)
+- `placebehind <watcher> <driver> 6 0` **before** board, while the driver is on foot
+- do **not** `placebehind` after the driver is seated (run `76dea383`: seat mode owns
+  body 1, same landing throw). A follow-cam would need a landing check that only
+  uses the viewer's local position
 - `require vehicle;id=` so a missed board stops the scenario
 - reverse half starts with `heal` + `godmode 1`
-
-Do **not** `placebehind` after the driver is seated. Run `76dea383` did that and
-`Wait-ViewerLanding` threw `[guest] viewer landing starts without a valid partner
-pose` (seat mode owns body 1, so `realized/body_valid/pose_valid` is false). A later
-follow-cam would need a landing check that only uses the viewer's local position.
 
 Re-run the auto scenario with the same Invoke-WorkerScenario line. Judge from the
 **guest** `seat-entered` / `seat-drive-*` frames: Snake seated in the jeep, nametag

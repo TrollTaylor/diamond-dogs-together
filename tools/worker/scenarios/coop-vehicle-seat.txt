@@ -5,11 +5,11 @@
 # after the host gets out. Then the roles reverse (the host watches the guest
 # drive the same jeep; Quiet seated on the host screen).
 #
-# placebehind AFTER the driver is seated fails Wait-ViewerLanding ("viewer landing
-# starts without a valid partner pose") because seat mode owns body 1. Run 76dea383
-# hit that. Run b8102e6e placed the watcher 14 m / 5 m aside before enter and looked
-# at a Wakh Sind wall. Place the watcher 6 m behind the on-foot driver, then board.
-# godmode 1 so an alert does not drop the watcher. Do not send the watcher to the jeep.
+# Both players must goto_vehicle first: Wait-ViewerLanding requires the watcher's
+# partner pose, which is invalid across the 200 m spawn-to-jeep gap (run 611509)
+# and after seat mode owns body 1 (run 76dea383). b8102e6e used 14 m / 5 m aside
+# and looked at a Wakh Sind wall. Use 6 m / 0 side while the driver is still on
+# foot at the jeep, then board. godmode 1 so an alert does not drop the watcher.
 #
 # Expected (guest script-observer.log, first half; host log, second half):
 #   partner_ride=rx; kind=2; rev=..; epoch=..; v=2; seat=0; vehicle=256xx
@@ -34,6 +34,7 @@ stance guest stand
 placebehind host guest 6 -0.7
 wait 4000
 host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
 wait 4000
 placebehind guest host 6 0
 wait 2500
