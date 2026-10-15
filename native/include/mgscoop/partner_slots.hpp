@@ -88,7 +88,12 @@ bool BulletType(std::uint8_t type) noexcept;
 // standin (weapons4): body 1 holds the plan's stand-in for the remote's
 // current slot (a bullet type: nothing stripped; a projectile stand-in is
 // projectile: FIRE stripped, HOLD allowed).
-enum class Gate : std::uint8_t { match, mismatch, switching, projectile, standin };
+// unsupported (anim round 1, A1; JudgeUnsupported below): the remote holds
+// equipment body 1 cannot show (a support weapon, an item, the bionic arm, a
+// shield): HOLD, FIRE and RELOAD are stripped so the partner no longer raises
+// its old gun while the remote aims a grenade. Computed by the driver before
+// Judge; it wins over every other verdict.
+enum class Gate : std::uint8_t { match, mismatch, switching, projectile, standin, unsupported };
 const char* GateName(Gate gate) noexcept;
 struct GateIn {
     std::uint32_t remote_equip, remote_base, body_equip;
@@ -105,7 +110,98 @@ struct GateIn {
     bool standin;
 };
 Gate Judge(const GateIn& in) noexcept;
-// FIRE | RELOAD for mismatch and switching, FIRE for projectile, 0 for match
-// and standin.
+// FIRE | RELOAD for mismatch and switching, FIRE for projectile, HOLD | FIRE |
+// RELOAD (0x58) for unsupported, 0 for match and standin.
 std::uint32_t StripBits(Gate gate) noexcept;
+
+// --- Anim round 1 (docs/anim-round1-weapons.md) ----------------------------------
+// A1, the unsupported-equipment gate: the remote's live v5 slot (the sender's
+// equip-row nibble) above the gun slots (ChangeEquip 0x11AC4AA..0x11AC5AF:
+// 12 Throwing / 13 Placed -> 3, 17 Item -> 4, 14 AttackArm -> 6), or its
+// in-hand equip (input frame v4, rec+0x24C of the sender's gun record; an
+// alias as the manifest base) of a type outside the gun and shield types 1..9
+// (12 Throwing, 13 Placed, 14 AttackArm, 17 Item, any type above 9; a shield
+// keeps the projectile verdict: FIRE stripped). An unread type and an unknown
+// slot never judge unsupported (the old verdicts stay).
+enum class Unsupported : std::uint8_t { no, slot, type };
+const char* UnsupportedName(Unsupported value) noexcept;
+struct UnsupportedIn {
+    bool slot_valid;      // the remote's live v5 slot (0..15)
+    std::uint8_t slot;
+    bool type_ok;         // the remote's in-hand equip type was read (equip type table)
+    std::uint8_t type;
+};
+Unsupported JudgeUnsupported(const UnsupportedIn& in) noexcept;
+
+// The remote's aim-family acts (Q+0x18; action-anims act table): 11/12 stand
+// aim idle/turn, 13 stand aim move, 14/15 crouch aim idle/turn, 16 crouch aim
+// move, 17/19/20 prone and supine aim. Act 18 is not an aim state.
+inline constexpr bool AimAct(std::uint16_t act) noexcept { return (act >= 11 && act <= 17) || act == 19 || act == 20; }
+// Remote acts in which a synthesized HOLD is refused: dead/dying 40/41,
+// carried 42..44, stun/faint 79..83, down 84..89, helicopter 97..108,
+// vehicle 109..112 and 121, horse 122, D-Walker 123..126, sleep 131..133,
+// direct motion 139.
+bool AimBlockedAct(std::uint16_t act) noexcept;
+
+// State-driven aim intent (critic P0.5/4.6; partner_native_aim_intent). The
+// remote's pad HOLD reaches body 1 as before; with state the native window
+// also injects HOLD (into the sample's held word, so the edge and the PP+0x27C
+// latch follow the level exactly like a held RMB) while the remote's v5 gun
+// group says Aiming or its act is an aim act, independent of the remote's
+// toggle/hold aim option. The driver's gate (AimGate, per tick) and the hook's
+// frame rule (AimFrame, per window) both must pass; the frame rule reads the
+// sample of that window, so HOLD drops in the first window after the pad bit,
+// the flag and the act all cleared (the act through the next Arm).
+enum class AimRefusal : std::uint8_t { none, off, gate, slot, sleep, carried, hidden, ride, act };
+const char* AimRefusalName(AimRefusal value) noexcept;
+struct AimGateIn {
+    bool enabled;                // partner_native_aim_intent=state with the native gun stage active
+    bool judged;                 // the weapon gate judged this tick (weapon_gate is current)
+    Gate gate;                   // match or standin admit
+    bool slot_valid;             // the remote's live v5 slot
+    std::uint8_t slot;           // <= 2
+    bool sleeping;               // the partner sleep owner holds body 1 (coop_sleep)
+    bool carried;                // instance 1 is carried (coop_carry)
+    bool hidden;                 // the ride guard hides body 1 (ride, air, dead, stale)
+    bool riding;                 // the remote's ride state is not on foot (ride wire)
+    bool act_valid;              // the remote's live act
+    std::uint16_t act;
+};
+AimRefusal AimGate(const AimGateIn& in) noexcept;
+enum class AimSource : std::uint8_t { none, pad, flag, act };
+const char* AimSourceName(AimSource value) noexcept;
+struct AimFrameIn {
+    bool gate_ok;      // the driver's AimGate passed (Arm)
+    bool live;         // the window's sample is live (age <= stale_ms)
+    bool pad_hold;     // its held word carries HOLD (the remote's own press: nothing to add)
+    bool v5_valid;     // its v5 gun group is valid
+    bool v5_aiming;    // GunFlag::Aiming
+    bool act_aim;      // the driver's remote act is an aim act (Arm, expires)
+};
+// pad first (the raw HOLD, never added), then the v5 flag, then the act;
+// none without the gate or a live sample.
+AimSource AimFrame(const AimFrameIn& in) noexcept;
+inline constexpr bool AimAdds(AimSource source) noexcept { return source == AimSource::flag || source == AimSource::act; }
+
+// Auto-fire stop (critic P0.4, weapon-anims A3): instance 1's non-local shots
+// never spend its magazine and the mirror shows the remote's last round as 1,
+// so a held automatic trigger kept firing visual rounds after the remote ran
+// dry. Dry: the remote's v4 magazine has read 0 for grace_ms (the sample that
+// spent the last round still delivers its FIRE edge) and the remote is not
+// reloading; FIRE is stripped until a reload starts or the magazine reads
+// above 0 (a new magazine value: a reload's refill, a switch, a pickup).
+struct DryIn {
+    std::uint64_t now_ms;
+    bool mag_valid;            // the live sample carries v4 Mag
+    std::uint16_t mag;
+    bool remote_reloading;     // v5 Reloading or mode 11/12
+};
+struct DryState {
+    bool dry;
+    std::uint64_t zero_ms;     // when the magazine first read 0 (0: not zero)
+    std::uint32_t stops, clears;
+};
+inline constexpr std::uint32_t kDryGraceMs = 50;
+// True while FIRE must be stripped.
+bool DryStep(DryState& state, const DryIn& in, std::uint32_t grace_ms = kDryGraceMs) noexcept;
 } // namespace mgscoop::partner_slots

@@ -603,6 +603,11 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
             a.standin_slot[r] = m.slot_plan.map[r];
         }
     }
+    // Anim round 1: the state-driven aim intent (the hook adds HOLD per window,
+    // partner_slots AimFrame) and the reload rate factor (0: no rate write).
+    a.aim_intent = set.native_active && set.ngun && m.aim_gate_ok;
+    a.aim_act_until_ms = a.aim_intent && m.aim_act ? now + kAimActHoldMs : 0u;
+    a.reload_rate_k = gun_stage && set.nreload_rate == PartnerNativeReloadRate::adapt && !m.rate_adapt.latched ? m.rate_adapt.k : 0.0f;
     (void)st;
     return a;
 }
@@ -1964,6 +1969,22 @@ void EmitNative(Mission& m, const Hooks& h, LogCap& cap, const char* head, const
     if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
     (void)m;
 }
+// EmitNative with its own limit (anim round 1 families).
+void EmitNativeN(const Hooks& h, LogCap& cap, unsigned limit, const char* head, const char* format, ...) noexcept {
+    if (cap.lines >= limit) {
+        if (!cap.capped) {
+            cap.capped = true;
+            EmitFormat(h, "%s=capped; limit=%u\r\n", head, limit);
+        }
+        return;
+    }
+    char line[512]{};
+    va_list arguments;
+    va_start(arguments, format);
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    va_end(arguments);
+    if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
+}
 
 // Reliable channel 2 (equipment manifest): drained every tick in every drive
 // mode so the sender's window never stalls; the receiver only stores it.
@@ -2263,6 +2284,39 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         m.weapon_gate = set.ngun ? partner_slots::Judge(gi) : partner_slots::Gate::match;
         weapon_judged = true;
     }
+    // Anim round 1, A1: the unsupported-equipment gate. The remote's in-hand
+    // equip type (read once per equip: the raw id, an alias through the type
+    // getter's alias path, else the manifest base's) and its live v5 slot; a
+    // support weapon, an item or the bionic arm in the remote's hands strips HOLD,
+    // FIRE and RELOAD (0x58) whatever body 1 holds.
+    if (m.remote_gun_equip == pnat::kNull || m.remote_gun_equip == 0) {
+        m.remote_type_equip = 0;
+        m.remote_equip_type = pnat::kNull;
+    } else if (m.remote_type_equip != m.remote_gun_equip) {
+        m.remote_type_equip = m.remote_gun_equip;
+        std::uint8_t t = 0;
+        const bool raw_ok = h.equip_type && h.equip_type(h.context, static_cast<std::uint32_t>(m.remote_gun_equip), t) && t != 0;
+        const bool base_ok = !raw_ok && m.remote_gun_base != pnat::kNull && m.remote_gun_base != m.remote_gun_equip && h.equip_type &&
+                             h.equip_type(h.context, static_cast<std::uint32_t>(m.remote_gun_base), t) && t != 0;
+        m.remote_equip_type = raw_ok || base_ok ? static_cast<std::int32_t>(t) : pnat::kNull;
+    }
+    {
+        partner_slots::UnsupportedIn ui{};
+        ui.slot_valid = m.remote_v5 && m.remote_slot <= pin::kInvSlotMax;
+        ui.slot = m.remote_slot;
+        ui.type_ok = m.remote_equip_type != pnat::kNull;
+        ui.type = ui.type_ok ? static_cast<std::uint8_t>(m.remote_equip_type) : static_cast<std::uint8_t>(0);
+        m.unsupported = set.ngun && set.nunsupported ? partner_slots::JudgeUnsupported(ui) : partner_slots::Unsupported::no;
+    }
+    if (m.unsupported != partner_slots::Unsupported::no) {
+        m.weapon_gate = partner_slots::Gate::unsupported;
+        m.weapon_standin = false;
+        m.standin_remote_slot = m.standin_body_slot = partner_slots::kNoSlot;
+    } else if (!weapon_judged && m.weapon_gate == partner_slots::Gate::unsupported) {
+        // The remote put the equipment away while body 1 is unread: FIRE and
+        // RELOAD stay stripped (mismatch) until the next readable tick judges.
+        m.weapon_gate = partner_slots::Gate::mismatch;
+    }
     m.tele.weapon_gate_current = weapon_judged;
     if (!set.ngun) m.weapon_gate = partner_slots::Gate::match;
     m.weapon_mismatch = m.weapon_gate == partner_slots::Gate::mismatch;
@@ -2290,6 +2344,43 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
                    ns.shot_leaks ? "shot_leak" : "ammo_leak", ns.shot_leaks, ns.ammo_leaks, d.leak_strip);
     }
     m.weapon_strip |= d.leak_strip;
+    // Anim round 1: the auto-fire stop (partner_slots DryStep). Instance 1's
+    // non-local shots never spend its magazine, so once the remote's magazine
+    // has read 0 for kDryGraceMs (its last round's FIRE edge still passes) FIRE
+    // is stripped until a reload starts or the magazine reads above 0.
+    {
+        const bool remote_reloading = m.remote_v5 && ((m.remote_gun_flags & pin::GunFlag::Reloading) != 0 ||
+                                                       partner_reload::ReloadMode(m.remote_gun_mode));
+        const bool was = m.dry_strip;
+        const bool active = set.ngun && set.ndry && set.nfire == PartnerNativeFire::visual;
+        m.dry_strip = active && partner_slots::DryStep(m.dry, partner_slots::DryIn{now, m.remote_mag_ok, m.remote_mag, remote_reloading});
+        if (!active) { m.dry.dry = false; m.dry.zero_ms = 0; }
+        if (m.dry_strip) m.weapon_strip |= pnat::kPadFire;
+        if (m.dry_strip != was)
+            EmitNativeN(h, m.dry_cap, kAnimWeaponCap, "partner_fire_dry",
+                        "partner_fire=%s; remote_mag=%u; remote_cap=%u; reason=%s; stops=%u; strip=0x%x\r\n",
+                        m.dry_strip ? "dry_stop" : "dry_clear", unsigned(m.remote_mag), unsigned(m.remote_mag_cap),
+                        m.dry_strip ? "remote_empty" : remote_reloading ? "reload" : !m.remote_mag_ok ? "no_mag" : m.remote_mag ? "mag" : "off",
+                        m.dry.stops, m.weapon_strip);
+    }
+    // Anim round 1: the unsupported line (own cap, on change of the key).
+    {
+        const std::uint64_t key = m.unsupported == partner_slots::Unsupported::no ? 0u
+            : (1ull | (static_cast<std::uint64_t>(m.unsupported) << 1) | (static_cast<std::uint64_t>(m.remote_slot) << 4) |
+               (static_cast<std::uint64_t>(static_cast<std::uint32_t>(m.remote_gun_equip)) << 12) |
+               (static_cast<std::uint64_t>(static_cast<std::uint8_t>(m.remote_equip_type)) << 44));
+        if (key != m.unsupported_key || !m.unsupported_logged) {
+            const bool was = m.unsupported_logged && m.unsupported_key != 0;
+            m.unsupported_logged = true;
+            m.unsupported_key = key;
+            if (key || was)
+                EmitNativeN(h, m.unsupported_cap, kAnimWeaponCap, "partner_weapon_unsupported",
+                            "partner_weapon=%s; remote_slot=%u; remote_equip=%d; type=%d; reason=%s; body_equip=%u; strip=0x%x\r\n",
+                            key ? "unsupported" : "unsupported_end", unsigned(m.remote_slot), m.remote_gun_equip, m.remote_equip_type,
+                            partner_slots::UnsupportedName(m.unsupported), gun_ok && gun.fields_ok ? gun.fields.equip : 0u,
+                            m.weapon_strip);
+        }
+    }
     if(m.weapon_ms_at && now>=m.weapon_ms_at && now-m.weapon_ms_at<=250u) {
         const auto dt=Clamp32(now-m.weapon_ms_at);
         if(m.weapon_standin) m.standin_ms=Clamp32(static_cast<std::uint64_t>(m.standin_ms)+dt);
@@ -2313,14 +2404,14 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     }
     // An unqualified weapon type (FIRE alone stripped): its own capped line on change.
     const bool type_masked = m.weapon_gate == partner_slots::Gate::projectile;
-    if (set.ngun && weapon_judged && m.weapon_gate != partner_slots::Gate::switching &&
+    if (set.ngun && weapon_judged && m.weapon_gate != partner_slots::Gate::switching && m.weapon_gate != partner_slots::Gate::unsupported &&
         (!m.weapon_type_logged_once || m.weapon_type_logged != type_masked) && (type_masked || m.weapon_type_logged_once)) {
         m.weapon_type_logged_once = true;
         m.weapon_type_logged = type_masked;
         EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; body_equip=%u; body_type=%d; strip=0x%x\r\n",
                    type_masked ? "projectile" : "type_ok", gun.fields.equip, m.body_type, m.weapon_strip);
     }
-    if (set.ngun && weapon_judged && m.weapon_gate != partner_slots::Gate::switching &&
+    if (set.ngun && weapon_judged && m.weapon_gate != partner_slots::Gate::switching && m.weapon_gate != partner_slots::Gate::unsupported &&
         (!m.weapon_logged_once || m.weapon_logged != m.weapon_mismatch)) {
         const bool first = !m.weapon_logged_once;
         m.weapon_logged_once = true;
@@ -2423,6 +2514,10 @@ void TickReload(Driver& d, const Hooks& h, const pnat::Out& out, bool gun_ok, co
     ri.gate = f && pnat::GunReloadGate(gun.fields, gun.b3d5);
     ri.can_reload = f && pnat::GunCanReload(gun.fields);
     ri.weapon_match = (m.weapon_strip & pnat::kPadReload) == 0;
+    // Anim round 1: only the gate's own transient verdicts wait (never the
+    // unsupported gate, the gun-absent strip or the play leak strip).
+    ri.weapon_wait = (m.weapon_gate == partner_slots::Gate::mismatch || m.weapon_gate == partner_slots::Gate::switching) &&
+                     !m.weapon_absent && !d.leak_strip;
     ri.body_mag_ok = f;
     ri.body_mag = f ? static_cast<std::uint16_t>(pnat::GunMagazine(gun.fields)) : static_cast<std::uint16_t>(0);
     ri.force_tap = d.rtap_pending;
@@ -2460,6 +2555,25 @@ void TickReload(Driver& d, const Hooks& h, const pnat::Out& out, bool gun_ok, co
                    partner_reload::StateName(m.reload.state), unsigned(ri.body_mode), unsigned(ri.remote_mode), unsigned(ri.remote_seq),
                    f ? pnat::GunMagazine(gun.fields) : 0u, f ? unsigned(gun.m3e8) : 0u, m.reload.taps,
                    tap_refused ? tap_refused : m.reload_out.reason ? m.reload_out.reason : "none");
+    // Anim round 1: the reload rate. One paired reload (body 1's native length and
+    // the remote's) updates k with partner_native_reload_rate=adapt (logged with
+    // off too: the ratio is the parity evidence); the hook's write at body_exit.
+    if (m.reload_out.learn) {
+        const bool adapt = set.nreload_rate == PartnerNativeReloadRate::adapt;
+        const float k_before = m.rate_adapt.k;
+        const partner_reload::RateVerdict v = adapt ? partner_reload::RateLearn(m.rate_adapt, m.reload_out.learn_body_ms,
+                                                                                m.reload_out.learn_remote_ms)
+                                                    : partner_reload::RateVerdict::latched;
+        const float ratio = m.reload_out.learn_remote_ms ? static_cast<float>(m.reload_out.learn_body_ms) /
+                                                               static_cast<float>(m.reload_out.learn_remote_ms) : 0.0f;
+        EmitNativeN(h, m.rate_cap, kAnimWeaponCap, "partner_reload_rate",
+                    "partner_reload=rate; setting=%s; verdict=%s; body_ms=%u; remote_ms=%u; ratio_milli=%d; k_milli=%d,%d; samples=%u; "
+                    "latched=%u\r\n",
+                    PartnerNativeReloadRateName(set.nreload_rate), adapt ? partner_reload::RateVerdictName(v) : "off",
+                    m.reload_out.learn_body_ms, m.reload_out.learn_remote_ms, static_cast<int>(ratio * 1000.0f),
+                    static_cast<int>(k_before * 1000.0f), static_cast<int>(m.rate_adapt.k * 1000.0f), m.rate_adapt.samples,
+                    m.rate_adapt.latched ? 1u : 0u);
+    }
     // The remote's next reload queued while body 1 still reloaded: one tap at its exit.
     if (m.reload_out.queued_tap)
         EmitNative(m, h, m.reload_cap, "partner_reload",
@@ -2542,6 +2656,144 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
                    wrote ? "write" : "refused", partner_input_hook::SlotRefusalName(ns.slot_last), ns.slot_target,
                    unsigned(m.remote_switch_seq), m.slots1_ok ? unsigned(m.slots1.nibble) : 0xFFu,
                    gun_ok && gun.fields_ok ? unsigned(gun.hand_slot) : 0xFFu, ns.slot_writes, ns.slot_refused);
+    }
+}
+
+// --- Anim round 1 weapons (docs/anim-round1-weapons.md) -------------------------
+// The state-driven aim intent's gate (partner_slots AimGate) for the next Arm,
+// the remote's aim act, and the partner_aim_intent line (own cap, change lines
+// at most every kAimIntentLineMs; the hook decides per window, AimFrame).
+void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& latest, const sync::AnimState& remote_anim,
+                   bool pose_live, const partner_input_hook::NativeStats& ns, std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    const bool act_valid = pose_live && (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    partner_slots::AimGateIn gi{};
+    gi.enabled = set.ngun && set.naim_intent == PartnerNativeAimIntent::state;
+    gi.judged = m.weapon_ok && !m.weapon_absent;
+    gi.gate = m.weapon_gate;
+    gi.slot_valid = m.remote_v5 && m.remote_slot <= pin::kInvSlotMax;
+    gi.slot = m.remote_slot;
+    gi.sleeping = h.native_pose_suppressed && h.native_pose_suppressed(h.context);
+    gi.carried = m.carry_hold;
+    gi.hidden = m.visibility.hidden;
+    gi.riding = partner_ride_wire::Live(d.ride_rx, epoch, now) && d.ride_rx.packet.kind != partner_ride_wire::Kind::foot;
+    gi.act_valid = act_valid;
+    gi.act = remote_anim.act;
+    m.aim_refusal = partner_slots::AimGate(gi);
+    m.aim_gate_ok = m.aim_refusal == partner_slots::AimRefusal::none;
+    m.aim_act = act_valid && partner_slots::AimAct(remote_anim.act);
+    if (!gi.enabled) return;
+    // The driver's view of the frame rule on the newest sample (telemetry only).
+    const bool live = latest_ok && latest.age_ms <= set.stale_ms;
+    partner_slots::AimFrameIn fi{};
+    fi.gate_ok = m.aim_gate_ok;
+    fi.live = live;
+    fi.pad_hold = live && (latest.packet.held & partner_pad::kHold) != 0;
+    fi.v5_valid = live && latest.packet.version >= 5 && (latest.packet.gun_flags & pin::GunFlag::Valid) != 0;
+    fi.v5_aiming = live && (latest.packet.gun_flags & pin::GunFlag::Aiming) != 0;
+    fi.act_aim = m.aim_act;
+    const partner_slots::AimSource src = partner_slots::AimFrame(fi);
+    const std::uint64_t key = static_cast<std::uint64_t>(src) | (static_cast<std::uint64_t>(m.aim_refusal) << 4) |
+                              (static_cast<std::uint64_t>(m.weapon_gate) << 8) | (m.aim_act ? 1ull << 12 : 0ull);
+    if ((key == m.aim_intent_key && m.aim_intent_logged) || (m.aim_intent_ms && now - m.aim_intent_ms < kAimIntentLineMs)) return;
+    if (m.aim_intent_lines >= kAimIntentLineCap) return;
+    ++m.aim_intent_lines;
+    m.aim_intent_key = key;
+    m.aim_intent_logged = true;
+    m.aim_intent_ms = now ? now : 1;
+    EmitFormat(h, "partner_aim_intent=%s; source=%s; refusal=%s; remote_act=%u; act_aim=%u; flags=0x%x; pad_hold=%u; gate=%s; slot=%u; "
+                  "added_flag=%u; added_act=%u; pad_windows=%u%s\r\n",
+               m.aim_gate_ok ? "on" : "off", partner_slots::AimSourceName(src), partner_slots::AimRefusalName(m.aim_refusal),
+               act_valid ? unsigned(remote_anim.act) : 0u, m.aim_act ? 1u : 0u, live ? unsigned(latest.packet.gun_flags) : 0u,
+               fi.pad_hold ? 1u : 0u, partner_slots::GateName(m.weapon_gate), unsigned(m.remote_slot), ns.aim_added_flag,
+               ns.aim_added_act, ns.aim_pad_windows, m.aim_intent_lines == kAimIntentLineCap ? "; capped=1" : "");
+}
+
+// partner_weapon_ctx: one line per change of the weapon context (the remote's
+// slot, in-hand equip and its type, its act outside locomotion, body 1's slot
+// and equip, the gate), at most every kWeaponCtxMs; the changes in between are
+// counted in the next line (no cap: bounded by the change rate).
+void TickWeaponCtx(Driver& d, const Hooks& h, const sync::AnimState& remote_anim, bool pose_live, bool gun_ok, const pp::Gun1& gun,
+                   std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    if (!set.ngun) return;
+    const unsigned act = pose_live && (remote_anim.flags & sync::AnimFlag::Valid) ? unsigned(remote_anim.act) : 0u;
+    const unsigned act_key = act >= 1 && act <= 6 ? 0u : act;
+    const unsigned body_slot = m.slots1_ok ? unsigned(m.slots1.nibble & 0xFu) : 0xFFu;
+    const std::uint32_t body_equip = gun_ok && gun.fields_ok ? gun.fields.equip : 0u;
+    std::uint64_t key = 1469598103934665603ull;
+    const auto mix = [&key](std::uint64_t v) noexcept { key = (key ^ v) * 1099511628211ull; };
+    mix(m.remote_slot);
+    mix(static_cast<std::uint32_t>(m.remote_gun_equip));
+    mix(static_cast<std::uint32_t>(m.remote_equip_type));
+    mix(act_key);
+    mix(body_slot);
+    mix(body_equip);
+    mix(static_cast<std::uint64_t>(m.weapon_gate));
+    mix(static_cast<std::uint64_t>(m.unsupported));
+    if (key != m.ctx_seen_key) {
+        m.ctx_seen_key = key;
+        ++m.ctx_changes;
+    }
+    if (m.ctx_have && key == m.ctx_key) return;
+    if (m.ctx_have && now - m.ctx_ms < kWeaponCtxMs) return;
+    m.ctx_have = true;
+    m.ctx_key = key;
+    m.ctx_ms = now;
+    EmitFormat(h, "partner_weapon_ctx; remote_slot=%u; remote_equip=%d; type=%d; remote_act=%u; body_slot=%u; body_equip=%u; gate=%s; "
+                  "unsupported=%s; strip=0x%x; aim=%s; dry=%u; changes=%u\r\n",
+               unsigned(m.remote_slot), m.remote_gun_equip, m.remote_equip_type, act, body_slot, body_equip,
+               partner_slots::GateName(m.weapon_gate), partner_slots::UnsupportedName(m.unsupported), m.weapon_strip,
+               partner_slots::AimRefusalName(m.aim_refusal), m.dry_strip ? 1u : 0u, m.ctx_changes);
+    m.ctx_changes = 0;
+}
+
+// The fire/projectile census (lab key partner_fire_census=1): recording in the
+// filter's hooks follows the setting; the driver drains the ring and logs each
+// request (at most kCensusLinesPerSecond per second, kCensusLineCap per
+// mission; the rest counted) and a 5 s summary while anything changed.
+void TickFireCensus(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    namespace ff = partner_fire_filter;
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    ff::SetCensus(set.fire_census);
+    if (!set.fire_census) return;
+    ff::CensusTotals t{};
+    ff::ReadCensusTotals(t);
+    if (!m.census_install_logged && (t.projectile_installed || t.projectile_refusal)) {
+        m.census_install_logged = true;
+        EmitFormat(h, "partner_fire_census=on; projectile=%s; reason=%s\r\n", t.projectile_installed ? "installed" : "refused",
+                   t.projectile_refusal ? t.projectile_refusal : "none");
+    }
+    if (!m.census_second_ms || now - m.census_second_ms >= 1000) {
+        if (m.census_second_ms && (m.census_skipped || m.census_lost) && m.census_lines < kCensusLineCap) {
+            ++m.census_lines;
+            EmitFormat(h, "partner_fire_census=summary; bullets=%u; noises=%u; projectiles=%u; recorded=%u; skipped=%u; lost=%u; "
+                          "projectile_slot=%s\r\n",
+                       t.bullets, t.noises, t.projectiles, t.recorded, m.census_skipped, m.census_lost,
+                       t.projectile_live ? "live" : t.projectile_installed ? "lost" : "off");
+            m.census_skipped = m.census_lost = 0;
+        }
+        m.census_second_ms = now ? now : 1;
+        m.census_second_lines = 0;
+    }
+    ff::CensusEntry buf[64];
+    std::uint32_t lost = 0;
+    const std::size_t n = ff::DrainCensus(m.census_cursor, buf, 64, lost);
+    m.census_lost += lost;
+    for (std::size_t i = 0; i < n; ++i) {
+        const ff::CensusEntry& e = buf[i];
+        if (m.census_second_lines >= kCensusLinesPerSecond || m.census_lines >= kCensusLineCap) { ++m.census_skipped; continue; }
+        ++m.census_second_lines;
+        ++m.census_lines;
+        EmitFormat(h, "partner_fire_census=%s; owner=0x%x; owner_index=%u; owner_type=%u; id=%u; b=%u,%u,%u; aux=%u; dropped=%u; "
+                      "fields=%u; thread=%u; seq=%u\r\n",
+                   ff::CensusKindName(e.kind), unsigned(e.owner), unsigned(e.owner & 0x1FFu), unsigned(e.owner >> 9), unsigned(e.id),
+                   unsigned(e.b0), unsigned(e.b1), unsigned(e.b2), unsigned(e.aux), e.dropped ? 1u : 0u, e.fields_ok ? 1u : 0u,
+                   e.thread, e.seq);
     }
 }
 
@@ -3110,6 +3362,10 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     m.remote_reload_seq = m.remote_v5 ? latest.packet.reload_seq : static_cast<std::uint8_t>(0);
     m.remote_switch_seq = m.remote_v5 ? latest.packet.switch_seq : static_cast<std::uint8_t>(0);
     m.remote_slot = m.remote_v5 && latest.packet.inv_slot <= pin::kInvSlotMax ? latest.packet.inv_slot : pin::kInvSlotUnknown;
+    // Anim round 1: the remote's v4 magazine of the newest live sample (the auto-fire stop).
+    m.remote_mag_ok = latest_ok && latest.age_ms <= set.stale_ms && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Mag);
+    m.remote_mag = m.remote_mag_ok ? latest.packet.mag : static_cast<std::uint16_t>(0);
+    m.remote_mag_cap = m.remote_mag_ok ? latest.packet.mag_cap : static_cast<std::uint16_t>(0);
     const bool remote_aiming = (latest_ok && (latest.packet.xflags & pin::XFlag::Aiming)) || (remote_flags & sync::ActionFlag::Aiming);
     const bool body_aiming = gun_ok && gun.node_active && (gun.gun3c0 & c::gun_flag_hold);
     if (remote_aiming == body_aiming) {
@@ -3125,19 +3381,42 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         TickWeapons(d, h, st, ready, gun_ok, gun, is.native, now);
         TickReload(d, h, out, gun_ok, gun, now);
         TickSlots(d, h, st, realized, gun_ok, gun, is.native);
+        // Anim round 1: the aim intent's gate, the weapon context line, the census
+        // and the reload rate the hook applied (at body 1's reload exit).
+        TickAimIntent(d, h, latest_ok, latest, remote_anim, pose_live, is.native, now);
+        TickWeaponCtx(d, h, remote_anim, pose_live, gun_ok, gun, now);
+        TickFireCensus(d, h, now);
+        if (set.ngun && set.nreload_rate == PartnerNativeReloadRate::adapt && m.reload_out.body_event &&
+            std::strcmp(m.reload_out.body_event, "body_exit") == 0)
+            EmitNativeN(h, m.rate_cap, kAnimWeaponCap, "partner_reload_rate",
+                        "partner_reload=rate_applied; k_milli=%d; reloads=%u; writes=%u; refused=%u; last=%s; native_milli=%d; "
+                        "written_milli=%d; faulted=%u; len_ms=%u\r\n",
+                        static_cast<int>(m.rate_adapt.k * 1000.0f), is.native.rate_reloads, is.native.rate_writes,
+                        is.native.rate_refused, partner_input_hook::RateRefusalName(static_cast<partner_input_hook::RateRefusal>(is.native.rate_last)),
+                        is.native.rate_native_milli, is.native.rate_written_milli, is.native.rate_faulted ? 1u : 0u, m.reload_out.len_ms);
     }
     // Aim parity: the target for the drain window and the aim telemetry.
     TickAim(d, h, st, configured, realized, latest_ok, latest, remote_aiming || body_aiming, now);
     const std::uint32_t gun_key = gun_ok ? (gun.gun3c0 | (gun.node_active ? 0x80000000u : 0u)) : 0xFFFFFFFFu;
-    if (gun_key != m.native_gun_last || (set.ngun && now - m.native_gun_line_ms >= kNativeLineMs && m.native_gun_lines < kNativeLineCap)) {
-        const bool change = gun_key != m.native_gun_last;
-        m.native_gun_last = gun_key;
-        if (!change) { m.native_gun_line_ms = now; ++m.native_gun_lines; }
+    // Anim round 1: a change line at most every kNativeGunChangeMs on its own
+    // cap (the old 64-line cap went blind about 30 s into a mission), the 1 Hz
+    // line also while the state keeps changing; changes= counts the changes
+    // since the previous line.
+    const bool gun_changed = gun_key != m.native_gun_last;
+    if (gun_changed) { m.native_gun_last = gun_key; ++m.native_gun_changes; }
+    const bool change_due = gun_changed && now - m.native_gun_change_ms >= kNativeGunChangeMs &&
+                            m.native_gun_change_lines < kNativeGunChangeCap;
+    const bool periodic_due = set.ngun && now - m.native_gun_line_ms >= kNativeLineMs && m.native_gun_lines < kNativeLineCap;
+    if (change_due || periodic_due) {
+        const bool change = change_due;
+        if (change) { m.native_gun_change_ms = now; ++m.native_gun_change_lines; }
+        else { m.native_gun_line_ms = now; ++m.native_gun_lines; }
         char line[512]{};
         const bool f = gun_ok && gun.fields_ok;
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
                 "partner_native_gun; node=%u; gun3c0=0x%x; b2=%u; b18=%u; b20=%u; mode=%u; remote_flags=0x%x; equip=%u,%u; cap=%u; mag=%u; "
-                "stock=%u; cls=%u; noreload=%u; b3d5=%u; slot=%u; can_reload=%u; gate=%u; aim_match=%u; aim_err_mdeg=na; fire=%s; read=%s\r\n",
+                "stock=%u; cls=%u; noreload=%u; b3d5=%u; slot=%u; can_reload=%u; gate=%u; aim_match=%u; aim_err_mdeg=na; fire=%s; read=%s; "
+                "changes=%u\r\n",
                 gun_ok && gun.node_active ? 1u : 0u, gun.gun3c0, (gun.gun3c0 & c::gun_flag_in_hand) ? 1u : 0u,
                 (gun.gun3c0 & c::gun_flag_hold) ? 1u : 0u, (gun.gun3c0 & c::gun3c0_reload) ? 1u : 0u, unsigned(gun.mode), remote_flags,
                 remote_equip, f ? gun.fields.equip : 0u, f ? pnat::GunCapacity(gun.fields) : 0u, f ? pnat::GunMagazine(gun.fields) : 0u,
@@ -3146,9 +3425,11 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
                 f ? unsigned(gun.b3d5) : 0u, f ? unsigned(gun.slot) : 0u, f && pnat::GunCanReload(gun.fields) ? 1u : 0u,
                 f && pnat::GunReloadGate(gun.fields, gun.b3d5) ? 1u : 0u, m.aim_match ? 1u : 0u,
                 set.nfire != PartnerNativeFire::visual ? "off" : m.fire_refusal ? m.fire_refusal : "live",
-                gun_ok ? (gun.fields_ok ? "ok" : "fields") : (gun.refusal ? gun.refusal : "unavailable")))) {
-            if (change) EmitNative(m, h, m.native_gun_cap, "partner_native_gun", "%s", line);
-            else Emit(h, line);
+                gun_ok ? (gun.fields_ok ? "ok" : "fields") : (gun.refusal ? gun.refusal : "unavailable"), m.native_gun_changes))) {
+            m.native_gun_changes = 0;
+            if (change && m.native_gun_change_lines == kNativeGunChangeCap)
+                EmitFormat(h, "partner_native_gun=capped; limit=%u; kind=change; periodic=1\r\n", kNativeGunChangeCap);
+            Emit(h, line);
         }
     }
     // Native rates: both records at most every kRatesReadMs (read-only; the
@@ -3814,6 +4095,11 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nequip = lab.partner_native_equip;
     d.settings.nride = lab.partner_native_ride;
     d.settings.nstandin = lab.partner_native_standin;
+    d.settings.nunsupported = lab.partner_native_unsupported;
+    d.settings.ndry = lab.partner_native_dry_stop;
+    d.settings.naim_intent = lab.partner_native_aim_intent;
+    d.settings.nreload_rate = lab.partner_native_reload_rate;
+    d.settings.fire_census = lab.partner_fire_census;
 
     d.settings.play_mode = lab.mode == LabMode::play;
     d.settings.nprofile = lab.partner_native_profile;

@@ -245,7 +245,24 @@ struct NativeStats {
     std::int32_t look_remote_cdeg[2], look_slot_cdeg[2];
     bool look_src_installed, look_src_faulted;
     std::uint32_t look_src_hits, look_src_skipped, look_src_refused, look_src_calls;
+    // Anim round 1 (docs/anim-round1-weapons.md): rec+0x3E8 rewrites for a slot
+    // change and for a base above the capacity (also in mag_m3e8_writes); the
+    // aim intent (main windows whose live sample got HOLD from the v5 flag / the
+    // act, windows the remote's own pad held it, the last source: AimSource);
+    // the reload rate write (reloads seen with a factor, writes, refusals, the
+    // last refusal RateRefusal, the native and written rate x1000 of the last
+    // reload, a fault turned it off until MissionStart).
+    std::uint32_t mag_m3e8_slot, mag_m3e8_cap;
+    std::uint32_t aim_added_flag, aim_added_act, aim_pad_windows;
+    std::uint8_t aim_last_source;
+    std::uint32_t rate_reloads, rate_writes, rate_refused;
+    std::uint8_t rate_last;
+    std::int32_t rate_native_milli, rate_written_milli;
+    bool rate_faulted;
 };
+// The reload rate write's refusals (NativeStats::rate_last).
+enum class RateRefusal : std::uint8_t { none, off, prim, cls, native, fault };
+const char* RateRefusalName(RateRefusal refusal) noexcept;
 
 // Drained by the driver. Counters are process-lifetime totals (the driver
 // logs deltas); us_max is cleared by each drain.

@@ -310,15 +310,29 @@ struct MagazineHistory {
     std::uint16_t remote_mag=0, remote_cap=0;
     std::uint8_t body_slot=0;
 };
+// slot_changed (anim round 1): body 1's slot rec+0x3DA differs from the last
+// committed one; the write then also rewrites the completion base rec+0x3E8
+// (the shadow kept the previous weapon's count: 41 of 11 after a rifle ->
+// handgun switch, 0x1054A3C..0x1054A4E adds to it without the capacity bound).
 struct MagazineAttempt {
-    bool needed, reconcile, remote_was_loaded;
+    bool needed, reconcile, remote_was_loaded, slot_changed;
 };
 constexpr MagazineAttempt PrepareMagazine(const MagazineHistory& h, std::uint16_t remote_mag,
                                          std::uint16_t remote_cap, std::uint8_t body_slot,
                                          bool fire_edge, bool reload_edge) noexcept {
+    const bool slot_changed=h.slot_seen && body_slot!=h.body_slot;
     const bool changed=!h.seen || remote_mag!=h.remote_mag || remote_cap!=h.remote_cap ||
-                       h.freeze_pending || (h.slot_seen && body_slot!=h.body_slot);
-    return {fire_edge || reload_edge || changed, h.freeze_pending, h.seen && h.remote_mag>0};
+                       h.freeze_pending || slot_changed;
+    return {fire_edge || reload_edge || changed, h.freeze_pending, h.seen && h.remote_mag>0, slot_changed};
+}
+// The completion base rule (anim round 1): the mirror's write sets rec+0x3E8
+// to the mirrored magazine on a reconcile, on a slot change, and whenever the
+// base exceeds the capacity of the weapon in hand (never while body 1 reloads:
+// the mirror is frozen then). The non-local completion builds the new magazine
+// as base + min(rounds, capacity - base) with unsigned 16-bit arithmetic, so a
+// base above the capacity overflows the magazine.
+constexpr bool ShadowRewrite(bool reconcile, bool slot_changed, std::uint32_t shadow, std::uint32_t cap) noexcept {
+    return reconcile || slot_changed || shadow > cap;
 }
 inline void CommitMagazine(MagazineHistory& h, std::uint16_t remote_mag,
                            std::uint16_t remote_cap, std::uint8_t body_slot) noexcept {

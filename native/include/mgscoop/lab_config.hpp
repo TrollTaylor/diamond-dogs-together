@@ -178,6 +178,18 @@ enum class PartnerNativeEquipShared : std::uint8_t { off, on, prefer };
 // gate lets HOLD, FIRE and RELOAD through for it (partner_slots MakePlan,
 // Gate::standin): off or on (the gun profile's default).
 enum class PartnerNativeStandin : std::uint8_t { off, on };
+// Anim round 1 (docs/anim-round1-weapons.md). The partner's aim intent:
+// pad (HOLD only from the remote's pad, the old behaviour) or state (also
+// while the remote's v5 gun group says Aiming or its act is an aim act, with
+// the weapon gate match/standin, the remote in slot 0..2 and neither asleep,
+// carried, hidden nor riding: partner_slots AimGate/AimFrame). The gun
+// profile's default is state.
+enum class PartnerNativeAimIntent : std::uint8_t { pad, state };
+// Reload duration parity: off (body 1 reloads at its own provider rate) or
+// adapt (the hook writes rate * k into instance 1's own rec+0x310 while it
+// reloads; k learns from body 1's and the remote's measured reload lengths,
+// partner_reload RateLearn). Lab key, default off until a hidden test.
+enum class PartnerNativeReloadRate : std::uint8_t { off, adapt };
 // Remote riding/deployment body visibility: driven native loco/gun stages
 // default to hide in lab and play. Explicit off restores the prior visibility;
 // hiding and stable on-foot recovery do not render a mounted partner body.
@@ -437,6 +449,20 @@ struct LabConfig {
     PartnerNativeEquipShared partner_native_equip_shared = PartnerNativeEquipShared::off;
     bool partner_native_equip_measured = false;
     PartnerNativeStandin partner_native_standin = PartnerNativeStandin::off;
+    // Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported-
+    // equipment gate (HOLD|FIRE|RELOAD stripped while the remote holds a
+    // support weapon, an item or the bionic arm; on with the gun profile), the
+    // auto-fire stop (FIRE stripped once the remote's magazine is dry; on with
+    // the gun profile), the aim intent (state with the gun profile, else pad),
+    // the reload rate (off unless named) and the fire/projectile census (lab
+    // key partner_fire_census=1, read-only: logs every RequestBullet, AddNoise
+    // and class-3 projectile request with its owner; default 0).
+    bool partner_native_unsupported = false, partner_native_unsupported_given = false;
+    bool partner_native_dry_stop = false, partner_native_dry_stop_given = false;
+    PartnerNativeAimIntent partner_native_aim_intent = PartnerNativeAimIntent::pad;
+    bool partner_native_aim_intent_given = false;
+    PartnerNativeReloadRate partner_native_reload_rate = PartnerNativeReloadRate::off;
+    bool partner_fire_census = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
@@ -531,6 +557,8 @@ const char* PartnerNativeSlotName(PartnerNativeSlot value) noexcept;
 const char* PartnerNativeEquipName(PartnerNativeEquip value) noexcept;
 const char* PartnerNativeEquipSharedName(PartnerNativeEquipShared value) noexcept;
 const char* PartnerNativeStandinName(PartnerNativeStandin value) noexcept;
+const char* PartnerNativeAimIntentName(PartnerNativeAimIntent value) noexcept;
+const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept;
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
@@ -587,6 +615,8 @@ bool ParsePartnerNativeSlot(const char* text, std::size_t size, PartnerNativeSlo
 bool ParsePartnerNativeEquip(const char* text, std::size_t size, PartnerNativeEquip& out) noexcept;
 bool ParsePartnerNativeEquipShared(const char* text, std::size_t size, PartnerNativeEquipShared& out) noexcept;
 bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNativeStandin& out) noexcept;
+bool ParsePartnerNativeAimIntent(const char* text, std::size_t size, PartnerNativeAimIntent& out) noexcept;
+bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNativeReloadRate& out) noexcept;
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.
