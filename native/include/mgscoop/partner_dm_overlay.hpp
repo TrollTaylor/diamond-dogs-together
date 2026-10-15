@@ -159,7 +159,7 @@ struct State {
     std::uint8_t stop_tries, replays;
     const char* stop_reason;  // a stop is wanted (static reason)
     const char* deferred;     // the deferral reason last reported (change-only)
-    bool patch_sent, conflict_logged;
+    bool conflict_logged;
     // Map: the candidate entry and since when; since when unmapped; the remote
     // act the overlay started for; a finished one-shot entry is not replayed
     // while the remote stays in its act (done_index); a pending switch.

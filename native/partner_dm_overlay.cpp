@@ -176,7 +176,7 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         s.replays = 0;
         s.stop_reason = nullptr;
         s.deferred = nullptr;
-        s.patch_sent = s.conflict_logged = false;
+        s.conflict_logged = false;
         s.switching = false;
         s.next_index = kNone;
         ++s.requests;
@@ -388,9 +388,13 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
                 // Switch: the next entry plays without returning to native.
                 const std::uint8_t next = s.next_index;
                 event("released", "switch", Ms(s.start_ms, now));
+                o.index = s.index;  // the line names the released entry
+                o.loop = s.loop;
+                o.source = s.source;
                 begin(Source::map, next, map_entry(next), map_ms(next));
                 s.phase = Phase::patch;
-                break;
+                o.suspend = o.owns_dm = true;
+                return o;
             }
             finish("released", s.stop_reason ? s.stop_reason : "stopped");
         } else if (Ms(s.stop_ms, now) >= p.stop_wait_ms) {
