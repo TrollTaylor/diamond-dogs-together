@@ -96,7 +96,11 @@ $context="MGSWORKERCTX1 $id host 41 12345 MGSWorker_$id admitted`n"
 Assert-True (Test-WorkerContextText $context $id 'host' $lease) 'native context exact owner'
 foreach($changed in @($context.Replace('host','guest'),$context.Replace('41','42'),$context.Replace('12345','99999'),$context.Replace('admitted','pending'),$context.TrimEnd([char]10),$context.Replace("`n","`r`n"),($context+"`n"))){Assert-True (!(Test-WorkerContextText $changed $id 'host' $lease)) 'context mismatch'}
 $flags=[ordered]@{}
-foreach($name in @('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE','MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')){$flags[$name]='OFF'}
+# The flags exactly as Invoke-WorkerChecks writes them (Get-WorkerExperiments), so a new experiment there cannot silently break Normal admission.
+$checkSource=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerChecks.ps1'))
+$checkedExperiments=@([regex]::Matches([regex]::Match($checkSource,'(?s)function Get-WorkerExperiments \{.*?\n\}').Value,"'(MGS_LOCAL_[A-Z0-9_]+)'")|ForEach-Object{$_.Groups[1].Value})
+Assert-True ($checkedExperiments.Count -ge 18 -and $checkedExperiments -ccontains 'MGS_LOCAL_UPPER_FIRE_ZERO_BLEND' -and $checkedExperiments -ccontains 'MGS_LOCAL_MGO_STANDING_FRAME_OBSERVER') 'worker check experiments parsed'
+foreach($name in $checkedExperiments){$flags[$name]='OFF'}
 $flags.MGS_BACKGROUND_WORKER='ON'
 $receipt=@{schema=1;status='passed';plan=@{profile='Normal';project='C:\repo';build_directory='C:\repo\build\worker';flags=$flags};artifacts=@{loader_sha256=$hash}}
 Assert-True (Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash) 'normal21 worker build checks'
