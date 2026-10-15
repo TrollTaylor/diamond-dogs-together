@@ -89,6 +89,31 @@ above the seat, body following while it turns. Host `seat-rev-entered` must show
 seated. If those frames pass, then flip `kPartnerNativeRideDriven` (one line in
 `native/include/mgscoop/lab_config.hpp` plus the assertion in `tests/lab_config_tests.cpp`).
 
+## Hidden seat run 8b8e5bbc (logs pass, visuals still not a default-flip)
+
+Same Invoke-WorkerScenario line, scenario HEAD `5d50e45`. Closed / BaselineRestored /
+RealSavesUnchanged. PNGs: `C:/Users/taylo/AppData/Local/Temp/mgs-caps/seat2/`.
+Run folder: `D:/mgs-coop-wt/anim/build/worker-runtime/8b8e5bbc2acc4b2a967da44aa1aaab6f`.
+
+Guest first half (and host reverse) again confirmed `veh_lv_0000` / 25608 / state
+`0x489157d7d94f` / `err_mm` ~1..370 / `cam_ok=1` / exit foot + revert. Reverse guest
+boarded (`vehicle;id=25608; localSeat=1`).
+
+Guest `seat-entered` / drive / turn frames: watcher 6 m behind a driver whose yaw
+(-83) faced a building, so the camera is a wall with Taylor's nametag ~9 m through
+it. The jeep is on the other side. **Not a seated-mesh proof.**
+
+Host `seat-rev-entered` / `seat-rev-drive-04`: host prone in the grass with a **clear
+view of the jeep**. A bald Snake-looking body sits in the vehicle; the Guest nametag
+floats beside it, not locked to the mesh. Guest is configured Quiet, so this may be
+the partner with the wrong parts, or rider `9728` (passenger slot occupied on **both**
+the host-driven and guest-driven census: `riders=0,9728,65535,65535`). **Do not treat
+this as Quiet-seated proof. Do not flip the seat default.**
+
+Next visual attempt should not use driver yaw for the watcher. Need a view from the
+plaza side of `veh_lv_0000` (host jeep ~577, 320, 1157) that is not through a wall,
+and a landing path that can follow after seat owns body 1. Identify 9728.
+
 ## Not run
 
 - `coop-vehicle-seat-manual.txt` (T1/T4/T5 seat_dm)
