@@ -63,6 +63,7 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Prefixed(source, size, rx_prefix)) return Receipt::rx;
     if (Prefixed(source, size, log_prefix)) return Receipt::log;
     if (Prefixed(source, size, warp_prefix)) return Receipt::warp;
+    if (Prefixed(source, size, note_prefix)) return Receipt::note;
     return Receipt::none;
 }
 
@@ -131,10 +132,28 @@ bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::ui
     return true;
 }
 
+bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept {
+    if (!source || !Prefixed(source, size, note_prefix) || size > max_receipt) return false;
+    const char* p = source + sizeof(note_prefix) - 1;
+    const char* end = source + size;
+    std::int64_t c = 0, x = 0, y = 0;
+    if (!Token(p, end, c) || p >= end || *p != ' ') return false;
+    ++p;
+    if (!Token(p, end, x) || p >= end || *p != ' ') return false;
+    ++p;
+    if (!Token(p, end, y) || p != end) return false;
+    if (c < 1 || c > 15 || x < 0 || x > 4294967295LL || y < 0 || y > 4294967295LL) return false;
+    code = static_cast<std::uint8_t>(c);
+    a = static_cast<std::uint32_t>(x);
+    b = static_cast<std::uint32_t>(y);
+    return true;
+}
+
 std::size_t FormatCfgReply(const CfgReply& r, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return 0;
-    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role), unsigned(r.proto),
-                                unsigned(r.link), unsigned(r.epoch), unsigned(r.probe), unsigned(r.mode), unsigned(r.session));
+    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
+                                unsigned(r.proto), unsigned(r.link), unsigned(r.epoch), unsigned(r.probe), unsigned(r.mode),
+                                unsigned(r.session), unsigned(r.remote_mission), unsigned(r.remote_level), unsigned(r.wait));
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
     return static_cast<std::size_t>(n);
 }

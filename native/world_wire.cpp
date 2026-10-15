@@ -177,6 +177,51 @@ const char* UnpairName(std::uint8_t reason) noexcept {
 std::uint32_t U(std::int64_t v) noexcept { return static_cast<std::uint32_t>(v); }
 } // namespace
 
+const char* PairWaitName(std::uint8_t code) noexcept {
+    static constexpr const char* kNames[] = {"paired",        "off",           "no_link",        "no_hello",
+                                             "remote_off",    "remote_saves",  "same_role",      "local_loading",
+                                             "remote_loading", "different_mission", "epoch",     "settling"};
+    return code < sizeof(kNames) / sizeof(kNames[0]) ? kNames[code] : "unknown";
+}
+
+std::uint8_t WaitPublisher::Update(std::uint8_t raw, std::uint32_t local, std::uint32_t remote, std::uint64_t now_ms,
+                                   bool& post_mismatch) noexcept {
+    post_mismatch = false;
+    if (raw != pair_wait::different_mission) {
+        active = false;  // the pair and its posted flag stay
+        return raw;
+    }
+    const bool same = known && local == pair_local && remote == pair_remote;
+    if (!same) {
+        known = true;
+        pair_local = local;
+        pair_remote = remote;
+        posted = false;
+    }
+    if (!same || !active) {
+        active = true;
+        since_ms = now_ms;
+    }
+    if (now_ms < since_ms || now_ms - since_ms < kMismatchSettleMs) return pair_wait::settling;
+    if (!posted) {
+        posted = true;
+        post_mismatch = true;
+    }
+    return pair_wait::different_mission;
+}
+
+void NoteGate::Accept(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint64_t now_ms, bool& post, bool& log) noexcept {
+    post = log = false;
+    if (code >= sizeof(slots) / sizeof(slots[0])) return;
+    Slot& s = slots[code];
+    if (!s.used || s.a != a || s.b != b) s = Slot{true, false, false, a, b, 0, 0};
+    // A clock that went back counts as elapsed.
+    post = !s.posted || now_ms < s.post_ms || now_ms - s.post_ms >= 1000;
+    log = !s.logged || now_ms < s.log_ms || now_ms - s.log_ms >= 10000;
+    if (post) { s.posted = true; s.post_ms = now_ms; }
+    if (log) { s.logged = true; s.log_ms = now_ms; }
+}
+
 const OpSpec* OpTable(std::size_t& count) noexcept {
     count = sizeof(kOps) / sizeof(kOps[0]);
     return kOps;
@@ -283,6 +328,9 @@ void Core::Configure(const Config& config, std::uint64_t now_ms) noexcept {
     pending_level_set_ = false;
     remote_level_ = remote_saves_ = remote_role_ = eff_ = 0;
     remote_hello_ = false;
+    remote_location_ = 0;
+    logged_wait_ = 0xFF;
+    logged_wait_local_ = logged_wait_remote_ = 0;
     link_up_ = link_known_ = false;
     session_ = 0;
     link_up_ms_ = 0;
@@ -603,6 +651,7 @@ void Core::OnHello(const Op& op, std::uint64_t now_ms) noexcept {
     remote_role_ = static_cast<std::uint8_t>(op.v[6]);
     remote_saves_ = static_cast<std::uint8_t>(op.v[9]);
     remote_hello_ = true;
+    remote_location_ = U(op.v[1]);  // both roles, before the saves and role refusals
     hello_since_up_ = true;
     if (remote_saves_ != 1) {
         Line("world=pair_refused; reason=remote_saves");
@@ -736,6 +785,8 @@ void Core::OnSession(std::uint32_t session, std::uint64_t now_ms) noexcept {
     remote_hello_ = false;
     remote_ = Ready{};
     remote_level_ = remote_saves_ = remote_role_ = 0;
+    remote_location_ = 0;
+    logged_wait_ = 0xFF;
     pair_refused_logged_ = false;
     session_ = session;
     link_known_ = true;
@@ -830,6 +881,9 @@ CfgReply Core::Cfg(std::uint32_t mission, bool start, std::uint32_t read_mission
     reply.epoch = TxEpoch();
     reply.mode = config_.play ? kModePlay : kModeLab;
     reply.session = link_up_ ? session_ : 0;
+    reply.remote_mission = remote_mission();
+    reply.remote_level = remote_level();
+    reply.wait = pair_wait();
     return reply;
 }
 
@@ -1149,6 +1203,51 @@ void Core::Tick(std::uint64_t now_ms) noexcept {
         (!overflow_logged_once_ || now_ms - overflow_ms_ >= 10000))
         FlushOverflow(now_ms);
     Stats10s(now_ms);
+    NotePair();
+}
+
+std::uint32_t Core::local_mission() const noexcept { return local_.valid ? local_.mission : 0; }
+
+std::uint32_t Core::remote_mission() const noexcept {
+    return link_up_ && remote_hello_ && remote_.valid ? remote_.mission : 0;
+}
+
+std::uint8_t Core::remote_level() const noexcept { return link_up_ && remote_hello_ ? remote_level_ : 0; }
+
+std::uint32_t Core::remote_location() const noexcept { return remote_location_; }
+
+bool Core::linked() const noexcept {
+    return link_up_ && remote_hello_ && remote_saves_ == 1 && remote_role_ != config_.role && remote_level_ >= 1;
+}
+
+// TryPair's gates in TryPair's order; 10 (epoch) when every scene gate passes.
+std::uint8_t Core::pair_wait() const noexcept {
+    if (paired_) return pair_wait::paired;
+    if (level_ < 1) return pair_wait::off;
+    if (!link_up_) return pair_wait::no_link;
+    if (!remote_hello_) return pair_wait::no_hello;
+    if (remote_level_ < 1) return pair_wait::remote_off;
+    if (remote_saves_ != 1) return pair_wait::remote_saves;
+    if (remote_role_ == config_.role) return pair_wait::same_role;
+    if (!local_.valid) return pair_wait::local_loading;
+    if (!remote_.valid) return pair_wait::remote_loading;
+    if (remote_.mission != local_.mission) return pair_wait::different_mission;
+    return pair_wait::epoch;
+}
+
+void Core::NotePair() noexcept {
+    if (paired_ || !level_ || !link_up_) {
+        logged_wait_ = 0xFF;
+        return;
+    }
+    const std::uint8_t wait = pair_wait();
+    const std::uint32_t local = local_mission(), remote = remote_mission();
+    if (wait == logged_wait_ && local == logged_wait_local_ && remote == logged_wait_remote_) return;
+    logged_wait_ = wait;
+    logged_wait_local_ = local;
+    logged_wait_remote_ = remote;
+    Line("world=pair_wait; reason=%s; local=%u; remote=%u; remote_level=%u", PairWaitName(wait), local, remote,
+         unsigned(remote_level()));
 }
 
 void Core::Stats10s(std::uint64_t now_ms) noexcept {

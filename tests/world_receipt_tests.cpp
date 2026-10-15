@@ -73,12 +73,45 @@ void Cfg() {
           "strict CFG");
     world::CfgReply r{3, 2, 1, 1, 65535, 15, 1, 4294967295u};
     char out[world::reply_capacity];
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295") == 0,
-          "CFG first seven fields preserved, unsigned session appended");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0") == 0,
+          "CFG first seven fields preserved, unsigned session appended, then remote mission, remote level and wait");
     r.link = 0; r.session = 0;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0") == 0, "disconnected CFG session zero");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0") == 0, "disconnected CFG session zero");
+    r.link = 1; r.session = 7; r.remote_mission = 30010; r.remote_level = 3; r.wait = 9;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9") == 0,
+          "the partner's mission, its world level and the raw pair-wait code are r[9..11]");
+    r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255") == 0 &&
+              std::strlen(out) < world::reply_capacity,
+          "the widest CFG reply fits");
     char tiny[16];
     Check(!world::FormatCfgReply(r, tiny, sizeof(tiny)) && tiny[0] == 0, "CFG insufficient buffer produces no partial reply");
+}
+
+// On-screen world notes: "<code> <a> <b>", code 1..15, a and b u32, no sign.
+void Note() {
+    Check(Kind("return 'MGS_COOP_WORLD_NOTE_V1' -- 1 40010 1") == world::Receipt::note, "note");
+    const std::string ok = "return 'MGS_COOP_WORLD_NOTE_V1' -- 2 30010 0";
+    Check(world::Classify(ok.data(), ok.size(), "return 'MGS_COOP_WORLD_NOTE_V1' -- 2 30010 1") == world::Receipt::none,
+          "note name != source");
+    Check(Kind("return 'MGS_COOP_WORLD_NOTE_V1' -- ") == world::Receipt::none, "a note prefix without args");
+    std::uint8_t code = 0;
+    std::uint32_t a = 0, b = 0;
+    const auto parse = [&](const char* tail) {
+        const std::string s = std::string(world::note_prefix) + tail;
+        return world::ParseNote(s.data(), s.size(), code, a, b);
+    };
+    Check(parse("1 40010 1") && code == 1 && a == 40010 && b == 1, "PROGRESS story start");
+    Check(parse("4 0 0") && code == 4 && a == 0 && b == 0, "zeros");
+    Check(parse("15 4294967295 4294967295") && code == 15 && a == 4294967295u && b == 4294967295u, "bounds");
+    code = 9; a = 9; b = 9;
+    Check(!parse("0 1 1") && !parse("16 1 1") && !parse("-1 1 1") && !parse("01 1 1") && !parse("1  1 1") && !parse("1 1") &&
+              !parse("1 1 1 ") && !parse("1 4294967296 0") && !parse("1 0 4294967296") && !parse("1 -1 0") && !parse("1 0 -1") &&
+              !parse("1 1 1 1") && !parse("+1 1 1") && !parse("1 1.0 1") && !parse(" 1 1 1") && !parse(""),
+          "strict NOTE grammar");
+    Check(code == 9 && a == 9 && b == 9, "outputs untouched on failure");
+    const std::string other = "return 'MGS_COOP_WORLD_WARP_V1' -- 1 2 3";
+    Check(!world::ParseNote(other.data(), other.size(), code, a, b) && !world::ParseNote(nullptr, 3, code, a, b), "other receipts");
 }
 
 void TxParse() {
@@ -230,6 +263,7 @@ int main() {
     Log();
     Triggers();
     Warp();
+    Note();
     std::printf("world_receipt_tests: %u checks passed\n", checks);
     return 0;
 }
