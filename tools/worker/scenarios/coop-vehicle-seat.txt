@@ -4,6 +4,11 @@
 # following it while it drives straight and turns), then standing beside it
 # after the host gets out. Then the roles reverse (the host watches the guest
 # drive the same jeep; Quiet seated on the host screen).
+# Run b8102e6e used placebehind 14 5 before the host entered and never re-placed:
+# the guest stood around a building corner (Wakh Sind alley) while the jeep was
+# in the plaza, then combat downed the guest before the reverse half
+# (vehicle_not_riding). Keep the viewer 6 m behind the current driver, after
+# entry and before each burst. godmode 1 so an alert does not drop the watcher.
 # Expected (guest script-observer.log, first half; host log, second half):
 #   partner_ride=rx; kind=2; rev=..; epoch=..; v=2; seat=0; vehicle=256xx      (once per state change)
 #   partner_ride=seat_show; vehicle=256xx; seat=0
@@ -27,7 +32,7 @@ labsetting nametag=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
-both debug godmode 0
+both debug godmode 1
 host debug time 43200
 host debug weather sunny
 guest debug teleport 805.0 342.1 1636.5 -60
@@ -37,54 +42,67 @@ stance guest stand
 placebehind host guest 6 -0.7
 wait 4000
 host debug goto_vehicle jeep
-guest debug goto_vehicle jeep
 wait 4000
-placebehind guest host 14 5
-wait 2500
-guest run vehicle_names
-both capture seat-before
 host press e 150
 wait 3500
 host run vehicle_seats
+host require vehicle;id=
 host run vehicle_names
+placebehind guest host 6 0
+wait 1500
+guest run vehicle_names
 both capture seat-entered
 host hold w 1500 nowait
+placebehind guest host 6 0
 guest burst seat-drive-a 8 150
 host hold w 1500 nowait
+placebehind guest host 6 0
 guest burst seat-drive-b 8 150
 host hold w+a 1500 nowait
+placebehind guest host 6 0
 guest burst seat-turn-left 8 150
 host hold w+d 1500 nowait
+placebehind guest host 6 0
 guest burst seat-turn-right 8 150
 host hold w 1500
 host release
-wait 2500
+placebehind guest host 6 0
+wait 1500
 both capture seat-stopped
 host press e 150
 guest burst seat-exiting 8 300
 wait 2500
+placebehind guest host 6 0
 both capture seat-exited
 state
-# Roles reversed: the guest drives the same jeep, the host watches Quiet seated.
+# Roles reversed: heal first (b8102e6e left the guest downed). The guest drives,
+# the host watches Quiet seated.
+both debug heal
+both debug godmode 1
+wait 2000
 guest debug goto_vehicle jeep
-wait 3000
-placebehind host guest 14 5
-wait 2500
-both capture seat-rev-before
+wait 4000
 guest press e 150
 wait 3500
 guest run vehicle_seats
+guest require vehicle;id=
+placebehind host guest 6 0
+wait 1500
 both capture seat-rev-entered
 guest hold w 1500 nowait
+placebehind host guest 6 0
 host burst seat-rev-drive 8 150
 guest hold w+a 1500 nowait
+placebehind host guest 6 0
 host burst seat-rev-turn 8 150
 guest hold w 1500
 guest release
-wait 2500
+placebehind host guest 6 0
+wait 1500
 both capture seat-rev-stopped
 guest press e 150
 host burst seat-rev-exiting 8 300
 wait 2500
+placebehind host guest 6 0
 both capture seat-rev-exited
 state
