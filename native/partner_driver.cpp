@@ -2684,6 +2684,12 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
     m.aim_refusal = partner_slots::AimGate(gi);
     m.aim_gate_ok = m.aim_refusal == partner_slots::AimRefusal::none;
     m.aim_act = act_valid && partner_slots::AimAct(remote_anim.act);
+    if (set.ngun && !m.anim_settings_logged) {
+        m.anim_settings_logged = true;
+        EmitFormat(h, "partner_weapon=settings; unsupported=%u; dry_stop=%u; aim_intent=%s; reload_rate=%s; fire_census=%u\r\n",
+                   set.nunsupported ? 1u : 0u, set.ndry ? 1u : 0u, PartnerNativeAimIntentName(set.naim_intent),
+                   PartnerNativeReloadRateName(set.nreload_rate), set.fire_census ? 1u : 0u);
+    }
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
     const bool live = latest_ok && latest.age_ms <= set.stale_ms;

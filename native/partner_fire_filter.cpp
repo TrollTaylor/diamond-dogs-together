@@ -83,7 +83,8 @@ bool ReadRecord(const void* record, std::size_t offset, void* out, std::size_t s
     __try {
         std::memcpy(out, static_cast<const unsigned char*>(record) + offset, size);
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+                    ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
         return false;
     }
 }

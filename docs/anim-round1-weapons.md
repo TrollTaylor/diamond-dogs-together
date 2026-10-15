@@ -255,7 +255,8 @@ request function takes (this, request) only (prologues pinned); the gun-code cal
 ## 10. Hidden tests (coordinator) and expected log signatures
 
 Static first: `python tools/generate_partner_contract.py --check` -> `554 code sites, 113 vtable slots ... match`.
-Both logs: `partner_code_gate=ok`.
+Both logs: `partner_code_gate=ok` and, once per mission with the gun stage,
+`partner_weapon=settings; unsupported=1; dry_stop=1; aim_intent=state; reload_rate=off|adapt; fire_census=0|1`.
 
 1. **Census + unsupported gate**: `tools/worker/scenarios/partner-fire-census.txt` (header lists every expected
    line). `-PartnerProfile native -NativeStage gun -BuildProfile research`. Key evidence:

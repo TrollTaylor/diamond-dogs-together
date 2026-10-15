@@ -894,6 +894,8 @@ struct Mission {
     std::uint32_t shadow_slot_logged, shadow_cap_logged;
     bool shadow_logged;
     LogCap shadow_cap;
+    // The anim round 1 weapon settings line (once per mission with the gun stage).
+    bool anim_settings_logged;
     // partner_native_gun change lines: own cap, at most every kNativeGunChangeMs
     // (later changes counted in the next line's changes=).
     std::uint64_t native_gun_change_ms;
