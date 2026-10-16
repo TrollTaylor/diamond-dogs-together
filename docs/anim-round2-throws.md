@@ -719,6 +719,11 @@ to mode 37), while the host's gun record changes state; the host never left slot
 sender did not log which `ReadGun` check failed. The new `partner_input=sender_hold` line names it, so the next hidden
 run shows the exact refusal (`gun_node`, `gun_iface`, `gun_prim`, `gun_rec`, `fields`, ...).
 
+**Corrected by the hidden runs (below, "Hidden runs at 6a89368 and b3d1ba5"):** the sender's reads never failed. The
+glitch frames were complete; the receiver's driver read them as "no input" because `partner_net::LatestInput` returned
+false while the receive thread held the lock. The sender and receiver holds below stay as defense in depth; neither
+fired in any run.
+
 ### Fix 1: the sender keeps the last good read
 
 `partner_input::HoldSender` (`partner_input.hpp`): the sender records the last good gun read (equip, magazine, the v5 gun
@@ -793,3 +798,51 @@ pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/sce
 
 The second re-runs the lab scenario of `0c9269ce`. Its throws must all log `throw_release`, and a
 `partner_input=sender_hold` or `partner_support=slot_hold` line, if any, names the frame it kept.
+
+## Hidden runs at 6a89368 and b3d1ba5 (2026-10-16)
+
+Research worker checks passed at both heads (receipts `20261016-111821-6420d2b7...`, `20261016-114947-5bb4f891...`).
+Every run: hidden worker, verify lock, `-SaveSeed lab`, `MGS_GAME_LUA_DIR` unset, no build process during the run
+(CPU sampled every 2-3 s: averages 19..26 %, peaks 38..63 %), Closed, BaselineRestored and RealSavesUnchanged true,
+no `ExpectFailures` except where noted. Frames were converted and inspected for every run: body 1 shows the throw family
+in each throw burst, the explosion in the viewer-own phase, the grenade and the magazine in the lab run.
+
+At `6a89368`:
+
+| Run | Scenario | Result |
+| --- | --- | --- |
+| `6d9dc4f9` | play, WanSim off | 4/4 `throw_release`, `changed=0` everywhere, `viewer_own` rebase, no forbidden line. **One glitch line mid support episode** (between `armed; reason=throw` and its `throw_release`): `partner_weapon_ctx; remote_slot=255; remote_equip=-2147483648; ...; gate=unsupported; strip=0x58`. The throw still completed. No `sender_hold` and no `slot_hold` line anywhere. The same shape appeared twice per role in gun play. |
+| `702613c1` | play, bad | 4/4, clean, no glitch; no `stall_freeze` (no gap over 250 ms in an episode). |
+| `ea8791c2` | play, awful | 4/4, clean, no glitch; no `stall_freeze`. |
+| `c9e3156f` | play, stall | **Failed.** The host's two `input_stall` ran (320 ms, `actual_ms=321/332`, `skipped=18/19`), but the guest never logged `stall_freeze`: at stale_ms its gate went `partner_weapon=unsupported; remote_slot=255; remote_equip=354; reason=type; strip=0x58` and body 1 dropped from aim to stand idle (`partner_act; edge=body; remote=11; body=1`). One `throw_release` per phase still followed after the stall. |
+| `9f2d0bfb` | lab regression | 3/3 `throw_release` (the magazine throw lost in `0c9269ce` now completes), clean; one glitch line per role outside a hold. |
+
+Defects and fixes (`b3d1ba5`):
+- **The stall hold never engaged.** `TickNative`'s `StallHold` and the observer's `ContextHold` read `native_active`
+  from `Driver::settings`, the configured copy, where it is always false (it is set only in `EffectiveSettings`).
+  Both now use `partner_driver::NativeActive(d)` (the native drive configured and the arbiter's last step active).
+  The policy unit tests passed because they never went through the driver; `partner_driver_tests` now does (a stale
+  v5 slot-3 frame at 320 and 399 ms keeps the support gate with strip 0x40, 401 ms strips, `stall=neutral` does not
+  hold; it fails without the fix).
+- **The `remote_slot=255` glitch is on the receiver.** `partner_net::LatestInput` used `TryAcquireSRWLockShared` and
+  returned false while the receive thread held `g_lock`. The driver's three read sites and the observer took that for
+  "no input" for one tick (remote_slot 255, equip unknown, gate unsupported). The header promised that callers keep
+  their previous sample, but only the input hook (`ConsumeInput`) did. `LatestInput` now waits for the short exclusive
+  section, as `SampleRemote` already did on the same thread, and counts the waits (`partner_net=stats; ...;
+  latest_waits=N`). `ConsumeInput` stays non-blocking.
+
+Full CTest 277/277. At `b3d1ba5`:
+
+| Run | Scenario | Result |
+| --- | --- | --- |
+| `33c11da9` | play, stall | **Passed, no ExpectFailures.** A: `stall_freeze; ...; reason=start; level=0x8; age_ms=267` then `reason=fresh; frames=4`, then one `throw_release`. B: `start; level=0x18; age_ms=251`, `fresh; frames=5`, one `throw_release`. During each stall the gate stayed `support` (strip 0x40) and body 1 kept its aim; frames `stall-*-hold` show it, `stall-*-throw-*` show one throw each. Counts unchanged, `changed=0` x4. `latest_waits` 2 (guest), 1 (host). |
+| `117620b9` | play, off | 4/4, `changed=0` x10, `viewer_own`, no forbidden line, **no glitch and no unknown-slot ctx line on either role** while `latest_waits` reached 4 (guest) and 7 (host): each wait was a tick that used to read as no input. |
+| `e9244c56` | play, bad | 4/4, clean, no glitch. |
+| `733e023b` | play, awful | 4/4, clean, no glitch (`latest_waits` 1 on the host). |
+| `8c7f3472` | lab regression | 3/3 (grenade, magazine, grenade), clean, no glitch, `latest_waits` 13/4. |
+
+No `partner_support=slot_hold` or `partner_input=sender_hold` line appeared in any run. Under `-WanSim bad|awful` no
+input gap over 250 ms fell inside a support episode, so the freeze shows only with the stall step. Still open: Stage B
+(the default flip) and the checkpoint post-reload half (`a7d164c1`, the known `host_continue` freeze); the host's
+infinite grenades (pre-existing). Some runs end with `Forced=true` (the supervisor terminated the job after WM_CLOSE),
+which was also seen before this work; the saves and the baseline were unchanged.
