@@ -1233,6 +1233,45 @@ void TestJobWindow() {
         hk::PublishArm(a);
         Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0), "arm watchdog: the old Arm runs as before");
     }
+    // WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): the place / detonate mirror in the real drain window. This image
+    // admits no support lane (no guard lease, filter or writer), so the remote's 46 edge (a v7 frame with the place
+    // word) arms an episode and logs it, but body 1's rec+0x3CC is never written (lane refusal) and the job runs once.
+    {
+        alignas(16) static unsigned char c4_rec[c::gun_rec_size];
+        std::memset(c4_rec, 0, sizeof(c4_rec));
+        c4_rec[c::gun_mode_cur] = 44;
+        Put<std::uint16_t>(Addr(c4_rec) + c::gun_equip, 395);
+        Put<std::uint32_t>(Addr(c4_rec) + c::gun_flags27c, 3u << 6);
+        Put<std::uint32_t>(Addr(c4_rec) + c::gun_surface, 0x1000060u);
+        pi::Arm armed = a;
+        armed.native_support = armed.native_placed = armed.native_place_mirror = true;
+        armed.gun_rec = Addr(c4_rec);
+        hk::PublishArm(armed);
+        const pi::Sample saved = g_hook_sample;
+        g_hook_sample.packet.version = 7;
+        g_hook_sample.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Place;
+        g_hook_sample.packet.gun_mode = 46;
+        g_hook_sample.packet.place_bits = 0x14;
+        g_hook_sample.packet.inv_slot = 3;
+        dispatch(w->root1, 8);  // a new frame with the gun group and the place word
+        pd::JobParam param{0, 0, 0, 8, g_world.bits};
+        param.block = 1;
+        const int ran = g_probe_ran;
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == ran + 1,
+              "place mirror: the job runs once in its window");
+        Check(Logged("partner_place_mirror=edge; act=place; remote_mode=46; surface=1; default=0; place_bits=0x14; v7=1"),
+              "place mirror: the remote's 46 edge is logged with the v7 class");
+        Check(Get<std::uint32_t>(Addr(c4_rec) + c::gun_surface) == 0x1000060u && !Logged("partner_place_mirror=write"),
+              "place mirror: no admitted C4 lane, body 1's word is never written");
+        armed.native_place_mirror = false;
+        hk::PublishArm(armed);
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) &&
+                  Get<std::uint32_t>(Addr(c4_rec) + c::gun_surface) == 0x1000060u && LogCount("partner_place_mirror=edge") == 1,
+              "place mirror: the key off does nothing");
+        g_hook_sample = saved;
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);
+    }
     // A refused nested job from the pre-dispatch HUD probe keeps its own
     // callback; it must not replace the outer drain's pending original.
     {

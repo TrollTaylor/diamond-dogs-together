@@ -555,6 +555,8 @@ void TestAccumulate() {
     bad.version = 6;
     Check(pi::ValidPacket(bad), "version 6 without optional aim direction is valid");
     bad.version = 7;
+    Check(pi::ValidPacket(bad), "version 7 without the optional place word is valid");
+    bad.version = 8;
     Check(!pi::ValidPacket(bad), "unknown version refused");
     bad.version = 5;
     // v5 gun group: known flags only; without GunFlag::Valid every byte is 0.
@@ -715,6 +717,28 @@ void TestComposeSteer() {
               g5.slot_valid && g5.inv_slot == 2 && pi::LevelOnly(g5, c).gun_valid && !pi::Neutral(g5).gun_valid,
           "the injection carries the v5 gun group and slot; neutral drops them");
     Check(!gun.gun_valid && !gun.slot_valid, "a v4 sample carries no gun group and no trusted slot");
+    // v7 (WS4 v2): the sender's C4 place word reaches the injection with GunFlag::Place.
+    {
+        pi::Sample v7 = live;
+        pi::V7Source src7{};
+        src7.v6.v5 = src5;
+        src7.v6.v5.gun_flags = pi::GunFlag::InHand;
+        src7.v6.v5.gun_mode = 46;
+        src7.place_valid = true; src7.place_bits = 0x14;
+        pi::Fill7(v7.packet, src7);
+        edge = pi::EdgeState{};
+        const pi::Injection g7 = pi::Compose(c, v7, 0, pi::Overlay{}, edge);
+        Check(pi::ValidPacket(v7.packet) && g7.gun_valid && g7.gun_mode == 46 && g7.place_valid && g7.place_bits == 0x14 &&
+                  pi::LevelOnly(g7, c).place_valid && pi::Strip(g7, 0x40u).place_bits == 0x14,
+              "the injection carries the v7 place word (level-only and stripped copies too)");
+        Check(!g5.place_valid && g5.place_bits == 0, "a v5 sample carries no place word");
+        // The identity hold republishes a held frame's gun group without the place word.
+        pi::IdentityHold hold{};
+        pi::InputPacket complete = v7.packet;
+        complete.inv_slot = 3; complete.xflags = static_cast<std::uint8_t>(complete.xflags | pi::XFlag::Equip); complete.gun_equip = 395;
+        (void)pi::HoldIdentity(hold, complete, 395, 1000);
+        Check(!(hold.gun_flags & pi::GunFlag::Place), "the identity hold stores the gun group without GunFlag::Place");
+    }
     src5.gun_valid = false;
     pi::Fill5(v5.packet, src5);
     Check(pi::ValidPacket(v5.packet) && v5.packet.gun_flags == 0 && v5.packet.gun_mode == 0 && v5.packet.reload_seq == 0,

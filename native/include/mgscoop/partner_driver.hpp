@@ -364,6 +364,9 @@ struct Hooks {
     // partner_net's receive path): the equip of this tick's support verdict
     // (Mission::support_equip, 0 = none), published every driver tick. May be null.
     void (*publish_support_identity)(void* context, std::uint16_t equip) noexcept = nullptr;
+    // Input frame v7 (WS4 v2, the sender's C4 place word): whether the peer was
+    // seen sending v7 (partner_net::PeerSendsInputV7). Null: v7 is never sent.
+    bool (*peer_input_v7)(void* context) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -479,6 +482,9 @@ struct Settings {
     // nsupport): placed C4 (type 13, 391..395, slot 3) and arm holds (type 14,
     // only 516 for now, slot 6, HOLD only: FIRE stays stripped).
     bool nplaced, narm;
+    // WS4 v2 (lab.ini partner_native_place_mirror; needs nplaced): the remote's
+    // C4 place / detonate mirrored into body 1's record (partner_place_mirror).
+    bool nplace_mirror;
     PartnerNativeAimIntent naim_intent;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;
@@ -902,6 +908,9 @@ struct Mission {
     std::uint64_t v6_probe_ms;
     std::uint32_t v6_probes;
     bool v6_peer_logged;
+    std::uint64_t v7_probe_ms;
+    std::uint32_t v7_probes;
+    bool v7_peer_logged;
     partner_aim::DirCheck dir_check;
     partner_aim::DirReason dir_reason;
     bool dir_reason_logged;

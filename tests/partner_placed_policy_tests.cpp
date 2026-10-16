@@ -2,6 +2,7 @@
 // (partner_placed_policy.hpp) on fake memory, the watchdog, and the contract pins they rely on.
 // Synthetic only: a byte map stands in for the game; nothing here runs or reads game code.
 #include "mgscoop/partner_placed_policy.hpp"
+#include "mgscoop/partner_place_mirror.hpp"
 #include "mgscoop/partner_support_policy.hpp"
 #include "partner_player_contract.hpp"
 #include <cstdio>
@@ -344,6 +345,176 @@ void ContractPins() {
                   "contract: the latch block's offsets are the digest's");
         }
 }
+
+// --- WS4 v2: the place / detonate mirror (partner_place_mirror.hpp) -----------------------
+namespace pm = mgscoop::partner_place_mirror;
+pm::In Body(std::uint8_t remote_mode, std::uint8_t body_mode, std::uint32_t body_3cc, std::uint64_t now, std::uint8_t bits = 0x14,
+            bool place_valid = true) {
+    pm::In x{};
+    x.key = true; x.lane = true; x.remote_valid = true; x.remote_mode = remote_mode;
+    x.place_valid = place_valid; x.place_bits = place_valid ? bits : 0;
+    x.body_ok = true; x.body_equip = 395; x.body_cls = 3; x.body_mode = body_mode; x.body_3cc = body_3cc; x.now_ms = now;
+    return x;
+}
+pm::After AfterJob(std::uint8_t mode, std::uint32_t w3cc, std::uint8_t next = 0) {
+    pm::After a{};
+    a.ok = true; a.mode = mode; a.mode_next = next; a.w3cc = w3cc;
+    return a;
+}
+void PlaceMirror() {
+    // The census words: the viewer's ground place (mode 46) and its preview (mode 44); a wall class.
+    Check(pm::WireBits(0x1500060u) == 0x14 && pm::WireSurface(0x14) == 1, "wire: the census' ground place names class 1");
+    Check(pm::WireBits(0x1400000u) == 0x10 && pm::WireSurface(0x10) == 1, "wire: a preview-only word names its preview class");
+    Check(pm::WireSurface(pm::WireBits(0x200000u | 0x800000u)) == 2 && pm::WireSurface(0) == 0, "wire: wall class 2; none 0");
+    Check(pm::WireSurface(0x0C | 0x10) == 3, "wire: the placed class wins over the preview class");
+
+    // A place: the remote's 44 -> 46 edge, body 1 holding C4 in 44 (census word 0x1000060).
+    pm::State s{};
+    pm::Out o = pm::Step(s, Body(44, 44, 0x1000060u, 1000));
+    Check(o.act == pm::Act::none && o.edge == pm::Act::none && s.pending == pm::Act::none, "place: no edge while the remote readies");
+    o = pm::Step(s, Body(46, 44, 0x1000060u, 1016));
+    Check(o.edge == pm::Act::place && o.act == pm::Act::place && o.why == pm::Why::wrote && s.surface == 1 && !s.surface_default,
+          "place: the remote's 46 edge writes at once");
+    Check(o.value == (0x1000060u | 0x40000u | 0x400000u), "place: bit 18 and the class in 22-23, nothing else");
+    Check((o.value ^ 0x1000060u) == (pm::k::kPlaceReq | (1u << pm::k::kPreviewShift)),
+          "place: only the request and preview bits change");
+    pm::Verdict v = pm::Judge(s, AfterJob(46, 0x1500060u), 1017);
+    Check(v.act == pm::Act::place && v.taken && !v.revert && !v.retry && s.taken == 1, "place: body 1 entered 46 (taken)");
+    o = pm::Step(s, Body(46, 46, 0x1500060u, 1033));
+    Check(o.act == pm::Act::none && o.edge == pm::Act::none, "place: one write per remote episode");
+    v = pm::Judge(s, AfterJob(46, 0x1500060u), 1034);
+    Check(v.act == pm::Act::none, "verdict: nothing in flight");
+    // Back to 44 and a second place: a new episode, a second write.
+    o = pm::Step(s, Body(44, 44, 0x1410060u, 2000));
+    o = pm::Step(s, Body(46, 44, 0x1410060u, 2100));
+    Check(o.act == pm::Act::place && s.edges == 2 && s.writes == 2, "place: the next 46 edge is a new episode");
+    v = pm::Judge(s, AfterJob(44, 0x1410060u, 46), 2101);
+    Check(v.taken, "place: the queued next mode (rec+0x2C1 = 46) counts as taken");
+
+    // Not taken: our bits go back to their values before the write, then a retry.
+    s = pm::State{};
+    o = pm::Step(s, Body(46, 43, 0x60u, 3000));
+    Check(o.act == pm::Act::place && o.value == (0x60u | 0x40000u | 0x400000u), "retry: 43 takes a place write too");
+    v = pm::Judge(s, AfterJob(43, o.value), 3001);
+    Check(!v.taken && v.revert && v.value == 0x60u && v.retry && s.pending == pm::Act::place && s.reverted == 1,
+          "retry: not taken -> reverted to the word before the write, pending again");
+    o = pm::Step(s, Body(46, 44, 0x1000060u, 3017));
+    Check(o.act == pm::Act::place && s.tries == 2 && o.edge == pm::Act::none, "retry: the same episode writes again (no new edge)");
+    v = pm::Judge(s, AfterJob(44, 0x1000060u), 3018);
+    Check(!v.taken && !v.revert && v.retry, "retry: a consumed request is never reverted");
+    // The tries cap ends the episode.
+    for (unsigned i = 0; i < 10; ++i) {
+        o = pm::Step(s, Body(46, 44, 0x1000060u, 3020 + i));
+        if (o.act != pm::Act::none) v = pm::Judge(s, AfterJob(44, o.value), 3020 + i);
+    }
+    Check(s.pending == pm::Act::none && s.tries == pm::k::kMaxTries && s.writes == pm::k::kMaxTries, "retry: at most kMaxTries writes");
+
+    // An edge waits for body 1 (lagging in 0 / 45) and expires after kPendingMs.
+    s = pm::State{};
+    o = pm::Step(s, Body(46, 0, 0x0u, 5000));
+    Check(o.edge == pm::Act::place && o.act == pm::Act::none && o.why == pm::Why::mode && s.pending == pm::Act::place,
+          "wait: body 1 not in 43/44 yet");
+    o = pm::Step(s, Body(46, 45, 0x0u, 5000 + pm::k::kPendingMs));
+    Check(o.why == pm::Why::mode && s.pending == pm::Act::place, "wait: still within the bound");
+    o = pm::Step(s, Body(46, 44, 0x1000060u, 5001 + pm::k::kPendingMs));
+    Check(o.dropped == pm::Act::place && o.why == pm::Why::expired && o.dropped_after == pm::Why::mode && o.act == pm::Act::none &&
+              s.dropped == 1,
+          "wait: expired (names what it waited on), never late");
+    // The remote leaving the place family drops it; a frame without the gun group changes nothing.
+    s = pm::State{};
+    pm::Step(s, Body(46, 0, 0x0u, 6000));
+    pm::In gone = Body(0, 0, 0x0u, 6010);
+    gone.remote_valid = false;
+    o = pm::Step(s, gone);
+    Check(s.pending == pm::Act::place && o.dropped == pm::Act::none, "frames: an invalid gun group neither drops nor edges");
+    o = pm::Step(s, Body(0, 0, 0x0u, 6020));
+    Check(o.dropped == pm::Act::place && o.why == pm::Why::left && s.pending == pm::Act::none, "frames: the remote put the C4 away");
+    pm::In flicker = Body(46, 44, 0x1000060u, 6030);
+    flicker.remote_valid = false;
+    o = pm::Step(s, flicker);
+    Check(o.edge == pm::Act::none && s.pending == pm::Act::none, "frames: an invalid frame with 46 is no edge");
+
+    // A detonate: only from 44, bit 19 alone.
+    s = pm::State{};
+    pm::Step(s, Body(44, 44, 0x3410060u, 7000));
+    o = pm::Step(s, Body(47, 43, 0x2410060u, 7016));
+    Check(o.edge == pm::Act::detonate && o.act == pm::Act::none && o.why == pm::Why::mode, "detonate: 43 waits for 44");
+    o = pm::Step(s, Body(47, 44, 0x3410060u, 7032));
+    Check(o.act == pm::Act::detonate && o.value == (0x3410060u | 0x80000u), "detonate: bit 19 only (22-23 untouched)");
+    v = pm::Judge(s, AfterJob(47, 0x1410060u), 7033);
+    Check(v.taken && v.act == pm::Act::detonate, "detonate: body 1 entered 47");
+    s = pm::State{};
+    o = pm::Step(s, Body(47, 44, 0x1000060u, 7100));
+    v = pm::Judge(s, AfterJob(45, o.value), 7101);
+    Check(v.revert && v.value == 0x1000060u, "detonate: not taken -> bit 19 reverted");
+
+    // Gates: the key, the lane, the body record, C4 class 3, a request already set.
+    const auto gate = [](pm::In x, pm::Why want, const char* what) {
+        pm::State g{};
+        const pm::Out r = pm::Step(g, x);
+        Check(r.act == pm::Act::none && r.why == want && g.pending == pm::Act::place && g.writes == 0, what);
+    };
+    pm::In x = Body(46, 44, 0x1000060u, 8000);
+    x.key = false; gate(x, pm::Why::key, "gate: no key, no write");
+    x = Body(46, 44, 0x1000060u, 8000); x.lane = false; gate(x, pm::Why::lane, "gate: the C4 lane not admitted");
+    x = Body(46, 44, 0x1000060u, 8000); x.body_ok = false; gate(x, pm::Why::body, "gate: body 1's record unread");
+    x = Body(46, 44, 0x1000060u, 8000); x.body_equip = 46; gate(x, pm::Why::equip, "gate: body 1 holds a gun");
+    x = Body(46, 44, 0x1000060u, 8000); x.body_equip = 396; gate(x, pm::Why::equip, "gate: a mine (not 391..395)");
+    x = Body(46, 44, 0x1000060u, 8000); x.body_cls = 2; gate(x, pm::Why::equip, "gate: not class 3");
+    x = Body(46, 44, 0x1040060u, 8000); gate(x, pm::Why::busy, "gate: bit 18 already set");
+    x = Body(46, 44, 0x1080060u, 8000); gate(x, pm::Why::busy, "gate: bit 19 already set");
+    // A v6 peer (no place word) places on the ground class; a wall word keeps its class.
+    s = pm::State{};
+    o = pm::Step(s, Body(46, 44, 0x1000060u, 9000, 0, false));
+    Check(o.act == pm::Act::place && s.surface == pm::k::kDefaultSurface && s.surface_default &&
+              o.value == (0x1000060u | 0x40000u | (1u << 22)),
+          "surface: no place word -> the ground class");
+    s = pm::State{};
+    o = pm::Step(s, Body(46, 44, 0x1000060u, 9100, 0x2A));
+    Check(o.act == pm::Act::place && s.surface == 2 && (o.value & pm::k::kPreviewMask) == (2u << 22), "surface: a wall place keeps class 2");
+    Check(std::strcmp(pm::ActName(pm::Act::detonate), "detonate") == 0 && std::strcmp(pm::WhyName(pm::Why::left), "remote_left") == 0,
+          "names");
+}
+void PlaceMirrorPins() {
+    // The mirror's bits and modes are the contract's.
+    Check(pm::k::kPlaceReq == c::gun3cc_place_req && pm::k::kDetReq == c::gun3cc_detonate_req && pm::k::kPreviewMask == c::gun3cc_preview_mask &&
+              pm::k::kSurfaceMask == c::gun3cc_surface_mask && c::gun_surface == 0x3CC,
+          "contract: the rec+0x3CC bits");
+    for (std::uintptr_t rva : {0x103E485u, 0x103E48Au, 0x103E4C0u, 0x103E4F3u, 0x107EBD3u, 0x107DC2Au, 0x10967A5u, 0x109687Cu, 0x109689Fu,
+                               0x107BBE1u, 0x107BD27u, 0x107C6FAu, 0x107EFCDu, 0x107F2CAu, 0x105327Fu, 0x105333Eu})
+        Check(Pinned(rva), "contract: every WS4 v2 site is pinned");
+    const auto site = [](std::uintptr_t rva) -> const c::Site* {
+        for (const auto& s : c::code_sites)
+            if (s.rva == rva) return &s;
+        return nullptr;
+    };
+    const auto has = [](const c::Site* s, std::initializer_list<unsigned char> pat) {
+        if (!s) return false;
+        const std::size_t n = pat.size();
+        for (std::size_t i = 0; i + n <= s->size; ++i)
+            if (std::memcmp(s->bytes + i, pat.begin(), n) == 0) return true;
+        return false;
+    };
+    const auto mask_of = [](const c::Site* s) {  // 81 a? cc 03 00 00 <imm32>
+        std::uint32_t m = 0;
+        if (s && s->size >= 10) std::memcpy(&m, s->bytes + 6, 4);
+        return m;
+    };
+    Check(has(site(0x107EBD3), {0xc1, 0xe8, 0x12}) && has(site(0x107EBD3), {0xbf, 0x2e, 0, 0, 0}), "mode 43 op 0: bit 18 -> 46");
+    Check(has(site(0x107DC2A), {0xc1, 0xe8, 0x12}) && has(site(0x107DC2A), {0xbf, 0x2e, 0, 0, 0}) &&
+              has(site(0x107DC2A), {0xc1, 0xea, 0x13}) && has(site(0x107DC2A), {0xbf, 0x2f, 0, 0, 0}),
+          "mode 44 op 0: bit 18 -> 46, bit 19 -> 47");
+    Check(has(site(0x109687C), {0x0f, 0xba, 0xf0, 0x13}) && has(site(0x109687C), {0x0f, 0xba, 0xe8, 0x12}),
+          "decode: btr 19 / bts 18 (its only bit-18 write)");
+    Check(~mask_of(site(0x107BBE1)) == (pm::k::kPlaceReq | 0x30000u), "mode 46 op 1 consumes bit 18 (with 16-17)");
+    Check(~mask_of(site(0x107EFCD)) == pm::k::kDetReq && ~mask_of(site(0x105333E)) == pm::k::kDetReq,
+          "mode 47 op 1 and the non-local detonation only clear bit 19");
+    Check(has(site(0x107BD27), {0xc1, 0xe0, 0x14}) && has(site(0x107BD27), {0xc1, 0xe8, 0x02}) &&
+              has(site(0x107BD27), {0x25, 0x00, 0x00, 0x30, 0x00}),
+          "mode 46 op 1: probe class << 20, else fold 22-23 into 20-21");
+    Check(has(site(0x105327F), {0xf6, 0x82, 0xc0, 0x03, 0x00, 0x00, 0x01}) && has(site(0x107C6FA), {0xf6, 0x87, 0xc0, 0x03, 0x00, 0x00, 0x01}),
+          "the detonation and the placement test rec+0x3C0 bit 0 (local only)");
+}
 } // namespace
 
 int main() {
@@ -352,6 +523,8 @@ int main() {
     ArmEnergy();
     Watchdog();
     ContractPins();
-    std::printf("partner_placed_policy_tests: %u checks (fake memory; read-only WS4 v1 digests; no gameplay evidence)\n", checks);
+    PlaceMirror();
+    PlaceMirrorPins();
+    std::printf("partner_placed_policy_tests: %u checks (fake memory; read-only WS4 v1 digests, the WS4 v2 mirror policy; no gameplay evidence)\n", checks);
     return 0;
 }

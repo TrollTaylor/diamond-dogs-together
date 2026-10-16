@@ -734,6 +734,57 @@ int main() {
               decode_input_frame(frame,input_frame_size_v5,ss,ep,seq,got) && got.version == 5,
               "v5 remains compatible with max-size encoder");
     }
+
+    {
+        // v7 (WS4 v2): the sender's C4 place word with GunFlag::Place.
+        namespace pi = mgscoop::partner_input;
+        pi::InputPacket pkt{};
+        pi::V7Source source{};
+        source.v6.v5.gun_valid = true;
+        source.v6.v5.gun_flags = pi::GunFlag::Aiming | pi::GunFlag::InHand;
+        source.v6.v5.gun_mode = 46;
+        source.place_valid = true; source.place_bits = 0x14;  // the census' ground place (rec+0x3CC 0x1500060)
+        pi::Fill7(pkt, source);
+        std::uint8_t frame[input_frame_size_max]{}, old[input_frame_size_v5]{};
+        std::uint64_t ss = 0; std::uint32_t ep = 0, seq = 0; pi::InputPacket got{};
+        Check(input_frame_size_v7 == 124 && input_frame_size_max == input_frame_size_v7, "v7 frame is 124 bytes, the max");
+        Check(pkt.version == 7 && (pkt.gun_flags & pi::GunFlag::Place) && pkt.place_bits == 0x14 && pi::ValidPacket(pkt), "Fill7 sets the place word");
+        Check(encode_input_frame_any(77, 30020, 10, pkt, frame) == input_frame_size_v7 &&
+              decode_input_frame(frame, input_frame_size_v7, ss, ep, seq, got) && got.version == 7 && got.place_bits == 0x14 &&
+              (got.gun_flags & pi::GunFlag::Place) && got.gun_mode == 46,
+              "v7 place word round trip");
+        Check(frame[wire::header_size + 92] == 0x14 && frame[wire::header_size + 93] == 0 && frame[wire::header_size + 94] == 0 &&
+              frame[wire::header_size + 95] == 0, "v7 layout: [92] place word, [93..95] reserved zero");
+        Check(encode_input_frame_any(77, 30020, 10, pkt, old) == 0 && old[0] == 0, "v7 refuses the legacy output buffer");
+        Check(!decode_input_frame(frame, input_frame_size_v6, ss, ep, seq, got), "a v7 frame is not a v6 frame");
+        std::uint8_t bad_frame[input_frame_size_max]{};
+        std::memcpy(bad_frame, frame, sizeof(bad_frame));
+        bad_frame[wire::header_size + 93] = 1;
+        Check(!decode_input_frame(bad_frame, input_frame_size_v7, ss, ep, seq, got), "v7 reserved bytes must be zero");
+        std::memcpy(bad_frame, frame, sizeof(bad_frame));
+        bad_frame[wire::header_size + 92] = 0x40;
+        Check(!decode_input_frame(bad_frame, input_frame_size_v7, ss, ep, seq, got), "v7 place word above 0x3F refuses on the wire");
+        auto bad = pkt; bad.gun_mode = 7;
+        Check(!pi::ValidPacket(bad), "v7 place word needs a gun mode 43..47");
+        bad = pkt; bad.gun_flags &= static_cast<std::uint8_t>(~pi::GunFlag::Place);
+        Check(!pi::ValidPacket(bad), "v7 place word without the flag refuses");
+        bad = pkt; bad.version = 6;
+        Check(!pi::ValidPacket(bad), "v6 cannot carry the place flag or word");
+        bad = pkt; bad.place_bits = 0;
+        Check(pi::ValidPacket(bad), "v7 flag with word 0 (no class yet) is valid");
+        // Fill7 refuses a place word outside the family or without a valid gun group.
+        source.v6.v5.gun_mode = 7; pi::Fill7(pkt, source);
+        Check(pkt.version == 7 && !(pkt.gun_flags & pi::GunFlag::Place) && pkt.place_bits == 0 && pi::ValidPacket(pkt),
+              "Fill7: no place word outside 43..47");
+        source.v6.v5.gun_mode = 47; source.v6.v5.gun_valid = false; pi::Fill7(pkt, source);
+        Check(pkt.gun_flags == 0 && pkt.place_bits == 0 && pi::ValidPacket(pkt), "Fill7: no place word without the gun group");
+        source.v6.v5.gun_valid = true; source.place_bits = 0x40; pi::Fill7(pkt, source);
+        Check(!(pkt.gun_flags & pi::GunFlag::Place) && pkt.place_bits == 0, "Fill7: a word above 0x3F is not sent");
+        // Fill6 / Fill5 leave no place word (a v6 peer gets a clean frame).
+        source.place_bits = 0x14; pi::Fill7(pkt, source);
+        pi::Fill6(pkt, source.v6);
+        Check(pkt.version == 6 && pkt.place_bits == 0 && !(pkt.gun_flags & pi::GunFlag::Place) && pi::ValidPacket(pkt), "Fill6 drops the place word");
+    }
     std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);
     return 0;
 }

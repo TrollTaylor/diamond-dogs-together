@@ -1,0 +1,188 @@
+# WS4 v2: the partner body kneels to place C4 and plays the detonate motion (docs/anim-round2-throws.md "WS4 v2").
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR unset,
+# no build running in any worktree, under the shared verify lock (after the Research worker checks), one worker session.
+# Static proof first: python tools/generate_partner_contract.py --check (670 code sites, 146 vtable slots).
+# The mirror key partner_native_place_mirror is lab only and default 0 until this run's frames show both motions; this
+# scenario names it, the WS4 v1 keys and the census (k=1 gun lines show body 1's modes 46 / 47).
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-c4-v2.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# The HOST acts; the prone GUEST films body 1 (the host's partner body) from 4 m behind and 5 m to its right before
+# every place (body 1's hands and the kneel from the side; partner-c4 runs 7f8d643d / d05a1267) and 6 m / 7 m for the
+# detonation. godmode on both, infinite ammo OFF. The lab seed's support entry 2 is C4 395.
+# Controls (census runs 3ef82e27 .. a93db206): place = aim (RMB) + fire (LMB) on a valid spot (43 -> 46; an invalid spot
+# only readies 43 -> 44 -> 45 -> 0, which spot is valid varies, so four spots are tried); detonate with a live charge =
+# aim + E (44 -> 47); the second E finds no charge left when the first one fired.
+# What v2 changes (guest, body 1): on the host's place (its v5 gun mode 46, its v7 place word naming the surface class)
+# the guest's hook writes rec+0x3CC bit 18 and the class into bits 22-23 of body 1's own record before body 1's job, so
+# body 1's op 0 picks 46 (the kneel); on the host's detonate (47) bit 19 in mode 44 picks 47 (the detonator motion).
+# Neither places nor sets off a charge in the guest's world (mode 46 op 9 and the detonation 0x1053270 are local-only).
+# Evidence (lines are capped per mission):
+#  both:  partner_support=lanes; support=1; placed=1; arm=0; arm_fire=stripped; place_mirror=1
+#         partner_input=v7_peer; probes=..   (both copies send the v7 place word)
+#  guest (body 1 = the host's partner):
+#    partner_place_mirror=edge; act=place; remote_mode=46; surface=1; default=0; place_bits=0x14|0x10; v7=1 per host place;
+#    partner_place_mirror=write; act=place; body_mode=43|44; f3cc_before=0x..; f3cc_after=0x..(+0x40000 | class << 22);
+#    partner_place_mirror=result; act=place; taken=1; body_mode=46 (or mode_next=46);
+#    partner_support=armed; slot=3; equip=395; type=13; reason=place (body 1 entered mode 46);
+#    partner_placed_census=gun; k=1; equip=395; type=13; cls=3; mode=46; ... (state 1, 2, 4..6: the kneel);
+#    partner_place_mirror=edge; act=detonate; remote_mode=47 / write; act=detonate; body_mode=44 / result; act=detonate;
+#      taken=1; body_mode=47 and partner_support=armed; ...; reason=detonate; census k=1 mode=47;
+#    partner_support=placed_check; slot=3; equip=395; type=13; reason=ok; what=same at every mode change (46 and 47
+#      included: the viewer's latch and the placed owner table did not move inside body 1's job);
+#    partner_placed_census=service; reason=ok; ...; owner1=-1; ...; owners=65535:0 throughout (body 1 never registers a
+#      charge in the guest's world);
+#    partner_support=stock_check; ...; type=13; changed=0 after each episode; every guest require
+#      support;...;counts=12,16383,12,8,12,12,8,8 passes (C4 stays 12: body 1 never spends).
+#  host: its own census k=0 modes 46 at each valid place and 47 at the detonation (its charges go off in both worlds
+#    through world sync).
+#  NEVER (any of them fails the run):
+#    NO partner_support=refused; ...; reason=placed_shared_write (nor placed_shared_write_mission_latched);
+#    NO stock_leak_mission_latched, stock_gap, rec240_foreign, rec240_stale, writer_uncertain_mission_latched;
+#    NO partner_place_mirror=result; ...; reverted=2 (a revert that could not be written); NO partner_input=fault;
+#    no crash; scenario.json Closed, BaselineRestored, RealSavesUnchanged.
+# Captures: c4-select, c4-place-p1..p4 (body 1 kneeling to place, beside the host's own kneel), c4-det / c4-det2
+# (body 1's detonator motion with the host's), end (back on the gun).
+labsetting partner_native_support=1
+labsetting partner_native_placed=1
+labsetting partner_native_arm=0
+labsetting partner_native_place_mirror=1
+labsetting partner_placed_census=1
+labsetting debug_soldier_warp=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug infinite_ammo 0
+guest debug infinite_ammo 0
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 7 2
+wait 2000
+stance guest prone
+both capture start
+wait 6000
+host run support
+host expect ^support;ids=354,349,395,
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+both capture c4-idle
+# --- C4 395: select (support entry 2), then place at P1..P4 (aim + fire) -----------------------------------------
+host debug slot support 2
+wait 2000
+guest burst c4-select 3 250
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+# Re-frame (P1): 4 m behind the host and 5 m to its right (the kneel from the side).
+stance guest stand
+placebehind guest host 4 5
+wait 1500
+stance guest prone
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+guest burst c4-place-p1 8 200
+host release
+wait 1500
+host run support
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+# Re-frame (P2)
+stance guest stand
+placebehind guest host 4 5
+wait 1500
+stance guest prone
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+guest burst c4-place-p2 8 200
+host release
+wait 1500
+host run support
+host hold d 1000
+wait 500
+host hold w 250
+wait 1000
+# Re-frame (P3)
+stance guest stand
+placebehind guest host 4 5
+wait 1500
+stance guest prone
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+guest burst c4-place-p3 8 200
+host release
+wait 1500
+host run support
+host hold a 1000
+host hold a 1000
+wait 500
+host hold w 250
+wait 1000
+# Re-frame (P4)
+stance guest stand
+placebehind guest host 4 5
+wait 1500
+stance guest prone
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+guest burst c4-place-p4 8 200
+host release
+wait 1500
+host run support
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+both capture c4-placed
+# --- Detonate (aim, then E once in mode 44); a second try in case the first E came before 44 ----------------------
+host hold s 1500
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+# Re-frame (detonation): 6 m behind and 7 m to the right (outside the charges).
+stance guest stand
+placebehind guest host 6 7
+wait 1500
+stance guest prone
+wait 1000
+host hold rmb 1500 nowait
+wait 1000
+host press e
+guest burst c4-det 8 150
+host release
+wait 2000
+host run support
+stance guest stand
+placebehind guest host 6 7
+wait 1500
+stance guest prone
+wait 1000
+host hold rmb 1500 nowait
+wait 1100
+host press e
+guest burst c4-det2 8 150
+host release
+wait 2000
+host run support
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+both capture c4-after
+# --- Back to the gun --------------------------------------------------------------------------------------------
+host debug slot back 0
+wait 2500
+both capture end

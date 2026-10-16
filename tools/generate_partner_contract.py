@@ -918,6 +918,47 @@ SITES += [
     (0x10605BF, '418bc4e9e1fcffff83ff0e0f858f000000',
      'activation: kind 13 joins the stores 0x10602A8; kind 14 -> 0x10605D0 (the equip jump table 0x1061C70)'),
 ]
+# --- WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): the remote's C4 place (46) / detonate (47) mirrored into body
+# 1's own rec+0x3CC before its job (partner_place_mirror; lab key partner_native_place_mirror). No patch. The gun
+# update 0x103E2D0 calls the decode 0x1095DF0 (0x103E485, pinned above), then the mode's op 4 and op 0 (the next mode
+# into rec+0x2C1), then the transition 0x1040A00; mode 43 op 0 picks 46 on bit 18, mode 44 op 0 46 on bit 18 and 47 on
+# bit 19; the decode's class-3 path sets 18 (clearing 19) only on FIRE with a preview class in 22-23 and sets 19 only
+# on ACTION with rec+0x280 bit 23 (a live charge); mode 46 op 1 clears 16-18, takes its probe's class into 20-21 and
+# folds 22-23 into 20-21 when the probe gives 0; its placement (op 9) runs only for the local record (rec+0x3C0 bit
+# 0); mode 47 op 1 clears 19 and op 10's detonation 0x1053270 only clears 19 for a non-local record.
+# Bytes from the scratch REA .xtext dump; this generator re-reads them from the exact executable.
+SITES += [
+    (0x103E48A, '4883bbb002000000745f41b8040000008bd60f288bb00200004533c9660f6fc1660f73d808660f7ec04863c866480f7ec84803cfffd0',
+     'gun update: after the decode, the current mode\'s member handler [rec+0x2B0] with op 4 (r8d = 4)'),
+    (0x103E4C0, '4883bbb00200000074290f288bb00200004533c94533c0660f6fc18bd6660f73d808660f7ec04863c866480f7ec84803cfffd0',
+     'gun update: then the same handler with op 0 (r8d = 0): the next mode into rec+0x2C1'),
+    (0x103E4F3, '440fb68bc10200004585c9741a0fb683c0020000443bc8740e448bc6488bd7488bcbe8e6240000',
+     'gun update: rec+0x2C1 != 0 and != rec+0x2C0 -> the transition 0x1040A00(rec, plugin, id) in the same update'),
+    (0x107EBD3, '8b8bc003000033ff84c90f889f0000000fbae1090f82950000008b83cc030000c1e812a801740abf2e000000e98e000000',
+     'place hold (mode 43) op 0: rec+0x3C0 bit 7 / bit 9 -> the selector; else rec+0x3CC bit 18 -> next mode 0x2E (46)'),
+    (0x107DC2A, '8b8ec003000033ff84c9784c0fbae1097246f786c4030000000004007407bf30000000eb438b96cc0300008bc2c1e812a8017407bf2e00'
+     '0000eb2dc1ea13f6c2017407bf2f000000eb1e',
+     'place ready (mode 44) op 0: rec+0x3C4 bit 18 -> 0x30; rec+0x3CC bit 18 -> 0x2E (46); bit 19 -> 0x2F (47)'),
+    (0x10967A5, '83f8030f85400100008b93c00300008bca8bc2c1e913c1e8120ac8f6c1010f84d2fdffff0fbae21a0f82c8fdffff',
+     'decode 0x1095DF0: class 3 (C4) needs rec+0x3C0 bit 18 or 19 and not bit 26'),
+    (0x109687C, '8b83cc0300000fbaf0130fbae8128983cc030000eb0d',
+     'decode class 3: the only bit-18 write: btr 19, bts 18 (FIRE, a preview class in 22-23, the placed manager says yes)'),
+    (0x109689F, '418b85d00000000fbae0170f83ebfcffff0fbae0180f82e1fcffff8b83cc030000c1e812a8010f85d0fcffff488b07488bcfff5040c1e8'
+     '05a8010f84bcfcffff818bcc03000000000800e9adfcffff',
+     'decode class 3: bit 19 only with rec+0x280 bit 23 (a live charge), not bit 24, bit 18 clear and pad bit 5 (ACTION)'),
+    (0x107BBE1, '81a7cc030000fffff8ff', 'place (mode 46) op 1: rec+0x3CC &= ~0x70000 (consumes the bit-18 request)'),
+    (0x107BD27, 'e8d411fdff81a7cc030000ffffcfff83e003c1e0140987cc0300008b8fcc030000f7c10000300075148bc1c1e80233c1250000300033c1'
+     '8987cc030000',
+     'place (mode 46) op 1, offline / local branch: probe 0x104CF00 -> rec+0x3CC bits 20-21; 0 -> fold bits 22-23 into 20-21'),
+    (0x107C6FA, 'f687c0030000010f841c05000080bfc2020000040f830f050000',
+     'place (mode 46) op 9: the placement block only for the local record (rec+0x3C0 bit 0) and state < 4'),
+    (0x107EFCD, '81a3cc030000fffff7ff', 'detonate (mode 47) op 1: rec+0x3CC &= ~0x80000 (consumes the bit-19 request)'),
+    (0x107F2CA, 'f683c003000002740b448bc7488bd3e8923ffdfff683c003000001741141b101448bc7488bd3488bcee848ddfbff',
+     'detonate (mode 47) op 10: 0x1053270 behind rec+0x3C0 bit 1; 0x103D040 only for the local record (bit 0)'),
+    (0x105327F, 'f682c003000001418bf0488bfa488be90f84a9000000',
+     'detonation 0x1053270: a non-local record (rec+0x3C0 bit 0 clear) -> 0x105333E (no placed vt+0x68 call)'),
+    (0x105333E, '81a2cc030000fffff7ff', 'detonation 0x1053270, non-local: only rec+0x3CC &= ~0x80000'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -1804,6 +1845,31 @@ def anim_round1_assertions():
 
 
 
+def ws4_v2_assertions():
+    """WS4 v2: the place family's handlers, the detonation's callers and its non-local exit (read-only)."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    table = mode_table_emulation()
+
+    def entry(k):
+        return table.get(0x2C556A0 + 16 * k) or (None, None)
+    want = {43: 0x107E480, 44: 0x107D300, 45: 0x107DD00, 46: 0x107BAC0, 47: 0x107ECF0}
+    for k, fn in want.items():
+        need(entry(k) == (fn, 0), f'mode table entry {k}: {entry(k)} (expected {fn:#x})')
+    callers = rel_refs(0x1053270, (0xE8,))
+    need(callers == [0x1068A8C, 0x107F2D9, 0x107F77B, 0x108A46B], f'the detonation 0x1053270 callers: {[hex(x) for x in callers]}')
+    need(0x1053295 + struct.unpack('<i', rd(0x1053291, 4))[0] == 0x105333E, 'the detonation\'s non-local exit is 0x105333E')
+    need(calls_in(0x105333E, 0x1053350) == [], 'the non-local exit calls nothing')
+    need(calls_in(0x107BD2C, 0x107BD64) == [], 'mode 46 op 1: no call between the probe and the latch block')
+    need(0x107BD2C == 0x107BD27 + 5 and 0x107BD2C + struct.unpack('<i', rd(0x107BD28, 4))[0] == 0x104CF00,
+         'mode 46 op 1 calls the probe 0x104CF00 at 0x107BD27')
+    need(0x107C701 + 6 + struct.unpack('<i', rd(0x107C703, 4))[0] == 0x107CC23, 'mode 46 op 9: a non-local record skips to 0x107CC23')
+    return out
+
+
 def support_native_assertions():
     out = []
     def need(cond, what):
@@ -2140,6 +2206,7 @@ def handle_call_assertions():
 
 
 failures += anim_round1_assertions()
+failures += ws4_v2_assertions()
 failures += support_native_assertions()
 failures += vehicle_assertions()
 failures += handle_call_assertions()
@@ -2545,6 +2612,10 @@ w('inline constexpr std::size_t ctl_vt_arm_equip=0x1f0, ctl_vt_arm_energy=0xe8, 
 w('inline constexpr std::size_t ctl_vars=0x20, ctl_arm_frac=0x58, store_arm_energy=0x1c, store_counts=0x98, vars_arm_energy_sum=0x670;')
 w('inline constexpr unsigned arm_energy_k=5, arm_energy_slots=4;')
 w('inline constexpr std::uint16_t arm_equip_first=0x203, arm_equip_last=0x209;')
+w('// --- WS4 v2 (partner_place_mirror): rec+0x3cc bit 18 asks modes 43/44 for 46 (place), bit 19 asks 44 for 47')
+w('// (detonate); bits 20-21 the placed surface class (46 op 1: its probe, else bits 22-23), 22-23 the preview class.')
+w('inline constexpr std::uint32_t gun3cc_place_req=0x40000, gun3cc_detonate_req=0x80000, gun3cc_surface_mask=0x300000, gun3cc_preview_mask=0xc00000;')
+w('inline constexpr std::uint8_t gun_mode_place_hold=43, gun_mode_place_ready=44, gun_mode_place=46, gun_mode_detonate=47;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

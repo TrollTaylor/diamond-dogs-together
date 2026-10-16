@@ -158,6 +158,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # WS4 v1: native C4 placing and arm holds
     'partner_native_placed=1','partner_native_placed=0','guest:partner_native_placed=1','host:partner_native_placed=0',
     'partner_native_arm=1','partner_native_arm=0','guest:partner_native_arm=1','host:partner_native_arm=0',
+    # WS4 v2: the C4 place / detonate mirror
+    'partner_native_place_mirror=1','partner_native_place_mirror=0','guest:partner_native_place_mirror=1','host:partner_native_place_mirror=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
@@ -170,6 +172,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_placed_census=2','partner_placed_census=','partner_placed_census=on','both:partner_placed_census=1',
     'partner_native_placed=2','partner_native_placed=','partner_native_placed=on','both:partner_native_placed=1',
     'partner_native_arm=2','partner_native_arm=','partner_native_arm=yes','both:partner_native_arm=1','partner_native_arms=1',
+    'partner_native_place_mirror=2','partner_native_place_mirror=','partner_native_place_mirror=on','both:partner_native_place_mirror=1',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
@@ -181,6 +184,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_ride_census=1','labsetting guest partner_ride_seat_id=1','labsetting host partner_ride_tilt=0',
         'labsetting partner_placed_census=1','labsetting host partner_placed_census=0',
         'labsetting partner_native_placed=1','labsetting guest partner_native_placed=0','labsetting partner_native_arm=1','labsetting host partner_native_arm=0',
+        'labsetting partner_native_place_mirror=1','labsetting guest partner_native_place_mirror=0',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
@@ -523,6 +527,38 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         $steps=@($cpSteps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'});$failed=$false
         try { & $validator } catch { $failed=$true }
         Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
+    }
+    # WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): partner-c4-v2.txt names the mirror key with the WS4 v1 C4 key and
+    # the census, places C4 at several spots and detonates, framing body 1 from the side before every phase.
+    & {
+        $Mode='lab'
+        $v2Path=Join-Path $RepoRoot 'tools\worker\scenarios\partner-c4-v2.txt'
+        Assert-True (Test-Path -LiteralPath $v2Path -PathType Leaf) 'shipped WS4 v2 scenario partner-c4-v2.txt'
+        $v2Lines=[IO.File]::ReadAllLines($v2Path)
+        $labsettings=@($v2Lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -cmatch '^labsetting(\s|$)'})
+        foreach($line in @('labsetting partner_native_place_mirror=1','labsetting partner_native_placed=1','labsetting partner_placed_census=1')){
+            Assert-True ($labsettings -ccontains $line) ('partner-c4-v2 names '+$line)
+        }
+        foreach($line in $labsettings){ Assert-True ($line -cmatch $lineMatch.Groups[1].Value) ('partner-c4-v2 labsetting is allow-listed: '+$line) }
+        $steps=@($v2Lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-c4-v2 steps valid in lab mode '+$failure)
+        $v2Text=[IO.File]::ReadAllText($v2Path)
+        foreach($needle in @('-PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab','place_mirror=1',
+            'partner_place_mirror=edge; act=place','partner_place_mirror=result; act=place; taken=1','reason=place','reason=detonate',
+            'mode=46','mode=47','owners=65535:0','NO partner_support=refused; ...; reason=placed_shared_write','reverted=2',
+            'counts=12,16383,12,8,12,12,8,8','v7_peer','RealSavesUnchanged')){
+            Assert-True ($v2Text.Contains($needle)) ('partner-c4-v2 covers: '+$needle)
+        }
+        $placeAttempts=@($steps|Where-Object{$_ -ceq 'host hold lmb 300 nowait'})
+        $detonate=@($steps|Where-Object{$_ -ceq 'host press e'})
+        Assert-True ($placeAttempts.Count -ge 3 -and $detonate.Count -ge 1) 'partner-c4-v2: several place attempts and a detonation'
+        $reframes=@($steps|Where-Object{$_ -cmatch '^placebehind guest host [0-9]+ [0-9]+$'})
+        Assert-True ($reframes.Count -ge ($placeAttempts.Count+$detonate.Count+1)) 'partner-c4-v2 re-frames the guest before every phase'
+        $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
+        Assert-True ($guestCounts.Count -ge 3) 'partner-c4-v2 requires the guest seed counts unchanged around the C4'
+        Assert-True (@($steps|Where-Object{$_ -cmatch '^guest burst c4-(place|det)'}).Count -ge 5) 'partner-c4-v2 films every place and detonation'
     }
     # WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): partner-c4.txt, a lab scenario that names both WS4 v1 keys and
     # the census, places C4 at several spots, detonates, then aims the arm, with every evidence line in its header.

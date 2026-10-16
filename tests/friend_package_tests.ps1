@@ -453,6 +453,13 @@ try {
                 !$guestIni.Contains('partner_native_placed') -and !$guestIni.Contains('partner_native_arm') -and
                 !$clipsIni.Contains('partner_native_placed') -and !$clipsIni.Contains('partner_native_arm')) 'Play-Coop lab.ini never names the WS4 v1 keys'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play -Partner native defaults C4 and arm holds on (WS4 v1)'
+            # WS4 v2: the C4 place / detonate mirror is lab only until its hidden run; Play-Coop never names it.
+            Assert-True (!$hostIni.Contains('partner_native_place_mirror') -and !$guestIni.Contains('partner_native_place_mirror') -and
+                !$clipsIni.Contains('partner_native_place_mirror')) 'Play-Coop lab.ini never names the WS4 v2 mirror'
+            Assert-Equal "$($n['partner_native_place_mirror'])" '0' 'native: play leaves the WS4 v2 mirror off'
+            $file = Join-Path $fixture 'play-ws4v2-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_place_mirror=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_place_mirror'])|$($m['partner_native_placed'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named WS4 v2 mirror off'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'

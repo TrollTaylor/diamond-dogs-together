@@ -515,6 +515,13 @@ struct LabConfig {
     bool partner_native_placed_given = false;
     bool partner_native_arm = false;
     bool partner_native_arm_given = false;
+    // WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): the remote's C4 place (gun
+    // mode 46) and detonate (47) mirrored into body 1's rec+0x3CC before its job,
+    // so body 1 kneels to place and plays the detonator motion (no charge is
+    // placed or set off in the viewer's world). Rides on partner_native_placed.
+    // Lab only and default 0 until its hidden run shows both motions; play
+    // forces it off.
+    bool partner_native_place_mirror = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;

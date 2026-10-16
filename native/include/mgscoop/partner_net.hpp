@@ -196,6 +196,8 @@ bool ConsumeInput(partner_input::Sample& out) noexcept;
 // sender sends v5 only then (plus probes); an older build refuses 116 bytes.
 bool PeerSendsInputV5() noexcept;
 bool PeerSendsInputV6() noexcept;
+// The same for input frame v7 (WS4 v2: the sender's C4 place word).
+bool PeerSendsInputV7() noexcept;
 // Clears the ring, the sequence state and the received look, and makes the
 // next SubmitLook send at once (mission boundaries). A new link session does
 // the receive half of this on the receive thread, in the same g_tx_lock

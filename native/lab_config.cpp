@@ -189,6 +189,9 @@ bool ParseWs4CensusKey(Slice key, Slice value, LabConfig& result, bool& ok) noex
     } else if (Equals(key, "partner_native_arm")) {
         ok = ParseBool(value, result.partner_native_arm);
         if (ok) result.partner_native_arm_given = true;
+    } else if (Equals(key, "partner_native_place_mirror")) {
+        // WS4 v2: the remote's C4 place / detonate motion on body 1 (lab only).
+        ok = ParseBool(value, result.partner_native_place_mirror);
     } else return false;
     return true;
 }
@@ -1413,6 +1416,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_ride_census = false;
         // The WS4 placed / arm census is a lab measurement too (read-only).
         c.partner_placed_census = false;
+        // WS4 v2: the place / detonate mirror stays lab-only until proven.
+        c.partner_native_place_mirror = false;
     }
 }
 
