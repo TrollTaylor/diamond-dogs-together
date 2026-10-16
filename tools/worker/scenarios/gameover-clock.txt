@@ -1,0 +1,32 @@
+# Lab-only held raw clock: the ESC pause menu and the MISSION FAILED menu hold the game's raw
+# Lua clock while OnUpdate runs (world_lua=event=raw_clock; step=held|resumed); world timers keep
+# wall time, so the host_continue probe still starts under the menu and both copies reload 30010.
+# Copied saves only; the probes stage the checkpoint, the shared death and the Continue.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+wait 8000
+host press escape
+wait 6000
+host capture clock-pause
+host press escape
+wait 4000
+waitlog host 'event=raw_clock; step=resumed; held_ms=[0-9]+' 10
+host worldtrigger world_probe=shared_checkpoint
+wait 5000
+guest worldtrigger world_probe=shared_death
+wait 15000
+both capture clock-gameover
+waitlog host 'event=raw_clock; step=held; raw_ms=[0-9]+' 10
+waitlog guest 'event=raw_clock; step=held; raw_ms=[0-9]+' 10
+host worldtrigger world_probe=host_continue
+waitmission host 30010 120
+waitmission guest 30010 120
+waitlog host 'event=probe; id=host_continue; step=done; result=ok' 10
+waitlog guest 'event=follow; step=replay; id=[0-9]+; src=30010; next=30010; kind=4' 10
+waitgameplay host 120
+waitgameplay guest 120
+wait 10000
+both capture clock-return
+state

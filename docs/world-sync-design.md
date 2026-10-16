@@ -42,7 +42,7 @@ The goal is one shared world: the same mission and location, the same enemies (a
   - Large payloads are chunked and reassembled in native code.
 - **Lua side.**
   - Lua drains the world queue only while `ready` is set, meaning after its own `MISSION_READY` for the current epoch. Until then, world messages wait in native.
-  - All protocol timers use `Time.GetRawElapsedTimeSinceStartUp()`, never frame counts. The unfocused guest runs at 16–60 FPS.
+  - All protocol timers use `Time.GetRawElapsedTimeSinceStartUp()`, never frame counts. The unfocused guest runs at 16–60 FPS. The game holds that clock still under the MISSION FAILED menu, so the wall clock carries it there (`W.now()`, docs/world-sync-protocol.md section 7, Clock).
 - **Names.**
   - Names go on the wire as `Fox.StrCode32` hashes.
   - Each PC builds `hash ↔ name ↔ gameObjectId` maps at `OnMissionGameStart` from `mvars.ene_soldierDefine` and `mvars.ene_soldierIDList` (`lib/TppEnemy.lua:1422-1447`), plus hostages, vehicles and CPs. The maps are rebuilt on a quest or reinforcement spawn.
