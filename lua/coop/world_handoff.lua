@@ -279,10 +279,10 @@ X.fromTitle = not heli
 if X.pass or F.token or W.host or not W.active then return original(...) end
 local now, t = W.now(), nxt ~= 0 and nxt or W.mission
 local name = heli and "TitleRestartHeli" or "TitleContinue"
+-- An armed guest is world_follow's (its step=request line); it never reaches the lock.
 if not heli and armed() then
     pcall(X.decline, t)
     F.request(4)
-    line(name, 4, t, 0, "armed")
     return X.reopen()
 end
 local ok, d, code, a, b, m = pcall(X.decide, name, 4, t, now, heli)

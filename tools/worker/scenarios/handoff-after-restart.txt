@@ -5,7 +5,10 @@
 # Run (coordinator only, hidden worker):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-after-restart.txt -SaveSeed lab -GuestSaveSeedRun <R4 runId> -LabSetting save_handoff=scene -GraphicsQuality low
 # Evidence:
-#  - guest script-observer.log: save_handoff=need; need=0; why=same_scene (no offer on the host).
+#  - guest script-observer.log: save_handoff=need; need=0; why=same (no offer on the host). The
+#    host restarts from the same lab seed, so the applied guest copy is byte-identical to the
+#    host's set and GuestNeed answers same before the location rule (run 318f135d); same_scene
+#    needs a different set at the same place (unit tests cover it).
 #  - guest world=paired at 40010; the host's title Continue is followed (kind 4 plus the
 #    title seeds); both reach 30010 and pair there.
 #  - Closed, BaselineRestored and RealSavesUnchanged true.
