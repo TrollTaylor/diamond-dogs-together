@@ -772,7 +772,7 @@ Then 'pwsh -File tools/worker/Invoke-WorkerChecks.ps1 -Profile Normal -EnableBac
 - applyhandoff: run\guest-saves progress equals the staged manifest; run\guest-saves-replaced\<stamp>-before-handoff holds the old real-seed tree; settings files are the guest's own; imported-progress.json has source=handoff.
 - R5 Restart, session 2:
 - Command: 'pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-after-restart.txt -SaveSeed lab -GuestSaveSeedRun <R4 runId> -LabSetting save_handoff=scene -GraphicsQuality low'.
-- The guest title is 40010 and the guest logs 'save_handoff=need; need=0; why=same_scene' (no offer).
+- The guest title is 40010 and the guest logs 'save_handoff=need; need=0; why=same' (no offer). Runtime correction (R5 run 318f135d): the host restarts from the same lab seed, so the applied guest copy equals the host's set (both 3ACACF1D) and GuestNeed answers same before the location rule; why=same_scene needs a different set at the same place.
 - world=paired at 40010; the host's title Continue is followed (kind 4 plus title seeds); both reach 30010 and pair there.
 - R6 Travel lock with escape:
 - Command: 'pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/travel-lock.txt -SaveSeed lab -GuestSaveSeed real -LabSetting travel_lock=1 -LabSetting save_handoff=off -GraphicsQuality low'.
