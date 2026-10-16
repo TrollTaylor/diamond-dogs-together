@@ -71,7 +71,8 @@ motions or generate a second real grenade.
   `rec+0x240` is logged at episode entry and the observed native release edge.
 - **Handle call (WS1, resolved; see "Handle call resolved" below).** Admission also requires
   `rec+0x240` == the Match-verified slot-3 handle (B), and every windowed body-1 job checks the
-  row that handle names in the global handle manager (C, detect-only until its hidden run).
+  row that handle names in the global handle manager (C; a foreign row latches support off for the mission since
+  the hidden runs of 2026-10-16).
 
 ## Patch bytes and contract pins
 
@@ -436,7 +437,7 @@ The call is safe for body 1 as v1 is built: at every throw call rec+0x240 is bod
 rec+0x240 whose row an engine-side free handed to the viewer. Examples are the iface reset (vt+0x38/vt+0x160) and
 `0x1055EA0` (vt+0x1C0/vt+0x1C8, the viewer's model instance). None is shown to be reachable. B guards only the
 input-driven vt+0x160 modes. Only C sees a stale handle behind the other users: it checks the row whenever the record
-has B's identity and class 2/3, but it only detects. WS4 (type 13 / class 3) must audit this table and cannot rely on the five vt+0x160 sites alone.
+has B's identity and class 2/3 and latches support off on a foreign row, but it cannot stop the call itself. WS4 (type 13 / class 3) must audit this table and cannot rely on the five vt+0x160 sites alone.
 Three fail-closed pins close or detect the risk:
 
 - **B (admission).** `partner_support_equip::Ready()` also returns the Match-verified slot-3 handle
@@ -456,20 +457,23 @@ Three fail-closed pins close or detect the risk:
   line even past the shared cap). v1 does not force that re-activation; a run that shows the line fails (see "Hidden
   run"):
   `partner_support=refused; slot=3; equip=N; type=12; reason=rec240_stale; rec240=0x..; slot_handle=0x..`.
-- **C (per-job row check, detect-only).** After every windowed body-1 job, while the record has B's identity (so never
+- **C (per-job row check; detect-only first, latching since the hidden runs).** After every windowed body-1 job, while the record has B's identity (so never
   during a gun<->support or support<->support switch before `0x105FDB0` refreshes rec+0x240; critic #13) and its class
   `(rec+0x27C>>6)&7` is 2 or 3 (the iface reset's own gate), `partner_support_policy::CheckRow` reads X from the calls'
   own receiver `[prim+0x60]` (vtable `0x234B840` required, as in the writer's Capture) and requires
   `idx = rec240>>16 < [X+0x68]`, row word +0 == `(rec240>>5)&0x7FF` and owner word +2 == 1. Lines (one per handle or
   verdict change):
-  - `partner_support=rec240_check; slot=3; equip=N; type=12; reason=ok; rec240=0x..; why=ok; idx=..; capacity=..; row_equip=N; owner=1; class=2|3; checks=..; foreign=0; mode=log; latched=0`
+  - `partner_support=rec240_check; slot=3; equip=N; type=12; reason=ok; rec240=0x..; why=ok; idx=..; capacity=..; row_equip=N; owner=1; class=2|3; checks=..; foreign=0; mode=latch; latched=0`
   - `partner_support=rec240_check; ...; reason=unread; why=unread` (manager chain or row unreadable; never latches)
-  - `partner_support=refused; slot=3; equip=N; type=12; reason=rec240_foreign; rec240=0x..; why=owner|equip|range|empty; ...; mode=log; latched=0`
+  - `partner_support=refused; slot=3; equip=N; type=12; reason=rec240_foreign; rec240=0x..; why=owner|equip|range|empty; ...; mode=latch; latched=1`
 
-  `partner_support_policy::kRec240Latch` is **false**: a foreign row only logs. After a hidden run shows no
-  `rec240_foreign`, flipping it to true makes the same verdict call `LatchNativeSupportOff` for the mission
-  (`latched=1`, reserved log slot). C cannot stop an in-job native call; it detects an alias before more support
-  presses are admitted.
+  `partner_support_policy::kRec240Latch` is **true** (2026-10-16). It started false (`mode=log`: a foreign row only
+  logged). The hidden runs at `5f11c7b` showed no false positive: lab `1b85d7f2` logged `reason=ok; owner=1` for 354
+  (`0x22c4c`) and 349 (`0x22bac`), and the play rehearsals `1be14967` / `dc8cefc8` / `3a3a0913` logged only
+  `reason=ok`; none had `rec240_foreign`, `rec240_stale` or `unread`. A foreign verdict now sets the stock latch
+  (`g_support_leak`, the same mission latch as `LatchNativeSupportOff`; `latched=1`, reserved log slot): native support
+  stays off for the mission and later presses get the old strip. C cannot stop an in-job native call; it catches an
+  alias before more support presses are admitted.
 - **E (contract).** New pins: `0x101E1D4` (prim+0x60 store), `0x103C944..0x103C980` (factory/vtables),
   `0x1089289..0x10892D1` (mode-28 site), `0x1062629..0x106263D` and `0x1062676..0x106269C` (iface reset class gate,
   vt+0x38, vt+0x160), `0x105FEA5`, `0x105FF6F`, `0x10602E8..0x10602F7` (the rec+0x240 writer), whole bodies
@@ -491,7 +495,8 @@ Tests: `partner_support_policy_tests` gained 73 checks (1378 -> 1451): record re
 reader-based record wiring on a fake prim/record, and the row check on fake manager tables (class matrix 0..7; own row
 ok with the pin bit set; viewer-owned row; other owner; reused row with another equip word; index == capacity; last
 in-range index; empty handles; wrong/sibling manager vtable, no manager, zero or 17-bit capacity, no rows and an
-unreadable row are `unread`; the detect-only default never latches; the latch mode latches exactly the foreign verdicts).
+unreadable row are `unread`; detect-only mode never latches; the latch mode, now the default, latches exactly the
+foreign verdicts).
 The hook static_asserts the pure policy's offsets against the generated contract. Review fix WS1-1 added 11 checks
 (1451 -> 1462): `RecordStale` (another index, equip or kind and an empty rec+0x240 under the identity are stale; no
 Match-verified handle or a switch is not judged; no state of a normal equip/follow, before or between the two
@@ -501,7 +506,7 @@ Still open (research "handle-call" Open): when exactly `0x1061F50` runs for body
 `[X+0x198]` were not opened; the LIFO free-list decode is inferred; the other plugin with six X vt+0x160 callers
 (`0x11FB84F` .. `0x11FCAD2`, handles at +0x18 of per-id 0x60 records) stays outside v1 (slots 4/6 refused).
 
-**Hidden run (runtime owner; not run here).** Re-run the throws scenario of `aaa2a0e0`/`ea93a2e3` in lab:
+**Hidden run (done 2026-10-16; see the result below).** Re-run the throws scenario of `aaa2a0e0`/`ea93a2e3` in lab:
 `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-native.txt
 -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab` (MGS_GAME_LUA_DIR unset). Accept when:
 scenario.json Closed / BaselineRestored / RealSavesUnchanged; the throws still pass exactly as in `ea93a2e3` (equip 354
@@ -510,6 +515,13 @@ and 349, `armed; reason=throw` and `throw_release`, every `stock_check; ...; cha
 `partner_support=rec240_check; ...; reason=ok; ...; owner=1` per thrown equip (354 and 349) on the guest; **no**
 `reason=rec240_foreign`, **no** `reason=rec240_stale` and no `reason=unread` (any of them fails the run). Then flip
 `kRec240Latch` (and its fixture assertion) and re-run once.
+
+Result at `5f11c7b` (run `1b85d7f2cc794f90a57e665edd2d4189`, lab, research worker): passed like `ea93a2e3`. Every guest
+`counts=12,16383,12,8,12,12,8,8` require passed, every `stock_check` had `changed=0`, and the frames show both throws.
+On the guest: `rec240_check; reason=ok; owner=1` for 354 (`rec240=0x22c4c; idx=2; class=2; foreign=0`) and 349
+(`0x22bac`); the host logged the same for the guest's 354. Neither role logged `rec240_foreign`, `rec240_stale` or
+`unread`. The play rehearsals at the same head (below) logged only `reason=ok` too. `kRec240Latch` is therefore now
+**true**; the post-flip re-run is recorded below.
 
 ## Throws in play (WS2 Stage A + hardening, 2026-10-16)
 

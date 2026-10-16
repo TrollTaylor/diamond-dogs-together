@@ -50,7 +50,7 @@ sp::Rec240Row Row(std::uint16_t equip=354) noexcept {return sp::CheckRow(Read,kB
 }
 template<class Check> void Rec240Fixtures(Check& check) {
  using sp::Rec240;
- static_assert(!sp::kRec240Latch,"WS1 C starts detect-only (log, no latch) until its hidden run");
+ static_assert(sp::kRec240Latch,"WS1 C latches a foreign row (flipped after the hidden runs showed no false positive)");
  // --- B: record_ready also requires rec+0x240 == the Match-verified slot-3 handle.
  sp::RecordIn r{};r.chain=true;r.switching=false;r.rec_equip=r.equip=354;r.slot_hand=3;r.cls=2;
  r.rec_handle=r.slot_handle=fake::Handle(5,354);
@@ -129,12 +129,12 @@ template<class Check> void Rec240Fixtures(Check& check) {
  fake::Reset();fake::Put<std::uintptr_t>(fake::kEngine+fake::k::kEngineRows,0);check(fake::Row().verdict==Rec240::unread,"C: no row table");
  fake::Reset(fake::Handle(0x400,354));fake::Put<std::uint32_t>(fake::kEngine+fake::k::kEngineCapacity,0xFFFF);
  {const auto row=fake::Row();check(row.verdict==Rec240::unread && !sp::Rec240Latches(row.verdict,true),"C: unreadable row is unread, never a latch");}
- // Detect-only first: the default never latches; the latch mode latches every foreign verdict only.
+ // The default (latch) latches exactly the foreign verdicts; detect-only mode never latches.
  for(Rec240 v: {Rec240::skip,Rec240::ok,Rec240::unread,Rec240::empty,Rec240::range,Rec240::equip,Rec240::owner}){
   const bool foreign=v==Rec240::empty || v==Rec240::range || v==Rec240::equip || v==Rec240::owner;
   check(sp::Rec240Foreign(v)==foreign,"C: foreign verdict set");
-  check(!sp::Rec240Latches(v,sp::kRec240Latch),"C: detect-only default never latches");
-  check(sp::Rec240Latches(v,true)==foreign,"C: latch mode latches exactly the foreign verdicts");}
+  check(!sp::Rec240Latches(v,false),"C: detect-only mode never latches");
+  check(sp::Rec240Latches(v,sp::kRec240Latch)==foreign,"C: the default latches exactly the foreign verdicts");}
  check(std::strcmp(sp::Rec240Name(Rec240::owner),"owner")==0 && std::strcmp(sp::Rec240Name(Rec240::ok),"ok")==0 &&
        std::strcmp(sp::Rec240Name(Rec240::empty),"empty")==0 && std::strcmp(sp::Rec240Name(Rec240::unread),"unread")==0,"C: verdict names");
 }

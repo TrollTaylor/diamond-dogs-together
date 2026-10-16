@@ -256,8 +256,8 @@ constexpr bool ContextHold(const StallHoldIn& s) noexcept {
 // only). B covers only the four input-driven modes. The gun plugin also passes
 // rec+0x240 to 17 other X methods at 22 more sites (REC240_X_CALLS and
 // REC240_X_CALLS_BY_HAND in the contract generator; docs "Other X calls"). Those
-// are unaudited; behind them and the iface reset only C's detect-only row check
-// sees a stale handle.
+// are unaudited; behind them and the iface reset only C's per-job row check
+// sees a stale handle (it latches support off; it cannot stop the in-job call).
 // Offsets duplicated from partner_player_contract.hpp (this header stays pure
 // and includable by fixtures); partner_input_hook.cpp static_asserts them equal.
 namespace rec240 {
@@ -268,10 +268,13 @@ inline constexpr std::uint32_t kRecSwitch=0x80;
 inline constexpr std::size_t kEngineCapacity=0x68, kEngineRows=0x140, kRowStride=6, kRowEquip=0, kRowOwner=2;
 inline constexpr std::uint16_t kOwnerBody1=1;
 }
-// Detect-only first (spec WS1 C): a foreign rec+0x240 row logs
-// reason=rec240_foreign and does NOT latch until a hidden run has shown no
-// false positive; then this flips to true (support latched off for the mission).
-inline constexpr bool kRec240Latch=false;
+// Spec WS1 C started detect-only (a foreign row only logged). The hidden runs
+// at 5f11c7b showed no false positive: lab 1b85d7f2 and play 1be14967 /
+// dc8cefc8 / 3a3a0913 logged only reason=ok owner=1 and no rec240_foreign,
+// rec240_stale or unread. So a foreign rec+0x240 row (empty, range, equip,
+// owner) now latches native support off for the mission
+// (reason=rec240_foreign; mode=latch; latched=1). unread never latches.
+inline constexpr bool kRec240Latch=true;
 // The gun record body 1's native support would act on. chain: prim vtable,
 // prim+0x8 == blk1 and prim+0x58 == rec (the existing record_ready identity).
 // slot_handle: the Match-verified slot-3 handle Y+0x40[1*7+3] from
