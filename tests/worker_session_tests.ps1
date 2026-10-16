@@ -150,6 +150,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_fire_census=1','partner_native_aim_intent=pad','guest:partner_native_reload_rate=adapt','partner_native_unsupported=0',
     'host:partner_native_dry_stop=1','partner_native_aim_intent=state','partner_native_reload_rate=off',
     'partner_native_support=1','partner_native_support=0','guest:partner_native_support=1','host:partner_native_support=0',
+    # WS4 step 0: the read-only placed / arm census
+    'partner_placed_census=1','partner_placed_census=0','guest:partner_placed_census=1','host:partner_placed_census=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
@@ -158,6 +160,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_ride=drive','partner_ride_seat_exit=jump','partner_ride_seat_enter=',
     'partner_fire_census=2','partner_native_aim_intent=on','partner_native_reload_rate=fast','partner_native_unsupported=yes',
     'partner_native_support=2','partner_native_support=','partner_native_support=yes',
+    'partner_placed_census=2','partner_placed_census=','partner_placed_census=on','both:partner_placed_census=1',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
@@ -166,6 +169,7 @@ Assert-True ($lineMatch.Success) 'the scenario labsetting regex'
 foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partner_native_slot=call','labsetting partner_native_equip=manifest',
         'labsetting partner_fire_census=1','labsetting host partner_native_aim_intent=state','labsetting partner_native_reload_rate=adapt',
         'labsetting partner_native_support=1','labsetting guest partner_native_support=0',
+        'labsetting partner_placed_census=1','labsetting host partner_placed_census=0',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
@@ -175,6 +179,7 @@ foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','lab
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
+Assert-True ('labsetting partner_placed_census=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses an invalid placed census bool'
 Assert-True ($scenarioText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'") -and
     $sessionText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'")) 'the reload/slot/equip keys need the gun stage'
 # EVADE 0x40000 (dive/evade/roll) is in every native mask; ACTION 0x20 (ride, knife kill, pickup) never; FIRE 0x10

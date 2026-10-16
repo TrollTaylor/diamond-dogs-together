@@ -176,6 +176,14 @@ bool ParseRound2SupportKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     return true;
 }
 
+// WS4 step 0: the read-only placed / arm census (partner_placed_census=0|1),
+// its own helper for the same nesting limit.
+bool ParseWs4CensusKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (!Equals(key, "partner_placed_census")) return false;
+    ok = ParseBool(value, result.partner_placed_census);
+    return true;
+}
+
 // The round-1 actions track's keys (docs/anim-round1-actions.md): true when
 // `key` is one of them (`ok` then says whether its value parsed).
 bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
@@ -249,10 +257,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
-        // Separate key helpers (anim rounds 1-2, save handoff): the main chain
-        // is at MSVC's block nesting limit.
+        // Separate key helpers (anim rounds 1-2, save handoff, the WS4 census):
+        // the main chain is at MSVC's block nesting limit.
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
-            ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok)) {
+            ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
+            ParseWs4CensusKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -1369,6 +1378,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_equip_measured = false;
         // The fire census is a lab measurement (it swaps a forwarding census slot).
         c.partner_fire_census = false;
+        // The WS4 placed / arm census is a lab measurement too (read-only).
+        c.partner_placed_census = false;
     }
 }
 

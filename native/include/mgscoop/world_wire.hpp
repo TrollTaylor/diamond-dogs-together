@@ -203,6 +203,9 @@ struct CfgReply {
     // after Core::Cfg (which leaves them 0): r[12] the save_handoff_state::LuaCode
     // and r[13] the travel lock (1 may apply, else 0).
     std::uint8_t handoff, lock;
+    // WS4 step 0 (lab key partner_placed_census): r[14] 1 asks the Lua observer for the
+    // event=obs_att attacker census lines, else 0; filled only by world_link::HandleCfg.
+    std::uint8_t census;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

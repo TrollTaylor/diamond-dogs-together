@@ -497,6 +497,11 @@ struct LabConfig {
     // Native type-12 support throws are an explicit experiment; no profile enables them.
     bool partner_native_support = false;
     bool partner_native_support_given = false;
+    // WS4 step 0 (docs/anim-round2-throws.md "WS4 step 0"): the read-only C4 /
+    // bionic-arm census (partner_placed_census lines, the input hook's pad
+    // sample and the Lua event=obs_att lines through world CFG r[14]). No
+    // write, no game call; default 0; play forces it off.
+    bool partner_placed_census = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;

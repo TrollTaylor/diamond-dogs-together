@@ -800,6 +800,27 @@ SITES += [
      'X vt+0x38 0xDC64E0 (1/2): kinds 1..8 flag bytes; else if row[5] bit 0 -> 0xDC6540(X-0x20, idx) (model instance release)'),
     (0xDC6530, 'e0418bd0e8070000004883c428c3', 'X vt+0x38 0xDC64E0 (2/2): call 0xDC6540; ret at 0xDC653D'),
 ]
+# --- WS4 step 0: the read-only placed / arm census (partner_placed_census, lab key partner_placed_census=1). No patch,
+# no call: these pin the layouts the census reads. The placed-object service owner table as the detonation 0xFC54F0
+# (placed iface vt+0x68, pinned below) reads it: owners u16 iface+0xB0[0..u32 iface+0x6C), per-owner slots u32
+# iface+0x70 from u32 iface+0x68 + per*index, slot flags iface+0x90 (stride 3, bit 0), slot equip u16 iface+0x18
+# (stride 4), age u16 iface+0xD8[per*index + j]. And mode 46 op 1's gate: offline (P+0x204 bit 8 clear) or the local
+# id goes to 0x107BC9B (0x104CF00, then the plugin latch +0x350 bit 3 / u16 +0x3E8 at 0x107BD64..0x107BD8B); the
+# online-remote branch folds rec+0x3CC bits 22-23 into 20-21 and jumps to 0x107BD93 past them.
+SITES += [
+    (0xFC557A, '448b436c0fb754244833c04585c07417488b8bb0000000663911740effc04883c102413bc072f0418bc0413bc074ab',
+     'placed detonate 0xFC54F0: index of the owner (u16 [rsp+0x48]) in u16 iface+0xB0[0..iface+0x6C); unknown -> 0xFC5554'),
+    (0xFC55A9, '8b4b708bbbe000000085c9745c448b4b68448bd14c897424404c8bb390000000440fafd0448bd94503ca4b8d044e41f6040101'
+     '7424488b4318420fb70c88',
+     'placed detonate 0xFC54F0: slots first iface+0x68 + per iface+0x70 * index; flags iface+0x90 stride 3 bit 0; '
+     'equip u16 iface+0x18 stride 4'),
+    (0xFC55E7, '3bcd7517488b83d8000000460fb70450443bc77306418bf8418bf141ffc141ffc249ffcb75c64c8b742440',
+     'placed detonate 0xFC54F0: the oldest live slot of that equip by age u16 iface+0xD8[per*index + j]'),
+    (0x107BC5B, '498b4608488b88380100008b8104020000c1e808a80174283bb11802000074208b87cc0300008bc8c1e90233c881e10000300033c8'
+     '898fcc030000e9f8000000',
+     'place (mode 46) op 1 gate: offline or the local id -> 0x107BC9B (the shared plugin latch); online remote folds '
+     'rec+0x3CC bits 22-23 into 20-21, jmp 0x107BD93'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -947,6 +968,10 @@ SLOTS += [
     (0x234B470, 0x38, 0xDC64E0, 'handle manager sibling vt+0x38 = model instance release'),
     (0x234B840, 0x40, 0xDC0350, 'handle manager vt+0x40 = has-model test'),
     (0x234B470, 0x40, 0xDC0350, 'handle manager sibling vt+0x40 = has-model test'),
+]
+# WS4 step 0: the placed iface's detonation, the owner-table reader the census mirrors (never called by us).
+SLOTS += [
+    (0x23A9FD0, 0x68, 0xFC54F0, 'placed-object service live iface vt+0x68 = detonate(owner id & 0x1FF, equip)'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 
@@ -2286,6 +2311,19 @@ w('// rows: u16 equip +0, u16 owner +2, byte 4 bit 7 pin, byte 5 bit 0 model ins
 w('inline constexpr std::uintptr_t handle_engine_vt_rva=0x234b840, handle_engine_vt_alt_rva=0x234b470, handle_pin_rva=0xdc1740;')
 w('inline constexpr std::size_t prim_handle_engine=0x60, handle_engine_capacity=0x68, handle_engine_rows=0x140;')
 w('inline constexpr std::size_t handle_row_stride=6, handle_row_equip=0, handle_row_owner=2, handle_vt_pin=0x160, handle_vt_release=0x38;')
+w('// --- WS4 step 0 census (read-only; partner_placed_census): the placed iface owner table as the detonation 0xfc54f0')
+w('// (iface vt+0x68) reads it: owners u16 iface+0xb0[0..u32 iface+0x6c), slot first + per*index + j (u32 iface+0x68,')
+w('// u32 iface+0x70), flags iface+0x90 stride 3 bit 0, equip u16 iface+0x18 stride 4, age u16 iface+0xd8[per*index + j].')
+w('// Mode 46 op 1 (gate 0x107bc5b: offline or the local id -> 0x107bc9b) latches the gun plugin: +0x350 bit 3 and')
+w('// u16 +0x3e8 = u16 +0x3d8 (0x107bd64..0x107bd8b); its online-remote branch 0x107bc7b folds rec+0x3cc bits 22-23')
+w('// into 20-21 and jumps to 0x107bd93. The stun arm (mode 52, 0x1085b50) op 0 reads [P+0xb0]+0x2c bit 0 and the')
+w('// float [P+0xb0]+0x10 directly.')
+w('inline constexpr std::uintptr_t placed_detonate_rva=0xfc54f0, place_gate_rva=0x107bc5b, place_gate_remote_rva=0x107bc7b, place_shared_rva=0x107bc9b;')
+w('inline constexpr std::size_t placed_vt_detonate=0x68, placed_first=0x68, placed_owner_count=0x6c, placed_per_owner=0x70;')
+w('inline constexpr std::size_t placed_equips=0x18, placed_equip_stride=4, placed_flags=0x90, placed_flag_stride=3, placed_owners=0xb0, placed_age=0xd8;')
+w('inline constexpr std::size_t prim_place_flags=0x350, prim_place_target=0x3d8, prim_place_latched=0x3e8, gun_surface=0x3cc;')
+w('inline constexpr std::uint32_t prim_place_bit=0x8;')
+w('inline constexpr std::size_t pad_stun_mag=0x10, pad_stun_mask=0x2c;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

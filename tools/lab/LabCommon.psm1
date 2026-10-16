@@ -326,6 +326,8 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_fire_census'; Json = 'fire_census'; Kind = 'bool' },
     # Native thrown support (type 12 only), default off in every profile.
     @{ Key = 'partner_native_support'; Json = 'native_support'; Kind = 'bool' },
+    # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
+    @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

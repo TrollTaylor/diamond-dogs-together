@@ -29,6 +29,9 @@ struct Config {
     std::uint8_t saves;          // the save gate held (always 1 here)
     std::uint32_t build;         // ParseBuild(lab::ProbeVersion())
     LogFn log;
+    // WS4 step 0: lab key partner_placed_census (lab mode only): CFG r[14] = 1
+    // asks the Lua observer for its event=obs_att attacker census lines.
+    bool placed_census = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

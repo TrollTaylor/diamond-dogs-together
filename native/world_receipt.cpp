@@ -189,10 +189,10 @@ bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint
 
 std::size_t FormatCfgReply(const CfgReply& r, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return 0;
-    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
+    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
                                 unsigned(r.proto), unsigned(r.link), unsigned(r.epoch), unsigned(r.probe), unsigned(r.mode),
                                 unsigned(r.session), unsigned(r.remote_mission), unsigned(r.remote_level), unsigned(r.wait),
-                                unsigned(r.handoff), unsigned(r.lock));
+                                unsigned(r.handoff), unsigned(r.lock), unsigned(r.census));
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
     return static_cast<std::size_t>(n);
 }

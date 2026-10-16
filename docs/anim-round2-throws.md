@@ -78,9 +78,9 @@ motions or generate a second real grenade.
 Inspected executable (read only): `D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe`,
 version 1.0.15.4, SHA-256
 `085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
-The generator currently verifies **614 code sites and 128 vtable slots** (589/122 before the WS1
-handle-call pins, 607/128 before its review fixes, 612/128 before the WS2 review fixes), including all previous
-reference/containment assertions.
+The generator currently verifies **618 code sites and 129 vtable slots** (589/122 before the WS1
+handle-call pins, 607/128 before its review fixes, 612/128 before the WS2 review fixes, 614/128 before the WS4
+step 0 census pins), including all previous reference/containment assertions.
 
 | RVA | Original bytes | Enabled in-memory bytes |
 |---|---|---|
@@ -647,3 +647,40 @@ host Continue, the guest's counts read back from the reloaded save, one more thr
 separate decision (a rehearsal-only world-probe admission). Stage B follows only after these pass: the default flip
 (`lab_config.cpp` ResolveWeaponDefaults), lab_config_tests matrix, lab_ini_check, friend_package_tests, docs, then a
 re-run of `partner-support-play.txt` without `-LabSetting partner_native_support=1`.
+
+## WS4 step 0: placed and arm census (read-only, 2026-10-16)
+
+Branch `wp/feat-c4` (from `wp/feat-throws` 5f11c7b, WS1 + WS2). Nothing here changes behaviour: one new lab key,
+`partner_placed_census=0|1` (default 0, play forces it off, no profile enables it), adds read-only log lines that
+answer the WS4 questions before any C4 or arm admission (spec WS4 "Step 0", critic #8-#12). No write and no call
+into game code: the readers are templates over a read function (`native/include/mgscoop/partner_placed_census.hpp`).
+
+| Question | Where | Line |
+|---|---|---|
+| Q1 gun-record class `(rec+0x27C>>6)&7` and mode `rec+0x2C0` of the viewer's C4 (391..395, type 13) and arms (515..518, type 14) | observer `ObservePlacedCensus` (10 Hz, natural owner), qualified `partner_player::ReadGun` k=0 and k=1 | `partner_placed_census=gun; k=..; equip=..; type=..; cls=..; mode=..; state=..; ...` on a change while C4/an arm is in hand, a place (43..47) or arm (52..56) mode runs, or the plugin latch is set |
+| Q2 owner 1 in the placed owner table | the service chain `*(*(base+0x2C3A8A0)+8)` -> `+0x98` -> `+0x208`, iface vtable `0x23A9FD0` exactly (`0x23A9D20`: `dying`), the table exactly as `0xFC54F0` reads it | `partner_placed_census=service; reason=ok; count=..; per=..; first=..; owner0=..; owner1=..; live0=..; live1=..; owners=id:live[equips],..` on change |
+| Q3 the plugin latch `+0x350` bit 3 / u16 `+0x3E8` (from `+0x3D8`) | the same gun line, per instance, and `same_prim` (one shared plugin or one per instance) | `latched=..; p3d8=..; p3e8=..; same_prim=..` |
+| Q4 attacker ids of Dead/Neutralize/Unconscious/Dying | Lua `world_sync.lua` `W.censusLine`, enabled by world CFG `r[14]` (14 values now; `world_link::HandleCfg`, lab only) | `world_lua=event=obs_att;m=..;ent=..;id=..;a1=..;c1=..;a2=..;c2=..;a3=..;c3=..` (kills cap 400, Damage 200) |
+| Q5 does body 1's window shadow `[P+0xB0]+0x10` / `+0x2C` (stun op 0) | `partner_input_hook` drain window, `PadCensusPre` right before the job and `PadCensusPost` before POST, a seqlock sample (`PublishPad`) | `partner_placed_census=pad; viewer_mag=..; viewer_mask=..; body_mag=..; body_mask=..; mode=..; differs=..; arm=..` |
+
+Contract (regenerated, `--check` passes): **618 code sites, 129 vtable slots** (614/128 before). New pins: the
+owner-table reader of the detonation `0xFC54F0` (`0xFC557A`, `0xFC55A9`, `0xFC55E7`: owners u16 `iface+0xB0`,
+count `+0x6C`, per `+0x70`, first `+0x68`, flags `+0x90` stride 3, equip `+0x18` stride 4, age `+0xD8`), the
+mode-46 op-1 gate `0x107BC5B..0x107BC9B` (offline or local id -> the shared latch block `0x107BC9B`; online remote
+folds rec+0x3CC bits 22-23 into 20-21 and jumps to `0x107BD93`), and the slot `0x23A9FD0+0x68 = 0xFC54F0`. The
+header gains `placed_*`, `prim_place_*`, `gun_surface`, `pad_stun_*`; `partner_placed_census.cpp` static-asserts
+them against the census offsets. The latch offsets `+0x350/+0x3D8/+0x3E8` come from the mode-46 pcode
+(`0x107BD64..0x107BD8B`, research "placed-arms"); their store bytes are not pinned (not read from the exe here).
+
+Tests: `partner_placed_census_tests` (fake byte-map memory: the service chain refusals, owner rows, owner 1 found
+at `first + per*index + j`, digest, the gun extras and latch, the logging policy, budgets, the pad seqlock and the
+contract pins), `partner_defer_tests` (the real hook's drain window on the fake world: off publishes nothing, on
+publishes the viewer's saved `0.25 / 0x100` against body 1's shadowed values, and the host's pad is byte-identical
+afterwards), `world_receipt_tests` (`r[14]`), `world_sync_lua_check` (`obs_att` lines, classes, caps, off without
+`r[14]`), `lab_config_tests` and `worker_session_tests` (the key in all three `-LabSetting` copies).
+
+Hidden run (not run here): `tools/worker/scenarios/partner-c4-census.txt` (evidence lines in its header). Its
+stimulus uses the lab seed's C4 395 (support entry 2) and whatever arm the seed carries: no debug lever equips a
+specific arm (`debug weapon` only reaches hip/back/secondary residents), so the stun-arm questions stay open if the
+seed's arm is not 515. The C4 detonate key (RELOAD) is the retail binding as remembered, not verified here: no
+`mode=47` line means the stimulus missed.

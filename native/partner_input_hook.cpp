@@ -54,6 +54,7 @@
 #include "mgscoop/partner_support_policy.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_pad_bits.hpp"
+#include "mgscoop/partner_placed_census.hpp"
 #include "partner_player_contract.hpp"
 #include <MinHook.h>
 #include <intrin.h>
@@ -1361,6 +1362,44 @@ void ProbeRecord(std::uintptr_t rec) noexcept {
     InterlockedExchange(&g_d_rec_next, static_cast<LONG>(next));
     InterlockedExchange(&g_d_rec_mag, ok ? pi::Milli(mag) : 0);
     InterlockedExchange(&g_d_rec_heading, ok ? pi::Milli(heading) : 0);
+}
+
+// WS4 step 0 (lab key partner_placed_census, read-only): the PlayerPad fields
+// the stun arm's op 0 (gun mode 52) reads directly, [P+0xB0]+0x10 (float) and
+// +0x2C (bit 0), as the viewer had them (the window's saved host copy) and as
+// body 1's job sees them (right before the job, and right after it, before
+// POST), with body 1's gun mode rec+0x2C0 at both ends (0xFF unless the Arm's
+// gun prim still holds its record). Reads only, on the hook thread inside the
+// window; a fault leaves that half unread and never marks the window faulted.
+namespace ppc = mgscoop::partner_placed_census;
+ppc::PadSample g_pc_pending{};
+std::uint32_t g_pc_windows = 0;
+std::uint8_t PadCensusMode(const pi::Arm& a) noexcept {
+    if (!a.gun_prim || !a.gun_rec || Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) != a.gun_rec) return 0xFF;
+    return Load<std::uint8_t>(a.gun_rec + c::gun_mode_cur);
+}
+void PadCensusPre(const pi::Arm& a, const Save& save) noexcept {
+    g_pc_pending = ppc::PadSample{};
+    if (!ppc::PadCensusOn() || !save.derived_saved || !save.masks_saved) return;
+    std::memcpy(&g_pc_pending.viewer_mag, save.derived + (c::pad_stun_mag - c::pp_derived), sizeof(g_pc_pending.viewer_mag));
+    std::memcpy(&g_pc_pending.viewer_mask, save.host_masks + (c::pad_stun_mask - c::pp_masks), sizeof(g_pc_pending.viewer_mask));
+    __try {
+        g_pc_pending.body_mag_pre = Load<float>(a.pp + c::pad_stun_mag);
+        g_pc_pending.body_mask_pre = Load<std::uint32_t>(a.pp + c::pad_stun_mask);
+        g_pc_pending.mode_pre = PadCensusMode(a);
+        g_pc_pending.pre_ok = true;
+    } __except (ProbeFilter(GetExceptionCode())) {}
+}
+void PadCensusPost(const pi::Arm& a) noexcept {
+    if (!ppc::PadCensusOn() || !g_pc_pending.pre_ok) return;
+    __try {
+        g_pc_pending.body_mag_post = Load<float>(a.pp + c::pad_stun_mag);
+        g_pc_pending.body_mask_post = Load<std::uint32_t>(a.pp + c::pad_stun_mask);
+        g_pc_pending.mode_post = PadCensusMode(a);
+        g_pc_pending.post_ok = true;
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    g_pc_pending.windows = ++g_pc_windows;
+    ppc::PublishPad(g_pc_pending);
 }
 
 // D3 telemetry: the remote's look the drain injected and instance 1's slot
@@ -3018,6 +3057,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         PoseRejectDiagnostic(reject::Stage::before,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));
         InterlockedIncrement(&g_pose_suppressed);g_pose_reason="pose_before_refused";return JobWindowOutcome::suppressed;
     }
+    PadCensusPre(a, save);  // read-only, lab key partner_placed_census
     timing=native_work_timing::Begin(native_work_timing::Kind::native_job);
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
     if(support_window)partner_support_guard::Leave();
@@ -3029,6 +3069,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     g_in_drain = false;
     if (save.rings_saved) g_ring_prev[static_cast<std::size_t>(consumer)] = j.held;
     ProbeRecord(a.rec1);
+    PadCensusPost(a);  // read-only, lab key partner_placed_census
     LookProbe(a, j);
     AfterJob(a, shots_before, ammo_before);
     if(a.native_support || g_support_episode)SupportCheck(a,j,support_before,support_slot_before,support_words_before,ammo_before);

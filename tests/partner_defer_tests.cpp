@@ -23,6 +23,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_placed_census.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "partner_player_contract.hpp"
 
@@ -1172,6 +1173,35 @@ void TestJobWindow() {
         Check(!hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 3, "pool0 == block: refused");
         w->pool[0] = 0;
         Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 4, "instance 1's block: windowed");
+    }
+    // WS4 step 0 (lab key partner_placed_census, read-only): the stun op-0 pad
+    // fields around body 1's job. Off: nothing is published. On: the viewer's
+    // PP+0x10 / +0x2C come from the window's saved host copy, body 1's are what
+    // its job saw, and the host's pad is byte-identical after the window.
+    {
+        namespace ppc = mgscoop::partner_placed_census;
+        ppc::detail::ResetPadForTest();
+        Put<float>(Addr(w->pp) + 0x10, 0.25f);  // the host's move magnitude
+        pd::JobParam param{0, 0, 0, 8, g_world.bits};
+        param.block = 1;
+        ppc::PadSample pad{};
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && !ppc::ReadPad(pad),
+              "pad census off: a windowed drain publishes nothing");
+        static unsigned char pp_before[sizeof(w->pp)];
+        std::memcpy(pp_before, w->pp, sizeof(pp_before));
+        ppc::SetPadCensus(true);
+        const bool windowed = hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0);
+        ppc::SetPadCensus(false);
+        Check(windowed && ppc::ReadPad(pad) && pad.windows == 1 && pad.pre_ok && pad.post_ok, "pad census on: one sample per windowed drain");
+        Check(pad.viewer_mag == 0.25f && pad.viewer_mask == 0x100u, "pad census: the viewer's PP+0x10 / +0x2C from the window's saved copy");
+        Check(pad.body_mag_pre != 0.25f && pad.body_mag_pre == pad.body_mag_post && (pad.body_mask_pre & 0x100u) == 0 &&
+              ppc::PadDiffers(pad), "pad census: body 1's job saw its own (shadowed) PP+0x10 / +0x2C");
+        Check(pad.mode_pre == 0xFF && pad.mode_post == 0xFF, "pad census: no gun prim in the Arm, the modes stay unread");
+        Check(std::memcmp(pp_before, w->pp, sizeof(pp_before)) == 0, "pad census: the host's pad is byte-identical after the window");
+        Check(Get<float>(Addr(w->pp) + 0x10) == 0.25f && Get<std::uint32_t>(Addr(w->pp) + c::pp_masks + 4) == 0x100u,
+              "pad census: the host's PP+0x10 / +0x2C are back");
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && ppc::ReadPad(pad) && pad.windows == 1,
+              "pad census off again: no new sample");
     }
     // A refused nested job from the pre-dispatch HUD probe keeps its own
     // callback; it must not replace the outer drain's pending original.

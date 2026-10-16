@@ -59,6 +59,22 @@ int main() {
     }
     Check(!Lab("enabled=1\nrole=host\npartner_native_support=1\npartner_native_support=0\n").partner_native_support,
           "explicit support 0 disarms a previous 1");
+    // WS4 step 0: the read-only placed / arm census is its own lab key, default off, no profile turns it on.
+    Check(!LabConfig{}.partner_placed_census && !Lab("").partner_placed_census, "placed census default off");
+    {
+        const auto on = Lab("enabled=1\nrole=host\npartner_placed_census=1\n");
+        Check(on.partner_placed_census && on.invalid_values == 0 && on.unknown_keys == 0, "placed census 1 parses");
+        Check(!Lab("enabled=1\nrole=host\npartner_placed_census=1\npartner_placed_census=0\n").partner_placed_census,
+              "placed census 0 after 1 turns it off");
+        const auto gunLab = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nmode=lab\nnet_bind=any\npartner=1\n"
+                                "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n");
+        Check(!gunLab.partner_placed_census && gunLab.partner_native_support, "the lab gun profile leaves the placed census off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_placed_census=") + value + "\n");
+            Check(!invalid.partner_placed_census && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid placed census value refuses");
+        }
+    }
 
     const auto guest = Lab(
         "\xEF\xBB\xBF# lab guest\r\n"
@@ -967,6 +983,9 @@ int main() {
         const auto playCensus = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_fire_census=1\npartner_native_reload_rate=adapt\n");
         Check(!playCensus.partner_fire_census && playCensus.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::adapt,
               "play: the fire census is lab only; the reload rate key is kept");
+        const auto playPlaced = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_placed_census=1\n");
+        Check(!playPlaced.partner_placed_census && playPlaced.invalid_values == 0 && playPlaced.play_refused == 0,
+              "play: the placed census is forced off (lab only), not a play refusal");
         Check(kPlayRefusedNativeDrive == 0x20000 && kPlayRefusedNativeDrive == (kPlayRefusedDebugSoldierWarp << 1), "native refusal bit");
         // Every play refusal is its own bit (no two refusals share one).
         const std::uint32_t play_refusal_bits[] = {kPlayRefusedLoopback, kPlayRefusedSelfSteamId, kPlayRefusedPeerSteamId, kPlayRefusedSelfName,

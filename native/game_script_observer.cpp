@@ -96,6 +96,7 @@
 #include "mgscoop/partner_support_equip.hpp"
 #include "mgscoop/partner_support_guard.hpp"
 #include "mgscoop/partner_support_policy.hpp"
+#include "mgscoop/partner_placed_census.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
@@ -1293,6 +1294,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.saves = 1;
     world.build = mgscoop::world_link::ParseBuild(lab::ProbeVersion());
     world.log = Log;
+    world.placed_census = labc.partner_placed_census && labc.mode == mgscoop::LabMode::lab;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -1862,6 +1864,121 @@ void ObserveNativeSupport() noexcept {
     }
 }
 
+// WS4 step 0 (docs/anim-round2-throws.md "WS4 step 0: placed and arm census"):
+// the read-only C4 / bionic-arm census, lab key partner_placed_census=1 in lab
+// mode (play forces the key off). Same natural owner and 10 Hz cadence as the
+// equipment observers. Reads only: the qualified partner_player::ReadGun for
+// both instances plus the plugin latch and record bytes next to it, the
+// placed-object service owner table (vtable-checked chain) and the input
+// hook's pad sample. No write, no game call. Capped per mission:
+//   partner_placed_census=gun; k=..      C4 / arm in hand, place or arm modes, the plugin latch
+//   partner_placed_census=service; ..    the owner table, on change
+//   partner_placed_census=pad; ..        body 1 in an arm mode, or a shadow verdict change
+//   partner_placed_census=status; ..     every 5 s
+void ObservePlacedCensus() noexcept {
+    namespace pc=mgscoop::partner_placed_census;
+    const auto& config=mgscoop::GetLabConfig();
+    const bool on=config.partner_placed_census && config.mode==mgscoop::LabMode::lab && lab_active && partner_on && partner_gate_ok;
+    pc::SetPadCensus(on);
+    if(!on || !game_base) return;
+    const auto& mission=partner_driver.mission;
+    const std::uint64_t now=mgscoop::partner_net::NowMs();
+    struct CensusState {
+        std::uint32_t mission=0xFFFFFFFFu,realize_gen=0xFFFFFFFFu;
+        bool announced=false,have_gun[2]{},have_service=false,have_pad=false;
+        pc::GunSample gun[2]{};
+        std::uint32_t service_digest=0;
+        pc::Service service{};
+        pc::PadSample pad{};
+        pc::Budget gun_budget{},service_budget{},pad_budget{},status_budget{};
+        std::uint64_t status_ms=0;
+    };
+    static CensusState st;
+    if(st.mission!=partner_mission || st.realize_gen!=mission.realize_gen) {
+        st=CensusState{};st.mission=partner_mission;st.realize_gen=mission.realize_gen;
+    }
+    if(!st.announced) {
+        st.announced=true;
+        LogFormat("partner_placed_census=on; mission=%u; realize_gen=%u; read_only=1; writes=0; calls=0\r\n",
+            unsigned(partner_mission),unsigned(mission.realize_gen));
+    }
+    const auto read=[](std::uintptr_t at,void* out,std::size_t size) noexcept {
+        SIZE_T count=0;
+        return at && size && at<=UINTPTR_MAX-size &&
+            ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),out,size,&count) && count==size;
+    };
+    const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+    char line[640]{};
+    // Q1 / Q3: both instances' gun records and plugin latches.
+    pp::State state{};
+    if(mission.realized && pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.arrays_ok && state.count==2 &&
+       state.local==0 && state.ids[0]==0 && state.ids[1]==1) {
+        pc::GunSample cur[2]{};
+        for(std::uint32_t k=0;k<2;++k) {
+            pp::Gun1 gun{};
+            if(!pp::Realized(state,k) || !pp::ReadGun(partner_addresses,state,k,gun) || !gun.fields_ok) continue;
+            pc::GunSample& s=cur[k];
+            s.ok=true;s.prim=gun.prim;s.rec=gun.rec;
+            s.equip=static_cast<std::uint16_t>(gun.fields.equip);s.w27c=gun.fields.flags27c;s.cls=pc::GunClass(s.w27c);
+            s.mode=gun.mode_cur;s.mode2=gun.mode;s.slot=gun.slot;s.hand=gun.hand_slot;s.f3c0=gun.gun3c0;
+            std::uint8_t type=0;
+            if(pp::EquipType(partner_addresses,s.equip,type)) s.type=type;
+            pc::ReadGunExtra(read,s);
+        }
+        const int same_prim=cur[0].ok && cur[1].ok ? (cur[0].prim==cur[1].prim ? 1 : 0) : -1;
+        for(unsigned k=0;k<2;++k) {
+            if(!cur[k].ok) continue;  // unread: the previous sample stays the reference
+            bool keep=true;
+            if(pc::LogGun(st.have_gun[k],st.gun[k],cur[k])) {
+                if(pc::Take(st.gun_budget,now,10,2000)) {
+                    if(pc::FormatGun(line,sizeof(line),k,cur[k],same_prim)) Log(line);
+                } else if(st.gun_budget.capped) {
+                    if(pc::CapReport(st.gun_budget)) LogFormat("partner_placed_census=capped; kind=gun; limit=2000\r\n");
+                } else {
+                    keep=false;  // over this second's budget: retried against the same reference
+                }
+            }
+            if(keep) {st.gun[k]=cur[k];st.have_gun[k]=true;}
+        }
+    }
+    // Q2: the placed-object service's owner table (owner 1 registered?).
+    const pc::Service svc=pc::ReadService(read,base);
+    if(!st.have_service || svc.digest!=st.service_digest) {
+        if(pc::Take(st.service_budget,now,5,600)) {
+            if(pc::FormatService(line,sizeof(line),svc)) Log(line);
+            st.service_digest=svc.digest;st.have_service=true;
+        } else if(st.service_budget.capped) {
+            st.service_digest=svc.digest;st.have_service=true;
+            if(pc::CapReport(st.service_budget)) LogFormat("partner_placed_census=capped; kind=service; limit=600\r\n");
+        }
+    }
+    st.service=svc;
+    // Q5: the stun op-0 pad fields around body 1's job (the hook's sample).
+    pc::PadSample pad{};
+    if(pc::ReadPad(pad)) {
+        bool keep=true;
+        if(pc::LogPad(st.have_pad,st.pad,pad)) {
+            if(pc::Take(st.pad_budget,now,10,1200)) {
+                if(pc::FormatPad(line,sizeof(line),pad)) Log(line);
+            } else if(st.pad_budget.capped) {
+                if(pc::CapReport(st.pad_budget)) LogFormat("partner_placed_census=capped; kind=pad; limit=1200\r\n");
+            } else {
+                keep=false;
+            }
+        }
+        if(keep) {st.pad=pad;st.have_pad=true;}
+    }
+    if((now<st.status_ms || now-st.status_ms>=5000) && pc::Take(st.status_budget,now,1,720)) {
+        st.status_ms=now;
+        LogFormat("partner_placed_census=status; k0_equip=%u; k0_cls=%u; k0_mode=%u; k0_latched=%u; k1_equip=%u; k1_cls=%u; "
+            "k1_mode=%u; k1_latched=%u; service=%s; owners=%u; owner1=%d; live1=%u; pad_windows=%u; pad_differs=%u\r\n",
+            unsigned(st.gun[0].equip),unsigned(st.gun[0].cls),unsigned(st.gun[0].mode),pc::Latched(st.gun[0]) ? 1u : 0u,
+            unsigned(st.gun[1].equip),unsigned(st.gun[1].cls),unsigned(st.gun[1].mode),pc::Latched(st.gun[1]) ? 1u : 0u,
+            st.service.refusal ? st.service.refusal : "ok",st.service.count,st.service.index1,unsigned(st.service.live1),
+            st.pad.windows,pc::PadDiffers(st.pad) ? 1u : 0u);
+    }
+}
+
 // The existing Lua OnUpdate polls in every mission, including title/ACC.
 // This path remains on the natural runtime owner under receipt_lock, independent
 // of the menu. Closing, termination and batch execution stop it before any reads.
@@ -1878,6 +1995,7 @@ void ObserveEquipmentTick() noexcept {
     ObserveStock46Writer();
     ObserveEquipWriter();
     ObserveNativeSupport();
+    ObservePlacedCensus();
 }
 
 void PublishDebugSnapshot() noexcept {

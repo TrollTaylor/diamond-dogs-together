@@ -101,6 +101,11 @@ local function fixture(options)
             if phase == '1' then c.cfgStarts = (c.cfgStarts or 0) + 1 else c.cfgQueries = (c.cfgQueries or 0) + 1 end
             return function()
                 local p = c.peer
+                if p and p.census ~= nil then
+                    -- A WS4 step 0 loader: r[14] the attacker census flag (lab key partner_placed_census).
+                    return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, p.session or 7, p.mission, p.level, p.wait, p.handoff or 0, p.lock or 0, p.census
+                end
                 if p and p.lock ~= nil then
                     -- A join-fix phase-2 loader: also the save handoff code r[12] and the travel lock r[13].
                     return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
@@ -399,6 +404,38 @@ do
     end
     F.msg(env, 'GameObject', 'Damage', c.ids.sol_b1, 1, 0)
     check(not has(c.logs, 'm=Damage'), 'Damage is recorded, not logged')
+    F.msg(env, 'GameObject', 'Unconscious', c.ids.sol_b1, 0, 3)
+    check(c.W.census == false and not has(c.logs, 'event=obs_att'), 'no CFG r[14]: no attacker census lines')
+end
+
+-- 3b. WS4 step 0 attacker census (CFG r[14] = 1, lab key partner_placed_census): every raw argument after
+-- the id with its attribution class for Dead / Neutralize / Unconscious / Dying (cap 400) and Damage (cap 200);
+-- log only: the regular obs lines and the original call are unchanged.
+do
+    local env, c = fixture({role = 2, peer = {mission = 30010, level = 3, wait = 0, census = 1}})
+    F.start(env, c)
+    check(c.W.census == true, 'CFG r[14]=1 turns the attacker census on')
+    F.clear(c)
+    local e = string.format('%.0f', u32('sol_b1'))
+    F.msg(env, 'GameObject', 'Unconscious', c.ids.sol_b1, 0, 3)
+    check(has(c.logs, 'event=obs_att;m=Unconscious;ent=' .. e .. ';id=' .. tostring(c.ids.sol_b1) .. ';a1=0;c1=local;a2=3;c2=') and
+        has(c.logs, ';a3=nil;c3=none') and has(c.logs, 'event=obs;m=Unconscious;ent=' .. e .. ';id=' .. tostring(c.ids.sol_b1) .. ';att=none'),
+        'Unconscious: the raw attacker argument and its class next to the unchanged obs line')
+    F.msg(env, 'GameObject', 'Dead', c.ids.sol_b2, 0, 9, 4)
+    check(has(c.logs, 'event=obs_att;m=Dead;ent=' .. string.format('%.0f', u32('sol_b2')) .. ';id=' .. tostring(c.ids.sol_b2) ..
+        ';a1=0;c1=local;a2=9;c2='), 'Dead: a1 is the attacker')
+    F.msg(env, 'GameObject', 'Damage', c.ids.sol_b3, 1, 0)
+    check(has(c.logs, 'event=obs_att;m=Damage;') and has(c.logs, ';a1=1;c1=') and has(c.logs, ';a2=0;c2=local;') and
+        not has(c.logs, 'event=obs;m=Damage'), 'Damage: a census line only (the attacker is a2)')
+    F.msg(env, 'GameObject', 'Conscious', c.ids.sol_b1, 0)
+    check(not has(c.logs, 'event=obs_att;m=Conscious'), 'Conscious is not part of the census')
+    F.clear(c)
+    for _ = 1, 402 do F.msg(env, 'GameObject', 'Dying', c.ids.sol_a1, 0) end
+    check(count(c.logs, 'event=obs_att;m=Dying') == 398 and count(c.logs, 'event=obs_att_cap;kind=kill') == 1,
+        'kills cap at 400 per mission (two already logged), one cap line')
+    for _ = 1, 202 do F.msg(env, 'GameObject', 'Damage', c.ids.sol_a2, 1, 0) end
+    check(count(c.logs, 'event=obs_att;m=Damage') == 199 and count(c.logs, 'event=obs_att_cap;kind=damage') == 1,
+        'Damage caps at 200 per mission (one already logged), one cap line')
 end
 
 -- 4. Roster: ipairs only, sorted, stable.
