@@ -11,8 +11,23 @@
 #  - "debug support" lists vars.supportWeapons[0..7]; the lab seed is 354,349,395,411,366,370,378,388 (run aaa2a0e0):
 #    entry 2 = 395 is the seed's C4 (391..395), selected with "debug slot support 2" (Player.SetCurrentSlot).
 #  - "spawn_enemy here" (labsetting debug_soldier_warp=1) puts a living guard 5 m in front of the host.
-#  - C4: LMB places at the feet (not aiming); RELOAD (r) detonates (retail binding, unverified here: if the host log
-#    shows no mode=47 line, the detonate stimulus missed; re-run with "host press e" in its place and report it).
+#  - C4 binding (runs 3ef82e27, 56e111b3, f572f8d8, 0acd0731, 0920df7f, edb2ecfc, 46e9c686, d88c140c): mode 43/44
+#    op 0 (scratch decompilations of 0x107E480 / 0x107D300) go to 46 (place) on rec+0x3CC bit 18 and 44 to 47
+#    (detonate) on bit 19 while the hold bit rec+0x3C0 bit 18 (the aim) stays set; dropping the aim goes 45 -> 0.
+#     place:    aim (RMB), then fire (LMB). On a valid spot (census surface=5) it places at once: 43 -> 46 (state
+#               1, 2, 4/5), live0 0 -> 1. On an invalid spot (surface=4, e.g. the start spot) it only readies:
+#               43 -> 44 -> 45 -> 0. Which spot is valid varied between runs (run ea04a338: neither P1 nor P2),
+#               so the host tries four spots P1..P4 (a valid one places; several may).
+#               LMB alone (tapped, held, looking down, crouched) never leaves mode 0.
+#     detonate: aim (RMB) with a live charge enters 43 -> 44, then the action key (E) while aiming: 44 -> 47, the
+#               guard's Dead 88 ms after E, live0 1 -> 0 (run d88c140c; also aim + fire + E in run edb2ecfc).
+#               Without a live charge aim + E still runs 43 -> 44 -> 47 (the switch-on) with no effect (ea04a338).
+#               With a live charge RELOAD (r), E alone and LMB alone did nothing (run d88c140c D1..D3); they stay
+#               in the run as negative controls.
+#    Every attempt is followed by a "support" marker in the host log.
+#  - The guard is spawned after the place: the host backs off (s, turning toward the camera), then taps w to face
+#    the charges again, so "spawn_enemy here" (5 m along the host's own yaw) lands near them. Spawning first
+#    (run 56e111b3) alerted him and put the host in reflex mode during the place.
 #  - The arm: "debug slot hand 0" selects the seed's bionic arm (equip read back from rec+0x24C in the census line).
 #    MISSING LEVER: no debug command equips a specific arm (debug weapon only reaches hip/back/secondary residents),
 #    so the stun-arm (515) and rocket-arm (517/518) sections only test the arm the lab seed carries; the k=0 gun line
@@ -38,6 +53,19 @@
 #         guest (slot 6 is still Gate::unsupported), so mode stays outside 52..56 there; arm=1 lines need WS4 itself.
 #  never: a write/patch line from this key, partner_input=fault, a crash; scenario.json Closed, BaselineRestored,
 #         RealSavesUnchanged.
+# Observed (runs 3ef82e27 .. a93db206, 2026-10-16; a93db206 is this file):
+#  Q1 C4 395: type=13 cls=3 (w27c 0x10000c1/0x10000c5), modes 43/44/45, 46 (state 1, 2, 4/5) and 47. Arm: the seed
+#     carries 516 (Hand of Jehuty), type=14 cls=6 (w27c 0x1000181), modes 1/2/3 (aim) and 55 (use); never 52..54.
+#  Q2 count=1 per=32 (first=200 in 30010): one owner row, id 65535 until the host's first place, then owner 0 with
+#     live0 1, 2 [395/395], back to 0 at the detonation. owner1=-1 throughout on both machines.
+#  Q3 p350=0x10 (bit 3 clear), p3d8=p3e8=0xffff, latched=0 on every 43..47 line (ground places carry no target);
+#     same_prim=0 on every line.
+#  Q4 host C4 kill: Damage a1=199 a2=0(local) a3=4; Dead a1=0(local) a2=3; Neutralize a1=0(local) a2=0 a3=8. The
+#     guest's synced copy: a1=65535(none). No Unconscious/Dying; Jehuty use gave no event.
+#  Q5 guest: differs=1 while only the host walks (body_mag 1.000, viewer 0.000) or only the guest crawls (viewer
+#     1.000, body 0.000), differs=0 with both still; masks 0x0 throughout.
+#  Side effect: the host's C4 also hits body 1 (downed_damage id=1 damage=5500, friendly_hit=queued), and the
+#     guest applies it to itself (friendly_hit=owner applied=1; the second charge downed the guest).
 labsetting partner_placed_census=1
 labsetting debug_soldier_warp=1
 title 200
@@ -68,29 +96,91 @@ both capture census-idle
 host hold w 1200
 guest burst walk 4 250
 wait 1500
-# --- C4 395: select, place at the feet, back off, a guard in front, detonate ---------------------------------------
+# --- C4 395: select, place at P1..P4 (aim + fire), back off, a guard near the charges, detonation attempts ------
 host debug slot support 2
 wait 1500
 guest burst c4-select 3 250
-host hold lmb 150 nowait
-guest burst c4-place 6 200
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p1 6 200
 host release
-wait 2500
+wait 1500
+host run support
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p2 6 200
+host release
+wait 1500
+host run support
+host hold d 1000
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p3 6 200
+host release
+wait 1500
+host run support
+host hold a 1000
+host hold a 1000
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p4 6 200
+host release
+wait 1500
 host run support
 both capture c4-placed
 host hold s 1500
 host hold s 1500
+wait 500
+host hold w 250
 wait 1000
-# The guard lands 5 m in front of the host: about the charge's spot after backing off.
 host run spawn_enemy here
 host expect ^guard_here;
-wait 3000
+wait 2500
 host run enemy_list 40
 both capture c4-armed
+# D1: RELOAD tapped.
 host press r
-guest burst c4-detonate 6 200
-wait 3000
+host burst c4-det-r 4 250
+wait 1000
 host run support
+# D2: the action key tapped, no aim.
+host press e
+host burst c4-det-e 4 250
+wait 1000
+host run support
+# D3: fire tapped, no aim.
+host hold lmb 150 nowait
+host burst c4-det-lmb 4 250
+host release
+wait 1000
+host run support
+# D4: aim only, then the action key.
+host hold rmb 1500 nowait
+wait 500
+host press e
+host burst c4-det-aim-e 4 250
+host release
+wait 1000
+host run support
+wait 2000
 host run enemy_list 40
 both capture c4-after
 # --- The bionic arm (hand slot): hold (rocket arms: mode 54), then use (stun arm: mode 52) near a guard -----------
@@ -99,18 +189,18 @@ wait 1500
 host run spawn_enemy here
 host expect ^guard_here;
 wait 2500
-host hold w 1000
+# No walk toward the guard: in runs f572f8d8..edb2ecfc he knocked the host down before the arm was used.
 guest burst arm-select 3 250
 host hold rmb 1500 nowait
 guest burst arm-hold 5 250
 host hold rmb 1500 nowait
 wait 400
 host hold rmb+lmb 150 nowait
-guest burst arm-use 5 200
+host burst arm-use 5 200
 host release
 wait 1000
 host hold lmb 150 nowait
-guest burst arm-use-hip 4 200
+host burst arm-use-hip 4 200
 host release
 wait 3000
 host run enemy_list 40
