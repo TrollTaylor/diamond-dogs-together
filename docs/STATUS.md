@@ -5,8 +5,10 @@
 link v2 is connected, and a named `partner_native_support=0` (or `-Partner clips`) opts out. The play hidden rehearsals
 with the named key passed before the flip (`117620b9` off, `e9244c56` bad, `733e023b` awful, the stall step
 `33c11da9`, lab regression `8c7f3472`: 4/4 throws each, the viewer's counts unchanged, no false latch). The default
-proof without the key is in [the throw design](anim-round2-throws.md) "Stage B". Not packaged yet; the installed
-0.12.6 friend loader keeps throws lab-only.
+proof without the key passed: hidden run `a0d8edf6` (play, `-WanSim bad`, no `-LabSetting`) logged
+`partner_support=mode; mode=play; reason=ok` on both copies and 4/4 partner throws on the guest with its counts unchanged
+and no false latch; frames show each throw ([the throw design](anim-round2-throws.md) "Stage B"). Full CTest 277/277.
+Not packaged yet; the installed 0.12.6 friend loader keeps throws lab-only.
 
 ## October 15, 2026: native partner grenade throws (lab / local test)
 

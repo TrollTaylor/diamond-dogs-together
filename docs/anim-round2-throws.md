@@ -872,3 +872,31 @@ The proof of the default (no `-LabSetting`, no labsetting line):
 ```powershell
 pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim bad
 ```
+
+Result at `f6bde02` (2026-10-16): **passed, the default is proven.** Research worker checks passed first (receipt
+`20261016-122536-7c10d554...`, 9 checks, 271 audited tests; full CTest 277/277). Hidden run `a0d8edf6` (`-Mode play
+-WanSim bad`, no `-LabSetting`: session.json `lab_settings: []`, no `native_support` in worker-lab.json, no labsetting
+line in the scenario; hidden worker, no SwitchDesktop/ShowWindow/focus call, visible desktop unchanged; verify lock,
+`-SaveSeed lab`, `MGS_GAME_LUA_DIR` unset, no build process during the run, CPU avg 20 % / max 40 %):
+- Both roles logged `partner_support=mode; mode=play; reason=ok`, which the observer logs only with
+  `partner_native_support` on, so the loader resolved the default in play on both copies.
+- Guest: 4/4 `armed; reason=throw_release` (3 partner throws, then the 4th after the overlap), `stock_check changed=0`
+  x10, `changed=1` x0, the exact `viewer_own` rebase (`kind=throw; k=6; before=12; after=11; viewer_mode=37;
+  viewer_state=2; other_jobs=0`), `rec240_check ... foreign=0; latched=0`, thrown filter `dropped=403;
+  preview_dropped=399; passed=90` (the guest's own throws pass). Host: its 1 `throw_release` (the guest's own throw
+  mirrored), `changed=0` x2. Zero forbidden lines (stock_gap, stock_index, stock_leak_mission_latched, fire_reload_off,
+  writer_uncertain_mission_latched, rec240_stale/foreign, unread, S_IS_ONLINE), zero `remote_slot=255` glitch or
+  unknown-equip ctx lines, no `slot_hold`/`sender_hold`, `latest_waits` 3 (guest) / 1 (host), `hard_leaves=0`,
+  `latched=0`.
+- All 7 `require` lines met (`ExpectFailures` empty): the guest's counts `12,16383,12,8,12,12,8,8` after each partner
+  throw and `11,...` after its own. Closed, BaselineRestored and RealSavesUnchanged true; `Forced=true` as before.
+- Same shape as the named-key run `e9244c56` (same counts per line kind, the same three per-load `refused; slot=255`
+  lines before gameplay). No `stall_freeze` (no input gap over 250 ms fell inside an episode; `max_gap` 923 / 892 ms
+  outside them), as in every `-WanSim bad` run; the freeze is proven by `33c11da9`.
+- Frames (converted to PNG and inspected): `grenade-throw-1..3` show body 1's wind-up and release/follow-through
+  (throw-1 frames 02..04, throw-2 and throw-3 frames 03..04, then back to the stand with the rifle on its back); `viewer-own-throw-02` the guest's
+  own grenade in hand; `viewer-own-partner-throw-02/03` body 1's wind-up and release behind the guest after the
+  overlap, then the guest's own grenade exploding (04..08).
+
+Open (unchanged): the checkpoint post-reload half (`a7d164c1`, the known `host_continue` freeze), the host's infinite
+grenades (pre-existing), and a new friend package (0.12.6 keeps throws lab-only).
