@@ -545,7 +545,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True ($placeAttempts.Count -ge 3 -and $detonate.Count -ge 1 -and $armSelect.Count -eq 1) 'partner-c4: several place attempts, a detonation, the arm'
         # The host walks between attempts: the guest is placed behind it again before every place, the detonation and
         # the arm, or the static watcher loses body 1 from the frame (run 4e5ab735).
-        $reframes=@($steps|Where-Object{$_ -cmatch '^placebehind guest host [0-9]+ 2$'})
+        $reframes=@($steps|Where-Object{$_ -cmatch '^placebehind guest host [0-9]+ [0-9]+$'})
         Assert-True ($reframes.Count -ge ($placeAttempts.Count+$detonate.Count+$armSelect.Count+1)) 'partner-c4 re-frames the guest before every phase'
         $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
         Assert-True ($guestCounts.Count -ge 3) 'partner-c4 requires the guest seed counts unchanged around the C4 and the arm'

@@ -6,8 +6,9 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-c4.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
 # The HOST acts; the prone GUEST films body 1 (the host's partner body) from 7 m behind and 2 m aside (body 1 must be
 # in frame; the watcher's own body hides it when closer). The host walks between attempts, so the guest is placed
-# behind it again before every phase (9 m for the detonation: in 4e5ab735 the static watcher lost body 1 from the
-# frame after P1 and the host's charges downed it). godmode on both, infinite ammo OFF. The lab seed's support
+# again before every phase, 4 m behind and 5 m to the right so body 1's hands (the C4, the arm) show from the side
+# (6 m / 7 m for the detonation): in 4e5ab735 the static watcher lost body 1 from the frame after P1 and the host's
+# charges downed it; in 7f8d643d (7 m straight behind) the C4 stayed hidden in front of body 1. godmode on both, infinite ammo OFF. The lab seed's support
 # entry 2 is C4 395 (k = 6 + 2 = 8; census sub=2); its hand slot carries 516 Hand of Jehuty (type 14, class 6).
 # Controls (census runs 3ef82e27 .. a93db206): place = aim (RMB) + fire (LMB) on a valid spot (43 -> 46; an invalid
 # spot only readies 43 -> 44 -> 45 -> 0, which spot is valid varies, so four spots are tried); detonate with a live
@@ -89,9 +90,9 @@ host hold s 1500
 wait 500
 host hold w 250
 wait 1000
-# Re-frame (P1): the host moved, so the prone watcher goes 7 m behind it again (body 1 in frame).
+# Re-frame (P1): the host moved, so the prone watcher goes 4 m behind and 5 m to its right (body 1's hands in view).
 stance guest stand
-placebehind guest host 7 2
+placebehind guest host 4 5
 wait 1500
 stance guest prone
 wait 1000
@@ -106,9 +107,9 @@ host hold s 1500
 wait 500
 host hold w 250
 wait 1000
-# Re-frame (P2): the host moved, so the prone watcher goes 7 m behind it again (body 1 in frame).
+# Re-frame (P2): the host moved, so the prone watcher goes 4 m behind and 5 m to its right (body 1's hands in view).
 stance guest stand
-placebehind guest host 7 2
+placebehind guest host 4 5
 wait 1500
 stance guest prone
 wait 1000
@@ -123,9 +124,9 @@ host hold d 1000
 wait 500
 host hold w 250
 wait 1000
-# Re-frame (P3): the host moved, so the prone watcher goes 7 m behind it again (body 1 in frame).
+# Re-frame (P3): the host moved, so the prone watcher goes 4 m behind and 5 m to its right (body 1's hands in view).
 stance guest stand
-placebehind guest host 7 2
+placebehind guest host 4 5
 wait 1500
 stance guest prone
 wait 1000
@@ -141,9 +142,9 @@ host hold a 1000
 wait 500
 host hold w 250
 wait 1000
-# Re-frame (P4): the host moved, so the prone watcher goes 7 m behind it again (body 1 in frame).
+# Re-frame (P4): the host moved, so the prone watcher goes 4 m behind and 5 m to its right (body 1's hands in view).
 stance guest stand
-placebehind guest host 7 2
+placebehind guest host 4 5
 wait 1500
 stance guest prone
 wait 1000
@@ -167,9 +168,9 @@ host run spawn_enemy here
 host expect ^guard_here;
 wait 2500
 host run enemy_list 40
-# Re-frame (detonation; 9 m keeps the watcher outside the charges): the host moved, so the prone watcher goes 9 m behind it again (body 1 in frame).
+# Re-frame (detonation): the host moved, so the prone watcher goes 6 m behind and 7 m to its right (outside the charges).
 stance guest stand
-placebehind guest host 9 2
+placebehind guest host 6 7
 wait 1500
 stance guest prone
 wait 1000
@@ -187,9 +188,9 @@ both capture c4-after
 # --- The bionic arm (hand slot, the seed's 516): hold the aim a few seconds, then the host fires it ---------------
 host debug slot hand 0
 wait 2000
-# Re-frame (arm): the host moved, so the prone watcher goes 7 m behind it again (body 1 in frame).
+# Re-frame (arm): the host moved, so the prone watcher goes 4 m behind and 5 m to its right (body 1's hands in view).
 stance guest stand
-placebehind guest host 7 2
+placebehind guest host 4 5
 wait 1500
 stance guest prone
 wait 1000
