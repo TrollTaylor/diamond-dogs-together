@@ -1,5 +1,5 @@
 // Original body-1 support writer: slot 3 type 12 (thrown) and, WS4 v1, slot 3
-// type 13 C4 391..395 and slot 6 type 14 arms 515..521 (ChangeEquip type 14 ->
+// type 13 C4 391..395 and slot 6 type 14 arm 516 (ChangeEquip type 14 ->
 // ctl vt+0x1F0 0x11B1B60: for a non-local id only ctl vt+0xA0(id, 6, equip) and
 // ctl vt+0x98(id, 6, 0, equip), contract-pinned). Static contract: equip-audit.md.
 #define WIN32_LEAN_AND_MEAN

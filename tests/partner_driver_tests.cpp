@@ -5441,7 +5441,7 @@ void TestNativeThrownSupport() {
 
 // WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the C4 and arm lanes of the driver's support gate. C4 (type 13,
 // 391..395) in slot 3 with partner_native_placed gets the support gate (RELOAD stripped, HOLD/FIRE kept); an arm
-// (type 14, 515..521) in slot 6 with partner_native_arm gets it with FIRE stripped too (HOLD only); every other
+// (type 14, only 516) in slot 6 with partner_native_arm gets it with FIRE stripped too (HOLD only); every other
 // type-13/14 equip, the wrong slot, or a key off stays unsupported (0x58), and the Arm carries both keys.
 void TestNativePlacedArmLanes() {
     namespace pn=mgscoop::partner_native;
@@ -5451,10 +5451,10 @@ void TestNativePlacedArmLanes() {
     s.driver.settings.nunsupported=true;
     s.driver.settings.naim_intent=mgscoop::PartnerNativeAimIntent::state;
     s.hooks.support_ready=[](void* ctx,const pp::State& st,std::uint16_t equip) noexcept {
-        return static_cast<Fake*>(ctx)->support_ready && st.ids[0]==0 && st.ids[1]==1 && (equip==395 || equip==411 || equip==516);
+        return static_cast<Fake*>(ctx)->support_ready && st.ids[0]==0 && st.ids[1]==1 && (equip==395 || equip==411 || equip==516 || equip==517);
     };
     s.hooks.publish_support_identity=[](void* ctx,std::uint16_t equip) noexcept {static_cast<Fake*>(ctx)->support_identity=equip;};
-    s.fake.equip_types[46]=4;s.fake.equip_types[395]=13;s.fake.equip_types[411]=13;s.fake.equip_types[516]=14;
+    s.fake.equip_types[46]=4;s.fake.equip_types[395]=13;s.fake.equip_types[411]=13;s.fake.equip_types[516]=14;s.fake.equip_types[517]=14;
     s.fake.latest.packet.version=5;s.fake.latest.packet.xflags=pi::XFlag::Equip;
     s.fake.latest.packet.gun_flags=pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming;
     s.fake.latest.packet.gun_equip=46;s.fake.latest.packet.inv_slot=1;
@@ -5486,6 +5486,13 @@ void TestNativePlacedArmLanes() {
           s.fake.arms.back().native_arm && s.fake.arms.back().gun_rec==s.fake.gun.rec && !s.fake.arms.back().mag_mirror,
           "arm 516 with the arm key: the support gate with FIRE stripped (HOLD only)");
     Check(s.driver.mission.aim_refusal==slots::AimRefusal::none && s.fake.arms.back().aim_intent,"an admitted arm keeps the aim intent (toggle aim)");
+    // WS4-1: the rocket arm 517 (class 5; its hold is mode 54, a use mode) is no lane, even with a Ready that
+    // answers: unsupported, so body 1 never gets HOLD for it.
+    s.fake.gun.fields.flags27c=5u<<6;s.fake.gun.fields.equip=517;s.fake.latest.packet.gun_equip=517;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported && (s.fake.arms.back().strip&0x58u)==0x58u,
+          "rocket arm 517 with the arm key: unsupported (HOLD stripped too)");
+    s.fake.gun.fields.flags27c=6u<<6;s.fake.gun.fields.equip=516;s.fake.latest.packet.gun_equip=516;s.N();
+    Check(s.driver.settings.support_live && s.fake.arms.back().strip==0x50u,"back to 516: the arm lane again");
     s.fake.latest.packet.inv_slot=3;s.N();
     Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"an arm reported in slot 3: unsupported");
     s.fake.latest.packet.inv_slot=6;s.driver.settings.nsupport=false;s.N();

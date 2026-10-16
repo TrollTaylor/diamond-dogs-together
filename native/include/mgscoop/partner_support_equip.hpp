@@ -1,7 +1,7 @@
 #pragma once
 // Anim round 2 support equipment for body 1: slot 3 type 12 (thrown) and, WS4
 // v1, slot 3 type 13 C4 391..395 (lab key partner_native_placed) and slot 6
-// type 14 arms 515..521 (lab key partner_native_arm; ChangeEquip 0x11AC2E0 ->
+// type 14 arm 516 (lab key partner_native_arm; ChangeEquip 0x11AC2E0 ->
 // ctl vt+0x1F0 0x11B1B60, the same qualified dispatch). The writer runs on the
 // existing ObserveEquipmentTick owner; Follow runs in the qualified block-1 drain.
 #include <cstddef>

@@ -2,8 +2,8 @@
 
 Branch `wp/anim-throws`, based on `766746a5e950e69ad3afd9da945e3e273cd77be3`.
 Status (2026-10-16, WS4 v1): native **C4 placing and arm holds** for body 1 are implemented behind two lab keys,
-`partner_native_placed` and `partner_native_arm` (default 0, unit tests only; "WS4 v1" at the end). The thrown
-design below is unchanged by them.
+`partner_native_placed` and `partner_native_arm` (default 0, unit tests only; "WS4 v1" at the end; its review fixes
+narrow the arm lane to 516). The thrown design below is unchanged by them.
 Status (2026-10-16): **on by default with the native gun profile in lab and play** (Stage B, at the end). Status
 (2026-10-15): **implemented, default off.** Hidden run `aaa2a0e0` passed (the host body
 natively threw grenade 354 and magazine 349 on the guest screen; all 229 owner-1 thrown requests
@@ -965,11 +965,12 @@ command below). Both new keys default to 0 in every profile until their hidden r
 |---|---|---|---|---|---|
 | thrown | 12 | any | 3 | `partner_native_support` (as before) | HOLD, FIRE |
 | placed | 13 | **391..395 (C4) only** | 3 | `partner_native_placed` | HOLD, FIRE (place-hold 43, ready 44, end 45, place 46) |
-| arm | 14 | 515..521 (ctl vt+0x1F0's own range 0x203..0x209) | 6 | `partner_native_arm` | **HOLD only**: FIRE always stripped (aim pose 1/2/3) |
+| arm | 14 | **516 only** (`ArmLaneEquip`; review WS4-1) | 6 | `partner_native_arm` | **HOLD only**: FIRE always stripped (aim pose 1/2/3) |
 
 Both new keys ride on `partner_native_support` (its guard, thrown filter, writer, gates and per-job digests; the Arm
-fields `native_placed` / `native_arm` are false without it). Mines, decoys, cages (other type-13 equips) and every
-other type keep Round 1's `Gate::unsupported` strip 0x58. ACTION (0x20) and CQC stay stripped in every support window.
+fields `native_placed` / `native_arm` are false without it). Mines, decoys, cages (other type-13 equips), the arms
+515 and 517..521 and every other type keep Round 1's `Gate::unsupported` strip 0x58. ACTION (0x20) and CQC stay
+stripped in every support window.
 
 - **Policy** (`partner_support_policy.hpp`): `GateIn` gains `placed` / `arm`; `Admit` requires a lane and the lane's
   slot; `Strip(mask, request, key, admitted, arm)` strips 0x50 (FIRE|RELOAD) for an admitted arm, 0x40 for the slot-3
@@ -1077,15 +1078,49 @@ Full CTest **279/279** (278 + `partner_placed_policy_tests`), no game running; `
 - **No detonation animation on body 1**: ACTION (E) is never passed (ride, pickup, knife kill), so body 1 never gets
   44 -> 47. Passing it would need its own ACTION-consumer census.
 - Body 1 places where **its own** position is a valid spot; elsewhere it readies and ends (43 -> 44 -> 45).
-- **No arm use**: FIRE is always stripped for an arm. If an arm's aim pose is itself a use-family mode (research says
-  the rocket arms 517/518 hold in mode 54), the watchdog latches arms off at the first aim (fail closed) until a
-  census of that arm. Only 516 was observed (the lab seed); no debug lever equips another arm.
+- **No arm use, and only 516**: FIRE is always stripped for an arm, and the lane admits only 516, the one arm whose
+  hold was censused outside 52..56 (review WS4-1). 515 (class 4) and 517/518 (class 5) hold in mode 54 (0x1080730
+  op 1), itself a use mode whose op 6 calls the unaudited 0x108F860; 519..521 were never censused. They stay
+  `Gate::unsupported` (body 1 never gets HOLD for them) until each has its own census; no debug lever equips them.
 - A slot-6 handle body 1 already had (not allocated by this writer) refuses `foreign_handle`; whether a realized body
   carries one is unverified.
 - **Friendly fire** (existing, not changed): the host's C4 also damages body 1 and can down the guest
   (`friendly_hit=owner applied=1`).
 - Unwindowed or refused body-1 jobs are not bracketed by the digests (as for the existing per-job digests); the
   observer's 10 Hz watchdog still sees the gun mode.
+
+### Review fixes (`WS4 v1 review fixes`)
+
+- **WS4-1 (medium, fixed)**: the arm lane admitted every arm 515..521, but the activation `0x105FDB0` gives 515
+  class 4 and 517/518 class 5, whose hold is mode 54 (`0x1080730` op 1 picks the class-4 table or the class-5 path):
+  an admitted HOLD sent body 1 into a use mode (op 6 calls `0x108F860`, never audited) and the watchdog latched arms
+  off only after the job ran. `KindOf` now takes the arm lane from `ArmLaneEquip` (516 only, the censused hold in
+  aim modes 1/2/3); `ArmEquip` (515..521) stays the game's range for the logged type, the census and the driver's
+  record follow. Every other arm is no lane: the driver, `SupportGate`, the writer (`type`) and the follower refuse
+  it, and Round 1 strips 0x58. Tests: the lane table and an explicit 515/517..521 sweep (no lane, refused, never
+  waited for, strip 0x8078), the writer's `type` refusal for each, and the driver gate for 517 (unsupported 0x58,
+  then back to 516).
+- **WS4-2 (low, fixed)**: `0x11B1B60` (ctl vt+0x1F0, the one callee only the slot-6 dispatch runs) was pinned only by
+  the startup contract gate. It is now in the writer's pre-call SHA list (`tools/generate_equip_writer_pins.py`
+  `arm_equip_dispatch`, 0x207 bytes; `--check`: **113 gates**, 112 before), so `full_body_gate` covers it before every
+  slot-3 and slot-6 dispatch and follow. `partner_support_equip_tests` checks the entry and that its SHA-256 is the
+  digest of the contract's seven parts (the two generators agree on the retail bytes).
+- **WS4-3 (low, fixed)**: NativeView's strip is now the pure `partner_support_policy::ViewStrip(mask, key,
+  slot_valid, slot, admitted)` (the gate still runs only for a support request); the policy tests call it instead of
+  re-composing `Strip`, including the review's case (the driver's last tick judged C4, mask 0x40, the frame is an
+  admitted arm in slot 6: FIRE stripped, HOLD kept) and that the gate never runs without a request. The writer's
+  slot-6 paths now run for real in `partner_support_equip_tests` on a fake world (contract-RVA vtables, fake
+  ChangeEquip / SetCurrentSlot stubs): dispatch `ChangeEquip(ctl, 1, 516, flags 4)` judged on `Y+0x40[1*7+6]`,
+  `Ready` for slot 6 only, no re-dispatch once allocated, `Follow` = `SetCurrentSlot(ctl, 1, 6, 0)` with no
+  support-list search, an owned slot-6 handle re-dispatched and never `foreign_handle` while the same value in slot 3
+  is foreign (`g_owned` per lane), an unowned slot-6 handle `foreign_handle`, the pins gate before the dispatch, a
+  slot-3 handle change inside the dispatch `local_or_other_slot_changed` (uncertain), no arm key `slot`, 515 `type`.
+  A real-hook fixture where `SupportGate` admits a lane (guard, filter, writer, record, digests on one synthetic
+  image) still does not exist for any lane, thrown included.
+
+After the fixes: `partner_support_policy_tests` 43164 checks (38771 before), `partner_support_equip_tests` 72 (39 before,
+now linked with the writer and bcrypt), `partner_placed_policy_tests` 4175, `partner_driver_tests` 7632; both generators'
+`--check` pass (contract 637 / 133 unchanged, writer pins 113); full CTest **279/279**, no game running. No hidden run.
 
 ### Hidden run (not run here; coordinator only)
 

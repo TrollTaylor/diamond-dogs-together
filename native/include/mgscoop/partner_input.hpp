@@ -607,7 +607,7 @@ struct Arm {
     float reload_rate_k;
     bool native_support; // key selected; every consumer rechecks the fresh slot/equip and safety owners
     // WS4 v1 (not compared by SameArm; both need native_support): the placed C4
-    // lane (type 13, 391..395, slot 3) and the arm lane (type 14, 515..521,
+    // lane (type 13, 391..395, slot 3) and the arm lane (type 14, only 516,
     // slot 6, HOLD only), lab keys partner_native_placed / partner_native_arm.
     bool native_placed, native_arm;
     // Native support C(b) (not compared by SameArm): instance 0's gun prim and

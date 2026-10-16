@@ -461,7 +461,7 @@ struct Settings {
     bool nsupport; // lab-only native thrown equipment (type 12), default off
     // WS4 v1 (lab.ini partner_native_placed / partner_native_arm; both need
     // nsupport): placed C4 (type 13, 391..395, slot 3) and arm holds (type 14,
-    // 515..521, slot 6, HOLD only: FIRE stays stripped).
+    // only 516 for now, slot 6, HOLD only: FIRE stays stripped).
     bool nplaced, narm;
     PartnerNativeAimIntent naim_intent;
     PartnerNativeReloadRate nreload_rate;

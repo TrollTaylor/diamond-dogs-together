@@ -28,7 +28,10 @@ static_assert(pk::kStoreVtRva == c::store_vt_rva && pk::kStoreVtDerivedRva == c:
                   pk::kStoreEnergy == c::store_arm_energy && pk::kStoreCounts == c::store_counts && pk::kVarsSlotRva == c::vars_slot_rva &&
                   pk::kVarsEnergySum == c::vars_arm_energy_sum && pk::kArmWord == c::arm_energy_k && pk::kEnergySlots == c::arm_energy_slots,
               "the arm energy fields 0x11AF5E0 writes");
-static_assert(c::arm_equip_first == 515 && c::arm_equip_last == 521, "ctl vt+0x1F0's arm range is the arm lane's");
+static_assert(c::arm_equip_first == 515 && c::arm_equip_last == 521, "ctl vt+0x1F0's arm range is ArmEquip's (not the lane)");
+static_assert(mgscoop::partner_support_policy::ArmEquip(c::arm_equip_first) && mgscoop::partner_support_policy::ArmEquip(c::arm_equip_last) &&
+                  mgscoop::partner_support_policy::ArmLaneEquip(516) && !mgscoop::partner_support_policy::ArmLaneEquip(c::arm_equip_first),
+              "WS4-1: the arm lane is 516 inside ctl vt+0x1F0's range; the stun arm 515 is not in it");
 static_assert(c::arm_equip_rva == 0x11B1B60 && c::ctl_vt_arm_equip == 0x1F0 && c::arm_energy_rva == 0x11AF820 &&
                   c::ctl_vt_arm_energy == 0xE8 && c::store_count_read_rva == 0xEE9050 && c::store_vt_count == 0x88,
               "the WS4 v1 call/read sites");

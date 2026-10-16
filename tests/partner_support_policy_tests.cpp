@@ -622,15 +622,26 @@ template<class Check> void Fixtures(Check& check) {
  using sp::Kind;
  constexpr std::uint32_t H=sp::kPadHold,F=sp::kPadFire,HF=sp::kLevelBits;
  // --- Lanes: thrown is type 12 alone; C4 is type 13 AND 391..395 AND the placed key; an arm is type 14 AND
- // 515..521 (ctl vt+0x1F0's own range 0x203..0x209) AND the arm key. Mines/decoys (other type 13) never.
+ // 516 (WS4-1: the only arm whose hold pose was censused outside 52..56) AND the arm key. Mines/decoys (other
+ // type 13) and the other arms of ctl vt+0x1F0's range 515..521 never.
  check(sp::C4Equip(391) && sp::C4Equip(395) && !sp::C4Equip(390) && !sp::C4Equip(396),"C4 equips are 391..395");
  check(sp::ArmEquip(515) && sp::ArmEquip(516) && sp::ArmEquip(521) && !sp::ArmEquip(514) && !sp::ArmEquip(522),"arm equips are 515..521");
- const std::uint16_t equips[]={0,12,354,390,391,393,395,396,411,514,515,516,518,519,521,522,0x7FF};
+ check(sp::ArmLaneEquip(516) && !sp::ArmLaneEquip(515) && !sp::ArmLaneEquip(517) && !sp::ArmLaneEquip(518) && !sp::ArmLaneEquip(519) &&
+       !sp::ArmLaneEquip(521),"the arm lane is 516 only");
+ const std::uint16_t equips[]={0,12,354,390,391,393,395,396,411,514,515,516,517,518,519,520,521,522,0x7FF};
  for(unsigned type=0;type<32;++type)for(const auto equip:equips)for(unsigned keys=0;keys<4;++keys){
   const bool placed=(keys&1)!=0,arm=(keys&2)!=0;
   const Kind want=type==12 ? Kind::thrown : type==13 && placed && equip>=391 && equip<=395 ? Kind::placed
-   : type==14 && arm && equip>=515 && equip<=521 ? Kind::arm : Kind::none;
+   : type==14 && arm && equip==516 ? Kind::arm : Kind::none;
   check(sp::KindOf(static_cast<std::uint8_t>(type),equip,placed,arm)==want,"lane table (type x equip x keys)");
+ }
+ // WS4-1: the stun arm 515 (class 4) and the rocket arms 517/518 (class 5) hold in mode 54, a use mode; 519..521
+ // were never censused. With the arm key they are no lane (Gate::unsupported, strip 0x58: body 1 never gets HOLD).
+ for(const std::uint16_t equip: {std::uint16_t(515),std::uint16_t(517),std::uint16_t(518),std::uint16_t(519),std::uint16_t(520),std::uint16_t(521)}) {
+  check(sp::KindOf(14,equip,true,true)==Kind::none && sp::KindOf(14,equip,false,true)==Kind::none,"uncensused arms are no lane");
+  sp::GateIn x{true,false,true,true,true,true,true,true,true,true,6,14,equip};x.arm=true;
+  check(!sp::Admit(x) && !sp::WaitingOnEquip(x),"uncensused arm in slot 6 with the key: refused, never waited for");
+  check(sp::Strip(0,true,true,sp::Admit(x),sp::GateKind(x)==Kind::arm)==0x8078u,"uncensused arm: the unsupported strip (HOLD too)");
  }
  check(sp::KindSlot(Kind::thrown)==3 && sp::KindSlot(Kind::placed)==3 && sp::KindSlot(Kind::arm)==6 && sp::KindSlot(Kind::none)==0xFF,
        "lane slots: thrown and C4 in slot 3, arms in slot 6");
@@ -702,8 +713,8 @@ template<class Check> void Fixtures(Check& check) {
    o=sp::StepFrame(t,request,LaneGate(j,13,placed,false),0x40u,j.held,j.edge_press,now);
    if(o.verdict==sp::Frame::frozen){j=pi::Freeze(j,sp::kLevelBits,o.level,c);j.support_frozen=true;}
    sp::GateIn y=LaneGate(j,13,placed,false);if(j.support_frozen)y=sp::Fresh(y);
-   const bool admitted=request && sp::Admit(y);
-   return pi::Strip(j,sp::Strip(0x40u,request,true,admitted,sp::GateKind(y)==Kind::arm));
+   // NativeView's own strip (ViewStrip); the lambda is SupportAdmittedKind's verdict on this gate.
+   return pi::Strip(j,sp::ViewStrip(0x40u,true,j.slot_valid,j.inv_slot,[&]{return sp::Admit(y) ? sp::GateKind(y) : Kind::none;}));
   };
   sp::FrameOut o{};
   auto j=step(LaneSample(395,3,H,0,seq++),true,o);check(o.verdict==sp::Frame::admitted && (j.held&HF)==H,"C4: aim (place-hold 43) admitted");
@@ -719,8 +730,7 @@ template<class Check> void Fixtures(Check& check) {
    const bool request=sp::Request(true,j.slot_valid,j.inv_slot,driver);
    const sp::GateIn y=LaneGate(j,14,false,arm);
    o=sp::StepFrame(t,request,y,driver,j.held,j.edge_press,now);
-   const bool admitted=request && sp::Admit(y);
-   return pi::Strip(j,sp::Strip(driver,request,true,admitted,admitted && sp::GateKind(y)==Kind::arm));
+   return pi::Strip(j,sp::ViewStrip(driver,true,j.slot_valid,j.inv_slot,[&]{return sp::Admit(y) ? sp::GateKind(y) : Kind::none;}));
   };
   sp::FrameOut o{};
   auto j=step(LaneSample(516,6,H,0,seq++),true,o);check((j.held&HF)==H,"arm: HOLD (the aim pose, modes 1/2/3) reaches body 1");
@@ -728,6 +738,27 @@ template<class Check> void Fixtures(Check& check) {
   now+=16;j=step(LaneSample(516,6,H,320,seq),true,o);check(o.verdict!=sp::Frame::frozen && !(j.held&H),"arm: a stale frame is not frozen (old strip)");
   now+=16;j=step(LaneSample(516,6,H,0,seq++),false,o);check(!(j.held&HF),"arm with the key off or latched: HOLD stripped (Round 1)");
   check(sp::Request(true,true,6,0x50u) && !sp::Request(false,true,6,0x50u),"slot 6 is a support request only with the support key");}
+ // --- ViewStrip, NativeView's per-frame strip (WS4-3). One tick after a C4 -> arm switch the driver's last tick
+ // still judged the C4 lane (mask 0x40, FIRE kept) while the frame and body 1 are already in slot 6 with the arm
+ // admitted: the window's strip alone must take FIRE (and keep HOLD).
+ {unsigned calls=0;
+  const auto lane=[&](Kind k){return [&calls,k]{++calls;return k;};};
+  check((sp::ViewStrip(0x40u,true,true,6,lane(Kind::arm))&0x58u)==0x50u && calls==1,"C4 tick, arm frame admitted: FIRE stripped, HOLD kept");
+  check((sp::ViewStrip(0x40u,true,true,3,lane(Kind::placed))&0x58u)==0x40u,"C4 tick, C4 frame admitted: HOLD and FIRE kept");
+  check((sp::ViewStrip(0x40u,true,true,3,lane(Kind::thrown))&0x58u)==0x40u,"thrown admitted: HOLD and FIRE kept");
+  check((sp::ViewStrip(0x40u,true,true,6,lane(Kind::none))&0x58u)==0x58u,"refused lane: HOLD, FIRE and RELOAD stripped");
+  check((sp::ViewStrip(0x50u,true,true,6,lane(Kind::arm))&0x58u)==0x50u,"arm tick, arm frame: HOLD only");
+  check((sp::ViewStrip(0x58u,true,true,6,lane(Kind::arm))&0x58u)==0x58u,"the driver's unsupported strip survives an admitted arm");
+  for(const Kind k: {Kind::none,Kind::thrown,Kind::placed,Kind::arm}){
+   std::uint32_t s=sp::ViewStrip(0x40u,true,true,6,lane(k));
+   check((s&0x8020u)==0x8020u && (s&0x40u),"ACTION, CQC and RELOAD stripped in every support window");
+   s=sp::ViewStrip(0x40u,true,true,6,lane(k));
+   check(s==sp::Strip(0x40u,true,true,k!=Kind::none,k==Kind::arm),"ViewStrip is Strip of the admitted lane");
+  }
+  calls=0;
+  check(sp::ViewStrip(0x10u,false,true,6,lane(Kind::arm))==0x10u && calls==0,"key off: Round 1's mask, the gate never runs");
+  check(sp::ViewStrip(0u,true,true,1,lane(Kind::arm))==0x8020u && calls==0,"no request (gun slot, no 0x40): the gate never runs");
+  check(sp::ViewStrip(0u,true,false,6,lane(Kind::arm))==0x8020u && calls==0,"no request (slot unknown): the gate never runs");}
  // --- The writer's lane refusals (pure preconditions).
  {se::Preconditions p{};p.enabled=p.owner=p.gates=p.body_ready=p.safety_ready=true;p.player_flags=1;p.local=0;p.local_id=0;p.inventory_local=0;
   p.body_id=1;p.pool=1;p.restriction=0;p.sub=0;
@@ -739,6 +770,8 @@ template<class Check> void Fixtures(Check& check) {
   q=p;q.equip=516;q.type=14;q.slot=6;check(is(q,"type"),"writer: arm without the arm key refuses type");
   q.arm=true;check(is(q,nullptr),"writer: arm 516 with the key in slot 6");
   q.slot=3;check(is(q,"slot_type"),"writer: arm named in slot 3 refuses slot_type");
+  for(const std::uint16_t arm: {std::uint16_t(515),std::uint16_t(517),std::uint16_t(518),std::uint16_t(519),std::uint16_t(521)}){
+   q=p;q.equip=arm;q.type=14;q.slot=6;q.arm=true;check(is(q,"type"),"writer: an uncensused arm with the key refuses type (WS4-1)");}
   q=p;q.equip=354;q.type=12;q.slot=6;q.arm=true;check(is(q,"slot_type"),"writer: a grenade named in slot 6 refuses slot_type");
   q=p;q.equip=516;q.type=14;q.slot=6;q.arm=true;q.local_id=1;check(is(q,"p218"),"writer: arm keeps every non-local precondition");
   check(se::LaneSlot(3,false) && se::LaneSlot(3,true) && !se::LaneSlot(6,false) && se::LaneSlot(6,true) && !se::LaneSlot(4,true) && !se::LaneSlot(2,true),

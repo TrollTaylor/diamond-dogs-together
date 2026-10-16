@@ -530,11 +530,11 @@ pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
         return pi::Neutral(j);
     }
     // Key off: never a support request, so Round 1's a.strip alone decides (review-1ca3ce6).
-    const bool support_request=partner_support_policy::Request(a.native_support,j.slot_valid,j.inv_slot,a.strip);
-    // WS4 v1: the admitted lane; an arm is HOLD only (FIRE and RELOAD stripped).
-    const partner_support_policy::Kind lane=support_request ? SupportAdmittedKind(a,j) : partner_support_policy::Kind::none;
-    const std::uint32_t strip=partner_support_policy::Strip(a.strip,support_request,a.native_support,
-        lane!=partner_support_policy::Kind::none,lane==partner_support_policy::Kind::arm);
+    // WS4 v1: the admitted lane decides; an arm is HOLD only (FIRE and RELOAD
+    // stripped). The composition is the tested pure ViewStrip (WS4-3); the gate
+    // runs only for a support request.
+    const std::uint32_t strip=partner_support_policy::ViewStrip(a.strip,a.native_support,j.slot_valid,j.inv_slot,
+        [&]() noexcept { return SupportAdmittedKind(a,j); });
     if (strip) {
         InterlockedIncrement(&g_n_strip);
         InterlockedExchange(&g_n_strip_bits, static_cast<LONG>(strip));

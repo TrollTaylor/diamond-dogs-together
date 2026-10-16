@@ -637,8 +637,11 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_link_libraries(partner_ride_seat_tests PRIVATE mgs_partner_player mgs_coop_core bcrypt)
   target_compile_options(partner_ride_seat_tests PRIVATE /W4 /WX)
   add_test(NAME partner_ride_seat_tests COMMAND partner_ride_seat_tests)
+  # WS4 review: the pure preconditions plus the real slot-6 writer (Observe / Ready / Follow) on a fake world, and
+  # the writer's 0x11B1B60 SHA gate against the contract's bytes.
   add_executable(partner_support_equip_tests tests/partner_support_equip_tests.cpp)
-  target_include_directories(partner_support_equip_tests PRIVATE native/include)
+  target_include_directories(partner_support_equip_tests PRIVATE native/include native)
+  target_link_libraries(partner_support_equip_tests PRIVATE mgs_partner_player mgs_coop_core bcrypt)
   target_compile_options(partner_support_equip_tests PRIVATE /W4 /WX)
   add_test(NAME partner_support_equip_tests COMMAND partner_support_equip_tests)
   add_executable(partner_fire_support_tests tests/partner_fire_support_tests.cpp)

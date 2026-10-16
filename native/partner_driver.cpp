@@ -2421,7 +2421,7 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     // non-local equipment row/handle and the mission stock latch. Never reuse
     // the previous support verdict across an unread gun tick.
     // The lane (WS4 v1): thrown type 12 and, with their keys, C4 (type 13,
-    // 391..395) in slot 3 and an arm (type 14, 515..521) in slot 6.
+    // 391..395) in slot 3 and an arm (type 14, only 516: ArmLaneEquip) in slot 6.
     // A live v5 slot of the lane, or the stall hold of the same slot-3 support
     // equip (critic #4).
     namespace psp = partner_support_policy;

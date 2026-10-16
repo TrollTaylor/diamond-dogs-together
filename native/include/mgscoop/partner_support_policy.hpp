@@ -6,21 +6,32 @@ namespace mgscoop::partner_support_policy {
 // --- WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the support lanes. Thrown
 // items (EQP type 12, slot 3) as before; placed C4 (type 13, only the C4 equips
 // 391..395, slot 3, lab key partner_native_placed) and the bionic arm (type 14,
-// 515..521 = ctl vt+0x1F0's own range 0x203..0x209, slot 6, lab key
-// partner_native_arm, HOLD only). Mines, decoys and cages (other type-13
-// equips) stay Gate::unsupported. ChangeEquip 0x11AC2E0 maps types 12/13 to
-// slot 3 and 14 to slot 6 (0x11AC4B7..0x11AC4CE); a handle's kind (h & 0x1F)
-// is the equip's type (X vt+0 0xDC3250).
+// only 516 for now (ArmLaneEquip), slot 6, lab key partner_native_arm, HOLD
+// only). Mines, decoys and cages (other type-13 equips) and every other arm stay
+// Gate::unsupported. ChangeEquip 0x11AC2E0 maps types 12/13 to slot 3 and 14 to
+// slot 6 (0x11AC4B7..0x11AC4CE); a handle's kind (h & 0x1F) is the equip's type
+// (X vt+0 0xDC3250).
 enum class Kind : std::uint8_t { none, thrown, placed, arm };
 constexpr const char* KindName(Kind k) noexcept {
  return k==Kind::thrown ? "thrown" : k==Kind::placed ? "placed" : k==Kind::arm ? "arm" : "none";
 }
 inline constexpr std::uint8_t kTypeThrown=12,kTypePlaced=13,kTypeArm=14;
 constexpr bool C4Equip(std::uint16_t equip) noexcept { return equip>=391 && equip<=395; }
+// The game's arm equips: ctl vt+0x1F0's own range 0x203..0x209 (the type the
+// support lines print, the census, the driver's record follow). Not the lane.
 constexpr bool ArmEquip(std::uint16_t equip) noexcept { return equip>=515 && equip<=521; }
+// The arm lane (WS4 review, WS4-1): only an arm whose HOLD pose was censused
+// outside the use modes 52..56. That is 516 Hand of Jehuty (class 6; census:
+// aim modes 1/2/3). The activation 0x105FDB0's kind-14 switch gives 515 class 4
+// and 517/518 class 5, and mode 54 (0x1080730 op 1: the class-4 table or the
+// class-5 path) is their hold, inside 52..56, so an admitted HOLD would run
+// mode 54 (op 6: 0x108F860, never audited) and trip the watchdog. 519..521
+// (class 0) were never censused. Each stays Gate::unsupported (strip 0x58) until
+// its own census.
+constexpr bool ArmLaneEquip(std::uint16_t equip) noexcept { return equip==516; }
 constexpr Kind KindOf(std::uint8_t type,std::uint16_t equip,bool placed,bool arm) noexcept {
  return type==kTypeThrown ? Kind::thrown : type==kTypePlaced && placed && C4Equip(equip) ? Kind::placed
-  : type==kTypeArm && arm && ArmEquip(equip) ? Kind::arm : Kind::none;
+  : type==kTypeArm && arm && ArmLaneEquip(equip) ? Kind::arm : Kind::none;
 }
 // The inventory slot of a lane (0xFF: no lane).
 constexpr std::uint8_t KindSlot(Kind k) noexcept { return k==Kind::arm ? 6 : k==Kind::none ? 0xFF : 3; }
@@ -59,6 +70,18 @@ constexpr bool ThrowMode(std::uint8_t mode) noexcept { return mode>=28 && mode<=
 // 0x40 is RELOAD: the driver strips it alone for an admitted support slot.
 constexpr bool Request(bool key,bool slot_valid,std::uint8_t slot,std::uint32_t strip) noexcept {
  return key && ((slot_valid && slot>2) || strip==0x40u);
+}
+// The strip of one native window frame (the hook's NativeView): a support
+// request strips per the lane the gate admits (an admitted arm keeps HOLD only),
+// anything else Round 1's mask. The per-frame strip is the only FIRE strip while
+// the driver's last tick still judged a slot-3 lane (mask 0x40) and the frame is
+// already an admitted arm (WS4 review, WS4-3). admitted() returns the admitted
+// lane (Kind::none when refused); it runs only for a support request.
+template<class Admitted> constexpr std::uint32_t ViewStrip(std::uint32_t mask,bool key,bool slot_valid,std::uint8_t slot,
+                                                           Admitted&& admitted) noexcept {
+ const bool request=Request(key,slot_valid,slot,mask);
+ const Kind lane=request ? admitted() : Kind::none;
+ return Strip(mask,request,key,lane!=Kind::none,lane==Kind::arm);
 }
 // Body 1 may not be (re)equipped or have its slot followed while its gun mode
 // is unread (0xFF), switching, reloading (8/11/12), in the throw family, the
