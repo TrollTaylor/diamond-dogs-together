@@ -29,6 +29,37 @@ int main() {
     Check(!Lab("role=guest\n").present, "role without enabled is not present");
     Check(!Lab("enabled=1\n").present, "enabled without role is not present");
 
+    // Native support follows the native gun profile in lab mode only (hidden runs aaa2a0e0, ea93a2e3);
+    // off without a profile, for loco/off, in play mode, and a named key always wins.
+    Check(!LabConfig{}.partner_native_support && !Lab("").partner_native_support, "native support default off");
+    for (const char* mode : {"lab", "play"}) {
+        // Play profiles require the real clip-partner fallback configuration.
+        const std::string prefix = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nmode=") + mode +
+                                  "\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+        for (const char* profile : {"off", "loco", "gun"}) {
+            const std::string key = std::string("partner_native_profile=") + profile + "\n";
+            const bool lab_gun = std::strcmp(mode, "lab") == 0 && std::strcmp(profile, "gun") == 0;
+            const auto resolved = Lab(prefix + key);
+            Check(resolved.partner_native_support == lab_gun && !resolved.partner_native_support_given,
+                  "support defaults on only for the lab gun profile");
+            for (const bool keyFirst : {false, true}) {
+                for (const char* value : {"0", "1"}) {
+                    const std::string support = std::string("partner_native_support=") + value + "\n";
+                    const auto named = Lab(prefix + (keyFirst ? support + key : key + support));
+                    Check(named.partner_native_support == (value[0] == '1') && named.invalid_values == 0 && named.unknown_keys == 0,
+                          "explicit support 0/1 survives mode/profile resolution in either key order");
+                }
+            }
+        }
+    }
+    for (const char* value : {"2", "-1", "", "maybe"}) {
+        const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_support=") + value + "\n");
+        Check(!invalid.partner_native_support && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+              "invalid native support value refuses without arming");
+    }
+    Check(!Lab("enabled=1\nrole=host\npartner_native_support=1\npartner_native_support=0\n").partner_native_support,
+          "explicit support 0 disarms a previous 1");
+
     const auto guest = Lab(
         "\xEF\xBB\xBF# lab guest\r\n"
         "enabled = 1\r\n"

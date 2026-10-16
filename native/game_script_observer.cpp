@@ -93,6 +93,9 @@
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
+#include "mgscoop/partner_support_equip.hpp"
+#include "mgscoop/partner_support_guard.hpp"
+#include "mgscoop/partner_support_policy.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
@@ -934,6 +937,20 @@ bool PartnerFocused(void*) noexcept {
     if (window) GetWindowThreadProcessId(window, &foreground);
     return foreground == GetCurrentProcessId();
 }
+// Anim round 2: read-only admission for the driver's support gate. The
+// observer writer below is the only allocator; this callback never equips.
+bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexcept {
+    const auto& config=mgscoop::GetLabConfig();
+    if(!config.partner_native_support || config.mode!=mgscoop::LabMode::lab || config.partner_input_p218_allow ||
+       mgscoop::partner_input_hook::NativePoseWindowStatus().required ||
+       mgscoop::partner_input_hook::NativeSupportLatchedOff() ||
+       !mgscoop::partner_support_guard::Live() ||
+       !mgscoop::partner_support_guard::Armed(state.P,1) ||
+       !mgscoop::partner_fire_filter::ThrownPatchLive(game_base) || !mgscoop::partner_fire_filter::ThrownArmed(1)) return false;
+    pp::DmTargets targets{};
+    return !pp::ResolveDm(partner_addresses,state,targets) &&
+        mgscoop::partner_support_equip::Ready(reinterpret_cast<std::uintptr_t>(game_base),state.P,targets.blk1,equip);
+}
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
@@ -948,7 +965,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
-    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert};
+    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1729,6 +1746,83 @@ void ObserveEquipWriter() noexcept {
 #endif
 }
 
+// Type-12 slot 3: same natural owner, receipt lock and no-batch discipline as
+// the existing gun equipment writer. Every native precondition is re-read in
+// partner_support_equip; setting P+218 to 1 is explicitly incompatible.
+void ObserveNativeSupport() noexcept {
+    namespace se=mgscoop::partner_support_equip;
+    namespace sg=mgscoop::partner_support_guard;
+    namespace ff=mgscoop::partner_fire_filter;
+    const auto& config=mgscoop::GetLabConfig();
+    const auto& mission=partner_driver.mission;
+    se::Context context{};
+    context.enabled=config.partner_native_support && config.mode==mgscoop::LabMode::lab;
+    context.owner=OnRuntimeThread();context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
+    context.pins_intact=mgscoop::equipment_stock_writer::PinsIntact;
+    context.mission=partner_mission;context.realize_gen=mission.realize_gen;context.now_ms=mgscoop::partner_net::NowMs();
+    // Never (re)equip slot 3 through a switch, a reload or a running throw.
+    context.body_busy=mgscoop::partner_support_policy::BodyBusy(mission.body_gun_mode,mission.body_switching);
+    unsigned short current_mission=0;
+    context.gates=context.enabled && PartnerGunPiecesWanted() && offline_enabled && lab_active && lab::SavesRedirected() &&
+        partner_on && partner_gate_ok && allocation_enabled && archive_mounted && host_source_selected &&
+        !config.partner_input_p218_allow && !mgscoop::partner_input_hook::NativePoseWindowStatus().required &&
+        !mgscoop::partner_input_hook::NativeSupportLatchedOff() &&
+        !mission_terminating && !termination_scope.Active() && !gameplay_restore_pending &&
+        !HasDynamiteSessionOwnership() && !mgscoop::partner_defer::ShuttingDown() &&
+        ReadMission(current_mission) && mgscoop::SupportsPartnerBody(current_mission) &&
+        current_mission==partner_mission && current_mission==allocation_mission;
+    mgscoop::partner_input::Sample input{};
+    if(mission.remote_v5 && mission.remote_gun_equip>0 && mission.remote_gun_equip<0x800 &&
+       mgscoop::partner_net::LatestInput(input) && input.valid && input.age_ms<=partner_driver.settings.stale_ms &&
+       input.packet.version>=5 && (input.packet.xflags&mgscoop::partner_input::XFlag::Equip) &&
+       (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid) &&
+       input.packet.gun_equip==mission.remote_gun_equip && input.packet.inv_slot==mission.remote_slot) {
+        context.equip=static_cast<std::uint16_t>(mission.remote_gun_equip);context.slot=mission.remote_slot;
+    }
+    pp::State state{};pp::DmTargets targets{};
+    if(context.owner && context.gates && mission.parts_loaded && mission.realized &&
+       pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.vars_ok && state.arrays_ok &&
+       state.count==2 && state.local==0 && (state.flags&1u) && !(state.flags&0x100u) && !state.sync &&
+       state.ids[0]==0 && state.ids[1]==1 && state.pool[0]==0 && state.pool[1]==1 &&
+       state.parts[0]==3 && state.parts[1]==3 && pp::Realized(state,0) && pp::Realized(state,1) &&
+       !pp::ResolveDm(partner_addresses,state,targets)) {
+        context.body_ready=true;context.player=state.P;context.remote_block=targets.blk1;
+        const char* guard_reason=sg::Install(game_base,context.image_span,partner_gate_ok,Log);
+        const char* filter_reason=ff::InstallThrown(game_base,Log);
+        if(!guard_reason && !filter_reason && sg::Arm(state.P,1) && ff::ArmThrown(1))
+            context.safety_ready=sg::Live() && sg::Armed(state.P,1) && ff::ThrownPatchLive(game_base) && ff::ThrownArmed(1);
+    }
+    // Protective patches remain armed across slot/key changes, and after the
+    // stock latch: already queued or unwindowed body-1 work may still finish.
+    se::Observe(context,Log);
+    // A mission-scoped uncertain writer outcome also closes the drain's admission.
+    if(se::Uncertain() && !mgscoop::partner_input_hook::NativeSupportLatchedOff()) {
+        mgscoop::partner_input_hook::LatchNativeSupportOff();
+        LogFormat("partner_support=refused; slot=3; equip=%u; type=12; reason=writer_uncertain_mission_latched\r\n",
+            unsigned(context.equip));
+    }
+    ff::Stats totals{};ff::ReadStats(game_base,totals);
+    sg::Stats guard_totals{};sg::ReadStats(guard_totals);
+    static std::uint32_t summary_mission=0,summary_drop=0,summary_hits=0,summary_refused=0;
+    static std::uint64_t summary_ms=0;
+    static unsigned summary_lines=0;
+    if(summary_mission!=context.mission) {summary_mission=context.mission;summary_ms=0;summary_lines=0;summary_drop=totals.thrown_dropped;summary_hits=guard_totals.hits;summary_refused=guard_totals.refused;}
+    if(totals.thrown_armed && summary_lines<3600 && (context.now_ms<summary_ms || context.now_ms-summary_ms>=1000)) {
+        summary_ms=context.now_ms;++summary_lines;
+        LogFormat("partner_support=guard; slot=3; equip=%u; type=12; reason=%s; installed=%u; live=%u; armed=%u; hits=%u; refusals=%u; hit_delta=%u; refusal_delta=%u; windows=%u\r\n",
+            unsigned(context.equip),guard_totals.live ? "ok" : "hook_lost",unsigned(guard_totals.installed),unsigned(guard_totals.live),
+            unsigned(guard_totals.armed),guard_totals.hits,guard_totals.refused,guard_totals.hits-summary_hits,guard_totals.refused-summary_refused,guard_totals.windows);
+        summary_hits=guard_totals.hits;summary_refused=guard_totals.refused;
+        LogFormat("partner_fire_filter=summary; kind=thrown; installed=%u; live=%u; armed=%u; owner=%u; dropped=%u; preview_dropped=%u; passed=%u; unread=%u; delta=%u\r\n",
+            unsigned(totals.thrown_installed),unsigned(totals.thrown_live),unsigned(totals.thrown_armed),unsigned(totals.thrown_owner),
+            totals.thrown_dropped,totals.thrown_preview_dropped,totals.thrown_passed,totals.thrown_unread,totals.thrown_dropped-summary_drop);
+        if(totals.thrown_dropped!=summary_drop)
+            LogFormat("partner_support=filtered; slot=3; equip=%u; type=12; reason=owner; owner=0x1; dropped=%u; preview_dropped=%u\r\n",
+                unsigned(context.equip),totals.thrown_dropped-summary_drop,totals.thrown_preview_dropped);
+        summary_drop=totals.thrown_dropped;
+    }
+}
+
 // The existing Lua OnUpdate polls in every mission, including title/ACC.
 // This path remains on the natural runtime owner under receipt_lock, independent
 // of the menu. Closing, termination and batch execution stop it before any reads.
@@ -1744,6 +1838,7 @@ void ObserveEquipmentTick() noexcept {
     ObserveEquipmentVtables();
     ObserveStock46Writer();
     ObserveEquipWriter();
+    ObserveNativeSupport();
 }
 
 void PublishDebugSnapshot() noexcept {

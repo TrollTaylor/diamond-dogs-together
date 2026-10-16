@@ -31,6 +31,7 @@ void Check(bool value, const char* what) {
 // Recording fake of every effect. Writes emulate partner_player's rule that
 // set-type writes are refused while terminating and restorations are not.
 struct Fake {
+    bool support_ready=false;
     std::vector<std::string> lines;
     pp::State state{};
     pp::Refusal refusal = pp::Refusal::none;
@@ -5336,6 +5337,51 @@ void TestRideSeat() {
 // Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported gate and
 // its lines, the aim intent's Arm fields, the auto-fire stop, the reload rate
 // factor in the Arm, partner_weapon_ctx and partner_native_gun past the old cap.
+// The support gate has its own owner filter/stock guard. It must not depend
+// on the historical weapon_ok latch from a previously observed class-1 gun.
+void TestNativeThrownSupport() {
+    namespace pn=mgscoop::partner_native;
+    namespace pi=mgscoop::partner_input;
+    namespace slots=mgscoop::partner_slots;
+    NativeSession s;SetVisualFire(s);
+    s.driver.settings.nunsupported=true;
+    s.driver.settings.naim_intent=mgscoop::PartnerNativeAimIntent::state;
+    s.hooks.support_ready=[](void* ctx,const pp::State& st,std::uint16_t equip) noexcept {
+        return static_cast<Fake*>(ctx)->support_ready && st.ids[0]==0 && st.ids[1]==1 && equip==354;
+    };
+    s.fake.equip_types[46]=4;s.fake.equip_types[354]=12;s.fake.equip_types[355]=13;s.fake.equip_types[516]=14;
+    s.fake.latest.packet.version=5;s.fake.latest.packet.xflags=pi::XFlag::Equip;
+    s.fake.latest.packet.gun_flags=pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming;
+    s.fake.latest.packet.gun_equip=46;s.fake.latest.packet.inv_slot=1;
+    s.fake.gun.fields.equip=46;
+    Check(s.Until(pn::Mode::active,9000),"support fixture native active");
+    s.driver.settings.nsupport=true;s.fake.support_ready=true;
+    s.driver.mission.weapon_ok=false;
+    s.fake.gun.fields.flags27c=2u<<6;s.fake.gun.fields.equip=354;s.fake.gun.mode_cur=28;
+    s.fake.latest.packet.gun_equip=354;s.fake.latest.packet.inv_slot=3;
+    s.N();
+    Check(s.driver.settings.support_live && !s.driver.settings.fire_live &&
+        s.driver.mission.weapon_gate==slots::Gate::support && s.fake.arms.back().strip==0x40u &&
+        (s.fake.arms.back().config.mask&0x10u) && !s.fake.arms.back().mag_mirror &&
+        s.fake.arms.back().gun_rec==s.fake.gun.rec && s.fake.arms.back().native_support && s.fake.arms.back().aim_intent,
+        "qualified support passes HOLD/FIRE without historical gun-class admission");
+    s.fake.support_ready=false;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported &&
+        (s.fake.arms.back().strip&0x58u)==0x58u && !(s.fake.arms.back().config.mask&0x10u),"lost support safety masks same tick");
+    s.driver.settings.nunsupported=false; // old diagnostic cannot weaken native support
+    s.fake.support_ready=true;s.fake.latest.packet.gun_equip=355;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"type 13 stays unsupported");
+    s.fake.latest.packet.gun_equip=516;s.fake.latest.packet.inv_slot=6;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"arms stay unsupported");
+    s.driver.settings.nunsupported=true;
+    s.fake.latest.packet.gun_equip=354;s.fake.latest.packet.inv_slot=3;s.driver.settings.nsupport=false;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"key off refuses qualified support");
+    s.fake.latest.packet.gun_equip=46;s.fake.latest.packet.inv_slot=1;
+    s.fake.gun.fields.equip=46;s.fake.gun.fields.flags27c=1u<<6;s.fake.gun.mode_cur=7;s.N();
+    Check(!s.driver.settings.support_live && s.driver.settings.fire_live &&
+        s.driver.mission.weapon_gate==slots::Gate::match && s.fake.arms.back().mag_mirror,"support returns to ordinary gun policy");
+}
+
 void TestAnimRound1Weapons() {
     namespace pn = mgscoop::partner_native;
     namespace pi = mgscoop::partner_input;
@@ -5687,6 +5733,7 @@ int main() {
     TestMovementRecovery();
     TestNativeReloadSwitch();
     TestAnimRound1Weapons();
+    TestNativeThrownSupport();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "

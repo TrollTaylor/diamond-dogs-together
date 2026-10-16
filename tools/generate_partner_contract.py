@@ -718,6 +718,30 @@ SITES += [
     (0xFC52DB, '488d050e4a3e01488901488d7920488d05304a3e01488907488d05364b3e0148894140488d05bb4b3e0148894150e8429dc3ff488b88980000004839b908020000750b48c7810802000000000000',
      'placed-object service dtor: iface +0x20 = 0x23A9D20; gm+0x208 cleared if it is this iface'),
 ]
+# --- Native thrown support v1 (docs/anim-round2-throws.md).
+SITES += [
+    (0x108C887, 'c3cccccccccccccccc', 'support stock guard: predecessor ret and all eight int3 bytes (padding ends at next function 0x108C890)'),
+    (0x108C8C0, '48894c2408555641554883ec50488b4108458be8488bf24c8b8838010000488daab0010000418b8104020000', 'support stock guard: ammo-copy entry, P chain and full seven-byte load at 0x108C8E5'),
+    (0x108C8EC, 'c1e808a8017427453b8118020000741e48c785ac000000ffffffff818ac0030000000000204883c450415d5e5dc3', 'support stock guard: original online/local test, non-consuming counts and bit-29 branch through ret'),
+    (0x1087BF5, '498b4e608b9340020000488b014533c0ff9060010000f783c0030000000000200f8591010000', 'support throw: unresolved rec+0x240 item callback and bit-29 branch over all stock writes'),
+    (0x10880CC, '488b4e60488b01ff90600100004d8bcf448b', 'support throw: mode-30 unresolved item callback at 0x10880D3'),
+    (0x108AA84, '488b4d608b9740020000488b01ff9060010000', 'support throw: mode-33 unresolved item callback at 0x108AA91'),
+    (0x15E023A, 'f6423e01488bfa488bd974164881c100010000488b5c24404883c4205fe9c4ddffff', 'support entry filter must precede preview-bit branch and shared service+0x100 copy'),
+    (0x15E02B5, '4885c0740b488bd7488bc8e85bddffff488b6c2430488b742438488b5c244048', 'support entry filter: null pool result returns zero in original return domain'),
+    (0x15DE020, '0f28024c8bc141b9001800000f29010f284a100f2949100f2842200f2941200f', 'support preview copy helper entry (read-only evidence; owner filter drops before it)'),
+    (0x11AC2E0, '40535556415441564881eca0000000488b053ad099014833', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0x1156640, '488b8168010000488b89a80100002b500c33c04869d2b000', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0x1209EC0, '488bc4555356574154415541564157488da8e8fcffff4881', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0x11B0700, '4053555657415641574883ec68488b051c8c99014833c448', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0x11B0900, '48895c240848896c24104889742418574883ec400fb68424', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0x11AFF30, '48895c241848896c242056574155415641574883ec30488b', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0xEE9880, '48895c240848896c24104889742420574154415541564157', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0xEE9D70, '48895c240848896c24104889742418574883ec20448b490c', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0xB0C720, '44894c2420574883ec4048c7442420feffffff48895c2450', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0xDC3250, '44894c24205341544155415641574883ec204c8be1488b49', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0xDC2A50, '664489442418895424104883ec288bc24c8bc983e01f0f84', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+    (0xDC63A0, '488974241889542410574883ec208bc28bf2488bf983e01f', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -844,6 +868,18 @@ SLOTS += [
     (0x24299A0, 0x08, 0x15E0230, 'thrown-object service base iface vt+8 = request (fire census slot)'),
     (0x23A9FD0, 0x48, 0xFCCD80, 'placed-object service live iface vt+0x48 = request (fire census slot)'),
     (0x23A9D20, 0x48, 0xFCCD80, 'placed-object service base iface vt+0x48 = request (fire census slot)'),
+]
+# Audited native support virtual call relationships.
+SLOTS += [
+    (0x23C1720, 0x198, 0x11AC2E0, 'support equip: ChangeEquip'),
+    (0x23C1720, 0xA0, 0x11B0700, 'support equip: allocate and notify'),
+    (0x23C1720, 0x18, 0x11B0900, 'support equip: inventory and model writer'),
+    (0x23C1720, 0x90, 0x11AD420, 'support equip: pure sub-slot read'),
+    (0x23C1720, 0x98, 0x11AFF30, 'support equip: per-id row writer'),
+    (0x23894B0, 0x8, 0xEE9880, 'support inventory base: allocate'),
+    (0x23895D0, 0x8, 0xEE9880, 'support inventory derived: allocate'),
+    (0x23894B0, 0x10, 0xEE9D70, 'support inventory base: release'),
+    (0x23895D0, 0x10, 0xEE9D70, 'support inventory derived: release'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 
@@ -1558,7 +1594,54 @@ def anim_round1_assertions():
     return out
 
 
+
+def support_native_assertions():
+    out = []
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    funcs = runtime_functions()
+    need((0x108C878, 0x108C888) in funcs and (0x108C890, 0x108C8C0) in funcs and
+         (0x108C8C0, 0x108CC91) in funcs, 'support guard: exact neighboring function ranges')
+    need(not any(b < 0x108C890 and e > 0x108C888 for b, e in funcs),
+         'support guard: eight-byte padding is outside every runtime function')
+    need(rd(0x108C887, 9) == bytes.fromhex('c3cccccccccccccccc'),
+         'support guard: ret then exactly eight int3 bytes at 0x108C888')
+    need(branch_refs(0x108C888, 0x108C890) == [],
+         'support guard: no rel32 call/jmp/jcc into its int3 padding')
+    need(branch_refs(0x108C8E6, 0x108C8EC) == [],
+         'support guard: no rel32 call/jmp/jcc into replaced instruction interior')
+    need(0x108C888 - (0x108C8E5 + 2) == -95 and struct.pack('b', -95) == b'\xa1',
+         'support guard: EB A1 reaches 0x108C888 (EB 9F would miss by two bytes)')
+    need((0x108C8E5 & 63) + 4 <= 64 and (0x108C888 & 63) + 5 <= 64,
+         'support guard: published dword and padding jump each inside one cache line')
+    need(rel_refs(0x108C8C0) == [0x103E08C], 'support guard: ammo copy only called by gun phase 0')
+    need(0x1087C1B + struct.unpack('<i', rd(0x1087C17, 4))[0] == 0x1087DAC,
+         'support guard: bit-29 gate skips the stock decrement and ctl stock setter')
+    need(rd(0x15E023A, 4) == bytes.fromhex('f6423e01') and rd(0x15E0246, 7) == bytes.fromhex('4881c100010000'),
+         'support filter: preview bit is tested before service+0x100')
+    # Every new direct call reuses the complete, existing stock writer pins;
+    # keep all user-listed audited callees in that contract and verify their
+    # complete bodies here as well as the short expected-byte sites above.
+    import re
+    pin_text = (ROOT / 'native' / 'equipment_stock_writer_pins.hpp').read_text(encoding='utf-8')
+    pins = {}
+    for m in re.finditer(r'\{0x([0-9A-Fa-f]+),0x([0-9A-Fa-f]+),\{([^}]+)\}\}', pin_text):
+        body_rva, size = int(m.group(1), 16), int(m.group(2), 16)
+        digest = bytes(int(x.strip(), 16) for x in m.group(3).split(','))
+        pins[body_rva] = size, digest
+    for body_rva in (0x11AC2E0, 0x1156640, 0x1209EC0, 0x11B0700, 0x11B0900, 0x11AFF30,
+                     0xEE9880, 0xEE9D70, 0xB0C720, 0xDC3250, 0xDC2A50, 0xDC63A0, 0x11AFA80):
+        need(body_rva in pins, f'support equip audited callee {body_rva:#x} has complete body SHA256 pin')
+        if body_rva in pins:
+            size, digest = pins[body_rva]
+            need(hashlib.sha256(rd(body_rva, size)).digest() == digest,
+                 f'support equip audited callee {body_rva:#x} complete body matches SHA256 pin')
+    return out
+
+
 failures += anim_round1_assertions()
+failures += support_native_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1900,6 +1983,13 @@ w('inline constexpr std::uintptr_t thrown_slot_live_rva=0x2429ad0, thrown_slot_b
 w('inline constexpr std::uintptr_t placed_slot_live_rva=0x23a9fd0, placed_slot_base_rva=0x23a9d20;')
 w('inline constexpr std::size_t rocket_slot=0x58, thrown_slot=0x8, placed_slot=0x48, gm_thrown=0x200, gm_placed=0x208;')
 w('inline constexpr std::size_t req_owner=0x32, rocket_id=0x2c, rocket_aux=0x3e, thrown_id=0x3c, thrown_aux=0x3e, placed_id=0x30, placed_aux=0x3c;')
+w('// --- Native thrown support v1: permanent stock guard (partner_support_guard.cpp) ------------')
+w('inline constexpr std::uintptr_t support_stock_fn_rva=0x108c8c0, support_stock_load_rva=0x108c8e5;')
+w('inline constexpr std::uintptr_t support_stock_pad_rva=0x108c888, support_stock_pad_begin_rva=0x108c888, support_stock_pad_end_rva=0x108c890;')
+w('inline constexpr std::uintptr_t support_stock_back_rva=0x108c8ec, support_stock_remote_rva=0x108c8fc;')
+w('inline constexpr std::uint32_t support_stock_load_orig=0x04818b41, support_stock_load_new=0xcccca1eb;')
+w('inline constexpr std::size_t support_stock_counts=0x614, support_stock_count=46, support_item_handle=0x240;')
+w('inline constexpr std::uint8_t equip_type_thrown=12, equip_type_placed=13;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

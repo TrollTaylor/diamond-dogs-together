@@ -57,6 +57,12 @@ const char* g_slot_refusal[kCensusSlots]{};
 detail::ProjectileFn g_slot_original[kCensusSlots]{};
 detail::ProjectileFn g_slot_test_original[kCensusSlots]{};
 std::uintptr_t g_slot_base = 0;
+// Independent, process-latched thrown owner: unlike the stock guard this must
+// cover requests arriving outside a native drain (preview and real throw).
+volatile LONG g_thrown_owner = 0xFFFF, g_thrown_last_owner = 0xFFFF, g_thrown_logged = 0;
+volatile LONG g_thrown_dropped = 0, g_thrown_preview_dropped = 0;
+volatile LONG g_thrown_passed = 0, g_thrown_unread = 0;
+volatile LONG g_slot_tried[kCensusSlots]{};
 
 void Record(CensusKind kind, bool dropped, bool fields_ok, std::uint16_t owner, std::uint16_t id, std::uint8_t b0, std::uint8_t b1,
             std::uint8_t b2, std::uint16_t aux) noexcept {
@@ -156,19 +162,32 @@ void NoiseHook(void* self, const void* record) noexcept {
 }
 std::uintptr_t NoiseHookAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&NoiseHook); }
 
-// A census slot hook (any thread): records the request (the owner at +0x32,
-// the slot's id and aux words) and forwards it unchanged, the return value
-// included; never drops (the filters are round 2). The four request functions
-// take (this, request) only (contract: their prologues use rcx and rdx).
+// Any thread, atomics only. For thrown requests the full u16 owner is read
+// before the original entry. Dropping here precedes 15E0230's shared preview
+// copy at 15E023A..15E0257 as well as its real object allocation.
 template <unsigned I>
 void* SlotHook(void* iface, const void* request) noexcept {
+    std::uint16_t owner = 0xFFFF, id = 0, aux = 0;
+    bool owner_ok = false, drop = false;
+    if constexpr (I == 2) {
+        owner_ok = ReadRecord(request, c::req_owner, &owner, sizeof(owner));
+        InterlockedExchange(&g_thrown_last_owner, owner);
+        drop = owner_ok && detail::Drops(static_cast<std::uint16_t>(g_thrown_owner), owner);
+        if (!owner_ok) InterlockedIncrement(&g_thrown_unread);
+        if (drop) {
+            InterlockedIncrement(&g_thrown_dropped);
+            if (ReadRecord(request, c::thrown_aux, &aux, sizeof(aux)) && (aux & 1u))
+                InterlockedIncrement(&g_thrown_preview_dropped);
+        } else InterlockedIncrement(&g_thrown_passed);
+    }
     if (g_census_on) {
-        std::uint16_t owner = 0xFFFF, id = 0, aux = 0;
-        const bool ok = ReadRecord(request, c::req_owner, &owner, sizeof(owner)) && ReadRecord(request, kSlots[I].id, &id, sizeof(id)) &&
+        if constexpr (I != 2) owner_ok = ReadRecord(request, c::req_owner, &owner, sizeof(owner));
+        const bool ok = owner_ok && ReadRecord(request, kSlots[I].id, &id, sizeof(id)) &&
                         ReadRecord(request, kSlots[I].aux, &aux, sizeof(aux));
         InterlockedIncrement(&g_c_kind[I]);
-        Record(kSlots[I].kind, false, ok, owner, id, 0, 0, 0, aux);
+        Record(kSlots[I].kind, drop, ok, owner, id, 0, 0, 0, aux);
     }
+    if (drop) return nullptr;  // 15E02B5 returns 0; all audited callers ignore rax.
     const detail::ProjectileFn original = g_slot_test_original[I] ? g_slot_test_original[I] : g_slot_original[I];
     return original ? original(iface, request) : nullptr;
 }
@@ -182,6 +201,8 @@ const c::Site* SiteAt(std::uintptr_t rva) noexcept {
 // holding it, then one locked qword exchange each (the live slot first, swapped
 // back when the base slot fails). nullptr or the static refusal.
 const char* InstallSlot(std::uintptr_t base, unsigned i) noexcept {
+    if (InterlockedCompareExchange(&g_slot_tried[i], 1, 0) != 0)
+        return g_slot_ready[i] ? nullptr : (g_slot_refusal[i] ? g_slot_refusal[i] : "disabled");
     const CensusSlot& k = kSlots[i];
     const std::uintptr_t target = base + k.target_rva;
     const std::uintptr_t live = base + k.live_rva + k.offset, dying = base + k.base_rva + k.offset;
@@ -200,6 +221,7 @@ const char* InstallSlot(std::uintptr_t base, unsigned i) noexcept {
             near_code::PatchQword(reinterpret_cast<void*>(live), hook, target);
             return why;
         }
+    g_slot_ready[i] = true;
     return nullptr;
 }
 // Once per process, only with the census on (Install's first call after it).
@@ -261,7 +283,15 @@ void ResetForTest() noexcept {
         g_slot_ready[i] = false;
         g_slot_refusal[i] = nullptr;
         g_slot_original[i] = nullptr;
+        InterlockedExchange(&g_slot_tried[i], 0);
     }
+    InterlockedExchange(&g_thrown_owner, 0xFFFF);
+    InterlockedExchange(&g_thrown_logged, 0);
+    InterlockedExchange(&g_thrown_last_owner, 0xFFFF);
+    InterlockedExchange(&g_thrown_dropped, 0);
+    InterlockedExchange(&g_thrown_preview_dropped, 0);
+    InterlockedExchange(&g_thrown_passed, 0);
+    InterlockedExchange(&g_thrown_unread, 0);
     std::memset(g_c_ring, 0, sizeof(g_c_ring));
     InterlockedExchange(&g_slot_installed, 0);
     g_slot_base = 0;
@@ -394,6 +424,34 @@ void Disarm() noexcept { InterlockedExchange(&g_owner, 0xFFFF); }
 
 bool Armed() noexcept { return static_cast<std::uint16_t>(g_owner) != 0xFFFFu; }
 
+const char* InstallThrown(const void* base_ptr, LogFn log) noexcept {
+    const DWORD error = GetLastError();
+    const auto base = reinterpret_cast<std::uintptr_t>(base_ptr);
+    const bool attempted = InterlockedCompareExchange(&g_thrown_logged, 1, 0) != 0;
+    if (!base) { SetLastError(error); return "image"; }
+    g_slot_base = base;
+    g_slot_refusal[2] = InstallSlot(base, 2);
+    g_slot_ready[2] = g_slot_refusal[2] == nullptr;
+    if (log && !attempted) {
+        char line[320]{};
+        StringCchPrintfA(line, ARRAYSIZE(line),
+            "partner_fire_filter=%s; kind=thrown; slots=0x2429ad8,0x24299a8; target=0x15e0230; owner_field=0x32; preview=entry; reason=%s\r\n",
+            g_slot_ready[2] ? "installed" : "refused", g_slot_refusal[2] ? g_slot_refusal[2] : "ok");
+        log(line);
+    }
+    SetLastError(error);
+    return g_slot_refusal[2];
+}
+bool ThrownPatchLive(const void* base) noexcept { return base && SlotLive(reinterpret_cast<std::uintptr_t>(base), 2); }
+bool ArmThrown(std::uint16_t owner) noexcept {
+    if (owner != 1) return false;  // instance 0 and typed soldier owners never qualify
+    InterlockedExchange(&g_thrown_owner, owner);
+    return true;
+}
+bool ThrownArmed(std::uint16_t owner) noexcept {
+    return owner == 1 && static_cast<std::uint16_t>(g_thrown_owner) == owner;
+}
+
 void ReadStats(const void* base, Stats& out) noexcept {
     out = Stats{};
     out.installed = g_ready;
@@ -411,6 +469,15 @@ void ReadStats(const void* base, Stats& out) noexcept {
     out.noise_dropped = static_cast<std::uint32_t>(g_noise_dropped);
     out.noise_passed = static_cast<std::uint32_t>(g_noise_passed);
     out.noise_last_owner = static_cast<std::uint16_t>(g_noise_last_owner);
+    out.thrown_installed = g_slot_ready[2];
+    out.thrown_live = ThrownPatchLive(base);
+    out.thrown_owner = static_cast<std::uint16_t>(g_thrown_owner);
+    out.thrown_armed = ThrownArmed();
+    out.thrown_last_owner = static_cast<std::uint16_t>(g_thrown_last_owner);
+    out.thrown_dropped = static_cast<std::uint32_t>(g_thrown_dropped);
+    out.thrown_preview_dropped = static_cast<std::uint32_t>(g_thrown_preview_dropped);
+    out.thrown_passed = static_cast<std::uint32_t>(g_thrown_passed);
+    out.thrown_unread = static_cast<std::uint32_t>(g_thrown_unread);
 }
 
 const char* CensusKindName(CensusKind kind) noexcept {

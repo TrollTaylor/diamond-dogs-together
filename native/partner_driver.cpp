@@ -17,6 +17,7 @@
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/coop_hud.hpp"
 #include "partner_player_contract.hpp"
+#include "mgscoop/partner_support_policy.hpp"
 
 namespace mgscoop::partner_driver {
 namespace {
@@ -334,7 +335,7 @@ Settings EffectiveSettings(const Settings& base, bool active) noexcept {
     ds.p218 = false;
     ds.mask = base.input_mask;
     // FIRE only as visual fire with the owner filter live (fire_live, set by TickWeapons).
-    const bool fire = base.nfire == PartnerNativeFire::visual && base.fire_live;
+    const bool fire = base.nfire == PartnerNativeFire::visual && (base.fire_live || (base.nsupport && base.support_live));
     const pnat::DriveSettings x =
         pnat::Effective(ds, true, pnat::NativeConfig{base.ngun, fire, base.naim, base.nhold == PartnerNativeHold::net});
     e.apply = x.apply;
@@ -571,9 +572,10 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     for (unsigned i = 0; i < 3; ++i) a.rates_remote[i] = m.rates_remote[i];
     // Native weapons: the magazine mirror on instance 1's gun record (gun
     // stage only; the hook re-validates the prim chain before a write).
-    a.mag_mirror = set.native_active && set.ngun && m.gun1_rec != 0 && m.gun1_prim != 0;
-    a.gun_prim = a.mag_mirror ? m.gun1_prim : 0;
-    a.gun_rec = a.mag_mirror ? m.gun1_rec : 0;
+    a.mag_mirror = set.native_active && set.ngun && m.weapon_gate != partner_slots::Gate::support && m.gun1_rec != 0 && m.gun1_prim != 0;
+    a.gun_prim = set.native_active && set.ngun ? m.gun1_prim : 0;
+    a.gun_rec = set.native_active && set.ngun ? m.gun1_rec : 0;
+    a.native_support = set.native_active && set.ngun && set.nsupport;
     // The weapon gate (F4/W5): FIRE and RELOAD stripped while the remote's gun
     // is not body 1's or body 1 is mid-switch, FIRE alone for an unqualified type.
     a.strip = set.native_active ? m.weapon_strip : 0u;
@@ -2268,6 +2270,8 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
             m.weapon_ok = true;
             m.gun1_prim = gun.prim;
             m.gun1_rec = gun.rec;
+        } else if (set.nsupport && (pnat::GunClass(gun.fields.flags27c)==2 || pnat::GunClass(gun.fields.flags27c)==3)) {
+            m.gun1_prim=gun.prim; m.gun1_rec=gun.rec;
         }
     }
     const char* why = nullptr;
@@ -2365,9 +2369,21 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         ui.slot = m.remote_slot;
         ui.type_ok = m.remote_equip_type != pnat::kNull;
         ui.type = ui.type_ok ? static_cast<std::uint8_t>(m.remote_equip_type) : static_cast<std::uint8_t>(0);
-        m.unsupported = set.ngun && set.nunsupported ? partner_slots::JudgeUnsupported(ui) : partner_slots::Unsupported::no;
+        m.unsupported = set.ngun && (set.nunsupported || set.nsupport) ? partner_slots::JudgeUnsupported(ui) : partner_slots::Unsupported::no;
     }
-    if (m.unsupported != partner_slots::Unsupported::no) {
+    // The observer callback revalidates the armed guard, thrown entry filter,
+    // non-local equipment row/handle and the mission stock latch. Never reuse
+    // the previous support verdict across an unread gun tick.
+    const bool support_ready = set.ngun && set.nsupport && ready && m.remote_v5 && m.remote_slot==3 &&
+        m.remote_equip_type==12 && m.remote_gun_equip>0 && m.remote_gun_equip<0x800 &&
+        gun_ok && gun.fields_ok && gun.fields.equip==static_cast<std::uint32_t>(m.remote_gun_equip) && !m.body_switching &&
+        h.support_ready && h.support_ready(h.context,st,static_cast<std::uint16_t>(m.remote_gun_equip));
+    set.support_live=support_ready;
+    if (support_ready) {
+        m.unsupported=partner_slots::Unsupported::no;
+        m.weapon_gate=partner_slots::Gate::support;
+        weapon_judged=true;
+    } else if (m.unsupported != partner_slots::Unsupported::no || m.weapon_gate==partner_slots::Gate::support) {
         m.weapon_gate = partner_slots::Gate::unsupported;
         m.weapon_standin = false;
         m.standin_remote_slot = m.standin_body_slot = partner_slots::kNoSlot;
@@ -2384,7 +2400,7 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     // shows a gun class this mission (no gun on it: another mission, a build
     // without the gun pieces, the writer still waiting), HOLD, RELOAD and
     // FIRE are stripped too, so the partner never aims empty-handed.
-    m.weapon_absent = set.ngun && !m.weapon_ok;
+    m.weapon_absent = set.ngun && !m.weapon_ok && !support_ready;
     if (m.weapon_absent) m.weapon_strip |= kPartnerNativeGunBits | kPartnerNativeFireBit;
     if (set.ngun && (!m.weapon_absent_logged || m.weapon_absent != m.weapon_logged_absent)) {
         m.weapon_absent_logged = true;
@@ -2411,7 +2427,7 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         const bool remote_reloading = m.remote_v5 && ((m.remote_gun_flags & pin::GunFlag::Reloading) != 0 ||
                                                        partner_reload::ReloadMode(m.remote_gun_mode));
         const bool was = m.dry_strip;
-        const bool active = set.ngun && set.ndry && set.nfire == PartnerNativeFire::visual;
+        const bool active = set.ngun && set.ndry && set.nfire == PartnerNativeFire::visual && m.weapon_gate!=partner_slots::Gate::support;
         m.dry_strip = active && partner_slots::DryStep(m.dry, partner_slots::DryIn{now, m.remote_mag_ok, m.remote_mag, remote_reloading});
         if (!active) { m.dry.dry = false; m.dry.zero_ms = 0; }
         if (m.dry_strip) m.weapon_strip |= pnat::kPadFire;
@@ -2730,7 +2746,7 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
     partner_slots::AimGateIn gi{};
     gi.enabled = set.ngun && set.naim_intent == PartnerNativeAimIntent::state;
-    gi.judged = m.weapon_ok && !m.weapon_absent;
+    gi.judged = (m.weapon_ok || m.weapon_gate==partner_slots::Gate::support) && !m.weapon_absent;
     gi.gate = m.weapon_gate;
     gi.slot_valid = m.remote_v5 && m.remote_slot <= pin::kInvSlotMax;
     gi.slot = m.remote_slot;
@@ -4446,6 +4462,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_enter = lab.partner_ride_seat_enter;
     d.settings.seat_exit = lab.partner_ride_seat_exit;
     d.settings.nstandin = lab.partner_native_standin;
+    d.settings.nsupport = lab.partner_native_support;
     d.settings.nunsupported = lab.partner_native_unsupported;
     d.settings.ndry = lab.partner_native_dry_stop;
     d.settings.naim_intent = lab.partner_native_aim_intent;

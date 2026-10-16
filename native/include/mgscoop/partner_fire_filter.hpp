@@ -75,6 +75,15 @@ bool Arm(std::uint16_t owner) noexcept;
 void Disarm() noexcept;
 bool Armed() noexcept;
 
+// Anim round 2: thrown service entry filter (vt+8 at 2429AD0/24299A0).
+// Installed independently of the census. The armed owner stays latched across
+// drain boundaries and key changes: a queued/unwindowed request must not create
+// an object or overwrite the shared arc preview. Only owner 1 can be armed.
+const char* InstallThrown(const void* base, LogFn log) noexcept;
+bool ThrownPatchLive(const void* base) noexcept;
+bool ArmThrown(std::uint16_t owner = 1) noexcept;
+bool ThrownArmed(std::uint16_t owner = 1) noexcept;
+
 // Process-lifetime totals (the driver logs deltas).
 struct Stats {
     bool installed, live, armed;
@@ -90,6 +99,9 @@ struct Stats {
     bool noise_installed, noise_live;
     std::uint32_t noise_dropped, noise_passed;
     std::uint16_t noise_last_owner;
+    bool thrown_installed, thrown_live, thrown_armed;
+    std::uint16_t thrown_owner, thrown_last_owner;
+    std::uint32_t thrown_dropped, thrown_preview_dropped, thrown_passed, thrown_unread;
 };
 void ReadStats(const void* base, Stats& out) noexcept;
 
@@ -121,14 +133,14 @@ void ReadCensus(const void* base, std::size_t image_span, Census& out) noexcept;
 // (gun mode 37 and its helper 0x1061D90: gm+0x200 vt+8 = 0x15E0230; the equip
 // +0x3C, flags +0x3E); placed objects (gun mode 46: gm+0x208 vt+0x48 =
 // 0xFCCD80; the equip +0x30, flags +0x3C). Every builder stamps the owner id
-// & 0x1FF at +0x32. Each forwards every call unchanged (rax included).
+// & 0x1FF at +0x32. Armed body-1 thrown requests are dropped at the entry.
 enum class CensusKind : std::uint8_t { bullet, noise, projectile, rocket, thrown, placed };
 inline constexpr unsigned kCensusSlots = 4;  // projectile, rocket, thrown, placed (CensusKind - 2)
 const char* CensusKindName(CensusKind kind) noexcept;
 struct CensusEntry {
     std::uint32_t seq;      // write sequence (1-based); 0: an empty slot
     CensusKind kind;
-    bool dropped;           // the owner filter dropped it (bullet/noise; never a projectile)
+    bool dropped;           // the owner filter dropped it (bullet/noise/thrown)
     bool fields_ok;         // the record's fields were readable
     std::uint16_t owner;
     std::uint16_t id;       // bullet id, projectile id, or the noise kind

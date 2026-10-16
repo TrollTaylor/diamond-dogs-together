@@ -537,6 +537,7 @@ struct Arm {
     bool aim_intent;
     std::uint64_t aim_act_until_ms;
     float reload_rate_k;
+    bool native_support; // key selected; every consumer rechecks the fresh slot/equip and safety owners
 };
 
 // Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.
