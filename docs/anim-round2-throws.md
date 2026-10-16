@@ -68,14 +68,17 @@ motions or generate a second real grenade.
   stock table is shared, so the two cannot be told apart). Unread stock cannot
   admit a new support input.
   `rec+0x240` is logged at episode entry and the observed native release edge.
+- **Handle call (WS1, resolved; see "Handle call resolved" below).** Admission also requires
+  `rec+0x240` == the Match-verified slot-3 handle (B), and every windowed body-1 job checks the
+  row that handle names in the global handle manager (C, detect-only until its hidden run).
 
 ## Patch bytes and contract pins
 
 Inspected executable (read only): `D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe`,
 version 1.0.15.4, SHA-256
 `085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
-The generator currently verifies **589 code sites and 122 vtable slots**, including
-all previous reference/containment assertions.
+The generator currently verifies **607 code sites and 128 vtable slots** (589/122 before the WS1
+handle-call pins), including all previous reference/containment assertions.
 
 | RVA | Original bytes | Enabled in-memory bytes |
 |---|---|---|
@@ -157,8 +160,8 @@ and return-to-gun visuals, both roles, and two-PC gameplay. (Superseded by the g
 fix below: every body-1 job is guarded now.) Unwindowed or refused
 block-1 jobs do not receive the stock guard; persistent owner filtering and the
 stock latch are backstops, not a proof that such jobs cannot spend stock. Existing
-four unopened helpers and the per-item vt+0x160 call remain the audit's bounded
-unknowns. Placed types, arms, full campaign and progression remain outside v1.
+four unopened helpers remain the audit's bounded unknowns (the per-item vt+0x160 call is
+resolved: "Handle call resolved" below). Placed types, arms, full campaign and progression remain outside v1.
 
 ## Historical blocked attempts
 
@@ -189,7 +192,8 @@ Until both are resolved, Round 1 behaviour stays: slot 3/4/6 equipment means `Ga
 ### Throws spend the viewer's stock (findings 1, 5)
 - Mode 37 (`0x1087210`) op 10 (`0x10879BF`), offline and for any id:
   - the thrown request at `0x1087BF2`;
-  - the call `[[prim+0x60]] vt+0x160(rec+0x240)` at `0x1087C05`, which is not yet identified;
+  - the call `[[prim+0x60]] vt+0x160(rec+0x240)` at `0x1087C05` (resolved in WS1: the global equipment-handle
+    manager's `0xDC1740`, a per-handle pin bit plus model part; no stock, vars or HUD write; see "Handle call resolved");
   - then, unless rec+0x3C0 bit 29 (`0x1087C0B`) or a count >= 0x3FFF (`0x1087C39`): the decrement into
     rec+0x25C..0x262, ctl vt+0xB0, the stock setter ctl vt+0xC0 = `0x11AF490` (`0x1087CF0`), message 0xAAE7433A at
     count 0 (`0x1087D99`) and ctl vt+0x110.
@@ -309,8 +313,10 @@ No safety classifier stopped these runs.
   any id offline; `0x15E0230` copies previews into ONE shared record at thrown-service+0x100 (`0x15E023A..0x15E0257`).
   **The owner filter must run at the `0x15E0230` entry**, before the preview branch, so body 1 neither creates a real
   object nor overwrites the viewer's preview.
-- **Unresolved, to be watched at runtime:** `[plugin+0x60] vt+0x160(rec+0x240, flag)` at `0x1087C05`, `0x10880D3`,
-  `0x108AA91` (likely a per-item "pin pulled" toggle keyed by body 1's own equipment handle in rec+0x240), and
+- **Resolved in WS1 (2026-10-16, "Handle call resolved" below):** `[plugin+0x60] vt+0x160(rec+0x240, flag)` at
+  `0x1087C05`, `0x10880D3`, `0x108AA91` and two more sites (`0x10892CB`, `0x1062696`) is the global equipment-handle
+  manager's `0xDC1740`: the per-handle "pin pulled" bit and model part of the handle in rec+0x240. **Still
+  unresolved, to be watched at runtime:**
   `G vt+8` on message `0xB6F952A5` in modes 28/32/43/45. Four helpers have no Ghidra function
   (`0x105F8A0`, `0x103AE60`, `0x103A460`, `0x108FAD0`).
 - **Place family (43..47).** Placing and detonating are local-only for id 1 (confirmed), but mode 46 op 1 writes the
@@ -356,3 +362,90 @@ while it aimed its own grenade), guard `hits=2040` across `windows=6920`. Idle r
 instead of the earlier ~70. Frames (contact sheet `C:/Users/taylo/AppData/Local/Temp/mgs-caps/support2/sheet.png`):
 the host body's grenade and magazine throws (wind-up, release, follow-through) and the guest holding its
 own HAND GRENADE (12) with its arc while the partner throws beside it.
+
+## Handle call resolved (WS1, 2026-10-16)
+
+Spec: `coop-gaps-spec.md` WS1 (research "handle-call", critic #13). Branch `wp/feat-throws` from `wp/integ6`.
+Static evidence is from the exact executable (SHA-256 `085c2f82...bb45`), re-read by the contract generator.
+
+**What the call is.** `[prim+0x60]` is X, the process-wide equipment-handle manager `[[gm]+0x98]+0x1E8` (the same
+object as inventory Y+0x58 and controller ctl+0x28). The gun prim base constructor `0x101DE90` stores it at
+`0x101E1D4..0x101E1EA`; the factory `0x103C910` is the constructor's only caller (`0x103C944`) and then installs
+the prim vtables `0x23B3E80/0x23B3F68/0x23B3FA0/0x23B3FE0/0x23B4040`. X's two concrete vtables `0x234B840` and
+`0x234B470` both hold vt+0x160 = `0xDC1740`, vt+0x38 = `0xDC64E0` and vt+0x40 = `0xDC0350`; those slots are the only
+image pointers to the three methods.
+- `0xDC1740(X, h, flag)` sets or clears bit 7 of byte 4 of the 6-byte row `X+0x140[(h>>16)*6]`. When the handle has a
+  model instance (vt+0x40 `0xDC0350`: kinds 9+ read row byte 5 bit 0) it calls `0xDC1800`, which for kind 12 toggles
+  model part `0xB2149CAFEFD` on the handle's instance slot through `[X+0x190] vt+0x100`, and for equips
+  `0x17E..0x180` starts/stops an effect through `[X+0x198]`. It never allocates, frees or reuses a handle and writes
+  no stock, vars, HUD, camera or id-indexed player state. **It checks nothing**: no owner, bounds or equip word.
+- `0xDC64E0(X, h)` (vt+0x38) can release the handle's model instance through `0xDC6540`.
+- rec+0x240 is written only by the activation `0x105FDB0`: `0x10602E8` stores the handle loaded from
+  `Y+0x40[id*stride + rec+0x3D9]` (`0x105FEA5`, `0x105FEB4`), and `0x10602F0` stores rec+0x24C from the same handle.
+
+**Five gun-plugin sites** pass rec+0x240 (a generator census pins exactly these):
+
+| Site | Where | Flag |
+|---|---|---|
+| `0x10892CB` | mode 28 hold hub (new) | 0 |
+| `0x10880D3` | mode 30 op 1 | 0 |
+| `0x108AA91` | mode 33 pin event | 1 |
+| `0x1087C05` | mode 37 release | 0 |
+| `0x1062696` | gun iface reset `0x1061F50` (vtable `0x23B3FA0+0x10`), classes 2/3 only (`0x1062629..0x106263B`), after X vt+0x38 at `0x1062683` (new) | 0 |
+
+The call is safe for body 1 as v1 is built: at every throw call rec+0x240 is body 1's own Match-verified handle
+(owner 1, kind 12, this equip), as runs `aaa2a0e0` (`0x12c4c`, `0x12bac`) and `ea93a2e3` (`0x22c4c`, `0x22bac`,
+`0x22c4c`) show. The residual risk is the non-input iface reset firing on a stale rec+0x240 whose row an engine-side
+free handed to the viewer; it is not shown to be reachable. Three fail-closed pins close or detect it:
+
+- **B (admission).** `partner_support_equip::Ready()` also returns the Match-verified slot-3 handle
+  `Y+0x40[1*7+3]`; `SupportAdmitted` builds its record readiness with the pure
+  `partner_support_policy::RecordReady`: the previous identity (prim vtable/block/record, rec+0x24C == the remote's
+  equip, hand slot 3, no switch bit) **and** `rec+0x240 == that handle`. HOLD/FIRE therefore reach modes 28/30/33/37
+  only when every vt+0x160 call hits a row with owner 1, kind 12, the right equip and an in-range index. It may refuse
+  one more frame after an equip, until the activation refreshes rec+0x240; that transient logs once per pair:
+  `partner_support=rec240_check; ...; reason=pending; rec240=0x..; slot_handle=0x..`.
+- **C (per-job row check, detect-only).** After every windowed body-1 job, while the record has B's identity (so never
+  during a gun<->support or support<->support switch before `0x105FDB0` refreshes rec+0x240; critic #13) and its class
+  `(rec+0x27C>>6)&7` is 2 or 3 (the iface reset's own gate), `partner_support_policy::CheckRow` reads X from the calls'
+  own receiver `[prim+0x60]` (vtable `0x234B840` required, as in the writer's Capture) and requires
+  `idx = rec240>>16 < [X+0x68]`, row word +0 == `(rec240>>5)&0x7FF` and owner word +2 == 1. Lines (one per handle or
+  verdict change):
+  - `partner_support=rec240_check; slot=3; equip=N; type=12; reason=ok; rec240=0x..; why=ok; idx=..; capacity=..; row_equip=N; owner=1; class=2|3; checks=..; foreign=0; mode=log; latched=0`
+  - `partner_support=rec240_check; ...; reason=unread; why=unread` (manager chain or row unreadable; never latches)
+  - `partner_support=refused; slot=3; equip=N; type=12; reason=rec240_foreign; rec240=0x..; why=owner|equip|range|empty; ...; mode=log; latched=0`
+
+  `partner_support_policy::kRec240Latch` is **false**: a foreign row only logs. After a hidden run shows no
+  `rec240_foreign`, flipping it to true makes the same verdict call `LatchNativeSupportOff` for the mission
+  (`latched=1`, reserved log slot). C cannot stop an in-job native call; it detects an alias before more support
+  presses are admitted.
+- **E (contract).** New pins: `0x101E1D4` (prim+0x60 store), `0x103C944..0x103C980` (factory/vtables),
+  `0x1089289..0x10892D1` (mode-28 site), `0x1062629..0x106263D` and `0x1062676..0x106269C` (iface reset class gate,
+  vt+0x38, vt+0x160), `0x105FEA5`, `0x105FF6F`, `0x10602E8..0x10602F7` (the rec+0x240 writer), whole bodies
+  `0xDC1740..0xDC17FF`, `0xDC1800..0xDC1901`, `0xDC0350..0xDC0396`, `0xDC64E0..0xDC653D` (in <= 80-byte parts), vtable
+  slots `0x234B840`/`0x234B470` +0x160/+0x38/+0x40, and generator assertions (single base-ctor caller, the methods'
+  only references are the two vtables, exact function ranges and rets, the class-2/3 branch target, and the census of
+  exactly five rec+0x240 -> vt+0x160 call sites). The three existing call-site pins now name the resolved target.
+  Counts: **607 code sites, 128 vtable slots** (was 589/122). The writer receipt field is now `rec_handle_risk=pinned`.
+
+Tests: `partner_support_policy_tests` gained 73 checks (1378 -> 1451): record readiness with a mismatching rec+0x240
+(other index, equip or kind; no Match-verified handle; switch; previous equip; equip range), the composed `Admit`, the
+reader-based record wiring on a fake prim/record, and the row check on fake manager tables (class matrix 0..7; own row
+ok with the pin bit set; viewer-owned row; other owner; reused row with another equip word; index == capacity; last
+in-range index; empty handles; wrong/sibling manager vtable, no manager, zero or 17-bit capacity, no rows and an
+unreadable row are `unread`; the detect-only default never latches; the latch mode latches exactly the foreign verdicts).
+The hook static_asserts the pure policy's offsets against the generated contract.
+
+Still open (research "handle-call" Open): when exactly `0x1061F50` runs for body 1; `0xDC6540`, `[X+0x190]` vt+0x100 and
+`[X+0x198]` were not opened; the LIFO free-list decode is inferred; the other plugin with six X vt+0x160 callers
+(`0x11FB84F` .. `0x11FCAD2`, handles at +0x18 of per-id 0x60 records) stays outside v1 (slots 4/6 refused).
+
+**Hidden run (runtime owner; not run here).** Re-run the throws scenario of `aaa2a0e0`/`ea93a2e3` in lab:
+`pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-native.txt
+-PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab` (MGS_GAME_LUA_DIR unset). Accept when:
+scenario.json Closed / BaselineRestored / RealSavesUnchanged; the throws still pass exactly as in `ea93a2e3` (equip 354
+and 349, `armed; reason=throw` and `throw_release`, every `stock_check; ...; changed=0`, every guest
+`require support;...;counts=12,16383,12,8,12,12,8,8`, thrown filter drops, frames of both throws); at least one
+`partner_support=rec240_check; ...; reason=ok; ...; owner=1` per thrown equip (354 and 349) on the guest; **no**
+`reason=rec240_foreign` and no `reason=unread`; `reason=pending` lines, if any, only right after an equip/follow
+line. Then flip `kRec240Latch` (and its fixture assertion) and re-run once.

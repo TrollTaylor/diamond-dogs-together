@@ -66,11 +66,13 @@ Preview gate in every handler: `((P+0x204>>8)&1)==0 || id==P+0x218` [O] -> alway
    that it drives the local throw-arc/landing preview is [I]. An owner filter at 0x15E0230 drops it only if it
    runs at the entry, before 0x15E023A; a filter placed in the pool path (0x15E025C..0x15E02B5) would not.
    Without the guard, body 1's preview is suppressed only while rec+0x25C == 0 (bit 29 clear).
-2. **0x1087C05 `[plugin+0x60] vt+0x160(rec+0x240, 0)`** - target unresolved (see "Identification").
+2. **0x1087C05 `[plugin+0x60] vt+0x160(rec+0x240, 0)`** - target unresolved here; **resolved 2026-10-16 (WS1)**:
+   X vt+0x160 = 0xDC1740 on the global equipment-handle manager (docs/anim-round2-throws.md "Handle call resolved").
    Same receiver/shape also at mode 30 op 1 (0x10880D3, flag 0) and mode 33 op 12 (0x108AA91, flag 1, on message
    0xA3B3E67F, which also sets rec+0x3CC bit 9) [O]. None of the three is gated by locality or bit 29 [O].
    Receiver is the plugin-wide object (not per id); the per-player selector is the dword rec+0x240 [O].
-   Whether the callee writes only the instance named by that handle is [I]/unknown.
+   Whether the callee writes only the instance named by that handle is [I]/unknown. (WS1: it is process-wide, not
+   plugin-wide; it writes only the row bit and model part of the handle it is given, with no owner/bounds check.)
 3. **The real thrown request** (0x1087BF2): pool path of 0x15E0230 calls `[gm+0x18] vt+0x20(service+0x84)`
    (0x15E027C), then either the pool object copy (0x15E02C0) or `[gm+0x18] vt+0x30(service+0x84)` (0x15E0293) [O].
    This is the request the owner filter is meant to drop.
@@ -120,7 +122,11 @@ mismatch (lines 84-103) [O]. Mode 37 sets that bit only inside the bit-29-gated 
 proposed guard (forced remote branch, lines 19-23: rec+0x25C = -1, bit 29, return) the counters are not reached
 for id 1 [O]. Without the guard, offline, this path is live for any id that ever had bit 27 set [I].
 
-## Identification of 0x1087C05 (best effort, not resolved)
+## Identification of 0x1087C05 (best effort, not resolved here)
+Resolved 2026-10-16 (WS1, docs/anim-round2-throws.md "Handle call resolved"): the receiver is X =
+[[gm]+0x98]+0x1E8 (stored into prim+0x60 at 0x101E1D4), vt+0x160 = 0xDC1740; rec+0x240 is written only by the
+activation 0x105FDB0 (0x10602E8); there are two more sites, 0x10892CB (mode 28) and 0x1062696 (iface reset
+0x1061F50, after X vt+0x38 at 0x1062683). The notes below are the original best effort.
 - Receiver: object at plugin+0x60 (shared by all ids). Its +8 sub-object answers equip-id queries
   vt+0x48(equipId) (returns a type, compared with 5 in mode 33 op 12) and vt+0x50(equipId) (bool) [O].
 - Methods seen on it, all keyed by the dword rec+0x240 plus one flag: vt+0xE0 / vt+0xE8 (class-1 guns,
@@ -155,5 +161,5 @@ Context: 0x108C8C0, 0x108BD40, 0x103E010 (contains 0x103E070).
 Not proven side-effect free. Observed under the guard: no stock, ctl, message, camera, plugin-field, global or
 HUD write in the opened code; everything else is rec or id-indexed. Remaining viewer-world effects: (1) the
 preview copy into the single slot thrown-service+0x100 (dropped only if the owner filter sits at 0x15E0230
-entry); (2) the unresolved `[plugin+0x60] vt+0x160(rec+0x240, flag)` at 0x1087C05 / 0x10880D3 / 0x108AA91;
+entry); (2) the `[plugin+0x60] vt+0x160(rec+0x240, flag)` at 0x1087C05 / 0x10880D3 / 0x108AA91 (resolved in WS1);
 (3) four unopenable helpers. Body 1's throw aim also reads the viewer's camera offline (correctness, not a write).

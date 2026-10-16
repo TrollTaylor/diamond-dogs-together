@@ -723,9 +723,9 @@ SITES += [
     (0x108C887, 'c3cccccccccccccccc', 'support stock guard: predecessor ret and all eight int3 bytes (padding ends at next function 0x108C890)'),
     (0x108C8C0, '48894c2408555641554883ec50488b4108458be8488bf24c8b8838010000488daab0010000418b8104020000', 'support stock guard: ammo-copy entry, P chain and full seven-byte load at 0x108C8E5'),
     (0x108C8EC, 'c1e808a8017427453b8118020000741e48c785ac000000ffffffff818ac0030000000000204883c450415d5e5dc3', 'support stock guard: original online/local test, non-consuming counts and bit-29 branch through ret'),
-    (0x1087BF5, '498b4e608b9340020000488b014533c0ff9060010000f783c0030000000000200f8591010000', 'support throw: unresolved rec+0x240 item callback and bit-29 branch over all stock writes'),
-    (0x10880CC, '488b4e60488b01ff90600100004d8bcf448b', 'support throw: mode-30 unresolved item callback at 0x10880D3'),
-    (0x108AA84, '488b4d608b9740020000488b01ff9060010000', 'support throw: mode-33 unresolved item callback at 0x108AA91'),
+    (0x1087BF5, '498b4e608b9340020000488b014533c0ff9060010000f783c0030000000000200f8591010000', 'support throw: mode-37 [prim+0x60] vt+0x160(rec+0x240, 0) at 0x1087C05 (resolved: 0xDC1740) and bit-29 branch over all stock writes'),
+    (0x10880CC, '488b4e60488b01ff90600100004d8bcf448b', 'support throw: mode-30 [prim+0x60] vt+0x160(rec+0x240, 0) at 0x10880D3 (resolved: 0xDC1740)'),
+    (0x108AA84, '488b4d608b9740020000488b01ff9060010000', 'support throw: mode-33 [prim+0x60] vt+0x160(rec+0x240, 1) at 0x108AA91 (resolved: 0xDC1740)'),
     (0x15E023A, 'f6423e01488bfa488bd974164881c100010000488b5c24404883c4205fe9c4ddffff', 'support entry filter must precede preview-bit branch and shared service+0x100 copy'),
     (0x15E02B5, '4885c0740b488bd7488bc8e85bddffff488b6c2430488b742438488b5c244048', 'support entry filter: null pool result returns zero in original return domain'),
     (0x15DE020, '0f28024c8bc141b9001800000f29010f284a100f2949100f2842200f2941200f', 'support preview copy helper entry (read-only evidence; owner filter drops before it)'),
@@ -741,6 +741,46 @@ SITES += [
     (0xDC3250, '44894c24205341544155415641574883ec204c8be1488b49', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
     (0xDC2A50, '664489442418895424104883ec288bc24c8bc983e01f0f84', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
     (0xDC63A0, '488974241889542410574883ec208bc28bf2488bf983e01f', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
+]
+# --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
+# process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
+# vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
+# gun-plugin call passes; partner_input_hook requires it to equal the Match-verified slot-3 handle (B) and
+# checks its X+0x140 row per body-1 job (C). Whole bodies are pinned in <= 80-byte parts.
+SITES += [
+    (0x101E1D4, 'e8770ebeff4c8b8098000000498b88e801000048894f60',
+     'gun prim base ctor 0x101DE90: prim+0x60 = [[0xBFF050()]+0x98]+0x1E8 (the equipment-handle manager X)'),
+    (0x103C944, 'e84715feff90488d052f753701488903488d050d76370148894310488d053a76370148894330488d056f76370148894348488d05c476370148894350',
+     'gun prim factory 0x103C910: base ctor, then vtables 0x23B3E80, +0x10 0x23B3F68, +0x30 0x23B3FA0, +0x48 0x23B3FE0, +0x50 0x23B4040'),
+    (0x1089289, 'c683c00200001c83c9304088bbc2020000c783740300006666563f25fffdfffe03c94533c00bc8898bcc0300004183a5cc000000f3488b4d60488b018b9340020000ff9060010000',
+     'mode-28 hold hub: mode 0x1C, flag r8d = 0, then [prim+0x60] vt+0x160(rec+0x240, 0) at 0x10892CB'),
+    (0x1062629, '8b8f7c020000c1e90683e1078d41fe83f8017639',
+     'gun iface reset 0x1061F50: (rec+0x27C>>6)&7 in {2,3} -> 0x1062676'),
+    (0x1062676, '488b4e30488b018b9740020000ff5038488b4e30488b014533c08b9740020000ff9060010000',
+     'gun iface reset: [iface+0x30 = prim+0x60] vt+0x38(rec+0x240) at 0x1062683, then vt+0x160(rec+0x240, 0) at 0x1062696'),
+    (0x105FEA5, '410fb696d9030000418886dc030000',
+     'activation 0x105FDB0: the handle slot index is rec+0x3D9 (hand slot) for the load at 0x105FEB4'),
+    (0x105FF6F, '498db6b0010000', 'activation: rsi = rec+0x1B0 (rsi+0x90 = rec+0x240, rsi+0x9C = rec+0x24C)'),
+    (0x10602E8, '899e900000000bf84489ae9c000000',
+     'activation: rec+0x240 = the loaded handle, rec+0x24C = X vt+0x20(handle)'),
+    (0xDC1740, '48895c240889542410574883ec30c1ea10410fb6f8488bd90fb7c2488d1440488b8140010000806450047f4c8d0c504584c00f95c0c0e00741084104488b018b542448ff504084c0746b448b4c244844',
+     'X vt+0x160 0xDC1740 (1/3): row = X+0x140 + (h>>16)*6; row[4] bit 7 = flag; no owner/bounds/equip check; then X vt+0x40(h)'),
+    (0xDC1790, '8b830c01000033d2458bd141c1ea104585c0741d4c8b9b800100000f1f440000420fb60c1a413bca740affc2413bd072ef418bd0488b83400100004f8d0452488d4be0460fb6544004460fb704404183',
+     'X vt+0x160 0xDC1740 (2/3): instance slot n = index of (h>>16) in X+0x180[0..X+0x10C); row equip word and row[4]&0x7F'),
+    (0xDC17E0, 'e11f4183e27f448954242840887c2420e80b000000488b5c24404883c4305fc3',
+     'X vt+0x160 0xDC1740 (3/3): 0xDC1800(X-0x20, n, equip, kind, flag, row[4]&0x7F); ret at 0xDC17FF'),
+    (0xDC1800, '4889742410574883ec30418bf88bf23b912c0100000f83dc0000004c8b91b0010000418d41ff48895c2440488b99b801000083f8070f86b70000004183e90c744d41ffc974334183f9040f85a2000000',
+     'handle part toggle 0xDC1800 (1/4): n < X+0x10C; kinds 1..8 return; kinds 12/13/17 dispatch'),
+    (0xDC1850, '81eff3010000741583ff1a0f859100000049b85dcca7fa87950000eb5749b80b9e03a4789d0000eb4b4181f89d010000757049b8f2bdc59fe62e0000eb36807c246000498b0249b8fdfeca49210b0000',
+     'handle part toggle 0xDC1800 (2/4): kind 17 equips 0x1F3/0x20D, kind 13 equip 0x19D, kind 12 model part 0xB2149CAFEFD'),
+    (0xDC18A0, '410f94c1498bcaff90000100008d8782feffff83f802773a49b841c09f9fe24b00008bd6488b034533c9488bcb44384c2460741bc7442460989f16bf488b5c2440488b7424484883c4305f48ff6008ff',
+     'handle part toggle 0xDC1800 (3/4): [X+0x190] vt+0x100(n, part, !flag); equips 0x17E..0x180 effect [X+0x198] vt+8/vt+0x10'),
+    (0xDC18F0, '5010488b5c2440488b7424484883c4305fc3', 'handle part toggle 0xDC1800 (4/4): effect stop call and ret at 0xDC1901'),
+    (0xDC0350, '8bc24c8bc983e01f7502f3c3ffc8c1ea1083f807771a488b8128010000440fb7c2488b481833c042833c81ff0f95c0c30fb7c2488d0c40498b81400100000fb644480583e001c3',
+     'X vt+0x40 0xDC0350 (leaf, whole body): kind 0 -> 0; kinds 1..8 [[X+0x128]+0x18][idx] != -1; else row[5] bit 0'),
+    (0xDC64E0, '4883ec28448bc2488bd1418bc083e01f7447ffc841c1e81083f807771e488b9128010000488b422042802400fe488b422042800c00024883c428c3488b82400100004b8d0c40f644480501740c488d4a',
+     'X vt+0x38 0xDC64E0 (1/2): kinds 1..8 flag bytes; else if row[5] bit 0 -> 0xDC6540(X-0x20, idx) (model instance release)'),
+    (0xDC6530, 'e0418bd0e8070000004883c428c3', 'X vt+0x38 0xDC64E0 (2/2): call 0xDC6540; ret at 0xDC653D'),
 ]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
@@ -880,6 +920,15 @@ SLOTS += [
     (0x23895D0, 0x8, 0xEE9880, 'support inventory derived: allocate'),
     (0x23894B0, 0x10, 0xEE9D70, 'support inventory base: release'),
     (0x23895D0, 0x10, 0xEE9D70, 'support inventory derived: release'),
+]
+# WS1: the handle manager's two concrete vtables (the only image pointers to 0xDC1740 / 0xDC64E0 / 0xDC0350).
+SLOTS += [
+    (0x234B840, 0x160, 0xDC1740, 'handle manager vt+0x160 = pin bit + model part (the rec+0x240 call)'),
+    (0x234B470, 0x160, 0xDC1740, 'handle manager sibling vt+0x160 = pin bit + model part'),
+    (0x234B840, 0x38, 0xDC64E0, 'handle manager vt+0x38 = model instance release (iface reset 0x1062683)'),
+    (0x234B470, 0x38, 0xDC64E0, 'handle manager sibling vt+0x38 = model instance release'),
+    (0x234B840, 0x40, 0xDC0350, 'handle manager vt+0x40 = has-model test'),
+    (0x234B470, 0x40, 0xDC0350, 'handle manager sibling vt+0x40 = has-model test'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 
@@ -1640,8 +1689,43 @@ def support_native_assertions():
     return out
 
 
+def handle_call_assertions():
+    """WS1: the facts B/C rely on (docs/anim-round2-throws.md "Handle call resolved")."""
+    import re
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    funcs = runtime_functions()
+    need(rel_refs(0x101DE90) == [0x103C944], f'gun prim base ctor only called by the factory: {[hex(x) for x in rel_refs(0x101DE90)]}')
+    need(rd(0x101DEB8, 3) == bytes.fromhex('488bf9'), 'gun prim base ctor: rdi = this before the prim+0x60 store')
+    for target, hits in ((0xDC1740, [0x234B5D0, 0x234B9A0]), (0xDC64E0, [0x234B4A8, 0x234B878]), (0xDC0350, [0x234B4B0, 0x234B880])):
+        need(qword_hits(target) == hits, f'{target:#x} is referenced only by the two manager vtable slots: {[hex(x) for x in qword_hits(target)]}')
+        need(rel_refs(target) == [], f'no direct call/jmp to {target:#x}')
+    need(rel_refs(0x1061F50) == [] and 0x23B3FB0 in qword_hits(0x1061F50),
+         'iface reset 0x1061F50 is reached only through gun iface vtable slots (0x23B3FA0+0x10)')
+    need((0xDC1740, 0xDC1800) in funcs and (0xDC64E0, 0xDC653E) in funcs, 'manager method bodies: exact runtime function ranges')
+    need(rd(0xDC17FF, 1) == b'\xc3' and rd(0xDC1901, 2) == b'\xc3\xcc' and rd(0xDC653D, 2) == b'\xc3\xcc' and
+         rd(0xDC0396, 10) == b'\xc3' + b'\xcc' * 9, 'manager method bodies end at the pinned ret')
+    need(not any(b <= 0xDC0350 < e for b, e in funcs), '0xDC0350 is a frameless leaf (no unwind entry)')
+    need(rd(0x106263B, 1) == b'\x76' and 0x106263D + rd(0x106263C, 1)[0] == 0x1062676,
+         'iface reset: the class 2/3 jbe reaches the vt+0x38/vt+0x160 block')
+    # Every call [rax+0x160] whose edx came from [reg+0x240] within the 48 bytes before: exactly the five
+    # gun-plugin sites (a new site fails here before any partner support admission relies on B/C).
+    xt = [s for s in pe.sections if s.Name.rstrip(b'\0').decode() == '.xtext'][0]
+    data, va = xt.get_data(), xt.VirtualAddress
+    load = re.compile(rb'(?:\x41)?\x8b[\x90-\x97]\x40\x02\x00\x00')
+    sites = sorted(va + m.start() for m in re.finditer(rb'(?:\x41)?\xff[\x90-\x97]\x60\x01\x00\x00', data)
+                   if load.search(data[max(0, m.start() - 48):m.start()]))
+    need(sites == [0x1062696, 0x1087C05, 0x10880D3, 0x10892CB, 0x108AA91],
+         f'rec+0x240 -> vt+0x160 call sites: {[hex(x) for x in sites]}')
+    return out
+
+
 failures += anim_round1_assertions()
 failures += support_native_assertions()
+failures += handle_call_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1990,6 +2074,12 @@ w('inline constexpr std::uintptr_t support_stock_back_rva=0x108c8ec, support_sto
 w('inline constexpr std::uint32_t support_stock_load_orig=0x04818b41, support_stock_load_new=0xcccca1eb;')
 w('inline constexpr std::size_t support_stock_counts=0x614, support_stock_count=46, support_item_handle=0x240;')
 w('inline constexpr std::uint8_t equip_type_thrown=12, equip_type_placed=13;')
+w('// --- WS1 handle call: X = [prim+0x60] = [[gm]+0x98]+0x1e8 (the equipment-handle manager, = inventory+0x58); its')
+w('// vt+0x160 = 0xdc1740 (row X+0x140[(h>>16)*6] byte 4 bit 7 + the model part), vt+0x38 = 0xdc64e0, vt+0x40 = 0xdc0350;')
+w('// rows: u16 equip +0, u16 owner +2, byte 4 bit 7 pin, byte 5 bit 0 model instance; capacity X+0x68.')
+w('inline constexpr std::uintptr_t handle_engine_vt_rva=0x234b840, handle_engine_vt_alt_rva=0x234b470, handle_pin_rva=0xdc1740;')
+w('inline constexpr std::size_t prim_handle_engine=0x60, handle_engine_capacity=0x68, handle_engine_rows=0x140;')
+w('inline constexpr std::size_t handle_row_stride=6, handle_row_equip=0, handle_row_owner=2, handle_vt_pin=0x160, handle_vt_release=0x38;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

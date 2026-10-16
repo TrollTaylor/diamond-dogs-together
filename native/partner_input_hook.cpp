@@ -1828,6 +1828,24 @@ void SupportLine(const char* kind,const pi::Injection& j,const char* why,std::ui
         "partner_support=%s; slot=%u; equip=%u; type=12; reason=%s; rec240=0x%x\r\n",
         kind,unsigned(j.inv_slot),unsigned(j.equip),why,handle)))g_log(line);
 }
+// WS1: the pure policy's offsets are the contract's (rec+0x240 handle call).
+namespace rk=partner_support_policy::rec240;
+static_assert(rk::kPrimVtRva==c::gun_prim_vt_rva && rk::kPrimBlk==c::prim_blk && rk::kPrimRec==c::prim_gun_rec &&
+              rk::kPrimEngine==c::prim_handle_engine && rk::kEngineVtRva==c::handle_engine_vt_rva, "rec240 prim/manager identities");
+static_assert(rk::kRecHandle==c::support_item_handle && rk::kRecEquip==c::gun_equip && rk::kRecClassWord==c::gun_flags27c &&
+              rk::kRecFlags==c::gun_flags && rk::kRecSwitch==c::gun3c0_switch && rk::kRecSlotHand==c::gun_slot_hand, "rec240 record fields");
+static_assert(c::gun_class_shift==6 && c::gun_class_mask==7, "rec240 support class bits");
+static_assert(rk::kEngineCapacity==c::handle_engine_capacity && rk::kEngineRows==c::handle_engine_rows &&
+              rk::kRowStride==c::handle_row_stride && rk::kRowEquip==c::handle_row_equip && rk::kRowOwner==c::handle_row_owner, "rec240 manager rows");
+// Read-only and fault-safe (a fault is an unread, never a crash or a verdict).
+bool SupportRead(std::uintptr_t address,void* out,std::size_t size) noexcept {
+    if(!address || address>UINTPTR_MAX-size) return false;
+    __try {std::memcpy(out,reinterpret_cast<const void*>(address),size);return true;}
+    __except(ProbeFilter(GetExceptionCode())) {return false;}
+}
+// WS1 B diagnostics (hook thread): the last refused rec+0x240 / slot handle pair
+// (an expected transient right after an equip: logged once per pair, not a refusal of the path).
+std::uint32_t g_rec240_pending_rec=0,g_rec240_pending_slot=0;
 bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
     namespace sp=partner_support_policy;
     sp::GateIn x{};x.enabled=a.native_support && !a.p218 && !PoseRequired() && static_cast<std::uint32_t>(g_hook_thread)==GetCurrentThreadId();x.latched=g_support_leak!=0;
@@ -1838,21 +1856,61 @@ bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
     x.slot_valid=j.slot_valid;x.slot=j.inv_slot;x.equip_valid=j.equip_valid;x.equip=j.equip;
     x.type=0;
     // Ready rechecks the actual type, row, handle, owner, restriction and observer
-    // lease, and reports the decoded descriptor type the gate admits (only 12).
+    // lease, and reports the decoded descriptor type the gate admits (only 12)
+    // and the Match-verified slot-3 handle.
     if(x.enabled && !x.latched && x.slot_valid && x.slot==3 && x.equip_valid && x.equip>0 && x.equip<0x800) {
-        x.body_ready=partner_support_equip::Ready(g_base,a.P,a.blk1,j.equip,&x.type);
-        __try {
-            x.record_ready=a.gun_rec && a.gun_prim &&
-                Load<std::uintptr_t>(a.gun_prim)==g_base+c::gun_prim_vt_rva &&
-                Load<std::uintptr_t>(a.gun_prim+c::prim_blk)==a.blk1 &&
-                Load<std::uintptr_t>(a.gun_prim+c::prim_gun_rec)==a.gun_rec &&
-                Load<std::uint16_t>(a.gun_rec+c::gun_equip)==j.equip &&
-                Load<std::uint8_t>(a.gun_rec+c::gun_slot_hand)==3 &&
-                !(Load<std::uint32_t>(a.gun_rec+c::gun_flags)&c::gun3c0_switch);
-        } __except(ProbeFilter(GetExceptionCode())) {}
+        std::uint32_t slot_handle=0;
+        x.body_ready=partner_support_equip::Ready(g_base,a.P,a.blk1,j.equip,&x.type,&slot_handle);
+        // B: the record identity as before, plus rec+0x240 == that handle, so
+        // every [prim+0x60] vt+0x160(rec+0x240) of modes 28/30/33/37 hits it.
+        sp::RecordIn record=sp::ReadRecord(SupportRead,g_base,a.gun_prim,a.gun_rec,a.blk1,j.equip);
+        record.slot_handle=x.body_ready ? slot_handle : 0;
+        x.record_ready=sp::RecordReady(record);
+        if(x.body_ready && sp::RecordIdentity(record) && !x.record_ready) {
+            if(record.rec_handle!=g_rec240_pending_rec || slot_handle!=g_rec240_pending_slot) {
+                g_rec240_pending_rec=record.rec_handle;g_rec240_pending_slot=slot_handle;
+                if(g_log && g_support_lines<512){++g_support_lines;char line[224]{};
+                    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+                        "partner_support=rec240_check; slot=3; equip=%u; type=12; reason=pending; rec240=0x%x; slot_handle=0x%x\r\n",
+                        unsigned(j.equip),record.rec_handle,slot_handle)))g_log(line);}
+            }
+        }
         if(!ReadSupportDigest())x.body_ready=false;
     }
     return sp::Admit(x);
+}
+// WS1 C (per windowed body-1 job, after it; read-only): while the record holds
+// the remote's slot-3 equip (B's identity, so never mid-switch) and its class is
+// 2/3 (the iface reset 0x1061F50's gate for vt+0x38/vt+0x160 on rec+0x240), the
+// row X+0x140[rec240>>16] must be in range, name the handle's equip and owner 1.
+// Detect-only while partner_support_policy::kRec240Latch is false.
+std::uint32_t g_rec240_logged=0;
+partner_support_policy::Rec240 g_rec240_last=partner_support_policy::Rec240::skip;
+volatile LONG g_rec240_checks=0,g_rec240_foreign=0;
+void SupportRec240Check(const pi::Arm& a,const pi::Injection& j) noexcept {
+    namespace sp=partner_support_policy;
+    if(!a.native_support || static_cast<std::uint32_t>(g_hook_thread)!=GetCurrentThreadId() ||
+       !j.slot_valid || j.inv_slot!=3 || !j.equip_valid || !j.equip || j.equip>=0x800) return;
+    const sp::RecordIn record=sp::ReadRecord(SupportRead,g_base,a.gun_prim,a.gun_rec,a.blk1,j.equip);
+    const sp::Rec240Row row=sp::CheckRow(SupportRead,g_base,a.gun_prim,record);
+    if(row.verdict==sp::Rec240::skip) return;
+    const auto checks=static_cast<unsigned>(InterlockedIncrement(&g_rec240_checks));
+    const bool foreign=sp::Rec240Foreign(row.verdict);
+    const auto foreign_count=foreign ? static_cast<unsigned>(InterlockedIncrement(&g_rec240_foreign)) : static_cast<unsigned>(g_rec240_foreign);
+    const bool latch=sp::Rec240Latches(row.verdict,sp::kRec240Latch) && InterlockedExchange(&g_support_leak,1)==0;
+    // One line per (handle, verdict) change (the per-job check runs ~60/s); the
+    // first foreign line and a latch line use the reserved slot past the cap.
+    const bool changed=row.record.rec_handle!=g_rec240_logged || row.verdict!=g_rec240_last;
+    if(!g_log || (!changed && !latch)) return;
+    const bool first_foreign=foreign && !sp::Rec240Foreign(g_rec240_last);
+    g_rec240_logged=row.record.rec_handle;g_rec240_last=row.verdict;
+    if(!latch && !first_foreign && g_support_lines>=512) return;
+    ++g_support_lines;char line[320]{};
+    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+        "partner_support=%s; slot=3; equip=%u; type=12; reason=%s; rec240=0x%x; why=%s; idx=%u; capacity=%u; row_equip=%u; owner=%u; class=%u; checks=%u; foreign=%u; mode=%s; latched=%u\r\n",
+        foreign ? "refused" : "rec240_check",unsigned(j.equip),foreign ? "rec240_foreign" : row.verdict==sp::Rec240::ok ? "ok" : "unread",
+        row.record.rec_handle,sp::Rec240Name(row.verdict),row.idx,row.capacity,unsigned(row.row_equip),unsigned(row.row_owner),
+        unsigned(row.record.cls),checks,foreign_count,sp::kRec240Latch ? "latch" : "log",latch ? 1u : 0u)))g_log(line);
 }
 bool SupportThrowing(const pi::Arm& a,const pi::Injection& j,std::uint32_t& handle) noexcept {
     bool mode=false;
@@ -1863,6 +1921,7 @@ bool SupportThrowing(const pi::Arm& a,const pi::Injection& j,std::uint32_t& hand
 }
 void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,std::uint32_t slot_before,
                   const std::uint16_t (&slot_words_before)[8],std::uint32_t ammo_before) noexcept {
+    SupportRec240Check(a,j);
     const auto after=ReadSupportDigest();const auto ammo_after=ReadAmmoDigest();
     std::uint16_t slot_words[8]{};const auto slot_after=ReadSupportSlotDigest(&slot_words);
     std::uint32_t handle=0;const bool active=SupportThrowing(a,j,handle);
@@ -2679,6 +2738,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     };
     if(InterlockedExchange(&g_support_reset,0)){
         g_support_episode=false;g_support_released=false;g_support_episode_stock=0;g_support_lines=0;
+        g_rec240_logged=0;g_rec240_last=partner_support_policy::Rec240::skip;g_rec240_pending_rec=0;g_rec240_pending_slot=0;
     }
     const bool have = g_ready && !g_faulted && ReadArm(a);
     const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;

@@ -35,9 +35,11 @@ struct Context {
 void Observe(const Context& context,LogFn log) noexcept;
 // Fresh, read-only current slot/row/handle match, and the last owner admission
 // still names this exact body. No native call and no expensive hash per frame.
-// decoded_type (optional) receives the packed-descriptor type of equip.
+// decoded_type (optional) receives the packed-descriptor type of equip;
+// handle (optional) receives the Match-verified slot-3 handle Y+0x40[1*7+3]
+// when ready (else 0): the drain requires rec+0x240 to equal it (WS1 B).
 bool Ready(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,
-           std::uint8_t* decoded_type=nullptr) noexcept;
+           std::uint8_t* decoded_type=nullptr,std::uint32_t* handle=nullptr) noexcept;
 // Mission-scoped: a dispatch or follow whose outcome was uncertain (it may have
 // touched the viewer's state) keeps the writer off until the mission changes.
 bool Uncertain() noexcept;

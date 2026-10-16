@@ -145,7 +145,7 @@ void Receipt(LogFn log,const Context& x,const Snapshot& s,const char* phase,cons
     g_log_ms=x.now_ms;g_reason=reason;++lines;
     char line[448]{};
     StringCchPrintfA(line,ARRAYSIZE(line),
-        "partner_support=%s; slot=%u; equip=%u; type=%u; reason=%s; instance=1; handle=%08x; body_slot=%u; sub=%u; result=%d; mission=%u; gen=%u; rec_handle_risk=unresolved\r\n",
+        "partner_support=%s; slot=%u; equip=%u; type=%u; reason=%s; instance=1; handle=%08x; body_slot=%u; sub=%u; result=%d; mission=%u; gen=%u; rec_handle_risk=pinned\r\n",
         phase,unsigned(x.slot),unsigned(x.equip),unsigned(s.p.type),reason ? reason : "ok",s.handle,unsigned(s.slot),unsigned(s.p.sub),result,x.mission,x.realize_gen);
     log(line);
 }
@@ -219,12 +219,17 @@ void Observe(const Context& x,LogFn log) noexcept {
     Receipt(log,x,before,why ? "refused" : "equip",why ? why : "ok",result);
     ReleaseSRWLockExclusive(&g_lock);
 }
-bool Ready(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,std::uint8_t* decoded_type) noexcept {
+bool Ready(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,std::uint8_t* decoded_type,
+           std::uint32_t* handle) noexcept {
     if(decoded_type) *decoded_type=0;
+    if(handle) *handle=0;
     if(!TryAcquireSRWLockShared(&g_lock)) return false;
     Context x{};Snapshot s{};
     const bool ready=ContextFor(base,player,block,equip,x) && !Capture(x,s) && !Match(s,true);
     if(decoded_type) *decoded_type=s.p.type;
+    // The Match-verified slot-3 handle Y+0x40[1*7+3]: owner 1, this equip,
+    // kind 12, index below the manager's capacity (WS1 B).
+    if(handle && ready) *handle=s.handle;
     ReleaseSRWLockShared(&g_lock);return ready;
 }
 bool Uncertain() noexcept {
