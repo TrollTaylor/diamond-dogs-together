@@ -560,6 +560,12 @@ SITES = [
     (0x108C96E, 'f786d0030000000000084b8d0c40440fb73c4a4b8d0c40440fb7744a020f8418010000',
      'ammo copy: rec+0x3D0 bit 27 gates the tamper check; word0/word1 of the 6-byte row'),
     (0x108CAAE, '664489bdac000000664489b5ae000000', 'ammo copy: rec+0x25C = word0, rec+0x25E = word1'),
+    # The support classes 2/3 branch (C(b) viewer-own rebase reads instance 0's slot sub): the stock word of the held
+    # item is k = Y vt+0x68(rec+0x3DA slot, rec+0x3DC sub) (store vt+0x68 0xEE90A0: slot 3 -> 6 + sub), the same pair
+    # the mode-37/46 spend passes to ctl vt+0xB0 before the stock setter ctl vt+0xC0.
+    (0x108CB57, '498b81c8000000440fb682dc0300000fb692da030000488b5808',
+     'ammo copy classes 2/3: ctl = *(P+0xC8), r8d = u8 rec+0x3DC (the slot sub), edx = u8 rec+0x3DA (the slot), Y = *(ctl+8)'),
+    (0x108CB74, '488b3bff5768', 'ammo copy classes 2/3: k = Y vt+0x68(slot, sub)'),
     (0x1041660, '8b8104020000b9c83f0000c1e812a801742c', 'shoot: rec+0x3D0 bit 27 only with P+0x204 bit 18'),
     (0x107CB59, '8b8104020000c1e812a801741c', 'bit 27 setter 2: only with P+0x204 bit 18'),
     (0x1087D01, '8b8104020000c1e812a801741d', 'bit 27 setter 3: only with P+0x204 bit 18'),
@@ -723,9 +729,9 @@ SITES += [
     (0x108C887, 'c3cccccccccccccccc', 'support stock guard: predecessor ret and all eight int3 bytes (padding ends at next function 0x108C890)'),
     (0x108C8C0, '48894c2408555641554883ec50488b4108458be8488bf24c8b8838010000488daab0010000418b8104020000', 'support stock guard: ammo-copy entry, P chain and full seven-byte load at 0x108C8E5'),
     (0x108C8EC, 'c1e808a8017427453b8118020000741e48c785ac000000ffffffff818ac0030000000000204883c450415d5e5dc3', 'support stock guard: original online/local test, non-consuming counts and bit-29 branch through ret'),
-    (0x1087BF5, '498b4e608b9340020000488b014533c0ff9060010000f783c0030000000000200f8591010000', 'support throw: unresolved rec+0x240 item callback and bit-29 branch over all stock writes'),
-    (0x10880CC, '488b4e60488b01ff90600100004d8bcf448b', 'support throw: mode-30 unresolved item callback at 0x10880D3'),
-    (0x108AA84, '488b4d608b9740020000488b01ff9060010000', 'support throw: mode-33 unresolved item callback at 0x108AA91'),
+    (0x1087BF5, '498b4e608b9340020000488b014533c0ff9060010000f783c0030000000000200f8591010000', 'support throw: mode-37 [prim+0x60] vt+0x160(rec+0x240, 0) at 0x1087C05 (resolved: 0xDC1740) and bit-29 branch over all stock writes'),
+    (0x10880CC, '488b4e60488b01ff90600100004d8bcf448b', 'support throw: mode-30 [prim+0x60] vt+0x160(rec+0x240, 0) at 0x10880D3 (resolved: 0xDC1740)'),
+    (0x108AA84, '488b4d608b9740020000488b01ff9060010000', 'support throw: mode-33 [prim+0x60] vt+0x160(rec+0x240, 1) at 0x108AA91 (resolved: 0xDC1740)'),
     (0x15E023A, 'f6423e01488bfa488bd974164881c100010000488b5c24404883c4205fe9c4ddffff', 'support entry filter must precede preview-bit branch and shared service+0x100 copy'),
     (0x15E02B5, '4885c0740b488bd7488bc8e85bddffff488b6c2430488b742438488b5c244048', 'support entry filter: null pool result returns zero in original return domain'),
     (0x15DE020, '0f28024c8bc141b9001800000f29010f284a100f2949100f2842200f2941200f', 'support preview copy helper entry (read-only evidence; owner filter drops before it)'),
@@ -782,6 +788,136 @@ SITES += VEHICLE_SITES
 # The two small-move limits 0xBA9710 compares against (read-only .edata dwords; vehicle_assertions
 # and partner_vehicle::VerifyImage check them): 1.0f squared metres and 0.1f radians.
 VEHICLE_DATA = [(0x20A72CC, 0x3F800000), (0x20A8068, 0x3DCCCCCD)]
+# --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
+# process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
+# vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
+# gun-plugin call passes; partner_input_hook requires it to equal the Match-verified slot-3 handle (B) and
+# checks its X+0x140 row per body-1 job (C). Whole bodies are pinned in <= 80-byte parts.
+SITES += [
+    (0x101E1D4, 'e8770ebeff4c8b8098000000498b88e801000048894f60',
+     'gun prim base ctor 0x101DE90: prim+0x60 = [[0xBFF050()]+0x98]+0x1E8 (the equipment-handle manager X)'),
+    (0x103C944, 'e84715feff90488d052f753701488903488d050d76370148894310488d053a76370148894330488d056f76370148894348488d05c476370148894350',
+     'gun prim factory 0x103C910: base ctor, then vtables 0x23B3E80, +0x10 0x23B3F68, +0x30 0x23B3FA0, +0x48 0x23B3FE0, +0x50 0x23B4040'),
+    (0x1089289, 'c683c00200001c83c9304088bbc2020000c783740300006666563f25fffdfffe03c94533c00bc8898bcc0300004183a5cc000000f3488b4d60488b018b9340020000ff9060010000',
+     'mode-28 hold hub: mode 0x1C, flag r8d = 0, then [prim+0x60] vt+0x160(rec+0x240, 0) at 0x10892CB'),
+    (0x1062629, '8b8f7c020000c1e90683e1078d41fe83f8017639',
+     'gun iface reset 0x1061F50: (rec+0x27C>>6)&7 in {2,3} -> 0x1062676'),
+    (0x1062676, '488b4e30488b018b9740020000ff5038488b4e30488b014533c08b9740020000ff9060010000',
+     'gun iface reset: [iface+0x30 = prim+0x60] vt+0x38(rec+0x240) at 0x1062683, then vt+0x160(rec+0x240, 0) at 0x1062696'),
+    (0x105FDD8, '488b41084533e44c8bf9488b88380100000fb682de030000418bf0488b99c800000044894424384c8bf2488b7b08',
+     'activation 0x105FDB0 entry: r15 = prim, rcx = [[prim+8]+0x138], esi = id, rbx = ctl = [rcx+0xC8], r14 = rec, '
+     'rdi = Y = [ctl+8] (the operands of the 0x105FEB4 load and the 0x105FF1A call)'),
+    (0x105FEA5, '410fb696d9030000418886dc030000',
+     'activation 0x105FDB0: the handle slot index is rec+0x3D9 (hand slot) for the load at 0x105FEB4'),
+    (0x105FF1A, '498b4f608bd3488b01ff5020450fb68ed9030000448be88bc383e01f89442440',
+     'activation: r13d = [prim+0x60] (X) vt+0x20(ebx = the loaded handle), stored as rec+0x24C at 0x10602F0; '
+     'kind = ebx & 0x1F to eax and [rsp+0x40]'),
+    (0x105FF60, '8b4424404181a680020000fffffffe498db6b00100004489642430c6442434014489a6a800000083f8090f85e9000000',
+     'activation: eax = kind; rsi = rec+0x1B0 (rsi+0x90 = rec+0x240, rsi+0x9C = rec+0x24C); only kind 9 falls through '
+     'to the slot-2 reload of ebx/r13d (0x1060000, 0x1060041), other kinds jump to 0x1060079'),
+    (0x106018A, '8b7c2440c7442444ff0700008d47ff83f8070f87c3020000',
+     'activation: edi = kind; kinds outside 1..8 (12 among them) -> 0x1060465'),
+    (0x1060465, '448864243483ff0c0f8456020000', 'activation: kind 12 -> 0x10606C9'),
+    (0x1060767, 'e93cfbffff', 'activation: the kind-12 block 0x10606C9 joins the rec+0x240/rec+0x24C stores at 0x10602A8'),
+    (0x10602E8, '899e900000000bf84489ae9c000000',
+     'activation: rec+0x240 = the loaded handle, rec+0x24C = X vt+0x20(handle)'),
+    (0xDC1740, '48895c240889542410574883ec30c1ea10410fb6f8488bd90fb7c2488d1440488b8140010000806450047f4c8d0c504584c00f95c0c0e00741084104488b018b542448ff504084c0746b448b4c244844',
+     'X vt+0x160 0xDC1740 (1/3): row = X+0x140 + (h>>16)*6; row[4] bit 7 = flag; no owner/bounds/equip check; then X vt+0x40(h)'),
+    (0xDC1790, '8b830c01000033d2458bd141c1ea104585c0741d4c8b9b800100000f1f440000420fb60c1a413bca740affc2413bd072ef418bd0488b83400100004f8d0452488d4be0460fb6544004460fb704404183',
+     'X vt+0x160 0xDC1740 (2/3): instance slot n = index of (h>>16) in X+0x180[0..X+0x10C); row equip word and row[4]&0x7F'),
+    (0xDC17E0, 'e11f4183e27f448954242840887c2420e80b000000488b5c24404883c4305fc3',
+     'X vt+0x160 0xDC1740 (3/3): 0xDC1800(X-0x20, n, equip, kind, flag, row[4]&0x7F); ret at 0xDC17FF'),
+    (0xDC1800, '4889742410574883ec30418bf88bf23b912c0100000f83dc0000004c8b91b0010000418d41ff48895c2440488b99b801000083f8070f86b70000004183e90c744d41ffc974334183f9040f85a2000000',
+     'handle part toggle 0xDC1800 (1/4): n < X+0x10C; kinds 1..8 return; kinds 12/13/17 dispatch'),
+    (0xDC1850, '81eff3010000741583ff1a0f859100000049b85dcca7fa87950000eb5749b80b9e03a4789d0000eb4b4181f89d010000757049b8f2bdc59fe62e0000eb36807c246000498b0249b8fdfeca49210b0000',
+     'handle part toggle 0xDC1800 (2/4): kind 17 equips 0x1F3/0x20D, kind 13 equip 0x19D, kind 12 model part 0xB2149CAFEFD'),
+    (0xDC18A0, '410f94c1498bcaff90000100008d8782feffff83f802773a49b841c09f9fe24b00008bd6488b034533c9488bcb44384c2460741bc7442460989f16bf488b5c2440488b7424484883c4305f48ff6008ff',
+     'handle part toggle 0xDC1800 (3/4): [X+0x190] vt+0x100(n, part, !flag); equips 0x17E..0x180 effect [X+0x198] vt+8/vt+0x10'),
+    (0xDC18F0, '5010488b5c2440488b7424484883c4305fc3', 'handle part toggle 0xDC1800 (4/4): effect stop call and ret at 0xDC1901'),
+    (0xDC0350, '8bc24c8bc983e01f7502f3c3ffc8c1ea1083f807771a488b8128010000440fb7c2488b481833c042833c81ff0f95c0c30fb7c2488d0c40498b81400100000fb644480583e001c3',
+     'X vt+0x40 0xDC0350 (leaf, whole body): kind 0 -> 0; kinds 1..8 [[X+0x128]+0x18][idx] != -1; else row[5] bit 0'),
+    (0xDC64E0, '4883ec28448bc2488bd1418bc083e01f7447ffc841c1e81083f807771e488b9128010000488b422042802400fe488b422042800c00024883c428c3488b82400100004b8d0c40f644480501740c488d4a',
+     'X vt+0x38 0xDC64E0 (1/2): kinds 1..8 flag bytes; else if row[5] bit 0 -> 0xDC6540(X-0x20, idx) (model instance release)'),
+    (0xDC6530, 'e0418bd0e8070000004883c428c3', 'X vt+0x38 0xDC64E0 (2/2): call 0xDC6540; ret at 0xDC653D'),
+]
+# --- WS4 step 0: the read-only placed / arm census (partner_placed_census, lab key partner_placed_census=1). No patch,
+# no call: these pin the layouts the census reads. The placed-object service owner table as the detonation 0xFC54F0
+# (placed iface vt+0x68, pinned below) reads it: owners u16 iface+0xB0[0..u32 iface+0x6C), per-owner slots u32
+# iface+0x70 from u32 iface+0x68 + per*index, slot flags iface+0x90 (stride 3, bit 0), slot equip u16 iface+0x18
+# (stride 4), age u16 iface+0xD8[per*index + j]. And mode 46 op 1's gate: offline (P+0x204 bit 8 clear) or the local
+# id goes to 0x107BC9B (0x104CF00, then the plugin latch +0x350 bit 3 / u16 +0x3E8 at 0x107BD64..0x107BD8B); the
+# online-remote branch folds rec+0x3CC bits 22-23 into 20-21 and jumps to 0x107BD93 past them.
+SITES += [
+    (0xFC557A, '448b436c0fb754244833c04585c07417488b8bb0000000663911740effc04883c102413bc072f0418bc0413bc074ab',
+     'placed detonate 0xFC54F0: index of the owner (u16 [rsp+0x48]) in u16 iface+0xB0[0..iface+0x6C); unknown -> 0xFC5554'),
+    (0xFC55A9, '8b4b708bbbe000000085c9745c448b4b68448bd14c897424404c8bb390000000440fafd0448bd94503ca4b8d044e41f6040101'
+     '7424488b4318420fb70c88',
+     'placed detonate 0xFC54F0: slots first iface+0x68 + per iface+0x70 * index; flags iface+0x90 stride 3 bit 0; '
+     'equip u16 iface+0x18 stride 4'),
+    (0xFC55E7, '3bcd7517488b83d8000000460fb70450443bc77306418bf8418bf141ffc141ffc249ffcb75c64c8b742440',
+     'placed detonate 0xFC54F0: the oldest live slot of that equip by age u16 iface+0xD8[per*index + j]'),
+    (0x107BC5B, '498b4608488b88380100008b8104020000c1e808a80174283bb11802000074208b87cc0300008bc8c1e90233c881e10000300033c8'
+     '898fcc030000e9f8000000',
+     'place (mode 46) op 1 gate: offline or the local id -> 0x107BC9B (the shared plugin latch); online remote folds '
+     'rec+0x3CC bits 22-23 into 20-21, jmp 0x107BD93'),
+]
+# --- WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the C4 and arm lanes. No patch. ChangeEquip 0x11AC2E0 (whole
+# body SHA-pinned in equipment_stock_writer_pins.hpp) calls ctl vt+0x1F0 = 0x11B1B60 for type 14 and activates slot 6
+# with flags bit 2. 0x11B1B60 (whole body below): equip outside 0x203..0x209 -> 0x207; for the local id only the
+# energy/UI calls; current != equip -> ctl vt+0xA0(out, id, 6, equip, 0, 1, 1) and ctl vt+0x98(id, 6, 0, equip, 0, 0,
+# 0); the local id also ctl vt+0x118. Read-only digest sites: the viewer's placement latch (mode 46 op 1's store
+# block, r14 = the record's own prim) and the arm energy ctl vt+0xE8 0x11AF820 -> 0x11AF5E0 writes with no instance
+# id (Y+0x1C[i], the stock word through ctl vt+0xC0, ctl+0x58[i], vars+0x670), read back through store vt+0x88.
+# Bytes from the scratch REA .xtext dump; this generator re-reads them from the exact executable.
+SITES += [
+    (0x11AC379, '83f80e75244c8b1341b101458bc78bd5488bcbc644242801c64424200141ff92f0010000e9fe000000',
+     'ChangeEquip: type 14 (cmp eax,0xe) calls ctl vt+0x1F0(ctl, id, equip, 1, 1, 1) instead of the restriction '
+     'predicate and the lower writer, then the flags-4 activation 0x11AC4A0'),
+    (0x11AC4C6, '83ff0e75058d77f8eb3d', 'ChangeEquip flags 4: type 14 -> slot 6 (lea esi,[rdi-8]), then SetCurrentSlot(id, 6, 0)'),
+    (0x11B1B60, '48895c240848896c241848897424205741544155415641574883ec40488bf9418d80fdfdffffb90702000083f806488b4728418bf0'
+     '4c8b47084c8b60100f47f1418b480c498b4040448bf233ed410fb6',
+     'ctl vt+0x1F0 0x11B1B60 (1/7): arm equip; equip outside 0x203..0x209 -> 0x207; Y = [ctl+8]'),
+    (0x11B1BB0, 'd90fafca83c106baffff00008b04888bc8c1e910663bca740fa81f740b8be8c1ed0581e5ff070000488b4718440fb6ac2490000000'
+     '443bb014020000410f94c74584ff0f84d3000000498b04248bd649',
+     'ctl vt+0x1F0 (2/7): current = (Y+0x40[id*[Y+0xC]+6] >> 5) & 0x7FF if valid; local = id == P+0x214; '
+     'non-local -> 0x11B1CCC'),
+    (0x11B1C00, '8bccff506080bc2498000000008944247874164c8b07ba05000000488bcf41ff90000100008b4424788d8ef9fdffff83f9020f8694'
+     '00000085c00f848c00000084db0f8484000000488b07498b1c248b',
+     'ctl vt+0x1F0 (3/7): local only: [[ctl+0x28]+0x10] vt+0x60, ctl vt+0x100(5)'),
+    (0x11B1C50, 'd6488bcfff90380100008bd6498bcc448bc0ff5358488b4f08448b6424780fb7d8488b01458bc4448bcbba05000000895c2420ff50'
+     '70488b47180fb7d3488b88d8000000488b01ff90b0010000488b07',
+     'ctl vt+0x1F0 (4/7): local only: Y vt+0x70(5), UI [P+0xD8] vt+0x1B0'),
+    (0x11B1CA0, '44886c2438c64424300041b905000000448bc60fb7d3488bcfc7442428060000004489642420ff90e00000003bee7459488b07c644'
+     '243801c644243001488d54247841b906000000458bc6488bcfc744',
+     'ctl vt+0x1F0 (5/7): local only ctl vt+0xE0; any id: current != equip -> ctl vt+0xA0(out, id, 6, equip, 0, 1, 1)'),
+    (0x11B1CF0, '24280000000089742420ff90a0000000488b07c6442438004533c9c644243000418bd6458d4106488bcfc64424280089742420ff90'
+     '980000004584ff741b4584ed7416488b074533c0448bce418d5006',
+     'ctl vt+0x1F0 (6/7): ctl vt+0x98(id, 6, 0, equip, 0, 0, 0); the local id only: ctl vt+0x118'),
+    (0x11B1D40, '488bcfff90180100004c8d5c2440498b5b30498b6b40498b7348498be3415f415e415d415c5fc3',
+     'ctl vt+0x1F0 (7/7): epilogue, ret at 0x11B1D66'),
+    (0x11AF820, '4883ec580f28d1f30f2cd281fa000000807421660f6ec20f5bc00f2ec274150f14d20f50c283e00183f00103d0660f6ed20f5bd2f348'
+     '0f2cc2baf0d20000663bc2660f42d00fb68424980000004883c1',
+     'ctl vt+0xE8 0x11AF820 (1/2): the arm energy setter (mode 53 via 0x10546F0); clamp to 0xD2F0; rcx = ctl - 0x20'),
+    (0x11AF870, 'e0884424400fb6842490000000884424388b842488000000894424308b8424800000008944242844894c2420458bc8440fb7c2e838'
+     'fdffff4883c458c3',
+     'ctl vt+0xE8 (2/2): call 0x11AF5E0; ret'),
+    (0x11AF5F1, '81ffeb010000743181ffec010000742281ffed01000074138d87fdfdffff83f8030f87ff01000033edeb13bd03000000eb0cbd0100'
+     '0000eb05bd02000000',
+     'arm energy 0x11AF5E0: index 0 for 0x203..0x206 (515..518), 2/1/3 for 0x1EB/0x1EC/0x1ED; other equips return'),
+    (0x11AF65D, '488b46288b5424608bcd41bff0d2000066453bc7f30f115c881c',
+     'arm energy 0x11AF5E0: Y = [ctl+8] (rsi = ctl - 0x20); movss [Y+0x1C+4*index] = the energy (no instance id)'),
+    (0x11AF78D, '4863c5894c86788b8e84000000488b4640038e80000000034e7c034e78898870060000',
+     'arm energy 0x11AF5E0: u32 [ctl+0x58+4*index]; vars+0x670 = the sum of ctl+0x58..+0x64 (vars = [ctl+0x20])'),
+    (0xEE9050, '488b81980000004863d20fb70450c3', 'store vt+0x88 0xEE9050: u16 [[Y+0x98] + 2k] (the stock / arm energy word)'),
+    (0x107BD64, '410fb786d8030000663bc3741241838e500300000866418986e8030000eb104183a650030000f76641899ee8030000',
+     'place (mode 46) op 1 latch block (r14 = the record\'s own gun prim): +0x3D8 != 0xFFFF -> +0x350 |= 8 and '
+     '+0x3E8 = +0x3D8, else +0x350 &= ~8 and +0x3E8 = 0xFFFF'),
+    (0x1060465, '448864243483ff0c0f8456020000498b4760418bd5488b4808488b01ff505084c00f853d02000083ff0d0f8532010000',
+     'activation: kind 12 (or a kind whose equip [X+8] vt+0x50 accepts) -> 0x10606C9; kind 13 -> 0x1060495'),
+    (0x1060495, '81a6cc000000fffeffff818ecc000000c0000000', 'activation kind 13: rec+0x27C bit 8 clear, bits 6-7 set (class 3)'),
+    (0x10605BF, '418bc4e9e1fcffff83ff0e0f858f000000',
+     'activation: kind 13 joins the stores 0x10602A8; kind 14 -> 0x10605D0 (the equip jump table 0x1061C70)'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -934,6 +1070,26 @@ SLOTS += [
 SLOTS += [(vt, 0x70, 0x16FBEC0, 'vehicle system V vt+0x70 = record SetPosition') for vt in VEHICLE_V_VTS]
 SLOTS += [(vt, 0x78, 0x16FDDC0, 'vehicle realized-body manager RB vt+0x78 = realized SetPosition') for vt in VEHICLE_RB_VTS]
 SLOTS += [(vt, 0x1F0, 0xBA9710, 'vehicle category vt+0x1F0 = the realized body pose') for vt in VEHICLE_CAT_VTS]
+# WS1: the handle manager's two concrete vtables (the only image pointers to 0xDC1740 / 0xDC64E0 / 0xDC0350).
+SLOTS += [
+    (0x234B840, 0x160, 0xDC1740, 'handle manager vt+0x160 = pin bit + model part (the rec+0x240 call)'),
+    (0x234B470, 0x160, 0xDC1740, 'handle manager sibling vt+0x160 = pin bit + model part'),
+    (0x234B840, 0x38, 0xDC64E0, 'handle manager vt+0x38 = model instance release (iface reset 0x1062683)'),
+    (0x234B470, 0x38, 0xDC64E0, 'handle manager sibling vt+0x38 = model instance release'),
+    (0x234B840, 0x40, 0xDC0350, 'handle manager vt+0x40 = has-model test'),
+    (0x234B470, 0x40, 0xDC0350, 'handle manager sibling vt+0x40 = has-model test'),
+]
+# WS4 step 0: the placed iface's detonation, the owner-table reader the census mirrors (never called by us).
+SLOTS += [
+    (0x23A9FD0, 0x68, 0xFC54F0, 'placed-object service live iface vt+0x68 = detonate(owner id & 0x1FF, equip)'),
+]
+# WS4 v1: the arm equip (ChangeEquip type 14), the arm energy setter and the store count read (read-only digests).
+SLOTS += [
+    (0x23C1720, 0x1F0, 0x11B1B60, 'arm equip: ctl vt+0x1F0 (ChangeEquip type 14)'),
+    (0x23C1720, 0xE8, 0x11AF820, 'arm energy setter: ctl vt+0xE8 (the arm digest reads what it writes)'),
+    (0x23894B0, 0x88, 0xEE9050, 'store base vt+0x88 = the stock / energy word read'),
+    (0x23895D0, 0x88, 0xEE9050, 'store derived vt+0x88 = the stock / energy word read'),
+]
 SLOTS += partner_aim_sites.SLOTS
 
 
@@ -1741,9 +1897,252 @@ def vehicle_assertions():
     return out
 
 
+# (call site, X vtable offset) of every census-found X call taking rec+0x240 (docs/anim-round2-throws.md "Other X
+# calls"). Only the five vt+0x160 sites (and vt+0x38 before 0x1062696) are audited; the others are not.
+# REC240_X_CALLS_BY_HAND load rcx before the census window. REC240_X_METHODS: the method in both concrete X vtables.
+REC240_X_CALLS_BY_HAND = [(0x10565AE, 0x60), (0x1093F10, 0xD8)]
+REC240_X_METHODS = {
+    0x28: 0xDBE590, 0x30: 0xDC0920, 0x38: 0xDC64E0, 0x50: 0xDBF930, 0x58: 0xDC5540, 0x60: 0xDBF5C0, 0xA0: 0xDBD910,
+    0xD8: 0xDC5350, 0xE0: 0xDBFCF0, 0xE8: 0xDC12A0, 0x120: 0xDC2E40, 0x128: 0xDC2F70, 0x140: 0xDBF180, 0x148: 0xDBDC50,
+    0x160: 0xDC1740, 0x1B8: 0xDC26C0, 0x1C0: 0xDC1450, 0x1C8: 0xDC2890, 0x1D8: 0xDC1540,
+}
+REC240_X_CALLS = [
+    (0x103DF15, 0x28), (0x103F4D7, 0x120), (0x1043BB8, 0x140), (0x1055ED3, 0x1C0), (0x1055EF1, 0x1C8),
+    (0x1055F15, 0x1C0), (0x1055F33, 0x1C8), (0x1056562, 0x50), (0x10565DF, 0x148), (0x1059664, 0x1B8),
+    (0x105968F, 0x1C8), (0x105DBAD, 0x148), (0x105DE8F, 0x148), (0x1062683, 0x38), (0x1062696, 0x160),
+    (0x107905D, 0x1D8), (0x1087C05, 0x160), (0x10880D3, 0x160), (0x10892CB, 0x160), (0x108AA91, 0x160),
+    (0x108B740, 0xE0), (0x108B775, 0xE8), (0x1098580, 0x58), (0x1098939, 0xA0), (0x1099BFC, 0x30),
+    (0x1099E63, 0x128),
+]
+
+
+def handle_call_assertions():
+    """WS1: the facts B/C rely on (docs/anim-round2-throws.md "Handle call resolved")."""
+    import re
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    funcs = runtime_functions()
+    need(rel_refs(0x101DE90) == [0x103C944], f'gun prim base ctor only called by the factory: {[hex(x) for x in rel_refs(0x101DE90)]}')
+    need(rd(0x101DEB8, 3) == bytes.fromhex('488bf9'), 'gun prim base ctor: rdi = this before the prim+0x60 store')
+    for target, hits in ((0xDC1740, [0x234B5D0, 0x234B9A0]), (0xDC64E0, [0x234B4A8, 0x234B878]), (0xDC0350, [0x234B4B0, 0x234B880])):
+        need(qword_hits(target) == hits, f'{target:#x} is referenced only by the two manager vtable slots: {[hex(x) for x in qword_hits(target)]}')
+        need(rel_refs(target) == [], f'no direct call/jmp to {target:#x}')
+    need(rel_refs(0x1061F50) == [] and 0x23B3FB0 in qword_hits(0x1061F50),
+         'iface reset 0x1061F50 is reached only through gun iface vtable slots (0x23B3FA0+0x10)')
+    need((0xDC1740, 0xDC1800) in funcs and (0xDC64E0, 0xDC653E) in funcs, 'manager method bodies: exact runtime function ranges')
+    need(rd(0xDC17FF, 1) == b'\xc3' and rd(0xDC1901, 2) == b'\xc3\xcc' and rd(0xDC653D, 2) == b'\xc3\xcc' and
+         rd(0xDC0396, 10) == b'\xc3' + b'\xcc' * 9, 'manager method bodies end at the pinned ret')
+    need(not any(b <= 0xDC0350 < e for b, e in funcs), '0xDC0350 is a frameless leaf (no unwind entry)')
+    need(rd(0x106263B, 1) == b'\x76' and 0x106263D + rd(0x106263C, 1)[0] == 0x1062676,
+         'iface reset: the class 2/3 jbe reaches the vt+0x38/vt+0x160 block')
+    # Every call [rax+0x160] whose edx came from [reg+0x240] within the 48 bytes before: exactly the five
+    # gun-plugin sites (a new site fails here before any partner support admission relies on B/C).
+    xt = [s for s in pe.sections if s.Name.rstrip(b'\0').decode() == '.xtext'][0]
+    data, va = xt.get_data(), xt.VirtualAddress
+    load = re.compile(rb'(?:\x41)?\x8b[\x90-\x97]\x40\x02\x00\x00')
+    sites = sorted(va + m.start() for m in re.finditer(rb'(?:\x41)?\xff[\x90-\x97]\x60\x01\x00\x00', data)
+                   if load.search(data[max(0, m.start() - 48):m.start()]))
+    need(sites == [0x1062696, 0x1087C05, 0x10880D3, 0x10892CB, 0x108AA91],
+         f'rec+0x240 -> vt+0x160 call sites: {[hex(x) for x in sites]}')
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    md.detail = True
+    # B's premise (review WS1-3): for a kind-12 handle the activation 0x105FDB0 stores at 0x10602E8 (rec+0x240) the
+    # handle it loads at 0x105FEC0 from Y+0x40[id*[Y+0xC] + rec+0x3D9] and at 0x10602F0 (rec+0x24C) X vt+0x20 of it.
+    # Data flow over the activation's control flow graph (recursive descent from its entry: every direct branch and
+    # the one jump table followed, calls return and clobber the volatile registers, any other indirect jump fails;
+    # only the paths that reach the use count). Each operand's writer must lie on every path from the entry to its
+    # use and be the last write of that register before it. The kind-12 paths fix the three kind branches
+    # (0x105FF8A: kind != 9; 0x106019C: kind outside 1..8; 0x106046D: kind 12), whose operand (eax / edi = the kind
+    # saved at [rsp+0x40]) is checked the same way.
+    lo, hi = 0x105FDB0, 0x1061C6F
+    code, bad = {}, set()
+
+    def insn(a):
+        if a not in code:
+            code[a] = next(md.disasm(rd(a, 15), a), None)
+        return code[a]
+
+    # The one indirect jump (kind 14, equips 0x203..0x209): jmp rcx through the 7 RVAs at 0x1061C70.
+    need(insn(0x10605E2).op_str == 'eax, 6' and insn(0x10605E5).mnemonic == 'ja' and
+         insn(0x10605F0).op_str == 'ecx, dword ptr [rdx + rax*4 + 0x1061c70]' and insn(0x10605FA).op_str == 'rcx',
+         'activation: the kind-14 jump table 0x1061C70 has 7 entries')
+    tables = {0x10605FA: jump_table(0x1061C70, 7)}
+
+    def succ(a, force):
+        i = insn(a)
+        if a in force:
+            return [force[a]]
+        if a in tables:
+            return tables[a]
+        if i.mnemonic in ('ret', 'int3', 'ud2'):
+            return []
+        if i.group(capstone.CS_GRP_JUMP):
+            if i.operands[0].type != capstone.x86.X86_OP_IMM:
+                bad.add(a)
+                return []
+            return [i.operands[0].imm] if i.mnemonic == 'jmp' else [i.operands[0].imm, a + i.size]
+        return [a + i.size]
+
+    def on_paths(start, goal, force, dead=()):
+        """Instructions on some path start -> goal inside the activation (goal excluded, dead removed)."""
+        edges, todo = {}, [start]
+        while todo:
+            a = todo.pop()
+            if a in edges or a == goal or a in dead:
+                continue
+            if not lo <= a < hi or insn(a) is None:
+                bad.add(a)
+                continue
+            edges[a] = succ(a, force)
+            todo += edges[a]
+        live, grew = {goal}, True
+        while grew:
+            grew = False
+            for a, nxt in edges.items():
+                if a not in live and any(n in live for n in nxt):
+                    live.add(a)
+                    grew = True
+        return sorted(live - {goal})
+
+    def fam(reg):
+        """Every capstone name of the 64-bit register reg (rax/rbx/rdx, rsi/rdi, r8..r15)."""
+        if reg in ('rax', 'rbx', 'rcx', 'rdx'):
+            return {reg, 'e' + reg[1:], reg[1:], reg[1] + 'l', reg[1] + 'h'}
+        if reg in ('rsi', 'rdi', 'rbp', 'rsp'):
+            return {reg, 'e' + reg[1:], reg[1:], reg[1:] + 'l'}
+        return {reg, reg + 'd', reg + 'w', reg + 'b'}
+
+    volatile = set().union(*(fam(r) for r in ('rax', 'rcx', 'rdx', 'r8', 'r9', 'r10', 'r11')))
+
+    def writes(path, regs):
+        """The instructions in path that write regs (a call clobbers the volatile registers)."""
+        return [a for a in path if ({insn(a).reg_name(r) for r in insn(a).regs_access()[1]} |
+                                    (volatile if insn(a).mnemonic == 'call' else set())) & regs]
+
+    def last_writer(reg, writer, use, force=None):
+        force = force or {}
+        dominates = writer in on_paths(lo, use, force) and on_paths(lo, use, force, dead={writer}) == []
+        later = writes(on_paths(writer, use, force), fam(reg))
+        return dominates and later == [writer], [hex(a) for a in later]
+
+    kind12 = {0x105FF8A: 0x1060079, 0x106019C: 0x1060465, 0x106046D: 0x10606C9}
+    for reg, writer, use, force, what in (
+            ('r15', 0x105FDDF, 0x105FF1A, None, 'r15 = prim for X = [prim+0x60] at 0x105FF1A'),
+            ('r14', 0x105FDFF, 0x105FEA5, None, 'r14 = rec for the slot index rec+0x3D9 at 0x105FEA5'),
+            ('rdi', 0x105FE02, 0x105FEB4, None, 'rdi = Y for the load at 0x105FEB4'),
+            ('rsi', 0x105FDF0, 0x105FEB8, None, 'esi = id for the load at 0x105FEB8'),
+            ('rdx', 0x105FEA5, 0x105FEBE, None, 'edx = rec+0x3D9 for the load at 0x105FEBE'),
+            ('rbx', 0x105FEC0, 0x105FF1E, None, 'ebx = the loaded handle for X vt+0x20 at 0x105FF1E'),
+            ('rax', 0x105FF33, 0x105FF36, None, 'eax = ebx & 0x1F (the kind) saved at [rsp+0x40]'),
+            ('rdi', 0x106018A, 0x106046A, kind12, 'edi = [rsp+0x40] (the kind) for the kind branches 0x106019C/0x106046D'),
+            ('r14', 0x105FDFF, 0x105FF6F, kind12, 'r14 = rec for rsi = rec+0x1B0 at 0x105FF6F'),
+            ('rsi', 0x105FF6F, 0x10602E8, kind12, 'rsi = rec+0x1B0 for the stores'),
+            ('rbx', 0x105FEC0, 0x10602E8, kind12, 'kind 12: rec+0x240 = the handle loaded at 0x105FEC0'),
+            ('r13', 0x105FF2E, 0x10602F0, kind12, 'kind 12: rec+0x24C = X vt+0x20 of that handle')):
+        ok, later = last_writer(reg, writer, use, force)
+        need(ok, f'activation: {what} (writer {writer:#x} on every path, later writes {later})')
+    need(all(on_paths(lo, 0x10602E8, kind12, dead={a}) == [] for a in (0x1060465, 0x10606C9, 0x1060767)),
+         'activation: every kind-12 path to the stores runs the pinned kind-12 route 0x1060465 -> 0x10606C9 -> 0x1060767')
+    # eax at the kind-9 branch 0x105FF87: the kind saved at 0x105FF36, or its reload at 0x105FF60 after the
+    # [prim+8] vt+0x140 call 0x105FF51; [rsp+0x40] (the kind) is written only at 0x105FF36 on the kind-12 paths to
+    # 0x106018A.
+    need(on_paths(lo, 0x105FF87, {}, dead={0x105FF36}) == [] and
+         writes(on_paths(0x105FF36, 0x105FF87, {}), fam('rax')) == [0x105FF51, 0x105FF60] and
+         on_paths(0x105FF51, 0x105FF87, {}, dead={0x105FF60}) == [],
+         'activation: eax at 0x105FF87 is the kind (0x105FF36 on every path; after it only the 0x105FF51 call, '
+         'always followed by the 0x105FF60 reload, writes eax)')
+    stack40 = [a for a in on_paths(lo, 0x106018A, kind12) for op in insn(a).operands
+               if op.type == capstone.x86.X86_OP_MEM and op.mem.base == capstone.x86.X86_REG_RSP and
+               op.mem.index == 0 and op.mem.disp < 0x44 and op.mem.disp + op.size > 0x40 and op.access & capstone.CS_AC_WRITE]
+    need(stack40 == [0x105FF36] and on_paths(lo, 0x106018A, kind12, dead={0x105FF36}) == [],
+         f'activation: [rsp+0x40] writers before 0x106018A (kind 12): {[hex(a) for a in stack40]}')
+    # Any kind: the other ebx/r13d writes between the load and the stores are kind 9's slot-2 reload (0x1060000,
+    # 0x1060041) and 0x106065F's clear (ebx = r13d = 0) for a kind outside 1..8 and 12..14 whose equip [X+8] vt+0x50
+    # refuses. Kind 12 reaches neither (the kind-12 checks above).
+    anykind = on_paths(0x105FEC3, 0x10602E8, {})
+    need(writes(anykind, fam('rbx')) == [0x1060000, 0x1060678] and
+         writes(anykind, fam('r13')) == [0x105FF2E, 0x1060041, 0x106066D],
+         f'activation: ebx/r13d writes between the load and the stores (any kind): '
+         f'{[hex(a) for a in writes(anykind, fam("rbx"))]} / {[hex(a) for a in writes(anykind, fam("r13"))]}')
+    # WS4 v1: B's premise for the C4 (kind 13) and arm (kind 14) lanes. A kind whose equip [X+8] vt+0x50 accepts
+    # (0x1060486) takes the kind-12 route checked above; otherwise kind 13 sets class 3 and joins the stores at
+    # 0x10602A8 (0x10605C2), kind 14 calls 0x10517C0 and the equip jump table 0x1061C70 (classes 4/5/6/0). On every
+    # such path rec+0x240 is the handle loaded at 0x105FEC0 and rec+0x24C X vt+0x20 of it.
+    kind13 = {0x105FF8A: 0x1060079, 0x106019C: 0x1060465, 0x106046D: 0x1060473, 0x1060486: 0x106048C,
+              0x106048F: 0x1060495}
+    kind14 = {0x105FF8A: 0x1060079, 0x106019C: 0x1060465, 0x106046D: 0x1060473, 0x1060486: 0x106048C,
+              0x106048F: 0x10605C7, 0x10605CA: 0x10605D0}
+    for force, name in ((kind13, 'kind 13'), (kind14, 'kind 14')):
+        need(on_paths(lo, 0x10602E8, force) != [], f'activation: {name} reaches the stores')
+        for reg, writer, use, what in (('rbx', 0x105FEC0, 0x10602E8, 'rec+0x240 = the handle loaded at 0x105FEC0'),
+                                       ('r13', 0x105FF2E, 0x10602F0, 'rec+0x24C = X vt+0x20 of that handle'),
+                                       ('rsi', 0x105FF6F, 0x10602E8, 'rsi = rec+0x1B0 for the stores')):
+            ok, later = last_writer(reg, writer, use, force)
+            need(ok, f'activation: {name}: {what} (writer {writer:#x} on every path, later writes {later})')
+    need(on_paths(lo, 0x10602E8, kind13, dead={0x1060495}) == [],
+         'activation: every kind-13 path to the stores sets class 3 at 0x1060495')
+    need(not bad, f'activation: undecodable, out-of-range or indirect control flow at {[hex(a) for a in sorted(bad)]}')
+    # WS4 v1: the arm equip and energy setter are reached only through their slots of the ctl vtable 0x23C1720 and
+    # of its sibling 0x23C14B0 (no direct call or jump).
+    for target, disp in ((0x11B1B60, 0x1F0), (0x11AF820, 0xE8)):
+        need(qword_hits(target) == [0x23C14B0 + disp, 0x23C1720 + disp],
+             f'{target:#x} is referenced only by its two ctl vtable slots: {[hex(x) for x in qword_hits(target)]}')
+        need(rel_refs(target) == [], f'no direct call/jmp to {target:#x}')
+    need((0x11B1B60, 0x11B1D67) in funcs, 'ctl vt+0x1F0 0x11B1B60: exact runtime function range (whole body pinned)')
+    # Every other X call that takes rec+0x240 (review WS1-2): an indirect call whose rcx is [r+0x60] (prim+0x60)
+    # or [r+0x30] (iface+0x30 = prim+0x60) and whose edx/r8d is [r+0x240], both loaded in the 48 bytes before and
+    # neither rewritten nor crossed by another call. B only guards the input-driven modes 28/30/33/37 (four of the five
+    # vt+0x160 sites); every other site, the iface reset among them, is covered only by C's per-job row check (it
+    # latches support off on a foreign row). Only the vt+0x160/vt+0x38 methods were audited. 0x10565AE (vt+0x60) and 0x1093F10 (vt+0xD8) load rcx
+    # before the window and are checked separately below.
+    arg_re = re.compile(rb'(?:\x41)?\x8b[\x90-\x97]\x40\x02\x00\x00|[\x44\x45]\x8b[\x80-\x87]\x40\x02\x00\x00')
+    rcx_re = re.compile(rb'[\x48\x49]\x8b[\x48-\x4b\x4d-\x4f][\x30\x60]')
+    fams = {'edx': {'rdx', 'edx', 'dx', 'dl', 'dh'}, 'r8d': {'r8', 'r8d', 'r8w', 'r8b'}}
+    xcalls = []
+    for m in re.finditer(rb'(?:\x41)?\xff(?:[\x90-\x97]..\x00\x00|[\x50-\x57].)', data, re.S):
+        s = m.start()
+        args = [a.start() for a in arg_re.finditer(data, max(0, s - 48), s)]
+        rcxs = [r.start() for r in rcx_re.finditer(data, max(0, s - 48), s)]
+        if not args or not rcxs:
+            continue
+        start = min(args[-1], rcxs[-1])
+        ins = list(md.disasm(data[start:m.end()], va + start))
+        at = {i.address: i for i in ins}
+        if not ins or ins[-1].address != va + s or ins[-1].mnemonic != 'call' or va + args[-1] not in at or va + rcxs[-1] not in at:
+            continue
+        arg, rcx = at[va + args[-1]], at[va + rcxs[-1]]
+        reg = arg.op_str.split(',')[0]
+        if reg not in fams or not arg.op_str.endswith('+ 0x240]') or not rcx.op_str.startswith('rcx, qword ptr ['):
+            continue
+        if any(i.mnemonic == 'call' or (i.address > arg.address and {i.reg_name(r) for r in i.regs_access()[1]} & fams[reg]) or
+               (i.address > rcx.address and {i.reg_name(r) for r in i.regs_access()[1]} & {'rcx', 'ecx', 'cx', 'cl', 'ch'})
+               for i in ins[:-1]):
+            continue
+        xcalls.append((va + s, ins[-1].operands[0].mem.disp))
+    need(xcalls == REC240_X_CALLS, f'X calls taking rec+0x240: {[(hex(a), hex(d)) for a, d in xcalls]}')
+    for site, disp in REC240_X_CALLS_BY_HAND:
+        i = next(md.disasm(rd(site, 7), site), None)
+        need(i is not None and i.mnemonic == 'call' and i.operands[0].type == capstone.x86.X86_OP_MEM and
+             i.operands[0].mem.disp == disp and arg_re.search(data, site - va - 48, site - va) is not None and
+             (site, disp) not in xcalls,
+             f'{site:#x}: call [r+{disp:#x}] with edx/r8d = [r+0x240] in the 48 bytes before, outside the census')
+    slots = {d for _, d in REC240_X_CALLS + REC240_X_CALLS_BY_HAND}
+    need(set(REC240_X_METHODS) == slots, 'REC240_X_METHODS names exactly the X slots the rec+0x240 calls use')
+    for disp in sorted(slots):
+        for vt in (0x234B840, 0x234B470):
+            got = struct.unpack('<Q', rd(vt + disp, 8))[0] - IB
+            need(got == REC240_X_METHODS.get(disp), f'X vtable {vt:#x}+{disp:#x} = {got:#x} (REC240_X_METHODS)')
+    return out
+
+
 failures += anim_round1_assertions()
 failures += support_native_assertions()
 failures += vehicle_assertions()
+failures += handle_call_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -2037,6 +2436,10 @@ w('inline constexpr std::size_t store_total=0x10;')
 w('inline constexpr std::uint32_t gun3d0_tamper_check=0x8000000;')
 w('// The trigger (0x10964F7): rec+0x3C0 bit 24 = a shot this update, u8 rec+0x3DF = its count; rec+0x2C0 = the current mode.')
 w('inline constexpr std::size_t gun_mode_cur=0x2c0, gun_shots=0x3df;')
+w('// The slot-3 spend (C(b) viewer-own rebase): u8 rec+0x2c2 is the mode state (mode 37 tests it at 0x10879bf and sets')
+w('// 1 -> 2 in the throw block before its decrement; mode 46 sets 3 -> 4/5 after its decrement); u8 rec+0x3dc is the slot')
+w('// sub (the classes 2/3 ammo copy: k = Y vt+0x68(rec+0x3da, rec+0x3dc) at 0x108cb57, slot 3 -> k = 6 + sub).')
+w('inline constexpr std::size_t gun_state=0x2c2, gun_sub=0x3dc;')
 w('inline constexpr std::uint32_t gun3c0_shot=0x1000000;')
 w('inline constexpr std::uint8_t gun_mode_fire=9, gun_mode_fire2=10;')
 w('// AddNoise 0x515270 = slot 0 of the noise iface vtable 0x21876a8; the record keeps its owner at +0x12.')
@@ -2114,6 +2517,34 @@ w('inline constexpr std::size_t dm_entry_state=0x78, dm_entry_flags=0xb8, dm_ent
 w('inline constexpr std::uint8_t dm_entry_flag_target=2, dm_entry_flag_state=8, dm_entry_max=8;')
 w('inline constexpr std::uint64_t dm_cnp_ppos_c=0x2ccada28e251ull;  // low 48 bits')
 w('inline constexpr std::uintptr_t seat_target_blocks[]={0x9daae1,0x1198770,0x11987b5,0x11987e5,0x1198834,0x1198cc0,0x1198cff,0x1199508};')
+w('// --- WS1 handle call: X = [prim+0x60] = [[gm]+0x98]+0x1e8 (the equipment-handle manager, = inventory+0x58); its')
+w('// vt+0x160 = 0xdc1740 (row X+0x140[(h>>16)*6] byte 4 bit 7 + the model part), vt+0x38 = 0xdc64e0, vt+0x40 = 0xdc0350;')
+w('// rows: u16 equip +0, u16 owner +2, byte 4 bit 7 pin, byte 5 bit 0 model instance; capacity X+0x68.')
+w('inline constexpr std::uintptr_t handle_engine_vt_rva=0x234b840, handle_engine_vt_alt_rva=0x234b470, handle_pin_rva=0xdc1740;')
+w('inline constexpr std::size_t prim_handle_engine=0x60, handle_engine_capacity=0x68, handle_engine_rows=0x140;')
+w('inline constexpr std::size_t handle_row_stride=6, handle_row_equip=0, handle_row_owner=2, handle_vt_pin=0x160, handle_vt_release=0x38;')
+w('// --- WS4 step 0 census (read-only; partner_placed_census): the placed iface owner table as the detonation 0xfc54f0')
+w('// (iface vt+0x68) reads it: owners u16 iface+0xb0[0..u32 iface+0x6c), slot first + per*index + j (u32 iface+0x68,')
+w('// u32 iface+0x70), flags iface+0x90 stride 3 bit 0, equip u16 iface+0x18 stride 4, age u16 iface+0xd8[per*index + j].')
+w('// Mode 46 op 1 (gate 0x107bc5b: offline or the local id -> 0x107bc9b) latches the gun plugin: +0x350 bit 3 and')
+w('// u16 +0x3e8 = u16 +0x3d8 (0x107bd64..0x107bd8b); its online-remote branch 0x107bc7b folds rec+0x3cc bits 22-23')
+w('// into 20-21 and jumps to 0x107bd93. The stun arm (mode 52, 0x1085b50) op 0 reads [P+0xb0]+0x2c bit 0 and the')
+w('// float [P+0xb0]+0x10 directly.')
+w('inline constexpr std::uintptr_t placed_detonate_rva=0xfc54f0, place_gate_rva=0x107bc5b, place_gate_remote_rva=0x107bc7b, place_shared_rva=0x107bc9b;')
+w('inline constexpr std::size_t placed_vt_detonate=0x68, placed_first=0x68, placed_owner_count=0x6c, placed_per_owner=0x70;')
+w('inline constexpr std::size_t placed_equips=0x18, placed_equip_stride=4, placed_flags=0x90, placed_flag_stride=3, placed_owners=0xb0, placed_age=0xd8;')
+w('inline constexpr std::size_t prim_place_flags=0x350, prim_place_target=0x3d8, prim_place_latched=0x3e8, gun_surface=0x3cc;')
+w('inline constexpr std::uint32_t prim_place_bit=0x8;')
+w('inline constexpr std::size_t pad_stun_mag=0x10, pad_stun_mask=0x2c;')
+w('// --- WS4 v1 (read-only digests; partner_placed_policy): the arm equip ctl vt+0x1f0 = 0x11b1b60 (ChangeEquip type 14)')
+w('// and the arm energy ctl vt+0xe8 = 0x11af820 -> 0x11af5e0: index i (0 for 0x203..0x206), movss [Y+0x1c+4i], the word')
+w('// u16 [[Y+0x98]+2k] (k = 5, through ctl vt+0xc0; store vt+0x88 0xee9050 reads it), u32 [ctl+0x58+4i] and u32')
+w('// vars+0x670 = their sum (vars = [ctl+0x20]); no instance id anywhere. Mode 46 op 1 latches the record\'s own prim.')
+w('inline constexpr std::uintptr_t arm_equip_rva=0x11b1b60, arm_energy_rva=0x11af820, store_count_read_rva=0xee9050;')
+w('inline constexpr std::size_t ctl_vt_arm_equip=0x1f0, ctl_vt_arm_energy=0xe8, store_vt_count=0x88;')
+w('inline constexpr std::size_t ctl_vars=0x20, ctl_arm_frac=0x58, store_arm_energy=0x1c, store_counts=0x98, vars_arm_energy_sum=0x670;')
+w('inline constexpr unsigned arm_energy_k=5, arm_energy_slots=4;')
+w('inline constexpr std::uint16_t arm_equip_first=0x203, arm_equip_last=0x209;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

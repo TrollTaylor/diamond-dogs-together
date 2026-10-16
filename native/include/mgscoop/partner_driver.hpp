@@ -360,6 +360,10 @@ struct Hooks {
     // player-update thread with the seat dwords armed: nullptr on success.
     const char* (*seat_target)(void* context, const partner_player::SeatTargetRequest& request,
                                partner_player::SeatTargetResult& out) noexcept = nullptr;
+    // The unknown remote slot/equip debounce (partner_input::HoldIdentity in
+    // partner_net's receive path): the equip of this tick's support verdict
+    // (Mission::support_equip, 0 = none), published every driver tick. May be null.
+    void (*publish_support_identity)(void* context, std::uint16_t equip) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -441,7 +445,7 @@ struct Settings {
     // filter is installed, live and armed for instance 1 and its gun is a gun
     // class. EffectiveSettings passes FIRE only with nfire=visual and this.
     bool fire_live;
-    bool support_live; // current type-12 support gate, independent of an earlier gun class
+    bool support_live; // current support gate (type 12; WS4 v1: C4 / arm lanes), independent of an earlier gun class
     std::uint32_t steer_deg, trim_pct;
     PartnerNativeRates nrates;
     // The facing governor mode (partner_recon FaceMode while native) and the
@@ -471,6 +475,10 @@ struct Settings {
     // partner_fire_census).
     bool nunsupported, ndry;
     bool nsupport; // lab-only native thrown equipment (type 12), default off
+    // WS4 v1 (lab.ini partner_native_placed / partner_native_arm; both need
+    // nsupport): placed C4 (type 13, 391..395, slot 3) and arm holds (type 14,
+    // only 516 for now, slot 6, HOLD only: FIRE stays stripped).
+    bool nplaced, narm;
     PartnerNativeAimIntent naim_intent;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;
@@ -927,6 +935,11 @@ struct Mission {
     partner_reload::Out reload_out;
     partner_reload::SenderState sender_gun;
     LogCap reload_cap;
+    // The sender hold (partner_input::HoldSender, run 0c9269ce): a failed local
+    // gun/slot read republishes the last good one for kSenderHoldMs; its lines
+    // (partner_input=sender_hold, own cap) carry the read's refusal.
+    partner_input::SenderHold sender_hold;
+    LogCap sender_hold_cap;
     // The remote's latest live v5 gun group (remote_v5: GunFlag::Valid) and slot.
     bool remote_v5;
     std::uint8_t remote_gun_flags, remote_gun_mode, remote_reload_seq, remote_switch_seq, remote_slot;
@@ -950,6 +963,14 @@ struct Mission {
     partner_slots::Gate weapon_gate;
     std::int32_t body_type;
     bool body_switching;
+    // Native support through an input stall (partner_support_policy StallHold,
+    // critic #4): the newest v5 frame is stale but inside the stall hold and
+    // names slot 3 with support_equip, the equip of the last support verdict
+    // (0 = none); the observer keeps the writer context's slot/equip on that
+    // verdict while its own newest v5 frame is within stall_ms
+    // (partner_support_policy::ContextHold; never on support_stall alone).
+    bool support_stall;
+    std::uint16_t support_equip;
     // The last logged type verdict (partner_weapon=projectile|type_ok lines).
     bool weapon_type_logged, weapon_type_logged_once;
     // Weapons4: body 1 holds the plan's stand-in for the remote's current slot
@@ -1125,6 +1146,13 @@ struct Driver {
     Mission mission;
 };
 
+// The effective settings' native_active (EffectiveSettings): the native drive is
+// configured and the arbiter's last step is active. Driver::settings is the
+// configured copy, whose native_active is always false, so code that reads
+// d.settings (TickNative's stall hold, the observer's ContextHold) uses this.
+inline bool NativeActive(const Driver& d) noexcept {
+    return d.settings.drive == PartnerDrive::native && d.mission.native_out.active;
+}
 
 // WS3 vehicles: the vehicle the local player rides (0xFFFF none) and whether
 // the peer's live ride addendum advertises RIDE_TILT (docs/vehicle-ws3.md).

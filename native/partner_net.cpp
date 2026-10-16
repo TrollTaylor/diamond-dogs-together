@@ -58,6 +58,24 @@ std::uint32_t g_input_tx_seq = 0;
 std::uint64_t g_input_tx_ms = 0;
 partner_input::InputEdges g_edges{};
 volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
+// LatestInput calls that found g_lock held by the receive thread and waited
+// (process total, the stats line's latest_waits).
+volatile LONG g_latest_waits = 0;
+// The unknown remote slot/equip debounce (guarded by g_lock; its lines have their
+// own cap per receive reset) and the driver's published support verdict.
+partner_input::IdentityHold g_identity_hold{};
+unsigned g_identity_lines = 0;
+constexpr unsigned kIdentityLineCap = 128;
+volatile LONG g_support_identity = 0;
+// The worker-only input stall (game thread only): SubmitInput sends nothing
+// before g_stall_until_ms; the end line goes out with the first frame after it.
+#ifndef MGS_BACKGROUND_WORKER
+#define MGS_BACKGROUND_WORKER 0
+#endif
+constexpr bool kStallCompiled = MGS_BACKGROUND_WORKER != 0;
+std::uint64_t g_stall_until_ms = 0, g_stall_start_ms = 0;
+std::uint32_t g_stall_ms = 0, g_stall_skipped = 0, g_stall_count = 0;
+bool g_stall_active = false;
 // An accepted input frame v5 arrived since the last receive reset (PeerSendsInputV5).
 volatile LONG g_input_v5_peer = 0;
 volatile LONG g_input_v6_peer = 0;
@@ -394,9 +412,32 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
         }
         bool first = false, accepted = false;
         const std::uint64_t now = NowMs();
+        // The unknown slot/equip debounce: a held run's first frame and its end are logged.
+        namespace sp = partner_support_policy;
+        char id_line[192]{};
         AcquireSRWLockExclusive(&g_lock);
         if (AcceptInputSequence(g_input_valid, g_input_seq, g_input_rx_ms, in_seq, now)) {
             accepted = true;
+            const sp::IdentityTrack before = g_identity_hold.track;
+            const sp::Identity raw = partner_input::PacketIdentity(in);
+            const auto support = static_cast<std::uint16_t>(static_cast<std::uint32_t>(g_support_identity) & 0xFFFFu);
+            const sp::IdHold verdict = partner_input::HoldIdentity(g_identity_hold, in, support, now);
+            const bool start = verdict == sp::IdHold::held && !before.holding;
+            const bool end = sp::IdHoldEnds(verdict) && before.holding;
+            if ((start || end) && g_identity_lines < kIdentityLineCap) {
+                ++g_identity_lines;
+                if (start)
+                    (void)StringCchPrintfA(id_line, ARRAYSIZE(id_line),
+                        "partner_support=slot_hold; slot=3; equip=%u; reason=held; missing=%s; age_ms=%u; v5=%u; raw_slot=%u\r\n",
+                        unsigned(g_identity_hold.track.equip),
+                        !sp::SlotKnown(raw) && !sp::EquipKnown(raw) ? "both" : !sp::SlotKnown(raw) ? "slot" : "equip",
+                        now >= before.known_ms ? static_cast<unsigned>(now - before.known_ms) : 0u, raw.v5 ? 1u : 0u, unsigned(raw.slot));
+                else
+                    (void)StringCchPrintfA(id_line, ARRAYSIZE(id_line),
+                        "partner_support=slot_hold; slot=3; equip=%u; reason=%s; packets=%u; held_ms=%u\r\n",
+                        unsigned(before.equip), sp::IdHoldName(verdict), before.held,
+                        now >= before.since_ms ? static_cast<unsigned>(now - before.since_ms) : 0u);
+            }
             partner_input::AccumulateEdges(g_edges, in);
             g_input = in;
             g_input_valid = true;
@@ -408,6 +449,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
         }
         ReleaseSRWLockExclusive(&g_lock);
         InterlockedIncrement(accepted ? &g_in_rx : &g_in_drop);
+        if (id_line[0]) Log(id_line);
         if (first) {
             char line[96]{};
             if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=input_rx; first=1; seq=%u\r\n", in_seq))) Log(line);
@@ -471,6 +513,8 @@ void ResetReceiveLocked() noexcept {
     g_input_rx_ms = 0;
     g_input_first_logged = false;
     g_edges = partner_input::InputEdges{};
+    g_identity_hold = partner_input::IdentityHold{};
+    g_identity_lines = 0;
     InterlockedExchange(&g_input_v5_peer, 0);
     InterlockedExchange(&g_input_v6_peer, 0);
 }
@@ -1086,12 +1130,12 @@ void OnIdle(void*) noexcept {
         char line[384]{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
                 "partner_net=stats; tx=%llu; rx=%llu; drop_epoch=%u; drop_seq=%u; drop_bad=%u; status=%s; last_age_ms=%u; "
-                "native_us_avg=%u; native_us_max=%u; in_tx=%u; in_rx=%u; in_drop=%u\r\n",
+                "native_us_avg=%u; native_us_max=%u; in_tx=%u; in_rx=%u; in_drop=%u; latest_waits=%u\r\n",
                 static_cast<unsigned long long>(current.tx), static_cast<unsigned long long>(current.rx), current.drop_epoch,
                 current.drop_seq, current.drop_bad, pose::StatusName(status),
                 static_cast<unsigned>(age > 0xFFFFFFFFull ? 0xFFFFFFFFu : age),
                 count ? static_cast<unsigned>(sum / count) : 0u, max, static_cast<unsigned>(g_in_tx),
-                static_cast<unsigned>(g_in_rx), static_cast<unsigned>(g_in_drop))) ) Log(line);
+                static_cast<unsigned>(g_in_rx), static_cast<unsigned>(g_in_drop), static_cast<unsigned>(g_latest_waits))) ) Log(line);
     }
     SetLastError(error);
 }
@@ -1671,6 +1715,16 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     if (!epoch) return false;
     const DWORD error = GetLastError();
     const std::uint64_t now = NowMs();
+    // The worker-only input stall: nothing goes out until it ends (not sent:
+    // the driver's edge sets stay pending for the first frame after it).
+    if (kStallCompiled && g_stall_active) {
+        if (now < g_stall_until_ms) { ++g_stall_skipped; SetLastError(error); return false; }
+        g_stall_active = false;
+        char line[160]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                "partner_net=input_stall; reason=end; ms=%u; actual_ms=%u; skipped=%u; stalls=%u\r\n", g_stall_ms,
+                static_cast<unsigned>(now - g_stall_start_ms), g_stall_skipped, g_stall_count))) Log(line);
+    }
     if (g_input_tx_ms && now - g_input_tx_ms < kInputMinGapMs) { SetLastError(error); return false; }
     const std::uint32_t seq = g_input_tx_seq + 1;
     // v2..v5: v4 whatever the sender's own drive (rates, magazine, gun), v5 (the
@@ -1683,6 +1737,28 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     SetLastError(error);
     return sent;
 }
+
+const char* StallInput(std::uint32_t ms) noexcept {
+    // (Not a constant condition: a non-worker build always refuses here.)
+    if (!kStallCompiled || !g_running || !g_epoch) return kStallCompiled ? "net_off" : "not_worker_build";
+    if (ms < kInputStallMinMs || ms > kInputStallMaxMs) return "range";
+    const DWORD error = GetLastError();
+    const std::uint64_t now = NowMs();
+    if (g_stall_active && now < g_stall_until_ms) { SetLastError(error); return "busy"; }
+    g_stall_active = true;
+    g_stall_start_ms = now;
+    g_stall_until_ms = now + ms;
+    g_stall_ms = ms;
+    g_stall_skipped = 0;
+    ++g_stall_count;
+    char line[160]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=input_stall; reason=start; ms=%u; stalls=%u; last_tx_age_ms=%u\r\n",
+            ms, g_stall_count, g_input_tx_ms && now >= g_input_tx_ms ? static_cast<unsigned>(now - g_input_tx_ms) : 0u))) Log(line);
+    SetLastError(error);
+    return nullptr;
+}
+
+void SetSupportIdentity(std::uint16_t equip) noexcept { InterlockedExchange(&g_support_identity, static_cast<LONG>(equip)); }
 
 bool ConsumeInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};
@@ -1707,7 +1783,14 @@ bool PeerSendsInputV6() noexcept { return g_input_v6_peer != 0; }
 
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};
-    if (!TryAcquireSRWLockShared(&g_lock)) return false;
+    // Waits for the receive thread's short exclusive section (as SampleRemote
+    // does): the driver and the observer took a busy lock for "no input", which
+    // read as remote_slot=255 / equip unknown for one tick, gate unsupported and
+    // strip 0x58 mid support episode (hidden runs 0c9269ce, 6d9dc4f9, 9f2d0bfb).
+    if (!TryAcquireSRWLockShared(&g_lock)) {
+        InterlockedIncrement(&g_latest_waits);
+        AcquireSRWLockShared(&g_lock);
+    }
     if (g_input_valid) {
         const std::uint64_t now = NowMs();
         out.valid = true;
@@ -1742,6 +1825,7 @@ pose::RemoteFrame SampleRemoteWithTurns(std::uint32_t delay_ms, const pose::Hist
 
 void ResetRemote() noexcept {
     ClearLocalActions();
+    InterlockedExchange(&g_support_identity, 0);
     AcquireSRWLockExclusive(&g_lock);
     ResetReceiveLocked();
     ReleaseSRWLockExclusive(&g_lock);

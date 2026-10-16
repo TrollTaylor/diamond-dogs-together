@@ -176,6 +176,23 @@ bool ParseRound2SupportKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     return true;
 }
 
+// WS4 step 0: the read-only placed / arm census (partner_placed_census=0|1)
+// and the WS4 v1 keys (partner_native_placed / partner_native_arm=0|1), their
+// own helper for the same nesting limit.
+bool ParseWs4CensusKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_placed_census")) ok = ParseBool(value, result.partner_placed_census);
+    // WS4 v1: native placed C4 and arm holds (partner_native_placed / _arm=0|1);
+    // a named value always wins over the gun profile's default.
+    else if (Equals(key, "partner_native_placed")) {
+        ok = ParseBool(value, result.partner_native_placed);
+        if (ok) result.partner_native_placed_given = true;
+    } else if (Equals(key, "partner_native_arm")) {
+        ok = ParseBool(value, result.partner_native_arm);
+        if (ok) result.partner_native_arm_given = true;
+    } else return false;
+    return true;
+}
+
 // The round-1 actions track's keys (docs/anim-round1-actions.md): true when
 // `key` is one of them (`ok` then says whether its value parsed).
 bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
@@ -258,11 +275,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
-        // Separate key helpers (anim rounds 1-2, save handoff): the main chain
-        // is at MSVC's block nesting limit.
+        // Separate key helpers (anim rounds 1-2, save handoff, WS3 vehicles, the WS4 census):
+        // the main chain is at MSVC's block nesting limit.
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
             ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
-            ParseVehicleKey(key, value, result, ok)) {
+            ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -1361,9 +1378,18 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // 2020 ms); the census stays as named.
     if (!c.partner_native_unsupported_given) c.partner_native_unsupported = gun;
     // Anim round 2: native partner throws (docs/anim-round2-throws.md) follow the
-    // gun profile in lab mode only (the local two-window test), after hidden runs
-    // aaa2a0e0 and ea93a2e3; play mode never admits them, named keys win.
-    if (!c.partner_native_support_given) c.partner_native_support = gun && c.mode == LabMode::lab;
+    // gun profile in lab and play (Stage B, after the lab hidden runs aaa2a0e0 and
+    // ea93a2e3 and the play rehearsals 117620b9 / e9244c56 / 733e023b / 33c11da9);
+    // play still admits them only with link v2 connected (ModeRefusal), and a
+    // named partner_native_support=0 opts out in either mode.
+    if (!c.partner_native_support_given) c.partner_native_support = gun;
+    // WS4 v1: native C4 placing (391..395: place-hold, ready, end) and the arm
+    // hold (516, HOLD only) follow the gun profile in lab and play as well, after
+    // the lab hidden runs 7f8d643d / d05a1267 (docs/anim-round2-throws.md "WS4 v1
+    // on by default"). Both still ride on partner_native_support, play admits
+    // them only with link v2 connected, and a named 0 opts out of either.
+    if (!c.partner_native_placed_given) c.partner_native_placed = gun;
+    if (!c.partner_native_arm_given) c.partner_native_arm = gun;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1385,6 +1411,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // only on what the peer's ride addendum advertises (an older peer sends
         // none and keeps today's hide), behind the unchanged seat/tilt gates.
         c.partner_ride_census = false;
+        // The WS4 placed / arm census is a lab measurement too (read-only).
+        c.partner_placed_census = false;
     }
 }
 

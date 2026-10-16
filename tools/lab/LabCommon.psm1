@@ -332,6 +332,12 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_ride_census'; Json = 'ride_census'; Kind = 'bool' },
     @{ Key = 'partner_ride_seat_id'; Json = 'ride_seat_id'; Kind = 'bool' },
     @{ Key = 'partner_ride_tilt'; Json = 'ride_tilt'; Kind = 'bool' },
+    # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
+    @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
+    # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;
+    # written only when set).
+    @{ Key = 'partner_native_placed'; Json = 'native_placed'; Kind = 'bool' },
+    @{ Key = 'partner_native_arm'; Json = 'native_arm'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

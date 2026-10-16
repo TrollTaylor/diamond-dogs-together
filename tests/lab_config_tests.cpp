@@ -29,8 +29,9 @@ int main() {
     Check(!Lab("role=guest\n").present, "role without enabled is not present");
     Check(!Lab("enabled=1\n").present, "enabled without role is not present");
 
-    // Native support follows the native gun profile in lab mode only (hidden runs aaa2a0e0, ea93a2e3);
-    // off without a profile, for loco/off, in play mode, and a named key always wins.
+    // Native support follows the native gun profile in lab AND play (Stage B, docs/anim-round2-throws.md: lab hidden
+    // runs aaa2a0e0, ea93a2e3; play rehearsals 117620b9, e9244c56, 733e023b, 33c11da9); off without a profile and for
+    // loco/off in either mode, and a named key always wins (partner_native_support=0 opts out of the gun default).
     Check(!LabConfig{}.partner_native_support && !Lab("").partner_native_support, "native support default off");
     for (const char* mode : {"lab", "play"}) {
         // Play profiles require the real clip-partner fallback configuration.
@@ -38,10 +39,12 @@ int main() {
                                   "\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
         for (const char* profile : {"off", "loco", "gun"}) {
             const std::string key = std::string("partner_native_profile=") + profile + "\n";
-            const bool lab_gun = std::strcmp(mode, "lab") == 0 && std::strcmp(profile, "gun") == 0;
+            const bool gun = std::strcmp(profile, "gun") == 0;
             const auto resolved = Lab(prefix + key);
-            Check(resolved.partner_native_support == lab_gun && !resolved.partner_native_support_given,
-                  "support defaults on only for the lab gun profile");
+            Check(resolved.partner_native_support == gun && !resolved.partner_native_support_given,
+                  "support defaults on for the gun profile in lab and play, off for off/loco");
+            Check(resolved.play_refused == 0 && resolved.invalid_values == 0 && resolved.unknown_keys == 0,
+                  "support matrix configs are clean in lab and play");
             for (const bool keyFirst : {false, true}) {
                 for (const char* value : {"0", "1"}) {
                     const std::string support = std::string("partner_native_support=") + value + "\n";
@@ -59,6 +62,91 @@ int main() {
     }
     Check(!Lab("enabled=1\nrole=host\npartner_native_support=1\npartner_native_support=0\n").partner_native_support,
           "explicit support 0 disarms a previous 1");
+    // WS4 step 0: the read-only placed / arm census is its own lab key, default off, no profile turns it on.
+    Check(!LabConfig{}.partner_placed_census && !Lab("").partner_placed_census, "placed census default off");
+    {
+        const auto on = Lab("enabled=1\nrole=host\npartner_placed_census=1\n");
+        Check(on.partner_placed_census && on.invalid_values == 0 && on.unknown_keys == 0, "placed census 1 parses");
+        Check(!Lab("enabled=1\nrole=host\npartner_placed_census=1\npartner_placed_census=0\n").partner_placed_census,
+              "placed census 0 after 1 turns it off");
+        const auto gunLab = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nmode=lab\nnet_bind=any\npartner=1\n"
+                                "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n");
+        Check(!gunLab.partner_placed_census && gunLab.partner_native_support, "the lab gun profile leaves the placed census off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_placed_census=") + value + "\n");
+            Check(!invalid.partner_placed_census && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid placed census value refuses");
+        }
+    }
+    // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
+    // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
+    // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).
+    Check(!LabConfig{}.partner_native_placed && !LabConfig{}.partner_native_arm && !Lab("").partner_native_placed &&
+          !Lab("").partner_native_arm, "WS4 v1 keys default off without a profile");
+    for (const char* mode : {"lab", "play"}) {
+        const std::string prefix = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nmode=") + mode +
+                                  "\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+        for (const char* profile : {"off", "loco", "gun"}) {
+            const std::string key = std::string("partner_native_profile=") + profile + "\n";
+            const bool gun = std::strcmp(profile, "gun") == 0;
+            const auto resolved = Lab(prefix + key);
+            Check(resolved.partner_native_placed == gun && resolved.partner_native_arm == gun &&
+                      !resolved.partner_native_placed_given && !resolved.partner_native_arm_given,
+                  "C4 and arm holds default on for the gun profile in lab and play, off for off/loco");
+            Check(resolved.play_refused == 0 && resolved.invalid_values == 0 && resolved.unknown_keys == 0,
+                  "WS4 v1 matrix configs are clean in lab and play");
+            for (const bool keyFirst : {false, true}) {
+                for (const char* value : {"0", "1"}) {
+                    const std::string named = std::string("partner_native_placed=") + value + "\npartner_native_arm=" + value + "\n";
+                    const auto n = Lab(prefix + (keyFirst ? named + key : key + named));
+                    Check(n.partner_native_placed == (value[0] == '1') && n.partner_native_arm == (value[0] == '1') &&
+                              n.partner_native_placed_given && n.partner_native_arm_given && n.invalid_values == 0 &&
+                              n.unknown_keys == 0,
+                          "explicit C4 / arm 0/1 survive mode/profile resolution in either key order");
+                }
+                const std::string one = "partner_native_arm=0\n";
+                const auto armOff = Lab(prefix + (keyFirst ? one + key : key + one));
+                Check(armOff.partner_native_placed == gun && !armOff.partner_native_arm && !armOff.partner_native_placed_given &&
+                          armOff.partner_native_arm_given,
+                      "a named arm 0 opts out of the arm alone; C4 keeps the profile's default");
+            }
+        }
+    }
+    {
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_native_placed && profile.partner_native_arm && profile.partner_native_support,
+                  "the gun profile turns C4 and arm holds on (lab and play)");
+            // integ7 (WS2 Stage B + WS3 + WS4 v1 together): the gun profile runs throws, C4 and arm holds, the seat by
+            // id and RIDE_TILT in lab and play; both read-only censuses stay off.
+            Check(profile.partner_native_support && profile.partner_native_placed && profile.partner_native_arm &&
+                      !profile.partner_ride_census && profile.partner_ride_seat_id && profile.partner_ride_tilt &&
+                      !profile.partner_placed_census && profile.play_refused == 0 && profile.invalid_values == 0,
+                  "the gun profile: throws, C4, arms, seat by id and tilt on; censuses off (lab and play)");
+            const auto off = Lab(gun + mode + "partner_native_placed=0\npartner_native_arm=0\n");
+            Check(!off.partner_native_placed && !off.partner_native_arm && off.partner_native_support && off.play_refused == 0,
+                  "named 0s opt the gun profile out of C4 and arm holds, throws stay on");
+        }
+        const auto placed = Lab("enabled=1\nrole=host\npartner_native_placed=1\n");
+        Check(placed.partner_native_placed && !placed.partner_native_arm && placed.invalid_values == 0 && placed.unknown_keys == 0,
+              "partner_native_placed=1 parses alone");
+        const auto arm = Lab("enabled=1\nrole=host\npartner_native_arm=1\n");
+        Check(arm.partner_native_arm && !arm.partner_native_placed && arm.invalid_values == 0 && arm.unknown_keys == 0,
+              "partner_native_arm=1 parses alone");
+        const auto both = Lab("enabled=1\nrole=host\npartner_native_placed=1\npartner_native_arm=1\npartner_native_placed=0\n");
+        Check(!both.partner_native_placed && both.partner_native_arm, "a later 0 turns a key off, the other stays");
+        for (const char* key : {"partner_native_placed=", "partner_native_arm="})
+            for (const char* value : {"2", "-1", "", "maybe"}) {
+                const auto invalid = Lab(std::string("enabled=1\nrole=host\n") + key + value + "\n");
+                Check(!invalid.partner_native_placed && !invalid.partner_native_arm && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                      "an invalid WS4 v1 key value refuses");
+            }
+        const auto playNamed = Lab(gun + "mode=play\npartner_native_placed=1\npartner_native_arm=1\n");
+        Check(playNamed.partner_native_placed && playNamed.partner_native_arm && playNamed.invalid_values == 0,
+              "play keeps the named WS4 v1 keys (admission is ModeRefusal's, link v2 connected)");
+    }
 
     const auto guest = Lab(
         "\xEF\xBB\xBF# lab guest\r\n"
@@ -1001,6 +1089,9 @@ int main() {
         const auto playCensus = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_fire_census=1\npartner_native_reload_rate=adapt\n");
         Check(!playCensus.partner_fire_census && playCensus.partner_native_reload_rate == mgscoop::PartnerNativeReloadRate::adapt,
               "play: the fire census is lab only; the reload rate key is kept");
+        const auto playPlaced = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_placed_census=1\n");
+        Check(!playPlaced.partner_placed_census && playPlaced.invalid_values == 0 && playPlaced.play_refused == 0,
+              "play: the placed census is forced off (lab only), not a play refusal");
         Check(kPlayRefusedNativeDrive == 0x20000 && kPlayRefusedNativeDrive == (kPlayRefusedDebugSoldierWarp << 1), "native refusal bit");
         // Every play refusal is its own bit (no two refusals share one).
         const std::uint32_t play_refusal_bits[] = {kPlayRefusedLoopback, kPlayRefusedSelfSteamId, kPlayRefusedPeerSteamId, kPlayRefusedSelfName,

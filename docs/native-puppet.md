@@ -967,6 +967,15 @@ runtime before acting (`full_body_gate`).
   (admission `shutting_down`), like the deferral and the drain windows.
 - Play runs `partner_native_slot=call` as `write` from `Configure` and the
   trigger on (the telemetry shows what runs; `BuildArm` downgrades again).
+  **One exception (WS2: the user asked for throws in play):** the guarded
+  slot-3 type-12 support follower (`partner_support_equip::Follow`, native
+  SetCurrentSlot `0x11AFA80` for slot 3, type 12) is the one native
+  SetCurrentSlot allowed in play. It
+  runs for any `partner_native_slot` except `off`, exactly as in the lab hidden
+  runs, only with `partner_native_support` admitted (play: link v2 connected),
+  the stock guard and the thrown owner filter armed, the full-body pins intact
+  and its lease, row, handle and local-state checks passing
+  (docs/anim-round2-throws.md "Throws in play"). Gun slots 0..2 stay data-only.
 - The generalized pieces' admission (`EquipPiecesAdmitted`): the native gun
   profile with `manifest|substitute`, the offline-v1 branch on the redirected
   saves (`lab::SavesRedirected()`; play refuses to run without them), the

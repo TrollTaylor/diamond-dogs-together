@@ -691,6 +691,12 @@ try {
     $supportOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_support=0', 'guest:partner_native_support=1') -Role guest
     Assert-Equal $supportOverride['partner_native_support'] '1' 'native support role override'
     Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_support')) 'native gun JSON never auto-emits support'
+    # WS4 step 0: the read-only placed / arm census key (a bool, written only when named).
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_placed_census -Value 1)/$(ConvertTo-LabPartnerValue -Key partner_placed_census -Value $false)" '1/0' 'placed census bool values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_placed_census -Value 2 } '0 or 1' 'placed census invalid bool refused'
+    $placedOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_placed_census=1', 'host:partner_placed_census=0') -Role host
+    Assert-Equal $placedOverride['partner_placed_census'] '0' 'placed census role override'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_placed_census')) 'native gun JSON never auto-emits the placed census'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'

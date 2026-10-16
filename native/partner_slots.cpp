@@ -149,7 +149,9 @@ const char* AimRefusalName(AimRefusal value) noexcept {
 AimRefusal AimGate(const AimGateIn& in) noexcept {
     if (!in.enabled) return AimRefusal::off;
     if (!in.judged || (in.gate != Gate::match && in.gate != Gate::standin && in.gate != Gate::support)) return AimRefusal::gate;
-    if (!in.slot_valid || (in.gate == Gate::support ? in.slot != 3 : in.slot > 2)) return AimRefusal::slot;
+    // Support aims in its lane: slot 3, or slot 6 for an admitted arm (WS4 v1;
+    // the driver judges Gate::support at slot 6 only for the arm lane).
+    if (!in.slot_valid || (in.gate == Gate::support ? in.slot != 3 && in.slot != 6 : in.slot > 2)) return AimRefusal::slot;
     if (in.sleeping) return AimRefusal::sleep;
     if (in.carried) return AimRefusal::carried;
     if (in.hidden) return AimRefusal::hidden;

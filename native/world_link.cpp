@@ -25,6 +25,7 @@ volatile LONG g_configured = 0;
 volatile LONG g_pumping = 0;
 LogFn g_log = nullptr;
 bool g_lab_triggers = false;
+bool g_placed_census = false;  // WS4 step 0: CFG r[14] (lab key partner_placed_census, lab only)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
 // LOG receipts: at most 200 lines per 10 s (world=log_cap counts the rest).
@@ -204,6 +205,7 @@ void Configure(const Config& config) noexcept {
     if (InterlockedCompareExchange(&g_configured, 1, 0) != 0) return;
     g_log = config.log;
     g_lab_triggers = config.lab_triggers && !config.play;
+    g_placed_census = config.placed_census && !config.play;
     if (g_lab_triggers && config.directory &&
         FAILED(StringCchPrintfW(g_trigger_path, ARRAYSIZE(g_trigger_path) - 4, L"%s\\mgs-coop\\world.trigger", config.directory)))
         g_trigger_path[0] = 0;
@@ -265,6 +267,8 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     // from the published atomics after the pure core (outside the world lock).
     reply.handoff = save_handoff::LuaCode(now);
     reply.lock = save_handoff::LockAllowed();
+    // WS4 step 0: r[14] the attacker census (lab only, read-only logging).
+    reply.census = g_placed_census ? 1 : 0;
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }

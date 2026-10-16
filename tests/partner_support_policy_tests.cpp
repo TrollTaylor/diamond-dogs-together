@@ -3,14 +3,800 @@
 #include "mgscoop/partner_support_guard.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_slots.hpp"
+#include "mgscoop/partner_input.hpp"
 #include <cstdio>
 #include <initializer_list>
 #include <cstring>
+#include <utility>
 namespace sp=mgscoop::partner_support_policy;
 namespace se=mgscoop::partner_support_equip;
 namespace sg=mgscoop::partner_support_guard;
 namespace sf=mgscoop::partner_fire_filter;
 namespace slots=mgscoop::partner_slots;
+namespace pi=mgscoop::partner_input;
+using mgscoop::PartnerInput;
+// WS1 B/C fixtures: a fake gun prim, gun record and handle manager X in local
+// memory, read through a bounds-checked reader (an out-of-range read is an
+// unread, as a fault is in the hook). Synthetic only; no game code or memory.
+namespace fake {
+namespace k=sp::rec240;
+constexpr std::uintptr_t kBase=0x140000000ull,kBlk=0x7ff012340000ull;
+constexpr std::size_t kPrim=0x0,kRec=0x200,kEngine=0x1000,kRows=0x2000,kSize=0x3000;
+alignas(16) unsigned char mem[kSize];
+std::uintptr_t At(std::size_t off) noexcept {return reinterpret_cast<std::uintptr_t>(mem)+off;}
+bool Read(std::uintptr_t address,void* out,std::size_t size) noexcept {
+ const auto lo=reinterpret_cast<std::uintptr_t>(mem);
+ if(address<lo || address-lo>kSize || size>kSize-(address-lo)) return false;
+ std::memcpy(out,reinterpret_cast<const void*>(address),size);return true;
+}
+template<class T> void Put(std::size_t off,T v) noexcept {std::memcpy(mem+off,&v,sizeof(v));}
+constexpr std::uint32_t Handle(std::uint32_t idx,std::uint32_t equip,std::uint32_t kind=12) noexcept {return (idx<<16)|(equip<<5)|kind;}
+// Body 1 holds grenade 354 in hand slot 3, class 2, handle index 5 owned by 1;
+// row 4 is the viewer's (equip 12, owner 0).
+void Reset(std::uint32_t handle=Handle(5,354)) noexcept {
+ std::memset(mem,0,sizeof(mem));
+ Put<std::uintptr_t>(kPrim,kBase+k::kPrimVtRva);Put<std::uintptr_t>(kPrim+k::kPrimBlk,kBlk);
+ Put<std::uintptr_t>(kPrim+k::kPrimRec,At(kRec));Put<std::uintptr_t>(kPrim+k::kPrimEngine,At(kEngine));
+ Put<std::uint16_t>(kRec+k::kRecEquip,354);Put<std::uint8_t>(kRec+k::kRecSlotHand,3);Put<std::uint32_t>(kRec+k::kRecFlags,0x20);
+ Put<std::uint32_t>(kRec+k::kRecHandle,handle);Put<std::uint32_t>(kRec+k::kRecClassWord,(2u<<6)|0x1Fu|0x800u);
+ Put<std::uintptr_t>(kEngine,kBase+k::kEngineVtRva);Put<std::uint32_t>(kEngine+k::kEngineCapacity,64);
+ Put<std::uintptr_t>(kEngine+k::kEngineRows,At(kRows));
+ Put<std::uint16_t>(kRows+5*k::kRowStride+k::kRowEquip,354);Put<std::uint16_t>(kRows+5*k::kRowStride+k::kRowOwner,1);
+ Put<std::uint8_t>(kRows+5*k::kRowStride+4,0x80); // the pin bit (vt+0x160) is not part of the check
+ Put<std::uint16_t>(kRows+4*k::kRowStride+k::kRowEquip,12);Put<std::uint16_t>(kRows+4*k::kRowStride+k::kRowOwner,0);
+}
+sp::RecordIn Record(std::uint16_t equip=354) noexcept {return sp::ReadRecord(Read,kBase,At(kPrim),At(kRec),kBlk,equip);}
+sp::Rec240Row Row(std::uint16_t equip=354) noexcept {return sp::CheckRow(Read,kBase,At(kPrim),Record(equip));}
+}
+template<class Check> void Rec240Fixtures(Check& check) {
+ using sp::Rec240;
+ static_assert(sp::kRec240Latch,"WS1 C latches a foreign row (flipped after the hidden runs showed no false positive)");
+ // --- B: record_ready also requires rec+0x240 == the Match-verified slot-3 handle.
+ sp::RecordIn r{};r.chain=true;r.switching=false;r.rec_equip=r.equip=354;r.slot_hand=3;r.cls=2;
+ r.rec_handle=r.slot_handle=fake::Handle(5,354);
+ check(sp::RecordIdentity(r) && sp::RecordReady(r),"B: matching rec+0x240 is record ready");
+ {auto x=r;x.rec_handle=fake::Handle(4,354);check(sp::RecordIdentity(x) && !sp::RecordReady(x),"B: rec+0x240 on another index refuses");}
+ {auto x=r;x.rec_handle=fake::Handle(5,349);check(!sp::RecordReady(x),"B: rec+0x240 of another equip refuses");}
+ {auto x=r;x.rec_handle=fake::Handle(5,354,13);check(!sp::RecordReady(x),"B: rec+0x240 of another kind refuses");}
+ {auto x=r;x.slot_handle=0;check(!sp::RecordReady(x),"B: no Match-verified handle (Ready false) refuses");}
+ {auto x=r;x.rec_handle=0;x.slot_handle=0;check(!sp::RecordReady(x),"B: two empty handles never match");}
+ {auto x=r;x.chain=false;check(!sp::RecordIdentity(x) && !sp::RecordReady(x),"B: broken prim chain refuses");}
+ {auto x=r;x.rec_equip=349;check(!sp::RecordIdentity(x) && !sp::RecordReady(x),"B: record still on the previous equip refuses");}
+ {auto x=r;x.slot_hand=0;check(!sp::RecordIdentity(x),"B: record not in hand slot 3 refuses");}
+ {auto x=r;x.switching=true;check(!sp::RecordIdentity(x),"B: switching record refuses");}
+ for(unsigned equip: {0u,0x800u,0xFFFFu}){auto x=r;x.equip=x.rec_equip=static_cast<std::uint16_t>(equip);check(!sp::RecordIdentity(x),"B: equip range");}
+ // rec240_stale (review WS1-1): any rec+0x240 other than the slot handle under
+ // the identity (in practice a same-equip handle on another index); never the
+ // gap of a normal equip/follow.
+ check(!sp::RecordStale(r),"B: matching rec+0x240 is not stale");
+ {auto x=r;x.rec_handle=fake::Handle(4,354);check(sp::RecordStale(x) && !sp::RecordReady(x),"B: same equip on another index is stale (refused)");}
+ for(std::uint32_t h: {fake::Handle(5,349),fake::Handle(5,354,13),0u}){auto x=r;x.rec_handle=h;
+  check(sp::RecordStale(x) && !sp::RecordReady(x),"B: any other rec+0x240 under the identity is stale (refused)");}
+ {auto x=r;x.slot_handle=0;x.rec_handle=fake::Handle(4,354);check(!sp::RecordStale(x),"B: no Match-verified handle is not judged stale");}
+ {auto x=r;x.switching=true;x.rec_handle=fake::Handle(4,354);check(!sp::RecordStale(x),"B: switching record is not judged stale");}
+ // The activation 0x105FDB0 after an equip 349 -> 354: rec+0x240 (0x10602E8) is
+ // stored before rec+0x24C (0x10602F0). No state of that pass, or of a follow
+ // from a gun slot (rec+0x3D9 != 3 until 0x105FE5E), is stale.
+ {auto x=r;x.rec_equip=349;x.rec_handle=fake::Handle(7,349);
+  check(!sp::RecordStale(x) && !sp::RecordReady(x),"B: before the activation (previous equip) is not stale");
+  x.rec_handle=r.slot_handle;check(!sp::RecordStale(x) && !sp::RecordReady(x),"B: after the rec+0x240 store only is not stale");
+  x.rec_equip=354;check(!sp::RecordStale(x) && sp::RecordReady(x),"B: after the rec+0x24C store is ready");}
+ {auto x=r;x.slot_hand=0;x.rec_equip=0x2D;x.rec_handle=fake::Handle(2,0x2D,1);check(!sp::RecordStale(x),"B: follow from a gun slot is not stale");}
+ // The composed gate: a mismatching rec+0x240 alone closes support admission.
+ {sp::GateIn g{true,false,true,true,true,true,true,true,true,true,3,12,354};
+  auto x=r;x.rec_handle=fake::Handle(4,354);g.record_ready=sp::RecordReady(x);check(!sp::Admit(g),"B: Admit refuses a foreign rec+0x240");
+  g.record_ready=sp::RecordReady(r);check(sp::Admit(g),"B: Admit passes the matching rec+0x240");}
+ // ReadRecord reads the pinned offsets through the reader only.
+ fake::Reset();
+ {const auto x=fake::Record();
+  check(x.chain && !x.switching && x.rec_equip==354 && x.slot_hand==3 && x.cls==2 && x.rec_handle==fake::Handle(5,354),"B: ReadRecord fields");}
+ {fake::Put<std::uintptr_t>(fake::kPrim,fake::kBase+0x23B3F68);check(!fake::Record().chain,"B: wrong prim vtable");fake::Reset();}
+ {const auto x=sp::ReadRecord(fake::Read,fake::kBase,fake::At(fake::kPrim),fake::At(fake::kRec),fake::kBlk+0x6A8,354);check(!x.chain,"B: prim of another block");}
+ {const auto x=sp::ReadRecord(fake::Read,fake::kBase,fake::At(fake::kPrim),fake::At(fake::kRec)+0x610,fake::kBlk,354);check(!x.chain,"B: another record");}
+ {const auto x=sp::ReadRecord(fake::Read,fake::kBase,0,fake::At(fake::kRec),fake::kBlk,354);check(!x.chain,"B: no prim");}
+ {fake::Put<std::uint32_t>(fake::kRec+fake::k::kRecFlags,0xA0);check(fake::Record().switching,"B: switch bit 0x80 read");fake::Reset();}
+ {const auto x=sp::ReadRecord([](std::uintptr_t,void*,std::size_t) noexcept {return false;},fake::kBase,fake::At(fake::kPrim),fake::At(fake::kRec),fake::kBlk,354);
+  check(!x.chain && !sp::RecordReady(x),"B: unread memory is never ready");}
+ // --- C: the per-job row check on the fake manager tables.
+ fake::Reset();
+ {const auto row=fake::Row();check(row.verdict==Rec240::ok && row.idx==5 && row.capacity==64 && row.row_equip==354 && row.row_owner==1,"C: own row ok (pin bit ignored)");
+  check(!sp::Rec240Foreign(row.verdict) && !sp::Rec240Latches(row.verdict,true),"C: ok never latches");}
+ for(unsigned cls=0;cls<8;++cls){fake::Reset();fake::Put<std::uint32_t>(fake::kRec+fake::k::kRecClassWord,(cls<<6)|0x3Fu);
+  const auto row=fake::Row();check((row.verdict!=Rec240::skip)==(cls==2 || cls==3),"C: judged only for support classes 2/3 (iface reset gate)");}
+ // A stale handle (index 4, equip 354) whose row is now the viewer's equip 12.
+ fake::Reset(fake::Handle(4,354));check(fake::Row(354).verdict==Rec240::equip,"C: stale handle on the viewer's row (generation word)");
+ // Mid-switch (critic #13): the remote is already on another equip, or the switch bit is set: not judged.
+ check(fake::Row(349).verdict==Rec240::skip,"C: remote already on another equip (activation pending) is not judged");
+ fake::Reset();fake::Put<std::uint32_t>(fake::kRec+fake::k::kRecFlags,0x80);check(fake::Row().verdict==Rec240::skip,"C: switching record is not judged");
+ fake::Reset();fake::Put<std::uint8_t>(fake::kRec+fake::k::kRecSlotHand,0);check(fake::Row().verdict==Rec240::skip,"C: record not in hand slot 3 is not judged");
+ fake::Reset();fake::Put<std::uintptr_t>(fake::kPrim+fake::k::kPrimBlk,0);check(fake::Row().verdict==Rec240::skip,"C: broken prim chain is not judged");
+ // Foreign rows: owner, generation (equip) word, range, empty.
+ fake::Reset(fake::Handle(4,354));fake::Put<std::uint16_t>(fake::kRows+4*fake::k::kRowStride,354);
+ {const auto row=fake::Row();check(row.verdict==Rec240::owner && row.row_owner==0,"C: viewer-owned row with the same equip word is foreign (owner)");}
+ fake::Reset();fake::Put<std::uint16_t>(fake::kRows+5*fake::k::kRowStride+fake::k::kRowOwner,2);check(fake::Row().verdict==Rec240::owner,"C: owner 2 is foreign");
+ fake::Reset();fake::Put<std::uint16_t>(fake::kRows+5*fake::k::kRowStride,349);check(fake::Row().verdict==Rec240::equip,"C: row reused for another equip (generation word)");
+ fake::Reset(fake::Handle(64,354));check(fake::Row().verdict==Rec240::range,"C: index == capacity is out of range");
+ fake::Reset(fake::Handle(63,354));fake::Put<std::uint16_t>(fake::kRows+63*fake::k::kRowStride,354);fake::Put<std::uint16_t>(fake::kRows+63*fake::k::kRowStride+2,1);
+ check(fake::Row().verdict==Rec240::ok,"C: last in-range index ok");
+ fake::Reset(fake::Handle(0xFFFF,354));check(fake::Row().verdict==Rec240::empty,"C: empty index 0xFFFF");
+ fake::Reset(0);check(fake::Row().verdict==Rec240::empty,"C: zero handle");
+ fake::Reset(fake::Handle(5,0));check(fake::Row().verdict==Rec240::empty,"C: handle without an equip");
+ // Unread manager chain or row: never a foreign verdict, never a latch.
+ fake::Reset();fake::Put<std::uintptr_t>(fake::kEngine,fake::kBase+0x234B470);check(fake::Row().verdict==Rec240::unread,"C: sibling manager vtable is not the qualified class");
+ fake::Reset();fake::Put<std::uintptr_t>(fake::kPrim+fake::k::kPrimEngine,0);check(fake::Row().verdict==Rec240::unread,"C: no manager");
+ fake::Reset();fake::Put<std::uint32_t>(fake::kEngine+fake::k::kEngineCapacity,0);check(fake::Row().verdict==Rec240::unread,"C: zero capacity");
+ fake::Reset();fake::Put<std::uint32_t>(fake::kEngine+fake::k::kEngineCapacity,0x10000);check(fake::Row().verdict==Rec240::unread,"C: capacity above 16 bits");
+ fake::Reset();fake::Put<std::uintptr_t>(fake::kEngine+fake::k::kEngineRows,0);check(fake::Row().verdict==Rec240::unread,"C: no row table");
+ fake::Reset(fake::Handle(0x400,354));fake::Put<std::uint32_t>(fake::kEngine+fake::k::kEngineCapacity,0xFFFF);
+ {const auto row=fake::Row();check(row.verdict==Rec240::unread && !sp::Rec240Latches(row.verdict,true),"C: unreadable row is unread, never a latch");}
+ // The default (latch) latches exactly the foreign verdicts; detect-only mode never latches.
+ for(Rec240 v: {Rec240::skip,Rec240::ok,Rec240::unread,Rec240::empty,Rec240::range,Rec240::equip,Rec240::owner}){
+  const bool foreign=v==Rec240::empty || v==Rec240::range || v==Rec240::equip || v==Rec240::owner;
+  check(sp::Rec240Foreign(v)==foreign,"C: foreign verdict set");
+  check(!sp::Rec240Latches(v,false),"C: detect-only mode never latches");
+  check(sp::Rec240Latches(v,sp::kRec240Latch)==foreign,"C: the default latches exactly the foreign verdicts");}
+ check(std::strcmp(sp::Rec240Name(Rec240::owner),"owner")==0 && std::strcmp(sp::Rec240Name(Rec240::ok),"ok")==0 &&
+       std::strcmp(sp::Rec240Name(Rec240::empty),"empty")==0 && std::strcmp(sp::Rec240Name(Rec240::unread),"unread")==0,"C: verdict names");
+}
+// --- WS2: play admission, the viewer-own rebase, the stall freeze and the FIRE buffer.
+namespace ws2 {
+// The hook's old slot-3 digest formula, kept here to pin SlotDigest to it.
+std::uint32_t OldDigest(const std::uint16_t (&w)[8]) noexcept {
+ std::uint32_t h=2166136261u;
+ for(const auto v:w){h=(h^(v&0xFFu))*16777619u;h=(h^(v>>8))*16777619u;}
+ return h?h:1;
+}
+// One episode as SupportCheck runs it, on fake slot-3 words: a bracket reads
+// before/after the body-1 job, the gap check runs at each bracket after the
+// first, the per-job compare and the episode compare latch.
+// Instance 0's gun record at a bracket: mode, its state (rec+0x2C2), the
+// slot-3 sub it holds (0xFF: not slot 3), that item's count and bit 29.
+sp::ViewerRec V(std::uint8_t mode,std::uint8_t state=0,std::uint8_t sub=0xFF,std::uint16_t count=0,bool no_spend=false) noexcept {
+ sp::ViewerRec v{};v.mode=mode;v.state=state;v.slot=sub<8 ? 3 : 0;v.sub=sub<8 ? sub : 0;v.count=count;v.no_spend=no_spend;
+ return v;
+}
+struct Episode {
+ std::uint16_t vars[8]{12,16383,12,8,12,12,8,8};   // the lab seed's slot-3 stock words
+ std::uint16_t episode[8]{};std::uint32_t episode_stock=0;bool active=false;
+ std::uint16_t prev[8]{};bool prev_ok=false;sp::ViewerRec prev_viewer{};std::uint32_t prev_jobs=0;
+ std::uint32_t jobs=0;sp::StockLatch latch{};unsigned rebased=0;sp::Gap last=sp::Gap::none;
+ // One body-1 job bracket. job_k/job_d: what body 1's own job changes; extra_jobs:
+ // body-1 jobs that ran in the gap without a bracket.
+ void Bracket(const sp::ViewerRec& viewer,int job_k=-1,int job_d=0,std::uint32_t extra_jobs=0){
+  jobs+=1+extra_jobs;
+  std::uint16_t before[8];std::memcpy(before,vars,sizeof(before));
+  if(job_k>=0)vars[job_k]=static_cast<std::uint16_t>(vars[job_k]+job_d);
+  std::uint16_t after[8];std::memcpy(after,vars,sizeof(after));
+  last=sp::Gap::none;
+  if(active && episode_stock){
+   sp::GapIn g{};g.prev_ok=prev_ok;g.now_ok=true;std::memcpy(g.prev,prev,sizeof(g.prev));std::memcpy(g.now,before,sizeof(g.now));
+   g.viewer_prev=prev_viewer;g.viewer_now=viewer;g.other_jobs=jobs-prev_jobs-1u;
+   const auto gap=sp::ClassifyGap(g);last=gap.kind;
+   if(sp::GapRebases(gap.kind) && !latch.off){sp::Rebase(episode,g.prev,g.now);episode_stock=sp::SlotDigest(episode);++rebased;}
+  }
+  if(!active){active=true;std::memcpy(episode,before,sizeof(episode));episode_stock=sp::SlotDigest(before);}
+  sp::CheckStock(latch,true,true,sp::SlotDigest(before),sp::SlotDigest(after));              // per job
+  sp::CheckStock(latch,episode_stock!=0,true,episode_stock,sp::SlotDigest(after));          // across the episode
+  std::memcpy(prev,after,sizeof(prev));prev_ok=true;prev_viewer=viewer;prev_jobs=jobs;
+ }
+};
+// A v5 slot-3 sample of grenade 354 with `held`, `age_ms` old.
+pi::Sample Sample(std::uint32_t held,std::uint32_t age_ms,std::uint32_t seq,std::uint32_t press=0,std::uint32_t release=0) noexcept {
+ pi::Sample s{};s.valid=true;s.seq=seq;s.age_ms=age_ms;s.edge_press=press;s.edge_release=release;
+ auto& p=s.packet;p.version=5;p.held=held;p.cam_cdeg=0;p.inv_slot=3;
+ p.xflags=pi::XFlag::Equip;p.gun_equip=354;p.gun_flags=pi::GunFlag::Valid;
+ return s;
+}
+// The hook's SupportGate on a composed frame, every safety owner on and body
+// 1's equip ready or not (Ready and the record read).
+sp::GateIn Gate(const pi::Injection& j,bool body_ready=true) noexcept {
+ sp::GateIn x{true,false,true,true,true,true,j.slot_valid,j.equip_valid,body_ready,body_ready,j.inv_slot,
+              static_cast<std::uint8_t>(body_ready ? 12 : 0),j.equip};
+ x.live=j.live;x.stale=j.stale;x.gun_valid=j.gun_valid;
+ return x;
+}
+// One frame through the main window (Compose, then SupportFrame's StepFrame/
+// Freeze/AddEdges) and one consumer (NativeView's Strip): what body 1's job
+// sees. strip: the driver's Arm.strip (0x40 = the support gate).
+struct Pipe {
+ pi::Config c{};pi::EdgeState edge{};sp::FrameTrack track{};std::uint32_t strip=0x40u;bool body_ready=true;
+ sp::FrameOut out{};pi::Injection frame{};
+ explicit Pipe(std::uint32_t stall_ms){
+  c.mode=PartnerInput::net;c.mask=0xFFFFFFFFu;c.words[0]=pi::Word::held;c.words[1]=pi::Word::press;c.words[2]=pi::Word::release;
+  c.stale_ms=250;c.stall_ms=stall_ms;
+ }
+ pi::Injection Step(const pi::Sample& s,std::uint64_t now_ms){
+  pi::Injection j=pi::Compose(c,s,0,pi::Overlay{},edge);
+  const bool request=sp::Request(true,j.slot_valid,j.inv_slot,strip);
+  out=sp::StepFrame(track,request,Gate(j,body_ready),strip,j.held,j.edge_press,now_ms);
+  if(out.verdict==sp::Frame::frozen){j=pi::Freeze(j,sp::kLevelBits,out.level,c);j.support_frozen=true;}
+  if(out.strip)j=pi::Strip(j,out.strip);   // a kept FIRE press leaves the published frame
+  if(out.add_held || out.add_press || out.add_release)j=pi::AddEdges(j,out.add_held,out.add_press,out.add_release,c);
+  frame=j;
+  // NativeView: admission with freshness waived only for a frozen frame.
+  return View(body_ready);
+ }
+ // A later consumer of the same published frame (a drain's ForConsumer full
+ // view) with body 1's readiness at that consumer's time.
+ pi::Injection View(bool ready) const {
+  sp::GateIn y=Gate(frame,ready);if(frame.support_frozen)y=sp::Fresh(y);
+  const bool req=sp::Request(true,frame.slot_valid,frame.inv_slot,strip);
+  return pi::Strip(frame,sp::Strip(strip,req,true,req && sp::Admit(y)));
+ }
+};
+template<class Check> void Fixtures(Check& check) {
+ constexpr std::uint32_t H=sp::kPadHold,F=sp::kPadFire,HF=sp::kLevelBits;
+ // --- Stage A: ModeRefusal (lab always; play only with link v2 connected).
+ check(sp::ModeRefusal(true,false,false)==nullptr && sp::ModeRefusal(true,false,true)==nullptr,"mode: lab admits with or without a link");
+ check(sp::ModeRefusal(false,true,true)==nullptr,"mode: play admits with link v2 connected");
+ check(std::strcmp(sp::ModeRefusal(false,true,false),"link_not_connected")==0,"mode: play refuses without a connected link");
+ check(std::strcmp(sp::ModeRefusal(false,false,true),"mode")==0 && std::strcmp(sp::ModeRefusal(false,false,false),"mode")==0,
+       "mode: any other mode refuses");
+ check(sp::ModeRefusal(true,true,false)==nullptr,"mode: lab wins (never both)");
+ // --- C(b) pure gap verdicts.
+ {const std::uint16_t seed[8]{12,16383,12,8,12,12,8,8};
+  check(sp::SlotDigest(seed)==OldDigest(seed),"C(b): SlotDigest is the hook's slot digest");
+  const auto gap=[&](std::initializer_list<std::pair<int,int>> d,const sp::ViewerRec& vp,const sp::ViewerRec& vn,std::uint32_t jobs=0,bool pok=true,bool nok=true){
+   sp::GapIn g{};g.prev_ok=pok;g.now_ok=nok;std::memcpy(g.prev,seed,sizeof(seed));std::memcpy(g.now,seed,sizeof(seed));
+   for(const auto& e: d)g.now[e.first]=static_cast<std::uint16_t>(g.now[e.first]+e.second);
+   g.viewer_prev=vp;g.viewer_now=vn;g.other_jobs=jobs;return sp::ClassifyGap(g);};
+  // The viewer's grenade 354 is sub 0 (k6, 12): T0 before the release, T1 the
+  // throw block's 1 -> 2 with its own count decremented.
+  const sp::ViewerRec T0=V(37,1,0,12),T1=V(37,2,0,11),N=V(0);
+  check(gap({},N,N).kind==sp::Gap::none,"C(b): no change");
+  check(gap({{0,-1}},T0,T1,0,false).kind==sp::Gap::unread && gap({{0,-1}},T0,T1,0,true,false).kind==sp::Gap::unread,"C(b): unread end never rebases");
+  {const auto o=gap({{0,-1}},T0,T1);check(o.kind==sp::Gap::viewer_throw && o.word==0 && o.before==12 && o.after==11 && o.changed==1,
+   "C(b): viewer's own throw (the release step entered in the gap, its own word, its count)");}
+  check(gap({{0,-1}},V(33,0,0,12),T1).kind==sp::Gap::viewer_throw,"C(b): viewer's own throw from aim (mode 33) to the release");
+  check(gap({{3,-1}},V(46,3,3,8),V(46,4,3,7)).kind==sp::Gap::viewer_throw && gap({{3,-1}},V(46,3,3,8),V(46,5,3,7)).kind==sp::Gap::viewer_throw,
+   "C(b): viewer's own placement (mode 46 state 3 -> 4/5)");
+  // WS2 review: holding a slot-3 item is not spending it.
+  for(unsigned m: {28u,29u,32u,30u,33u,42u,43u,45u,47u}){
+   const auto h=V(static_cast<std::uint8_t>(m),0,0,12);
+   check(gap({{2,-1}},h,h).kind==sp::Gap::foreign,"C(b): viewer holding a grenade (28/29/32..47) with a -1 on another word latches");
+   check(gap({{0,-1}},h,V(static_cast<std::uint8_t>(m),0,0,11)).kind==sp::Gap::foreign,"C(b): its own word without the release step latches");
+  }
+  check(gap({{0,-1}},V(37,1,0,12),V(37,1,0,11)).kind==sp::Gap::foreign,"C(b): mode 37 before the release (state 1) never spends");
+  check(gap({{0,-1}},V(46,3,0,12),V(46,6,0,11)).kind==sp::Gap::foreign,"C(b): mode 46 state 6 (no placement) never spends");
+  check(gap({{0,-1}},T1,V(37,2,0,10)).kind==sp::Gap::foreign,"C(b): one credit per release (already released at the gap's start)");
+  check(gap({{0,-1}},V(0xFF),T1).kind==sp::Gap::foreign,"C(b): an unread start never attributes");
+  check(gap({{2,-1}},T0,T1).kind==sp::Gap::foreign,"C(b): released, but another word (k8) went down");
+  check(gap({{2,-1}},V(37,1,2,12),V(37,2,2,12)).kind==sp::Gap::foreign,"C(b): released, but the record kept its count (no decrement)");
+  check(gap({{0,-1}},T0,V(37,2,0,11,true)).kind==sp::Gap::foreign,"C(b): bit 29 (no stock write) never attributes");
+  {auto s=T1;s.slot=0;check(gap({{0,-1}},T0,s).kind==sp::Gap::foreign,"C(b): not slot 3");}
+  {auto s=T1;s.sub=8;check(gap({{0,-1}},T0,s).kind==sp::Gap::foreign,"C(b): sub out of range");}
+  for(unsigned m: {0u,7u,11u,27u,48u,0xFFu})check(gap({{0,-1}},V(static_cast<std::uint8_t>(m)),V(static_cast<std::uint8_t>(m))).kind==sp::Gap::foreign,
+   "C(b): a decrement while the viewer is not throwing (or unread) is a deferred-leak candidate");
+  check(gap({{0,-2}},T0,V(37,2,0,10)).kind==sp::Gap::foreign,"C(b): two at once is not one throw");
+  check(gap({{0,-1},{2,-1}},T0,T1).kind==sp::Gap::foreign,"C(b): two words down is not one throw");
+  check(gap({{0,-1},{3,1}},T0,T1).kind==sp::Gap::foreign,"C(b): a throw and a pickup in one gap stays unattributed");
+  check(gap({{0,-1}},T0,T1,1).kind==sp::Gap::foreign,"C(b): an unbracketed body-1 job in the gap: never attributed");
+  check(gap({{0,-1}},T0,T1,0xFFFFFFFFu).kind==sp::Gap::foreign,"C(b): a job count that went backwards fails closed");
+  {const auto o=gap({{0,1}},N,N);check(o.kind==sp::Gap::viewer_pickup && o.after==13,"C(b): viewer's pickup (+1, any viewer mode)");}
+  check(gap({{0,4},{2,2}},V(0xFF),V(0xFF)).kind==sp::Gap::viewer_pickup,"C(b): several pickups");
+  check(gap({{0,sp::kPickupMax}},N,N).kind==sp::Gap::viewer_pickup && gap({{0,sp::kPickupMax+1}},N,N).kind==sp::Gap::foreign,"C(b): pickup bound");
+  check(gap({{0,1}},N,N,1).kind==sp::Gap::foreign,"C(b): a pickup with an unbracketed body-1 job stays unattributed");
+  check(gap({{3,0xFFFF-8}},N,N).kind==sp::Gap::foreign,"C(b): a word set to 0xFFFF (the guard's count) is never a pickup");
+  check(!sp::GapRebases(sp::Gap::none) && !sp::GapRebases(sp::Gap::unread) && !sp::GapRebases(sp::Gap::foreign) &&
+        sp::GapRebases(sp::Gap::viewer_throw) && sp::GapRebases(sp::Gap::viewer_pickup),"C(b): only the viewer's own gaps rebase");
+  check(std::strcmp(sp::GapName(sp::Gap::viewer_throw),"throw")==0 && std::strcmp(sp::GapName(sp::Gap::viewer_pickup),"pickup")==0 &&
+        std::strcmp(sp::GapName(sp::Gap::foreign),"foreign")==0,"C(b): gap names");
+  {std::uint16_t e[8]{0,1,2,3,4,5,6,7};const std::uint16_t p[8]{5,5,5,5,5,5,5,5};const std::uint16_t n[8]{4,6,5,5,5,5,5,0xFFFF};
+   sp::Rebase(e,p,n);check(e[0]==0xFFFF && e[1]==2 && e[2]==2 && e[7]==1,"C(b): rebase moves by the delta (u16 wrap)");}
+ }
+ // --- C(b) episodes: the per-job compares are unchanged.
+ const auto dec=[](Episode& e,int k){e.vars[k]=static_cast<std::uint16_t>(e.vars[k]-1);};
+ {Episode e;e.Bracket(V(28,0,0,12));e.Bracket(V(33,0,0,12));dec(e,0);   // the viewer throws between two brackets
+  e.Bracket(V(37,2,0,11));check(e.last==sp::Gap::viewer_throw,"C(b): the gap is the viewer's throw");e.Bracket(V(37,2,0,11));
+  check(!e.latch.off && e.rebased==1,"C(b): the viewer's own throw during a partner episode does not latch");}
+ {Episode e;e.Bracket(V(46,3,3,8));dec(e,3);e.Bracket(V(46,4,3,7));e.Bracket(V(46,4,3,7));
+  check(!e.latch.off && e.rebased==1,"C(b): the viewer's own placement during a partner episode does not latch");}
+ {Episode e;e.Bracket(V(0));e.vars[2]=static_cast<std::uint16_t>(e.vars[2]+1);e.Bracket(V(0));e.Bracket(V(0));
+  check(!e.latch.off && e.rebased==1,"C(b): the viewer's pickup during a partner episode does not latch");}
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));e.vars[0]=static_cast<std::uint16_t>(e.vars[0]+1);e.Bracket(V(0));
+  check(!e.latch.off && e.rebased==2,"C(b): throw then pickup, each in its own gap");}
+ {Episode e;e.Bracket(V(37,2,0,12));e.Bracket(V(37,2,0,12),0,-1);
+  check(e.latch.off,"C(b): a body-1 leak inside its own job still latches (per-job compare), even while the viewer throws");}
+ {Episode e;e.Bracket(V(0));e.Bracket(V(0),6,-1);check(e.latch.off,"C(b): a body-1 leak in its own job latches");}
+ {Episode e;e.Bracket(V(0));dec(e,0);e.Bracket(V(0));
+  check(e.latch.off && e.rebased==0 && e.last==sp::Gap::foreign,"C(b): an out-of-job decrement the viewer did not throw still latches (deferred leak)");}
+ {Episode e;e.Bracket(V(37,1,0,12));dec(e,0);e.Bracket(V(37,2,0,11),-1,0,1);
+  check(e.latch.off && e.last==sp::Gap::foreign,"C(b): an unbracketed body-1 job in the gap: the decrement still latches");}
+ {Episode e;e.Bracket(V(37,1,0,12));e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-2);e.Bracket(V(37,2,0,10));
+  check(e.latch.off,"C(b): a double decrement still latches");}
+ {Episode e;e.Bracket(V(37,1,0,12));dec(e,0);e.Bracket(V(37,2,0,11),4,-1);
+  check(e.latch.off && e.rebased==1,"C(b): a rebased viewer throw does not hide a body-1 leak in the same bracket");}
+ // WS2 review: a deferred body-1 decrement while the viewer only holds a slot-3
+ // item (the lab seed: the viewer holds 354 = k6 in the hold hub, body 1 holds
+ // 395 = k8) or right after the viewer's own rebased throw still latches.
+ for(unsigned m: {28u,32u,45u}){
+  Episode e;const auto h=V(static_cast<std::uint8_t>(m),0,0,12);e.Bracket(h);dec(e,2);e.Bracket(h);
+  check(e.latch.off && e.rebased==0 && e.last==sp::Gap::foreign,"C(b): viewer holding (28/32/45), a -1 on k8 outside body 1's bracket latches");
+ }
+ {Episode e;e.Bracket(V(28,0,0,12));dec(e,0);e.Bracket(V(28,0,0,11));
+  check(e.latch.off && e.rebased==0,"C(b): viewer holding its grenade, a -1 on its own word without a release step latches");}
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));dec(e,0);e.Bracket(V(37,2,0,10));
+  check(e.latch.off && e.rebased==1 && e.last==sp::Gap::foreign,"C(b): a decrement in the gap after a rebased viewer throw latches (same word)");}
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));dec(e,2);e.Bracket(V(37,2,0,11));
+  check(e.latch.off && e.rebased==1 && e.last==sp::Gap::foreign,"C(b): a decrement in the gap after a rebased viewer throw latches (another word)");}
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));e.Bracket(V(28,0,0,11));e.Bracket(V(33,0,0,11));dec(e,0);e.Bracket(V(37,2,0,10));
+  check(!e.latch.off && e.rebased==2,"C(b): two viewer throws, each with its own release step, do not latch");}
+ // --- Stall freeze (critic #4): StallHold and the frame pipeline.
+ {sp::StallHoldIn s{};s.stall_hold=true;s.stale_ms=250;s.stall_ms=400;s.age_ms=300;s.v5_valid=true;s.slot=3;s.equip=354;s.was_support=true;s.support_equip=354;
+  check(sp::StallHold(s),"stall hold: stale v5 slot 3 of the same support equip inside the window");
+  {auto x=s;x.age_ms=250;check(!sp::StallHold(x),"stall hold: not stale yet (the live path judges)");}
+  {auto x=s;x.age_ms=400;check(sp::StallHold(x),"stall hold: up to stall_ms");x.age_ms=401;check(!sp::StallHold(x),"stall hold: beyond the window");}
+  {auto x=s;x.stall_hold=false;check(!sp::StallHold(x),"stall hold: partner_native_stall=neutral (lab default) never holds");}
+  {auto x=s;x.stall_ms=250;check(!sp::StallHold(x),"stall hold: stall_ms <= stale_ms is off");}
+  {auto x=s;x.was_support=false;check(!sp::StallHold(x),"stall hold: only a held support verdict");}
+  {auto x=s;x.support_equip=349;check(!sp::StallHold(x),"stall hold: another equip");}
+  {auto x=s;x.slot=2;check(!sp::StallHold(x),"stall hold: another slot");}
+  {auto x=s;x.v5_valid=false;check(!sp::StallHold(x),"stall hold: no v5 gun group");}
+  {auto x=s;x.equip=0;x.support_equip=0;check(!sp::StallHold(x),"stall hold: no equip");}}
+ // WS2 review: the observer's writer context through a stall is keyed on the
+ // driver's last support verdict, not on support_stall (a frame that crosses
+ // stale_ms between the driver's read and the observer's).
+ {sp::StallHoldIn d{};d.stall_hold=true;d.stale_ms=250;d.stall_ms=400;d.age_ms=247;d.v5_valid=true;d.slot=3;d.equip=354;
+  d.was_support=true;d.support_equip=354;
+  check(!sp::StallHold(d),"context: the driver's tick read 247 ms (live): no support_stall, support_equip judged live");
+  sp::StallHoldIn o=d;o.age_ms=252;
+  check(sp::ContextHold(o),"context: the observer then reads 252 ms (just stale): slot 3 / equip kept (Ready still answers)");
+  o.age_ms=5;check(sp::ContextHold(o),"context: fresh again before the driver's next tick: kept");
+  o.age_ms=400;check(sp::ContextHold(o),"context: up to stall_ms");o.age_ms=401;check(!sp::ContextHold(o),"context: beyond the window");
+  o=d;o.age_ms=300;o.support_equip=0;check(!sp::ContextHold(o),"context: no driver support verdict");
+  o=d;o.age_ms=300;o.equip=349;check(!sp::ContextHold(o),"context: another equip");
+  o=d;o.age_ms=300;o.slot=2;check(!sp::ContextHold(o),"context: another slot");
+  o=d;o.age_ms=300;o.v5_valid=false;check(!sp::ContextHold(o),"context: no v5 gun group");
+  o=d;o.age_ms=300;o.stall_hold=false;check(!sp::ContextHold(o),"context: partner_native_stall=neutral (lab) never holds");
+  o=d;o.age_ms=300;o.stall_ms=250;check(!sp::ContextHold(o),"context: stall_ms <= stale_ms is off");
+  o=d;o.age_ms=300;o.support_equip=0x800;o.equip=0x800;check(!sp::ContextHold(o),"context: equip range");}
+ for(std::uint32_t gap_ms: {251u,260u,400u,600u,1000u}){
+  Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;
+  auto j=p.Step(Sample(H,0,seq++),t);check(p.out.verdict==sp::Frame::admitted && (j.held&HF)==H,"freeze: aim admitted");
+  t+=16;j=p.Step(Sample(HF,0,seq++,F),t);check(p.out.verdict==sp::Frame::admitted && (j.held&HF)==HF && (j.edge_press&F),"freeze: FIRE press admitted");
+  const auto held_seq=seq-1;
+  bool kept=true,edges=false;
+  for(std::uint32_t age=251;;){
+   t+=16;j=p.Step(Sample(HF,age,held_seq),t);
+   kept=kept && p.out.verdict==sp::Frame::frozen && p.frame.support_frozen && (j.held&HF)==HF;
+   edges=edges || (j.edge_press&HF) || (j.edge_release&HF) || ((j.w[1]|j.w[2])&HF);
+   if(age>=gap_ms)break;
+   age=age+80>gap_ms ? gap_ms : age+80;
+  }
+  check(kept,"freeze: a 250..1000 ms stall keeps the admitted HOLD|FIRE level (no early release)");
+  check(!edges,"freeze: no new HOLD/FIRE edge during the stall");
+  t+=16;j=p.Step(Sample(HF,5,seq++),t);
+  check(p.out.verdict==sp::Frame::admitted && (j.held&HF)==HF && !(j.edge_press&HF),"freeze: fresh input resumes with no phantom second press");
+  t+=16;j=p.Step(Sample(H,5,seq++,0,F),t);
+  check((j.held&HF)==H && (j.edge_release&F) && !(j.edge_press&F),"freeze: the remote's release after the stall is one release edge");
+ }
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;
+  p.Step(Sample(H,0,seq++),t);t+=16;p.Step(Sample(HF,0,seq++,F),t);
+  t+=16;auto j=p.Step(Sample(HF,1100,seq-1),t);
+  check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"freeze: beyond the stall window the old strip applies");
+  t+=16;j=p.Step(Sample(HF,1200,seq-1),t);check(!(j.held&HF),"freeze: and stays stripped");
+  t+=16;j=p.Step(Sample(HF,5,seq++),t);check(p.out.verdict==sp::Frame::admitted && (j.held&HF)==HF,"freeze: fresh input admits again");}
+ {Pipe p(400);std::uint64_t t=1000;std::uint32_t seq=1;
+  p.Step(Sample(H,0,seq++),t);t+=16;p.Step(Sample(HF,0,seq++,F),t);
+  t+=16;auto j=p.Step(Sample(HF,300,seq-1),t);check(p.out.verdict==sp::Frame::frozen && (j.held&HF)==HF,"freeze: play default stall_ms 400 freezes at 300 ms");
+  t+=16;j=p.Step(Sample(HF,500,seq-1),t);check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"freeze: play default beyond 400 ms strips");}
+ {Pipe p(0);std::uint64_t t=1000;std::uint32_t seq=1;   // lab default: partner_native_stall=neutral
+  p.Step(Sample(HF,0,seq++,F),t);t+=16;auto j=p.Step(Sample(HF,300,seq-1),t);
+  check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"freeze: no stall hold (lab default) keeps the old strip");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;
+  p.Step(Sample(H,0,seq++),t);t+=16;p.Step(Sample(HF,0,seq++,F),t);
+  p.body_ready=false;t+=16;auto j=p.Step(Sample(HF,300,seq-1),t);
+  check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"freeze: every other gate still applies (body 1 not ready)");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;
+  p.Step(Sample(H,0,seq++),t);t+=16;p.Step(Sample(HF,0,seq++,F),t);
+  p.strip=0x58u;t+=16;auto j=p.Step(Sample(HF,300,seq-1),t);
+  check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"freeze: never against the driver's own strip");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;
+  p.Step(Sample(H,0,seq++),t);t+=16;p.Step(Sample(HF,0,seq++,F),t);
+  t+=16;auto s=Sample(HF,300,seq-1);s.packet.gun_equip=349;auto j=p.Step(s,t);
+  check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"freeze: only the same slot-3 equip");}
+ {sp::FrameTrack t{};sp::GateIn x{true,false,true,true,true,true,true,true,true,true,3,12,354};
+  sp::StepFrame(t,true,x,0x40u,H,0,0);
+  sp::GateIn s=x;s.live=false;s.stale=true;
+  const auto o=sp::StepFrame(t,true,s,0x40u,HF,F,16);
+  check(o.verdict==sp::Frame::frozen && o.level==H,"freeze: the level is the last ADMITTED one, not the stale frame's");
+  {pi::Config c{};c.mask=0xFFFFFFFFu;c.words[0]=pi::Word::held;c.words[1]=pi::Word::press;c.words[2]=pi::Word::release;
+   pi::Injection j{};j.held=HF|0x4u;j.w[0]=HF|0x4u;j.w[1]=F;j.edge_press=F|0x4u;j.edge_release=H;j.tap12=F;j.long12=H;j.synth=F;
+   const auto z=pi::Freeze(j,HF,H,c);
+   check(z.held==(H|0x4u) && z.w[0]==(H|0x4u) && !(z.w[1]&HF) && z.edge_press==0x4u && !z.edge_release && !z.tap12 && z.long12==H && !z.synth,
+         "freeze: Freeze sets the level and removes every HOLD/FIRE edge only");
+   check(pi::LevelOnly(pi::Freeze(j,HF,H,c),c).held==(H|0x4u),"freeze: the level reaches level-only consumers");
+   pi::Injection f=j;f.support_frozen=true;
+   check(pi::LevelOnly(f,c).support_frozen && pi::Strip(f,0x10u).support_frozen && !pi::Neutral(f).support_frozen,"freeze: the flag follows the frame, never Neutral");}}
+ // --- C(c) the FIRE-edge buffer.
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  auto j=p.Step(Sample(0,0,seq++,F,F),t);   // select-then-throw: a FIRE tap while body 1 is still being equipped
+  check(p.out.verdict==sp::Frame::refused && p.out.buffered && !(j.held&F),"buffer: a FIRE tap waiting on the equip is buffered (not injected)");
+  p.body_ready=true;t+=200;j=p.Step(Sample(0,0,seq++),t);
+  check(p.out.delivered && (j.held&F) && (j.edge_press&F) && (j.w[1]&F) && (j.w[0]&F),"buffer: delivered on the first admitted frame <= 300 ms");
+  check(!(j.edge_release&F) && !(j.w[2]&F),"buffer: the delivered tap is not also released in the same frame (WS2 review)");
+  t+=16;j=p.Step(Sample(0,0,seq++),t);
+  check(!(j.held&F) && (j.edge_release&F) && (j.w[2]&F) && !p.out.delivered,"buffer: the tap's release edge on the next frame");
+  t+=16;j=p.Step(Sample(0,0,seq++),t);check(!(j.edge_release&F) && !(j.edge_press&F),"buffer: delivered once");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  p.Step(Sample(F,0,seq++,F),t);p.body_ready=true;t+=300;auto j=p.Step(Sample(F,0,seq++),t);
+  check(p.out.delivered && (j.edge_press&F) && (j.held&F),"buffer: a press still held is delivered as its press edge at 300 ms");
+  t+=16;j=p.Step(Sample(F,0,seq++),t);check(!(j.edge_release&F) && (j.held&F),"buffer: a held FIRE gets no synthetic release");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  p.Step(Sample(0,0,seq++,F,F),t);t+=150;p.Step(Sample(0,0,seq++),t);check(!p.out.dropped,"buffer: still waiting at 150 ms");
+  p.body_ready=true;t+=151;auto j=p.Step(Sample(0,0,seq++),t);
+  check(p.out.dropped && !p.out.delivered && !(j.edge_press&F) && !(j.held&F),"buffer: dropped after 300 ms");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  p.Step(Sample(0,0,seq++,F,F),t);t+=100;auto s=Sample(0,0,seq++);s.packet.gun_equip=349;p.Step(s,t);
+  check(p.out.dropped,"buffer: another equip drops it");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  p.Step(Sample(0,0,seq++,F,F),t);t+=100;auto s=Sample(0,0,seq++);s.packet.inv_slot=0;p.Step(s,t);
+  check(p.out.dropped,"buffer: leaving slot 3 drops it");}
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  p.Step(Sample(0,0,seq++,F,F),t);t+=16;p.Step(Sample(0,0,seq++),t);   // the tap's synthesized window, then its release
+  check(p.out.verdict==sp::Frame::refused && !p.out.dropped,"buffer: kept while waiting");
+  p.body_ready=true;t+=16;auto j=p.Step(Sample(F,0,seq++,F),t);
+  check(!p.out.delivered && !p.out.dropped && (j.edge_press&F),"buffer: a fresh press at admission supersedes it (one press)");}
+ {sp::FrameTrack t{};sp::GateIn x{true,false,true,true,true,true,true,true,false,false,3,0,354};
+  auto y=x;y.latched=true;check(!sp::StepFrame(t,true,y,0x58u,0,F,0).buffered,"buffer: never while support is latched off");
+  y=x;y.guard_armed=false;check(!sp::StepFrame(t,true,y,0x58u,0,F,0).buffered,"buffer: never without the guard");
+  y=x;y.stale=true;check(!sp::StepFrame(t,true,y,0x58u,0,F,0).buffered,"buffer: never from a stale frame");
+  y=x;y.slot=2;check(!sp::StepFrame(t,true,y,0x58u,0,F,0).buffered,"buffer: slot 3 only");
+  y=x;y.body_ready=y.record_ready=true;y.type=13;check(!sp::StepFrame(t,true,y,0x58u,0,F,0).buffered,"buffer: never for a placed item (type 13)");
+  check(sp::StepFrame(t,true,x,0x58u,0,F,0).buffered,"buffer: waiting on body 1's equip");
+  y=x;y.body_ready=y.record_ready=true;y.type=12;
+  auto o=sp::StepFrame(t,true,y,0x58u,0,0,50);check(o.verdict==sp::Frame::refused && !o.dropped,"buffer: the driver's gate one tick behind keeps waiting");
+  o=sp::StepFrame(t,true,y,0x40u,0,0,66);check(o.delivered && o.add_press==F && o.add_held==F,"buffer: delivered once the driver passes FIRE");}
+ {pi::Config c{};c.mask=~0x10u;c.words[0]=pi::Word::held;c.words[1]=pi::Word::press;c.words[2]=pi::Word::release;
+  pi::Injection j{};const auto z=pi::AddEdges(j,F,F,0,c);check(!z.held && !z.edge_press && !z.w[0],"buffer: AddEdges stays inside the mask");
+  c.mask=0xFFFFFFFFu;const auto r=pi::AddEdges(j,0,0,F,c);check(r.edge_release==F && r.w[2]==F && !r.held,"buffer: AddEdges release word");
+  pi::Injection h{};h.held=F;check(!pi::AddEdges(h,0,0,F,c).edge_release,"buffer: never a release of a held bit");
+  pi::Injection r2{};r2.edge_release=F|0x4u;r2.w[2]=F|0x4u;
+  const auto d=pi::AddEdges(r2,F,F,0,c);
+  check((d.held&F) && (d.edge_press&F) && (d.w[1]&F) && d.edge_release==0x4u && d.w[2]==0x4u,
+        "buffer: AddEdges clears a same-frame release of an added held/press bit, nothing else");}
+ // WS2 review: a press the main window buffers never reaches a later consumer
+ // of the same frame that sees body 1 become ready (one remote press, one press).
+ for(unsigned tap=0;tap<2;++tap){
+  Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  unsigned presses=0,releases=0;bool contradictory=false;
+  const auto count=[&](const pi::Injection& v){presses+=(v.edge_press&F) ? 1u : 0u;releases+=(v.edge_release&F) ? 1u : 0u;
+                                               contradictory=contradictory || ((v.edge_press&F) && (v.edge_release&F));};
+  auto j=tap ? p.Step(Sample(0,0,seq++,F,F),t) : p.Step(Sample(F,0,seq++,F),t);
+  check(p.out.buffered && !(j.edge_press&F) && !(j.held&F),"buffer: the main window refuses and buffers");
+  auto d1=p.View(true);   // drain1 takes frame k after body 1 became ready in an earlier job of the frame
+  check(!(d1.edge_press&F) && !(d1.held&F) && !(d1.w[0]&F) && !(d1.w[1]&F) && !(d1.synth&F),
+        "buffer: a later consumer that sees body 1 ready in the same frame gets no FIRE");
+  count(d1);
+  p.body_ready=true;t+=16;j=p.Step(tap ? Sample(0,0,seq++) : Sample(F,0,seq++),t);count(j);d1=p.View(true);count(d1);
+  check(p.out.delivered && (j.edge_press&F) && (d1.edge_press&F),"buffer: delivered on the next frame (each consumer once)");
+  for(unsigned k=0;k<3;++k){t+=16;j=p.Step(tap ? Sample(0,0,seq++) : Sample(F,0,seq++),t);count(j);d1=p.View(true);count(d1);}
+  check(presses==2 && !contradictory,"buffer: one press frame for one remote press (main + drain1), never with its release");
+  check(releases==(tap ? 2u : 0u),"buffer: a tap's single release frame; a held press none");
+ }
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  p.Step(Sample(F,0,seq++,F),t);t+=16;p.Step(Sample(F,0,seq++),t);
+  check(p.out.verdict==sp::Frame::refused && !(p.View(true).held&F),"buffer: still waiting, a later consumer gets no FIRE level either");}
+}
+// --- Unknown remote slot/equip debounce (run 0c9269ce; docs/anim-round2-throws.md
+// "Unknown-slot glitch"): StepIdentity, partner_input::HoldIdentity on frames and
+// the receive -> Compose -> StepFrame -> NativeView pipeline of a held throw.
+pi::Sample Glitch(pi::Sample s) noexcept {
+ // The host's gun record read failed for one tick: no v5 gun group, no equip; its slot row still read 3.
+ s.packet.xflags=static_cast<std::uint8_t>(s.packet.xflags&~pi::XFlag::Equip);s.packet.gun_equip=0;
+ s.packet.gun_flags=s.packet.gun_mode=s.packet.reload_seq=s.packet.switch_seq=0;
+ s.packet.aim_pitch_cdeg=s.packet.aim_yaw_cdeg=0;   // v6: no gun direction without the group (Fill6)
+ return s;
+}
+template<class Check> void IdentityFixtures(Check& check) {
+ using sp::IdHold;
+ constexpr std::uint32_t H=sp::kPadHold,F=sp::kPadFire,HF=sp::kLevelBits;
+ const sp::Identity full{true,3,true,354};
+ const sp::Identity glitch{false,3,false,0};
+ const sp::Identity none{};
+ {sp::IdentityTrack t{};
+  check(sp::StepIdentity(t,full,354,1000)==IdHold::pass && t.have && t.equip==354 && t.known_ms==1000,
+        "identity: a complete slot-3 frame of the support equip is recorded");
+  check(sp::StepIdentity(t,glitch,354,1016)==IdHold::held && t.holding && t.held==1 && t.since_ms==1016,"identity: one unknown frame mid-hold is held");
+  check(sp::StepIdentity(t,none,354,1032)==IdHold::held && t.held==2,"identity: slot and equip both unknown: held");
+  check(sp::StepIdentity(t,full,354,1048)==IdHold::resumed && !t.holding && t.known_ms==1048,"identity: the next complete frame resumes");
+  check(sp::StepIdentity(t,full,354,1064)==IdHold::pass,"identity: then passes");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,glitch,354,1000+sp::kIdentityHoldMs)==IdHold::held,"identity: held at exactly kIdentityHoldMs after the last complete frame");
+  check(sp::StepIdentity(t,glitch,354,1001+sp::kIdentityHoldMs)==IdHold::expired && !t.have && !t.holding,"identity: a longer unknown expires (it applies)");
+  check(sp::StepIdentity(t,glitch,354,1300)==IdHold::pass,"identity: and keeps applying until a complete frame");
+  check(sp::StepIdentity(t,full,354,1316)==IdHold::pass && t.have,"identity: a complete frame starts over");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,glitch,354,999)==IdHold::expired,"identity: a clock that went backwards never holds");}
+ // A real change applies at once.
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,sp::Identity{true,0,true,46},354,1016)==IdHold::pass && !t.have,"identity: a complete frame of another slot is a real change");
+  check(sp::StepIdentity(t,glitch,354,1032)==IdHold::pass,"identity: an unknown after a real change is never held");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);sp::StepIdentity(t,glitch,354,1016);
+  check(sp::StepIdentity(t,sp::Identity{true,0,true,46},354,1032)==IdHold::changed && !t.have && !t.holding,"identity: a held run ends with a real change");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);sp::StepIdentity(t,glitch,354,1016);
+  check(sp::StepIdentity(t,sp::Identity{true,3,true,349},354,1032)==IdHold::changed,"identity: a complete frame of another equip ends a held run");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,sp::Identity{true,1,false,0},354,1016)==IdHold::changed && !t.have,"identity: a known other slot with the equip unknown is a real change");
+  sp::StepIdentity(t,full,354,1032);
+  check(sp::StepIdentity(t,sp::Identity{false,0xFF,true,349},354,1048)==IdHold::changed,"identity: a known other equip with the slot unknown is a real change");
+  sp::StepIdentity(t,full,354,1064);
+  check(sp::StepIdentity(t,sp::Identity{false,0xFF,true,354},354,1080)==IdHold::held,"identity: the same equip with the slot unknown is held");
+  check(sp::StepIdentity(t,sp::Identity{true,3,false,0},354,1096)==IdHold::held,"identity: slot 3 with the equip unknown is held");
+  check(sp::StepIdentity(t,sp::Identity{true,0xFF,true,354},354,1112)==IdHold::held,"identity: a v5 frame with the slot unknown is held");}
+ // Only during a support episode (the driver's verdict, published every tick).
+ {sp::IdentityTrack t{};
+  check(sp::StepIdentity(t,full,0,1000)==IdHold::pass && !t.have,"identity: no support verdict: nothing recorded");
+  check(sp::StepIdentity(t,glitch,0,1016)==IdHold::pass,"identity: no support verdict: nothing held (gun play unchanged)");
+  sp::StepIdentity(t,full,354,1032);
+  check(sp::StepIdentity(t,glitch,349,1048)==IdHold::pass && !t.have,"identity: a verdict of another equip never holds this one");
+  sp::StepIdentity(t,full,354,1064);sp::StepIdentity(t,glitch,354,1080);
+  check(sp::StepIdentity(t,glitch,0,1096)==IdHold::off && !t.holding && !t.have,"identity: the verdict ending during a held run ends it");
+  check(sp::StepIdentity(t,sp::Identity{true,3,true,0x800},0x800,1112)==IdHold::pass && !t.have,"identity: equip range");}
+ check(std::strcmp(sp::IdHoldName(IdHold::held),"held")==0 && std::strcmp(sp::IdHoldName(IdHold::resumed),"resumed")==0 &&
+       std::strcmp(sp::IdHoldName(IdHold::changed),"changed")==0 && std::strcmp(sp::IdHoldName(IdHold::expired),"expired")==0 &&
+       std::strcmp(sp::IdHoldName(IdHold::off),"off")==0 && std::strcmp(sp::IdHoldName(IdHold::pass),"pass")==0,"identity: names");
+ check(sp::IdHoldEnds(IdHold::resumed) && sp::IdHoldEnds(IdHold::changed) && sp::IdHoldEnds(IdHold::expired) && sp::IdHoldEnds(IdHold::off) &&
+       !sp::IdHoldEnds(IdHold::pass) && !sp::IdHoldEnds(IdHold::held),"identity: which verdicts end a held run");
+ // partner_input::HoldIdentity on frames (the receive path, before the frame is stored).
+ {pi::IdentityHold h{};
+  pi::InputPacket good=Sample(HF,0,1).packet;good.version=6;
+  good.gun_flags=pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming|pi::GunFlag::AimDir;good.gun_mode=28;good.reload_seq=4;good.switch_seq=7;
+  good.aim_pitch_cdeg=100;good.aim_yaw_cdeg=200;
+  check(pi::ValidPacket(good),"frame: the complete v6 frame is valid");
+  {const sp::Identity id=pi::PacketIdentity(good);
+   check(id.v5 && id.slot==3 && id.equip_valid && id.equip==354,"frame: PacketIdentity of a complete frame");}
+  pi::InputPacket p=good;
+  check(pi::HoldIdentity(h,p,354,1000)==IdHold::pass && std::memcmp(&p,&good,sizeof(p))==0,"frame: a complete frame passes unchanged");
+  pi::Sample gs{};gs.packet=good;
+  const pi::InputPacket g=Glitch(gs).packet;
+  {const sp::Identity id=pi::PacketIdentity(g);
+   check(pi::ValidPacket(g) && !id.v5 && !id.equip_valid && id.slot==3,"frame: the glitch frame is valid, without gun group and equip");}
+  p=g;
+  check(pi::HoldIdentity(h,p,354,1016)==IdHold::held,"frame: held");
+  check(p.inv_slot==3 && (p.xflags&pi::XFlag::Equip) && p.gun_equip==354 &&
+        p.gun_flags==(pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming) && p.gun_mode==28 && p.reload_seq==4 && p.switch_seq==7 &&
+        p.aim_pitch_cdeg==0 && p.aim_yaw_cdeg==0 && pi::ValidPacket(p),
+        "frame: slot 3, the equip and the last gun group (counters kept, AimDir dropped), still a valid frame");
+  check(p.held==g.held && p.lx==g.lx && p.ly==g.ly && p.edge_seq==g.edge_seq && p.cam_cdeg==g.cam_cdeg,"frame: its input is untouched");
+  p=good;p.inv_slot=pi::kInvSlotUnknown;
+  check(pi::HoldIdentity(h,p,354,1032)==IdHold::held && p.inv_slot==3 && p.gun_flags==good.gun_flags && p.aim_pitch_cdeg==100 && pi::ValidPacket(p),
+        "frame: an unknown slot alone gets slot 3 and keeps its own gun group");
+  p=g;p.version=4;
+  const pi::InputPacket v4=p;
+  check(pi::HoldIdentity(h,p,354,1048)==IdHold::off && std::memcmp(&p,&v4,sizeof(p))==0 && !h.track.have,"frame: a v4 frame is never held and ends a run");
+  p=good;pi::HoldIdentity(h,p,354,1064);
+  p=g;p.inv_slot=0;p.gun_flags=pi::GunFlag::Valid;p.xflags=static_cast<std::uint8_t>(p.xflags|pi::XFlag::Equip);p.gun_equip=46;
+  const pi::InputPacket gun=p;
+  check(pi::HoldIdentity(h,p,354,1080)==IdHold::pass && std::memcmp(&p,&gun,sizeof(p))==0 && !h.track.have,
+        "frame: a weapon switch (slot 0, equip 46) is never held");}
+ // The pipeline, the 0c9269ce throw: aim, FIRE held, one unknown frame mid-hold, release.
+ // Without the hold FIRE drops for that frame and comes back (the early release
+ // and a second throw); with it the level stays and the release is the only one.
+ for(unsigned hold=0;hold<2;++hold){
+  Pipe p(400);pi::IdentityHold idh{};std::uint64_t t=1000;std::uint32_t seq=1;
+  const auto step=[&](pi::Sample s){if(hold)(void)pi::HoldIdentity(idh,s.packet,354,t);return p.Step(s,t);};
+  unsigned rises=0,falls=0;bool was=false;
+  const auto level=[&](const pi::Injection& j){const bool on=(j.held&F)!=0;rises+=on && !was ? 1u : 0u;falls+=!on && was ? 1u : 0u;was=on;};
+  auto j=step(Sample(H,0,seq++));level(j);check(p.out.verdict==sp::Frame::admitted,"pipeline: aim admitted");
+  t+=16;j=step(Sample(HF,0,seq++,F));level(j);check((j.held&HF)==HF && (j.edge_press&F),"pipeline: FIRE press admitted");
+  t+=16;j=step(Sample(HF,0,seq++));level(j);
+  t+=16;j=step(Glitch(Sample(HF,0,seq++)));level(j);
+  if(hold)check(p.out.verdict==sp::Frame::admitted && (j.held&HF)==HF && !(j.edge_release&HF) && !(j.edge_press&HF),
+                "pipeline: the held unknown frame keeps the admitted HOLD|FIRE level (no early release, no edge)");
+  else check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"pipeline: without the hold the unknown frame strips HOLD|FIRE (the 0c9269ce early release)");
+  for(unsigned k=0;k<3;++k){t+=16;j=step(Sample(HF,0,seq++));level(j);}
+  t+=16;j=step(Sample(H,0,seq++,0,F));level(j);
+  if(hold)check(rises==1 && falls==1 && (j.edge_release&F),"pipeline: one FIRE level run, released once by the remote (one throw)");
+  else check(rises==2 && falls==2,"pipeline: without the hold FIRE drops and comes back (two releases)");
+ }
+ // A longer unknown (beyond kIdentityHoldMs) or a real slot change still applies.
+ {Pipe p(400);pi::IdentityHold idh{};std::uint64_t t=1000;std::uint32_t seq=1;
+  const auto step=[&](pi::Sample s){(void)pi::HoldIdentity(idh,s.packet,354,t);return p.Step(s,t);};
+  step(Sample(H,0,seq++));t+=16;step(Sample(HF,0,seq++,F));
+  bool kept=true;pi::Injection j{};
+  for(std::uint64_t d=16;d+16<=sp::kIdentityHoldMs;d+=16){t+=16;j=step(Glitch(Sample(HF,0,seq++)));kept=kept && (j.held&HF)==HF;}
+  check(kept,"pipeline: an unknown run within kIdentityHoldMs keeps the level");
+  t+=64;j=step(Glitch(Sample(HF,0,seq++)));
+  check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"pipeline: beyond kIdentityHoldMs the unknown applies (strip)");}
+ {Pipe p(400);pi::IdentityHold idh{};std::uint64_t t=1000;std::uint32_t seq=1;
+  const auto step=[&](pi::Sample s){(void)pi::HoldIdentity(idh,s.packet,354,t);return p.Step(s,t);};
+  step(Sample(H,0,seq++));t+=16;step(Sample(HF,0,seq++,F));
+  t+=16;auto s=Sample(H,0,seq++);s.packet.inv_slot=0;s.packet.gun_equip=46;const auto j=step(s);
+  check(p.out.verdict!=sp::Frame::admitted && p.out.verdict!=sp::Frame::frozen && j.slot_valid && j.inv_slot==0 && j.equip==46 && !(j.held&HF),
+        "pipeline: a real slot change applies at once (support refused)");}
+}
+}
+// --- WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the C4 and arm lanes ---------------------------
+namespace ws4 {
+// A composed support frame for `equip` in `slot` with HOLD/FIRE `held`.
+pi::Sample LaneSample(std::uint16_t equip,std::uint8_t slot,std::uint32_t held,std::uint32_t age_ms,std::uint32_t seq,std::uint32_t press=0) noexcept {
+ pi::Sample s=ws2::Sample(held,age_ms,seq,press);s.packet.gun_equip=equip;s.packet.inv_slot=slot;return s;
+}
+sp::GateIn LaneGate(const pi::Injection& j,std::uint8_t type,bool placed,bool arm,bool ready=true) noexcept {
+ sp::GateIn x{true,false,true,true,true,true,j.slot_valid,j.equip_valid,ready,ready,j.inv_slot,static_cast<std::uint8_t>(ready ? type : 0),j.equip};
+ x.live=j.live;x.stale=j.stale;x.gun_valid=j.gun_valid;x.placed=placed;x.arm=arm;
+ return x;
+}
+template<class Check> void Fixtures(Check& check) {
+ using sp::Kind;
+ constexpr std::uint32_t H=sp::kPadHold,F=sp::kPadFire,HF=sp::kLevelBits;
+ // --- Lanes: thrown is type 12 alone; C4 is type 13 AND 391..395 AND the placed key; an arm is type 14 AND
+ // 516 (WS4-1: the only arm whose hold pose was censused outside 52..56) AND the arm key. Mines/decoys (other
+ // type 13) and the other arms of ctl vt+0x1F0's range 515..521 never.
+ check(sp::C4Equip(391) && sp::C4Equip(395) && !sp::C4Equip(390) && !sp::C4Equip(396),"C4 equips are 391..395");
+ check(sp::ArmEquip(515) && sp::ArmEquip(516) && sp::ArmEquip(521) && !sp::ArmEquip(514) && !sp::ArmEquip(522),"arm equips are 515..521");
+ check(sp::ArmLaneEquip(516) && !sp::ArmLaneEquip(515) && !sp::ArmLaneEquip(517) && !sp::ArmLaneEquip(518) && !sp::ArmLaneEquip(519) &&
+       !sp::ArmLaneEquip(521),"the arm lane is 516 only");
+ const std::uint16_t equips[]={0,12,354,390,391,393,395,396,411,514,515,516,517,518,519,520,521,522,0x7FF};
+ for(unsigned type=0;type<32;++type)for(const auto equip:equips)for(unsigned keys=0;keys<4;++keys){
+  const bool placed=(keys&1)!=0,arm=(keys&2)!=0;
+  const Kind want=type==12 ? Kind::thrown : type==13 && placed && equip>=391 && equip<=395 ? Kind::placed
+   : type==14 && arm && equip==516 ? Kind::arm : Kind::none;
+  check(sp::KindOf(static_cast<std::uint8_t>(type),equip,placed,arm)==want,"lane table (type x equip x keys)");
+ }
+ // WS4-1: the stun arm 515 (class 4) and the rocket arms 517/518 (class 5) hold in mode 54, a use mode; 519..521
+ // were never censused. With the arm key they are no lane (Gate::unsupported, strip 0x58: body 1 never gets HOLD).
+ for(const std::uint16_t equip: {std::uint16_t(515),std::uint16_t(517),std::uint16_t(518),std::uint16_t(519),std::uint16_t(520),std::uint16_t(521)}) {
+  check(sp::KindOf(14,equip,true,true)==Kind::none && sp::KindOf(14,equip,false,true)==Kind::none,"uncensused arms are no lane");
+  sp::GateIn x{true,false,true,true,true,true,true,true,true,true,6,14,equip};x.arm=true;
+  check(!sp::Admit(x) && !sp::WaitingOnEquip(x),"uncensused arm in slot 6 with the key: refused, never waited for");
+  check(sp::Strip(0,true,true,sp::Admit(x),sp::GateKind(x)==Kind::arm)==0x8078u,"uncensused arm: the unsupported strip (HOLD too)");
+ }
+ check(sp::KindSlot(Kind::thrown)==3 && sp::KindSlot(Kind::placed)==3 && sp::KindSlot(Kind::arm)==6 && sp::KindSlot(Kind::none)==0xFF,
+       "lane slots: thrown and C4 in slot 3, arms in slot 6");
+ check(!std::strcmp(sp::KindName(Kind::placed),"placed") && !std::strcmp(sp::KindName(Kind::arm),"arm") &&
+       !std::strcmp(sp::KindName(Kind::thrown),"thrown") && !std::strcmp(sp::KindName(Kind::none),"none"),"lane names");
+ // --- Admit: the lane's own slot only, with every other gate as before.
+ sp::GateIn good{true,false,true,true,true,true,true,true,true,true,3,12,354};
+ for(unsigned slot=0;slot<16;++slot)for(unsigned type=0;type<32;++type)for(const auto equip:equips)for(unsigned keys=0;keys<4;++keys){
+  auto x=good;x.slot=static_cast<std::uint8_t>(slot);x.type=static_cast<std::uint8_t>(type);x.equip=equip;x.placed=(keys&1)!=0;x.arm=(keys&2)!=0;
+  const Kind k=sp::KindOf(x.type,equip,x.placed,x.arm);
+  check(sp::Admit(x)==(k!=Kind::none && slot==sp::KindSlot(k) && equip>0 && equip<0x800),"admit matrix (slot x type x equip x keys)");
+ }
+ {auto x=good;x.type=13;x.equip=395;x.placed=true;check(sp::Admit(x) && sp::GateKind(x)==Kind::placed,"C4 395 admitted in slot 3 with the key");
+  x.placed=false;check(!sp::Admit(x),"C4 without the placed key: refused (Round 1 strip)");
+  x.placed=true;x.slot=6;check(!sp::Admit(x),"C4 in slot 6: refused");
+  x.slot=3;x.equip=411;check(!sp::Admit(x),"another type-13 item (mine/decoy) with the placed key: refused");
+  x.equip=395;x.latched=true;check(!sp::Admit(x),"C4 after the mission latch (e.g. placed_shared_write): refused");}
+ {auto x=good;x.type=14;x.equip=516;x.slot=6;x.arm=true;check(sp::Admit(x) && sp::GateKind(x)==Kind::arm,"arm 516 admitted in slot 6 with the key");
+  x.arm=false;check(!sp::Admit(x),"arm without the key (or after the arm latch): refused");
+  x.arm=true;x.slot=3;check(!sp::Admit(x),"arm in slot 3: refused");
+  x.slot=6;x.record_ready=false;check(!sp::Admit(x),"arm before body 1's record holds it: refused");}
+ // --- Strip: an admitted arm keeps HOLD only; an admitted C4 keeps HOLD and FIRE (place = aim + fire).
+ check(sp::Strip(0,true,true,true,true)==0x8070u,"arm admitted: FIRE, RELOAD, ACTION and CQC stripped, HOLD kept");
+ check(sp::Strip(0,true,true,true,false)==0x8060u,"C4/thrown admitted: RELOAD, ACTION and CQC stripped (HOLD/FIRE kept)");
+ check(sp::Strip(0,true,true,false,true)==0x8078u && sp::Strip(0,true,true,false,false)==0x8078u,"refused lane: the old strip, arm flag irrelevant");
+ check((sp::Strip(0x50,true,true,true,true)&0x58u)==0x50u,"the driver's arm FIRE strip survives the admitted window");
+ // ACTION (0x20) is never passed: a C4 detonate (aim + E, 44 -> 47) cannot reach body 1 in v1.
+ for(unsigned a=0;a<2;++a)for(unsigned arm=0;arm<2;++arm)check((sp::Strip(0,true,true,a!=0,arm!=0)&0x20u)!=0,"ACTION is stripped in every support window");
+ // --- WaitingOnEquip: a C4 with the key waits for body 1's equip (select-then-place), an arm never (no FIRE).
+ {auto x=good;x.type=0;x.equip=395;x.body_ready=x.record_ready=false;x.placed=true;check(sp::WaitingOnEquip(x),"undecoded C4 waits");
+  x.type=13;check(sp::WaitingOnEquip(x),"decoded C4 not ready waits");x.body_ready=x.record_ready=true;check(!sp::WaitingOnEquip(x),"ready C4 does not wait");
+  x.body_ready=x.record_ready=false;x.placed=false;check(!sp::WaitingOnEquip(x),"C4 without the key never waits");
+  x=good;x.type=14;x.equip=516;x.slot=6;x.arm=true;x.body_ready=x.record_ready=false;check(!sp::WaitingOnEquip(x),"an arm never waits (slot 6)");
+  x.type=0;check(!sp::WaitingOnEquip(x),"an undecoded slot-6 frame never waits");}
+ // --- BodyBusy: the place family and the arm use modes (no re-equip, no follow).
+ for(unsigned mode=43;mode<=47;++mode)check(sp::BodyBusy(static_cast<std::uint8_t>(mode),false) && sp::PlaceMode(static_cast<std::uint8_t>(mode)),"place family busy");
+ for(unsigned mode=52;mode<=56;++mode)check(sp::BodyBusy(static_cast<std::uint8_t>(mode),false) && sp::ArmUseMode(static_cast<std::uint8_t>(mode)),"arm use busy");
+ for(unsigned mode: {0u,1u,2u,3u,7u,48u,51u,57u})check(!sp::BodyBusy(static_cast<std::uint8_t>(mode),false),"aim/idle modes (the arm pose 1/2/3) not busy");
+ check(!sp::PlaceMode(42) && !sp::PlaceMode(48) && !sp::ArmUseMode(51) && !sp::ArmUseMode(57),"family bounds");
+ // --- B in the arm lane: the record holds the arm in hand slot 6 (the activation stores rec+0x3D9 = 6).
+ {sp::RecordIn r{};r.chain=true;r.switching=false;r.rec_equip=r.equip=516;r.slot_hand=6;r.cls=6;r.slot=6;
+  r.rec_handle=r.slot_handle=fake::Handle(7,516,14);
+  check(sp::RecordIdentity(r) && sp::RecordReady(r),"arm: rec+0x240 == the slot-6 handle in hand slot 6");
+  auto x=r;x.slot=3;check(!sp::RecordIdentity(x),"arm record judged as slot 3: no identity");
+  x=r;x.slot_hand=3;check(!sp::RecordIdentity(x),"slot 6 lane with hand slot 3: no identity");
+  x=r;x.rec_handle=fake::Handle(8,516,14);check(sp::RecordStale(x) && !sp::RecordReady(x),"arm: another row index is stale");
+  sp::RecordIn d{};check(d.slot==3,"the default lane is slot 3 (thrown and C4)");}
+ {fake::Reset(fake::Handle(7,516,14));fake::Put<std::uint16_t>(fake::kRec+sp::rec240::kRecEquip,516);fake::Put<std::uint8_t>(fake::kRec+sp::rec240::kRecSlotHand,6);
+  fake::Put<std::uint32_t>(fake::kRec+sp::rec240::kRecClassWord,(6u<<6)|14u);
+  const auto r6=sp::ReadRecord(fake::Read,fake::kBase,fake::At(fake::kPrim),fake::At(fake::kRec),fake::kBlk,516,6);
+  check(r6.chain && r6.slot==6 && sp::RecordIdentity(r6) && r6.cls==6,"ReadRecord with lane 6 on a fake arm record");
+  const auto r3=sp::ReadRecord(fake::Read,fake::kBase,fake::At(fake::kPrim),fake::At(fake::kRec),fake::kBlk,516);
+  check(r3.chain && !sp::RecordIdentity(r3),"the same record read for lane 3: no identity");
+  check(sp::CheckRow(fake::Read,fake::kBase,fake::At(fake::kPrim),r6).verdict==sp::Rec240::skip,"C skips an arm (class 6 is not 2/3)");
+  fake::Reset(fake::Handle(5,395,13));fake::Put<std::uint16_t>(fake::kRec+sp::rec240::kRecEquip,395);
+  fake::Put<std::uint32_t>(fake::kRec+sp::rec240::kRecClassWord,(3u<<6)|13u);
+  fake::Put<std::uint16_t>(fake::kRows+5*sp::rec240::kRowStride+sp::rec240::kRowEquip,395);
+  const auto c4=sp::ReadRecord(fake::Read,fake::kBase,fake::At(fake::kPrim),fake::At(fake::kRec),fake::kBlk,395);
+  check(c4.cls==3 && sp::CheckRow(fake::Read,fake::kBase,fake::At(fake::kPrim),c4).verdict==sp::Rec240::ok,"C judges a C4 record (class 3): own row ok");
+  fake::Put<std::uint16_t>(fake::kRows+5*sp::rec240::kRowStride+sp::rec240::kRowOwner,0);
+  check(sp::CheckRow(fake::Read,fake::kBase,fake::At(fake::kPrim),c4).verdict==sp::Rec240::owner,"C: a C4 handle on the viewer's row is foreign");
+  fake::Reset();}
+ // --- The frame step on the C4 lane: aim, then fire, admitted with FIRE; a stall inside stall_ms freezes it.
+ {pi::Config c{};c.mode=PartnerInput::net;c.mask=0xFFFFFFFFu;c.words[0]=pi::Word::held;c.words[1]=pi::Word::press;c.words[2]=pi::Word::release;
+  c.stale_ms=250;c.stall_ms=400;pi::EdgeState edge{};sp::FrameTrack t{};std::uint64_t now=1000;std::uint32_t seq=1;
+  const auto step=[&](const pi::Sample& s,bool placed,sp::FrameOut& o){
+   pi::Injection j=pi::Compose(c,s,0,pi::Overlay{},edge);
+   const bool request=sp::Request(true,j.slot_valid,j.inv_slot,0x40u);
+   o=sp::StepFrame(t,request,LaneGate(j,13,placed,false),0x40u,j.held,j.edge_press,now);
+   if(o.verdict==sp::Frame::frozen){j=pi::Freeze(j,sp::kLevelBits,o.level,c);j.support_frozen=true;}
+   sp::GateIn y=LaneGate(j,13,placed,false);if(j.support_frozen)y=sp::Fresh(y);
+   // NativeView's own strip (ViewStrip); the lambda is SupportAdmittedKind's verdict on this gate.
+   return pi::Strip(j,sp::ViewStrip(0x40u,true,j.slot_valid,j.inv_slot,[&]{return sp::Admit(y) ? sp::GateKind(y) : Kind::none;}));
+  };
+  sp::FrameOut o{};
+  auto j=step(LaneSample(395,3,H,0,seq++),true,o);check(o.verdict==sp::Frame::admitted && (j.held&HF)==H,"C4: aim (place-hold 43) admitted");
+  now+=16;j=step(LaneSample(395,3,HF,0,seq++,F),true,o);check(o.verdict==sp::Frame::admitted && (j.held&HF)==HF && (j.edge_press&F),"C4: fire (place 46) admitted");
+  now+=16;j=step(LaneSample(395,3,HF,320,seq),true,o);check(o.verdict==sp::Frame::frozen && (j.held&HF)==HF && !(j.edge_press&HF),"C4: a stall inside stall_ms holds the level");
+  now+=16;j=step(LaneSample(395,3,HF,0,seq++),false,o);check(o.verdict==sp::Frame::refused && !(j.held&HF),"C4 with the key off: refused, HOLD/FIRE stripped");}
+ // --- The frame step on the arm lane: HOLD reaches body 1, FIRE never; a stale frame is never frozen (slot 6).
+ {pi::Config c{};c.mode=PartnerInput::net;c.mask=0xFFFFFFFFu;c.words[0]=pi::Word::held;c.words[1]=pi::Word::press;c.words[2]=pi::Word::release;
+  c.stale_ms=250;c.stall_ms=400;pi::EdgeState edge{};sp::FrameTrack t{};std::uint64_t now=1000;std::uint32_t seq=1;
+  const std::uint32_t driver=0x50u; // the driver's own arm strip (Gate::support + FIRE)
+  const auto step=[&](const pi::Sample& s,bool arm,sp::FrameOut& o){
+   pi::Injection j=pi::Compose(c,s,0,pi::Overlay{},edge);
+   const bool request=sp::Request(true,j.slot_valid,j.inv_slot,driver);
+   const sp::GateIn y=LaneGate(j,14,false,arm);
+   o=sp::StepFrame(t,request,y,driver,j.held,j.edge_press,now);
+   return pi::Strip(j,sp::ViewStrip(driver,true,j.slot_valid,j.inv_slot,[&]{return sp::Admit(y) ? sp::GateKind(y) : Kind::none;}));
+  };
+  sp::FrameOut o{};
+  auto j=step(LaneSample(516,6,H,0,seq++),true,o);check((j.held&HF)==H,"arm: HOLD (the aim pose, modes 1/2/3) reaches body 1");
+  now+=16;j=step(LaneSample(516,6,HF,0,seq++,F),true,o);check((j.held&HF)==H && !(j.edge_press&F) && !o.buffered,"arm: FIRE never reaches body 1 (no use mode), never buffered");
+  now+=16;j=step(LaneSample(516,6,H,320,seq),true,o);check(o.verdict!=sp::Frame::frozen && !(j.held&H),"arm: a stale frame is not frozen (old strip)");
+  now+=16;j=step(LaneSample(516,6,H,0,seq++),false,o);check(!(j.held&HF),"arm with the key off or latched: HOLD stripped (Round 1)");
+  check(sp::Request(true,true,6,0x50u) && !sp::Request(false,true,6,0x50u),"slot 6 is a support request only with the support key");}
+ // --- ViewStrip, NativeView's per-frame strip (WS4-3). One tick after a C4 -> arm switch the driver's last tick
+ // still judged the C4 lane (mask 0x40, FIRE kept) while the frame and body 1 are already in slot 6 with the arm
+ // admitted: the window's strip alone must take FIRE (and keep HOLD).
+ {unsigned calls=0;
+  const auto lane=[&](Kind k){return [&calls,k]{++calls;return k;};};
+  check((sp::ViewStrip(0x40u,true,true,6,lane(Kind::arm))&0x58u)==0x50u && calls==1,"C4 tick, arm frame admitted: FIRE stripped, HOLD kept");
+  check((sp::ViewStrip(0x40u,true,true,3,lane(Kind::placed))&0x58u)==0x40u,"C4 tick, C4 frame admitted: HOLD and FIRE kept");
+  check((sp::ViewStrip(0x40u,true,true,3,lane(Kind::thrown))&0x58u)==0x40u,"thrown admitted: HOLD and FIRE kept");
+  check((sp::ViewStrip(0x40u,true,true,6,lane(Kind::none))&0x58u)==0x58u,"refused lane: HOLD, FIRE and RELOAD stripped");
+  check((sp::ViewStrip(0x50u,true,true,6,lane(Kind::arm))&0x58u)==0x50u,"arm tick, arm frame: HOLD only");
+  check((sp::ViewStrip(0x58u,true,true,6,lane(Kind::arm))&0x58u)==0x58u,"the driver's unsupported strip survives an admitted arm");
+  for(const Kind k: {Kind::none,Kind::thrown,Kind::placed,Kind::arm}){
+   std::uint32_t s=sp::ViewStrip(0x40u,true,true,6,lane(k));
+   check((s&0x8020u)==0x8020u && (s&0x40u),"ACTION, CQC and RELOAD stripped in every support window");
+   s=sp::ViewStrip(0x40u,true,true,6,lane(k));
+   check(s==sp::Strip(0x40u,true,true,k!=Kind::none,k==Kind::arm),"ViewStrip is Strip of the admitted lane");
+  }
+  calls=0;
+  check(sp::ViewStrip(0x10u,false,true,6,lane(Kind::arm))==0x10u && calls==0,"key off: Round 1's mask, the gate never runs");
+  check(sp::ViewStrip(0u,true,true,1,lane(Kind::arm))==0x8020u && calls==0,"no request (gun slot, no 0x40): the gate never runs");
+  check(sp::ViewStrip(0u,true,false,6,lane(Kind::arm))==0x8020u && calls==0,"no request (slot unknown): the gate never runs");}
+ // --- The writer's lane refusals (pure preconditions).
+ {se::Preconditions p{};p.enabled=p.owner=p.gates=p.body_ready=p.safety_ready=true;p.player_flags=1;p.local=0;p.local_id=0;p.inventory_local=0;
+  p.body_id=1;p.pool=1;p.restriction=0;p.sub=0;
+  const auto is=[&](const se::Preconditions& q,const char* want){const char* why=se::Refusal(q);return want ? why && !std::strcmp(why,want) : !why;};
+  auto q=p;q.equip=395;q.type=13;check(is(q,"type"),"writer: C4 without the placed key refuses type");
+  q.placed=true;check(is(q,nullptr),"writer: C4 395 with the key in slot 3");
+  q.slot=6;check(is(q,"slot_type"),"writer: C4 named in slot 6 refuses slot_type");
+  q=p;q.equip=411;q.type=13;q.placed=true;check(is(q,"type"),"writer: a non-C4 type-13 item refuses type");
+  q=p;q.equip=516;q.type=14;q.slot=6;check(is(q,"type"),"writer: arm without the arm key refuses type");
+  q.arm=true;check(is(q,nullptr),"writer: arm 516 with the key in slot 6");
+  q.slot=3;check(is(q,"slot_type"),"writer: arm named in slot 3 refuses slot_type");
+  for(const std::uint16_t arm: {std::uint16_t(515),std::uint16_t(517),std::uint16_t(518),std::uint16_t(519),std::uint16_t(521)}){
+   q=p;q.equip=arm;q.type=14;q.slot=6;q.arm=true;check(is(q,"type"),"writer: an uncensused arm with the key refuses type (WS4-1)");}
+  q=p;q.equip=354;q.type=12;q.slot=6;q.arm=true;check(is(q,"slot_type"),"writer: a grenade named in slot 6 refuses slot_type");
+  q=p;q.equip=516;q.type=14;q.slot=6;q.arm=true;q.local_id=1;check(is(q,"p218"),"writer: arm keeps every non-local precondition");
+  check(se::LaneSlot(3,false) && se::LaneSlot(3,true) && !se::LaneSlot(6,false) && se::LaneSlot(6,true) && !se::LaneSlot(4,true) && !se::LaneSlot(2,true),
+        "writer lanes: slot 3 always, slot 6 only with the arm key");}
+ // --- The writer's Match per lane (pure): kind = the type, the lane's row words, the manager row.
+ {se::MatchIn m{};m.slot=3;m.type=13;m.equip=395;m.handle=fake::Handle(9,395,13);m.pool_capacity=64;m.row_slot=3;m.sub=2;m.current=395;
+  m.supports[0]=354;m.supports[1]=349;m.supports[2]=395;m.meta_ok=true;m.meta_equip=395;m.meta_owner=1;m.meta_flags=0x80;
+  check(!se::MatchRefusal(m,true) && se::AlreadyCurrent(m),"match: C4 in slot 3 sub 2, active");
+  auto x=m;x.handle=fake::Handle(9,395,12);check(!std::strcmp(se::MatchRefusal(x,false),"handle_equip"),"match: a kind-12 handle for a type-13 equip");
+  x=m;x.row_slot=0;check(!se::MatchRefusal(x,false) && !std::strcmp(se::MatchRefusal(x,true),"row_equip") && !se::AlreadyCurrent(x),"match: allocated, not active");
+  x=m;x.supports[2]=0;check(!std::strcmp(se::MatchRefusal(x,false),"support_list"),"match: C4 not in body 1's support list");
+  x=m;x.meta_owner=0;check(!std::strcmp(se::MatchRefusal(x,false),"handle_owner"),"match: a viewer-owned row");
+  x=m;x.handle=fake::Handle(64,395,13);check(!std::strcmp(se::MatchRefusal(x,false),"handle_equip"),"match: index == capacity");
+  x=m;x.handle=0;check(!std::strcmp(se::MatchRefusal(x,false),"handle_empty"),"match: empty");
+  se::MatchIn a{};a.slot=6;a.type=14;a.equip=516;a.handle=fake::Handle(11,516,14);a.pool_capacity=64;a.row_slot=6;a.sub=0;a.current=516;a.arm=516;
+  a.meta_ok=true;a.meta_equip=516;a.meta_owner=1;
+  check(!se::MatchRefusal(a,true) && se::AlreadyCurrent(a),"match: arm 516 in slot 6 (row+8), active");
+  auto y=a;y.arm=515;check(!std::strcmp(se::MatchRefusal(y,false),"row_equip"),"match: another arm in row+8");
+  y=a;y.row_slot=1;y.current=46;check(!se::MatchRefusal(y,false) && !std::strcmp(se::MatchRefusal(y,true),"row_equip") && !se::AlreadyCurrent(y),
+                                    "match: arm allocated while body 1 holds its gun (the follower activates it)");
+  y=a;y.handle=fake::Handle(11,516,13);check(!std::strcmp(se::MatchRefusal(y,false),"handle_equip"),"match: a kind-13 handle in the arm lane");
+  y=a;y.meta_flags=1;check(!std::strcmp(se::MatchRefusal(y,false),"handle_owner"),"match: a row with p6 bits");
+  y=a;y.slot=4;check(!std::strcmp(se::MatchRefusal(y,false),"row_equip"),"match: no lane 4");}
+}
+}
 int main(){
  unsigned checks=0,fail=0;
  const auto check=[&](bool v,const char* label){++checks;if(!v){++fail;std::printf("FAIL %s\n",label);}};
@@ -37,7 +823,8 @@ int main(){
  // Key off and no request: Strip returns the driver's Round 1 mask unchanged (incl. unsupported=0's empty mask).
  for(std::uint32_t mask: {0u,0x10u,0x50u,0x58u})check(sp::Strip(mask,false,false,false)==mask,"key off strip is the Round 1 mask");
  for(unsigned mode=0;mode<256;++mode)for(unsigned sw=0;sw<2;++sw){
-  const bool busy=sw || mode==0xFF || mode==8 || mode==11 || mode==12 || (mode>=28 && mode<=42);
+  // WS4 v1: the place family 43..47 and the arm use modes 52..56 are busy too.
+  const bool busy=sw || mode==0xFF || mode==8 || mode==11 || mode==12 || (mode>=28 && mode<=42) || (mode>=43 && mode<=47) || (mode>=52 && mode<=56);
   check(sp::BodyBusy(static_cast<std::uint8_t>(mode),sw!=0)==busy,"body busy matrix");}
  for(unsigned owner: {0u,1u,2u,0x201u,0xFFFFu})for(unsigned preview=0;preview<2;++preview){
   (void)preview;check(sf::detail::Drops(1,static_cast<std::uint16_t>(owner))==(owner==1),"full owner incl preview, zero and soldiers");}
@@ -59,6 +846,14 @@ int main(){
  check(slots::StripBits(slots::Gate::support)==0x40,"support permits HOLD/FIRE only");
  check(slots::StripBits(slots::Gate::unsupported)==0x58,"placed/arms unsupported mask");
  slots::AimGateIn aim{};aim.enabled=aim.judged=aim.slot_valid=true;aim.gate=slots::Gate::support;aim.slot=3;
- check(slots::AimGate(aim)==slots::AimRefusal::none,"support toggle aim");aim.slot=6;check(slots::AimGate(aim)==slots::AimRefusal::slot,"arms no aim");
+ check(slots::AimGate(aim)==slots::AimRefusal::none,"support toggle aim");
+ // WS4 v1: support at slot 6 is the admitted arm lane (the driver judges Gate::support there only for an arm).
+ aim.slot=6;check(slots::AimGate(aim)==slots::AimRefusal::none,"an admitted arm aims (toggle aim intent)");
+ for(unsigned slot: {4u,5u,7u,15u}){aim.slot=static_cast<std::uint8_t>(slot);check(slots::AimGate(aim)==slots::AimRefusal::slot,"support outside its lanes no aim");}
+ aim.gate=slots::Gate::unsupported;aim.slot=6;check(slots::AimGate(aim)==slots::AimRefusal::gate,"an unadmitted arm (unsupported) no aim");
+ Rec240Fixtures(check);
+ ws2::Fixtures(check);
+ ws2::IdentityFixtures(check);
+ ws4::Fixtures(check);
  std::printf("%u support policy checks, %u failures\n",checks,fail);return fail?1:0;
 }

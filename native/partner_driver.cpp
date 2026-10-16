@@ -36,6 +36,7 @@ void EmitFormat(const Hooks& h, const char* format, ...) noexcept {
     va_end(arguments);
     if (SUCCEEDED(result)) Emit(h, line);
 }
+void EmitNativeN(const Hooks& h, LogCap& cap, unsigned limit, const char* head, const char* format, ...) noexcept;
 // One line of a capped family: the first kTransitionLogCap lines are logged,
 // then "<head>=capped; limit=64" (with "; kind=<kind>" when given) once.
 void EmitCappedV(LogCap& cap, const Hooks& h, const char* head, const char* kind, const char* format, va_list arguments) noexcept {
@@ -454,6 +455,41 @@ pin::V5Source SenderV5(const Driver& d, const Hooks& h, const pp::State& st, con
     return v;
 }
 
+// The local player's gun record and slot row (the v4/v5 sender's sources and
+// the viewer's spend fields), read once per tick, and the sender's reload/switch
+// counters (partner_reload::SenderStep). A failed gun read inside the sender
+// hold (partner_input::HoldSender republishes the last good gun group) leaves
+// the counters as they are, so a slot change across the failed read is still
+// counted at the next good one; beyond the hold the counters restart as before.
+void ReadLocalGun(Mission& m, const Hooks& h, const pp::State& st, std::uint64_t now) noexcept {
+    m.gun0 = pp::Gun1{};
+    m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
+    m.slots0 = pp::Slots{};
+    m.slots0_ok = h.read_slots && h.read_slots(h.context, st, 0, m.slots0);
+    const bool gun_read = m.gun0_ok && m.gun0.fields_ok;
+    const std::uint8_t slot = m.slots0_ok ? m.slots0.nibble
+        : pin::SenderHoldLive(m.sender_hold.slot, m.sender_hold.slot_ms, now) ? m.sender_hold.inv_slot : static_cast<std::uint8_t>(0xFF);
+    if (gun_read || !pin::SenderHoldLive(m.sender_hold.gun, m.sender_hold.gun_ms, now))
+        partner_reload::SenderStep(m.sender_gun, gun_read, m.gun0.mode_cur, slot);
+}
+
+// The sender hold's lines (own cap): the start of a held run with the failed
+// read's refusal (which ReadGun / ReadSlots check failed), and its end.
+void LogSenderHold(Mission& m, const Hooks& h, const pin::SenderHoldOut& o) noexcept {
+    const auto line = [&](const char* field, pin::HoldEvent e, std::uint32_t ms, std::uint32_t frames, const char* refusal) noexcept {
+        if (e == pin::HoldEvent::start)
+            EmitNativeN(h, m.sender_hold_cap, kAnimWeaponCap, "partner_input_sender_hold",
+                        "partner_input=sender_hold; field=%s; reason=start; refusal=%s; good_age_ms=%u\r\n", field,
+                        refusal ? refusal : "unavailable", ms);
+        else if (e == pin::HoldEvent::resumed || e == pin::HoldEvent::expired)
+            EmitNativeN(h, m.sender_hold_cap, kAnimWeaponCap, "partner_input_sender_hold",
+                        "partner_input=sender_hold; field=%s; reason=%s; frames=%u; held_ms=%u\r\n", field, pin::HoldEventName(e),
+                        frames, ms);
+    };
+    line("gun", o.gun, o.gun_ms, o.gun_held, m.gun0_ok ? (m.gun0.fields_ok ? "ok" : "fields") : m.gun0.refusal);
+    line("slot", o.slot, o.slot_ms, o.slot_held, m.slots0_ok ? "nibble" : m.slots0.refusal);
+}
+
 pam::GunDirIn GunDirectionInput(const pp::AimRead& r, unsigned k) noexcept {
     pam::GunDirIn i{};
     i.gun_ok = r.gun_ok[k]; i.rate_ok = r.rate_ok[k]; i.body_ok = r.body_ok[k];
@@ -576,6 +612,12 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.gun_prim = set.native_active && set.ngun ? m.gun1_prim : 0;
     a.gun_rec = set.native_active && set.ngun ? m.gun1_rec : 0;
     a.native_support = set.native_active && set.ngun && set.nsupport;
+    a.native_placed = a.native_support && set.nplaced;
+    a.native_arm = a.native_support && set.narm;
+    // C(b): the viewer's own gun record (read-only attribution of its own throws).
+    const bool viewer_gun = a.native_support && m.gun0_ok && m.gun0.prim && m.gun0.rec;
+    a.viewer_gun_prim = viewer_gun ? m.gun0.prim : 0;
+    a.viewer_gun_rec = viewer_gun ? m.gun0.rec : 0;
     // The weapon gate (F4/W5): FIRE and RELOAD stripped while the remote's gun
     // is not body 1's or body 1 is mid-switch, FIRE alone for an unqualified type.
     a.strip = set.native_active ? m.weapon_strip : 0u;
@@ -1543,12 +1585,7 @@ void SendLocalInput(Driver& d, const Hooks& h, const pp::State& st, const Settin
             if (refresh_local) {
                 // Same checked local sources as TickNative/TickOnline; never
                 // touch instance1 while its visibility gate is holding it.
-                m.gun0 = pp::Gun1{};
-                m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
-                m.slots0 = pp::Slots{};
-                m.slots0_ok = h.read_slots && h.read_slots(h.context, st, 0, m.slots0);
-                partner_reload::SenderStep(m.sender_gun, m.gun0_ok && m.gun0.fields_ok, m.gun0.mode_cur,
-                                          m.slots0_ok ? m.slots0.nibble : static_cast<std::uint8_t>(0xFF));
+                ReadLocalGun(m, h, st, now);
                 if (d.settings.nrates == PartnerNativeRates::off || !h.read_rates) {
                     m.rates_id0_ok = false; m.rates_id0 = pp::RateRead{};
                 } else if (!m.rates_read_ms || now-m.rates_read_ms >= kRatesReadMs) {
@@ -1571,7 +1608,12 @@ void SendLocalInput(Driver& d, const Hooks& h, const pp::State& st, const Settin
             // out only once the peer sent v5 (plus a probe every kInputV5ProbeMs
             // so a v5 peer can learn ours).
             {
-                const pin::V5Source v5 = SenderV5(d, h, st, snap, raw.kb_flags);
+                pin::V5Source v5 = SenderV5(d, h, st, snap, raw.kb_flags);
+                // A failed local gun/slot read republishes the last good one for
+                // kSenderHoldMs (run 0c9269ce: one frame without the gun group and
+                // equip read as remote_slot=255 on the peer and aborted a held throw).
+                LogSenderHold(m, h, pin::HoldSender(m.sender_hold, v5, m.gun0_ok && m.gun0.fields_ok,
+                                                    m.slots0_ok && m.slots0.nibble <= pin::kInvSlotMax, now));
                 const bool peer_v5 = !h.peer_input_v5 || h.peer_input_v5(h.context);
                 if (peer_v5 && h.peer_input_v5 && !m.v5_peer_logged) {
                     m.v5_peer_logged = true;
@@ -2356,6 +2398,10 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
             m.gun1_rec = gun.rec;
         } else if (set.nsupport && (pnat::GunClass(gun.fields.flags27c)==2 || pnat::GunClass(gun.fields.flags27c)==3)) {
             m.gun1_prim=gun.prim; m.gun1_rec=gun.rec;
+        } else if (set.nsupport && set.narm && partner_support_policy::ArmEquip(static_cast<std::uint16_t>(gun.fields.equip))) {
+            // WS4 v1: an arm in hand (classes 4/5/6, or 0 for 519..521; the
+            // activation 0x105FDB0's kind-14 switch) is the same record.
+            m.gun1_prim=gun.prim; m.gun1_rec=gun.rec;
         }
     }
     const char* why = nullptr;
@@ -2458,11 +2504,27 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     // The observer callback revalidates the armed guard, thrown entry filter,
     // non-local equipment row/handle and the mission stock latch. Never reuse
     // the previous support verdict across an unread gun tick.
-    const bool support_ready = set.ngun && set.nsupport && ready && m.remote_v5 && m.remote_slot==3 &&
-        m.remote_equip_type==12 && m.remote_gun_equip>0 && m.remote_gun_equip<0x800 &&
+    // The lane (WS4 v1): thrown type 12 and, with their keys, C4 (type 13,
+    // 391..395) in slot 3 and an arm (type 14, only 516: ArmLaneEquip) in slot 6.
+    // A live v5 slot of the lane, or the stall hold of the same slot-3 support
+    // equip (critic #4).
+    namespace psp = partner_support_policy;
+    const psp::Kind support_kind = m.remote_equip_type == pnat::kNull || m.remote_gun_equip <= 0 || m.remote_gun_equip >= 0x800
+        ? psp::Kind::none
+        : psp::KindOf(static_cast<std::uint8_t>(m.remote_equip_type), static_cast<std::uint16_t>(m.remote_gun_equip),
+                      set.nplaced, set.narm);
+    const std::uint8_t support_lane = psp::KindSlot(support_kind);
+    const bool support_slot = (m.remote_v5 && m.remote_slot==support_lane) ||
+        (support_lane==3 && m.support_stall && m.remote_gun_equip==static_cast<std::int32_t>(m.support_equip));
+    const bool support_ready = set.ngun && set.nsupport && ready && support_kind!=psp::Kind::none && support_slot &&
+        m.remote_gun_equip>0 && m.remote_gun_equip<0x800 &&
         gun_ok && gun.fields_ok && gun.fields.equip==static_cast<std::uint32_t>(m.remote_gun_equip) && !m.body_switching &&
         h.support_ready && h.support_ready(h.context,st,static_cast<std::uint16_t>(m.remote_gun_equip));
     set.support_live=support_ready;
+    m.support_equip = support_ready ? static_cast<std::uint16_t>(m.remote_gun_equip) : static_cast<std::uint16_t>(0);
+    if (!support_ready) m.support_stall = false;
+    // partner_net's unknown slot/equip debounce holds only for this verdict's equip.
+    if (h.publish_support_identity) h.publish_support_identity(h.context, m.support_equip);
     if (support_ready) {
         m.unsupported=partner_slots::Unsupported::no;
         m.weapon_gate=partner_slots::Gate::support;
@@ -2480,6 +2542,10 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     if (!set.ngun) m.weapon_gate = partner_slots::Gate::match;
     m.weapon_mismatch = m.weapon_gate == partner_slots::Gate::mismatch;
     m.weapon_strip = partner_slots::StripBits(m.weapon_gate);
+    // WS4 v1: an admitted arm is HOLD only. FIRE stays stripped, so body 1 shows
+    // the arm's aim pose and never enters a use mode 52..56 (the hook strips it
+    // again, and its watchdog latches arms off if body 1 ever does).
+    if (support_ready && support_kind == psp::Kind::arm) m.weapon_strip |= pnat::kPadFire;
     // Gun profile (online play, docs/native-puppet.md "Online"): until body 1
     // shows a gun class this mission (no gun on it: another mission, a build
     // without the gun pieces, the writer still waiting), HOLD, RELOAD and
@@ -2848,6 +2914,10 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
         EmitFormat(h, "partner_weapon=settings; unsupported=%u; dry_stop=%u; aim_intent=%s; reload_rate=%s; fire_census=%u\r\n",
                    set.nunsupported ? 1u : 0u, set.ndry ? 1u : 0u, PartnerNativeAimIntentName(set.naim_intent),
                    PartnerNativeReloadRateName(set.nreload_rate), set.fire_census ? 1u : 0u);
+        // WS4 v1: the lanes beyond thrown support (only when one is named).
+        if (set.nplaced || set.narm)
+            EmitFormat(h, "partner_support=lanes; support=%u; placed=%u; arm=%u; arm_fire=stripped\r\n", set.nsupport ? 1u : 0u,
+                       set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u);
     }
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
@@ -2995,15 +3065,10 @@ void TickOnline(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t no
     namespace caps = partner_caps_wire;
     // The sender's sources (pure reads; TickNative reads them itself when configured).
     if (!configured && set.isend) {
-        m.gun0 = pp::Gun1{};
-        m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
         // Input frame v5 (R2/W1): the local player's current slot and the
         // reload/switch counters, so the peer's native reload and slot
         // follower work against a copy that shows clips too.
-        m.slots0 = pp::Slots{};
-        m.slots0_ok = h.read_slots && h.read_slots(h.context, st, 0, m.slots0);
-        partner_reload::SenderStep(m.sender_gun, m.gun0_ok && m.gun0.fields_ok, m.gun0.mode_cur,
-                                   m.slots0_ok ? m.slots0.nibble : static_cast<std::uint8_t>(0xFF));
+        ReadLocalGun(m, h, st, now);
         if (set.nrates != PartnerNativeRates::off && h.read_rates && (!m.rates_read_ms || now - m.rates_read_ms >= kRatesReadMs)) {
             m.rates_read_ms = now ? now : 1;
             m.rates_id0_ok = h.read_rates(h.context, st, 0, m.rates_id0);
@@ -3485,7 +3550,10 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // Vehicle demand has its own source-expiry/exit machine. Do not let the
     // foot arbiter destroy its native job, Arm or physical callback lifecycle.
     // Faulted/replaced owners fail VehicleJobCurrent and use normal refusal.
-    if(VehicleJobCurrent(d,h,st,terminating))return;
+    if(VehicleJobCurrent(d,h,st,terminating)){
+        if(h.publish_support_identity)h.publish_support_identity(h.context,0);
+        return;
+    }
     const bool configured = set.drive == PartnerDrive::native;
     const PartnerDefer defer = EffectivePartnerDefer(set.drive, set.defer);
     // Statistics: the deferral (process totals) and the hook's wrap/native parts.
@@ -3705,7 +3773,10 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // Online play: the sender's v4 sources for a copy that shows clips, the
     // capability exchange and the native.net telemetry (every drive mode).
     TickOnline(d, h, st, now, out, in, caps_live, configured);
-    if (!configured) return;
+    if (!configured) {
+        if (h.publish_support_identity) h.publish_support_identity(h.context, 0);
+        return;
+    }
     // D3 (naim=looksrc): the look source hook, lazily once per process with
     // defer=on, never while a batch is in flight (retried next tick).
     if (set.naim == PartnerNativeAim::looksrc && defer == PartnerDefer::on && set.stage >= 3 && realized && parts_loaded && !terminating &&
@@ -3719,14 +3790,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // F4: the remote's gun equip (input frame v4 xflags Equip) against body 1's.
     m.remote_gun_equip = latest_ok && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Equip)
                              ? static_cast<std::int32_t>(latest.packet.gun_equip) : pnat::kNull;
-    // The local gun record (v4 magazine sender and telemetry), once per tick.
-    m.gun0 = pp::Gun1{};
-    m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
-    // Input frame v5 (R2/W1): the local player's current slot and the reload/switch counters.
-    m.slots0 = pp::Slots{};
-    m.slots0_ok = h.read_slots && h.read_slots(h.context, st, 0, m.slots0);
-    partner_reload::SenderStep(m.sender_gun, m.gun0_ok && m.gun0.fields_ok, m.gun0.mode_cur,
-                               m.slots0_ok ? m.slots0.nibble : static_cast<std::uint8_t>(0xFF));
+    // The local gun record (v4 magazine sender and telemetry) and, input frame
+    // v5 (R2/W1), the local player's current slot and the reload/switch counters, once per tick.
+    ReadLocalGun(m, h, st, now);
     // The remote's latest live v5 gun group and slot.
     m.remote_v5 = latest_ok && latest.age_ms <= set.stale_ms && latest.packet.version >= 5 &&
                   (latest.packet.gun_flags & pin::GunFlag::Valid) != 0;
@@ -3735,6 +3801,24 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     m.remote_reload_seq = m.remote_v5 ? latest.packet.reload_seq : static_cast<std::uint8_t>(0);
     m.remote_switch_seq = m.remote_v5 ? latest.packet.switch_seq : static_cast<std::uint8_t>(0);
     m.remote_slot = m.remote_v5 && latest.packet.inv_slot <= pin::kInvSlotMax ? latest.packet.inv_slot : pin::kInvSlotUnknown;
+    // Native support through an input stall (critic #4): the support gate holds
+    // while the stale v5 frame is inside the stall hold with the same slot-3
+    // equip (TickWeapons rechecks everything else; the hook freezes the level).
+    {
+        partner_support_policy::StallHoldIn sh{};
+        // set is the configured copy (its native_active is always false): the
+        // arbiter's step above decides (hidden run c9e3156f never held).
+        sh.stall_hold = NativeActive(d) && set.nsupport && set.nstall == PartnerNativeStall::hold;
+        sh.stale_ms = set.stale_ms;
+        sh.stall_ms = set.stall_ms;
+        sh.age_ms = latest_ok ? latest.age_ms : 0xFFFFFFFFu;
+        sh.v5_valid = latest_ok && latest.packet.version >= 5 && (latest.packet.gun_flags & pin::GunFlag::Valid) != 0;
+        sh.slot = latest_ok ? latest.packet.inv_slot : static_cast<std::uint8_t>(0xFF);
+        sh.equip = latest_ok && (latest.packet.xflags & pin::XFlag::Equip) ? latest.packet.gun_equip : static_cast<std::uint16_t>(0);
+        sh.was_support = m.weapon_gate == partner_slots::Gate::support;
+        sh.support_equip = m.support_equip;
+        m.support_stall = partner_support_policy::StallHold(sh);
+    }
     // Anim round 1: the remote's v4 magazine of the newest live sample (the auto-fire stop).
     m.remote_mag_ok = latest_ok && latest.age_ms <= set.stale_ms && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Mag);
     m.remote_mag = m.remote_mag_ok ? latest.packet.mag : static_cast<std::uint16_t>(0);
@@ -4559,6 +4643,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.local_vehicle = partner_ride_wire::kVehicleUnknown;
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
+    d.settings.nplaced = lab.partner_native_placed;
+    d.settings.narm = lab.partner_native_arm;
     d.settings.nunsupported = lab.partner_native_unsupported;
     d.settings.ndry = lab.partner_native_dry_stop;
     d.settings.naim_intent = lab.partner_native_aim_intent;
@@ -4576,8 +4662,13 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.noverlay = lab.partner_native_overlay;
     d.settings.act_log = lab.partner_act_log;
     d.settings.stance_fast = lab.partner_native_stance_fast;
-    // Play never calls SetCurrentSlot itself (docs/native-puppet.md "Release gating"): the
-    // setting the telemetry reports is the one that runs (BuildArm downgrades it again).
+    // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
+    // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).
+    // The one exception (WS2: the user asked for throws in play): the guarded slot-3
+    // type-12 support follower (partner_support_equip::Follow, native SetCurrentSlot
+    // 0x11AFA80) runs in play as in the lab, for any nslot except off, only under the
+    // stock guard, the thrown owner filter, the full-body pins and its lease checks, and
+    // only while link v2 is connected.
     if (d.settings.play_mode && d.settings.nslot == PartnerNativeSlot::call) d.settings.nslot = PartnerNativeSlot::write;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);

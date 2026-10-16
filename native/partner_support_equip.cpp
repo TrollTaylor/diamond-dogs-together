@@ -1,5 +1,7 @@
-// Original type-12 body-1 writer. Static contract: equip-audit.md. This is
-// fixture/static evidence only until the hidden support scenario is recorded.
+// Original body-1 support writer: slot 3 type 12 (thrown) and, WS4 v1, slot 3
+// type 13 C4 391..395 and slot 6 type 14 arm 516 (ChangeEquip type 14 ->
+// ctl vt+0x1F0 0x11B1B60: for a non-local id only ctl vt+0xA0(id, 6, equip) and
+// ctl vt+0x98(id, 6, 0, equip), contract-pinned). Static contract: equip-audit.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -15,7 +17,8 @@ namespace c=partner_player_contract;
 namespace ec=equipment_stock_writer_contract;
 SRWLOCK g_lock=SRWLOCK_INIT;
 Context g_context{};
-std::uint32_t g_owned=0,g_owned_mission=0,g_owned_gen=0;
+// The handle each lane allocated (0: slot 3, 1: slot 6).
+std::uint32_t g_owned[2]{},g_owned_mission=0,g_owned_gen=0;
 std::uintptr_t g_owned_player=0,g_owned_block=0;
 bool g_uncertain=false;
 unsigned g_lines=0,g_key_lines=0;
@@ -35,13 +38,15 @@ struct Snapshot {
     std::array<std::uint32_t,7> local_handles{},remote_handles{};
     std::array<std::uint8_t,7*6> local_metadata{};
     std::array<std::uint8_t,c::vars_ammo_end-c::vars_ammo_begin> local_ammo{};
-    std::uint16_t current=0;
+    std::uint16_t current=0,arm=0;
     std::uint8_t slot=0xFF;
 };
-bool Empty(std::uint32_t h) noexcept {return !h || (h>>16)==0xFFFFu || ((h>>5)&0x7FFu)==0;}
+bool Empty(std::uint32_t h) noexcept {return EmptyHandle(h);}
+unsigned Lane(std::uint8_t slot) noexcept {return slot==6 ? 1u : 0u;}
 const char* Capture(const Context& x,Snapshot& s) noexcept {
     s=Snapshot{};s.p.enabled=x.enabled;s.p.owner=x.owner;s.p.gates=x.gates;
     s.p.body_ready=x.body_ready;s.p.safety_ready=x.safety_ready;s.p.equip=x.equip;
+    s.p.placed=x.placed;s.p.arm=x.arm;s.p.slot=x.slot;
     if(!x.enabled || !x.owner || !x.gates || !x.body_ready || !x.safety_ready) return Refusal(s.p);
     auto reader=Read;ec::View<decltype(reader)> v{reader,x.base,x.image_span};
     std::uintptr_t current=0,ids=0,pools=0,blocks=0,buffer=0,q=0,rows=0,vars=0;
@@ -68,6 +73,7 @@ const char* Capture(const Context& x,Snapshot& s) noexcept {
     if(!v.At(x.player,0xC8,s.ctl) || !v.Method(s.ctl,0x23C1720,0x198,0x11AC2E0) ||
        !v.Method(s.ctl,0x23C1720,0x10,0x11AFA80) || !v.Method(s.ctl,0x23C1720,0x18,0x11B0900) ||
        !v.Method(s.ctl,0x23C1720,0xA0,0x11B0700) || !v.Method(s.ctl,0x23C1720,0x98,0x11AFF30) ||
+       !v.Method(s.ctl,0x23C1720,0x1F0,0x11B1B60) ||
        !v.At(s.ctl,0x18,current) || current!=x.player || !v.At(s.ctl,8,s.inventory)) return "equipment_interface";
     std::uintptr_t inv_vt=0;std::uint32_t stride=0,total=0;
     if(!v.At(s.inventory,0,inv_vt) || (inv_vt!=x.base+c::store_vt_rva && inv_vt!=x.base+c::store_vt_derived_rva) ||
@@ -85,10 +91,10 @@ const char* Capture(const Context& x,Snapshot& s) noexcept {
        !v.At(s.metadata,0,s.local_metadata) || !v.At(x.base,c::vars_slot_rva,vars) || !vars ||
        !v.At(s.ctl,0x20,current) || current!=vars ||
        !Read(vars+c::vars_ammo_begin,s.local_ammo.data(),s.local_ammo.size())) return "local_snapshot";
-    s.row=rows+0x3A;s.handle=s.remote_handles[3];
+    s.row=rows+0x3A;s.handle=s.remote_handles[x.slot==6 ? 6 : 3];
     std::uint8_t slot=0,sub=0;
     if(!v.At(s.row,0,s.current) || !v.At(s.row,0x36,slot) || !v.At(s.row,0x37,sub) ||
-       !v.At(s.row,0xC,s.supports)) return "equipment_row";
+       !v.At(s.row,0xC,s.supports) || !v.At(s.row,8,s.arm)) return "equipment_row";
     s.slot=slot&0xF;s.p.sub=sub&0xF;
     // Packed descriptors are read, never the type getter (or its alias path).
     if(!x.equip || x.equip>=0x800) return "equip_range";
@@ -111,20 +117,26 @@ const char* Capture(const Context& x,Snapshot& s) noexcept {
        s.pool_capacity>0xFFFF || s.pool_cursor>s.pool_capacity || !v.At(s.engine,0x140,s.pool_rows) || !s.pool_rows) return "pool_bounds";
     return nullptr;
 }
-const char* Match(const Snapshot& s,bool active) noexcept {
-    if(Empty(s.handle)) return "handle_empty";
-    if((s.handle&0x1F)!=12 || ((s.handle>>5)&0x7FF)!=s.p.equip || (s.handle>>16)>=s.pool_capacity) return "handle_equip";
-    if(s.p.sub>=s.supports.size() || (active && (s.slot!=3 || s.current!=s.p.equip || s.supports[s.p.sub]!=s.p.equip))) return "row_equip";
-    bool found=false;for(auto e:s.supports) if(e==s.p.equip) found=true;
-    if(!found) return "support_list";
-    std::array<std::uint8_t,6> meta{};
-    if(!Read(s.pool_rows+std::size_t(s.handle>>16)*6,meta.data(),meta.size()) ||
-       ec::Word16(meta.data())!=s.p.equip || ec::Word16(meta.data()+2)!=1 || (meta[4]&0x7F)) return "handle_owner";
-    return nullptr;
+MatchIn MatchView(const Snapshot& s) noexcept {
+    MatchIn m{};m.slot=s.p.slot;m.type=s.p.type;m.equip=s.p.equip;m.handle=s.handle;m.pool_capacity=s.pool_capacity;
+    m.row_slot=s.slot;m.sub=s.p.sub;m.current=s.current;m.arm=s.arm;
+    for(unsigned i=0;i<8;++i) m.supports[i]=s.supports[i];
+    // The manager row only for a non-empty in-range handle (MatchRefusal refuses the rest first).
+    if(!Empty(s.handle) && (s.handle>>16)<s.pool_capacity) {
+        std::array<std::uint8_t,6> meta{};
+        if(Read(s.pool_rows+std::size_t(s.handle>>16)*6,meta.data(),meta.size())) {
+            m.meta_ok=true;m.meta_equip=ec::Word16(meta.data());m.meta_owner=ec::Word16(meta.data()+2);m.meta_flags=meta[4];
+        }
+    }
+    return m;
 }
+const char* Match(const Snapshot& s,bool active) noexcept {return MatchRefusal(MatchView(s),active);}
+// The viewer's row, handles, metadata and ammo vars, and body 1's handles of
+// every slot except the lane's own (3, or 6 for an arm).
 bool SameLocal(const Snapshot& a,const Snapshot& b) noexcept {
     if(a.local_row!=b.local_row || a.local_handles!=b.local_handles || a.local_metadata!=b.local_metadata || a.local_ammo!=b.local_ammo) return false;
-    for(unsigned i=0;i<7;++i) if(i!=3 && a.remote_handles[i]!=b.remote_handles[i]) return false;
+    const unsigned lane=a.p.slot==6 ? 6u : 3u;
+    for(unsigned i=0;i<7;++i) if(i!=lane && a.remote_handles[i]!=b.remote_handles[i]) return false;
     return true;
 }
 bool IdleReason(const char* reason) noexcept {
@@ -145,7 +157,7 @@ void Receipt(LogFn log,const Context& x,const Snapshot& s,const char* phase,cons
     g_log_ms=x.now_ms;g_reason=reason;++lines;
     char line[448]{};
     StringCchPrintfA(line,ARRAYSIZE(line),
-        "partner_support=%s; slot=%u; equip=%u; type=%u; reason=%s; instance=1; handle=%08x; body_slot=%u; sub=%u; result=%d; mission=%u; gen=%u; rec_handle_risk=unresolved\r\n",
+        "partner_support=%s; slot=%u; equip=%u; type=%u; reason=%s; instance=1; handle=%08x; body_slot=%u; sub=%u; result=%d; mission=%u; gen=%u; rec_handle_risk=pinned\r\n",
         phase,unsigned(x.slot),unsigned(x.equip),unsigned(s.p.type),reason ? reason : "ok",s.handle,unsigned(s.slot),unsigned(s.p.sub),result,x.mission,x.realize_gen);
     log(line);
 }
@@ -158,15 +170,17 @@ bool Dispatch(std::uintptr_t function,std::uintptr_t ctl,const Request* request,
     __try {return reinterpret_cast<Fn>(function)(reinterpret_cast<void*>(ctl),result,1,request)==result;}
     __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
-bool SetSlot(std::uintptr_t function,std::uintptr_t ctl,std::uint8_t sub) noexcept {
+// SetCurrentSlot(ctl, id 1, slot, sub): case 3 row+0 = row[6+sub] then ctl
+// vt+0xA0; case 6 row+0 = row+8 (no call); the rest is local-only for id 1.
+bool SetSlot(std::uintptr_t function,std::uintptr_t ctl,std::uint8_t slot,std::uint8_t sub) noexcept {
     using Fn=void (*)(void*,std::uint32_t,std::int32_t,std::uint8_t,char,char,int);
-    __try {reinterpret_cast<Fn>(function)(reinterpret_cast<void*>(ctl),1,3,sub,0,0,0);return true;}
+    __try {reinterpret_cast<Fn>(function)(reinterpret_cast<void*>(ctl),1,slot,sub,0,0,0);return true;}
     __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
-bool ContextFor(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,Context& out) noexcept {
+bool ContextFor(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,std::uint8_t slot,Context& out) noexcept {
     out=g_context;
     return out.enabled && out.owner && out.gates && out.body_ready && out.safety_ready && !g_uncertain &&
-        out.base==base && out.player==player && out.remote_block==block && out.slot==3 && out.equip==equip;
+        out.base==base && out.player==player && out.remote_block==block && LaneSlot(slot,out.arm) && out.slot==slot && out.equip==equip;
 }
 }
 void Observe(const Context& x,LogFn log) noexcept {
@@ -178,11 +192,13 @@ void Observe(const Context& x,LogFn log) noexcept {
     if(g_owned_mission!=x.mission) {g_uncertain=false;g_lines=0;g_key_lines=0;g_reason=nullptr;}
     if(g_owned_mission!=x.mission || (x.player && x.remote_block &&
        (g_owned_gen!=x.realize_gen || g_owned_player!=x.player || g_owned_block!=x.remote_block))) {
-        g_owned=0;
+        g_owned[0]=g_owned[1]=0;
         g_owned_mission=x.mission;g_owned_gen=x.realize_gen;g_owned_player=x.player;g_owned_block=x.remote_block;
     }
     if(!x.enabled) {ReleaseSRWLockExclusive(&g_lock);return;}
-    Snapshot before{};const char* why=x.slot!=3 ? "slot" : Capture(x,before);
+    // Slot 3 always; slot 6 only with the arm key (else the old idle "slot").
+    Snapshot before{};const char* why=!LaneSlot(x.slot,x.arm) ? "slot" : Capture(x,before);
+    const unsigned lane=Lane(x.slot);
     if(!why && g_uncertain) why="uncertain_latched";
     if(!why && !Match(before,false)) {
         // Already allocated for this exact remote equip. Let the drain's
@@ -190,7 +206,7 @@ void Observe(const Context& x,LogFn log) noexcept {
         ReleaseSRWLockExclusive(&g_lock);return;
     }
     if(!why && x.body_busy) why="body_busy";
-    if(!why && !Empty(before.handle) && before.handle!=g_owned) why="foreign_handle";
+    if(!why && !Empty(before.handle) && before.handle!=g_owned[lane]) why="foreign_handle";
     if(!why && !Empty(before.handle)) {
         std::array<std::uint8_t,6> meta{};
         if(!Read(before.pool_rows+std::size_t(before.handle>>16)*6,meta.data(),meta.size()) || (meta[5]&1u)) why="release_helper_unqualified";
@@ -213,18 +229,24 @@ void Observe(const Context& x,LogFn log) noexcept {
         else if(!SameLocal(late,after)) why="local_or_other_slot_changed";
         else why=Match(after,true);
         if(why) {g_uncertain=true;g_context.safety_ready=false;}
-        else {g_owned=after.handle;before=after;}
+        else {g_owned[lane]=after.handle;before=after;}
     }
     if(why) g_context.safety_ready=false;
     Receipt(log,x,before,why ? "refused" : "equip",why ? why : "ok",result);
     ReleaseSRWLockExclusive(&g_lock);
 }
-bool Ready(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,std::uint8_t* decoded_type) noexcept {
+bool Ready(std::uintptr_t base,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,std::uint8_t* decoded_type,
+           std::uint32_t* handle,std::uint8_t slot) noexcept {
     if(decoded_type) *decoded_type=0;
+    if(handle) *handle=0;
     if(!TryAcquireSRWLockShared(&g_lock)) return false;
     Context x{};Snapshot s{};
-    const bool ready=ContextFor(base,player,block,equip,x) && !Capture(x,s) && !Match(s,true);
+    const bool ready=ContextFor(base,player,block,equip,slot,x) && !Capture(x,s) && !Match(s,true);
     if(decoded_type) *decoded_type=s.p.type;
+    // The Match-verified lane handle Y+0x40[1*7+slot]: owner 1, this equip,
+    // kind = its type (12/13 slot 3, 14 slot 6), index below the manager's
+    // capacity (WS1 B).
+    if(handle && ready) *handle=s.handle;
     ReleaseSRWLockShared(&g_lock);return ready;
 }
 bool Uncertain() noexcept {
@@ -232,14 +254,15 @@ bool Uncertain() noexcept {
     const bool uncertain=g_uncertain;
     ReleaseSRWLockShared(&g_lock);return uncertain;
 }
-const char* Follow(std::uintptr_t base,std::size_t span,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,LogFn log) noexcept {
+const char* Follow(std::uintptr_t base,std::size_t span,std::uintptr_t player,std::uintptr_t block,std::uint16_t equip,LogFn log,
+                   std::uint8_t slot) noexcept {
     if(!TryAcquireSRWLockExclusive(&g_lock)) return "busy";
     Context x{};Snapshot before{};
-    const char* why=ContextFor(base,player,block,equip,x) ? nullptr : "admission";
+    const char* why=ContextFor(base,player,block,equip,slot,x) ? nullptr : "admission";
     if(!why && span!=x.image_span) why="image_span";
     if(!why) why=Capture(x,before);
     if(!why) why=Match(before,false);
-    if(!why && before.slot==3 && before.current==equip && before.supports[before.p.sub]==equip) {
+    if(!why && AlreadyCurrent(MatchView(before))) {
         ReleaseSRWLockExclusive(&g_lock);return nullptr;
     }
     std::uintptr_t mismatch=0;
@@ -247,10 +270,12 @@ const char* Follow(std::uintptr_t base,std::size_t span,std::uintptr_t player,st
     Snapshot late{};if(!why) why=Capture(x,late);
     if(!why && (before.handle!=late.handle || before.row!=late.row || before.ctl!=late.ctl || !SameLocal(before,late))) why="lease_changed";
     if(!why) {
-        std::uint8_t sub=0;while(sub<8 && late.supports[sub]!=equip) ++sub;
+        // Slot 3: the sub holding the equip; slot 6 (an arm): sub 0, as ChangeEquip's own activation.
+        std::uint8_t sub=0;
+        if(slot!=6) while(sub<8 && late.supports[sub]!=equip) ++sub;
         if(sub>=8) why="support_list";
         else {
-            const bool called=SetSlot(base+0x11AFA80,late.ctl,sub);
+            const bool called=SetSlot(base+0x11AFA80,late.ctl,slot==6 ? 6 : 3,sub);
             Snapshot after{};const char* after_why=Capture(x,after);
             why=!called ? "follow_fault" : after_why ? after_why : !SameLocal(late,after) ? "local_or_other_slot_changed" : Match(after,true);
             if(why) {g_uncertain=true;g_context.safety_ready=false;}

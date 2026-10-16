@@ -13,7 +13,12 @@
 #   partner_support=equip|follow|armed; slot=3; equip=354|349; type=12; reason=...
 #   partner_support=filtered; ... owner=0x1 ... preview and real requests dropped BEFORE the entry runs.
 #   partner_support=stock_check; ...; changed=0 after each body-1 throw episode; no stock leak latch.
-#   partner_support=...; rec240=... at throw time: retain for the unresolved vt+0x160 handle call.
+#   partner_support=...; rec240=... at throw time (the handle X vt+0x160 = 0xDC1740 acts on; WS1 resolved).
+#   partner_support=rec240_check; ...; reason=ok; ...; owner=1 for each thrown equip (WS1 C per-job row check);
+#   those lines say mode=latch; latched=0. NO reason=rec240_foreign (it latches support off for the mission, so the
+#   later throws fail too) and NO reason=unread (it never latches, so read the log).
+#   NO partner_support=refused; ...; reason=rec240_stale (WS1 B: a same-equip slot-3 handle on another index that
+#   the per-frame path does not refresh; never a normal equip/follow gap): any such line fails the run.
 #   partner_fire_census=thrown; owner=0x1; ...; dropped=1 for preview and throw; never owner 0 dropped.
 #   partner_fire_census=summary / the 1 Hz filter summary includes support drop counters.
 # On the host, owner 0 thrown requests pass (dropped=0), and only its own stock is spent.

@@ -23,6 +23,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_placed_census.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "partner_player_contract.hpp"
 
@@ -1173,6 +1174,65 @@ void TestJobWindow() {
         w->pool[0] = 0;
         Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 4, "instance 1's block: windowed");
     }
+    // WS4 step 0 (lab key partner_placed_census, read-only): the stun op-0 pad
+    // fields around body 1's job. Off: nothing is published. On: the viewer's
+    // PP+0x10 / +0x2C come from the window's saved host copy, body 1's are what
+    // its job saw, and the host's pad is byte-identical after the window.
+    {
+        namespace ppc = mgscoop::partner_placed_census;
+        ppc::detail::ResetPadForTest();
+        Put<float>(Addr(w->pp) + 0x10, 0.25f);  // the host's move magnitude
+        pd::JobParam param{0, 0, 0, 8, g_world.bits};
+        param.block = 1;
+        ppc::PadSample pad{};
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && !ppc::ReadPad(pad),
+              "pad census off: a windowed drain publishes nothing");
+        static unsigned char pp_before[sizeof(w->pp)];
+        std::memcpy(pp_before, w->pp, sizeof(pp_before));
+        ppc::SetPadCensus(true);
+        const bool windowed = hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0);
+        ppc::SetPadCensus(false);
+        Check(windowed && ppc::ReadPad(pad) && pad.windows == 1 && pad.pre_ok && pad.post_ok, "pad census on: one sample per windowed drain");
+        Check(pad.viewer_mag == 0.25f && pad.viewer_mask == 0x100u, "pad census: the viewer's PP+0x10 / +0x2C from the window's saved copy");
+        Check(pad.body_mag_pre != 0.25f && pad.body_mag_pre == pad.body_mag_post && (pad.body_mask_pre & 0x100u) == 0 &&
+              ppc::PadDiffers(pad), "pad census: body 1's job saw its own (shadowed) PP+0x10 / +0x2C");
+        Check(pad.mode_pre == 0xFF && pad.mode_post == 0xFF, "pad census: no gun prim in the Arm, the modes stay unread");
+        Check(std::memcmp(pp_before, w->pp, sizeof(pp_before)) == 0, "pad census: the host's pad is byte-identical after the window");
+        Check(Get<float>(Addr(w->pp) + 0x10) == 0.25f && Get<std::uint32_t>(Addr(w->pp) + c::pp_masks + 4) == 0x100u,
+              "pad census: the host's PP+0x10 / +0x2C are back");
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && ppc::ReadPad(pad) && pad.windows == 1,
+              "pad census off again: no new sample");
+    }
+    // WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the arm lane's read-only watchdog in the real drain window.
+    // With partner_native_arm (and native_support) in the Arm, body 1's gun record in the arm's aim pose never
+    // trips; in an arm use mode (52..56; FIRE is always stripped, so it must never happen) the job latches arms off
+    // for the mission, and only arms (the support latch is untouched). The job itself still runs once.
+    {
+        alignas(16) static unsigned char arm_rec[c::gun_rec_size];
+        std::memset(arm_rec, 0, sizeof(arm_rec));
+        pi::Arm armed = a;
+        armed.native_support = armed.native_arm = true;
+        armed.gun_rec = Addr(arm_rec);  // the watchdog reads only rec+0x2C0 (and rec+0x24C for its line)
+        hk::PublishArm(armed);
+        pd::JobParam param{0, 0, 0, 8, g_world.bits};
+        param.block = 1;
+        Check(!hk::NativeArmLatchedOff(), "arm watchdog: no latch before any arm job");
+        for (const std::uint8_t mode : {std::uint8_t(0), std::uint8_t(1), std::uint8_t(2), std::uint8_t(3), std::uint8_t(51), std::uint8_t(57)}) {
+            arm_rec[c::gun_mode_cur] = mode;
+            Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && !hk::NativeArmLatchedOff(),
+                  "arm watchdog: the aim pose and other modes never trip");
+        }
+        arm_rec[c::gun_mode_cur] = 55;  // Jehuty's use mode
+        const int ran = g_probe_ran;
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == ran + 1 && hk::NativeArmLatchedOff() &&
+                  !hk::NativeSupportLatchedOff(),
+              "arm watchdog: a use mode latches arms off for the mission (support untouched)");
+        arm_rec[c::gun_mode_cur] = 1;
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && hk::NativeArmLatchedOff(),
+              "arm watchdog: the latch stays for the mission");
+        hk::PublishArm(a);
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0), "arm watchdog: the old Arm runs as before");
+    }
     // A refused nested job from the pre-dispatch HUD probe keeps its own
     // callback; it must not replace the outer drain's pending original.
     {
@@ -2086,6 +2146,7 @@ void TestJobWindow() {
                   Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5,
               "after an ammo leak the mirror refuses (leak), nothing written");
         hk::ResetFault();  // MissionStart
+        Check(!hk::NativeArmLatchedOff(), "MissionStart (ResetFault) clears the WS4 v1 arm latch");
         Check(run() && !hs.native.mag_leak_off && hs.native.mag_writes == writes_after_store + 1 &&
                   Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 3 && StoreWord(w, 0) == 3,
               "MissionStart re-enables the mirror (14/30 -> 3 of 5)");

@@ -494,9 +494,27 @@ struct LabConfig {
     PartnerNativeReloadRate partner_native_reload_rate = PartnerNativeReloadRate::off;
     bool partner_native_reload_rate_given = false;
     bool partner_fire_census = false;
-    // Native type-12 support throws are an explicit experiment; no profile enables them.
+    // Native type-12 support throws (docs/anim-round2-throws.md): not named in
+    // lab.ini, on with the native gun profile in lab and play (Stage B), else
+    // off (ResolveWeaponDefaults); a named 0/1 always wins.
     bool partner_native_support = false;
     bool partner_native_support_given = false;
+    // WS4 step 0 (docs/anim-round2-throws.md "WS4 step 0"): the read-only C4 /
+    // bionic-arm census (partner_placed_census lines, the input hook's pad
+    // sample and the Lua event=obs_att lines through world CFG r[14]). No
+    // write, no game call; default 0; play forces it off.
+    bool partner_placed_census = false;
+    // WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): body 1's native placed C4
+    // (type 13, only 391..395, slot 3: place-hold, ready, place) and arm holds
+    // (type 14, only 516 for now, slot 6: HOLD only, FIRE always stripped). Both ride on
+    // partner_native_support (its guard, filter, writer and gates). Not named in
+    // lab.ini: on with the native gun profile in lab and play (after hidden runs
+    // 7f8d643d / d05a1267), else off (ResolveWeaponDefaults); a named 0/1 always
+    // wins; play admits them only while link v2 is connected (ModeRefusal).
+    bool partner_native_placed = false;
+    bool partner_native_placed_given = false;
+    bool partner_native_arm = false;
+    bool partner_native_arm_given = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;

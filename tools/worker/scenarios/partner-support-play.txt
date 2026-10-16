@@ -1,0 +1,119 @@
+# Native partner type-12 throws in two-PC play mode, WS2 Stage A (docs/anim-round2-throws.md "Throws in play").
+# The hidden play rehearsal: both copies in mode=play exactly as Play-Coop writes it, on 127.0.0.1 with the worker-only
+# play_rehearsal=1, copied lab saves, link v2. Stage B: partner_native_support defaults on with the gun profile in play
+# too, so neither the command line nor this file names it (Stage A runs passed -LabSetting partner_native_support=1).
+# Executable: mgsvtpp.exe 1.0.15.4, SHA-256 pinned by the partner contract; no visible launch, MGS_GAME_LUA_DIR unset.
+# Run (coordinator only, hidden worker; take the verify lock first; queue behind any running hidden run):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off
+#   then the same with -WanSim bad and with -WanSim awful.
+# Checkpoint save + reload (critic #6) cannot run in play: world triggers are lab-only by design (world_link Configure,
+# world_wire ApplyTrigger "not_lab", kPlayRefusedWorldProbe, the runner's worldtrigger rule). The persistence half runs
+# through the same redirected copied-save path in partner-support-checkpoint.txt (lab), right after these three.
+# Seed: the lab seed's support ids 354,349,395,411,366,370,378,388 with counts 12,16383,12,8,12,12,8,8 on both copies;
+# infinite ammo OFF; both debug god modes on. The host is the partner on the guest's screen (body 1) and vice versa.
+# Evidence (both script-observer.log files unless a role is named; state.json "native" in captures.jsonl):
+#  start:    early.log of both copies: play=1; loopback=0; mutex=renamed; refused=0x0; saves=redirected; rehearsal=1;
+#            link=connected; partner_support=mode; mode=play; reason=ok (once; a link drop logs reason=link_not_connected
+#            and support refuses through ContextFor while the guard and filter stay armed).
+#  safety:   partner_support=guard; slot=3; equip=0; type=12; reason=installed and partner_fire_filter=summary; kind=thrown;
+#            installed=1; live=1; armed=1 (per-second totals with dropped/preview_dropped growing on the guest).
+#  throws:   on the guest, one partner_support=armed; ...; reason=throw_release per host throw (3, then the 4th in the last
+#            phase); frames grenade-throw-1..3 show body 1 in the throw family (modes 28..42) with its own grenade.
+#  stock:    every partner_support=stock_check line has changed=0 (reason=throw_release|episode_end|viewer_own); the
+#            guest's counts=12,16383,12,8,12,12,8,8 after each host throw (the requires below), its own throw in the
+#            last phase spends exactly its own grenade (11,...). NO partner_support=stock_gap, NO stock_index, NO
+#            reason=stock_leak_mission_latched, NO partner_weapon=fire_reload_off (play's process leak strip), NO
+#            reason=writer_uncertain_mission_latched, NO reason=rec240_stale / rec240_foreign.
+#  last:     the viewer's own throw during a partner episode (critic #5, so a false latch cannot void the earlier phases):
+#            the guest logs partner_support=stock_check; ...; reason=viewer_own; changed=0; kind=throw; k=6; before=12;
+#            after=11 (C(b) rebase) with the spend step entered in that gap (viewer_mode=37; viewer_state=2; viewer_k=6;
+#            viewer_count=11; viewer_prev_state other than 2) and NO latch; the host's 4th throw still logs throw_release
+#            on the guest. The host's copy sees the same overlap mirrored (its own throw during the guest's aim):
+#            viewer_own there too, no latch. A stock_gap line's viewer_* fields say why a gap was not the viewer's.
+#  network:  native.net.hard_leaves 0, native.latched false. With -WanSim bad/awful: partner_support=stall_freeze;
+#            reason=start ... then reason=fresh (critic #4: the HOLD|FIRE level held through the gap, no early release,
+#            no phantom second throw) and still exactly one throw_release per host throw; a reason=strip end means the
+#            gap outlived partner_native_stall_ms (400) and the old strip applied (record it, it is not a leak).
+#            partner_support=fire_buffer; reason=delivered|dropped lines are informational (select-then-throw).
+#  trip:     no S_IS_ONLINE, session or FOB line; Closed, BaselineRestored and RealSavesUnchanged in scenario.json.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug infinite_ammo 0
+guest debug infinite_ammo 0
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+# Keep the viewer low and out of the partner's silhouette.
+placebehind guest host 7 2
+wait 2000
+stance guest prone
+both capture start
+# Entry: the link, the caps exchange and the native partner on both copies.
+wait 8000
+both capture native-on
+host run support
+host require support;ids=354,349,395,411,366,370,378,388;counts=[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+;active=
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+# --- Equip grenade 354 (body 1 follows the host's slot 3 on the guest's screen) ---------------------------
+host debug slot support 0
+wait 1500
+guest burst grenade-select 3 200
+# --- Aim, then throw x3; the guest's counts after each ----------------------------------------------------
+host hold rmb 1500 nowait
+guest burst grenade-aim 4 150
+host hold rmb+lmb 150 nowait
+guest burst grenade-throw-1 8 150
+host release
+wait 3000
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 150 nowait
+guest burst grenade-throw-2 8 150
+host release
+wait 3000
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 150 nowait
+guest burst grenade-throw-3 8 150
+host release
+wait 3000
+both capture throws-after
+host run support
+host require support;ids=354,349,395,411,366,370,378,388;counts=[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+;active=
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+# --- LAST (critic #5): the viewer's OWN throw during the partner's episode ----------------------------------
+# The guest throws its own grenade 354 while body 1 aims: C(b) attributes the slot-3 change between two body-1
+# jobs to the viewer (its gun mode in 28..47) and rebases the episode baseline instead of latching support off.
+guest debug slot support 0
+wait 1500
+stance guest stand
+wait 1000
+host hold rmb 1500 nowait
+guest hold rmb 1500 nowait
+guest burst viewer-own-aim 3 150
+guest hold rmb+lmb 150 nowait
+guest burst viewer-own-throw 6 150
+guest release
+# The partner throws after the overlap: support must still be admitted (no stock_leak_mission_latched).
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 150 nowait
+guest burst viewer-own-partner-throw 8 150
+host release
+wait 3000
+both capture end
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=11,16383,12,8,12,12,8,8;active=

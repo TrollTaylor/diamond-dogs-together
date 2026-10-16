@@ -219,6 +219,9 @@ GENERAL_RANGES = [
     ("bank_shared_key_selection", 0xADEA10, 0xADEA70, 0xADEA70),
     ("engine_first_used_stock_entry", 0xDBD5C0, 0xDBD607, 0xDBD607),
     ("inventory_actor_release", 0xEE9E60, 0xEE9EF0, 0xEE9EF0),
+    # WS4 v1 review (WS4-2): ctl vt+0x1F0, the one callee only the slot-6 (arm) dispatch runs (ChangeEquip type 14
+    # calls it instead of the restriction predicate and the lower writer). Whole body, ret at 0x11B1D66.
+    ("arm_equip_dispatch", 0x11B1B60, 0x11B1D67, 0x11B1D67),
 ]
 GENERAL_NAMES = {
     "recipe_dependency_selection", "dependency_hash_getter", "public_mission_preload",

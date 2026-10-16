@@ -222,6 +222,22 @@ startup verdict is `Get-WorkerPlaySafetyVerdict`. Profiles there: `animated`
 `scenarios/play-native.txt` and `scenarios/partner-native-online.txt` hold
 the evidence.
 
+The step `stall <host|guest> <ms>` (50..1000 ms) is a worker-only input stall
+(`docs/anim-round2-throws.md` "Stall test step"). The runner sends the native
+debug command `input_stall <ms>`, and that role's game then sends no partner
+input frames for that long (its edge sets go out with the first frame after
+it). The runner records the command's result as an expectation
+(`^input_stall=started;ms=<ms>;`), and the role's log has
+`partner_net=input_stall; reason=start` and `reason=end` lines. The game admits
+the command only in a background-worker build with the owned private worker
+active (`worker_scenario::Compiled()` and `Active()`, copied saves, partner and
+net on). Only that build compiles the stall into `partner_net`, which refuses
+with `not_worker_build` everywhere else, so the friend/Release loader (worker
+OFF by its receipt rules) never pauses input. Use it to put a gap of a known
+length inside a held action, independent of `-WanSim`:
+`scenarios/partner-support-stall.txt` puts two 320 ms host stalls inside a held
+grenade (the stall freeze lies between stale_ms 250 and stall_ms 400).
+
 `scenarios/steam-selftest.txt` (header `labsetting steam_selftest=1`; the
 runner also allows `steam_selftest=2`, which adds a network-loopback socket
 pair that binds UDP sockets) is the Steam online self-test

@@ -32,6 +32,7 @@ void Check(bool value, const char* what) {
 // set-type writes are refused while terminating and restorations are not.
 struct Fake {
     bool support_ready=false;
+    int support_identity=-1;   // the last publish_support_identity value (-1: never published)
     std::vector<std::string> lines;
     pp::State state{};
     pp::Refusal refusal = pp::Refusal::none;
@@ -1026,6 +1027,31 @@ void TestHiddenLocalSender() {
           s.fake.defer_installs==0 && s.fake.wrap_installs==0 && s.fake.fire_installs==0 && s.fake.look_src_installs==0 &&
           !s.driver.mission.input_armed && !s.driver.mission.realized,
           "hidden sender has no remote transforms, realization, native hook installs or enabled Arm");
+    // Sender hold (docs/anim-round2-throws.md "Unknown-slot glitch", run 0c9269ce): one
+    // failed local gun and slot read 33 ms after the last good one republishes the last
+    // good equip, gun group (counters kept) and slot instead of sending them unknown.
+    {
+        const pi::InputPacket prev=s.fake.inputs.back();
+        Check((prev.gun_flags & pi::GunFlag::Valid) && (prev.xflags & pi::XFlag::Equip) && prev.inv_slot<=pi::kInvSlotMax,
+              "sender hold: the last good frame carries the gun group, equip and slot");
+        const auto before=s.fake.inputs.size();
+        s.fake.gun0_ok=false; s.fake.gun0.refusal="gun_node"; s.fake.slots_ok[0]=false; s.fake.slots[0].refusal="rows";
+        Check(s.Tick(1) && s.fake.inputs.size()==before+1,"sender hold: a failed local read still sends");
+        const pi::InputPacket held=s.fake.inputs.back();
+        Check(held.gun_flags==prev.gun_flags && held.gun_mode==prev.gun_mode && held.reload_seq==prev.reload_seq &&
+              held.switch_seq==prev.switch_seq && (held.xflags & pi::XFlag::Equip) && held.gun_equip==prev.gun_equip &&
+              held.inv_slot==prev.inv_slot && (held.xflags & pi::XFlag::Mag)==(prev.xflags & pi::XFlag::Mag) && held.mag==prev.mag &&
+              pi::ValidPacket(held),
+              "sender hold: the frame republishes the last good gun group, equip, magazine and slot");
+        Check(s.fake.Has("partner_input=sender_hold; field=gun; reason=start; refusal=gun_node; good_age_ms=33\r\n") &&
+              s.fake.Has("partner_input=sender_hold; field=slot; reason=start; refusal=rows; good_age_ms=33\r\n"),
+              "sender hold: the start lines name the failed read's refusal");
+        s.fake.gun0_ok=true; s.fake.gun0.refusal=nullptr; s.fake.slots_ok[0]=true; s.fake.slots[0].refusal=nullptr;
+        Check(s.Tick(1) && s.fake.inputs.back().gun_equip==prev.gun_equip && s.fake.inputs.back().reload_seq==prev.reload_seq &&
+              s.fake.inputs.back().switch_seq==prev.switch_seq,"sender hold: the next good read goes out (no counter step across the hold)");
+        Check(s.fake.Has("partner_input=sender_hold; field=gun; reason=resumed; frames=1; held_ms=33\r\n") &&
+              s.fake.Has("partner_input=sender_hold; field=slot; reason=resumed; frames=1; held_ms=33\r\n"),"sender hold: the resumed lines");
+    }
     const auto packets=s.fake.inputs.size(); const auto pads=s.fake.pad_reads;
     s.fake.link_live=false; Check(s.Tick(1) && s.fake.inputs.size()==packets && s.fake.pad_reads==pads,"hidden sender requires live link lease");
     s.fake.link_live=true; s.fake.link_session=0;
@@ -1044,7 +1070,8 @@ void TestHiddenLocalSender() {
     Check(s.Tick(1,100) && s.fake.inputs.size()==packets+1,"fresh local pad still sends with unknown optional sources");
     const auto& unreadable=s.fake.inputs.back();
     Check(!(unreadable.gun_flags & pi::GunFlag::Valid) && !(unreadable.xflags & (pi::XFlag::Mag | pi::XFlag::Equip | pi::XFlag::Rates)) &&
-          unreadable.inv_slot==pi::kInvSlotUnknown,"unreadable local gear/rates never repeat old valid metadata");
+          unreadable.inv_slot==pi::kInvSlotUnknown,
+          "unreadable local gear/rates beyond the sender hold (298 ms after the last good read) never repeat old valid metadata");
     const auto after=s.fake.inputs.size(); const auto readAfter=s.fake.pad_reads;
     Check(!s.Tick(1,33,true) && s.fake.inputs.size()==after && s.fake.pad_reads==readAfter,"terminating hidden sender does nothing");
     s.driver.mission.stopped=true;
@@ -5737,6 +5764,7 @@ void TestNativeThrownSupport() {
     s.hooks.support_ready=[](void* ctx,const pp::State& st,std::uint16_t equip) noexcept {
         return static_cast<Fake*>(ctx)->support_ready && st.ids[0]==0 && st.ids[1]==1 && equip==354;
     };
+    s.hooks.publish_support_identity=[](void* ctx,std::uint16_t equip) noexcept {static_cast<Fake*>(ctx)->support_identity=equip;};
     s.fake.equip_types[46]=4;s.fake.equip_types[354]=12;s.fake.equip_types[355]=13;s.fake.equip_types[516]=14;
     s.fake.latest.packet.version=5;s.fake.latest.packet.xflags=pi::XFlag::Equip;
     s.fake.latest.packet.gun_flags=pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming;
@@ -5753,9 +5781,38 @@ void TestNativeThrownSupport() {
         (s.fake.arms.back().config.mask&0x10u) && !s.fake.arms.back().mag_mirror &&
         s.fake.arms.back().gun_rec==s.fake.gun.rec && s.fake.arms.back().native_support && s.fake.arms.back().aim_intent,
         "qualified support passes HOLD/FIRE without historical gun-class admission");
+    Check(s.fake.support_identity==354,"the support verdict's equip is published for partner_net's unknown slot/equip debounce");
+    // Critic #4 through the driver (hidden run c9e3156f: a 320 ms host stall never held): the stall
+    // hold follows the arbiter's effective state, never the configured copy's native_active.
+    {
+        const auto stale=s.fake.latest.age_ms;
+        s.driver.settings.nstall=mgscoop::PartnerNativeStall::hold;
+        s.driver.settings.stale_ms=250;s.driver.settings.stall_ms=400;
+        s.fake.latest.age_ms=320;s.N();
+        Check(!s.driver.settings.native_active && pd::NativeActive(s.driver) && s.driver.mission.support_stall &&
+            s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support &&
+            s.driver.mission.remote_slot==0xFF && s.fake.arms.back().strip==0x40u && s.fake.support_identity==354,
+            "a stale v5 slot-3 frame inside stall_ms keeps the support gate (configured native_active stays false)");
+        s.fake.latest.age_ms=399;s.N();
+        Check(s.driver.mission.support_stall && s.driver.mission.weapon_gate==slots::Gate::support,"still held at 399 ms");
+        s.fake.latest.age_ms=stale;s.N();
+        Check(!s.driver.mission.support_stall && s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support,
+            "fresh again: live support, no stall");
+        s.fake.latest.age_ms=401;s.N();
+        Check(!s.driver.mission.support_stall && !s.driver.settings.support_live &&
+            s.driver.mission.weapon_gate==slots::Gate::unsupported && (s.fake.arms.back().strip&0x58u)==0x58u,
+            "beyond stall_ms the old strip applies");
+        s.fake.latest.age_ms=stale;s.N();
+        s.driver.settings.nstall=mgscoop::PartnerNativeStall::neutral;s.fake.latest.age_ms=320;s.N();
+        Check(!s.driver.mission.support_stall && !s.driver.settings.support_live &&
+            s.driver.mission.weapon_gate==slots::Gate::unsupported,"stall=neutral (lab): no hold");
+        s.fake.latest.age_ms=stale;s.N();
+        Check(s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support,"fresh: support again");
+    }
     s.fake.support_ready=false;s.N();
     Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported &&
         (s.fake.arms.back().strip&0x58u)==0x58u && !(s.fake.arms.back().config.mask&0x10u),"lost support safety masks same tick");
+    Check(s.fake.support_identity==0,"no support verdict: 0 is published (nothing is held)");
     s.driver.settings.nunsupported=false; // old diagnostic cannot weaken native support
     s.fake.support_ready=true;s.fake.latest.packet.gun_equip=355;s.N();
     Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"type 13 stays unsupported");
@@ -5768,6 +5825,73 @@ void TestNativeThrownSupport() {
     s.fake.gun.fields.equip=46;s.fake.gun.fields.flags27c=1u<<6;s.fake.gun.mode_cur=7;s.N();
     Check(!s.driver.settings.support_live && s.driver.settings.fire_live &&
         s.driver.mission.weapon_gate==slots::Gate::match && s.fake.arms.back().mag_mirror,"support returns to ordinary gun policy");
+}
+
+// WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the C4 and arm lanes of the driver's support gate. C4 (type 13,
+// 391..395) in slot 3 with partner_native_placed gets the support gate (RELOAD stripped, HOLD/FIRE kept); an arm
+// (type 14, only 516) in slot 6 with partner_native_arm gets it with FIRE stripped too (HOLD only); every other
+// type-13/14 equip, the wrong slot, or a key off stays unsupported (0x58), and the Arm carries both keys.
+void TestNativePlacedArmLanes() {
+    namespace pn=mgscoop::partner_native;
+    namespace pi=mgscoop::partner_input;
+    namespace slots=mgscoop::partner_slots;
+    NativeSession s;SetVisualFire(s);
+    s.driver.settings.nunsupported=true;
+    s.driver.settings.naim_intent=mgscoop::PartnerNativeAimIntent::state;
+    s.hooks.support_ready=[](void* ctx,const pp::State& st,std::uint16_t equip) noexcept {
+        return static_cast<Fake*>(ctx)->support_ready && st.ids[0]==0 && st.ids[1]==1 && (equip==395 || equip==411 || equip==516 || equip==517);
+    };
+    s.hooks.publish_support_identity=[](void* ctx,std::uint16_t equip) noexcept {static_cast<Fake*>(ctx)->support_identity=equip;};
+    s.fake.equip_types[46]=4;s.fake.equip_types[395]=13;s.fake.equip_types[411]=13;s.fake.equip_types[516]=14;s.fake.equip_types[517]=14;
+    s.fake.latest.packet.version=5;s.fake.latest.packet.xflags=pi::XFlag::Equip;
+    s.fake.latest.packet.gun_flags=pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming;
+    s.fake.latest.packet.gun_equip=46;s.fake.latest.packet.inv_slot=1;
+    s.fake.gun.fields.equip=46;
+    Check(s.Until(pn::Mode::active,9000),"WS4 v1 fixture native active");
+    s.driver.settings.nsupport=true;s.fake.support_ready=true;s.driver.mission.weapon_ok=false;
+    // C4 395 in hand slot 3 on both sides (body 1's record class 3).
+    s.fake.gun.fields.flags27c=3u<<6;s.fake.gun.fields.equip=395;s.fake.gun.mode_cur=43;
+    s.fake.latest.packet.gun_equip=395;s.fake.latest.packet.inv_slot=3;
+    s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported &&
+          (s.fake.arms.back().strip&0x58u)==0x58u && !s.fake.arms.back().native_placed,"C4 with the placed key off: unsupported (Round 1)");
+    s.driver.settings.nplaced=true;s.N();
+    Check(s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support && s.fake.arms.back().strip==0x40u &&
+          s.fake.arms.back().native_placed && !s.fake.arms.back().native_arm && s.fake.support_identity==395,
+          "C4 395 with the placed key: the support gate (HOLD/FIRE kept), the Arm names the lane");
+    s.fake.latest.packet.inv_slot=6;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"C4 reported in slot 6: unsupported");
+    s.fake.latest.packet.inv_slot=3;s.fake.latest.packet.gun_equip=411;s.fake.gun.fields.equip=411;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,
+          "another type-13 item (mine/decoy) with the placed key: unsupported");
+    // The arm 516 in hand slot 6 (body 1's record class 6).
+    s.fake.gun.fields.flags27c=6u<<6;s.fake.gun.fields.equip=516;s.fake.gun.mode_cur=1;
+    s.fake.latest.packet.gun_equip=516;s.fake.latest.packet.inv_slot=6;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported &&
+          (s.fake.arms.back().strip&0x58u)==0x58u,"arm with the arm key off: unsupported (Round 1)");
+    s.driver.settings.narm=true;s.N();
+    Check(s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support && s.fake.arms.back().strip==0x50u &&
+          s.fake.arms.back().native_arm && s.fake.arms.back().gun_rec==s.fake.gun.rec && !s.fake.arms.back().mag_mirror,
+          "arm 516 with the arm key: the support gate with FIRE stripped (HOLD only)");
+    Check(s.driver.mission.aim_refusal==slots::AimRefusal::none && s.fake.arms.back().aim_intent,"an admitted arm keeps the aim intent (toggle aim)");
+    // WS4-1: the rocket arm 517 (class 5; its hold is mode 54, a use mode) is no lane, even with a Ready that
+    // answers: unsupported, so body 1 never gets HOLD for it.
+    s.fake.gun.fields.flags27c=5u<<6;s.fake.gun.fields.equip=517;s.fake.latest.packet.gun_equip=517;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported && (s.fake.arms.back().strip&0x58u)==0x58u,
+          "rocket arm 517 with the arm key: unsupported (HOLD stripped too)");
+    s.fake.gun.fields.flags27c=6u<<6;s.fake.gun.fields.equip=516;s.fake.latest.packet.gun_equip=516;s.N();
+    Check(s.driver.settings.support_live && s.fake.arms.back().strip==0x50u,"back to 516: the arm lane again");
+    s.fake.latest.packet.inv_slot=3;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"an arm reported in slot 3: unsupported");
+    s.fake.latest.packet.inv_slot=6;s.driver.settings.nsupport=false;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported &&
+          !s.fake.arms.back().native_arm && !s.fake.arms.back().native_placed,"the lanes need partner_native_support");
+    s.driver.settings.nsupport=true;s.fake.support_ready=false;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported,"the observer's Ready refuses: unsupported");
+    // Back to the gun: ordinary gun policy.
+    s.fake.support_ready=true;s.fake.latest.packet.gun_equip=46;s.fake.latest.packet.inv_slot=1;
+    s.fake.gun.fields.equip=46;s.fake.gun.fields.flags27c=1u<<6;s.fake.gun.mode_cur=7;s.N();
+    Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::match,"the arm returns to ordinary gun policy");
 }
 
 void TestAnimRound1Weapons() {
@@ -6124,6 +6248,7 @@ int main() {
     TestNativeReloadSwitch();
     TestAnimRound1Weapons();
     TestNativeThrownSupport();
+    TestNativePlacedArmLanes();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "

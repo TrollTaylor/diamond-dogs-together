@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_support_policy.hpp"
 
 namespace mgscoop::partner_input {
 
@@ -218,6 +219,43 @@ struct V6Source {
 };
 void Fill6(InputPacket& packet, const V6Source& source) noexcept;
 
+// Sender hold (docs/anim-round2-throws.md "Unknown-slot glitch", run 0c9269ce).
+// The v4/v5 weapon fields come from two reads of the local player per tick: its
+// gun record (ReadGun k=0 with its fields: the equip, the magazine and the v5 gun
+// group) and its slot row (ReadSlots: inv_slot). One failed gun read used to send
+// a frame with neither XFlag::Equip nor GunFlag::Valid, which the receiver reads as
+// remote_slot=255 / remote_equip unknown (its remote_v5 needs GunFlag::Valid) and
+// which aborted a held throw. A failed read now republishes the last good read's
+// fields for up to kSenderHoldMs; a good read (whatever it says, an empty hand
+// included) always replaces them, and beyond the bound the unknown goes out.
+inline constexpr std::uint64_t kSenderHoldMs = 250;
+struct SenderHold {
+    bool gun;                     // a good gun read was recorded
+    std::uint64_t gun_ms;
+    bool equip_valid, mag_valid, gun_valid;
+    std::uint32_t equip, mag, mag_cap;
+    std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
+    bool slot;                    // a good slot read was recorded
+    std::uint64_t slot_ms;
+    std::uint8_t inv_slot;
+    bool gun_holding, slot_holding;   // the current held runs (log transitions)
+    std::uint64_t gun_since_ms, slot_since_ms;
+    std::uint32_t gun_held, slot_held;
+};
+enum class HoldEvent : std::uint8_t { none, start, held, resumed, expired };
+const char* HoldEventName(HoldEvent event) noexcept;
+struct SenderHoldOut {
+    HoldEvent gun, slot;
+    std::uint32_t gun_ms, slot_ms;     // the age of the good read at start, the run's length at resumed/expired
+    std::uint32_t gun_held, slot_held; // frames the run republished
+};
+// Whether a failed read at now_ms is still inside the hold of the last good one.
+bool SenderHoldLive(bool have, std::uint64_t good_ms, std::uint64_t now_ms) noexcept;
+// v: the frame's sources as this tick read them; gun_read / slot_read: whether
+// the gun record (with its fields) and the slot row were read. Records the good
+// parts and fills the failed parts from the hold while it is live.
+SenderHoldOut HoldSender(SenderHold& hold, V5Source& v, bool gun_read, bool slot_read, std::uint64_t now_ms) noexcept;
+
 // Sources of the three edge words src+0x4C/+0x50/+0x54 inside the window.
 enum class Word : std::uint8_t { zero = kPartnerWordZero, press = kPartnerWordPress, release = kPartnerWordRelease,
                                  held = kPartnerWordHeld, net = kPartnerWordNet };
@@ -262,6 +300,19 @@ struct InputEdges {
     std::uint32_t sets;     // edge sets accepted (statistics)
 };
 void AccumulateEdges(InputEdges& edges, const InputPacket& packet) noexcept;
+// Receiver side (partner_net, under its lock, before an accepted frame is stored):
+// the unknown remote slot/equip debounce (partner_support_policy::StepIdentity).
+// support_equip: the driver's last support verdict (0 = none). A held frame gets
+// slot 3, XFlag::Equip with that equip and, when it lacked GunFlag::Valid, the gun
+// group of the last complete frame (GunFlag::AimDir dropped: its angles are not
+// carried); its input (held bits, sticks, edges) is untouched. Returns the verdict.
+struct IdentityHold {
+    partner_support_policy::IdentityTrack track;
+    std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;  // the last complete frame's gun group
+};
+partner_support_policy::Identity PacketIdentity(const InputPacket& packet) noexcept;
+partner_support_policy::IdHold HoldIdentity(IdentityHold& hold, InputPacket& packet, std::uint16_t support_equip,
+                                            std::uint64_t now_ms) noexcept;
 // Hook-thread only; survives Arm gen bumps (see Arm).
 //   net_held: the masked net held level of the last live window. A stall
 //     (stale input) keeps it for kStaleGraceMs without edges (the hold history
@@ -323,6 +374,11 @@ struct Injection {
     std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
     bool slot_valid;
     std::uint8_t inv_slot;
+    // Native support (partner_support_policy StepFrame, critic #4): this frame
+    // is a stall freeze of the last admitted support frame (its HOLD|FIRE
+    // level, no edges); a consumer admits it with freshness waived only, every
+    // other support gate rechecked. Copied by LevelOnly/Strip, cleared by Neutral.
+    bool support_frozen;
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released
@@ -359,6 +415,18 @@ Injection Neutral(const Injection& frame) noexcept;
 // The injection without `bits` anywhere (held, the three words, the edges,
 // long12, tap12 and the synthesized taps): the weapon gate's FIRE | RELOAD.
 Injection Strip(const Injection& injection, std::uint32_t bits) noexcept;
+// Native support stall freeze (critic #4): `bits` held exactly at `level`
+// (within the mask) with no edge of them anywhere (the three words by their
+// setting, the edges, tap12 and the synthesized taps; long12 is a level and a
+// stale frame carries none).
+Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept;
+// Native support FIRE buffer (C(c)): `held` added to the level, `press` and
+// `release` added as edges, each word by its setting (net words unchanged).
+// A bit added as held or press is never also a release edge of the same frame
+// (a delivered tap's own release, which Compose emits one frame after the
+// synthesized tap, is cleared here; the buffer sends it on the next frame).
+Injection AddEdges(const Injection& injection, std::uint32_t held, std::uint32_t press, std::uint32_t release,
+                   const Config& config) noexcept;
 // age_ms > kFrameMaxAgeMs: Neutral; frame_id != last_used: the full frame
 // (last_used = frame_id); otherwise LevelOnly. `view` (optional) tells which.
 Injection ForConsumer(const Injection& frame, std::uint32_t frame_id, std::uint32_t& last_used, std::uint64_t age_ms,
@@ -538,6 +606,16 @@ struct Arm {
     std::uint64_t aim_act_until_ms;
     float reload_rate_k;
     bool native_support; // key selected; every consumer rechecks the fresh slot/equip and safety owners
+    // WS4 v1 (not compared by SameArm; both need native_support): the placed C4
+    // lane (type 13, 391..395, slot 3) and the arm lane (type 14, only 516,
+    // slot 6, HOLD only), lab keys partner_native_placed / partner_native_arm.
+    bool native_placed, native_arm;
+    // Native support C(b) (not compared by SameArm): instance 0's gun prim and
+    // record from the driver tick's ReadGun(k=0). The hook re-validates the
+    // prim (vtable, prim+0x58 == record, not body 1's) before it reads the
+    // viewer's gun mode, read-only, to attribute a slot-3 stock change between
+    // two body-1 jobs to the viewer's own throw (0 = none).
+    std::uintptr_t viewer_gun_prim, viewer_gun_rec;
 };
 
 // Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.
