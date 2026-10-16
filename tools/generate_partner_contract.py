@@ -742,6 +742,46 @@ SITES += [
     (0xDC2A50, '664489442418895424104883ec288bc24c8bc983e01f0f84', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
     (0xDC63A0, '488974241889542410574883ec208bc28bf2488bf983e01f', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
 ]
+# --- WS3 vehicles (docs/vehicle-ws3.md): the driver seated in an unnamed vehicle by id (B1)
+# and the viewer's copy tilted with the driver's record angles (A1, census first).
+VEHICLE_SITES = [
+    # B1: the DM binding turns a locator into the entry's target id and flag 2 (an empty locator
+    # stores 0xFFFF and no flag); the native id path writes exactly those two fields later.
+    (0x9DAAE1, '488b4424308038007437488d542458488d4c2430e8366b71ff488b542458488d4c2420e8079621000fb70866894c754866413bcd0f8481000000804c354002eb7a6644896c7548eb72',
+     'DM binding: locator "" -> id 0xFFFF, no flag; else id = 0xBF4110(name) and flag 2 when id != 0xFFFF'),
+    # The vehicle unit lookup (service vt+0x18, the DM anchor's own call): object = service+0xB0,
+    # count = object vt+0, live bit object+0x28, record = object+0x10 + (id & 0x1FF) * 0x80.
+    (0xA272B5, '488bf1488b89b0000000410fb7f94d8bf0488bda4885c97508c702ffffffffeb4b488b01ff10663bf87208c703ffffffffeb394c8b96b0000000440fb7cf498b5228',
+     'vehicle lookup 0xA272A0: object = service+0xB0, index < object vt+0(), bitmap object+0x28'),
+    (0xA272F7, '410fb6c1458bc1241f49c1e8050fb6c8428b04820fa3c873d049c1e107c703000000004d034a104d890e488b742438488b7c2440488bc3488b5c24304883c420415ec3',
+     'vehicle lookup: live bit, record = object+0x10 + index << 7'),
+    (0xB2DD30, '0fb781c0010000c3', 'vehicle object vt+0 = count: u16 object+0x1C0'),
+    (0xB2B7AD, '498b6d304c89b424b00000004c89bc24a80000000f29b424900000004d8bf24d8bfa49c1e6074903ee',
+     'TppVehicle2 SendCommand: record = primary+0x30 + index << 7 (object = primary+0x20)'),
+    (0xB2BA5D, '498b4530f3410f104c062c0f5ac9e9', 'TppVehicle2 GetPosition: rotY = record+0x2C'),
+    (0xB2BA9F, '3d485692540f85a2fdffff', 'TppVehicle2 SendCommand: SetPosition (0x54925648)'),
+    (0xB2BB2D, '498b4520498d4d200f57c9f20f5ac80f28c60f557424304c8d442460488bd50fc6c9000f54c10f56c60f29442460ff5078',
+     'SetPosition: object vt+0x78(object, record, vec4(x, y, z, rotY))'),
+    (0xB36780, '488b89a8010000488b0148ff6070', 'object vt+0x78 0xB36780: V = object+0x1A8; jmp V vt+0x70'),
+    (0x16FBEDC, '807a6eff498bd8488bfa488bf1740d488b8998000000488b01ff50780f28030f294720',
+     '0x16FBEC0: realized (record+0x6E != 0xFF) -> RB = V+0x98, RB vt+0x78; then record+0x20 = vec4'),
+    (0x16FDDC0, '440fb64a6c488b417049c1e9044a8b0cc84d8bc8440fb6426f488b010fb7527848ffa0f0010000',
+     '0x16FDDC0: cat = (RB+0x70)[record+0x6C >> 4]; cat vt+0x1F0(cat, record+0x78, record+0x6F, vec4)'),
+    (0xBA9747, '488b81c8010000410fb6f849897310488b34f8488b01400fb6d74d8bf1488bd9ff50',
+     '0xBA9710: body = (cat+0x1C8)[slot]'),
+    (0xBA97CA, '488d542430488bce440f299c24d0000000440f294c2440440f29a424c0000000e8b1459bff',
+     '0xBA9710: 0x55DDA0(body) (a small move keeps the body Euler angles and adds the yaw delta)'),
+    (0xBA9812, '0f2f05b3da4f010f83e90300000f28c70f540507e94f010f2f0538e84f010f83d2030000',
+     '0xBA9710: the small move only below 1.0 (squared m, 0x20A72CC) and 0.1 rad (0x20A8068)'),
+    (0x55DBC8, '440f286920488bda488d5597e8c7010000', '0x55DB80 (the seat anchor world matrix): position record+0x20, 0x55DDA0(record)'),
+    (0x55DDF6, 'f30f104148', '0x55DDA0 reads +0x48'),
+    (0x55DF6D, 'f30f104144', '0x55DDA0 reads +0x44'),
+    (0x55E0D9, 'f30f10492c', '0x55DDA0 reads +0x2C (yaw)'),
+]
+SITES += VEHICLE_SITES
+# The two small-move limits 0xBA9710 compares against (read-only .edata dwords; vehicle_assertions
+# and partner_vehicle::VerifyImage check them): 1.0f squared metres and 0.1f radians.
+VEHICLE_DATA = [(0x20A72CC, 0x3F800000), (0x20A8068, 0x3DCCCCCD)]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -881,6 +921,19 @@ SLOTS += [
     (0x23894B0, 0x10, 0xEE9D70, 'support inventory base: release'),
     (0x23895D0, 0x10, 0xEE9D70, 'support inventory derived: release'),
 ]
+# WS3 vehicles: the unit lookup, the SetPosition chain and the realized category bodies
+# (each set is every vtable holding that function: vehicle_assertions checks the qword hits).
+VEHICLE_V_VTS = (0x2441010, 0x2441120)
+VEHICLE_RB_VTS = (0x24416B0, 0x2441780)
+VEHICLE_CAT_VTS = (0x22F7F90, 0x22F82E0, 0x22F8630, 0x22F8980, 0x22F8CD0, 0x22FCB50)
+SLOTS += [
+    (0x22AC8E0, 0x18, 0xA272A0, 'vehicle service vt+0x18 = the id lookup (the DM anchor calls it)'),
+    (0x22ED9F0, 0x00, 0xB2DD30, 'vehicle object vt+0 = the count getter'),
+    (0x22ED9F0, 0x78, 0xB36780, 'vehicle object vt+0x78 = the SetPosition forwarder'),
+]
+SLOTS += [(vt, 0x70, 0x16FBEC0, 'vehicle system V vt+0x70 = record SetPosition') for vt in VEHICLE_V_VTS]
+SLOTS += [(vt, 0x78, 0x16FDDC0, 'vehicle realized-body manager RB vt+0x78 = realized SetPosition') for vt in VEHICLE_RB_VTS]
+SLOTS += [(vt, 0x1F0, 0xBA9710, 'vehicle category vt+0x1F0 = the realized body pose') for vt in VEHICLE_CAT_VTS]
 SLOTS += partner_aim_sites.SLOTS
 
 
@@ -1640,8 +1693,57 @@ def support_native_assertions():
     return out
 
 
+def vehicle_assertions():
+    """WS3 vehicles (docs/vehicle-ws3.md): the facts behind the ride census, the seat-by-id write and the tilt write."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+
+    def call_target(site):
+        return site + 5 + struct.unpack('<i', rd(site + 1, 4))[0]
+    need(rd(0x9DAB04, 1) == b'\xe8' and call_target(0x9DAB04) == 0xBF4110, 'DM binding: the locator name -> id helper 0xBF4110')
+    need(rd(0x1198840, 1) == b'\xe8' and call_target(0x1198840) == 0xB7AF90, 'the DM anchor seats with 0xB7AF90(unit, out, seat)')
+    need(call_target(0xB7AFC9) == 0x55DB80, 'the seat matrix 0xB7AF90 starts from the unit world matrix 0x55DB80(unit)')
+    need(call_target(0x55DBD4) == 0x55DDA0, 'the unit world matrix uses 0x55DDA0 on the same record')
+    need(call_target(0xBA97EA) == 0x55DDA0, 'the realized body pose 0xBA9710 uses 0x55DDA0(body)')
+    need(rip_target(0xBA9812, 7) == 0x20A72CC and rip_target(0xBA9829, 7) == 0x20A8068, 'the small-move limits are 0x20A72CC / 0x20A8068')
+    need(struct.unpack('<f', rd(0x20A72CC, 4))[0] == 1.0 and abs(struct.unpack('<f', rd(0x20A8068, 4))[0] - 0.1) < 1e-7,
+         'the small-move limits are 1.0f and 0.1f')
+    for rva, value in VEHICLE_DATA:
+        need(struct.unpack('<I', rd(rva, 4))[0] == value and section_of(rva) == '.edata', f'vehicle data {rva:#x} = {value:#x} in .edata')
+    need(not any(s.Characteristics & 0x80000000 for s in pe.sections if s.Name.rstrip(bytes(1)).decode() == ".edata"), ".edata is not writable")
+    # Every vtable that holds the chain functions is in the pinned sets (no other class reaches them).
+    need(qword_hits(0x16FBEC0) == sorted(vt + 0x70 for vt in VEHICLE_V_VTS), f'V vtables: {[hex(x) for x in qword_hits(0x16FBEC0)]}')
+    need(qword_hits(0x16FDDC0) == sorted(vt + 0x78 for vt in VEHICLE_RB_VTS), f'RB vtables: {[hex(x) for x in qword_hits(0x16FDDC0)]}')
+    need(qword_hits(0xBA9710) == sorted(vt + 0x1F0 for vt in VEHICLE_CAT_VTS), f'category vtables: {[hex(x) for x in qword_hits(0xBA9710)]}')
+    need(qword_hits(0xA272A0) == [0x22AC8E0 + 0x18] and qword_hits(0xB36780) == [0x22ED9F0 + 0x78] and
+         qword_hits(0xB2DD30) == [0x22ED9F0], 'the lookup, the forwarder and the count getter each have one vtable slot')
+    # 0x55DDA0 keeps rcx (the record or the body) through its three angle reads: no call, jump out or rcx write before 0x55E0D9.
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    md.detail = True
+    starts, clobber = set(), []
+    for i in md.disasm(rd(0x55DDA0, 0x55E0DE - 0x55DDA0), IB + 0x55DDA0):
+        starts.add(i.address - IB)
+        if i.mnemonic in ('call', 'ret', 'jmp') or any(md.reg_name(r) in ('rcx', 'ecx', 'cx', 'cl') for r in i.regs_access()[1]):
+            clobber.append(hex(i.address - IB))
+    need(not clobber and {0x55DDF6, 0x55DF6D, 0x55E0D9} <= starts, f'0x55DDA0 reads +0x48/+0x44/+0x2C of its rcx: {clobber}')
+    # The DM record entry arrays of the seat-by-id write (pinned inside the ride seat blocks).
+    need(rd(0x1198792, 7) == bytes.fromhex('0fb699a0010000'), 'the anchor reads the current entry rec+0x1A0')
+    need(rd(0x11987A1, 8) == bytes.fromhex('0fb7bc59c0000000'), 'the anchor reads the entry target id rec+0xC0+2*cur')
+    need(rd(0x11987B5, 8) == bytes.fromhex('488b9cd9d0000000'), 'the anchor reads the entry CNP rec+0xD0+8*cur')
+    need(rd(0x1198CF7, 8) == bytes.fromhex('0fb6841eb8000000') and rd(0x1198D18, 5) == bytes.fromhex('4c8b44f378'),
+         'entry playback reads the flags rec+0xB8+cur and the named state rec+0x78+8*cur')
+    need(rd(0x1199508, 8) == bytes.fromhex('f68418b800000002'), 'phase 6 applies the anchor only with flag 2 at rec+0xB8+cur')
+    need(rd(0x1198821, 10) == bytes.fromhex('48b851e228daca2c0000'), 'the anchor accepts CNP_ppos_c 0x2ccada28e251 only')
+    return out
+
+
 failures += anim_round1_assertions()
 failures += support_native_assertions()
+failures += vehicle_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1990,6 +2092,28 @@ w('inline constexpr std::uintptr_t support_stock_back_rva=0x108c8ec, support_sto
 w('inline constexpr std::uint32_t support_stock_load_orig=0x04818b41, support_stock_load_new=0xcccca1eb;')
 w('inline constexpr std::size_t support_stock_counts=0x614, support_stock_count=46, support_item_handle=0x240;')
 w('inline constexpr std::uint8_t equip_type_thrown=12, equip_type_placed=13;')
+w('// --- WS3 vehicles (partner_vehicle, partner_player::WriteSeatTarget; docs/vehicle-ws3.md) ---------')
+w('// The unit chain: service = *(*(*(*(service_root)+8)+0x98)+0x2a8) (vt 0x22ac8e0, +0x18 = the lookup), object =')
+w('// service+0xb0 (vt 0x22ed9f0: +0 count, +0x78 SetPosition forwarder), V = object+0x1a8 (vt+0x70), RB = V+0x98')
+w('// (vt+0x78), cat = (RB+0x70)[type >> 4] (vt+0x1f0), body = (cat+0x1c8)[slot].')
+w('inline constexpr std::uintptr_t vehicle_service_vt_rva=0x22ac8e0, vehicle_lookup_rva=0xa272a0, vehicle_object_vt_rva=0x22ed9f0;')
+w('inline constexpr std::uintptr_t vehicle_count_fn_rva=0xb2dd30, vehicle_setpos_fn_rva=0xb36780, vehicle_v_fn_rva=0x16fbec0;')
+w('inline constexpr std::uintptr_t vehicle_rb_fn_rva=0x16fddc0, vehicle_cat_fn_rva=0xba9710;')
+w('inline constexpr std::uintptr_t vehicle_v_vts[]={' + ','.join(f'0x{v:x}' for v in VEHICLE_V_VTS) + '};')
+w('inline constexpr std::uintptr_t vehicle_rb_vts[]={' + ','.join(f'0x{v:x}' for v in VEHICLE_RB_VTS) + '};')
+w('inline constexpr std::uintptr_t vehicle_cat_vts[]={' + ','.join(f'0x{v:x}' for v in VEHICLE_CAT_VTS) + '};')
+w('// The contract blocks partner_vehicle re-checks before every tilt write (code_sites rvas) and the')
+w('// small-move limits of 0xBA9710 (read-only .edata dwords, little-endian float bits).')
+w('inline constexpr std::uintptr_t vehicle_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in VEHICLE_SITES if rva != 0x9DAAE1) + '};')
+w('struct DataWord { std::uintptr_t rva; std::uint32_t value; };')
+w('inline constexpr DataWord vehicle_data[]={' + ','.join(f'{{0x{rva:x},0x{value:08x}}}' for rva, value in VEHICLE_DATA) + '};')
+w('// The DM record entry arrays (rec = the body-1 DM record, stride 0x250): the named state code rec+0x78+8i,')
+w('// the flags rec+0xb8+i (2: target, 8: named state), the target id rec+0xc0+2i, the CNP rec+0xd0+8i, the')
+w('// current entry rec+0x1a0. The seat-by-id write stores the ids first, then ORs flag 2 (critic #17).')
+w('inline constexpr std::size_t dm_entry_state=0x78, dm_entry_flags=0xb8, dm_entry_target=0xc0, dm_entry_cnp=0xd0, dm_entry_cur=0x1a0;')
+w('inline constexpr std::uint8_t dm_entry_flag_target=2, dm_entry_flag_state=8, dm_entry_max=8;')
+w('inline constexpr std::uint64_t dm_cnp_ppos_c=0x2ccada28e251ull;  // low 48 bits')
+w('inline constexpr std::uintptr_t seat_target_blocks[]={0x9daae1,0x1198770,0x11987b5,0x11987e5,0x1198834,0x1198cc0,0x1198cff,0x1199508};')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

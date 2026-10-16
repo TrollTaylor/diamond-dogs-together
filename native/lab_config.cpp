@@ -185,6 +185,15 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     else return false;
     return true;
 }
+// WS3 vehicles (docs/vehicle-ws3.md): the ride census, seat by id and tilt
+// keys (booleans, lab only: ResolveWeaponDefaults turns them off in play).
+bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
+    else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
+    else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
+    else return false;
+    return true;
+}
 // Automatic save handoff and the guest travel lock (join-fix phase 2 P2-11):
 // save_handoff=off|stage|scene|always and travel_lock=0|1. Neither is a play
 // refusal; the effective travel lock is EffectiveTravelLock.
@@ -252,7 +261,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         // Separate key helpers (anim rounds 1-2, save handoff): the main chain
         // is at MSVC's block nesting limit.
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
-            ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok)) {
+            ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
+            ParseVehicleKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -1369,6 +1379,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_equip_measured = false;
         // The fire census is a lab measurement (it swaps a forwarding census slot).
         c.partner_fire_census = false;
+        // WS3 vehicles: lab experiments until their hidden runs pass.
+        c.partner_ride_census = c.partner_ride_seat_id = c.partner_ride_tilt = false;
     }
 }
 

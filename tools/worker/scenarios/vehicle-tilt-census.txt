@@ -1,0 +1,69 @@
+# WS3 step 0 (docs/vehicle-ws3.md): the read-only vehicle census. Nothing is
+# written: partner_ride_census=1 only logs, once a second per ridden vehicle,
+# the unit record (rec+0x20 pose, +0x2C yaw, +0x44/+0x48 the other two Euler
+# angles, +0x6C type, +0x6E realized, +0x6F slot) and its realized slot body
+# (cat+0x1C8)[slot] with same=1 when the body IS the record (critic #16).
+# The host drives the nearest authored jeep away from the Wakh Sind plaza over
+# the surrounding slopes while the guest watches (the seat scenario's steps).
+#
+# Run (both copies on the same build, -PartnerProfile native for the seat key):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-tilt-census.txt
+#        -PartnerProfile native -NativeStage gun -SaveSeed lab
+#
+# Evidence (host log: who=local is the driver's own record; guest log:
+# who=remote is the guest's copy of that vehicle):
+#   partner_ride_census; who=local; id=256xx; ref=ok; type=0x..; cat=..; ...; realized=..; ...; a44_mrad=..; a48_mrad=..;
+#     body_ref=ok; ...; same=1|0
+#   - A1 may be enabled only if same=1 on both sides (the realized body is the record).
+#   - The driver's a44_mrad / a48_mrad must CHANGE while it climbs and turns (live pitch/roll in
+#     the record) and stay small on flat ground; the guest's who=remote angles stay level
+#     (today's bug: only position and yaw cross the wire).
+#   - cat= is the same on both sides for an authored jeep (the B1 category gate).
+labsetting partner_native_ride=seat
+labsetting partner_ride_census=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+placebehind guest host 6 0
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+host run vehicle_names
+# Parked: the record angles at rest.
+wait 3000
+both capture census-parked
+# Away from the plaza and over the slopes around it (forward, left, forward, right, forward).
+host hold w 1500 nowait
+guest burst census-drive-a 8 200
+host hold w 1500
+host hold w+a 1500
+host hold w 1500
+host hold w 1500
+host hold w+d 1500
+host hold w 1500
+host hold w 1500 nowait
+guest burst census-drive-b 8 200
+host hold w+a 1500
+host hold w 1500
+host release
+wait 3000
+both capture census-stopped
+host press e 150
+wait 3000
+both capture census-exited
+state

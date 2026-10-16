@@ -45,6 +45,7 @@
 #include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
+#include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_reload.hpp"
@@ -351,6 +352,14 @@ struct Hooks {
     // the cam_connect refusal. Nothing in this track arms one.
     bool (*dm_camera_skip_armed)(void* context) noexcept = nullptr;
     bool (*support_ready)(void*,const partner_player::State&,std::uint16_t equip) noexcept = nullptr;
+    // --- WS3 vehicles (docs/vehicle-ws3.md; null: the census, the seat-by-id
+    // offer and the ride addendum's category refuse with reason=unavailable).
+    // Read-only vehicle unit and realized body read (partner_vehicle::ReadLive).
+    void (*vehicle_read)(void* context, std::uint16_t id, partner_vehicle::Read& out) noexcept = nullptr;
+    // The seat-by-id write (partner_player::WriteSeatTarget), only on the
+    // player-update thread with the seat dwords armed: nullptr on success.
+    const char* (*seat_target)(void* context, const partner_player::SeatTargetRequest& request,
+                               partner_player::SeatTargetResult& out) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -369,6 +378,9 @@ inline constexpr std::uint64_t kSeatConfirmMs = 2000, kSeatStopMs = 1000, kSeatE
 inline constexpr std::uint64_t kSeatFarMs = 1000, kSeatGetInMs = 1500, kSeatStatusMs = 1000, kSeatReleaseMs = 1500;
 inline constexpr std::uint32_t kSeatFarMm = 3000;
 inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
+// WS3 ride census cadence and cap (partner_ride_census=1).
+inline constexpr std::uint64_t kRideCensusMs = 1000;
+inline constexpr unsigned kRideCensusCap = 400;
 // The seat flow's phases (Mission::seat.phase).
 enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle };
 const char* SeatPhaseName(SeatPhase phase) noexcept;
@@ -448,6 +460,9 @@ struct Settings {
     PartnerNativeRide nride;  // qualified visibility policy; off until live acceptance
     PartnerRideSeatEnter seat_enter;  // nride=seat: direct loop or get-in chain
     PartnerRideSeatExit seat_exit;    // nride=seat: stop or get-off advance
+    // WS3 vehicles (docs/vehicle-ws3.md; lab only, default off): the ride
+    // census lines, the seat-by-id path (B1) and RIDE_TILT (A1).
+    bool ride_census, seat_id, ride_tilt;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -522,8 +537,18 @@ struct Mission {
         std::uint64_t vehicle_since_ms;
         std::uint16_t vehicle_rev;
         bool vehicle_live;
+        // Seat by id (WS3 B1): the id path was offered for this episode
+        // (seat_entry::by_id), its gate reason, and whether this play's DM
+        // record was targeted (target_done; target_wrote: by us, not a name).
+        bool byid, target_done, target_wrote;
+        const char* byid_reason;
+        std::uint8_t remote_category, local_category;
     } seat;
     bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
+    // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
+    // kRideCensusMs (the local one and the remote driver's copy), own cap.
+    LogCap census_cap;
+    std::uint64_t census_ms;
     LogCap seat_cap;       // partner_ride_seat event lines
     unsigned seat_status_lines;
     bool seat_status_capped;
@@ -1076,6 +1101,16 @@ struct Driver {
     std::uint32_t ride_tx_epoch;
     std::uint64_t ride_tx_ms;
     bool ride_invalid_logged;
+    // WS3 vehicles (docs/vehicle-ws3.md): the ride wire v3 addendum (category
+    // and the seat-id / tilt features), received and sent (link-session scoped),
+    // and the vehicle the local player rides (the tick's veh=, 0xFFFF none).
+    partner_ride_wire::ExtStore ride_ext;
+    partner_ride_wire::Ext ride_ext_tx;
+    bool ride_ext_tx_have;
+    std::uint32_t ride_ext_tx_epoch;
+    std::uint64_t ride_ext_tx_ms;
+    bool ride_ext_logged;
+    std::uint16_t local_vehicle;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;
@@ -1084,6 +1119,11 @@ struct Driver {
     Mission mission;
 };
 
+
+// WS3 vehicles: the vehicle the local player rides (0xFFFF none) and whether
+// the peer's live ride addendum advertises RIDE_TILT (docs/vehicle-ws3.md).
+std::uint16_t LocalVehicle(const Driver& driver) noexcept;
+bool RideTiltPeer(const Driver& driver, std::uint32_t epoch, std::uint64_t now_ms) noexcept;
 
 // Read-only admission from the same effective settings as Tick. The caller
 // must serialize with driver ticks; no caller-supplied active flag is accepted.

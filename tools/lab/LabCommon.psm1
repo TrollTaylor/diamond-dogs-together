@@ -326,6 +326,11 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_fire_census'; Json = 'fire_census'; Kind = 'bool' },
     # Native thrown support (type 12 only), default off in every profile.
     @{ Key = 'partner_native_support'; Json = 'native_support'; Kind = 'bool' },
+    # WS3 vehicles (docs/vehicle-ws3.md): the read-only ride census, the seat by id and RIDE_TILT
+    # (lab experiments, default off natively, off in play); written only when set.
+    @{ Key = 'partner_ride_census'; Json = 'ride_census'; Kind = 'bool' },
+    @{ Key = 'partner_ride_seat_id'; Json = 'ride_seat_id'; Kind = 'bool' },
+    @{ Key = 'partner_ride_tilt'; Json = 'ride_tilt'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

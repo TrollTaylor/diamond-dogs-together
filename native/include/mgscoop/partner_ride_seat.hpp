@@ -92,4 +92,52 @@ bool IsSeatState(std::uint64_t code, std::uint8_t seat) noexcept;
 // camera (0x11995F1..0x119971C).
 inline constexpr std::uint64_t kForbiddenRearSeatState = 0x2278ccf2234dull;
 
+// --- Seat by id (WS3 B1, docs/vehicle-ws3.md): an unnamed vehicle (the
+// sortie/deployed 25600..25607) has no locator, so Lua plays the same seat
+// chain untargeted (locator "", still CNP_ppos_c / MTP_GLOBAL_C). The binding
+// then stores target 0xFFFF and no flag 2 (0x9DAAE1..0x9DAB2A); a named
+// locator would have stored the id and flag 2. Once the seat DM is live on
+// body 1, the driver writes exactly those two fields into body 1's DM record:
+// every chained entry's target id first (rec+0xC0+2i, read by the phase-0
+// anchor 0x11987A1), then flag 2 (rec+0xB8+i, read by phase 6 0x1199508), on
+// the player-update thread so no frame sees the flag before the id.
+inline constexpr std::uint64_t kCnpPposC = 0x2ccada28e251ull;  // CNP_ppos_c, low 48 bits (0x1198821)
+inline constexpr std::uint8_t kEntryFlagTarget = 2, kEntryFlagState = 8, kEntryMax = 8;
+struct EntryView {
+    std::uint8_t flags[kEntryMax];
+    std::uint16_t ids[kEntryMax];
+    std::uint64_t cnp[kEntryMax];
+    std::uint64_t state[kEntryMax];
+    std::uint8_t cur;     // rec+0x1A0
+    std::uint64_t rec18;  // the playing state (rec+0x18)
+};
+struct TargetPlan {
+    const char* refusal;  // nullptr: the plan holds
+    bool write;           // false: every entry is already targeted at `vehicle` (a named locator)
+    std::uint8_t entries;
+};
+// The chain Lua played has `entries` (1..3) entries; every one must carry
+// CNP_ppos_c and a named seated state of `seat` (flag 8, rec+0x78+8i), and
+// either all are already targeted at `vehicle` with flag 2 (named: nothing to
+// write) or all are untargeted (0xFFFF, no flag 2: write). Anything else is
+// refused (foreign_target, cnp, entry_state, ...).
+TargetPlan PlanSeatTarget(const EntryView& view, std::uint16_t vehicle, std::uint8_t seat, std::uint8_t entries) noexcept;
+// The write itself, through `store` (the game: interlocked 16-bit exchanges and
+// byte ORs on body 1's live DM record; tests: a recorder): every entry's target
+// id first, then every entry's flag 2, so no frame anchors on a flag without
+// its id. False at the first failed store (the caller reads back anyway).
+inline constexpr std::size_t kEntryState = 0x78, kEntryFlags = 0xB8, kEntryTarget = 0xC0, kEntryCnp = 0xD0, kEntryCur = 0x1A0;
+template <class Store>
+bool ApplySeatTarget(Store& store, std::uintptr_t rec, std::uint16_t vehicle, std::uint8_t entries) noexcept {
+    for (unsigned i = 0; i < entries && i < kEntryMax; ++i)
+        if (!store.Word(rec + kEntryTarget + 2u * i, vehicle)) return false;
+    for (unsigned i = 0; i < entries && i < kEntryMax; ++i)
+        if (!store.OrByte(rec + kEntryFlags + i, kEntryFlagTarget)) return false;
+    return true;
+}
+// The number of chained entries for RIDE_SEAT entry bits (get_on 1, get_off 2).
+inline std::uint8_t ChainEntries(std::uint8_t entry_bits) noexcept {
+    return static_cast<std::uint8_t>(1u + (entry_bits & 1u) + ((entry_bits >> 1) & 1u));
+}
+
 } // namespace mgscoop::partner_ride_seat

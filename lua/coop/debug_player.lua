@@ -140,14 +140,22 @@ do
       local x, z = t[1] + 1.6 * dx / len, t[3] + 1.6 * dz / len
       local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok2, fmt("%s;via=%s;horse=%.2f,%.2f,%.2f", msg, via, t[1], t[2], t[3])
-    elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and a[2] == "jeep")) then
-      -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition).
+    elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie"))) then
+      -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition);
+      -- "sortie": the nearest deployed/sortie vehicle 25600..25607 instead (no
+      -- authored locator: the WS3 seat-by-id case, docs/vehicle-ws3.md).
       local me, best, bestD, bestName = A.pose(), nil, nil, nil
       local names = {}
-      for i = 0, 12 do names[#names + 1] = fmt("veh_lv_%04d", i) end
-      if a[2] ~= "jeep" then for i = 0, 5 do names[#names + 1] = fmt("veh_trc_%04d", i) end end
-      for _, name in ipairs(names) do
-        local okId, vid = pcall(GameObject.GetGameObjectId, "TppVehicle2", name)
+      if a[2] == "sortie" then
+        for i = 0, 7 do names[#names + 1] = {fmt("sortie_%d", i), 25600 + i} end
+      else
+        for i = 0, 12 do names[#names + 1] = fmt("veh_lv_%04d", i) end
+        if a[2] ~= "jeep" then for i = 0, 5 do names[#names + 1] = fmt("veh_trc_%04d", i) end end
+      end
+      for _, entry in ipairs(names) do
+        local name, okId, vid = entry, false, nil
+        if type(entry) == "table" then name, okId, vid = entry[1], true, entry[2]
+        else okId, vid = pcall(GameObject.GetGameObjectId, "TppVehicle2", name) end
         if okId and type(vid) == "number" and vid >= 0 and vid < 65535 then
           local okp, pos, rot = pcall(GameObject.SendCommand, vid, {id = "GetPosition"})
           if okp and pos ~= nil then

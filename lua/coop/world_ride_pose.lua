@@ -5,15 +5,21 @@
 -- GetPosition and SetPosition. Neither call mounts, dismounts, or arms.
 -- The driven vehicle streams RIDE_FAST datagrams at 20 Hz; the other game
 -- renders it 100 ms behind the newest sender tick and places it every frame.
+-- WS3 A1 (docs/vehicle-ws3.md, lab partner_ride_tilt=1): RIDE_TILT carries the
+-- driver's vehicle record angles (+0x44/+0x48, mrad) under the same sender
+-- tick, only when the native read receipt says the peer asked for it; the
+-- viewer interpolates them like the yaw and the native write receipt puts
+-- them into its copy's record right before each SetPosition.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
 local R = {realized = {}, occupied = {}, poses = {}, seq = 0, nextSend = 0, nextRefresh = 0,
     fast = {send = {next = 0}, tracks = {}, closed = {}, applied = 0}}
 W.ridePose = R
-local OP, FAST = 42, 44
+local OP, FAST, TILT = 42, 44, 45
 W.OP.RIDE_BODY = OP
 W.OP.RIDE_FAST = FAST
+W.OP.RIDE_TILT = TILT
 local floor = math.floor
 local SEND_MS, DELAY_MS, EXTRAPOLATE_MS, STALE_MS, CLOSED_MS = 50, 100, 200, 1500, 500
 local JUMP_MM, MAX_SAMPLES = 30000, 32
@@ -73,6 +79,44 @@ function R.trackPush(track, now, t, x, y, z, yaw)
     else track.offset = track.offset + (offset - track.offset) * 0.02 end
     track.received = now
     return true
+end
+-- Tilt samples (pure): a RIDE_TILT tick is unwrapped against its FAST track's
+-- sender clock, kept in tick order (newest 32); a tilt older than the newest
+-- is dropped. tiltAt interpolates at render time rt and holds the newest for
+-- at most TILT_HOLD_MS (then nil: no write, the copy keeps its own angles).
+local TILT_HOLD_MS, TILT_MAX = 300, 1570
+function R.tiltPush(track, t, a44, a48)
+    if type(track) ~= "table" or track.raw == nil or track.time == nil or not integer(t, 0, 4294967295) then return false end
+    if not integer(a44, -TILT_MAX, TILT_MAX) or not integer(a48, -TILT_MAX, TILT_MAX) then return false end
+    local d = (t - track.raw) % 4294967296
+    if d >= 2147483648 then d = d - 4294967296 end
+    local ut = track.time + d
+    local tilts = track.tilts
+    if not tilts then tilts = {}; track.tilts = tilts end
+    local last = tilts[#tilts]
+    if last and ut <= last.t then return false end
+    tilts[#tilts + 1] = {t = ut, a = a44, b = a48}
+    if #tilts > MAX_SAMPLES then table.remove(tilts, 1) end
+    return true
+end
+function R.tiltAt(track, rt)
+    local tilts = type(track) == "table" and track.tilts
+    if not tilts or #tilts == 0 or type(rt) ~= "number" then return nil end
+    local first, last = tilts[1], tilts[#tilts]
+    if rt <= first.t then return first.a, first.b end
+    if rt >= last.t then
+        if rt - last.t > TILT_HOLD_MS then return nil end
+        return last.a, last.b
+    end
+    for i = #tilts - 1, 1, -1 do
+        local a = tilts[i]
+        if a.t <= rt then
+            local b = tilts[i + 1]
+            local f = (rt - a.t) / (b.t - a.t)
+            return R.angleLerp(a.a, b.a, f), R.angleLerp(a.b, b.b, f)
+        end
+    end
+    return first.a, first.b
 end
 function R.trackPose(track, now)
     local samples = type(track) == "table" and track.samples
@@ -161,6 +205,21 @@ function R.vehiclePose(id)
     if not yaw or yaw < -31416 or yaw > 31416 then yaw = 0 end
     return xm, ym, zm, yaw
 end
+-- Native tilt receipts (inert without the native lab key and a capable peer).
+function R.tiltRead(id)
+    if R.tiltOff or type(W.receipt) ~= "function" or not integer(id, 0, 65534) then return nil end
+    local ok, a, b = pcall(W.receipt, string.format("return 'MGS_COOP_RIDE_TILT_V1' -- read %d", id))
+    if ok and integer(a, -TILT_MAX, TILT_MAX) and integer(b, -TILT_MAX, TILT_MAX) then return a, b end
+    -- partner_ride_tilt is fixed for the process: an 'off' answer ends the asking.
+    if ok and a == nil and b == "off" then R.tiltOff = true end
+end
+function R.tiltWrite(id, a, b)
+    if type(W.receipt) ~= "function" or not integer(id, 0, 65534) or type(a) ~= "number" or type(b) ~= "number" then return false end
+    local ra, rb = floor(a + 0.5), floor(b + 0.5)
+    if not integer(ra, -TILT_MAX, TILT_MAX) or not integer(rb, -TILT_MAX, TILT_MAX) then return false end
+    local ok, result = pcall(W.receipt, string.format("return 'MGS_COOP_RIDE_TILT_V1' -- write %d %d %d", id, ra, rb))
+    return ok and result == true
+end
 function R.place(id, x, y, z, yaw)
     local api = W.api
     if type(api) ~= "table" or type(api.send) ~= "function" or type(api.buddyVector) ~= "function" then return false end
@@ -216,7 +275,12 @@ function R.fastSend(now)
     if now < s.next then return end
     s.next = now + SEND_MS
     local x, y, z, yaw = R.vehiclePose(id)
-    if x and W.tx(FAST, W.tick32(now), 3, id, x, y, z, yaw) then R.fast.sent = (R.fast.sent or 0) + 1 end
+    if x and W.tx(FAST, W.tick32(now), 3, id, x, y, z, yaw) then
+        R.fast.sent = (R.fast.sent or 0) + 1
+        -- The record angles under the same sender tick (nil unless enabled and asked for).
+        local a, b = R.tiltRead(id)
+        if a and W.tx(TILT, W.tick32(now), id, a, b) then R.fast.tiltSent = (R.fast.tiltSent or 0) + 1 end
+    end
 end
 -- One line every 2 s while a track or a stream is live (rate evidence).
 local function logFast(now)
@@ -227,7 +291,8 @@ local function logFast(now)
     for _, t in pairs(f.tracks) do tracks, state, samples = tracks + 1, t.state or state, #t.samples end
     if tracks == 0 and (f.sent or 0) == (f.loggedSent or 0) then return end
     f.loggedSent = f.sent or 0
-    W.log(string.format("event=ride_fast;tracks=%d;applied=%d;sent=%d;state=%s;samples=%d", tracks, f.applied, f.sent or 0, state, samples))
+    W.log(string.format("event=ride_fast;tracks=%d;applied=%d;sent=%d;state=%s;samples=%d;tilt_sent=%d;tilt_written=%d", tracks, f.applied,
+        f.sent or 0, state, samples, f.tiltSent or 0, f.tiltWritten or 0))
 end
 -- Passenger/observer side: place each live track every frame.
 function R.fastApply(now)
@@ -237,9 +302,14 @@ function R.fastApply(now)
             R.fast.tracks[id] = nil
         elseif id ~= R.fast.localId then
             local a = track.applied
-            if not a or math.abs(a[1] - x) >= 1 or math.abs(a[2] - y) >= 1 or math.abs(a[3] - z) >= 1 or math.abs(a[4] - yaw) >= 1 then
+            local ta, tb = nil, nil
+            if track.offset ~= nil then ta, tb = R.tiltAt(track, now - track.offset - DELAY_MS) end
+            local tilted = ta ~= nil and (not a or a[5] == nil or math.abs(a[5] - ta) >= 1 or math.abs(a[6] - tb) >= 1)
+            if not a or tilted or math.abs(a[1] - x) >= 1 or math.abs(a[2] - y) >= 1 or math.abs(a[3] - z) >= 1 or math.abs(a[4] - yaw) >= 1 then
+                -- The tilt goes into the copy's record right before its SetPosition (0xBA9710's small move reads it).
+                if ta ~= nil and R.tiltWrite(id, ta, tb) then R.fast.tiltWritten = (R.fast.tiltWritten or 0) + 1 end
                 if R.place(id, x, y, z, yaw) then
-                    track.applied = {x, y, z, yaw}
+                    track.applied = {x, y, z, yaw, ta, tb}
                     track.state = state
                     R.fast.applied = R.fast.applied + 1
                 end
@@ -263,6 +333,14 @@ W.handlers[OP] = function(v)
     local decision = R.admit(pose, R.realized, vehicle)
     if decision.action ~= "apply" then return end
     R.move(pose, decision.command, decision.field)
+end
+W.handlers[TILT] = function(v)
+    if not W.paired or not W.eff or W.eff < 3 or type(v) ~= "table" or #v ~= 4 then return end
+    local id = v[2]
+    if not integer(id, 0, 65534) or horse(id) or walker(id) then return end
+    -- A tilt rides on a live RIDE_FAST track of that vehicle only.
+    local track = R.fast.tracks[id]
+    if track then R.tiltPush(track, v[1], v[3], v[4]) end
 end
 W.handlers[FAST] = function(v)
     if not W.paired or not W.eff or W.eff < 3 or type(v) ~= "table" or #v ~= 7 or v[2] ~= 3 then return end

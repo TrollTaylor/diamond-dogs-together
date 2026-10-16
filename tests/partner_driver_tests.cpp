@@ -182,6 +182,14 @@ struct Fake {
     bool seat_arm_ok = true;
     int seat_armed = -1;
     std::string seat_revert_reason;
+    // WS3 vehicles: the vehicle reads (id -> read; any other id refuses "live"),
+    // the seat-by-id writes (requests, forced result, whether it wrote).
+    std::vector<mgscoop::partner_vehicle::Read> vehicles;
+    unsigned vehicle_reads = 0;
+    std::vector<pp::SeatTargetRequest> seat_targets;
+    std::vector<std::string> seat_target_order;  // "dm_live" when the target ran while the DM played
+    const char* seat_target_result = nullptr;
+    bool seat_target_named = false;
 
     Fake() {
         Ready();
@@ -5010,6 +5018,54 @@ void TestNativePoseAnimationSuppression() {
           "ordinary DM path is restored after native holder retirement");
 }
 
+// --- WS3 vehicles (docs/vehicle-ws3.md): the vehicle read and seat-by-id fakes.
+void HookVehicleRead(void* context, std::uint16_t id, mgscoop::partner_vehicle::Read& out) noexcept {
+    Fake& f = F(context);
+    ++f.vehicle_reads;
+    out = mgscoop::partner_vehicle::Read{};
+    out.unit.id = id;
+    out.refusal = "live";
+    for (const auto& r : f.vehicles)
+        if (r.unit.id == id) out = r;
+}
+const char* HookSeatTarget(void* context, const pp::SeatTargetRequest& request, pp::SeatTargetResult& out) noexcept {
+    Fake& f = F(context);
+    f.seat_targets.push_back(request);
+    f.seat_target_order.push_back(f.seat_armed >= 0 && f.dm.q18[1] == c::q18_dm_act ? "armed_dm_live" : "early");
+    out = pp::SeatTargetResult{};
+    out.entries = request.entries;
+    if (f.seat_target_result) return f.seat_target_result;
+    out.wrote = !f.seat_target_named;
+    for (unsigned i = 0; i < request.entries && i < 3; ++i) { out.ids[i] = request.vehicle; out.flags[i] = 0x0A; }
+    return nullptr;
+}
+mgscoop::partner_vehicle::Read VehicleRead(std::uint16_t id, std::uint8_t type, std::uint8_t realized = 3) {
+    mgscoop::partner_vehicle::Read r{};
+    r.refusal = nullptr;
+    r.body_refusal = realized == 0xFF ? "unrealized" : nullptr;
+    r.unit.id = id;
+    r.unit.type = type;
+    r.unit.realized = realized;
+    r.unit.rec = 0x5000;
+    r.body.body = realized == 0xFF ? 0 : 0x5000;
+    return r;
+}
+std::vector<std::uint8_t> ExtBytes(std::uint16_t revision, std::uint16_t vehicle, std::uint8_t seat, std::uint8_t category,
+                                   std::uint32_t ms, std::uint8_t features = 3) {
+    namespace rw = mgscoop::partner_ride_wire;
+    rw::Ext e{};
+    e.features = features;
+    e.revision = revision;
+    e.vehicle = vehicle;
+    e.seat = seat;
+    e.category = category;
+    e.type = category == rw::kCategoryUnknown ? rw::kTypeUnknown : static_cast<std::uint8_t>(category << 4);
+    e.sender_ms = ms;
+    std::uint8_t b[rw::kExtSize]{};
+    Check(rw::EncodeExt(e, b), "ext encodes");
+    return std::vector<std::uint8_t>(b, b + sizeof(b));
+}
+
 // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md).
 bool HookRideSeatArm(void* context, std::uint8_t seat) noexcept {
     Fake& f = F(context);
@@ -5081,6 +5137,254 @@ struct SeatSession : Session {
     }
     void Ended() { fake.dm.q18[1] = 1; fake.dm.rec248 = 0; fake.dm.g388 = 0; }
 };
+
+// WS3 B1 (docs/vehicle-ws3.md): the remote driver seated in an unnamed vehicle
+// by id. The offer needs the lab key, the peer's live ride addendum naming the
+// category of exactly this ride, and this copy's realized same-category
+// vehicle; the id write runs only once the seat DM plays a seated state, with
+// the dwords armed, before the confirmation; every refusal hides as before.
+void TestRideSeatById() {
+    namespace rw = mgscoop::partner_ride_wire;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full;
+    const auto byid = [](SeatSession& s) {
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        s.fake.vehicles.push_back(VehicleRead(25600, 0x14));
+    };
+    {
+        // The sortie vehicle 25600: offered, played untargeted, targeted while the DM plays, confirmed.
+        SeatSession s;
+        byid(s);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900));
+        s.fake.sample.act = 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_vehicle == 25600 &&
+                  s.reply.seat_entry == partner::seat_entry::by_id && s.driver.mission.seat.byid,
+              "the id path is offered (entry bit 4) for a realized same-category copy");
+        Check(s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=1; reason=none; remote_cat=1; local_cat=1") == 1 &&
+                  s.fake.Containing("partner_ride=ext_rx; rev=1; vehicle=25600; seat=0; cat=1; type=0x10; features=0x03") == 1,
+              "the offer and the received addendum are logged");
+        Check(s.fake.seat_targets.empty() && s.fake.seat_armed == 0, "nothing targeted before the DM plays; the dwords armed first");
+        Check(s.Step() && s.fake.seat_targets.empty() && !s.driver.mission.seat.confirmed, "no DM yet: no write");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.fake.seat_targets.size() == 1 && s.fake.seat_targets[0].vehicle == 25600 && s.fake.seat_targets[0].seat == 0 &&
+                  s.fake.seat_targets[0].entries == 1 && s.fake.seat_target_order[0] == "armed_dm_live" &&
+                  s.driver.mission.seat.target_done && s.driver.mission.seat.target_wrote && s.driver.mission.seat.confirmed,
+              "the seated DM is targeted once (armed, DM live), then confirmed in the same tick");
+        Check(s.fake.Containing("partner_ride_seat=target; vehicle=25600; seat=0; wrote=1; entries=1; cur=0; ids=25600,0,0;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=confirmed; vehicle=25600; seat=0;") == 1,
+              "the target and confirmation lines");
+        for (unsigned i = 0; i < 40; ++i) Check(s.Step(), "seated ticks");
+        Check(s.fake.seat_targets.size() == 1 && s.fake.Containing("partner_ride_seat=status; phase=seated; vehicle=25600;") >= 1 &&
+                  s.fake.Containing("; byid=1\r\n") >= 1,
+              "written once; the status shows byid=1");
+        // The DM ends under the seat: a re-issued play is targeted again.
+        s.Ended();
+        Check(s.Step() && s.driver.mission.seat.phase == pd::SeatPhase::arm && !s.driver.mission.seat.confirmed, "lost: re-arm");
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_entry == partner::seat_entry::by_id && !s.driver.mission.seat.target_done,
+              "the re-issued play keeps the by-id bit and a fresh target");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.fake.seat_targets.size() == 2 && s.driver.mission.seat.confirmed, "targeted again");
+    }
+    {
+        // Gates: key off, no addendum, another revision, category mismatch, unrealized, viewer's own vehicle.
+        struct Case { const char* why; int setup; };
+        const Case cases[] = {{"no_ext", 0}, {"remote_category", 1}, {"category", 2}, {"unrealized", 3}, {"local_read", 4},
+                              {"remote_category", 5}, {"unavailable", 6}};
+        for (const Case& k : cases) {
+            SeatSession s;
+            byid(s);
+            s.Show();
+            s.Ride(rw::Kind::vehicle, 0, 25600);
+            if (k.setup == 1) s.fake.channel2.push_back(ExtBytes(static_cast<std::uint16_t>(s.ride_rev + 1), 25600, 0, 1, 900));
+            if (k.setup == 2) s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 2, 900));
+            if (k.setup == 3) { s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900)); s.fake.vehicles[0] = VehicleRead(25600, 0x14, 0xFF); }
+            if (k.setup == 4) { s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900)); s.fake.vehicles.clear(); }
+            if (k.setup == 5) s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900, 2));
+            if (k.setup == 6) { s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900)); s.hooks.seat_target = nullptr; }
+            s.fake.sample.act = 111;
+            const std::string want = std::string("partner_ride_seat=byid; vehicle=25600; seat=0; offer=0; reason=") + k.why + ";";
+            Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_entry == 0 && !s.driver.mission.seat.byid &&
+                      s.fake.Containing(want.c_str()) == 1,
+                  k.why);
+            // Lua then refuses the unnamed vehicle (no_name) and it hides as before.
+            const std::string note = std::string(partner::log_prefix) + "event=ride_seat_refused;id=25600;seat=0;reason=no_name";
+            pd::LuaLog(s.driver, s.hooks, note.data(), note.size());
+            Check(s.Step() && s.fake.Containing("reason=lua_refused") >= 1 && s.driver.mission.seat.blocked && s.fake.seat_targets.empty(),
+                  "without the offer an unnamed vehicle is refused and hides, nothing targeted");
+        }
+        SeatSession off;
+        off.hooks.vehicle_read = HookVehicleRead;
+        off.hooks.seat_target = HookSeatTarget;
+        off.fake.vehicles.push_back(VehicleRead(25600, 0x14));
+        off.Show();
+        off.Ride(rw::Kind::vehicle, 0, 25600);
+        off.fake.channel2.push_back(ExtBytes(off.ride_rev, 25600, 0, 1, 900));
+        off.fake.sample.act = 111;
+        Check(off.Step() && (off.reply.op & op::ride_seat) && off.reply.seat_entry == 0 && off.fake.Containing("partner_ride_seat=byid") == 0 &&
+                  off.fake.vehicle_reads == 0,
+              "partner_ride_seat_id=0: no offer, no vehicle read (today's behaviour)");
+    }
+    {
+        // The DM is live with the seated state but its entry bit (rec248 0x10) not yet set: the record is
+        // targeted at once (critic #17: q18[1] == 0x8B and rec+0x18), the confirmation waits for the bit.
+        SeatSession s;
+        byid(s);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900));
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.driver.mission.seat.byid, "offered");
+        s.Playing(kFrontLeftLoop);
+        s.fake.dm.rec248 = 0x06;
+        Check(s.Step() && s.fake.seat_targets.size() == 1 && s.driver.mission.seat.target_done && !s.driver.mission.seat.confirmed,
+              "targeted while the DM plays the seated state, not yet confirmed");
+        s.fake.dm.rec248 = 0x16;
+        Check(s.Step() && s.fake.seat_targets.size() == 1 && s.driver.mission.seat.confirmed, "confirmed once playing; no second write");
+    }
+    {
+        // A named vehicle under the offer: Lua plays the locator, the record is already targeted (wrote=0).
+        SeatSession s;
+        byid(s);
+        s.fake.vehicles[0] = VehicleRead(25608, 0x14);
+        s.fake.seat_target_named = true;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25608, 0, 1, 900));
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.reply.seat_entry == partner::seat_entry::by_id, "offered");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed && s.driver.mission.seat.target_done && !s.driver.mission.seat.target_wrote &&
+                  s.fake.Containing("partner_ride_seat=target; vehicle=25608; seat=0; wrote=0;") == 1,
+              "a named chain is confirmed without a write");
+    }
+    {
+        // The write refuses (e.g. not the player-update thread): refused, reverted, hidden.
+        SeatSession s;
+        byid(s);
+        s.fake.seat_target_result = "thread";
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900));
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.driver.mission.seat.byid, "offered");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && !s.driver.mission.seat.confirmed && s.driver.mission.seat.phase == pd::SeatPhase::exit &&
+                  s.fake.Containing("partner_ride_seat=refused; vehicle=25600; seat=0; name=-; state=-; reason=thread;") == 1,
+              "a refused write ends the episode (latched)");
+        s.Ended();
+        Check(s.Step() && s.fake.seat_armed == -1 && s.driver.mission.seat.blocked, "reverted and latched; the ride hides");
+        // The copy unrealizes between the offer and the write: the gate refuses at the write.
+        SeatSession g;
+        byid(g);
+        g.Show();
+        g.Ride(rw::Kind::vehicle, 0, 25600);
+        g.fake.channel2.push_back(ExtBytes(g.ride_rev, 25600, 0, 1, 900));
+        g.fake.sample.act = 111;
+        Check(g.Step() && g.driver.mission.seat.byid, "offered");
+        g.fake.vehicles[0] = VehicleRead(25600, 0x14, 0xFF);
+        g.Playing(kFrontLeftLoop);
+        Check(g.Step() && g.fake.seat_targets.empty() &&
+                  g.fake.Containing("partner_ride_seat=target; vehicle=25600; seat=0; wrote=0; reason=unrealized;") == 1 &&
+                  g.fake.Containing("reason=unrealized; manual=0") == 1,
+              "re-checked at the write: an unrealized copy refuses before any write");
+    }
+    {
+        // GetOn + GetOff chain: three entries are targeted.
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff, mgscoop::PartnerRideSeatEnter::getin);
+        byid(s);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900));
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.reply.seat_entry == (partner::seat_entry::by_id | partner::seat_entry::get_on | partner::seat_entry::get_off),
+              "the chain bits and the by-id bit");
+        s.Playing(0xdfb7fc6173d0ull);
+        Check(s.Step() && s.fake.seat_targets.size() == 1 && s.fake.seat_targets[0].entries == 3 && s.driver.mission.seat.confirmed,
+              "GetOn, Loop, GetOff: three entries, targeted during GetOn");
+    }
+}
+
+// WS3: the ride addendum sender (lab keys only) and the read-only census.
+void TestRideExtAndCensus() {
+    namespace rw = mgscoop::partner_ride_wire;
+    Session s(0);
+    AddNativeHooks(s.hooks);
+    s.hooks.send_reliable_append = HookSendReliable;
+    s.hooks.vehicle_read = HookVehicleRead;
+    s.fake.vehicles.push_back(VehicleRead(25600, 0x14));
+    const auto exts = [&]() {
+        std::vector<rw::Ext> out;
+        for (const auto& item : s.fake.reliable_sent) {
+            rw::Ext e{};
+            if (rw::IsExt(item.data(), item.size()) && rw::DecodeExt(item.data(), item.size(), e)) out.push_back(e);
+        }
+        return out;
+    };
+    const auto tick = [&](const char* suffix, std::uint64_t step) {
+        s.now += step;
+        const auto source = TickSource(++s.frame, 0) + " 0 0" + suffix;
+        return pd::Tick(s.driver, s.hooks, s.lab, source.data(), source.size(), pd::Clock{s.now, s.now}, false, s.reply);
+    };
+    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().empty() && s.fake.vehicle_reads == 0, "keys off: no addendum, no vehicle read");
+    Check(pd::LocalVehicle(s.driver) == 25600, "the local vehicle from the tick's veh=");
+    s.driver.settings.seat_id = true;
+    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == 1, "seat id on: the addendum goes out");
+    auto e = exts().back();
+    Check(e.features == rw::ExtFeature::SeatId && e.vehicle == 25600 && e.seat == 0 && e.category == 1 && e.type == 0x14 &&
+              e.revision == s.driver.ride_tx.revision && s.fake.Containing("partner_ride=ext_tx; rev=") == 1,
+          "it names this ride's vehicle category and revision");
+    const unsigned reads = s.fake.vehicle_reads;
+    Check(tick(" ride=2 veh=25600 seat=0", 500) && exts().size() == 1 && s.fake.vehicle_reads == reads, "no resend (or read) before the heartbeat");
+    Check(tick(" ride=2 veh=25600 seat=0", 1600) && exts().size() == 2 && s.fake.vehicle_reads == reads + 1, "the 2 s heartbeat");
+    s.driver.settings.ride_tilt = true;
+    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == 3 && exts().back().features == 3, "a feature change goes out at once");
+    Check(tick(" ride=0", 33) && exts().size() == 4 && exts().back().vehicle == rw::kVehicleUnknown && exts().back().category == rw::kCategoryUnknown &&
+              exts().back().revision == s.driver.ride_tx.revision && pd::LocalVehicle(s.driver) == rw::kVehicleUnknown,
+          "on foot: a new revision without a vehicle");
+    // RIDE_TILT capability of the peer.
+    Check(!pd::RideTiltPeer(s.driver, 7, s.now), "no peer addendum: no tilt");
+    s.fake.channel2.push_back(ExtBytes(1, rw::kVehicleUnknown, rw::kSeatUnknown, rw::kCategoryUnknown, 50, rw::ExtFeature::Tilt));
+    Check(tick(" ride=0", 33) && pd::RideTiltPeer(s.driver, 7, s.now) && !pd::RideTiltPeer(s.driver, 8, s.now) &&
+              !pd::RideTiltPeer(s.driver, 7, s.now + rw::kLeaseMs + 1), "the peer's tilt feature, its session and lease");
+    s.driver.settings.ride_tilt = false;
+    Check(!pd::RideTiltPeer(s.driver, 7, s.now), "our own key off: no tilt");
+    s.driver.settings.play_mode = true;
+    s.driver.settings.seat_id = true;
+    const auto before = exts().size();
+    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == before, "play mode never sends the addendum");
+    s.driver.settings.play_mode = false;
+    s.driver.settings.seat_id = s.driver.settings.ride_tilt = false;
+    // The census (partner_ride_census=1): one line per ridden vehicle each second, read only.
+    Session k(0);
+    AddNativeHooks(k.hooks);
+    k.hooks.vehicle_read = HookVehicleRead;
+    k.fake.vehicles.push_back(VehicleRead(25600, 0x14));
+    const auto ktick = [&](const char* suffix, std::uint64_t step) {
+        k.now += step;
+        const auto source = TickSource(++k.frame, 0) + " 0 0" + suffix;
+        return pd::Tick(k.driver, k.hooks, k.lab, source.data(), source.size(), pd::Clock{k.now, k.now}, false, k.reply);
+    };
+    Check(ktick(" ride=2 veh=25600 seat=0", 33) && k.fake.Containing("partner_ride_census") == 0, "census off: nothing");
+    k.driver.settings.ride_census = true;
+    Check(ktick(" ride=2 veh=25600 seat=0", 33) &&
+              k.fake.Containing("partner_ride_census; who=local; id=25600; ref=ok; type=0x14; cat=1; var=4; realized=3;") == 1,
+          "the local driver's vehicle is censused");
+    Check(ktick(" ride=2 veh=25600 seat=0", 500) && k.fake.Containing("partner_ride_census;") == 1, "at most once a second");
+    Check(ktick(" ride=2 veh=25600 seat=0", 600) && k.fake.Containing("partner_ride_census;") == 2, "the next second");
+    rw::Packet ride{rw::Kind::vehicle, 1, 100};
+    ride.seat = 0; ride.vehicle = 25601;
+    std::uint8_t bytes[rw::kSize]{};
+    Check(rw::Encode(ride, bytes), "remote ride encodes");
+    k.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+    Check(ktick(" ride=0", 1100) && k.fake.Containing("partner_ride_census; who=remote; id=25601; ref=live;") == 1,
+          "the remote driver's copy is censused too (an unknown id refuses live)");
+    k.driver.settings.play_mode = true;
+    const auto lines = k.fake.Containing("partner_ride_census;");
+    Check(ktick(" ride=2 veh=25600 seat=0", 1100) && k.fake.Containing("partner_ride_census;") == lines, "never in play");
+}
 
 void TestRideSeat() {
     namespace rw = mgscoop::partner_ride_wire;
@@ -5688,6 +5992,8 @@ int main() {
     TestFreeRoamRange();
     TestRideVisibility();
     TestRideSeat();
+    TestRideSeatById();
+    TestRideExtAndCensus();
     TestHiddenLocalSender();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();

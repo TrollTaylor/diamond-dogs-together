@@ -289,9 +289,12 @@ no DM in free roam; the dm=map `cam_connect` refusal is unchanged).
 
 ## Known limits
 
-- Unnamed vehicles (ACC sortie/deployed ids 25600..25607, reinforcements) hide (5.6 option a).
+- Unnamed vehicles (ACC sortie/deployed ids 25600..25607, reinforcements) hide (5.6 option a),
+  unless the WS3 seat-by-id path is on (lab `partner_ride_seat_id=1`, docs/vehicle-ws3.md "B1").
 - Horse, D-Walker, heli, APC and tank still hide.
-- The vehicle copy itself is still a level SetPosition teleport (no wheels, steering, slope).
+- The vehicle copy itself is still a level SetPosition teleport (no wheels, steering, slope); WS3
+  "A1" (lab `partner_ride_tilt=1`, docs/vehicle-ws3.md) adds the driver's pitch/roll once the
+  census proves the record identity.
 - The 3 m / 1 s sanity distance compares two 100 ms-delayed streams; watch `err_mm` in the status
   lines at speed before tightening or loosening it.
 

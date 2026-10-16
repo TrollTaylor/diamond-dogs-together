@@ -77,6 +77,42 @@ struct In {
 void Observe(Visibility&, const In&) noexcept;
 void Placed(Visibility&, std::uint64_t now) noexcept;
 
+// Version 3 addendum (WS3 vehicles, docs/vehicle-ws3.md): 16 bytes, the same
+// magic, sent NEXT TO the v1/v2 packet (never instead of it) and only while a
+// vehicle lab key (partner_ride_seat_id / partner_ride_tilt) is on. An older
+// receiver drops it as an invalid ride packet (its size and version are not
+// v1/v2) and keeps its stored v1/v2 state.
+//   [0] 0x52 [1] 3 [2] features (ExtFeature) [3] category (vehicle unit+0x6C >> 4, kCategoryUnknown)
+//   [4..5] the v1/v2 ride revision it describes (LE16, never 0) [6..7] vehicle id (LE16, kVehicleUnknown)
+//   [8] seat (0..3, kSeatUnknown) [9] type (unit+0x6C, 0xFF unknown) [10..11] 0 [12..15] sender_ms (LE32)
+inline constexpr std::uint8_t kVersionExt = 3;
+inline constexpr std::size_t kExtSize = 16;
+inline constexpr std::uint8_t kCategoryUnknown = 0xFF, kTypeUnknown = 0xFF;
+namespace ExtFeature {
+inline constexpr std::uint8_t SeatId = 1 << 0;  // the sender offers its vehicle category (seat by id)
+inline constexpr std::uint8_t Tilt = 1 << 1;    // the sender sends and accepts RIDE_TILT (world op 0x2D)
+inline constexpr std::uint8_t Known = 0x03;
+}
+inline constexpr std::uint64_t kExtHeartbeatMs = 2000;
+struct Ext {
+    std::uint8_t features{}, category=kCategoryUnknown, seat=kSeatUnknown, type=kTypeUnknown;
+    std::uint16_t revision{}, vehicle=kVehicleUnknown;
+    std::uint32_t sender_ms{};
+};
+inline bool IsExt(const std::uint8_t* b, std::size_t n) noexcept { return b && n==kExtSize && b[0]==kMagic && b[1]==kVersionExt; }
+bool EncodeExt(const Ext&, std::uint8_t (&)[kExtSize]) noexcept;
+bool DecodeExt(const std::uint8_t*, std::size_t, Ext&) noexcept;
+inline bool SameExt(const Ext& a, const Ext& b) noexcept {
+    return a.features==b.features && a.category==b.category && a.seat==b.seat && a.type==b.type && a.revision==b.revision && a.vehicle==b.vehicle;
+}
+struct ExtStore { bool have{}; Ext ext{}; std::uint32_t epoch{}; std::uint64_t received_ms{}; unsigned received{}, invalid{}, stale{}; };
+// Newer sender_ms of the same epoch (or a new epoch) replaces the stored addendum.
+bool AcceptExt(ExtStore&, const std::uint8_t*, std::size_t, std::uint32_t epoch, std::uint64_t now) noexcept;
+bool ExtLive(const ExtStore&, std::uint32_t epoch, std::uint64_t now) noexcept;
+// The remote's vehicle category for the stored ride packet: kCategoryUnknown
+// unless a live addendum describes that exact revision, vehicle and seat.
+std::uint8_t RemoteCategory(const ExtStore&, const Packet& ride, std::uint32_t epoch, std::uint64_t now) noexcept;
+
 // What the existing partner transform stream can drive for a mount.
 // That stream is the other player's position, heading and optional animation.
 // It has no horse-body transform, no vehicle-body transform and no walker arm.

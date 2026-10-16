@@ -2053,6 +2053,20 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             coop_carry::Receive(message, size);
             continue;
         }
+        // WS3 vehicles: the ride addendum (v3, 16 bytes) shares the ride magic.
+        if (partner_ride_wire::IsExt(message, size)) {
+            const bool had = d.ride_ext.have && d.ride_ext.epoch == epoch;
+            const partner_ride_wire::Ext before = d.ride_ext.ext;
+            if (partner_ride_wire::AcceptExt(d.ride_ext, message, size, epoch, now)) {
+                const auto& e = d.ride_ext.ext;
+                if (!had || !partner_ride_wire::SameExt(before, e))
+                    EmitCapped(m.ride_cap, h, "partner_ride",
+                               "partner_ride=ext_rx; rev=%u; vehicle=%u; seat=%u; cat=%u; type=0x%02x; features=0x%02x; epoch=%u\r\n",
+                               unsigned(e.revision), unsigned(e.vehicle), unsigned(e.seat), unsigned(e.category), unsigned(e.type),
+                               unsigned(e.features), epoch);
+            }
+            continue;
+        }
         if (partner_ride_wire::IsRide(message, size)) {
             if (partner_ride_wire::Accept(d.ride_rx, message, size, epoch, now)) {
                 // Heartbeats repeat the revision: only a new state or revision is logged.
@@ -2144,6 +2158,72 @@ void SendRide(Driver& d, const Hooks& h, const partner::Tick& tick, std::uint64_
     if (rw::Encode(packet, bytes) && h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) {
         d.ride_tx_epoch = epoch; d.ride_tx_ms = now; d.ride_tx_dirty = false;
     }
+}
+
+// WS3 vehicles (docs/vehicle-ws3.md): the ride addendum (v3) next to the
+// v1/v2 packet while a vehicle lab key is on: this copy's vehicle category
+// (the peer's seat-by-id gate) and the seat-id / RIDE_TILT features. On a
+// change at once (the category read only then), else a 2 s heartbeat.
+void SendRideExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    const Settings& set = d.settings;
+    if (set.play_mode || (!set.seat_id && !set.ride_tilt) || !d.ride_tx_have || !h.send_reliable_append) return;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (!epoch || !(h.link_live && h.link_live(h.context))) return;
+    rw::Ext want{};
+    want.features = static_cast<std::uint8_t>((set.seat_id ? rw::ExtFeature::SeatId : 0) | (set.ride_tilt ? rw::ExtFeature::Tilt : 0));
+    want.revision = d.ride_tx.revision;
+    const bool vehicle = d.ride_tx.kind == rw::Kind::vehicle && d.ride_tx.vehicle != rw::kVehicleUnknown;
+    want.vehicle = vehicle ? d.ride_tx.vehicle : rw::kVehicleUnknown;
+    want.seat = vehicle ? d.ride_tx.seat : rw::kSeatUnknown;
+    const bool same_ride = d.ride_ext_tx_have && d.ride_ext_tx.features == want.features && d.ride_ext_tx.revision == want.revision &&
+                           d.ride_ext_tx.vehicle == want.vehicle && d.ride_ext_tx.seat == want.seat;
+    if (same_ride && d.ride_ext_tx_epoch == epoch && now >= d.ride_ext_tx_ms && now - d.ride_ext_tx_ms < rw::kExtHeartbeatMs) return;
+    if (vehicle && h.vehicle_read) {
+        partner_vehicle::Read r{};
+        h.vehicle_read(h.context, want.vehicle, r);
+        if (!r.refusal && r.unit.id == want.vehicle) {
+            want.type = r.unit.type;
+            want.category = partner_vehicle::Category(r.unit.type);
+        }
+    }
+    const bool changed = !d.ride_ext_tx_have || !rw::SameExt(d.ride_ext_tx, want);
+    want.sender_ms = static_cast<std::uint32_t>(now);
+    std::uint8_t bytes[rw::kExtSize]{};
+    if (!rw::EncodeExt(want, bytes) || !h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) return;
+    if (changed)
+        EmitCapped(d.mission.ride_cap, h, "partner_ride",
+                   "partner_ride=ext_tx; rev=%u; vehicle=%u; seat=%u; cat=%u; type=0x%02x; features=0x%02x; epoch=%u\r\n",
+                   unsigned(want.revision), unsigned(want.vehicle), unsigned(want.seat), unsigned(want.category), unsigned(want.type),
+                   unsigned(want.features), epoch);
+    d.ride_ext_tx = want;
+    d.ride_ext_tx_have = true;
+    d.ride_ext_tx_epoch = epoch;
+    d.ride_ext_tx_ms = now;
+}
+
+// WS3 step 0 (partner_ride_census=1, lab only): one read-only census line per
+// ridden vehicle every kRideCensusMs: the local player's vehicle (who=local:
+// the driver's own record) and the remote's (who=remote: this copy of the
+// driver's vehicle), with the unit record, its realized body and same=.
+void TickRideCensus(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    Mission& m = d.mission;
+    if (!d.settings.ride_census || d.settings.play_mode || !h.vehicle_read) return;
+    if (m.census_ms && now >= m.census_ms && now - m.census_ms < kRideCensusMs) return;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    const bool remote = rw::Live(d.ride_rx, epoch, now) && d.ride_rx.packet.kind == rw::Kind::vehicle &&
+                        d.ride_rx.packet.vehicle != rw::kVehicleUnknown && d.ride_rx.packet.vehicle != d.local_vehicle;
+    if (d.local_vehicle == rw::kVehicleUnknown && !remote) return;
+    m.census_ms = now ? now : 1;
+    char line[512]{};
+    const auto one = [&](const char* who, std::uint16_t id) noexcept {
+        partner_vehicle::Read r{};
+        h.vehicle_read(h.context, id, r);
+        if (partner_vehicle::FormatCensus(who, r, line, sizeof(line))) EmitNativeN(h, m.census_cap, kRideCensusCap, "partner_ride_census", "%s", line);
+    };
+    if (d.local_vehicle != rw::kVehicleUnknown) one("local", d.local_vehicle);
+    if (remote) one("remote", d.ride_rx.packet.vehicle);
 }
 
 // The loadout sender (docs/native-puppet.md "Loadout mirroring"): this copy's
@@ -4387,6 +4467,12 @@ bool SeatManual(Driver& d, const Hooks& h, bool arm, std::uint8_t seat, std::uin
     return true;
 }
 
+std::uint16_t LocalVehicle(const Driver& d) noexcept { return d.local_vehicle; }
+bool RideTiltPeer(const Driver& d, std::uint32_t epoch, std::uint64_t now_ms) noexcept {
+    return d.settings.ride_tilt && !d.settings.play_mode && partner_ride_wire::ExtLive(d.ride_ext, epoch, now_ms) &&
+           (d.ride_ext.ext.features & partner_ride_wire::ExtFeature::Tilt) != 0;
+}
+
 bool NativeSleepPresentationReady(const Driver& d) noexcept {
     const auto& m = d.mission;
     const auto effective = EffectiveSettings(d.settings, m.native_out.active);
@@ -4461,6 +4547,10 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nride = lab.partner_native_ride;
     d.settings.seat_enter = lab.partner_ride_seat_enter;
     d.settings.seat_exit = lab.partner_ride_seat_exit;
+    d.settings.ride_census = lab.partner_ride_census && lab.mode == LabMode::lab;
+    d.settings.seat_id = lab.partner_ride_seat_id && lab.mode == LabMode::lab;
+    d.settings.ride_tilt = lab.partner_ride_tilt && lab.mode == LabMode::lab;
+    d.local_vehicle = partner_ride_wire::kVehicleUnknown;
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
     d.settings.nunsupported = lab.partner_native_unsupported;
@@ -4954,6 +5044,12 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const Settings set_effective = EffectiveSettings(d.settings, m.native_out.active);
     const Settings& set = set_effective;
     SendRide(d, h, tick, now);
+    // WS3 vehicles: the local vehicle (the tick's veh=), the ride addendum and the census.
+    d.local_vehicle = tick.has_ride && tick.ride_kind == static_cast<std::uint8_t>(partner_ride_wire::Kind::vehicle) && tick.has_vehicle &&
+                              tick.vehicle != partner_ride_wire::kVehicleUnknown
+                          ? tick.vehicle : partner_ride_wire::kVehicleUnknown;
+    SendRideExt(d, h, now);
+    TickRideCensus(d, h, now);
     // Local animation fields and looks (sender side; anim=mirror source).
     pp::Anim anim{};
     const bool anim_ok = h.read_anim && h.read_anim(h.context, st, anim);

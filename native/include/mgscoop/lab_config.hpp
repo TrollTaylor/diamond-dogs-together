@@ -501,6 +501,14 @@ struct LabConfig {
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;
     PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::stop;
+    // WS3 vehicles (docs/vehicle-ws3.md): lab only (play forces all three off),
+    // default off until their hidden runs pass. partner_ride_census: the
+    // read-only vehicle unit/body census lines; partner_ride_seat_id: the
+    // remote driver seated in an unnamed vehicle by id (B1); partner_ride_tilt:
+    // RIDE_TILT, the driver's record angles written into the viewer's copy (A1).
+    bool partner_ride_census = false;
+    bool partner_ride_seat_id = false;
+    bool partner_ride_tilt = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;

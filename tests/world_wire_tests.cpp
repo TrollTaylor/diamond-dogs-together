@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 50, "50 ops (world, rescue, companion, ride body, horse cargo, fast ride and local ops)");
+    Check(count == 51, "51 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +140,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x2D) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x2E) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::ride_fast) && world::FindOp(op::ride_fast)->body == 23 &&
               world::FindOp(op::ride_fast)->wire == world::Wire::datagram, "RIDE_FAST is a 23-byte datagram");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
@@ -1523,6 +1523,45 @@ void RideFast() {
     Setup(2, 2, true); Pair(30010, 200);
     Check(Tx(g_host, op::ride_fast, {1, 3, 4000, 0, 0, 0, 0}, 201) == world::TxStatus::disabled, "fast ride requires world level 3");
 }
+// WS3 A1 (docs/vehicle-ws3.md): RIDE_TILT is a new lab-only datagram next to
+// RIDE_FAST (which keeps its exact 7 values); its own latest-value slot, so a
+// RIDE_FAST and a RIDE_TILT of the same sender tick both reach Lua.
+void RideTilt() {
+    const auto* spec = world::FindOp(op::ride_tilt);
+    Check(spec && spec->wire == world::Wire::datagram && spec->body == 14 && spec->lua == 4 && spec->native == 0 && spec->rx == 0 &&
+              spec->lab_only && spec->level == 3 && spec->dir == world::Dir::both && !spec->request,
+          "RIDE_TILT is a 14-byte lab-only datagram both ways");
+    Check(op::ride_tilt == 0x2D && world::FindOp(op::ride_fast)->lua == 7, "a new code; RIDE_FAST keeps 7 values");
+    Setup(3, 3); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+    world::Datagram datagram{}, older{};
+    Check(Tx(g_host, op::ride_tilt, {1000, 25600, 120, -45}, 101, &datagram) == world::TxStatus::ok &&
+              datagram.size == world::kBundleHeaderSize + world::kOpHeaderSize + 14, "the record angles become one datagram");
+    Check(Tx(g_host, op::ride_tilt, {990, 25600, 1, 2}, 101, &older) == world::TxStatus::ok, "older angles encode");
+    g_guest.OnDatagram(datagram.bytes, datagram.size, 102);
+    g_guest.OnDatagram(older.bytes, older.size, 102);
+    auto rx = Drain(g_guest, 3, 103);
+    const auto* got = Find(rx, op::ride_tilt);
+    Check(got && Count(rx, op::ride_tilt) == 1 && got->count == 4 && got->v[0] == 1000 && got->v[1] == 25600 && got->v[2] == 120 &&
+              got->v[3] == -45, "the newest angles are delivered once, a late older sample dropped");
+    world::Datagram fast{}, tilt{};
+    Check(Tx(g_host, op::ride_fast, {1001, 3, 25600, 1, 2, 3, 0}, 104, &fast) == world::TxStatus::ok &&
+              Tx(g_host, op::ride_tilt, {1001, 25600, 5, 6}, 104, &tilt) == world::TxStatus::ok, "one tick: pose and angles");
+    g_guest.OnDatagram(fast.bytes, fast.size, 104);
+    g_guest.OnDatagram(tilt.bytes, tilt.size, 104);
+    rx = Drain(g_guest, 3, 105);
+    Check(Find(rx, op::ride_fast) && Find(rx, op::ride_tilt) && Find(rx, op::ride_tilt)->v[2] == 5,
+          "RIDE_FAST and RIDE_TILT of one sender tick both reach Lua (separate slots)");
+    world::Datagram guestTilt{};
+    Check(Tx(g_guest, op::ride_tilt, {7, 25601, -1570, 1570}, 106, &guestTilt) == world::TxStatus::ok, "the guest driver sends too");
+    g_host.OnDatagram(guestTilt.bytes, guestTilt.size, 106);
+    Check(Find(Drain(g_host, 3, 107), op::ride_tilt) != nullptr, "guest angles reach the host");
+    Check(Tx(g_host, op::ride_tilt, {1002, 25600, 1571, 0}, 108) == world::TxStatus::bad_args &&
+              Tx(g_host, op::ride_tilt, {1002, 25600, 0, -1571}, 108) == world::TxStatus::bad_args,
+          "|angle| >= pi/2 refused");
+    Check(Tx(g_host, op::ride_tilt, {1002, 65535, 0, 0}, 108) == world::TxStatus::bad_args, "null object id refused");
+    Setup(3, 3, true); Pair(30010, 200);
+    Check(Tx(g_host, op::ride_tilt, {1, 25600, 0, 0}, 201) == world::TxStatus::lab_only, "play refuses RIDE_TILT");
+}
 } // namespace
 
 int main() {
@@ -1543,6 +1582,7 @@ int main() {
     SpawnSync();
     RescueAndBuddies();
     RideFast();
+    RideTilt();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

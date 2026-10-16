@@ -229,8 +229,24 @@ do
         local hit = vehicleMap[vid]
         if hit then return hit[1], hit[2] end
     end
+    -- Seat by id (WS3 B1, docs/vehicle-ws3.md): the class of this copy's
+    -- vehicle from the retail GetVehicleType; light vehicles and trucks only
+    -- (APC, tank and anything unknown have no seated state here).
+    local function vehicleClass(vid)
+        local types = get(Vehicle, "type")
+        if api.sendCommand == nil or type(types) ~= "table" then return nil end
+        local ok, t = pcall(api.sendCommand, vid, {id = "GetVehicleType"})
+        if not ok or not integer(t, 0, 65535) then return nil end
+        if t == get(types, "EASTERN_LIGHT_VEHICLE") or t == get(types, "WESTERN_LIGHT_VEHICLE") then return "lv" end
+        if t == get(types, "EASTERN_TRUCK") or t == get(types, "WESTERN_TRUCK") then return "trc" end
+        return nil
+    end
+    -- entry: bit 1 GetOn, bit 2 GetOff, bit 4 (by_id) native armed the id path
+    -- for this play: an unnamed vehicle (no authored locator, e.g. the sortie
+    -- vehicle 25600) then plays the same chain untargeted (locator "") and
+    -- native targets body 1's DM record at the id; a named one stays named.
     local function rideSeat(R, vid, seat, action, entry)
-        if not (integer(vid, 0, 65534) and integer(seat, 0, 3) and integer(action, 1, 2) and integer(entry, 0, 3)) then
+        if not (integer(vid, 0, 65534) and integer(seat, 0, 3) and integer(action, 1, 2) and integer(entry, 0, 7)) then
             note("event=ride_seat_refused;id=" .. tostring(vid) .. ";seat=" .. tostring(seat) .. ";reason=bad_args"); return
         end
         if action == 2 then
@@ -239,19 +255,27 @@ do
             end
             return
         end
+        local chain, byid = entry % 4, entry >= 4
         local name, class = vehicleName(vid)
-        local states = name and SEAT[class][seat]
+        local locator = name
+        if not name and byid then class, locator = vehicleClass(vid), "" end
+        local states = class and SEAT[class][seat]
         local mine = get(e, "MgsCoopPartnerRideSeat")
         local localId, localSeat
         if type(mine) == "function" then localId, localSeat = mine() end
-        local why = not name and "no_name" or not states and "state" or (localId == vid and localSeat == seat) and "shared_seat" or nil
+        local why = (not name and not byid) and "no_name" or not class and "no_class" or not states and "state" or
+            (localId == vid and localSeat == seat) and "shared_seat" or nil
         if why then note(fmt("event=ride_seat_refused;id=%d;seat=%d;reason=%s", vid, seat, why)); return end
         local entries = {{"coopRide", R}}
-        if entry % 2 == 1 then entries[#entries + 1] = {states[2], false, name, "CNP_ppos_c", "MTP_GLOBAL_C", true} end
-        entries[#entries + 1] = {states[1], true, name, "CNP_ppos_c", "MTP_GLOBAL_C", true}
-        if entry >= 2 then entries[#entries + 1] = {states[3], false, name, "CNP_ppos_c", "MTP_GLOBAL_C", true} end
+        if chain % 2 == 1 then entries[#entries + 1] = {states[2], false, locator, "CNP_ppos_c", "MTP_GLOBAL_C", true} end
+        entries[#entries + 1] = {states[1], true, locator, "CNP_ppos_c", "MTP_GLOBAL_C", true}
+        if chain >= 2 then entries[#entries + 1] = {states[3], false, locator, "CNP_ppos_c", "MTP_GLOBAL_C", true} end
         if call(api.dmPlay, "Player.RequestToPlayDirectMotion", entries) then
-            note(fmt("event=ride_seat;id=%d;seat=%d;name=%s;state=%s;entry=%d", vid, seat, name, states[1], entry))
+            if name then
+                note(fmt("event=ride_seat;id=%d;seat=%d;name=%s;state=%s;entry=%d", vid, seat, name, states[1], chain))
+            else
+                note(fmt("event=ride_seat;id=%d;seat=%d;name=-;state=%s;entry=%d;byid=1;class=%s", vid, seat, states[1], chain, class))
+            end
         end
     end
     local function tick()

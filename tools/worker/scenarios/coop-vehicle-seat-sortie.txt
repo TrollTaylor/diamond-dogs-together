@@ -1,0 +1,93 @@
+# WS3 B1 (docs/vehicle-ws3.md): the remote driver SEATED in the unnamed
+# deployed/sortie vehicle (25600..25607; the user's case: continue into 30010
+# in the deployed vehicle), both directions. Before WS3 the guest refused it
+# (partner_lua=event=ride_seat_refused; ...; reason=no_name) and hid the
+# partner for the whole ride. With partner_ride_seat_id=1 native offers the id
+# path (RIDE_SEAT entry bit 4) when the peer's ride addendum names the same
+# vehicle category and this copy's same id is realized; Lua plays the seat
+# chain untargeted (locator "") and native targets body 1's DM record by id.
+# Needs a save whose players deployed with a vehicle (goto_vehicle sortie
+# answers vehicle_none otherwise: then this run proves nothing).
+#
+# Run: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-sortie.txt
+#      -PartnerProfile native -NativeStage gun -SaveSeed lab
+#
+# Expected (guest log, first half; host log, second half):
+#   partner_ride=ext_rx; rev=..; vehicle=2560x; seat=0; cat=..; type=0x..; features=0x01
+#   partner_ride_seat=byid; vehicle=2560x; seat=0; offer=1; reason=none; remote_cat=N; local_cat=N
+#   partner_lua=event=ride_seat;id=2560x;seat=0;name=-;state=stateVehicleFrontLeftLoop;entry=0;byid=1;class=lv
+#   partner_ride_seat=target; vehicle=2560x; seat=0; wrote=1; entries=1; cur=0; ids=2560x,0,0; flags=0x0a,...; reason=none
+#   partner_ride_seat=confirmed; vehicle=2560x; seat=0; state=0x489157d7d94f; ...
+#   partner_ride_seat=status; phase=seated; ...; err_mm=<small, < 3000>; ...; byid=1
+#   and the FRAMES show the driver seated in the moving vehicle (the memory rule: a frame, not a log).
+# Failure signatures: byid; offer=0; reason=no_ext|remote_category|category|unrealized|local_read|local_vehicle;
+#   target; reason=thread|seat_unarmed|dm_idle|cnp|entry_state|foreign_target|readback; seat_far (the 3 m check).
+labsetting partner_native_ride=seat
+labsetting partner_ride_seat_id=1
+labsetting partner_ride_census=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle sortie
+guest debug goto_vehicle sortie
+wait 4000
+placebehind guest host 6 0
+wait 2500
+both capture sortie-before
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=2560[0-7]
+wait 2500
+both capture sortie-seat-entered
+host hold w 1500 nowait
+guest burst sortie-seat-drive-a 8 150
+host hold w 1500 nowait
+guest burst sortie-seat-drive-b 8 150
+host hold w+a 1500 nowait
+guest burst sortie-seat-turn 8 150
+host hold w 1500
+host release
+wait 2500
+both capture sortie-seat-stopped
+host press e 150
+guest burst sortie-seat-exiting 8 300
+wait 2500
+both capture sortie-seat-exited
+state
+both debug heal
+both debug godmode 1
+wait 2000
+guest debug goto_vehicle sortie
+wait 4000
+placebehind host guest 6 0
+wait 2500
+both capture sortie-rev-before
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=2560[0-7]
+wait 2500
+both capture sortie-rev-entered
+guest hold w 1500 nowait
+host burst sortie-rev-drive 8 150
+guest hold w+a 1500 nowait
+host burst sortie-rev-turn 8 150
+guest hold w 1500
+guest release
+wait 2500
+both capture sortie-rev-stopped
+guest press e 150
+host burst sortie-rev-exiting 8 300
+wait 2500
+both capture sortie-rev-exited
+state
