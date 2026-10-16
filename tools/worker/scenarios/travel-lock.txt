@@ -13,8 +13,14 @@
 titlemenu both 240
 title host 240
 waitmission host 30010 300
+# The title opens on its press-any-button screen: the first Enter only opens the menu
+# (run 2016bb7b: that Enter logged nothing; the next one, Continue, logged the refuse).
+guest press enter
+wait 3000
+guest capture title-menu
 guest press enter
 waitlog guest 'world_lua=event=handoff; step=lock; .*decision=refuse' 20
+guest capture title-refused
 wait 4000
 expectstate guest mission ^40050$
 guest press enter
