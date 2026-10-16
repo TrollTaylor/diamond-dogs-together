@@ -521,7 +521,26 @@ Result at `5f11c7b` (run `1b85d7f2cc794f90a57e665edd2d4189`, lab, research worke
 On the guest: `rec240_check; reason=ok; owner=1` for 354 (`rec240=0x22c4c; idx=2; class=2; foreign=0`) and 349
 (`0x22bac`); the host logged the same for the guest's 354. Neither role logged `rec240_foreign`, `rec240_stale` or
 `unread`. The play rehearsals at the same head (below) logged only `reason=ok` too. `kRec240Latch` is therefore now
-**true**; the post-flip re-run is recorded below.
+**true** (`82da4d0`).
+
+Post-flip re-runs at `82da4d0` (lab, research worker, no build running):
+- `8dbb4cfdf667467c9a2089427a6a8167` passed the gameplay criteria. It logged three `throw_release` (354, 349, 354),
+  every `stock_check` with `changed=0`, and every guest require `counts=12,16383,12,8,12,12,8,8`. The guest logged
+  `rec240_check; reason=ok; owner=1; mode=latch; latched=0` for 354 and 349, and the host logged it for 354. No role
+  logged `rec240_foreign`, `rec240_stale` or `unread`. The frames show the grenade throw and the magazine throw
+  (arm out at `-02`, follow-through at `-03`), and the viewer-arc throw while the guest's own HAND GRENADE stays at 12.
+  Its stop.json has `forced_job_termination=true`. Both roles logged `partner_shutdown=hooks_off` and the host exited
+  0, but the guest (exit 1223) did not exit within the close wait. That is the known WM_CLOSE slow exit
+  (`join-fix-phase2-spec.md` item 3).
+- `0c9269ced36f4322b356bee5fb79f72c` (not forced) has the same latch lines but lost the magazine throw. One host
+  packet carried an unknown slot during the hold (`partner_weapon_ctx; remote_slot=255;
+  remote_equip=-2147483648; remote_act=11`). The gate went `unsupported` (strip 0x58) for about 110 ms, the release
+  fell inside that window, and 349 logged no `throw_release`. The frames show the hold, then idle. The same one-packet
+  unknown slot appears before the flip (`1be14967`, `a7d164c1`) and is unrelated to the latch (`latched=0`
+  throughout).
+
+Open: a single unknown-slot remote packet during a support hold aborts the throw. Holding the last known slot through a
+short gap, as the stall freeze does for input, would keep the throw.
 
 ## Throws in play (WS2 Stage A + hardening, 2026-10-16)
 
@@ -659,3 +678,17 @@ host Continue, the guest's counts read back from the reloaded save, one more thr
 separate decision (a rehearsal-only world-probe admission). Stage B follows only after these pass: the default flip
 (`lab_config.cpp` ResolveWeaponDefaults), lab_config_tests matrix, lab_ini_check, friend_package_tests, docs, then a
 re-run of `partner-support-play.txt` without `-LabSetting partner_native_support=1`.
+
+Results at `5f11c7b` (2026-10-16). The clean runs passed with frames: off `1be14967`, bad `dc8cefc8` and awful
+`3a3a0913`. Each had 4/4 `throw_release`, `changed=0` everywhere, the exact `viewer_own` rebase, `hard_leaves=0` and no
+latch. **Stage B was not flipped**, for three reasons:
+- The header's network evidence never appeared. No `stall_freeze` start/fresh fired under bad or awful, because no
+  input gap over 250 ms fell inside a support episode. The critic #4 path is still unproven at runtime and needs a
+  stall-injection preset or step.
+- The first off attempt `2e1beba1` lost one throw animation while another agent's build starved both games
+  (gaps over 400 ms, so the old strip applied by design).
+- The checkpoint run `a7d164c1` stops at the known `host_continue` freeze, so the post-reload half is unproven.
+
+Also open: the host role shows infinite ammo, which was already there before this work, so the host's own spend
+cannot be observed. A single unknown-slot remote packet can also abort a held throw (see the post-flip re-runs under
+"Handle call resolved").
