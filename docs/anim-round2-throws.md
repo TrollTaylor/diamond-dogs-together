@@ -1,7 +1,8 @@
 # Anim round 2: native partner throws, v1
 
 Branch `wp/anim-throws`, based on `766746a5e950e69ad3afd9da945e3e273cd77be3`.
-Status (2026-10-15): **implemented, default off.** Hidden run `aaa2a0e0` passed (the host body
+Status (2026-10-16): **on by default with the native gun profile in lab and play** (Stage B, at the end). Status
+(2026-10-15): **implemented, default off.** Hidden run `aaa2a0e0` passed (the host body
 natively threw grenade 354 and magazine 349 on the guest screen; all 229 owner-1 thrown requests
 dropped, none passed; the guest's stock unchanged); the review findings in
 `docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md` are fixed below ("Fixes after
@@ -546,9 +547,9 @@ run yet): see "Unknown-slot glitch" at the end of this document.
 ## Throws in play (WS2 Stage A + hardening, 2026-10-16)
 
 Spec: `coop-gaps-spec.md` WS2 (research "throws-play", critic #4..#7). Branch `wp/feat-throws`. **Stage B (the default
-flip to `gun` in both modes) is not done**: `lab_config.cpp` still defaults `partner_native_support` to the lab gun
-profile only, so play gets throws only from a named `partner_native_support=1` (the worker's `-LabSetting`), and
-Play-Coop friends see no change yet. Stage A changed no contract site or slot (612 / 128). The WS2 review fixes add two
+flip to `gun` in both modes) is done** ("Stage B" at the end): `lab_config.cpp` now defaults `partner_native_support`
+to the gun profile in lab and play; before it, play got throws only from a named `partner_native_support=1` (the
+worker's `-LabSetting`). Stage A changed no contract site or slot (612 / 128). The WS2 review fixes add two
 code sites (614 / 128, below): the viewer-own rebase now also reads instance 0's `gun_state` (rec+0x2C2) and `gun_sub`
 (rec+0x3DC) besides the already pinned `gun_prim_vt_rva`, `prim_gun_rec`, `prim_blk`, `gun_mode_cur`, `gun_slot`,
 `gun_stock`/`gun_stock_sub`, `gun_flags27c` and `gun_flags`, all on instance 0's own gun record.
@@ -846,3 +847,28 @@ input gap over 250 ms fell inside a support episode, so the freeze shows only wi
 (the default flip) and the checkpoint post-reload half (`a7d164c1`, the known `host_continue` freeze); the host's
 infinite grenades (pre-existing). Some runs end with `Forced=true` (the supervisor terminated the job after WM_CLOSE),
 which was also seen before this work; the saves and the baseline were unchanged.
+
+## Stage B: on by default in play (2026-10-16)
+
+After every play rehearsal and the stall proof passed at `b3d1ba5` (above), `ResolveWeaponDefaults` (`lab_config.cpp`)
+resolves an unnamed `partner_native_support` to the native gun profile in **both** modes (`gun`, was
+`gun && mode == lab`). Nothing else changed: play still admits support only with link v2 `connected`
+(`partner_support_policy::ModeRefusal`, the `partner_support=mode` line), the guard, the owner filter, the per-job and
+episode stock checks, the viewer-own rebase, the stall hold and the identity hold are as tested, and a named
+`partner_native_support=0` (or `1`) still wins in either mode. `-Partner clips` resolves no native drive, so no support.
+
+- **Play-Coop**: `New-CoopPlayLabIniText` writes no `partner_native_support` key (only `partner_native_profile=gun` with
+  `-Partner native`), so friends get the loader's default; `friend_package_tests` asserts that the generated host and
+  guest lab.ini resolve `partner_native_support=1` (not named), that `-Partner clips` resolves 0, and that an appended
+  `partner_native_support=0` resolves 0 with `play_refused=0x0` and no invalid value.
+- **Tests**: the `lab_config_tests` matrix (lab/play x off/loco/gun: on exactly for gun in both modes, clean in both;
+  named 0/1 win in either key order); `lab_ini_check` prints `partner_native_support` and `partner_native_support_given`.
+- **Scenarios**: the headers of `partner-support-play.txt` and `partner-support-stall.txt` drop
+  `-LabSetting partner_native_support=1` from their commands (neither file names the key; `worker_session_tests` checks
+  both). `partner-support-native.txt` (lab) keeps its explicit `labsetting partner_native_support=1`.
+
+The proof of the default (no `-LabSetting`, no labsetting line):
+
+```powershell
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim bad
+```

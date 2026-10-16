@@ -1351,9 +1351,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // 2020 ms); the census stays as named.
     if (!c.partner_native_unsupported_given) c.partner_native_unsupported = gun;
     // Anim round 2: native partner throws (docs/anim-round2-throws.md) follow the
-    // gun profile in lab mode only (the local two-window test), after hidden runs
-    // aaa2a0e0 and ea93a2e3; play mode never admits them, named keys win.
-    if (!c.partner_native_support_given) c.partner_native_support = gun && c.mode == LabMode::lab;
+    // gun profile in lab and play (Stage B, after the lab hidden runs aaa2a0e0 and
+    // ea93a2e3 and the play rehearsals 117620b9 / e9244c56 / 733e023b / 33c11da9);
+    // play still admits them only with link v2 connected (ModeRefusal), and a
+    // named partner_native_support=0 opts out in either mode.
+    if (!c.partner_native_support_given) c.partner_native_support = gun;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;

@@ -1,3 +1,13 @@
+## October 16, 2026: native partner throws in two-PC play, on by default (Stage B)
+
+**The teammate's throws now also animate in two-PC play.** With the native partner (Play-Coop's default
+`-Partner native`) the loader now resolves `partner_native_support=1` in play as in the lab; play admits it only while
+link v2 is connected, and a named `partner_native_support=0` (or `-Partner clips`) opts out. The play hidden rehearsals
+with the named key passed before the flip (`117620b9` off, `e9244c56` bad, `733e023b` awful, the stall step
+`33c11da9`, lab regression `8c7f3472`: 4/4 throws each, the viewer's counts unchanged, no false latch). The default
+proof without the key is in [the throw design](anim-round2-throws.md) "Stage B". Not packaged yet; the installed
+0.12.6 friend loader keeps throws lab-only.
+
 ## October 15, 2026: native partner grenade throws (lab / local test)
 
 **Your teammate's body now throws grenades.** When the other player equips a thrown support item (EQP type 12:

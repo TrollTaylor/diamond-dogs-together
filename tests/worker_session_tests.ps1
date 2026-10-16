@@ -477,7 +477,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True (@($playLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'partner-support-play names no labsetting line'
         Assert-True (@($steps|Where-Object{$_ -cmatch '(^|\s)worldtrigger(\s|$)'}).Count -eq 0) 'partner-support-play has no lab-only world trigger'
         $playText=[IO.File]::ReadAllText($playPath)
-        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off',
+        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off',
             '-WanSim bad','-WanSim awful','partner_support=mode; mode=play; reason=ok','reason=throw_release','reason=viewer_own','stall_freeze',
             'NO partner_support=stock_gap','stock_leak_mission_latched','fire_reload_off','writer_uncertain_mission_latched','hard_leaves 0',
             'rehearsal=1','partner-support-checkpoint.txt')){
@@ -526,7 +526,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True (!$failure) ('partner-support-stall steps valid in play mode '+$failure)
         Assert-True (@($stallLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'partner-support-stall names no labsetting line'
         $stallText=[IO.File]::ReadAllText($stallPath)
-        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off',
+        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off',
             'partner_net=input_stall; reason=start; ms=320','partner_net=input_stall; reason=end; ms=320','reason=start; level=0x8','level=0x18',
             'reason=fresh','exactly ONE partner_support=armed','no second throw','NO partner_support=stock_gap','stock_leak_mission_latched',
             'fire_reload_off','rec240_foreign','background worker','friend/Release','Closed, BaselineRestored and RealSavesUnchanged')){

@@ -494,7 +494,9 @@ struct LabConfig {
     PartnerNativeReloadRate partner_native_reload_rate = PartnerNativeReloadRate::off;
     bool partner_native_reload_rate_given = false;
     bool partner_fire_census = false;
-    // Native type-12 support throws are an explicit experiment; no profile enables them.
+    // Native type-12 support throws (docs/anim-round2-throws.md): not named in
+    // lab.ini, on with the native gun profile in lab and play (Stage B), else
+    // off (ResolveWeaponDefaults); a named 0/1 always wins.
     bool partner_native_support = false;
     bool partner_native_support_given = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;

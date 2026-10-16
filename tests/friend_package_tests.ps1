@@ -439,9 +439,19 @@ try {
         if ($n.ContainsKey('partner_native_profile')) {
             Assert-Equal "$($n['partner_native_profile'])|$($n['partner_drive'])|$($n['partner_input_defer'])|$($n['partner_input_send'])|$($n['partner_input_mask'])|$($n['partner_native_gun'])|$($n['partner_native_fire'])|$($n['partner_native_aim'])|$($n['partner_native_rates'])|$($n['partner_input_words'])" 'gun|native|on|1|0x224005E|1|visual|look|mirror|hpr' 'native: play -Partner native expands to the qualified gun stage'
             Assert-Equal "$($n['partner_native_net'])|$($n['partner_native_stall'])|$($n['partner_native_stall_ms'])|$($n['partner_native_hold'])|$($n['partner_input_edge_repeats'])|$($n['play_rehearsal'])|$($n['play_refused'])" 'online|hold|400|own|5|0|0x0' 'native: play defaults online, stall hold, 5 edge repeats, no refusal'
+            # Stage B (docs/anim-round2-throws.md): native partner throws are on by default with the play gun profile.
+            # Play-Coop writes no partner_native_support key; the loader resolves it, and a named 0 opts out.
+            Assert-True (!$hostIni.Contains('partner_native_support') -and !$guestIni.Contains('partner_native_support') -and !$clipsIni.Contains('partner_native_support')) 'Play-Coop lab.ini never names partner_native_support'
+            Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])" '1|0' 'native: play -Partner native defaults native throws on (Stage B)'
+            $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
+            Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
+            $file = Join-Path $fixture 'play-support-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_support=0`n", $utf8)
+            $n = Invoke-IniCheck lab $file
+            Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['partner_native_profile'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '0|1|gun|0x0|0/0' 'native: a named partner_native_support=0 opts play out of native throws'
             $file = Join-Path $fixture 'play-clips-lab.ini'; [IO.File]::WriteAllText($file, $clipsIni, $utf8)
             $n = Invoke-IniCheck lab $file
             Assert-Equal "$($n['partner_native_profile'])|$($n['partner_drive'])|$($n['partner_input_send'])|$($n['play_refused'])|$($n['invalid_values'])" 'off|legacy|1|0x0|0' 'native: play -Partner clips keeps the clip partner'
+            Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])" '0|0' 'native: play -Partner clips has no native throws'
         }
         $file = Join-Path $fixture 'play-coop.ini'; [IO.File]::WriteAllText($file, $coopIni)
         $n = Invoke-IniCheck coop $file

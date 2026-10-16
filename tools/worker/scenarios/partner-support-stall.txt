@@ -4,12 +4,12 @@
 # 'stall host 320' makes the host send no partner input for 320 ms (native debug command input_stall, refused
 # by every build without the background worker, the friend/Release loader included), so the guest's newest
 # input frame ages through stale_ms (250) into the stall hold (partner_native_stall=hold, stall_ms 400, the
-# play default) while the host holds its grenade. The default stays lab-only (Stage B not flipped): the named
-# key comes from the command line, not from a labsetting line here.
+# play default) while the host holds its grenade. Stage B: partner_native_support defaults on with the gun
+# profile in play too, so neither the command line nor this file names it.
 # Executable: mgsvtpp.exe 1.0.15.4, SHA-256 pinned by the partner contract; no visible launch, MGS_GAME_LUA_DIR unset.
 # Run (coordinator only, hidden worker; take the verify lock first; queue behind any running hidden run; never
 # while a build runs, it starves the games and spoils the timing):
-#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-stall.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-stall.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off
 # Seed: the lab seed's support ids 354,349,395,411,366,370,378,388 with counts 12,16383,12,8,12,12,8,8 on both
 # copies; infinite ammo OFF; both debug god modes on. The host is the partner on the guest's screen (body 1).
 # Two phases, each one host grenade throw (354) with one 320 ms stall:

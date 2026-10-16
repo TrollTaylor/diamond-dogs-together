@@ -141,6 +141,9 @@ int main(int argc, char** argv) {
                     c.steam_selftest_fn ? 1 : 0, mgscoop::CoopHudName(c.coop_hud));
         // Automatic save handoff (join-fix phase 2 P2-11): the policy and the effective travel lock.
         std::printf("save_handoff=%s\ntravel_lock=%d\n", mgscoop::SaveHandoffName(c.save_handoff), mgscoop::EffectiveTravelLock(c) ? 1 : 0);
+        // Native partner throws (docs/anim-round2-throws.md Stage B): the resolved key and whether it was named.
+        std::printf("partner_native_support=%d\npartner_native_support_given=%d\n", c.partner_native_support ? 1 : 0,
+                    c.partner_native_support_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

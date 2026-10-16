@@ -101,7 +101,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    coop_hud=compact|full|off, the in-game co-op status line and toasts;
                                    the seated vehicle rider: partner_native_ride=off|hide|seat,
                                    partner_ride_seat_enter=direct|getin, partner_ride_seat_exit=stop|getoff;
-                                   partner_native_support=0|1, guarded native type-12 throws (default off);
+                                   partner_native_support=0|1, guarded native type-12 throws (default on with the gun profile);
                                    partner_fire_census=0|1, the owner census for support and other requests;
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
                                    partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the
