@@ -326,9 +326,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_fire_census'; Json = 'fire_census'; Kind = 'bool' },
     # Native thrown support (type 12 only), default off in every profile.
     @{ Key = 'partner_native_support'; Json = 'native_support'; Kind = 'bool' },
-    # WS3 vehicles (docs/vehicle-ws3.md): the read-only ride census and the seat by id (lab
-    # experiments, default off natively, off in play) and RIDE_TILT (default on natively, lab
-    # and play); written only when set.
+    # WS3 vehicles (docs/vehicle-ws3.md): the read-only ride census (a lab experiment, default
+    # off natively, off in play), the seat by id and RIDE_TILT (default on natively, lab and
+    # play); written only when set.
     @{ Key = 'partner_ride_census'; Json = 'ride_census'; Kind = 'bool' },
     @{ Key = 'partner_ride_seat_id'; Json = 'ride_seat_id'; Kind = 'bool' },
     @{ Key = 'partner_ride_tilt'; Json = 'ride_tilt'; Kind = 'bool' },

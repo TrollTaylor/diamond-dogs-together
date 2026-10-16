@@ -26,12 +26,14 @@ bool SeatHooks(const Hooks& h) noexcept {
 
 bool SeatMission(std::uint32_t mission) noexcept { return mission == 30010 || mission == 30020; }
 // Mother Base (30050) has no authored vehicle locator (no veh_lv_/veh_trc_
-// name), so only the seat by id (WS3 B1, lab partner_ride_seat_id=1) can seat
-// the remote there: the seat flow runs in 30050 only with that key and only
-// for an offered id (TickSeat refuses the rest before anything is armed).
-// Hidden run bf0388c3: the real save continued into 30050, the remote drove
-// the unnamed jeep 25603 (cat 1, realized, same category on both copies) and
-// the guest hid it without any seat line (this gate, silently).
+// name), so only the seat by id (WS3 B1, partner_ride_seat_id=1, default on
+// in lab and play) can seat the remote there: the seat flow runs in 30050 only
+// with that key and only for an offered id (TickSeat refuses the rest before
+// anything is armed). Hidden run bf0388c3: the real save continued into 30050,
+// the remote drove the unnamed jeep 25603 (cat 1, realized, same category on
+// both copies) and the guest hid it without any seat line (this gate,
+// silently); hidden run abb0b7cf then seated it by id (offer=1, wrote=1,
+// confirmed, err_mm 0..218 while it moved).
 bool SeatByIdOnlyMission(std::uint32_t mission) noexcept { return mission == 30050; }
 bool SeatCapableMission(std::uint32_t mission, bool seat_id) noexcept {
     return SeatMission(mission) || (seat_id && SeatByIdOnlyMission(mission));

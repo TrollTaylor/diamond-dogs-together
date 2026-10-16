@@ -2,10 +2,11 @@
 
 Branch `wp/feat-vehicle` (from `wp/integ6`, 0.13.0). Spec: the WS3 section of the co-op gaps spec
 (session scratchpad `gaps/coop-gaps-spec.md`), research "vehicle" and the CRITIC corrections #15-#17
-(`gaps/research.md`, `gaps/spec.md`). The census and the seat by id are lab-only and off by default
-(play forces them off); RIDE_TILT is on by default in lab and play since hidden run `0a2314f2`
-(the viewer's jeep pitched with the seated driver). Hidden-run findings and the re-run plan are at
-the end.
+(`gaps/research.md`, `gaps/spec.md`). The census is lab-only and off by default (play forces it
+off); RIDE_TILT is on by default in lab and play since hidden run `0a2314f2` (the viewer's jeep
+pitched with the seated driver) and the seat by id since hidden run `abb0b7cf` (the guest saw the
+remote driver seated in the moving Mother Base sortie jeep). Hidden-run findings and the re-run
+plan are at the end.
 
 ## Root causes (research, unchanged)
 
@@ -20,15 +21,16 @@ the end.
 | Key | Default | Play | Effect |
 |---|---|---|---|
 | `partner_ride_census=1` | 0 | forced 0 | Step 0: one read-only `partner_ride_census` line per ridden vehicle per second (own cap 400). |
-| `partner_ride_seat_id=1` | 0 | forced 0 | B1: the seat-by-id offer, the ride addendum's category, the id write; Mother Base seat mode. |
+| `partner_ride_seat_id=1` | **1** | admitted | B1: the seat-by-id offer, the ride addendum's category, the id write; Mother Base seat mode. `=0` turns it off. |
 | `partner_ride_tilt=1` | **1** | admitted | A1: the ride addendum advertises RIDE_TILT; the driver sends, the viewer writes. `=0` turns it off. |
 
 All three are in the three `-LabSetting` allow-lists (`Invoke-WorkerScenario.ps1` ValidatePattern and
 labsetting line, `Start-WorkerSession.ps1`), `tools/lab/LabCommon.psm1` and `ParseVehicleKey`
 (`native/lab_config.cpp`, a side helper: the main chain is at MSVC's nesting limit).
-`ResolveWeaponDefaults` turns the census and the seat by id off in play (no `play_refused` bit, as
-before); no profile turns them on. `lab_ini_check` prints the three resolved values
-(`friend_package_tests`: the play package resolves `1|0|0`).
+`ResolveWeaponDefaults` turns the census off in play (no `play_refused` bit, as before); no profile
+turns it on. The seat by id and RIDE_TILT keep their value in play (an explicit `=0` wins in either
+mode). `lab_ini_check` prints the three resolved values (`friend_package_tests`: the play package
+resolves census|seat_id|tilt `0|1|1`).
 
 **A1 default: ON (lab and play).** Hidden run `0a2314f2` showed the viewer's copy of the jeep
 pitched nose-up with the driver seated; census runs `e54e0294`/`dd60eace` showed `same=1` (the
@@ -39,11 +41,20 @@ two equal reads, finite, |angle| <= 1570 mrad). Older peers: the ride addendum i
 invalid ride packet (one `partner_ride=refused; reason=packet_or_session` line), so the tilt
 feature is never seen and no RIDE_TILT is sent to them; an unknown world op would be skipped anyway.
 
-**B1 default: OFF.** It only acts in the previously refused `no_name` case (a named vehicle keeps
-its locator; the record write runs only when every chained entry is untargeted), but two runtime
-facts are unproven: the realized flag `rec+0x6E` and the DM confirmation of an entry that starts
-untargeted (research "Open"). The memory rule for the seat ("no default flip before a hidden-run
-frame shows the driver seated") applies here too: no seat frame exists yet (`bf0388c3` below).
+**B1 default: ON (lab and play).** The memory rule for the seat ("no default flip before a
+hidden-run frame shows the driver seated") is met: hidden run `abb0b7cf` (Mother Base, real seed)
+logged the full by-id episode on the guest (`byid; vehicle=25603; ...; offer=1`, `target; ...;
+wrote=1`, `confirmed`, 13 seated status lines with `byid=1` and `err_mm` 0..218, no `seat_far`) and
+its frame `guest-sortie-seat-drive-a-04` shows the remote driver seated in the moving unnamed
+sortie jeep. Both open runtime facts held (the realized flag `rec+0x6E`, the DM confirmation of an
+entry that starts untargeted). It still only acts in the previously refused `no_name` case (a named
+vehicle keeps its locator; the record write runs only when every chained entry is untargeted). The
+seat flow itself already runs in play whenever native drive is on (`partner_native_ride=seat`,
+`kPartnerNativeRideDriven`). Capability: the offer needs the peer's live ride addendum with the
+seat-id feature naming this ride's category (`RemoteCategory`); an older peer sends no addendum
+(or a tilt-only one), so the offer refuses `no_ext`/`remote_category` and the ride keeps today's
+behaviour (named locators seat, an unnamed vehicle hides), and an older receiver drops our
+addendum as an invalid ride packet.
 
 ## Step 0: the read-only census (`native/partner_vehicle.{hpp,cpp}`)
 
@@ -90,7 +101,7 @@ partner_ride_census; who=remote; id=25600; ref=ok; type=0x14; cat=1; var=4; real
   RIDE_SEAT entry bit 4 (`partner::seat_entry::by_id`); a refusal keeps today's behaviour (Lua
   refuses `no_name`, the ride hides) and is logged `partner_ride_seat=byid; ...; offer=0; reason=..`.
 - **Mission scope**: seat mode runs in 30010/30020 (authored locators) and, with
-  `partner_ride_seat_id=1` only, in Mother Base 30050 (`SeatCapableMission`): MB has no
+  `partner_ride_seat_id=1` only (the default), in Mother Base 30050 (`SeatCapableMission`): MB has no
   `veh_lv_`/`veh_trc_` name, so there it seats only an offered id; a refused offer in 30050 is refused
   natively at the episode start (`partner_ride_seat=refused; ...; reason=<the byid reason>`, latched)
   before any release, arm or play (Lua could only answer `no_name`). The manual `seat_dm` lever stays
@@ -133,8 +144,8 @@ seat-mode hide of a live vehicle ride, once per reason).
 - **Sender** (`world_ride_pose.lua` R.fastSend): after RIDE_FAST, the native receipt
   `MGS_COOP_RIDE_TILT_V1 -- read <id>` returns the driver's own record +0x44/+0x48 in mrad only if
   the key is on, the id is the local vehicle (the tick's `veh=`) and the peer advertised tilt; then
-  RIDE_TILT under the same tick. In play the ride addendum carries only the tilt feature (the seat
-  id feature stays lab-only).
+  RIDE_TILT under the same tick. In play the ride addendum carries the tilt and the seat-id
+  features as in lab (`features=0x03` by default; `partner_ride_seat_id=0` sends tilt only).
 - **Receiver** (`R.fastApply`): the tilt samples ride on the FAST track (same sender clock),
   interpolated with `R.angleLerp` at the render time, held at most 300 ms; right before each
   `R.place` (SetPosition) the receipt `-- write <id> <a44> <a48>` runs
@@ -174,6 +185,11 @@ the key off (`reason=mission`), an unknown seat (`reason=seat_unknown`); `TestRi
 `TestRideExtAndCensus` play sends the tilt-only addendum and admits the peer's tilt;
 `world_wire_tests` RIDE_TILT in play; `lab_config_tests`/`lab_ini_check`/`friend_package_tests`
 the tilt default and play admission.
+After `abb0b7cf` (seat id default on, lab and play): `lab_config_tests` the defaults matrix (census
+off, seat id and tilt on, in every profile and in play; an explicit 0 keeps each off),
+`TestRideExtAndCensus` the driver's defaults and the play addendum (`SeatId`, then `SeatId|Tilt`
+with the category; `seat_id=0` sends tilt only), `TestRideSeatById`/MB key-off cases set
+`seat_id=0` explicitly, `friend_package_tests` the play package resolves `0|1|1`.
 
 ## Hidden runs
 
@@ -194,10 +210,22 @@ the tilt default and play admission.
   vs 2 is most likely the two sides' light vehicles, not another class (inferred; Lua's
   `GetVehicleType` still decides lv/trc and refuses anything else as `no_class`). **Fix:** Mother Base is seat-capable with `partner_ride_seat_id=1` only, seats by id only
   (a refused offer is refused natively at the start), and every seat-mode hide logs `unavailable`.
+- Seat by id, sortie `abb0b7cf` (`-SaveSeed real`, Mother Base 30050, `coop-vehicle-seat-sortie.txt`):
+  guest `ext_rx; rev=2; vehicle=25603; seat=0; cat=1; type=0x10; features=0x03`, `byid;
+  vehicle=25603; seat=0; offer=1; reason=none; remote_cat=1; local_cat=1`, `start; ...; entry=4`,
+  `partner_lua=event=ride_seat; id=25603; seat=0; name=-; state=stateVehicleFrontLeftLoop; entry=0;
+  byid=1; class=lv`, `target; vehicle=25603; seat=0; wrote=1; entries=1; cur=0; ids=25603,0,0;
+  flags=0x0f,0x00,0x00; reason=none; ms=33`, `confirmed; vehicle=25603; seat=0;
+  state=0x489157d7d94f`, 13 status lines `phase=seated; ...; byid=1` with `err_mm` 0..218, no
+  `seat_far`, then `exit; reason=foot; via=stop; confirmed=1`. Frame `guest-sortie-seat-drive-a-04`:
+  the remote driver seated in the moving unnamed sortie jeep. **B1 default on, lab and play.**
+  The reverse half (the host as the viewer) stopped on a guest `gameplay` refusal after the guest's
+  goto (the Mother Base arrival demo), not on the seat; the scenario now waits 45 s after gameplay.
 
 ## Re-run plan (coordinator; one PC, both copies on this build)
 
-1. **Seat by id** `tools/worker/scenarios/coop-vehicle-seat-sortie.txt` with **`-SaveSeed real`**
+1. **Seat by id** (first half done: `abb0b7cf`, B1 default on; the reverse half is still to re-run)
+   `tools/worker/scenarios/coop-vehicle-seat-sortie.txt` with **`-SaveSeed real`**
    (`-PartnerProfile native -NativeStage gun`): Mother Base, `goto_vehicle sortie` -> the unnamed jeep
    (25603 in `bf0388c3`). The lab seed cannot reproduce it: it continues into 30010 without a
    deployed vehicle (`vehicle_none;alive_unnamed=none`); 30010's 25600/25601 exist only after a

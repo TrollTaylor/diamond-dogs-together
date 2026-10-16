@@ -896,34 +896,40 @@ int main() {
         Check(std::strcmp(mgscoop::PartnerNativeRideName(mgscoop::PartnerNativeRide::hide),"hide")==0 &&
               std::strcmp(mgscoop::PartnerNativeEquipSharedName(mgscoop::PartnerNativeEquipShared::prefer),"prefer")==0,
               "weapons4 and ride names");
-        // WS3 vehicles (docs/vehicle-ws3.md): the ride census and the seat by id are lab experiments,
-        // default off in every profile, explicit only, and always off in play. RIDE_TILT is on by
-        // default (hidden run 0a2314f2: the viewer's jeep pitched with the seated driver), in play too.
-        Check(!def.partner_ride_census && !def.partner_ride_seat_id && def.partner_ride_tilt,
-              "WS3 census and seat id default off, tilt default on");
+        // WS3 vehicles (docs/vehicle-ws3.md): the ride census is a lab measurement, default off in every
+        // profile, explicit only, and always off in play. The seat by id (hidden run abb0b7cf: the remote
+        // driver seated in the moving Mother Base jeep) and RIDE_TILT (hidden run 0a2314f2: the viewer's
+        // jeep pitched with the seated driver) are on by default, in play too; an explicit 0 wins.
+        Check(!def.partner_ride_census && def.partner_ride_seat_id && def.partner_ride_tilt,
+              "WS3 census default off, seat id and tilt default on");
         const auto vehicleGun = Lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-        Check(!vehicleGun.partner_ride_census && !vehicleGun.partner_ride_seat_id && vehicleGun.partner_ride_tilt,
-              "the gun profile keeps the WS3 defaults (census and seat id off, tilt on)");
-        const auto vehicleKeys = Lab("enabled=1\nrole=host\npartner_ride_census=1\npartner_ride_seat_id=1\npartner_ride_tilt=0\n");
+        Check(!vehicleGun.partner_ride_census && vehicleGun.partner_ride_seat_id && vehicleGun.partner_ride_tilt,
+              "the gun profile keeps the WS3 defaults (census off, seat id and tilt on)");
+        const auto vehicleKeys = Lab("enabled=1\nrole=host\npartner_ride_census=1\npartner_ride_seat_id=0\npartner_ride_tilt=0\n");
         Check(vehicleKeys.invalid_values == 0 && vehicleKeys.unknown_keys == 0 && vehicleKeys.partner_ride_census &&
-                  vehicleKeys.partner_ride_seat_id && !vehicleKeys.partner_ride_tilt, "WS3 vehicle keys parse in lab (tilt=0 turns it off)");
+                  !vehicleKeys.partner_ride_seat_id && !vehicleKeys.partner_ride_tilt,
+              "WS3 vehicle keys parse in lab (seat_id=0 and tilt=0 turn them off)");
+        const auto vehicleOn = Lab("enabled=1\nrole=host\npartner_ride_seat_id=1\n");
+        Check(vehicleOn.invalid_values == 0 && vehicleOn.partner_ride_seat_id, "an explicit seat_id=1 is accepted");
         const auto vehicleBad = Lab("enabled=1\nrole=host\npartner_ride_census=2\npartner_ride_seat_id=maybe\npartner_ride_tilt=\n");
         Check(vehicleBad.invalid_values == 3 && vehicleBad.unknown_keys == 0 && !vehicleBad.partner_ride_census &&
-                  !vehicleBad.partner_ride_seat_id && vehicleBad.partner_ride_tilt, "invalid WS3 vehicle values refuse and keep the defaults");
+                  vehicleBad.partner_ride_seat_id && vehicleBad.partner_ride_tilt, "invalid WS3 vehicle values refuse and keep the defaults");
         const auto vehiclePlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                      "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_ride_census=1\n"
                                      "partner_ride_seat_id=1\npartner_ride_tilt=1\n");
-        Check(vehiclePlay.mode == mgscoop::LabMode::play && !vehiclePlay.partner_ride_census && !vehiclePlay.partner_ride_seat_id &&
+        Check(vehiclePlay.mode == mgscoop::LabMode::play && !vehiclePlay.partner_ride_census && vehiclePlay.partner_ride_seat_id &&
                   vehiclePlay.partner_ride_tilt && vehiclePlay.play_refused == 0,
-              "play turns the census and the seat id off and admits RIDE_TILT (no refusal bit)");
+              "play turns the census off and admits the seat id and RIDE_TILT (no refusal bit)");
         const auto vehiclePlayDefault = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n");
         const auto vehiclePlayOff = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
-                                        "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_ride_tilt=0\n");
+                                        "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_ride_seat_id=0\n"
+                                        "partner_ride_tilt=0\n");
         Check(vehiclePlayDefault.mode == mgscoop::LabMode::play && vehiclePlayDefault.partner_ride_tilt &&
-                  !vehiclePlayDefault.partner_ride_census && !vehiclePlayDefault.partner_ride_seat_id &&
-                  vehiclePlayOff.mode == mgscoop::LabMode::play && !vehiclePlayOff.partner_ride_tilt && vehiclePlayOff.invalid_values == 0,
-              "play: tilt on by default, an explicit 0 keeps it off");
+                  !vehiclePlayDefault.partner_ride_census && vehiclePlayDefault.partner_ride_seat_id &&
+                  vehiclePlayOff.mode == mgscoop::LabMode::play && !vehiclePlayOff.partner_ride_tilt &&
+                  !vehiclePlayOff.partner_ride_seat_id && vehiclePlayOff.invalid_values == 0 && vehiclePlayOff.play_refused == 0,
+              "play: seat id and tilt on by default, an explicit 0 keeps each off");
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {

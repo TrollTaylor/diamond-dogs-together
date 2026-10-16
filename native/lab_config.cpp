@@ -1379,11 +1379,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_equip_measured = false;
         // The fire census is a lab measurement (it swaps a forwarding census slot).
         c.partner_fire_census = false;
-        // WS3 vehicles: the census and the seat by id stay lab experiments (no
-        // seat frame yet); RIDE_TILT is admitted (hidden run 0a2314f2: it only
-        // writes the viewer's own vehicle copy behind the identity/sanity gates,
-        // and only to a peer whose ride addendum asks for it).
-        c.partner_ride_census = c.partner_ride_seat_id = false;
+        // WS3 vehicles: the census stays a lab measurement. The seat by id
+        // (hidden run abb0b7cf: the remote driver seated in the moving Mother
+        // Base jeep) and RIDE_TILT (hidden run 0a2314f2) are admitted: each acts
+        // only on what the peer's ride addendum advertises (an older peer sends
+        // none and keeps today's hide), behind the unchanged seat/tilt gates.
+        c.partner_ride_census = false;
     }
 }
 

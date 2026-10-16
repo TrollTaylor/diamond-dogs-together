@@ -460,8 +460,9 @@ struct Settings {
     PartnerNativeRide nride;  // qualified visibility policy; off until live acceptance
     PartnerRideSeatEnter seat_enter;  // nride=seat: direct loop or get-in chain
     PartnerRideSeatExit seat_exit;    // nride=seat: stop or get-off advance
-    // WS3 vehicles (docs/vehicle-ws3.md; lab only, default off): the ride
-    // census lines, the seat-by-id path (B1) and RIDE_TILT (A1).
+    // WS3 vehicles (docs/vehicle-ws3.md): the ride census lines (lab only,
+    // default off), the seat-by-id path (B1) and RIDE_TILT (A1) (both default
+    // on, lab and play, capability-gated by the peer's ride addendum).
     bool ride_census, seat_id, ride_tilt;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;

@@ -2162,13 +2162,15 @@ void SendRide(Driver& d, const Hooks& h, const partner::Tick& tick, std::uint64_
 
 // WS3 vehicles (docs/vehicle-ws3.md): the ride addendum (v3) next to the
 // v1/v2 packet while a vehicle key is on: this copy's vehicle category (the
-// peer's seat-by-id gate) and the seat-id / RIDE_TILT features. The seat by id
-// stays a lab experiment; RIDE_TILT (default on) is also advertised in play.
+// peer's seat-by-id gate) and the seat-id / RIDE_TILT features. Both keys are
+// on by default and advertised in lab and play (seat by id after hidden run
+// abb0b7cf, RIDE_TILT after 0a2314f2); an older peer drops the addendum as an
+// invalid ride packet and keeps its v1/v2 state.
 // On a change at once (the category read only then), else a 2 s heartbeat.
 void SendRideExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     namespace rw = partner_ride_wire;
     const Settings& set = d.settings;
-    const bool seat_id = set.seat_id && !set.play_mode;
+    const bool seat_id = set.seat_id;
     if ((!seat_id && !set.ride_tilt) || !d.ride_tx_have || !h.send_reliable_append) return;
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
     if (!epoch || !(h.link_live && h.link_live(h.context))) return;
@@ -4550,8 +4552,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_enter = lab.partner_ride_seat_enter;
     d.settings.seat_exit = lab.partner_ride_seat_exit;
     d.settings.ride_census = lab.partner_ride_census && lab.mode == LabMode::lab;
-    d.settings.seat_id = lab.partner_ride_seat_id && lab.mode == LabMode::lab;
-    // RIDE_TILT (A1) runs in play too (default on, after hidden run 0a2314f2).
+    // The seat by id (B1, default on after hidden run abb0b7cf) and RIDE_TILT
+    // (A1, default on after hidden run 0a2314f2) run in play too.
+    d.settings.seat_id = lab.partner_ride_seat_id;
     d.settings.ride_tilt = lab.partner_ride_tilt;
     d.local_vehicle = partner_ride_wire::kVehicleUnknown;
     d.settings.nstandin = lab.partner_native_standin;

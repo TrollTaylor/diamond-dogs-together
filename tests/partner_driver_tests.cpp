@@ -1145,7 +1145,7 @@ void TestRideVisibility() {
     // Producer uses append-mode; retries queued refusal and carries the latest kind.
     Session sender(0);
     AddNativeHooks(sender.hooks); sender.hooks.send_reliable_append=HookSendReliable;
-    // The v1/v2 ride packets only: the WS3 ride addendum (v3, RIDE_TILT on by default) shares the magic.
+    // The v1/v2 ride packets only: the WS3 ride addendum (v3, seat id and RIDE_TILT on by default) shares the magic.
     const auto rideSends=[&]() {
         unsigned n=0;
         for (const auto& item : sender.fake.reliable_sent) if (rw::IsRide(item.data(),item.size()) && !rw::IsExt(item.data(),item.size())) ++n;
@@ -1164,7 +1164,7 @@ void TestRideVisibility() {
     sender.fake.reliable_ok=false;
     Check(send(1,1) && sender.fake.reliable_sent.empty() && sender.driver.ride_tx_dirty,"refused ride send retains newest pending state");
     sender.fake.reliable_ok=true; Check(send(1,1) && rideSends()==1,"ride retry queues once via append mode");
-    Check(extSends()==1,"the RIDE_TILT addendum (default on) goes next to it");
+    Check(extSends()==1,"the seat id / RIDE_TILT addendum (default on) goes next to it");
     Check(send(1,1000) && rideSends()==1,"unchanged ride bounded below2s heartbeat");
     Check(send(1,1000) && rideSends()==2,"ride heartbeat at2s");
     Check(send(0,1) && rideSends()==3,"foot transition sends immediately");
@@ -5146,7 +5146,7 @@ struct SeatSession : Session {
 };
 
 // WS3 B1 (docs/vehicle-ws3.md): the remote driver seated in an unnamed vehicle
-// by id. The offer needs the lab key, the peer's live ride addendum naming the
+// by id. The offer needs the key (default on), the peer's live ride addendum naming the
 // category of exactly this ride, and this copy's realized same-category
 // vehicle; the id write runs only once the seat DM plays a seated state, with
 // the dwords armed, before the confirmation; every refusal hides as before.
@@ -5223,6 +5223,7 @@ void TestRideSeatById() {
                   "without the offer an unnamed vehicle is refused and hides, nothing targeted");
         }
         SeatSession off;
+        off.driver.settings.seat_id = false;
         off.hooks.vehicle_read = HookVehicleRead;
         off.hooks.seat_target = HookSeatTarget;
         off.fake.vehicles.push_back(VehicleRead(25600, 0x14));
@@ -5352,6 +5353,7 @@ void TestRideSeatById() {
         Check(s.Step() && s.fake.Containing("partner_ride_seat=unavailable;") == 1, "once per (vehicle, seat, reason)");
         // The key off: Mother Base is not seat-capable; the hide says so (it was silent in bf0388c3).
         SeatSession off(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        off.driver.settings.seat_id = false;
         off.hooks.vehicle_read = HookVehicleRead;
         off.hooks.seat_target = HookSeatTarget;
         off.fake.vehicles.push_back(VehicleRead(25603, 0x10));
@@ -5371,13 +5373,13 @@ void TestRideSeatById() {
     }
 }
 
-// WS3: the ride addendum sender (seat id lab only, tilt default on in lab and play) and the read-only census.
+// WS3: the ride addendum sender (seat id and tilt default on in lab and play) and the read-only census.
 void TestRideExtAndCensus() {
     namespace rw = mgscoop::partner_ride_wire;
     Session s(0);
-    Check(s.driver.settings.ride_tilt && !s.driver.settings.seat_id && !s.driver.settings.ride_census,
-          "the driver's defaults: RIDE_TILT on, the seat by id and the census off");
-    s.driver.settings.ride_tilt = false;  // every vehicle key off first
+    Check(s.driver.settings.ride_tilt && s.driver.settings.seat_id && !s.driver.settings.ride_census,
+          "the driver's defaults: RIDE_TILT and the seat by id on, the census off");
+    s.driver.settings.ride_tilt = s.driver.settings.seat_id = false;  // every vehicle key off first
     AddNativeHooks(s.hooks);
     s.hooks.send_reliable_append = HookSendReliable;
     s.hooks.vehicle_read = HookVehicleRead;
@@ -5418,15 +5420,22 @@ void TestRideExtAndCensus() {
               !pd::RideTiltPeer(s.driver, 7, s.now + rw::kLeaseMs + 1), "the peer's tilt feature, its session and lease");
     s.driver.settings.ride_tilt = false;
     Check(!pd::RideTiltPeer(s.driver, 7, s.now), "our own key off: no tilt");
+    // Play (hidden run abb0b7cf: the seat by id proven in Mother Base) advertises both features.
     s.driver.settings.play_mode = true;
     s.driver.settings.seat_id = true;
     const auto before = exts().size();
-    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == before, "play never offers the seat by id (no addendum for it)");
+    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == before + 1 && exts().back().features == rw::ExtFeature::SeatId &&
+              exts().back().vehicle == 25600 && exts().back().category == 1,
+          "play offers the seat by id (the addendum names the category)");
     s.driver.settings.ride_tilt = true;
-    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == before + 1 && exts().back().features == rw::ExtFeature::Tilt &&
-              exts().back().vehicle == 25600,
-          "play advertises RIDE_TILT only");
+    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == before + 2 &&
+              exts().back().features == (rw::ExtFeature::SeatId | rw::ExtFeature::Tilt) && exts().back().vehicle == 25600 &&
+              exts().back().category == 1,
+          "play advertises the seat id and RIDE_TILT (the defaults)");
     Check(pd::RideTiltPeer(s.driver, 7, s.now), "play admits the peer's RIDE_TILT");
+    s.driver.settings.seat_id = false;
+    Check(tick(" ride=2 veh=25600 seat=0", 33) && exts().size() == before + 3 && exts().back().features == rw::ExtFeature::Tilt,
+          "play with partner_ride_seat_id=0 advertises RIDE_TILT only");
     s.driver.settings.play_mode = false;
     s.driver.settings.seat_id = s.driver.settings.ride_tilt = false;
     // The census (partner_ride_census=1): one line per ridden vehicle each second, read only.
@@ -5632,6 +5641,7 @@ void TestRideSeat() {
         Check(s.Step() && s.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=0; name=-; state=-; reason=seat_patch;") == 1 &&
                   !(s.reply.op & op::ride_seat) && s.driver.mission.seat.blocked, "a refused seat patch never plays");
         SeatSession mb(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb.driver.settings.seat_id = false;  // partner_ride_seat_id=0 (default on: TestRideSeatById's Mother Base cases)
         mb.fake.Realize(true); mb.fake.state.parts[1] = 3; mb.driver.mission.bits_set = true;
         mb.Ride(rw::Kind::vehicle, 0, 25608);
         Check(mb.Step() && !(mb.reply.op & op::ride_seat) && mb.driver.mission.visibility.hidden && mb.fake.seat_arms == 0,

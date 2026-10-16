@@ -15,6 +15,10 @@
 # bf0388c3 this build's predecessor hid it silently (seat mode was 30010/30020
 # only); now a refused offer logs partner_ride_seat=refused and every hide
 # logs partner_ride_seat=unavailable; reason=...
+# PROVEN by hidden run abb0b7cf (real seed, Mother Base 25603: offer=1, wrote=1,
+# confirmed, status byid=1 err_mm 0..218, frame guest-sortie-seat-drive-a-04):
+# partner_ride_seat_id is default on in lab and play since; the labsetting below
+# stays explicit so this scenario keeps checking the same path.
 #
 # Run: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-sortie.txt
 #      -PartnerProfile native -NativeStage gun -SaveSeed real

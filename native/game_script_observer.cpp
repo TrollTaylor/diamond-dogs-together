@@ -940,10 +940,12 @@ bool PartnerFocused(void*) noexcept {
 }
 // --- WS3 vehicles (docs/vehicle-ws3.md): the read-only vehicle unit/body read
 // (the ride census, the ride addendum's category, the seat-by-id gate) and the
-// seat-by-id write. Both stay behind the code gate; the write only in lab with
-// partner_ride_seat_id=1, on the player-update thread (the input hook's
-// thread, which every hidden run logged equal to the driver's Lua thread),
-// with the seat dwords armed (the untargeted entry's camera stores skipped).
+// seat-by-id write. Both stay behind the code gate; the write only with
+// partner_ride_seat_id=1 (default on, lab and play, after hidden run abb0b7cf;
+// the driver offers the id only for a peer whose ride addendum names the
+// category), on the player-update thread (the input hook's thread, which every
+// hidden run logged equal to the driver's Lua thread), with the seat dwords
+// armed (the untargeted entry's camera stores skipped).
 void PartnerVehicleRead(void*, std::uint16_t id, mgscoop::partner_vehicle::Read& out) noexcept {
     out = mgscoop::partner_vehicle::Read{};
     if (!game_base || !partner_gate_ok) { out.refusal = "gate"; return; }
@@ -953,7 +955,7 @@ const char* PartnerSeatTarget(void*, const pp::SeatTargetRequest& request, pp::S
     out = pp::SeatTargetResult{};
     const auto& config = mgscoop::GetLabConfig();
     if (!game_base || !partner_gate_ok) return "gate";
-    if (!config.partner_ride_seat_id || config.mode != mgscoop::LabMode::lab) return "off";
+    if (!config.partner_ride_seat_id) return "off";
     if (!OnRuntimeThread() || mission_terminating) return "runtime";
     const std::uint32_t hook = mgscoop::partner_input_hook::HookThread();
     if (!hook || hook != GetCurrentThreadId()) return "thread";
