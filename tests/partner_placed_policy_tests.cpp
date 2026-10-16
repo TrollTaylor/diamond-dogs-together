@@ -354,6 +354,7 @@ pm::In Body(std::uint8_t remote_mode, std::uint8_t body_mode, std::uint32_t body
     x.key = true; x.lane = true; x.remote_valid = true; x.remote_mode = remote_mode;
     x.place_valid = place_valid; x.place_bits = place_valid ? bits : 0;
     x.body_ok = true; x.body_equip = 395; x.body_cls = 3; x.body_mode = body_mode; x.body_3cc = body_3cc; x.now_ms = now;
+    x.fire_press = false;
     return x;
 }
 pm::After AfterJob(std::uint8_t mode, std::uint32_t w3cc, std::uint8_t next = 0) {
@@ -472,7 +473,67 @@ void PlaceMirror() {
     s = pm::State{};
     o = pm::Step(s, Body(46, 44, 0x1000060u, 9100, 0x2A));
     Check(o.act == pm::Act::place && s.surface == 2 && (o.value & pm::k::kPreviewMask) == (2u << 22), "surface: a wall place keeps class 2");
-    Check(std::strcmp(pm::ActName(pm::Act::detonate), "detonate") == 0 && std::strcmp(pm::WhyName(pm::Why::left), "remote_left") == 0,
+
+    // Hidden run 289badb6: a class plus a FIRE press in one job claimed owner 1's row through placed vt+0x40.
+    // A press holds the place write back (an edge: the next job has none), at most kMaxDefer jobs, then the
+    // write goes without the class; unread counts as a press.
+    s = pm::State{};
+    pm::In fire = Body(46, 44, 0x1000060u, 10000);
+    fire.fire_press = true;
+    o = pm::Step(s, fire);
+    Check(o.edge == pm::Act::place && o.act == pm::Act::none && o.why == pm::Why::fire && s.deferrals == 1 && s.pending == pm::Act::place,
+          "fire: a press in the job defers the place write");
+    o = pm::Step(s, Body(46, 44, 0x1000060u, 10016));
+    Check(o.act == pm::Act::place && o.classed && o.value == (0x1000060u | 0x40000u | 0x400000u), "fire: the next job writes with the class");
+    s = pm::State{};
+    pm::In held = Body(46, 44, 0x1000060u, 11000);
+    held.fire_press = true;
+    for (unsigned i = 0; i < pm::k::kMaxDefer; ++i) {
+        held.now_ms = 11000 + 16 * i;
+        o = pm::Step(s, held);
+        Check(o.act == pm::Act::none && o.why == pm::Why::fire, "fire: deferred while pressed");
+    }
+    held.now_ms += 16;
+    o = pm::Step(s, held);
+    Check(o.act == pm::Act::place && !o.classed && o.value == (0x1000060u | 0x40000u) && s.unclassed == 1,
+          "fire: after kMaxDefer the write goes without the class (bit 18 only)");
+    Check(pm::In{}.fire_press, "fire: the default (unread) is a press");
+    // The detonate write never waits for a press (no class bits, 22-23 untouched).
+    s = pm::State{};
+    pm::In det = Body(47, 44, 0x1000060u, 12000);
+    det.fire_press = true;
+    o = pm::Step(s, det);
+    Check(o.act == pm::Act::detonate && o.value == (0x1000060u | 0x80000u), "fire: a detonate does not wait for the press");
+
+    // Align: after a taken place, inside 46 (state <= 3, rec+0x3C0 bit 26) 22-23 follow 46 op 1's class in 20-21.
+    s = pm::State{};
+    o = pm::Step(s, Body(46, 44, 0x1000060u, 13000));
+    pm::Judge(s, AfterJob(46, 0x1600060u), 13001);  // 46 op 1: the probe gave 2, our class 1 in 22-23
+    Check(s.align_until_ms == 13001 + pm::k::kAlignMs, "align: a taken place opens the window");
+    pm::In in46 = Body(46, 46, 0x1600060u, 13017);
+    in46.body_state = 1; in46.body_3c0 = 0x24040020u;
+    o = pm::Align(s, in46);
+    Check(o.act == pm::Act::align && o.value == 0x1A00060u && s.aligned == 1, "align: 22-23 := 20-21 (2) while kneeling");
+    in46.body_3cc = 0x1A00060u;
+    Check(pm::Align(s, in46).act == pm::Act::none, "align: nothing once equal");
+    in46.body_3cc = 0x1600060u;
+    pm::In late = in46; late.body_state = 4;
+    Check(pm::Align(s, late).act == pm::Act::none, "align: not after state 3");
+    pm::In notbusy = in46; notbusy.body_3c0 = 0x20040020u;
+    Check(pm::Align(s, notbusy).act == pm::Act::none, "align: never without bit 26 (the decode's place path open)");
+    pm::In other = in46; other.body_mode = 44;
+    Check(pm::Align(s, other).act == pm::Act::none, "align: only in 46");
+    pm::In nolane = in46; nolane.lane = false;
+    Check(pm::Align(s, nolane).act == pm::Act::none, "align: needs the lane");
+    pm::In expired = in46; expired.now_ms = 13002 + pm::k::kAlignMs;
+    Check(pm::Align(s, expired).act == pm::Act::none, "align: bounded after the taken place");
+    pm::State fresh{};
+    Check(pm::Align(fresh, in46).act == pm::Act::none, "align: never without a taken place");
+    pm::In zero = in46; zero.body_3cc = 0x1400060u;  // 20-21 = 0 with a class in 22-23 (rule check)
+    Check(pm::Align(s, zero).act == pm::Act::align && pm::Align(s, zero).value == 0x1000060u,
+          "align: 20-21 = 0 with a class in 22-23 -> 22-23 = 0 (they must match)");
+    Check(std::strcmp(pm::ActName(pm::Act::detonate), "detonate") == 0 && std::strcmp(pm::WhyName(pm::Why::left), "remote_left") == 0 &&
+              std::strcmp(pm::ActName(pm::Act::align), "align") == 0 && std::strcmp(pm::WhyName(pm::Why::fire), "fire_press") == 0,
           "names");
 }
 void PlaceMirrorPins() {
@@ -481,8 +542,14 @@ void PlaceMirrorPins() {
               pm::k::kSurfaceMask == c::gun3cc_surface_mask && c::gun_surface == 0x3CC,
           "contract: the rec+0x3CC bits");
     for (std::uintptr_t rva : {0x103E485u, 0x103E48Au, 0x103E4C0u, 0x103E4F3u, 0x107EBD3u, 0x107DC2Au, 0x10967A5u, 0x109687Cu, 0x109689Fu,
-                               0x107BBE1u, 0x107BD27u, 0x107C6FAu, 0x107EFCDu, 0x107F2CAu, 0x105327Fu, 0x105333Eu})
+                               0x107BBE1u, 0x107BD27u, 0x107C6FAu, 0x107EFCDu, 0x107F2CAu, 0x105327Fu, 0x105333Eu, 0x10967F8u, 0x1096836u,
+                               0x1205E80u, 0xFCB1F0u, 0xFC9C00u, 0xFC9C33u, 0x107C2ABu})
         Check(Pinned(rva), "contract: every WS4 v2 site is pinned");
+    Check(Slot(0x23A9FD0, 0x40, 0xFCB1F0) && Slot(0x23A9D20, 0x40, 0xFCB1F0) && Slot(0x23C8D40, 0x40, 0x1205E80),
+          "contract: placed vt+0x40 and PP vt+0x40 are pinned slots");
+    Check(pm::k::kPadFire == c::pad_press_fire && pm::k::kGunBusy == c::gun3c0_place_busy && c::src_press == 0x50 &&
+              c::pp_press_fallback == 0x468 && c::pp_vt_press == 0x40,
+          "contract: the press word and bit 26");
     const auto site = [](std::uintptr_t rva) -> const c::Site* {
         for (const auto& s : c::code_sites)
             if (s.rva == rva) return &s;
@@ -514,6 +581,13 @@ void PlaceMirrorPins() {
           "mode 46 op 1: probe class << 20, else fold 22-23 into 20-21");
     Check(has(site(0x105327F), {0xf6, 0x82, 0xc0, 0x03, 0x00, 0x00, 0x01}) && has(site(0x107C6FA), {0xf6, 0x87, 0xc0, 0x03, 0x00, 0x00, 0x01}),
           "the detonation and the placement test rec+0x3C0 bit 0 (local only)");
+    Check(has(site(0x1205E80), {0x8b, 0x50, 0x50}) && has(site(0x1205E80), {0x8b, 0x91, 0x68, 0x04, 0x00, 0x00}) &&
+              has(site(0x1205E80), {0x8b, 0x41, 0x28, 0xf7, 0xd0}),
+          "PP vt+0x40: [PP+8]+0x50, else PP+0x468, & ~PP+0x28");
+    Check(has(site(0x10967F8), {0xff, 0x50, 0x40, 0xc1, 0xe8, 0x04}) && has(site(0x10967F8), {0xf7, 0x83, 0xcc, 0x03, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x00}),
+          "decode: the FIRE press (bit 4) and a class in 22-23 gate the placed call");
+    Check(~mask_of(site(0x107C2AB)) == (pm::k::kSurfaceMask | pm::k::kPreviewMask | 0x1000000u), "mode 46 op 2 clears bits 20-24");
+    Check(has(site(0xFC9C33), {0x66, 0x89, 0x04, 0x51}), "0xFC9C00 writes the owner id into a new row (the claim)");
 }
 } // namespace
 

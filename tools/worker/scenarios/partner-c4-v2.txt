@@ -22,6 +22,8 @@
 #  guest (body 1 = the host's partner):
 #    partner_place_mirror=edge; act=place; remote_mode=46; surface=1; default=0; place_bits=0x14|0x10; v7=1 per host place;
 #    partner_place_mirror=write; act=place; body_mode=43|44; f3cc_before=0x..; f3cc_after=0x..(+0x40000 | class << 22);
+#      classed=1 (the class only in a job without a FIRE press: run 289badb6 claimed owner 1's row when both met);
+#    partner_place_mirror=align; ... (only if 46 op 1's own class differs from ours: 22-23 follow 20-21 in 46);
 #    partner_place_mirror=result; act=place; taken=1; body_mode=46 (or mode_next=46);
 #    partner_support=armed; slot=3; equip=395; type=13; reason=place (body 1 entered mode 46);
 #    partner_placed_census=gun; k=1; equip=395; type=13; cls=3; mode=46; ... (state 1, 2, 4..6: the kneel);
@@ -39,6 +41,7 @@
 #    NO partner_support=refused; ...; reason=placed_shared_write (nor placed_shared_write_mission_latched);
 #    NO stock_leak_mission_latched, stock_gap, rec240_foreign, rec240_stale, writer_uncertain_mission_latched;
 #    NO partner_place_mirror=result; ...; reverted=2 (a revert that could not be written); NO partner_input=fault;
+#    NO guest partner_placed_census=service; ...; owners=1:... (owner 1 must never get a row in the guest's table);
 #    no crash; scenario.json Closed, BaselineRestored, RealSavesUnchanged.
 # Captures: c4-select, c4-place-p1..p4 (body 1 kneeling to place, beside the host's own kneel), c4-det / c4-det2
 # (body 1's detonator motion with the host's), end (back on the gun).

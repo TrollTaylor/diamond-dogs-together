@@ -2328,9 +2328,12 @@ static_assert(pmr::k::kPlaceReq==c::gun3cc_place_req && pmr::k::kDetReq==c::gun3
               pmr::k::kModePlace==c::gun_mode_place && pmr::k::kModeDetonate==c::gun_mode_detonate &&
               c::gun_surface==0x3CC && c::gun_mode==0x2C1 && c::gun_mode_cur==0x2C0,"the mirror's record word is the contract's");
 static_assert(c::gun_class_shift==6 && c::gun_class_mask==7,"the mirror's C4 class bits");
+static_assert(pmr::k::kPadFire==partner_pad::kFire && pmr::k::kPadFire==c::pad_press_fire && pmr::k::kGunBusy==c::gun3c0_place_busy &&
+              c::pp_vt_press==0x40 && c::src_press==0x50 && c::pp_press_fallback==0x468 && c::pp_masks==0x28 && c::pp_src==0x8,
+              "the mirror reads the press word the way PP vt+0x40 0x1205E80 does");
 // Body 1's gun record, qualified as body 1's own (its prim vtable, prim+0x8 =
 // body 1's block, prim+0x58 = the record), read-only; ok=false on a fault.
-struct MirrorBody { bool ok; std::uint16_t equip; std::uint8_t cls, mode, mode_next; std::uint32_t w3cc; };
+struct MirrorBody { bool ok; std::uint16_t equip; std::uint8_t cls, mode, mode_next, state; std::uint32_t w3cc, w3c0; };
 bool MirrorQualified(const pi::Arm& a) noexcept {
     return a.gun_prim && a.gun_rec && a.blk1 && Load<std::uintptr_t>(a.gun_prim)==g_base+c::gun_prim_vt_rva &&
            Load<std::uintptr_t>(a.gun_prim+c::prim_blk)==a.blk1 && Load<std::uintptr_t>(a.gun_prim+c::prim_gun_rec)==a.gun_rec;
@@ -2342,10 +2345,25 @@ MirrorBody ReadMirrorBody(const pi::Arm& a) noexcept {
             b.equip=Load<std::uint16_t>(a.gun_rec+c::gun_equip);
             b.cls=static_cast<std::uint8_t>((Load<std::uint32_t>(a.gun_rec+c::gun_flags27c)>>c::gun_class_shift)&c::gun_class_mask);
             b.mode=Load<std::uint8_t>(a.gun_rec+c::gun_mode_cur);b.mode_next=Load<std::uint8_t>(a.gun_rec+c::gun_mode);
+            b.state=Load<std::uint8_t>(a.gun_rec+c::gun_state);b.w3c0=Load<std::uint32_t>(a.gun_rec+c::gun_flags);
             b.w3cc=Load<std::uint32_t>(a.gun_rec+c::gun_surface);b.ok=true;
         }
     } __except(ProbeFilter(GetExceptionCode())) {b=MirrorBody{};}
     return b;
+}
+// Whether body 1's decode would see a FIRE press in this job: the press word
+// exactly as PP vt+0x40 (0x1205E80) gives it to the decode's class-3 path,
+// [PP+8]+0x50 or PP+0x468 when that is 0, masked by ~PP+0x28, after PRE wrote
+// the window's words. True (no class bits) when unread.
+bool MirrorFirePress(const pi::Arm& a) noexcept {
+    __try {
+        if(!a.pp)return true;
+        const std::uintptr_t src=Load<std::uintptr_t>(a.pp+c::pp_src);
+        if(!src)return true;
+        std::uint32_t w=Load<std::uint32_t>(src+c::src_press);
+        if(!w)w=Load<std::uint32_t>(a.pp+c::pp_press_fallback);
+        return (w & ~Load<std::uint32_t>(a.pp+c::pp_masks) & pmr::k::kPadFire)!=0;
+    } __except(ProbeFilter(GetExceptionCode())) {return true;}
 }
 // Body 1's rec+0x3CC from expect to value (re-qualified; false: changed, unqualified or a fault).
 bool MirrorStore(const pi::Arm& a,std::uint32_t expect,std::uint32_t value) noexcept {
@@ -2369,12 +2387,14 @@ void PlaceMirrorPre(const pi::Arm& a,const pi::Injection& j,bool support_window)
     pmr::In x{};
     x.key=true;x.remote_valid=j.gun_valid;x.remote_mode=j.gun_mode;x.place_valid=j.place_valid;x.place_bits=j.place_bits;
     x.now_ms=NowMs();
-    if(g_mirror.pending!=pmr::Act::none || remote_edge) {
+    const bool aligning=x.now_ms<=g_mirror.align_until_ms;
+    if(g_mirror.pending!=pmr::Act::none || remote_edge || aligning) {
         x.lane=support_window && SupportAdmittedKind(a,j)==partner_support_policy::Kind::placed;
         const MirrorBody b=ReadMirrorBody(a);
-        x.body_ok=b.ok;x.body_equip=b.equip;x.body_cls=b.cls;x.body_mode=b.mode;x.body_3cc=b.w3cc;
+        x.body_ok=b.ok;x.body_equip=b.equip;x.body_cls=b.cls;x.body_mode=b.mode;x.body_state=b.state;x.body_3cc=b.w3cc;x.body_3c0=b.w3c0;
+        x.fire_press=MirrorFirePress(a);
     }
-    const pmr::Out o=pmr::Step(g_mirror,x);
+    pmr::Out o=pmr::Step(g_mirror,x);
     if(o.edge!=pmr::Act::none)
         MirrorLine(false,"partner_place_mirror=edge; act=%s; remote_mode=%u; surface=%u; default=%u; place_bits=0x%x; v7=%u; edges=%u\r\n",
             pmr::ActName(o.edge),unsigned(x.remote_mode),unsigned(g_mirror.surface),g_mirror.surface_default ? 1u : 0u,unsigned(x.place_bits),
@@ -2382,6 +2402,16 @@ void PlaceMirrorPre(const pi::Arm& a,const pi::Injection& j,bool support_window)
     if(o.dropped!=pmr::Act::none)
         MirrorLine(false,"partner_place_mirror=dropped; act=%s; reason=%s; waiting_on=%s; tries=%u; body_mode=%u; dropped=%u\r\n",
             pmr::ActName(o.dropped),pmr::WhyName(o.why),pmr::WhyName(o.dropped_after),g_mirror.tries,unsigned(x.body_mode),g_mirror.dropped);
+    if(o.act==pmr::Act::none && aligning) {
+        // The kneel in progress: keep 22-23 equal to 46 op 1's class (states 1-3).
+        o=pmr::Align(g_mirror,x);
+        if(o.act==pmr::Act::align) {
+            const bool stored=MirrorStore(a,x.body_3cc,o.value);
+            MirrorLine(false,"partner_place_mirror=align; stored=%u; body_mode=%u; state=%u; f3cc_before=0x%x; f3cc_after=0x%x; aligned=%u\r\n",
+                stored ? 1u : 0u,unsigned(x.body_mode),unsigned(x.body_state),x.body_3cc,o.value,g_mirror.aligned);
+        }
+        return;
+    }
     if(o.act==pmr::Act::none)return;
     if(!MirrorStore(a,x.body_3cc,o.value)) {
         // Not written (the word moved or the record no longer qualifies): no
@@ -2391,8 +2421,9 @@ void PlaceMirrorPre(const pi::Arm& a,const pi::Injection& j,bool support_window)
             pmr::ActName(o.act),unsigned(x.body_mode),x.body_3cc);
         return;
     }
-    MirrorLine(false,"partner_place_mirror=write; act=%s; body_mode=%u; f3cc_before=0x%x; f3cc_after=0x%x; surface=%u; tries=%u; writes=%u; remote_mode=%u\r\n",
-        pmr::ActName(o.act),unsigned(x.body_mode),x.body_3cc,o.value,unsigned(g_mirror.surface),g_mirror.tries,g_mirror.writes,unsigned(x.remote_mode));
+    MirrorLine(false,"partner_place_mirror=write; act=%s; body_mode=%u; f3cc_before=0x%x; f3cc_after=0x%x; surface=%u; classed=%u; deferrals=%u; tries=%u; writes=%u; remote_mode=%u\r\n",
+        pmr::ActName(o.act),unsigned(x.body_mode),x.body_3cc,o.value,unsigned(g_mirror.surface),o.classed ? 1u : 0u,g_mirror.deferrals,
+        g_mirror.tries,g_mirror.writes,unsigned(x.remote_mode));
 }
 // After body 1's job: taken, or our request reverted (never left for a later op 0).
 void PlaceMirrorPost(const pi::Arm& a) noexcept {

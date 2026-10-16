@@ -958,6 +958,27 @@ SITES += [
     (0x105327F, 'f682c003000001418bf0488bfa488be90f84a9000000',
      'detonation 0x1053270: a non-local record (rec+0x3C0 bit 0 clear) -> 0x105333E (no placed vt+0x68 call)'),
     (0x105333E, '81a2cc030000fffff7ff', 'detonation 0x1053270, non-local: only rec+0x3CC &= ~0x80000'),
+    # Hidden run 289badb6: a class in 22-23 plus a FIRE press in one body-1 job sends the decode's class-3 path to the
+    # placed iface vt+0x40 0xFCB1F0, whose 0xFC9C00 claims the free owner row for id 1 (iface+0xB0 65535 -> 1). The
+    # mirror writes the class only when the press word, read as PP vt+0x40 reads it, has no FIRE, and aligns 22-23
+    # only inside 46 (rec+0x3C0 bit 26 set by 46 op 1, cleared with 20-24 by 46 op 2).
+    (0x10967F8, '488b07488bcfff5040c1e804a8010f8493000000e83f88b6ff0fb7d6488b8898000000b8ff010000488b89080200006623d0f783cc0300'
+     '000000c000745c',
+     'decode class 3: PP vt+0x40 bit 4 (the FIRE press) -> the placed iface (0xBFF050 -> +0x98 -> +0x208) only when '
+     'rec+0x3CC bits 22-23 hold a class'),
+    (0x1096836, 'f783c003000000000020750b0fb7835c02000085c07445498b442408448bc64c8b4878452b4108498b81d802000041803c0044752748'
+     '8b01458b859c000000ff504084c07416',
+     'decode class 3: rec+0x3C0 bit 29 or rec+0x25C, the per-id byte [G+0x78]+0x2D8 == 0x44, then placed vt+0x40(id, equip)'),
+    (0x1205E80, '488b41088b505085d275068b91680400008b4128f7d023c2c3',
+     'PP vt+0x40 0x1205E80: the press word [PP+8]+0x50, or PP+0x468 when 0, & ~PP+0x28 (the decode\'s FIRE / ACTION)'),
+    (0xFCB1F0, '48895c24086689542410574883ec20488bd94883c1e0418bf8e8f2e9ffff',
+     'placed iface vt+0x40 0xFCB1F0: first 0xFC9C00(iface-0x20, owner)'),
+    (0xFC9C00, '6689542410534883ec20448b898c00000033c0488bd94585c974184c8b81d0000000664139107446ffc04983c002413bc172ef',
+     '0xFC9C00 (1/2): look up u16 id in iface+0xB0[0..iface+0x6C) (this = iface - 0x20)'),
+    (0xFC9C33, '488b89d0010000488d93e0000000488b01ff5020488b8bd00000008bd00fb744243866890451488b83d8000000488d0c52488d04c84883c4205bc3',
+     '0xFC9C00 (2/2): not found -> a new row from [iface+0x1B0] vt+0x20 with the id written into it (the owner-1 '
+     'registration the mirror must never cause)'),
+    (0x107C2AB, '81a7cc030000ffff0ffe', 'place (mode 46) op 2: rec+0x3CC &= ~0x1F00000 (bits 20-24, the classes) on the way out'),
 ]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
@@ -1084,6 +1105,9 @@ SLOTS += [
     (0x2429AD0, 0x08, 0x15E0230, 'thrown-object service live iface vt+8 = request (fire census slot)'),
     (0x24299A0, 0x08, 0x15E0230, 'thrown-object service base iface vt+8 = request (fire census slot)'),
     (0x23A9FD0, 0x48, 0xFCCD80, 'placed-object service live iface vt+0x48 = request (fire census slot)'),
+    (0x23A9FD0, 0x40, 0xFCB1F0, 'WS4 v2: placed iface vt+0x40 = can-place (claims the owner row through 0xFC9C00)'),
+    (0x23A9D20, 0x40, 0xFCB1F0, 'WS4 v2: placed base iface vt+0x40 = can-place'),
+    (0x23C8D40, 0x40, 0x1205E80, 'WS4 v2: PP vtable +0x40 = the press word the decode reads'),
     (0x23A9D20, 0x48, 0xFCCD80, 'placed-object service base iface vt+0x48 = request (fire census slot)'),
 ]
 # Audited native support virtual call relationships.
@@ -1867,6 +1891,12 @@ def ws4_v2_assertions():
     need(0x107BD2C == 0x107BD27 + 5 and 0x107BD2C + struct.unpack('<i', rd(0x107BD28, 4))[0] == 0x104CF00,
          'mode 46 op 1 calls the probe 0x104CF00 at 0x107BD27')
     need(0x107C701 + 6 + struct.unpack('<i', rd(0x107C703, 4))[0] == 0x107CC23, 'mode 46 op 9: a non-local record skips to 0x107CC23')
+    # The owner-row claim 0xFC9C00: its only direct callers are placed vt+0x40 (the decode's place path), vt+0x20's
+    # body and the placement request processor 0xFC8020 (local placements only).
+    owner = rel_refs(0xFC9C00, (0xE8,))
+    need(owner == [0xFC8056, 0xFCB209, 0xFCDEA5], f'0xFC9C00 callers: {[hex(x) for x in owner]}')
+    need(0xFCB20E + struct.unpack('<i', rd(0xFCB20A, 4))[0] == 0xFC9C00, 'placed vt+0x40 calls 0xFC9C00 first')
+    need(0x109680C + 5 + struct.unpack('<i', rd(0x109680D, 4))[0] == 0xBFF050, 'the decode reaches the placed service through 0xBFF050')
     return out
 
 
@@ -2616,6 +2646,12 @@ w('// --- WS4 v2 (partner_place_mirror): rec+0x3cc bit 18 asks modes 43/44 for 4
 w('// (detonate); bits 20-21 the placed surface class (46 op 1: its probe, else bits 22-23), 22-23 the preview class.')
 w('inline constexpr std::uint32_t gun3cc_place_req=0x40000, gun3cc_detonate_req=0x80000, gun3cc_surface_mask=0x300000, gun3cc_preview_mask=0xc00000;')
 w('inline constexpr std::uint8_t gun_mode_place_hold=43, gun_mode_place_ready=44, gun_mode_place=46, gun_mode_detonate=47;')
+w('// The decode reads the press word through PP vt+0x40 (0x1205e80): [PP+8]+0x50, or PP+0x468 when 0, & ~PP+0x28;')
+w('// FIRE 0x10 with a class in rec+0x3cc 22-23 reaches placed vt+0x40 (0xfcb1f0 -> 0xfc9c00 claims an owner row).')
+w('// rec+0x3c0 bit 26: set by 46 op 1, cleared by 46 op 2 (the decode\'s class-3 place path is off while set).')
+w('inline constexpr std::size_t pp_vt_press=0x40, src_press=0x50, pp_press_fallback=0x468;')
+w('inline constexpr std::uint32_t pad_press_fire=0x10, gun3c0_place_busy=0x4000000;')
+w('inline constexpr std::uintptr_t placed_owner_claim_rva=0xfc9c00, placed_can_place_rva=0xfcb1f0, pp_press_word_rva=0x1205e80;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:
