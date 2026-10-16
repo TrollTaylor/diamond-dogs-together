@@ -821,6 +821,63 @@ SITES += [
      'place (mode 46) op 1 gate: offline or the local id -> 0x107BC9B (the shared plugin latch); online remote folds '
      'rec+0x3CC bits 22-23 into 20-21, jmp 0x107BD93'),
 ]
+# --- WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the C4 and arm lanes. No patch. ChangeEquip 0x11AC2E0 (whole
+# body SHA-pinned in equipment_stock_writer_pins.hpp) calls ctl vt+0x1F0 = 0x11B1B60 for type 14 and activates slot 6
+# with flags bit 2. 0x11B1B60 (whole body below): equip outside 0x203..0x209 -> 0x207; for the local id only the
+# energy/UI calls; current != equip -> ctl vt+0xA0(out, id, 6, equip, 0, 1, 1) and ctl vt+0x98(id, 6, 0, equip, 0, 0,
+# 0); the local id also ctl vt+0x118. Read-only digest sites: the viewer's placement latch (mode 46 op 1's store
+# block, r14 = the record's own prim) and the arm energy ctl vt+0xE8 0x11AF820 -> 0x11AF5E0 writes with no instance
+# id (Y+0x1C[i], the stock word through ctl vt+0xC0, ctl+0x58[i], vars+0x670), read back through store vt+0x88.
+# Bytes from the scratch REA .xtext dump; this generator re-reads them from the exact executable.
+SITES += [
+    (0x11AC379, '83f80e75244c8b1341b101458bc78bd5488bcbc644242801c64424200141ff92f0010000e9fe000000',
+     'ChangeEquip: type 14 (cmp eax,0xe) calls ctl vt+0x1F0(ctl, id, equip, 1, 1, 1) instead of the restriction '
+     'predicate and the lower writer, then the flags-4 activation 0x11AC4A0'),
+    (0x11AC4C6, '83ff0e75058d77f8eb3d', 'ChangeEquip flags 4: type 14 -> slot 6 (lea esi,[rdi-8]), then SetCurrentSlot(id, 6, 0)'),
+    (0x11B1B60, '48895c240848896c241848897424205741544155415641574883ec40488bf9418d80fdfdffffb90702000083f806488b4728418bf0'
+     '4c8b47084c8b60100f47f1418b480c498b4040448bf233ed410fb6',
+     'ctl vt+0x1F0 0x11B1B60 (1/7): arm equip; equip outside 0x203..0x209 -> 0x207; Y = [ctl+8]'),
+    (0x11B1BB0, 'd90fafca83c106baffff00008b04888bc8c1e910663bca740fa81f740b8be8c1ed0581e5ff070000488b4718440fb6ac2490000000'
+     '443bb014020000410f94c74584ff0f84d3000000498b04248bd649',
+     'ctl vt+0x1F0 (2/7): current = (Y+0x40[id*[Y+0xC]+6] >> 5) & 0x7FF if valid; local = id == P+0x214; '
+     'non-local -> 0x11B1CCC'),
+    (0x11B1C00, '8bccff506080bc2498000000008944247874164c8b07ba05000000488bcf41ff90000100008b4424788d8ef9fdffff83f9020f8694'
+     '00000085c00f848c00000084db0f8484000000488b07498b1c248b',
+     'ctl vt+0x1F0 (3/7): local only: [[ctl+0x28]+0x10] vt+0x60, ctl vt+0x100(5)'),
+    (0x11B1C50, 'd6488bcfff90380100008bd6498bcc448bc0ff5358488b4f08448b6424780fb7d8488b01458bc4448bcbba05000000895c2420ff50'
+     '70488b47180fb7d3488b88d8000000488b01ff90b0010000488b07',
+     'ctl vt+0x1F0 (4/7): local only: Y vt+0x70(5), UI [P+0xD8] vt+0x1B0'),
+    (0x11B1CA0, '44886c2438c64424300041b905000000448bc60fb7d3488bcfc7442428060000004489642420ff90e00000003bee7459488b07c644'
+     '243801c644243001488d54247841b906000000458bc6488bcfc744',
+     'ctl vt+0x1F0 (5/7): local only ctl vt+0xE0; any id: current != equip -> ctl vt+0xA0(out, id, 6, equip, 0, 1, 1)'),
+    (0x11B1CF0, '24280000000089742420ff90a0000000488b07c6442438004533c9c644243000418bd6458d4106488bcfc64424280089742420ff90'
+     '980000004584ff741b4584ed7416488b074533c0448bce418d5006',
+     'ctl vt+0x1F0 (6/7): ctl vt+0x98(id, 6, 0, equip, 0, 0, 0); the local id only: ctl vt+0x118'),
+    (0x11B1D40, '488bcfff90180100004c8d5c2440498b5b30498b6b40498b7348498be3415f415e415d415c5fc3',
+     'ctl vt+0x1F0 (7/7): epilogue, ret at 0x11B1D66'),
+    (0x11AF820, '4883ec580f28d1f30f2cd281fa000000807421660f6ec20f5bc00f2ec274150f14d20f50c283e00183f00103d0660f6ed20f5bd2f348'
+     '0f2cc2baf0d20000663bc2660f42d00fb68424980000004883c1',
+     'ctl vt+0xE8 0x11AF820 (1/2): the arm energy setter (mode 53 via 0x10546F0); clamp to 0xD2F0; rcx = ctl - 0x20'),
+    (0x11AF870, 'e0884424400fb6842490000000884424388b842488000000894424308b8424800000008944242844894c2420458bc8440fb7c2e838'
+     'fdffff4883c458c3',
+     'ctl vt+0xE8 (2/2): call 0x11AF5E0; ret'),
+    (0x11AF5F1, '81ffeb010000743181ffec010000742281ffed01000074138d87fdfdffff83f8030f87ff01000033edeb13bd03000000eb0cbd0100'
+     '0000eb05bd02000000',
+     'arm energy 0x11AF5E0: index 0 for 0x203..0x206 (515..518), 2/1/3 for 0x1EB/0x1EC/0x1ED; other equips return'),
+    (0x11AF65D, '488b46288b5424608bcd41bff0d2000066453bc7f30f115c881c',
+     'arm energy 0x11AF5E0: Y = [ctl+8] (rsi = ctl - 0x20); movss [Y+0x1C+4*index] = the energy (no instance id)'),
+    (0x11AF78D, '4863c5894c86788b8e84000000488b4640038e80000000034e7c034e78898870060000',
+     'arm energy 0x11AF5E0: u32 [ctl+0x58+4*index]; vars+0x670 = the sum of ctl+0x58..+0x64 (vars = [ctl+0x20])'),
+    (0xEE9050, '488b81980000004863d20fb70450c3', 'store vt+0x88 0xEE9050: u16 [[Y+0x98] + 2k] (the stock / arm energy word)'),
+    (0x107BD64, '410fb786d8030000663bc3741241838e500300000866418986e8030000eb104183a650030000f76641899ee8030000',
+     'place (mode 46) op 1 latch block (r14 = the record\'s own gun prim): +0x3D8 != 0xFFFF -> +0x350 |= 8 and '
+     '+0x3E8 = +0x3D8, else +0x350 &= ~8 and +0x3E8 = 0xFFFF'),
+    (0x1060465, '448864243483ff0c0f8456020000498b4760418bd5488b4808488b01ff505084c00f853d02000083ff0d0f8532010000',
+     'activation: kind 12 (or a kind whose equip [X+8] vt+0x50 accepts) -> 0x10606C9; kind 13 -> 0x1060495'),
+    (0x1060495, '81a6cc000000fffeffff818ecc000000c0000000', 'activation kind 13: rec+0x27C bit 8 clear, bits 6-7 set (class 3)'),
+    (0x10605BF, '418bc4e9e1fcffff83ff0e0f858f000000',
+     'activation: kind 13 joins the stores 0x10602A8; kind 14 -> 0x10605D0 (the equip jump table 0x1061C70)'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -972,6 +1029,13 @@ SLOTS += [
 # WS4 step 0: the placed iface's detonation, the owner-table reader the census mirrors (never called by us).
 SLOTS += [
     (0x23A9FD0, 0x68, 0xFC54F0, 'placed-object service live iface vt+0x68 = detonate(owner id & 0x1FF, equip)'),
+]
+# WS4 v1: the arm equip (ChangeEquip type 14), the arm energy setter and the store count read (read-only digests).
+SLOTS += [
+    (0x23C1720, 0x1F0, 0x11B1B60, 'arm equip: ctl vt+0x1F0 (ChangeEquip type 14)'),
+    (0x23C1720, 0xE8, 0x11AF820, 'arm energy setter: ctl vt+0xE8 (the arm digest reads what it writes)'),
+    (0x23894B0, 0x88, 0xEE9050, 'store base vt+0x88 = the stock / energy word read'),
+    (0x23895D0, 0x88, 0xEE9050, 'store derived vt+0x88 = the stock / energy word read'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 
@@ -1903,7 +1967,31 @@ def handle_call_assertions():
          writes(anykind, fam('r13')) == [0x105FF2E, 0x1060041, 0x106066D],
          f'activation: ebx/r13d writes between the load and the stores (any kind): '
          f'{[hex(a) for a in writes(anykind, fam("rbx"))]} / {[hex(a) for a in writes(anykind, fam("r13"))]}')
+    # WS4 v1: B's premise for the C4 (kind 13) and arm (kind 14) lanes. A kind whose equip [X+8] vt+0x50 accepts
+    # (0x1060486) takes the kind-12 route checked above; otherwise kind 13 sets class 3 and joins the stores at
+    # 0x10602A8 (0x10605C2), kind 14 calls 0x10517C0 and the equip jump table 0x1061C70 (classes 4/5/6/0). On every
+    # such path rec+0x240 is the handle loaded at 0x105FEC0 and rec+0x24C X vt+0x20 of it.
+    kind13 = {0x105FF8A: 0x1060079, 0x106019C: 0x1060465, 0x106046D: 0x1060473, 0x1060486: 0x106048C,
+              0x106048F: 0x1060495}
+    kind14 = {0x105FF8A: 0x1060079, 0x106019C: 0x1060465, 0x106046D: 0x1060473, 0x1060486: 0x106048C,
+              0x106048F: 0x10605C7, 0x10605CA: 0x10605D0}
+    for force, name in ((kind13, 'kind 13'), (kind14, 'kind 14')):
+        need(on_paths(lo, 0x10602E8, force) != [], f'activation: {name} reaches the stores')
+        for reg, writer, use, what in (('rbx', 0x105FEC0, 0x10602E8, 'rec+0x240 = the handle loaded at 0x105FEC0'),
+                                       ('r13', 0x105FF2E, 0x10602F0, 'rec+0x24C = X vt+0x20 of that handle'),
+                                       ('rsi', 0x105FF6F, 0x10602E8, 'rsi = rec+0x1B0 for the stores')):
+            ok, later = last_writer(reg, writer, use, force)
+            need(ok, f'activation: {name}: {what} (writer {writer:#x} on every path, later writes {later})')
+    need(on_paths(lo, 0x10602E8, kind13, dead={0x1060495}) == [],
+         'activation: every kind-13 path to the stores sets class 3 at 0x1060495')
     need(not bad, f'activation: undecodable, out-of-range or indirect control flow at {[hex(a) for a in sorted(bad)]}')
+    # WS4 v1: the arm equip and energy setter are reached only through their slots of the ctl vtable 0x23C1720 and
+    # of its sibling 0x23C14B0 (no direct call or jump).
+    for target, disp in ((0x11B1B60, 0x1F0), (0x11AF820, 0xE8)):
+        need(qword_hits(target) == [0x23C14B0 + disp, 0x23C1720 + disp],
+             f'{target:#x} is referenced only by its two ctl vtable slots: {[hex(x) for x in qword_hits(target)]}')
+        need(rel_refs(target) == [], f'no direct call/jmp to {target:#x}')
+    need((0x11B1B60, 0x11B1D67) in funcs, 'ctl vt+0x1F0 0x11B1B60: exact runtime function range (whole body pinned)')
     # Every other X call that takes rec+0x240 (review WS1-2): an indirect call whose rcx is [r+0x60] (prim+0x60)
     # or [r+0x30] (iface+0x30 = prim+0x60) and whose edx/r8d is [r+0x240], both loaded in the 48 bytes before and
     # neither rewritten nor crossed by another call. B only guards the input-driven modes 28/30/33/37 (four of the five
@@ -2324,6 +2412,15 @@ w('inline constexpr std::size_t placed_equips=0x18, placed_equip_stride=4, place
 w('inline constexpr std::size_t prim_place_flags=0x350, prim_place_target=0x3d8, prim_place_latched=0x3e8, gun_surface=0x3cc;')
 w('inline constexpr std::uint32_t prim_place_bit=0x8;')
 w('inline constexpr std::size_t pad_stun_mag=0x10, pad_stun_mask=0x2c;')
+w('// --- WS4 v1 (read-only digests; partner_placed_policy): the arm equip ctl vt+0x1f0 = 0x11b1b60 (ChangeEquip type 14)')
+w('// and the arm energy ctl vt+0xe8 = 0x11af820 -> 0x11af5e0: index i (0 for 0x203..0x206), movss [Y+0x1c+4i], the word')
+w('// u16 [[Y+0x98]+2k] (k = 5, through ctl vt+0xc0; store vt+0x88 0xee9050 reads it), u32 [ctl+0x58+4i] and u32')
+w('// vars+0x670 = their sum (vars = [ctl+0x20]); no instance id anywhere. Mode 46 op 1 latches the record\'s own prim.')
+w('inline constexpr std::uintptr_t arm_equip_rva=0x11b1b60, arm_energy_rva=0x11af820, store_count_read_rva=0xee9050;')
+w('inline constexpr std::size_t ctl_vt_arm_equip=0x1f0, ctl_vt_arm_energy=0xe8, store_vt_count=0x88;')
+w('inline constexpr std::size_t ctl_vars=0x20, ctl_arm_frac=0x58, store_arm_energy=0x1c, store_counts=0x98, vars_arm_energy_sum=0x670;')
+w('inline constexpr unsigned arm_energy_k=5, arm_energy_slots=4;')
+w('inline constexpr std::uint16_t arm_equip_first=0x203, arm_equip_last=0x209;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

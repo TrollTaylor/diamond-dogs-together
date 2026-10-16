@@ -612,6 +612,8 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.gun_prim = set.native_active && set.ngun ? m.gun1_prim : 0;
     a.gun_rec = set.native_active && set.ngun ? m.gun1_rec : 0;
     a.native_support = set.native_active && set.ngun && set.nsupport;
+    a.native_placed = a.native_support && set.nplaced;
+    a.native_arm = a.native_support && set.narm;
     // C(b): the viewer's own gun record (read-only attribution of its own throws).
     const bool viewer_gun = a.native_support && m.gun0_ok && m.gun0.prim && m.gun0.rec;
     a.viewer_gun_prim = viewer_gun ? m.gun0.prim : 0;
@@ -2312,6 +2314,10 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
             m.gun1_rec = gun.rec;
         } else if (set.nsupport && (pnat::GunClass(gun.fields.flags27c)==2 || pnat::GunClass(gun.fields.flags27c)==3)) {
             m.gun1_prim=gun.prim; m.gun1_rec=gun.rec;
+        } else if (set.nsupport && set.narm && partner_support_policy::ArmEquip(static_cast<std::uint16_t>(gun.fields.equip))) {
+            // WS4 v1: an arm in hand (classes 4/5/6, or 0 for 519..521; the
+            // activation 0x105FDB0's kind-14 switch) is the same record.
+            m.gun1_prim=gun.prim; m.gun1_rec=gun.rec;
         }
     }
     const char* why = nullptr;
@@ -2414,11 +2420,20 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     // The observer callback revalidates the armed guard, thrown entry filter,
     // non-local equipment row/handle and the mission stock latch. Never reuse
     // the previous support verdict across an unread gun tick.
-    // A live v5 slot 3, or the stall hold of the same support equip (critic #4).
-    const bool support_slot = (m.remote_v5 && m.remote_slot==3) ||
-        (m.support_stall && m.remote_gun_equip==static_cast<std::int32_t>(m.support_equip));
-    const bool support_ready = set.ngun && set.nsupport && ready && support_slot &&
-        m.remote_equip_type==12 && m.remote_gun_equip>0 && m.remote_gun_equip<0x800 &&
+    // The lane (WS4 v1): thrown type 12 and, with their keys, C4 (type 13,
+    // 391..395) in slot 3 and an arm (type 14, 515..521) in slot 6.
+    // A live v5 slot of the lane, or the stall hold of the same slot-3 support
+    // equip (critic #4).
+    namespace psp = partner_support_policy;
+    const psp::Kind support_kind = m.remote_equip_type == pnat::kNull || m.remote_gun_equip <= 0 || m.remote_gun_equip >= 0x800
+        ? psp::Kind::none
+        : psp::KindOf(static_cast<std::uint8_t>(m.remote_equip_type), static_cast<std::uint16_t>(m.remote_gun_equip),
+                      set.nplaced, set.narm);
+    const std::uint8_t support_lane = psp::KindSlot(support_kind);
+    const bool support_slot = (m.remote_v5 && m.remote_slot==support_lane) ||
+        (support_lane==3 && m.support_stall && m.remote_gun_equip==static_cast<std::int32_t>(m.support_equip));
+    const bool support_ready = set.ngun && set.nsupport && ready && support_kind!=psp::Kind::none && support_slot &&
+        m.remote_gun_equip>0 && m.remote_gun_equip<0x800 &&
         gun_ok && gun.fields_ok && gun.fields.equip==static_cast<std::uint32_t>(m.remote_gun_equip) && !m.body_switching &&
         h.support_ready && h.support_ready(h.context,st,static_cast<std::uint16_t>(m.remote_gun_equip));
     set.support_live=support_ready;
@@ -2443,6 +2458,10 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     if (!set.ngun) m.weapon_gate = partner_slots::Gate::match;
     m.weapon_mismatch = m.weapon_gate == partner_slots::Gate::mismatch;
     m.weapon_strip = partner_slots::StripBits(m.weapon_gate);
+    // WS4 v1: an admitted arm is HOLD only. FIRE stays stripped, so body 1 shows
+    // the arm's aim pose and never enters a use mode 52..56 (the hook strips it
+    // again, and its watchdog latches arms off if body 1 ever does).
+    if (support_ready && support_kind == psp::Kind::arm) m.weapon_strip |= pnat::kPadFire;
     // Gun profile (online play, docs/native-puppet.md "Online"): until body 1
     // shows a gun class this mission (no gun on it: another mission, a build
     // without the gun pieces, the writer still waiting), HOLD, RELOAD and
@@ -2811,6 +2830,10 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
         EmitFormat(h, "partner_weapon=settings; unsupported=%u; dry_stop=%u; aim_intent=%s; reload_rate=%s; fire_census=%u\r\n",
                    set.nunsupported ? 1u : 0u, set.ndry ? 1u : 0u, PartnerNativeAimIntentName(set.naim_intent),
                    PartnerNativeReloadRateName(set.nreload_rate), set.fire_census ? 1u : 0u);
+        // WS4 v1: the lanes beyond thrown support (only when one is named).
+        if (set.nplaced || set.narm)
+            EmitFormat(h, "partner_support=lanes; support=%u; placed=%u; arm=%u; arm_fire=stripped\r\n", set.nsupport ? 1u : 0u,
+                       set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u);
     }
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
@@ -4524,6 +4547,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_exit = lab.partner_ride_seat_exit;
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
+    d.settings.nplaced = lab.partner_native_placed;
+    d.settings.narm = lab.partner_native_arm;
     d.settings.nunsupported = lab.partner_native_unsupported;
     d.settings.ndry = lab.partner_native_dry_stop;
     d.settings.naim_intent = lab.partner_native_aim_intent;

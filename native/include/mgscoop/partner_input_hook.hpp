@@ -70,6 +70,10 @@ void ResetFault() noexcept;
 bool NativeSupportLatchedOff() noexcept;
 // The equip writer's mission-scoped uncertainty also closes drain admission.
 void LatchNativeSupportOff() noexcept;
+// WS4 v1: the arm lane's own mission latch (the use-mode watchdog, the arm
+// energy digest); ResetFault clears it with the support latch.
+bool NativeArmLatchedOff() noexcept;
+void LatchNativeArmOff() noexcept;
 
 // The driver publishes this each tick (seqlock: odd, copy, even). Copied by
 // value; pointers are read inside the hook under SEH and re-validated.

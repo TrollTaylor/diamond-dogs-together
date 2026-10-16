@@ -55,6 +55,7 @@
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_pad_bits.hpp"
 #include "mgscoop/partner_placed_census.hpp"
+#include "mgscoop/partner_placed_policy.hpp"
 #include "partner_player_contract.hpp"
 #include <MinHook.h>
 #include <intrin.h>
@@ -195,14 +196,31 @@ std::uint64_t g_frame_ms = 0;
 std::uint32_t g_consumer_last[pi::kConsumers]{};
 bool g_in_drain = false;
 volatile LONG g_support_leak=0, g_support_reset=1;
+// WS4 v1: the arm lane's mission latch (the use-mode watchdog, the arm energy
+// digest); cleared by ResetFault with the support latch.
+volatile LONG g_arm_latch=0;
 unsigned g_support_lines=0;
 bool g_support_episode=false, g_support_released=false;
+// WS4 v1 (hook thread): body 1's place (46) / detonate (47) entries, the
+// placed and arm checks' last verdicts and their own line caps.
+bool g_support_placing=false, g_support_detonating=false;
+unsigned g_placed_lines=0, g_arm_lines=0;
+std::uint32_t g_placed_checks=0, g_arm_checks=0;
+partner_placed_policy::Placed g_placed_last=partner_placed_policy::Placed::same;
+std::uint8_t g_placed_mode_last=0xFF;
+partner_placed_policy::Energy g_arm_last=partner_placed_policy::Energy::same;
+std::uint8_t g_arm_mode_last=0xFF;
+std::uint16_t g_arm_equip_last=0;
+// The decoded descriptor type of the equip support lines name (SupportGate).
+std::uint16_t g_support_type_equip=0;
+std::uint8_t g_support_type=0;
 std::uint32_t g_support_episode_stock=0;
 std::uint16_t g_support_episode_words[8]{};
 std::uint32_t ReadSupportDigest() noexcept;
 std::uint32_t ReadSupportSlotDigest(std::uint16_t (*words)[8]=nullptr) noexcept;
 bool SupportBodyBusy(const pi::Arm& a) noexcept;
 bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept;
+partner_support_policy::Kind SupportAdmittedKind(const pi::Arm& a,const pi::Injection& j) noexcept;
 // WS2 (hook thread): the frame step's track (stall freeze, FIRE buffer) with
 // its own log cap, and C(b)'s previous bracket (after-words, the viewer's gun
 // record and W50's body-1 job count at that point).
@@ -513,8 +531,10 @@ pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
     }
     // Key off: never a support request, so Round 1's a.strip alone decides (review-1ca3ce6).
     const bool support_request=partner_support_policy::Request(a.native_support,j.slot_valid,j.inv_slot,a.strip);
+    // WS4 v1: the admitted lane; an arm is HOLD only (FIRE and RELOAD stripped).
+    const partner_support_policy::Kind lane=support_request ? SupportAdmittedKind(a,j) : partner_support_policy::Kind::none;
     const std::uint32_t strip=partner_support_policy::Strip(a.strip,support_request,a.native_support,
-        support_request && SupportAdmitted(a,j));
+        lane!=partner_support_policy::Kind::none,lane==partner_support_policy::Kind::arm);
     if (strip) {
         InterlockedIncrement(&g_n_strip);
         InterlockedExchange(&g_n_strip_bits, static_cast<LONG>(strip));
@@ -1661,6 +1681,17 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
         SlotVerdict(why ? SlotRefusal::plan : SlotRefusal::none);
         return;
     }
+    // WS4 v1: an arm in the remote's hand slot 6 (HOLD only) takes the same
+    // guarded native SetCurrentSlot (case 6: row+0 = row+8, no call for id 1),
+    // never while body 1 is busy or the arm or support latch is set.
+    if (target==6 && a.native_arm && !g_arm_latch && j.equip_valid && !g_support_leak &&
+        partner_support_guard::Armed(a.P,1) && partner_fire_filter::ThrownPatchLive(reinterpret_cast<const void*>(g_base)) &&
+        partner_fire_filter::ThrownArmed(1)) {
+        if(SupportBodyBusy(a)) { SlotVerdict(SlotRefusal::mode); return; }
+        const char* why=partner_support_equip::Follow(g_base,c::image_span,a.P,a.blk1,j.equip,g_log,6);
+        SlotVerdict(why ? SlotRefusal::plan : SlotRefusal::none);
+        return;
+    }
     if (target > 2) { SlotVerdict(SlotRefusal::other); return; }
     // The body slot for the remote's slot: itself, or the plan's stand-in (weapons4).
     const std::uint32_t body_target = (a.standin_mask & (1u << target)) ? a.standin_slot[target] : target;
@@ -1874,13 +1905,22 @@ bool SupportBodyBusy(const pi::Arm& a) noexcept {
     } __except(ProbeFilter(GetExceptionCode())) {mode=0xFF;switching=true;}
     return partner_support_policy::BodyBusy(mode,switching);
 }
+// The type the support lines name: the equip's decoded descriptor type
+// (SupportGate records Ready's decode), else its lane's type by equip id
+// (WS4 v1: 13 for C4 391..395, 14 for arms 515..521, 12 otherwise).
+unsigned SupportType(std::uint16_t equip) noexcept {
+    if(equip && equip==g_support_type_equip && g_support_type) return g_support_type;
+    return partner_support_policy::C4Equip(equip) ? 13u : partner_support_policy::ArmEquip(equip) ? 14u : 12u;
+}
+// Body 1's gun mode (0xFF unread), read-only.
+std::uint8_t BodyMode(const pi::Arm& a) noexcept;
 // force: the mission latch line has a reserved slot outside the shared cap.
 void SupportLine(const char* kind,const pi::Injection& j,const char* why,std::uint32_t handle=0,bool force=false) noexcept {
     if(!g_log || (!force && g_support_lines>=512))return;
     ++g_support_lines;char line[256]{};
     if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-        "partner_support=%s; slot=%u; equip=%u; type=12; reason=%s; rec240=0x%x\r\n",
-        kind,unsigned(j.inv_slot),unsigned(j.equip),why,handle)))g_log(line);
+        "partner_support=%s; slot=%u; equip=%u; type=%u; reason=%s; rec240=0x%x\r\n",
+        kind,unsigned(j.inv_slot),unsigned(j.equip),SupportType(j.equip),why,handle)))g_log(line);
 }
 // WS1: the pure policy's offsets are the contract's (rec+0x240 handle call).
 namespace rk=partner_support_policy::rec240;
@@ -1906,9 +1946,16 @@ bool SupportRead(std::uintptr_t address,void* out,std::size_t size) noexcept {
 std::uint32_t g_rec240_stale_rec=0,g_rec240_stale_slot=0;
 bool g_rec240_stale_logged=false;
 // The support gate of one frame/consumer (reads body 1's equip and record).
+// WS4 v1: the read-only checks a lane needs before it may admit input (fail
+// closed): the viewer's placement latch and the placed owner table (C4), the
+// viewer's arm energy (arms).
+bool PlacedReadable(const pi::Arm& a) noexcept;
+bool ArmEnergyReadable(const pi::Arm& a) noexcept;
 partner_support_policy::GateIn SupportGate(const pi::Arm& a,const pi::Injection& j) noexcept {
     namespace sp=partner_support_policy;
     sp::GateIn x{};x.enabled=a.native_support && !a.p218 && !PoseRequired() && static_cast<std::uint32_t>(g_hook_thread)==GetCurrentThreadId();x.latched=g_support_leak!=0;
+    // WS4 v1 lanes: C4 with the placed key, arms with the arm key and no arm latch.
+    x.placed=a.native_placed;x.arm=a.native_arm && g_arm_latch==0;
     x.guard_installed=partner_support_guard::Live();x.guard_armed=partner_support_guard::Armed(a.P,1);
     x.filter_live=partner_fire_filter::ThrownPatchLive(reinterpret_cast<const void*>(g_base));
     x.filter_armed=partner_fire_filter::ThrownArmed(1);
@@ -1916,14 +1963,17 @@ partner_support_policy::GateIn SupportGate(const pi::Arm& a,const pi::Injection&
     x.slot_valid=j.slot_valid;x.slot=j.inv_slot;x.equip_valid=j.equip_valid;x.equip=j.equip;
     x.type=0;
     // Ready rechecks the actual type, row, handle, owner, restriction and observer
-    // lease, and reports the decoded descriptor type the gate admits (only 12)
-    // and the Match-verified slot-3 handle.
-    if(x.enabled && !x.latched && x.slot_valid && x.slot==3 && x.equip_valid && x.equip>0 && x.equip<0x800) {
+    // lease, and reports the decoded descriptor type the gate admits (12; WS4
+    // v1: 13 for C4 and 14 for an arm with their keys) and the Match-verified
+    // handle of the lane's slot (3, or 6 for an arm).
+    if(x.enabled && !x.latched && x.slot_valid && partner_support_equip::LaneSlot(x.slot,x.arm) && x.equip_valid && x.equip>0 && x.equip<0x800) {
         std::uint32_t slot_handle=0;
-        x.body_ready=partner_support_equip::Ready(g_base,a.P,a.blk1,j.equip,&x.type,&slot_handle);
-        // B: the record identity as before, plus rec+0x240 == that handle, so
-        // every [prim+0x60] vt+0x160(rec+0x240) of modes 28/30/33/37 hits it.
-        sp::RecordIn record=sp::ReadRecord(SupportRead,g_base,a.gun_prim,a.gun_rec,a.blk1,j.equip);
+        x.body_ready=partner_support_equip::Ready(g_base,a.P,a.blk1,j.equip,&x.type,&slot_handle,x.slot);
+        if(x.type){g_support_type_equip=j.equip;g_support_type=x.type;}
+        // B: the record identity as before (in the lane's hand slot), plus
+        // rec+0x240 == that handle, so every [prim+0x60] vt+0x160(rec+0x240)
+        // of modes 28/30/33/37 hits it.
+        sp::RecordIn record=sp::ReadRecord(SupportRead,g_base,a.gun_prim,a.gun_rec,a.blk1,j.equip,x.slot);
         record.slot_handle=x.body_ready ? slot_handle : 0;
         x.record_ready=sp::RecordReady(record);
         if(sp::RecordStale(record)) {
@@ -1932,21 +1982,28 @@ partner_support_policy::GateIn SupportGate(const pi::Arm& a,const pi::Injection&
                 const bool first=!g_rec240_stale_logged;g_rec240_stale_logged=true;
                 if(g_log && (first || g_support_lines<512)){++g_support_lines;char line[224]{};
                     if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-                        "partner_support=refused; slot=3; equip=%u; type=12; reason=rec240_stale; rec240=0x%x; slot_handle=0x%x\r\n",
-                        unsigned(j.equip),record.rec_handle,slot_handle)))g_log(line);}
+                        "partner_support=refused; slot=%u; equip=%u; type=%u; reason=rec240_stale; rec240=0x%x; slot_handle=0x%x\r\n",
+                        unsigned(x.slot),unsigned(j.equip),SupportType(j.equip),record.rec_handle,slot_handle)))g_log(line);}
             }
         }
         if(!ReadSupportDigest())x.body_ready=false;
+        // WS4 v1: a lane whose read-only check cannot be read admits nothing.
+        const sp::Kind kind=sp::GateKind(x);
+        if(kind==sp::Kind::placed && !PlacedReadable(a))x.body_ready=false;
+        if(kind==sp::Kind::arm && !ArmEnergyReadable(a))x.body_ready=false;
     }
     return x;
 }
-bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
+partner_support_policy::Kind SupportAdmittedKind(const pi::Arm& a,const pi::Injection& j) noexcept {
     namespace sp=partner_support_policy;
     sp::GateIn x=SupportGate(a,j);
     // A stall-frozen frame (SupportFrame, critic #4): freshness waived only;
     // every other gate is rechecked for this consumer.
     if(j.support_frozen)x=sp::Fresh(x);
-    return sp::Admit(x);
+    return sp::Admit(x) ? sp::GateKind(x) : sp::Kind::none;
+}
+bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
+    return SupportAdmittedKind(a,j)!=partner_support_policy::Kind::none;
 }
 static_assert(partner_support_policy::kPadHold==partner_pad::kHold && partner_support_policy::kPadFire==partner_native::kPadFire,
               "support level bits are HOLD|FIRE");
@@ -1957,8 +2014,8 @@ void SupportFrameLine(const char* kind,const char* reason,std::uint16_t equip,st
     if(!g_log || g_support_frame_lines>=128)return;
     ++g_support_frame_lines;char line[224]{};
     if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-        "partner_support=%s; slot=3; equip=%u; type=12; reason=%s; level=0x%x; age_ms=%u; frames=%u; held_ms=%u\r\n",
-        kind,unsigned(equip),reason,level,age_ms,frames,held_ms)))g_log(line);
+        "partner_support=%s; slot=3; equip=%u; type=%u; reason=%s; level=0x%x; age_ms=%u; frames=%u; held_ms=%u\r\n",
+        kind,unsigned(equip),SupportType(equip),reason,level,age_ms,frames,held_ms)))g_log(line);
 }
 // WS2 (the main window, once per frame, before any consumer takes the frame;
 // ForConsumer then hands each consumer its edges once): the stall freeze
@@ -2032,15 +2089,17 @@ void SupportRec240Check(const pi::Arm& a,const pi::Injection& j) noexcept {
     if(!latch && !first_foreign && g_support_lines>=512) return;
     ++g_support_lines;char line[320]{};
     if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-        "partner_support=%s; slot=3; equip=%u; type=12; reason=%s; rec240=0x%x; why=%s; idx=%u; capacity=%u; row_equip=%u; owner=%u; class=%u; checks=%u; foreign=%u; mode=%s; latched=%u\r\n",
-        foreign ? "refused" : "rec240_check",unsigned(j.equip),foreign ? "rec240_foreign" : row.verdict==sp::Rec240::ok ? "ok" : "unread",
+        "partner_support=%s; slot=3; equip=%u; type=%u; reason=%s; rec240=0x%x; why=%s; idx=%u; capacity=%u; row_equip=%u; owner=%u; class=%u; checks=%u; foreign=%u; mode=%s; latched=%u\r\n",
+        foreign ? "refused" : "rec240_check",unsigned(j.equip),SupportType(j.equip),foreign ? "rec240_foreign" : row.verdict==sp::Rec240::ok ? "ok" : "unread",
         row.record.rec_handle,sp::Rec240Name(row.verdict),row.idx,row.capacity,unsigned(row.row_equip),unsigned(row.row_owner),
         unsigned(row.record.cls),checks,foreign_count,sp::kRec240Latch ? "latch" : "log",latch ? 1u : 0u)))g_log(line);
 }
 bool SupportThrowing(const pi::Arm& a,const pi::Injection& j,std::uint32_t& handle) noexcept {
     bool mode=false;
     __try { if(a.gun_rec){handle=Load<std::uint32_t>(a.gun_rec+0x240);
-        mode=partner_support_policy::ThrowMode(Load<std::uint8_t>(a.gun_rec+c::gun_mode_cur));}
+        const std::uint8_t m=Load<std::uint8_t>(a.gun_rec+c::gun_mode_cur);
+        // WS4 v1: the place family (43..47) keeps a C4 episode like a throw.
+        mode=partner_support_policy::ThrowMode(m) || partner_support_policy::PlaceMode(m);}
     } __except(ProbeFilter(GetExceptionCode())) {}
     return mode || (a.native_support && j.slot_valid && j.inv_slot==3 && (j.held&(partner_pad::kHold|partner_native::kPadFire)));
 }
@@ -2099,8 +2158,8 @@ void SupportGapCheck(const pi::Injection& j,std::uint32_t slot_before,const std:
     // viewer_*: instance 0 at the gap's end (mode, state, slot, k = 6 + sub,
     // count, bit 29); viewer_prev*: its mode and state at the gap's start.
     if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-        "partner_support=%s; slot=%u; equip=%u; type=12; reason=%s; changed=%u; kind=%s; k=%u; before=%u; after=%u; words=%u; viewer_mode=%u; viewer_state=%u; viewer_slot=%u; viewer_k=%u; viewer_count=%u; viewer_no_spend=%u; viewer_prev=%u; viewer_prev_state=%u; other_jobs=%u\r\n",
-        rebase ? "stock_check" : "stock_gap",unsigned(j.inv_slot),unsigned(j.equip),rebase ? "viewer_own" : "unattributed",rebase ? 0u : 1u,
+        "partner_support=%s; slot=%u; equip=%u; type=%u; reason=%s; changed=%u; kind=%s; k=%u; before=%u; after=%u; words=%u; viewer_mode=%u; viewer_state=%u; viewer_slot=%u; viewer_k=%u; viewer_count=%u; viewer_no_spend=%u; viewer_prev=%u; viewer_prev_state=%u; other_jobs=%u\r\n",
+        rebase ? "stock_check" : "stock_gap",unsigned(j.inv_slot),unsigned(j.equip),SupportType(j.equip),rebase ? "viewer_own" : "unattributed",rebase ? 0u : 1u,
         sp::GapName(gap.kind),6u+gap.word,
         unsigned(gap.before),unsigned(gap.after),unsigned(gap.changed),unsigned(viewer.mode),unsigned(viewer.state),unsigned(viewer.slot),
         viewer.sub<8 ? 6u+viewer.sub : 0xFFu,unsigned(viewer.count),viewer.no_spend ? 1u : 0u,
@@ -2132,19 +2191,27 @@ void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,s
         unsigned k=0;while(k<8 && slot_words[k]==g_support_episode_words[k])++k;
         char line[160]{};
         if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-            "partner_support=stock_index; slot=3; equip=%u; type=12; reason=episode; k=%u; before=%u; after=%u\r\n",
-            unsigned(j.equip),k<8?6u+k:0xFFu,k<8?unsigned(g_support_episode_words[k]):0u,k<8?unsigned(slot_words[k]):0u)))g_log(line);
+            "partner_support=stock_index; slot=3; equip=%u; type=%u; reason=episode; k=%u; before=%u; after=%u\r\n",
+            unsigned(j.equip),SupportType(j.equip),k<8?6u+k:0xFFu,k<8?unsigned(g_support_episode_words[k]):0u,k<8?unsigned(slot_words[k]):0u)))g_log(line);
     }
     bool released=false;
     __try {released=a.gun_rec && Load<std::uint8_t>(a.gun_rec+c::gun_mode_cur)==37 &&
         Load<std::uint8_t>(a.gun_rec+0x2C2)==2;} __except(ProbeFilter(GetExceptionCode())) {}
     const bool release_edge=released && !g_support_released;g_support_released=released;
     if(release_edge)SupportLine("armed",j,"throw_release",handle);
+    // WS4 v1: body 1 entering the place (46) and detonate (47) modes, one line each.
+    {
+        const std::uint8_t body_mode=BodyMode(a);
+        const bool placing=body_mode==46,detonating=body_mode==47;
+        if(placing && !g_support_placing)SupportLine("armed",j,"place",handle);
+        if(detonating && !g_support_detonating)SupportLine("armed",j,"detonate",handle);
+        g_support_placing=placing;g_support_detonating=detonating;
+    }
     if((changed && !g_support_leak) || release_edge || (g_support_episode && !active)) {
         if(g_log && g_support_lines<512){++g_support_lines;char line[192]{};
             if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-                "partner_support=stock_check; slot=%u; equip=%u; type=12; reason=%s; changed=%u; before=0x%x; after=0x%x\r\n",
-                unsigned(j.inv_slot),unsigned(j.equip),changed?"stock_leak":(!before || !after)?"stock_unread":release_edge?"throw_release":"episode_end",changed?1u:0u,
+                "partner_support=stock_check; slot=%u; equip=%u; type=%u; reason=%s; changed=%u; before=0x%x; after=0x%x\r\n",
+                unsigned(j.inv_slot),unsigned(j.equip),SupportType(j.equip),changed?"stock_leak":(!before || !after)?"stock_unread":release_edge?"throw_release":"episode_end",changed?1u:0u,
                 g_support_episode_stock?g_support_episode_stock:before,g_support_episode_stock?slot_after:after)))g_log(line);}
     }
     if(changed && InterlockedExchange(&g_support_leak,1)==0)SupportLine("refused",j,"stock_leak_mission_latched",handle,true);
@@ -2152,6 +2219,96 @@ void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,s
     // C(b): this bracket's after-read starts the next gap.
     g_support_prev_ok=slot_after!=0;std::memcpy(g_support_prev_words,slot_words,sizeof(g_support_prev_words));
     g_support_prev_viewer=viewer;g_support_prev_jobs=jobs;
+}
+
+// --- WS4 v1: the read-only placed and arm checks (docs/anim-round2-throws.md "WS4 v1") ---
+// Offsets are the contract's (partner_placed_policy duplicates them pure).
+namespace ppk=partner_placed_policy::k;
+static_assert(ppk::kPrimVtRva==c::gun_prim_vt_rva && ppk::kPrimBlk==c::prim_blk && ppk::kPrimRec==c::prim_gun_rec &&
+              ppk::kPrimPlaceFlags==c::prim_place_flags && ppk::kPrimPlaceTarget==c::prim_place_target &&
+              ppk::kPrimPlaceLatched==c::prim_place_latched && ppk::kPrimPlaceBit==c::prim_place_bit, "the placement latch is the contract's");
+static_assert(ppk::kPEquip==c::p_equip && ppk::kCtlVtRva==c::equip_ctl_vt_rva && ppk::kCtlStore==c::ctl_inventory &&
+              ppk::kCtlPlayer==c::ctl_player && ppk::kStoreVtRva==c::store_vt_rva && ppk::kStoreVtDerivedRva==c::store_vt_derived_rva &&
+              ppk::kVarsSlotRva==c::vars_slot_rva && ppk::kCtlVars==c::ctl_vars && ppk::kCtlFrac==c::ctl_arm_frac &&
+              ppk::kStoreEnergy==c::store_arm_energy && ppk::kStoreCounts==c::store_counts && ppk::kVarsEnergySum==c::vars_arm_energy_sum &&
+              ppk::kArmWord==c::arm_energy_k && ppk::kEnergySlots==c::arm_energy_slots, "the arm energy chain is the contract's");
+std::uint8_t BodyMode(const pi::Arm& a) noexcept {
+    std::uint8_t mode=0xFF;
+    __try { if(a.gun_rec)mode=Load<std::uint8_t>(a.gun_rec+c::gun_mode_cur); } __except(ProbeFilter(GetExceptionCode())) {mode=0xFF;}
+    return mode;
+}
+std::uint16_t BodyEquip(const pi::Arm& a) noexcept {
+    std::uint16_t equip=0;
+    __try { if(a.gun_rec)equip=Load<std::uint16_t>(a.gun_rec+c::gun_equip); } __except(ProbeFilter(GetExceptionCode())) {equip=0;}
+    return equip;
+}
+partner_placed_policy::PlacedSnap ReadPlacedSnap(const pi::Arm& a) noexcept {
+    return partner_placed_policy::ReadPlaced(SupportRead,g_base,a.viewer_gun_prim,a.viewer_gun_rec,a.blk1,a.gun_prim);
+}
+partner_placed_policy::ArmEnergy ReadArmEnergySnap(const pi::Arm& a) noexcept {
+    return partner_placed_policy::ReadArmEnergy(SupportRead,g_base,a.P);
+}
+bool PlacedReadable(const pi::Arm& a) noexcept {
+    const partner_placed_policy::PlacedSnap s=ReadPlacedSnap(a);
+    return s.latch.ok && s.svc_ok;
+}
+bool ArmEnergyReadable(const pi::Arm& a) noexcept { return ReadArmEnergySnap(a).ok; }
+// Per windowed body-1 job while body 1 is in the place family (43..47) before
+// or after it: the viewer's own placement latch (+0x350 bit 3, +0x3D8, +0x3E8)
+// and the placed owner table must not move inside body 1's job. A change
+// latches native support off for the mission (fail closed): the planned
+// mode-46 code patch (P3) is replaced by this read-only digest (census Q3).
+void PlacedCheck(const pi::Arm& a,const pi::Injection& j,std::uint8_t mode_before,const partner_placed_policy::PlacedSnap& before) noexcept {
+    namespace pp=partner_placed_policy;
+    const std::uint8_t mode_after=BodyMode(a);
+    if(!pp::PlacedBracket(mode_before,mode_after))return;
+    const pp::PlacedSnap after=ReadPlacedSnap(a);
+    const pp::Placed v=pp::ComparePlaced(before,after);
+    ++g_placed_checks;
+    const bool shared=pp::PlacedLatches(v);
+    const bool latch=shared && InterlockedExchange(&g_support_leak,1)==0;
+    const bool changed=v!=g_placed_last || mode_after!=g_placed_mode_last;
+    const bool first_shared=shared && !pp::PlacedLatches(g_placed_last);
+    g_placed_last=v;g_placed_mode_last=mode_after;
+    if(!g_log || (!changed && !latch) || (!latch && !first_shared && g_placed_lines>=256))return;
+    ++g_placed_lines;char line[448]{};
+    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+        "partner_support=%s; slot=3; equip=%u; type=%u; reason=%s; what=%s; mode=%u; mode_before=%u; latch_before=%u; latch_after=%u; "
+        "p3d8=0x%x; p3e8=0x%x; svc_before=0x%x; svc_after=0x%x; owners=%u; owner0=%d; owner1=%d; live0=%u; live1=%u; checks=%u; latched=%u\r\n",
+        shared ? "refused" : "placed_check",unsigned(j.equip),SupportType(j.equip),shared ? "placed_shared_write" : v==pp::Placed::unread ? "unread" : "ok",
+        pp::PlacedName(v),unsigned(mode_after),unsigned(mode_before),pp::LatchBit(before.latch) ? 1u : 0u,pp::LatchBit(after.latch) ? 1u : 0u,
+        unsigned(after.latch.target),unsigned(after.latch.latched),before.svc_digest,after.svc_digest,after.count,after.index0,after.index1,
+        unsigned(after.live0),unsigned(after.live1),g_placed_checks,latch ? 1u : 0u)))g_log(line);
+    if(latch)SupportLine("refused",j,"placed_shared_write_mission_latched",0,true);
+}
+// Per windowed body-1 job with the arm key: the watchdog (body 1's gun mode
+// in an arm use mode 52..56 latches arms off for the mission; FIRE is always
+// stripped, so it must never fire) and the viewer's arm energy, which ctl
+// vt+0xE8 writes with no instance id: a change inside body 1's job latches
+// arms off for the mission. Lines on a verdict, mode or arm change (own cap).
+void ArmCheck(const pi::Arm& a,const pi::Injection& j,const partner_placed_policy::ArmEnergy& before) noexcept {
+    namespace pp=partner_placed_policy;namespace sp=partner_support_policy;
+    const std::uint8_t mode=BodyMode(a);
+    const std::uint16_t equip=BodyEquip(a);
+    ++g_arm_checks;
+    const bool use=sp::ArmUseMode(mode);
+    const pp::ArmEnergy after=ReadArmEnergySnap(a);
+    const pp::Energy v=pp::CompareEnergy(before,after);
+    const bool trip=use || v==pp::Energy::changed;
+    const bool latch=trip && InterlockedExchange(&g_arm_latch,1)==0;
+    // Only an arm in hand (or a trip) is worth a line; a gun or grenade is not.
+    const bool relevant=trip || sp::ArmEquip(equip) || (j.slot_valid && j.inv_slot==6);
+    const bool changed=v!=g_arm_last || mode!=g_arm_mode_last || equip!=g_arm_equip_last;
+    g_arm_last=v;g_arm_mode_last=mode;g_arm_equip_last=equip;
+    if(!g_log || (!latch && (!relevant || !changed || g_arm_lines>=256)))return;
+    ++g_arm_lines;char line[384]{};
+    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+        "partner_arm=%s; slot=6; equip=%u; type=14; reason=%s; body_equip=%u; mode=%u; energy=%s; energy_before=0x%x; energy_after=0x%x; "
+        "word=%u; remote_slot=%u; checks=%u; latched=%u\r\n",
+        trip ? "refused" : "check",unsigned(j.equip),use ? "use_mode_mission_latched" : v==pp::Energy::changed ? "energy_changed_mission_latched"
+            : v==pp::Energy::unread ? "unread" : "ok",
+        unsigned(equip),unsigned(mode),pp::EnergyName(v),pp::EnergyDigest(before),pp::EnergyDigest(after),unsigned(after.word),
+        j.slot_valid ? unsigned(j.inv_slot) : 0xFFu,g_arm_checks,latch ? 1u : 0u)))g_log(line);
 }
 
 // After the job: the leak verdicts and whether instance 1's reload request is set.
@@ -2935,6 +3092,10 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         g_support_episode=false;g_support_released=false;g_support_episode_stock=0;g_support_lines=0;
         g_support_prev_ok=false;g_support_prev_viewer=partner_support_policy::ViewerRec{};g_support_prev_jobs=0;
         g_rec240_logged=0;g_rec240_last=partner_support_policy::Rec240::skip;g_rec240_stale_rec=0;g_rec240_stale_slot=0;g_rec240_stale_logged=false;
+        g_support_placing=g_support_detonating=false;g_placed_lines=g_arm_lines=0;g_placed_checks=g_arm_checks=0;
+        g_placed_last=partner_placed_policy::Placed::same;g_placed_mode_last=0xFF;
+        g_arm_last=partner_placed_policy::Energy::same;g_arm_mode_last=0xFF;g_arm_equip_last=0;
+        g_support_type_equip=0;g_support_type=0;
     }
     const bool have = g_ready && !g_faulted && ReadArm(a);
     const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;
@@ -3041,6 +3202,11 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     std::uint16_t support_words_before[8]{};
     const std::uint32_t support_slot_before =
         a.native_support || g_support_episode ? ReadSupportSlotDigest(&support_words_before) : 0;
+    // WS4 v1 (read-only): the viewer's placement latch and the placed owner
+    // table (C4 lane), the viewer's arm energy (arm lane), before this job.
+    const std::uint8_t body_mode_before=a.native_placed ? BodyMode(a) : static_cast<std::uint8_t>(0xFF);
+    const partner_placed_policy::PlacedSnap placed_before=a.native_placed ? ReadPlacedSnap(a) : partner_placed_policy::PlacedSnap{};
+    const partner_placed_policy::ArmEnergy arm_before=a.native_arm ? ReadArmEnergySnap(a) : partner_placed_policy::ArmEnergy{};
     // Phase 1 picks its pad-sampling branch by id == P+0x218: instance 1 (id 1,
     // validated: ids[1] == 1) takes it for this job only, on this thread.
     const bool detour = partner_local_detour::Installed();
@@ -3075,6 +3241,8 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     LookProbe(a, j);
     AfterJob(a, shots_before, ammo_before);
     if(a.native_support || g_support_episode)SupportCheck(a,j,support_before,support_slot_before,support_words_before,ammo_before);
+    if(a.native_placed)PlacedCheck(a,j,body_mode_before,placed_before);
+    if(a.native_arm)ArmCheck(a,j,arm_before);
     timing=native_work_timing::Begin(native_work_timing::Kind::pose_post);
     SafePost(a, save, true);native_work_timing::End(timing);
     EndWindow();
@@ -3173,8 +3341,11 @@ bool InDrainJob() noexcept { return g_in_drain; }
 
 bool NativeSupportLatchedOff() noexcept {return g_support_leak!=0;}
 void LatchNativeSupportOff() noexcept {InterlockedExchange(&g_support_leak,1);}
+bool NativeArmLatchedOff() noexcept {return g_arm_latch!=0;}
+void LatchNativeArmOff() noexcept {InterlockedExchange(&g_arm_latch,1);}
 void ResetFault() noexcept {
     InterlockedExchange(&g_support_leak,0);
+    InterlockedExchange(&g_arm_latch,0);
     InterlockedExchange(&g_support_reset,1);
     InterlockedExchange(&g_support_frame_reset,1);
     InterlockedExchange(&g_fault_phase, 0);

@@ -1,21 +1,54 @@
 #pragma once
-// Native thrown-support admission and stock latch; pure fixture policy.
+// Native support admission and stock latch; pure fixture policy.
 #include <cstddef>
 #include <cstdint>
 namespace mgscoop::partner_support_policy {
+// --- WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): the support lanes. Thrown
+// items (EQP type 12, slot 3) as before; placed C4 (type 13, only the C4 equips
+// 391..395, slot 3, lab key partner_native_placed) and the bionic arm (type 14,
+// 515..521 = ctl vt+0x1F0's own range 0x203..0x209, slot 6, lab key
+// partner_native_arm, HOLD only). Mines, decoys and cages (other type-13
+// equips) stay Gate::unsupported. ChangeEquip 0x11AC2E0 maps types 12/13 to
+// slot 3 and 14 to slot 6 (0x11AC4B7..0x11AC4CE); a handle's kind (h & 0x1F)
+// is the equip's type (X vt+0 0xDC3250).
+enum class Kind : std::uint8_t { none, thrown, placed, arm };
+constexpr const char* KindName(Kind k) noexcept {
+ return k==Kind::thrown ? "thrown" : k==Kind::placed ? "placed" : k==Kind::arm ? "arm" : "none";
+}
+inline constexpr std::uint8_t kTypeThrown=12,kTypePlaced=13,kTypeArm=14;
+constexpr bool C4Equip(std::uint16_t equip) noexcept { return equip>=391 && equip<=395; }
+constexpr bool ArmEquip(std::uint16_t equip) noexcept { return equip>=515 && equip<=521; }
+constexpr Kind KindOf(std::uint8_t type,std::uint16_t equip,bool placed,bool arm) noexcept {
+ return type==kTypeThrown ? Kind::thrown : type==kTypePlaced && placed && C4Equip(equip) ? Kind::placed
+  : type==kTypeArm && arm && ArmEquip(equip) ? Kind::arm : Kind::none;
+}
+// The inventory slot of a lane (0xFF: no lane).
+constexpr std::uint8_t KindSlot(Kind k) noexcept { return k==Kind::arm ? 6 : k==Kind::none ? 0xFF : 3; }
+// The place family (43 place-hold start, 44 ready/preview, 45 hold end, 46
+// place, 47 detonate; WS4 census Q1) and the arm use modes (52 stun, 53 rocket
+// launch, 54 rocket hold, 55/56 Jehuty). Body 1 must never enter 52..56 (FIRE
+// is always stripped for an arm; the watchdog latches arms off if it does).
+constexpr bool PlaceMode(std::uint8_t mode) noexcept { return mode>=43 && mode<=47; }
+constexpr bool ArmUseMode(std::uint8_t mode) noexcept { return mode>=52 && mode<=56; }
+// placed / arm: the WS4 v1 lab keys (partner_native_placed / partner_native_arm).
 struct GateIn {
  bool enabled, latched, guard_installed, guard_armed, filter_live, filter_armed;
  bool slot_valid, equip_valid, body_ready, record_ready;
  std::uint8_t slot, type;
  std::uint16_t equip;
  bool live=true,stale=false,gun_valid=true,p218_window=false;
+ bool placed=false,arm=false;
 };
+constexpr Kind GateKind(const GateIn& x) noexcept { return KindOf(x.type,x.equip,x.placed,x.arm); }
 constexpr bool Admit(const GateIn& x) noexcept {
+ const Kind k=GateKind(x);
  return x.live && !x.stale && x.gun_valid && !x.p218_window && x.enabled && !x.latched && x.guard_installed && x.guard_armed && x.filter_live && x.filter_armed &&
-  x.slot_valid && x.slot==3 && x.equip_valid && x.equip>0 && x.equip<0x800 && x.type==12 && x.body_ready && x.record_ready;
+  x.slot_valid && k!=Kind::none && x.slot==KindSlot(k) && x.equip_valid && x.equip>0 && x.equip<0x800 && x.body_ready && x.record_ready;
 }
-constexpr std::uint32_t Strip(std::uint32_t mask,bool request,bool key,bool admitted) noexcept {
- if(request)mask|=admitted ? 0x40u : 0x58u;
+// arm: the admitted lane is an arm, which never gets FIRE (HOLD only: body 1
+// shows the arm's aim pose and never enters the use modes 52..56).
+constexpr std::uint32_t Strip(std::uint32_t mask,bool request,bool key,bool admitted,bool arm=false) noexcept {
+ if(request)mask|=admitted ? (arm ? 0x50u : 0x40u) : 0x58u;
  if(key || request)mask|=0x8020u; // no Action or CQC in support windows
  return mask;
 }
@@ -28,10 +61,11 @@ constexpr bool Request(bool key,bool slot_valid,std::uint8_t slot,std::uint32_t 
  return key && ((slot_valid && slot>2) || strip==0x40u);
 }
 // Body 1 may not be (re)equipped or have its slot followed while its gun mode
-// is unread (0xFF), switching, reloading (8/11/12) or in the throw family:
-// the old slot-3 handle may still be referenced by the running throw.
+// is unread (0xFF), switching, reloading (8/11/12), in the throw family, the
+// place family 43..47 (WS4 v1) or an arm use mode 52..56: the old slot-3/6
+// handle may still be referenced by the running throw, place or detonation.
 constexpr bool BodyBusy(std::uint8_t mode,bool switching) noexcept {
- return switching || mode==0xFF || mode==8 || mode==11 || mode==12 || ThrowMode(mode);
+ return switching || mode==0xFF || mode==8 || mode==11 || mode==12 || ThrowMode(mode) || PlaceMode(mode) || ArmUseMode(mode);
 }
 struct StockLatch { bool off=false; };
 // An unread before/after refuses admission; only actual changed evidence latches.
@@ -156,11 +190,14 @@ inline constexpr std::uint32_t kPadHold=0x08u,kPadFire=0x10u,kLevelBits=kPadHold
 inline constexpr std::uint64_t kFireBufferMs=300;
 constexpr GateIn Fresh(GateIn x) noexcept {x.live=true;x.stale=false;return x;}
 // Every gate passes on a fresh frame except body 1's equip (Ready / record);
-// a decoded type other than 12 (a placed item, an arm) is never waited for.
+// only a slot-3 lane is waited for (thrown, or an admitted C4 with the placed
+// key: select-then-place); an arm never gets FIRE, any other type never waits.
 constexpr bool WaitingOnEquip(const GateIn& x) noexcept {
+ const Kind k=GateKind(x);
+ const bool slot3=k==Kind::thrown || k==Kind::placed;
  return x.live && !x.stale && x.gun_valid && !x.p218_window && x.enabled && !x.latched && x.guard_installed && x.guard_armed &&
   x.filter_live && x.filter_armed && x.slot_valid && x.slot==3 && x.equip_valid && x.equip>0 && x.equip<0x800 &&
-  (x.type==0 || x.type==12) && !(x.body_ready && x.record_ready && x.type==12);
+  (x.type==0 || slot3) && !(x.body_ready && x.record_ready && slot3);
 }
 struct FrameTrack {
  bool have=false;std::uint16_t equip=0;std::uint32_t level=0;           // the last admitted support frame
@@ -189,7 +226,10 @@ constexpr FrameOut StepFrame(FrameTrack& t,bool request,const GateIn& x,std::uin
   t.have=false;t.fire=false;
   return o;
  }
- const bool driver_ok=(strip&kLevelBits)==0;
+ // WS4 v1: an arm lane is HOLD only. The driver strips its FIRE, which is not
+ // "the driver one tick behind", and its FIRE press is never buffered.
+ const bool arm=GateKind(x)==Kind::arm;
+ const bool driver_ok=(strip&(arm ? kPadHold : kLevelBits))==0;
  if(driver_ok && Admit(x)){
   o.verdict=Frame::admitted;
   if(t.fire){
@@ -211,7 +251,7 @@ constexpr FrameOut StepFrame(FrameTrack& t,bool request,const GateIn& x,std::uin
  // Waiting: body 1's equip, or the driver's gate one tick behind the hook's.
  const bool waiting=WaitingOnEquip(x) || (!driver_ok && Admit(x));
  if(t.fire && (!waiting || x.equip!=t.fire_equip || now_ms<t.fire_ms || now_ms-t.fire_ms>kFireBufferMs)){t.fire=false;o.dropped=true;}
- if(waiting && (press&kPadFire)){t.fire=true;t.fire_ms=now_ms;t.fire_equip=x.equip;o.buffered=true;}
+ if(waiting && !arm && (press&kPadFire)){t.fire=true;t.fire_ms=now_ms;t.fire_equip=x.equip;o.buffered=true;}
  if(t.fire)o.strip=kPadFire;   // only the buffer delivers this press
  return o;
 }
@@ -332,17 +372,23 @@ inline constexpr bool kRec240Latch=true;
 // prim+0x8 == blk1 and prim+0x58 == rec (the existing record_ready identity).
 // slot_handle: the Match-verified slot-3 handle Y+0x40[1*7+3] from
 // partner_support_equip::Ready (0 = not ready).
+// slot: the lane's hand slot (3; WS4 v1: 6 for an arm). The activation
+// 0x105FDB0 stores rec+0x3D9 = the current slot and, for kinds 12, 13 and 14
+// alike, rec+0x240 = the slot's handle and rec+0x24C = its equip at 0x10602E8 /
+// 0x10602F0 (kind 13 sets class 3, kind 14 classes 4/5/6/0 per equip first).
 struct RecordIn {
  bool chain=false,switching=true;
  std::uint16_t rec_equip=0,equip=0;
  std::uint8_t slot_hand=0xFF,cls=0;
  std::uint32_t rec_handle=0,slot_handle=0;
+ std::uint8_t slot=3;
 };
-// The record holds the remote's equip in hand slot 3 and is not switching: the
-// activation that wrote rec+0x24C wrote rec+0x240 in the same pass, so a
-// gun<->support or support<->support switch is never judged on a stale handle.
+// The record holds the remote's equip in the lane's hand slot and is not
+// switching: the activation that wrote rec+0x24C wrote rec+0x240 in the same
+// pass, so a gun<->support or support<->support switch is never judged on a
+// stale handle.
 constexpr bool RecordIdentity(const RecordIn& r) noexcept {
- return r.chain && r.equip>0 && r.equip<0x800 && r.rec_equip==r.equip && r.slot_hand==3 && !r.switching;
+ return r.chain && r.equip>0 && r.equip<0x800 && r.rec_equip==r.equip && r.slot_hand==r.slot && !r.switching;
 }
 // B: HOLD/FIRE reach modes 28/30/33/37 only when every vt+0x160 call there
 // hits the Match-verified row (owner 1, this equip, kind 12, index in range).
@@ -390,9 +436,9 @@ struct Rec240Row {
 // Read: bool(std::uintptr_t address, void* out, std::size_t size) noexcept,
 // read-only and fault-safe. base: the image base (vtable identities only).
 template<class Read> RecordIn ReadRecord(Read&& read,std::uintptr_t base,std::uintptr_t prim,std::uintptr_t rec,
-                                         std::uintptr_t blk,std::uint16_t equip) noexcept {
+                                         std::uintptr_t blk,std::uint16_t equip,std::uint8_t slot=3) noexcept {
  namespace k=rec240;
- RecordIn r{};r.equip=equip;
+ RecordIn r{};r.equip=equip;r.slot=slot;
  std::uintptr_t vt=0,pblk=0,prec=0;std::uint32_t flags=0,word27c=0;
  if(!prim || !rec || !read(prim,&vt,sizeof(vt)) || vt!=base+k::kPrimVtRva || !read(prim+k::kPrimBlk,&pblk,sizeof(pblk)) ||
     pblk!=blk || !read(prim+k::kPrimRec,&prec,sizeof(prec)) || prec!=rec) return r;

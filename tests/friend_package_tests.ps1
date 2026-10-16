@@ -443,6 +443,9 @@ try {
             # Play-Coop writes no partner_native_support key; the loader resolves it, and a named 0 opts out.
             Assert-True (!$hostIni.Contains('partner_native_support') -and !$guestIni.Contains('partner_native_support') -and !$clipsIni.Contains('partner_native_support')) 'Play-Coop lab.ini never names partner_native_support'
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])" '1|0' 'native: play -Partner native defaults native throws on (Stage B)'
+            # WS4 v1: native C4 placing and arm holds stay off in every profile until their hidden runs pass.
+            Assert-True (!$hostIni.Contains('partner_native_placed') -and !$hostIni.Contains('partner_native_arm')) 'Play-Coop lab.ini never names the WS4 v1 keys'
+            Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])" '0|0' 'native: play -Partner native leaves C4 and arm holds off (WS4 v1)'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             $file = Join-Path $fixture 'play-support-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_support=0`n", $utf8)

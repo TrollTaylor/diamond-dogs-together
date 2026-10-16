@@ -144,6 +144,8 @@ int main(int argc, char** argv) {
         // Native partner throws (docs/anim-round2-throws.md Stage B): the resolved key and whether it was named.
         std::printf("partner_native_support=%d\npartner_native_support_given=%d\n", c.partner_native_support ? 1 : 0,
                     c.partner_native_support_given ? 1 : 0);
+        // WS4 v1: native placed C4 and arm holds (default 0 in every profile).
+        std::printf("partner_native_placed=%d\npartner_native_arm=%d\n", c.partner_native_placed ? 1 : 0, c.partner_native_arm ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

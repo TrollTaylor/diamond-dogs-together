@@ -949,8 +949,16 @@ const char* SupportModeReason() noexcept {
     return mgscoop::partner_support_policy::ModeRefusal(config.mode==mgscoop::LabMode::lab,play,
         play && mgscoop::partner_net::GetLinkInfo().state==mgscoop::link::LinkState::connected);
 }
+// The type the support lines name (WS4 v1): 13 for C4 391..395, 14 for arms
+// 515..521, else 12 (the writer's own receipts carry the decoded type).
+unsigned SupportLineType(std::uint16_t equip) noexcept {
+    return mgscoop::partner_support_policy::C4Equip(equip) ? 13u : mgscoop::partner_support_policy::ArmEquip(equip) ? 14u : 12u;
+}
 // Anim round 2: read-only admission for the driver's support gate. The
 // observer writer below is the only allocator; this callback never equips.
+// WS4 v1: the writer context names one lane (slot 3, or 6 for an arm); Ready
+// answers only for that lane, so asking both is the same as asking the
+// context's own.
 bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexcept {
     const auto& config=mgscoop::GetLabConfig();
     if(!config.partner_native_support || SupportModeReason() || config.partner_input_p218_allow ||
@@ -960,8 +968,10 @@ bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexc
        !mgscoop::partner_support_guard::Armed(state.P,1) ||
        !mgscoop::partner_fire_filter::ThrownPatchLive(game_base) || !mgscoop::partner_fire_filter::ThrownArmed(1)) return false;
     pp::DmTargets targets{};
-    return !pp::ResolveDm(partner_addresses,state,targets) &&
-        mgscoop::partner_support_equip::Ready(reinterpret_cast<std::uintptr_t>(game_base),state.P,targets.blk1,equip);
+    if(pp::ResolveDm(partner_addresses,state,targets)) return false;
+    const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+    return mgscoop::partner_support_equip::Ready(base,state.P,targets.blk1,equip,nullptr,nullptr,3) ||
+        mgscoop::partner_support_equip::Ready(base,state.P,targets.blk1,equip,nullptr,nullptr,6);
 }
 // The driver's support verdict for partner_net's unknown slot/equip debounce.
 void PartnerPublishSupportIdentity(void*,std::uint16_t equip) noexcept { mgscoop::partner_net::SetSupportIdentity(equip); }
@@ -1787,8 +1797,21 @@ void ObserveNativeSupport() noexcept {
     context.owner=OnRuntimeThread();context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
     context.pins_intact=mgscoop::equipment_stock_writer::PinsIntact;
     context.mission=partner_mission;context.realize_gen=mission.realize_gen;context.now_ms=mgscoop::partner_net::NowMs();
-    // Never (re)equip slot 3 through a switch, a reload or a running throw.
+    // Never (re)equip slot 3/6 through a switch, a reload, a running throw, a
+    // place/detonation or an arm use mode.
     context.body_busy=mgscoop::partner_support_policy::BodyBusy(mission.body_gun_mode,mission.body_switching);
+    // WS4 v1: the C4 and arm lanes (both ride on partner_native_support). The
+    // read-only watchdog: body 1 in an arm use mode 52..56 (FIRE is always
+    // stripped for an arm, so it must never happen) latches arms off for the
+    // mission, here at 10 Hz and in the hook after every windowed job.
+    if(context.enabled && config.partner_native_arm && mgscoop::partner_support_policy::ArmUseMode(mission.body_gun_mode) &&
+       !mgscoop::partner_input_hook::NativeArmLatchedOff()) {
+        mgscoop::partner_input_hook::LatchNativeArmOff();
+        LogFormat("partner_arm=refused; slot=6; equip=%u; type=14; reason=use_mode_mission_latched; mode=%u; source=observer\r\n",
+            unsigned(mission.remote_gun_equip>0 ? mission.remote_gun_equip : 0),unsigned(mission.body_gun_mode));
+    }
+    context.placed=config.partner_native_placed;
+    context.arm=config.partner_native_arm && !mgscoop::partner_input_hook::NativeArmLatchedOff();
     unsigned short current_mission=0;
     context.gates=context.enabled && PartnerGunPiecesWanted() && offline_enabled && lab_active && lab::SavesRedirected() &&
         partner_on && partner_gate_ok && allocation_enabled && archive_mounted && host_source_selected &&
@@ -1843,8 +1866,8 @@ void ObserveNativeSupport() noexcept {
     // A mission-scoped uncertain writer outcome also closes the drain's admission.
     if(se::Uncertain() && !mgscoop::partner_input_hook::NativeSupportLatchedOff()) {
         mgscoop::partner_input_hook::LatchNativeSupportOff();
-        LogFormat("partner_support=refused; slot=3; equip=%u; type=12; reason=writer_uncertain_mission_latched\r\n",
-            unsigned(context.equip));
+        LogFormat("partner_support=refused; slot=%u; equip=%u; type=%u; reason=writer_uncertain_mission_latched\r\n",
+            unsigned(context.slot==6 ? 6 : 3),unsigned(context.equip),SupportLineType(context.equip));
     }
     ff::Stats totals{};ff::ReadStats(game_base,totals);
     sg::Stats guard_totals{};sg::ReadStats(guard_totals);
@@ -1854,16 +1877,16 @@ void ObserveNativeSupport() noexcept {
     if(summary_mission!=context.mission) {summary_mission=context.mission;summary_ms=0;summary_lines=0;summary_drop=totals.thrown_dropped;summary_hits=guard_totals.hits;summary_refused=guard_totals.refused;}
     if(totals.thrown_armed && summary_lines<3600 && (context.now_ms<summary_ms || context.now_ms-summary_ms>=1000)) {
         summary_ms=context.now_ms;++summary_lines;
-        LogFormat("partner_support=guard; slot=3; equip=%u; type=12; reason=%s; installed=%u; live=%u; armed=%u; hits=%u; refusals=%u; hit_delta=%u; refusal_delta=%u; windows=%u\r\n",
-            unsigned(context.equip),guard_totals.live ? "ok" : "hook_lost",unsigned(guard_totals.installed),unsigned(guard_totals.live),
+        LogFormat("partner_support=guard; slot=%u; equip=%u; type=%u; reason=%s; installed=%u; live=%u; armed=%u; hits=%u; refusals=%u; hit_delta=%u; refusal_delta=%u; windows=%u\r\n",
+            unsigned(context.slot==6 ? 6 : 3),unsigned(context.equip),SupportLineType(context.equip),guard_totals.live ? "ok" : "hook_lost",unsigned(guard_totals.installed),unsigned(guard_totals.live),
             unsigned(guard_totals.armed),guard_totals.hits,guard_totals.refused,guard_totals.hits-summary_hits,guard_totals.refused-summary_refused,guard_totals.windows);
         summary_hits=guard_totals.hits;summary_refused=guard_totals.refused;
         LogFormat("partner_fire_filter=summary; kind=thrown; installed=%u; live=%u; armed=%u; owner=%u; dropped=%u; preview_dropped=%u; passed=%u; unread=%u; delta=%u\r\n",
             unsigned(totals.thrown_installed),unsigned(totals.thrown_live),unsigned(totals.thrown_armed),unsigned(totals.thrown_owner),
             totals.thrown_dropped,totals.thrown_preview_dropped,totals.thrown_passed,totals.thrown_unread,totals.thrown_dropped-summary_drop);
         if(totals.thrown_dropped!=summary_drop)
-            LogFormat("partner_support=filtered; slot=3; equip=%u; type=12; reason=owner; owner=0x1; dropped=%u; preview_dropped=%u\r\n",
-                unsigned(context.equip),totals.thrown_dropped-summary_drop,totals.thrown_preview_dropped);
+            LogFormat("partner_support=filtered; slot=%u; equip=%u; type=%u; reason=owner; owner=0x1; dropped=%u; preview_dropped=%u\r\n",
+                unsigned(context.slot==6 ? 6 : 3),unsigned(context.equip),SupportLineType(context.equip),totals.thrown_dropped-summary_drop,totals.thrown_preview_dropped);
         summary_drop=totals.thrown_dropped;
     }
 }

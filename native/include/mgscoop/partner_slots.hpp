@@ -159,7 +159,7 @@ struct AimGateIn {
     bool judged;                 // the weapon gate judged this tick (weapon_gate is current)
     Gate gate;                   // match or standin admit
     bool slot_valid;             // the remote's live v5 slot
-    std::uint8_t slot;           // <= 2
+    std::uint8_t slot;           // <= 2 (support: 3, or 6 for an admitted arm)
     bool sleeping;               // the partner sleep owner holds body 1 (coop_sleep)
     bool carried;                // instance 1 is carried (coop_carry)
     bool hidden;                 // the ride guard hides body 1 (ride, air, dead, stale)

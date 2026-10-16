@@ -606,6 +606,10 @@ struct Arm {
     std::uint64_t aim_act_until_ms;
     float reload_rate_k;
     bool native_support; // key selected; every consumer rechecks the fresh slot/equip and safety owners
+    // WS4 v1 (not compared by SameArm; both need native_support): the placed C4
+    // lane (type 13, 391..395, slot 3) and the arm lane (type 14, 515..521,
+    // slot 6, HOLD only), lab keys partner_native_placed / partner_native_arm.
+    bool native_placed, native_arm;
     // Native support C(b) (not compared by SameArm): instance 0's gun prim and
     // record from the driver tick's ReadGun(k=0). The hook re-validates the
     // prim (vtable, prim+0x58 == record, not body 1's) before it reads the

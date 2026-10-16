@@ -78,6 +78,36 @@ int main() {
                   "an invalid placed census value refuses");
         }
     }
+    // WS4 v1: native placed C4 and arm holds, two lab keys, default 0 in every profile (lab and play, gun or not) until
+    // their hidden runs pass; a named 1 enables each on its own; play keeps a named key (ModeRefusal gates it there).
+    Check(!LabConfig{}.partner_native_placed && !LabConfig{}.partner_native_arm && !Lab("").partner_native_placed &&
+          !Lab("").partner_native_arm, "WS4 v1 keys default off");
+    {
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_native_placed && !profile.partner_native_arm && profile.partner_native_support,
+                  "the gun profile leaves C4 and arm holds off (lab and play)");
+        }
+        const auto placed = Lab("enabled=1\nrole=host\npartner_native_placed=1\n");
+        Check(placed.partner_native_placed && !placed.partner_native_arm && placed.invalid_values == 0 && placed.unknown_keys == 0,
+              "partner_native_placed=1 parses alone");
+        const auto arm = Lab("enabled=1\nrole=host\npartner_native_arm=1\n");
+        Check(arm.partner_native_arm && !arm.partner_native_placed && arm.invalid_values == 0 && arm.unknown_keys == 0,
+              "partner_native_arm=1 parses alone");
+        const auto both = Lab("enabled=1\nrole=host\npartner_native_placed=1\npartner_native_arm=1\npartner_native_placed=0\n");
+        Check(!both.partner_native_placed && both.partner_native_arm, "a later 0 turns a key off, the other stays");
+        for (const char* key : {"partner_native_placed=", "partner_native_arm="})
+            for (const char* value : {"2", "-1", "", "maybe"}) {
+                const auto invalid = Lab(std::string("enabled=1\nrole=host\n") + key + value + "\n");
+                Check(!invalid.partner_native_placed && !invalid.partner_native_arm && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                      "an invalid WS4 v1 key value refuses");
+            }
+        const auto playNamed = Lab(gun + "mode=play\npartner_native_placed=1\npartner_native_arm=1\n");
+        Check(playNamed.partner_native_placed && playNamed.partner_native_arm && playNamed.invalid_values == 0,
+              "play keeps the named WS4 v1 keys (admission is ModeRefusal's, link v2 connected)");
+    }
 
     const auto guest = Lab(
         "\xEF\xBB\xBF# lab guest\r\n"

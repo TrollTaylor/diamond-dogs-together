@@ -433,7 +433,7 @@ struct Settings {
     // filter is installed, live and armed for instance 1 and its gun is a gun
     // class. EffectiveSettings passes FIRE only with nfire=visual and this.
     bool fire_live;
-    bool support_live; // current type-12 support gate, independent of an earlier gun class
+    bool support_live; // current support gate (type 12; WS4 v1: C4 / arm lanes), independent of an earlier gun class
     std::uint32_t steer_deg, trim_pct;
     PartnerNativeRates nrates;
     // The facing governor mode (partner_recon FaceMode while native) and the
@@ -459,6 +459,10 @@ struct Settings {
     // partner_fire_census).
     bool nunsupported, ndry;
     bool nsupport; // lab-only native thrown equipment (type 12), default off
+    // WS4 v1 (lab.ini partner_native_placed / partner_native_arm; both need
+    // nsupport): placed C4 (type 13, 391..395, slot 3) and arm holds (type 14,
+    // 515..521, slot 6, HOLD only: FIRE stays stripped).
+    bool nplaced, narm;
     PartnerNativeAimIntent naim_intent;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;

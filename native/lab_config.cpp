@@ -176,11 +176,15 @@ bool ParseRound2SupportKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     return true;
 }
 
-// WS4 step 0: the read-only placed / arm census (partner_placed_census=0|1),
-// its own helper for the same nesting limit.
+// WS4 step 0: the read-only placed / arm census (partner_placed_census=0|1)
+// and the WS4 v1 keys (partner_native_placed / partner_native_arm=0|1), their
+// own helper for the same nesting limit.
 bool ParseWs4CensusKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
-    if (!Equals(key, "partner_placed_census")) return false;
-    ok = ParseBool(value, result.partner_placed_census);
+    if (Equals(key, "partner_placed_census")) ok = ParseBool(value, result.partner_placed_census);
+    // WS4 v1: native placed C4 and arm holds (partner_native_placed / _arm=0|1).
+    else if (Equals(key, "partner_native_placed")) ok = ParseBool(value, result.partner_native_placed);
+    else if (Equals(key, "partner_native_arm")) ok = ParseBool(value, result.partner_native_arm);
+    else return false;
     return true;
 }
 

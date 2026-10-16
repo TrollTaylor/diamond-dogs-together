@@ -1,6 +1,9 @@
 # Anim round 2: native partner throws, v1
 
 Branch `wp/anim-throws`, based on `766746a5e950e69ad3afd9da945e3e273cd77be3`.
+Status (2026-10-16, WS4 v1): native **C4 placing and arm holds** for body 1 are implemented behind two lab keys,
+`partner_native_placed` and `partner_native_arm` (default 0, unit tests only; "WS4 v1" at the end). The thrown
+design below is unchanged by them.
 Status (2026-10-16): **on by default with the native gun profile in lab and play** (Stage B, at the end). Status
 (2026-10-15): **implemented, default off.** Hidden run `aaa2a0e0` passed (the host body
 natively threw grenade 354 and magazine 349 on the guest screen; all 229 owner-1 thrown requests
@@ -80,9 +83,9 @@ motions or generate a second real grenade.
 Inspected executable (read only): `D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe`,
 version 1.0.15.4, SHA-256
 `085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
-The generator currently verifies **618 code sites and 129 vtable slots** (589/122 before the WS1
+The generator currently verifies **637 code sites and 133 vtable slots** (589/122 before the WS1
 handle-call pins, 607/128 before its review fixes, 612/128 before the WS2 review fixes, 614/128 before the WS4
-step 0 census pins), including all previous reference/containment assertions.
+step 0 census pins, 618/129 before WS4 v1), including all previous reference/containment assertions.
 
 | RVA | Original bytes | Enabled in-memory bytes |
 |---|---|---|
@@ -937,3 +940,165 @@ stimulus uses the lab seed's C4 395 (support entry 2) and whatever arm the seed 
 specific arm (`debug weapon` only reaches hip/back/secondary residents), so the stun-arm questions stay open if the
 seed's arm is not 515. The C4 detonate key (RELOAD) is the retail binding as remembered, not verified here: no
 `mode=47` line means the stimulus missed.
+
+## WS4 v1: native C4 placing and arm holds (2026-10-16)
+
+Spec: `coop-gaps-spec.md` WS4 (research "placed-arms", option C), revised by the census. Branch `wp/feat-c4`
+(`164e3c4` = the census + merged `wp/feat-throws` `90ea5cf`). **Unit tests only; no hidden run yet** (scenario and
+command below). Both new keys default to 0 in every profile until their hidden run passes.
+
+### What the census decided
+
+| Q | Answer (runs `3ef82e27` .. `a93db206`) | Consequence for v1 |
+|---|---|---|
+| Q1 | C4 395 is type 13, class 3 (`w27c 0x10000c1`); viewer modes 43 place-hold start, 44 ready/preview, 45 hold end, 46 place (states 1, 2, 4/5), 47 detonate. Place = aim + fire on a valid spot (43 -> 46; an invalid spot readies only, 43 -> 44 -> 45 -> 0); detonate = aim + E with a live charge (44 -> 47). The seed's arm is 516 Hand of Jehuty (type 14, class 6, aim modes 1/2/3, use mode 55). | The stock guard (classes 2/3) already covers C4. Slot-3 stock word of 395 is k = 6 + sub 2 = 8. |
+| Q2 | The placed owner table has one row (count 1, per 32); owner id 1 is never registered. | An owner-1 object mirror is impossible (0xFC54F0 / 0xFCAFA0 return 0xFF): **v1 has no object mirror**. |
+| Q3 | The plugin latch (+0x350 bit 3, +0x3D8, +0x3E8) is never set by ground places (+0x3D8 = 0xFFFF takes the clear path) and `same_prim=0` (one gun plugin per instance). | **The planned P3 code patch at 0x107BC66 is dropped**; a read-only digest of the VIEWER's latch replaces it. |
+| Q4 | C4 kills are att=local on the placer's world (Dead a1=0) and committed on the host by the existing world sync. | Outcomes stay host-authoritative; nothing new. |
+| Q5 | Body 1's drain window shadows PP+0x10 / +0x2C (stun op 0 reads body 1's own pad). | Not needed in v1 (no arm use). |
+
+### Lanes and admission
+
+`partner_support_policy::KindOf(type, equip, placed, arm)` names the lane; `KindSlot` its inventory slot:
+
+| Lane | Type | Equips | Slot | Key | Body 1 gets |
+|---|---|---|---|---|---|
+| thrown | 12 | any | 3 | `partner_native_support` (as before) | HOLD, FIRE |
+| placed | 13 | **391..395 (C4) only** | 3 | `partner_native_placed` | HOLD, FIRE (place-hold 43, ready 44, end 45, place 46) |
+| arm | 14 | 515..521 (ctl vt+0x1F0's own range 0x203..0x209) | 6 | `partner_native_arm` | **HOLD only**: FIRE always stripped (aim pose 1/2/3) |
+
+Both new keys ride on `partner_native_support` (its guard, thrown filter, writer, gates and per-job digests; the Arm
+fields `native_placed` / `native_arm` are false without it). Mines, decoys, cages (other type-13 equips) and every
+other type keep Round 1's `Gate::unsupported` strip 0x58. ACTION (0x20) and CQC stay stripped in every support window.
+
+- **Policy** (`partner_support_policy.hpp`): `GateIn` gains `placed` / `arm`; `Admit` requires a lane and the lane's
+  slot; `Strip(mask, request, key, admitted, arm)` strips 0x50 (FIRE|RELOAD) for an admitted arm, 0x40 for the slot-3
+  lanes; `WaitingOnEquip` (the FIRE-edge buffer) waits for a C4 like a grenade, never for an arm; `StepFrame` treats an
+  arm frame as HOLD only (the driver's own FIRE strip is not "the driver one tick behind", no FIRE is ever buffered for
+  it, and slot 6 never freezes); `BodyBusy` adds the place family 43..47 and the arm use modes 52..56; `RecordIn.slot`
+  is the lane's hand slot (6 for an arm) for WS1 B's record identity.
+- **Driver** (`partner_driver.cpp`): the support gate takes the lane of the remote's decoded type and equip (with the
+  keys) and its v5 slot (3 or 6; the stall hold stays slot 3 only); an admitted arm adds FIRE to `weapon_strip`; the
+  gun record follows body 1 while it holds an arm; `partner_support=lanes; support=1; placed=..; arm=..;
+  arm_fire=stripped` once with the settings line when a key is named. `AimGate` lets an admitted arm (Gate::support at
+  slot 6) use the aim intent (toggle aim).
+- **Hook** (`partner_input_hook.cpp`): `SupportGate` sets the keys, asks `Ready` for the lane's slot, reads the record
+  for that hand slot, and refuses a C4 lane while the viewer latch or the owner table is unreadable, an arm lane while
+  the arm energy is unreadable (fail closed); `NativeView` strips per the admitted lane; the drain's `SlotFollow`
+  follows slot 6 for an arm through the same guarded native SetCurrentSlot (case 6: row+0 = row+8, no call for id 1);
+  the support episode now also spans the place family; `partner_support=armed; ...; reason=place|detonate` mark body
+  1 entering mode 46 / 47. Every support line prints the decoded type (`SupportType`; 13 / 14 for the new lanes).
+- **Writer** (`partner_support_equip`): one qualified dispatch for every lane. Slot 3 is unchanged except that the
+  handle kind must equal the decoded type (12 or 13). Slot 6 (an arm, only with the key) dispatches the same
+  ChangeEquip 0x11AC2E0 request (flags 4): for type 14 it calls ctl vt+0x1F0 = 0x11B1B60, which for a non-local id runs
+  only ctl vt+0xA0(id, 6, equip, 0, 1, 1) (Y vt+8 releases and re-allocates `Y+0x40[1*7+6]`, the model binder is a
+  no-op for slot 6) and ctl vt+0x98(id, 6, 0, equip) (row+8), then SetCurrentSlot(id, 6, 0) (equip audit,
+  research equip-audit). Capture also requires ctl vt+0x1F0 to be 0x11B1B60. `Match` is pure now
+  (`MatchRefusal(MatchIn, active)`): slot 3 as before; slot 6 checks the kind-14 handle, row+8 and, active, the
+  current slot 6 and row+0, then the manager row (equip, owner 1, p6 bits 0). Each lane keeps its own owned handle
+  (a slot-6 handle we did not allocate refuses `foreign_handle`, as in slot 3); `SameLocal` excludes only the lane's own
+  handle. The new refusal `slot_type` names a type in the wrong lane.
+- **Observer** (`game_script_observer.cpp`): the writer context carries the keys (the arm key off while the arm latch
+  is set); `PartnerSupportReady` asks the context's lane (3 or 6).
+
+### Read-only safety digests instead of P3 (`partner_placed_policy.hpp`)
+
+No new code patch. Around every windowed body-1 job (hook thread):
+
+- **Placed** (key on; compared when body 1's mode was in 43..47 before or after the job): the VIEWER's gun plugin
+  latch (`a.viewer_gun_prim`, re-validated: its vtable, prim+0x58 == the viewer's record, never body 1's block or prim;
+  only +0x350 **bit 3**, +0x3D8 and +0x3E8: the viewer's own activation toggles bit 4 and its rocket arm bits 7/9) and the
+  placed service owner table (`partner_placed_census::ReadService`, its digest: owner rows, live counts, equips). Any
+  change inside body 1's job latches native support off for the mission:
+  `partner_support=refused; slot=3; equip=395; type=13; reason=placed_shared_write; what=latch|service; ...; latched=1`
+  plus `partner_support=refused; ...; reason=placed_shared_write_mission_latched`. Unread never latches (and refuses
+  new C4 input through `SupportGate`). Status lines on a verdict or mode change (own cap 256):
+  `partner_support=placed_check; slot=3; equip=N; type=13; reason=ok|unread; what=same|unread; mode=..; mode_before=..;
+  latch_before=..; latch_after=..; p3d8=..; p3e8=..; svc_before=..; svc_after=..; owners=..; owner0=..; owner1=..;
+  live0=..; live1=..; checks=..; latched=0`.
+- **Arm** (key on, every job): the viewer's arm energy, everything ctl vt+0xE8 (0x11AF820 -> 0x11AF5E0, no instance
+  id; mode 53 calls it through 0x10546F0) writes: the float `Y+0x1C[i]` (i = 0 for 515..518), the slot-6 store word
+  `[[Y+0x98]+2*5]` (the stock setter ctl vt+0xC0 with k = 5; store vt+0x88 0xEE9050 reads it), `ctl+0x58[i]` and the
+  `vars+0x670` sum (just past the ammo digest's block). Any change inside body 1's job, or body 1's rec+0x2C0 in an arm
+  use mode 52..56 (the **watchdog**; FIRE is always stripped, so it must never trip), latches arms off for the mission
+  (`g_arm_latch`, cleared with the support latch by `ResetFault`): `partner_arm=refused; slot=6; equip=N; type=14;
+  reason=use_mode_mission_latched|energy_changed_mission_latched; ...; latched=1`. The observer runs the same
+  watchdog at 10 Hz on `mission.body_gun_mode` (`...; source=observer`). Status lines while an arm is in hand or the
+  remote's slot is 6, on a verdict/mode/equip change (own cap 256): `partner_arm=check; slot=6; equip=N; type=14;
+  reason=ok|unread; body_equip=..; mode=..; energy=same|unread; energy_before=..; energy_after=..; word=..;
+  remote_slot=..; checks=..; latched=0`. The vars word k=5 is also inside the existing per-job support digest.
+
+### Contract (`python tools/generate_partner_contract.py --check`: 637 code sites, 133 vtable slots)
+
+New pins (bytes taken from the scratch REA `.xtext` dump, re-read from the exact executable by the generator):
+ChangeEquip's type-14 branch `0x11AC379` and slot map `0x11AC4C6`; **ctl vt+0x1F0 `0x11B1B60` whole** (seven parts,
+0x207 bytes, ret at `0x11B1D66`); ctl vt+0xE8 `0x11AF820` whole; `0x11AF5E0`'s index map `0x11AF5F1`, energy store
+`0x11AF65D` and fraction/vars sum `0x11AF78D`; store vt+0x88 `0xEE9050`; the mode-46 op-1 latch store block
+`0x107BD64..0x107BD92` (r14 = the record's own prim); the activation's kind branches `0x1060465`, `0x1060495` (kind
+13 sets class 3) and `0x10605BF` (kind 13 joins the stores, kind 14 the equip jump table). Slots: ctl
+`0x23C1720`+0x1F0 = 0x11B1B60, +0xE8 = 0x11AF820, store `0x23894B0`/`0x23895D0`+0x88 = 0xEE9050. Assertions: the
+activation's data flow for kinds 13 and 14 (as WS1 did for kind 12: on every non-vt+0x50 path rec+0x240 is the handle
+loaded at 0x105FEC0, rec+0x24C X vt+0x20 of it, rsi = rec+0x1B0, and kind 13 always sets class 3), 0x11B1B60 and
+0x11AF820 referenced only by their slots in the ctl vtable and its sibling `0x23C14B0`, never called directly, and
+0x11B1B60's exact runtime function range. Header constants: `arm_equip_rva`, `arm_energy_rva`,
+`store_count_read_rva`, `ctl_vars`, `ctl_arm_frac`, `store_arm_energy`, `store_counts`, `vars_arm_energy_sum`,
+`arm_energy_k`, `arm_energy_slots`, `arm_equip_first/last`; the hook and the new test static_assert the pure header's
+offsets against them.
+
+### Keys, scripts and tests
+
+`partner_native_placed=0|1` and `partner_native_arm=0|1` (lab_config side helper `ParseWs4CensusKey`, `lab_ini_check`
+prints them), in all three `-LabSetting` regex copies, `LabCommon` (written only when named), Play-Coop never names
+them (`friend_package_tests`: both resolve 0 for the play gun profile). Play admits a named key only with link v2
+connected (the throws' `ModeRefusal`), like Stage A of WS2.
+
+- `partner_support_policy_tests` (38771 checks): the lane table (type x equip x keys), the admission matrix (slot x
+  type x equip x keys), strips (an admitted arm keeps HOLD only; ACTION stripped in every support window), the FIRE
+  buffer (C4 waits, arms never), BodyBusy 43..47 / 52..56, B in the arm lane and C on a C4 record (fake memory), the
+  C4 frame pipeline (aim, fire, a stall freeze, the key off) and the arm pipeline (HOLD only, never FIRE, never frozen),
+  the writer's lane refusals and the pure Match of both lanes; AimGate with the arm lane.
+- New CTest `partner_placed_policy_tests` (4175 checks, in `Get-WorkerTests`): the viewer latch reader and its
+  refusals, the placed verdicts (body 1's own latch ignored, the viewer's latch, owner-0 charges, an owner-1 row,
+  unread), the bracket, the arm energy reader/verdicts/refusals, the watchdog, and the contract pins it relies on.
+- `partner_driver_tests` (`TestNativePlacedArmLanes`): the driver's gate for C4 (strip 0x40) and an arm (strip 0x50,
+  aim intent kept) with their keys; the key off, the wrong slot, a non-C4 type-13 item, no support key or a refusing
+  `Ready` stay unsupported (0x58); back to the gun is ordinary gun policy.
+- `partner_defer_tests`: the real hook's drain window with the arm key: the aim pose and other modes never trip the
+  watchdog, Jehuty's use mode 55 latches arms off (support untouched) and the latch holds; ResetFault clears it.
+- `lab_config_tests`, `lab_scripts_tests` (unchanged pattern), `friend_package_tests`, `worker_session_tests` (the keys
+  in both forms, and `partner-c4.txt`: its labsettings, steps in lab mode, evidence lines and phases).
+
+Full CTest **279/279** (278 + `partner_placed_policy_tests`), no game running; `--check` 637 / 133.
+
+### Limits of v1 (by design)
+
+- **No object mirror**: the viewer never sees the partner's charge (owner 1 is not in the placed owner table). Each
+  player's own world creates and detonates its own C4; kills commit on the host through world sync.
+- **No detonation animation on body 1**: ACTION (E) is never passed (ride, pickup, knife kill), so body 1 never gets
+  44 -> 47. Passing it would need its own ACTION-consumer census.
+- Body 1 places where **its own** position is a valid spot; elsewhere it readies and ends (43 -> 44 -> 45).
+- **No arm use**: FIRE is always stripped for an arm. If an arm's aim pose is itself a use-family mode (research says
+  the rocket arms 517/518 hold in mode 54), the watchdog latches arms off at the first aim (fail closed) until a
+  census of that arm. Only 516 was observed (the lab seed); no debug lever equips another arm.
+- A slot-6 handle body 1 already had (not allocated by this writer) refuses `foreign_handle`; whether a realized body
+  carries one is unverified.
+- **Friendly fire** (existing, not changed): the host's C4 also damages body 1 and can down the guest
+  (`friendly_hit=owner applied=1`).
+- Unwindowed or refused body-1 jobs are not bracketed by the digests (as for the existing per-job digests); the
+  observer's 10 Hz watchdog still sees the gun mode.
+
+### Hidden run (not run here; coordinator only)
+
+```powershell
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-c4.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+```
+
+Hidden worker only, verify lock, Research worker checks first, `MGS_GAME_LUA_DIR` unset, no build running. The
+scenario names `partner_native_placed=1`, `partner_native_arm=1` and the census key (k=1 gun lines). The host places C4
+at four spots (aim + fire), spawns a guard near the charges and detonates (aim + E) while the prone guest films body 1
+from 7 m behind; then the host aims the arm (516) for about 4.5 s and fires it once. Accept (header): body 1's modes 43
+(44/45 or 46) on the guest's census lines, `placed_check ... what=same`, the guest's counts unchanged
+(`12,16383,12,8,12,12,8,8`), the guest's owner table without an owner-1 row (`owners=65535:0`), the arm's
+`partner_arm=check ... mode=1|2|3; energy=same`, the host's kill (`obs_att ... a1=0; c1=local`), and none of
+`placed_shared_write`, `partner_arm=refused`, a k=1 mode 52..56, `stock_leak_mission_latched`, `rec240_foreign` or
+`rec240_stale`; frames of every phase. Then decide the defaults (on with the gun profile in lab and play).
