@@ -636,8 +636,8 @@ do
     local c = fixture(2, {mission = 40010, r12 = 3, paired = true})
     c.menu.Continue()
     check(called(c, 'select_continue') == 0 and noted(c, 9, 0, 0) == 1 and #saved(c, 3) == 0 and c.tx[1].op == OP.REQ_MISSION and
-        called(c, 'reboot_menu') == 1 and logged(c, 'fn=TitleContinue;kind=4;target=30010;host=0;decision=armed') == 1,
-        'first press: suppressed (REQ_MISSION), note 9, the menu reopened')
+        called(c, 'reboot_menu') == 1 and logged(c, 'event=follow;step=request;kind=4;mission=40010') == 1 and logged(c, 'step=lock') == 0,
+        'first press: suppressed (REQ_MISSION), note 9, the menu reopened; world_follow logs it, never the lock')
     c.time = c.time + 500
     c.menu.Continue()
     check(#saved(c, 3) == 0 and noted(c, 9) == 1, '+0.5 s: nothing')
