@@ -249,7 +249,23 @@ do
       if not W.active then return end
     end
   end
+  -- DIAGNOSTIC (lab only, temporary): the raw clock against a frame count,
+  -- os.clock and Time.GetFrameTime once per 60 ticks; the log adds native t_ms.
+  W.diagFrames = 0
+  function W.clockDiag()
+    W.diagFrames = W.diagFrames + 1
+    if W.mode ~= 1 or W.diagFrames % 60 ~= 0 then return end
+    local osClock = W.get(os, "clock")
+    local frameTime = W.get(Time, "GetFrameTime")
+    local okO, o = pcall(osClock)
+    local okF, ft = pcall(frameTime)
+    local R = W.recovery
+    W.log(fmt("event=clock_diag;f=%d;raw_ms=%.0f;os_ms=%s;ft_us=%s;dead=%d;ingame=%d;pr=%s", W.diagFrames, W.api.time() * 1000,
+      okO and type(o) == "number" and fmt("%.0f", o * 1000) or "none", okF and type(ft) == "number" and fmt("%.0f", ft * 1000000) or "none",
+      R and R.dead and 1 or 0, W.inGame() and 1 or 0, W.pr and W.pr.name or "none"))
+  end
   function W.tick()
+    pcall(W.clockDiag)
     local now = W.now()
     W.drain(now)
     if not W.active then return end
