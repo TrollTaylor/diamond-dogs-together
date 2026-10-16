@@ -7,7 +7,7 @@
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-c4-v2.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
 # The HOST acts; the prone GUEST films body 1 (the host's partner body) from 4 m behind and 5 m to its right before
-# every place (body 1's hands and the kneel from the side; partner-c4 runs 7f8d643d / d05a1267) and 6 m / 7 m for the
+# every place (body 1's hands and the kneel from the side; partner-c4 runs 7f8d643d / d05a1267) and 2 m / 7 m (a side view) for the
 # detonation. godmode on both, infinite ammo OFF. The lab seed's support entry 2 is C4 395.
 # Controls (census runs 3ef82e27 .. a93db206): place = aim (RMB) + fire (LMB) on a valid spot (43 -> 46; an invalid spot
 # only readies 43 -> 44 -> 45 -> 0, which spot is valid varies, so four spots are tried); detonate with a live charge =
@@ -157,9 +157,10 @@ host hold s 1500
 wait 500
 host hold w 250
 wait 1000
-# Re-frame (detonation): 6 m behind and 7 m to the right (outside the charges).
+# Re-frame (detonation): 2 m behind and 7 m to the right, a side view of the detonator (run 12320c2f filmed it from
+# behind at 6 m / 7 m, where the raised arm is hard to tell from the hold-out pose).
 stance guest stand
-placebehind guest host 6 7
+placebehind guest host 2 7
 wait 1500
 stance guest prone
 wait 1000
@@ -171,7 +172,7 @@ host release
 wait 2000
 host run support
 stance guest stand
-placebehind guest host 6 7
+placebehind guest host 2 7
 wait 1500
 stance guest prone
 wait 1000
