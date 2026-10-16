@@ -473,6 +473,29 @@ std::size_t FormatDmProbe(const DmState& dm, bool patched, char* out, std::size_
 // terminating). nullptr on success or when nothing of ours is pending.
 const char* ClearDmPending(const Addresses& addresses, bool terminating, bool& cleared) noexcept;
 
+// Seat by id (WS3 B1, docs/vehicle-ws3.md; partner_ride_seat::PlanSeatTarget):
+// while the seat DM plays on body 1 (q18[1] == 0x8B, rec248 bit 4, a seated
+// state of `seat`), targets the `entries` chained entries of body 1's DM record
+// at `vehicle`: every target id rec+0xC0+2i first, then flag 2 at rec+0xB8+i
+// (interlocked 16-bit exchanges, then interlocked byte ORs), and reads both
+// back. Called only on the player-update thread (the caller checks). The ride
+// seat contract blocks (seat_target_blocks) are re-verified first. Already
+// targeted entries (a named locator) are left alone (wrote = false).
+struct SeatTargetRequest {
+    std::uint16_t vehicle;
+    std::uint8_t seat;
+    std::uint8_t entries;  // 1..3 (partner_ride_seat::ChainEntries)
+};
+struct SeatTargetResult {
+    bool wrote;
+    std::uint8_t entries, cur;
+    std::uint8_t flags[3];   // read back
+    std::uint16_t ids[3];    // read back
+    std::uintptr_t rec;
+};
+const char* WriteSeatTarget(const Addresses& addresses, const void* image, std::size_t span, bool terminating,
+                            const SeatTargetRequest& request, SeatTargetResult& out) noexcept;
+
 // probe=ps (read-only, layouts [S] except +0x738/+0x740 from the setters
 // 0xFF5220/0xFF5710/0xFF56E0): per instance the PS+0x740 dirty mask, the
 // 10-float record *(PS+0x738)+(id-base)*0x28, the 32-byte record

@@ -228,4 +228,29 @@ bool IsSeatState(std::uint64_t code, std::uint8_t seat) noexcept {
     return false;
 }
 
+static_assert(kCnpPposC == c::dm_cnp_ppos_c && kEntryFlagTarget == c::dm_entry_flag_target && kEntryFlagState == c::dm_entry_flag_state &&
+                  kEntryMax == c::dm_entry_max && kEntryState == c::dm_entry_state && kEntryFlags == c::dm_entry_flags &&
+                  kEntryTarget == c::dm_entry_target && kEntryCnp == c::dm_entry_cnp && kEntryCur == c::dm_entry_cur,
+              "the DM record entry layout");
+
+TargetPlan PlanSeatTarget(const EntryView& v, std::uint16_t vehicle, std::uint8_t seat, std::uint8_t entries) noexcept {
+    TargetPlan plan{nullptr, false, entries};
+    const auto refuse = [&](const char* why) noexcept { plan.refusal = why; return plan; };
+    if (!entries || entries > 3) return refuse("entries");
+    if (vehicle == 0xFFFF || (vehicle >> 9) != 50 || seat > 3) return refuse("vehicle");
+    if (v.cur >= entries) return refuse("cur");
+    if (!IsSeatState(v.rec18, seat)) return refuse("state");
+    bool named = true, open = true;
+    for (unsigned i = 0; i < entries; ++i) {
+        if ((v.cnp[i] & kCode48) != kCnpPposC) return refuse("cnp");
+        if (!(v.flags[i] & kEntryFlagState) || !IsSeatState(v.state[i], seat)) return refuse("entry_state");
+        named = named && v.ids[i] == vehicle && (v.flags[i] & kEntryFlagTarget);
+        open = open && v.ids[i] == 0xFFFF && !(v.flags[i] & kEntryFlagTarget);
+    }
+    if (named) return plan;
+    if (!open) return refuse("foreign_target");
+    plan.write = true;
+    return plan;
+}
+
 } // namespace mgscoop::partner_ride_seat

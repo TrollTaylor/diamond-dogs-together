@@ -11,6 +11,7 @@
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
+#include "mgscoop/partner_ride_seat.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_player {
@@ -1317,6 +1318,78 @@ const char* ClearDmPending(const Addresses& a, bool terminating, bool& cleared) 
     if (!(flags & 4) || req0 != 1) return nullptr;  // nothing of ours pending
     if (!AndByte(g + c::g_flags, static_cast<char>(~4))) return "fault";
     cleared = true;
+    return nullptr;
+}
+
+namespace {
+bool ExchangeWord(std::uintptr_t address, short value) noexcept {
+    __try { _InterlockedExchange16(reinterpret_cast<volatile short*>(address), value); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// The ride seat contract blocks the seat-by-id write relies on, as in the running image.
+bool SeatTargetBlocksOk(const void* image, std::size_t span) noexcept {
+    const auto* base = static_cast<const unsigned char*>(image);
+    if (!base) return false;
+    for (const std::uintptr_t rva : c::seat_target_blocks) {
+        const c::Site* site = nullptr;
+        for (const auto& s : c::code_sites)
+            if (s.rva == rva) site = &s;
+        if (!site || site->rva > span || site->size > span - site->rva) return false;
+        // The ride seat dword 0x119883C (inside 0x1198834) is ours while armed: masked.
+        for (std::size_t i = 0; i < site->size; ++i) {
+            const std::uintptr_t at = site->rva + i;
+            if (at >= c::ride_seat_rva && at < c::ride_seat_rva + 4) continue;
+            if (at >= c::ride_cam_play_rva && at < c::ride_cam_play_rva + 4) continue;
+            if (at >= c::ride_cam_plain_rva && at < c::ride_cam_plain_rva + 4) continue;
+            if (base[at] != site->bytes[i]) return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
+const char* WriteSeatTarget(const Addresses& a, const void* image, std::size_t span, bool terminating, const SeatTargetRequest& req,
+                            SeatTargetResult& out) noexcept {
+    namespace prs = mgscoop::partner_ride_seat;
+    const Preserve preserve;
+    out = SeatTargetResult{};
+    if (req.entries < 1 || req.entries > 3) return "entries";
+    if (!SeatTargetBlocksOk(image, span)) return "pins";
+    State s{};
+    if (const char* reason = Prepare(a, 1, terminating, WriteKind::set, s)) return reason;
+    DmTargets t{};
+    if (const char* reason = ResolveDm(a, s, t)) return reason;
+    DmState dm{};
+    if (!ReadDm(a, s, t, dm) || !dm.rec_ok) return "dm_read";
+    // The DM is live on body 1; the plan checks the seated state (rec+0x18) and every entry.
+    if (dm.q18[1] != c::q18_dm_act) return "dm_idle";
+    if (t.rec & 7u) return "alignment";
+    prs::EntryView view{};
+    if (!ReadBlock(t.rec + c::dm_entry_flags, view.flags, sizeof(view.flags)) ||
+        !ReadBlock(t.rec + c::dm_entry_target, view.ids, sizeof(view.ids)) ||
+        !ReadBlock(t.rec + c::dm_entry_cnp, view.cnp, sizeof(view.cnp)) ||
+        !ReadBlock(t.rec + c::dm_entry_state, view.state, sizeof(view.state)) || !ReadValue(t.rec + c::dm_entry_cur, view.cur))
+        return "fault";
+    view.rec18 = dm.rec18;
+    const prs::TargetPlan plan = prs::PlanSeatTarget(view, req.vehicle, req.seat, req.entries);
+    out.rec = t.rec;
+    out.cur = view.cur;
+    out.entries = req.entries;
+    if (plan.refusal) return plan.refusal;
+    if (plan.write) {
+        // Every target id first (phase 0 anchors from it), then flag 2 (phase 6 applies it).
+        struct LiveStore {
+            bool Word(std::uintptr_t at, std::uint16_t v) noexcept { return ExchangeWord(at, static_cast<short>(v)); }
+            bool OrByte(std::uintptr_t at, std::uint8_t v) noexcept { return InterlockedOrByte(at, static_cast<char>(v)); }
+        } store;
+        if (!prs::ApplySeatTarget(store, t.rec, req.vehicle, req.entries)) return "fault";
+        out.wrote = true;
+    }
+    if (!ReadBlock(t.rec + c::dm_entry_flags, out.flags, req.entries) ||
+        !ReadBlock(t.rec + c::dm_entry_target, out.ids, sizeof(std::uint16_t) * req.entries))
+        return "fault";
+    for (unsigned i = 0; i < req.entries; ++i)
+        if (out.ids[i] != req.vehicle || !(out.flags[i] & c::dm_entry_flag_target)) return "readback";
     return nullptr;
 }
 

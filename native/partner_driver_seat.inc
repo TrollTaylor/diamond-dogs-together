@@ -1,7 +1,8 @@
 // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md,
 // critic.md section 5). Included inside partner_driver.cpp's anonymous
 // namespace. While a remote drives or rides a usable seat of a light vehicle or
-// truck in 30010/30020, body 1 stays realized and plays a targeted direct
+// truck in 30010/30020 (and, by id only, Mother Base 30050: SeatCapableMission),
+// body 1 stays realized and plays a targeted direct
 // motion anchored to the receiver's own copy of that vehicle (Lua resolves the
 // copy's locator name; partner_ride_seat arms the seat index and the camera
 // skips). Phases: release (a dm=map clip is stopped first) -> arm (comparator
@@ -24,11 +25,59 @@ bool SeatHooks(const Hooks& h) noexcept {
 }
 
 bool SeatMission(std::uint32_t mission) noexcept { return mission == 30010 || mission == 30020; }
+// Mother Base (30050) has no authored vehicle locator (no veh_lv_/veh_trc_
+// name), so only the seat by id (WS3 B1, partner_ride_seat_id=1, default on
+// in lab and play) can seat the remote there: the seat flow runs in 30050 only
+// with that key and only for an offered id (TickSeat refuses the rest before
+// anything is armed). Hidden run bf0388c3: the real save continued into 30050,
+// the remote drove the unnamed jeep 25603 (cat 1, realized, same category on
+// both copies) and the guest hid it without any seat line (this gate,
+// silently); hidden run abb0b7cf then seated it by id (offer=1, wrote=1,
+// confirmed, err_mm 0..218 while it moved).
+bool SeatByIdOnlyMission(std::uint32_t mission) noexcept { return mission == 30050; }
+bool SeatCapableMission(std::uint32_t mission, bool seat_id) noexcept {
+    return SeatMission(mission) || (seat_id && SeatByIdOnlyMission(mission));
+}
 
 // The (vehicle, seat) a refusal or a get-off ended stays unseated (it hides)
 // until the remote's live ride leaves it.
 bool SeatBlocked(const Mission::Seat& s, const partner_ride_wire::Packet& ride) noexcept {
     return s.blocked && ride.kind == partner_ride_wire::Kind::vehicle && ride.vehicle == s.block_vehicle && ride.seat == s.block_seat;
+}
+
+// Why seat mode draws a live vehicle ride hidden instead of seated (nullptr:
+// seat mode applies, or this is not a seat-mode vehicle ride). The order is
+// seat_capable's (partner_driver.cpp), then the block latch.
+const char* SeatUnavailable(const Driver& d, const Hooks& h, bool ride_live) noexcept {
+    namespace rw = partner_ride_wire;
+    const Mission& m = d.mission;
+    const rw::Packet& p = d.ride_rx.packet;
+    if (d.settings.nride != PartnerNativeRide::seat || !ride_live || p.kind != rw::Kind::vehicle) return nullptr;
+    if (!rw::SeatUsable(p.seat, p.vehicle)) return "seat_unknown";
+    if (!SeatCapableMission(m.mission_code, d.settings.seat_id)) return "mission";
+    if (!SeatHooks(h)) return "hooks";
+    if (h.native_pose_suppressed && h.native_pose_suppressed(h.context)) return "native_pose";
+    if (SeatBlocked(m.seat, p)) return "blocked";
+    return nullptr;
+}
+
+// No seat refusal hides silently: each reason is logged once per (vehicle,
+// seat) while it holds (a latched refusal logged its episode's exit first).
+void SeatLogUnavailable(Driver& d, const Hooks& h, const char* why) noexcept {
+    Mission& m = d.mission;
+    const partner_ride_wire::Packet& p = d.ride_rx.packet;
+    if (!why) {
+        m.seat_unavailable = nullptr;
+        return;
+    }
+    if (why == m.seat_unavailable && p.vehicle == m.seat_unavailable_vehicle && p.seat == m.seat_unavailable_seat) return;
+    m.seat_unavailable = why;
+    m.seat_unavailable_vehicle = p.vehicle;
+    m.seat_unavailable_seat = p.seat;
+    const bool blocked = std::strcmp(why, "blocked") == 0;
+    EmitSeat(m, h, "partner_ride_seat=unavailable; vehicle=%u; seat=%u; reason=%s; mission=%u; byid=%u; block=%s\r\n", unsigned(p.vehicle),
+             unsigned(p.seat), why, unsigned(m.mission_code), d.settings.seat_id ? 1u : 0u,
+             blocked && m.seat.block_reason ? m.seat.block_reason : "-");
 }
 
 // Per tick, before the visibility step: the get-in window (when the live ride
@@ -212,11 +261,67 @@ void SeatStatus(Mission& m, const Hooks& h, const pp::State& st, const SeatTickI
     (void)st;
     EmitFormat(h,
                "partner_ride_seat=status; phase=%s; vehicle=%u; seat=%u; confirmed=%u; q18=0x%x,0x%x; rec18=0x%llx; rec1a0=%u; "
-               "rec248=0x%02x; cam1f0=0x%llx; cam200=%u; err_mm=%d; remote_act=%u; manual=%u\r\n",
+               "rec248=0x%02x; cam1f0=0x%llx; cam200=%u; err_mm=%d; remote_act=%u; manual=%u; byid=%u\r\n",
                SeatPhaseName(s.phase), unsigned(s.vehicle), unsigned(s.seat), s.confirmed ? 1u : 0u, dm_ok ? unsigned(dm.q18[0]) : 0u,
                dm_ok ? unsigned(dm.q18[1]) : 0u, dm_ok ? static_cast<unsigned long long>(dm.rec18) : 0ull, dm_ok ? unsigned(dm.rec1a0) : 0u,
                dm_ok ? unsigned(dm.rec248) : 0u, dm_ok ? static_cast<unsigned long long>(dm.cam1f0) : 0ull, dm_ok ? dm.cam200 : 0u,
-               err_mm == UINT32_MAX ? -1 : static_cast<int>(err_mm), unsigned(in.remote_act), s.manual ? 1u : 0u);
+               err_mm == UINT32_MAX ? -1 : static_cast<int>(err_mm), unsigned(in.remote_act), s.manual ? 1u : 0u,
+               s.target_wrote ? 1u : 0u);
+}
+
+// Seat by id (WS3 B1, docs/vehicle-ws3.md; partner_ride_seat_id=1): the id
+// path is offered (seat_entry::by_id) when the remote's live ride addendum
+// names its vehicle category for this exact ride, this copy's same-id vehicle
+// is realized (rec+0x6E != 0xFF) and of the same category, the viewer does not
+// ride that id itself, and both hooks exist. Lua then plays an unnamed
+// vehicle's chain untargeted (locator ""); lv/trc only (GetVehicleType).
+// nullptr: offer; else the static reason (the 3 m sanity check still applies).
+const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    auto& s = d.mission.seat;
+    s.remote_category = s.local_category = rw::kCategoryUnknown;
+    if (!h.vehicle_read || !h.seat_target) return "unavailable";
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (d.ride_rx.packet.kind != rw::Kind::vehicle || d.ride_rx.packet.vehicle != s.vehicle || d.ride_rx.packet.seat != s.seat)
+        return "vehicle_change";
+    if (!rw::ExtLive(d.ride_ext, epoch, now)) return "no_ext";
+    s.remote_category = rw::RemoteCategory(d.ride_ext, d.ride_rx.packet, epoch, now);
+    if (s.remote_category == rw::kCategoryUnknown) return "remote_category";
+    if (s.vehicle == d.local_vehicle) return "local_vehicle";
+    partner_vehicle::Read r{};
+    h.vehicle_read(h.context, s.vehicle, r);
+    if (r.refusal || r.unit.id != s.vehicle) return "local_read";
+    s.local_category = partner_vehicle::Category(r.unit.type);
+    if (r.unit.realized == partner_vehicle::kNotRealized) return "unrealized";
+    if (s.local_category != s.remote_category) return "category";
+    return nullptr;
+}
+
+// Once the untargeted seat DM is live on body 1 (q18[1] == 0x8B, a seated
+// state of the seat), on this (the player-update) thread: every chained
+// entry's target id first, then flag 2 (partner_player::WriteSeatTarget;
+// critic #17). A named locator's chain is already targeted (wrote=0).
+const char* SeatTarget(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    auto& s = m.seat;
+    if (const char* why = SeatByIdGate(d, h, now)) {
+        EmitSeat(m, h, "partner_ride_seat=target; vehicle=%u; seat=%u; wrote=0; reason=%s; remote_cat=%u; local_cat=%u\r\n",
+                 unsigned(s.vehicle), unsigned(s.seat), why, unsigned(s.remote_category), unsigned(s.local_category));
+        return why;
+    }
+    const pp::SeatTargetRequest request{s.vehicle, s.seat, prs::ChainEntries(s.entry)};
+    pp::SeatTargetResult r{};
+    const char* why = h.seat_target(h.context, request, r);
+    EmitSeat(m, h,
+             "partner_ride_seat=target; vehicle=%u; seat=%u; wrote=%u; entries=%u; cur=%u; ids=%u,%u,%u; flags=0x%02x,0x%02x,0x%02x; "
+             "reason=%s; ms=%u\r\n",
+             unsigned(s.vehicle), unsigned(s.seat), r.wrote ? 1u : 0u, unsigned(request.entries), unsigned(r.cur), unsigned(r.ids[0]),
+             unsigned(r.ids[1]), unsigned(r.ids[2]), unsigned(r.flags[0]), unsigned(r.flags[1]), unsigned(r.flags[2]), why ? why : "none",
+             Clamp32(now - s.issue_ms));
+    if (why) return why;
+    s.target_done = true;
+    s.target_wrote = r.wrote;
+    return nullptr;
 }
 
 // One step of the seat flow. own: this tick's reply is the seat's (deferred
@@ -243,6 +348,17 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             s.loop_entry = 1;
         }
         if (set.seat_exit == PartnerRideSeatExit::getoff) s.entry |= partner::seat_entry::get_off;
+        // Seat by id (WS3 B1): offered per episode, re-checked at the write.
+        s.byid = s.target_done = s.target_wrote = false;
+        s.byid_reason = nullptr;
+        if (set.seat_id) {
+            s.byid_reason = SeatByIdGate(d, h, now);
+            s.byid = !s.byid_reason;
+            if (s.byid) s.entry |= partner::seat_entry::by_id;
+            EmitSeat(m, h, "partner_ride_seat=byid; vehicle=%u; seat=%u; offer=%u; reason=%s; remote_cat=%u; local_cat=%u\r\n",
+                     unsigned(s.vehicle), unsigned(s.seat), s.byid ? 1u : 0u, s.byid_reason ? s.byid_reason : "none",
+                     unsigned(s.remote_category), unsigned(s.local_category));
+        }
         s.plays = s.stops = 0;
         s.confirmed = s.next_sent = s.latch_exit = s.lua_refused = false;
         s.exit_reason = nullptr;
@@ -254,6 +370,10 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         EmitSeat(m, h, "partner_ride_seat=start; vehicle=%u; seat=%u; entry=%u; enter=%s; exit=%s; remote_act=%u\r\n", unsigned(s.vehicle),
                  unsigned(s.seat), unsigned(s.entry), PartnerRideSeatEnterName(set.seat_enter), PartnerRideSeatExitName(set.seat_exit),
                  unsigned(in.remote_act));
+        // Mother Base has no authored locator: without the id offer Lua could
+        // only refuse it (no_name), so it is refused here, before the release
+        // or the arm touches anything (latched: it hides until the ride changes).
+        if (!SeatMission(m.mission_code) && !s.byid) SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
     }
     out.own = true;
     m.ride_seated = true;
@@ -366,6 +486,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         s.issue_ms = now;
         ++s.plays;
         s.confirmed = false;
+        s.target_done = s.target_wrote = false;
         EmitSeat(m, h, "partner_ride_seat=play; vehicle=%u; seat=%u; name=lua; state=lua; entry=%u; attempt=%u; reason=none\r\n",
                  unsigned(s.vehicle), unsigned(s.seat), unsigned(s.entry), s.plays);
         SeatGo(s, SeatPhase::seated, now);
@@ -374,7 +495,16 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
     case SeatPhase::seated: {
         std::uint32_t err_mm = UINT32_MAX;
         const bool playing = body_dm && dm.rec_ok && (dm.rec248 & 0x10);
-        if (playing && (s.manual || prs::IsSeatState(dm.rec18, s.seat))) {
+        // Seat by id: once the DM is live on body 1 with a seated state of this
+        // seat (q18[1] == 0x8B, rec+0x18; critic #17), the record is targeted
+        // before the seat can be confirmed (the confirmation waits for it).
+        if (s.byid && !s.manual && !s.target_done && body_dm && dm.rec_ok && prs::IsSeatState(dm.rec18, s.seat)) {
+            if (const char* target_why = SeatTarget(d, h, now)) {
+                SeatRefuse(m, h, target_why, now);
+                break;
+            }
+        }
+        if (playing && (s.manual || prs::IsSeatState(dm.rec18, s.seat)) && (!s.byid || s.manual || s.target_done)) {
             if (!s.confirmed) {
                 s.confirmed = true;
                 s.confirm_ms = now;

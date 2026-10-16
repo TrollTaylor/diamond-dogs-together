@@ -135,13 +135,14 @@ local function fixture(options)
         SetOtherInstanceIsForMirrorMode = function(on) record('mirror:' .. tostring(on)) end,
         RequestToPlayDirectMotion = function(t)
             if type(t) == 'table' and type(t[1]) == 'table' and t[1][1] == 'coopRide' then
-                -- The seated rider: every entry carries the locator, CNP_ppos_c, MTP_GLOBAL_C and the flag.
+                -- The seated rider: every entry carries the locator ("" on the WS3 by-id path), CNP_ppos_c,
+                -- MTP_GLOBAL_C and the flag.
                 local parts = {}
                 for i = 2, #t do
                     local entry = t[i]
                     check(type(entry) == 'table' and type(entry[1]) == 'string' and entry[1]:match('^state%w+$') and
                         entry[1] ~= 'stateDirectPlayRideRearLeftSeatOnVehicle' and type(entry[2]) == 'boolean' and
-                        type(entry[3]) == 'string' and entry[3] ~= '' and entry[4] == 'CNP_ppos_c' and entry[5] == 'MTP_GLOBAL_C' and
+                        type(entry[3]) == 'string' and entry[4] == 'CNP_ppos_c' and entry[5] == 'MTP_GLOBAL_C' and
                         entry[6] == true, 'seat entry shape')
                     parts[#parts + 1] = entry[1] .. (entry[2] and '+' or '') .. '@' .. entry[3]
                 end
@@ -611,7 +612,7 @@ do
     check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25608;seat=0;reason=shared_seat'), 'the viewer in the same seat refuses')
     check(seat(25608, 1, 1, 0) == 'seatplay:1:stateVehicleFrontRightLoop+@veh_lv_0000', 'the viewer driving, the remote beside')
     check(seat(25608, 0, 2, 2) == 'dmnext' and hasLog(c, 'event=ride_seat_next;id=25608;seat=0'), 'action 2 advances to GetOff')
-    for _, bad in ipairs({{25608, 4, 1, 0}, {25608, 0, 3, 0}, {65535, 0, 1, 0}, {25608, 0, 1, 4}, {'25608', 0, 1, 0}, {25608, 0.5, 1, 0}}) do
+    for _, bad in ipairs({{25608, 4, 1, 0}, {25608, 0, 3, 0}, {65535, 0, 1, 0}, {25608, 0, 1, 8}, {'25608', 0, 1, 0}, {25608, 0.5, 1, 0}}) do
         _, n = seat(bad[1], bad[2], bad[3], bad[4])
         check(n == 0 and c.logs[#c.logs]:find('event=ride_seat_refused;', 1, true) == 1 and c.logs[#c.logs]:find('reason=bad_args', 1, true),
             'bad RIDE_SEAT values refused')
@@ -624,6 +625,52 @@ do
     local mark = #c.calls
     update(env)
     check(#c.calls == mark and hasLog(c, 'event=refused;reason=bad_index;R=2'), 'R ~= 1 refuses RIDE_SEAT')
+end
+-- Seat by id (WS3 B1, docs/vehicle-ws3.md): RIDE_SEAT entry bit 4 = native armed the id path.
+do
+    local env, c = fixture()
+    env.Vehicle = {type = {EASTERN_LIGHT_VEHICLE = 0, EASTERN_TRUCK = 1, EASTERN_WHEELED_ARMORED_VEHICLE = 2, EASTERN_TRACKED_TANK = 3,
+        WESTERN_LIGHT_VEHICLE = 4, WESTERN_TRUCK = 5, WESTERN_WHEELED_ARMORED_VEHICLE = 6, WESTERN_TRACKED_TANK = 7}}
+    local vtype, typeReads = {[25600] = 4, [25601] = 1, [25602] = 6}, 0
+    env.GameObject.SendCommand = function(id, command)
+        if type(command) == 'table' and command.id == 'GetVehicleType' then
+            typeReads = typeReads + 1
+            check(next(command, 'id') == nil, 'GetVehicleType carries no other field')
+            return vtype[id]
+        end
+    end
+    env.GameObject.GetGameObjectId = function(_, name) return name == 'veh_lv_0000' and 25608 or 65535 end
+    call(env, 'OnMissionGameStart')
+    local function seat(vid, s, action, entry)
+        c.reply = {512, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, vid, s, action, entry}
+        local mark = #c.calls
+        update(env)
+        return c.calls[mark + 1], #c.calls - mark
+    end
+    check(seat(25600, 0, 1, 4) == 'seatplay:1:stateVehicleFrontLeftLoop+@' and typeReads == 1 and
+        hasLog(c, 'event=ride_seat;id=25600;seat=0;name=-;state=stateVehicleFrontLeftLoop;entry=0;byid=1;class=lv'),
+        'by id: the unnamed (sortie) light vehicle plays the driver loop untargeted (locator ""), CNP_ppos_c and MTP_GLOBAL_C kept')
+    check(seat(25600, 1, 1, 7) == 'seatplay:1:stateVehicleGetOnFrontRight@,stateVehicleFrontRightLoop+@,stateVehicleGetOffFrontRight@',
+        'by id with GetOn and GetOff: every chained entry untargeted')
+    check(seat(25601, 0, 1, 4) == 'seatplay:1:stateTruckFrontLeftLoop+@' and hasLog(c, 'event=ride_seat;id=25601;seat=0;name=-;state=stateTruckFrontLeftLoop;entry=0;byid=1;class=trc'), 'a truck by id')
+    local _, n = seat(25602, 0, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25602;seat=0;reason=no_class'), 'an APC by id is refused (light vehicles and trucks only)')
+    _, n = seat(25603, 0, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25603;seat=0;reason=no_class'), 'an unreadable vehicle type is refused')
+    _, n = seat(25600, 0, 1, 0)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25600;seat=0;reason=no_name'), 'without the native by-id bit an unnamed vehicle still hides')
+    local reads = typeReads
+    check(seat(25608, 0, 1, 4) == 'seatplay:1:stateVehicleFrontLeftLoop+@veh_lv_0000' and typeReads == reads,
+        'a named vehicle stays on its locator under the by-id bit (no type read)')
+    _, n = seat(25601, 2, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25601;seat=2;reason=state'), 'a truck by id has no rear seats')
+    env.e.MgsCoopPartnerRideSeat = function() return 25600, 0 end
+    _, n = seat(25600, 0, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25600;seat=0;reason=shared_seat'), 'the viewer in that seat refuses by id too')
+    env.e.MgsCoopPartnerRideSeat = nil
+    env.Vehicle = nil
+    _, n = seat(25601, 1, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25601;seat=1;reason=no_class'), 'no Vehicle.type table: refused')
 end
 -- The sender's seat/vehicle/status suffix (lua/coop/partner_ride.lua).
 do

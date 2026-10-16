@@ -61,6 +61,9 @@ inline constexpr std::uint8_t enemy_debug = 0x22, enemy_debug_ack = 0x23;
 inline constexpr std::uint8_t downed_status = 0x24, downed_commit = 0x25, revive_grant = 0x26,
                               buddy_state = 0x27, buddy_ack = 0x28, friendly_hit = 0x29, ride_body = 0x2A,
                               cargo = 0x2B, ride_fast = 0x2C;
+// WS3 vehicles (docs/vehicle-ws3.md): the driven vehicle's record angles next
+// to RIDE_FAST (lab only; sent only to a peer whose ride addendum advertises it).
+inline constexpr std::uint8_t ride_tilt = 0x2D;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -424,7 +427,7 @@ private:
     unsigned ctrl_head_ = 0, ctrl_size_ = 0;
     Entry world_[kWorldQueue]{};
     unsigned world_head_ = 0, world_size_ = 0;
-    Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{};
+    Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{}, ride_tilt_{};
     Grant grants_[kGrants]{};
     std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
     OutEntry out_[kOutboundQueue]{};

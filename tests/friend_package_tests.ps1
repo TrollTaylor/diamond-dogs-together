@@ -439,6 +439,10 @@ try {
         if ($n.ContainsKey('partner_native_profile')) {
             Assert-Equal "$($n['partner_native_profile'])|$($n['partner_drive'])|$($n['partner_input_defer'])|$($n['partner_input_send'])|$($n['partner_input_mask'])|$($n['partner_native_gun'])|$($n['partner_native_fire'])|$($n['partner_native_aim'])|$($n['partner_native_rates'])|$($n['partner_input_words'])" 'gun|native|on|1|0x224005E|1|visual|look|mirror|hpr' 'native: play -Partner native expands to the qualified gun stage'
             Assert-Equal "$($n['partner_native_net'])|$($n['partner_native_stall'])|$($n['partner_native_stall_ms'])|$($n['partner_native_hold'])|$($n['partner_input_edge_repeats'])|$($n['play_rehearsal'])|$($n['play_refused'])" 'online|hold|400|own|5|0|0x0' 'native: play defaults online, stall hold, 5 edge repeats, no refusal'
+            if ($n.ContainsKey('partner_ride_tilt')) {
+                # WS3 vehicles (docs/vehicle-ws3.md): play runs the seat by id and RIDE_TILT by default; the census stays lab only.
+                Assert-Equal "$($n['partner_ride_census'])|$($n['partner_ride_seat_id'])|$($n['partner_ride_tilt'])" '0|1|1' 'native: play admits the seat by id and RIDE_TILT by default, no census'
+            }
             $file = Join-Path $fixture 'play-clips-lab.ini'; [IO.File]::WriteAllText($file, $clipsIni, $utf8)
             $n = Invoke-IniCheck lab $file
             Assert-Equal "$($n['partner_native_profile'])|$($n['partner_drive'])|$($n['partner_input_send'])|$($n['play_refused'])|$($n['invalid_values'])" 'off|legacy|1|0x0|0' 'native: play -Partner clips keeps the clip partner'

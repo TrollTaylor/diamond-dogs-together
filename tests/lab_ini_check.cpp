@@ -141,6 +141,9 @@ int main(int argc, char** argv) {
                     c.steam_selftest_fn ? 1 : 0, mgscoop::CoopHudName(c.coop_hud));
         // Automatic save handoff (join-fix phase 2 P2-11): the policy and the effective travel lock.
         std::printf("save_handoff=%s\ntravel_lock=%d\n", mgscoop::SaveHandoffName(c.save_handoff), mgscoop::EffectiveTravelLock(c) ? 1 : 0);
+        // WS3 vehicles (docs/vehicle-ws3.md): the census (lab only), the seat by id and RIDE_TILT (lab and play).
+        std::printf("partner_ride_census=%d\npartner_ride_seat_id=%d\npartner_ride_tilt=%d\n", c.partner_ride_census ? 1 : 0,
+                    c.partner_ride_seat_id ? 1 : 0, c.partner_ride_tilt ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

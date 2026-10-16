@@ -98,6 +98,7 @@
 #include "mgscoop/partner_support_policy.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
+#include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
 #include "mgscoop/partner_upper_phase_observer.hpp"
@@ -937,6 +938,30 @@ bool PartnerFocused(void*) noexcept {
     if (window) GetWindowThreadProcessId(window, &foreground);
     return foreground == GetCurrentProcessId();
 }
+// --- WS3 vehicles (docs/vehicle-ws3.md): the read-only vehicle unit/body read
+// (the ride census, the ride addendum's category, the seat-by-id gate) and the
+// seat-by-id write. Both stay behind the code gate; the write only with
+// partner_ride_seat_id=1 (default on, lab and play, after hidden run abb0b7cf;
+// the driver offers the id only for a peer whose ride addendum names the
+// category), on the player-update thread (the input hook's thread, which every
+// hidden run logged equal to the driver's Lua thread), with the seat dwords
+// armed (the untargeted entry's camera stores skipped).
+void PartnerVehicleRead(void*, std::uint16_t id, mgscoop::partner_vehicle::Read& out) noexcept {
+    out = mgscoop::partner_vehicle::Read{};
+    if (!game_base || !partner_gate_ok) { out.refusal = "gate"; return; }
+    mgscoop::partner_vehicle::ReadLive(game_base, id, out);
+}
+const char* PartnerSeatTarget(void*, const pp::SeatTargetRequest& request, pp::SeatTargetResult& out) noexcept {
+    out = pp::SeatTargetResult{};
+    const auto& config = mgscoop::GetLabConfig();
+    if (!game_base || !partner_gate_ok) return "gate";
+    if (!config.partner_ride_seat_id) return "off";
+    if (!OnRuntimeThread() || mission_terminating) return "runtime";
+    const std::uint32_t hook = mgscoop::partner_input_hook::HookThread();
+    if (!hook || hook != GetCurrentThreadId()) return "thread";
+    if (!mgscoop::partner_ride_seat::Armed()) return "seat_unarmed";
+    return pp::WriteSeatTarget(partner_addresses, game_base, game_span, mission_terminating, request, out);
+}
 // Anim round 2: read-only admission for the driver's support gate. The
 // observer writer below is the only allocator; this callback never equips.
 bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexcept {
@@ -965,7 +990,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
-    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady};
+    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
+    PartnerVehicleRead,PartnerSeatTarget};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -3707,6 +3733,88 @@ bool SelectRidePoseReceipt(const char* buffer,std::size_t size,mgscoop::script_b
     replacement={reply,std::strlen(reply)};
     return true;
 }
+// RIDE_TILT (WS3 A1, docs/vehicle-ws3.md; partner_ride_tilt, default on in lab and play):
+//   return 'MGS_COOP_RIDE_TILT_V1' -- read <id>             -> return <a44_mrad>,<a48_mrad> | return nil
+//   return 'MGS_COOP_RIDE_TILT_V1' -- write <id> <a44> <a48> -> return true | return false
+// read: the driver's own vehicle record angles (its veh=), only while the
+// peer's ride addendum advertises RIDE_TILT. write: this copy's record +0x44 /
+// +0x48 just before Lua's SetPosition, after partner_vehicle::TiltRefusal on
+// two equal reads (identity body == record, realized, not the viewer's own
+// vehicle, |angle| < pi/2) and the contract blocks re-verified.
+struct RideTiltLog { unsigned reads, writes, refusals; const char* last; std::uint32_t mission; } ride_tilt_log{};
+void RideTiltRefused(const char* verb, unsigned id, const char* why) noexcept {
+    ++ride_tilt_log.refusals;
+    if (ride_tilt_log.last == why) return;
+    ride_tilt_log.last = why;
+    LogFormat("partner_ride_tilt=refused; verb=%s; id=%u; reason=%s; n=%u\r\n", verb, id, why, ride_tilt_log.refusals);
+}
+bool SelectRideTiltReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace v = mgscoop::partner_vehicle;
+    constexpr char prefix[] = "return 'MGS_COOP_RIDE_TILT_V1' -- ";
+    if (!buffer || size <= sizeof(prefix) - 1 || size > 96 || std::memcmp(buffer, prefix, sizeof(prefix) - 1) != 0) return false;
+    world_quiet = true;
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    const char* cursor = buffer + sizeof(prefix) - 1;
+    const char* end = buffer + size;
+    bool write = false;
+    if (end - cursor > 5 && std::memcmp(cursor, "read ", 5) == 0) cursor += 5;
+    else if (end - cursor > 6 && std::memcmp(cursor, "write ", 6) == 0) { cursor += 6; write = true; }
+    else return finish("return nil");
+    std::int32_t values[3]{};
+    const unsigned count = write ? 3u : 1u;
+    for (unsigned i = 0; i < count; ++i) {
+        const auto parsed = std::from_chars(cursor, end, values[i]);
+        if (parsed.ec != std::errc() || parsed.ptr == cursor) return finish(write ? "return false" : "return nil");
+        cursor = parsed.ptr;
+        if (i + 1 < count) { if (cursor == end || *cursor != ' ') return finish(write ? "return false" : "return nil"); ++cursor; }
+    }
+    if (cursor != end || values[0] < 0 || values[0] > 65534) return finish(write ? "return false" : "return nil");
+    const auto id = static_cast<std::uint16_t>(values[0]);
+    if (ride_tilt_log.mission != partner_mission) ride_tilt_log = RideTiltLog{0, 0, 0, nullptr, partner_mission};
+    const auto& config = mgscoop::GetLabConfig();
+    // Play admits it too (the key resolves on in both; only the viewer's own copy is written).
+    const bool enabled = config.partner_ride_tilt && partner_gate_ok && game_base;
+    const bool runtime = OnRuntimeThread() && !mission_terminating;
+    const bool peer = pd::RideTiltPeer(partner_driver, PartnerLinkSession(nullptr), mgscoop::partner_net::NowMs());
+    const std::uint16_t local = pd::LocalVehicle(partner_driver);
+    static char reply[64]{};
+    if (!write) {
+        v::Read r{};
+        if (enabled && runtime && peer && id == local) v::ReadLive(game_base, id, r);
+        v::TiltReadIn in{};
+        in.enabled = enabled; in.runtime = runtime; in.peer = peer; in.id = id; in.local = local; in.read = &r;
+        std::int32_t a = 0, b = 0;
+        if (const char* why = v::TiltReadRefusal(in, a, b)) {
+            if (enabled) RideTiltRefused("read", id, why);
+            // The key is fixed for the process: Lua stops asking after an 'off'.
+            return finish(config.partner_ride_tilt ? "return nil" : "return nil,'off'");
+        }
+        if (++ride_tilt_log.reads <= 4 || ride_tilt_log.reads % 600 == 0)
+            LogFormat("partner_ride_tilt=read; id=%u; a44_mrad=%d; a48_mrad=%d; n=%u\r\n", unsigned(id), a, b, ride_tilt_log.reads);
+        if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply), "return %d,%d", a, b))) return finish("return nil");
+        return finish(reply);
+    }
+    const bool pins = enabled && !v::VerifyImage(game_base, game_span);
+    v::Read first{}, second{};
+    if (enabled && runtime && pins && peer && id != local) {
+        v::ReadLive(game_base, id, first);
+        v::ReadLive(game_base, id, second);
+    }
+    v::TiltIn in{};
+    in.enabled = enabled; in.pins = pins; in.runtime = runtime; in.peer = peer; in.id = id; in.local = local;
+    in.a44_mrad = values[1]; in.a48_mrad = values[2]; in.first = &first; in.second = &second;
+    const char* why = v::TiltRefusal(in);
+    if (!why) why = v::WriteTilt(first, values[1], values[2]);
+    if (why) {
+        if (enabled) RideTiltRefused("write", id, why);
+        return finish("return false");
+    }
+    ride_tilt_log.last = nullptr;
+    if (++ride_tilt_log.writes <= 8 || ride_tilt_log.writes % 600 == 0)
+        LogFormat("partner_ride_tilt=write; id=%u; a44_mrad=%d; a48_mrad=%d; before=%d,%d; n=%u\r\n", unsigned(id), values[1], values[2],
+                  v::Mrad(first.unit.a44), v::Mrad(first.unit.a48), ride_tilt_log.writes);
+    return finish("return true");
+}
 bool SelectBuddyCapacityReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
     constexpr char prefix[]="return 'MGS_COOP_BUDDY_CAPACITY_V1' -- ";
@@ -4317,6 +4425,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(SelectVehicleNamesReceipt(buffer,size,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
+    if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;

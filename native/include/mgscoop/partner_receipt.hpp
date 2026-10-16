@@ -76,8 +76,11 @@ namespace seat_action {
 inline constexpr std::uint8_t play = 1, next = 2;
 }
 // RIDE_SEAT entry bits: the chain starts with the seat's GetOn / ends with its GetOff.
+// by_id (WS3 B1, docs/vehicle-ws3.md): the native id path is armed for this
+// play (realized same-category copy): Lua may play an unnamed vehicle's chain
+// untargeted (locator "") instead of refusing no_name; native then targets it.
 namespace seat_entry {
-inline constexpr std::uint8_t get_on = 1, get_off = 2;
+inline constexpr std::uint8_t get_on = 1, get_off = 2, by_id = 4;
 }
 // Highest gani index of the Lua table (partner_sync.lua GANI).
 inline constexpr std::uint8_t max_gani = kPartnerDmGaniMax;  // partner_sync.lua GANI 0..25

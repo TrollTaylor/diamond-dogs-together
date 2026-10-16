@@ -48,6 +48,45 @@ bool Live(const Store& s, std::uint32_t epoch, std::uint64_t now) noexcept {
     return s.have && epoch && s.epoch==epoch && now>=s.received_ms && now-s.received_ms<=kLeaseMs;
 }
 void Placed(Visibility& s, std::uint64_t now) noexcept { s.place_ms=now; s.retry_ms=now; }
+bool EncodeExt(const Ext& e, std::uint8_t (&b)[kExtSize]) noexcept {
+    for(auto& x : b) x=0;
+    if(!e.revision || (e.features & ~ExtFeature::Known) || (e.seat>kSeatMax && e.seat!=kSeatUnknown)) return false;
+    // A vehicle id is a type-50 id or unknown; a category is 0..15 or unknown.
+    if(e.vehicle!=kVehicleUnknown && (e.vehicle>>9)!=kVehicleType) return false;
+    if(e.category!=kCategoryUnknown && e.category>15) return false;
+    if(e.type!=kTypeUnknown && e.category!=static_cast<std::uint8_t>(e.type>>4)) return false;
+    b[0]=kMagic; b[1]=kVersionExt; b[2]=e.features; b[3]=e.category;
+    b[4]=static_cast<std::uint8_t>(e.revision); b[5]=static_cast<std::uint8_t>(e.revision>>8);
+    b[6]=static_cast<std::uint8_t>(e.vehicle); b[7]=static_cast<std::uint8_t>(e.vehicle>>8);
+    b[8]=e.seat; b[9]=e.type;
+    for(unsigned i=0;i<4;++i) b[12+i]=static_cast<std::uint8_t>(e.sender_ms>>(i*8));
+    return true;
+}
+bool DecodeExt(const std::uint8_t* b, std::size_t n, Ext& out) noexcept {
+    if(!IsExt(b,n) || b[10] || b[11]) return false;
+    Ext e{};
+    e.features=b[2]; e.category=b[3];
+    e.revision=static_cast<std::uint16_t>(b[4]|(b[5]<<8));
+    e.vehicle=static_cast<std::uint16_t>(b[6]|(b[7]<<8));
+    e.seat=b[8]; e.type=b[9];
+    for(unsigned i=0;i<4;++i) e.sender_ms|=static_cast<std::uint32_t>(b[12+i])<<(i*8);
+    std::uint8_t check[kExtSize]{};
+    if(!EncodeExt(e,check)) return false;  // the same field rules both ways
+    out=e; return true;
+}
+bool AcceptExt(ExtStore& s, const std::uint8_t* b, std::size_t n, std::uint32_t epoch, std::uint64_t now) noexcept {
+    Ext e{}; if(!epoch || !DecodeExt(b,n,e)) { ++s.invalid; return false; }
+    if(s.have && s.epoch==epoch && static_cast<std::uint32_t>(e.sender_ms-s.ext.sender_ms)>=0x80000000u) { ++s.stale; return false; }
+    s.have=true; s.ext=e; s.epoch=epoch; s.received_ms=now; ++s.received; return true;
+}
+bool ExtLive(const ExtStore& s, std::uint32_t epoch, std::uint64_t now) noexcept {
+    return s.have && epoch && s.epoch==epoch && now>=s.received_ms && now-s.received_ms<=kLeaseMs;
+}
+std::uint8_t RemoteCategory(const ExtStore& s, const Packet& ride, std::uint32_t epoch, std::uint64_t now) noexcept {
+    if(!ExtLive(s,epoch,now) || !(s.ext.features & ExtFeature::SeatId) || ride.kind!=Kind::vehicle) return kCategoryUnknown;
+    if(s.ext.revision!=ride.revision || s.ext.vehicle!=ride.vehicle || s.ext.seat!=ride.seat) return kCategoryUnknown;
+    return s.ext.category;
+}
 void Observe(Visibility& s, const In& in) noexcept {
     // Ring identity is stronger evidence than clocks/positions: a real reset
     // may preserve both. Legacy/synthetic generation0 keeps prior behavior.
