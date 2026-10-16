@@ -1,3 +1,33 @@
+## October 16, 2026: 0.13.0 installed (join fixes, save handoff, throws in play, C4/arm, vehicle seat and tilt)
+
+Installed: package `mgs-coop-friend-0.13.0-20261016T163124Z-d00bc5c4` (Release receipt
+`20261016-162824-bfaef91c021646e09afcf7dbe0dc5cc8`, 274 audited tests, ZIP SHA-256 `6e2192a7...b339`) in both owned
+copies, loader SHA-256 `7452ec67...a8c6` (host through `Install-Coop.ps1 -Role Host -Character snake -NonInteractive`,
+which kept the existing co-op save copy; guest through the owned `install.ps1`); both executables, both Steam DLLs and
+all 17 save-folder files hash-identical before and after; no game launched. Source: `dev/oct7-continue` fast-forwarded
+to `wp/integ7` `bebb316` (280/280 CTest, contract 655 code sites / 146 vtable slots). The version is 0.13.0 and play
+refuses a build mismatch, so both players need this same package.
+
+What 0.13.0 adds over 0.12.6 (details: [join-fix phase 1](join-fix-phase1-spec.md), [phase 2](join-fix-phase2-spec.md),
+[save handoff](save-handoff.md), [throws and C4/arm](anim-round2-throws.md), [vehicles](vehicle-ws3.md)):
+- The partner's mission is shown everywhere (HUD, F9, link-status, Play-Coop) with a 'different missions' note; the host
+  helicopter hold has an on-screen message, a 'choose again to fly alone' escape and a 2-minute bound; a story-start
+  co-op save is warned about at the title; Share-Save is documented and Install-Coop asks twice before replacing an
+  imported partner save; Collect-Logs lists the co-op saves and keeps 3 sessions.
+- Automatic save handoff: a joining guest whose save cannot meet the host gets the host's co-op save at the title and
+  MGSV restarts once on it through Play-Coop (old copy kept aside, Share-Save [R]); travel lock: the guest follows the
+  host's travel with soft refusals and escapes.
+- Native partner grenade throws are on in two-PC play (stock guard, owner filter, viewer-own rebase, stall hold,
+  receiver slot fix; WS1 rec+0x240 checks latch on a foreign row).
+- The partner draws and holds C4 and holds Hand of Jehuty's aim pose instead of lowering the rifle (no kneel/detonate
+  motion yet, no mirror of the charge in the viewer's world).
+- Vehicles: the remote driver is seated by id in unnamed sortie vehicles (also at Mother Base), and the viewer's copy
+  of the vehicle tilts with the driver's pitch and roll (RIDE_TILT).
+
+Hidden runs on the integrated build: play-native `c74a4ef5`, throws default in play `67f13461`, C4/arm `ea2b96fa`, tilt
+`05a6a6c7`, heli-alone `8c87caf7`, handoff transfer `db682ef9`. Known pre-existing issues: the shared game-over host
+continue stalls under the MISSION FAILED menu (Lua clock), and the lab seed's host shows infinite ammo.
+
 ## October 16, 2026: the partner holds C4 and Hand of Jehuty natively, on by default (WS4 v1)
 
 **The teammate's body no longer lowers its rifle for C4 or Hand of Jehuty.** With the native partner (the gun
