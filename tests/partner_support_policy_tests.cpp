@@ -61,6 +61,23 @@ template<class Check> void Rec240Fixtures(Check& check) {
  {auto x=r;x.slot_hand=0;check(!sp::RecordIdentity(x),"B: record not in hand slot 3 refuses");}
  {auto x=r;x.switching=true;check(!sp::RecordIdentity(x),"B: switching record refuses");}
  for(unsigned equip: {0u,0x800u,0xFFFFu}){auto x=r;x.equip=x.rec_equip=static_cast<std::uint16_t>(equip);check(!sp::RecordIdentity(x),"B: equip range");}
+ // rec240_stale (review WS1-1): any rec+0x240 other than the slot handle under
+ // the identity (in practice a same-equip handle on another index); never the
+ // gap of a normal equip/follow.
+ check(!sp::RecordStale(r),"B: matching rec+0x240 is not stale");
+ {auto x=r;x.rec_handle=fake::Handle(4,354);check(sp::RecordStale(x) && !sp::RecordReady(x),"B: same equip on another index is stale (refused)");}
+ for(std::uint32_t h: {fake::Handle(5,349),fake::Handle(5,354,13),0u}){auto x=r;x.rec_handle=h;
+  check(sp::RecordStale(x) && !sp::RecordReady(x),"B: any other rec+0x240 under the identity is stale (refused)");}
+ {auto x=r;x.slot_handle=0;x.rec_handle=fake::Handle(4,354);check(!sp::RecordStale(x),"B: no Match-verified handle is not judged stale");}
+ {auto x=r;x.switching=true;x.rec_handle=fake::Handle(4,354);check(!sp::RecordStale(x),"B: switching record is not judged stale");}
+ // The activation 0x105FDB0 after an equip 349 -> 354: rec+0x240 (0x10602E8) is
+ // stored before rec+0x24C (0x10602F0). No state of that pass, or of a follow
+ // from a gun slot (rec+0x3D9 != 3 until 0x105FE5E), is stale.
+ {auto x=r;x.rec_equip=349;x.rec_handle=fake::Handle(7,349);
+  check(!sp::RecordStale(x) && !sp::RecordReady(x),"B: before the activation (previous equip) is not stale");
+  x.rec_handle=r.slot_handle;check(!sp::RecordStale(x) && !sp::RecordReady(x),"B: after the rec+0x240 store only is not stale");
+  x.rec_equip=354;check(!sp::RecordStale(x) && sp::RecordReady(x),"B: after the rec+0x24C store is ready");}
+ {auto x=r;x.slot_hand=0;x.rec_equip=0x2D;x.rec_handle=fake::Handle(2,0x2D,1);check(!sp::RecordStale(x),"B: follow from a gun slot is not stale");}
  // The composed gate: a mismatching rec+0x240 alone closes support admission.
  {sp::GateIn g{true,false,true,true,true,true,true,true,true,true,3,12,354};
   auto x=r;x.rec_handle=fake::Handle(4,354);g.record_ready=sp::RecordReady(x);check(!sp::Admit(g),"B: Admit refuses a foreign rec+0x240");

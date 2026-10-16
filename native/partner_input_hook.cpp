@@ -1843,9 +1843,14 @@ bool SupportRead(std::uintptr_t address,void* out,std::size_t size) noexcept {
     __try {std::memcpy(out,reinterpret_cast<const void*>(address),size);return true;}
     __except(ProbeFilter(GetExceptionCode())) {return false;}
 }
-// WS1 B diagnostics (hook thread): the last refused rec+0x240 / slot handle pair
-// (an expected transient right after an equip: logged once per pair, not a refusal of the path).
-std::uint32_t g_rec240_pending_rec=0,g_rec240_pending_slot=0;
+// WS1 B diagnostics (hook thread): the last stale rec+0x240 / slot handle pair.
+// Not a normal gap after an equip/follow (partner_support_policy::RecordStale):
+// in practice a same-equip handle on another row index that the per-frame path
+// does not refresh, so B refuses support until the activation re-runs. Logged
+// once per pair as refused; reason=rec240_stale; the first one of a mission uses
+// the reserved slot past the shared cap.
+std::uint32_t g_rec240_stale_rec=0,g_rec240_stale_slot=0;
+bool g_rec240_stale_logged=false;
 bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
     namespace sp=partner_support_policy;
     sp::GateIn x{};x.enabled=a.native_support && !a.p218 && !PoseRequired() && static_cast<std::uint32_t>(g_hook_thread)==GetCurrentThreadId();x.latched=g_support_leak!=0;
@@ -1866,12 +1871,13 @@ bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
         sp::RecordIn record=sp::ReadRecord(SupportRead,g_base,a.gun_prim,a.gun_rec,a.blk1,j.equip);
         record.slot_handle=x.body_ready ? slot_handle : 0;
         x.record_ready=sp::RecordReady(record);
-        if(x.body_ready && sp::RecordIdentity(record) && !x.record_ready) {
-            if(record.rec_handle!=g_rec240_pending_rec || slot_handle!=g_rec240_pending_slot) {
-                g_rec240_pending_rec=record.rec_handle;g_rec240_pending_slot=slot_handle;
-                if(g_log && g_support_lines<512){++g_support_lines;char line[224]{};
+        if(sp::RecordStale(record)) {
+            if(record.rec_handle!=g_rec240_stale_rec || slot_handle!=g_rec240_stale_slot) {
+                g_rec240_stale_rec=record.rec_handle;g_rec240_stale_slot=slot_handle;
+                const bool first=!g_rec240_stale_logged;g_rec240_stale_logged=true;
+                if(g_log && (first || g_support_lines<512)){++g_support_lines;char line[224]{};
                     if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-                        "partner_support=rec240_check; slot=3; equip=%u; type=12; reason=pending; rec240=0x%x; slot_handle=0x%x\r\n",
+                        "partner_support=refused; slot=3; equip=%u; type=12; reason=rec240_stale; rec240=0x%x; slot_handle=0x%x\r\n",
                         unsigned(j.equip),record.rec_handle,slot_handle)))g_log(line);}
             }
         }
@@ -2738,7 +2744,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     };
     if(InterlockedExchange(&g_support_reset,0)){
         g_support_episode=false;g_support_released=false;g_support_episode_stock=0;g_support_lines=0;
-        g_rec240_logged=0;g_rec240_last=partner_support_policy::Rec240::skip;g_rec240_pending_rec=0;g_rec240_pending_slot=0;
+        g_rec240_logged=0;g_rec240_last=partner_support_policy::Rec240::skip;g_rec240_stale_rec=0;g_rec240_stale_slot=0;g_rec240_stale_logged=false;
     }
     const bool have = g_ready && !g_faulted && ReadArm(a);
     const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;

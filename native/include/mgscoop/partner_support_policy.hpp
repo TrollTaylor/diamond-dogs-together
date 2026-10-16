@@ -48,9 +48,14 @@ constexpr bool CheckStock(StockLatch& s,bool before_ok,bool after_ok,std::uint32
 // X+0x140[(h>>16)*6] and toggles the handle's model part; vt+0x38 = 0xDC64E0 can
 // release the handle's model instance. Neither checks owner, bounds or the equip
 // word. The gun plugin passes rec+0x240 (written only by the activation
-// 0x105FDB0 at 0x10602E8, with rec+0x24C at 0x10602F0) at 0x10892CB (mode 28),
-// 0x10880D3 (30), 0x108AA91 (33), 0x1087C05 (37) and, after vt+0x38 at 0x1062683,
-// at 0x1062696 in the iface reset 0x1061F50 (support classes 2/3 only).
+// 0x105FDB0 at 0x10602E8, with rec+0x24C at 0x10602F0) to vt+0x160 at 0x10892CB
+// (mode 28), 0x10880D3 (30), 0x108AA91 (33), 0x1087C05 (37) and, after vt+0x38
+// at 0x1062683, at 0x1062696 in the iface reset 0x1061F50 (support classes 2/3
+// only). B covers only the four input-driven modes. The gun plugin also passes
+// rec+0x240 to 17 other X methods at 22 more sites (REC240_X_CALLS and
+// REC240_X_CALLS_BY_HAND in the contract generator; docs "Other X calls"). Those
+// are unaudited; behind them and the iface reset only C's detect-only row check
+// sees a stale handle.
 // Offsets duplicated from partner_player_contract.hpp (this header stays pure
 // and includable by fixtures); partner_input_hook.cpp static_asserts them equal.
 namespace rec240 {
@@ -83,9 +88,25 @@ constexpr bool RecordIdentity(const RecordIn& r) noexcept {
 }
 // B: HOLD/FIRE reach modes 28/30/33/37 only when every vt+0x160 call there
 // hits the Match-verified row (owner 1, this equip, kind 12, index in range).
-// Fails closed: an extra refused frame until the activation refreshes rec+0x240.
+// Fails closed. It adds no refused frame to a normal equip/follow: until the
+// activation runs, rec+0x24C still names the previous equip or rec+0x3D9 the
+// gun slot (no identity), and for a kind-12 handle the activation stores
+// rec+0x240 (0x10602E8) before rec+0x24C (0x10602F0); ReadRecord reads
+// rec+0x24C first.
 constexpr bool RecordReady(const RecordIn& r) noexcept {
  return RecordIdentity(r) && r.slot_handle!=0 && r.rec_handle==r.slot_handle;
+}
+// B diagnostic: the record has the identity but rec+0x240 is not the
+// Match-verified slot-3 handle. This is never the gap of a normal equip/follow
+// (see RecordReady): rec+0x24C, X vt+0x20 of rec+0x240 when the activation ran,
+// names this equip, so rec+0x240 is in practice a same-equip handle on another
+// row index (the stale-handle hazard itself). The phase-0 switch detector
+// 0x103AED0 compares only the slot and the equip bits (h>>5)&0x7FF, so the
+// per-frame path does not re-run the activation and the state persists. B
+// refuses support until something re-runs it (a slot or equip change). The
+// hook logs it as refused; reason=rec240_stale.
+constexpr bool RecordStale(const RecordIn& r) noexcept {
+ return RecordIdentity(r) && r.slot_handle!=0 && r.rec_handle!=r.slot_handle;
 }
 constexpr std::uint8_t SupportClass(std::uint32_t word27c) noexcept { return static_cast<std::uint8_t>((word27c>>6)&7u); }
 // The iface reset's own gate (0x1062629..0x106263B: (rec+0x27C>>6)&7 in {2,3}).

@@ -126,7 +126,9 @@ for id 1 [O]. Without the guard, offline, this path is live for any id that ever
 Resolved 2026-10-16 (WS1, docs/anim-round2-throws.md "Handle call resolved"): the receiver is X =
 [[gm]+0x98]+0x1E8 (stored into prim+0x60 at 0x101E1D4), vt+0x160 = 0xDC1740; rec+0x240 is written only by the
 activation 0x105FDB0 (0x10602E8); there are two more sites, 0x10892CB (mode 28) and 0x1062696 (iface reset
-0x1061F50, after X vt+0x38 at 0x1062683). The notes below are the original best effort.
+0x1061F50, after X vt+0x38 at 0x1062683). Those are the five vt+0x160 sites. 22 more X calls (20 found by a
+census, 2 by hand) pass rec+0x240 to 17 other X methods, which were not audited (review WS1-2;
+anim-round2-throws.md "Other X calls"). The notes below are the original best effort.
 - Receiver: object at plugin+0x60 (shared by all ids). Its +8 sub-object answers equip-id queries
   vt+0x48(equipId) (returns a type, compared with 5 in mode 33 op 12) and vt+0x50(equipId) (bool) [O].
 - Methods seen on it, all keyed by the dword rec+0x240 plus one flag: vt+0xE0 / vt+0xE8 (class-1 guns,

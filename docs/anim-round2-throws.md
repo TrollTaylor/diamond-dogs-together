@@ -77,8 +77,8 @@ motions or generate a second real grenade.
 Inspected executable (read only): `D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe`,
 version 1.0.15.4, SHA-256
 `085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
-The generator currently verifies **607 code sites and 128 vtable slots** (589/122 before the WS1
-handle-call pins), including all previous reference/containment assertions.
+The generator currently verifies **612 code sites and 128 vtable slots** (589/122 before the WS1
+handle-call pins, 607/128 before its review fixes), including all previous reference/containment assertions.
 
 | RVA | Original bytes | Enabled in-memory bytes |
 |---|---|---|
@@ -380,10 +380,21 @@ image pointers to the three methods.
   `0x17E..0x180` starts/stops an effect through `[X+0x198]`. It never allocates, frees or reuses a handle and writes
   no stock, vars, HUD, camera or id-indexed player state. **It checks nothing**: no owner, bounds or equip word.
 - `0xDC64E0(X, h)` (vt+0x38) can release the handle's model instance through `0xDC6540`.
-- rec+0x240 is written only by the activation `0x105FDB0`: `0x10602E8` stores the handle loaded from
-  `Y+0x40[id*stride + rec+0x3D9]` (`0x105FEA5`, `0x105FEB4`), and `0x10602F0` stores rec+0x24C from the same handle.
+- rec+0x240 is written only by the activation `0x105FDB0`, at `0x10602E8`, next to rec+0x24C at `0x10602F0`. For a
+  kind-12 handle (`h & 0x1F`) it stores the handle loaded at `0x105FEC0` from `Y+0x40[id*[Y+0xC] + rec+0x3D9]`
+  (r15 = prim, r14 = rec, esi = id, ctl = `[[[prim+8]+0x138]+0xC8]`, Y = `[ctl+8]`: `0x105FDD8..0x105FE06`; slot
+  index `0x105FEA5`; load `0x105FEB4`), and rec+0x24C = X vt+0x20 of that handle (`0x105FF1A..0x105FF3A`, which also
+  saves the kind at `[rsp+0x40]`). The kind-12 route to the stores is `0x105FF8A` (not kind 9) -> `0x106019C` (kind
+  outside 1..8) -> `0x106046D` (kind 12) -> block `0x10606C9` -> `0x1060767` -> `0x10602A8`. Other kinds rewrite
+  ebx/r13d before the stores: kind 9 reloads both from slot 2 (`0x1060000`, `0x1060041`; its own handle goes to
+  rec+0x244), and a kind outside 1..8 and 12..14 whose equip `[X+8]` vt+0x50 refuses clears both
+  (`0x106066D`, `0x1060678`). The generator checks this by data flow over the activation's control flow graph
+  (recursive descent from its entry, the kind-14 jump table `0x1061C70` resolved, calls clobbering the volatile
+  registers): on every kind-12 path each pinned writer (prim, rec, id, Y, slot index, handle, kind, rsi = rec+0x1B0,
+  r13d) lies on every path to its use and is the last write before it, and the kind-12 route is on every path; over
+  all kinds the only other ebx/r13d writes are the two pairs above.
 
-**Five gun-plugin sites** pass rec+0x240 (a generator census pins exactly these):
+**Five vt+0x160 sites** pass rec+0x240 to X vt+0x160 (a generator census pins exactly these):
 
 | Site | Where | Flag |
 |---|---|---|
@@ -393,18 +404,56 @@ image pointers to the three methods.
 | `0x1087C05` | mode 37 release | 0 |
 | `0x1062696` | gun iface reset `0x1061F50` (vtable `0x23B3FA0+0x10`), classes 2/3 only (`0x1062629..0x106263B`), after X vt+0x38 at `0x1062683` (new) | 0 |
 
+**Other X calls with rec+0x240 (unaudited).** The five sites are not every gun-plugin use of the handle. A second
+generator census (`REC240_X_CALLS`: edx/r8d = `[r+0x240]` and rcx = `[r+0x60]` (prim) or `[r+0x30]` (iface) in the
+48 bytes before an indirect call, neither rewritten nor crossed by a call) pins 26 sites: the five above, vt+0x38 at
+`0x1062683`, and 20 more. Two more load rcx before that window and were found by hand (`REC240_X_CALLS_BY_HAND`: the
+generator checks each is a call `[r+disp]` with edx/r8d = `[r+0x240]` in the 48 bytes before). Only vt+0x160 and
+vt+0x38 were audited; the 17 other methods were not checked for an owner, bounds or equip test. The generator checks
+that both concrete X vtables (`0x234B840`, `0x234B470`) hold each method below (`REC240_X_METHODS`):
+
+| Site | X slot (method) | In |
+|---|---|---|
+| `0x103DF15` | vt+0x28 (`0xDBE590`) | `0x103D370` |
+| `0x103F4D7` | vt+0x120 (`0xDC2E40`) | `0x103EB70` |
+| `0x1043BB8` | vt+0x140 (`0xDBF180`) | `0x1043B40` |
+| `0x1055ED3`, `0x1055F15` / `0x1055EF1`, `0x1055F33` | vt+0x1C0 (`0xDC1450`) / vt+0x1C8 (`0xDC2890`) | `0x1055EA0` (callers `0x106EA4C`, `0x1070CE4`, `0x1070E39`, `0x1079042`; checks only index != 0xFFFF; for kinds 9+ vt+0x1C0 calls `[X+0x190]` vt+0x1B8 on the handle's model instance slot) |
+| `0x1056562`, `0x10565AE` (by hand), `0x10565DF` | vt+0x50 (`0xDBF930`), vt+0x60 (`0xDBF5C0`), vt+0x148 (`0xDBDC50`) | `0x1056390` |
+| `0x1059664`, `0x105968F` | vt+0x1B8 (`0xDC26C0`), vt+0x1C8 | reload motion segment `0x1059620` (Anim round 1's "motion vt+0x1C8" is this X call) |
+| `0x105DBAD`, `0x105DE8F` | vt+0x148 | `0x105DAD0` |
+| `0x107905D` | vt+0x1D8 (`0xDC1540`) | reload handler `0x1077840` |
+| `0x108B740`, `0x108B775` | vt+0xE0 (`0xDBFCF0`), vt+0xE8 (`0xDC12A0`) | `0x108AFC0` (class-1 guns) |
+| `0x1093F10` (by hand) | vt+0xD8 (`0xDC5350`), rec+0x244 instead when rec+0x280 bit 0 | `0x1093A00` |
+| `0x1098580` | vt+0x58 (`0xDC5540`) | `0x10982D0` |
+| `0x1098939` | vt+0xA0 (`0xDBD910`) | `0x1098670` |
+| `0x1099BFC`, `0x1099E63` | vt+0x30 (`0xDC0920`, classes 2/3 only), vt+0x128 (`0xDC2F70`) | gun iface vt+0x8 `0x1099AB0` (it first calls the activation `0x105FDB0` unconditionally) |
+
 The call is safe for body 1 as v1 is built: at every throw call rec+0x240 is body 1's own Match-verified handle
 (owner 1, kind 12, this equip), as runs `aaa2a0e0` (`0x12c4c`, `0x12bac`) and `ea93a2e3` (`0x22c4c`, `0x22bac`,
-`0x22c4c`) show. The residual risk is the non-input iface reset firing on a stale rec+0x240 whose row an engine-side
-free handed to the viewer; it is not shown to be reachable. Three fail-closed pins close or detect it:
+`0x22c4c`) show. The residual risk is any X call above outside B's four input-driven modes reaching a stale
+rec+0x240 whose row an engine-side free handed to the viewer. Examples are the iface reset (vt+0x38/vt+0x160) and
+`0x1055EA0` (vt+0x1C0/vt+0x1C8, the viewer's model instance). None is shown to be reachable. B guards only the
+input-driven vt+0x160 modes. Only C sees a stale handle behind the other users: it checks the row whenever the record
+has B's identity and class 2/3, but it only detects. WS4 (type 13 / class 3) must audit this table and cannot rely on the five vt+0x160 sites alone.
+Three fail-closed pins close or detect the risk:
 
 - **B (admission).** `partner_support_equip::Ready()` also returns the Match-verified slot-3 handle
   `Y+0x40[1*7+3]`; `SupportAdmitted` builds its record readiness with the pure
   `partner_support_policy::RecordReady`: the previous identity (prim vtable/block/record, rec+0x24C == the remote's
   equip, hand slot 3, no switch bit) **and** `rec+0x240 == that handle`. HOLD/FIRE therefore reach modes 28/30/33/37
-  only when every vt+0x160 call hits a row with owner 1, kind 12, the right equip and an in-range index. It may refuse
-  one more frame after an equip, until the activation refreshes rec+0x240; that transient logs once per pair:
-  `partner_support=rec240_check; ...; reason=pending; rec240=0x..; slot_handle=0x..`.
+  only when every vt+0x160 call hits a row with owner 1, kind 12, the right equip and an in-range index. The new term
+  adds no refused frame to a normal equip/follow. Until the activation runs, rec+0x24C still names the previous equip
+  (or rec+0x3D9 the gun slot), so the identity already refuses. For a kind-12 handle the activation then stores
+  rec+0x240 (`0x10602E8`) before rec+0x24C (`0x10602F0`), and `ReadRecord` reads rec+0x24C first. A mismatch under the
+  identity (`partner_support_policy::RecordStale`) is therefore the stale-handle hazard itself: rec+0x24C (X vt+0x20
+  of rec+0x240 when the activation ran) names this equip, so rec+0x240 is in practice a same-equip handle on another
+  row index. The phase-0 switch detector `0x103AED0` (`0x103AF7B..0x103AFB4`) compares only the slot and the equip
+  bits `(h>>5)&0x7FF`, so the per-frame path does not re-run the activation and the state persists. (Only the gun
+  iface vt+0x8 `0x1099AB0` calls `0x105FDB0` unconditionally, and when it runs is unknown.) B then refuses support
+  until something re-runs the activation (a slot or equip change) and logs once per pair (the mission's first such
+  line even past the shared cap). v1 does not force that re-activation; a run that shows the line fails (see "Hidden
+  run"):
+  `partner_support=refused; slot=3; equip=N; type=12; reason=rec240_stale; rec240=0x..; slot_handle=0x..`.
 - **C (per-job row check, detect-only).** After every windowed body-1 job, while the record has B's identity (so never
   during a gun<->support or support<->support switch before `0x105FDB0` refreshes rec+0x240; critic #13) and its class
   `(rec+0x27C>>6)&7` is 2 or 3 (the iface reset's own gate), `partner_support_policy::CheckRow` reads X from the calls'
@@ -427,6 +476,13 @@ free handed to the viewer; it is not shown to be reachable. Three fail-closed pi
   only references are the two vtables, exact function ranges and rets, the class-2/3 branch target, and the census of
   exactly five rec+0x240 -> vt+0x160 call sites). The three existing call-site pins now name the resolved target.
   Counts: **607 code sites, 128 vtable slots** (was 589/122). The writer receipt field is now `rec_handle_risk=pinned`.
+  Review fixes (WS1-2/WS1-3): pins `0x105FDD8..0x105FE06` (activation operands: prim, rec, id, ctl, Y),
+  `0x105FF1A..0x105FF3A` (rec+0x24C = X vt+0x20(handle); the kind), `0x105FF60..0x105FF90` (eax = the kind,
+  rsi = rec+0x1B0, the kind-9 branch; replaces `0x105FF6F`), `0x106018A..0x10601A2` (kinds outside 1..8),
+  `0x1060465..0x1060473` (kind 12) and `0x1060767..0x106076C` (the kind-12 join); the `0x105FEB4` load was already
+  pinned (35 bytes). New generator assertions: the activation data flow above (kind-12 last writers and route, the
+  other kinds' ebx/r13d writes, the kind-14 jump table), the `REC240_X_CALLS` census of 26 X calls with rec+0x240,
+  the two hand-found calls and the 19 X methods in both vtables. Counts: **612 code sites, 128 vtable slots**.
 
 Tests: `partner_support_policy_tests` gained 73 checks (1378 -> 1451): record readiness with a mismatching rec+0x240
 (other index, equip or kind; no Match-verified handle; switch; previous equip; equip range), the composed `Admit`, the
@@ -434,7 +490,10 @@ reader-based record wiring on a fake prim/record, and the row check on fake mana
 ok with the pin bit set; viewer-owned row; other owner; reused row with another equip word; index == capacity; last
 in-range index; empty handles; wrong/sibling manager vtable, no manager, zero or 17-bit capacity, no rows and an
 unreadable row are `unread`; the detect-only default never latches; the latch mode latches exactly the foreign verdicts).
-The hook static_asserts the pure policy's offsets against the generated contract.
+The hook static_asserts the pure policy's offsets against the generated contract. Review fix WS1-1 added 11 checks
+(1451 -> 1462): `RecordStale` (another index, equip or kind and an empty rec+0x240 under the identity are stale; no
+Match-verified handle or a switch is not judged; no state of a normal equip/follow, before or between the two
+activation stores, is stale).
 
 Still open (research "handle-call" Open): when exactly `0x1061F50` runs for body 1; `0xDC6540`, `[X+0x190]` vt+0x100 and
 `[X+0x198]` were not opened; the LIFO free-list decode is inferred; the other plugin with six X vt+0x160 callers
@@ -447,5 +506,5 @@ scenario.json Closed / BaselineRestored / RealSavesUnchanged; the throws still p
 and 349, `armed; reason=throw` and `throw_release`, every `stock_check; ...; changed=0`, every guest
 `require support;...;counts=12,16383,12,8,12,12,8,8`, thrown filter drops, frames of both throws); at least one
 `partner_support=rec240_check; ...; reason=ok; ...; owner=1` per thrown equip (354 and 349) on the guest; **no**
-`reason=rec240_foreign` and no `reason=unread`; `reason=pending` lines, if any, only right after an equip/follow
-line. Then flip `kRec240Latch` (and its fixture assertion) and re-run once.
+`reason=rec240_foreign`, **no** `reason=rec240_stale` and no `reason=unread` (any of them fails the run). Then flip
+`kRec240Latch` (and its fixture assertion) and re-run once.

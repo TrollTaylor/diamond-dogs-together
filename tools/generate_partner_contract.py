@@ -758,9 +758,21 @@ SITES += [
      'gun iface reset 0x1061F50: (rec+0x27C>>6)&7 in {2,3} -> 0x1062676'),
     (0x1062676, '488b4e30488b018b9740020000ff5038488b4e30488b014533c08b9740020000ff9060010000',
      'gun iface reset: [iface+0x30 = prim+0x60] vt+0x38(rec+0x240) at 0x1062683, then vt+0x160(rec+0x240, 0) at 0x1062696'),
+    (0x105FDD8, '488b41084533e44c8bf9488b88380100000fb682de030000418bf0488b99c800000044894424384c8bf2488b7b08',
+     'activation 0x105FDB0 entry: r15 = prim, rcx = [[prim+8]+0x138], esi = id, rbx = ctl = [rcx+0xC8], r14 = rec, '
+     'rdi = Y = [ctl+8] (the operands of the 0x105FEB4 load and the 0x105FF1A call)'),
     (0x105FEA5, '410fb696d9030000418886dc030000',
      'activation 0x105FDB0: the handle slot index is rec+0x3D9 (hand slot) for the load at 0x105FEB4'),
-    (0x105FF6F, '498db6b0010000', 'activation: rsi = rec+0x1B0 (rsi+0x90 = rec+0x240, rsi+0x9C = rec+0x24C)'),
+    (0x105FF1A, '498b4f608bd3488b01ff5020450fb68ed9030000448be88bc383e01f89442440',
+     'activation: r13d = [prim+0x60] (X) vt+0x20(ebx = the loaded handle), stored as rec+0x24C at 0x10602F0; '
+     'kind = ebx & 0x1F to eax and [rsp+0x40]'),
+    (0x105FF60, '8b4424404181a680020000fffffffe498db6b00100004489642430c6442434014489a6a800000083f8090f85e9000000',
+     'activation: eax = kind; rsi = rec+0x1B0 (rsi+0x90 = rec+0x240, rsi+0x9C = rec+0x24C); only kind 9 falls through '
+     'to the slot-2 reload of ebx/r13d (0x1060000, 0x1060041), other kinds jump to 0x1060079'),
+    (0x106018A, '8b7c2440c7442444ff0700008d47ff83f8070f87c3020000',
+     'activation: edi = kind; kinds outside 1..8 (12 among them) -> 0x1060465'),
+    (0x1060465, '448864243483ff0c0f8456020000', 'activation: kind 12 -> 0x10606C9'),
+    (0x1060767, 'e93cfbffff', 'activation: the kind-12 block 0x10606C9 joins the rec+0x240/rec+0x24C stores at 0x10602A8'),
     (0x10602E8, '899e900000000bf84489ae9c000000',
      'activation: rec+0x240 = the loaded handle, rec+0x24C = X vt+0x20(handle)'),
     (0xDC1740, '48895c240889542410574883ec30c1ea10410fb6f8488bd90fb7c2488d1440488b8140010000806450047f4c8d0c504584c00f95c0c0e00741084104488b018b542448ff504084c0746b448b4c244844',
@@ -1689,6 +1701,25 @@ def support_native_assertions():
     return out
 
 
+# (call site, X vtable offset) of every census-found X call taking rec+0x240 (docs/anim-round2-throws.md "Other X
+# calls"). Only the five vt+0x160 sites (and vt+0x38 before 0x1062696) are audited; the others are not.
+# REC240_X_CALLS_BY_HAND load rcx before the census window. REC240_X_METHODS: the method in both concrete X vtables.
+REC240_X_CALLS_BY_HAND = [(0x10565AE, 0x60), (0x1093F10, 0xD8)]
+REC240_X_METHODS = {
+    0x28: 0xDBE590, 0x30: 0xDC0920, 0x38: 0xDC64E0, 0x50: 0xDBF930, 0x58: 0xDC5540, 0x60: 0xDBF5C0, 0xA0: 0xDBD910,
+    0xD8: 0xDC5350, 0xE0: 0xDBFCF0, 0xE8: 0xDC12A0, 0x120: 0xDC2E40, 0x128: 0xDC2F70, 0x140: 0xDBF180, 0x148: 0xDBDC50,
+    0x160: 0xDC1740, 0x1B8: 0xDC26C0, 0x1C0: 0xDC1450, 0x1C8: 0xDC2890, 0x1D8: 0xDC1540,
+}
+REC240_X_CALLS = [
+    (0x103DF15, 0x28), (0x103F4D7, 0x120), (0x1043BB8, 0x140), (0x1055ED3, 0x1C0), (0x1055EF1, 0x1C8),
+    (0x1055F15, 0x1C0), (0x1055F33, 0x1C8), (0x1056562, 0x50), (0x10565DF, 0x148), (0x1059664, 0x1B8),
+    (0x105968F, 0x1C8), (0x105DBAD, 0x148), (0x105DE8F, 0x148), (0x1062683, 0x38), (0x1062696, 0x160),
+    (0x107905D, 0x1D8), (0x1087C05, 0x160), (0x10880D3, 0x160), (0x10892CB, 0x160), (0x108AA91, 0x160),
+    (0x108B740, 0xE0), (0x108B775, 0xE8), (0x1098580, 0x58), (0x1098939, 0xA0), (0x1099BFC, 0x30),
+    (0x1099E63, 0x128),
+]
+
+
 def handle_call_assertions():
     """WS1: the facts B/C rely on (docs/anim-round2-throws.md "Handle call resolved")."""
     import re
@@ -1720,6 +1751,171 @@ def handle_call_assertions():
                    if load.search(data[max(0, m.start() - 48):m.start()]))
     need(sites == [0x1062696, 0x1087C05, 0x10880D3, 0x10892CB, 0x108AA91],
          f'rec+0x240 -> vt+0x160 call sites: {[hex(x) for x in sites]}')
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    md.detail = True
+    # B's premise (review WS1-3): for a kind-12 handle the activation 0x105FDB0 stores at 0x10602E8 (rec+0x240) the
+    # handle it loads at 0x105FEC0 from Y+0x40[id*[Y+0xC] + rec+0x3D9] and at 0x10602F0 (rec+0x24C) X vt+0x20 of it.
+    # Data flow over the activation's control flow graph (recursive descent from its entry: every direct branch and
+    # the one jump table followed, calls return and clobber the volatile registers, any other indirect jump fails;
+    # only the paths that reach the use count). Each operand's writer must lie on every path from the entry to its
+    # use and be the last write of that register before it. The kind-12 paths fix the three kind branches
+    # (0x105FF8A: kind != 9; 0x106019C: kind outside 1..8; 0x106046D: kind 12), whose operand (eax / edi = the kind
+    # saved at [rsp+0x40]) is checked the same way.
+    lo, hi = 0x105FDB0, 0x1061C6F
+    code, bad = {}, set()
+
+    def insn(a):
+        if a not in code:
+            code[a] = next(md.disasm(rd(a, 15), a), None)
+        return code[a]
+
+    # The one indirect jump (kind 14, equips 0x203..0x209): jmp rcx through the 7 RVAs at 0x1061C70.
+    need(insn(0x10605E2).op_str == 'eax, 6' and insn(0x10605E5).mnemonic == 'ja' and
+         insn(0x10605F0).op_str == 'ecx, dword ptr [rdx + rax*4 + 0x1061c70]' and insn(0x10605FA).op_str == 'rcx',
+         'activation: the kind-14 jump table 0x1061C70 has 7 entries')
+    tables = {0x10605FA: jump_table(0x1061C70, 7)}
+
+    def succ(a, force):
+        i = insn(a)
+        if a in force:
+            return [force[a]]
+        if a in tables:
+            return tables[a]
+        if i.mnemonic in ('ret', 'int3', 'ud2'):
+            return []
+        if i.group(capstone.CS_GRP_JUMP):
+            if i.operands[0].type != capstone.x86.X86_OP_IMM:
+                bad.add(a)
+                return []
+            return [i.operands[0].imm] if i.mnemonic == 'jmp' else [i.operands[0].imm, a + i.size]
+        return [a + i.size]
+
+    def on_paths(start, goal, force, dead=()):
+        """Instructions on some path start -> goal inside the activation (goal excluded, dead removed)."""
+        edges, todo = {}, [start]
+        while todo:
+            a = todo.pop()
+            if a in edges or a == goal or a in dead:
+                continue
+            if not lo <= a < hi or insn(a) is None:
+                bad.add(a)
+                continue
+            edges[a] = succ(a, force)
+            todo += edges[a]
+        live, grew = {goal}, True
+        while grew:
+            grew = False
+            for a, nxt in edges.items():
+                if a not in live and any(n in live for n in nxt):
+                    live.add(a)
+                    grew = True
+        return sorted(live - {goal})
+
+    def fam(reg):
+        """Every capstone name of the 64-bit register reg (rax/rbx/rdx, rsi/rdi, r8..r15)."""
+        if reg in ('rax', 'rbx', 'rcx', 'rdx'):
+            return {reg, 'e' + reg[1:], reg[1:], reg[1] + 'l', reg[1] + 'h'}
+        if reg in ('rsi', 'rdi', 'rbp', 'rsp'):
+            return {reg, 'e' + reg[1:], reg[1:], reg[1:] + 'l'}
+        return {reg, reg + 'd', reg + 'w', reg + 'b'}
+
+    volatile = set().union(*(fam(r) for r in ('rax', 'rcx', 'rdx', 'r8', 'r9', 'r10', 'r11')))
+
+    def writes(path, regs):
+        """The instructions in path that write regs (a call clobbers the volatile registers)."""
+        return [a for a in path if ({insn(a).reg_name(r) for r in insn(a).regs_access()[1]} |
+                                    (volatile if insn(a).mnemonic == 'call' else set())) & regs]
+
+    def last_writer(reg, writer, use, force=None):
+        force = force or {}
+        dominates = writer in on_paths(lo, use, force) and on_paths(lo, use, force, dead={writer}) == []
+        later = writes(on_paths(writer, use, force), fam(reg))
+        return dominates and later == [writer], [hex(a) for a in later]
+
+    kind12 = {0x105FF8A: 0x1060079, 0x106019C: 0x1060465, 0x106046D: 0x10606C9}
+    for reg, writer, use, force, what in (
+            ('r15', 0x105FDDF, 0x105FF1A, None, 'r15 = prim for X = [prim+0x60] at 0x105FF1A'),
+            ('r14', 0x105FDFF, 0x105FEA5, None, 'r14 = rec for the slot index rec+0x3D9 at 0x105FEA5'),
+            ('rdi', 0x105FE02, 0x105FEB4, None, 'rdi = Y for the load at 0x105FEB4'),
+            ('rsi', 0x105FDF0, 0x105FEB8, None, 'esi = id for the load at 0x105FEB8'),
+            ('rdx', 0x105FEA5, 0x105FEBE, None, 'edx = rec+0x3D9 for the load at 0x105FEBE'),
+            ('rbx', 0x105FEC0, 0x105FF1E, None, 'ebx = the loaded handle for X vt+0x20 at 0x105FF1E'),
+            ('rax', 0x105FF33, 0x105FF36, None, 'eax = ebx & 0x1F (the kind) saved at [rsp+0x40]'),
+            ('rdi', 0x106018A, 0x106046A, kind12, 'edi = [rsp+0x40] (the kind) for the kind branches 0x106019C/0x106046D'),
+            ('r14', 0x105FDFF, 0x105FF6F, kind12, 'r14 = rec for rsi = rec+0x1B0 at 0x105FF6F'),
+            ('rsi', 0x105FF6F, 0x10602E8, kind12, 'rsi = rec+0x1B0 for the stores'),
+            ('rbx', 0x105FEC0, 0x10602E8, kind12, 'kind 12: rec+0x240 = the handle loaded at 0x105FEC0'),
+            ('r13', 0x105FF2E, 0x10602F0, kind12, 'kind 12: rec+0x24C = X vt+0x20 of that handle')):
+        ok, later = last_writer(reg, writer, use, force)
+        need(ok, f'activation: {what} (writer {writer:#x} on every path, later writes {later})')
+    need(all(on_paths(lo, 0x10602E8, kind12, dead={a}) == [] for a in (0x1060465, 0x10606C9, 0x1060767)),
+         'activation: every kind-12 path to the stores runs the pinned kind-12 route 0x1060465 -> 0x10606C9 -> 0x1060767')
+    # eax at the kind-9 branch 0x105FF87: the kind saved at 0x105FF36, or its reload at 0x105FF60 after the
+    # [prim+8] vt+0x140 call 0x105FF51; [rsp+0x40] (the kind) is written only at 0x105FF36 on the kind-12 paths to
+    # 0x106018A.
+    need(on_paths(lo, 0x105FF87, {}, dead={0x105FF36}) == [] and
+         writes(on_paths(0x105FF36, 0x105FF87, {}), fam('rax')) == [0x105FF51, 0x105FF60] and
+         on_paths(0x105FF51, 0x105FF87, {}, dead={0x105FF60}) == [],
+         'activation: eax at 0x105FF87 is the kind (0x105FF36 on every path; after it only the 0x105FF51 call, '
+         'always followed by the 0x105FF60 reload, writes eax)')
+    stack40 = [a for a in on_paths(lo, 0x106018A, kind12) for op in insn(a).operands
+               if op.type == capstone.x86.X86_OP_MEM and op.mem.base == capstone.x86.X86_REG_RSP and
+               op.mem.index == 0 and op.mem.disp < 0x44 and op.mem.disp + op.size > 0x40 and op.access & capstone.CS_AC_WRITE]
+    need(stack40 == [0x105FF36] and on_paths(lo, 0x106018A, kind12, dead={0x105FF36}) == [],
+         f'activation: [rsp+0x40] writers before 0x106018A (kind 12): {[hex(a) for a in stack40]}')
+    # Any kind: the other ebx/r13d writes between the load and the stores are kind 9's slot-2 reload (0x1060000,
+    # 0x1060041) and 0x106065F's clear (ebx = r13d = 0) for a kind outside 1..8 and 12..14 whose equip [X+8] vt+0x50
+    # refuses. Kind 12 reaches neither (the kind-12 checks above).
+    anykind = on_paths(0x105FEC3, 0x10602E8, {})
+    need(writes(anykind, fam('rbx')) == [0x1060000, 0x1060678] and
+         writes(anykind, fam('r13')) == [0x105FF2E, 0x1060041, 0x106066D],
+         f'activation: ebx/r13d writes between the load and the stores (any kind): '
+         f'{[hex(a) for a in writes(anykind, fam("rbx"))]} / {[hex(a) for a in writes(anykind, fam("r13"))]}')
+    need(not bad, f'activation: undecodable, out-of-range or indirect control flow at {[hex(a) for a in sorted(bad)]}')
+    # Every other X call that takes rec+0x240 (review WS1-2): an indirect call whose rcx is [r+0x60] (prim+0x60)
+    # or [r+0x30] (iface+0x30 = prim+0x60) and whose edx/r8d is [r+0x240], both loaded in the 48 bytes before and
+    # neither rewritten nor crossed by another call. B only guards the input-driven modes 28/30/33/37 (four of the five
+    # vt+0x160 sites); every other site, the iface reset among them, is covered only by C's detect-only per-job row
+    # check. Only the vt+0x160/vt+0x38 methods were audited. 0x10565AE (vt+0x60) and 0x1093F10 (vt+0xD8) load rcx
+    # before the window and are checked separately below.
+    arg_re = re.compile(rb'(?:\x41)?\x8b[\x90-\x97]\x40\x02\x00\x00|[\x44\x45]\x8b[\x80-\x87]\x40\x02\x00\x00')
+    rcx_re = re.compile(rb'[\x48\x49]\x8b[\x48-\x4b\x4d-\x4f][\x30\x60]')
+    fams = {'edx': {'rdx', 'edx', 'dx', 'dl', 'dh'}, 'r8d': {'r8', 'r8d', 'r8w', 'r8b'}}
+    xcalls = []
+    for m in re.finditer(rb'(?:\x41)?\xff(?:[\x90-\x97]..\x00\x00|[\x50-\x57].)', data, re.S):
+        s = m.start()
+        args = [a.start() for a in arg_re.finditer(data, max(0, s - 48), s)]
+        rcxs = [r.start() for r in rcx_re.finditer(data, max(0, s - 48), s)]
+        if not args or not rcxs:
+            continue
+        start = min(args[-1], rcxs[-1])
+        ins = list(md.disasm(data[start:m.end()], va + start))
+        at = {i.address: i for i in ins}
+        if not ins or ins[-1].address != va + s or ins[-1].mnemonic != 'call' or va + args[-1] not in at or va + rcxs[-1] not in at:
+            continue
+        arg, rcx = at[va + args[-1]], at[va + rcxs[-1]]
+        reg = arg.op_str.split(',')[0]
+        if reg not in fams or not arg.op_str.endswith('+ 0x240]') or not rcx.op_str.startswith('rcx, qword ptr ['):
+            continue
+        if any(i.mnemonic == 'call' or (i.address > arg.address and {i.reg_name(r) for r in i.regs_access()[1]} & fams[reg]) or
+               (i.address > rcx.address and {i.reg_name(r) for r in i.regs_access()[1]} & {'rcx', 'ecx', 'cx', 'cl', 'ch'})
+               for i in ins[:-1]):
+            continue
+        xcalls.append((va + s, ins[-1].operands[0].mem.disp))
+    need(xcalls == REC240_X_CALLS, f'X calls taking rec+0x240: {[(hex(a), hex(d)) for a, d in xcalls]}')
+    for site, disp in REC240_X_CALLS_BY_HAND:
+        i = next(md.disasm(rd(site, 7), site), None)
+        need(i is not None and i.mnemonic == 'call' and i.operands[0].type == capstone.x86.X86_OP_MEM and
+             i.operands[0].mem.disp == disp and arg_re.search(data, site - va - 48, site - va) is not None and
+             (site, disp) not in xcalls,
+             f'{site:#x}: call [r+{disp:#x}] with edx/r8d = [r+0x240] in the 48 bytes before, outside the census')
+    slots = {d for _, d in REC240_X_CALLS + REC240_X_CALLS_BY_HAND}
+    need(set(REC240_X_METHODS) == slots, 'REC240_X_METHODS names exactly the X slots the rec+0x240 calls use')
+    for disp in sorted(slots):
+        for vt in (0x234B840, 0x234B470):
+            got = struct.unpack('<Q', rd(vt + disp, 8))[0] - IB
+            need(got == REC240_X_METHODS.get(disp), f'X vtable {vt:#x}+{disp:#x} = {got:#x} (REC240_X_METHODS)')
     return out
 
 

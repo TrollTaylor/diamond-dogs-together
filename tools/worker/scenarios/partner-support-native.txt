@@ -16,7 +16,8 @@
 #   partner_support=...; rec240=... at throw time (the handle X vt+0x160 = 0xDC1740 acts on; WS1 resolved).
 #   partner_support=rec240_check; ...; reason=ok; ...; owner=1 for each thrown equip (WS1 C per-job row check);
 #   NO reason=rec240_foreign and NO reason=unread (detect-only: they would not latch, so read the log).
-#   reason=pending (WS1 B) may appear once right after an equip/follow, before the activation refreshes rec+0x240.
+#   NO partner_support=refused; ...; reason=rec240_stale (WS1 B: a same-equip slot-3 handle on another index that
+#   the per-frame path does not refresh; never a normal equip/follow gap): any such line fails the run.
 #   partner_fire_census=thrown; owner=0x1; ...; dropped=1 for preview and throw; never owner 0 dropped.
 #   partner_fire_census=summary / the 1 Hz filter summary includes support drop counters.
 # On the host, owner 0 thrown requests pass (dropped=0), and only its own stock is spent.
