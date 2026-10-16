@@ -142,12 +142,28 @@ do
       return ok2, fmt("%s;via=%s;horse=%.2f,%.2f,%.2f", msg, via, t[1], t[2], t[3])
     elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie"))) then
       -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition);
-      -- "sortie": the nearest deployed/sortie vehicle 25600..25607 instead (no
-      -- authored locator: the WS3 seat-by-id case, docs/vehicle-ws3.md).
+      -- "sortie": the nearest deployed/sortie vehicle instead: an id in 25600..25607
+      -- that no authored veh_lv_/veh_trc_ locator names (no locator: the WS3
+      -- seat-by-id case, docs/vehicle-ws3.md). In 30010 the authored trucks take
+      -- 25602..25607 (hidden run e54e0294), so only the unnamed slots qualify.
       local me, best, bestD, bestName = A.pose(), nil, nil, nil
       local names = {}
       if a[2] == "sortie" then
-        for i = 0, 7 do names[#names + 1] = {fmt("sortie_%d", i), 25600 + i} end
+        local named = {}
+        for _, class in ipairs({{"lv", 32}, {"trc", 16}}) do
+          for k = 0, class[2] - 1 do
+            local okN, nid = pcall(GameObject.GetGameObjectId, "TppVehicle2", fmt("veh_%s_%04d", class[1], k))
+            if okN and type(nid) == "number" then named[nid] = true end
+          end
+        end
+        -- Only a live slot (the retail relief-vehicle checks use IsAlive the same way).
+        for i = 0, 7 do
+          local vid = 25600 + i
+          if not named[vid] then
+            local okA, alive = pcall(GameObject.SendCommand, vid, {id = "IsAlive"})
+            if okA and alive == true then names[#names + 1] = {fmt("sortie_%d", i), vid} end
+          end
+        end
       else
         for i = 0, 12 do names[#names + 1] = fmt("veh_lv_%04d", i) end
         if a[2] ~= "jeep" then for i = 0, 5 do names[#names + 1] = fmt("veh_trc_%04d", i) end end
@@ -167,7 +183,12 @@ do
           end
         end
       end
-      if not best then return false, "vehicle_none" end
+      if not best then
+        if a[2] ~= "sortie" then return false, "vehicle_none" end
+        local ids = {}
+        for _, entry in ipairs(names) do ids[#ids + 1] = tostring(entry[2]) end
+        return false, "vehicle_none;alive_unnamed=" .. (#ids > 0 and table.concat(ids, ",") or "none")
+      end
       local s = best[4] + math.pi / 2
       local x, z = best[1] + 1.9 * math.sin(s), best[3] + 1.9 * math.cos(s)
       local W = e.MgsCoopWorld

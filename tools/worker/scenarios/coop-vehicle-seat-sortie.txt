@@ -29,6 +29,9 @@ labsetting nametag=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
+# Where each copy starts (a save that continues in the deployed vehicle starts riding it).
+host run vehicle_seats
+guest run vehicle_seats
 both debug godmode 1
 host debug time 43200
 host debug weather sunny
@@ -37,16 +40,24 @@ stance host stand
 stance guest stand
 placebehind host guest 6 -0.7
 wait 4000
-host debug goto_vehicle sortie
+# goto_vehicle sortie: a live id in 25600..25607 that no authored locator
+# names (in 30010 veh_trc_0000..0005 are 25602..25607); vehicle_none lists
+# the live unnamed ids it saw.
+host run goto_vehicle sortie
+host expect vehicle=sortie_
 guest debug goto_vehicle sortie
 wait 4000
-placebehind guest host 6 0
+# The watcher ahead of the vehicle and off its line (goto_vehicle leaves the
+# host on the vehicle's right facing it, so the host's right is the vehicle's
+# forward): it then drives past the watcher (tilt run 0a2314f2 framing).
+placebehind guest host 3 9
 wait 2500
 both capture sortie-before
 host press e 150
 wait 3500
 host run vehicle_seats
 host require vehicle;id=2560[0-7]
+host run vehicle_names
 wait 2500
 both capture sortie-seat-entered
 host hold w 1500 nowait
@@ -59,6 +70,12 @@ host hold w 1500
 host release
 wait 2500
 both capture sortie-seat-stopped
+# placebehind needs the viewer's partner pose, which a seated driver does not
+# give: the watcher goes 2 m from the driver's streamed pose, then 7 m back.
+guest debug goto_partner
+guest debug forward -7
+wait 2500
+both capture sortie-seat-near
 host press e 150
 guest burst sortie-seat-exiting 8 300
 wait 2500
@@ -67,15 +84,17 @@ state
 both debug heal
 both debug godmode 1
 wait 2000
-guest debug goto_vehicle sortie
+guest run goto_vehicle sortie
+guest expect vehicle=sortie_
 wait 4000
-placebehind host guest 6 0
+placebehind host guest 3 9
 wait 2500
 both capture sortie-rev-before
 guest press e 150
 wait 3500
 guest run vehicle_seats
 guest require vehicle;id=2560[0-7]
+guest run vehicle_names
 wait 2500
 both capture sortie-rev-entered
 guest hold w 1500 nowait
@@ -86,6 +105,10 @@ guest hold w 1500
 guest release
 wait 2500
 both capture sortie-rev-stopped
+host debug goto_partner
+host debug forward -7
+wait 2500
+both capture sortie-rev-near
 guest press e 150
 host burst sortie-rev-exiting 8 300
 wait 2500

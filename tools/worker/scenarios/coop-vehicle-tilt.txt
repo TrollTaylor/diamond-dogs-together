@@ -37,7 +37,7 @@ wait 4000
 host debug goto_vehicle jeep
 guest debug goto_vehicle jeep
 wait 4000
-placebehind guest host 6 0
+placebehind guest host 3 9
 wait 2500
 host press e 150
 wait 3500
@@ -58,6 +58,23 @@ guest burst tilt-drive-c 8 200
 host release
 wait 2500
 both capture tilt-stopped
+# The viewer's copy of the stopped jeep from fixed points around the stop
+# (hidden runs e54e0294 / 28ef347a: the jeep ends nose-up on the shop step
+# at about 578.0 320.2 1177.3, heading north, pitch a44 ~ 230..290 mrad).
+# placebehind needs a valid partner pose on the viewer, which a seated driver
+# does not give, so these are plain teleports facing the jeep.
+guest debug teleport 586.0 322.0 1176.0 -81
+wait 2500
+both capture tilt-view-east
+guest debug teleport 570.0 322.0 1176.0 81
+wait 2500
+both capture tilt-view-west
+guest debug teleport 584.0 322.0 1169.0 -36
+wait 2500
+both capture tilt-view-southeast
+stance guest crouch
+wait 1500
+both capture tilt-view-southeast-crouch
 host press e 150
 wait 3000
 both capture tilt-exited
