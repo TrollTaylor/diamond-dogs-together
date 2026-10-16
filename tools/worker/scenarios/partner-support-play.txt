@@ -26,8 +26,10 @@
 #            reason=writer_uncertain_mission_latched, NO reason=rec240_stale / rec240_foreign.
 #  last:     the viewer's own throw during a partner episode (critic #5, so a false latch cannot void the earlier phases):
 #            the guest logs partner_support=stock_check; ...; reason=viewer_own; changed=0; kind=throw; k=6; before=12;
-#            after=11 (C(b) rebase) and NO latch; the host's 4th throw still logs throw_release on the guest. The host's
-#            copy sees the same overlap mirrored (its own throw during the guest's aim): viewer_own there too, no latch.
+#            after=11 (C(b) rebase) with the spend step entered in that gap (viewer_mode=37; viewer_state=2; viewer_k=6;
+#            viewer_count=11; viewer_prev_state other than 2) and NO latch; the host's 4th throw still logs throw_release
+#            on the guest. The host's copy sees the same overlap mirrored (its own throw during the guest's aim):
+#            viewer_own there too, no latch. A stock_gap line's viewer_* fields say why a gap was not the viewer's.
 #  network:  native.net.hard_leaves 0, native.latched false. With -WanSim bad/awful: partner_support=stall_freeze;
 #            reason=start ... then reason=fresh (critic #4: the HOLD|FIRE level held through the gap, no early release,
 #            no phantom second throw) and still exactly one throw_release per host throw; a reason=strip end means the

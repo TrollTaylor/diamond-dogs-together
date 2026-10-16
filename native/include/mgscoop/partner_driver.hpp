@@ -922,7 +922,9 @@ struct Mission {
     // Native support through an input stall (partner_support_policy StallHold,
     // critic #4): the newest v5 frame is stale but inside the stall hold and
     // names slot 3 with support_equip, the equip of the last support verdict
-    // (0 = none); the observer keeps the writer context's slot/equip then too.
+    // (0 = none); the observer keeps the writer context's slot/equip on that
+    // verdict while its own newest v5 frame is within stall_ms
+    // (partner_support_policy::ContextHold; never on support_stall alone).
     bool support_stall;
     std::uint16_t support_equip;
     // The last logged type verdict (partner_weapon=projectile|type_ok lines).

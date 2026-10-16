@@ -456,6 +456,11 @@ Injection AddEdges(const Injection& injection, std::uint32_t held, std::uint32_t
     held &= config.mask;
     press &= config.mask;
     release &= config.mask & ~held & ~j.held;
+    // Never held/pressed and released in one frame: a bit added as held or
+    // press loses any release edge of this frame (and the release words).
+    const std::uint32_t added = held | press;
+    j.edge_release &= ~added;
+    for (unsigned i = 0; i < 3; ++i) if (config.words[i] == Word::release) j.w[i] &= ~added;
     j.held |= held;
     j.edge_press |= press;
     j.edge_release |= release;

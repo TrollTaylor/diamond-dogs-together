@@ -560,6 +560,12 @@ SITES = [
     (0x108C96E, 'f786d0030000000000084b8d0c40440fb73c4a4b8d0c40440fb7744a020f8418010000',
      'ammo copy: rec+0x3D0 bit 27 gates the tamper check; word0/word1 of the 6-byte row'),
     (0x108CAAE, '664489bdac000000664489b5ae000000', 'ammo copy: rec+0x25C = word0, rec+0x25E = word1'),
+    # The support classes 2/3 branch (C(b) viewer-own rebase reads instance 0's slot sub): the stock word of the held
+    # item is k = Y vt+0x68(rec+0x3DA slot, rec+0x3DC sub) (store vt+0x68 0xEE90A0: slot 3 -> 6 + sub), the same pair
+    # the mode-37/46 spend passes to ctl vt+0xB0 before the stock setter ctl vt+0xC0.
+    (0x108CB57, '498b81c8000000440fb682dc0300000fb692da030000488b5808',
+     'ammo copy classes 2/3: ctl = *(P+0xC8), r8d = u8 rec+0x3DC (the slot sub), edx = u8 rec+0x3DA (the slot), Y = *(ctl+8)'),
+    (0x108CB74, '488b3bff5768', 'ammo copy classes 2/3: k = Y vt+0x68(slot, sub)'),
     (0x1041660, '8b8104020000b9c83f0000c1e812a801742c', 'shoot: rec+0x3D0 bit 27 only with P+0x204 bit 18'),
     (0x107CB59, '8b8104020000c1e812a801741c', 'bit 27 setter 2: only with P+0x204 bit 18'),
     (0x1087D01, '8b8104020000c1e812a801741d', 'bit 27 setter 3: only with P+0x204 bit 18'),
@@ -2215,6 +2221,10 @@ w('inline constexpr std::size_t store_total=0x10;')
 w('inline constexpr std::uint32_t gun3d0_tamper_check=0x8000000;')
 w('// The trigger (0x10964F7): rec+0x3C0 bit 24 = a shot this update, u8 rec+0x3DF = its count; rec+0x2C0 = the current mode.')
 w('inline constexpr std::size_t gun_mode_cur=0x2c0, gun_shots=0x3df;')
+w('// The slot-3 spend (C(b) viewer-own rebase): u8 rec+0x2c2 is the mode state (mode 37 tests it at 0x10879bf and sets')
+w('// 1 -> 2 in the throw block before its decrement; mode 46 sets 3 -> 4/5 after its decrement); u8 rec+0x3dc is the slot')
+w('// sub (the classes 2/3 ammo copy: k = Y vt+0x68(rec+0x3da, rec+0x3dc) at 0x108cb57, slot 3 -> k = 6 + sub).')
+w('inline constexpr std::size_t gun_state=0x2c2, gun_sub=0x3dc;')
 w('inline constexpr std::uint32_t gun3c0_shot=0x1000000;')
 w('inline constexpr std::uint8_t gun_mode_fire=9, gun_mode_fire2=10;')
 w('// AddNoise 0x515270 = slot 0 of the noise iface vtable 0x21876a8; the record keeps its owner at +0x12.')

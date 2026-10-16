@@ -371,6 +371,9 @@ Injection Strip(const Injection& injection, std::uint32_t bits) noexcept;
 Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept;
 // Native support FIRE buffer (C(c)): `held` added to the level, `press` and
 // `release` added as edges, each word by its setting (net words unchanged).
+// A bit added as held or press is never also a release edge of the same frame
+// (a delivered tap's own release, which Compose emits one frame after the
+// synthesized tap, is cleared here; the buffer sends it on the next frame).
 Injection AddEdges(const Injection& injection, std::uint32_t held, std::uint32_t press, std::uint32_t release,
                    const Config& config) noexcept;
 // age_ms > kFrameMaxAgeMs: Neutral; frame_id != last_used: the full frame

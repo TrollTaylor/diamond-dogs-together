@@ -56,15 +56,43 @@ constexpr const char* ModeRefusal(bool lab,bool play,bool link_connected) noexce
 // when every body-1 job of the gap was bracketed, no word moved to or from
 // 0xFFFF (the guard's never-runs-out count), and the change is either a pickup
 // (increases only, each at most kPickupMax) or the viewer's own throw or
-// placement (exactly one word down by exactly 1, nothing else, with instance
-// 0's gun mode in the slot-3 family 28..47 at the gap's start or end).
+// placement: exactly one word down by exactly 1, nothing else, the viewer
+// ENTERED its spend step in this gap (ViewerSpendEntered) and that word is the
+// viewer's own held item (ViewerOwnWord). Merely holding a slot-3 item (the
+// hold hub 28/29, draw/holster 32, C4 in hand 43..47) never attributes.
 // Anything else stays a deferred-leak candidate and the episode compare
 // latches as before; the per-job compares are untouched, so a body-1 leak
 // inside its own job always latches.
 inline constexpr std::uint16_t kPickupMax=64;
 inline constexpr std::uint16_t kStockSentinel=0xFFFF;
-// The viewer's throw family 28..42 plus placement 43..47 (C4/mines are slot 3 too).
-constexpr bool ViewerSupportMode(std::uint8_t mode) noexcept { return mode>=28 && mode<=47; }
+// Instance 0's gun record at one end of a gap (read-only; mode 0xFF unread):
+// the gun mode rec+0x2C0, the mode's state rec+0x2C2, the hand slot rec+0x3DA,
+// the slot sub rec+0x3DC, the count the spend decrements (rec+0x260, or
+// rec+0x262 with rec+0x27C bit 9) and rec+0x3C0 bit 29 (no stock write).
+struct ViewerRec {
+ std::uint8_t mode=0xFF,state=0xFF,slot=0xFF,sub=0xFF;
+ std::uint16_t count=0;
+ bool no_spend=true;
+};
+// The spend step itself, not the throw family. Mode 37's throw block (op 10,
+// 0x10879BF) sets rec+0x2C2 1 -> 2 and, unless bit 29 or a count >= 0x3FFF,
+// decrements the count and calls the stock setter ctl vt+0xC0 with
+// k = ctl vt+0xB0(rec+0x3DA, rec+0x3DC) in the same block. Mode 46's place
+// block (op 9, 0x107C6FA) does the same and then sets 3 -> 4/5.
+constexpr bool ViewerSpent(const ViewerRec& v) noexcept {
+ return (v.mode==37 && v.state==2) || (v.mode==46 && (v.state==4 || v.state==5));
+}
+// Read at both ends, in the spend step at the end and not at the start: one
+// credit per throw or placement (a later gap of the same step is foreign).
+constexpr bool ViewerSpendEntered(const ViewerRec& prev,const ViewerRec& now) noexcept {
+ return prev.mode!=0xFF && now.mode!=0xFF && !ViewerSpent(prev) && ViewerSpent(now);
+}
+// The decremented word is the viewer's own held item: slot 3 with k = 6 + sub
+// (store vt+0x68, the ammo copy's mapping), the record's count is the word's
+// new value, and the record spends (bit 29 clear).
+constexpr bool ViewerOwnWord(const ViewerRec& v,std::uint8_t word,std::uint16_t after) noexcept {
+ return v.slot==3 && v.sub<8 && v.sub==word && v.count==after && !v.no_spend;
+}
 enum class Gap : std::uint8_t { none, unread, viewer_throw, viewer_pickup, foreign };
 constexpr const char* GapName(Gap g) noexcept {
  return g==Gap::none ? "none" : g==Gap::unread ? "unread" : g==Gap::viewer_throw ? "throw" : g==Gap::viewer_pickup ? "pickup" : "foreign";
@@ -73,7 +101,7 @@ constexpr bool GapRebases(Gap g) noexcept { return g==Gap::viewer_throw || g==Ga
 struct GapIn {
  bool prev_ok=false,now_ok=false;      // the previous bracket's after-words, this bracket's before-words
  std::uint16_t prev[8]{},now[8]{};
- std::uint8_t viewer_prev=0xFF,viewer_now=0xFF;  // instance 0's gun mode at both ends (0xFF unread)
+ ViewerRec viewer_prev{},viewer_now{}; // instance 0's record at both ends
  std::uint32_t other_jobs=0;           // body-1 jobs that ran in the gap outside a bracket
 };
 struct GapOut { Gap kind=Gap::none; std::uint8_t word=0xFF; std::uint16_t before=0,after=0; std::uint8_t changed=0; };
@@ -93,8 +121,9 @@ constexpr GapOut ClassifyGap(const GapIn& g) noexcept {
  if(!o.changed){o.kind=Gap::none;return o;}
  if(g.other_jobs || sentinel){o.kind=Gap::foreign;return o;}
  if(!down){o.kind=big ? Gap::foreign : Gap::viewer_pickup;return o;}
- const bool viewer=ViewerSupportMode(g.viewer_prev) || ViewerSupportMode(g.viewer_now);
- o.kind=down==1 && !up && by_one && viewer ? Gap::viewer_throw : Gap::foreign;
+ const bool own=down==1 && !up && by_one && ViewerSpendEntered(g.viewer_prev,g.viewer_now) &&
+  ViewerOwnWord(g.viewer_now,o.word,o.after);
+ o.kind=own ? Gap::viewer_throw : Gap::foreign;
  return o;
 }
 // The episode baseline moved by the gap's delta (u16 wrap, word by word).
@@ -117,7 +146,12 @@ constexpr std::uint32_t SlotDigest(const std::uint16_t (&words)[8]) noexcept {
 // level with no edge of them. Beyond the window the old strip applies.
 // A FIRE press while support only waits on body 1's equip (select-then-throw)
 // is kept for kFireBufferMs and delivered on the first admitted frame of the
-// same equip (a tap gets its release edge on the next frame).
+// same equip (a tap gets its release edge on the next frame). While it is kept,
+// FIRE (level, edges, words) leaves the published frame (FrameOut.strip): the
+// main window judges once per frame, but every drain consumer re-judges the
+// full frame against live body-1 state, so a consumer that saw body 1 become
+// ready later in the same frame would otherwise inject the press the buffer
+// delivers again on the next frame (one remote press, two pins).
 inline constexpr std::uint32_t kPadHold=0x08u,kPadFire=0x10u,kLevelBits=kPadHold|kPadFire;
 inline constexpr std::uint64_t kFireBufferMs=300;
 constexpr GateIn Fresh(GateIn x) noexcept {x.live=true;x.stale=false;return x;}
@@ -138,6 +172,7 @@ struct FrameOut {
  Frame verdict=Frame::none;
  std::uint32_t level=0;                          // frozen: the HOLD|FIRE level to hold
  std::uint32_t add_held=0,add_press=0,add_release=0;
+ std::uint32_t strip=0;                          // bits to remove from the published frame (a kept press)
  bool buffered=false,delivered=false,dropped=false;
 };
 // request: partner_support_policy::Request for the frame; x: its gate (fresh
@@ -177,6 +212,7 @@ constexpr FrameOut StepFrame(FrameTrack& t,bool request,const GateIn& x,std::uin
  const bool waiting=WaitingOnEquip(x) || (!driver_ok && Admit(x));
  if(t.fire && (!waiting || x.equip!=t.fire_equip || now_ms<t.fire_ms || now_ms-t.fire_ms>kFireBufferMs)){t.fire=false;o.dropped=true;}
  if(waiting && (press&kPadFire)){t.fire=true;t.fire_ms=now_ms;t.fire_equip=x.equip;o.buffered=true;}
+ if(t.fire)o.strip=kPadFire;   // only the buffer delivers this press
  return o;
 }
 // The driver's support gate through an input stall (critic #4): the newest v5
@@ -192,6 +228,19 @@ struct StallHoldIn {
 constexpr bool StallHold(const StallHoldIn& s) noexcept {
  return s.stall_hold && s.stall_ms>s.stale_ms && s.age_ms>s.stale_ms && s.age_ms<=s.stall_ms && s.v5_valid && s.slot==3 &&
   s.was_support && s.equip>0 && s.equip<0x800 && s.equip==s.support_equip;
+}
+// The observer's writer context through the same stall: it keeps slot 3 and
+// support_equip (so Ready answers) while the observer's own newest v5 frame,
+// fresh or stale, is at most stall_ms old and still names slot 3 and the equip
+// of the driver's last support verdict (support_equip, 0 = none). Keyed on that
+// verdict, not on the driver's support_stall: the driver sets support_stall
+// only on a tick whose own read was already stale, so a frame that crossed
+// stale_ms between the driver's read and the observer's would otherwise clear
+// the context and refuse the whole stall (WS2 review, critic #4 early release).
+// stall_hold, stale_ms, stall_ms, age_ms, v5_valid, slot, equip as StallHoldIn.
+constexpr bool ContextHold(const StallHoldIn& s) noexcept {
+ return s.stall_hold && s.stall_ms>s.stale_ms && s.age_ms<=s.stall_ms && s.v5_valid && s.slot==3 &&
+  s.support_equip>0 && s.support_equip<0x800 && s.equip==s.support_equip;
 }
 
 // --- Handle call hardening (WS1; docs/anim-round2-throws.md "Handle call resolved").

@@ -149,14 +149,20 @@ std::uint32_t OldDigest(const std::uint16_t (&w)[8]) noexcept {
 // One episode as SupportCheck runs it, on fake slot-3 words: a bracket reads
 // before/after the body-1 job, the gap check runs at each bracket after the
 // first, the per-job compare and the episode compare latch.
+// Instance 0's gun record at a bracket: mode, its state (rec+0x2C2), the
+// slot-3 sub it holds (0xFF: not slot 3), that item's count and bit 29.
+sp::ViewerRec V(std::uint8_t mode,std::uint8_t state=0,std::uint8_t sub=0xFF,std::uint16_t count=0,bool no_spend=false) noexcept {
+ sp::ViewerRec v{};v.mode=mode;v.state=state;v.slot=sub<8 ? 3 : 0;v.sub=sub<8 ? sub : 0;v.count=count;v.no_spend=no_spend;
+ return v;
+}
 struct Episode {
  std::uint16_t vars[8]{12,16383,12,8,12,12,8,8};   // the lab seed's slot-3 stock words
  std::uint16_t episode[8]{};std::uint32_t episode_stock=0;bool active=false;
- std::uint16_t prev[8]{};bool prev_ok=false;std::uint8_t prev_viewer=0xFF;std::uint32_t prev_jobs=0;
+ std::uint16_t prev[8]{};bool prev_ok=false;sp::ViewerRec prev_viewer{};std::uint32_t prev_jobs=0;
  std::uint32_t jobs=0;sp::StockLatch latch{};unsigned rebased=0;sp::Gap last=sp::Gap::none;
  // One body-1 job bracket. job_k/job_d: what body 1's own job changes; extra_jobs:
  // body-1 jobs that ran in the gap without a bracket.
- void Bracket(std::uint8_t viewer,int job_k=-1,int job_d=0,std::uint32_t extra_jobs=0){
+ void Bracket(const sp::ViewerRec& viewer,int job_k=-1,int job_d=0,std::uint32_t extra_jobs=0){
   jobs+=1+extra_jobs;
   std::uint16_t before[8];std::memcpy(before,vars,sizeof(before));
   if(job_k>=0)vars[job_k]=static_cast<std::uint16_t>(vars[job_k]+job_d);
@@ -204,12 +210,18 @@ struct Pipe {
   const bool request=sp::Request(true,j.slot_valid,j.inv_slot,strip);
   out=sp::StepFrame(track,request,Gate(j,body_ready),strip,j.held,j.edge_press,now_ms);
   if(out.verdict==sp::Frame::frozen){j=pi::Freeze(j,sp::kLevelBits,out.level,c);j.support_frozen=true;}
+  if(out.strip)j=pi::Strip(j,out.strip);   // a kept FIRE press leaves the published frame
   if(out.add_held || out.add_press || out.add_release)j=pi::AddEdges(j,out.add_held,out.add_press,out.add_release,c);
   frame=j;
   // NativeView: admission with freshness waived only for a frozen frame.
-  sp::GateIn y=Gate(j,body_ready);if(j.support_frozen)y=sp::Fresh(y);
-  const bool req=sp::Request(true,j.slot_valid,j.inv_slot,strip);
-  return pi::Strip(j,sp::Strip(strip,req,true,req && sp::Admit(y)));
+  return View(body_ready);
+ }
+ // A later consumer of the same published frame (a drain's ForConsumer full
+ // view) with body 1's readiness at that consumer's time.
+ pi::Injection View(bool ready) const {
+  sp::GateIn y=Gate(frame,ready);if(frame.support_frozen)y=sp::Fresh(y);
+  const bool req=sp::Request(true,frame.slot_valid,frame.inv_slot,strip);
+  return pi::Strip(frame,sp::Strip(strip,req,true,req && sp::Admit(y)));
  }
 };
 template<class Check> void Fixtures(Check& check) {
@@ -224,27 +236,47 @@ template<class Check> void Fixtures(Check& check) {
  // --- C(b) pure gap verdicts.
  {const std::uint16_t seed[8]{12,16383,12,8,12,12,8,8};
   check(sp::SlotDigest(seed)==OldDigest(seed),"C(b): SlotDigest is the hook's slot digest");
-  const auto gap=[&](std::initializer_list<std::pair<int,int>> d,std::uint8_t vp,std::uint8_t vn,std::uint32_t jobs=0,bool pok=true,bool nok=true){
+  const auto gap=[&](std::initializer_list<std::pair<int,int>> d,const sp::ViewerRec& vp,const sp::ViewerRec& vn,std::uint32_t jobs=0,bool pok=true,bool nok=true){
    sp::GapIn g{};g.prev_ok=pok;g.now_ok=nok;std::memcpy(g.prev,seed,sizeof(seed));std::memcpy(g.now,seed,sizeof(seed));
    for(const auto& e: d)g.now[e.first]=static_cast<std::uint16_t>(g.now[e.first]+e.second);
    g.viewer_prev=vp;g.viewer_now=vn;g.other_jobs=jobs;return sp::ClassifyGap(g);};
-  check(gap({},0,0).kind==sp::Gap::none,"C(b): no change");
-  check(gap({{0,-1}},37,37,0,false).kind==sp::Gap::unread && gap({{0,-1}},37,37,0,true,false).kind==sp::Gap::unread,"C(b): unread end never rebases");
-  {const auto o=gap({{0,-1}},37,0);check(o.kind==sp::Gap::viewer_throw && o.word==0 && o.before==12 && o.after==11 && o.changed==1,"C(b): viewer's own throw (mode 37 at the start)");}
-  check(gap({{2,-1}},7,30).kind==sp::Gap::viewer_throw,"C(b): viewer's own throw (mode 30 at the end)");
-  for(unsigned m: {28u,42u,43u,47u})check(gap({{0,-1}},static_cast<std::uint8_t>(m),0).kind==sp::Gap::viewer_throw,"C(b): throw 28..42 and placement 43..47");
-  for(unsigned m: {0u,7u,11u,27u,48u,0xFFu})check(gap({{0,-1}},static_cast<std::uint8_t>(m),static_cast<std::uint8_t>(m)).kind==sp::Gap::foreign,
+  // The viewer's grenade 354 is sub 0 (k6, 12): T0 before the release, T1 the
+  // throw block's 1 -> 2 with its own count decremented.
+  const sp::ViewerRec T0=V(37,1,0,12),T1=V(37,2,0,11),N=V(0);
+  check(gap({},N,N).kind==sp::Gap::none,"C(b): no change");
+  check(gap({{0,-1}},T0,T1,0,false).kind==sp::Gap::unread && gap({{0,-1}},T0,T1,0,true,false).kind==sp::Gap::unread,"C(b): unread end never rebases");
+  {const auto o=gap({{0,-1}},T0,T1);check(o.kind==sp::Gap::viewer_throw && o.word==0 && o.before==12 && o.after==11 && o.changed==1,
+   "C(b): viewer's own throw (the release step entered in the gap, its own word, its count)");}
+  check(gap({{0,-1}},V(33,0,0,12),T1).kind==sp::Gap::viewer_throw,"C(b): viewer's own throw from aim (mode 33) to the release");
+  check(gap({{3,-1}},V(46,3,3,8),V(46,4,3,7)).kind==sp::Gap::viewer_throw && gap({{3,-1}},V(46,3,3,8),V(46,5,3,7)).kind==sp::Gap::viewer_throw,
+   "C(b): viewer's own placement (mode 46 state 3 -> 4/5)");
+  // WS2 review: holding a slot-3 item is not spending it.
+  for(unsigned m: {28u,29u,32u,30u,33u,42u,43u,45u,47u}){
+   const auto h=V(static_cast<std::uint8_t>(m),0,0,12);
+   check(gap({{2,-1}},h,h).kind==sp::Gap::foreign,"C(b): viewer holding a grenade (28/29/32..47) with a -1 on another word latches");
+   check(gap({{0,-1}},h,V(static_cast<std::uint8_t>(m),0,0,11)).kind==sp::Gap::foreign,"C(b): its own word without the release step latches");
+  }
+  check(gap({{0,-1}},V(37,1,0,12),V(37,1,0,11)).kind==sp::Gap::foreign,"C(b): mode 37 before the release (state 1) never spends");
+  check(gap({{0,-1}},V(46,3,0,12),V(46,6,0,11)).kind==sp::Gap::foreign,"C(b): mode 46 state 6 (no placement) never spends");
+  check(gap({{0,-1}},T1,V(37,2,0,10)).kind==sp::Gap::foreign,"C(b): one credit per release (already released at the gap's start)");
+  check(gap({{0,-1}},V(0xFF),T1).kind==sp::Gap::foreign,"C(b): an unread start never attributes");
+  check(gap({{2,-1}},T0,T1).kind==sp::Gap::foreign,"C(b): released, but another word (k8) went down");
+  check(gap({{2,-1}},V(37,1,2,12),V(37,2,2,12)).kind==sp::Gap::foreign,"C(b): released, but the record kept its count (no decrement)");
+  check(gap({{0,-1}},T0,V(37,2,0,11,true)).kind==sp::Gap::foreign,"C(b): bit 29 (no stock write) never attributes");
+  {auto s=T1;s.slot=0;check(gap({{0,-1}},T0,s).kind==sp::Gap::foreign,"C(b): not slot 3");}
+  {auto s=T1;s.sub=8;check(gap({{0,-1}},T0,s).kind==sp::Gap::foreign,"C(b): sub out of range");}
+  for(unsigned m: {0u,7u,11u,27u,48u,0xFFu})check(gap({{0,-1}},V(static_cast<std::uint8_t>(m)),V(static_cast<std::uint8_t>(m))).kind==sp::Gap::foreign,
    "C(b): a decrement while the viewer is not throwing (or unread) is a deferred-leak candidate");
-  check(gap({{0,-2}},37,37).kind==sp::Gap::foreign,"C(b): two at once is not one throw");
-  check(gap({{0,-1},{2,-1}},37,37).kind==sp::Gap::foreign,"C(b): two words down is not one throw");
-  check(gap({{0,-1},{3,1}},37,37).kind==sp::Gap::foreign,"C(b): a throw and a pickup in one gap stays unattributed");
-  check(gap({{0,-1}},37,37,1).kind==sp::Gap::foreign,"C(b): an unbracketed body-1 job in the gap: never attributed");
-  check(gap({{0,-1}},37,37,0xFFFFFFFFu).kind==sp::Gap::foreign,"C(b): a job count that went backwards fails closed");
-  {const auto o=gap({{0,1}},0,0);check(o.kind==sp::Gap::viewer_pickup && o.after==13,"C(b): viewer's pickup (+1, any viewer mode)");}
-  check(gap({{0,4},{2,2}},0xFF,0xFF).kind==sp::Gap::viewer_pickup,"C(b): several pickups");
-  check(gap({{0,sp::kPickupMax}},0,0).kind==sp::Gap::viewer_pickup && gap({{0,sp::kPickupMax+1}},0,0).kind==sp::Gap::foreign,"C(b): pickup bound");
-  check(gap({{0,1}},0,0,1).kind==sp::Gap::foreign,"C(b): a pickup with an unbracketed body-1 job stays unattributed");
-  check(gap({{3,0xFFFF-8}},0,0).kind==sp::Gap::foreign,"C(b): a word set to 0xFFFF (the guard's count) is never a pickup");
+  check(gap({{0,-2}},T0,V(37,2,0,10)).kind==sp::Gap::foreign,"C(b): two at once is not one throw");
+  check(gap({{0,-1},{2,-1}},T0,T1).kind==sp::Gap::foreign,"C(b): two words down is not one throw");
+  check(gap({{0,-1},{3,1}},T0,T1).kind==sp::Gap::foreign,"C(b): a throw and a pickup in one gap stays unattributed");
+  check(gap({{0,-1}},T0,T1,1).kind==sp::Gap::foreign,"C(b): an unbracketed body-1 job in the gap: never attributed");
+  check(gap({{0,-1}},T0,T1,0xFFFFFFFFu).kind==sp::Gap::foreign,"C(b): a job count that went backwards fails closed");
+  {const auto o=gap({{0,1}},N,N);check(o.kind==sp::Gap::viewer_pickup && o.after==13,"C(b): viewer's pickup (+1, any viewer mode)");}
+  check(gap({{0,4},{2,2}},V(0xFF),V(0xFF)).kind==sp::Gap::viewer_pickup,"C(b): several pickups");
+  check(gap({{0,sp::kPickupMax}},N,N).kind==sp::Gap::viewer_pickup && gap({{0,sp::kPickupMax+1}},N,N).kind==sp::Gap::foreign,"C(b): pickup bound");
+  check(gap({{0,1}},N,N,1).kind==sp::Gap::foreign,"C(b): a pickup with an unbracketed body-1 job stays unattributed");
+  check(gap({{3,0xFFFF-8}},N,N).kind==sp::Gap::foreign,"C(b): a word set to 0xFFFF (the guard's count) is never a pickup");
   check(!sp::GapRebases(sp::Gap::none) && !sp::GapRebases(sp::Gap::unread) && !sp::GapRebases(sp::Gap::foreign) &&
         sp::GapRebases(sp::Gap::viewer_throw) && sp::GapRebases(sp::Gap::viewer_pickup),"C(b): only the viewer's own gaps rebase");
   check(std::strcmp(sp::GapName(sp::Gap::viewer_throw),"throw")==0 && std::strcmp(sp::GapName(sp::Gap::viewer_pickup),"pickup")==0 &&
@@ -253,23 +285,42 @@ template<class Check> void Fixtures(Check& check) {
    sp::Rebase(e,p,n);check(e[0]==0xFFFF && e[1]==2 && e[2]==2 && e[7]==1,"C(b): rebase moves by the delta (u16 wrap)");}
  }
  // --- C(b) episodes: the per-job compares are unchanged.
- {Episode e;e.Bracket(28);e.Bracket(30);e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-1);   // the viewer throws between two brackets
-  e.Bracket(37);check(e.last==sp::Gap::viewer_throw,"C(b): the gap is the viewer's throw");e.Bracket(37);
+ const auto dec=[](Episode& e,int k){e.vars[k]=static_cast<std::uint16_t>(e.vars[k]-1);};
+ {Episode e;e.Bracket(V(28,0,0,12));e.Bracket(V(33,0,0,12));dec(e,0);   // the viewer throws between two brackets
+  e.Bracket(V(37,2,0,11));check(e.last==sp::Gap::viewer_throw,"C(b): the gap is the viewer's throw");e.Bracket(V(37,2,0,11));
   check(!e.latch.off && e.rebased==1,"C(b): the viewer's own throw during a partner episode does not latch");}
- {Episode e;e.Bracket(0);e.vars[2]=static_cast<std::uint16_t>(e.vars[2]+1);e.Bracket(0);e.Bracket(0);
+ {Episode e;e.Bracket(V(46,3,3,8));dec(e,3);e.Bracket(V(46,4,3,7));e.Bracket(V(46,4,3,7));
+  check(!e.latch.off && e.rebased==1,"C(b): the viewer's own placement during a partner episode does not latch");}
+ {Episode e;e.Bracket(V(0));e.vars[2]=static_cast<std::uint16_t>(e.vars[2]+1);e.Bracket(V(0));e.Bracket(V(0));
   check(!e.latch.off && e.rebased==1,"C(b): the viewer's pickup during a partner episode does not latch");}
- {Episode e;e.Bracket(0);e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-1);e.Bracket(37);e.vars[0]=static_cast<std::uint16_t>(e.vars[0]+1);e.Bracket(0);
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));e.vars[0]=static_cast<std::uint16_t>(e.vars[0]+1);e.Bracket(V(0));
   check(!e.latch.off && e.rebased==2,"C(b): throw then pickup, each in its own gap");}
- {Episode e;e.Bracket(37);e.Bracket(37,0,-1);
+ {Episode e;e.Bracket(V(37,2,0,12));e.Bracket(V(37,2,0,12),0,-1);
   check(e.latch.off,"C(b): a body-1 leak inside its own job still latches (per-job compare), even while the viewer throws");}
- {Episode e;e.Bracket(0);e.Bracket(0,6,-1);check(e.latch.off,"C(b): a body-1 leak in its own job latches");}
- {Episode e;e.Bracket(0);e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-1);e.Bracket(0);
+ {Episode e;e.Bracket(V(0));e.Bracket(V(0),6,-1);check(e.latch.off,"C(b): a body-1 leak in its own job latches");}
+ {Episode e;e.Bracket(V(0));dec(e,0);e.Bracket(V(0));
   check(e.latch.off && e.rebased==0 && e.last==sp::Gap::foreign,"C(b): an out-of-job decrement the viewer did not throw still latches (deferred leak)");}
- {Episode e;e.Bracket(37);e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-1);e.Bracket(37,-1,0,1);
+ {Episode e;e.Bracket(V(37,1,0,12));dec(e,0);e.Bracket(V(37,2,0,11),-1,0,1);
   check(e.latch.off && e.last==sp::Gap::foreign,"C(b): an unbracketed body-1 job in the gap: the decrement still latches");}
- {Episode e;e.Bracket(37);e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-2);e.Bracket(37);check(e.latch.off,"C(b): a double decrement still latches");}
- {Episode e;e.Bracket(37);e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-1);e.Bracket(37,4,-1);
+ {Episode e;e.Bracket(V(37,1,0,12));e.vars[0]=static_cast<std::uint16_t>(e.vars[0]-2);e.Bracket(V(37,2,0,10));
+  check(e.latch.off,"C(b): a double decrement still latches");}
+ {Episode e;e.Bracket(V(37,1,0,12));dec(e,0);e.Bracket(V(37,2,0,11),4,-1);
   check(e.latch.off && e.rebased==1,"C(b): a rebased viewer throw does not hide a body-1 leak in the same bracket");}
+ // WS2 review: a deferred body-1 decrement while the viewer only holds a slot-3
+ // item (the lab seed: the viewer holds 354 = k6 in the hold hub, body 1 holds
+ // 395 = k8) or right after the viewer's own rebased throw still latches.
+ for(unsigned m: {28u,32u,45u}){
+  Episode e;const auto h=V(static_cast<std::uint8_t>(m),0,0,12);e.Bracket(h);dec(e,2);e.Bracket(h);
+  check(e.latch.off && e.rebased==0 && e.last==sp::Gap::foreign,"C(b): viewer holding (28/32/45), a -1 on k8 outside body 1's bracket latches");
+ }
+ {Episode e;e.Bracket(V(28,0,0,12));dec(e,0);e.Bracket(V(28,0,0,11));
+  check(e.latch.off && e.rebased==0,"C(b): viewer holding its grenade, a -1 on its own word without a release step latches");}
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));dec(e,0);e.Bracket(V(37,2,0,10));
+  check(e.latch.off && e.rebased==1 && e.last==sp::Gap::foreign,"C(b): a decrement in the gap after a rebased viewer throw latches (same word)");}
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));dec(e,2);e.Bracket(V(37,2,0,11));
+  check(e.latch.off && e.rebased==1 && e.last==sp::Gap::foreign,"C(b): a decrement in the gap after a rebased viewer throw latches (another word)");}
+ {Episode e;e.Bracket(V(33,0,0,12));dec(e,0);e.Bracket(V(37,2,0,11));e.Bracket(V(28,0,0,11));e.Bracket(V(33,0,0,11));dec(e,0);e.Bracket(V(37,2,0,10));
+  check(!e.latch.off && e.rebased==2,"C(b): two viewer throws, each with its own release step, do not latch");}
  // --- Stall freeze (critic #4): StallHold and the frame pipeline.
  {sp::StallHoldIn s{};s.stall_hold=true;s.stale_ms=250;s.stall_ms=400;s.age_ms=300;s.v5_valid=true;s.slot=3;s.equip=354;s.was_support=true;s.support_equip=354;
   check(sp::StallHold(s),"stall hold: stale v5 slot 3 of the same support equip inside the window");
@@ -282,6 +333,23 @@ template<class Check> void Fixtures(Check& check) {
   {auto x=s;x.slot=2;check(!sp::StallHold(x),"stall hold: another slot");}
   {auto x=s;x.v5_valid=false;check(!sp::StallHold(x),"stall hold: no v5 gun group");}
   {auto x=s;x.equip=0;x.support_equip=0;check(!sp::StallHold(x),"stall hold: no equip");}}
+ // WS2 review: the observer's writer context through a stall is keyed on the
+ // driver's last support verdict, not on support_stall (a frame that crosses
+ // stale_ms between the driver's read and the observer's).
+ {sp::StallHoldIn d{};d.stall_hold=true;d.stale_ms=250;d.stall_ms=400;d.age_ms=247;d.v5_valid=true;d.slot=3;d.equip=354;
+  d.was_support=true;d.support_equip=354;
+  check(!sp::StallHold(d),"context: the driver's tick read 247 ms (live): no support_stall, support_equip judged live");
+  sp::StallHoldIn o=d;o.age_ms=252;
+  check(sp::ContextHold(o),"context: the observer then reads 252 ms (just stale): slot 3 / equip kept (Ready still answers)");
+  o.age_ms=5;check(sp::ContextHold(o),"context: fresh again before the driver's next tick: kept");
+  o.age_ms=400;check(sp::ContextHold(o),"context: up to stall_ms");o.age_ms=401;check(!sp::ContextHold(o),"context: beyond the window");
+  o=d;o.age_ms=300;o.support_equip=0;check(!sp::ContextHold(o),"context: no driver support verdict");
+  o=d;o.age_ms=300;o.equip=349;check(!sp::ContextHold(o),"context: another equip");
+  o=d;o.age_ms=300;o.slot=2;check(!sp::ContextHold(o),"context: another slot");
+  o=d;o.age_ms=300;o.v5_valid=false;check(!sp::ContextHold(o),"context: no v5 gun group");
+  o=d;o.age_ms=300;o.stall_hold=false;check(!sp::ContextHold(o),"context: partner_native_stall=neutral (lab) never holds");
+  o=d;o.age_ms=300;o.stall_ms=250;check(!sp::ContextHold(o),"context: stall_ms <= stale_ms is off");
+  o=d;o.age_ms=300;o.support_equip=0x800;o.equip=0x800;check(!sp::ContextHold(o),"context: equip range");}
  for(std::uint32_t gap_ms: {251u,260u,400u,600u,1000u}){
   Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;
   auto j=p.Step(Sample(H,0,seq++),t);check(p.out.verdict==sp::Frame::admitted && (j.held&HF)==H,"freeze: aim admitted");
@@ -346,6 +414,7 @@ template<class Check> void Fixtures(Check& check) {
   check(p.out.verdict==sp::Frame::refused && p.out.buffered && !(j.held&F),"buffer: a FIRE tap waiting on the equip is buffered (not injected)");
   p.body_ready=true;t+=200;j=p.Step(Sample(0,0,seq++),t);
   check(p.out.delivered && (j.held&F) && (j.edge_press&F) && (j.w[1]&F) && (j.w[0]&F),"buffer: delivered on the first admitted frame <= 300 ms");
+  check(!(j.edge_release&F) && !(j.w[2]&F),"buffer: the delivered tap is not also released in the same frame (WS2 review)");
   t+=16;j=p.Step(Sample(0,0,seq++),t);
   check(!(j.held&F) && (j.edge_release&F) && (j.w[2]&F) && !p.out.delivered,"buffer: the tap's release edge on the next frame");
   t+=16;j=p.Step(Sample(0,0,seq++),t);check(!(j.edge_release&F) && !(j.edge_press&F),"buffer: delivered once");}
@@ -381,7 +450,33 @@ template<class Check> void Fixtures(Check& check) {
  {pi::Config c{};c.mask=~0x10u;c.words[0]=pi::Word::held;c.words[1]=pi::Word::press;c.words[2]=pi::Word::release;
   pi::Injection j{};const auto z=pi::AddEdges(j,F,F,0,c);check(!z.held && !z.edge_press && !z.w[0],"buffer: AddEdges stays inside the mask");
   c.mask=0xFFFFFFFFu;const auto r=pi::AddEdges(j,0,0,F,c);check(r.edge_release==F && r.w[2]==F && !r.held,"buffer: AddEdges release word");
-  pi::Injection h{};h.held=F;check(!pi::AddEdges(h,0,0,F,c).edge_release,"buffer: never a release of a held bit");}
+  pi::Injection h{};h.held=F;check(!pi::AddEdges(h,0,0,F,c).edge_release,"buffer: never a release of a held bit");
+  pi::Injection r2{};r2.edge_release=F|0x4u;r2.w[2]=F|0x4u;
+  const auto d=pi::AddEdges(r2,F,F,0,c);
+  check((d.held&F) && (d.edge_press&F) && (d.w[1]&F) && d.edge_release==0x4u && d.w[2]==0x4u,
+        "buffer: AddEdges clears a same-frame release of an added held/press bit, nothing else");}
+ // WS2 review: a press the main window buffers never reaches a later consumer
+ // of the same frame that sees body 1 become ready (one remote press, one press).
+ for(unsigned tap=0;tap<2;++tap){
+  Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  unsigned presses=0,releases=0;bool contradictory=false;
+  const auto count=[&](const pi::Injection& v){presses+=(v.edge_press&F) ? 1u : 0u;releases+=(v.edge_release&F) ? 1u : 0u;
+                                               contradictory=contradictory || ((v.edge_press&F) && (v.edge_release&F));};
+  auto j=tap ? p.Step(Sample(0,0,seq++,F,F),t) : p.Step(Sample(F,0,seq++,F),t);
+  check(p.out.buffered && !(j.edge_press&F) && !(j.held&F),"buffer: the main window refuses and buffers");
+  auto d1=p.View(true);   // drain1 takes frame k after body 1 became ready in an earlier job of the frame
+  check(!(d1.edge_press&F) && !(d1.held&F) && !(d1.w[0]&F) && !(d1.w[1]&F) && !(d1.synth&F),
+        "buffer: a later consumer that sees body 1 ready in the same frame gets no FIRE");
+  count(d1);
+  p.body_ready=true;t+=16;j=p.Step(tap ? Sample(0,0,seq++) : Sample(F,0,seq++),t);count(j);d1=p.View(true);count(d1);
+  check(p.out.delivered && (j.edge_press&F) && (d1.edge_press&F),"buffer: delivered on the next frame (each consumer once)");
+  for(unsigned k=0;k<3;++k){t+=16;j=p.Step(tap ? Sample(0,0,seq++) : Sample(F,0,seq++),t);count(j);d1=p.View(true);count(d1);}
+  check(presses==2 && !contradictory,"buffer: one press frame for one remote press (main + drain1), never with its release");
+  check(releases==(tap ? 2u : 0u),"buffer: a tap's single release frame; a held press none");
+ }
+ {Pipe p(1000);std::uint64_t t=1000;std::uint32_t seq=1;p.body_ready=false;
+  p.Step(Sample(F,0,seq++,F),t);t+=16;p.Step(Sample(F,0,seq++),t);
+  check(p.out.verdict==sp::Frame::refused && !(p.View(true).held&F),"buffer: still waiting, a later consumer gets no FIRE level either");}
 }
 }
 int main(){

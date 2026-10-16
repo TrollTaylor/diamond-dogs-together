@@ -204,7 +204,7 @@ bool SupportBodyBusy(const pi::Arm& a) noexcept;
 bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept;
 // WS2 (hook thread): the frame step's track (stall freeze, FIRE buffer) with
 // its own log cap, and C(b)'s previous bracket (after-words, the viewer's gun
-// mode and W50's body-1 job count at that point).
+// record and W50's body-1 job count at that point).
 partner_support_policy::FrameTrack g_support_track{};
 volatile LONG g_support_frame_reset=1;
 unsigned g_support_frame_lines=0;
@@ -212,7 +212,7 @@ bool g_support_frozen_run=false;
 std::uint32_t g_support_frozen_frames=0;
 bool g_support_prev_ok=false;
 std::uint16_t g_support_prev_words[8]{};
-std::uint8_t g_support_prev_viewer=0xFF;
+partner_support_policy::ViewerRec g_support_prev_viewer{};
 std::uint32_t g_support_prev_jobs=0;
 pi::Injection SupportFrame(const pi::Arm& a,const pi::Injection& frame,std::uint64_t now_ms,std::uint32_t age_ms) noexcept;
 pi::Injection g_drain_inj{};
@@ -1953,6 +1953,9 @@ pi::Injection SupportFrame(const pi::Arm& a,const pi::Injection& frame,std::uint
     } else {
         end_freeze(o.verdict==sp::Frame::admitted ? "fresh" : "strip");
     }
+    // A kept (buffered) FIRE press leaves the published frame: no later drain
+    // consumer may inject it before the buffer delivers it (WS2 review).
+    if(o.strip)j=pi::Strip(j,o.strip);
     if(o.add_held || o.add_press || o.add_release)j=pi::AddEdges(j,o.add_held,o.add_press,o.add_release,a.config);
     const std::uint32_t held_ms=before.fire && now_ms>=before.fire_ms ? static_cast<std::uint32_t>(now_ms-before.fire_ms) : 0u;
     if(o.dropped)SupportFrameLine("fire_buffer","dropped",before.fire_equip,0,age_ms,0,held_ms);
@@ -2000,19 +2003,32 @@ bool SupportThrowing(const pi::Arm& a,const pi::Injection& j,std::uint32_t& hand
     } __except(ProbeFilter(GetExceptionCode())) {}
     return mode || (a.native_support && j.slot_valid && j.inv_slot==3 && (j.held&(partner_pad::kHold|partner_native::kPadFire)));
 }
-// C(b): instance 0's gun mode (0xFF unread), read-only through the driver
-// tick's ReadGun(k=0) prim/record re-validated here: the prim vtable,
-// prim+0x58 == the record, and never body 1's prim, block or record.
-std::uint8_t ViewerGunMode(const pi::Arm& a) noexcept {
+// C(b): instance 0's gun record (mode 0xFF unread), read-only through the
+// driver tick's ReadGun(k=0) prim/record re-validated here: the prim vtable,
+// prim+0x58 == the record, and never body 1's prim, block or record. The
+// fields are the spend step's own (partner_support_policy::ViewerRec): the
+// mode, its state (gun_state), the hand slot and sub (k = 6 + sub), the count
+// mode 37/46 decrement (gun_stock, or gun_stock_sub with gun27c_sub) and
+// rec+0x3C0 bit 29 (gun3c0_cap_stock; the throw skips every stock write with
+// it, pin 0x1087BF5).
+static_assert(c::gun_state==0x2C2 && c::gun_sub==0x3DC && c::gun_slot==0x3DA && c::gun_stock==0x260 && c::gun_stock_sub==0x262 &&
+              c::gun27c_sub==0x200 && c::gun3c0_cap_stock==0x20000000u,"the viewer's spend fields");
+partner_support_policy::ViewerRec ReadViewer(const pi::Arm& a) noexcept {
+    partner_support_policy::ViewerRec v{};
     const std::uintptr_t prim=a.viewer_gun_prim,rec=a.viewer_gun_rec;
-    if(!prim || !rec || prim==a.gun_prim || rec==a.gun_rec)return 0xFF;
-    std::uint8_t mode=0xFF;
+    if(!prim || !rec || prim==a.gun_prim || rec==a.gun_rec)return v;
     __try {
         if(Load<std::uintptr_t>(prim)==g_base+c::gun_prim_vt_rva && Load<std::uintptr_t>(prim+c::prim_gun_rec)==rec &&
-           Load<std::uintptr_t>(prim+c::prim_blk)!=a.blk1)
-            mode=Load<std::uint8_t>(rec+c::gun_mode_cur);
-    } __except(ProbeFilter(GetExceptionCode())) {mode=0xFF;}
-    return mode;
+           Load<std::uintptr_t>(prim+c::prim_blk)!=a.blk1) {
+            partner_support_policy::ViewerRec r{};
+            r.mode=Load<std::uint8_t>(rec+c::gun_mode_cur);r.state=Load<std::uint8_t>(rec+c::gun_state);
+            r.slot=Load<std::uint8_t>(rec+c::gun_slot);r.sub=Load<std::uint8_t>(rec+c::gun_sub);
+            r.count=Load<std::uint16_t>(rec+((Load<std::uint32_t>(rec+c::gun_flags27c)&c::gun27c_sub) ? c::gun_stock_sub : c::gun_stock));
+            r.no_spend=(Load<std::uint32_t>(rec+c::gun_flags)&c::gun3c0_cap_stock)!=0;
+            v=r;
+        }
+    } __except(ProbeFilter(GetExceptionCode())) {v=partner_support_policy::ViewerRec{};}
+    return v;
 }
 // C(b) (docs/anim-round2-throws.md "Viewer-own rebase"): the change of the
 // slot-3 words between the previous bracket's after-read and this bracket's
@@ -2020,7 +2036,7 @@ std::uint8_t ViewerGunMode(const pi::Arm& a) noexcept {
 // (partner_support_policy::ClassifyGap) moves the episode baseline by exactly
 // that delta; anything else stays for the episode compare (latch as before).
 void SupportGapCheck(const pi::Injection& j,std::uint32_t slot_before,const std::uint16_t (&now)[8],
-                     std::uint8_t viewer,std::uint32_t jobs) noexcept {
+                     const partner_support_policy::ViewerRec& viewer,std::uint32_t jobs) noexcept {
     namespace sp=partner_support_policy;
     if(!g_support_episode || !g_support_episode_stock)return;
     sp::GapIn g{};g.prev_ok=g_support_prev_ok;g.now_ok=slot_before!=0;
@@ -2036,14 +2052,18 @@ void SupportGapCheck(const pi::Injection& j,std::uint32_t slot_before,const std:
         g_support_episode_stock=sp::SlotDigest(g_support_episode_words);
     }
     if(!g_log || g_support_lines>=512)return;
-    ++g_support_lines;char line[256]{};
+    ++g_support_lines;char line[352]{};
     // viewer_own is a passed stock_check (changed=0); a foreign gap is left to
     // the episode compare below (stock_index / stock_leak_mission_latched).
+    // viewer_*: instance 0 at the gap's end (mode, state, slot, k = 6 + sub,
+    // count, bit 29); viewer_prev*: its mode and state at the gap's start.
     if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
-        "partner_support=%s; slot=%u; equip=%u; type=12; reason=%s; changed=%u; kind=%s; k=%u; before=%u; after=%u; words=%u; viewer_mode=%u; viewer_prev=%u; other_jobs=%u\r\n",
+        "partner_support=%s; slot=%u; equip=%u; type=12; reason=%s; changed=%u; kind=%s; k=%u; before=%u; after=%u; words=%u; viewer_mode=%u; viewer_state=%u; viewer_slot=%u; viewer_k=%u; viewer_count=%u; viewer_no_spend=%u; viewer_prev=%u; viewer_prev_state=%u; other_jobs=%u\r\n",
         rebase ? "stock_check" : "stock_gap",unsigned(j.inv_slot),unsigned(j.equip),rebase ? "viewer_own" : "unattributed",rebase ? 0u : 1u,
         sp::GapName(gap.kind),6u+gap.word,
-        unsigned(gap.before),unsigned(gap.after),unsigned(gap.changed),unsigned(viewer),unsigned(g.viewer_prev),g.other_jobs)))g_log(line);
+        unsigned(gap.before),unsigned(gap.after),unsigned(gap.changed),unsigned(viewer.mode),unsigned(viewer.state),unsigned(viewer.slot),
+        viewer.sub<8 ? 6u+viewer.sub : 0xFFu,unsigned(viewer.count),viewer.no_spend ? 1u : 0u,
+        unsigned(g.viewer_prev.mode),unsigned(g.viewer_prev.state),g.other_jobs)))g_log(line);
 }
 void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,std::uint32_t slot_before,
                   const std::uint16_t (&slot_words_before)[8],std::uint32_t ammo_before) noexcept {
@@ -2051,9 +2071,9 @@ void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,s
     const auto after=ReadSupportDigest();const auto ammo_after=ReadAmmoDigest();
     std::uint16_t slot_words[8]{};const auto slot_after=ReadSupportSlotDigest(&slot_words);
     std::uint32_t handle=0;const bool active=SupportThrowing(a,j,handle);
-    // No viewer job runs inside body 1's job: this read is the viewer's mode at
-    // this gap's end and the next gap's start.
-    const std::uint8_t viewer=ViewerGunMode(a);
+    // No viewer job runs inside body 1's job: this read is the viewer's record
+    // at this gap's end and the next gap's start.
+    const partner_support_policy::ViewerRec viewer=ReadViewer(a);
     const std::uint32_t jobs=partner_defer::Body1Jobs();
     SupportGapCheck(j,slot_before,slot_words_before,viewer,jobs);
     if(active && !g_support_episode){g_support_episode=true;g_support_episode_stock=slot_before;
@@ -2872,7 +2892,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     };
     if(InterlockedExchange(&g_support_reset,0)){
         g_support_episode=false;g_support_released=false;g_support_episode_stock=0;g_support_lines=0;
-        g_support_prev_ok=false;g_support_prev_viewer=0xFF;g_support_prev_jobs=0;
+        g_support_prev_ok=false;g_support_prev_viewer=partner_support_policy::ViewerRec{};g_support_prev_jobs=0;
         g_rec240_logged=0;g_rec240_last=partner_support_policy::Rec240::skip;g_rec240_stale_rec=0;g_rec240_stale_slot=0;g_rec240_stale_logged=false;
     }
     const bool have = g_ready && !g_faulted && ReadArm(a);

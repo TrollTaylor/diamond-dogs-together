@@ -1800,15 +1800,23 @@ void ObserveNativeSupport() noexcept {
        (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid) &&
        input.packet.gun_equip==mission.remote_gun_equip && input.packet.inv_slot==mission.remote_slot) {
         context.equip=static_cast<std::uint16_t>(mission.remote_gun_equip);context.slot=mission.remote_slot;
-    } else if(mission.support_stall && mission.support_equip>0 && mission.support_equip<0x800 &&
-              mgscoop::partner_net::LatestInput(input) && input.valid && input.age_ms<=partner_driver.settings.stall_ms &&
-              input.packet.version>=5 && (input.packet.xflags&mgscoop::partner_input::XFlag::Equip) &&
-              (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid) &&
-              input.packet.gun_equip==mission.support_equip && input.packet.inv_slot==3) {
+    } else if(mission.support_equip>0 && mgscoop::partner_net::LatestInput(input) && input.valid) {
         // The driver holds support through an input stall (critic #4): keep the
         // context's slot and equip so Ready still answers; the writer finds the
-        // equip already allocated and dispatches nothing.
-        context.equip=mission.support_equip;context.slot=3;
+        // equip already allocated and dispatches nothing. Keyed on the driver's
+        // last support verdict (support_equip), not on support_stall, which the
+        // driver sets only on a tick whose own read was already stale: a frame
+        // that crossed stale_ms between the two reads must not clear the context
+        // (partner_support_policy::ContextHold, WS2 review).
+        const auto& set=partner_driver.settings;
+        mgscoop::partner_support_policy::StallHoldIn hold{};
+        hold.stall_hold=set.native_active && set.nsupport && set.nstall==mgscoop::PartnerNativeStall::hold;
+        hold.stale_ms=set.stale_ms;hold.stall_ms=set.stall_ms;hold.age_ms=input.age_ms;
+        hold.v5_valid=input.packet.version>=5 && (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid);
+        hold.slot=input.packet.inv_slot;
+        hold.equip=(input.packet.xflags&mgscoop::partner_input::XFlag::Equip) ? input.packet.gun_equip : static_cast<std::uint16_t>(0);
+        hold.was_support=true;hold.support_equip=mission.support_equip;
+        if(mgscoop::partner_support_policy::ContextHold(hold)) {context.equip=mission.support_equip;context.slot=3;}
     }
     pp::State state{};pp::DmTargets targets{};
     if(context.owner && context.gates && mission.parts_loaded && mission.realized &&

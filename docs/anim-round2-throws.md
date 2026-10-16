@@ -78,8 +78,9 @@ motions or generate a second real grenade.
 Inspected executable (read only): `D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe`,
 version 1.0.15.4, SHA-256
 `085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
-The generator currently verifies **612 code sites and 128 vtable slots** (589/122 before the WS1
-handle-call pins, 607/128 before its review fixes), including all previous reference/containment assertions.
+The generator currently verifies **614 code sites and 128 vtable slots** (589/122 before the WS1
+handle-call pins, 607/128 before its review fixes, 612/128 before the WS2 review fixes), including all previous
+reference/containment assertions.
 
 | RVA | Original bytes | Enabled in-memory bytes |
 |---|---|---|
@@ -515,8 +516,10 @@ and 349, `armed; reason=throw` and `throw_release`, every `stock_check; ...; cha
 Spec: `coop-gaps-spec.md` WS2 (research "throws-play", critic #4..#7). Branch `wp/feat-throws`. **Stage B (the default
 flip to `gun` in both modes) is not done**: `lab_config.cpp` still defaults `partner_native_support` to the lab gun
 profile only, so play gets throws only from a named `partner_native_support=1` (the worker's `-LabSetting`), and
-Play-Coop friends see no change yet. No contract site or slot changed (612 / 128): every new read is an existing
-pinned offset (`gun_prim_vt_rva`, `prim_gun_rec`, `prim_blk`, `gun_mode_cur`) on instance 0's own gun record.
+Play-Coop friends see no change yet. Stage A changed no contract site or slot (612 / 128). The WS2 review fixes add two
+code sites (614 / 128, below): the viewer-own rebase now also reads instance 0's `gun_state` (rec+0x2C2) and `gun_sub`
+(rec+0x3DC) besides the already pinned `gun_prim_vt_rva`, `prim_gun_rec`, `prim_blk`, `gun_mode_cur`, `gun_slot`,
+`gun_stock`/`gun_stock_sub`, `gun_flags27c` and `gun_flags`, all on instance 0's own gun record.
 
 **Admission (Stage A).** `partner_support_policy::ModeRefusal(lab, play, link_connected)` -> nullptr (lab; play with
 link v2 connected) | `link_not_connected` | `mode`. The observer's `SupportModeReason()` (GetLabConfig().mode and
@@ -535,22 +538,40 @@ for gun slots, and SlotFollow's slot-3 branch calls Follow for any value except 
 hidden runs used (`partner_driver.cpp` Configure, `docs/native-puppet.md` "Release gating").
 
 **Viewer-own rebase (C(b)).** The episode baseline (the eight slot-3 words) spans viewer frames, so the viewer's own
-throw or pickup used to latch support off for the mission. Each SupportCheck now also reads instance 0's gun mode
-(the driver tick's `ReadGun(k=0)` prim/record in `Arm.viewer_gun_prim/rec`, re-validated in the hook: prim vtable,
-prim+0x58 == record, never body 1's prim, record or block; read-only, 0xFF unread) and W50's count of body-1 jobs
-(`partner_defer::Body1Jobs`). The change between the previous bracket's after-read and this bracket's before-read
-happened outside body 1's job. `partner_support_policy::ClassifyGap` attributes it to the viewer, and the episode
-baseline is rebased by exactly that delta, only when every body-1 job of the gap was bracketed (no other W50 count),
-no word moved to or from 0xFFFF, and it is either a pickup (increases only, each <= 64) or one throw/placement
-(exactly one word down by exactly 1, nothing else, with the viewer's gun mode in 28..47 at the gap's start or end).
+throw or pickup used to latch support off for the mission. Each SupportCheck now also reads instance 0's gun record
+(`ReadViewer`: the driver tick's `ReadGun(k=0)` prim/record in `Arm.viewer_gun_prim/rec`, re-validated in the hook:
+prim vtable, prim+0x58 == record, never body 1's prim, record or block; read-only, mode 0xFF unread) and W50's count
+of body-1 jobs (`partner_defer::Body1Jobs`). The change between the previous bracket's after-read and this bracket's
+before-read happened outside body 1's job. `partner_support_policy::ClassifyGap` attributes it to the viewer, and the
+episode baseline is rebased by exactly that delta, only when every body-1 job of the gap was bracketed (no other W50
+count), no word moved to or from 0xFFFF, and it is either a pickup (increases only, each <= 64) or one throw/placement:
+exactly one word down by exactly 1, nothing else, and both of these (WS2 review):
+- the viewer **entered its spend step in this gap** (`ViewerSpendEntered`): read at both ends, not spent at the start,
+  spent at the end. The spend step is mode 37 with rec+0x2C2 == 2 (the throw block, op 10 at 0x10879BF, sets 1 -> 2 and
+  in the same block decrements the count and calls the stock setter ctl vt+0xC0) or mode 46 with rec+0x2C2 == 4/5 (the
+  place block, op 9, decrements and then sets 3 -> 4/5). Holding an item (the hold hub 28/29, draw/holster 32, aim,
+  C4 in hand 43..47) never attributes, and one throw or placement is credited once (a later gap of the same step,
+  which still starts released, is foreign);
+- the word is **the viewer's own held item** (`ViewerOwnWord`): rec+0x3DA == 3, word k = 6 + rec+0x3DC (the same
+  (slot, sub) pair the spend passes to ctl vt+0xB0 and the classes 2/3 ammo copy passes to store vt+0x68, pinned at
+  0x108CB57/0x108CB74), the record's count (rec+0x260, or rec+0x262 with rec+0x27C bit 9) equals the word's new value,
+  and rec+0x3C0 bit 29 is clear (with it the throw writes no stock).
+
 Line: `partner_support=stock_check; slot=3; equip=N; type=12; reason=viewer_own; changed=0; kind=throw|pickup; k=6..13;
-before=..; after=..; words=..; viewer_mode=..; viewer_prev=..; other_jobs=0`. Anything else logs
-`partner_support=stock_gap; ...; reason=unattributed; changed=1; ...` and the unchanged episode compare latches as
-before (`stock_index`, `stock_leak_mission_latched`). The per-job compares (full support table and ammo block around
-body 1's own job) are untouched, so a body-1 leak inside its job always latches; a deferred decrement while the viewer
-is not throwing, an unbracketed body-1 job in the gap, a double decrement or a mixed gap all still latch. Residual: a
-deferred body-1 decrement of exactly one item in the same frame as the viewer's own throw is indistinguishable and
-is rebased; block-1 sub-jobs (`p->sub != 0`) are not counted.
+before=..; after=..; words=..; viewer_mode=..; viewer_state=..; viewer_slot=..; viewer_k=..; viewer_count=..;
+viewer_no_spend=..; viewer_prev=..; viewer_prev_state=..; other_jobs=0` (viewer_* at the gap's end, viewer_prev* its
+start). Anything else logs `partner_support=stock_gap; ...; reason=unattributed; changed=1; ...` and the unchanged
+episode compare latches as before (`stock_index`, `stock_leak_mission_latched`). The per-job compares (full support
+table and ammo block around body 1's own job) are untouched, so a body-1 leak inside its job always latches; a
+deferred decrement while the viewer only holds (or is not near) a slot-3 item, a decrement of a word the viewer does
+not hold, a decrement in the gap after the viewer's own rebased throw, an unbracketed body-1 job in the gap, a double
+decrement or a mixed gap all still latch. Residual: a deferred body-1 decrement is credited to the viewer only if it
+is the viewer's own held word and lands in the one gap in which the viewer's record enters the spend step; the
+viewer's own spend in that gap decrements the same word (bit 29 clear; a count >= 0x3FFF skips the decrement, but then
+the record's count no longer equals the word), so both together drop it by 2 and latch. The remaining error is
+fail-closed: if the viewer's record has already left the spend step, or holds another item, at the bracket after its
+throw (a gap spanning two viewer frames), its own throw latches support off as before WS2. Block-1 sub-jobs
+(`p->sub != 0`) are not counted.
 
 **Stall freeze (critic #4).** Admit needs a fresh frame, and Compose marks every frame older than stale_ms stale, so a
 250 ms..1 s gap used to strip HOLD|FIRE|RELOAD: body 1 released early, and when FIRE came back still held it could
@@ -560,8 +581,12 @@ slot-3 equip as the last admitted frame, the main window's `SupportFrame` (`part
 that frame's HOLD|FIRE **level** with no HOLD/FIRE edge anywhere (`partner_input::Freeze`) and marks the frame
 `support_frozen`; every consumer admits it with freshness waived only (every other gate rechecked). The driver holds
 its support gate through the same window (`partner_support_policy::StallHold`: stale but <= stall_ms, v5 slot 3, the
-equip of the last support verdict) and the observer keeps the writer context's slot/equip then
-(`Mission.support_stall/support_equip`), so `Ready` still answers and the writer dispatches nothing. Fresh input
+equip of the last support verdict) and the observer keeps the writer context's slot/equip on the driver's last support
+verdict (`partner_support_policy::ContextHold`: `Mission.support_equip` nonzero and its own newest v5 frame, fresh or
+stale, <= stall_ms, slot 3, that equip), so `Ready` still answers and the writer dispatches nothing. It is never keyed
+on `Mission.support_stall` (WS2 review): the driver sets that only on a tick whose own read was already stale, so a
+frame that crossed stale_ms between the driver's read and the observer's used to clear the context and refuse the
+whole stall (an early release). Fresh input
 resumes through Compose's own edge state (no phantom press); beyond the window the old strip applies. Never against
 the driver's own strip (a frame whose HOLD|FIRE `Arm.strip` removes is never admitted or frozen). Lab mode keeps
 `partner_native_stall=neutral`, so nothing changes there. Lines (own cap of 128 per mission, so a bad link cannot use
@@ -571,10 +596,14 @@ level=0x..; age_ms=..; frames=..; held_ms=0`.
 **FIRE-edge buffer (C(c)).** A FIRE press while support waits only on body 1's equip (`WaitingOnEquip`: every gate but
 Ready/record, decoded type 0 or 12; or the driver's gate one tick behind the hook's) is kept for 300 ms and delivered
 on the first admitted frame of the same equip (`partner_input::AddEdges`: the press edge, plus the held bit and a
-release edge on the next frame for a tap). Another equip, leaving slot 3, a stale frame, any other refusal or 300 ms
-drop it; a fresh press at admission supersedes it. Lines: `partner_support=fire_buffer; ...; reason=buffered|delivered|dropped; held_ms=..`.
+release edge on the next frame for a tap; AddEdges clears any release edge or release word of a bit it adds as held or
+press, so the delivery frame never also carries the tap's own release, WS2 review). While the press is kept, FIRE
+(level, edges, words, synthesized tap) leaves the published frame (`FrameOut.strip`, WS2 review): the main window
+judges once per frame, but each drain consumer re-judges its full view against live body-1 state, so a consumer that
+saw body 1 become ready later in the same frame used to inject the press the buffer then delivered again. Another
+equip, leaving slot 3, a stale frame, any other refusal or 300 ms drop it; a fresh press at admission supersedes it. Lines: `partner_support=fire_buffer; ...; reason=buffered|delivered|dropped; held_ms=..`.
 
-Tests: `partner_support_policy_tests` 1462 -> 1582 checks (ModeRefusal table; ClassifyGap verdicts and Rebase/
+Tests: `partner_support_policy_tests` 1462 -> 1582 -> 1639 checks after the review fixes (ModeRefusal table; ClassifyGap verdicts and Rebase/
 SlotDigest; episode sequences: the viewer's own throw or pickup during a partner episode does not latch, a body-1 leak
 in its own job, a deferred decrement the viewer did not throw, an unbracketed job, a double decrement all still latch;
 StallHold table; the Compose -> StepFrame -> Freeze -> NativeView pipeline: stalls of 251..1000 ms keep the admitted
@@ -582,6 +611,24 @@ level with no edge, fresh input resumes without a second press, beyond the windo
 the driver's strip / another equip strip; the FIRE buffer delivered within 300 ms with the tap's release, held press,
 dropped after 300 ms, other equip, leaving slot 3, superseded, never latched/unguarded/stale/slot 2/type 13).
 `worker_session_tests` validates the play scenario in play mode and the checkpoint companion.
+
+**WS2 review fixes (2026-10-16).** All four findings were confirmed by reading the code; each has a fix and fixtures:
+- WS2-1 (high): ClassifyGap credited any single -1 on any slot-3 word to the viewer while its gun mode was 28..47 at
+  either end, so a deferred body-1 decrement while the viewer merely held a grenade or C4 (or in the gap right after
+  its rebased throw) rebased instead of latching. Fixed as above (spend step entered in the gap + own word); two new
+  pins (0x108CB57, 0x108CB74) and contract fields `gun_state`/`gun_sub`. Fixtures: holding in 28/29/30/32/33/42/43/45/47
+  with a -1 on another word or on its own word, mode 37 state 1, mode 46 state 6, already released at the start, an
+  unread start, another word, a kept count, bit 29, slot/sub, the lab-seed k8 case for 28/32/45, a -1 after a rebased
+  throw (same and other word), two separate viewer throws, and the viewer's own placement.
+- WS2-2 (medium): the observer's stall branch needed `support_stall`, which a race at stall onset left false. Fixed
+  with `ContextHold` on the driver's last verdict; fixtures: driver live at 247 ms then observer at 252 ms (kept),
+  fresh again, the window edge, no verdict, other equip/slot, no v5, neutral, stall_ms <= stale_ms, equip range.
+- WS2-3 (medium): a buffered press stayed in the published frame, so a later drain consumer that saw body 1 become
+  ready in the same frame injected it and the buffer delivered it again next frame. Fixed with `FrameOut.strip`;
+  fixtures: two consumers with a mid-frame readiness flip (held press and tap): exactly one press frame per consumer,
+  never with its release; still waiting, no FIRE level for a later consumer.
+- WS2-4 (low): the delivery frame of a buffered tap carried held + press + Compose's release of the synthesized tap.
+  Fixed in AddEdges; the buffer fixture asserts no release at k+1, and an AddEdges unit check.
 
 **Hidden runs (not run here; another agent owns the runtime).** Coordinator only, verify lock, MGS_GAME_LUA_DIR unset:
 
