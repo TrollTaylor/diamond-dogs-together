@@ -154,6 +154,21 @@ RemoteLook SampleLook() noexcept;
 // (InputEdges), and logs partner_net=input_rx; first=1 once per epoch.
 inline constexpr std::uint32_t kInputMinGapMs = 8;
 bool SubmitInput(const partner_input::InputPacket& packet) noexcept;
+// The worker-only input stall (docs/anim-round2-throws.md "Stall test step"):
+// SubmitInput sends nothing for `ms` (kInputStallMinMs..kInputStallMaxMs) from
+// now, so the peer's newest input frame ages through stale_ms into its stall
+// hold exactly as a real gap would; the sender's edge sets keep accumulating
+// (SenderSent is not called) and go out with the first frame after the stall.
+// Only the private worker's native debug command (input_stall <ms>) calls it,
+// and only when MGS_BACKGROUND_WORKER is compiled in and the worker scenario is
+// active; every other build refuses (the friend/Release loader never has the
+// background worker). Lines: partner_net=input_stall; reason=start|end.
+inline constexpr std::uint32_t kInputStallMinMs = 50, kInputStallMaxMs = 1000;
+const char* StallInput(std::uint32_t ms) noexcept;   // nullptr: started; else the refusal
+// The unknown remote slot/equip debounce (partner_input::HoldIdentity, applied
+// to each accepted input frame before it is stored): the equip of the driver's
+// last support verdict (0 = none; the partner driver publishes it every tick).
+void SetSupportIdentity(std::uint16_t equip) noexcept;
 // Default-off data transport only (MGS_LOCAL_ACTION_EVENTS). The observer
 // authorizes a natural owner receipt before caching it. SubmitLocal sends this
 // separate companion at the same rate gate as movement, never enables gun DM.

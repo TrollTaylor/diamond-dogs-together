@@ -962,6 +962,8 @@ bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexc
     return !pp::ResolveDm(partner_addresses,state,targets) &&
         mgscoop::partner_support_equip::Ready(reinterpret_cast<std::uintptr_t>(game_base),state.P,targets.blk1,equip);
 }
+// The driver's support verdict for partner_net's unknown slot/equip debounce.
+void PartnerPublishSupportIdentity(void*,std::uint16_t equip) noexcept { mgscoop::partner_net::SetSupportIdentity(equip); }
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
@@ -976,7 +978,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
-    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady};
+    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
+    PartnerPublishSupportIdentity};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -2208,6 +2211,23 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             mgscoop::steam_online::StatusLine(status, sizeof(status));
             debug::Result(pending.id, 1, status);
             LogFormat("debug_menu=dispatch; id=%u; text=steam_status; generation=%u; native=1\r\n", pending.id, pending.generation);
+        } else if (pending.id && std::strncmp(pending.text, "input_stall ", 12) == 0) {
+            // Worker-only (docs/anim-round2-throws.md "Stall test step"): this copy
+            // sends no partner input for N ms, so the peer's stall freeze runs on
+            // demand. Only the owned private worker of a background-worker build
+            // (never the friend/Release loader, which has no background worker).
+            const bool worker=mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::Active() &&
+                offline_enabled && lab::SavesRedirected() && partner_on && partner_gate_ok;
+            const char* digits=pending.text+12;
+            std::size_t n=0;unsigned ms=0;
+            while(n<5 && digits[n]>='0' && digits[n]<='9'){ms=ms*10u+static_cast<unsigned>(digits[n]-'0');++n;}
+            const bool parsed=n>=2 && n<=4 && digits[n]==0 && digits[0]!='0';
+            const char* why=!worker ? "owned_worker_required" : !parsed ? "args" : mgscoop::partner_net::StallInput(ms);
+            char line[161]{};
+            if(why) StringCchPrintfA(line,ARRAYSIZE(line),"input_stall=refused;reason=%s",why);
+            else StringCchPrintfA(line,ARRAYSIZE(line),"input_stall=started;ms=%u;gameplay=unverified",ms);
+            debug::Result(pending.id,why?0u:1u,line);
+            LogFormat("debug_menu=input_stall; id=%u; ok=%u; result=%s\r\n",pending.id,why?0u:1u,line);
         } else if (pending.id && std::strncmp(pending.text, "worker_pad ", 11) == 0) {
             // Only the natural owner of a current copied-save private scenario
             // may lease an in-process controller; real desktop input stays blocked.

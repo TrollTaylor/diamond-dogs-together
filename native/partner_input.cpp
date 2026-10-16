@@ -248,6 +248,115 @@ void Fill6(InputPacket& p, const V6Source& v) noexcept {
     }
 }
 
+namespace {
+std::uint32_t SpanMs(std::uint64_t from, std::uint64_t to) noexcept {
+    if (to < from) return 0u;
+    const std::uint64_t d = to - from;
+    return d > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(d);
+}
+}  // namespace
+
+const char* HoldEventName(HoldEvent event) noexcept {
+    switch (event) {
+    case HoldEvent::start: return "start";
+    case HoldEvent::held: return "held";
+    case HoldEvent::resumed: return "resumed";
+    case HoldEvent::expired: return "expired";
+    default: return "none";
+    }
+}
+
+bool SenderHoldLive(bool have, std::uint64_t good_ms, std::uint64_t now_ms) noexcept {
+    return have && now_ms >= good_ms && now_ms - good_ms <= kSenderHoldMs;
+}
+
+SenderHoldOut HoldSender(SenderHold& h, V5Source& v, bool gun_read, bool slot_read, std::uint64_t now) noexcept {
+    SenderHoldOut o{};
+    // The gun record: the equip (xflags Equip), the magazine (xflags Mag) and the v5 gun group.
+    if (gun_read) {
+        if (h.gun_holding) {
+            o.gun = HoldEvent::resumed;
+            o.gun_ms = SpanMs(h.gun_since_ms, now);
+            o.gun_held = h.gun_held;
+            h.gun_holding = false;
+        }
+        h.gun = true;
+        h.gun_ms = now;
+        h.equip_valid = v.v4.equip_valid;
+        h.equip = v.v4.equip;
+        h.mag_valid = v.v4.mag_valid;
+        h.mag = v.v4.mag;
+        h.mag_cap = v.v4.mag_cap;
+        h.gun_valid = v.gun_valid;
+        h.gun_flags = v.gun_flags;
+        h.gun_mode = v.gun_mode;
+        h.reload_seq = v.reload_seq;
+        h.switch_seq = v.switch_seq;
+    } else if (SenderHoldLive(h.gun, h.gun_ms, now)) {
+        if (!h.gun_holding) {
+            h.gun_holding = true;
+            h.gun_since_ms = now;
+            h.gun_held = 0;
+            o.gun = HoldEvent::start;
+            o.gun_ms = SpanMs(h.gun_ms, now);
+        } else {
+            o.gun = HoldEvent::held;
+        }
+        ++h.gun_held;
+        v.v4.equip_valid = h.equip_valid;
+        v.v4.equip = h.equip;
+        v.v4.mag_valid = h.mag_valid;
+        v.v4.mag = h.mag;
+        v.v4.mag_cap = h.mag_cap;
+        v.gun_valid = h.gun_valid;
+        v.gun_flags = h.gun_flags;
+        v.gun_mode = h.gun_mode;
+        v.reload_seq = h.reload_seq;
+        v.switch_seq = h.switch_seq;
+    } else {
+        if (h.gun_holding) {
+            o.gun = HoldEvent::expired;
+            o.gun_ms = SpanMs(h.gun_since_ms, now);
+            o.gun_held = h.gun_held;
+            h.gun_holding = false;
+        }
+        h.gun = false;
+    }
+    // The slot row: the v3 inv_slot (the receiver's remote slot with GunFlag::Valid).
+    if (slot_read) {
+        if (h.slot_holding) {
+            o.slot = HoldEvent::resumed;
+            o.slot_ms = SpanMs(h.slot_since_ms, now);
+            o.slot_held = h.slot_held;
+            h.slot_holding = false;
+        }
+        h.slot = true;
+        h.slot_ms = now;
+        h.inv_slot = v.v4.v3.inv_slot;
+    } else if (SenderHoldLive(h.slot, h.slot_ms, now)) {
+        if (!h.slot_holding) {
+            h.slot_holding = true;
+            h.slot_since_ms = now;
+            h.slot_held = 0;
+            o.slot = HoldEvent::start;
+            o.slot_ms = SpanMs(h.slot_ms, now);
+        } else {
+            o.slot = HoldEvent::held;
+        }
+        ++h.slot_held;
+        v.v4.v3.inv_slot = h.inv_slot;
+    } else {
+        if (h.slot_holding) {
+            o.slot = HoldEvent::expired;
+            o.slot_ms = SpanMs(h.slot_since_ms, now);
+            o.slot_held = h.slot_held;
+            h.slot_holding = false;
+        }
+        h.slot = false;
+    }
+    return o;
+}
+
 bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
@@ -496,6 +605,48 @@ void AccumulateEdges(InputEdges& e, const InputPacket& p) noexcept {
     e.release |= p.w54;
     e.tap12 |= p.tap12;
     ++e.sets;
+}
+
+partner_support_policy::Identity PacketIdentity(const InputPacket& p) noexcept {
+    partner_support_policy::Identity id{};
+    id.v5 = p.version >= 5 && (p.gun_flags & GunFlag::Valid) != 0;
+    id.slot = p.inv_slot;
+    id.equip_valid = p.version >= 4 && (p.xflags & XFlag::Equip) != 0;
+    id.equip = id.equip_valid ? p.gun_equip : static_cast<std::uint16_t>(0);
+    return id;
+}
+
+partner_support_policy::IdHold HoldIdentity(IdentityHold& h, InputPacket& p, std::uint16_t support_equip, std::uint64_t now) noexcept {
+    namespace sp = partner_support_policy;
+    // A frame without a v5 gun group field set (a v1..v4 peer) never carries a
+    // slot-3 identity: nothing to hold, and a held run ends.
+    if (p.version < 5) {
+        const bool was = h.track.holding;
+        h.track = sp::IdentityTrack{};
+        return was ? sp::IdHold::off : sp::IdHold::pass;
+    }
+    const sp::Identity id = PacketIdentity(p);
+    const sp::IdHold verdict = sp::StepIdentity(h.track, id, support_equip, now);
+    if (sp::SlotKnown(id) && sp::EquipKnown(id) && h.track.have) {
+        // The complete support frame: its gun group is what a held frame republishes.
+        h.gun_flags = static_cast<std::uint8_t>(p.gun_flags & GunFlag::Known);
+        h.gun_mode = p.gun_mode;
+        h.reload_seq = p.reload_seq;
+        h.switch_seq = p.switch_seq;
+        return verdict;
+    }
+    if (verdict != sp::IdHold::held) return verdict;
+    if (!id.v5) {
+        p.gun_flags = static_cast<std::uint8_t>((h.gun_flags & GunFlag::Known) | GunFlag::Valid);
+        p.gun_mode = h.gun_mode;
+        p.reload_seq = h.reload_seq;
+        p.switch_seq = h.switch_seq;
+        p.aim_pitch_cdeg = p.aim_yaw_cdeg = 0;
+    }
+    p.inv_slot = 3;
+    p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Equip);
+    p.gun_equip = h.track.equip;
+    return verdict;
 }
 
 void HoldPush(HoldHistory& h, std::uint32_t held) noexcept {

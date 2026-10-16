@@ -540,7 +540,8 @@ Post-flip re-runs at `82da4d0` (lab, research worker, no build running):
   throughout).
 
 Open: a single unknown-slot remote packet during a support hold aborts the throw. Holding the last known slot through a
-short gap, as the stall freeze does for input, would keep the throw.
+short gap, as the stall freeze does for input, would keep the throw. Fixed at both ends since (unit tests only, no hidden
+run yet): see "Unknown-slot glitch" at the end of this document.
 
 ## Throws in play (WS2 Stage A + hardening, 2026-10-16)
 
@@ -684,11 +685,111 @@ Results at `5f11c7b` (2026-10-16). The clean runs passed with frames: off `1be14
 latch. **Stage B was not flipped**, for three reasons:
 - The header's network evidence never appeared. No `stall_freeze` start/fresh fired under bad or awful, because no
   input gap over 250 ms fell inside a support episode. The critic #4 path is still unproven at runtime and needs a
-  stall-injection preset or step.
+  stall-injection preset or step (added since: "Stall test step" below).
 - The first off attempt `2e1beba1` lost one throw animation while another agent's build starved both games
   (gaps over 400 ms, so the old strip applied by design).
 - The checkpoint run `a7d164c1` stops at the known `host_continue` freeze, so the post-reload half is unproven.
 
 Also open: the host role shows infinite ammo, which was already there before this work, so the host's own spend
 cannot be observed. A single unknown-slot remote packet can also abort a held throw (see the post-flip re-runs under
-"Handle call resolved").
+"Handle call resolved"; fixed at both ends since, below).
+
+## Unknown-slot glitch and the stall test step (2026-10-16)
+
+Unit tests only; no hidden run in this step (commands below).
+
+### Why the host sent `remote_slot=255` mid-hold
+
+The guest's lines in `0c9269ce` (the lost magazine throw): `partner_weapon_ctx; remote_slot=255;
+remote_equip=-2147483648; type=-2147483648; remote_act=11; body_slot=3; body_equip=349; gate=unsupported; strip=0x58`,
+then the observer's `partner_support=refused; slot=255; equip=0; type=0; reason=slot` (its writer context cleared),
+`partner_weapon=unsupported; remote_slot=3; remote_equip=349; type=12; reason=slot` on the next tick (the support
+verdict needs `Ready` again) and `unsupported_end` about 110 ms later. The same one-frame shape shows in a later run
+right after a `throw_release`. `remote_act=11` comes from the pose stream, so only the input frame's weapon fields
+were missing.
+
+On the receiver, `remote_slot` is the frame's `inv_slot` only while `remote_v5` holds (version >= 5 with
+`GunFlag::Valid`, fresh), else 255. `remote_equip` is `gun_equip` only with `XFlag::Equip`, else unknown. On the sender,
+`XFlag::Equip` (`SenderV4`) and `GunFlag::Valid` (`SenderV5`) both come from ONE read of the local player's gun record
+(`ReadGun(k=0)` with its fields); `inv_slot` comes from a separate read (`ReadSlots`). A frame that lacks both the equip
+and the gun group therefore means `ReadGun(k=0)` failed (or returned without its fields) on that tick. Its `inv_slot`
+may well have been 3, but without `GunFlag::Valid` the receiver reports 255. The same tick also cleared
+`partner_reload::SenderStep`'s `have`. Both logged cases coincide with the host's own throw transition (the hold hub
+to mode 37), while the host's gun record changes state; the host never left slot 3, so it was not a switch frame. The
+sender did not log which `ReadGun` check failed. The new `partner_input=sender_hold` line names it, so the next hidden
+run shows the exact refusal (`gun_node`, `gun_iface`, `gun_prim`, `gun_rec`, `fields`, ...).
+
+### Fix 1: the sender keeps the last good read
+
+`partner_input::HoldSender` (`partner_input.hpp`): the sender records the last good gun read (equip, magazine, the v5 gun
+group with its counters) and the last good slot read. A failed read republishes them for up to `kSenderHoldMs` (250)
+after the last good one. A good read always replaces them, an empty hand included, so a real change goes out at once.
+Beyond the bound the unknown goes out as before. The driver's three read sites now share `ReadLocalGun`, which also
+leaves `SenderStep` alone during a held failure, so a slot change across a failed read is still counted at the next
+good one. `m.gun0`/`m.gun0_ok` (the viewer's own spend fields, `ReadViewer`) are untouched: only the wire fields are
+held. Lines (own cap): `partner_input=sender_hold; field=gun|slot; reason=start; refusal=<the read's refusal>;
+good_age_ms=..`, then `reason=resumed|expired; frames=..; held_ms=..`.
+
+### Fix 2: the receiver debounces an unknown slot/equip during a support episode
+
+`partner_support_policy::StepIdentity` plus `partner_input::HoldIdentity`, applied in `partner_net`'s receive path to
+each accepted input frame before it is stored. Every consumer reads that one stored frame: the driver's gate, the
+hook's `SupportFrame` and its drain consumers, and the observer's writer context. The driver publishes the equip of each
+tick's support verdict (`Hooks::publish_support_identity` -> `partner_net::SetSupportIdentity`; 0 without a verdict, while
+not native, during a vehicle job and at `ResetRemote`). While that equip is E and the last complete frame (v5 gun
+group, slot 3, equip E) arrived at most `kIdentityHoldMs` (250) ago, a v5 frame whose slot and/or equip is UNKNOWN gets
+slot 3, `XFlag::Equip` E and, when it lacked `GunFlag::Valid`, the last complete frame's gun group (counters kept, so
+no phantom reload or switch; `GunFlag::AimDir` dropped, its angles are not carried). Its input (held bits, sticks,
+edges) is untouched. A known part that names something else (another slot or equip) is a real change and applies at
+once, an unknown run longer than 250 ms applies, and no support verdict (gun play, lab or play without the key) holds
+nothing. A v1..v4 frame is never held. Lines (own cap of 128 per receive reset): `partner_support=slot_hold; slot=3;
+equip=E; reason=held; missing=slot|equip|both; age_ms=..; v5=..; raw_slot=..`, then `reason=resumed|changed|expired|off;
+packets=..; held_ms=..`.
+
+### Stall test step (worker only)
+
+The step `stall <host|guest> <ms>` (50..1000) in `Invoke-WorkerScenario.ps1` sends the native debug command
+`input_stall <ms>`. `game_script_observer` admits it only with `worker_scenario::Compiled()` and `Active()` (the owned
+private worker), `offline-v1`, copied saves, partner and net on. It then calls `partner_net::StallInput`, which is
+compiled in only with `MGS_BACKGROUND_WORKER` (CMake defines it for `mgs_coop_lab` only in the worker build) and refuses
+with `not_worker_build` in every other build. The Release profile never builds the background worker
+(`Get-WorkerPlan`, `worker_checks_tests`), so a friend loader can never pause its input. During the stall `SubmitInput`
+sends nothing (the driver's edge sets stay pending for the first frame after it). The peer's newest input frame ages
+exactly as in a real gap. Lines: `partner_net=input_stall; reason=start; ms=..; stalls=..; last_tx_age_ms=..` and, with
+the first frame after it, `reason=end; ms=..; actual_ms=..; skipped=..; stalls=..`. The runner records the command's
+result as an expectation (`^input_stall=started;ms=<ms>;`).
+
+`tools/worker/scenarios/partner-support-stall.txt` (play rehearsal) runs two host grenade throws with one 320 ms stall
+each (past stale_ms 250, inside stall_ms 400): A inside the aim (HOLD), then FIRE; B inside the FIRE hold, then the
+release. Expected per phase, in order: the host's `input_stall` start/end; on the guest
+`partner_support=stall_freeze; ...; reason=start; level=0x8` (A) or `level=0x18` (B), then `reason=fresh`; then exactly
+one `throw_release`. No early release, no second throw, every `stock_check` `changed=0`, and the guest's counts
+unchanged.
+
+Tests:
+- `partner_input_tests` (HoldSender): start, held at exactly 250 ms, resumed, a good read wins, expiry, an empty hand,
+  the magazine, independent reads, and the wire frame valid with `GunFlag::Valid`, Equip and slot 3.
+- `partner_support_policy_tests`: the StepIdentity table (held, resumed, expired, changed, off, partial identities,
+  the verdict's equip, range, a clock that goes backwards); HoldIdentity on frames (the 0c9269ce frame is stored with
+  slot 3, the equip and the last gun group and stays valid, its input untouched; a v4 frame and a weapon switch are
+  never held); and the receive -> Compose -> StepFrame -> NativeView pipeline (without the hold FIRE drops and comes
+  back, two releases; with it one level run and one release; an unknown beyond 250 ms strips; a real slot change
+  applies at once).
+- `partner_driver_tests`: a failed local read 33 ms after a good one republishes the gun group, equip, magazine and
+  slot, with the refusal in the start line, then resumed; beyond the hold the old unknown; the support verdict's equip
+  is published, 0 without one.
+- `link_udp_tests`, through a real partner_net: the glitch frame is stored held with the held/resumed lines, nothing
+  is held without a verdict, and the stall is refused with `not_worker_build` in a non-worker build (or, in a worker
+  build, started, silent for 320 ms and ended).
+- `worker_session_tests`: the stall step's validation, the new scenario in play mode, the placement of its stalls,
+  its waits, and the worker-only gating in the sources.
+
+Hidden runs (not run here; coordinator only, verify lock, MGS_GAME_LUA_DIR unset, no build while they run):
+
+```powershell
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-stall.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-native.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+```
+
+The second re-runs the lab scenario of `0c9269ce`. Its throws must all log `throw_release`, and a
+`partner_input=sender_hold` or `partner_support=slot_hold` line, if any, names the frame it kept.

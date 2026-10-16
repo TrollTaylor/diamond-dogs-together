@@ -1,0 +1,100 @@
+# Native partner throws in two-PC play: the stall freeze (critic #4) on demand (docs/anim-round2-throws.md
+# "Stall test step"). The play rehearsal of partner-support-play.txt (both copies mode=play, 127.0.0.1, the
+# worker-only play_rehearsal=1, copied lab saves, link v2) with the WORKER-ONLY input stall: the step
+# 'stall host 320' makes the host send no partner input for 320 ms (native debug command input_stall, refused
+# by every build without the background worker, the friend/Release loader included), so the guest's newest
+# input frame ages through stale_ms (250) into the stall hold (partner_native_stall=hold, stall_ms 400, the
+# play default) while the host holds its grenade. The default stays lab-only (Stage B not flipped): the named
+# key comes from the command line, not from a labsetting line here.
+# Executable: mgsvtpp.exe 1.0.15.4, SHA-256 pinned by the partner contract; no visible launch, MGS_GAME_LUA_DIR unset.
+# Run (coordinator only, hidden worker; take the verify lock first; queue behind any running hidden run; never
+# while a build runs, it starves the games and spoils the timing):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-stall.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off
+# Seed: the lab seed's support ids 354,349,395,411,366,370,378,388 with counts 12,16383,12,8,12,12,8,8 on both
+# copies; infinite ammo OFF; both debug god modes on. The host is the partner on the guest's screen (body 1).
+# Two phases, each one host grenade throw (354) with one 320 ms stall:
+#  A (aim):  the host aims (HOLD), the stall falls inside the aim, then the host presses and releases FIRE.
+#  B (hold): the host aims and holds FIRE (the throw goes on FIRE's release), the stall falls inside that hold,
+#            then the host releases.
+# Evidence (both script-observer.log files unless a role is named), per phase, in this order:
+#  stall:    scenario.json Expectations 'host stall ^input_stall=started;ms=320;' met; on the host
+#            partner_net=input_stall; reason=start; ms=320 then partner_net=input_stall; reason=end; ms=320;
+#            actual_ms=320..360; skipped=N (N > 0: frames not sent).
+#  freeze:   on the guest partner_support=stall_freeze; slot=3; equip=354; type=12; reason=start; level=0x8 (A) or
+#            level=0x18 (B); age_ms=251..400, then partner_support=stall_freeze; ...; reason=fresh (critic #4: the
+#            HOLD|FIRE level held through the gap). A reason=strip end means the gap outlived stall_ms (400) and
+#            the old strip applied: the run did not test the freeze (record it, re-run).
+#  throw:    exactly ONE partner_support=armed; ...; reason=throw_release on the guest per phase, AFTER that phase's
+#            reason=fresh line: no early release during the stall and no second throw after it (two throw_release
+#            lines in a phase, or one before its fresh line, fail the run). Frames stall-*-hold show body 1 still
+#            aiming (A) / holding the grenade back (B) right after the stall; stall-*-throw-* show the one throw.
+#  stock:    every partner_support=stock_check line has changed=0; the guest's counts=12,16383,12,8,12,12,8,8 after
+#            each phase (the requires below). NO partner_support=stock_gap, NO stock_index, NO
+#            reason=stock_leak_mission_latched, NO partner_weapon=fire_reload_off, NO reason=rec240_stale / rec240_foreign.
+#  identity: partner_support=slot_hold lines (the unknown slot/equip debounce) are informational; a reason=held
+#            line inside a phase names the frames it kept (packets=, held_ms= at its end).
+#  trip:     no S_IS_ONLINE, session or FOB line; Closed, BaselineRestored and RealSavesUnchanged in scenario.json.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug infinite_ammo 0
+guest debug infinite_ammo 0
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+# Keep the viewer low and out of the partner's silhouette.
+placebehind guest host 7 2
+wait 2000
+stance guest prone
+both capture start
+# Entry: the link, the caps exchange and the native partner on both copies.
+wait 8000
+both capture native-on
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+# --- Equip grenade 354 (body 1 follows the host's slot 3 on the guest's screen) ---------------------------
+host debug slot support 0
+wait 1500
+guest burst grenade-select 3 200
+# --- A: the stall inside the aim (HOLD level), then FIRE --------------------------------------------------
+host hold rmb 1500 nowait
+wait 300
+stall host 320
+# Extend the aim past the stall (a held key only gets a later release: no new press).
+host hold rmb 1500 nowait
+guest capture stall-a-hold
+wait 400
+host hold rmb+lmb 150 nowait
+guest burst stall-a-throw 8 150
+host release
+wait 3000
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+waitlog host 'partner_net=input_stall; reason=end; ms=320;' 10
+waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=start;' 10
+waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=fresh;' 10
+waitlog guest 'partner_support=armed; slot=3; equip=354; type=12; reason=throw_release' 10
+# --- B: the stall inside the FIRE hold (the grenade held back), then the release --------------------------
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 1500 nowait
+wait 300
+stall host 320
+host hold rmb+lmb 1500 nowait
+guest capture stall-b-hold
+wait 400
+host release
+guest burst stall-b-throw 8 150
+wait 3000
+both capture end
+host run support
+host require support;ids=354,349,395,411,366,370,378,388;counts=[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+;active=
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=start; level=0x18;' 10

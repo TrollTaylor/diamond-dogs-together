@@ -459,10 +459,17 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   if(MGS_LOCAL_ACTION_EVENTS)
     target_compile_definitions(mgs_coop_lab PRIVATE MGS_LOCAL_ACTION_EVENTS=1)
   endif()
+  # The worker-only input stall (partner_net::StallInput): every other build refuses it.
+  if(MGS_BACKGROUND_WORKER)
+    target_compile_definitions(mgs_coop_lab PRIVATE MGS_BACKGROUND_WORKER=1)
+  endif()
   # Link v2 over real 127.0.0.1 sockets: handshake, data, flood, impairment heap.
   add_executable(link_udp_tests tests/link_udp_tests.cpp)
   target_link_libraries(link_udp_tests PRIVATE mgs_coop_lab ws2_32)
   target_compile_options(link_udp_tests PRIVATE /W4 /WX)
+  if(MGS_BACKGROUND_WORKER)
+    target_compile_definitions(link_udp_tests PRIVATE MGS_BACKGROUND_WORKER=1)
+  endif()
   add_test(NAME link_udp_tests COMMAND link_udp_tests)
   # Automatic save handoff glue (join-fix phase 2): file actions against fake
   # save trees in a temporary folder under the build directory.

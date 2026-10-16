@@ -478,6 +478,134 @@ template<class Check> void Fixtures(Check& check) {
   p.Step(Sample(F,0,seq++,F),t);t+=16;p.Step(Sample(F,0,seq++),t);
   check(p.out.verdict==sp::Frame::refused && !(p.View(true).held&F),"buffer: still waiting, a later consumer gets no FIRE level either");}
 }
+// --- Unknown remote slot/equip debounce (run 0c9269ce; docs/anim-round2-throws.md
+// "Unknown-slot glitch"): StepIdentity, partner_input::HoldIdentity on frames and
+// the receive -> Compose -> StepFrame -> NativeView pipeline of a held throw.
+pi::Sample Glitch(pi::Sample s) noexcept {
+ // The host's gun record read failed for one tick: no v5 gun group, no equip; its slot row still read 3.
+ s.packet.xflags=static_cast<std::uint8_t>(s.packet.xflags&~pi::XFlag::Equip);s.packet.gun_equip=0;
+ s.packet.gun_flags=s.packet.gun_mode=s.packet.reload_seq=s.packet.switch_seq=0;
+ s.packet.aim_pitch_cdeg=s.packet.aim_yaw_cdeg=0;   // v6: no gun direction without the group (Fill6)
+ return s;
+}
+template<class Check> void IdentityFixtures(Check& check) {
+ using sp::IdHold;
+ constexpr std::uint32_t H=sp::kPadHold,F=sp::kPadFire,HF=sp::kLevelBits;
+ const sp::Identity full{true,3,true,354};
+ const sp::Identity glitch{false,3,false,0};
+ const sp::Identity none{};
+ {sp::IdentityTrack t{};
+  check(sp::StepIdentity(t,full,354,1000)==IdHold::pass && t.have && t.equip==354 && t.known_ms==1000,
+        "identity: a complete slot-3 frame of the support equip is recorded");
+  check(sp::StepIdentity(t,glitch,354,1016)==IdHold::held && t.holding && t.held==1 && t.since_ms==1016,"identity: one unknown frame mid-hold is held");
+  check(sp::StepIdentity(t,none,354,1032)==IdHold::held && t.held==2,"identity: slot and equip both unknown: held");
+  check(sp::StepIdentity(t,full,354,1048)==IdHold::resumed && !t.holding && t.known_ms==1048,"identity: the next complete frame resumes");
+  check(sp::StepIdentity(t,full,354,1064)==IdHold::pass,"identity: then passes");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,glitch,354,1000+sp::kIdentityHoldMs)==IdHold::held,"identity: held at exactly kIdentityHoldMs after the last complete frame");
+  check(sp::StepIdentity(t,glitch,354,1001+sp::kIdentityHoldMs)==IdHold::expired && !t.have && !t.holding,"identity: a longer unknown expires (it applies)");
+  check(sp::StepIdentity(t,glitch,354,1300)==IdHold::pass,"identity: and keeps applying until a complete frame");
+  check(sp::StepIdentity(t,full,354,1316)==IdHold::pass && t.have,"identity: a complete frame starts over");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,glitch,354,999)==IdHold::expired,"identity: a clock that went backwards never holds");}
+ // A real change applies at once.
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,sp::Identity{true,0,true,46},354,1016)==IdHold::pass && !t.have,"identity: a complete frame of another slot is a real change");
+  check(sp::StepIdentity(t,glitch,354,1032)==IdHold::pass,"identity: an unknown after a real change is never held");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);sp::StepIdentity(t,glitch,354,1016);
+  check(sp::StepIdentity(t,sp::Identity{true,0,true,46},354,1032)==IdHold::changed && !t.have && !t.holding,"identity: a held run ends with a real change");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);sp::StepIdentity(t,glitch,354,1016);
+  check(sp::StepIdentity(t,sp::Identity{true,3,true,349},354,1032)==IdHold::changed,"identity: a complete frame of another equip ends a held run");}
+ {sp::IdentityTrack t{};sp::StepIdentity(t,full,354,1000);
+  check(sp::StepIdentity(t,sp::Identity{true,1,false,0},354,1016)==IdHold::changed && !t.have,"identity: a known other slot with the equip unknown is a real change");
+  sp::StepIdentity(t,full,354,1032);
+  check(sp::StepIdentity(t,sp::Identity{false,0xFF,true,349},354,1048)==IdHold::changed,"identity: a known other equip with the slot unknown is a real change");
+  sp::StepIdentity(t,full,354,1064);
+  check(sp::StepIdentity(t,sp::Identity{false,0xFF,true,354},354,1080)==IdHold::held,"identity: the same equip with the slot unknown is held");
+  check(sp::StepIdentity(t,sp::Identity{true,3,false,0},354,1096)==IdHold::held,"identity: slot 3 with the equip unknown is held");
+  check(sp::StepIdentity(t,sp::Identity{true,0xFF,true,354},354,1112)==IdHold::held,"identity: a v5 frame with the slot unknown is held");}
+ // Only during a support episode (the driver's verdict, published every tick).
+ {sp::IdentityTrack t{};
+  check(sp::StepIdentity(t,full,0,1000)==IdHold::pass && !t.have,"identity: no support verdict: nothing recorded");
+  check(sp::StepIdentity(t,glitch,0,1016)==IdHold::pass,"identity: no support verdict: nothing held (gun play unchanged)");
+  sp::StepIdentity(t,full,354,1032);
+  check(sp::StepIdentity(t,glitch,349,1048)==IdHold::pass && !t.have,"identity: a verdict of another equip never holds this one");
+  sp::StepIdentity(t,full,354,1064);sp::StepIdentity(t,glitch,354,1080);
+  check(sp::StepIdentity(t,glitch,0,1096)==IdHold::off && !t.holding && !t.have,"identity: the verdict ending during a held run ends it");
+  check(sp::StepIdentity(t,sp::Identity{true,3,true,0x800},0x800,1112)==IdHold::pass && !t.have,"identity: equip range");}
+ check(std::strcmp(sp::IdHoldName(IdHold::held),"held")==0 && std::strcmp(sp::IdHoldName(IdHold::resumed),"resumed")==0 &&
+       std::strcmp(sp::IdHoldName(IdHold::changed),"changed")==0 && std::strcmp(sp::IdHoldName(IdHold::expired),"expired")==0 &&
+       std::strcmp(sp::IdHoldName(IdHold::off),"off")==0 && std::strcmp(sp::IdHoldName(IdHold::pass),"pass")==0,"identity: names");
+ check(sp::IdHoldEnds(IdHold::resumed) && sp::IdHoldEnds(IdHold::changed) && sp::IdHoldEnds(IdHold::expired) && sp::IdHoldEnds(IdHold::off) &&
+       !sp::IdHoldEnds(IdHold::pass) && !sp::IdHoldEnds(IdHold::held),"identity: which verdicts end a held run");
+ // partner_input::HoldIdentity on frames (the receive path, before the frame is stored).
+ {pi::IdentityHold h{};
+  pi::InputPacket good=Sample(HF,0,1).packet;good.version=6;
+  good.gun_flags=pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming|pi::GunFlag::AimDir;good.gun_mode=28;good.reload_seq=4;good.switch_seq=7;
+  good.aim_pitch_cdeg=100;good.aim_yaw_cdeg=200;
+  check(pi::ValidPacket(good),"frame: the complete v6 frame is valid");
+  {const sp::Identity id=pi::PacketIdentity(good);
+   check(id.v5 && id.slot==3 && id.equip_valid && id.equip==354,"frame: PacketIdentity of a complete frame");}
+  pi::InputPacket p=good;
+  check(pi::HoldIdentity(h,p,354,1000)==IdHold::pass && std::memcmp(&p,&good,sizeof(p))==0,"frame: a complete frame passes unchanged");
+  pi::Sample gs{};gs.packet=good;
+  const pi::InputPacket g=Glitch(gs).packet;
+  {const sp::Identity id=pi::PacketIdentity(g);
+   check(pi::ValidPacket(g) && !id.v5 && !id.equip_valid && id.slot==3,"frame: the glitch frame is valid, without gun group and equip");}
+  p=g;
+  check(pi::HoldIdentity(h,p,354,1016)==IdHold::held,"frame: held");
+  check(p.inv_slot==3 && (p.xflags&pi::XFlag::Equip) && p.gun_equip==354 &&
+        p.gun_flags==(pi::GunFlag::Valid|pi::GunFlag::InHand|pi::GunFlag::Aiming) && p.gun_mode==28 && p.reload_seq==4 && p.switch_seq==7 &&
+        p.aim_pitch_cdeg==0 && p.aim_yaw_cdeg==0 && pi::ValidPacket(p),
+        "frame: slot 3, the equip and the last gun group (counters kept, AimDir dropped), still a valid frame");
+  check(p.held==g.held && p.lx==g.lx && p.ly==g.ly && p.edge_seq==g.edge_seq && p.cam_cdeg==g.cam_cdeg,"frame: its input is untouched");
+  p=good;p.inv_slot=pi::kInvSlotUnknown;
+  check(pi::HoldIdentity(h,p,354,1032)==IdHold::held && p.inv_slot==3 && p.gun_flags==good.gun_flags && p.aim_pitch_cdeg==100 && pi::ValidPacket(p),
+        "frame: an unknown slot alone gets slot 3 and keeps its own gun group");
+  p=g;p.version=4;
+  const pi::InputPacket v4=p;
+  check(pi::HoldIdentity(h,p,354,1048)==IdHold::off && std::memcmp(&p,&v4,sizeof(p))==0 && !h.track.have,"frame: a v4 frame is never held and ends a run");
+  p=good;pi::HoldIdentity(h,p,354,1064);
+  p=g;p.inv_slot=0;p.gun_flags=pi::GunFlag::Valid;p.xflags=static_cast<std::uint8_t>(p.xflags|pi::XFlag::Equip);p.gun_equip=46;
+  const pi::InputPacket gun=p;
+  check(pi::HoldIdentity(h,p,354,1080)==IdHold::pass && std::memcmp(&p,&gun,sizeof(p))==0 && !h.track.have,
+        "frame: a weapon switch (slot 0, equip 46) is never held");}
+ // The pipeline, the 0c9269ce throw: aim, FIRE held, one unknown frame mid-hold, release.
+ // Without the hold FIRE drops for that frame and comes back (the early release
+ // and a second throw); with it the level stays and the release is the only one.
+ for(unsigned hold=0;hold<2;++hold){
+  Pipe p(400);pi::IdentityHold idh{};std::uint64_t t=1000;std::uint32_t seq=1;
+  const auto step=[&](pi::Sample s){if(hold)(void)pi::HoldIdentity(idh,s.packet,354,t);return p.Step(s,t);};
+  unsigned rises=0,falls=0;bool was=false;
+  const auto level=[&](const pi::Injection& j){const bool on=(j.held&F)!=0;rises+=on && !was ? 1u : 0u;falls+=!on && was ? 1u : 0u;was=on;};
+  auto j=step(Sample(H,0,seq++));level(j);check(p.out.verdict==sp::Frame::admitted,"pipeline: aim admitted");
+  t+=16;j=step(Sample(HF,0,seq++,F));level(j);check((j.held&HF)==HF && (j.edge_press&F),"pipeline: FIRE press admitted");
+  t+=16;j=step(Sample(HF,0,seq++));level(j);
+  t+=16;j=step(Glitch(Sample(HF,0,seq++)));level(j);
+  if(hold)check(p.out.verdict==sp::Frame::admitted && (j.held&HF)==HF && !(j.edge_release&HF) && !(j.edge_press&HF),
+                "pipeline: the held unknown frame keeps the admitted HOLD|FIRE level (no early release, no edge)");
+  else check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"pipeline: without the hold the unknown frame strips HOLD|FIRE (the 0c9269ce early release)");
+  for(unsigned k=0;k<3;++k){t+=16;j=step(Sample(HF,0,seq++));level(j);}
+  t+=16;j=step(Sample(H,0,seq++,0,F));level(j);
+  if(hold)check(rises==1 && falls==1 && (j.edge_release&F),"pipeline: one FIRE level run, released once by the remote (one throw)");
+  else check(rises==2 && falls==2,"pipeline: without the hold FIRE drops and comes back (two releases)");
+ }
+ // A longer unknown (beyond kIdentityHoldMs) or a real slot change still applies.
+ {Pipe p(400);pi::IdentityHold idh{};std::uint64_t t=1000;std::uint32_t seq=1;
+  const auto step=[&](pi::Sample s){(void)pi::HoldIdentity(idh,s.packet,354,t);return p.Step(s,t);};
+  step(Sample(H,0,seq++));t+=16;step(Sample(HF,0,seq++,F));
+  bool kept=true;pi::Injection j{};
+  for(std::uint64_t d=16;d+16<=sp::kIdentityHoldMs;d+=16){t+=16;j=step(Glitch(Sample(HF,0,seq++)));kept=kept && (j.held&HF)==HF;}
+  check(kept,"pipeline: an unknown run within kIdentityHoldMs keeps the level");
+  t+=64;j=step(Glitch(Sample(HF,0,seq++)));
+  check(p.out.verdict==sp::Frame::refused && !(j.held&HF),"pipeline: beyond kIdentityHoldMs the unknown applies (strip)");}
+ {Pipe p(400);pi::IdentityHold idh{};std::uint64_t t=1000;std::uint32_t seq=1;
+  const auto step=[&](pi::Sample s){(void)pi::HoldIdentity(idh,s.packet,354,t);return p.Step(s,t);};
+  step(Sample(H,0,seq++));t+=16;step(Sample(HF,0,seq++,F));
+  t+=16;auto s=Sample(H,0,seq++);s.packet.inv_slot=0;s.packet.gun_equip=46;const auto j=step(s);
+  check(p.out.verdict!=sp::Frame::admitted && p.out.verdict!=sp::Frame::frozen && j.slot_valid && j.inv_slot==0 && j.equip==46 && !(j.held&HF),
+        "pipeline: a real slot change applies at once (support refused)");}
+}
 }
 int main(){
  unsigned checks=0,fail=0;
@@ -530,5 +658,6 @@ int main(){
  check(slots::AimGate(aim)==slots::AimRefusal::none,"support toggle aim");aim.slot=6;check(slots::AimGate(aim)==slots::AimRefusal::slot,"arms no aim");
  Rec240Fixtures(check);
  ws2::Fixtures(check);
+ ws2::IdentityFixtures(check);
  std::printf("%u support policy checks, %u failures\n",checks,fail);return fail?1:0;
 }

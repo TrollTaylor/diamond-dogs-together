@@ -243,6 +243,59 @@ constexpr bool ContextHold(const StallHoldIn& s) noexcept {
   s.support_equip>0 && s.support_equip<0x800 && s.equip==s.support_equip;
 }
 
+// --- Unknown remote slot/equip debounce (run 0c9269ce; docs/anim-round2-throws.md
+// "Unknown-slot glitch"). One live host frame mid-hold carried neither the v5 gun
+// group nor the equip (the sender's own gun record read failed for one tick), so
+// every consumer saw remote_slot=255 / remote_equip unknown: the driver's gate went
+// unsupported (strip 0x58) for about 110 ms and the held throw was lost. The
+// receiver (partner_net, per accepted input frame) now keeps the last complete
+// support identity through such frames: while the driver's last support verdict
+// names equip E (support_equip, published every driver tick) and the last complete
+// frame (v5 gun group, slot 3, equip E) arrived at most kIdentityHoldMs ago, a frame
+// whose slot and/or equip is UNKNOWN gets slot 3, equip E and that frame's gun group
+// (partner_input::HoldIdentity), the way the stall freeze keeps the input level.
+// A known part naming something else (another slot, another equip) is a real change
+// and applies at once; an unknown run longer than kIdentityHoldMs applies too.
+inline constexpr std::uint64_t kIdentityHoldMs=250;
+// One frame's identity: v5 (version >= 5 with GunFlag::Valid), its slot (0xFF
+// unknown) and its equip (XFlag::Equip, 1..65535).
+struct Identity { bool v5=false; std::uint8_t slot=0xFF; bool equip_valid=false; std::uint16_t equip=0; };
+constexpr bool SlotKnown(const Identity& id) noexcept { return id.v5 && id.slot<=15; }
+constexpr bool EquipKnown(const Identity& id) noexcept { return id.equip_valid && id.equip>0; }
+struct IdentityTrack {
+ bool have=false;std::uint16_t equip=0;std::uint64_t known_ms=0;   // the last complete support identity (slot 3, equip)
+ bool holding=false;std::uint64_t since_ms=0;std::uint32_t held=0;  // the current run of held frames
+};
+// pass: nothing held (no episode, or a complete frame); held: substitute the
+// identity; resumed: the first complete frame of the same identity after a held
+// run; changed: a real change (a complete or partly known frame names another
+// slot/equip); expired: the unknown run outlived kIdentityHoldMs (it applies);
+// off: the support verdict ended during a held run.
+enum class IdHold : std::uint8_t { pass, held, resumed, changed, expired, off };
+constexpr const char* IdHoldName(IdHold v) noexcept {
+ return v==IdHold::held ? "held" : v==IdHold::resumed ? "resumed" : v==IdHold::changed ? "changed" : v==IdHold::expired ? "expired"
+  : v==IdHold::off ? "off" : "pass";
+}
+constexpr bool IdHoldEnds(IdHold v) noexcept { return v==IdHold::resumed || v==IdHold::changed || v==IdHold::expired || v==IdHold::off; }
+constexpr IdHold StepIdentity(IdentityTrack& t,const Identity& id,std::uint16_t support_equip,std::uint64_t now_ms) noexcept {
+ const bool support=support_equip>0 && support_equip<0x800;
+ const bool slot_known=SlotKnown(id),equip_known=EquipKnown(id);
+ const bool was=t.holding;
+ if(slot_known && equip_known){
+  const bool match=support && id.slot==3 && id.equip==support_equip;
+  const bool same=t.have && match && id.equip==t.equip;
+  if(match){t.have=true;t.equip=id.equip;t.known_ms=now_ms;} else t.have=false;
+  t.holding=false;
+  return !was ? IdHold::pass : same ? IdHold::resumed : IdHold::changed;
+ }
+ if(!t.have || !support || support_equip!=t.equip){t.have=false;t.holding=false;return was ? IdHold::off : IdHold::pass;}
+ if((slot_known && id.slot!=3) || (equip_known && id.equip!=t.equip)){t.have=false;t.holding=false;return IdHold::changed;}
+ if(now_ms<t.known_ms || now_ms-t.known_ms>kIdentityHoldMs){t.have=false;t.holding=false;return IdHold::expired;}
+ if(!t.holding){t.holding=true;t.since_ms=now_ms;t.held=0;}
+ ++t.held;
+ return IdHold::held;
+}
+
 // --- Handle call hardening (WS1; docs/anim-round2-throws.md "Handle call resolved").
 // X = [prim+0x60] (stored by the gun prim base constructor at 0x101E1E7) is the
 // process-wide equipment-handle manager [[gm]+0x98]+0x1E8 (= inventory+0x58 =
