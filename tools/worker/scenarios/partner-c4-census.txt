@@ -1,0 +1,214 @@
+# WS4 step 0: the READ-ONLY C4 / bionic-arm census (docs/anim-round2-throws.md "WS4 step 0"). Coordinator only, hidden
+# worker, copied lab saves; no visible launch. Nothing in this run changes behaviour: the key partner_placed_census=1
+# only adds read-only log lines (native reads through the qualified ReadGun chain and the vtable-checked placed
+# service chain, the input hook's read-only pad sample, and the Lua event=obs_att lines through world CFG r[14]).
+# Static proof first: python tools/generate_partner_contract.py --check (618 code sites, 129 vtable slots).
+# Run (after the verify lock, the ReleaseGun/CTest checks and no other worker):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-c4-census.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# The HOST acts (its own instance 0 is the census "viewer" k=0 in the HOST log); the prone guest films the host's
+# partner (body 1 on the guest, k=1 and the pad sample in the GUEST log). godmode on both; infinite ammo OFF.
+# Stimulus (existing levers only):
+#  - "debug support" lists vars.supportWeapons[0..7]; the lab seed is 354,349,395,411,366,370,378,388 (run aaa2a0e0):
+#    entry 2 = 395 is the seed's C4 (391..395), selected with "debug slot support 2" (Player.SetCurrentSlot).
+#  - "spawn_enemy here" (labsetting debug_soldier_warp=1) puts a living guard 5 m in front of the host.
+#  - C4 binding (runs 3ef82e27, 56e111b3, f572f8d8, 0acd0731, 0920df7f, edb2ecfc, 46e9c686, d88c140c): mode 43/44
+#    op 0 (scratch decompilations of 0x107E480 / 0x107D300) go to 46 (place) on rec+0x3CC bit 18 and 44 to 47
+#    (detonate) on bit 19 while the hold bit rec+0x3C0 bit 18 (the aim) stays set; dropping the aim goes 45 -> 0.
+#     place:    aim (RMB), then fire (LMB). On a valid spot (census surface=5) it places at once: 43 -> 46 (state
+#               1, 2, 4/5), live0 0 -> 1. On an invalid spot (surface=4, e.g. the start spot) it only readies:
+#               43 -> 44 -> 45 -> 0. Which spot is valid varied between runs (run ea04a338: neither P1 nor P2),
+#               so the host tries four spots P1..P4 (a valid one places; several may).
+#               LMB alone (tapped, held, looking down, crouched) never leaves mode 0.
+#     detonate: aim (RMB) with a live charge enters 43 -> 44, then the action key (E) while aiming: 44 -> 47, the
+#               guard's Dead 88 ms after E, live0 1 -> 0 (run d88c140c; also aim + fire + E in run edb2ecfc).
+#               Without a live charge aim + E still runs 43 -> 44 -> 47 (the switch-on) with no effect (ea04a338).
+#               With a live charge RELOAD (r), E alone and LMB alone did nothing (run d88c140c D1..D3); they stay
+#               in the run as negative controls.
+#    Every attempt is followed by a "support" marker in the host log.
+#  - The guard is spawned after the place: the host backs off (s, turning toward the camera), then taps w to face
+#    the charges again, so "spawn_enemy here" (5 m along the host's own yaw) lands near them. Spawning first
+#    (run 56e111b3) alerted him and put the host in reflex mode during the place.
+#  - The arm: "debug slot hand 0" selects the seed's bionic arm (equip read back from rec+0x24C in the census line).
+#    MISSING LEVER: no debug command equips a specific arm (debug weapon only reaches hip/back/secondary residents),
+#    so the stun-arm (515) and rocket-arm (517/518) sections only test the arm the lab seed carries; the k=0 gun line
+#    names it (arm=1; equip=...). A seed without 515 leaves the stun questions open (report the equip).
+# Evidence (lines are capped per mission; "status" every 5 s):
+#  both:  partner_code_gate=ok; partner_placed_census=on; mission=30010; ...; read_only=1; writes=0; calls=0.
+#  Q2 (host and guest): partner_placed_census=service; reason=ok; count=N; per=P; first=F; owner0=I; owner1=J; ...;
+#         owners=<id>:<live>[equips],... owner1=-1 means owner id 1 is NOT in the placed owner table (iface+0xB0) in the
+#         offline two-instance setup (a later owner-1 mirror would be dropped: 0xFC54F0/0xFCAFA0 return 0xFF); after the
+#         host places, the host's live0 rises by 1 with equip 395 listed, and falls after the detonation.
+#  Q1 (host): partner_placed_census=gun; k=0; equip=395; type=13; cls=<2|3>; mode=<43..47>; ...; c4=1 lines while
+#         selecting (43..45), placing (46, state=3..5) and detonating (47); cls is the stock guard's question (it forces
+#         classes 2/3 only). The arm section: k=0; equip=<515..518>; type=14; cls=..; mode=<52..56>; arm=1.
+#  Q3 (host): the mode-46 line pair shows p350 bit 3 (latched=1) and p3e8=<p3d8> right after the place on k=0, and
+#         latched=0 / p3e8=0xffff after the local op 2; same_prim=0 means each instance has its own gun plugin (the
+#         latch is then per instance, not shared); same_prim=1 means one shared plugin. k=1 latched stays 0.
+#  Q4 (host): world_lua=event=obs_att;m=Dead|Neutralize|Unconscious|Dying;ent=..;id=..;a1=..;c1=local|other|none;a2=..
+#         for the C4 kill and the arm hit: which argument carries the attacker (a1 for Dead/Neutralize; Unconscious and
+#         Dying are only observable here) and whether it is the local player (c=local) or null/none.
+#  Q5 (guest): partner_placed_census=pad; windows=..; viewer_mag=..; viewer_mask=..; body_mag=..; body_mask=..; ...;
+#         differs=1 while the host walks and the prone guest is still: body 1's job reads its own injected PP+0x10 /
+#         +0x2C (the window shadows the stun op-0 fields); differs=0 with both still. Body 1 stays on a gun on the
+#         guest (slot 6 is still Gate::unsupported), so mode stays outside 52..56 there; arm=1 lines need WS4 itself.
+#  never: a write/patch line from this key, partner_input=fault, a crash; scenario.json Closed, BaselineRestored,
+#         RealSavesUnchanged.
+# Observed (runs 3ef82e27 .. a93db206, 2026-10-16; a93db206 is this file):
+#  Q1 C4 395: type=13 cls=3 (w27c 0x10000c1/0x10000c5), modes 43/44/45, 46 (state 1, 2, 4/5) and 47. Arm: the seed
+#     carries 516 (Hand of Jehuty), type=14 cls=6 (w27c 0x1000181), modes 1/2/3 (aim) and 55 (use); never 52..54.
+#  Q2 count=1 per=32 (first=200 in 30010): one owner row, id 65535 until the host's first place, then owner 0 with
+#     live0 1, 2 [395/395], back to 0 at the detonation. owner1=-1 throughout on both machines.
+#  Q3 p350=0x10 (bit 3 clear), p3d8=p3e8=0xffff, latched=0 on every 43..47 line (ground places carry no target);
+#     same_prim=0 on every line.
+#  Q4 host C4 kill: Damage a1=199 a2=0(local) a3=4; Dead a1=0(local) a2=3; Neutralize a1=0(local) a2=0 a3=8. The
+#     guest's synced copy: a1=65535(none). No Unconscious/Dying; Jehuty use gave no event.
+#  Q5 guest: differs=1 while only the host walks (body_mag 1.000, viewer 0.000) or only the guest crawls (viewer
+#     1.000, body 0.000), differs=0 with both still; masks 0x0 throughout.
+#  Side effect: the host's C4 also hits body 1 (downed_damage id=1 damage=5500, friendly_hit=queued), and the
+#     guest applies it to itself (friendly_hit=owner applied=1; the second charge downed the guest).
+labsetting partner_placed_census=1
+labsetting debug_soldier_warp=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug infinite_ammo 0
+guest debug infinite_ammo 0
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+# Prone watcher 7 m back and 2 m aside so its own body does not hide the partner (run 204b5d54).
+placebehind guest host 7 2
+wait 2000
+stance guest prone
+both capture start
+wait 6000
+host run support
+host expect ^support;ids=354,349,395,
+guest run support
+both capture census-idle
+# --- Q5 baseline: the host walks while the prone guest stays still (guest pad lines: differs=1) ---------------------
+host hold w 1200
+guest burst walk 4 250
+wait 1500
+# --- C4 395: select, place at P1..P4 (aim + fire), back off, a guard near the charges, detonation attempts ------
+host debug slot support 2
+wait 1500
+guest burst c4-select 3 250
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p1 6 200
+host release
+wait 1500
+host run support
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p2 6 200
+host release
+wait 1500
+host run support
+host hold d 1000
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p3 6 200
+host release
+wait 1500
+host run support
+host hold a 1000
+host hold a 1000
+wait 500
+host hold w 250
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+host burst c4-place-p4 6 200
+host release
+wait 1500
+host run support
+both capture c4-placed
+host hold s 1500
+host hold s 1500
+wait 500
+host hold w 250
+wait 1000
+host run spawn_enemy here
+host expect ^guard_here;
+wait 2500
+host run enemy_list 40
+both capture c4-armed
+# D1: RELOAD tapped.
+host press r
+host burst c4-det-r 4 250
+wait 1000
+host run support
+# D2: the action key tapped, no aim.
+host press e
+host burst c4-det-e 4 250
+wait 1000
+host run support
+# D3: fire tapped, no aim.
+host hold lmb 150 nowait
+host burst c4-det-lmb 4 250
+host release
+wait 1000
+host run support
+# D4: aim only, then the action key.
+host hold rmb 1500 nowait
+wait 500
+host press e
+host burst c4-det-aim-e 4 250
+host release
+wait 1000
+host run support
+wait 2000
+host run enemy_list 40
+both capture c4-after
+# --- The bionic arm (hand slot): hold (rocket arms: mode 54), then use (stun arm: mode 52) near a guard -----------
+host debug slot hand 0
+wait 1500
+host run spawn_enemy here
+host expect ^guard_here;
+wait 2500
+# No walk toward the guard: in runs f572f8d8..edb2ecfc he knocked the host down before the arm was used.
+guest burst arm-select 3 250
+host hold rmb 1500 nowait
+guest burst arm-hold 5 250
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+lmb 150 nowait
+host burst arm-use 5 200
+host release
+wait 1000
+host hold lmb 150 nowait
+host burst arm-use-hip 4 200
+host release
+wait 3000
+host run enemy_list 40
+both capture arm-after
+# --- Back to the gun; the reverse pad case: the guest crawls while the host stands still -------------------------
+host debug slot back 0
+wait 2000
+guest hold d 1200
+host burst guest-crawl 3 300
+wait 2000
+both capture end

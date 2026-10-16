@@ -143,4 +143,89 @@ check(R.fast.tracks[4000] ~= nil, 'a new ride after the final pose starts a new 
 W.paired = false
 W.tick()
 check(next(R.fast.tracks) == nil, 'unpairing drops every fast track')
+-- WS3 A1 (docs/vehicle-ws3.md): RIDE_TILT (op 45) carries the driver's record
+-- angles under the same sender tick; the viewer interpolates them and writes
+-- them through the native receipt right before each SetPosition.
+check(W.OP.RIDE_TILT == 45 and W.handlers[45] ~= nil, 'RIDE_TILT is op 45 with its own handler')
+do
+    local track = {samples = {}}
+    check(not R.tiltPush(track, 5000, 10, 20), 'a tilt before any fast sample is dropped')
+    check(R.trackPush(track, 10000, 5000, 0, 0, 0, 0) and R.trackPush(track, 10050, 5050, 1000, 0, 0, 0), 'fast samples')
+    check(R.tiltPush(track, 5000, 0, 100) and R.tiltPush(track, 5050, 100, -100), 'tilts under the fast ticks')
+    check(not R.tiltPush(track, 5040, 1, 1) and not R.tiltPush(track, 5050, 1, 1), 'an older or repeated tilt tick is dropped')
+    check(not R.tiltPush(track, 5100, 1571, 0) and not R.tiltPush(track, 5100, 0, -1571) and not R.tiltPush(track, 5100, 0.5, 0),
+        'angles at or beyond pi/2, or fractional mrad, are dropped')
+    local a, b = R.tiltAt(track, 5025)
+    check(near(a, 50) and near(b, 0), 'the tilt interpolates at render time')
+    a, b = R.tiltAt(track, 5200)
+    check(a == 100 and b == -100, 'the newest tilt holds for a short while')
+    check(R.tiltAt(track, 5400) == nil, 'a stale tilt is not written (the copy keeps its own angles)')
+    a, b = R.tiltAt(track, 4000)
+    check(a == 0 and b == 100, 'before the first tilt: the first one')
+    check(R.tiltAt({samples = {}}, 1) == nil, 'no tilt samples: nil')
+    local w = {samples = {}}
+    check(R.trackPush(w, 100, 4294967290, 0, 0, 0, 0) and R.tiltPush(w, 4294967290, 5, 5) and R.tiltPush(w, 50, 10, 10) and
+        w.tilts[2].t - w.tilts[1].t == 56, 'tilt ticks unwrap with the fast track clock')
+end
+do
+    local receipts, tiltAnswer, placedAtWrite = {}, nil, nil
+    W.receipt = function(source)
+        receipts[#receipts + 1] = source
+        if source:find(' -- read ', 1, true) then
+            if tiltAnswer then return tiltAnswer[1], tiltAnswer[2] end
+            return nil
+        end
+        if source:find(' -- write ', 1, true) then placedAtWrite = #placed; return true end
+    end
+    W.paired = true
+    fakeRiding = false
+    R.fast.send.id = nil
+    clock = clock + 5000
+    local t0 = 80000
+    W.handlers[44]({t0, 3, 4000, 0, 0, 0, 0})
+    W.handlers[45]({t0, 4000, 0, 0})
+    for i = 1, 4 do
+        clock = clock + 50
+        W.handlers[44]({t0 + i * 50, 3, 4000, i * 1000, 0, 0, 0})
+        W.handlers[45]({t0 + i * 50, 4000, i * 100, -i * 50})
+    end
+    W.handlers[45]({t0 + 60, 1234, 5, 5})
+    W.handlers[45]({t0 + 60, 4000, 5})
+    check(#R.fast.tracks[4000].tilts == 5, 'tilts ride on the live fast track; a short or foreign tilt is dropped')
+    local before = #placed
+    W.tick()
+    check(#placed == before + 1 and near(placed[#placed].x, 2) and placedAtWrite == before and
+        receipts[#receipts] == "return 'MGS_COOP_RIDE_TILT_V1' -- write 4000 200 -100",
+        'the interpolated tilt is written right before the SetPosition of the same rendered tick')
+    local writes = #receipts
+    W.tick()
+    check(#receipts == writes and #placed == before + 1, 'an unchanged pose and tilt neither write nor place again')
+    -- The driver: RIDE_TILT only when the native read answers (enabled and the peer asked for it).
+    clock = clock + 3000
+    W.tick()
+    fakeRiding = true
+    tiltAnswer = {120, -30}
+    sent = {}
+    W.tick()
+    check(#sent == 2 and sent[1][1] == 44 and sent[2][1] == 45 and sent[2][2] == sent[1][2] and sent[2][3] == 4000 and
+        sent[2][4] == 120 and sent[2][5] == -30, 'the driver adds RIDE_TILT under the same sender tick')
+    tiltAnswer = nil
+    clock = clock + 60
+    W.tick()
+    check(#sent == 3 and sent[3][1] == 44, 'no native answer: RIDE_FAST alone')
+    tiltAnswer = {1571, 0}
+    clock = clock + 60
+    W.tick()
+    check(#sent == 4 and sent[4][1] == 44, 'an out-of-range native answer is not sent')
+    -- The key off ('off' answer): Lua stops asking for the rest of the process.
+    tiltAnswer = {nil, 'off'}
+    clock = clock + 60
+    W.tick()
+    local asked = #receipts
+    clock = clock + 60
+    W.tick()
+    check(R.tiltOff == true and #receipts == asked and #sent == 6 and sent[6][1] == 44, 'an off answer ends the reads; RIDE_FAST continues')
+    fakeRiding = false
+    W.receipt = nil
+end
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

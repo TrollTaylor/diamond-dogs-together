@@ -42,7 +42,15 @@ the end), a Windows Firewall rule (administrator prompt). Nothing else
 contacts the network, and nothing changes firewall or router settings
 without a "y". The online flow has none of these steps.
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3] [-Partner native|clips] [-SteamDispatch both|fnptr|callback|poll] [-Hud compact|full|off]
+Automatic save handoff (docs/two-pc-play.md "Save handoff"): when the
+joiner's co-op save would start somewhere other than the host's, the game
+copies the host's save at the title screen and quits; this window (or the
+hidden helper) then puts it into mgs-coop\coop-saves (the old copy goes to
+mgs-coop\coop-saves-replaced\<time>-before-handoff; Share-Save.bat [R] brings
+it back) and starts MGSV once more with the same code. -SaveHandoff off turns
+it off; -TravelLock off lets the joiner travel without the host.
+
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3] [-Partner native|clips] [-SteamDispatch both|fnptr|callback|poll] [-Hud compact|full|off] [-SaveHandoff scene|always|off] [-TravelLock on|off]
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 -Cleanup
 #>
 [CmdletBinding()]
@@ -76,10 +84,18 @@ param(
     # The in-game co-op status line (docs/two-pc-play.md "In game"): compact
     # (the default), full (more detail) or off.
     [ValidateSet('', 'compact', 'full', 'off')][string]$Hud = '',
+    # The automatic save handoff (docs/two-pc-play.md "Save handoff"): scene
+    # (the default: the joiner gets the host's save only when its own save
+    # cannot meet the host), always (whenever the saves differ) or off.
+    [ValidateSet('scene', 'always', 'off')][string]$SaveHandoff = 'scene',
+    # The joiner follows the host's travel (on, the default) or travels freely (off).
+    [ValidateSet('on', 'off')][string]$TravelLock = 'on',
     # Remove the files of an earlier session that did not end cleanly, then exit.
     [switch]$Cleanup,
     # Internal: the hidden watchdog started by this script (value: the session id).
     [string]$Watch,
+    # Internal (tests/friend_package_tests.ps1): never start Steam, even after a save handoff.
+    [switch]$TestNoLaunch,
     [switch]$NonInteractive,
     # Folder with package.json (default: the package folder).
     [string]$PackageDirectory
@@ -96,7 +112,8 @@ trap {
 }
 # The loader versions whose native side implements the play mode. The
 # integrator keeps this list matched to the packaged loader version.
-$script:SupportedLoaderVersions = @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6')
+$script:SupportedLoaderVersions = @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0')
+if ($TestNoLaunch) { $env:MGS_COOP_TEST_NO_LAUNCH = '1' }
 
 function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
     # Packaged layout: scripts\<name>. Repository layout: tools\friend\..\<path>.
@@ -132,19 +149,64 @@ $paths = Get-InstancePaths -GameDirectory $gameRoot
 if ($Watch) {
     # Cleans up when the game started from this folder exits, or when no game
     # started and the launcher window is gone. Never prints anything that matters.
+    # A guest's game that exits for an automatic save handoff is applied and
+    # started again here when the launcher window is gone (or does not act
+    # within 20 s); then this helper waits for the new game and cleans up only
+    # after it exits (docs/two-pc-play.md "Save handoff").
     $seen = $false
-    while ($true) {
+    $lastPid = 0
+    $lastStart = ''
+    $exitSeen = $null
+    $restartUntil = [DateTime]::MinValue
+    $restartWait = 180
+    $waitOverride = 0
+    if ($env:MGS_COOP_TEST_RESTART_WAIT_SEC -and [int]::TryParse($env:MGS_COOP_TEST_RESTART_WAIT_SEC, [ref]$waitOverride) -and $waitOverride -gt 0) { $restartWait = $waitOverride }
+    :watch while ($true) {
         $session = Read-CoopPlaySession -GameRoot $gameRoot
         if (!$session -or [string](Get-FriendProperty $session 'state' '') -ne 'active' -or [string](Get-FriendProperty $session 'session_id' '') -cne $Watch) { exit 0 }
+        $launcherAlive = Test-CoopProcessAlive -Id ([int](Get-FriendProperty $session 'launcher_pid' 0)) -StartUtc ([string](Get-FriendProperty $session 'launcher_start_utc' ''))
         $games = @(Get-GameProcessInDirectory -Directory $gameRoot)
-        if ($games.Count) { $seen = $true }
-        elseif ($seen) { break }
-        elseif (!(Test-CoopProcessAlive -Id ([int](Get-FriendProperty $session 'launcher_pid' 0)) -StartUtc ([string](Get-FriendProperty $session 'launcher_start_utc' '')))) {
+        if ($games.Count) {
+            $known = @($games | Where-Object { !$_.Unknown } | Select-Object -First 1)
+            if ($known.Count -and [int]$known[0].Id -ne $lastPid) {
+                $lastPid = [int]$known[0].Id
+                $lastStart = Get-CoopProcessStartUtc -Id $lastPid
+                try { $null = Set-CoopPlayGame -GameRoot $gameRoot -GamePid $lastPid -GameStartUtc $lastStart -SessionId $Watch } catch { }
+            }
+            $seen = $true
+            $exitSeen = $null
+            $restartUntil = [DateTime]::MinValue
+        } elseif ($seen) {
+            if ($null -eq $exitSeen) { $exitSeen = [DateTime]::UtcNow }
+            $h = $null
+            try { $h = Invoke-CoopHandoffAfterExit -GameRoot $gameRoot -ExitedPid $lastPid -ExitedStartUtc $lastStart -Owner watchdog -LauncherAlive:$launcherAlive -ExitSeenUtc $exitSeen }
+            catch { $h = [pscustomobject]@{ Action = 'failed'; Messages = @($_.Exception.Message) } }
+            if ($h.Action -eq 'deferred') { Start-Sleep -Seconds 2; continue watch }
+            if ($h.Action -eq 'relaunched' -or $h.Action -eq 'claimed_by_other' -or (Test-CoopHandoffPending -Session (Read-CoopPlaySession -GameRoot $gameRoot))) {
+                # A game started again for the host's save: wait for it (the cleanup guard holds meanwhile).
+                $seen = $false
+                $exitSeen = $null
+                $restartUntil = [DateTime]::UtcNow.AddSeconds($restartWait)
+                Start-Sleep -Seconds 2
+                continue watch
+            }
+            break watch
+        } elseif ($restartUntil -ne [DateTime]::MinValue) {
+            # Waiting for the game started again after a save handoff; the
+            # launcher window's own 5-minute limit wins while it runs.
+            $pendingSession = Read-CoopPlaySession -GameRoot $gameRoot
+            $claimed = ConvertTo-CoopUtcTime (Get-CoopSessionHandoff $pendingSession).claimed_utc
+            $consoleWaits = $launcherAlive -and $null -ne $claimed -and ([DateTime]::UtcNow - $claimed).TotalSeconds -lt 330
+            if ([DateTime]::UtcNow -ge $restartUntil -and !$consoleWaits) {
+                $null = Invoke-CoopPlayCleanup -GameRoot $gameRoot -Force
+                exit 0
+            }
+        } elseif (!$launcherAlive) {
             # The window was closed before the game started. A game that is just
             # starting gets a moment to appear first.
             Start-Sleep -Seconds 3
-            if (@(Get-GameProcessInDirectory -Directory $gameRoot).Count) { $seen = $true; continue }
-            break
+            if (@(Get-GameProcessInDirectory -Directory $gameRoot).Count) { $seen = $true; continue watch }
+            break watch
         }
         Start-Sleep -Seconds 2
     }
@@ -216,8 +278,10 @@ Write-Host "Game folder: $gameRoot"
 
 if ($Cleanup) {
     if (@(Get-GameProcessInDirectory -Directory $gameRoot).Count) { throw 'MGSV is running from this folder. The co-op files are removed when it exits; run -Cleanup again after quitting it.' }
-    $r = Invoke-CoopPlayCleanup -GameRoot $gameRoot
+    $r = Invoke-CoopPlayCleanup -GameRoot $gameRoot -Force
     if ($r.Ran) { Write-CleanupResult $r } else { Write-Host 'No active co-op session; nothing to clean up.' }
+    $stale = Remove-CoopStaleHandoff -GameRoot $gameRoot
+    Write-Lines -Lines @($stale.Messages) -Color Yellow
     exit 0
 }
 
@@ -241,6 +305,10 @@ if (@(Get-GameProcessInDirectory -Directory $gameRoot).Count) { throw 'MGSV is a
 if (Test-CoopPlaySessionLive -GameRoot $gameRoot) { throw 'Another Play-Coop window is active for this folder; close it first (or quit MGSV). Nothing was changed.' }
 $leftover = Invoke-CoopPlayCleanup -GameRoot $gameRoot
 if ($leftover.Ran) { Write-Host 'An earlier co-op session did not end cleanly; its files were cleaned up.' -ForegroundColor Yellow; Write-CleanupResult $leftover }
+# A save handoff of an earlier session that never got applied (its request, staged
+# files and rejoin code) goes too.
+$staleHandoff = Remove-CoopStaleHandoff -GameRoot $gameRoot
+Write-Lines -Lines @($staleHandoff.Messages) -Color Yellow
 $record = Read-FriendJson $paths.Record
 if (!$record -or (Get-FriendProperty $record 'product') -ne 'mgs-coop-original-loader-probe' -or [string](Get-FriendProperty $record 'game_directory' '') -ne $gameRoot) {
     throw 'The MGS Co-op loader in this folder is not the one Install-Coop installed. Run Install-Coop.bat again.'
@@ -543,9 +611,19 @@ try {
         Write-Host 'Partner: animation clips only (-Partner clips).'
     }
     if ($Transport -eq 'steam') {
-        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait -SteamDispatch $SteamDispatch -Partner $Partner
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait -SteamDispatch $SteamDispatch -Partner $Partner -SaveHandoff $SaveHandoff -TravelLock $TravelLock
     } else {
-        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World -Partner $Partner
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World -Partner $Partner -SaveHandoff $SaveHandoff -TravelLock $TravelLock
+    }
+    # The settings lab.ini is written from (no secrets): a save handoff writes
+    # lab.ini again from them with save_handoff=off (Invoke-CoopHandoffAfterExit).
+    $labRecord = [ordered]@{ role = $labRole; save_dir = $saveDir; transport = $Transport; port = $Port; peer = ''; world = $World; partner = $Partner
+        steam_self = ''; steam_peer = ''; steam_wait = $false; steam_dispatch = ''; save_handoff = $SaveHandoff.ToLowerInvariant(); travel_lock = $TravelLock.ToLowerInvariant() }
+    if ($Transport -eq 'steam') {
+        $labRecord.steam_self = $steamSelf; $labRecord.steam_peer = $steamPeer; $labRecord.steam_wait = [bool]$steamWait; $labRecord.steam_dispatch = $SteamDispatch
+    } else { $labRecord.peer = $peerAddress }
+    if ($labRole -eq 'guest' -and $SaveHandoff -ne 'off') {
+        Write-Host "Save sharing: if your co-op save starts somewhere else than the host's, you get the host's save at the title screen and MGSV restarts once (your own copy is kept; Share-Save.bat [R]). -SaveHandoff off turns this off."
     }
     $coopText = New-CoopPlayCoopIniText -Character $character -Hud $Hud
     $utf8 = New-Object Text.UTF8Encoding $false
@@ -562,6 +640,7 @@ try {
         $script:session.port = $Port
         $script:session.transport = $Transport
         $script:session.clip_sha256 = $clipSha
+        $script:session.lab = $labRecord
         foreach ($w in $writes) {
             if (Test-Path -LiteralPath $w.Path) { throw "mgs-coop\$($w.Name) appeared while Play-Coop was preparing; nothing more was written." }
             if ($w.Name -eq 'script-observe.enabled') {
@@ -577,8 +656,11 @@ try {
             $script:session.files = @($script:session.files) + @([ordered]@{ name = $w.Name; sha256 = (Get-CoopTextSha256 -Bytes $w.Bytes) })
             Save-Session
             $temp = $w.Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-            [IO.File]::WriteAllBytes($temp, [byte[]]$w.Bytes)
-            [IO.File]::Move($temp, $w.Path)
+            # A temp file (the join code in link-secret.txt) never stays behind.
+            try {
+                [IO.File]::WriteAllBytes($temp, [byte[]]$w.Bytes)
+                [IO.File]::Move($temp, $w.Path)
+            } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
         }
     }
     $activated = $true
@@ -598,70 +680,165 @@ try {
     }
 
     # ---------------------------------------------------------------- 5: launch
-    Section 'Starting MGSV through Steam'
+    # Run 0 is the first game; run 1 the game started again after an automatic
+    # save handoff (docs/two-pc-play.md "Save handoff"), at most once a session.
     $logNames = @('early.log', 'steam-observer.log', 'script-observer.log')
     $offsets = @{}
     foreach ($n in $logNames) { $offsets[$n] = Get-FileLengthOrZero (Join-Path $paths.Mod $n) }
-    # (tests/friend_package_tests.ps1 starts a stand-in game itself.)
-    if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1') { Start-Process 'steam://rungameid/287700' }
-    Write-Host 'Waiting for MGSV (answer any Steam dialog). [Q] stops and switches co-op off.'
-    while ($true) {
-        $games = @(Get-GameProcessInDirectory -Directory $gameRoot | Where-Object { !$_.Unknown })
-        if ($games.Count) { $gamePid = [int]$games[0].Id; break }
-        $key = $null
-        try { if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true).Key } } catch { $key = $null }
-        if ($key -eq 'Q') { Write-Host 'Stopped before the game started.'; exit 0 }
-        Start-Sleep -Milliseconds 500
-    }
-    Write-Host "MGSV started (process $gamePid). Checking that co-op and the save copy are active..."
-    $texts = @{}
-    foreach ($n in $logNames) { $texts[$n] = '' }
-    $deadline = [DateTime]::UtcNow.AddSeconds(90)
-    $evidence = $null
-    while ($true) {
-        foreach ($n in $logNames) {
-            $d = Read-CoopLogDelta -Path (Join-Path $paths.Mod $n) -Offset $offsets[$n]
-            $texts[$n] += $d.Text
-            $offsets[$n] = $d.NewOffset
+    $gameStart = ''
+    :runs for ($run = 0; $run -lt 2; $run++) {
+        $gamePid = 0
+        if ($run -eq 0) {
+            Section 'Starting MGSV through Steam'
+            # (tests/friend_package_tests.ps1 starts a stand-in game itself.)
+            if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1') { Start-Process 'steam://rungameid/287700' }
+            Write-Host 'Waiting for MGSV (answer any Steam dialog). [Q] stops and switches co-op off.'
+            while ($true) {
+                $games = @(Get-GameProcessInDirectory -Directory $gameRoot | Where-Object { !$_.Unknown })
+                if ($games.Count) { $gamePid = [int]$games[0].Id; break }
+                $key = $null
+                try { if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true).Key } } catch { $key = $null }
+                if ($key -eq 'Q') { Write-Host 'Stopped before the game started.'; exit 0 }
+                Start-Sleep -Milliseconds 500
+            }
+            Write-Host "MGSV started (process $gamePid). Checking that co-op and the save copy are active..."
+        } else {
+            # Steam was asked to start MGSV again (by this window or the helper);
+            # the co-op files stay in place meanwhile (the cleanup guard, P2-17).
+            # The wait stops at once when co-op was switched off or the restart
+            # failed (the helper's own attempt; the finally block then switches
+            # co-op off), and ends with the claim's 300 s too, so this window never
+            # outlives the helper's wait. It asks for a manual start only after its
+            # own relaunch check passed, with time left: never without the co-op files.
+            $waitStart = [DateTime]::UtcNow
+            $limit = $waitStart.AddSeconds(300)
+            $retried = $false
+            $relaunchOk = $false
+            $told = $false
+            while (!$gamePid) {
+                $games = @(Get-GameProcessInDirectory -Directory $gameRoot | Where-Object { !$_.Unknown })
+                if ($games.Count) { $gamePid = [int]$games[0].Id; break }
+                $pending = $null
+                try { $pending = Get-CoopRelaunchWait -GameRoot $gameRoot -SessionId ([string]$session.session_id) } catch { $pending = $null }
+                if ($pending -and $pending.Stop) { Write-Lines -Lines @($pending.Lines) -Color Yellow; break runs }
+                if ($pending -and $null -ne $pending.ClaimedUtc -and $pending.ClaimedUtc.AddSeconds(300) -lt $limit) { $limit = $pending.ClaimedUtc.AddSeconds(300) }
+                $now = [DateTime]::UtcNow
+                $elapsed = ($now - $waitStart).TotalSeconds
+                $left = ($limit - $now).TotalSeconds
+                if ($elapsed -ge 60 -and !$retried) {
+                    $retried = $true
+                    # (Too late for Steam to start it before the limit: no new attempt.)
+                    if ($left -ge 90) {
+                        $relaunch = $null
+                        try { $relaunch = Start-CoopRelaunch -GameRoot $gameRoot } catch { $relaunch = [pscustomobject]@{ Ok = $false; Problem = $_.Exception.Message } }
+                        if (!$relaunch.Ok) {
+                            Write-Host "MGSV could not be started again: $($relaunch.Problem). Do not start MGS V from Steam now; start Play-Coop.bat again." -ForegroundColor Yellow
+                            break runs
+                        }
+                        $relaunchOk = $true
+                    }
+                }
+                if ($elapsed -ge 120 -and !$told -and $relaunchOk -and $left -ge 90) {
+                    $told = $true
+                    Write-Host ('Steam did not start MGSV again within 60 s: start MGS V from Steam yourself; co-op stays on for {0} more seconds.' -f [int]$left) -ForegroundColor Yellow
+                }
+                if ($now -ge $limit) {
+                    Write-Host 'MGSV did not start again in time; co-op is switched off.' -ForegroundColor Yellow
+                    Write-CleanupResult (Invoke-CoopPlayCleanup -GameRoot $gameRoot -Force)
+                    break runs
+                }
+                $key = $null
+                try { if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true).Key } } catch { $key = $null }
+                if ($key -eq 'Q') {
+                    # Only a live helper may take over: it waits for the game and switches co-op off after it.
+                    if (Test-CoopProcessAlive -Id ([int]$session.watchdog_pid) -StartUtc ([string]$session.watchdog_start_utc)) { Write-Host 'Closing this window; the helper switches co-op off when MGSV exits.'; $skipCleanup = $true; break runs }
+                    Write-Host 'No helper is running: keep this window open until MGSV exits (it switches co-op off then).' -ForegroundColor Yellow
+                }
+                Start-Sleep -Milliseconds 500
+            }
+            Write-Host "MGSV restarted (process $gamePid)."
         }
-        $final = [DateTime]::UtcNow -ge $deadline
-        $evidence = Get-CoopLaunchEvidence -EarlyLog $texts['early.log'] -SteamLog $texts['steam-observer.log'] -ObserverLog $texts['script-observer.log'] -SaveDir $saveDir -Final:$final -Transport $Transport
-        if ($evidence.State -ne 'pending') { break }
-        if (!(Test-CoopProcessAlive -Id $gamePid)) { break }
-        Start-Sleep -Seconds 1
-    }
-    $banner = $null
-    switch ($evidence.State) {
-        'ok' { Write-Host 'Co-op is active and the game plays from the save COPY.' -ForegroundColor Green }
-        'unsafe' {
-            $banner = 'Co-op did NOT start and save protection is NOT active: this game is normal offline play on your REAL saves. Quit MGSV now if you do not want that.'
+        $gameStart = Get-CoopProcessStartUtc -Id $gamePid
+        try { $null = Set-CoopPlayGame -GameRoot $gameRoot -GamePid $gamePid -GameStartUtc $gameStart -SessionId $session.session_id } catch { }
+        $texts = @{}
+        foreach ($n in $logNames) { $texts[$n] = '' }
+        $deadline = [DateTime]::UtcNow.AddSeconds(90)
+        $evidence = $null
+        while ($true) {
+            foreach ($n in $logNames) {
+                $d = Read-CoopLogDelta -Path (Join-Path $paths.Mod $n) -Offset $offsets[$n]
+                $texts[$n] += $d.Text
+                $offsets[$n] = $d.NewOffset
+            }
+            $final = [DateTime]::UtcNow -ge $deadline
+            $evidence = Get-CoopLaunchEvidence -EarlyLog $texts['early.log'] -SteamLog $texts['steam-observer.log'] -ObserverLog $texts['script-observer.log'] -SaveDir $saveDir -Final:$final -Transport $Transport
+            if ($evidence.State -ne 'pending') { break }
+            if (!(Test-CoopProcessAlive -Id $gamePid)) { break }
+            Start-Sleep -Seconds 1
         }
-        'old_loader' { Write-Host 'The save copy is active, but the installed loader is too old for two-PC play (no play= line). Install the package your friend uses.' -ForegroundColor Yellow }
-        default { Write-Host 'Co-op did not confirm its start:' -ForegroundColor Yellow }
-    }
-    foreach ($m in @($evidence.Missing)) { Write-Host "  missing: $m" -ForegroundColor Yellow }
-    foreach ($m in @($evidence.Problems)) { Write-Host "  $m" -ForegroundColor Yellow }
-    if ($banner) { Write-Host ''; Write-Host $banner -ForegroundColor White -BackgroundColor DarkRed; Write-Host '' }
+        $banner = $null
+        switch ($evidence.State) {
+            'ok' { Write-Host 'Co-op is active and the game plays from the save COPY.' -ForegroundColor Green }
+            'unsafe' {
+                $banner = 'Co-op did NOT start and save protection is NOT active: this game is normal offline play on your REAL saves. Quit MGSV now if you do not want that.'
+            }
+            'old_loader' { Write-Host 'The save copy is active, but the installed loader is too old for two-PC play (no play= line). Install the package your friend uses.' -ForegroundColor Yellow }
+            default { Write-Host 'Co-op did not confirm its start:' -ForegroundColor Yellow }
+        }
+        foreach ($m in @($evidence.Missing)) { Write-Host "  missing: $m" -ForegroundColor Yellow }
+        foreach ($m in @($evidence.Problems)) { Write-Host "  $m" -ForegroundColor Yellow }
+        if ($banner) { Write-Host ''; Write-Host $banner -ForegroundColor White -BackgroundColor DarkRed; Write-Host '' }
 
-    # ---------------------------------------------------------------- status
-    Write-Host 'Meet in Mother Base or Afghanistan/Africa free roam. [Q] closes this window (co-op stays on until MGSV exits).'
-    $last = ''
-    $bannerAt = [DateTime]::UtcNow
-    while (Test-CoopProcessAlive -Id $gamePid) {
-        $status = Read-CoopStatusFile -Path $paths.LinkStatus -ExpectedPid $gamePid
-        $line = Format-CoopStatusLine -Status $status -Role $labRole -OwnBuild $ownBuild
-        if ($line -ne $last) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $line); $last = $line }
-        if ($banner -and ([DateTime]::UtcNow - $bannerAt).TotalSeconds -ge 30) { Write-Host $banner -ForegroundColor White -BackgroundColor DarkRed; $bannerAt = [DateTime]::UtcNow }
-        $key = $null
-        try { if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true).Key } } catch { $key = $null }
-        if ($key -eq 'Q') {
-            # Only a live helper may take over the cleanup.
-            if (Test-CoopProcessAlive -Id ([int]$session.watchdog_pid) -StartUtc ([string]$session.watchdog_start_utc)) { Write-Host 'Closing this window; the helper switches co-op off when MGSV exits.'; $skipCleanup = $true; break }
-            Write-Host 'No helper is running: keep this window open until MGSV exits (it switches co-op off then).' -ForegroundColor Yellow
+        # ------------------------------------------------------------ status
+        if ($run -eq 0) {
+            Write-Host 'Not in the same place? Both games must Continue into the same Mother Base or free roam; Share-Save.bat gives both players the same progress (FRIEND-GUIDE.txt section 3).'
+            Write-Host 'Meet in Mother Base or Afghanistan/Africa free roam. [Q] closes this window (co-op stays on until MGSV exits).'
         }
-        Start-Sleep -Seconds 1
+        $last = ''
+        $lastHandoff = 'off'
+        $bannerAt = [DateTime]::UtcNow
+        while (Test-CoopProcessAlive -Id $gamePid) {
+            $status = Read-CoopStatusFile -Path $paths.LinkStatus -ExpectedPid $gamePid
+            $line = Format-CoopStatusLine -Status $status -Role $labRole -OwnBuild $ownBuild
+            if ($line -ne $last) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $line); $last = $line }
+            # The save handoff in one sentence, once per change.
+            $handoff = [string](Get-CoopValue $status 'handoff' 'off')
+            if ($handoff -cne $lastHandoff) {
+                $lastHandoff = $handoff
+                $handoffLine = (Get-CoopHandoffText -Token $handoff -Role $labRole).Line
+                if ($handoffLine) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $handoffLine) -ForegroundColor Cyan }
+            }
+            if ($banner -and ([DateTime]::UtcNow - $bannerAt).TotalSeconds -ge 30) { Write-Host $banner -ForegroundColor White -BackgroundColor DarkRed; $bannerAt = [DateTime]::UtcNow }
+            $key = $null
+            try { if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true).Key } } catch { $key = $null }
+            if ($key -eq 'Q') {
+                # Only a live helper may take over the cleanup.
+                if (Test-CoopProcessAlive -Id ([int]$session.watchdog_pid) -StartUtc ([string]$session.watchdog_start_utc)) { Write-Host 'Closing this window; the helper switches co-op off when MGSV exits.'; $skipCleanup = $true; break }
+                Write-Host 'No helper is running: keep this window open until MGSV exits (it switches co-op off then).' -ForegroundColor Yellow
+            }
+            Start-Sleep -Seconds 1
+        }
+        if ($skipCleanup) { break runs }
+        # The game exited: an automatic save handoff is applied now and MGSV
+        # starts once more; otherwise co-op is switched off (finally below).
+        foreach ($n in $logNames) { $offsets[$n] = Get-FileLengthOrZero (Join-Path $paths.Mod $n) }
+        $after = $null
+        try { $after = Invoke-CoopHandoffAfterExit -GameRoot $gameRoot -ExitedPid $gamePid -ExitedStartUtc $gameStart -Owner console }
+        catch { $after = [pscustomobject]@{ Action = 'failed'; Messages = @("Could not apply the host's save: $($_.Exception.Message)."); Aside = ''; Files = 0; Bytes = 0 } }
+        if ($run -eq 0 -and ($after.Action -eq 'relaunched' -or $after.Action -eq 'claimed_by_other')) {
+            Write-Host ''
+            Write-Host "MGSV closed to load the host's save." -ForegroundColor Cyan
+            if ($after.Action -eq 'relaunched') {
+                Write-Host ("Applying the host's save ({0} files, {1} KB)..." -f $after.Files, [int][Math]::Ceiling([double]$after.Bytes / 1024))
+                Write-Host "Your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($after.Aside) (Share-Save.bat [R] brings it back)."
+                Write-Host 'Starting MGSV again with the same join code...'
+            } else { Write-Lines -Lines @($after.Messages) }
+            continue runs
+        }
+        Write-Lines -Lines @($after.Messages) -Color Yellow
+        Write-Host 'MGSV exited.'
+        break runs
     }
-    if (!$skipCleanup) { Write-Host 'MGSV exited.' }
 } finally {
     if ($activated -or $session) {
         if ($skipCleanup) { }
@@ -672,7 +849,10 @@ try {
             if (!$helper -and $session -and $env:MGS_COOP_TEST_NO_WATCHDOG -ne '1') {
                 $session.watchdog_pid = Start-CoopWatchdog -ScriptPath $PSCommandPath -GameRoot $gameRoot -SessionId $session.session_id
                 $session.watchdog_start_utc = Get-CoopProcessStartUtc -Id $session.watchdog_pid
-                try { Save-Session } catch { }
+                # The file on disk may hold more than this window knows (a save handoff): update it in place.
+                $newWatchdog = [int]$session.watchdog_pid
+                $newWatchdogStart = [string]$session.watchdog_start_utc
+                try { $null = Update-CoopPlaySession -GameRoot $gameRoot -SessionId $session.session_id -Update { param($t) $t['watchdog_pid'] = $newWatchdog; $t['watchdog_start_utc'] = $newWatchdogStart } } catch { }
                 $helper = Test-CoopProcessAlive -Id ([int]$session.watchdog_pid) -StartUtc ([string]$session.watchdog_start_utc)
             }
             if ($helper) { Write-Host 'MGSV is still running: co-op is switched off when it exits.' -ForegroundColor Yellow }

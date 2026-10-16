@@ -330,7 +330,10 @@ function Test-WorkerCheckReceipt($Receipt,[string]$BuildDirectory,[string]$RepoR
     if($Receipt.schema -ne 1 -or $Receipt.status -cne 'passed' -or $Receipt.plan.profile -cne 'Normal' -or
        $Receipt.plan.project -ine $RepoRoot -or $Receipt.plan.build_directory -ine $BuildDirectory -or
        $Receipt.plan.flags.MGS_BACKGROUND_WORKER -cne 'ON' -or $Receipt.artifacts.loader_sha256 -ine $LoaderSha256){return $false}
-    $experiments=@('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST',
+    # Every experiment Invoke-WorkerChecks (Get-WorkerExperiments) writes into a receipt; all must be OFF.
+    $experiments=@('MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER','MGS_LOCAL_MGO_UNIQUE_REST_OBSERVER','MGS_LOCAL_MGO_STANDING_CYCLE_OBSERVER',
+        'MGS_LOCAL_MGO_STANDING_LOOKUP_OBSERVER','MGS_LOCAL_MGO_STANDING_FRAME_OBSERVER',
+        'MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST',
         'MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE',
         'MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')
     if($Receipt.plan.flags.Count -ne $experiments.Count+1){return $false}

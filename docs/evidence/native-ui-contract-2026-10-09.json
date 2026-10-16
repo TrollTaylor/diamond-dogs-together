@@ -2,7 +2,7 @@
   "executable": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
   "sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
   "scope": "Static natural lifecycle, native RGB setters and classifier; private run 6eef887cb2e04cd785bee9eb6f968119 observed actual ID1 category1 red original WU reticle. Friendly color mapping remains measured by RGB census.",
-  "abi": "Windows x64: FE7270 int(UI primary*, uint16 ID); caller FEA731. FE8690 void(UI secondary*,uint16 hint,uint32 priority,uint8 flag,uint8 enable,uint8 arg6,uint8 arg7); helper return10A498E. Helper10A4950 bool(movement*,uint8 enable), natural callers10B5640/10B767B.",
+  "abi": "Windows x64: FE7270 int(UI primary*, uint16 ID); caller FEA731. FE8690 void(UI secondary*,uint16 hint,uint32 priority,uint8 flag,uint8 enable,uint8 arg6,uint8 arg7); helper return10A498E. Helper10A4950 bool(movement*,uint8 enable), natural callers10B5640/10B767B. Sibling prompt queues FE8770/FE89E0/FE8700/FE8C70 (vt+268/288/270/278) share the FE8690 signature and body over fields 3C0/410/460/4B0; which queue carries the sleep struggle guide is unverified.",
   "sites": [
     {
       "rva": "0xfe6fda",
@@ -183,6 +183,30 @@
       "size": 112,
       "sha256": "5ccc53981f3e9ddfb72b7d45aeebe3c6ed58f71ecf74fa787f202390af59a733",
       "purpose": "complete UI hint queue leaf; enable argument5 produces flag bit9, no owner gate"
+    },
+    {
+      "rva": "0xfe8770",
+      "size": 112,
+      "sha256": "07ddd8bc3ab07e3b992a3280ea318bad4146e252cb28fdd72c5f1bfa40d5165d",
+      "purpose": "complete UI prompt queue leaf vt+0x268 fields 0x3c0; same body as FE8690, no owner gate"
+    },
+    {
+      "rva": "0xfe89e0",
+      "size": 112,
+      "sha256": "5dc639f7f8e6bfb862305b96d5fd9ae6d8f54fd763c308a01be98d13328a4deb",
+      "purpose": "complete UI prompt queue leaf vt+0x288 fields 0x410; same body as FE8690, no owner gate"
+    },
+    {
+      "rva": "0xfe8700",
+      "size": 112,
+      "sha256": "b3c2289f39da34c11bb5c4da5fbe8d4189f039cd72a8f1097db77c88321b7331",
+      "purpose": "complete UI prompt queue leaf vt+0x270 fields 0x460; same body as FE8690, no owner gate"
+    },
+    {
+      "rva": "0xfe8c70",
+      "size": 112,
+      "sha256": "266b490bd039d027e22c3c1a595829693289ed4402e4823c5e88ed839804d0aa",
+      "purpose": "complete UI prompt queue leaf vt+0x278 fields 0x4b0; same body as FE8690, no owner gate"
     },
     {
       "rva": "0x109e130",

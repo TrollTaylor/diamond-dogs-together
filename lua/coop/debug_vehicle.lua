@@ -3,7 +3,7 @@
 do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,integer,fmt=A.get,A.call,A.integer,string.format
- local V={handles={vehicle_seats=true}};D.vehicle=V
+ local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true}};D.vehicle=V
  function V.stop()end -- No native state, borrowed objects or cached IDs.
  local function name(v)return type(v)=="string" and #v>0 and #v<=64 and v:match("^[%w_]+$")~=nil end
  local function context()
@@ -100,8 +100,55 @@ do
   if #text>160 then return false,"vehicle_receipt_overflow" end
   return true,text
  end
+ -- The seated rider levers (docs/anim-round1-seat.md). vehicle_names: every
+ -- resolvable authored veh_lv_/veh_trc_ locator as runs "<index range>@<first id>"
+ -- (ids consecutive within a run), the local vehicle id and native seat.
+ local function names(a)
+  if #a~=1 then return false,"vehicle_args" end
+  local c,why=context();if not c then return false,why end
+  local out={}
+  for _,class in ipairs({{"lv",32},{"trc",16}})do
+   local runs,run={},nil
+   for k=0,class[2]-1 do
+    local got=call(GameObject,"GetGameObjectId","TppVehicle2",fmt("veh_%s_%04d",class[1],k))
+    if integer(got,0,65534) then
+     if run and run.last==k-1 and run.id+(k-run.first)==got then run.last=k
+     else run={first=k,last=k,id=got};runs[#runs+1]=run end
+    else run=nil end
+   end
+   for i,r in ipairs(runs)do runs[i]=r.first==r.last and fmt("%d@%d",r.first,r.id) or fmt("%d-%d@%d",r.first,r.last,r.id) end
+   out[#out+1]=class[1].."="..(#runs>0 and table.concat(runs,",") or "none")
+  end
+  local mine=get(e,"MgsCoopPartnerRideSeat");local vid,seat
+  if type(mine)=="function" then vid,seat=mine() end
+  local text=fmt("vehicle_names;%s;local=%d;seat=%d",table.concat(out,";"),integer(vid,0,65534) and vid or 65535,integer(seat,0,255) and seat or 255)
+  if #text>160 then text=text:sub(1,160) end
+  return true,text
+ end
+ -- seat_dm <state> <seat 0..3> <locator> arms the four seat dwords on body 1 through
+ -- the native seat receipt and plays the seated state there; seat_dm stop ends it.
+ -- Only a TppVehicle2 locator (type 50) is accepted: a horse or walker locator
+ -- would anchor body 1 to a stale matrix.
+ local function seatDm(a)
+  if a[2]=="stop" and #a==2 then
+   call(Player,"RequestToStopDirectMotion")
+   if A.receipt("return 'MGS_COOP_PARTNER_SEAT_V1' -- stop")~=true then return false,"seat_dm_stop_refused" end
+   return true,"seat_dm=stop"
+  end
+  if #a~=4 or type(a[2])~="string" or not a[2]:match("^state%w+$") or #a[2]>64 or a[2]=="stateDirectPlayRideRearLeftSeatOnVehicle" then return false,"seat_dm_args" end
+  if not a[3]:match("^[0-3]$") or not name(a[4]) then return false,"seat_dm_args" end
+  local c,why=context();if not c then return false,why end
+  if c.mission~=30010 and c.mission~=30020 then return false,"seat_dm_mission" end
+  local seat=tonumber(a[3])
+  local vid=call(GameObject,"GetGameObjectId","TppVehicle2",a[4])
+  if not integer(vid,0,65534) or math.floor(vid/512)~=50 then return false,"seat_dm_locator" end
+  if A.receipt(fmt("return 'MGS_COOP_PARTNER_SEAT_V1' -- arm %d %d",seat,vid))~=true then return false,"seat_dm_refused" end
+  call(Player,"RequestToPlayDirectMotion",{{"coopRide",1},{a[2],true,a[4],"CNP_ppos_c","MTP_GLOBAL_C",true}})
+  return true,fmt("seat_dm;id=%d;seat=%d;name=%s;state=%s",vid,seat,a[4],a[2])
+ end
  function V.run(a,id)
-  local ok,yes,why=pcall(read,a)
+  local f=a[1]=="vehicle_names" and names or a[1]=="seat_dm" and seatDm or read
+  local ok,yes,why=pcall(f,a)
   if not ok then return false,"vehicle_binding" end
   return yes,why
  end

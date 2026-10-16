@@ -48,7 +48,7 @@ local function fixture(options)
     options = options or {}
     local c = {receipts = {}, tx = {}, logs = {}, rx = {}, calls = {}, time = 100, life = {}, recovered = {}, phase = {},
         pos = {}, inGame = true, missionStart = true, demo = false, order = {}, txReply = nil, seq = 'Seq_Game_MainGame',
-        flags = 3, original = {}}
+        flags = 3, original = {}, peer = options.peer}
     local mission = options.mission or 30010
     local defs = options.defs or {cp_a = {'sol_a1', 'sol_a2', 'sol_a3', lrrpVehicle = 'veh_x', lrrpTravelPlan = 'travel_x'},
         cp_b = {'sol_b1', 'sol_b2', 'sol_b3'}, quest_cp = {'sol_q1', 'sol_q2'}}
@@ -100,8 +100,37 @@ local function fixture(options)
             check(m ~= nil, 'CFG args ' .. source)
             if phase == '1' then c.cfgStarts = (c.cfgStarts or 0) + 1 else c.cfgQueries = (c.cfgQueries or 0) + 1 end
             return function()
+                local p = c.peer
+                if p and p.census ~= nil then
+                    -- A WS4 step 0 loader: r[14] the attacker census flag (lab key partner_placed_census).
+                    return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, p.session or 7, p.mission, p.level, p.wait, p.handoff or 0, p.lock or 0, p.census
+                end
+                if p and p.lock ~= nil then
+                    -- A join-fix phase-2 loader: also the save handoff code r[12] and the travel lock r[13].
+                    return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, p.session or 7, p.mission, p.level, p.wait, p.handoff or 0, p.lock
+                end
+                if p then
+                    -- A join-fix loader: session, then remote_mission, remote_level and the raw pair-wait code.
+                    return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, p.session or 7, p.mission, p.level, p.wait
+                end
                 return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0, options.mode or 1
             end
+        elseif starts(source, PRE .. "NOTE_V1'") then
+            check(body:match('^%d+ %d+ %d+$'), 'NOTE integers only: ' .. body)
+            for n in body:gmatch('%S+') do check(n == '0' or not n:find('^0'), 'NOTE no leading zeros: ' .. n) end
+            c.notes = c.notes or {}
+            c.notes[#c.notes + 1] = body
+            return function() return true end
+        elseif starts(source, PRE .. "SAVE_V1'") then
+            -- The save handoff report (join-fix phase 2 P2-2): exactly six unsigned integers.
+            check(body and body:match('^%d+ %d+ %d+ %d+ %d+ %d+$'), 'SAVE_V1 six unsigned integers: ' .. source)
+            for n in body:gmatch('%d+') do check(n == '0' or not n:find('^0'), 'SAVE_V1 no leading zeros: ' .. n) end
+            c.saves = c.saves or {}
+            c.saves[#c.saves + 1] = body
+            return function() return true end
         elseif starts(source, PRE .. "TX_V1'") then
             check(body:match('^[%-%d][%-%d ]*$') and not body:find('  ') and not body:find('e') and not body:find('%.'),
                 'TX integers only: ' .. body)
@@ -321,6 +350,40 @@ do
     check(#F.tx(c, OP.OUTCOME) == 0 and has(c.logs, 'event=bad_value;op=16;field=9') and W.active, 'NaN position: not sent, still active')
 end
 
+-- 2b. NOTE receipts and the partner view (CFG r[9..11]; docs/join-fix-phase1-spec.md K1/K16).
+do
+    local env, c = fixture({role = 1})
+    F.start(env, c)
+    local W = c.W
+    local before = #c.receipts
+    check(W.note(2, 30010, 0) == true and c.receipts[#c.receipts] == "return 'MGS_COOP_WORLD_NOTE_V1' -- 2 30010 0" and
+        #c.receipts == before + 1, 'W.note sends exactly one NOTE receipt and returns true')
+    check(W.note(3, 4294967295, 4) == true and c.notes[#c.notes] == '3 4294967295 4', 'W.note formats u32 without exponent')
+    before = #c.receipts
+    check(W.note(2, -1, 0) == false and W.note(2, 1.5, 0) == false and W.note(-1, 1, 1) == false and W.note(2, nil, 0) == false and
+        W.note(2, 0 / 0, 0) == false and W.note(2, 1, 4294967296) == false and #c.receipts == before,
+        'W.note sends nothing for a negative, fractional, missing or oversized value')
+    check(W.peer() == nil, 'W.peer is nil with the 7-value CFG of an older loader')
+    local env2, c2 = fixture({role = 1, peer = {mission = 30010, level = 3, wait = 9}})
+    F.start(env2, c2)
+    local p = c2.W.peer()
+    check(p and p.mission == 30010 and p.level == 3 and p.wait == 9 and p.session == 7 and p.linked == true,
+        'W.peer reads remote mission, level, raw wait and the session')
+    c2.peer = {mission = 0, level = 3, wait = 3}
+    p = c2.W.peer()
+    check(p and p.mission == 0 and p.wait == 3 and p.linked == false, 'no HELLO yet: not linked')
+    for _, wait in ipairs({0, 7, 8, 10}) do
+        c2.peer = {mission = 30010, level = 3, wait = wait}
+        check(c2.W.peer().linked == true, 'linked for raw wait ' .. wait)
+    end
+    c2.peer = {mission = 30010, level = 3, wait = 9, link = 0, session = 0}
+    p = c2.W.peer()
+    check(p.session == nil and p.linked == false, 'link down: no session, not linked')
+    local env3, c3 = fixture({role = 1, literal = true})
+    F.start(env3, c3)
+    check(c3.W.peer() == nil and c3.W.note(1, 40010, 0) == false, 'literal receipts: no peer view, note not handled')
+end
+
 -- 3. The observer: original first, arguments and returns passed through, RESEND skipped.
 do
     local env, c = fixture({role = 2})
@@ -341,6 +404,38 @@ do
     end
     F.msg(env, 'GameObject', 'Damage', c.ids.sol_b1, 1, 0)
     check(not has(c.logs, 'm=Damage'), 'Damage is recorded, not logged')
+    F.msg(env, 'GameObject', 'Unconscious', c.ids.sol_b1, 0, 3)
+    check(c.W.census == false and not has(c.logs, 'event=obs_att'), 'no CFG r[14]: no attacker census lines')
+end
+
+-- 3b. WS4 step 0 attacker census (CFG r[14] = 1, lab key partner_placed_census): every raw argument after
+-- the id with its attribution class for Dead / Neutralize / Unconscious / Dying (cap 400) and Damage (cap 200);
+-- log only: the regular obs lines and the original call are unchanged.
+do
+    local env, c = fixture({role = 2, peer = {mission = 30010, level = 3, wait = 0, census = 1}})
+    F.start(env, c)
+    check(c.W.census == true, 'CFG r[14]=1 turns the attacker census on')
+    F.clear(c)
+    local e = string.format('%.0f', u32('sol_b1'))
+    F.msg(env, 'GameObject', 'Unconscious', c.ids.sol_b1, 0, 3)
+    check(has(c.logs, 'event=obs_att;m=Unconscious;ent=' .. e .. ';id=' .. tostring(c.ids.sol_b1) .. ';a1=0;c1=local;a2=3;c2=') and
+        has(c.logs, ';a3=nil;c3=none') and has(c.logs, 'event=obs;m=Unconscious;ent=' .. e .. ';id=' .. tostring(c.ids.sol_b1) .. ';att=none'),
+        'Unconscious: the raw attacker argument and its class next to the unchanged obs line')
+    F.msg(env, 'GameObject', 'Dead', c.ids.sol_b2, 0, 9, 4)
+    check(has(c.logs, 'event=obs_att;m=Dead;ent=' .. string.format('%.0f', u32('sol_b2')) .. ';id=' .. tostring(c.ids.sol_b2) ..
+        ';a1=0;c1=local;a2=9;c2='), 'Dead: a1 is the attacker')
+    F.msg(env, 'GameObject', 'Damage', c.ids.sol_b3, 1, 0)
+    check(has(c.logs, 'event=obs_att;m=Damage;') and has(c.logs, ';a1=1;c1=') and has(c.logs, ';a2=0;c2=local;') and
+        not has(c.logs, 'event=obs;m=Damage'), 'Damage: a census line only (the attacker is a2)')
+    F.msg(env, 'GameObject', 'Conscious', c.ids.sol_b1, 0)
+    check(not has(c.logs, 'event=obs_att;m=Conscious'), 'Conscious is not part of the census')
+    F.clear(c)
+    for _ = 1, 402 do F.msg(env, 'GameObject', 'Dying', c.ids.sol_a1, 0) end
+    check(count(c.logs, 'event=obs_att;m=Dying') == 398 and count(c.logs, 'event=obs_att_cap;kind=kill') == 1,
+        'kills cap at 400 per mission (two already logged), one cap line')
+    for _ = 1, 202 do F.msg(env, 'GameObject', 'Damage', c.ids.sol_a2, 1, 0) end
+    check(count(c.logs, 'event=obs_att;m=Damage') == 199 and count(c.logs, 'event=obs_att_cap;kind=damage') == 1,
+        'Damage caps at 200 per mission (one already logged), one cap line')
 end
 
 -- 4. Roster: ipairs only, sorted, stable.
@@ -1360,6 +1455,36 @@ do
     check(not c7.W.active and has(c7.logs, 'event=inactive;reason=missing_required;names=Fox.StrCode32'), 'a missing required binding')
 end
 
+-- 16b. A held host sortie (W.follow.hostDeploy) still ends while world sync is
+-- inactive (world level 0, W.fail), but never one from an ended mission (OnTerminate).
+do
+    for _, cause in ipairs({'level0', 'error'}) do
+        local env, c = fixture({role = 1})
+        F.start(env, c)
+        local holds, holdArgs, ticks = 0, nil, 0
+        c.W.follow = {hostDeploy = {}, tick = function() ticks = ticks + 1 end,
+            hold = function(...) holds = holds + 1; holdArgs = select('#', ...) end}
+        F.tick(env, c, 1)
+        check(ticks == 1 and holds == 0, cause .. ': while active, the follow tick owns the hold')
+        if cause == 'error' then
+            c.W.enemy.tick = function() error('boom') end
+        else
+            F.push(c, 0, OP.UNPAIRED, 5); F.push(c, 0, OP.LEVEL, 0)
+        end
+        F.tick(env, c, 1)
+        check(not c.W.active and c.W.isStarted and ticks == 1 and holds == 0, cause .. ': inactive and still started')
+        F.tick(env, c, 1)
+        check(holds == 1 and holdArgs == 0 and ticks == 1, cause .. ': the inactive update releases the held sortie')
+        c.W.follow.hostDeploy = nil
+        F.tick(env, c, 2)
+        check(holds == 1, cause .. ': nothing held, no call')
+        c.W.follow.hostDeploy = {}
+        F.call(env, 'OnTerminate')
+        F.tick(env, c, 2)
+        check(not c.W.isStarted and holds == 1, cause .. ': a hold left from an ended mission is never released')
+    end
+end
+
 -- The real world wrapper must retry owned downed cleanup after it becomes
 -- inactive, while leaving RX, simulation and other stop hooks alone.
 do
@@ -1437,6 +1562,72 @@ do
         F.tick(env, c, 3)
         check(#c.receipts == beforeReceipts and resets == beforeResets and #c.rx == beforeRx + 1,
             reason .. ': completed inactive cleanup is inert')
+    end
+end
+-- 16c. Join-fix phase 2: world_handoff with the real world_sync and world_follow
+-- (CFG r[12..13] through W.cfg/W.peer, SAVE_V1 through W.receipt, the title lock note).
+do
+    local coopDir = assert(FILES[1]:match('^(.*[/\])'), 'world chunk directory')
+    local function titleGuest(peer, title)
+        local env, c = fixture({role = 2, mission = 40050, peer = peer})
+        env.gvars.ini_isTitleMode, env.gvars.str_storySequence = title ~= false, 200
+        env.gvars.title_nextMissionCode = 30050
+        env.TppDefine.STORY_SEQUENCE = {CLEARD_ESCAPE_THE_HOSPITAL = 100, CLEARD_RECUE_MILLER = 110, CLEARD_TO_MATHER_BASE = 120}
+        env.TppScriptVars = {IsSavingOrLoading = function() return c.saving == true end}
+        c.continues = 0
+        env.TppMission.ExecuteContinueFromCheckPoint = function() c.continues = c.continues + 1 end
+        -- The title menu (title_sequence Seq_Game_TitleMenu): the game's title Continue.
+        local menu = {OnSelectContinue = function() c.continues = c.continues + 1 end, OnSelectRestartHeli = function() end}
+        menu.Messages = function(self) return {Continue = self.OnSelectContinue} end
+        env.mvars.seq_sequenceTable = {Seq_Game_TitleMenu = menu}
+        for _, name in ipairs({'world_follow_seed.lua', 'world_follow.lua', 'world_handoff.lua'}) do
+            local chunk = assert(loadfile(coopDir .. name)); setfenv(chunk, env); chunk()
+        end
+        -- TppSequence.Init captures the menu handlers inside OnInitialize, after the install.
+        F.start(env, c, function() c.menu = menu.Messages(menu) end)
+        return env, c
+    end
+    local env, c = titleGuest({mission = 30010, level = 3, wait = 9, handoff = 0, lock = 1})
+    check(type(c.W.handoff) == 'table' and c.W.follow.replayHold == c.W.handoff.replayHold, 'world_handoff installs on the real world table')
+    F.tick(env, c, 1)
+    check(c.saves and #c.saves == 1 and c.saves[1] == '1 40050 1 2 0 0', 'the real tick sends REPORT through the strict SAVE_V1 grammar')
+    c.saving = true
+    F.tick(env, c, 8)
+    check(#c.saves == 2 and c.saves[2] == '1 40050 1 2 1 0', 'a change is reported after 250 ms')
+    c.menu.Continue()
+    check(c.continues == 0 and c.notes[#c.notes] == '7 30010 1' and
+        has(c.logs, 'event=handoff;step=lock;fn=TitleContinue;kind=4;target=30050;host=30010;decision=refuse'),
+        'the real CFG r[13]=1 locks the title menu Continue (note 7 b=1)')
+    c.peer.lock = 0
+    c.menu.Continue()
+    check(c.continues == 1, 'r[13]=0 from the real CFG: allowed')
+    c.peer.lock, c.peer.handoff = 1, 3
+    c.time = c.time + 250
+    check(c.W.handoff.replayHold() == true and has(c.logs, 'event=handoff;step=replay_hold;code=3'), 'r[12]=3: the title replay hold')
+    local env2, c2 = titleGuest({mission = 30010, level = 3, wait = 9})
+    c2.menu.Continue()
+    F.tick(env2, c2, 1)
+    check(c2.continues == 1 and c2.W.handoff.replayHold() == false and #c2.saves == 1,
+        'an 11-value CFG (older loader): no lock, no replay hold, the report still sent')
+    check(not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 2 3 4 5") and not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 02 3 4 5 6") and
+        not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 -2 3 4 5 6") and not pcall(env.loadstring, PRE .. "BOGUS_V1' -- 1"),
+        'the native stub refuses a malformed SAVE_V1 and still errors on an unknown receipt')
+    -- Review lua-flow-3: a held guest sortie (world_handoff) still leaves once world sync
+    -- is inactive (W.fail), released by the real inactive update, never from an ended mission.
+    for _, final in ipairs({false, true}) do
+        local env3, c3 = titleGuest({mission = 30010, level = 3, wait = 9, handoff = 0, lock = 1}, false)
+        env3.gvars.mis_nextMissionCodeForMissionClear = 30020
+        env3.TppMission.OnEndMissionPreparation(5, nil)
+        check(F.callCount(c3, 'OnEndMissionPreparation:5:nil') == 0 and c3.W.handoff.held ~= nil, 'the guest sortie is held')
+        F.tick(env3, c3, 1)
+        check(F.callCount(c3, 'OnEndMissionPreparation:5:nil') == 0, 'held while world sync runs')
+        if final then F.call(env3, 'OnTerminate') else c3.W.fail('boom') end
+        check(not c3.W.active, 'world sync inactive')
+        F.tick(env3, c3, 2)
+        check(F.callCount(c3, 'OnEndMissionPreparation:5:nil') == (final and 0 or 1),
+            final and 'an ended mission never releases the held sortie' or 'the inactive update releases the held sortie once')
+        check(final or (c3.W.handoff.held == nil and has(c3.logs, 'event=handoff;step=lock;fn=OnEndMissionPreparation;kind=6;target=30020;host=30010;decision=inactive')),
+            'released as decision=inactive')
     end
 end
 -- The world and debug chunks inside the composed TppMain (exact splice;

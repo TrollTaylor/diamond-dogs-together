@@ -24,6 +24,14 @@ do
         -- Manual finite probes only; exact receiver MTAR paths, layering unverified.
         GMP .. "snaphg00/snaphg00_s_fre.gani", GMP .. "snapar00/snapar00_aw1_s_fre.gani",
         GMP .. "snapar01/snapar01_aw0_s_fre.gani", GMP .. "snapsr02/snapsr02_s_fre2.gani", GMP .. "snapsr02/snapsr02_s_fre_rld.gani"}
+    -- DM overlay lever (docs/anim-round1-actions.md): reply values 64..127 are
+    -- 64 + 32 * loop + index into OVERLAY, in the native partner_dm_overlay
+    -- catalogue order (graph-0 states, then resident clips; append only).
+    local OVERLAY = {[0] = "stateDamageBigFront", "stateDamageBigBack", "stateDamageBigLeft", "stateDamageBigRight", "stateDead",
+        "stateCBoxIdle", "stateCBoxMove", "stateEludeIdle", "stateClimbIdle", "stateClimbMoveFront", "stateClimbMoveBack",
+        "stateClimbIdleR", "stateStandIdleLeft", "stateSquatIdleLeft", "stateCqcDeath", "statePutDown", "stateFultonStart",
+        "stateLedgeDrop", "stateCrawlSupineIdle", GMP .. "snapdam/snapdam_s_fre.gani", GMP .. "snapdam/snapdam_p_die_idl.gani",
+        DMP .. "snapnon_s_fal_lp_l.gani"}
     local function receipt(source)
         local chunk = loadstring(source)
         if type(chunk) ~= "function" then return nil end
@@ -190,6 +198,86 @@ do
         end
         receipt("return 'MGS_COOP_VEHICLE_NAMES_V1' -- " .. tostring(nonce) .. " " .. table.concat(values, " "))
     end
+    -- The seated vehicle rider (RIDE_SEAT 512; docs/anim-round1-seat.md): a
+    -- targeted direct motion on body R anchored to this copy's own vehicle by
+    -- its locator name, CNP_ppos_c and MTP_GLOBAL_C on every chained entry
+    -- (never stateDirectPlayRideRearLeftSeatOnVehicle, never a horse/walker).
+    -- {loop, get on, get off} per class and native seat; trucks have no
+    -- stateTruckFrontRightLoop (seat 1 borrows the light front-right loop).
+    local SEAT = {lv = {[0] = {"stateVehicleFrontLeftLoop", "stateVehicleGetOnFrontLeft", "stateVehicleGetOffFrontLeft"},
+        {"stateVehicleFrontRightLoop", "stateVehicleGetOnFrontRight", "stateVehicleGetOffFrontRight"},
+        {"stateVehicleBackLeftLoop", "stateVehicleGetOnBackLeft", "stateVehicleGetOffBackLeft"},
+        {"stateVehicleBackRightLoop", "stateVehicleGetOnBackRight", "stateVehicleGetOffBackRight"}},
+        trc = {[0] = {"stateTruckFrontLeftLoop", "stateTruckGetOnFrontLeft", "stateTruckGetOffFrontLeft"},
+        {"stateVehicleFrontRightLoop", "stateTruckGetOnFrontRight", "stateTruckGetOffFrontRight"}}}
+    local vehicleMap, vehicleMapFrame = nil, 0
+    -- Reverse map id -> {name, class} over the authored free-roam locators
+    -- (30010: veh_lv_0000..0012, veh_trc_0000..0005; 30020: veh_lv_0000..0010,
+    -- veh_trc_0000..0009), rebuilt on a miss at most every 300 frames.
+    local function vehicleName(vid)
+        if vehicleMap == nil or (vehicleMap[vid] == nil and frame - vehicleMapFrame >= 300) then
+            local find, map = get(GameObject, "GetGameObjectId"), {}
+            if type(find) == "function" then
+                for k = 0, 47 do
+                    local name = k < 32 and fmt("veh_lv_%04d", k) or fmt("veh_trc_%04d", k - 32)
+                    local ok, id = pcall(find, "TppVehicle2", name)
+                    if ok and integer(id, 0, 65534) and map[id] == nil then map[id] = {name, k < 32 and "lv" or "trc"} end
+                end
+            end
+            vehicleMap, vehicleMapFrame = map, frame
+        end
+        local hit = vehicleMap[vid]
+        if hit then return hit[1], hit[2] end
+    end
+    -- Seat by id (WS3 B1, docs/vehicle-ws3.md): the class of this copy's
+    -- vehicle from the retail GetVehicleType; light vehicles and trucks only
+    -- (APC, tank and anything unknown have no seated state here).
+    local function vehicleClass(vid)
+        local types = get(Vehicle, "type")
+        if api.sendCommand == nil or type(types) ~= "table" then return nil end
+        local ok, t = pcall(api.sendCommand, vid, {id = "GetVehicleType"})
+        if not ok or not integer(t, 0, 65535) then return nil end
+        if t == get(types, "EASTERN_LIGHT_VEHICLE") or t == get(types, "WESTERN_LIGHT_VEHICLE") then return "lv" end
+        if t == get(types, "EASTERN_TRUCK") or t == get(types, "WESTERN_TRUCK") then return "trc" end
+        return nil
+    end
+    -- entry: bit 1 GetOn, bit 2 GetOff, bit 4 (by_id) native armed the id path
+    -- for this play: an unnamed vehicle (no authored locator, e.g. the sortie
+    -- vehicle 25600) then plays the same chain untargeted (locator "") and
+    -- native targets body 1's DM record at the id; a named one stays named.
+    local function rideSeat(R, vid, seat, action, entry)
+        if not (integer(vid, 0, 65534) and integer(seat, 0, 3) and integer(action, 1, 2) and integer(entry, 0, 7)) then
+            note("event=ride_seat_refused;id=" .. tostring(vid) .. ";seat=" .. tostring(seat) .. ";reason=bad_args"); return
+        end
+        if action == 2 then
+            if call(get(Player, "RequestToGoNextDirectMotion"), "Player.RequestToGoNextDirectMotion") then
+                note(fmt("event=ride_seat_next;id=%d;seat=%d", vid, seat))
+            end
+            return
+        end
+        local chain, byid = entry % 4, entry >= 4
+        local name, class = vehicleName(vid)
+        local locator = name
+        if not name and byid then class, locator = vehicleClass(vid), "" end
+        local states = class and SEAT[class][seat]
+        local mine = get(e, "MgsCoopPartnerRideSeat")
+        local localId, localSeat
+        if type(mine) == "function" then localId, localSeat = mine() end
+        local why = (not name and not byid) and "no_name" or not class and "no_class" or not states and "state" or
+            (localId == vid and localSeat == seat) and "shared_seat" or nil
+        if why then note(fmt("event=ride_seat_refused;id=%d;seat=%d;reason=%s", vid, seat, why)); return end
+        local entries = {{"coopRide", R}}
+        if chain % 2 == 1 then entries[#entries + 1] = {states[2], false, locator, "CNP_ppos_c", "MTP_GLOBAL_C", true} end
+        entries[#entries + 1] = {states[1], true, locator, "CNP_ppos_c", "MTP_GLOBAL_C", true}
+        if chain >= 2 then entries[#entries + 1] = {states[3], false, locator, "CNP_ppos_c", "MTP_GLOBAL_C", true} end
+        if call(api.dmPlay, "Player.RequestToPlayDirectMotion", entries) then
+            if name then
+                note(fmt("event=ride_seat;id=%d;seat=%d;name=%s;state=%s;entry=%d", vid, seat, name, states[1], chain))
+            else
+                note(fmt("event=ride_seat;id=%d;seat=%d;name=-;state=%s;entry=%d;byid=1;class=%s", vid, seat, states[1], chain, class))
+            end
+        end
+    end
     local function tick()
         if not active or failed or not supported() or not api.isValid() then clearActions(); return end
         local x, y, z, ry = vars.playerPosX, vars.playerPosY, vars.playerPosZ, vars.playerRotY
@@ -217,8 +305,21 @@ do
         -- The reply carries 5 look values after the 8 pose values when op has
         -- SET_PARTS (16): type, partsType, camoType, handType, faceId.
         local ride = get(e, "MgsCoopPartnerRide")
-        local rideSuffix = type(ride) == "function" and (" ride=" .. tostring(ride())) or ""
-        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d %d %d",
+        local rideSuffix = ""
+        if type(ride) == "function" then
+            -- ride=, then the local vehicle id and native seat on a vehicle, then
+            -- the PlayerStatus census bits when any is set (docs/anim-round1-seat.md).
+            local kind = ride()
+            rideSuffix = " ride=" .. tostring(kind)
+            local seatOf, bitsOf = get(e, "MgsCoopPartnerRideSeat"), get(e, "MgsCoopPartnerStatusBits")
+            if kind == 2 and type(seatOf) == "function" then
+                local vid, seat = seatOf()
+                if integer(vid, 0, 65534) then rideSuffix = rideSuffix .. fmt(" veh=%d seat=%d", vid, integer(seat, 0, 3) and seat or 255) end
+            end
+            local bits = type(bitsOf) == "function" and bitsOf() or 0
+            if integer(bits, 1, 4095) then rideSuffix = rideSuffix .. fmt(" st=0x%x", bits) end
+        end
+        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg, sv, ss, sa, se = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d %d %d",
             frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
             floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0), actions, gun) .. rideSuffix)
         if type(op) ~= "number" or op <= 0 then return end
@@ -258,10 +359,19 @@ do
         if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
         -- MIRROR_OFF (extension): native ends the F3c diagnostic after at most 10 s.
         if op % 128 >= 64 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", false) then note("event=mirror_off") end
-        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..30; partner::max_gani);
+        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..30; partner::max_gani,
+        -- or 64..127 for an OVERLAY entry);
         -- after SET_PARTS, before WARP. Needs the native comparator patch.
         if op % 256 >= 128 then
-            if integer(dg, 0, 30) and GANI[dg] ~= nil then
+            if integer(dg, 64, 127) then
+                local k = dg - 64
+                local entry = OVERLAY[k % 32]
+                if entry == nil then
+                    note("event=dm_refused;reason=bad_overlay")
+                elseif call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {entry, k >= 32, "", "", "", true}}) then
+                    note("event=dm_overlay;index=" .. (k % 32) .. ";loop=" .. (k >= 32 and 1 or 0))
+                end
+            elseif integer(dg, 0, 30) and GANI[dg] ~= nil then
                 -- Resident turn clips 13..20 are finite transitions, not loops.
                 if call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {GANI[dg], dg <= 12 or dg == 21, "", "", "", true}}) then
                     note("event=dm_play;gani=" .. dg)
@@ -271,6 +381,8 @@ do
             end
         end
         if op % 512 >= 256 and call(api.dmStop, "Player.RequestToStopDirectMotion") then note("event=dm_stop") end
+        -- RIDE_SEAT (512): vehicle id, seat, action and entry follow the gani value.
+        if op % 1024 >= 512 then rideSeat(R, sv, ss, sa, se) end
         if op % 2 == 1 and finite(px) and finite(py) and finite(pz) and finite(pry) then
             call(api.sendCommand, "GameObject.SendCommand", {type = "TppPlayer2", index = R},
                 {id = "Warp", pos = {px / 1000, py / 1000, pz / 1000}, rotY = pry / 1000})

@@ -23,6 +23,11 @@ using Classify=int (*)(void*,std::uint16_t);
 Classify original_classify=nullptr;
 using QueueHint=void (*)(void*,std::uint16_t,std::uint32_t,std::uint8_t,std::uint8_t,std::uint8_t,std::uint8_t);
 QueueHint original_hint=nullptr;
+QueueHint original_prompt[4]{};
+std::atomic<Mode> prompt_mode{Mode::filter};
+std::atomic<bool> prompt_ready{false};
+std::atomic<unsigned> prompt_samples{0},prompt_filtered{0},prompt_receipts{0},prompt_refusals{0};
+std::atomic<unsigned long long> prompt_last{0};
 using detail::quiet_job;
 std::atomic<Mode> quiet_mode{Mode::filter};
 std::atomic<bool> quiet_ready{false};
@@ -143,13 +148,62 @@ __declspec(noinline) int ClassifyTarget(void* primary,std::uint16_t id) {
     SetLastError(error);return output;
 }
 
+// True when a prompt request was queued from inside the validated instance-1
+// job; it must not reach the local HUD. `field` names the queue's field block.
+bool PartnerPrompt(void* ui,std::size_t field,std::uint16_t id,std::uint32_t priority,std::uint8_t enable,std::uintptr_t caller) noexcept {
+    namespace u=native_ui_contract;namespace n=native_ui;
+    if(!prompt_ready.load(std::memory_order_acquire) || !enabled.load(std::memory_order_acquire) || !quiet_job.armed) return false;
+    const DWORD error=GetLastError();
+    n::QuietHint q{};auto& s=q.owner;
+    s.caller=caller;s.ui=reinterpret_cast<std::uintptr_t>(ui);s.primary=s.ui>=0x20?s.ui-0x20:0;
+    q.thread=GetCurrentThreadId();q.owner_thread=quiet_job.owner_thread;q.job_id=1;q.armed=quiet_job.armed;
+    q.hint=id;q.priority=priority;q.enable=enable;
+    const n::ClassificationExpected e{caller,image+u::ui_vtable_rva,image+u::ui_primary_vtable_rva,image+p::p_vtable_rva};
+    std::uintptr_t ids=0;
+    const bool read=s.ui==quiet_job.ui && Value(s.primary,s.primary_vtable) && Value(s.ui,s.ui_vtable) &&
+        Value(s.ui+u::ui_owner,s.owner) && Value(image+p::player_slot_rva,s.p) && s.p==quiet_job.p &&
+        Value(s.p,s.p_vtable) && Value(s.p+u::p_ui,s.p_ui) && Value(s.p+p::p_flags,s.flags) &&
+        Value(s.p+p::p_count,s.count) && Value(s.p+p::p_local,s.local) &&
+        Value(s.p+p::p_ids,ids) && Read(ids,s.ids,sizeof(s.ids));
+    if(!read || !n::OwnedPartnerPrompt(q,e)) {
+        if(prompt_refusals.fetch_add(1,std::memory_order_relaxed)<16 && logger) {
+            char line[256]{};
+            if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),"teammate_partner_prompt_refused;queue=0x%x;id=%u;caller=0x%llx;scope=original_queue_preserved\r\n",
+                unsigned(field),unsigned(id),static_cast<unsigned long long>(Rva(caller))))) logger(line);
+        }
+        SetLastError(error);return false;
+    }
+    const Mode current=prompt_mode.load(std::memory_order_acquire);
+    const bool suppressed=n::SuppressPartnerPrompt(q,e,current==Mode::filter);
+    prompt_samples.fetch_add(1,std::memory_order_relaxed);
+    if(suppressed) prompt_filtered.fetch_add(1,std::memory_order_relaxed);
+    // Partner jobs repeat their prompts every frame; record each distinct request.
+    const unsigned long long key=(static_cast<unsigned long long>(field)<<48)^(static_cast<unsigned long long>(id)<<32)^
+        (static_cast<unsigned long long>(enable)<<31)^Rva(caller);
+    if(prompt_last.exchange(key,std::memory_order_relaxed)!=key && prompt_receipts.fetch_add(1,std::memory_order_relaxed)<64 && logger) {
+        char line[320]{};
+        if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),"teammate_partner_prompt;mode=%s;queue=0x%x;id=%u;priority=%u;enable=%u;suppressed=%u;caller=0x%llx;scope=owned_partner_job\r\n",
+            current==Mode::filter?"filter":"observe",unsigned(field),unsigned(id),priority,unsigned(enable),suppressed?1u:0u,
+            static_cast<unsigned long long>(Rva(caller))))) logger(line);
+    }
+    SetLastError(error);return suppressed;
+}
+template<unsigned N> __declspec(noinline) void QueuePrompt(void* ui,std::uint16_t id,std::uint32_t priority,
+    std::uint8_t flag,std::uint8_t enable,std::uint8_t extra6,std::uint8_t extra7) {
+    if(!PartnerPrompt(ui,native_ui_contract::prompt_queue_fields[N],id,priority,enable,reinterpret_cast<std::uintptr_t>(_ReturnAddress())))
+        original_prompt[N](ui,id,priority,flag,enable,extra6,extra7);
+}
+constexpr QueueHint prompt_hooks[4]={&QueuePrompt<0>,&QueuePrompt<1>,&QueuePrompt<2>,&QueuePrompt<3>};
+
 // This receives the naturally called secondary UI exactly; no receiver adjust.
 // Suppressed calls never enter the original queue, preserving all four fields.
 __declspec(noinline) void QueueQuietHint(void* ui,std::uint16_t hint,std::uint32_t priority,
     std::uint8_t flag,std::uint8_t enable_hint,std::uint8_t extra6,std::uint8_t extra7) {
     namespace u=native_ui_contract;namespace n=native_ui;
     const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-    if(!enabled.load(std::memory_order_acquire) || !quiet_job.armed || hint!=0x78 || caller!=image+u::quiet_queue_return) {
+    const bool quiet_site=hint==0x78 && caller==image+u::quiet_queue_return;
+    if(!quiet_site && PartnerPrompt(ui,u::ui_hint,hint,priority,enable_hint,caller)) return;
+    if(!enabled.load(std::memory_order_acquire) || !quiet_job.armed || !quiet_site) {
         original_hint(ui,hint,priority,flag,enable_hint,extra6,extra7);return;
     }
     const DWORD error=GetLastError();
@@ -248,7 +302,7 @@ bool ReticleStatusLine(char* out,std::size_t capacity) noexcept {
         ui_samples.load(std::memory_order_relaxed),ui_matches.load(std::memory_order_relaxed),ui_filtered.load(std::memory_order_relaxed),ui_refusals.load(std::memory_order_relaxed));
     SetLastError(error);return SUCCEEDED(result);
 }
-bool Install(void* base,std::size_t span,void (*log)(const char*) noexcept) noexcept {
+bool Install(void* base,std::size_t span,void (*log)(const char*) noexcept,bool leave_vt268) noexcept {
     if(!base || !log) return false;
     const DWORD error=GetLastError();
     AcquireSRWLockExclusive(&lock);
@@ -271,6 +325,9 @@ bool Install(void* base,std::size_t span,void (*log)(const char*) noexcept) noex
     std::uintptr_t slot=0;
     if(!Value(candidate+c::camera_secondary_vtable+0x98,slot) || slot!=candidate+0x111d4b0 ||
         !Value(candidate+native_ui_contract::ui_vtable_rva+0x280,slot) || slot!=candidate+native_ui_contract::quiet_queue_rva) return false;
+    for(unsigned i=0;i<4;++i)
+        if(!Value(candidate+native_ui_contract::ui_vtable_rva+native_ui_contract::prompt_queue_slots[i],slot) ||
+            slot!=candidate+native_ui_contract::prompt_queue_rvas[i]) return false;
     const auto init=MH_Initialize();
     if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED) return false;
     HMODULE pinned=nullptr;
@@ -296,6 +353,28 @@ bool Install(void* base,std::size_t span,void (*log)(const char*) noexcept) noex
         MH_DisableHook(ui_target);MH_DisableHook(hint_target);
         MH_RemoveHook(hint_target);MH_RemoveHook(ui_target);MH_RemoveHook(aim_target);
         log("teammate_targeting=failed;reason=enable;inactive_forwarding=1\r\n");return false;
+    }
+    // Prompt hooks are optional: without them the partner's prompts stay
+    // visible, but the qualified aim/reticle/Quiet filters remain installed.
+    const unsigned first=leave_vt268 ? 1u : 0u;
+    unsigned hooked=first;
+    for(;hooked<4;++hooked) {
+        const auto target=reinterpret_cast<void*>(candidate+native_ui_contract::prompt_queue_rvas[hooked]);
+        if(MH_CreateHook(target,reinterpret_cast<void*>(prompt_hooks[hooked]),reinterpret_cast<void**>(&original_prompt[hooked]))!=MH_OK) break;
+        if(MH_EnableHook(target)!=MH_OK) {MH_RemoveHook(target);break;}
+    }
+    if(hooked<4) {
+        while(hooked>first) {
+            const auto target=reinterpret_cast<void*>(candidate+native_ui_contract::prompt_queue_rvas[--hooked]);
+            MH_DisableHook(target);MH_RemoveHook(target);
+        }
+        log("teammate_partner_prompt=failed;reason=hook;scope=partner_prompts_unfiltered\r\n");
+    } else {
+        prompt_mode.store(Mode::filter,std::memory_order_release);prompt_ready.store(true,std::memory_order_release);
+        detail::prompt_filter.store(&PartnerPrompt,std::memory_order_release);
+        log(leave_vt268 ?
+            "teammate_partner_prompt=installed;mode=filter;queues=0x370,0x410,0x460,0x4b0;queue_0x3c0=native_pose_window;scope=owned_partner_job_only;qualification=static_contract\r\n" :
+            "teammate_partner_prompt=installed;mode=filter;queues=0x370,0x3c0,0x410,0x460,0x4b0;scope=owned_partner_job_only;qualification=static_contract\r\n");
     }
     installed=base;mode.store(Mode::filter,std::memory_order_release);reticle_mode.store(Mode::filter,std::memory_order_release);
     quiet_mode.store(Mode::filter,std::memory_order_release);quiet_ready.store(true,std::memory_order_release);

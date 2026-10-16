@@ -805,6 +805,132 @@ void TestOnline() {
     Check(!pi::ValidPacket(pkt), "a receiver refuses more than kEdgeRepeatsMax repeats");
 }
 
+// Sender hold (docs/anim-round2-throws.md "Unknown-slot glitch", run 0c9269ce): a
+// failed local gun/slot read republishes the last good read for kSenderHoldMs; a
+// good read always wins (a real change goes out at once); beyond the bound the
+// unknown goes out.
+void TestSenderHold() {
+    // The host holding grenade 354 in slot 3 (hold hub 28) ...
+    const auto good = []() noexcept {
+        pi::V5Source v{};
+        v.v4.v3.inv_slot = 3;
+        v.v4.equip_valid = true;
+        v.v4.equip = 354;
+        v.gun_valid = true;
+        v.gun_flags = pi::GunFlag::InHand | pi::GunFlag::Aiming;
+        v.gun_mode = 28;
+        v.reload_seq = 4;
+        v.switch_seq = 7;
+        return v;
+    };
+    // ... and what SenderV5 builds when both reads fail (the 0c9269ce frame).
+    const auto failed = []() noexcept {
+        pi::V5Source v{};
+        v.v4.v3.inv_slot = pi::kInvSlotUnknown;
+        return v;
+    };
+    const auto wire = [](const pi::V5Source& v) noexcept {
+        pi::InputPacket p = pi::Quantize(pi::PadSnapshot{}, 0);
+        pi::Fill5(p, v);
+        return p;
+    };
+    {
+        const pi::InputPacket glitch = wire(failed());
+        Check(pi::ValidPacket(glitch) && !(glitch.gun_flags & pi::GunFlag::Valid) && !(glitch.xflags & pi::XFlag::Equip) &&
+                  glitch.inv_slot == pi::kInvSlotUnknown,
+              "without the hold a failed read sends no gun group and no equip (the receiver's remote_slot=255, remote_equip unknown)");
+    }
+    pi::SenderHold h{};
+    pi::V5Source v = good();
+    pi::SenderHoldOut o = pi::HoldSender(h, v, true, true, 1000);
+    Check(o.gun == pi::HoldEvent::none && o.slot == pi::HoldEvent::none && v.v4.equip == 354 && v.v4.v3.inv_slot == 3,
+          "a good read passes unchanged and is recorded");
+    v = failed();
+    o = pi::HoldSender(h, v, false, false, 1016);
+    Check(o.gun == pi::HoldEvent::start && o.slot == pi::HoldEvent::start && o.gun_ms == 16 && o.slot_ms == 16,
+          "a failed read 16 ms later starts a held run (the age of the good read)");
+    Check(v.v4.equip_valid && v.v4.equip == 354 && v.gun_valid && v.gun_flags == (pi::GunFlag::InHand | pi::GunFlag::Aiming) &&
+              v.gun_mode == 28 && v.reload_seq == 4 && v.switch_seq == 7 && v.v4.v3.inv_slot == 3,
+          "the frame republishes the last good equip, gun group (counters unchanged) and slot");
+    {
+        const pi::InputPacket held = wire(v);
+        Check(pi::ValidPacket(held) && (held.gun_flags & pi::GunFlag::Valid) && (held.xflags & pi::XFlag::Equip) && held.gun_equip == 354 &&
+                  held.inv_slot == 3 && held.reload_seq == 4 && held.switch_seq == 7,
+              "on the wire: v5 with GunFlag::Valid, equip 354 and slot 3 (the receiver keeps support)");
+    }
+    v = failed();
+    o = pi::HoldSender(h, v, false, false, 1250);
+    Check(o.gun == pi::HoldEvent::held && o.slot == pi::HoldEvent::held && v.v4.equip == 354 && v.v4.v3.inv_slot == 3,
+          "still held at exactly kSenderHoldMs after the last good read");
+    v = good();
+    v.v4.equip = 349;
+    o = pi::HoldSender(h, v, true, true, 1266);
+    Check(o.gun == pi::HoldEvent::resumed && o.gun_held == 2 && o.gun_ms == 250 && o.slot == pi::HoldEvent::resumed && o.slot_held == 2 &&
+              v.v4.equip == 349,
+          "a good read ends the run (frames, length) and always wins: a real change goes out at once");
+    v = failed();
+    o = pi::HoldSender(h, v, false, false, 1300);
+    Check(o.gun == pi::HoldEvent::start && v.v4.equip == 349, "the next failure republishes the new equip");
+    v = failed();
+    o = pi::HoldSender(h, v, false, false, 1517);
+    Check(o.gun == pi::HoldEvent::expired && o.gun_held == 1 && o.gun_ms == 217 && o.slot == pi::HoldEvent::expired &&
+              !v.v4.equip_valid && !v.gun_valid && v.v4.v3.inv_slot == pi::kInvSlotUnknown,
+          "beyond kSenderHoldMs the unknown goes out (the run expires)");
+    v = failed();
+    o = pi::HoldSender(h, v, false, false, 1533);
+    Check(o.gun == pi::HoldEvent::none && o.slot == pi::HoldEvent::none && !v.v4.equip_valid && !v.gun_valid,
+          "and keeps going out until a good read");
+    // A good read of empty hands is what a later failure republishes (never the older grenade).
+    h = pi::SenderHold{};
+    v = good();
+    pi::HoldSender(h, v, true, true, 2000);
+    v = good();
+    v.v4.equip_valid = false;
+    v.v4.equip = 0;
+    v.gun_valid = false;
+    v.gun_flags = v.gun_mode = v.reload_seq = v.switch_seq = 0;
+    pi::HoldSender(h, v, true, true, 2016);
+    v = failed();
+    o = pi::HoldSender(h, v, false, false, 2032);
+    Check(o.gun == pi::HoldEvent::start && !v.v4.equip_valid && !v.gun_valid && v.v4.v3.inv_slot == 3,
+          "the last good read wins, an empty hand included");
+    // The magazine (xflags Mag) is part of the gun read.
+    h = pi::SenderHold{};
+    v = good();
+    v.v4.mag_valid = true; v.v4.mag = 5; v.v4.mag_cap = 30;
+    pi::HoldSender(h, v, true, true, 2500);
+    v = failed();
+    v.v4.v3.inv_slot = 1;
+    pi::HoldSender(h, v, false, true, 2516);
+    Check(v.v4.mag_valid && v.v4.mag == 5 && v.v4.mag_cap == 30 && v.v4.v3.inv_slot == 1,
+          "a failed gun read keeps the magazine; a good slot read passes its own value");
+    // The two reads are independent.
+    h = pi::SenderHold{};
+    v = good();
+    pi::HoldSender(h, v, true, true, 3000);
+    v = good();
+    v.v4.v3.inv_slot = pi::kInvSlotUnknown;
+    o = pi::HoldSender(h, v, true, false, 3016);
+    Check(o.slot == pi::HoldEvent::start && o.gun == pi::HoldEvent::none && v.v4.v3.inv_slot == 3, "a slot read alone is held");
+    v = failed();
+    v.v4.v3.inv_slot = 2;
+    o = pi::HoldSender(h, v, false, true, 3032);
+    Check(o.gun == pi::HoldEvent::start && o.slot == pi::HoldEvent::resumed && v.v4.v3.inv_slot == 2 && v.v4.equip == 354,
+          "a gun read alone is held while the slot read passes");
+    // No good read yet: nothing to hold.
+    h = pi::SenderHold{};
+    v = failed();
+    o = pi::HoldSender(h, v, false, false, 10);
+    Check(o.gun == pi::HoldEvent::none && o.slot == pi::HoldEvent::none && !v.gun_valid && v.v4.v3.inv_slot == pi::kInvSlotUnknown,
+          "no good read yet: the unknown goes out");
+    Check(!pi::SenderHoldLive(true, 5000, 4999) && pi::SenderHoldLive(true, 5000, 5000) && pi::SenderHoldLive(true, 5000, 5000 + pi::kSenderHoldMs) &&
+              !pi::SenderHoldLive(true, 5000, 5001 + pi::kSenderHoldMs) && !pi::SenderHoldLive(false, 5000, 5000),
+          "SenderHoldLive: within [good, good + kSenderHoldMs], never backwards or without a good read");
+    Check(std::strcmp(pi::HoldEventName(pi::HoldEvent::start), "start") == 0 && std::strcmp(pi::HoldEventName(pi::HoldEvent::resumed), "resumed") == 0 &&
+              std::strcmp(pi::HoldEventName(pi::HoldEvent::expired), "expired") == 0 && std::strcmp(pi::HoldEventName(pi::HoldEvent::none), "none") == 0,
+          "hold event names");
+}
+
 } // namespace
 
 int main() {
@@ -823,6 +949,7 @@ int main() {
     TestSenderEdges();
     TestAccumulate();
     TestComposeSteer();
+    TestSenderHold();
     std::printf("%u partner input checks passed: effective pad, dir check, quantize round trip/clamps, compose "
                 "(pass/neutral/stick/net, yaw, stale, edges, net word, mask, overlay), tap/press timers, heading, hpr edges and "
                 "sub-sample taps, stall grace/silent release, resync after a disarm, level-only wrap windows, hold classifier replica and net codes, key bindings, sender edge sets, receiver accumulation\n", checks);

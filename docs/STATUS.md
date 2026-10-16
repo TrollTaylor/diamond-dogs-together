@@ -1,3 +1,127 @@
+## October 16, 2026: 0.13.0 installed (join fixes, save handoff, throws in play, C4/arm, vehicle seat and tilt)
+
+Installed: package `mgs-coop-friend-0.13.0-20261016T163124Z-d00bc5c4` (Release receipt
+`20261016-162824-bfaef91c021646e09afcf7dbe0dc5cc8`, 274 audited tests, ZIP SHA-256 `6e2192a7...b339`) in both owned
+copies, loader SHA-256 `7452ec67...a8c6` (host through `Install-Coop.ps1 -Role Host -Character snake -NonInteractive`,
+which kept the existing co-op save copy; guest through the owned `install.ps1`); both executables, both Steam DLLs and
+all 17 save-folder files hash-identical before and after; no game launched. Source: `dev/oct7-continue` fast-forwarded
+to `wp/integ7` `bebb316` (280/280 CTest, contract 655 code sites / 146 vtable slots). The version is 0.13.0 and play
+refuses a build mismatch, so both players need this same package.
+
+What 0.13.0 adds over 0.12.6 (details: [join-fix phase 1](join-fix-phase1-spec.md), [phase 2](join-fix-phase2-spec.md),
+[save handoff](save-handoff.md), [throws and C4/arm](anim-round2-throws.md), [vehicles](vehicle-ws3.md)):
+- The partner's mission is shown everywhere (HUD, F9, link-status, Play-Coop) with a 'different missions' note; the host
+  helicopter hold has an on-screen message, a 'choose again to fly alone' escape and a 2-minute bound; a story-start
+  co-op save is warned about at the title; Share-Save is documented and Install-Coop asks twice before replacing an
+  imported partner save; Collect-Logs lists the co-op saves and keeps 3 sessions.
+- Automatic save handoff: a joining guest whose save cannot meet the host gets the host's co-op save at the title and
+  MGSV restarts once on it through Play-Coop (old copy kept aside, Share-Save [R]); travel lock: the guest follows the
+  host's travel with soft refusals and escapes.
+- Native partner grenade throws are on in two-PC play (stock guard, owner filter, viewer-own rebase, stall hold,
+  receiver slot fix; WS1 rec+0x240 checks latch on a foreign row).
+- The partner draws and holds C4 and holds Hand of Jehuty's aim pose instead of lowering the rifle (no kneel/detonate
+  motion yet, no mirror of the charge in the viewer's world).
+- Vehicles: the remote driver is seated by id in unnamed sortie vehicles (also at Mother Base), and the viewer's copy
+  of the vehicle tilts with the driver's pitch and roll (RIDE_TILT).
+
+Hidden runs on the integrated build: play-native `c74a4ef5`, throws default in play `67f13461`, C4/arm `ea2b96fa`, tilt
+`05a6a6c7`, heli-alone `8c87caf7`, handoff transfer `db682ef9`. Known pre-existing issues: the shared game-over host
+continue stalls under the MISSION FAILED menu (Lua clock), and the lab seed's host shows infinite ammo.
+
+## October 16, 2026: the partner holds C4 and Hand of Jehuty natively, on by default (WS4 v1)
+
+**The teammate's body no longer lowers its rifle for C4 or Hand of Jehuty.** With the native partner (the gun
+profile, lab and two-PC play) the loader now resolves `partner_native_placed=1` and `partner_native_arm=1`: when the
+other player takes out C4 (391..395), their body draws it, holds it out in the place-hold / ready pose and puts it away;
+with Hand of Jehuty (516) it holds the arm's aim pose (its floating hand and targeting beams) and never uses it. Nothing
+is placed, fired or spent on the viewer's side: read-only digests of the viewer's placement latch, the placed owner
+table and the arm energy, the stock guard and the support stock checks stayed unchanged in every run. Hidden runs (lab,
+research worker): `7f8d643d` and `d05a1267` (frames of every phase from the side), the throws regression `6db902ce`
+(3/3), and the earlier `4e5ab735` whose static watcher lost body 1 from the frame (scenario fixed). Not yet: the body
+never kneels to place a charge or plays the detonation (the valid-spot and detonate requests are set only by the local
+player's own probe; a v2 would mirror them), there is no mirror of the partner's charge in the viewer's world, and
+mines, decoys and the other arms still lower the rifle. A named 0 (or `-Partner clips`) opts out
+([the design](anim-round2-throws.md) "WS4 v1"). The default is proven without any named key: hidden run `197d73f2`
+(lab, no labsetting) logged `partner_support=lanes; support=1; placed=1; arm=1` on both copies, the C4 and arm checks
+unchanged, and its frames show the C4 hold and the arm's aim pose. Full CTest 279/279. Not packaged yet; play mode has
+no C4/arm hidden run yet (it admits them by the throws' rule).
+
+## October 16, 2026: native partner throws in two-PC play, on by default (Stage B)
+
+**The teammate's throws now also animate in two-PC play.** With the native partner (Play-Coop's default
+`-Partner native`) the loader now resolves `partner_native_support=1` in play as in the lab; play admits it only while
+link v2 is connected, and a named `partner_native_support=0` (or `-Partner clips`) opts out. The play hidden rehearsals
+with the named key passed before the flip (`117620b9` off, `e9244c56` bad, `733e023b` awful, the stall step
+`33c11da9`, lab regression `8c7f3472`: 4/4 throws each, the viewer's counts unchanged, no false latch). The default
+proof without the key passed: hidden run `a0d8edf6` (play, `-WanSim bad`, no `-LabSetting`) logged
+`partner_support=mode; mode=play; reason=ok` on both copies and 4/4 partner throws on the guest with its counts unchanged
+and no false latch; frames show each throw ([the throw design](anim-round2-throws.md) "Stage B"). Full CTest 277/277.
+Not packaged yet; the installed 0.12.6 friend loader keeps throws lab-only.
+
+## October 15, 2026: native partner grenade throws (lab / local test)
+
+**Your teammate's body now throws grenades.** When the other player equips a thrown support item (EQP type 12:
+grenades, smoke/stun/sleep grenades, empty magazines), aims and throws, their body on your screen holds the item and
+plays its own native throw (wind-up, release, follow-through). Nothing is spawned on your side and your grenade counts
+never change: a scoped stock guard puts the partner body on the game's own non-consuming remote-player branch, and an
+owner filter at the thrown service's entry drops every request (real throw and arc preview) owned by the partner body.
+Placed items (C4, mines) and the bionic arm still lower the gun (they write shared game state). This is on by default in
+the lab/local two-window test (`partner_native_support`, the native gun profile in lab mode); two-PC play mode does not
+admit it yet.
+
+Hidden runs: `aaa2a0e0df66419e8d026f029417f3da` (GPT's v1: both throws visible, 229 partner requests dropped, none
+passed, guest counts unchanged) and, after the review fixes, `ea93a2e38edf41d780f1ce275d1b0f40` (the guest's exact
+counts required unchanged after every throw and while it aimed its own grenade; 317 partner requests dropped, the
+guest's own 80 arc previews forwarded). The review (`docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md`) found the
+guard only covered drain-window jobs; it now covers every body-1 job. Full ReleaseGun CTest 273/273. History of the
+blocked attempts and the REA/Ghidra audit: [the throw design](anim-round2-throws.md).
+
+Installed: package `mgs-coop-friend-0.12.6-20261015T233337Z-8ec568ed` (Release receipt
+`20261015-233107-b5f9df5644f04116ac88dfccedbfeb00`, 263 audited tests, ZIP SHA-256 `c01d8cd9...5ae4`) in both owned
+copies, loader SHA-256 `76cb0e89...65b2` (host through `Install-Coop.ps1 -Role Host -Character snake`, guest through the
+owned `install.ps1`); both executables, both Steam DLLs and all 17 save-folder files (13 real saves) hash-identical
+before and after; no game launched. The version stays 0.12.6, so both players need this same package.
+
+GPT's original note (v1, before the review): `wp/anim-throws` implements `partner_native_support=1` for type-12
+slot-3 equipment. A scoped stock guard, thrown-service entry owner filter,
+non-local native equipment writer/follower and per-window input gate isolate body 1;
+read-only support/inventory checks latch it off on a change. Placed equipment and
+arms remain unsupported. The explicit p218 diagnostic and required private
+whole-player pose window refuse support because they violate its non-local audit.
+Static contract verification passed for executable 1.0.15.4 SHA-256
+`085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
+ReleaseGun build and all **253/253 CTest tests** passed, including the friend-package
+fixture. Results, patch bytes and the prepared scenario are recorded in
+[the throw design](anim-round2-throws.md).
+(Superseded: the hidden runs above verified animation, counts and item visibility.)
+
+## October 15, 2026: the remote driver is drawn seated; partner weapon and stance fixes
+
+**Driver in the seat.** A teammate driving a light vehicle or truck in Afghanistan or Africa free roam is now drawn in the driver's seat of the viewer's own copy of that vehicle (`partner_native_ride=seat`, the new driven default). The receiver keeps the partner body realized and plays a targeted direct motion on it, the engine's own seat mechanism that retail mission s10150 uses for Snake's jeep ride: `{{"coopRide",1},{"stateVehicleFrontLeftLoop",true,"veh_lv_0000","CNP_ppos_c","MTP_GLOBAL_C",true}}`. The engine re-anchors the body to the vehicle copy's seat matrix every frame (`0x1198770` -> `0xB7AF90` -> `PS+0x270`), so it follows the vehicle that `RIDE_FAST` moves. Four reversible code dwords are armed only for the seat episode: the anchor's seat index (`0x119883C`) and three skips over the direct-motion camera-connect stores (`0x1198D56`, `0x1198D81`, `0x11992E9`), so neither the seat's entry nor its end touches the viewer's own camera connect. The sender adds the vehicle id, native seat (from `GetRiderId`) and a PlayerStatus bitmask to its receipt; the ride wire is v2 (v1 still accepted). Heli, horse, D-Walker, APC/tank, unnamed vehicles and stale rides still hide. Hidden runs: `8b8e5bbc2acc4b2a967da44aa1aaab6f` (the guest's body seated in the jeep's driver seat on the host screen, hands on the wheel, while it drives) and `77d24c5e1ac74552a55450a7b0307966` (watched from the Wakh Sind plaza: Snake seated while the jeep drives in and parks, then climbing out); the body tracks the remote's seated pose to about 1 mm (`partner_ride_seat=status; ...; err_mm=1`). Rider `9728` in the census is D-Dog (`TppBuddyDog2`), who rides in his owner's passenger seat on the owner's copy. Not yet tested: both players driving at once, passenger seats, trucks, Africa vehicle names, the optional get-in/get-off chaining.
+
+**Partner weapons.** When the remote holds a support weapon, item or the bionic arm (slot 3/4/6), the partner no longer raises its old rifle (`partner_weapon=unsupported; ...; strip=0x58`). Its aim follows the remote's aim state and aim act, not only the raw aim button, so toggle aim and the end of an aim show. Visual fire stops when the remote's magazine is empty and resumes at its reload. The partner's magazine base is rewritten on every weapon switch (the old `41/11` handgun reading is gone). The partner's reload length now adapts to the remote's (`partner_native_reload_rate=adapt`, the gun-profile default): 3018 -> 2285 -> 2082 -> 2051 -> 2035 ms against the remote's ~2020 ms, handgun 1242 vs 1223 ms. Hidden runs `204b5d547faf48da8ea89a7e485b1b59` (fire census: grenade 354, magazine 349 and Jehuty 516 gated; the host's grenade goes through the thrown service with owner 0), `6163920a2b104de1b2c560b998e03d8c` and `8ca5da4a50a14905bb61582999250149`.
+
+**Stance and actions.** Crouch, prone and stand now follow within about half a second instead of 1.5-2.5 s, and an edge-triggered `partner_act` census and per-second `partner_pad_dropped` counts are logged for diagnosing what remains (`5b7221a6c7db4458b7364f25f82e75ca`: crouch 8/8, prone 6/6, dive 3/3 matched). A direct-motion overlay lever plays damage staggers, the ledge hang, ladder poses and a lying clip on the partner (`873d7197a16a44dc83dec7133f8b6446`); `stateDead` shows nothing and the box pose has no box model. The overlay stays **off** by default.
+
+**Not done.** Native grenade throws, C4 placing, launcher fire and arm abilities for the partner were stopped twice by a safety classifier (`wp/anim-throws`, `docs/anim-round2-throws.md`): static analysis also showed the partner's native throws would spend the viewer's own shared grenade stock. Vault, climb and ladder still need a census at real spots. Details: `docs/anim-round1-integ.md`, `docs/anim-round1-seat.md`, `docs/anim-round1-weapons.md`, `docs/anim-round1-actions.md`. Full ReleaseGun CTest 269/269.
+
+Installed: package `mgs-coop-friend-0.12.6-20261015T125018Z-402381a3` (Release receipt `20261015-124725-02a0ea189acf4d04893ba092438a4a3e`, 263 audited tests, ZIP SHA-256 `5985ea4c...aa51`) in both owned copies, loader SHA-256 `f3dd0621...0bbb` (host through `Install-Coop.ps1 -Role Host -Character snake`, guest through the owned `install.ps1`); both executables, both Steam DLLs and all 17 save-folder files (13 real saves) hash-identical before and after; no game launched. The version stays 0.12.6, so both players need this same package for two-PC play.
+
+## October 14, 2026 (night): carried camera and the sleeping teammate's stray prompts
+
+**Carried camera.** A carried player's view sat low beside the carrier, inside the bodies. The carried player now gets the stock non-animation camera (`Player.RequestToPlayCameraNonAnimation`, the layer the mission-clear and game-over shots use) aimed at the carrier (player instance 1) from 3.8 m behind and a little above. `Player.RequestToStopCameraAnimation` returns the normal camera after put-down, cleanup or link loss. A one-tick role dropout does not restart the shot, and a refused request is retried after 2 s. `followTime` is how long the shot keeps tracking its target in seconds (retail cutscenes use 3-7). With 0 the shot stayed where it started while the carrier walked away (run `9d08106b35be49ca877f7c761115db0c`). It is now 600 s and renewed while the carry lasts. In hidden run `dbb5b57eac50475db3e37ad708bb926e` the shot stayed behind the carrier through 2.5 s of walking and a turn, then returned to the normal camera after put-down.
+
+**Sleeper's view in dark greyscale.** The sleeping player's light grey wash (an ImGui rectangle, which lightened the frame) is replaced by a full-screen pass. It copies the finished game frame and redraws it as greyscale at half brightness with a soft vignette. The pass runs from an ImGui draw callback queued first in the frame, so the backend restores its state, and the teammate's name tag and the `ASLEEP`/`CARRIED` status draw over it in colour. The game's back buffer is `R8G8B8A8_UNORM_SRGB` (`overlay=sleep_view; format=29; srgb=1; samples=1`), so the shader darkens in display space. Darkening the linear values (run `1be8bed7c825430e97e43fa618c3b6ee`) left the sky at about 160-175 of 255; the display-space version (run `dc2f33c97a7a41ca891d0ceb45ea9ca0`) brings it to about 85-110. A refused shader or frame copy falls back to a dark wash. The overlay fixture checks a green test frame turns grey, dark and darker at the edges, while a healthy player's frame keeps its colour.
+
+**Stray prompts on a sleeping teammate.** The healthy player saw two prompts the wounded case does not show: the stock Fulton offer and the sleeper's own struggle guide (stick + E, `!`).
+
+- *Struggle guide.* The player UI object has five prompt queues: vt+268/288/270/278/280 at `0xFE8770`/`0xFE89E0`/`0xFE8700`/`0xFE8C70`/`0xFE8690`. All five share one body over the field blocks `0x3C0`/`0x410`/`0x460`/`0x4B0`/`0x370`, and none checks which player instance owns the request. Instance 1's sleep update queues hint 93 (`0x5D`) on vt+268 from `0x12CAD45`; carried, it also queues hint 94 from `0x1127437`. Any prompt queued from inside the validated instance-1 job now stays off the local HUD (`teammate_partner_prompt`). The check uses the same player/UI ownership chain as the existing Quiet hint filter, but accepts any producer and any queue. The sleeper still sees its own guide. In worker builds the private native pose window already hooks vt+268 (`PoseSleepHint`), so that queue stays with the pose window, which forwards its other requests through the same filter. `tools/generate_native_ui_contract.py` pins the four added bodies and vtable slots (41 sites).
+- *Fulton.* The stock Fulton offer covers any unconscious body. While carrying, E stays native for horse loading, so the stock Fulton could actually extract a carried sleeping teammate. The Fulton action is now withheld (`vars.playerDisableActionFlag` gains `PlayerDisableAction.FULTON`) while a downed teammate is within 3 m or carried. Only a bit the mod added is removed again, so a mission's own Fulton lock is kept.
+
+Hidden runs `9d08106b35be49ca877f7c761115db0c` and `dbb5b57eac50475db3e37ad708bb926e` (lab defaults, friendly dart): from 11 m the host's only stock prompt is Pet D-Dog, with D-Dog beside the host. Beside the teammate it shows only the stock carry icon and the mod's `HOLD / WAKE UP`. Carrying shows neither the Fulton offer nor the struggle guide. The host log records the suppressed hints 93 and 94 on queue `0x3C0`. The carried guest's view showed the carrier from behind, the follow camera stopped after put-down, and the wake restored 6600/6600 HP. An earlier attempt, run `1d3e80b4b4e14e12915d77d04ac9dbba`, never reached gameplay: the new vt+268 hook changed bytes the private pose module verifies (`pose_full_code`), so the worker refused. All three runs restored the baseline loaders, and the real saves were unchanged. Checks: all 264 parallel CTest tests and `lab_scripts_tests` passed; `friend_package_tests` was not rerun because of the known OneDrive lock. Not yet covered: a wounded carried teammate's camera, the reverse roles (the host carried), and a live two-PC session. [Evidence](evidence/carried-camera-partner-prompts-actual-2026-10-14.json).
+
+Installed: package `mgs-coop-friend-0.12.6-20261014T235803Z-73f514f3` (Release receipt `20261014-235549-75c3eb274ab445b581fb5c2b211c626d`, ZIP SHA-256 `cc3a79bb...9d10`) in both owned copies, loader SHA-256 `d4a1807e...cbbb`; both executables, both Steam DLLs and all 13 real save files unchanged. It replaces the same evening's `20261014T232700Z-f62273b9`, which had the light sleeper wash. The version stays 0.12.6, so both players need this same package for two-PC play. Release builds have no native pose window, so they hook the vt+268 queue directly; no hidden run can exercise that path, because worker builds always leave that queue to the pose window.
+
 ## October 14, 2026 (evening): fixes from the first 0.12.6 local test
 
 The user's local two-window test (both copies on loader `1497f2ba...`) found five problems. Their logs explain three:

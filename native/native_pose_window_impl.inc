@@ -1174,6 +1174,7 @@ __declspec(noinline) void PoseSleepHint(void* ui,std::uint16_t hint,std::uint32_
   else InterlockedIncrement(&g_pose_hints);
   SetLastError(incoming);return; // mandatory refusal never enters the shared hint producer
  }
+ if(teammate_targeting::FilterPartnerPrompt(ui,0x3c0,hint,priority,enable,caller)){SetLastError(incoming);return;}
  SetLastError(incoming);g_pose_hint(ui,hint,priority,flag,enable,extra6,extra7);
 }
 struct PosePatch {

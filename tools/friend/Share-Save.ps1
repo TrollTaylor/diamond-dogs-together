@@ -8,7 +8,7 @@ Double-click Share-Save.bat and choose:
                                copy (mgs-coop\coop-saves). Your previous copy is
                                kept aside and [R] brings it back.
   [R] Restore                - puts back the co-op save copy that the last
-                               import replaced.
+                               import or automatic save handoff replaced.
 
 Only the co-op save COPY that Play-Coop uses is read or changed. Your real
 Steam saves (normal game starts) are never read or written by this script.
@@ -48,11 +48,12 @@ Import-Module (Resolve-Piece 'FriendCommon.psm1' 'FriendCommon.psm1') -Force -Di
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $PackageDirectory = Split-Path -Parent $scriptRoot
-$interactive = !$NonInteractive -and [Environment]::UserInteractive
+$interactive = Test-FriendInteractive -NonInteractive:$NonInteractive
 
 # The files that carry progress (taken from the friend) and the subfolders of
-# the co-op save copy (Install-Coop's Copy-SaveSeed layout).
-$progressPattern = '^(TPP_GAME_DATA[0-9]?|PERSONAL_DATA[0-9]?)$'
+# the co-op save copy (Install-Coop's Copy-SaveSeed layout). The import itself
+# is FriendCommon's Import-CoopProgressFiles (shared with the automatic save handoff).
+$progressPattern = Get-CoopProgressPattern
 $subdirs = @('287700\local', 'remote')
 $maxFileBytes = 4MB
 $formatName = 'mgs-coop-save-share'
@@ -82,7 +83,7 @@ if (!(Test-Path -LiteralPath $GameDirectory -PathType Container)) { throw "Folde
 $gameRoot = [IO.Path]::GetFullPath((Get-Item -LiteralPath $GameDirectory -Force).FullName).TrimEnd('\', '/')
 $paths = Get-InstancePaths -GameDirectory $gameRoot
 $saveDir = $paths.CoopSaves
-$replacedRoot = Join-Path $paths.Mod 'coop-saves-replaced'
+$replacedRoot = $paths.CoopSavesReplaced
 
 Write-Host 'MGS Co-op - share a co-op save' -ForegroundColor Cyan
 Write-Host "Game folder: $gameRoot"
@@ -101,7 +102,7 @@ if (!$Mode) {
         Section 'What do you want to do?'
         Write-Host '  [E] Export my co-op save (a zip on the Desktop to send to your friend)'
         Write-Host "  [I] Import a friend's save (your current co-op copy is kept aside)"
-        Write-Host '  [R] Restore the co-op copy the last import replaced'
+        Write-Host '  [R] Restore the co-op copy the last import or automatic save handoff replaced'
         Write-Host '  [Q] Quit'
         switch -Regex (Ask 'Choose E, I, R or Q') {
             '^[Ee]' { $Mode = 'Export' }
@@ -130,19 +131,9 @@ if ($Mode -eq 'Export') {
     $zipOut = Join-Path $OutputDirectory ('mgs-coop-save-' + (Get-FriendStamp) + '.zip')
     $manifestFiles = @(foreach ($f in $files) { [ordered]@{ entry = $f.Entry; bytes = $f.Bytes; sha256 = (Get-FileSha $f.Path) } })
     $manifest = [ordered]@{ format = $formatName; v = 1; exported_utc = [DateTime]::UtcNow.ToString('o'); files = $manifestFiles }
-    $stream = [IO.File]::Open($zipOut, [IO.FileMode]::CreateNew)
-    try {
-        $zip = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create)
-        try {
-            foreach ($f in $files) { [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.Path, $f.Entry) }
-            $entry = $zip.CreateEntry('share-save.json')
-            $w = New-Object IO.StreamWriter($entry.Open(), (New-Object Text.UTF8Encoding $false))
-            try { $w.Write(($manifest | ConvertTo-Json -Depth 5)) } finally { $w.Dispose() }
-        } finally { $zip.Dispose() }
-    } finally { $stream.Dispose() }
-    # Re-read what was written: every hash must match the source.
-    $check = [IO.Compression.ZipFile]::OpenRead($zipOut)
-    try { if (@($check.Entries).Count -ne $files.Count + 1) { throw 'The written zip is incomplete.' } } finally { $check.Dispose() }
+    # Writes the zip, then re-reads it: every entry's hash must match the manifest.
+    # A failed export deletes its zip, so only verified exports stay on the Desktop.
+    Write-FriendShareZip -ZipPath $zipOut -Files $files.ToArray() -ManifestFiles $manifestFiles -ManifestText ($manifest | ConvertTo-Json -Depth 5)
     Section 'Done'
     Write-Host "Exported $($files.Count) save files to:"
     Write-Host "     $zipOut" -ForegroundColor Green
@@ -152,10 +143,6 @@ if ($Mode -eq 'Export') {
 }
 
 # ---------------------------------------------------------------- restore
-function Get-ImportBackups {
-    if (!(Test-Path -LiteralPath $replacedRoot -PathType Container)) { return @() }
-    return @(Get-ChildItem -LiteralPath $replacedRoot -Directory -Force | Where-Object { $_.Name -like '*-before-import' } | Sort-Object Name -Descending)
-}
 function Move-CurrentAside([string]$Suffix) {
     $null = New-Item -ItemType Directory -Path $replacedRoot -Force
     $dest = Join-Path $replacedRoot ((Get-FriendStamp) + $Suffix)
@@ -166,14 +153,18 @@ function Move-CurrentAside([string]$Suffix) {
 }
 
 if ($Mode -eq 'Restore') {
-    $backups = @(Get-ImportBackups)
-    if (!$backups.Count) { throw 'No co-op save copy from before an import was found. Nothing was changed.' }
+    # The newest copy an import (-before-import) or an automatic save handoff
+    # (-before-handoff) moved aside.
+    $backups = @(Get-CoopProgressBackups -ReplacedRoot $replacedRoot)
+    if (!$backups.Count) { throw 'No co-op save copy from before an import or an automatic save handoff was found. Nothing was changed.' }
     $pick = $backups[0]
-    Write-Host "Restoring the co-op save copy kept at $($pick.FullName)"
+    if ($pick.Kind -eq 'handoff') { Write-Host "Restoring the co-op save copy kept before the automatic save handoff at $($pick.Path)" }
+    else { Write-Host "Restoring the co-op save copy kept before the import at $($pick.Path)" }
     if ($interactive -and (Ask 'Restore it now? The current copy is kept aside too. [Y/n]') -match '^(n|no)$') { Write-Host 'Nothing was changed.'; exit 0 }
+    Assert-NoReparsePoint -Path $pick.Path -StopAt $paths.Mod
     $aside = Move-CurrentAside '-before-restore'
-    try { Move-Item -LiteralPath $pick.FullName -Destination $saveDir }
-    catch { Move-Item -LiteralPath $aside -Destination $saveDir; throw }
+    try { [IO.Directory]::Move($pick.Path, $saveDir) }
+    catch { if (!(Test-Path -LiteralPath $saveDir)) { [IO.Directory]::Move($aside, $saveDir) }; throw }
     Section 'Done'
     Write-Host 'Your previous co-op save copy is back. The replaced copy was kept at:'
     Write-Host "     $aside"
@@ -201,6 +192,8 @@ try {
     foreach ($m in @($manifest.files)) { $want[[string]$m.entry] = $m }
     $null = New-Item -ItemType Directory -Path $stage
     $taken = 0
+    # What was really taken (the import marker lists these, never the bytes).
+    $importedFiles = New-Object Collections.Generic.List[object]
     foreach ($e in @($zip.Entries)) {
         if ($e.FullName -eq 'share-save.json') { continue }
         $parts = $e.FullName.Split('/')
@@ -214,6 +207,7 @@ try {
         $null = New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force
         [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dest, $false)
         if ((Get-FileSha $dest) -ne ([string]$m.sha256).ToUpperInvariant()) { throw "$($e.FullName) is damaged (hash mismatch). Ask your friend to export again. Nothing was changed." }
+        $importedFiles.Add([pscustomobject]@{ entry = $e.FullName; bytes = [Int64]$e.Length; sha256 = ([string]$m.sha256).ToUpperInvariant() })
         $taken++
     }
     if (!(Test-Path -LiteralPath (Join-Path $stage '287700\local\TPP_GAME_DATA0')) -and !(Test-Path -LiteralPath (Join-Path $stage '287700\local\TPP_GAME_DATA1'))) {
@@ -224,34 +218,35 @@ try {
     throw
 } finally { $zip.Dispose() }
 
-$exported = [string](Get-FriendProperty $manifest 'exported_utc' 'unknown')
+$exportedValue = Get-FriendProperty $manifest 'exported_utc' ''
+# PowerShell 7's ConvertFrom-Json returns a DateTime; Windows PowerShell 5.1 keeps the text.
+if ($exportedValue -is [DateTime]) { $exportedValue = $exportedValue.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture) }
+$exportedValue = [string]$exportedValue
+$exported = $exportedValue
+if (!$exported) { $exported = 'unknown' }
 Write-Host "Friend's save: $taken progress files, exported $exported (UTC)."
 Write-Host 'Your current co-op copy is kept aside; your own settings stay; your real saves are not touched.'
 if ($interactive -and (Ask 'Use this progress for co-op now? [Y/n]') -match '^(n|no)$') {
     Remove-Item -LiteralPath $stage -Recurse -Force
     Write-Host 'Nothing was changed.'; exit 0
 }
-# New copy = your current copy (settings included) with the friend's progress files on top.
-$newDir = Join-Path $paths.Mod ('coop-saves-new-' + (Get-FriendStamp))
+# New copy = your current copy (settings included) with the friend's progress
+# files on top and the import marker (names, sizes and hashes; no save bytes):
+# Install-Coop asks twice before it replaces this copy, and [R] moves it aside
+# together with the imported progress. The current copy goes to
+# coop-saves-replaced\<time>-before-import; a failure puts it back.
 try {
-    Copy-Item -LiteralPath $saveDir -Destination $newDir -Recurse
-    foreach ($sub in $subdirs) {
-        $target = Join-Path $newDir $sub
-        $null = New-Item -ItemType Directory -Path $target -Force
-        # Drop the old progress files so a slot the friend does not have cannot mix two players' progress.
-        foreach ($old in @(Get-ChildItem -LiteralPath $target -File -Force | Where-Object { $_.Name -cmatch $progressPattern })) { Remove-Item -LiteralPath $old.FullName -Force }
-        $from = Join-Path $stage $sub
-        if (Test-Path -LiteralPath $from) { foreach ($f in @(Get-ChildItem -LiteralPath $from -File -Force)) { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $target $f.Name) } }
-    }
-    $aside = Move-CurrentAside '-before-import'
-    try { Move-Item -LiteralPath $newDir -Destination $saveDir }
-    catch { Move-Item -LiteralPath $aside -Destination $saveDir; throw }
+    $aside = Import-CoopProgressFiles -StageRoot $stage -SaveDir $saveDir -ReplacedRoot $replacedRoot -Suffix '-before-import' `
+        -Marker @{ Source = 'share-save'; ExportedUtc = $exportedValue } -Manifest $importedFiles.ToArray()
+} catch {
+    if ($_.Exception.Message.Contains(' is kept at ')) { throw }
+    throw ($_.Exception.Message + ' Nothing was changed.')
 } finally {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-    if (Test-Path -LiteralPath $newDir) { Remove-Item -LiteralPath $newDir -Recurse -Force }
 }
 Section 'Done'
 Write-Host "Your co-op save copy now has your friend's progress. Your previous copy is kept at:"
 Write-Host "     $aside"
 Write-Host 'Start Play-Coop.bat as usual. If the game does not accept the save, run Share-Save.bat and choose [R].'
+Write-Host 'Keep the zip: if this copy is ever replaced, import it again.'
 exit 0

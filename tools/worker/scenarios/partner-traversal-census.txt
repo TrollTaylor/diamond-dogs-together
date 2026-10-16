@@ -1,0 +1,123 @@
+# Round-1 actions track (docs/anim-round1-actions.md "Hidden tests" H2): a traversal act census with the act logger
+# on (partner_act / partner_pad_dropped lines) and the native stance window (partner_recon=stance_fix / stance_wait).
+# The host performs every traversal action the worker keys reach; the guest films its body 1 (the host's puppet).
+# Run (hidden worker, coordinator only):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-traversal-census.txt -PartnerProfile native -NativeStage loco
+#   (or -NativeStage gun -BuildProfile research, the user's profile).
+# Read the guest's script-observer.log (the host's acts as "remote", body 1's as "body"):
+#   partner_act; t=<tick>; edge=remote|body|miss; remote=<act>(<family>); body=<act>(<family>); match_ms=<ms>|pending|miss|-
+#   partner_pad_dropped; action=..; stock=..; call=..; subject=..; weapon=..; cqc=..; light=..; vfire=..; marker=..; fire=..; other=..; ...
+#   partner_recon=stance_fix; remote=<s>; body=<s>; via=tap|hold; ms=..; fixes=..; after_ms=<~500..700>
+#   partner_recon=stance_wait; reason=pad|body|settle|state|gun|reload|switch|carry|downed; remote=..; body=..; ms=..
+# The host's own log carries the same lines for the guest. Collect per section: every remote act id seen (the
+# census), its family name or '?', the body's match_ms or miss, and the dropped presses. Acts not yet named
+# (vault, climb, hang, ladder, window, cover) get their ids from the remote= side of these lines.
+labsetting partner_act_log=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 5 3
+wait 5000
+both capture census-start
+# --- Stance cycles (acts 1/3/5; the native stance window: a lost edge is fixed after ~0.5 s, not 2 s) ----------
+host press c
+wait 1200
+guest capture census-crouch
+host press c
+wait 1200
+guest capture census-stand
+host hold c 600
+wait 1600
+guest capture census-prone
+host press c
+wait 1200
+guest capture census-prone-to-crouch
+host press c
+wait 1500
+guest capture census-stand-again
+# Fast toggles (the guards: pad quiet, body stable): C, C within 300 ms.
+host press c
+wait 250
+host press c
+wait 1500
+guest capture census-double-tap
+# --- Crawl and prone rolls (6, rolls) -------------------------------------------------------------------------
+stance host prone
+placebehind guest host 5 3
+host hold w 1200
+wait 300
+host hold shift+d 600 nowait
+guest burst census-roll-dash 4 150
+wait 1000
+host hold space+a 300 nowait
+guest burst census-roll-evade 4 150
+wait 1200
+stance host stand
+# --- Dive while running (57 -> 6), evade (27) -------------------------------------------------------------------
+resetpose host
+stance host stand
+placebehind guest host 8 3
+host hold shift+w 1500 nowait
+wait 1100
+host hold shift+w+space 200 nowait
+guest burst census-dive 6 150
+wait 1500
+stance host stand
+resetpose host
+placebehind guest host 5 3
+host press space
+guest burst census-evade 4 150
+wait 1500
+# --- Step down / fall and landing (25/26): a 3 m debug step up, then the fall ------------------------------------
+host debug step 0 3 0
+guest burst census-fall 6 150
+wait 2500
+resetpose host
+stance host stand
+placebehind guest host 5 3
+wait 2000
+# --- ACTION: jump/vault probe ahead of the lab start (no verified obstacle; records the act ids) ------------------
+host hold w 1500 nowait
+wait 700
+host hold w+e 200 nowait
+guest burst census-vault-probe 6 150
+host release
+wait 1500
+host press e
+guest burst census-action-idle 3 150
+wait 1000
+# --- Other masked presses (partner_pad_dropped census: which bindings reach which groups) -------------------------
+host press q
+wait 800
+host hold f 600
+wait 800
+host release
+host press 1
+wait 1200
+host press 2
+wait 1200
+host press x
+wait 800
+host press z
+wait 1500
+guest capture census-presses
+# --- Ladder / ledge / window / cover: no verified coordinates in the repo yet. To extend the census, add a known
+# spot (30010) and the same pattern, for example:
+#   host debug teleport <x> <y> <z> <yaw>     (at the foot of a ladder, facing it)
+#   placebehind guest host 5 3
+#   host hold w 1500 nowait
+#   host hold w+e 200 nowait                 (ACTION: grab the ladder)
+#   host hold w 1500 nowait                  (climb; remote acts 21/23 expected)
+#   guest burst census-ladder 6 200
+resetpose host
+both capture census-end
+state

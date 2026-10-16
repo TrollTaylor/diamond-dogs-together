@@ -683,6 +683,21 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_equip -Value manifest)/$(ConvertTo-LabPartnerValue -Key partner_native_equip -Value substitute)" 'manifest/substitute' 'equip enums'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_equip -Value any } 'stock46|manifest|substitute' 'equip values'
 
+    # Native type-12 support must be explicitly named and is serialized as a bool.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_support -Value $true)/$(ConvertTo-LabPartnerValue -Key partner_native_support -Value 0)" '1/0' 'native support bool values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_support -Value 2 } '0 or 1' 'native support invalid bool refused'
+    $supportJson = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_support = 1 })
+    Assert-Equal $supportJson['partner_native_support'] '1' 'native support short JSON name'
+    $supportOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_support=0', 'guest:partner_native_support=1') -Role guest
+    Assert-Equal $supportOverride['partner_native_support'] '1' 'native support role override'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_support')) 'native gun JSON never auto-emits support'
+    # WS4 step 0: the read-only placed / arm census key (a bool, written only when named).
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_placed_census -Value 1)/$(ConvertTo-LabPartnerValue -Key partner_placed_census -Value $false)" '1/0' 'placed census bool values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_placed_census -Value 2 } '0 or 1' 'placed census invalid bool refused'
+    $placedOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_placed_census=1', 'host:partner_placed_census=0') -Role host
+    Assert-Equal $placedOverride['partner_placed_census'] '0' 'placed census role override'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_placed_census')) 'native gun JSON never auto-emits the placed census'
+
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_words -Value rp0) 'rp0' 'partner_input_words'
@@ -760,6 +775,11 @@ try {
     Assert-Equal ($repairOverrides['partner_native_ride']) 'hide' 'private worker accepts bounded deployment visibility setting'
     Assert-Equal ($repairOverrides['partner_native_equip_shared']) 'on' 'shared weapon setting reaches prepared lab.ini'
     Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'partner_native_ride=drive' -Role host } 'allowed:' 'unknown deployment mode refused'
+    $seatOverrides=ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_ride=seat','partner_ride_seat_enter=getin','partner_ride_seat_exit=getoff') -Role guest
+    Assert-Equal ($seatOverrides['partner_native_ride']) 'seat' 'the seated vehicle rider is a bounded ride setting'
+    Assert-Equal ($seatOverrides['partner_ride_seat_enter']) 'getin' 'seat enter setting'
+    Assert-Equal ($seatOverrides['partner_ride_seat_exit']) 'getoff' 'seat exit setting'
+    Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'partner_ride_seat_exit=jump' -Role host } 'allowed:' 'unknown seat exit refused'
     $e7 = Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items 'guest:net_latency_ms=100,guest:net_loss_permille=200' -Role guest)
     $e7i = ConvertFrom-IniText (New-LabIniFromSettings -Settings $e7)
     Assert-Equal "$($e7i['net_latency_ms'])/$($e7i['net_loss_permille'])/$($e7i['partner_stage'])" '100/200/0' 'E7 impairment written for the guest'

@@ -167,12 +167,96 @@ bool ForEachPair(const char* text, std::size_t length, Visit visit) noexcept {
     }
     return true;
 }
+
+// Keep round-2 support outside the main parser chain (MSVC nesting limit).
+bool ParseRound2SupportKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (!Equals(key, "partner_native_support")) return false;
+    ok = ParseBool(value, result.partner_native_support);
+    if (ok) result.partner_native_support_given = true;
+    return true;
+}
+
+// WS4 step 0: the read-only placed / arm census (partner_placed_census=0|1)
+// and the WS4 v1 keys (partner_native_placed / partner_native_arm=0|1), their
+// own helper for the same nesting limit.
+bool ParseWs4CensusKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_placed_census")) ok = ParseBool(value, result.partner_placed_census);
+    // WS4 v1: native placed C4 and arm holds (partner_native_placed / _arm=0|1);
+    // a named value always wins over the gun profile's default.
+    else if (Equals(key, "partner_native_placed")) {
+        ok = ParseBool(value, result.partner_native_placed);
+        if (ok) result.partner_native_placed_given = true;
+    } else if (Equals(key, "partner_native_arm")) {
+        ok = ParseBool(value, result.partner_native_arm);
+        if (ok) result.partner_native_arm_given = true;
+    } else return false;
+    return true;
+}
+
+// The round-1 actions track's keys (docs/anim-round1-actions.md): true when
+// `key` is one of them (`ok` then says whether its value parsed).
+bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
+    else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
+    else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
+    else return false;
+    return true;
+}
+// WS3 vehicles (docs/vehicle-ws3.md): the ride census, seat by id and tilt
+// keys (booleans, lab only: ResolveWeaponDefaults turns them off in play).
+bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
+    else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
+    else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
+    else return false;
+    return true;
+}
+// Automatic save handoff and the guest travel lock (join-fix phase 2 P2-11):
+// save_handoff=off|stage|scene|always and travel_lock=0|1. Neither is a play
+// refusal; the effective travel lock is EffectiveTravelLock.
+bool ParseSaveHandoffKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "save_handoff")) {
+        ok = ParseSaveHandoff(value.data, value.size, result.save_handoff);
+        if (ok) result.save_handoff_given = true;
+    } else if (Equals(key, "travel_lock")) {
+        bool lock = false;
+        ok = ParseBool(value, lock);
+        if (ok) result.travel_lock = lock ? 1 : 0;
+    } else {
+        return false;
+    }
+    return true;
+}
 } // namespace
 
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
     return ParseLabConfig(text, length, out, LabParseOptions{});
 }
 
+namespace {
+// Anim round 1 weapons (docs/anim-round1-weapons.md): true when key is one of
+// them (ok: the value parsed).
+bool ParseAnimWeaponsKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "partner_native_unsupported")) {
+        ok = ParseBool(value, result.partner_native_unsupported);
+        if (ok) result.partner_native_unsupported_given = true;
+    } else if (Equals(key, "partner_native_dry_stop")) {
+        ok = ParseBool(value, result.partner_native_dry_stop);
+        if (ok) result.partner_native_dry_stop_given = true;
+    } else if (Equals(key, "partner_native_aim_intent")) {
+        ok = ParsePartnerNativeAimIntent(value.data, value.size, result.partner_native_aim_intent);
+        if (ok) result.partner_native_aim_intent_given = true;
+    } else if (Equals(key, "partner_native_reload_rate")) {
+        ok = ParsePartnerNativeReloadRate(value.data, value.size, result.partner_native_reload_rate);
+        if (ok) result.partner_native_reload_rate_given = true;
+    } else if (Equals(key, "partner_fire_census")) {
+        ok = ParseBool(value, result.partner_fire_census);
+    } else {
+        return false;
+    }
+    return true;
+}
+} // namespace
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const LabParseOptions& options) noexcept {
     LabConfig result{};
     bool enabled = false;
@@ -191,6 +275,14 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
+        // Separate key helpers (anim rounds 1-2, save handoff, WS3 vehicles, the WS4 census):
+        // the main chain is at MSVC's block nesting limit.
+        if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
+            ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
+            ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok)) {
+            if (!ok) ++result.invalid_values;
+            return;
+        }
         if (Equals(key, "enabled")) ok = ParseBool(value, enabled);
         else if (Equals(key, "role")) {
             if (Equals(value, "host")) result.role = LabRole::host;
@@ -360,6 +452,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
             ok = ParsePartnerNativeRide(value.data, value.size, result.partner_native_ride);
             if (ok) result.partner_native_ride_given = true;
         }
+        else if (Equals(key, "partner_ride_seat_enter")) ok = ParsePartnerRideSeatEnter(value.data, value.size, result.partner_ride_seat_enter);
+        else if (Equals(key, "partner_ride_seat_exit")) ok = ParsePartnerRideSeatExit(value.data, value.size, result.partner_ride_seat_exit);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -767,6 +861,27 @@ bool ParseCoopHud(const char* text, std::size_t size, CoopHud& out) noexcept {
     else if (Equals(s, "off") || Equals(s, "0")) out = CoopHud::off;
     else return false;
     return true;
+}
+const char* SaveHandoffName(SaveHandoff value) noexcept {
+    switch (value) {
+    case SaveHandoff::stage: return "stage";
+    case SaveHandoff::scene: return "scene";
+    case SaveHandoff::always: return "always";
+    default: return "off";
+    }
+}
+bool ParseSaveHandoff(const char* text, std::size_t size, SaveHandoff& out) noexcept {
+    const Slice s{text, text ? size : 0};
+    if (Equals(s, "off")) out = SaveHandoff::off;
+    else if (Equals(s, "stage")) out = SaveHandoff::stage;
+    else if (Equals(s, "scene")) out = SaveHandoff::scene;
+    else if (Equals(s, "always")) out = SaveHandoff::always;
+    else return false;
+    return true;
+}
+bool EffectiveTravelLock(const LabConfig& config) noexcept {
+    if (config.travel_lock != kTravelLockAbsent) return config.travel_lock != 0;
+    return config.mode == LabMode::play;
 }
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
@@ -1257,14 +1372,47 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.partner_native_equip_shared_given)
         c.partner_native_equip_shared = gun ? PartnerNativeEquipShared::on : PartnerNativeEquipShared::off;
     if (!c.partner_native_standin_given) c.partner_native_standin = gun ? PartnerNativeStandin::on : PartnerNativeStandin::off;
+    // Anim round 1: the unsupported gate, the auto-fire stop, the state-driven
+    // aim intent and the adaptive reload rate follow the gun profile (the rate
+    // after hidden run 8ca5da4a converged 3018 -> 2035 ms against the remote's
+    // 2020 ms); the census stays as named.
+    if (!c.partner_native_unsupported_given) c.partner_native_unsupported = gun;
+    // Anim round 2: native partner throws (docs/anim-round2-throws.md) follow the
+    // gun profile in lab and play (Stage B, after the lab hidden runs aaa2a0e0 and
+    // ea93a2e3 and the play rehearsals 117620b9 / e9244c56 / 733e023b / 33c11da9);
+    // play still admits them only with link v2 connected (ModeRefusal), and a
+    // named partner_native_support=0 opts out in either mode.
+    if (!c.partner_native_support_given) c.partner_native_support = gun;
+    // WS4 v1: native C4 placing (391..395: place-hold, ready, end) and the arm
+    // hold (516, HOLD only) follow the gun profile in lab and play as well, after
+    // the lab hidden runs 7f8d643d / d05a1267 (docs/anim-round2-throws.md "WS4 v1
+    // on by default"). Both still ride on partner_native_support, play admits
+    // them only with link v2 connected, and a named 0 opts out of either.
+    if (!c.partner_native_placed_given) c.partner_native_placed = gun;
+    if (!c.partner_native_arm_given) c.partner_native_arm = gun;
+    if (!c.partner_native_reload_rate_given)
+        c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
+    if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
+    if (!c.partner_native_aim_intent_given)
+        c.partner_native_aim_intent = gun ? PartnerNativeAimIntent::state : PartnerNativeAimIntent::pad;
     // Only a driven native stage gets the default. Census/off never owns the
     // body; explicit off/hide remains authoritative in either lab or play.
     if (!c.partner_native_ride_given)
         c.partner_native_ride = c.partner_drive == PartnerDrive::native && c.partner_input_defer == PartnerDefer::on
-                                    ? PartnerNativeRide::hide : PartnerNativeRide::off;
+                                    ? kPartnerNativeRideDriven : PartnerNativeRide::off;
     if (c.mode == LabMode::play) {
         if (c.partner_native_equip_shared == PartnerNativeEquipShared::prefer) c.partner_native_equip_shared = PartnerNativeEquipShared::on;
         c.partner_native_equip_measured = false;
+        // The fire census is a lab measurement (it swaps a forwarding census slot).
+        c.partner_fire_census = false;
+        // WS3 vehicles: the census stays a lab measurement. The seat by id
+        // (hidden run abb0b7cf: the remote driver seated in the moving Mother
+        // Base jeep) and RIDE_TILT (hidden run 0a2314f2) are admitted: each acts
+        // only on what the peer's ride addendum advertises (an older peer sends
+        // none and keeps today's hide), behind the unchanged seat/tilt gates.
+        c.partner_ride_census = false;
+        // The WS4 placed / arm census is a lab measurement too (read-only).
+        c.partner_placed_census = false;
     }
 }
 
@@ -1299,8 +1447,34 @@ bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNative
     return true;
 }
 
+const char* PartnerNativeAimIntentName(PartnerNativeAimIntent value) noexcept {
+    return value == PartnerNativeAimIntent::state ? "state" : "pad";
+}
+
+bool ParsePartnerNativeAimIntent(const char* text, std::size_t size, PartnerNativeAimIntent& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "pad")) out = PartnerNativeAimIntent::pad;
+    else if (Equals(s, "state")) out = PartnerNativeAimIntent::state;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept {
+    return value == PartnerNativeReloadRate::adapt ? "adapt" : "off";
+}
+
+bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNativeReloadRate& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeReloadRate::off;
+    else if (Equals(s, "adapt")) out = PartnerNativeReloadRate::adapt;
+    else return false;
+    return true;
+}
+
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept {
-    return value == PartnerNativeRide::hide ? "hide" : "off";
+    return value == PartnerNativeRide::hide ? "hide" : value == PartnerNativeRide::seat ? "seat" : "off";
 }
 
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept {
@@ -1308,6 +1482,51 @@ bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRid
     const Slice s{text, size};
     if (Equals(s, "off")) out = PartnerNativeRide::off;
     else if (Equals(s, "hide")) out = PartnerNativeRide::hide;
+    else if (Equals(s, "seat")) out = PartnerNativeRide::seat;
+    else return false;
+    return true;
+}
+
+const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept {
+    return value == PartnerRideSeatEnter::getin ? "getin" : "direct";
+}
+
+bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "direct")) out = PartnerRideSeatEnter::direct;
+    else if (Equals(s, "getin")) out = PartnerRideSeatEnter::getin;
+    else return false;
+    return true;
+}
+
+const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept {
+    return value == PartnerRideSeatExit::getoff ? "getoff" : "stop";
+}
+
+bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "stop")) out = PartnerRideSeatExit::stop;
+    else if (Equals(s, "getoff")) out = PartnerRideSeatExit::getoff;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept {
+    switch (value) {
+    case PartnerNativeOverlay::debug: return "debug";
+    case PartnerNativeOverlay::map: return "map";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeOverlay::off;
+    else if (Equals(s, "debug")) out = PartnerNativeOverlay::debug;
+    else if (Equals(s, "map")) out = PartnerNativeOverlay::map;
     else return false;
     return true;
 }

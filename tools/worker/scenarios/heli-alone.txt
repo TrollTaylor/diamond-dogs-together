@@ -1,0 +1,36 @@
+# Bounded host helicopter hold (docs/join-fix-phase1-spec.md C5/C7, docs/world-sync-protocol.md W3):
+# the host flies Mother Base -> ACC -> Africa while the guest has world sync off, so the
+# host's sortie is held, shows the wait note, and leaves alone after 120 s.
+# Run (coordinator only, hidden worker; copies of the real saves):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/heli-alone.txt -SaveSeed real -GraphicsQuality low
+# The host keeps a stale view of a guest switched to world=0 (no wire signal), so this
+# exercises the 120 s timeout rather than the immediate alone path (unit tests cover that).
+# Evidence:
+#  - host script-observer.log: world_lua=event=follow; step=deploy_wait; reason=ready; target=30020,
+#    then world=note; code=2; a=30020; b=0, then about 120 s later
+#    world_lua=event=follow; step=deploy_alone; reason=timeout; target=30020 and world=note; code=3; a=30020; b=4.
+#  - captures.jsonl heli-hold: the host hud.toast starts with "Waiting up to 2 min for your partner".
+#  - the host reaches 30020; guest-stayed shows the guest still in 30050.
+#  - world_goto=failed; reason=acc_timeout on the host is expected and harmless (native goto deadline).
+#  - the scenario stays under 600 s in total.
+labsetting coop_hud=full
+title 200
+wait 4000
+waitgameplay host 150
+waitgameplay guest 240
+guest worldtrigger world=0
+wait 3000
+host worldtrigger goto=30020
+# The ACC load stops on its "Resume Game" tips screen until Space: in runs 468ab156 and 2d3c35db
+# the 40050 allocation was initialized 4 s after the goto but ran only after the next waitmission's
+# guarded resume (61 s and 91 s later), so fixed waits put heli-hold on the tips screen.
+# waitmission 40050 passes that screen the same way and returns when the ACC runtime starts. The
+# hold (deploy_wait, NOTE 2 re-posted every 3 s) begins about 3 s later; capture 8 s in, before the
+# one different-missions toast (note 16) that the settle rule posts 15 s after the ACC arrival.
+waitmission host 40050 120
+wait 8000
+host capture heli-hold
+waitmission host 30020 300
+waitgameplay host 120
+host capture heli-alone-arrived
+guest capture guest-stayed

@@ -96,7 +96,11 @@ $context="MGSWORKERCTX1 $id host 41 12345 MGSWorker_$id admitted`n"
 Assert-True (Test-WorkerContextText $context $id 'host' $lease) 'native context exact owner'
 foreach($changed in @($context.Replace('host','guest'),$context.Replace('41','42'),$context.Replace('12345','99999'),$context.Replace('admitted','pending'),$context.TrimEnd([char]10),$context.Replace("`n","`r`n"),($context+"`n"))){Assert-True (!(Test-WorkerContextText $changed $id 'host' $lease)) 'context mismatch'}
 $flags=[ordered]@{}
-foreach($name in @('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE','MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')){$flags[$name]='OFF'}
+# The flags exactly as Invoke-WorkerChecks writes them (Get-WorkerExperiments), so a new experiment there cannot silently break Normal admission.
+$checkSource=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerChecks.ps1'))
+$checkedExperiments=@([regex]::Matches([regex]::Match($checkSource,'(?s)function Get-WorkerExperiments \{.*?\n\}').Value,"'(MGS_LOCAL_[A-Z0-9_]+)'")|ForEach-Object{$_.Groups[1].Value})
+Assert-True ($checkedExperiments.Count -ge 18 -and $checkedExperiments -ccontains 'MGS_LOCAL_UPPER_FIRE_ZERO_BLEND' -and $checkedExperiments -ccontains 'MGS_LOCAL_MGO_STANDING_FRAME_OBSERVER') 'worker check experiments parsed'
+foreach($name in $checkedExperiments){$flags[$name]='OFF'}
 $flags.MGS_BACKGROUND_WORKER='ON'
 $receipt=@{schema=1;status='passed';plan=@{profile='Normal';project='C:\repo';build_directory='C:\repo\build\worker';flags=$flags};artifacts=@{loader_sha256=$hash}}
 Assert-True (Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash) 'normal21 worker build checks'
@@ -139,19 +143,58 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_face=aim','partner_native_aim=looksrc',
     # every track's keys share the one allow-list (aim parity, online play, Steam join, weapons)
     'partner_native_aimpt=look','host:partner_native_aimpt=point','partner_native_net=online','partner_input_edge_repeats=5',
-    'steam_selftest_fn=1','coop_hud=compact')){
+    'steam_selftest_fn=1','coop_hud=compact',
+    # the seated vehicle rider (docs/anim-round1-seat.md)
+    'partner_native_ride=seat','guest:partner_ride_seat_enter=getin','partner_ride_seat_exit=getoff','partner_native_ride=hide',
+    # anim round 1 weapons (docs/anim-round1-weapons.md)
+    'partner_fire_census=1','partner_native_aim_intent=pad','guest:partner_native_reload_rate=adapt','partner_native_unsupported=0',
+    'host:partner_native_dry_stop=1','partner_native_aim_intent=state','partner_native_reload_rate=off',
+    'partner_native_support=1','partner_native_support=0','guest:partner_native_support=1','host:partner_native_support=0',
+    # WS3 vehicles (docs/vehicle-ws3.md): the ride census, seat by id and tilt keys
+    'partner_ride_census=1','partner_ride_census=0','guest:partner_ride_seat_id=1','partner_ride_seat_id=0','host:partner_ride_tilt=1',
+    'partner_ride_tilt=0',
+    # WS4 step 0: the read-only placed / arm census
+    'partner_placed_census=1','partner_placed_census=0','guest:partner_placed_census=1','host:partner_placed_census=0',
+    # WS4 v1: native C4 placing and arm holds
+    'partner_native_placed=1','partner_native_placed=0','guest:partner_native_placed=1','host:partner_native_placed=0',
+    'partner_native_arm=1','partner_native_arm=0','guest:partner_native_arm=1','host:partner_native_arm=0',
+    # join-fix phase 2 (P2-19): the save handoff and the travel lock
+    'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
 }
-foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_native_reload=','partner_native_equip=any','partner_native_equip=','partner_native_gun=0')){
+foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_native_reload=','partner_native_equip=any','partner_native_equip=','partner_native_gun=0',
+    'partner_native_ride=drive','partner_ride_seat_exit=jump','partner_ride_seat_enter=',
+    'partner_fire_census=2','partner_native_aim_intent=on','partner_native_reload_rate=fast','partner_native_unsupported=yes',
+    'partner_native_support=2','partner_native_support=','partner_native_support=yes',
+    'partner_ride_census=2','partner_ride_seat_id=on','partner_ride_tilt=','partner_ride_tilt=yes','both:partner_ride_census=1',
+    'partner_placed_census=2','partner_placed_census=','partner_placed_census=on','both:partner_placed_census=1',
+    'partner_native_placed=2','partner_native_placed=','partner_native_placed=on','both:partner_native_placed=1',
+    'partner_native_arm=2','partner_native_arm=','partner_native_arm=yes','both:partner_native_arm=1','partner_native_arms=1',
+    'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 $lineMatch=[regex]::Match($scenarioText,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)")
 Assert-True ($lineMatch.Success) 'the scenario labsetting regex'
-foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partner_native_slot=call','labsetting partner_native_equip=manifest')){
+foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partner_native_slot=call','labsetting partner_native_equip=manifest',
+        'labsetting partner_fire_census=1','labsetting host partner_native_aim_intent=state','labsetting partner_native_reload_rate=adapt',
+        'labsetting partner_native_support=1','labsetting guest partner_native_support=0',
+        'labsetting partner_ride_census=1','labsetting guest partner_ride_seat_id=1','labsetting host partner_ride_tilt=0',
+        'labsetting partner_placed_census=1','labsetting host partner_placed_census=0',
+        'labsetting partner_native_placed=1','labsetting guest partner_native_placed=0','labsetting partner_native_arm=1','labsetting host partner_native_arm=0',
+        'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
+foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage')){
+    Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
+}
+Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
+foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1')){
+    Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
+}
+Assert-True ('labsetting partner_placed_census=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses an invalid placed census bool'
+Assert-True ('labsetting partner_native_placed=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting partner_native_arm=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid WS4 v1 bools'
 Assert-True ($scenarioText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'") -and
     $sessionText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'")) 'the reload/slot/equip keys need the gun stage'
 # EVADE 0x40000 (dive/evade/roll) is in every native mask; ACTION 0x20 (ride, knife kill, pickup) never; FIRE 0x10
@@ -332,9 +375,46 @@ foreach($name in @('freshBackup','manifestBackup','saveRoot','graphics')) {
 # the explicit -SaveSeed lab opt-in copies each folder's own lab save copy
 # (never the real saves) into the fresh run directory.
 $seedDefinitions=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -ceq 'seed'},$true)|ForEach-Object{$_.Extent.Text})
-Assert-True ($seedDefinitions.Count -eq 2) 'two seed forms'
+# Three forms since join-fix phase 2 (P2-19): real (backup), lab and run (an earlier closed run's guest copy).
+Assert-True ($seedDefinitions.Count -eq 3) 'three seed forms'
 Assert-True ($seedDefinitions -ccontains "`$seed=Copy-SaveSeed -BackupDirectory `$freshBackup -SaveDir `$saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'") 'default role seed reads only this run verified backup'
 Assert-True ($start.Contains("[ValidateSet('real','lab')][string]`$SaveSeed='real'") -and $start.Contains("`$labSaves=Assert-WorkerPlainPath `$p.SaveDir -MustExist")) 'lab seed is an explicit opt-in from the folder lab save copy'
+Assert-True ($start.Contains("[ValidateSet('','real','lab')][string]`$HostSaveSeed=''") -and $start.Contains("[ValidateSet('','real','lab')][string]`$GuestSaveSeed=''") -and
+    $start.Contains("[ValidatePattern('^`$|^[0-9a-f]{32}`$')][string]`$GuestSaveSeedRun=''")) 'per-role seed parameters (P2-19)'
+Assert-True ($start.Contains('$seedRunSaves=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun $runId') -and $start.Contains('$roleSeed=$roleSeeds[$role]') -and
+    $start.Contains('$row.save_seed_kind=$roleSeed')) 'the role loop picks each role''s seed and records it'
+foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
+    $seedAst=if($name -ceq 'Start-WorkerSession.ps1'){$startAst}else{[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'),[ref]$tokens,[ref]$errors)}
+    $seedParams=@($seedAst.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -cin 'HostSaveSeed','GuestSaveSeed','GuestSaveSeedRun'})
+    Assert-True ($seedParams.Count -eq 3) ('per-role seed parameters in '+$name)
+    $fixtureArgs=if($name -ceq 'Start-WorkerSession.ps1'){@{BuildDirectory='C:\fixture';CheckReceipt='C:\fixture';BaselineLoaderSha256=('A'*64)}}else{@{}}
+    $bind=[scriptblock]::Create($seedAst.ParamBlock.Extent.Text+'; return "$HostSaveSeed|$GuestSaveSeed|$GuestSaveSeedRun"')
+    Assert-True ((& $bind @fixtureArgs) -ceq '||') ('seed defaults are empty in '+$name)
+    Assert-True ((& $bind @fixtureArgs -HostSaveSeed lab -GuestSaveSeed real) -ceq 'lab|real|') ('seeds bind in '+$name)
+    Assert-True ((& $bind @fixtureArgs -GuestSaveSeedRun $id) -ceq ('||'+$id)) ('seed run binds in '+$name)
+    foreach($bad in @(@{HostSaveSeed='run'},@{GuestSaveSeed='both'},@{GuestSaveSeedRun='0123'},@{GuestSaveSeedRun=($id+'0')})){
+        Assert-Throws {& $bind @fixtureArgs @bad} ('seed parameter refuses '+(($bad.Keys|ForEach-Object{$_+'='+$bad[$_]}) -join ',')+' in '+$name)
+    }
+}
+# The pure seed choice of Start-WorkerSession (executed, not copied).
+& {
+    $definition=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-WorkerRoleSeeds'},$true))
+    Assert-True ($definition.Count -eq 1) 'one actual role seed boundary'
+    . ([scriptblock]::Create($definition[0].Extent.Text))
+    $s=Get-WorkerRoleSeeds 'real' '' '' '';Assert-True ($s.host -ceq 'real' -and $s.guest -ceq 'real') 'empty role seeds take -SaveSeed'
+    $s=Get-WorkerRoleSeeds 'lab' '' 'real' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real') 'guest seed overrides only the guest'
+    $s=Get-WorkerRoleSeeds 'real' 'lab' '' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real') 'host seed overrides only the host'
+    $s=Get-WorkerRoleSeeds 'lab' '' '' $id;Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'run') 'a seed run seeds the guest only'
+    Assert-Throws {Get-WorkerRoleSeeds 'lab' '' 'real' $id} 'a seed run excludes -GuestSaveSeed'
+    Assert-Throws {Get-WorkerRoleSeeds 'lab' '' '' $id.ToUpperInvariant()} 'a seed run id is exact lower case'
+}
+# LabCommon admits the two phase-2 keys for Prepare-LabInstance -PartnerSetting (lab runs).
+Assert-True ((ConvertTo-LabPartnerValue -Key save_handoff -Value stage) -ceq 'stage' -and (ConvertTo-LabPartnerValue -Key save_handoff -Value always) -ceq 'always' -and
+    (ConvertTo-LabPartnerValue -Key travel_lock -Value 1) -ceq '1' -and (ConvertTo-LabPartnerValue -Key travel_lock -Value 0) -ceq '0') 'save_handoff and travel_lock are LabCommon keys'
+Assert-Throws {ConvertTo-LabPartnerValue -Key save_handoff -Value auto} 'save_handoff values'
+Assert-Throws {ConvertTo-LabPartnerValue -Key travel_lock -Value 2} 'travel_lock values'
+$roleSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:save_handoff=stage','guest:save_handoff=scene','travel_lock=1') -Role guest
+Assert-True ($roleSettings['save_handoff'] -ceq 'scene' -and $roleSettings['travel_lock'] -ceq '1') 'role-scoped save_handoff reaches only its role'
 Assert-True ($startAssignments.graphics -ceq "`$graphics=Join-Path `$saveRoot '287700\local\TPP_GRAPHICS_CONFIG'") 'graphics edits target the fresh role copy'
 $stop=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Stop-WorkerSession.ps1'))
 Assert-True ($stop.Contains('Get-WorkerLeasedProcess') -and $stop.Contains('MGSWORKERCTL1')) 'owned control shutdown'
@@ -376,7 +456,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
 # functions, key/role lists and validation loop, extracted; nothing runs).
 & {
     $parts=@()
-    foreach($name in @('Test-ScenarioKeys','Test-ScenarioLabel')) {
+    foreach($name in @('Test-ScenarioKeys','Test-ScenarioLabel','ConvertFrom-ScenarioPatternTokens')) {
         $definition=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
         Assert-True ($definition.Count -eq 1) ('scenario validator helper '+$name)
         $parts+=$definition[0].Extent.Text
@@ -401,6 +481,154 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         try { & $validator } catch { $failure=$_.Exception.Message }
         Assert-True (!$failure) ('scenario steps valid: '+$file.Name+' '+$failure)
     }
+    # WS2 (native throws in two-PC play, Stage A): the play rehearsal validates in PLAY mode (no lab-only step such
+    # as worldtrigger), names no labsetting (a scenario labsetting line overrides -LabSetting, and the Stage B
+    # re-run is the same file without the command-line key), throws three times, then runs the viewer's own throw
+    # during a partner episode LAST (critic #5). Its checkpoint save + reload half is the lab companion.
+    & {
+        $Mode='play'
+        $playPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-support-play.txt'
+        Assert-True (Test-Path -LiteralPath $playPath -PathType Leaf) 'shipped WS2 scenario partner-support-play.txt'
+        $playLines=[IO.File]::ReadAllLines($playPath)
+        $steps=@($playLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-support-play steps valid in play mode '+$failure)
+        Assert-True (@($playLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'partner-support-play names no labsetting line'
+        Assert-True (@($steps|Where-Object{$_ -cmatch '(^|\s)worldtrigger(\s|$)'}).Count -eq 0) 'partner-support-play has no lab-only world trigger'
+        $playText=[IO.File]::ReadAllText($playPath)
+        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off',
+            '-WanSim bad','-WanSim awful','partner_support=mode; mode=play; reason=ok','reason=throw_release','reason=viewer_own','stall_freeze',
+            'NO partner_support=stock_gap','stock_leak_mission_latched','fire_reload_off','writer_uncertain_mission_latched','hard_leaves 0',
+            'rehearsal=1','partner-support-checkpoint.txt')){
+            Assert-True ($playText.Contains($needle)) ('partner-support-play covers: '+$needle)
+        }
+        $hostThrows=@(for($i=0;$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'host hold rmb+lmb 150 nowait'){$i}})
+        $ownThrow=@(for($i=0;$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'guest hold rmb+lmb 150 nowait'){$i}})
+        Assert-True ($hostThrows.Count -eq 4 -and $ownThrow.Count -eq 1) 'partner-support-play: three partner throws, the viewer-own overlap and one throw after it'
+        Assert-True ($ownThrow[0] -gt $hostThrows[2] -and $ownThrow[0] -lt $hostThrows[3]) 'partner-support-play runs the viewer-own throw after the three throws'
+        $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
+        Assert-True ($guestCounts.Count -ge 4) 'partner-support-play requires the guest seed counts before and after the throws'
+        Assert-True ($steps[-1] -cmatch '^guest require support;.*counts=11,16383,12,8,12,12,8,8;') 'partner-support-play ends on the guest spending exactly its own grenade'
+        $cpPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-support-checkpoint.txt'
+        $cpText=[IO.File]::ReadAllText($cpPath)
+        foreach($needle in @('host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death',
+            'host worldtrigger world_probe=host_continue','-PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab')){
+            Assert-True ($cpText.Contains($needle)) ('partner-support-checkpoint covers: '+$needle)
+        }
+        Assert-True (!$cpText.Contains('-Mode play')) 'partner-support-checkpoint runs in lab mode (world triggers are lab-only)'
+        $cpSteps=@([IO.File]::ReadAllLines($cpPath)|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
+        $continueAt=[array]::IndexOf($cpSteps,'host worldtrigger world_probe=host_continue')
+        Assert-True ($continueAt -gt 0 -and @($cpSteps[$continueAt..($cpSteps.Count-1)]|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'}).Count -ge 1) 'partner-support-checkpoint re-reads the guest counts after the reload'
+        $steps=@($cpSteps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'});$failed=$false
+        try { & $validator } catch { $failed=$true }
+        Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
+    }
+    # WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): partner-c4.txt, a lab scenario that names both WS4 v1 keys and
+    # the census, places C4 at several spots, detonates, then aims the arm, with every evidence line in its header.
+    & {
+        $Mode='lab'
+        $c4Path=Join-Path $RepoRoot 'tools\worker\scenarios\partner-c4.txt'
+        Assert-True (Test-Path -LiteralPath $c4Path -PathType Leaf) 'shipped WS4 v1 scenario partner-c4.txt'
+        $c4Lines=[IO.File]::ReadAllLines($c4Path)
+        $labsettings=@($c4Lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -cmatch '^labsetting(\s|$)'})
+        foreach($line in @('labsetting partner_native_placed=1','labsetting partner_native_arm=1','labsetting partner_placed_census=1')){
+            Assert-True ($labsettings -ccontains $line) ('partner-c4 names '+$line)
+        }
+        foreach($line in $labsettings){ Assert-True ($line -cmatch $lineMatch.Groups[1].Value) ('partner-c4 labsetting is allow-listed: '+$line) }
+        $steps=@($c4Lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-c4 steps valid in lab mode '+$failure)
+        $c4Text=[IO.File]::ReadAllText($c4Path)
+        foreach($needle in @('-PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab','partner_support=lanes; support=1; placed=1; arm=1',
+            'partner_placed_census=gun; k=1','mode=43','mode=46','reason=place','partner_support=placed_check','owners=65535:0',
+            'NO partner_support=refused; ...; reason=placed_shared_write','partner_arm=check','NO partner_arm=refused','use_mode_mission_latched',
+            'counts=12,16383,12,8,12,12,8,8','obs_att','ACTION','RealSavesUnchanged')){
+            Assert-True ($c4Text.Contains($needle)) ('partner-c4 covers: '+$needle)
+        }
+        $placeAttempts=@($steps|Where-Object{$_ -ceq 'host hold lmb 300 nowait'})
+        $detonate=@($steps|Where-Object{$_ -ceq 'host press e'})
+        $armSelect=@($steps|Where-Object{$_ -ceq 'host debug slot hand 0'})
+        Assert-True ($placeAttempts.Count -ge 3 -and $detonate.Count -ge 1 -and $armSelect.Count -eq 1) 'partner-c4: several place attempts, a detonation, the arm'
+        # The host walks between attempts: the guest is placed behind it again before every place, the detonation and
+        # the arm, or the static watcher loses body 1 from the frame (run 4e5ab735).
+        $reframes=@($steps|Where-Object{$_ -cmatch '^placebehind guest host [0-9]+ [0-9]+$'})
+        Assert-True ($reframes.Count -ge ($placeAttempts.Count+$detonate.Count+$armSelect.Count+1)) 'partner-c4 re-frames the guest before every phase'
+        $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
+        Assert-True ($guestCounts.Count -ge 3) 'partner-c4 requires the guest seed counts unchanged around the C4 and the arm'
+        Assert-True (@($steps|Where-Object{$_ -cmatch '(^|\s)capture(\s|$)'}).Count -ge 6) 'partner-c4 captures every phase'
+    }
+    # WS2 follow-up (docs/anim-round2-throws.md "Stall test step"): the worker-only 'stall <role> <ms>' step
+    # (50..1000 ms, one role) and partner-support-stall.txt, a play rehearsal whose stalls fall inside a held grenade.
+    & {
+        $Mode='play'
+        foreach($step in @('stall host 320','stall guest 50','stall host 1000','stall guest 400')){
+            $steps=@($step);$failure=$null;try{& $validator}catch{$failure=$_.Exception.Message}
+            Assert-True (!$failure) ('stall step admitted: '+$step+' '+$failure)
+        }
+        foreach($step in @('stall both 320','stall host 49','stall host 1001','stall host','stall host 320 x','STALL host 320','Stall host 320',
+            'stall HOST 320','stall host 0320','stall host abc','stall host -320','stall host 3.5','stall host 99999','host stall 320')){
+            $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
+            Assert-True $failed ('stall step refused: '+$step)
+        }
+        $stallPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-support-stall.txt'
+        Assert-True (Test-Path -LiteralPath $stallPath -PathType Leaf) 'shipped scenario partner-support-stall.txt'
+        $stallLines=[IO.File]::ReadAllLines($stallPath)
+        $steps=@($stallLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-support-stall steps valid in play mode '+$failure)
+        Assert-True (@($stallLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'partner-support-stall names no labsetting line'
+        $stallText=[IO.File]::ReadAllText($stallPath)
+        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off',
+            'partner_net=input_stall; reason=start; ms=320','partner_net=input_stall; reason=end; ms=320','reason=start; level=0x8','level=0x18',
+            'reason=fresh','exactly ONE partner_support=armed','no second throw','NO partner_support=stock_gap','stock_leak_mission_latched',
+            'fire_reload_off','rec240_foreign','background worker','friend/Release','Closed, BaselineRestored and RealSavesUnchanged')){
+            Assert-True ($stallText.Contains($needle)) ('partner-support-stall covers: '+$needle)
+        }
+        $stalls=@(for($i=0;$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'stall host 320'){$i}})
+        Assert-True ($stalls.Count -eq 2) 'partner-support-stall: two 320 ms host stalls (in stall_ms 400, past stale_ms 250)'
+        # A: inside the aim (rmb held), before the throw's FIRE; B: inside the FIRE hold, before its release.
+        $aim=[array]::IndexOf($steps,'host hold rmb 1500 nowait')
+        $fireA=[array]::IndexOf($steps,'host hold rmb+lmb 150 nowait')
+        Assert-True ($aim -ge 0 -and $aim -lt $stalls[0] -and $stalls[0] -lt $fireA) 'partner-support-stall A: the stall falls between the aim and the FIRE press'
+        Assert-True ($steps[$stalls[0]+1] -ceq 'host hold rmb 1500 nowait') 'partner-support-stall A: the aim is extended past the stall (no new press)'
+        $holdB=[array]::IndexOf($steps,'host hold rmb+lmb 1500 nowait')
+        $releaseB=@(for($i=$stalls[1];$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'host release'){$i}})
+        Assert-True ($holdB -gt $fireA -and $holdB -lt $stalls[1] -and $releaseB.Count -ge 1) 'partner-support-stall B: the stall falls inside the FIRE hold, then the release'
+        Assert-True ($steps[$stalls[1]+1] -ceq 'host hold rmb+lmb 1500 nowait') 'partner-support-stall B: the FIRE hold is extended past the stall (no new press)'
+        $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
+        Assert-True ($guestCounts.Count -ge 3) 'partner-support-stall requires the guest seed counts before and after both phases'
+        foreach($needle in @("waitlog host 'partner_net=input_stall; reason=end; ms=320;' 10",
+            "waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=start;' 10",
+            "waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=fresh;' 10",
+            "waitlog guest 'partner_support=armed; slot=3; equip=354; type=12; reason=throw_release' 10",
+            "waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=start; level=0x18;' 10")){
+            Assert-True ($steps -ccontains $needle) ('partner-support-stall waits for: '+$needle)
+        }
+        # The runner sends the native input_stall command (paired by its result) and records an expectation.
+        $runnerText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+        Assert-True ($runnerText.Contains('$command="input_stall $($t[2])"') -and $runnerText.Contains('$pattern="^input_stall=started;ms=$($t[2]);"') -and
+            $runnerText.Contains("Add-ScenarioExpectation `$t[1] 'stall'")) 'the stall step sends input_stall and records its result'
+        Assert-True ($runnerText.Contains("'waitmission','waitgameplay','stance','resetpose','waitexit','expectstate','stall'")) 'the stall step drives its one role'
+        # Worker-only (never in friend/Release builds): the native command is gated on the compiled background
+        # worker and the owned private worker; partner_net refuses without the worker build (link_udp_tests checks
+        # the refusal in a non-worker build); only the worker build defines MGS_BACKGROUND_WORKER for partner_net;
+        # and the Release profile never builds the background worker (Get-WorkerPlan, worker_checks_tests).
+        $observerText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'native\game_script_observer.cpp'))
+        $at=$observerText.IndexOf('std::strncmp(pending.text, "input_stall ", 12) == 0')
+        Assert-True ($at -gt 0) 'the native input_stall command exists'
+        $branch=$observerText.Substring($at,[Math]::Min(1600,$observerText.Length-$at))
+        Assert-True ($branch.Contains('mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::Active()') -and
+            $branch.Contains('lab::SavesRedirected()') -and $branch.Contains('"owned_worker_required"') -and
+            $branch.Contains('mgscoop::partner_net::StallInput(ms)')) 'input_stall needs the compiled background worker and the owned private worker'
+        $netText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'native\partner_net.cpp'))
+        Assert-True ($netText.Contains('constexpr bool kStallCompiled = MGS_BACKGROUND_WORKER != 0;') -and $netText.Contains('"not_worker_build"')) 'partner_net refuses the stall without the worker build'
+        $cmakeText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'CMakeLists.txt'))
+        Assert-True ([regex]::IsMatch($cmakeText,'if\(MGS_BACKGROUND_WORKER\)\s+target_compile_definitions\(mgs_coop_lab PRIVATE MGS_BACKGROUND_WORKER=1\)\s+endif\(\)')) 'only the worker build compiles the stall into partner_net'
+        Assert-True ($cmakeText.Contains('option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)')) 'the background worker stays default OFF'
+    }
     foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120',
         'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',
         'host worldtrigger world=0','guest worldtrigger world=0')){
@@ -412,6 +640,30 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
         Assert-True $failed ('hidden travel refuses '+$step)
     }
+    # Join-fix phase 2 steps (P2-19): titles, log and state checks, one role's exit and the handoff apply.
+    foreach($step in @('titlemenu both 240','titlemenu host 5','titlemenu guest 400','title guest 200','title host','title','title 240',
+        'waitlog host ^save_handoff= 30',"waitlog guest 'save_handoff=exit; how=wm_close' 60","waitlog host 'save_handoff=offer; ' 60",
+        'expectstate guest handoff ^staged$','expectstate guest mission ^40050$','expectstate host travel_unlocked ^0$','expectstate guest handoff_pct ^(100|[1-9]?[0-9])$',
+        'waitexit guest 90','waitexit host 5','applyhandoff guest')){
+        $steps=@($step);$failure=$null;try{& $validator}catch{$failure=$_.Exception.Message}
+        Assert-True (!$failure) ('phase-2 step admitted: '+$step+' '+$failure)
+    }
+    foreach($step in @('title both','title both 240','title guest 1','title guest x','titlemenu guest 1','titlemenu guest','titlemenu guest 401','titlemenu all 240',
+        'TITLEMENU both 240','waitexit both 60','waitexit guest 4','waitexit guest','applyhandoff host','applyhandoff both','applyhandoff','applyhandoff guest now',
+        'expectstate guest secret x','expectstate both mission 1','expectstate guest mission','expectstate guest mission (','expectstate guest Mission 1',
+        'waitlog both x 30','waitlog host x','waitlog host ( 30',"waitlog host '' 30",'waitlog host x 401','waitlog host x 0','waitlog host x y')){
+        $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
+        Assert-True $failed ('phase-2 step refused: '+$step)
+    }
+    foreach($name in @('handoff-stage.txt','handoff-restart.txt','handoff-after-restart.txt','travel-lock.txt')){
+        Assert-True (@($scenarioFiles|Where-Object{$_.Name -ceq $name}).Count -eq 1) ('shipped phase-2 scenario '+$name)
+    }
+    $restart=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\scenarios\handoff-restart.txt'))
+    foreach($needle in @("waitlog guest 'save_handoff=exit; how=wm_close' 60",'waitexit guest 90','applyhandoff guest','-LabSetting guest:save_handoff=scene')){
+        Assert-True ($restart.Contains($needle)) ('handoff-restart covers: '+$needle)
+    }
+    $after=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\scenarios\handoff-after-restart.txt'))
+    Assert-True ($after.Contains('-GuestSaveSeedRun <R4 runId>') -and $after.Contains("waitlog guest 'save_handoff=need; need=0' 120")) 'handoff-after-restart seeds the guest from the restart run'
     # Execute the actual dispatch clause with a recording helper: grammar alone cannot catch a wrong role variable.
     $dispatch=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.SwitchStatementAst]},$true) |
         ForEach-Object {$_.Clauses} | Where-Object {$_.Item2.Extent.Text.Contains('Invoke-ScenarioWorldTravel')})
@@ -472,7 +724,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
 # The aimturn stimulus is the qualified +-1500 only (dx 700/900 never turned a settled aimed body).
 & {
     $parts=@()
-    foreach($name in @('Test-ScenarioKeys','Test-ScenarioLabel')) {
+    foreach($name in @('Test-ScenarioKeys','Test-ScenarioLabel','ConvertFrom-ScenarioPatternTokens')) {
         $parts+=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))[0].Extent.Text
     }
     foreach($variable in @('roleNames','keyNames')) {
@@ -964,6 +1216,298 @@ try {
     $script:fixtureSession=$case.session;$script:packageCalls=0;$script:fakeActiveGame=$case.session.roles.host.game
     Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'fake live owned game blocks restoration'
     Assert-True ($script:packageCalls -eq 0 -and $case.report.roles.Count -eq 0) 'process-context refusal cannot restore package or configs'
+    # ---- Join-fix phase 2, track E (docs/join-fix-phase2-spec.md P2-19): the actual helper
+    # bodies on owned fixture bytes below this test's build folder; recorded clock and leases.
+    # Stop: a role recorded as exited by waitexit tolerates a reused PID; every other child refuses.
+    & {
+        foreach($name in @('Test-WorkerRoleExited','Get-WorkerStopChildProcess')){
+            $definition=@($stopAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+            Assert-True ($definition.Count -eq 1) ('actual exited-role boundary '+$name)
+            . ([scriptblock]::Create($definition[0].Extent.Text))
+        }
+        $stopText=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Stop-WorkerSession.ps1'))
+        Assert-True ($stopText.Contains('$childProcess=Get-WorkerStopChildProcess $session $child') -and $stopText.Contains('exited_roles')) 'Stop closes children through the exited-role boundary'
+        $lease=[pscustomobject]@{mode='reused'}
+        function Get-WorkerLeasedProcess($Expected){
+            if($lease.mode -ceq 'reused'){throw 'Worker PID now names a different process; refusing ownership.'}
+            if($lease.mode -ceq 'gone'){return $null}
+            return [pscustomobject]@{fake=$true;pid=$Expected.pid}
+        }
+        $exitedChild=@{role='guest';pid=4242;creation_filetime='777';exe='C:\g\mgsvtpp.exe'}
+        $liveChild=@{role='host';pid=4243;creation_filetime='778';exe='C:\h\mgsvtpp.exe'}
+        $stopSession=@{roles=@{host=@{game='C:\h'};guest=@{game='C:\g';exited=@{pid=4242;creation_filetime='777';forced=$false}}}}
+        Assert-True ((Test-WorkerRoleExited $stopSession $exitedChild) -and !(Test-WorkerRoleExited $stopSession $liveChild)) 'exit records name their exact lease'
+        Assert-True ($null -eq (Get-WorkerStopChildProcess $stopSession $exitedChild)) 'an exited role tolerates its reused PID'
+        Assert-Throws {Get-WorkerStopChildProcess $stopSession $liveChild} 'a live role still refuses a reused PID'
+        $otherLease=$exitedChild.Clone();$otherLease.creation_filetime='999'
+        Assert-Throws {Get-WorkerStopChildProcess $stopSession $otherLease} 'an exit record of another lease excuses nothing'
+        $lease.mode='gone';Assert-True ($null -eq (Get-WorkerStopChildProcess $stopSession $liveChild)) 'a gone child needs no close'
+        $lease.mode='live';Assert-True ((Get-WorkerStopChildProcess $stopSession $exitedChild).fake) 'a still-live leased child is closed as before'
+    }
+    # Start: -GuestSaveSeedRun reads only one exact, closed earlier run's guest copy; the actual seed chain copies it.
+    & {
+        $definition=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-WorkerSeedRunSaves'},$true))
+        Assert-True ($definition.Count -eq 1) 'one actual seed-run boundary'
+        . ([scriptblock]::Create($definition[0].Extent.Text))
+        $fakeRepo=Join-Path $fixture 'fake-repo';$seedId='abcdefabcdefabcdefabcdefabcdef01'
+        $seedRun=Join-Path $fakeRepo ('build\worker-runtime\'+$seedId)
+        $seedSaves=Join-Path $seedRun 'guest-saves'
+        $null=New-Item -ItemType Directory -Path (Join-Path $seedSaves '287700\local'),(Join-Path $seedSaves 'remote') -Force
+        [IO.File]::WriteAllText((Join-Path $seedSaves '287700\local\TPP_GAME_DATA0'),"handed-off progress`n")
+        [IO.File]::WriteAllText((Join-Path $seedSaves '287700\local\TPP_GRAPHICS_CONFIG'),"guest graphics`n")
+        [IO.File]::WriteAllText((Join-Path $seedSaves 'remote\TPP_GAME_DATA'),"handed-off remote`n")
+        [IO.File]::WriteAllText((Join-Path $seedSaves 'imported-progress.json'),"{}`n")
+        $seedSessionPath=Join-Path $seedRun 'session.json'
+        Write-WorkerSessionJson $seedSessionPath ([ordered]@{schema=1;run_id=$seedId;status='closed'})
+        $before=@(Get-WorkerCopyInventory $seedSaves)
+        Assert-True ((Get-WorkerSeedRunSaves $fakeRepo $seedId $id) -ieq $seedSaves) 'a closed earlier run seeds the guest'
+        Assert-Throws {Get-WorkerSeedRunSaves $fakeRepo $seedId $seedId} 'the current run cannot seed itself'
+        Assert-Throws {Get-WorkerSeedRunSaves $fakeRepo $seedId.ToUpperInvariant() $id} 'the seed run id is exact lower case'
+        Assert-Throws {Get-WorkerSeedRunSaves $fakeRepo ('0'*32) $id} 'a missing seed run refuses'
+        foreach($bad in @(@{schema=1;run_id=$seedId;status='ready'},@{schema=1;run_id=$seedId;status='cleanup_refused'},@{schema=1;run_id=('0'*32);status='closed'})){
+            Write-WorkerSessionJson $seedSessionPath $bad
+            Assert-Throws {Get-WorkerSeedRunSaves $fakeRepo $seedId $id} ('a seed run must be closed and own its id: '+$bad.status)
+        }
+        Write-WorkerSessionJson $seedSessionPath ([ordered]@{schema=1;run_id=$seedId;status='closed'})
+        Rename-Item -LiteralPath (Join-Path $seedSaves 'remote') -NewName 'remote-moved'
+        Assert-Throws {Get-WorkerSeedRunSaves $fakeRepo $seedId $id} 'a seed copy without remote refuses'
+        Rename-Item -LiteralPath (Join-Path $seedSaves 'remote-moved') -NewName 'remote'
+        Rename-Item -LiteralPath (Join-Path $seedSaves '287700\local\TPP_GAME_DATA0') -NewName 'TPP_CONFIG_DATA0'
+        Assert-Throws {Get-WorkerSeedRunSaves $fakeRepo $seedId $id} 'a seed copy without TPP_GAME_DATA refuses'
+        Rename-Item -LiteralPath (Join-Path $seedSaves '287700\local\TPP_CONFIG_DATA0') -NewName 'TPP_GAME_DATA0'
+        $chain=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.IfStatementAst] -and $node.Clauses[0].Item1.Extent.Text -ceq "`$roleSeed -ceq 'lab'"},$true))
+        Assert-True ($chain.Count -eq 1) 'one actual role seed chain'
+        $roleSeed='run';$GuestSaveSeedRun=$seedId;$repo=$fakeRepo;$runId=$id;$freshBackup=Join-Path $fixture 'no-backup'
+        $saveRoot=Join-Path $fixture 'run-seed\guest-saves';$null=New-Item -ItemType Directory -Path (Join-Path $fixture 'run-seed')
+        . ([scriptblock]::Create($chain[0].Extent.Text))
+        $copied=@(Get-WorkerCopyInventory $saveRoot)
+        Assert-True ($seed.Seeded -and $seed.Files -eq 3 -and $copied.Count -eq 3) 'the run seed copies exactly 287700 and remote'
+        foreach($row in $copied){
+            $source=@($before|Where-Object{$_['path'] -ceq $row['path']})
+            Assert-True ($source.Count -eq 1 -and $source[0]['sha256'] -ceq $row['sha256']) ('the run seed copies '+$row['path']+' unchanged')
+        }
+        $afterSeed=@(Get-WorkerCopyInventory $seedSaves)
+        Assert-True ($afterSeed.Count -eq $before.Count -and @(for($i=0;$i -lt $before.Count;$i++){if($before[$i]['sha256'] -cne $afterSeed[$i]['sha256']){1}}).Count -eq 0) 'the seed run stays unchanged'
+    }
+    # Invoke-WorkerScenario: waitlog, expectstate, waitexit and applyhandoff helper bodies.
+    & {
+        foreach($name in @('Add-ScenarioExpectation','Get-ScenarioStepRoles','ConvertFrom-ScenarioPatternTokens','New-ScenarioLogCursor','Read-ScenarioLogLines',
+            'Wait-ScenarioLog','Get-ScenarioStateValue','Get-ScenarioRoleLease','Wait-ScenarioRoleExit','Get-ScenarioHandoffSlots','Get-ScenarioHandoffSetSha256',
+            'ConvertTo-ScenarioUtc','Test-ScenarioHandoffStage','Get-ScenarioSaveHashes','Test-ScenarioSameMap','Format-ScenarioMap','New-ScenarioHandoffApply','Invoke-ScenarioHandoffApply')){
+            $definition=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+            Assert-True ($definition.Count -eq 1) ('actual phase-2 scenario helper '+$name)
+            . ([scriptblock]::Create($definition[0].Extent.Text))
+        }
+        $scenarioText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+        Assert-True ($scenarioText.Contains('$gone=@(Get-ScenarioStepRoles $t|Where-Object{$exitedRoles.ContainsKey($_)})') -and
+            $scenarioText.Contains("foreach(`$role in 'host','guest'){if(!`$exitedRoles.ContainsKey(`$role)){Release-RoleFinally `$role}}") -and
+            $scenarioText.Contains('if($stop -and $stop.Closed){$pendingHandoff=Invoke-ScenarioHandoffApply $pendingHandoff}')) 'the runner fails fast on an exited role and applies only after a closed Stop'
+        $expectations=[Collections.Generic.List[string]]::new();$expectFailures=[Collections.Generic.List[string]]::new()
+        $runId=$id;$exitedRoles=@{};$clock=[pscustomobject]@{now=[int64]1000000};$repo=$RepoRoot
+        function Get-ScenarioTick{return $clock.now}
+        function Start-Sleep([int]$Milliseconds){$clock.now+=$Milliseconds}
+        # Step roles: a role that left through waitexit may only be read (waitlog) or applied.
+        foreach($case in @(@('wait 100',''),@('state',''),@('waitlog guest x 5',''),@('applyhandoff guest',''),@('title','host,guest'),@('title 200','host,guest'),
+            @('title guest 200','guest'),@('titlemenu both 240','host,guest'),@('titlemenu host 240','host'),@('waitmission guest 30010 300','guest'),
+            @('expectstate guest mission x','guest'),@('waitexit guest 90','guest'),@('placebehind host guest 6','host,guest'),
+            @('heldcapture host guest w lbl 1','host,guest'),@('both press enter','host,guest'),@('guest press enter','guest'),@('host run status','host'))){
+            Assert-True ((@(Get-ScenarioStepRoles ($case[0] -split '\s+')) -join ',') -ceq $case[1]) ('step roles of '+$case[0])
+        }
+        Assert-True ((ConvertFrom-ScenarioPatternTokens @("'save_handoff=exit;","how=wm_close'")) -ceq 'save_handoff=exit; how=wm_close') 'a quoted pattern keeps its space'
+        Assert-True ((ConvertFrom-ScenarioPatternTokens @("'save_handoff=offer;","'")) -ceq 'save_handoff=offer; ') 'a quoted trailing space survives the split'
+        Assert-True ((ConvertFrom-ScenarioPatternTokens @('^save_handoff=')) -ceq '^save_handoff=') 'an unquoted pattern'
+        Assert-True ($null -eq (ConvertFrom-ScenarioPatternTokens @("''")) -and $null -eq (ConvertFrom-ScenarioPatternTokens @('(')) -and
+            $null -eq (ConvertFrom-ScenarioPatternTokens @())) 'empty and invalid patterns refuse'
+        # waitlog: this session's lines only (from the recorded offset), complete lines only.
+        $run=Join-Path $fixture 'scenario-run';$null=New-Item -ItemType Directory -Path $run
+        $hostGame=Join-Path $fixture 'scenario-games\host';$guestGame=Join-Path $fixture 'scenario-games\guest'
+        $null=New-Item -ItemType Directory -Path (Join-Path $hostGame 'mgs-coop'),(Join-Path $guestGame 'mgs-coop') -Force
+        $log=Join-Path $hostGame 'mgs-coop\script-observer.log'
+        [IO.File]::WriteAllText($log,"save_handoff=staged; xfer=OLD; files=1`r`n")
+        $offset=(Get-Item -LiteralPath $log).Length
+        $sessionRecord=[ordered]@{schema=1;run_id=$id;status='ready';roles=[ordered]@{
+            host=[ordered]@{game=$hostGame;log_offsets=[ordered]@{'script-observer.log'=[ordered]@{path=$log;offset=$offset}}}
+            guest=[ordered]@{game=$guestGame;log_offsets=[ordered]@{'script-observer.log'=[ordered]@{path=(Join-Path $guestGame 'mgs-coop\script-observer.log');offset=0}}}}}
+        Write-WorkerSessionJson (Join-Path $run 'session.json') $sessionRecord
+        [IO.File]::AppendAllText($log,"save_handoff=configured; role=host; mode=stage; channel=4; dir=ok`r`nsave_handoff=offer; xfer=0A1B2C3D; files=3`r`npartial save_handoff=exit")
+        Assert-True ((Wait-ScenarioLog 'host' '^save_handoff=offer; ' 5) -ceq 'save_handoff=offer; xfer=0A1B2C3D; files=3') 'waitlog finds a session line without CR'
+        Assert-True ($null -eq (Wait-ScenarioLog 'host' 'xfer=OLD' 1)) 'waitlog ignores lines before the session offset'
+        $before=$clock.now
+        Assert-True ($null -eq (Wait-ScenarioLog 'host' 'save_handoff=exit' 2) -and $clock.now-$before -ge 2000) 'waitlog never takes an unterminated line and times out'
+        $cursor=New-ScenarioLogCursor 'host'
+        Assert-True (@(Read-ScenarioLogLines $cursor).Count -eq 2 -and @(Read-ScenarioLogLines $cursor).Count -eq 0) 'the cursor reads each complete line once'
+        [IO.File]::AppendAllText($log,"; how=wm_close`r`n")
+        Assert-True ((@(Read-ScenarioLogLines $cursor) -join '|') -ceq 'partial save_handoff=exit; how=wm_close') 'a completed partial line is read whole'
+        Assert-True ((Wait-ScenarioLog 'host' 'save_handoff=exit; how=wm_close' 1) -ceq 'partial save_handoff=exit; how=wm_close') 'waitlog matches anywhere in the line'
+        [IO.File]::WriteAllText($log,"short`r`n")
+        Assert-Throws {Read-ScenarioLogLines $cursor} 'a log truncated below the cursor refuses'
+        $sessionRecord.roles.host.log_offsets['script-observer.log'].path=Join-Path $fixture 'elsewhere.log'
+        Write-WorkerSessionJson (Join-Path $run 'session.json') $sessionRecord
+        Assert-Throws {New-ScenarioLogCursor 'host'} 'waitlog reads only the owned game folder log'
+        $sessionRecord.roles.host.log_offsets['script-observer.log'].path=$log
+        Assert-True ($null -eq (Wait-ScenarioLog 'guest' 'anything' 1)) 'a role without a log yet simply waits'
+        # expectstate: fresh owned state only; booleans as true/false.
+        $fixtureState=@{run_id=$id;role='guest';tick_ms=$clock.now;mission=40050;handoff='staged';handoff_pct=100;travel_unlocked=0;gameplay_ready=$false}
+        function Read-RoleRaw([string]$Role){return $fixtureState.Clone()}
+        foreach($case in @(@('mission','40050'),@('handoff','staged'),@('handoff_pct','100'),@('travel_unlocked','0'),@('gameplay_ready','false'))){
+            $v=Get-ScenarioStateValue 'guest' $case[0]
+            Assert-True ($v.Ok -and $v.Value -ceq $case[1]) ('expectstate reads '+$case[0])
+        }
+        Assert-True (!(Get-ScenarioStateValue 'guest' 'world_paired').Ok) 'a missing field fails'
+        Assert-True (!(Get-ScenarioStateValue 'host' 'mission').Ok) 'another role''s state fails'
+        $fixtureState.tick_ms=$clock.now-3001;Assert-True (!(Get-ScenarioStateValue 'guest' 'mission').Ok) 'stale state fails'
+        $fixtureState.tick_ms=$clock.now+1;Assert-True (!(Get-ScenarioStateValue 'guest' 'mission').Ok) 'future state fails'
+        $fixtureState.tick_ms=$clock.now;$fixtureState.run_id='f'*32;Assert-True (!(Get-ScenarioStateValue 'guest' 'mission').Ok) 'foreign state fails'
+        Add-ScenarioExpectation 'guest' 'expectstate handoff' '^staged$' 'staged' $true
+        Add-ScenarioExpectation 'guest' 'expectstate handoff' '^staged$' 'countdown' $false -WarningAction SilentlyContinue
+        Assert-True ($expectations.Count -eq 2 -and $expectFailures.Count -eq 1 -and $expectFailures[0] -ceq 'guest expectstate handoff ^staged$ <- countdown') 'checks are recorded like expect'
+        # waitexit: the owned lease must end while the supervisor keeps running.
+        $creation=[DateTime]::new(2026,10,15,12,0,0,[DateTimeKind]::Utc).ToFileTimeUtc()
+        $supervisor=[ordered]@{run_id=$id;stage='running';owned_processes=@(
+            [ordered]@{role='host';pid=4243;creation_filetime=[string]($creation+10000000);exe=(Join-Path $hostGame 'mgsvtpp.exe');admitted=$true},
+            [ordered]@{role='guest';pid=4242;creation_filetime=[string]$creation;exe=(Join-Path $guestGame 'mgsvtpp.exe');admitted=$true})}
+        Write-WorkerSessionJson (Join-Path $run 'supervisor.json') $supervisor
+        $fake=[pscustomobject]@{calls=0;exitAfter=3;ExitCode=0;disposed=$false;mode='live'}
+        $fake|Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {param($ms) $this.calls++;$clock.now+=$ms;return $this.calls -ge $this.exitAfter}
+        $fake|Add-Member -MemberType ScriptMethod -Name Dispose -Value {$this.disposed=$true}
+        function Get-WorkerLeasedProcess($Expected){
+            if($fake.mode -ceq 'reused'){throw 'Worker PID now names a different process; refusing ownership.'}
+            Assert-True ([long]$Expected.pid -in 4242,4243) 'waitexit leases the supervisor''s owned pid'
+            return $fake
+        }
+        $fake.exitAfter=1000000
+        Assert-Throws {Wait-ScenarioRoleExit 'host' 5} 'waitexit times out when the game stays'
+        Assert-True ($fake.disposed -and !$exitedRoles.ContainsKey('host')) 'a timed-out waitexit records nothing'
+        $supervisor.stage='closing';Write-WorkerSessionJson (Join-Path $run 'supervisor.json') $supervisor;$fake.mode='reused'
+        Assert-Throws {Wait-ScenarioRoleExit 'guest' 5} 'an exit while the supervisor closes is not the game''s own'
+        $supervisor.stage='running';Write-WorkerSessionJson (Join-Path $run 'supervisor.json') $supervisor
+        $fake.mode='live';$fake.calls=0;$fake.exitAfter=3;$fake.disposed=$false
+        Wait-ScenarioRoleExit 'guest' 90
+        $recorded=Read-WorkerSessionJson (Join-Path $run 'session.json')
+        Assert-True ($fake.disposed -and $exitedRoles.ContainsKey('guest') -and [long]$recorded['roles']['guest']['exited']['pid'] -eq 4242 -and
+            [string]$recorded['roles']['guest']['exited']['creation_filetime'] -ceq [string]$creation -and $recorded['roles']['guest']['exited']['forced'] -eq $false -and
+            [int]$recorded['roles']['guest']['exited']['exit_code'] -eq 0) 'waitexit records the exact lease, exit code and forced=false in session.json'
+        $supervisor.owned_processes=@($supervisor.owned_processes[0]);Write-WorkerSessionJson (Join-Path $run 'supervisor.json') $supervisor
+        Assert-Throws {Wait-ScenarioRoleExit 'guest' 5} 'waitexit needs the role''s owned lease'
+        # The P2-6 set hash: a golden vector and an independent byte layout.
+        $golden=@(@{entry='remote/TPP_GAME_DATA';bytes=0x01020304;sha256='B71199EBD070B36BEAB7317920C2C2F1D777DF8D05E5527D8458FDA57CB17A7A'},
+            @{entry='287700/local/TPP_GAME_DATA0';bytes=1;sha256=('0'*64)})
+        Assert-True ((Get-ScenarioHandoffSetSha256 $golden) -ceq '72096957C1A4E997965569CF00AD27F2C3BE607B98D7CFA8C1F36A64B261AA86') 'set hash golden vector (ascending slots, u32 LE sizes)'
+        Assert-Throws {Get-ScenarioHandoffSetSha256 @(@{entry='287700/local/TPP_CONFIG_DATA0';bytes=1;sha256=('0'*64)})} 'settings files are never part of a set'
+        function Get-FixtureSetSha([object[]]$Rows){
+            $slotOf=@{'287700/local/TPP_GAME_DATA0'=0;'287700/local/TPP_GAME_DATA1'=1;'287700/local/PERSONAL_DATA0'=2;'287700/local/PERSONAL_DATA1'=3;'remote/TPP_GAME_DATA'=4;'remote/PERSONAL_DATA'=5}
+            $bytes=[Collections.Generic.List[byte]]::new()
+            foreach($r in @($Rows|Sort-Object {$slotOf[$_['entry']]})){
+                $n=[long]$r['bytes'];$bytes.Add([byte]$slotOf[$r['entry']])
+                foreach($shift in 0,8,16,24){$bytes.Add([byte](($n -shr $shift) -band 0xFF))}
+                $bytes.AddRange([Convert]::FromHexString($r['sha256']))
+            }
+            return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes.ToArray()))
+        }
+        # A staged handoff in an owned fixture run (the native guest's P2-9 layout).
+        function New-FixtureHandoffRun([string]$Name){
+            $fixtureRun=Join-Path $fixture $Name
+            $saves=Join-Path $fixtureRun 'guest-saves'
+            $null=New-Item -ItemType Directory -Path (Join-Path $saves '287700\local'),(Join-Path $saves 'remote') -Force
+            foreach($pair in @(@('287700\local\TPP_GAME_DATA0','own progress 0'),@('287700\local\TPP_GAME_DATA1','own progress 1'),@('287700\local\PERSONAL_DATA0','own personal'),
+                @('remote\TPP_GAME_DATA','own remote'),@('287700\local\TPP_CONFIG_DATA0','own settings'),@('287700\local\TPP_GRAPHICS_CONFIG','own graphics'))){
+                [IO.File]::WriteAllText((Join-Path $saves $pair[0]),$pair[1]+"`n")
+            }
+            $stage=Join-Path $fixtureRun 'guest-saves-handoff\0A1B2C3D'
+            $null=New-Item -ItemType Directory -Path (Join-Path $stage '287700\local'),(Join-Path $stage 'remote') -Force
+            $rows=[Collections.Generic.List[object]]::new()
+            foreach($pair in @(@('287700/local/TPP_GAME_DATA0','host progress 0, a longer file'),@('287700/local/PERSONAL_DATA0','host personal'),@('remote/TPP_GAME_DATA','host remote'))){
+                $path=Join-Path $stage $pair[0].Replace('/','\');[IO.File]::WriteAllText($path,$pair[1]+"`n")
+                $rows.Add([ordered]@{entry=$pair[0];bytes=(Get-Item -LiteralPath $path).Length;sha256=(Get-WorkerHash $path)})
+            }
+            $set=Get-FixtureSetSha $rows.ToArray()
+            Write-WorkerSessionJson (Join-Path $stage 'handoff.json') ([ordered]@{format='mgs-coop-save-handoff';v=1;xfer='0A1B2C3D';created_utc='2026-10-15T12:05:00Z';
+                host_build='0.13.0+fixture';host_mission=30010;set_sha256=$set;files=$rows.ToArray()})
+            $request=[ordered]@{format='mgs-coop-save-handoff-request';v=1;pid=4242;process_start_utc='2026-10-15T12:00:00Z';xfer='0A1B2C3D';set_sha256=$set;mode='scene';rejoin=0;created_utc='2026-10-15T12:05:01Z'}
+            Write-WorkerSessionJson (Join-Path $fixtureRun 'guest-saves-handoff\request.json') $request
+            return [pscustomobject]@{Run=$fixtureRun;Saves=$saves;Stage=$stage;Root=(Join-Path $fixtureRun 'guest-saves-handoff');Set=$set}
+        }
+        $h=New-FixtureHandoffRun 'handoff-run-1'
+        $requestDoc=Read-WorkerSessionJson (Join-Path $h.Root 'request.json')
+        $checked=Test-ScenarioHandoffStage $requestDoc $h.Root 4242 ([string]$creation)
+        Assert-True ($checked.Xfer -ceq '0A1B2C3D' -and $checked.SetSha256 -ceq $h.Set -and @($checked.Files).Count -eq 3 -and $checked.Mode -ceq 'scene' -and
+            $checked.CreatedUtc -ceq '2026-10-15T12:05:00Z') 'a valid staged handoff is admitted with its rows'
+        Assert-Throws {Test-ScenarioHandoffStage $requestDoc $h.Root 4243 ([string]$creation)} 'the request must name the exited pid'
+        Assert-Throws {Test-ScenarioHandoffStage $requestDoc $h.Root 4242 ([string]($creation+100000000))} 'the request must name the exited process start'
+        foreach($change in @(@('mode','stage'),@('xfer','0a1b2c3d'),@('xfer','00000000'),@('set_sha256',('A'*64)),@('format','mgs-coop-save-handoff'),@('v',2))){
+            $bad=$requestDoc.Clone();$bad[$change[0]]=$change[1]
+            Assert-Throws {Test-ScenarioHandoffStage $bad $h.Root 4242 ([string]$creation)} ('request refuses '+$change[0]+'='+$change[1])
+        }
+        $stray=Join-Path $h.Stage 'remote\PERSONAL_DATA';[IO.File]::WriteAllText($stray,"unnamed`n")
+        Assert-Throws {Test-ScenarioHandoffStage $requestDoc $h.Root 4242 ([string]$creation)} 'an unnamed staged file refuses'
+        Remove-Item -LiteralPath $stray
+        $staged0=Join-Path $h.Stage '287700\local\TPP_GAME_DATA0';$original=[IO.File]::ReadAllText($staged0)
+        [IO.File]::WriteAllText($staged0,$original.Replace('host','HOST'))
+        Assert-Throws {Test-ScenarioHandoffStage $requestDoc $h.Root 4242 ([string]$creation)} 'a staged byte change refuses'
+        [IO.File]::WriteAllText($staged0,$original)
+        $handoffPath=Join-Path $h.Stage 'handoff.json';$handoffText=[IO.File]::ReadAllText($handoffPath)
+        $variants=@(
+            @{name='unknown entry';edit={param($d) $d['files'][1]['entry']='287700/local/TPP_CONFIG_DATA0'}},
+            @{name='repeated entry';edit={param($d) $d['files'][1]['entry']='287700/local/TPP_GAME_DATA0'}},
+            @{name='size';edit={param($d) $d['files'][2]['bytes']=[long]$d['files'][2]['bytes']+1}},
+            @{name='lower-case hash';edit={param($d) $d['files'][2]['sha256']=([string]$d['files'][2]['sha256']).ToLowerInvariant()}},
+            @{name='no TPP_GAME_DATA0/1';edit={param($d) $d['files']=@($d['files'][1],$d['files'][2])}},
+            @{name='xfer';edit={param($d) $d['xfer']='0A1B2C3E'}})
+        foreach($variant in $variants){
+            $doc=Read-WorkerSessionJson $handoffPath;& $variant.edit $doc;Write-WorkerSessionJson $handoffPath $doc
+            Assert-Throws {Test-ScenarioHandoffStage $requestDoc $h.Root 4242 ([string]$creation)} ('handoff.json refuses '+$variant.name)
+            [IO.File]::WriteAllText($handoffPath,$handoffText)
+        }
+        $null=Test-ScenarioHandoffStage $requestDoc $h.Root 4242 ([string]$creation)
+        Assert-True $true 'the restored stage is admitted again'
+        # applyhandoff: checked at step time, applied after Stop through Import-CoopProgressFiles (P2-18 contract).
+        $applyLog=[Collections.Generic.List[hashtable]]::new();$importMode=[pscustomobject]@{mode='ok'}
+        function Import-Module {param([Parameter(ValueFromRemainingArguments)]$Rest) $applyLog.Add(@{module=($Rest -join ' ')})}
+        function Import-CoopProgressFiles {
+            param([string]$StageRoot,[string]$SaveDir,[string]$ReplacedRoot,[string]$Suffix,[hashtable]$Marker,[object[]]$Manifest)
+            $applyLog.Add(@{stage=$StageRoot;save=$SaveDir;replaced=$ReplacedRoot;suffix=$Suffix;source=$Marker.Source;files=@($Marker.Files).Count;exported=$Marker.ExportedUtc;manifest=@($Manifest).Count})
+            if($importMode.mode -ceq 'throw'){throw 'fixture import refused'}
+            $new=$SaveDir+'-new';Copy-Item -LiteralPath $SaveDir -Destination $new -Recurse
+            foreach($sub in '287700\local','remote'){
+                if($importMode.mode -cne 'keep-old'){foreach($old in @(Get-ChildItem -LiteralPath (Join-Path $new $sub) -File|Where-Object{$_.Name -cmatch '^(TPP_GAME_DATA[0-9]?|PERSONAL_DATA[0-9]?)$'})){Remove-Item -LiteralPath $old.FullName}}
+                foreach($f in @(Get-ChildItem -LiteralPath (Join-Path $StageRoot $sub) -File)){Copy-Item -LiteralPath $f.FullName -Destination (Join-Path (Join-Path $new $sub) $f.Name) -Force}
+            }
+            [IO.File]::WriteAllText((Join-Path $new 'imported-progress.json'),(([ordered]@{format='mgs-coop-imported-progress';v=1;source=$Marker.Source}|ConvertTo-Json)+"`n"))
+            $null=New-Item -ItemType Directory -Path $ReplacedRoot -Force
+            $aside=Join-Path $ReplacedRoot ('20261015-120600'+$Suffix)
+            Move-Item -LiteralPath $SaveDir -Destination $aside;Move-Item -LiteralPath $new -Destination $SaveDir
+            return $aside
+        }
+        $exitedRoles=@{}
+        $run=$h.Run
+        Assert-Throws {New-ScenarioHandoffApply 'guest'} 'applyhandoff needs waitexit guest first'
+        $exitedRoles['guest']=[ordered]@{pid=4242;creation_filetime=[string]$creation;forced=$false}
+        Assert-Throws {New-ScenarioHandoffApply 'host'} 'applyhandoff is guest only'
+        $pending=New-ScenarioHandoffApply 'guest'
+        Assert-True ($pending.xfer -ceq '0A1B2C3D' -and @($pending.before.progress.Keys).Count -eq 4 -and @($pending.before.settings.Keys).Count -eq 2 -and !$pending.applied) 'the step records the copy before any change'
+        Assert-True ((Test-WorkerDescendant $pending.replaced_root $run) -and (Test-WorkerDescendant $pending.save_dir $run) -and (Test-WorkerDescendant $pending.stage $run)) 'every apply path stays in the run'
+        $expectations.Clear();$expectFailures.Clear()
+        $result=Invoke-ScenarioHandoffApply $pending
+        $call=@($applyLog|Where-Object{$_.ContainsKey('stage')})[-1]
+        Assert-True ($call.stage -ceq $h.Stage -and $call.save -ceq $h.Saves -and $call.replaced -ceq (Join-Path $run 'guest-saves-replaced') -and $call.suffix -ceq '-before-handoff' -and
+            $call.source -ceq 'handoff' -and $call.files -eq 3 -and $call.manifest -eq 3 -and $call.exported -ceq '2026-10-15T12:05:00Z') 'Import-CoopProgressFiles gets the run paths, -before-handoff, the handoff marker and the staged manifest'
+        Assert-True ($result.applied -and !$result.failure -and $expectFailures.Count -eq 0 -and $expectations.Count -eq 6) ('the apply checks all pass: '+($expectFailures -join ' | '))
+        Assert-True ($result.marker_source -ceq 'handoff' -and $result.aside.EndsWith('-before-handoff') -and @($result.after.progress.Keys).Count -eq 3 -and
+            (Test-ScenarioSameMap $pending.before.progress $result.aside_progress)) 'scenario.json HandoffApply holds after, aside and its old progress'
+        # Failures are recorded, never thrown past the run's cleanup.
+        foreach($mode in 'throw','keep-old'){
+            $h=New-FixtureHandoffRun ('handoff-run-'+$mode);$run=$h.Run;$importMode.mode=$mode
+            $pending=New-ScenarioHandoffApply 'guest';$expectations.Clear();$expectFailures.Clear()
+            $result=Invoke-ScenarioHandoffApply $pending -WarningAction SilentlyContinue
+            if($mode -ceq 'throw'){Assert-True (!$result.applied -and $result.failure -ceq 'fixture import refused' -and $expectFailures.Count -eq 1) 'a refused import is one failed expectation'}
+            else{Assert-True ($result.applied -and @($expectFailures|Where-Object{$_ -clike '*progress=staged*'}).Count -eq 1) 'old progress left behind fails progress=staged'}
+        }
+        $h=New-FixtureHandoffRun 'handoff-run-changed';$run=$h.Run;$importMode.mode='ok'
+        $pending=New-ScenarioHandoffApply 'guest';$expectations.Clear();$expectFailures.Clear()
+        [IO.File]::WriteAllText((Join-Path $h.Saves '287700\local\TPP_GAME_DATA0'),"written after the check`n")
+        $result=Invoke-ScenarioHandoffApply $pending -WarningAction SilentlyContinue
+        Assert-True (!$result.applied -and $result.failure -clike '*changed after applyhandoff*' -and !(Test-Path -LiteralPath (Join-Path $run 'guest-saves-replaced'))) 'a copy changed after the check is never replaced'
+    }
 } finally {
     $script:fakeActiveGame=''
     if(Test-Path -LiteralPath $fixture) {
@@ -1069,14 +1613,25 @@ try {
   $worker='C:\fixture';$build='C:\fixture';$CheckReceipt='C:\fixture';$BaselineLoaderSha256='A'*64
   $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$BuddyCapacityArchive='';$MgoSleepRestArchive='';$MgoUniqueRestArchive='';$AmmoExperiment=$false;$MgoStandingCycleArchive='';$StandingLookupObserver=$false;$NativeActivationObserver=$false;$StandingFrameObserver=$false
   $SaveSeed='lab';$LabSetting=@();$Mode='lab';$WanSim='off'
+  $HostSaveSeed='';$GuestSaveSeed='';$GuestSaveSeedRun=''
   function Join-Path([string]$Path,[string]$ChildPath){Assert-True ($ChildPath -ceq 'Start-WorkerSession.ps1') 'graphics: recorded Start only';return 'Graphics-RecordStart'}
   function Graphics-RecordStart {
    param($BuildDirectory,$CheckReceipt,$BaselineLoaderSha256,$TimeoutSec,$ReadyTimeoutSec,$PartnerProfile,$NativeStage,$BuildProfile,
-    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive,$MgoSleepRestArchive,$MgoUniqueRestArchive,$MgoStandingCycleArchive,[switch]$StandingLookupObserver,[switch]$StandingFrameObserver,[switch]$NativeActivationObserver)
+    [switch]$AmmoExperiment,$SaveSeed,$HostSaveSeed,$GuestSaveSeed,$GuestSaveSeedRun,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive,$MgoSleepRestArchive,$MgoUniqueRestArchive,$MgoStandingCycleArchive,[switch]$StandingLookupObserver,[switch]$StandingFrameObserver,[switch]$NativeActivationObserver)
+   if($script:recordSeeds){return "$SaveSeed|$HostSaveSeed|$GuestSaveSeed|$GuestSaveSeedRun"}
    return $GraphicsQuality
   }
+  $script:recordSeeds=$false
   $GraphicsQuality='preserve';Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'preserve') 'graphics: real invocation forwards default'
   $GraphicsQuality='low';Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'low') 'graphics: real invocation forwards low'
+  # The per-role seeds reach Start-WorkerSession unchanged (P2-19).
+  $script:recordSeeds=$true
+  Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'lab|||') 'seeds: real invocation forwards empty role seeds'
+  $HostSaveSeed='lab';$GuestSaveSeed='real'
+  Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'lab|lab|real|') 'seeds: real invocation forwards both role seeds'
+  $GuestSaveSeed='';$GuestSaveSeedRun='0123456789abcdef0123456789abcdef'
+  Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'lab|lab||0123456789abcdef0123456789abcdef') 'seeds: real invocation forwards the seed run'
+  $script:recordSeeds=$false
  }
 }
 

@@ -34,7 +34,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$version='0.12.6'
+$version='0.13.0'
 $archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
 $dll=Join-Path $projectRoot 'build/package-loader/dinput8.dll'
 # Provenance (package.json "build"): how the loader was made.

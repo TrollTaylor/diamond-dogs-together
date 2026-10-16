@@ -7,7 +7,10 @@
 #define NOMINMAX
 #include <windows.h>
 #include <strsafe.h>
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/lab_status.hpp"
+#include "mgscoop/save_handoff.hpp"
+#include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/world_wire.hpp"
 
@@ -22,6 +25,7 @@ volatile LONG g_configured = 0;
 volatile LONG g_pumping = 0;
 LogFn g_log = nullptr;
 bool g_lab_triggers = false;
+bool g_placed_census = false;  // WS4 step 0: CFG r[14] (lab key partner_placed_census, lab only)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
 // LOG receipts: at most 200 lines per 10 s (world=log_cap counts the rest).
@@ -29,6 +33,13 @@ std::uint64_t g_log_window_ms = 0;
 unsigned g_log_lines = 0, g_log_dropped = 0;
 thread_local char g_reply[world::reply_capacity]{};
 std::uint8_t g_pump_buffer[world::kMaxReliableBundle];  // the single pumper only
+// Under g_world_lock: the published pair-wait code (different missions settle
+// for 15 s), the NOTE rate gate and the title progress of the last PROGRESS
+// note (0 unknown, 1 ok, 2 story_start).
+world::WaitPublisher g_waits;
+world::NoteGate g_notes;
+std::uint8_t g_progress = 0, g_published_wait = 1;
+std::uint32_t g_title_mission = 0;
 
 struct Locked {
     Locked() noexcept { AcquireSRWLockExclusive(&g_world_lock); }
@@ -55,6 +66,27 @@ void Flush(std::uint64_t now_ms) noexcept {
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "%s; t_ms=%llu\r\n", text, static_cast<unsigned long long>(now_ms))))
             Write(line);
     }
+}
+
+// Publishes the world view for link-status.json, the HUD and F9: the core is
+// read and the settle rule applied under the world lock; partner_net (atomics
+// only) and the one note-16 toast per different-missions pair come after it.
+void PublishWorld(std::uint64_t now_ms) noexcept {
+    partner_net::WorldView view{};
+    std::uint32_t local = 0;
+    bool post_mismatch = false;
+    {
+        Locked lock;
+        view.level = g_core.level();
+        view.paired = g_core.paired();
+        view.partner_mission = g_core.remote_mission();
+        local = g_core.local_mission();
+        g_published_wait = g_waits.Update(g_core.pair_wait(), local, view.partner_mission, now_ms, post_mismatch);
+        view.pair_wait = g_published_wait;
+        view.progress = g_progress;
+    }
+    partner_net::PublishWorldState(view);
+    if (post_mismatch) coop_hud::PostWorldNote(16, local, view.partner_mission, view.partner_mission, local);
 }
 
 // Sends queued R ops as bundles on reliable channel 1. One pumper at a time
@@ -142,6 +174,7 @@ void OnIdleHook(std::uint64_t now_ms) noexcept {
     }
     Pump();
     Flush(now_ms);
+    PublishWorld(now_ms);
 }
 
 const partner_net::WorldHooks kHooks{&OnDatagramHook, &OnIdleHook, &OnSessionHook};
@@ -172,6 +205,7 @@ void Configure(const Config& config) noexcept {
     if (InterlockedCompareExchange(&g_configured, 1, 0) != 0) return;
     g_log = config.log;
     g_lab_triggers = config.lab_triggers && !config.play;
+    g_placed_census = config.placed_census && !config.play;
     if (g_lab_triggers && config.directory &&
         FAILED(StringCchPrintfW(g_trigger_path, ARRAYSIZE(g_trigger_path) - 4, L"%s\\mgs-coop\\world.trigger", config.directory)))
         g_trigger_path[0] = 0;
@@ -189,13 +223,30 @@ void Configure(const Config& config) noexcept {
         g_core.Configure(core, now);
     }
     Flush(now);
+    PublishWorld(now);
 }
 
 bool Configured() noexcept { return g_configured != 0; }
 Status GetStatus() noexcept {
-    if (!Configured()) return {};
+    Status s{};
+    if (!Configured()) return s;
     Locked lock;
-    return {true, g_core.paired(), g_core.link_up(), g_core.level(), g_core.eff(), g_core.epoch()};
+    s.configured = true;
+    s.paired = g_core.paired();
+    s.link_up = g_core.link_up();
+    s.level = g_core.level();
+    s.effective = g_core.eff();
+    s.epoch = g_core.epoch();
+    s.linked = g_core.linked();
+    s.remote_level = g_core.remote_level();
+    s.core_wait = g_core.pair_wait();
+    s.pair_wait = g_published_wait;
+    s.progress = g_progress;
+    s.local_mission = g_core.local_mission();
+    s.remote_mission = g_core.remote_mission();
+    s.remote_location = g_core.remote_location();
+    s.title_mission = g_title_mission;
+    return s;
 }
 
 const partner_net::WorldHooks* Hooks() noexcept { return &kHooks; }
@@ -212,6 +263,12 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
         Locked lock;
         reply = g_core.Cfg(mission, phase == 1, read_mission, now);
     }
+    // Save handoff (P2-1): r[12] the handoff code, r[13] the travel lock,
+    // from the published atomics after the pure core (outside the world lock).
+    reply.handoff = save_handoff::LuaCode(now);
+    reply.lock = save_handoff::LockAllowed();
+    // WS4 step 0: r[14] the attacker census (lab only, read-only logging).
+    reply.census = g_placed_census ? 1 : 0;
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }
@@ -276,6 +333,51 @@ const char* HandleLog(const char* source, std::size_t size) noexcept {
     ++g_log_lines;
     Write(line);
     return yes;
+}
+
+const char* HandleNote(const char* source, std::size_t size) noexcept {
+    if (!Configured()) return nullptr;
+    std::uint8_t code = 0;
+    std::uint32_t a = 0, b = 0;
+    if (!world::ParseNote(source, size, code, a, b)) return nullptr;
+    // Note 9 (CONTINUE_DURING_HANDOFF, P2-3 a=pct): Lua has no transfer percent
+    // (CFG r[12] is only the code), so the native one is used.
+    if (code == 9 && a == 0) a = save_handoff_state::Get().pct;
+    static constexpr char yes[] = "return true";
+    static constexpr char no[] = "return false";
+    // 1 PROGRESS, 2 HELI_WAIT, 3 HELI_ALONE, 4 HELI_REFUSED; join-fix phase 2
+    // (P2-3): 5 TRAVEL_LOCKED, 6 HOST_PARTNER_CANNOT_JOIN, 7 TITLE_CONTINUE_LOCKED,
+    // 8 TRAVEL_ALONE, 9 CONTINUE_DURING_HANDOFF, 10 HANDOFF_KEPT_OWN,
+    // 11 GUEST_LANDING_ELSEWHERE, 12 SORTIE_HELD; 13..15 have no meaning yet.
+    const bool known = code >= 1 && code <= 12;
+    const std::uint64_t now = partner_net::NowMs();
+    std::uint32_t partner = 0, local = 0;
+    bool post = false, log = false;
+    {
+        Locked lock;
+        partner = g_core.remote_mission();
+        local = g_core.local_mission();
+        g_notes.Accept(code, a, b, now, post, log);
+        if (code == 1) {
+            g_progress = b ? 2 : 1;
+            g_title_mission = a;
+        }
+    }
+    if (log) {
+        char line[160]{};
+        const HRESULT formatted =
+            known ? StringCchPrintfA(line, ARRAYSIZE(line), "world=note; code=%u; a=%u; b=%u; partner=%u; t_ms=%llu\r\n", unsigned(code),
+                                     a, b, partner, static_cast<unsigned long long>(now))
+                  : StringCchPrintfA(line, ARRAYSIZE(line), "world=note; code=%u; result=unknown; t_ms=%llu\r\n", unsigned(code),
+                                     static_cast<unsigned long long>(now));
+        if (SUCCEEDED(formatted)) Write(line);
+    }
+    // Code 1 toasts only a story start, and not while a save handoff runs for
+    // this guest (the handoff toasts replace it; the log line stays).
+    const bool story_toast = code != 1 || (b == 1 && !save_handoff::GuestHandoffActive());
+    if (post && known && story_toast) coop_hud::PostWorldNote(code, a, b, partner, local);
+    PublishWorld(now);
+    return known ? yes : no;
 }
 
 WarpGrant FindGrant(std::uint16_t seq) noexcept {

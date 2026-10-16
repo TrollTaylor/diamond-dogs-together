@@ -1,0 +1,70 @@
+{
+  "executable": "D:/Games/steamapps/common/MGS_TPP/mgsvtpp.exe",
+  "sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "kind": "actual hidden two-copy runs on the private worker desktop (lab mode, copied saves, research build with the worker on)",
+  "scenario": "tools/worker/scenarios/coop-sleep-prompts-camera.txt",
+  "runs": [
+    {
+      "run_id": "1d3e80b4b4e14e12915d77d04ac9dbba",
+      "result": "refused before gameplay",
+      "finding": "The new vt+268 prompt-queue hook (0xFE8770) changed bytes that native_pose_window_contract verifies; native_pose_early refused with pose_full_code and the worker bridge never wrote its state file.",
+      "baseline_restored": true,
+      "real_saves_unchanged": true
+    },
+    {
+      "run_id": "9d08106b35be49ca877f7c761115db0c",
+      "result": "all scenario requirements passed",
+      "observed": [
+        "host 11 m from the sleeping guest: no struggle guide; only Pet D-Dog with D-Dog adjacent",
+        "host beside the sleeping guest: stock carry icon and the mod's HOLD / WAKE UP only; no Fulton offer",
+        "host carrying: no Fulton offer, no struggle guide",
+        "sleeping guest's own view: struggle guide still shown",
+        "host log: teammate_partner_prompt suppressed queue 0x3c0 hint 93 from 0x12cad45 and hint 94 from 0x1127437",
+        "carried guest: shot behind the carrier; with followTime 0 it did not follow while the carrier walked",
+        "wake restored 6600/6600 HP; guest camera back to normal"
+      ],
+      "baseline_restored": true,
+      "real_saves_unchanged": true
+    },
+    {
+      "run_id": "dbb5b57eac50475db3e37ad708bb926e",
+      "result": "all scenario requirements passed",
+      "observed": [
+        "followTime 600: the carried guest's shot stayed behind the carrier through 2.5 s of walking and a turn",
+        "event=carried_camera on=1 ok=1 carrier=1 renew=0, then on=0 after put-down",
+        "host prompt results and suppressed hints identical to run 9d08106b"
+      ],
+      "baseline_restored": true,
+      "real_saves_unchanged": true
+    },
+    {
+      "run_id": "1be8bed7c825430e97e43fa618c3b6ee",
+      "result": "all scenario requirements passed",
+      "observed": [
+        "sleeper's greyscale view with the HUD and the teammate's name tag in colour",
+        "darkening applied to linear values on the sRGB back buffer: sky about 158-174 of 255, lighter than intended"
+      ],
+      "baseline_restored": true,
+      "real_saves_unchanged": true
+    },
+    {
+      "run_id": "dc2f33c97a7a41ca891d0ceb45ea9ca0",
+      "result": "all scenario requirements passed",
+      "observed": [
+        "debug-overlay.log: overlay=sleep_view; format=29; srgb=1; samples=1 (R8G8B8A8_UNORM_SRGB)",
+        "display-space darkening: sky about 86-110 of 255, dark greyscale on the ground and while carried",
+        "colour returned after the wake"
+      ],
+      "baseline_restored": true,
+      "real_saves_unchanged": true
+    }
+  ],
+  "static": "tools/generate_native_ui_contract.py verifies the four sibling prompt-queue bodies FE8770/FE89E0/FE8700/FE8C70 (vt+268/288/270/278, fields 3C0/410/460/4B0) as identical to FE8690 apart from field offsets, plus their vtable slots (41 sites).",
+  "limitations": [
+    "Sleeping teammate only; the wounded carried camera and the reverse roles (host carried) were not run.",
+    "Local two-copy loopback lab, not a two-PC Steam session.",
+    "The Fulton withholding was judged from captures; no native readback of vars.playerDisableActionFlag was recorded.",
+    "In worker builds the vt+268 queue is filtered through the private pose window's hook; release builds hook it directly, which these runs did not exercise.",
+    "The 600 s renewal was checked by the Lua fixture only."
+  ]
+}

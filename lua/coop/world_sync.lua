@@ -31,6 +31,12 @@ do
   function W.log(text)
     W.receipt(PRE .. "LOG_V1' -- " .. sub(gsub(tostring(text), "[^%w_=:,.;%-]", "_"), 1, 160))
   end
+  -- NOTE: a native on-screen note (code a b, unsigned integers); true only when native handled it.
+  function W.note(code, a, b)
+    local c, x, y = W.n(code), W.n(a), W.n(b)
+    if not (c and x and y) or code < 0 or a < 0 or b < 0 then return false end
+    return W.receipt(PRE .. "NOTE_V1' -- " .. c .. " " .. x .. " " .. y) == true
+  end
   function W.now() return W.api.time() * 1000 end
   function W.tick32(now) return floor(now) % 4294967296 end
   -- An integer for a receipt, or nil (the op is then not sent).
@@ -71,6 +77,14 @@ do
     local r = {W.receipt(PRE .. "CFG_V1' -- " .. text .. " " .. phase)}
     if type(r[1]) ~= "number" then return {0} end
     return r
+  end
+  -- The partner's scene from CFG r[9..11]; nil from an older loader. wait is the raw pair-wait code.
+  function W.peer()
+    local r = W.cfg(W.get(vars, "missionCode"), 0)
+    if type(r[11]) ~= "number" then return nil end
+    local session = r[4] == 1 and type(r[8]) == "number" and r[8] > 0 and r[8] or nil
+    return {mission = r[9] or 0, level = r[10] or 0, wait = r[11], session = session,
+      linked = session ~= nil and (r[11] == 0 or r[11] >= 7)}
   end
   function W.inGame() return W.api.checkState() == true end
   function W.bind()
@@ -150,6 +164,7 @@ do
   function W.reset()
     W.active, W.observing, W.isStarted, W.failed, W.paired, W.w1 = false, false, false, false, false, false
     W.eff, W.epoch, W.rid, W.flags, W.obsCount, W.badAt = 0, 0, 0, 0, 0, nil
+    W.census, W.censusKills, W.censusDamage = false, 0, 0
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
   end
@@ -160,6 +175,8 @@ do
     local r = W.cfg(mission, 1)
     if r[1] < 1 then return end
     W.level, W.role, W.epoch, W.probeId, W.mode = r[1], r[2], r[5] or 0, r[6] or 0, r[7] or 0
+    -- WS4 step 0 (lab key partner_placed_census): r[14] asks for the event=obs_att lines.
+    W.census = r[14] == 1
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
     local missing, required = W.bind()
@@ -248,8 +265,29 @@ do
     if W.place then W.place.tick(now) end
   end
 
+  -- WS4 step 0 attacker census (CFG r[14], lab only; log only): every raw
+  -- argument after the id with its attribution class, for kills (Dead,
+  -- Neutralize, Unconscious, Dying: at most 400 per mission) and Damage (at
+  -- most 200), so C4 and stun-arm results show which argument carries the
+  -- attacker (Unconscious and Dying are otherwise logged with att=none).
+  function W.censusLine(kind, h, a0, a1, a2, a3)
+    local kill = kind == "Dead" or kind == "Neutralize" or kind == "Unconscious" or kind == "Dying"
+    if not kill and kind ~= "Damage" then return end
+    local cap = kill and 400 or 200
+    local n = (kill and W.censusKills or W.censusDamage) + 1
+    if kill then W.censusKills = n else W.censusDamage = n end
+    if n > cap then
+      if n == cap + 1 then W.log("event=obs_att_cap;kind=" .. (kill and "kill" or "damage")) end
+      return
+    end
+    local function raw(v) return type(v) == "number" and fmt("%.0f", v) or type(v) end
+    local function cls(v) return type(v) == "number" and W.attClass and W.attClass(v) or "none" end
+    W.log(fmt("event=obs_att;m=%s;ent=%.0f;id=%s;a1=%s;c1=%s;a2=%s;c2=%s;a3=%s;c3=%s", kind, h or 0, tostring(a0),
+      raw(a1), cls(a1), raw(a2), cls(a2), raw(a3), cls(a3)))
+  end
+
   -- Observer (after the original; records only, never sends).
-  function W.observe(class, msg, a0, a1, a2)
+  function W.observe(class, msg, a0, a1, a2, a3)
     local M = W.M
     if class == M.Weather then
       if msg == M.ChangeWeather then W.weatherDirty = true end
@@ -261,6 +299,7 @@ do
     if kind == "ChangePhase" then h = W.cpById[a0] end
     if kind == "Dead" or kind == "Neutralize" or kind == "FultonInfo" then att = a1 elseif kind == "Damage" then att = a2 end
     local class2 = W.attClass and W.attClass(att) or "none"
+    if W.census then W.censusLine(kind, h, a0, a1, a2, a3) end
     if not h then W.stats.unmapped = W.stats.unmapped + 1 end
     if kind ~= "Damage" then
       W.stats.obs = W.stats.obs + 1
@@ -301,6 +340,9 @@ do
     else
       if W.downed and (W.downed.maskOwned or W.downed.reviveMaskOwned or W.downed.nativePending) then pcall(W.downed.stop) end
       if W.buddy and W.buddy.cleanupPending then pcall(W.buddy.cleanupPending) end
+      -- A held host or guest sortie still ends (W.fail, LEVEL 0); never one from an ended mission.
+      if W.isStarted and W.follow and W.follow.hostDeploy then pcall(W.follow.hold) end
+      if W.isStarted and W.handoff and W.handoff.held then pcall(W.handoff.hold) end
     end
     return ...
   end

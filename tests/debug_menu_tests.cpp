@@ -702,6 +702,40 @@ int main() {
     Check(!std::strcmp(reason("partner_goto"), "ok"), "partner pose ready");
     avail.remote_age_ms = 1001; Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "stale partner pose refused");
     avail.remote_age_ms = 10; strcpy_s(avail.link_state, "lost"); Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "link down refused");
+    // Story missions and the helicopter never reach supported gameplay: "mission", not "gameplay".
+    {
+        debug::Snapshot scene = avail;
+        scene.gameplay_ready = false; scene.mission = 10020;
+        const auto scene_reason = [&](const char* id) { const char* r = act::DisabledReason(*act::FindAction(id), scene, false); return r ? r : "ok"; };
+        Check(!std::strcmp(scene_reason("player_position"), "mission") && !std::strcmp(scene_reason("tools_clear_log"), "ok"),
+              "a story mission names the mission reason; UI-only rows still work");
+        scene.mission = 40050;
+        Check(!std::strcmp(scene_reason("player_position"), "mission"), "the helicopter names the mission reason");
+        scene.mission = 0;
+        Check(!std::strcmp(scene_reason("player_position"), "gameplay"), "mission 0 (loading) is still gameplay");
+        scene.mission = 30050;
+        Check(!std::strcmp(scene_reason("player_position"), "gameplay"), "a supported mission waits for gameplay");
+        scene.mission = 10020; scene.terminating = true;
+        Check(!std::strcmp(scene_reason("player_position"), "gameplay"), "a terminating mission is still gameplay");
+        scene.terminating = false; scene.enabled = false;
+        Check(!std::strcmp(scene_reason("player_position"), "gameplay"), "a disabled menu is still gameplay");
+        scene.enabled = true; scene.gameplay_ready = true;
+        Check(!std::strcmp(scene_reason("player_position"), "ok"), "gameplay ready in any mission: no mission refusal");
+    }
+    // The partner in another mission (settled pair-wait 9): partner_elsewhere instead of partner_pose.
+    avail.world_paired = false; avail.world_pair_wait = 9; avail.world_partner_mission = 30010; avail.mission = 30050;
+    Check(!std::strcmp(reason("partner_goto"), "partner_elsewhere"), "partner in another mission: partner_elsewhere");
+    avail.world_pair_wait = 2;
+    Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "no link: partner_pose");
+    avail.world_pair_wait = 11;
+    Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "settling: partner_pose");
+    avail.world_pair_wait = 9; avail.world_partner_mission = 30050;
+    Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "the same mission: partner_pose");
+    avail.world_partner_mission = 0;
+    Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "an unknown partner mission: partner_pose");
+    avail.world_partner_mission = 30010; avail.world_paired = true;
+    Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "paired: partner_pose");
+    avail.world_paired = false; avail.world_pair_wait = 1; avail.world_partner_mission = 0; avail.mission = 0;
     act::Category cat{};
     Check(act::ParseCategory("enemies", cat) && cat == act::Category::enemies && act::ParseCategory("coop", cat) && cat == act::Category::partner &&
           act::ParseCategory("diag", cat) && cat == act::Category::tools && act::ParseCategory("mission", cat) && cat == act::Category::tools &&

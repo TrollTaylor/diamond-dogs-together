@@ -10,10 +10,12 @@
 #include <bcrypt.h>
 #include <strsafe.h>
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/partner_native_net.hpp"
+#include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/session.hpp"
 #include "mgscoop/steam_join_code.hpp"
@@ -56,6 +58,24 @@ std::uint32_t g_input_tx_seq = 0;
 std::uint64_t g_input_tx_ms = 0;
 partner_input::InputEdges g_edges{};
 volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
+// LatestInput calls that found g_lock held by the receive thread and waited
+// (process total, the stats line's latest_waits).
+volatile LONG g_latest_waits = 0;
+// The unknown remote slot/equip debounce (guarded by g_lock; its lines have their
+// own cap per receive reset) and the driver's published support verdict.
+partner_input::IdentityHold g_identity_hold{};
+unsigned g_identity_lines = 0;
+constexpr unsigned kIdentityLineCap = 128;
+volatile LONG g_support_identity = 0;
+// The worker-only input stall (game thread only): SubmitInput sends nothing
+// before g_stall_until_ms; the end line goes out with the first frame after it.
+#ifndef MGS_BACKGROUND_WORKER
+#define MGS_BACKGROUND_WORKER 0
+#endif
+constexpr bool kStallCompiled = MGS_BACKGROUND_WORKER != 0;
+std::uint64_t g_stall_until_ms = 0, g_stall_start_ms = 0;
+std::uint32_t g_stall_ms = 0, g_stall_skipped = 0, g_stall_count = 0;
+bool g_stall_active = false;
 // An accepted input frame v5 arrived since the last receive reset (PeerSendsInputV5).
 volatile LONG g_input_v5_peer = 0;
 volatile LONG g_input_v6_peer = 0;
@@ -108,6 +128,12 @@ volatile LONG g_tx_not_connected = 0;
 volatile LONG g_link_state = static_cast<LONG>(link::LinkState::off);
 volatile LONG g_applied_interp = 100;
 volatile LONG g_partner_shown = 0, g_partner_look = 0, g_partner_mission = 0;
+// World sync (PublishWorldState): level bits 0-1, paired bit 2, the published
+// pair-wait code bits 4-7, progress bits 8-9; the partner's mission apart.
+volatile LONG g_world_state = 0x10 /*pair_wait 1 off*/, g_world_partner = 0;
+// Steam guest: the last pasted-code decision, join_seq << 8 | join_result
+// (ArmSteamGuest on the transport thread; GetSteamInfo).
+volatile LONG g_join = 0;
 // Online play: drive | reason << 8 | remote drive << 16 | remote reason << 24 (PublishNativeState).
 volatile LONG g_native_state = 0;
 // The partner mission whose pack list was refused (PublishPackState; 0 none).
@@ -115,13 +141,27 @@ volatile LONG g_pack_refused_mission = 0;
 // LinkInfo seqlock (single writer: the receive thread, or Start before it runs).
 volatile LONG g_info_seq = 0;
 volatile LONG g_info_state = 0, g_info_session = 0, g_info_rtt = 0, g_info_jitter = 0, g_info_interp = 0, g_info_loss = 0;
+// The peer's HELLO/WELCOME build (LinkInfo.remote_build), 16 bytes packed
+// little-endian into the same seqlock (join-fix phase 2: the handoff gate).
+constexpr unsigned kInfoBuildWords = link::kBuildSize / 4;
+static_assert(link::kBuildSize % 4 == 0, "the remote build packs into whole LONGs");
+volatile LONG g_info_build[kInfoBuildWords]{};
+// Automatic save handoff (PublishHandoffState): token | pct << 8.
+volatile LONG g_handoff_state = 0;
+// Steam guest (BuildGuestJoinCode): the code it was armed with, kept only for
+// a guest that started waiting (net_steam_wait); under g_secret_lock, zeroed
+// at shutdown.
+bool g_guest_code_allowed = false;
 // Receive-thread-only link bookkeeping.
 link::InterpController g_interp;
 std::uint64_t g_interp_update_ms = 0;
 const char* g_disabled_reason = nullptr;  // link=disabled reason (state disabled)
 wchar_t g_status_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_status_check_ms = 0, g_status_write_ms = 0;
-char g_status_last[1024]{}; // bounded additive cached partner/gun status
+// link-status.json (docs/link-protocol.md 7.2): the cached content and both
+// formatting buffers hold kStatusCapacity bytes; FormatStatus fails closed.
+constexpr std::size_t kStatusCapacity = 1536;
+char g_status_last[kStatusCapacity]{}; // bounded additive cached partner/gun status
 std::uint32_t g_status_fail = 0, g_status_write_ms_max = 0;
 std::uint64_t g_drop_logged[link::kDropReasons]{};
 std::uint64_t g_drop_logged_ms = 0;
@@ -140,6 +180,8 @@ std::uint64_t g_handshake_logged_ms = 0;
 char g_build[link::kBuildSize]{};
 // World sync hooks (set once before Start; read by the receive thread only).
 WorldHooks g_world{};
+// Save handoff hooks (set once before Start; the receive/transport thread only).
+HandoffHooks g_handoff{};
 volatile LONG g_world_unknown_channel = 0;
 // Status-file snapshot taken under g_tx_lock by the receive thread.
 struct LinkSnapshot {
@@ -214,6 +256,11 @@ char g_steam_disabled[40]{};            // "steam_<reason>" for link=disabled
 SRWLOCK g_secret_lock = SRWLOCK_INIT;   // the host's retained secret (code / invites)
 char g_host_secret[link::kSecretChars]{};
 bool g_host_secret_valid = false;
+// Steam guest (save handoff rejoin, BuildGuestJoinCode): the armed host and
+// secret, under g_secret_lock; set only when g_guest_code_allowed.
+char g_guest_secret[link::kSecretChars]{};
+std::uint64_t g_guest_host = 0;
+bool g_guest_secret_valid = false;
 // The F9 paste mailbox (consumed on the transport thread).
 SRWLOCK g_paste_lock = SRWLOCK_INIT;
 char g_paste[96]{};
@@ -365,9 +412,32 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
         }
         bool first = false, accepted = false;
         const std::uint64_t now = NowMs();
+        // The unknown slot/equip debounce: a held run's first frame and its end are logged.
+        namespace sp = partner_support_policy;
+        char id_line[192]{};
         AcquireSRWLockExclusive(&g_lock);
         if (AcceptInputSequence(g_input_valid, g_input_seq, g_input_rx_ms, in_seq, now)) {
             accepted = true;
+            const sp::IdentityTrack before = g_identity_hold.track;
+            const sp::Identity raw = partner_input::PacketIdentity(in);
+            const auto support = static_cast<std::uint16_t>(static_cast<std::uint32_t>(g_support_identity) & 0xFFFFu);
+            const sp::IdHold verdict = partner_input::HoldIdentity(g_identity_hold, in, support, now);
+            const bool start = verdict == sp::IdHold::held && !before.holding;
+            const bool end = sp::IdHoldEnds(verdict) && before.holding;
+            if ((start || end) && g_identity_lines < kIdentityLineCap) {
+                ++g_identity_lines;
+                if (start)
+                    (void)StringCchPrintfA(id_line, ARRAYSIZE(id_line),
+                        "partner_support=slot_hold; slot=3; equip=%u; reason=held; missing=%s; age_ms=%u; v5=%u; raw_slot=%u\r\n",
+                        unsigned(g_identity_hold.track.equip),
+                        !sp::SlotKnown(raw) && !sp::EquipKnown(raw) ? "both" : !sp::SlotKnown(raw) ? "slot" : "equip",
+                        now >= before.known_ms ? static_cast<unsigned>(now - before.known_ms) : 0u, raw.v5 ? 1u : 0u, unsigned(raw.slot));
+                else
+                    (void)StringCchPrintfA(id_line, ARRAYSIZE(id_line),
+                        "partner_support=slot_hold; slot=3; equip=%u; reason=%s; packets=%u; held_ms=%u\r\n",
+                        unsigned(before.equip), sp::IdHoldName(verdict), before.held,
+                        now >= before.since_ms ? static_cast<unsigned>(now - before.since_ms) : 0u);
+            }
             partner_input::AccumulateEdges(g_edges, in);
             g_input = in;
             g_input_valid = true;
@@ -379,6 +449,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
         }
         ReleaseSRWLockExclusive(&g_lock);
         InterlockedIncrement(accepted ? &g_in_rx : &g_in_drop);
+        if (id_line[0]) Log(id_line);
         if (first) {
             char line[96]{};
             if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=input_rx; first=1; seq=%u\r\n", in_seq))) Log(line);
@@ -442,6 +513,8 @@ void ResetReceiveLocked() noexcept {
     g_input_rx_ms = 0;
     g_input_first_logged = false;
     g_edges = partner_input::InputEdges{};
+    g_identity_hold = partner_input::IdentityHold{};
+    g_identity_lines = 0;
     InterlockedExchange(&g_input_v5_peer, 0);
     InterlockedExchange(&g_input_v6_peer, 0);
 }
@@ -540,6 +613,18 @@ void LogEvent(const link::Event& e, std::uint64_t now_ms) noexcept {
     }
 }
 
+// The published world sync view (PublishWorldState; atomics, any thread).
+WorldView ReadWorld() noexcept {
+    const auto packed = static_cast<std::uint32_t>(g_world_state);
+    WorldView w{};
+    w.level = static_cast<std::uint8_t>(packed & 0x3u);
+    w.paired = (packed & 0x4u) != 0;
+    w.pair_wait = static_cast<std::uint8_t>((packed >> 4) & 0xFu);
+    w.progress = static_cast<std::uint8_t>((packed >> 8) & 0x3u);
+    w.partner_mission = static_cast<std::uint32_t>(g_world_partner);
+    return w;
+}
+
 // The in-game status line's view of the link (transport thread; at most
 // every 100 ms or on a state change).
 void PublishHud(const LinkSnapshot& s, link::LinkState state, std::uint64_t now) noexcept {
@@ -578,6 +663,16 @@ void PublishHud(const LinkSnapshot& s, link::LinkState state, std::uint64_t now)
         v.code_ready = g_host_secret_valid && g_steam.ready() && !g_shutdown;
         ReleaseSRWLockShared(&g_secret_lock);
     }
+    // World sync: the HUD names the partner's mission only while connected.
+    const WorldView world = ReadWorld();
+    v.world_level = world.level;
+    v.pair_wait = world.pair_wait;
+    v.world_paired = world.paired;
+    v.partner_mission = state == link::LinkState::connected ? world.partner_mission : 0;
+    // Save handoff (PublishHandoffState): the token and its percent.
+    const auto handoff = static_cast<std::uint32_t>(g_handoff_state);
+    v.handoff = static_cast<std::uint8_t>(handoff & 0xFFu);
+    v.handoff_pct = static_cast<std::uint8_t>((handoff >> 8) & 0xFFu);
     v.publish_ms = GetTickCount64();
     coop_hud::PublishLink(v);
 }
@@ -621,6 +716,12 @@ void PublishInfo(const LinkSnapshot& s, std::uint32_t interp_ms) noexcept {
     InterlockedExchange(&g_info_jitter, static_cast<LONG>(s.jitter_ms));
     InterlockedExchange(&g_info_interp, static_cast<LONG>(interp_ms));
     InterlockedExchange(&g_info_loss, static_cast<LONG>(s.loss_permille));
+    for (unsigned w = 0; w < kInfoBuildWords; ++w) {
+        std::uint32_t packed = 0;
+        for (unsigned b = 0; b < 4; ++b)
+            packed |= static_cast<std::uint32_t>(static_cast<unsigned char>(s.remote_build[w * 4 + b])) << (8 * b);
+        InterlockedExchange(&g_info_build[w], static_cast<LONG>(packed));
+    }
     InterlockedIncrement(&g_info_seq);  // even: stable
     InterlockedExchange(&g_link_state, static_cast<LONG>(s.state));
 }
@@ -634,6 +735,27 @@ const char* PartnerStatusName() noexcept {
     }
     ReleaseSRWLockShared(&g_lock);
     return status == pose::Status::none ? "none" : pose::StatusName(status);
+}
+
+// link-status world keys with a trailing comma (docs/link-protocol.md 7.2):
+// level 0 is "off" and a link that is not connected "no_link", both unpaired
+// with no partner mission; otherwise the published values.
+bool FormatWorldJson(link::LinkState state, char* out, std::size_t capacity) noexcept {
+    WorldView w = ReadWorld();
+    if (!w.level) {
+        w.paired = false;
+        w.partner_mission = 0;
+        w.pair_wait = 1;  // off
+    } else if (state != link::LinkState::connected) {
+        w.paired = false;
+        w.partner_mission = 0;
+        w.pair_wait = 2;  // no_link
+    }
+    const char* progress = w.progress == 1 ? "ok" : w.progress == 2 ? "story_start" : "unknown";
+    return SUCCEEDED(StringCchPrintfA(out, capacity,
+                                      "\"world\":%u,\"paired\":%u,\"partner_mission\":%lu,\"pair_wait\":\"%s\",\"progress\":\"%s\",",
+                                      static_cast<unsigned>(w.level), w.paired ? 1u : 0u, static_cast<unsigned long>(w.partner_mission),
+                                      coop_text::PairWaitName(w.pair_wait), progress));
 }
 
 // link-status.json: one ASCII line, keys in the documented order.
@@ -678,12 +800,23 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
     if (!coop_hud::FormatPartnerJson(partner, s.session,
         no_body || state != link::LinkState::connected ? 0u : static_cast<std::uint32_t>(g_partner_mission),
         GetTickCount64(), partner_status, sizeof(partner_status))) return false;
+    // World sync (docs/link-protocol.md 7.2), appended after the transport keys.
+    char world[128]{};
+    if (!FormatWorldJson(state, world, sizeof(world))) return false;
+    // Save handoff (docs/save-handoff.md; P2-13), appended after the world keys.
+    char handoff[64]{};
+    const auto handoff_state = static_cast<std::uint32_t>(g_handoff_state);
+    const unsigned handoff_pct = (handoff_state >> 8) & 0xFFu;
+    if (FAILED(StringCchPrintfA(handoff, ARRAYSIZE(handoff), "\"handoff\":\"%s\",\"handoff_pct\":%u,",
+                                save_handoff_state::TokenName(static_cast<std::uint8_t>(handoff_state & 0xFFu)),
+                                handoff_pct > 100 ? 100u : handoff_pct)))
+        return false;
     return SUCCEEDED(StringCchPrintfA(out, capacity,
         "{\"v\":1,\"pid\":%lu,\"mode\":\"%s\",\"role\":\"%s\",\"state\":\"%s\",\"reason\":\"%s\",\"verified\":%u,\"session\":%u,"
         "\"peer\":\"%s\",\"local_port\":%u,\"rtt_ms\":%u,\"jitter_ms\":%u,\"loss_permille\":%u,\"resend\":%u,"
         "\"tx_Bps\":%u,\"rx_Bps\":%u,\"interp_ms\":%u,\"remote_build\":%s,\"partner\":\"%s\",\"partner_shown\":%u,"
         "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",\"partner_drive\":\"%s\",\"partner_reason\":\"%s\",\"remote_drive\":\"%s\","
-        "\"remote_reason\":\"%s\",%s%s\"time_utc\":%s}\n",
+        "\"remote_reason\":\"%s\",%s%s%s%s\"time_utc\":%s}\n",
         GetCurrentProcessId(), g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", link::LinkStateName(state), reason,
         verified ? 1u : 0u, s.session, peer, static_cast<unsigned>(g_ops->local_port()), s.rtt_ms, s.jitter_ms,
         s.loss_permille, s.resend, g_tx_bps, g_rx_bps, static_cast<unsigned>(EffectiveInterpMs(g_config.interp_ms)), build, PartnerStatusName(),
@@ -692,18 +825,18 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
         no_body ? "off" : partner_native_net::DriveName(static_cast<partner_native_net::Drive>(native & 0xFFu)),
         no_body ? "no_body_pack" : partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 8)),
         partner_native_net::DriveName(static_cast<partner_native_net::Drive>((native >> 16) & 0xFFu)),
-        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 24)), partner_status, transport, time_utc));
+        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 24)), partner_status, transport, world, handoff, time_utc));
 }
 
 void WriteStatus(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_ms) noexcept {
     if (!g_status_path[0]) return;
     if (now_ms - g_status_check_ms < kStatusCheckMs) return;
     g_status_check_ms = now_ms;
-    char content[1024]{};
+    char content[kStatusCapacity]{};
     if (!FormatStatus(s, state, content, sizeof(content), false)) return;
     const bool changed = lstrcmpA(content, g_status_last) != 0;
     if (!changed && now_ms - g_status_write_ms < kStatusRefreshMs) return;
-    char document[1024]{};
+    char document[kStatusCapacity]{};
     if (!FormatStatus(s, state, document, sizeof(document), true)) return;
     std::size_t length = 0;
     while (document[length]) ++length;
@@ -852,6 +985,8 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     // World sync: the session first (it clears the world queues), then the
     // datagrams of this packet; both outside every partner_net lock.
     if (delivery.new_session && g_world.on_session) g_world.on_session(new_session);
+    // Save handoff: no resume, the channel-4 transfer restarts in the new session.
+    if (delivery.new_session && g_handoff.on_session) g_handoff.on_session(new_session);
     for (unsigned i = 0; g_world.on_datagram && i < datagram_count; ++i) g_world.on_datagram(datagrams[i].data, datagrams[i].size);
     if (rel_count) {
         // Preserve existing world callbacks outside all locks and before
@@ -879,6 +1014,8 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     if (close_seen) {
         Log(g_config.host ? "link=peer_left; role=host; next=accepting\r\n" : "link=peer_left; role=guest; next=reconnecting\r\n");
         coop_hud::Post(coop_hud::EventKind::peer_left, 0, "");
+        // Save handoff: the goodbye, after the CLOSE handling and outside every lock.
+        if (g_handoff.on_peer_close) g_handoff.on_peer_close();
     }
 }
 
@@ -950,6 +1087,8 @@ void LinkIdle() noexcept {
     WriteStatus(snapshot, state, now);
     PublishHud(snapshot, state, now);
     if (g_world.on_idle) g_world.on_idle(now);
+    // Save handoff: channel 4 is drained and paced only from this hook.
+    if (g_handoff.on_idle) g_handoff.on_idle(now);
 }
 
 // Receive thread: legacy keepalive after 1 s without a send (raw path), and a
@@ -991,12 +1130,12 @@ void OnIdle(void*) noexcept {
         char line[384]{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
                 "partner_net=stats; tx=%llu; rx=%llu; drop_epoch=%u; drop_seq=%u; drop_bad=%u; status=%s; last_age_ms=%u; "
-                "native_us_avg=%u; native_us_max=%u; in_tx=%u; in_rx=%u; in_drop=%u\r\n",
+                "native_us_avg=%u; native_us_max=%u; in_tx=%u; in_rx=%u; in_drop=%u; latest_waits=%u\r\n",
                 static_cast<unsigned long long>(current.tx), static_cast<unsigned long long>(current.rx), current.drop_epoch,
                 current.drop_seq, current.drop_bad, pose::StatusName(status),
                 static_cast<unsigned>(age > 0xFFFFFFFFull ? 0xFFFFFFFFu : age),
                 count ? static_cast<unsigned>(sum / count) : 0u, max, static_cast<unsigned>(g_in_tx),
-                static_cast<unsigned>(g_in_rx), static_cast<unsigned>(g_in_drop))) ) Log(line);
+                static_cast<unsigned>(g_in_rx), static_cast<unsigned>(g_in_drop), static_cast<unsigned>(g_latest_waits))) ) Log(line);
     }
     SetLastError(error);
 }
@@ -1122,6 +1261,14 @@ void StartLink() noexcept {
 }
 
 // ------------------------------------------------------------ Steam online
+// One pasted-code (or invite) decision for the F9 Online result (SteamInfo
+// join_seq / join_result): 1 joined, 2 ignored (busy), 3 the own code. The
+// transport thread is the only writer.
+void NoteJoin(std::uint8_t result) noexcept {
+    const auto seq = (static_cast<std::uint32_t>(g_join) >> 8) + 1u;
+    InterlockedExchange(&g_join, static_cast<LONG>(((seq & 0xFFFFFFu) << 8) | result));
+}
+
 // The Steam guest's arm (8.2): on the transport thread, only while waiting or
 // rejected. Derives K_psk, restarts the session for the new host under
 // g_tx_lock with the same receive/reliable reset as a new session, then
@@ -1139,10 +1286,13 @@ void ArmSteamGuest(std::uint64_t host, const char (&secret)[link::kSecretChars],
                           (current == link::LinkState::connecting || current == link::LinkState::reconnecting));
     if (!armable) {
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join_ignored; reason=busy; via=%s\r\n", via))) Log(line);
+        coop_hud::Post(coop_hud::EventKind::join_ignored, 0, via);
+        NoteJoin(2);
         return;
     }
     if (host == g_config.steam_self) {
         Log("steam=join_refused; reason=peer_is_self\r\n");
+        NoteJoin(3);
         return;
     }
     link::SessionConfig session{};
@@ -1174,10 +1324,23 @@ void ArmSteamGuest(std::uint64_t host, const char (&secret)[link::kSecretChars],
     InterlockedExchange(&g_steam_end, 0);
     InterlockedExchange(&g_peer_left, 0);
     g_connecting_since_ms = 0;
+    // Save handoff rejoin (BuildGuestJoinCode): only a guest that started
+    // waiting keeps the code it was armed with, until shutdown.
+    if (g_guest_code_allowed) {
+        AcquireSRWLockExclusive(&g_secret_lock);
+        if (!g_shutdown) {
+            for (std::size_t i = 0; i < link::kSecretChars; ++i) g_guest_secret[i] = secret[i];
+            g_guest_host = host;
+            g_guest_secret_valid = true;
+        }
+        ReleaseSRWLockExclusive(&g_secret_lock);
+    }
     if (g_world.on_session) g_world.on_session(session_number);
+    if (g_handoff.on_session) g_handoff.on_session(session_number);
     steam_code::FormatPeer(host, peer);
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join; via=%s; host=%s\r\n", via, peer))) Log(line);
     coop_hud::Post(coop_hud::EventKind::joining, lstrcmpA(via, "invite") == 0 ? 1 : 0, peer);
+    NoteJoin(1);
 }
 
 // Transport thread, every LinkIdle (both roles): a 1252 the function pointer
@@ -1285,6 +1448,9 @@ void SteamOnShutdown(void*) noexcept {
     AcquireSRWLockExclusive(&g_secret_lock);
     link::SecureZero(g_host_secret, sizeof(g_host_secret));
     g_host_secret_valid = false;
+    link::SecureZero(g_guest_secret, sizeof(g_guest_secret));
+    g_guest_host = 0;
+    g_guest_secret_valid = false;
     ReleaseSRWLockExclusive(&g_secret_lock);
 }
 
@@ -1294,6 +1460,9 @@ void StartSteamLink() noexcept {
     g_use_steam = true;
     g_ops = &kSteamOps;
     const bool waiting = !g_config.host && (g_config.steam_wait || !g_config.steam_peer);
+    // Save handoff rejoin: only a guest that started waiting for an invite or an
+    // F9 paste (net_steam_wait) keeps its join code (link-rejoin.txt).
+    g_guest_code_allowed = !g_config.host && g_config.steam_wait;
     char secret[link::kSecretChars]{};
     if (!waiting) {
         const link::SecretStatus secret_status = ReadSecret(g_config.directory, secret);
@@ -1546,6 +1715,16 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     if (!epoch) return false;
     const DWORD error = GetLastError();
     const std::uint64_t now = NowMs();
+    // The worker-only input stall: nothing goes out until it ends (not sent:
+    // the driver's edge sets stay pending for the first frame after it).
+    if (kStallCompiled && g_stall_active) {
+        if (now < g_stall_until_ms) { ++g_stall_skipped; SetLastError(error); return false; }
+        g_stall_active = false;
+        char line[160]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                "partner_net=input_stall; reason=end; ms=%u; actual_ms=%u; skipped=%u; stalls=%u\r\n", g_stall_ms,
+                static_cast<unsigned>(now - g_stall_start_ms), g_stall_skipped, g_stall_count))) Log(line);
+    }
     if (g_input_tx_ms && now - g_input_tx_ms < kInputMinGapMs) { SetLastError(error); return false; }
     const std::uint32_t seq = g_input_tx_seq + 1;
     // v2..v5: v4 whatever the sender's own drive (rates, magazine, gun), v5 (the
@@ -1558,6 +1737,28 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     SetLastError(error);
     return sent;
 }
+
+const char* StallInput(std::uint32_t ms) noexcept {
+    // (Not a constant condition: a non-worker build always refuses here.)
+    if (!kStallCompiled || !g_running || !g_epoch) return kStallCompiled ? "net_off" : "not_worker_build";
+    if (ms < kInputStallMinMs || ms > kInputStallMaxMs) return "range";
+    const DWORD error = GetLastError();
+    const std::uint64_t now = NowMs();
+    if (g_stall_active && now < g_stall_until_ms) { SetLastError(error); return "busy"; }
+    g_stall_active = true;
+    g_stall_start_ms = now;
+    g_stall_until_ms = now + ms;
+    g_stall_ms = ms;
+    g_stall_skipped = 0;
+    ++g_stall_count;
+    char line[160]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=input_stall; reason=start; ms=%u; stalls=%u; last_tx_age_ms=%u\r\n",
+            ms, g_stall_count, g_input_tx_ms && now >= g_input_tx_ms ? static_cast<unsigned>(now - g_input_tx_ms) : 0u))) Log(line);
+    SetLastError(error);
+    return nullptr;
+}
+
+void SetSupportIdentity(std::uint16_t equip) noexcept { InterlockedExchange(&g_support_identity, static_cast<LONG>(equip)); }
 
 bool ConsumeInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};
@@ -1582,7 +1783,14 @@ bool PeerSendsInputV6() noexcept { return g_input_v6_peer != 0; }
 
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};
-    if (!TryAcquireSRWLockShared(&g_lock)) return false;
+    // Waits for the receive thread's short exclusive section (as SampleRemote
+    // does): the driver and the observer took a busy lock for "no input", which
+    // read as remote_slot=255 / equip unknown for one tick, gate unsupported and
+    // strip 0x58 mid support episode (hidden runs 0c9269ce, 6d9dc4f9, 9f2d0bfb).
+    if (!TryAcquireSRWLockShared(&g_lock)) {
+        InterlockedIncrement(&g_latest_waits);
+        AcquireSRWLockShared(&g_lock);
+    }
     if (g_input_valid) {
         const std::uint64_t now = NowMs();
         out.valid = true;
@@ -1617,6 +1825,7 @@ pose::RemoteFrame SampleRemoteWithTurns(std::uint32_t delay_ms, const pose::Hist
 
 void ResetRemote() noexcept {
     ClearLocalActions();
+    InterlockedExchange(&g_support_identity, 0);
     AcquireSRWLockExclusive(&g_lock);
     ResetReceiveLocked();
     ReleaseSRWLockExclusive(&g_lock);
@@ -1649,9 +1858,15 @@ LinkInfo GetLinkInfo() noexcept {
         info.jitter_ms = static_cast<std::uint32_t>(g_info_jitter);
         info.interp_ms = static_cast<std::uint32_t>(g_info_interp);
         info.loss_permille = static_cast<std::uint32_t>(g_info_loss);
+        for (unsigned w = 0; w < kInfoBuildWords; ++w) {
+            const auto packed = static_cast<std::uint32_t>(g_info_build[w]);
+            for (unsigned b = 0; b < 4; ++b) info.remote_build[w * 4 + b] = static_cast<char>((packed >> (8 * b)) & 0xFFu);
+        }
+        info.remote_build[link::kBuildSize] = 0;
         MemoryBarrier();
         if (g_info_seq == before) return info;
     }
+    info.remote_build[0] = 0;  // a torn build never passes the handoff gate
     info.state = static_cast<LinkState>(g_link_state);  // writer busy: the state alone
     return info;
 }
@@ -1676,6 +1891,14 @@ void PublishPackState(std::uint32_t refused_mission) noexcept {
     InterlockedExchange(&g_pack_refused_mission, static_cast<LONG>(refused_mission));
 }
 
+void PublishWorldState(const WorldView& view) noexcept {
+    const std::uint32_t packed = (static_cast<std::uint32_t>(view.level) & 0x3u) | (view.paired ? 0x4u : 0u) |
+                                 ((static_cast<std::uint32_t>(view.pair_wait) & 0xFu) << 4) |
+                                 ((static_cast<std::uint32_t>(view.progress) & 0x3u) << 8);
+    InterlockedExchange(&g_world_partner, static_cast<LONG>(view.partner_mission));
+    InterlockedExchange(&g_world_state, static_cast<LONG>(packed));
+}
+
 link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::size_t size, link::ReliableMode mode) noexcept {
     if (channel < 1 || channel >= link::kReliableChannels) return link::ReliableResult::bad_channel;
     if (size > link::kMaxReliableMessage) return link::ReliableResult::too_large;
@@ -1689,8 +1912,24 @@ link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::
 
 void SetWorldHooks(const WorldHooks* hooks) noexcept { g_world = hooks ? *hooks : WorldHooks{}; }
 
+void SetHandoffHooks(const HandoffHooks* hooks) noexcept { g_handoff = hooks ? *hooks : HandoffHooks{}; }
+
+unsigned ReliableQueued(std::uint8_t channel) noexcept {
+    if (channel < 1 || channel >= link::kReliableChannels || !g_v2 || !g_running) return 0;
+    AcquireSRWLockShared(&g_tx_lock);
+    const unsigned queued = g_rel_tx[channel].queued();
+    ReleaseSRWLockShared(&g_tx_lock);
+    return queued;
+}
+
+void PublishHandoffState(std::uint8_t token, std::uint8_t pct) noexcept {
+    const std::uint32_t packed = static_cast<std::uint32_t>(token) | (static_cast<std::uint32_t>(pct > 100 ? 100 : pct) << 8);
+    InterlockedExchange(&g_handoff_state, static_cast<LONG>(packed));
+}
+
 link::ReliableResult SendDatagram(std::uint8_t channel, const void* bytes, std::size_t size) noexcept {
-    if (channel < 1 || channel >= link::kReliableChannels) return link::ReliableResult::bad_channel;
+    // DATAGRAM channels stay 1..3 (link_protocol EncodeDatagram); channel 4 is reliable only.
+    if (channel < 1 || channel > 3) return link::ReliableResult::bad_channel;
     if (size > link::kMaxDatagramPayload) return link::ReliableResult::too_large;
     if (!g_v2 || !g_running) return link::ReliableResult::not_connected;
     std::uint8_t message[link::kDatagramHeaderSize + link::kMaxDatagramPayload];
@@ -1779,11 +2018,17 @@ void Shutdown() noexcept {
     AcquireSRWLockExclusive(&g_secret_lock);
     link::SecureZero(g_host_secret, sizeof(g_host_secret));
     g_host_secret_valid = false;
+    link::SecureZero(g_guest_secret, sizeof(g_guest_secret));
+    g_guest_host = 0;
+    g_guest_secret_valid = false;
     ReleaseSRWLockExclusive(&g_secret_lock);
 }
 
 SteamInfo GetSteamInfo() noexcept {
     SteamInfo info{};
+    const auto join = static_cast<std::uint32_t>(g_join);  // one atomic: a consistent pair
+    info.join_seq = join >> 8;
+    info.join_result = static_cast<std::uint8_t>(join & 0xFFu);
     info.active = g_use_steam && g_running;
     if (!info.active) return info;
     info.ready = g_steam_ready != 0 && g_steam.ready() && !g_steam.faulted();
@@ -1831,6 +2076,18 @@ bool BuildCode(char* out, std::size_t capacity, bool invite) noexcept {
 } // namespace
 
 bool BuildSteamJoinCode(char* out, std::size_t capacity) noexcept { return BuildCode(out, capacity, false); }
+
+bool BuildGuestJoinCode(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    out[0] = 0;
+    if (!g_use_steam || g_config.host || !g_guest_code_allowed) return false;
+    bool ok = false;
+    AcquireSRWLockShared(&g_secret_lock);
+    if (g_guest_secret_valid && !g_shutdown && g_guest_host) ok = steam_code::Format(g_guest_secret, g_guest_host, out, capacity);
+    ReleaseSRWLockShared(&g_secret_lock);
+    if (!ok) out[0] = 0;
+    return ok;
+}
 bool BuildSteamInvite(char* out, std::size_t capacity) noexcept { return BuildCode(out, capacity, true); }
 
 bool PostSteamJoin(const char* text) noexcept {

@@ -3,6 +3,7 @@
 #include <d3dcompiler.h>
 #include <dxgi.h>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -13,6 +14,14 @@
 #include "mgscoop/debug_menu_ui.hpp"
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/save_handoff_state.hpp"
+
+namespace mgscoop::debug_menu_ui {
+// Test-only, defined in debug_menu_ui.cpp under MGS_DEBUG_OVERLAY_TESTING: the
+// Partner / Co-op > Shared save section of the latest drawn frame.
+bool SharedSaveStatusForTest(char* out, std::size_t capacity) noexcept;
+bool SharedSaveItemForTest(int item, float (&rect)[4], bool& state) noexcept;
+}  // namespace mgscoop::debug_menu_ui
 
 namespace {
 unsigned checks = 0, failures = 0, window_keys = 0;
@@ -228,6 +237,92 @@ int main() {
     bridge::Result(command.id, 1, "position=1,2,3;yaw=0");
     Check(present(1) && bridge::GetSnapshot().receipts[0].id == command.id && bridge::GetSnapshot().receipts[0].status == 0,
         "result receipt reaches the footer source");
+    // Partner / Co-op > Shared save (automatic save handoff; docs/debug-menu.md):
+    // copied save_handoff_state only, UI-only rows, real mouse clicks.
+    {
+        namespace hs = mgscoop::save_handoff_state;
+        using T = hs::Token;
+        hs::ResetForTest();
+        mui::SelectCategory(act::Category::partner);
+        char shared[200]{};
+        float rect[4]{};
+        bool item_state = false;
+        Check(present(2) && !mui::SharedSaveStatusForTest(shared, sizeof(shared)) && shared[0] == 0 &&
+            !mui::SharedSaveItemForTest(0, rect, item_state) && !mui::SharedSaveItemForTest(1, rect, item_state),
+            "Shared save is hidden while save handoff is not configured");
+        const auto publish = [&](std::uint8_t role, T token, bool can_keep) {
+            hs::View view{};
+            view.available = true; view.role = role; view.token = static_cast<std::uint8_t>(token); view.pct = 42; view.why = 5;
+            view.bytes = 608012; view.host_mission = 30010; view.can_keep = can_keep;
+            hs::Publish(view);
+        };
+        const struct { std::uint8_t role; T token; bool keep; const char* line; } views[] = {
+            {2, T::off, false, "Automatic save sharing is off (Play-Coop -SaveHandoff off)."},
+            {2, T::idle, false, "Your save matches the host's place; nothing to share."},
+            {2, T::same, false, "Your save matches the host's place; nothing to share."},
+            {2, T::wait_host, true, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you."},
+            {2, T::receiving, true, "Receiving the host's save: 42% of 594 KB."},
+            {2, T::staged, true, "Host's save received and checked (594 KB)."},
+            {2, T::countdown, true, "Host's save ready: MGSV restarts in 10 s. Your current co-op save is kept aside (Share-Save.bat [R])."},
+            {2, T::exiting, false, "MGSV is closing to load the host's save; Play-Coop starts it again."},
+            {2, T::kept, false, "You kept your own save for this session."},
+            {2, T::refused, false, "The host's save cannot be shared: it continues into a mission co-op cannot join."},
+            {2, T::failed, false, "Getting the host's save failed: the connection dropped. Nothing was changed."},
+            {2, T::applied, false, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
+            {1, T::idle, false, "Your save matches your partner's place; nothing to share."},
+            {1, T::offered, false, "Offering your save to your partner."},
+            {1, T::sending, false, "Sending your save: 42%"},
+            {1, T::partner_staged, false, "Your partner received your save."},
+            {1, T::partner_restarting, false, "Your partner is restarting on your save."},
+            {1, T::kept, false, "Your partner kept their own save."},
+        };
+        for (const auto& v : views) {
+            publish(v.role, v.token, v.keep);
+            const bool drawn = present(1) && mui::SharedSaveStatusForTest(shared, sizeof(shared));
+            if (!drawn || std::strcmp(shared, v.line) != 0) std::printf("  shared save line: \"%s\"\n", shared);
+            Check(drawn && std::strcmp(shared, v.line) == 0, "the Shared save section renders each token's status line");
+            if (v.role == 2)
+                Check(mui::SharedSaveItemForTest(0, rect, item_state) && item_state == v.keep && rect[2] > rect[0] && rect[3] > rect[1] &&
+                    mui::SharedSaveItemForTest(1, rect, item_state) && item_state, "guest rows: Keep my own save (enabled iff can_keep) and Travel lock");
+            else
+                Check(!mui::SharedSaveItemForTest(0, rect, item_state) && !mui::SharedSaveItemForTest(1, rect, item_state),
+                    "the host has no Keep my own save or Travel lock row");
+        }
+        // The countdown follows the newest G2 toast ("restarts in N s").
+        publish(2, T::countdown, true);
+        mgscoop::coop_hud::PostSaveHandoff(2, 7, 0);
+        Check(present(1) && mui::SharedSaveStatusForTest(shared, sizeof(shared)) &&
+            std::strcmp(shared, "Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Share-Save.bat [R]).") == 0,
+            "the countdown line follows the G2 toast");
+        ImGuiIO& mio = ImGui::GetIO();
+        const auto click = [&](const float (&r)[4]) {
+            mio.AddMousePosEvent((r[0] + r[2]) * 0.5f, (r[1] + r[3]) * 0.5f);
+            bool ok = present(1);
+            mio.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            ok = present(1) && ok;
+            mio.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            ok = present(1) && ok;
+            mio.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+            return present(1) && ok;
+        };
+        publish(2, T::same, false);
+        Check(present(1) && mui::SharedSaveItemForTest(0, rect, item_state) && !item_state && click(rect) && !hs::TakeKeepOwnSave(),
+            "a disabled Keep my own save requests nothing");
+        publish(2, T::countdown, true);
+        Check(present(1) && mui::SharedSaveItemForTest(0, rect, item_state) && item_state && click(rect), "click the enabled Keep my own save");
+        Check(hs::TakeKeepOwnSave() && !hs::TakeKeepOwnSave(), "Keep my own save raises RequestKeepOwnSave exactly once");
+        Check(!std::strcmp(bridge::GetSnapshot().last_ui_action, "handoff_keep"), "Keep my own save records handoff_keep");
+        Check(!hs::TravelUnlocked() && mui::SharedSaveItemForTest(1, rect, item_state) && item_state, "the Travel lock starts checked");
+        Check(click(rect) && hs::TravelUnlocked() && !std::strcmp(bridge::GetSnapshot().last_ui_action, "travel_unlock") &&
+            mui::SharedSaveItemForTest(1, rect, item_state) && !item_state, "unchecking Travel lock unlocks travel (travel_unlock)");
+        Check(click(rect) && !hs::TravelUnlocked() && !std::strcmp(bridge::GetSnapshot().last_ui_action, "travel_lock") &&
+            mui::SharedSaveItemForTest(1, rect, item_state) && item_state, "checking Travel lock again locks travel (travel_lock)");
+        Check(!hs::TakeKeepOwnSave(), "the Travel lock checkbox never requests Keep my own save");
+        hs::ResetForTest();
+        Check(present(1) && !mui::SharedSaveStatusForTest(shared, sizeof(shared)) && !mui::SharedSaveItemForTest(1, rect, item_state),
+            "Shared save hides again when the view is not available");
+        mui::SelectCategory(act::Category::player);
+    }
     const auto frames_before_resize = ui::StatsForTest().frames;
     Check(SUCCEEDED(chain->ResizeBuffers(1, 800, 600, DXGI_FORMAT_R8G8B8A8_UNORM, 0)), "resize succeeds without leaked backbuffer reference");
     Check(ui::StatsForTest().resizes == 1 && present(1) && ui::StatsForTest().frames == frames_before_resize + 1, "menu renders after resize");
@@ -382,6 +477,30 @@ int main() {
             Check(shot() && lit(ax - 220, height * 0.30f, ax + 220, height * 0.30f + 70, false) >= 40,
                   "the sleeping player sees a compact status above the stock icons");
             dump("rescue_self_asleep");
+            // Over a coloured world the sleeper's view turns dark greyscale with
+            // darker edges; the status drawn after it keeps its colour.
+            const float world[4] = {0.2f, 0.7f, 0.3f, 1.0f};
+            const auto shotOn = [&](const float* color) {
+                ctx->ClearRenderTargetView(bb_rtv, color);
+                ui::CaptureNextFrameForTest();
+                return SUCCEEDED(chain->Present(0, 0)) && ui::CapturedFrameForTest(rgba, width, height) && width && height;
+            };
+            const auto pixel = [&](float x, float y) {
+                return rgba + (static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)) * 4;
+            };
+            const auto grey = [](const unsigned char* px) {
+                const int lo = (std::min)(px[0], (std::min)(px[1], px[2])), hi = (std::max)(px[0], (std::max)(px[1], px[2]));
+                return hi - lo <= 6;
+            };
+            Check(shotOn(world), "sleeping frame over a coloured world");
+            const unsigned char* corner = pixel(8, 8);
+            const unsigned char* low = pixel(width * 0.5f, height * 0.9f);
+            Check(grey(corner) && grey(low), "the sleeper's world is greyscale");
+            Check(low[1] < 100 && corner[1] < low[1], "the sleeper's world is dark, darker at the edges");
+            Check(lit(ax - 220, height * 0.30f, ax + 220, height * 0.30f + 70, false) >= 40, "the sleeper's status stays bright over it");
+            dump("rescue_self_asleep_world");
+            publish(true, false, false, 0, 2, false);
+            Check(shotOn(world) && pixel(8, 8)[1] > pixel(8, 8)[0] + 60, "a healthy player's world keeps its colour");
             hud::Configure(hud::Mode::off, true);
             publish(true, true, true, 0, 2, false);
             Check(shot() && lit(bx, by - 30, bx + 230, by + 30, false) >= 40,

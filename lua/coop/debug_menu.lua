@@ -107,11 +107,11 @@ do
   return D.host == true
  end
  -- Sync tag: read-only view of the world link. Enemy outcomes need W1;
- -- clock/weather follow at an active world level of 3.
+ -- clock/weather only while the clock is synced (W.env.clockOn).
  local function sync(kind)
   local W = get(e, "MgsCoopWorld")
-  local eff = tonumber(get(W, "eff")) or 0
-  local on = get(W, "paired") == true and (kind == "env" and eff >= 3 or kind ~= "env" and get(W, "w1") == true)
+  local f = get(get(W, "env"), "clockOn")
+  local on = get(W, "paired") == true and (kind == "env" and type(f) == "function" and f() == true or kind ~= "env" and get(W, "w1") == true)
   return on and "sync=world" or "sync=none"
  end
  local function pose()
@@ -180,7 +180,7 @@ do
    if call(Player, "SetInfiniteAmmoFromScript", n == 1) == false then return false, "ammo_refused" end
    D.infinite = n == 1
    return true, "infinite_ammo_" .. a[2]
-  elseif cmd == "inventory" or cmd == "weapon" or cmd == "drop_item" then
+  elseif cmd == "inventory" or cmd == "weapon" or cmd == "drop_item" or cmd == "support" or cmd == "slot" then
    if not D.equipment then return false, "equipment_unavailable" end
    return D.equipment.run(a, id)
   elseif cmd == "time" and #a == 2 then
@@ -239,7 +239,9 @@ do
    local payload = table.concat(fields, " ")
    if #payload > 160 then return false, "partner_args" end
    local ok = receipt("return 'MGS_COOP_DEBUG_PARTNER_V1' -- " .. fmt("%.0f %s", id, payload)) == true
-   return ok, ok and "partner_applied" or "partner_refused"
+   local Wd = get(e, "MgsCoopWorld")
+   local lone = ok and (tonumber(get(Wd, "level")) or 0) >= 1 and get(Wd, "active") == true and get(Wd, "paired") ~= true
+   return ok, ok and (lone and "partner_applied;partner=not_paired" or "partner_applied") or "partner_refused"
   end
   return false, "command_args"
  end
@@ -300,7 +302,7 @@ do
   ok, failure = pcall(function()
    if a[1] == "status" and #a == 1 then good, why = status(); return end
    good, why = guard()
-   if not good and why == "on_foot" and (a[1] == "buddy_census" or a[1] == "horse_status" or a[1] == "vehicle_seats" or a[1] == "cargo_status" or a[1] == "sleep_clock") and #a == 1 then good, why = mountCensus() end
+   if not good and why == "on_foot" and ((a[1] == "buddy_census" or a[1] == "horse_status" or a[1] == "vehicle_seats" or a[1] == "cargo_status" or a[1] == "sleep_clock" or a[1] == "vehicle_names") and #a == 1 or a[1] == "seat_dm" and #a >= 2 and #a <= 4) then good, why = mountCensus() end
    if good then good, why = run(a, id) end
   end)
   if not ok then

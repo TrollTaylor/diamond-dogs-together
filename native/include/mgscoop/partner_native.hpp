@@ -112,7 +112,14 @@ struct In {
     std::uint32_t quality_good_ms;
     bool remote_caps_refused;
     const char* visibility_reason;  // qualified ride/air/dead guard; null normally
+    // A suspend sub-mode (docs/anim-round1-actions.md "DM overlay"): while set,
+    // entering/active leave and fallback stays blocked with this reason, but
+    // the leave counts no fallback (no latch) and, once it clears, fallback
+    // re-enters at once (no cooldown, no settling hold) unless another blocker
+    // showed up meanwhile. kSuspendOverlay is the DM overlay lever's reason.
+    const char* suspend_reason;
 };
+inline constexpr char kSuspendOverlay[] = "overlay";
 
 struct Out {
     Mode mode;
@@ -126,6 +133,10 @@ struct Out {
     bool req_dmmap_rearm;    // leaving: then dm=map
     bool req_epoch;          // leaving: body epoch ++
     const char* enter_step;  // entering: "dm_stop" | "dm_revert" | "place" | "armed" when it changes, else nullptr
+    // This step belongs to a suspend cycle (the suspend leave, its fallback, or
+    // the immediate re-entry through active): the driver logs it on the
+    // suspending lever's own cap instead of the transition cap.
+    bool suspend_cycle;
 };
 
 struct State {
@@ -156,6 +167,10 @@ struct State {
     std::uint8_t net_count;
     std::uint32_t net_leaves, hard_leaves, net_reentries, quiet_episodes;
     const char* last_net_reason;    // static; nullptr before any
+    // Suspend sub-mode: left for In::suspend_reason (re-enter at once when it
+    // clears), resuming (entering after a suspend, until active), suspends.
+    bool suspended, resumed;
+    std::uint32_t suspends;
 };
 
 // MissionStart: fallback (configured) or off; per-mission counters cleared.
@@ -310,15 +325,29 @@ struct MagazineHistory {
     std::uint16_t remote_mag=0, remote_cap=0;
     std::uint8_t body_slot=0;
 };
+// slot_changed (anim round 1): body 1's slot rec+0x3DA differs from the last
+// committed one; the write then also rewrites the completion base rec+0x3E8
+// (the shadow kept the previous weapon's count: 41 of 11 after a rifle ->
+// handgun switch, 0x1054A3C..0x1054A4E adds to it without the capacity bound).
 struct MagazineAttempt {
-    bool needed, reconcile, remote_was_loaded;
+    bool needed, reconcile, remote_was_loaded, slot_changed;
 };
 constexpr MagazineAttempt PrepareMagazine(const MagazineHistory& h, std::uint16_t remote_mag,
                                          std::uint16_t remote_cap, std::uint8_t body_slot,
                                          bool fire_edge, bool reload_edge) noexcept {
+    const bool slot_changed=h.slot_seen && body_slot!=h.body_slot;
     const bool changed=!h.seen || remote_mag!=h.remote_mag || remote_cap!=h.remote_cap ||
-                       h.freeze_pending || (h.slot_seen && body_slot!=h.body_slot);
-    return {fire_edge || reload_edge || changed, h.freeze_pending, h.seen && h.remote_mag>0};
+                       h.freeze_pending || slot_changed;
+    return {fire_edge || reload_edge || changed, h.freeze_pending, h.seen && h.remote_mag>0, slot_changed};
+}
+// The completion base rule (anim round 1): the mirror's write sets rec+0x3E8
+// to the mirrored magazine on a reconcile, on a slot change, and whenever the
+// base exceeds the capacity of the weapon in hand (never while body 1 reloads:
+// the mirror is frozen then). The non-local completion builds the new magazine
+// as base + min(rounds, capacity - base) with unsigned 16-bit arithmetic, so a
+// base above the capacity overflows the magazine.
+constexpr bool ShadowRewrite(bool reconcile, bool slot_changed, std::uint32_t shadow, std::uint32_t cap) noexcept {
+    return reconcile || slot_changed || shadow > cap;
 }
 inline void CommitMagazine(MagazineHistory& h, std::uint16_t remote_mag,
                            std::uint16_t remote_cap, std::uint8_t body_slot) noexcept {

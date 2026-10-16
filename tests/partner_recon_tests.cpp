@@ -51,6 +51,11 @@ struct World {
     bool live = true;
     bool in_valid = true;
     bool hold_stripped = false;
+    bool stance_pad = false;             // the remote's live input shows STANCE
+    const char* stance_block = nullptr;  // a driver gate (gun, reload, carry)
+    bool remote_downed = false;
+    const char* last_wait = nullptr;     // the guard of the last stance_wait event
+    unsigned waits = 0;
     std::uint32_t in_age = 5;
     bool relink = false;
     bool snapped = false;
@@ -130,7 +135,11 @@ struct World {
         in.remote_act = remote_act;
         in.remote_stance = remote_stance;
         in.hold_stripped = hold_stripped;
+        in.stance_pad = stance_pad;
+        in.stance_block = stance_block;
+        in.remote_downed = remote_downed;
         out = pr::Step(st, in, params);
+        if (out.events & pr::Event::stance_wait) { last_wait = out.report.fix_wait; ++waits; }
         events |= out.events;
         if (out.events & pr::Event::runaway) ++runaways;
         if (out.events & pr::Event::input_pin) ++input_pins;
@@ -469,6 +478,144 @@ void TestStanceFix() {
     o.remote_stance = 2;
     o.Run(4000);
     Check(o.fixes == 0, "stance_fix=false: none");
+}
+
+bool Same(const char* a, const char* b) { return a && b && std::string(a) == b; }
+
+// Native stance level (docs/anim-round1-actions.md): 500 ms instead of 2 s, and
+// never against a stance change already in flight.
+void TestNativeStanceFix() {
+    const auto native = [] {
+        World w;
+        w.params = pr::NativeParams(pr::Params{}, pr::FaceMode::off);
+        w.apply_fix = true;
+        w.Place();
+        w.Run(1500);
+        w.ResetCounters();
+        w.waits = 0;
+        w.last_wait = nullptr;
+        return w;
+    };
+    Check(pr::NativeParams(pr::Params{}).stance_fix_ms == 500 && pr::NativeParams(pr::Params{}).stance_fix_gap_ms == 1000 &&
+          pr::Params{}.stance_fix_ms == 2000 && pr::Params{}.stance_pad_quiet_ms == 0, "native stance window 500 ms; legacy 2 s, no guards");
+    Check(pr::StateAct(39) && pr::StateAct(43) && pr::StateAct(132) && pr::StateAct(139) && pr::StateAct(40) && !pr::StateAct(57) &&
+          !pr::StateAct(1) && !pr::StateAct(27), "state acts: carry, carried, sleep, dead, DM");
+    {   // A lost crouch edge: one tap about 650 ms after the remote's change (150 ms debounce + 500 ms).
+        World w = native();
+        w.remote_stance = 2;
+        w.Run(600);
+        Check(w.fixes == 0, "native: no fix before the 500 ms window");
+        w.Run(250);
+        Check(w.fixes == 1 && w.last_fix == pr::StanceFix::tap && w.body_stance == 2, "native: one tap within ~650 ms");
+        w.Run(3000);
+        Check(w.fixes == 1, "native: matched, no more");
+        // Standing up: the body lingered in crouch (lost edge) -> one tap back.
+        w.remote_stance = 1;
+        w.ResetCounters();
+        w.Run(850);
+        Check(w.fixes == 1 && w.body_stance == 1, "native: the lingering crouch is fixed within ~650 ms");
+        // Prone: a hold.
+        w.remote_stance = 3;
+        w.ResetCounters();
+        w.Run(850);
+        Check(w.fixes == 1 && w.last_fix == pr::StanceFix::hold && w.body_stance == 3, "native: prone hold within ~650 ms");
+    }
+    {   // A body that follows its own input late (a slow native transition) is never fought.
+        World w = native();
+        w.remote_stance = 2;
+        w.Run(400);
+        w.body_stance = 2;  // the body's own transition landed
+        w.Run(2000);
+        Check(w.fixes == 0, "native: no fix when the body follows on its own");
+    }
+    {   // STANCE still held by the remote (a prone hold in progress): wait; 400 ms after release, fix.
+        World w = native();
+        w.stance_pad = true;
+        w.remote_stance = 3;
+        w.Run(2000);
+        Check(w.fixes == 0 && w.waits == 1 && Same(w.last_wait, "pad"), "native: STANCE input in flight -> wait (pad, once)");
+        w.stance_pad = false;
+        w.Run(350);
+        Check(w.fixes == 0, "native: pad quiet window");
+        w.Run(150);
+        Check(w.fixes == 1 && w.last_fix == pr::StanceFix::hold, "native: fixed after the quiet window");
+    }
+    {   // Body 1's own stance just changed (the wrong way): 300 ms stable first.
+        World w = native();
+        w.remote_stance = 2;
+        w.Run(640);
+        w.body_stance = 3;
+        w.Run(200);
+        Check(w.fixes == 0 && Same(w.last_wait, "body"), "native: body stance changing -> wait (body)");
+        w.Run(200);
+        Check(w.fixes == 1, "native: fixed once the body stance is stable");
+    }
+    {   // A dive (57) then prone crawl: 800 ms settle after the last non-locomotion act.
+        World w = native();
+        w.remote_act = 57;
+        w.remote_stance = 3;
+        w.Run(600);
+        Check(w.fixes == 0 && w.waits == 0, "native: no fix or wait during the dive act");
+        w.remote_act = 6;
+        w.Run(700);
+        Check(w.fixes == 0 && Same(w.last_wait, "settle"), "native: settle after the dive");
+        w.Run(250);
+        Check(w.fixes == 1 && w.last_fix == pr::StanceFix::hold, "native: fixed after the settle");
+    }
+    {   // An evade on the body itself (Quiet 58): the same settle.
+        World w = native();
+        w.body_act = 58;
+        w.remote_stance = 2;
+        w.Run(500);
+        w.body_act = 1;
+        w.Run(700);
+        Check(w.fixes == 0, "native: settle after the body evade");
+        w.Run(250);
+        Check(w.fixes == 1, "native: fixed after the evade settle");
+    }
+    {   // Wake from sleep (133 -> 5 -> 3 -> 1): its own native exit first (2 s state settle).
+        World w = native();
+        w.remote_act = 133;
+        w.Run(800);
+        w.remote_act = 3;
+        w.remote_stance = 2;
+        w.Run(1800);
+        Check(w.fixes == 0 && Same(w.last_wait, "state"), "native: state settle after sleep/carry/DM acts");
+        w.Run(400);
+        Check(w.fixes == 1, "native: fixed after the state settle");
+    }
+    {   // The gun stage or a carry (driver gates) holds the corrective input.
+        World w = native();
+        w.stance_block = "gun";
+        w.remote_stance = 2;
+        w.Run(3000);
+        Check(w.fixes == 0 && w.waits == 1 && Same(w.last_wait, "gun"), "native: gun gate -> wait (gun)");
+        w.stance_block = nullptr;
+        w.Run(100);
+        Check(w.fixes == 1, "native: fixed once the gate clears");
+    }
+    {   // A downed remote is mirrored lying (hold allowed); nothing pulls it up while downed.
+        World w = native();
+        w.remote_downed = true;
+        w.remote_stance = 3;
+        w.Run(900);
+        Check(w.fixes == 1 && w.last_fix == pr::StanceFix::hold && w.body_stance == 3, "native: downed remote -> prone hold");
+        w.remote_stance = 1;
+        w.ResetCounters();
+        w.waits = 0;
+        w.Run(3000);
+        Check(w.fixes == 0 && Same(w.last_wait, "downed"), "native: no stand-up fix while the remote is downed");
+        w.remote_downed = false;
+        w.Run(100);
+        Check(w.fixes == 1, "native: revived -> fixed");
+    }
+    {   // Stale input still refuses (unchanged).
+        World w = native();
+        w.in_valid = false;
+        w.remote_stance = 2;
+        w.Run(3000);
+        Check(w.fixes == 0, "native: stale input -> no fix");
+    }
 }
 
 // An aligned run: the body follows the input exactly. No corrections at all.
@@ -1220,6 +1367,7 @@ int main() {
     TestNonStickingNudge();
     TestInputPin();
     TestStanceFix();
+    TestNativeStanceFix();
     TestAlignedRun();
     TestLateralNudge();
     TestMovingSnap();
@@ -1237,7 +1385,7 @@ int main() {
     TestSenderClockAndParity();
     TestFacingGovernor();
     std::printf("%u partner recon checks passed: placement/verify/retry, I6 runaway replay (pin, no sawtooth), moving runaway, "
-                "lag model (walk/run/turn/sprint/stops), non-sticking nudges, input pin, stance fix, aligned run and turn, "
+                "lag model (walk/run/turn/sprint/stops), non-sticking nudges, input pin, stance fix, native stance level (500 ms, pad/body/settle/state/gate/downed guards), aligned run and turn, "
                 "lateral nudges, one moving snap, diverging, teleport/far, stance suspend/prone/mismatch, frozen acts, loss/relink, "
                 "idle yaw and snap, rearm/manual, recon pin/off, stop check, native actions (split runaway, lag, along cap, "
                 "stop grace), facing governor (idle turn, hysteresis, stick abort, contest/latch, settle, aim, placement yaw, windowed "

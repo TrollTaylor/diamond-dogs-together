@@ -82,7 +82,7 @@ do
         A.dead = false
         A.baseW1 = W.w1 and W.api.isStart and W.api.isStart() == true
         if A.enabled and W.active and W.level >= 3 and W.feature and W.feature.enemies then
-            W.w1 = false; log("step=wait;reason=checkpoint_alignment")
+            W.w1 = false; log("step=wait;reason=unpaired")
         end
     end
     W.startHooks[#W.startHooks + 1] = A.reset

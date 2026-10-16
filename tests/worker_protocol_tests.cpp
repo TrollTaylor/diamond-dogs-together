@@ -234,8 +234,9 @@ int main() {
           gun.partner_native_fire == mgscoop::PartnerNativeFire::visual && gun.partner_input_mask == 0x224005Eu,
           "native_gun_stage (visual fire, EVADE and FIRE in the mask)");
     Check(census.partner_native_ride == mgscoop::PartnerNativeRide::off &&
-          loco.partner_native_ride == mgscoop::PartnerNativeRide::hide && gun.partner_native_ride == mgscoop::PartnerNativeRide::hide,
-          "worker native visibility defaults: census off; driven loco/gun hide");
+          loco.partner_native_ride == mgscoop::kPartnerNativeRideDriven && gun.partner_native_ride == mgscoop::kPartnerNativeRideDriven &&
+          mgscoop::kPartnerNativeRideDriven == mgscoop::PartnerNativeRide::seat,
+          "worker native visibility defaults: census off; driven loco/gun seat");
     mgscoop::LabConfig rideOff{}; const std::string rideOffText = gun_text + "partner_native_ride=off\n";
     Check(mgscoop::ParseLabConfig(rideOffText.data(), rideOffText.size(), rideOff) && NativeProfile(rideOff) &&
           rideOff.partner_native_ride == mgscoop::PartnerNativeRide::off && rideOff.partner_native_ride_given,

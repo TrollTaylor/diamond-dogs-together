@@ -32,6 +32,8 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_dmmap.hpp"
+#include "mgscoop/partner_act_log.hpp"
+#include "mgscoop/partner_dm_overlay.hpp"
 #include "mgscoop/partner_facing.hpp"
 #include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
@@ -43,6 +45,7 @@
 #include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
+#include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_reload.hpp"
@@ -128,6 +131,10 @@ inline constexpr unsigned kDmMapSwitchCap = 600;
 // partner_lost=hide (lab-tested only): the realize bits are cleared after the
 // net sample has been lost this long; the next live sample re-realizes.
 inline constexpr std::uint64_t kLostHideMs = 10000;
+// Round-1 actions track (docs/anim-round1-actions.md): the DM overlay's own
+// line cap per mission (partner_overlay=..., then "partner_overlay=capped").
+// The act census lines have their own caps (partner_act_log).
+inline constexpr unsigned kOverlayLogCap = 400;
 // Drained input-hook statistics (mirror of partner_input_hook::Stats).
 struct InputStats {
     partner_input::WindowStats window;
@@ -142,6 +149,16 @@ inline constexpr unsigned kNativeLineCap = 3600;   // partner_defer / partner_na
 inline constexpr unsigned kNativeEventCap = 64;    // transitions, enter steps, gun changes, manifests
 inline constexpr std::uint64_t kNativeMatchWindowMs = 10000;
 inline constexpr std::uint64_t kAimMatchMs = 300;
+// Anim round 1 weapons (docs/anim-round1-weapons.md): line cadences and caps.
+inline constexpr std::uint64_t kWeaponCtxMs = 100;          // partner_weapon_ctx: at most 10 lines/s, no cap
+inline constexpr std::uint64_t kNativeGunChangeMs = 100;    // partner_native_gun change lines
+inline constexpr unsigned kNativeGunChangeCap = 3600;
+inline constexpr std::uint64_t kAimIntentLineMs = 100;      // partner_aim_intent change lines
+inline constexpr unsigned kAimIntentLineCap = 2000;
+inline constexpr unsigned kAnimWeaponCap = 256;             // partner_weapon=unsupported / dry / rate lines (each family)
+inline constexpr unsigned kCensusLinesPerSecond = 20;       // partner_fire_census per-request lines
+inline constexpr unsigned kCensusLineCap = 4000;
+inline constexpr std::uint64_t kAimActHoldMs = 150;         // the Arm's aim act expiry (a stale Arm drops it)
 inline constexpr std::uint64_t kAimReadMs = 250;
 // What the observer reports about the native installs (H0 input hook, wraps,
 // H2, H1, and the phase-1 local detour P1, installed with defer=on).
@@ -323,6 +340,30 @@ struct Hooks {
     // Fresh mount intent or current native cleanup lease, matched to the
     // existing Arm. Keeps that Arm; never creates a new admission.
     bool (*native_vehicle_job)(void*,const partner_player::State&,const partner_input::Arm&) noexcept = nullptr;
+    // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md;
+    // any null: the seat refuses with reason=unavailable and the ride hides as before).
+    // Arms the four partner_ride_seat dwords for `seat` (true: armed) / reverts them.
+    bool (*ride_seat_arm)(void* context, std::uint8_t seat) noexcept = nullptr;
+    void (*ride_seat_revert)(void* context, const char* reason) noexcept = nullptr;
+    // Round-1 actions (docs/anim-round1-actions.md "DM overlay"): the hook
+    // point of a camera-skip module (the DM entry/End camera-connect stores
+    // skipped while armed). While it returns true the DM overlay may play with
+    // a non-zero local camera connect (CAM+0x1F0/+0x200); null or false keeps
+    // the cam_connect refusal. Nothing in this track arms one.
+    bool (*dm_camera_skip_armed)(void* context) noexcept = nullptr;
+    bool (*support_ready)(void*,const partner_player::State&,std::uint16_t equip) noexcept = nullptr;
+    // --- WS3 vehicles (docs/vehicle-ws3.md; null: the census, the seat-by-id
+    // offer and the ride addendum's category refuse with reason=unavailable).
+    // Read-only vehicle unit and realized body read (partner_vehicle::ReadLive).
+    void (*vehicle_read)(void* context, std::uint16_t id, partner_vehicle::Read& out) noexcept = nullptr;
+    // The seat-by-id write (partner_player::WriteSeatTarget), only on the
+    // player-update thread with the seat dwords armed: nullptr on success.
+    const char* (*seat_target)(void* context, const partner_player::SeatTargetRequest& request,
+                               partner_player::SeatTargetResult& out) noexcept = nullptr;
+    // The unknown remote slot/equip debounce (partner_input::HoldIdentity in
+    // partner_net's receive path): the equip of this tick's support verdict
+    // (Mission::support_equip, 0 = none), published every driver tick. May be null.
+    void (*publish_support_identity)(void* context, std::uint16_t equip) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -330,6 +371,23 @@ inline constexpr std::uint64_t kInputV5ProbeMs = 2000;
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
 inline constexpr unsigned kWeaponEventCap = 64;        // fire gate transitions, manifests sent, apply verdicts
+// The seated vehicle rider (docs/anim-round1-seat.md): the play is re-issued
+// after kSeatConfirmMs unconfirmed (at most kSeatPlays per episode); a stop is
+// re-sent after kSeatStopMs and given up (patches reverted anyway) after
+// kSeatExitMs (kSeatNextMs for the GetOff advance); the body farther than
+// kSeatFarMm from the remote's streamed seated pose for kSeatFarMs falls back
+// to hide; get-in only within kSeatGetInMs of the vehicle kind; the 1 Hz
+// partner_ride_seat=status line and the event lines have their own caps.
+inline constexpr std::uint64_t kSeatConfirmMs = 2000, kSeatStopMs = 1000, kSeatExitMs = 3000, kSeatNextMs = 4000;
+inline constexpr std::uint64_t kSeatFarMs = 1000, kSeatGetInMs = 1500, kSeatStatusMs = 1000, kSeatReleaseMs = 1500;
+inline constexpr std::uint32_t kSeatFarMm = 3000;
+inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
+// WS3 ride census cadence and cap (partner_ride_census=1).
+inline constexpr std::uint64_t kRideCensusMs = 1000;
+inline constexpr unsigned kRideCensusCap = 400;
+// The seat flow's phases (Mission::seat.phase).
+enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle };
+const char* SeatPhaseName(SeatPhase phase) noexcept;
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
 // GetTickCount64 (the probe's t_ms, comparable with the other log lines).
@@ -387,6 +445,7 @@ struct Settings {
     // filter is installed, live and armed for instance 1 and its gun is a gun
     // class. EffectiveSettings passes FIRE only with nfire=visual and this.
     bool fire_live;
+    bool support_live; // current support gate (type 12; WS4 v1: C4 / arm lanes), independent of an earlier gun class
     std::uint32_t steer_deg, trim_pct;
     PartnerNativeRates nrates;
     // The facing governor mode (partner_recon FaceMode while native) and the
@@ -403,8 +462,26 @@ struct Settings {
     // What body 1 carries (lab.ini partner_native_equip; the observer runs the writers).
     PartnerNativeEquip nequip;
     PartnerNativeRide nride;  // qualified visibility policy; off until live acceptance
+    PartnerRideSeatEnter seat_enter;  // nride=seat: direct loop or get-in chain
+    PartnerRideSeatExit seat_exit;    // nride=seat: stop or get-off advance
+    // WS3 vehicles (docs/vehicle-ws3.md): the ride census lines (lab only,
+    // default off), the seat-by-id path (B1) and RIDE_TILT (A1) (both default
+    // on, lab and play, capability-gated by the peer's ride addendum).
+    bool ride_census, seat_id, ride_tilt;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
+    // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
+    // partner_native_unsupported, _dry_stop, _aim_intent, _reload_rate,
+    // partner_fire_census).
+    bool nunsupported, ndry;
+    bool nsupport; // lab-only native thrown equipment (type 12), default off
+    // WS4 v1 (lab.ini partner_native_placed / partner_native_arm; both need
+    // nsupport): placed C4 (type 13, 391..395, slot 3) and arm holds (type 14,
+    // only 516 for now, slot 6, HOLD only: FIRE stays stripped).
+    bool nplaced, narm;
+    PartnerNativeAimIntent naim_intent;
+    PartnerNativeReloadRate nreload_rate;
+    bool fire_census;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file enables the native drive
@@ -420,6 +497,10 @@ struct Settings {
     std::uint32_t stall_ms;
     PartnerNativeHold nhold;
     std::uint32_t edge_repeats;
+    // Round-1 actions track: the DM overlay lever and the act census lines.
+    PartnerNativeOverlay noverlay;
+    bool act_log;
+    bool stance_fast;  // the native stance window (partner_native_stance_fast)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -437,7 +518,58 @@ struct Mission {
     bool range_hidden, range_needs_place;
     LogCap range_cap;
     partner_ride_wire::Visibility visibility;
-    LogCap ride_cap;
+    LogCap ride_cap;       // partner_ride=rx (on a state/revision change only)
+    LogCap ride_vis_cap;   // partner_ride=hide|foot_stable|seat_show
+    // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md).
+    struct Seat {
+        SeatPhase phase;
+        bool manual;                 // the debug seat_dm lever owns the DM (Lua issued it)
+        bool armed;                  // partner_ride_seat dwords armed by us
+        bool confirmed;              // body 1 plays a seated state of `seat`
+        bool next_sent;              // the exit advanced to GetOff (RequestToGoNextDirectMotion)
+        bool lua_refused;            // Lua refused the current request (LuaLog event=ride_seat_refused)
+        std::uint16_t vehicle;       // the episode's vehicle GameObject id and native seat
+        std::uint8_t seat;
+        std::uint8_t entry;          // partner::seat_entry bits of the played chain
+        std::uint8_t loop_entry;     // the loop's index in that chain
+        unsigned plays, stops;
+        std::uint64_t phase_ms, issue_ms, confirm_ms, far_since_ms, status_ms;
+        const char* exit_reason;
+        bool latch_exit;             // the exit blocks this (vehicle, seat) until the ride changes
+        // A (vehicle, seat) refused or ended this ride: seat mode is off for it
+        // (it hides) until the remote's ride state leaves it.
+        bool blocked;
+        std::uint16_t block_vehicle;
+        std::uint8_t block_seat;
+        const char* block_reason;
+        // When the received ride became this vehicle (the get-in window).
+        std::uint64_t vehicle_since_ms;
+        std::uint16_t vehicle_rev;
+        bool vehicle_live;
+        // Seat by id (WS3 B1): the id path was offered for this episode
+        // (seat_entry::by_id), its gate reason, and whether this play's DM
+        // record was targeted (target_done; target_wrote: by us, not a name).
+        bool byid, target_done, target_wrote;
+        const char* byid_reason;
+        std::uint8_t remote_category, local_category;
+    } seat;
+    bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
+    // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
+    // kRideCensusMs (the local one and the remote driver's copy), own cap.
+    LogCap census_cap;
+    std::uint64_t census_ms;
+    LogCap seat_cap;       // partner_ride_seat event lines
+    // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
+    // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
+    const char* seat_unavailable;
+    std::uint16_t seat_unavailable_vehicle;
+    std::uint8_t seat_unavailable_seat;
+    unsigned seat_status_lines;
+    bool seat_status_capped;
+    // The local PlayerStatus census of the receipt's st= (logged on change).
+    bool status_have;
+    std::uint16_t status_bits;
+    LogCap status_cap;
     const char* visibility_logged;
     std::uint64_t visibility_place_try_ms;
     std::uint64_t start_ms, ticks;
@@ -803,6 +935,11 @@ struct Mission {
     partner_reload::Out reload_out;
     partner_reload::SenderState sender_gun;
     LogCap reload_cap;
+    // The sender hold (partner_input::HoldSender, run 0c9269ce): a failed local
+    // gun/slot read republishes the last good one for kSenderHoldMs; its lines
+    // (partner_input=sender_hold, own cap) carry the read's refusal.
+    partner_input::SenderHold sender_hold;
+    LogCap sender_hold_cap;
     // The remote's latest live v5 gun group (remote_v5: GunFlag::Valid) and slot.
     bool remote_v5;
     std::uint8_t remote_gun_flags, remote_gun_mode, remote_reload_seq, remote_switch_seq, remote_slot;
@@ -826,6 +963,14 @@ struct Mission {
     partner_slots::Gate weapon_gate;
     std::int32_t body_type;
     bool body_switching;
+    // Native support through an input stall (partner_support_policy StallHold,
+    // critic #4): the newest v5 frame is stale but inside the stall hold and
+    // names slot 3 with support_equip, the equip of the last support verdict
+    // (0 = none); the observer keeps the writer context's slot/equip on that
+    // verdict while its own newest v5 frame is within stall_ms
+    // (partner_support_policy::ContextHold; never on support_stall alone).
+    bool support_stall;
+    std::uint16_t support_equip;
     // The last logged type verdict (partner_weapon=projectile|type_ok lines).
     bool weapon_type_logged, weapon_type_logged_once;
     // Weapons4: body 1 holds the plan's stand-in for the remote's current slot
@@ -839,6 +984,67 @@ struct Mission {
     std::uint64_t weapon_ms_at;
     std::uint32_t standin_ms, absent_ms;
     std::uint8_t body_gun_mode;
+    // --- Anim round 1 weapons (docs/anim-round1-weapons.md).
+    // The remote's v4 magazine of the latest live sample (auto-fire stop).
+    bool remote_mag_ok;
+    std::uint16_t remote_mag, remote_mag_cap;
+    // A1: the unsupported-equipment verdict (partner_slots JudgeUnsupported),
+    // the remote's in-hand equip type (kNull unread; read once per equip) and
+    // the last logged key (own cap).
+    partner_slots::Unsupported unsupported;
+    std::int32_t remote_equip_type;
+    std::int32_t remote_type_equip;     // the equip remote_equip_type belongs to (kNull: none)
+    std::uint64_t unsupported_key;
+    bool unsupported_logged;
+    LogCap unsupported_cap;
+    // State-driven aim intent: the driver's gate (partner_slots AimGate), the
+    // remote's act is an aim act (live pose), the last logged key and the hook
+    // totals at the last line (own cap, change lines at most every kAimIntentLineMs).
+    partner_slots::AimRefusal aim_refusal;
+    bool aim_gate_ok, aim_act;
+    std::uint64_t aim_intent_key, aim_intent_ms;
+    bool aim_intent_logged;
+    unsigned aim_intent_lines;
+    // Auto-fire stop (partner_slots DryStep) and its lines.
+    partner_slots::DryState dry;
+    bool dry_strip;
+    LogCap dry_cap;
+    // Reload rate adaptation (partner_reload RateLearn) and its lines.
+    partner_reload::RateAdapt rate_adapt;
+    LogCap rate_cap;
+    // partner_weapon_ctx: one line per change of the weapon context, at most
+    // every kWeaponCtxMs (later changes coalesce into the next line; no cap).
+    std::uint64_t ctx_key, ctx_ms, ctx_seen_key;
+    bool ctx_have;
+    unsigned ctx_changes;
+    // The mirror's rec+0x3E8 rewrites for a slot change / a base above the
+    // capacity (hook totals at the last partner_reload=shadow line; own cap).
+    std::uint32_t shadow_slot_logged, shadow_cap_logged;
+    bool shadow_logged;
+    LogCap shadow_cap;
+    // The anim round 1 weapon settings line (once per mission with the gun stage).
+    bool anim_settings_logged;
+    // partner_native_gun change lines: own cap, at most every kNativeGunChangeMs
+    // (later changes counted in the next line's changes=).
+    std::uint64_t native_gun_change_ms;
+    unsigned native_gun_change_lines, native_gun_changes;
+    // The fire/projectile census (partner_fire_census=1): the ring cursor, the
+    // per-second budget and mission totals of its lines.
+    std::uint32_t census_cursor;
+    bool census_cursor_ok;
+    std::uint64_t census_second_ms;
+    unsigned census_second_lines, census_lines;
+    std::uint32_t census_lost, census_skipped;
+    bool census_install_logged;
+    // --- Round-1 actions track (docs/anim-round1-actions.md).
+    // The act census (log only) and the remote's dropped pad presses.
+    partner_act_log::ActState act_log;
+    partner_act_log::PadState pad_census;
+    // The DM overlay lever: its machine, the last step (the next tick's native
+    // suspend reason) and its line cap.
+    partner_dm_overlay::State overlay;
+    partner_dm_overlay::Out overlay_out;
+    LogCap overlay_cap;
 };
 
 struct Driver {
@@ -866,6 +1072,10 @@ struct Driver {
     std::uint32_t tap_seq;
     // rtap=1: one test reload tap through the event machine on the next native tick.
     bool rtap_pending;
+    // Round-1 actions: the DM overlay debug one-shot (overlay=, oloop=, oms=),
+    // applied on the next tick.
+    bool overlay_pending;
+    partner_dm_overlay::Request overlay_request;
     // Round 4: a placement requested by a trigger (place=1, or a change of
     // apply/input/source), consumed by the next reconciliation step.
     partner_recon::PlaceReason recon_place_request;
@@ -909,11 +1119,25 @@ struct Driver {
     // its sends (the mission's weapon_cap may be spent by then).
     LogCap equip_tx_cap;
     partner_ride_wire::Store ride_rx;
+    // The last logged received ride state (partner_ride=rx on a change only).
+    partner_ride_wire::Packet ride_rx_logged;
+    bool ride_rx_logged_have;
+    std::uint32_t ride_rx_logged_epoch;
     partner_ride_wire::Packet ride_tx;
     bool ride_tx_have, ride_tx_dirty;
     std::uint32_t ride_tx_epoch;
     std::uint64_t ride_tx_ms;
     bool ride_invalid_logged;
+    // WS3 vehicles (docs/vehicle-ws3.md): the ride wire v3 addendum (category
+    // and the seat-id / tilt features), received and sent (link-session scoped),
+    // and the vehicle the local player rides (the tick's veh=, 0xFFFF none).
+    partner_ride_wire::ExtStore ride_ext;
+    partner_ride_wire::Ext ride_ext_tx;
+    bool ride_ext_tx_have;
+    std::uint32_t ride_ext_tx_epoch;
+    std::uint64_t ride_ext_tx_ms;
+    bool ride_ext_logged;
+    std::uint16_t local_vehicle;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;
@@ -922,6 +1146,18 @@ struct Driver {
     Mission mission;
 };
 
+// The effective settings' native_active (EffectiveSettings): the native drive is
+// configured and the arbiter's last step is active. Driver::settings is the
+// configured copy, whose native_active is always false, so code that reads
+// d.settings (TickNative's stall hold, the observer's ContextHold) uses this.
+inline bool NativeActive(const Driver& d) noexcept {
+    return d.settings.drive == PartnerDrive::native && d.mission.native_out.active;
+}
+
+// WS3 vehicles: the vehicle the local player rides (0xFFFF none) and whether
+// the peer's live ride addendum advertises RIDE_TILT (docs/vehicle-ws3.md).
+std::uint16_t LocalVehicle(const Driver& driver) noexcept;
+bool RideTiltPeer(const Driver& driver, std::uint32_t epoch, std::uint64_t now_ms) noexcept;
 
 // Read-only admission from the same effective settings as Tick. The caller
 // must serialize with driver ticks; no caller-supplied active flag is accepted.
@@ -943,6 +1179,12 @@ void MissionEnd(Driver& driver, const Hooks& hooks) noexcept;
 bool Cfg(Driver& driver, const Hooks& hooks, const char* precheck, std::uint64_t now_ms) noexcept;
 // LOG receipt: "partner_lua=<payload>", at most kLuaLogCap per mission.
 void LuaLog(Driver& driver, const Hooks& hooks, const char* source, std::size_t size) noexcept;
+// SEAT receipt (the debug seat_dm lever, docs/anim-round1-seat.md): arm=true
+// arms the seat dwords for (seat, vehicle) on a realized, DM-idle body 1 and
+// hands body 1 to a manual seat (Lua then plays its own DM); arm=false ends it
+// (Lua stops the DM; the patches revert once DM End ran). True when accepted.
+bool SeatManual(Driver& driver, const Hooks& hooks, bool arm, std::uint8_t seat, std::uint16_t vehicle, std::uint64_t now_ms,
+                bool terminating) noexcept;
 // STOP receipt (allowed while terminating): clears our bits when
 // teardown=clear, restores the policy byte, drops pending one-shots, stops
 // ticking and logs partner_stop.

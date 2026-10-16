@@ -222,6 +222,22 @@ startup verdict is `Get-WorkerPlaySafetyVerdict`. Profiles there: `animated`
 `scenarios/play-native.txt` and `scenarios/partner-native-online.txt` hold
 the evidence.
 
+The step `stall <host|guest> <ms>` (50..1000 ms) is a worker-only input stall
+(`docs/anim-round2-throws.md` "Stall test step"). The runner sends the native
+debug command `input_stall <ms>`, and that role's game then sends no partner
+input frames for that long (its edge sets go out with the first frame after
+it). The runner records the command's result as an expectation
+(`^input_stall=started;ms=<ms>;`), and the role's log has
+`partner_net=input_stall; reason=start` and `reason=end` lines. The game admits
+the command only in a background-worker build with the owned private worker
+active (`worker_scenario::Compiled()` and `Active()`, copied saves, partner and
+net on). Only that build compiles the stall into `partner_net`, which refuses
+with `not_worker_build` everywhere else, so the friend/Release loader (worker
+OFF by its receipt rules) never pauses input. Use it to put a gap of a known
+length inside a held action, independent of `-WanSim`:
+`scenarios/partner-support-stall.txt` puts two 320 ms host stalls inside a held
+grenade (the stall freeze lies between stale_ms 250 and stall_ms 400).
+
 `scenarios/steam-selftest.txt` (header `labsetting steam_selftest=1`; the
 runner also allows `steam_selftest=2`, which adds a network-loopback socket
 pair that binds UDP sockets) is the Steam online self-test
@@ -233,6 +249,69 @@ sessions, then inert Messages calls; it never sends to a peer. The guest
 member. Before it: `python tools/generate_steam_shim_contract.py --check`
 and `--steamclient "<Steam folder>/steamclient64.dll"`, then the worker
 checks.
+
+### Save handoff and travel lock (join-fix phase 2)
+
+`docs/join-fix-phase2-spec.md` P2-19 and track E. These steps never drive
+gameplay beyond Enter at a title; they read owned files, wait for one role's own
+exit and apply a staged save inside the run folder.
+
+Seeds: `-SaveSeed real|lab` still seeds both copies. `-HostSaveSeed` and
+`-GuestSaveSeed` (`real`, `lab`, or `''` for `-SaveSeed`) seed one role.
+`-GuestSaveSeedRun <runId>` seeds the guest from an earlier, closed run's
+`guest-saves\{287700,remote}`. The source must be an exact
+`build\worker-runtime\<runId>` folder with `session.json` status `closed`. It is
+read only: links, more than 4096 entries or oversized files refuse, and its
+`287700\local` must hold a `TPP_GAME_DATA` file. It cannot be combined with
+`-GuestSaveSeed`. `session.json` records `save_seeds` and each role row's
+`save_seed_kind` / `save_seed_run`. `-LabSetting` (and the scenario
+`labsetting` line, all three allow-lists identical) also takes
+`save_handoff=off|stage|scene|always` and `travel_lock=0|1`.
+
+Steps:
+
+- `titlemenu <host|guest|both> <s>`: Enter every 3 s only while the role is at
+  the boot screens (`state.json` mission 0 or 1, or no state yet). It stops at
+  40010/40020/40050. The role's `loading.json` names the next mission at
+  allocation start, about 10 s before a title takes input, so no Enter lands on
+  the title menu (where it would be Continue). Any other mission fails the step.
+- `title <host|guest> [s]`: the old `title` loop for one role only.
+- `waitlog <role> <regex> <s>`: a complete `script-observer.log` line of this
+  session (from `session.json` `roles.<role>.log_offsets`) must match the
+  case-sensitive regex. Wrap a regex with spaces in single quotes. A timeout is
+  an `ExpectFailures` entry; the scenario continues.
+- `expectstate <role> <field> <regex>`: a fresh (3 s) `state.json` field of an
+  allow-listed set (mission, generation, gameplay_ready, terminating, world_*,
+  handoff, handoff_pct, travel_unlocked), nonfatal like `expect`.
+- `waitexit <role> <s>`: the role's leased game process must end on its own
+  while the supervisor keeps running. The exit is recorded in `session.json`
+  (`roles.<role>.exited`, `forced=false`) and in `scenario.json` `ExitedRoles`.
+  Later steps that drive that role fail fast; `waitlog` and `applyhandoff` still
+  work. Stop-WorkerSession then tolerates the role: it sends nothing to it, and
+  a reused PID is not adopted. The baseline loader is still restored and the
+  real saves compared.
+- `applyhandoff guest` (after `waitexit guest`): it checks
+  `run\guest-saves-handoff\request.json` against the exited game's pid and start,
+  plus its staged set (`handoff.json` names, sizes, hashes and the P2-6 set hash).
+  It also records the copy's hashes. The supervisor holds `run\guest-saves` and
+  its `287700\local` and `remote` folders without delete sharing until it exits,
+  so the import runs after Stop has closed the session. It calls
+  `Import-CoopProgressFiles` (`tools/friend/FriendCommon.psm1`) with
+  `-SaveDir run\guest-saves`, `-ReplacedRoot run\guest-saves-replaced`,
+  `-Suffix -before-handoff` and the `handoff` marker. `scenario.json`
+  `HandoffApply` then holds the before and after hashes, the aside folder and
+  the checks: progress equals the stage, settings are the guest's own, the
+  aside holds the old progress, and the marker has source `handoff`.
+
+Two-session restart proof (hidden checks R4 and R5): first run
+`scenarios/handoff-restart.txt`, in which the guest stages, counts down, closes
+its window, exits, and gets the staged set applied. Then run
+`scenarios/handoff-after-restart.txt` with `-GuestSaveSeedRun <that run id>`.
+Both titles must be 40010, the guest logs `need=0`, and both pair and follow
+into 30010. `scenarios/handoff-stage.txt` is the transfer alone (R2, R3).
+`scenarios/travel-lock.txt` is the guest lock and its escape (R6). Each header
+gives the run command and the evidence. The worker has no "relaunch guest"
+control, so a restart always takes two sessions.
 
 ## Primary API contracts and acceptance limits
 

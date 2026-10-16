@@ -904,6 +904,7 @@ void TestOnline() {
     const pn::Params p = pn::OnlineParams();
     Check(p.online && p.stale_hold_ms == 1500 && p.link_hold_ms == 1500 && p.cooldown_ms == 5000 && p.latch_fallbacks == 3,
           "online params: 1.5 s stale/link holds, the hard latch unchanged");
+    Check(pn::NetReason("seat") && pn::NetReason("ride") && pn::NetReason("air"), "the seated rider leaves like a ride (no latch)");
     Check(pn::NetReason("net_input") && pn::NetReason("net_link") && pn::NetReason("net_quiet") && pn::NetReason("range_hidden") &&
               pn::NetReason("unrealized") && !pn::NetReason("thread") && !pn::NetReason("cost") && !pn::NetReason("input_stale") &&
               !pn::NetReason(nullptr), "network reasons");
@@ -1652,7 +1653,366 @@ void TestSlots() {
     Check(Is(ps::GateName(ps::Gate::switching), "switching"), "gate names");
 }
 
+// --- Anim round 1 weapons (docs/anim-round1-weapons.md) ---------------------------
+// A1 the unsupported-equipment gate, the state-driven aim intent (the driver's
+// gate, the hook's frame rule and the injected edges), the auto-fire stop, the
+// reload queue and rate learning, the rec+0x3E8 slot rule.
+void TestAnimUnsupported() {
+    namespace ps = mgscoop::partner_slots;
+    Check(ps::StripBits(ps::Gate::unsupported) == 0x58u && Is(ps::GateName(ps::Gate::unsupported), "unsupported"),
+          "unsupported strips HOLD|FIRE|RELOAD (0x58)");
+    using U = ps::Unsupported;
+    const auto judge = [](bool sv, std::uint8_t slot, bool tok, std::uint8_t type) {
+        return ps::JudgeUnsupported(ps::UnsupportedIn{sv, slot, tok, type});
+    };
+    Check(judge(true, 3, false, 0) == U::slot && judge(true, 4, false, 0) == U::slot && judge(true, 6, false, 0) == U::slot &&
+              judge(true, 15, true, 1) == U::slot, "support 3, item 4, hand 6 and any slot above 2: slot");
+    for (std::uint8_t s = 0; s < 3; ++s)
+        for (std::uint8_t t = 1; t <= 8; ++t) Check(judge(true, s, true, t) == U::no, "a gun slot holding a gun type: supported");
+    Check(judge(true, 2, true, 12) == U::type && judge(true, 0, true, 13) == U::type && judge(true, 1, true, 14) == U::type &&
+              judge(true, 0, true, 17) == U::type && judge(true, 1, true, 10) == U::type,
+          "throwing 12, placed 13, arm 14, item 17, any type above 9 in hand: type");
+    Check(judge(true, 1, true, 9) == U::no, "a shield (9, back slot with the secondary gun) keeps the projectile verdict");
+    Check(judge(false, 3, false, 0) == U::no && judge(true, 0xFF, false, 0) == U::no, "no live v5 slot, no type: never unsupported");
+    Check(judge(false, 0, true, 0) == U::no && judge(true, 2, false, 12) == U::no, "type 0 or an unread type: no verdict");
+    Check(judge(false, 0, true, 12) == U::type, "a v4 remote (no v5 slot) still judges its in-hand type");
+    Check(Is(ps::UnsupportedName(U::slot), "slot") && Is(ps::UnsupportedName(U::type), "type") && Is(ps::UnsupportedName(U::no), "no"),
+          "unsupported names");
+}
+
+void TestAnimAimIntent() {
+    namespace ps = mgscoop::partner_slots;
+    for (unsigned a = 0; a < 160; ++a) {
+        const bool aim = (a >= 11 && a <= 17) || a == 19 || a == 20;
+        Check(ps::AimAct(static_cast<std::uint16_t>(a)) == aim, "the aim family is exactly 11..17, 19, 20");
+    }
+    Check(ps::AimBlockedAct(40) && ps::AimBlockedAct(43) && ps::AimBlockedAct(82) && ps::AimBlockedAct(100) && ps::AimBlockedAct(111) &&
+              ps::AimBlockedAct(122) && ps::AimBlockedAct(125) && ps::AimBlockedAct(132) && ps::AimBlockedAct(139) &&
+              ps::AimBlockedAct(61) && ps::AimBlockedAct(75) && !ps::AimBlockedAct(29) &&
+              !ps::AimBlockedAct(1) && !ps::AimBlockedAct(11) && !ps::AimBlockedAct(57),
+          "dead, carried, stun, heli, vehicle, horse, walker, sleep, DM acts block; loco and aim acts do not");
+    ps::AimGateIn g{};
+    g.enabled = g.judged = true;
+    g.gate = ps::Gate::match;
+    g.slot_valid = true;
+    g.slot = 1;
+    g.act_valid = true;
+    g.act = 11;
+    Check(ps::AimGate(g) == ps::AimRefusal::none, "match, slot 1, on foot: the intent may inject");
+    g.gate = ps::Gate::standin;
+    Check(ps::AimGate(g) == ps::AimRefusal::none, "a stand-in admits too");
+    for (ps::Gate bad : {ps::Gate::mismatch, ps::Gate::switching, ps::Gate::projectile, ps::Gate::unsupported}) {
+        g.gate = bad;
+        Check(ps::AimGate(g) == ps::AimRefusal::gate, "mismatch, switching, projectile and unsupported refuse (gate)");
+    }
+    g.gate = ps::Gate::match;
+    g.judged = false; Check(ps::AimGate(g) == ps::AimRefusal::gate, "an unjudged gate refuses"); g.judged = true;
+    g.slot = 3; Check(ps::AimGate(g) == ps::AimRefusal::slot, "a support slot refuses"); g.slot = 2;
+    g.slot_valid = false; Check(ps::AimGate(g) == ps::AimRefusal::slot, "no v5 slot refuses"); g.slot_valid = true;
+    g.sleeping = true; Check(ps::AimGate(g) == ps::AimRefusal::sleep, "sleeping refuses"); g.sleeping = false;
+    g.carried = true; Check(ps::AimGate(g) == ps::AimRefusal::carried, "carried refuses"); g.carried = false;
+    g.hidden = true; Check(ps::AimGate(g) == ps::AimRefusal::hidden, "a hidden body refuses"); g.hidden = false;
+    g.riding = true; Check(ps::AimGate(g) == ps::AimRefusal::ride, "riding refuses"); g.riding = false;
+    g.act = 43; Check(ps::AimGate(g) == ps::AimRefusal::act, "a blocked act refuses"); g.act = 1;
+    g.enabled = false; Check(ps::AimGate(g) == ps::AimRefusal::off && Is(ps::AimRefusalName(ps::AimRefusal::off), "off"), "pad setting: off");
+    // The frame rule: the pad first (never added), then the flag, then the act; nothing without the gate or a live sample.
+    using S = ps::AimSource;
+    Check(ps::AimFrame({true, true, true, true, true, true}) == S::pad && !ps::AimAdds(S::pad), "the remote's own HOLD: pad, nothing added");
+    Check(ps::AimFrame({false, true, true, false, false, false}) == S::pad, "the pad needs no gate (the raw path is unchanged)");
+    Check(ps::AimFrame({true, true, false, true, true, false}) == S::flag && ps::AimAdds(S::flag), "v5 Aiming without HOLD: flag adds HOLD");
+    Check(ps::AimFrame({true, true, false, false, true, false}) == S::none, "Aiming without a valid v5 group: nothing");
+    Check(ps::AimFrame({true, true, false, true, false, true}) == S::act && ps::AimAdds(S::act), "an aim act without flags (10:35): act adds HOLD");
+    Check(ps::AimFrame({false, true, false, true, true, true}) == S::none, "no gate: nothing added");
+    Check(ps::AimFrame({true, false, true, true, true, true}) == S::none, "a stale sample: nothing (Compose releases)");
+    Check(Is(ps::AimSourceName(S::flag), "flag") && Is(ps::AimSourceName(S::act), "act"), "source names");
+    // Edges through Compose: the hook ORs HOLD into the window's sample held word.
+    pi::Config c{};
+    c.mode = PartnerInput::net;
+    c.mask = 0x224005Eu;
+    c.words[0] = pi::Word::held; c.words[1] = pi::Word::press; c.words[2] = pi::Word::release;
+    c.stale_ms = 250;
+    pi::EdgeState edge{};
+    pi::Sample s{};
+    s.valid = true;
+    s.packet.version = 5;
+    s.packet.flags = pi::Flag::Valid;
+    const auto frame = [&](std::uint8_t flags, bool act, std::uint32_t held) {
+        ++s.seq;
+        s.packet.gun_flags = flags;
+        s.packet.held = held;
+        pi::Sample sc = s;
+        const S src = ps::AimFrame({true, s.valid && s.age_ms <= c.stale_ms, (held & 0x8u) != 0,
+                                    (flags & pi::GunFlag::Valid) != 0, (flags & pi::GunFlag::Aiming) != 0, act});
+        if (ps::AimAdds(src)) sc.packet.held |= 0x8u;
+        return pi::Compose(c, sc, 0, pi::Overlay{}, edge);
+    };
+    const std::uint8_t aiming = pi::GunFlag::Valid | pi::GunFlag::Aiming, idle = pi::GunFlag::Valid;
+    pi::Injection j = frame(idle, false, 0);
+    Check(!(j.held & 0x8u) && !(pn::Latch27c(0, j.w[0], 0) & 1u), "no aim: no HOLD, latch 0");
+    j = frame(aiming, false, 0);
+    Check((j.held & 0x8u) && (j.edge_press & 0x8u) && (pn::Latch27c(0, j.w[0], 0) & 1u), "flag on: one HOLD press, latch 1");
+    j = frame(aiming, false, 0);
+    Check((j.held & 0x8u) && !(j.edge_press & 0x8u) && !(j.edge_release & 0x8u), "held: no repeated edge");
+    j = frame(aiming, true, 0x8u);
+    Check((j.held & 0x8u) && !(j.edge_press & 0x8u) && !(j.edge_release & 0x8u), "the remote's own HOLD takes over without an edge");
+    j = frame(idle, true, 0);
+    Check((j.held & 0x8u) && !(j.edge_release & 0x8u), "only the act left: still held (toggle aim, 10:35)");
+    j = frame(idle, false, 0);
+    Check(!(j.held & 0x8u) && (j.edge_release & 0x8u) && !(pn::Latch27c(1, j.w[0], 0) & 1u),
+          "all three sources clear: released in the same window, latch 0 (no stuck HOLD)");
+    j = frame(idle, false, 0);
+    Check(!(j.held & 0x8u) && !(j.edge_release & 0x8u) && !(j.edge_press & 0x8u), "stays released");
+    j = frame(aiming, false, 0);
+    Check((j.edge_press & 0x8u), "a new aim presses again");
+    s.age_ms = 400;  // the sample goes stale: Compose's own grace, then a silent release
+    j = frame(aiming, false, 0);
+    Check(!(j.edge_press & 0x8u), "a stale sample adds nothing new");
+    s.age_ms = 2000;
+    j = frame(aiming, false, 0);
+    Check(!(j.held & 0x8u), "beyond the grace: released (no stuck HOLD on a lost link)");
+    s.age_ms = 0;
+    j = frame(aiming, false, 0);
+    Check((j.held & 0x8u), "live again: held");
+    // The weapon gate strips it again downstream (unsupported: 0x58).
+    j = pi::Strip(j, ps::StripBits(ps::Gate::unsupported));
+    Check(!(j.held & 0x8u) && !(pn::Latch27c(0, j.w[0], 0) & 1u), "the unsupported strip removes the synthesized HOLD");
+}
+
+void TestAnimDry() {
+    namespace ps = mgscoop::partner_slots;
+    ps::DryState d{};
+    Check(!ps::DryStep(d, {1000, true, 5, false}), "a loaded remote: FIRE passes");
+    Check(!ps::DryStep(d, {1016, true, 0, false}) && d.zero_ms == 1016, "the sample that spent the last round: the grace starts");
+    Check(!ps::DryStep(d, {1050, true, 0, false}), "within kDryGraceMs: the last round's FIRE edge passes");
+    Check(ps::DryStep(d, {1066, true, 0, false}) && d.stops == 1, "dry after the grace: FIRE stripped");
+    Check(ps::DryStep(d, {2000, true, 0, false}) && d.stops == 1, "stays stripped while empty (one stop)");
+    Check(!ps::DryStep(d, {2100, true, 0, true}) && d.clears == 1, "a reload starts: FIRE passes again");
+    Check(!ps::DryStep(d, {2120, true, 0, false}) && d.zero_ms == 2120, "a cancelled reload restarts the grace");
+    Check(ps::DryStep(d, {2200, true, 0, false}), "and dries again");
+    Check(!ps::DryStep(d, {2300, true, 30, false}) && d.zero_ms == 0, "a new magazine value clears");
+    Check(!ps::DryStep(d, {2400, false, 0, false}), "no v4 magazine: never stripped");
+    ps::DryState z{};
+    Check(!ps::DryStep(z, {0, true, 0, false}) && !ps::DryStep(z, {10, true, 0, false}), "a zero clock never dries at once");
+}
+
+void TestAnimReload() {
+    // The weapon-gate queue: a reload start while body 1 is still switching waits, then taps once matched.
+    pr::Machine m{};
+    pr::Reset(m);
+    pr::Step(m, ReloadReady(1000, 4, 7, 8));
+    pr::In in = ReloadReady(1020, 5, 11, 8);
+    in.weapon_match = false;
+    in.weapon_wait = true;
+    pr::Out o = pr::Step(m, in);
+    Check(!o.tap && o.hold && Is(o.event, "queued_weapon") && m.state == pr::State::waiting && m.waits == 1,
+          "switching: the reload is queued, not a weapon fallback");
+    in.now_ms = 1500;
+    o = pr::Step(m, in);
+    Check(!o.tap && !o.event && m.state == pr::State::waiting, "still switching: waiting");
+    in = ReloadReady(1700, 5, 11, 7);
+    o = pr::Step(m, in);
+    Check(o.tap && Is(o.event, "replay") && m.state == pr::State::pending && m.replays == 1 && m.taps == 1, "matched: one replayed tap");
+    o = pr::Step(m, ReloadReady(1750, 5, 11, 11));
+    Check(Is(o.event, "entered") && m.state == pr::State::entered, "body 1 enters after the replay");
+    // The remote finished while body 1 still switched: no replay.
+    pr::Reset(m);
+    pr::Step(m, ReloadReady(1000, 4, 7, 8));
+    in = ReloadReady(1020, 5, 11, 8); in.weapon_match = false; in.weapon_wait = true;
+    pr::Step(m, in);
+    in = ReloadReady(1600, 5, 7, 8); in.weapon_match = false; in.weapon_wait = true;
+    o = pr::Step(m, in);
+    Check(Is(o.event, "fallback") && Is(o.reason, "remote_done") && m.state == pr::State::idle, "the remote is done: remote_done");
+    // A wait that never ends: weapon_timeout.
+    pr::Reset(m);
+    pr::Step(m, ReloadReady(1000, 4, 7, 8));
+    in = ReloadReady(1020, 5, 11, 8); in.weapon_match = false; in.weapon_wait = true;
+    pr::Step(m, in);
+    in.now_ms = 1020 + pr::Params{}.wait_ms;
+    o = pr::Step(m, in);
+    Check(Is(o.reason, "weapon_timeout"), "waited wait_ms: weapon_timeout");
+    // Unsupported / a lasting mismatch (no wait): the old weapon fallback.
+    pr::Reset(m);
+    pr::Step(m, ReloadReady(1000, 4, 7, 7));
+    in = ReloadReady(1020, 5, 11, 7); in.weapon_match = false; in.weapon_wait = false;
+    o = pr::Step(m, in);
+    Check(Is(o.reason, "weapon") && m.waits == 0, "unsupported: weapon fallback");
+    // The gate turns permanent while waiting.
+    pr::Reset(m);
+    pr::Step(m, ReloadReady(1000, 4, 7, 8));
+    in = ReloadReady(1020, 5, 11, 8); in.weapon_match = false; in.weapon_wait = true;
+    pr::Step(m, in);
+    in.now_ms = 1100; in.weapon_wait = false;
+    Check(Is(pr::Step(m, in).reason, "weapon"), "waiting, then unsupported: weapon");
+    Check(Is(pr::StateName(pr::State::waiting), "waiting"), "state name");
+    // Rate learning pairs: body 1 finishes after the remote (3020 vs 2027 ms, G:812676).
+    pr::Reset(m);
+    pr::Step(m, ReloadReady(1000, 4, 7, 7));
+    pr::Step(m, ReloadReady(1100, 5, 11, 7));    // the remote enters (tap)
+    pr::Step(m, ReloadReady(1300, 5, 11, 11));   // body 1 enters 200 ms later
+    o = pr::Step(m, ReloadReady(3127, 5, 7, 11)); // the remote exits after 2027 ms
+    Check(!o.learn, "the remote's exit alone learns nothing");
+    o = pr::Step(m, ReloadReady(4320, 5, 7, 7));  // body 1 exits after 3020 ms
+    Check(o.learn && o.learn_body_ms == 3020 && o.learn_remote_ms == 2027 && m.learned == 1, "body exit after the remote: one pair");
+    // Body 1 finishes first (k too high): the pair completes at the remote's exit.
+    pr::Step(m, ReloadReady(5000, 6, 11, 7));
+    pr::Step(m, ReloadReady(5100, 6, 11, 11));
+    o = pr::Step(m, ReloadReady(6000, 6, 11, 7));
+    Check(!o.learn && m.learn_pending, "body 1 first: pending");
+    o = pr::Step(m, ReloadReady(7000, 6, 7, 7));
+    Check(o.learn && o.learn_body_ms == 900 && o.learn_remote_ms == 2000 && !m.learn_pending, "the remote's exit completes the pair");
+    // A body reload far from the remote's start (a raw press, no remote reload) is not paired.
+    pr::Step(m, ReloadReady(20000, 6, 7, 11));
+    o = pr::Step(m, ReloadReady(23000, 6, 7, 7));
+    Check(!o.learn, "an unpaired body reload is not learned");
+    // RateLearn: k converges toward parity, short and wild pairs are ignored, a pinned bound latches.
+    pr::RateAdapt a{};
+    Check(pr::RateLearn(a, 3020, 2027) == pr::RateVerdict::learned && a.k > 1.2f && a.k < 1.4f, "one 1.49x pair: k about 1.32");
+    const float k1 = a.k;
+    Check(pr::RateLearn(a, 2300, 2027) == pr::RateVerdict::learned && a.k > k1, "a slower-than-remote body still raises k");
+    Check(pr::RateLearn(a, 100, 2000) == pr::RateVerdict::short_span && pr::RateLearn(a, 9000, 2000) == pr::RateVerdict::ratio &&
+              a.ignored == 2, "short spans and a 4.5x mispair are ignored");
+    pr::RateAdapt b{};
+    for (int i = 0; i < 4; ++i) pr::RateLearn(b, 2900, 1000);
+    Check(b.k == pr::RateParams{}.k_max, "a 2.9x body pins k at k_max");
+    pr::RateVerdict v = pr::RateVerdict::learned;
+    for (int i = 0; i < 4 && !b.latched; ++i) v = pr::RateLearn(b, 2900, 1000);
+    Check(b.latched && b.k == 1.0f && v == pr::RateVerdict::latched && pr::RateLearn(b, 1000, 1000) == pr::RateVerdict::latched,
+          "no effect at the bound: latched, k back to 1");
+    pr::RateAdapt c{};
+    for (int i = 0; i < 6; ++i) pr::RateLearn(c, 1000, 1000);
+    Check(c.k == 1.0f && !c.latched, "parity keeps k = 1");
+    Check(pr::RateTarget(1.0f, 1.5f) == 1.5f && pr::RateTarget(2.0f, 3.0f) == 4.0f && pr::RateTarget(0.5f, 0.1f) == 0.25f,
+          "the target is native * k within 0.25..4");
+    Check(pr::RateTarget(20.0f, 1.5f) == 20.0f && pr::RateTarget(1.0f, -1.0f) == 1.0f, "an out-of-range native or k writes the native");
+    Check(pr::RateNativeOk(1.0f) && pr::RateNativeOk(3.0f) && !pr::RateNativeOk(0.0f) && !pr::RateNativeOk(9.0f), "native rate range");
+    Check(Is(pr::RateVerdictName(pr::RateVerdict::short_span), "short"), "verdict names");
+}
+
+void TestAnimShadow() {
+    pn::MagazineHistory h{};
+    pn::CommitMagazine(h, 20, 30, 0);
+    auto at = pn::PrepareMagazine(h, 20, 30, 2, false, false);
+    Check(at.needed && at.slot_changed && !at.reconcile, "a slot change (rifle -> handgun) is due with slot_changed");
+    at = pn::PrepareMagazine(h, 21, 30, 0, false, false);
+    Check(at.needed && !at.slot_changed, "a magazine change on the same slot: no slot change");
+    Check(pn::ShadowRewrite(false, true, 31, 11) && pn::ShadowRewrite(true, false, 5, 11) && pn::ShadowRewrite(false, false, 41, 11) &&
+              !pn::ShadowRewrite(false, false, 4, 11), "the base is rewritten on a reconcile, a slot change and above the capacity");
+}
+
+// The suspend sub-mode (docs/anim-round1-actions.md "DM overlay"): the DM
+// overlay suspends the drive without a fallback, a latch or a re-entry hold.
+void TestSuspend() {
+    pn::State s{};
+    pn::Reset(s, true);
+    std::uint64_t t = Activate(s, 1000);
+    for (unsigned episode = 0; episode < 6; ++episode) {
+        pn::In in = Healthy(++t);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Out o = pn::Step(s, in);
+        Check(LeaveRequests(o) && Is(o.reason, "overlay") && o.suspend_cycle && s.fallbacks == 0 && s.hard_leaves == 0 && s.net_leaves == 0,
+              "suspend: leaving (defer, window, dm=map rearm, epoch) without a fallback");
+        in.now_ms = ++t;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay") && o.suspend_cycle && o.transition, "suspend: fallback, suspend cycle");
+        for (int i = 0; i < 30; ++i) {
+            in.now_ms = (t += 100);
+            o = pn::Step(s, in);
+        }
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay") && !o.transition, "suspended: blocked with the overlay reason");
+        // The overlay released: re-enter at once (no cooldown, no 2 s settling); the window was disarmed: place step.
+        in = Ready(++t);
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::entering && Is(o.reason, "resume") && o.suspend_cycle && o.transition && Is(o.enter_step, "place") &&
+              o.req_defer_arm, "resume: entering at once (place step, deferral first)");
+        in.window_armed = in.recon_placed = true;
+        in.now_ms = ++t;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::active && o.suspend_cycle && !s.resumed, "resume: active, still on the suspend cycle");
+        in = Healthy(++t);
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::active && !o.suspend_cycle, "steady active: not a suspend cycle");
+        t += 100;
+    }
+    Check(s.fallbacks == 0 && s.suspends == 6 && s.mode == pn::Mode::active, "six suspends: never latched, never counted");
+    // Another blocker during the suspend restores the normal cooldown and settling hold.
+    {
+        pn::In in = Healthy(++t);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Step(s, in);
+        in.now_ms = ++t;
+        pn::Step(s, in);
+        in.link_live = false;
+        in.now_ms = ++t;
+        pn::Out o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay"), "suspend reason first");
+        in.suspend_reason = nullptr;
+        in.now_ms = ++t;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "link") && !s.suspended, "another blocker: the suspend shortcut is gone");
+        in = Ready(++t);
+        in.window_armed = in.recon_placed = true;
+        o = pn::Step(s, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "cooldown"), "normal cooldown again");
+        bool entered = false;
+        std::uint64_t at = 0;
+        for (int i = 0; i < 100 && !entered; ++i) {
+            in.now_ms = (t += 100);
+            o = pn::Step(s, in);
+            if (o.mode != pn::Mode::fallback) { entered = true; at = t; }
+        }
+        Check(entered && at - s.left_ms >= 5000, "re-entry after the cooldown and the settling hold");
+    }
+    // A suspend from entering leaves without counting either.
+    {
+        pn::State e{};
+        pn::Reset(e, true);
+        std::uint64_t now = 1000;
+        pn::Out o{};
+        for (; now < 10000 && o.mode != pn::Mode::entering; now += 100) o = pn::Step(e, Ready(now));
+        Check(o.mode == pn::Mode::entering, "entering");
+        pn::In in = Ready(now);
+        in.suspend_reason = pn::kSuspendOverlay;
+        o = pn::Step(e, in);
+        Check(LeaveRequests(o) && e.fallbacks == 0 && e.suspended, "suspend while entering: no fallback counted");
+    }
+    // A suspend never latches, whatever the latch threshold says.
+    {
+        pn::State z{};
+        pn::Reset(z, true);
+        pn::Params strict{};
+        strict.latch_fallbacks = 0;
+        std::uint64_t now = 1000;
+        pn::Out o{};
+        for (; now < 10000 && o.mode != pn::Mode::active; now += 100) {
+            pn::In in = Ready(now);
+            in.window_armed = in.recon_placed = true;
+            o = pn::Step(z, in, strict);
+        }
+        Check(o.mode == pn::Mode::active, "strict latch: active");
+        pn::In in = Healthy(now);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Step(z, in, strict);
+        in.now_ms = now + 1;
+        o = pn::Step(z, in, strict);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay"), "a suspend never latches");
+    }
+    // A suspend while already in fallback (the drive was not active) keeps the normal hold.
+    {
+        pn::State f{};
+        pn::Reset(f, true);
+        pn::In in = Ready(1000);
+        in.suspend_reason = pn::kSuspendOverlay;
+        pn::Out o = pn::Step(f, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "overlay") && !f.suspended && !o.suspend_cycle, "fallback blocked by the overlay");
+        in.suspend_reason = nullptr;
+        in.now_ms = 1100;
+        o = pn::Step(f, in);
+        Check(o.mode == pn::Mode::fallback && Is(o.reason, "settling"), "not suspended by us: the normal settling hold");
+    }
+}
+
 int main() {
+    TestSuspend();
     for (const char* visibilityWhy : {"ride", "ride_stale", "air", "dead"}) {
         pn::State visibilityState{}; pn::Reset(visibilityState, true);
         for (unsigned episode=0; episode<6; ++episode) {
@@ -1676,6 +2036,11 @@ int main() {
     TestMagazineHistory();
     TestReload();
     TestSlots();
+    TestAnimUnsupported();
+    TestAnimAimIntent();
+    TestAnimDry();
+    TestAnimReload();
+    TestAnimShadow();
     TestOffAndLegacy();
     TestEnterSequence();
     TestEnterTimeoutsAndRevertLatch();
@@ -1700,6 +2065,7 @@ int main() {
                 "refusals), weapons (capacity, magazine, CanReload, reload gate, magazine mirror), online play (network leaves "
                 "without latch, quality-gated re-entry, quiet remote, flap guard, remote_caps, hold=net, link quality, reason "
                 "codes, native.net JSON, capability message), aim parity, reload and switch (event machine, freeze rule, sender "
-                "counters, slot plan, weapon gate)\n", checks);
+                "counters, slot plan, weapon gate), anim round 1 (unsupported gate, aim intent gate, frame rule and edges, auto-fire "
+                "stop, reload queue, rate learning, rec+0x3E8 rule)\n", checks);
     return 0;
 }

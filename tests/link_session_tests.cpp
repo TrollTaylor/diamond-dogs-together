@@ -745,6 +745,42 @@ void SourceChanged() {
     Check(guest->session.state() == link::LinkState::connected && guest->session.stats().src_changed >= 2, "src_changed counted");
 }
 
+// A slow relay delivers the guest's queued HELLOs to the host in one burst
+// (kGuestNonces of them) before the guest sees any WELCOME. The guest commits
+// on the first matching WELCOME (its oldest HELLO), so the host must still
+// hold that HELLO's pending slot when the CONFIRM arrives (kPendingSlots).
+void PendingBurst() {
+    static_assert(link::kPendingSlots >= link::kGuestNonces, "one pending slot per nonce the guest still accepts");
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
+    std::vector<Datagram> hellos;
+    for (std::uint64_t t = 0; hellos.size() < link::kGuestNonces && t < 5000; t += 100) {
+        guest->session.OnTimer(t);
+        guest->Collect();
+        for (auto& d : guest->outbox) hellos.push_back(d);
+        guest->outbox.clear();
+    }
+    Check(hellos.size() == link::kGuestNonces && guest->session.state() == link::LinkState::connecting, "4 HELLOs queued");
+    for (const auto& d : hellos) host->session.OnDatagram(d.bytes.data(), d.bytes.size(), kGuestEp, 1600);
+    host->Collect();
+    Check(host->outbox.size() == link::kGuestNonces, "one WELCOME per queued HELLO");
+    std::vector<Datagram> welcomes = host->outbox;
+    host->outbox.clear();
+    for (const auto& d : welcomes) {
+        guest->session.OnDatagram(d.bytes.data(), d.bytes.size(), kHostEp, 1700);
+        guest->Collect();
+    }
+    Check(guest->session.state() == link::LinkState::handshake && guest->outbox.size() == 1 &&
+              guest->Drops(link::DropReason::unknown_msg) == link::kGuestNonces - 1,
+          "the guest commits on the first WELCOME (the later ones are dropped)");
+    Pump({host.get(), guest.get()}, 1710);
+    Check(guest->session.state() == link::LinkState::connected && host->session.state() == link::LinkState::connected &&
+              host->Saw(link::EventKind::connected) && host->session.session_number() == 1,
+          "the host still holds the oldest HELLO's slot and accepts its CONFIRM");
+    Check(host->Drops(link::DropReason::wrong_session) == 0 && guest->Drops(link::DropReason::wrong_session) == 0,
+          "no wrong_session drops after a HELLO burst");
+}
+
 void GuestBackoff() {
     auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     unsigned first10 = 0, until10min = 0, after = 0;
@@ -832,6 +868,7 @@ int main() {
     RateLimits();
     Malformed();
     SourceChanged();
+    PendingBurst();
     GuestBackoff();
     SeqExhaustion();
     ExactFilter();

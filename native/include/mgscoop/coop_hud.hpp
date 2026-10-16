@@ -4,7 +4,11 @@
 // Producers post copied data only: partner_net's transport thread publishes a
 // LinkView (state, route, round trip, reason, the partner's goodbye, the
 // Steam end reason) and posts events (connected, lost, reconnected, partner
-// left, refused, version mismatch, Steam unavailable); the Steam owner pass
+// left, refused, version mismatch, Steam unavailable, a pasted code ignored
+// while connected or connecting); world_link posts world_note (the world
+// sync notes: helicopter hold, different missions, story-start save, travel
+// lock); the save handoff glue posts save_handoff (docs/save-handoff.md);
+// the Steam owner pass
 // posts invite_sent, the script observer no_body (a partner mission started
 // on a pack list the player package selection refused, docs/two-pc-play.md
 // "In game") and the F9 panel code_copied (the HUD is hidden while the
@@ -51,6 +55,16 @@ struct LinkView {
     char own_build[24];
     std::uint64_t publish_ms;  // GetTickCount64 at publish
     std::uint32_t session, mission; // refuse views from a previous link/mission
+    // World sync (partner_net::PublishWorldState); zero keeps today's line:
+    // the local world level, the published pair-wait code (world_wire
+    // pair_wait; 9 different_mission, 11 settling), paired, and the partner's
+    // mission (0 unknown or not connected).
+    std::uint8_t world_level{}, pair_wait{};
+    bool world_paired{};
+    std::uint32_t partner_mission{};
+    // Save handoff (partner_net::PublishHandoffState; join-fix phase 2 P2-15):
+    // the save_handoff_state::Token and its percent; zero keeps today's line.
+    std::uint8_t handoff{}, handoff_pct{};
 };
 void PublishLink(const LinkView& view) noexcept;
 bool GetLink(LinkView& out) noexcept;
@@ -131,7 +145,10 @@ enum class EventKind : std::uint8_t {
     joining,       // text: the masked host, arg: 1 from an invite
     join_refused,  // text: the parser status
     code_copied,
-    no_body        // arg: the mission, text: the refused pack's scene (partner::PackSceneName)
+    no_body,       // arg: the mission, text: the refused pack's scene (partner::PackSceneName)
+    world_note,    // arg: the note code, text: "<a> <b> <partner> <local>" in decimal (PostWorldNote)
+    join_ignored,  // text: via (a pasted code while already connected or connecting)
+    save_handoff   // arg: save_handoff_state::Toast code, text: "<a> <b>" in decimal (coop_text::FormatSaveHandoff)
 };
 struct Event {
     EventKind kind;
@@ -140,6 +157,14 @@ struct Event {
     std::uint32_t sequence;
 };
 void Post(EventKind kind, std::int32_t arg, const char* text) noexcept;
+// A world sync note (docs/world-sync-protocol.md NOTE codes) as a world_note
+// event; the sentence is coop_text::FormatWorldNote's. Any thread.
+void PostWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint32_t partner,
+                   std::uint32_t local) noexcept;
+// An automatic save handoff toast (save_handoff_state::Toast code, G1..G10 /
+// H1..H7) as a save_handoff event with the text "<a> <b>"; the sentence is
+// coop_text::FormatSaveHandoff's. The same as Post(save_handoff, code, "<a> <b>"). Any thread.
+void PostSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b) noexcept;
 // Copies the events newer than `cursor` (oldest first) and advances it.
 unsigned Take(Event* out, unsigned max, std::uint32_t& cursor) noexcept;
 
@@ -181,15 +206,23 @@ struct RescuePrompt {
 bool ClassifyDowned(const DownedView& view, std::uint32_t current_mission, std::uint64_t now_ms, RescuePrompt& out) noexcept;
 const char* RescueName(Rescue state) noexcept;
 // The status line for `view` (`name`: the partner's display name, may be "").
-// False when nothing is shown (no view, link off).
+// False when nothing is shown (no view, link off). A save handoff in progress
+// (view.handoff, a save_handoff_state::Token) replaces the partner part of the
+// connected line: receiving "... | getting host save N%", sending "... |
+// sending your save N%", staged / countdown / exiting "CO-OP [connected] <name>
+// | host save ready - MGSV restarts"; the host whose partner left with
+// partner_restarting shows "CO-OP [<name> restarting] loading your save -
+// waiting for them". handoff 0 (off) keeps every other line unchanged.
 bool FormatLine(const LinkView& view, const char* name, Mode mode, std::uint64_t now_ms, Line& out,
                 const PartnerView* partner = nullptr) noexcept;
 // The toast sentence for one event (false: no toast for it).
 bool FormatToast(const Event& event, const LinkView& view, const char* name, char* out, std::size_t capacity, Tone& tone) noexcept;
 class Model {
 public:
-    // A new toast (an identical active one is extended instead); the oldest
-    // is replaced when kMaxToasts are active.
+    // A new toast. An identical active one is extended instead, and an active
+    // one that differs only in its numbers (the save handoff countdown "MGSV
+    // restarts in 9 s" after "10 s", a new percent) is replaced in place; the
+    // oldest is replaced when kMaxToasts are active.
     void Add(const char* text, Tone tone, std::uint64_t now_ms) noexcept;
     void OnEvent(const Event& event, const LinkView& view, const char* name, std::uint64_t now_ms) noexcept;
     // Active toasts, newest first; returns the count (<= kMaxToasts).

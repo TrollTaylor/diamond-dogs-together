@@ -1,6 +1,7 @@
 -- W3 startup Continue against exact extracted game function bodies. The engine
 -- records calls; no game, real save, external service or transport is used.
--- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua, world_follow_seed.lua, extracted TppPlayer.lua.
+-- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua, world_follow_seed.lua, extracted TppPlayer.lua,
+-- world_handoff.lua (join-fix phase 2: composed after world_follow, as in the splice).
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local function read(path) local f = assert(io.open(path, 'rb')); local s = f:read('*a'); f:close(); return s end
@@ -15,12 +16,18 @@ local stopSource = slice(read(worldPath), 'function W.stop(final)', '-- Control 
 local continueSource = slice(missionSource, 'function e.ExecuteContinueFromCheckPoint(', 'function e.IncrementRetryCount(')
 local loadSource = slice(missionSource, 'function e.RequestLoad(', 'function e.ExecuteReload(')
 local reserveSource = slice(mainSource, 'function e.ReservePlayerLoadingPosition(', 'function e.OnReload(')
+-- The sortie deploy: the vanilla OnEndMissionPreparation (and GoToEmergencyMission)
+-- reserve their clear through e.ReserveMissionClear, which world_follow wraps.
+local deploySource = slice(missionSource, 'function e.ReserveMissionClear(', 'function e.MissionGameEnd(') ..
+    slice(missionSource, 'function e.OnEndMissionPreparation(', 'function e.GetNextMissionCodeForEmergency(') ..
+    slice(missionSource, 'function e.GoToEmergencyMission(', 'function e.RequestLoad(') ..
+    slice(missionSource, 'function e.SetNextMissionCodeForMissionClear(', 'function e.GetNextMissionCodeForMissionClear(')
 local allocationTitleSource = slice(mainSource, 'if gvars.ini_isTitleMode then', 'TppUiCommand.ExcludeNonPermissionContents()')
 local initialActionSource = slice(read(arg[5]), 'if(gvars.ply_initialPlayerState==TppDefine.INITIAL_PLAYER_STATE.RIDEON_HELICOPTER)',
     'mvars.ply_locationStationTable={}')
 local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13, REJECT = 4, MISSION_END = 7}
 local locations = {[30010] = 10, [40010] = 10, [30020] = 20, [40020] = 20, [30050] = 50, [40050] = 50}
-local function fixture(host, target, level, active)
+local function fixture(host, target, level, active, deploy)
     local c = {time = 1000, tx = {}, logs = {}, chunkChecks = {}, engine = {}, stages = {}, configLevel = level or 3}
     local env = setmetatable({}, {__index = _G})
     local function noop() end
@@ -86,7 +93,7 @@ local function fixture(host, target, level, active)
         c.restores = (c.restores or 0) + 1
         c.restoreTitle = {env.gvars.ini_isTitleMode, env.gvars.ini_isReturnToTitle, env.gvars.isContinueFromTitle}
         env.svars.ply_isUsedPlayerInitialAction = host
-        local m = host and target or 40020
+        local m = host and target or c.ownTarget or 40020
         env.vars.missionCode, env.vars.locationCode = m, locations[m]
         if host then
             env.vars.initialPlayerFlag = 1
@@ -138,6 +145,10 @@ local function fixture(host, target, level, active)
         local chunk = assert(loadstring(text)); setfenv(chunk, env); chunk()
     end
     compile('local e=TppMission\n' .. continueSource .. loadSource)
+    if deploy then
+        env.TppDefine.MISSION_CLEAR_TYPE, env.TppDefine.STORY_MISSION_CLUSTER_ID = {FROM_HELISPACE = 3}, {}
+        compile('local e=TppMission\n' .. deploySource)
+    end
     compile('local e=TppMain\n' .. reserveSource)
     compile('function TppMain.TestAllocationTitleContext(n)\n' .. allocationTitleSource .. '\nend')
     compile('function TppPlayer.TestInitialAction(a)\nlocal i=GameObject.GetGameObjectId\nlocal n=GameObject.NULL_ID\n' .. initialActionSource .. '\nend')
@@ -146,7 +157,12 @@ local function fixture(host, target, level, active)
         epoch = 7, paired = true, eff = 3, isStarted = true}
     env.e.MgsCoopWorld = W
     W.get = function(t, k) return t and t[k] end
-    W.cfg = function() return {c.configLevel, c.configRole or W.role, 1, c.link or 1, 7, 0, 1, c.session or 55} end
+    W.cfg = function()
+        local r = {c.configLevel, c.configRole or W.role, 1, c.link or 1, 7, 0, 1, c.session or 55}
+        -- A phase-2 loader (partner scene r[9..11], handoff r[12], lock r[13]) only when a test sets c.lock.
+        if c.lock ~= nil then r[9], r[10], r[11], r[12], r[13] = 30010, 3, 9, c.handoff or 0, c.lock end
+        return r
+    end
     W.h = function() return 444 end
     W.now = function() return c.time end
     W.inGame = function() return false end
@@ -154,9 +170,23 @@ local function fixture(host, target, level, active)
     W.log = function(text) c.logs[#c.logs + 1] = text end
     W.fail = function(text) c.failure = text; W.active = false end
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op = op, v = {...}}; return true end
+    -- SAVE_V1 receipts (world_handoff): recorded as integer lists.
+    c.saves = {}
+    W.n = function(v) if type(v) == 'number' and v == math.floor(v) and v >= 0 and v < 4294967296 then return string.format('%.0f', v) end end
+    W.receipt = function(source)
+        local body = assert(source:match("^return 'MGS_COOP_WORLD_SAVE_V1' %-%- (%d+ %d+ %d+ %d+ %d+ %d+)$"), source)
+        local v = {}
+        for n in body:gmatch('%d+') do v[#v + 1] = tonumber(n) end
+        c.saves[#c.saves + 1] = v
+        return true
+    end
+    -- NOTE recorder; W.peer stays nil (an older loader: the legacy follow behaviour).
+    c.notes = {}
+    W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end
     compile('local W=e.MgsCoopWorld\nlocal OP=W.OP\n' .. stopSource)
     compile(read(arg[4]))
     compile(read(arg[1]))
+    compile(read(assert(arg[6], 'world_handoff.lua argument')))
     W.follow.install({level or 3, W.role})
     for _, f in ipairs(W.startHooks) do f() end
     for _, f in ipairs(W.pairedHooks) do f(false) end
@@ -379,4 +409,133 @@ check(not beforeReplay.F.current and not beforeReplay.restores and not beforeRep
 beforeReplay.link = 1; beforeReplay.F.tick(beforeReplay.time)
 check(beforeReplay.F.current and beforeReplay.F.current.session == 55 and beforeReplay.restores == 1,
     'first replay binds the current native session after link returns')
+-- A story or emergency destination chosen again (docs/join-fix-phase1-spec.md C5): the
+-- exact vanilla deploy reserves its own clear through the wrapped e.ReserveMissionClear.
+for _, case in ipairs({{10020, 0, 10020}, {30020, 50050, 50050}}) do
+    local d = fixture(true, 30020, 3, true, true)
+    local g = d.env.gvars
+    g.mis_nextMissionCodeForMissionClear, g.mis_nextMissionCodeForEmergency, g.mis_nextMissionStartRouteForEmergency = case[1], case[2], 77
+    d.env.TppMission.OnEndMissionPreparation(5, nil)
+    check(d.env.mvars.mis_isReserveMissionClear == nil and #d.notes == 1 and d.notes[1][1] == 4 and d.notes[1][2] == case[1],
+        'exact-game deploy to ' .. case[3] .. ': the first choice is refused')
+    d.time = d.time + 1500
+    d.env.TppMission.OnEndMissionPreparation(5, nil)
+    check(d.env.mvars.mis_isReserveMissionClear == true and d.env.svars.mis_isDefiniteMissionClear == true and
+        g.mis_nextMissionCodeForMissionClear == case[3] and d.env.svars.mis_missionClearType == 3 and d.env.mvars.mis_selectedDeployTime == 5 and
+        #d.notes == 2 and d.notes[2][1] == 3 and d.notes[2][3] == 3 and d.F.pass == nil,
+        'exact-game deploy to ' .. case[3] .. ': chosen again, the vanilla clear is reserved')
+end
+-- Join-fix phase 2 (world_handoff composed): the host's real title Continue reports
+-- its restored checkpoint target (SAVE op 2, the provenance binding).
+local reporter = fixture(true, 30050)
+hostContinue(reporter)
+local continues = {}
+for _, v in ipairs(reporter.saves) do if v[1] == 2 then continues[#continues + 1] = v end end
+check(#continues == 1 and continues[1][2] == 30050 and continues[1][3] == 0 and continues[1][5] == 0 and continues[1][6] == 0,
+    'actual host Continue sends one SAVE op 2 with the restored checkpoint mission')
+-- The game's title Continue (review lua-flow-1) never calls TppMission's Continue
+-- functions. Model of the vanilla title_sequence.lua flow (lua sha 1d9eb747...,
+-- docs/characters.md:312, read only): the UI Continue runs Seq_Game_TitleMenu's
+-- OnSelectContinue (select flag: a helicopter-space, 10115 or 50050 next mission
+-- restarts in the helicopter, anything else continues; next sequence CheckDlc);
+-- after the chunk check Seq_Game_ChunkInstalled fades out and
+-- OnEndFadeOutSelectContinue runs TppSave.VarRestoreOnContinueFromCheckPoint,
+-- ClearTitleMode, TppMain.ReservePlayerLoadingPosition(CONTINUE), sets
+-- isContinueFromTitle and calls TppMission.Load(vars.missionCode, title mission).
+-- The TppMain/TppMission bodies below it are the exact extracted ones.
+local function titleFlow(g, titleMission)
+    local env = g.env
+    local menu = {}
+    function menu.OnSelectContinue()
+        local n = env.gvars.title_nextMissionCode
+        g.selectFlag = (env.TppMission.IsHelicopterSpace(n) or n == 10115 or n == 50050) and 'heli' or 'continue'
+        g.selects = (g.selects or 0) + 1
+    end
+    function menu.OnSelectRestartHeli() g.selectFlag = 'heli'; g.selects = (g.selects or 0) + 1 end
+    function menu.Messages(self) return {Continue = self.OnSelectContinue, RestartHeli = self.OnSelectRestartHeli} end
+    env.mvars.seq_sequenceTable = {Seq_Game_TitleMenu = menu}
+    env.TppUiCommand.RebootTitleSelectMenu = function() g.reboots = (g.reboots or 0) + 1 end
+    env.title_sequence = {StartTitleMenu = function() g.menuStarts = (g.menuStarts or 0) + 1 end}
+    g.W.follow.install({3, g.W.role})  -- the title mission's init (before TppSequence.Init)
+    local exec = menu.Messages(menu)   -- TppSequence.Init captures the handlers now
+    g.restart = function() exec.RestartHeli() end
+    -- One press: the select and, when it went through into a Continue, the fade and the load.
+    g.press = function()
+        local before = g.selects or 0
+        exec.Continue()
+        if (g.selects or 0) == before then return false end
+        if g.selectFlag ~= 'continue' then return true end
+        env.TppSave.VarRestoreOnContinueFromCheckPoint()
+        env.gvars.ini_isTitleMode, env.gvars.ini_isReturnToTitle = false, false
+        env.TppMain.ReservePlayerLoadingPosition(env.TppDefine.MISSION_LOAD_TYPE.CONTINUE_FROM_CHECK_POINT)
+        env.gvars.isContinueFromTitle = true
+        env.TppMission.Load(env.vars.missionCode, titleMission)
+        return true
+    end
+    return g
+end
+-- A linked guest at a 40050 title with the host in 30010 (phase-2 CFG r[12..13]).
+local function titleGuest(armed, handoff)
+    local g = fixture(false, 30050)
+    if not armed then g.W.paired, g.F.armed = false, false end
+    g.W.mission, g.env.vars.missionCode, g.env.vars.locationCode = 40050, 40050, 50
+    g.env.gvars.ini_isTitleMode, g.env.gvars.ini_isReturnToTitle = true, true
+    g.env.gvars.title_nextMissionCode = 30050
+    g.env.TppMission.IsHelicopterSpace = function(m) return math.floor(m / 10000) == 4 end
+    for _, f in ipairs(g.W.startHooks) do f() end
+    g.lock, g.handoff, g.ownTarget = 1, handoff or 0, 30050
+    g.W.peer = function() return {mission = 30010, level = 3, wait = 9, linked = true, session = 55} end
+    return titleFlow(g, 40050)
+end
+local function noted(g, code)
+    local n = 0
+    for _, v in ipairs(g.notes) do if v[1] == code then n = n + 1 end end
+    return n
+end
+local locked = titleGuest(false)
+check(locked.press() == false and not locked.selects and not locked.restores and not locked.env.mvars.mis_loadRequest and
+    not locked.loaded and #locked.engine == 0 and locked.env.gvars.usingNormalMissionSlot == false and
+    locked.env.gvars.ini_isTitleMode == true and #locked.notes == 1 and locked.notes[1][1] == 7 and
+    locked.notes[1][2] == 30010 and locked.notes[1][3] == 1,
+    'locked guest title Continue: refused at the menu select, before the fade, VarRestore or load (note 7 b=1)')
+check(locked.reboots == 1 and locked.menuStarts == 1 and #locked.tx == 0, 'the menu takes input again; no world op sent')
+locked.time = locked.time + 2000
+check(locked.press() == true and locked.restores == 1 and locked.loaded and locked.loaded[1] == 30050 and
+    locked.env.vars.missionCode == 30050, 'the repeat 2 s later runs the vanilla title flow into its own checkpoint')
+local continued, landing
+for _, v in ipairs(locked.saves) do if v[1] == 2 then continued = v end end
+for _, v in ipairs(locked.notes) do if v[1] == 11 then landing = v end end
+check(continued and continued[2] == 30050 and continued[3] == 1 and landing and landing[2] == 30050 and landing[3] == 30010,
+    'its title Continue reports op 2 (title=1, latched before ClearTitleMode) and warns that it lands away from the host (note 11)')
+local unlocked = titleGuest(false)
+unlocked.lock = 0
+check(unlocked.press() == true and unlocked.restores == 1 and #unlocked.notes == 0, 'travel lock off (r13=0): the vanilla title Continue runs at once')
+-- A pending handoff: the veto works with the lock off too (review SS-2), and the repeat declines.
+local pending = titleGuest(false, 3)
+pending.lock = 0
+check(pending.press() == false and not pending.restores and noted(pending, 9) == 1, 'handoff pending, lock off: refused with note 9')
+pending.time = pending.time + 2000
+local declines = 0
+check(pending.press() == true and pending.restores == 1, 'the repeat continues the guest own save')
+for _, v in ipairs(pending.saves) do if v[1] == 3 then declines = declines + 1 end end
+check(declines == 1 and noted(pending, 10) == 1, 'and declines the handoff first (SAVE op 3, note 10)')
+-- An armed guest follows the host's Continue: its own select is suppressed, a second
+-- press while the host's save is coming declines the handoff.
+local follower = titleGuest(true, 3)
+check(follower.F.armed and follower.press() == false and not follower.restores and noted(follower, 9) == 1 and
+    follower.tx[#follower.tx].op == OP.REQ_MISSION and follower.reboots == 1, 'armed guest: suppressed (REQ_MISSION), note 9')
+follower.time = follower.time + 2000
+local followerDeclines = 0
+check(follower.press() == false and not follower.restores, 'armed guest: still no own Continue')
+for _, v in ipairs(follower.saves) do if v[1] == 3 then followerDeclines = followerDeclines + 1 end end
+check(followerDeclines == 1 and noted(follower, 10) == 1, 'armed guest: the second press declines (SAVE op 3, note 10)')
+-- RestartHeli stays in this helicopter: no travel rule (unarmed or armed).
+for _, armed in ipairs({false, true}) do
+    local heli = titleGuest(armed)
+    heli.restart()
+    check(heli.selects == 1 and heli.selectFlag == 'heli' and #heli.notes == 0, 'RestartHeli is allowed (armed=' .. tostring(armed) .. ')')
+end
+local heliPending = titleGuest(false, 3)
+heliPending.restart()
+check(not heliPending.selects and noted(heliPending, 9) == 1, 'RestartHeli while the handoff is pending: note 9 first')
 print(checks .. ' exact-game W3 Continue/load checks passed; no game')

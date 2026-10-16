@@ -15,6 +15,33 @@ Scenario: one step per line (a file via -ScenarioPath or lines via -Step);
 blank lines and lines starting with # are ignored. Roles: host, guest, both.
 
   title [timeoutSec]               press Enter on each role until it reports gameplay ready
+  title <host|guest> [timeoutSec]  the same for one role only (the other stays where it is)
+  titlemenu <host|guest|both> <timeoutSec>
+                                   press Enter every 3 s only while the role is still at the boot
+                                   screens (state.json mission 0 or 1, or no state yet) and stop once
+                                   it reaches a title (40010/40020/40050); its loading.json naming a
+                                   title mission ends the presses before an Enter could become Continue
+  waitlog <host|guest> <regex> <timeoutSec>
+                                   wait for a complete script-observer.log line of this session (from
+                                   session.json roles.<role>.log_offsets) matching the case-sensitive
+                                   regex; wrap it in single quotes when it holds spaces; nonfatal
+                                   (a timeout is listed in ExpectFailures)
+  expectstate <host|guest> <field> <regex>
+                                   the role's fresh state.json field (mission, generation, gameplay_ready,
+                                   terminating, world_level, world_paired, world_effective,
+                                   world_partner_mission, world_pair_wait, handoff, handoff_pct,
+                                   travel_unlocked) must match; nonfatal like expect
+  waitexit <host|guest> <timeoutSec>
+                                   wait until the role's owned game process has exited on its own
+                                   (supervisor still running); records it in session.json
+                                   (roles.<role>.exited, forced=false); later steps that drive that
+                                   role fail fast (waitlog and applyhandoff still work)
+  applyhandoff guest               after waitexit guest: check run\guest-saves-handoff\request.json and
+                                   its staged set now, then, once the owned session has closed (the
+                                   supervisor holds run\guest-saves without delete sharing until it
+                                   exits), apply it with Import-CoopProgressFiles (FriendCommon) to
+                                   run\guest-saves, keeping the old copy in run\guest-saves-replaced;
+                                   the before/after hashes and checks go to scenario.json HandoffApply
   <role> press <keys> [ms]         keys joined by +: w a s d enter space escape e r shift ctrl 1 2 f
                                    c q x z tab lmb rmb (c = crouch, hold c ~0.3 s = prone)
   <role> hold <keys> <ms> [nowait] hold for 1..1500 ms (repeat the step for longer holds);
@@ -71,7 +98,25 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    online play A/B: partner_native_net=lab|online, partner_native_stall=neutral|hold,
                                    partner_native_hold=own|net, partner_input_edge_repeats=2..8;
                                    steam_selftest_fn=0|1, the self-test's function-pointer stage F/D;
-                                   coop_hud=compact|full|off, the in-game co-op status line and toasts)
+                                   coop_hud=compact|full|off, the in-game co-op status line and toasts;
+                                   the seated vehicle rider: partner_native_ride=off|hide|seat,
+                                   partner_ride_seat_enter=direct|getin, partner_ride_seat_exit=stop|getoff;
+                                   partner_native_support=0|1, guarded native type-12 throws (default on with the gun profile);
+                                   WS3 vehicles (docs/vehicle-ws3.md; census lab only, default off; seat id and tilt default on): partner_ride_census=0|1
+                                   the read-only vehicle census, partner_ride_seat_id=0|1 the seat by id (unnamed
+                                   vehicles), partner_ride_tilt=0|1 RIDE_TILT (the driver's vehicle angles);
+                                   partner_placed_census=0|1, the read-only WS4 C4 / bionic-arm census (lab only);
+                                   partner_native_placed=0|1 / partner_native_arm=0|1, WS4 v1 native C4 placing
+                                   (391..395) and arm holds (HOLD only) for the partner body (default on with the gun profile);
+                                   partner_fire_census=0|1, the owner census for support and other requests;
+                                   partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
+                                   partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the
+                                   native stance window (0: the previous 2 s rule); docs/anim-round1-actions.md);
+                                   join-fix phase 2: save_handoff=off|stage|scene|always, travel_lock=0|1
+
+Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
+or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the
+save handoff restart proof, scenarios/handoff-after-restart.txt).
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -100,10 +145,14 @@ param(
     [switch]$NativeActivationObserver,
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
+    # Per-role seeds ('' = -SaveSeed) and the guest seed from an earlier closed run (P2-19).
+    [ValidateSet('','real','lab')][string]$HostSaveSeed='',
+    [ValidateSet('','real','lab')][string]$GuestSaveSeed='',
+    [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$GuestSaveSeedRun='',
     # Optional quality preset, applied only to this run's fresh role save copies.
     [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01])$')][string[]]$LabSetting=@(),
     # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
     # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
     [ValidateSet('lab','play')][string]$Mode='lab',
@@ -123,6 +172,11 @@ Assert-WorkerMgoSleepRestScope $BuildProfile $Mode $PartnerProfile $NativeStage 
 Assert-WorkerMgoUniqueRestScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoUniqueRestArchive $BuddyCapacityArchive $MgoSleepRestArchive
 Assert-WorkerMgoStandingCycleScope $BuildProfile $Mode $PartnerProfile $NativeStage ([bool]$AmmoExperiment) $MgoStandingCycleArchive $BuddyCapacityArchive $MgoSleepRestArchive $MgoUniqueRestArchive
 if($BuildProfile -ceq 'mgo-standing-cycle' -and $SaveSeed -cne 'lab'){throw 'Standing cycle tests require copied lab saves.'}
+# Start-WorkerSession checks the seed run itself; refuse the combinations here before any build or check.
+if($GuestSaveSeedRun -and $GuestSaveSeed){throw '-GuestSaveSeedRun excludes -GuestSaveSeed.'}
+if($GuestSaveSeedRun -cnotmatch '^$|^[0-9a-f]{32}$'){throw '-GuestSaveSeedRun must be one exact lower-case worker run id.'}
+if(($BuildProfile -ceq 'mgo-standing-cycle' -or $NativeActivationObserver) -and (($HostSaveSeed -and $HostSaveSeed -cne 'lab') -or
+    ($GuestSaveSeed -and $GuestSaveSeed -cne 'lab') -or $GuestSaveSeedRun)){throw 'Standing cycle and native activation tests require copied lab saves for both roles.'}
 if($StandingLookupObserver -and $BuildProfile -cne 'mgo-standing-cycle'){throw '-StandingLookupObserver needs the exact standing-cycle profile.'}
 if($StandingFrameObserver -and ($BuildProfile -cne 'mgo-standing-cycle' -or !$StandingLookupObserver)){throw '-StandingFrameObserver needs the exact standing-cycle profile and -StandingLookupObserver.'}
 Assert-WorkerNativeActivationScope ([bool]$NativeActivationObserver) $BuildProfile $Mode $PartnerProfile $NativeStage $SaveSeed ([bool]$AmmoExperiment)
@@ -148,7 +202,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01])$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
@@ -174,10 +228,29 @@ function Test-ScenarioKeys([string]$Keys){
         @($parts|Sort-Object -Unique).Count -eq $parts.Count
 }
 function Test-ScenarioLabel([string]$Label){return $Label -cmatch '^[A-Za-z0-9_-]{1,64}$'}
+# A step's regex (waitlog, expectstate): its tokens joined by single spaces, without
+# one surrounding pair of single quotes (so a pattern may hold spaces). $null when
+# empty or not a valid .NET regex.
+function ConvertFrom-ScenarioPatternTokens([string[]]$Tokens){
+    $text=(@($Tokens) -join ' ')
+    if($text.Length -ge 2 -and $text.StartsWith("'") -and $text.EndsWith("'")){$text=$text.Substring(1,$text.Length-2)}
+    if(!$text){return $null}
+    try{$null=[regex]::new($text)}catch{return $null}
+    return $text
+}
 foreach($line in $steps){
     $t=$line -split '\s+'
     $ok=switch -Regex ($t[0]) {
-        '^title$' {$t.Count -eq 1 -or ($t.Count -eq 2 -and [int]$t[1] -ge 5 -and [int]$t[1] -le 400)}
+        '^title$' {$t.Count -eq 1 -or ($t.Count -eq 2 -and $t[1] -cmatch '^[0-9]{1,3}$' -and [int]$t[1] -ge 5 -and [int]$t[1] -le 400) -or
+            ($t.Count -in 2,3 -and $t[1] -cin 'host','guest' -and ($t.Count -eq 2 -or ($t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400)))}
+        '^titlemenu$' {$t[0] -ceq 'titlemenu' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest','both' -and $t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
+        '^waitlog$' {$t[0] -ceq 'waitlog' -and $t.Count -ge 4 -and $t[1] -cin 'host','guest' -and $t[-1] -cmatch '^[0-9]{1,3}$' -and [int]$t[-1] -ge 1 -and [int]$t[-1] -le 400 -and
+            $null -ne (ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)]))}
+        '^expectstate$' {$t[0] -ceq 'expectstate' -and $t.Count -ge 4 -and $t[1] -cin 'host','guest' -and
+            $t[2] -cin 'mission','generation','gameplay_ready','terminating','world_level','world_paired','world_effective','world_partner_mission','world_pair_wait','handoff','handoff_pct','travel_unlocked' -and
+            $null -ne (ConvertFrom-ScenarioPatternTokens @($t[3..($t.Count-1)]))}
+        '^waitexit$' {$t[0] -ceq 'waitexit' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest' -and $t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
+        '^applyhandoff$' {$t[0] -ceq 'applyhandoff' -and $t.Count -eq 2 -and $t[1] -ceq 'guest'}
         '^wait$' {$t.Count -eq 2 -and [int]$t[1] -ge 0 -and [int]$t[1] -le 60000}
         '^state$' {$t.Count -eq 1}
         '^waitmission$' {$t.Count -eq 4 -and $t[1] -cin 'host','guest' -and $t[2] -cin '30010','30020','30050','40010','40020','40050' -and [int]$t[3] -ge 5 -and [int]$t[3] -le 400}
@@ -189,6 +262,10 @@ foreach($line in $steps){
         '^aimturn$' {$t.Count -eq 5 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'host','guest' -and
             [Math]::Abs([int]$t[3]) -eq 1500 -and (Test-ScenarioLabel $t[4])}
         '^resetpose$' {$t.Count -eq 2 -and $t[1] -cin 'host','guest'}
+        # Worker-only input stall (docs/anim-round2-throws.md "Stall test step"): the role sends no
+        # partner input for 50..1000 ms (the native input_stall command; non-worker builds refuse it).
+        '^stall$' {$t[0] -ceq 'stall' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest' -and $t[2] -cmatch '^[1-9][0-9]{1,3}$' -and
+            [int]$t[2] -ge 50 -and [int]$t[2] -le 1000}
         default {
             $roleNames -ccontains $t[0] -and $t.Count -ge 2 -and $(switch($t[1]){
                 'press'{$t.Count -in 3,4 -and (Test-ScenarioKeys $t[2]) -and ($t.Count -eq 3 -or ([int]$t[3] -ge 1 -and [int]$t[3] -le 1500))}
@@ -223,7 +300,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -BuddyCapacityArchive $BuddyCapacityArchive -MgoSleepRestArchive $MgoSleepRestArchive -MgoUniqueRestArchive $MgoUniqueRestArchive -MgoStandingCycleArchive $MgoStandingCycleArchive -StandingLookupObserver:$StandingLookupObserver -StandingFrameObserver:$StandingFrameObserver -NativeActivationObserver:$NativeActivationObserver -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -BuddyCapacityArchive $BuddyCapacityArchive -MgoSleepRestArchive $MgoSleepRestArchive -MgoUniqueRestArchive $MgoUniqueRestArchive -MgoStandingCycleArchive $MgoStandingCycleArchive -StandingLookupObserver:$StandingLookupObserver -StandingFrameObserver:$StandingFrameObserver -NativeActivationObserver:$NativeActivationObserver -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -HostSaveSeed $HostSaveSeed -GuestSaveSeed $GuestSaveSeed -GuestSaveSeedRun $GuestSaveSeedRun -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId
@@ -303,13 +380,13 @@ function Send-Step([string]$Role,[hashtable]$Arguments){
 function Read-RoleRaw([string]$Role){
     try{Get-Content -LiteralPath (Join-Path $run "$Role.state.json") -Raw|ConvertFrom-Json -AsHashtable}catch{$null}
 }
-function Read-RoleLoading([string]$Role){
+function Read-RoleLoading([string]$Role,[string]$Phase='initialized'){
     try{
         $path=Join-Path $run "$Role.loading.json"
         $file=Get-Item -LiteralPath $path -Force
         if($file.Length -gt 1024 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $null}
         $s=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json -AsHashtable
-        if($s['run_id'] -cne $runId -or $s['role'] -cne $Role -or $s['phase'] -cne 'initialized' -or
+        if($s['run_id'] -cne $runId -or $s['role'] -cne $Role -or $s['phase'] -cne $Phase -or
            $s['mission'] -notin 30010,30020,30050,40010,40020,40050 -or ![uint32]$s['generation']){return $null}
         return $s
     }catch{return $null}
@@ -368,9 +445,13 @@ function Read-ContinueGenerations {
     return $captured
 }
 function Wait-ScenarioMission([string]$Role,[int]$Mission,[int]$TimeoutSec){
+    # Helicopter space (40010/40020/40050) never reports on-foot gameplay_ready, so
+    # its arrival is the owned loading metadata entering the runtime phase for that
+    # mission (runtime_enter), after the same guarded resume passed its tips screen.
+    $heli=$Mission -ge 40000
     $limit=(Get-ScenarioTick)+1000*$TimeoutSec;$arrived=$false
     do{
-        $s=Read-RoleRaw $Role;$now=Get-ScenarioTick;$generation=[uint32]0
+        $s=if($heli){Read-RoleLoading $Role 'running'}else{Read-RoleRaw $Role};$now=Get-ScenarioTick;$generation=[uint32]0
         $validGeneration=$s -and $s.ContainsKey('generation') -and
             [string]$s['generation'] -cmatch '^[1-9][0-9]{0,9}$' -and
             [uint32]::TryParse([string]$s['generation'],[ref]$generation)
@@ -378,9 +459,9 @@ function Wait-ScenarioMission([string]$Role,[int]$Mission,[int]$TimeoutSec){
             $continueRequirements[$Role].mission -ne $Mission -or
             ($validGeneration -and $generation -gt $continueRequirements[$Role].generation)
         if($s -and $s['run_id'] -ceq $runId -and $s['role'] -ceq $Role -and
-            [int]$s['mission'] -eq $Mission -and $s['gameplay_ready'] -and !$s['terminating'] -and
+            [int]$s['mission'] -eq $Mission -and ($heli -or ($s['gameplay_ready'] -and !$s['terminating'])) -and
             $validGeneration -and $newAllocation -and
-            $s.ContainsKey('tick_ms') -and [int64]$s['tick_ms'] -le $now -and $now-[int64]$s['tick_ms'] -le 1000){
+            $s.ContainsKey('tick_ms') -and [int64]$s['tick_ms'] -le $now -and ($heli -or $now-[int64]$s['tick_ms'] -le 1000)){
             $null=$continueRequirements.Remove($Role);$arrived=$true;break
         }
         Resume-TripLoading
@@ -792,10 +873,328 @@ function Reset-ScenarioPose([string]$Role){
     }
     Write-Host "  $Role benchmark $command confirmed: $result"
 }
+# ---- Join-fix phase 2 steps (docs/join-fix-phase2-spec.md P2-19, track E): titles,
+# log and state checks, an exit of one role and the coordinator's save handoff apply.
+$exitedRoles=@{}
+$pendingHandoff=$null
+# A nonfatal check, recorded like expect: "<role> <verb> <pattern> <- <actual>".
+function Add-ScenarioExpectation([string]$Role,[string]$Verb,[string]$Pattern,[string]$Actual,[bool]$Met){
+    $line="$Role $Verb $Pattern <- $Actual"
+    $expectations.Add($line)
+    if(!$Met){$expectFailures.Add($line);Write-Warning "  expectation failed: $line"}
+    else{Write-Host "  expectation met: $Verb $Pattern"}
+}
+# The roles whose live game a step drives. A role that left through waitexit takes
+# only waitlog (its log stays readable) and applyhandoff afterwards; state only reads.
+function Get-ScenarioStepRoles([string[]]$Tokens){
+    $t=@($Tokens)
+    if($t[0] -cin 'wait','state','waitlog','applyhandoff'){return @()}
+    if($t[0] -ceq 'title'){if($t.Count -ge 2 -and $t[1] -cin 'host','guest'){return @($t[1])};return @('host','guest')}
+    if($t[0] -ceq 'titlemenu'){if($t[1] -ceq 'both'){return @('host','guest')};return @($t[1])}
+    if($t[0] -cin 'waitmission','waitgameplay','stance','resetpose','waitexit','expectstate','stall'){return @($t[1])}
+    if($t[0] -cin 'placebehind','heldcapture','aimturn'){return @($t[1],$t[2])}
+    if($t[0] -ceq 'both'){return @('host','guest')}
+    return @($t[0])
+}
+# The role's loading.json (native, written at every allocation boundary) for this
+# run and role, any mission and phase; $null when absent or not an owned plain file.
+function Read-RoleLoadingRaw([string]$Role){
+    try{
+        $path=Join-Path $run "$Role.loading.json"
+        if(!(Test-Path -LiteralPath $path -PathType Leaf)){return $null}
+        $file=Get-Item -LiteralPath $path -Force
+        if($file.Length -gt 1024 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $null}
+        $s=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json -AsHashtable
+        if($s -isnot [Collections.IDictionary] -or $s['run_id'] -cne $runId -or $s['role'] -cne $Role){return $null}
+        return $s
+    }catch{return $null}
+}
+# titlemenu, one role: 'press' while it is still at the boot screens (state.json
+# mission 0 or 1, or no state yet), 'done' once a title mission (40010/40020/40050)
+# runs, 'wait' while a title is loading. loading.json names the next allocation's
+# mission at allocation_enter, about 10 s before that title takes input, so an
+# Enter never lands on the title menu (where it would be Continue). Any other
+# mission means the role passed the title: refused.
+function Get-ScenarioTitleMenuAction([string]$Role,$State,$Loading){
+    $titles=@(40010,40020,40050)
+    $stateOk=$State -is [Collections.IDictionary] -and $State['run_id'] -ceq $runId -and $State['role'] -ceq $Role
+    $loadingOk=$Loading -is [Collections.IDictionary] -and $Loading['run_id'] -ceq $runId -and $Loading['role'] -ceq $Role
+    $stateMission=if($stateOk){[int64]$State['mission']}else{[int64]-1}
+    $loadingMission=if($loadingOk){[int64]$Loading['mission']}else{[int64]-1}
+    if($loadingOk -and $loadingMission -in $titles -and [string]$Loading['phase'] -ceq 'running'){return 'done'}
+    if($stateOk -and $stateMission -in $titles){return 'done'}
+    if($loadingOk -and $loadingMission -in $titles){return 'wait'}
+    if($loadingOk -and $loadingMission -notin 0,1){throw "[$Role] left the boot screens for mission $loadingMission before a title."}
+    if($stateOk -and $stateMission -notin 0,1){throw "[$Role] left the boot screens for mission $stateMission before a title."}
+    if($null -ne $State -and !$stateOk){return 'wait'}
+    return 'press'
+}
+function Invoke-ScenarioTitleMenu([string[]]$Roles,[int]$TimeoutSec){
+    $limit=(Get-ScenarioTick)+1000*$TimeoutSec
+    $pending=[Collections.Generic.List[string]]::new();foreach($r in $Roles){$pending.Add($r)}
+    while($true){
+        foreach($r in @($pending)){
+            $action=Get-ScenarioTitleMenuAction $r (Read-RoleRaw $r) (Read-RoleLoadingRaw $r)
+            if($action -ceq 'done'){$null=$pending.Remove($r);Write-Host "  $r reached the title";continue}
+            if($action -ceq 'press'){$null=Send-Step $r @{Operation='press';Keys='enter';DurationMs=120}}
+        }
+        if(!$pending.Count){return}
+        if((Get-ScenarioTick) -ge $limit){throw "[$($pending -join ',')] did not reach a title (40010/40020/40050) within $TimeoutSec s."}
+        Start-Sleep -Milliseconds 3000
+    }
+}
+# title / title <role>: Enter every 3 s on each listed role until it reports gameplay ready.
+function Invoke-ScenarioTitle([string[]]$Roles,[int]$TimeoutSec){
+    $limit=(Get-ScenarioTick)+1000*$TimeoutSec
+    while((Get-ScenarioTick) -lt $limit){
+        $pending=@($Roles|Where-Object{!((Read-RoleState $_).gameplay_ready)})
+        if(!$pending.Count){break}
+        foreach($r in $pending){$null=Send-Step $r @{Operation='press';Keys='enter';DurationMs=120}}
+        Start-Sleep -Milliseconds 3000
+    }
+    foreach($r in $Roles){$s=Read-RoleState $r;Write-Host "  $r mission=$($s.mission) ready=$($s.gameplay_ready)"}
+}
+# waitlog reads the role's script-observer.log from this session's start offset
+# (session.json roles.<role>.log_offsets, recorded by Start-WorkerSession), so a
+# line written before the step began still counts. Complete lines only.
+function New-ScenarioLogCursor([string]$Role){
+    $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')
+    if($owned['run_id'] -cne $runId){throw 'Worker log session ownership differs.'}
+    $row=$owned['roles'][$Role]
+    $source=$row['log_offsets']['script-observer.log']
+    $path=Assert-WorkerPlainPath ([string]$source['path'])
+    if($path -ine [IO.Path]::GetFullPath((Join-Path (Join-Path ([string]$row['game']) 'mgs-coop') 'script-observer.log'))){throw "[$Role] log path differs from its owned game folder."}
+    $offset=[long]$source['offset']
+    if($offset -lt 0){throw "[$Role] invalid script-observer.log offset."}
+    return [pscustomobject]@{role=$Role;path=$path;position=$offset;carry=[byte[]]::new(0);read=[long]0}
+}
+function Read-ScenarioLogLines($Cursor){
+    if(!(Test-Path -LiteralPath $Cursor.path -PathType Leaf)){return @()}
+    $stream=[IO.File]::Open($Cursor.path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try{
+        if($stream.Length -lt $Cursor.position){throw "[$($Cursor.role)] script-observer.log was truncated during the session."}
+        $count=[long][Math]::Min([long]4194304,$stream.Length-$Cursor.position)
+        if($count -le 0){return @()}
+        $null=$stream.Seek($Cursor.position,[IO.SeekOrigin]::Begin)
+        $bytes=[byte[]]::new([int]$count);$got=0
+        while($got -lt $count){$n=$stream.Read($bytes,$got,[int]$count-$got);if(!$n){break};$got+=$n}
+    }finally{$stream.Dispose()}
+    $Cursor.position+=$got;$Cursor.read+=$got
+    if($Cursor.read -gt 67108864){throw "[$($Cursor.role)] script-observer.log grew beyond the 64 MiB waitlog bound."}
+    $all=[byte[]]::new($Cursor.carry.Length+$got)
+    [Array]::Copy($Cursor.carry,0,$all,0,$Cursor.carry.Length);[Array]::Copy($bytes,0,$all,$Cursor.carry.Length,$got)
+    $last=[Array]::LastIndexOf($all,[byte]10)
+    if($last -lt 0){$Cursor.carry=$all;return @()}
+    $rest=$all.Length-$last-1;$carry=[byte[]]::new($rest)
+    if($rest){[Array]::Copy($all,$last+1,$carry,0,$rest)}
+    $Cursor.carry=$carry
+    return @([Text.Encoding]::UTF8.GetString($all,0,$last).Split([char]10)|ForEach-Object{$_.TrimEnd([char]13)})
+}
+function Wait-ScenarioLog([string]$Role,[string]$Pattern,[int]$TimeoutSec){
+    $cursor=New-ScenarioLogCursor $Role
+    $limit=(Get-ScenarioTick)+1000*$TimeoutSec
+    while($true){
+        foreach($line in @(Read-ScenarioLogLines $cursor)){if($line -cmatch $Pattern){return $line}}
+        if((Get-ScenarioTick) -ge $limit){return $null}
+        Start-Sleep -Milliseconds 500
+    }
+}
+# expectstate: the role's own fresh state.json field (booleans as true/false).
+function Get-ScenarioStateValue([string]$Role,[string]$Field){
+    $s=Read-RoleRaw $Role;$now=Get-ScenarioTick
+    if(!$s -or $s['run_id'] -cne $runId -or $s['role'] -cne $Role){return [pscustomobject]@{Ok=$false;Value='no owned state.json'}}
+    $tick=[int64]0
+    if(!$s.ContainsKey('tick_ms') -or ![int64]::TryParse([string]$s['tick_ms'],[ref]$tick) -or $tick -gt $now -or $now-$tick -gt 3000){
+        return [pscustomobject]@{Ok=$false;Value='stale state.json'}
+    }
+    if(!$s.ContainsKey($Field)){return [pscustomobject]@{Ok=$false;Value="state.json has no $Field"}}
+    $value=$s[$Field]
+    if($value -is [bool]){$value=if($value){'true'}else{'false'}}
+    return [pscustomobject]@{Ok=$true;Value=[string]$value}
+}
+# waitexit: the role's owned game (supervisor.json lease) must end on its own while
+# the supervisor keeps running; the exit is recorded in session.json for Stop.
+function Get-ScenarioRoleLease([string]$Role){
+    $status=Read-WorkerSessionJson (Join-Path $run 'supervisor.json')
+    if([string]$status['run_id'] -cne $runId){throw 'Supervisor receipt ownership differs.'}
+    $owned=@($status['owned_processes']|Where-Object{$_ -is [Collections.IDictionary] -and [string]$_['role'] -ceq $Role})
+    if($owned.Count -ne 1 -or !$owned[0]['admitted']){throw "[$Role] has no owned admitted game lease."}
+    return @{pid=[long]$owned[0]['pid'];creation_filetime=[string]$owned[0]['creation_filetime'];exe=[string]$owned[0]['exe']}
+}
+function Wait-ScenarioRoleExit([string]$Role,[int]$TimeoutSec){
+    $lease=Get-ScenarioRoleLease $Role
+    # A PID that now names another process means the owned game already ended.
+    $process=try{Get-WorkerLeasedProcess $lease}catch{$null}
+    $exitCode=$null
+    if($process){
+        try{
+            $limit=(Get-ScenarioTick)+1000*$TimeoutSec
+            while(!$process.WaitForExit(250)){
+                if((Get-ScenarioTick) -ge $limit){throw "[$Role] game did not exit within $TimeoutSec s."}
+            }
+            $exitCode=try{[int]$process.ExitCode}catch{$null}
+        }finally{$process.Dispose()}
+    }
+    $status=Read-WorkerSessionJson (Join-Path $run 'supervisor.json')
+    if([string]$status['stage'] -cne 'running'){throw "[$Role] exit was not the game's own (supervisor stage $($status['stage']))."}
+    $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')
+    if($owned['run_id'] -cne $runId -or $owned['status'] -cne 'ready'){throw 'Worker session ownership differs.'}
+    $record=[ordered]@{pid=$lease.pid;creation_filetime=$lease.creation_filetime;exit_code=$exitCode;
+        observed_utc=[DateTime]::UtcNow.ToString('o');forced=$false;step='waitexit'}
+    $owned['roles'][$Role]['exited']=$record
+    Write-WorkerSessionJson (Join-Path $run 'session.json') $owned
+    $exitedRoles[$Role]=$record
+    Write-Host "  $Role game exited on its own (pid $($lease.pid), exit code $exitCode)"
+}
+# The save handoff slot table (P2-6): entry -> slot.
+function Get-ScenarioHandoffSlots{
+    return [ordered]@{'287700/local/TPP_GAME_DATA0'=0;'287700/local/TPP_GAME_DATA1'=1;'287700/local/PERSONAL_DATA0'=2;
+        '287700/local/PERSONAL_DATA1'=3;'remote/TPP_GAME_DATA'=4;'remote/PERSONAL_DATA'=5}
+}
+# set_sha256 (P2-6): SHA-256 over the present slots in ascending order, each
+# u8 slot, u32 size little-endian and the raw 32-byte file SHA-256. Upper-case hex.
+function Get-ScenarioHandoffSetSha256([object[]]$Files){
+    $slots=Get-ScenarioHandoffSlots
+    $buffer=[IO.MemoryStream]::new()
+    foreach($f in @($Files|Sort-Object {$slots[[string]$_['entry']]})){
+        if(!$slots.Contains([string]$f['entry'])){throw "Unknown save handoff entry: $($f['entry'])"}
+        $buffer.WriteByte([byte]$slots[[string]$f['entry']])
+        $size=[BitConverter]::GetBytes([uint32]$f['bytes']);if(![BitConverter]::IsLittleEndian){[Array]::Reverse($size)}
+        $buffer.Write($size,0,4)
+        $hash=[Convert]::FromHexString([string]$f['sha256']);if($hash.Length -ne 32){throw 'A file SHA-256 must be 32 bytes.'}
+        $buffer.Write($hash,0,32)
+    }
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($buffer.ToArray()))
+}
+function ConvertTo-ScenarioUtc($Value){
+    if($Value -is [DateTime]){return $Value.ToUniversalTime()}
+    $when=[DateTime]::MinValue
+    $styles=[Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal
+    if($Value -is [string] -and [DateTime]::TryParse($Value,[Globalization.CultureInfo]::InvariantCulture,$styles,[ref]$when)){return $when}
+    return $null
+}
+# One staged save handoff exactly as the native guest wrote it (P2-9): request.json
+# names the exited game and its stage; handoff.json lists 1..6 known slots whose
+# sizes and hashes equal the staged bytes; nothing else is staged; the set hash
+# (P2-6) equals both documents. Returns the stage; throws with the reason.
+function Test-ScenarioHandoffStage($Request,[string]$HandoffRoot,[long]$ExpectedPid,[string]$ExpectedCreationFiletime){
+    if($Request -isnot [Collections.IDictionary] -or [string]$Request['format'] -cne 'mgs-coop-save-handoff-request' -or [string]$Request['v'] -cne '1'){throw 'request.json is not a v1 save handoff request.'}
+    $xfer=[string]$Request['xfer'];$set=[string]$Request['set_sha256']
+    if($xfer -cnotmatch '^[0-9A-F]{8}$' -or $xfer -ceq '00000000'){throw 'request.json xfer is not 8 upper-case hex digits.'}
+    if($set -cnotmatch '^[0-9A-F]{64}$'){throw 'request.json set_sha256 is not 64 upper-case hex digits.'}
+    if([string]$Request['mode'] -cnotin 'scene','always'){throw 'request.json mode is neither scene nor always.'}
+    if([long]$Request['pid'] -ne $ExpectedPid){throw "request.json pid $($Request['pid']) is not the exited game $ExpectedPid."}
+    $start=ConvertTo-ScenarioUtc $Request['process_start_utc']
+    $leaseStart=[DateTime]::FromFileTimeUtc([long]$ExpectedCreationFiletime)
+    if($null -eq $start -or [Math]::Abs(($start-$leaseStart).TotalSeconds) -gt 2){throw 'request.json process_start_utc is not the exited game''s start.'}
+    $stage=Assert-WorkerPlainPath (Join-Path $HandoffRoot $xfer) -MustExist
+    if(!(Test-Path -LiteralPath $stage -PathType Container)){throw 'The staged folder named by request.json is not a folder.'}
+    $handoff=Read-WorkerSessionJson (Join-Path $stage 'handoff.json') 65536
+    if([string]$handoff['format'] -cne 'mgs-coop-save-handoff' -or [string]$handoff['v'] -cne '1' -or
+       [string]$handoff['xfer'] -cne $xfer -or [string]$handoff['set_sha256'] -cne $set){throw 'handoff.json does not match request.json.'}
+    $slots=Get-ScenarioHandoffSlots
+    $rows=@($handoff['files'])
+    if($rows.Count -lt 1 -or $rows.Count -gt 6){throw 'handoff.json must list 1..6 files.'}
+    $seen=@{};$total=[long]0;$files=[Collections.Generic.List[object]]::new()
+    foreach($f in $rows){
+        if($f -isnot [Collections.IDictionary]){throw 'handoff.json has a malformed file row.'}
+        $entry=[string]$f['entry'];$bytes=[long]$f['bytes'];$sha=[string]$f['sha256']
+        if(!$slots.Contains($entry) -or $seen.ContainsKey($entry)){throw "handoff.json names an unknown or repeated entry: $entry"}
+        if($bytes -lt 1 -or $bytes -gt 4194304 -or $sha -cnotmatch '^[0-9A-F]{64}$'){throw "handoff.json has a bad size or hash for $entry."}
+        $path=Assert-WorkerPlainPath (Join-Path $stage $entry.Replace('/','\')) -MustExist
+        if((Get-Item -LiteralPath $path -Force).Length -ne $bytes -or (Get-WorkerHash $path) -cne $sha){throw "Staged $entry differs from handoff.json."}
+        $seen[$entry]=$true;$total+=$bytes
+        $files.Add([ordered]@{entry=$entry;bytes=$bytes;sha256=$sha})
+    }
+    if($total -gt 8388608){throw 'The staged set exceeds 8 MiB.'}
+    if(!$seen.ContainsKey('287700/local/TPP_GAME_DATA0') -and !$seen.ContainsKey('287700/local/TPP_GAME_DATA1')){throw 'The staged set has no TPP_GAME_DATA0 or TPP_GAME_DATA1.'}
+    $want=@('handoff.json')+@($files|ForEach-Object{([string]$_['entry']).Replace('/','\')})
+    $extra=@(Get-WorkerCopyInventory $stage|Where-Object{$want -cnotcontains [string]$_['path']})
+    if($extra.Count){throw "The staged folder holds a file handoff.json does not name: $($extra[0]['path'])"}
+    if((Get-ScenarioHandoffSetSha256 $files.ToArray()) -cne $set){throw 'The staged set hash differs from request.json.'}
+    $created=ConvertTo-ScenarioUtc $handoff['created_utc']
+    return [pscustomobject]@{Xfer=$xfer;SetSha256=$set;Mode=[string]$Request['mode'];Stage=$stage;Files=$files.ToArray();
+        CreatedUtc=$(if($created){$created.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)}else{''})}
+}
+# Progress (Share-Save's name pattern) and settings file hashes of one save copy.
+function Get-ScenarioSaveHashes([string]$SaveDir){
+    $progress=[ordered]@{};$settings=[ordered]@{}
+    foreach($row in @(Get-WorkerCopyInventory $SaveDir)){
+        $m=[regex]::Match([string]$row['path'],'^(287700\\local|remote)\\([^\\]+)$')
+        if(!$m.Success){continue}
+        if($m.Groups[2].Value -cmatch '^(TPP_GAME_DATA[0-9]?|PERSONAL_DATA[0-9]?)$'){$progress[$m.Value]=[string]$row['sha256']}
+        else{$settings[$m.Value]=[string]$row['sha256']}
+    }
+    return [ordered]@{progress=$progress;settings=$settings}
+}
+function Test-ScenarioSameMap($Expected,$Actual){
+    if(@($Expected.Keys).Count -ne @($Actual.Keys).Count){return $false}
+    foreach($k in @($Expected.Keys)){if(!$Actual.Contains($k) -or [string]$Actual[$k] -cne [string]$Expected[$k]){return $false}}
+    return $true
+}
+function Format-ScenarioMap($Map){return (@($Map.Keys|ForEach-Object{$_+'='+([string]$Map[$_]).Substring(0,[Math]::Min(8,([string]$Map[$_]).Length))}) -join ',')}
+# applyhandoff guest, step time: the exited guest's request and stage are checked now
+# and the copy's hashes recorded. The apply itself runs after Stop (see the step list).
+function New-ScenarioHandoffApply([string]$Role){
+    if($Role -cne 'guest'){throw 'applyhandoff applies to the guest only.'}
+    if(!$exitedRoles.ContainsKey('guest')){throw '[guest] applyhandoff needs an earlier waitexit guest: the game must have exited.'}
+    $exit=$exitedRoles['guest']
+    $saveDir=Assert-WorkerPlainPath (Join-Path $run 'guest-saves') -MustExist
+    $handoffRoot=Assert-WorkerPlainPath (Join-Path $run 'guest-saves-handoff') -MustExist
+    $replaced=Assert-WorkerPlainPath (Join-Path $run 'guest-saves-replaced')
+    foreach($path in @($saveDir,$handoffRoot,$replaced)){if(!(Test-WorkerDescendant $path $run)){throw 'applyhandoff paths must stay under the run directory.'}}
+    $request=Read-WorkerSessionJson (Join-Path $handoffRoot 'request.json') 65536
+    $stage=Test-ScenarioHandoffStage $request $handoffRoot ([long]$exit['pid']) ([string]$exit['creation_filetime'])
+    $before=Get-ScenarioSaveHashes $saveDir
+    Write-Host "  guest staged save handoff $($stage.Xfer): $(@($stage.Files).Count) files, set $($stage.SetSha256.Substring(0,8)); applied after the session closes"
+    return [ordered]@{role='guest';xfer=$stage.Xfer;set_sha256=$stage.SetSha256;mode=$stage.Mode;stage=$stage.Stage;save_dir=$saveDir;
+        replaced_root=$replaced;created_utc=$stage.CreatedUtc;files=@($stage.Files);before=$before;after=$null;aside=$null;
+        aside_progress=$null;marker_source=$null;applied=$false;failure=$null}
+}
+# applyhandoff guest, after Stop: Import-CoopProgressFiles (FriendCommon, P2-18) with
+# the run paths, then the checks of hidden check R4 as nonfatal expectations.
+function Invoke-ScenarioHandoffApply($Pending){
+    try{
+        $current=Get-ScenarioSaveHashes $Pending.save_dir
+        if(!(Test-ScenarioSameMap $Pending.before.progress $current.progress) -or !(Test-ScenarioSameMap $Pending.before.settings $current.settings)){
+            throw 'The guest save copy changed after applyhandoff checked it.'
+        }
+        Import-Module (Join-Path $repo 'tools\friend\FriendCommon.psm1') -Force -DisableNameChecking
+        if(!(Get-Command Import-CoopProgressFiles -ErrorAction SilentlyContinue)){throw 'Import-CoopProgressFiles is not available in tools/friend/FriendCommon.psm1.'}
+        $marker=@{Source='handoff';ExportedUtc=[string]$Pending.created_utc;Files=@($Pending.files)}
+        $returned=@(Import-CoopProgressFiles -StageRoot $Pending.stage -SaveDir $Pending.save_dir -ReplacedRoot $Pending.replaced_root -Suffix '-before-handoff' -Marker $marker -Manifest @($Pending.files))
+        $Pending.applied=$true
+        $Pending.aside=[string](@($returned|Where-Object{$_ -is [string] -and $_})|Select-Object -Last 1)
+    }catch{
+        $Pending.failure=$_.Exception.Message
+        Add-ScenarioExpectation 'guest' 'applyhandoff' 'applied' "failed: $($Pending.failure)" $false
+        return $Pending
+    }
+    Add-ScenarioExpectation 'guest' 'applyhandoff' 'applied' "applied $($Pending.xfer)" $true
+    $after=Get-ScenarioSaveHashes $Pending.save_dir;$Pending.after=$after
+    $staged=[ordered]@{};foreach($f in @($Pending.files)){$staged[([string]$f['entry']).Replace('/','\')]=[string]$f['sha256']}
+    Add-ScenarioExpectation 'guest' 'applyhandoff' 'progress=staged' (Format-ScenarioMap $after.progress) (Test-ScenarioSameMap $staged $after.progress)
+    Add-ScenarioExpectation 'guest' 'applyhandoff' 'settings=own' (Format-ScenarioMap $after.settings) (Test-ScenarioSameMap $Pending.before.settings $after.settings)
+    $asideOk=$Pending.aside -and (Test-Path -LiteralPath $Pending.aside -PathType Container) -and
+        (Test-WorkerDescendant $Pending.aside $Pending.replaced_root) -and $Pending.aside.EndsWith('-before-handoff',[StringComparison]::Ordinal)
+    Add-ScenarioExpectation 'guest' 'applyhandoff' 'aside=<stamp>-before-handoff' ([string]$Pending.aside) ([bool]$asideOk)
+    if($asideOk){
+        $old=Get-ScenarioSaveHashes $Pending.aside;$Pending.aside_progress=$old.progress
+        Add-ScenarioExpectation 'guest' 'applyhandoff' 'aside=old progress' (Format-ScenarioMap $old.progress) (Test-ScenarioSameMap $Pending.before.progress $old.progress)
+    }
+    $markerPath=Join-Path $Pending.save_dir 'imported-progress.json'
+    $markerDoc=try{Read-WorkerSessionJson $markerPath 65536}catch{$null}
+    $Pending.marker_source=if($markerDoc){[string]$markerDoc['source']}else{$null}
+    Add-ScenarioExpectation 'guest' 'applyhandoff' 'marker source=handoff' ([string]$Pending.marker_source) ([bool]($markerDoc -and [string]$markerDoc['format'] -ceq 'mgs-coop-imported-progress' -and $Pending.marker_source -ceq 'handoff'))
+    return $Pending
+}
 try {
     foreach($line in $steps){
         $t=$line -split '\s+'
         Write-Host "step: $line"
+        # A role that left through waitexit has no game to drive: fail fast.
+        $gone=@(Get-ScenarioStepRoles $t|Where-Object{$exitedRoles.ContainsKey($_)})
+        if($gone.Count){throw "[$($gone -join ',')] exited after waitexit; '$line' cannot drive it."}
         # if/elseif, not switch: 'continue' inside a PowerShell switch only leaves the switch.
         if($t[0] -ceq 'wait'){Start-Sleep -Milliseconds ([int]$t[1]);continue}
         if($t[0] -ceq 'stance'){Set-ScenarioStance $t[1] $t[2];continue}
@@ -804,14 +1203,35 @@ try {
         if($t[0] -ceq 'resetpose'){Reset-ScenarioPose $t[1];continue}
         if($t[0] -ceq 'state'){foreach($r in 'host','guest'){$s=Read-RoleState $r;Write-Host "  $r mission=$($s.mission) ready=$($s.gameplay_ready) generation=$($s.generation)"};continue}
         if($t[0] -ceq 'title'){
-            $limit=[Environment]::TickCount64+1000*($(if($t.Count -eq 2){[int]$t[1]}else{240}))
-            while([Environment]::TickCount64 -lt $limit){
-                $pending=@('host','guest'|Where-Object{!((Read-RoleState $_).gameplay_ready)})
-                if(!$pending.Count){break}
-                foreach($r in $pending){$null=Send-Step $r @{Operation='press';Keys='enter';DurationMs=120}}
-                Start-Sleep -Seconds 3
-            }
-            foreach($r in 'host','guest'){$s=Read-RoleState $r;Write-Host "  $r mission=$($s.mission) ready=$($s.gameplay_ready)"}
+            Invoke-ScenarioTitle @(Get-ScenarioStepRoles $t) $(if($t.Count -ge 2 -and $t[-1] -cmatch '^[0-9]+$'){[int]$t[-1]}else{240})
+            continue
+        }
+        if($t[0] -ceq 'titlemenu'){Invoke-ScenarioTitleMenu @(Get-ScenarioStepRoles $t) ([int]$t[2]);continue}
+        if($t[0] -ceq 'waitlog'){
+            $pattern=ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)])
+            $matched=Wait-ScenarioLog $t[1] $pattern ([int]$t[-1])
+            Add-ScenarioExpectation $t[1] 'waitlog' $pattern $(if($null -ne $matched){$matched}else{"no matching line within $($t[-1]) s"}) ($null -ne $matched)
+            continue
+        }
+        if($t[0] -ceq 'expectstate'){
+            $pattern=ConvertFrom-ScenarioPatternTokens @($t[3..($t.Count-1)])
+            $value=Get-ScenarioStateValue $t[1] $t[2]
+            Add-ScenarioExpectation $t[1] ('expectstate '+$t[2]) $pattern $value.Value ($value.Ok -and $value.Value -cmatch $pattern)
+            continue
+        }
+        if($t[0] -ceq 'waitexit'){Wait-ScenarioRoleExit $t[1] ([int]$t[2]);continue}
+        if($t[0] -ceq 'stall'){
+            # The role's partner input sending pauses for N ms in-game (it starts when the game takes
+            # the command); the result is an expectation (nonfatal), the log has the start/end lines.
+            $command="input_stall $($t[2])"
+            try{$result=Invoke-DebugResult $t[1] $command 4000}catch{$result="no result: $($_.Exception.Message)"}
+            $pattern="^input_stall=started;ms=$($t[2]);"
+            Add-ScenarioExpectation $t[1] 'stall' $pattern $result ($result -cmatch $pattern)
+            continue
+        }
+        if($t[0] -ceq 'applyhandoff'){
+            if($pendingHandoff){throw 'applyhandoff runs once per session.'}
+            $pendingHandoff=New-ScenarioHandoffApply $t[1]
             continue
         }
         if($t[0] -ceq 'waitmission'){
@@ -895,15 +1315,27 @@ try {
     Write-Warning "Scenario stopped: $failure"
 } finally {
     # A failed or timed-out hold must also release before the owned shutdown.
-    foreach($role in 'host','guest'){Release-RoleFinally $role}
+    # A role that exited through waitexit has no input left to release.
+    foreach($role in 'host','guest'){if(!$exitedRoles.ContainsKey($role)){Release-RoleFinally $role}}
     $stop=& (Join-Path $worker 'Stop-WorkerSession.ps1') -RunDirectory $run
     $stop=@($stop|Where-Object{$_ -isnot [string]})[-1]
+}
+# applyhandoff: the supervisor held run\guest-saves (and its 287700\local and remote)
+# open without delete sharing until it exited, so the copy is replaced only now,
+# after the owned session closed. Only run-directory paths are written.
+if($pendingHandoff){
+    if($stop -and $stop.Closed){$pendingHandoff=Invoke-ScenarioHandoffApply $pendingHandoff}
+    else{
+        $pendingHandoff.failure='The owned session did not close; the staged save was not applied.'
+        Add-ScenarioExpectation 'guest' 'applyhandoff' 'applied' "failed: $($pendingHandoff.failure)" $false
+    }
 }
 $result=[ordered]@{
     RunDirectory=$run;Frames=$frames.ToArray();Failure=$failure;InputReleaseFailures=$releaseFailures.ToArray()
     Expectations=$expectations.ToArray();ExpectFailures=$expectFailures.ToArray()
     Closed=$stop.Closed;BaselineRestored=$stop.BaselineRestored;RealSavesUnchanged=$stop.RealSavesUnchanged;Forced=$stop.Forced
     IsolationFailed=$stop.IsolationFailed;SupervisorReason=$stop.SupervisorReason;SupervisorError=$stop.SupervisorError
+    ExitedRoles=$exitedRoles;HandoffApply=$pendingHandoff
 }
 Write-WorkerSessionJson (Join-Path $run 'scenario.json') $result
 [pscustomobject]$result

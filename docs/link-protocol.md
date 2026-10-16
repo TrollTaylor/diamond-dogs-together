@@ -318,7 +318,8 @@ UNAUTH REJECT(`bad_code`) per second in total. A
 valid HELLO is checked for proto, mode, role and (play) build, then: an Ng of
 a committed session is a replay; while `connected` a HELLO from another
 endpoint gets REJECT(`busy`); the Ng of a pending slot gets the same WELCOME
-again; otherwise a pending slot (2, oldest replaced) and a WELCOME. A CONFIRM
+again; otherwise a pending slot (4, one per nonce the guest still accepts;
+oldest replaced) and a WELCOME. A CONFIRM
 or DATA of a pending sid from that slot's endpoint with a valid K_g2h tag
 commits (at most one commit per 2 s): the endpoint is locked, the Ng goes into
 a 32-entry seen ring, the receive state is reset and an empty DATA is sent at
@@ -344,8 +345,9 @@ filter (`net_bind=loopback`); `net_link=legacy` keeps the raw frames.
 
 ## 6. Reliable channels, timing
 
-- Channels 1..3 (0 reserved for the link, 1 world, 2..3 game), 32-message
-  windows both ways, 1024-byte messages, static storage. Per-channel RELACK
+- Channels 1..4 (0 reserved for the link, 1 world, 2..3 game, 4 save
+  handoff; `link::kReliableChannels` = 5), 32-message windows both ways,
+  1024-byte messages, static storage. Per-channel RELACK
   (`next_expected`, a 32-bit bitmap, `free_slots`); a message is acknowledged
   only once stored; packet acks are for RTT statistics only. RTO =
   clamp(srtt + 4 rttvar, 100, 2000) (250 before the first sample), x2 per
@@ -368,6 +370,26 @@ filter (`net_bind=loopback`); `net_link=legacy` keeps the raw frames.
   LinkIdle) and `on_session` (after a new session committed), all on the
   receive thread with no partner_net lock held. Null hooks keep today's
   behaviour.
+- Channel 4, the automatic save handoff ([save-handoff.md](save-handoff.md);
+  join-fix phase 2). Only `save_handoff.cpp` sends on it or drains it, from
+  the handoff hooks (`partner_net::SetHandoffHooks`, installed before `Start`
+  only when `lab.ini` `save_handoff` configures the module): `on_idle` after
+  the world `on_idle` at the end of LinkIdle, `on_session` after each world
+  `on_session` (a committed new session and the Steam guest's arm) and
+  `on_peer_close` after a CLOSE was handled, outside every partner_net lock.
+  The ascending pack order puts channel 4 behind every first transmission of
+  channels 1..3, and the sender keeps at most 16 messages in flight
+  (`partner_net::ReliableQueued(4)`, read under `g_tx_lock`). A peer built
+  before channel 4 silently drops channel >= 4 and never acknowledges it, so
+  no channel-4 byte goes out unless the peer's HELLO/WELCOME build
+  (`LinkInfo.remote_build`, published with the other LinkInfo fields) is at
+  least `save_handoff_wire::kHandoffMin*` (0.13.0), and the receiver pulls
+  (WANT). A new session clears channel 4 like the others (no resume).
+  DATAGRAMs stay on channels 1..3 (`SendDatagram(4)` is `bad_channel`).
+- `partner_net::BuildGuestJoinCode`: a Steam guest that started waiting
+  (`net_steam_wait`) keeps the code it was armed with (invite or F9 paste)
+  under the secret lock until shutdown, so the handoff restart can write
+  `link-rejoin.txt`; the host keeps its secret as before.
 - RTT: RFC 6298 from the packet ack and `ack_delay_ms`. Inbound loss: DATA
   sequence gaps over two 5-s buckets. Jitter: RFC 3550 on transform-carrying
   DATA. Offset: minimum transit (diagnostic).
@@ -464,10 +486,42 @@ this order:
 
 Since the Steam transport, four keys come before `time_utc` (also on UDP):
 `"transport":"udp|steam","route":"relay|direct|unknown|none","accepting":0|1,"steam":"ok|acquiring|off|<reason>"`.
-With steam, `peer` is `"steam:...1234"` and `local_port` is 0. The buffer is
-768 bytes. Two more keys follow them (steam-online.md 20.7/20.8):
+With steam, `peer` is `"steam:...1234"` and `local_port` is 0. Two more keys
+follow them (steam-online.md 20.7/20.8):
 `"steam_end":<ESteamNetConnectionEnd, 0 none>,"left":0|1` (the guest's last
 Steam session failure while not connected; the partner's CLOSE).
+
+World sync (join-fix phase 1): five keys follow `"left"`, still before
+`time_utc`, in this order:
+`"world":0-3,"paired":0|1,"partner_mission":<u32>,"pair_wait":"<name>","progress":"unknown|ok|story_start"`.
+They come from `partner_net::PublishWorldState`, which `world_link` calls
+after every idle tick, Configure and NOTE receipt (atomics only).
+- `world` is the local world level (0 world sync off).
+- `pair_wait` is the published pair-wait code by name (world-sync-protocol.md):
+  `paired`, `off`, `no_link`, `no_hello`, `remote_off`, `remote_saves`,
+  `same_role`, `local_loading`, `remote_loading`, `different_mission`,
+  `epoch`, `settling` (another value `unknown`). Different missions read
+  `settling` for the first 15 s, then `different_mission`.
+- `progress` is the title-helicopter save check (`story_start`: the co-op
+  save Continues into the story start).
+- Gating: world level 0 gives `"paired":0,"partner_mission":0,"pair_wait":"off"`;
+  a `state` other than `connected` gives `"paired":0,"partner_mission":0,"pair_wait":"no_link"`;
+  otherwise the published values. `progress` is never gated.
+
+Save handoff (join-fix phase 2, [save-handoff.md](save-handoff.md)): two
+keys follow `"progress"`, still before `time_utc`:
+`"handoff":"<token>","handoff_pct":<0-100>`. The token is one of, in this
+order, `off|idle|same|wait_host|offered|sending|partner_staged|partner_restarting|receiving|staged|countdown|exiting|kept|refused|failed|applied`
+(`save_handoff_state::Token`), published by the handoff glue through
+`partner_net::PublishHandoffState` (atomics; also copied into the HUD
+LinkView). Without the module it stays `"off"` with 0; a document without the
+keys (an older loader) means `off` for the tools.
+
+`mission` stays the local mission and every earlier key keeps its place.
+FormatStatus builds the line in a 1536-byte buffer (the cached content and the
+written document use the same size; `link_udp_tests` bounds the worst case,
+every field at its longest and the four appended blocks at their buffer
+sizes, at about 1230 bytes) and writes nothing when it would not fit.
 
 `state`: `off|disabled|listening|connecting|handshake|connected|reconnecting|lost|rejected|waiting`
 (`waiting`: a Steam guest without a host);
@@ -491,7 +545,8 @@ thread); `saves` from `lab::SavesRedirected()`.
 Steam keys `net_transport`, `net_steam_self`, `net_peer_steam`,
 `net_steam_wait`, `net_steam_accept`, `steam_selftest`, then
 `net_steam_dispatch`, `steam_selftest_fn` and `coop_hud` (`lab_ini_check coop`
-adds `hud`);
+adds `hud`), then `save_handoff=off|stage|scene|always` and the effective
+`travel_lock=0|1` (join-fix phase 2);
 `lab_ini_check steamcode <text>` prints `steamcode_status=<status>` and, when
 ok, `host=<SteamID64>` (the native MGS2 parser; never the secret).
 

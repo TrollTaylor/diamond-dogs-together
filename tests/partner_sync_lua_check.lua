@@ -113,7 +113,7 @@ local function fixture(options)
         if starts(source, TICK) then
             c.ticks[#c.ticks + 1] = source:sub(#TICK + 1)
             return function()
-                if c.reply then return unpack(c.reply, 1, 14) end
+                if c.reply then return unpack(c.reply, 1, 18) end
                 return 'MGS_COOP_PARTNER_V1'
             end
         end
@@ -134,12 +134,28 @@ local function fixture(options)
         end,
         SetOtherInstanceIsForMirrorMode = function(on) record('mirror:' .. tostring(on)) end,
         RequestToPlayDirectMotion = function(t)
+            if type(t) == 'table' and type(t[1]) == 'table' and t[1][1] == 'coopRide' then
+                -- The seated rider: every entry carries the locator ("" on the WS3 by-id path), CNP_ppos_c,
+                -- MTP_GLOBAL_C and the flag.
+                local parts = {}
+                for i = 2, #t do
+                    local entry = t[i]
+                    check(type(entry) == 'table' and type(entry[1]) == 'string' and entry[1]:match('^state%w+$') and
+                        entry[1] ~= 'stateDirectPlayRideRearLeftSeatOnVehicle' and type(entry[2]) == 'boolean' and
+                        type(entry[3]) == 'string' and entry[4] == 'CNP_ppos_c' and entry[5] == 'MTP_GLOBAL_C' and
+                        entry[6] == true, 'seat entry shape')
+                    parts[#parts + 1] = entry[1] .. (entry[2] and '+' or '') .. '@' .. entry[3]
+                end
+                record('seatplay:' .. tostring(t[1][2]) .. ':' .. table.concat(parts, ','))
+                return
+            end
             check(type(t) == 'table' and type(t[1]) == 'table' and t[1][1] == 'coopLoco' and type(t[2]) == 'table' and
                 type(t[2][2]) == 'boolean' and t[2][3] == '' and t[2][6] == true, 'dmPlay arg shape')
             c.dmLoop = t[2][2]
             record('dmplay:' .. tostring(t[1][2]) .. ':' .. tostring(t[2][1]))
         end,
         RequestToStopDirectMotion = function() record('dmstop') end,
+        RequestToGoNextDirectMotion = function() record('dmnext') end,
     }
     env.PlayerInfo = {
         GetLocalPlayerIndex = function() return c.localIndex end,
@@ -523,8 +539,27 @@ for offset, name in ipairs({
     check(#c.calls == mark + 1 and c.calls[#c.calls] == "dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/" .. name .. ".gani" and
         c.dmLoop == false, "receiver probe " .. id .. " exact path/instance and finite playback")
 end
+-- DM overlay lever (docs/anim-round1-actions.md): 64 + 32 * loop + index plays OVERLAY[index].
+for _, case in ipairs({{64, 'stateDamageBigFront', false}, {64 + 32 + 7, 'stateEludeIdle', true}, {64 + 4, 'stateDead', false},
+    {64 + 32 + 12, 'stateStandIdleLeft', true},
+    {64 + 32 + 20, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapdam/snapdam_p_die_idl.gani', true},
+    {64 + 21, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_s_fal_lp_l.gani', false}}) do
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, case[1]}
+    mark = #c.calls
+    update(env)
+    check(#c.calls == mark + 1 and c.calls[#c.calls] == 'dmplay:1:' .. case[2] and c.dmLoop == case[3] and
+        hasLog(c, 'event=dm_overlay;index=' .. ((case[1] - 64) % 32) .. ';loop=' .. (case[3] and 1 or 0)),
+        'overlay reply ' .. case[1] .. ' plays ' .. case[2])
+end
+for _, bad in ipairs({64 + 22, 64 + 32 + 22, 127}) do
+    local notes = count(c.logs, 'event=dm_refused;reason=bad_overlay')
+    mark = #c.calls
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}
+    update(env)
+    check(#c.calls == mark and count(c.logs, 'event=dm_refused;reason=bad_overlay') == notes + 1, 'overlay beyond the catalogue refused: ' .. bad)
+end
 -- bad gani index refused (31 = partner::max_gani + 1).
-for _, bad in ipairs({31, -1, 1.5, '3'}) do
+for _, bad in ipairs({31, -1, 1.5, '3', 63, 128}) do
     local notes = count(c.logs, 'event=dm_refused;reason=bad_gani')
     mark = #c.calls
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}
@@ -535,6 +570,153 @@ end
 c.reply = {256, 1, 0, 0, 0, 0, 1, 0}
 update(env)
 check(c.calls[#c.calls] == 'dmstop' and hasLog(c, 'event=dm_stop'), 'DM_STOP')
+
+-- RIDE_SEAT (512): the seated vehicle rider (docs/anim-round1-seat.md).
+do
+    local env, c = fixture(); call(env, 'OnMissionGameStart')
+    local ids = {veh_lv_0000 = 25608, veh_lv_0001 = 25609, veh_trc_0000 = 25621, veh_trc_0001 = 25622}
+    local lookups = 0
+    env.GameObject.GetGameObjectId = function(kind, name)
+        check(kind == 'TppVehicle2' and (name:match('^veh_lv_00%d%d$') ~= nil or name:match('^veh_trc_00%d%d$') ~= nil),
+            'authored vehicle locators only: ' .. tostring(name))
+        lookups = lookups + 1
+        return ids[name] or 65535
+    end
+    local function seat(vid, s, action, entry)
+        c.reply = {512, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, vid, s, action, entry}
+        local mark = #c.calls
+        update(env)
+        return c.calls[mark + 1], #c.calls - mark
+    end
+    local call1 = seat(25608, 0, 1, 0)
+    check(lookups == 48 and call1 == 'seatplay:1:stateVehicleFrontLeftLoop+@veh_lv_0000' and
+        hasLog(c, 'event=ride_seat;id=25608;seat=0;name=veh_lv_0000;state=stateVehicleFrontLeftLoop;entry=0'),
+        'seat 0 of a light vehicle: the looping driver state on its locator, CNP_ppos_c, MTP_GLOBAL_C')
+    check(seat(25609, 1, 1, 3) == 'seatplay:1:stateVehicleGetOnFrontRight@veh_lv_0001,stateVehicleFrontRightLoop+@veh_lv_0001,' ..
+        'stateVehicleGetOffFrontRight@veh_lv_0001' and lookups == 48, 'entry 3: GetOn, Loop, GetOff, each on the locator; cached map')
+    check(seat(25608, 2, 1, 1) == 'seatplay:1:stateVehicleGetOnBackLeft@veh_lv_0000,stateVehicleBackLeftLoop+@veh_lv_0000',
+        'entry 1: GetOn then the loop')
+    check(seat(25621, 0, 1, 0) == 'seatplay:1:stateTruckFrontLeftLoop+@veh_trc_0000', 'truck driver')
+    check(seat(25622, 1, 1, 2) == 'seatplay:1:stateVehicleFrontRightLoop+@veh_trc_0001,stateTruckGetOffFrontRight@veh_trc_0001',
+        'truck seat 1: the light front-right loop guess, the truck get-off')
+    local _, n = seat(25621, 2, 1, 0)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25621;seat=2;reason=state'), 'trucks have no rear seats')
+    _, n = seat(25600, 0, 1, 0)
+    check(n == 0 and lookups == 48 and hasLog(c, 'event=ride_seat_refused;id=25600;seat=0;reason=no_name'),
+        'an unnamed (sortie) vehicle is refused; no rebuild within 300 frames')
+    c.reply = nil; update(env, 300)
+    _, n = seat(25600, 0, 1, 0)
+    check(n == 0 and lookups == 96, 'a miss rebuilds the map after 300 frames')
+    env.e.MgsCoopPartnerRideSeat = function() return 25608, 0 end
+    _, n = seat(25608, 0, 1, 0)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25608;seat=0;reason=shared_seat'), 'the viewer in the same seat refuses')
+    check(seat(25608, 1, 1, 0) == 'seatplay:1:stateVehicleFrontRightLoop+@veh_lv_0000', 'the viewer driving, the remote beside')
+    check(seat(25608, 0, 2, 2) == 'dmnext' and hasLog(c, 'event=ride_seat_next;id=25608;seat=0'), 'action 2 advances to GetOff')
+    for _, bad in ipairs({{25608, 4, 1, 0}, {25608, 0, 3, 0}, {65535, 0, 1, 0}, {25608, 0, 1, 8}, {'25608', 0, 1, 0}, {25608, 0.5, 1, 0}}) do
+        _, n = seat(bad[1], bad[2], bad[3], bad[4])
+        check(n == 0 and c.logs[#c.logs]:find('event=ride_seat_refused;', 1, true) == 1 and c.logs[#c.logs]:find('reason=bad_args', 1, true),
+            'bad RIDE_SEAT values refused')
+    end
+    env.Player.RequestToGoNextDirectMotion = nil
+    _, n = seat(25608, 0, 2, 2)
+    check(n == 0 and hasLog(c, 'event=op_skipped;missing=Player.RequestToGoNextDirectMotion'), 'a missing GoNext binding is skipped')
+    -- A RIDE_SEAT reply still honours the bad-index refusal first.
+    c.reply = {512, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 25608, 1, 1, 0}
+    local mark = #c.calls
+    update(env)
+    check(#c.calls == mark and hasLog(c, 'event=refused;reason=bad_index;R=2'), 'R ~= 1 refuses RIDE_SEAT')
+end
+-- Seat by id (WS3 B1, docs/vehicle-ws3.md): RIDE_SEAT entry bit 4 = native armed the id path.
+do
+    local env, c = fixture()
+    env.Vehicle = {type = {EASTERN_LIGHT_VEHICLE = 0, EASTERN_TRUCK = 1, EASTERN_WHEELED_ARMORED_VEHICLE = 2, EASTERN_TRACKED_TANK = 3,
+        WESTERN_LIGHT_VEHICLE = 4, WESTERN_TRUCK = 5, WESTERN_WHEELED_ARMORED_VEHICLE = 6, WESTERN_TRACKED_TANK = 7}}
+    local vtype, typeReads = {[25600] = 4, [25601] = 1, [25602] = 6}, 0
+    env.GameObject.SendCommand = function(id, command)
+        if type(command) == 'table' and command.id == 'GetVehicleType' then
+            typeReads = typeReads + 1
+            check(next(command, 'id') == nil, 'GetVehicleType carries no other field')
+            return vtype[id]
+        end
+    end
+    env.GameObject.GetGameObjectId = function(_, name) return name == 'veh_lv_0000' and 25608 or 65535 end
+    call(env, 'OnMissionGameStart')
+    local function seat(vid, s, action, entry)
+        c.reply = {512, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, vid, s, action, entry}
+        local mark = #c.calls
+        update(env)
+        return c.calls[mark + 1], #c.calls - mark
+    end
+    check(seat(25600, 0, 1, 4) == 'seatplay:1:stateVehicleFrontLeftLoop+@' and typeReads == 1 and
+        hasLog(c, 'event=ride_seat;id=25600;seat=0;name=-;state=stateVehicleFrontLeftLoop;entry=0;byid=1;class=lv'),
+        'by id: the unnamed (sortie) light vehicle plays the driver loop untargeted (locator ""), CNP_ppos_c and MTP_GLOBAL_C kept')
+    check(seat(25600, 1, 1, 7) == 'seatplay:1:stateVehicleGetOnFrontRight@,stateVehicleFrontRightLoop+@,stateVehicleGetOffFrontRight@',
+        'by id with GetOn and GetOff: every chained entry untargeted')
+    check(seat(25601, 0, 1, 4) == 'seatplay:1:stateTruckFrontLeftLoop+@' and hasLog(c, 'event=ride_seat;id=25601;seat=0;name=-;state=stateTruckFrontLeftLoop;entry=0;byid=1;class=trc'), 'a truck by id')
+    local _, n = seat(25602, 0, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25602;seat=0;reason=no_class'), 'an APC by id is refused (light vehicles and trucks only)')
+    _, n = seat(25603, 0, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25603;seat=0;reason=no_class'), 'an unreadable vehicle type is refused')
+    _, n = seat(25600, 0, 1, 0)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25600;seat=0;reason=no_name'), 'without the native by-id bit an unnamed vehicle still hides')
+    local reads = typeReads
+    check(seat(25608, 0, 1, 4) == 'seatplay:1:stateVehicleFrontLeftLoop+@veh_lv_0000' and typeReads == reads,
+        'a named vehicle stays on its locator under the by-id bit (no type read)')
+    _, n = seat(25601, 2, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25601;seat=2;reason=state'), 'a truck by id has no rear seats')
+    env.e.MgsCoopPartnerRideSeat = function() return 25600, 0 end
+    _, n = seat(25600, 0, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25600;seat=0;reason=shared_seat'), 'the viewer in that seat refuses by id too')
+    env.e.MgsCoopPartnerRideSeat = nil
+    env.Vehicle = nil
+    _, n = seat(25601, 1, 1, 4)
+    check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25601;seat=1;reason=no_class'), 'no Vehicle.type table: refused')
+end
+-- The sender's seat/vehicle/status suffix (lua/coop/partner_ride.lua).
+do
+    local env, c = fixture(); call(env, 'OnMissionGameStart')
+    env.vars.playerVehicleGameObjectId = 25608
+    env.GameObject.GetGameObjectIdByIndex = function(kind, index)
+        check(kind == 'TppPlayer2' and index == 0, 'the local player id by its index'); return 0
+    end
+    local riders, riderReads = {41, 0, 65535, 65535}, 0
+    env.GameObject.SendCommand = function(id, command)
+        if command.id == 'GetRiderId' then
+            riderReads = riderReads + 1
+            check(id == env.vars.playerVehicleGameObjectId and next(command, 'id') == nil, 'riders of the local vehicle only')
+            return riders
+        end
+        c.warps[#c.warps + 1] = {id = id, command = command}
+    end
+    local function ends(text, suffix) return text:sub(-#suffix) == suffix end
+    c.status = {[STATUS.ON_VEHICLE] = true}
+    update(env)
+    local tick = lastTick(c)
+    check(ends(tick, ' ride=2 veh=25608 seat=1 st=0x400') and riderReads == 1, 'vehicle id, native seat (index - 1) and status: ' .. tick)
+    update(env, 20)
+    check(riderReads == 1 and ends(lastTick(c), ' ride=2 veh=25608 seat=1 st=0x400'), 'the seat is cached per vehicle')
+    env.vars.playerVehicleGameObjectId = 25609; riders = {0}
+    update(env)
+    check(riderReads == 2 and ends(lastTick(c), ' ride=2 veh=25609 seat=0 st=0x400'), 'a new vehicle reads its riders again')
+    env.vars.playerVehicleGameObjectId = 25610; riders = {41, 42}
+    update(env)
+    check(ends(lastTick(c), ' ride=2 veh=25610 seat=255 st=0x400') and riderReads == 3, 'not listed yet: unknown seat')
+    update(env, 14); check(riderReads == 3, 'an unknown seat retries every 15 frames')
+    riders = {41, 42, 0}; update(env)
+    check(riderReads == 4 and ends(lastTick(c), ' ride=2 veh=25610 seat=2 st=0x400'), 'the retry finds the rear-left seat')
+    c.status = {[STATUS.ON_VEHICLE] = true, [STATUS.BINOCLE] = true, [STATUS.SUBJECT] = true}; update(env)
+    check(lastTick(c):sub(-9) == ' st=0x403', 'status bits in fixed order: ' .. lastTick(c))
+    env.vars.playerVehicleGameObjectId = 6656; c.status = {[STATUS.ON_VEHICLE] = true}; update(env)
+    check(fields(lastTick(c))[12] == 'ride=2' and fields(lastTick(c))[13] == 'st=0x400', 'a non-vehicle-type id sends no seat')
+    c.status = {[STATUS.BINOCLE] = true}; update(env)
+    check(fields(lastTick(c))[12] == 'ride=0' and fields(lastTick(c))[13] == 'st=0x1' and #fields(lastTick(c)) == 13,
+        'on foot: no vehicle, the binoculars status')
+    c.status = {}; update(env)
+    check(#fields(lastTick(c)) == 12, 'no status set: no st=')
+    env.e.MgsCoopPartnerStatusBits = nil; env.e.MgsCoopPartnerRideSeat = nil
+    c.status = {[STATUS.ON_VEHICLE] = true}; update(env)
+    check(fields(lastTick(c))[12] == 'ride=2' and #fields(lastTick(c)) == 12, 'missing helpers keep the plain ride suffix')
+end
 -- DM_PLAY | SET_PARTS: parts first, then dmplay with the trailing gani.
 c.reply = {144, 1, 0, 0, 0, 0, 1, 0, 6, 27, 116, 0, 0, 1}
 mark = #c.calls

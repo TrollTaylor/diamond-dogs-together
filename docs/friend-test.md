@@ -84,10 +84,12 @@ stops with an explanation; a missing character uses the role default.
    `<game>\mgs-coop\real-save-backups\<time>`. Real files are only read.
    `Copy-SaveSeed` then seeds `<game>\mgs-coop\coop-saves` from that backup.
    Without an active friend install (first install, or again after
-   Uninstall-Coop), a copy left from an earlier test is always replaced. On a
-   reinstall the copy is kept unless `-ReseedSaves` is given or the player says
-   yes (the prompt shows when the copy last changed). A replaced copy is moved
-   to `coop-saves-replaced\<time>`, never deleted.
+   Uninstall-Coop), a copy left from an earlier test is replaced, unless it
+   holds a partner's Share-Save import (then Install-Coop asks twice, and
+   `-NonInteractive` keeps it; `-ReseedSaves` replaces it). On a reinstall the
+   copy is kept unless `-ReseedSaves` is given or the player says yes (the
+   prompt shows when the copy last changed). A replaced copy is moved to
+   `coop-saves-replaced\<time>`, never deleted.
 8. **Install.** It copies any existing `lab.ini`, `coop.ini`,
    `script-observe.enabled` and `client-host.txt` aside as
    `*.before-friend-<time>` (first friend install only). The order is chosen

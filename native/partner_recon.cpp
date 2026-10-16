@@ -26,6 +26,18 @@ std::uint32_t Ms(std::uint64_t from, std::uint64_t now) noexcept {
     return d > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(d);
 }
 void Copy3(double (&to)[3], const double (&from)[3]) noexcept { to[0] = from[0]; to[1] = from[1]; to[2] = from[2]; }
+bool Within(std::uint64_t since, std::uint64_t now, std::uint32_t ms) noexcept { return ms && since && now >= since && now - since < ms; }
+
+// The guard holding a due stance fix (Params stance_*), or nullptr.
+const char* StanceFixWait(const State& st, const In& in, const Params& P, std::uint64_t now) noexcept {
+    if (in.stance_block) return in.stance_block;
+    if (in.remote_downed && st.stance_applied != 3) return "downed";
+    if (P.stance_pad_quiet_ms && (in.stance_pad || Within(st.stance_pad_ms, now, P.stance_pad_quiet_ms))) return "pad";
+    if (Within(st.body_stance_ms, now, P.stance_body_stable_ms)) return "body";
+    if (Within(st.state_act_ms, now, P.stance_state_settle_ms)) return "state";
+    if (Within(st.nonloco_ms, now, P.stance_settle_ms)) return "settle";
+    return nullptr;
+}
 
 // The filtered error d about 300 ms ago (the oldest sample at least 300 ms
 // old, else the oldest one).
@@ -213,7 +225,18 @@ Params NativeParams(const Params& base, FaceMode face) noexcept {
     p.cap_along_prone_min_mmps = 150;
     p.cap_along_prone_max_mmps = 400;
     p.stop_grace_ms = 1200;
+    // The stance level fix (critic P0.3): 500 ms instead of 2 s, behind the guards.
+    p.stance_fix_ms = 500;
+    p.stance_fix_gap_ms = 1000;
+    p.stance_pad_quiet_ms = 400;
+    p.stance_body_stable_ms = 300;
+    p.stance_settle_ms = 800;
+    p.stance_state_settle_ms = 2000;
     return p;
+}
+
+bool StateAct(std::uint16_t act) noexcept {
+    return act == 39 || act == 40 || act == 41 || (act >= 42 && act <= 44) || (act >= 131 && act <= 133) || act == 139;
 }
 
 Out Step(State& st, const In& in, const Params& P) noexcept {
@@ -444,6 +467,16 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             st.stance_candidate = 0;
         }
     }
+    // Stance fix guards: the remote's STANCE input, body 1's own stance
+    // change, and the last non-locomotion / StateAct act on either side.
+    const std::uint64_t now1 = now ? now : 1;
+    if (in.stance_pad) st.stance_pad_ms = now1;
+    if (in.body_anim_ok && in.body_stance >= 1 && in.body_stance <= 3) {
+        if (st.body_stance_seen && in.body_stance != st.body_stance_seen) st.body_stance_ms = now1;
+        st.body_stance_seen = in.body_stance;
+    }
+    if ((in.body_anim_ok && !Loco(in.body_act)) || (in.remote_anim_valid && !Loco(in.remote_act))) st.nonloco_ms = now1;
+    if ((in.body_anim_ok && StateAct(in.body_act)) || (in.remote_anim_valid && StateAct(in.remote_act))) st.state_act_ms = now1;
     std::uint32_t mismatch_ms = 0;
     if (st.stance_applied && in.body_anim_ok && in.body_stance >= 1 && in.body_stance <= 3 && in.body_stance != st.stance_applied) {
         if (!st.mismatch_since) st.mismatch_since = now;
@@ -758,16 +791,31 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     // lost or extra edge inverts crouch/stand until the remote toggles again.
     // A mismatch held stance_fix_ms asks for one corrective tap toward the
     // remote's stance (a hold for prone), at most every stance_fix_gap_ms.
-    if (P.stance_fix && in.input_net && !input_stale && in.target_live && st.stance_applied && in.body_anim_ok &&
+    // The guards (Params stance_*) keep a due fix from fighting a stance change
+    // already in flight; the first guard of an episode is reported once.
+    const bool fix_due = P.stance_fix && in.input_net && !input_stale && in.target_live && st.stance_applied && in.body_anim_ok &&
         in.body_stance >= 1 && in.body_stance <= 3 && in.body_stance != st.stance_applied && Loco(in.body_act) &&
         (!in.remote_anim_valid || Loco(in.remote_act)) && mismatch_ms >= P.stance_fix_ms &&
-        (!st.last_stance_fix_ms || now - st.last_stance_fix_ms >= P.stance_fix_gap_ms)) {
+        (!st.last_stance_fix_ms || now - st.last_stance_fix_ms >= P.stance_fix_gap_ms);
+    const char* fix_wait = fix_due ? StanceFixWait(st, in, P, now) : nullptr;
+    if (fix_due && !fix_wait) {
         o.stance_fix = st.stance_applied == 3 ? StanceFix::hold : StanceFix::tap;
         o.report.fix_body = in.body_stance;
         o.report.fix_remote = st.stance_applied;
         o.events |= Event::stance_fix;
         st.last_stance_fix_ms = now;
         st.mismatch_since = now;  // wait for the result before the next one
+        st.stance_wait = nullptr;
+    } else if (fix_wait) {
+        if (fix_wait != st.stance_wait) {
+            st.stance_wait = fix_wait;
+            o.events |= Event::stance_wait;
+            o.report.fix_wait = fix_wait;
+            o.report.fix_body = in.body_stance;
+            o.report.fix_remote = st.stance_applied;
+        }
+    } else if (!st.stance_applied || !in.body_anim_ok || in.body_stance == st.stance_applied) {
+        st.stance_wait = nullptr;  // the episode ended: the next one reports its guard again
     }
     // Runaway: the body moves on its own. Idle remote: the body moves. Moving
     // remote: its own velocity differs from the remote's while the error is

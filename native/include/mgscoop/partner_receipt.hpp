@@ -8,11 +8,15 @@
 // at most max_receipt bytes):
 //   return 'MGS_COOP_PARTNER_CFG_V1'                      -> return true|false
 //   return 'MGS_COOP_PARTNER_V1' -- <frame> <x_mm> <y_mm> <z_mm> <yaw_cdeg> <cam_cdeg> <stance> <move> <luaflags> [<action_flags> <equip_id>]
+//        [ ride=<0..5> [ veh=<0..65535> seat=<0..3|255>] [ st=0x<hex>]]
 //        -> return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>   (quiet; per frame)
-//           followed by ,<type>,<parts>,<camo>,<hand>,<face> when op has SET_PARTS (16) or DM_PLAY (128)
-//           (zeros unless SET_PARTS), and then ,<gani> (0..25) when op has DM_PLAY (128)
+//           followed by ,<type>,<parts>,<camo>,<hand>,<face> when op has SET_PARTS (16), DM_PLAY (128)
+//           or RIDE_SEAT (512) (zeros unless SET_PARTS), then ,<gani> (0..30) when op has DM_PLAY or
+//           RIDE_SEAT (0 unless DM_PLAY), then ,<vehicle>,<seat>,<action>,<entry> when op has RIDE_SEAT
 //   return 'MGS_COOP_PARTNER_LOG_V1' -- <payload>          -> logs partner_lua=<payload>; return true
 //   return 'MGS_COOP_PARTNER_STOP_V1'                     -> return true
+//   return 'MGS_COOP_PARTNER_SEAT_V1' -- arm <seat> <vehicle> | stop
+//        -> return true|false (debug seat_dm lever: arms/ends the manual seat; docs/anim-round1-seat.md)
 // Integers only, so neither Lua's nor the C runtime's locale is involved.
 #include <cstddef>
 #include <cstdint>
@@ -21,17 +25,20 @@
 
 namespace mgscoop::partner {
 
-enum class Receipt : unsigned char { none, cfg, tick, log, stop };
+enum class Receipt : unsigned char { none, cfg, tick, log, stop, seat };
 
 inline constexpr char cfg_source[] = "return 'MGS_COOP_PARTNER_CFG_V1'";
 inline constexpr char stop_source[] = "return 'MGS_COOP_PARTNER_STOP_V1'";
 inline constexpr char tick_prefix[] = "return 'MGS_COOP_PARTNER_V1' -- ";
 inline constexpr char log_prefix[] = "return 'MGS_COOP_PARTNER_LOG_V1' -- ";
+inline constexpr char seat_prefix[] = "return 'MGS_COOP_PARTNER_SEAT_V1' -- ";
 inline constexpr std::size_t max_receipt = 200;
 inline constexpr std::size_t max_log_payload = 160;
 // Always fits FormatReply output (8 signed 32-bit integers, the 5 bounded look
-// values, the gani index, commas, "return "): at most 114 characters.
-inline constexpr std::size_t reply_capacity = 128;
+// values, the gani index, the 4 RIDE_SEAT values, commas, "return "): at most
+// 133 characters with every op bit and every field at its widest
+// (tests/partner_receipt_tests.cpp).
+inline constexpr std::size_t reply_capacity = 160;
 // Fits FormatLogLine output: "partner_lua=" + payload with ';' -> "; " + CRLF.
 inline constexpr std::size_t log_line_capacity = 12 + 2 * max_log_payload + 3;
 // Index of the partner's player instance. Offline the local index is 0.
@@ -57,6 +64,23 @@ inline constexpr std::uint32_t mirror_off = 64;
 // Player.RequestToStopDirectMotion().
 inline constexpr std::uint32_t dm_play = 128;
 inline constexpr std::uint32_t dm_stop = 256;
+// The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md):
+// the vehicle id, native seat, action and entry follow the gani value. action
+// 1 plays Player.RequestToPlayDirectMotion{{"coopRide",R},[GetOn],Loop,[GetOff]}
+// with the receiver's own locator name of that vehicle, "CNP_ppos_c" and
+// "MTP_GLOBAL_C" on every entry; action 2 advances the playing chain to its
+// GetOff entry (RequestToGoNextDirectMotion). Never sent with DM_PLAY/DM_STOP.
+inline constexpr std::uint32_t ride_seat = 512;
+}
+namespace seat_action {
+inline constexpr std::uint8_t play = 1, next = 2;
+}
+// RIDE_SEAT entry bits: the chain starts with the seat's GetOn / ends with its GetOff.
+// by_id (WS3 B1, docs/vehicle-ws3.md): the native id path is armed for this
+// play (realized same-category copy): Lua may play an unnamed vehicle's chain
+// untargeted (locator "") instead of refusing no_name; native then targets it.
+namespace seat_entry {
+inline constexpr std::uint8_t get_on = 1, get_off = 2, by_id = 4;
 }
 // Highest gani index of the Lua table (partner_sync.lua GANI).
 inline constexpr std::uint8_t max_gani = kPartnerDmGaniMax;  // partner_sync.lua GANI 0..25
@@ -85,14 +109,43 @@ struct Tick {
     std::uint16_t equip_id;
     bool has_ride;
     std::uint8_t ride_kind;  // optional named suffix ride=0..5
+    // Optional after ride=: " veh=<id> seat=<s>" (the local vehicle GameObject id,
+    // 65535 none, and the local native seat 0..3, 255 unknown) and " st=0x<hex>"
+    // (status_bits, docs/anim-round1-seat.md; absent = 0 when ride= is present).
+    bool has_vehicle;
+    std::uint16_t vehicle;
+    std::uint8_t seat;
+    bool has_status;
+    std::uint16_t status;
 };
+// The local PlayerStatus census bits of " st=" (lua/coop/partner_ride.lua; a
+// status the binding table lacks is never set).
+namespace status_bit {
+inline constexpr std::uint16_t binocle = 1u << 0, subject = 1u << 1, cbox = 1u << 2, cbox_evade = 1u << 3, trash_box = 1u << 4,
+                               trash_box_half_open = 1u << 5, behind = 1u << 6, carry = 1u << 7, cqc_continuous = 1u << 8,
+                               on_horse = 1u << 9, on_vehicle = 1u << 10, on_helicopter = 1u << 11;
+inline constexpr std::uint16_t all = 0xFFF;
+}
+// "binocle,subject,..." (or "none") into out; the length written.
+std::size_t FormatStatusBits(std::uint16_t bits, char* out, std::size_t capacity) noexcept;
 inline constexpr std::int32_t max_frame = 999999;
 inline constexpr std::int32_t max_pos_mm = 1000000000;   // matches sync::max_coord_component (1e6 m)
 inline constexpr std::int32_t max_angle_cdeg = 3600000;  // +-36000 degrees, normalized later
-// Strict: the tick prefix, then exactly 9 or 11 signed decimal integers (11 may end in ride=0..5) separated by
-// single spaces; no '+', no leading zeros, no "-0", nothing trailing, every
+// Strict: the tick prefix, then exactly 9 or 11 signed decimal integers (11 may end in ride=0..5, optionally
+// followed by veh=<0..65535> seat=<0..3|255>, then optionally st=0x<1..3 lowercase hex, at most 0xfff, no
+// leading zero>) separated by single spaces; no '+', no leading zeros, no "-0", nothing trailing, every
 // value within its bound. `out` is written only on success.
 bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept;
+// The debug seat receipt (Receipt::seat): "arm <seat 0..3> <vehicle 0..65534>" or "stop".
+struct SeatRequest {
+    bool arm;
+    std::uint8_t seat;
+    std::uint16_t vehicle;
+};
+bool ParseSeatReceipt(const char* source, std::size_t size, SeatRequest& out) noexcept;
+// A LOG receipt whose payload starts "event=ride_seat_refused;id=<vehicle>;seat=<0..3>;" (the
+// receiver Lua refused a RIDE_SEAT request): its vehicle and seat.
+bool ParseSeatRefusal(const char* source, std::size_t size, std::uint16_t& vehicle, std::uint8_t& seat) noexcept;
 
 // A player appearance as Player.SetPartsInfoAtInstanceIndex (0x9DF530) takes
 // it, plus face_equip (Q+0x68), which no Lua binding sets (written natively).
@@ -141,12 +194,15 @@ struct Reply {
     std::int32_t yaw_mrad;
     Status status;
     std::uint32_t age_ms;
-    Look look;  // appended (5 values, no face_equip) when op has set_parts_explicit (zeros with dm_play only)
-    std::uint8_t gani;  // appended after the look values when op has dm_play
+    Look look;  // appended (5 values, no face_equip) when op has set_parts_explicit (zeros with dm_play/ride_seat only)
+    std::uint8_t gani;  // appended after the look values when op has dm_play (0 with ride_seat only)
+    // Appended after the gani when op has ride_seat.
+    std::uint16_t seat_vehicle = 0;
+    std::uint8_t seat = 0, seat_action = 0, seat_entry = 0;
 };
 // "return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>"
-// [",<type>,<parts>,<camo>,<hand>,<face>" when op & (set_parts_explicit | dm_play)]
-// [",<gani>" when op & dm_play].
+// [",<type>,<parts>,<camo>,<hand>,<face>" when op & (set_parts_explicit | dm_play | ride_seat)]
+// [",<gani>" when op & (dm_play | ride_seat)] [",<vehicle>,<seat>,<action>,<entry>" when op & ride_seat].
 // Returns the length without terminator, or 0 (empty output) if it does not fit.
 std::size_t FormatReply(const Reply& reply, char* out, std::size_t capacity) noexcept;
 
@@ -179,6 +235,8 @@ std::size_t FormatLogLine(const char* source, std::size_t size, char* out, std::
 //   | hold=none|pass|own|net | recon=off|track|pin | align=<-50..150>
 //   | slot=remote|body|none | runaway=pin|disarm|off | wrap=off|census|window
 //   | place=1   (one-shot: a new placement)
+// Round-1 actions (docs/anim-round1-actions.md "DM overlay"):
+//   | overlay=<partner_dm_overlay entry>|stop | oloop=0|1 | oms=<100..60000>   (one-shots)
 // Decimal values have no leading zeros. "stop" must be alone. Anything else
 // (unknown token, repeat, empty) is refused.
 inline constexpr std::size_t max_trigger = 255;
@@ -276,6 +334,15 @@ struct Trigger {
     bool has_nslot;
     PartnerNativeSlot nslot;
     bool rtap;
+    // Round-1 actions (docs/anim-round1-actions.md "DM overlay"; the debug
+    // commands overlay_state / overlay_stop): overlay=<partner_dm_overlay
+    // catalogue entry>|stop, and with an entry oloop=0|1 (default: the entry's)
+    // and oms=<100..60000> (default 3000). One-shots.
+    bool overlay, overlay_stop;
+    std::uint8_t overlay_index;
+    bool has_oloop, oloop;
+    bool has_oms;
+    std::uint32_t oms;
 };
 bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 

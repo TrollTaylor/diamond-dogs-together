@@ -5,13 +5,18 @@ Collects the MGS Co-op logs of one PC into a ZIP on the Desktop
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Collect-Logs.ps1 [-GameDirectory "<MGSV folder>"] [-OutputDirectory <folder>]
 
 Included (bounded, read-only, the game may still be running):
-  probe.log (tail), script-observer.log (from the last "script adapter" start
-  line), steam-observer.log (tail), early.log, lab-status.json,
-  link-status.json, play-session.json, lab.ini, coop.ini,
+  probe.log (tail), script-observer.log (the last 3 sessions: from the
+  3rd-last "script adapter" start line), steam-observer.log (tail), early.log,
+  lab-status.json, link-status.json, play-session.json, lab.ini, coop.ini,
   script-observe.enabled, probe-install.json, client-host.txt,
-  host-steamid.txt and friend-install.json, plus summary.txt with versions,
-  file hashes and the real save check. Never included: link-secret.txt (the
-  link key) and steam-join.ini. SteamIDs are masked except their last 4
+  host-steamid.txt and friend-install.json, coop-saves.txt (the co-op save
+  folders: names, sizes and times only, never save contents), the automatic
+  save handoff's coop-saves-handoff\provenance.json, applied.json and
+  request.json (as handoff-*.json; set hashes and missions, no save bytes),
+  plus summary.txt with versions, file hashes, the co-op save state, the save
+  handoff state and the real save check. Never included: link-secret.txt (the
+  link key), link-rejoin.txt (a join code), steam-join.ini and any save file.
+  SteamIDs are masked except their last 4
   digits; Steam account folder numbers and the Windows user name in paths are
   removed; join codes (MGS1-... and MGS2-...) and invite strings
   (+mgscoop_join ...) are replaced and public IPv4 addresses after peer=,
@@ -93,22 +98,35 @@ function Save([string]$Name, [AllowEmptyString()][string]$Text) {
 try {
     $included = New-Object Collections.Generic.List[string]
     $missing = New-Object Collections.Generic.List[string]
-    $logLimitChars = $MaxLogBytes
-    # script-observer.log: everything since the last loader start, bounded.
+    # script-observer.log: the last 3 loader sessions (a problem session is often
+    # followed by a short check), bounded to 3 logs' worth.
+    $observerLimitChars = [int][Math]::Min(16777216, 3 * [Int64]$MaxLogBytes)
     $observer = Read-FriendFileTail -Path (Join-Path $paths.Mod 'script-observer.log') -MaxBytes ([Math]::Min(16777216, $MaxLogBytes * 8))
     if ($observer) {
-        Save 'script-observer.log' (Limit-TextTail -Text (Get-TextFromLastMarker -Text $observer -Marker 'MGS Co-op script adapter') -MaxChars $logLimitChars)
+        Save 'script-observer.log' (Limit-TextTail -Text (Get-TextFromLastMarkers -Text $observer -Marker 'MGS Co-op script adapter' -Count 3) -MaxChars $observerLimitChars)
         $included.Add('script-observer.log')
     } else { $missing.Add('script-observer.log') }
     foreach ($row in @(@('probe.log', 262144), @('steam-observer.log', 262144), @('early.log', 65536))) {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $row[0]) -MaxBytes ([Math]::Min($MaxLogBytes, [int]$row[1]))
         if ($text) { Save $row[0] $text; $included.Add($row[0]) } else { $missing.Add($row[0]) }
     }
-    # Allow-list. link-secret.txt (the link key) and steam-join.ini are never collected.
+    # Allow-list. link-secret.txt (the link key), link-rejoin.txt (a join code) and steam-join.ini are never collected.
     foreach ($name in @('lab-status.json', 'link-status.json', 'play-session.json', 'lab.ini', 'coop.ini', 'script-observe.enabled', 'probe-install.json', 'client-host.txt', 'host-steamid.txt', 'friend-install.json')) {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $name) -MaxBytes 65536
         if ($text) { Save $name $text; $included.Add($name) } else { $missing.Add($name) }
     }
+    # The automatic save handoff's records (set hashes, missions, times; no save
+    # bytes, no secret), only when present and at most 64 KB each.
+    foreach ($name in @('provenance.json', 'applied.json', 'request.json')) {
+        $path = Join-Path $paths.CoopSavesHandoff $name
+        if (!(Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path -Force).Length -gt 65536) { continue }
+        $text = Read-FriendFileTail -Path $path -MaxBytes 65536
+        if ($text) { Save ('handoff-' + $name) $text; $included.Add('handoff-' + $name) }
+    }
+    # The co-op save folders (which copy is active, what was replaced or imported):
+    # relative names, sizes and times only; no save file is read or collected.
+    Save 'coop-saves.txt' (((Get-FriendSaveListing -ModDirectory $paths.Mod) -join "`r`n") + "`r`n")
+    $included.Add('coop-saves.txt')
 
     # ------------------------------------------------------------ summary
     $package = Read-FriendJson (Join-Path $PackageDirectory 'package.json')
@@ -139,6 +157,25 @@ try {
     $installStatus = [string](Get-FriendProperty $state 'status' 'none')
     $running = @(Get-GameProcessInDirectory -Directory $gameRoot).Count -gt 0
     $os = [Environment]::OSVersion.VersionString
+    # The co-op save copy: its file count, the Share-Save import marker and the
+    # newest folder set aside (an import, a restore or an Install-Coop reseed).
+    $coopSaveFiles = 0
+    if (Test-Path -LiteralPath $paths.CoopSaves -PathType Container) { $coopSaveFiles = @(Get-ChildItem -LiteralPath $paths.CoopSaves -File -Recurse -Force -ErrorAction SilentlyContinue).Count }
+    $importMarkerState = 'absent'
+    if (Test-Path -LiteralPath (Join-Path $paths.CoopSaves 'imported-progress.json') -PathType Leaf) { $importMarkerState = 'present' }
+    $newestReplaced = 'none'
+    $replacedRoot = Join-Path $paths.Mod 'coop-saves-replaced'
+    if (Test-Path -LiteralPath $replacedRoot -PathType Container) {
+        foreach ($d in @(Get-ChildItem -LiteralPath $replacedRoot -Directory -Force)) {
+            if ($d.Name -cmatch '^[0-9]{8}-[0-9]{6}' -and ($newestReplaced -eq 'none' -or [string]::CompareOrdinal($d.Name, $newestReplaced) -gt 0)) { $newestReplaced = $d.Name }
+        }
+    }
+    # The automatic save handoff: the session's state and the copies it moved aside.
+    $handoffState = 'none'
+    $playHandoff = Get-FriendProperty $playSession 'handoff' $null
+    if ($playHandoff) { $handoffState = [string](Get-FriendProperty $playHandoff 'state' 'none') }
+    if (!$handoffState) { $handoffState = 'none' }
+    $asidesHandoff = @(Get-CoopProgressBackups -ReplacedRoot $replacedRoot | Where-Object { $_.Kind -eq 'handoff' }).Count
     $lines = @(
         'MGS Co-op log collection',
         ('collected_local=' + [DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss zzz')),
@@ -155,6 +192,8 @@ try {
         ('dinput8.dll sha256=' + $loader + '; matches_install_record=' + ([bool]$loader -and $loader -eq [string](Get-FriendProperty $record 'dll_sha256' ''))),
         ('mgs-coop-player-runtime.dat sha256=' + $archive + '; expected=' + ($archive -eq $expectArchive.ToUpperInvariant())),
         ('real_saves=' + $saveCheck),
+        ('coop_saves=files=' + $coopSaveFiles + '; import_marker=' + $importMarkerState + '; newest_replaced=' + $newestReplaced),
+        ('handoff=' + $handoffState + '; asides_handoff=' + $asidesHandoff),
         ('windows=' + $os + '; powershell=' + $PSVersionTable.PSVersion.ToString()),
         ('included=' + ($included -join ',')),
         ('missing=' + ($missing -join ',')),
@@ -170,6 +209,7 @@ Write-Host ''
 Write-Host "Saved: $zipPath ($([Math]::Round($size / 1024)) KB)" -ForegroundColor Green
 Write-Host 'Send this ZIP file to the person who gave you the package. SteamIDs inside are masked'
 Write-Host 'except their last 4 digits, join codes and public addresses are masked, and the link key is'
-Write-Host 'not included. You can open the ZIP to check what it contains.'
+Write-Host 'not included. Co-op save folders are listed by name, size and time only; no save file is'
+Write-Host 'included. You can open the ZIP to check what it contains.'
 Write-Output $zipPath
 exit 0

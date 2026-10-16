@@ -1,0 +1,20 @@
+# Save handoff restart, session 2 of 2 (docs/join-fix-phase2-spec.md P2-7, hidden check R5):
+# the guest starts from session 1's applied copy (-GuestSaveSeedRun <handoff-restart run id>),
+# so both titles are 40010, the guest needs no handoff, both pair at the title and the
+# host's title Continue is followed into Mother Base.
+# Run (coordinator only, hidden worker):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-after-restart.txt -SaveSeed lab -GuestSaveSeedRun <R4 runId> -LabSetting save_handoff=scene -GraphicsQuality low
+# Evidence:
+#  - guest script-observer.log: save_handoff=need; need=0; why=same (no offer on the host). The
+#    host restarts from the same lab seed, so the applied guest copy is byte-identical to the
+#    host's set and GuestNeed answers same before the location rule (run 318f135d); same_scene
+#    needs a different set at the same place (unit tests cover it).
+#  - guest world=paired at 40010; the host's title Continue is followed (kind 4 plus the
+#    title seeds); both reach 30010 and pair there.
+#  - Closed, BaselineRestored and RealSavesUnchanged true.
+titlemenu both 240
+waitlog guest 'save_handoff=need; need=0' 120
+waitlog guest 'world=paired; epoch=[0-9]+; mission=40010' 120
+title host 240
+waitmission host 30010 300
+waitmission guest 30010 300

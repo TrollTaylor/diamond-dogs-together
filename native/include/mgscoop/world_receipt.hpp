@@ -7,7 +7,15 @@
 // Receipts (the chunk name always equals the source, as loadstring sets it;
 // NUL-free, at most max_receipt bytes):
 //   return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>     phase 0 query, 1 start
-//        -> return <level>,<role>,<proto>,<link>,<epoch>,<probe>,<mode>
+//        -> return <level>,<role>,<proto>,<link>,<epoch>,<probe>,<mode>,<session>,
+//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>
+//        (14 values; r[9..11] are the partner's mission and world level, 0
+//        unknown, and the raw pair-wait code world::pair_wait 0..10; r[12] is
+//        the save handoff code save_handoff_state::LuaCode 0..6 and r[13] the
+//        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
+//        phase 2 P2-1; r[14] the WS4 attacker census 0|1 (lab key
+//        partner_placed_census, lab only), also from HandleCfg; Lua treats a
+//        missing value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
@@ -16,6 +24,15 @@
 //   return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>          guest spawn sync: one native placement of
 //        the grant recorded for <seq> (world_wire.hpp Grant) on GameObjectId <goId>
 //        -> return {r=,h=,leaf=} | return {refused="<reason>"} (game_script_observer)
+//   return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>        an on-screen world note
+//        (code 1..15, a and b 0..4294967295, no sign; world_link::HandleNote)
+//        -> return true (handled or rate-gated) | return false (no meaning yet)
+//   return 'MGS_COOP_WORLD_SAVE_V1' -- <op> <a> <b> <c> <d> <e>   the save handoff report
+//        (join-fix phase 2 P2-2; exactly 6 integers, no sign; save_handoff::HandleLua):
+//        op 1 REPORT a=mission 0..99999 b=title 0|1 c=story 0..2 d=saving 0|1 e=ingame 0|1;
+//        op 2 CONTINUE a=target 1..99999 b=title 0|1 c=story 0..2 d=e=0;
+//        op 3 DECLINE a=1 second_continue|2 f9 b..e=0
+//        -> return true | return false (module off or rate-gated)
 // Integers only: an optional '-' (i32 fields only), no '+', no leading zeros,
 // no "-0", no '.', single spaces, nothing trailing; u32 up to 4294967295.
 #include <cstddef>
@@ -24,13 +41,15 @@
 
 namespace mgscoop::world {
 
-enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp };
+enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save };
 
 inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
 inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
 inline constexpr char rx_prefix[] = "return 'MGS_COOP_WORLD_RX_V1' -- ";
 inline constexpr char log_prefix[] = "return 'MGS_COOP_WORLD_LOG_V1' -- ";
 inline constexpr char warp_prefix[] = "return 'MGS_COOP_WORLD_WARP_V1' -- ";
+inline constexpr char note_prefix[] = "return 'MGS_COOP_WORLD_NOTE_V1' -- ";
+inline constexpr char save_prefix[] = "return 'MGS_COOP_WORLD_SAVE_V1' -- ";
 inline constexpr std::size_t max_receipt = 240;
 inline constexpr std::size_t max_log_payload = 160;
 // The longest reply: "return " and 17 values (queue, op, 15 fields) of at
@@ -52,6 +71,13 @@ TxStatus ParseTx(const char* source, std::size_t size, std::uint8_t& code, std::
 bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 // WARP_V1: seq 1..65535, goId 0..65535 (strict integers). Outputs only on success.
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
+// NOTE_V1: code 1..15, a and b 0..4294967295 (strict integers, no sign).
+// Outputs only on success.
+bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept;
+// SAVE_V1: exactly 6 strict integers (no sign) with the P2-2 ranges per op
+// (see the grammar above). Outputs only on success.
+bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint32_t& a, std::uint32_t& b, std::uint32_t& c,
+               std::uint32_t& d, std::uint32_t& e) noexcept;
 
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;

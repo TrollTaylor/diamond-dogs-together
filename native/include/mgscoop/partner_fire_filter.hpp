@@ -75,6 +75,15 @@ bool Arm(std::uint16_t owner) noexcept;
 void Disarm() noexcept;
 bool Armed() noexcept;
 
+// Anim round 2: thrown service entry filter (vt+8 at 2429AD0/24299A0).
+// Installed independently of the census. The armed owner stays latched across
+// drain boundaries and key changes: a queued/unwindowed request must not create
+// an object or overwrite the shared arc preview. Only owner 1 can be armed.
+const char* InstallThrown(const void* base, LogFn log) noexcept;
+bool ThrownPatchLive(const void* base) noexcept;
+bool ArmThrown(std::uint16_t owner = 1) noexcept;
+bool ThrownArmed(std::uint16_t owner = 1) noexcept;
+
 // Process-lifetime totals (the driver logs deltas).
 struct Stats {
     bool installed, live, armed;
@@ -90,6 +99,9 @@ struct Stats {
     bool noise_installed, noise_live;
     std::uint32_t noise_dropped, noise_passed;
     std::uint16_t noise_last_owner;
+    bool thrown_installed, thrown_live, thrown_armed;
+    std::uint16_t thrown_owner, thrown_last_owner;
+    std::uint32_t thrown_dropped, thrown_preview_dropped, thrown_passed, thrown_unread;
 };
 void ReadStats(const void* base, Stats& out) noexcept;
 
@@ -106,6 +118,51 @@ struct Census {
 };
 void ReadCensus(const void* base, std::size_t image_span, Census& out) noexcept;
 
+// --- Anim round 1: the fire/projectile census (lab key partner_fire_census=1) ---
+// Read-only records of every request the hooks see, for every owner (the local
+// instance 0 included), before the filter's own verdict (which is unchanged):
+// RequestBullet records (owner +0x2A, bullet id +0x2E, kind +0x30, sub +0x31,
+// flags +0x32: 0x1302F50 fills them before the call), AddNoise records (owner
+// +0x12, kind +0x10, flags +0x11) and, with the projectile census slot, the
+// class-3 projectile requests 0x1303450 sends to *(*(svc+0x98)+0x210) vt+0 =
+// 0x1337760 (owner +0x32 = the shot record's +0x2A, projectile id +0x2E, +0x34).
+// With the census on, Install also swaps four forwarding slots (each in its
+// service's live and base iface vtable, read-only data, no direct caller,
+// contract-pinned): the projectile request above; the rocket punch (gun mode
+// 53: the projectile service vt+0x58 = 0x1337920; +0x2C, +0x3E); thrown objects
+// (gun mode 37 and its helper 0x1061D90: gm+0x200 vt+8 = 0x15E0230; the equip
+// +0x3C, flags +0x3E); placed objects (gun mode 46: gm+0x208 vt+0x48 =
+// 0xFCCD80; the equip +0x30, flags +0x3C). Every builder stamps the owner id
+// & 0x1FF at +0x32. Armed body-1 thrown requests are dropped at the entry.
+enum class CensusKind : std::uint8_t { bullet, noise, projectile, rocket, thrown, placed };
+inline constexpr unsigned kCensusSlots = 4;  // projectile, rocket, thrown, placed (CensusKind - 2)
+const char* CensusKindName(CensusKind kind) noexcept;
+struct CensusEntry {
+    std::uint32_t seq;      // write sequence (1-based); 0: an empty slot
+    CensusKind kind;
+    bool dropped;           // the owner filter dropped it (bullet/noise/thrown)
+    bool fields_ok;         // the record's fields were readable
+    std::uint16_t owner;
+    std::uint16_t id;       // bullet id, projectile id, or the noise kind
+    std::uint8_t b0, b1, b2;  // bullet: kind, sub, flags; noise: flags; projectile: 0
+    std::uint16_t aux;      // projectile request +0x34
+    std::uint32_t thread;
+};
+inline constexpr std::size_t kCensusRing = 256;
+// Recording on/off (the driver sets it from partner_fire_census every tick).
+void SetCensus(bool on) noexcept;
+bool CensusOn() noexcept;
+// Entries newer than cursor (the last seq consumed; advanced), at most max;
+// lost counts entries overwritten before they were drained or torn reads.
+std::size_t DrainCensus(std::uint32_t& cursor, CensusEntry* out, std::size_t max, std::uint32_t& lost) noexcept;
+struct CensusTotals {
+    bool slot_installed[kCensusSlots], slot_live[kCensusSlots];
+    const char* slot_refusal[kCensusSlots];   // static, nullptr: installed or not tried
+    std::uint32_t slot_requests[kCensusSlots];
+    std::uint32_t bullets, noises, recorded;
+};
+void ReadCensusTotals(CensusTotals& out) noexcept;  // the slot check uses the base Install saw
+
 namespace detail {
 // The hook entry (vtable ABI: rcx = iface, rdx = record; returns rax).
 using RequestFn = void* (*)(void* iface, const void* record) noexcept;
@@ -113,6 +170,13 @@ RequestFn HookEntry() noexcept;
 // Test only: forget an install (the test frees its synthetic image) and
 // redirect the forwarded call (the synthetic image holds no code).
 void ResetForTest() noexcept;
+// A census slot's hook entry (vtable ABI: rcx = the service iface, rdx = the
+// request): slot 0 projectile, 1 rocket, 2 thrown, 3 placed.
+using ProjectileFn = void* (*)(void* iface, const void* request) noexcept;
+ProjectileFn SlotHookEntry(unsigned slot) noexcept;
+void SetSlotOriginalForTest(unsigned slot, ProjectileFn original) noexcept;
+// Records one census entry (the hooks' path; tests call it directly).
+void RecordForTest(CensusKind kind, bool dropped, std::uint16_t owner, std::uint16_t id) noexcept;
 void SetOriginalForTest(RequestFn original) noexcept;
 // The noise hook entry (vtable ABI: rcx = the noise manager, rdx = the record).
 using NoiseFn = void (*)(void* self, const void* record) noexcept;

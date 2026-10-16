@@ -61,6 +61,9 @@ inline constexpr std::uint8_t enemy_debug = 0x22, enemy_debug_ack = 0x23;
 inline constexpr std::uint8_t downed_status = 0x24, downed_commit = 0x25, revive_grant = 0x26,
                               buddy_state = 0x27, buddy_ack = 0x28, friendly_hit = 0x29, ride_body = 0x2A,
                               cargo = 0x2B, ride_fast = 0x2C;
+// WS3 vehicles (docs/vehicle-ws3.md): the driven vehicle's record angles next
+// to RIDE_FAST (lab only; sent only to a peer whose ride addendum advertises it).
+inline constexpr std::uint8_t ride_tilt = 0x2D;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -100,6 +103,17 @@ struct Grant {
 namespace unpair {
 inline constexpr std::uint8_t link_session = 1, remote_mission = 2, epoch = 3, remote_end = 4, level0 = 5, local_end = 6;
 }
+// Why an unpaired core is not paired (Core::pair_wait, the first failing gate
+// in TryPair's order; CFG r[11], world=pair_wait log lines). settling exists
+// only in published views: a different_mission that has not lasted
+// kMismatchSettleMs yet (WaitPublisher).
+namespace pair_wait {
+inline constexpr std::uint8_t paired = 0, off = 1, no_link = 2, no_hello = 3, remote_off = 4, remote_saves = 5, same_role = 6,
+                              local_loading = 7, remote_loading = 8, different_mission = 9, epoch = 10, settling = 11;
+}
+// "paired", "off", ... "settling"; any other code "unknown".
+const char* PairWaitName(std::uint8_t code) noexcept;
+inline constexpr std::uint64_t kMismatchSettleMs = 15000;
 
 enum class Type : std::uint8_t { u8, u16, u32, i32 };
 // A value is valid in [min, max], or equal to alt when alt >= 0 (weather 255 = release).
@@ -184,6 +198,47 @@ struct CfgReply {
     std::uint16_t epoch;
     std::uint8_t probe, mode;
     std::uint32_t session; // Local transport generation; zero while disconnected.
+    // The partner's scene (Core::remote_mission / remote_level, 0 unknown) and
+    // the raw pair-wait code (Core::pair_wait; never settling).
+    std::uint32_t remote_mission;
+    std::uint8_t remote_level, wait;
+    // Save handoff (join-fix phase 2 P2-1), filled only by world_link::HandleCfg
+    // after Core::Cfg (which leaves them 0): r[12] the save_handoff_state::LuaCode
+    // and r[13] the travel lock (1 may apply, else 0).
+    std::uint8_t handoff, lock;
+    // WS4 step 0 (lab key partner_placed_census): r[14] 1 asks the Lua observer for the
+    // event=obs_att attacker census lines, else 0; filled only by world_link::HandleCfg.
+    std::uint8_t census;
+};
+
+// The published pair-wait code (world_link): raw, except different_mission is
+// published as settling until the same (local, remote) pair has lasted
+// kMismatchSettleMs without interruption. post_mismatch is set exactly once
+// per pair, when different_mission is first published for it; another raw
+// code deactivates the timer but keeps the pair and its posted flag, so the
+// same pair settles again but never posts twice. Pure; the caller serializes.
+struct WaitPublisher {
+    std::uint8_t Update(std::uint8_t raw, std::uint32_t local, std::uint32_t remote, std::uint64_t now_ms,
+                        bool& post_mismatch) noexcept;
+
+    bool active = false, posted = false, known = false;  // known: pair_local/pair_remote hold a pair
+    std::uint32_t pair_local = 0, pair_remote = 0;
+    std::uint64_t since_ms = 0;
+};
+
+// NOTE receipt rate gate, one slot per code 0..31 (other codes: neither):
+// post is false when the same (a, b) was posted under 1000 ms ago, log is
+// false when it was logged under 10000 ms ago; another (a, b) replaces the
+// slot and passes both. Pure; the caller serializes.
+struct NoteGate {
+    void Accept(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint64_t now_ms, bool& post, bool& log) noexcept;
+
+    struct Slot {
+        bool used, posted, logged;
+        std::uint32_t a, b;
+        std::uint64_t post_ms, log_ms;
+    };
+    Slot slots[32]{};
 };
 
 struct RxReply {
@@ -259,6 +314,21 @@ public:
     std::uint32_t generation() const noexcept { return generation_; }
     GotoState goto_state() const noexcept { return goto_.state; }
     const Stats& stats() const noexcept { return stats_; }
+    // The scenes behind pairing (both roles). local_mission: the mission of our
+    // last READY while it is valid, else 0. remote_mission: the partner's
+    // mission while the link is up and this session's HELLO arrived (the host
+    // learns it from READY, the guest from HELLO or READY; a matching remote
+    // MISSION_END clears it), else 0. remote_level: the HELLO world level while
+    // the link is up, else 0. remote_location: the last HELLO location (reset
+    // by Configure and a new session). linked: a level >= 1 partner of the
+    // other role with saves passed its HELLO on the live link. pair_wait: the
+    // first failing gate in TryPair's order (world::pair_wait; 0 paired).
+    std::uint32_t local_mission() const noexcept;
+    std::uint32_t remote_mission() const noexcept;
+    std::uint8_t remote_level() const noexcept;
+    std::uint32_t remote_location() const noexcept;
+    bool linked() const noexcept;
+    std::uint8_t pair_wait() const noexcept;
 
 private:
     struct Entry {
@@ -323,11 +393,17 @@ private:
     std::uint16_t TxEpoch() const noexcept;
     void RecordGrant(const Entry& entry, std::uint64_t now_ms) noexcept;
     void ClearGrants() noexcept;
+    // Tick: one world=pair_wait line per (reason, local, remote) change while
+    // the level is on, the link up and not paired (no local op).
+    void NotePair() noexcept;
 
     Config config_{};
     std::uint8_t level_ = 0, pending_level_ = 0, remote_level_ = 0, remote_saves_ = 0, remote_role_ = 0, eff_ = 0;
     bool pending_level_set_ = false;
     bool remote_hello_ = false;
+    std::uint32_t remote_location_ = 0;   // HELLO v[1], both roles
+    std::uint8_t logged_wait_ = 0xFF;     // NotePair: 0xFF nothing logged since paired / link down
+    std::uint32_t logged_wait_local_ = 0, logged_wait_remote_ = 0;
     bool link_up_ = false, link_known_ = false;
     std::uint32_t session_ = 0;
     std::uint64_t link_up_ms_ = 0;
@@ -354,7 +430,7 @@ private:
     unsigned ctrl_head_ = 0, ctrl_size_ = 0;
     Entry world_[kWorldQueue]{};
     unsigned world_head_ = 0, world_size_ = 0;
-    Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{};
+    Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{}, ride_tilt_{};
     Grant grants_[kGrants]{};
     std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
     OutEntry out_[kOutboundQueue]{};

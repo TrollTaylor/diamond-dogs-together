@@ -1,0 +1,101 @@
+# The seated vehicle rider (docs/anim-round1-seat.md, partner_native_ride=seat).
+# The host drives the nearest authored jeep (veh_lv_*) while the guest watches:
+# the guest must draw the host SEATED in its own copy of that jeep (driver seat,
+# following it while it drives straight and turns), then standing beside it
+# after the host gets out. Then the roles reverse (the host watches the guest
+# drive the same jeep; Quiet seated on the host screen).
+#
+# Both players must goto_vehicle first: Wait-ViewerLanding requires the watcher's
+# partner pose, which is invalid across the 200 m spawn-to-jeep gap (run 611509)
+# and after seat mode owns body 1 (run 76dea383). b8102e6e used 14 m / 5 m aside
+# and looked at a Wakh Sind wall. Use 6 m / 0 side while the driver is still on
+# foot at the jeep, then board. godmode 1 so an alert does not drop the watcher.
+#
+# Expected (guest script-observer.log, first half; host log, second half):
+#   partner_ride=rx; kind=2; rev=..; epoch=..; v=2; seat=0; vehicle=256xx
+#   partner_ride=seat_show; vehicle=256xx; seat=0
+#   partner_ride_seat=start; ...
+#   partner_ride_seat_patch=applied; seat=0; sites=0x119883c,0x1198d56,0x1198d81,0x11992e9
+#   partner_ride_seat=confirmed; vehicle=256xx; seat=0; state=0x489157d7d94f; ...
+#   partner_ride_seat=status; phase=seated; ...; err_mm=<small>
+#   partner_ride_seat=exit; ...; confirmed=1; ...
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+placebehind guest host 6 0
+wait 2500
+guest run vehicle_names
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+host run vehicle_names
+# Watch from the Wakh Sind plaza, not from the driver's yaw (b8102e6e and
+# 8b8e5bbc looked into a wall from behind the jeep's start at (576,320,1157)).
+# Run 8b8e5bbc's reverse half proved (585.0, 320.1, 1176.9) has a clear view of
+# the plaza where the jeep arrives (578.5, 320.8, 1176.9); face -90 = toward -x
+# (placebehind convention: forward = (sin yaw, cos yaw)). A plain debug teleport:
+# Wait-ViewerLanding would refuse because seat mode owns body 1.
+guest debug teleport 585.000 323.100 1176.900 -90.000
+wait 3000
+both capture seat-entered
+host hold w 1500 nowait
+guest burst seat-drive-a 8 150
+host hold w 1500 nowait
+guest burst seat-drive-b 8 150
+host release
+wait 1500
+guest capture seat-plaza-parked
+host hold w+a 1500 nowait
+guest burst seat-turn-left 8 150
+host hold w+d 1500 nowait
+guest burst seat-turn-right 8 150
+host hold w 1500
+host release
+wait 2500
+both capture seat-stopped
+host press e 150
+guest burst seat-exiting 8 300
+wait 2500
+both capture seat-exited
+state
+both debug heal
+both debug godmode 1
+wait 2000
+guest debug goto_vehicle jeep
+wait 4000
+placebehind host guest 6 0
+wait 2500
+both capture seat-rev-before
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=
+both capture seat-rev-entered
+guest hold w 1500 nowait
+host burst seat-rev-drive 8 150
+guest hold w+a 1500 nowait
+host burst seat-rev-turn 8 150
+guest hold w 1500
+guest release
+wait 2500
+both capture seat-rev-stopped
+guest press e 150
+host burst seat-rev-exiting 8 300
+wait 2500
+both capture seat-rev-exited
+state

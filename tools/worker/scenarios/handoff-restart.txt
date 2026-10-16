@@ -1,0 +1,40 @@
+# Save handoff restart, session 1 of 2 (docs/join-fix-phase2-spec.md P2-9, P2-10, hidden check R4):
+# as handoff-stage.txt, but the guest runs save_handoff=scene, so after staging it writes
+# request.json, counts down 10 s at its title and closes its own window (WM_CLOSE). The
+# coordinator then applies the staged set to run\guest-saves like Play-Coop would
+# (applyhandoff runs after the owned session has closed). Session 2 is
+# handoff-after-restart.txt with -GuestSaveSeedRun <this run's id>.
+# Run (coordinator only, hidden worker):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-restart.txt -SaveSeed lab -GuestSaveSeed real -LabSetting host:save_handoff=stage -LabSetting guest:save_handoff=scene -GraphicsQuality low
+# Evidence:
+#  - guest script-observer.log: save_handoff=countdown; ms=10000, then save_handoff=exit; how=wm_close;
+#    the game exits within 90 s with no forced termination (scenario.json
+#    ExitedRoles.guest.forced=false). A partner_shutdown=hooks_off; teardown=other_thread line
+#    at the title is expected: PartnerMissionStart arms every runtime allocation, the 40050
+#    title included, and base 0.12.1 logs it there too. The host logs
+#    save_handoff=result_rx; status=exiting, then link=lost; after_ms=... (UDP sends no
+#    goodbye; link=peer_left is Steam only; the host needs kHostLostMs = 3 s of silence, so the
+#    waitlog below keeps the session open for it), and its handoff token is partner_restarting.
+#  - captures.jsonl handoff-restarting: the host hud.toast starts with the H2 text (the lab HUD
+#    is off unless coop_hud is set; the lost toast replaces H2 once the link is lost).
+#  - scenario.json HandoffApply: applied; run\guest-saves progress equals the staged manifest;
+#    run\guest-saves-replaced\<stamp>-before-handoff holds the old real-seed progress; the
+#    settings files are the guest's own; imported-progress.json has source=handoff.
+#  - Closed, BaselineRestored and RealSavesUnchanged true; nothing new under the game folders'
+#    mgs-coop other than logs and link-status.json; no link-rejoin.txt (UDP).
+# In scene mode the token moves on from staged to countdown within moments, so the state
+# check accepts staged, countdown or exiting.
+labsetting coop_hud=full
+titlemenu both 240
+title host 240
+waitlog host 'save_handoff=provenance; .*mission=30010' 120
+waitlog host 'save_handoff=offer; ' 60
+waitlog guest 'save_handoff=staged; ' 90
+expectstate guest mission ^40050$
+expectstate guest handoff ^(staged|countdown|exiting)$
+waitlog guest 'save_handoff=exit; how=wm_close' 60
+host capture handoff-restarting
+waitexit guest 90
+waitlog host 'link=lost; after_ms=' 30
+expectstate host handoff ^partner_restarting$
+applyhandoff guest

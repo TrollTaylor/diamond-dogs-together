@@ -223,6 +223,90 @@ check(c.masks.MgsCoopRevive == nil and physical == 0x1820, 'ordinary use returns
 c = fixture(); c.n.held = true; c.D.records[2].pos[1] = 3001
 check(not c.step() and c.sets == 0, 'ordinary native use held away from teammate never starts revive')
 
+-- Carried: the stock non-animation camera follows the carrier (instance 1)
+-- from behind; a one-tick role dropout keeps it; put down and cleanup stop it.
+do
+    local function cameraFixture(failing)
+        local f = fixture()
+        f.plays, f.stops = {}, 0
+        f.env.Player.RequestToPlayCameraNonAnimation = function(p)
+            f.plays[#f.plays + 1] = p
+            if failing then error('camera refused') end
+        end
+        f.env.Player.RequestToStopCameraAnimation = function() f.stops = f.stops + 1 end
+        f.env.GameObject = {GetGameObjectIdByIndex = function(kind, index) return kind == 'TppPlayer2' and index == 1 and 1 or nil end}
+        f.env.Vector3 = function(x, y, z) return {x = x, y = y, z = z} end
+        return f
+    end
+    c = cameraFixture()
+    c.step()
+    check(#c.plays == 0, 'an uncarried player keeps the normal camera')
+    c.n.carry = 2; c.step()
+    local p = c.plays[1]
+    check(#c.plays == 1 and p.characterId == 1 and p.isFollowPos == true and p.isFollowRot == true and
+        p.offsetPos.z < 0 and p.skeletonNames[1] == 'SKL_004_HEAD', 'being carried follows the carrier from behind')
+    c.step(16); c.step(16)
+    check(#c.plays == 1 and c.stops == 0, 'the follow camera starts once while carried')
+    c.n.carry = 0; c.step(16); c.n.carry = 2; c.step(16)
+    check(#c.plays == 1 and c.stops == 0, 'a one-tick role dropout does not restart the camera')
+    c.n.carry = 0
+    for _ = 1, 5 do c.step(16) end
+    check(c.stops == 0, 'the camera holds through a short dropout')
+    c.step(16)
+    check(c.stops == 1, 'put down returns to the normal camera')
+    c.n.carry = 2; c.step(16)
+    check(#c.plays == 2, 'a new carry follows again')
+    c.D.stop()
+    check(c.stops == 2, 'downed cleanup stops the follow camera')
+    c = cameraFixture(); c.n.carry = 2; c.step()
+    check(c.plays[1].followTime >= 60, 'the shot keeps tracking for the carry, not a cutscene length')
+    for _ = 1, 58 do c.step(10000) end
+    check(#c.plays == 1, 'the follow is not restarted early')
+    c.step(10000)
+    check(#c.plays == 2 and c.stops == 0, 'a long carry renews the follow without returning to the player camera')
+    c.n.carry = 0
+    for _ = 1, 6 do c.step(16) end
+    check(c.stops == 1, 'put down after a renewal stops the follow camera once')
+    c = cameraFixture(true); c.n.carry = 2; c.step()
+    check(#c.plays == 1 and c.stops == 0, 'a refused camera request is not treated as playing')
+    c.step(500)
+    check(#c.plays == 1, 'a refused camera request is not retried every frame')
+    c.step(1600)
+    check(#c.plays == 2, 'a refused camera request is retried after 2 s')
+end
+
+-- Fulton is withheld only while a downed teammate is within reach or carried,
+-- keeping other disable bits and any mission-owned Fulton lock.
+do
+    local function fultonFixture(flags)
+        local f = fixture()
+        f.env.vars.playerDisableActionFlag = flags
+        f.env.PlayerDisableAction = {FULTON = 8}
+        function f.at(ms) f.D.records[2].at = f.now + (ms or 0); return f.step(ms) end
+        return f
+    end
+    c = fultonFixture(4); c.at()
+    check(c.env.vars.playerDisableActionFlag == 12, 'a downed teammate within reach withholds Fulton and keeps other bits')
+    c.at(16)
+    check(c.env.vars.playerDisableActionFlag == 12, 'withholding Fulton is idempotent')
+    c.D.records[2].pos[1] = 9000; c.at(16)
+    check(c.env.vars.playerDisableActionFlag == 4, 'leaving reach restores Fulton')
+    c.D.records[2].pos[1] = 3000; c.at(16); c.env.vars.playerDisableActionFlag = 4; c.at(16)
+    check(c.env.vars.playerDisableActionFlag == 12, 'a mission overwrite while in reach is withheld again')
+    c.n.carry = 1; c.D.records[2].pos[1] = 9000; c.at(16)
+    check(c.env.vars.playerDisableActionFlag == 12, 'carrying the teammate keeps Fulton withheld')
+    c.D.stop()
+    check(c.env.vars.playerDisableActionFlag == 4, 'downed cleanup restores Fulton')
+    c = fultonFixture(8); c.at()
+    check(c.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is not doubled')
+    c.D.records[2].pos[1] = 9000; c.at(16)
+    check(c.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is never removed')
+    c = fultonFixture(0); c.D.records[2].down = false; c.at()
+    check(c.env.vars.playerDisableActionFlag == 0, 'an awake teammate leaves Fulton available')
+    c = fultonFixture(0); c.n.down = true; c.at()
+    check(c.env.vars.playerDisableActionFlag == 0, 'a downed local player does not change Fulton')
+end
+
 -- Execute the real staged world-sync OnUpdate wrapper while inactive; D.tick is not entered there.
 do
     local env = setmetatable({e = {}}, {__index = _G})

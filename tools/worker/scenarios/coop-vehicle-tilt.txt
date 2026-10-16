@@ -1,0 +1,81 @@
+# WS3 A1 (docs/vehicle-ws3.md): the driven vehicle tilts with the ground on
+# the viewer. RUN ONLY AFTER vehicle-tilt-census.txt showed same=1 on both
+# sides and live driver angles. With partner_ride_tilt=1 on both copies each
+# side's ride addendum advertises RIDE_TILT; the driver reads its own record
+# +0x44/+0x48 (partner_ride_tilt=read) and sends them under the RIDE_FAST
+# tick; the viewer interpolates them and writes its copy's record right before
+# each SetPosition (partner_ride_tilt=write), so 0xBA9710's per-frame move and
+# the seat anchor both pick them up. An authored jeep (no seat-by-id needed).
+#
+# Run: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-tilt.txt
+#      -PartnerProfile native -NativeStage gun -SaveSeed lab
+#
+# Expected: host partner_ride=ext_rx; ...; features=0x02 (and the guest too);
+#   host partner_ride_tilt=read; id=256xx; a44_mrad=..; a48_mrad=..; n=..
+#   guest partner_ride_tilt=write; id=256xx; a44_mrad=..; a48_mrad=..; before=..; n=..
+#   guest world log event=ride_fast; ...; tilt_written=<growing>; host ...; tilt_sent=<growing>
+#   guest census who=remote a44/a48 now follow the host's who=local values (100 ms behind)
+#   no partner_ride_tilt=refused; reason=identity (that means the census was not same=1)
+#   FRAMES: the guest sees the jeep (and the seated driver) pitched/rolled on slopes, no flicker
+#   at the large-move frames (relay bursts still show one level frame: known limit).
+labsetting partner_native_ride=seat
+labsetting partner_ride_tilt=1
+labsetting partner_ride_census=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+placebehind guest host 3 9
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+wait 2500
+both capture tilt-entered
+host hold w 1500 nowait
+guest burst tilt-drive-a 8 200
+host hold w+a 1500 nowait
+guest burst tilt-turn-a 8 200
+host hold w 1500 nowait
+guest burst tilt-drive-b 8 200
+host hold w+d 1500 nowait
+guest burst tilt-turn-b 8 200
+host hold w 1500 nowait
+guest burst tilt-drive-c 8 200
+host release
+wait 2500
+both capture tilt-stopped
+# The viewer's copy of the stopped jeep from fixed points around the stop
+# (hidden runs e54e0294 / 28ef347a: the jeep ends nose-up on the shop step
+# at about 578.0 320.2 1177.3, heading north, pitch a44 ~ 230..290 mrad).
+# placebehind needs a valid partner pose on the viewer, which a seated driver
+# does not give, so these are plain teleports facing the jeep.
+guest debug teleport 586.0 322.0 1176.0 -81
+wait 2500
+both capture tilt-view-east
+guest debug teleport 570.0 322.0 1176.0 81
+wait 2500
+both capture tilt-view-west
+guest debug teleport 584.0 322.0 1169.0 -36
+wait 2500
+both capture tilt-view-southeast
+stance guest crouch
+wait 1500
+both capture tilt-view-southeast-crouch
+host press e 150
+wait 3000
+both capture tilt-exited
+state

@@ -80,6 +80,22 @@ int main(){
   h=q;h.owner.count=1;check(!u::SuppressQuietHint(h,v,true),"single player lifecycle forwards");
   h=q;h.owner.local=1;check(!u::SuppressQuietHint(h,v,true),"foreign local UI index forwards");
   h=q;h.owner.ids[1]=2;check(!u::SuppressQuietHint(h,v,true),"unverified partner roster forwards");
+  // Partner prompts: any producer, hint or queue inside the validated instance-1 job.
+  auto g=q;g.hint=0x2a;g.priority=5;g.flag=1;g.enable=0;g.extra6=1;g.owner.caller+=0x40;
+  check(u::OwnedPartnerPrompt(g,v),"any prompt queued in the partner job is the partner's");
+  check(!u::SuppressPartnerPrompt(g,v,false),"observe forwards partner prompts unchanged");
+  check(u::SuppressPartnerPrompt(g,v,true),"filter keeps partner prompts off the local HUD");
+  h=g;h.armed=false;check(!u::SuppressPartnerPrompt(h,v,true),"local prompts outside the partner job forward");
+  h=g;h.job_id=0;check(!u::SuppressPartnerPrompt(h,v,true),"local job prompts forward");
+  h=g;h.thread++;check(!u::SuppressPartnerPrompt(h,v,true),"prompts from another thread forward");
+  h=g;h.thread=h.owner_thread=0;check(!u::SuppressPartnerPrompt(h,v,true),"unset owner thread forwards prompts");
+  h=g;h.owner.owner++;check(!u::SuppressPartnerPrompt(h,v,true),"foreign UI owner forwards prompts");
+  h=g;h.owner.p_ui++;check(!u::SuppressPartnerPrompt(h,v,true),"stale player UI forwards prompts");
+  h=g;h.owner.ui_vtable++;check(!u::SuppressPartnerPrompt(h,v,true),"foreign UI class forwards prompts");
+  h=g;h.owner.flags|=0x100;check(!u::SuppressPartnerPrompt(h,v,true),"native online lifecycle forwards prompts");
+  h=g;h.owner.count=1;check(!u::SuppressPartnerPrompt(h,v,true),"single player lifecycle forwards prompts");
+  h=g;h.owner.ids[1]=2;check(!u::SuppressPartnerPrompt(h,v,true),"unverified partner roster forwards prompts");
+  check(u::OwnedClassification(r,v) && !u::OwnedClassification(g.owner,v),"reticle classification still requires its exact caller");
   u::CensusStamp first{0xffff,0xffff,0,0x20000010,0x23110,17};
   auto second=first;check(u::SameCensus(first,second),"identical native census can suppress duplicate receipt");
   second.ray=1;check(!u::SameCensus(first,second),"ray-only teammate hit produces new receipt");

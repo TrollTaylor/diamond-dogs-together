@@ -66,6 +66,12 @@ function Get-InstancePaths {
         LinkStatus = Join-Path $mod 'link-status.json'
         PlaySession = Join-Path $mod 'play-session.json'
         CoopSaves = Join-Path $mod 'coop-saves'
+        # The automatic save handoff (docs/save-handoff.md, join-fix phase 2):
+        # the guest's staging folder (<save_dir>-handoff), the folders a co-op
+        # copy is moved aside to, and the guest's rejoin code at a handoff exit.
+        CoopSavesHandoff = Join-Path $mod 'coop-saves-handoff'
+        CoopSavesReplaced = Join-Path $mod 'coop-saves-replaced'
+        LinkRejoin = Join-Path $mod 'link-rejoin.txt'
     }
 }
 
@@ -792,7 +798,13 @@ function New-CoopPlayLabIniText {
         [ValidateSet('native', 'clips')][string]$Partner = 'native',
         # Steam: which sources find a code join (docs/steam-online.md 20.5,
         # the two-PC A/B variants); empty writes no key (native default both).
-        [ValidateSet('', 'both', 'fnptr', 'callback', 'poll')][string]$SteamDispatch = ''
+        [ValidateSet('', 'both', 'fnptr', 'callback', 'poll')][string]$SteamDispatch = '',
+        # The automatic save handoff (docs/save-handoff.md): '' writes no key
+        # (the loader's default is off); Play-Coop writes it explicitly.
+        [ValidateSet('', 'off', 'stage', 'scene', 'always')][string]$SaveHandoff = '',
+        # The guest travel lock: '' and on write nothing (the play default is
+        # on); off writes travel_lock=0.
+        [ValidateSet('', 'on', 'off')][string]$TravelLock = ''
     )
     if ($SaveDir -cnotmatch '^[A-Za-z]:\\' -and !$SaveDir.StartsWith('\\')) { throw "save_dir must be an absolute path: $SaveDir" }
     if ($SaveDir -match '[\x00-\x1f\x7f]' -or $SaveDir -ne $SaveDir.Trim() -or $script:CoopUtf8NoBom.GetByteCount($SaveDir) -gt 259) { throw "Invalid save_dir: $SaveDir" }
@@ -842,6 +854,9 @@ function New-CoopPlayLabIniText {
     $lines.Add('partner_input_send=1')
     # The only native key play accepts; the loader expands it to the qualified gun stage.
     if ($Partner -eq 'native') { $lines.Add('partner_native_profile=gun') }
+    # Just before the world line; with no -SaveHandoff/-TravelLock the text is unchanged.
+    if ($SaveHandoff) { $lines.Add('save_handoff=' + $SaveHandoff.ToLowerInvariant()) }
+    if ($TravelLock -eq 'off') { $lines.Add('travel_lock=0') }
     # Never world_probe: the probes are lab-only (native refuses them in play).
     if ($World -gt 0) { $lines.Add('world=' + $World) }
     return ($lines.ToArray() -join "`n") + "`n"
@@ -1077,6 +1092,94 @@ function Get-CoopValue {
     return $Default
 }
 
+function Get-CoopMissionName {
+    # Pure: a player-facing name for a mission number (link-status "partner_mission").
+    # The same long table as native/coop_reason_text.cpp FormatMission.
+    param([UInt32]$Mission)
+    switch ($Mission) {
+        0 { return 'a loading screen' }
+        1 { return 'the start screen' }
+        30010 { return 'Afghanistan free roam' }
+        30020 { return 'Africa free roam' }
+        30050 { return 'Mother Base' }
+        40010 { return 'the Afghanistan helicopter' }
+        40020 { return 'the Africa helicopter' }
+        40050 { return 'the Mother Base helicopter' }
+    }
+    if ($Mission -ge 10000 -and $Mission -le 11999) { return "story mission $Mission" }
+    return "mission $Mission"
+}
+
+function Get-CoopHandoffText {
+    # Pure: the automatic save handoff (link-status "handoff"/"handoff_pct",
+    # docs/save-handoff.md) in Play-Coop words. Segment: the status-line part
+    # (' | ...', '' for off/idle/same and unknown tokens); Line: the sentence
+    # the launcher prints once when the token changes ('' = nothing to say).
+    # $Role: the lab role (host|guest).
+    param([AllowNull()][AllowEmptyString()][string]$Token, [int]$Pct = 0, [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role)
+    if ($Pct -lt 0) { $Pct = 0 }
+    if ($Pct -gt 100) { $Pct = 100 }
+    $segment = ''
+    $line = ''
+    $guest = $Role -eq 'guest'
+    switch -CaseSensitive ([string]$Token) {
+        'wait_host' {
+            $segment = " | waiting for the host's save"
+            $line = "Your save starts somewhere other than the host's. Once the host is in Mother Base or free roam, their save is copied to you and MGSV restarts once."
+        }
+        'receiving' {
+            $segment = " | getting the host's save $Pct%"
+            $line = "Getting the host's save so you both start in the same place. Your own co-op save is kept (Share-Save.bat [R] brings it back)."
+        }
+        { $_ -in @('staged', 'countdown') } {
+            $segment = ' | host save ready, MGSV restarts'
+            $line = "Host's save ready: MGSV restarts at the title screen and Play-Coop starts it again on the host's save. Press Continue twice in the game to keep your own save."
+        }
+        'exiting' {
+            $segment = ' | host save ready, MGSV restarts'
+            $line = "MGSV is closing to load the host's save; keep this window open."
+        }
+        { $_ -in @('offered', 'sending') } {
+            $segment = " | sending your save to your friend $Pct%"
+            $line = 'Sending your save to your friend so you both start in the same place.'
+        }
+        { $_ -in @('partner_staged', 'partner_restarting') } {
+            $segment = ' | your friend is restarting on your save'
+            $line = 'Your friend is restarting MGSV on your save (about a minute). Wait here; they arrive where your save continues.'
+        }
+        'kept' {
+            if ($guest) {
+                $segment = ' | save not shared: you kept your own save'
+                $line = 'You kept your own save for this session.'
+            } else {
+                $segment = ' | save not shared: your friend kept their own save'
+                $line = 'Your friend kept their own save.'
+            }
+        }
+        'refused' {
+            if ($guest) {
+                $segment = " | save not shared: the host's save does not continue into Mother Base or free roam yet"
+                $line = "The host's save cannot be shared yet: the host should Continue into Mother Base or free roam first (a save in the story opening is never shared)."
+            } else {
+                $segment = ' | save not shared: your save does not continue into Mother Base or free roam yet'
+                $line = 'Your save is not shared yet: Continue into Mother Base or free roam first (a save in the story opening is never shared).'
+            }
+        }
+        'failed' {
+            $segment = ' | save not shared: the transfer failed'
+            if ($guest) { $line = "Getting the host's save failed. Nothing was changed." }
+            else { $line = 'Sending your save failed. Use Share-Save.bat instead.' }
+        }
+        'applied' {
+            if ($guest) {
+                $segment = " | playing on the host's save"
+                $line = "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."
+            }
+        }
+    }
+    return [pscustomobject]@{ Segment = $segment; Line = $line }
+}
+
 function Format-CoopStatusLine {
     # Pure: the launcher's one-line status from link-status.json (spec 9.2 step 5),
     # for example "[HOST] link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look | mission 30050".
@@ -1115,7 +1218,11 @@ function Format-CoopStatusLine {
     }
     # The partner said goodbye (a link CLOSE), and the guest's Steam failure reason (1252).
     if ([int](Get-CoopValue $Status 'left' 0) -and $state -ne 'connected') {
-        if ($Role -eq 'host') { $text += ' - your friend left; waiting for them to come back' } else { $text += ' - the host left; waiting for them to come back' }
+        if ($Role -eq 'host') { $text += ' - your friend left; waiting for them to come back' }
+        elseif ($reason -eq 'bad_code' -and [int](Get-CoopValue $Status 'verified' 1) -eq 0) {
+            # The host came back with a new code (every Host run makes one): the old one never works again.
+            $text += ' - the host restarted with a new code: paste it in F9 > Partner / Co-op > Online'
+        } else { $text += ' - the host left; waiting for them to come back' }
     }
     $steamEnd = [int](Get-CoopValue $Status 'steam_end' 0)
     if ($steamEnd -and $state -ne 'connected') { $text += ' (Steam: ' + (Get-CoopSteamEndText -End $steamEnd) + ')' }
@@ -1157,10 +1264,28 @@ function Format-CoopStatusLine {
     elseif ($remoteDrive -eq 'clips' -or $remoteDrive -eq 'off') {
         $partner += '; you on the other PC: clips (' + (Get-CoopPartnerReasonText -Reason ([string](Get-CoopValue $Status 'remote_reason' ''))) + ')'
     }
+    # The world-sync keys (link-protocol.md 7.2; absent in older documents): the partner's
+    # settled mission when the two games are in different missions, and the story-start warning.
     $mission = [UInt32](Get-CoopValue $Status 'mission' 0)
     $missionText = 'mission ' + $mission
-    if ($mission -notin $script:CoopPartnerMissions) { $missionText += ' - Partner body unavailable in this mission; use Mother Base or free roam.' }
-    return "$text | $partner | $missionText"
+    $partnerMission = [UInt32](Get-CoopValue $Status 'partner_mission' 0)
+    $wait = [string](Get-CoopValue $Status 'pair_wait' '')
+    if ($state -eq 'connected' -and $wait -eq 'different_mission' -and $partnerMission -ne 0) {
+        $missionText += ' - your partner is in ' + (Get-CoopMissionName $partnerMission) + '. Different missions never pair: meet in the same Mother Base, free roam or helicopter.'
+    } elseif ($mission -notin @(0, 1, 40010, 40020, 40050) -and $mission -notin $script:CoopPartnerMissions) {
+        # Not at a loading screen, the title or a helicopter: a scene without a partner body.
+        $missionText += ' - Partner body unavailable in this mission; use Mother Base or free roam.'
+    }
+    # The automatic save handoff (link-status "handoff"; absent = off): one
+    # segment before the mission. While the guest waits for or gets the host's
+    # save, the Share-Save sentence below would point the wrong way.
+    $handoff = [string](Get-CoopValue $Status 'handoff' 'off')
+    $handoffText = Get-CoopHandoffText -Token $handoff -Pct ([int](Get-CoopValue $Status 'handoff_pct' 0)) -Role $Role
+    $handoffBusy = $handoff -cin @('wait_host', 'receiving', 'staged', 'countdown', 'exiting')
+    if (!$handoffBusy -and [string](Get-CoopValue $Status 'progress' '') -eq 'story_start') {
+        $missionText += ' Your co-op save is at the story start: quit, then import your partner''s save with Share-Save.bat (option I).'
+    }
+    return "$text | $partner$($handoffText.Segment) | $missionText"
 }
 
 # ---------------------------------------------------------------------------

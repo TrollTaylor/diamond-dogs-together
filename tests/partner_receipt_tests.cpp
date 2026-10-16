@@ -2,6 +2,7 @@
 // and log formatting, trigger grammar, stage policy and pose math. Pure; no
 // game or Win32 calls.
 #include "mgscoop/partner_receipt.hpp"
+#include "mgscoop/partner_dm_overlay.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -94,6 +95,60 @@ int main() {
         Check(!TickOk((std::string("0 0 0 0 0 0 0 0 0 0 0") + invalidRide).c_str()), "strict ride suffix refuses malformed data");
     Check(TickArgs("0 0 0 0 0 0 0 0 0", rich) && !rich.has_ride && rich.ride_kind == 0,
           "legacy producer clears prior ride evidence");
+    // The seated rider's suffix (docs/anim-round1-seat.md): veh= seat= then st=, in this order only.
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=2 veh=25608 seat=0", rich) && rich.has_ride && rich.ride_kind == 2 && rich.has_vehicle &&
+              rich.vehicle == 25608 && rich.seat == 0 && !rich.has_status && rich.status == 0, "ride with vehicle and seat");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=2 veh=25608 seat=3 st=0x400", rich) && rich.seat == 3 && rich.has_status &&
+              rich.status == status_bit::on_vehicle, "ride, vehicle, seat and status");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=0 st=0x3", rich) && !rich.has_vehicle && rich.vehicle == 0xFFFF && rich.seat == 0xFF &&
+              rich.has_status && rich.status == (status_bit::binocle | status_bit::subject), "status without a vehicle");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=2 veh=65535 seat=255 st=0x0", rich) && rich.has_vehicle && rich.vehicle == 65535 &&
+              rich.seat == 255 && rich.has_status && rich.status == 0, "unknown vehicle and seat spellings");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=1 st=0xfff", rich) && rich.status == status_bit::all, "every status bit");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=2", rich) && !rich.has_vehicle && rich.seat == 0xFF && !rich.has_status,
+          "a later plain ride suffix clears the seat evidence");
+    for (const char* invalid : {" ride=2 veh=25608", " ride=2 seat=0", " ride=2 veh=25608 seat=4", " ride=2 veh=25608 seat=254",
+                                " ride=2 veh=65536 seat=0", " ride=2 veh=-1 seat=0", " ride=2 veh=025608 seat=0", " ride=2 seat=0 veh=25608",
+                                " ride=2 veh=25608 seat=0 ", " ride=2 veh=25608  seat=0", " ride=2 st=0x1000", " ride=2 st=0x01",
+                                " ride=2 st=0xFF", " ride=2 st=0x", " ride=2 st=1", " ride=2 st=0x1 veh=1 seat=0", " ride=2 st=0x1 st=0x1",
+                                " ride=2 veh=25608 seat=0 st=0x1 ", " st=0x1", " veh=25608 seat=0", " ride=2 vehicle=1 seat=0",
+                                " ride=2 veh=1 seat=0x1", " ride=22 veh=1 seat=0"})
+        Check(!TickOk((std::string("0 0 0 0 0 0 0 0 0 0 0") + invalid).c_str()), "strict seat/status suffix refuses malformed data");
+    {
+        char names[160]{};
+        Check(FormatStatusBits(0, names, sizeof(names)) == 4 && std::strcmp(names, "none") == 0, "status names: none");
+        Check(FormatStatusBits(status_bit::binocle | status_bit::cbox_evade | status_bit::on_helicopter, names, sizeof(names)) &&
+                  std::strcmp(names, "binocle,cbox_evade,on_helicopter") == 0, "status names in bit order");
+        Check(FormatStatusBits(status_bit::all, names, sizeof(names)) &&
+                  std::strcmp(names, "binocle,subject,cbox,cbox_evade,trash_box,trash_box_half_open,behind,carry,cqc_continuous,on_horse,"
+                                     "on_vehicle,on_helicopter") == 0, "every status name");
+        char tiny[8]{};
+        Check(FormatStatusBits(status_bit::all, tiny, sizeof(tiny)) == 0 && tiny[0] == 0, "status names too small");
+    }
+    // The debug seat receipt and the Lua refusal note.
+    {
+        SeatRequest r{};
+        const std::string arm = std::string(seat_prefix) + "arm 2 25608";
+        Check(Kind(arm) == Receipt::seat && ParseSeatReceipt(arm.data(), arm.size(), r) && r.arm && r.seat == 2 && r.vehicle == 25608,
+              "seat receipt arm");
+        const std::string stop = std::string(seat_prefix) + "stop";
+        Check(Kind(stop) == Receipt::seat && ParseSeatReceipt(stop.data(), stop.size(), r) && !r.arm, "seat receipt stop");
+        for (const char* bad : {"arm 4 25608", "arm 0 65535", "arm 0", "arm 0 1 2", "arm  0 1", "stop ", "Stop", "arm 01 1", "arm -1 1", ""}) {
+            const std::string text = std::string(seat_prefix) + bad;
+            Check(!ParseSeatReceipt(text.data(), text.size(), r), "strict seat receipt");
+        }
+        std::uint16_t v = 0; std::uint8_t s = 9;
+        const std::string refused = std::string(log_prefix) + "event=ride_seat_refused;id=25600;seat=1;reason=no_name";
+        Check(ParseSeatRefusal(refused.data(), refused.size(), v, s) && v == 25600 && s == 1, "Lua refusal note");
+        for (const char* bad : {"event=ride_seat_refused;id=25600;seat=1", "event=ride_seat_refused;id=;seat=1;reason=x",
+                                "event=ride_seat_refused;id=25600;seat=4;reason=x", "event=ride_seat;id=25600;seat=1;name=x",
+                                "event=ride_seat_refused;id=65535;seat=1;reason=x", "event=ride_seat_refused;seat=1;id=2;reason=x"}) {
+            const std::string text = std::string(log_prefix) + bad;
+            Check(!ParseSeatRefusal(text.data(), text.size(), v, s), "strict Lua refusal note");
+        }
+        const std::string tick_source = std::string(tick_prefix) + "event=ride_seat_refused;id=1;seat=1;reason=x";
+        Check(!ParseSeatRefusal(tick_source.data(), tick_source.size(), v, s), "only a LOG receipt carries a refusal");
+    }
     Check(!TickOk("0 0 0 0 0 0 0 0 0 1"), "partial gun suffix refused");
     Check(!TickOk("0 0 0 0 0 0 0 0 0 4 1"), "locomotion bit in gun suffix refused");
     Check(!TickOk("0 0 0 0 0 0 0 0 0 12 1") && !TickOk("0 0 0 0 0 0 0 0 0 64 1"), "unknown suffix flags refused");
@@ -150,9 +205,9 @@ int main() {
     {
         const std::string widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
                                           -2147483647 - 1, Status::lost, 0xFFFFFFFFu});
-        // op 0xFFFFFFFF includes SET_PARTS (16) and DM_PLAY (128): the 5 look
-        // values (here 0) and the gani (0) follow.
-        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295,0,0,0,0,0,0" &&
+        // op 0xFFFFFFFF includes SET_PARTS (16), DM_PLAY (128) and RIDE_SEAT (512): the 5 look
+        // values (here 0), the gani (0) and the 4 seat values (0) follow.
+        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295,0,0,0,0,0,0,0,0,0,0" &&
               widest.size() < reply_capacity, "widest reply fits reply_capacity");
         char small[16]{};
         Check(FormatReply({1, 1, 0, 0, 0, 0, Status::live, 0}, small, sizeof(small)) == 0 && small[0] == 0, "too small");
@@ -311,7 +366,7 @@ int main() {
         Reply without = with;
         without.op = op::warp;
         Check(ReplyText(without) == "return 1,1,10,20,30,40,1,5", "no look values without op 16");
-        const std::string widest = ReplyText({0xFFFFFFFFu & ~op::dm_play, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1,
+        const std::string widest = ReplyText({0xFFFFFFFFu & ~(op::dm_play | op::ride_seat), 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1,
                                               -2147483647 - 1, -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}});
         Check(widest.size() == 111 && widest.size() < reply_capacity &&
               widest.compare(widest.size() - 22, 22, ",255,255,255,255,65535") == 0, "widest 13-value reply fits reply_capacity");
@@ -320,15 +375,32 @@ int main() {
         Check(ReplyText(dmp) == "return 129,1,0,0,0,0,1,0,0,0,0,0,0,3", "dm_play: zeros then gani");
         Reply dmp16{op::dm_play | op::set_parts_explicit, 1, 0, 0, 0, 0, Status::live, 0, Look{6, 27, 116, 0, 0, 9}, 5};
         Check(ReplyText(dmp16) == "return 144,1,0,0,0,0,1,0,6,27,116,0,0,5", "dm_play | set_parts: look then gani");
-        const std::string dmwidest = ReplyText({0xFFFFFFFFu, 1, 0, 0, 0, 0, Status::live, 0, Look{255, 255, 255, 255, 65535, 255}, 9});
+        const std::string dmwidest = ReplyText({0xFFFFFFFFu & ~op::ride_seat, 1, 0, 0, 0, 0, Status::live, 0, Look{255, 255, 255, 255, 65535, 255}, 9});
         Check(dmwidest.size() < reply_capacity, "widest 14-value reply fits reply_capacity");
         // dm=map: the stand jog loop (gani 12) is the 14th value; the widest
         // reply with a two-digit gani is 114 characters.
         Reply dm12{op::dm_play, 1, 0, 0, 0, 0, Status::live, 0, Look{}, 12};
         Check(ReplyText(dm12) == "return 128,1,0,0,0,0,1,0,0,0,0,0,0,12", "dm_play: gani 12 as the 14th value");
-        const std::string dm12widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
+        const std::string dm12widest = ReplyText({0xFFFFFFFFu & ~op::ride_seat, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
                                                   -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}, 12});
         Check(dm12widest.size() == 114 && dm12widest.size() < reply_capacity, "widest reply (gani 12) is 114 characters");
+        // RIDE_SEAT (512) appends vehicle, seat, action and entry after the gani (look zeros, gani 0 without 16/128).
+        Reply seat{op::ride_seat, 1, 10, 20, 30, 40, Status::live, 5, Look{6, 27, 116, 0, 0, 9}, 7};
+        seat.seat_vehicle = 25608; seat.seat = 3; seat.seat_action = seat_action::play; seat.seat_entry = seat_entry::get_on | seat_entry::get_off;
+        Check(ReplyText(seat) == "return 512,1,10,20,30,40,1,5,0,0,0,0,0,0,25608,3,1,3", "ride_seat: zeros, gani 0, then the seat values");
+        seat.op = op::ride_seat | op::set_parts_explicit; seat.seat_action = seat_action::next;
+        Check(ReplyText(seat) == "return 528,1,10,20,30,40,1,5,6,27,116,0,0,0,25608,3,2,3", "ride_seat with look values");
+        Reply noseat = seat; noseat.op = op::warp;
+        Check(ReplyText(noseat) == "return 1,1,10,20,30,40,1,5", "no seat values without op 512");
+        const std::string seatwidest = ReplyText([] {
+            Reply r{0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1, Status::lost, 0xFFFFFFFFu,
+                    Look{255, 255, 255, 255, 65535, 255}, 255};
+            r.seat_vehicle = 65535; r.seat = 255; r.seat_action = 255; r.seat_entry = 255;
+            return r;
+        }());
+        Check(seatwidest.size() == 133 && seatwidest.size() < reply_capacity, "widest 18-value reply fits reply_capacity");
+        Check(op::ride_seat == 512 && (op::ride_seat & (op::warp | op::set_all_active | op::copy_parts | op::clear_all_active |
+              op::set_parts_explicit | op::mirror_on | op::mirror_off | op::dm_play | op::dm_stop)) == 0, "op 512 is a free bit");
         Check(max_gani == 30 && max_gani == mgscoop::kPartnerDmGaniMax, "max_gani follows the dm=map table bound");
     }
 
@@ -470,6 +542,19 @@ int main() {
         Check(!TriggerOk("nreload=tap") && !TriggerOk("nslot=on") && !TriggerOk("rtap=0") && !TriggerOk("rtap=2") &&
                   !TriggerOk("rtap=1 rtap=1") && !TriggerOk("nreload=raw nreload=event"),
               "bad reload/slot values and repeats");
+        // Round-1 actions: the DM overlay debug one-shots (overlay_state / overlay_stop).
+        Check(TriggerText("overlay=stateEludeIdle oloop=1 oms=2500", tg) && tg.overlay && !tg.overlay_stop &&
+                  tg.overlay_index == mgscoop::partner_dm_overlay::Find("stateEludeIdle", 14) && tg.has_oloop && tg.oloop && tg.has_oms &&
+                  tg.oms == 2500,
+              "overlay start with loop and ms");
+        Check(TriggerText("overlay=snapdam_s_fre", tg) && tg.overlay && !tg.has_oloop && !tg.has_oms && TriggerText("overlay=stop", tg) &&
+                  tg.overlay_stop && !tg.overlay,
+              "overlay without options; overlay stop");
+        Check(!TriggerOk("overlay=stateGunHold") && !TriggerOk("overlay=statedead") && !TriggerOk("overlay=") &&
+                  !TriggerOk("overlay=stateDead overlay=stop") && !TriggerOk("overlay=stop oms=500") && !TriggerOk("oloop=1") &&
+                  !TriggerOk("overlay=stateDead oms=99") && !TriggerOk("overlay=stateDead oms=60001") && !TriggerOk("overlay=stateDead oloop=2") &&
+                  !TriggerOk("overlay=stateDead oloop=1 oloop=0"),
+              "bad overlay names (graph 2, case), options without a start, ranges and repeats refused");
         // A long trigger within the 255-byte limit (not every token at once).
         const std::string longest =
             "stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox "

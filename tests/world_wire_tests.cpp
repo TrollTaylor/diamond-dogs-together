@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 50, "50 ops (world, rescue, companion, ride body, horse cargo, fast ride and local ops)");
+    Check(count == 51, "51 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +140,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x2D) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x2E) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::ride_fast) && world::FindOp(op::ride_fast)->body == 23 &&
               world::FindOp(op::ride_fast)->wire == world::Wire::datagram, "RIDE_FAST is a 23-byte datagram");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
@@ -456,6 +456,208 @@ void Pairing() {
     rx = Drain(g_guest, 3, 20);
     p = Find(rx, op::enemy_outcome);
     Check(p && p->queue == 1 && p->v[0] == 7 && p->v[2] == 5, "mask 3: the world op once paired");
+
+    // ---- The remote scene and the pair-wait reason (both roles).
+    namespace wait = world::pair_wait;
+    Setup();
+    Check(g_host.pair_wait() == wait::no_link && g_host.remote_mission() == 0 && g_host.local_mission() == 0 && !g_host.linked() &&
+              g_host.remote_location() == 0,
+          "configured, link down: no_link and nothing known");
+    g_host.OnLinkState(true, 1, 1000);
+    g_guest.OnLinkState(true, 1, 1000);
+    Check(g_host.pair_wait() == wait::no_hello && g_guest.pair_wait() == wait::no_hello, "link up, no HELLO yet");
+    g_host.Cfg(30050, true, 30050, 1000);
+    g_guest.Cfg(30010, true, 30010, 1000);
+    Check(Tx(g_host, op::hello, {30050, 1, 77, 10, 3}, 1000) == world::TxStatus::ok &&
+              Tx(g_host, op::ready, {30050, 77, 10, 3}, 1000) == world::TxStatus::ok &&
+              Tx(g_guest, op::hello, {30010, 1, 66, 10, 3}, 1000) == world::TxStatus::ok &&
+              Tx(g_guest, op::ready, {30010, 66, 10, 3}, 1000) == world::TxStatus::ok,
+          "different missions: HELLO and READY both ways");
+    Exchange(1000);
+    Check(!g_host.paired() && !g_guest.paired(), "different missions never pair");
+    Check(g_host.pair_wait() == wait::different_mission && g_guest.pair_wait() == wait::different_mission,
+          "both report different_mission");
+    Check(g_host.remote_mission() == 30010 && g_guest.remote_mission() == 30050 && g_host.local_mission() == 30050 &&
+              g_guest.local_mission() == 30010,
+          "each side knows the other's mission (host from READY, guest from HELLO/READY)");
+    Check(g_host.remote_location() == 1 && g_guest.remote_location() == 1, "the HELLO location is kept on both roles");
+    Check(g_host.linked() && g_guest.linked() && g_host.remote_level() == 3 && g_guest.remote_level() == 3, "linked at level 3");
+    Lines(g_host);
+    Lines(g_guest);
+    g_host.Tick(1100);
+    g_host.Tick(1200);
+    g_host.Tick(1300);
+    auto waits = Lines(g_host);
+    Check(waits.size() == 1 && waits[0] == "world=pair_wait; reason=different_mission; local=30050; remote=30010; remote_level=3",
+          "three ticks log the reason once");
+    g_guest.Tick(1100);
+    Check(HasLine(Lines(g_guest), "world=pair_wait; reason=different_mission; local=30010; remote=30050; remote_level=3"),
+          "the guest logs its own view");
+    // A remote MISSION_END clears the partner's mission: remote_loading.
+    Check(Tx(g_guest, op::mission_end, {30010}, 1400) == world::TxStatus::ok, "guest MISSION_END");
+    Pump(g_guest, g_host, 1400);
+    Check(g_host.remote_mission() == 0 && g_host.pair_wait() == wait::remote_loading && g_host.linked(), "host: remote_loading");
+    Check(g_guest.local_mission() == 0 && g_guest.pair_wait() == wait::local_loading, "guest: local_loading");
+    g_host.Tick(1500);
+    waits = Lines(g_host);
+    Check(waits.size() == 1 && waits[0] == "world=pair_wait; reason=remote_loading; local=30050; remote=0; remote_level=3",
+          "a changed reason logs again");
+    Check(Tx(g_host, op::mission_end, {30050}, 1600) == world::TxStatus::ok, "host MISSION_END");
+    Pump(g_host, g_guest, 1600);
+    Check(g_guest.remote_mission() == 0 && g_guest.pair_wait() == wait::local_loading, "guest: the host's mission is gone too");
+    // A new session forgets the partner: no_hello.
+    g_host.OnSession(2, 1700);
+    Check(g_host.remote_mission() == 0 && g_host.pair_wait() == wait::no_hello && g_host.remote_location() == 0 && !g_host.linked() &&
+              g_host.remote_level() == 0,
+          "after a new session: no_hello, location reset");
+    // Link down: no_link, masked values, no pair_wait line while down.
+    Tx(g_guest, op::hello, {30010, 2, 66, 10, 3}, 1800);
+    Pump(g_guest, g_host, 1800);
+    Check(g_host.remote_location() == 2 && g_host.linked() && g_host.remote_level() == 3, "a fresh HELLO on the new session");
+    Lines(g_host);
+    g_host.OnLinkState(false, 2, 1900);
+    Check(g_host.remote_mission() == 0 && g_host.pair_wait() == wait::no_link && !g_host.linked() && g_host.remote_level() == 0,
+          "link down: no_link, nothing remote");
+    g_host.Tick(2000);
+    g_host.Tick(2100);
+    Check(!HasLine(Lines(g_host), "world=pair_wait"), "no pair_wait line while the link is down");
+    g_host.OnLinkState(true, 2, 2200);
+    g_host.Tick(2300);
+    Check(HasLine(Lines(g_host), "world=pair_wait; reason=local_loading; local=0; remote=0; remote_level=3"),
+          "the link coming back logs again");
+    // HELLO refusals: saves 0 (remote_saves), the same role (same_role); the
+    // location is kept before either refusal.
+    const auto inject_hello = [](world::Core& core, std::int64_t location, std::int64_t role, std::int64_t saves, std::int64_t level) {
+        world::Op h{};
+        h.code = op::hello;
+        h.count = 11;
+        const std::int64_t values[11] = {30050, location, 5, 10, 3, level, role, 1, 0, saves, 1100};
+        std::memcpy(h.v, values, sizeof(values));
+        std::uint8_t b[64];
+        const std::size_t n = world::kBundleHeaderSize + world::EncodeOp(h, b + world::kBundleHeaderSize, sizeof(b) - world::kBundleHeaderSize);
+        world::WriteBundleHeader(b, 1);
+        core.OnReliable(b, n, 2400);
+    };
+    Setup();
+    g_host.OnLinkState(true, 1, 2400);
+    g_host.Cfg(30050, true, 30050, 2400);
+    inject_hello(g_host, 6, world::kRoleGuest, 1, 0);
+    Check(g_host.pair_wait() == wait::remote_off && g_host.remote_location() == 6 && !g_host.linked() && g_host.remote_level() == 0,
+          "a level-0 HELLO: remote_off");
+    inject_hello(g_host, 7, world::kRoleGuest, 0, 3);
+    Check(g_host.pair_wait() == wait::remote_saves && g_host.remote_location() == 7 && !g_host.linked(), "saves=0: remote_saves");
+    inject_hello(g_host, 8, world::kRoleHost, 1, 3);
+    Check(g_host.pair_wait() == wait::same_role && g_host.remote_location() == 8 && !g_host.linked(), "the same role: same_role");
+    inject_hello(g_host, 9, world::kRoleGuest, 1, 3);
+    Check(g_host.pair_wait() == wait::local_loading && g_host.linked(), "a good HELLO with no local READY: local_loading");
+    Tx(g_host, op::ready, {30050, 5, 10, 3}, 2400);
+    Check(g_host.pair_wait() == wait::remote_loading, "a local READY, no remote READY: remote_loading");
+    Setup(0, 3);
+    Check(g_host.pair_wait() == wait::off, "level 0: off");
+    g_host.OnLinkState(true, 1, 2400);
+    g_host.Tick(2500);
+    Check(!HasLine(Lines(g_host), "world=pair_wait"), "level 0 never logs pair_wait");
+    // Paired: 0 and silent; a CFG start (link up) logs again.
+    Setup();
+    Pair(30050, 3000);
+    Check(g_host.pair_wait() == wait::paired && g_guest.pair_wait() == wait::paired && g_host.remote_mission() == 30050 &&
+              g_host.local_mission() == 30050,
+          "paired: 0");
+    Lines(g_host);
+    g_host.Tick(3100);
+    g_host.Tick(3200);
+    Check(!HasLine(Lines(g_host), "world=pair_wait"), "no pair_wait line while paired");
+    g_host.Cfg(30010, true, 30010, 3300);
+    g_host.Tick(3400);
+    Check(HasLine(Lines(g_host), "world=pair_wait; reason=local_loading; local=0; remote=30050; remote_level=3"),
+          "a CFG start unpairs and logs the new reason");
+    // The last gate (epoch): every scene gate passes but the epochs disagree.
+    Setup();
+    g_host.OnLinkState(true, 1, 4000);
+    g_guest.OnLinkState(true, 1, 4000);
+    g_guest.Cfg(30050, true, 30050, 4000);
+    Tx(g_guest, op::hello, {30050, 1, 77, 10, 3}, 4000);
+    Tx(g_guest, op::ready, {30050, 77, 10, 3}, 4000);
+    Tx(g_host, op::hello, {30050, 1, 77, 10, 3}, 4000);  // before its CFG start: epoch 0
+    Pump(g_host, g_guest, 4000);
+    Check(!g_guest.paired() && g_guest.pair_wait() == wait::epoch && g_guest.remote_mission() == 30050,
+          "guest: the same scene, no host epoch yet");
+    g_host.Cfg(30050, true, 30050, 4000);
+    Tx(g_host, op::ready, {30050, 77, 10, 3}, 4000);
+    Pump(g_guest, g_host, 4000);
+    Check(!g_host.paired() && g_host.pair_wait() == wait::epoch && g_host.remote_mission() == 30050,
+          "host: the guest's READY carries another epoch");
+    Exchange(4000);
+    Check(g_host.paired() && g_guest.paired() && g_host.pair_wait() == wait::paired && g_guest.pair_wait() == wait::paired,
+          "the READY echo pairs both");
+    for (std::uint8_t code = 0; code <= 11; ++code)
+        Check(std::strcmp(world::PairWaitName(code), "unknown") != 0, "every pair-wait code has a name");
+    Check(std::strcmp(world::PairWaitName(0), "paired") == 0 && std::strcmp(world::PairWaitName(1), "off") == 0 &&
+              std::strcmp(world::PairWaitName(2), "no_link") == 0 && std::strcmp(world::PairWaitName(3), "no_hello") == 0 &&
+              std::strcmp(world::PairWaitName(4), "remote_off") == 0 && std::strcmp(world::PairWaitName(5), "remote_saves") == 0 &&
+              std::strcmp(world::PairWaitName(6), "same_role") == 0 && std::strcmp(world::PairWaitName(7), "local_loading") == 0 &&
+              std::strcmp(world::PairWaitName(8), "remote_loading") == 0 &&
+              std::strcmp(world::PairWaitName(9), "different_mission") == 0 && std::strcmp(world::PairWaitName(10), "epoch") == 0 &&
+              std::strcmp(world::PairWaitName(11), "settling") == 0 && std::strcmp(world::PairWaitName(12), "unknown") == 0 &&
+              std::strcmp(world::PairWaitName(200), "unknown") == 0,
+          "pair-wait names (K2)");
+}
+
+// The published pair-wait code: different missions settle for 15 s first.
+void Publisher() {
+    namespace wait = world::pair_wait;
+    world::WaitPublisher w{};
+    bool post = true;
+    Check(world::kMismatchSettleMs == 15000, "15 s settle");
+    Check(w.Update(wait::different_mission, 30050, 30010, 1000, post) == wait::settling && !post, "11 at t");
+    Check(w.Update(wait::different_mission, 30050, 30010, 15999, post) == wait::settling && !post, "11 at t+14999");
+    Check(w.Update(wait::different_mission, 30050, 30010, 16000, post) == wait::different_mission && post, "9 at t+15000, posted");
+    Check(w.Update(wait::different_mission, 30050, 30010, 16001, post) == wait::different_mission && !post, "posted once");
+    for (std::uint8_t raw = 0; raw <= wait::epoch; ++raw) {
+        if (raw == wait::different_mission) continue;
+        Check(w.Update(raw, 30050, 0, 17000, post) == raw && !post, "other codes pass through at once");
+    }
+    Check(w.Update(wait::different_mission, 30050, 30010, 18000, post) == wait::settling && !post,
+          "the same pair after an interruption settles again");
+    Check(w.Update(wait::different_mission, 30050, 30010, 33000, post) == wait::different_mission && !post,
+          "the same pair never posts twice");
+    Check(w.Update(wait::different_mission, 30050, 30020, 34000, post) == wait::settling && !post, "a new remote restarts the timer");
+    Check(w.Update(wait::different_mission, 30050, 30020, 48999, post) == wait::settling && !post, "still settling");
+    Check(w.Update(wait::different_mission, 30050, 30020, 49000, post) == wait::different_mission && post, "the new pair posts");
+    Check(w.Update(wait::different_mission, 40050, 30020, 49001, post) == wait::settling && !post, "a new local restarts the timer");
+    // A pair interrupted before it settled starts over when it returns.
+    world::WaitPublisher v{};
+    Check(v.Update(wait::different_mission, 40050, 30050, 0, post) == wait::settling && !post, "travel: settling");
+    Check(v.Update(wait::remote_loading, 40050, 0, 5000, post) == wait::remote_loading, "the partner loads");
+    Check(v.Update(wait::different_mission, 40050, 30050, 600000, post) == wait::settling && !post,
+          "the same pair much later settles again (no early toast)");
+    Check(v.Update(wait::different_mission, 40050, 30050, 614999, post) == wait::settling && !post &&
+              v.Update(wait::different_mission, 40050, 30050, 615000, post) == wait::different_mission && post,
+          "then posts once after 15 s");
+}
+
+// The NOTE rate gate: posts at most once per second, logs once per 10 s.
+void Notes() {
+    world::NoteGate g{};
+    bool post = false, log = false;
+    g.Accept(2, 30010, 0, 1000, post, log);
+    Check(post && log, "the first note posts and logs");
+    g.Accept(2, 30010, 0, 1999, post, log);
+    Check(!post && !log, "the same note within 1000 ms: neither");
+    g.Accept(2, 30010, 0, 2000, post, log);
+    Check(post && !log, "at 1000 ms it posts again; the log waits");
+    g.Accept(2, 30010, 0, 10999, post, log);
+    Check(post && !log, "logged at most once per 10000 ms");
+    g.Accept(2, 30010, 0, 11000, post, log);
+    Check(!post && log, "logged again 10000 ms after the last log (the post waits for its own 1000 ms)");
+    g.Accept(2, 30010, 1, 11001, post, log);
+    Check(post && log, "a different b posts and logs at once");
+    g.Accept(3, 30010, 1, 11001, post, log);
+    Check(post && log, "each code has its own slot");
+    g.Accept(3, 30010, 1, 11500, post, log);
+    Check(!post && !log, "that slot gates too");
+    g.Accept(32, 1, 1, 11002, post, log);
+    Check(!post && !log, "codes above 31 have no slot");
 }
 
 void AutoOps() {
@@ -978,6 +1180,49 @@ void ConfigSession() {
     cfg = g_guest.Cfg(40050, false, 40050, 31);
     Check(cfg.session == 0 && cfg.link == 0 && cfg.level == 3 && cfg.role == world::kRoleGuest,
           "link loss clears only the live generation/link metadata");
+
+    // r[9..11]: the partner's scene and the raw pair-wait code, both phases.
+    Setup();
+    g_host.OnLinkState(true, 7, 100);
+    g_guest.OnLinkState(true, 7, 100);
+    g_host.Cfg(30050, true, 30050, 100);
+    cfg = g_guest.Cfg(30010, true, 30010, 100);
+    Check(cfg.remote_mission == 0 && cfg.remote_level == 0 && cfg.wait == world::pair_wait::no_hello, "start before any HELLO");
+    Tx(g_host, op::hello, {30050, 1, 77, 10, 3}, 100);
+    Tx(g_host, op::ready, {30050, 77, 10, 3}, 100);
+    Tx(g_guest, op::hello, {30010, 1, 66, 10, 3}, 100);
+    Tx(g_guest, op::ready, {30010, 66, 10, 3}, 100);
+    Exchange(100);
+    cfg = g_guest.Cfg(30010, false, 30010, 110);
+    Check(cfg.level == 3 && cfg.role == world::kRoleGuest && cfg.proto == world::kProto && cfg.link == 1 &&
+              cfg.epoch == g_host.epoch() && cfg.probe == 0 && cfg.mode == world::kModeLab && cfg.session == 7,
+          "the first eight fields are unchanged");
+    Check(cfg.remote_mission == 30050 && cfg.remote_level == 3 && cfg.wait == world::pair_wait::different_mission,
+          "guest CFG: the host's mission and level, different_mission (raw, never settling)");
+    cfg = g_host.Cfg(30050, false, 30050, 110);
+    Check(cfg.remote_mission == 30010 && cfg.remote_level == 3 && cfg.wait == world::pair_wait::different_mission && cfg.session == 7,
+          "host CFG: the guest's mission and level");
+    Tx(g_host, op::mission_end, {30050}, 120);
+    Pump(g_host, g_guest, 120);
+    cfg = g_guest.Cfg(30010, false, 30010, 121);
+    Check(cfg.remote_mission == 0 && cfg.remote_level == 3 && cfg.wait == world::pair_wait::remote_loading,
+          "after the host's MISSION_END: mission unknown, remote_loading");
+    cfg = g_guest.Cfg(40050, true, 40050, 122);
+    Check(cfg.remote_mission == 0 && cfg.wait == world::pair_wait::local_loading, "a CFG start fills the fields too");
+    g_guest.OnSession(8, 130);
+    cfg = g_guest.Cfg(40050, false, 40050, 131);
+    Check(cfg.remote_mission == 0 && cfg.remote_level == 0 && cfg.wait == world::pair_wait::no_hello && cfg.session == 8,
+          "a new session: no_hello");
+    Tx(g_host, op::hello, {40050, 1, 77, 10, 3}, 132);
+    Tx(g_host, op::ready, {40050, 77, 10, 3}, 132);
+    Exchange(132);
+    cfg = g_guest.Cfg(40050, false, 40050, 133);
+    Check(cfg.remote_mission == 40050 && cfg.remote_level == 3 && cfg.wait == world::pair_wait::local_loading,
+          "the host's READY names its new mission");
+    g_guest.OnLinkState(false, 8, 140);
+    cfg = g_guest.Cfg(40050, false, 40050, 141);
+    Check(cfg.remote_mission == 0 && cfg.remote_level == 0 && cfg.wait == world::pair_wait::no_link && cfg.link == 0,
+          "link down: masked, no_link");
 }
 void WorldDisable() {
     Setup();
@@ -1278,12 +1523,59 @@ void RideFast() {
     Setup(2, 2, true); Pair(30010, 200);
     Check(Tx(g_host, op::ride_fast, {1, 3, 4000, 0, 0, 0, 0}, 201) == world::TxStatus::disabled, "fast ride requires world level 3");
 }
+// WS3 A1 (docs/vehicle-ws3.md): RIDE_TILT is a new datagram next to RIDE_FAST
+// (which keeps its exact 7 values); its own latest-value slot, so a RIDE_FAST
+// and a RIDE_TILT of the same sender tick both reach Lua. Admitted in play
+// (hidden run 0a2314f2); an older peer skips the unknown code.
+void RideTilt() {
+    const auto* spec = world::FindOp(op::ride_tilt);
+    Check(spec && spec->wire == world::Wire::datagram && spec->body == 14 && spec->lua == 4 && spec->native == 0 && spec->rx == 0 &&
+              !spec->lab_only && spec->level == 3 && spec->dir == world::Dir::both && !spec->request,
+          "RIDE_TILT is a 14-byte datagram both ways, lab and play");
+    Check(op::ride_tilt == 0x2D && world::FindOp(op::ride_fast)->lua == 7, "a new code; RIDE_FAST keeps 7 values");
+    Setup(3, 3); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+    world::Datagram datagram{}, older{};
+    Check(Tx(g_host, op::ride_tilt, {1000, 25600, 120, -45}, 101, &datagram) == world::TxStatus::ok &&
+              datagram.size == world::kBundleHeaderSize + world::kOpHeaderSize + 14, "the record angles become one datagram");
+    Check(Tx(g_host, op::ride_tilt, {990, 25600, 1, 2}, 101, &older) == world::TxStatus::ok, "older angles encode");
+    g_guest.OnDatagram(datagram.bytes, datagram.size, 102);
+    g_guest.OnDatagram(older.bytes, older.size, 102);
+    auto rx = Drain(g_guest, 3, 103);
+    const auto* got = Find(rx, op::ride_tilt);
+    Check(got && Count(rx, op::ride_tilt) == 1 && got->count == 4 && got->v[0] == 1000 && got->v[1] == 25600 && got->v[2] == 120 &&
+              got->v[3] == -45, "the newest angles are delivered once, a late older sample dropped");
+    world::Datagram fast{}, tilt{};
+    Check(Tx(g_host, op::ride_fast, {1001, 3, 25600, 1, 2, 3, 0}, 104, &fast) == world::TxStatus::ok &&
+              Tx(g_host, op::ride_tilt, {1001, 25600, 5, 6}, 104, &tilt) == world::TxStatus::ok, "one tick: pose and angles");
+    g_guest.OnDatagram(fast.bytes, fast.size, 104);
+    g_guest.OnDatagram(tilt.bytes, tilt.size, 104);
+    rx = Drain(g_guest, 3, 105);
+    Check(Find(rx, op::ride_fast) && Find(rx, op::ride_tilt) && Find(rx, op::ride_tilt)->v[2] == 5,
+          "RIDE_FAST and RIDE_TILT of one sender tick both reach Lua (separate slots)");
+    world::Datagram guestTilt{};
+    Check(Tx(g_guest, op::ride_tilt, {7, 25601, -1570, 1570}, 106, &guestTilt) == world::TxStatus::ok, "the guest driver sends too");
+    g_host.OnDatagram(guestTilt.bytes, guestTilt.size, 106);
+    Check(Find(Drain(g_host, 3, 107), op::ride_tilt) != nullptr, "guest angles reach the host");
+    Check(Tx(g_host, op::ride_tilt, {1002, 25600, 1571, 0}, 108) == world::TxStatus::bad_args &&
+              Tx(g_host, op::ride_tilt, {1002, 25600, 0, -1571}, 108) == world::TxStatus::bad_args,
+          "|angle| >= pi/2 refused");
+    Check(Tx(g_host, op::ride_tilt, {1002, 65535, 0, 0}, 108) == world::TxStatus::bad_args, "null object id refused");
+    Setup(3, 3, true); Pair(30010, 200); Drain(g_host, 3, 200); Drain(g_guest, 3, 200);
+    world::Datagram playTilt{};
+    Check(Tx(g_host, op::ride_tilt, {1, 25600, 7, -8}, 201, &playTilt) == world::TxStatus::ok && playTilt.size > 0, "play sends RIDE_TILT");
+    g_guest.OnDatagram(playTilt.bytes, playTilt.size, 202);
+    const auto playRx = Drain(g_guest, 3, 203);
+    const auto* playGot = Find(playRx, op::ride_tilt);
+    Check(playGot && playGot->v[1] == 25600 && playGot->v[2] == 7 && playGot->v[3] == -8, "play delivers RIDE_TILT to Lua");
+}
 } // namespace
 
 int main() {
     Table();
     Codec();
     Pairing();
+    Publisher();
+    Notes();
     AutoOps();
     Gating();
     Queues();
@@ -1296,6 +1588,7 @@ int main() {
     SpawnSync();
     RescueAndBuddies();
     RideFast();
+    RideTilt();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

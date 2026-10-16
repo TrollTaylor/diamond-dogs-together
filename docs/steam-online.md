@@ -557,7 +557,13 @@ It is allowed only in state `waiting` or `rejected`:
    session;
 3. clear the world queues through `on_session`.
 
-A connected or connecting guest ignores 337 (logged `steam=join_ignored; reason=busy`).
+A connected or connecting guest ignores 337 and a pasted code (logged `steam=join_ignored; reason=busy;
+via=invite|code`; a pasted code still replaces one the host answered with `bad_code`). It then shows the toast "That code was not used: you are already connected or
+connecting to a host." and the F9 Online result "That code was not used: you are already connected or
+connecting." (instead of "Code submitted; joining..."). A pasted own code (`steam=join_refused;
+reason=peer_is_self`) gives the F9 result "That code is your own; ask your friend for theirs.". The
+transport thread reports each decision through `SteamInfo` `join_seq` / `join_result` (1 joined,
+2 ignored, 3 own code), which the Steam owner pass turns into the F9 result.
 
 ### 8.3 Host secret retention
 
@@ -1184,12 +1190,20 @@ left" / "the host left" while not connected.
 The overlay draws one line top-right while F9 is closed (hidden during
 demos), for example `CO-OP [connected] Snake_Fan - Steam relay 61 ms`,
 `CO-OP [waiting] code ready - F9 to copy/invite`, `CO-OP [joining 12 s] host
-not answering` or `CO-OP [refused] wrong code?`; `full` adds a detail line
+not answering` or `CO-OP [refused] wrong code?`. A guest whose host left and came
+back with a new code (an unverified `bad_code` answer after the goodbye) reads
+`CO-OP [the host has a new code] paste it in F9 > Partner / Co-op > Online`; with
+world sync on and the partner settled in another mission (`pair_wait`
+`different_mission`, after 15 s) the connected line ends `| partner in <short
+mission name>` instead of a loading partner view. `full` adds a detail line
 (rtt, jitter, loss, build, peer). Modes `compact|full|off`: lab.ini
 `coop_hud` wins, then coop.ini `hud` (play only); default compact in play and
 off in the one-PC lab. Toasts (4 s, at most 3): connected, reconnected, lost,
 partner left, refused (the plain reason), version mismatch, Steam
-unavailable, the 1252 end reason, joining, invalid join code, invite sent and
+unavailable, the 1252 end reason, joining, invalid join code, a pasted code
+not used (`join_ignored`, already connected or connecting), the world sync notes
+(world-sync-protocol.md NOTE codes: the host's helicopter hold, flying alone, an
+unsupported destination, different missions, a story-start save), invite sent and
 code copied (those two show for what is left of their 4 s once F9 closes).
 Nothing reads game memory or calls Steam. Worker evidence: state.json `hud`
 (`enabled, mode, frames, hidden, events, toasts, line, toast, tick_ms`) and

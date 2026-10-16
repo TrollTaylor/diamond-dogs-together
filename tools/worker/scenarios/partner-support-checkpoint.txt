@@ -1,0 +1,96 @@
+# Native partner type-12 throws: checkpoint save + reload with the counts unchanged (WS2, critic #6), lab half.
+# A leak would already be in vars when a digest latches (the compares run after the job), and co-op saves persist,
+# so the acceptance needs the redirected copied save itself: partner throws, then a shared checkpoint save, a shared
+# death and the host's Continue from that checkpoint (the game reloads vars from the save), then the counts again.
+# Play mode cannot script this (world triggers are lab-only by design), so it runs here on the same redirected
+# copied-save path (lab::SavesRedirected) right after the three partner-support-play.txt runs.
+# Executable: mgsvtpp.exe 1.0.15.4, SHA-256 pinned by the partner contract; no visible launch, MGS_GAME_LUA_DIR unset.
+# Run (coordinator only, hidden worker; take the verify lock first):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-checkpoint.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# (lab mode: partner_native_support is on by default for the native gun profile; no named key.)
+# Evidence:
+#  - guest counts=12,16383,12,8,12,12,8,8 after each host throw (requires) and AGAIN after the Continue, i.e. read
+#    back from the reloaded checkpoint save; the host's own counts after the reload equal its counts at the save.
+#  - world_probe receipts: id=shared_checkpoint;step=done;result=ok, id=shared_death;...;result=ok,
+#    id=host_continue;...;result=ok; both roles back in 30010 with a new generation.
+#  - every partner_support=stock_check changed=0; NO stock_gap, NO stock_leak_mission_latched, NO rec240_stale /
+#    rec240_foreign; one partner_support=armed; ...; reason=throw_release per host throw on the guest.
+#  - after the reload: partner_support=mode; mode=lab; reason=ok, guard and thrown filter still installed and armed,
+#    and the post-reload throw again logs throw_release with the guest's counts unchanged.
+#  - Closed, BaselineRestored and RealSavesUnchanged in scenario.json.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug infinite_ammo 0
+guest debug infinite_ammo 0
+stance host stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 7 2
+wait 2000
+stance guest prone
+both capture start
+wait 6000
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+host debug slot support 0
+wait 1500
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 150 nowait
+guest burst cp-throw-1 8 150
+host release
+wait 3000
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 150 nowait
+guest burst cp-throw-2 8 150
+host release
+wait 3000
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 150 nowait
+guest burst cp-throw-3 8 150
+host release
+wait 3000
+host run support
+host require support;ids=354,349,395,411,366,370,378,388;counts=[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+;active=
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+# --- Checkpoint save, shared death, Continue from the checkpoint (the save is reloaded) ----------------------
+host worldtrigger world_probe=shared_checkpoint
+wait 5000
+both capture checkpoint-saved
+guest worldtrigger world_probe=shared_death
+wait 5000
+both capture shared-gameover
+host worldtrigger world_probe=host_continue
+waitmission host 30010 120
+waitmission guest 30010 120
+waitgameplay host 120
+waitgameplay guest 120
+wait 10000
+both capture checkpoint-return
+host run support
+host require support;ids=354,349,395,411,366,370,378,388;counts=[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+;active=
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=
+# --- One more partner throw after the reload: support re-admitted, counts unchanged --------------------------
+host debug infinite_ammo 0
+guest debug infinite_ammo 0
+host debug slot support 0
+wait 1500
+host hold rmb 1500 nowait
+wait 600
+host hold rmb+lmb 150 nowait
+guest burst cp-throw-after 8 150
+host release
+wait 3000
+both capture end
+guest run support
+guest require support;ids=354,349,395,411,366,370,378,388;counts=12,16383,12,8,12,12,8,8;active=

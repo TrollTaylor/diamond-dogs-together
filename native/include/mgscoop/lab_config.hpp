@@ -178,10 +178,43 @@ enum class PartnerNativeEquipShared : std::uint8_t { off, on, prefer };
 // gate lets HOLD, FIRE and RELOAD through for it (partner_slots MakePlan,
 // Gate::standin): off or on (the gun profile's default).
 enum class PartnerNativeStandin : std::uint8_t { off, on };
+// Anim round 1 (docs/anim-round1-weapons.md). The partner's aim intent:
+// pad (HOLD only from the remote's pad, the old behaviour) or state (also
+// while the remote's v5 gun group says Aiming or its act is an aim act, with
+// the weapon gate match/standin, the remote in slot 0..2 and neither asleep,
+// carried, hidden nor riding: partner_slots AimGate/AimFrame). The gun
+// profile's default is state.
+enum class PartnerNativeAimIntent : std::uint8_t { pad, state };
+// Reload duration parity: off (body 1 reloads at its own provider rate) or
+// adapt (the hook writes rate * k into instance 1's own rec+0x310 while it
+// reloads; k learns from body 1's and the remote's measured reload lengths,
+// partner_reload RateLearn). Lab key, default off until a hidden test.
+enum class PartnerNativeReloadRate : std::uint8_t { off, adapt };
 // Remote riding/deployment body visibility: driven native loco/gun stages
 // default to hide in lab and play. Explicit off restores the prior visibility;
 // hiding and stable on-foot recovery do not render a mounted partner body.
-enum class PartnerNativeRide : std::uint8_t { off, hide };
+// seat (docs/anim-round1-seat.md): a remote driving or riding a light vehicle
+// or truck in 30010/30020 is drawn seated in the receiver's copy of that
+// vehicle (a targeted direct motion on body 1, partner_ride_seat); everything
+// else (heli, horse, walker, APC/tank, unnamed vehicles, stale) still hides.
+enum class PartnerNativeRide : std::uint8_t { off, hide, seat };
+// The driven native stages' default (ResolveWeaponDefaults): the seated
+// driver, flipped from hide after hidden runs 8b8e5bbc (the guest seated on the
+// host screen) and 77d24c5e (the host seated on the guest screen) captured the
+// remote body in the jeep's driver seat while it drove and parked.
+inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide::seat;
+// partner_native_ride=seat: how the seat direct motion starts (direct: the
+// seated loop at once; getin: the seat's finite get-on state, then the loop,
+// only while the remote is entering) and ends (stop: RequestToStopDirectMotion;
+// getoff: the chain carries the seat's finite get-off state and the exit
+// advances to it with RequestToGoNextDirectMotion, falling back to stop).
+enum class PartnerRideSeatEnter : std::uint8_t { direct, getin };
+enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
+// Round-1 actions track (docs/anim-round1-actions.md "DM overlay"): the
+// DirectMotion overlay lever for graph-0 action states on body 1: off (the
+// default), debug (only the debug commands overlay_state / overlay_stop) or
+// map (also the remote-act map: damage, death, box, ledge hang, ladder).
+enum class PartnerNativeOverlay : std::uint8_t { off, debug, map };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -279,6 +312,15 @@ bool ParseSteamDispatch(const char* text, std::size_t size, SteamDispatch& out) 
 enum class CoopHud : std::uint8_t { unset, compact, full, off };
 const char* CoopHudName(CoopHud value) noexcept;
 bool ParseCoopHud(const char* text, std::size_t size, CoopHud& out) noexcept;
+// Automatic save handoff (docs/save-handoff.md; join-fix phase 2 P2-11):
+// lab.ini save_handoff=off|stage|scene|always (absent = off; Play-Coop writes
+// it explicitly; stage transfers and stages but never requests a restart) and
+// travel_lock=0|1 (absent: 1 in play, 0 in lab). Neither is a play refusal.
+// The order matches save_handoff_wire::Mode.
+enum class SaveHandoff : std::uint8_t { off, stage, scene, always };
+const char* SaveHandoffName(SaveHandoff value) noexcept;
+bool ParseSaveHandoff(const char* text, std::size_t size, SaveHandoff& out) noexcept;
+inline constexpr std::uint8_t kTravelLockAbsent = 0xFF;
 // World sync lab probes (docs/world-sync-protocol.md "Probes"): lab.ini
 // world_probe and the world.trigger key. The ids are the wire probeId of
 // PROBE_SYNC and the Lua probe number, in this order.
@@ -437,8 +479,65 @@ struct LabConfig {
     PartnerNativeEquipShared partner_native_equip_shared = PartnerNativeEquipShared::off;
     bool partner_native_equip_measured = false;
     PartnerNativeStandin partner_native_standin = PartnerNativeStandin::off;
+    // Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported-
+    // equipment gate (HOLD|FIRE|RELOAD stripped while the remote holds a
+    // support weapon, an item or the bionic arm; on with the gun profile), the
+    // auto-fire stop (FIRE stripped once the remote's magazine is dry; on with
+    // the gun profile), the aim intent (state with the gun profile, else pad),
+    // the reload rate (off unless named) and the fire/projectile census (lab
+    // key partner_fire_census=1, read-only: logs every RequestBullet, AddNoise
+    // and class-3 projectile request with its owner; default 0).
+    bool partner_native_unsupported = false, partner_native_unsupported_given = false;
+    bool partner_native_dry_stop = false, partner_native_dry_stop_given = false;
+    PartnerNativeAimIntent partner_native_aim_intent = PartnerNativeAimIntent::pad;
+    bool partner_native_aim_intent_given = false;
+    PartnerNativeReloadRate partner_native_reload_rate = PartnerNativeReloadRate::off;
+    bool partner_native_reload_rate_given = false;
+    bool partner_fire_census = false;
+    // Native type-12 support throws (docs/anim-round2-throws.md): not named in
+    // lab.ini, on with the native gun profile in lab and play (Stage B), else
+    // off (ResolveWeaponDefaults); a named 0/1 always wins.
+    bool partner_native_support = false;
+    bool partner_native_support_given = false;
+    // WS4 step 0 (docs/anim-round2-throws.md "WS4 step 0"): the read-only C4 /
+    // bionic-arm census (partner_placed_census lines, the input hook's pad
+    // sample and the Lua event=obs_att lines through world CFG r[14]). No
+    // write, no game call; default 0; play forces it off.
+    bool partner_placed_census = false;
+    // WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): body 1's native placed C4
+    // (type 13, only 391..395, slot 3: place-hold, ready, place) and arm holds
+    // (type 14, only 516 for now, slot 6: HOLD only, FIRE always stripped). Both ride on
+    // partner_native_support (its guard, filter, writer and gates). Not named in
+    // lab.ini: on with the native gun profile in lab and play (after hidden runs
+    // 7f8d643d / d05a1267), else off (ResolveWeaponDefaults); a named 0/1 always
+    // wins; play admits them only while link v2 is connected (ModeRefusal).
+    bool partner_native_placed = false;
+    bool partner_native_placed_given = false;
+    bool partner_native_arm = false;
+    bool partner_native_arm_given = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
+    PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;
+    PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::stop;
+    // WS3 vehicles (docs/vehicle-ws3.md). partner_ride_census: the read-only
+    // vehicle unit/body census lines, lab only (play forces it off), default
+    // off. partner_ride_seat_id: the remote driver seated in an unnamed vehicle
+    // by id (B1); default on in lab and play after hidden run abb0b7cf (Mother
+    // Base, the guest saw the remote driver seated in the moving sortie jeep
+    // 25603). partner_ride_tilt: RIDE_TILT, the driver's record angles written
+    // into the viewer's own vehicle copy (A1); default on in lab and play after
+    // hidden run 0a2314f2 (the viewer's jeep pitched with the seated driver).
+    // Both are capability-gated on the wire (the ride addendum's features).
+    bool partner_ride_census = false;
+    bool partner_ride_seat_id = true;
+    bool partner_ride_tilt = true;
+    // Round-1 actions track: the DM overlay lever (off) and the act census
+    // telemetry (partner_act / partner_pad_dropped lines, log only; on).
+    PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
+    bool partner_act_log = true;
+    // The native stance level fix: 1 = the round-1 window (500 ms behind the
+    // guards, partner_recon NativeParams), 0 = the previous 2 s rule.
+    bool partner_native_stance_fast = true;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute
@@ -465,6 +564,12 @@ struct LabConfig {
     // only (play forces none and sets kPlayRefusedWorldProbe).
     std::uint32_t world = 0;
     WorldProbe world_probe = WorldProbe::none;
+    // Automatic save handoff and the guest travel lock (P2-11): save_handoff
+    // absent = off; travel_lock 0|1, kTravelLockAbsent when not named (the
+    // effective value is then 1 in play and 0 in lab).
+    SaveHandoff save_handoff = SaveHandoff::off;
+    bool save_handoff_given = false;
+    std::uint8_t travel_lock = kTravelLockAbsent;
     // Debug "Spawn enemy here" native placement (native/soldier_warp.cpp): the
     // engine set-transform message to one soldier. Lab qualification only; play
     // forces it off (kPlayRefusedDebugSoldierWarp).
@@ -531,8 +636,16 @@ const char* PartnerNativeSlotName(PartnerNativeSlot value) noexcept;
 const char* PartnerNativeEquipName(PartnerNativeEquip value) noexcept;
 const char* PartnerNativeEquipSharedName(PartnerNativeEquipShared value) noexcept;
 const char* PartnerNativeStandinName(PartnerNativeStandin value) noexcept;
+const char* PartnerNativeAimIntentName(PartnerNativeAimIntent value) noexcept;
+const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept;
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
+const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
+const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
+const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
+// The effective travel lock (P2-11): the lab.ini travel_lock when given,
+// otherwise on in play and off in lab.
+bool EffectiveTravelLock(const LabConfig& config) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
 bool ParseNametagCrosshair(const char* text, std::size_t size, NametagCrosshair& out) noexcept;
@@ -587,7 +700,12 @@ bool ParsePartnerNativeSlot(const char* text, std::size_t size, PartnerNativeSlo
 bool ParsePartnerNativeEquip(const char* text, std::size_t size, PartnerNativeEquip& out) noexcept;
 bool ParsePartnerNativeEquipShared(const char* text, std::size_t size, PartnerNativeEquipShared& out) noexcept;
 bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNativeStandin& out) noexcept;
+bool ParsePartnerNativeAimIntent(const char* text, std::size_t size, PartnerNativeAimIntent& out) noexcept;
+bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNativeReloadRate& out) noexcept;
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
+bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
+bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
+bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.
 void ResolveWeaponDefaults(LabConfig& config) noexcept;

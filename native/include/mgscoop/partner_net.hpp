@@ -154,6 +154,21 @@ RemoteLook SampleLook() noexcept;
 // (InputEdges), and logs partner_net=input_rx; first=1 once per epoch.
 inline constexpr std::uint32_t kInputMinGapMs = 8;
 bool SubmitInput(const partner_input::InputPacket& packet) noexcept;
+// The worker-only input stall (docs/anim-round2-throws.md "Stall test step"):
+// SubmitInput sends nothing for `ms` (kInputStallMinMs..kInputStallMaxMs) from
+// now, so the peer's newest input frame ages through stale_ms into its stall
+// hold exactly as a real gap would; the sender's edge sets keep accumulating
+// (SenderSent is not called) and go out with the first frame after the stall.
+// Only the private worker's native debug command (input_stall <ms>) calls it,
+// and only when MGS_BACKGROUND_WORKER is compiled in and the worker scenario is
+// active; every other build refuses (the friend/Release loader never has the
+// background worker). Lines: partner_net=input_stall; reason=start|end.
+inline constexpr std::uint32_t kInputStallMinMs = 50, kInputStallMaxMs = 1000;
+const char* StallInput(std::uint32_t ms) noexcept;   // nullptr: started; else the refusal
+// The unknown remote slot/equip debounce (partner_input::HoldIdentity, applied
+// to each accepted input frame before it is stored): the equip of the driver's
+// last support verdict (0 = none; the partner driver publishes it every tick).
+void SetSupportIdentity(std::uint16_t equip) noexcept;
 // Default-off data transport only (MGS_LOCAL_ACTION_EVENTS). The observer
 // authorizes a natural owner receipt before caching it. SubmitLocal sends this
 // separate companion at the same rate gate as movement, never enables gun DM.
@@ -166,13 +181,15 @@ struct ActionSample { partner_actions::Receipt receipt{}; std::uint32_t age_ms =
 bool SampleActions(std::uint32_t expected_mission, ActionSample& out) noexcept;
 // Edge sets of accepted frames are accumulated (partner_input::AccumulateEdges)
 // until ConsumeInput takes them.
-// The newest received input (non-blocking): false when the lock is busy (the
-// caller keeps its previous sample). age_ms = NowMs() - rx_ms. Read-only: the
-// edge fields stay 0 (Lua-side stats and probes).
+// The newest received input; always returns true. It waits for the receive
+// thread's short exclusive section (like SampleRemote; the waits are counted in
+// the stats line's latest_waits): its callers (the driver, the observer) took a
+// busy lock for "no input" (out.valid false). age_ms = NowMs() - rx_ms.
+// Read-only: the edge fields stay 0 (Lua-side stats and probes).
 bool LatestInput(partner_input::Sample& out) noexcept;
 // LatestInput plus the edges accumulated since the previous call, which it
-// clears (the input window's sample; false when the lock is busy, and then
-// nothing is consumed).
+// clears (the input window's sample; non-blocking: false when the lock is busy,
+// and then nothing is consumed and the input hook keeps its previous sample).
 bool ConsumeInput(partner_input::Sample& out) noexcept;
 // True once the peer sent an accepted input frame v5 since the last receive
 // reset (a new link session, ResetRemote): its build decodes v5. The native
@@ -196,6 +213,9 @@ const char* LinkStateName(LinkState state) noexcept;
 struct LinkInfo {
     LinkState state;
     std::uint32_t session, rtt_ms, jitter_ms, interp_ms, loss_permille;
+    // The peer's HELLO/WELCOME build ("0.13.0+c07d0a2", NUL-terminated; ""
+    // before a handshake). The save handoff gates channel 4 on it (P2-4).
+    char remote_build[link::kBuildSize + 1];
 };
 // Game-thread snapshot (seqlock read; never blocks). state off without v2.
 LinkInfo GetLinkInfo() noexcept;
@@ -215,7 +235,21 @@ void PublishNativeState(std::uint8_t drive, std::uint8_t reason, std::uint8_t re
 // it equals the published partner mission, link-status.json reports
 // partner_drive "off" and partner_reason "no_body_pack" (no partner body).
 void PublishPackState(std::uint32_t refused_mission) noexcept;
-// Reliable ordered channels 1..3 (1 = world, reserved; 2..3 = game). Session
+// World sync as link-status.json, the HUD and F9 report it (world_link
+// publishes it; docs/link-protocol.md 7.2): the local world level 0..3,
+// paired, the partner's mission (0 unknown), the published pair-wait code
+// (world_wire pair_wait; 11 settling) and the title progress (0 unknown,
+// 1 ok, 2 story_start). Any thread, atomics only, never blocks.
+struct WorldView {
+    std::uint8_t level;
+    bool paired;
+    std::uint32_t partner_mission;
+    std::uint8_t pair_wait;
+    std::uint8_t progress;
+};
+void PublishWorldState(const WorldView& view) noexcept;
+// Reliable ordered channels 1..4 (1 = world; 2..3 = game; 4 = save handoff,
+// sent and drained only by save_handoff.cpp through HandoffHooks). Session
 // scoped: a new handshake clears them on both sides (LinkInfo.session bumps)
 // and callers send their state again. On `full` the caller keeps its dirty
 // flag and retries next tick. Never blocks on I/O, never allocates.
@@ -256,6 +290,28 @@ void SetWorldHooks(const WorldHooks* hooks) noexcept;     // install time, befor
 // Game or receive thread; not_connected / too_large / bad_channel as SendReliable.
 link::ReliableResult SendDatagram(std::uint8_t channel, const void* bytes, std::size_t size) noexcept;
 
+// Automatic save handoff (docs/save-handoff.md; join-fix phase 2 P2-12). Only
+// save_handoff.cpp sends on reliable channel 4 or drains it, from these hooks.
+// All callbacks run on the receive or transport thread with no partner_net
+// lock held; null hooks = today's behaviour.
+struct HandoffHooks {
+    void (*on_idle)(std::uint64_t now_ms) noexcept;      // after g_world.on_idle at the end of LinkIdle
+    void (*on_session)(std::uint32_t session) noexcept;  // after each g_world.on_session (new session, ArmSteamGuest)
+    void (*on_peer_close)() noexcept;                    // after the CLOSE handling, outside the locks
+};
+void SetHandoffHooks(const HandoffHooks* hooks) noexcept;  // install time, before Start
+// Messages queued and not yet acknowledged on a reliable channel (g_tx_lock);
+// 0 for an unknown channel or before Start.
+unsigned ReliableQueued(std::uint8_t channel) noexcept;
+// Guest: the MGS2 join code it was armed with (secret-bearing: the caller
+// clears its buffer). True only for a Steam guest that started waiting
+// (net_steam_wait) and was then armed by an invite or an F9 paste; zeroed at
+// shutdown.
+bool BuildGuestJoinCode(char* out, std::size_t capacity) noexcept;
+// link-status.json "handoff" (save_handoff_state::Token) and "handoff_pct"
+// (0..100), also copied into the HUD LinkView. Any thread, atomics only.
+void PublishHandoffState(std::uint8_t token, std::uint8_t pct) noexcept;
+
 // --- Steam online (docs/steam-online.md 7.6, 8.2, 8.3, 10). Inert on UDP.
 // Window-close shutdown flag (any thread, flags only): the Steam transport
 // sends one link CLOSE, closes the peer session and makes no further Steam
@@ -280,6 +336,12 @@ struct SteamInfo {
     char dispatch_reason[24];
     std::int32_t steam_end;
     bool left;
+    // Guest: ArmSteamGuest bumps join_seq on every pasted-code or invite
+    // decision; join_result is that decision (0 none, 1 joined, 2 ignored
+    // because already connected or connecting, 3 the own code). Copied even
+    // when Steam is not active (steam_online's F9 Online result).
+    std::uint32_t join_seq{};
+    std::uint8_t join_result{};
 };
 SteamInfo GetSteamInfo() noexcept;
 // Host: the F9 Accept joins toggle (atomic; the transport reads it).

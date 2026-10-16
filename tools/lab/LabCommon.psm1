@@ -312,7 +312,37 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_equip_shared'; Json = 'native_equip_shared'; Kind = 'enum'; Values = @('off', 'on', 'prefer') },
     @{ Key = 'partner_native_equip_measured'; Json = 'native_equip_measured'; Kind = 'bool' },
     @{ Key = 'partner_native_standin'; Json = 'native_standin'; Kind = 'enum'; Values = @('off', 'on') },
-    @{ Key = 'partner_native_ride'; Json = 'native_ride'; Kind = 'enum'; Values = @('off', 'hide') },
+    @{ Key = 'partner_native_ride'; Json = 'native_ride'; Kind = 'enum'; Values = @('off', 'hide', 'seat') },
+    # The seated vehicle rider (docs/anim-round1-seat.md): how the seat direct motion starts and ends.
+    @{ Key = 'partner_ride_seat_enter'; Json = 'ride_seat_enter'; Kind = 'enum'; Values = @('direct', 'getin') },
+    @{ Key = 'partner_ride_seat_exit'; Json = 'ride_seat_exit'; Kind = 'enum'; Values = @('stop', 'getoff') },
+    # Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported-equipment gate and the auto-fire stop
+    # (on with the gun profile), the aim intent (state with the gun profile), the reload rate (off unless set)
+    # and the read-only fire/projectile census (lab only, default 0).
+    @{ Key = 'partner_native_unsupported'; Json = 'native_unsupported'; Kind = 'bool' },
+    @{ Key = 'partner_native_dry_stop'; Json = 'native_dry_stop'; Kind = 'bool' },
+    @{ Key = 'partner_native_aim_intent'; Json = 'native_aim_intent'; Kind = 'enum'; Values = @('pad', 'state') },
+    @{ Key = 'partner_native_reload_rate'; Json = 'native_reload_rate'; Kind = 'enum'; Values = @('off', 'adapt') },
+    @{ Key = 'partner_fire_census'; Json = 'fire_census'; Kind = 'bool' },
+    # Native thrown support (type 12 only), default off in every profile.
+    @{ Key = 'partner_native_support'; Json = 'native_support'; Kind = 'bool' },
+    # WS3 vehicles (docs/vehicle-ws3.md): the read-only ride census (a lab experiment, default
+    # off natively, off in play), the seat by id and RIDE_TILT (default on natively, lab and
+    # play); written only when set.
+    @{ Key = 'partner_ride_census'; Json = 'ride_census'; Kind = 'bool' },
+    @{ Key = 'partner_ride_seat_id'; Json = 'ride_seat_id'; Kind = 'bool' },
+    @{ Key = 'partner_ride_tilt'; Json = 'ride_tilt'; Kind = 'bool' },
+    # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
+    @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
+    # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;
+    # written only when set).
+    @{ Key = 'partner_native_placed'; Json = 'native_placed'; Kind = 'bool' },
+    @{ Key = 'partner_native_arm'; Json = 'native_arm'; Kind = 'bool' },
+    # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
+    # (off natively) and the act census lines (on natively); written only when set.
+    @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },
+    @{ Key = 'partner_act_log'; Json = 'act_log'; Kind = 'bool' },
+    @{ Key = 'partner_native_stance_fast'; Json = 'native_stance_fast'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.
@@ -341,6 +371,11 @@ $script:LabPartnerKeys = @(
     @{ Key = 'net_reorder_permille'; Json = 'net_reorder_permille'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_reorder_ms'; Json = 'net_reorder_ms'; Kind = 'int'; Min = 1; Max = 500 },
     @{ Key = 'net_seed'; Json = 'net_seed'; Kind = 'u32'; Min = 1 },
+    # Join-fix phase 2 (docs/join-fix-phase2-spec.md P2-11): the save handoff
+    # (absent = off; stage only in hidden worker runs) and the guest travel lock
+    # (absent = 1 in play, 0 in the lab). Written only when set.
+    @{ Key = 'save_handoff'; Json = 'save_handoff'; Kind = 'enum'; Values = @('off', 'stage', 'scene', 'always') },
+    @{ Key = 'travel_lock'; Json = 'travel_lock'; Kind = 'bool' },
     # World sync (docs/world-sync-protocol.md): 0 = inert (the default; never
     # written then), 1 plumbing, 2 enemies + alert, 3 clock/weather + travel/recovery. The probe
     # is a lab experiment (Play-OfflineCoop -WorldProbe, world.trigger).

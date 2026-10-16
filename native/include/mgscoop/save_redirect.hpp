@@ -19,6 +19,22 @@ bool format_user_data_folder(const char* save_dir, char* buf, int cub) noexcept;
 bool format_remote_path(const char* save_dir, const char* name, char* out, std::size_t out_size) noexcept;
 // True for a file name the redirect accepts (no traversal, no directory parts).
 bool is_safe_remote_name(const char* name) noexcept;
+// <save_dir>\287700\local\<name> with format_remote_path's name rules (no
+// separator, drive colon, "." or ".."), so no path escapes the local folder.
+bool format_local_path(const char* save_dir, const char* name, char* out, std::size_t out_size) noexcept;
+
+// Automatic save handoff staging (docs/save-handoff.md; join-fix phase 2
+// P2-9): "<save_dir>-handoff" with the save_dir's trailing separators trimmed
+// (the game folder's mgs-coop\coop-saves-handoff in play, run\<role>-saves-
+// handoff in the worker). Refused for an empty save_dir, a result that does
+// not fit, or when the longest path the handoff writes below it (the folder
+// plus kHandoffLongestTail) would reach kHandoffPathLimit characters.
+inline constexpr char kHandoffSuffix[] = "-handoff";
+// The tooling's longest staged name below the folder (FriendCommon's
+// FixedPathSuffixes): \<xfer8>.partial\287700\local\TPP_GAME_DATA0.mgs-coop-<32 hex>.tmp
+inline constexpr std::size_t kHandoffLongestTail = 91;
+inline constexpr std::size_t kHandoffPathLimit = 248;
+bool format_handoff_dir(const char* save_dir, char* out, std::size_t out_size) noexcept;
 
 // Longest save_dir (after trimming trailing separators) the lab accepts. The
 // game's GetUserDataFolder call site at 0x54CBDE passes a 0x105-byte buffer and
@@ -41,6 +57,19 @@ bool configured() noexcept;
 // exe calls the getter at every save step). Returns `real` unchanged when no
 // save_dir is configured or on allocation failure.
 void* wrap_remote_storage(void* real) noexcept;
+
+// The configured save_dir (copied under the redirect lock); false (out
+// emptied) when no redirect is configured or it does not fit.
+bool current_save_dir(char* out, std::size_t out_size) noexcept;
+
+// Host snapshot of a redirected remote slot (save handoff P2-6 slots 4/5):
+// <save_dir>\remote\<name> read whole into buf. The redirect's I/O lock is
+// taken shared, like the game's own RS_FileRead, while RS_FileWrite and
+// RS_FileDelete take it exclusive: a write that arrives during the read waits
+// for it (it never fails on a sharing violation) and the read never sees a
+// half-written file. False (size 0) when not configured, the name is unsafe,
+// the file is missing or larger than cap, or the read fails.
+bool read_remote_snapshot(const char* name, void* buf, std::size_t cap, std::size_t& size) noexcept;
 
 void reset_for_test() noexcept;
 #endif

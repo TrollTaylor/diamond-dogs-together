@@ -1,0 +1,67 @@
+# A friendly dart puts the guest to sleep near the host. The host's screen
+# should carry no Fulton offer and no struggle guide for the sleeping teammate
+# (the guide stays on the sleeper's own screen), far or near. Carried, the
+# guest's camera should follow the carrier from behind, also while walking.
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+host press 2 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 400
+guest run downed_status
+guest require down=1.*cause=2.*lock=1.*state=asleep
+wait 6500
+both capture sleep-prompts-far
+host debug goto_carry
+wait 2500
+both capture sleep-prompts-near
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require b1=1,a2b
+both capture sleep-carried
+host hold w 1500 nowait
+wait 1000
+both capture sleep-carried-walk
+host hold w 1500 nowait
+wait 1200
+both capture sleep-carried-walk2
+host release
+host mouse 1200 0
+wait 300
+host hold w 1500 nowait
+wait 1200
+both capture sleep-carried-turn
+host release
+wait 1500
+host hold r 900
+host release
+wait 3500
+both capture sleep-put-down
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 9000
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
+both capture sleep-woken
+state

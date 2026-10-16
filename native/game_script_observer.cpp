@@ -93,7 +93,13 @@
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
+#include "mgscoop/partner_support_equip.hpp"
+#include "mgscoop/partner_support_guard.hpp"
+#include "mgscoop/partner_support_policy.hpp"
+#include "mgscoop/partner_placed_census.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
+#include "mgscoop/partner_ride_seat.hpp"
+#include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
 #include "mgscoop/partner_upper_phase_observer.hpp"
@@ -102,6 +108,8 @@
 #include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/world_link.hpp"
+#include "mgscoop/save_handoff.hpp"
+#include "mgscoop/save_redirect.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/soldier_warp.hpp"
@@ -887,6 +895,13 @@ bool PartnerDmPatch(void*, bool on, const char* reason) noexcept {
     else mgscoop::partner_dm_patch::Revert(game_base, Log, reason);
     return mgscoop::partner_dm_patch::Patched();
 }
+// The seated vehicle rider's four dwords (partner_ride_seat; docs/anim-round1-seat.md).
+bool PartnerRideSeatArm(void*, std::uint8_t seat) noexcept {
+    return game_base && mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log);
+}
+void PartnerRideSeatRevert(void*, const char* reason) noexcept {
+    if (game_base) mgscoop::partner_ride_seat::Revert(game_base, game_span, Log, reason);
+}
 bool PartnerDmClearPending(void*) noexcept {
     bool cleared = false;
     mgscoop::partner_player::ClearDmPending(partner_addresses, mission_terminating, cleared);
@@ -924,6 +939,67 @@ bool PartnerFocused(void*) noexcept {
     if (window) GetWindowThreadProcessId(window, &foreground);
     return foreground == GetCurrentProcessId();
 }
+// --- WS3 vehicles (docs/vehicle-ws3.md): the read-only vehicle unit/body read
+// (the ride census, the ride addendum's category, the seat-by-id gate) and the
+// seat-by-id write. Both stay behind the code gate; the write only with
+// partner_ride_seat_id=1 (default on, lab and play, after hidden run abb0b7cf;
+// the driver offers the id only for a peer whose ride addendum names the
+// category), on the player-update thread (the input hook's thread, which every
+// hidden run logged equal to the driver's Lua thread), with the seat dwords
+// armed (the untargeted entry's camera stores skipped).
+void PartnerVehicleRead(void*, std::uint16_t id, mgscoop::partner_vehicle::Read& out) noexcept {
+    out = mgscoop::partner_vehicle::Read{};
+    if (!game_base || !partner_gate_ok) { out.refusal = "gate"; return; }
+    mgscoop::partner_vehicle::ReadLive(game_base, id, out);
+}
+const char* PartnerSeatTarget(void*, const pp::SeatTargetRequest& request, pp::SeatTargetResult& out) noexcept {
+    out = pp::SeatTargetResult{};
+    const auto& config = mgscoop::GetLabConfig();
+    if (!game_base || !partner_gate_ok) return "gate";
+    if (!config.partner_ride_seat_id) return "off";
+    if (!OnRuntimeThread() || mission_terminating) return "runtime";
+    const std::uint32_t hook = mgscoop::partner_input_hook::HookThread();
+    if (!hook || hook != GetCurrentThreadId()) return "thread";
+    if (!mgscoop::partner_ride_seat::Armed()) return "seat_unarmed";
+    return pp::WriteSeatTarget(partner_addresses, game_base, game_span, mission_terminating, request, out);
+}
+// WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
+// native type-12 support runs in the one-PC lab, and in two-PC play only while
+// link v2 is connected. Both observer gates use it. After a link drop the guard
+// and the thrown filter stay installed and armed (queued or unwindowed body-1
+// work may still finish); Ready and Follow refuse through ContextFor.
+const char* SupportModeReason() noexcept {
+    const auto& config=mgscoop::GetLabConfig();
+    const bool play=config.mode==mgscoop::LabMode::play;
+    return mgscoop::partner_support_policy::ModeRefusal(config.mode==mgscoop::LabMode::lab,play,
+        play && mgscoop::partner_net::GetLinkInfo().state==mgscoop::link::LinkState::connected);
+}
+// The type the support lines name (WS4 v1): 13 for C4 391..395, 14 for arms
+// 515..521, else 12 (the writer's own receipts carry the decoded type).
+unsigned SupportLineType(std::uint16_t equip) noexcept {
+    return mgscoop::partner_support_policy::C4Equip(equip) ? 13u : mgscoop::partner_support_policy::ArmEquip(equip) ? 14u : 12u;
+}
+// Anim round 2: read-only admission for the driver's support gate. The
+// observer writer below is the only allocator; this callback never equips.
+// WS4 v1: the writer context names one lane (slot 3, or 6 for an arm); Ready
+// answers only for that lane, so asking both is the same as asking the
+// context's own.
+bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexcept {
+    const auto& config=mgscoop::GetLabConfig();
+    if(!config.partner_native_support || SupportModeReason() || config.partner_input_p218_allow ||
+       mgscoop::partner_input_hook::NativePoseWindowStatus().required ||
+       mgscoop::partner_input_hook::NativeSupportLatchedOff() ||
+       !mgscoop::partner_support_guard::Live() ||
+       !mgscoop::partner_support_guard::Armed(state.P,1) ||
+       !mgscoop::partner_fire_filter::ThrownPatchLive(game_base) || !mgscoop::partner_fire_filter::ThrownArmed(1)) return false;
+    pp::DmTargets targets{};
+    if(pp::ResolveDm(partner_addresses,state,targets)) return false;
+    const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+    return mgscoop::partner_support_equip::Ready(base,state.P,targets.blk1,equip,nullptr,nullptr,3) ||
+        mgscoop::partner_support_equip::Ready(base,state.P,targets.blk1,equip,nullptr,nullptr,6);
+}
+// The driver's support verdict for partner_net's unknown slot/equip debounce.
+void PartnerPublishSupportIdentity(void*,std::uint16_t equip) noexcept { mgscoop::partner_net::SetSupportIdentity(equip); }
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
@@ -938,7 +1014,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
-    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob};
+    PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
+    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1215,6 +1292,9 @@ void PartnerShutdown() noexcept {
     mgscoop::sleep_info::Shutdown();
     mgscoop::vehicle_info::Shutdown();
     mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
+    // Save handoff (docs/save-handoff.md): flags only; the hook thread sends
+    // ABORT shutdown when mid-transfer and frees the snapshot.
+    mgscoop::save_handoff::Shutdown();
     // Steam online exit hygiene (docs/steam-online.md C11): flags only. The
     // transport thread sends one CLOSE, closes the peer session and parks;
     // the owner context clears the guest beacon once and stops calling Steam.
@@ -1252,9 +1332,34 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.saves = 1;
     world.build = mgscoop::world_link::ParseBuild(lab::ProbeVersion());
     world.log = Log;
+    world.placed_census = labc.partner_placed_census && labc.mode == mgscoop::LabMode::lab;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
+}
+
+// Automatic save handoff install (docs/save-handoff.md; after ConfigureWorld,
+// before partner_net::Start). Always records the role and the travel lock
+// (CFG r[13]); the transfer configures only with lab.ini save_handoff set,
+// link v2, redirected saves and world on. Logs save_handoff=configured or
+// save_handoff=disabled; the hooks are set only when configured.
+void ConfigureSaveHandoff(const mgscoop::LabConfig& labc, const wchar_t* directory) noexcept {
+    char save_dir[260]{};
+    if (!lab::save::current_save_dir(save_dir, sizeof(save_dir))) save_dir[0] = 0;
+    mgscoop::save_handoff::Config handoff{};
+    handoff.role = labc.role == mgscoop::LabRole::guest ? 2 : 1;
+    handoff.mode = labc.save_handoff;
+    handoff.play = labc.mode == mgscoop::LabMode::play;
+    handoff.net = labc.net;
+    handoff.link_v2 = labc.net_link == mgscoop::NetLink::v2;
+    handoff.saves_redirected = lab::SavesRedirected();
+    handoff.world_on = world_on;
+    handoff.travel_lock = mgscoop::EffectiveTravelLock(labc);
+    handoff.steam_wait = labc.net_steam_wait;
+    handoff.save_dir = save_dir;
+    handoff.directory = directory;
+    handoff.log = Log;
+    if (mgscoop::save_handoff::Configure(handoff)) mgscoop::partner_net::SetHandoffHooks(mgscoop::save_handoff::Hooks());
 }
 
 const char* HandlePartnerCfg() noexcept {
@@ -1274,6 +1379,17 @@ const char* HandlePartnerLog(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
     pd::LuaLog(partner_driver, partner_hooks, buffer, size);
     return yes;
+}
+
+// The debug seat_dm lever (lua/coop/debug_vehicle.lua): arm or end the manual seat.
+const char* HandlePartnerSeat(const char* buffer, std::size_t size) noexcept {
+    static constexpr char yes[]="return true";
+    static constexpr char no[]="return false";
+    if (!OnRuntimeThread()) return nullptr;
+    partner::SeatRequest request{};
+    if (!partner::ParseSeatReceipt(buffer, size, request)) return no;
+    return pd::SeatManual(partner_driver, partner_hooks, request.arm, request.seat, request.vehicle, mgscoop::partner_net::NowMs(),
+                          mission_terminating) ? yes : no;
 }
 
 const char* HandlePartnerStop() noexcept {
@@ -1365,7 +1481,7 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply)) {
         ClearUpperEndOwner(); mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{}); return nullptr;
     }
-    if(PartnerSleepSuppressed(nullptr))reply.op&=~(partner::op::dm_play|partner::op::dm_stop);
+    if(PartnerSleepSuppressed(nullptr))reply.op&=~(partner::op::dm_play|partner::op::dm_stop|partner::op::ride_seat);
     CoopRescueTick();
     mgscoop::coop_carry::Tick();
     mgscoop::coop_sleep::Tick();
@@ -1681,6 +1797,240 @@ void ObserveEquipWriter() noexcept {
 #endif
 }
 
+// Type-12 slot 3: same natural owner, receipt lock and no-batch discipline as
+// the existing gun equipment writer. Every native precondition is re-read in
+// partner_support_equip; setting P+218 to 1 is explicitly incompatible.
+void ObserveNativeSupport() noexcept {
+    namespace se=mgscoop::partner_support_equip;
+    namespace sg=mgscoop::partner_support_guard;
+    namespace ff=mgscoop::partner_fire_filter;
+    const auto& config=mgscoop::GetLabConfig();
+    const auto& mission=partner_driver.mission;
+    se::Context context{};
+    const char* mode_reason=SupportModeReason();
+    context.enabled=config.partner_native_support && !mode_reason;
+    // One line per change of the mode verdict (only with the key selected).
+    {
+        static const char* logged_reason="";
+        static int logged_mode=-1;
+        const int mode=config.mode==mgscoop::LabMode::play ? 1 : config.mode==mgscoop::LabMode::lab ? 0 : 2;
+        if(config.partner_native_support && (mode!=logged_mode || std::strcmp(mode_reason ? mode_reason : "ok",logged_reason)!=0)) {
+            logged_mode=mode;logged_reason=mode_reason ? mode_reason : "ok";
+            LogFormat("partner_support=mode; mode=%s; reason=%s\r\n",mode==1 ? "play" : mode==0 ? "lab" : "other",logged_reason);
+        }
+    }
+    context.owner=OnRuntimeThread();context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
+    context.pins_intact=mgscoop::equipment_stock_writer::PinsIntact;
+    context.mission=partner_mission;context.realize_gen=mission.realize_gen;context.now_ms=mgscoop::partner_net::NowMs();
+    // Never (re)equip slot 3/6 through a switch, a reload, a running throw, a
+    // place/detonation or an arm use mode.
+    context.body_busy=mgscoop::partner_support_policy::BodyBusy(mission.body_gun_mode,mission.body_switching);
+    // WS4 v1: the C4 and arm lanes (both ride on partner_native_support). The
+    // read-only watchdog: body 1 in an arm use mode 52..56 (FIRE is always
+    // stripped for an arm, so it must never happen) latches arms off for the
+    // mission, here at 10 Hz and in the hook after every windowed job.
+    if(context.enabled && config.partner_native_arm && mgscoop::partner_support_policy::ArmUseMode(mission.body_gun_mode) &&
+       !mgscoop::partner_input_hook::NativeArmLatchedOff()) {
+        mgscoop::partner_input_hook::LatchNativeArmOff();
+        LogFormat("partner_arm=refused; slot=6; equip=%u; type=14; reason=use_mode_mission_latched; mode=%u; source=observer\r\n",
+            unsigned(mission.remote_gun_equip>0 ? mission.remote_gun_equip : 0),unsigned(mission.body_gun_mode));
+    }
+    context.placed=config.partner_native_placed;
+    context.arm=config.partner_native_arm && !mgscoop::partner_input_hook::NativeArmLatchedOff();
+    unsigned short current_mission=0;
+    context.gates=context.enabled && PartnerGunPiecesWanted() && offline_enabled && lab_active && lab::SavesRedirected() &&
+        partner_on && partner_gate_ok && allocation_enabled && archive_mounted && host_source_selected &&
+        !config.partner_input_p218_allow && !mgscoop::partner_input_hook::NativePoseWindowStatus().required &&
+        !mgscoop::partner_input_hook::NativeSupportLatchedOff() &&
+        !mission_terminating && !termination_scope.Active() && !gameplay_restore_pending &&
+        !HasDynamiteSessionOwnership() && !mgscoop::partner_defer::ShuttingDown() &&
+        ReadMission(current_mission) && mgscoop::SupportsPartnerBody(current_mission) &&
+        current_mission==partner_mission && current_mission==allocation_mission;
+    mgscoop::partner_input::Sample input{};
+    if(mission.remote_v5 && mission.remote_gun_equip>0 && mission.remote_gun_equip<0x800 &&
+       mgscoop::partner_net::LatestInput(input) && input.valid && input.age_ms<=partner_driver.settings.stale_ms &&
+       input.packet.version>=5 && (input.packet.xflags&mgscoop::partner_input::XFlag::Equip) &&
+       (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid) &&
+       input.packet.gun_equip==mission.remote_gun_equip && input.packet.inv_slot==mission.remote_slot) {
+        context.equip=static_cast<std::uint16_t>(mission.remote_gun_equip);context.slot=mission.remote_slot;
+    } else if(mission.support_equip>0 && mgscoop::partner_net::LatestInput(input) && input.valid) {
+        // The driver holds support through an input stall (critic #4): keep the
+        // context's slot and equip so Ready still answers; the writer finds the
+        // equip already allocated and dispatches nothing. Keyed on the driver's
+        // last support verdict (support_equip), not on support_stall, which the
+        // driver sets only on a tick whose own read was already stale: a frame
+        // that crossed stale_ms between the two reads must not clear the context
+        // (partner_support_policy::ContextHold, WS2 review).
+        const auto& set=partner_driver.settings;
+        mgscoop::partner_support_policy::StallHoldIn hold{};
+        // settings is the configured copy (native_active only in the effective one).
+        hold.stall_hold=pd::NativeActive(partner_driver) && set.nsupport && set.nstall==mgscoop::PartnerNativeStall::hold;
+        hold.stale_ms=set.stale_ms;hold.stall_ms=set.stall_ms;hold.age_ms=input.age_ms;
+        hold.v5_valid=input.packet.version>=5 && (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid);
+        hold.slot=input.packet.inv_slot;
+        hold.equip=(input.packet.xflags&mgscoop::partner_input::XFlag::Equip) ? input.packet.gun_equip : static_cast<std::uint16_t>(0);
+        hold.was_support=true;hold.support_equip=mission.support_equip;
+        if(mgscoop::partner_support_policy::ContextHold(hold)) {context.equip=mission.support_equip;context.slot=3;}
+    }
+    pp::State state{};pp::DmTargets targets{};
+    if(context.owner && context.gates && mission.parts_loaded && mission.realized &&
+       pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.vars_ok && state.arrays_ok &&
+       state.count==2 && state.local==0 && (state.flags&1u) && !(state.flags&0x100u) && !state.sync &&
+       state.ids[0]==0 && state.ids[1]==1 && state.pool[0]==0 && state.pool[1]==1 &&
+       state.parts[0]==3 && state.parts[1]==3 && pp::Realized(state,0) && pp::Realized(state,1) &&
+       !pp::ResolveDm(partner_addresses,state,targets)) {
+        context.body_ready=true;context.player=state.P;context.remote_block=targets.blk1;
+        const char* guard_reason=sg::Install(game_base,context.image_span,partner_gate_ok,Log);
+        const char* filter_reason=ff::InstallThrown(game_base,Log);
+        if(!guard_reason && !filter_reason && sg::Arm(state.P,1) && ff::ArmThrown(1))
+            context.safety_ready=sg::Live() && sg::Armed(state.P,1) && ff::ThrownPatchLive(game_base) && ff::ThrownArmed(1);
+    }
+    // Protective patches remain armed across slot/key changes, and after the
+    // stock latch: already queued or unwindowed body-1 work may still finish.
+    se::Observe(context,Log);
+    // A mission-scoped uncertain writer outcome also closes the drain's admission.
+    if(se::Uncertain() && !mgscoop::partner_input_hook::NativeSupportLatchedOff()) {
+        mgscoop::partner_input_hook::LatchNativeSupportOff();
+        LogFormat("partner_support=refused; slot=%u; equip=%u; type=%u; reason=writer_uncertain_mission_latched\r\n",
+            unsigned(context.slot==6 ? 6 : 3),unsigned(context.equip),SupportLineType(context.equip));
+    }
+    ff::Stats totals{};ff::ReadStats(game_base,totals);
+    sg::Stats guard_totals{};sg::ReadStats(guard_totals);
+    static std::uint32_t summary_mission=0,summary_drop=0,summary_hits=0,summary_refused=0;
+    static std::uint64_t summary_ms=0;
+    static unsigned summary_lines=0;
+    if(summary_mission!=context.mission) {summary_mission=context.mission;summary_ms=0;summary_lines=0;summary_drop=totals.thrown_dropped;summary_hits=guard_totals.hits;summary_refused=guard_totals.refused;}
+    if(totals.thrown_armed && summary_lines<3600 && (context.now_ms<summary_ms || context.now_ms-summary_ms>=1000)) {
+        summary_ms=context.now_ms;++summary_lines;
+        LogFormat("partner_support=guard; slot=%u; equip=%u; type=%u; reason=%s; installed=%u; live=%u; armed=%u; hits=%u; refusals=%u; hit_delta=%u; refusal_delta=%u; windows=%u\r\n",
+            unsigned(context.slot==6 ? 6 : 3),unsigned(context.equip),SupportLineType(context.equip),guard_totals.live ? "ok" : "hook_lost",unsigned(guard_totals.installed),unsigned(guard_totals.live),
+            unsigned(guard_totals.armed),guard_totals.hits,guard_totals.refused,guard_totals.hits-summary_hits,guard_totals.refused-summary_refused,guard_totals.windows);
+        summary_hits=guard_totals.hits;summary_refused=guard_totals.refused;
+        LogFormat("partner_fire_filter=summary; kind=thrown; installed=%u; live=%u; armed=%u; owner=%u; dropped=%u; preview_dropped=%u; passed=%u; unread=%u; delta=%u\r\n",
+            unsigned(totals.thrown_installed),unsigned(totals.thrown_live),unsigned(totals.thrown_armed),unsigned(totals.thrown_owner),
+            totals.thrown_dropped,totals.thrown_preview_dropped,totals.thrown_passed,totals.thrown_unread,totals.thrown_dropped-summary_drop);
+        if(totals.thrown_dropped!=summary_drop)
+            LogFormat("partner_support=filtered; slot=%u; equip=%u; type=%u; reason=owner; owner=0x1; dropped=%u; preview_dropped=%u\r\n",
+                unsigned(context.slot==6 ? 6 : 3),unsigned(context.equip),SupportLineType(context.equip),totals.thrown_dropped-summary_drop,totals.thrown_preview_dropped);
+        summary_drop=totals.thrown_dropped;
+    }
+}
+
+// WS4 step 0 (docs/anim-round2-throws.md "WS4 step 0: placed and arm census"):
+// the read-only C4 / bionic-arm census, lab key partner_placed_census=1 in lab
+// mode (play forces the key off). Same natural owner and 10 Hz cadence as the
+// equipment observers. Reads only: the qualified partner_player::ReadGun for
+// both instances plus the plugin latch and record bytes next to it, the
+// placed-object service owner table (vtable-checked chain) and the input
+// hook's pad sample. No write, no game call. Capped per mission:
+//   partner_placed_census=gun; k=..      C4 / arm in hand, place or arm modes, the plugin latch
+//   partner_placed_census=service; ..    the owner table, on change
+//   partner_placed_census=pad; ..        body 1 in an arm mode, or a shadow verdict change
+//   partner_placed_census=status; ..     every 5 s
+void ObservePlacedCensus() noexcept {
+    namespace pc=mgscoop::partner_placed_census;
+    const auto& config=mgscoop::GetLabConfig();
+    const bool on=config.partner_placed_census && config.mode==mgscoop::LabMode::lab && lab_active && partner_on && partner_gate_ok;
+    pc::SetPadCensus(on);
+    if(!on || !game_base) return;
+    const auto& mission=partner_driver.mission;
+    const std::uint64_t now=mgscoop::partner_net::NowMs();
+    struct CensusState {
+        std::uint32_t mission=0xFFFFFFFFu,realize_gen=0xFFFFFFFFu;
+        bool announced=false,have_gun[2]{},have_service=false,have_pad=false;
+        pc::GunSample gun[2]{};
+        std::uint32_t service_digest=0;
+        pc::Service service{};
+        pc::PadSample pad{};
+        pc::Budget gun_budget{},service_budget{},pad_budget{},status_budget{};
+        std::uint64_t status_ms=0;
+    };
+    static CensusState st;
+    if(st.mission!=partner_mission || st.realize_gen!=mission.realize_gen) {
+        st=CensusState{};st.mission=partner_mission;st.realize_gen=mission.realize_gen;
+    }
+    if(!st.announced) {
+        st.announced=true;
+        LogFormat("partner_placed_census=on; mission=%u; realize_gen=%u; read_only=1; writes=0; calls=0\r\n",
+            unsigned(partner_mission),unsigned(mission.realize_gen));
+    }
+    const auto read=[](std::uintptr_t at,void* out,std::size_t size) noexcept {
+        SIZE_T count=0;
+        return at && size && at<=UINTPTR_MAX-size &&
+            ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),out,size,&count) && count==size;
+    };
+    const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+    char line[640]{};
+    // Q1 / Q3: both instances' gun records and plugin latches.
+    pp::State state{};
+    if(mission.realized && pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.arrays_ok && state.count==2 &&
+       state.local==0 && state.ids[0]==0 && state.ids[1]==1) {
+        pc::GunSample cur[2]{};
+        for(std::uint32_t k=0;k<2;++k) {
+            pp::Gun1 gun{};
+            if(!pp::Realized(state,k) || !pp::ReadGun(partner_addresses,state,k,gun) || !gun.fields_ok) continue;
+            pc::GunSample& s=cur[k];
+            s.ok=true;s.prim=gun.prim;s.rec=gun.rec;
+            s.equip=static_cast<std::uint16_t>(gun.fields.equip);s.w27c=gun.fields.flags27c;s.cls=pc::GunClass(s.w27c);
+            s.mode=gun.mode_cur;s.mode2=gun.mode;s.slot=gun.slot;s.hand=gun.hand_slot;s.f3c0=gun.gun3c0;
+            std::uint8_t type=0;
+            if(pp::EquipType(partner_addresses,s.equip,type)) s.type=type;
+            pc::ReadGunExtra(read,s);
+        }
+        const int same_prim=cur[0].ok && cur[1].ok ? (cur[0].prim==cur[1].prim ? 1 : 0) : -1;
+        for(unsigned k=0;k<2;++k) {
+            if(!cur[k].ok) continue;  // unread: the previous sample stays the reference
+            bool keep=true;
+            if(pc::LogGun(st.have_gun[k],st.gun[k],cur[k])) {
+                if(pc::Take(st.gun_budget,now,10,2000)) {
+                    if(pc::FormatGun(line,sizeof(line),k,cur[k],same_prim)) Log(line);
+                } else if(st.gun_budget.capped) {
+                    if(pc::CapReport(st.gun_budget)) LogFormat("partner_placed_census=capped; kind=gun; limit=2000\r\n");
+                } else {
+                    keep=false;  // over this second's budget: retried against the same reference
+                }
+            }
+            if(keep) {st.gun[k]=cur[k];st.have_gun[k]=true;}
+        }
+    }
+    // Q2: the placed-object service's owner table (owner 1 registered?).
+    const pc::Service svc=pc::ReadService(read,base);
+    if(!st.have_service || svc.digest!=st.service_digest) {
+        if(pc::Take(st.service_budget,now,5,600)) {
+            if(pc::FormatService(line,sizeof(line),svc)) Log(line);
+            st.service_digest=svc.digest;st.have_service=true;
+        } else if(st.service_budget.capped) {
+            st.service_digest=svc.digest;st.have_service=true;
+            if(pc::CapReport(st.service_budget)) LogFormat("partner_placed_census=capped; kind=service; limit=600\r\n");
+        }
+    }
+    st.service=svc;
+    // Q5: the stun op-0 pad fields around body 1's job (the hook's sample).
+    pc::PadSample pad{};
+    if(pc::ReadPad(pad)) {
+        bool keep=true;
+        if(pc::LogPad(st.have_pad,st.pad,pad)) {
+            if(pc::Take(st.pad_budget,now,10,1200)) {
+                if(pc::FormatPad(line,sizeof(line),pad)) Log(line);
+            } else if(st.pad_budget.capped) {
+                if(pc::CapReport(st.pad_budget)) LogFormat("partner_placed_census=capped; kind=pad; limit=1200\r\n");
+            } else {
+                keep=false;
+            }
+        }
+        if(keep) {st.pad=pad;st.have_pad=true;}
+    }
+    if((now<st.status_ms || now-st.status_ms>=5000) && pc::Take(st.status_budget,now,1,720)) {
+        st.status_ms=now;
+        LogFormat("partner_placed_census=status; k0_equip=%u; k0_cls=%u; k0_mode=%u; k0_latched=%u; k1_equip=%u; k1_cls=%u; "
+            "k1_mode=%u; k1_latched=%u; service=%s; owners=%u; owner1=%d; live1=%u; pad_windows=%u; pad_differs=%u\r\n",
+            unsigned(st.gun[0].equip),unsigned(st.gun[0].cls),unsigned(st.gun[0].mode),pc::Latched(st.gun[0]) ? 1u : 0u,
+            unsigned(st.gun[1].equip),unsigned(st.gun[1].cls),unsigned(st.gun[1].mode),pc::Latched(st.gun[1]) ? 1u : 0u,
+            st.service.refusal ? st.service.refusal : "ok",st.service.count,st.service.index1,unsigned(st.service.live1),
+            st.pad.windows,pc::PadDiffers(st.pad) ? 1u : 0u);
+    }
+}
+
 // The existing Lua OnUpdate polls in every mission, including title/ACC.
 // This path remains on the natural runtime owner under receipt_lock, independent
 // of the menu. Closing, termination and batch execution stop it before any reads.
@@ -1696,6 +2046,8 @@ void ObserveEquipmentTick() noexcept {
     ObserveEquipmentVtables();
     ObserveStock46Writer();
     ObserveEquipWriter();
+    ObserveNativeSupport();
+    ObservePlacedCensus();
 }
 
 void PublishDebugSnapshot() noexcept {
@@ -1720,6 +2072,9 @@ void PublishDebugSnapshot() noexcept {
     snapshot.world_paired = world_status.paired;
     snapshot.world_link_up = world_status.link_up;
     snapshot.world_effective = world_status.effective;
+    snapshot.world_partner_mission = world_status.remote_mission;
+    snapshot.world_pair_wait = world_status.pair_wait;
+    snapshot.world_remote_level = world_status.remote_level;
     snapshot.realized = mission.realized;
     snapshot.parts_loaded = mission.parts_loaded;
     snapshot.range_hidden = mission.range_hidden;
@@ -2023,6 +2378,23 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             mgscoop::steam_online::StatusLine(status, sizeof(status));
             debug::Result(pending.id, 1, status);
             LogFormat("debug_menu=dispatch; id=%u; text=steam_status; generation=%u; native=1\r\n", pending.id, pending.generation);
+        } else if (pending.id && std::strncmp(pending.text, "input_stall ", 12) == 0) {
+            // Worker-only (docs/anim-round2-throws.md "Stall test step"): this copy
+            // sends no partner input for N ms, so the peer's stall freeze runs on
+            // demand. Only the owned private worker of a background-worker build
+            // (never the friend/Release loader, which has no background worker).
+            const bool worker=mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::Active() &&
+                offline_enabled && lab::SavesRedirected() && partner_on && partner_gate_ok;
+            const char* digits=pending.text+12;
+            std::size_t n=0;unsigned ms=0;
+            while(n<5 && digits[n]>='0' && digits[n]<='9'){ms=ms*10u+static_cast<unsigned>(digits[n]-'0');++n;}
+            const bool parsed=n>=2 && n<=4 && digits[n]==0 && digits[0]!='0';
+            const char* why=!worker ? "owned_worker_required" : !parsed ? "args" : mgscoop::partner_net::StallInput(ms);
+            char line[161]{};
+            if(why) StringCchPrintfA(line,ARRAYSIZE(line),"input_stall=refused;reason=%s",why);
+            else StringCchPrintfA(line,ARRAYSIZE(line),"input_stall=started;ms=%u;gameplay=unverified",ms);
+            debug::Result(pending.id,why?0u:1u,line);
+            LogFormat("debug_menu=input_stall; id=%u; ok=%u; result=%s\r\n",pending.id,why?0u:1u,line);
         } else if (pending.id && std::strncmp(pending.text, "worker_pad ", 11) == 0) {
             // Only the natural owner of a current copied-save private scenario
             // may lease an in-process controller; real desktop input stays blocked.
@@ -3114,6 +3486,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
                 mission_terminating=false;
                 mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; PartnerMissionStart(allocation_mission);
                 if(world_on) mgscoop::world_link::MissionRuntime(allocation_mission);
+                mgscoop::save_handoff::NoteMission(allocation_mission,false);
             }
             else RestoreGameplayRules();
         }
@@ -3134,6 +3507,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             mission_phase=MissionPhase::idle; allocation_thread=0;
             PartnerMissionEnd();
             if(world_on) mgscoop::world_link::LocalMissionEnd();
+            mgscoop::save_handoff::NoteMission(0,true);
         }
     } else return false;
     static constexpr char yes[]="return true",no[]="return false";
@@ -3313,6 +3687,7 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
     case partner::Receipt::cfg: reply = HandlePartnerCfg(); break;
     case partner::Receipt::log: reply = HandlePartnerLog(buffer, size); break;
     case partner::Receipt::stop: reply = HandlePartnerStop(); break;
+    case partner::Receipt::seat: reply = HandlePartnerSeat(buffer, size); break;
     default: break;
     }
     if (reply) replacement = {reply, std::strlen(reply)};
@@ -3330,8 +3705,10 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
 // runs on any thread, CFG start on the runtime thread before termination,
 // TX on the runtime thread (MISSION_END also on the termination thread), RX
 // on the runtime thread, LOG on the runtime or termination thread, WARP (guest
-// spawn sync) on the runtime thread. A refused receipt stays literal (Lua
-// treats it as inactive or not sent).
+// spawn sync) on the runtime thread, NOTE (on-screen world notes) on the
+// runtime or termination thread, SAVE (the save handoff report, join-fix
+// phase 2 P2-2) on the runtime thread only. A refused receipt stays literal
+// (Lua treats it as inactive or not sent).
 bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::size_t size, const char* name, LONG64 count,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace world=mgscoop::world;
@@ -3354,6 +3731,10 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
     } else if(kind==world::Receipt::warp) {
         // Lua owner thread only; every other gate is in the handler.
         if(OnRuntimeThread()) reply=GuestWarpReceipt(buffer,size);  // ParseWarp checks the prefix itself
+    } else if(kind==world::Receipt::note) {
+        if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleNote(buffer,size);
+    } else if(kind==world::Receipt::save) {
+        if(OnRuntimeThread()) reply=mgscoop::save_handoff::HandleLua(buffer,size);
     }
     if(reply) replacement={reply,std::strlen(reply)};
     world_quiet=kind!=world::Receipt::cfg;
@@ -3551,6 +3932,88 @@ bool SelectRidePoseReceipt(const char* buffer,std::size_t size,mgscoop::script_b
         return finish("return {ready=false,reason='read'}");
     replacement={reply,std::strlen(reply)};
     return true;
+}
+// RIDE_TILT (WS3 A1, docs/vehicle-ws3.md; partner_ride_tilt, default on in lab and play):
+//   return 'MGS_COOP_RIDE_TILT_V1' -- read <id>             -> return <a44_mrad>,<a48_mrad> | return nil
+//   return 'MGS_COOP_RIDE_TILT_V1' -- write <id> <a44> <a48> -> return true | return false
+// read: the driver's own vehicle record angles (its veh=), only while the
+// peer's ride addendum advertises RIDE_TILT. write: this copy's record +0x44 /
+// +0x48 just before Lua's SetPosition, after partner_vehicle::TiltRefusal on
+// two equal reads (identity body == record, realized, not the viewer's own
+// vehicle, |angle| < pi/2) and the contract blocks re-verified.
+struct RideTiltLog { unsigned reads, writes, refusals; const char* last; std::uint32_t mission; } ride_tilt_log{};
+void RideTiltRefused(const char* verb, unsigned id, const char* why) noexcept {
+    ++ride_tilt_log.refusals;
+    if (ride_tilt_log.last == why) return;
+    ride_tilt_log.last = why;
+    LogFormat("partner_ride_tilt=refused; verb=%s; id=%u; reason=%s; n=%u\r\n", verb, id, why, ride_tilt_log.refusals);
+}
+bool SelectRideTiltReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace v = mgscoop::partner_vehicle;
+    constexpr char prefix[] = "return 'MGS_COOP_RIDE_TILT_V1' -- ";
+    if (!buffer || size <= sizeof(prefix) - 1 || size > 96 || std::memcmp(buffer, prefix, sizeof(prefix) - 1) != 0) return false;
+    world_quiet = true;
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    const char* cursor = buffer + sizeof(prefix) - 1;
+    const char* end = buffer + size;
+    bool write = false;
+    if (end - cursor > 5 && std::memcmp(cursor, "read ", 5) == 0) cursor += 5;
+    else if (end - cursor > 6 && std::memcmp(cursor, "write ", 6) == 0) { cursor += 6; write = true; }
+    else return finish("return nil");
+    std::int32_t values[3]{};
+    const unsigned count = write ? 3u : 1u;
+    for (unsigned i = 0; i < count; ++i) {
+        const auto parsed = std::from_chars(cursor, end, values[i]);
+        if (parsed.ec != std::errc() || parsed.ptr == cursor) return finish(write ? "return false" : "return nil");
+        cursor = parsed.ptr;
+        if (i + 1 < count) { if (cursor == end || *cursor != ' ') return finish(write ? "return false" : "return nil"); ++cursor; }
+    }
+    if (cursor != end || values[0] < 0 || values[0] > 65534) return finish(write ? "return false" : "return nil");
+    const auto id = static_cast<std::uint16_t>(values[0]);
+    if (ride_tilt_log.mission != partner_mission) ride_tilt_log = RideTiltLog{0, 0, 0, nullptr, partner_mission};
+    const auto& config = mgscoop::GetLabConfig();
+    // Play admits it too (the key resolves on in both; only the viewer's own copy is written).
+    const bool enabled = config.partner_ride_tilt && partner_gate_ok && game_base;
+    const bool runtime = OnRuntimeThread() && !mission_terminating;
+    const bool peer = pd::RideTiltPeer(partner_driver, PartnerLinkSession(nullptr), mgscoop::partner_net::NowMs());
+    const std::uint16_t local = pd::LocalVehicle(partner_driver);
+    static char reply[64]{};
+    if (!write) {
+        v::Read r{};
+        if (enabled && runtime && peer && id == local) v::ReadLive(game_base, id, r);
+        v::TiltReadIn in{};
+        in.enabled = enabled; in.runtime = runtime; in.peer = peer; in.id = id; in.local = local; in.read = &r;
+        std::int32_t a = 0, b = 0;
+        if (const char* why = v::TiltReadRefusal(in, a, b)) {
+            if (enabled) RideTiltRefused("read", id, why);
+            // The key is fixed for the process: Lua stops asking after an 'off'.
+            return finish(config.partner_ride_tilt ? "return nil" : "return nil,'off'");
+        }
+        if (++ride_tilt_log.reads <= 4 || ride_tilt_log.reads % 600 == 0)
+            LogFormat("partner_ride_tilt=read; id=%u; a44_mrad=%d; a48_mrad=%d; n=%u\r\n", unsigned(id), a, b, ride_tilt_log.reads);
+        if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply), "return %d,%d", a, b))) return finish("return nil");
+        return finish(reply);
+    }
+    const bool pins = enabled && !v::VerifyImage(game_base, game_span);
+    v::Read first{}, second{};
+    if (enabled && runtime && pins && peer && id != local) {
+        v::ReadLive(game_base, id, first);
+        v::ReadLive(game_base, id, second);
+    }
+    v::TiltIn in{};
+    in.enabled = enabled; in.pins = pins; in.runtime = runtime; in.peer = peer; in.id = id; in.local = local;
+    in.a44_mrad = values[1]; in.a48_mrad = values[2]; in.first = &first; in.second = &second;
+    const char* why = v::TiltRefusal(in);
+    if (!why) why = v::WriteTilt(first, values[1], values[2]);
+    if (why) {
+        if (enabled) RideTiltRefused("write", id, why);
+        return finish("return false");
+    }
+    ride_tilt_log.last = nullptr;
+    if (++ride_tilt_log.writes <= 8 || ride_tilt_log.writes % 600 == 0)
+        LogFormat("partner_ride_tilt=write; id=%u; a44_mrad=%d; a48_mrad=%d; before=%d,%d; n=%u\r\n", unsigned(id), values[1], values[2],
+                  v::Mrad(first.unit.a44), v::Mrad(first.unit.a48), ride_tilt_log.writes);
+    return finish("return true");
 }
 bool SelectBuddyCapacityReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
@@ -4162,6 +4625,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(SelectVehicleNamesReceipt(buffer,size,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
+    if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;
@@ -4819,6 +5283,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     }
                     if (labc.net) {
                         ConfigureWorld(labc, directory);
+                        ConfigureSaveHandoff(labc, directory);
                         mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
                                                          labc.net_latency_ms, labc.net_loss_permille, Log};
                         net.link_v2 = labc.net_link == mgscoop::NetLink::v2;
@@ -4866,7 +5331,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 // configures the overlay layer before the overlay installs (nametag=ready|refused).
                 mgscoop::nametag_game::Install({base, span, Log, partner_on && partner_gate_ok, labc.role != mgscoop::LabRole::guest, &labc,
                     &mgscoop::GetCoopConfig(), SteamLocalPersonaName});
-                mgscoop::teammate_targeting::Install(game_base,game_span,Log);
+                mgscoop::teammate_targeting::Install(game_base,game_span,Log,mgscoop::worker_scenario::Compiled());
             }
             if (mgscoop::character::ReceiptsActive(host_create_enabled, client_enabled, offline_enabled)) {
                 // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.

@@ -37,10 +37,18 @@ local function fixture(options)
             c.stock, c.stockSub = a.stock, a.stockSub
         end
     end, GetAmmoStockBySlot = function(slot, sub)
+        if slot == 11 then
+            check(sub >= 0 and sub <= 7 and sub % 1 == 0, 'support stock uses retail support enum and sub-index')
+            if c.supportStockError == sub then error('stock unreadable') end
+            return c.supportCounts[sub], 0
+        end
         check((slot == 5 or slot == 7 or slot == 9) and sub == 0, 'native slot enum, not vars slot index')
         return c.stock, c.stockSub
     end}
-    env.PlayerSlotType = {PRIMARY_1 = 5, PRIMARY_2 = 7, SECONDARY = 9}
+    env.PlayerSlotType = {PRIMARY_1 = 5, PRIMARY_2 = 7, SECONDARY = 9, SUPPORT = 11, ITEM = 12, HAND = 14}
+    env.Player.SetCurrentSlot = function(a) record('slot', a); if c.slotRefuse then return false end; env.vars.currentInventorySlot = a.slotType end
+    env.vars.supportWeapons = {[0] = 354, [1] = 391, [2] = 0}
+    c.supportCounts = {[0] = 12, [1] = 6, [2] = 0, [3] = -1, [4] = "invalid", [5] = 65535, [6] = 1.5}
     env.DemoDaemon = {IsDemoPlaying = function() return c.demo or false end}
     env.TppMission = {CheckMissionState = function() return not c.loading end, IsMissionStart = function() return not c.ended end}
     env.Tpp = {IsHelicopter = function(v) return c.heli or false end}
@@ -203,6 +211,31 @@ for _, pair in ipairs({{'hip', 301}, {'back', 8}, {'secondary', 101}}) do
     check(c.calls[#c.calls][2].equipId == pair[2] and c.calls[#c.calls][2].number == 2, 'pickup resolves actual ' .. pair[1] .. ' slot')
 end
 check(c:send('weapon secondary EQP_WP_10004')[3] == 'weapon_not_resident', 'new nonresident weapon cannot bypass loading')
+-- Anim round 1 (fire census stimulus): the support ids (read-only) and the retail slot selection.
+local supportCalls = #c.calls
+check(c:send('support')[3] == 'support;ids=354,391,0,na,na,na,na,na;counts=12,6,0,na,na,65535,na,na;active=1' and #c.calls == supportCalls, 'local support ids and counts read-only')
+check(c.env.vars.supportWeapons[0] == 354 and c.supportCounts[0] == 12 and c.supportCounts[1] == 6, 'support query preserves loadout and stock')
+c.supportStockError = 1
+check(c:send('support')[3]:find(';counts=12,na,0,na,na,65535,na,na;', 1, true), 'one unreadable support stock does not hide other entries')
+c.supportStockError = nil
+local supportGetter = c.env.Player.GetAmmoStockBySlot
+c.env.Player.GetAmmoStockBySlot = nil
+check(c:send('support')[3]:find(';counts=na,na,na,na,na,na,na,na;', 1, true), 'missing stock getter reports unknown counts without mutation')
+c.env.Player.GetAmmoStockBySlot = supportGetter
+local supportEnum = c.env.PlayerSlotType.SUPPORT
+c.env.PlayerSlotType.SUPPORT = nil
+check(c:send('support')[3]:find(';counts=na,na,na,na,na,na,na,na;', 1, true), 'missing support enum never guesses a slot')
+c.env.PlayerSlotType.SUPPORT = supportEnum
+check(#c.calls == supportCalls, 'support stock error paths are read-only')
+check(c:send('slot support 1')[3] == 'submitted_slot;slot=support;native=11;sub=1;active=11', 'slot selection submits the retail API')
+local sl = c.calls[#c.calls]
+check(sl[1] == 'slot' and sl[2].slotType == 11 and sl[2].subIndex == 1, 'SetCurrentSlot schema: slotType by name, subIndex')
+check(c:send('slot hand 0')[2] == 1 and c.calls[#c.calls][2].slotType == 14, 'hand slot by name')
+check(c:send('slot support 8')[3] == 'slot_args' and c:send('slot grenade 0')[3] == 'slot_args', 'slot refusals')
+c.slotRefuse = true
+check(c:send('slot back 0')[3] == 'slot_refused', 'a refused selection is reported')
+c.slotRefuse = nil
+check(c:send('slot hip 0')[2] == 1, 'back to the hip slot')
 check(c:send('time 86399')[2] == 1 and c.env.vars.clock == 86399, 'clock boundary')
 check(c:send('weather rainy')[2] == 1 and c:count('weather') == 1, 'weather submits exact API')
 check(c:send('weather auto')[2] == 1 and c:count('weather_auto') == 1, 'weather cancel')
@@ -215,8 +248,34 @@ check(c.life[7] == 255, 'unknown soldier not mutated')
 c.deferDead = true
 check(c:send('clear_enemies 50')[3]:find('submitted=1;dead_readback=0', 1, true), 'dead nearest skipped and submitted batch does not fake readback')
 check(c:send('partner stage=3 apply=xform look=net dm=map')[3] == 'partner_applied' and c:count('partner') == 1, 'partner action dispatched only after owner guard')
+c.env.e.MgsCoopWorld = {level = 3, active = true, paired = false}
+check(c:send('partner stage=3')[3] == 'partner_applied;partner=not_paired', 'world sync on but unpaired: applied, partner not paired')
+c.env.e.MgsCoopWorld = {level = 3, active = true, paired = true}
+check(c:send('partner stage=3')[3] == 'partner_applied', 'paired world: plain applied')
+for _, w in ipairs({{level = 0}, {level = 3, active = false, paired = false}}) do
+    c.env.e.MgsCoopWorld = w
+    check(c:send('partner stage=3')[3] == 'partner_applied', 'world sync off or inactive: plain applied')
+end
+c.env.e.MgsCoopWorld = {level = 3, active = true, paired = false}
 c.partnerRefuse = true
 check(c:send('partner stage=3')[3] == 'partner_refused', 'native partner refusal explicit')
+c.env.e.MgsCoopWorld = nil
+-- Round-1 actions (docs/anim-round1-actions.md): the DM overlay debug commands dispatch native partner one-shots.
+local ov = fixture()
+check(ov:send('overlay_state stateEludeIdle 1 2500')[3] == 'overlay_queued;state=stateEludeIdle' and ov:count('partner') == 1 and
+    ov.calls[#ov.calls][2] == 'overlay=stateEludeIdle oloop=1 oms=2500', 'overlay_state dispatches overlay/oloop/oms')
+check(ov:send('overlay_state stateDead loop 0')[3] == 'overlay_queued;state=stateDead' and ov.calls[#ov.calls][2] == 'overlay=stateDead oloop=0',
+    'overlay_state loop keyword')
+check(ov:send('overlay_state stateCBoxIdle')[3] == 'overlay_queued;state=stateCBoxIdle' and ov.calls[#ov.calls][2] == 'overlay=stateCBoxIdle',
+    'overlay_state with the name only')
+check(ov:send('overlay_stop')[3] == 'overlay_stop_queued' and ov.calls[#ov.calls][2] == 'overlay=stop', 'overlay_stop')
+local overlayCalls = ov:count('partner')
+for _, bad in ipairs({'overlay_state', 'overlay_state bad-name', 'overlay_state stateDead 2', 'overlay_state stateDead 1 99',
+    'overlay_state stateDead 1 60001', 'overlay_state stateDead 1 500 7', 'overlay_stop now'}) do
+    check(ov:send(bad)[2] == 0 and ov:count('partner') == overlayCalls, 'overlay args refused locally: ' .. bad)
+end
+ov.partnerRefuse = true
+check(ov:send('overlay_state stateDead')[3] == 'overlay_refused', 'overlay native refusal explicit')
 local controls = fixture()
 local function partnerPreset(text)
     local n = controls:count('partner')
@@ -608,8 +667,14 @@ check(math.abs(w.pos[1] - 18) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and ma
 f = fixture(); check(f:send('goto_partner', {pp = {1e9, 0, 0, 40}})[3] == 'partner_pose_bounds', 'partner pose bounds')
 f = fixture(); f.env.vars.clock = 86000
 check(f:send('time_add 1000')[3] == 'time_readback;sync=none' and f.env.vars.clock == 600, 'time_add wraps')
-f.env.e.MgsCoopWorld = {paired = true, eff = 3}
+f.env.e.MgsCoopWorld = {paired = true, eff = 3, env = {clockOn = function() return true end}}
 check(f:send('time 43200')[3] == 'time_readback;sync=world', 'clock sync tag at world level 3')
+f.env.e.MgsCoopWorld = {paired = true, eff = 3, env = {clockOn = function() return false end}}
+check(f:send('time 43200')[3] == 'time_readback;sync=none', 'paired without a synced clock (helicopter) reads back sync=none')
+f.env.e.MgsCoopWorld = {paired = false, eff = 3, env = {clockOn = function() return true end}}
+check(f:send('time 43200')[3] == 'time_readback;sync=none', 'unpaired reads back sync=none')
+f.env.e.MgsCoopWorld = {paired = true, eff = 3}
+check(f:send('time 43200')[3] == 'time_readback;sync=none', 'no env clock state reads back sync=none')
 check(fixture({host = false}):send('time_add 60')[3] == 'host_only', 'guest time_add refused')
 -- spawn_enemy here / closest / route
 local function guardsFixture(options)
@@ -858,5 +923,13 @@ v.mounted = 'vehicle'
 check(v:send('vehicle_seats')[3] == 'vehicle_seats_routed', 'exact vehicle reader permits mounted posture')
 check(v:send('vehicle_seats arbitrary')[3] == 'on_foot', 'mounted vehicle read exception requires exact command')
 check(v:send('horse_spawn')[3] == 'on_foot', 'mounted read exception never permits summon')
+-- The seated rider levers (docs/anim-round1-seat.md) also run while the viewer drives.
+v.D.vehicle = {handles = {vehicle_seats = true, vehicle_names = true, seat_dm = true}, run = function(a) return true, a[1] .. '_routed' end}
+check(v:send('vehicle_names')[3] == 'vehicle_names_routed', 'vehicle names readable while mounted')
+check(v:send('seat_dm stop')[3] == 'seat_dm_routed', 'seat_dm stop while mounted')
+check(v:send('seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000')[3] == 'seat_dm_routed', 'seat_dm while mounted')
+check(v:send('vehicle_names extra')[3] == 'on_foot', 'vehicle names exception requires the exact command')
+check(v:send('seat_dm a b c d')[3] == 'on_foot', 'seat_dm exception is bounded to its arguments')
+check(v:send('seat_dm')[3] == 'on_foot', 'seat_dm without arguments is not admitted while mounted')
 
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')
