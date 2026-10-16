@@ -576,6 +576,10 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.gun_prim = set.native_active && set.ngun ? m.gun1_prim : 0;
     a.gun_rec = set.native_active && set.ngun ? m.gun1_rec : 0;
     a.native_support = set.native_active && set.ngun && set.nsupport;
+    // C(b): the viewer's own gun record (read-only attribution of its own throws).
+    const bool viewer_gun = a.native_support && m.gun0_ok && m.gun0.prim && m.gun0.rec;
+    a.viewer_gun_prim = viewer_gun ? m.gun0.prim : 0;
+    a.viewer_gun_rec = viewer_gun ? m.gun0.rec : 0;
     // The weapon gate (F4/W5): FIRE and RELOAD stripped while the remote's gun
     // is not body 1's or body 1 is mid-switch, FIRE alone for an unqualified type.
     a.strip = set.native_active ? m.weapon_strip : 0u;
@@ -2374,11 +2378,16 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     // The observer callback revalidates the armed guard, thrown entry filter,
     // non-local equipment row/handle and the mission stock latch. Never reuse
     // the previous support verdict across an unread gun tick.
-    const bool support_ready = set.ngun && set.nsupport && ready && m.remote_v5 && m.remote_slot==3 &&
+    // A live v5 slot 3, or the stall hold of the same support equip (critic #4).
+    const bool support_slot = (m.remote_v5 && m.remote_slot==3) ||
+        (m.support_stall && m.remote_gun_equip==static_cast<std::int32_t>(m.support_equip));
+    const bool support_ready = set.ngun && set.nsupport && ready && support_slot &&
         m.remote_equip_type==12 && m.remote_gun_equip>0 && m.remote_gun_equip<0x800 &&
         gun_ok && gun.fields_ok && gun.fields.equip==static_cast<std::uint32_t>(m.remote_gun_equip) && !m.body_switching &&
         h.support_ready && h.support_ready(h.context,st,static_cast<std::uint16_t>(m.remote_gun_equip));
     set.support_live=support_ready;
+    m.support_equip = support_ready ? static_cast<std::uint16_t>(m.remote_gun_equip) : static_cast<std::uint16_t>(0);
+    if (!support_ready) m.support_stall = false;
     if (support_ready) {
         m.unsupported=partner_slots::Unsupported::no;
         m.weapon_gate=partner_slots::Gate::support;
@@ -3651,6 +3660,22 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     m.remote_reload_seq = m.remote_v5 ? latest.packet.reload_seq : static_cast<std::uint8_t>(0);
     m.remote_switch_seq = m.remote_v5 ? latest.packet.switch_seq : static_cast<std::uint8_t>(0);
     m.remote_slot = m.remote_v5 && latest.packet.inv_slot <= pin::kInvSlotMax ? latest.packet.inv_slot : pin::kInvSlotUnknown;
+    // Native support through an input stall (critic #4): the support gate holds
+    // while the stale v5 frame is inside the stall hold with the same slot-3
+    // equip (TickWeapons rechecks everything else; the hook freezes the level).
+    {
+        partner_support_policy::StallHoldIn sh{};
+        sh.stall_hold = set.native_active && set.nsupport && set.nstall == PartnerNativeStall::hold;
+        sh.stale_ms = set.stale_ms;
+        sh.stall_ms = set.stall_ms;
+        sh.age_ms = latest_ok ? latest.age_ms : 0xFFFFFFFFu;
+        sh.v5_valid = latest_ok && latest.packet.version >= 5 && (latest.packet.gun_flags & pin::GunFlag::Valid) != 0;
+        sh.slot = latest_ok ? latest.packet.inv_slot : static_cast<std::uint8_t>(0xFF);
+        sh.equip = latest_ok && (latest.packet.xflags & pin::XFlag::Equip) ? latest.packet.gun_equip : static_cast<std::uint16_t>(0);
+        sh.was_support = m.weapon_gate == partner_slots::Gate::support;
+        sh.support_equip = m.support_equip;
+        m.support_stall = partner_support_policy::StallHold(sh);
+    }
     // Anim round 1: the remote's v4 magazine of the newest live sample (the auto-fire stop).
     m.remote_mag_ok = latest_ok && latest.age_ms <= set.stale_ms && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Mag);
     m.remote_mag = m.remote_mag_ok ? latest.packet.mag : static_cast<std::uint16_t>(0);
@@ -4480,8 +4505,13 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.noverlay = lab.partner_native_overlay;
     d.settings.act_log = lab.partner_act_log;
     d.settings.stance_fast = lab.partner_native_stance_fast;
-    // Play never calls SetCurrentSlot itself (docs/native-puppet.md "Release gating"): the
-    // setting the telemetry reports is the one that runs (BuildArm downgrades it again).
+    // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
+    // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).
+    // The one exception (WS2: the user asked for throws in play): the guarded slot-3
+    // type-12 support follower (partner_support_equip::Follow, native SetCurrentSlot
+    // 0x11AFA80) runs in play as in the lab, for any nslot except off, only under the
+    // stock guard, the thrown owner filter, the full-body pins and its lease checks, and
+    // only while link v2 is connected.
     if (d.settings.play_mode && d.settings.nslot == PartnerNativeSlot::call) d.settings.nslot = PartnerNativeSlot::write;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);

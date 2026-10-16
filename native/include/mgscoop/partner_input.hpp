@@ -323,6 +323,11 @@ struct Injection {
     std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
     bool slot_valid;
     std::uint8_t inv_slot;
+    // Native support (partner_support_policy StepFrame, critic #4): this frame
+    // is a stall freeze of the last admitted support frame (its HOLD|FIRE
+    // level, no edges); a consumer admits it with freshness waived only, every
+    // other support gate rechecked. Copied by LevelOnly/Strip, cleared by Neutral.
+    bool support_frozen;
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released
@@ -359,6 +364,15 @@ Injection Neutral(const Injection& frame) noexcept;
 // The injection without `bits` anywhere (held, the three words, the edges,
 // long12, tap12 and the synthesized taps): the weapon gate's FIRE | RELOAD.
 Injection Strip(const Injection& injection, std::uint32_t bits) noexcept;
+// Native support stall freeze (critic #4): `bits` held exactly at `level`
+// (within the mask) with no edge of them anywhere (the three words by their
+// setting, the edges, tap12 and the synthesized taps; long12 is a level and a
+// stale frame carries none).
+Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept;
+// Native support FIRE buffer (C(c)): `held` added to the level, `press` and
+// `release` added as edges, each word by its setting (net words unchanged).
+Injection AddEdges(const Injection& injection, std::uint32_t held, std::uint32_t press, std::uint32_t release,
+                   const Config& config) noexcept;
 // age_ms > kFrameMaxAgeMs: Neutral; frame_id != last_used: the full frame
 // (last_used = frame_id); otherwise LevelOnly. `view` (optional) tells which.
 Injection ForConsumer(const Injection& frame, std::uint32_t frame_id, std::uint32_t& last_used, std::uint64_t age_ms,
@@ -538,6 +552,12 @@ struct Arm {
     std::uint64_t aim_act_until_ms;
     float reload_rate_k;
     bool native_support; // key selected; every consumer rechecks the fresh slot/equip and safety owners
+    // Native support C(b) (not compared by SameArm): instance 0's gun prim and
+    // record from the driver tick's ReadGun(k=0). The hook re-validates the
+    // prim (vtable, prim+0x58 == record, not body 1's) before it reads the
+    // viewer's gun mode, read-only, to attribute a slot-3 stock change between
+    // two body-1 jobs to the viewer's own throw (0 = none).
+    std::uintptr_t viewer_gun_prim, viewer_gun_rec;
 };
 
 // Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.

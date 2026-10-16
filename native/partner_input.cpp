@@ -438,6 +438,31 @@ Injection Strip(const Injection& injection, std::uint32_t bits) noexcept {
     return j;
 }
 
+Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept {
+    Injection j = injection;
+    const std::uint32_t keep = level & bits & config.mask;
+    j.held = (j.held & ~bits) | keep;
+    for (unsigned i = 0; i < 3; ++i) j.w[i] = (j.w[i] & ~bits) | (config.words[i] == Word::held ? keep : 0u);
+    j.edge_press &= ~bits;
+    j.edge_release &= ~bits;
+    j.tap12 &= ~bits;
+    j.synth &= ~bits;
+    return j;
+}
+
+Injection AddEdges(const Injection& injection, std::uint32_t held, std::uint32_t press, std::uint32_t release,
+                   const Config& config) noexcept {
+    Injection j = injection;
+    held &= config.mask;
+    press &= config.mask;
+    release &= config.mask & ~held & ~j.held;
+    j.held |= held;
+    j.edge_press |= press;
+    j.edge_release |= release;
+    for (unsigned i = 0; i < 3; ++i) j.w[i] |= WordValue(config.words[i], press, release, held, 0u) & config.mask;
+    return j;
+}
+
 Injection ForConsumer(const Injection& frame, std::uint32_t frame_id, std::uint32_t& last_used, std::uint64_t age_ms,
                       const Config& config, ConsumerView* view) noexcept {
     if (age_ms > kFrameMaxAgeMs) {

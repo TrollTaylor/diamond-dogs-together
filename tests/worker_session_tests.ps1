@@ -461,6 +461,49 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         try { & $validator } catch { $failure=$_.Exception.Message }
         Assert-True (!$failure) ('scenario steps valid: '+$file.Name+' '+$failure)
     }
+    # WS2 (native throws in two-PC play, Stage A): the play rehearsal validates in PLAY mode (no lab-only step such
+    # as worldtrigger), names no labsetting (a scenario labsetting line overrides -LabSetting, and the Stage B
+    # re-run is the same file without the command-line key), throws three times, then runs the viewer's own throw
+    # during a partner episode LAST (critic #5). Its checkpoint save + reload half is the lab companion.
+    & {
+        $Mode='play'
+        $playPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-support-play.txt'
+        Assert-True (Test-Path -LiteralPath $playPath -PathType Leaf) 'shipped WS2 scenario partner-support-play.txt'
+        $playLines=[IO.File]::ReadAllLines($playPath)
+        $steps=@($playLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-support-play steps valid in play mode '+$failure)
+        Assert-True (@($playLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'partner-support-play names no labsetting line'
+        Assert-True (@($steps|Where-Object{$_ -cmatch '(^|\s)worldtrigger(\s|$)'}).Count -eq 0) 'partner-support-play has no lab-only world trigger'
+        $playText=[IO.File]::ReadAllText($playPath)
+        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off',
+            '-WanSim bad','-WanSim awful','partner_support=mode; mode=play; reason=ok','reason=throw_release','reason=viewer_own','stall_freeze',
+            'NO partner_support=stock_gap','stock_leak_mission_latched','fire_reload_off','writer_uncertain_mission_latched','hard_leaves 0',
+            'rehearsal=1','partner-support-checkpoint.txt')){
+            Assert-True ($playText.Contains($needle)) ('partner-support-play covers: '+$needle)
+        }
+        $hostThrows=@(for($i=0;$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'host hold rmb+lmb 150 nowait'){$i}})
+        $ownThrow=@(for($i=0;$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'guest hold rmb+lmb 150 nowait'){$i}})
+        Assert-True ($hostThrows.Count -eq 4 -and $ownThrow.Count -eq 1) 'partner-support-play: three partner throws, the viewer-own overlap and one throw after it'
+        Assert-True ($ownThrow[0] -gt $hostThrows[2] -and $ownThrow[0] -lt $hostThrows[3]) 'partner-support-play runs the viewer-own throw after the three throws'
+        $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
+        Assert-True ($guestCounts.Count -ge 4) 'partner-support-play requires the guest seed counts before and after the throws'
+        Assert-True ($steps[-1] -cmatch '^guest require support;.*counts=11,16383,12,8,12,12,8,8;') 'partner-support-play ends on the guest spending exactly its own grenade'
+        $cpPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-support-checkpoint.txt'
+        $cpText=[IO.File]::ReadAllText($cpPath)
+        foreach($needle in @('host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death',
+            'host worldtrigger world_probe=host_continue','-PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab')){
+            Assert-True ($cpText.Contains($needle)) ('partner-support-checkpoint covers: '+$needle)
+        }
+        Assert-True (!$cpText.Contains('-Mode play')) 'partner-support-checkpoint runs in lab mode (world triggers are lab-only)'
+        $cpSteps=@([IO.File]::ReadAllLines($cpPath)|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
+        $continueAt=[array]::IndexOf($cpSteps,'host worldtrigger world_probe=host_continue')
+        Assert-True ($continueAt -gt 0 -and @($cpSteps[$continueAt..($cpSteps.Count-1)]|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'}).Count -ge 1) 'partner-support-checkpoint re-reads the guest counts after the reload'
+        $steps=@($cpSteps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'});$failed=$false
+        try { & $validator } catch { $failed=$true }
+        Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
+    }
     foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120',
         'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',
         'host worldtrigger world=0','guest worldtrigger world=0')){

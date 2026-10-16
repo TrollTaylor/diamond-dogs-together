@@ -41,6 +41,159 @@ constexpr bool CheckStock(StockLatch& s,bool before_ok,bool after_ok,std::uint32
  return changed;
 }
 
+// --- WS2 Stage A: play admission (docs/anim-round2-throws.md "Throws in play").
+// The one-PC lab always; two-PC play only while link v2 is connected; any other
+// mode never. The observer's SupportModeReason feeds both of its gates.
+constexpr const char* ModeRefusal(bool lab,bool play,bool link_connected) noexcept {
+ return lab ? nullptr : play ? (link_connected ? nullptr : "link_not_connected") : "mode";
+}
+
+// --- WS2 C(b): the viewer's own slot-3 items during a partner episode.
+// The episode baseline (the eight slot-3 stock words vars+0x620..0x62F) spans
+// viewer frames. Between two bracketed body-1 jobs only the viewer (instance 0)
+// and the world run, so a change there is the viewer's own unless a body-1 job
+// ran outside the bracket. The baseline is rebased by exactly that delta only
+// when every body-1 job of the gap was bracketed, no word moved to or from
+// 0xFFFF (the guard's never-runs-out count), and the change is either a pickup
+// (increases only, each at most kPickupMax) or the viewer's own throw or
+// placement (exactly one word down by exactly 1, nothing else, with instance
+// 0's gun mode in the slot-3 family 28..47 at the gap's start or end).
+// Anything else stays a deferred-leak candidate and the episode compare
+// latches as before; the per-job compares are untouched, so a body-1 leak
+// inside its own job always latches.
+inline constexpr std::uint16_t kPickupMax=64;
+inline constexpr std::uint16_t kStockSentinel=0xFFFF;
+// The viewer's throw family 28..42 plus placement 43..47 (C4/mines are slot 3 too).
+constexpr bool ViewerSupportMode(std::uint8_t mode) noexcept { return mode>=28 && mode<=47; }
+enum class Gap : std::uint8_t { none, unread, viewer_throw, viewer_pickup, foreign };
+constexpr const char* GapName(Gap g) noexcept {
+ return g==Gap::none ? "none" : g==Gap::unread ? "unread" : g==Gap::viewer_throw ? "throw" : g==Gap::viewer_pickup ? "pickup" : "foreign";
+}
+constexpr bool GapRebases(Gap g) noexcept { return g==Gap::viewer_throw || g==Gap::viewer_pickup; }
+struct GapIn {
+ bool prev_ok=false,now_ok=false;      // the previous bracket's after-words, this bracket's before-words
+ std::uint16_t prev[8]{},now[8]{};
+ std::uint8_t viewer_prev=0xFF,viewer_now=0xFF;  // instance 0's gun mode at both ends (0xFF unread)
+ std::uint32_t other_jobs=0;           // body-1 jobs that ran in the gap outside a bracket
+};
+struct GapOut { Gap kind=Gap::none; std::uint8_t word=0xFF; std::uint16_t before=0,after=0; std::uint8_t changed=0; };
+constexpr GapOut ClassifyGap(const GapIn& g) noexcept {
+ GapOut o{};
+ if(!g.prev_ok || !g.now_ok){o.kind=Gap::unread;return o;}
+ unsigned down=0,up=0;bool sentinel=false,big=false,by_one=true;
+ for(unsigned k=0;k<8;++k){
+  const std::uint16_t a=g.prev[k],b=g.now[k];
+  if(a==b)continue;
+  if(!o.changed){o.word=static_cast<std::uint8_t>(k);o.before=a;o.after=b;}
+  ++o.changed;
+  if(a==kStockSentinel || b==kStockSentinel)sentinel=true;
+  if(b>a){++up;if(b-a>kPickupMax)big=true;}
+  else{++down;if(a-b!=1)by_one=false;}
+ }
+ if(!o.changed){o.kind=Gap::none;return o;}
+ if(g.other_jobs || sentinel){o.kind=Gap::foreign;return o;}
+ if(!down){o.kind=big ? Gap::foreign : Gap::viewer_pickup;return o;}
+ const bool viewer=ViewerSupportMode(g.viewer_prev) || ViewerSupportMode(g.viewer_now);
+ o.kind=down==1 && !up && by_one && viewer ? Gap::viewer_throw : Gap::foreign;
+ return o;
+}
+// The episode baseline moved by the gap's delta (u16 wrap, word by word).
+constexpr void Rebase(std::uint16_t (&episode)[8],const std::uint16_t (&prev)[8],const std::uint16_t (&now)[8]) noexcept {
+ for(unsigned k=0;k<8;++k)episode[k]=static_cast<std::uint16_t>(episode[k]+static_cast<std::uint16_t>(now[k]-prev[k]));
+}
+// The slot-3 digest (FNV-1a over the eight words, low byte first; 0 means unread).
+constexpr std::uint32_t SlotDigest(const std::uint16_t (&words)[8]) noexcept {
+ std::uint32_t h=2166136261u;
+ for(const auto w:words){h=(h^(w&0xFFu))*16777619u;h=(h^(static_cast<unsigned>(w)>>8))*16777619u;}
+ return h ? h : 1u;
+}
+
+// --- WS2 stall freeze (critic #4) and the FIRE-edge buffer (C(c)), per frame.
+// A stale frame used to fail Admit and get HOLD|FIRE|RELOAD stripped: body 1
+// released early, and when FIRE came back still held it threw again (the guard
+// never runs it out). Inside the stall window (Compose carries a stale sample's
+// slot/equip only there) of the same slot-3 equip as the last admitted frame,
+// with every other gate passing, the frame instead holds that frame's HOLD|FIRE
+// level with no edge of them. Beyond the window the old strip applies.
+// A FIRE press while support only waits on body 1's equip (select-then-throw)
+// is kept for kFireBufferMs and delivered on the first admitted frame of the
+// same equip (a tap gets its release edge on the next frame).
+inline constexpr std::uint32_t kPadHold=0x08u,kPadFire=0x10u,kLevelBits=kPadHold|kPadFire;
+inline constexpr std::uint64_t kFireBufferMs=300;
+constexpr GateIn Fresh(GateIn x) noexcept {x.live=true;x.stale=false;return x;}
+// Every gate passes on a fresh frame except body 1's equip (Ready / record);
+// a decoded type other than 12 (a placed item, an arm) is never waited for.
+constexpr bool WaitingOnEquip(const GateIn& x) noexcept {
+ return x.live && !x.stale && x.gun_valid && !x.p218_window && x.enabled && !x.latched && x.guard_installed && x.guard_armed &&
+  x.filter_live && x.filter_armed && x.slot_valid && x.slot==3 && x.equip_valid && x.equip>0 && x.equip<0x800 &&
+  (x.type==0 || x.type==12) && !(x.body_ready && x.record_ready && x.type==12);
+}
+struct FrameTrack {
+ bool have=false;std::uint16_t equip=0;std::uint32_t level=0;           // the last admitted support frame
+ bool fire=false;std::uint64_t fire_ms=0;std::uint16_t fire_equip=0;     // a buffered FIRE press
+ bool release=false;                                                     // a delivered tap's release is due
+};
+enum class Frame : std::uint8_t { none, admitted, frozen, refused };
+struct FrameOut {
+ Frame verdict=Frame::none;
+ std::uint32_t level=0;                          // frozen: the HOLD|FIRE level to hold
+ std::uint32_t add_held=0,add_press=0,add_release=0;
+ bool buffered=false,delivered=false,dropped=false;
+};
+// request: partner_support_policy::Request for the frame; x: its gate (fresh
+// or stale as composed); strip: the driver's Arm.strip (its weapon gate, the
+// play leak strip): a frame whose HOLD|FIRE the driver strips is never
+// admitted or frozen here, and a buffered press waits for the driver too;
+// held/press: the frame's held level and press edges.
+constexpr FrameOut StepFrame(FrameTrack& t,bool request,const GateIn& x,std::uint32_t strip,std::uint32_t held,std::uint32_t press,
+                             std::uint64_t now_ms) noexcept {
+ FrameOut o{};
+ if(t.release){t.release=false;if(!(held&kPadFire))o.add_release=kPadFire;}
+ if(!request){
+  if(t.fire)o.dropped=true;
+  t.have=false;t.fire=false;
+  return o;
+ }
+ const bool driver_ok=(strip&kLevelBits)==0;
+ if(driver_ok && Admit(x)){
+  o.verdict=Frame::admitted;
+  if(t.fire){
+   if(press&kPadFire){}      // a fresh press supersedes the buffered one
+   else if(x.equip==t.fire_equip && now_ms>=t.fire_ms && now_ms-t.fire_ms<=kFireBufferMs){
+    o.add_press=kPadFire;o.delivered=true;
+    if(!(held&kPadFire)){o.add_held=kPadFire;t.release=true;}
+   } else o.dropped=true;
+   t.fire=false;
+  }
+  t.have=true;t.equip=x.equip;t.level=held&kLevelBits;
+  return o;
+ }
+ if(driver_ok && x.stale && t.have && x.slot_valid && x.slot==3 && x.equip_valid && x.equip==t.equip && Admit(Fresh(x))){
+  o.verdict=Frame::frozen;o.level=t.level;
+  return o;
+ }
+ o.verdict=Frame::refused;t.have=false;
+ // Waiting: body 1's equip, or the driver's gate one tick behind the hook's.
+ const bool waiting=WaitingOnEquip(x) || (!driver_ok && Admit(x));
+ if(t.fire && (!waiting || x.equip!=t.fire_equip || now_ms<t.fire_ms || now_ms-t.fire_ms>kFireBufferMs)){t.fire=false;o.dropped=true;}
+ if(waiting && (press&kPadFire)){t.fire=true;t.fire_ms=now_ms;t.fire_equip=x.equip;o.buffered=true;}
+ return o;
+}
+// The driver's support gate through an input stall (critic #4): the newest v5
+// frame is older than stale_ms but within the stall hold
+// (partner_native_stall=hold), still names slot 3 and the equip of the tick
+// that last judged support. Every other support condition (type 12, body 1's
+// equip, the observer's Ready and safety owners) is rechecked as before.
+struct StallHoldIn {
+ bool stall_hold=false;std::uint32_t stale_ms=0,stall_ms=0,age_ms=0;
+ bool v5_valid=false;std::uint8_t slot=0xFF;std::uint16_t equip=0;
+ bool was_support=false;std::uint16_t support_equip=0;
+};
+constexpr bool StallHold(const StallHoldIn& s) noexcept {
+ return s.stall_hold && s.stall_ms>s.stale_ms && s.age_ms>s.stale_ms && s.age_ms<=s.stall_ms && s.v5_valid && s.slot==3 &&
+  s.was_support && s.equip>0 && s.equip<0x800 && s.equip==s.support_equip;
+}
+
 // --- Handle call hardening (WS1; docs/anim-round2-throws.md "Handle call resolved").
 // X = [prim+0x60] (stored by the gun prim base constructor at 0x101E1E7) is the
 // process-wide equipment-handle manager [[gm]+0x98]+0x1E8 (= inventory+0x58 =

@@ -720,4 +720,6 @@ void* WrapBatchEntry() noexcept { return reinterpret_cast<void*>(&WrapBatch); }
 void* W50Entry() noexcept { return reinterpret_cast<void*>(&W50); }
 } // namespace detail
 
+std::uint32_t Body1Jobs() noexcept { return static_cast<std::uint32_t>(InterlockedCompareExchange(&g_b1, 0, 0)); }
+
 } // namespace mgscoop::partner_defer

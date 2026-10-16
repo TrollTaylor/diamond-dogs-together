@@ -18,9 +18,10 @@ motions or generate a second real grenade.
 - `partner_native_support=0|1` is the only new setting. Default: **on for the native gun
   profile in lab mode** (the local two-window test, after hidden runs `aaa2a0e0` and `ea93a2e3`),
   off everywhere else; a named key always wins (`partner_native_support_given`). Its independent parser helper avoids the main MSVC nesting limit.
-  Admission additionally requires lab mode, redirected copied saves, the ordinary
-  native gun/body admission, current owner/lifetime and a fresh v4 Equip plus v5
-  current slot/gun group. Friend/play mode does not admit it.
+  Admission additionally requires lab mode, or two-PC play with link v2 connected
+  (WS2 Stage A, "Throws in play" below; play still needs the named key), redirected
+  copied saves, the ordinary native gun/body admission, current owner/lifetime and a
+  fresh v4 Equip plus v5 current slot/gun group (or, in play, the stall hold).
 - `partner_support_guard` installs once. The seven-byte load at `0x108C8E5`
   becomes a short jump through the verified eight-byte int3 padding beginning
   **0x108C888**, then a near stub. Correct displacement is **EB A1**, not EB 9F.
@@ -64,8 +65,8 @@ motions or generate a second real grenade.
   across the aim/throw episode, so the viewer's own reload or ammo pickup no
   longer latches support off; a change logs `partner_support=stock_index; k=..`.
   A changed digest latches support off until the next mission reset. The viewer
-  throwing its own support item during the remote's episode still latches (the
-  stock table is shared, so the two cannot be told apart). Unread stock cannot
+  throwing or picking up its own support item during the remote's episode no
+  longer latches (WS2 C(b), "Viewer-own rebase" below). Unread stock cannot
   admit a new support input.
   `rec+0x240` is logged at episode entry and the observed native release edge.
 - **Handle call (WS1, resolved; see "Handle call resolved" below).** Admission also requires
@@ -508,3 +509,94 @@ and 349, `armed; reason=throw` and `throw_release`, every `stock_check; ...; cha
 `partner_support=rec240_check; ...; reason=ok; ...; owner=1` per thrown equip (354 and 349) on the guest; **no**
 `reason=rec240_foreign`, **no** `reason=rec240_stale` and no `reason=unread` (any of them fails the run). Then flip
 `kRec240Latch` (and its fixture assertion) and re-run once.
+
+## Throws in play (WS2 Stage A + hardening, 2026-10-16)
+
+Spec: `coop-gaps-spec.md` WS2 (research "throws-play", critic #4..#7). Branch `wp/feat-throws`. **Stage B (the default
+flip to `gun` in both modes) is not done**: `lab_config.cpp` still defaults `partner_native_support` to the lab gun
+profile only, so play gets throws only from a named `partner_native_support=1` (the worker's `-LabSetting`), and
+Play-Coop friends see no change yet. No contract site or slot changed (612 / 128): every new read is an existing
+pinned offset (`gun_prim_vt_rva`, `prim_gun_rec`, `prim_blk`, `gun_mode_cur`) on instance 0's own gun record.
+
+**Admission (Stage A).** `partner_support_policy::ModeRefusal(lab, play, link_connected)` -> nullptr (lab; play with
+link v2 connected) | `link_not_connected` | `mode`. The observer's `SupportModeReason()` (GetLabConfig().mode and
+`partner_net::GetLinkInfo().state == connected`, the `EquipAdmissionReason` pattern) feeds both gates:
+`PartnerSupportReady` (the driver's support gate) and `ObserveNativeSupport` (`context.enabled = key && !reason`).
+One line per change, only with the key selected: `partner_support=mode; mode=play|lab|other; reason=ok|link_not_connected|mode`.
+After a link drop the stock guard and the thrown owner filter stay installed and armed (queued or unwindowed body-1
+work may still finish); `Ready` and `Follow` refuse through `ContextFor` because the writer context is disabled.
+All other play refusals are unchanged (kPlayRefusedNativeDrive, kPlayRefusedNativeProfile, the forced-off fire
+census, the gun-slot call->write downgrade, the process-wide play leak strip, which already covers an in-job stock
+leak because the ammo digest vars+0x548..0x670 includes the support table).
+
+**The play SetCurrentSlot exception.** The guarded slot-3 type-12 support follower (`partner_support_equip::Follow`,
+native SetCurrentSlot `0x11AFA80`) is the one native SetCurrentSlot allowed in play. Play runs `nslot=call` as `write`
+for gun slots, and SlotFollow's slot-3 branch calls Follow for any value except `off`, exactly the combination the lab
+hidden runs used (`partner_driver.cpp` Configure, `docs/native-puppet.md` "Release gating").
+
+**Viewer-own rebase (C(b)).** The episode baseline (the eight slot-3 words) spans viewer frames, so the viewer's own
+throw or pickup used to latch support off for the mission. Each SupportCheck now also reads instance 0's gun mode
+(the driver tick's `ReadGun(k=0)` prim/record in `Arm.viewer_gun_prim/rec`, re-validated in the hook: prim vtable,
+prim+0x58 == record, never body 1's prim, record or block; read-only, 0xFF unread) and W50's count of body-1 jobs
+(`partner_defer::Body1Jobs`). The change between the previous bracket's after-read and this bracket's before-read
+happened outside body 1's job. `partner_support_policy::ClassifyGap` attributes it to the viewer, and the episode
+baseline is rebased by exactly that delta, only when every body-1 job of the gap was bracketed (no other W50 count),
+no word moved to or from 0xFFFF, and it is either a pickup (increases only, each <= 64) or one throw/placement
+(exactly one word down by exactly 1, nothing else, with the viewer's gun mode in 28..47 at the gap's start or end).
+Line: `partner_support=stock_check; slot=3; equip=N; type=12; reason=viewer_own; changed=0; kind=throw|pickup; k=6..13;
+before=..; after=..; words=..; viewer_mode=..; viewer_prev=..; other_jobs=0`. Anything else logs
+`partner_support=stock_gap; ...; reason=unattributed; changed=1; ...` and the unchanged episode compare latches as
+before (`stock_index`, `stock_leak_mission_latched`). The per-job compares (full support table and ammo block around
+body 1's own job) are untouched, so a body-1 leak inside its job always latches; a deferred decrement while the viewer
+is not throwing, an unbracketed body-1 job in the gap, a double decrement or a mixed gap all still latch. Residual: a
+deferred body-1 decrement of exactly one item in the same frame as the viewer's own throw is indistinguishable and
+is rebased; block-1 sub-jobs (`p->sub != 0`) are not counted.
+
+**Stall freeze (critic #4).** Admit needs a fresh frame, and Compose marks every frame older than stale_ms stale, so a
+250 ms..1 s gap used to strip HOLD|FIRE|RELOAD: body 1 released early, and when FIRE came back still held it could
+throw again (the guard never runs it out). Now, inside the stall window (`partner_native_stall=hold`, the play
+default, `partner_native_stall_ms` 400; Compose carries a stale sample's slot/equip only there) and for the same
+slot-3 equip as the last admitted frame, the main window's `SupportFrame` (`partner_support_policy::StepFrame`) holds
+that frame's HOLD|FIRE **level** with no HOLD/FIRE edge anywhere (`partner_input::Freeze`) and marks the frame
+`support_frozen`; every consumer admits it with freshness waived only (every other gate rechecked). The driver holds
+its support gate through the same window (`partner_support_policy::StallHold`: stale but <= stall_ms, v5 slot 3, the
+equip of the last support verdict) and the observer keeps the writer context's slot/equip then
+(`Mission.support_stall/support_equip`), so `Ready` still answers and the writer dispatches nothing. Fresh input
+resumes through Compose's own edge state (no phantom press); beyond the window the old strip applies. Never against
+the driver's own strip (a frame whose HOLD|FIRE `Arm.strip` removes is never admitted or frozen). Lab mode keeps
+`partner_native_stall=neutral`, so nothing changes there. Lines (own cap of 128 per mission, so a bad link cannot use
+up the shared stock_check cap): `partner_support=stall_freeze; slot=3; equip=N; type=12; reason=start|fresh|strip|off;
+level=0x..; age_ms=..; frames=..; held_ms=0`.
+
+**FIRE-edge buffer (C(c)).** A FIRE press while support waits only on body 1's equip (`WaitingOnEquip`: every gate but
+Ready/record, decoded type 0 or 12; or the driver's gate one tick behind the hook's) is kept for 300 ms and delivered
+on the first admitted frame of the same equip (`partner_input::AddEdges`: the press edge, plus the held bit and a
+release edge on the next frame for a tap). Another equip, leaving slot 3, a stale frame, any other refusal or 300 ms
+drop it; a fresh press at admission supersedes it. Lines: `partner_support=fire_buffer; ...; reason=buffered|delivered|dropped; held_ms=..`.
+
+Tests: `partner_support_policy_tests` 1462 -> 1582 checks (ModeRefusal table; ClassifyGap verdicts and Rebase/
+SlotDigest; episode sequences: the viewer's own throw or pickup during a partner episode does not latch, a body-1 leak
+in its own job, a deferred decrement the viewer did not throw, an unbracketed job, a double decrement all still latch;
+StallHold table; the Compose -> StepFrame -> Freeze -> NativeView pipeline: stalls of 251..1000 ms keep the admitted
+level with no edge, fresh input resumes without a second press, beyond the window / lab neutral / body not ready /
+the driver's strip / another equip strip; the FIRE buffer delivered within 300 ms with the tap's release, held press,
+dropped after 300 ms, other equip, leaving slot 3, superseded, never latched/unguarded/stale/slot 2/type 13).
+`worker_session_tests` validates the play scenario in play mode and the checkpoint companion.
+
+**Hidden runs (not run here; another agent owns the runtime).** Coordinator only, verify lock, MGS_GAME_LUA_DIR unset:
+
+```powershell
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim bad
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim awful
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-checkpoint.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+```
+
+The evidence lines are in the scenario headers. Checkpoint save + reload (critic #6) cannot be scripted in play:
+world triggers are lab-only by design (`world_link` Configure, `world_wire` ApplyTrigger `not_lab`,
+kPlayRefusedWorldProbe, the runner's `worldtrigger` rule), so the persistence half runs on the same redirected
+copied-save path in lab (`partner-support-checkpoint.txt`: three partner throws, shared checkpoint, shared death,
+host Continue, the guest's counts read back from the reloaded save, one more throw). A play-mode checkpoint needs a
+separate decision (a rehearsal-only world-probe admission). Stage B follows only after these pass: the default flip
+(`lab_config.cpp` ResolveWeaponDefaults), lab_config_tests matrix, lab_ini_check, friend_package_tests, docs, then a
+re-run of `partner-support-play.txt` without `-LabSetting partner_native_support=1`.

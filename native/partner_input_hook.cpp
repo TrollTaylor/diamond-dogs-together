@@ -202,6 +202,19 @@ std::uint32_t ReadSupportDigest() noexcept;
 std::uint32_t ReadSupportSlotDigest(std::uint16_t (*words)[8]=nullptr) noexcept;
 bool SupportBodyBusy(const pi::Arm& a) noexcept;
 bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept;
+// WS2 (hook thread): the frame step's track (stall freeze, FIRE buffer) with
+// its own log cap, and C(b)'s previous bracket (after-words, the viewer's gun
+// mode and W50's body-1 job count at that point).
+partner_support_policy::FrameTrack g_support_track{};
+volatile LONG g_support_frame_reset=1;
+unsigned g_support_frame_lines=0;
+bool g_support_frozen_run=false;
+std::uint32_t g_support_frozen_frames=0;
+bool g_support_prev_ok=false;
+std::uint16_t g_support_prev_words[8]{};
+std::uint8_t g_support_prev_viewer=0xFF;
+std::uint32_t g_support_prev_jobs=0;
+pi::Injection SupportFrame(const pi::Arm& a,const pi::Injection& frame,std::uint64_t now_ms,std::uint32_t age_ms) noexcept;
 pi::Injection g_drain_inj{};
 pi::Arm g_drain_arm{};
 volatile LONG g_wrap_floor = 0;   // PartnerWrap counting without an enabled Arm (census)
@@ -1049,8 +1062,10 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
         else if (src == partner_slots::AimSource::pad) InterlockedIncrement(&g_ai_pad);
         InterlockedExchange(&g_ai_last, static_cast<LONG>(src));
     }
-    const pi::Injection j = pi::Compose(a.config, sc, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge, a.native ? a.steer_rad : 0.0,
-                                        a.native && a.mag_scale > 0.0 ? a.mag_scale : 1.0);
+    pi::Injection j = pi::Compose(a.config, sc, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge, a.native ? a.steer_rad : 0.0,
+                                  a.native && a.mag_scale > 0.0 ? a.mag_scale : 1.0);
+    // Native support (WS2): the stall freeze and the FIRE-edge buffer on the frame itself.
+    if (a.native && a.config.mode == PartnerInput::net) j = SupportFrame(a, j, now_ms, s.valid ? s.age_ms : pi::kNoSample);
     if (j.hist_reset) g_hist = pi::HoldHistory{};
     if (!j.hist_freeze) pi::HoldPush(g_hist, j.held);
     g_last_inj = j;
@@ -1600,6 +1615,8 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
         partner_fire_filter::ThrownArmed(1)) {
         // Never activate or swap slot 3 while body 1 is switching, reloading or
         // still in a throw (its old handle may be referenced): review-1ca3ce6.
+        // In play too (a.slot_follow is write there): this guarded type-12
+        // follower is the one native SetCurrentSlot play allows (WS2).
         if(SupportBodyBusy(a)) { SlotVerdict(SlotRefusal::mode); return; }
         const char* why=partner_support_equip::Follow(g_base,c::image_span,a.P,a.blk1,j.equip,g_log);
         SlotVerdict(why ? SlotRefusal::plan : SlotRefusal::none);
@@ -1808,9 +1825,7 @@ std::uint32_t ReadSupportSlotDigest(std::uint16_t (*words)[8]) noexcept {
     } __except(ProbeFilter(GetExceptionCode())) {}
     if(!ok)return 0;
     if(words)std::memcpy(*words,local,sizeof(local));
-    std::uint32_t h=2166136261u;
-    for(const auto w:local){h=(h^(w&0xFFu))*16777619u;h=(h^(w>>8))*16777619u;}
-    return h?h:1;
+    return partner_support_policy::SlotDigest(local);
 }
 // Unread counts as busy: an unknown mode or switch never re-equips slot 3.
 bool SupportBodyBusy(const pi::Arm& a) noexcept {
@@ -1851,7 +1866,8 @@ bool SupportRead(std::uintptr_t address,void* out,std::size_t size) noexcept {
 // the reserved slot past the shared cap.
 std::uint32_t g_rec240_stale_rec=0,g_rec240_stale_slot=0;
 bool g_rec240_stale_logged=false;
-bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
+// The support gate of one frame/consumer (reads body 1's equip and record).
+partner_support_policy::GateIn SupportGate(const pi::Arm& a,const pi::Injection& j) noexcept {
     namespace sp=partner_support_policy;
     sp::GateIn x{};x.enabled=a.native_support && !a.p218 && !PoseRequired() && static_cast<std::uint32_t>(g_hook_thread)==GetCurrentThreadId();x.latched=g_support_leak!=0;
     x.guard_installed=partner_support_guard::Live();x.guard_armed=partner_support_guard::Armed(a.P,1);
@@ -1883,7 +1899,66 @@ bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
         }
         if(!ReadSupportDigest())x.body_ready=false;
     }
+    return x;
+}
+bool SupportAdmitted(const pi::Arm& a,const pi::Injection& j) noexcept {
+    namespace sp=partner_support_policy;
+    sp::GateIn x=SupportGate(a,j);
+    // A stall-frozen frame (SupportFrame, critic #4): freshness waived only;
+    // every other gate is rechecked for this consumer.
+    if(j.support_frozen)x=sp::Fresh(x);
     return sp::Admit(x);
+}
+static_assert(partner_support_policy::kPadHold==partner_pad::kHold && partner_support_policy::kPadFire==partner_native::kPadFire,
+              "support level bits are HOLD|FIRE");
+// One line of the frame step (its own cap: a bad link must not use up the
+// stock_check/throw_release lines of the shared cap).
+void SupportFrameLine(const char* kind,const char* reason,std::uint16_t equip,std::uint32_t level,std::uint32_t age_ms,
+                      std::uint32_t frames,std::uint32_t held_ms) noexcept {
+    if(!g_log || g_support_frame_lines>=128)return;
+    ++g_support_frame_lines;char line[224]{};
+    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+        "partner_support=%s; slot=3; equip=%u; type=12; reason=%s; level=0x%x; age_ms=%u; frames=%u; held_ms=%u\r\n",
+        kind,unsigned(equip),reason,level,age_ms,frames,held_ms)))g_log(line);
+}
+// WS2 (the main window, once per frame, before any consumer takes the frame;
+// ForConsumer then hands each consumer its edges once): the stall freeze
+// (critic #4) and the FIRE-edge buffer (C(c)), partner_support_policy::StepFrame.
+pi::Injection SupportFrame(const pi::Arm& a,const pi::Injection& frame,std::uint64_t now_ms,std::uint32_t age_ms) noexcept {
+    namespace sp=partner_support_policy;
+    if(InterlockedExchange(&g_support_frame_reset,0)){
+        g_support_track=sp::FrameTrack{};g_support_frozen_run=false;g_support_frozen_frames=0;g_support_frame_lines=0;
+    }
+    const auto end_freeze=[&](const char* how) noexcept {
+        if(!g_support_frozen_run)return;
+        g_support_frozen_run=false;
+        SupportFrameLine("stall_freeze",how,g_support_track.equip,0,age_ms,g_support_frozen_frames,0);
+    };
+    if(!a.native || !a.native_support || a.neutral || PoseHeld()){
+        end_freeze("off");g_support_track=sp::FrameTrack{};return frame;
+    }
+    const bool request=sp::Request(a.native_support,frame.slot_valid,frame.inv_slot,a.strip);
+    const sp::GateIn x=request ? SupportGate(a,frame) : sp::GateIn{};
+    const sp::FrameTrack before=g_support_track;
+    const sp::FrameOut o=sp::StepFrame(g_support_track,request,x,a.strip,frame.held,frame.edge_press,now_ms);
+    pi::Injection j=frame;
+    if(o.verdict==sp::Frame::frozen){
+        j=pi::Freeze(j,sp::kLevelBits,o.level,a.config);
+        j.support_frozen=true;
+        if(!g_support_frozen_run){
+            g_support_frozen_run=true;g_support_frozen_frames=0;
+            SupportFrameLine("stall_freeze","start",before.equip,o.level,age_ms,0,0);
+        }
+        ++g_support_frozen_frames;
+    } else {
+        end_freeze(o.verdict==sp::Frame::admitted ? "fresh" : "strip");
+    }
+    if(o.add_held || o.add_press || o.add_release)j=pi::AddEdges(j,o.add_held,o.add_press,o.add_release,a.config);
+    const std::uint32_t held_ms=before.fire && now_ms>=before.fire_ms ? static_cast<std::uint32_t>(now_ms-before.fire_ms) : 0u;
+    if(o.dropped)SupportFrameLine("fire_buffer","dropped",before.fire_equip,0,age_ms,0,held_ms);
+    if(o.delivered)SupportFrameLine("fire_buffer","delivered",before.fire_equip,o.add_held|o.add_press,age_ms,0,held_ms);
+    if(o.buffered)SupportFrameLine("fire_buffer","buffered",x.equip,0,age_ms,0,0);
+    return j;
 }
 // WS1 C (per windowed body-1 job, after it; read-only): while the record holds
 // the remote's slot-3 equip (B's identity, so never mid-switch) and its class is
@@ -1925,12 +2000,62 @@ bool SupportThrowing(const pi::Arm& a,const pi::Injection& j,std::uint32_t& hand
     } __except(ProbeFilter(GetExceptionCode())) {}
     return mode || (a.native_support && j.slot_valid && j.inv_slot==3 && (j.held&(partner_pad::kHold|partner_native::kPadFire)));
 }
+// C(b): instance 0's gun mode (0xFF unread), read-only through the driver
+// tick's ReadGun(k=0) prim/record re-validated here: the prim vtable,
+// prim+0x58 == the record, and never body 1's prim, block or record.
+std::uint8_t ViewerGunMode(const pi::Arm& a) noexcept {
+    const std::uintptr_t prim=a.viewer_gun_prim,rec=a.viewer_gun_rec;
+    if(!prim || !rec || prim==a.gun_prim || rec==a.gun_rec)return 0xFF;
+    std::uint8_t mode=0xFF;
+    __try {
+        if(Load<std::uintptr_t>(prim)==g_base+c::gun_prim_vt_rva && Load<std::uintptr_t>(prim+c::prim_gun_rec)==rec &&
+           Load<std::uintptr_t>(prim+c::prim_blk)!=a.blk1)
+            mode=Load<std::uint8_t>(rec+c::gun_mode_cur);
+    } __except(ProbeFilter(GetExceptionCode())) {mode=0xFF;}
+    return mode;
+}
+// C(b) (docs/anim-round2-throws.md "Viewer-own rebase"): the change of the
+// slot-3 words between the previous bracket's after-read and this bracket's
+// before-read happened outside body 1's job. The viewer's own throw or pickup
+// (partner_support_policy::ClassifyGap) moves the episode baseline by exactly
+// that delta; anything else stays for the episode compare (latch as before).
+void SupportGapCheck(const pi::Injection& j,std::uint32_t slot_before,const std::uint16_t (&now)[8],
+                     std::uint8_t viewer,std::uint32_t jobs) noexcept {
+    namespace sp=partner_support_policy;
+    if(!g_support_episode || !g_support_episode_stock)return;
+    sp::GapIn g{};g.prev_ok=g_support_prev_ok;g.now_ok=slot_before!=0;
+    std::memcpy(g.prev,g_support_prev_words,sizeof(g.prev));std::memcpy(g.now,now,sizeof(g.now));
+    g.viewer_prev=g_support_prev_viewer;g.viewer_now=viewer;
+    // This bracket's own job is one W50 count; any other ran unbracketed (wrap-safe, fails closed).
+    g.other_jobs=jobs-g_support_prev_jobs-1u;
+    const sp::GapOut gap=sp::ClassifyGap(g);
+    if(gap.kind==sp::Gap::none || gap.kind==sp::Gap::unread)return;
+    const bool rebase=sp::GapRebases(gap.kind) && !g_support_leak;
+    if(rebase){
+        sp::Rebase(g_support_episode_words,g.prev,g.now);
+        g_support_episode_stock=sp::SlotDigest(g_support_episode_words);
+    }
+    if(!g_log || g_support_lines>=512)return;
+    ++g_support_lines;char line[256]{};
+    // viewer_own is a passed stock_check (changed=0); a foreign gap is left to
+    // the episode compare below (stock_index / stock_leak_mission_latched).
+    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+        "partner_support=%s; slot=%u; equip=%u; type=12; reason=%s; changed=%u; kind=%s; k=%u; before=%u; after=%u; words=%u; viewer_mode=%u; viewer_prev=%u; other_jobs=%u\r\n",
+        rebase ? "stock_check" : "stock_gap",unsigned(j.inv_slot),unsigned(j.equip),rebase ? "viewer_own" : "unattributed",rebase ? 0u : 1u,
+        sp::GapName(gap.kind),6u+gap.word,
+        unsigned(gap.before),unsigned(gap.after),unsigned(gap.changed),unsigned(viewer),unsigned(g.viewer_prev),g.other_jobs)))g_log(line);
+}
 void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,std::uint32_t slot_before,
                   const std::uint16_t (&slot_words_before)[8],std::uint32_t ammo_before) noexcept {
     SupportRec240Check(a,j);
     const auto after=ReadSupportDigest();const auto ammo_after=ReadAmmoDigest();
     std::uint16_t slot_words[8]{};const auto slot_after=ReadSupportSlotDigest(&slot_words);
     std::uint32_t handle=0;const bool active=SupportThrowing(a,j,handle);
+    // No viewer job runs inside body 1's job: this read is the viewer's mode at
+    // this gap's end and the next gap's start.
+    const std::uint8_t viewer=ViewerGunMode(a);
+    const std::uint32_t jobs=partner_defer::Body1Jobs();
+    SupportGapCheck(j,slot_before,slot_words_before,viewer,jobs);
     if(active && !g_support_episode){g_support_episode=true;g_support_episode_stock=slot_before;
         std::memcpy(g_support_episode_words,slot_words_before,sizeof(g_support_episode_words));
         SupportLine("armed",j,"throw",handle);}
@@ -1963,6 +2088,9 @@ void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,s
     }
     if(changed && InterlockedExchange(&g_support_leak,1)==0)SupportLine("refused",j,"stock_leak_mission_latched",handle,true);
     if(!active){g_support_episode=false;g_support_episode_stock=0;}
+    // C(b): this bracket's after-read starts the next gap.
+    g_support_prev_ok=slot_after!=0;std::memcpy(g_support_prev_words,slot_words,sizeof(g_support_prev_words));
+    g_support_prev_viewer=viewer;g_support_prev_jobs=jobs;
 }
 
 // After the job: the leak verdicts and whether instance 1's reload request is set.
@@ -2744,6 +2872,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     };
     if(InterlockedExchange(&g_support_reset,0)){
         g_support_episode=false;g_support_released=false;g_support_episode_stock=0;g_support_lines=0;
+        g_support_prev_ok=false;g_support_prev_viewer=0xFF;g_support_prev_jobs=0;
         g_rec240_logged=0;g_rec240_last=partner_support_policy::Rec240::skip;g_rec240_stale_rec=0;g_rec240_stale_slot=0;g_rec240_stale_logged=false;
     }
     const bool have = g_ready && !g_faulted && ReadArm(a);
@@ -2984,6 +3113,7 @@ void LatchNativeSupportOff() noexcept {InterlockedExchange(&g_support_leak,1);}
 void ResetFault() noexcept {
     InterlockedExchange(&g_support_leak,0);
     InterlockedExchange(&g_support_reset,1);
+    InterlockedExchange(&g_support_frame_reset,1);
     InterlockedExchange(&g_fault_phase, 0);
     InterlockedExchange(&g_fault_code, 0);
     InterlockedExchange(&g_faulted, 0);

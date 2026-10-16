@@ -937,11 +937,22 @@ bool PartnerFocused(void*) noexcept {
     if (window) GetWindowThreadProcessId(window, &foreground);
     return foreground == GetCurrentProcessId();
 }
+// WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
+// native type-12 support runs in the one-PC lab, and in two-PC play only while
+// link v2 is connected. Both observer gates use it. After a link drop the guard
+// and the thrown filter stay installed and armed (queued or unwindowed body-1
+// work may still finish); Ready and Follow refuse through ContextFor.
+const char* SupportModeReason() noexcept {
+    const auto& config=mgscoop::GetLabConfig();
+    const bool play=config.mode==mgscoop::LabMode::play;
+    return mgscoop::partner_support_policy::ModeRefusal(config.mode==mgscoop::LabMode::lab,play,
+        play && mgscoop::partner_net::GetLinkInfo().state==mgscoop::link::LinkState::connected);
+}
 // Anim round 2: read-only admission for the driver's support gate. The
 // observer writer below is the only allocator; this callback never equips.
 bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexcept {
     const auto& config=mgscoop::GetLabConfig();
-    if(!config.partner_native_support || config.mode!=mgscoop::LabMode::lab || config.partner_input_p218_allow ||
+    if(!config.partner_native_support || SupportModeReason() || config.partner_input_p218_allow ||
        mgscoop::partner_input_hook::NativePoseWindowStatus().required ||
        mgscoop::partner_input_hook::NativeSupportLatchedOff() ||
        !mgscoop::partner_support_guard::Live() ||
@@ -1756,7 +1767,18 @@ void ObserveNativeSupport() noexcept {
     const auto& config=mgscoop::GetLabConfig();
     const auto& mission=partner_driver.mission;
     se::Context context{};
-    context.enabled=config.partner_native_support && config.mode==mgscoop::LabMode::lab;
+    const char* mode_reason=SupportModeReason();
+    context.enabled=config.partner_native_support && !mode_reason;
+    // One line per change of the mode verdict (only with the key selected).
+    {
+        static const char* logged_reason="";
+        static int logged_mode=-1;
+        const int mode=config.mode==mgscoop::LabMode::play ? 1 : config.mode==mgscoop::LabMode::lab ? 0 : 2;
+        if(config.partner_native_support && (mode!=logged_mode || std::strcmp(mode_reason ? mode_reason : "ok",logged_reason)!=0)) {
+            logged_mode=mode;logged_reason=mode_reason ? mode_reason : "ok";
+            LogFormat("partner_support=mode; mode=%s; reason=%s\r\n",mode==1 ? "play" : mode==0 ? "lab" : "other",logged_reason);
+        }
+    }
     context.owner=OnRuntimeThread();context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
     context.pins_intact=mgscoop::equipment_stock_writer::PinsIntact;
     context.mission=partner_mission;context.realize_gen=mission.realize_gen;context.now_ms=mgscoop::partner_net::NowMs();
@@ -1778,6 +1800,15 @@ void ObserveNativeSupport() noexcept {
        (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid) &&
        input.packet.gun_equip==mission.remote_gun_equip && input.packet.inv_slot==mission.remote_slot) {
         context.equip=static_cast<std::uint16_t>(mission.remote_gun_equip);context.slot=mission.remote_slot;
+    } else if(mission.support_stall && mission.support_equip>0 && mission.support_equip<0x800 &&
+              mgscoop::partner_net::LatestInput(input) && input.valid && input.age_ms<=partner_driver.settings.stall_ms &&
+              input.packet.version>=5 && (input.packet.xflags&mgscoop::partner_input::XFlag::Equip) &&
+              (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid) &&
+              input.packet.gun_equip==mission.support_equip && input.packet.inv_slot==3) {
+        // The driver holds support through an input stall (critic #4): keep the
+        // context's slot and equip so Ready still answers; the writer finds the
+        // equip already allocated and dispatches nothing.
+        context.equip=mission.support_equip;context.slot=3;
     }
     pp::State state{};pp::DmTargets targets{};
     if(context.owner && context.gates && mission.parts_loaded && mission.realized &&

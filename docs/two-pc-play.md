@@ -563,7 +563,9 @@ xform clip partner as the automatic fallback.
   HOLD, RELOAD and FIRE (`partner_weapon=absent; body_gun=absent`), so the
   partner never aims empty-handed; the partner's own reload
   (`partner_native_reload=event`) and the slot follower
-  (`partner_native_slot=write`; play never calls SetCurrentSlot) follow the
+  (`partner_native_slot=write`; play never calls SetCurrentSlot for a gun slot;
+  the guarded slot-3 support follower is the one exception, docs/native-puppet.md
+  "Release gating") follow the
   other player's reloads and weapon switches. Safety argument as in the lab: play takes the same
   offline-v1 branch with redirected saves (it refuses to run otherwise), the
   pieces write only instance 1's runtime equipment and the mission block

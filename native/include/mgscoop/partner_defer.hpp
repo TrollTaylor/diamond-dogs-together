@@ -83,6 +83,10 @@ void MissionStart() noexcept;
 // join; nested or not) or on any other thread (block 0's job may be running
 // on a worker). Shared PP/CAM fields must not be swapped while it is true.
 bool InBatch() noexcept;
+// W50's running count of block 1's sub-0 jobs, deferred or passed through
+// (process lifetime, wraps). The hook's native support C(b) gap check
+// (partner_support_policy::ClassifyGap) counts the ones no drain bracketed.
+std::uint32_t Body1Jobs() noexcept;
 
 // Process-lifetime totals (the driver logs deltas); the *_us_max and
 // spin_max maxima are cleared by each drain.
