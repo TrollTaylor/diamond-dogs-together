@@ -482,7 +482,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True (@($playLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'partner-support-play names no labsetting line'
         Assert-True (@($steps|Where-Object{$_ -cmatch '(^|\s)worldtrigger(\s|$)'}).Count -eq 0) 'partner-support-play has no lab-only world trigger'
         $playText=[IO.File]::ReadAllText($playPath)
-        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off',
+        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off',
             '-WanSim bad','-WanSim awful','partner_support=mode; mode=play; reason=ok','reason=throw_release','reason=viewer_own','stall_freeze',
             'NO partner_support=stock_gap','stock_leak_mission_latched','fire_reload_off','writer_uncertain_mission_latched','hard_leaves 0',
             'rehearsal=1','partner-support-checkpoint.txt')){
@@ -508,6 +508,76 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         $steps=@($cpSteps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'});$failed=$false
         try { & $validator } catch { $failed=$true }
         Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
+    }
+    # WS2 follow-up (docs/anim-round2-throws.md "Stall test step"): the worker-only 'stall <role> <ms>' step
+    # (50..1000 ms, one role) and partner-support-stall.txt, a play rehearsal whose stalls fall inside a held grenade.
+    & {
+        $Mode='play'
+        foreach($step in @('stall host 320','stall guest 50','stall host 1000','stall guest 400')){
+            $steps=@($step);$failure=$null;try{& $validator}catch{$failure=$_.Exception.Message}
+            Assert-True (!$failure) ('stall step admitted: '+$step+' '+$failure)
+        }
+        foreach($step in @('stall both 320','stall host 49','stall host 1001','stall host','stall host 320 x','STALL host 320','Stall host 320',
+            'stall HOST 320','stall host 0320','stall host abc','stall host -320','stall host 3.5','stall host 99999','host stall 320')){
+            $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
+            Assert-True $failed ('stall step refused: '+$step)
+        }
+        $stallPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-support-stall.txt'
+        Assert-True (Test-Path -LiteralPath $stallPath -PathType Leaf) 'shipped scenario partner-support-stall.txt'
+        $stallLines=[IO.File]::ReadAllLines($stallPath)
+        $steps=@($stallLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-support-stall steps valid in play mode '+$failure)
+        Assert-True (@($stallLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'partner-support-stall names no labsetting line'
+        $stallText=[IO.File]::ReadAllText($stallPath)
+        foreach($needle in @('-Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off',
+            'partner_net=input_stall; reason=start; ms=320','partner_net=input_stall; reason=end; ms=320','reason=start; level=0x8','level=0x18',
+            'reason=fresh','exactly ONE partner_support=armed','no second throw','NO partner_support=stock_gap','stock_leak_mission_latched',
+            'fire_reload_off','rec240_foreign','background worker','friend/Release','Closed, BaselineRestored and RealSavesUnchanged')){
+            Assert-True ($stallText.Contains($needle)) ('partner-support-stall covers: '+$needle)
+        }
+        $stalls=@(for($i=0;$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'stall host 320'){$i}})
+        Assert-True ($stalls.Count -eq 2) 'partner-support-stall: two 320 ms host stalls (in stall_ms 400, past stale_ms 250)'
+        # A: inside the aim (rmb held), before the throw's FIRE; B: inside the FIRE hold, before its release.
+        $aim=[array]::IndexOf($steps,'host hold rmb 1500 nowait')
+        $fireA=[array]::IndexOf($steps,'host hold rmb+lmb 150 nowait')
+        Assert-True ($aim -ge 0 -and $aim -lt $stalls[0] -and $stalls[0] -lt $fireA) 'partner-support-stall A: the stall falls between the aim and the FIRE press'
+        Assert-True ($steps[$stalls[0]+1] -ceq 'host hold rmb 1500 nowait') 'partner-support-stall A: the aim is extended past the stall (no new press)'
+        $holdB=[array]::IndexOf($steps,'host hold rmb+lmb 1500 nowait')
+        $releaseB=@(for($i=$stalls[1];$i -lt $steps.Count;$i++){if($steps[$i] -ceq 'host release'){$i}})
+        Assert-True ($holdB -gt $fireA -and $holdB -lt $stalls[1] -and $releaseB.Count -ge 1) 'partner-support-stall B: the stall falls inside the FIRE hold, then the release'
+        Assert-True ($steps[$stalls[1]+1] -ceq 'host hold rmb+lmb 1500 nowait') 'partner-support-stall B: the FIRE hold is extended past the stall (no new press)'
+        $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
+        Assert-True ($guestCounts.Count -ge 3) 'partner-support-stall requires the guest seed counts before and after both phases'
+        foreach($needle in @("waitlog host 'partner_net=input_stall; reason=end; ms=320;' 10",
+            "waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=start;' 10",
+            "waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=fresh;' 10",
+            "waitlog guest 'partner_support=armed; slot=3; equip=354; type=12; reason=throw_release' 10",
+            "waitlog guest 'partner_support=stall_freeze; slot=3; equip=354; type=12; reason=start; level=0x18;' 10")){
+            Assert-True ($steps -ccontains $needle) ('partner-support-stall waits for: '+$needle)
+        }
+        # The runner sends the native input_stall command (paired by its result) and records an expectation.
+        $runnerText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+        Assert-True ($runnerText.Contains('$command="input_stall $($t[2])"') -and $runnerText.Contains('$pattern="^input_stall=started;ms=$($t[2]);"') -and
+            $runnerText.Contains("Add-ScenarioExpectation `$t[1] 'stall'")) 'the stall step sends input_stall and records its result'
+        Assert-True ($runnerText.Contains("'waitmission','waitgameplay','stance','resetpose','waitexit','expectstate','stall'")) 'the stall step drives its one role'
+        # Worker-only (never in friend/Release builds): the native command is gated on the compiled background
+        # worker and the owned private worker; partner_net refuses without the worker build (link_udp_tests checks
+        # the refusal in a non-worker build); only the worker build defines MGS_BACKGROUND_WORKER for partner_net;
+        # and the Release profile never builds the background worker (Get-WorkerPlan, worker_checks_tests).
+        $observerText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'native\game_script_observer.cpp'))
+        $at=$observerText.IndexOf('std::strncmp(pending.text, "input_stall ", 12) == 0')
+        Assert-True ($at -gt 0) 'the native input_stall command exists'
+        $branch=$observerText.Substring($at,[Math]::Min(1600,$observerText.Length-$at))
+        Assert-True ($branch.Contains('mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::Active()') -and
+            $branch.Contains('lab::SavesRedirected()') -and $branch.Contains('"owned_worker_required"') -and
+            $branch.Contains('mgscoop::partner_net::StallInput(ms)')) 'input_stall needs the compiled background worker and the owned private worker'
+        $netText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'native\partner_net.cpp'))
+        Assert-True ($netText.Contains('constexpr bool kStallCompiled = MGS_BACKGROUND_WORKER != 0;') -and $netText.Contains('"not_worker_build"')) 'partner_net refuses the stall without the worker build'
+        $cmakeText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'CMakeLists.txt'))
+        Assert-True ([regex]::IsMatch($cmakeText,'if\(MGS_BACKGROUND_WORKER\)\s+target_compile_definitions\(mgs_coop_lab PRIVATE MGS_BACKGROUND_WORKER=1\)\s+endif\(\)')) 'only the worker build compiles the stall into partner_net'
+        Assert-True ($cmakeText.Contains('option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)')) 'the background worker stays default OFF'
     }
     foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120',
         'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',

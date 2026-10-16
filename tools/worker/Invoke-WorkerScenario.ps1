@@ -101,7 +101,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    coop_hud=compact|full|off, the in-game co-op status line and toasts;
                                    the seated vehicle rider: partner_native_ride=off|hide|seat,
                                    partner_ride_seat_enter=direct|getin, partner_ride_seat_exit=stop|getoff;
-                                   partner_native_support=0|1, guarded native type-12 throws (default off);
+                                   partner_native_support=0|1, guarded native type-12 throws (default on with the gun profile);
                                    partner_placed_census=0|1, the read-only WS4 C4 / bionic-arm census (lab only);
                                    partner_fire_census=0|1, the owner census for support and other requests;
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
@@ -257,6 +257,10 @@ foreach($line in $steps){
         '^aimturn$' {$t.Count -eq 5 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'host','guest' -and
             [Math]::Abs([int]$t[3]) -eq 1500 -and (Test-ScenarioLabel $t[4])}
         '^resetpose$' {$t.Count -eq 2 -and $t[1] -cin 'host','guest'}
+        # Worker-only input stall (docs/anim-round2-throws.md "Stall test step"): the role sends no
+        # partner input for 50..1000 ms (the native input_stall command; non-worker builds refuse it).
+        '^stall$' {$t[0] -ceq 'stall' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest' -and $t[2] -cmatch '^[1-9][0-9]{1,3}$' -and
+            [int]$t[2] -ge 50 -and [int]$t[2] -le 1000}
         default {
             $roleNames -ccontains $t[0] -and $t.Count -ge 2 -and $(switch($t[1]){
                 'press'{$t.Count -in 3,4 -and (Test-ScenarioKeys $t[2]) -and ($t.Count -eq 3 -or ([int]$t[3] -ge 1 -and [int]$t[3] -le 1500))}
@@ -882,7 +886,7 @@ function Get-ScenarioStepRoles([string[]]$Tokens){
     if($t[0] -cin 'wait','state','waitlog','applyhandoff'){return @()}
     if($t[0] -ceq 'title'){if($t.Count -ge 2 -and $t[1] -cin 'host','guest'){return @($t[1])};return @('host','guest')}
     if($t[0] -ceq 'titlemenu'){if($t[1] -ceq 'both'){return @('host','guest')};return @($t[1])}
-    if($t[0] -cin 'waitmission','waitgameplay','stance','resetpose','waitexit','expectstate'){return @($t[1])}
+    if($t[0] -cin 'waitmission','waitgameplay','stance','resetpose','waitexit','expectstate','stall'){return @($t[1])}
     if($t[0] -cin 'placebehind','heldcapture','aimturn'){return @($t[1],$t[2])}
     if($t[0] -ceq 'both'){return @('host','guest')}
     return @($t[0])
@@ -1211,6 +1215,15 @@ try {
             continue
         }
         if($t[0] -ceq 'waitexit'){Wait-ScenarioRoleExit $t[1] ([int]$t[2]);continue}
+        if($t[0] -ceq 'stall'){
+            # The role's partner input sending pauses for N ms in-game (it starts when the game takes
+            # the command); the result is an expectation (nonfatal), the log has the start/end lines.
+            $command="input_stall $($t[2])"
+            try{$result=Invoke-DebugResult $t[1] $command 4000}catch{$result="no result: $($_.Exception.Message)"}
+            $pattern="^input_stall=started;ms=$($t[2]);"
+            Add-ScenarioExpectation $t[1] 'stall' $pattern $result ($result -cmatch $pattern)
+            continue
+        }
         if($t[0] -ceq 'applyhandoff'){
             if($pendingHandoff){throw 'applyhandoff runs once per session.'}
             $pendingHandoff=New-ScenarioHandoffApply $t[1]

@@ -21,6 +21,12 @@
 #include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/udp_transport.hpp"
 
+// Background-worker builds (MGS_BACKGROUND_WORKER=1, also on partner_net) admit the
+// worker-only input stall; every other build, the friend/Release loader's included, refuses it.
+#ifndef MGS_BACKGROUND_WORKER
+#define MGS_BACKGROUND_WORKER 0
+#endif
+
 namespace {
 namespace link = mgscoop::link;
 namespace lab = mgscoop::lab;
@@ -576,6 +582,68 @@ void PartnerNetV2() {
     Check(net::SubmitLocal(tick, mgscoop::sync::AnimState{}), "SubmitLocal sent");
     Check(WaitFor([] { return g_guest.frames >= 1; }) && g_guest.frame_size == mgscoop::sync::transform_frame_size,
           "the guest received the FRAME");
+    // Input frames from the guest: the unknown slot/equip debounce in the receive path
+    // (partner_input::HoldIdentity, docs/anim-round2-throws.md "Unknown-slot glitch").
+    {
+        namespace pi = mgscoop::partner_input;
+        std::uint32_t in_seq = 0;
+        const auto send_input = [&](const pi::InputPacket& p) {
+            std::uint8_t f[mgscoop::sync::input_frame_size_max];
+            const std::size_t n = mgscoop::sync::encode_input_frame_any(net::kSession, 30050, ++in_seq, p, f);
+            std::uint8_t ib[512];
+            link::BodyWriter iw(ib, sizeof(ib));
+            iw.Add(link::MsgType::frame, f, n);
+            return n && GuestSendBody(ib, iw.size());
+        };
+        const auto latest = [&](pi::Sample& s) { return WaitFor([&] { return net::LatestInput(s) && s.valid && s.seq == in_seq; }); };
+        pi::InputPacket good = pi::Quantize(pi::PadSnapshot{}, 0);
+        good.version = 5;
+        good.held = 0x18;
+        good.inv_slot = 3;
+        good.xflags = pi::XFlag::Equip;
+        good.gun_equip = 354;
+        good.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming;
+        good.gun_mode = 28;
+        good.reload_seq = 4;
+        good.switch_seq = 7;
+        pi::InputPacket glitch = good;
+        glitch.xflags = 0;
+        glitch.gun_equip = 0;
+        glitch.gun_flags = glitch.gun_mode = glitch.reload_seq = glitch.switch_seq = 0;
+        Check(pi::ValidPacket(good) && pi::ValidPacket(glitch), "input frames valid");
+        pi::Sample s{};
+        net::SetSupportIdentity(354);
+        Check(send_input(good) && latest(s) && s.packet.gun_equip == 354, "a complete support frame arrives");
+        Check(send_input(glitch) && latest(s), "the 0c9269ce frame arrives");
+        Check(s.packet.inv_slot == 3 && (s.packet.xflags & pi::XFlag::Equip) && s.packet.gun_equip == 354 &&
+                  s.packet.gun_flags == good.gun_flags && s.packet.reload_seq == 4 && s.packet.switch_seq == 7 && s.packet.held == 0x18,
+              "the receiver stores it with the last slot, equip and gun group (input untouched)");
+        Check(WaitFor([] { return Logged("partner_support=slot_hold; slot=3; equip=354; reason=held; missing=both; age_ms="); }),
+              "slot_hold held line");
+        Check(send_input(good) && latest(s), "the next complete frame");
+        Check(WaitFor([] { return Logged("partner_support=slot_hold; slot=3; equip=354; reason=resumed; packets=1; held_ms="); }),
+              "slot_hold resumed line");
+        net::SetSupportIdentity(0);
+        Check(send_input(good) && latest(s) && send_input(glitch) && latest(s), "frames without a support verdict");
+        Check(!(s.packet.xflags & pi::XFlag::Equip) && !(s.packet.gun_flags & pi::GunFlag::Valid),
+              "no support verdict: the unknown frame is stored as it came (gun play unchanged)");
+        // The worker-only input stall (docs/anim-round2-throws.md "Stall test step").
+        const char* const stall = net::StallInput(320);
+        if constexpr (MGS_BACKGROUND_WORKER != 0) {
+            Check(stall == nullptr && Logged("partner_net=input_stall; reason=start; ms=320;"), "a worker build starts the stall");
+            Check(!net::SubmitInput(good), "nothing goes out during the stall");
+            Check(net::StallInput(320) != nullptr && std::strcmp(net::StallInput(320), "busy") == 0, "one stall at a time");
+            Sleep(340);
+            Check(net::SubmitInput(good), "the first frame after the stall goes out");
+            Check(Logged("partner_net=input_stall; reason=end; ms=320; actual_ms="), "input_stall end line");
+            Check(std::strcmp(net::StallInput(49), "range") == 0 && std::strcmp(net::StallInput(1001), "range") == 0, "stall range");
+        } else {
+            Check(stall != nullptr && std::strcmp(stall, "not_worker_build") == 0 && !Logged("partner_net=input_stall"),
+                  "a build without the background worker (the friend/Release loader) refuses the input stall");
+            Sleep(10);
+            Check(net::SubmitInput(good), "sending is unchanged");
+        }
+    }
     // Reliable channels both ways.
     Check(net::SendReliable(0, "x", 1, link::ReliableMode::append) == link::ReliableResult::bad_channel, "channel 0 reserved");
     Check(net::SendReliable(5, "x", 1, link::ReliableMode::append) == link::ReliableResult::bad_channel, "channel 5 does not exist");

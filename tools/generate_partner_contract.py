@@ -1907,8 +1907,8 @@ def handle_call_assertions():
     # Every other X call that takes rec+0x240 (review WS1-2): an indirect call whose rcx is [r+0x60] (prim+0x60)
     # or [r+0x30] (iface+0x30 = prim+0x60) and whose edx/r8d is [r+0x240], both loaded in the 48 bytes before and
     # neither rewritten nor crossed by another call. B only guards the input-driven modes 28/30/33/37 (four of the five
-    # vt+0x160 sites); every other site, the iface reset among them, is covered only by C's detect-only per-job row
-    # check. Only the vt+0x160/vt+0x38 methods were audited. 0x10565AE (vt+0x60) and 0x1093F10 (vt+0xD8) load rcx
+    # vt+0x160 sites); every other site, the iface reset among them, is covered only by C's per-job row check (it
+    # latches support off on a foreign row). Only the vt+0x160/vt+0x38 methods were audited. 0x10565AE (vt+0x60) and 0x1093F10 (vt+0xD8) load rcx
     # before the window and are checked separately below.
     arg_re = re.compile(rb'(?:\x41)?\x8b[\x90-\x97]\x40\x02\x00\x00|[\x44\x45]\x8b[\x80-\x87]\x40\x02\x00\x00')
     rcx_re = re.compile(rb'[\x48\x49]\x8b[\x48-\x4b\x4d-\x4f][\x30\x60]')

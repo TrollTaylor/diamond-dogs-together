@@ -29,8 +29,9 @@ int main() {
     Check(!Lab("role=guest\n").present, "role without enabled is not present");
     Check(!Lab("enabled=1\n").present, "enabled without role is not present");
 
-    // Native support follows the native gun profile in lab mode only (hidden runs aaa2a0e0, ea93a2e3);
-    // off without a profile, for loco/off, in play mode, and a named key always wins.
+    // Native support follows the native gun profile in lab AND play (Stage B, docs/anim-round2-throws.md: lab hidden
+    // runs aaa2a0e0, ea93a2e3; play rehearsals 117620b9, e9244c56, 733e023b, 33c11da9); off without a profile and for
+    // loco/off in either mode, and a named key always wins (partner_native_support=0 opts out of the gun default).
     Check(!LabConfig{}.partner_native_support && !Lab("").partner_native_support, "native support default off");
     for (const char* mode : {"lab", "play"}) {
         // Play profiles require the real clip-partner fallback configuration.
@@ -38,10 +39,12 @@ int main() {
                                   "\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
         for (const char* profile : {"off", "loco", "gun"}) {
             const std::string key = std::string("partner_native_profile=") + profile + "\n";
-            const bool lab_gun = std::strcmp(mode, "lab") == 0 && std::strcmp(profile, "gun") == 0;
+            const bool gun = std::strcmp(profile, "gun") == 0;
             const auto resolved = Lab(prefix + key);
-            Check(resolved.partner_native_support == lab_gun && !resolved.partner_native_support_given,
-                  "support defaults on only for the lab gun profile");
+            Check(resolved.partner_native_support == gun && !resolved.partner_native_support_given,
+                  "support defaults on for the gun profile in lab and play, off for off/loco");
+            Check(resolved.play_refused == 0 && resolved.invalid_values == 0 && resolved.unknown_keys == 0,
+                  "support matrix configs are clean in lab and play");
             for (const bool keyFirst : {false, true}) {
                 for (const char* value : {"0", "1"}) {
                     const std::string support = std::string("partner_native_support=") + value + "\n";

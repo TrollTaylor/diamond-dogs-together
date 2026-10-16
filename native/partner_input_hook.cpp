@@ -2006,7 +2006,9 @@ pi::Injection SupportFrame(const pi::Arm& a,const pi::Injection& frame,std::uint
 // the remote's slot-3 equip (B's identity, so never mid-switch) and its class is
 // 2/3 (the iface reset 0x1061F50's gate for vt+0x38/vt+0x160 on rec+0x240), the
 // row X+0x140[rec240>>16] must be in range, name the handle's equip and owner 1.
-// Detect-only while partner_support_policy::kRec240Latch is false.
+// A foreign verdict latches native support off for the mission
+// (partner_support_policy::kRec240Latch, true since the WS1 hidden runs); an
+// unread chain or row never latches.
 std::uint32_t g_rec240_logged=0;
 partner_support_policy::Rec240 g_rec240_last=partner_support_policy::Rec240::skip;
 volatile LONG g_rec240_checks=0,g_rec240_foreign=0;

@@ -1,10 +1,10 @@
 # Native partner type-12 throws in two-PC play mode, WS2 Stage A (docs/anim-round2-throws.md "Throws in play").
 # The hidden play rehearsal: both copies in mode=play exactly as Play-Coop writes it, on 127.0.0.1 with the worker-only
-# play_rehearsal=1, copied lab saves, link v2. The default stays lab-only (Stage B not flipped): the named key comes from
-# the command line, NOT from a labsetting line here, so the Stage B re-run is this same file without it.
+# play_rehearsal=1, copied lab saves, link v2. Stage B: partner_native_support defaults on with the gun profile in play
+# too, so neither the command line nor this file names it (Stage A runs passed -LabSetting partner_native_support=1).
 # Executable: mgsvtpp.exe 1.0.15.4, SHA-256 pinned by the partner contract; no visible launch, MGS_GAME_LUA_DIR unset.
 # Run (coordinator only, hidden worker; take the verify lock first; queue behind any running hidden run):
-#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -LabSetting partner_native_support=1 -WanSim off
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-support-play.txt -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -WanSim off
 #   then the same with -WanSim bad and with -WanSim awful.
 # Checkpoint save + reload (critic #6) cannot run in play: world triggers are lab-only by design (world_link Configure,
 # world_wire ApplyTrigger "not_lab", kPlayRefusedWorldProbe, the runner's worldtrigger rule). The persistence half runs

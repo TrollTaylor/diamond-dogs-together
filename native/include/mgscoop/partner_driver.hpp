@@ -351,6 +351,10 @@ struct Hooks {
     // the cam_connect refusal. Nothing in this track arms one.
     bool (*dm_camera_skip_armed)(void* context) noexcept = nullptr;
     bool (*support_ready)(void*,const partner_player::State&,std::uint16_t equip) noexcept = nullptr;
+    // The unknown remote slot/equip debounce (partner_input::HoldIdentity in
+    // partner_net's receive path): the equip of this tick's support verdict
+    // (Mission::support_equip, 0 = none), published every driver tick. May be null.
+    void (*publish_support_identity)(void* context, std::uint16_t equip) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -896,6 +900,11 @@ struct Mission {
     partner_reload::Out reload_out;
     partner_reload::SenderState sender_gun;
     LogCap reload_cap;
+    // The sender hold (partner_input::HoldSender, run 0c9269ce): a failed local
+    // gun/slot read republishes the last good one for kSenderHoldMs; its lines
+    // (partner_input=sender_hold, own cap) carry the read's refusal.
+    partner_input::SenderHold sender_hold;
+    LogCap sender_hold_cap;
     // The remote's latest live v5 gun group (remote_v5: GunFlag::Valid) and slot.
     bool remote_v5;
     std::uint8_t remote_gun_flags, remote_gun_mode, remote_reload_seq, remote_switch_seq, remote_slot;
@@ -1092,6 +1101,13 @@ struct Driver {
     Mission mission;
 };
 
+// The effective settings' native_active (EffectiveSettings): the native drive is
+// configured and the arbiter's last step is active. Driver::settings is the
+// configured copy, whose native_active is always false, so code that reads
+// d.settings (TickNative's stall hold, the observer's ContextHold) uses this.
+inline bool NativeActive(const Driver& d) noexcept {
+    return d.settings.drive == PartnerDrive::native && d.mission.native_out.active;
+}
 
 // Read-only admission from the same effective settings as Tick. The caller
 // must serialize with driver ticks; no caller-supplied active flag is accepted.

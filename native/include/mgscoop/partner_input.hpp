@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_support_policy.hpp"
 
 namespace mgscoop::partner_input {
 
@@ -218,6 +219,43 @@ struct V6Source {
 };
 void Fill6(InputPacket& packet, const V6Source& source) noexcept;
 
+// Sender hold (docs/anim-round2-throws.md "Unknown-slot glitch", run 0c9269ce).
+// The v4/v5 weapon fields come from two reads of the local player per tick: its
+// gun record (ReadGun k=0 with its fields: the equip, the magazine and the v5 gun
+// group) and its slot row (ReadSlots: inv_slot). One failed gun read used to send
+// a frame with neither XFlag::Equip nor GunFlag::Valid, which the receiver reads as
+// remote_slot=255 / remote_equip unknown (its remote_v5 needs GunFlag::Valid) and
+// which aborted a held throw. A failed read now republishes the last good read's
+// fields for up to kSenderHoldMs; a good read (whatever it says, an empty hand
+// included) always replaces them, and beyond the bound the unknown goes out.
+inline constexpr std::uint64_t kSenderHoldMs = 250;
+struct SenderHold {
+    bool gun;                     // a good gun read was recorded
+    std::uint64_t gun_ms;
+    bool equip_valid, mag_valid, gun_valid;
+    std::uint32_t equip, mag, mag_cap;
+    std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
+    bool slot;                    // a good slot read was recorded
+    std::uint64_t slot_ms;
+    std::uint8_t inv_slot;
+    bool gun_holding, slot_holding;   // the current held runs (log transitions)
+    std::uint64_t gun_since_ms, slot_since_ms;
+    std::uint32_t gun_held, slot_held;
+};
+enum class HoldEvent : std::uint8_t { none, start, held, resumed, expired };
+const char* HoldEventName(HoldEvent event) noexcept;
+struct SenderHoldOut {
+    HoldEvent gun, slot;
+    std::uint32_t gun_ms, slot_ms;     // the age of the good read at start, the run's length at resumed/expired
+    std::uint32_t gun_held, slot_held; // frames the run republished
+};
+// Whether a failed read at now_ms is still inside the hold of the last good one.
+bool SenderHoldLive(bool have, std::uint64_t good_ms, std::uint64_t now_ms) noexcept;
+// v: the frame's sources as this tick read them; gun_read / slot_read: whether
+// the gun record (with its fields) and the slot row were read. Records the good
+// parts and fills the failed parts from the hold while it is live.
+SenderHoldOut HoldSender(SenderHold& hold, V5Source& v, bool gun_read, bool slot_read, std::uint64_t now_ms) noexcept;
+
 // Sources of the three edge words src+0x4C/+0x50/+0x54 inside the window.
 enum class Word : std::uint8_t { zero = kPartnerWordZero, press = kPartnerWordPress, release = kPartnerWordRelease,
                                  held = kPartnerWordHeld, net = kPartnerWordNet };
@@ -262,6 +300,19 @@ struct InputEdges {
     std::uint32_t sets;     // edge sets accepted (statistics)
 };
 void AccumulateEdges(InputEdges& edges, const InputPacket& packet) noexcept;
+// Receiver side (partner_net, under its lock, before an accepted frame is stored):
+// the unknown remote slot/equip debounce (partner_support_policy::StepIdentity).
+// support_equip: the driver's last support verdict (0 = none). A held frame gets
+// slot 3, XFlag::Equip with that equip and, when it lacked GunFlag::Valid, the gun
+// group of the last complete frame (GunFlag::AimDir dropped: its angles are not
+// carried); its input (held bits, sticks, edges) is untouched. Returns the verdict.
+struct IdentityHold {
+    partner_support_policy::IdentityTrack track;
+    std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;  // the last complete frame's gun group
+};
+partner_support_policy::Identity PacketIdentity(const InputPacket& packet) noexcept;
+partner_support_policy::IdHold HoldIdentity(IdentityHold& hold, InputPacket& packet, std::uint16_t support_equip,
+                                            std::uint64_t now_ms) noexcept;
 // Hook-thread only; survives Arm gen bumps (see Arm).
 //   net_held: the masked net held level of the last live window. A stall
 //     (stale input) keeps it for kStaleGraceMs without edges (the hold history

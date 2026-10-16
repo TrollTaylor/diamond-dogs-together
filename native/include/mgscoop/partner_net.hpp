@@ -154,6 +154,21 @@ RemoteLook SampleLook() noexcept;
 // (InputEdges), and logs partner_net=input_rx; first=1 once per epoch.
 inline constexpr std::uint32_t kInputMinGapMs = 8;
 bool SubmitInput(const partner_input::InputPacket& packet) noexcept;
+// The worker-only input stall (docs/anim-round2-throws.md "Stall test step"):
+// SubmitInput sends nothing for `ms` (kInputStallMinMs..kInputStallMaxMs) from
+// now, so the peer's newest input frame ages through stale_ms into its stall
+// hold exactly as a real gap would; the sender's edge sets keep accumulating
+// (SenderSent is not called) and go out with the first frame after the stall.
+// Only the private worker's native debug command (input_stall <ms>) calls it,
+// and only when MGS_BACKGROUND_WORKER is compiled in and the worker scenario is
+// active; every other build refuses (the friend/Release loader never has the
+// background worker). Lines: partner_net=input_stall; reason=start|end.
+inline constexpr std::uint32_t kInputStallMinMs = 50, kInputStallMaxMs = 1000;
+const char* StallInput(std::uint32_t ms) noexcept;   // nullptr: started; else the refusal
+// The unknown remote slot/equip debounce (partner_input::HoldIdentity, applied
+// to each accepted input frame before it is stored): the equip of the driver's
+// last support verdict (0 = none; the partner driver publishes it every tick).
+void SetSupportIdentity(std::uint16_t equip) noexcept;
 // Default-off data transport only (MGS_LOCAL_ACTION_EVENTS). The observer
 // authorizes a natural owner receipt before caching it. SubmitLocal sends this
 // separate companion at the same rate gate as movement, never enables gun DM.
@@ -166,13 +181,15 @@ struct ActionSample { partner_actions::Receipt receipt{}; std::uint32_t age_ms =
 bool SampleActions(std::uint32_t expected_mission, ActionSample& out) noexcept;
 // Edge sets of accepted frames are accumulated (partner_input::AccumulateEdges)
 // until ConsumeInput takes them.
-// The newest received input (non-blocking): false when the lock is busy (the
-// caller keeps its previous sample). age_ms = NowMs() - rx_ms. Read-only: the
-// edge fields stay 0 (Lua-side stats and probes).
+// The newest received input; always returns true. It waits for the receive
+// thread's short exclusive section (like SampleRemote; the waits are counted in
+// the stats line's latest_waits): its callers (the driver, the observer) took a
+// busy lock for "no input" (out.valid false). age_ms = NowMs() - rx_ms.
+// Read-only: the edge fields stay 0 (Lua-side stats and probes).
 bool LatestInput(partner_input::Sample& out) noexcept;
 // LatestInput plus the edges accumulated since the previous call, which it
-// clears (the input window's sample; false when the lock is busy, and then
-// nothing is consumed).
+// clears (the input window's sample; non-blocking: false when the lock is busy,
+// and then nothing is consumed and the input hook keeps its previous sample).
 bool ConsumeInput(partner_input::Sample& out) noexcept;
 // True once the peer sent an accepted input frame v5 since the last receive
 // reset (a new link session, ResetRemote): its build decodes v5. The native
