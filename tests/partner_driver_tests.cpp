@@ -5394,6 +5394,33 @@ void TestNativeThrownSupport() {
         s.fake.arms.back().gun_rec==s.fake.gun.rec && s.fake.arms.back().native_support && s.fake.arms.back().aim_intent,
         "qualified support passes HOLD/FIRE without historical gun-class admission");
     Check(s.fake.support_identity==354,"the support verdict's equip is published for partner_net's unknown slot/equip debounce");
+    // Critic #4 through the driver (hidden run c9e3156f: a 320 ms host stall never held): the stall
+    // hold follows the arbiter's effective state, never the configured copy's native_active.
+    {
+        const auto stale=s.fake.latest.age_ms;
+        s.driver.settings.nstall=mgscoop::PartnerNativeStall::hold;
+        s.driver.settings.stale_ms=250;s.driver.settings.stall_ms=400;
+        s.fake.latest.age_ms=320;s.N();
+        Check(!s.driver.settings.native_active && pd::NativeActive(s.driver) && s.driver.mission.support_stall &&
+            s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support &&
+            s.driver.mission.remote_slot==0xFF && s.fake.arms.back().strip==0x40u && s.fake.support_identity==354,
+            "a stale v5 slot-3 frame inside stall_ms keeps the support gate (configured native_active stays false)");
+        s.fake.latest.age_ms=399;s.N();
+        Check(s.driver.mission.support_stall && s.driver.mission.weapon_gate==slots::Gate::support,"still held at 399 ms");
+        s.fake.latest.age_ms=stale;s.N();
+        Check(!s.driver.mission.support_stall && s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support,
+            "fresh again: live support, no stall");
+        s.fake.latest.age_ms=401;s.N();
+        Check(!s.driver.mission.support_stall && !s.driver.settings.support_live &&
+            s.driver.mission.weapon_gate==slots::Gate::unsupported && (s.fake.arms.back().strip&0x58u)==0x58u,
+            "beyond stall_ms the old strip applies");
+        s.fake.latest.age_ms=stale;s.N();
+        s.driver.settings.nstall=mgscoop::PartnerNativeStall::neutral;s.fake.latest.age_ms=320;s.N();
+        Check(!s.driver.mission.support_stall && !s.driver.settings.support_live &&
+            s.driver.mission.weapon_gate==slots::Gate::unsupported,"stall=neutral (lab): no hold");
+        s.fake.latest.age_ms=stale;s.N();
+        Check(s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::support,"fresh: support again");
+    }
     s.fake.support_ready=false;s.N();
     Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::unsupported &&
         (s.fake.arms.back().strip&0x58u)==0x58u && !(s.fake.arms.back().config.mask&0x10u),"lost support safety masks same tick");

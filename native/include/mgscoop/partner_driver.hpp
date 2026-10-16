@@ -1101,6 +1101,13 @@ struct Driver {
     Mission mission;
 };
 
+// The effective settings' native_active (EffectiveSettings): the native drive is
+// configured and the arbiter's last step is active. Driver::settings is the
+// configured copy, whose native_active is always false, so code that reads
+// d.settings (TickNative's stall hold, the observer's ContextHold) uses this.
+inline bool NativeActive(const Driver& d) noexcept {
+    return d.settings.drive == PartnerDrive::native && d.mission.native_out.active;
+}
 
 // Read-only admission from the same effective settings as Tick. The caller
 // must serialize with driver ticks; no caller-supplied active flag is accepted.

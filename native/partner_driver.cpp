@@ -3699,7 +3699,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // equip (TickWeapons rechecks everything else; the hook freezes the level).
     {
         partner_support_policy::StallHoldIn sh{};
-        sh.stall_hold = set.native_active && set.nsupport && set.nstall == PartnerNativeStall::hold;
+        // set is the configured copy (its native_active is always false): the
+        // arbiter's step above decides (hidden run c9e3156f never held).
+        sh.stall_hold = NativeActive(d) && set.nsupport && set.nstall == PartnerNativeStall::hold;
         sh.stale_ms = set.stale_ms;
         sh.stall_ms = set.stall_ms;
         sh.age_ms = latest_ok ? latest.age_ms : 0xFFFFFFFFu;

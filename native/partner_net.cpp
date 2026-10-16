@@ -58,6 +58,9 @@ std::uint32_t g_input_tx_seq = 0;
 std::uint64_t g_input_tx_ms = 0;
 partner_input::InputEdges g_edges{};
 volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
+// LatestInput calls that found g_lock held by the receive thread and waited
+// (process total, the stats line's latest_waits).
+volatile LONG g_latest_waits = 0;
 // The unknown remote slot/equip debounce (guarded by g_lock; its lines have their
 // own cap per receive reset) and the driver's published support verdict.
 partner_input::IdentityHold g_identity_hold{};
@@ -1127,12 +1130,12 @@ void OnIdle(void*) noexcept {
         char line[384]{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
                 "partner_net=stats; tx=%llu; rx=%llu; drop_epoch=%u; drop_seq=%u; drop_bad=%u; status=%s; last_age_ms=%u; "
-                "native_us_avg=%u; native_us_max=%u; in_tx=%u; in_rx=%u; in_drop=%u\r\n",
+                "native_us_avg=%u; native_us_max=%u; in_tx=%u; in_rx=%u; in_drop=%u; latest_waits=%u\r\n",
                 static_cast<unsigned long long>(current.tx), static_cast<unsigned long long>(current.rx), current.drop_epoch,
                 current.drop_seq, current.drop_bad, pose::StatusName(status),
                 static_cast<unsigned>(age > 0xFFFFFFFFull ? 0xFFFFFFFFu : age),
                 count ? static_cast<unsigned>(sum / count) : 0u, max, static_cast<unsigned>(g_in_tx),
-                static_cast<unsigned>(g_in_rx), static_cast<unsigned>(g_in_drop))) ) Log(line);
+                static_cast<unsigned>(g_in_rx), static_cast<unsigned>(g_in_drop), static_cast<unsigned>(g_latest_waits))) ) Log(line);
     }
     SetLastError(error);
 }
@@ -1780,7 +1783,14 @@ bool PeerSendsInputV6() noexcept { return g_input_v6_peer != 0; }
 
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};
-    if (!TryAcquireSRWLockShared(&g_lock)) return false;
+    // Waits for the receive thread's short exclusive section (as SampleRemote
+    // does): the driver and the observer took a busy lock for "no input", which
+    // read as remote_slot=255 / equip unknown for one tick, gate unsupported and
+    // strip 0x58 mid support episode (hidden runs 0c9269ce, 6d9dc4f9, 9f2d0bfb).
+    if (!TryAcquireSRWLockShared(&g_lock)) {
+        InterlockedIncrement(&g_latest_waits);
+        AcquireSRWLockShared(&g_lock);
+    }
     if (g_input_valid) {
         const std::uint64_t now = NowMs();
         out.valid = true;

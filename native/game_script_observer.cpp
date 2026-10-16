@@ -1813,7 +1813,8 @@ void ObserveNativeSupport() noexcept {
         // (partner_support_policy::ContextHold, WS2 review).
         const auto& set=partner_driver.settings;
         mgscoop::partner_support_policy::StallHoldIn hold{};
-        hold.stall_hold=set.native_active && set.nsupport && set.nstall==mgscoop::PartnerNativeStall::hold;
+        // settings is the configured copy (native_active only in the effective one).
+        hold.stall_hold=pd::NativeActive(partner_driver) && set.nsupport && set.nstall==mgscoop::PartnerNativeStall::hold;
         hold.stale_ms=set.stale_ms;hold.stall_ms=set.stall_ms;hold.age_ms=input.age_ms;
         hold.v5_valid=input.packet.version>=5 && (input.packet.gun_flags&mgscoop::partner_input::GunFlag::Valid);
         hold.slot=input.packet.inv_slot;

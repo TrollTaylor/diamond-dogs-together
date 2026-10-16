@@ -181,13 +181,15 @@ struct ActionSample { partner_actions::Receipt receipt{}; std::uint32_t age_ms =
 bool SampleActions(std::uint32_t expected_mission, ActionSample& out) noexcept;
 // Edge sets of accepted frames are accumulated (partner_input::AccumulateEdges)
 // until ConsumeInput takes them.
-// The newest received input (non-blocking): false when the lock is busy (the
-// caller keeps its previous sample). age_ms = NowMs() - rx_ms. Read-only: the
-// edge fields stay 0 (Lua-side stats and probes).
+// The newest received input; always returns true. It waits for the receive
+// thread's short exclusive section (like SampleRemote; the waits are counted in
+// the stats line's latest_waits): its callers (the driver, the observer) took a
+// busy lock for "no input" (out.valid false). age_ms = NowMs() - rx_ms.
+// Read-only: the edge fields stay 0 (Lua-side stats and probes).
 bool LatestInput(partner_input::Sample& out) noexcept;
 // LatestInput plus the edges accumulated since the previous call, which it
-// clears (the input window's sample; false when the lock is busy, and then
-// nothing is consumed).
+// clears (the input window's sample; non-blocking: false when the lock is busy,
+// and then nothing is consumed and the input hook keeps its previous sample).
 bool ConsumeInput(partner_input::Sample& out) noexcept;
 // True once the peer sent an accepted input frame v5 since the last receive
 // reset (a new link session, ResetRemote): its build decodes v5. The native
