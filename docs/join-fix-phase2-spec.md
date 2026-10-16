@@ -166,7 +166,7 @@ Native deletes only these known names and empty folders, never recursively, and 
 - save_handoff::NoteMission says no partner mission and not terminating;
 - 10000 ms of countdown have elapsed with the title held throughout;
 - no decline has arrived (Lua op 3 or the F9 KeepOwnSave request).
-On exit: RESULT exiting is sent, then EnumWindows picks the largest visible unowned top-level window of GetCurrentProcessId() and PostMessageW(WM_CLOSE) is posted. With no window found: log 'save_handoff=exit; how=no_window' and toast G9. If the process is still alive 20 s later: log 'save_handoff=exit_slow' and toast G9.
+On exit: RESULT exiting is sent, then EnumWindows picks the largest visible unowned top-level window of GetCurrentProcessId() and PostMessageW(WM_CLOSE) is posted. With no window found: log 'save_handoff=exit; how=no_window' and toast G9. If the process is still alive 20 s later: log 'save_handoff=exit_slow' and toast G9 (after a WM_CLOSE from the glue's own timer, since PartnerShutdown stops the core; review N1). A decline or the guest's own Continue (op 2) while exiting still drops the request (review SS-1).
 If the title is lost for more than 2 s, or on a decline: ABORT, delete request.json then the staged files, and set state kept (decline) or failed (not_title).
 - P2-11 lab.ini keys (native/lab_config.cpp next to world :409; unknown keys are already ignored at :452):
 - save_handoff=off|stage|scene|always. When the key is absent the value is off; Play-Coop writes it explicitly.
@@ -274,7 +274,7 @@ Decode refuses: n=0 or n>6; unsorted or duplicate slots; slot>5; size 0 or >4 Mi
 - Outputs, through an Actions ring: Send{kind, mode}, HashSet, Snapshot, StageWrite{slot, offset, len}, CommitStage, WriteManifest, WriteRequest{rejoin}, WriteProvenance, DeleteStage, PostExit, Toast{code, a, b}, Log, Publish{token, pct, lua_code}.
 - Pure helpers: HostEligible, GuestNeed (P2-7), ExitGate (P2-10), Loc(mission), and a Provenance table (8 entries, LRU, Bind/Find).
 - JSON format/parse, bounded and ASCII, rejecting unknown v: provenance.json, handoff.json, request.json and applied.json (P2-8, P2-9).
-- Timers: STATE every 500 ms on change plus a 5 s heartbeat; host idle offer 30 s; guest chunk stall 30 s; host waits 60 s for RESULT; snapshot kept 300 s; countdown 10 s; exit_slow 20 s; Lua freshness 1500 ms (exit) and 3000 ms (phase); settle bind 30 s; at most 3 offers per set per session; at most 4 chunks per tick while ReliableQueued(4) < 16.
+- Timers: STATE every 500 ms on change plus a 5 s heartbeat; host idle offer 30 s; guest chunk stall 30 s; host chunk stall 30 s (sending with no CHUNK queued: failed stall; review N2); host waits 60 s for RESULT; snapshot kept 300 s; countdown 10 s; exit_slow 20 s; Lua freshness 1500 ms (exit) and 3000 ms (phase); settle bind 30 s; at most 3 offers per set per session; at most 4 chunks per tick while ReliableQueued(4) < 16.
 - There is no resume: OnSession drops the partial and keeps a verified stage. A new OFFER with the same set is answered DECLINE same when the stage still matches the guest's own set; otherwise the guest reuses the stage and sends RESULT staged without a WANT.
 - A3 save_handoff_state.hpp/.cpp exactly as P2-14, in the steam_online_state.hpp seqlock style (native/include/mgscoop/steam_online_state.hpp:1-6). TokenName follows the P2-13 order.
 - A4 CMakeLists.txt (single owner; the other tracks send their hunks here):
@@ -428,7 +428,7 @@ No camera-agent file is touched.
 - U2 coop_hud.cpp:
 - FormatToast (:436-491): case save_handoff strictly parses '<a> <b>' and calls FormatSaveHandoff. Tones: G1/G2/G10 info, G9 warn, G5/G6/G7 warn, H1/H2/H3 info, H4/H6/H7 warn.
 - FormatLine connected (:375-382): handoff receiving gives 'CO-OP [connected] %.24s - %s %u ms | getting host save %u%%'; sending gives '... | sending your save %u%%'; staged, countdown or exiting gives 'CO-OP [connected] %.24s | host save ready - MGSV restarts'.
-- listening or lost with v.left and handoff==partner_restarting (:384-414): 'CO-OP [%.24s restarting] loading your save - waiting for them'.
+- listening or lost with handoff==partner_restarting (:384-414), with or without v.left (UDP sends no goodbye; review N3): 'CO-OP [%.24s restarting] loading your save - waiting for them'. The host's lost toast is suppressed while partner_restarting (H2 already said so).
 - Defaults keep every existing string.
 - U3 coop_reason_text.cpp: FormatSaveHandoff sentences for codes G1..G10 and H1..H7, plus FormatWorldNote sentences for codes 5..12 (texts in user_visible_texts). Mission names come from FormatMission (Phase-1 K11). Every sentence is <= 199 chars and ASCII.
 - U4 debug_menu_ui.cpp, Partner / Co-op page. Right after the Online section (:665-677), add a 'Shared save' section shown when save_handoff_state::Get().available:
@@ -468,9 +468,10 @@ Helpers, all read through pcall or W.get:
 - C2 X.tick(now) is chained in front of F.tick: 'local prev = F.tick; F.tick = function(now) X.tick(now); return prev(now) end' (W.tick calls W.follow.tick dynamically, world_sync.lua:246). It:
 - sends REPORT op 1 on change or every 1000 ms;
 - expires X.esc entries;
-- runs the sortie hold: release on a mission change (drop), on W.paired or F.queue non-empty (drop, log decision=follow), on TravelUnlocked (r[13]==0: run the stored original, note 8 b=2), after 120000 ms (run the original, note 8 b=3); re-post note 12 every 3 s while held.
+- runs the sortie hold: release on a mission change (drop), on W.paired or F.queue non-empty (drop, log decision=follow), on TravelUnlocked (r[13]==0: run the stored original, note 8 b=2), after 120000 ms (run the original, note 8 b=3); re-post note 12 every 3 s while held. As implemented (review lua-flow-2/3): dropped first when the live gvars no longer name the held target (the prep screen cancelled or changed; decision=stale), and released when world sync is inactive (W.fail, LEVEL 0: world_sync's inactive OnUpdate calls X.hold while W.isStarted; decision=inactive, note 8 b=2).
 - C3 Lock install through F.installHooks (world_follow.lua:244-247; idempotent through X.installed). Inner wrappers are installed BEFORE world_follow wraps, so world_follow's guest() armed suppression stays the outer layer and F.originalDeploy becomes X's wrapper.
 Wrapped TppMission functions: ReserveMissionClear, AbortMission, AbortMissionByMenu, ContinueFromCheckPoint, ExecuteContinueFromCheckPoint, OnEndMissionPreparation; plus e.ReservePlayerLoadingPosition.
+Review lua-flow-1 (as implemented): the game's title Continue never calls TppMission's Continue functions (title_sequence Seq_Game_TitleMenu.OnSelectContinue -> CheckDlc/ChunkInstalled -> FadeOut -> OnEndFadeOutSelectContinue: VarRestore, ClearTitleMode, ReservePlayerLoadingPosition, Load). So every 4xxxx mission init (F.installHooks, before TppSequence.Init captures self.OnSelectContinue) wraps the shared Seq_Game_TitleMenu.OnSelectContinue and OnSelectRestartHeli from mvars.seq_sequenceTable. At the select (title mode, before any fade or restore): an armed guest (world_follow's guest()) is suppressed (F.request(4); X.decline for a pending handoff); otherwise the title rules below run with target gvars.title_nextMissionCode; a RestartHeli or a Continue into a helicopter-space/10115/50050 next mission does not travel (only the handoff rules). A refused select reopens the menu as the vanilla cancel path does (TppUiCommand.RebootTitleSelectMenu, title_sequence.StartTitleMenu). The kind-4 TppMission wrappers pass through at a title. op 2's title bit is latched at the select (ClearTitleMode runs before the reserve). R6 confirms the menu takes the second press.
 Each wrapper passes straight through when F.token is set, when W.host, or when X.decide returns allow.
 X.decide(fn, kind, target, now) is pure and returns 'allow' when any of these holds:
 - not F.enabled or not W.active or W.level < 3;
@@ -482,7 +483,7 @@ X.decide(fn, kind, target, now) is pure and returns 'allow' when any of these ho
 - target is nil or 0, or equals m, or is 4xxxx, or equals W.mission;
 - an escape for (fn, target) passed within the last 2000 ms (one press can hit two wrappers).
 Title Continue (kind 4 while title()):
-- r[12] in 2..4: refuse, note 9;
+- r[12] in 2..4: refuse, note 9 (checked before r[13], after the escape: the veto works with the travel lock off; review SS-2);
 - r[12]==1: refuse, note 7 b=3;
 - story()==1: note 7 b=2;
 - SUPPORTED[W.mission] ~= SUPPORTED[m]: note 7 b=1;
@@ -726,7 +727,8 @@ docs/two-pc-play.md gets the same flow and the new HUD and status lines.
 - "The background helper is restarting MGSV with the host's save..."
 - "Could not apply the host's save: <reason>. Your co-op save is unchanged."
 - "A host save from an earlier session was not applied and was removed."
-- "Steam did not start MGSV again within 60 s: start MGS V from Steam yourself; co-op stays on for 5 minutes."
+- "Steam did not start MGSV again within 60 s: start MGS V from Steam yourself; co-op stays on for <n> more seconds." (only after the console's own relaunch check passed with at least 90 s left; review SS-4)
+- "Co-op was switched off while MGSV was restarting (the helper could not start it again); do not start MGS V from Steam now. Start Play-Coop.bat again." / "MGSV could not be started again: <reason>. Do not start MGS V from Steam now; start Play-Coop.bat again." (the console's run-1 wait stops at once; review SS-4)
 - "The host's save was already applied once this session; the newer one was not used."
 - Join hint: "Save sharing: if your co-op save starts somewhere else than the host's, you get the host's save at the title screen and MGSV restarts once (your own copy is kept; Share-Save.bat [R]). -SaveHandoff off turns this off."
 - SHARE-SAVE:
@@ -765,7 +767,7 @@ Then 'pwsh -File tools/worker/Invoke-WorkerChecks.ps1 -Profile Normal -EnableBac
 - R3 The same transfer over the play link: 'pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -GuestSaveSeed real -LabSetting save_handoff=stage -ScenarioPath tools/worker/scenarios/handoff-stage.txt -GraphicsQuality low'. Pass: as R2, plus 'save_handoff=configured; role=...; channel=4' in both logs.
 - R4 Restart, session 1:
 - Command: 'pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-restart.txt -SaveSeed lab -GuestSaveSeed real -LabSetting host:save_handoff=stage -LabSetting guest:save_handoff=scene -GraphicsQuality low'.
-- Guest: 'save_handoff=countdown', then 'save_handoff=exit; how=wm_close'. The process exits within 90 s with no forced termination, 'partner_shutdown' is logged, and the host logs link=peer_left.
+- Guest: 'save_handoff=countdown', then 'save_handoff=exit; how=wm_close'. The process exits within 90 s with no forced termination. The host logs 'save_handoff=result_rx; status=exiting', then (UDP, the worker) 'link=lost; after_ms=...' with its handoff token partner_restarting; 'link=peer_left' appears only on Steam. 'partner_shutdown' is not logged at the title (PartnerShutdown returns before logging when no partner mission is armed).
 - The host's state.json hud toast starts with the H2 text.
 - applyhandoff: run\guest-saves progress equals the staged manifest; run\guest-saves-replaced\<stamp>-before-handoff holds the old real-seed tree; settings files are the guest's own; imported-progress.json has source=handoff.
 - R5 Restart, session 2:

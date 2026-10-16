@@ -993,6 +993,10 @@ void Core::OnContinue(std::uint32_t target, std::uint64_t now_ms) noexcept {
     m_.cb_target = target;
     m_.cb_at = now_ms;
     Log("save_handoff=continue; target=%u", target);
+    // Exiting, but the game kept running and loads the guest's own save (a
+    // Continue Lua allowed without op 3: lock off, no link): the request must
+    // not be applied at the next exit.
+    if (config_.role == wire::Role::guest && m_.guest == GuestPhase::exiting) GuestCancelExit(wire::AbortReason::not_title, now_ms);
     if (!m_.hash_pending) {
         Emit(ActionKind::hash_set);
         m_.hash_pending = true;
@@ -1020,7 +1024,9 @@ void Core::OnDecline(DeclineSource source, std::uint64_t now_ms) noexcept {
         break;
     case GuestPhase::staged:
     case GuestPhase::countdown: GuestAbortStage(wire::AbortReason::user, now_ms); break;
-    case GuestPhase::exiting: break;  // WM_CLOSE is already posted
+    // WM_CLOSE is posted but the game still runs (no_window, a slow close): the
+    // veto holds, request.json goes before the tooling can apply it.
+    case GuestPhase::exiting: GuestCancelExit(wire::AbortReason::user, now_ms); break;
     case GuestPhase::idle:
         if (static_cast<Token>(view_.token) == Token::wait_host) {
             SetToken(Token::kept, U8(wire::DeclineReason::user));
@@ -1070,7 +1076,7 @@ void Core::OnPeer(const std::uint8_t* bytes, std::size_t size, std::uint64_t now
     if (bad) {
         ++stats_.bad_msg;
         if (!m_.bad_logged || now_ms - m_.bad_log_at >= kBadMsgLogMs) {
-            Log("save_handoff=bad_msg; why=%s", bad);
+            Log("save_handoff=bad_msg; why=%s; count=%u", bad, stats_.bad_msg);
             m_.bad_logged = true;
             m_.bad_log_at = now_ms;
         }
@@ -1262,6 +1268,9 @@ void Core::OnSendResult(const Action& sent, bool queued, std::uint64_t now_ms) n
     const bool host = config_.role == wire::Role::host;
     if (queued) {
         if (sent.message == wire::Kind::chunk) ++stats_.chunks_sent;
+        // A queued CHUNK proves the link takes data (a reliable slot frees only on an ack).
+        if (host && sent.message == wire::Kind::chunk && m_.host == HostPhase::sending && sent.xfer == m_.xfer)
+            m_.progress_at = now_ms;
         if (!host && sent.message == wire::Kind::result && sent.xfer == m_.xfer &&
             sent.data[8] == U8(wire::ResultStatus::staged) && m_.stage_ok) {
             m_.result_sent = true;
@@ -1439,6 +1448,12 @@ void Core::HostTick(std::uint64_t now_ms, unsigned queued) noexcept {
         if (now_ms - m_.phase_at >= kOfferIdleMs) HostFail(wire::Fail::timeout, wire::AbortReason::stall, now_ms);
         break;
     case HostPhase::sending: {
+        // The guest crashed or the link died without a CLOSE: every CHUNK (and
+        // END) is refused or the queue never drains. Mirrors the guest's stall.
+        if (now_ms - m_.progress_at >= kChunkStallMs) {
+            HostFail(wire::Fail::stall, wire::AbortReason::stall, now_ms);
+            break;
+        }
         unsigned sent = 0;
         while (m_.cur_file < m_.offer.n && sent < kChunksPerTick && queued + sent < kMaxQueued) {
             const wire::FileEntry& file = m_.offer.files[m_.cur_file];
@@ -1616,7 +1631,7 @@ void Core::HostMessage(const wire::Message& msg, std::uint64_t now_ms) noexcept 
         m_.cur_off = 0;
         m_.sent_bytes = 0;
         m_.host = HostPhase::sending;
-        m_.phase_at = now_ms;
+        m_.phase_at = m_.progress_at = now_ms;
         SetToken(Token::sending, 0);
         view_.pct = 0;
         Log("save_handoff=want_rx; xfer=%08X; mask=%02X; bytes=%u", m_.xfer, unsigned{m_.want_mask}, m_.want_total);
@@ -1805,10 +1820,12 @@ void Core::GuestTick(std::uint64_t now_ms) noexcept {
         break;
     }
     case GuestPhase::exiting:
-        if (m_.exit_posted && !m_.exit_slow && now_ms - m_.exit_at >= kExitSlowMs) {
+        // no_window only (G9 already shown; the game keeps running and ticking).
+        // After a WM_CLOSE the overlay's PartnerShutdown stops this core (and a
+        // Steam link parks), so the glue's own timer logs exit_slow and shows G9.
+        if (m_.exit_posted && !m_.exit_window && !m_.exit_slow && now_ms - m_.exit_at >= kExitSlowMs) {
             m_.exit_slow = true;
             Log("save_handoff=exit_slow");
-            if (m_.exit_window) PostToast(Toast::g9_quit_manually, 0, 0);  // no_window already showed G9
         }
         break;
     }
@@ -2053,6 +2070,15 @@ void Core::GuestAbortStage(wire::AbortReason reason, std::uint64_t now_ms) noexc
         PostToast(Toast::g7_failed, U8(fail), 0);
     }
     (void)now_ms;
+}
+
+// Exiting, yet the game still runs: a veto (user) or the guest's own Continue
+// (not_title) drops the request and the stage like the countdown does. The
+// host's partner_restarting (done) accepts the ABORT. Staleness never cancels
+// here: reports stop during a legitimate slow WM_CLOSE teardown.
+void Core::GuestCancelExit(wire::AbortReason reason, std::uint64_t now_ms) noexcept {
+    GuestAbortStage(reason, now_ms);
+    m_.exit_posted = m_.exit_window = m_.exit_slow = false;
 }
 
 }  // namespace mgscoop::save_handoff_core

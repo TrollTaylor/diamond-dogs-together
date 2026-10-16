@@ -433,37 +433,109 @@ local continues = {}
 for _, v in ipairs(reporter.saves) do if v[1] == 2 then continues[#continues + 1] = v end end
 check(#continues == 1 and continues[1][2] == 30050 and continues[1][3] == 0 and continues[1][5] == 0 and continues[1][6] == 0,
     'actual host Continue sends one SAVE op 2 with the restored checkpoint mission')
--- An unarmed, linked guest at a 40050 title with the host in 30010: the actual
--- ExecuteContinueFromCheckPoint is refused before any vanilla side effect, and
--- the same Continue 2 s later runs the vanilla path on its own save.
-local function lockedGuest()
-    local g = fixture(false, 30050)
-    g.W.paired, g.F.armed = false, false
-    g.W.mission, g.env.vars.missionCode, g.env.vars.locationCode = 40050, 40050, 50
-    g.env.gvars.ini_isTitleMode, g.env.gvars.ini_isReturnToTitle = true, true
-    for _, f in ipairs(g.W.startHooks) do f() end
-    g.lock, g.ownTarget = 1, 30050
-    g.W.peer = function() return {mission = 30010, level = 3, wait = 9, linked = true, session = 55} end
+-- The game's title Continue (review lua-flow-1) never calls TppMission's Continue
+-- functions. Model of the vanilla title_sequence.lua flow (lua sha 1d9eb747...,
+-- docs/characters.md:312, read only): the UI Continue runs Seq_Game_TitleMenu's
+-- OnSelectContinue (select flag: a helicopter-space, 10115 or 50050 next mission
+-- restarts in the helicopter, anything else continues; next sequence CheckDlc);
+-- after the chunk check Seq_Game_ChunkInstalled fades out and
+-- OnEndFadeOutSelectContinue runs TppSave.VarRestoreOnContinueFromCheckPoint,
+-- ClearTitleMode, TppMain.ReservePlayerLoadingPosition(CONTINUE), sets
+-- isContinueFromTitle and calls TppMission.Load(vars.missionCode, title mission).
+-- The TppMain/TppMission bodies below it are the exact extracted ones.
+local function titleFlow(g, titleMission)
+    local env = g.env
+    local menu = {}
+    function menu.OnSelectContinue()
+        local n = env.gvars.title_nextMissionCode
+        g.selectFlag = (env.TppMission.IsHelicopterSpace(n) or n == 10115 or n == 50050) and 'heli' or 'continue'
+        g.selects = (g.selects or 0) + 1
+    end
+    function menu.OnSelectRestartHeli() g.selectFlag = 'heli'; g.selects = (g.selects or 0) + 1 end
+    function menu.Messages(self) return {Continue = self.OnSelectContinue, RestartHeli = self.OnSelectRestartHeli} end
+    env.mvars.seq_sequenceTable = {Seq_Game_TitleMenu = menu}
+    env.TppUiCommand.RebootTitleSelectMenu = function() g.reboots = (g.reboots or 0) + 1 end
+    env.title_sequence = {StartTitleMenu = function() g.menuStarts = (g.menuStarts or 0) + 1 end}
+    g.W.follow.install({3, g.W.role})  -- the title mission's init (before TppSequence.Init)
+    local exec = menu.Messages(menu)   -- TppSequence.Init captures the handlers now
+    g.restart = function() exec.RestartHeli() end
+    -- One press: the select and, when it went through into a Continue, the fade and the load.
+    g.press = function()
+        local before = g.selects or 0
+        exec.Continue()
+        if (g.selects or 0) == before then return false end
+        if g.selectFlag ~= 'continue' then return true end
+        env.TppSave.VarRestoreOnContinueFromCheckPoint()
+        env.gvars.ini_isTitleMode, env.gvars.ini_isReturnToTitle = false, false
+        env.TppMain.ReservePlayerLoadingPosition(env.TppDefine.MISSION_LOAD_TYPE.CONTINUE_FROM_CHECK_POINT)
+        env.gvars.isContinueFromTitle = true
+        env.TppMission.Load(env.vars.missionCode, titleMission)
+        return true
+    end
     return g
 end
-local locked = lockedGuest()
-check(locked.env.TppMission.ExecuteContinueFromCheckPoint() == nil and not locked.restores and not locked.env.mvars.mis_loadRequest and
+-- A linked guest at a 40050 title with the host in 30010 (phase-2 CFG r[12..13]).
+local function titleGuest(armed, handoff)
+    local g = fixture(false, 30050)
+    if not armed then g.W.paired, g.F.armed = false, false end
+    g.W.mission, g.env.vars.missionCode, g.env.vars.locationCode = 40050, 40050, 50
+    g.env.gvars.ini_isTitleMode, g.env.gvars.ini_isReturnToTitle = true, true
+    g.env.gvars.title_nextMissionCode = 30050
+    g.env.TppMission.IsHelicopterSpace = function(m) return math.floor(m / 10000) == 4 end
+    for _, f in ipairs(g.W.startHooks) do f() end
+    g.lock, g.handoff, g.ownTarget = 1, handoff or 0, 30050
+    g.W.peer = function() return {mission = 30010, level = 3, wait = 9, linked = true, session = 55} end
+    return titleFlow(g, 40050)
+end
+local function noted(g, code)
+    local n = 0
+    for _, v in ipairs(g.notes) do if v[1] == code then n = n + 1 end end
+    return n
+end
+local locked = titleGuest(false)
+check(locked.press() == false and not locked.selects and not locked.restores and not locked.env.mvars.mis_loadRequest and
     not locked.loaded and #locked.engine == 0 and locked.env.gvars.usingNormalMissionSlot == false and
-    #locked.notes == 1 and locked.notes[1][1] == 7 and locked.notes[1][2] == 30010 and locked.notes[1][3] == 1,
-    'locked guest title Continue: refused before VarRestore, load or any vanilla state change (note 7 b=1)')
-check(#locked.tx == 0, 'the refusal sends no world op')
+    locked.env.gvars.ini_isTitleMode == true and #locked.notes == 1 and locked.notes[1][1] == 7 and
+    locked.notes[1][2] == 30010 and locked.notes[1][3] == 1,
+    'locked guest title Continue: refused at the menu select, before the fade, VarRestore or load (note 7 b=1)')
+check(locked.reboots == 1 and locked.menuStarts == 1 and #locked.tx == 0, 'the menu takes input again; no world op sent')
 locked.time = locked.time + 2000
-locked.env.TppMission.ExecuteContinueFromCheckPoint()
-local request = locked.env.mvars.mis_loadRequest
-check(locked.restores == 1 and request and request.nextMission == 30050 and locked.env.vars.missionCode == 30050,
-    'the repeat 2 s later runs the vanilla Continue into its own checkpoint')
+check(locked.press() == true and locked.restores == 1 and locked.loaded and locked.loaded[1] == 30050 and
+    locked.env.vars.missionCode == 30050, 'the repeat 2 s later runs the vanilla title flow into its own checkpoint')
 local continued, landing
 for _, v in ipairs(locked.saves) do if v[1] == 2 then continued = v end end
 for _, v in ipairs(locked.notes) do if v[1] == 11 then landing = v end end
 check(continued and continued[2] == 30050 and continued[3] == 1 and landing and landing[2] == 30050 and landing[3] == 30010,
-    'its title Continue reports op 2 (title=1) and warns that it lands away from the host (note 11)')
-local unlocked = lockedGuest()
+    'its title Continue reports op 2 (title=1, latched before ClearTitleMode) and warns that it lands away from the host (note 11)')
+local unlocked = titleGuest(false)
 unlocked.lock = 0
-unlocked.env.TppMission.ExecuteContinueFromCheckPoint()
-check(unlocked.restores == 1 and #unlocked.notes == 0, 'travel lock off (r13=0): the vanilla Continue runs at once')
+check(unlocked.press() == true and unlocked.restores == 1 and #unlocked.notes == 0, 'travel lock off (r13=0): the vanilla title Continue runs at once')
+-- A pending handoff: the veto works with the lock off too (review SS-2), and the repeat declines.
+local pending = titleGuest(false, 3)
+pending.lock = 0
+check(pending.press() == false and not pending.restores and noted(pending, 9) == 1, 'handoff pending, lock off: refused with note 9')
+pending.time = pending.time + 2000
+local declines = 0
+check(pending.press() == true and pending.restores == 1, 'the repeat continues the guest own save')
+for _, v in ipairs(pending.saves) do if v[1] == 3 then declines = declines + 1 end end
+check(declines == 1 and noted(pending, 10) == 1, 'and declines the handoff first (SAVE op 3, note 10)')
+-- An armed guest follows the host's Continue: its own select is suppressed, a second
+-- press while the host's save is coming declines the handoff.
+local follower = titleGuest(true, 3)
+check(follower.F.armed and follower.press() == false and not follower.restores and noted(follower, 9) == 1 and
+    follower.tx[#follower.tx].op == OP.REQ_MISSION and follower.reboots == 1, 'armed guest: suppressed (REQ_MISSION), note 9')
+follower.time = follower.time + 2000
+local followerDeclines = 0
+check(follower.press() == false and not follower.restores, 'armed guest: still no own Continue')
+for _, v in ipairs(follower.saves) do if v[1] == 3 then followerDeclines = followerDeclines + 1 end end
+check(followerDeclines == 1 and noted(follower, 10) == 1, 'armed guest: the second press declines (SAVE op 3, note 10)')
+-- RestartHeli stays in this helicopter: no travel rule (unarmed or armed).
+for _, armed in ipairs({false, true}) do
+    local heli = titleGuest(armed)
+    heli.restart()
+    check(heli.selects == 1 and heli.selectFlag == 'heli' and #heli.notes == 0, 'RestartHeli is allowed (armed=' .. tostring(armed) .. ')')
+end
+local heliPending = titleGuest(false, 3)
+heliPending.restart()
+check(not heliPending.selects and noted(heliPending, 9) == 1, 'RestartHeli while the handoff is pending: note 9 first')
 print(checks .. ' exact-game W3 Continue/load checks passed; no game')

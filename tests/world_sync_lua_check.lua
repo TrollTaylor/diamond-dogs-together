@@ -1531,17 +1531,23 @@ end
 -- (CFG r[12..13] through W.cfg/W.peer, SAVE_V1 through W.receipt, the title lock note).
 do
     local coopDir = assert(FILES[1]:match('^(.*[/\])'), 'world chunk directory')
-    local function titleGuest(peer)
+    local function titleGuest(peer, title)
         local env, c = fixture({role = 2, mission = 40050, peer = peer})
-        env.gvars.ini_isTitleMode, env.gvars.str_storySequence = true, 200
+        env.gvars.ini_isTitleMode, env.gvars.str_storySequence = title ~= false, 200
+        env.gvars.title_nextMissionCode = 30050
         env.TppDefine.STORY_SEQUENCE = {CLEARD_ESCAPE_THE_HOSPITAL = 100, CLEARD_RECUE_MILLER = 110, CLEARD_TO_MATHER_BASE = 120}
         env.TppScriptVars = {IsSavingOrLoading = function() return c.saving == true end}
         c.continues = 0
         env.TppMission.ExecuteContinueFromCheckPoint = function() c.continues = c.continues + 1 end
+        -- The title menu (title_sequence Seq_Game_TitleMenu): the game's title Continue.
+        local menu = {OnSelectContinue = function() c.continues = c.continues + 1 end, OnSelectRestartHeli = function() end}
+        menu.Messages = function(self) return {Continue = self.OnSelectContinue} end
+        env.mvars.seq_sequenceTable = {Seq_Game_TitleMenu = menu}
         for _, name in ipairs({'world_follow_seed.lua', 'world_follow.lua', 'world_handoff.lua'}) do
             local chunk = assert(loadfile(coopDir .. name)); setfenv(chunk, env); chunk()
         end
-        F.start(env, c)
+        -- TppSequence.Init captures the menu handlers inside OnInitialize, after the install.
+        F.start(env, c, function() c.menu = menu.Messages(menu) end)
         return env, c
     end
     local env, c = titleGuest({mission = 30010, level = 3, wait = 9, handoff = 0, lock = 1})
@@ -1551,24 +1557,41 @@ do
     c.saving = true
     F.tick(env, c, 8)
     check(#c.saves == 2 and c.saves[2] == '1 40050 1 2 1 0', 'a change is reported after 250 ms')
-    env.TppMission.ExecuteContinueFromCheckPoint()
+    c.menu.Continue()
     check(c.continues == 0 and c.notes[#c.notes] == '7 30010 1' and
-        has(c.logs, 'event=handoff;step=lock;fn=ExecuteContinueFromCheckPoint;kind=4;target=40050;host=30010;decision=refuse'),
-        'the real CFG r[13]=1 locks the title Continue (note 7 b=1)')
+        has(c.logs, 'event=handoff;step=lock;fn=TitleContinue;kind=4;target=30050;host=30010;decision=refuse'),
+        'the real CFG r[13]=1 locks the title menu Continue (note 7 b=1)')
     c.peer.lock = 0
-    env.TppMission.ExecuteContinueFromCheckPoint()
+    c.menu.Continue()
     check(c.continues == 1, 'r[13]=0 from the real CFG: allowed')
     c.peer.lock, c.peer.handoff = 1, 3
     c.time = c.time + 250
     check(c.W.handoff.replayHold() == true and has(c.logs, 'event=handoff;step=replay_hold;code=3'), 'r[12]=3: the title replay hold')
     local env2, c2 = titleGuest({mission = 30010, level = 3, wait = 9})
-    env2.TppMission.ExecuteContinueFromCheckPoint()
+    c2.menu.Continue()
     F.tick(env2, c2, 1)
     check(c2.continues == 1 and c2.W.handoff.replayHold() == false and #c2.saves == 1,
         'an 11-value CFG (older loader): no lock, no replay hold, the report still sent')
     check(not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 2 3 4 5") and not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 02 3 4 5 6") and
         not pcall(env.loadstring, PRE .. "SAVE_V1' -- 1 -2 3 4 5 6") and not pcall(env.loadstring, PRE .. "BOGUS_V1' -- 1"),
         'the native stub refuses a malformed SAVE_V1 and still errors on an unknown receipt')
+    -- Review lua-flow-3: a held guest sortie (world_handoff) still leaves once world sync
+    -- is inactive (W.fail), released by the real inactive update, never from an ended mission.
+    for _, final in ipairs({false, true}) do
+        local env3, c3 = titleGuest({mission = 30010, level = 3, wait = 9, handoff = 0, lock = 1}, false)
+        env3.gvars.mis_nextMissionCodeForMissionClear = 30020
+        env3.TppMission.OnEndMissionPreparation(5, nil)
+        check(F.callCount(c3, 'OnEndMissionPreparation:5:nil') == 0 and c3.W.handoff.held ~= nil, 'the guest sortie is held')
+        F.tick(env3, c3, 1)
+        check(F.callCount(c3, 'OnEndMissionPreparation:5:nil') == 0, 'held while world sync runs')
+        if final then F.call(env3, 'OnTerminate') else c3.W.fail('boom') end
+        check(not c3.W.active, 'world sync inactive')
+        F.tick(env3, c3, 2)
+        check(F.callCount(c3, 'OnEndMissionPreparation:5:nil') == (final and 0 or 1),
+            final and 'an ended mission never releases the held sortie' or 'the inactive update releases the held sortie once')
+        check(final or (c3.W.handoff.held == nil and has(c3.logs, 'event=handoff;step=lock;fn=OnEndMissionPreparation;kind=6;target=30020;host=30010;decision=inactive')),
+            'released as decision=inactive')
+    end
 end
 -- The world and debug chunks inside the composed TppMain (exact splice;
 -- inert with literal native receipts).

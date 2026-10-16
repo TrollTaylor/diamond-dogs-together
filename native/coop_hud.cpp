@@ -464,7 +464,10 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
         out.tone = Tone::good;
         break;
     case LinkState::listening:
-        if (v.left && handoff == HandoffToken::partner_restarting) {
+        // partner_restarting comes only from the guest's RESULT exiting right before
+        // its WM_CLOSE and stays until the next session: any drop after it is the
+        // restart. UDP sends no goodbye (v.left stays false), Steam does.
+        if (handoff == HandoffToken::partner_restarting) {
             // The guest closed MGSV to restart on the host's save (P2-10).
             Print(t, n, "CO-OP [%.24s restarting] loading your save - waiting for them", named ? name : "your friend");
             out.tone = Tone::info;
@@ -483,7 +486,7 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
         }
         break;
     case LinkState::lost:
-        if (v.left && handoff == HandoffToken::partner_restarting) {
+        if (handoff == HandoffToken::partner_restarting) {
             Print(t, n, "CO-OP [%.24s restarting] loading your save - waiting for them", named ? name : "your friend");
             out.tone = Tone::info;
             break;
@@ -545,6 +548,8 @@ bool FormatToast(const Event& e, const LinkView& v, const char* name, char* out,
         tone = Tone::good;
         return true;
     case EventKind::lost:
+        // The guest is restarting on the host's save (H2 said so; UDP has no goodbye).
+        if (v.host && static_cast<save_handoff_state::Token>(v.handoff) == save_handoff_state::Token::partner_restarting) return false;
         if (v.host) Print(out, capacity, "Lost the connection to %s - waiting for them to come back.", who);
         else Print(out, capacity, "Lost the connection to the host - reconnecting...");
         tone = Tone::warn;

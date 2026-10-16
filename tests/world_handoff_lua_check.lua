@@ -11,7 +11,8 @@ local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_
 local HOST = {mission = 30010, level = 3, wait = 9, linked = true, session = 55}
 local function copy(t) local r = {} for k, v in pairs(t) do r[k] = v end return r end
 -- opts: mission (40050 title helicopter by default), title (default: 4xxxx), seq (str_storySequence),
--- peer (false: none), r12, r13, old (an 11-value CFG), paired.
+-- peer (false: none), r12, r13, old (an 11-value CFG), paired, next (title_nextMissionCode;
+-- default: the title's own scene, 40050 -> 30050).
 local function fixture(role, opts)
     opts = opts or {}
     local mission = opts.mission or 40050
@@ -32,7 +33,8 @@ local function fixture(role, opts)
         ply_missionStartRot = 0, ply_useMissionStartPosForNoOrderBox = false,
         ply_missionStartPosForNoOrderBox = {[0] = 0, [1] = 0, [2] = 0}, ply_missionStartRotForNoOrderBox = 0,
         mis_checkPoint = 0, ini_isTitleMode = title, ini_isReturnToTitle = false, isContinueFromTitle = false,
-        str_storySequence = opts.seq or 200, mis_nextMissionCodeForMissionClear = 30020, mis_nextMissionCodeForEmergency = 0}
+        str_storySequence = opts.seq or 200, mis_nextMissionCodeForMissionClear = 30020, mis_nextMissionCodeForEmergency = 0,
+        title_nextMissionCode = opts.next or (math.floor(mission / 10000) == 4 and mission - 10000 or 0)}
     env.svars = {mis_missionClearType = 3, ply_isUsedPlayerInitialAction = false}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4},
         STORY_SEQUENCE = {CLEARD_ESCAPE_THE_HOSPITAL = 100, CLEARD_RECUE_MILLER = 110, CLEARD_TO_MATHER_BASE = 120}}
@@ -60,7 +62,18 @@ local function fixture(role, opts)
                 env.TppMission.ReserveMissionClear{missionClearType = 3, nextMissionId = env.gvars.mis_nextMissionCodeForMissionClear}
             end
         end,
-        Load = function(m) record('load'); c.loaded = m end}
+        Load = function(m) record('load'); c.loaded = m end,
+        IsHelicopterSpace = function(m) return math.floor(m / 10000) == 4 end}
+    -- The title menu as the game builds it (title_sequence Seq_Game_TitleMenu, shared
+    -- into the helicopter mission's sequence table): TppSequence.Init captures
+    -- self.OnSelectContinue in the message table after world_follow's install.
+    local menu = {
+        OnSelectContinue = function() record('select_continue') end,
+        OnSelectRestartHeli = function() record('select_heli') end}
+    menu.Messages = function(self) return {Continue = self.OnSelectContinue, RestartHeli = self.OnSelectRestartHeli} end
+    env.mvars.seq_sequenceTable = {Seq_Game_TitleMenu = menu}
+    env.TppUiCommand = {RebootTitleSelectMenu = function() record('reboot_menu') end}
+    env.title_sequence = {StartTitleMenu = function() record('start_menu') end}
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {},
         level = opts.level or 3, role = role, host = role == 1, active = true, mission = mission, epoch = 7,
         paired = false, eff = 3}
@@ -101,6 +114,7 @@ local function fixture(role, opts)
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.follow.install({W.level, role})
+    c.menu = menu.Messages(menu)  -- TppSequence.Init (OnInitialize, after the install)
     for _, f in ipairs(W.startHooks) do f() end
     if opts.paired then W.paired = true; for _, f in ipairs(W.pairedHooks) do f(false) end end
     c.W, c.env, c.F, c.X, c.M = W, env, W.follow, W.handoff, env.TppMission
@@ -141,8 +155,16 @@ do
     local c = fixture(2)
     check(type(c.X) == 'table' and c.F.replayHold == c.X.replayHold and #c.F.installHooks == 1, 'W.handoff, F.replayHold and one install hook')
     local wrapped = c.M.ExecuteContinueFromCheckPoint
+    local menu = c.env.mvars.seq_sequenceTable.Seq_Game_TitleMenu
+    local select = menu.OnSelectContinue
+    check(c.menu.Continue == select and c.menu.RestartHeli == menu.OnSelectRestartHeli, 'the menu message table captures the wrapped selects')
     c.F.install({3, 2})
-    check(c.M.ExecuteContinueFromCheckPoint == wrapped, 'a second install wraps nothing again')
+    check(c.M.ExecuteContinueFromCheckPoint == wrapped and menu.OnSelectContinue == select, 'a second install wraps nothing again')
+    local field = fixture(2, {mission = 30010})
+    local plain = field.env.mvars.seq_sequenceTable.Seq_Game_TitleMenu
+    field.F.install({3, 2})
+    plain.OnSelectContinue()
+    check(#field.logs == 0 and called(field, 'select_continue') == 1, 'a free-roam mission init leaves a title table alone')
 end
 
 -- 2. REPORT (op 1): on a change (at most every 250 ms) and every 1000 ms.
@@ -240,77 +262,123 @@ do
         esc.X.decide('ReserveMissionClear', 1, 10036, esc.time + 2001) == 'refuse', 'an escape allows for 2000 ms')
 end
 
--- 5. Title Continue (kind 4 at a title helicopter).
+-- 5. Title Continue: the title menu's own select (title_sequence Seq_Game_TitleMenu),
+-- before any fade, VarRestore or load. The game's title Continue never calls
+-- TppMission.ContinueFromCheckPoint/ExecuteContinueFromCheckPoint.
 do
     local c = fixture(2)
-    check(c.M.ExecuteContinueFromCheckPoint() == nil and called(c, 'continue') == 0 and #c.notes == 1 and
-        noted(c, 7, 30010, 1) == 1, 'location differs (40050 vs 30010): refused before vanilla with note 7 b=1')
-    check(logged(c, 'event=handoff;step=lock;fn=ExecuteContinueFromCheckPoint;kind=4;target=40050;host=30010;decision=refuse') == 1,
-        'the refusal line')
+    check(c.menu.Continue() == nil and called(c, 'select_continue') == 0 and #c.notes == 1 and noted(c, 7, 30010, 1) == 1,
+        'location differs (40050 vs 30010): refused at the select with note 7 b=1')
+    check(called(c, 'reboot_menu') == 1 and called(c, 'start_menu') == 1, 'the refused select reopens the menu (the vanilla cancel path)')
+    check(logged(c, 'event=handoff;step=lock;fn=TitleContinue;kind=4;target=30050;host=30010;decision=refuse') == 1, 'the refusal line')
     c.time = 1500
-    c.M.ExecuteContinueFromCheckPoint()
-    check(called(c, 'continue') == 0 and #c.notes == 1 and logged(c, 'decision=refuse') == 2, '+0.5 s: refused again, no new note')
+    c.menu.Continue()
+    check(called(c, 'select_continue') == 0 and #c.notes == 1 and logged(c, 'decision=refuse') == 2, '+0.5 s: refused again, no new note')
     c.time = 3000
-    check(c.M.ExecuteContinueFromCheckPoint() == 'vanilla' and called(c, 'continue') == 1 and noted(c, 8, 40050, 1) == 1 and
-        #saved(c, 3) == 0 and logged(c, 'decision=repeat') == 1, '+2 s: allowed once (travel alone), the vanilla return kept')
+    c.menu.Continue()
+    check(called(c, 'select_continue') == 1 and noted(c, 8, 30050, 1) == 1 and #saved(c, 3) == 0 and logged(c, 'decision=repeat') == 1,
+        '+2 s: the vanilla select runs once (travel alone)')
     local late = fixture(2)
-    late.M.ExecuteContinueFromCheckPoint()
+    late.menu.Continue()
     late.time = late.time + 11000
-    late.M.ExecuteContinueFromCheckPoint()
-    check(called(late, 'continue') == 0 and noted(late, 7, 30010, 1) == 2, '+11 s: refused again with a new note')
+    late.menu.Continue()
+    check(called(late, 'select_continue') == 0 and noted(late, 7, 30010, 1) == 2, '+11 s: refused again with a new note')
     late.time = late.time + 1000
-    late.M.ExecuteContinueFromCheckPoint()
-    check(called(late, 'continue') == 1, 'the new refusal opens a new repeat window')
+    late.menu.Continue()
+    check(called(late, 'select_continue') == 1, 'the new refusal opens a new repeat window')
     local story = fixture(2, {mission = 40010, seq = 110})
-    story.M.ExecuteContinueFromCheckPoint()
-    check(called(story, 'continue') == 0 and noted(story, 7, 30010, 2) == 1, 'story opening: note 7 b=2')
+    story.menu.Continue()
+    check(called(story, 'select_continue') == 0 and noted(story, 7, 30010, 2) == 1, 'story opening: note 7 b=2')
     local wait = fixture(2, {mission = 40010, r12 = 1, seq = 110})
-    wait.M.ContinueFromCheckPoint()
-    check(called(wait, 'continue_menu') == 0 and noted(wait, 7, 30010, 3) == 1, 'waiting for the host save first: note 7 b=3')
+    wait.menu.Continue()
+    check(called(wait, 'select_continue') == 0 and noted(wait, 7, 30010, 3) == 1, 'waiting for the host save first: note 7 b=3')
     for _, h in ipairs({2, 3, 4}) do
         local busy = fixture(2, {mission = 40010, r12 = h})
-        busy.M.ExecuteContinueFromCheckPoint()
-        check(called(busy, 'continue') == 0 and noted(busy, 9, 0, 0) == 1 and #busy.notes == 1, 'handoff busy (' .. h .. '): note 9')
+        busy.menu.Continue()
+        check(called(busy, 'select_continue') == 0 and noted(busy, 9, 0, 0) == 1 and #busy.notes == 1, 'handoff busy (' .. h .. '): note 9')
     end
     local ok = fixture(2, {mission = 40010})
-    check(ok.M.ExecuteContinueFromCheckPoint() == 'vanilla' and #ok.notes == 0, 'same location, story open: allowed')
+    ok.menu.Continue()
+    check(called(ok, 'select_continue') == 1 and #ok.notes == 0 and called(ok, 'reboot_menu') == 0, 'same location, story open: allowed')
     for _, h in ipairs({5, 6}) do
         local kept = fixture(2, {mission = 40010, r12 = h})
-        kept.M.ExecuteContinueFromCheckPoint()
-        check(called(kept, 'continue') == 1 and #kept.notes == 0, 'kept or failed handoff (' .. h .. '): allowed')
+        kept.menu.Continue()
+        check(called(kept, 'select_continue') == 1 and #kept.notes == 0, 'kept or failed handoff (' .. h .. '): allowed')
     end
     local unknown = fixture(2, {mission = 40010, seq = 110})
     unknown.env.TppDefine.STORY_SEQUENCE = nil
-    unknown.M.ExecuteContinueFromCheckPoint()
-    check(called(unknown, 'continue') == 1, 'unknown story at the same location: allowed')
+    unknown.menu.Continue()
+    check(called(unknown, 'select_continue') == 1, 'unknown story at the same location: allowed')
     -- A repeat while the handoff is pending declines it (op 3) and notes 10 before 8.
     local p = fixture(2, {r12 = 3})
-    p.M.ExecuteContinueFromCheckPoint()
+    p.menu.Continue()
     p.time = p.time + 2000
-    p.M.ExecuteContinueFromCheckPoint()
+    p.menu.Continue()
     local n = #p.notes
-    check(called(p, 'continue') == 1 and #saved(p, 3) == 1 and same(saved(p, 3)[1], {3, 1, 0, 0, 0, 0}) and
+    check(called(p, 'select_continue') == 1 and #saved(p, 3) == 1 and same(saved(p, 3)[1], {3, 1, 0, 0, 0, 0}) and
         p.notes[n - 1][1] == 10 and p.notes[n][1] == 8, 'pending repeat: SAVE op 3 decline, note 10 then note 8')
     local w = fixture(2, {r12 = 1})
-    w.M.ExecuteContinueFromCheckPoint(); w.time = w.time + 2000; w.M.ExecuteContinueFromCheckPoint()
-    check(called(w, 'continue') == 1 and #saved(w, 3) == 1, 'waiting repeat: declined too')
-    -- One press through ContinueFromCheckPoint reaches the wrapped Execute (isNoFade or the fade).
-    local menu = fixture(2); menu.nestedContinue = true
-    menu.M.ContinueFromCheckPoint()
-    check(called(menu, 'continue_menu') == 0 and called(menu, 'continue') == 0, 'the menu Continue is refused first')
-    menu.time = menu.time + 2000
-    menu.M.ContinueFromCheckPoint()
-    check(called(menu, 'continue_menu') == 1 and called(menu, 'continue') == 1 and noted(menu, 8) == 1, 'the repeat passes both wrappers')
-    menu.time = menu.time + 2000; menu.nestedContinue = false
-    menu.M.ExecuteContinueFromCheckPoint()
-    check(called(menu, 'continue') == 2, 'the fade callback within 2 s passes the escape')
-    menu.time = menu.time + 1; menu.F.tick(menu.time)
-    menu.M.ExecuteContinueFromCheckPoint()
-    check(called(menu, 'continue') == 2 and menu.X.esc['4:40050'] == nil, 'the escape expires after 2 s')
+    w.menu.Continue(); w.time = w.time + 2000; w.menu.Continue()
+    check(called(w, 'select_continue') == 1 and #saved(w, 3) == 1, 'waiting repeat: declined too')
+    -- At a title the TppMission Continue wrappers pass (the menu owns the title Continue).
+    local direct = fixture(2)
+    direct.nestedContinue = true
+    direct.M.ContinueFromCheckPoint()
+    check(called(direct, 'continue_menu') == 1 and called(direct, 'continue') == 1 and #direct.notes == 0,
+        'TppMission Continue at a title: passed through')
     -- A game-over Continue inside a mission (not a title) restarts this mission: allowed.
     local field = fixture(2, {mission = 30020})
     field.M.ExecuteContinueFromCheckPoint()
     check(called(field, 'continue') == 1 and #field.notes == 0, 'in-mission Continue: allowed')
+    -- RestartHeli (and a Continue into a helicopter) does not travel: only the handoff rules.
+    local heli = fixture(2)
+    heli.menu.RestartHeli()
+    check(called(heli, 'select_heli') == 1 and #heli.notes == 0, 'RestartHeli at another location: allowed')
+    local heliNext = fixture(2, {next = 40050})
+    heliNext.menu.Continue()
+    check(called(heliNext, 'select_continue') == 1 and #heliNext.notes == 0, 'a Continue that restarts in the helicopter: allowed')
+    local heliBusy = fixture(2, {r12 = 3})
+    heliBusy.menu.RestartHeli()
+    check(called(heliBusy, 'select_heli') == 0 and noted(heliBusy, 9, 0, 0) == 1 and
+        logged(heliBusy, 'fn=TitleRestartHeli;kind=4;target=30050;host=30010;decision=refuse') == 1, 'RestartHeli while the handoff is pending: note 9')
+    heliBusy.time = heliBusy.time + 2000
+    heliBusy.menu.RestartHeli()
+    check(called(heliBusy, 'select_heli') == 1 and #saved(heliBusy, 3) == 1 and noted(heliBusy, 10) == 1 and noted(heliBusy, 8) == 0,
+        'its repeat declines (op 3, note 10) and stays in the helicopter (no note 8)')
+    local heliWait = fixture(2, {r12 = 1})
+    heliWait.menu.RestartHeli()
+    check(called(heliWait, 'select_heli') == 0 and noted(heliWait, 7, 30010, 3) == 1, 'RestartHeli while waiting for the host save: note 7 b=3')
+    -- The host and a replay pass; outside title mode the select is the vanilla one.
+    local host = fixture(1)
+    host.menu.Continue()
+    check(called(host, 'select_continue') == 1 and #host.notes == 0, 'the host passes through')
+    local notTitle = fixture(2, {title = false})
+    notTitle.menu.Continue()
+    check(called(notTitle, 'select_continue') == 1 and #notTitle.notes == 0, 'not in title mode: passed through')
+end
+
+-- 5b. Review SS-2: the pending-handoff veto does not depend on the travel lock.
+do
+    local c = fixture(2, {mission = 40010, r12 = 3, r13 = 0})
+    c.menu.Continue()
+    check(called(c, 'select_continue') == 0 and noted(c, 9, 0, 0) == 1 and #saved(c, 3) == 0, 'lock off, handoff pending: note 9')
+    c.time = c.time + 2000
+    c.menu.Continue()
+    check(called(c, 'select_continue') == 1 and #saved(c, 3) == 1 and same(saved(c, 3)[1], {3, 1, 0, 0, 0, 0}) and noted(c, 10) == 1,
+        'lock off: the repeat sends SAVE op 3 and runs the select once')
+    -- After the repeat, with r12 still 3, the follow-up Continue calls are not swallowed.
+    c.nestedContinue = true
+    c.M.ContinueFromCheckPoint()
+    check(called(c, 'continue_menu') == 1 and called(c, 'continue') == 1, 'nested Continue calls pass after the repeat')
+    for _, case in ipairs({{'peer unlinked', {mission = 0, level = 0, wait = 3, linked = false}}, {'host loading', {mission = 0, level = 3, wait = 9, linked = true, session = 55}},
+        {'host in 10020', {mission = 10020, level = 3, wait = 9, linked = true, session = 55}}}) do
+        local g = fixture(2, {mission = 40010, r12 = 3, peer = case[2]})
+        g.menu.Continue()
+        check(called(g, 'select_continue') == 0 and noted(g, 9, 0, 0) == 1, case[1] .. ' while the handoff is pending: still note 9')
+    end
+    local idle = fixture(2, {mission = 40010, r12 = 1, r13 = 0, seq = 110})
+    idle.menu.Continue()
+    check(called(idle, 'select_continue') == 1 and #idle.notes == 0, 'r12 1 with the lock off: allowed (wait-host is a lock rule)')
 end
 
 -- 6. iDroid ReserveMissionClear and AbortMission.
@@ -354,7 +422,7 @@ do
     check(called(token, 'clear') == 1 and #token.notes == 0, 'F.token (a replay) passes through')
     local h = fixture(1)
     check(h.M.ExecuteContinueFromCheckPoint() == 'vanilla' and #h.notes == 0, 'the host passes through')
-    local paired = fixture(2, {mission = 40010, paired = true})
+    local paired = fixture(2, {mission = 30010, title = false, paired = true})
     paired.M.ExecuteContinueFromCheckPoint()
     check(called(paired, 'continue') == 0 and #paired.notes == 0 and paired.tx[1].op == OP.REQ_MISSION,
         'an armed guest stays world_follow suppressed (outer layer), never reaching the lock')
@@ -441,6 +509,41 @@ do
     host.W.paired = true
     host.M.OnEndMissionPreparation(2, nil)
     check(called(host, 'deploy') == 1 and host.X.held == nil, 'the host sortie never reaches the lock hold')
+    -- Review lua-flow-2: the prep screen cancelled (mission 0) or changed since the hold:
+    -- the vanilla deploy would re-read the gvars, so the old choice never flies.
+    for _, case in ipairs({{'cancelled', 0, 120000}, {'changed', 30050, 500}, {'cancelled, then unlocked', 0, 500}}) do
+        local s = heli()
+        s.M.OnEndMissionPreparation(2, nil)
+        s.env.gvars.mis_nextMissionCodeForMissionClear = case[2]
+        if case[1]:find('unlocked', 1, true) then s.r13 = 0 end
+        at(s, s.time + case[3])
+        at(s, s.time + 1)
+        check(called(s, 'deploy') == 0 and s.X.held == nil and logged(s, 'decision=stale') == 1 and noted(s, 8) == 0,
+            case[1] .. ': the stale hold is dropped, no deploy')
+        at(s, s.time + 200000)
+        check(called(s, 'deploy') == 0 and noted(s, 12) == 1, case[1] .. ': nothing later either')
+    end
+    -- Review lua-flow-3: world sync stopped (W.fail) while held: released once with the
+    -- stored arguments (world_sync's inactive update calls X.hold), even when a follow
+    -- state is left over; never a follow drop.
+    local failed = heli()
+    failed.M.OnEndMissionPreparation(2, 7)
+    failed.F.current = {1}
+    failed.W.paired = true
+    failed.W.fail('boom')
+    failed.X.hold()
+    check(called(failed, 'deploy') == 1 and failed.deploy[1] == 2 and failed.deploy[2] == 7 and failed.X.held == nil and
+        logged(failed, 'decision=inactive') == 1 and logged(failed, 'decision=follow') == 0 and noted(failed, 8, 30020, 2) == 1,
+        'inactive: the held sortie leaves alone with its stored arguments')
+    failed.X.hold()
+    check(called(failed, 'deploy') == 1, 'released once')
+    local cancelled = heli()
+    cancelled.M.OnEndMissionPreparation(2, nil)
+    cancelled.env.gvars.mis_nextMissionCodeForMissionClear = 0
+    cancelled.W.active = false
+    cancelled.X.hold()
+    check(called(cancelled, 'deploy') == 0 and cancelled.X.held == nil and logged(cancelled, 'decision=stale') == 1,
+        'inactive but cancelled in the prep screen: dropped, not flown')
 end
 
 -- 8. The loading choke point: op 2 CONTINUE, the final report and the warnings.
@@ -470,11 +573,12 @@ do
     check(same(hc.saves[#hc.saves], {1, 40050, 0, 2, 0, 0}), 'then a final report: leaving the title, not in game')
     -- The guest Continued alone into 30050 while the host is in 30010.
     local g = fixture(2)
-    g.M.ExecuteContinueFromCheckPoint(); g.time = g.time + 2000; g.M.ExecuteContinueFromCheckPoint()
-    g.env.vars.missionCode = 30050
+    g.menu.Continue(); g.time = g.time + 2000; g.menu.Continue()
+    -- The vanilla OnEndFadeOutSelectContinue: VarRestore, ClearTitleMode, then the reserve.
+    g.env.vars.missionCode, g.env.gvars.ini_isTitleMode = 30050, false
     g.env.e.ReservePlayerLoadingPosition(4)
-    check(#saved(g, 2) == 1 and saved(g, 2)[1][2] == 30050 and noted(g, 11, 30050, 30010) == 1 and
-        logged(g, 'step=warn;reason=landing_elsewhere;target=30050') == 1, 'guest landing elsewhere: op 2 and note 11')
+    check(#saved(g, 2) == 1 and same(saved(g, 2)[1], {2, 30050, 1, 2, 0, 0}) and noted(g, 11, 30050, 30010) == 1 and
+        logged(g, 'step=warn;reason=landing_elsewhere;target=30050') == 1, 'guest landing elsewhere: op 2 (title=1 latched) and note 11')
     local meet = fixture(2, {mission = 40010})
     meet.env.vars.missionCode = 30010
     meet.env.e.ReservePlayerLoadingPosition(4)
@@ -526,21 +630,28 @@ do
     check(g.F.current and called(g, 'continue') == 1, 'released: the replay runs (through the lock, F.token)')
 end
 
--- 10. An armed guest's suppressed title Continue still declines a pending handoff.
+-- 10. An armed guest's title select stays suppressed (it follows the host's
+-- Continue) and still declines a pending handoff when pressed twice.
 do
     local c = fixture(2, {mission = 40010, r12 = 3, paired = true})
-    c.M.ExecuteContinueFromCheckPoint()
-    check(called(c, 'continue') == 0 and noted(c, 9, 0, 0) == 1 and #saved(c, 3) == 0, 'first press: note 9')
+    c.menu.Continue()
+    check(called(c, 'select_continue') == 0 and noted(c, 9, 0, 0) == 1 and #saved(c, 3) == 0 and c.tx[1].op == OP.REQ_MISSION and
+        called(c, 'reboot_menu') == 1 and logged(c, 'fn=TitleContinue;kind=4;target=30010;host=0;decision=armed') == 1,
+        'first press: suppressed (REQ_MISSION), note 9, the menu reopened')
     c.time = c.time + 500
-    c.M.ExecuteContinueFromCheckPoint()
+    c.menu.Continue()
     check(#saved(c, 3) == 0 and noted(c, 9) == 1, '+0.5 s: nothing')
     c.time = c.time + 1500
-    c.M.ExecuteContinueFromCheckPoint()
-    check(called(c, 'continue') == 0 and #saved(c, 3) == 1 and noted(c, 10) == 1 and
-        logged(c, 'fn=request;kind=4;target=40010;host=0;decision=decline') == 1, '+2 s: SAVE op 3 and note 10')
+    c.menu.Continue()
+    check(called(c, 'select_continue') == 0 and #saved(c, 3) == 1 and noted(c, 10) == 1 and
+        logged(c, 'fn=TitleContinue;kind=4;target=30010;host=0;decision=decline') == 1, '+2 s: SAVE op 3 and note 10, still suppressed')
     local idle = fixture(2, {mission = 40010, r12 = 1, paired = true})
-    idle.M.ExecuteContinueFromCheckPoint(); idle.time = idle.time + 2000; idle.M.ExecuteContinueFromCheckPoint()
-    check(#idle.notes == 0 and #saved(idle, 3) == 0, 'waiting for the host (r12 1): the armed request path is untouched')
+    idle.menu.Continue(); idle.time = idle.time + 2000; idle.menu.Continue()
+    check(#idle.notes == 0 and #saved(idle, 3) == 0 and called(idle, 'select_continue') == 0,
+        'waiting for the host (r12 1): suppressed, no handoff note')
+    local heli = fixture(2, {mission = 40010, paired = true})
+    heli.menu.RestartHeli()
+    check(called(heli, 'select_heli') == 1 and #heli.tx == 0, 'an armed RestartHeli does not travel: allowed')
 end
 
 print('world_handoff_lua_check: ' .. checks .. ' checks passed')

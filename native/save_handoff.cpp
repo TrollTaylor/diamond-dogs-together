@@ -787,8 +787,17 @@ bool g_have_report = false;
 bool g_shutdown_done = false;
 bool g_applied_pending = false;
 core::Applied g_applied{};
-std::uint32_t g_bad_logged = 0;
-std::uint64_t g_bad_log_ms = 0, g_io_log_ms = 0;
+std::uint64_t g_io_log_ms = 0;
+// P2-10 exit_slow after a WM_CLOSE: a one-shot timer-queue timer, independent of
+// the core and the link thread (the overlay's PartnerShutdown stops the core and
+// a Steam link parks). g_exit_armed holds the armed generation (0 disarmed); the
+// callback fires only for its own generation, once. Disarmed when the core
+// leaves the exiting token (a veto or the guest's own Continue).
+LONG g_exit_armed = 0, g_exit_gen = 0;
+HANDLE g_exit_timer = nullptr;  // hook thread only
+DWORD g_exit_slow_ms = static_cast<DWORD>(core::kExitSlowMs);
+io::EnumWindowsFn g_exit_enum = &io::EnumTopLevelWindows;
+io::PostCloseFn g_exit_post = &io::PostWindowClose;
 std::uint8_t g_peer_buffer[link::kMaxReliableMessage];
 char g_text[core::kManifestJsonMax + core::kProvenanceJsonMax];  // the hook thread's document buffer
 
@@ -892,7 +901,34 @@ void ReleaseSnapshot() noexcept {
     g_snap_job = SnapJob{};
 }
 
+// The exit_slow timer callback (a timer-queue thread): never touches g_core.
+VOID CALLBACK ExitSlowFired(PVOID parameter, BOOLEAN) noexcept {
+    const auto gen = static_cast<LONG>(reinterpret_cast<LONG_PTR>(parameter));
+    if (!gen || InterlockedCompareExchange(&g_exit_armed, 0, gen) != gen) return;  // disarmed or superseded
+    Write("save_handoff=exit_slow", Now());
+    coop_hud::PostSaveHandoff(static_cast<std::uint8_t>(hstate::Toast::g9_quit_manually), 0, 0);
+}
+
+// A WM_CLOSE was posted: the process should be gone within kExitSlowMs.
+void ArmExitSlow() noexcept {
+    LONG gen = InterlockedIncrement(&g_exit_gen);
+    if (!gen) gen = InterlockedIncrement(&g_exit_gen);
+    InterlockedExchange(&g_exit_armed, gen);
+    if (g_exit_timer) {
+        DeleteTimerQueueTimer(nullptr, g_exit_timer, nullptr);  // non-blocking; an old generation no-ops anyway
+        g_exit_timer = nullptr;
+    }
+    HANDLE timer = nullptr;
+    if (CreateTimerQueueTimer(&timer, nullptr, &ExitSlowFired, reinterpret_cast<PVOID>(static_cast<LONG_PTR>(gen)), g_exit_slow_ms, 0,
+                              WT_EXECUTEONLYONCE))
+        g_exit_timer = timer;
+    else
+        InterlockedCompareExchange(&g_exit_armed, 0, gen);
+}
+
 void PublishView(hstate::View view) noexcept {
+    // The core left exiting (ABORT user / not_title): no exit_slow or G9 any more.
+    if (view.token != static_cast<std::uint8_t>(hstate::Token::exiting)) InterlockedExchange(&g_exit_armed, 0);
     view.available = true;
     view.role = static_cast<std::uint8_t>(g_role);
     hstate::Publish(view);
@@ -973,7 +1009,9 @@ void Execute(const core::Action& a, std::uint64_t now_ms, bool& chunk_refused) n
         break;
     }
     case core::ActionKind::post_exit: {
-        const bool found = io::PostExit(&io::EnumTopLevelWindows, &io::PostWindowClose, GetCurrentProcessId());
+        const bool found = io::PostExit(g_exit_enum, g_exit_post, GetCurrentProcessId());
+        // no_window: the core keeps ticking and owns exit_slow (G9 shown at once).
+        if (found) ArmExitSlow();
         g_core.OnExitPosted(found, now_ms);
         break;
     }
@@ -1143,15 +1181,7 @@ void OnIdleHook(std::uint64_t now_ms) noexcept {
         g_core.OnPeer(g_peer_buffer, size, now_ms);
         Drain(now_ms);
     }
-    const core::Stats stats = g_core.stats();
-    if (stats.bad_msg != g_bad_logged && (!g_bad_log_ms || now_ms - g_bad_log_ms >= core::kBadMsgLogMs)) {
-        g_bad_logged = stats.bad_msg;
-        g_bad_log_ms = now_ms;
-        char text[96]{};
-        if (SUCCEEDED(StringCchPrintfA(text, ARRAYSIZE(text), "save_handoff=bad_msg; why=%s; count=%u", wire::DecodeName(stats.last_bad),
-                                       stats.bad_msg)))
-            Write(text, now_ms);
-    }
+    // "save_handoff=bad_msg" is the core's (it alone knows the role/direction reasons).
     StepHash(now_ms);
     StepSnapshot(now_ms);
     g_core.Tick(now_ms, partner_net::ReliableQueued(wire::kChannel));
@@ -1352,7 +1382,25 @@ bool GuestHandoffActive() noexcept {
 
 void Shutdown() noexcept { InterlockedExchange(&g_shutdown, 1); }
 
+void SetExitForTest(io::EnumWindowsFn enumerate, io::PostCloseFn post, std::uint32_t slow_ms) noexcept {
+    g_exit_enum = enumerate ? enumerate : &io::EnumTopLevelWindows;
+    g_exit_post = post ? post : &io::PostWindowClose;
+    g_exit_slow_ms = slow_ms ? static_cast<DWORD>(slow_ms) : static_cast<DWORD>(core::kExitSlowMs);
+}
+
+void ExecuteForTest(const core::Action& action) noexcept {
+    bool chunk_refused = false;
+    Execute(action, Now(), chunk_refused);
+    Drain(Now());
+}
+
 void ResetForTest() noexcept {
+    InterlockedExchange(&g_exit_armed, 0);
+    if (g_exit_timer) {
+        DeleteTimerQueueTimer(nullptr, g_exit_timer, nullptr);
+        g_exit_timer = nullptr;
+    }
+    SetExitForTest(nullptr, nullptr, 0);
     InterlockedExchange(&g_configured, 0);
     InterlockedExchange(&g_role, 0);
     InterlockedExchange(&g_travel_lock, 0);

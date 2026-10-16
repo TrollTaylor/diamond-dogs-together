@@ -204,4 +204,15 @@ bool PostWindowClose(void* handle) noexcept;                            // PostM
 
 }  // namespace io
 
+// P2-10 exit_slow: after a post_exit that found the window, a one-shot timer
+// (timer queue, not the core or the link thread: the overlay's PartnerShutdown
+// stops the core and a Steam link parks) logs "save_handoff=exit_slow" and
+// posts G9 when the process is still alive core::kExitSlowMs later, unless the
+// core left the exiting token first (a veto). The no_window path stays the core's.
+// Tests only: the post_exit enumerator and poster and the exit_slow delay
+// (nullptr / 0 restore the defaults; ResetForTest restores them too).
+void SetExitForTest(io::EnumWindowsFn enumerate, io::PostCloseFn post, std::uint32_t slow_ms) noexcept;
+// Tests only: executes one action on the hook-thread path (then drains the core).
+void ExecuteForTest(const save_handoff_core::Action& action) noexcept;
+
 }  // namespace mgscoop::save_handoff

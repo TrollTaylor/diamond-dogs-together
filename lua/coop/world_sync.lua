@@ -315,8 +315,9 @@ do
     else
       if W.downed and (W.downed.maskOwned or W.downed.reviveMaskOwned or W.downed.nativePending) then pcall(W.downed.stop) end
       if W.buddy and W.buddy.cleanupPending then pcall(W.buddy.cleanupPending) end
-      -- A held host sortie still ends (W.fail, LEVEL 0); never one from an ended mission.
+      -- A held host or guest sortie still ends (W.fail, LEVEL 0); never one from an ended mission.
       if W.isStarted and W.follow and W.follow.hostDeploy then pcall(W.follow.hold) end
+      if W.isStarted and W.handoff and W.handoff.held then pcall(W.handoff.hold) end
     end
     return ...
   end

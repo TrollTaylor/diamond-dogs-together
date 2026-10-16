@@ -2750,13 +2750,33 @@ void TestSaveHandoffHud() {
     v.handoff = token(T::partner_staged);
     CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text, "CO-OP [Snake_Fan left] waiting for them to come back",
               "left without partner_restarting keeps the left line");
+    // UDP sends no goodbye: the RESULT exiting (partner_restarting) alone is the restart.
     v.handoff = token(T::partner_restarting);
     v.left = false;
-    v.state = static_cast<std::uint8_t>(link::LinkState::lost);
     v.down_ms = 3000;
     v.publish_ms = 0;
+    for (const auto state : {link::LinkState::lost, link::LinkState::listening}) {
+        v.state = static_cast<std::uint8_t>(state);
+        CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text,
+                  "CO-OP [Snake_Fan restarting] loading your save - waiting for them", "lost or listening without a goodbye + partner_restarting");
+        Check(line.tone == hud::Tone::info, "UDP restart is info");
+    }
+    {
+        hud::Event lost{};
+        lost.kind = hud::EventKind::lost;
+        char toast[256]{};
+        hud::Tone tone{};
+        Check(!hud::FormatToast(lost, v, "Snake_Fan", toast, sizeof(toast), tone) && toast[0] == 0,
+              "host: no 'Lost the connection' toast after H2 (partner_restarting)");
+        v.handoff = token(T::partner_staged);
+        Check(hud::FormatToast(lost, v, "Snake_Fan", toast, sizeof(toast), tone) &&
+                  std::strcmp(toast, "Lost the connection to Snake_Fan - waiting for them to come back.") == 0 && tone == hud::Tone::warn,
+              "any other token keeps the lost toast");
+    }
+    v.handoff = token(T::partner_staged);
+    v.state = static_cast<std::uint8_t>(link::LinkState::lost);
     CheckText(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line), line.text, "CO-OP [partner lost 3 s] waiting for them to come back",
-              "lost without a goodbye keeps the lost line");
+              "lost without a goodbye and without partner_restarting keeps the lost line");
     v.down_ms = 0;
     v.state = static_cast<std::uint8_t>(link::LinkState::connected);
     v.handoff = 0;

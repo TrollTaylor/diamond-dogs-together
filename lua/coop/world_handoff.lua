@@ -1,6 +1,8 @@
 -- Join-fix phase 2 (docs/join-fix-phase2-spec.md C1-C6): the SAVE report for the
 -- native save handoff, the guest travel lock (inner wrappers below world_follow's
--- armed-guest suppression), travel warnings and the title replay hold.
+-- armed-guest suppression), travel warnings and the title replay hold. A title
+-- Continue is gated at the title menu itself (title_sequence Seq_Game_TitleMenu):
+-- the game's title Continue never calls TppMission's Continue functions.
 do
 local W = e.MgsCoopWorld
 local F = W.follow
@@ -76,19 +78,26 @@ if not last or key ~= last.key then
 end
 end
 -- allow, or refuse/hold with the note (code, a, b) and the host mission.
-function X.decide(fn, kind, target, now)
+-- heli: a title RestartHeli (no travel: only the handoff rules apply).
+function X.decide(fn, kind, target, now, heli)
 if not F.enabled or not W.active or (W.level or 0) < 3 or not F.session() then return "allow" end
 local h, lock = X.code()
+local esc = X.esc[kind .. ":" .. (target or 0)]
+if esc and now <= esc then return "allow" end
+-- A pending handoff vetoes a title Continue (note 9, twice declines) with or without the lock.
+local title = kind == 4 and X.title()
+if title and h >= 2 and h <= 4 then
+    local p = peer()
+    return "refuse", 9, 0, 0, p and num(p.mission) or 0
+end
 if lock ~= 1 then return "allow" end
 local p = peer()
 if not p or not p.linked or (num(p.level) or 0) < 3 then return "allow" end
 local m = p.mission
 if m == 0 or m == 1 or not SUPPORTED[m] or F.current or #F.queue > 0 then return "allow" end
-local esc = X.esc[kind .. ":" .. (target or 0)]
-if esc and now <= esc then return "allow" end
-if kind == 4 and X.title() then
-    if h >= 2 and h <= 4 then return "refuse", 9, 0, 0, m end
+if title then
     if h == 1 then return "refuse", 7, m, 3, m end
+    if heli then return "allow" end
     if X.story() == 1 then return "refuse", 7, m, 2, m end
     if SUPPORTED[W.mission] ~= SUPPORTED[m] then return "refuse", 7, m, 1, m end
     return "allow"
@@ -117,11 +126,32 @@ elseif kind == 6 then
 elseif type(args) == "table" and args.isTitleMode ~= true then t = args.nextMissionId end
 return num(t)
 end
+-- A refused call: noted at most once per 1 s; true for the repeat 1-10 s (Continue)
+-- or 1-30 s (travel) later, which runs once (travelling alone; quiet: no note 8).
+local function again(name, kind, t, now, code, a, b, m, quiet)
+local key, r = kind .. ":" .. (t or 0), X.refused
+local span = r and r.key == key and r.mission == W.mission and now - r.at
+if span and span >= 1000 and span <= (kind == 4 and 10000 or 30000) then
+    X.refused = nil
+    X.esc[key] = now + 2000
+    if code == 9 or (code == 7 and b == 3) then X.save(3, 1, 0, 0, 0, 0); note(10, 0, 0) end
+    if not quiet then note(8, t, 1) end
+    line(name, kind, t, m, "repeat")
+    return true
+end
+if not (span and span >= 0 and span < 1000) then
+    X.refused = {key = key, mission = W.mission, at = now}
+    note(code, a, b)
+end
+line(name, kind, t, m, "refuse")
+return false
+end
 local function wrap(name, kind)
 local original = W.get(TppMission, name)
 if type(original) ~= "function" then return end
 TppMission[name] = function(...)
-    if F.token or X.pass or W.host or not W.active then
+    -- At a title the menu gate below owns Continue (a replay passes F.token anyway).
+    if F.token or X.pass or W.host or not W.active or (kind == 4 and X.title()) then
         if kind == 6 then X.held = nil end
         return original(...)
     end
@@ -147,22 +177,8 @@ TppMission[name] = function(...)
         line(name, kind, t, m, "hold")
         return
     end
-    local key, r = kind .. ":" .. (t or 0), X.refused
-    local span = r and r.key == key and r.mission == W.mission and now - r.at
-    if span and span >= 1000 and span <= (kind == 4 and 10000 or 30000) then
-        -- Done again: allowed once (both Continue wrappers of one press), travelling alone.
-        X.refused = nil
-        X.esc[key] = now + 2000
-        if code == 9 or (code == 7 and b == 3) then X.save(3, 1, 0, 0, 0, 0); note(10, 0, 0) end
-        note(8, t, 1)
-        line(name, kind, t, m, "repeat")
-        return original(...)
-    end
-    if not (span and span >= 0 and span < 1000) then
-        X.refused = {key = key, mission = W.mission, at = now}
-        note(code, a, b)
-    end
-    line(name, kind, t, m, "refuse")
+    -- Done again: allowed once (both Continue wrappers of one press), travelling alone.
+    if again(name, kind, t, now, code, a, b, m) then return original(...) end
     if name == "ReserveMissionClear" then return false end
 end
 end
@@ -172,12 +188,21 @@ if b then note(8, hd.target, b) end
 line(DEPLOY, 6, hd.target, hd.host, why)
 X.call(hd.fn, unpack(hd, 1, hd.n))
 end
--- The held sortie: dropped on a mission change or a follow; released by the F9
--- unlock, after 120 s, or once the lock no longer applies; the note every 3 s.
+-- The held sortie: dropped on a mission change, a follow, or once the prep screen
+-- no longer names it (cancelled or changed: the vanilla deploy re-reads gvars);
+-- released when world sync stopped (world_sync calls this while inactive), by the
+-- F9 unlock, after 120 s, or once the lock no longer applies; the note every 3 s.
 function X.hold(now)
 local hd = X.held
 if not hd then return end
+now = now or W.now()
 if hd.mission ~= W.mission or W.host then X.held = nil; return end
+if target(6) ~= hd.target then
+    X.held = nil
+    line(DEPLOY, 6, hd.target, hd.host, "stale")
+    return
+end
+if not W.active then return release(hd, "inactive", 2) end
 if W.paired or F.current or #F.queue > 0 then
     X.held = nil
     line(DEPLOY, 6, hd.target, hd.host, "follow")
@@ -209,27 +234,77 @@ if c ~= (X.replayCode or 0) then X.replayCode = c; log(fmt("step=replay_hold;cod
 return c ~= 0
 end
 F.replayHold = X.replayHold
--- An armed guest's title Continue is suppressed by world_follow (F.request):
+-- An armed guest's title Continue stays suppressed (it follows the host's):
 -- pressing it twice while the host's save is coming still declines the handoff.
-function X.decline()
+function X.decline(t)
 local h = X.code()
 if h < 2 or h > 4 then return end
-local now, key, r = W.now(), "4:" .. W.mission, X.refused
+t = t or W.mission
+local now, key, r = W.now(), "4:" .. t, X.refused
 local span = r and r.key == key and r.mission == W.mission and now - r.at
 if span and span >= 1000 and span <= 10000 then
     X.refused = nil
     X.save(3, 1, 0, 0, 0, 0)
     note(10, 0, 0)
-    line("request", 4, W.mission, 0, "decline")
+    line("TitleContinue", 4, t, 0, "decline")
 elseif not (span and span >= 0 and span < 1000) then
     X.refused = {key = key, mission = W.mission, at = now}
     note(9, 0, 0)
 end
 end
-local request = F.request
-F.request = function(kind, arg)
-if kind == 4 and W.active and not W.host and X.title() then pcall(X.decline) end
-return request(kind, arg)
+-- world_follow's guest(): an armed guest follows the host's travel.
+local function armed()
+return F.enabled and W.active and (W.level or 0) >= 3 and SUPPORTED[W.mission] and (not W.paired or (W.eff or 0) >= 3) and
+    F.armed and not F.token
+end
+-- The vanilla Continue select restarts in the helicopter for these (no travel).
+local function heliNext(m)
+local f = W.get(TppMission, "IsHelicopterSpace")
+local ok, v = false, nil
+if type(f) == "function" then ok, v = pcall(f, m) end
+return (ok and v == true) or m == 10115 or m == 50050
+end
+-- A swallowed select: the menu takes input again, as the vanilla cancel path does.
+function X.reopen()
+local reboot, start = W.get(TppUiCommand, "RebootTitleSelectMenu"), W.get(title_sequence, "StartTitleMenu")
+if type(reboot) == "function" then pcall(reboot) end
+if type(start) == "function" then pcall(start) end
+end
+-- The title menu's Continue / RestartHeli select, before any fade, VarRestore or load.
+function X.select(original, restart, ...)
+if not X.title() then return original(...) end
+local nxt = num(W.get(gvars, "title_nextMissionCode")) or 0
+local heli = restart or heliNext(nxt)
+X.fromTitle = not heli
+if X.pass or F.token or W.host or not W.active then return original(...) end
+local now, t = W.now(), nxt ~= 0 and nxt or W.mission
+local name = heli and "TitleRestartHeli" or "TitleContinue"
+if not heli and armed() then
+    pcall(X.decline, t)
+    F.request(4)
+    line(name, 4, t, 0, "armed")
+    return X.reopen()
+end
+local ok, d, code, a, b, m = pcall(X.decide, name, 4, t, now, heli)
+if not ok then log("step=error;msg=" .. string.sub(tostring(d), 1, 100)) end
+if not ok or d == "allow" or again(name, 4, t, now, code, a, b, m, heli) then return original(...) end
+X.reopen()
+end
+local WRAPPED = setmetatable({}, {__mode = "k"})
+-- Each title mission init, before TppSequence.Init builds the menu's message
+-- table (it captures self.OnSelectContinue): the shared Seq_Game_TitleMenu.
+function X.wrapTitle()
+if floor((num(W.get(vars, "missionCode")) or 0) / 10000) ~= 4 then return end
+local menu = W.get(W.get(mvars, "seq_sequenceTable"), "Seq_Game_TitleMenu")
+if type(menu) ~= "table" then return end
+for name, restart in pairs({OnSelectContinue = false, OnSelectRestartHeli = true}) do
+    local original = W.get(menu, name)
+    if type(original) == "function" and not WRAPPED[original] then
+        local f = function(...) return X.select(original, restart, ...) end
+        WRAPPED[f] = true
+        menu[name] = f
+    end
+end
 end
 -- Loading choke point: op 2 CONTINUE (never for a replay), the final REPORT and the warnings.
 function X.loading(kind)
@@ -238,7 +313,7 @@ local k = kind == L.MISSION_FINALIZE and 1 or kind == L.MISSION_ABORT and 2 or
     kind == L.MISSION_RESTART and 3 or kind == L.CONTINUE_FROM_CHECK_POINT and 4 or 0
 if k == 0 then return end
 local t, replay = num(W.get(vars, "missionCode")), F.token or F.current
-if k == 4 and t and not replay then X.save(2, t, X.title() and 1 or 0, X.story(), 0, 0) end
+if k == 4 and t and not replay then X.save(2, t, (X.title() or X.fromTitle) and 1 or 0, X.story(), 0, 0) end
 if not W.active then return end
 X.leaving = true
 local now, p = W.now(), peer()
@@ -260,6 +335,7 @@ elseif k == 4 and not replay then
 end
 end
 F.installHooks[#F.installHooks + 1] = function()
+pcall(X.wrapTitle)
 if X.installed then return end
 X.installed = true
 for name, kind in pairs(KIND) do wrap(name, kind) end
@@ -273,7 +349,7 @@ if type(reserve) == "function" then
 end
 end
 W.startHooks[#W.startHooks + 1] = function()
-X.held, X.refused, X.leaving, X.last, X.replayCode = nil, nil, false, nil, nil
+X.held, X.refused, X.leaving, X.last, X.replayCode, X.fromTitle = nil, nil, false, nil, nil, false
 X.esc, X.warned = {}, {}
 end
 end

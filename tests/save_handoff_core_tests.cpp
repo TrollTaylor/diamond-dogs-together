@@ -483,10 +483,13 @@ void TestTransferScene() {
     CHECK(FirstToast(g_host, Toast::h2_partner_restarting)->a == 30010);
     CHECK(g_host.toasts.size() == 2);
     CHECK(g_guest.toasts.size() == 11);
-    // Still alive 20 s after the WM_CLOSE: exit_slow and G9, once.
+    // Still alive 20 s after a WM_CLOSE: the glue's timer owns exit_slow and G9
+    // (PartnerShutdown stops this core; save_handoff_io_tests ExitSlow). The
+    // core logs it only for no_window (TestEdges).
     Run(25000);
-    CHECK(CountLog(g_guest, "save_handoff=exit_slow") == 1);
-    CHECK(CountToast(g_guest, Toast::g9_quit_manually) == 1);
+    CHECK(CountLog(g_guest, "save_handoff=exit_slow") == 0);
+    CHECK(CountToast(g_guest, Toast::g9_quit_manually) == 0);
+    CHECK(TokenOf(g_guest) == Token::exiting && g_guest.request_present);  // staleness never cancels an exit
     CHECK(g_guest.exits == 1 && g_guest.requests == 1);
     CHECK(CountLog(g_host, "save_handoff=offer;") == 1);
     const core::Stats hs_stats = g_host.core->stats(), gs = g_guest.core->stats();
@@ -928,6 +931,7 @@ void TestPacing() {
     CHECK(g_host.max_chunks_tick == 1);
     CHECK(StagedEqualsHost() && g_guest.write_errors == 0);
     CHECK(g_guest.core->stats().bad_msg == 0 && !HasLog(g_guest, "failed"));
+    CHECK(!HasLog(g_host, "failed"));  // a slow but steady stream never trips the host's stall
     // STATE never replaces a CHUNK (ReliableMode::latest only after a STATE).
     CHECK(g_host.core->stats().chunks_sent == g_guest.core->stats().chunks_received);
 }
@@ -1111,19 +1115,23 @@ void TestEdges() {
     for (int i = 0; i < 5; ++i) g_host.core->OnPeer(junk, sizeof(junk), g_now);
     Drain(g_host);
     CHECK(g_host.core->stats().bad_msg == 5 && g_host.core->stats().last_bad == wire::Decode::version);
-    CHECK(CountLog(g_host, "save_handoff=bad_msg; why=version") == 1);
+    CHECK(CountLog(g_host, "save_handoff=bad_msg; why=version; count=1") == 1 && CountLog(g_host, "save_handoff=bad_msg;") == 1);
     g_now += core::kBadMsgLogMs;
     g_host.core->OnPeer(junk, 3, g_now);
     Drain(g_host);
-    CHECK(CountLog(g_host, "save_handoff=bad_msg; why=short") == 1);
-    // A host STATE arriving at the host, or a CHUNK at the host, is refused.
+    CHECK(CountLog(g_host, "save_handoff=bad_msg; why=short; count=6") == 1);
+    // A host STATE arriving at the host, or a CHUNK at the host, is refused; the
+    // core's one line names the role/direction reason (never the stale decode one).
     wire::Message st{};
     st.kind = wire::Kind::state;
     st.state.role = wire::Role::host;
     std::uint8_t buf[wire::kMaxMessage];
     std::size_t n = wire::Encode(st, buf, sizeof(buf));
+    g_now += core::kBadMsgLogMs;
     g_host.core->OnPeer(buf, n, g_now);
     Drain(g_host);
+    CHECK(CountLog(g_host, "save_handoff=bad_msg; why=role; count=7") == 1);
+    CHECK(CountLog(g_host, "why=ok") == 0 && CountLog(g_host, "save_handoff=bad_msg;") == 3);
     CHECK(g_host.core->stats().bad_msg == 7);
     // A stale CHUNK (another xfer) at an idle guest is ignored and not logged.
     wire::Message ch{};
@@ -1137,6 +1145,101 @@ void TestEdges() {
     g_guest.core->OnPeer(buf, n, g_now);
     Drain(g_guest);
     CHECK(g_guest.core->stats().stale == 1 && g_guest.logs.size() == logs);
+}
+
+// Review SS-1: the WM_CLOSE did not close the game (no_window, a slow close);
+// a veto, or the guest's own Continue, still drops the request before the
+// tooling can apply it. Staleness alone never cancels an exit.
+void ExitThenCancel(bool window, bool decline) {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_guest.window = window;
+    BindHost(30010);
+    CHECK(Run(30000, GuestExited));
+    Run(200);
+    CHECK(TokenOf(g_guest) == Token::exiting && g_guest.view.lua_code == 4 && g_guest.request_present);
+    CHECK(TokenOf(g_host) == Token::partner_restarting);
+    const std::uint32_t xfer = g_guest.staged.begin()->first;
+    const unsigned deletes = g_guest.deletes;
+    if (decline) g_guest.core->OnDecline(core::DeclineSource::second_continue, g_now);
+    else g_guest.core->OnContinue(30050, g_now);  // its own save, without an op 3 (lock off, no link)
+    Drain(g_guest);
+    const wire::AbortReason reason = decline ? wire::AbortReason::user : wire::AbortReason::not_title;
+    CHECK(g_guest.sent.back().first == wire::Kind::abort && g_guest.sent.back().second == static_cast<std::uint8_t>(reason));
+    CHECK(g_guest.deletes == deletes + 1 && OpIndex(g_guest, "delete:" + Hex8(xfer)) >= 0);
+    CHECK(!g_guest.request_present && g_guest.staged.empty());
+    if (decline) {
+        CHECK(HasLog(g_guest, ("save_handoff=abort; why=user; xfer=" + Hex8(xfer)).c_str()));
+        CHECK(TokenOf(g_guest) == Token::kept && g_guest.view.lua_code == 5 && CountToast(g_guest, Toast::g8_kept) == 1);
+    } else {
+        CHECK(HasLog(g_guest, ("save_handoff=abort; why=not_title; xfer=" + Hex8(xfer)).c_str()));
+        CHECK(TokenOf(g_guest) == Token::failed && g_guest.view.why == static_cast<std::uint8_t>(wire::Fail::not_title));
+        CHECK(FirstToast(g_guest, Toast::g7_failed)->a == static_cast<std::uint32_t>(wire::Fail::not_title));
+    }
+    g_guest.rep = InGame(30050);  // its own Continue loads: the title is left
+    Run(1000);
+    if (decline) CHECK(TokenOf(g_host) == Token::kept && CountToast(g_host, Toast::h5_partner_kept) == 1);
+    else CHECK(TokenOf(g_host) == Token::failed && g_host.view.why == static_cast<std::uint8_t>(wire::Fail::not_title));
+    // Nothing more: no second exit, no exit_slow, no G9 beyond the no_window one.
+    Run(30000);
+    CHECK(g_guest.exits == 1 && !HasLog(g_guest, "save_handoff=exit_slow"));
+    CHECK(CountToast(g_guest, Toast::g9_quit_manually) == (window ? 0u : 1u));
+}
+void TestExitVeto() {
+    for (const bool window : {true, false})
+        for (const bool decline : {true, false}) ExitThenCancel(window, decline);
+    // F9 Keep my own save while exiting: the same veto.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_guest.window = false;
+    BindHost(30010);
+    CHECK(Run(30000, GuestExited));
+    g_guest.core->OnDecline(core::DeclineSource::f9, g_now);
+    Drain(g_guest);
+    CHECK(!g_guest.request_present && TokenOf(g_guest) == Token::kept && HasLog(g_guest, "save_handoff=declined; source=f9"));
+    // Reports stop for more than 30 s while exiting (a slow WM_CLOSE teardown):
+    // the request stays, the token stays exiting.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(30000, GuestExited));
+    const unsigned deletes = g_guest.deletes;
+    g_guest.report_on = false;
+    Run(35000);
+    CHECK(g_guest.deletes == deletes && g_guest.request_present && !g_guest.staged.empty());
+    CHECK(TokenOf(g_guest) == Token::exiting && !HasLog(g_guest, "why=not_title"));
+    // An op 2 while still counting down is no exit cancel (the 2 s title rule owns it).
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(20000, GuestCountdown));
+    g_guest.core->OnContinue(30050, g_now);
+    Drain(g_guest);
+    CHECK(TokenOf(g_guest) == Token::countdown && g_guest.request_present);
+}
+
+// Review N2: the host in sending with the link dead and no CLOSE (UDP guest
+// crash): failed stall after kChunkStallMs, the snapshot freed by the idle path.
+void HostStall(bool refuse_all) {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_host.files = MakeFiles(1, 12000);
+    g_host.pump_rate = 2;
+    BindHost(30010);
+    CHECK(Run(30000, GuestReceiving));
+    CHECK(TokenOf(g_host) == Token::sending);
+    g_host.drop_in = ~0u;  // the guest is gone: nothing reaches the host any more
+    if (refuse_all) g_host.link_up = false;  // every CHUNK (and STATE) refused: not_connected
+    else g_host.pump_rate = 0;               // nothing acknowledged: the queue stays full, no CHUNK queued
+    CHECK(!Run(core::kChunkStallMs - 200, [] { return TokenOf(g_host) == Token::failed; }));
+    CHECK(TokenOf(g_host) == Token::sending);
+    CHECK(Run(400, [] { return TokenOf(g_host) == Token::failed; }));
+    CHECK(g_host.view.why == static_cast<std::uint8_t>(wire::Fail::stall) && g_host.view.pct == 0);
+    CHECK(HasLog(g_host, "save_handoff=abort; why=stall; xfer=") && HasLog(g_host, "save_handoff=failed; why=stall"));
+    CHECK(CountToast(g_host, Toast::h6_failed) == 1);
+    static unsigned released;
+    released = g_host.releases;
+    CHECK(Run(core::kSnapshotKeepMs + 1000, [] { return g_host.releases > released; }));
+    CHECK(g_host.releases == released + 1);  // the 8 MiB snapshot is freed by the idle path
+}
+void TestHostStall() {
+    HostStall(true);
+    HostStall(false);
 }
 
 // ---- Pure decisions.
@@ -1585,6 +1688,8 @@ int main(int argc, char** argv) {
     TestSnapshotChanged();
     TestTimers();
     TestEdges();
+    TestExitVeto();
+    TestHostStall();
     std::printf("save_handoff_core_tests: %u checks passed\n", checks);
     return 0;
 }

@@ -594,6 +594,102 @@ void ModuleGates(const io::Dirs& dirs) {
     hs::ResetForTest();
 }
 
+// P2-10 exit_slow after a WM_CLOSE (review N1): the overlay's PartnerShutdown
+// stops the core right after the close is posted, so the glue's own timer logs
+// exit_slow and posts G9 once; a veto (the core leaving the exiting token)
+// cancels it, and no_window leaves it to the core.
+unsigned CountLines(const char* prefix) {
+    unsigned n = 0;
+    for (unsigned i = 0; i < g_line_count; ++i)
+        if (std::strncmp(g_lines[i], prefix, std::strlen(prefix)) == 0) ++n;
+    return n;
+}
+unsigned TakeG9(std::uint32_t& cursor) {
+    namespace hs = mgscoop::save_handoff_state;
+    mgscoop::coop_hud::Event events[64]{};
+    unsigned g9 = 0, taken = 0;
+    while ((taken = mgscoop::coop_hud::Take(events, 64, cursor)) > 0)
+        for (unsigned i = 0; i < taken; ++i)
+            if (events[i].kind == mgscoop::coop_hud::EventKind::save_handoff &&
+                events[i].arg == static_cast<std::int32_t>(hs::Toast::g9_quit_manually))
+                ++g9;
+    return g9;
+}
+bool WaitLine(const char* prefix, unsigned ms) {
+    for (unsigned waited = 0; waited < ms; waited += 10) {
+        if (CountLines(prefix)) return true;
+        Sleep(10);
+    }
+    return CountLines(prefix) != 0;
+}
+void ExitSlow(const io::Dirs& dirs) {
+    namespace hs = mgscoop::save_handoff_state;
+    const std::string save_dir = fs::path(dirs.save).string();
+    const std::wstring game = (g_root / "game").wstring();
+    module::Config scene{};
+    scene.role = 2;
+    scene.mode = mgscoop::SaveHandoff::scene;
+    scene.play = scene.net = scene.link_v2 = scene.saves_redirected = scene.world_on = scene.travel_lock = true;
+    scene.save_dir = save_dir.c_str();
+    scene.directory = game.c_str();
+    scene.log = &Capture;
+    int handle = 0;
+    const auto configure = [&](std::uint32_t delay_ms) {
+        module::ResetForTest();
+        hs::ResetForTest();
+        g_line_count = 0;
+        Check(module::Configure(scene), "guest scene configured");
+        g_windows[0] = io::Window{&handle, GetCurrentProcessId(), true, false, 2073600};
+        g_window_count = 1;
+        g_posts = 0;
+        g_posted = nullptr;
+        module::SetExitForTest(&FakeEnum, &FakePost, delay_ms);
+    };
+    core::Action exit{};
+    exit.kind = core::ActionKind::post_exit;
+    std::uint32_t cursor = 0;
+    TakeG9(cursor);
+
+    // WM_CLOSE posted, then PartnerShutdown and one hook tick: the core is stopped,
+    // yet exit_slow and G9 still come, exactly once.
+    configure(150);
+    module::ExecuteForTest(exit);
+    Check(g_posts == 1 && g_posted == &handle, "post_exit closes the game window");
+    module::Shutdown();
+    module::Hooks()->on_idle(GetTickCount64());
+    Check(WaitLine("save_handoff=exit_slow", 3000), "exit_slow after the delay although the core is shut down");
+    Sleep(400);
+    Check(CountLines("save_handoff=exit_slow") == 1, "exactly one exit_slow line");
+    Check(TakeG9(cursor) == 1, "exactly one G9 (quit MGSV manually)");
+
+    // A veto first (the core publishes kept): no exit_slow, no G9.
+    configure(1000);
+    module::ExecuteForTest(exit);
+    core::Action kept{};
+    kept.kind = core::ActionKind::publish;
+    kept.view.token = static_cast<std::uint8_t>(hs::Token::kept);
+    module::ExecuteForTest(kept);
+    Sleep(1500);
+    Check(CountLines("save_handoff=exit_slow") == 0 && TakeG9(cursor) == 0, "a declined exit: the timer stays silent");
+    // The exiting token itself keeps it armed.
+    configure(150);
+    module::ExecuteForTest(exit);
+    core::Action exiting{};
+    exiting.kind = core::ActionKind::publish;
+    exiting.view.token = static_cast<std::uint8_t>(hs::Token::exiting);
+    module::ExecuteForTest(exiting);
+    Check(WaitLine("save_handoff=exit_slow", 3000) && TakeG9(cursor) == 1, "the exiting token keeps the timer armed");
+
+    // no_window: nothing armed here (the core logs exit_slow and G9 was shown at once).
+    configure(150);
+    g_window_count = 0;
+    module::ExecuteForTest(exit);
+    Sleep(500);
+    Check(g_posts == 0 && CountLines("save_handoff=exit_slow") == 0 && TakeG9(cursor) == 0, "no_window: the glue arms nothing");
+    module::ResetForTest();
+    hs::ResetForTest();
+}
+
 // The shared P2-6 vectors (tests/fixtures/handoff-set.json, track A): the glue
 // hashing the six fixture files on disk gives the fixture's set_sha256, the
 // value the wire tests and Get-CoopHandoffSetSha256 also check. Reconfigures
@@ -655,6 +751,7 @@ int main() {
     Rejoin(dirs);
     ExitWindow();
     ModuleGates(dirs);
+    ExitSlow(dirs);
     FixtureSet();
     mgscoop::lab::save::reset_for_test();
     // Only this test's own temporary tree.

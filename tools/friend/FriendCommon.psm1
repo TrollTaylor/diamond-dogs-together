@@ -1077,6 +1077,16 @@ function Clear-CoopClipboardIfCode {
     } catch { return $false }
 }
 
+function Remove-CoopLinkRejoin {
+    # Deletes mgs-coop\link-rejoin.txt (a fixed name, never a save) when it is a
+    # plain file; the caller holds the play mutex. Returns $true when one was removed.
+    param([Parameter(Mandatory)]$Paths)
+    if (!(Test-Path -LiteralPath $Paths.LinkRejoin -PathType Leaf)) { return $false }
+    Assert-NoReparsePoint -Path $Paths.LinkRejoin -StopAt $Paths.Game
+    Remove-Item -LiteralPath $Paths.LinkRejoin -Force
+    return $true
+}
+
 function Invoke-CoopPlayCleanup {
     # Deactivates a Play-Coop session in $GameRoot (spec 9.2 step 6). Idempotent
     # and serialized by the per-folder mutex. Deletes, in this order, the
@@ -1085,7 +1095,9 @@ function Invoke-CoopPlayCleanup {
     # then removes a recorded UPnP mapping, clears the clipboard if it still
     # holds the code, and sets the session state to off. A changed file is kept
     # and reported. A file's hash may also be its prev_sha256 (the lab.ini a
-    # save handoff rewrote). P2-17 guard: while a save handoff restart is
+    # save handoff rewrote). link-rejoin.txt (a steam-wait guest's copy of the
+    # host's join code, written at a save handoff exit) is removed too: no join
+    # code outlives the session. P2-17 guard: while a save handoff restart is
     # claimed (Test-CoopHandoffClaimLive) it does nothing (Ran=$false, message
     # 'a save handoff restart is in progress'): the game Steam starts again
     # must find the co-op files. -Force (Play-Coop -Cleanup, a restart deadline)
@@ -1100,6 +1112,7 @@ function Invoke-CoopPlayCleanup {
         if (!$Force -and (Test-CoopHandoffClaimLive -Session $session)) { $result.Messages += @('a save handoff restart is in progress'); return }
         $result.Ran = $true
         Assert-NoReparsePoint -Path $paths.Mod -StopAt $paths.Game
+        if (Remove-CoopLinkRejoin -Paths $paths) { $result.Removed += @('link-rejoin.txt') }
         $records = @{}
         foreach ($f in @(Get-FriendProperty $session 'files' @())) {
             $hashes = @(([string](Get-FriendProperty $f 'sha256' '')).ToUpperInvariant())
@@ -1392,6 +1405,33 @@ function Start-CoopRelaunch {
     return $out
 }
 
+function Get-CoopRelaunchWait {
+    # The console's wait for the game started again for a save handoff (Play-Coop
+    # run 1). Stop = $true once co-op was switched off (no active session, or
+    # another one: Off = $true) or the restart no longer pends (handoff failed or
+    # limit, no live claim): Lines say why and never ask for a manual start - the
+    # co-op files may be gone, and plain MGSV would run on the REAL saves (P2-17).
+    # ClaimedUtc is the claim's time (the helper waits 330 s from it at most).
+    param([Parameter(Mandatory)][string]$GameRoot, [string]$SessionId = '')
+    $out = [pscustomobject]@{ Stop = $false; Off = $false; Lines = @(); ClaimedUtc = $null }
+    $s = Read-CoopPlaySession -GameRoot $GameRoot
+    if (!$s -or [string](Get-FriendProperty $s 'state' '') -ne 'active' -or ($SessionId -and [string](Get-FriendProperty $s 'session_id' '') -cne $SessionId)) {
+        $out.Stop = $true
+        $out.Off = $true
+        $out.Lines = @('Co-op was switched off while MGSV was restarting (the helper could not start it again); do not start MGS V from Steam now. Start Play-Coop.bat again.')
+        return $out
+    }
+    $h = Get-CoopSessionHandoff $s
+    $out.ClaimedUtc = ConvertTo-CoopUtcTime $h.claimed_utc
+    if ($h.state -ceq 'relaunching' -or $h.state -ceq 'relaunched' -or (Test-CoopHandoffClaimLive -Session $s)) { return $out }
+    $out.Stop = $true
+    $why = if ($h.message) { ': ' + [string]$h.message } else { '' }
+    $lines = @("MGSV could not be started again$why. Do not start MGS V from Steam now; start Play-Coop.bat again.")
+    if ($h.aside) { $lines += @("Your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($h.aside) (Share-Save.bat [R] brings it back).") }
+    $out.Lines = $lines
+    return $out
+}
+
 function Set-CoopPlayGame {
     # Records the running game (game_pid, game_start_utc) in the active
     # session; a handoff that is relaunching becomes relaunched (its restart
@@ -1428,6 +1468,8 @@ function Invoke-CoopHandoffAfterExit {
     #   (a waiting Steam guest with link-rejoin.txt gets net_peer_steam and
     #   link-secret.txt), each new hash recorded before its write, request,
     #   stage and link-rejoin.txt deleted, state relaunching, count 1.
+    # stale, limit and a failed apply delete link-rejoin.txt as well (no rejoin
+    # follows); the none returns outside the mutex never touch it.
     # Then (outside the mutex) 5 s for Steam, and Start-CoopRelaunch. Any failure:
     # state failed, no relaunch: failed (the caller switches co-op off).
     # Returns @{ Action = none|deferred|relaunched|claimed_by_other|limit|stale|failed;
@@ -1474,6 +1516,8 @@ function Invoke-CoopHandoffAfterExit {
             if ($staleXfer -cmatch '^[0-9A-Fa-f]{8}$') {
                 try { $null = Remove-CoopProgressStage -StageRoot (Join-Path $paths.CoopSavesHandoff $staleXfer) } catch { }
             }
+            # Nothing is applied, so no rejoin: the host's join code goes as well.
+            try { $null = Remove-CoopLinkRejoin -Paths $paths } catch { }
             $result.Action = 'stale'
             $result.Messages = @("A host save that does not belong to this game start was not applied and was removed ($($req.Problem)).")
             return
@@ -1481,6 +1525,7 @@ function Invoke-CoopHandoffAfterExit {
         if ($handoff.count -ge 1) {
             Remove-Item -LiteralPath $req.RequestPath -Force
             $null = Remove-CoopProgressStage -StageRoot $req.StageDir
+            try { $null = Remove-CoopLinkRejoin -Paths $paths } catch { }
             $handoff['state'] = 'limit'
             $handoff['message'] = 'a second host save in one session was not applied'
             $table['handoff'] = $handoff
@@ -1553,12 +1598,15 @@ function Invoke-CoopHandoffAfterExit {
             $table['lab'] = $labRecord
             Save-CoopPlaySession -GameRoot $GameRoot -Session $table
             if ($secretBytes) {
+                # A temp file holding the secret never stays behind (a full disk, a lock).
                 $temp = $paths.LinkSecret + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-                [IO.File]::WriteAllBytes($temp, $secretBytes)
-                [IO.File]::Move($temp, $paths.LinkSecret)
+                try {
+                    [IO.File]::WriteAllBytes($temp, $secretBytes)
+                    [IO.File]::Move($temp, $paths.LinkSecret)
+                } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
             }
             Write-CoopAtomicBytes -Path $paths.LabIni -Bytes $newBytes
-            if (Test-Path -LiteralPath $paths.LinkRejoin) { Remove-Item -LiteralPath $paths.LinkRejoin -Force }
+            $null = Remove-CoopLinkRejoin -Paths $paths
             Remove-Item -LiteralPath $req.RequestPath -Force
             $null = Remove-CoopProgressStage -StageRoot $req.StageDir
             $claim['state'] = 'relaunching'
@@ -1572,8 +1620,10 @@ function Invoke-CoopHandoffAfterExit {
             $claim['message'] = $reason
             $table['handoff'] = $claim
             try { Save-CoopPlaySession -GameRoot $GameRoot -Session $table } catch { }
-            # Never applied twice: the request goes (a stage stays for the next Play-Coop to remove).
+            # Never applied twice: the request goes (a stage stays for the next Play-Coop to remove),
+            # and with no relaunch the host's join code goes too.
             Remove-Item -LiteralPath $req.RequestPath -Force -ErrorAction SilentlyContinue
+            try { $null = Remove-CoopLinkRejoin -Paths $paths } catch { }
             $result.Action = 'failed'
             if ($state.Imported) {
                 $result.Messages = @("The host's save was applied, but MGSV could not be started again: $reason. Start Play-Coop.bat again; your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($result.Aside) (Share-Save.bat [R] brings it back).")

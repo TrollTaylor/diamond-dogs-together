@@ -656,8 +656,11 @@ try {
             $script:session.files = @($script:session.files) + @([ordered]@{ name = $w.Name; sha256 = (Get-CoopTextSha256 -Bytes $w.Bytes) })
             Save-Session
             $temp = $w.Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-            [IO.File]::WriteAllBytes($temp, [byte[]]$w.Bytes)
-            [IO.File]::Move($temp, $w.Path)
+            # A temp file (the join code in link-secret.txt) never stays behind.
+            try {
+                [IO.File]::WriteAllBytes($temp, [byte[]]$w.Bytes)
+                [IO.File]::Move($temp, $w.Path)
+            } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
         }
     }
     $activated = $true
@@ -702,23 +705,45 @@ try {
         } else {
             # Steam was asked to start MGSV again (by this window or the helper);
             # the co-op files stay in place meanwhile (the cleanup guard, P2-17).
+            # The wait stops at once when co-op was switched off or the restart
+            # failed (the helper's own attempt; the finally block then switches
+            # co-op off), and ends with the claim's 300 s too, so this window never
+            # outlives the helper's wait. It asks for a manual start only after its
+            # own relaunch check passed, with time left: never without the co-op files.
             $waitStart = [DateTime]::UtcNow
+            $limit = $waitStart.AddSeconds(300)
             $retried = $false
+            $relaunchOk = $false
             $told = $false
             while (!$gamePid) {
                 $games = @(Get-GameProcessInDirectory -Directory $gameRoot | Where-Object { !$_.Unknown })
                 if ($games.Count) { $gamePid = [int]$games[0].Id; break }
-                $elapsed = ([DateTime]::UtcNow - $waitStart).TotalSeconds
+                $pending = $null
+                try { $pending = Get-CoopRelaunchWait -GameRoot $gameRoot -SessionId ([string]$session.session_id) } catch { $pending = $null }
+                if ($pending -and $pending.Stop) { Write-Lines -Lines @($pending.Lines) -Color Yellow; break runs }
+                if ($pending -and $null -ne $pending.ClaimedUtc -and $pending.ClaimedUtc.AddSeconds(300) -lt $limit) { $limit = $pending.ClaimedUtc.AddSeconds(300) }
+                $now = [DateTime]::UtcNow
+                $elapsed = ($now - $waitStart).TotalSeconds
+                $left = ($limit - $now).TotalSeconds
                 if ($elapsed -ge 60 -and !$retried) {
                     $retried = $true
-                    try { $null = Start-CoopRelaunch -GameRoot $gameRoot } catch { }
+                    # (Too late for Steam to start it before the limit: no new attempt.)
+                    if ($left -ge 90) {
+                        $relaunch = $null
+                        try { $relaunch = Start-CoopRelaunch -GameRoot $gameRoot } catch { $relaunch = [pscustomobject]@{ Ok = $false; Problem = $_.Exception.Message } }
+                        if (!$relaunch.Ok) {
+                            Write-Host "MGSV could not be started again: $($relaunch.Problem). Do not start MGS V from Steam now; start Play-Coop.bat again." -ForegroundColor Yellow
+                            break runs
+                        }
+                        $relaunchOk = $true
+                    }
                 }
-                if ($elapsed -ge 120 -and !$told) {
+                if ($elapsed -ge 120 -and !$told -and $relaunchOk -and $left -ge 90) {
                     $told = $true
-                    Write-Host 'Steam did not start MGSV again within 60 s: start MGS V from Steam yourself; co-op stays on for 5 minutes.' -ForegroundColor Yellow
+                    Write-Host ('Steam did not start MGSV again within 60 s: start MGS V from Steam yourself; co-op stays on for {0} more seconds.' -f [int]$left) -ForegroundColor Yellow
                 }
-                if ($elapsed -ge 300) {
-                    Write-Host 'MGSV did not start again within 5 minutes; co-op is switched off.' -ForegroundColor Yellow
+                if ($now -ge $limit) {
+                    Write-Host 'MGSV did not start again in time; co-op is switched off.' -ForegroundColor Yellow
                     Write-CleanupResult (Invoke-CoopPlayCleanup -GameRoot $gameRoot -Force)
                     break runs
                 }

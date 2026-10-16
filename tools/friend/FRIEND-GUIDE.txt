@@ -410,8 +410,11 @@ The Play-Coop status line explains most problems:
 - "save not shared": the host's save is still in the story opening or
   continues into a mission co-op cannot join. The host goes to Mother Base
   or free roam first, or the player whose save reaches Mother Base hosts.
-- "Steam did not start MGSV again": start MGS V from Steam yourself within
-  5 minutes; co-op stays on until then.
+- "Steam did not start MGSV again": start MGS V from Steam yourself while
+  co-op stays on (the window says for how many seconds).
+- "Co-op was switched off while MGSV was restarting" or "MGSV could not be
+  started again": do NOT start MGS V from Steam now (it would play your real
+  saves); start Play-Coop.bat again.
 - "The host's save was already applied once this session": the joiner got
   the host's save once already; quit and start Play-Coop again if needed.
 - "The host is in ... do the same again ... to travel alone" (in game): the

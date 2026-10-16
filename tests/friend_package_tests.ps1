@@ -1646,6 +1646,70 @@ try {
         $hostTable['launcher_start_utc'] = Get-CoopProcessStartUtc -Id $sleeper.Id
         Save-CoopPlaySession -GameRoot $hH.Game -Session $hostTable
         Assert-True (@((Remove-CoopStaleHandoff -GameRoot $hH.Game).Removed).Count -eq 0 -and (Test-Path -LiteralPath $stH.Stage)) 'a live session keeps its handoff files'
+        if ($sleeper -and !$sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force; $null = $sleeper.WaitForExit(5000) }
+
+        # 7. Review SS-3: link-rejoin.txt (the host's join code) never outlives the session.
+        $hR = New-HandoffSession 'handoff-rejoin-stale' -SteamWait
+        [IO.File]::WriteAllText($hR.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinSecret -SteamId $hostSteamId) + "`r`n")
+        $stR = New-HandoffStage $hR.CoopSavesHandoff '7A8B9CAD' @{ '287700/local/TPP_GAME_DATA0' = 'host progress r' }
+        $null = New-HandoffRequest $hR.CoopSavesHandoff $stR 8282 '2026-10-15T11:59:00Z' -Rejoin 1
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hR.Game -ExitedPid 8281 -ExitedStartUtc $exitedStart -Owner console
+        Assert-True ($res.Action -eq 'stale' -and !(Test-Path -LiteralPath $hR.LinkRejoin)) "a stale request (another game start) removes link-rejoin.txt too ($($res.Action))"
+        Assert-Equal (Invoke-CoopHandoffAfterExit -GameRoot $hR.Game -ExitedPid 0 -ExitedStartUtc $exitedStart -Owner console).Action 'none' 'an unknown exited game: none'
+        [IO.File]::WriteAllText($hR.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinSecret -SteamId $hostSteamId) + "`r`n")
+        Assert-Equal (Invoke-CoopHandoffAfterExit -GameRoot $hR.Game -ExitedPid 0 -ExitedStartUtc $exitedStart -Owner console).Action 'none' 'none again'
+        Assert-True (Test-Path -LiteralPath $hR.LinkRejoin) 'a none outside the mutex never deletes link-rejoin.txt (the helper may still apply it)'
+        $cR = Invoke-CoopPlayCleanup -GameRoot $hR.Game
+        Assert-True ($cR.Ran -and (@($cR.Removed) -contains 'link-rejoin.txt') -and !(Test-Path -LiteralPath $hR.LinkRejoin) -and (Get-SessionJson $hR).state -eq 'off') "the session's cleanup removes link-rejoin.txt ($(@($cR.Removed) -join ','))"
+        # A failed apply (lab.ini changed) of a waiting Steam joiner: no rejoin follows, the code goes.
+        $hRf = New-HandoffSession 'handoff-rejoin-fail' -SteamWait
+        [IO.File]::AppendAllText($hRf.LabIni, "partner_lost=hide`n")
+        [IO.File]::WriteAllText($hRf.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinSecret -SteamId $hostSteamId) + "`r`n")
+        $stRf = New-HandoffStage $hRf.CoopSavesHandoff '7B8C9DAE' @{ '287700/local/TPP_GAME_DATA0' = 'host progress rf' }
+        $null = New-HandoffRequest $hRf.CoopSavesHandoff $stRf 8383 '2026-10-15T11:59:00Z' -Rejoin 1
+        $res = Invoke-CoopHandoffAfterExit -GameRoot $hRf.Game -ExitedPid 8383 -ExitedStartUtc $exitedStart -Owner console
+        Assert-True ($res.Action -eq 'failed' -and !(Test-Path -LiteralPath $hRf.LinkRejoin) -and !(Test-Path -LiteralPath $hRf.LinkSecret) -and
+            !@(Get-ChildItem -LiteralPath $hRf.Mod -Filter 'link-secret.txt.*.tmp' -Force).Count) "a failed apply removes link-rejoin.txt and leaves no secret behind ($($res.Action))"
+        # Under a live claim the guarded cleanup keeps it (the restarted game rejoins with it); -Force removes it.
+        $hRc = New-HandoffSession 'handoff-rejoin-claim' -SteamWait
+        $sleeper = Start-Process -FilePath $winPs -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 300' -WindowStyle Hidden -PassThru
+        $claimRc = ConvertTo-CoopSessionTable -Session (Get-SessionJson $hRc)
+        $claimRc['handoff'] = [ordered]@{ state = 'relaunching'; claimed_by_pid = $sleeper.Id; claimed_start_utc = (Get-CoopProcessStartUtc -Id $sleeper.Id); claimed_utc = [DateTime]::UtcNow.ToString('o')
+            xfer = '7C8DAEBF'; set_sha256 = ('A' * 64); count = 1; aside = ''; message = '' }
+        Save-CoopPlaySession -GameRoot $hRc.Game -Session $claimRc
+        [IO.File]::WriteAllText($hRc.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinSecret -SteamId $hostSteamId) + "`r`n")
+        Assert-True (!(Invoke-CoopPlayCleanup -GameRoot $hRc.Game).Ran -and (Test-Path -LiteralPath $hRc.LinkRejoin)) 'a live claim: the guarded cleanup keeps link-rejoin.txt'
+        $forcedRc = Invoke-CoopPlayCleanup -GameRoot $hRc.Game -Force
+        Assert-True ($forcedRc.Ran -and (@($forcedRc.Removed) -contains 'link-rejoin.txt') -and !(Test-Path -LiteralPath $hRc.LinkRejoin)) '-Force removes it'
+
+        # 8. Review SS-4: the console's run-1 wait (Get-CoopRelaunchWait) stops once co-op is off or
+        #    the restart failed, and never while the restart is pending.
+        $hW = New-HandoffSession 'handoff-relaunch-wait'
+        $wId = [string](Get-SessionJson $hW).session_id
+        $setW = {
+            param([string]$State, [string]$Message = '', [string]$Aside = '', [int]$ClaimPid = 0, [string]$ClaimStart = '')
+            $t = ConvertTo-CoopSessionTable -Session (Get-SessionJson $hW)
+            $t['handoff'] = [ordered]@{ state = $State; claimed_by_pid = $ClaimPid; claimed_start_utc = $ClaimStart; claimed_utc = [DateTime]::UtcNow.AddSeconds(-10).ToString('o')
+                xfer = '7D8EBFC0'; set_sha256 = ('B' * 64); count = 1; aside = $Aside; message = $Message }
+            Save-CoopPlaySession -GameRoot $hW.Game -Session $t
+        }
+        foreach ($pendingState in @('relaunching', 'relaunched')) {
+            & $setW $pendingState
+            $w = Get-CoopRelaunchWait -GameRoot $hW.Game -SessionId $wId
+            Assert-True (!$w.Stop -and $null -ne $w.ClaimedUtc -and ([DateTime]::UtcNow - $w.ClaimedUtc).TotalSeconds -ge 9) "$pendingState`: keep waiting, the claim time known"
+        }
+        & $setW 'applying' '' '' $sleeper.Id (Get-CoopProcessStartUtc -Id $sleeper.Id)
+        Assert-True (!(Get-CoopRelaunchWait -GameRoot $hW.Game -SessionId $wId).Stop) 'applying with a live claimant: keep waiting'
+        & $setW 'failed' 'mgs-coop\coop.ini changed' '20261015-120000-before-handoff'
+        $w = Get-CoopRelaunchWait -GameRoot $hW.Game -SessionId $wId
+        Assert-Equal "$($w.Stop)|$($w.Off)|$(@($w.Lines) -join ' ')" ("True|False|MGSV could not be started again: mgs-coop\coop.ini changed. Do not start MGS V from Steam now; start Play-Coop.bat again. " +
+            'Your previous co-op save is kept at mgs-coop\coop-saves-replaced\20261015-120000-before-handoff (Share-Save.bat [R] brings it back).') 'failed: stop, the reason and the kept copy'
+        & $setW 'limit'
+        Assert-True ((Get-CoopRelaunchWait -GameRoot $hW.Game -SessionId $wId).Stop) 'limit: stop'
+        Assert-True ((Get-CoopRelaunchWait -GameRoot $hW.Game -SessionId 'another').Off) 'another session: co-op off for this window'
+        $null = Invoke-CoopPlayCleanup -GameRoot $hW.Game -Force
+        $w = Get-CoopRelaunchWait -GameRoot $hW.Game -SessionId $wId
+        Assert-True ($w.Stop -and $w.Off -and (@($w.Lines) -join ' ') -ceq 'Co-op was switched off while MGSV was restarting (the helper could not start it again); do not start MGS V from Steam now. Start Play-Coop.bat again.') 'off: stop, never a manual start'
     } finally {
         Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
         Remove-Item Env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC -ErrorAction SilentlyContinue
@@ -2376,6 +2440,68 @@ try {
             Stop-StandIn $standIn1; Stop-StandIn $standIn2
             if (!$hoLauncher.HasExited) { Stop-Process -Id $hoLauncher.Id -Force -ErrorAction SilentlyContinue }
             [IO.File]::WriteAllBytes($hop.Exe, $hoRealExe)
+        }
+
+        # Review SS-4: the launcher waits for a restart the helper claimed (claimed_by_other); the
+        # helper's restart then fails (state failed, co-op still on) or the helper switches co-op off.
+        # The window stops waiting at once, never says "start MGS V from Steam yourself", and exits 0
+        # with co-op off.
+        foreach ($outcome in @('failed', 'off')) {
+            $coIn = Join-Path $fixture "handoff-claimed-$outcome-in.txt"; $coOut = Join-Path $fixture "handoff-claimed-$outcome-out.txt"; $coErr = Join-Path $fixture "handoff-claimed-$outcome-err.txt"
+            [IO.File]::WriteAllText($coIn, "$joinCode`r`n`r`n`r`n")
+            $env:MGS_COOP_TEST_INTERACTIVE = '1'; $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_NO_WATCHDOG = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'
+            $savedModulePath = $env:PSModulePath
+            $env:PSModulePath = ''
+            try {
+                $coLauncher = Start-Process -FilePath $winPs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $play + '"'), '-GameDirectory', ('"' + $hoGame + '"'), '-Role', 'Join') `
+                    -RedirectStandardInput $coIn -RedirectStandardOutput $coOut -RedirectStandardError $coErr -NoNewWindow -PassThru
+                $null = $coLauncher.Handle  # keeps the exit code readable after WaitForExit
+            } finally {
+                $env:PSModulePath = $savedModulePath
+                foreach ($v in 'MGS_COOP_TEST_INTERACTIVE', 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_NO_WATCHDOG', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+            }
+            $coRead = { if (Test-Path -LiteralPath $coOut) { Read-SharedText -Path $coOut } else { '' } }
+            $standIn1 = $null; $coHelper = $null
+            try {
+                Assert-True (Wait-Until { (& $coRead).Contains('Waiting for MGSV') } 90) "[claimed $outcome] the launcher waits for the game: $(& $coRead)"
+                $standIn1 = Start-StandIn $hoGame
+                Assert-True (Wait-Until { (& $coRead).Contains('MGSV started') } 30) "[claimed $outcome] the launcher sees the game"
+                Add-StandInEvidence $hop
+                # The helper (a live stand-in process) claimed the restart while this window was busy.
+                $coHelper = Start-Process -FilePath $winPs -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 300' -WindowStyle Hidden -PassThru
+                $coHelperStart = Get-CoopProcessStartUtc -Id $coHelper.Id
+                $null = Update-CoopPlaySession -GameRoot $hoGame -Update {
+                    param($t)
+                    $t['handoff'] = [ordered]@{ state = 'relaunching'; claimed_by_pid = $coHelper.Id; claimed_start_utc = $coHelperStart; claimed_utc = [DateTime]::UtcNow.ToString('o')
+                        xfer = '8E9FA0B1'; set_sha256 = ('C' * 64); count = 1; aside = '20261015-120000-before-handoff'; message = '' }
+                }
+                Stop-StandIn $standIn1
+                Assert-True (Wait-Until { (& $coRead).Contains("The background helper is restarting MGSV with the host's save...") } 60) "[claimed $outcome] claimed_by_other: the window waits: $(& $coRead)"
+                Start-Sleep -Seconds 2
+                Assert-True (!$coLauncher.HasExited -and (Get-PlayFilesPresent $hop) -eq 4) "[claimed $outcome] the restart is pending: co-op stays on"
+                if ($outcome -eq 'failed') {
+                    # The helper's own Start-CoopRelaunch failed; its cleanup has not run yet.
+                    $null = Update-CoopPlaySession -GameRoot $hoGame -Update { param($t) $h = Get-CoopSessionHandoff $t; $h['state'] = 'failed'; $h['message'] = 'mgs-coop\coop.ini changed'; $t['handoff'] = $h }
+                } else {
+                    $null = Invoke-CoopPlayCleanup -GameRoot $hoGame -Force
+                }
+                Assert-True ($coLauncher.WaitForExit(15000)) "[claimed $outcome] the window stops waiting at once: $(& $coRead)"
+                $coText = & $coRead
+                Assert-Equal $coLauncher.ExitCode 0 "[claimed $outcome] exit code 0"
+                Assert-True (!$coText.Contains('start MGS V from Steam yourself') -and !$coText.Contains('co-op stays on for')) "[claimed $outcome] never asks for a manual start: $coText"
+                if ($outcome -eq 'failed') {
+                    Assert-True ($coText.Contains('MGSV could not be started again: mgs-coop\coop.ini changed. Do not start MGS V from Steam now; start Play-Coop.bat again.') -and
+                        $coText.Contains('Your previous co-op save is kept at mgs-coop\coop-saves-replaced\20261015-120000-before-handoff (Share-Save.bat [R] brings it back).')) "[claimed failed] the reason and the kept copy: $coText"
+                } else {
+                    Assert-True ($coText.Contains('Co-op was switched off while MGSV was restarting (the helper could not start it again); do not start MGS V from Steam now. Start Play-Coop.bat again.')) "[claimed off] co-op was switched off: $coText"
+                }
+                Assert-True ((Get-PlayFilesPresent $hop) -eq 0 -and (Get-SessionJson $hop).state -eq 'off') "[claimed $outcome] co-op is off (the window's finally block switches a failed restart off)"
+            } finally {
+                Stop-StandIn $standIn1
+                if ($coHelper -and !$coHelper.HasExited) { Stop-Process -Id $coHelper.Id -Force -ErrorAction SilentlyContinue }
+                if (!$coLauncher.HasExited) { Stop-Process -Id $coLauncher.Id -Force -ErrorAction SilentlyContinue }
+                [IO.File]::WriteAllBytes($hop.Exe, $hoRealExe)
+            }
         }
 
         # The same with the window gone (-Watch): the helper applies, waits for the restarted game

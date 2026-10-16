@@ -24,13 +24,15 @@ namespace wire = ::mgscoop::save_handoff_wire;
 inline constexpr std::uint64_t kStateMinGapMs = 500;      // STATE on change, at least this far apart
 inline constexpr std::uint64_t kStateHeartbeatMs = 5000;  // and this heartbeat (plus at every new session)
 inline constexpr std::uint64_t kOfferIdleMs = 30000;      // host: an OFFER without WANT/DECLINE expires
-inline constexpr std::uint64_t kChunkStallMs = 30000;     // guest: no CHUNK for this long -> ABORT stall
+inline constexpr std::uint64_t kChunkStallMs = 30000;     // guest: no CHUNK for this long -> ABORT stall;
+                                                          // host: no CHUNK queued for this long while sending -> failed stall
 inline constexpr std::uint64_t kResultWaitMs = 60000;     // host: END sent, no RESULT -> failed timeout
 inline constexpr std::uint64_t kSnapshotKeepMs = 300000;  // host: the in-memory snapshot is released after this
 inline constexpr std::uint64_t kSnapshotGapMs = 500;      // the two snapshot / Continue-bind reads are this far apart
 inline constexpr std::uint64_t kCountdownMs = 10000;      // guest: title countdown before PostExit
 inline constexpr std::uint64_t kTitleLostMs = 2000;       // guest: title lost this long during the countdown -> ABORT not_title
-inline constexpr std::uint64_t kExitSlowMs = 20000;       // guest: still alive this long after PostExit -> exit_slow + G9
+inline constexpr std::uint64_t kExitSlowMs = 20000;       // guest: still alive this long after PostExit -> exit_slow (+ G9):
+                                                          // the core for no_window, the glue's timer after a WM_CLOSE
 inline constexpr std::uint64_t kExitFreshMs = 1500;       // Lua report freshness for PostExit
 inline constexpr std::uint64_t kPhaseFreshMs = 3000;      // Lua report freshness for phase/story (older: unknown)
 inline constexpr std::uint64_t kSettleBindMs = 30000;     // in-game settle bind window (30010/30020/30050)
@@ -285,8 +287,11 @@ public:
     // ---- Inputs (one thread; drain the actions after each call).
     void OnLua(const Report& report, std::uint64_t now_ms) noexcept;
     // Lua op 2 CONTINUE: a Continue load into `target` (binds the set, P2-8 a).
+    // A guest that is already exiting (the WM_CLOSE did not close the game)
+    // loads its own save: the stage is dropped (ABORT not_title, request.json first).
     void OnContinue(std::uint32_t target, std::uint64_t now_ms) noexcept;
-    // Lua op 3 DECLINE or the F9 Keep my own save request.
+    // Lua op 3 DECLINE or the F9 Keep my own save request: in every guest phase
+    // up to exiting the stage is dropped (ABORT user, request.json first).
     void OnDecline(DeclineSource source, std::uint64_t now_ms) noexcept;
     // One channel-4 message from the peer (any Decode failure is counted).
     void OnPeer(const std::uint8_t* bytes, std::size_t size, std::uint64_t now_ms) noexcept;
@@ -396,6 +401,7 @@ private:
         std::uint32_t cur_off = 0;
         std::uint64_t sent_bytes = 0;
         std::uint64_t phase_at = 0, retry_at = 0;
+        std::uint64_t progress_at = 0;    // sending: the WANT or the last queued CHUNK (kChunkStallMs)
         bool stop = false;                // no more OFFERs of stop_set this session (a DECLINE)
         std::uint8_t stop_set[wire::kShaSize] = {};
         // Guest.
@@ -459,6 +465,7 @@ private:
     void GuestFail(wire::Fail fail, wire::Kind tell, std::uint64_t now_ms) noexcept;
     void GuestDropPartial(const char* why) noexcept;
     void GuestAbortStage(wire::AbortReason reason, std::uint64_t now_ms) noexcept;
+    void GuestCancelExit(wire::AbortReason reason, std::uint64_t now_ms) noexcept;
     void StageCommitted(std::uint64_t now_ms) noexcept;
     void DoExit(std::uint64_t now_ms) noexcept;
 

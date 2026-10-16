@@ -7,9 +7,12 @@
 # Run (coordinator only, hidden worker):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-restart.txt -SaveSeed lab -GuestSaveSeed real -LabSetting host:save_handoff=stage -LabSetting guest:save_handoff=scene -GraphicsQuality low
 # Evidence:
-#  - guest script-observer.log: save_handoff=countdown; ms=10000, then save_handoff=exit; how=wm_close
-#    and partner_shutdown; the game exits within 90 s with no forced termination
-#    (scenario.json ExitedRoles.guest.forced=false); the host logs link=peer_left.
+#  - guest script-observer.log: save_handoff=countdown; ms=10000, then save_handoff=exit; how=wm_close;
+#    the game exits within 90 s with no forced termination (scenario.json
+#    ExitedRoles.guest.forced=false). No partner_shutdown line at the title (no partner
+#    mission is armed there). The host logs save_handoff=result_rx; status=exiting, then
+#    link=lost; after_ms=... (UDP sends no goodbye; link=peer_left is Steam only), and its
+#    link-status handoff is partner_restarting.
 #  - the host's state.json hud toast starts with the H2 text (captures or state).
 #  - scenario.json HandoffApply: applied; run\guest-saves progress equals the staged manifest;
 #    run\guest-saves-replaced\<stamp>-before-handoff holds the old real-seed progress; the

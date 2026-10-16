@@ -202,9 +202,16 @@ DECLINE: Continue pressed twice, or F9 'Keep my own save'). Then RESULT
 exiting goes out and the largest visible, unowned top-level window of this
 process gets `WM_CLOSE` (EnumWindows; debug_overlay is not involved). Without
 a window: `save_handoff=exit; how=no_window` and toast G9; still alive 20 s
-later: `save_handoff=exit_slow` and G9. Losing the title for more than 2 s, or
-a decline, sends ABORT, deletes request.json then the stage, and sets the
-state failed (not_title) or kept (decline). A steam-wait guest writes
+later: `save_handoff=exit_slow` and G9. After a WM_CLOSE the overlay's
+PartnerShutdown stops the Core (and a Steam link parks), so the glue arms its
+own one-shot timer-queue timer for that line and G9; the Core logs exit_slow
+only for no_window (G9 was shown at once). Losing the title for more than 2 s
+in the countdown, or a decline, sends ABORT, deletes request.json then the
+stage, and sets the state failed (not_title) or kept (decline). While exiting
+(the game still runs: no_window or a slow close) a decline (Lua op 3, F9) still
+does that (kept), and so does the guest's own Continue (Lua op 2: failed
+not_title); a stale report never cancels an exit, since reports stop during a
+legitimate slow teardown. A steam-wait guest writes
 `<game>\mgs-coop\link-rejoin.txt` (one MGS2 code and CRLF) right before the
 exit; it is never collected and Play-Coop turns it into link-secret.txt plus
 `net_peer_steam` under its mutex.
@@ -253,11 +260,13 @@ percent.
 
 Glue: `save_handoff=configured; role=host|guest; mode=<mode>; channel=4; dir=ok`,
 `save_handoff=disabled; reason=<reason>`, `save_handoff=cleanup; removed=N`,
-`save_handoff=bad_msg; why=<decode>; count=N`,
 `save_handoff=io_error; op=<action>; error=<win32>` (at most once per 10 s),
-`save_handoff=rejoin; written=0`. Core (P2-16): `state_rx`, `need`,
-`provenance`, `offer`, `decide`, `progress`, `staged`, `countdown`, `exit`,
-`exit_slow`, `abort`, `failed`, `result_rx`, `applied_seen`.
+`save_handoff=rejoin; written=0`, `save_handoff=exit_slow` (the timer after a
+WM_CLOSE). Core (P2-16): `state_rx`, `need`, `provenance`, `offer`, `decide`,
+`progress`, `staged`, `countdown`, `exit`, `exit_slow` (no_window), `abort`,
+`failed`, `result_rx`, `applied_seen`, and the single
+`save_handoff=bad_msg; why=<short|magic|version|kind|size|bounds|role|direction>; count=N`
+(at most once per 10 s; role and direction extend P2-5's decode reasons).
 
 ## link-status.json, state.json and the HUD
 
