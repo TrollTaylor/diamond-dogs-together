@@ -38,6 +38,8 @@ labsetting nametag=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
+# Mother Base (real seed) can play an arrival demo on a copy: let it finish before the first command.
+wait 45000
 # Where each copy starts (a save that continues in the deployed vehicle starts riding it).
 host run vehicle_seats
 guest run vehicle_seats
