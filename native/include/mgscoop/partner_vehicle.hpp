@@ -149,9 +149,9 @@ void ReadVehicle(Reader& r, std::uintptr_t image, std::uint16_t id, Read& out) n
 // The same object and the same fields twice (a write is gated on two equal reads).
 bool SameRead(const Read& a, const Read& b) noexcept;
 
-// --- The tilt write gate (partner_ride_tilt=1; docs/vehicle-ws3.md "A1").
+// --- The tilt write gate (partner_ride_tilt, default on; docs/vehicle-ws3.md "A1").
 struct TiltIn {
-    bool enabled = false;       // lab key on, lab mode
+    bool enabled = false;       // partner_ride_tilt on (lab and play) and the code gate
     bool pins = false;          // the contract blocks verify (VerifyImage) and the code gate passed
     bool runtime = false;       // the mission runtime thread, not terminating
     bool peer = false;          // the peer advertised RIDE_TILT (ride ext feature)

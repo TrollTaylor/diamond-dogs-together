@@ -1,7 +1,8 @@
 // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md,
 // critic.md section 5). Included inside partner_driver.cpp's anonymous
 // namespace. While a remote drives or rides a usable seat of a light vehicle or
-// truck in 30010/30020, body 1 stays realized and plays a targeted direct
+// truck in 30010/30020 (and, by id only, Mother Base 30050: SeatCapableMission),
+// body 1 stays realized and plays a targeted direct
 // motion anchored to the receiver's own copy of that vehicle (Lua resolves the
 // copy's locator name; partner_ride_seat arms the seat index and the camera
 // skips). Phases: release (a dm=map clip is stopped first) -> arm (comparator
@@ -24,11 +25,57 @@ bool SeatHooks(const Hooks& h) noexcept {
 }
 
 bool SeatMission(std::uint32_t mission) noexcept { return mission == 30010 || mission == 30020; }
+// Mother Base (30050) has no authored vehicle locator (no veh_lv_/veh_trc_
+// name), so only the seat by id (WS3 B1, lab partner_ride_seat_id=1) can seat
+// the remote there: the seat flow runs in 30050 only with that key and only
+// for an offered id (TickSeat refuses the rest before anything is armed).
+// Hidden run bf0388c3: the real save continued into 30050, the remote drove
+// the unnamed jeep 25603 (cat 1, realized, same category on both copies) and
+// the guest hid it without any seat line (this gate, silently).
+bool SeatByIdOnlyMission(std::uint32_t mission) noexcept { return mission == 30050; }
+bool SeatCapableMission(std::uint32_t mission, bool seat_id) noexcept {
+    return SeatMission(mission) || (seat_id && SeatByIdOnlyMission(mission));
+}
 
 // The (vehicle, seat) a refusal or a get-off ended stays unseated (it hides)
 // until the remote's live ride leaves it.
 bool SeatBlocked(const Mission::Seat& s, const partner_ride_wire::Packet& ride) noexcept {
     return s.blocked && ride.kind == partner_ride_wire::Kind::vehicle && ride.vehicle == s.block_vehicle && ride.seat == s.block_seat;
+}
+
+// Why seat mode draws a live vehicle ride hidden instead of seated (nullptr:
+// seat mode applies, or this is not a seat-mode vehicle ride). The order is
+// seat_capable's (partner_driver.cpp), then the block latch.
+const char* SeatUnavailable(const Driver& d, const Hooks& h, bool ride_live) noexcept {
+    namespace rw = partner_ride_wire;
+    const Mission& m = d.mission;
+    const rw::Packet& p = d.ride_rx.packet;
+    if (d.settings.nride != PartnerNativeRide::seat || !ride_live || p.kind != rw::Kind::vehicle) return nullptr;
+    if (!rw::SeatUsable(p.seat, p.vehicle)) return "seat_unknown";
+    if (!SeatCapableMission(m.mission_code, d.settings.seat_id)) return "mission";
+    if (!SeatHooks(h)) return "hooks";
+    if (h.native_pose_suppressed && h.native_pose_suppressed(h.context)) return "native_pose";
+    if (SeatBlocked(m.seat, p)) return "blocked";
+    return nullptr;
+}
+
+// No seat refusal hides silently: each reason is logged once per (vehicle,
+// seat) while it holds (a latched refusal logged its episode's exit first).
+void SeatLogUnavailable(Driver& d, const Hooks& h, const char* why) noexcept {
+    Mission& m = d.mission;
+    const partner_ride_wire::Packet& p = d.ride_rx.packet;
+    if (!why) {
+        m.seat_unavailable = nullptr;
+        return;
+    }
+    if (why == m.seat_unavailable && p.vehicle == m.seat_unavailable_vehicle && p.seat == m.seat_unavailable_seat) return;
+    m.seat_unavailable = why;
+    m.seat_unavailable_vehicle = p.vehicle;
+    m.seat_unavailable_seat = p.seat;
+    const bool blocked = std::strcmp(why, "blocked") == 0;
+    EmitSeat(m, h, "partner_ride_seat=unavailable; vehicle=%u; seat=%u; reason=%s; mission=%u; byid=%u; block=%s\r\n", unsigned(p.vehicle),
+             unsigned(p.seat), why, unsigned(m.mission_code), d.settings.seat_id ? 1u : 0u,
+             blocked && m.seat.block_reason ? m.seat.block_reason : "-");
 }
 
 // Per tick, before the visibility step: the get-in window (when the live ride
@@ -321,6 +368,10 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         EmitSeat(m, h, "partner_ride_seat=start; vehicle=%u; seat=%u; entry=%u; enter=%s; exit=%s; remote_act=%u\r\n", unsigned(s.vehicle),
                  unsigned(s.seat), unsigned(s.entry), PartnerRideSeatEnterName(set.seat_enter), PartnerRideSeatExitName(set.seat_exit),
                  unsigned(in.remote_act));
+        // Mother Base has no authored locator: without the id offer Lua could
+        // only refuse it (no_name), so it is refused here, before the release
+        // or the arm touches anything (latched: it hides until the ride changes).
+        if (!SeatMission(m.mission_code) && !s.byid) SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
     }
     out.own = true;
     m.ride_seated = true;

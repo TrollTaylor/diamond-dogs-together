@@ -102,7 +102,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    the seated vehicle rider: partner_native_ride=off|hide|seat,
                                    partner_ride_seat_enter=direct|getin, partner_ride_seat_exit=stop|getoff;
                                    partner_native_support=0|1, guarded native type-12 throws (default off);
-                                   WS3 vehicles (docs/vehicle-ws3.md; lab only, default off): partner_ride_census=0|1
+                                   WS3 vehicles (docs/vehicle-ws3.md; census and seat id lab only, default off; tilt default on): partner_ride_census=0|1
                                    the read-only vehicle census, partner_ride_seat_id=0|1 the seat by id (unnamed
                                    vehicles), partner_ride_tilt=0|1 RIDE_TILT (the driver's vehicle angles);
                                    partner_fire_census=0|1, the owner census for support and other requests;

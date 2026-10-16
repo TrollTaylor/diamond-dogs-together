@@ -6,21 +6,30 @@
 # path (RIDE_SEAT entry bit 4) when the peer's ride addendum names the same
 # vehicle category and this copy's same id is realized; Lua plays the seat
 # chain untargeted (locator "") and native targets body 1's DM record by id.
-# Needs a save whose players deployed with a vehicle (goto_vehicle sortie
-# answers vehicle_none otherwise: then this run proves nothing).
+# Needs a live unnamed vehicle (goto_vehicle sortie answers vehicle_none
+# otherwise: then this run proves nothing). The lab seed continues into 30010
+# without a deployed vehicle (vehicle_none;alive_unnamed=none); the real seed
+# continues into Mother Base 30050, where the unnamed jeep 25603 (sortie_3,
+# cat 1, type 0x10, 4 seats) is live on both copies (hidden run bf0388c3).
+# Mother Base seats ONLY by id (no authored locator; SeatCapableMission): in
+# bf0388c3 this build's predecessor hid it silently (seat mode was 30010/30020
+# only); now a refused offer logs partner_ride_seat=refused and every hide
+# logs partner_ride_seat=unavailable; reason=...
 #
 # Run: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-sortie.txt
-#      -PartnerProfile native -NativeStage gun -SaveSeed lab
+#      -PartnerProfile native -NativeStage gun -SaveSeed real
 #
 # Expected (guest log, first half; host log, second half):
-#   partner_ride=ext_rx; rev=..; vehicle=2560x; seat=0; cat=..; type=0x..; features=0x01
+#   partner_ride=ext_rx; rev=..; vehicle=2560x; seat=0; cat=..; type=0x..; features=0x03 (seat id + tilt, default on)
 #   partner_ride_seat=byid; vehicle=2560x; seat=0; offer=1; reason=none; remote_cat=N; local_cat=N
 #   partner_lua=event=ride_seat;id=2560x;seat=0;name=-;state=stateVehicleFrontLeftLoop;entry=0;byid=1;class=lv
 #   partner_ride_seat=target; vehicle=2560x; seat=0; wrote=1; entries=1; cur=0; ids=2560x,0,0; flags=0x0a,...; reason=none
 #   partner_ride_seat=confirmed; vehicle=2560x; seat=0; state=0x489157d7d94f; ...
 #   partner_ride_seat=status; phase=seated; ...; err_mm=<small, < 3000>; ...; byid=1
 #   and the FRAMES show the driver seated in the moving vehicle (the memory rule: a frame, not a log).
-# Failure signatures: byid; offer=0; reason=no_ext|remote_category|category|unrealized|local_read|local_vehicle;
+# Failure signatures: unavailable; reason=mission|hooks|native_pose|seat_unknown|blocked;
+#   byid; offer=0; reason=no_ext|remote_category|category|unrealized|local_read|local_vehicle (then, in 30050,
+#   refused; reason=<same>); partner_lua=event=ride_seat_refused;...;reason=no_class (GetVehicleType not lv/trc);
 #   target; reason=thread|seat_unarmed|dm_idle|cnp|entry_state|foreign_target|readback; seat_far (the 3 m check).
 labsetting partner_native_ride=seat
 labsetting partner_ride_seat_id=1
@@ -44,7 +53,7 @@ wait 4000
 # names (in 30010 veh_trc_0000..0005 are 25602..25607); vehicle_none lists
 # the live unnamed ids it saw.
 host run goto_vehicle sortie
-host expect vehicle=sortie_
+host expect warp_position_readback
 guest debug goto_vehicle sortie
 wait 4000
 # The watcher ahead of the vehicle and off its line (goto_vehicle leaves the
@@ -85,7 +94,7 @@ both debug heal
 both debug godmode 1
 wait 2000
 guest run goto_vehicle sortie
-guest expect vehicle=sortie_
+guest expect warp_position_readback
 wait 4000
 placebehind host guest 3 9
 wait 2500

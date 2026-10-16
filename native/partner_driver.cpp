@@ -2161,17 +2161,19 @@ void SendRide(Driver& d, const Hooks& h, const partner::Tick& tick, std::uint64_
 }
 
 // WS3 vehicles (docs/vehicle-ws3.md): the ride addendum (v3) next to the
-// v1/v2 packet while a vehicle lab key is on: this copy's vehicle category
-// (the peer's seat-by-id gate) and the seat-id / RIDE_TILT features. On a
-// change at once (the category read only then), else a 2 s heartbeat.
+// v1/v2 packet while a vehicle key is on: this copy's vehicle category (the
+// peer's seat-by-id gate) and the seat-id / RIDE_TILT features. The seat by id
+// stays a lab experiment; RIDE_TILT (default on) is also advertised in play.
+// On a change at once (the category read only then), else a 2 s heartbeat.
 void SendRideExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     namespace rw = partner_ride_wire;
     const Settings& set = d.settings;
-    if (set.play_mode || (!set.seat_id && !set.ride_tilt) || !d.ride_tx_have || !h.send_reliable_append) return;
+    const bool seat_id = set.seat_id && !set.play_mode;
+    if ((!seat_id && !set.ride_tilt) || !d.ride_tx_have || !h.send_reliable_append) return;
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
     if (!epoch || !(h.link_live && h.link_live(h.context))) return;
     rw::Ext want{};
-    want.features = static_cast<std::uint8_t>((set.seat_id ? rw::ExtFeature::SeatId : 0) | (set.ride_tilt ? rw::ExtFeature::Tilt : 0));
+    want.features = static_cast<std::uint8_t>((seat_id ? rw::ExtFeature::SeatId : 0) | (set.ride_tilt ? rw::ExtFeature::Tilt : 0));
     want.revision = d.ride_tx.revision;
     const bool vehicle = d.ride_tx.kind == rw::Kind::vehicle && d.ride_tx.vehicle != rw::kVehicleUnknown;
     want.vehicle = vehicle ? d.ride_tx.vehicle : rw::kVehicleUnknown;
@@ -4469,7 +4471,7 @@ bool SeatManual(Driver& d, const Hooks& h, bool arm, std::uint8_t seat, std::uin
 
 std::uint16_t LocalVehicle(const Driver& d) noexcept { return d.local_vehicle; }
 bool RideTiltPeer(const Driver& d, std::uint32_t epoch, std::uint64_t now_ms) noexcept {
-    return d.settings.ride_tilt && !d.settings.play_mode && partner_ride_wire::ExtLive(d.ride_ext, epoch, now_ms) &&
+    return d.settings.ride_tilt && partner_ride_wire::ExtLive(d.ride_ext, epoch, now_ms) &&
            (d.ride_ext.ext.features & partner_ride_wire::ExtFeature::Tilt) != 0;
 }
 
@@ -4549,7 +4551,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_exit = lab.partner_ride_seat_exit;
     d.settings.ride_census = lab.partner_ride_census && lab.mode == LabMode::lab;
     d.settings.seat_id = lab.partner_ride_seat_id && lab.mode == LabMode::lab;
-    d.settings.ride_tilt = lab.partner_ride_tilt && lab.mode == LabMode::lab;
+    // RIDE_TILT (A1) runs in play too (default on, after hidden run 0a2314f2).
+    d.settings.ride_tilt = lab.partner_ride_tilt;
     d.local_vehicle = partner_ride_wire::kVehicleUnknown;
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
@@ -5148,9 +5151,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const bool free_roam_net = !vehicle_job&&set.source == PartnerSource::net &&
                                (m.mission_code == 30010 || m.mission_code == 30020);
     const bool ride_guard = !vehicle_job&&set.source == PartnerSource::net && set.nride != PartnerNativeRide::off;
-    // partner_native_ride=seat (docs/anim-round1-seat.md): free roam only, every hook present, no private pose lease.
-    const bool seat_capable = ride_guard && set.nride == PartnerNativeRide::seat && SeatMission(m.mission_code) && SeatHooks(h) &&
-                              !(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
+    // partner_native_ride=seat (docs/anim-round1-seat.md): free roam (Mother Base by id only), every hook present,
+    // no private pose lease. A seat-mode vehicle ride it cannot seat logs why (SeatUnavailable).
+    const bool seat_capable = ride_guard && set.nride == PartnerNativeRide::seat && SeatCapableMission(m.mission_code, set.seat_id) &&
+                              SeatHooks(h) && !(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
     const std::uint32_t ride_epoch = h.link_session ? h.link_session(h.context) : 0;
     const bool ride_live = d.ride_rx.have && d.ride_rx.epoch == ride_epoch && partner_ride_wire::Live(d.ride_rx, ride_epoch, now);
     SeatObserveRide(m.seat, ride_live, d.ride_rx.packet, now);
@@ -5176,6 +5180,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         vi.ride_live = rw::Live(d.ride_rx, epoch, now);
         vi.kind = d.ride_rx.packet.kind;
         vi.seat_mode = seat_capable && !SeatBlocked(m.seat, d.ride_rx.packet);
+        SeatLogUnavailable(d, h, SeatUnavailable(d, h, vi.ride_live));
         vi.seat = d.ride_rx.packet.seat;
         vi.vehicle = d.ride_rx.packet.vehicle;
         vi.lease_live = epoch && h.link_live && h.link_live(h.context);

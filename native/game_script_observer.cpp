@@ -3731,7 +3731,7 @@ bool SelectRidePoseReceipt(const char* buffer,std::size_t size,mgscoop::script_b
     replacement={reply,std::strlen(reply)};
     return true;
 }
-// RIDE_TILT (WS3 A1, docs/vehicle-ws3.md; lab partner_ride_tilt=1):
+// RIDE_TILT (WS3 A1, docs/vehicle-ws3.md; partner_ride_tilt, default on in lab and play):
 //   return 'MGS_COOP_RIDE_TILT_V1' -- read <id>             -> return <a44_mrad>,<a48_mrad> | return nil
 //   return 'MGS_COOP_RIDE_TILT_V1' -- write <id> <a44> <a48> -> return true | return false
 // read: the driver's own vehicle record angles (its veh=), only while the
@@ -3770,7 +3770,8 @@ bool SelectRideTiltReceipt(const char* buffer, std::size_t size, mgscoop::script
     const auto id = static_cast<std::uint16_t>(values[0]);
     if (ride_tilt_log.mission != partner_mission) ride_tilt_log = RideTiltLog{0, 0, 0, nullptr, partner_mission};
     const auto& config = mgscoop::GetLabConfig();
-    const bool enabled = config.partner_ride_tilt && config.mode == mgscoop::LabMode::lab && partner_gate_ok && game_base;
+    // Play admits it too (the key resolves on in both; only the viewer's own copy is written).
+    const bool enabled = config.partner_ride_tilt && partner_gate_ok && game_base;
     const bool runtime = OnRuntimeThread() && !mission_terminating;
     const bool peer = pd::RideTiltPeer(partner_driver, PartnerLinkSession(nullptr), mgscoop::partner_net::NowMs());
     const std::uint16_t local = pd::LocalVehicle(partner_driver);
@@ -3784,7 +3785,7 @@ bool SelectRideTiltReceipt(const char* buffer, std::size_t size, mgscoop::script
         if (const char* why = v::TiltReadRefusal(in, a, b)) {
             if (enabled) RideTiltRefused("read", id, why);
             // The key is fixed for the process: Lua stops asking after an 'off'.
-            return finish(config.partner_ride_tilt && config.mode == mgscoop::LabMode::lab ? "return nil" : "return nil,'off'");
+            return finish(config.partner_ride_tilt ? "return nil" : "return nil,'off'");
         }
         if (++ride_tilt_log.reads <= 4 || ride_tilt_log.reads % 600 == 0)
             LogFormat("partner_ride_tilt=read; id=%u; a44_mrad=%d; a48_mrad=%d; n=%u\r\n", unsigned(id), a, b, ride_tilt_log.reads);

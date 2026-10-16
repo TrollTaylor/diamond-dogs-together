@@ -2,8 +2,10 @@
 
 Branch `wp/feat-vehicle` (from `wp/integ6`, 0.13.0). Spec: the WS3 section of the co-op gaps spec
 (session scratchpad `gaps/coop-gaps-spec.md`), research "vehicle" and the CRITIC corrections #15-#17
-(`gaps/research.md`, `gaps/spec.md`). Nothing here was run in the game; the hidden-run plan is at
-the end. Everything new is lab-only and off by default (play forces the three keys off).
+(`gaps/research.md`, `gaps/spec.md`). The census and the seat by id are lab-only and off by default
+(play forces them off); RIDE_TILT is on by default in lab and play since hidden run `0a2314f2`
+(the viewer's jeep pitched with the seated driver). Hidden-run findings and the re-run plan are at
+the end.
 
 ## Root causes (research, unchanged)
 
@@ -13,24 +15,35 @@ the end. Everything new is lab-only and off by default (play forces the three ke
 - (a) No tilt: only x, y, z and yaw cross the wire (RIDE_FAST) and SetPosition carries only
   vec4(x, y, z, rotY); `0xBA9710`'s per-frame (small) move keeps the copy's own record angles.
 
-## Settings (lab.ini, lab mode only, default 0)
+## Settings (lab.ini)
 
-| Key | Effect |
-|---|---|
-| `partner_ride_census=1` | Step 0: one read-only `partner_ride_census` line per ridden vehicle per second (own cap 400). |
-| `partner_ride_seat_id=1` | B1: the seat-by-id offer, the ride addendum's category, the id write. |
-| `partner_ride_tilt=1` | A1: the ride addendum advertises RIDE_TILT; the driver sends, the viewer writes. |
+| Key | Default | Play | Effect |
+|---|---|---|---|
+| `partner_ride_census=1` | 0 | forced 0 | Step 0: one read-only `partner_ride_census` line per ridden vehicle per second (own cap 400). |
+| `partner_ride_seat_id=1` | 0 | forced 0 | B1: the seat-by-id offer, the ride addendum's category, the id write; Mother Base seat mode. |
+| `partner_ride_tilt=1` | **1** | admitted | A1: the ride addendum advertises RIDE_TILT; the driver sends, the viewer writes. `=0` turns it off. |
 
 All three are in the three `-LabSetting` allow-lists (`Invoke-WorkerScenario.ps1` ValidatePattern and
 labsetting line, `Start-WorkerSession.ps1`), `tools/lab/LabCommon.psm1` and `ParseVehicleKey`
 (`native/lab_config.cpp`, a side helper: the main chain is at MSVC's nesting limit).
-`ResolveWeaponDefaults` turns them off in play; no profile turns them on.
+`ResolveWeaponDefaults` turns the census and the seat by id off in play (no `play_refused` bit, as
+before); no profile turns them on. `lab_ini_check` prints the three resolved values
+(`friend_package_tests`: the play package resolves `1|0|0`).
+
+**A1 default: ON (lab and play).** Hidden run `0a2314f2` showed the viewer's copy of the jeep
+pitched nose-up with the driver seated; census runs `e54e0294`/`dd60eace` showed `same=1` (the
+realized body is the unit record). It only writes the viewer's own copy record `+0x44/+0x48`,
+behind the unchanged identity/sanity gates (`TiltRefusal`: key, contract blocks and thresholds,
+runtime thread, peer, type 50, not the viewer's own vehicle, realized, `identity` body == record,
+two equal reads, finite, |angle| <= 1570 mrad). Older peers: the ride addendum is dropped as an
+invalid ride packet (one `partner_ride=refused; reason=packet_or_session` line), so the tilt
+feature is never seen and no RIDE_TILT is sent to them; an unknown world op would be skipped anyway.
 
 **B1 default: OFF.** It only acts in the previously refused `no_name` case (a named vehicle keeps
 its locator; the record write runs only when every chained entry is untargeted), but two runtime
 facts are unproven: the realized flag `rec+0x6E` and the DM confirmation of an entry that starts
 untargeted (research "Open"). The memory rule for the seat ("no default flip before a hidden-run
-frame shows the driver seated") applies here too.
+frame shows the driver seated") applies here too: no seat frame exists yet (`bf0388c3` below).
 
 ## Step 0: the read-only census (`native/partner_vehicle.{hpp,cpp}`)
 
@@ -76,6 +89,16 @@ partner_ride_census; who=remote; id=25600; ref=ok; type=0x14; cat=1; var=4; real
   (`local_read`), realized (`unrealized`) and of the same category (`category`). The offer sets
   RIDE_SEAT entry bit 4 (`partner::seat_entry::by_id`); a refusal keeps today's behaviour (Lua
   refuses `no_name`, the ride hides) and is logged `partner_ride_seat=byid; ...; offer=0; reason=..`.
+- **Mission scope**: seat mode runs in 30010/30020 (authored locators) and, with
+  `partner_ride_seat_id=1` only, in Mother Base 30050 (`SeatCapableMission`): MB has no
+  `veh_lv_`/`veh_trc_` name, so there it seats only an offered id; a refused offer in 30050 is refused
+  natively at the episode start (`partner_ride_seat=refused; ...; reason=<the byid reason>`, latched)
+  before any release, arm or play (Lua could only answer `no_name`). The manual `seat_dm` lever stays
+  30010/30020.
+- **No silent hide**: a live vehicle ride under `partner_native_ride=seat` that seat mode cannot draw
+  logs `partner_ride_seat=unavailable; vehicle=..; seat=..; reason=seat_unknown|mission|hooks|
+  native_pose|blocked; mission=..; byid=0|1; block=<latched reason>|-` once per (vehicle, seat,
+  reason) (`SeatUnavailable`, the seat_capable order, then the latch).
 - **Lua** (`partner_sync.lua` rideSeat): with bit 4 and no authored name, the class comes from the
   retail `GetVehicleType` (EASTERN/WESTERN_LIGHT_VEHICLE -> lv, EASTERN/WESTERN_TRUCK -> trc, else
   `no_class`: lv/trc only); the same chain plays with locator "" and still `CNP_ppos_c` /
@@ -94,11 +117,13 @@ partner_ride_census; who=remote; id=25600; ref=ok; type=0x14; cat=1; var=4; real
 
 Log lines: `partner_ride=ext_tx|ext_rx; rev=..; vehicle=..; seat=..; cat=..; type=..; features=..`,
 `partner_ride_seat=byid; ...`, `partner_ride_seat=target; vehicle=..; seat=..; wrote=0|1; entries=..;
-cur=..; ids=..; flags=..; reason=..; ms=..`, `partner_lua=event=ride_seat;id=..;seat=..;name=-;state=..;entry=..;byid=1;class=lv|trc`, the status line's new `; byid=1` suffix.
+cur=..; ids=..; flags=..; reason=..; ms=..`, `partner_lua=event=ride_seat;id=..;seat=..;name=-;state=..;entry=..;byid=1;class=lv|trc`, the status line's new `; byid=1` suffix,
+`partner_ride_seat=unavailable; vehicle=..; seat=..; reason=..; mission=..; byid=..; block=..` (every
+seat-mode hide of a live vehicle ride, once per reason).
 
 ## A1: tilt
 
-- New world op **RIDE_TILT 0x2D** (lab-only datagram, 14 bytes: sender tick u32, id u16, two i32
+- New world op **RIDE_TILT 0x2D** (datagram, lab and play, 14 bytes: sender tick u32, id u16, two i32
   mrad in [-1570, 1570]); RIDE_FAST keeps its exact 7 values (critic #15); its own latest-value
   slot, so a RIDE_FAST and a RIDE_TILT of the same tick both reach Lua; an older peer skips the
   unknown code.
@@ -108,7 +133,8 @@ cur=..; ids=..; flags=..; reason=..; ms=..`, `partner_lua=event=ride_seat;id=..;
 - **Sender** (`world_ride_pose.lua` R.fastSend): after RIDE_FAST, the native receipt
   `MGS_COOP_RIDE_TILT_V1 -- read <id>` returns the driver's own record +0x44/+0x48 in mrad only if
   the key is on, the id is the local vehicle (the tick's `veh=`) and the peer advertised tilt; then
-  RIDE_TILT under the same tick.
+  RIDE_TILT under the same tick. In play the ride addendum carries only the tilt feature (the seat
+  id feature stays lab-only).
 - **Receiver** (`R.fastApply`): the tilt samples ride on the FAST track (same sender clock),
   interpolated with `R.angleLerp` at the render time, held at most 300 ms; right before each
   `R.place` (SetPosition) the receipt `-- write <id> <a44> <a48>` runs
@@ -142,21 +168,52 @@ store's view, `PlanSeatTarget` and the id-then-flag order. `partner_driver_tests
 (`TestRideSeatById`, `TestRideExtAndCensus`), `world_wire_tests` (RideTilt, 51 ops),
 `partner_sync_lua_check` (by-id rideSeat), `world_ride_pose_lua_check` (tilt push/interp/write
 order/sender), `lab_config_tests`, `worker_session_tests` (allow-lists, the three scenarios).
+After `bf0388c3`: `TestRideSeatById` Mother Base by id (offered, targeted, confirmed), MB refused at
+the start without the offer (never armed/played, latched, `unavailable; reason=blocked`), MB with
+the key off (`reason=mission`), an unknown seat (`reason=seat_unknown`); `TestRideSeat` MB line;
+`TestRideExtAndCensus` play sends the tilt-only addendum and admits the peer's tilt;
+`world_wire_tests` RIDE_TILT in play; `lab_config_tests`/`lab_ini_check`/`friend_package_tests`
+the tilt default and play admission.
 
-## Hidden-run plan (coordinator; one PC, both copies on this build, `-SaveSeed lab`)
+## Hidden runs
 
-1. **Census** `tools/worker/scenarios/vehicle-tilt-census.txt` (`-PartnerProfile native
-   -NativeStage gun`). Look for, on the host (`who=local`) and the guest (`who=remote`):
-   `ref=ok; body_ref=ok; ...; same=1` on both, `cat=` equal on both sides, the driver's
-   `a44_mrad`/`a48_mrad` changing on slopes and small on flat ground, the guest's copy level.
-   `same=0` (or a refusal) means A1 stays off and the write target needs a new decision.
-2. **Seat by id** `tools/worker/scenarios/coop-vehicle-seat-sortie.txt`: the sortie vehicle 25600
-   (or 25601..25607; `goto_vehicle sortie`), both directions. Needs a save with a deployed vehicle
-   (if `goto_vehicle sortie` answers `vehicle_none`, the run proves nothing). Look for `byid; offer=1`,
-   `partner_lua=event=ride_seat;...;byid=1;class=lv`, `target; ...; wrote=1`, `confirmed`, status
-   `err_mm` well under 3000 and `byid=1`, no `seat_far`, and FRAMES with the driver seated in the
-   moving vehicle in both halves. Then decide the B1 default.
-3. **Tilt** `tools/worker/scenarios/coop-vehicle-tilt.txt` (only after 1 showed `same=1`):
-   `ext_rx ... features=0x02` both sides, `partner_ride_tilt=read` (host), `=write` (guest), no
-   `refused; reason=identity`, the guest census `who=remote` angles tracking the host's
-   `who=local`, and frames of the jeep and its seated driver pitched/rolled on slopes.
+- Census `e54e0294`/`dd60eace`: `same=1` on both sides, `cat=` equal, the viewer's copy level.
+- Tilt `0a2314f2`: the viewer's copy of the jeep pitched nose-up with the driver seated: A1 default on.
+- Seat by id, sortie `bf0388c3` (`-SaveSeed real`): the real save continued into **Mother Base
+  30050**, not 30010. Host: `goto_vehicle; name=sortie_3; id=25603`, `vehicle;id=25603;seats=4;
+  riders=0,65535,65535,65535;localSeat=1` (`localSeat` is the 1-based Lua index of GetRiderId's
+  table, i.e. native seat 0, the driver, as `vehicle_names;...;local=25603;seat=0` says), `ext_tx;
+  rev=2; vehicle=25603; seat=0; cat=1; type=0x10; features=0x01`. Guest: `partner_ride=rx; kind=2;
+  rev=2; ...; seat=0; vehicle=25603`, the same `ext_rx`, census `who=remote; id=25603; ref=ok;
+  type=0x10; cat=1; realized=3; slot=3; ...; same=1`, then only `partner_ride=hide; reason=ride`: no
+  `byid` line, no `ride_seat` play. **Cause:** seat mode was mission-gated to 30010/30020
+  (`SeatMission` inside `seat_capable`), so in 30050 `vi.seat_mode` was false, `Observe` hid the
+  vehicle ride as `ride` and `TickSeat` never ran; nothing logged why. Not the class: the MB jeep is a
+  light vehicle (frames: the open jeep; 4 seats; its category object has the same vtable
+  `0x22f7f90` as the 30010 `veh_lv_0000` 25608, `type=0x20; cat=2`, seated by name earlier), so cat 1
+  vs 2 is most likely the two sides' light vehicles, not another class (inferred; Lua's
+  `GetVehicleType` still decides lv/trc and refuses anything else as `no_class`). **Fix:** Mother Base is seat-capable with `partner_ride_seat_id=1` only, seats by id only
+  (a refused offer is refused natively at the start), and every seat-mode hide logs `unavailable`.
+
+## Re-run plan (coordinator; one PC, both copies on this build)
+
+1. **Seat by id** `tools/worker/scenarios/coop-vehicle-seat-sortie.txt` with **`-SaveSeed real`**
+   (`-PartnerProfile native -NativeStage gun`): Mother Base, `goto_vehicle sortie` -> the unnamed jeep
+   (25603 in `bf0388c3`). The lab seed cannot reproduce it: it continues into 30010 without a
+   deployed vehicle (`vehicle_none;alive_unnamed=none`); 30010's 25600/25601 exist only after a
+   sortie with a vehicle. Guest log (first half; host log for the reverse half):
+   `ext_rx; ...; vehicle=25603; seat=0; cat=1; type=0x10; features=0x03`,
+   `byid; vehicle=25603; seat=0; offer=1; reason=none; remote_cat=1; local_cat=1`, `start`, `armed`,
+   `play; ...; entry=4`, `partner_lua=event=ride_seat;id=25603;seat=0;name=-;state=stateVehicleFrontLeftLoop;entry=0;byid=1;class=lv`,
+   `target; vehicle=25603; seat=0; wrote=1; entries=1; ...; ids=25603,0,0`, `confirmed`, status
+   `byid=1` with `err_mm` well under 3000, no `seat_far`, and FRAMES with the driver seated in the
+   moving jeep in both halves. Failure branches: `unavailable; reason=mission` (old build or the key
+   off), `byid; offer=0; reason=..` then `refused; reason=..` (the gate),
+   `partner_lua=event=ride_seat_refused;...;reason=no_class` (GetVehicleType is not a light vehicle
+   or truck: the class map, not the seat states, refuses), `target; reason=..`, `seat_far`.
+2. **30010 by id** (optional, after 1): needs a deployed vehicle in 30010. Smallest route: the real
+   seed's host deploys from the ACC with a vehicle (or a save that did), then the same scenario; no
+   code change. Until then 30010 sortie slots stay untested.
+3. **Tilt** is default on: any vehicle scenario now shows `features=0x02` (or `0x03` with the seat
+   id), `partner_ride_tilt=read` (driver) and `=write` (viewer); `coop-vehicle-tilt.txt` remains the
+   targeted check.

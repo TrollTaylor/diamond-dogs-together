@@ -5,7 +5,7 @@
 -- GetPosition and SetPosition. Neither call mounts, dismounts, or arms.
 -- The driven vehicle streams RIDE_FAST datagrams at 20 Hz; the other game
 -- renders it 100 ms behind the newest sender tick and places it every frame.
--- WS3 A1 (docs/vehicle-ws3.md, lab partner_ride_tilt=1): RIDE_TILT carries the
+-- WS3 A1 (docs/vehicle-ws3.md, partner_ride_tilt, default on): RIDE_TILT carries the
 -- driver's vehicle record angles (+0x44/+0x48, mrad) under the same sender
 -- tick, only when the native read receipt says the peer asked for it; the
 -- viewer interpolates them like the yaw and the native write receipt puts

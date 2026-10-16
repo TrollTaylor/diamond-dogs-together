@@ -116,11 +116,11 @@ constexpr OpSpec kOps[] = {
     {op::ride_fast, "RIDE_FAST", 1, Dir::both, Wire::datagram, 3, false, false, 7, 0, 0, 23,
      {U32(), U8(3, 3), U16(0, 65534), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-31416, 31416)}},
-    // RIDE_TILT (WS3 A1, docs/vehicle-ws3.md; lab only): the same sender tick as that
+    // RIDE_TILT (WS3 A1, docs/vehicle-ws3.md; lab and play): the same sender tick as that
     // RIDE_FAST, body id and the driver's vehicle record angles +0x44 / +0x48 in mrad
     // (|angle| < pi/2). A new op: an older peer skips it (unknown_op) and RIDE_FAST keeps
     // its exact 7 values (critic #15); sent only to a peer whose ride addendum asks for it.
-    {op::ride_tilt, "RIDE_TILT", 1, Dir::both, Wire::datagram, 3, false, true, 4, 0, 0, 14,
+    {op::ride_tilt, "RIDE_TILT", 1, Dir::both, Wire::datagram, 3, false, false, 4, 0, 0, 14,
      {U32(), U16(0, 65534), I32(-1570, 1570), I32(-1570, 1570)}},
     // CARGO: seq, state (0 stop,1 transport,2 offer,3 request), xyz mm, heading mrad.
     // Lua validates current mission/epoch, fresh offer, role and proximity.

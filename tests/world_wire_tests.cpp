@@ -1523,14 +1523,15 @@ void RideFast() {
     Setup(2, 2, true); Pair(30010, 200);
     Check(Tx(g_host, op::ride_fast, {1, 3, 4000, 0, 0, 0, 0}, 201) == world::TxStatus::disabled, "fast ride requires world level 3");
 }
-// WS3 A1 (docs/vehicle-ws3.md): RIDE_TILT is a new lab-only datagram next to
-// RIDE_FAST (which keeps its exact 7 values); its own latest-value slot, so a
-// RIDE_FAST and a RIDE_TILT of the same sender tick both reach Lua.
+// WS3 A1 (docs/vehicle-ws3.md): RIDE_TILT is a new datagram next to RIDE_FAST
+// (which keeps its exact 7 values); its own latest-value slot, so a RIDE_FAST
+// and a RIDE_TILT of the same sender tick both reach Lua. Admitted in play
+// (hidden run 0a2314f2); an older peer skips the unknown code.
 void RideTilt() {
     const auto* spec = world::FindOp(op::ride_tilt);
     Check(spec && spec->wire == world::Wire::datagram && spec->body == 14 && spec->lua == 4 && spec->native == 0 && spec->rx == 0 &&
-              spec->lab_only && spec->level == 3 && spec->dir == world::Dir::both && !spec->request,
-          "RIDE_TILT is a 14-byte lab-only datagram both ways");
+              !spec->lab_only && spec->level == 3 && spec->dir == world::Dir::both && !spec->request,
+          "RIDE_TILT is a 14-byte datagram both ways, lab and play");
     Check(op::ride_tilt == 0x2D && world::FindOp(op::ride_fast)->lua == 7, "a new code; RIDE_FAST keeps 7 values");
     Setup(3, 3); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
     world::Datagram datagram{}, older{};
@@ -1559,8 +1560,13 @@ void RideTilt() {
               Tx(g_host, op::ride_tilt, {1002, 25600, 0, -1571}, 108) == world::TxStatus::bad_args,
           "|angle| >= pi/2 refused");
     Check(Tx(g_host, op::ride_tilt, {1002, 65535, 0, 0}, 108) == world::TxStatus::bad_args, "null object id refused");
-    Setup(3, 3, true); Pair(30010, 200);
-    Check(Tx(g_host, op::ride_tilt, {1, 25600, 0, 0}, 201) == world::TxStatus::lab_only, "play refuses RIDE_TILT");
+    Setup(3, 3, true); Pair(30010, 200); Drain(g_host, 3, 200); Drain(g_guest, 3, 200);
+    world::Datagram playTilt{};
+    Check(Tx(g_host, op::ride_tilt, {1, 25600, 7, -8}, 201, &playTilt) == world::TxStatus::ok && playTilt.size > 0, "play sends RIDE_TILT");
+    g_guest.OnDatagram(playTilt.bytes, playTilt.size, 202);
+    const auto playRx = Drain(g_guest, 3, 203);
+    const auto* playGot = Find(playRx, op::ride_tilt);
+    Check(playGot && playGot->v[1] == 25600 && playGot->v[2] == 7 && playGot->v[3] == -8, "play delivers RIDE_TILT to Lua");
 }
 } // namespace
 

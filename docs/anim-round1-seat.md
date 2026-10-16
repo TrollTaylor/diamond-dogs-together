@@ -73,8 +73,8 @@ armed image re-validates and Revert is idempotent. A dword that is neither origi
 refused (`site_<name>`), never overwritten.
 
 The driver arms only when no DM runs on either body and nothing is pending
-(`q18[0] != 0x8B && q18[1] != 0x8B && (g388 & 0x3C) == 0`), only in 30010/30020, only for the
-seat episode; it reverts after DM End ran (`q18[1] != 0x8B`), at MissionStart/MissionEnd/STOP
+(`q18[0] != 0x8B && q18[1] != 0x8B && (g388 & 0x3C) == 0`), only in 30010/30020 (and Mother Base
+30050 for an offered seat by id, docs/vehicle-ws3.md), only for the seat episode; it reverts after DM End ran (`q18[1] != 0x8B`), at MissionStart/MissionEnd/STOP
 (MissionEnd also covers the window-close shutdown) and on every exit including link loss.
 
 ## Settings
@@ -290,11 +290,13 @@ no DM in free roam; the dm=map `cam_connect` refusal is unchanged).
 ## Known limits
 
 - Unnamed vehicles (ACC sortie/deployed ids 25600..25607, reinforcements) hide (5.6 option a),
-  unless the WS3 seat-by-id path is on (lab `partner_ride_seat_id=1`, docs/vehicle-ws3.md "B1").
+  unless the WS3 seat-by-id path is on (lab `partner_ride_seat_id=1`, docs/vehicle-ws3.md "B1"),
+  which also makes Mother Base (no authored locators) seat-capable by id only. Every seat-mode hide
+  of a live vehicle ride logs `partner_ride_seat=unavailable; ...; reason=..`.
 - Horse, D-Walker, heli, APC and tank still hide.
-- The vehicle copy itself is still a level SetPosition teleport (no wheels, steering, slope); WS3
-  "A1" (lab `partner_ride_tilt=1`, docs/vehicle-ws3.md) adds the driver's pitch/roll once the
-  census proves the record identity.
+- The vehicle copy itself is still a SetPosition teleport (no wheels or steering); WS3 "A1"
+  (`partner_ride_tilt`, default on in lab and play, docs/vehicle-ws3.md) adds the driver's
+  pitch/roll (census `same=1`, hidden run `0a2314f2`).
 - The 3 m / 1 s sanity distance compares two 100 ms-delayed streams; watch `err_mm` in the status
   lines at speed before tightening or loosening it.
 

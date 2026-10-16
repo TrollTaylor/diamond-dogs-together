@@ -550,6 +550,11 @@ struct Mission {
     LogCap census_cap;
     std::uint64_t census_ms;
     LogCap seat_cap;       // partner_ride_seat event lines
+    // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
+    // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
+    const char* seat_unavailable;
+    std::uint16_t seat_unavailable_vehicle;
+    std::uint8_t seat_unavailable_seat;
     unsigned seat_status_lines;
     bool seat_status_capped;
     // The local PlayerStatus census of the receipt's st= (logged on change).
