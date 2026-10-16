@@ -109,7 +109,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_native_placed=0|1 / partner_native_arm=0|1, WS4 v1 native C4 placing
                                    (391..395) and arm holds (HOLD only) for the partner body (default on with the gun profile);
                                    partner_native_place_mirror=0|1, WS4 v2: the remote's C4 place kneel and detonate motion
-                                   on the partner body (lab only, default 0);
+                                   on the partner body (lab only, default on with the gun profile);
                                    partner_fire_census=0|1, the owner census for support and other requests;
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
                                    partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the

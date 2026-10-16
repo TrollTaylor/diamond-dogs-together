@@ -78,8 +78,8 @@ int main() {
                   "an invalid placed census value refuses");
         }
     }
-    // WS4 v2: the C4 place / detonate mirror (partner_native_place_mirror). Lab only and default 0 until its hidden
-    // run: not on with the gun profile, a named 1 works in lab, play forces it off.
+    // WS4 v2: the C4 place / detonate mirror (partner_native_place_mirror). Not named: on with the gun profile in lab
+    // (after its hidden runs), off for off/loco and without a profile; a named 0/1 wins in lab; play forces it off.
     {
         Check(!LabConfig{}.partner_native_place_mirror && !Lab("").partner_native_place_mirror, "WS4 v2 key defaults off");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
@@ -87,11 +87,20 @@ int main() {
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const bool play = std::strcmp(mode, "mode=play\n") == 0;
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_native_place_mirror && profile.partner_native_placed, "the gun profile leaves the WS4 v2 mirror off");
+            Check(profile.partner_native_place_mirror == !play && !profile.partner_native_place_mirror_given && profile.partner_native_placed,
+                  "the gun profile turns the WS4 v2 mirror on in lab; play forces it off");
             const auto named = Lab(gun + mode + "partner_native_place_mirror=1\n");
-            Check(named.partner_native_place_mirror == !play && named.partner_native_placed && named.invalid_values == 0 &&
-                      named.unknown_keys == 0 && named.play_refused == 0,
+            Check(named.partner_native_place_mirror == !play && named.partner_native_place_mirror_given && named.partner_native_placed &&
+                      named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
                   "a named WS4 v2 mirror runs in lab; play forces it off");
+            const auto off = Lab(gun + mode + "partner_native_place_mirror=0\n");
+            Check(!off.partner_native_place_mirror && off.partner_native_place_mirror_given && off.partner_native_placed,
+                  "a named 0 opts the gun profile out of the WS4 v2 mirror");
+            for (const char* other : {"off", "loco"}) {
+                const std::string base = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                         "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=";
+                Check(!Lab(base + other + "\n" + mode).partner_native_place_mirror, "off/loco profiles leave the WS4 v2 mirror off");
+            }
         }
         const auto alone = Lab("enabled=1\nrole=host\npartner_native_place_mirror=1\n");
         Check(alone.partner_native_place_mirror && alone.invalid_values == 0 && alone.unknown_keys == 0, "partner_native_place_mirror=1 parses");
