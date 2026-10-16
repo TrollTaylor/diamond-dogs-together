@@ -1201,3 +1201,27 @@ drive, so none of them.
 ```powershell
 pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath <scratch copy of partner-c4.txt without its labsetting lines> -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
 ```
+
+Result at `3ede328` (2026-10-16): **passed, the default is proven.** Research worker checks passed first (receipt
+`20261016-152032-20d2b548...`, the research loader rebuilt from `3ede328`; full CTest 279/279). Hidden run `197d73f2`
+(lab, the scratch copy of `partner-c4.txt` with no labsetting line and no `-LabSetting`: session.json
+`lab_settings: []`, no `native_support` / `native_placed` / `native_arm` in worker-lab.json; hidden worker on its
+private desktop, no SwitchDesktop/focus/system-input call, visible desktop unchanged; verify lock, `-SaveSeed lab`,
+`MGS_GAME_LUA_DIR` unset, no build process during the run). Closed, BaselineRestored and RealSavesUnchanged true,
+`Forced=false`, all six `require`/`expect` lines met:
+- Both roles logged `partner_support=lanes; support=1; placed=1; arm=1; arm_fire=stripped`, which the driver prints only
+  with a lane on, so the loader resolved both new defaults (and the throws) on both copies.
+- Guest: `equip; slot=3; equip=395; type=13; reason=ok`, `rec240_check; ...; type=13; reason=ok`, `placed_check; ...;
+  reason=ok; what=same` at modes 43, 44, 45, 0 for each of the five attempts, `stock_check; ...; type=13;
+  reason=episode_end; changed=0` x5, every guest `counts=12,16383,12,8,12,12,8,8`; `equip; slot=6; equip=516; type=14;
+  reason=ok`, `partner_arm=check; ...; mode=1|2|3; energy=same` (15 lines). Zero `placed_shared_write`,
+  `partner_arm=refused`, `stock_leak_mission_latched`, `stock_gap`, `stock_index`, `rec240_foreign`, `rec240_stale`,
+  `writer_uncertain_mission_latched`, `partner_input=fault` or `S_IS_ONLINE` on either role. (Without the census key
+  there are no `partner_placed_census` / `obs_att` lines.)
+- Frames (cropped from the BMPs and inspected): body 1 draws the C4 (`c4-place-p1-01`), holds it out (`p1-03`, `p2-03`,
+  `p4-03`, `c4-det-03`), puts it away (`p1-05`); Hand of Jehuty's aim pose with the floating hand and its beams
+  (`arm-hold-1/2/3-03`, `arm-fire-03`), back on the rifle at `end`.
+
+Open: the place kneel (46) and the detonation (47) on body 1 (a v2 that mirrors the remote's requests), the C4 object
+mirror, mines / decoys / the other arms, a play-mode hidden run of the C4 and arm lanes (play admits them by the
+throws' rule, which the play rehearsals proved for throws), and a new friend package.

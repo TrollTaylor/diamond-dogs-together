@@ -11,7 +11,10 @@ research worker): `7f8d643d` and `d05a1267` (frames of every phase from the side
 never kneels to place a charge or plays the detonation (the valid-spot and detonate requests are set only by the local
 player's own probe; a v2 would mirror them), there is no mirror of the partner's charge in the viewer's world, and
 mines, decoys and the other arms still lower the rifle. A named 0 (or `-Partner clips`) opts out
-([the design](anim-round2-throws.md) "WS4 v1"). Not packaged yet.
+([the design](anim-round2-throws.md) "WS4 v1"). The default is proven without any named key: hidden run `197d73f2`
+(lab, no labsetting) logged `partner_support=lanes; support=1; placed=1; arm=1` on both copies, the C4 and arm checks
+unchanged, and its frames show the C4 hold and the arm's aim pose. Full CTest 279/279. Not packaged yet; play mode has
+no C4/arm hidden run yet (it admits them by the throws' rule).
 
 ## October 16, 2026: native partner throws in two-PC play, on by default (Stage B)
 
