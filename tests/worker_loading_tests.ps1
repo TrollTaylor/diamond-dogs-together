@@ -13,10 +13,19 @@ foreach($name in 'Resume-TripLoading','Get-ScenarioWaitAction','Read-ContinueGen
  Check ($f.Count -eq 1) ('actual helper '+$name);. ([scriptblock]::Create($f[0].Extent.Text))
 }
 $runId='0123456789abcdef0123456789abcdef';$loadingAttempts=@{};$continueRequirements=@{}
-$c=[pscustomobject]@{now=[int64]10000;loading=@{};commands=[Collections.Generic.List[hashtable]]::new();readyAt=[int64]11000;case='pass';states=@{};advance=@{};reads=[Collections.Generic.List[string]]::new()}
+$c=[pscustomobject]@{now=[int64]10000;loading=@{};commands=[Collections.Generic.List[hashtable]]::new();readyAt=[int64]11000;case='pass';states=@{};advance=@{};reads=[Collections.Generic.List[string]]::new();runAfter=0}
 function Get-ScenarioTick{return $c.now}
 function Start-Sleep([int]$Milliseconds){$c.now+=$Milliseconds}
-function Read-RoleLoading([string]$Role){return $c.loading[$Role]}
+# Recorded metadata with a phase answers only that phase; runAfter commands later
+# the recorded allocation enters its runtime phase (the tips pause was resumed).
+function Read-RoleLoading([string]$Role,[string]$Phase='initialized'){
+ $s=$c.loading[$Role]
+ if($s -is [hashtable] -and $s.ContainsKey('phase')){
+  if($c.runAfter -and $c.commands.Count -ge $c.runAfter){$s=$s.Clone();$s.phase='running'}
+  if($s.phase -cne $Phase){return $null}
+ }
+ return $s
+}
 function Send-Step([string]$Role,[hashtable]$Arguments){
  $c.commands.Add(@{role=$Role;operation=$Arguments.Operation;tick=$c.now;args=$Arguments.Clone()})
  if($c.case -ceq 'refused'){throw 'native loading token changed'}
@@ -108,6 +117,35 @@ $c.states=@{host=(New-RecordedState 'host' 8)};$c.states.host.mission=30010;$c.s
 $continueRequirements=@{host=@{mission=30020;generation=8};guest=@{mission=30020;generation=19}}
 $before=$c.now;Wait-ScenarioMission 'host' 30010 5
 Check ($c.now -eq $before -and !$continueRequirements.ContainsKey('host') -and $continueRequirements.ContainsKey('guest')) 'different-destination goto stays immediate and clears only accepted role'
+# Helicopter space never reports gameplay_ready: waitmission 40050 resumes the
+# owned tips pause, then arrives only on that allocation's runtime-phase metadata.
+function New-HeliLoading([uint32]$Generation=4){
+ return @{run_id=$runId;role='host';phase='initialized';mission=40050;generation=$Generation;tick_ms=$c.now}
+}
+$savedReadyAt=$c.readyAt;$c.readyAt=0;$c.case='pass';$c.advance=@{};$c.commands.Clear();$loadingAttempts=@{};$continueRequirements=@{}
+$c.states=@{host=(New-RecordedState 'host' 3)};$c.states.host.mission=30050
+$c.loading=@{host=(New-HeliLoading)};$c.runAfter=1
+$before=$c.now;Wait-ScenarioMission 'host' 40050 30
+Check ($c.commands.Count -eq 1 -and $c.commands[0].role -ceq 'host' -and $c.commands[0].operation -ceq 'resume_loading') 'heli-space wait resumes the owned tips pause once'
+Check ($c.now-$before -eq 250) 'heli-space wait arrives on the runtime phase after the resume'
+$c.commands.Clear();$c.loading=@{host=(New-HeliLoading)};$c.loading.host.phase='running';$c.runAfter=0
+Wait-ScenarioMission 'host' 40050 5
+Check ($c.commands.Count -eq 0) 'heli-space runtime phase needs no resume'
+foreach($case in 'initialized','onfoot-ready','mission','run','role','zero','future','old-continue'){
+ $c.commands.Clear();$loadingAttempts=@{};$continueRequirements=@{};$c.runAfter=1
+ $c.states=@{host=(New-RecordedState 'host' 3)};$c.states.host.mission=30050
+ $c.loading=@{host=(New-HeliLoading)}
+ switch($case){
+  'initialized'{$c.runAfter=0}
+  'onfoot-ready'{$c.runAfter=0;$c.states.host.mission=40050;$c.states.host.gameplay_ready=$true}
+  'mission'{$c.loading.host.mission=30050};'run'{$c.loading.host.run_id='f'*32};'role'{$c.loading.host.role='guest'}
+  'zero'{$c.loading.host.generation=0};'future'{$c.loading.host.tick_ms=$c.now+100000}
+  'old-continue'{$continueRequirements=@{host=@{mission=40050;generation=4}}}
+ }
+ $threw=$false;try{Wait-ScenarioMission 'host' 40050 5}catch{$threw=$true}
+ Check $threw ('heli-space wait refuses '+$case)
+}
+$c.runAfter=0;$c.loading=@{};$c.states=@{};$continueRequirements=@{};$loadingAttempts=@{};$c.commands.Clear();$c.readyAt=$savedReadyAt
 # Run the exact pre-submit path. The atomic writer records then stops before
 # any filesystem log polling; no worker path or native controller is invoked.
 $Mode='lab';$run='C:\fixture';$writes=[Collections.Generic.List[object]]::new()
