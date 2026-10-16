@@ -1,3 +1,22 @@
+## October 16, 2026: the partner kneels to place C4 and presses the detonator (WS4 v2, lab)
+
+**The teammate's body now kneels when the other player places C4 and plays the detonator press when they set it off.**
+When the remote's own gun record enters the place (46) or detonate (47) mode, the viewer writes the matching request
+bit into the partner body's own gun record just before its update (`partner_place_mirror`; the surface class rides on
+a new input frame v7). The body's own game code then runs the kneel or the detonator motion. Nothing is placed or set
+off in the viewer's world (the placement and the detonation run only for the local player), and the WS4 v1 digests
+(placement latch, placed owner table, stock words) bracket every job. The first hidden run (`289badb6`) found one
+shared write: a class bit plus a FIRE press in the same job made the decode register owner 1 in the viewer's placed
+table. The digest caught it and turned support off. Fixed: the class is written only in a job without a FIRE press,
+and is aligned again once the body kneels. Hidden runs `12320c2f`, `0d8190ea` and `96feab6d` (lab, research worker):
+3/3 places and 2/2 detonations taken each time, the guest's placed table never moved (`owners=65535:0`), zero
+`placed_shared_write`, unchanged counts. Frames show the kneel at every valid spot and the detonator raise right after
+E, compared with a same-angle reference of the ready pose (it is brief: one frame at 150 ms). Lab key
+`partner_native_place_mirror`: on with the native gun profile in lab (proven without a named key in run `98e99783`),
+off in play (no play-mode C4 run yet). Contract
+677 code sites / 149 vtable slots; full CTest 280/280. Not merged or packaged
+([the design](anim-round2-throws.md) "WS4 v2").
+
 ## October 16, 2026: the partner holds C4 and Hand of Jehuty natively, on by default (WS4 v1)
 
 **The teammate's body no longer lowers its rifle for C4 or Hand of Jehuty.** With the native partner (the gun
