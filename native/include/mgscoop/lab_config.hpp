@@ -507,11 +507,14 @@ struct LabConfig {
     // WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): body 1's native placed C4
     // (type 13, only 391..395, slot 3: place-hold, ready, place) and arm holds
     // (type 14, only 516 for now, slot 6: HOLD only, FIRE always stripped). Both ride on
-    // partner_native_support (its guard, filter, writer and gates). Default 0
-    // in every profile until the hidden run passes; a named 1 enables it in lab,
-    // and in play only while link v2 is connected (the throws' ModeRefusal).
+    // partner_native_support (its guard, filter, writer and gates). Not named in
+    // lab.ini: on with the native gun profile in lab and play (after hidden runs
+    // 7f8d643d / d05a1267), else off (ResolveWeaponDefaults); a named 0/1 always
+    // wins; play admits them only while link v2 is connected (ModeRefusal).
     bool partner_native_placed = false;
+    bool partner_native_placed_given = false;
     bool partner_native_arm = false;
+    bool partner_native_arm_given = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;

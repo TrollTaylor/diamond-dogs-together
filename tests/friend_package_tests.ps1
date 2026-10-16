@@ -443,18 +443,26 @@ try {
             # Play-Coop writes no partner_native_support key; the loader resolves it, and a named 0 opts out.
             Assert-True (!$hostIni.Contains('partner_native_support') -and !$guestIni.Contains('partner_native_support') -and !$clipsIni.Contains('partner_native_support')) 'Play-Coop lab.ini never names partner_native_support'
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])" '1|0' 'native: play -Partner native defaults native throws on (Stage B)'
-            # WS4 v1: native C4 placing and arm holds stay off in every profile until their hidden runs pass.
-            Assert-True (!$hostIni.Contains('partner_native_placed') -and !$hostIni.Contains('partner_native_arm')) 'Play-Coop lab.ini never names the WS4 v1 keys'
-            Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])" '0|0' 'native: play -Partner native leaves C4 and arm holds off (WS4 v1)'
+            # WS4 v1 (docs/anim-round2-throws.md "WS4 v1 on by default"): native C4 placing and arm holds follow the play
+            # gun profile too; Play-Coop names neither key, and a named 0 opts out of either.
+            Assert-True (!$hostIni.Contains('partner_native_placed') -and !$hostIni.Contains('partner_native_arm') -and
+                !$guestIni.Contains('partner_native_placed') -and !$guestIni.Contains('partner_native_arm') -and
+                !$clipsIni.Contains('partner_native_placed') -and !$clipsIni.Contains('partner_native_arm')) 'Play-Coop lab.ini never names the WS4 v1 keys'
+            Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play -Partner native defaults C4 and arm holds on (WS4 v1)'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
+            Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'
             $file = Join-Path $fixture 'play-support-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_support=0`n", $utf8)
             $n = Invoke-IniCheck lab $file
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['partner_native_profile'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '0|1|gun|0x0|0/0' 'native: a named partner_native_support=0 opts play out of native throws'
+            $file = Join-Path $fixture 'play-ws4-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_placed=0`npartner_native_arm=0`n", $utf8)
+            $n = Invoke-IniCheck lab $file
+            Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])|$($n['partner_native_support'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '0|0|1|1|1|0x0|0/0' 'native: named WS4 v1 0s opt play out of C4 and arm holds, throws stay on'
             $file = Join-Path $fixture 'play-clips-lab.ini'; [IO.File]::WriteAllText($file, $clipsIni, $utf8)
             $n = Invoke-IniCheck lab $file
             Assert-Equal "$($n['partner_native_profile'])|$($n['partner_drive'])|$($n['partner_input_send'])|$($n['play_refused'])|$($n['invalid_values'])" 'off|legacy|1|0x0|0' 'native: play -Partner clips keeps the clip partner'
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])" '0|0' 'native: play -Partner clips has no native throws'
+            Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])" '0|0' 'native: play -Partner clips has no C4 or arm holds'
         }
         $file = Join-Path $fixture 'play-coop.ini'; [IO.File]::WriteAllText($file, $coopIni)
         $n = Invoke-IniCheck coop $file

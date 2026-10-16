@@ -104,7 +104,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_native_support=0|1, guarded native type-12 throws (default on with the gun profile);
                                    partner_placed_census=0|1, the read-only WS4 C4 / bionic-arm census (lab only);
                                    partner_native_placed=0|1 / partner_native_arm=0|1, WS4 v1 native C4 placing
-                                   (391..395) and arm holds (HOLD only) for the partner body (default off);
+                                   (391..395) and arm holds (HOLD only) for the partner body (default on with the gun profile);
                                    partner_fire_census=0|1, the owner census for support and other requests;
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
                                    partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the

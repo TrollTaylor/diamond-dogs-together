@@ -181,10 +181,15 @@ bool ParseRound2SupportKey(Slice key, Slice value, LabConfig& result, bool& ok) 
 // own helper for the same nesting limit.
 bool ParseWs4CensusKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_placed_census")) ok = ParseBool(value, result.partner_placed_census);
-    // WS4 v1: native placed C4 and arm holds (partner_native_placed / _arm=0|1).
-    else if (Equals(key, "partner_native_placed")) ok = ParseBool(value, result.partner_native_placed);
-    else if (Equals(key, "partner_native_arm")) ok = ParseBool(value, result.partner_native_arm);
-    else return false;
+    // WS4 v1: native placed C4 and arm holds (partner_native_placed / _arm=0|1);
+    // a named value always wins over the gun profile's default.
+    else if (Equals(key, "partner_native_placed")) {
+        ok = ParseBool(value, result.partner_native_placed);
+        if (ok) result.partner_native_placed_given = true;
+    } else if (Equals(key, "partner_native_arm")) {
+        ok = ParseBool(value, result.partner_native_arm);
+        if (ok) result.partner_native_arm_given = true;
+    } else return false;
     return true;
 }
 
@@ -1369,6 +1374,13 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // play still admits them only with link v2 connected (ModeRefusal), and a
     // named partner_native_support=0 opts out in either mode.
     if (!c.partner_native_support_given) c.partner_native_support = gun;
+    // WS4 v1: native C4 placing (391..395: place-hold, ready, end) and the arm
+    // hold (516, HOLD only) follow the gun profile in lab and play as well, after
+    // the lab hidden runs 7f8d643d / d05a1267 (docs/anim-round2-throws.md "WS4 v1
+    // on by default"). Both still ride on partner_native_support, play admits
+    // them only with link v2 connected, and a named 0 opts out of either.
+    if (!c.partner_native_placed_given) c.partner_native_placed = gun;
+    if (!c.partner_native_arm_given) c.partner_native_arm = gun;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;

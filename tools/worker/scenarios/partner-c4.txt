@@ -2,6 +2,8 @@
 # Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR unset,
 # no build running in any worktree, under the shared verify lock (after the Research worker checks), one worker session.
 # Static proof first: python tools/generate_partner_contract.py --check (637 code sites, 133 vtable slots).
+# Both WS4 v1 keys default on with the gun profile since the runs 7f8d643d / d05a1267; this scenario still names them
+# (a scratch copy without the labsetting lines proves the default).
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-c4.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
 # The HOST acts; the prone GUEST films body 1 (the host's partner body) from 7 m behind and 2 m aside (body 1 must be

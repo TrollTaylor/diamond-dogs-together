@@ -1,3 +1,18 @@
+## October 16, 2026: the partner holds C4 and Hand of Jehuty natively, on by default (WS4 v1)
+
+**The teammate's body no longer lowers its rifle for C4 or Hand of Jehuty.** With the native partner (the gun
+profile, lab and two-PC play) the loader now resolves `partner_native_placed=1` and `partner_native_arm=1`: when the
+other player takes out C4 (391..395), their body draws it, holds it out in the place-hold / ready pose and puts it away;
+with Hand of Jehuty (516) it holds the arm's aim pose (its floating hand and targeting beams) and never uses it. Nothing
+is placed, fired or spent on the viewer's side: read-only digests of the viewer's placement latch, the placed owner
+table and the arm energy, the stock guard and the support stock checks stayed unchanged in every run. Hidden runs (lab,
+research worker): `7f8d643d` and `d05a1267` (frames of every phase from the side), the throws regression `6db902ce`
+(3/3), and the earlier `4e5ab735` whose static watcher lost body 1 from the frame (scenario fixed). Not yet: the body
+never kneels to place a charge or plays the detonation (the valid-spot and detonate requests are set only by the local
+player's own probe; a v2 would mirror them), there is no mirror of the partner's charge in the viewer's world, and
+mines, decoys and the other arms still lower the rifle. A named 0 (or `-Partner clips`) opts out
+([the design](anim-round2-throws.md) "WS4 v1"). Not packaged yet.
+
 ## October 16, 2026: native partner throws in two-PC play, on by default (Stage B)
 
 **The teammate's throws now also animate in two-PC play.** With the native partner (Play-Coop's default

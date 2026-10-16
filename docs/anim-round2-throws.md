@@ -1,9 +1,11 @@
 # Anim round 2: native partner throws, v1
 
 Branch `wp/anim-throws`, based on `766746a5e950e69ad3afd9da945e3e273cd77be3`.
-Status (2026-10-16, WS4 v1): native **C4 placing and arm holds** for body 1 are implemented behind two lab keys,
-`partner_native_placed` and `partner_native_arm` (default 0, unit tests only; "WS4 v1" at the end; its review fixes
-narrow the arm lane to 516). The thrown design below is unchanged by them.
+Status (2026-10-16, WS4 v1): native **C4 holds and arm holds** for body 1, keys `partner_native_placed` and
+`partner_native_arm`, are **on by default with the native gun profile in lab and play** after the lab hidden runs
+`7f8d643d` / `d05a1267` ("WS4 v1" at the end: "Hidden runs at 1a38783..efa4fd3" and "WS4 v1 on by default"). Body 1
+draws the C4, shows the place-hold / ready pose and puts it away (43 -> 44 -> 45), and holds Hand of Jehuty's aim pose;
+it never kneels to place (46) or detonates (47) in v1. The thrown design below is unchanged by them.
 Status (2026-10-16): **on by default with the native gun profile in lab and play** (Stage B, at the end). Status
 (2026-10-15): **implemented, default off.** Hidden run `aaa2a0e0` passed (the host body
 natively threw grenade 354 and magazine 349 on the guest screen; all 229 owner-1 thrown requests
@@ -1049,9 +1051,11 @@ offsets against them.
 ### Keys, scripts and tests
 
 `partner_native_placed=0|1` and `partner_native_arm=0|1` (lab_config side helper `ParseWs4CensusKey`, `lab_ini_check`
-prints them), in all three `-LabSetting` regex copies, `LabCommon` (written only when named), Play-Coop never names
-them (`friend_package_tests`: both resolve 0 for the play gun profile). Play admits a named key only with link v2
-connected (the throws' `ModeRefusal`), like Stage A of WS2.
+prints them and, since the default flip, `partner_native_placed_given` / `partner_native_arm_given`), in all three
+`-LabSetting` regex copies, `LabCommon` (written only when named), Play-Coop never names them. Since "WS4 v1 on by
+default" (below) both resolve to the native gun profile in lab and play when not named (`friend_package_tests`: 1 for
+the play host and guest, 0 with `-Partner clips`, 0 with a named 0). Play admits them only with link v2 connected (the
+throws' `ModeRefusal`), like Stage A of WS2.
 
 - `partner_support_policy_tests` (38771 checks): the lane table (type x equip x keys), the admission matrix (slot x
   type x equip x keys), strips (an admitted arm keeps HOLD only; ACTION stripped in every support window), the FIRE
@@ -1077,7 +1081,11 @@ Full CTest **279/279** (278 + `partner_placed_policy_tests`), no game running; `
   player's own world creates and detonates its own C4; kills commit on the host through world sync.
 - **No detonation animation on body 1**: ACTION (E) is never passed (ride, pickup, knife kill), so body 1 never gets
   44 -> 47. Passing it would need its own ACTION-consumer census.
-- Body 1 places where **its own** position is a valid spot; elsewhere it readies and ends (43 -> 44 -> 45).
+- **Body 1 never places** (corrected by the hidden runs below; the design expected a place where body 1's own spot is
+  valid): 43/44 go to mode 46 only with rec+0x3CC bit 18 (op 0 of `0x107E480` / `0x107D300`; bits 20-23 carry the
+  surface), and only the local-only placement probe sets them (mode 44 op 2 runs `0x104CF00` behind rec+0x3C0 bit 0),
+  so body 1's surface stays 0 and every attempt readies and ends (43 -> 44 -> 45). The place kneel needs a v2 that
+  mirrors the remote's place request into body 1's record (its own census and pins).
 - **No arm use, and only 516**: FIRE is always stripped for an arm, and the lane admits only 516, the one arm whose
   hold was censused outside 52..56 (review WS4-1). 515 (class 4) and 517/518 (class 5) hold in mode 54 (0x1080730
   op 1), itself a use mode whose op 6 calls the unaudited 0x108F860; 519..521 were never censused. They stay
@@ -1137,3 +1145,59 @@ from 7 m behind; then the host aims the arm (516) for about 4.5 s and fires it o
 `partner_arm=check ... mode=1|2|3; energy=same`, the host's kill (`obs_att ... a1=0; c1=local`), and none of
 `placed_shared_write`, `partner_arm=refused`, a k=1 mode 52..56, `stock_leak_mission_latched`, `rec240_foreign` or
 `rec240_stale`; frames of every phase. Then decide the defaults (on with the gun profile in lab and play).
+
+### Hidden runs at 1a38783..efa4fd3 (2026-10-16)
+
+Research worker checks passed before each scenario (receipts `20261016-142115-61515cb3...`,
+`20261016-144040-505c33ed...`, `20261016-145641-b3fb041d...`). Every run: hidden worker on its private desktop
+(`visible_fallback=false`, `switch_desktop_called=false`, no focus or system-input call, visible desktop unchanged),
+verify lock, `-SaveSeed lab`, `MGS_GAME_LUA_DIR` unset, no build process during the run (sampled every 2 s: CPU average
+22..27 %, peaks 47..62 %), Closed, BaselineRestored and RealSavesUnchanged true, `ExpectFailures` empty (`Forced=true`
+on the C4 runs, as before). Frames were cropped from the BMPs and inspected.
+
+| Run | Head | Result |
+| --- | --- | --- |
+| `4e5ab735` | `1a38783` | Log evidence passed (below), but the frames missed body 1: the watcher stayed where it was placed while the host walked between attempts, so body 1 left the guest's view after P1, and the host's charges, placed near the watcher, downed the guest at the detonation (`friendly_hit=owner; ...; down=1`, the existing friendly fire). Scenario fix `b34f728`: the guest is placed behind the host again before every phase. |
+| `7f8d643d` | `b34f728` | Passed; body 1 in frame in every phase (a rock hid P3), but from 7 m straight behind its hands and the C4 stay hidden in front of the body. Fix `efa4fd3`: 4 m behind and 5 m to the right (6 m / 7 m for the detonation). Host kill committed: `obs_att; m=Dead; ...; a1=0; c1=local` (the guest's copy `a1=65535`, census Q4). |
+| `d05a1267` | `efa4fd3` | Passed. Frames: body 1 draws the C4 and holds it out in the left hand (place-hold / ready, `c4-place-p1-02..04`, `p2-02..04`, `p3-02`, `p4-02`, `c4-det-02`), then puts it away (`-05`); Hand of Jehuty's aim pose with its floating hand and targeting beams (`arm-hold-1/2/3`), unchanged while the host fires the arm (`arm-fire-03`), back to the rifle at `end`. The host's detonation did not fire in this run (its aim + E went 43 -> 45: a host-side stimulus miss; `7f8d643d` has the kill). |
+| `6db902ce` | `efa4fd3` | Throws lab regression (`partner-support-native.txt`): 3/3 `throw_release` (354, 349, 354), `stock_check changed=0` x6, every guest `counts=12,16383,12,8,12,12,8,8` require met, `rec240_check; reason=ok; owner=1` for 354 and 349, thrown filter `dropped=321; preview_dropped=318; passed=80`; frames show the grenade, magazine and viewer-arc throws. |
+
+The C4 runs, on the guest (body 1 = the host's partner): `partner_support=lanes; support=1; placed=1; arm=1;
+arm_fire=stripped`; `equip; slot=3; equip=395; type=13; reason=ok` (handle `0x2316d`) and `rec240_check; ...; type=13;
+reason=ok; owner=1; class=3`; for each of the five attempts (P1..P4 and the detonation) the census `k=1` modes
+`43 -> 44 -> 45 -> 0` and `placed_check; ...; reason=ok; what=same` at every mode change (latch 0 before and after,
+`p3d8=0xffff`, service digest unchanged, `owner1=-1`), `stock_check; ...; type=13; reason=episode_end; changed=0` x5,
+the guest's owner table `owners=65535:0` throughout; `equip; slot=6; equip=516; type=14; reason=ok` (handle
+`0x1408e`), `partner_arm=check; ...; reason=ok; body_equip=516; mode=1|2|3; energy=same` (15 lines, `word=36000`),
+census `k=1` arm modes only 0..3 (never 52..56) while the host's own went 1 2 3 .. 55 56. The host placed 3 of 4 (P1
+an invalid spot: `43 44 45`; P2..P4 `43 46`, `owners=0:3[395/395/395]`). Zero lines of `placed_shared_write`,
+`partner_arm=refused`, `stock_leak_mission_latched`, `stock_gap`, `stock_index`, `rec240_foreign`, `rec240_stale`,
+`writer_uncertain_mission_latched`, `partner_input=fault` or `S_IS_ONLINE` in any run, either role.
+
+Two things the runs showed that v1 cannot do (both are in "Limits of v1"): body 1 never kneels to place (mode 46 needs
+the valid-spot bit only the local-only probe sets; `armed; ...; reason=place` never appears, every C4 episode logs
+`armed; ...; reason=throw`, the support episode's generic entry line), and it never detonates (ACTION is not passed;
+mode 47 needs rec+0x3CC bit 19, the same local-only kind of request). A v2 would mirror the remote's place/detonate
+requests (its v5 gun mode 46/47) into body 1's record before 43/44's op 0 selects the next mode.
+
+### WS4 v1 on by default (2026-10-16)
+
+After the runs above, `ResolveWeaponDefaults` (`lab_config.cpp`) resolves an unnamed `partner_native_placed` and
+`partner_native_arm` to the native gun profile in **both** modes, like `partner_native_support` (Stage B). Each records
+whether it was named (`partner_native_placed_given`, `partner_native_arm_given`), and a named 0/1 wins in either order.
+Nothing else changed: both still ride on `partner_native_support` (a named `partner_native_support=0` turns all three
+lanes off), play admits them only with link v2 `connected` (`ModeRefusal`), the C4 lane only for 391..395 and the arm
+lane only for 516 (HOLD only), and every digest, latch and watchdog is as tested. `-Partner clips` resolves no native
+drive, so none of them.
+
+- **Play-Coop** names neither key; `friend_package_tests` asserts that the generated host and guest lab.ini resolve
+  both to 1 (not named), that `-Partner clips` resolves 0, and that appended named 0s resolve 0 with the throws still on,
+  `play_refused=0x0` and no invalid value.
+- **Tests**: the `lab_config_tests` matrix (lab/play x off/loco/gun: on exactly for gun in both modes; named 0/1 win in
+  either key order; a named arm 0 leaves C4 on); `lab_ini_check` prints both `_given` flags.
+- **Scenarios**: `partner-c4.txt` keeps its explicit labsettings (`worker_session_tests` checks them). The proof of the
+  default is a scratch copy without any labsetting line:
+
+```powershell
+pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath <scratch copy of partner-c4.txt without its labsetting lines> -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+```

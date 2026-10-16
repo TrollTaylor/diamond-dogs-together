@@ -524,12 +524,14 @@ xform clip partner as the automatic fallback.
   clips` writes no profile.
 - **Play defaults** (keys not named): `partner_native_net=online`,
   `partner_native_stall=hold` (400 ms), `partner_input_edge_repeats=5`,
-  `partner_native_support=1` (native throws, below). Allowed
+  `partner_native_support=1` (native throws, below), `partner_native_placed=1` and
+  `partner_native_arm=1` (C4 and arm holds, below). Allowed
   variants in play: `partner_native_net`, `partner_native_stall`,
   `partner_native_stall_ms`, `partner_native_hold`, `partner_input_edge_repeats`,
   `partner_native_face`, `partner_native_aim=looksrc`, `partner_native_aimpt`,
   `partner_native_reload`, `partner_native_slot` (`call` runs as `write`),
-  `partner_native_equip` and `partner_native_support` (a named key keeps its value).
+  `partner_native_equip`, `partner_native_support`, `partner_native_placed` and `partner_native_arm` (a named key
+  keeps its value).
 - **Native throws** (Stage B, [anim-round2-throws.md](anim-round2-throws.md)
   "Throws in play"): with the gun profile the other player's grenade and
   empty-magazine throws (EQP type 12 in slot 3) play on their body with the
@@ -544,8 +546,19 @@ xform clip partner as the automatic fallback.
   FIRE (`partner_native_stall=hold`) instead of releasing early. Play-Coop has
   no separate switch: `-Partner clips` turns off the native partner and with it
   the throws, and a named `partner_native_support=0` (a hand-written lab.ini,
-  or the worker's `-LabSetting`) opts out of the throws alone. C4 and mine
-  placing and the bionic arm still lower the partner's gun.
+  or the worker's `-LabSetting`) opts out of the throws (and with them the C4
+  and arm holds below).
+- **C4 and arm holds** (WS4 v1, [anim-round2-throws.md](anim-round2-throws.md)
+  "WS4 v1 on by default"): with the gun profile, when the other player takes
+  out C4 (391..395) their body draws it, shows the place-hold / ready pose and
+  puts it away, and with Hand of Jehuty (516) it holds the arm's aim pose,
+  instead of lowering the rifle. The body never places or detonates a charge
+  (only the other player's own game creates and fires it; the kills reach both
+  worlds through world sync) and never uses the arm (FIRE is stripped). The
+  loader resolves `partner_native_placed=1` and `partner_native_arm=1` for the
+  gun profile; play admits them only while link v2 is `connected`, a named 0
+  opts out of either, and mines, decoys, the other arms and items still lower
+  the partner's gun.
 - **Automatic fallback** (logged as `partner_native=<mode>; reason=..`,
   `partner_native_net; ...` at 1 Hz, `partner_native_net=quiet|resume`):
 

@@ -78,17 +78,50 @@ int main() {
                   "an invalid placed census value refuses");
         }
     }
-    // WS4 v1: native placed C4 and arm holds, two lab keys, default 0 in every profile (lab and play, gun or not) until
-    // their hidden runs pass; a named 1 enables each on its own; play keeps a named key (ModeRefusal gates it there).
+    // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
+    // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
+    // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).
     Check(!LabConfig{}.partner_native_placed && !LabConfig{}.partner_native_arm && !Lab("").partner_native_placed &&
-          !Lab("").partner_native_arm, "WS4 v1 keys default off");
+          !Lab("").partner_native_arm, "WS4 v1 keys default off without a profile");
+    for (const char* mode : {"lab", "play"}) {
+        const std::string prefix = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nmode=") + mode +
+                                  "\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+        for (const char* profile : {"off", "loco", "gun"}) {
+            const std::string key = std::string("partner_native_profile=") + profile + "\n";
+            const bool gun = std::strcmp(profile, "gun") == 0;
+            const auto resolved = Lab(prefix + key);
+            Check(resolved.partner_native_placed == gun && resolved.partner_native_arm == gun &&
+                      !resolved.partner_native_placed_given && !resolved.partner_native_arm_given,
+                  "C4 and arm holds default on for the gun profile in lab and play, off for off/loco");
+            Check(resolved.play_refused == 0 && resolved.invalid_values == 0 && resolved.unknown_keys == 0,
+                  "WS4 v1 matrix configs are clean in lab and play");
+            for (const bool keyFirst : {false, true}) {
+                for (const char* value : {"0", "1"}) {
+                    const std::string named = std::string("partner_native_placed=") + value + "\npartner_native_arm=" + value + "\n";
+                    const auto n = Lab(prefix + (keyFirst ? named + key : key + named));
+                    Check(n.partner_native_placed == (value[0] == '1') && n.partner_native_arm == (value[0] == '1') &&
+                              n.partner_native_placed_given && n.partner_native_arm_given && n.invalid_values == 0 &&
+                              n.unknown_keys == 0,
+                          "explicit C4 / arm 0/1 survive mode/profile resolution in either key order");
+                }
+                const std::string one = "partner_native_arm=0\n";
+                const auto armOff = Lab(prefix + (keyFirst ? one + key : key + one));
+                Check(armOff.partner_native_placed == gun && !armOff.partner_native_arm && !armOff.partner_native_placed_given &&
+                          armOff.partner_native_arm_given,
+                      "a named arm 0 opts out of the arm alone; C4 keeps the profile's default");
+            }
+        }
+    }
     {
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_native_placed && !profile.partner_native_arm && profile.partner_native_support,
-                  "the gun profile leaves C4 and arm holds off (lab and play)");
+            Check(profile.partner_native_placed && profile.partner_native_arm && profile.partner_native_support,
+                  "the gun profile turns C4 and arm holds on (lab and play)");
+            const auto off = Lab(gun + mode + "partner_native_placed=0\npartner_native_arm=0\n");
+            Check(!off.partner_native_placed && !off.partner_native_arm && off.partner_native_support && off.play_refused == 0,
+                  "named 0s opt the gun profile out of C4 and arm holds, throws stay on");
         }
         const auto placed = Lab("enabled=1\nrole=host\npartner_native_placed=1\n");
         Check(placed.partner_native_placed && !placed.partner_native_arm && placed.invalid_values == 0 && placed.unknown_keys == 0,
