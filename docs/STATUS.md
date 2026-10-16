@@ -1,3 +1,26 @@
+## October 16, 2026: world timers keep running under the MISSION FAILED menu
+
+**After a shared game over the host's lab Continue now runs and both copies reload the checkpoint.** The game
+holds its raw Lua clock (`Time.GetRawElapsedTimeSinceStartUp`) still under the MISSION FAILED menu and the ESC
+pause menu while `OnUpdate` keeps running. The lab census run `65da90ce` showed the host's raw clock at 67517 ms
+for 33 s of game over while `os.clock` and the update count advanced. Every world timer read that clock, so the
+`host_continue` probe was scheduled but never started, and digests, stats, follow retries and holds froze until
+a reload. `partner-native-checkpoint` had never passed (failing identically on 49af9ab, run `c5bd1ab1`).
+`W.now()` is now the raw clock plus the wall time (`os.clock`) the game held it for, added once per update only
+while the raw clock stands still (at most 250 ms per update, with any catch-up jump paid back), and logs
+`event=raw_clock;step=held|resumed` ([protocol](world-sync-protocol.md) section 7, Clock). Hidden runs (lab,
+normal worker): `partner-native-checkpoint` passes (`8a955580`: the probe runs 1 s after its trigger under the
+menu, the guest replays the kind-4 follow, both back in 30010 at the checkpoint pose); the new
+`gameover-clock.txt` passes (`9337b356`: a 6.6 s ESC pause held and resumed without a catch-up, both copies held
+under the menu, Continue and follow); the new `gameover-manual-continue.txt` passes (`3412877e`: the real menu,
+host Enter on CONTINUE FROM CHECKPOINT then NO on the lab save's Chicken Hat popup, the guest replays the kind-4
+follow, both back in 30010). Real players were not blocked before the
+fix: the menu Continue and the guest's first follow attempt need no Lua timer (pre-fix run `7ec64b80`), but a
+refused guest attempt would never have retried and the 120 s follow timeout could not fire. Behaviour change:
+the ESC pause also holds the raw clock, so world timers now keep wall time in a local pause too (digests and
+downed status keep flowing; a partner's 3 s revive hold or 30 s sleep credit can complete meanwhile). Full
+CTest 280/280. Branch `wp/gameover-clock` (from `wp/integ7`); not merged or packaged.
+
 ## October 16, 2026: the partner holds C4 and Hand of Jehuty natively, on by default (WS4 v1)
 
 **The teammate's body no longer lowers its rifle for C4 or Hand of Jehuty.** With the native partner (the gun
