@@ -517,8 +517,8 @@ struct LabConfig {
     bool partner_native_arm_given = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
-    PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::direct;
-    PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::stop;
+    PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::getin;
+    PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::getoff;
     // WS3 vehicles (docs/vehicle-ws3.md). partner_ride_census: the read-only
     // vehicle unit/body census lines, lab only (play forces it off), default
     // off. partner_ride_seat_id: the remote driver seated in an unnamed vehicle

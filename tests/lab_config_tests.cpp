@@ -943,8 +943,8 @@ int main() {
                 const auto autoRide = Lab(prefix + profileKey);
                 Check(autoRide.partner_native_ride == mgscoop::kPartnerNativeRideDriven && !autoRide.partner_native_ride_given &&
                       autoRide.partner_input_defer == PartnerDefer::on, "driven native profile defaults ride hide in lab/play");
-                Check(autoRide.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::direct &&
-                      autoRide.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::stop, "seat enter/exit defaults direct/stop");
+                Check(autoRide.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::getin &&
+                      autoRide.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::getoff, "seat enter/exit defaults getin/getoff");
                 for (const bool keyFirst : {false, true}) {
                     const auto off = Lab(prefix + (keyFirst ? "partner_native_ride=off\n" + profileKey : profileKey + "partner_native_ride=off\n"));
                     Check(off.partner_native_ride == PartnerNativeRide::off && off.partner_native_ride_given,
@@ -952,11 +952,11 @@ int main() {
                     const auto hide = Lab(prefix + (keyFirst ? "partner_native_ride=hide\n" + profileKey : profileKey + "partner_native_ride=hide\n"));
                     Check(hide.partner_native_ride == PartnerNativeRide::hide && hide.partner_native_ride_given,
                           "explicit ride hide is admitted before/after either native profile in lab/play");
-                    const auto seat = Lab(prefix + (keyFirst ? "partner_native_ride=seat\npartner_ride_seat_enter=getin\n" + profileKey
-                                                             : profileKey + "partner_native_ride=seat\npartner_ride_seat_exit=getoff\n"));
+                    const auto seat = Lab(prefix + (keyFirst ? "partner_native_ride=seat\npartner_ride_seat_enter=direct\n" + profileKey
+                                                             : profileKey + "partner_native_ride=seat\npartner_ride_seat_exit=stop\n"));
                     Check(seat.invalid_values == 0 && seat.partner_native_ride == PartnerNativeRide::seat && seat.partner_native_ride_given &&
-                          seat.partner_ride_seat_enter == (keyFirst ? mgscoop::PartnerRideSeatEnter::getin : mgscoop::PartnerRideSeatEnter::direct) &&
-                          seat.partner_ride_seat_exit == (keyFirst ? mgscoop::PartnerRideSeatExit::stop : mgscoop::PartnerRideSeatExit::getoff),
+                          seat.partner_ride_seat_enter == (keyFirst ? mgscoop::PartnerRideSeatEnter::direct : mgscoop::PartnerRideSeatEnter::getin) &&
+                          seat.partner_ride_seat_exit == (keyFirst ? mgscoop::PartnerRideSeatExit::getoff : mgscoop::PartnerRideSeatExit::stop),
                           "explicit ride seat and the seat enter/exit keys are admitted in lab/play");
                 }
             }
@@ -971,8 +971,8 @@ int main() {
               namedBadRide.invalid_values == 1 && namedBadRide.partner_native_ride_given && namedBadRide.partner_native_ride == PartnerNativeRide::off,
               "invalid ride value inherits default but cannot erase a valid explicit off");
         const auto badSeat = Lab("enabled=1\nrole=host\npartner_ride_seat_enter=walk\npartner_ride_seat_exit=jump\npartner_native_ride=Seat\n");
-        Check(badSeat.invalid_values == 3 && badSeat.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::direct &&
-              badSeat.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::stop && badSeat.partner_native_ride == PartnerNativeRide::off,
+        Check(badSeat.invalid_values == 3 && badSeat.partner_ride_seat_enter == mgscoop::PartnerRideSeatEnter::getin &&
+              badSeat.partner_ride_seat_exit == mgscoop::PartnerRideSeatExit::getoff && badSeat.partner_native_ride == PartnerNativeRide::off,
               "invalid seat enter/exit/ride values refuse and keep the defaults");
         Check(mgscoop::kPartnerNativeRideDriven == PartnerNativeRide::seat, "the driven default draws the remote seated (hidden runs 8b8e5bbc, 77d24c5e)");
         Check(std::strcmp(mgscoop::PartnerNativeRideName(PartnerNativeRide::seat),"seat")==0 &&

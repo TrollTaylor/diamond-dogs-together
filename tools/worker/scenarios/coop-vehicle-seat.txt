@@ -36,11 +36,14 @@ wait 4000
 host debug goto_vehicle jeep
 guest debug goto_vehicle jeep
 wait 4000
-placebehind guest host 6 0
+# Stand 6 m down the open road (+z) looking back at the jeep and driver at (577,320,1157);
+# +x behind the driver (583.6, 320.2, 1156.7) is inside a shed wall.
+guest debug teleport 579.000 322.500 1163.000 -160.000
 wait 2500
 guest run vehicle_names
 host press e 150
-wait 3500
+guest burst seat-entering 8 300
+wait 1500
 host run vehicle_seats
 host require vehicle;id=
 host run vehicle_names
@@ -55,16 +58,13 @@ wait 3000
 both capture seat-entered
 host hold w 1500 nowait
 guest burst seat-drive-a 8 150
-host hold w 1500 nowait
-guest burst seat-drive-b 8 150
 host release
 wait 1500
 guest capture seat-plaza-parked
-host hold w+a 1500 nowait
-guest burst seat-turn-left 8 150
-host hold w+d 1500 nowait
-guest burst seat-turn-right 8 150
-host hold w 1500
+host hold w+a 800 nowait
+guest burst seat-turn-left 6 150
+host hold s+d 800 nowait
+guest burst seat-turn-right 6 150
 host release
 wait 2500
 both capture seat-stopped
@@ -76,21 +76,24 @@ state
 both debug heal
 both debug godmode 1
 wait 2000
+stance guest stand
 guest debug goto_vehicle jeep
 wait 4000
-placebehind host guest 6 0
+# Watch from the open +x side of the Wakh Sind plaza facing -x toward the jeep
+# (the -x side at x=574.7 has stacked crates).
+host debug teleport 585.000 323.100 1176.900 -90.000
 wait 2500
 both capture seat-rev-before
 guest press e 150
-wait 3500
+host burst seat-rev-entering 8 300
+wait 1500
 guest run vehicle_seats
 guest require vehicle;id=
 both capture seat-rev-entered
-guest hold w 1500 nowait
+guest hold s 1200 nowait
 host burst seat-rev-drive 8 150
-guest hold w+a 1500 nowait
-host burst seat-rev-turn 8 150
-guest hold w 1500
+guest hold w+a 800 nowait
+host burst seat-rev-turn 6 150
 guest release
 wait 2500
 both capture seat-rev-stopped

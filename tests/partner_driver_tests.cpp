@@ -5590,14 +5590,60 @@ void TestRideSeat() {
         Check(s.Step(4000) && s.reply.op == op::dm_stop, "unconsumed GetOff advance stops after kSeatNextMs");
     }
     {
-        // Get-in: within kSeatGetInMs of the vehicle kind the chain starts with GetOn.
-        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::getin);
+        // Get-in + Get-off: within kSeatGetInMs of the usable vehicle seat the chain starts with GetOn,
+        // probes loop and getoff entry transitions, and mid-ride DM loss re-plays seated loop directly.
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff, mgscoop::PartnerRideSeatEnter::getin);
         s.Show();
         s.Ride(rw::Kind::vehicle, 1, 25608);
-        Check(s.Step() && s.reply.seat == 1 && s.reply.seat_entry == partner::seat_entry::get_on && s.driver.mission.seat.loop_entry == 1,
-              "get-in prepends GetOn");
-        s.Playing(0x00f3b0882fd1ull);  // stateVehicleGetOnFrontRight
-        Check(s.Step() && s.driver.mission.seat.confirmed, "the GetOn state confirms seat 1");
+        Check(s.Step() && s.reply.seat == 1 &&
+                  s.reply.seat_entry == (partner::seat_entry::get_on | partner::seat_entry::get_off) &&
+                  s.driver.mission.seat.loop_entry == 1,
+              "get-in + get-off prepends GetOn and appends GetOff");
+        s.Playing(0x00f3b0882fd1ull);  // stateVehicleGetOnFrontRight (rec1a0 == 0)
+        Check(s.Step() && s.driver.mission.seat.confirmed && !s.driver.mission.seat.loop_confirmed &&
+                  s.fake.Containing("partner_ride_seat=dm; when=confirmed;") == 1,
+              "the GetOn state confirms seat 1");
+        s.fake.dm.rec18 = 0x4470e2406e9dull;  // stateVehicleFrontRightLoop
+        s.fake.dm.rec1a0 = 1;
+        Check(s.Step() && s.driver.mission.seat.loop_confirmed &&
+                  s.fake.Containing("partner_ride_seat=dm; when=loop;") == 1 &&
+                  s.fake.Containing("rec18=0x4470e2406e9d; rec1a0=1;") == 1,
+              "advancing to entry 1 (Loop) logs the loop probe once");
+        s.fake.sample.act = 112;
+        Check(s.Step() && s.reply.op == op::ride_seat && s.reply.seat_action == partner::seat_action::next &&
+                  !s.driver.mission.seat.getoff_confirmed,
+              "act 112 advances to GetOff");
+        s.fake.dm.rec18 = 0xe59bbf7182faull;  // stateVehicleGetOffFrontRight
+        s.fake.dm.rec1a0 = 2;
+        Check(s.Step() && s.driver.mission.seat.getoff_confirmed &&
+                  s.fake.Containing("partner_ride_seat=dm; when=getoff;") == 1 &&
+                  s.fake.Containing("rec18=0xe59bbf7182fa; rec1a0=2;") == 1,
+              "advancing to entry 2 (GetOff) logs the getoff probe once");
+
+        // Delayed seat resolution (initial seat=255 while hiding/re-showing, then usable seat=0 after 1600 ms)
+        // still prepends GetOn because SeatObserveRide refreshes vehicle_since_ms when a usable seat first arrives.
+        SeatSession d(mgscoop::PartnerRideSeatExit::getoff, mgscoop::PartnerRideSeatEnter::getin);
+        d.Show();
+        d.Ride(rw::Kind::vehicle, 0xFF, 25608);
+        Check(d.Step(800) && d.driver.mission.visibility.hidden && !d.driver.mission.seat.seat_live,
+              "initial seat=255 hides and does not mark seat_live");
+        Check(d.Step(800), "still waiting while re-placing");
+        d.Ride(rw::Kind::vehicle, 0, 25608);
+        d.fake.Realize(false); d.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !d.driver.mission.bits_set; ++i) d.Step(50);
+        d.fake.Realize(true); d.fake.state.parts[1] = 3;
+        Check(d.Step() && (d.reply.op & op::ride_seat) &&
+                  (d.reply.seat_entry & partner::seat_entry::get_on) != 0 && d.driver.mission.seat.loop_entry == 1,
+              "usable seat refreshes vehicle_since_ms so GetOn still plays after re-show");
+        d.Playing(0xdfb7fc6173d0ull);  // stateVehicleGetOnFrontLeft
+        Check(d.Step() && d.driver.mission.seat.confirmed, "GetOn confirmed on seat 0");
+        // Mid-ride DM loss after confirmation re-plays the seated loop directly (clears get_on).
+        d.Ended();
+        Check(d.Step() && d.driver.mission.seat.phase == pd::SeatPhase::arm &&
+                  (d.driver.mission.seat.entry & partner::seat_entry::get_on) == 0 && d.driver.mission.seat.loop_entry == 0,
+              "mid-ride DM loss after confirmation clears get_on");
+        Check(d.Step() && (d.reply.op & op::ride_seat) && (d.reply.seat_entry & partner::seat_entry::get_on) == 0,
+              "re-issued play goes directly to Loop");
     }
     {
         // Unconfirmed: re-issued up to kSeatPlays, then refused and latched (hides).
