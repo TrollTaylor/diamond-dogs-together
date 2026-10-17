@@ -379,7 +379,7 @@ inline constexpr unsigned kWeaponEventCap = 64;        // fire gate transitions,
 // to hide; get-in only within kSeatGetInMs of the vehicle kind; the 1 Hz
 // partner_ride_seat=status line and the event lines have their own caps.
 inline constexpr std::uint64_t kSeatConfirmMs = 2000, kSeatStopMs = 1000, kSeatExitMs = 3000, kSeatNextMs = 4000;
-inline constexpr std::uint64_t kSeatFarMs = 1000, kSeatGetInMs = 1500, kSeatStatusMs = 1000, kSeatReleaseMs = 1500;
+inline constexpr std::uint64_t kSeatFarMs = 1000, kSeatGetInMs = 2500, kSeatStatusMs = 1000, kSeatReleaseMs = 1500;
 inline constexpr std::uint32_t kSeatFarMm = 3000;
 inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
 // WS3 ride census cadence and cap (partner_ride_census=1).
@@ -526,6 +526,8 @@ struct Mission {
         bool manual;                 // the debug seat_dm lever owns the DM (Lua issued it)
         bool armed;                  // partner_ride_seat dwords armed by us
         bool confirmed;              // body 1 plays a seated state of `seat`
+        bool loop_confirmed;         // body 1 transitioned from GetOn into the seated loop
+        bool getoff_confirmed;       // body 1 transitioned from the loop into GetOff
         bool next_sent;              // the exit advanced to GetOff (RequestToGoNextDirectMotion)
         bool lua_refused;            // Lua refused the current request (LuaLog event=ride_seat_refused)
         std::uint16_t vehicle;       // the episode's vehicle GameObject id and native seat
@@ -542,10 +544,11 @@ struct Mission {
         std::uint16_t block_vehicle;
         std::uint8_t block_seat;
         const char* block_reason;
-        // When the received ride became this vehicle (the get-in window).
+        // When the received ride became this vehicle/seat (the get-in window).
         std::uint64_t vehicle_since_ms;
         std::uint16_t vehicle_rev;
         bool vehicle_live;
+        bool seat_live;
         // Seat by id (WS3 B1): the id path was offered for this episode
         // (seat_entry::by_id), its gate reason, and whether this play's DM
         // record was targeted (target_done; target_wrote: by us, not a name).

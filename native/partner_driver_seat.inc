@@ -85,8 +85,10 @@ void SeatLogUnavailable(Driver& d, const Hooks& h, const char* why) noexcept {
 void SeatObserveRide(Mission::Seat& s, bool live, const partner_ride_wire::Packet& ride, std::uint64_t now) noexcept {
     namespace rw = partner_ride_wire;
     const bool vehicle = live && ride.kind == rw::Kind::vehicle;
-    if (vehicle && (!s.vehicle_live || ride.vehicle != s.vehicle_rev)) s.vehicle_since_ms = now;
+    const bool seat_ok = vehicle && rw::SeatUsable(ride.seat, ride.vehicle);
+    if ((vehicle && (!s.vehicle_live || ride.vehicle != s.vehicle_rev)) || (seat_ok && !s.seat_live)) s.vehicle_since_ms = now;
     s.vehicle_live = vehicle;
+    s.seat_live = seat_ok;
     s.vehicle_rev = vehicle ? ride.vehicle : rw::kVehicleUnknown;
     if (s.blocked && live && (ride.kind != rw::Kind::vehicle || ride.vehicle != s.block_vehicle || ride.seat != s.block_seat)) {
         s.blocked = false;
@@ -239,9 +241,10 @@ void SeatSettle(Driver& d, const Hooks& h, std::uint64_t now, bool terminating) 
     const std::uint64_t since = s.vehicle_since_ms;
     const std::uint16_t rev = s.vehicle_rev;
     const bool live = s.vehicle_live;
+    const bool slive = s.seat_live;
     s = Mission::Seat{};
     s.blocked = blocked; s.block_vehicle = bv; s.block_seat = bs; s.block_reason = br;
-    s.vehicle_since_ms = since; s.vehicle_rev = rev; s.vehicle_live = live;
+    s.vehicle_since_ms = since; s.vehicle_rev = rev; s.vehicle_live = live; s.seat_live = slive;
     m.ride_seated = false;
 }
 
@@ -360,7 +363,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
                      unsigned(s.remote_category), unsigned(s.local_category));
         }
         s.plays = s.stops = 0;
-        s.confirmed = s.next_sent = s.latch_exit = s.lua_refused = false;
+        s.confirmed = s.loop_confirmed = s.getoff_confirmed = s.next_sent = s.latch_exit = s.lua_refused = false;
         s.exit_reason = nullptr;
         s.far_since_ms = s.status_ms = s.issue_ms = s.confirm_ms = 0;
         SeatGo(s, SeatPhase::release, now);
@@ -485,7 +488,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         out.entry = s.entry;
         s.issue_ms = now;
         ++s.plays;
-        s.confirmed = false;
+        s.confirmed = s.loop_confirmed = s.getoff_confirmed = false;
         s.target_done = s.target_wrote = false;
         EmitSeat(m, h, "partner_ride_seat=play; vehicle=%u; seat=%u; name=lua; state=lua; entry=%u; attempt=%u; reason=none\r\n",
                  unsigned(s.vehicle), unsigned(s.seat), unsigned(s.entry), s.plays);
@@ -508,10 +511,14 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             if (!s.confirmed) {
                 s.confirmed = true;
                 s.confirm_ms = now;
+                s.loop_confirmed = dm.rec1a0 == s.loop_entry;
                 EmitSeat(m, h, "partner_ride_seat=confirmed; vehicle=%u; seat=%u; state=0x%llx; entry=%u; ms=%u; plays=%u; manual=%u\r\n",
                          unsigned(s.vehicle), unsigned(s.seat), static_cast<unsigned long long>(dm.rec18 & 0xFFFFFFFFFFFFull),
                          unsigned(dm.rec1a0), Clamp32(now - s.issue_ms), s.plays, s.manual ? 1u : 0u);
                 SeatDmProbe(m, h, dm_ok, dm, "confirmed");
+            } else if (!s.loop_confirmed && (s.entry & partner::seat_entry::get_on) && dm.rec1a0 == s.loop_entry) {
+                s.loop_confirmed = true;
+                SeatDmProbe(m, h, dm_ok, dm, "loop");
             }
         } else if (playing && now - s.issue_ms >= kSeatConfirmMs) {
             SeatDmProbe(m, h, dm_ok, dm, "foreign");
@@ -521,7 +528,9 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             // The seat DM ended under us: re-issued (the dwords stay armed).
             EmitSeat(m, h, "partner_ride_seat=lost; vehicle=%u; seat=%u; played_ms=%u; plays=%u\r\n", unsigned(s.vehicle), unsigned(s.seat),
                      Clamp32(now - s.confirm_ms), s.plays);
-            s.confirmed = false;
+            s.confirmed = s.loop_confirmed = false;
+            s.entry = static_cast<std::uint8_t>(s.entry & ~partner::seat_entry::get_on);
+            s.loop_entry = 0;
             if (s.manual) { SeatExit(m, h, "manual_ended", false, now); break; }
             if (s.plays >= kSeatPlays) { SeatRefuse(m, h, "lost", now); break; }
             SeatGo(s, SeatPhase::arm, now);
@@ -561,6 +570,10 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
     }
     if (s.phase == SeatPhase::exit) {
         if (!s.issue_ms) SeatDmProbe(m, h, dm_ok, dm, "exit");
+        if (s.next_sent && !s.getoff_confirmed && body_dm && dm.rec_ok && dm.rec1a0 == s.loop_entry + 1) {
+            s.getoff_confirmed = true;
+            SeatDmProbe(m, h, dm_ok, dm, "getoff");
+        }
         if (!body_dm) {
             // Nothing (more) plays on body 1: a request still pending is ours.
             if (dm_ok && (dm.g388 & 4) && h.dm_clear_pending) h.dm_clear_pending(h.context);

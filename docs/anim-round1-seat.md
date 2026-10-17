@@ -81,20 +81,12 @@ The driver arms only when no DM runs on either body and nothing is pending
 
 | Key | Values | Default |
 |---|---|---|
-| `partner_native_ride` | `off`, `hide`, `seat` | driven native stages: `kPartnerNativeRideDriven` (= `hide`); else `off` |
-| `partner_ride_seat_enter` | `direct` (the loop at once), `getin` (GetOn first, only within 1.5 s of the vehicle kind) | `direct` |
-| `partner_ride_seat_exit` | `stop` (RequestToStopDirectMotion), `getoff` (the chain ends with GetOff; act 112 or foot advances to it) | `stop` |
+| `partner_native_ride` | `off`, `hide`, `seat` | driven native stages: `kPartnerNativeRideDriven` (= `seat`); else `off` |
+| `partner_ride_seat_enter` | `direct` (the loop at once), `getin` (GetOn first, within 2.5 s of the first usable vehicle seat) | `getin` |
+| `partner_ride_seat_exit` | `stop` (RequestToStopDirectMotion), `getoff` (the chain ends with GetOff; act 112 or foot advances to it) | `getoff` |
 
-**Flipping the release default after the hidden test** is one line in
-`native/include/mgscoop/lab_config.hpp`:
-
-```cpp
-inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide::seat;  // was ::hide
-```
-
-(and the one assertion `kPartnerNativeRideDriven == PartnerNativeRide::hide` in
-`tests/lab_config_tests.cpp`, which documents the current default; every other test follows the
-constant).
+**Ghidra comparison (`RideVehicleActionImpl` vs `DirectPlayMotionActionPluginImpl`, October 16, 2026):**
+Decompilation of `RideVehicleActionImpl` (`0x1412471B0..0x14125C050`) and `DirectPlayMotionActionPluginImpl` (`0x141198770..0x141199860`) in `mgsvtpp_1_0_15_4_aug_4_patch.exe` (`085c2f82...bb45`) confirmed that both invoke the exact same motion graph state player `(*(PS+0x78)+0x238)->vtable+0x170(mgr, body_index, 0, state_code, blend, 0)` with the same graph-0 vehicle states (`stateVehicleGetOnFrontLeft`, `stateVehicleFrontLeftLoop`, `stateVehicleGetOffFrontLeft`, etc.) and anchor body 1's transform `*(PS+0x270)[1]` via `VehicleCommunicationInfo::FetchVehicleSeatLocalMatrix` (`0x140B7AF90`). Because `RideVehicleActionImpl` also mutates the local vehicle's occupant slots (`RequestToUseRiderSeat`, `ClearRiderId`), turret ownership, `vars.playerDisableActionFlag`, and vehicle camera (`RequestToResetToNewRideVehicleCamera`), the 3-entry `DirectPlayMotionActionPluginImpl` chain (`GetOn` $\to$ `Loop` $\to$ `GetOff`) is strictly cleaner and safer for remote body 1. `partner_ride_seat_enter=getin` and `partner_ride_seat_exit=getoff` are now on by default (`kSeatGetInMs = 2500` ms, refreshed when a usable seat first arrives after an initial `seat=255` tick; mid-ride DM loss clears `get_on` so re-issued plays go straight to `Loop`; `SeatDmProbe` logs `when=loop` and `when=getoff`). Verified in hidden worker runs `6b4e1667bd994580818fe20d181b3b5d`, `bea50b8682754baa9bf94f7b482dac8e`, and `e10774b712824d12a12d0ace9d7b20d2`.
 
 ## Wire and receipts
 
