@@ -3592,7 +3592,8 @@ void TestNativeEnterAndLeave() {
     Check(s.fake.Containing("partner_native=enter; step=place") == 1 && s.fake.Containing("partner_native=enter; step=armed") == 1,
           "every enter step logged once");
     const auto& arm = s.fake.arms.back();
-    Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == 0x2240006u &&
+    Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == 0x2240026u &&
+          arm.config.sample_strip == 0x20u &&
           arm.wrap == mgscoop::PartnerWrap::window && arm.hold == mgscoop::PartnerInputHold::own && arm.go == 0x1000 - 0x20 &&
           !arm.local_all && arm.naim == mgscoop::PartnerNativeAim::off && !arm.p218, "the native Arm (effective settings)");
     // Publication order: identity -> deferral armed -> enabled native Arm (run
@@ -4678,7 +4679,7 @@ void TestNativeReloadSwitch() {
     Check(s.fake.inputs.back().switch_seq == 1 && s.fake.inputs.back().inv_slot == 2, "v5 sender: a slot change advances switch_seq");
     // The Arm: event mode, the remote's raw RELOAD stripped from its sample (live v5), the plan's slots.
     const pi::Arm& a0 = s.fake.arms.back();
-    Check(a0.reload == mgscoop::PartnerNativeReload::event && !a0.reload_hold && a0.config.sample_strip == 0x40u &&
+    Check(a0.reload == mgscoop::PartnerNativeReload::event && !a0.reload_hold && a0.config.sample_strip == 0x60u &&
               a0.slot_follow == mgscoop::PartnerNativeSlot::write && a0.slot_ok == 0 && a0.strip == 0,
           "Arm: reload event, sample strip RELOAD, follower write (no manifest yet: no admitted slot)");
     // The receiver: the remote enters its reload (counter 4 -> 5, mode 11): one RELOAD tap.
@@ -4837,7 +4838,7 @@ void TestNativeReloadSwitch() {
     s.driver.settings.nreload = mgscoop::PartnerNativeReload::mirror;
     s.N();
     Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::write && s.fake.arms.back().reload == mgscoop::PartnerNativeReload::mirror &&
-              s.fake.arms.back().config.sample_strip == 0, "play: call runs as write; mirror: no sample strip");
+              s.fake.arms.back().config.sample_strip == 0x20u, "play: call runs as write; mirror: kAction sample strip");
     s.driver.settings.play_mode = false;
     s.N();
     Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::call, "lab: the call variant reaches the Arm");
@@ -4849,7 +4850,7 @@ void TestNativeReloadSwitch() {
     s.fake.latest.packet.reload_seq = 0;
     s.fake.latest.packet.inv_slot = 0xFF;
     s.N();
-    Check(s.fake.arms.back().config.sample_strip == 0 && !s.driver.mission.tele.reload_remote_valid,
+    Check(s.fake.arms.back().config.sample_strip == 0x20u && !s.driver.mission.tele.reload_remote_valid,
           "a v4 remote: its raw R still reaches body 1");
     // The ring carries body 1's gun mode and hand slot.
     const auto& e = pn::At(s.driver.mission.tele.ring, s.driver.mission.tele.ring.count - 1);
@@ -5024,7 +5025,7 @@ void TestNativeActionsWithWeapons() {
     s.fake.latest.packet.mag_cap = 30;
     s.N();
     const pi::Arm& arm = s.fake.arms.back();
-    Check(arm.enabled && arm.native && arm.config.mask == 0x224005Eu, "together: the native Arm's mask is EVADE | HOLD | RELOAD | FIRE (0x224005E)");
+    Check(arm.enabled && arm.native && arm.config.mask == 0x224007Eu, "together: the native Arm's mask is ACTION | EVADE | HOLD | RELOAD | FIRE (0x224007E)");
     Check(arm.rates_mirror && arm.rates_rec == 0xA188 && arm.rates_id == 1 && arm.rates_remote[0] == 1100 && arm.rates_remote[1] == 900 &&
               arm.rates_remote[2] == 1500 && arm.mag_mirror && arm.gun_rec == 0x9100 && arm.gun_prim == 0x9000,
           "together: one Arm requests the rates mirror and the magazine mirror");

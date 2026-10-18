@@ -20,6 +20,7 @@ bool ValidInv(std::uint8_t inv) noexcept { return inv <= kInvSlotMax || inv == k
 } // namespace
 
 bool SameSlots(const Manifest& a, const Manifest& b) noexcept {
+    if (a.cbox_active != b.cbox_active || a.active_item_id != b.active_item_id) return false;
     for (std::size_t i = 0; i < kSlots; ++i) {
         const Slot& x = a.slots[i];
         const Slot& y = b.slots[i];
@@ -39,6 +40,7 @@ std::size_t Encode(const Manifest& m, std::uint8_t (&out)[kSize]) noexcept {
     Put32(out + 4, m.epoch);
     out[8] = m.inv_slot;
     out[9] = static_cast<std::uint8_t>(kSlots);
+    Put16(out + 10, m.active_item_id);
     for (std::size_t i = 0; i < kSlots; ++i) {
         std::uint8_t* s = out + kHeader + i * kSlotSize;
         Put16(s, m.slots[i].base_id);
@@ -46,6 +48,7 @@ std::size_t Encode(const Manifest& m, std::uint8_t (&out)[kSize]) noexcept {
         std::memcpy(s + 4, m.slots[i].recipe, kRecipe);
         out[kTypes + i] = m.slots[i].type;
     }
+    out[kTypes + kSlots] = m.cbox_active ? 0x01u : 0x00u;
     return kSize;
 }
 
@@ -81,7 +84,12 @@ Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_
     m.inv_slot = data[8];
     if (!ValidInv(m.inv_slot)) return Result::inv_slot;
     if (data[9] != kSlots) return Result::slot_count;
-    if (data[10] || data[11]) return Result::reserved;
+    if (m.version == kVersion1) {
+        if (data[10] || data[11]) return Result::reserved;
+    } else if (m.version == kVersion) {
+        if (data[11] & 0xF0) return Result::reserved;
+        m.active_item_id = Get16(data + 10);
+    }
     for (std::size_t i = 0; i < kSlots; ++i) {
         const std::uint8_t* s = data + kHeader + i * kSlotSize;
         m.slots[i].base_id = Get16(s);
@@ -89,7 +97,8 @@ Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_
         std::memcpy(m.slots[i].recipe, s + 4, kRecipe);
     }
     if (m.version == kVersion) {
-        if (data[kTypes + kSlots]) return Result::reserved;
+        if (data[kTypes + kSlots] & 0xFEu) return Result::reserved;
+        m.cbox_active = (data[kTypes + kSlots] & 0x01u) != 0;
         for (std::size_t i = 0; i < kSlots; ++i) {
             if (data[kTypes + i] > kMaxGunType) return Result::type;
             m.slots[i].type = data[kTypes + i];

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/partner_pad_bits.hpp"
 
 namespace {
 namespace pi = mgscoop::partner_input;
@@ -931,9 +932,29 @@ void TestSenderHold() {
           "hold event names");
 }
 
+void TestActionSampleStripAndOverlay() {
+    pi::Config c = Cfg();
+    c.mask |= mgscoop::partner_pad::kAction;
+    c.sample_strip |= mgscoop::partner_pad::kAction;
+
+    // 1. Raw network packet with kAction (0x20u) held: stripped by sample_strip
+    pi::Sample live = Live(1, mgscoop::partner_pad::kAction);
+    pi::EdgeState edge{};
+    pi::Injection j = pi::Compose(c, live, 0, pi::Overlay{}, edge);
+    Check((j.held & mgscoop::partner_pad::kAction) == 0, "raw network kAction stripped by sample_strip");
+
+    // 2. Synthetic overlay tap with kAction: passes through to j.held
+    pi::Overlay overlay{};
+    overlay.bits = mgscoop::partner_pad::kAction;
+    edge = pi::EdgeState{};
+    j = pi::Compose(c, live, 0, overlay, edge);
+    Check((j.held & mgscoop::partner_pad::kAction) != 0, "synthetic overlay kAction tap passes through mask");
+}
+
 } // namespace
 
 int main() {
+    TestActionSampleStripAndOverlay();
     TestOnline();
     TestEffective();
     TestDirCheck();

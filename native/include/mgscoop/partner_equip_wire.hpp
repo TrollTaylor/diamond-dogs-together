@@ -50,6 +50,8 @@ struct Manifest {
     std::uint32_t epoch;
     std::uint8_t inv_slot;
     std::uint8_t version;  // the decoded version (Encode always writes kVersion)
+    bool cbox_active{};
+    std::uint16_t active_item_id{};
     Slot slots[kSlots];
 };
 // Field-wise (no padding compared).

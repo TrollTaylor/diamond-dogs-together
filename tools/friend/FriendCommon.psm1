@@ -396,8 +396,16 @@ function Write-FriendTextFile {
     $temp = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     [IO.File]::WriteAllText($temp, $Text, $script:Utf8NoBom)
     try {
-        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
-        else { [IO.File]::Move($temp, $Path) }
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+                if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+                else { [IO.File]::Move($temp, $Path) }
+                break
+            } catch {
+                if ($attempt -eq 5) { throw $_ }
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
 
@@ -886,14 +894,23 @@ function Import-CoopProgressFiles {
         $n = 1
         while (Test-Path -LiteralPath $aside) { $aside = Join-Path $ReplacedRoot ($stamp + '-' + $n + $Suffix); $n++ }
         # Directory.Move never moves into an existing folder.
-        [IO.Directory]::Move($SaveDir, $aside)
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try { [IO.Directory]::Move($SaveDir, $aside); break }
+            catch { if ($attempt -eq 5) { throw $_ }; Start-Sleep -Milliseconds (100 * $attempt) }
+        }
         try {
             if ($TestBeforeFinalMove) { & $TestBeforeFinalMove $newDir }
-            [IO.Directory]::Move($newDir, $SaveDir)
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+                try { [IO.Directory]::Move($newDir, $SaveDir); break }
+                catch { if ($attempt -eq 5) { throw $_ }; Start-Sleep -Milliseconds (100 * $attempt) }
+            }
         } catch {
             $failure = $_
             if (Test-Path -LiteralPath $SaveDir) { throw ("The new co-op save copy could not be put in place and $SaveDir exists again; your previous copy is kept at $aside. (" + $failure.Exception.Message + ')') }
-            [IO.Directory]::Move($aside, $SaveDir)
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+                try { [IO.Directory]::Move($aside, $SaveDir); break }
+                catch { if ($attempt -eq 5) { throw $_ }; Start-Sleep -Milliseconds (100 * $attempt) }
+            }
             $aside = $null
             throw $failure
         }
@@ -1363,8 +1380,16 @@ function Write-CoopAtomicBytes {
     $temp = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     [IO.File]::WriteAllBytes($temp, $Bytes)
     try {
-        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
-        else { [IO.File]::Move($temp, $Path) }
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+                if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+                else { [IO.File]::Move($temp, $Path) }
+                break
+            } catch {
+                if ($attempt -eq 5) { throw $_ }
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
 

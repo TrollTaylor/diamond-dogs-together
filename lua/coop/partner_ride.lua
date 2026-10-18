@@ -34,12 +34,18 @@ if type(e) == "table" then
     -- is listed. nil when not on a vehicle; seat 255 when unknown.
     local cache = {id = nil, seat = 255, wait = 0}
     e.MgsCoopPartnerRideSeat = function()
-        local query, status = field(PlayerInfo, "OrCheckStatus"), field(PlayerStatus, "ON_VEHICLE")
-        if type(query) ~= "function" or not integer(status, 0, 2147483647) then return nil end
-        local ok, on = pcall(query, {status})
-        if not ok or on ~= true then cache.id = nil; return nil end
+        local query, statusVeh = field(PlayerInfo, "OrCheckStatus"), field(PlayerStatus, "ON_VEHICLE")
+        local statusHorse = field(PlayerStatus, "ON_HORSE")
+        if type(query) ~= "function" then return nil end
+        local onVeh = integer(statusVeh, 0, 2147483647) and select(2, pcall(query, {statusVeh})) == true
+        local onHorse = integer(statusHorse, 0, 2147483647) and select(2, pcall(query, {statusHorse})) == true
+        if not onVeh and not onHorse then cache.id = nil; return nil end
         local id = field(vars, "playerVehicleGameObjectId")
-        if not integer(id, 0, 65534) or math.floor(id / 512) ~= 50 then cache.id = nil; return nil end
+        if not integer(id, 0, 65534) or id == 65535 then cache.id = nil; return nil end
+        if onHorse then
+            cache.id = id; cache.seat = 0; return id, 0
+        end
+        if math.floor(id / 512) ~= 50 then cache.id = nil; return nil end
         if id ~= cache.id then cache.id, cache.seat, cache.wait = id, 255, 0 end
         if cache.seat == 255 then
             cache.wait = cache.wait - 1
