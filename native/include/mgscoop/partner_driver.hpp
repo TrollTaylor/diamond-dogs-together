@@ -617,6 +617,12 @@ struct Mission {
     std::uint8_t anim_psw[2];
     // Native calls: disabled for the rest of the mission after a fault.
     bool native_disabled;
+    std::uint16_t prev_remote_act{};
+    bool have_prev_remote_act{};
+    partner_ride_wire::Kind prev_ride_kind{partner_ride_wire::Kind::foot};
+    std::uint16_t prev_ride_vehicle{partner_ride_wire::kVehicleUnknown};
+    bool cbox_applied{};
+    std::uint16_t cbox_item_applied{};
     // Movement drivers.
     const char* xform_state;   // nullptr = applied, else the refusal last logged
     bool xform_logged;

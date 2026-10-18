@@ -312,7 +312,7 @@ do
             local kind = ride()
             rideSuffix = " ride=" .. tostring(kind)
             local seatOf, bitsOf = get(e, "MgsCoopPartnerRideSeat"), get(e, "MgsCoopPartnerStatusBits")
-            if kind == 2 and type(seatOf) == "function" then
+            if (kind == 2 or kind == 3) and type(seatOf) == "function" then
                 local vid, seat = seatOf()
                 if integer(vid, 0, 65534) then rideSuffix = rideSuffix .. fmt(" veh=%d seat=%d", vid, integer(seat, 0, 3) and seat or 255) end
             end

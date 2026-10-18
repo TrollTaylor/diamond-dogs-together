@@ -124,8 +124,7 @@ void SeatOwnBody(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     m.tele.latched = m.native_out.mode == pnat::Mode::latched;
     m.tele.armed = m.tele.input_live = m.tele.body_valid = false;
     m.tele.net.local_drive = set.drive == PartnerDrive::native ? partner_native_net::Drive::clips : partner_native_net::Drive::off;
-    CopyText(m.tele.net.local_reason, sizeof(m.tele.net.local_reason), "seat");
-    d.settings.fire_live = false;
+    if (rw::SeatIndex(m.seat.seat) == 0) d.settings.fire_live = false;
 }
 
 struct SeatTickIn {

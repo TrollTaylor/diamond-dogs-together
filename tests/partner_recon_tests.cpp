@@ -54,6 +54,7 @@ struct World {
     bool stance_pad = false;             // the remote's live input shows STANCE
     const char* stance_block = nullptr;  // a driver gate (gun, reload, carry)
     bool remote_downed = false;
+    bool mounted = false;
     const char* last_wait = nullptr;     // the guard of the last stance_wait event
     unsigned waits = 0;
     std::uint32_t in_age = 5;
@@ -138,6 +139,7 @@ struct World {
         in.stance_pad = stance_pad;
         in.stance_block = stance_block;
         in.remote_downed = remote_downed;
+        in.mounted = mounted;
         out = pr::Step(st, in, params);
         if (out.events & pr::Event::stance_wait) { last_wait = out.report.fix_wait; ++waits; }
         events |= out.events;
@@ -1355,9 +1357,59 @@ void TestFacingGovernor() {
     }
 }
 
+void TestClimbVaultAndMounted() {
+    // 1. Whitelist verification
+    Check(pr::ClimbVaultAct(21), "act 21 in whitelist");
+    Check(pr::ClimbVaultAct(23), "act 23 in whitelist");
+    Check(pr::ClimbVaultAct(28), "act 28 in whitelist");
+    Check(pr::ClimbVaultAct(49), "act 49 in whitelist");
+    Check(pr::ClimbVaultAct(50), "act 50 in whitelist");
+    Check(pr::ClimbVaultAct(54), "act 54 in whitelist");
+    Check(pr::ClimbVaultAct(55), "act 55 in whitelist");
+    Check(pr::ClimbVaultAct(56), "act 56 in whitelist");
+    Check(pr::ClimbVaultAct(59), "act 59 in whitelist");
+    Check(!pr::ClimbVaultAct(1), "act 1 not in whitelist");
+    Check(!pr::ClimbVaultAct(2), "act 2 not in whitelist");
+    Check(!pr::ClimbVaultAct(6), "act 6 not in whitelist");
+    Check(!pr::ClimbVaultAct(11), "act 11 not in whitelist");
+
+    // 2. Velocity-runaway checks frozen during climb/vault
+    {
+        World w;
+        w.Place();
+        w.body_v[2] = 2000.0; // Body moves on its own (> runaway_mmps)
+        w.follow = false;
+        w.remote_act = 21;    // Remote is climbing
+        w.Run(2000);
+        Check(w.pins == 0 && w.runaways == 0, "runaway frozen while remote is in climb act 21");
+    }
+    {
+        World w;
+        w.Place();
+        w.body_v[2] = 2000.0;
+        w.follow = false;
+        w.body_act = 49;      // Body is vaulting
+        w.Run(2000);
+        Check(w.pins == 0 && w.runaways == 0, "runaway frozen while body is in vault act 49");
+    }
+
+    // 3. Mounted freezes runaway checks and disables nudges
+    {
+        World w;
+        w.Place();
+        w.body_v[2] = 2000.0;
+        w.follow = false;
+        w.mounted = true;
+        w.Run(2000);
+        Check(w.pins == 0 && w.runaways == 0, "runaway frozen while mounted");
+        Check(w.nudges == 0, "on-foot nudges disabled while mounted");
+    }
+}
+
 } // namespace
 
 int main() {
+    TestClimbVaultAndMounted();
     TestHelpers();
     TestPlacement();
     TestPlacementFailure();

@@ -843,7 +843,19 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             }
         }
     }
-    if (!st.runaway_active) {
+    const bool climb_vault = (in.body_anim_ok && ClimbVaultAct(in.body_act)) ||
+                             (in.remote_anim_valid && ClimbVaultAct(in.remote_act));
+    const bool freeze_runaway = climb_vault || in.mounted;
+    if (freeze_runaway) {
+        st.runaway_since = 0;
+        st.runaway_latched = false;
+        st.runaway_exit_since = 0;
+        if (st.runaway_active) {
+            runaway_ms = Ms(st.runaway_start, now);
+            st.runaway_active = false;
+            o.events |= Event::runaway_end;
+        }
+    } else if (!st.runaway_active) {
         const bool idle_case = remote_idle && speed_free > P.runaway_mmps && !grace;
         const bool moving_case = !idle_case && remote_moving &&
                                  (P.runaway_split ? ((!in.hold_stripped && dv_along > thr) || dv_cross > thr) : dv > P.runaway_mmps);
@@ -1134,7 +1146,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     // Nudge: position only, at most every nudge_period_ms.
     std::uint32_t dead = prone ? P.dead_prone_mm : remote_moving ? P.dead_moving_mm : P.dead_idle_mm;
     if (now < st.dead_until) dead *= 2;
-    if (d_f >= dead && (!st.last_nudge_ms || now - st.last_nudge_ms >= P.nudge_period_ms)) {
+    if (!in.mounted && d_f >= dead && (!st.last_nudge_ms || now - st.last_nudge_ms >= P.nudge_period_ms)) {
         const double dtn = !st.last_nudge_ms ? static_cast<double>(P.nudge_period_ms)
                                               : static_cast<double>(now - st.last_nudge_ms > 200 ? 200 : now - st.last_nudge_ms);
         const double tau = remote_moving ? P.tau_moving_ms : P.tau_idle_ms;

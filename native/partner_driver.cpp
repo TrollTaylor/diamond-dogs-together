@@ -24,6 +24,7 @@ namespace {
 namespace pp = partner_player;
 namespace c = partner_player_contract;
 namespace pam = mgscoop::partner_aim;
+namespace rw = partner_ride_wire;
 
 void Emit(const Hooks& h, const char* line) noexcept {
     if (h.log) h.log(h.context, line);
@@ -635,6 +636,10 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.reload_reconcile = gun_stage && m.reload_out.reconcile;
     a.reload_release = gun_stage && m.reload_out.release;
     a.config.sample_strip = gun_stage && set.nreload == PartnerNativeReload::event && m.remote_v5 ? pnat::kPadReload : 0u;
+    if (set.native_active) {
+        a.config.mask |= partner_pad::kAction;
+        a.config.sample_strip |= partner_pad::kAction;
+    }
     a.slot_follow = !gun_stage ? PartnerNativeSlot::off
                     : (set.play_mode && set.nslot == PartnerNativeSlot::call) ? PartnerNativeSlot::write
                                                                               : set.nslot;
@@ -1257,6 +1262,10 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.body_anim_ok = anim_ok;
     in.body_act = anim_ok ? anim.act[1] : 0;
     in.body_stance = anim_ok ? anim.stance[1] : 0;
+    namespace rw = partner_ride_wire;
+    in.mounted = m.ride_seated ||
+                 (d.ride_rx.packet.kind == rw::Kind::vehicle && d.ride_rx.packet.vehicle != rw::kVehicleUnknown) ||
+                 (d.ride_rx.packet.kind == rw::Kind::horse && d.ride_rx.packet.vehicle != rw::kVehicleUnknown);
     // Stance level guards: STANCE in the remote's live input (held, its "now"
     // word, the edge set, a short tap or a long hold), the gun/carry gate and a
     // downed remote (native only; the legacy rule has no guards).
@@ -1877,6 +1886,65 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         EmitRecon(m, h, kRcFix, "partner_recon=dashfix; act=%u; speed=%u; attempts=%u\r\n",
                   anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.speed[1]) : 0u, m.dash.attempts);
     }
+    // Act-Gated ACTION (0x20) Replay: climbing, vaulting, ladders, doors
+    const bool remote_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    const std::uint16_t remote_act = remote_valid ? remote_anim.act : 0u;
+    const std::uint16_t body_act = anim_ok ? anim.act[1] : 0u;
+    if (arm_now && set.native_active && m.have_prev_remote_act &&
+        m.prev_remote_act >= 1 && m.prev_remote_act <= 6 &&
+        pr::ClimbVaultAct(remote_act) &&
+        (!anim_ok || !pr::ClimbVaultAct(body_act))) {
+        if (m.recon_target_ok) {
+            alignas(16) float snap_p[4] = {
+                static_cast<float>(m.recon_target[0] / 1000.0),
+                static_cast<float>(m.recon_target[1] / 1000.0),
+                static_cast<float>(m.recon_target[2] / 1000.0),
+                0.0f
+            };
+            alignas(16) float snap_q[4]{};
+            partner::YawToQuat(static_cast<float>(m.recon_target_yaw), snap_q);
+            if (h.apply_transform) h.apply_transform(h.context, terminating, snap_p, snap_q, PartnerReset::none);
+        }
+        BumpTap(d, m, partner_pad::kAction, now);
+        EmitRecon(m, h, kRcFix, "partner_recon=climb_vault_action; remote_act=%u; body_act=%u\r\n",
+                  unsigned(remote_act), unsigned(body_act));
+    }
+    if (remote_valid) {
+        m.prev_remote_act = remote_act;
+        m.have_prev_remote_act = true;
+    }
+
+    // Vehicle / horse mount and dismount transitions
+    const bool cur_mounted = (d.ride_rx.packet.kind == rw::Kind::vehicle || d.ride_rx.packet.kind == rw::Kind::horse) &&
+                             (d.ride_rx.packet.vehicle != rw::kVehicleUnknown);
+    const bool prev_mounted = (m.prev_ride_kind == rw::Kind::vehicle || m.prev_ride_kind == rw::Kind::horse) &&
+                              (m.prev_ride_vehicle != rw::kVehicleUnknown);
+    if (arm_now && set.native_active) {
+        if (cur_mounted && !prev_mounted) {
+            if (m.recon_target_ok) {
+                alignas(16) float snap_p[4] = {
+                    static_cast<float>(m.recon_target[0] / 1000.0),
+                    static_cast<float>(m.recon_target[1] / 1000.0),
+                    static_cast<float>(m.recon_target[2] / 1000.0),
+                    0.0f
+                };
+                alignas(16) float snap_q[4]{};
+                partner::YawToQuat(static_cast<float>(m.recon_target_yaw), snap_q);
+                if (h.apply_transform) h.apply_transform(h.context, terminating, snap_p, snap_q, PartnerReset::none);
+            }
+            BumpTap(d, m, partner_pad::kAction, now);
+            EmitRecon(m, h, kRcFix, "partner_recon=mount_action; kind=%u; vehicle=%u; seat=%u\r\n",
+                      unsigned(d.ride_rx.packet.kind), unsigned(d.ride_rx.packet.vehicle), unsigned(d.ride_rx.packet.seat));
+        } else if (!cur_mounted && prev_mounted) {
+            const bool high_speed = (remote_valid && remote_anim.speed >= 3);
+            const std::uint32_t exit_button = high_speed ? partner_pad::kEvade : partner_pad::kAction;
+            BumpTap(d, m, exit_button, now);
+            EmitRecon(m, h, kRcFix, "partner_recon=dismount_action; button=0x%x; high_speed=%u\r\n",
+                      exit_button, high_speed ? 1u : 0u);
+        }
+    }
+    m.prev_ride_kind = d.ride_rx.packet.kind;
+    m.prev_ride_vehicle = d.ride_rx.packet.vehicle;
     // One-shot acceptance (only while about to be armed and within the mask).
     if (d.tap_pending) {
         d.tap_pending = false;
@@ -2299,6 +2367,8 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                 mf.slots[i].type = ew::GunType(lo.type[i]) ? lo.type[i] : static_cast<std::uint8_t>(0);
                 std::memcpy(mf.slots[i].recipe, lo.chimera + i * ew::kRecipe, ew::kRecipe);
             }
+            mf.cbox_active = ((m.status_bits & (1u << 2)) != 0) || lo.cbox_active;
+            mf.active_item_id = mf.cbox_active ? (lo.active_item_id ? lo.active_item_id : static_cast<std::uint16_t>(456)) : static_cast<std::uint16_t>(0);
             d.equip_tables_ok = lo.tables_ok;
             if (!d.equip_tx_have || !ew::SameSlots(mf, d.equip_tx)) {
                 mf.revision = static_cast<std::uint16_t>(d.equip_tx_have && d.equip_tx.revision != 0xFFFFu ? d.equip_tx.revision + 1 : 1);
@@ -5332,6 +5402,14 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 Probe(d, h, st, clock);
                 SeatReportRealized(m, h, realized_now, parts_now, now);
                 m.body_ok = false;
+                if (m.seat.confirmed && rw::SeatIndex(m.seat.seat) >= 1) {
+                    pin::Sample latest{};
+                    const bool latest_ok = set.input == PartnerInput::net && h.latest_input && h.latest_input(h.context, latest) && latest.valid;
+                    partner_input_hook::NativeStats ns{};
+                    TickAimIntent(d, h, latest_ok, latest, remote_anim, pose_valid, ns, now);
+                    const bool aiming = (latest_ok && (latest.packet.held & partner_pad::kHold) != 0);
+                    TickAim(d, h, st, true, realized_now, latest_ok, latest, aiming, now);
+                }
                 reply = partner::Reply{seat_out.ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad,
                                        status, age_ms, partner::Look{}, 0};
                 reply.seat_vehicle = seat_out.vehicle;
