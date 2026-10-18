@@ -1,5 +1,7 @@
 ## October 18, 2026: 0.13.2 (Act-gated action replay, cardboard box preload, multi-seat passenger riding)
 
+Package: `mgs-coop-friend-0.13.2-20261018T032136Z-bcd27cbc` (Release receipt `20261018-031908-d344f7a10a714f57b029ed349de0dbeb`, 275 audited tests, ZIP SHA-256 `8c53cf09fad9f312d5ced07178b279b2629ca17e3efd95dec6e1c629791c8d85`, loader SHA-256 `f27f7d6aa9f9639ce4f24456d24f778722e121547affd02e3db9377c3a30e249`).
+
 - **Act-Gated ACTION Replay**: Replay `partner_pad::kAction` (0x20u) via native overlay tap for climb, vault, ladder, and door transitions with initial transform snapping and recon runaway freeze.
 - **Cardboard Box Sync**: `EQP_IT_CBox` preload and active state synchronization across instances using the 64-byte `partner_equip_wire` manifest (bytes 10..11 and byte 63 bit 0) and `Player.ChangeEquip` (0x9D0D60).
 - **Multi-Seat Vehicle & Passenger Support**: Enhanced `partner_ride_wire` packet encoding multi-seat index and passenger role flags; driver transform authority with passenger aiming and firing preserved; mounted horse and vehicle visibility support.
