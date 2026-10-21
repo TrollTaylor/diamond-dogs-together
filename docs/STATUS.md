@@ -20,6 +20,29 @@ so both players need this same package.
 **Vehicle boarding and dismount animations (`partner_ride_seat_enter=getin`, `partner_ride_seat_exit=getoff`).**
 Ghidra decompilation of `RideVehicleActionImpl` (`0x1412471B0..0x14125C050`) and `DirectPlayMotionActionPluginImpl` (`0x141198770..0x141199860`) in `mgsvtpp_1_0_15_4_aug_4_patch.exe` (SHA-256 `085c2f82...bb45`) confirmed that both play the exact same graph-0 vehicle states (`stateVehicleGetOnFrontLeft`, `stateVehicleFrontLeftLoop`, `stateVehicleGetOffFrontLeft`, etc.) through `(*(PS+0x78)+0x238)->vtable+0x170(mgr, body_index, 0, state_code, blend, 0)` and anchor body 1's transform `*(PS+0x270)[1]` via `VehicleCommunicationInfo::FetchVehicleSeatLocalMatrix` (`0x140B7AF90`), whereas `RideVehicleActionImpl` also mutates the local vehicle's rider slots, turret ownership, disable-action flags, and camera. Keeping the 3-entry `DirectPlayMotionActionPluginImpl` chain (`GetOn` $\to$ `Loop` $\to$ `GetOff`) avoids all vehicle/camera side effects while playing the stock entry and exit motions. `partner_ride_seat_enter=getin` and `partner_ride_seat_exit=getoff` are now the defaults in lab and play (`kSeatGetInMs = 2500` ms, refreshed when a usable seat first arrives after an initial `seat=255` tick; mid-ride DM loss clears `get_on` so re-issued plays go straight to `Loop`; `SeatDmProbe` logs `when=loop` and `when=getoff`). Verified in hidden worker runs `6b4e1667bd994580818fe20d181b3b5d`, `bea50b8682754baa9bf94f7b482dac8e`, and `e10774b712824d12a12d0ace9d7b20d2` (both directions passing: `entry=7`, `entries=3; flags=0x0e,0x0f,0x0e`, `when=confirmed` on `0xdfb7fc6173d0` in 33-34 ms, `when=loop` on `0x489157d7d94f` with `err_mm=0..223`, `when=getoff` on `rec1a0=2` via `RequestToGoNextDirectMotion()`, finishing within 16 ms of the driver's own `act=112` dismount; frames `guest-seat-entering-01..05.bmp`, `guest-seat-exiting-04.bmp`, `host-seat-rev-entering-02..04.bmp`).
 
+## October 16, 2026: world timers keep running under the MISSION FAILED menu
+
+**After a shared game over the host's lab Continue now runs and both copies reload the checkpoint.** The game
+holds its raw Lua clock (`Time.GetRawElapsedTimeSinceStartUp`) still under the MISSION FAILED menu and the ESC
+pause menu while `OnUpdate` keeps running. The lab census run `65da90ce` showed the host's raw clock at 67517 ms
+for 33 s of game over while `os.clock` and the update count advanced. Every world timer read that clock, so the
+`host_continue` probe was scheduled but never started, and digests, stats, follow retries and holds froze until
+a reload. `partner-native-checkpoint` had never passed (failing identically on 49af9ab, run `c5bd1ab1`).
+`W.now()` is now the raw clock plus the wall time (`os.clock`) the game held it for, added once per update only
+while the raw clock stands still (at most 250 ms per update, with any catch-up jump paid back), and logs
+`event=raw_clock;step=held|resumed` ([protocol](world-sync-protocol.md) section 7, Clock). Hidden runs (lab,
+normal worker): `partner-native-checkpoint` passes (`8a955580`: the probe runs 1 s after its trigger under the
+menu, the guest replays the kind-4 follow, both back in 30010 at the checkpoint pose); the new
+`gameover-clock.txt` passes (`9337b356`: a 6.6 s ESC pause held and resumed without a catch-up, both copies held
+under the menu, Continue and follow); the new `gameover-manual-continue.txt` passes (`3412877e`: the real menu,
+host Enter on CONTINUE FROM CHECKPOINT then NO on the lab save's Chicken Hat popup, the guest replays the kind-4
+follow, both back in 30010). Real players were not blocked before the
+fix: the menu Continue and the guest's first follow attempt need no Lua timer (pre-fix run `7ec64b80`), but a
+refused guest attempt would never have retried and the 120 s follow timeout could not fire. Behaviour change:
+the ESC pause also holds the raw clock, so world timers now keep wall time in a local pause too (digests and
+downed status keep flowing; a partner's 3 s revive hold or 30 s sleep credit can complete meanwhile). Full
+CTest 280/280. Branch `wp/gameover-clock` (from `wp/integ7`); not merged or packaged.
+
 ## October 16, 2026: 0.13.0 installed (join fixes, save handoff, throws in play, C4/arm, vehicle seat and tilt)
 
 Installed: package `mgs-coop-friend-0.13.0-20261016T163124Z-d00bc5c4` (Release receipt
