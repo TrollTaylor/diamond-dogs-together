@@ -1948,9 +1948,11 @@ void ObserveNativeCbox() noexcept {
     context.pins_intact=mgscoop::equipment_stock_writer::PinsIntact;
     context.equip_type=CboxEquipType;
     context.mission=partner_mission;context.realize_gen=mission.realize_gen;context.now_ms=mgscoop::partner_net::NowMs();
+    context.epoch=mission.start_ms;
     context.want=mission.cbox_want;context.want_id=mission.cbox_id;context.seq=mission.cbox_seq;
     unsigned short current_mission=0;
     context.gate_reason=!context.enabled ? "off"
+        : !mission.cfg_ready || mission.stopped ? "partner_cfg"
         : !PartnerGunPiecesWanted() ? "gun_profile"
         : !offline_enabled ? "offline_branch"
         : !lab_active ? "lab_inactive"

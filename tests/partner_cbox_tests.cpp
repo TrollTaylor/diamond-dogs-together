@@ -76,7 +76,7 @@ void TestBodySub() {
 }
 void TestDecide() {
     pol::State s{};
-    pol::Enter(s, 30010, 1);
+    pol::Enter(s, 30010, 7000, 1);
     auto on = pol::Decide(s, {true, 1, 0, 468});
     Check(on.step == pol::Step::on && !on.reason, "a fresh edge with a mapped box: on");
     auto none = pol::Decide(s, {true, 1, 0, 0});
@@ -89,7 +89,7 @@ void TestDecide() {
     auto keep = pol::Decide(s, {true, 3, 468, 468});
     Check(keep.step == pol::Step::keep && Same(keep.reason, "current"), "never re-dispatch while the box is current");
     pol::State fresh{};
-    pol::Enter(fresh, 30010, 1);
+    pol::Enter(fresh, 30010, 7000, 1);
     Check(pol::Decide(fresh, {true, 1, 472, 472}).step == pol::Step::keep, "a box already current (not ours) is never re-dispatched");
     // Off: only for our box while current.
     auto off = pol::Decide(s, {false, 3, 468, 0});
@@ -100,7 +100,7 @@ void TestDecide() {
     Check(pol::Decide(s, {false, 3, 468, 0}).step == pol::Step::keep, "one off attempt per edge");
     // Latches.
     pol::State u{};
-    pol::Enter(u, 30010, 1);
+    pol::Enter(u, 30010, 7000, 1);
     u.uncertain = true;
     auto ul = pol::Decide(u, {true, 1, 0, 468});
     Check(ul.step == pol::Step::refuse && Same(ul.reason, "uncertain_latched") && ul.final, "uncertain: no on");
@@ -108,7 +108,7 @@ void TestDecide() {
     auto uo = pol::Decide(u, {false, 2, 468, 0});
     Check(uo.step == pol::Step::refuse && Same(uo.reason, "uncertain_latched"), "uncertain: not even an off");
     pol::State w{};
-    pol::Enter(w, 30010, 1);
+    pol::Enter(w, 30010, 7000, 1);
     w.watch_latched = true;
     auto wl = pol::Decide(w, {true, 1, 0, 468});
     Check(wl.step == pol::Step::refuse && Same(wl.reason, "viewer_changed_latched"), "a viewer-change latch: no new on");
@@ -117,14 +117,18 @@ void TestDecide() {
 }
 void TestEnter() {
     pol::State s{};
-    pol::Enter(s, 30010, 4);
+    pol::Enter(s, 30010, 7000, 4);
     s.done = true;
     s.done_seq = 9;
     s.applied = 468;
     s.uncertain = true;
-    pol::Enter(s, 30010, 5);
+    pol::Enter(s, 30010, 7000, 5);
     Check(!s.done && s.applied == 468 && s.uncertain && s.realize_gen == 5, "a re-realize re-arms the edge, keeps the box and latches");
-    pol::Enter(s, 30020, 5);
+    s.done = true;
+    pol::Enter(s, 30010, 9000, 5);
+    Check(!s.done && !s.applied && !s.uncertain && s.epoch == 9000, "a new mission with the same code (a new start epoch) clears everything");
+    s.uncertain = true;
+    pol::Enter(s, 30020, 9000, 5);
     Check(!s.done && !s.applied && !s.uncertain && s.mission == 30020, "a new mission clears everything");
 }
 void TestVerdicts() {
@@ -187,6 +191,8 @@ void TestWatches() {
     Check(!pol::WatchLatch(f::stocks, 3, 77), "the viewer's act changed (it acts itself): log only");
     Check(!pol::WatchLatch(f::vars_current | f::row_items, 3, 3), "the viewer selected another item: log only");
     Check(!pol::WatchLatch(f::row_current, 1, 1), "the viewer's own item nibble: log only");
+    Check(!pol::WatchLatch(f::row_other | f::handles_other, 3, 3), "the viewer's weapons (row 0 outside the items, other handles): log only");
+    Check(pol::WatchLatch(f::row_other | f::stocks, 3, 3), "a weapon switch does not hide an item stock change");
 }
 void TestReconHold() {
     Check(pol::ReconHold(true, true, 77, true, 5000, 0) && pol::ReconHold(true, true, 78, true, 5000, 0), "boxed and wanted: hold");
@@ -424,6 +430,7 @@ cb::Context Ctx(bool want, std::uint16_t id, std::uint32_t seq, std::uint32_t mi
     x.remote_block = Addr(g_o->buffer) + 0x6A8;
     x.image_span = kSpan;
     x.mission = mission;
+    x.epoch = 1000u + mission;
     x.realize_gen = 1;
     x.now_ms = (g_now += 100);
     x.pins_intact = &Pins;
@@ -579,6 +586,13 @@ void TestUncertain() {
     Check(g_off == 0, "uncertain: nothing of ours to take off");
     cb::Observe(Ctx(true, 468, 3, m), &Log);
     Check(g_on == 1 && Logged("reason=uncertain_latched"), "uncertain: no further on");
+    // The same mission code with a new start epoch (a restarted mission; the driver's cbox_seq restarts): clean.
+    Build();
+    auto restarted = Ctx(true, 468, 1, m);
+    restarted.epoch += 7;
+    cb::Observe(restarted, &Log);
+    Check(g_on == 1 && !cb::Uncertain() && Logged("partner_cbox=apply; id=468;") && Logged("reason=ok"),
+          "a restarted mission (same code, new epoch) clears the latch and the edge state");
     // A new mission clears the latch.
     m = ++g_mission;
     Build();
@@ -635,6 +649,14 @@ void TestWatchesWorld() {
     Put<std::uint32_t>(Addr(g_o->vars) + 0x67C, 2);
     cb::Observe(Ctx(true, 468, 1, m), &Log);
     Check(Logged("partner_cbox=viewer_changed; fields=0x10; viewer_act=3>20; latched=0;"), "the viewer's own selection: logged only");
+    // The viewer switches weapons (row 0 +0 and its slot nibble, a slot handle), act unchanged: logged, not latched.
+    Put<std::uint16_t>(Row(0), 101);
+    Put<std::uint8_t>(Row(0) + 0x36, 2);
+    g_o->handles[2] ^= 0x10000u;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(Logged("partner_cbox=viewer_changed; fields=0x180; viewer_act=20>20; latched=0;"), "the viewer's weapon switch: logged only");
+    const auto st = cb::GetStatus();
+    Check(!st.watch_latched && st.applied == 468, "no latch for the viewer's own selection or weapons");
     // Our box no longer current (the row was reset): released, never taken off.
     Put<std::uint16_t>(Row(1) + 0x1C + 2, 0);
     cb::Observe(Ctx(false, 468, 2, m), &Log);

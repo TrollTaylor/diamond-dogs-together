@@ -145,39 +145,45 @@ bool SameLease(const Snapshot& a, const Snapshot& b) noexcept {
 // The per-tick watch digest (field masks, partner_cbox_policy::field).
 struct Watch {
     bool have = false;
-    std::array<std::uint8_t, 0x1A> row_items{};  // viewer row +0x1C..+0x35
-    std::uint8_t row_current = 0;
+    Row row0{};
     std::uint16_t vstock[pol::kSubs]{};
     std::array<std::uint8_t, 16> vars_items{};
     std::uint32_t vars_current = 0;
     std::array<std::uint8_t, pol::kSubs * c::q_item_record_size> records0{};
-    std::uint32_t item_handle = 0;
+    std::array<std::uint32_t, 7> handles{};
     std::uint16_t act0 = 0;
 };
 Watch g_watch{};
 Watch WatchOf(const Snapshot& s) noexcept {
     Watch w{};
     w.have = true;
-    std::memcpy(w.row_items.data(), s.row0.data() + c::equip_row_items, w.row_items.size());
-    w.row_current = static_cast<std::uint8_t>(CurrentSub(s.row0));
+    w.row0 = s.row0;
     std::memcpy(w.vstock, s.vstock, sizeof(w.vstock));
     w.vars_items = s.vars_items;
     w.vars_current = s.vars_current;
     w.records0 = s.records0;
-    w.item_handle = s.local_handles[c::slot_type_item];
+    w.handles = s.local_handles;
     w.act0 = s.act[0];
     return w;
 }
+// The viewer's row 0 split: the item list and item bytes (+0x1C..+0x34), the
+// item nibble (+0x37 high), and everything else (weapons, slot nibble, +0x38).
 std::uint32_t Changed(const Watch& a, const Watch& b) noexcept {
     namespace f = pol::field;
     std::uint32_t m = 0;
-    if (a.row_items != b.row_items) m |= f::row_items;
-    if (a.row_current != b.row_current) m |= f::row_current;
+    for (std::size_t i = 0; i < a.row0.size(); ++i) {
+        if (a.row0[i] == b.row0[i]) continue;
+        if (i >= c::equip_row_items && i < c::equip_row_item_bytes + pol::kSubs) m |= f::row_items;
+        else if (i == c::equip_row_item_nibble) m |= (a.row0[i] >> 4) != (b.row0[i] >> 4) ? f::row_current : 0u;
+        else m |= f::row_other;
+        if (i == c::equip_row_item_nibble && (a.row0[i] & 0xF) != (b.row0[i] & 0xF)) m |= f::row_other;
+    }
     if (std::memcmp(a.vstock, b.vstock, sizeof(a.vstock)) != 0) m |= f::stocks;
     if (a.vars_items != b.vars_items) m |= f::vars_items;
     if (a.vars_current != b.vars_current) m |= f::vars_current;
     if (a.records0 != b.records0) m |= f::records;
-    if (a.item_handle != b.item_handle) m |= f::item_handle;
+    for (unsigned i = 0; i < 7; ++i)
+        if (a.handles[i] != b.handles[i]) m |= i == c::slot_type_item ? f::item_handle : f::handles_other;
     return m;
 }
 bool IdleReason(const char* reason) noexcept {
@@ -409,12 +415,12 @@ void ApplyOff(const Context& x, const Snapshot& before, LogFn log) noexcept {
 }  // namespace
 void Observe(const Context& x, LogFn log) noexcept {
     if (!TryAcquireSRWLockExclusive(&g_lock)) return;
-    if (g_state.mission != x.mission) {
+    if (g_state.mission != x.mission || g_state.epoch != x.epoch) {
         g_lines = g_key_lines = 0;
         g_reason = nullptr;
         g_watch = Watch{};
     }
-    pol::Enter(g_state, x.mission, x.realize_gen);
+    pol::Enter(g_state, x.mission, x.epoch, x.realize_gen);
     if (!x.enabled) {
         ReleaseSRWLockExclusive(&g_lock);
         return;

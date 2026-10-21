@@ -30,6 +30,10 @@ struct Context {
     std::uintptr_t base = 0, player = 0, remote_block = 0;
     std::size_t image_span = 0;
     std::uint32_t mission = 0, realize_gen = 0;
+    // The driver's mission start (Mission::start_ms, set at CFG ready): with the
+    // mission code it scopes the latches and the edge state (cbox_seq restarts
+    // with every mission, also one with the same code).
+    std::uint64_t epoch = 0;
     std::uint64_t now_ms = 0;
     // equipment_stock_writer::PinsIntact (every SHA-pinned body, including
     // ChangeEquip, SetCurrentItemIndex and its callees).

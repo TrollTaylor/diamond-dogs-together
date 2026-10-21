@@ -64,6 +64,7 @@ constexpr unsigned ViewerSub(std::uint16_t box, const std::uint16_t (&items)[kSu
 // --- The edge / attempt state (mission-scoped; the module owns it) ---------
 struct State {
     std::uint32_t mission = 0, realize_gen = 0;
+    std::uint64_t epoch = 0;       // the driver's mission start (Mission::start_ms): a same-code mission is new
     bool done = false;             // the remote edge `done_seq` was attempted (on or off)
     std::uint32_t done_seq = 0;
     std::uint16_t applied = 0;     // the box this module put on body 1 (0: none)
@@ -76,13 +77,15 @@ struct State {
     // no new "on" this mission; taking off a box we put on stays allowed.
     bool watch_latched = false;
 };
-// A new mission clears everything; a new body realize generation re-arms the
-// edge (the next tick attempts the remote's current state once more) and keeps
-// the box we put on (body 1's equipment row lives in Q, not in the realized body).
-constexpr void Enter(State& s, std::uint32_t mission, std::uint32_t realize_gen) noexcept {
-    if (s.mission != mission) {
+// A new mission (code or start epoch: the driver's edge counter restarts with
+// it) clears everything; a new body realize generation re-arms the edge (the
+// next tick attempts the remote's current state once more) and keeps the box we
+// put on (body 1's equipment row lives in Q, not in the realized body).
+constexpr void Enter(State& s, std::uint32_t mission, std::uint64_t epoch, std::uint32_t realize_gen) noexcept {
+    if (s.mission != mission || s.epoch != epoch) {
         s = State{};
         s.mission = mission;
+        s.epoch = epoch;
         s.realize_gen = realize_gen;
         return;
     }
@@ -193,15 +196,22 @@ inline constexpr std::uint32_t vars_items = 0x8;    // vars.items (+0x5A4)
 inline constexpr std::uint32_t vars_current = 0x10; // vars.currentItemIndex (+0x67C)
 inline constexpr std::uint32_t records = 0x20;      // the viewer's item records Q+0x160[0..7]
 inline constexpr std::uint32_t item_handle = 0x40;  // the viewer's slot-4 handle
+inline constexpr std::uint32_t row_other = 0x80;    // the rest of viewer row 0 (its weapons, slot nibble)
+inline constexpr std::uint32_t handles_other = 0x100;  // the viewer's other six slot handles
+// The item state body 1's box could touch (the latching set); the rest is the
+// viewer's own selection or weapons (logged only).
+inline constexpr std::uint32_t item_state = row_items | stocks | vars_items | records | item_handle;
+inline constexpr std::uint32_t selection = row_current | vars_current;
 }  // namespace field
 // A change the viewer did not select: anything in the item state while the
 // viewer's act and its own item selection (row nibble, vars.currentItemIndex)
 // stayed the same latches watch_latched (a lab heuristic: in the hidden runs the
 // viewer films and touches nothing; a viewer that picks, uses or swaps an item
-// changes its act or its selection and is only logged).
+// changes its act or its selection, and a weapon switch only touches row_other /
+// handles_other: those are only logged).
 constexpr bool WatchLatch(std::uint32_t changed, std::uint16_t act_before, std::uint16_t act_now) noexcept {
-    if (!changed) return false;
-    if (changed & (field::row_current | field::vars_current)) return false;
+    if (!(changed & field::item_state)) return false;
+    if (changed & field::selection) return false;
     return act_before == act_now;
 }
 
