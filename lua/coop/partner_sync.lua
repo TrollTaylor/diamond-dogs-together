@@ -312,14 +312,19 @@ do
             local kind = ride()
             rideSuffix = " ride=" .. tostring(kind)
             local seatOf, bitsOf = get(e, "MgsCoopPartnerRideSeat"), get(e, "MgsCoopPartnerStatusBits")
-            if (kind == 2 or kind == 3) and type(seatOf) == "function" then
+            if kind == 2 and type(seatOf) == "function" then
                 local vid, seat = seatOf()
                 if integer(vid, 0, 65534) then rideSuffix = rideSuffix .. fmt(" veh=%d seat=%d", vid, integer(seat, 0, 3) and seat or 255) end
             end
             local bits = type(bitsOf) == "function" and bitsOf() or 0
             if integer(bits, 1, 4095) then rideSuffix = rideSuffix .. fmt(" st=0x%x", bits) end
+            local itemOf = get(e, "MgsCoopPartnerActiveItem")
+            if type(itemOf) == "function" then
+                local id = itemOf()
+                if integer(id, 0, 65534) then rideSuffix = rideSuffix .. fmt(" item=%d", id) end
+            end
         end
-        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg, sv, ss, sa, se = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d %d %d",
+        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg, sv, ss, sa, se, citem, cact = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d %d %d",
             frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
             floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0), actions, gun) .. rideSuffix)
         if type(op) ~= "number" or op <= 0 then return end
@@ -383,6 +388,20 @@ do
         if op % 512 >= 256 and call(api.dmStop, "Player.RequestToStopDirectMotion") then note("event=dm_stop") end
         -- RIDE_SEAT (512): vehicle id, seat, action and entry follow the gani value.
         if op % 1024 >= 512 then rideSeat(R, sv, ss, sa, se) end
+        -- CBOX (1024): Player.ChangeEquip on body 1 (public wrapper 0x9D0D60,
+        -- playerIndex in R8D). Ids 456..482 are EQP_IT_CBox .. the last box
+        -- (IsVarsCurrentItemCBox: id - 0x1C8 < 0x1B). stock 0 does not grant a
+        -- box to the viewer's counts. dropPrevEquip stays false.
+        if op % 2048 >= 1024 then
+            if integer(citem, 456, 482) and (cact == 0 or cact == 1) then
+                if call(get(Player, "ChangeEquip"), "Player.ChangeEquip", {playerIndex = R, equipId = citem, stock = 0,
+                    stockSub = 0, ammo = 0, ammoSub = 0, suppressorLife = 0, toActive = cact == 1, dropPrevEquip = false}) then
+                    note(fmt("event=cbox;id=%d;active=%d", citem, cact))
+                end
+            else
+                note("event=cbox_refused;reason=item")
+            end
+        end
         if op % 2 == 1 and finite(px) and finite(py) and finite(pz) and finite(pry) then
             call(api.sendCommand, "GameObject.SendCommand", {type = "TppPlayer2", index = R},
                 {id = "Warp", pos = {px / 1000, py / 1000, pz / 1000}, rotY = pry / 1000})

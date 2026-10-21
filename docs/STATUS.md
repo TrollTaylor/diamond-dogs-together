@@ -1,11 +1,34 @@
-## October 18, 2026: 0.13.2 (Act-gated action replay, cardboard box preload, multi-seat passenger riding)
+## October 18, 2026: 0.13.3 friend package staged (not installed)
 
-Package: `mgs-coop-friend-0.13.2-20261018T032136Z-bcd27cbc` (Release receipt `20261018-031908-d344f7a10a714f57b029ed349de0dbeb`, 275 audited tests, ZIP SHA-256 `8c53cf09fad9f312d5ced07178b279b2629ca17e3efd95dec6e1c629791c8d85`, loader SHA-256 `f27f7d6aa9f9639ce4f24456d24f778722e121547affd02e3db9377c3a30e249`).
+Package `mgs-coop-friend-0.13.3-20261018T213930Z-3204584b` (Release receipt
+`20261018-213554-ab5af7b22f3f4bb4ac76fcff12745636`, 274 audited tests, ZIP SHA-256
+`f06068efbe5baa9e493ee0cb8f7ec222e2df0698d7b4bca646866e81655d458d6`, loader SHA-256
+`1f3e6d12073ad363c9bcef458a62dc7d48641edfb0f95d68538b7c852f4a4ae6`). Source commit `bf29f67` with a dirty
+tree. The link build id is `0.13.3+bf29f67`, so it will not connect to the 0.13.2 package. Not installed
+into either game copy, and the ladder, pipe, step-on and cardboard-box changes have not had a hidden-worker run.
 
-- **Act-Gated ACTION Replay**: Replay `partner_pad::kAction` (0x20u) via native overlay tap for climb, vault, ladder, and door transitions with initial transform snapping and recon runaway freeze.
-- **Cardboard Box Sync**: `EQP_IT_CBox` preload and active state synchronization across instances using the 64-byte `partner_equip_wire` manifest (bytes 10..11 and byte 63 bit 0) and `Player.ChangeEquip` (0x9D0D60).
-- **Multi-Seat Vehicle & Passenger Support**: Enhanced `partner_ride_wire` packet encoding multi-seat index and passenger role flags; driver transform authority with passenger aiming and firing preserved; mounted horse and vehicle visibility support.
-- **281/281 CTest tests passing cleanly.**
+## October 18, 2026: 0.13.2 gameplay replaced (fixture-only; not a hidden-worker run)
+
+Package `mgs-coop-friend-0.13.2-20261018T032136Z-bcd27cbc` shipped a climb whitelist, a box bit and vehicle ACTION taps
+that were only fixture-tested. In play the box never called `Player.ChangeEquip`, the climb tap was dropped by the next
+reconciliation placement, and the mount taps fought the 0.13.1 seat chain (GetOn/Loop/GetOff), which stays the vehicle
+path. Horse riders stay hidden: there is no seated horse motion.
+
+What replaces that package in this tree:
+
+- **Ladders, pipes and step-ons.** Acts 21, 22 and 24 (Ghidra writers LadderActionImpl, PipeActionPluginImpl,
+  StepOnActionImpl on 1.0.15.4) place body 1, then fire one ACTION overlay tap only after the window is armed again.
+  ACTION is in the mask and in `sample_strip`, so the remote pad's E never arrives raw. Recon far/vertical/runaway
+  placements are held for the climb. Acts 49/50/59 are not traversals.
+- **Cardboard box.** Version 2 of the equip manifest carries `active_item_id` (bytes 10..11) and `cbox_active`
+  (byte 63 bit 0). `EQP_IT_CBox` is 0x1C8; `IsVarsCurrentItemCBox` (`0x9D68E0`) accepts 0x1C8..0x1E2. The receiver
+  asks Lua for `Player.ChangeEquip` on instance 1 (public wrapper `0x9D0D60`, `playerIndex` in R8D) with stock 0 and
+  `dropPrevEquip` false. Not yet run in the hidden worker.
+- **Vehicle passengers.** Seats 0..3 already play that seat's GetOn/Loop/GetOff on the receiver's vehicle copy.
+  Mount and dismount do not press ACTION. A passenger's aim while that direct motion owns the body is still the
+  seat episode's early return: the aim tick does not run during it.
+
+Vehicle GetOn/GetOff (0.13.1) is unchanged. The `owned_flag_map_tests` stack fix and the `FriendCommon.psm1` retry stay.
 
 ## October 17, 2026: 0.13.1 installed (vehicle entry `GetOn` and exit `GetOff` animations on by default)
 

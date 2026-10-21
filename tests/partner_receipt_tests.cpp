@@ -105,6 +105,10 @@ int main() {
     Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=2 veh=65535 seat=255 st=0x0", rich) && rich.has_vehicle && rich.vehicle == 65535 &&
               rich.seat == 255 && rich.has_status && rich.status == 0, "unknown vehicle and seat spellings");
     Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=1 st=0xfff", rich) && rich.status == status_bit::all, "every status bit");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=0 st=0x4 item=456", rich) && rich.has_status && rich.status == status_bit::cbox &&
+              rich.has_item && rich.item == 456, "box status and the active item id");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=0 item=456", rich) && !rich.has_status && rich.has_item && rich.item == 456,
+          "item id without a status word");
     Check(TickArgs("0 0 0 0 0 0 0 0 0 0 0 ride=2", rich) && !rich.has_vehicle && rich.seat == 0xFF && !rich.has_status,
           "a later plain ride suffix clears the seat evidence");
     for (const char* invalid : {" ride=2 veh=25608", " ride=2 seat=0", " ride=2 veh=25608 seat=4", " ride=2 veh=25608 seat=254",
@@ -112,6 +116,7 @@ int main() {
                                 " ride=2 veh=25608 seat=0 ", " ride=2 veh=25608  seat=0", " ride=2 st=0x1000", " ride=2 st=0x01",
                                 " ride=2 st=0xFF", " ride=2 st=0x", " ride=2 st=1", " ride=2 st=0x1 veh=1 seat=0", " ride=2 st=0x1 st=0x1",
                                 " ride=2 veh=25608 seat=0 st=0x1 ", " st=0x1", " veh=25608 seat=0", " ride=2 vehicle=1 seat=0",
+                                " ride=0 item=65535", " ride=0 item=456 st=0x4", " ride=0 st=0x4 item=456 extra=1",
                                 " ride=2 veh=1 seat=0x1", " ride=22 veh=1 seat=0"})
         Check(!TickOk((std::string("0 0 0 0 0 0 0 0 0 0 0") + invalid).c_str()), "strict seat/status suffix refuses malformed data");
     {
@@ -205,9 +210,9 @@ int main() {
     {
         const std::string widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
                                           -2147483647 - 1, Status::lost, 0xFFFFFFFFu});
-        // op 0xFFFFFFFF includes SET_PARTS (16), DM_PLAY (128) and RIDE_SEAT (512): the 5 look
-        // values (here 0), the gani (0) and the 4 seat values (0) follow.
-        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295,0,0,0,0,0,0,0,0,0,0" &&
+        // op 0xFFFFFFFF includes SET_PARTS (16), DM_PLAY (128), RIDE_SEAT (512) and CBOX (1024):
+        // the 5 look values (here 0), the gani (0), the 4 seat values (0) and the box id/active (0) follow.
+        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295,0,0,0,0,0,0,0,0,0,0,0,0" &&
               widest.size() < reply_capacity, "widest reply fits reply_capacity");
         char small[16]{};
         Check(FormatReply({1, 1, 0, 0, 0, 0, Status::live, 0}, small, sizeof(small)) == 0 && small[0] == 0, "too small");
@@ -366,7 +371,7 @@ int main() {
         Reply without = with;
         without.op = op::warp;
         Check(ReplyText(without) == "return 1,1,10,20,30,40,1,5", "no look values without op 16");
-        const std::string widest = ReplyText({0xFFFFFFFFu & ~(op::dm_play | op::ride_seat), 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1,
+        const std::string widest = ReplyText({0xFFFFFFFFu & ~(op::dm_play | op::ride_seat | op::cbox), 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1,
                                               -2147483647 - 1, -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}});
         Check(widest.size() == 111 && widest.size() < reply_capacity &&
               widest.compare(widest.size() - 22, 22, ",255,255,255,255,65535") == 0, "widest 13-value reply fits reply_capacity");
@@ -375,13 +380,13 @@ int main() {
         Check(ReplyText(dmp) == "return 129,1,0,0,0,0,1,0,0,0,0,0,0,3", "dm_play: zeros then gani");
         Reply dmp16{op::dm_play | op::set_parts_explicit, 1, 0, 0, 0, 0, Status::live, 0, Look{6, 27, 116, 0, 0, 9}, 5};
         Check(ReplyText(dmp16) == "return 144,1,0,0,0,0,1,0,6,27,116,0,0,5", "dm_play | set_parts: look then gani");
-        const std::string dmwidest = ReplyText({0xFFFFFFFFu & ~op::ride_seat, 1, 0, 0, 0, 0, Status::live, 0, Look{255, 255, 255, 255, 65535, 255}, 9});
+        const std::string dmwidest = ReplyText({0xFFFFFFFFu & ~(op::ride_seat | op::cbox), 1, 0, 0, 0, 0, Status::live, 0, Look{255, 255, 255, 255, 65535, 255}, 9});
         Check(dmwidest.size() < reply_capacity, "widest 14-value reply fits reply_capacity");
         // dm=map: the stand jog loop (gani 12) is the 14th value; the widest
         // reply with a two-digit gani is 114 characters.
         Reply dm12{op::dm_play, 1, 0, 0, 0, 0, Status::live, 0, Look{}, 12};
         Check(ReplyText(dm12) == "return 128,1,0,0,0,0,1,0,0,0,0,0,0,12", "dm_play: gani 12 as the 14th value");
-        const std::string dm12widest = ReplyText({0xFFFFFFFFu & ~op::ride_seat, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
+        const std::string dm12widest = ReplyText({0xFFFFFFFFu & ~(op::ride_seat | op::cbox), 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
                                                   -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}, 12});
         Check(dm12widest.size() == 114 && dm12widest.size() < reply_capacity, "widest reply (gani 12) is 114 characters");
         // RIDE_SEAT (512) appends vehicle, seat, action and entry after the gani (look zeros, gani 0 without 16/128).
@@ -393,14 +398,20 @@ int main() {
         Reply noseat = seat; noseat.op = op::warp;
         Check(ReplyText(noseat) == "return 1,1,10,20,30,40,1,5", "no seat values without op 512");
         const std::string seatwidest = ReplyText([] {
-            Reply r{0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1, Status::lost, 0xFFFFFFFFu,
+            Reply r{0xFFFFFFFFu & ~op::cbox, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1, Status::lost, 0xFFFFFFFFu,
                     Look{255, 255, 255, 255, 65535, 255}, 255};
             r.seat_vehicle = 65535; r.seat = 255; r.seat_action = 255; r.seat_entry = 255;
             return r;
         }());
         Check(seatwidest.size() == 133 && seatwidest.size() < reply_capacity, "widest 18-value reply fits reply_capacity");
-        Check(op::ride_seat == 512 && (op::ride_seat & (op::warp | op::set_all_active | op::copy_parts | op::clear_all_active |
-              op::set_parts_explicit | op::mirror_on | op::mirror_off | op::dm_play | op::dm_stop)) == 0, "op 512 is a free bit");
+        Reply box{op::cbox, 1, 10, 20, 30, 40, Status::live, 5};
+        box.cbox_item = 456; box.cbox_active = true;
+        Check(ReplyText(box) == "return 1024,1,10,20,30,40,1,5,0,0,0,0,0,0,0,0,0,0,456,1", "cbox pads to 20 values");
+        box.op = op::cbox | op::ride_seat; box.seat_vehicle = 25608; box.seat = 1; box.seat_action = 1; box.seat_entry = 1;
+        Check(ReplyText(box) == "return 1536,1,10,20,30,40,1,5,0,0,0,0,0,0,25608,1,1,1,456,1", "cbox after a seat reply");
+        Check(op::ride_seat == 512 && op::cbox == 1024 &&
+              ((op::ride_seat | op::cbox) & (op::warp | op::set_all_active | op::copy_parts | op::clear_all_active |
+              op::set_parts_explicit | op::mirror_on | op::mirror_off | op::dm_play | op::dm_stop)) == 0, "ops 512 and 1024 are free bits");
         Check(max_gani == 30 && max_gani == mgscoop::kPartnerDmGaniMax, "max_gani follows the dm=map table bound");
     }
 

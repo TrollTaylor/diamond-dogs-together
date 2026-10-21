@@ -44,7 +44,7 @@ const char* ActionName(Action action) noexcept;
 enum class Mode : std::uint8_t { idle, place, verify, track, pin, frozen, fallback };
 const char* ModeName(Mode mode) noexcept;
 
-enum class PlaceReason : std::uint8_t { none, first, rearm, relink, teleport, far_error, vertical, diverging, manual, retry };
+enum class PlaceReason : std::uint8_t { none, first, rearm, relink, teleport, far_error, vertical, diverging, manual, retry, traverse };
 const char* PlaceReasonName(PlaceReason reason) noexcept;
 
 enum class Frozen : std::uint8_t { none, pose_stale, input_stale, act, remote_act, stance, settle, body };
@@ -277,7 +277,11 @@ struct In {
     bool stance_pad{};
     const char* stance_block{};
     bool remote_downed{};
-    bool mounted{};
+    // Traversal replay (partner_traverse): while a replay waits for body 1 or
+    // body 1 runs a ladder/pipe/climb/hang, the far/vertical placements and
+    // the runaway stay off (a placement disarms the window or neutralizes the
+    // pad, which drops the ACTION tap). Teleports and body jumps still place.
+    bool traverse_hold{};
 };
 
 struct Report {
@@ -480,12 +484,9 @@ Out Step(State& state, const In& in, const Params& params) noexcept;
 // Everything else stays `base`.
 
 Params NativeParams(const Params& base, FaceMode face = FaceMode::idle) noexcept;
+// Acts whose own native exit runs before a stance fix (stance_state_settle_ms):
+// carry 39, dead/dying 40/41, carried 42..44, sleep 131..133, DM 139.
 bool StateAct(std::uint16_t act) noexcept;
-// Acts representing climbing, vaulting, ladders, ledge-hangs, or doors:
-// 21, 23 (ladder/pipe), 28 (hop/vault), 49, 50 (door/interact), 54..56 (ledge hang), 59 (vault/fence).
-inline bool ClimbVaultAct(std::uint16_t act) noexcept {
-    return act == 21 || act == 23 || act == 28 || act == 49 || act == 50 || (act >= 54 && act <= 56) || act == 59;
-}
 
 // Helpers (also used by tests): wrap radians to (-pi, pi]; the exponential
 // smoothing factor 1 - exp(-dt/tau).

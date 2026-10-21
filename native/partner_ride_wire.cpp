@@ -3,14 +3,12 @@
 namespace mgscoop::partner_ride_wire {
 bool IsRide(const std::uint8_t* b, std::size_t n) noexcept { return b && n && b[0]==kMagic; }
 std::uint8_t VersionFor(const Packet& p) noexcept {
-    if (p.kind==Kind::vehicle && (SeatIndex(p.seat)<=kSeatMax || p.vehicle!=kVehicleUnknown)) return kVersion;
-    if (p.kind==Kind::horse && p.vehicle!=kVehicleUnknown) return kVersion;
-    return kVersion1;
+    return p.kind==Kind::vehicle && (p.seat<=kSeatMax || p.vehicle!=kVehicleUnknown) ? kVersion : kVersion1;
 }
 bool Encode(const Packet& p, std::uint8_t (&b)[kSize]) noexcept {
     if (static_cast<unsigned>(p.kind)>5 || !p.revision) return false;
     const std::uint8_t version=VersionFor(p);
-    if (version==kVersion && SeatIndex(p.seat)>kSeatMax && p.seat!=kSeatUnknown) return false;
+    if (version==kVersion && p.seat>kSeatMax && p.seat!=kSeatUnknown) return false;
     b[0]=kMagic; b[1]=version; b[2]=static_cast<std::uint8_t>(p.kind);
     b[3]=version==kVersion ? p.seat : 0;
     b[4]=static_cast<std::uint8_t>(p.revision); b[5]=static_cast<std::uint8_t>(p.revision>>8);
@@ -26,12 +24,9 @@ bool Decode(const std::uint8_t* b, std::size_t n, Packet& out) noexcept {
         if(b[3] || b[6] || b[7]) return false;
     } else if(b[1]==kVersion) {
         const std::uint16_t vehicle=static_cast<std::uint16_t>(b[6]|(b[7]<<8));
-        if(SeatIndex(b[3])>kSeatMax && b[3]!=kSeatUnknown) return false;
-        // Only a vehicle or horse carries a seat or vehicle id; any other kind is a malformed v2.
-        if(p.kind!=Kind::vehicle && p.kind!=Kind::horse) {
-            if(b[3]!=kSeatUnknown || vehicle!=kVehicleUnknown) return false;
-        }
-        if(p.kind==Kind::horse && SeatIndex(b[3])>0 && b[3]!=kSeatUnknown) return false;
+        if(b[3]>kSeatMax && b[3]!=kSeatUnknown) return false;
+        // Only a vehicle carries a seat; any other kind is a malformed v2.
+        if(p.kind!=Kind::vehicle && (b[3]!=kSeatUnknown || vehicle!=kVehicleUnknown)) return false;
         p.seat=b[3]; p.vehicle=vehicle;
     } else return false;
     if(!p.revision) return false;
@@ -102,9 +97,7 @@ void Observe(Visibility& s, const In& in) noexcept {
     const bool heli=in.anim_valid && in.remote_act>=kHeliActFirst && in.remote_act<=kHeliActLast;
     // Seat mode: a live vehicle ride in a usable seat is drawn seated, not hidden.
     const bool seat_ok=in.seat_mode && !heli && in.ride_live && in.kind==Kind::vehicle && SeatUsable(in.seat,in.vehicle);
-    const bool horse_ok=in.seat_mode && !heli && in.ride_live && in.kind==Kind::horse && HorseUsable(in.seat,in.vehicle);
-    const bool mounted_visible=seat_ok || horse_ok;
-    const bool riding=heli || (in.ride_live && in.kind!=Kind::foot && !mounted_visible);
+    const bool riding=heli || (in.ride_live && in.kind!=Kind::foot && !seat_ok);
     const bool stale=in.ride_have && !in.ride_live;
     const bool foot=!heli && (!in.ride_have || (in.ride_live && in.kind==Kind::foot));
     if(s.air && in.body_anim_valid && in.body_act!=25) s.air=false;
@@ -123,11 +116,11 @@ void Observe(Visibility& s, const In& in) noexcept {
     s.seated=seat_ok && !s.air && !s.dead_locked && in.lease_live;
     if(riding || stale || s.air || s.dead_locked || !in.lease_live) {
         s.hidden=true; s.reason=s.dead_locked ? "dead" : s.air ? "air" : riding ? "ride" : "ride_stale";
-    } else if(s.seated || horse_ok) {
-        // Seated or mounted horse is shown at once (the driver's seat flow places and seats it).
+    } else if(s.seated) {
+        // Seated is shown at once (the driver's seat flow places and seats it).
         s.hidden=false; s.reason=nullptr;
     }
-    const bool valid=in.fresh && in.lease_live && in.time_valid && !in.jump && (foot || mounted_visible) && in.anim_valid &&
+    const bool valid=in.fresh && in.lease_live && in.time_valid && !in.jump && foot && in.anim_valid &&
                      !s.air && !s.dead_locked && std::isfinite(in.x) && std::isfinite(in.y) && std::isfinite(in.z);
     if(!valid || (s.have_sample && (in.sender_ms<s.sender_ms || in.sender_ms-s.sender_ms>1000))) {
         s.have_sample=s.stable=false;

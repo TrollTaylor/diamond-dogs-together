@@ -86,8 +86,7 @@ Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_
     if (data[9] != kSlots) return Result::slot_count;
     if (m.version == kVersion1) {
         if (data[10] || data[11]) return Result::reserved;
-    } else if (m.version == kVersion) {
-        if (data[11] & 0xF0) return Result::reserved;
+    } else {
         m.active_item_id = Get16(data + 10);
     }
     for (std::size_t i = 0; i < kSlots; ++i) {

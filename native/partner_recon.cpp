@@ -146,6 +146,7 @@ const char* PlaceReasonName(PlaceReason reason) noexcept {
     case PlaceReason::diverging: return "diverging";
     case PlaceReason::manual: return "manual";
     case PlaceReason::retry: return "retry";
+    case PlaceReason::traverse: return "traverse";
     default: return "none";
     }
 }
@@ -662,11 +663,11 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         if (teleport || body_jump) {
             st.need_place = true;
             st.place_reason = PlaceReason::teleport;
-        } else if (have_err && err >= P.warp_mm && gap_ok && !input_stale) {
+        } else if (have_err && err >= P.warp_mm && gap_ok && !input_stale && !in.traverse_hold) {
             if (prone) far_snap = true;
             else request_place(PlaceReason::far_error);
         }
-        if (have_err && std::fabs(dy) >= P.vertical_mm && !input_stale) {
+        if (have_err && std::fabs(dy) >= P.vertical_mm && !input_stale && !in.traverse_hold) {
             if (!st.vertical_since) st.vertical_since = now ? now : 1;
             if (Held(st.vertical_since, now, P.vertical_hold_ms) && gap_ok) {
                 if (prone) far_snap = true;
@@ -843,12 +844,10 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             }
         }
     }
-    const bool climb_vault = (in.body_anim_ok && ClimbVaultAct(in.body_act)) ||
-                             (in.remote_anim_valid && ClimbVaultAct(in.remote_act));
-    const bool freeze_runaway = climb_vault || in.mounted;
-    if (freeze_runaway) {
+    if (in.traverse_hold) {
+        // A traversal moves body 1 on its own (ladder, pipe, climb, hang):
+        // never a runaway episode, and an active one ends.
         st.runaway_since = 0;
-        st.runaway_latched = false;
         st.runaway_exit_since = 0;
         if (st.runaway_active) {
             runaway_ms = Ms(st.runaway_start, now);
@@ -1146,7 +1145,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     // Nudge: position only, at most every nudge_period_ms.
     std::uint32_t dead = prone ? P.dead_prone_mm : remote_moving ? P.dead_moving_mm : P.dead_idle_mm;
     if (now < st.dead_until) dead *= 2;
-    if (!in.mounted && d_f >= dead && (!st.last_nudge_ms || now - st.last_nudge_ms >= P.nudge_period_ms)) {
+    if (d_f >= dead && (!st.last_nudge_ms || now - st.last_nudge_ms >= P.nudge_period_ms)) {
         const double dtn = !st.last_nudge_ms ? static_cast<double>(P.nudge_period_ms)
                                               : static_cast<double>(now - st.last_nudge_ms > 200 ? 200 : now - st.last_nudge_ms);
         const double tau = remote_moving ? P.tau_moving_ms : P.tau_idle_ms;
