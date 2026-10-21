@@ -71,6 +71,11 @@ inline constexpr std::uint32_t dm_stop = 256;
 // "MTP_GLOBAL_C" on every entry; action 2 advances the playing chain to its
 // GetOff entry (RequestToGoNextDirectMotion). Never sent with DM_PLAY/DM_STOP.
 inline constexpr std::uint32_t ride_seat = 512;
+// Cardboard box on body 1 (Player.ChangeEquip, public wrapper 0x9D0D60,
+// instance index in R8D). Two values follow a 20-wide reply: the box equip
+// id (0x1C8..0x1E2) and 1/0 for toActive. Padded through the seat fields so
+// those two values stay at the end whether or not RIDE_SEAT is also set.
+inline constexpr std::uint32_t cbox = 1024;
 }
 namespace seat_action {
 inline constexpr std::uint8_t play = 1, next = 2;
@@ -117,6 +122,9 @@ struct Tick {
     std::uint8_t seat;
     bool has_status;
     std::uint16_t status;
+    // Optional after st= (or after ride=/seat when st= is absent): " item=<id>".
+    bool has_item;
+    std::uint16_t item;
 };
 // The local PlayerStatus census bits of " st=" (lua/coop/partner_ride.lua; a
 // status the binding table lacks is never set).
@@ -133,7 +141,7 @@ inline constexpr std::int32_t max_pos_mm = 1000000000;   // matches sync::max_co
 inline constexpr std::int32_t max_angle_cdeg = 3600000;  // +-36000 degrees, normalized later
 // Strict: the tick prefix, then exactly 9 or 11 signed decimal integers (11 may end in ride=0..5, optionally
 // followed by veh=<0..65535> seat=<0..3|255>, then optionally st=0x<1..3 lowercase hex, at most 0xfff, no
-// leading zero>) separated by single spaces; no '+', no leading zeros, no "-0", nothing trailing, every
+// leading zero>, then optionally item=<0..65534>) separated by single spaces; no '+', no leading zeros, no "-0", nothing trailing, every
 // value within its bound. `out` is written only on success.
 bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept;
 // The debug seat receipt (Receipt::seat): "arm <seat 0..3> <vehicle 0..65534>" or "stop".
@@ -199,6 +207,9 @@ struct Reply {
     // Appended after the gani when op has ride_seat.
     std::uint16_t seat_vehicle = 0;
     std::uint8_t seat = 0, seat_action = 0, seat_entry = 0;
+    // Appended after the seat fields when op has cbox (the prefix is padded to 18).
+    std::uint16_t cbox_item = 0;
+    bool cbox_active = false;
 };
 // "return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>"
 // [",<type>,<parts>,<camo>,<hand>,<face>" when op & (set_parts_explicit | dm_play | ride_seat)]

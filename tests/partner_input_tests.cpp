@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <cstring>
 #include "mgscoop/partner_input.hpp"
-#include "mgscoop/partner_pad_bits.hpp"
 
 namespace {
 namespace pi = mgscoop::partner_input;
@@ -758,6 +757,16 @@ void TestComposeSteer() {
           "sample_strip: no RELOAD from the remote's held, words, edges, long12, tap12 or synthesized taps");
     const pi::Injection tapped = pi::Compose(cs, r, 0, pi::Overlay{0x40u}, edge);
     Check((tapped.held & 0x40u) && (tapped.edge_press & 0x40u), "sample_strip: an overlay tap still presses RELOAD");
+    // ACTION (0x20) is the same rule: raw network never reaches body 1; the overlay tap does.
+    cs.mask = 0x20u;
+    cs.sample_strip = 0x20u;
+    r.packet.held = 0x20u; r.packet.long12 = 0x20u; r.edge_press = 0x20u; r.edge_release = 0x20u; r.edge_tap12 = 0x20u;
+    edge = pi::EdgeState{};
+    const pi::Injection action = pi::Compose(cs, r, 0, pi::Overlay{}, edge);
+    Check(action.held == 0 && !(action.edge_press & 0x20u) && !(action.long12 & 0x20u) && !(action.tap12 & 0x20u) &&
+              !(edge.net_held & 0x20u), "sample_strip: no ACTION from the remote pad");
+    const pi::Injection actionTap = pi::Compose(cs, r, 0, pi::Overlay{0x20u}, edge);
+    Check((actionTap.held & 0x20u) && (actionTap.edge_press & 0x20u), "sample_strip: an overlay tap still presses ACTION");
     pi::Arm a1{}, a2{};
     a2.config.sample_strip = 0x40u;
     Check(pi::SameArm(a1, a2), "sample_strip is not compared by SameArm (no gen bump)");
@@ -956,29 +965,9 @@ void TestSenderHold() {
           "hold event names");
 }
 
-void TestActionSampleStripAndOverlay() {
-    pi::Config c = Cfg();
-    c.mask |= mgscoop::partner_pad::kAction;
-    c.sample_strip |= mgscoop::partner_pad::kAction;
-
-    // 1. Raw network packet with kAction (0x20u) held: stripped by sample_strip
-    pi::Sample live = Live(1, mgscoop::partner_pad::kAction);
-    pi::EdgeState edge{};
-    pi::Injection j = pi::Compose(c, live, 0, pi::Overlay{}, edge);
-    Check((j.held & mgscoop::partner_pad::kAction) == 0, "raw network kAction stripped by sample_strip");
-
-    // 2. Synthetic overlay tap with kAction: passes through to j.held
-    pi::Overlay overlay{};
-    overlay.bits = mgscoop::partner_pad::kAction;
-    edge = pi::EdgeState{};
-    j = pi::Compose(c, live, 0, overlay, edge);
-    Check((j.held & mgscoop::partner_pad::kAction) != 0, "synthetic overlay kAction tap passes through mask");
-}
-
 } // namespace
 
 int main() {
-    TestActionSampleStripAndOverlay();
     TestOnline();
     TestEffective();
     TestDirCheck();

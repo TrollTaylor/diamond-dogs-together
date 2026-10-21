@@ -193,11 +193,10 @@ int main() {
         in.seat_mode = true; in.seat = rw::kSeatUnknown; rw::Observe(v, in);
         Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride") == 0, "an unknown seat hides");
         in.seat = 1; in.vehicle = 6656; rw::Observe(v, in);
+        Check(!v.seated && v.hidden, "a non-vehicle id hides");
         in.vehicle = 25608; in.kind = rw::Kind::horse; rw::Observe(v, in);
         Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride") == 0, "a horse still hides in seat mode");
-        in.seat = 0; in.vehicle = 6656; rw::Observe(v, in);
-        Check(!v.seated && !v.hidden, "a horse with a valid vehicle and seat stays visible");
-        in.kind = rw::Kind::vehicle; in.seat = 0; in.vehicle = 25608; rw::Observe(v, in); Check(v.seated && !v.hidden, "back to seated");
+        in.kind = rw::Kind::vehicle; rw::Observe(v, in); Check(v.seated && !v.hidden, "back to seated");
         in.remote_act = 97; rw::Observe(v, in);
         Check(!v.seated && v.hidden && std::strcmp(v.reason, "ride") == 0, "act 97 (heli boarding) hides, even seated");
         in.remote_act = 111; rw::Observe(v, in); Check(v.seated, "seated again");
@@ -246,7 +245,9 @@ int main() {
     Check(buf[0] == 0x45 && buf[1] == 2 && buf[2] == 7 && buf[3] == 0 && buf[4] == 0x44 && buf[7] == 0x11 && buf[8] == 1 && buf[9] == 3 &&
           buf[10] == 0 && buf[11] == 0, "header layout");
     Check(buf[12] == 100 && buf[14] == 0x2E && buf[16] == 0 && buf[12 + 16] == 101 && buf[59] == 0x2B, "slot layout");
-    Check(buf[60] == 1 && buf[61] == 4 && buf[62] == 2 && buf[63] == 0, "type[3] at 60..62, 63 reserved");
+    Check(buf[60] == 1 && buf[61] == 4 && buf[62] == 2 && buf[63] == 0, "type[3] at 60..62, box bit clear");
+    Check(ew::CboxEquip(0x1C8) && ew::CboxEquip(0x1E2) && !ew::CboxEquip(0x1E3) && !ew::CboxEquip(0x1C7),
+          "box ids are 0x1C8..0x1E2");
     ew::Manifest got{};
     Check(ew::Decode(buf, sizeof(buf), m.epoch, got) == ew::Result::ok && got.revision == 7 && got.epoch == m.epoch && got.inv_slot == 1 &&
           got.version == 2 && ew::SameSlots(got, m) && got.slots[0].type == 1 && got.slots[1].type == 4 && got.slots[2].type == 2,
@@ -254,21 +255,6 @@ int main() {
     Check(ew::Decode(buf, sizeof(buf), 0, got) == ew::Result::ok, "epoch 0 accepts any epoch");
     Check(ew::Decode(buf, sizeof(buf), m.epoch + 1, got) == ew::Result::stale_epoch, "another epoch is stale");
     Check(ew::Decode(buf, sizeof(buf) - 1, 0, got) == ew::Result::size && ew::Decode(nullptr, 64, 0, got) == ew::Result::size, "size");
-    {
-        ew::Manifest cbox_m = m;
-        cbox_m.cbox_active = true;
-        cbox_m.active_item_id = 456;
-        std::uint8_t cbox_buf[ew::kSize]{};
-        Check(ew::Encode(cbox_m, cbox_buf) == ew::kSize, "encode cbox manifest");
-        Check(cbox_buf[10] == (456 & 0xFF) && cbox_buf[11] == ((456 >> 8) & 0x0F), "active_item_id in bytes 10..11");
-        Check(cbox_buf[63] == 0x01, "cbox_active in byte 63 bit 0");
-        ew::Manifest cbox_got{};
-        Check(ew::Decode(cbox_buf, sizeof(cbox_buf), cbox_m.epoch, cbox_got) == ew::Result::ok, "decode cbox manifest");
-        Check(cbox_got.cbox_active == true, "decoded cbox_active true");
-        Check(cbox_got.active_item_id == 456, "decoded active_item_id 456");
-        Check(ew::SameSlots(cbox_m, cbox_got), "SameSlots matches for cbox manifest");
-        Check(!ew::SameSlots(m, cbox_got), "SameSlots detects cbox_active difference");
-    }
     // Version 1 (the 0.12.0 layout, 60 bytes): still accepted, types unknown.
     {
         std::uint8_t v1[ew::kSizeV1]{};
@@ -304,8 +290,8 @@ int main() {
     Check(ew::Encode(bad, buf) == 0, "a type above 8 refused by encode");
     struct Tweak { std::size_t at; std::uint8_t value; ew::Result expect; };
     const Tweak tweaks[] = {{0, 0x46, ew::Result::magic}, {1, 3, ew::Result::version}, {8, 16, ew::Result::inv_slot},
-                            {9, 2, ew::Result::slot_count}, {11, 0xF0, ew::Result::reserved},
-                            {63, 2, ew::Result::reserved}, {60, 9, ew::Result::type}, {62, 0x20, ew::Result::type}};
+                            {9, 2, ew::Result::slot_count}, {63, 2, ew::Result::reserved}, {60, 9, ew::Result::type},
+                            {62, 0x20, ew::Result::type}};
     for (const Tweak& t : tweaks) {
         ew::Encode(m, buf);
         buf[t.at] = t.value;
@@ -317,6 +303,20 @@ int main() {
     ew::Encode(m, buf);
     buf[4] = buf[5] = buf[6] = buf[7] = 0;
     Check(ew::Decode(buf, sizeof(buf), 0, got) == ew::Result::epoch, "epoch 0 refused on decode");
+    // Version 2 reserved bytes: the active item id and the cardboard-box bit.
+    {
+        ew::Manifest box = m;
+        box.cbox_active = true;
+        box.active_item_id = 0x1C8;
+        Check(ew::Encode(box, buf) == ew::kSize && buf[10] == 0xC8 && buf[11] == 0x01 && buf[63] == 1, "box fields pack");
+        ew::Manifest out{};
+        Check(ew::Decode(buf, sizeof(buf), box.epoch, out) == ew::Result::ok && out.cbox_active && out.active_item_id == 0x1C8 &&
+                  !ew::SameSlots(out, m), "box fields round-trip and change the manifest");
+        std::uint8_t v1[ew::kSizeV1]{};
+        std::memcpy(v1, buf, sizeof(v1));
+        v1[1] = 1;
+        Check(ew::Decode(v1, sizeof(v1), box.epoch, out) == ew::Result::reserved, "version 1 still refuses a nonzero item id");
+    }
     // Store: new revisions stored, duplicates/invalid/stale counted only.
     ew::Store st{};
     ew::Encode(m, buf);

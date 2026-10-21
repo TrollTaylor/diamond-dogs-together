@@ -413,8 +413,6 @@ struct Loadout {
     std::uint8_t type[3];
     std::uint8_t alias_receiver[3];  // a customized alias's receiver from the alias table (0 none)
     const char* scan[3];
-    bool cbox_active{};
-    std::uint16_t active_item_id{};
 };
 bool ReadLoadout(const Addresses& addresses, Loadout& out) noexcept;
 

@@ -221,12 +221,12 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
         constexpr std::uint8_t gun_flags = sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading;
         if (action_flags & ~gun_flags) return false;
     }
-    bool has_ride = false, has_vehicle = false, has_status = false;
+    bool has_ride = false, has_vehicle = false, has_status = false, has_item = false;
     std::uint8_t ride_kind = 0, seat = 0xFF;
-    std::uint16_t vehicle = 0xFFFF, status = 0;
+    std::uint16_t vehicle = 0xFFFF, status = 0, item = 0;
     if (p != end) {
         // " ride=N" (one digit 0..5), then optionally " veh=V seat=S", then
-        // optionally " st=0xH"; nothing else, in this order only.
+        // optionally " st=0xH", then optionally " item=<id>"; nothing else, in this order only.
         if (end-p < 7 || std::memcmp(p, " ride=", 6) != 0 || p[6] < '0' || p[6] > '5' || (end-p > 7 && p[7] != ' ')) return false;
         has_ride = true; ride_kind = static_cast<std::uint8_t>(p[6]-'0'); p += 7;
         std::int32_t v = 0, s = 0;
@@ -234,20 +234,30 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
             if (!NamedValue(p, end, "veh", 0, 65535, v) || !NamedValue(p, end, "seat", 0, 255, s) || (s > 3 && s != 255)) return false;
             has_vehicle = true; vehicle = static_cast<std::uint16_t>(v); seat = static_cast<std::uint8_t>(s);
         }
-        if (p != end) {
+        if (p != end && end - p >= 7 && std::memcmp(p, " st=0x", 6) == 0) {
             // " st=0x" + 1..3 lowercase hex digits, no leading zero (except "0x0"), at most status_bit::all.
-            if (end-p < 7 || end-p > 9 || std::memcmp(p, " st=0x", 6) != 0 || (end-p > 7 && p[6] == '0')) return false;
+            // A following " item=" stops the hex (the old whole-suffix bound).
+            const char* q = p + 6;
+            if (q >= end || (*q == '0' && q + 1 < end && q[1] != ' ')) return false;
             std::uint32_t bits = 0;
-            for (const char* q = p + 6; q < end; ++q) {
+            unsigned digits = 0;
+            for (; q < end && *q != ' '; ++q) {
                 const char c = *q;
                 const std::uint32_t digit = (c >= '0' && c <= '9') ? static_cast<std::uint32_t>(c - '0')
                                           : (c >= 'a' && c <= 'f') ? static_cast<std::uint32_t>(c - 'a' + 10) : 0x100u;
-                if (digit > 15) return false;
+                if (digit > 15 || ++digits > 3) return false;
                 bits = (bits << 4) | digit;
             }
-            if (bits > status_bit::all) return false;
-            has_status = true; status = static_cast<std::uint16_t>(bits); p = end;
+            if (!digits || bits > status_bit::all) return false;
+            has_status = true; status = static_cast<std::uint16_t>(bits); p = q;
         }
+        if (p != end) {
+            std::int32_t id = 0;
+            if (!NamedValue(p, end, "item", 0, 65534, id)) return false;
+            has_item = true;
+            item = static_cast<std::uint16_t>(id);
+        }
+        if (p != end) return false;
     }
     Tick parsed{};
     parsed.frame = values[0];
@@ -261,6 +271,7 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
     parsed.has_ride = has_ride; parsed.ride_kind = ride_kind;
     parsed.has_vehicle = has_vehicle; parsed.vehicle = vehicle; parsed.seat = seat;
     parsed.has_status = has_status; parsed.status = status;
+    parsed.has_item = has_item; parsed.item = item;
     out = parsed;
     return true;
 }
@@ -272,12 +283,14 @@ std::size_t FormatReply(const Reply& reply, char* out, std::size_t capacity) noe
     const bool look = (reply.op & op::set_parts_explicit) != 0;
     const bool dm = (reply.op & op::dm_play) != 0;
     const bool seat = (reply.op & op::ride_seat) != 0;
-    const std::int64_t values[18] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
+    const bool cbox = (reply.op & op::cbox) != 0;
+    const std::int64_t values[20] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
                                      static_cast<std::int64_t>(reply.status), reply.age_ms, look ? reply.look.type : 0,
                                      look ? reply.look.parts : 0, look ? reply.look.camo : 0, look ? reply.look.hand : 0,
                                      look ? reply.look.face : 0, dm ? reply.gani : 0, reply.seat_vehicle, reply.seat,
-                                     reply.seat_action, reply.seat_entry};
-    const unsigned count = seat ? 18u : dm ? 14u : look ? 13u : 8u;
+                                     reply.seat_action, reply.seat_entry, reply.cbox_item, reply.cbox_active ? 1 : 0};
+    // cbox pads through the seat fields so its two values stay at the end.
+    const unsigned count = cbox ? 20u : seat ? 18u : dm ? 14u : look ? 13u : 8u;
     bool ok = Append(out, capacity, at, "return ", 7);
     for (unsigned i = 0; ok && i < count; ++i) ok = (i == 0 || Append(out, capacity, at, ",", 1)) && AppendInt(out, capacity, at, values[i]);
     if (!ok) { out[0] = 0; return 0; }

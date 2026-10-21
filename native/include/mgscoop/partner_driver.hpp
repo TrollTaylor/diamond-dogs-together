@@ -54,6 +54,7 @@
 #include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
+#include "mgscoop/partner_traverse.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/pose_interp.hpp"
@@ -507,6 +508,7 @@ struct Settings {
     PartnerNativeOverlay noverlay;
     bool act_log;
     bool stance_fast;  // the native stance window (partner_native_stance_fast)
+    bool traverse;     // traversal replay (partner_native_traverse)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -578,6 +580,11 @@ struct Mission {
     // The local PlayerStatus census of the receipt's st= (logged on change).
     bool status_have;
     std::uint16_t status_bits;
+    std::uint16_t active_item;  // the local tick's item= id (0 unknown)
+    // Receiver cardboard box: a short burst of op::cbox after the remote manifest changes.
+    bool cbox_pending, cbox_want, cbox_applied;
+    std::uint16_t cbox_id, cbox_id_applied;
+    std::uint8_t cbox_left;
     LogCap status_cap;
     const char* visibility_logged;
     std::uint64_t visibility_place_try_ms;
@@ -623,12 +630,6 @@ struct Mission {
     std::uint8_t anim_psw[2];
     // Native calls: disabled for the rest of the mission after a fault.
     bool native_disabled;
-    std::uint16_t prev_remote_act{};
-    bool have_prev_remote_act{};
-    partner_ride_wire::Kind prev_ride_kind{partner_ride_wire::Kind::foot};
-    std::uint16_t prev_ride_vehicle{partner_ride_wire::kVehicleUnknown};
-    bool cbox_applied{};
-    std::uint16_t cbox_item_applied{};
     // Movement drivers.
     const char* xform_state;   // nullptr = applied, else the refusal last logged
     bool xform_logged;
@@ -709,6 +710,11 @@ struct Mission {
     bool input_stale_logged;
     // --- Round 4: reconciliation (apply=input).
     partner_recon::State recon;
+    // Traversal replay (partner_traverse): the machine, its hold (fed to the
+    // next StepRecon) and its log family.
+    partner_traverse::State traverse;
+    bool traverse_hold;
+    LogCap traverse_cap;
     bool recon_active;             // apply=input with input != off this mission (recon state in use)
     bool recon_last_ok;            // the previous recon action was executed
     partner_recon::Out recon_out;  // the last step (logs, status)
@@ -724,6 +730,8 @@ struct Mission {
     std::int32_t recon_in_r;       // x1000
     double recon_target[3];
     double recon_target_yaw;
+    bool recon_remote_ok;            // the aligned sample's anim fields (StepRecon)
+    std::uint16_t recon_remote_act;
     bool recon_target_ok;
     std::uint64_t recon_line_ms;
     unsigned recon_lines;

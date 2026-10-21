@@ -8,13 +8,17 @@
 //
 //   [0] 0x45 'E'  [1] version (2; 1 still decodes)  [2..3] revision u16 (never 0)
 //   [4..7] epoch u32 (the partner_net link session; stale epochs dropped)
-//   [8] inv_slot (0..15, 0xFF unknown)  [9] slot_count = 3  [10..11] 0
+//   [8] inv_slot (0..15, 0xFF unknown)  [9] slot_count = 3
+//   [10..11] active_item_id u16 (version 2; 0 none). Version 1 keeps these 0.
 //   then 3 slots x 16 bytes (hip, back, secondary):
 //   [0..1] base_id u16 (a stock gun id, 0 unknown: never a non-gun id)
 //   [2..3] alias u16 (weapons[slot] equip id)
 //   [4..15] recipe[12] (chimeraParts[i*12..+12]; byte 0 = receiver)
 //   version 2 only: [60..62] type[3] (the slot's own gun type 1..8 from the
-//   game's tables, 0 unknown; also known when no base id matched), [63] 0.
+//   game's tables, 0 unknown; also known when no base id matched),
+//   [63] bit 0 = cbox_active (the remote is in a cardboard box). Other bits 0.
+//   EQP_IT_CBox is 0x1C8. IsVarsCurrentItemCBox (0x9D68E0) treats
+//   id - 0x1C8 < 0x1B as a box (0x1C8..0x1E2), from RegisterConstantEquipId.
 // Version 1 is 60 bytes (types unknown), version 2 64 bytes; little-endian.
 // One message type on the channel (the capability message, first byte 0x43,
 // is told apart by its magic).
@@ -38,6 +42,13 @@ inline constexpr std::uint8_t kInvSlotMax = 15;
 inline constexpr std::uint8_t kChannel = 2;  // partner_net reliable channel (1 = world)
 inline constexpr std::uint8_t kMaxGunType = 8;  // gun types 1..8 (1 AR .. 8 missile)
 inline constexpr bool GunType(std::uint32_t type) noexcept { return type >= 1 && type <= kMaxGunType; }
+// Cardboard boxes (1.0.15.4): EQP_IT_CBox = 0x1C8, and every id in
+// [0x1C8, 0x1E2] (IsVarsCurrentItemCBox: id - 0x1C8 < 0x1B).
+inline constexpr std::uint16_t kCboxBase = 0x1C8;
+inline constexpr std::uint16_t kCboxSpan = 0x1B;
+inline constexpr bool CboxEquip(std::uint16_t id) noexcept {
+    return static_cast<std::uint16_t>(id - kCboxBase) < kCboxSpan;
+}
 
 struct Slot {
     std::uint16_t base_id;
@@ -50,8 +61,8 @@ struct Manifest {
     std::uint32_t epoch;
     std::uint8_t inv_slot;
     std::uint8_t version;  // the decoded version (Encode always writes kVersion)
-    bool cbox_active{};
-    std::uint16_t active_item_id{};
+    bool cbox_active;             // version 2 byte 63 bit 0 (version 1: false)
+    std::uint16_t active_item_id; // version 2 bytes 10..11 (version 1: 0)
     Slot slots[kSlots];
 };
 // Field-wise (no padding compared).

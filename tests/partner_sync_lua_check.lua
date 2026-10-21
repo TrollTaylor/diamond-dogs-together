@@ -113,7 +113,7 @@ local function fixture(options)
         if starts(source, TICK) then
             c.ticks[#c.ticks + 1] = source:sub(#TICK + 1)
             return function()
-                if c.reply then return unpack(c.reply, 1, 18) end
+                if c.reply then return unpack(c.reply, 1, 20) end
                 return 'MGS_COOP_PARTNER_V1'
             end
         end
@@ -156,6 +156,10 @@ local function fixture(options)
         end,
         RequestToStopDirectMotion = function() record('dmstop') end,
         RequestToGoNextDirectMotion = function() record('dmnext') end,
+        ChangeEquip = function(t)
+            record(string.format('changeequip:%s:%s:%s:%s:%s', tostring(t.playerIndex), tostring(t.equipId),
+                tostring(t.stock), tostring(t.toActive), tostring(t.dropPrevEquip)))
+        end,
     }
     env.PlayerInfo = {
         GetLocalPlayerIndex = function() return c.localIndex end,
@@ -671,6 +675,23 @@ do
     env.Vehicle = nil
     _, n = seat(25601, 1, 1, 4)
     check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25601;seat=1;reason=no_class'), 'no Vehicle.type table: refused')
+end
+-- CBOX (1024): Player.ChangeEquip on instance 1 for a box id, stock 0, no drop.
+do
+    local env, c = fixture(); call(env, 'OnMissionGameStart')
+    local function equip(id, active)
+        c.reply = {1024, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, id, active}
+        local mark = #c.calls
+        update(env)
+        return c.calls[mark + 1]
+    end
+    check(equip(456, 1) == 'changeequip:1:456:0:true:false' and hasLog(c, 'event=cbox;id=456;active=1'),
+        'the base cardboard box is equipped on instance 1')
+    check(equip(482, 0) == 'changeequip:1:482:0:false:false' and hasLog(c, 'event=cbox;id=482;active=0'),
+        'the last box id can be put away')
+    local notes = count(c.logs, 'event=cbox_refused;reason=item')
+    check(equip(455, 1) == nil and count(c.logs, 'event=cbox_refused;reason=item') == notes + 1, 'an id below the box range is refused')
+    check(equip(483, 1) == nil and count(c.logs, 'event=cbox_refused;reason=item') == notes + 2, 'an id above the box range is refused')
 end
 -- The sender's seat/vehicle/status suffix (lua/coop/partner_ride.lua).
 do
