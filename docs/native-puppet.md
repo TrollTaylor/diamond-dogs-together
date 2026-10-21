@@ -1259,6 +1259,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_shared` | off, on, prefer (gun profile: on; prefer is lab-only; fresh shape/bank/ref/ownership gates remain mandatory) |
 | `partner_native_standin` | off, on (gun profile: on; closest already-filled class when the remote slot is unavailable) |
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
+| `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / step-on replay, see "Traversal"; default 0 in lab and play, lab only: play forces 0) |
 
@@ -1311,6 +1312,120 @@ stage), and requires `partner_native_noise=filter`). `Get-WorkerPartnerSettings`
 (tools/worker/WorkerSessionCommon.psm1) is the source of truth;
 `Play-OfflineCoop.ps1` runs the same gun-stage settings on the animated
 partner by default (`-NoNative` turns the native drive off).
+
+## Cardboard box
+
+F2 (0.13.5, unreleased): the remote's cardboard box on body 1 (instance 1),
+native. Module `native/partner_cbox_equip.{hpp,cpp}`, pure policy
+`native/include/mgscoop/partner_cbox_policy.hpp`, tests
+`tests/partner_cbox_tests.cpp`, static contract in the research note
+`re-cbox.md` (sections 3-6, 9, 12). Lab key `partner_native_cbox=0|1`:
+**default 0 in lab and play**, play forces it off, a named value records
+`partner_native_cbox_given`. It stays off until a hidden-worker FRAME shows
+body 1 boxed with the viewer's own state unchanged.
+
+**Why native.** The 0.13.3 Lua apply (`Player.ChangeEquip`, 0x9D0D60) ignores
+`playerIndex` and passes `R8D = [P+0x214]`: it boxed the VIEWER's own player.
+0.13.4 removed it and kept only the transport (manifest v2 bytes 10..11 and
+byte 63 bit 0, `NoteCbox`).
+
+**The two calls** (from `ObserveNativeCbox()`, the 10 Hz equipment tick right
+after `ObserveNativeSupport()`, the same natural owner, gates and body lease):
+
+- **on:** `ChangeEquip` 0x11AC2E0 `(ctl, &result, R8D = 1, {type 0x326C48DA30C0,
+  equip = B, stock fields 0, flags = 4})`. For a non-local id and an item of
+  type 0x11 it only writes body 1's item list (`row1+0x1C+2k` through
+  SetEquipState, the per-(id, sub) record `Q+0x160[8+k]`, `Q+0x17C` bit 1) and
+  calls `SetCurrentItemIndex(ctl, 1, k, 0)` (`row1+0x37` high nibble = k).
+  Every viewer-side write in those functions is gated on `idx == [P+0x214]`.
+  The engine's `CBoxActionPluginImpl::PollingImpl` then wakes the box on its
+  own (act 77, `Q+0xD8[1]` = the box object): no detour, no input.
+- **off:** `SetCurrentItemIndex` 0x11AF9A0 `(ctl, EDX = 1, R8D = 0, R9B = 0)`,
+  only for a box this lane put on: sub 0 is always "no item", so state 2's
+  can-wear check fails and the box exits (state 0xB). OnRemoveItem runs
+  `UnsetSlot(ctl, 1, 4)` (body 1's item-slot handle may change; logged as
+  `h4=before>after`).
+
+**Choosing B.** The can-wear predicate (0x10DF430) takes body 1's OWN current
+item but asks `GetItemStockCount` (ctl vt+0xC8, 0x11AD660), which scans the
+VIEWER's item list (0x11AD67E `[P+0x214]`). So body 1 can only wear a box id
+the viewer owns with stock > 0: `MapViewerBox` picks the remote's id W if the
+viewer holds it in subs 1..7 with stock (`mapped=same`), else the viewer's
+first box with stock (`mapped=viewer_box`: another camo), else refuses
+`viewer_no_box` with no call. Body 1's sub: the one already holding B, else
+the first free 1..7, else `body_items_full` (the pickup's replace-current path
+is never used). B must pass `pp::EquipType(B) == 17`.
+
+**Discipline** (`partner_support_equip`'s): SRW lock; every chain re-read
+(player lease, offline, `[P+0x214] == 0`, body chain, the busy predicate
+0x1156640, ctl vt+0x198/+0x68/+0x90/+0xC8/+0xB0/+0x20/+0x98, store
+vt+0x68/+0x88/+0x10, the type table); the full SHA gate
+(`equipment_stock_writer::PinsIntact`, which now covers SetCurrentItemIndex,
+OnRemoveItem, OnEquipItem, GetItemStockCount and GetEquipIdSlot); a late
+re-capture; the strict viewer digest around each call (row 0, its seven
+handles, its item stocks `*(Y+0x98)+(0xE+k)*2`, `vars.items` +0x5A4,
+`vars.currentItemIndex` +0x67C, the vars ammo block, `Q+0x160[0..7]`, its act
+and box word) and body 1's other slot handles (0..6 but 4); SEH around both
+calls. Any surprise latches `uncertain` for the mission (no further call, not
+even an off); `not_current` (ChangeEquip returned 0 but the row does not show
+B) only ends the edge. The latches and the edge state are scoped to the
+mission code and the driver's mission start (`Mission::start_ms`, so a
+restarted mission with the same code starts clean); the observer waits for the
+driver's CFG (`step=partner_cfg`). One attempt per remote edge (`Mission::cbox_seq`); never
+a second ChangeEquip while B is body 1's current item (it would reset the box
+life record and run OnRemoveItem / OnEquipItem while boxed). Busy (transient)
+while body 1 switches / reloads / throws, a gun writer slot is in readiness or
+tracking, or the support lane latched uncertain: the box Wake allocates an
+engine handle and OnRemoveItem touches body 1's slot-4 handle, which those
+writers' digests compare.
+
+**Watches** while our box is body 1's current item: `entered` (act 77/78
+within 1500 ms, with the box word; on timeout the PS record bits `rec+8` bit 11
+and `rec+0xC` bits 26..28, the viewer's stock and `rec_ok`), `exited` (the
+engine took body 1 out of the box while it stays current), and the per-tick
+viewer digest (`viewer_changed; fields=..`): a change in the viewer's item
+rows, stocks, vars items or records while its act and its own selection stayed
+the same latches `watch_latched` (no new on this mission; our box still comes
+off). **Driver:** `NoteCbox` keeps the edge detection and logs `apply=native`
+with the key; the reconciliation holds its far / vertical / runaway
+placements while body 1 is in 77/78 for the remote's box and 3 s after the
+remote's off (`partner_cbox=hold; on=1|0`): a placement would teleport the box.
+
+Logs (one per decision):
+
+- `partner_cbox=remote; id=..; active=0|1; apply=native|off; seq=..` (driver)
+- `partner_cbox=mode; mode=lab|play|other; enabled=0|1`
+- `partner_cbox=apply; id=B; want=W; mapped=same|viewer_box; via=native; sub=k; body_sub=k; result=..; reason=ok|..; act1=..; h4=..>..; uncertain=0|1; seq=..; mission=..`
+- `partner_cbox=off; id=B; via=native; reason=ok|still_current|..; act1=..; h4=..>..; uncertain=..`
+- `partner_cbox=refused; reason=viewer_no_box|type|body_items_full|full_body_gate|body_busy|gun_writer_active|support_uncertain|restriction|lease_changed|gates|uncertain_latched|viewer_changed_latched|<capture>; step=on|off|<gate>; ...`
+- `partner_cbox=entered; ok=1; act=77; ms=..; qd8=..` or `entered; ok=0; act=..; ms=..; rec8=0x..; recC=0x..; rec_ok=..; vstock=..; qd8=..`
+- `partner_cbox=exited|viewer_changed|released; ...`, `partner_cbox=hold; on=..; body_act=..; want=..; seq=..`
+
+**Lab tooling.** `debug items` (read-only): `items;ids=..;counts=..;current=..`
+(`vars.items`, `Player.GetAmmoStockBySlot(ITEM, i)`, `vars.currentItemIndex`).
+`debug give_item cbox` (lab only: the native dispatcher refuses it outside
+mode=lab with redirected saves): one stock `EQP_IT_CBox` into a FREE sub of the
+LOCAL player's running item list (`Player.ChangeEquip toActive=false`), readback
+on `vars.items`; a full list refuses `items_full`. Use it only if the census
+shows a lab seed without a box. Risk: a checkpoint save writes the gift into
+that run's copied save (never a real save), and the box model's assets may
+not be resident for an item that was not in the sortie loadout.
+
+**Scenarios.** `tools/worker/scenarios/partner-cbox-census.txt` (both
+`run items`; the host seed's subs 1..7 hold 468, 451, 492, 483, 484, 472, 466,
+boxes 468 / 472 / 466), then `partner-cbox.txt` (host boxes with `run slot
+item 1`, the prone guest films `cbox-on`, a `cbox-move` burst, `cbox-off`,
+`guest-self`; then the roles reversed). Hard requirement: no viewer
+`partner_status=local; st=0x4` it did not press.
+
+**Status (0.13.5 work): unproven, off.** Static reading only; open: whether
+PollingImpl runs for idx 1 every frame under the native drive (and is not
+blocked by a DM / active plugin), whether the box model renders on body 1
+(object capacity, asset residency for the mapped id), whether body 1's box
+damage changes the viewer's stock (the stock array has no player stride:
+watched by `viewer_changed`), the consumers of `Q+0x17C` and `*(P+0x130)`
+vt+0x48, the PS record bits' meaning, and pad cross-effects while boxed (the
+remote's ACTION hold with an icon 0x31 reaches body 1's delivery-point state).
 
 ## Online
 

@@ -1,3 +1,28 @@
+## 0.13.5 (in progress)
+
+Unreleased feature branches on top of `wp/integ8`; the version stays 0.13.4 until the integration step.
+
+### F2
+
+- **Cardboard box on body 1, native (`wp/cbox-native`; docs/native-puppet.md "Cardboard box").** New lab key
+  `partner_native_cbox` (default 0 in lab and play, play forces it off, `_given` flag). With it, the viewer's
+  equipment observer (`ObserveNativeCbox`, right after the support lane) calls `ChangeEquip(ctl, &r, 1, {box,
+  flags 4})` for the remote's box edge and `SetCurrentItemIndex(ctl, 1, 0, 0)` for its off (only a box it put on);
+  the engine's own CBox polling wakes the box on body 1. The box id is one the VIEWER owns with stock
+  (`mapped=same|viewer_box`, else `viewer_no_box`): the box wake reads the viewer's item stock.
+- Guards as the support lane: SRW lock, SEH, every chain re-read, the full SHA gate, a late re-capture, the strict
+  viewer digest and body 1's other slots around each call, a mission-scoped uncertain latch; one attempt per remote
+  edge (`Mission::cbox_seq`), never a second ChangeEquip while the box is current; busy while the gun or support
+  writers are mid-flight. Watches: `entered` (77/78 within 1500 ms), `exited`, `viewer_changed`.
+- Driver: `partner_cbox=remote; ...; apply=native|off; seq=..`; the reconciliation holds its placements while body 1
+  is boxed (`partner_cbox=hold`).
+- Contract: 687 code sites / 155 vtable slots (was 677 / 149); writer pins 118 gates (was 113: SetCurrentItemIndex,
+  OnRemoveItem, OnEquipItem, GetItemStockCount, GetEquipIdSlot).
+- Lab tooling: `debug items` (read-only census) and the lab-only `debug give_item cbox` (refused natively outside
+  mode=lab). Scenarios `partner-cbox-census.txt` and `partner-cbox.txt` (not run yet: no hidden-worker run in this
+  phase). Tests: `partner_cbox_tests` (policy + the module on a fake world), driver, lab config, debug Lua checks.
+- **Unproven, off:** no FRAME of body 1 boxed yet; the open items are listed in "Cardboard box".
+
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
 Branch `wp/integ8` from `dev/oct7-continue` `bf29f67` (0.13.2): merge commits of `wp/gameover-clock` `8324dd2`,

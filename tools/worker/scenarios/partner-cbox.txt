@@ -1,0 +1,120 @@
+# F2 (docs/native-puppet.md "Cardboard box"): the remote's cardboard box on the partner body (body 1), native.
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR unset,
+# no build running in any worktree, under the shared verify lock, one worker session. Run partner-cbox-census.txt first
+# and fix the box sub below if the census differs (host sub 1 = 468; the guest's seed decides mapped=same|viewer_box).
+# Static proof first: python tools/generate_partner_contract.py --check (687 code sites, 155 vtable slots) and
+# python tools/generate_equip_writer_pins.py --check (118 gates).
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-cbox.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# What runs (the viewer's copy, on the 10 Hz equipment tick right after the support lane):
+#   on:  ChangeEquip 0x11AC2E0 (ctl, &r, R8D 1, {equip = B, flags 4}): body 1's item list gets B, its +0x37 item nibble
+#        points at it; the engine's CBox PollingImpl then wakes the box on body 1 (act 77, Q+0xD8[1] = the box object).
+#   off: SetCurrentItemIndex 0x11AF9A0 (ctl, EDX 1, R8D 0, R9B 0), only for a box this lane put on.
+#   B = the remote's box id if the viewer owns it with stock, else the viewer's first box with stock.
+# The HOST boxes and unboxes itself through the retail item slot ("run slot item k", Player.SetCurrentSlot ITEM): its
+# own st=0x4 / act 77 is expected. The prone GUEST films body 1 (the host's partner body) from 4 m behind / 3 m right.
+# Then the roles reverse (the guest boxes, the host films).
+# Expected on the VIEWER (guest in the first half, host in the second):
+#   partner_cbox=mode; mode=lab; enabled=1
+#   partner_cbox=remote; id=468; active=1; apply=native; seq=N
+#   partner_cbox=apply; id=468; want=468; mapped=same|viewer_box; via=native; sub=k; body_sub=k; result=0; reason=ok;
+#     act1=..; h4=........>........; uncertain=0
+#   partner_act; edge=body; remote=77; body=77; match_ms<1000 (partner_act_log=1)
+#   partner_cbox=entered; ok=1; act=77|78; ms<1500; qd8=<nonzero, new>
+#   partner_cbox=hold; on=1; body_act=77; want=1   (no partner_recon=place; reason=vertical|far_error while boxed)
+#   cbox-move frames: body 1 moving in the box (act 78) with the remote's W
+#   partner_cbox=remote; id=468; active=0; apply=native; seq=N+1
+#   partner_cbox=off; id=468; via=native; reason=ok; ... then body 1 leaves 77/78 (77 -> 61 -> 3), partner_cbox=hold; on=0
+#   the viewer's "run items" line after each half equals its census line (ids, counts, current)
+# NEVER (any of them fails the run):
+#   - a VIEWER partner_status=local; st=0x4 the viewer did not press: the guest's own act never enters 77/78 in the
+#     first half, the host's never in the second (the 0.13.3 bug boxed the viewer's own player);
+#   - partner_cbox=viewer_changed (the viewer's item rows / stocks / vars / records moved while body 1 was boxed),
+#     reason=viewer_changed / body_slots_changed / seh_fault / dispatch_result, uncertain=1;
+#   - partner_cbox=entered; ok=0 (log the rec8 / recC / vstock fields: the can-wear gates) or partner_cbox=exited
+#     while the remote stays boxed;
+#   - the gun or support writers latching (equip_writer=... unverified, partner_support=... uncertain) after a box edge;
+#   - no crash; scenario.json Closed, BaselineRestored, RealSavesUnchanged.
+# Captures: cbox-on (body 1 in the box: the box MODEL, not the soldier), cbox-move-01..06 (moving box), cbox-off (body 1
+# out of the box), guest-self (the guest's own player standing, NOT boxed); then the same with the roles reversed:
+# rev-cbox-on, rev-cbox-move-.., rev-cbox-off, host-self.
+labsetting partner_native_cbox=1
+labsetting partner_act_log=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+stance host stand
+stance guest stand
+wait 2000
+resetpose host
+stance host stand
+host debug clear_enemies 100
+host run items
+host expect ^items;ids=0,468,
+guest run items
+guest require ^items;ids=
+# Only if the census showed no box on the guest (lab only; see partner-cbox-census.txt):
+# guest run give_item cbox
+placebehind guest host 4 3
+wait 2500
+stance guest prone
+both capture start
+# --- First half: the host boxes (sub 1 = 468); body 1 on the guest boxes natively. ----------------------------------
+host run slot item 1
+host expect ^submitted_slot;slot=item;native=4;sub=1;
+waitlog host 'partner_status=local; st=0x4' 10
+waitlog guest 'partner_cbox=apply; id=4[0-9][0-9]; want=468; mapped=(same|viewer_box); via=native; sub=[1-7]; body_sub=[1-7]; result=0; reason=ok;' 10
+waitlog guest 'partner_cbox=entered; ok=1; act=7[78];' 10
+wait 1000
+guest capture cbox-on
+host capture host-boxed
+host hold w 1500 nowait
+guest burst cbox-move 6 150
+wait 2000
+# Off: the proven host path (sub 2 = 451 unboxes the host: run 28094e48), then sub 0.
+host run slot item 2
+waitlog guest 'partner_cbox=off; id=4[0-9][0-9]; via=native; reason=ok;' 10
+wait 3000
+guest capture cbox-off
+host run slot item 0
+wait 1500
+stance guest stand
+wait 1500
+guest capture guest-self
+guest run items
+guest expect ^items;ids=0,468,
+# --- Second half: the roles reversed (the guest boxes; body 1 on the host boxes). ----------------------------------
+host debug clear_enemies 100
+placebehind host guest 4 3
+wait 2500
+stance host prone
+guest run slot item 1
+guest expect ^submitted_slot;slot=item;native=4;sub=1;
+waitlog guest 'partner_status=local; st=0x4' 10
+waitlog host 'partner_cbox=apply; id=4[0-9][0-9]; want=4[0-9][0-9]; mapped=(same|viewer_box); via=native; sub=[1-7]; body_sub=[1-7]; result=0; reason=ok;' 10
+waitlog host 'partner_cbox=entered; ok=1; act=7[78];' 10
+wait 1000
+host capture rev-cbox-on
+guest capture guest-boxed
+guest hold w 1500 nowait
+host burst rev-cbox-move 6 150
+wait 2000
+guest run slot item 2
+waitlog host 'partner_cbox=off; id=4[0-9][0-9]; via=native; reason=ok;' 10
+wait 3000
+host capture rev-cbox-off
+guest run slot item 0
+wait 1500
+stance host stand
+wait 1500
+host capture host-self
+host run items
+host expect ^items;ids=0,468,451,492,483,484,472,466;
+guest run support
+host run support
+both capture end
+state
