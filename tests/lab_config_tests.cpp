@@ -143,6 +143,47 @@ int main() {
                   "an invalid traverse value refuses");
         }
     }
+    // F1 vehicles (partner_ride_board, docs/native-puppet.md "Vehicle boarding"): off|block|passenger, default off in lab
+    // and play, also with the native gun profile (no hidden-worker FRAME yet); a named value runs in lab only, play
+    // forces it off; a named value records _given.
+    {
+        using mgscoop::PartnerRideBoard;
+        Check(LabConfig{}.partner_ride_board == PartnerRideBoard::off && !LabConfig{}.partner_ride_board_given &&
+                  Lab("").partner_ride_board == PartnerRideBoard::off,
+              "board key defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_ride_board == PartnerRideBoard::off && !profile.partner_ride_board_given && profile.invalid_values == 0,
+                  "the gun profile leaves the board key off in lab and play");
+            for (const char* value : {"block", "passenger"}) {
+                const auto named = Lab(gun + mode + "partner_ride_board=" + value + "\n");
+                const PartnerRideBoard want = std::strcmp(value, "block") == 0 ? PartnerRideBoard::block : PartnerRideBoard::passenger;
+                Check(named.partner_ride_board == (play ? PartnerRideBoard::off : want) && named.partner_ride_board_given &&
+                          named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
+                      "a named board mode runs in lab; play forces it off");
+            }
+            const auto off = Lab(gun + mode + "partner_ride_board=off\n");
+            Check(off.partner_ride_board == PartnerRideBoard::off && off.partner_ride_board_given, "a named off stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_ride_board=passenger\n");
+        Check(alone.partner_ride_board == PartnerRideBoard::passenger && alone.partner_ride_board_given && alone.invalid_values == 0 &&
+                  alone.unknown_keys == 0,
+              "partner_ride_board=passenger parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_ride_board=passenger\npartner_ride_board=block\n");
+        Check(later.partner_ride_board == PartnerRideBoard::block, "a later value wins");
+        for (const char* value : {"1", "on", "", "Block", "passengers", "drive"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_board=") + value + "\n");
+            Check(invalid.partner_ride_board == PartnerRideBoard::off && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid board value refuses");
+        }
+        Check(std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::off), "off") == 0 &&
+                  std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::block), "block") == 0 &&
+                  std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::passenger), "passenger") == 0,
+              "board names");
+    }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
     // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).

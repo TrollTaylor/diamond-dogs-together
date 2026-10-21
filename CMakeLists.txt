@@ -512,7 +512,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_compile_options(steam_identity_tests PRIVATE /W4 /WX)
   add_test(NAME steam_identity_tests COMMAND steam_identity_tests)
   # Offline partner spike: guarded player-instance access and the log-only crash probe.
-  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp)
+  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_board.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp)
   target_include_directories(mgs_partner_player PUBLIC native/include PRIVATE native)
   target_compile_options(mgs_partner_player PRIVATE /W4 /WX)
   if(MGS_BACKGROUND_WORKER)
@@ -650,6 +650,13 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_link_libraries(partner_vehicle_tests PRIVATE mgs_partner_player mgs_coop_core bcrypt)
   target_compile_options(partner_vehicle_tests PRIVATE /W4 /WX)
   add_test(NAME partner_vehicle_tests COMMAND partner_vehicle_tests)
+  # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board policy, the wrappers with
+  # bound fakes, the pinned blocks and the local passenger report.
+  add_executable(partner_board_tests tests/partner_board_tests.cpp)
+  target_include_directories(partner_board_tests PRIVATE native)
+  target_link_libraries(partner_board_tests PRIVATE mgs_partner_player mgs_coop_core)
+  target_compile_options(partner_board_tests PRIVATE /W4 /WX)
+  add_test(NAME partner_board_tests COMMAND partner_board_tests)
   # WS4 review: the pure preconditions plus the real slot-6 writer (Observe / Ready / Follow) on a fake world, and
   # the writer's 0x11B1B60 SHA gate against the contract's bytes.
   add_executable(partner_support_equip_tests tests/partner_support_equip_tests.cpp)

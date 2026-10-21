@@ -46,6 +46,7 @@
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
 #include "mgscoop/partner_vehicle.hpp"
+#include "mgscoop/partner_board.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_reload.hpp"
@@ -368,6 +369,18 @@ struct Hooks {
     // Input frame v7 (WS4 v2, the sender's C4 place word): whether the peer was
     // seen sending v7 (partner_net::PeerSendsInputV7). Null: v7 is never sent.
     bool (*peer_input_v7)(void* context) noexcept = nullptr;
+    // --- F1 vehicles (docs/native-puppet.md "Vehicle boarding"; any null: partner_ride_board
+    // logs reason=unavailable once and nothing is installed, published or reported).
+    // Lazy install of the two board call-site redirects (partner_board::Install, after the
+    // code gate; nullptr ok, else a static reason), their per-tick live check, the policy word
+    // the wrappers read (partner_board::Pack; 0 = off) and their counters.
+    const char* (*board_install)(void* context) noexcept = nullptr;
+    bool (*board_live)(void* context) noexcept = nullptr;
+    void (*board_publish)(void* context, std::uint64_t policy) noexcept = nullptr;
+    void (*board_stats)(void* context, partner_board::Stats& out) noexcept = nullptr;
+    // The local passenger report (partner_board::ReadLocalPassenger: act 0x6E, P+0x120 /
+    // Q+0xE0, rider[2|3] == local); reads only. False: unread.
+    bool (*local_passenger)(void* context, const partner_player::State& state, partner_board::LocalPassenger& out) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -389,6 +402,10 @@ inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
 // WS3 ride census cadence and cap (partner_ride_census=1).
 inline constexpr std::uint64_t kRideCensusMs = 1000;
 inline constexpr unsigned kRideCensusCap = 400;
+// F1 vehicles (partner_ride_board): a board counter line at most once a second
+// per site and kind (the pre-query runs every frame near the vehicle), own cap.
+inline constexpr std::uint64_t kBoardLogMs = 1000;
+inline constexpr unsigned kBoardLogCap = 200;
 // The seat flow's phases (Mission::seat.phase).
 enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle };
 const char* SeatPhaseName(SeatPhase phase) noexcept;
@@ -472,6 +489,9 @@ struct Settings {
     // default off), the seat-by-id path (B1) and RIDE_TILT (A1) (both default
     // on, lab and play, capability-gated by the peer's ride addendum).
     bool ride_census, seat_id, ride_tilt;
+    // F1 vehicles (lab.ini partner_ride_board; docs/native-puppet.md "Vehicle boarding"):
+    // the board block / passenger hook and the local passenger report. Off by default; play forces off.
+    PartnerRideBoard ride_board;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -570,6 +590,26 @@ struct Mission {
     LogCap census_cap;
     std::uint64_t census_ms;
     LogCap seat_cap;       // partner_ride_seat event lines
+    // F1 vehicles (partner_ride_board): the board counters last logged, the
+    // last published policy, a phase-1 back seat awaiting the local passenger
+    // report, and the mission-scoped uncertain latch (passenger then publishes
+    // block; partner_ride=board_uncertain once).
+    struct Board {
+        partner_board::Stats seen;   // the process counters at this mission's first board tick
+        bool seen_have;
+        std::uint32_t logged_block[2], logged_steer[2], steer_count, faults_seen;
+        std::uint64_t block_log_ms[2], steer_log_ms[2];
+        std::uint64_t policy;
+        bool policy_logged;
+        partner_board::Policy logged;
+        bool steer_pending;
+        std::uint8_t steer_seat;
+        std::uint16_t steer_vehicle;
+        std::uint64_t steer_ms;
+        const char* uncertain;
+        bool live_refused;
+        LogCap cap;
+    } board;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
     const char* seat_unavailable;
@@ -1165,6 +1205,13 @@ struct Driver {
     std::uint64_t ride_ext_tx_ms;
     bool ride_ext_logged;
     std::uint16_t local_vehicle;
+    // F1 vehicles: the local player as a stock back-seat passenger (the native
+    // report; Lua says foot for act 0x6E), kept apart from local_vehicle (the
+    // vehicle the viewer DRIVES: RIDE_TILT and the receiver's local_vehicle gate).
+    partner_board::LocalPassenger local_passenger;
+    // The board hook's lazy install (once per process) and its result.
+    bool board_install_tried, board_installed;
+    const char* board_refusal;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;

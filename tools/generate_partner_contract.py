@@ -788,6 +788,64 @@ SITES += VEHICLE_SITES
 # The two small-move limits 0xBA9710 compares against (read-only .edata dwords; vehicle_assertions
 # and partner_vehicle::VerifyImage check them): 1.0f squared metres and 0.1f radians.
 VEHICLE_DATA = [(0x20A72CC, 0x3F800000), (0x20A8068, 0x3DCCCCCD)]
+# --- F1 vehicles (partner_board, docs/native-puppet.md "Vehicle boarding", research re-vehicle.md): the board block
+# and passengers both ways. Site A 0x12458AC (the ride pre-query 0x1245820's CALL 0x124B3A0) and site B 0x1251479
+# (phase 1 0x1251200's CALL 0x124B360) are retargeted to the board wrappers; their rel32 operands are masked by
+# partner_board::VerifyImage (the code gate checks the original bytes once, before any lazy install). The wrappers
+# call the nearest search and the two getters below; block relies on the pre-query failing CanExec and on phase 1's
+# stock "no seat" exit, passenger on phase 1 passing a back seat unchanged to TryToRide and selecting the passenger
+# phase (act 0x6E); the local passenger report reads P+0x120[body] (the ridden unit) and Q+0xE0[body] (the vehicle id).
+BOARD_SITES = [
+    (0x1245877, '498bce0f284020660f7f8424a0000000e834247eff41b901000000488d9424a0000000fec80fb6c8413ac9440f42c94533c0498bce'
+     'e8ef5a0000488d542454498bce440fb6f8e8ce580000',
+     'board site A: the pre-query 0x1245820 bounds first 0 / last min(count-1, 1) and calls 0x124B3A0(unit, pos) at '
+     '0x12458AC; the seat goes to r15b'),
+    (0x125145C, '8bd6488b4878488b8938020000488b01ff9088030000498bce488d5020e8e29effff440fb6e03c040f844fffffff498bcee85ed330ff'
+     '8be884c0757f',
+     'board site B: phase 1 0x1251200 calls 0x124B360(unit, CS vt+0x388(body)+0x20) at 0x1251479; 4 -> the no-seat '
+     'exit 0x12513D9; then GetVehicleType 0x55E7F0'),
+    (0x1246A3F, '488d442440418bd7488bce4889442420e8ccedffff84c00f8417040000',
+     'RideVehicle CanExec 0x1246650: the pre-query 0x1245820 false -> 0x1246E73 (return false: no ride icon)'),
+    (0x124B360, '48895c2408574883ec20488bda488bf9e84bc97dfffec841b901000000488bd3440fb6c0488bcf453ac1450f42c84533c0488b5c2430'
+     '4883c4205fe900000000',
+     'SearchNearestRideSeatForDriver 0x124B360 (whole body): last = min(count-1, 1), first 0, jmp 0x124B3A0'),
+    (0x124B3A0, '4056574154415641574881ecd0000000450fb6f1410fb6f84c8be24889542420488bf1e8883c9bff4c8b90980000000fb6566c498b'
+     '8aa8020000c1ea04488b01ff90680100004c8bf84885c07512',
+     'nearest free seat 0x124B3A0(unit, pos, first r8b, last r9b): the category through service vt+0x168'),
+    (0x124B3EE, 'b0044881c4d0000000415f415e415c5f5ec3', 'nearest free seat: no category -> 4'),
+    (0x124B454, 'f30f10355cf3e500400fb6c740b50441b8ffff00000f287c2460440f28442450440f284c2440440f28542430',
+     'nearest free seat: radius 100.0 (0x20AA7B8, 10 m squared), result 4 until a free seat is nearer'),
+    (0x124B480, '3bc30f8da50000000f1f840000000000413afe0f8775010000400fb6c76644394446307579',
+     'nearest free seat: seats first..last below the base count, only rider[seat] == 0xFFFF'),
+    (0x55E7F0, '40534883ec20488bd9e852086a00488b9098000000488b8aa80200000fb6536c488b01c1ea04ff90680100004885c0750d0fb6436c'
+     'c1e8044883c4205bc30fb680b60100004883c4205bc3',
+     'GetVehicleType 0x55E7F0 (whole body): cat+0x1B6, or unit+0x6C >> 4 without a category'),
+    (0xA27CC0, '48895c240848896c24104889742418574883ec20488be932dbe872731d00488b9098000000488bbaa80200000fb6556c488b07c1ea04'
+     '488bcfff9068010000488bf04885c07428',
+     'seat count 0xA27CC0 (1/2): the category through service vt+0x168; none -> 0'),
+    (0xA27D07, '488b070fb6556c488bcfff90700100004885c074070fb698b50000000fb686b70100000fb6cb03c1488b5c2430488b6c2438488b7424'
+     '404883c4205fc3',
+     'seat count 0xA27CC0 (2/2): cat+0x1B7 + the attachment +0xB5 (service vt+0x170)'),
+    (0xA27220, '885424104883ec28488b010fb6d2c1ea04ff90680100004885c075054883c428c30fb64c2438488b80d001000083e10f488b04c8488'
+     '3c428c3',
+     'service vt+0x170 0xA27220 (whole body): the attachment = (category+0x1D0)[type & 0xF]'),
+    (0xA27260, '4863c2488b84c1b8000000c3', 'service vt+0x168 0xA27260 (whole body): the category = service+0xB8[index]'),
+    (0x1251822, '4d85f60f84910000000fb64b570fb6c1240f3c0272080fb6c183e00feb03418bc7440fb7c60fb6d0498bce664523c4e81a7ca6ff',
+     'phase 1: seat = (sel & 0xF) < 2 ? 0 : sel (a back seat passes unchanged); TryToRide 0xCB9470(unit, seat, id)'),
+    (0x125188E, '0fb64357240f3c020f92c00402884355e8add79aff488b8898000000410fb74678488b91a802000066894220',
+     'phase 1: next phase = (sel < 2) + 2 (3 driver, 2 passenger 0x1250CF0); VehicleSystem+0x20 = unit+0x78'),
+    (0xA2956A, '488d0c77b8ffff0000663941307405403' '2ffeb240fb7442458668941304084f67513b900fe00006685c17509b800400000660947'
+     '7c',
+     'TryToRide 0xA29530: stores the id only into an empty rider[seat]; the player-driver flag +0x7C 0x4000 only '
+     'for seat 0'),
+    (0x1250E96, '488b823801000041b8040000008bd7488b4860488b4118b96e00000066890c78',
+     'passenger phase 0x1250CF0 enter: act (*(Q+0x18))[body] = 0x6E'),
+    (0x125AD61, '488b4508488b6c2450488b8038010000488b802001000048891cf0',
+     '0x125AD00: (*(P+0x120))[body] = the ridden unit (the local passenger report)'),
+    (0x12CF42F, '498b85e00000000fb70c706641898c2410010000',
+     'UpdatePlayerInfo 0x12CE870: vars+0x110 (playerVehicleGameObjectId) = (*(Q+0xE0))[body]'),
+]
+SITES += BOARD_SITES
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -1156,6 +1214,13 @@ SLOTS += [
     (0x23895D0, 0x88, 0xEE9050, 'store derived vt+0x88 = the stock / energy word read'),
 ]
 SLOTS += partner_aim_sites.SLOTS
+# F1 vehicles (partner_board): the vehicle service slots behind the getters the board wrappers call and phase 1's
+# registration of the steered seat.
+SLOTS += [
+    (0x22AC8E0, 0x168, 0xA27260, 'vehicle service vt+0x168 = the category lookup (GetVehicleType, the seat count, the nearest search)'),
+    (0x22AC8E0, 0x170, 0xA27220, 'vehicle service vt+0x170 = the attachment lookup (the seat count)'),
+    (0x22AC8E0, 0x220, 0xA29530, 'vehicle service vt+0x220 = TryToRide (phase 1 registers the steered back seat)'),
+]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -1993,6 +2058,45 @@ def vehicle_assertions():
     return out
 
 
+def board_assertions():
+    """F1 vehicles (partner_board): the two retargeted calls and the stock facts block and passenger rely on."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+
+    def call_target(site):
+        return site + 5 + struct.unpack('<i', rd(site + 1, 4))[0]
+    need(rd(0x12458AC, 1) == b'\xe8' and call_target(0x12458AC) == 0x124B3A0 and
+         struct.unpack('<I', rd(0x12458AD, 4))[0] == 0x00005AEF, 'board site A: E8 rel32 0x00005AEF -> 0x124B3A0')
+    need(rd(0x1251479, 1) == b'\xe8' and call_target(0x1251479) == 0x124B360 and
+         struct.unpack('<I', rd(0x125147A, 4))[0] == 0xFFFF9EE2, 'board site B: E8 rel32 0xFFFF9EE2 -> 0x124B360')
+    for site in (0x12458AD, 0x125147A):
+        need((site & 63) + 4 <= 64, f'board patch dword {site:#x} inside one cache line')
+    a_refs, b_refs, q_refs = rel_refs(0x124B3A0), rel_refs(0x124B360), rel_refs(0x1245820)
+    need(a_refs == [0x12458AC, 0x124B39B], f'0x124B3A0 reached only from site A and the 0x124B360 tail jmp: {[hex(x) for x in a_refs]}')
+    need(b_refs == [0x1251479], f'0x124B360 called only from site B: {[hex(x) for x in b_refs]}')
+    need(q_refs == [0x1246A4F], f'the pre-query 0x1245820 called only by RideVehicle CanExec at 0x1246A4F: {[hex(x) for x in q_refs]}')
+    need(call_target(0x1245887) == 0xA27CC0 and call_target(0x124B370) == 0xA27CC0, 'both searches bound last with the seat count 0xA27CC0')
+    need(call_target(0x125148D) == 0x55E7F0, 'phase 1 reads GetVehicleType 0x55E7F0 right after site B')
+    need(call_target(0x1251851) == 0xCB9470, 'phase 1 registers the seat through TryToRide 0xCB9470')
+    need(rd(0xCB94A9, 6) == bytes.fromhex('ff9020020000'), 'TryToRide 0xCB9470 forwards to service vt+0x220')
+    need(rip_target(0x124B454, 8) == 0x20AA7B8 and struct.unpack('<f', rd(0x20AA7B8, 4))[0] == 100.0,
+         'the nearest search radius is 100.0 (10 m squared) at 0x20AA7B8')
+    # Each site lies in one runtime function; no branch (rel32 anywhere, or rel8/rel32 inside that function's
+    # linear sweep) lands inside a patched rel32 operand.
+    funcs = runtime_functions()
+    for site, lo, hi in ((0x12458AC, 0x12458AD, 0x12458B1), (0x1251479, 0x125147A, 0x125147E)):
+        owner = [f for f in funcs if f[0] <= site < f[1]]
+        need(len(owner) == 1, f'one runtime function covers {site:#x}: {owner}')
+        local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+        inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
+        need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
+    need(any(f[0] == 0x1245820 and f[1] > 0x12458C2 for f in funcs), 'the pre-query 0x1245820 runs through site A')
+    return out
+
+
 # (call site, X vtable offset) of every census-found X call taking rec+0x240 (docs/anim-round2-throws.md "Other X
 # calls"). Only the five vt+0x160 sites (and vt+0x38 before 0x1062696) are audited; the others are not.
 # REC240_X_CALLS_BY_HAND load rcx before the census window. REC240_X_METHODS: the method in both concrete X vtables.
@@ -2239,6 +2343,7 @@ failures += anim_round1_assertions()
 failures += ws4_v2_assertions()
 failures += support_native_assertions()
 failures += vehicle_assertions()
+failures += board_assertions()
 failures += handle_call_assertions()
 if failures:
     print('\n'.join(failures))
@@ -2652,6 +2757,20 @@ w('// rec+0x3c0 bit 26: set by 46 op 1, cleared by 46 op 2 (the decode\'s class-
 w('inline constexpr std::size_t pp_vt_press=0x40, src_press=0x50, pp_press_fallback=0x468;')
 w('inline constexpr std::uint32_t pad_press_fire=0x10, gun3c0_place_busy=0x4000000;')
 w('inline constexpr std::uintptr_t placed_owner_claim_rva=0xfc9c00, placed_can_place_rva=0xfcb1f0, pp_press_word_rva=0x1205e80;')
+w('// --- F1 vehicles (partner_board; docs/native-puppet.md "Vehicle boarding") --------------------------------')
+w('// Site A: the ride pre-query 0x1245820 calls the nearest free seat 0x124b3a0(unit, pos, first, last); site B: phase 1')
+w('// 0x1251200 calls SearchNearestRideSeatForDriver 0x124b360(unit, pos). Both return a seat or 4 (none).')
+w('inline constexpr std::uintptr_t board_a_site=0x12458ac, board_a_next_ip=0x12458b1, board_a_block_rva=0x1245877;')
+w('inline constexpr std::uint32_t board_a_rel32_orig=0x00005aef;  // -> 0x124b3a0')
+w('inline constexpr std::uintptr_t board_b_site=0x1251479, board_b_next_ip=0x125147e, board_b_block_rva=0x125145c;')
+w('inline constexpr std::uint32_t board_b_rel32_orig=0xffff9ee2;  // -> 0x124b360')
+w('inline constexpr std::uintptr_t board_nearest_rva=0x124b3a0, board_driver_rva=0x124b360, board_type_rva=0x55e7f0, board_count_rva=0xa27cc0;')
+w('// Unit record: u16 rider[seat] at +0x30, u16 index at +0x78 (id = 0x6400 | index). Player: (*(P+0x120))[body] the')
+w('// ridden unit, (*(Q+0x18))[body] the act (0x6e: the passenger phase), (*(Q+0xe0))[body] the ridden vehicle id.')
+w('inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, board_p_units=0x120, board_q_vehicle=0xe0;')
+w('inline constexpr std::uint16_t board_act_passenger=0x6e;')
+w('// The contract blocks partner_board re-checks before the patch (code_sites rvas; the two rel32 operands masked).')
+w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) + '};')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

@@ -100,6 +100,7 @@
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_vehicle.hpp"
+#include "mgscoop/partner_board.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
 #include "mgscoop/partner_upper_phase_observer.hpp"
@@ -964,6 +965,32 @@ const char* PartnerSeatTarget(void*, const pp::SeatTargetRequest& request, pp::S
     if (!mgscoop::partner_ride_seat::Armed()) return "seat_unarmed";
     return pp::WriteSeatTarget(partner_addresses, game_base, game_span, mission_terminating, request, out);
 }
+// F1 vehicles (docs/native-puppet.md "Vehicle boarding", partner_ride_board): the two board
+// call-site redirects install lazily from the driver tick behind the code gate (like the
+// deferral); the policy word and the counters are atomics; the local passenger report reads
+// only (ReadProcessMemory) and resolves the vehicle through partner_vehicle::ReadLive.
+const char* PartnerBoardInstall(void*) noexcept {
+    if (!game_base || !partner_gate_ok) return "gate";
+    return mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log);
+}
+bool PartnerBoardLive(void*) noexcept { return game_base && mgscoop::partner_board::PatchLive(game_base); }
+void PartnerBoardPublish(void*, std::uint64_t policy) noexcept { mgscoop::partner_board::Publish(policy); }
+void PartnerBoardStats(void*, mgscoop::partner_board::Stats& out) noexcept { mgscoop::partner_board::ReadStats(out); }
+bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board::LocalPassenger& out) noexcept {
+    out = mgscoop::partner_board::LocalPassenger{};
+    if (!game_base || !partner_gate_ok) { out.reason = "gate"; return false; }
+    auto reader = [](std::uintptr_t address, void* buffer, std::size_t size) noexcept {
+        SIZE_T read = 0;
+        return address && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address), buffer, size, &read) && read == size;
+    };
+    auto lookup = [](std::uint16_t id) noexcept -> std::uintptr_t {
+        mgscoop::partner_vehicle::Read r{};
+        mgscoop::partner_vehicle::ReadLive(game_base, id, r);
+        return !r.refusal && r.unit.id == id ? r.unit.rec : 0;
+    };
+    out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local);
+    return true;
+}
 // WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
 // native type-12 support runs in the one-PC lab, and in two-PC play only while
 // link v2 is connected. Both observer gates use it. After a link drop the guard
@@ -1016,7 +1043,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
     PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
-    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7};
+    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
+    PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1306,6 +1334,8 @@ void PartnerShutdown() noexcept {
     mgscoop::partner_defer::Shutdown();
     mgscoop::partner_input_hook::Shutdown();
     mgscoop::partner_aim_point::Shutdown();
+    // F1 vehicles: the board wrappers fall back to the stock searches (an atomic store).
+    mgscoop::partner_board::Publish(0);
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;
