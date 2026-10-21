@@ -1056,7 +1056,8 @@ bool ReadGun(const Addresses& a, const State& s, std::uint32_t k, Gun1& out) noe
                     ReadValue(rec + c::gun_b3d5, out.b3d5) && ReadValue(rec + c::gun_slot, out.slot) &&
                     ReadValue(rec + c::gun_mode_cur, out.mode_cur) && ReadValue(rec + c::gun_slot_hand, out.hand_slot) &&
                     ReadValue(rec + c::gun_slot_src, out.slot_src) && ReadValue(rec + c::gun_m3e4, out.m3e4) &&
-                    ReadValue(rec + c::gun_m3e6, out.m3e6) && ReadValue(rec + c::gun_m3e8, out.m3e8);
+                    ReadValue(rec + c::gun_m3e6, out.m3e6) && ReadValue(rec + c::gun_m3e8, out.m3e8) &&
+                    ReadValue(rec + c::gun_surface, out.gun3cc);
     g.gun3c0 = out.gun3c0;
     // The upper-body request byte of this id (Q+0x20 is a per-id u8 array; 5 = reload).
     std::uintptr_t upper = 0;

@@ -129,16 +129,21 @@ bool NoRates(const InputPacket& p) noexcept {
 bool NoMag(const InputPacket& p) noexcept { return p.mag == 0 && p.mag_cap == 0 && !(p.xflags & XFlag::Mag); }
 bool NoEquip(const InputPacket& p) noexcept { return p.gun_equip == 0 && !(p.xflags & (XFlag::Equip | XFlag::Gamepad)); }
 bool NoV6(const InputPacket& p) noexcept { return p.aim_pitch_cdeg == 0 && p.aim_yaw_cdeg == 0; }
+bool NoV7(const InputPacket& p) noexcept { return p.place_bits == 0; }
 bool NoV5(const InputPacket& p) noexcept {
-    return p.gun_flags == 0 && p.gun_mode == 0 && p.reload_seq == 0 && p.switch_seq == 0 && NoV6(p);
+    return p.gun_flags == 0 && p.gun_mode == 0 && p.reload_seq == 0 && p.switch_seq == 0 && NoV6(p) && NoV7(p);
 }
 bool NoV4(const InputPacket& p) noexcept { return NoRates(p) && NoMag(p) && NoEquip(p) && NoV5(p); }
 // The v5 gun group: known flags only; without GunFlag::Valid every byte is 0.
 // v6: the gun direction only with GunFlag::AimDir (which needs Valid and
 // Aiming) and inside the wire ranges; without it both angles are 0.
+// v7: the place word only with GunFlag::Place (which needs Valid and a gun
+// mode 43..47) and within kMaxPlaceBits; without it the byte is 0.
 bool ValidV5(const InputPacket& p) noexcept {
-    if (p.gun_flags & ~(p.version >= 6 ? GunFlag::KnownV6 : GunFlag::Known)) return false;
+    const std::uint8_t known = p.version >= 7 ? GunFlag::KnownV7 : p.version >= 6 ? GunFlag::KnownV6 : GunFlag::Known;
+    if (p.gun_flags & ~known) return false;
     if (!(p.gun_flags & GunFlag::Valid)) return NoV5(p);
+    if ((p.gun_flags & GunFlag::Place) ? p.place_bits > kMaxPlaceBits || !PlaceWireMode(p.gun_mode) : !NoV7(p)) return false;
     if (!(p.gun_flags & GunFlag::AimDir)) return NoV6(p);
     return (p.gun_flags & GunFlag::Aiming) != 0 && p.aim_pitch_cdeg >= -kMaxAimPitchCdeg && p.aim_pitch_cdeg <= kMaxAimPitchCdeg &&
            p.aim_yaw_cdeg >= kCamMin && p.aim_yaw_cdeg <= kCamMax;
@@ -200,6 +205,7 @@ void Fill3(InputPacket& p, const V3Source& v) noexcept {
     p.gun_equip = 0;
     p.gun_flags = p.gun_mode = p.reload_seq = p.switch_seq = 0;
     p.aim_pitch_cdeg = p.aim_yaw_cdeg = 0;
+    p.place_bits = 0;
 }
 
 void Fill4(InputPacket& p, const V4Source& v) noexcept {
@@ -207,6 +213,7 @@ void Fill4(InputPacket& p, const V4Source& v) noexcept {
     p.version = 4;
     p.gun_flags = p.gun_mode = p.reload_seq = p.switch_seq = 0;
     p.aim_pitch_cdeg = p.aim_yaw_cdeg = 0;
+    p.place_bits = 0;
     if (v.rates_valid && RateIn(v.rate_dash) && RateIn(v.rate_crawl) && RateIn(v.rate_crawl_factor)) {
         p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Rates);
         p.rate_dash = v.rate_dash;
@@ -245,6 +252,16 @@ void Fill6(InputPacket& p, const V6Source& v) noexcept {
         p.gun_flags = static_cast<std::uint8_t>(p.gun_flags | GunFlag::AimDir);
         p.aim_pitch_cdeg = v.aim_pitch_cdeg;
         p.aim_yaw_cdeg = v.aim_yaw_cdeg;
+    }
+}
+
+void Fill7(InputPacket& p, const V7Source& v) noexcept {
+    Fill6(p, v.v6);
+    p.version = 7;
+    p.place_bits = 0;
+    if (v.place_valid && (p.gun_flags & GunFlag::Valid) && PlaceWireMode(p.gun_mode) && v.place_bits <= kMaxPlaceBits) {
+        p.gun_flags = static_cast<std::uint8_t>(p.gun_flags | GunFlag::Place);
+        p.place_bits = v.place_bits;
     }
 }
 
@@ -361,9 +378,9 @@ bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
     if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
-    if ((p.version < 2 || p.version > 6) || p.edge_rep > kEdgeRepeatsMax) return false;
+    if ((p.version < 2 || p.version > 7) || p.edge_rep > kEdgeRepeatsMax) return false;
     // v2: no v3/v4/v5 field; v3: no v4 field (ValidV3); v4: both groups checked (ValidV4); v5: the gun group too;
-    // v6: the gun direction with GunFlag::AimDir.
+    // v6: the gun direction with GunFlag::AimDir; v7: the place word with GunFlag::Place.
     if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
     // No edge set: no edge words.
     if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;
@@ -455,6 +472,10 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
             j.switch_seq = p.switch_seq;
             j.slot_valid = p.inv_slot <= kInvSlotMax;
             j.inv_slot = p.inv_slot;
+        }
+        if (p.version >= 7) {
+            j.place_valid = (p.gun_flags & GunFlag::Place) != 0;
+            j.place_bits = p.place_bits;
         }
     }
     held &= c.mask;
@@ -642,6 +663,7 @@ partner_support_policy::IdHold HoldIdentity(IdentityHold& h, InputPacket& p, std
         p.reload_seq = h.reload_seq;
         p.switch_seq = h.switch_seq;
         p.aim_pitch_cdeg = p.aim_yaw_cdeg = 0;
+        p.place_bits = 0;
     }
     p.inv_slot = 3;
     p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Equip);

@@ -294,7 +294,8 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
         std::memcpy(out, v2, n);
         return n;
     }
-    const bool v6 = packet.version == input_version_v6;
+    const bool v7 = packet.version == input_version_v7;
+    const bool v6 = packet.version == input_version_v6 || v7;
     const bool v5 = packet.version == input_version_v5 || v6;
     const bool v4 = packet.version == input_version_v4 || v5;
     if ((packet.version != input_version_v3 && !v4) || session == 0 || epoch == 0 || sequence == 0 ||
@@ -311,16 +312,18 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     as2.gun_equip = 0;
     as2.gun_flags = as2.gun_mode = as2.reload_seq = as2.switch_seq = 0;
     as2.aim_pitch_cdeg = as2.aim_yaw_cdeg = 0;
+    as2.place_bits = 0;
     std::uint8_t v2[input_frame_size]{};
     if (!encode_input_frame(session, epoch, sequence, as2, v2)) return 0;
     std::memcpy(out, v2, sizeof(v2));
     put_header(out, wire::Kind::event, session, epoch, sequence,
-               static_cast<std::uint32_t>(v6   ? input_packet_size_v6
+               static_cast<std::uint32_t>(v7   ? input_packet_size_v7
+                                          : v6 ? input_packet_size_v6
                                           : v5 ? input_packet_size_v5
                                           : v4 ? input_packet_size_v4
                                                : input_packet_size_v3));
     auto* b = out + wire::header_size;
-    b[1] = v6 ? input_version_v6 : v5 ? input_version_v5 : v4 ? input_version_v4 : input_version_v3;
+    b[1] = v7 ? input_version_v7 : v6 ? input_version_v6 : v5 ? input_version_v5 : v4 ? input_version_v4 : input_version_v3;
     std::uint32_t f = 0;
     std::memcpy(&f, &packet.look_pitch, 4); put(b + 48, f);
     std::memcpy(&f, &packet.look_yaw, 4); put(b + 52, f);
@@ -346,7 +349,10 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     if (!v6) return input_frame_size_v5;
     put(b + 88, static_cast<std::uint16_t>(packet.aim_pitch_cdeg), 2);
     put(b + 90, static_cast<std::uint16_t>(packet.aim_yaw_cdeg), 2);
-    return input_frame_size_v6;
+    if (!v7) return input_frame_size_v6;
+    b[92] = packet.place_bits;
+    b[93] = b[94] = b[95] = 0;
+    return input_frame_size_v7;
 }
 
 std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
@@ -362,13 +368,15 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
                         std::uint32_t& sequence, partner_input::InputPacket& out) noexcept {
     if (!data) return false;
-    const bool v6 = size == input_frame_size_v6;
+    const bool v7 = size == input_frame_size_v7;
+    const bool v6 = size == input_frame_size_v6 || v7;
     const bool v5 = size == input_frame_size_v5 || v6;
     const bool v4 = size == input_frame_size_v4 || v5;
     const bool v3 = size == input_frame_size_v3 || v4;
     const bool v2 = size == input_frame_size || v3;
     if (!v2 && size != input_frame_size_v1) return false;
-    const std::size_t payload = v6   ? input_packet_size_v6
+    const std::size_t payload = v7   ? input_packet_size_v7
+                                : v6 ? input_packet_size_v6
                                 : v5 ? input_packet_size_v5
                                 : v4 ? input_packet_size_v4
                                 : v3 ? input_packet_size_v3
@@ -381,12 +389,16 @@ bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_
     if (frame_session == 0 || frame_epoch == 0 || frame_sequence == 0) return false;
     const auto* b = data + wire::header_size;
     if (b[0] != input_magic ||
-        b[1] != (v6 ? input_version_v6 : v5 ? input_version_v5 : v4 ? input_version_v4 : v3 ? input_version_v3 : v2 ? input_version : 1) ||
+        b[1] != (v7 ? input_version_v7 : v6 ? input_version_v6 : v5 ? input_version_v5 : v4 ? input_version_v4 : v3 ? input_version_v3 : v2 ? input_version : 1) ||
         b[39] != 0)
         return false;
     if (!v2 && (b[3] != 0 || b[38] != 0)) return false;
     partner_input::InputPacket p{};
-    p.version = v6 ? 6 : v5 ? 5 : v4 ? 4 : v3 ? 3 : v2 ? 2 : 1;
+    p.version = v7 ? 7 : v6 ? 6 : v5 ? 5 : v4 ? 4 : v3 ? 3 : v2 ? 2 : 1;
+    if (v7) {
+        if (b[93] != 0 || b[94] != 0 || b[95] != 0) return false;
+        p.place_bits = b[92];
+    }
     if (v6) {
         p.aim_pitch_cdeg = static_cast<std::int16_t>(get(b + 88, 2));
         p.aim_yaw_cdeg = static_cast<std::int16_t>(get(b + 90, 2));

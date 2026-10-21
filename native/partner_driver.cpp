@@ -528,6 +528,23 @@ pin::V6Source SenderV6(Driver& d, const Hooks& h, const pp::State& st, const pin
     return v;
 }
 
+// Input frame v7 (WS4 v2, docs/anim-round2-throws.md "WS4 v2"): v6 plus the
+// local player's C4 place word, rec+0x3CC bits 18..23, while its gun record
+// (read this tick, not a held read) holds a C4 (391..395, class 3) in a mode of
+// the place family; the receiver mirrors the place / detonate into body 1.
+pin::V7Source SenderV7(const Mission& m, const pin::V6Source& v6) noexcept {
+    pin::V7Source v{};
+    v.v6 = v6;
+    const pp::Gun1& g = m.gun0;
+    const bool c4 = m.gun0_ok && g.fields_ok && g.fields.equip <= 0xFFFFu && partner_support_policy::C4Equip(static_cast<std::uint16_t>(g.fields.equip)) &&
+                    ((g.fields.flags27c >> c::gun_class_shift) & c::gun_class_mask) == 3u;
+    if (c4 && v6.v5.gun_valid && pin::PlaceWireMode(v6.v5.gun_mode) && g.mode_cur == v6.v5.gun_mode) {
+        v.place_valid = true;
+        v.place_bits = static_cast<std::uint8_t>((g.gun3cc >> 18) & pin::kMaxPlaceBits);
+    }
+    return v;
+}
+
 // One overlay tap (the input window injects `bits` for kTapFrames windows):
 // a new tap_seq, or, for a second tap in the same tick (a reload tap and a
 // stance fix), the bits ORed into this tick's tap.
@@ -615,6 +632,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.native_support = set.native_active && set.ngun && set.nsupport;
     a.native_placed = a.native_support && set.nplaced;
     a.native_arm = a.native_support && set.narm;
+    a.native_place_mirror = a.native_placed && set.nplace_mirror;
     // C(b): the viewer's own gun record (read-only attribution of its own throws).
     const bool viewer_gun = a.native_support && m.gun0_ok && m.gun0.prim && m.gun0.rec;
     a.viewer_gun_prim = viewer_gun ? m.gun0.prim : 0;
@@ -1631,14 +1649,24 @@ void SendLocalInput(Driver& d, const Hooks& h, const pp::State& st, const Settin
                 const bool probe = !peer_v5 && (!m.v5_probe_ms || now - m.v5_probe_ms >= kInputV5ProbeMs);
                 const bool peer_v6 = h.peer_input_v6 && h.peer_input_v6(h.context);
                 const bool probe6 = h.peer_input_v6 && !peer_v6 && (!m.v6_probe_ms || now - m.v6_probe_ms >= kInputV5ProbeMs);
-                if (peer_v6 || probe6) pin::Fill6(pkt, SenderV6(d, h, st, v5));
+                // v7 (the C4 place word) like v6: once the peer sent v7, plus a probe
+                // every kInputV5ProbeMs to a v6 peer (a v6 build drops only the probe).
+                const bool peer_v7 = peer_v6 && h.peer_input_v7 && h.peer_input_v7(h.context);
+                const bool probe7 = peer_v6 && h.peer_input_v7 && !peer_v7 && (!m.v7_probe_ms || now - m.v7_probe_ms >= kInputV5ProbeMs);
+                if (peer_v7 || probe7) pin::Fill7(pkt, SenderV7(m, SenderV6(d, h, st, v5)));
+                else if (peer_v6 || probe6) pin::Fill6(pkt, SenderV6(d, h, st, v5));
                 else if (peer_v5 || probe) pin::Fill5(pkt, v5);
                 else pin::Fill4(pkt, v5.v4);
                 if (peer_v6 && !m.v6_peer_logged) {
                     m.v6_peer_logged = true;
                     EmitFormat(h, "partner_input=v6_peer; probes=%u\r\n", m.v6_probes);
                 }
+                if (peer_v7 && !m.v7_peer_logged) {
+                    m.v7_peer_logged = true;
+                    EmitFormat(h, "partner_input=v7_peer; probes=%u\r\n", m.v7_probes);
+                }
                 if (probe6) { m.v6_probe_ms = now ? now : 1; ++m.v6_probes; }
+                if (probe7) { m.v7_probe_ms = now ? now : 1; ++m.v7_probes; }
                 if (probe) {
                     m.v5_probe_ms = now;
                     ++m.v5_probes;
@@ -2986,8 +3014,9 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
                    PartnerNativeReloadRateName(set.nreload_rate), set.fire_census ? 1u : 0u);
         // WS4 v1: the lanes beyond thrown support (only when one is named).
         if (set.nplaced || set.narm)
-            EmitFormat(h, "partner_support=lanes; support=%u; placed=%u; arm=%u; arm_fire=stripped\r\n", set.nsupport ? 1u : 0u,
-                       set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u);
+            EmitFormat(h, "partner_support=lanes; support=%u; placed=%u; arm=%u; arm_fire=stripped; place_mirror=%u\r\n", set.nsupport ? 1u : 0u,
+                       set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u,
+                       set.nsupport && set.nplaced && set.nplace_mirror ? 1u : 0u);
     }
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
@@ -4715,6 +4744,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nsupport = lab.partner_native_support;
     d.settings.nplaced = lab.partner_native_placed;
     d.settings.narm = lab.partner_native_arm;
+    d.settings.nplace_mirror = lab.partner_native_place_mirror;
     d.settings.nunsupported = lab.partner_native_unsupported;
     d.settings.ndry = lab.partner_native_dry_stop;
     d.settings.naim_intent = lab.partner_native_aim_intent;

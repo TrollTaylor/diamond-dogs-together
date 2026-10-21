@@ -20,6 +20,25 @@ so both players need this same package.
 **Vehicle boarding and dismount animations (`partner_ride_seat_enter=getin`, `partner_ride_seat_exit=getoff`).**
 Ghidra decompilation of `RideVehicleActionImpl` (`0x1412471B0..0x14125C050`) and `DirectPlayMotionActionPluginImpl` (`0x141198770..0x141199860`) in `mgsvtpp_1_0_15_4_aug_4_patch.exe` (SHA-256 `085c2f82...bb45`) confirmed that both play the exact same graph-0 vehicle states (`stateVehicleGetOnFrontLeft`, `stateVehicleFrontLeftLoop`, `stateVehicleGetOffFrontLeft`, etc.) through `(*(PS+0x78)+0x238)->vtable+0x170(mgr, body_index, 0, state_code, blend, 0)` and anchor body 1's transform `*(PS+0x270)[1]` via `VehicleCommunicationInfo::FetchVehicleSeatLocalMatrix` (`0x140B7AF90`), whereas `RideVehicleActionImpl` also mutates the local vehicle's rider slots, turret ownership, disable-action flags, and camera. Keeping the 3-entry `DirectPlayMotionActionPluginImpl` chain (`GetOn` $\to$ `Loop` $\to$ `GetOff`) avoids all vehicle/camera side effects while playing the stock entry and exit motions. `partner_ride_seat_enter=getin` and `partner_ride_seat_exit=getoff` are now the defaults in lab and play (`kSeatGetInMs = 2500` ms, refreshed when a usable seat first arrives after an initial `seat=255` tick; mid-ride DM loss clears `get_on` so re-issued plays go straight to `Loop`; `SeatDmProbe` logs `when=loop` and `when=getoff`). Verified in hidden worker runs `6b4e1667bd994580818fe20d181b3b5d`, `bea50b8682754baa9bf94f7b482dac8e`, and `e10774b712824d12a12d0ace9d7b20d2` (both directions passing: `entry=7`, `entries=3; flags=0x0e,0x0f,0x0e`, `when=confirmed` on `0xdfb7fc6173d0` in 33-34 ms, `when=loop` on `0x489157d7d94f` with `err_mm=0..223`, `when=getoff` on `rec1a0=2` via `RequestToGoNextDirectMotion()`, finishing within 16 ms of the driver's own `act=112` dismount; frames `guest-seat-entering-01..05.bmp`, `guest-seat-exiting-04.bmp`, `host-seat-rev-entering-02..04.bmp`).
 
+## October 16, 2026: the partner kneels to place C4 and presses the detonator (WS4 v2, lab)
+
+**The teammate's body now kneels when the other player places C4 and plays the detonator press when they set it off.**
+When the remote's own gun record enters the place (46) or detonate (47) mode, the viewer writes the matching request
+bit into the partner body's own gun record just before its update (`partner_place_mirror`; the surface class rides on
+a new input frame v7). The body's own game code then runs the kneel or the detonator motion. Nothing is placed or set
+off in the viewer's world (the placement and the detonation run only for the local player), and the WS4 v1 digests
+(placement latch, placed owner table, stock words) bracket every job. The first hidden run (`289badb6`) found one
+shared write: a class bit plus a FIRE press in the same job made the decode register owner 1 in the viewer's placed
+table. The digest caught it and turned support off. Fixed: the class is written only in a job without a FIRE press,
+and is aligned again once the body kneels. Hidden runs `12320c2f`, `0d8190ea` and `96feab6d` (lab, research worker):
+3/3 places and 2/2 detonations taken each time, the guest's placed table never moved (`owners=65535:0`), zero
+`placed_shared_write`, unchanged counts. Frames show the kneel at every valid spot and the detonator raise right after
+E, compared with a same-angle reference of the ready pose (it is brief: one frame at 150 ms). Lab key
+`partner_native_place_mirror`: on with the native gun profile in lab (proven without a named key in run `98e99783`),
+off in play (no play-mode C4 run yet). Contract
+677 code sites / 149 vtable slots; full CTest 280/280. Not merged or packaged
+([the design](anim-round2-throws.md) "WS4 v2").
+
 ## October 16, 2026: world timers keep running under the MISSION FAILED menu
 
 **After a shared game over the host's lab Continue now runs and both copies reload the checkpoint.** The game

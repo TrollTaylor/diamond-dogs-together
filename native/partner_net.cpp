@@ -79,6 +79,7 @@ bool g_stall_active = false;
 // An accepted input frame v5 arrived since the last receive reset (PeerSendsInputV5).
 volatile LONG g_input_v5_peer = 0;
 volatile LONG g_input_v6_peer = 0;
+volatile LONG g_input_v7_peer = 0;
 // Look send side (game thread only).
 partner::Look g_look_sent{};
 bool g_look_sent_valid = false;
@@ -445,6 +446,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
             g_input_rx_ms = now;
             if (in.version >= 5) InterlockedExchange(&g_input_v5_peer, 1);
             if (in.version >= 6) InterlockedExchange(&g_input_v6_peer, 1);
+            if (in.version >= 7) InterlockedExchange(&g_input_v7_peer, 1);
             if (!g_input_first_logged) { g_input_first_logged = true; first = true; }
         }
         ReleaseSRWLockExclusive(&g_lock);
@@ -517,6 +519,7 @@ void ResetReceiveLocked() noexcept {
     g_identity_lines = 0;
     InterlockedExchange(&g_input_v5_peer, 0);
     InterlockedExchange(&g_input_v6_peer, 0);
+    InterlockedExchange(&g_input_v7_peer, 0);
 }
 
 // ---- Link v2 logging (receive thread, outside both locks).
@@ -1780,6 +1783,7 @@ bool ConsumeInput(partner_input::Sample& out) noexcept {
 
 bool PeerSendsInputV5() noexcept { return g_input_v5_peer != 0; }
 bool PeerSendsInputV6() noexcept { return g_input_v6_peer != 0; }
+bool PeerSendsInputV7() noexcept { return g_input_v7_peer != 0; }
 
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};

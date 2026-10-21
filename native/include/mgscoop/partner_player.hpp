@@ -341,6 +341,10 @@ struct Gun1 {
     std::uint16_t m3e4, m3e6, m3e8;
     bool upper_ok;
     std::uint8_t upper_req;
+    // WS4 v2 (with fields_ok): the placement word rec+0x3CC (bit 18 the place
+    // request, 19 the detonate request, 20-21 the placed surface class, 22-23
+    // the preview class; the v7 sender's place word, body 1's mirror target).
+    std::uint32_t gun3cc;
 };
 bool ReadGun1(const Addresses& addresses, const State& state, Gun1& out) noexcept;
 // Instance `index`'s movement rate record (docs/native-puppet.md "Rates";

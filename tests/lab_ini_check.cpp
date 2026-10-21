@@ -151,6 +151,9 @@ int main(int argc, char** argv) {
         std::printf("partner_native_placed=%d\npartner_native_arm=%d\npartner_native_placed_given=%d\npartner_native_arm_given=%d\n",
                     c.partner_native_placed ? 1 : 0, c.partner_native_arm ? 1 : 0, c.partner_native_placed_given ? 1 : 0,
                     c.partner_native_arm_given ? 1 : 0);
+        // WS4 v2: the place / detonate mirror (lab only, default 0).
+        std::printf("partner_native_place_mirror=%d\npartner_native_place_mirror_given=%d\n", c.partner_native_place_mirror ? 1 : 0,
+                    c.partner_native_place_mirror_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

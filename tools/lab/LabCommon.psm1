@@ -338,6 +338,9 @@ $script:LabPartnerKeys = @(
     # written only when set).
     @{ Key = 'partner_native_placed'; Json = 'native_placed'; Kind = 'bool' },
     @{ Key = 'partner_native_arm'; Json = 'native_arm'; Kind = 'bool' },
+    # WS4 v2: the remote's C4 place kneel and detonate motion on the partner body (lab only: the loader defaults it on
+    # with the gun profile in lab and off in play; written only when set).
+    @{ Key = 'partner_native_place_mirror'; Json = 'native_place_mirror'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

@@ -178,6 +178,7 @@ struct Fake {
     // Input frame v5 negotiation: the peer was seen sending v5 (partner_net::PeerSendsInputV5).
     bool peer_v5 = true;
     bool peer_v6 = false;
+    bool peer_v7 = false;
     // The seated vehicle rider's dwords (partner_ride_seat).
     unsigned seat_arms = 0, seat_reverts = 0;
     bool seat_arm_ok = true;
@@ -597,6 +598,7 @@ bool HookEquipType(void* context, std::uint32_t equip, std::uint8_t& type) noexc
 }
 bool HookPeerInputV5(void* context) noexcept { return F(context).peer_v5; }
 bool HookPeerInputV6(void* context) noexcept { return F(context).peer_v6; }
+bool HookPeerInputV7(void* context) noexcept { return F(context).peer_v7; }
 void AddWeaponHooks(pd::Hooks& h) {
     h.read_slots = HookReadSlots;
     h.equip_type = HookEquipType;
@@ -3925,6 +3927,50 @@ void TestNativeGunDirectionWire() {
               s.fake.aim_pubs.back().src == static_cast<std::uint8_t>(mgscoop::partner_aim::Source::look),
           "v6 receiver: direction refusal clears the prior point target and uses look");
 }
+// WS4 v2: input frame v7 carries the local player's C4 place word (rec+0x3CC bits 18..23) while its C4 is in
+// the place family, only once the peer sent v7 (plus bounded probes to a v6 peer); a gun or a non-family
+// mode sends the flag clear.
+void TestNativeC4PlaceWire() {
+    namespace pi = mgscoop::partner_input;
+    NativeSession s;
+    s.hooks.peer_input_v6 = HookPeerInputV6;
+    s.hooks.peer_input_v7 = HookPeerInputV7;
+    AddWeaponHooks(s.hooks);
+    s.driver.settings.ngun = true;
+    s.fake.peer_v6 = true;
+    Check(s.Until(mgscoop::partner_native::Mode::active, 9000), "v7 sender: native active");
+    // The local player places C4 395 (class 3) in mode 46 with the census word 0x1500060.
+    s.fake.gun0_ok = true; s.fake.gun0.fields_ok = true;
+    s.fake.gun0.fields.flags27c = 3u << 6; s.fake.gun0.fields.equip = 395;
+    s.fake.gun0.gun3c0 = (1u << 18) | 4u; s.fake.gun0.mode_cur = 46; s.fake.gun0.gun3cc = 0x1500060u;
+    s.fake.inputs.clear();
+    const auto probes = s.driver.mission.v7_probes;
+    for (unsigned n = 0; n < 30; ++n) s.N();
+    unsigned v6 = 0, v7 = 0;
+    for (const auto& in : s.fake.inputs) { if (in.version == 6) ++v6; if (in.version == 7) ++v7; }
+    Check(v6 > 0 && v7 <= 1 && s.driver.mission.v7_probes <= probes + 1, "v7 unknown peer: v6 frames with bounded probes");
+    s.fake.peer_v7 = true; s.fake.inputs.clear();
+    s.N();
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 7 && s.driver.mission.v7_peer_logged,
+          "v7 negotiated peer sends v7 and records capability once");
+    const auto sent = s.fake.inputs.back();
+    Check((sent.gun_flags & pi::GunFlag::Place) && sent.place_bits == 0x14 && sent.gun_mode == 46 && pi::ValidPacket(sent),
+          "v7 sender: the C4 place word (bits 18..23) with GunFlag::Place");
+    s.fake.gun0.mode_cur = 47; s.fake.gun0.gun3cc = 0x1410060u; s.N();
+    Check((s.fake.inputs.back().gun_flags & pi::GunFlag::Place) && s.fake.inputs.back().gun_mode == 47 &&
+              s.fake.inputs.back().place_bits == 0x10,
+          "v7 sender: the detonate mode carries the word too");
+    s.fake.gun0.mode_cur = 7; s.N();
+    Check(s.fake.inputs.back().version == 7 && !(s.fake.inputs.back().gun_flags & pi::GunFlag::Place) && s.fake.inputs.back().place_bits == 0,
+          "v7 sender: no place word outside the place family");
+    s.fake.gun0.mode_cur = 46; s.fake.gun0.fields.equip = 46; s.fake.gun0.fields.flags27c = 1u << 6; s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::Place) && s.fake.inputs.back().place_bits == 0,
+          "v7 sender: a gun is never a C4 place word");
+    s.fake.gun0.fields.equip = 395; s.fake.gun0.fields.flags27c = 2u << 6; s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::Place), "v7 sender: only class 3 sends the word");
+    s.hooks.peer_input_v7 = nullptr; s.fake.gun0.fields.flags27c = 3u << 6; s.N();
+    Check(s.fake.inputs.back().version == 6, "no v7 hook: v6 frames only");
+}
 void TestNativeAim() {
     namespace pn = mgscoop::partner_native;
     namespace pi = mgscoop::partner_input;
@@ -6287,6 +6333,7 @@ int main() {
     TestNativeRates();
     TestNativeAim();
     TestNativeGunDirectionWire();
+    TestNativeC4PlaceWire();
     TestNativePlayAndWithdraw();
     TestNativeWeapons();
     TestNativeActionsWithWeapons();

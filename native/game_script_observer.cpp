@@ -806,6 +806,7 @@ bool PartnerLinkLive(void*) noexcept {
 std::uint32_t PartnerLinkSession(void*) noexcept { return mgscoop::partner_net::GetLinkInfo().session; }
 bool PartnerPeerInputV5(void*) noexcept { return mgscoop::partner_net::PeerSendsInputV5(); }
 bool PartnerPeerInputV6(void*) noexcept { return mgscoop::partner_net::PeerSendsInputV6(); }
+bool PartnerPeerInputV7(void*) noexcept { return mgscoop::partner_net::PeerSendsInputV7(); }
 bool PartnerDrainReliable(void*, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
     return mgscoop::partner_net::DrainReliable(channel, out, capacity, size);
 }
@@ -1015,7 +1016,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
     PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
-    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity};
+    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
