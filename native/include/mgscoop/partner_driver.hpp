@@ -509,6 +509,7 @@ struct Settings {
     bool act_log;
     bool stance_fast;  // the native stance window (partner_native_stance_fast)
     bool traverse;     // traversal replay (partner_native_traverse)
+    bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -581,11 +582,17 @@ struct Mission {
     bool status_have;
     std::uint16_t status_bits;
     std::uint16_t active_item;  // the local tick's item= id (0 unknown)
-    // Receiver cardboard box: the remote manifest's box state last logged (transport only;
-    // nothing is applied to body 1 and no reply carries op::cbox until a native apply exists).
+    // Receiver cardboard box: the remote manifest's box state last logged. No reply
+    // carries op::cbox (no Lua apply); with partner_native_cbox the observer's
+    // partner_cbox_equip puts the box on body 1 natively from cbox_want / cbox_id /
+    // cbox_seq (F2, docs/native-puppet.md "Cardboard box").
     bool cbox_pending, cbox_want, cbox_applied;
     std::uint16_t cbox_id, cbox_id_applied;
     std::uint8_t cbox_left;
+    std::uint32_t cbox_seq;      // +1 per logged change (the native apply's edge, one attempt each)
+    std::uint64_t cbox_off_ms;   // when the remote's box last went off (the recon hold's grace)
+    bool cbox_hold;              // the recon hold for a boxed body 1 (partner_cbox_policy::ReconHold), last tick
+    LogCap cbox_cap;             // partner_cbox=hold lines
     LogCap status_cap;
     const char* visibility_logged;
     std::uint64_t visibility_place_try_ms;

@@ -18,6 +18,7 @@
 #include "mgscoop/coop_hud.hpp"
 #include "partner_player_contract.hpp"
 #include "mgscoop/partner_support_policy.hpp"
+#include "mgscoop/partner_cbox_policy.hpp"
 
 namespace mgscoop::partner_driver {
 namespace {
@@ -1294,6 +1295,16 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.remote_downed = set.native_active && set.stance_fast && RemoteDowned(clock.tick_ms);
     // The traversal replay's hold from the previous tick (TickTraverse).
     in.traverse_hold = set.native_active && set.traverse && m.traverse_hold;
+    // F2: no far / vertical / runaway placement while body 1 is boxed (77/78) for the
+    // remote's box, or within 3 s of its off (a placement would teleport the box).
+    const bool cbox_hold = partner_cbox_policy::ReconHold(set.native_active && set.cbox, anim_ok, anim_ok ? anim.act[1] : 0,
+                                                          m.cbox_want, clock.now_ms, m.cbox_off_ms);
+    if (cbox_hold != m.cbox_hold) {
+        m.cbox_hold = cbox_hold;
+        EmitCapped(m.cbox_cap, h, "partner_cbox", "partner_cbox=hold; on=%u; body_act=%u; want=%u; seq=%u\r\n", cbox_hold ? 1u : 0u,
+                   unsigned(anim_ok ? anim.act[1] : 0), m.cbox_want ? 1u : 0u, m.cbox_seq);
+    }
+    in.traverse_hold = in.traverse_hold || cbox_hold;
     m.recon_remote_ok = in.remote_anim_valid;
     m.recon_remote_act = in.remote_act;
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
@@ -4693,25 +4704,30 @@ bool NativeSleepPresentationReady(const Driver& d) noexcept {
            m.dmmap.phase == partner_dmmap::Phase::idle;
 }
 
-// The remote manifest's cardboard box. Only the transport runs: a change is
-// logged once and nothing is applied to body 1. The 0.13.3 apply (op::cbox ->
-// Lua Player.ChangeEquip) boxed the VIEWER's own player, because that binding
-// (0x9D0D60) ignores playerIndex and passes [P+0x214] in R8D. A native apply
-// for instance 1 comes later behind a lab key.
-void NoteCbox(Driver& d, const Hooks& h) noexcept {
+// The remote manifest's cardboard box: the edge detector. A change is logged
+// once and counted (cbox_seq). The 0.13.3 apply (op::cbox -> Lua
+// Player.ChangeEquip) boxed the VIEWER's own player, because that binding
+// (0x9D0D60) ignores playerIndex and passes [P+0x214] in R8D; it stays gone.
+// With partner_native_cbox (lab only) the equipment observer's
+// partner_cbox_equip applies the box to body 1 natively from cbox_want /
+// cbox_id / cbox_seq (apply=native); otherwise only the transport runs.
+void NoteCbox(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
     namespace ew = partner_equip_wire;
     Mission& m = d.mission;
     if (!m.equip.have) return;
     const std::uint16_t sent = m.equip.manifest.active_item_id;
     const bool want = m.equip.manifest.cbox_active && ew::CboxEquip(sent);
     if (want == m.cbox_applied && (!want || sent == m.cbox_id_applied)) return;
+    if (m.cbox_want && !want) m.cbox_off_ms = now_ms ? now_ms : 1;
     m.cbox_pending = false;
     m.cbox_want = want;
     m.cbox_id = want ? sent : (m.cbox_id_applied ? m.cbox_id_applied : ew::kCboxBase);
     m.cbox_left = 0;
     m.cbox_applied = want;  // the remote state last logged, not an apply
     m.cbox_id_applied = m.cbox_id;
-    EmitFormat(h, "partner_cbox=remote; id=%u; active=%u; apply=off\r\n", unsigned(m.cbox_id), want ? 1u : 0u);
+    ++m.cbox_seq;
+    EmitFormat(h, "partner_cbox=remote; id=%u; active=%u; apply=%s; seq=%u\r\n", unsigned(m.cbox_id), want ? 1u : 0u,
+               d.settings.cbox ? "native" : "off", m.cbox_seq);
 }
 // Inert: no reply carries op::cbox until the native apply exists.
 void StampCbox(Mission& m, partner::Reply& reply) noexcept {
@@ -4813,6 +4829,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.act_log = lab.partner_act_log;
     d.settings.stance_fast = lab.partner_native_stance_fast;
     d.settings.traverse = lab.partner_native_traverse;
+    d.settings.cbox = lab.partner_native_cbox;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
     // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).
     // The one exception (WS2: the user asked for throws in play): the guarded slot-3
@@ -5207,7 +5224,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     m.tele.weapon_gate_current = false;
     if (terminating) { partner_upper_probe::Clear("tick_terminating"); return false; }
     TickEquipLink(d, h, clock.now_ms);  // reliable channel 2 and the loadout sender, every tick in every drive mode
-    NoteCbox(d, h);
+    NoteCbox(d, h, clock.now_ms);
     if (!m.cfg_ready || m.stopped || terminating) { partner_upper_probe::Clear("tick_inactive"); return false; }
     partner::Tick tick{};
     if (!partner::ParseTick(source, size, tick)) {

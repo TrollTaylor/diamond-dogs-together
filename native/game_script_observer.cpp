@@ -94,6 +94,7 @@
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_support_equip.hpp"
+#include "mgscoop/partner_cbox_equip.hpp"
 #include "mgscoop/partner_support_guard.hpp"
 #include "mgscoop/partner_support_policy.hpp"
 #include "mgscoop/partner_placed_census.hpp"
@@ -1917,6 +1918,72 @@ void ObserveNativeSupport() noexcept {
     }
 }
 
+// F2 (docs/native-puppet.md "Cardboard box"): the remote's cardboard box on body 1
+// through partner_cbox_equip (ChangeEquip(1, box, flags 4) on, SetCurrentItemIndex(1,
+// 0) off). Lab key partner_native_cbox (default 0; play forces it off). Same natural
+// owner, 10 Hz tick, admission gates and body lease as ObserveNativeSupport, right
+// after it: serialized with the gun and support writers, and busy while either is
+// mid-flight (a gun writer slot in readiness / tracking, body 1 switching or
+// reloading, or the support lane latched uncertain).
+bool CboxEquipType(std::uint16_t equip,std::uint8_t& type) noexcept { return pp::EquipType(partner_addresses,equip,type); }
+void ObserveNativeCbox() noexcept {
+    namespace cb=mgscoop::partner_cbox_equip;
+    namespace pcb=mgscoop::partner_cbox_policy;
+    namespace w=mgscoop::equipment_stock_writer;
+    const auto& config=mgscoop::GetLabConfig();
+    const auto& mission=partner_driver.mission;
+    cb::Context context{};
+    context.enabled=config.partner_native_cbox && config.mode==mgscoop::LabMode::lab;
+    {
+        // One line per change of the verdict (only with the key named).
+        static int logged=-1;
+        const int now=context.enabled ? 1 : 0;
+        if(config.partner_native_cbox && now!=logged) {
+            logged=now;
+            LogFormat("partner_cbox=mode; mode=%s; enabled=%u\r\n",config.mode==mgscoop::LabMode::play ? "play" :
+                config.mode==mgscoop::LabMode::lab ? "lab" : "other",unsigned(now));
+        }
+    }
+    context.owner=OnRuntimeThread();context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
+    context.pins_intact=mgscoop::equipment_stock_writer::PinsIntact;
+    context.equip_type=CboxEquipType;
+    context.mission=partner_mission;context.realize_gen=mission.realize_gen;context.now_ms=mgscoop::partner_net::NowMs();
+    context.want=mission.cbox_want;context.want_id=mission.cbox_id;context.seq=mission.cbox_seq;
+    unsigned short current_mission=0;
+    context.gate_reason=!context.enabled ? "off"
+        : !PartnerGunPiecesWanted() ? "gun_profile"
+        : !offline_enabled ? "offline_branch"
+        : !lab_active ? "lab_inactive"
+        : !lab::SavesRedirected() ? "saves_not_redirected"
+        : !partner_on ? "partner_off"
+        : !partner_gate_ok ? "code_gate"
+        : !allocation_enabled || !archive_mounted || !host_source_selected ? "allocation_source"
+        : config.partner_input_p218_allow ? "p218_allow"
+        : mgscoop::partner_input_hook::NativePoseWindowStatus().required ? "pose_window"
+        : mission_terminating || termination_scope.Active() || gameplay_restore_pending ? "terminating"
+        : HasDynamiteSessionOwnership() ? "dynamite_session"
+        : mgscoop::partner_defer::ShuttingDown() ? "shutting_down"
+        : !ReadMission(current_mission) || !mgscoop::SupportsPartnerBody(current_mission) ? "mission"
+        : current_mission!=partner_mission || current_mission!=allocation_mission ? "mission_owner" : nullptr;
+    context.gates=context.gate_reason==nullptr;
+    pcb::BusyIn busy{};
+    busy.gun_mode_busy=mgscoop::partner_support_policy::BodyBusy(mission.body_gun_mode,mission.body_switching);
+    for(const auto& slot:partner_driver.equip_status.slots)
+        if(slot.state==w::SlotState::readiness || slot.state==w::SlotState::tracking) busy.gun_writer_active=true;
+    busy.support_uncertain=mgscoop::partner_support_equip::Uncertain();
+    context.busy_reason=pcb::BusyReason(busy);
+    pp::State state{};pp::DmTargets targets{};
+    if(context.owner && context.gates && mission.parts_loaded && mission.realized &&
+       pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.vars_ok && state.arrays_ok &&
+       state.count==2 && state.local==0 && (state.flags&1u) && !(state.flags&0x100u) && !state.sync &&
+       state.ids[0]==0 && state.ids[1]==1 && state.pool[0]==0 && state.pool[1]==1 &&
+       state.parts[0]==3 && state.parts[1]==3 && pp::Realized(state,0) && pp::Realized(state,1) &&
+       !pp::ResolveDm(partner_addresses,state,targets)) {
+        context.body_ready=true;context.player=state.P;context.remote_block=targets.blk1;
+    }
+    cb::Observe(context,Log);
+}
+
 // WS4 step 0 (docs/anim-round2-throws.md "WS4 step 0: placed and arm census"):
 // the read-only C4 / bionic-arm census, lab key partner_placed_census=1 in lab
 // mode (play forces the key off). Same natural owner and 10 Hz cadence as the
@@ -2048,6 +2115,7 @@ void ObserveEquipmentTick() noexcept {
     ObserveStock46Writer();
     ObserveEquipWriter();
     ObserveNativeSupport();
+    ObserveNativeCbox();
     ObservePlacedCensus();
 }
 
@@ -2924,6 +2992,13 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 r.ready?1u:0u,r.reviveMaskObserved?1u:0u,r.reviveMaskPresent?1u:0u,r.applied?1u:0u,r.held?1u:0u,
                 static_cast<unsigned long>(r.generation),r.reason?r.reason:"unknown");
             debug::Result(pending.id,1,status);
+        } else if (pending.id && std::strncmp(pending.text, "give_item", 9) == 0 && (pending.text[9] == 0 || pending.text[9] == ' ') &&
+                   !(mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab && offline_enabled && lab::SavesRedirected())) {
+            // F2 lab tooling (debug_equipment.lua "give_item cbox"): it adds a box to the LOCAL
+            // player's item list in the running copy, so it is refused here outside the one-PC lab
+            // (mode=lab, offline, redirected saves); in the lab it goes on to Lua below.
+            debug::Result(pending.id, 0, "give_item=refused;reason=lab_only");
+            LogFormat("debug_menu=give_item; id=%u; ok=0; reason=lab_only\r\n", pending.id);
         } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {
             // Read-only: the in-game status line as the overlay last drew it.
             char status[161]{};

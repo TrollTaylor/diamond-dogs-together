@@ -556,6 +556,14 @@ struct LabConfig {
     // until a hidden-worker FRAME shows body 1 on the ladder.
     bool partner_native_traverse = false;
     bool partner_native_traverse_given = false;
+    // F2 (partner_cbox_equip, docs/native-puppet.md "Cardboard box"): the
+    // remote's cardboard box on body 1 through two native calls on the
+    // equipment observer tick (ChangeEquip(1, box, flags 4) on, then
+    // SetCurrentItemIndex(1, 0) off). Default 0 in lab and play; a named 1 is
+    // lab only (play forces it off) until a hidden-worker FRAME shows body 1
+    // boxed with the viewer's own state unchanged.
+    bool partner_native_cbox = false;
+    bool partner_native_cbox_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute
