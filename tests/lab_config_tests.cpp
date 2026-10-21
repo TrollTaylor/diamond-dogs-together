@@ -112,6 +112,37 @@ int main() {
                   "an invalid WS4 v2 mirror value refuses");
         }
     }
+    // Traversal replay (partner_native_traverse, docs/native-puppet.md "Traversal"): default 0 in lab and play, also
+    // with the native gun profile (no hidden-worker FRAME of body 1 on a ladder yet); a named 1 runs in lab only, play
+    // forces it off; a named value records _given.
+    {
+        Check(!LabConfig{}.partner_native_traverse && !LabConfig{}.partner_native_traverse_given && !Lab("").partner_native_traverse,
+              "traverse key defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_native_traverse && !profile.partner_native_traverse_given && profile.invalid_values == 0,
+                  "the gun profile leaves traverse off in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_traverse=1\n");
+            Check(named.partner_native_traverse == !play && named.partner_native_traverse_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named traverse=1 runs in lab; play forces it off");
+            const auto off = Lab(gun + mode + "partner_native_traverse=0\n");
+            Check(!off.partner_native_traverse && off.partner_native_traverse_given, "a named traverse=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_traverse=1\n");
+        Check(alone.partner_native_traverse && alone.partner_native_traverse_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_native_traverse=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_traverse=1\npartner_native_traverse=0\n");
+        Check(!later.partner_native_traverse, "a later 0 turns traverse off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_traverse=") + value + "\n");
+            Check(!invalid.partner_native_traverse && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid traverse value refuses");
+        }
+    }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
     // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).

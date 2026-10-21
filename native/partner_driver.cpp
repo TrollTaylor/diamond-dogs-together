@@ -2240,18 +2240,28 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             }
             continue;
         }
+        const bool had = m.equip.have;
+        const partner_equip_wire::Manifest before = m.equip.manifest;
         const bool accepted = partner_equip_wire::Accept(m.equip, message, size, epoch);
+        // Only the cardboard-box fields moved (the sender keeps the revision for a
+        // box toggle): the gun slots, their types and the apply verdict stand, so
+        // a box toggle never re-drives the gun writer (NoteCbox logs the box).
+        const bool box_only = accepted && had && before.revision == m.equip.manifest.revision &&
+                              before.epoch == m.equip.manifest.epoch && before.version == m.equip.manifest.version &&
+                              before.inv_slot == m.equip.manifest.inv_slot && partner_equip_wire::SameSlots(before, m.equip.manifest);
         if (accepted) {
             d.equip_cache = m.equip.manifest;
             d.equip_cache_have = true;
             d.equip_cache_epoch = epoch;
+        }
+        if (accepted && !box_only) {
             // New content (also under the stored revision number: a 0.12.0 sender
             // restarts at 1 every mission): the per-revision slot types and apply
             // verdict are recomputed (revisions are never 0).
             m.slot_types_rev = 0;
             m.equip_apply_rev = 0;
         }
-        if (accepted) {
+        if (accepted && !box_only) {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
             EmitNative(m, h, m.native_equip_cap, "partner_equip",
@@ -2421,11 +2431,12 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
         std::uint16_t item = m.active_item;
         if (cbox && !ew::CboxEquip(item)) item = ew::kCboxBase;
         if (!cbox && !ew::CboxEquip(item)) item = 0;
+        // A box toggle keeps the revision (the receiver's gun writer is keyed on the
+        // revision and the slots); the receiver takes the changed box fields under
+        // the same revision as new content (partner_equip_wire::Accept, SameBox).
         if (d.equip_tx.cbox_active != cbox || d.equip_tx.active_item_id != item) {
             d.equip_tx.cbox_active = cbox;
             d.equip_tx.active_item_id = item;
-            d.equip_tx.revision = static_cast<std::uint16_t>(d.equip_tx.revision == 0xFFFFu ? 1 : d.equip_tx.revision + 1);
-            if (!d.equip_tx.revision) d.equip_tx.revision = 1;
             d.equip_tx_dirty = true;
         }
     }
@@ -4682,30 +4693,30 @@ bool NativeSleepPresentationReady(const Driver& d) noexcept {
            m.dmmap.phase == partner_dmmap::Phase::idle;
 }
 
-// The remote manifest's cardboard box, applied on body 1 by op::cbox (Lua
-// Player.ChangeEquip, instance 1). A change starts a 4-tick burst so one
-// missed receipt still equips; the burst is not restarted while it runs.
+// The remote manifest's cardboard box. Only the transport runs: a change is
+// logged once and nothing is applied to body 1. The 0.13.3 apply (op::cbox ->
+// Lua Player.ChangeEquip) boxed the VIEWER's own player, because that binding
+// (0x9D0D60) ignores playerIndex and passes [P+0x214] in R8D. A native apply
+// for instance 1 comes later behind a lab key.
 void NoteCbox(Driver& d, const Hooks& h) noexcept {
     namespace ew = partner_equip_wire;
     Mission& m = d.mission;
-    if (!m.equip.have || m.cbox_pending) return;
+    if (!m.equip.have) return;
     const std::uint16_t sent = m.equip.manifest.active_item_id;
     const bool want = m.equip.manifest.cbox_active && ew::CboxEquip(sent);
     if (want == m.cbox_applied && (!want || sent == m.cbox_id_applied)) return;
-    m.cbox_pending = true;
+    m.cbox_pending = false;
     m.cbox_want = want;
     m.cbox_id = want ? sent : (m.cbox_id_applied ? m.cbox_id_applied : ew::kCboxBase);
-    m.cbox_left = 4;
-    m.cbox_applied = want;
+    m.cbox_left = 0;
+    m.cbox_applied = want;  // the remote state last logged, not an apply
     m.cbox_id_applied = m.cbox_id;
-    EmitFormat(h, "partner_cbox=request; id=%u; active=%u\r\n", unsigned(m.cbox_id), want ? 1u : 0u);
+    EmitFormat(h, "partner_cbox=remote; id=%u; active=%u; apply=off\r\n", unsigned(m.cbox_id), want ? 1u : 0u);
 }
+// Inert: no reply carries op::cbox until the native apply exists.
 void StampCbox(Mission& m, partner::Reply& reply) noexcept {
-    if (!m.cbox_pending || !m.cbox_left) return;
-    reply.op |= partner::op::cbox;
-    reply.cbox_item = m.cbox_id;
-    reply.cbox_active = m.cbox_want;
-    if (--m.cbox_left == 0) m.cbox_pending = false;
+    (void)m;
+    (void)reply;
 }
 
 void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {

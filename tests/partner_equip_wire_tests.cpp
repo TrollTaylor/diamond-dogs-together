@@ -311,7 +311,17 @@ int main() {
         Check(ew::Encode(box, buf) == ew::kSize && buf[10] == 0xC8 && buf[11] == 0x01 && buf[63] == 1, "box fields pack");
         ew::Manifest out{};
         Check(ew::Decode(buf, sizeof(buf), box.epoch, out) == ew::Result::ok && out.cbox_active && out.active_item_id == 0x1C8 &&
-                  !ew::SameSlots(out, m), "box fields round-trip and change the manifest");
+                  !ew::SameBox(out, m), "box fields round-trip and change the manifest");
+        // A box toggle is not a slot change: the receiver's gun writer is keyed on the slots only.
+        Check(ew::SameSlots(out, m) && ew::SameBox(m, m), "box fields are outside SameSlots");
+        // A box-only change under the stored revision is new content, not a duplicate.
+        ew::Store boxed{};
+        Check(ew::Encode(m, buf) == ew::kSize && ew::Accept(boxed, buf, sizeof(buf), m.epoch), "store the plain manifest");
+        box.revision = m.revision;
+        Check(ew::Encode(box, buf) == ew::kSize && ew::Accept(boxed, buf, sizeof(buf), m.epoch) && boxed.manifest.cbox_active &&
+                  boxed.duplicates == 0,
+              "a box-only change is stored, not a duplicate");
+        ew::Encode(box, buf);
         std::uint8_t v1[ew::kSizeV1]{};
         std::memcpy(v1, buf, sizeof(v1));
         v1[1] = 1;
@@ -352,7 +362,7 @@ int main() {
     }
     Check(std::strcmp(ew::ResultName(ew::Result::stale_epoch), "stale_epoch") == 0 && std::strcmp(ew::ResultName(ew::Result::type), "type") == 0,
           "result names");
-    // SameSlots compares every field (the type too).
+    // SameSlots compares every slot field (the type too), never the box fields.
     ew::Manifest other = m;
     Check(ew::SameSlots(other, m), "same slots");
     other.slots[1].type = 6;

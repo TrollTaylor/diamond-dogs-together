@@ -1,29 +1,85 @@
-## October 18, 2026: 0.13.3 friend package staged (not installed)
+## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
+
+Branch `wp/integ8` from `dev/oct7-continue` `bf29f67` (0.13.2): merge commits of `wp/gameover-clock` `8324dd2`,
+`wp/c4-v2` `7e33abc` and `wip/agents-0133` `4914fa6` (the uncommitted tree the 0.13.3 package was built from), then
+one fix-up commit. No rebase. Not packaged or installed yet; both copies still run 0.13.3, and input frame v7 (C4 v2)
+plus the build id mean both copies need the same new package. Full CTest 282/282 (`-Configure`); contract
+677 code sites / 149 vtable slots (`generate_partner_contract.py --check`, no regeneration).
+
+What the fix-up changes against 0.13.3:
+- **The cardboard box is no longer applied.** 0.13.3 asked Lua for `Player.ChangeEquip{playerIndex=1,...}` on every
+  remote box toggle (op::cbox 1024). That binding (`FUN_1409D0D60`) never reads `playerIndex` and passes
+  `R8D=[P+0x214]`, the local index (`0x1409D101A`), so it boxed the VIEWER's own player and the box ping-ponged
+  between the copies (see the 0.13.3 entry). The Lua apply and its op::cbox consumer are gone; `NoteCbox` only logs
+  `partner_cbox=remote; id=..; active=..; apply=off` and `StampCbox` is inert. The transport stays: manifest v2 bytes
+  10..11 and byte 63 bit 0, the tick's ` item=`, the SendEquip box fields and `MgsCoopPartnerActiveItem`. A box toggle
+  keeps the manifest revision and `SameSlots` no longer compares the box fields (`SameBox` does, so the store still
+  takes the change), so a box toggle never re-runs the receiver's gun apply. A native apply for instance 1 comes later
+  behind a lab key.
+- **Traversal replay off.** `partner_native_traverse` defaults to 0 in lab and play (a `_given` flag like
+  `partner_native_place_mirror`; play forces it off); its key is in the three `-LabSetting` regex copies,
+  `LabCommon`, `worker_session_tests`, `lab_config_tests`, `lab_ini_check` and `friend_package_tests`. The ladder source
+  gate is the game's own mask (acts 1..4, 25, 31, 32 from `FUN_1411E9A70`); see
+  [native-puppet.md "Traversal"](native-puppet.md) for why the tap is unproven (the stock start goes through the
+  local-only action icon, `0x141155B87`).
+- **Act names** (`partner_act_log.cpp`, writer census): 22 pipe, 23 wall_climb, 24 step_on, 28 cliff_drop, 75/76 cure,
+  79..83 trash_box (were heli?, ladder_climb?, fall_entry?, hop?, knockdown?, stun?); 21 is `ladder`.
+- **Tests.** `partner_ride_wire_tests` is back for the 0.13.1 wire; `partner_traverse_tests` and it are in the audited
+  `Get-WorkerTests` list; `TestNativeEnterAndLeave` asserts `sample_strip == 0` by default and `0x20` with traverse
+  on; the Lua check's `ChangeEquip` stub now behaves like the binding (local index) and asserts no Lua apply.
+- Version 0.13.4 (CMakeLists, package.ps1, probe.ps1, the Play-Coop / Play-LocalCoop / package-install /
+  set-session-mode allow-lists, FRIEND-GUIDE).
+
+Still open (no hidden-worker run on this merge yet): `partner-c4-v2.txt` and `gameover-clock.txt` on the merged build,
+`partner-overlay-states.txt` (must not regress); the viewer boarding the partner-driven jeep still becomes a second
+driver (the partner is then hidden); no passenger seat for the partner; horse and D-Walker riders stay hidden.
+
+## October 18, 2026: 0.13.3 friend package, installed in both copies and played (box apply hit the viewer)
 
 Package `mgs-coop-friend-0.13.3-20261018T213930Z-3204584b` (Release receipt
 `20261018-213554-ab5af7b22f3f4bb4ac76fcff12745636`, 274 audited tests, ZIP SHA-256
 `f06068efbe5baa9e493ee0cb8f7ec222e2df0698d7b4bca646866e81655d458d6`, loader SHA-256
 `1f3e6d12073ad363c9bcef458a62dc7d48641edfb0f95d68538b7c852f4a4ae6`). Source commit `bf29f67` with a dirty
-tree. The link build id is `0.13.3+bf29f67`, so it will not connect to the 0.13.2 package. Not installed
-into either game copy, and the ladder, pipe, step-on and cardboard-box changes have not had a hidden-worker run.
+tree (saved later as `wip/agents-0133` `4914fa6`). The link build id is `0.13.3+bf29f67`, so it will not connect to
+the 0.13.2 package. **Correction:** this entry first said "not installed"; it WAS installed in both owned copies and
+played the same evening (early.log `early=start; version=0.13.3+bf29f67`, host line 3636, guest line 3546;
+link-status.json `remote_build: 0.13.3+bf29f67` at 2026-10-18T21:44:23Z). No hidden-worker run. What that session
+showed:
+- Traversal: 0 `partner_traverse` lines and no remote act 21..24, so the replay never ran.
+- Cardboard box: each remote box-on boxed the VIEWER's own player, never body 1. Guest
+  `partner_cbox=request; id=468; active=1`, then its own `partner_status=local; st=0x4`, while the host's body 1 logged
+  `edge=miss; remote=77(cbox?); body=1(stand_idle); held_ms=3003`. A re-request also knocked the local player out of
+  its own box. Removed in 0.13.4.
+- Vehicles: the 0.13.1 seat chain worked (partner drives, viewer sees it seated). A viewer boarding the partner-driven
+  jeep took seat 0 as a second driver; the other copy then refused the partner seat (`reason=local_vehicle`) and hid
+  the partner.
 
 ## October 18, 2026: 0.13.2 gameplay replaced (fixture-only; not a hidden-worker run)
 
-Package `mgs-coop-friend-0.13.2-20261018T032136Z-bcd27cbc` shipped a climb whitelist, a box bit and vehicle ACTION taps
-that were only fixture-tested. In play the box never called `Player.ChangeEquip`, the climb tap was dropped by the next
-reconciliation placement, and the mount taps fought the 0.13.1 seat chain (GetOn/Loop/GetOff), which stays the vehicle
-path. Horse riders stay hidden: there is no seated horse motion.
+Package `mgs-coop-friend-0.13.2-20261018T032136Z-bcd27cbc` (Release receipt
+`20261018-031908-d344f7a10a714f57b029ed349de0dbeb`, 274 audited tests (the first version of this entry said 275 and
+the commit 281/281 CTest), ZIP SHA-256 `8c53cf09fad9f312d5ced07178b279b2629ca17e3efd95dec6e1c629791c8d85`, loader
+SHA-256 `f27f7d6aa9f9639ce4f24456d24f778722e121547affd02e3db9377c3a30e249`) shipped a climb whitelist, a box bit and
+vehicle ACTION taps that were only fixture-tested. In play the box never called `Player.ChangeEquip`; the ladder tap
+failed 3 of 3 (on the host a `partner_recon=place; reason=vertical` followed the tap by about 0.6 s, but on the guest
+no placement followed and body 1 ran acts 1, 31, 32, 33 without reaching 21, so the placement does not explain it:
+the stock start goes through the local-only action icon, see [native-puppet.md "Traversal"](native-puppet.md)); and
+the mount/dismount taps never fired (0 `mount_action`/`dismount_action` lines: they sat after the vehicle early
+return). The 0.13.1 seat chain (GetOn/Loop/GetOff) stays the vehicle path. Horse riders stay hidden: there is no
+seated horse motion.
 
-What replaces that package in this tree:
+What 0.13.3 replaced it with (installed and played, see the 0.13.3 entry; corrected in 0.13.4):
 
 - **Ladders, pipes and step-ons.** Acts 21, 22 and 24 (Ghidra writers LadderActionImpl, PipeActionPluginImpl,
-  StepOnActionImpl on 1.0.15.4) place body 1, then fire one ACTION overlay tap only after the window is armed again.
-  ACTION is in the mask and in `sample_strip`, so the remote pad's E never arrives raw. Recon far/vertical/runaway
-  placements are held for the climb. Acts 49/50/59 are not traversals.
+  StepOnActionImpl on 1.0.15.4) place body 1, then fire up to 3 ACTION overlay taps 350 ms apart (not one) only after
+  the window is armed again. ACTION is in the mask and in `sample_strip`, so the remote pad's E never arrives raw.
+  Recon far/vertical/runaway placements are held for the climb. Acts 49/50/59 are not traversals. Never ran in play;
+  off by default since 0.13.4.
 - **Cardboard box.** Version 2 of the equip manifest carries `active_item_id` (bytes 10..11) and `cbox_active`
   (byte 63 bit 0). `EQP_IT_CBox` is 0x1C8; `IsVarsCurrentItemCBox` (`0x9D68E0`) accepts 0x1C8..0x1E2. The receiver
-  asks Lua for `Player.ChangeEquip` on instance 1 (public wrapper `0x9D0D60`, `playerIndex` in R8D) with stock 0 and
-  `dropPrevEquip` false. Not yet run in the hidden worker.
+  asked Lua for `Player.ChangeEquip` with `playerIndex=1`, stock 0 and `dropPrevEquip` false. **Wrong:** the Lua
+  binding (`0x9D0D60`) ignores `playerIndex` and passes the local index `[P+0x214]` in R8D, so it changed the
+  viewer's own player. Removed in 0.13.4 (the transport stays).
 - **Vehicle passengers.** Seats 0..3 already play that seat's GetOn/Loop/GetOff on the receiver's vehicle copy.
   Mount and dismount do not press ACTION. A passenger's aim while that direct motion owns the body is still the
   seat episode's early return: the aim tick does not run during it.
@@ -59,7 +115,7 @@ and is aligned again once the body kneels. Hidden runs `12320c2f`, `0d8190ea` an
 E, compared with a same-angle reference of the ready pose (it is brief: one frame at 150 ms). Lab key
 `partner_native_place_mirror`: on with the native gun profile in lab (proven without a named key in run `98e99783`),
 off in play (no play-mode C4 run yet). Contract
-677 code sites / 149 vtable slots; full CTest 280/280. Not merged or packaged
+677 code sites / 149 vtable slots; full CTest 280/280. Merged into 0.13.4 (`wp/integ8`); not packaged yet
 ([the design](anim-round2-throws.md) "WS4 v2").
 
 ## October 16, 2026: world timers keep running under the MISSION FAILED menu
@@ -83,7 +139,7 @@ fix: the menu Continue and the guest's first follow attempt need no Lua timer (p
 refused guest attempt would never have retried and the 120 s follow timeout could not fire. Behaviour change:
 the ESC pause also holds the raw clock, so world timers now keep wall time in a local pause too (digests and
 downed status keep flowing; a partner's 3 s revive hold or 30 s sleep credit can complete meanwhile). Full
-CTest 280/280. Branch `wp/gameover-clock` (from `wp/integ7`); not merged or packaged.
+CTest 280/280. Branch `wp/gameover-clock` (from `wp/integ7`); merged into 0.13.4 (`wp/integ8`), not packaged yet.
 
 ## October 16, 2026: 0.13.0 installed (join fixes, save handoff, throws in play, C4/arm, vehicle seat and tilt)
 
@@ -107,13 +163,15 @@ What 0.13.0 adds over 0.12.6 (details: [join-fix phase 1](join-fix-phase1-spec.m
 - Native partner grenade throws are on in two-PC play (stock guard, owner filter, viewer-own rebase, stall hold,
   receiver slot fix; WS1 rec+0x240 checks latch on a foreign row).
 - The partner draws and holds C4 and holds Hand of Jehuty's aim pose instead of lowering the rifle (no kneel/detonate
-  motion yet, no mirror of the charge in the viewer's world).
+  motion yet, no mirror of the charge in the viewer's world). The kneel and detonator motion came later in WS4 v2
+  (lab only), merged in 0.13.4.
 - Vehicles: the remote driver is seated by id in unnamed sortie vehicles (also at Mother Base), and the viewer's copy
   of the vehicle tilts with the driver's pitch and roll (RIDE_TILT).
 
 Hidden runs on the integrated build: play-native `c74a4ef5`, throws default in play `67f13461`, C4/arm `ea2b96fa`, tilt
 `05a6a6c7`, heli-alone `8c87caf7`, handoff transfer `db682ef9`. Known pre-existing issues: the shared game-over host
-continue stalls under the MISSION FAILED menu (Lua clock), and the lab seed's host shows infinite ammo.
+continue stalls under the MISSION FAILED menu (Lua clock; fixed by the held raw clock, `wp/gameover-clock`, merged in
+0.13.4), and the lab seed's host shows infinite ammo.
 
 ## October 16, 2026: the partner holds C4 and Hand of Jehuty natively, on by default (WS4 v1)
 

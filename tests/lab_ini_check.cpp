@@ -154,6 +154,9 @@ int main(int argc, char** argv) {
         // WS4 v2: the place / detonate mirror (lab only, default 0).
         std::printf("partner_native_place_mirror=%d\npartner_native_place_mirror_given=%d\n", c.partner_native_place_mirror ? 1 : 0,
                     c.partner_native_place_mirror_given ? 1 : 0);
+        // Traversal replay (lab only, default 0) and whether it was named.
+        std::printf("partner_native_traverse=%d\npartner_native_traverse_given=%d\n", c.partner_native_traverse ? 1 : 0,
+                    c.partner_native_traverse_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

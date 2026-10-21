@@ -76,10 +76,9 @@ Out Step(State& s, const In& in, const Params& P) noexcept {
         return o;
     }
     const bool body_traverse = in.body_ok && TraverseAct(in.body_act);
-    const bool can_tap = in.armed && !in.placing && in.body_ok && SourceAct(in.body_act);
     // A replay starts on the remote's edge into an ACTION-started traversal
     // that body 1 does not show, from idle or from a native hang (climb up).
-    const bool start = remote_edge && ReplayAct(in.remote_act) && in.body_ok && SourceAct(in.body_act) &&
+    const bool start = remote_edge && ReplayAct(in.remote_act) && in.body_ok && SourceAct(in.remote_act, in.body_act) &&
                        in.body_act != in.remote_act && in.target_ok &&
                        (s.phase == Phase::idle || (s.phase == Phase::native && !ReplayAct(in.body_act)));
     if (start) {
@@ -145,6 +144,8 @@ Out Step(State& s, const In& in, const Params& P) noexcept {
     default:
         break;
     }
+    // A tap only from a source act of the episode's own replay act (s.act, set by `start`).
+    const bool can_tap = in.armed && !in.placing && in.body_ok && SourceAct(s.act, in.body_act);
     if (s.phase == Phase::tap) {
         if (episode_entered) {
             ++s.entered;

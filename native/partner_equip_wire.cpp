@@ -20,7 +20,6 @@ bool ValidInv(std::uint8_t inv) noexcept { return inv <= kInvSlotMax || inv == k
 } // namespace
 
 bool SameSlots(const Manifest& a, const Manifest& b) noexcept {
-    if (a.cbox_active != b.cbox_active || a.active_item_id != b.active_item_id) return false;
     for (std::size_t i = 0; i < kSlots; ++i) {
         const Slot& x = a.slots[i];
         const Slot& y = b.slots[i];
@@ -117,7 +116,8 @@ bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint3
     // receiver keeps the session's manifest across missions (MissionStart seeds it): its new
     // loadout under the old revision number must replace the stored one, never be dropped.
     if (store.have && store.manifest.revision == m.revision && store.manifest.epoch == m.epoch &&
-        store.manifest.version == m.version && store.manifest.inv_slot == m.inv_slot && SameSlots(store.manifest, m)) {
+        store.manifest.version == m.version && store.manifest.inv_slot == m.inv_slot && SameSlots(store.manifest, m) &&
+        SameBox(store.manifest, m)) {
         ++store.duplicates;
         return false;
     }

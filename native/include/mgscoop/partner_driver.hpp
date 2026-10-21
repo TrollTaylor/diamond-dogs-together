@@ -581,7 +581,8 @@ struct Mission {
     bool status_have;
     std::uint16_t status_bits;
     std::uint16_t active_item;  // the local tick's item= id (0 unknown)
-    // Receiver cardboard box: a short burst of op::cbox after the remote manifest changes.
+    // Receiver cardboard box: the remote manifest's box state last logged (transport only;
+    // nothing is applied to body 1 and no reply carries op::cbox until a native apply exists).
     bool cbox_pending, cbox_want, cbox_applied;
     std::uint16_t cbox_id, cbox_id_applied;
     std::uint8_t cbox_left;

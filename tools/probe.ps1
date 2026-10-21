@@ -23,7 +23,7 @@ if ($Action -eq 'Install') {
     if ((Test-Path -LiteralPath $targetDll) -or (Test-Path -LiteralPath $manifestPath)) { throw 'An existing loader or installation record is present; nothing was replaced' }
     $sourceHash = (Get-FileHash -LiteralPath $sourceDll -Algorithm SHA256).Hash
     $record = [ordered]@{
-        product = 'mgs-coop-original-loader-probe'; version = '0.13.3'; game_directory = $gameRoot;
+        product = 'mgs-coop-original-loader-probe'; version = '0.13.4'; game_directory = $gameRoot;
         dll_sha256 = $sourceHash; executable_sha256 = (Get-FileHash -LiteralPath (Join-Path $gameRoot 'mgsvtpp.exe') -Algorithm SHA256).Hash;
         installed_utc = [DateTime]::UtcNow.ToString('o'); scope = 'Diagnostics and exact-source Lua experiments; host-v2 creates an experimental native host; host-v3 additionally opens admission after mission startup and closes it before termination; client-v1 requests native joining after mission startup using client-host.txt; no verified playable co-op'
     }

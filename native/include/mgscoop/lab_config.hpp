@@ -547,10 +547,15 @@ struct LabConfig {
     // The native stance level fix: 1 = the round-1 window (500 ms behind the
     // guards, partner_recon NativeParams), 0 = the previous 2 s rule.
     bool partner_native_stance_fast = true;
-    // Traversal replay (partner_traverse): ladders, drain pipes and step-ons
-    // the remote starts with ACTION are replayed on body 1 as a placement and a
-    // state-verified ACTION overlay tap. 0 = ACTION never reaches body 1.
-    bool partner_native_traverse = true;
+    // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal"):
+    // ladders, drain pipes and step-ons the remote starts with ACTION are
+    // replayed on body 1 as a placement and a state-verified ACTION overlay tap.
+    // 0 = ACTION never reaches body 1. Default 0 in lab and play: the stock start
+    // goes through the local-only action icon (0x141155B87), so a tap on
+    // instance 1's pad is unproven; a named 1 is lab only (play forces it off)
+    // until a hidden-worker FRAME shows body 1 on the ladder.
+    bool partner_native_traverse = false;
+    bool partner_native_traverse_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute

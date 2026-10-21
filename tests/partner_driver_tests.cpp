@@ -3594,7 +3594,9 @@ void TestNativeEnterAndLeave() {
     Check(s.fake.Containing("partner_native=enter; step=place") == 1 && s.fake.Containing("partner_native=enter; step=armed") == 1,
           "every enter step logged once");
     const auto& arm = s.fake.arms.back();
-    Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == (0x2240006u | 0x20u) &&
+    // partner_native_traverse defaults off: no ACTION in the mask or the sample strip.
+    Check(!s.driver.settings.traverse && arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net &&
+          arm.config.mask == 0x2240006u && arm.config.sample_strip == 0u &&
           arm.wrap == mgscoop::PartnerWrap::window && arm.hold == mgscoop::PartnerInputHold::own && arm.go == 0x1000 - 0x20 &&
           !arm.local_all && arm.naim == mgscoop::PartnerNativeAim::off && !arm.p218, "the native Arm (effective settings)");
     // Publication order: identity -> deferral armed -> enabled native Arm (run
@@ -3618,6 +3620,19 @@ void TestNativeEnterAndLeave() {
         for (int i = 0; i < 10; ++i) s.N();
         Check(s.fake.arms.back().enabled && s.fake.arms.back().gen == gen, "steering changes never bump the Arm gen");
         s.fake.sample.x = 1.0f;
+    }
+    // partner_native_traverse=1 (lab only): ACTION joins the mask (the state-verified overlay tap reaches
+    // body 1) and the sample strip (the remote's raw E never passes); off again restores the Arm.
+    {
+        s.driver.settings.traverse = true;
+        s.N();
+        const auto& on = s.fake.arms.back();
+        Check(on.enabled && on.native && on.config.mask == (0x2240006u | 0x20u) && on.config.sample_strip == 0x20u,
+              "traverse on: ACTION in the mask and the sample strip");
+        s.driver.settings.traverse = false;
+        s.N();
+        Check(s.fake.arms.back().config.mask == 0x2240006u && s.fake.arms.back().config.sample_strip == 0u,
+              "traverse off: no ACTION again");
     }
     // Telemetry for the worker state.json.
     const auto& tele = s.driver.mission.tele;
@@ -4502,6 +4517,22 @@ void TestNativeWeapons() {
               ew::Decode(s.fake.reliable_sent[2].data(), s.fake.reliable_sent[2].size(), 8, m) == ew::Result::ok && m.revision == 2 &&
               m.slots[1].alias == 875, "a changed loadout gets revision 2");
         Check(s.fake.inputs.back().equip_rev == 2, "the v4 frame names the manifest revision");
+        // The local cardboard box (st= cbox, item=): resent at once under the same revision, so the
+        // receiver's gun writer (keyed on the revision and the slots) is not re-driven by a box toggle.
+        s.driver.mission.status_bits = mgscoop::partner::status_bit::cbox;
+        s.driver.mission.active_item = 0x1D4;
+        s.N();
+        Check(s.fake.reliable_sent.size() == 4 &&
+                  ew::Decode(s.fake.reliable_sent[3].data(), s.fake.reliable_sent[3].size(), 8, m) == ew::Result::ok && m.revision == 2 &&
+                  m.cbox_active && m.active_item_id == 0x1D4 && m.slots[1].alias == 875,
+              "a box toggle: resent under the same revision");
+        s.driver.mission.status_bits = 0;
+        s.driver.mission.active_item = 0;
+        s.N();
+        Check(s.fake.reliable_sent.size() == 5 &&
+                  ew::Decode(s.fake.reliable_sent[4].data(), s.fake.reliable_sent[4].size(), 8, m) == ew::Result::ok && m.revision == 2 &&
+                  !m.cbox_active && m.active_item_id == 0,
+              "box off: resent under the same revision");
         // The receiver's verdict for the back slot.
         s.fake.gun_ok = true;
         s.fake.gun.fields_ok = true;
@@ -4524,6 +4555,26 @@ void TestNativeWeapons() {
         s.N();
         Check(s.fake.Has("partner_equip=apply; rev=5; slot=1; want=40; loaded=0; result=no_weapon; writer=stock46\r\n"),
               "apply: re-judged when the loaded equip changes");
+        // The remote's cardboard box (same revision, box fields only): logged as transport only; the gun
+        // verdict is not re-run, the slot types stand and no reply carries op::cbox (no Lua apply).
+        const std::size_t applies = s.fake.Containing("partner_equip=apply;");
+        const std::size_t manifests = s.fake.Containing("partner_equip=manifest;");
+        rx.cbox_active = true; rx.active_item_id = 0x1C8;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        bool cbox_op = false;
+        for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
+        Check(s.driver.mission.equip.manifest.cbox_active && s.driver.mission.equip.manifest.revision == 5 &&
+                  s.fake.Containing("partner_equip=apply;") == applies && s.fake.Containing("partner_equip=manifest;") == manifests &&
+                  s.fake.Has("partner_cbox=remote; id=456; active=1; apply=off\r\n") && !cbox_op,
+              "a box toggle: logged, no gun re-apply, no op::cbox");
+        rx.cbox_active = false; rx.active_item_id = 0;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box-off manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
+        Check(!s.driver.mission.equip.manifest.cbox_active && s.fake.Containing("partner_equip=apply;") == applies &&
+                  s.fake.Has("partner_cbox=remote; id=456; active=0; apply=off\r\n") && !cbox_op,
+              "box off: logged, no gun re-apply, no op::cbox");
     }
 }
 
@@ -4724,7 +4775,7 @@ void TestNativeReloadSwitch() {
     Check(s.fake.inputs.back().switch_seq == 1 && s.fake.inputs.back().inv_slot == 2, "v5 sender: a slot change advances switch_seq");
     // The Arm: event mode, the remote's raw RELOAD stripped from its sample (live v5), the plan's slots.
     const pi::Arm& a0 = s.fake.arms.back();
-    Check(a0.reload == mgscoop::PartnerNativeReload::event && !a0.reload_hold && a0.config.sample_strip == (0x40u | 0x20u) &&
+    Check(a0.reload == mgscoop::PartnerNativeReload::event && !a0.reload_hold && a0.config.sample_strip == 0x40u &&
               a0.slot_follow == mgscoop::PartnerNativeSlot::write && a0.slot_ok == 0 && a0.strip == 0,
           "Arm: reload event, sample strip RELOAD, follower write (no manifest yet: no admitted slot)");
     // The receiver: the remote enters its reload (counter 4 -> 5, mode 11): one RELOAD tap.
@@ -4883,7 +4934,7 @@ void TestNativeReloadSwitch() {
     s.driver.settings.nreload = mgscoop::PartnerNativeReload::mirror;
     s.N();
     Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::write && s.fake.arms.back().reload == mgscoop::PartnerNativeReload::mirror &&
-              s.fake.arms.back().config.sample_strip == 0x20u, "play: call runs as write; mirror strips only ACTION");
+              s.fake.arms.back().config.sample_strip == 0u, "play: call runs as write; mirror: no sample strip");
     s.driver.settings.play_mode = false;
     s.N();
     Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::call, "lab: the call variant reaches the Arm");
@@ -4895,7 +4946,7 @@ void TestNativeReloadSwitch() {
     s.fake.latest.packet.reload_seq = 0;
     s.fake.latest.packet.inv_slot = 0xFF;
     s.N();
-    Check(s.fake.arms.back().config.sample_strip == 0x20u && !s.driver.mission.tele.reload_remote_valid,
+    Check(s.fake.arms.back().config.sample_strip == 0u && !s.driver.mission.tele.reload_remote_valid,
           "a v4 remote: its raw R still reaches body 1");
     // The ring carries body 1's gun mode and hand slot.
     const auto& e = pn::At(s.driver.mission.tele.ring, s.driver.mission.tele.ring.count - 1);
@@ -5070,7 +5121,7 @@ void TestNativeActionsWithWeapons() {
     s.fake.latest.packet.mag_cap = 30;
     s.N();
     const pi::Arm& arm = s.fake.arms.back();
-    Check(arm.enabled && arm.native && arm.config.mask == (0x224005Eu | 0x20u), "together: the native Arm's mask is EVADE | HOLD | RELOAD | FIRE | ACTION");
+    Check(arm.enabled && arm.native && arm.config.mask == 0x224005Eu, "together: the native Arm's mask is EVADE | HOLD | RELOAD | FIRE (0x224005E; traverse off)");
     Check(arm.rates_mirror && arm.rates_rec == 0xA188 && arm.rates_id == 1 && arm.rates_remote[0] == 1100 && arm.rates_remote[1] == 900 &&
               arm.rates_remote[2] == 1500 && arm.mag_mirror && arm.gun_rec == 0x9100 && arm.gun_prim == 0x9000,
           "together: one Arm requests the rates mirror and the magazine mirror");

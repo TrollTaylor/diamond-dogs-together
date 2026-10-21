@@ -65,8 +65,13 @@ struct Manifest {
     std::uint16_t active_item_id; // version 2 bytes 10..11 (version 1: 0)
     Slot slots[kSlots];
 };
-// Field-wise (no padding compared).
+// The three gun slots, field-wise (no padding compared). The box fields are
+// not compared: a box toggle must not re-drive the receiver's gun writer.
 bool SameSlots(const Manifest& a, const Manifest& b) noexcept;
+// The cardboard-box fields (cbox_active, active_item_id).
+inline bool SameBox(const Manifest& a, const Manifest& b) noexcept {
+    return a.cbox_active == b.cbox_active && a.active_item_id == b.active_item_id;
+}
 
 // kSize (version 2), or 0 (out zeroed) for revision 0, epoch 0, an inv_slot
 // outside 0..15/0xFF or a type outside 0..8.

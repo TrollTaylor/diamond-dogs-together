@@ -203,7 +203,11 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
     else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
-    else if (Equals(key, "partner_native_traverse")) ok = ParseBool(value, result.partner_native_traverse);
+    else if (Equals(key, "partner_native_traverse")) {
+        // Traversal replay (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.partner_native_traverse);
+        if (ok) result.partner_native_traverse_given = true;
+    }
     else return false;
     return true;
 }
@@ -1399,6 +1403,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // its hidden runs showed body 1's kneel and detonator motion with every
     // placed digest unchanged); play forces it off below.
     if (!c.partner_native_place_mirror_given) c.partner_native_place_mirror = gun;
+    // Traversal replay: off unless named (no hidden-worker FRAME of body 1 on a
+    // ladder yet); play forces it off below.
+    if (!c.partner_native_traverse_given) c.partner_native_traverse = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1424,6 +1431,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_placed_census = false;
         // WS4 v2: the place / detonate mirror stays lab-only (no play-mode C4 run yet).
         c.partner_native_place_mirror = false;
+        // Traversal replay stays lab-only (the ACTION tap on body 1 is unproven).
+        c.partner_native_traverse = false;
     }
 }
 

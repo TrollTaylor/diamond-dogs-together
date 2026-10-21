@@ -149,7 +149,7 @@ contract with its string; keyboard bit i is key binding i, `0x1206C21..0x1206CF2
 | 0x2000000 | keyboard binding 25 (walk) | Ctrl | always |
 | 0x8 / 0x40 | HOLD / RELOAD = CARRY | RMB / R | gun stage |
 | 0x10 | FIRE | LMB aimed | fire gate only |
-| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never |
+| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never from the remote's pad; with `partner_native_traverse=1` (lab only, default 0) only the traversal replay's overlay tap ("Traversal") |
 | 0x200, 0x400, 0x8000, ... | CALL/INTERROGATE, SUBJECT, CQC, weapons, markers | | never |
 
 The movement base is `kPartnerNativeBaseMask = 0x2240006`; the gun stage
@@ -168,12 +168,12 @@ also calls a global service's vt+0x28 with the object id held at +0x29C of
 its per-id record, i.e. it may message another GameObject in the receiver's
 world. Which states reach these six, and whether instance 1 can enter them
 with ACTION masked, is not verified (open item; the action census records
-`remote_act`/`body.act`). ACTION
-stays masked: it aliases ride, knife kill and pickup, which would act on the
-receiver's world. RELOAD aliases CARRY (gun stage only; gating it on the
-remote's aim state is an open item). Phase 2 (vault/climb) would replay a
-one-frame ACTION press only when the remote's act enters a vault/climb census
-whitelist near the body; not implemented.
+`remote_act`/`body.act`). The remote's own ACTION never reaches body 1: it
+aliases ride, knife kill and pickup, which would act on the receiver's world.
+RELOAD aliases CARRY (gun stage only; gating it on the remote's aim state is
+an open item). The traversal replay ("Traversal") is the only path that may
+press ACTION on body 1, as a state-verified overlay tap, and it is off by
+default.
 
 Reconciliation (native preset, `partner_recon::NativeParams`): the moving
 runaway compares the body's own velocity with the remote's along and across
@@ -186,6 +186,70 @@ the slide decelerates (`stop_grace`). The arbiter's runaway timer counts only
 the idle-remote runaway (`report.runaway_idle`). Runs a7823/63199 showed the
 old rule: a sprint at 0.835 speed pinned, never exited, and the arbiter left
 with `runaway`.
+
+## Traversal
+
+`partner_traverse` (`native/partner_traverse.*`, driven by `TickTraverse` in
+`partner_driver.cpp`) replays a remote ladder (act 21), drain pipe (22) or
+step-on (24: low vault, onto a ledge, up out of a hang) on body 1. Lab key
+`partner_native_traverse=0|1`: **default 0 in lab and play**, play forces it
+off, a named value records `partner_native_traverse_given`. It stays off until
+a hidden-worker FRAME shows body 1 on a ladder.
+
+Act ids come from a static writer census of `Q+0x18[id]` on 1.0.15.4 (owners
+named by Ghidra): 21 `LadderActionImpl`, 22 `PipeActionPluginImpl`, 23
+`ClimbActionPluginImpl` (wall / cliff free-climb), 24 `StepOnActionImpl`, 25
+fall and 26 land (`StepDownActionImpl`), 27 evade and 28 the cliff / edge drop
+(`CliffActionImpl`), 54..56 the ledge hang (`EludeActionPluginImpl`). 25, 26,
+28 and 54..56 start without ACTION and already match natively (falling and
+EVADE reach body 1). There is no player door act: door states belong to the
+toilet (84..89), trash box (79..83) and the 67..74 plugin. 49/50/59 are Fulton
+acts.
+
+One episode, per remote edge into 21/22/24 that body 1 does not show:
+
+1. **Source gate.** Body 1's act must be a plausible start. A ladder admits
+   only the game's own mask (`LadderActionImpl::CheckEnableStartLadder`
+   `0x1411E9B70` -> `FUN_1411E9A70`, `0x18200001E`: acts 1..4, 25, 31, 32);
+   a pipe or a step-on admits locomotion 1..8 and the hang 54..56 (not yet
+   read from their plugins).
+2. **Placement.** One reconciliation placement at the aligned remote pose
+   (`PlaceReason::traverse`: the Lua Warp with a neutral pad), skipped when body
+   1 is within 300 mm and 0.35 rad; no replay beyond 8 m (the reconciliation
+   places normally). The placement must verify within 1200 ms.
+3. **Tap.** Only after the window is armed again with a live pad on this and
+   the previous tick: a 4-frame ACTION overlay tap (`BumpTap`), at most 3 taps
+   per episode 350 ms apart while the remote stays in the traversal; body 1
+   must enter within 1500 ms of the first tap or the episode aborts
+   (`no_entry`).
+4. **Hold.** While an episode runs and while body 1 runs any traversal act
+   natively (21..24, 28, 54..56), the reconciliation's far, vertical and
+   runaway placements are held (`traverse_hold`, `partner_recon.cpp`); a
+   teleport still places. The hold ends 1500 ms after body 1 left the
+   traversal, 3 s after the remote left every traversal act, or after 45 s.
+
+ACTION is added to the Arm's `mask` and `sample_strip` only with
+`native_active && traverse` (`BuildArm`): the overlay tap passes, the remote's
+raw E (held, edges, words, tap12/long12) never does. `kNativeBase` and
+`kMovementOnlyBits` are unchanged. Carry, a seated ride, the DM overlay and a
+downed remote block the replay (`block=` in the log). Every edge logs
+`partner_traverse=<start|placed|tap|entered|done|abort>; reason=..; phase=..;
+act=..; remote_act=..; body_act=..; taps=..; episodes=..; entered=..;
+aborted=..; block=..`.
+
+**Status (0.13.4): unproven, off.** The 0.13.3 build that shipped this machine
+on by default logged 0 `partner_traverse` lines in play. A stock ladder, pipe,
+wall-climb or step-on start goes through the HUD action icon:
+`CorePluginImpl::ExecParallelStart` runs the icon builder `[[P+0xD0]]+0x18`
+(`0x140AFCCE0`) only for `idx == [P+0x218]` (`0x141155B87`), and the plugin
+polls read `IsCompletedActionIcon` (`0x140AFD870`, no player index) at
+`0x1411EB00D` (ladder), `0x141213DBC` (pipe), `0x14114DEC8` (climb) and
+`0x14129BF86` (step-on). An ACTION press on instance 1's pad has no consumer
+there, so the tap step is expected to be replaced by an icon request for body
+1 (the plugin's own `ExecActionButtonFunction` for idx 1). The ACTION reads
+inside a running traversal (ladder `0x1411EFEEC`, `0x1411F02DD`; elude
+`0x1411A7967`) do read instance 1's pad, which is why the mask and strip
+wiring stays.
 
 ## Rates
 
@@ -1196,6 +1260,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_standin` | off, on (gun profile: on; closest already-filled class when the remote slot is unavailable) |
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
+| `partner_native_traverse` | 0, 1 (the ladder / pipe / step-on replay, see "Traversal"; default 0 in lab and play, lab only: play forces 0) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and

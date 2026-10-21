@@ -49,7 +49,13 @@ void TestNames() {
     Check(Is(pal::ActName(57), "dive") && Is(pal::ActName(58), "evade_quiet") && Is(pal::ActName(27), "evade") && Is(pal::ActName(139), "dm") &&
               Is(pal::ActName(111), "vehicle_seated") && Is(pal::ActName(132), "sleep") && Is(pal::ActName(43), "carried"),
           "verified names have no '?'");
-    Check(Is(pal::ActName(23), "ladder_climb?") && Is(pal::ActName(55), "ledge_hang?") && Is(pal::ActName(77), "cbox?") &&
+    // The static writer census (1.0.15.4): 21 ladder, 22 pipe, 23 wall climb, 24 step-on, 28 cliff drop, 75/76 cure,
+    // 79..83 trash box (not heli, ladder climb, fall entry, hop, knockdown or stun).
+    Check(Is(pal::ActName(21), "ladder") && Is(pal::ActName(22), "pipe") && Is(pal::ActName(23), "wall_climb") &&
+              Is(pal::ActName(24), "step_on") && Is(pal::ActName(28), "cliff_drop") && Is(pal::ActName(75), "cure") &&
+              Is(pal::ActName(76), "cure") && Is(pal::ActName(79), "trash_box") && Is(pal::ActName(83), "trash_box"),
+          "writer-census names have no '?'");
+    Check(Is(pal::ActName(55), "ledge_hang?") && Is(pal::ActName(77), "cbox?") &&
               Is(pal::ActName(70), "cover?") && Is(pal::ActName(93), "cqc_hold?") && Is(pal::ActName(104), "heli") &&
               Is(pal::ActName(124), "walker?") && Is(pal::ActName(29), "hit?"),
           "uncertain families end in '?'");

@@ -156,8 +156,10 @@ local function fixture(options)
         end,
         RequestToStopDirectMotion = function() record('dmstop') end,
         RequestToGoNextDirectMotion = function() record('dmnext') end,
+        -- Like the real binding (0x9D0D60): playerIndex is never read and the
+        -- change lands on the local player ([P+0x214] in R8D).
         ChangeEquip = function(t)
-            record(string.format('changeequip:%s:%s:%s:%s:%s', tostring(t.playerIndex), tostring(t.equipId),
+            record(string.format('changeequip:%s:%s:%s:%s:%s', tostring(c.localIndex), tostring(t.equipId),
                 tostring(t.stock), tostring(t.toActive), tostring(t.dropPrevEquip)))
         end,
     }
@@ -676,22 +678,18 @@ do
     _, n = seat(25601, 1, 1, 4)
     check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25601;seat=1;reason=no_class'), 'no Vehicle.type table: refused')
 end
--- CBOX (1024): Player.ChangeEquip on instance 1 for a box id, stock 0, no drop.
+-- CBOX (1024) is never applied through Lua: Player.ChangeEquip would equip the
+-- local player (the binding ignores playerIndex), so no reply value may reach it.
 do
     local env, c = fixture(); call(env, 'OnMissionGameStart')
-    local function equip(id, active)
-        c.reply = {1024, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, id, active}
-        local mark = #c.calls
+    local logs, ticks = #c.logs, #c.ticks
+    for _, box in ipairs({{456, 1}, {482, 0}}) do
+        c.reply = {1024, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, box[1], box[2]}
         update(env)
-        return c.calls[mark + 1]
     end
-    check(equip(456, 1) == 'changeequip:1:456:0:true:false' and hasLog(c, 'event=cbox;id=456;active=1'),
-        'the base cardboard box is equipped on instance 1')
-    check(equip(482, 0) == 'changeequip:1:482:0:false:false' and hasLog(c, 'event=cbox;id=482;active=0'),
-        'the last box id can be put away')
-    local notes = count(c.logs, 'event=cbox_refused;reason=item')
-    check(equip(455, 1) == nil and count(c.logs, 'event=cbox_refused;reason=item') == notes + 1, 'an id below the box range is refused')
-    check(equip(483, 1) == nil and count(c.logs, 'event=cbox_refused;reason=item') == notes + 2, 'an id above the box range is refused')
+    check(#c.ticks == ticks + 2, 'both box replies were received')
+    for _, entry in ipairs(c.calls) do check(not entry:match('^changeequip:'), 'no ChangeEquip call: ' .. entry) end
+    for i = logs + 1, #c.logs do check(not c.logs[i]:match('cbox'), 'no cbox event: ' .. c.logs[i]) end
 end
 -- The sender's seat/vehicle/status suffix (lua/coop/partner_ride.lua).
 do

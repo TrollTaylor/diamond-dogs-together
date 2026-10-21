@@ -2,6 +2,7 @@
 // replay with a verified placement, bounded taps and the reconciliation hold).
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <cstring>
 #include "mgscoop/partner_traverse.hpp"
 
@@ -47,7 +48,15 @@ void TestActSets() {
     for (std::uint16_t a : notTrav) Check(!tv::TraverseAct(a) && !tv::ReplayAct(a), "not a traversal act");
     const std::uint16_t trav[] = {21, 22, 23, 24, 28, 54, 55, 56};
     for (std::uint16_t a : trav) Check(tv::TraverseAct(a), "traversal act");
-    Check(tv::SourceAct(1) && tv::SourceAct(8) && tv::SourceAct(54) && !tv::SourceAct(25) && !tv::SourceAct(139), "source acts");
+    // Ladder sources: the game's own mask 0x18200001E (FUN_1411E9A70) = acts 1..4, 25, 31, 32.
+    const std::uint16_t ladderFrom[] = {1, 2, 3, 4, 25, 31, 32};
+    for (std::uint16_t a : ladderFrom) Check(tv::LadderSourceAct(a) && tv::SourceAct(21, a), "ladder source act");
+    const std::uint16_t ladderNot[] = {0, 5, 6, 7, 8, 21, 24, 26, 30, 33, 54, 55, 56, 63, 64, 139};
+    for (std::uint16_t a : ladderNot) Check(!tv::LadderSourceAct(a) && !tv::SourceAct(21, a), "not a ladder source act");
+    // Pipe and step-on sources: locomotion 1..8 and the ledge hang.
+    for (std::uint16_t r : {std::uint16_t(22), std::uint16_t(24)})
+        Check(tv::SourceAct(r, 1) && tv::SourceAct(r, 8) && tv::SourceAct(r, 54) && !tv::SourceAct(r, 25) && !tv::SourceAct(r, 139),
+              "pipe/step-on source acts");
 }
 
 // Remote 2 -> 21: one placement, then one tap only after the placement
@@ -116,8 +125,22 @@ void TestRefusals() {
         Check(!w.out.request_place && !w.out.hold, "disabled: no replay");
     }
     {
+        World w; w.in.body_act = 25; w.Tick(); w.in.remote_act = 22; w.Tick();
+        Check(!w.out.request_place && !w.out.tap, "body falling (25): no pipe replay");
+    }
+    {
+        // The ladder mask admits a fall (25) but not prone (5) or a running step (8).
         World w; w.in.body_act = 25; w.Tick(); w.in.remote_act = 21; w.Tick();
-        Check(!w.out.request_place && !w.out.tap, "body falling (25): no replay");
+        Check(w.out.request_place && w.st.episodes == 1, "body falling (25): a ladder replay (game mask)");
+        for (std::uint16_t from : {std::uint16_t(5), std::uint16_t(8)}) {
+            World p; p.in.body_act = from; p.Tick(); p.in.remote_act = 21; p.Tick();
+            Check(!p.out.request_place && !p.out.tap && p.st.episodes == 0, "prone or running step: no ladder replay");
+        }
+    }
+    {
+        // A pipe from prone is still admitted (1..8): the ladder mask is the ladder's only.
+        World w; w.in.body_act = 5; w.Tick(); w.in.remote_act = 22; w.Tick();
+        Check(w.out.request_place && w.st.episodes == 1, "prone: a pipe replay");
     }
     {
         World w; w.in.target[0] = 20000.0; w.Tick(); w.in.remote_act = 21; w.Tick();
@@ -180,6 +203,7 @@ int main() {
     TestHangClimbUp();
     TestRemoteLeft();
     std::printf("%u partner traverse checks passed: act sets (static writer census), ladder replay (one placement, tap after "
-                "verify, native hold, grace), near tap and bounded retaps, refusals, hang climb-up, remote left\n", checks);
+                "verify, native hold, grace), near tap and bounded retaps, refusals (ladder source mask), hang climb-up, remote left\n",
+                checks);
     return 0;
 }

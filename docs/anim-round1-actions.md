@@ -110,17 +110,21 @@ Family names (action-anims.md section 3 with critic 3.6; `?` marks likely/specul
 | 9 | supine_idle? | 57 / 58 | dive / evade_quiet |
 | 11 / 12 / 13 | aim_stand_idle / aim_stand_turn / aim_stand_move | 59 | interact_held? |
 | 14 / 15 / 16 | aim_crouch_idle / aim_crouch_turn / aim_crouch_move? | 67..74 | cover? |
-| 17, 19, 20 | aim_prone? | 75 / 76 | knockdown? / knockdown_recover? |
-| 21 / 23 | ladder? / ladder_climb? | 77, 78 | cbox? |
-| 22 | heli? | 79..83 | stun? |
-| 24 | fall_entry? | 91..96 | cqc_hold? |
+| 17, 19, 20 | aim_prone? | 75, 76 | cure |
+| 21 / 23 | ladder / wall_climb | 77, 78 | cbox? |
+| 22 | pipe | 79..83 | trash_box |
+| 24 | step_on | 91..96 | cqc_hold? |
 | 25 / 26 | fall / land | 97 / 98..108 | heli_board? / heli |
 | 27 | evade | 109 / 110 / 111 / 112 | vehicle_in / vehicle_dismount? / vehicle_seated / vehicle_out |
-| 28 | hop? | 121 / 122 / 123..126 | vehicle_passenger? / horse? / walker? |
+| 28 | cliff_drop | 121 / 122 / 123..126 | vehicle_passenger? / horse? / walker? |
 | 29 | hit? | 131 / 132 / 133 | sleep_onset / sleep / sleep_wake |
 | 0 | none | 139 / 142 | dm / dive_variant? |
 
-Everything else prints `?`.
+Everything else prints `?`. 0.13.4 renamed 21-24, 28, 75/76 and 79..83 from the static writer census of
+`Q+0x18[id]` on 1.0.15.4 (owners named by Ghidra): 21 `LadderActionImpl`, 22 `PipeActionPluginImpl`, 23
+`ClimbActionPluginImpl` (wall / cliff free-climb), 24 `StepOnActionImpl` (low vault, onto a ledge, up out of a hang),
+28 `CliffActionImpl` (edge drop), 75/76 Cure, 79..83 `TrashBoxActionPluginImpl`. They were heli?, ladder_climb?,
+fall_entry?, hop?, knockdown? and stun?.
 
 **Dropped pad presses.** Per second, the remote's presses (its input frames' edge sets, i.e. the
 sender's pad before this copy's mask; v1 frames: rising held bits) that body 1's window did not pass,

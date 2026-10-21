@@ -9,22 +9,26 @@
 // remote's act enters one of those acts, body 1 is placed once at the remote's
 // aligned pose through the reconciliation's own placement, and only after that
 // placement has been verified (window armed again, pad not neutral) one
-// 4-frame ACTION overlay tap is requested (retried a bounded number of times
-// while the remote stays in the traversal). While the replay waits and while
-// body 1 runs a traversal, the reconciliation's far/vertical/runaway
-// placements are held off: a placement disarms the window or holds the pad
-// neutral, which is what dropped the 0.13.2 taps (live log: remote act 21,
-// tap, then `partner_recon=place; reason=vertical` with a neutral pad).
+// 4-frame ACTION overlay tap is requested (at most 3 taps per episode while
+// the remote stays in the traversal). While the replay waits and while body 1
+// runs a traversal, the reconciliation's far/vertical/runaway placements are
+// held off (a placement disarms the window or holds the pad neutral).
+//
+// Unproven and off by default (lab key partner_native_traverse, play forces
+// 0): a stock ladder/pipe/climb/step-on start goes through the HUD action
+// icon, whose builder runs only for the local player (0x141155B87) and whose
+// completion (IsCompletedActionIcon 0x140AFD870) takes no player index, so a
+// tap on instance 1's pad may have no consumer. The 0.13.2 recon placement
+// after a tap explains only the host's failed ladder, not the guest's.
 //
 // Act ids are the exe's own writers of Q+0x18[id] (1.0.15.4, static census of
 // `mov word [act + id*2], imm` after the [+0x138]+0x60 -> +0x18 chain, owners
-// named by Ghidra): 21 LadderActionImpl, 22 PipeActionPluginImpl, 23 and 28
-// ClimbActionPluginImpl, 24 StepOnActionImpl, 54..56 EludeActionPluginImpl
-// (ledge hang). The 0.13.2 whitelist's 49/50/59 are HasBeenFulton/Fulton
-// acts and are not traversals. In the 0.13.2 user session the remote's ACTION
-// presses were dropped right around 21 and 24 (partner_pad_dropped action>0),
-// while 28 (hop) and 54 (grab while falling) were matched natively by body 1
-// (EVADE and falling reach it), so only 21/22/24 are replayed.
+// named by Ghidra): 21 LadderActionImpl, 22 PipeActionPluginImpl, 23
+// ClimbActionPluginImpl (wall climb), 24 StepOnActionImpl, 28 CliffActionImpl
+// (cliff drop), 54..56 EludeActionPluginImpl (ledge hang). The 0.13.2
+// whitelist's 49/50/59 are HasBeenFulton/Fulton acts and are not traversals.
+// 28 and 54 (grab while falling) are matched natively by body 1 (EVADE and
+// falling reach it), so only 21/22/24 are replayed.
 #include <cstdint>
 
 namespace mgscoop::partner_traverse {
@@ -35,9 +39,18 @@ inline constexpr bool ReplayAct(std::uint16_t act) noexcept { return act == 21 |
 inline constexpr bool TraverseAct(std::uint16_t act) noexcept {
     return (act >= 21 && act <= 24) || act == 28 || (act >= 54 && act <= 56);
 }
-// Body acts from which an ACTION start is plausible: locomotion (1..8; 7 is a
-// prone side roll, 8 a running step) and the ledge hang (climb up = step-on).
-inline constexpr bool SourceAct(std::uint16_t act) noexcept { return (act >= 1 && act <= 8) || (act >= 54 && act <= 56); }
+// The ladder start's own source mask (LadderActionImpl::CheckEnableStartLadder
+// 0x1411E9B70 -> FUN_1411E9A70, mask 0x18200001E): acts 1..4, 25, 31 and 32.
+// The game refuses a ladder from any other act (prone 5/6, 7, 8 included).
+inline constexpr std::uint64_t kLadderSourceMask = 0x18200001EULL;
+inline constexpr bool LadderSourceAct(std::uint16_t act) noexcept { return act < 64 && ((kLadderSourceMask >> act) & 1u) != 0; }
+// Body acts from which an ACTION start of `replay` is plausible: a ladder (21)
+// only from the game's own mask; a pipe or a step-on from locomotion (1..8; 7
+// is a prone side roll, 8 a running step) and the ledge hang (climb up =
+// step-on). The pipe and step-on sources are not yet read from their plugins.
+inline constexpr bool SourceAct(std::uint16_t replay, std::uint16_t act) noexcept {
+    return replay == 21 ? LadderSourceAct(act) : (act >= 1 && act <= 8) || (act >= 54 && act <= 56);
+}
 
 enum class Phase : std::uint8_t { idle, place, tap, native };
 
