@@ -748,6 +748,23 @@ SITES += [
     (0xDC2A50, '664489442418895424104883ec288bc24c8bc983e01f0f84', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
     (0xDC63A0, '488974241889542410574883ec208bc28bf2488bf983e01f', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
 ]
+# --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box").
+# On: ChangeEquip(ctl, &r, 1, {box, flags 4}); off: SetCurrentItemIndex(ctl, 1, 0, 0) (ctl vt+0x68). Both bodies and
+# their callees (OnRemoveItem, OnEquipItem, GetItemStockCount, GetEquipIdSlot) are SHA-pinned whole by
+# equipment_stock_writer_pins.hpp; these are the semantic sites the module's reasoning depends on.
+SITES += [
+    (0x11AF9D9, '4109827c010000', 'cbox: SetCurrentItemIndex 0x11AF9A0 ORs Q+0x17C with 1 << idx'),
+    (0x11AFA00, '0fb64b37400fb6c5c0e00480e10f0ac8400fb6c5884b37', 'cbox: SetCurrentItemIndex row+0x37 = (row+0x37 & 0xF) | sub << 4 (the current item sub)'),
+    (0x11AFA2C, '488b46183bb814020000750a488b462089a87c060000', 'cbox: SetCurrentItemIndex writes vars+0x67C only for idx == [P+0x214]'),
+    (0x11AFF92, '443bb914020000', 'cbox: SetEquipState 0x11AFF30 writes vars items only for idx == [P+0x214]'),
+    (0x11AD675, '488b41188bfa4c8bf18bb014020000', 'cbox: GetItemStockCount 0x11AD660 scans the VIEWER\'s items ([P+0x214]), not instance idx'),
+    (0x10DF4EA, '486bdb3a4869ff30040000480398c000000048037e780fb6433748c1e804440fb774431c',
+     'cbox: can-wear 0x10DF430 reads instance idx\'s current item row[0x1C + 2*(row[0x37] >> 4)] (row = Q+0xC0 + idx*0x3A)'),
+    (0x10DF517, '418d8638feffff83f81a774d', 'cbox: can-wear: the box range 0x1C8..0x1E2'),
+    (0x10DF53B, 'ff90c8000000', 'cbox: can-wear: ctl vt+0xC8 (GetItemStockCount) of that item: zero refuses the box'),
+    (0x110BDD3, 'b84d00000066890469', 'cbox: Wake 0x110BD40 writes Q+0x18[idx] = 0x4D (act 77)'),
+    (0x10ED7BE, '488b88d80000000fb7839803000066890479', 'cbox: state 1 0x10ED490 stores the box object id at Q+0xD8[idx]'),
+]
 # --- WS3 vehicles (docs/vehicle-ws3.md): the driver seated in an unnamed vehicle by id (B1)
 # and the viewer's copy tilted with the driver's record angles (A1, census first).
 VEHICLE_SITES = [
@@ -1154,6 +1171,15 @@ SLOTS += [
     (0x23C1720, 0xE8, 0x11AF820, 'arm energy setter: ctl vt+0xE8 (the arm digest reads what it writes)'),
     (0x23894B0, 0x88, 0xEE9050, 'store base vt+0x88 = the stock / energy word read'),
     (0x23895D0, 0x88, 0xEE9050, 'store derived vt+0x88 = the stock / energy word read'),
+]
+# F2: the cardboard box on body 1 (the off call, the stock check chain and the remove hook it runs).
+SLOTS += [
+    (0x23C1720, 0x68, 0x11AF9A0, 'cbox: ctl vt+0x68 = SetCurrentItemIndex(id, sub, flag) (the off call; ChangeEquip\'s item activation)'),
+    (0x23C1720, 0xC8, 0x11AD660, 'cbox: ctl vt+0xC8 = GetItemStockCount(equip) (the viewer\'s stock; the box wake reads it)'),
+    (0x23C1720, 0xB0, 0x11AD200, 'cbox: ctl vt+0xB0 = the inventory index forwarder (inventory vt+0x68)'),
+    (0x23C1720, 0x20, 0x11B2490, 'cbox: ctl vt+0x20 = UnsetSlot(id, slot) (OnRemoveItem of the old current item)'),
+    (0x23894B0, 0x68, 0xEE90A0, 'cbox: store base vt+0x68 = the stock index (slot 4: 0xE + sub)'),
+    (0x23895D0, 0x68, 0xEE90A0, 'cbox: store derived vt+0x68 = the stock index (slot 4: 0xE + sub)'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 
@@ -2652,6 +2678,25 @@ w('// rec+0x3c0 bit 26: set by 46 op 1, cleared by 46 op 2 (the decode\'s class-
 w('inline constexpr std::size_t pp_vt_press=0x40, src_press=0x50, pp_press_fallback=0x468;')
 w('inline constexpr std::uint32_t pad_press_fire=0x10, gun3c0_place_busy=0x4000000;')
 w('inline constexpr std::uintptr_t placed_owner_claim_rva=0xfc9c00, placed_can_place_rva=0xfcb1f0, pp_press_word_rva=0x1205e80;')
+w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
+w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
+w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')
+w('// (0xe + sub)*2] (Y = *(ctl+8); ctl vt+0xb0 -> store vt+0x68 case 4 = 0xe + sub; store vt+0x88 0xee9050 reads it).')
+w('// vars items u16[8] at +0x5a4 and currentItemIndex u32 at +0x67c (both written only for idx == [P+0x214]).')
+w('// Per-(id, sub) item records Q+0x160 + (sub + id*8)*0x10 (box life / poster; SetEquipState rewrites them).')
+w('// The box is worn when the can-wear predicate 0x10df430 passes for idx: the block-1 PS record (PS = *(block+0x78),')
+w('// rec = *(PS+0x280) + (idx - *(PS+8))*0x20) has rec+8 bit 11 and rec+0xc bits 26..28 clear, idx\'s current item is a')
+w('// box 0x1c8..0x1e2 and GetItemStockCount (the VIEWER\'s list) has stock for it; Wake writes act 0x4d (77, moving 78).')
+w('inline constexpr std::uintptr_t change_equip_rva=0x11ac2e0, set_current_item_index_rva=0x11af9a0, get_item_stock_count_rva=0x11ad660;')
+w('inline constexpr std::uintptr_t get_equip_id_slot_rva=0x11ad420, item_index_forward_rva=0x11ad200, store_index_rva=0xee90a0, unset_slot_rva=0x11b2490;')
+w('inline constexpr std::size_t ctl_vt_change_equip=0x198, ctl_vt_set_item=0x68, ctl_vt_equip_id_slot=0x90, ctl_vt_item_stock=0xc8;')
+w('inline constexpr std::size_t ctl_vt_item_index=0xb0, ctl_vt_unset_slot=0x20, store_vt_index=0x68;')
+w('inline constexpr std::size_t equip_row_items=0x1c, equip_row_item_bytes=0x2c, equip_row_item_nibble=0x37, item_subs=8;')
+w('inline constexpr std::size_t inv_stocks=0x98, inv_item_stock_base=0xe, vars_items=0x5a4, vars_current_item=0x67c;')
+w('inline constexpr std::size_t q_item_records=0x160, q_item_record_size=0x10, q_box_object=0xd8, block_ps=0x78;')
+w('inline constexpr std::uint32_t cbox_rec8_mask=0x800, cbox_recc_mask=0x1c000000;')
+w('inline constexpr std::uint16_t cbox_first=0x1c8, cbox_last=0x1e2;')
+w('inline constexpr std::uint8_t equip_type_item=0x11, slot_type_item=4, act_cbox=0x4d, act_cbox_move=0x4e;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:
