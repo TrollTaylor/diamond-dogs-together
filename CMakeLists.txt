@@ -203,8 +203,9 @@ endforeach()
 # Round-1 actions track (docs/anim-round1-actions.md): the act census telemetry
 # and the DirectMotion overlay lever, pure and portable like the partner core.
 target_sources(mgs_coop_core PRIVATE native/partner_act_log.cpp native/partner_dm_overlay.cpp native/partner_traverse.cpp)
-# Gestures (docs/native-puppet.md "Gestures"): the pure sender, wire, node tables and decisions.
-target_sources(mgs_coop_core PRIVATE native/partner_gesture_policy.cpp)
+# Gestures (docs/native-puppet.md "Gestures"): the pure sender, wire, node tables and decisions,
+# and the gesture lab lever's grammar, admission, preconditions and formats.
+target_sources(mgs_coop_core PRIVATE native/partner_gesture_policy.cpp native/partner_gesture_lever_policy.cpp)
 foreach(_mgs_actions_test partner_act_log_tests partner_dm_overlay_tests)
   add_executable(${_mgs_actions_test} tests/${_mgs_actions_test}.cpp)
   target_link_libraries(${_mgs_actions_test} PRIVATE mgs_coop_core)
@@ -226,6 +227,13 @@ if(MSVC)
   target_compile_options(partner_gesture_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME partner_gesture_tests COMMAND partner_gesture_tests)
+add_executable(partner_gesture_lever_tests tests/partner_gesture_lever_tests.cpp)
+target_include_directories(partner_gesture_lever_tests PRIVATE native/include)
+target_link_libraries(partner_gesture_lever_tests PRIVATE mgs_coop_core)
+if(MSVC)
+  target_compile_options(partner_gesture_lever_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME partner_gesture_lever_tests COMMAND partner_gesture_lever_tests)
 # Horse / D-Walker riders (docs/mounts.md): the act census, hide decision and episode lines.
 add_executable(partner_mount_tests tests/partner_mount_tests.cpp)
 target_link_libraries(partner_mount_tests PRIVATE mgs_coop_core)
@@ -528,7 +536,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_compile_options(steam_identity_tests PRIVATE /W4 /WX)
   add_test(NAME steam_identity_tests COMMAND steam_identity_tests)
   # Offline partner spike: guarded player-instance access and the log-only crash probe.
-  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_board.cpp native/partner_pass_camera.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp native/partner_icon.cpp native/partner_gesture.cpp)
+  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_board.cpp native/partner_pass_camera.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp native/partner_icon.cpp native/partner_gesture.cpp native/partner_gesture_lever.cpp)
   target_include_directories(mgs_partner_player PUBLIC native/include PRIVATE native)
   target_compile_options(mgs_partner_player PRIVATE /W4 /WX)
   if(MGS_BACKGROUND_WORKER)
@@ -746,6 +754,12 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_link_libraries(partner_gesture_hook_tests PRIVATE mgs_partner_player mgs_coop_core minhook bcrypt)
   target_compile_options(partner_gesture_hook_tests PRIVATE /W4 /WX)
   add_test(NAME partner_gesture_hook_tests COMMAND partner_gesture_hook_tests)
+  # The gesture lab lever: identity, slot, preconditions, the one call and its guards on a fake image (a fake request).
+  add_executable(partner_gesture_lever_fire_tests tests/partner_gesture_lever_fire_tests.cpp)
+  target_include_directories(partner_gesture_lever_fire_tests PRIVATE native/include native)
+  target_link_libraries(partner_gesture_lever_fire_tests PRIVATE mgs_partner_player mgs_coop_core)
+  target_compile_options(partner_gesture_lever_fire_tests PRIVATE /W4 /WX)
+  add_test(NAME partner_gesture_lever_fire_tests COMMAND partner_gesture_lever_fire_tests)
   # Official, pinned Dear ImGui core and Win32/DX11 backends remain unmodified.
   add_library(mgs_imgui STATIC third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_win32.cpp third_party/imgui/backends/imgui_impl_dx11.cpp)
   target_include_directories(mgs_imgui PUBLIC third_party/imgui)

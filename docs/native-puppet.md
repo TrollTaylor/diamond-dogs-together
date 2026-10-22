@@ -882,11 +882,118 @@ picks up, the prone guest films body 1 from 4 m):
 
 Still unproven: the squat clip in a FRAME (grass hid body 1's arms), the
 moving pickup (a held W+R over the dropped back weapon never raised 0x15 on
-the host), the hand signs and the knock (no lab spot: E at the lab start pets
-D-Dog, act 94), the reverse direction (the guest picking up, the host
-filming), and whether body 1's own upper plugins ever take graph 2 back
-(`override; cause=node|pending`, never seen). The rate-record MotionVars
-writes of `re-traverse-gesture.md` 5.3 "Optional" were not needed.
+the host), the hand signs and the knock (no trigger in the 0.13.5 runs: E at
+the lab start pets D-Dog, act 94; see the lab lever below), the reverse
+direction (the guest picking up, the host filming), and whether body 1's own
+upper plugins ever take graph 2 back (`override; cause=node|pending`, never
+seen). The rate-record MotionVars writes of `re-traverse-gesture.md` 5.3
+"Optional" were not needed.
+
+### Lab lever: knock and hand signs
+
+0.13.6 (`native/partner_gesture_lever.*`, pure part
+`native/partner_gesture_lever_policy.cpp`, `tests/partner_gesture_lever_tests.cpp`
+and `tests/partner_gesture_lever_fire_tests.cpp`). Lab key
+`partner_gesture_lever=0|1`: **default 0 in lab and play**, play forces a
+named 1 off (no refusal bit, like the WS4 v2 mirror), a named value records
+`partner_gesture_lever_given`. It exists only to film the receiver's knock and
+hand-sign nodes; the receiver itself is unchanged (`partner_native_gesture`).
+
+**How the local player triggers them (read-only research, mgsvtpp.exe
+1.0.15.4).** Neither is an action-icon press, so no key of the padop key-type
+table `0x22E86A8` (key type 0..9 -> pad bit 5, 6, 15, 3, 1, 11, 10, 2, 18, 7:
+ACTION, RELOAD, CQC, HOLD, STANCE, bit 11, SUBJECT, DASH, EVADE, STOCK)
+starts them. `KnockActionPluginImpl`'s only icon query is its
+`ExecActionButtonFunction` `0x1411E44B0` (key type 0 = ACTION, result type
+0x70), and that is the high-grass crawl (state 8 `StateHighComoCrawl`: crawl,
+idle, act 1..20, `IsHighComoCrawlPhase`), not the knock. The knock and the
+signs are **requests** written into the plugin's per-id work row by three
+methods of its primary vtable `0x1423C5A20` (the block's `*(blk+0xF8)`,
+stored only by the constructor `0x1411E3750`; `*(plugin+8) == blk`):
+
+| Slot | Function | Row write (`row = *(plugin+0x68) + (id - *(*(plugin+0x38)+0x24))*0xE0`) |
+|---|---|---|
+| vt+0x28 | `RequestKnock` `0x1411E5100` | `+0xD0` bit 0 set, `+0x24 = 1`, `+0x18` = the frame (`QST+0x40` -> `+0x38`), `+0x20 = 2` |
+| vt+0x30 | `RequestHandSignGo` `0x1411E5060` | the same with `+0x24 = 2` |
+| vt+0x38 | `RequestHandSignStop` `0x1411E50B0` | the same with `+0x24 = 3` |
+
+The plugin's polling (vt+0x58 `0x1411E5160`) takes a request through
+`FUN_1411E3A20` while the frame is at most `+0x18 + +0x20` (two frames):
+kind 1 (knock) always; kinds 2 / 3 (signs) only while the speed `Q+0x38 <= 1`,
+the act is not 0x79 / 0x7A and PS rec+0xC bit 28 is clear. It then starts
+state 1 `StateKnock` `0x1411E7210` (`Q+0x20 = 0x17`), 2 `StateHandSignGo`
+(0x18) or 3 `StateHandSignStop` (0x19), the signs only when `GetStance != 4`.
+No wall or cover is involved: the knock plays wherever it is requested.
+
+The stock callers (a scan of `.text` for an `[reg+0xF8]` load feeding a
+vt+0x28 / +0x30 / +0x38 call within ten instructions finds these five in the
+player code; a caller that keeps the plugin pointer elsewhere would not show,
+and the request functions have no direct caller):
+- **Knock: the call menu.** Holding CALL (Q, pad bit 0x200) for 12 frames
+  (`CallMenuManagerImpl::UpdatePadState` `0x14110FEF0`: PP vt+0x90(9, 12) == 3;
+  a tap, 2, is the buddy call / whistle `CallBuzzer`) shows the call menu.
+  Command set 0 is the knock (`UpdateCommandSetKnock` `0x14110F8D0`, enabled
+  while act 1..20 or 31..37, `Q+0x20 == 0`, `Q+0x28 == 0` and the speed not
+  2..3), whose callback `0x14110CCE0` calls vt+0x28 with the menu owner's id.
+  The cursor and the decision live in the UI (`tpp::ui::hud::impl::CallMenuImpl`,
+  `CallMenuManagerImpl::UpdateSelectState` `0x141110060`: select state 2 is set
+  0, 4..7 the buddy set's slots, 8..11 the interrogation set) and were not
+  mapped to keys.
+- **Hand signs: buddy commands and the child-soldier orders.**
+  `ExecCommandSendCommandToBuddy` `0x14110CF10`: buddy command 4 (Quiet "Cover
+  me") or 0x13 (D-Horse "Do it") -> vt+0x30 Go, 5 (Quiet "Cease cover") ->
+  vt+0x38 Stop; the child-soldier order menu (`UpdateCommandSetRescueBoy`):
+  `0x14110CD30` Go, `0x14110CE20` Stop. **No D-Dog command (8..0x10) signs**, so
+  the lab seed's D-Dog cannot trigger one; the 0.13.5 scenario's "Q then E" was
+  a CALL tap (the whistle) and then E (petting D-Dog, act 94).
+
+**The lever.** The native debug command `gesture_lever knock|sign_go|sign_stop`
+(the F9 console or a worker `run` step; it never reaches Lua) calls this copy's
+own request slot with id 0, the very call the menu's command makes, on the
+runtime thread. Admission, in order: the key (`key_off`), `mode=lab` (`mode`),
+lab active, copied saves (`saves_not_redirected`), the offline branch, the
+partner and its startup code gate (`code_gate`: the contract pins below),
+gameplay, not shutting down, not latched. Then the identity (offline, two
+instances, this copy at id 0, both blocks, both plugins with their back
+pointers and distinct work rows, this copy's PS), the slot and the polling slot
+(`slot`), this copy's arrays and the stock precondition: knock = the call
+menu's enable test (`act`, `upper`, `q28`, `speed`), signs = speed <= 1, act
+not 0x79/0x7A, stance not 4 and upper 0 (`speed`, `act`, `stance`, `upper`).
+The call runs under SEH (`fault` latches the lever for the process). Instance
+1's request fields (row +0x18 / +0x20 / +0x24 / +0xD0 bit 0) and its upper
+byte are compared before and after: any change latches (`other_changed`).
+Body 1 and the peer are never touched; the request then runs the stock state
+on this copy's own player, and the existing sender reports its edge.
+
+Result (the `run` value, at most 160 characters):
+`gesture_lever=requested;kind=..;id=0;act=..;stance=..;speed=..;row=K,0xD0,2;other=same`
+or `gesture_lever=refused;reason=..;kind=..;...`. Log (one per command, uncapped):
+`partner_gesture=lever; result=requested|refused; reason=..; kind=..; id=0;
+act=..; upper=0x..; q28=..; stance=..; speed=..; called=0|1; row_kind=..;
+row_d0=0x..; row_life=..; frame=..; rec4=0x..; rec8=0x..; recc=0x..;
+other_same=0|1`. `recc` is PS rec+0xC: bit 28 (0x10000000) set means the
+polling will refuse a sign.
+
+Contract (`tools/generate_partner_contract.py`, `GESTURE_LEVER_SITES` and the
+slots; 761 code sites / 197 vtable slots): the three request bodies, the
+request test `0x1411E3A20` (frame window, kind dispatch), the polling's call
+and its kind -> state writes, the three upper writes (0x17 / 0x18 / 0x19), the
+five stock call sites and the knock command binding, the CALL hold classifier
+call; slots +0x28 / +0x30 / +0x38 / +0x58 of `0x23C5A20`; assertions: the
+vtable's only store is the constructor, the request functions have no direct
+caller and only data references, and the key-type table's ten values.
+
+Scenario: `tools/worker/scenarios/partner-upper-gestures.txt` (key named on
+the host only): after the pickups the standing host runs `gesture_lever
+knock`, `sign_go`, `sign_stop` and a crouched `knock`; the prone guest bursts
+`gest-knock`, `gest-sign`, `gest-sign-stop`, `gest-knock-squat`; waitlogs for
+the host's `lever; result=requested` and `local; kind=knock; upper=0x17` /
+`sign_go; upper=0x18` / `sign_stop; upper=0x19`, the guest's `rx`, `submit;
+...; exist=1; kind=..; method=reserve`, `applied` and `ended`; the guest's own
+`gesture_lever knock` must refuse with `key_off`; a host CALL hold captures the
+stock call menu (`callmenu-open`, census only). Not run yet (no game launches
+in this phase): the lever, the knock / sign nodes on body 1 and their frames
+are all unproven.
 
 ## Mounts
 
@@ -1957,6 +2064,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
+| `partner_gesture_lever` | 0, 1 (lab only: the native debug command `gesture_lever <kind>` (kind `knock`, `sign_go` or `sign_stop`) makes this copy's OWN player knock or sign through the stock `KnockActionPluginImpl` request slot the call menu uses, for the gesture proof, see "Gestures", "Lab lever: knock and hand signs"; default 0 in lab and play, play forces a named 1 off; a named value records `partner_gesture_lever_given`) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not

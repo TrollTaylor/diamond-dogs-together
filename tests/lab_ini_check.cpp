@@ -166,6 +166,9 @@ int main(int argc, char** argv) {
         // Gestures (on with the gun profile, lab and play) and whether the key was named.
         std::printf("partner_native_gesture=%d\npartner_native_gesture_given=%d\n", c.partner_native_gesture ? 1 : 0,
                     c.partner_native_gesture_given ? 1 : 0);
+        // The gesture lab lever (lab only, default 0; play forces it off) and whether it was named.
+        std::printf("partner_gesture_lever=%d\npartner_gesture_lever_given=%d\n", c.partner_gesture_lever ? 1 : 0,
+                    c.partner_gesture_lever_given ? 1 : 0);
         // Horse / D-Walker riders (hide with the gun profile in lab; play forces off) and whether it was named.
         std::printf("partner_native_mount=%s\npartner_native_mount_given=%d\n", mgscoop::PartnerNativeMountName(c.partner_native_mount),
                     c.partner_native_mount_given ? 1 : 0);

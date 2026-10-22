@@ -68,7 +68,7 @@ function Get-WorkerTests {
         'partner_cbox_tests',
         'partner_player_tests', 'teammate_targeting_tests', 'downed_damage_tests', 'downed_player_tests', 'partner_driver_tests', 'partner_input_hook_tests',
         'partner_support_equip_tests', 'partner_fire_support_tests', 'partner_support_policy_tests', 'partner_support_guard_fixture', 'partner_placed_census_tests', 'partner_placed_policy_tests',
-        'partner_native_tests', 'partner_equip_wire_tests', 'partner_ride_wire_tests', 'partner_traverse_tests', 'partner_icon_tests', 'partner_gesture_tests', 'partner_gesture_hook_tests', 'partner_vehicle_tests', 'partner_board_tests', 'partner_pass_camera_tests', 'partner_defer_tests', 'partner_defer_pose_nested_foreign_tests', 'partner_defer_pose_held_generation_tests',
+        'partner_native_tests', 'partner_equip_wire_tests', 'partner_ride_wire_tests', 'partner_traverse_tests', 'partner_icon_tests', 'partner_gesture_tests', 'partner_gesture_hook_tests', 'partner_gesture_lever_tests', 'partner_gesture_lever_fire_tests', 'partner_vehicle_tests', 'partner_board_tests', 'partner_pass_camera_tests', 'partner_defer_tests', 'partner_defer_pose_nested_foreign_tests', 'partner_defer_pose_held_generation_tests',
         'partner_mount_tests',
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',

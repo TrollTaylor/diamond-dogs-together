@@ -93,6 +93,7 @@
 #include "mgscoop/partner_icon.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_aim_point.hpp"
+#include "mgscoop/partner_gesture_lever.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_support_equip.hpp"
 #include "mgscoop/partner_cbox_equip.hpp"
@@ -1072,6 +1073,30 @@ const char* PartnerGestureInstall(void*) noexcept {
 }
 void PartnerGestureStep(void*, const mgscoop::partner_gesture::Command& command, mgscoop::partner_gesture::Status& out) noexcept {
     mgscoop::partner_gesture::Step(command, out);
+}
+// The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and
+// hand signs"): the debug command "gesture_lever knock|sign_go|sign_stop" on the
+// runtime thread. Lab only (the key, which play forces off, mode=lab, lab active,
+// copied saves, the offline branch, the partner code gate, gameplay); this
+// copy's own player only. One result and one partner_gesture=lever line.
+void HandleGestureLever(std::uint32_t command_id, const char* text) noexcept {
+    namespace gl = mgscoop::partner_gesture_lever;
+    const auto& labc = mgscoop::GetLabConfig();
+    const auto snapshot = mgscoop::debug_menu::GetSnapshot();
+    const gl::Gate gate{labc.partner_gesture_lever, labc.mode == mgscoop::LabMode::lab, lab_active, lab::SavesRedirected(),
+                        offline_enabled, partner_on, partner_gate_ok && game_base != nullptr,
+                        snapshot.gameplay_ready && !snapshot.terminating && !mission_terminating,
+                        mgscoop::partner_defer::ShuttingDown(), gl::Latched()};
+    gl::Outcome outcome{};
+    outcome.request = gl::Parse(text);
+    if (const char* why = gl::Admit(gate)) outcome.refusal = why;
+    else if (outcome.request == gl::Request::none) outcome.refusal = "args";
+    else outcome = gl::Fire(reinterpret_cast<std::uintptr_t>(game_base), outcome.request);
+    char result[161]{}, line[400]{};
+    gl::FormatResult(outcome, result, sizeof(result));
+    gl::FormatLog(outcome, line, sizeof(line));
+    mgscoop::debug_menu::Result(command_id, outcome.refusal ? 0u : 1u, result[0] ? result : "gesture_lever=refused;reason=format");
+    if (line[0]) Log(line);
 }
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
@@ -2522,6 +2547,15 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             if (mgscoop::partner_aim_point::HandleCommand(pending.text, tag_result, sizeof(tag_result), tag_ok)) {
                 debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
                 LogFormat("debug_menu=aimpt; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
+                replacement = {reply, std::strlen(reply)};
+                debug_quiet = true;
+                return true;
+            }
+            // "gesture_lever knock|sign_go|sign_stop" (docs/native-puppet.md "Gestures",
+            // "Lab lever: knock and hand signs"): this copy's own knock / hand sign through
+            // the stock request slots; lab only (partner_gesture_lever, play forces it off).
+            if (mgscoop::partner_gesture_lever::IsCommand(pending.text)) {
+                HandleGestureLever(pending.id, pending.text);
                 replacement = {reply, std::strlen(reply)};
                 debug_quiet = true;
                 return true;

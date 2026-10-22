@@ -496,6 +496,14 @@ try {
             $file = Join-Path $fixture 'play-gesture-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_gesture=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_gesture'])|$($m['partner_native_gesture_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named gesture 0 opts out in play'
+            # The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs") is lab only and
+            # default 0; Play-Coop never names it, and play forces a named 1 off.
+            Assert-True (!$hostIni.Contains('partner_gesture_lever') -and !$guestIni.Contains('partner_gesture_lever') -and
+                !$clipsIni.Contains('partner_gesture_lever')) 'Play-Coop lab.ini never names partner_gesture_lever'
+            Assert-Equal "$($n['partner_gesture_lever'])|$($n['partner_gesture_lever_given'])" '0|0' 'native: play leaves the gesture lever off'
+            $file = Join-Path $fixture 'play-gesture-lever-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_gesture_lever=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_gesture_lever'])|$($m['partner_gesture_lever_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named gesture lever off'
             # Horse / D-Walker riders (docs/mounts.md): hide with the native gun profile in lab and play (hidden runs
             # bfd6fcc4 / 2ab88411 lab and the play rehearsal 5a044a4d); Play-Coop never names the key, and a named off opts out.
             Assert-True (!$hostIni.Contains('partner_native_mount') -and !$guestIni.Contains('partner_native_mount') -and

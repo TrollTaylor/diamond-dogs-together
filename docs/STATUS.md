@@ -1,3 +1,54 @@
+## 0.13.6 (in progress)
+
+Not released: the version stays 0.13.5. Feature branches merge into the next integration branch; nothing here has
+had a hidden-worker run yet.
+
+### partner_gesture_lever
+
+- **G6: a lab lever that triggers the host's own knock and hand signs** (`wp/sign-knock`, docs/native-puppet.md
+  "Gestures", "Lab lever: knock and hand signs"), so the unproven knock (0x17) and hand sign Go / Stop (0x18 / 0x19)
+  kinds of `partner_native_gesture` can be filmed on the guest's body 1. Lab key `partner_gesture_lever` (a `_given`
+  flag), **default 0 in lab and play; play forces a named 1 off**; the receiver (`partner_native_gesture`) is unchanged.
+- **Research (read-only):** neither gesture is an action-icon press (padop key-type table `0x22E86A8`: key type 0..9
+  -> pad bit 5, 6, 15, 3, 1, 11, 10, 2, 18, 7; `KnockActionPluginImpl`'s only icon query, key type 0 / result 0x70,
+  is the high-grass crawl). Both are requests in the plugin's work row, made through vt+0x28 `RequestKnock`
+  `0x11E5100`, vt+0x30 `RequestHandSignGo` `0x11E5060`, vt+0x38 `RequestHandSignStop` `0x11E50B0` of its vtable
+  `0x23C5A20` (the block's `*(blk+0xF8)`), and taken by the polling `0x11E5160` / `0x11E3A20` within two frames.
+  Stock callers: the **call menu** (hold CALL = Q for 12 frames; command set 0 = knock, enabled while act 1..20 or
+  31..37, upper 0, `Q+0x28` 0, not running; no wall needed) for the knock; **Quiet's "Cover me" / "Cease cover",
+  D-Horse's "Do it" and the child-soldier orders** for the signs. No D-Dog command signs, and a CALL tap is the
+  whistle: the 0.13.5 "Q then E" was a whistle and a D-Dog pet.
+- **Lever:** the native debug command `gesture_lever knock|sign_go|sign_stop` (F9 console or a worker `run`; never
+  Lua) calls this copy's own request slot with id 0, the same call the menu makes. Admission: key, `mode=lab`, lab
+  active, copied saves, offline branch, partner code gate, gameplay, not latched. Identity, slot and polling slot
+  re-checked per command; the stock precondition (knock: the menu's enable test; signs: speed <= 1, act not
+  0x79/0x7A, stance not 4, upper 0); SEH (`fault` latches); instance 1's request fields and upper byte compared
+  before / after (`other_changed` latches). Result `gesture_lever=requested;kind=..;id=0;...` or
+  `gesture_lever=refused;reason=..;...`; log `partner_gesture=lever; result=..; reason=..; kind=..; ...; recc=0x..;
+  other_same=..` (one line per command).
+- New code: `native/include/mgscoop/partner_gesture_lever.hpp`, `native/partner_gesture_lever_policy.cpp` (pure:
+  grammar, slots, admission, preconditions, formats), `native/partner_gesture_lever.cpp` (identity, the call, the
+  guards), the handler `HandleGestureLever` in `native/game_script_observer.cpp`.
+- Contract: 743 -> 761 code sites, 193 -> 197 vtable slots (`GESTURE_LEVER_SITES`: the three request bodies, the
+  request test, the polling's dispatch and kind -> state writes, the 0x17 / 0x18 / 0x19 upper writes, the five stock
+  call sites, the knock command binding, the CALL hold classifier call; slots +0x28 / +0x30 / +0x38 / +0x58), plus
+  `gesture_lever_assertions` (the vtable's only store is the constructor `0x11E37DC`, no direct caller of the request
+  functions, the key-type table).
+- Tests: `partner_gesture_lever_tests` (pure) and `partner_gesture_lever_fire_tests` (fake image: one call with this
+  copy's plugin and id 0, every identity / slot / precondition refusal without a call, the `other_changed` and `fault`
+  latches) in CMake and `Get-WorkerTests`; the key in `lab_config_tests`, `lab_ini_check`, `friend_package_tests`,
+  `worker_session_tests`, the three `-LabSetting` regexes and the help, LabCommon, the native-puppet.md config table.
+  Full CTest 291/291 (`-Configure`; 0.13.5 had 289, plus the two lever tests).
+- Scenario `tools/worker/scenarios/partner-upper-gestures.txt` (key named on the host only): the old E / Q+E presses
+  are replaced by `host run gesture_lever knock`, `sign_go`, `sign_stop` and a crouched `knock`, guest bursts
+  `gest-knock`, `gest-sign`, `gest-sign-stop`, `gest-knock-squat`, waitlogs for the host's `lever; result=requested`
+  and `local; kind=knock|sign_go|sign_stop`, and the guest's `rx`, `submit; ...; method=reserve`, `applied` and
+  `ended`; the guest's own `gesture_lever knock` must refuse (`key_off`); a host CALL hold captures the stock call
+  menu (census only).
+- **Unproven (needs the hidden-run phase):** the lever in the game, the 0x17 / 0x18 / 0x19 edges at tick rate, the
+  knock / sign nodes on body 1 in FRAMES, the PS rec+0xC bit 28 sign gate in the lab, and the call menu's key
+  mapping (UI-side, not researched). The default stays 0 until those frames exist.
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

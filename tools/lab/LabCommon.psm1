@@ -354,6 +354,10 @@ $script:LabPartnerKeys = @(
     # Gestures (docs/native-puppet.md "Gestures"): the remote's pickup, hand signs and knock on the partner body's upper
     # graph, and this copy's own upper-act edges as their sender (lab only: off unless set, forced off in play).
     @{ Key = 'partner_native_gesture'; Json = 'native_gesture'; Kind = 'bool' },
+    # The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs"): the native debug
+    # command gesture_lever knock|sign_go|sign_stop (this copy's own knock / hand sign through the stock request slots;
+    # lab only: off unless set, forced off in play; written only when set).
+    @{ Key = 'partner_gesture_lever'; Json = 'gesture_lever'; Kind = 'bool' },
     # Horse / D-Walker riders (docs/mounts.md): hide the partner body while the remote's act is a mount act
     # (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_mount'; Json = 'native_mount'; Kind = 'enum'; Values = @('off', 'hide') },
