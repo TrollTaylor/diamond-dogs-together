@@ -69,9 +69,10 @@ What is NOT fully shared yet:
   approximation. Grenade and rocket launchers are
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
-  build. The user reported partial successful two-PC play on 0.12.0. These
-  0.13.2 changes are checked on two hidden local copies and still need a fresh
-  two-PC session; complete campaign progression remains unsupported.
+  build. The user reported partial successful two-PC play on 0.12.0. The
+  0.13.5 changes passed hidden two-game checks on one PC, also with a
+  simulated bad internet connection, and still need a fresh two-PC
+  session; complete campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
 version on both PCs). Konami's servers are never contacted: the game plays
@@ -84,6 +85,33 @@ Two ways to connect:
   two-PC play worked on 0.12.0; both players need this version for the repairs.
 - LAN/VPN: the two games talk over UDP on the same network or through a VPN
   such as Tailscale (sections 4 and 5).
+
+WHAT'S NEW IN @VERSION@
+-----------------------
+Both players need this same version; it does not connect to older ones.
+These need the native partner, which is the default.
+- RIDE IN THE BACK SEAT. When your partner drives a jeep or another light
+  vehicle, stand by it and press ACTION (E by default) to sit in a free back
+  seat. Your camera follows from behind while your partner drives. Press
+  ACTION again to get off. You can no longer climb into the driver's seat
+  your partner is using (that used to make you a second driver and hide
+  your partner). Trucks and armored vehicles have no passenger seat: while
+  your partner drives one, you cannot get in.
+- CARDBOARD BOX. When your partner hides in a cardboard box, you now see the
+  box on their body, moving with them, and it comes off when they leave it.
+  Your own character is never boxed by it (0.13.3 did that by mistake).
+- CLIMBING. Your partner's body now climbs ladders (for example the ladders
+  on the Mother Base containers) and climbs up onto waist-high ledges and
+  rocks, using the game's own moves.
+- PICKING THINGS UP. When your partner picks up an item, their body bends
+  down for it.
+- HORSE AND D-WALKER. While your partner rides D-Horse or D-Walker, their
+  body is hidden on your screen and comes back when they get off (before,
+  a D-Walker rider walked on foot and a hidden rider could stay standing
+  where they got on). Your own horse no longer jumps or floats near your
+  partner while they ride theirs.
+- SHARED GAME OVER. The stall after a shared MISSION FAILED is fixed:
+  "continue from checkpoint" brings both players back.
 
 
 1. WHAT YOU BOTH NEED
@@ -495,14 +523,31 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
   while holding ACTION. F9 > Partner / Co-op has Downed status and Revive
   input status, plus read-only carry/sleep diagnostics and horse controls. Wait for the
   summoned local horse, close F9, then mount with normal game controls.
-  Loading a teammate onto a horse, shared horse/vehicle
-  passengers and two shared rideable horses/Walkers remain unfinished. Sleep
+  Loading a teammate onto a horse, riding together on one horse or
+  D-Walker and two shared rideable horses/Walkers remain unfinished. Sleep
   is immobile, keeps health, and wakes after 30 seconds or a teammate E hold.
   The crawl uses
   the normal prone animation at reduced speed, not the exact hospital clip.
 
-  Partial two-PC Steam play was reported on 0.12.0. This 0.13.2 build needs
-  a fresh two-PC test; its recorded qualification uses two hidden instances.
+  Partial two-PC Steam play was reported on 0.12.0. This 0.13.5 build needs
+  a fresh two-PC test. Known limits of the 0.13.5 additions:
+  - Back seat: you cannot aim or shoot from it, and the first-person view
+    there was not tested. Only light vehicles (jeeps and the like) have a
+    passenger seat; trucks and armored vehicles do not.
+  - Climbing: ladders and climbing onto ledges were checked; wall cracks and
+    pipes were not (no test spot was found). While your partner is on a
+    ladder, your own screen may show the game's ladder button hint; it has
+    no effect.
+  - Gestures: only picking up was checked. Hand signs and knocking on walls
+    were not.
+  - Horse and D-Walker: the rider is hidden, not shown riding. There is no
+    second horse or D-Walker under your partner on your screen.
+  - Cardboard box: getting out of the box shows no exit move; the box just
+    comes off.
+  - C4: your partner kneels to place C4 and raises the detonator only in
+    the developer's test mode, not yet in online play.
+  - When your partner walks slowly (Ctrl + W), their body may play the run
+    animation in place instead of walking. This is an older issue.
 - Online play uses Steam's networking and Valve's relays: it needs both PCs
   online in Steam. If it does not connect, use LAN/VPN.
 - LAN/VPN play talks directly over UDP without a relay: if neither a VPN nor

@@ -15,6 +15,8 @@
 # Controls (census runs 3ef82e27 .. a93db206): place = aim (RMB) + fire (LMB) on a valid spot (43 -> 46; an invalid
 # spot only readies 43 -> 44 -> 45 -> 0, which spot is valid varies, so four spots are tried); detonate with a live
 # charge = aim + E (44 -> 47).
+# Since WS4 v2 (lab default on, docs/anim-round2-throws.md "WS4 v2") body 1 also kneels (46) and detonates (47) here;
+# partner-c4-v2.txt is its scenario. The v1 notes below describe the run without the mirror (partner_native_place_mirror=0).
 # v1 limits (expected, not failures): ACTION (E) is never passed to body 1, so body 1 never detonates (no mode 47 on
 # the guest; the host's own mode 47 detonates its charges in both worlds through world sync); no object mirror (the
 # viewer never sees the partner's charge: owner 1 is not in the placed owner table, census Q2); body 1 never places

@@ -1,0 +1,294 @@
+# Horse and D-Walker riders (docs/mounts.md, F5): the mount hide, RIDE_BODY and the rider-state probes.
+# Run (hidden worker, coordinator only, one run at a time, no builds running anywhere):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-mount.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# The guest runs partner_native_mount=hide (it watches the host first); the host is named off, so Part 4 (the guest
+# rides a D-Walker, the host watches) stays today's baseline (the gun profile's lab default is hide since 0.13.5).
+# Order (play-friendly since 2026-10-22): Part 1 D-Walker (host rides, guest hide), Part 2 D-Horse (host rides,
+# guest hide), Part 3 both D-Horse (RIDE_BODY), Part 4 the reverse D-Walker baseline, Part 5 the lab-only overlay
+# probes last. A horse dismount E is pressed only after "host require localMounted=1", so no E press can mount the
+# host's horse by mistake (fbde3dcc's stop), and the D-Walker evidence comes before any horse part.
+# Play rehearsal (-Mode play -WanSim bad):
+#   1. Copy this file. Delete the two "labsetting ... partner_native_mount=" lines (each copy then runs its build's
+#      play default), the "labsetting partner_native_overlay=debug" line, and Part 5 (from its "--- Part 5" marker
+#      line through the "--- end of Part 5" line). Nothing else is lab-only.
+#   2. pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath <copy> -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -Mode play -WanSim bad
+#   Since 5a044a4d play defaults partner_native_mount to hide with the gun profile: both copies log
+#   partner_mount=configured; mode=hide with the key not named, Part 1's and Part 2's frames show the hides, and Part 4
+#   is the reverse hide (the host runs the play default too) instead of the baseline.
+# Lab saves deploy D-Dog: horse_spawn / walker_spawn switch the local buddy with the stock CallBuddy. walker_spawn
+# refuses while the local player rides (player_mounted); after a ride the scenario requires localMounted=0 before the
+# rider's next buddy switch. The viewer is placed beside / behind the rider and turns its camera ("mouse") so its own
+# model does not cover the partner; the buddy lands where CallBuddy puts it (it varied between runs).
+# Results (wp/integ9 0.13.5, research build, gun stage, lab seed; these runs used the earlier order: probes, horse,
+# both D-Horse, D-Walker, baseline):
+#   b264ad58 / 251abcef (before the unrealize): the hide cleared the realize bits only; Lua's all-active mode kept
+#   instance 1 realized and the partner body stood idle at the get-on spot, turned to the camera, for every horse and
+#   D-Walker ride (frames horse-riding, walker-riding, walker-drive-NN). b264ad58 filmed a rock and the viewer's back
+#   (the vantage lines below came from it).
+#   bfd6fcc4 (with partner_mount=unrealize): no partner body anywhere while the host rode the D-Walker (two vantages)
+#   or the D-Horse, the body back at the dismount spot (walker-off, walker2-off, horse-off); the guest's own act stayed
+#   1 and its partner_status=local stayed st=0x0. fbde3dcc (play rehearsal, -Mode play -WanSim bad, key not named,
+#   lab-only parts removed): the horse part passed the same way; the both-D-Horse part's last E press mounted the
+#   host's horse (its first E found no horse: RIDE_BODY had moved it), so "host require localMounted=0" stopped the
+#   run before the D-Walker part. RIDE_BODY no longer moves a viewer's own horse or walker (user decision 2026-10-22,
+#   docs/mounts.md section 2).
+# Results in this order (wp/integ9 4f9396e plus the play hide default; every require passed):
+#   2ab88411 (lab, this file): Parts 1 and 2 as bfd6fcc4 (no partner body while the host rode the D-Walker, two
+#   vantages, or the D-Horse; back after each dismount). Part 3: the guest's own idle horse stood beside the guest in
+#   every horse-viewer-own* frame and on the ground in horse-viewer-own-host; the host's first E mounted its own horse
+#   (localMounted=1, arrival=mounted); one ride_body refuse line per mount id on each copy. Part 4: the baseline.
+#   5a044a4d (the play copy, -Mode play -WanSim bad, rtt ~180 ms, no key named): both copies logged
+#   partner_mount=configured; mode=hide; the D-Walker (two vantages) and the D-Horse hidden on the guest's screen, the
+#   guest's D-Walker hidden on the host's screen (Part 4), each body back after the dismount; Part 3 as in the lab.
+#
+# Part 1, the host rides D-Walker, the guest watches (hide). Neither copy has a horse yet:
+#   guest: partner_mount=configured; mode=hide; ride=seat; acts=121..126 (once per mission, at its start)
+#   host: walker_status walker;selected=walker;available=1;actor0=22528;localMounted=0
+#   guest: partner_ride=rx stays kind=0 (the sender reports a D-Walker rider on foot: no ON_* status for act 125)
+#   guest: partner_mount=hide; mount=walker; act=123|125; kind=0; ..., partner_ride=hide; reason=ride; act=12x and
+#          partner_mount=unrealize; mount=walker; ...; op=clear_allactive
+#   guest: partner_mount=end; mount=walker; ... after the dismount, then allactive_set and partner_realized=1
+#   Frames walker-before (the host standing) / walker-riding / walker-drive / walker-turn burst (no partner body);
+#   walker-off: the host on foot again. Then a second ride from the host's left side (walker2-*).
+# Part 2, the host switches to D-Horse and rides it, the guest watches (hide):
+#   host: walker_status localMounted=0 (the Part 1 dismount finished) before horse_spawn
+#   guest: partner_ride=rx; kind=3 ...   partner_ride=hide; reason=ride; act=1 (the kind arrives before act 121)
+#   guest: partner_mount=hide; mount=horse; act=121; kind=3, then partner_mount=unrealize; mount=horse; act=121;
+#          episode=N; op=clear_allactive and partner_lua=event=allactive_cleared (body 1 unrealized: probe pool=00,ff)
+#   guest: partner_mount=end; mount=horse; act=1 after the dismount, partner_ride=foot_stable; next=place,
+#          partner_lua=event=allactive_set, partner_realized=1
+#   Frames horse-before (the host standing) / horse-riding / horse-ride burst (no partner body) / horse-off (back).
+#   host: horse_status localMounted=1 while riding (stock mount; required before the dismount E); horse-host-riding.
+# Part 3, both copies deploy D-Horse (RIDE_BODY, world op 42). Expected since the 2026-10-22 fix (2ab88411, 5a044a4d):
+#   both: world_lua=event=ride_body;action=refuse;reason=not_mirror;id=6656;kind=1 (once per copy), and never a
+#         SetCallHorse on the viewer's own horse;
+#   host: the first E press mounts its own horse (horse_status localMounted=1 is required): its horse is no longer
+#         pulled toward the guest's idle horse;
+#   guest: its own idle horse 6656 stays where CallBuddy put it (horse-viewer-own-spawned, the horse-viewer-own and
+#          horse-viewer-own-ride bursts and horse-viewer-own-after from the same spot); horse-viewer-own-host (beside
+#          the host after the ride) shows no guest horse hanging in the air around the host.
+#   Before the fix (b264ad58, 251abcef, bfd6fcc4, fbde3dcc) the guest's horse leapt and hung in the air around the
+#   host, and the host's first E found no horse.
+# Part 4, the reverse: the guest rides D-Walker, the host (mount off) watches: today's baseline.
+#   The host keeps its D-Horse from Parts 2/3, so it has no walker of its own (RIDE_BODY would no longer move one).
+#   host: no partner_mount line; partner_ride shows no hide for the walker acts (kind=0)
+#   Frames base-walker-riding / base-walker-drive burst: body 1 walks on foot along the walker's path with no walker
+#   under it (b264ad58, 251abcef, bfd6fcc4, 2ab88411). In the play copy the host runs the play default (hide): one
+#   partner_mount=hide; mount=walker episode on the host and no partner body in those frames (5a044a4d).
+# Part 5 (lab only), overlay probes (both on foot; the guest's body 1 is the host's puppet): do the rider states play
+# on body 1 without a mount? Logged per state S, guest script-observer.log:
+#   partner_overlay=play; state=S; ... gani=118|119|120; partner_overlay=playing; ...; body_act=139; q18=0x1,0x8b;
+#   rec18=0x0; code_match=0 (all three, every run), then stop on the 4 s timeout.
+#   Frames dm-ride-idle / dm-gallop (251abcef): body 1 drops into a seated / hunched rider pose at ground level with
+#   nothing under it; dm-walker-walk: the standing pose. Not a display: the rider stays hidden.
+# Never: a guest partner_status=local line with ON_HORSE / ON_VEHICLE unless the guest itself mounted.
+labsetting host partner_native_mount=off
+labsetting guest partner_native_mount=hide
+labsetting partner_native_overlay=debug
+labsetting partner_act_log=1
+labsetting nametag=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+# The open field of coop-ride-horse.txt: the host joins the guest there (the horse and walker spawn 4 m beside it).
+placebehind host guest 6 -0.7
+wait 4000
+# No garrison alert (integ8-rt vehicle-seat-rev2: enemy fire knocked the watcher down); repeated after each move.
+host debug clear_enemies 100
+resetpose host
+stance host stand
+placebehind guest host 7 2
+wait 3000
+guest mouse 300 0
+wait 800
+both capture mount-start
+# --- Part 1: the host rides D-Walker, the guest (hide) watches ---------------------------------------------------
+host debug teleport 807.7 341.7 1636.6 -174
+wait 3000
+stance host stand
+host run walker_spawn
+wait 12000
+host run walker_status
+host require walker;selected=walker;available=1;actor0=22528
+host run goto_walker
+wait 2000
+host debug clear_enemies 100
+placebehind guest host 8 2
+wait 2500
+guest mouse -250 0
+wait 800
+guest capture walker-before
+host capture walker-host-before
+host press e 150
+guest burst walker-mounting 8 250
+wait 2500
+guest capture walker-riding
+host capture walker-host-riding
+host hold w 1500 nowait
+guest burst walker-drive 8 200
+host release
+wait 1500
+host hold w+a 800 nowait
+guest burst walker-turn 4 200
+host release
+wait 1500
+host press e 150
+guest burst walker-dismount 8 300
+wait 3000
+guest capture walker-off
+# Second ride from the host's left side (a second vantage).
+host run walker_status
+host require localMounted=0
+host run goto_walker
+wait 2000
+placebehind guest host 4 8
+wait 2500
+guest mouse -250 0
+wait 800
+guest capture walker2-before
+host press e 150
+guest burst walker2-mounting 6 250
+wait 2500
+guest capture walker2-riding
+host hold w 1500 nowait
+guest burst walker2-drive 8 200
+host release
+wait 1500
+host press e 150
+guest burst walker2-dismount 6 300
+wait 3000
+guest capture walker2-off
+# --- Part 2: the host rides D-Horse, the guest (hide) watches ----------------------------------------------------
+# The Part 1 dismount must have finished: never switch the buddy block under a mounted host.
+host run walker_status
+host require localMounted=0
+stance host stand
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656
+host run goto_horse
+wait 2000
+host debug clear_enemies 100
+placebehind guest host 4 8
+wait 2500
+guest mouse -250 0
+wait 800
+guest capture horse-before
+host capture horse-host-before
+host press e 150
+guest burst horse-mounting 6 250
+wait 2000
+# The dismount E below only runs on a mounted host, so it can never mount the horse.
+host run horse_status
+host require localMounted=1
+guest capture horse-riding
+host capture horse-host-riding
+host hold w 1500 nowait
+guest burst horse-ride 8 200
+host release
+wait 1500
+guest capture horse-stopped
+host press e 150
+guest burst horse-dismount 6 300
+wait 3000
+host run horse_status
+host require localMounted=0
+guest capture horse-off
+# --- Part 3: both copies deploy D-Horse; RIDE_BODY must leave the guest's own idle horse where it is ---------------
+guest run horse_spawn
+wait 10000
+guest run horse_status
+guest expect horse;selected=horse;available=1;actor0=6656
+stance guest stand
+guest mouse 300 0
+wait 800
+guest capture horse-viewer-own-spawned
+host run goto_horse
+wait 2000
+host debug clear_enemies 100
+both capture horse-viewer-own-before
+host press e 150
+guest burst horse-viewer-own 8 250
+wait 1500
+# The first E must have mounted the host's own horse (before the fix RIDE_BODY had pulled it away).
+host run horse_status
+host require localMounted=1
+host hold w 1500 nowait
+guest burst horse-viewer-own-ride 8 200
+host release
+wait 2000
+both capture horse-viewer-own-after
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+placebehind guest host 9 3
+wait 2500
+guest capture horse-viewer-own-host
+# --- Part 4: the reverse; the guest rides D-Walker, the host (mount off) watches: today's baseline -----------------
+# The host keeps its D-Horse from Parts 2/3, so it has no walker of its own.
+guest debug teleport 807.7 341.7 1636.6 -174
+wait 3000
+stance guest stand
+guest run walker_spawn
+wait 12000
+guest run walker_status
+guest require walker;selected=walker;available=1;actor0=22528
+guest run goto_walker
+wait 2000
+placebehind host guest 8 2
+wait 2500
+host debug clear_enemies 100
+host mouse -250 0
+wait 800
+host capture base-walker-before
+guest press e 150
+host burst base-walker-mounting 8 250
+wait 2500
+host capture base-walker-riding
+guest hold w 1500 nowait
+host burst base-walker-drive 8 200
+guest release
+wait 1500
+guest press e 150
+host burst base-walker-dismount 8 300
+wait 3000
+host capture base-walker-off
+# --- Part 5 (lab only): rider states on body 1 without a mount (overlay debug probes) -----------------------------
+guest run walker_status
+guest expect localMounted=0
+stance host stand
+stance guest stand
+placebehind guest host 7 2
+wait 3000
+guest mouse 300 0
+wait 800
+guest capture dm-before
+guest run overlay_state stateRideOnIdle 1 4000
+guest expect ^overlay_queued;state=stateRideOnIdle$
+wait 800
+guest burst dm-ride-idle 3 400
+wait 4000
+guest run overlay_state stateGallop 1 4000
+guest expect ^overlay_queued;state=stateGallop$
+wait 800
+guest burst dm-gallop 3 400
+wait 4000
+guest run overlay_state stateRideWalkerWalk 1 4000
+guest expect ^overlay_queued;state=stateRideWalkerWalk$
+wait 800
+guest burst dm-walker-walk 3 400
+wait 4000
+guest capture dm-done
+# --- end of Part 5 (lab only) -------------------------------------------------------------------------------------
+both capture mount-end
+state

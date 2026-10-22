@@ -113,7 +113,7 @@ local function fixture(options)
         if starts(source, TICK) then
             c.ticks[#c.ticks + 1] = source:sub(#TICK + 1)
             return function()
-                if c.reply then return unpack(c.reply, 1, 18) end
+                if c.reply then return unpack(c.reply, 1, 20) end
                 return 'MGS_COOP_PARTNER_V1'
             end
         end
@@ -156,6 +156,12 @@ local function fixture(options)
         end,
         RequestToStopDirectMotion = function() record('dmstop') end,
         RequestToGoNextDirectMotion = function() record('dmnext') end,
+        -- Like the real binding (0x9D0D60): playerIndex is never read and the
+        -- change lands on the local player ([P+0x214] in R8D).
+        ChangeEquip = function(t)
+            record(string.format('changeequip:%s:%s:%s:%s:%s', tostring(c.localIndex), tostring(t.equipId),
+                tostring(t.stock), tostring(t.toActive), tostring(t.dropPrevEquip)))
+        end,
     }
     env.PlayerInfo = {
         GetLocalPlayerIndex = function() return c.localIndex end,
@@ -543,7 +549,9 @@ end
 for _, case in ipairs({{64, 'stateDamageBigFront', false}, {64 + 32 + 7, 'stateEludeIdle', true}, {64 + 4, 'stateDead', false},
     {64 + 32 + 12, 'stateStandIdleLeft', true},
     {64 + 32 + 20, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapdam/snapdam_p_die_idl.gani', true},
-    {64 + 21, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_s_fal_lp_l.gani', false}}) do
+    {64 + 21, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_s_fal_lp_l.gani', false},
+    -- Mount research probes (docs/mounts.md): rider states on body 1 without a mount.
+    {64 + 32 + 22, 'stateRideOnIdle', true}, {64 + 32 + 23, 'stateGallop', true}, {64 + 24, 'stateRideWalkerWalk', false}}) do
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, case[1]}
     mark = #c.calls
     update(env)
@@ -551,7 +559,7 @@ for _, case in ipairs({{64, 'stateDamageBigFront', false}, {64 + 32 + 7, 'stateE
         hasLog(c, 'event=dm_overlay;index=' .. ((case[1] - 64) % 32) .. ';loop=' .. (case[3] and 1 or 0)),
         'overlay reply ' .. case[1] .. ' plays ' .. case[2])
 end
-for _, bad in ipairs({64 + 22, 64 + 32 + 22, 127}) do
+for _, bad in ipairs({64 + 25, 64 + 32 + 25, 127}) do
     local notes = count(c.logs, 'event=dm_refused;reason=bad_overlay')
     mark = #c.calls
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}
@@ -672,6 +680,19 @@ do
     _, n = seat(25601, 1, 1, 4)
     check(n == 0 and hasLog(c, 'event=ride_seat_refused;id=25601;seat=1;reason=no_class'), 'no Vehicle.type table: refused')
 end
+-- CBOX (1024) is never applied through Lua: Player.ChangeEquip would equip the
+-- local player (the binding ignores playerIndex), so no reply value may reach it.
+do
+    local env, c = fixture(); call(env, 'OnMissionGameStart')
+    local logs, ticks = #c.logs, #c.ticks
+    for _, box in ipairs({{456, 1}, {482, 0}}) do
+        c.reply = {1024, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, box[1], box[2]}
+        update(env)
+    end
+    check(#c.ticks == ticks + 2, 'both box replies were received')
+    for _, entry in ipairs(c.calls) do check(not entry:match('^changeequip:'), 'no ChangeEquip call: ' .. entry) end
+    for i = logs + 1, #c.logs do check(not c.logs[i]:match('cbox'), 'no cbox event: ' .. c.logs[i]) end
+end
 -- The sender's seat/vehicle/status suffix (lua/coop/partner_ride.lua).
 do
     local env, c = fixture(); call(env, 'OnMissionGameStart')
@@ -716,6 +737,23 @@ do
     env.e.MgsCoopPartnerStatusBits = nil; env.e.MgsCoopPartnerRideSeat = nil
     c.status = {[STATUS.ON_VEHICLE] = true}; update(env)
     check(fields(lastTick(c))[12] == 'ride=2' and #fields(lastTick(c)) == 12, 'missing helpers keep the plain ride suffix')
+end
+-- F1 vehicles (docs/native-puppet.md "Vehicle boarding"): a stock back-seat passenger (act 0x6E) has no
+-- ON_VEHICLE (UpdatePlayerInfo sets it only for the driver's act 0x6F), so Lua reports it on foot and never
+-- reads its riders, even with vars.playerVehicleGameObjectId naming the vehicle. The native passenger report
+-- (partner_board) replaces this foot report in the ride sender.
+do
+    local env, c = fixture(); call(env, 'OnMissionGameStart')
+    env.vars.playerVehicleGameObjectId = 25603
+    local riderReads = 0
+    env.GameObject.SendCommand = function(id, command)
+        if command.id == 'GetRiderId' then riderReads = riderReads + 1; return {65535, 65535, 0, 65535} end
+        c.warps[#c.warps + 1] = {id = id, command = command}
+    end
+    c.status = {}
+    update(env)
+    check(fields(lastTick(c))[12] == 'ride=0' and #fields(lastTick(c)) == 12 and riderReads == 0,
+        'a passenger without ON_VEHICLE reports foot (no veh=, no seat=, no rider read): ' .. lastTick(c))
 end
 -- DM_PLAY | SET_PARTS: parts first, then dmplay with the trailing gani.
 c.reply = {144, 1, 0, 0, 0, 0, 1, 0, 6, 27, 116, 0, 0, 1}

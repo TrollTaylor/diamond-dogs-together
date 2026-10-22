@@ -110,17 +110,24 @@ Family names (action-anims.md section 3 with critic 3.6; `?` marks likely/specul
 | 9 | supine_idle? | 57 / 58 | dive / evade_quiet |
 | 11 / 12 / 13 | aim_stand_idle / aim_stand_turn / aim_stand_move | 59 | interact_held? |
 | 14 / 15 / 16 | aim_crouch_idle / aim_crouch_turn / aim_crouch_move? | 67..74 | cover? |
-| 17, 19, 20 | aim_prone? | 75 / 76 | knockdown? / knockdown_recover? |
-| 21 / 23 | ladder? / ladder_climb? | 77, 78 | cbox? |
-| 22 | heli? | 79..83 | stun? |
-| 24 | fall_entry? | 91..96 | cqc_hold? |
+| 17, 19, 20 | aim_prone? | 75, 76 | cure |
+| 21 / 23 | ladder / wall_climb | 77, 78 | cbox? |
+| 22 | pipe | 79..83 | trash_box |
+| 24 | step_on | 91..96 | cqc_hold? |
 | 25 / 26 | fall / land | 97 / 98..108 | heli_board? / heli |
 | 27 | evade | 109 / 110 / 111 / 112 | vehicle_in / vehicle_dismount? / vehicle_seated / vehicle_out |
-| 28 | hop? | 121 / 122 / 123..126 | vehicle_passenger? / horse? / walker? |
+| 28 | cliff_drop | 121 / 122 / 123 / 124 / 125 / 126 | horse_ride / horse_mount / walker_mount / walker? / walker_drive / walker_off |
 | 29 | hit? | 131 / 132 / 133 | sleep_onset / sleep / sleep_wake |
 | 0 | none | 139 / 142 | dm / dive_variant? |
 
-Everything else prints `?`.
+Everything else prints `?`. 0.13.4 renamed 21-24, 28, 75/76 and 79..83 from the static writer census of
+`Q+0x18[id]` on 1.0.15.4 (owners named by Ghidra): 21 `LadderActionImpl`, 22 `PipeActionPluginImpl`, 23
+`ClimbActionPluginImpl` (wall / cliff free-climb), 24 `StepOnActionImpl` (low vault, onto a ledge, up out of a hang),
+28 `CliffActionImpl` (edge drop), 75/76 Cure, 79..83 `TrashBoxActionPluginImpl`. They were heli?, ladder_climb?,
+fall_entry?, hop?, knockdown? and stun?. 0.13.5 (F5, docs/mounts.md) renamed the mount acts the same way: 121 the
+RideHorse ride state (PlayerInfo sets ON_HORSE only for it; it was vehicle_passenger?), 122 the RideHorse get-on /
+get-off / turn states (it was horse?), 123 / 125 / 126 the D-Walker get-on, `StateDrive` and leave states; 124 has
+no writer and keeps walker?.
 
 **Dropped pad presses.** Per second, the remote's presses (its input frames' edge sets, i.e. the
 sender's pad before this copy's mask; v1 frames: rising held bits) that body 1's window did not pass,
@@ -197,9 +204,12 @@ point this hook at its "skips armed" query (or call the overlay's In::cam_skip f
 ### 4.3 Catalogue (append only; the index is the reply value's low 5 bits and `OVERLAY[index]`)
 
 Each state's StrCode64 was computed with the investigators' `foxhash.sc64` (validated:
-`stateGunHold` = `aa0ea22a5e0e`), found exactly once in the shared node pool of the retail
-`TppPlayer2_layers.mog` (copy `build/partner-turn-resident-audit-20261007/package-00_fpk/...`), and
-**absent** from the SQ-4 graph 2/3 node list (`mog-nodes-2_3.json`); the controls `stateThrowHoldEnd`,
+`stateGunHold` = `aa0ea22a5e0e`) and found exactly once in the shared node pool of the retail
+`TppPlayer2_layers.mog` (copy `build/partner-turn-resident-audit-20261007/package-00_fpk/...`). The
+states 0..18 were also checked **absent** from the SQ-4 graph 2/3 node list (`mog-nodes-2_3.json`). The
+mount probes 22..24 were checked against the node pool only (pool=1 each, re-run 2026-10-21 with the
+tool below and an empty node list, because `mog-nodes-2_3.json` was not available): their absence from
+graphs 2/3 is **unchecked**. In the graph check, the controls `stateThrowHoldEnd`,
 `statePlaceSwitchOn`, `stateBinocleLoop` and `stateGunHold` were correctly found in graph 2, and the
 non-existent `stateDamageBig` absent (`tools/partner_overlay_mogcheck.py`; it takes the directory of a
 StrCode64 module `foxhash.sc64`, the MOG and the SQ-4 node list). The clip paths
@@ -229,6 +239,9 @@ are `player2_resident.mtar` PathCode64 entries (motion-levers `verified-clips.ts
 | 19 | snapdam_s_fre (clip) | fc53062c44565522 | 0 | - |
 | 20 | snapdam_p_die_idl (clip) | fc5046c89dad210c | 1 | - |
 | 21 | snapnon_s_fal_lp_l (clip) | fc50fb7461e1772c | 1 | - |
+| 22 | stateRideOnIdle | f241f3bcf60b | 1 | - (mount research probe, docs/mounts.md; pool only, graph 2/3 unchecked) |
+| 23 | stateGallop | ce7e8409eb61 | 1 | - (mount research probe; pool only, graph 2/3 unchecked) |
+| 24 | stateRideWalkerWalk | 1b8b642289d5 | 1 | - (mount research probe; no code reference; pool only, graph 2/3 unchecked) |
 
 The damage direction is not on the wire, so the map plays Front for every hit; the other directions
 are for the debug command. `vy` is the remote's vertical speed (EMA of the sampled y). The

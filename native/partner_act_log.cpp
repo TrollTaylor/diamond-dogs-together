@@ -36,6 +36,11 @@ constexpr std::uint32_t kBits[kGroups] = {0x20u, 0x80u, 0x200u, 0x400u, 0x7800u,
 constexpr std::uint32_t kNamed = 0x20u | 0x80u | 0x200u | 0x400u | 0x7800u | 0x8000u | 0x20000u | 0x80000u | 0x400000u | 0x10u;
 } // namespace
 
+// Names without '?' are confirmed: by play, or by the static writer census of
+// Q+0x18[id] on 1.0.15.4 (owners named by Ghidra): 21 LadderActionImpl, 22
+// PipeActionPluginImpl, 23 ClimbActionPluginImpl (wall / cliff free-climb), 24
+// StepOnActionImpl (low vault, onto a ledge, up out of a hang), 28
+// CliffActionImpl (edge drop), 75/76 Cure, 79..83 TrashBoxActionPluginImpl.
 const char* ActName(std::uint16_t act) noexcept {
     switch (act) {
     case 0: return "none";
@@ -54,14 +59,14 @@ const char* ActName(std::uint16_t act) noexcept {
     case 15: return "aim_crouch_turn";
     case 16: return "aim_crouch_move?";
     case 17: case 19: case 20: return "aim_prone?";
-    case 21: return "ladder?";
-    case 22: return "heli?";
-    case 23: return "ladder_climb?";
-    case 24: return "fall_entry?";
+    case 21: return "ladder";
+    case 22: return "pipe";
+    case 23: return "wall_climb";
+    case 24: return "step_on";
     case 25: return "fall";
     case 26: return "land";
     case 27: return "evade";
-    case 28: return "hop?";
+    case 28: return "cliff_drop";
     case 29: return "hit?";
     case 39: return "carry_body";
     case 40: return "dead";
@@ -76,16 +81,20 @@ const char* ActName(std::uint16_t act) noexcept {
     case 57: return "dive";
     case 58: return "evade_quiet";
     case 59: return "interact_held?";
-    case 75: return "knockdown?";
-    case 76: return "knockdown_recover?";
+    case 75: case 76: return "cure";
     case 77: case 78: return "cbox?";
     case 97: return "heli_board?";
     case 109: return "vehicle_in";
     case 110: return "vehicle_dismount?";
     case 111: return "vehicle_seated";
     case 112: return "vehicle_out";
-    case 121: return "vehicle_passenger?";
-    case 122: return "horse?";
+    // Mount acts from the writer census (docs/mounts.md, partner_mount_policy.hpp).
+    case 121: return "horse_ride";
+    case 122: return "horse_mount";
+    case 123: return "walker_mount";
+    case 124: return "walker?";
+    case 125: return "walker_drive";
+    case 126: return "walker_off";
     case 131: return "sleep_onset";
     case 132: return "sleep";
     case 133: return "sleep_wake";
@@ -94,7 +103,7 @@ const char* ActName(std::uint16_t act) noexcept {
     default: break;
     }
     if (act >= 67 && act <= 74) return "cover?";
-    if (act >= 79 && act <= 83) return "stun?";
+    if (act >= 79 && act <= 83) return "trash_box";
     if (act >= 91 && act <= 96) return "cqc_hold?";
     if (act >= 98 && act <= 108) return "heli";
     if (act >= 123 && act <= 126) return "walker?";

@@ -334,6 +334,26 @@ and `PHASE_{SNEAK,CAUTION,EVASION,ALERT}`. W2: `TppWeather.ForceRequestWeather`/
 `CancelForceRequestWeather`, `WeatherManager.PauseNewWeatherChangeRandom`,
 `DemoDaemon.IsDemoPlaying`, numeric `vars.clock`/`vars.weather`.
 
+Clock: every world timer reads `W.now()`, the raw clock
+(`Time.GetRawElapsedTimeSinceStartUp`, ms) plus `W.held`. The game holds the
+raw clock still under the MISSION FAILED menu and the ESC pause menu while
+`OnUpdate` keeps running (hidden run `65da90ce`, a lab-only census: the host's
+raw clock stayed at 67517 ms for 33 s of game over while `os.clock` and the
+update count advanced; about 6 s of ESC pause held it at 52469 ms, and it
+resumed from there without a catch-up jump; `Time.GetFrameTime` reads a fixed
+16.683 ms even while paused). Under the menu that froze the lab
+`host_continue` probe (scheduled, never started), the 1 Hz digests, the 60 s
+stats, follow retries and the sortie holds until the mission reloaded.
+`W.clockTick` runs once per update, before the world tick: when the raw clock
+has not moved since the previous update it adds the wall time since then
+(`os.clock`, at most 250 ms per update) to `W.held`; when the raw clock moves
+again it pays back any catch-up beyond the wall time. `W.now()` stays
+monotonic and is unchanged while the raw clock runs; without `os.clock` the
+raw clock alone drives it. World timers therefore also keep wall time during a
+local ESC pause, as the partner's game does (digests, downed status and their
+freshness windows, holds); before, a paused copy stopped sending until it resumed. Logs: `event=raw_clock;step=held;raw_ms=` once a
+hold passes 1 s, then `event=raw_clock;step=resumed;held_ms=;paid_back_ms=`.
+
 Observer: `event=obs;m=<kind>;ent=<hash|0>;id=;att=local|buddy|other|none`
 for Dead, Neutralize, Unconscious, Dying, Conscious (log only), Fulton,
 FultonInfo, FultonFailed, Holdup and ChangePhase (Damage is recorded, not
@@ -587,7 +607,8 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 `req_timeout`, `req_drop`, `req_hold`, `apply`, `ledger`, `divergence`, `phase`,
 `req_phase`, `floor`, `phase_vec`, `area`, `digest_mismatch`, `resync`,
 `resync_needed`, `clock`, `clock_tx`, `clock_check`, `weather`,
-`weather_check`, `roster`, `stats`, `bad_value`, `probe`, `goto`.
+`weather_check`, `roster`, `stats`, `bad_value`, `probe`, `goto`,
+`raw_clock` (section 7, Clock).
 
 ## 11. Deviations from the corrected spec
 

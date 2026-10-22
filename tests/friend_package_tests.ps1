@@ -453,6 +453,57 @@ try {
                 !$guestIni.Contains('partner_native_placed') -and !$guestIni.Contains('partner_native_arm') -and
                 !$clipsIni.Contains('partner_native_placed') -and !$clipsIni.Contains('partner_native_arm')) 'Play-Coop lab.ini never names the WS4 v1 keys'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play -Partner native defaults C4 and arm holds on (WS4 v1)'
+            # WS4 v2: the C4 place / detonate mirror is lab only until its hidden run; Play-Coop never names it.
+            Assert-True (!$hostIni.Contains('partner_native_place_mirror') -and !$guestIni.Contains('partner_native_place_mirror') -and
+                !$clipsIni.Contains('partner_native_place_mirror')) 'Play-Coop lab.ini never names the WS4 v2 mirror'
+            Assert-Equal "$($n['partner_native_place_mirror'])" '0' 'native: play leaves the WS4 v2 mirror off'
+            $file = Join-Path $fixture 'play-ws4v2-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_place_mirror=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_place_mirror'])|$($m['partner_native_placed'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named WS4 v2 mirror off'
+            # Traversal replay (docs/native-puppet.md "Traversal icon") follows the native gun profile in play (user decision
+            # 2026-10-22; step-on proven in hidden run 104e9a47); Play-Coop never names it, and a named 0 opts out.
+            Assert-True (!$hostIni.Contains('partner_native_traverse') -and !$guestIni.Contains('partner_native_traverse') -and
+                !$clipsIni.Contains('partner_native_traverse')) 'Play-Coop lab.ini never names partner_native_traverse'
+            Assert-Equal "$($n['partner_native_traverse'])|$($n['partner_native_traverse_given'])" '1|0' 'native: play defaults the traversal replay on'
+            $file = Join-Path $fixture 'play-traverse-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_traverse=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_traverse'])|$($m['partner_native_traverse_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named traversal 0 opts out in play'
+            # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board follows the native gun profile in play as
+            # passenger (the back seat with the passenger camera; hidden runs 495e7c3a lab and de949f80 play; block:
+            # 0348c4d8, fad26e25); a named block or passenger runs as named. Play-Coop never names the key.
+            Assert-True (!$hostIni.Contains('partner_ride_board') -and !$guestIni.Contains('partner_ride_board') -and
+                !$clipsIni.Contains('partner_ride_board')) 'Play-Coop lab.ini never names partner_ride_board'
+            Assert-Equal "$($n['partner_ride_board'])|$($n['partner_ride_board_given'])" 'passenger|0' 'native: play defaults the board to passenger'
+            foreach ($value in @('block', 'passenger')) {
+                $file = Join-Path $fixture "play-board-$value-lab.ini"; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_board=$value`n", $utf8)
+                $m = Invoke-IniCheck lab $file
+                Assert-Equal "$($m['partner_ride_board'])|$($m['partner_ride_board_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" "$value|1|0x0|0/0" "native: play admits a named board $value"
+            }
+            # F2: the native cardboard box on body 1 (docs/native-puppet.md "Cardboard box") follows the native gun profile in
+            # play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link v2 connected).
+            # Play-Coop never names the key, and a named 0 opts out.
+            Assert-True (!$hostIni.Contains('partner_native_cbox') -and !$guestIni.Contains('partner_native_cbox') -and
+                !$clipsIni.Contains('partner_native_cbox')) 'Play-Coop lab.ini never names partner_native_cbox'
+            Assert-Equal "$($n['partner_native_cbox'])|$($n['partner_native_cbox_given'])" '1|0' 'native: play defaults the native box on'
+            $file = Join-Path $fixture 'play-cbox-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_cbox=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_cbox'])|$($m['partner_native_cbox_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named native box 0 opts out in play'
+            # Gestures (docs/native-puppet.md "Gestures") follow the native gun profile in play (hidden runs 0e343f72 lab and
+            # the play rehearsal); Play-Coop never names the key, and a named 0 opts out.
+            Assert-True (!$hostIni.Contains('partner_native_gesture') -and !$guestIni.Contains('partner_native_gesture') -and
+                !$clipsIni.Contains('partner_native_gesture')) 'Play-Coop lab.ini never names partner_native_gesture'
+            Assert-Equal "$($n['partner_native_gesture'])|$($n['partner_native_gesture_given'])" '1|0' 'native: play defaults gestures on'
+            $file = Join-Path $fixture 'play-gesture-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_gesture=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_gesture'])|$($m['partner_native_gesture_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named gesture 0 opts out in play'
+            # Horse / D-Walker riders (docs/mounts.md): hide with the native gun profile in lab and play (hidden runs
+            # bfd6fcc4 / 2ab88411 lab and the play rehearsal 5a044a4d); Play-Coop never names the key, and a named off opts out.
+            Assert-True (!$hostIni.Contains('partner_native_mount') -and !$guestIni.Contains('partner_native_mount') -and
+                !$clipsIni.Contains('partner_native_mount')) 'Play-Coop lab.ini never names partner_native_mount'
+            Assert-Equal "$($n['partner_native_mount'])|$($n['partner_native_mount_given'])" 'hide|0' 'native: play defaults the mount hide on'
+            $file = Join-Path $fixture 'play-mount-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_mount=off`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_mount'])|$($m['partner_native_mount_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'off|1|0x0|0/0' 'native: a named mount off opts out in play'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'

@@ -1,0 +1,36 @@
+# F2 step 0 (docs/native-puppet.md "Cardboard box"): the lab seeds' item lists, read-only, before partner-cbox.txt.
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR unset,
+# no build running in any worktree, under the shared verify lock, one worker session.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-cbox-census.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# Nothing is selected, equipped or given: "items" reads vars.items[0..7], Player.GetAmmoStockBySlot(ITEM, i) and
+# vars.currentItemIndex; "support" is the existing support census.
+# Known (0.13.4 runtime runs, integ8-rt 28094e48): the HOST seed's item subs 1..7 hold 468, 451, 492, 483, 484, 472, 466;
+# 468 (sub 1), 472 (sub 6) and 466 (sub 7) are cardboard boxes ("host run slot item 1" boxes the host: st=0x4, act 77).
+# This census confirms the GUEST seed. partner-cbox.txt then needs:
+#   - the box sub the host selects (sub 1 = 468 if the host line below matches);
+#   - whether the guest (the viewer of the host's box) owns 468 with stock > 0: then the guest logs mapped=same, else
+#     mapped=viewer_box (its own first box with stock: another camo), else reason=viewer_no_box (no call at all; the
+#     engine's box wake reads the VIEWER's item stock). In that last case only, the lab-only "give_item cbox" (one
+#     EQP_IT_CBox into a free sub of that copy's running item list, never into a full list) is the fallback; its risk:
+#     a checkpoint save writes it into that run's copied save, and the box model's assets may not be resident for an
+#     item that was not in the sortie loadout (docs/native-puppet.md "Cardboard box").
+# Expected: both "items;ids=0,468,451,492,483,484,472,466;counts=0,1,..;current=0" (the guest's may differ: record it).
+# Result (hidden run ea1abea5, wp/integ9 0.13.5): host AND guest "items;ids=0,468,451,492,483,484,472,466;
+# counts=0,8,10,54000,10,4,8,8;current=0": each viewer owns the other's 468 with stock 8 (mapped=same; no give_item).
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+wait 2000
+host run items
+host expect ^items;ids=
+host expect ^items;ids=0,468,451,492,483,484,472,466;counts=
+guest run items
+guest expect ^items;ids=
+guest expect ^items;ids=0,468,
+host run support
+guest run support
+both capture census
+state

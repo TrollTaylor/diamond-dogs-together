@@ -748,6 +748,23 @@ SITES += [
     (0xDC2A50, '664489442418895424104883ec288bc24c8bc983e01f0f84', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
     (0xDC63A0, '488974241889542410574883ec208bc28bf2488bf983e01f', 'support equip audited callee; complete body SHA256 also pinned by equipment_stock_writer_pins.hpp'),
 ]
+# --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box").
+# On: ChangeEquip(ctl, &r, 1, {box, flags 4}); off: SetCurrentItemIndex(ctl, 1, 0, 0) (ctl vt+0x68). Both bodies and
+# their callees (OnRemoveItem, OnEquipItem, GetItemStockCount, GetEquipIdSlot) are SHA-pinned whole by
+# equipment_stock_writer_pins.hpp; these are the semantic sites the module's reasoning depends on.
+SITES += [
+    (0x11AF9D9, '4109827c010000', 'cbox: SetCurrentItemIndex 0x11AF9A0 ORs Q+0x17C with 1 << idx'),
+    (0x11AFA00, '0fb64b37400fb6c5c0e00480e10f0ac8400fb6c5884b37', 'cbox: SetCurrentItemIndex row+0x37 = (row+0x37 & 0xF) | sub << 4 (the current item sub)'),
+    (0x11AFA2C, '488b46183bb814020000750a488b462089a87c060000', 'cbox: SetCurrentItemIndex writes vars+0x67C only for idx == [P+0x214]'),
+    (0x11AFF92, '443bb914020000', 'cbox: SetEquipState 0x11AFF30 writes vars items only for idx == [P+0x214]'),
+    (0x11AD675, '488b41188bfa4c8bf18bb014020000', 'cbox: GetItemStockCount 0x11AD660 scans the VIEWER\'s items ([P+0x214]), not instance idx'),
+    (0x10DF4EA, '486bdb3a4869ff30040000480398c000000048037e780fb6433748c1e804440fb774431c',
+     'cbox: can-wear 0x10DF430 reads instance idx\'s current item row[0x1C + 2*(row[0x37] >> 4)] (row = Q+0xC0 + idx*0x3A)'),
+    (0x10DF517, '418d8638feffff83f81a774d', 'cbox: can-wear: the box range 0x1C8..0x1E2'),
+    (0x10DF53B, 'ff90c8000000', 'cbox: can-wear: ctl vt+0xC8 (GetItemStockCount) of that item: zero refuses the box'),
+    (0x110BDD3, 'b84d00000066890469', 'cbox: Wake 0x110BD40 writes Q+0x18[idx] = 0x4D (act 77)'),
+    (0x10ED7BE, '488b88d80000000fb7839803000066890479', 'cbox: state 1 0x10ED490 stores the box object id at Q+0xD8[idx]'),
+]
 # --- WS3 vehicles (docs/vehicle-ws3.md): the driver seated in an unnamed vehicle by id (B1)
 # and the viewer's copy tilted with the driver's record angles (A1, census first).
 VEHICLE_SITES = [
@@ -788,6 +805,105 @@ SITES += VEHICLE_SITES
 # The two small-move limits 0xBA9710 compares against (read-only .edata dwords; vehicle_assertions
 # and partner_vehicle::VerifyImage check them): 1.0f squared metres and 0.1f radians.
 VEHICLE_DATA = [(0x20A72CC, 0x3F800000), (0x20A8068, 0x3DCCCCCD)]
+# --- F1 vehicles (partner_board, docs/native-puppet.md "Vehicle boarding", research re-vehicle.md): the board block
+# and passengers both ways. Site A 0x12458AC (the ride pre-query 0x1245820's CALL 0x124B3A0) and site B 0x1251479
+# (phase 1 0x1251200's CALL 0x124B360) are retargeted to the board wrappers; their rel32 operands are masked by
+# partner_board::VerifyImage (the code gate checks the original bytes once, before any lazy install). The wrappers
+# call the nearest search and the two getters below; block relies on the pre-query failing CanExec and on phase 1's
+# stock "no seat" exit, passenger on phase 1 passing a back seat unchanged to TryToRide and selecting the passenger
+# phase (act 0x6E); the local passenger report reads P+0x120[body] (the ridden unit) and Q+0xE0[body] (the vehicle id).
+BOARD_SITES = [
+    (0x1245877, '498bce0f284020660f7f8424a0000000e834247eff41b901000000488d9424a0000000fec80fb6c8413ac9440f42c94533c0498bce'
+     'e8ef5a0000488d542454498bce440fb6f8e8ce580000',
+     'board site A: the pre-query 0x1245820 bounds first 0 / last min(count-1, 1) and calls 0x124B3A0(unit, pos) at '
+     '0x12458AC; the seat goes to r15b'),
+    (0x125145C, '8bd6488b4878488b8938020000488b01ff9088030000498bce488d5020e8e29effff440fb6e03c040f844fffffff498bcee85ed330ff'
+     '8be884c0757f',
+     'board site B: phase 1 0x1251200 calls 0x124B360(unit, CS vt+0x388(body)+0x20) at 0x1251479; 4 -> the no-seat '
+     'exit 0x12513D9; then GetVehicleType 0x55E7F0'),
+    (0x1246A3F, '488d442440418bd7488bce4889442420e8ccedffff84c00f8417040000',
+     'RideVehicle CanExec 0x1246650: the pre-query 0x1245820 false -> 0x1246E73 (return false: no ride icon)'),
+    (0x124B360, '48895c2408574883ec20488bda488bf9e84bc97dfffec841b901000000488bd3440fb6c0488bcf453ac1450f42c84533c0488b5c2430'
+     '4883c4205fe900000000',
+     'SearchNearestRideSeatForDriver 0x124B360 (whole body): last = min(count-1, 1), first 0, jmp 0x124B3A0'),
+    (0x124B3A0, '4056574154415641574881ecd0000000450fb6f1410fb6f84c8be24889542420488bf1e8883c9bff4c8b90980000000fb6566c498b'
+     '8aa8020000c1ea04488b01ff90680100004c8bf84885c07512',
+     'nearest free seat 0x124B3A0(unit, pos, first r8b, last r9b): the category through service vt+0x168'),
+    (0x124B3EE, 'b0044881c4d0000000415f415e415c5f5ec3', 'nearest free seat: no category -> 4'),
+    (0x124B454, 'f30f10355cf3e500400fb6c740b50441b8ffff00000f287c2460440f28442450440f284c2440440f28542430',
+     'nearest free seat: radius 100.0 (0x20AA7B8, 10 m squared), result 4 until a free seat is nearer'),
+    (0x124B480, '3bc30f8da50000000f1f840000000000413afe0f8775010000400fb6c76644394446307579',
+     'nearest free seat: seats first..last below the base count, only rider[seat] == 0xFFFF'),
+    (0x55E7F0, '40534883ec20488bd9e852086a00488b9098000000488b8aa80200000fb6536c488b01c1ea04ff90680100004885c0750d0fb6436c'
+     'c1e8044883c4205bc30fb680b60100004883c4205bc3',
+     'GetVehicleType 0x55E7F0 (whole body): cat+0x1B6, or unit+0x6C >> 4 without a category'),
+    (0xA27CC0, '48895c240848896c24104889742418574883ec20488be932dbe872731d00488b9098000000488bbaa80200000fb6556c488b07c1ea04'
+     '488bcfff9068010000488bf04885c07428',
+     'seat count 0xA27CC0 (1/2): the category through service vt+0x168; none -> 0'),
+    (0xA27D07, '488b070fb6556c488bcfff90700100004885c074070fb698b50000000fb686b70100000fb6cb03c1488b5c2430488b6c2438488b7424'
+     '404883c4205fc3',
+     'seat count 0xA27CC0 (2/2): cat+0x1B7 + the attachment +0xB5 (service vt+0x170)'),
+    (0xA27220, '885424104883ec28488b010fb6d2c1ea04ff90680100004885c075054883c428c30fb64c2438488b80d001000083e10f488b04c8488'
+     '3c428c3',
+     'service vt+0x170 0xA27220 (whole body): the attachment = (category+0x1D0)[type & 0xF]'),
+    (0xA27260, '4863c2488b84c1b8000000c3', 'service vt+0x168 0xA27260 (whole body): the category = service+0xB8[index]'),
+    (0x1251822, '4d85f60f84910000000fb64b570fb6c1240f3c0272080fb6c183e00feb03418bc7440fb7c60fb6d0498bce664523c4e81a7ca6ff',
+     'phase 1: seat = (sel & 0xF) < 2 ? 0 : sel (a back seat passes unchanged); TryToRide 0xCB9470(unit, seat, id)'),
+    (0x125188E, '0fb64357240f3c020f92c00402884355e8add79aff488b8898000000410fb74678488b91a802000066894220',
+     'phase 1: next phase = (sel < 2) + 2 (3 driver, 2 passenger 0x1250CF0); VehicleSystem+0x20 = unit+0x78'),
+    (0xA2956A, '488d0c77b8ffff0000663941307405403' '2ffeb240fb7442458668941304084f67513b900fe00006685c17509b800400000660947'
+     '7c',
+     'TryToRide 0xA29530: stores the id only into an empty rider[seat]; the player-driver flag +0x7C 0x4000 only '
+     'for seat 0'),
+    (0x1250E96, '488b823801000041b8040000008bd7488b4860488b4118b96e00000066890c78',
+     'passenger phase 0x1250CF0 enter: act (*(Q+0x18))[body] = 0x6E'),
+    (0x125AD61, '488b4508488b6c2450488b8038010000488b802001000048891cf0',
+     '0x125AD00: (*(P+0x120))[body] = the ridden unit (the local passenger report)'),
+    (0x12CF42F, '498b85e00000000fb70c706641898c2410010000',
+     'UpdatePlayerInfo 0x12CE870: vars+0x110 (playerVehicleGameObjectId) = (*(Q+0xE0))[body]'),
+]
+SITES += BOARD_SITES
+# --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera", research complete/re-passcam):
+# the local player's camera CAM = *(P+0xB8) takes the first of its six modules (CAM+0xBD0) whose vt+0x18 is true; the
+# VehicleCamera's CanActivate 0x12D0F60 is true only for act 0x6F (driver) / 0x70 (get-off), so a stock back-seat
+# passenger (act 0x6E) keeps the fallback module, whose collision ray hits the jeep. partner_pass_camera writes the
+# VehicleCamera's own encoding of the ridden vehicle (CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx), CAM+0x200 = 1)
+# while the local passenger is seated and the VehicleCamera is not the active module; every module's position solve
+# (PlayerCamera vt+0xA8 0x1121D30) ignores that owner's geometry; the VehicleCamera's Deactivate (the get-off) and the
+# ride's FinishState clear it. No code or slot is patched. Pinned: the CanActivate (why 0x6E never selects the
+# VehicleCamera), the module selection, the connect encoding, the two clears and the collision query's use of +0x1F0.
+PASS_CAMERA_SITES = [
+    (0x12D0F60, '488b4108488b80480300008b9018020000488b4060488b48180fb7045183c09183f8010f96c0c3',
+     'VehicleCamera CanActivate 0x12D0F60 (whole body): P = CAM+0x348, act = (*(Q+0x18))[P+0x218]; act - 0x6F <= 1'),
+    (0x12D1EB0, '4c8b4928498b9148030000448b8218020000488b82200100004a8b3cc0488b4260488b5018420fb704424885ff750e33c94189890c020000'
+     'e92d01000083c092a9fdffffff',
+     'VehicleCamera connect 0x12D1E80: the unit of P+0x120[P+0x218] (none: CAM+0x20C = 0, no connect); act 0x6E or 0x70 '
+     'takes the passenger branch'),
+    (0x12D1F7E, '33c94189890c020000488b5328f6820402000001742c83ba3c030000017523488d442420488944242848894c2420488b442420488982f001'
+     '0000898a00020000eb5a',
+     'VehicleCamera connect, act 0x6E / 0x70: CAM+0x20C = 0 (the camera base stays the body); the handle is dropped only '
+     'with CAM+0x204 bit 0 and the previous mode 1'),
+    (0x12D1FCA, '0fb74778b9ff0100006623c1b900640000660bc10fb7c848b8ffffffffffffff074823c848b80000000000000088480bc848894c2420488b'
+     '442420488b4b28c7810002000001000000488981f0010000',
+     'VehicleCamera connect: CAM+0x200 = 1, CAM+0x1F0 = 0x8800000000000000 | (0x6400 | (u16 unit+0x78 & 0x1FF))'),
+    (0x12D20A9, '488d4fe0e81ef3ffff488d4fe0e8c5fdffff',
+     'VehicleCamera vt+0x20 0x12D2050 (every update while active) calls the connect 0x12D1E80'),
+    (0x12D0F02, '488b4b08488d442440488944244833d24889542440488b442440488981f00100008991000200004883c4305bc3',
+     'VehicleCamera Deactivate 0x12D0ED0: CAM+0x1F0 = 0, CAM+0x200 = 0'),
+    (0x11194B6, '4c8db3d00b00008bf790498b3e4885ff740d488b07488bcfff501884c0750dffc64983c608413bf472e0eb06448be6',
+     'PlayerCamera update 0x1119410: the first module of CAM+0xBD0[0..5] whose vt+0x18 is true is the mode (6: none)'),
+    (0x1119503, '488b8b300d00004885c97406488b01ff50088b8340030000488d4be04c89ab300d000089833c0300004489a340030000e838c8ffff488b8b'
+     '300d00004885c97405488b01ff10',
+     'PlayerCamera update: a new mode deactivates the old module (vt+0x08), keeps CAM+0x33C = old, CAM+0x340 = new, '
+     'activates the new one (vt+0x00)'),
+    (0x124CD38, '488b89b8000000488d442420488944242848896c2420488b442420488981f001000089a900020000488d442420488944242848896c2420'
+     '488b442420488981f8010000488b0141b0018bd6ff5028',
+     'ride FinishState 0x124C850: CAM = *(P+0xB8); CAM+0x1F0 = 0, CAM+0x200 = 0, CAM+0x1F8 = 0, CAM vt+0x28(body, 1)'),
+    (0x1121D8F, '488b81f0010000488bf948b90000000000000080440f29bc24d0000000488bf241be000700004885c1740d488987200c000041be00078000',
+     'PlayerCamera vt+0xA8 0x1121D30 (the position solve every module ends in): CAM+0x1F0 with bit 63 set is the ignored '
+     'collision owner (copied to CAM+0xC20, query flags 0x700 | 0x800000)'),
+]
+SITES += PASS_CAMERA_SITES
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -918,6 +1034,153 @@ SITES += [
     (0x10605BF, '418bc4e9e1fcffff83ff0e0f858f000000',
      'activation: kind 13 joins the stores 0x10602A8; kind 14 -> 0x10605D0 (the equip jump table 0x1061C70)'),
 ]
+# --- WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): the remote's C4 place (46) / detonate (47) mirrored into body
+# 1's own rec+0x3CC before its job (partner_place_mirror; lab key partner_native_place_mirror). No patch. The gun
+# update 0x103E2D0 calls the decode 0x1095DF0 (0x103E485, pinned above), then the mode's op 4 and op 0 (the next mode
+# into rec+0x2C1), then the transition 0x1040A00; mode 43 op 0 picks 46 on bit 18, mode 44 op 0 46 on bit 18 and 47 on
+# bit 19; the decode's class-3 path sets 18 (clearing 19) only on FIRE with a preview class in 22-23 and sets 19 only
+# on ACTION with rec+0x280 bit 23 (a live charge); mode 46 op 1 clears 16-18, takes its probe's class into 20-21 and
+# folds 22-23 into 20-21 when the probe gives 0; its placement (op 9) runs only for the local record (rec+0x3C0 bit
+# 0); mode 47 op 1 clears 19 and op 10's detonation 0x1053270 only clears 19 for a non-local record.
+# Bytes from the scratch REA .xtext dump; this generator re-reads them from the exact executable.
+SITES += [
+    (0x103E48A, '4883bbb002000000745f41b8040000008bd60f288bb00200004533c9660f6fc1660f73d808660f7ec04863c866480f7ec84803cfffd0',
+     'gun update: after the decode, the current mode\'s member handler [rec+0x2B0] with op 4 (r8d = 4)'),
+    (0x103E4C0, '4883bbb00200000074290f288bb00200004533c94533c0660f6fc18bd6660f73d808660f7ec04863c866480f7ec84803cfffd0',
+     'gun update: then the same handler with op 0 (r8d = 0): the next mode into rec+0x2C1'),
+    (0x103E4F3, '440fb68bc10200004585c9741a0fb683c0020000443bc8740e448bc6488bd7488bcbe8e6240000',
+     'gun update: rec+0x2C1 != 0 and != rec+0x2C0 -> the transition 0x1040A00(rec, plugin, id) in the same update'),
+    (0x107EBD3, '8b8bc003000033ff84c90f889f0000000fbae1090f82950000008b83cc030000c1e812a801740abf2e000000e98e000000',
+     'place hold (mode 43) op 0: rec+0x3C0 bit 7 / bit 9 -> the selector; else rec+0x3CC bit 18 -> next mode 0x2E (46)'),
+    (0x107DC2A, '8b8ec003000033ff84c9784c0fbae1097246f786c4030000000004007407bf30000000eb438b96cc0300008bc2c1e812a8017407bf2e00'
+     '0000eb2dc1ea13f6c2017407bf2f000000eb1e',
+     'place ready (mode 44) op 0: rec+0x3C4 bit 18 -> 0x30; rec+0x3CC bit 18 -> 0x2E (46); bit 19 -> 0x2F (47)'),
+    (0x10967A5, '83f8030f85400100008b93c00300008bca8bc2c1e913c1e8120ac8f6c1010f84d2fdffff0fbae21a0f82c8fdffff',
+     'decode 0x1095DF0: class 3 (C4) needs rec+0x3C0 bit 18 or 19 and not bit 26'),
+    (0x109687C, '8b83cc0300000fbaf0130fbae8128983cc030000eb0d',
+     'decode class 3: the only bit-18 write: btr 19, bts 18 (FIRE, a preview class in 22-23, the placed manager says yes)'),
+    (0x109689F, '418b85d00000000fbae0170f83ebfcffff0fbae0180f82e1fcffff8b83cc030000c1e812a8010f85d0fcffff488b07488bcfff5040c1e8'
+     '05a8010f84bcfcffff818bcc03000000000800e9adfcffff',
+     'decode class 3: bit 19 only with rec+0x280 bit 23 (a live charge), not bit 24, bit 18 clear and pad bit 5 (ACTION)'),
+    (0x107BBE1, '81a7cc030000fffff8ff', 'place (mode 46) op 1: rec+0x3CC &= ~0x70000 (consumes the bit-18 request)'),
+    (0x107BD27, 'e8d411fdff81a7cc030000ffffcfff83e003c1e0140987cc0300008b8fcc030000f7c10000300075148bc1c1e80233c1250000300033c1'
+     '8987cc030000',
+     'place (mode 46) op 1, offline / local branch: probe 0x104CF00 -> rec+0x3CC bits 20-21; 0 -> fold bits 22-23 into 20-21'),
+    (0x107C6FA, 'f687c0030000010f841c05000080bfc2020000040f830f050000',
+     'place (mode 46) op 9: the placement block only for the local record (rec+0x3C0 bit 0) and state < 4'),
+    (0x107EFCD, '81a3cc030000fffff7ff', 'detonate (mode 47) op 1: rec+0x3CC &= ~0x80000 (consumes the bit-19 request)'),
+    (0x107F2CA, 'f683c003000002740b448bc7488bd3e8923ffdfff683c003000001741141b101448bc7488bd3488bcee848ddfbff',
+     'detonate (mode 47) op 10: 0x1053270 behind rec+0x3C0 bit 1; 0x103D040 only for the local record (bit 0)'),
+    (0x105327F, 'f682c003000001418bf0488bfa488be90f84a9000000',
+     'detonation 0x1053270: a non-local record (rec+0x3C0 bit 0 clear) -> 0x105333E (no placed vt+0x68 call)'),
+    (0x105333E, '81a2cc030000fffff7ff', 'detonation 0x1053270, non-local: only rec+0x3CC &= ~0x80000'),
+    # Hidden run 289badb6: a class in 22-23 plus a FIRE press in one body-1 job sends the decode's class-3 path to the
+    # placed iface vt+0x40 0xFCB1F0, whose 0xFC9C00 claims the free owner row for id 1 (iface+0xB0 65535 -> 1). The
+    # mirror writes the class only when the press word, read as PP vt+0x40 reads it, has no FIRE, and aligns 22-23
+    # only inside 46 (rec+0x3C0 bit 26 set by 46 op 1, cleared with 20-24 by 46 op 2).
+    (0x10967F8, '488b07488bcfff5040c1e804a8010f8493000000e83f88b6ff0fb7d6488b8898000000b8ff010000488b89080200006623d0f783cc0300'
+     '000000c000745c',
+     'decode class 3: PP vt+0x40 bit 4 (the FIRE press) -> the placed iface (0xBFF050 -> +0x98 -> +0x208) only when '
+     'rec+0x3CC bits 22-23 hold a class'),
+    (0x1096836, 'f783c003000000000020750b0fb7835c02000085c07445498b442408448bc64c8b4878452b4108498b81d802000041803c0044752748'
+     '8b01458b859c000000ff504084c07416',
+     'decode class 3: rec+0x3C0 bit 29 or rec+0x25C, the per-id byte [G+0x78]+0x2D8 == 0x44, then placed vt+0x40(id, equip)'),
+    (0x1205E80, '488b41088b505085d275068b91680400008b4128f7d023c2c3',
+     'PP vt+0x40 0x1205E80: the press word [PP+8]+0x50, or PP+0x468 when 0, & ~PP+0x28 (the decode\'s FIRE / ACTION)'),
+    (0xFCB1F0, '48895c24086689542410574883ec20488bd94883c1e0418bf8e8f2e9ffff',
+     'placed iface vt+0x40 0xFCB1F0: first 0xFC9C00(iface-0x20, owner)'),
+    (0xFC9C00, '6689542410534883ec20448b898c00000033c0488bd94585c974184c8b81d0000000664139107446ffc04983c002413bc172ef',
+     '0xFC9C00 (1/2): look up u16 id in iface+0xB0[0..iface+0x6C) (this = iface - 0x20)'),
+    (0xFC9C33, '488b89d0010000488d93e0000000488b01ff5020488b8bd00000008bd00fb744243866890451488b83d8000000488d0c52488d04c84883c4205bc3',
+     '0xFC9C00 (2/2): not found -> a new row from [iface+0x1B0] vt+0x20 with the id written into it (the owner-1 '
+     'registration the mirror must never cause)'),
+    (0x107C2AB, '81a7cc030000ffff0ffe', 'place (mode 46) op 2: rec+0x3CC &= ~0x1F00000 (bits 20-24, the classes) on the way out'),
+]
+# --- F3 (0.13.5, docs/native-puppet.md "Traversal icon"): body 1's traversal start through the action icon. No patch:
+# partner_icon keeps a copy of the padop vtable 0x22E8F00 (96 slots) whose +0x28 answers body 1's query of the
+# requested plugin with that plugin's own Exec for idx 1 and whose +0x50 swallows body 1's step-on force-complete;
+# partner_input_hook swaps the copy into P+0xD0's padop only inside instance 1's drain windows with a request.
+ICON_SITES = [
+    (0xAFD870, '48895c2420564883ec204963c0498bf1', 'IsCompletedActionIcon (padop vt+0x28) prologue; complete body in icon_bodies'),
+    (0xB02480, '48895c24084889742410574883ec2048', 'padop vt+0x50 force-complete prologue; complete body in icon_bodies'),
+    (0x12128C0, '33c0b9060000004584c00f44c1c3', 'ActionPlugin vt[0] of the traversal plugins: kt (r8b) == 0 ? 6 : 0'),
+    (0x11EA140, '48895c241048896c2418488974242041', 'ladder ExecActionButtonFunction (ActionPlugin vt[1], this = F+0x38) prologue'),
+    (0x1211820, '4055565741564157488dac2430ffffff', 'pipe ExecActionButtonFunction (this = F) prologue'),
+    (0x114BEC0, '4055565741564157488dac2450ffffff', 'climb ExecActionButtonFunction (this = F) prologue'),
+    (0x1293F60, '4055535641564157488dac24f0fcffff', 'step-on ExecActionButtonFunction (this = F+0x38) prologue'),
+    (0x1155B79, '4c8b87a0010000498bb0380100003b9e18020000',
+     'ExecParallelStart: block = [core+0x1A0], P = [block+0x138]; cmp idx, [P+0x218] (the icon builder runs for the local id only)'),
+    (0x1155BC3, '488b87a0010000488b8ed00000008bd34c8b40784c8b094983c01041ff5118',
+     'ExecParallelStart: [[P+0xD0]]+0x18(padop, idx, [block+0x78]+0x10): the builder reads the plugin list PS+0x10'),
+    (0x114DEB3, '488b8dd00000004c8d4c2420488b014533c0488bd7ff502884c07406c6431102',
+     'climb poll: [P+0xD0] vt+0x28(padop, plugin, kt 0, &res); true -> work+0x11 = 2'),
+    (0x11EAFF8, '488b4208488b8838010000488b89d0000000488b01ff502884c0743c',
+     'ladder poll: padop = [[[plugin+8]+0x138]+0xD0] (plugin+8 = its block), vt+0x28(padop, plugin, kt 0, &res)'),
+    (0x1213DA8, '488b8838010000488bd3488b89d0000000488b01ff502884c07544',
+     'pipe poll: padop = [[block+0x138]+0xD0], vt+0x28(padop, plugin, kt 0, &res); true -> work+0x11 = 1'),
+    (0x129BF69, '488b88380100004c8d4c2420488b89d0000000488d56384533c0488b01ff5028',
+     'step-on poll: vt+0x28(padop, F+0x38, kt 0, &res)'),
+    (0x129C10E, '498b80380100004c8d4c242033d2488b88d000000041b001488b01ff5050b001',
+     'step-on poll after a completion: vt+0x50(padop, kt 0, 1, &res), then al = 1 (res is not read again)'),
+]
+SITES += ICON_SITES
+# Complete-body SHA-256 pins (partner_icon::Build re-checks them in the running image before the copy is built).
+ICON_BODIES = [
+    (0xAFD870, 0x1AE, 'a83ca7af582197da1796e12dad3b619b908f447430205df07e502a3e9370a8a5', 'IsCompletedActionIcon'),
+    (0xB02480, 0x135, '6cbf174286d4f4d5f6c1229114fcf1d8aa0b2ce180cddbfad1230a5a0d409afe', 'padop vt+0x50 force-complete'),
+    (0x12128C0, 0xE, '97fe4df6a153d13e7757e418a08517464cba11ec71ac0080ff12f4ddcb2a65c7', 'traversal plugin priority'),
+]
+# The ActionPlugin vtables whose vt[0]/vt[1] the copy's answer relies on (from the constructors; every image pointer
+# to the four Exec functions).
+ICON_PLUGIN_VTS = [
+    (0x23C6000, 0x11EA140, 'ladder (base)'), (0x23C60C0, 0x11EA140, 'ladder (derived)'),
+    (0x23C9BE0, 0x1211820, 'pipe'), (0x23C9CB0, 0x1211820, 'pipe (second)'),
+    (0x23BB850, 0x114BEC0, 'climb'), (0x23BB930, 0x114BEC0, 'climb (second)'),
+    (0x23D13E0, 0x1293F60, 'step-on'), (0x23D1490, 0x1293F60, 'step-on (second)'),
+]
+# --- Gestures (docs/native-puppet.md "Gestures"; partner_gesture, lab key partner_native_gesture): the remote's pickup,
+# hand signs and knock on body 1's graph 2. A MinHook on the per-entry motion update 0xB6C410 (installed lazily, after
+# this gate), filtered to ActMotionStart's call (return address 0xAF0381) for body 1's entry; inside it the cs methods
+# below with the stock ABI. The nine bodies' SHA-256 pins are partner_gesture.hpp kPins (gesture_assertions re-reads
+# them; the hook checks them again before it is created). No other byte is patched.
+SITES += [
+    (0xAF0360, '488b4e104803cbf681ac0000000174118b81ac000000d1e8a8017505e88fc007004881c3c000000048ffcf75d3',
+     'ActMotionStart 0xAF0340: per entry (+0xC0), when [entry+0xAC] bit 0 set and bit 1 clear, call 0xB6C410(entry); '
+     'the next ip 0xAF0381 is the gesture update filter'),
+    (0xB6C410, '405556574154415541574881ec88000000488b8198000000',
+     'per-entry update 0xB6C410 prologue (MinHook relocates the first 6 bytes; no rip-relative operand) and the request '
+     'buffer [entry+0x98] it consumes'),
+    (0xAF2BD7, '2b5f0cf30f10842480000000f30f114424308b842488000000488b4f104c8b4424788944243c4c8d145b4c8d4c243049c1e2068bd6c644242001'
+     '498b8c0a98000000e8d2bd0700',
+     'SetCurrentNode (cs vt+0x170): entry = [cs+0x10] + (body - [cs+0xC])*0xC0; blend = 5th arg, option = 6th, node = r9; '
+     'SetRequest 0xB6E9F0([entry+0x98], graph, node, &params, direct 1)'),
+    (0xAF2747, '2b5f0cf30f10442470f30f114424208b442478488b4f104c8b4424688944242c4c8d145b4c8d4c242049c1e2068bd6498b8c0a98000000'
+     'e85dbf0700',
+     'ReserveToResetNode (cs vt+0x160): the same entry and arguments; ReserveToReset 0xB6E6E0([entry+0x98], graph, node, &params)'),
+    (0xAF1F10, '4c894c24204883ec282b510c488b4110418bc8488d145248c1e206488b840290000000488b0cc84885c9750732c04883c428c3',
+     'IsGraphExistNode (cs vt+0x210, 1/2): graph = [[entry+0x90] + graph*8]; a null graph returns 0'),
+    (0xAF1F43, '488b54245048c744243000000000488b014c8d4c24484c8d442430ff50404883c428c3',
+     'IsGraphExistNode (2/2): graph vt+0x40(graph, tags = the 5th argument, &0, &node)'),
+    (0x1C6FEE5, '48b9ffffffffffff000033db4889bc240002000048850e740a6690ffc348850cde75f8',
+     'graph vt+0x40 0x1C6FEA0 walks the tag list until a zero 48-bit entry: the gesture passes {0, 0}, never null'),
+    (0xAF1F70, '2b510c488b4110418bc8488d145248c1e206488b840290000000488b0cc8488b0148ffa0d8000000',
+     'cs vt+0x228 (the pickup end test): jmp graph vt+0xD8 of [[entry+0x90] + graph*8] without a null check'),
+    (0xAF2110, '2b510c488b41104963c8488d145248c1e206488b440270488b4010488b94c8f80000008b424c24033c01740332c0c348634a4848c1e10548'
+     '03ca33d2e91fc4f800',
+     'cs vt+0x2B8 (the hand-sign end test, layer 3): [[[entry+0x70]+0x10]+0xF8+layer*8] state & 3 == 1 -> 0x1A7E570, '
+     'no null check'),
+    (0xB6E9F0, '4c894424184c8bc141ba010000008bca6641d3e2807c24280074076645095002eb0c410fb7c266f7d0664121400266450910418b480c6641f7'
+     'd26645215004',
+     'SetRequest 0xB6E9F0: buffer+0 |= bit, +2 |= bit (direct) and +4 &= ~bit; only the target body\'s buffer is written'),
+    (0xB6E6E0, '4c894424184c8bc18bcab80100000066d3e06641090066410940026641094004410faf480c49034810',
+     'ReserveToReset 0xB6E6E0: buffer+0/+2/+4 |= bit, then the record at [buffer+0x10] + graph*[buffer+0xC]'),
+    (0xB6EA1E, '66450910418b480c6641f7d26645215004498b010fafca49034810488901',
+     'SetRequest 0xB6E9F0: the mask bit is set and the record [buffer+0x10] + graph*[buffer+0xC] overwritten without '
+     'looking at a waiting request (so does ReserveToReset above): the gesture never writes over one (pending)'),
+    (0xB6C5E2, '488b85980000004489286644896804',
+     'per-entry update 0xB6C410: buffer+0/+2 (dword) and +4 cleared only after every channel consumed its request, so a '
+     'graph-2 mask bit at the hook\'s entry is another owner\'s request (the gesture refuses or ends without a write)'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -1043,6 +1306,9 @@ SLOTS += [
     (0x2429AD0, 0x08, 0x15E0230, 'thrown-object service live iface vt+8 = request (fire census slot)'),
     (0x24299A0, 0x08, 0x15E0230, 'thrown-object service base iface vt+8 = request (fire census slot)'),
     (0x23A9FD0, 0x48, 0xFCCD80, 'placed-object service live iface vt+0x48 = request (fire census slot)'),
+    (0x23A9FD0, 0x40, 0xFCB1F0, 'WS4 v2: placed iface vt+0x40 = can-place (claims the owner row through 0xFC9C00)'),
+    (0x23A9D20, 0x40, 0xFCB1F0, 'WS4 v2: placed base iface vt+0x40 = can-place'),
+    (0x23C8D40, 0x40, 0x1205E80, 'WS4 v2: PP vtable +0x40 = the press word the decode reads'),
     (0x23A9D20, 0x48, 0xFCCD80, 'placed-object service base iface vt+0x48 = request (fire census slot)'),
 ]
 # Audited native support virtual call relationships.
@@ -1090,7 +1356,56 @@ SLOTS += [
     (0x23894B0, 0x88, 0xEE9050, 'store base vt+0x88 = the stock / energy word read'),
     (0x23895D0, 0x88, 0xEE9050, 'store derived vt+0x88 = the stock / energy word read'),
 ]
+# F2: the cardboard box on body 1 (the off call, the stock check chain and the remove hook it runs).
+SLOTS += [
+    (0x23C1720, 0x68, 0x11AF9A0, 'cbox: ctl vt+0x68 = SetCurrentItemIndex(id, sub, flag) (the off call; ChangeEquip\'s item activation)'),
+    (0x23C1720, 0xC8, 0x11AD660, 'cbox: ctl vt+0xC8 = GetItemStockCount(equip) (the viewer\'s stock; the box wake reads it)'),
+    (0x23C1720, 0xB0, 0x11AD200, 'cbox: ctl vt+0xB0 = the inventory index forwarder (inventory vt+0x68)'),
+    (0x23C1720, 0x20, 0x11B2490, 'cbox: ctl vt+0x20 = UnsetSlot(id, slot) (OnRemoveItem of the old current item)'),
+    (0x23894B0, 0x68, 0xEE90A0, 'cbox: store base vt+0x68 = the stock index (slot 4: 0xE + sub)'),
+    (0x23895D0, 0x68, 0xEE90A0, 'cbox: store derived vt+0x68 = the stock index (slot 4: 0xE + sub)'),
+]
+# Gestures: the five cs methods the body-1 hook calls (also re-checked before every call) and the graph methods behind
+# IsGraphExistNode (vt+0x40) and the pickup end test (vt+0xD8).
+SLOTS += [
+    (0x22E6070, 0x160, 0xAF2710, 'cs vt+0x160 = ReserveToResetNode (hand signs, knock)'),
+    (0x22E6070, 0x170, 0xAF2BA0, 'cs vt+0x170 = SetCurrentNode (pickup, the stateNull return)'),
+    (0x22E6070, 0x210, 0xAF1F10, 'cs vt+0x210 = IsGraphExistNode'),
+    (0x22E6070, 0x228, 0xAF1F70, 'cs vt+0x228 = the graph motion-end test (pickup end)'),
+    (0x22E6070, 0x2B8, 0xAF2110, 'cs vt+0x2B8 = BlendControl IsPlayEnd (hand sign / knock end, layer 3)'),
+    (0x250BA50, 0x40, 0x1C6FEA0, 'graph vt+0x40 = the node lookup IsGraphExistNode forwards to'),
+    (0x250BA50, 0xD8, 0x1C70150, 'graph vt+0xD8 = the motion-end test cs vt+0x228 jumps to'),
+]
 SLOTS += partner_aim_sites.SLOTS
+# F1 vehicles (partner_board): the vehicle service slots behind the getters the board wrappers call and phase 1's
+# registration of the steered seat.
+SLOTS += [
+    (0x22AC8E0, 0x168, 0xA27260, 'vehicle service vt+0x168 = the category lookup (GetVehicleType, the seat count, the nearest search)'),
+    (0x22AC8E0, 0x170, 0xA27220, 'vehicle service vt+0x170 = the attachment lookup (the seat count)'),
+    (0x22AC8E0, 0x220, 0xA29530, 'vehicle service vt+0x220 = TryToRide (phase 1 registers the steered back seat)'),
+]
+# F1 passenger camera (partner_pass_camera): the VehicleCamera module vtable (live 0x23D67F0, base 0x23D6720), never
+# patched (the CanActivate keeps a passenger on the fallback module), and the PlayerCamera position solve.
+SLOTS += [
+    (0x23D67F0, 0x00, 0x12D0D00, 'VehicleCamera vt+0x00 = Activate'),
+    (0x23D67F0, 0x08, 0x12D0ED0, 'VehicleCamera vt+0x08 = Deactivate (clears CAM+0x1F0 / +0x200)'),
+    (0x23D67F0, 0x18, 0x12D0F60, 'VehicleCamera vt+0x18 = CanActivate (act 0x6F / 0x70 only)'),
+    (0x23D67F0, 0x20, 0x12D2050, 'VehicleCamera vt+0x20 = update (calls the connect 0x12D1E80)'),
+    (0x23D67F0, 0x58, 0x12D1D40, 'VehicleCamera vt+0x58 = UpdateActionType'),
+    (0x23D6720, 0x18, 0x12D0F60, 'VehicleCamera base vt+0x18 = CanActivate'),
+    (0x23B8250, 0x50, 0x1111C50, 'PlayerCamera vt+0x50 = the module registration (CAM+0xBD0[index])'),
+    (0x23B8250, 0xA8, 0x1121D30, 'PlayerCamera vt+0xA8 = the position solve (collision query ignores CAM+0x1F0)'),
+]
+# F3: the padop slots the vtable copy replaces (+0x28, +0x50) or relies on (+0x18 builder, +0x188 the ray with the
+# per-type cache the climb / pipe Exec use), and vt[0] / vt[1] of every traversal ActionPlugin vtable.
+SLOTS += [
+    (0x22E8F00, 0x18, 0xAFCCE0, 'padop vt+0x18 = the icon builder (local id only)'),
+    (0x22E8F00, 0x28, 0xAFD870, 'padop vt+0x28 = IsCompletedActionIcon (the copy forwards every non-body-1 query here)'),
+    (0x22E8F00, 0x50, 0xB02480, 'padop vt+0x50 = force-complete (the copy forwards outside the drain scope)'),
+    (0x22E8F00, 0x188, 0xAFBEC0, 'padop vt+0x188 = the ray with the per-type cache (entry 0x19 = padop+0x7F0)'),
+]
+SLOTS += [(vt, 0x0, 0x12128C0, f'{what} ActionPlugin vt[0] = priority') for vt, _, what in ICON_PLUGIN_VTS]
+SLOTS += [(vt, 0x8, ex, f'{what} ActionPlugin vt[1] = ExecActionButtonFunction') for vt, ex, what in ICON_PLUGIN_VTS]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -1804,6 +2119,37 @@ def anim_round1_assertions():
 
 
 
+def ws4_v2_assertions():
+    """WS4 v2: the place family's handlers, the detonation's callers and its non-local exit (read-only)."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    table = mode_table_emulation()
+
+    def entry(k):
+        return table.get(0x2C556A0 + 16 * k) or (None, None)
+    want = {43: 0x107E480, 44: 0x107D300, 45: 0x107DD00, 46: 0x107BAC0, 47: 0x107ECF0}
+    for k, fn in want.items():
+        need(entry(k) == (fn, 0), f'mode table entry {k}: {entry(k)} (expected {fn:#x})')
+    callers = rel_refs(0x1053270, (0xE8,))
+    need(callers == [0x1068A8C, 0x107F2D9, 0x107F77B, 0x108A46B], f'the detonation 0x1053270 callers: {[hex(x) for x in callers]}')
+    need(0x1053295 + struct.unpack('<i', rd(0x1053291, 4))[0] == 0x105333E, 'the detonation\'s non-local exit is 0x105333E')
+    need(calls_in(0x105333E, 0x1053350) == [], 'the non-local exit calls nothing')
+    need(calls_in(0x107BD2C, 0x107BD64) == [], 'mode 46 op 1: no call between the probe and the latch block')
+    need(0x107BD2C == 0x107BD27 + 5 and 0x107BD2C + struct.unpack('<i', rd(0x107BD28, 4))[0] == 0x104CF00,
+         'mode 46 op 1 calls the probe 0x104CF00 at 0x107BD27')
+    need(0x107C701 + 6 + struct.unpack('<i', rd(0x107C703, 4))[0] == 0x107CC23, 'mode 46 op 9: a non-local record skips to 0x107CC23')
+    # The owner-row claim 0xFC9C00: its only direct callers are placed vt+0x40 (the decode's place path), vt+0x20's
+    # body and the placement request processor 0xFC8020 (local placements only).
+    owner = rel_refs(0xFC9C00, (0xE8,))
+    need(owner == [0xFC8056, 0xFCB209, 0xFCDEA5], f'0xFC9C00 callers: {[hex(x) for x in owner]}')
+    need(0xFCB20E + struct.unpack('<i', rd(0xFCB20A, 4))[0] == 0xFC9C00, 'placed vt+0x40 calls 0xFC9C00 first')
+    need(0x109680C + 5 + struct.unpack('<i', rd(0x109680D, 4))[0] == 0xBFF050, 'the decode reaches the placed service through 0xBFF050')
+    return out
+
+
 def support_native_assertions():
     out = []
     def need(cond, what):
@@ -1894,6 +2240,71 @@ def vehicle_assertions():
          'entry playback reads the flags rec+0xB8+cur and the named state rec+0x78+8*cur')
     need(rd(0x1199508, 8) == bytes.fromhex('f68418b800000002'), 'phase 6 applies the anchor only with flag 2 at rec+0xB8+cur')
     need(rd(0x1198821, 10) == bytes.fromhex('48b851e228daca2c0000'), 'the anchor accepts CNP_ppos_c 0x2ccada28e251 only')
+    return out
+
+
+def board_assertions():
+    """F1 vehicles (partner_board): the two retargeted calls and the stock facts block and passenger rely on."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+
+    def call_target(site):
+        return site + 5 + struct.unpack('<i', rd(site + 1, 4))[0]
+    need(rd(0x12458AC, 1) == b'\xe8' and call_target(0x12458AC) == 0x124B3A0 and
+         struct.unpack('<I', rd(0x12458AD, 4))[0] == 0x00005AEF, 'board site A: E8 rel32 0x00005AEF -> 0x124B3A0')
+    need(rd(0x1251479, 1) == b'\xe8' and call_target(0x1251479) == 0x124B360 and
+         struct.unpack('<I', rd(0x125147A, 4))[0] == 0xFFFF9EE2, 'board site B: E8 rel32 0xFFFF9EE2 -> 0x124B360')
+    for site in (0x12458AD, 0x125147A):
+        need((site & 63) + 4 <= 64, f'board patch dword {site:#x} inside one cache line')
+    a_refs, b_refs, q_refs = rel_refs(0x124B3A0), rel_refs(0x124B360), rel_refs(0x1245820)
+    need(a_refs == [0x12458AC, 0x124B39B], f'0x124B3A0 reached only from site A and the 0x124B360 tail jmp: {[hex(x) for x in a_refs]}')
+    need(b_refs == [0x1251479], f'0x124B360 called only from site B: {[hex(x) for x in b_refs]}')
+    need(q_refs == [0x1246A4F], f'the pre-query 0x1245820 called only by RideVehicle CanExec at 0x1246A4F: {[hex(x) for x in q_refs]}')
+    need(call_target(0x1245887) == 0xA27CC0 and call_target(0x124B370) == 0xA27CC0, 'both searches bound last with the seat count 0xA27CC0')
+    need(call_target(0x125148D) == 0x55E7F0, 'phase 1 reads GetVehicleType 0x55E7F0 right after site B')
+    need(call_target(0x1251851) == 0xCB9470, 'phase 1 registers the seat through TryToRide 0xCB9470')
+    need(rd(0xCB94A9, 6) == bytes.fromhex('ff9020020000'), 'TryToRide 0xCB9470 forwards to service vt+0x220')
+    need(rip_target(0x124B454, 8) == 0x20AA7B8 and struct.unpack('<f', rd(0x20AA7B8, 4))[0] == 100.0,
+         'the nearest search radius is 100.0 (10 m squared) at 0x20AA7B8')
+    # Each site lies in one runtime function; no branch (rel32 anywhere, or rel8/rel32 inside that function's
+    # linear sweep) lands inside a patched rel32 operand.
+    funcs = runtime_functions()
+    for site, lo, hi in ((0x12458AC, 0x12458AD, 0x12458B1), (0x1251479, 0x125147A, 0x125147E)):
+        owner = [f for f in funcs if f[0] <= site < f[1]]
+        need(len(owner) == 1, f'one runtime function covers {site:#x}: {owner}')
+        local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+        inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
+        need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
+    need(any(f[0] == 0x1245820 and f[1] > 0x12458C2 for f in funcs), 'the pre-query 0x1245820 runs through site A')
+    return out
+
+
+def pass_camera_assertions():
+    """F1 passenger camera (partner_pass_camera): the two slots are the only way into the VehicleCamera's
+    CanActivate, only the module factory stores its vtables, the module selection calls vt+0x18 over six modules, and
+    every module's final solve (vt+0xA0) tail-jumps to the vt+0xA8 collision solve that reads CAM+0x1F0."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    hits = qword_hits(0x12D0F60)
+    need(hits == [0x23D6738, 0x23D6808] and rel_refs(0x12D0F60) == [],
+         f'CanActivate 0x12D0F60 only through vt+0x18 of 0x23D6720 / 0x23D67F0: {[hex(x) for x in hits]}')
+    for slot in (0x23D6738, 0x23D6808):
+        need(slot % 8 == 0 and section_of(slot) == section_of(0x23D67F0), f'slot {slot:#x} is an aligned vtable qword')
+    need(lea_rip_refs(0x23D67F0) == [0x12D0EB6] and lea_rip_refs(0x23D6720) == [0x12D0E81],
+         'only the VehicleCamera factory 0x12D0E20 stores its module vtables')
+    need(rel_refs(0x12D1E80) == [0x12D20B6], f'the connect 0x12D1E80 is called only by the module update: {[hex(x) for x in rel_refs(0x12D1E80)]}')
+    need(rd(0x111949D, 4) == bytes.fromhex('448d6706') and rd(0x11194CE, 3) == bytes.fromhex('ff5018'),
+         'the module selection: six modules (lea r12d,[rdi+6]), call [rax+0x18]')
+    need(rd(0x1114450, 14) == bytes.fromhex('488b81f0010000488902488bc2c3'),
+         'PlayerCamera::GetIgnoreColliosionGeoOwnerId 0x1114450 returns CAM+0x1F0')
+    need(qword_hits(0x1121D20) and rd(0x1121D20, 10) == bytes.fromhex('488b0148ffa0a8000000'),
+         'PlayerCamera vt+0xA0 0x1121D20 tail-jumps to vt+0xA8 (the collision solve)')
     return out
 
 
@@ -2139,10 +2550,89 @@ def handle_call_assertions():
     return out
 
 
+# The stock graph-2 nodes the gesture tables use (partner_gesture_policy.cpp NodeFor), each an imm64 operand inside its
+# stock state function, and the update hook's callers (docs/native-puppet.md "Gestures").
+GESTURE_NODES = [
+    (0x120E520, 0x120E960, 'PickUpActionPluginImpl enter FUN_14120E520', (0x1E904603EB7D, 0x82E84B26E4CE, 0xFF77B695370A)),
+    (0x11E6A40, 0x11E6C30, 'KnockActionPluginImpl::StateHandSignGo', (0xE74E11BABA4B, 0x8881431FFF42, 0x5FE632112A9A, 0x2153458C564C)),
+    (0x11E6C30, 0x11E6E00, 'KnockActionPluginImpl::StateHandSignStop', (0xB98C80A7DDAE, 0x78CB18630AF1, 0x825F953B5437, 0x724E8FE0F814)),
+    (0x11E7210, 0x11E7990, 'KnockActionPluginImpl::StateKnock',
+     (0xD64283446A67, 0x7B2D4F836A92, 0x7BC06465D606, 0xD08C8B213CAB, 0xC1143CAC83B1, 0x0430147D9D34, 0x174A0F341288, 0x1EC34B25A344)),
+]
+
+
+def gesture_assertions():
+    """Gestures: the pinned bodies (partner_gesture.hpp kPins), the caller filter, the stock nodes and blend constants."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    import re
+    header = (ROOT / 'native' / 'include' / 'mgscoop' / 'partner_gesture.hpp').read_text(encoding='utf-8')
+    pins = [(int(r, 16), int(n, 16), h) for r, n, h in re.findall(r'\{0x([0-9a-f]+), 0x([0-9a-f]+), "([0-9a-f]{64})"\}', header)]
+    need(len(pins) == 9, f'partner_gesture.hpp kPins: 9 bodies ({len(pins)})')
+    for rva, size, sha in pins:
+        need(hashlib.sha256(rd(rva, size)).hexdigest() == sha, f'gesture pin {rva:#x}+{size:#x} matches the executable')
+    # The pins overlapping partner_upper_manual_idle / end_observer carry the same values.
+    idle = (ROOT / 'native' / 'include' / 'mgscoop' / 'partner_upper_manual_idle.hpp').read_text(encoding='utf-8')
+    for rva, size, sha in pins:
+        m = re.search(r'\{0x%x,0x%x,"([0-9a-f]{64})"\}' % (rva, size), idle)
+        need(m is None or m.group(1) == sha, f'gesture pin {rva:#x} equals the manual idle pin')
+    # The filter: ActMotionStart's one call; the return address 0xAF0381.
+    need(0xAF037C + 5 + struct.unpack('<i', rd(0xAF037D, 4))[0] == 0xB6C410 and rd(0xAF037C, 1) == b'\xe8',
+         'ActMotionStart 0xAF037C calls 0xB6C410 (next ip 0xAF0381)')
+    callers = rel_refs(0xB6C410)
+    need(0xAF037C in callers, f'0xAF037C is a direct caller of 0xB6C410: {[hex(x) for x in callers]}')
+    need(rel_refs(0xAF0340) != [] or qword_hits(0xAF0340) != [], 'ActMotionStart is reachable (direct call or vtable)')
+    for start, end, name, nodes in GESTURE_NODES:
+        body = rd(start, end - start)
+        for node in nodes:
+            i = body.find(struct.pack('<Q', node))
+            need(i >= 2 and body[i - 2] in (0x48, 0x49) and 0xB8 <= body[i - 1] <= 0xBF,
+                 f'{name}: node {node:#x} is a mov r64, imm64 operand')
+    need(struct.unpack('<f', rd(0x20A72C4, 4))[0] == 0.5 and struct.unpack('<f', rd(0x20A72CC, 4))[0] == 1.0,
+         'the stock pickup blend 0.5f (0x20A72C4) and hand-sign blend 1.0f (0x20A72CC)')
+    # The stock hand-sign call: vt+0x160 with graph 2 and the 1.0 blend (0x11E6B98).
+    need(rd(0x11E6B98, 6) == bytes.fromhex('ff9060010000'), 'StateHandSignGo calls cs vt+0x160 at 0x11E6B98')
+    return out
+
+
 failures += anim_round1_assertions()
+failures += ws4_v2_assertions()
 failures += support_native_assertions()
 failures += vehicle_assertions()
+failures += board_assertions()
+failures += pass_camera_assertions()
 failures += handle_call_assertions()
+
+
+def traverse_icon_assertions():
+    """F3 (docs/native-puppet.md "Traversal icon"): the facts behind the padop vtable copy."""
+    out = []
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    for rva, size, digest, what in ICON_BODIES:
+        need(hashlib.sha256(rd(rva, size)).hexdigest() == digest, f'{what} {rva:#x} complete body matches its SHA-256 pin')
+    # 96 code slots, then data: the copy covers the whole table.
+    slots = [struct.unpack('<Q', rd(0x22E8F00 + 8 * i, 8))[0] - IB for i in range(97)]
+    need(all(section_of(v) == '.xtext' for v in slots[:96]), 'padop vtable: slots +0x0..+0x2F8 are code')
+    need(section_of(slots[96]) != '.xtext', 'padop vtable: +0x300 is not a code slot (96 slots)')
+    # Only the constructor (0xAFAE90) and the destructor (vt[0] 0xAFBA10) store the padop vtable: an object with it is
+    # always a padop. The two replaced functions are reached only through their slots (no direct call, no other pointer).
+    need(lea_rip_refs(0x22E8F00) == [0xAFAED2, 0xAFBA26], f'padop vtable stores: {[hex(x) for x in lea_rip_refs(0x22E8F00)]}')
+    need(qword_hits(0xAFD870) == [0x22E8F28] and rel_refs(0xAFD870) == [], 'IsCompletedActionIcon only through padop vt+0x28')
+    need(qword_hits(0xB02480) == [0x22E8F50] and rel_refs(0xB02480) == [], 'force-complete only through padop vt+0x50')
+    for ex in sorted({e for _, e, _ in ICON_PLUGIN_VTS}):
+        need(sorted(qword_hits(ex)) == sorted(vt + 8 for vt, e, _ in ICON_PLUGIN_VTS if e == ex) and rel_refs(ex) == [],
+             f'Exec {ex:#x} only through the listed ActionPlugin vtables')
+    need(sorted(qword_hits(0x12128C0)) == sorted(vt for vt, _, _ in ICON_PLUGIN_VTS), 'the priority is vt[0] of exactly these vtables')
+    return out
+
+
+failures += traverse_icon_assertions()
+failures += gesture_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -2545,6 +3035,66 @@ w('inline constexpr std::size_t ctl_vt_arm_equip=0x1f0, ctl_vt_arm_energy=0xe8, 
 w('inline constexpr std::size_t ctl_vars=0x20, ctl_arm_frac=0x58, store_arm_energy=0x1c, store_counts=0x98, vars_arm_energy_sum=0x670;')
 w('inline constexpr unsigned arm_energy_k=5, arm_energy_slots=4;')
 w('inline constexpr std::uint16_t arm_equip_first=0x203, arm_equip_last=0x209;')
+w('// --- WS4 v2 (partner_place_mirror): rec+0x3cc bit 18 asks modes 43/44 for 46 (place), bit 19 asks 44 for 47')
+w('// (detonate); bits 20-21 the placed surface class (46 op 1: its probe, else bits 22-23), 22-23 the preview class.')
+w('inline constexpr std::uint32_t gun3cc_place_req=0x40000, gun3cc_detonate_req=0x80000, gun3cc_surface_mask=0x300000, gun3cc_preview_mask=0xc00000;')
+w('inline constexpr std::uint8_t gun_mode_place_hold=43, gun_mode_place_ready=44, gun_mode_place=46, gun_mode_detonate=47;')
+w('// The decode reads the press word through PP vt+0x40 (0x1205e80): [PP+8]+0x50, or PP+0x468 when 0, & ~PP+0x28;')
+w('// FIRE 0x10 with a class in rec+0x3cc 22-23 reaches placed vt+0x40 (0xfcb1f0 -> 0xfc9c00 claims an owner row).')
+w('// rec+0x3c0 bit 26: set by 46 op 1, cleared by 46 op 2 (the decode\'s class-3 place path is off while set).')
+w('inline constexpr std::size_t pp_vt_press=0x40, src_press=0x50, pp_press_fallback=0x468;')
+w('inline constexpr std::uint32_t pad_press_fire=0x10, gun3c0_place_busy=0x4000000;')
+w('inline constexpr std::uintptr_t placed_owner_claim_rva=0xfc9c00, placed_can_place_rva=0xfcb1f0, pp_press_word_rva=0x1205e80;')
+w('// --- F1 vehicles (partner_board; docs/native-puppet.md "Vehicle boarding") --------------------------------')
+w('// Site A: the ride pre-query 0x1245820 calls the nearest free seat 0x124b3a0(unit, pos, first, last); site B: phase 1')
+w('// 0x1251200 calls SearchNearestRideSeatForDriver 0x124b360(unit, pos). Both return a seat or 4 (none).')
+w('inline constexpr std::uintptr_t board_a_site=0x12458ac, board_a_next_ip=0x12458b1, board_a_block_rva=0x1245877;')
+w('inline constexpr std::uint32_t board_a_rel32_orig=0x00005aef;  // -> 0x124b3a0')
+w('inline constexpr std::uintptr_t board_b_site=0x1251479, board_b_next_ip=0x125147e, board_b_block_rva=0x125145c;')
+w('inline constexpr std::uint32_t board_b_rel32_orig=0xffff9ee2;  // -> 0x124b360')
+w('inline constexpr std::uintptr_t board_nearest_rva=0x124b3a0, board_driver_rva=0x124b360, board_type_rva=0x55e7f0, board_count_rva=0xa27cc0;')
+w('// Unit record: u16 rider[seat] at +0x30, u16 index at +0x78 (id = 0x6400 | index). Player: (*(P+0x120))[body] the')
+w('// ridden unit, (*(Q+0x18))[body] the act (0x6e: the passenger phase), (*(Q+0xe0))[body] the ridden vehicle id.')
+w('inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, board_p_units=0x120, board_q_vehicle=0xe0;')
+w('inline constexpr std::uint16_t board_act_passenger=0x6e;')
+w('// The contract blocks partner_board re-checks before the patch (code_sites rvas; the two rel32 operands masked).')
+w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) + '};')
+w('// --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera") ------------------------')
+w('// The VehicleCamera module (live vtable 0x23d67f0, base 0x23d6720): CanActivate 0x12d0f60 at slot +0x18 of both, true')
+w('// only for act 0x6f / 0x70. The local camera CAM = *(P+0xb8) holds the six modules at CAM+0xbd0, the mode at +0x340')
+w('// (the previous one at +0x33c); the module + 8 is its CAM and CAM+0x348 is P (the act index is u32 P+0x218).')
+w('inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam_module_vtable_rva=0x23d67f0, pass_cam_module_base_vtable_rva=0x23d6720;')
+w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;')
+w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
+w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
+w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
+w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
+w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')
+w('// (0xe + sub)*2] (Y = *(ctl+8); ctl vt+0xb0 -> store vt+0x68 case 4 = 0xe + sub; store vt+0x88 0xee9050 reads it).')
+w('// vars items u16[8] at +0x5a4 and currentItemIndex u32 at +0x67c (both written only for idx == [P+0x214]).')
+w('// Per-(id, sub) item records *(Q+0x160) + (sub + id*8)*0x10 (Q+0x160 is a pointer: 0x11b0345 mov rax,[rdx+0x160];')
+w('// box life / poster; SetEquipState rewrites them). Q+0x17c is the dirty mask (1 << id), never a viewer digest.')
+w('// The box is worn when the can-wear predicate 0x10df430 passes for idx: the block-1 PS record (PS = *(block+0x78),')
+w('// rec = *(PS+0x280) + (idx - *(PS+8))*0x20) has rec+8 bit 11 and rec+0xc bits 26..28 clear, idx\'s current item is a')
+w('// box 0x1c8..0x1e2 and GetItemStockCount (the VIEWER\'s list) has stock for it; Wake writes act 0x4d (77, moving 78).')
+w('inline constexpr std::uintptr_t change_equip_rva=0x11ac2e0, set_current_item_index_rva=0x11af9a0, get_item_stock_count_rva=0x11ad660;')
+w('inline constexpr std::uintptr_t get_equip_id_slot_rva=0x11ad420, item_index_forward_rva=0x11ad200, store_index_rva=0xee90a0, unset_slot_rva=0x11b2490;')
+w('inline constexpr std::size_t ctl_vt_change_equip=0x198, ctl_vt_set_item=0x68, ctl_vt_equip_id_slot=0x90, ctl_vt_item_stock=0xc8;')
+w('inline constexpr std::size_t ctl_vt_item_index=0xb0, ctl_vt_unset_slot=0x20, store_vt_index=0x68;')
+w('inline constexpr std::size_t equip_row_items=0x1c, equip_row_item_bytes=0x2c, equip_row_item_nibble=0x37, item_subs=8;')
+w('inline constexpr std::size_t inv_stocks=0x98, inv_item_stock_base=0xe, vars_items=0x5a4, vars_current_item=0x67c;')
+w('inline constexpr std::size_t q_item_records=0x160, q_item_record_size=0x10, q_box_object=0xd8, block_ps=0x78;')
+w('inline constexpr std::uint32_t cbox_rec8_mask=0x800, cbox_recc_mask=0x1c000000;')
+w('inline constexpr std::uint16_t cbox_first=0x1c8, cbox_last=0x1e2;')
+w('inline constexpr std::uint8_t equip_type_item=0x11, slot_type_item=4, act_cbox=0x4d, act_cbox_move=0x4e;')
+w('// --- F3 traversal icon (partner_icon; docs/native-puppet.md "Traversal icon") ---------------------------')
+w('// The padop vtable copy forwards to these bodies; partner_icon::Build re-hashes them in the running image.')
+w('struct BodyPin { std::uintptr_t rva; std::size_t size; std::uint8_t sha256[32]; };')
+w('inline constexpr BodyPin icon_bodies[]={')
+for rva, size, digest, what in ICON_BODIES:
+    w(f'    {{0x{rva:x},0x{size:x},{{{cbytes(digest)}}}}}, // {what}')
+w('};')
+w('inline constexpr std::uintptr_t icon_plugin_vts[]={' + ','.join(f'0x{vt:x}' for vt, _, _ in ICON_PLUGIN_VTS) + '};')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

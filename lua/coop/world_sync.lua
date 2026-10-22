@@ -37,7 +37,38 @@ do
     if not (c and x and y) or code < 0 or a < 0 or b < 0 then return false end
     return W.receipt(PRE .. "NOTE_V1' -- " .. c .. " " .. x .. " " .. y) == true
   end
-  function W.now() return W.api.time() * 1000 end
+  -- The world clock in ms: the raw Lua clock plus the time the game held it
+  -- still. Time.GetRawElapsedTimeSinceStartUp stops under the MISSION FAILED
+  -- menu while OnUpdate keeps running, which froze every world timer (probe
+  -- delays, follow retries, digests, holds). W.clockTick (once per update)
+  -- then adds the wall time since the previous update (os.clock, at most
+  -- 250 ms per update); when the raw clock moves again it pays back any
+  -- catch-up jump. Monotonic; nothing is added while the raw clock runs.
+  W.held, W.clock = 0, {}
+  function W.now() return W.api.time() * 1000 + W.held end
+  function W.clockTick()
+    local c, raw, wall = W.clock, W.api.time() * 1000, W.api.wall and W.api.wall()
+    if type(raw) ~= "number" or raw ~= raw then return end
+    if type(wall) ~= "number" or wall ~= wall then wall = nil end
+    local dWall = wall and c.wall and wall - c.wall
+    if dWall and dWall < 0 then dWall = nil end
+    if c.raw and raw == c.raw then
+      if dWall then
+        local add = math.min(dWall, 250)
+        W.held, c.episode = W.held + add, (c.episode or 0) + add
+        if c.episode >= 1000 and not c.logged then
+          c.logged = true
+          W.log(fmt("event=raw_clock;step=held;raw_ms=%.0f", raw))
+        end
+      end
+    elseif c.raw and c.episode then
+      local back = dWall and math.max(0, math.min(raw - c.raw - dWall, c.episode)) or 0
+      W.held = W.held - back
+      if c.logged then W.log(fmt("event=raw_clock;step=resumed;held_ms=%.0f;paid_back_ms=%.0f", c.episode, back)) end
+      c.episode, c.logged = nil, nil
+    end
+    c.raw, c.wall = raw, wall
+  end
   function W.tick32(now) return floor(now) % 4294967296 end
   -- An integer for a receipt, or nil (the op is then not sent).
   function W.n(v)
@@ -99,6 +130,9 @@ do
     local function num(...) return want("number", ...) end
     a.str32 = fn(Fox, "Fox", "StrCode32")
     a.time = fn(Time, "Time", "GetRawElapsedTimeSinceStartUp")
+    -- Optional: the wall clock (ms) that carries W.now() while the raw clock is held.
+    local clock = W.get(os, "clock")
+    a.wall = type(clock) == "function" and function() return clock() * 1000 end or nil
     a.send = fn(GameObject, "GameObject", "SendCommand")
     a.id = fn(GameObject, "GameObject", "GetGameObjectId")
     a.null = num(GameObject, "GameObject", "NULL_ID")
@@ -334,6 +368,7 @@ do
     return ...
   end
   local function updated(...)
+    if W.api and W.api.time then pcall(W.clockTick) end
     if W.active then
       local ok, err = pcall(W.tick)
       if not ok then W.fail(err) end

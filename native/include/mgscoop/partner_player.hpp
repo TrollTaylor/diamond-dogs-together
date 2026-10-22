@@ -170,6 +170,10 @@ struct Anim {
     std::uint32_t m1d8, m1e0, m1f8;  // FNV-1a of the instance-0 motion records
 };
 bool ReadAnim(const State& state, Anim& out) noexcept;
+// Both ids' upper act byte (u8 *(Q+0x20)[id]: 0 none, 5 reload, 0x15 pickup,
+// 0x17 knock, 0x18 / 0x19 hand sign Go / Stop; the gesture sender). Zeros and
+// false when unreadable.
+bool ReadUpper(const State& state, std::uint8_t (&out)[2]) noexcept;
 // The sync form of slot `index` (stance/speed clamped to 0..3; flags valid).
 sync::AnimState AnimSlot(const Anim& anim, std::uint32_t index) noexcept;
 
@@ -341,6 +345,10 @@ struct Gun1 {
     std::uint16_t m3e4, m3e6, m3e8;
     bool upper_ok;
     std::uint8_t upper_req;
+    // WS4 v2 (with fields_ok): the placement word rec+0x3CC (bit 18 the place
+    // request, 19 the detonate request, 20-21 the placed surface class, 22-23
+    // the preview class; the v7 sender's place word, body 1's mirror target).
+    std::uint32_t gun3cc;
 };
 bool ReadGun1(const Addresses& addresses, const State& state, Gun1& out) noexcept;
 // Instance `index`'s movement rate record (docs/native-puppet.md "Rates";
@@ -409,8 +417,6 @@ struct Loadout {
     std::uint8_t type[3];
     std::uint8_t alias_receiver[3];  // a customized alias's receiver from the alias table (0 none)
     const char* scan[3];
-    bool cbox_active{};
-    std::uint16_t active_item_id{};
 };
 bool ReadLoadout(const Addresses& addresses, Loadout& out) noexcept;
 

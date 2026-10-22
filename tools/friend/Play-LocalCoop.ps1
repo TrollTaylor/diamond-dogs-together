@@ -83,7 +83,7 @@ foreach ($role in $roots.Keys) {
     if (!(Test-FileHash -Path $p.Archive -Expected ([string]$package.runtime_archive.sha256))) { throw "[$role] The checked two-player runtime archive is missing. Install co-op in this game copy first." }
     $record = Read-FriendJson $p.Record
     if (!$record -or [string]$record.product -cne 'mgs-coop-original-loader-probe' -or [string]$record.game_directory -cne $p.Game -or !(Test-FileHash -Path $p.Loader -Expected ([string]$record.dll_sha256))) { throw "[$role] This game copy has no matching owned co-op loader. Install co-op in it first; unrelated loaders are never replaced." }
-    if (@($record.PSObject.Properties.Name) -notcontains 'version' -or [string]$record.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2')) { throw "[$role] Install this release in the game copy first." }
+    if (@($record.PSObject.Properties.Name) -notcontains 'version' -or [string]$record.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5')) { throw "[$role] Install this release in the game copy first." }
     foreach ($name in @('partner.trigger','world.trigger','join.trigger','reset.trigger','worker.ini','worker.enabled')) {
         if (Test-Path -LiteralPath (Join-Path $p.Mod $name)) { throw "[$role] $name belongs to a developer test. Finish that test before local play." }
     }

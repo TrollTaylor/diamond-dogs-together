@@ -14,31 +14,49 @@ local chunk = assert(loadfile(arg[1]))
 setfenv(chunk, env)
 chunk()
 local R = env.e.MgsCoopWorld.ridePose
-local realized = {[6656] = true, [22529] = true}
+local realized = {[6656] = true, [6657] = true, [22528] = true, [22529] = true}
 check(R.decide({}, realized).action == 'drop', 'a pose with no body id is dropped')
 check(R.decide({id = nil}, realized).action == 'drop', 'a nil body id is dropped')
 check(R.decide({id = 1}, realized).action == 'drop', 'a body id outside the horse and walker ids is dropped')
-check(R.decide({id = 6657}, realized).action == 'refuse' and R.decide({id = 6657}, realized).id == 6657,
-    'a horse the census did not realize is refused')
-check(R.decide({id = 22528}, realized).action == 'refuse', 'a walker the census did not realize is refused')
-local walker = R.decide({id = 22529, x = 802100, y = 338300, z = 1642000, yaw = -500}, realized)
+-- User decision 2026-10-22 (docs/mounts.md "RIDE_BODY and the viewer's own buddy"): the partner's horse / walker
+-- pose never moves a body that is not a registered mirror of the partner's mount. Nothing registers one in 0.13.5,
+-- and index 0 (6656 / 22528, the copy's own declared buddy) is never a mirror.
+check(type(R.mirrors) == 'table' and next(R.mirrors) == nil, 'no mirror body is registered in 0.13.5')
+for _, id in ipairs({6656, 6657, 22528, 22529}) do
+    local d = R.decide({id = id, kind = id < 22528 and 1 or 2}, realized)
+    check(d.action == 'refuse' and d.id == id and d.reason == 'not_mirror',
+        'no mirror: the realized horse / walker ' .. id .. ' is refused')
+    d = R.decide({id = id}, realized, R.mirrors)
+    check(d.action == 'refuse' and d.reason == 'not_mirror', 'the registry as shipped refuses ' .. id)
+    local v = R.admit({id = id, kind = 3}, realized, true)
+    check(v.action == 'refuse' and v.reason == 'not_mirror', 'no mirror: a vehicle-flagged horse / walker id ' .. id .. ' is refused')
+end
+local every = {[6656] = true, [6657] = true, [22528] = true, [22529] = true}
+check(R.decide({id = 6656}, realized, every).reason == 'not_mirror' and R.decide({id = 22528}, realized, every).reason == 'not_mirror'
+    and not R.mirror(6656, every) and not R.mirror(22528, every), "index 0 (the copy's own buddy) is never a mirror, even if named")
+local mirrors = {[6657] = true, [22529] = true}
+check(R.decide({id = 6657}, {}, mirrors).action == 'refuse' and R.decide({id = 6657}, {}, mirrors).reason == nil,
+    'a mirror the census did not realize is refused')
+check(R.decide({id = 22529}, {}, mirrors).action == 'refuse', 'a walker mirror the census did not realize is refused')
+local walker = R.decide({id = 22529, x = 802100, y = 338300, z = 1642000, yaw = -500}, realized, mirrors)
 check(walker.action == 'apply' and walker.id == 22529 and walker.command == 'SetPosition',
-    'a realized walker pose applies only as SetPosition on that body')
-local horse = R.decide({id = 6656}, realized)
-check(horse.action == 'apply' and horse.id == 6656 and horse.command == 'SetCallHorse',
-    'a realized horse pose uses the pinned horse position call on that body')
+    'a realized walker mirror applies only as SetPosition on that body')
+local horse = R.decide({id = 6657}, realized, mirrors)
+check(horse.action == 'apply' and horse.id == 6657 and horse.command == 'SetCallHorse',
+    'a realized horse mirror uses the pinned horse position call on that body')
 local calls = {}
 local function apply(pose)
-    local decision = R.decide(pose, realized)
+    local decision = R.decide(pose, realized, mirrors)
     if decision.action == 'apply' then calls[#calls + 1] = decision end
     return decision.action
 end
 check(apply({id = 22529}) == 'apply' and #calls == 1 and calls[1].id == 22529 and calls[1].command == 'SetPosition',
-    'applying a walker pose commands only 22529')
+    'applying a walker mirror pose commands only 22529')
 check(apply({}) == 'drop' and #calls == 1, 'a missing id does not command another body')
-check(apply({id = 6657}) == 'refuse' and #calls == 1, 'an unrealized body does not command the realized horse')
-check(apply({id = 6656}) == 'apply' and #calls == 2 and calls[2].id == 6656 and calls[2].command == 'SetCallHorse',
-    'the realized horse is commanded separately from the walker')
+check(apply({id = 6656}) == 'refuse' and apply({id = 22528}) == 'refuse' and #calls == 1,
+    "the viewer's own horse and walker are never commanded")
+check(apply({id = 6657}) == 'apply' and #calls == 2 and calls[2].id == 6657 and calls[2].command == 'SetCallHorse',
+    'the horse mirror is commanded separately from the walker')
 local gx, gy, gz = R.headingGoal(10, 20, 30, math.pi / 2)
 check(math.abs(gx - 11) < 0.000001 and gy == 20 and math.abs(gz - 30) < 0.000001,
     'horse heading is the one-metre goal offset atan2 reads back')
@@ -50,9 +68,11 @@ check(parked.action == 'refuse' and parked.id == 4000, 'a body that is not a veh
 local jeep = R.admit({id = 4000, kind = 3}, realized, true)
 check(jeep.action == 'apply' and jeep.id == 4000 and jeep.command == 'SetPosition' and jeep.field == 'position',
     'a realized vehicle pose applies only as SetPosition on that body')
-local horseJeep = R.admit({id = 6656, kind = 3}, realized, true)
+local horseJeep = R.admit({id = 6657, kind = 3}, realized, true, mirrors)
 check(horseJeep.action == 'apply' and horseJeep.command == 'SetCallHorse' and horseJeep.field == nil,
-    'a horse id keeps the horse call when a vehicle flag is also set')
+    'a horse mirror keeps the horse call when a vehicle flag is also set')
+check(R.admit({id = 6656, kind = 3}, realized, true, every).action == 'refuse',
+    "a vehicle flag never turns the viewer's own horse into a vehicle placement")
 -- Fast vehicle track: interpolation by sender tick, 100 ms behind.
 local function near(a, b, eps) return math.abs(a - b) <= (eps or 0.001) end
 local track = {samples = {}}
@@ -227,5 +247,72 @@ do
     check(R.tiltOff == true and #receipts == asked and #sent == 6 and sent[6][1] == 44, 'an off answer ends the reads; RIDE_FAST continues')
     fakeRiding = false
     W.receipt = nil
+end
+-- F1 vehicles (docs/native-puppet.md "Vehicle boarding"): a stock back-seat passenger (act 0x6E) has no
+-- ON_VEHICLE, so R.localVehicle() is nil even with vars.playerVehicleGameObjectId naming the vehicle: the
+-- passenger never streams that vehicle and keeps placing the driver's track on its copy (the stock passenger
+-- phase attaches the viewer to that copy every frame).
+do
+    W.paired = true
+    R.fast.tracks = {}
+    R.fast.send.id = nil
+    env.PlayerInfo = {OrCheckStatus = function() return false end}
+    env.PlayerStatus = {ON_VEHICLE = 1}
+    env.vars = {playerVehicleGameObjectId = 4000}
+    clock = clock + 5000
+    local t0 = 200000
+    W.handlers[44]({t0, 3, 4000, 0, 0, 0, 0})
+    for i = 1, 6 do
+        clock = clock + 50
+        W.handlers[44]({t0 + i * 50, 3, 4000, i * 1000, 0, 0, 0})
+    end
+    sent = {}
+    local before = #placed
+    W.tick()
+    check(R.localVehicle() == nil and R.fast.localId == nil, 'a passenger without ON_VEHICLE has no local vehicle')
+    check(#placed == before + 1 and placed[#placed].id == 4000, 'the passenger keeps placing the driver track on its copy')
+    check(#sent == 0, 'the passenger streams nothing for that vehicle')
+end
+-- User decision 2026-10-22 (docs/mounts.md "RIDE_BODY and the viewer's own buddy"): the partner's RIDE_BODY stream
+-- never places the viewer's own D-Horse / D-Walker. Before 0.13.5 the viewer's idle horse leapt and hung in the air
+-- around the partner (hidden runs b264ad58, 251abcef, bfd6fcc4, fbde3dcc).
+do
+    local sends, logs, api = {}, {}, W.api
+    W.api = {
+        send = function(id, cmd) sends[#sends + 1] = {id = id, cmd = cmd.id}; return true end,
+        buddyVector = function(px, py, pz) return {x = px, y = py, z = pz} end
+    }
+    W.log = function(text) logs[#logs + 1] = text end
+    W.paired = true
+    R.realized = {[6656] = true, [6657] = true, [22528] = true, [22529] = true, [4000] = true}
+    R.occupied, R.refused, R.fast.tracks, R.fast.closed = {}, {}, {}, {}
+    for i = 1, 3 do
+        -- seq, kind (1 horse, 2 walker, 3 vehicle), id, x, y, z (mm), yaw (mrad), occupied, rider
+        W.handlers[42]({i, 1, 6656, 1000 * i, 0, 2000, 300, 1, 1})
+        W.handlers[42]({i, 2, 22528, 1000 * i, 0, 2000, 300, 1, 1})
+        W.handlers[42]({i, 1, 6657, 1000 * i, 0, 2000, 300, 0, 65535})
+        W.handlers[42]({i, 2, 22529, 1000 * i, 0, 2000, 300, 0, 65535})
+        W.handlers[42]({i, 3, 6656, 1000 * i, 0, 2000, 300, 0, 65535})
+    end
+    check(#sends == 0, "the partner's horse / walker poses never command a horse or walker on the viewer's copy")
+    check(R.refused[6656] == 6 and R.refused[22528] == 3 and R.refused[6657] == 3 and R.refused[22529] == 3,
+        'every refused pose is counted per body id')
+    check(#logs == 4 and logs[1] == 'event=ride_body;action=refuse;reason=not_mirror;id=6656;kind=1' and
+        logs[2] == 'event=ride_body;action=refuse;reason=not_mirror;id=22528;kind=2', 'one world_lua line per refused body id')
+    check(R.move({id = 6656, x = 0, y = 0, z = 0, yaw = 0}, 'SetCallHorse') == false and
+        R.move({id = 22528, x = 0, y = 0, z = 0, yaw = 0}, 'SetPosition') == false and
+        R.move({id = 22529, x = 0, y = 0, z = 0, yaw = 0}, 'SetPosition', 'position') == false and
+        R.place(6656, 0, 0, 0, 0) == false and R.place(22528, 0, 0, 0, 0) == false and #sends == 0,
+        'R.move and R.place refuse a horse or walker that is not a mirror')
+    -- A registered mirror (index 1 only) is the one horse / walker a pose may move; index 0 never.
+    R.mirrors[6657], R.mirrors[6656] = true, true
+    W.handlers[42]({4, 1, 6657, 5000, 0, 2000, 300, 0, 65535})
+    W.handlers[42]({4, 1, 6656, 5000, 0, 2000, 300, 0, 65535})
+    check(#sends == 1 and sends[1].id == 6657 and sends[1].cmd == 'SetCallHorse', 'only the registered index-1 mirror is moved')
+    R.mirrors = {}
+    -- Vehicles are unchanged: the reliable final pose still places the vehicle body.
+    W.handlers[42]({5, 3, 4000, 8000, 0, 0, 0, 0, 65535})
+    check(#sends == 2 and sends[2].id == 4000 and sends[2].cmd == 'SetPosition', 'a vehicle RIDE_BODY pose still places the vehicle')
+    W.api, W.log = api, nil
 end
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <cstring>
 #include "mgscoop/partner_input.hpp"
-#include "mgscoop/partner_pad_bits.hpp"
 
 namespace {
 namespace pi = mgscoop::partner_input;
@@ -556,6 +555,8 @@ void TestAccumulate() {
     bad.version = 6;
     Check(pi::ValidPacket(bad), "version 6 without optional aim direction is valid");
     bad.version = 7;
+    Check(pi::ValidPacket(bad), "version 7 without the optional place word is valid");
+    bad.version = 8;
     Check(!pi::ValidPacket(bad), "unknown version refused");
     bad.version = 5;
     // v5 gun group: known flags only; without GunFlag::Valid every byte is 0.
@@ -716,6 +717,28 @@ void TestComposeSteer() {
               g5.slot_valid && g5.inv_slot == 2 && pi::LevelOnly(g5, c).gun_valid && !pi::Neutral(g5).gun_valid,
           "the injection carries the v5 gun group and slot; neutral drops them");
     Check(!gun.gun_valid && !gun.slot_valid, "a v4 sample carries no gun group and no trusted slot");
+    // v7 (WS4 v2): the sender's C4 place word reaches the injection with GunFlag::Place.
+    {
+        pi::Sample v7 = live;
+        pi::V7Source src7{};
+        src7.v6.v5 = src5;
+        src7.v6.v5.gun_flags = pi::GunFlag::InHand;
+        src7.v6.v5.gun_mode = 46;
+        src7.place_valid = true; src7.place_bits = 0x14;
+        pi::Fill7(v7.packet, src7);
+        edge = pi::EdgeState{};
+        const pi::Injection g7 = pi::Compose(c, v7, 0, pi::Overlay{}, edge);
+        Check(pi::ValidPacket(v7.packet) && g7.gun_valid && g7.gun_mode == 46 && g7.place_valid && g7.place_bits == 0x14 &&
+                  pi::LevelOnly(g7, c).place_valid && pi::Strip(g7, 0x40u).place_bits == 0x14,
+              "the injection carries the v7 place word (level-only and stripped copies too)");
+        Check(!g5.place_valid && g5.place_bits == 0, "a v5 sample carries no place word");
+        // The identity hold republishes a held frame's gun group without the place word.
+        pi::IdentityHold hold{};
+        pi::InputPacket complete = v7.packet;
+        complete.inv_slot = 3; complete.xflags = static_cast<std::uint8_t>(complete.xflags | pi::XFlag::Equip); complete.gun_equip = 395;
+        (void)pi::HoldIdentity(hold, complete, 395, 1000);
+        Check(!(hold.gun_flags & pi::GunFlag::Place), "the identity hold stores the gun group without GunFlag::Place");
+    }
     src5.gun_valid = false;
     pi::Fill5(v5.packet, src5);
     Check(pi::ValidPacket(v5.packet) && v5.packet.gun_flags == 0 && v5.packet.gun_mode == 0 && v5.packet.reload_seq == 0,
@@ -734,6 +757,16 @@ void TestComposeSteer() {
           "sample_strip: no RELOAD from the remote's held, words, edges, long12, tap12 or synthesized taps");
     const pi::Injection tapped = pi::Compose(cs, r, 0, pi::Overlay{0x40u}, edge);
     Check((tapped.held & 0x40u) && (tapped.edge_press & 0x40u), "sample_strip: an overlay tap still presses RELOAD");
+    // ACTION (0x20) is the same rule: raw network never reaches body 1; the overlay tap does.
+    cs.mask = 0x20u;
+    cs.sample_strip = 0x20u;
+    r.packet.held = 0x20u; r.packet.long12 = 0x20u; r.edge_press = 0x20u; r.edge_release = 0x20u; r.edge_tap12 = 0x20u;
+    edge = pi::EdgeState{};
+    const pi::Injection action = pi::Compose(cs, r, 0, pi::Overlay{}, edge);
+    Check(action.held == 0 && !(action.edge_press & 0x20u) && !(action.long12 & 0x20u) && !(action.tap12 & 0x20u) &&
+              !(edge.net_held & 0x20u), "sample_strip: no ACTION from the remote pad");
+    const pi::Injection actionTap = pi::Compose(cs, r, 0, pi::Overlay{0x20u}, edge);
+    Check((actionTap.held & 0x20u) && (actionTap.edge_press & 0x20u), "sample_strip: an overlay tap still presses ACTION");
     pi::Arm a1{}, a2{};
     a2.config.sample_strip = 0x40u;
     Check(pi::SameArm(a1, a2), "sample_strip is not compared by SameArm (no gen bump)");
@@ -932,29 +965,9 @@ void TestSenderHold() {
           "hold event names");
 }
 
-void TestActionSampleStripAndOverlay() {
-    pi::Config c = Cfg();
-    c.mask |= mgscoop::partner_pad::kAction;
-    c.sample_strip |= mgscoop::partner_pad::kAction;
-
-    // 1. Raw network packet with kAction (0x20u) held: stripped by sample_strip
-    pi::Sample live = Live(1, mgscoop::partner_pad::kAction);
-    pi::EdgeState edge{};
-    pi::Injection j = pi::Compose(c, live, 0, pi::Overlay{}, edge);
-    Check((j.held & mgscoop::partner_pad::kAction) == 0, "raw network kAction stripped by sample_strip");
-
-    // 2. Synthetic overlay tap with kAction: passes through to j.held
-    pi::Overlay overlay{};
-    overlay.bits = mgscoop::partner_pad::kAction;
-    edge = pi::EdgeState{};
-    j = pi::Compose(c, live, 0, overlay, edge);
-    Check((j.held & mgscoop::partner_pad::kAction) != 0, "synthetic overlay kAction tap passes through mask");
-}
-
 } // namespace
 
 int main() {
-    TestActionSampleStripAndOverlay();
     TestOnline();
     TestEffective();
     TestDirCheck();

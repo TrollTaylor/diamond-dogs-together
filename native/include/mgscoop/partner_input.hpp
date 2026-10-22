@@ -114,6 +114,12 @@ struct InputPacket {
     // and world yaw) in centidegrees, with GunFlag::AimDir (which needs Valid and
     // Aiming): pitch within +-partner_aim::kMaxPitchCdeg, yaw [-18000, 17999].
     std::int16_t aim_pitch_cdeg, aim_yaw_cdeg;
+    // v7 only (docs/anim-round2-throws.md "WS4 v2"; 0 otherwise): the sender's
+    // C4 place word, rec+0x3CC bits 18..23 shifted down (bit 0 the place
+    // request, bit 1 the detonate request, bits 2-3 the placed surface class,
+    // bits 4-5 the preview class), with GunFlag::Place (which needs Valid and a
+    // gun mode 43..47); else 0.
+    std::uint8_t place_bits;
 };
 namespace GunFlag {
 inline constexpr std::uint8_t Valid = 1 << 0;      // the group is valid (the sender's gun record was read)
@@ -125,7 +131,14 @@ inline constexpr std::uint8_t Known = 0x1F;        // v5
 inline constexpr std::uint8_t AimDir = 1 << 5;     // v6 only: aim_pitch_cdeg / aim_yaw_cdeg hold the gun direction
 inline constexpr std::uint8_t KnownV6 = 0x3F;
 static_assert((AimDir & Known) == 0 && KnownV6 == (Known | AimDir), "the v6 gun flag is outside the v5 set");
+inline constexpr std::uint8_t Place = 1 << 6;      // v7 only: place_bits holds the sender's C4 place word
+inline constexpr std::uint8_t KnownV7 = 0x7F;
+static_assert((Place & KnownV6) == 0 && KnownV7 == (KnownV6 | Place), "the v7 gun flag is outside the v6 set");
 }
+// v7: the place word's range and the gun modes that may carry it (the place
+// family 43..47: place-hold, ready, end, place, detonate).
+inline constexpr std::uint8_t kMaxPlaceBits = 0x3F;
+constexpr bool PlaceWireMode(std::uint8_t mode) noexcept { return mode >= 43 && mode <= 47; }
 inline constexpr std::int16_t kMaxAimPitchCdeg = 9000;
 namespace XFlag {
 inline constexpr std::uint8_t Look = 1 << 0;
@@ -166,9 +179,10 @@ std::int32_t NormalizeCdeg(std::int64_t cdeg) noexcept;
 // The clamps above; non-finite values become 0.
 InputPacket Quantize(const PadSnapshot& snapshot, std::int32_t cam_cdeg) noexcept;
 // Whether every value is inside the wire ranges (player_sync checks the same).
-// Versions 1..6; a v1/v2 packet carries no v3 field, a v1..v3 packet no v4
-// field (xflags Rates and Mag are v4 only), a v1..v4 packet no gun group and
-// a v1..v5 packet no gun direction (GunFlag::AimDir is v6 only).
+// Versions 1..7; a v1/v2 packet carries no v3 field, a v1..v3 packet no v4
+// field (xflags Rates and Mag are v4 only), a v1..v4 packet no gun group, a
+// v1..v5 packet no gun direction (GunFlag::AimDir is v6 only) and a v1..v6
+// packet no place word (GunFlag::Place is v7 only).
 bool ValidPacket(const InputPacket& packet) noexcept;
 // The sender's v3 fields (read on the driver tick; invalid groups have their
 // valid flag clear). Fill3 sets version 3 and the v3 fields of a v2 packet.
@@ -218,6 +232,16 @@ struct V6Source {
     std::int16_t aim_pitch_cdeg, aim_yaw_cdeg;
 };
 void Fill6(InputPacket& packet, const V6Source& source) noexcept;
+// Version 7 (WS4 v2, the C4 place and detonate): Fill6's fields plus the
+// sender's place word (GunFlag::Place) when place_valid, the gun group is
+// valid, its mode is in the place family (PlaceWireMode) and the word fits
+// kMaxPlaceBits; else the flag stays clear and place_bits 0.
+struct V7Source {
+    V6Source v6;
+    bool place_valid;
+    std::uint8_t place_bits;
+};
+void Fill7(InputPacket& packet, const V7Source& source) noexcept;
 
 // Sender hold (docs/anim-round2-throws.md "Unknown-slot glitch", run 0c9269ce).
 // The v4/v5 weapon fields come from two reads of the local player per tick: its
@@ -304,8 +328,9 @@ void AccumulateEdges(InputEdges& edges, const InputPacket& packet) noexcept;
 // the unknown remote slot/equip debounce (partner_support_policy::StepIdentity).
 // support_equip: the driver's last support verdict (0 = none). A held frame gets
 // slot 3, XFlag::Equip with that equip and, when it lacked GunFlag::Valid, the gun
-// group of the last complete frame (GunFlag::AimDir dropped: its angles are not
-// carried); its input (held bits, sticks, edges) is untouched. Returns the verdict.
+// group of the last complete frame (GunFlag::AimDir and GunFlag::Place dropped:
+// their angles and place word are not carried); its input (held bits, sticks,
+// edges) is untouched. Returns the verdict.
 struct IdentityHold {
     partner_support_policy::IdentityTrack track;
     std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;  // the last complete frame's gun group
@@ -374,6 +399,9 @@ struct Injection {
     std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
     bool slot_valid;
     std::uint8_t inv_slot;
+    // WS4 v2 (v7): the live sample's C4 place word (place_valid: GunFlag::Place).
+    bool place_valid;
+    std::uint8_t place_bits;
     // Native support (partner_support_policy StepFrame, critic #4): this frame
     // is a stall freeze of the last admitted support frame (its HOLD|FIRE
     // level, no edges); a consumer admits it with freshness waived only, every
@@ -610,15 +638,27 @@ struct Arm {
     // lane (type 13, 391..395, slot 3) and the arm lane (type 14, only 516,
     // slot 6, HOLD only), lab keys partner_native_placed / partner_native_arm.
     bool native_placed, native_arm;
+    // WS4 v2 (not compared by SameArm; needs native_placed): the remote's C4
+    // place (46) / detonate (47) mirrored into body 1's rec+0x3CC before its
+    // job (partner_place_mirror), lab key partner_native_place_mirror.
+    bool native_place_mirror;
     // Native support C(b) (not compared by SameArm): instance 0's gun prim and
     // record from the driver tick's ReadGun(k=0). The hook re-validates the
     // prim (vtable, prim+0x58 == record, not body 1's) before it reads the
     // viewer's gun mode, read-only, to attribute a slot-3 stock change between
     // two body-1 jobs to the viewer's own throw (0 = none).
     std::uintptr_t viewer_gun_prim, viewer_gun_rec;
+    // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
+    // by SameArm, so a request never bumps gen): body 1's pending icon request
+    // from partner_traverse (partner_icon::Kind, 0 = none), its process-unique
+    // id and its expiry (a stale Arm drops it). A drain window swaps the padop
+    // vtable copy in only while all three hold (partner_icon::SwapWanted).
+    std::uint8_t icon_kind;
+    std::uint32_t icon_seq;
+    std::uint64_t icon_until_ms;
 };
 
-// Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.
+// Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip, the icon request and the one-shots.
 bool SameArm(const Arm& a, const Arm& b) noexcept;
 
 // Hook statistics drained by the driver (the hook keeps atomics).

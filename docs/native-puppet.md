@@ -149,7 +149,7 @@ contract with its string; keyboard bit i is key binding i, `0x1206C21..0x1206CF2
 | 0x2000000 | keyboard binding 25 (walk) | Ctrl | always |
 | 0x8 / 0x40 | HOLD / RELOAD = CARRY | RMB / R | gun stage |
 | 0x10 | FIRE | LMB aimed | fire gate only |
-| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never |
+| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never from the remote's pad; with `partner_native_traverse=1` (default on with the gun profile, lab and play) it stays in the mask, but since 0.13.5 no replay step taps it (the icon request replaces the tap: "Traversal icon") |
 | 0x200, 0x400, 0x8000, ... | CALL/INTERROGATE, SUBJECT, CQC, weapons, markers | | never |
 
 The movement base is `kPartnerNativeBaseMask = 0x2240006`; the gun stage
@@ -168,12 +168,13 @@ also calls a global service's vt+0x28 with the object id held at +0x29C of
 its per-id record, i.e. it may message another GameObject in the receiver's
 world. Which states reach these six, and whether instance 1 can enter them
 with ACTION masked, is not verified (open item; the action census records
-`remote_act`/`body.act`). ACTION
-stays masked: it aliases ride, knife kill and pickup, which would act on the
-receiver's world. RELOAD aliases CARRY (gun stage only; gating it on the
-remote's aim state is an open item). Phase 2 (vault/climb) would replay a
-one-frame ACTION press only when the remote's act enters a vault/climb census
-whitelist near the body; not implemented.
+`remote_act`/`body.act`). The remote's own ACTION never reaches body 1: it
+aliases ride, knife kill and pickup, which would act on the receiver's world.
+RELOAD aliases CARRY (gun stage only; gating it on the remote's aim state is
+an open item). Nothing presses ACTION on body 1: since 0.13.5 the traversal
+replay ("Traversal", on with the gun profile) starts body 1's ladder, pipe, climb or
+step-on through its action icon ("Traversal icon"), not through an overlay
+tap.
 
 Reconciliation (native preset, `partner_recon::NativeParams`): the moving
 runaway compares the body's own velocity with the remote's along and across
@@ -186,6 +187,762 @@ the slide decelerates (`stop_grace`). The arbiter's runaway timer counts only
 the idle-remote runaway (`report.runaway_idle`). Runs a7823/63199 showed the
 old rule: a sprint at 0.835 speed pinned, never exited, and the arbiter left
 with `runaway`.
+
+## Traversal
+
+`partner_traverse` (`native/partner_traverse.*`, driven by `TickTraverse` in
+`partner_driver.cpp`) replays a remote ladder (act 21), drain pipe (22), wall
+climb (23) or step-on (24: low vault, onto a ledge, up out of a hang) on body
+1. Key
+`partner_native_traverse=0|1`: **default on with the native gun profile in
+lab and play** (user decision 2026-10-22, after the step-on FRAMES of hidden
+run `104e9a47`, "Traversal icon"), off without the profile; a named value
+records `partner_native_traverse_given` and a named 0 opts out. The Mother
+Base ladder (21) is proven since (hidden runs `8f27806d` lab, `2596f6ae`
+play); pipe (22) and wall climb (23) are still unproven in a FRAME.
+
+Act ids come from a static writer census of `Q+0x18[id]` on 1.0.15.4 (owners
+named by Ghidra): 21 `LadderActionImpl`, 22 `PipeActionPluginImpl`, 23
+`ClimbActionPluginImpl` (wall / cliff free-climb), 24 `StepOnActionImpl`, 25
+fall and 26 land (`StepDownActionImpl`), 27 evade and 28 the cliff / edge drop
+(`CliffActionImpl`), 54..56 the ledge hang (`EludeActionPluginImpl`). 25, 26,
+28 and 54..56 start without ACTION and already match natively (falling and
+EVADE reach body 1). There is no player door act: door states belong to the
+toilet (84..89), trash box (79..83) and the 67..74 plugin. 49/50/59 are Fulton
+acts.
+
+One episode, per remote edge into 21..24 that body 1 does not show (25..28
+and 54..56 are never requested: they arrive natively):
+
+1. **Source gate.** Body 1's act must be a start the plugin's own gate
+   accepts. A ladder admits only the game's own mask
+   (`LadderActionImpl::CheckEnableStartLadder` `0x1411E9B70` ->
+   `FUN_1411E9A70`, `0x18200001E`: acts 1..4, 25, 31, 32); a pipe
+   (`FUN_141210510`) or a wall climb (`CheckActionState` `0x14114A900`)
+   acts 1..20; a step-on (`FUN_141293790` and Exec's act 0x36 path) acts
+   1..20, 31, 32 and the hang 54.
+2. **Placement.** One reconciliation placement at the aligned remote pose
+   (`PlaceReason::traverse`: the Lua Warp with a neutral pad), skipped when body
+   1 is within 300 mm and 0.35 rad; no replay beyond 8 m (the reconciliation
+   places normally). The placement must verify within 1200 ms.
+3. **Icon request (0.13.5).** Only after the window is armed again with a
+   live pad and while body 1's act is a source act of the plugin: the
+   machine raises `Out::icon` (ladder, pipe, climb or step-on) as a level
+   with one `icon_seq` per episode; the driver turns it into a
+   process-unique request id and publishes `Arm.icon_kind` / `icon_seq` /
+   `icon_until_ms` (now + 250 ms, not compared by `SameArm`). The drain
+   window answers body 1's icon query once per id ("Traversal icon"). Body 1
+   must enter a traversal act within 1500 ms of the request phase or the
+   episode aborts (`no_entry`). The 0.13.4 ACTION overlay tap (`BumpTap`,
+   up to 3 per episode) is gone.
+4. **Hold.** While an episode runs and while body 1 runs any traversal act
+   natively (21..24, 28, 54..56), the reconciliation's far, vertical and
+   runaway placements are held (`traverse_hold`, `partner_recon.cpp`); a
+   teleport still places. The hold ends 1500 ms after body 1 left the
+   traversal, 3 s after the remote left every traversal act, or after 45 s.
+
+ACTION is added to the Arm's `mask` and `sample_strip` only with
+`native_active && traverse` (`BuildArm`): the remote's raw E (held, edges,
+words, tap12/long12) never passes; nothing in the replay taps it any more
+(the mask stays for a later in-traversal ACTION replay, see below).
+`kNativeBase` and `kMovementOnlyBits` are unchanged. Carry, a seated ride, the
+DM overlay and a downed remote block the replay (`block=` in the log). Every
+edge logs `partner_traverse=<start|placed|request|entered|done|abort>;
+reason=..; phase=idle|place|request|native; act=..; remote_act=..;
+body_act=..; icon=..; seq=..; episodes=..; requests=..; entered=..;
+aborted=..; block=..`.
+
+**Status (0.13.5): on with the gun profile; step-on and ladder proven (lab and play), pipe / wall climb unproven.** The 0.13.4
+tap path stayed off; the 0.13.3 build that shipped this machine on by default logged 0 `partner_traverse` lines in
+play. A stock ladder, pipe,
+wall-climb or step-on start goes through the HUD action icon:
+`CorePluginImpl::ExecParallelStart` runs the icon builder `[[P+0xD0]]+0x18`
+(`0x140AFCCE0`) only for `idx == [P+0x218]` (`0x141155B87`), and the plugin
+polls read `IsCompletedActionIcon` (`0x140AFD870`, no player index) at
+`0x1411EB00D` (ladder), `0x141213DBC` (pipe), `0x14114DEC8` (climb) and
+`0x14129BF86` (step-on). An ACTION press on instance 1's pad has no consumer
+there, so 0.13.5 replaces the tap step with an icon request for body 1 (the
+plugin's own `ExecActionButtonFunction` for idx 1, "Traversal icon"). The
+ACTION reads inside a running traversal (ladder `0x1411EFEEC`, `0x1411F02DD`;
+elude `0x1411A7967`) do read instance 1's pad, which is why the mask and strip
+wiring stays.
+
+## Vehicle boarding
+
+F1 (0.13.5, research `re-vehicle.md`): what the viewer's **own** ride action
+does at a vehicle the partner drives, and the partner seated as a passenger in
+either player's vehicle. Key `partner_ride_board=off|block|passenger`, a named
+value records `partner_ride_board_given`:
+
+- **passenger is the default with the native gun profile, in lab and play**
+  (since hidden runs `495e7c3a` lab and `de949f80` play, see "Passenger
+  camera"): the viewer boards a free back seat (2/3) of a light vehicle the
+  partner drives; at trucks, armoured vehicles, a taken back seat or anything
+  else it blocks exactly like block. Hidden run `59cfc415` (lab,
+  `coop-vehicle-passenger.txt`): the back-door prompt appears on the light
+  vehicle, the viewer boards seat 2 (`board_passenger; site=phase1`,
+  `local_passenger; via=p120`, act 0x6E), rides with the partner-driven jeep
+  (RIDE_FAST applied) and gets off with the stock GetOffBackLeft; the partner
+  sees it in the back seat (`partner_ride_seat=confirmed; seat=2`), both
+  directions. There the passenger's own camera looked at the jeep's interior
+  (`cam1f0=0x0` until the get-off's own `0x8800000000006408`); the passenger
+  camera fixes it. The truck half did not run in any of the passenger runs:
+  the host could not board `veh_trc_0000` from the `goto_vehicle truck` spot
+  and the guest's nearest truck was another one 817 m away (the copies' trucks
+  differ), so the truck fallback (`reason=type`) is still only unit-tested. The
+  light vehicle reads `type=2; seats=4`.
+- **block** (named): hidden run `0348c4d8` (lab, `coop-vehicle-shared.txt`,
+  both directions): the viewer pressed E beside the jeep the partner drove, got
+  no ride icon (`board_block; site=prequery`), stayed on foot
+  (`vehicle_not_riding`, no `st=0x400`), and the partner kept driving in the
+  viewer's frames; the ride icon came back once the partner got out. Play
+  rehearsal `fad26e25` (`-Mode play -WanSim bad`, rtt ~180 ms, 1-3 % loss; the
+  same scenario without the key, when block was the default:
+  `board_install; mode=block`): the same in both directions, no
+  `board_uncertain`.
+
+**Why.** The partner is drawn in the viewer's copy of its vehicle by the DM
+seat chain (`partner_ride_seat`), never registered in the copy's `rider[]`.
+So the copy's `rider[0]` is empty: RideVehicle `CanExec` (`0x1246650`) passes
+its driver-seat test, the pre-query finds door 0/1 and phase 1 registers the
+viewer as a **second driver** of the copy (seat 0, the player-driver flag
+`rec+0x7C |= 0x4000`; on exit `TryToGetOff` makes the copy dormant).
+
+**The hook** (`native/partner_board.cpp`, `native/include/mgscoop/partner_board.hpp`;
+pure policy `partner_board_policy.hpp`). Two rel32 call sites of the stock ride
+action are retargeted to wrappers (`RetargetCall`, the `partner_defer` H2
+pattern; B failing reverts A), lazily from the driver tick after the code gate,
+once per process; `PatchLive` is checked every tick:
+
+| Site | Call | Stock range | 4 means |
+|---|---|---|---|
+| A `0x12458AC` (rel32 `0x00005AEF`) | pre-query `0x1245820` -> nearest free seat `0x124B3A0(unit, pos, first, last)` | 0..min(count-1, 1) | the pre-query fails, `CanExec` fails at `0x1246A56`: no ride icon |
+| B `0x1251479` (rel32 `0xFFFF9EE2`) | phase 1 `0x1251200` -> `SearchNearestRideSeatForDriver 0x124B360(unit, pos)` | the same | the stock "no seat" exit (FinishRideSerial): the race backstop |
+
+The driver publishes one policy word per tick (`partner_board::Pack`: vehicle,
+the peer's seat, mode, lease end), from the peer's live ride (same link epoch,
+within `kLeaseMs` 5000 ms of its last packet). Both wrappers decide the same:
+
+- **stock** unless the peer holds **seat 0** of exactly this unit
+  (`0x6400 | u16 unit+0x78`); a peer passenger leaves the driver's seat to the
+  viewer (the copy is then driven by the viewer's own RIDE_FAST stream);
+- **block**: 4 at both sites;
+- **passenger**: light vehicles only (`GetVehicleType 0x55E7F0` in {1, 2},
+  seat count `0xA27CC0` in 3..4): the original `0x124B3A0` over the free back
+  seats 2..min(count-1, 3), never the peer's seat; trucks (3, 4), armoured
+  vehicles and anything else block. Stock phase 1 passes a back seat
+  unchanged to `TryToRide` (`0x1251832..0x1251840`), selects the passenger
+  phase `0x1250CF0` (`0x1251894`), which writes act 0x6E, plays
+  GetOn/Loop/GetOff of that seat and attaches the viewer to the copy RIDE_FAST
+  moves. An exit from seat 2/3 never makes the copy dormant.
+
+The wrappers read only u16 `unit+0x78` and call the two getters, under SEH: a
+getter fault blocks, an index-read fault passes through to stock (the vehicle
+is unknown, and the stock search reads the same unit first), and both count;
+`rider[]` is never written by us.
+
+**The local passenger report** (sender). `PlayerStatus.ON_VEHICLE` is set only
+for the driver's act 0x6F (`UpdatePlayerInfo 0x12CE870`), so Lua reports a
+passenger on foot and `MgsCoopPartnerRideSeat` returns nil. Native reads it
+(`partner_board::ReadLocalPassenger`, passenger mode only): act
+`(*(Q+0x18))[local] == 0x6E`, the vehicle `0x6400 | u16 unit+0x78` of
+`(*(P+0x120))[local]` confirmed by the vehicle lookup (else
+`(*(Q+0xE0))[local]`, which is `vars.playerVehicleGameObjectId`), the seat
+s in {2, 3} with `rider[s] == local`. It replaces Lua's foot report in the
+tick the ride sender sees (kind vehicle, seat, vehicle). `local_vehicle` keeps
+meaning the vehicle the viewer **drives** (RIDE_TILT, the receiver's gate);
+the report is `Driver::local_passenger`.
+
+**Receiver** (`partner_driver_seat.inc`): the by-id gate lets the peer sit in a
+back seat (2/3) of the vehicle the viewer drives (passenger mode; any other
+seat keeps `local_vehicle`); the peer reporting the viewer's own back seat is
+refused natively as `shared_seat` (by id and at `TickSeat` start; Lua's guard
+needs ON_VEHICLE); passenger mode skips the 3 m far latch for the vehicle the
+viewer drives or rides (the peer's stream lags the real vehicle). RIDE_FAST
+needs no change: a passenger has no `R.localVehicle()`, so it never streams
+and keeps applying the driver's track (`world_ride_pose_lua_check`).
+
+**Logs** (from the driver tick; the hook only counts):
+`partner_ride=board_install; mode=..; result=ok|refused; reason=..`,
+`partner_ride=board_policy; vehicle=..; seat=..; mode=..; uncertain=..` (on a
+change), `partner_ride=board_block; vehicle=..; site=prequery|phase1; n=..;
+mode=..; reason=..; type=..; seats=..` and `partner_ride=board_passenger;
+vehicle=..; seat=..; site=..; n=..; type=..; seats=..` (mission counts, at most
+once a second per site), `partner_ride=board_seated` (a steered back seat seen
+as the local passenger), `partner_ride=local_passenger; vehicle=..; seat=..;
+state=on|off`, `partner_ride=board_refused; reason=patch_lost` and
+`partner_ride=board_uncertain; reason=patch_lost|fault|two_drivers|steer_unconfirmed|seat_mismatch`
+(mission latch, once; passenger then publishes block). Two caps of 200 lines
+per mission: one for the periodic `board_block` / `board_passenger` counter
+lines (`partner_ride=capped; kind=board_count`), one for every other board
+line (`kind=board`), so a long stand at the peer's vehicle never silences the
+latch and report lines.
+
+**Pins.** `tools/generate_partner_contract.py` `BOARD_SITES` (19 blocks: both
+call sites and their contexts, CanExec's pre-query test, `0x124B360`, the
+nearest search's lookup / radius 100.0 / rider test, both getters and the two
+service lookups, phase 1's seat pass-through and phase select, TryToRide, the
+passenger act write, the `P+0x120` writer and the `Q+0xE0` read) and three
+vehicle service slots (+0x168, +0x170, +0x220); `board_assertions` checks the
+callers (`0x124B3A0`: site A and the `0x124B360` tail; `0x124B360`: site B;
+`0x1245820`: CanExec only), the rel32 values, the cache lines and that no
+branch lands inside either operand.
+
+**Proven in `59cfc415`** (`re-vehicle.md` 9): the light vehicle's entry scan
+offers the back door (the prompt appears; the "site B only" fallback is not
+needed), the Wakh Sind jeep is type 2 with 4 seats, and after a passenger exit
+the copy keeps following the driver's stream (`pass-after-exit-NN`). **Still
+unproven:** the truck numbering (3/4) and its block (the passenger camera
+is proven, see "Passenger camera"), the attach jitter against the
+20 Hz RIDE_FAST placement, and what the copy's phase-6
+`RequestVehicleToManualDrive` does to the next FAST placement. Research builds: `coop_passenger` and
+`coop_vehicle_mirror` SHA-pin `0x1245820` and `0x1251200` whole and refuse
+(`exact_code`) once the board sites are live. The startup partner code gate
+and `partner_upper_probe`'s one-time gate both run at configure, before the
+lazy board install, so they never see the patched rel32; nothing re-runs them.
+
+### Passenger camera
+
+User decision 2026-10-22: new camera code may connect the vehicle camera for a
+local back-seat passenger at boarding and release it at the get-off; the camera
+files listed as protected and the P+C0 setter `0x11F6520` stay untouched. No
+new key: it is part of `partner_ride_board=passenger` (the default with the
+native gun profile since hidden runs `495e7c3a` lab and `de949f80` play), the
+only mode in which the viewer becomes a stock passenger. Research (read-only
+Ghidra, raw dumps in the scratchpad `complete/re-passcam/`):
+
+- **How the stock camera picks its view.** The local player's camera
+  `CAM = *(P+0xB8)` (PlayerCamera, vtable `0x23B8250`) holds six modules at
+  `CAM+0xBD0`. Every camera update (`0x1119410`, loop `0x11194B6..0x11194E5`)
+  takes the first module whose `vt+0x18` (CanActivate) is true as the mode
+  `CAM+0x340`; on a change the old module's `vt+0x08` runs, `CAM+0x33C` keeps
+  the old mode and the new module's `vt+0x00` runs. The modules come from data
+  (`CAM vt+0x50 0x1111C50`); the classes found are the cut-in camera, a camera
+  for act 0x68, the subjective camera, one keyed to player status bits, the
+  VehicleCamera (index 3 in the lab) and an always-true fallback (`0x23B29E0`,
+  CanActivate `0x84B020 mov al,1`; index 5), which the on-foot player and a
+  seated passenger use.
+- **The VehicleCamera** (`tpp::gm::player::(anon)::VehicleCamera`, factory
+  `0x12D0E20`, module vtable `0x23D67F0`, base `0x23D6720`). CanActivate
+  `0x12D0F60` is `act = (*(Q+0x18))[P+0x218]; return act - 0x6F <= 1`, so it
+  serves the driver (0x6F) and the get-off (0x70), never the passenger phase
+  (0x6E). Its update (`vt+0x20 0x12D2050 -> 0x12D1E80`) sets the camera's
+  ignore-collision owner `CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx)`
+  with `CAM+0x200 = 1`. Every module's position solve ends in PlayerCamera
+  `vt+0xA0 -> vt+0xA8` (`0x1121D30`), whose collision query ignores the owner
+  in `CAM+0x1F0` when bit 63 is set (copied to `CAM+0xC20`, query flags
+  `0x700 | 0x800000`; `PlayerCamera::GetIgnoreColliosionGeoOwnerId 0x1114450`
+  returns `+0x1F0`). Its Deactivate (`0x12D0ED0`) and the ride's FinishState
+  (`0x124C850`, `0x124CD38..0x124CD86`) clear `CAM+0x1F0 / +0x1F8 / +0x200`.
+- **Why the passenger saw the interior** (run `59cfc415`). With act 0x6E
+  nothing selects the VehicleCamera and the passenger phase `0x1250CF0` never
+  touches the camera, so the fallback camera orbits the seated body and its
+  collision ray hits the jeep (`cam1f0=0x0`). The get-off's
+  `0x8800000000006408` came from the VehicleCamera once act 0x70 selected it.
+- **The first fix did not work** (`wp/pass-cam` `27e5e19`, hidden run
+  `4ae70de7`). Granting the VehicleCamera to act 0x6E (a swap of its two
+  CanActivate slots) connected (`mode=3; cam1f0=0x8800000000006408`), but its
+  passenger branch (`CAM+0x20C = 0`, with the light vehicle's driver parameter
+  set 0x11 from `UpdateActionType 0x12D1D40`) left the passenger's camera where
+  the guest boarded: the frames show the jeep driving away from a stationary
+  camera (scratchpad `frames/passenger/grant-4ae70de7-...-DEFECT.jpg`). The
+  slot swap is gone.
+
+**The fix** (`c5f272d`; `native/partner_pass_camera.{hpp,cpp}`, pure
+`partner_pass_camera_policy.hpp`). The passenger keeps the fallback camera, and
+the driver tick (`TickPassCamera`, right after `TickBoard`) writes the
+VehicleCamera's own encoding of the ridden vehicle to the local player's camera
+(`CAM+0x200 = 1`, `CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx)`) while the
+native local passenger report says seat 2/3 (act 0x6E): the fallback camera
+then orbits the seated passenger outside the jeep, whose geometry its collision
+query skips. `partner_pass_camera::Connect` reads the camera first (SEH;
+`*(P+0xB8)` must carry the PlayerCamera vtable) and writes only when
+`ConnectPlan` says so: never while the VehicleCamera is the active module (the
+driver, the get-off: stock owns the field), never over another owner, nothing
+when the handle is already there (`held`). The release is stock: at the get-off
+act 0x70 selects the VehicleCamera, whose Deactivate (and FinishState) clear the
+field; if our handle is still there 8 s after the report ended, the driver
+clears it (`ReleasePlan`: only our own handle, never under the VehicleCamera).
+No code or vtable is patched and no game function is called; the install
+(`partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=10`, once
+per process after the code gate) only verifies the pinned blocks. A write
+fault latches the mission (`state=refused; reason=fault; latch=mission`), as
+does the board's `board_uncertain`; nothing is written while the mission
+terminates.
+
+**Logs** (driver tick, board cap): `partner_ride=pass_camera; state=install;
+result=ok|refused; reason=..` once; per boarding `state=connect; vehicle=..;
+seat=..; reason=handle; plan=connect|held; ms=..; cam1f0=0x88..; cam200=1;
+mode=..; prev=..; vmode=..; writes=..` (the vehicle's handle in `CAM+0x1F0`),
+or `state=refused; reason=other_owner|stock_module|not_connected|cam_read|
+install|uncertain|..; ...` (no connect within 3 s, or not armed); after the
+report ends `state=release; reason=stock|other|cleared|still_connected;
+ok=1|0; ms=..`. `vmode` is the VehicleCamera's index among the six modules,
+`mode` the current one (5, the fallback, while seated).
+
+**Pins.** `PASS_CAMERA_SITES` (10 blocks: the whole CanActivate, the connect's
+unit/act test, its 0x6E/0x70 branch and the store (the encoding we copy), the
+update's call, the Deactivate clear, the module selection and switch,
+FinishState's clear, and the collision query's `CAM+0x1F0` test at
+`0x1121D8F`) and 8 slots (the VehicleCamera's Activate / Deactivate /
+CanActivate / update / UpdateActionType, the base CanActivate, PlayerCamera
+`vt+0x50` and `vt+0xA8`); `pass_camera_assertions`: the CanActivate is reached
+only through the two slots, only the factory stores the two vtables, the
+connect is called only by the update, the selection loops over six modules
+through `call [rax+0x18]`, `0x1114450` returns `CAM+0x1F0`, and `vt+0xA0`
+tail-jumps to `vt+0xA8`. Contract 743 code sites / 193 vtable slots.
+
+**Proven.** Hidden run `495e7c3a` (lab, `coop-vehicle-passenger.txt`, build
+`c5f272d`), both directions: `state=connect; reason=handle; plan=connect;
+ms=0; cam1f0=0x8800000000006408; cam200=1; mode=5; vmode=3; writes=1` at the
+boarding, `state=release; reason=stock; ok=1; ms=3059` (reverse `3083`) after
+the stock get-off. FRAMES: the passenger's own camera behind its seated body,
+outside the jeep, while the partner drives (`pass-guest-view`, `pass-drive-NN`,
+reverse `pass-rev-seated`, `pass-rev-drive-NN`: the street changes behind the
+jeep), the stock get-off, then the on-foot camera (`pass-exit-NN`,
+`pass-exited`, `pass-rev-exited`); the drivers' cameras are the stock chase
+camera with the partner body seated in the back (`pass-drive-host-NN`,
+`pass-rev-drive-driver-NN`) and the name tag sits at the seated head. Neither
+copy logged `viewer_changed`, `uncertain=1`, `board_uncertain` or
+`crash_probe=av`; the viewers' `st=0x400` appears only while they drove
+themselves. Play rehearsal `de949f80` (`-Mode play -WanSim bad`, rtt ~180 ms, 0-4 %
+loss; a scratch copy of the scenario without the key, so the new default ran:
+`board_install; mode=passenger` on both copies): the same connect / release
+lines (release `ms=3087` / `3067`) and the same frames in both directions,
+with the play HUD.
+
+**Unproven.** Aiming or the first-person view from the back seat (other
+modules take over; the handle stays set, so their collision skips the jeep
+too), a passenger in a truck (trucks block), and the attach jitter against the
+20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
+ride in both lab runs (also in `59cfc415`, godmode on, source not found).
+
+## Traversal icon
+
+F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research
+note `re-traverse-gesture.md` sections 1-4). Same key as "Traversal":
+`partner_native_traverse`, **default on with the native gun profile in lab
+and play** (user decision 2026-10-22; the play force-off is gone), off without
+the profile, a named 0 opts out; no new key. **Step-on (24) is proven in
+FRAMES** (hidden runs `104e9a47` lab and `04d3511f` play, below) **and so is
+the ladder (21)** at Mother Base (`8f27806d` lab, `2596f6ae` play, both
+directions; `partner-traverse-ladder-mb.txt`); wall climb (23) and pipe (22)
+are unproven because no spot was found ("Hidden runs" below).
+
+**Why body 1 never starts a traversal.** The icon controller "padop"
+(`Player2PadOperatorControllerImpl`, vtable `0x1422E8F00`, 96 slots, one object
+per P at `P+0xD0`, allocated by `0x140AFC770` -> ctor `0x140AFAE90`) is shared
+by both bodies. Its builder (vt+0x18 `0x140AFCCE0`) runs only for
+`idx == P+0x218` (`0x141155B87`) and fills the key-type slots
+`padop+0x980+kt*0xE0` with block 0's plugin pointers (`[block+0x78]+0x10`, 0x45
+`ActionPlugin*`). Action plugins are per block (`ActionPlugin+8` = its block),
+so body 1's polls (ladder `0x1411EB00D`, pipe `0x141213DBC`, climb
+`0x14114DEC8`, step-on `0x14129BF86`) pass block 1's own plugin objects to
+`IsCompletedActionIcon` (vt+0x28 `0x140AFD870`), whose first compare
+`[padop+0x980+kt*0xE0] == plugin` (`0x140AFD88D`) never holds for them. The
+same static evidence says body 1 never reads the viewer's icon either.
+
+**Mechanism.** No code byte and no image vtable slot is written (the carry
+contract pins `0xAFD870` and the slot {`0x22E8F00`, +0x28}).
+
+1. `partner_icon::Build` (once per process, lazily from `PartnerInstallDefer`
+   with defer=on and the key on, after the code gate): the live image slots
+   +0x28 / +0x50 must be the originals and the complete bodies of `0xAFD870`
+   (0x1AE), `0xB02480` (0x135) and the traversal priority `0x12128C0` must
+   match their SHA-256 pins (`icon_bodies` in `partner_player_contract.hpp`).
+   It copies vt[-1] and the 96 slots and replaces +0x28 with
+   `IconCompletedBody1` and +0x50 with `IconForceBody1`. Logs
+   `partner_icon=built; ...` or `partner_icon=refused; reason=slots|pins|..`.
+2. **Swap.** `ApplyPre` (drain windows only, `WindowOpts::icon`) installs the
+   copy into `[P+0xD0]` when `SwapWanted` holds (native Arm, `icon_kind`
+   1..4, `icon_seq != 0`, `NowMs() < icon_until_ms`) and the padop identity
+   is exact (vtable `image+0x22E8F00`, `padop+0x10 == P`, as
+   `carry_plugin_read.hpp` checks); `ApplyPost` (every exit path, SEH and
+   `__finally` included) restores the image vtable first, under its own SEH
+   (a fault in a later restore never leaves the copy installed), and only
+   over the copy (`RestoreAction`): a vptr already back is left, a foreign
+   vptr is never overwritten (`restore_mismatch`, latches the mission).
+3. **Scope.** `partner_icon::Begin(P, blk1, kind, seq)` right before block
+   1's job, `End` in `GuardedCall`'s `__finally` and the outer `__finally`.
+   Outside the scope (another thread, outside the job) every call through the
+   copy goes to the original.
+4. **`IconCompletedBody1`.** A query is body 1's when the scope is active on
+   this thread and `*(plugin+8) == blk1`; anything else goes to the original.
+   Body 1's query is answered `true` only when (in this order, `GrantCheck`)
+   kt == 0, a request is pending, the mission latch is clear, this request
+   id was not granted yet, the plugin's vt[1] is the requested kind's Exec
+   (`0x11EA140` ladder, `0x1211820` pipe, `0x114BEC0` climb, `0x1293F60`
+   step-on), `padop+0x10 == P`, `P+0x204` bit 10 (the stock gate at
+   `0x140AFD90C`) and `res` is 16-byte aligned; then priority
+   `vt[0](plugin, 1, 0)` (`0x12128C0`: 6 for kt 0) and
+   `Exec(plugin, 1, 0, res)` under SEH, with the shared ray-cache entry
+   `padop+0x7F0..+0x840` (vt+0x188 type 0x19, used by the climb and pipe
+   Exec) saved and restored. Exec fills body 1's own work and geo path; the
+   stock poll then sets its work state and the plugin's Wake writes act
+   21..24 in that frame. Every other body-1 query returns `false` (what stock
+   returns for body 1).
+5. **Viewer guard.** Around Exec the module digests the viewer's state Exec
+   must never touch: the six key-type slots (`padop+0x980..+0xEC0`), the six
+   icon input states (`padop+0x1240..+0x1330`) and the viewer's act words
+   `Q+0x18[local]` / `Q+0x20[local]`. Any change, or an SEH fault, latches the
+   mission-scoped `uncertain` flag: no further grants until MissionStart
+   (`partner_input_hook::ResetFault` -> `partner_icon::ResetMission`).
+6. **`IconForceBody1`** (+0x50): body 1's step-on poll calls it right after a
+   completion (`0x14129C129`); stock would set the viewer's input-state bit 7
+   (`padop+0x1260`) and copy the viewer's slot result into a local the poll
+   discards. In scope it is swallowed; outside it goes to the original.
+
+**Contract.** `tools/generate_partner_contract.py` pins the four Exec
+prologues, the priority body, the two forwarded prologues, the builder gate
+(`0x1155B79`, `0x1155BC3`), the four poll call sites and the step-on force
+call (`ICON_SITES`), the padop slots +0x18/+0x28/+0x50/+0x188 and vt[0]/vt[1]
+of every traversal `ActionPlugin` vtable (`0x23C6000`, `0x23C60C0`,
+`0x23C9BE0`, `0x23C9CB0`, `0x23BB850`, `0x23BB930`, `0x23D13E0`,
+`0x23D1490`), and asserts that only the ctor/dtor store the padop vtable and
+that `0xAFD870` / `0xB02480` / the Exec functions are reached only through
+those slots.
+
+**Census (read-only).** Once per mission with the key on and the block-1
+targets read: block 1's `PS+0x10` plugin list against block 0's, and
+`*(p+8) == its block` for the four traversal plugins (found by vt[1]):
+`partner_icon=census; distinct=<differ>/<both non-null>; blk_ok=0x<b0>/0x<b1>;
+found=0x<b0>/0x<b1>; null=<n0>/<n1>; read=0|1; verdict=ok|unread|empty|shared|
+missing0|missing1|blk0|blk1` (bits are 1 << kind: 0x1e = all four).
+
+**Logs** (from the driver tick; the hook only counts):
+- `partner_traverse=icon; plugin=ladder|pipe|climb|step_on; res=ok|none;
+  seq=..; exec_ok=..; exec_fail=..; granted=..; queries=..; denied=..;
+  swaps=..; swap_refused=..; windows=..; passed=..; force_swallowed=..;
+  req_queries=..; req_denied=..; deny=<Deny>; latched=0|1;
+  viewer_changed=..; faults=..; restore_mismatch=..` once per request. Every
+  count is the delta since the request started; `latched` is the mission
+  latch at the time of the line. `queries` / `denied` count every body-1
+  query in scope (body 1's other traversal polls and its kt > 0 plugins
+  query in the same job); `req_queries` / `req_denied` count only the
+  requested plugin's own queries (its vt[1] is the requested Exec), and
+  `deny` is that plugin's last refusal (`none` when it had none in this
+  request). `windows` counts scoped jobs (`Begin`), `passed` calls through
+  the copy that went to the original (another thread, another block, or
+  outside the scope). `res=ok` as soon as the grant is counted, `res=none`
+  when the machine left the request phase without one: entered natively or
+  aborted; a tick inside the phase without the level, such as a disarmed
+  window, neither ends the request nor restarts its deltas.
+- `partner_traverse=icon_act; seq=..; act=..; ms=..` for every body-1 act
+  change in the 2 s after a grant, then one line with `final=1`.
+- The existing `partner_act` edges (`partner_act_log=1`): expect
+  `edge=body; remote=X; body=X; match_ms<1500` after `res=ok`.
+
+Reading a failed run: `queries=0` means body 1's polls never ran inside a
+swapped drain window: no window swapped (`swaps=0` / `swap_refused>0`), the
+swapped windows never scoped block 1's job (`windows=0`), or the polls went
+through the copy outside the scope (`passed>0`: another thread or block).
+`queries>0, req_queries=0` means body 1's other polls ran but the requested
+plugin's poll never reached the icon (its own state gate refused first:
+act, upper act `Q+0x20[1]`). `exec_fail>0, exec_ok=0` (`deny=exec`) means
+the plugin's own gates refused body 1 at that pose (placement, facing, act,
+upper act); `deny=p_flag` means `P+0x204` bit 10 was clear;
+`deny=align|owner|fault`, `restore_mismatch>0` or `latched=1`: report.
+`res=ok` without `edge=body` means the poll or the Wake did not follow the
+completion.
+
+**Risks** (for the hidden run).
+- The ladder Exec reads `P+0xB0` pad +0x10/+0x14/+0x2C (instance 1's injected
+  pad inside the drain) and body 1's facing; the climb and pipe Exec cast a
+  ray whose default path passes `P+0x214` (the local index), so body 1's ray
+  may exclude the viewer instead of itself (effect unknown).
+- `P+0x204` bit 10's meaning and writer are unknown; it is set whenever the
+  viewer's own icons work.
+- Readers that check the padop vtable on other threads during a swapped
+  window (carry, sleep, horse readers) see the copy and refuse for that read;
+  the carry readers already avoid windows through `WindowSeq`.
+- With `P+0x218 = 1` inside a window (`p218`, pose-owned windows) the
+  builder would run for body 1 and fill the shared slots with block 1's
+  plugins; while a request is pending the copy still answers only the
+  requested plugin (no viewer E reaches body 1).
+- Body 1 reloading (upper act 5) or picking up (0x15) cannot start a
+  traversal, as in stock.
+
+**Hidden runs** (research build, gun stage, lab seed, key named; STATUS.md
+0.13.5 F3). The census reads `distinct=52/52; blk_ok=0x1e/0x1e;
+found=0x1e/0x1e; verdict=ok` on both copies. Step-on spot: the rock shelf east
+of the lab start, the host at 828.18,337.20,1630.51 facing yaw 95, W then W+E
+(`partner-traverse-icon.txt` Part 3). In `104e9a47` both attempts logged
+`icon; plugin=step_on; res=ok; exec_ok=1; granted=1; req_queries=1;
+latched=0; viewer_changed=0; faults=0; restore_mismatch=0` and `edge=remote;
+remote=24; body=24; match_ms=0`, with no vertical placement and the viewer's
+act at 1 throughout; the frames show body 1 reaching up, pulling itself onto
+the shelf and standing on it. In `d10ddf39` the same spot needed a placement
+first (`start; reason=placed`, body edge `match_ms=43`). Spot search for the
+rest (lab start, Wialo Village, Mission 1's horse start, the slopedTown
+outpost, Wakh Sind Barracks) found no 21/22/23: the climb Exec only accepts an
+authored crack-climb geo path whose end is within 2.5 m and +-1.5 m of the
+player (`0x14114AA50`), and the lab seed's D-Dog takes the E press whenever it
+is the nearest action (act 94, petting).
+
+**Default (user decision 2026-10-22).** The key is on with the native gun
+profile in lab and play on the strength of the step-on proof and the clean
+viewer guard (`latched=0; viewer_changed=0; faults=0; restore_mismatch=0` in
+every request).
+
+**Runs after the flip** (key not named, so the default ran; `b9b391f`;
+STATUS.md 0.13.5 F3). `04d3511f` is the step-on play rehearsal
+(`-Mode play -WanSim bad`, rtt ~185 ms): `partner_icon=built` on both copies,
+both host step-ons and one reversed step-on `res=ok` with edge 24/24, and the
+same frames as the lab run with the play HUD. Ladder: Mother Base (real seed),
+the ladder on the red container with its rungs at x=22.61, z=-14.86 (deck
+y=0.80, the climber faces +z), from the user's 0.13.2 MB play. The host
+teleports to 22.61,1.80,-15.55 yaw 0, W 300 ms, W+E 200 ms, then holds W; E
+alone from 22.61,-15.40 also grabs it, an approach from the west (yaw 95)
+walks past. `8f27806d` (lab) and `2596f6ae` (play, both directions) logged
+`icon; plugin=ladder; res=ok; exec_ok=1; granted=1; req_queries=1;
+deny=none; latched=0; viewer_changed=0; faults=0; restore_mismatch=0` and
+`edge=remote; remote=21; body=21; match_ms=0` for every grab (body 1 often
+enters 21 a frame before the act census sees the remote's 21), with no
+vertical placement; the frames show body 1 grab the ladder, climb it and go
+over the top onto the container roof while the viewer (act 1) stands still.
+
+**Open (cosmetic): the viewer's HUD shows the ladder hint.** While body 1 is on
+the ladder, the viewer's HUD shows the stock "C + ladder" hint beside its own
+player (frames `8f27806d` `ladA-up-01..04`; `2596f6ae` `lad-up-01..top-02` and
+the host's `rev-up-01..top-02`), although the viewer is on foot and the
+climber's own view mid-ladder shows no hint. Likely source (read-only Ghidra):
+body 1's LadderActionImpl state handler `0x1411EC3A0` case 4 calls `P+0xD8`
+(`UiControllerImpl`, vtable `0x1423AF358`) vt+0x260 (`0x140FE6D10` ->
+`[this+0x48]` vt+0xF8 with 3, 8, 0, 1, 0, 0) with no `P+0x218` check, while its
+case 2 checks `P+0x218` before `P` vt+0x90. There is no input path: body 1's
+slide poll (`0x1411EC54A`) asks IsCompletedActionIcon with block 1's plugin,
+which never matches the viewer's icon slots. Suppressing it would need a new
+scoped filter of that UI call for body 1 (not attempted).
+
+**Wall climb (23) and pipe (22)** stay unproven: no spot is known. The game's
+own Lua registers its crack points with the UI as a Vector3 list through
+`TppUiCommand.RegisterCrackPoints` (`0x1408D5010`, up to 64 points); none of
+the library scripts read with `tools/archive_probe` calls it, so the caller is
+a location or mission script, and logging that call's argument would list the
+crack-climb spots.
+
+## Gestures
+
+`partner_gesture` (`native/partner_gesture.*`, pure part
+`native/partner_gesture_policy.*`, driven by `SendGesture` / `ReceiveGesture` /
+`TickGesture` in `partner_driver.cpp`) plays the remote's pickup, hand sign Go
+/ Stop and wall knock on body 1's upper graph. Key
+`partner_native_gesture=0|1`: **default on with the native gun profile in lab
+and play** (the pickup on body 1 in FRAMES: hidden runs `0e343f72` lab and
+`75a7e7dc` play with bad WAN, see "Status" below), off without it, a named 0
+opts out, a named value records `partner_native_gesture_given`. The same key
+gates the sender (`tools/worker/scenarios/partner-upper-gestures.txt`).
+
+**Why a new signal.** These are upper-only actions: the lower act `Q+0x18`
+does not change, so neither the snapshot's anim extension (act, stance, speed)
+nor the Lua tick says anything. The stock plugins write the upper act byte
+`Q+0x20[id]`: 0x15 pickup (`PickUpActionPluginImpl` Wake `0x14120FD9A`,
+cleared in its Sleep `0x14120EB37`), 0x17 knock (`StateKnock` `0x1411E7210`),
+0x18 / 0x19 hand sign Go / Stop (`StateHandSignGo` `0x1411E6A40`,
+`StateHandSignStop` `0x1411E6C30`). The byte persists from the state's enter to
+its Sleep, so the driver tick samples it.
+
+**Sender.** Every driver tick with the key on, `partner_player::ReadUpper` reads
+both ids' byte; a rising edge of this copy's own byte (`P+0x214`, index 0) into
+one of the four values sends one 12-byte message on reliable channel 2, append
+mode (see "Wire"), with the sender's own stance `Q+0x30` and speed `Q+0x38`
+(moving = speed != 0). The first sample after enabling, after an unread tick or
+in a new link session is a baseline (a gesture already running is not sent). A
+refused send stays pending for up to 500 ms; a newer edge supersedes it.
+
+**Receiver.** `DrainEquip` hands a `'G'` message to `ReceiveGesture` (a
+strictly newer seq of the session is stored; with the key off it is only
+counted). `TickGesture` gates the newest edge, picks the stock node and
+publishes a request to the body-1 hook:
+
+| Gate (`partner_gesture_policy::Gate`, in order) | refusal |
+|---|---|
+| key on | `key_off` |
+| the mission's `uncertain` latch clear | `uncertain` |
+| native drive active, body 1 realized with its parts loaded | `not_native`, `unrealized` |
+| no carry, seated ride, DM overlay, downed remote or vehicle job | `carry`, `seat`, `overlay`, `downed`, `vehicle` |
+| the remote's pose sample live, the hook installed, no gesture running | `remote_stale`, `not_installed`, `busy` |
+| body 1 in plain locomotion: act 1..6 (not 0x4D box), `Q+0x28[1] == 0`, `Q+0x20[1] == 0` | `box`, `body_act`, `body_q28`, `body_upper` |
+| the edge is younger than 500 ms | `stale` |
+| (after publication) a body-1 update takes the request within 500 ms | `unanswered` |
+
+Nodes (the remote's stance from the message; the low-item / flag-0 rows of the
+stock tables; `NodeFor`, every value an imm64 operand inside the stock
+function, asserted by the contract generator):
+
+| Gesture | Method (cs vtable) | Blend | Stand (1) | Squat (2) | Crawl (3) | Other |
+|---|---|---|---|---|---|---|
+| pickup | SetCurrentNode vt+0x170 | 0.5 | idle `0x1E904603EB7D`, moving `0x82E84B26E4CE` | `0xFF77B695370A` | refused (`stance`) | refused |
+| hand sign Go | ReserveToResetNode vt+0x160 | 1.0 | `0xE74E11BABA4B` | `0x8881431FFF42` | `0x5FE632112A9A` | `0x2153458C564C` |
+| hand sign Stop | ReserveToResetNode vt+0x160 | 1.0 | `0xB98C80A7DDAE` | `0x78CB18630AF1` | `0x825F953B5437` | `0x724E8FE0F814` |
+| knock | ReserveToResetNode vt+0x160 | 1.0 | `0xD64283446A67` | `0x7BC06465D606` | `0xC1143CAC83B1` | `0x174A0F341288` |
+
+The knock takes the second node of each stock pair (`0x7B2D4F836A92`,
+`0xD08C8B213CAB`, `0x0430147D9D34`, `0x1EC34B25A344`) when body 1's hand look
+`Q+0x58[1]` is non-zero. The item height and the per-id Left/Right flag
+(`PS+0x2F0`) are not on the wire.
+
+**The body-1 hook.** A MinHook on the per-entry motion update `0x140B6C410`,
+installed lazily (the first native tick with the key on, after the startup
+partner code gate) and never removed. Everything but `ActMotionStart`'s call
+(return address `0x140AF0381`) for body 1's entry passes straight through (one
+atomic compare). For body 1 it re-resolves the identity (P, Q, block 1 with id
+1 only, PS, CS with base 1 and count 1, entry, graph and request-buffer
+layout, and a different CS / entry / buffer for body 0), then, right before
+the original update consumes it:
+
+1. `IsGraphExistNode(cs, 1, 2, node, {0, 0})` (vt+0x210 `0x140AF1F10`; the tag
+   list is walked until a zero entry, so it is never null);
+2. pickup `SetCurrentNode(cs, 1, 2, node, 0.5f, 0)` (vt+0x170 `0x140AF2BA0`),
+   signs and the knock `ReserveToResetNode(cs, 1, 2, node, 1.0f, 0)` (vt+0x160
+   `0x140AF2710`): both write only body 1's request buffer (`SetRequest`
+   `0x140B6E9F0` / `ReserveToReset` `0x140B6E6E0`);
+3. after the original update, graph 2's current / queued node is read back
+   (`applied; ok=`).
+
+Neither write method looks at a request already waiting: both set the mask
+bit and overwrite the graph's record, and the update clears the masks only
+after consuming them (`0x140B6C5E2`). Stock action-plugin state code (the
+pickup's `0x14120E520` through vt+0x170, `StateHandSignGo`'s call at
+`0x1411E6B98` through vt+0x160) submits graph-2 requests from the plugin
+update, not from the motion update, so a graph-2 mask bit in body 1's request
+buffer at the update's entry is another owner's request (ours is always
+consumed by the update it was made in). The hook then never writes: a new
+request is refused (`pending`, checked right before the write) and a running
+gesture ends (below).
+
+Every later body-1 update tests the end (`partner_gesture_policy::End`):
+another body or controller ends it without a write (`identity`); so do the
+window closing (`shutdown`) and another owner's waiting graph-2 request
+(`pending`, re-checked right before the stateNull write too: a late one ends
+the gesture with `null=0; note=pending`); a lost lease
+(the driver's command older than 250 ms, disabled, or a seat / carry / overlay
+taking body 1) ends it with the stateNull return if graph 2 still shows our node;
+another owner of graph 2 (after a 300 ms grace) ends it without a write
+(`node`); the clip end after 150 ms (pickup `vt+0x228(cs, 1, 2)` `0x140AF1F70`,
+signs and knock `vt+0x2B8(cs, 1, 3)` `0x140AF2110`), the remote's speed > 1 for
+signs and the knock, or the 2000 ms deadline end it with
+`SetCurrentNode(cs, 1, 2, stateNull 0xC1A2050D3802, 0.0f, 0)` (the validated
+`partner_upper_manual_idle` return), only while graph 2 still shows our node. A
+new mission epoch (MissionStart / MissionEnd / STOP) drops a running gesture
+without any write; the withdrawal's step drains the hook's receipts, so it logs
+them (and `receipts_dropped`) for the ending mission like a tick does. When the
+game window closes (`PartnerShutdown`, any thread, next to the deferral and
+input-hook shutdowns) `partner_gesture::Shutdown` makes every later update pass
+straight through: no game call and no write, a running gesture included.
+
+Guards: the nine bodies are SHA-256 pinned (`partner_gesture.hpp` `kPins`,
+re-checked before the hook is created; the contract generator compares them
+with the executable); the five cs vtable slots are checked before every call;
+every call runs under SEH (a fault latches `fault` and the hook passes through
+for the rest of the process). Around every write the viewer's own body 0
+(request masks and graph-2 request record) is digested before and after, and
+body 1 may change only its graph-2 mask bit and must keep its graph-0 record:
+any surprise latches `uncertain` for the mission (no further writes, not even
+the stateNull return). A diagnostic build whose phase observer already hooks
+`0xB6C410` refuses the install (`phase_observer`).
+
+Logs (`partner_gesture=`, 400 lines per mission; uncertain / fault / install /
+configured / patch_lost uncapped): `configured; key=1; sender=..; receiver=..`,
+`install; result=ok|<reason>` (the hook's own `installed; hook=0xb6c410;
+caller=0xaf0381; pins=9; slots=5` or `install_refused; reason=..; rva=..`),
+`local; kind=..; upper=0x..; seq=..; stance=..; speed=..; moving=..; sent=0|1`,
+`rx; kind=..; seq=..; ...`, `refused; reason=..; where=driver|hook; ...`,
+`submit; graph=2; node=0x..; exist=1; kind=..; method=set|reserve; seq=..;
+stance=..; moving=..; body_act=..`, `applied; ...; current=0x..; queued=0x..;
+ok=0|1`, `ended; via=end|timeout|override; cause=..; seq=..; kind=..; ms=..;
+null=0|1; current=0x..`, `uncertain; reason=..`, `fault; reason=..`. The hook
+answers every request it sees (submit or refused); a request no body-1 update
+took within 500 ms is withdrawn with `refused; reason=unanswered; where=driver;
+...; body_calls=<body-1 updates so far>; resolve=ok|<identity refusal>` (the
+update filter never had body 1's entry, or the caller never matched).
+
+**Status (0.13.5): the pickup is proven, on with the gun profile in lab and
+play.** The stock pickup key is R, not E: `PickUpActionPluginImpl` polls the
+padop icon with key type 1 (`FUN_1412086f0` -> padop vt+0x28(plugin, 1, res)),
+and key type 1 is pad bit 0x40 (RELOAD, table `0x22E86A8`); over a dropped
+weapon a short R is a reload and only the long press picks it up (the swap
+panel shows the R glyph). Hidden runs (research build, gun stage, lab seed;
+Closed, BaselineRestored, RealSavesUnchanged, no visible fallback; the host
+picks up, the prone guest films body 1 from 4 m):
+- `ab16d947` / `0e343f72` lab (key named): host `local; kind=pickup;
+  upper=0x15; seq=1; stance=1` and `seq=2; stance=2`; guest `rx` -> `submit;
+  graph=2; node=0x1e904603eb7d; exist=1; method=set; body_act=1` -> `applied;
+  current=0x1e904603eb7d; queued=0x0; ok=1` -> `ended; via=end; cause=clip;
+  ms=625..656; null=1`, and the same for the squat node `0xff77b695370a`
+  (`body_act=3`). FRAMES: body 1 bends down at the waist reaching for the
+  ground and comes back up while its legs stay planted, then stands as before;
+  the viewer's own player stays prone (act 5) in every capture. `IsGraphExistNode`
+  accepts the `{0, 0}` tag list and the vt+0x228 end fires after ~0.6 s.
+- `75a7e7dc` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 0-3 %
+  loss), the same scenario without the key: `configured; key=1` by default on
+  both, the same lines (`ms=594` / `672`) and the same frames.
+- No `refused`, `uncertain`, `fault` or AV in any run; no viewer
+  `partner_status=local` change.
+
+Still unproven: the squat clip in a FRAME (grass hid body 1's arms), the
+moving pickup (a held W+R over the dropped back weapon never raised 0x15 on
+the host), the hand signs and the knock (no lab spot: E at the lab start pets
+D-Dog, act 94), the reverse direction (the guest picking up, the host
+filming), and whether body 1's own upper plugins ever take graph 2 back
+(`override; cause=node|pending`, never seen). The rate-record MotionVars
+writes of `re-traverse-gesture.md` 5.3 "Optional" were not needed.
+
+## Mounts
+
+D-Horse and D-Walker riders are **hidden, never drawn** (docs/mounts.md has the
+research). The viewer's copy holds no GameObject for the partner's mount (one
+buddy block per copy, declared count 1), the DM anchor `0x1198770` seats only
+GameObject types 50 and 4, and the rider states follow a live horse's state, so
+any drawn rider would float.
+
+The ride wire hides a horse rider: Lua reports `ON_HORSE` as kind 3, and
+PlayerInfo `0x1412CE870` sets `ON_HORSE` only for act 121. It does **not** hide
+a D-Walker rider: act 125 (`RideWalkerGearActionImpl::StateDrive`) sets no
+`ON_*` status Lua binds, so the sender reports kind 0 (foot), and the viewer
+keeps body 1 as an on-foot puppet whose remote position is the cockpit and
+whose remote act (125) is no locomotion act: in the baseline frames (key off,
+partner-mount.txt's baseline part) body 1 walks on foot along the walker's path with no
+walker under it. The horse get-on / get-off act 122 is reported as foot too.
+
+Key `partner_native_mount=off|hide` (**default hide with the native gun profile in lab and play**, a
+named value records `partner_native_mount_given`, a named off opts out): with `hide` the viewer also hides body 1
+while the remote's act is a mount act (121, 122 horse; 123..126 D-Walker), like the heli acts 97..108
+(`partner_mount_policy.hpp`, `partner_ride_wire::Observe`). It acts only where `partner_native_ride` hides (not off).
+
+Clearing the native realize bits (the ride hide's `partner_bits=cleared; reason=ride`) does **not** take body 1 off
+the screen: Lua's all-instance-active mode (`Player.SetAllInstanceActiveMode`, P+0x204 bit 0x2000) keeps instance 1
+realized, and in hidden runs `b264ad58` / `251abcef` the partner body stood idle at the get-on spot, turned to the
+camera and without its name tag, for the whole horse or D-Walker ride. So while a mount episode hides body 1 and Lua
+reports all-active, the hidden reply also carries `CLEAR_ALLACTIVE` (op 8; `partner_mount_policy::Unrealize`): Lua
+sets the mode off (`partner_lua=event=allactive_cleared`), instance 1 is unrealized (probe `pool=00,ff`,
+`rbits=0x1`; instance 0 untouched, it is the stock single-player state). The partner is shown again after the usual
+500 ms of calm on-foot samples: placed, then the stage policy's `SET_ALLACTIVE` realizes it again
+(`allactive_set`, `partner_realized=1`; the look is kept). Lines (driver tick, capped at 64):
+
+- `partner_mount=configured; mode=hide; ride=<partner_native_ride>; acts=121..126` once per mission;
+- `partner_mount=hide; mount=horse|walker; act=..; kind=<ride wire kind>; ride_live=..; episode=..` when the act rule starts hiding;
+- `partner_mount=unrealize; mount=..; act=..; episode=..; op=clear_allactive` once per episode;
+- `partner_mount=end; mount=..; act=<the first valid non-mount act>; ms=..; kind=..` when it stops (a missing act sample does not end it);
+- the existing `partner_ride=hide; reason=ride; act=..` and `partner_ride=foot_stable; next=place`.
+
+The horse kind-3 hide without the key still only clears the bits and leaves that standing body (filmed in
+`251abcef`); the heli and vehicle-fallback ride hides use the same bit clear (not filmed).
+
+Hidden runs (`tools/worker/scenarios/partner-mount.txt`, research build, gun stage, lab seed): `bfd6fcc4` (lab):
+no partner body on the guest's screen while the host rode the D-Walker (two vantages) or the D-Horse, the body back
+at the dismount spot, the guest's own act and status unchanged; the lab default follows it. `fbde3dcc` (play
+rehearsal, `-WanSim bad`, key not named): the horse part passed the same way, but the run stopped before the
+D-Walker part (Part 3 left the host mounted). Since 2026-10-22 the scenario runs the D-Walker part first and
+presses a horse dismount E only after `host require localMounted=1`; its header says how to make the play copy
+(docs/mounts.md section 8). The same day RIDE_BODY stopped moving the viewer's own D-Horse / D-Walker (docs/mounts.md
+section 2): the "Part 3" stop above came from it pulling the host's horse away. On that build: `2ab88411` (lab, the
+reordered scenario) repeats the `bfd6fcc4` hide frames, and in Part 3 the viewer's own idle D-Horse stays where it
+stood while the host's first E mounts the host's own horse (each copy logs one `ride_body; action=refuse;
+reason=not_mirror` line per mount id). `5a044a4d` (play rehearsal, `-WanSim bad`, rtt ~180 ms, key not named on
+either copy): both copies log `partner_mount=configured; mode=hide`; no partner body while the host rides the D-Walker
+(two vantages) or the D-Horse, nor on the host's screen while the guest rides its D-Walker (Part 4); the body back
+after each dismount; Part 3 as in the lab. **Play now defaults hide too.**
 
 ## Rates
 
@@ -1195,7 +1952,12 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_shared` | off, on, prefer (gun profile: on; prefer is lab-only; fresh shape/bank/ref/ownership gates remain mandatory) |
 | `partner_native_standin` | off, on (gun profile: on; closest already-filled class when the remote slot is unavailable) |
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
+| `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 1 with the native gun profile in lab and play since hidden runs `05cffdd1` lab and `71e19d1e` play (-WanSim bad); play admits it only with link v2 connected; a named 0 opts out) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
+| `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
+| `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
+| `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
+| `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and
@@ -1246,6 +2008,158 @@ stage), and requires `partner_native_noise=filter`). `Get-WorkerPartnerSettings`
 (tools/worker/WorkerSessionCommon.psm1) is the source of truth;
 `Play-OfflineCoop.ps1` runs the same gun-stage settings on the animated
 partner by default (`-NoNative` turns the native drive off).
+
+## Cardboard box
+
+F2 (0.13.5, unreleased): the remote's cardboard box on body 1 (instance 1),
+native. Module `native/partner_cbox_equip.{hpp,cpp}`, pure policy
+`native/include/mgscoop/partner_cbox_policy.hpp`, tests
+`tests/partner_cbox_tests.cpp`, static contract in the research note
+`re-cbox.md` (sections 3-6, 9, 12). Lab key `partner_native_cbox=0|1`:
+**default 1 with the native gun profile in lab and play** (hidden runs
+`05cffdd1` lab and `71e19d1e` play rehearsal, see Status below), off without
+the gun profile; play admits it like the support lane, only with link v2
+connected (`SupportModeReason`); a named value records
+`partner_native_cbox_given` and a named 0 opts out.
+
+**Why native.** The 0.13.3 Lua apply (`Player.ChangeEquip`, 0x9D0D60) ignores
+`playerIndex` and passes `R8D = [P+0x214]`: it boxed the VIEWER's own player.
+0.13.4 removed it and kept only the transport (manifest v2 bytes 10..11 and
+byte 63 bit 0, `NoteCbox`).
+
+**The two calls** (from `ObserveNativeCbox()`, the 10 Hz equipment tick right
+after `ObserveNativeSupport()`, the same natural owner, gates and body lease):
+
+- **on:** `ChangeEquip` 0x11AC2E0 `(ctl, &result, R8D = 1, {type 0x326C48DA30C0,
+  equip = B, stock fields 0, flags = 4})`. For a non-local id and an item of
+  type 0x11 it only writes body 1's item list (`row1+0x1C+2k` through
+  SetEquipState, the per-(id, sub) record 8+k of the array `*(Q+0x160)`
+  (`+ (sub + id*8)*0x10`; `Q+0x160` is a pointer), `Q+0x17C` bit 1) and
+  calls `SetCurrentItemIndex(ctl, 1, k, 0)` (`row1+0x37` high nibble = k).
+  Every viewer-side write in those functions is gated on `idx == [P+0x214]`.
+  The engine's `CBoxActionPluginImpl::PollingImpl` then wakes the box on its
+  own (act 77, `Q+0xD8[1]` = the box object): no detour, no input.
+- **off:** `SetCurrentItemIndex` 0x11AF9A0 `(ctl, EDX = 1, R8D = 0, R9B = 0)`,
+  only for a box this lane put on: sub 0 is always "no item", so state 2's
+  can-wear check fails and the box exits (state 0xB). OnRemoveItem runs
+  `UnsetSlot(ctl, 1, 4)` (body 1's item-slot handle may change; logged as
+  `h4=before>after`).
+
+**Choosing B.** The can-wear predicate (0x10DF430) takes body 1's OWN current
+item but asks `GetItemStockCount` (ctl vt+0xC8, 0x11AD660), which scans the
+VIEWER's item list (0x11AD67E `[P+0x214]`). So body 1 can only wear a box id
+the viewer owns with stock > 0: `MapViewerBox` picks the remote's id W if the
+viewer holds it in subs 1..7 with stock (`mapped=same`), else the viewer's
+first box with stock (`mapped=viewer_box`: another camo), else refuses
+`viewer_no_box` with no call. Body 1's sub: the one already holding B, else
+the first free 1..7, else `body_items_full` (the pickup's replace-current path
+is never used). B must pass `pp::EquipType(B) == 17`.
+
+**Discipline** (`partner_support_equip`'s): SRW lock; every chain re-read
+(player lease, offline, `[P+0x214] == 0`, body chain, the busy predicate
+0x1156640, ctl vt+0x198/+0x68/+0x90/+0xC8/+0xB0/+0x20/+0x98, store
+vt+0x68/+0x88/+0x10, the type table); the full SHA gate
+(`equipment_stock_writer::PinsIntact`, which now covers SetCurrentItemIndex,
+OnRemoveItem, OnEquipItem, GetItemStockCount and GetEquipIdSlot); a late
+re-capture; the strict viewer digest around each call (row 0, its seven
+handles, its item stocks `*(Y+0x98)+(0xE+k)*2`, `vars.items` +0x5A4,
+`vars.currentItemIndex` +0x67C, the vars ammo block, its item records 0..7 at
+`*(Q+0x160) + 0..0x7F` (the pointer itself is part of the lease), its act
+and box word; never the `Q+0x17C` dirty mask, which both calls set for body 1
+and the engine clears) and body 1's other slot handles (0..6 but 4); SEH around both
+calls. Any surprise latches `uncertain` for the mission (no further call, not
+even an off); `not_current` (ChangeEquip returned 0 but the row does not show
+B) only ends the edge. The latches and the edge state are scoped to the
+mission code and the driver's mission start (`Mission::start_ms`, so a
+restarted mission with the same code starts clean); the box this lane put on
+is carried across that reset (`partner_cbox=carried; id=..`): if body 1's row
+survived the restart it is still ours, and it comes off when the remote is not
+boxed (the engine would otherwise keep body 1 boxed while the viewer has
+stock); a rebuilt row releases it with no call (`partner_cbox=released`). The
+observer waits for the
+driver's CFG (`step=partner_cfg`). One attempt per remote edge (`Mission::cbox_seq`); never
+a second ChangeEquip while B is body 1's current item (it would reset the box
+life record and run OnRemoveItem / OnEquipItem while boxed). Busy (transient)
+while body 1 switches / reloads / throws, a gun writer slot is in readiness or
+tracking, or the support lane latched uncertain: the box Wake allocates an
+engine handle and OnRemoveItem touches body 1's slot-4 handle, which those
+writers' digests compare.
+
+**Watches** while our box is body 1's current item: `entered` (act 77/78
+within 1500 ms, with the box word; on timeout the PS record bits `rec+8` bit 11
+and `rec+0xC` bits 26..28, the viewer's stock and `rec_ok`), `exited` (the
+engine took body 1 out of the box while it stays current), and the per-tick
+viewer digest (`viewer_changed; fields=..`): a change in the viewer's item
+rows, stocks, vars items or records while its act and its own selection stayed
+the same latches `watch_latched` (no new on this mission; our box still comes
+off). **Driver:** `NoteCbox` keeps the edge detection and logs `apply=native`
+with the key; the reconciliation holds its far / vertical / runaway
+placements while body 1 is in 77/78 for the remote's box and 3 s after the
+remote's off (`partner_cbox=hold; on=1|0`): a placement would teleport the box.
+
+Logs (one per decision):
+
+- `partner_cbox=remote; id=..; active=0|1; apply=native|off; seq=..` (driver)
+- `partner_cbox=mode; mode=lab|play|other; enabled=0|1; reason=ok|link_not_connected|mode`
+- `partner_cbox=apply; id=B; want=W; mapped=same|viewer_box; via=native; sub=k; body_sub=k; result=..; reason=ok|..; act1=..; h4=..>..; uncertain=0|1; seq=..; mission=..`
+- `partner_cbox=off; id=B; via=native; reason=ok|still_current|..; act1=..; h4=..>..; uncertain=..`
+- `partner_cbox=refused; reason=viewer_no_box|type|body_items_full|full_body_gate|body_busy|gun_writer_active|support_uncertain|restriction|lease_changed|gates|uncertain_latched|viewer_changed_latched|<capture>; step=on|off|<gate>; ...`
+- `partner_cbox=entered; act=77; ms=..; qd8=..` or `entered; ok=0; act=..; ms=..; rec8=0x..; recC=0x..; rec_ok=..; vstock=..; qd8=..`
+- `partner_cbox=exited|viewer_changed|released|carried; ...`, `partner_cbox=hold; on=..; body_act=..; want=..; seq=..`
+
+**Lab tooling.** `debug items` (read-only): `items;ids=..;counts=..;current=..`
+(`vars.items`, `Player.GetAmmoStockBySlot(ITEM, i)`, `vars.currentItemIndex`).
+`debug give_item cbox` (lab only: the native dispatcher refuses it outside
+mode=lab with redirected saves): one stock `EQP_IT_CBox` into a FREE sub of the
+LOCAL player's running item list (`Player.ChangeEquip toActive=false`), readback
+on `vars.items`; a full list refuses `items_full`. Use it only if the census
+shows a lab seed without a box. Risk: a checkpoint save writes the gift into
+that run's copied save (never a real save), and the box model's assets may
+not be resident for an item that was not in the sortie loadout.
+
+**Scenarios.** `tools/worker/scenarios/partner-cbox-census.txt` (both
+`run items`; both lab seeds' subs 1..7 hold 468, 451, 492, 483, 484, 472, 466
+with stocks 8, 10, 54000, 10, 4, 8, 8, boxes 468 / 472 / 466: run `ea1abea5`),
+then `partner-cbox.txt` (host boxes with `run slot
+item 1`, the prone guest films `cbox-on`, a `cbox-move` burst, `cbox-off`,
+`guest-self`; then the roles reversed). Hard requirement: no viewer
+`partner_status=local; st=0x4` it did not press.
+
+**Status (0.13.5): proven, on by default with the gun profile (lab and
+play).** Hidden runs on `wp/integ9` (research build, lab seed, Closed,
+BaselineRestored, RealSavesUnchanged, no visible fallback):
+
+- `05cffdd1` lab, `partner-cbox.txt` (key named): both directions
+  `partner_cbox=apply; id=468; want=468; mapped=same; ...; result=0;
+  reason=ok; h4=00000000>00000000; uncertain=0`, `entered; act=77; ms=109|115;
+  qd8=33806|33807`, `partner_act; edge=body; remote=77; body=77;
+  match_ms=789|793`, `hold; on=1`, then `off; reason=ok` and body 1 77 -> 3,
+  `hold; on=0`. The viewer's own `partner_status=local; st=0x4` and its act
+  0x4D appear only in the half where that viewer pressed `slot item 1`; no
+  `viewer_changed`, `refused`, `exited`, `uncertain=1`, writer latch or AV;
+  both viewers' `run items` lines after the run equal the census. FRAMES: the
+  box MODEL (the 468 camo) stands where the partner was on the viewer's screen
+  (`cbox-on`, `rev-cbox-on`), slides away across the `cbox-move` bursts with
+  the flaps of the moving box, is gone with the partner crouched beside it
+  (`cbox-off`), and the viewer's own player stands unboxed (`guest-self`,
+  `host-self`); the viewer's act stays 5 (prone) in every capture while it
+  films the box (on, move, off).
+- `71e19d1e` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 1-3 %
+  loss), the same scenario with the key NOT named: `partner_cbox=mode;
+  mode=play; enabled=1; reason=ok` on both, then the same lines (ms=101|102)
+  and frames both directions.
+
+Notes: the remote's act stays 77 while it walks in the box (no 78 seen on
+either side), and body 1 leaves the box 77 -> 3 directly while the remote
+shows its exit act 61 for ~2.7 s (`edge=miss; remote=61`): cosmetic. The
+prone viewer's "E + standing figure" prompt in some frames is the stock prone
+prompt (also in 0.13.4 C4 runs without a box). Still open (not seen in these
+runs): whether body 1's box damage changes the viewer's stock (watched by
+`viewer_changed`), the consumers of `Q+0x17C` and `*(P+0x130)` vt+0x48, the PS
+record bits' meaning, a viewer without the remote's box id (`viewer_box` /
+`viewer_no_box`: both seeds hold 468), and pad cross-effects while boxed (the
+remote's ACTION hold with an icon 0x31 reaches body 1's delivery-point
+state).
 
 ## Online
 
@@ -1359,6 +2273,17 @@ stall hold are pure; the gun strip reads the already pinned gun record
   still decodes, any other size/version pairing is refused. The sender is
   native pure reads of vars and the type tables (see "Loadout mirroring");
   the receiver stores it, plans from it and logs the apply verdict.
+- Gesture edge (`partner_gesture_policy`, reliable channel 2, append mode,
+  only with `partner_native_gesture=1`; see "Gestures"): 12 bytes, `[0]` 0x47
+  ('G'), `[1]` version 1, `[2]` kind (1 pickup, 2 hand sign Go, 3 hand sign
+  Stop, 4 knock), `[3]` the sender's stance 0..3, `[4]` its speed 0..3, `[5]`
+  flags (bit 0 moving), `[6..7]` seq (LE16, never 0), `[8..11]` sender_ms
+  (LE32). Strict decode; the receiver keeps a strictly newer seq per link
+  session. An older build has no classifier for 0x47: the message reaches its
+  manifest decoder, which refuses it (`Result::magic`, the store's `invalid`
+  counter only), and every other channel-2 message is unaffected. The v1
+  action events (`partner_action_events`) are not touched: a new kind there
+  would make an older `Valid` reject the whole frame.
 
 ## Telemetry
 

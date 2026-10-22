@@ -1409,6 +1409,63 @@ do
     check(count(c3.logs, 'event=probe;id=p3;step=read;ms=') == 3 and has(c3.logs, ';life=2;status=0'), 'p3 FAINT reads')
 end
 
+-- 15b. A held raw clock (the MISSION FAILED menu): the wall clock carries W.now().
+do
+    local function held(env, c, n, step)
+        for _ = 1, n do
+            c.wall = c.wall + (step or 33)
+            F.call(env, 'OnUpdate')
+        end
+    end
+    local env, c = fixture({role = 1, probe = 5})
+    c.wall = 5000
+    env.os = {clock = function() return c.wall / 1000 end}
+    F.start(env, c)
+    F.pair(env, c, 3)
+    F.tick(env, c, 30)
+    check(c.W.held == 0, 'a running raw clock adds nothing')
+    F.clear(c)
+    local W, t0, last, monotonic = c.W, c.W.now(), c.W.now(), true
+    for _ = 1, 400 do
+        held(env, c, 1)
+        if W.now() < last then monotonic = false end
+        last = W.now()
+    end
+    check(math.abs(W.now() - t0 - 13200) < 1e-6 and monotonic, 'the wall time carries W.now() while the raw clock is held')
+    check(has(c.logs, 'event=probe;id=p12;step=result'), 'a probe due during the hold runs')
+    check(#F.tx(c, OP.DIGEST) >= 12, 'the 1 Hz digest keeps running')
+    check(count(c.logs, 'event=raw_clock;step=held;raw_ms=') == 1, 'one held line per hold')
+    local before = W.now()
+    held(env, c, 1, 5000)
+    check(math.abs(W.now() - before - 250) < 1e-6, 'one update adds at most 250 ms')
+    -- The raw clock catches up: the held time is paid back, W.now() stays monotonic.
+    local episode = W.now() - t0
+    before = W.now()
+    c.time = c.time + episode + 33
+    c.wall = c.wall + 33
+    F.call(env, 'OnUpdate')
+    check(math.abs(W.now() - before - 33) < 1e-6, 'a catch-up jump is paid back')
+    check(has(c.logs, 'event=raw_clock;step=resumed;held_ms=13450;paid_back_ms=13450'), 'resumed line with the payback')
+    -- The raw clock resumes from where it stopped: the held time stays.
+    held(env, c, 100)
+    before = W.now()
+    c.time, c.wall = c.time + 33, c.wall + 33
+    F.call(env, 'OnUpdate')
+    check(math.abs(W.now() - before - 33) < 1e-6 and W.held > 3299 and
+        has(c.logs, 'event=raw_clock;step=resumed;held_ms=3300;paid_back_ms=0'), 'a resumed raw clock keeps the held time')
+    F.tick(env, c, 30)
+    check(count(c.logs, 'event=raw_clock;step=held;') == 2 and count(c.logs, 'event=raw_clock;step=resumed;') == 2,
+        'a running raw clock logs nothing more')
+    -- Without a wall clock the raw clock alone drives W.now() (the earlier behaviour).
+    local envn, n = fixture({role = 1})
+    envn.os = {}
+    F.start(envn, n)
+    F.pair(envn, n, 3)
+    local frozen = n.W.now()
+    for _ = 1, 100 do F.call(envn, 'OnUpdate') end
+    check(n.W.now() == frozen and n.W.held == 0 and not has(n.logs, 'event=raw_clock;'), 'no wall clock: nothing held')
+end
+
 -- 16. Errors and originals.
 do
     local env, c = fixture({role = 1})
@@ -1751,5 +1808,5 @@ end
 print(checks .. ' world sync Lua checks passed: inert literal CFG (2 loads per mission), receipts < 256 bytes, %.0f hashes, ' ..
     'observer after the original (RESEND skipped), roster digest (ipairs only), host commits / echo / sweep, guest ' ..
     'attribution and fultons, REJECT/known/timeouts, ledger and area union, alert without latch, PHASE_VEC, digests and ' ..
-    'resync, clock and weather, lab goto, probes, error policy' ..
+    'resync, clock and weather, lab goto, probes, held raw clock, error policy' ..
     (composedRuns > 0 and ('; composed TppMain (' .. composedRuns .. ' run)') or '') .. '; no game calls')

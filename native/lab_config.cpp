@@ -189,6 +189,10 @@ bool ParseWs4CensusKey(Slice key, Slice value, LabConfig& result, bool& ok) noex
     } else if (Equals(key, "partner_native_arm")) {
         ok = ParseBool(value, result.partner_native_arm);
         if (ok) result.partner_native_arm_given = true;
+    } else if (Equals(key, "partner_native_place_mirror")) {
+        // WS4 v2: the remote's C4 place / detonate motion on body 1 (lab only).
+        ok = ParseBool(value, result.partner_native_place_mirror);
+        if (ok) result.partner_native_place_mirror_given = true;
     } else return false;
     return true;
 }
@@ -199,15 +203,37 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
     else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
+    else if (Equals(key, "partner_native_traverse")) {
+        // Traversal replay (default on with the gun profile); a named value records _given.
+        ok = ParseBool(value, result.partner_native_traverse);
+        if (ok) result.partner_native_traverse_given = true;
+    }
+    else if (Equals(key, "partner_native_cbox")) {
+        // F2: the cardboard box on body 1 (default on with the gun profile); a named value records _given.
+        ok = ParseBool(value, result.partner_native_cbox);
+        if (ok) result.partner_native_cbox_given = true;
+    }
+    else if (Equals(key, "partner_native_gesture")) {
+        // Gestures on body 1 (default on with the gun profile); a named value records _given.
+        ok = ParseBool(value, result.partner_native_gesture);
+        if (ok) result.partner_native_gesture_given = true;
+    }
     else return false;
     return true;
 }
 // WS3 vehicles (docs/vehicle-ws3.md): the ride census, seat by id and tilt
-// keys (booleans, lab only: ResolveWeaponDefaults turns them off in play).
+// keys (booleans, lab only: ResolveWeaponDefaults turns them off in play), and
+// the F1 board key partner_ride_board=off|block|passenger (default passenger with
+// the gun profile in lab and play).
 bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
+    else if (Equals(key, "partner_ride_board")) {
+        // F1 vehicles: the board block / passenger hook (defaults in ResolveWeaponDefaults); a named value records _given.
+        ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
+        if (ok) result.partner_ride_board_given = true;
+    }
     else return false;
     return true;
 }
@@ -256,6 +282,14 @@ bool ParseAnimWeaponsKey(Slice key, Slice value, LabConfig& result, bool& ok) no
     }
     return true;
 }
+// Horse / D-Walker riders (docs/mounts.md): partner_native_mount=off|hide, lab
+// only and default off; a named value records _given.
+bool ParseMountKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (!Equals(key, "partner_native_mount")) return false;
+    ok = ParsePartnerNativeMount(value.data, value.size, result.partner_native_mount);
+    if (ok) result.partner_native_mount_given = true;
+    return true;
+}
 } // namespace
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const LabParseOptions& options) noexcept {
     LabConfig result{};
@@ -279,7 +313,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         // the main chain is at MSVC's block nesting limit.
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
             ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
-            ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok)) {
+            ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok) ||
+            ParseMountKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -1390,6 +1425,37 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // them only with link v2 connected, and a named 0 opts out of either.
     if (!c.partner_native_placed_given) c.partner_native_placed = gun;
     if (!c.partner_native_arm_given) c.partner_native_arm = gun;
+    // WS4 v2: the C4 place / detonate mirror follows the gun profile in lab (after
+    // its hidden runs showed body 1's kneel and detonator motion with every
+    // placed digest unchanged); play forces it off below.
+    if (!c.partner_native_place_mirror_given) c.partner_native_place_mirror = gun;
+    // Traversal replay (the F3 icon path) follows the gun profile in lab and play
+    // (user decision 2026-10-22, after hidden run 104e9a47: body 1 stepped onto
+    // the shelf through its own action icon, the viewer's guard clean; play
+    // rehearsal 04d3511f; the Mother Base ladder in 8f27806d lab / 2596f6ae play;
+    // pipe and wall climb are still unproven in a FRAME); a named 0 opts out.
+    if (!c.partner_native_traverse_given) c.partner_native_traverse = gun;
+    // F1 vehicles: the board follows the gun profile as PASSENGER in lab and play (the
+    // block half: hidden runs 0348c4d8 lab and fad26e25 play; the back seat with the
+    // passenger camera: hidden runs 495e7c3a lab and de949f80 play -WanSim bad, both
+    // directions, the passenger's own view outside the moving jeep). Passenger offers
+    // only the free back seats of a light vehicle; trucks and the rest block. A named
+    // block or off still wins.
+    if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
+    // F2 cardboard box on body 1 follows the gun profile in lab and play (hidden
+    // run 05cffdd1: the viewer saw the box model on the partner body, moving and
+    // taken off, both directions, its own player never boxed); play admits it
+    // only with link v2 connected (the observer's SupportModeReason).
+    if (!c.partner_native_cbox_given) c.partner_native_cbox = gun;
+    // Gestures follow the gun profile in lab and play (hidden run 0e343f72: the
+    // viewer saw body 1 bend down and come back up for the remote's pickup, its
+    // own player unchanged); a named 0 opts out.
+    if (!c.partner_native_gesture_given) c.partner_native_gesture = gun;
+    // Mount riders follow the gun profile in lab and play (hidden runs bfd6fcc4 /
+    // 2ab88411 lab and the play rehearsal 5a044a4d, -WanSim bad: the viewer saw no partner
+    // body while the partner rode a D-Walker or D-Horse, the body back after the
+    // dismount, its own player unchanged); a named off opts out.
+    if (!c.partner_native_mount_given) c.partner_native_mount = gun ? PartnerNativeMount::hide : PartnerNativeMount::off;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1413,6 +1479,17 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_ride_census = false;
         // The WS4 placed / arm census is a lab measurement too (read-only).
         c.partner_placed_census = false;
+        // WS4 v2: the place / detonate mirror stays lab-only (no play-mode C4 run yet).
+        c.partner_native_place_mirror = false;
+        // Traversal replay runs in play too (user decision 2026-10-22; the icon
+        // request needs only the native drain windows, as in the lab).
+        // F1 vehicles: the board runs in play too, block (play rehearsal fad26e25) and the
+        // back-seat passenger with its camera (play rehearsal de949f80, -WanSim bad).
+        // F2: the native box on body 1 runs in play too (the observer admits play only with
+        // link v2 connected).
+        // Gestures run in play too (the sender needs a live link session).
+        // Mount riders run in play too: the play rehearsal 5a044a4d (-WanSim bad, key not
+        // named) hid the D-Walker and the D-Horse rider as the lab runs did.
     }
 }
 
@@ -1487,6 +1564,19 @@ bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRid
     return true;
 }
 
+const char* PartnerNativeMountName(PartnerNativeMount value) noexcept {
+    return value == PartnerNativeMount::hide ? "hide" : "off";
+}
+
+bool ParsePartnerNativeMount(const char* text, std::size_t size, PartnerNativeMount& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeMount::off;
+    else if (Equals(s, "hide")) out = PartnerNativeMount::hide;
+    else return false;
+    return true;
+}
+
 const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept {
     return value == PartnerRideSeatEnter::getin ? "getin" : "direct";
 }
@@ -1496,6 +1586,20 @@ bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSe
     const Slice s{text, size};
     if (Equals(s, "direct")) out = PartnerRideSeatEnter::direct;
     else if (Equals(s, "getin")) out = PartnerRideSeatEnter::getin;
+    else return false;
+    return true;
+}
+
+const char* PartnerRideBoardName(PartnerRideBoard value) noexcept {
+    return value == PartnerRideBoard::block ? "block" : value == PartnerRideBoard::passenger ? "passenger" : "off";
+}
+
+bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerRideBoard::off;
+    else if (Equals(s, "block")) out = PartnerRideBoard::block;
+    else if (Equals(s, "passenger")) out = PartnerRideBoard::passenger;
     else return false;
     return true;
 }

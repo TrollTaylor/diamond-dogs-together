@@ -14,18 +14,6 @@ namespace mgscoop::partner_ride_wire {
 inline constexpr std::uint8_t kChannel=2, kMagic=0x52, kVersion=2, kVersion1=1;
 inline constexpr std::size_t kSize=12;
 inline constexpr std::uint8_t kSeatUnknown=0xFF, kSeatMax=3;
-inline constexpr std::uint8_t kSeatRolePassenger=0x80u;
-inline constexpr std::uint8_t SeatIndex(std::uint8_t seat) noexcept {
-    return seat==kSeatUnknown ? kSeatUnknown : static_cast<std::uint8_t>(seat & 0x7Fu);
-}
-inline constexpr bool SeatRolePassenger(std::uint8_t seat) noexcept {
-    return seat!=kSeatUnknown && ((seat & kSeatRolePassenger)!=0);
-}
-inline constexpr std::uint8_t PackSeat(std::uint8_t index, bool passenger_role) noexcept {
-    if (index>kSeatMax && index!=kSeatUnknown) return kSeatUnknown;
-    if (index==kSeatUnknown) return kSeatUnknown;
-    return static_cast<std::uint8_t>((index & 0x7Fu) | (passenger_role ? kSeatRolePassenger : 0u));
-}
 inline constexpr std::uint16_t kVehicleUnknown=0xFFFF;
 // The vehicle GameObject type (id >> 9): the DM anchor 0x1198770 seats only this type.
 inline constexpr std::uint16_t kVehicleType=50;
@@ -47,7 +35,7 @@ struct Packet {
     std::uint8_t version=kVersion1;  // decoded version (Encode chooses its own)
 };
 bool IsRide(const std::uint8_t*, std::size_t) noexcept;
-// The version Encode writes: 2 for a vehicle with a known seat or vehicle id, or a horse with a vehicle id.
+// The version Encode writes: 2 for a vehicle with a known seat or vehicle id.
 std::uint8_t VersionFor(const Packet&) noexcept;
 bool Encode(const Packet&, std::uint8_t (&)[kSize]) noexcept;
 bool Decode(const std::uint8_t*, std::size_t, Packet&) noexcept;
@@ -60,16 +48,16 @@ bool Accept(Store&, const std::uint8_t*, std::size_t, std::uint32_t epoch, std::
 bool Live(const Store&, std::uint32_t epoch, std::uint64_t now) noexcept;
 // A seat the seated visibility can use: a known native seat in a vehicle-type id.
 inline bool SeatUsable(std::uint8_t seat, std::uint16_t vehicle) noexcept {
-    return SeatIndex(seat)<=kSeatMax && vehicle!=kVehicleUnknown && (vehicle>>9)==kVehicleType;
-}
-inline bool HorseUsable(std::uint8_t seat, std::uint16_t vehicle) noexcept {
-    return vehicle!=kVehicleUnknown && (seat==kSeatUnknown || SeatIndex(seat)==0);
+    return seat<=kSeatMax && vehicle!=kVehicleUnknown && (vehicle>>9)==kVehicleType;
 }
 // Pure hide/re-show policy. Repeated/held sender samples cannot prove landing.
 struct Visibility {
     bool hidden{}, air{}, dead_retry{}, dead_locked{}, have_sample{}, stable{};
     // seat mode: the remote rides a usable seat of a vehicle (drawn seated, not hidden).
     bool seated{};
+    // partner_native_mount=hide: this observation hid by the remote's horse /
+    // D-Walker act (partner_mount_policy), whatever the ride kind says.
+    bool mount{};
     // The air candidate has held since air_since_ms (air_pending).
     bool air_pending{};
     std::uint64_t air_since_ms{};
@@ -88,6 +76,9 @@ struct In {
     // the live ride's seat and vehicle (kSeatUnknown / kVehicleUnknown otherwise).
     bool seat_mode{};
     std::uint8_t seat=kSeatUnknown; std::uint16_t vehicle=kVehicleUnknown;
+    // partner_native_mount=hide (docs/mounts.md): a remote horse / D-Walker act
+    // 121..126 hides like a ride even when the sender reports foot.
+    bool mount_hide{};
 };
 void Observe(Visibility&, const In&) noexcept;
 void Placed(Visibility&, std::uint64_t now) noexcept;

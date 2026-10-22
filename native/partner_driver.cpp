@@ -18,13 +18,13 @@
 #include "mgscoop/coop_hud.hpp"
 #include "partner_player_contract.hpp"
 #include "mgscoop/partner_support_policy.hpp"
+#include "mgscoop/partner_cbox_policy.hpp"
 
 namespace mgscoop::partner_driver {
 namespace {
 namespace pp = partner_player;
 namespace c = partner_player_contract;
 namespace pam = mgscoop::partner_aim;
-namespace rw = partner_ride_wire;
 
 void Emit(const Hooks& h, const char* line) noexcept {
     if (h.log) h.log(h.context, line);
@@ -528,6 +528,23 @@ pin::V6Source SenderV6(Driver& d, const Hooks& h, const pp::State& st, const pin
     return v;
 }
 
+// Input frame v7 (WS4 v2, docs/anim-round2-throws.md "WS4 v2"): v6 plus the
+// local player's C4 place word, rec+0x3CC bits 18..23, while its gun record
+// (read this tick, not a held read) holds a C4 (391..395, class 3) in a mode of
+// the place family; the receiver mirrors the place / detonate into body 1.
+pin::V7Source SenderV7(const Mission& m, const pin::V6Source& v6) noexcept {
+    pin::V7Source v{};
+    v.v6 = v6;
+    const pp::Gun1& g = m.gun0;
+    const bool c4 = m.gun0_ok && g.fields_ok && g.fields.equip <= 0xFFFFu && partner_support_policy::C4Equip(static_cast<std::uint16_t>(g.fields.equip)) &&
+                    ((g.fields.flags27c >> c::gun_class_shift) & c::gun_class_mask) == 3u;
+    if (c4 && v6.v5.gun_valid && pin::PlaceWireMode(v6.v5.gun_mode) && g.mode_cur == v6.v5.gun_mode) {
+        v.place_valid = true;
+        v.place_bits = static_cast<std::uint8_t>((g.gun3cc >> 18) & pin::kMaxPlaceBits);
+    }
+    return v;
+}
+
 // One overlay tap (the input window injects `bits` for kTapFrames windows):
 // a new tap_seq, or, for a second tap in the same tick (a reload tap and a
 // stance fix), the bits ORed into this tick's tap.
@@ -615,6 +632,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.native_support = set.native_active && set.ngun && set.nsupport;
     a.native_placed = a.native_support && set.nplaced;
     a.native_arm = a.native_support && set.narm;
+    a.native_place_mirror = a.native_placed && set.nplace_mirror;
     // C(b): the viewer's own gun record (read-only attribution of its own throws).
     const bool viewer_gun = a.native_support && m.gun0_ok && m.gun0.prim && m.gun0.rec;
     a.viewer_gun_prim = viewer_gun ? m.gun0.prim : 0;
@@ -636,9 +654,23 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.reload_reconcile = gun_stage && m.reload_out.reconcile;
     a.reload_release = gun_stage && m.reload_out.release;
     a.config.sample_strip = gun_stage && set.nreload == PartnerNativeReload::event && m.remote_v5 ? pnat::kPadReload : 0u;
-    if (set.native_active) {
+    // Traversal replay (partner_traverse): ACTION stays in the mask (no
+    // replay step taps it any more; an in-traversal ACTION replay would need
+    // it) and in sample_strip so the remote's own ACTION (ride, knife kill,
+    // pickup) never passes raw from the network pad (Compose: held, edges,
+    // taps, words, tap12/long12 all use ~sample_strip; only overlay.bits is
+    // filtered by the mask alone).
+    if (set.native_active && set.traverse) {
         a.config.mask |= partner_pad::kAction;
         a.config.sample_strip |= partner_pad::kAction;
+    }
+    // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
+    // by SameArm): body 1's pending icon request, valid for kHoldMs, so a
+    // stale Arm drops it.
+    if (set.native_active && set.traverse && m.icon_kind != partner_traverse::Icon::none && m.icon_seq != 0) {
+        a.icon_kind = static_cast<std::uint8_t>(m.icon_kind);
+        a.icon_seq = m.icon_seq;
+        a.icon_until_ms = now + partner_icon::kHoldMs;
     }
     a.slot_follow = !gun_stage ? PartnerNativeSlot::off
                     : (set.play_mode && set.nslot == PartnerNativeSlot::call) ? PartnerNativeSlot::write
@@ -1262,10 +1294,6 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.body_anim_ok = anim_ok;
     in.body_act = anim_ok ? anim.act[1] : 0;
     in.body_stance = anim_ok ? anim.stance[1] : 0;
-    namespace rw = partner_ride_wire;
-    in.mounted = m.ride_seated ||
-                 (d.ride_rx.packet.kind == rw::Kind::vehicle && d.ride_rx.packet.vehicle != rw::kVehicleUnknown) ||
-                 (d.ride_rx.packet.kind == rw::Kind::horse && d.ride_rx.packet.vehicle != rw::kVehicleUnknown);
     // Stance level guards: STANCE in the remote's live input (held, its "now"
     // word, the edge set, a short tap or a long hold), the gun/carry gate and a
     // downed remote (native only; the legacy rule has no guards).
@@ -1274,6 +1302,20 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
                      kStanceBit) != 0;
     in.stance_block = set.stance_fast ? StanceBlock(m, set, remote_action_flags) : nullptr;
     in.remote_downed = set.native_active && set.stance_fast && RemoteDowned(clock.tick_ms);
+    // The traversal replay's hold from the previous tick (TickTraverse).
+    in.traverse_hold = set.native_active && set.traverse && m.traverse_hold;
+    // F2: no far / vertical / runaway placement while body 1 is boxed (77/78) for the
+    // remote's box, or within 3 s of its off (a placement would teleport the box).
+    const bool cbox_hold = partner_cbox_policy::ReconHold(set.native_active && set.cbox, anim_ok, anim_ok ? anim.act[1] : 0,
+                                                          m.cbox_want, clock.now_ms, m.cbox_off_ms);
+    if (cbox_hold != m.cbox_hold) {
+        m.cbox_hold = cbox_hold;
+        EmitCapped(m.cbox_cap, h, "partner_cbox", "partner_cbox=hold; on=%u; body_act=%u; want=%u; seq=%u\r\n", cbox_hold ? 1u : 0u,
+                   unsigned(anim_ok ? anim.act[1] : 0), m.cbox_want ? 1u : 0u, m.cbox_seq);
+    }
+    in.traverse_hold = in.traverse_hold || cbox_hold;
+    m.recon_remote_ok = in.remote_anim_valid;
+    m.recon_remote_act = in.remote_act;
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
     pnat::DashIn di{};
     di.now_ms = in.now_ms;
@@ -1631,14 +1673,24 @@ void SendLocalInput(Driver& d, const Hooks& h, const pp::State& st, const Settin
                 const bool probe = !peer_v5 && (!m.v5_probe_ms || now - m.v5_probe_ms >= kInputV5ProbeMs);
                 const bool peer_v6 = h.peer_input_v6 && h.peer_input_v6(h.context);
                 const bool probe6 = h.peer_input_v6 && !peer_v6 && (!m.v6_probe_ms || now - m.v6_probe_ms >= kInputV5ProbeMs);
-                if (peer_v6 || probe6) pin::Fill6(pkt, SenderV6(d, h, st, v5));
+                // v7 (the C4 place word) like v6: once the peer sent v7, plus a probe
+                // every kInputV5ProbeMs to a v6 peer (a v6 build drops only the probe).
+                const bool peer_v7 = peer_v6 && h.peer_input_v7 && h.peer_input_v7(h.context);
+                const bool probe7 = peer_v6 && h.peer_input_v7 && !peer_v7 && (!m.v7_probe_ms || now - m.v7_probe_ms >= kInputV5ProbeMs);
+                if (peer_v7 || probe7) pin::Fill7(pkt, SenderV7(m, SenderV6(d, h, st, v5)));
+                else if (peer_v6 || probe6) pin::Fill6(pkt, SenderV6(d, h, st, v5));
                 else if (peer_v5 || probe) pin::Fill5(pkt, v5);
                 else pin::Fill4(pkt, v5.v4);
                 if (peer_v6 && !m.v6_peer_logged) {
                     m.v6_peer_logged = true;
                     EmitFormat(h, "partner_input=v6_peer; probes=%u\r\n", m.v6_probes);
                 }
+                if (peer_v7 && !m.v7_peer_logged) {
+                    m.v7_peer_logged = true;
+                    EmitFormat(h, "partner_input=v7_peer; probes=%u\r\n", m.v7_probes);
+                }
                 if (probe6) { m.v6_probe_ms = now ? now : 1; ++m.v6_probes; }
+                if (probe7) { m.v7_probe_ms = now ? now : 1; ++m.v7_probes; }
                 if (probe) {
                     m.v5_probe_ms = now;
                     ++m.v5_probes;
@@ -1666,6 +1718,132 @@ bool VehicleJobCurrent(const Driver& d,const Hooks& h,const pp::State& st,bool t
 bool VehicleAttached(const Hooks& h,const pp::State& st) noexcept {
     return h.native_vehicle_attached&&h.native_vehicle_attached(h.context,st);
 }
+// Traversal replay (partner_traverse, docs/native-puppet.md "Traversal"): a
+// remote ladder/pipe/climb/step-on start is replayed on body 1 as one
+// reconciliation placement at the aligned remote pose, then (window armed and
+// live) an icon request for that plugin (F3, "Traversal icon": Arm.icon_kind /
+// icon_seq, granted at most once per request by partner_icon inside the drain
+// window) until body 1 enters or entry_ms passes. The hold keeps the
+// far/vertical/runaway placements off (next StepRecon) until body 1 has
+// finished its own traversal.
+namespace ptv = mgscoop::partner_traverse;
+namespace pic = mgscoop::partner_icon;
+inline constexpr std::uint64_t kIconActWindowMs = 2000;  // body act lines after a grant
+// partner_traverse=icon: one line per request (the hook's counters are
+// process totals; every count is the delta since the request started, and
+// `latched` is the mission latch now), once granted or once the request ended
+// without a grant; then body 1's act for 2 s. `deny` is the last refusal of
+// the requested plugin's own query (none when it had none in this request):
+// body 1's other polls query in the same job and only count in denied=. A
+// request is open from its first raised tick until the machine leaves the
+// request phase (entered, aborted) or a new id replaces it: a tick inside the
+// phase without the level (window not armed, a non-source body act) neither
+// ends it nor restarts its deltas.
+void LogIconResult(Mission& m, const Hooks& h, const pic::Stats& is, std::uint32_t granted) noexcept {
+    m.icon_logged = true;
+    const pic::Stats& b = m.icon_base;
+    const std::uint32_t req_denied = is.req_denied - b.req_denied;
+    EmitCapped(m.icon_cap, h, "partner_traverse",
+               "partner_traverse=icon; plugin=%s; res=%s; seq=%u; exec_ok=%u; exec_fail=%u; granted=%u; queries=%u; denied=%u; "
+               "swaps=%u; swap_refused=%u; windows=%u; passed=%u; force_swallowed=%u; req_queries=%u; req_denied=%u; deny=%s; "
+               "latched=%u; viewer_changed=%u; faults=%u; restore_mismatch=%u\r\n",
+               ptv::IconName(m.icon_req_kind), granted > 0 ? "ok" : "none", m.icon_req_seq, is.exec_ok - b.exec_ok,
+               is.exec_fail - b.exec_fail, granted, is.queries - b.queries, is.denied - b.denied, is.swaps - b.swaps,
+               is.swap_refused - b.swap_refused, is.windows - b.windows, is.passed - b.passed, is.force_swallowed - b.force_swallowed,
+               is.req_queries - b.req_queries, req_denied,
+               req_denied ? pic::DenyName(static_cast<pic::Deny>(is.req_deny)) : pic::DenyName(pic::Deny::none), is.latched ? 1u : 0u,
+               is.viewer_changed - b.viewer_changed, is.faults - b.faults, is.restore_mismatch - b.restore_mismatch);
+}
+void LogIcon(Mission& m, const Hooks& h, const pic::Stats& is, const ptv::Out& o, std::uint64_t now, bool body_ok,
+             std::uint16_t body_act) noexcept {
+    const bool req = o.icon != ptv::Icon::none;
+    if (req && (!m.icon_req || m.icon_req_seq != m.icon_seq)) {
+        // A new id replaced an open request that never logged (no grant): close it first.
+        if (m.icon_req && !m.icon_logged) LogIconResult(m, h, is, 0);
+        m.icon_base = is;
+        m.icon_logged = false;
+        m.icon_req = true;
+        m.icon_req_seq = m.icon_seq;
+        m.icon_req_kind = o.icon;
+    }
+    if (m.icon_req) {
+        const std::uint32_t granted = is.granted - m.icon_base.granted;
+        const bool ended = m.traverse.phase != ptv::Phase::request;
+        if (!m.icon_logged && (granted > 0 || ended)) {
+            LogIconResult(m, h, is, granted);
+            if (granted > 0) {
+                m.icon_grant_ms = now ? now : 1;
+                m.icon_act_last = 0xFFFF;
+            }
+        }
+        if (ended) m.icon_req = false;
+    }
+    // Body 1's act for 2 s after a grant (each change, the first one at once).
+    if (m.icon_grant_ms) {
+        const std::uint64_t since = now - m.icon_grant_ms;
+        if (since > kIconActWindowMs) {
+            EmitCapped(m.icon_cap, h, "partner_traverse", "partner_traverse=icon_act; seq=%u; act=%u; ms=%u; final=1\r\n", m.icon_req_seq,
+                       body_ok ? unsigned(body_act) : 0xFFFFu, static_cast<unsigned>(since));
+            m.icon_grant_ms = 0;
+        } else if (body_ok && body_act != m.icon_act_last) {
+            m.icon_act_last = body_act;
+            EmitCapped(m.icon_cap, h, "partner_traverse", "partner_traverse=icon_act; seq=%u; act=%u; ms=%u\r\n", m.icon_req_seq,
+                       unsigned(body_act), static_cast<unsigned>(since));
+        }
+    }
+}
+void TickTraverse(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool recon_used, bool carry_hold, bool arm_now,
+                  const pr::Out& ro, bool anim_ok, const pp::Anim& anim, const InputStats& stats) noexcept {
+    Mission& m = d.mission;
+    const std::uint64_t now = clock.now_ms;
+    ptv::In in{};
+    in.now_ms = now;
+    in.enabled = recon_used && set.native_active && set.traverse;
+    const char* block = carry_hold                                          ? "carry"
+                      : m.ride_seated                                       ? "seat"
+                      : mgscoop::partner_dm_overlay::Active(m.overlay)      ? "overlay"
+                      : (set.native_active && RemoteDowned(clock.tick_ms)) ? "downed"
+                                                                            : nullptr;
+    in.blocked = block != nullptr;
+    in.placing = ro.action == pr::Action::place || ro.mode == pr::Mode::verify || ro.mode == pr::Mode::place;
+    const bool live_mode = ro.mode == pr::Mode::track || ro.mode == pr::Mode::frozen;
+    // Compose drops press edges in the first window after a (re)arm, so a tap
+    // needs a window that was already armed with a live pad on the last tick.
+    in.armed = arm_now && ro.arm && !ro.neutral && live_mode && m.input_armed && !m.input_neutral;
+    in.remote_ok = m.recon_remote_ok;
+    in.remote_act = m.recon_remote_act;
+    in.body_ok = anim_ok && m.body_ok;
+    in.body_act = anim_ok ? anim.act[1] : 0;
+    in.target_ok = m.recon_target_ok;
+    for (unsigned i = 0; i < 3; ++i) {
+        in.target[i] = m.recon_target[i];
+        in.body[i] = static_cast<double>(m.body_pos[i]) * 1000.0;
+    }
+    in.target_yaw = m.recon_target_yaw;
+    in.body_yaw = partner::QuatToYaw(m.body_quat);
+    const ptv::Out o = ptv::Step(m.traverse, in);
+    if (o.request_place) d.recon_place_request = pr::PlaceReason::traverse;
+    // The icon request for the Arm (BuildArm, this tick): the machine's
+    // episode id becomes a process-unique request id (the hook grants once per id).
+    if (o.icon != ptv::Icon::none && o.icon_seq != 0 && o.icon_seq != m.icon_episode) {
+        m.icon_episode = o.icon_seq;
+        if (++d.icon_seq == 0) d.icon_seq = 1;
+        m.icon_seq = d.icon_seq;
+    }
+    m.icon_kind = o.icon;
+    m.traverse_hold = o.hold;
+    if (o.event != ptv::Out::Event::none) {
+        EmitCapped(m.traverse_cap, h, "partner_traverse",
+                   "partner_traverse=%s; reason=%s; phase=%s; act=%u; remote_act=%u; body_act=%u; icon=%s; seq=%u; episodes=%u; "
+                   "requests=%u; entered=%u; aborted=%u; block=%s\r\n",
+                   ptv::EventName(o.event), o.reason ? o.reason : "-", ptv::PhaseName(m.traverse.phase), unsigned(m.traverse.act),
+                   unsigned(in.remote_act), unsigned(in.body_act), ptv::IconName(ptv::IconFor(m.traverse.act)),
+                   m.icon_episode == m.traverse.icon_seq ? m.icon_seq : 0u,
+                   m.traverse.episodes, m.traverse.requests, m.traverse.entered, m.traverse.aborted, block ? block : "-");
+    }
+    if (in.enabled || m.icon_req || m.icon_grant_ms) LogIcon(m, h, stats.native.icon, o, now, in.body_ok, in.body_act);
+}
+
 void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
                const Clock& clock, bool terminating, bool parts_loaded, bool pose_valid, const partner::Pose& pose, bool relink,
                bool anim_ok, const pp::Anim& anim, const sync::AnimState& remote_anim, std::uint32_t& ops, InputTick& out) noexcept {
@@ -1886,65 +2064,18 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         EmitRecon(m, h, kRcFix, "partner_recon=dashfix; act=%u; speed=%u; attempts=%u\r\n",
                   anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.speed[1]) : 0u, m.dash.attempts);
     }
-    // Act-Gated ACTION (0x20) Replay: climbing, vaulting, ladders, doors
-    const bool remote_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
-    const std::uint16_t remote_act = remote_valid ? remote_anim.act : 0u;
-    const std::uint16_t body_act = anim_ok ? anim.act[1] : 0u;
-    if (arm_now && set.native_active && m.have_prev_remote_act &&
-        m.prev_remote_act >= 1 && m.prev_remote_act <= 6 &&
-        pr::ClimbVaultAct(remote_act) &&
-        (!anim_ok || !pr::ClimbVaultAct(body_act))) {
-        if (m.recon_target_ok) {
-            alignas(16) float snap_p[4] = {
-                static_cast<float>(m.recon_target[0] / 1000.0),
-                static_cast<float>(m.recon_target[1] / 1000.0),
-                static_cast<float>(m.recon_target[2] / 1000.0),
-                0.0f
-            };
-            alignas(16) float snap_q[4]{};
-            partner::YawToQuat(static_cast<float>(m.recon_target_yaw), snap_q);
-            if (h.apply_transform) h.apply_transform(h.context, terminating, snap_p, snap_q, PartnerReset::none);
-        }
-        BumpTap(d, m, partner_pad::kAction, now);
-        EmitRecon(m, h, kRcFix, "partner_recon=climb_vault_action; remote_act=%u; body_act=%u\r\n",
-                  unsigned(remote_act), unsigned(body_act));
+    // F3 (docs/native-puppet.md "Traversal icon"): the read-only plugin-list
+    // census, once per mission with the key on and the block-1 targets read.
+    if (set.native_active && set.traverse && !m.icon_census_done && h.icon_census && !census && targets.blk0 && targets.blk1) {
+        m.icon_census_done = true;
+        pic::Census ic{};
+        h.icon_census(h.context, targets, ic);
+        EmitFormat(h,
+                   "partner_icon=census; distinct=%u/%u; blk_ok=0x%x/0x%x; found=0x%x/0x%x; null=%u/%u; read=%u; verdict=%s\r\n",
+                   ic.distinct, ic.plugins, ic.blk_ok0, ic.blk_ok1, ic.found0, ic.found1, ic.null0, ic.null1, ic.read ? 1u : 0u,
+                   pic::CensusVerdict(ic));
     }
-    if (remote_valid) {
-        m.prev_remote_act = remote_act;
-        m.have_prev_remote_act = true;
-    }
-
-    // Vehicle / horse mount and dismount transitions
-    const bool cur_mounted = (d.ride_rx.packet.kind == rw::Kind::vehicle || d.ride_rx.packet.kind == rw::Kind::horse) &&
-                             (d.ride_rx.packet.vehicle != rw::kVehicleUnknown);
-    const bool prev_mounted = (m.prev_ride_kind == rw::Kind::vehicle || m.prev_ride_kind == rw::Kind::horse) &&
-                              (m.prev_ride_vehicle != rw::kVehicleUnknown);
-    if (arm_now && set.native_active) {
-        if (cur_mounted && !prev_mounted) {
-            if (m.recon_target_ok) {
-                alignas(16) float snap_p[4] = {
-                    static_cast<float>(m.recon_target[0] / 1000.0),
-                    static_cast<float>(m.recon_target[1] / 1000.0),
-                    static_cast<float>(m.recon_target[2] / 1000.0),
-                    0.0f
-                };
-                alignas(16) float snap_q[4]{};
-                partner::YawToQuat(static_cast<float>(m.recon_target_yaw), snap_q);
-                if (h.apply_transform) h.apply_transform(h.context, terminating, snap_p, snap_q, PartnerReset::none);
-            }
-            BumpTap(d, m, partner_pad::kAction, now);
-            EmitRecon(m, h, kRcFix, "partner_recon=mount_action; kind=%u; vehicle=%u; seat=%u\r\n",
-                      unsigned(d.ride_rx.packet.kind), unsigned(d.ride_rx.packet.vehicle), unsigned(d.ride_rx.packet.seat));
-        } else if (!cur_mounted && prev_mounted) {
-            const bool high_speed = (remote_valid && remote_anim.speed >= 3);
-            const std::uint32_t exit_button = high_speed ? partner_pad::kEvade : partner_pad::kAction;
-            BumpTap(d, m, exit_button, now);
-            EmitRecon(m, h, kRcFix, "partner_recon=dismount_action; button=0x%x; high_speed=%u\r\n",
-                      exit_button, high_speed ? 1u : 0u);
-        }
-    }
-    m.prev_ride_kind = d.ride_rx.packet.kind;
-    m.prev_ride_vehicle = d.ride_rx.packet.vehicle;
+    TickTraverse(d, h, set, clock, recon_used, carry_hold, arm_now, ro, anim_ok, anim, s);
     // One-shot acceptance (only while about to be armed and within the mask).
     if (d.tap_pending) {
         d.tap_pending = false;
@@ -2140,6 +2271,26 @@ void EmitNativeN(const Hooks& h, LogCap& cap, unsigned limit, const char* head, 
     if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
 }
 
+namespace gpol = mgscoop::partner_gesture_policy;
+namespace pges = mgscoop::partner_gesture;
+constexpr unsigned kGestureLogCap = 400;
+// Gestures (docs/native-puppet.md "Gestures"): a new edge of the remote's upper
+// act (first byte 'G' on channel 2). Stored with the key off too (counted, not
+// acted on); with the key on the newest one waits for TickGesture's gate.
+void ReceiveGesture(Driver& d, const Hooks& h, const std::uint8_t* message, std::size_t size, std::uint32_t epoch,
+                    std::uint64_t now) noexcept {
+    if (!gpol::Accept(d.gesture_rx, message, size, epoch, now) || !d.settings.ngesture) return;
+    Mission& m = d.mission;
+    const gpol::Packet& p = d.gesture_rx.packet;
+    m.gesture_pending = true;
+    m.gesture_rx_packet = p;
+    m.gesture_rx_ms = now;
+    ++m.gesture_rx;
+    EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                "partner_gesture=rx; kind=%s; seq=%u; stance=%u; speed=%u; moving=%u; epoch=%u\r\n", gpol::KindName(p.kind), unsigned(p.seq),
+                unsigned(p.stance), unsigned(p.speed), (p.flags & gpol::Flag::Moving) ? 1u : 0u, epoch);
+}
+
 // Reliable channel 2 (equipment manifest): drained every tick in every drive
 // mode so the sender's window never stalls; the receiver only stores it.
 void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
@@ -2195,6 +2346,12 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             }
             continue;
         }
+        // Gestures share channel 2 (first byte 0x47 'G'; an older build drops it
+        // through the manifest decoder as Result::magic).
+        if (gpol::IsGesture(message, size)) {
+            ReceiveGesture(d, h, message, size, epoch, now);
+            continue;
+        }
         // Online play: the capability message shares channel 2 (first byte 0x43).
         if (partner_caps_wire::IsCaps(message, size)) {
             if (partner_caps_wire::Accept(d.caps_rx, message, size, epoch) &&
@@ -2216,18 +2373,28 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             }
             continue;
         }
+        const bool had = m.equip.have;
+        const partner_equip_wire::Manifest before = m.equip.manifest;
         const bool accepted = partner_equip_wire::Accept(m.equip, message, size, epoch);
+        // Only the cardboard-box fields moved (the sender keeps the revision for a
+        // box toggle): the gun slots, their types and the apply verdict stand, so
+        // a box toggle never re-drives the gun writer (NoteCbox logs the box).
+        const bool box_only = accepted && had && before.revision == m.equip.manifest.revision &&
+                              before.epoch == m.equip.manifest.epoch && before.version == m.equip.manifest.version &&
+                              before.inv_slot == m.equip.manifest.inv_slot && partner_equip_wire::SameSlots(before, m.equip.manifest);
         if (accepted) {
             d.equip_cache = m.equip.manifest;
             d.equip_cache_have = true;
             d.equip_cache_epoch = epoch;
+        }
+        if (accepted && !box_only) {
             // New content (also under the stored revision number: a 0.12.0 sender
             // restarts at 1 every mission): the per-revision slot types and apply
             // verdict are recomputed (revisions are never 0).
             m.slot_types_rev = 0;
             m.equip_apply_rev = 0;
         }
-        if (accepted) {
+        if (accepted && !box_only) {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
             EmitNative(m, h, m.native_equip_cap, "partner_equip",
@@ -2340,6 +2507,282 @@ void TickRideCensus(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     if (remote) one("remote", d.ride_rx.packet.vehicle);
 }
 
+// F1 vehicles (partner_ride_board; docs/native-puppet.md "Vehicle boarding").
+partner_board::Mode BoardMode(PartnerRideBoard value) noexcept {
+    return value == PartnerRideBoard::block ? partner_board::Mode::block
+         : value == PartnerRideBoard::passenger ? partner_board::Mode::passenger : partner_board::Mode::off;
+}
+// One board line under `cap` (kBoardLogCap per mission; `kind` names the family
+// in the capped line): Board::count_cap for the periodic counter lines,
+// Board::cap for the rest, so the counters never crowd out a latch line.
+void EmitBoardV(LogCap& cap, const char* kind, const Hooks& h, const char* format, va_list arguments) noexcept {
+    if (cap.lines >= kBoardLogCap) {
+        if (!cap.capped) {
+            cap.capped = true;
+            EmitFormat(h, "partner_ride=capped; limit=%u; kind=%s\r\n", kBoardLogCap, kind);
+        }
+        return;
+    }
+    char line[512]{};
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
+}
+void EmitBoard(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitBoardV(m.board.cap, "board", h, format, arguments);
+    va_end(arguments);
+}
+void EmitBoardCount(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitBoardV(m.board.count_cap, "board_count", h, format, arguments);
+    va_end(arguments);
+}
+void BoardPublish(Driver& d, const Hooks& h, std::uint64_t word) noexcept {
+    if (d.mission.board.policy == word) return;
+    d.mission.board.policy = word;
+    if (h.board_publish) h.board_publish(h.context, word);
+}
+// Mission boundaries and stop: the wrappers see no policy, the report restarts.
+void BoardWithdraw(Driver& d, const Hooks& h) noexcept {
+    if (h.board_publish) h.board_publish(h.context, 0);
+    d.mission.board.policy = 0;
+    d.local_passenger = partner_board::LocalPassenger{};
+    // The passenger camera connects only from a tick's own report (cleared just above), so
+    // nothing of it outlives a mission boundary or a stop; the stock clears release the handle.
+}
+const char* BoardSiteName(unsigned site) noexcept { return site ? "phase1" : "prequery"; }
+
+// One step per tick, before the ride sender: the lazy install (once per process,
+// after the code gate), the local passenger report (passenger mode; it replaces
+// Lua's foot report in the tick the ride sender sees), the patch-live check, the
+// counters (logged here, never from the hook), the mission-scoped surprise latch
+// and the policy word for the peer's live ride. Key off: nothing at all.
+void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating, partner::Tick& ride) noexcept {
+    namespace pb = partner_board;
+    namespace rw = partner_ride_wire;
+    Mission& m = d.mission;
+    auto& b = m.board;
+    const pb::Mode mode = BoardMode(d.settings.ride_board);
+    if (mode == pb::Mode::off) return;
+    if (terminating) {
+        BoardPublish(d, h, 0);
+        return;
+    }
+    if (!d.board_install_tried) {
+        d.board_install_tried = true;
+        const char* why = !h.board_install || !h.board_live || !h.board_publish || !h.board_stats ? "unavailable" : h.board_install(h.context);
+        d.board_installed = why == nullptr;
+        d.board_refusal = why;
+        EmitFormat(h, "partner_ride=board_install; mode=%s; result=%s; reason=%s\r\n", pb::ModeName(mode), why ? "refused" : "ok",
+                   why ? why : "none");
+    }
+    // The local passenger report (passenger mode only: stock code never seats a player in 2/3).
+    pb::LocalPassenger lp{};
+    if (mode == pb::Mode::passenger && h.local_passenger && !h.local_passenger(h.context, st, lp)) lp = pb::LocalPassenger{};
+    if (!pb::SameReport(lp, d.local_passenger)) {
+        if (lp.valid)
+            EmitBoard(m, h, "partner_ride=local_passenger; vehicle=%u; seat=%u; state=on; via=%s\r\n", unsigned(lp.vehicle), unsigned(lp.seat),
+                      lp.via == 1 ? "p120" : "qe0");
+        else
+            EmitBoard(m, h, "partner_ride=local_passenger; vehicle=%u; seat=%u; state=off; reason=%s\r\n", unsigned(d.local_passenger.vehicle),
+                      unsigned(d.local_passenger.seat), lp.reason ? lp.reason : "-");
+    }
+    d.local_passenger = lp;
+    if (lp.valid) {
+        ride.has_ride = true;
+        ride.ride_kind = static_cast<std::uint8_t>(rw::Kind::vehicle);
+        ride.has_vehicle = true;
+        ride.vehicle = lp.vehicle;
+        ride.seat = lp.seat;
+    }
+    if (!d.board_installed) return;
+    const bool live = h.board_live(h.context);
+    if (!live && !b.live_refused) {
+        b.live_refused = true;
+        EmitBoard(m, h, "partner_ride=board_refused; reason=patch_lost\r\n");
+    }
+    pb::Stats stats{};
+    h.board_stats(h.context, stats);
+    if (!b.seen_have) {
+        // Process-lifetime counters: this mission counts from here.
+        b.seen_have = true;
+        b.seen = stats;
+        b.steer_count = stats.steer[1];
+    }
+    const std::uint32_t new_faults = stats.faults - b.seen.faults;
+    for (unsigned site = 0; site < 2; ++site) {
+        const std::uint32_t blocks = stats.block[site] - b.seen.block[site];
+        const std::uint32_t steers = stats.steer[site] - b.seen.steer[site];
+        if (blocks != b.logged_block[site] && (!b.block_log_ms[site] || now - b.block_log_ms[site] >= kBoardLogMs)) {
+            b.logged_block[site] = blocks;
+            b.block_log_ms[site] = now ? now : 1;
+            EmitBoardCount(m, h, "partner_ride=board_block; vehicle=%u; site=%s; n=%u; mode=%s; reason=%s; type=%u; seats=%u\r\n",
+                           unsigned(stats.last_vehicle), BoardSiteName(site), blocks, pb::ModeName(mode),
+                           stats.last_reason ? stats.last_reason : "-", unsigned(stats.last_type), unsigned(stats.last_count));
+        }
+        if (steers != b.logged_steer[site] && (!b.steer_log_ms[site] || now - b.steer_log_ms[site] >= kBoardLogMs)) {
+            b.logged_steer[site] = steers;
+            b.steer_log_ms[site] = now ? now : 1;
+            EmitBoardCount(m, h, "partner_ride=board_passenger; vehicle=%u; seat=%u; site=%s; n=%u; type=%u; seats=%u\r\n",
+                           unsigned(stats.last_vehicle), unsigned(stats.last_seat[site]), BoardSiteName(site), steers,
+                           unsigned(stats.last_type), unsigned(stats.last_count));
+        }
+    }
+    // A phase-1 back seat must show up as the local passenger (kSteerConfirmMs).
+    if (stats.steer[1] != b.steer_count) {
+        b.steer_count = stats.steer[1];
+        b.steer_pending = true;
+        b.steer_seat = stats.last_seat[1];
+        b.steer_vehicle = stats.last_vehicle;
+        b.steer_ms = now;
+    }
+    if (b.steer_pending && lp.valid && lp.seat == b.steer_seat && lp.vehicle == b.steer_vehicle) {
+        b.steer_pending = false;
+        EmitBoard(m, h, "partner_ride=board_seated; vehicle=%u; seat=%u; ms=%u\r\n", unsigned(lp.vehicle), unsigned(lp.seat),
+                  Clamp32(now - b.steer_ms));
+    }
+    const pb::Policy published = pb::Unpack(b.policy);
+    pb::SurpriseIn si{};
+    si.installed = d.board_installed;
+    si.live = live;
+    si.new_faults = new_faults - b.faults_seen;
+    si.peer_driver = b.policy != 0 && published.peer_seat == 0;
+    si.policy_vehicle = published.vehicle;
+    si.local_vehicle = d.local_vehicle;
+    si.steer_pending = b.steer_pending;
+    si.steer_seat = b.steer_seat;
+    si.steer_ms = b.steer_ms;
+    si.now_ms = now;
+    si.lp = lp;
+    b.faults_seen = new_faults;
+    if (const char* why = pb::SurpriseReason(si)) {
+        if (!b.uncertain) {
+            b.uncertain = why;
+            EmitBoard(m, h, "partner_ride=board_uncertain; reason=%s; vehicle=%u; local_vehicle=%u; passenger=%u,%u; mode=%s\r\n", why,
+                      unsigned(published.vehicle), unsigned(d.local_vehicle), unsigned(lp.vehicle), unsigned(lp.seat), pb::ModeName(mode));
+        }
+        if (b.steer_pending && (std::strcmp(why, "steer_unconfirmed") == 0 || std::strcmp(why, "seat_mismatch") == 0)) b.steer_pending = false;
+    }
+    // The policy for the peer's live ride (same link epoch, inside the lease).
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    pb::PublishIn in{};
+    in.mode = mode;
+    in.uncertain = b.uncertain != nullptr;
+    in.ride_live = live && epoch && d.ride_rx.have && d.ride_rx.epoch == epoch && rw::Live(d.ride_rx, epoch, now);
+    in.vehicle_kind = d.ride_rx.packet.kind == rw::Kind::vehicle;
+    in.seat = d.ride_rx.packet.seat;
+    in.vehicle = d.ride_rx.packet.vehicle;
+    in.received_ms = d.ride_rx.received_ms;
+    const pb::Policy p = pb::PolicyFor(in);
+    BoardPublish(d, h, p.mode == pb::Mode::off ? 0 : pb::Pack(p));
+    if (!b.policy_logged || p.mode != b.logged.mode || p.vehicle != b.logged.vehicle || p.peer_seat != b.logged.peer_seat) {
+        b.policy_logged = true;
+        b.logged = p;
+        EmitBoard(m, h, "partner_ride=board_policy; vehicle=%u; seat=%u; mode=%s; uncertain=%s\r\n", unsigned(p.vehicle), unsigned(p.peer_seat),
+                  pb::ModeName(p.mode), b.uncertain ? b.uncertain : "none");
+    }
+}
+
+// F1 passenger camera (docs/native-puppet.md "Passenger camera"; partner_pass_camera):
+// one step per tick right after TickBoard, passenger mode only. The lazy install (once
+// per process, after the code gate: the pinned blocks, no patch), the fault latch (mission
+// scoped: nothing is connected again), the connect of the ridden vehicle's ignore-collision
+// handle on the local camera while the local back-seat passenger is reported
+// (partner_pass_camera::ArmFor, Connect: never under the stock VehicleCamera, never over
+// another owner) and the per-boarding episode lines; after the report ends the stock
+// get-off / FinishState clear it, else our own handle is cleared after kReleaseMs. Never
+// for the driver (stock) or body 1; nothing is written while the mission terminates.
+void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
+    namespace pc = partner_pass_camera;
+    Mission& m = d.mission;
+    auto& c = m.pass_camera;
+    if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
+    if (terminating) return;
+    if (!d.pass_camera_install_tried) {
+        d.pass_camera_install_tried = true;
+        const char* why = !h.pass_camera_install || !h.pass_camera_connect || !h.pass_camera_stats || !h.pass_camera_read
+                              ? "unavailable"
+                              : h.pass_camera_install(h.context);
+        d.pass_camera_installed = why == nullptr;
+        d.pass_camera_refusal = why;
+        EmitFormat(h, "partner_ride=pass_camera; state=install; result=%s; reason=%s\r\n", why ? "refused" : "ok", why ? why : "none");
+    }
+    const partner_board::LocalPassenger& lp = d.local_passenger;
+    pc::Stats stats{};
+    if (d.pass_camera_installed) h.pass_camera_stats(h.context, stats);
+    if (!c.seen_have) {
+        // Process-lifetime counters: this mission counts from here.
+        c.seen_have = true;
+        c.seen = stats;
+    }
+    if (!c.uncertain && stats.faults != c.seen.faults) c.uncertain = "fault";
+    if (c.uncertain && !c.uncertain_logged) {
+        c.uncertain_logged = true;
+        EmitBoard(m, h, "partner_ride=pass_camera; state=refused; vehicle=%u; seat=%u; reason=%s; latch=mission; faults=%u\r\n",
+                  unsigned(lp.vehicle), unsigned(lp.seat), c.uncertain, stats.faults - c.seen.faults);
+    }
+    pc::ArmIn ai{};
+    ai.passenger_mode = true;
+    ai.installed = d.pass_camera_installed;
+    ai.uncertain = m.board.uncertain != nullptr || c.uncertain != nullptr;
+    ai.passenger = lp.valid;
+    ai.vehicle = lp.vehicle;
+    ai.seat = lp.seat;
+    const char* arm_reason = "none";
+    const pc::Arm arm = pc::ArmFor(ai, arm_reason);
+    pc::Camera cam{};
+    const char* plan = "none";
+    if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, true, cam);
+    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
+    pc::StepIn in{};
+    in.passenger = lp.valid;
+    in.vehicle = lp.vehicle;
+    in.seat = lp.seat;
+    in.armed = arm.armed;
+    in.arm_reason = arm_reason;
+    in.plan = plan ? plan : "none";
+    in.cam = cam;
+    in.writes = stats.writes;
+    in.now_ms = now;
+    pc::StepOut out = pc::Step(c.episode, in);
+    // The lines count this boarding's writes including this tick's (the counters read again).
+    pc::Stats after = stats;
+    if (d.pass_camera_installed) h.pass_camera_stats(h.context, after);
+    const unsigned writes = after.writes - c.episode.writes_at_start;
+    switch (out.event) {
+    case pc::Event::connect:
+        EmitBoard(m, h,
+                  "partner_ride=pass_camera; state=connect; vehicle=%u; seat=%u; reason=%s; plan=%s; ms=%u; cam1f0=0x%llx; cam200=%u; mode=%d; "
+                  "prev=%d; vmode=%d; writes=%u\r\n",
+                  unsigned(out.vehicle), unsigned(out.seat), out.reason, in.plan, out.ms, static_cast<unsigned long long>(cam.connect), cam.on,
+                  cam.mode, cam.prev, cam.vehicle_mode, writes);
+        break;
+    case pc::Event::refused:
+        EmitBoard(m, h,
+                  "partner_ride=pass_camera; state=refused; vehicle=%u; seat=%u; reason=%s; ms=%u; cam1f0=0x%llx; cam200=%u; mode=%d; vmode=%d; "
+                  "writes=%u\r\n",
+                  unsigned(out.vehicle), unsigned(out.seat), out.reason, out.ms, static_cast<unsigned long long>(cam.connect), cam.on, cam.mode,
+                  cam.vehicle_mode, writes);
+        break;
+    case pc::Event::release:
+        if (out.clear) {
+            // Our handle outlived the ride (no stock clear within kReleaseMs): clear it.
+            const char* why = h.pass_camera_connect(h.context, st, out.vehicle, false, cam);
+            out.ok = why && std::strcmp(why, "ours") == 0 && cam.ok && cam.connect == 0;
+        }
+        EmitBoard(m, h,
+                  "partner_ride=pass_camera; state=release; vehicle=%u; seat=%u; reason=%s; ok=%u; ms=%u; cam1f0=0x%llx; cam200=%u; mode=%d; "
+                  "writes=%u\r\n",
+                  unsigned(out.vehicle), unsigned(out.seat), out.reason, out.ok ? 1u : 0u, out.ms, static_cast<unsigned long long>(cam.connect),
+                  cam.on, cam.mode, writes);
+        break;
+    case pc::Event::none:
+        break;
+    }
+}
+
 // The loadout sender (docs/native-puppet.md "Loadout mirroring"): this copy's
 // manifest (pure reads, at most once per kEquipReadMs), a new revision on
 // change, resent after a new link session. Driver-level: it outlives missions
@@ -2367,8 +2810,12 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                 mf.slots[i].type = ew::GunType(lo.type[i]) ? lo.type[i] : static_cast<std::uint8_t>(0);
                 std::memcpy(mf.slots[i].recipe, lo.chimera + i * ew::kRecipe, ew::kRecipe);
             }
-            mf.cbox_active = ((m.status_bits & (1u << 2)) != 0) || lo.cbox_active;
-            mf.active_item_id = mf.cbox_active ? (lo.active_item_id ? lo.active_item_id : static_cast<std::uint16_t>(456)) : static_cast<std::uint16_t>(0);
+            const bool cbox = (m.status_bits & partner::status_bit::cbox) != 0;
+            std::uint16_t item = m.active_item;
+            if (cbox && !ew::CboxEquip(item)) item = ew::kCboxBase;
+            if (!cbox && !ew::CboxEquip(item)) item = 0;
+            mf.cbox_active = cbox;
+            mf.active_item_id = item;
             d.equip_tables_ok = lo.tables_ok;
             if (!d.equip_tx_have || !ew::SameSlots(mf, d.equip_tx)) {
                 mf.revision = static_cast<std::uint16_t>(d.equip_tx_have && d.equip_tx.revision != 0xFFFFu ? d.equip_tx.revision + 1 : 1);
@@ -2386,6 +2833,20 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                                    unsigned(lo.chimera[i * ew::kRecipe]), unsigned(lo.alias_receiver[i]), unsigned(lo.base[i]),
                                    lo.scan[i] ? lo.scan[i] : "none", lo.tables_ok ? 1u : 0u);
             }
+        }
+    }
+    if (d.equip_tx_have) {
+        const bool cbox = (m.status_bits & partner::status_bit::cbox) != 0;
+        std::uint16_t item = m.active_item;
+        if (cbox && !ew::CboxEquip(item)) item = ew::kCboxBase;
+        if (!cbox && !ew::CboxEquip(item)) item = 0;
+        // A box toggle keeps the revision (the receiver's gun writer is keyed on the
+        // revision and the slots); the receiver takes the changed box fields under
+        // the same revision as new content (partner_equip_wire::Accept, SameBox).
+        if (d.equip_tx.cbox_active != cbox || d.equip_tx.active_item_id != item) {
+            d.equip_tx.cbox_active = cbox;
+            d.equip_tx.active_item_id = item;
+            d.equip_tx_dirty = true;
         }
     }
     if (d.equip_tx_have && epoch != d.equip_tx_epoch) d.equip_tx_dirty = true;
@@ -2986,8 +3447,9 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
                    PartnerNativeReloadRateName(set.nreload_rate), set.fire_census ? 1u : 0u);
         // WS4 v1: the lanes beyond thrown support (only when one is named).
         if (set.nplaced || set.narm)
-            EmitFormat(h, "partner_support=lanes; support=%u; placed=%u; arm=%u; arm_fire=stripped\r\n", set.nsupport ? 1u : 0u,
-                       set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u);
+            EmitFormat(h, "partner_support=lanes; support=%u; placed=%u; arm=%u; arm_fire=stripped; place_mirror=%u\r\n", set.nsupport ? 1u : 0u,
+                       set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u,
+                       set.nsupport && set.nplaced && set.nplace_mirror ? 1u : 0u);
     }
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
@@ -4552,6 +5014,220 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     pnat::Push(t.ring, e);
 }
 
+// --- Gestures (partner_gesture, docs/native-puppet.md "Gestures") ------------------------------
+// Sender: every tick with the key on, this copy's own upper act byte
+// Q+0x20[local]; a rising edge into pickup / knock / hand sign Go / Stop goes
+// out once on reliable channel 2 (append). Receiver: ReceiveGesture (channel-2
+// drain) keeps the newest edge; TickGesture gates it, picks the stock node and
+// publishes the request to the body-1 update hook (partner_gesture::Step every
+// tick), then logs the hook's receipts.
+void SendGesture(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, bool anim_ok, const pp::Anim& anim,
+                 std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    m.gesture_upper_ok = false;
+    m.gesture_upper[0] = m.gesture_upper[1] = 0;
+    if (!set.ngesture || !h.read_upper) {
+        d.gesture_tx.ready = false;
+        d.gesture_tx_pending = false;
+        return;
+    }
+    std::uint8_t upper[2]{};
+    m.gesture_upper_ok = h.read_upper(h.context, st, upper);
+    m.gesture_upper[0] = upper[0];
+    m.gesture_upper[1] = upper[1];
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    const bool live = epoch && h.link_live && h.link_live(h.context) && h.send_reliable_append;
+    const std::uint32_t local = st.local < 2 ? st.local : 0;
+    const gpol::SenderIn in{live, m.gesture_upper_ok && anim_ok, upper[local], anim_ok ? anim.stance[local] : std::uint8_t{0},
+                            anim_ok ? anim.speed[local] : std::uint8_t{0}, epoch, now};
+    const gpol::SenderOut o = gpol::Observe(d.gesture_tx, in);
+    if (o.send) {
+        if (d.gesture_tx_pending)
+            EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                        "partner_gesture=local; kind=%s; upper=0x%02x; seq=%u; sent=0; reason=superseded\r\n",
+                        gpol::KindName(d.gesture_tx_packet.kind), unsigned(d.gesture_tx_upper), unsigned(d.gesture_tx_packet.seq));
+        d.gesture_tx_pending = true;
+        d.gesture_tx_packet = o.packet;
+        d.gesture_tx_upper = upper[local];
+        d.gesture_tx_ms = now;
+    }
+    if (!d.gesture_tx_pending) return;
+    const gpol::Packet& p = d.gesture_tx_packet;
+    const char* drop = !live ? "link" : now - d.gesture_tx_ms > gpol::kRequestMs ? "queue" : nullptr;
+    std::uint8_t bytes[gpol::kSize]{};
+    if (!drop && !gpol::Encode(p, bytes)) drop = "encode";
+    if (!drop && !h.send_reliable_append(h.context, gpol::kChannel, bytes, sizeof(bytes))) return;  // full: retried next tick
+    d.gesture_tx_pending = false;
+    EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                "partner_gesture=local; kind=%s; upper=0x%02x; seq=%u; stance=%u; speed=%u; moving=%u; sent=%u%s%s\r\n", gpol::KindName(p.kind),
+                unsigned(d.gesture_tx_upper), unsigned(p.seq), unsigned(p.stance), unsigned(p.speed),
+                (p.flags & gpol::Flag::Moving) ? 1u : 0u, drop ? 0u : 1u, drop ? "; reason=" : "", drop ? drop : "");
+}
+
+void LogGestureReceipt(Mission& m, const Hooks& h, const pges::Receipt& r) noexcept {
+    const unsigned long long node = r.node, current = r.current, queued = r.queued;
+    switch (r.stage) {
+    case pges::Stage::submit:
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=submit; graph=2; node=0x%llx; exist=%u; kind=%s; method=%s; seq=%u; stance=%u; moving=%u; body_act=%u\r\n",
+                    node, r.exist ? 1u : 0u, gpol::KindName(r.kind), gpol::MethodName(r.method), r.seq, unsigned(m.gesture_request_stance),
+                    m.gesture_request_moving ? 1u : 0u, unsigned(r.body_act));
+        break;
+    case pges::Stage::applied:
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=applied; seq=%u; kind=%s; node=0x%llx; current=0x%llx; queued=0x%llx; ok=%u\r\n", r.seq,
+                    gpol::KindName(r.kind), node, current, queued, r.ok ? 1u : 0u);
+        break;
+    case pges::Stage::ended:
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=ended; via=%s; cause=%s; seq=%u; kind=%s; ms=%u; null=%u; current=0x%llx%s%s\r\n", gpol::ViaName(r.via),
+                    r.cause ? r.cause : "-", r.seq, gpol::KindName(r.kind), r.ms, r.null_sent ? 1u : 0u, current,
+                    r.reason ? "; note=" : "", r.reason ? r.reason : "");
+        break;
+    case pges::Stage::refused:
+        ++m.gesture_refused;
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=refused; reason=%s; where=hook; kind=%s; seq=%u; node=0x%llx; body_act=%u; body_upper=0x%02x; body_q28=%u; "
+                    "age_ms=%u; current=0x%llx\r\n",
+                    r.reason ? r.reason : "-", gpol::KindName(r.kind), r.seq, node, unsigned(r.body_act), unsigned(r.body_upper),
+                    unsigned(r.body_q28), r.ms, current);
+        break;
+    case pges::Stage::uncertain:
+        EmitFormat(h, "partner_gesture=uncertain; reason=%s; seq=%u; kind=%s; node=0x%llx; latched=mission\r\n", r.reason ? r.reason : "-", r.seq,
+                   gpol::KindName(r.kind), node);
+        break;
+    default:
+        EmitFormat(h, "partner_gesture=fault; reason=%s; seq=%u; kind=%s; hook=passthrough\r\n", r.reason ? r.reason : "-", r.seq,
+                   gpol::KindName(r.kind));
+        break;
+    }
+}
+
+// Logs the receipts a step drained from the hook (every decision since the
+// previous step), forgets the request the hook answered and latches uncertain.
+void DrainGesture(Mission& m, const Hooks& h, const pges::Status& status) noexcept {
+    for (unsigned i = 0; i < status.count && i < pges::kReceipts; ++i) {
+        const pges::Receipt& r = status.receipts[i];
+        LogGestureReceipt(m, h, r);
+        if (r.seq && r.seq == m.gesture_request.seq &&
+            (r.stage == pges::Stage::submit || r.stage == pges::Stage::refused || r.stage == pges::Stage::uncertain || r.stage == pges::Stage::fault))
+            m.gesture_request = pges::Request{};
+    }
+    if (status.dropped)
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture", "partner_gesture=receipts_dropped; n=%u\r\n", status.dropped);
+    if (status.uncertain) m.gesture_uncertain = true;
+}
+
+// The hook drops a running gesture without any write when the epoch changes.
+// The step drains the receipts queued since the last tick: they are logged for
+// the ending mission (every caller runs before MissionStart's reset).
+void WithdrawGesture(Driver& d, const Hooks& h) noexcept {
+    if (!++d.gesture_epoch) d.gesture_epoch = 1;
+    if (!h.gesture_step || !d.gesture_install_tried || d.gesture_install_refusal) return;
+    pges::Command command{};
+    command.epoch = d.gesture_epoch;
+    pges::Status status{};
+    h.gesture_step(h.context, command, status);
+    DrainGesture(d.mission, h, status);
+}
+
+void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool realized, bool parts_loaded, bool anim_ok,
+                 const pp::Anim& anim, bool looks_ok, const pp::Looks& looks, const sync::AnimState& remote_anim, bool remote_live) noexcept {
+    Mission& m = d.mission;
+    if (!set.ngesture) {
+        m.gesture_pending = false;
+        return;
+    }
+    if (!m.gesture_configured_logged) {
+        m.gesture_configured_logged = true;
+        EmitFormat(h, "partner_gesture=configured; key=1; sender=%u; receiver=%u; epoch=%u\r\n", h.read_upper ? 1u : 0u,
+                   h.gesture_step && h.gesture_install ? 1u : 0u, d.gesture_epoch);
+    }
+    const char* block = m.carry_hold                                          ? "carry"
+                      : m.ride_seated || m.seat.phase != SeatPhase::idle      ? "seat"
+                      : mgscoop::partner_dm_overlay::Active(m.overlay)       ? "overlay"
+                      : (set.native_active && RemoteDowned(clock.tick_ms))    ? "downed"
+                      : m.vehicle_job                                         ? "vehicle"
+                                                                              : nullptr;
+    // Lazy install the first time the native drive is active with the key on.
+    if (set.native_active && !d.gesture_install_tried && h.gesture_install) {
+        d.gesture_install_tried = true;
+        d.gesture_install_refusal = h.gesture_install(h.context);
+        EmitFormat(h, "partner_gesture=install; result=%s\r\n", d.gesture_install_refusal ? d.gesture_install_refusal : "ok");
+    }
+    const bool installed = h.gesture_step && d.gesture_install_tried && !d.gesture_install_refusal;
+    if (m.gesture_request.seq && (clock.tick_ms < m.gesture_request.issued_ms || clock.tick_ms - m.gesture_request.issued_ms > gpol::kRequestMs)) {
+        // No body-1 update took it (the hook answers every request it sees with a
+        // submit or a refusal): the update filter never matched body 1's entry.
+        const pges::Request& q = m.gesture_request;
+        ++m.gesture_refused;
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=refused; reason=unanswered; where=driver; kind=%s; seq=%u; node=0x%llx; age_ms=%llu; body_calls=%u; "
+                    "resolve=%s\r\n",
+                    gpol::KindName(q.kind), q.seq, static_cast<unsigned long long>(q.node),
+                    static_cast<unsigned long long>(clock.tick_ms >= q.issued_ms ? clock.tick_ms - q.issued_ms : 0), m.gesture_hook_body_calls,
+                    m.gesture_hook_resolve ? m.gesture_hook_resolve : "ok");
+        m.gesture_request = pges::Request{};
+    }
+    if (m.gesture_pending) {
+        m.gesture_pending = false;
+        const gpol::Packet& p = m.gesture_rx_packet;
+        gpol::GateIn g{};
+        g.enabled = true;
+        g.native = set.native_active;
+        g.realized = realized && parts_loaded;
+        g.remote_live = remote_live;
+        g.block = block;
+        g.body_ok = anim_ok && m.gesture_upper_ok;
+        g.body_act = anim_ok ? anim.act[1] : 0;
+        g.body_q28 = anim_ok ? anim.q28[1] : 0;
+        g.body_upper = m.gesture_upper[1];
+        g.installed = installed;
+        g.busy = m.gesture_active || m.gesture_request.seq != 0;
+        g.uncertain = m.gesture_uncertain;
+        const char* why = !h.gesture_step || !h.gesture_install ? "unavailable" : gpol::Gate(g);
+        if (!why && (clock.now_ms < m.gesture_rx_ms || clock.now_ms - m.gesture_rx_ms > gpol::kRequestMs)) why = "stale";
+        const bool moving = (p.flags & gpol::Flag::Moving) != 0;
+        gpol::Choice choice{};
+        if (!why) {
+            choice = gpol::NodeFor(p.kind, p.stance, moving, looks_ok && looks.look[1].hand != 0);
+            why = choice.refusal;
+        }
+        if (why) {
+            ++m.gesture_refused;
+            EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                        "partner_gesture=refused; reason=%s; where=driver; kind=%s; seq=%u; stance=%u; moving=%u; body_act=%u; body_upper=0x%02x; "
+                        "body_q28=%u\r\n",
+                        why, gpol::KindName(p.kind), unsigned(p.seq), unsigned(p.stance), moving ? 1u : 0u, unsigned(g.body_act),
+                        unsigned(g.body_upper), unsigned(g.body_q28));
+        } else {
+            if (!++d.gesture_seq) d.gesture_seq = 1;
+            m.gesture_request = pges::Request{d.gesture_seq, p.kind, choice.node, choice.method, choice.blend, clock.tick_ms};
+            m.gesture_request_stance = p.stance;
+            m.gesture_request_moving = moving;
+            ++m.gesture_requests;
+        }
+    }
+    if (!installed) return;
+    pges::Command command{};
+    command.enabled = set.native_active && realized && parts_loaded && !block && !m.gesture_uncertain;
+    command.epoch = d.gesture_epoch;
+    command.now_ms = clock.tick_ms;
+    command.request = m.gesture_request;
+    command.remote_known = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    command.remote_speed = remote_anim.speed;
+    pges::Status status{};
+    h.gesture_step(h.context, command, status);
+    DrainGesture(m, h, status);
+    m.gesture_active = status.active;
+    m.gesture_hook_resolve = status.resolve;
+    m.gesture_hook_body_calls = status.body_calls;
+    if (!status.live && !m.gesture_patch_lost_logged) {
+        m.gesture_patch_lost_logged = true;
+        EmitFormat(h, "partner_gesture=patch_lost; installed=%u; faulted=%u\r\n", status.installed ? 1u : 0u, status.faulted ? 1u : 0u);
+    }
+}
+
 #include "partner_driver_seat.inc"
 } // namespace
 
@@ -4640,6 +5316,37 @@ bool NativeSleepPresentationReady(const Driver& d) noexcept {
            m.dmmap.phase == partner_dmmap::Phase::idle;
 }
 
+// The remote manifest's cardboard box: the edge detector. A change is logged
+// once and counted (cbox_seq). The 0.13.3 apply (op::cbox -> Lua
+// Player.ChangeEquip) boxed the VIEWER's own player, because that binding
+// (0x9D0D60) ignores playerIndex and passes [P+0x214] in R8D; it stays gone.
+// With partner_native_cbox (on with the gun profile) the equipment observer's
+// partner_cbox_equip applies the box to body 1 natively from cbox_want /
+// cbox_id / cbox_seq (apply=native); otherwise only the transport runs.
+void NoteCbox(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
+    namespace ew = partner_equip_wire;
+    Mission& m = d.mission;
+    if (!m.equip.have) return;
+    const std::uint16_t sent = m.equip.manifest.active_item_id;
+    const bool want = m.equip.manifest.cbox_active && ew::CboxEquip(sent);
+    if (want == m.cbox_applied && (!want || sent == m.cbox_id_applied)) return;
+    if (m.cbox_want && !want) m.cbox_off_ms = now_ms ? now_ms : 1;
+    m.cbox_pending = false;
+    m.cbox_want = want;
+    m.cbox_id = want ? sent : (m.cbox_id_applied ? m.cbox_id_applied : ew::kCboxBase);
+    m.cbox_left = 0;
+    m.cbox_applied = want;  // the remote state last logged, not an apply
+    m.cbox_id_applied = m.cbox_id;
+    ++m.cbox_seq;
+    EmitFormat(h, "partner_cbox=remote; id=%u; active=%u; apply=%s; seq=%u\r\n", unsigned(m.cbox_id), want ? 1u : 0u,
+               d.settings.cbox ? "native" : "off", m.cbox_seq);
+}
+// Inert: no reply carries op::cbox until the native apply exists.
+void StampCbox(Mission& m, partner::Reply& reply) noexcept {
+    (void)m;
+    (void)reply;
+}
+
 void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
     DrainEquip(d, h, now_ms);
     SendEquip(d, h, now_ms);
@@ -4711,10 +5418,15 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_id = lab.partner_ride_seat_id;
     d.settings.ride_tilt = lab.partner_ride_tilt;
     d.local_vehicle = partner_ride_wire::kVehicleUnknown;
+    // F1 vehicles: the board hook (ResolveWeaponDefaults: passenger with the gun profile, in
+    // lab and play; with it the passenger camera).
+    d.settings.ride_board = lab.partner_ride_board;
+    d.local_passenger = partner_board::LocalPassenger{};
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
     d.settings.nplaced = lab.partner_native_placed;
     d.settings.narm = lab.partner_native_arm;
+    d.settings.nplace_mirror = lab.partner_native_place_mirror;
     d.settings.nunsupported = lab.partner_native_unsupported;
     d.settings.ndry = lab.partner_native_dry_stop;
     d.settings.naim_intent = lab.partner_native_aim_intent;
@@ -4732,6 +5444,11 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.noverlay = lab.partner_native_overlay;
     d.settings.act_log = lab.partner_act_log;
     d.settings.stance_fast = lab.partner_native_stance_fast;
+    d.settings.traverse = lab.partner_native_traverse;
+    d.settings.cbox = lab.partner_native_cbox;
+    d.settings.ngesture = lab.partner_native_gesture;
+    // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
+    d.settings.nmount = lab.partner_native_mount;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
     // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).
     // The one exception (WS2: the user asked for throws in play): the guarded slot-3
@@ -4768,8 +5485,12 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     // The seat dwords never outlive a mission (a missed MissionEnd included).
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_start");
+    // Gestures: a new hook epoch (a running gesture is dropped without a write).
+    WithdrawGesture(d, h);
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
+    // F1 vehicles: no board policy outlives a mission (the lease would end it anyway).
+    BoardWithdraw(d, h);
     d.mission = Mission{};
     // Weapons4: the writer's body lease starts a generation; body 1's gun mode is unread.
     d.mission.realize_gen = 1;
@@ -4813,6 +5534,11 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.settings.noverlay != PartnerNativeOverlay::off)
         EmitFormat(h, "partner_actions=configured; overlay=%s; act_log=%u\r\n", PartnerNativeOverlayName(d.settings.noverlay),
                d.settings.act_log ? 1u : 0u);
+    // Mount riders: an enabled act rule says so once per mission (it acts only where partner_native_ride hides).
+    if (d.settings.nmount != PartnerNativeMount::off)
+        EmitFormat(h, "partner_mount=configured; mode=%s; ride=%s; acts=%u..%u\r\n", PartnerNativeMountName(d.settings.nmount),
+                   PartnerNativeRideName(d.settings.nride), unsigned(partner_mount_policy::kHorseActFirst),
+                   unsigned(partner_mount_policy::kWalkerActLast));
     if (!h.take_trigger) return;
     char text[partner::max_trigger + 1]{};
     std::size_t length = 0;
@@ -4832,6 +5558,8 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_end");
+    BoardWithdraw(d, h);
+    WithdrawGesture(d, h);
     d.mission.seat.armed = false;
     d.mission.seat.phase = SeatPhase::idle;
     d.mission.ride_seated = false;
@@ -4895,6 +5623,8 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
+    BoardWithdraw(d, h);
+    WithdrawGesture(d, h);
     m.seat.armed = false;
     m.seat.phase = SeatPhase::idle;
     m.ride_seated = false;
@@ -5126,6 +5856,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     m.tele.weapon_gate_current = false;
     if (terminating) { partner_upper_probe::Clear("tick_terminating"); return false; }
     TickEquipLink(d, h, clock.now_ms);  // reliable channel 2 and the loadout sender, every tick in every drive mode
+    NoteCbox(d, h, clock.now_ms);
     if (!m.cfg_ready || m.stopped || terminating) { partner_upper_probe::Clear("tick_inactive"); return false; }
     partner::Tick tick{};
     if (!partner::ParseTick(source, size, tick)) {
@@ -5144,6 +5875,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // The local PlayerStatus census (receipt st=, docs/anim-round1-seat.md): logged on change.
     if (tick.has_ride) {
         const std::uint16_t bits = tick.has_status ? tick.status : 0;
+        if (tick.has_item) m.active_item = tick.item;
         if (!m.status_have || bits != m.status_bits) {
             m.status_have = true;
             m.status_bits = bits;
@@ -5210,11 +5942,17 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // configured ones unless it is entering or active).
     const Settings set_effective = EffectiveSettings(d.settings, m.native_out.active);
     const Settings& set = set_effective;
-    SendRide(d, h, tick, now);
-    // WS3 vehicles: the local vehicle (the tick's veh=), the ride addendum and the census.
+    // WS3 vehicles: the local vehicle (the tick's veh=: the vehicle the viewer DRIVES, Lua's
+    // ON_VEHICLE), the ride addendum and the census.
     d.local_vehicle = tick.has_ride && tick.ride_kind == static_cast<std::uint8_t>(partner_ride_wire::Kind::vehicle) && tick.has_vehicle &&
                               tick.vehicle != partner_ride_wire::kVehicleUnknown
                           ? tick.vehicle : partner_ride_wire::kVehicleUnknown;
+    // F1 vehicles (partner_ride_board): the board hook and the local passenger report, which
+    // replaces Lua's foot report (act 0x6E has no ON_VEHICLE) in the tick the ride sender sees.
+    partner::Tick ride_tick = tick;
+    TickBoard(d, h, st, now, terminating, ride_tick);
+    TickPassCamera(d, h, st, now, terminating);
+    SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
     TickRideCensus(d, h, now);
     // Local animation fields and looks (sender side; anim=mirror source).
@@ -5223,6 +5961,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const sync::AnimState local_anim = anim_ok ? pp::AnimSlot(anim, st.local) : sync::AnimState{};
     pp::Looks looks{};
     const bool looks_ok = h.read_looks && h.read_looks(h.context, st, looks);
+    // Gestures: this copy's upper act edges (sender) and both ids' upper bytes for the receiver's gate.
+    SendGesture(d, h, st, set, anim_ok, anim, now);
     // Pose source.
     partner::Pose pose{};
     bool pose_valid = false;
@@ -5350,8 +6090,27 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         vi.lease_live = epoch && h.link_live && h.link_live(h.context);
         vi.rearmed = m.bits_set;
         vi.now_ms = now;
+        vi.mount_hide = set.nmount == PartnerNativeMount::hide;
         const bool hidden_before = m.visibility.hidden;
         rw::Observe(m.visibility, vi);
+        // partner_native_mount=hide: one line when the act rule starts hiding and one when it stops
+        // (kind is what the ride wire says at that moment: foot for a D-Walker rider).
+        namespace pm = partner_mount_policy;
+        const bool mount_holds = pm::Holds(m.visibility.mount, m.mount.active, m.visibility.hidden, visibility_sample.anim_valid);
+        switch (pm::Step(m.mount, mount_holds, visibility_sample.act, now)) {
+        case pm::Edge::begin:
+            EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=hide; mount=%s; act=%u; kind=%u; ride_live=%u; episode=%u\r\n",
+                       pm::MountName(m.mount.mount), unsigned(m.mount.act), unsigned(vi.kind), vi.ride_live ? 1u : 0u,
+                       m.mount.episodes);
+            break;
+        case pm::Edge::end:
+            EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=end; mount=%s; act=%u; ms=%llu; kind=%u\r\n",
+                       pm::MountName(m.mount.mount), unsigned(visibility_sample.act),
+                       static_cast<unsigned long long>(pm::EpisodeMs(m.mount, now)), unsigned(vi.kind));
+            break;
+        default:
+            break;
+        }
         if (m.visibility.hidden && !hidden_before) {
             m.range_needs_place = true; m.pose_applied = m.have_cmd = m.hybrid_placed = false;
             partner_dmmap::SpeedReset(m.dmmap_speed); partner_dmmap::CancelFiniteEvents(m.dmmap);
@@ -5402,20 +6161,13 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 Probe(d, h, st, clock);
                 SeatReportRealized(m, h, realized_now, parts_now, now);
                 m.body_ok = false;
-                if (m.seat.confirmed && rw::SeatIndex(m.seat.seat) >= 1) {
-                    pin::Sample latest{};
-                    const bool latest_ok = set.input == PartnerInput::net && h.latest_input && h.latest_input(h.context, latest) && latest.valid;
-                    partner_input_hook::NativeStats ns{};
-                    TickAimIntent(d, h, latest_ok, latest, remote_anim, pose_valid, ns, now);
-                    const bool aiming = (latest_ok && (latest.packet.held & partner_pad::kHold) != 0);
-                    TickAim(d, h, st, true, realized_now, latest_ok, latest, aiming, now);
-                }
                 reply = partner::Reply{seat_out.ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad,
                                        status, age_ms, partner::Look{}, 0};
                 reply.seat_vehicle = seat_out.vehicle;
                 reply.seat = seat_out.seat;
                 reply.seat_action = seat_out.action;
                 reply.seat_entry = seat_out.entry;
+                StampCbox(m, reply);
                 return true;
             }
         }
@@ -5497,8 +6249,21 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                                    status, age_ms, partner::Look{}, 0};
             return true;
         };
-        if (m.range_hidden || (ride_guard && (m.visibility.hidden || ((m.bits_set || m.dm_patched) && m.visibility_logged))))
-            return deferred_reply();
+        if (m.range_hidden || (ride_guard && (m.visibility.hidden || ((m.bits_set || m.dm_patched) && m.visibility_logged)))) {
+            const bool replied = deferred_reply();
+            // partner_native_mount=hide: the cleared bits leave instance 1 realized while Lua's
+            // all-active mode is on, so a mount episode also asks Lua to clear it (body 1 off screen).
+            if (ride_guard && partner_mount_policy::Unrealize(m.mount.active, m.visibility.hidden,
+                                                              (tick.luaflags & partner::luaflag::all_active) != 0)) {
+                reply.op |= partner::op::clear_all_active;
+                if (!m.mount.unrealize_logged) {
+                    m.mount.unrealize_logged = true;
+                    EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=unrealize; mount=%s; act=%u; episode=%u; op=clear_allactive\r\n",
+                               partner_mount_policy::MountName(m.mount.mount), unsigned(visibility_sample.act), m.mount.episodes);
+                }
+            }
+            return replied;
+        }
         if (m.range_needs_place) {
             if (fresh && set.stage >= 1 && !m.bits_set &&
                 (!ride_guard || !m.visibility_place_try_ms || now-m.visibility_place_try_ms >= 1000)) {
@@ -6086,6 +6851,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const Settings set_levers = EffectiveSettings(d.settings, m.native_out.active);
     TickInput(d, h, lab, st, set_levers, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);
+    // Gestures: the received edge's gate, the request and the body-1 hook's receipts.
+    TickGesture(d, h, set_levers, clock, realized, parts_loaded, anim_ok, anim, looks_ok, looks, remote_anim,
+                set.source == PartnerSource::net && sample_status == pose::Status::live);
     // Round-1 actions: the DM overlay lever owns the DM while it runs; dm=map
     // stands down (TickDm with dm=off only to release a clip it still owns).
     // A seat episode blocks the overlay (OverlayBlocked: seat), so one already
@@ -6127,6 +6895,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     reply = partner::Reply{final_ops, partner::partner_index, reply_pose.x_mm, reply_pose.y_mm, reply_pose.z_mm,
                            reply_pose.yaw_mrad, status, age_ms, (ops & partner::op::set_parts_explicit) ? apply_look : partner::Look{},
                            gani};
+    StampCbox(m, reply);
     return true;
 }
 

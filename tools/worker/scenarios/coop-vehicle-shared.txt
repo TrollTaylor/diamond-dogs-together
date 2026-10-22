@@ -1,0 +1,90 @@
+# F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board BLOCK, partner_ride_board=block.
+# Cloned from coop-vehicle-seat.txt in its passing scratch form (integ8-rt vehicle-seat-rev2:
+# clear_enemies after each goto_vehicle, the Wakh Sind garrison otherwise knocks a player down).
+# The host drives the Wakh Sind jeep; the guest stands at its door (goto_vehicle leaves it 1.9 m
+# beside the jeep) and presses E: with block the guest gets no ride icon and never becomes a second
+# driver of its own copy of that jeep. Then the roles reverse. A session has one lab.ini, so the
+# passenger mode (and the truck fallback) runs in coop-vehicle-passenger.txt.
+#
+# Expected, first half (the guest presses E at the host-driven jeep):
+#   guest  partner_ride=board_install; mode=block; result=ok; reason=none
+#          partner_ride=board_policy; vehicle=256xx; seat=0; mode=block; uncertain=none
+#          partner_ride=board_block; vehicle=256xx; site=prequery; n=..; mode=block; reason=block; ...
+#          (site=phase1 only when the icon was already up as the host's seat-0 packet arrived)
+#          no partner_status=local; st=0x400 (ON_VEHICLE) after the E press, run vehicle_seats ->
+#          vehicle_not_riding, no partner_ride=board_uncertain, no second driver (the host's jeep keeps
+#          moving under the host's stream in shared-drive-away)
+#   host   no partner_ride_seat=...; reason=local_vehicle, no partner_ride=hide; the guest stands beside
+#          the jeep (shared-host-view)
+# Second half: the same with the roles swapped (the host's log has the board_block lines).
+# Captures: shared-host-drives, shared-blocked, shared-host-view, shared-drive-away-NN, shared-exited,
+# shared-rev-guest-drives, shared-rev-blocked, shared-rev-guest-view, shared-rev-exited.
+# Passed: run 0348c4d8 (lab) and the play rehearsal fad26e25 (-Mode play -WanSim bad, with the board line below
+# removed: block is the gun-profile default since then, so the line only pins it).
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=block
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host press e 150
+wait 2500
+host run vehicle_seats
+host require vehicle;id=
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=block' 10
+both capture shared-host-drives
+guest press e 150
+wait 2500
+guest capture shared-blocked
+host capture shared-host-view
+guest run vehicle_seats
+guest expect vehicle_not_riding
+waitlog guest 'partner_ride=board_block; vehicle=256[0-9][0-9]; site=prequery' 5
+host hold w 1500 nowait
+guest burst shared-drive-away 6 200
+host release
+wait 1500
+host press e 150
+wait 2500
+both capture shared-exited
+state
+both debug heal
+both debug godmode 1
+wait 1500
+host debug clear_enemies 100
+wait 1000
+guest debug goto_vehicle jeep
+host debug goto_vehicle jeep
+wait 4000
+guest press e 150
+wait 2500
+guest run vehicle_seats
+guest require vehicle;id=
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=block' 10
+both capture shared-rev-guest-drives
+host press e 150
+wait 2500
+host capture shared-rev-blocked
+guest capture shared-rev-guest-view
+host run vehicle_seats
+host expect vehicle_not_riding
+waitlog host 'partner_ride=board_block; vehicle=256[0-9][0-9]; site=prequery' 5
+guest press e 150
+wait 2500
+both capture shared-rev-exited
+state

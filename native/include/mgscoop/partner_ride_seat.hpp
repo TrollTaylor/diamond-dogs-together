@@ -21,9 +21,10 @@
 // re-checked here before each write (the patched dword itself is masked, so a
 // patched block re-validates for an idempotent revert).
 //
-// Seat 1 caveat (0xB79A3F..0xB79A57): 0xB799C0 maps seat 1 to seat 0 unless
-// word(unit+0x32) & 0xFE00; on an empty receiver copy the front passenger may
-// therefore be drawn in the driver's seat (hidden test T4).
+// Seat 1 caveat (0xB79A3F..0xB79A57): 0xB799C0 maps seat 1 to seat 0 only when
+// rider[1] (word unit+0x32) holds a player id ((word & 0xFE00) == 0); on an
+// empty receiver copy (rider[1] == 0xFFFF) seat 1 is drawn front-right. Nothing
+// here writes rider[] (re-vehicle.md 3.4; the earlier wording had it inverted).
 //
 // Arm only while no DM runs on either body, only in 30010/30020 and only for
 // the seat DM's lifetime; revert once DM End ran (body act != 0x8B), and at

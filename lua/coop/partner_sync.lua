@@ -31,7 +31,7 @@ do
         "stateCBoxIdle", "stateCBoxMove", "stateEludeIdle", "stateClimbIdle", "stateClimbMoveFront", "stateClimbMoveBack",
         "stateClimbIdleR", "stateStandIdleLeft", "stateSquatIdleLeft", "stateCqcDeath", "statePutDown", "stateFultonStart",
         "stateLedgeDrop", "stateCrawlSupineIdle", GMP .. "snapdam/snapdam_s_fre.gani", GMP .. "snapdam/snapdam_p_die_idl.gani",
-        DMP .. "snapnon_s_fal_lp_l.gani"}
+        DMP .. "snapnon_s_fal_lp_l.gani", "stateRideOnIdle", "stateGallop", "stateRideWalkerWalk"}
     local function receipt(source)
         local chunk = loadstring(source)
         if type(chunk) ~= "function" then return nil end
@@ -312,12 +312,17 @@ do
             local kind = ride()
             rideSuffix = " ride=" .. tostring(kind)
             local seatOf, bitsOf = get(e, "MgsCoopPartnerRideSeat"), get(e, "MgsCoopPartnerStatusBits")
-            if (kind == 2 or kind == 3) and type(seatOf) == "function" then
+            if kind == 2 and type(seatOf) == "function" then
                 local vid, seat = seatOf()
                 if integer(vid, 0, 65534) then rideSuffix = rideSuffix .. fmt(" veh=%d seat=%d", vid, integer(seat, 0, 3) and seat or 255) end
             end
             local bits = type(bitsOf) == "function" and bitsOf() or 0
             if integer(bits, 1, 4095) then rideSuffix = rideSuffix .. fmt(" st=0x%x", bits) end
+            local itemOf = get(e, "MgsCoopPartnerActiveItem")
+            if type(itemOf) == "function" then
+                local id = itemOf()
+                if integer(id, 0, 65534) then rideSuffix = rideSuffix .. fmt(" item=%d", id) end
+            end
         end
         local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg, sv, ss, sa, se = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d %d %d",
             frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
@@ -383,6 +388,10 @@ do
         if op % 512 >= 256 and call(api.dmStop, "Player.RequestToStopDirectMotion") then note("event=dm_stop") end
         -- RIDE_SEAT (512): vehicle id, seat, action and entry follow the gani value.
         if op % 1024 >= 512 then rideSeat(R, sv, ss, sa, se) end
+        -- CBOX (1024) is not applied here. The Lua Player.ChangeEquip binding
+        -- (0x9D0D60) ignores playerIndex and passes the local index [P+0x214]
+        -- in R8D, so it boxed the viewer's own player (0.13.3). The box apply
+        -- for body 1 belongs in the native equipment writer behind a lab key.
         if op % 2 == 1 and finite(px) and finite(py) and finite(pz) and finite(pry) then
             call(api.sendCommand, "GameObject.SendCommand", {type = "TppPlayer2", index = R},
                 {id = "Warp", pos = {px / 1000, py / 1000, pz / 1000}, rotY = pry / 1000})

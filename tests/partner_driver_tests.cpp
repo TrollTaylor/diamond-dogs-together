@@ -178,6 +178,7 @@ struct Fake {
     // Input frame v5 negotiation: the peer was seen sending v5 (partner_net::PeerSendsInputV5).
     bool peer_v5 = true;
     bool peer_v6 = false;
+    bool peer_v7 = false;
     // The seated vehicle rider's dwords (partner_ride_seat).
     unsigned seat_arms = 0, seat_reverts = 0;
     bool seat_arm_ok = true;
@@ -191,6 +192,19 @@ struct Fake {
     std::vector<std::string> seat_target_order;  // "dm_live" when the target ran while the DM played
     const char* seat_target_result = nullptr;
     bool seat_target_named = false;
+    // F3 traversal icon: the census the hook returns and its calls.
+    mgscoop::partner_icon::Census icon_census{};
+    unsigned icon_census_calls = 0;
+    std::uintptr_t icon_census_blk[2] = {0, 0};
+    // Gestures (docs/native-puppet.md "Gestures"): both ids' upper act byte, the
+    // hook install, the published commands and the receipts the next step returns.
+    std::uint8_t upper[2]{};
+    bool upper_ok = true;
+    unsigned upper_reads = 0;
+    const char* gesture_install_result = nullptr;
+    unsigned gesture_installs = 0;
+    std::vector<mgscoop::partner_gesture::Command> gesture_commands;
+    mgscoop::partner_gesture::Status gesture_status{};
 
     Fake() {
         Ready();
@@ -514,6 +528,13 @@ bool HookReadLookSource(void* context, const pp::State&, pp::LookSource& out) no
     return F(context).look_source_ok;
 }
 std::uint32_t HookWindowSeq(void* context) noexcept { return F(context).window_seq; }
+void HookIconCensus(void* context, const pp::InputTargets& targets, mgscoop::partner_icon::Census& out) noexcept {
+    auto& f = F(context);
+    ++f.icon_census_calls;
+    f.icon_census_blk[0] = targets.blk0;
+    f.icon_census_blk[1] = targets.blk1;
+    out = f.icon_census;
+}
 bool HookReadRates(void* context, const pp::State&, std::uint32_t index, pp::RateRead& out) noexcept {
     if (index < 2) ++F(context).rates_reads[index];
     out = index < 2 ? F(context).rates[index] : pp::RateRead{};
@@ -597,6 +618,29 @@ bool HookEquipType(void* context, std::uint32_t equip, std::uint8_t& type) noexc
 }
 bool HookPeerInputV5(void* context) noexcept { return F(context).peer_v5; }
 bool HookPeerInputV6(void* context) noexcept { return F(context).peer_v6; }
+bool HookPeerInputV7(void* context) noexcept { return F(context).peer_v7; }
+bool HookReadUpper(void* context, const pp::State&, std::uint8_t (&out)[2]) noexcept {
+    Fake& f = F(context);
+    ++f.upper_reads;
+    out[0] = f.upper[0];
+    out[1] = f.upper[1];
+    return f.upper_ok;
+}
+const char* HookGestureInstall(void* context) noexcept {
+    ++F(context).gesture_installs;
+    return F(context).gesture_install_result;
+}
+void HookGestureStep(void* context, const mgscoop::partner_gesture::Command& command, mgscoop::partner_gesture::Status& out) noexcept {
+    Fake& f = F(context);
+    f.gesture_commands.push_back(command);
+    out = f.gesture_status;
+    f.gesture_status.count = 0;  // receipts are delivered once
+}
+void AddGestureHooks(pd::Hooks& h) {
+    h.read_upper = HookReadUpper;
+    h.gesture_install = HookGestureInstall;
+    h.gesture_step = HookGestureStep;
+}
 void AddWeaponHooks(pd::Hooks& h) {
     h.read_slots = HookReadSlots;
     h.equip_type = HookEquipType;
@@ -661,6 +705,8 @@ struct Session {
     int stance = 0, move = 0;
     std::vector<int> played;
     unsigned both_dm_ops = 0;
+    // F1 vehicles: an optional local ride suffix (" ride=2 veh=.. seat=..") every tick carries.
+    std::string ride_suffix;
 
     explicit Session(std::uint32_t stage, mgscoop::PartnerApply apply = mgscoop::PartnerApply::warp,
                      mgscoop::PartnerSource source = mgscoop::PartnerSource::fixed,
@@ -678,7 +724,8 @@ struct Session {
     // One frame: advances the clock, returns whether the tick was replied.
     bool Tick(int luaflags, std::uint64_t step_ms = 33, bool terminating = false) {
         now += step_ms;
-        const std::string source = TickSource(++frame, luaflags, 1000, 2000, 3000, 4500, 0, stance, move);
+        const std::string source = TickSource(++frame, luaflags, 1000, 2000, 3000, 4500, 0, stance, move) +
+                                   (ride_suffix.empty() ? std::string() : " 0 0" + ride_suffix);
         reply = partner::Reply{};
         const bool replied = pd::Tick(driver, hooks, lab, source.data(), source.size(), pd::Clock{now, now + 5000}, terminating, reply);
         if (replied && (reply.op & op::dm_play)) played.push_back(reply.gani);
@@ -1198,6 +1245,66 @@ void TestRideVisibility() {
     rw::Packet out{};
     for (const auto& item : sender.fake.reliable_sent) if (rw::IsRide(item.data(),item.size())) rw::Decode(item.data(),item.size(),out);
     Check(out.kind==rw::Kind::foot && out.revision==2,"foot packet has next nonzero revision");
+}
+
+// partner_native_mount=hide (docs/mounts.md): the sender reports a D-Walker rider on foot (no ON_* status
+// for act 125), so only the remote's act can hide it. Off keeps today's on-foot drawing.
+void TestMountVisibility() {
+    for (const bool on : {false, true}) {
+        Session s(3,mgscoop::PartnerApply::warp,mgscoop::PartnerSource::net,30050);
+        AddNativeHooks(s.hooks); s.driver.settings.nride=mgscoop::PartnerNativeRide::hide;
+        s.driver.settings.nmount=on ? mgscoop::PartnerNativeMount::hide : mgscoop::PartnerNativeMount::off;
+        auto& sample=s.fake.sample;
+        sample.valid=sample.time_valid=sample.anim_valid=true; sample.status=mgscoop::pose::Status::live;
+        sample.act=125; sample.x=1; sample.y=2; sample.z=3; sample.sender_ms=1000;
+        if (!on) {
+            Check(s.Tick(1) && !s.driver.mission.visibility.hidden && (s.reply.op & op::warp) && s.fake.Containing("partner_mount=")==0,
+                  "mount off: a D-Walker act without a ride kind is drawn like a foot sample (today)");
+            continue;
+        }
+        // The cleared bits alone leave instance 1 drawn (hidden runs b264ad58 / 251abcef): while Lua reports all-active
+        // mode the hidden reply carries CLEAR_ALLACTIVE, one partner_mount=unrealize line per episode.
+        Check(s.Tick(1) && s.driver.mission.visibility.hidden && s.reply.op==op::clear_all_active && s.fake.Writes("slot")==0 &&
+                  s.fake.Containing("partner_mount=hide; mount=walker; act=125; kind=0; ride_live=0; episode=1")==1 &&
+                  s.fake.Containing("partner_mount=unrealize; mount=walker; act=125; episode=1; op=clear_allactive")==1 &&
+                  s.fake.Containing("partner_ride=hide; reason=ride; act=125")==1,
+              "mount hide: the D-Walker act hides body 1 as a ride and asks Lua to unrealize it, one line each");
+        sample.sender_ms=1100; sample.act=126;
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.reply.op==op::clear_all_active &&
+                  s.fake.Containing("partner_mount=")==2,
+              "the same episode across walker acts logs nothing more (CLEAR repeats while Lua reports all-active)");
+        sample.sender_ms=1150;
+        Check(s.Tick(0,50) && s.driver.mission.visibility.hidden && s.reply.op==0 && s.fake.Containing("partner_mount=")==2,
+              "Lua reports all-active off: nothing more to clear");
+        sample.anim_valid=false; sample.sender_ms=1200;
+        Check(s.Tick(1,50) && s.driver.mission.visibility.hidden && s.reply.op==op::clear_all_active && s.fake.Containing("partner_mount=")==2,
+              "a missing act sample neither shows the body nor ends the episode");
+        sample.anim_valid=true; sample.act=1; sample.sender_ms=2000;
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.reply.op==0 &&
+                  s.fake.Containing("partner_mount=end; mount=walker; act=1; ms=")==1,
+              "a valid foot act ends the episode (no CLEAR after it); the body waits for the stable-foot proof");
+        for (unsigned i=1;i<=5;++i) { sample.sender_ms=2000+i*100; Check(s.Tick(1,100) && s.reply.op==0,"mount: stable foot samples"); }
+        Check(!s.driver.mission.visibility.hidden && s.fake.Writes("slot")==1 && s.fake.Containing("partner_mount=")==3,
+              "after 500 ms of calm foot samples body 1 is shown and placed again");
+        sample.sender_ms=2600;
+        Check(s.Tick(0,100) && (s.reply.op & op::set_all_active) && !(s.reply.op & op::clear_all_active),
+              "the show path asks Lua for all-active mode again");
+        sample.act=121; sample.sender_ms=2700;
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=hide; mount=horse; act=121")==1 &&
+                  s.fake.Containing("partner_mount=unrealize; mount=horse; act=121; episode=2")==1 && s.reply.op==op::clear_all_active,
+              "a horse act opens a second episode, unrealized as well");
+    }
+    // The once-per-mission configured line: only with the key on, naming the ride mode it depends on.
+    {
+        Session s(3,mgscoop::PartnerApply::warp,mgscoop::PartnerSource::net,30050);
+        s.lab.partner_native_ride=mgscoop::PartnerNativeRide::hide;
+        pd::Configure(s.driver,s.lab); pd::MissionStart(s.driver,s.hooks,30050);
+        Check(s.fake.Containing("partner_mount=")==0,"mount off: no partner_mount=configured line");
+        s.lab.partner_native_mount=mgscoop::PartnerNativeMount::hide;
+        pd::Configure(s.driver,s.lab); pd::MissionStart(s.driver,s.hooks,30050);
+        Check(s.fake.Containing("partner_mount=configured; mode=hide; ride=hide; acts=121..126")==1,
+              "mount hide: one partner_mount=configured line per mission start");
+    }
 }
 
 void TestFreeRoamRange() {
@@ -3409,6 +3516,141 @@ std::vector<std::uint8_t> CapsBytes(std::uint16_t revision, std::uint32_t epoch,
     return std::vector<std::uint8_t>(b, b + sizeof(b));
 }
 void SetVisualFire(NativeSession& s);
+// F3 (docs/native-puppet.md "Traversal icon"): with partner_native_traverse
+// on, a remote ladder edge next to body 1 raises the icon request in the
+// published Arm (kind, a process-unique id, an expiry) without a gen bump; the
+// hook's grant (its process totals) logs res=ok once, body 1's act follows for
+// 2 s, a request that ends without a grant logs res=none; the read-only census
+// runs once per mission; the key off never requests.
+void TestNativeTraverseIcon() {
+    namespace pn = mgscoop::partner_native;
+    namespace ic = mgscoop::partner_icon;
+    {
+        NativeSession s;
+        s.hooks.icon_census = HookIconCensus;
+        s.fake.input_targets.blk0 = 0x8000;
+        s.fake.input_targets.blk1 = 0x8800;
+        s.fake.icon_census.read = true;
+        s.fake.icon_census.plugins = s.fake.icon_census.distinct = 0x40;
+        s.fake.icon_census.found0 = s.fake.icon_census.found1 = ic::kAllKinds;
+        s.fake.icon_census.blk_ok0 = s.fake.icon_census.blk_ok1 = ic::kAllKinds;
+        s.driver.settings.traverse = true;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true;
+        s.fake.sample.act = 2;
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "icon: native active with traverse on");
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.icon_census_calls == 1 && s.fake.icon_census_blk[0] == 0x8000 && s.fake.icon_census_blk[1] == 0x8800 &&
+                  s.fake.Containing("partner_icon=census; distinct=64/64; blk_ok=0x1e/0x1e; found=0x1e/0x1e; null=0/0; read=1; verdict=ok") == 1,
+              "icon: the census runs once per mission with both blocks");
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0 && s.fake.arms.back().icon_until_ms == 0,
+              "icon: no request while both walk");
+        const std::uint32_t gen = s.fake.arms.back().gen;
+        // The hook's process totals before this request (an earlier mission's latch, long cleared, and other
+        // requests' activity): the result lines carry deltas, and a stale requested-plugin deny never shows.
+        auto& is = s.fake.stats.native.icon;
+        is.viewer_changed = 2; is.faults = 1; is.windows = 40; is.passed = 7; is.force_swallowed = 4; is.restore_mismatch = 1;
+        is.req_queries = 9; is.req_denied = 5; is.req_deny = static_cast<std::uint8_t>(ic::Deny::p_flag);
+        s.fake.sample.act = 21;
+        bool raised = false;
+        for (int i = 0; i < 10 && !raised; ++i) {
+            s.N();
+            raised = s.fake.arms.back().icon_kind != 0;
+        }
+        const auto a = s.fake.arms.back();
+        Check(raised && a.icon_kind == static_cast<std::uint8_t>(ic::Kind::ladder) && a.icon_seq != 0 && a.icon_until_ms > 0 &&
+                  a.gen == gen && a.enabled && a.native,
+              "icon: a remote ladder edge next to body 1 raises the ladder request (no gen bump)");
+        Check(s.fake.Containing("partner_traverse=start; reason=near;") == 1, "icon: start near logged");
+        const std::uint32_t seq = a.icon_seq;
+        s.N();
+        Check(s.fake.arms.back().icon_seq == seq && s.fake.arms.back().icon_kind == a.icon_kind, "icon: the same request id while it waits");
+        Check(s.fake.Containing("partner_traverse=request; reason=ladder;") == 1, "icon: the request event");
+        // One tick with a body act outside the ladder's sources (8, a running step) drops the level inside the
+        // request phase: the request stays open (no result line), and the same id comes back.
+        is.queries += 2; is.denied += 2; is.swaps += 1;  // hook activity before the drop (part of this request's deltas)
+        s.fake.anim.act[1] = 8;
+        s.N();
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0 && s.fake.Containing("partner_traverse=icon; ") == 0,
+              "icon: a non-source tick drops the level without a result line");
+        s.fake.anim.act[1] = 2;
+        s.N();
+        Check(s.fake.arms.back().icon_seq == seq && s.fake.arms.back().icon_kind == a.icon_kind && s.fake.Containing("partner_traverse=icon; ") == 0,
+              "icon: the same request id after the drop");
+        // The hook grants (process totals in the drained stats).
+        is.ready = true;
+        is.queries += 4; is.exec_ok += 1; is.granted += 1; is.swaps += 2; is.granted_seq = seq; is.last_kind = 1;
+        is.windows += 3; is.passed += 1; is.force_swallowed += 1; is.req_queries += 1;
+        is.last_deny = static_cast<std::uint8_t>(ic::Deny::kind);  // another body-1 poll's refusal
+        s.N();
+        char want[384];
+        std::snprintf(want, sizeof(want),
+                      "partner_traverse=icon; plugin=ladder; res=ok; seq=%u; exec_ok=1; exec_fail=0; granted=1; queries=6; denied=2; swaps=3; "
+                      "swap_refused=0; windows=3; passed=1; force_swallowed=1; req_queries=1; req_denied=0; deny=none; latched=0; "
+                      "viewer_changed=0; faults=0; restore_mismatch=0\r\n",
+                      seq);
+        Check(s.fake.Containing(want) == 1, "icon: res=ok logged once with the deltas (the drop did not restart them)");
+        Check(s.fake.Containing("deny=p_flag") == 0 && s.fake.Containing("deny=kind") == 0,
+              "icon: neither a stale requested-plugin deny nor another poll's deny is logged");
+        s.fake.anim.act[1] = 21;
+        s.N();
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0, "icon: body 1 on the ladder, the request drops");
+        Check(s.fake.Containing("partner_traverse=entered; reason=request;") == 1, "icon: entered through the request");
+        std::snprintf(want, sizeof(want), "partner_traverse=icon_act; seq=%u; act=21;", seq);
+        Check(s.fake.Containing(want) == 1, "icon: body 1's act after the grant");
+        for (int i = 0; i < 70; ++i) s.N();
+        std::snprintf(want, sizeof(want), "partner_traverse=icon_act; seq=%u; act=21; ms=", seq);
+        Check(s.fake.Containing(want) == 2 && s.fake.Containing("final=1") == 1, "icon: the 2 s act window closes");
+        Check(s.fake.Containing("res=ok") == 1 && s.fake.Containing("res=none") == 0, "icon: one result line");
+        // A second request without a grant: res=none when it ends (entry timeout).
+        s.fake.anim.act[1] = 2;
+        s.fake.sample.act = 2;
+        for (int i = 0; i < 120; ++i) s.N();
+        s.fake.sample.act = 24;
+        raised = false;
+        for (int i = 0; i < 10 && !raised; ++i) {
+            s.N();
+            raised = s.fake.arms.back().icon_kind != 0;
+        }
+        Check(raised && s.fake.arms.back().icon_kind == static_cast<std::uint8_t>(ic::Kind::step_on) && s.fake.arms.back().icon_seq == seq + 1,
+              "icon: the next episode gets the next id (step-on)");
+        // The step-on plugin's Exec refuses three times; body 1's other polls (kind / kt refusals) run last.
+        is.queries += 9; is.exec_fail += 3; is.denied += 9; is.req_queries += 3; is.req_denied += 3;
+        is.req_deny = static_cast<std::uint8_t>(ic::Deny::exec);
+        is.last_deny = static_cast<std::uint8_t>(ic::Deny::kind);
+        for (int i = 0; i < 60; ++i) s.N();
+        std::snprintf(want, sizeof(want), "partner_traverse=icon; plugin=step_on; res=none; seq=%u; exec_ok=0; exec_fail=3; granted=0;", seq + 1);
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.Containing(want) == 1 && s.fake.Containing("deny=exec") == 1 &&
+                  s.fake.Containing("req_queries=3; req_denied=3; deny=exec; latched=0; viewer_changed=0; faults=0;") == 1,
+              "icon: no entry within entry_ms: the request drops, res=none with the deltas and the requested plugin's deny");
+        Check(s.fake.Containing("partner_traverse=abort; reason=no_entry;") == 1, "icon: the episode aborts");
+        Check(s.fake.icon_census_calls == 1, "icon: still one census this mission");
+    }
+    {
+        // The key off: the same edge never requests, no census.
+        NativeSession s;
+        s.hooks.icon_census = HookIconCensus;
+        s.fake.input_targets.blk0 = 0x8000;
+        s.fake.input_targets.blk1 = 0x8800;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true;
+        s.fake.sample.act = 2;
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "icon off: native active");
+        for (int i = 0; i < 20; ++i) s.N();
+        s.fake.sample.act = 21;
+        bool raised = false;
+        for (int i = 0; i < 20; ++i) {
+            s.N();
+            raised = raised || s.fake.arms.back().icon_kind != 0;
+        }
+        Check(!raised && s.fake.icon_census_calls == 0 && s.fake.Containing("partner_traverse=") == 0 &&
+                  s.fake.Containing("partner_icon=") == 0,
+              "icon off: no request, no census, no lines");
+    }
+}
+
 void TestNativeOnline() {
     namespace pn = mgscoop::partner_native;
     namespace pnn = mgscoop::partner_native_net;
@@ -3592,8 +3834,10 @@ void TestNativeEnterAndLeave() {
     Check(s.fake.Containing("partner_native=enter; step=place") == 1 && s.fake.Containing("partner_native=enter; step=armed") == 1,
           "every enter step logged once");
     const auto& arm = s.fake.arms.back();
-    Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == 0x2240026u &&
-          arm.config.sample_strip == 0x20u &&
+    // traverse off (this session sets the driver settings directly and leaves it off; lab_config resolves the key on
+    // with the gun profile): no ACTION in the mask or the sample strip.
+    Check(!s.driver.settings.traverse && arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net &&
+          arm.config.mask == 0x2240006u && arm.config.sample_strip == 0u &&
           arm.wrap == mgscoop::PartnerWrap::window && arm.hold == mgscoop::PartnerInputHold::own && arm.go == 0x1000 - 0x20 &&
           !arm.local_all && arm.naim == mgscoop::PartnerNativeAim::off && !arm.p218, "the native Arm (effective settings)");
     // Publication order: identity -> deferral armed -> enabled native Arm (run
@@ -3617,6 +3861,47 @@ void TestNativeEnterAndLeave() {
         for (int i = 0; i < 10; ++i) s.N();
         Check(s.fake.arms.back().enabled && s.fake.arms.back().gen == gen, "steering changes never bump the Arm gen");
         s.fake.sample.x = 1.0f;
+    }
+    // partner_native_traverse=1 (the gun profile's default, lab and play): ACTION joins the mask (kept for a later in-traversal ACTION replay; since
+    // 0.13.5 no replay step taps it) and the sample strip (the remote's raw E never passes); off again restores the Arm.
+    {
+        s.driver.settings.traverse = true;
+        s.N();
+        const auto& on = s.fake.arms.back();
+        Check(on.enabled && on.native && on.config.mask == (0x2240006u | 0x20u) && on.config.sample_strip == 0x20u,
+              "traverse on: ACTION in the mask and the sample strip");
+        s.driver.settings.traverse = false;
+        s.N();
+        Check(s.fake.arms.back().config.mask == 0x2240006u && s.fake.arms.back().config.sample_strip == 0u,
+              "traverse off: no ACTION again");
+    }
+    // F2 (partner_native_cbox=1, lab only): body 1 boxed (77/78) for the remote's box holds the
+    // reconciliation's far / vertical / runaway placements (one partner_cbox=hold line per edge);
+    // leaving the box releases it; with the key off nothing changes.
+    {
+        const bool anim_ok = s.fake.anim_ok;
+        const std::uint16_t act1 = s.fake.anim.act[1];
+        s.driver.settings.cbox = true;
+        s.driver.mission.cbox_want = true;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 77;
+        s.N();
+        Check(s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold; on=1; body_act=77; want=1;") == 1,
+              "cbox on: body 1 in the box holds the placements");
+        s.fake.anim.act[1] = 78;
+        s.N();
+        Check(s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold;") == 1, "the moving box (78) keeps the hold, no new line");
+        s.fake.anim.act[1] = 3;
+        s.N();
+        Check(!s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold; on=0; body_act=3;") == 1, "out of the box: released");
+        s.driver.settings.cbox = false;
+        s.fake.anim.act[1] = 77;
+        s.N();
+        Check(!s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold;") == 2, "key off: no hold");
+        s.driver.mission.cbox_want = false;
+        s.fake.anim_ok = anim_ok;
+        s.fake.anim.act[1] = act1;
+        s.N();
     }
     // Telemetry for the worker state.json.
     const auto& tele = s.driver.mission.tele;
@@ -3924,6 +4209,50 @@ void TestNativeGunDirectionWire() {
     Check(s.fake.aim_pubs.back().valid &&
               s.fake.aim_pubs.back().src == static_cast<std::uint8_t>(mgscoop::partner_aim::Source::look),
           "v6 receiver: direction refusal clears the prior point target and uses look");
+}
+// WS4 v2: input frame v7 carries the local player's C4 place word (rec+0x3CC bits 18..23) while its C4 is in
+// the place family, only once the peer sent v7 (plus bounded probes to a v6 peer); a gun or a non-family
+// mode sends the flag clear.
+void TestNativeC4PlaceWire() {
+    namespace pi = mgscoop::partner_input;
+    NativeSession s;
+    s.hooks.peer_input_v6 = HookPeerInputV6;
+    s.hooks.peer_input_v7 = HookPeerInputV7;
+    AddWeaponHooks(s.hooks);
+    s.driver.settings.ngun = true;
+    s.fake.peer_v6 = true;
+    Check(s.Until(mgscoop::partner_native::Mode::active, 9000), "v7 sender: native active");
+    // The local player places C4 395 (class 3) in mode 46 with the census word 0x1500060.
+    s.fake.gun0_ok = true; s.fake.gun0.fields_ok = true;
+    s.fake.gun0.fields.flags27c = 3u << 6; s.fake.gun0.fields.equip = 395;
+    s.fake.gun0.gun3c0 = (1u << 18) | 4u; s.fake.gun0.mode_cur = 46; s.fake.gun0.gun3cc = 0x1500060u;
+    s.fake.inputs.clear();
+    const auto probes = s.driver.mission.v7_probes;
+    for (unsigned n = 0; n < 30; ++n) s.N();
+    unsigned v6 = 0, v7 = 0;
+    for (const auto& in : s.fake.inputs) { if (in.version == 6) ++v6; if (in.version == 7) ++v7; }
+    Check(v6 > 0 && v7 <= 1 && s.driver.mission.v7_probes <= probes + 1, "v7 unknown peer: v6 frames with bounded probes");
+    s.fake.peer_v7 = true; s.fake.inputs.clear();
+    s.N();
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 7 && s.driver.mission.v7_peer_logged,
+          "v7 negotiated peer sends v7 and records capability once");
+    const auto sent = s.fake.inputs.back();
+    Check((sent.gun_flags & pi::GunFlag::Place) && sent.place_bits == 0x14 && sent.gun_mode == 46 && pi::ValidPacket(sent),
+          "v7 sender: the C4 place word (bits 18..23) with GunFlag::Place");
+    s.fake.gun0.mode_cur = 47; s.fake.gun0.gun3cc = 0x1410060u; s.N();
+    Check((s.fake.inputs.back().gun_flags & pi::GunFlag::Place) && s.fake.inputs.back().gun_mode == 47 &&
+              s.fake.inputs.back().place_bits == 0x10,
+          "v7 sender: the detonate mode carries the word too");
+    s.fake.gun0.mode_cur = 7; s.N();
+    Check(s.fake.inputs.back().version == 7 && !(s.fake.inputs.back().gun_flags & pi::GunFlag::Place) && s.fake.inputs.back().place_bits == 0,
+          "v7 sender: no place word outside the place family");
+    s.fake.gun0.mode_cur = 46; s.fake.gun0.fields.equip = 46; s.fake.gun0.fields.flags27c = 1u << 6; s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::Place) && s.fake.inputs.back().place_bits == 0,
+          "v7 sender: a gun is never a C4 place word");
+    s.fake.gun0.fields.equip = 395; s.fake.gun0.fields.flags27c = 2u << 6; s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::Place), "v7 sender: only class 3 sends the word");
+    s.hooks.peer_input_v7 = nullptr; s.fake.gun0.fields.flags27c = 3u << 6; s.N();
+    Check(s.fake.inputs.back().version == 6, "no v7 hook: v6 frames only");
 }
 void TestNativeAim() {
     namespace pn = mgscoop::partner_native;
@@ -4457,6 +4786,22 @@ void TestNativeWeapons() {
               ew::Decode(s.fake.reliable_sent[2].data(), s.fake.reliable_sent[2].size(), 8, m) == ew::Result::ok && m.revision == 2 &&
               m.slots[1].alias == 875, "a changed loadout gets revision 2");
         Check(s.fake.inputs.back().equip_rev == 2, "the v4 frame names the manifest revision");
+        // The local cardboard box (st= cbox, item=): resent at once under the same revision, so the
+        // receiver's gun writer (keyed on the revision and the slots) is not re-driven by a box toggle.
+        s.driver.mission.status_bits = mgscoop::partner::status_bit::cbox;
+        s.driver.mission.active_item = 0x1D4;
+        s.N();
+        Check(s.fake.reliable_sent.size() == 4 &&
+                  ew::Decode(s.fake.reliable_sent[3].data(), s.fake.reliable_sent[3].size(), 8, m) == ew::Result::ok && m.revision == 2 &&
+                  m.cbox_active && m.active_item_id == 0x1D4 && m.slots[1].alias == 875,
+              "a box toggle: resent under the same revision");
+        s.driver.mission.status_bits = 0;
+        s.driver.mission.active_item = 0;
+        s.N();
+        Check(s.fake.reliable_sent.size() == 5 &&
+                  ew::Decode(s.fake.reliable_sent[4].data(), s.fake.reliable_sent[4].size(), 8, m) == ew::Result::ok && m.revision == 2 &&
+                  !m.cbox_active && m.active_item_id == 0,
+              "box off: resent under the same revision");
         // The receiver's verdict for the back slot.
         s.fake.gun_ok = true;
         s.fake.gun.fields_ok = true;
@@ -4479,6 +4824,46 @@ void TestNativeWeapons() {
         s.N();
         Check(s.fake.Has("partner_equip=apply; rev=5; slot=1; want=40; loaded=0; result=no_weapon; writer=stock46\r\n"),
               "apply: re-judged when the loaded equip changes");
+        // The remote's cardboard box (same revision, box fields only): logged as transport only; the gun
+        // verdict is not re-run, the slot types stand and no reply carries op::cbox (no Lua apply).
+        const std::size_t applies = s.fake.Containing("partner_equip=apply;");
+        const std::size_t manifests = s.fake.Containing("partner_equip=manifest;");
+        rx.cbox_active = true; rx.active_item_id = 0x1C8;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        bool cbox_op = false;
+        for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
+        Check(s.driver.mission.equip.manifest.cbox_active && s.driver.mission.equip.manifest.revision == 5 &&
+                  s.fake.Containing("partner_equip=apply;") == applies && s.fake.Containing("partner_equip=manifest;") == manifests &&
+                  s.fake.Has("partner_cbox=remote; id=456; active=1; apply=off; seq=1\r\n") && !cbox_op &&
+                  s.driver.mission.cbox_want && s.driver.mission.cbox_id == 456 && s.driver.mission.cbox_seq == 1,
+              "a box toggle: logged, no gun re-apply, no op::cbox");
+        rx.cbox_active = false; rx.active_item_id = 0;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box-off manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
+        Check(!s.driver.mission.equip.manifest.cbox_active && s.fake.Containing("partner_equip=apply;") == applies &&
+                  s.fake.Has("partner_cbox=remote; id=456; active=0; apply=off; seq=2\r\n") && !cbox_op &&
+                  !s.driver.mission.cbox_want && s.driver.mission.cbox_seq == 2 && s.driver.mission.cbox_off_ms != 0,
+              "box off: logged, no gun re-apply, no op::cbox");
+        // F2 (partner_native_cbox=1, lab only): the same edges say apply=native and count on (the
+        // equipment observer's partner_cbox_equip reads cbox_want / cbox_id / cbox_seq); still no op::cbox.
+        s.driver.settings.cbox = true;
+        rx.cbox_active = true; rx.active_item_id = 472;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box 472 manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
+        Check(s.fake.Has("partner_cbox=remote; id=472; active=1; apply=native; seq=3\r\n") && !cbox_op &&
+                  s.driver.mission.cbox_want && s.driver.mission.cbox_id == 472 && s.driver.mission.cbox_seq == 3 &&
+                  s.fake.Containing("partner_equip=apply;") == applies,
+              "key on: apply=native, the edge counted, no op::cbox, no gun re-apply");
+        rx.active_item_id = 466;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box 466 manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        for (int i = 0; i < 6; ++i) s.N();
+        Check(s.fake.Has("partner_cbox=remote; id=466; active=1; apply=native; seq=4\r\n") && s.driver.mission.cbox_id == 466,
+              "a different box id while boxed is a new edge");
+        s.driver.settings.cbox = false;
     }
 }
 
@@ -4679,7 +5064,7 @@ void TestNativeReloadSwitch() {
     Check(s.fake.inputs.back().switch_seq == 1 && s.fake.inputs.back().inv_slot == 2, "v5 sender: a slot change advances switch_seq");
     // The Arm: event mode, the remote's raw RELOAD stripped from its sample (live v5), the plan's slots.
     const pi::Arm& a0 = s.fake.arms.back();
-    Check(a0.reload == mgscoop::PartnerNativeReload::event && !a0.reload_hold && a0.config.sample_strip == 0x60u &&
+    Check(a0.reload == mgscoop::PartnerNativeReload::event && !a0.reload_hold && a0.config.sample_strip == 0x40u &&
               a0.slot_follow == mgscoop::PartnerNativeSlot::write && a0.slot_ok == 0 && a0.strip == 0,
           "Arm: reload event, sample strip RELOAD, follower write (no manifest yet: no admitted slot)");
     // The receiver: the remote enters its reload (counter 4 -> 5, mode 11): one RELOAD tap.
@@ -4838,7 +5223,7 @@ void TestNativeReloadSwitch() {
     s.driver.settings.nreload = mgscoop::PartnerNativeReload::mirror;
     s.N();
     Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::write && s.fake.arms.back().reload == mgscoop::PartnerNativeReload::mirror &&
-              s.fake.arms.back().config.sample_strip == 0x20u, "play: call runs as write; mirror: kAction sample strip");
+              s.fake.arms.back().config.sample_strip == 0u, "play: call runs as write; mirror: no sample strip");
     s.driver.settings.play_mode = false;
     s.N();
     Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::call, "lab: the call variant reaches the Arm");
@@ -4850,7 +5235,7 @@ void TestNativeReloadSwitch() {
     s.fake.latest.packet.reload_seq = 0;
     s.fake.latest.packet.inv_slot = 0xFF;
     s.N();
-    Check(s.fake.arms.back().config.sample_strip == 0x20u && !s.driver.mission.tele.reload_remote_valid,
+    Check(s.fake.arms.back().config.sample_strip == 0u && !s.driver.mission.tele.reload_remote_valid,
           "a v4 remote: its raw R still reaches body 1");
     // The ring carries body 1's gun mode and hand slot.
     const auto& e = pn::At(s.driver.mission.tele.ring, s.driver.mission.tele.ring.count - 1);
@@ -5025,7 +5410,7 @@ void TestNativeActionsWithWeapons() {
     s.fake.latest.packet.mag_cap = 30;
     s.N();
     const pi::Arm& arm = s.fake.arms.back();
-    Check(arm.enabled && arm.native && arm.config.mask == 0x224007Eu, "together: the native Arm's mask is ACTION | EVADE | HOLD | RELOAD | FIRE (0x224007E)");
+    Check(arm.enabled && arm.native && arm.config.mask == 0x224005Eu, "together: the native Arm's mask is EVADE | HOLD | RELOAD | FIRE (0x224005E; traverse off)");
     Check(arm.rates_mirror && arm.rates_rec == 0xA188 && arm.rates_id == 1 && arm.rates_remote[0] == 1100 && arm.rates_remote[1] == 900 &&
               arm.rates_remote[2] == 1500 && arm.mag_mirror && arm.gun_rec == 0x9100 && arm.gun_prim == 0x9000,
           "together: one Arm requests the rates mirror and the magazine mirror");
@@ -5493,6 +5878,497 @@ void TestRideExtAndCensus() {
     k.driver.settings.play_mode = true;
     const auto lines = k.fake.Containing("partner_ride_census;");
     Check(ktick(" ride=2 veh=25600 seat=0", 1100) && k.fake.Containing("partner_ride_census;") == lines, "never in play");
+}
+
+// --- F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board hook's driver side
+// (install, policy, counters, the local passenger report, the surprise latch) and the
+// receiver's seat gates (the viewer's own vehicle, shared_seat, the far latch).
+struct BoardFake {
+    unsigned installs = 0;
+    const char* install_result = nullptr;
+    bool live = true;
+    std::vector<std::uint64_t> published;
+    mgscoop::partner_board::Stats stats{};
+    mgscoop::partner_board::LocalPassenger lp{};
+    unsigned lp_reads = 0;
+};
+BoardFake g_board;
+const char* HookBoardInstall(void*) noexcept { ++g_board.installs; return g_board.install_result; }
+bool HookBoardLive(void*) noexcept { return g_board.live; }
+void HookBoardPublish(void*, std::uint64_t word) noexcept { g_board.published.push_back(word); }
+void HookBoardStats(void*, mgscoop::partner_board::Stats& out) noexcept { out = g_board.stats; }
+bool HookLocalPassenger(void*, const pp::State&, mgscoop::partner_board::LocalPassenger& out) noexcept {
+    ++g_board.lp_reads;
+    out = g_board.lp;
+    return true;
+}
+void AddBoardHooks(pd::Hooks& h) {
+    g_board = BoardFake{};
+    h.board_install = HookBoardInstall;
+    h.board_live = HookBoardLive;
+    h.board_publish = HookBoardPublish;
+    h.board_stats = HookBoardStats;
+    h.local_passenger = HookLocalPassenger;
+}
+void BoardSetup(Session& s, mgscoop::PartnerRideBoard mode) {
+    AddNativeHooks(s.hooks);
+    s.hooks.send_reliable_append = HookSendReliable;
+    AddBoardHooks(s.hooks);
+    s.driver.settings.ride_board = mode;
+}
+mgscoop::partner_board::LocalPassenger BoardPassenger(std::uint16_t vehicle, std::uint8_t seat) {
+    mgscoop::partner_board::LocalPassenger lp{};
+    lp.valid = true; lp.vehicle = vehicle; lp.seat = seat; lp.via = 1; lp.reason = "ok";
+    return lp;
+}
+std::uint64_t BoardLast() { return g_board.published.empty() ? 0 : g_board.published.back(); }
+void BoardRide(Session& s, std::uint16_t& rev, mgscoop::partner_ride_wire::Kind kind, std::uint8_t seat, std::uint16_t vehicle) {
+    namespace rw = mgscoop::partner_ride_wire;
+    rw::Packet p{kind, ++rev, static_cast<std::uint32_t>(s.now)};
+    p.seat = seat; p.vehicle = vehicle;
+    std::uint8_t bytes[rw::kSize]{};
+    Check(rw::Encode(p, bytes), "board ride encodes");
+    s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+}
+mgscoop::partner_ride_wire::Packet BoardSent(const Session& s) {
+    namespace rw = mgscoop::partner_ride_wire;
+    rw::Packet out{};
+    for (const auto& item : s.fake.reliable_sent)
+        if (rw::IsRide(item.data(), item.size())) rw::Decode(item.data(), item.size(), out);
+    return out;
+}
+
+void TestBoardDriver() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    {
+        // Key off (the default): nothing installed, read, published or logged.
+        Session s(0);
+        Check(s.driver.settings.ride_board == PartnerRideBoard::off, "the driver's default: board off");
+        BoardSetup(s, PartnerRideBoard::off);
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        s.ride_suffix = " ride=0";
+        for (int i = 0; i < 5; ++i) Check(s.Tick(0), "off ticks");
+        Check(g_board.installs == 0 && g_board.lp_reads == 0 && s.fake.Containing("partner_ride=board") == 0 &&
+                  s.fake.Containing("partner_ride=local_passenger") == 0 && BoardLast() == 0,
+              "key off: no install, no report, no policy, no line");
+    }
+    {
+        // Block: one install per process, the policy for the peer's live vehicle ride, the counters
+        // (mission-relative, at most once a second per site), a lost patch latches uncertain.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0) && g_board.installs == 1 &&
+                  s.fake.Containing("partner_ride=board_install; mode=block; result=ok; reason=none") == 1,
+              "installed on the first tick");
+        Check(s.fake.Containing("partner_ride=board_policy; vehicle=65535; seat=255; mode=off; uncertain=none") == 1 && BoardLast() == 0,
+              "no ride: no policy");
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        Check(s.Tick(0) && g_board.installs == 1, "installed once");
+        const pb::Policy p = pb::Unpack(BoardLast());
+        Check(p.mode == pb::Mode::block && p.vehicle == 25603 && p.peer_seat == 0 &&
+                  p.until_ms == static_cast<std::uint32_t>(s.driver.ride_rx.received_ms + pb::kLeaseMs),
+              "block policy for the peer's vehicle, the lease from its arrival");
+        Check(s.fake.Containing("partner_ride=board_policy; vehicle=25603; seat=0; mode=block; uncertain=none") == 1, "the policy line");
+        Check(g_board.lp_reads == 0 && BoardSent(s).kind == rw::Kind::foot, "block: no passenger report, Lua's foot goes out");
+        g_board.stats.block[0] = 5; g_board.stats.last_vehicle = 25603; g_board.stats.last_reason = "block";
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery; n=5; mode=block; reason=block;") == 1,
+              "the pre-query block line");
+        g_board.stats.block[0] = 9;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery;") == 1, "rate limited");
+        Check(s.Tick(0, 1000) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery; n=9;") == 1,
+              "the next second logs the total");
+        g_board.stats.block[1] = 1;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=phase1; n=1;") == 1, "the phase-1 backstop line");
+        BoardRide(s, rev, rw::Kind::foot, 0xFF, 0xFFFF);
+        Check(s.Tick(0) && BoardLast() == 0 && s.fake.Containing("partner_ride=board_policy; vehicle=65535; seat=255; mode=off;") == 2,
+              "the peer on foot: withdrawn");
+        // A new mission keeps the process install; the counters restart there.
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(BoardLast() == 0 && pd::Cfg(s.driver, s.hooks, nullptr, s.now), "mission start withdraws");
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        Check(s.Tick(0) && g_board.installs == 1 && pb::Unpack(BoardLast()).mode == pb::Mode::block, "no second install; the policy again");
+        g_board.stats.block[0] = 12;
+        Check(s.Tick(0, 1000) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery; n=3;") == 1, "mission-relative count");
+        g_board.live = false;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_refused; reason=patch_lost") == 1 &&
+                  s.fake.Containing("partner_ride=board_uncertain; reason=patch_lost;") == 1 && BoardLast() == 0,
+              "a lost patch: refused, uncertain, withdrawn");
+        g_board.live = true;
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).mode == pb::Mode::block, "live again: block");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(BoardLast() == 0, "mission end withdraws");
+    }
+    {
+        // A refused install never publishes; it is tried once.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        g_board.install_result = "bytes";
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0) && s.Tick(0) && g_board.installs == 1 &&
+                  s.fake.Containing("partner_ride=board_install; mode=block; result=refused; reason=bytes") == 1 && BoardLast() == 0,
+              "a refused install never publishes");
+    }
+    {
+        // Passenger: the native report replaces Lua's foot report in the ride sender; local_vehicle
+        // keeps meaning the vehicle the viewer drives.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0) && BoardSent(s).kind == rw::Kind::foot, "on foot");
+        g_board.lp = BoardPassenger(25603, 2);
+        Check(s.Tick(0), "passenger tick");
+        const rw::Packet sent = BoardSent(s);
+        Check(sent.kind == rw::Kind::vehicle && sent.seat == 2 && sent.vehicle == 25603 && sent.version == 2,
+              "the ride goes out as kind=vehicle, seat 2 of 25603");
+        Check(pd::LocalVehicle(s.driver) == 0xFFFF && s.driver.local_passenger.valid, "local_vehicle stays the driven vehicle (none)");
+        Check(s.fake.Containing("partner_ride=local_passenger; vehicle=25603; seat=2; state=on; via=p120") == 1, "the report line");
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=local_passenger;") == 1, "logged on change only");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && BoardSent(s).kind == rw::Kind::foot &&
+                  s.fake.Containing("partner_ride=local_passenger; vehicle=25603; seat=2; state=off; reason=act") == 1,
+              "getting off: Lua's foot again");
+    }
+    {
+        // A steered phase-1 back seat is confirmed by the report; one never seen latches uncertain and
+        // passenger publishes block for the rest of the mission; the ride lease ends the policy.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.ride_suffix = " ride=0";
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).mode == pb::Mode::passenger, "the passenger policy");
+        g_board.stats.steer[1] = 1; g_board.stats.last_seat[1] = 3; g_board.stats.last_vehicle = 25603;
+        g_board.stats.last_type = 1; g_board.stats.last_count = 4;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_passenger; vehicle=25603; seat=3; site=phase1; n=1; type=1; seats=4") == 1,
+              "the steer line");
+        g_board.lp = BoardPassenger(25603, 3);
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_seated; vehicle=25603; seat=3;") == 1 &&
+                  s.fake.Containing("board_uncertain") == 0, "confirmed by the report");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.stats.steer[1] = 2; g_board.stats.last_seat[1] = 2;
+        Check(s.Tick(0) && s.Tick(0, 2000) && s.fake.Containing("board_uncertain") == 0, "inside the confirmation window");
+        Check(s.Tick(0, 1100) && s.fake.Containing("partner_ride=board_uncertain; reason=steer_unconfirmed;") == 1, "never seen: uncertain");
+        Check(pb::Unpack(BoardLast()).mode == pb::Mode::block &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25603; seat=0; mode=block; uncertain=steer_unconfirmed") == 1,
+              "passenger degrades to block for the mission");
+        Check(s.Tick(0, 5100) && BoardLast() == 0, "the ride lease ended: withdrawn");
+    }
+    {
+        // The viewer drives the vehicle the peer drives (two drivers), and a hook fault: uncertain.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "policy");
+        s.ride_suffix = " ride=2 veh=25603 seat=0";
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_uncertain; reason=two_drivers; vehicle=25603; local_vehicle=25603;") == 1,
+              "two drivers: uncertain");
+        Session f(0);
+        BoardSetup(f, PartnerRideBoard::block);
+        f.ride_suffix = " ride=0";
+        Check(f.Tick(0), "first");
+        g_board.stats.faults = 1;
+        Check(f.Tick(0) && f.fake.Containing("partner_ride=board_uncertain; reason=fault;") == 1, "a hook fault: uncertain");
+    }
+    {
+        // The counter lines have their own cap: a long stand at the peer's vehicle (a new pre-query
+        // count every second) never silences the latch lines.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "first");
+        g_board.stats.last_vehicle = 25603; g_board.stats.last_reason = "block";
+        for (unsigned i = 1; i <= pd::kBoardLogCap + 10; ++i) {
+            g_board.stats.block[0] = i;
+            s.Tick(0, 1000);
+        }
+        Check(s.fake.Containing("partner_ride=board_block;") == pd::kBoardLogCap &&
+                  s.fake.Containing("partner_ride=capped; limit=200; kind=board_count") == 1 &&
+                  s.fake.Containing("kind=board\r\n") == 0,
+              "the counter lines stop at their own cap");
+        g_board.live = false;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_refused; reason=patch_lost") == 1 &&
+                  s.fake.Containing("partner_ride=board_uncertain; reason=patch_lost;") == 1,
+              "the latch lines still log after the counter cap");
+    }
+}
+
+// --- F1 passenger camera (docs/native-puppet.md "Passenger camera"): the driver side
+// (passenger mode only; the lazy install, the connect of the reported back seat's vehicle
+// handle every tick, the connect / refused / release lines, the driver's clear, the
+// mission latch, and no write while the mission terminates).
+struct PassCameraFake {
+    unsigned installs = 0;
+    const char* install_result = nullptr;
+    struct Call { std::uint16_t vehicle; bool on; };
+    std::vector<Call> calls;
+    const char* plan = "connect";
+    bool apply = true;  // a set plan shows the handle, a clear empties the field
+    mgscoop::partner_pass_camera::Stats stats{};
+    mgscoop::partner_pass_camera::Camera cam{};
+    unsigned reads = 0;
+};
+PassCameraFake g_pass;
+const char* HookPassInstall(void*) noexcept { ++g_pass.installs; return g_pass.install_result; }
+const char* HookPassConnect(void*, const pp::State&, std::uint16_t vehicle, bool on, mgscoop::partner_pass_camera::Camera& out) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    g_pass.calls.push_back({vehicle, on});
+    const char* reason = g_pass.plan;
+    if (!on) {
+        const pc::Write w = pc::ReleasePlan(g_pass.cam, vehicle, reason);
+        if (w == pc::Write::clear && g_pass.apply) { g_pass.cam.connect = 0; g_pass.cam.on = 0; ++g_pass.stats.clears; }
+    } else if (std::strcmp(reason, "connect") == 0 && g_pass.apply) {
+        g_pass.cam.connect = pc::ConnectHandle(vehicle);
+        g_pass.cam.on = 1;
+        ++g_pass.stats.writes;
+    }
+    out = g_pass.cam;
+    return reason;
+}
+void HookPassStats(void*, mgscoop::partner_pass_camera::Stats& out) noexcept { out = g_pass.stats; }
+bool HookPassRead(void*, const pp::State&, mgscoop::partner_pass_camera::Camera& out) noexcept {
+    ++g_pass.reads;
+    out = g_pass.cam;
+    return out.ok;
+}
+void AddPassCameraHooks(pd::Hooks& h) {
+    g_pass = PassCameraFake{};
+    h.pass_camera_install = HookPassInstall;
+    h.pass_camera_connect = HookPassConnect;
+    h.pass_camera_stats = HookPassStats;
+    h.pass_camera_read = HookPassRead;
+}
+// mode 5 = the fallback module, 3 = the VehicleCamera.
+mgscoop::partner_pass_camera::Camera PassCam(std::uint64_t connect, std::uint32_t on, std::int32_t mode = 5) {
+    mgscoop::partner_pass_camera::Camera k{};
+    k.ok = true; k.connect = connect; k.on = on; k.mode = mode; k.prev = 1; k.vehicle_mode = 3;
+    return k;
+}
+unsigned PassConnects() {
+    unsigned n = 0;
+    for (const auto& c : g_pass.calls) n += c.on ? 1u : 0u;
+    return n;
+}
+
+void TestPassCameraDriver() {
+    namespace pc = mgscoop::partner_pass_camera;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    {
+        // Block (and off): never installed, connected or logged.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        AddPassCameraHooks(s.hooks);
+        s.ride_suffix = " ride=0";
+        g_board.lp = BoardPassenger(25608, 2);  // never read in block mode anyway
+        for (int i = 0; i < 3; ++i) Check(s.Tick(0), "block ticks");
+        Check(g_pass.installs == 0 && g_pass.calls.empty() && g_pass.reads == 0 && s.fake.Containing("partner_ride=pass_camera") == 0,
+              "block: no passenger camera at all");
+    }
+    {
+        // Passenger: one install; the handle connected only for the reported back seat, every tick;
+        // the connect line once; nothing at the get-off; release once the stock clear lands.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        AddPassCameraHooks(s.hooks);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0) && g_pass.installs == 1 && s.fake.Containing("partner_ride=pass_camera; state=install; result=ok; reason=none") == 1,
+              "installed on the first passenger-mode tick");
+        Check(g_pass.calls.empty() && g_pass.reads == 0, "on foot: nothing connected, the camera unread");
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(0, 0);
+        Check(s.Tick(0) && g_pass.calls.size() == 1 && g_pass.calls[0].vehicle == 25608 && g_pass.calls[0].on, "boarded: connected");
+        Check(s.fake.Containing("partner_ride=pass_camera; state=connect; vehicle=25608; seat=2; reason=handle; plan=connect; ms=") == 1 &&
+                  s.fake.Containing("cam1f0=0x8800000000006408; cam200=1; mode=5; prev=1; vmode=3; writes=1") == 1,
+              "the connect line (the camera read after the write)");
+        g_pass.plan = "held";
+        Check(s.Tick(0) && PassConnects() == 2 && s.fake.Containing("state=connect") == 1, "re-asserted each tick; connect logs once");
+        // The get-off (act 0x70): the report ends, nothing is connected any more; the stock
+        // VehicleCamera holds the handle until its Deactivate.
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_pass.cam = PassCam(pc::ConnectHandle(25608), 1, 3);
+        Check(s.Tick(0) && PassConnects() == 2 && s.fake.Containing("state=release") == 0, "get-off: no connect, still held by stock");
+        g_pass.cam = PassCam(0, 0);
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=pass_camera; state=release; vehicle=25608; seat=2; reason=stock; ok=1;") == 1,
+              "the release line once the stock camera dropped the handle");
+        Check(s.Tick(0) && s.fake.Containing("state=release") == 1 && g_pass.calls.size() == 2, "released once; on foot nothing connects");
+        // A terminating mission writes nothing.
+        g_board.lp = BoardPassenger(25608, 3);
+        s.Tick(0, 33, true);
+        Check(g_pass.calls.size() == 2, "terminating: no connect");
+    }
+    {
+        // Our handle outlives the ride (no stock clear within kReleaseMs): the driver clears it once.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        AddPassCameraHooks(s.hooks);
+        s.ride_suffix = " ride=0";
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(0, 0);
+        Check(s.Tick(0) && s.fake.Containing("state=connect") == 1, "connected");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && s.Tick(0, 7000) && s.fake.Containing("state=release") == 0, "inside the release window");
+        Check(s.Tick(0, 1100) && !g_pass.calls.back().on && g_pass.cam.connect == 0 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=release; vehicle=25608; seat=2; reason=cleared; ok=1;") == 1,
+              "the driver cleared its own handle");
+    }
+    {
+        // Another owner: never overwritten; refused once with the plan's reason.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        AddPassCameraHooks(s.hooks);
+        s.ride_suffix = " ride=0";
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(pc::ConnectHandle(25601), 1);
+        g_pass.plan = "other_owner";
+        Check(s.Tick(0) && s.Tick(0, 2900) && s.fake.Containing("state=refused") == 0, "inside the connect window");
+        Check(s.Tick(0, 200) && s.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=other_owner;") == 1 &&
+                  g_pass.cam.connect == pc::ConnectHandle(25601),
+              "refused: another owner");
+        Check(s.Tick(0, 5000) && s.fake.Containing("state=refused") == 1, "once per boarding");
+    }
+    {
+        // A write fault latches the mission: nothing connected again, one refused line; the board's
+        // own latch stops it too. A refused install refuses each boarding with reason=install.
+        Session f(0);
+        BoardSetup(f, PartnerRideBoard::passenger);
+        AddPassCameraHooks(f.hooks);
+        f.ride_suffix = " ride=0";
+        Check(f.Tick(0), "first");
+        g_pass.stats.faults = 1;
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(0, 0);
+        Check(f.Tick(0) && g_pass.calls.empty() && f.fake.Containing("reason=fault; latch=mission; faults=1") == 1 &&
+                  f.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=uncertain;") == 1,
+              "a fault latches; the boarding is refused as uncertain");
+        Check(f.Tick(0) && g_pass.calls.empty(), "the latch holds for the mission");
+        Session r(0);
+        BoardSetup(r, PartnerRideBoard::passenger);
+        AddPassCameraHooks(r.hooks);
+        g_pass.install_result = "bytes";
+        r.ride_suffix = " ride=0";
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(r.Tick(0) && r.Tick(0) && g_pass.installs == 1 && g_pass.calls.empty() &&
+                  r.fake.Containing("partner_ride=pass_camera; state=install; result=refused; reason=bytes") == 1 &&
+                  r.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=install;") == 1,
+              "a refused install never connects");
+        Session u(0);
+        BoardSetup(u, PartnerRideBoard::passenger);
+        u.ride_suffix = " ride=0";
+        Check(u.Tick(0) && u.fake.Containing("partner_ride=pass_camera; state=install; result=refused; reason=unavailable") == 1,
+              "no hooks: unavailable");
+    }
+}
+
+void TestBoardSeatGates() {
+    namespace rw = mgscoop::partner_ride_wire;
+    using mgscoop::PartnerRideBoard;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full, kBackLeftLoop = 0xc40b38a1a985ull;
+    const auto byid = [](SeatSession& s, PartnerRideBoard mode) {
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = mode;
+    };
+    const auto mb = [&](PartnerRideBoard mode, std::uint8_t seat, SeatSession& s) {
+        byid(s, mode);
+        s.Show();
+        s.ride_suffix = " ride=2 veh=25603 seat=0";  // the viewer drives the jeep
+        s.Ride(rw::Kind::vehicle, seat, 25603);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, seat, 1, 900));
+        s.fake.sample.act = 110;
+    };
+    {
+        // Mother Base by id: the peer in a back seat of the jeep the viewer drives is offered (passenger mode),
+        // seated, and the far latch is skipped while the viewer's real jeep outruns the peer's stream.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(PartnerRideBoard::passenger, 2, s);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 2 && s.reply.seat_vehicle == 25603 &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=2; offer=1; reason=none;") == 1,
+              "passenger: the peer's back seat in the viewer's own jeep is offered by id");
+        s.Playing(kBackLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed && s.fake.seat_targets.size() == 1, "targeted and confirmed in seat 2");
+        s.fake.body_pos[0] = 9.0f;
+        Check(s.Step() && s.Step(600) && s.Step(600) && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.fake.Containing("partner_ride=seat_far") == 0,
+              "no far latch for the viewer's own vehicle");
+    }
+    {
+        // Without the key: today's local_vehicle refusal; in passenger mode the front seats stay refused.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(PartnerRideBoard::off, 2, s);
+        Check(s.Step() && !(s.reply.op & op::ride_seat) &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=2; offer=0; reason=local_vehicle;") == 1,
+              "key off: refused (local_vehicle)");
+        SeatSession f(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(PartnerRideBoard::passenger, 1, f);
+        Check(f.Step() && !(f.reply.op & op::ride_seat) &&
+                  f.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=1; offer=0; reason=local_vehicle;") == 1,
+              "seat 1 of the viewer's own vehicle stays refused");
+    }
+    {
+        // shared_seat: the peer reports the viewer's own back seat (a named vehicle, 30010): refused before
+        // anything is armed, latched; the other back seat plays.
+        SeatSession s;
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = PartnerRideBoard::passenger;
+        g_board.lp = BoardPassenger(25608, 2);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 2, 25608);
+        s.fake.sample.act = 110;
+        Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 &&
+                  s.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=2; name=-; state=-; reason=shared_seat; manual=0") == 1,
+              "shared_seat refused at the start");
+        Check(s.Step() && s.driver.mission.seat.blocked, "latched");
+        SeatSession o;
+        AddBoardHooks(o.hooks);
+        o.driver.settings.ride_board = PartnerRideBoard::passenger;
+        g_board.lp = BoardPassenger(25608, 2);
+        o.Show();
+        o.Ride(rw::Kind::vehicle, 3, 25608);
+        o.fake.sample.act = 110;
+        Check(o.Step() && (o.reply.op & op::ride_seat) && o.reply.seat == 3 && o.fake.Containing("reason=shared_seat") == 0,
+              "the other back seat is seated");
+    }
+    {
+        // The viewer rides the peer-driven copy as a passenger: no far latch; block mode keeps it.
+        SeatSession s;
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = PartnerRideBoard::passenger;
+        g_board.lp = BoardPassenger(25608, 2);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(s.Step(), "play");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed, "confirmed");
+        s.fake.body_pos[0] = 9.0f;
+        Check(s.Step() && s.Step(600) && s.Step(600) && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.fake.Containing("partner_ride=seat_far") == 0,
+              "passenger in that copy: no far latch");
+        SeatSession k;
+        AddBoardHooks(k.hooks);
+        k.driver.settings.ride_board = PartnerRideBoard::block;
+        k.Show();
+        k.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(k.Step(), "play");
+        k.Playing(kFrontLeftLoop);
+        Check(k.Step() && k.driver.mission.seat.confirmed, "confirmed");
+        k.fake.body_pos[0] = 9.0f;
+        Check(k.Step() && k.Step(600) && k.Step(600) && k.fake.Containing("partner_ride=seat_far; vehicle=25608; seat=0;") == 1, "block mode keeps the far latch");
+    }
 }
 
 void TestRideSeat() {
@@ -6233,6 +7109,260 @@ void TestRound1Actions() {
     }
 }
 
+// Gestures (docs/native-puppet.md "Gestures"): the upper-act edge sender, the
+// channel-2 receiver, the driver's gate and stock node choice, the request
+// handed to the body-1 hook (partner_gesture::Step), its receipts in the log,
+// the epoch on mission boundaries, and a copy with the key off (as an older peer
+// sees the message: the manifest path is unaffected).
+std::vector<std::uint8_t> GestureBytes(mgscoop::partner_gesture_policy::Kind kind, std::uint16_t seq, std::uint8_t stance, std::uint8_t speed) {
+    namespace gp = mgscoop::partner_gesture_policy;
+    gp::Packet p{};
+    p.kind = kind;
+    p.seq = seq;
+    p.stance = stance;
+    p.speed = speed;
+    p.flags = speed ? gp::Flag::Moving : 0;
+    p.sender_ms = 1234;
+    std::uint8_t b[gp::kSize]{};
+    Check(gp::Encode(p, b), "gesture fixture encodes");
+    return std::vector<std::uint8_t>(b, b + sizeof(b));
+}
+void TestGestures() {
+    namespace gp = mgscoop::partner_gesture_policy;
+    namespace pg = mgscoop::partner_gesture;
+    namespace pn = mgscoop::partner_native;
+    // --- Sender: a rising edge of this copy's upper byte goes out once (append, channel 2).
+    {
+        Session s(0);
+        AddNativeHooks(s.hooks);
+        AddGestureHooks(s.hooks);
+        s.hooks.send_reliable_append = HookSendReliable;
+        s.driver.settings.ngesture = true;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[0] = 3;
+        s.fake.anim.stance[0] = 2;
+        s.fake.anim.speed[0] = 2;
+        const auto sent = [&]() {
+            unsigned n = 0;
+            for (const auto& m : s.fake.reliable_sent) if (gp::IsGesture(m.data(), m.size())) ++n;
+            return n;
+        };
+        s.Tick(1);
+        Check(sent() == 0 && s.fake.upper_reads >= 1, "the first sample is a baseline");
+        s.fake.upper[0] = 0x15;
+        s.Tick(1);
+        Check(sent() == 1, "a pickup edge goes out");
+        s.Tick(1);
+        Check(sent() == 1, "held: no repeat");
+        gp::Packet p{};
+        for (const auto& m : s.fake.reliable_sent)
+            if (gp::IsGesture(m.data(), m.size())) Check(gp::Decode(m.data(), m.size(), p), "the sent message decodes");
+        Check(p.kind == gp::Kind::pickup && p.stance == 2 && p.speed == 2 && (p.flags & gp::Flag::Moving) && p.seq == 1,
+              "the sender's own stance, speed and moving flag");
+        Check(s.fake.Count("partner_gesture=local; kind=pickup; upper=0x15; seq=1; stance=2; speed=2; moving=1; sent=1\r\n") == 1,
+              "one local line per edge");
+        // Body 1's upper byte (index 1) is never sent.
+        s.fake.upper[0] = 0;
+        s.fake.upper[1] = 0x18;
+        s.Tick(1);
+        Check(sent() == 1, "the partner body's own byte is not this copy's gesture");
+        // A refused send stays pending and goes out on the next tick.
+        s.fake.reliable_ok = false;
+        s.fake.upper[0] = 0x18;
+        s.Tick(1);
+        Check(sent() == 1 && s.driver.gesture_tx_pending, "queue refused: pending");
+        s.fake.reliable_ok = true;
+        s.Tick(1);
+        Check(sent() == 2 && !s.driver.gesture_tx_pending, "retried on the next tick");
+        // Key off: no read, nothing sent.
+        s.driver.settings.ngesture = false;
+        const unsigned reads = s.fake.upper_reads;
+        s.fake.upper[0] = 0x19;
+        s.Tick(1);
+        Check(sent() == 2 && s.fake.upper_reads == reads, "key off: the sender is idle");
+    }
+    // --- Receiver with the key off (what an older build does with the message too): the manifest still arrives.
+    {
+        MapSession s;
+        AddNativeHooks(s.hooks);
+        AddGestureHooks(s.hooks);
+        mgscoop::partner_equip_wire::Manifest m{};
+        m.revision = 3; m.epoch = 7; m.inv_slot = 1; m.slots[1].base_id = 46; m.slots[1].alias = 0x2E;
+        std::uint8_t bytes[mgscoop::partner_equip_wire::kSize]{};
+        Check(mgscoop::partner_equip_wire::Encode(m, bytes) == sizeof(bytes), "manifest encodes");
+        s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 1, 1, 0));
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        s.T();
+        Check(s.fake.channel2.empty() && s.driver.mission.equip.have && s.driver.mission.equip.manifest.revision == 3 &&
+                  s.driver.mission.equip.invalid == 0 && s.driver.gesture_rx.received == 1 && !s.driver.mission.gesture_pending &&
+                  s.fake.Containing("partner_gesture=") == 0 && s.fake.gesture_commands.empty() && s.fake.gesture_installs == 0,
+              "key off: the gesture is counted and dropped, the manifest is stored");
+    }
+    // --- Receiver with the key on, native active.
+    NativeSession s;
+    AddGestureHooks(s.hooks);
+    s.driver.settings.ngesture = true;
+    Check(s.Playing() >= 0 && s.Until(pn::Mode::active, 9000), "native active");
+    s.fake.anim_ok = true;
+    s.fake.anim.act[0] = 1;
+    s.fake.anim.act[1] = 1;
+    s.fake.anim.stance[1] = 1;
+    s.fake.lines.clear();
+    s.N();
+    Check(s.fake.gesture_installs == 1 && s.fake.Count("partner_gesture=install; result=ok\r\n") + s.fake.Count("partner_gesture=configured;") <= 2,
+          "the hook installs once with the key on and the native drive active");
+    Check(!s.fake.gesture_commands.empty() && s.fake.gesture_commands.back().enabled && !s.fake.gesture_commands.back().request.seq &&
+              s.fake.gesture_commands.back().epoch == s.driver.gesture_epoch && s.driver.gesture_epoch != 0,
+          "an enabled command with no request every tick");
+    // A received pickup: the stock node through SetCurrentNode.
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 1, 1, 0));
+    s.N();
+    Check(s.fake.Count("partner_gesture=rx; kind=pickup; seq=1; stance=1; speed=0; moving=0;") == 1, "rx line");
+    const pg::Request q = s.fake.gesture_commands.back().request;
+    Check(q.seq == 1 && q.kind == gp::Kind::pickup && q.node == 0x1E904603EB7DULL && q.method == gp::Method::set_current && q.blend == 0.5f,
+          "the request: statePickUpStandRight, set, 0.5");
+    s.N();
+    Check(s.fake.gesture_commands.back().request.seq == 1, "the request stays published until the hook answers");
+    // The hook's receipts.
+    pg::Status& st = s.fake.gesture_status;
+    st = pg::Status{};
+    st.installed = st.live = st.active = true;
+    st.active_seq = 1;
+    st.count = 2;
+    st.receipts[0].stage = pg::Stage::submit;
+    st.receipts[0].seq = 1;
+    st.receipts[0].kind = gp::Kind::pickup;
+    st.receipts[0].method = gp::Method::set_current;
+    st.receipts[0].node = q.node;
+    st.receipts[0].exist = true;
+    st.receipts[0].body_act = 1;
+    st.receipts[1].stage = pg::Stage::applied;
+    st.receipts[1].seq = 1;
+    st.receipts[1].kind = gp::Kind::pickup;
+    st.receipts[1].node = q.node;
+    st.receipts[1].current = q.node;
+    st.receipts[1].ok = true;
+    s.N();
+    Check(s.fake.Count("partner_gesture=submit; graph=2; node=0x1e904603eb7d; exist=1; kind=pickup; method=set; seq=1; stance=1; moving=0; "
+                       "body_act=1\r\n") == 1 &&
+              s.fake.Count("partner_gesture=applied; seq=1; kind=pickup; node=0x1e904603eb7d; current=0x1e904603eb7d; queued=0x0; ok=1\r\n") == 1,
+          "submit and applied lines");
+    s.N();
+    Check(!s.fake.gesture_commands.back().request.seq && s.driver.mission.gesture_active, "the answered request is withdrawn; busy");
+    // Busy: a second gesture while one runs is refused by the driver.
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::sign_go, 2, 1, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=busy; where=driver; kind=sign_go; seq=2;") == 1 &&
+              !s.fake.gesture_commands.back().request.seq,
+          "busy: refused, no request");
+    // The end.
+    st.active = false;
+    st.count = 1;
+    st.receipts[0] = pg::Receipt{};
+    st.receipts[0].stage = pg::Stage::ended;
+    st.receipts[0].seq = 1;
+    st.receipts[0].kind = gp::Kind::pickup;
+    st.receipts[0].via = gp::Via::end;
+    st.receipts[0].cause = "clip";
+    st.receipts[0].null_sent = true;
+    st.receipts[0].ms = 900;
+    s.N();
+    Check(s.fake.Count("partner_gesture=ended; via=end; cause=clip; seq=1; kind=pickup; ms=900; null=1; current=0x0\r\n") == 1 &&
+              !s.driver.mission.gesture_active,
+          "ended line");
+    // A knock with a non-zero hand on body 1 picks the hand variant (ReserveToResetNode, 1.0).
+    s.fake.looks.look[1].hand = 2;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::knock, 3, 1, 0));
+    s.N();
+    const pg::Request k = s.fake.gesture_commands.back().request;
+    Check(k.seq == 2 && k.kind == gp::Kind::knock && k.node == 0x7B2D4F836A92ULL && k.method == gp::Method::reserve_reset && k.blend == 1.0f,
+          "knock, hand variant, reserve");
+    // The hook refuses: the request is withdrawn and the refusal logged.
+    st.count = 1;
+    st.receipts[0] = pg::Receipt{};
+    st.receipts[0].stage = pg::Stage::refused;
+    st.receipts[0].seq = 2;
+    st.receipts[0].kind = gp::Kind::knock;
+    st.receipts[0].reason = "no_node";
+    s.N();
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=no_node; where=hook; kind=knock; seq=2;") == 1 &&
+              !s.fake.gesture_commands.back().request.seq,
+          "a hook refusal withdraws the request");
+    // An unanswered request expires after kRequestMs.
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::sign_stop, 4, 2, 0));
+    s.N();
+    Check(s.fake.gesture_commands.back().request.seq == 3 && s.fake.gesture_commands.back().request.node == 0x78CB18630AF1ULL,
+          "sign Stop squat");
+    // The hook's step reports why body 1's entry is not in its filter.
+    st.body_calls = 42;
+    st.resolve = "ps";
+    for (int i = 0; i < 20; ++i) s.N();
+    Check(!s.fake.gesture_commands.back().request.seq &&
+              s.fake.Containing("partner_gesture=refused; reason=unanswered; where=driver; kind=sign_stop; seq=3; node=0x78cb18630af1; age_ms=") == 1 &&
+              s.fake.Containing("; body_calls=42; resolve=ps\r\n") == 1,
+          "an unanswered request expires with one refusal line");
+    st.body_calls = 0;
+    st.resolve = nullptr;
+    // Gate refusals.
+    s.fake.anim.act[1] = 0x4D;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 5, 1, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=box; where=driver; kind=pickup; seq=5;") == 1, "body 1 boxed: refused");
+    s.fake.anim.act[1] = 1;
+    s.fake.upper[1] = 5;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 6, 1, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=body_upper; where=driver; kind=pickup; seq=6;") == 1, "body 1 reloading: refused");
+    s.fake.upper[1] = 0;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 7, 3, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=stance; where=driver; kind=pickup; seq=7; stance=3;") == 1,
+          "a crawling pickup has no stock node");
+    // A repeated seq is a duplicate (reliable delivery repeats nothing, but a stale copy must not replay).
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 7, 1, 0));
+    s.N();
+    Check(s.fake.Count("partner_gesture=rx; kind=pickup; seq=7;") == 1 && s.driver.gesture_rx.duplicates >= 1, "a duplicate seq is dropped");
+    // The uncertain latch holds for the mission.
+    st.uncertain = true;
+    st.count = 0;
+    s.N();
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 8, 1, 0));
+    s.N();
+    Check(s.driver.mission.gesture_uncertain && s.fake.Containing("partner_gesture=refused; reason=uncertain; where=driver;") == 1 &&
+              !s.fake.gesture_commands.back().enabled,
+          "uncertain: latched, the command disabled, requests refused");
+    // Receipts the hook queued since the last tick: the withdrawal's step drains them, so it logs them.
+    st.count = 2;
+    st.receipts[0] = pg::Receipt{};
+    st.receipts[0].stage = pg::Stage::uncertain;
+    st.receipts[0].seq = 9;
+    st.receipts[0].kind = gp::Kind::sign_go;
+    st.receipts[0].node = 0xE74E11BABA4BULL;
+    st.receipts[0].reason = "body1_foreign";
+    st.receipts[1] = pg::Receipt{};
+    st.receipts[1].stage = pg::Stage::ended;
+    st.receipts[1].seq = 9;
+    st.receipts[1].kind = gp::Kind::sign_go;
+    st.receipts[1].via = gp::Via::override_;
+    st.receipts[1].cause = "pending";
+    st.receipts[1].ms = 40;
+    st.dropped = 3;
+    // Mission end: a new epoch goes to the hook (drops a running gesture without a write).
+    const std::uint32_t before = s.driver.gesture_epoch;
+    const std::size_t commands = s.fake.gesture_commands.size();
+    pd::MissionEnd(s.driver, s.hooks);
+    Check(s.driver.gesture_epoch == before + 1 && s.fake.gesture_commands.size() == commands + 1 &&
+              !s.fake.gesture_commands.back().enabled && s.fake.gesture_commands.back().epoch == before + 1 &&
+              !s.fake.gesture_commands.back().request.seq,
+          "mission end: a disabled command of a new epoch");
+    Check(s.fake.Count("partner_gesture=uncertain; reason=body1_foreign; seq=9; kind=sign_go; node=0xe74e11baba4b; latched=mission\r\n") == 1 &&
+              s.fake.Count("partner_gesture=ended; via=override; cause=pending; seq=9; kind=sign_go; ms=40; null=0; current=0x0\r\n") == 1 &&
+              s.fake.Count("partner_gesture=receipts_dropped; n=3\r\n") == 1,
+          "mission end: the drained receipts and the dropped count are logged");
+    st.dropped = 0;
+}
+
 int main() {
     TestRound1Actions();
     TestCfgAndMissionBoundaries();
@@ -6246,9 +7376,13 @@ int main() {
     TestForceExistsAndPolicy();
     TestFreeRoamRange();
     TestRideVisibility();
+    TestMountVisibility();
     TestRideSeat();
     TestRideSeatById();
     TestRideExtAndCensus();
+    TestBoardDriver();
+    TestPassCameraDriver();
+    TestBoardSeatGates();
     TestHiddenLocalSender();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();
@@ -6280,6 +7414,8 @@ int main() {
     TestDmMapCaps();
     TestNativeSleepPresentationAdmission();
     TestNativeEnterAndLeave();
+    TestNativeTraverseIcon();
+    TestGestures();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
@@ -6287,6 +7423,7 @@ int main() {
     TestNativeRates();
     TestNativeAim();
     TestNativeGunDirectionWire();
+    TestNativeC4PlaceWire();
     TestNativePlayAndWithdraw();
     TestNativeWeapons();
     TestNativeActionsWithWeapons();

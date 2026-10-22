@@ -395,6 +395,18 @@ bool ReadAnim(const State& s, Anim& out) noexcept {
     return true;
 }
 
+bool ReadUpper(const State& s, std::uint8_t (&out)[2]) noexcept {
+    const Preserve preserve;
+    out[0] = out[1] = 0;
+    if (!s.Q) return false;
+    std::uintptr_t p20 = 0;
+    std::uint8_t v[2]{};
+    if (!ReadValue(s.Q + c::q_upper, p20) || !p20 || !ReadBlock(p20, v, sizeof(v))) return false;
+    out[0] = v[0];
+    out[1] = v[1];
+    return true;
+}
+
 sync::AnimState AnimSlot(const Anim& anim, std::uint32_t index) noexcept {
     sync::AnimState state{};
     if (index >= 2) return state;
@@ -1056,7 +1068,8 @@ bool ReadGun(const Addresses& a, const State& s, std::uint32_t k, Gun1& out) noe
                     ReadValue(rec + c::gun_b3d5, out.b3d5) && ReadValue(rec + c::gun_slot, out.slot) &&
                     ReadValue(rec + c::gun_mode_cur, out.mode_cur) && ReadValue(rec + c::gun_slot_hand, out.hand_slot) &&
                     ReadValue(rec + c::gun_slot_src, out.slot_src) && ReadValue(rec + c::gun_m3e4, out.m3e4) &&
-                    ReadValue(rec + c::gun_m3e6, out.m3e6) && ReadValue(rec + c::gun_m3e8, out.m3e8);
+                    ReadValue(rec + c::gun_m3e6, out.m3e6) && ReadValue(rec + c::gun_m3e8, out.m3e8) &&
+                    ReadValue(rec + c::gun_surface, out.gun3cc);
     g.gun3c0 = out.gun3c0;
     // The upper-body request byte of this id (Q+0x20 is a per-id u8 array; 5 = reload).
     std::uintptr_t upper = 0;

@@ -149,6 +149,15 @@ the tick reads neither the camera nor the body nor the gun; only the names flow.
   below the position) falls back to position - 0.9 m.
 - Head: foot + 1.80 / 1.25 / 0.55 m (stand / squat / prone) + 0.25 m. The stance is
   the partner's network stance (fresh within 1 s), else the body's own stance.
+- Seated (wp/pass-cam): while the driver's seat flow holds body 1 seated in a vehicle
+  (`Mission::ride_seated` with the seat phase `seated`), the head is foot + 0.95 m +
+  0.25 m and the capsule uses the squat height. The seated body's T+0x10 "foot" is the
+  seat and the streamed stance stays stand, so the standing 1.80 m floated the tag about
+  a metre above the seated head (run 59cfc415: `nametag=visible; d_mm=4694;
+  ndc_permille=-523,1138` with the guest in the host's back seat). The visible line
+  carries `seated=0|1`. Checked in frames: hidden runs `495e7c3a` (lab) and `de949f80` (play)
+  show the tag just above the seated partner's head in the back seat and in the driver's seat,
+  both directions (`nametag=visible; ...; seated=1` on both copies).
 - Legacy hover telemetry (does not draw or recolor the reticle): the ray from the camera through NDC (0,0) (lens shift included)
   against a capsule of radius 0.30 m (stand/squat: vertical from foot+0.15 to the top
   -0.15; prone: horizontal, +-0.85 m along the body yaw at foot+0.25), 0.1..150 m.

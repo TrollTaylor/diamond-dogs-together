@@ -1225,3 +1225,156 @@ private desktop, no SwitchDesktop/focus/system-input call, visible desktop uncha
 Open: the place kneel (46) and the detonation (47) on body 1 (a v2 that mirrors the remote's requests), the C4 object
 mirror, mines / decoys / the other arms, a play-mode hidden run of the C4 and arm lanes (play admits them by the
 throws' rule, which the play rehearsals proved for throws), and a new friend package.
+
+## WS4 v2: the partner kneels to place C4 and presses the detonator (2026-10-16)
+
+Branch `wp/c4-v2` (from `wp/integ7` `bebb316`). v1 left body 1 holding the C4 out (43 -> 44 -> 45) at every host place
+and never detonating ("Limits of v1"). v2 mirrors the remote's place and detonate requests into body 1's own gun
+record, so body 1's own mode handlers run the kneel (46) and the detonator motion (47). Lab key
+`partner_native_place_mirror=0|1`: default 0 and forced off in play until its hidden runs showed both motions; since
+`ae9be89` it follows the native gun profile in lab (play still forces it off; "On by default in lab" below).
+
+### Why a record write (static, REA decompilations and the scratch `.xtext` dump; every site pinned)
+
+| Site | What it does for body 1 |
+|---|---|
+| gun update `0x103E2D0`: `0x103E485` decode, `0x103E48A` op 4, `0x103E4C0` op 0, `0x103E4F3` transition | the decode `0x1095DF0` runs first, then the mode's op 4 and op 0 (the next mode into rec+0x2C1), then `0x1040A00` in the same update: a write before body 1's job is what op 0 sees |
+| mode 43 op 0 `0x107EBD3` | rec+0x3CC bit 18 -> next mode 46 |
+| mode 44 op 0 `0x107DC2A` | bit 18 -> 46, bit 19 -> 47 |
+| decode class 3 `0x10967A5`, `0x109687C`, `0x109689F` | bit 18 only on FIRE with a preview class in bits 22-23 (written only by the local-only preview, mode 44 op 2 / `0x104CF00` behind rec+0x3C0 bit 0) and a yes from the placed manager; bit 19 only on ACTION with rec+0x280 bit 23 (a live charge). Body 1 has neither; nothing clears bit 18 there |
+| mode 46 op 1 `0x107BBE1`, `0x107BD27` | consumes bit 18; its own probe's class into bits 20-21, else bits 22-23 folded into 20-21 (the kneel variant: class 2 is the wall place) |
+| mode 46 op 9 `0x107C6FA` | the real placement only for the local record (rec+0x3C0 bit 0) |
+| mode 47 op 1 `0x107EFCD`, op 10 `0x107F2CA`, detonation `0x105327F` / `0x105333E` | consumes bit 19; the detonation `0x1053270` only clears bit 19 for a non-local record (no placed vt+0x68 call) |
+
+So the write asks for the motion only: no charge is placed or set off in the viewer's world. The existing census
+(v1 runs `d05a1267`, `7f8d643d`) already showed body 1's side: in 43/44/45 its bits 20-23 stay 0 and its own plugin's
+`p3d8=0xffff` (mode 46 op 1 then takes the latch-clear path on body 1's own plugin, `same_prim=0`). The viewer's ground
+place is class 1 in bits 20-21 and 22-23 (`f3cc=0x1500060` in mode 46, run `a93db206`).
+
+### Wire: input frame v7
+
+v6 plus `[92]` the sender's place word (rec+0x3CC bits 18..23 >> 18) with `GunFlag::Place` 0x40, only while its gun
+record (read this tick) is a C4 391..395 of class 3 in a place-family mode (43..47) equal to the frame's gun mode;
+`[93..95]` reserved zero. 124 bytes. Negotiated like v6 (`partner_input=v7_peer`; a probe every 2 s to a v6 peer, which
+drops only the probe). A held identity frame drops the flag. The receiver takes the class from bits 20-21 (placed),
+else 22-23 (preview), else ground (class 1) for a v6 peer.
+
+### The mirror (`partner_place_mirror.hpp`, pure; hook `PlaceMirrorPre` / `PlaceMirrorPost`)
+
+Hook thread, inside body 1's window, last step before its job:
+- the remote's gun mode entering 46 (place) or 47 (detonate) arms one episode (a frame without the gun group changes
+  nothing; leaving the place family drops it; it waits at most 1.5 s for body 1);
+- a write needs the key, the support lease and the C4 lane admitted for this job (`SupportAdmittedKind == placed`),
+  body 1's own qualified record (prim vtable, prim+0x8 = body 1's block, prim+0x58 = the record) holding C4 391..395 of
+  class 3 in 43/44 (place) or 44 (detonate), and neither request bit already set; one compare-and-swap of body 1's
+  rec+0x3CC: place = bit 18 plus the class in bits 22-23 (only in a job without a FIRE press, see run `289badb6`
+  below), detonate = bit 19;
+- while body 1 kneels after a taken place (46, state <= 3, rec+0x3C0 bit 26) `Align` keeps bits 22-23 equal to 46 op
+  1's class in 20-21;
+- after the job: taken when body 1's mode (or rec+0x2C1) is 46/47; otherwise our bits go back to their values before
+  the write while our request is still set (never left for a later op 0) and the episode retries (at most 8 writes).
+
+Lines (own cap 256): `partner_place_mirror=edge|write|result|align|dropped|skip; act=place|detonate; ...`. The settings line is
+`partner_support=lanes; ...; arm_fire=stripped; place_mirror=0|1`. Every v1 digest still brackets each body-1 job: the
+viewer's placement latch and the placed owner table (`placed_check`, mode 46/47 included), the slot-3 stock words.
+
+### Contract (`--check`: 677 code sites, 149 vtable slots; 655 / 146 before)
+
+15 sites (the table above), the 7 sites and 3 slots of the run-`289badb6` fix (below) and `ws4_v2_assertions`: the mode table entries 43..47 (`0x107E480`, `0x107D300`,
+`0x107DD00`, `0x107BAC0`, `0x107ECF0`), the detonation's four callers and its non-local exit `0x105333E` (no call), no
+call between mode 46 op 1's probe and its latch block, op 9's non-local skip to `0x107CC23`. Header constants
+`gun3cc_place_req`, `gun3cc_detonate_req`, `gun3cc_surface_mask`, `gun3cc_preview_mask` and the place-family modes; the
+hook and the policy test static_assert them.
+
+### Tests
+
+`partner_placed_policy_tests` (the mirror: wire words from the census, edges, one write per episode, taken / reverted /
+retried, the tries cap, the 1.5 s bound, the remote leaving, invalid frames, detonate only from 44, every gate, v6
+default class, wall class, the FIRE deferral and the unclassed fallback, `Align`; the pins and their bytes), `player_sync_tests` (v7 round trip, layout, reserved bytes,
+range, flag rules, Fill7 / Fill6), `partner_input_tests` (v7 valid, the injection carries the word, the identity hold
+drops it), `partner_driver_tests` (`TestNativeC4PlaceWire`: v6 until the peer sends v7 with bounded probes, the word for
+C4 in 46/47 only, never for a gun or another class), `partner_defer_tests` (the real drain window: the 46 edge logged
+with the v7 class, no write without an admitted lane, the key off does nothing), `lab_config_tests`,
+`worker_session_tests` (the key in the three `-LabSetting` copies, `partner-c4-v2.txt`), `friend_package_tests`
+(Play-Coop never names the key; play forces it off). Full CTest 280/280 at every commit.
+
+### The class bits and the decode: run `289badb6` (fixed in `1895425`)
+
+The first hidden run (`c935921`, `partner-c4-v2.txt`) took two places: body 1 entered 46 (`partner_place_mirror=result;
+act=place; taken=1; body_mode=46`, census `k=1 mode=46` states 1..3, `f3cc=0x1500060`, the host's own ground word) and
+the frames show the kneel (`guest-c4-place-p2-03`). On the second place the guest's owner table moved inside body 1's
+job (`partner_support=refused; ...; reason=placed_shared_write; what=service; svc_before=0x1aafdb44;
+svc_after=0x9f0f99f3`, then `owners=1:0`): the free row was claimed for owner id 1. The v1 digest latched native support
+off for the mission, so the third place and both detonations found no lane (`dropped; ...; waiting_on=lane`).
+
+Cause (static): with a class in bits 22-23 and a FIRE press in the same job, the decode's class-3 path
+(`0x10967F8..0x109687C`) calls the placed iface vt+0x40 `0xFCB1F0` (id & 0x1FF, equip), whose first call `0xFC9C00`
+looks the owner up in iface+0xB0 and, when absent, takes a row from the iface's allocator and writes the id into it.
+`0xFC9C00` has three direct callers: vt+0x40, vt+0x20's body and the placement request processor `0xFC8020`
+(local placements only). The decode reads FIRE as bit 0x10 of PP vt+0x40 `0x1205E80`: `[PP+8]+0x50`, or PP+0x468 when
+that is 0, masked by `~PP+0x28` (a press edge, delivered once per consumer).
+
+Fix: the place write carries the class only in a job whose press word, read exactly that way after PRE, has no FIRE
+(else it waits up to 4 jobs, then writes bit 18 alone; `classed=0|1; deferrals=N` on the write line); and once body 1
+is in 46 (state <= 3, rec+0x3C0 bit 26 set by 46 op 1, which switches the decode's place path off) `Align` copies 46 op
+1's own class from bits 20-21 into 22-23 when they differ, so states 1-3 never abort the kneel
+(`partner_place_mirror=align; ...`). 46 op 2 clears bits 20-24 (`0x107C2AB`) and bit 26 on the way out. Pins: the
+decode's FIRE gate, PP vt+0x40 (body and slot), placed vt+0x40 (slot, live and base iface) and `0xFC9C00` (with its
+callers asserted), `0x107C2AB` (`--check`: 677 code sites, 149 vtable slots).
+
+### Hidden run `12320c2f` (`1895425`): passed
+
+Research worker checks first (receipt `20261016-173625-2c666c24...`, the research loader rebuilt from `1895425`); hidden
+worker on its private desktop, verify lock, `-SaveSeed lab`, `MGS_GAME_LUA_DIR` unset, no build process during the run.
+Closed, BaselineRestored and RealSavesUnchanged true, every `require` met, `ExpectFailures` empty (`Forced=true`, as on
+the v1 C4 runs).
+- Both copies: `partner_input=v7_peer`, `partner_support=lanes; support=1; placed=1; arm=0; arm_fire=stripped;
+  place_mirror=1`.
+- Guest, three host places: each `edge; act=place; remote_mode=46; surface=1; default=0; place_bits=0x14; v7=1`, a write
+  in 43 (`classed=1; deferrals=0`) reverted (`taken=0; reverted=1; retry=1`), the retry taken (`taken=1;
+  body_mode=46`), `armed; ...; reason=place`, census `k=1 mode=46` states 0..3 with `f3cc=0x1500060` (no align needed:
+  46 op 1 kept class 1).
+- Guest, two host detonations: `edge; act=detonate; remote_mode=47`, the write in 44 (`f3cc 0x1030060 -> 0x10b0060`)
+  reverted once, then taken (`body_mode=47`), `armed; ...; reason=detonate`, census `k=1 mode=47`, then 44 -> 45 -> 0.
+- Safety: zero `placed_shared_write`, `stock_leak`, `stock_gap`, `rec240_foreign`, `rec240_stale`,
+  `writer_uncertain`, `partner_input=fault`, `reverted=2` or `S_IS_ONLINE` lines on either copy; the guest's placed
+  table `owners=65535:0` with `owner1=-1` in all 25 per-job `placed_check` lines (`reason=ok; what=same` at modes 0,
+  43, 44, 45, 46 and 47); every guest `counts=12,16383,12,8,12,12,8,8`; the host's own table `0:1 -> 0:2 -> 0:3`, then
+  its detonations (`0:1`, `0:0`).
+- Frames (cropped from the BMPs): `guest-c4-place-p2-01` body 1 standing with the C4 out, `-02` / `-03` bent down to
+  the ground (the kneel), `-04` rising; the detonations were filmed from behind (`c4-det-01/02`, `c4-det2-01/02`: the
+  left arm raised forward, then both arms down and the C4 put away), which does not separate the detonator from the
+  hold-out pose; the next runs film them from the side.
+
+### Hidden runs `0d8190ea` (`45bfac2`) and `96feab6d` (`7d60276`): the detonation from the side
+
+Same procedure (Research receipts `20261016-175650-66d61f92...`, `20261016-180903-e51237c3...`). `partner-c4-v2.txt` now
+films each detonation 2 m behind and 7 m to the right of the host, and (`7d60276`) takes a two-frame `c4-ready` burst
+just before E with the RMB hold renewed, so body 1 in 44 is the same-angle reference for 47. Both runs: Closed,
+BaselineRestored, RealSavesUnchanged, every `require` met (`Forced=false` on `0d8190ea`, `true` on `96feab6d`); the same
+log story as `12320c2f` (3/3 places taken into 46, 2/2 detonations into 47, `owners=65535:0` and `owner1=-1` in every
+`placed_check`, zero `placed_shared_write` / `stock_leak` / `rec240_*` / `partner_input=fault` / `reverted=2`).
+Frames (`96feab6d`, cropped from the BMPs): `guest-c4-place-p2/p3/p4-02` and `-03` body 1 down on one knee with its
+hand at the ground, `-01` standing with the C4 out, `-04` rising (P1 was an invalid spot for the host too); in
+`c4-det-01` and `c4-det2-01` (the first frame after E, 150 ms bursts) the forearm is raised steeper and the hand turned
+up, unlike every `c4-ready` / `c4-ready2` frame (44, the C4 held out), and by `-02` it is back to the hold-out pose: the
+detonator press is real but brief. An evidence sheet (P2..P4 kneels, 44 vs 47) was made from these crops.
+
+### On by default in lab (`ae9be89`)
+
+`ResolveWeaponDefaults` resolves an unnamed `partner_native_place_mirror` to the native gun profile in lab
+(`partner_native_place_mirror_given` records a named value; a named 0/1 wins); play forces it off (no play-mode C4 run
+yet: the play rehearsals proved throws only). `lab_config_tests` (lab on / play off for the gun profile, named 0 and 1,
+off/loco), `lab_ini_check` prints `partner_native_place_mirror_given`, `friend_package_tests` (play resolves 0, a named 1
+too). Full CTest 280/280.
+
+Proof (`ae9be89`): hidden run `98e99783` from a scratch copy of `partner-c4-v2.txt` without any labsetting line
+(`session.json lab_settings: []`; Research receipt `20261016-182602-f77e3562...`): both copies logged
+`partner_input=v7_peer` and `partner_support=lanes; support=1; placed=1; arm=1; arm_fire=stripped; place_mirror=1`; the
+guest took 3 places and 2 detonations (`result; ...; taken=1`, `armed; ...; reason=place|detonate`), all 25
+`placed_check` lines `reason=ok; what=same` with `owner1=-1`, every guest `counts=12,16383,12,8,12,12,8,8`, zero lines of
+the NEVER list; Closed, BaselineRestored, RealSavesUnchanged, `Forced=false`.
+
+Open: a play-mode hidden run of the C4 lanes and the mirror (then the play default), the C4 object mirror (owner 1 has
+no row in the viewer's placed table by design now), mines / decoys / the other arms, and a new friend package (both PCs
+need the v7 frame for the surface class; a v6 peer gets the ground kneel).

@@ -38,6 +38,20 @@ do
         end
         return result
     end
+    -- Read-only: a slot list's local ids (vars.<list>[0..7]) and each entry's stock through the retail getter.
+    local function census(list, key)
+        local ids, counts = {}, {}
+        local native = get(PlayerSlotType, key)
+        local readable = integer(native, 0, 15) and type(get(Player, "GetAmmoStockBySlot")) == "function"
+        for i = 0, 7 do
+            local v = get(get(vars, list), i)
+            ids[i + 1] = integer(v, 0, 65535) and fmt("%.0f", v) or "na"
+            local ok, count = false, nil
+            if readable then ok, count = pcall(call, Player, "GetAmmoStockBySlot", native, i) end
+            counts[i + 1] = ok and integer(count, 0, 65535) and fmt("%.0f", count) or "na"
+        end
+        return "ids=" .. table.concat(ids, ",") .. ";counts=" .. table.concat(counts, ",")
+    end
     function E.run(a, id)
         local cmd = a[1]
         if cmd == "inventory" and #a == 1 then
@@ -111,18 +125,43 @@ do
             if call(TppPickable, "DropItem", item) == false then return false, "pickup_refused" end
             return true, "submitted_pickup;number=" .. a[3] .. ";spawn_count_unverified"
         elseif cmd == "support" and #a == 1 then
-            -- Read-only: local support ids and each entry's stock through the retail getter.
-            local ids, counts = {}, {}
-            local native = get(PlayerSlotType, "SUPPORT")
-            local readable = integer(native, 0, 15) and type(get(Player, "GetAmmoStockBySlot")) == "function"
-            for i = 0, 7 do
-                local v = get(get(vars, "supportWeapons"), i)
-                ids[i + 1] = integer(v, 0, 65535) and fmt("%.0f", v) or "na"
-                local ok, count = false, nil
-                if readable then ok, count = pcall(call, Player, "GetAmmoStockBySlot", native, i) end
-                counts[i + 1] = ok and integer(count, 0, 65535) and fmt("%.0f", count) or "na"
+            return true, "support;" .. census("supportWeapons", "SUPPORT") .. ";active=" .. active()
+        elseif cmd == "items" and #a == 1 then
+            -- F2 census, read-only: the local item ids, stocks and vars.currentItemIndex.
+            local cur = get(vars, "currentItemIndex")
+            return true, "items;" .. census("items", "ITEM") .. ";current=" .. (integer(cur, 0, 7) and fmt("%.0f", cur) or "na")
+        elseif cmd == "give_item" and #a == 2 then
+            -- F2, lab only (the native dispatcher refuses it outside mode=lab): one stock box
+            -- EQP_IT_CBox into a FREE sub of the LOCAL player's item list in this running copy
+            -- (Player.ChangeEquip toActive=false; a full list is refused, never replaced). A
+            -- checkpoint save writes it only into the lab run's own copied save.
+            if a[2] ~= "cbox" then return false, "give_item_args" end
+            local equip = get(TppEquip, "EQP_IT_CBox")
+            if not integer(equip, 1, 65535) then return false, "item_unavailable" end
+            local free
+            for i = 7, 1, -1 do
+                local v = get(get(vars, "items"), i)
+                if v == equip then return true, fmt("give_item;equip=%.0f;sub=%d;already=1", equip, i) end
+                if v == 0 then free = i end
             end
-            return true, "support;ids=" .. table.concat(ids, ",") .. ";counts=" .. table.concat(counts, ",") .. ";active=" .. active()
+            if not free then return false, "items_full" end
+            if type(get(Player, "ChangeEquip")) ~= "function" then return false, "missing_ChangeEquip" end
+            if call(Player, "ChangeEquip", {equipId = equip, stock = 1, stockSub = 0, ammo = 0, ammoSub = 0, suppressorLife = 0,
+                isSuppressorOn = false, isLightOn = false, toActive = false, dropPrevEquip = false}) == false then
+                return false, "give_item_refused"
+            end
+            local q = {kind = "equip", id = id, mission = D.mission, frames = 0}
+            q.poll = function()
+                for i = 1, 7 do
+                    if get(get(vars, "items"), i) == equip then
+                        D.pending = nil
+                        return A.note(id, true, fmt("give_item_readback;equip=%.0f;sub=%d", equip, i))
+                    end
+                end
+                if q.frames >= 300 then D.pending = nil; A.note(id, false, "give_item_readback_timeout") end
+            end
+            D.pending = q
+            return true, fmt("submitted_give_item;equip=%.0f;free=%d", equip, free)
         elseif cmd == "slot" and #a == 3 then
             -- The retail slot selection (Player.SetCurrentSlot, the local player's
             -- equip controller vt+0x10) for the fire census: support/item/hand too.

@@ -144,6 +144,9 @@ int main(int argc, char** argv) {
         // WS3 vehicles (docs/vehicle-ws3.md): the census (lab only), the seat by id and RIDE_TILT (lab and play).
         std::printf("partner_ride_census=%d\npartner_ride_seat_id=%d\npartner_ride_tilt=%d\n", c.partner_ride_census ? 1 : 0,
                     c.partner_ride_seat_id ? 1 : 0, c.partner_ride_tilt ? 1 : 0);
+        // F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board key (passenger with the gun profile) and whether it was named.
+        std::printf("partner_ride_board=%s\npartner_ride_board_given=%d\n", mgscoop::PartnerRideBoardName(c.partner_ride_board),
+                    c.partner_ride_board_given ? 1 : 0);
         // Native partner throws (docs/anim-round2-throws.md Stage B): the resolved key and whether it was named.
         std::printf("partner_native_support=%d\npartner_native_support_given=%d\n", c.partner_native_support ? 1 : 0,
                     c.partner_native_support_given ? 1 : 0);
@@ -151,6 +154,21 @@ int main(int argc, char** argv) {
         std::printf("partner_native_placed=%d\npartner_native_arm=%d\npartner_native_placed_given=%d\npartner_native_arm_given=%d\n",
                     c.partner_native_placed ? 1 : 0, c.partner_native_arm ? 1 : 0, c.partner_native_placed_given ? 1 : 0,
                     c.partner_native_arm_given ? 1 : 0);
+        // WS4 v2: the place / detonate mirror (lab only, default 0).
+        std::printf("partner_native_place_mirror=%d\npartner_native_place_mirror_given=%d\n", c.partner_native_place_mirror ? 1 : 0,
+                    c.partner_native_place_mirror_given ? 1 : 0);
+        // Traversal replay (on with the gun profile, lab and play) and whether it was named.
+        std::printf("partner_native_traverse=%d\npartner_native_traverse_given=%d\n", c.partner_native_traverse ? 1 : 0,
+                    c.partner_native_traverse_given ? 1 : 0);
+        // F2: the native cardboard box on body 1 (lab only, default 0) and whether it was named.
+        std::printf("partner_native_cbox=%d\npartner_native_cbox_given=%d\n", c.partner_native_cbox ? 1 : 0,
+                    c.partner_native_cbox_given ? 1 : 0);
+        // Gestures (on with the gun profile, lab and play) and whether the key was named.
+        std::printf("partner_native_gesture=%d\npartner_native_gesture_given=%d\n", c.partner_native_gesture ? 1 : 0,
+                    c.partner_native_gesture_given ? 1 : 0);
+        // Horse / D-Walker riders (hide with the gun profile in lab; play forces off) and whether it was named.
+        std::printf("partner_native_mount=%s\npartner_native_mount_given=%d\n", mgscoop::PartnerNativeMountName(c.partner_native_mount),
+                    c.partner_native_mount_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

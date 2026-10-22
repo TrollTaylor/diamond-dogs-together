@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/partner_icon.hpp"
 #include "mgscoop/native_pose_window.hpp"
 
 namespace mgscoop::nametag_game { struct HudJobProbe; }
@@ -266,6 +267,9 @@ struct NativeStats {
     std::uint8_t rate_last;
     std::int32_t rate_native_milli, rate_written_milli;
     bool rate_faulted;
+    // F3 traversal icon (partner_icon process totals): padop vtable copy swaps
+    // in drain windows, body-1 queries, Exec results, grants, latches.
+    partner_icon::Stats icon;
 };
 // The reload rate write's refusals (NativeStats::rate_last).
 enum class RateRefusal : std::uint8_t { none, off, prim, cls, native, fault };

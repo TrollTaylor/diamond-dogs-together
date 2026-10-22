@@ -332,12 +332,31 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_ride_census'; Json = 'ride_census'; Kind = 'bool' },
     @{ Key = 'partner_ride_seat_id'; Json = 'ride_seat_id'; Kind = 'bool' },
     @{ Key = 'partner_ride_tilt'; Json = 'ride_tilt'; Kind = 'bool' },
+    # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board block / back-seat passenger hook (the loader
+    # resolves it to passenger with the native gun profile in lab and play, else off; written only when set).
+    @{ Key = 'partner_ride_board'; Json = 'ride_board'; Kind = 'enum'; Values = @('off', 'block', 'passenger') },
     # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
     @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
     # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;
     # written only when set).
     @{ Key = 'partner_native_placed'; Json = 'native_placed'; Kind = 'bool' },
     @{ Key = 'partner_native_arm'; Json = 'native_arm'; Kind = 'bool' },
+    # WS4 v2: the remote's C4 place kneel and detonate motion on the partner body (lab only: the loader defaults it on
+    # with the gun profile in lab and off in play; written only when set).
+    @{ Key = 'partner_native_place_mirror'; Json = 'native_place_mirror'; Kind = 'bool' },
+    # Traversal replay (docs/native-puppet.md "Traversal", "Traversal icon"): the ladder / pipe / climb / step-on placement
+    # and action-icon request on the partner body (lab only: the loader defaults it off in lab and forces it off in play;
+    # written only when set).
+    @{ Key = 'partner_native_traverse'; Json = 'native_traverse'; Kind = 'bool' },
+    # F2 (docs/native-puppet.md "Cardboard box"): the remote's cardboard box on the partner body through two native
+    # calls (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
+    @{ Key = 'partner_native_cbox'; Json = 'native_cbox'; Kind = 'bool' },
+    # Gestures (docs/native-puppet.md "Gestures"): the remote's pickup, hand signs and knock on the partner body's upper
+    # graph, and this copy's own upper-act edges as their sender (lab only: off unless set, forced off in play).
+    @{ Key = 'partner_native_gesture'; Json = 'native_gesture'; Kind = 'bool' },
+    # Horse / D-Walker riders (docs/mounts.md): hide the partner body while the remote's act is a mount act
+    # (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
+    @{ Key = 'partner_native_mount'; Json = 'native_mount'; Kind = 'enum'; Values = @('off', 'hide') },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

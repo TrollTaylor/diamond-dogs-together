@@ -1,0 +1,28 @@
+# Lab-only real-menu Continue after a shared game over: the host confirms CONTINUE on
+# its own MISSION FAILED menu (no host_continue probe) and the guest must follow into
+# 30010 (follow kind 4). Copied saves only; the probes only stage the checkpoint and death.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+wait 8000
+host worldtrigger world_probe=shared_checkpoint
+wait 5000
+guest worldtrigger world_probe=shared_death
+wait 20000
+both capture manual-menu
+host press enter
+wait 2500
+# The lab save then asks "Equip the Chicken Hat?" (the stealth-assist popup, NO focused);
+# Enter keeps NO and continues.
+host capture manual-popup
+host press enter
+wait 3000
+both capture manual-chosen
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=30010; next=30010; kind=4' 60
+waitlog guest 'event=follow; step=replay; id=[0-9]+; src=30010; next=30010; kind=4' 120
+waitgameplay host 120
+waitgameplay guest 120
+wait 10000
+both capture manual-return
+state

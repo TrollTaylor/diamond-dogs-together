@@ -210,6 +210,21 @@ inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide:
 // advances to it with RequestToGoNextDirectMotion, falling back to stop).
 enum class PartnerRideSeatEnter : std::uint8_t { direct, getin };
 enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
+// F1 vehicles (docs/native-puppet.md "Vehicle boarding"; partner_board): what the
+// viewer's own ride action does at a vehicle the partner drives. off: stock (the
+// viewer can become a second driver of that copy); block: no ride icon and no
+// second driver; passenger: the free back seats of a light vehicle (the stock
+// passenger phase, with the passenger camera), trucks and the rest block. Default
+// passenger with the native gun profile in lab and play (ResolveWeaponDefaults),
+// off without it.
+enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
+// D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
+// ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
+// foot), hide (the viewer also hides body 1 while the remote's act is a horse
+// or D-Walker act 121..126, and unrealizes it through Lua's all-active mode).
+// The viewer's copy holds no GameObject for the partner's mount, so there is no
+// seated value. Default hide with the native gun profile in lab; play forces off.
+enum class PartnerNativeMount : std::uint8_t { off, hide };
 // Round-1 actions track (docs/anim-round1-actions.md "DM overlay"): the
 // DirectMotion overlay lever for graph-0 action states on body 1: off (the
 // default), debug (only the debug commands overlay_state / overlay_stop) or
@@ -515,10 +530,27 @@ struct LabConfig {
     bool partner_native_placed_given = false;
     bool partner_native_arm = false;
     bool partner_native_arm_given = false;
+    // WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): the remote's C4 place (gun
+    // mode 46) and detonate (47) mirrored into body 1's rec+0x3CC before its job,
+    // so body 1 kneels to place and plays the detonator motion (no charge is
+    // placed or set off in the viewer's world). Rides on partner_native_placed.
+    // Not named in lab.ini: on with the native gun profile in lab (after hidden
+    // runs 12320c2f / 0d8190ea / the reference run), else off; a named 0/1 wins.
+    // Play forces it off (no play-mode C4 run yet).
+    bool partner_native_place_mirror = false;
+    bool partner_native_place_mirror_given = false;
     PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::getin;
     PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::getoff;
+    // Mount riders (docs/mounts.md): hide with the native gun profile in lab
+    // (hidden run bfd6fcc4: no partner body on the viewer's screen while the
+    // partner rode, the body back after the dismount), off without it; a named
+    // value records _given (a named off opts out). Play forces it off (its
+    // rehearsal fbde3dcc covered the horse only). Acts only where
+    // partner_native_ride hides.
+    PartnerNativeMount partner_native_mount = PartnerNativeMount::off;
+    bool partner_native_mount_given = false;
     // WS3 vehicles (docs/vehicle-ws3.md). partner_ride_census: the read-only
     // vehicle unit/body census lines, lab only (play forces it off), default
     // off. partner_ride_seat_id: the remote driver seated in an unnamed vehicle
@@ -531,6 +563,10 @@ struct LabConfig {
     bool partner_ride_census = false;
     bool partner_ride_seat_id = true;
     bool partner_ride_tilt = true;
+    // F1 vehicles (partner_board, see PartnerRideBoard): off here; the native gun
+    // profile resolves it to passenger in lab and play; a named value records _given.
+    PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
+    bool partner_ride_board_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
@@ -538,6 +574,36 @@ struct LabConfig {
     // The native stance level fix: 1 = the round-1 window (500 ms behind the
     // guards, partner_recon NativeParams), 0 = the previous 2 s rule.
     bool partner_native_stance_fast = true;
+    // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal" and
+    // "Traversal icon"): ladders, drain pipes, wall climbs and step-ons the
+    // remote starts through its action icon are replayed on body 1 as a
+    // placement and (0.13.5, partner_icon) an icon request that the padop
+    // vtable copy answers inside instance 1's drain windows with the plugin's
+    // own Exec for idx 1. Nothing presses ACTION on body 1. Default on with the
+    // native gun profile in lab and play (user decision 2026-10-22; hidden run
+    // 104e9a47: body 1's step-on in FRAMES, the viewer's own player unchanged;
+    // play rehearsal 04d3511f; the Mother Base ladder in 8f27806d lab and
+    // 2596f6ae play; pipe and wall climb unproven); a named 0 opts out.
+    bool partner_native_traverse = false;
+    bool partner_native_traverse_given = false;
+    // F2 (partner_cbox_equip, docs/native-puppet.md "Cardboard box"): the
+    // remote's cardboard box on body 1 through two native calls on the
+    // equipment observer tick (ChangeEquip(1, box, flags 4) on, then
+    // SetCurrentItemIndex(1, 0) off). Default on with the native gun profile in
+    // lab and play (hidden run 05cffdd1: the box model on body 1, both
+    // directions, the viewer's own state unchanged); play admits it only with
+    // link v2 connected; a named 0 opts out.
+    bool partner_native_cbox = false;
+    bool partner_native_cbox_given = false;
+    // Gestures (partner_gesture, docs/native-puppet.md "Gestures"): the remote's
+    // pickup, hand sign Go / Stop and wall knock (its upper act Q+0x20 edges, a
+    // new reliable channel-2 message) played on body 1's graph 2 through
+    // SetCurrentNode / ReserveToResetNode inside body 1's own motion update. The
+    // same key gates the sender. Default on with the native gun profile in lab
+    // and play (hidden run 0e343f72: the pickup clip on body 1, the viewer's own
+    // player unchanged); a named 0 opts out.
+    bool partner_native_gesture = false;
+    bool partner_native_gesture_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute
@@ -639,8 +705,10 @@ const char* PartnerNativeStandinName(PartnerNativeStandin value) noexcept;
 const char* PartnerNativeAimIntentName(PartnerNativeAimIntent value) noexcept;
 const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept;
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
+const char* PartnerNativeMountName(PartnerNativeMount value) noexcept;
 const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
 const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
+const char* PartnerRideBoardName(PartnerRideBoard value) noexcept;
 const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // The effective travel lock (P2-11): the lab.ini travel_lock when given,
@@ -703,8 +771,10 @@ bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNative
 bool ParsePartnerNativeAimIntent(const char* text, std::size_t size, PartnerNativeAimIntent& out) noexcept;
 bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNativeReloadRate& out) noexcept;
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
+bool ParsePartnerNativeMount(const char* text, std::size_t size, PartnerNativeMount& out) noexcept;
 bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
 bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
+bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard& out) noexcept;
 bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.

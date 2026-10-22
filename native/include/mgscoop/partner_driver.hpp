@@ -45,7 +45,10 @@
 #include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
+#include "mgscoop/partner_mount_policy.hpp"
 #include "mgscoop/partner_vehicle.hpp"
+#include "mgscoop/partner_board.hpp"
+#include "mgscoop/partner_pass_camera.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_reload.hpp"
@@ -54,6 +57,10 @@
 #include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
+#include "mgscoop/partner_traverse.hpp"
+#include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_gesture.hpp"
+#include "mgscoop/partner_gesture_policy.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/pose_interp.hpp"
@@ -364,6 +371,45 @@ struct Hooks {
     // partner_net's receive path): the equip of this tick's support verdict
     // (Mission::support_equip, 0 = none), published every driver tick. May be null.
     void (*publish_support_identity)(void* context, std::uint16_t equip) noexcept = nullptr;
+    // Input frame v7 (WS4 v2, the sender's C4 place word): whether the peer was
+    // seen sending v7 (partner_net::PeerSendsInputV7). Null: v7 is never sent.
+    bool (*peer_input_v7)(void* context) noexcept = nullptr;
+    // --- F1 vehicles (docs/native-puppet.md "Vehicle boarding"; any null: partner_ride_board
+    // logs reason=unavailable once and nothing is installed, published or reported).
+    // Lazy install of the two board call-site redirects (partner_board::Install, after the
+    // code gate; nullptr ok, else a static reason), their per-tick live check, the policy word
+    // the wrappers read (partner_board::Pack; 0 = off) and their counters.
+    const char* (*board_install)(void* context) noexcept = nullptr;
+    bool (*board_live)(void* context) noexcept = nullptr;
+    void (*board_publish)(void* context, std::uint64_t policy) noexcept = nullptr;
+    void (*board_stats)(void* context, partner_board::Stats& out) noexcept = nullptr;
+    // The local passenger report (partner_board::ReadLocalPassenger: act 0x6E, P+0x120 /
+    // Q+0xE0, rider[2|3] == local); reads only. False: unread.
+    bool (*local_passenger)(void* context, const partner_player::State& state, partner_board::LocalPassenger& out) noexcept = nullptr;
+    // F3 traversal icon (docs/native-puppet.md "Traversal icon"; null: no
+    // census line): the read-only census of block 0's and block 1's action
+    // plugin lists (partner_icon::ReadCensus), once per mission with the key on.
+    void (*icon_census)(void* context, const partner_player::InputTargets& targets, partner_icon::Census& out) noexcept = nullptr;
+    // --- Gestures (docs/native-puppet.md "Gestures"; any null: the sender
+    // sends nothing and a received gesture refuses with reason=unavailable).
+    // Both ids' upper act byte Q+0x20 (partner_player::ReadUpper).
+    bool (*read_upper)(void* context, const partner_player::State& state, std::uint8_t (&out)[2]) noexcept = nullptr;
+    // Lazy install of the body-1 update hook (partner_gesture::Install): nullptr ok, else a static reason.
+    const char* (*gesture_install)(void* context) noexcept = nullptr;
+    // partner_gesture::Step: publishes the command, drains the receipts.
+    void (*gesture_step)(void* context, const partner_gesture::Command& command, partner_gesture::Status& out) noexcept = nullptr;
+    // --- F1 passenger camera (docs/native-puppet.md "Passenger camera"; passenger mode only;
+    // any null: one partner_ride=pass_camera; state=install; result=refused; reason=unavailable
+    // and nothing is connected). Lazy install (partner_pass_camera::Install: the pinned blocks,
+    // after the code gate; no patch), the connect / clear of the vehicle's ignore-collision
+    // handle on the local camera (partner_pass_camera::Connect: returns the plan's reason, `out`
+    // read after the write), the write counters and the local camera's connect fields
+    // (partner_pass_camera::ReadCamera; reads only).
+    const char* (*pass_camera_install)(void* context) noexcept = nullptr;
+    const char* (*pass_camera_connect)(void* context, const partner_player::State& state, std::uint16_t vehicle, bool on,
+                                       partner_pass_camera::Camera& out) noexcept = nullptr;
+    void (*pass_camera_stats)(void* context, partner_pass_camera::Stats& out) noexcept = nullptr;
+    bool (*pass_camera_read)(void* context, const partner_player::State& state, partner_pass_camera::Camera& out) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -385,6 +431,12 @@ inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
 // WS3 ride census cadence and cap (partner_ride_census=1).
 inline constexpr std::uint64_t kRideCensusMs = 1000;
 inline constexpr unsigned kRideCensusCap = 400;
+// F1 vehicles (partner_ride_board): a board counter line at most once a second
+// per site and kind (the pre-query runs every frame near the vehicle). Two caps
+// of kBoardLogCap per mission: the counter lines (Board::count_cap) and every
+// other board line (Board::cap), so the counters never crowd out a latch line.
+inline constexpr std::uint64_t kBoardLogMs = 1000;
+inline constexpr unsigned kBoardLogCap = 200;
 // The seat flow's phases (Mission::seat.phase).
 enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle };
 const char* SeatPhaseName(SeatPhase phase) noexcept;
@@ -468,6 +520,9 @@ struct Settings {
     // default off), the seat-by-id path (B1) and RIDE_TILT (A1) (both default
     // on, lab and play, capability-gated by the peer's ride addendum).
     bool ride_census, seat_id, ride_tilt;
+    // F1 vehicles (lab.ini partner_ride_board; docs/native-puppet.md "Vehicle boarding"):
+    // the board block / passenger hook and the local passenger report. Off by default; play forces off.
+    PartnerRideBoard ride_board;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -479,6 +534,9 @@ struct Settings {
     // nsupport): placed C4 (type 13, 391..395, slot 3) and arm holds (type 14,
     // only 516 for now, slot 6, HOLD only: FIRE stays stripped).
     bool nplaced, narm;
+    // WS4 v2 (lab.ini partner_native_place_mirror; needs nplaced): the remote's
+    // C4 place / detonate mirrored into body 1's record (partner_place_mirror).
+    bool nplace_mirror;
     PartnerNativeAimIntent naim_intent;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;
@@ -501,6 +559,10 @@ struct Settings {
     PartnerNativeOverlay noverlay;
     bool act_log;
     bool stance_fast;  // the native stance window (partner_native_stance_fast)
+    bool traverse;     // traversal replay (partner_native_traverse)
+    bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
+    bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
+    PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -520,6 +582,9 @@ struct Mission {
     partner_ride_wire::Visibility visibility;
     LogCap ride_cap;       // partner_ride=rx (on a state/revision change only)
     LogCap ride_vis_cap;   // partner_ride=hide|foot_stable|seat_show
+    // partner_native_mount=hide: the act-rule episode (partner_mount=hide|end lines, capped).
+    partner_mount_policy::Episode mount;
+    LogCap mount_cap;
     // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md).
     struct Seat {
         SeatPhase phase;
@@ -562,6 +627,38 @@ struct Mission {
     LogCap census_cap;
     std::uint64_t census_ms;
     LogCap seat_cap;       // partner_ride_seat event lines
+    // F1 vehicles (partner_ride_board): the board counters last logged, the
+    // last published policy, a phase-1 back seat awaiting the local passenger
+    // report, and the mission-scoped uncertain latch (passenger then publishes
+    // block; partner_ride=board_uncertain once).
+    struct Board {
+        partner_board::Stats seen;   // the process counters at this mission's first board tick
+        bool seen_have;
+        std::uint32_t logged_block[2], logged_steer[2], steer_count, faults_seen;
+        std::uint64_t block_log_ms[2], steer_log_ms[2];
+        std::uint64_t policy;
+        bool policy_logged;
+        partner_board::Policy logged;
+        bool steer_pending;
+        std::uint8_t steer_seat;
+        std::uint16_t steer_vehicle;
+        std::uint64_t steer_ms;
+        const char* uncertain;
+        bool live_refused;
+        LogCap cap;         // every other board line: policy, local_passenger, seated, refused, uncertain
+        LogCap count_cap;   // the periodic board_block / board_passenger counter lines
+    } board;
+    // F1 passenger camera (passenger mode): the per-boarding episode (connect /
+    // refused / release lines, under board.cap), the connect's counters at this
+    // mission's first tick and the mission latch (fault: nothing is connected
+    // again this mission).
+    struct PassCamera {
+        partner_pass_camera::Episode episode;
+        partner_pass_camera::Stats seen;
+        bool seen_have;
+        const char* uncertain;
+        bool uncertain_logged;
+    } pass_camera;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
     const char* seat_unavailable;
@@ -572,6 +669,18 @@ struct Mission {
     // The local PlayerStatus census of the receipt's st= (logged on change).
     bool status_have;
     std::uint16_t status_bits;
+    std::uint16_t active_item;  // the local tick's item= id (0 unknown)
+    // Receiver cardboard box: the remote manifest's box state last logged. No reply
+    // carries op::cbox (no Lua apply); with partner_native_cbox the observer's
+    // partner_cbox_equip puts the box on body 1 natively from cbox_want / cbox_id /
+    // cbox_seq (F2, docs/native-puppet.md "Cardboard box").
+    bool cbox_pending, cbox_want, cbox_applied;
+    std::uint16_t cbox_id, cbox_id_applied;
+    std::uint8_t cbox_left;
+    std::uint32_t cbox_seq;      // +1 per logged change (the native apply's edge, one attempt each)
+    std::uint64_t cbox_off_ms;   // when the remote's box last went off (the recon hold's grace)
+    bool cbox_hold;              // the recon hold for a boxed body 1 (partner_cbox_policy::ReconHold), last tick
+    LogCap cbox_cap;             // partner_cbox=hold lines
     LogCap status_cap;
     const char* visibility_logged;
     std::uint64_t visibility_place_try_ms;
@@ -617,12 +726,6 @@ struct Mission {
     std::uint8_t anim_psw[2];
     // Native calls: disabled for the rest of the mission after a fault.
     bool native_disabled;
-    std::uint16_t prev_remote_act{};
-    bool have_prev_remote_act{};
-    partner_ride_wire::Kind prev_ride_kind{partner_ride_wire::Kind::foot};
-    std::uint16_t prev_ride_vehicle{partner_ride_wire::kVehicleUnknown};
-    bool cbox_applied{};
-    std::uint16_t cbox_item_applied{};
     // Movement drivers.
     const char* xform_state;   // nullptr = applied, else the refusal last logged
     bool xform_logged;
@@ -703,6 +806,26 @@ struct Mission {
     bool input_stale_logged;
     // --- Round 4: reconciliation (apply=input).
     partner_recon::State recon;
+    // Traversal replay (partner_traverse): the machine, its hold (fed to the
+    // next StepRecon) and its log family.
+    partner_traverse::State traverse;
+    bool traverse_hold;
+    LogCap traverse_cap;
+    // F3 traversal icon: this tick's request for the Arm (kind, the process-
+    // unique id Driver::icon_seq gave the machine's episode icon_episode), the
+    // request log state (icon_req: a request is open, from its first raised
+    // tick until the request phase ends; stats at its start; logged once),
+    // the 2 s body-act window after a grant and the once-per-mission census.
+    partner_traverse::Icon icon_kind;
+    std::uint32_t icon_seq, icon_episode;
+    bool icon_req, icon_logged;
+    partner_traverse::Icon icon_req_kind;
+    std::uint32_t icon_req_seq;
+    partner_icon::Stats icon_base;
+    std::uint64_t icon_grant_ms;
+    std::uint16_t icon_act_last;
+    bool icon_census_done;
+    LogCap icon_cap;
     bool recon_active;             // apply=input with input != off this mission (recon state in use)
     bool recon_last_ok;            // the previous recon action was executed
     partner_recon::Out recon_out;  // the last step (logs, status)
@@ -718,6 +841,8 @@ struct Mission {
     std::int32_t recon_in_r;       // x1000
     double recon_target[3];
     double recon_target_yaw;
+    bool recon_remote_ok;            // the aligned sample's anim fields (StepRecon)
+    std::uint16_t recon_remote_act;
     bool recon_target_ok;
     std::uint64_t recon_line_ms;
     unsigned recon_lines;
@@ -911,6 +1036,9 @@ struct Mission {
     std::uint64_t v6_probe_ms;
     std::uint32_t v6_probes;
     bool v6_peer_logged;
+    std::uint64_t v7_probe_ms;
+    std::uint32_t v7_probes;
+    bool v7_peer_logged;
     partner_aim::DirCheck dir_check;
     partner_aim::DirReason dir_reason;
     bool dir_reason_logged;
@@ -1054,6 +1182,27 @@ struct Mission {
     partner_dm_overlay::State overlay;
     partner_dm_overlay::Out overlay_out;
     LogCap overlay_cap;
+    // --- Gestures (partner_gesture, docs/native-puppet.md "Gestures").
+    // This tick's upper act bytes (both ids), the newest received edge waiting
+    // for the gate (driver clock), the request in flight (its seq stays in the
+    // hook's command until a receipt names it or kRequestMs passes), the
+    // stance/moving it was chosen for, the hook's last status, the mission
+    // latch and the line family.
+    bool gesture_upper_ok;
+    std::uint8_t gesture_upper[2];
+    bool gesture_pending;
+    partner_gesture_policy::Packet gesture_rx_packet;
+    std::uint64_t gesture_rx_ms;
+    partner_gesture::Request gesture_request;
+    std::uint8_t gesture_request_stance;
+    bool gesture_request_moving;
+    bool gesture_active, gesture_uncertain, gesture_patch_lost_logged, gesture_configured_logged;
+    std::uint32_t gesture_rx, gesture_requests, gesture_refused;
+    // The hook's last step (for a request no body-1 update answered): body 1's
+    // identity verdict (nullptr resolved) and the process count of body-1 updates.
+    const char* gesture_hook_resolve;
+    std::uint32_t gesture_hook_body_calls;
+    LogCap gesture_cap;
 };
 
 struct Driver {
@@ -1079,6 +1228,9 @@ struct Driver {
     // tap= sequence: process-lifetime (the hook keeps its last seen value
     // across gens and missions, so a value is never reused).
     std::uint32_t tap_seq;
+    // F3: the icon request id, process-lifetime for the same reason (the hook
+    // grants at most once per id; 0 is never used).
+    std::uint32_t icon_seq;
     // rtap=1: one test reload tap through the event machine on the next native tick.
     bool rtap_pending;
     // Round-1 actions: the DM overlay debug one-shot (overlay=, oloop=, oms=),
@@ -1147,11 +1299,35 @@ struct Driver {
     std::uint64_t ride_ext_tx_ms;
     bool ride_ext_logged;
     std::uint16_t local_vehicle;
+    // F1 vehicles: the local player as a stock back-seat passenger (the native
+    // report; Lua says foot for act 0x6E), kept apart from local_vehicle (the
+    // vehicle the viewer DRIVES: RIDE_TILT and the receiver's local_vehicle gate).
+    partner_board::LocalPassenger local_passenger;
+    // The board hook's lazy install (once per process) and its result.
+    bool board_install_tried, board_installed;
+    const char* board_refusal;
+    // The passenger camera's lazy install (once per process, passenger mode) and its result.
+    bool pass_camera_install_tried, pass_camera_installed;
+    const char* pass_camera_refusal;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;
     char preload_verdict[24], preload_reason[32];
     std::uint32_t preload_mission, preload_new_hashes;
+    // Gestures (docs/native-puppet.md "Gestures"), process-lifetime: the
+    // upper-act edge sender (link-session scoped) and its one pending message,
+    // the receiver's store, the request serial (never reused), the hook's
+    // mission epoch (bumped at every MissionStart/MissionEnd/Stop: the hook
+    // drops a running gesture without a write) and the lazy install verdict.
+    partner_gesture_policy::Sender gesture_tx;
+    bool gesture_tx_pending;
+    partner_gesture_policy::Packet gesture_tx_packet;
+    std::uint8_t gesture_tx_upper;
+    std::uint64_t gesture_tx_ms;
+    partner_gesture_policy::Store gesture_rx;
+    std::uint32_t gesture_seq, gesture_epoch;
+    bool gesture_install_tried;
+    const char* gesture_install_refusal;
     Mission mission;
 };
 

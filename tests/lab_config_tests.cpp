@@ -78,6 +78,211 @@ int main() {
                   "an invalid placed census value refuses");
         }
     }
+    // WS4 v2: the C4 place / detonate mirror (partner_native_place_mirror). Not named: on with the gun profile in lab
+    // (after its hidden runs), off for off/loco and without a profile; a named 0/1 wins in lab; play forces it off.
+    {
+        Check(!LabConfig{}.partner_native_place_mirror && !Lab("").partner_native_place_mirror, "WS4 v2 key defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_native_place_mirror == !play && !profile.partner_native_place_mirror_given && profile.partner_native_placed,
+                  "the gun profile turns the WS4 v2 mirror on in lab; play forces it off");
+            const auto named = Lab(gun + mode + "partner_native_place_mirror=1\n");
+            Check(named.partner_native_place_mirror == !play && named.partner_native_place_mirror_given && named.partner_native_placed &&
+                      named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named WS4 v2 mirror runs in lab; play forces it off");
+            const auto off = Lab(gun + mode + "partner_native_place_mirror=0\n");
+            Check(!off.partner_native_place_mirror && off.partner_native_place_mirror_given && off.partner_native_placed,
+                  "a named 0 opts the gun profile out of the WS4 v2 mirror");
+            for (const char* other : {"off", "loco"}) {
+                const std::string base = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                         "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=";
+                Check(!Lab(base + other + "\n" + mode).partner_native_place_mirror, "off/loco profiles leave the WS4 v2 mirror off");
+            }
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_place_mirror=1\n");
+        Check(alone.partner_native_place_mirror && alone.invalid_values == 0 && alone.unknown_keys == 0, "partner_native_place_mirror=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_place_mirror=1\npartner_native_place_mirror=0\n");
+        Check(!later.partner_native_place_mirror, "a later 0 turns the mirror off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_place_mirror=") + value + "\n");
+            Check(!invalid.partner_native_place_mirror && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid WS4 v2 mirror value refuses");
+        }
+    }
+    // Traversal replay (partner_native_traverse, docs/native-puppet.md "Traversal" / "Traversal icon"): on with the
+    // native gun profile in lab and play (user decision 2026-10-22; hidden run 104e9a47: body 1's step-on in FRAMES),
+    // off without it; a named 1 runs in either mode, a named 0 opts out; a named value records _given.
+    {
+        Check(!LabConfig{}.partner_native_traverse && !LabConfig{}.partner_native_traverse_given && !Lab("").partner_native_traverse,
+              "traverse key defaults off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_native_traverse && !profile.partner_native_traverse_given && profile.invalid_values == 0,
+                  "the gun profile defaults traverse on in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_traverse=1\n");
+            Check(named.partner_native_traverse && named.partner_native_traverse_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named traverse=1 runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_native_traverse=0\n");
+            Check(!off.partner_native_traverse && off.partner_native_traverse_given, "a named traverse=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_traverse=1\n");
+        Check(alone.partner_native_traverse && alone.partner_native_traverse_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_native_traverse=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_traverse=1\npartner_native_traverse=0\n");
+        Check(!later.partner_native_traverse, "a later 0 turns traverse off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_traverse=") + value + "\n");
+            Check(!invalid.partner_native_traverse && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid traverse value refuses");
+        }
+    }
+    // F1 vehicles (partner_ride_board, docs/native-puppet.md "Vehicle boarding"): off|block|passenger. Passenger (the
+    // back seat with the passenger camera; trucks block) follows the native gun profile in lab and play (hidden runs
+    // 495e7c3a lab and de949f80 play; block: 0348c4d8, fad26e25); anything else stays off unless named; a named
+    // value runs as named in either mode and records _given.
+    {
+        using mgscoop::PartnerRideBoard;
+        Check(LabConfig{}.partner_ride_board == PartnerRideBoard::off && !LabConfig{}.partner_ride_board_given &&
+                  Lab("").partner_ride_board == PartnerRideBoard::off,
+              "board key defaults off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_ride_board == PartnerRideBoard::passenger && !profile.partner_ride_board_given && profile.invalid_values == 0,
+                  "the gun profile defaults the board to passenger in lab and play");
+            for (const char* value : {"block", "passenger"}) {
+                const auto named = Lab(gun + mode + "partner_ride_board=" + value + "\n");
+                const PartnerRideBoard want = std::strcmp(value, "block") == 0 ? PartnerRideBoard::block : PartnerRideBoard::passenger;
+                Check(named.partner_ride_board == want && named.partner_ride_board_given && named.invalid_values == 0 &&
+                          named.unknown_keys == 0 && named.play_refused == 0,
+                      "a named board mode runs as named in lab and play");
+            }
+            const auto off = Lab(gun + mode + "partner_ride_board=off\n");
+            Check(off.partner_ride_board == PartnerRideBoard::off && off.partner_ride_board_given, "a named off stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_ride_board=passenger\n");
+        Check(alone.partner_ride_board == PartnerRideBoard::passenger && alone.partner_ride_board_given && alone.invalid_values == 0 &&
+                  alone.unknown_keys == 0,
+              "partner_ride_board=passenger parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_ride_board=passenger\npartner_ride_board=block\n");
+        Check(later.partner_ride_board == PartnerRideBoard::block, "a later value wins");
+        for (const char* value : {"1", "on", "", "Block", "passengers", "drive"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_board=") + value + "\n");
+            Check(invalid.partner_ride_board == PartnerRideBoard::off && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid board value refuses");
+        }
+        Check(std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::off), "off") == 0 &&
+                  std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::block), "block") == 0 &&
+                  std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::passenger), "passenger") == 0,
+              "board names");
+    }
+    // F2 cardboard box on body 1 (partner_native_cbox, docs/native-puppet.md "Cardboard box"): on with the native gun
+    // profile in lab and play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link
+    // v2 connected), off without it; a named 1 runs in either mode, a named 0 opts out; a named value records _given.
+    {
+        Check(!LabConfig{}.partner_native_cbox && !LabConfig{}.partner_native_cbox_given && !Lab("").partner_native_cbox,
+              "cbox key defaults off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_native_cbox && !profile.partner_native_cbox_given && profile.invalid_values == 0,
+                  "the gun profile defaults the box on in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_cbox=1\n");
+            Check(named.partner_native_cbox && named.partner_native_cbox_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named cbox=1 runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_native_cbox=0\n");
+            Check(!off.partner_native_cbox && off.partner_native_cbox_given, "a named cbox=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_cbox=1\n");
+        Check(alone.partner_native_cbox && alone.partner_native_cbox_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_native_cbox=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_cbox=1\npartner_native_cbox=0\n");
+        Check(!later.partner_native_cbox, "a later 0 turns the box off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_cbox=") + value + "\n");
+            Check(!invalid.partner_native_cbox && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid cbox value refuses");
+        }
+    }
+    // Gestures (partner_native_gesture, docs/native-puppet.md "Gestures"): on with the native gun profile in lab and
+    // play (hidden runs 0e343f72 lab and the play rehearsal: body 1's pickup in the frames), off without it; a named 1
+    // runs in either mode, a named 0 opts out; a named value records _given; independent of the traversal key.
+    {
+        Check(!LabConfig{}.partner_native_gesture && !LabConfig{}.partner_native_gesture_given && !Lab("").partner_native_gesture,
+              "gesture key defaults off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_native_gesture && !profile.partner_native_gesture_given && profile.invalid_values == 0,
+                  "the gun profile defaults gestures on in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_gesture=1\n");
+            Check(named.partner_native_gesture && named.partner_native_gesture_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0 && !named.partner_native_traverse_given &&
+                      named.partner_native_traverse == profile.partner_native_traverse,
+                  "a named gesture=1 runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_native_gesture=0\n");
+            Check(!off.partner_native_gesture && off.partner_native_gesture_given && off.partner_native_traverse &&
+                      !off.partner_native_traverse_given,
+                  "a named gesture=0 stays off and leaves the traversal default");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_gesture=1\n");
+        Check(alone.partner_native_gesture && alone.partner_native_gesture_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_native_gesture=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_gesture=1\npartner_native_gesture=0\n");
+        Check(!later.partner_native_gesture, "a later 0 turns gestures off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_gesture=") + value + "\n");
+            Check(!invalid.partner_native_gesture && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid gesture value refuses");
+        }
+    }
+    // Horse / D-Walker riders (partner_native_mount=off|hide, docs/mounts.md): hide with the native gun profile in lab
+    // and play (hidden runs bfd6fcc4 / 2ab88411 lab, play rehearsal 5a044a4d: no partner body while the partner rode), off
+    // without it; a named off opts out in either mode; a named value records _given.
+    {
+        Check(LabConfig{}.partner_native_mount == PartnerNativeMount::off && !LabConfig{}.partner_native_mount_given &&
+                  Lab("").partner_native_mount == PartnerNativeMount::off,
+              "mount key defaults off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto want = PartnerNativeMount::hide;
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_native_mount == want && !profile.partner_native_mount_given && profile.invalid_values == 0,
+                  "the gun profile defaults the mount hide on in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_mount=hide\n");
+            Check(named.partner_native_mount == want &&
+                      named.partner_native_mount_given && named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named mount=hide runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_native_mount=off\n");
+            Check(off.partner_native_mount == PartnerNativeMount::off && off.partner_native_mount_given, "a named mount=off stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_mount=hide\n");
+        Check(alone.partner_native_mount == PartnerNativeMount::hide && alone.partner_native_mount_given && alone.invalid_values == 0 &&
+                  alone.unknown_keys == 0,
+              "partner_native_mount=hide parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_mount=hide\npartner_native_mount=off\n");
+        Check(later.partner_native_mount == PartnerNativeMount::off, "a later off turns the mount hide off");
+        for (const char* value : {"1", "0", "seat", "Hide", "", "on"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_mount=") + value + "\n");
+            Check(invalid.partner_native_mount == PartnerNativeMount::off && !invalid.partner_native_mount_given &&
+                      invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid mount value refuses");
+        }
+        Check(std::strcmp(PartnerNativeMountName(PartnerNativeMount::hide), "hide") == 0 &&
+                  std::strcmp(PartnerNativeMountName(PartnerNativeMount::off), "off") == 0,
+              "mount names");
+    }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
     // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).

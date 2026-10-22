@@ -1,0 +1,115 @@
+# F3 ladder (act 21) on body 1 at Mother Base (docs/native-puppet.md "Traversal icon"), both directions. The key
+# partner_native_traverse is NOT named: it defaults on with the native gun profile in lab and play, so this file is
+# the lab run and the play rehearsal alike. Mother Base needs the real seed (copies of the real saves, restored and
+# hash-checked after the run; the lab seed continues into 30010, which has no verified ladder).
+# Run (hidden worker, coordinator only, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-traverse-ladder-mb.txt
+#     -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real            (lab)
+#     ... -SaveSeed real -Mode play -WanSim bad                                                (play rehearsal)
+# The MB arrival demo blocks guest debug commands for a while after gameplay (cc3a74b): wait 60 s before the first.
+# Spot: the ladder on the red container south-east of the real seed's start (both copies start at about 9.0,0.8,-41.1).
+# Its rungs stand at x=22.61, z=-14.86 (deck y=0.80); the climber faces +z (yaw 0) and exits at the top (y=4.80) onto
+# the container roof at z=-12..-10.7. Source: the user's 0.13.2 MB play (assess host_0132 ~2876-2909, guest_0132
+# ~3266-3333: the remote's pose stayed at 22607,y,-14856 while y rose; top 22.63,4.80,-13.80). The host teleports to
+# 22.61,1.80,-15.55 yaw 0 (it lands at 22.59,0.80,-15.16 facing the ladder), W 300 ms, W+E 200 ms, then W to climb.
+# Approaching from the west (21.66,-14.77 yaw 95, where the user's guest grabbed it while running east) walked past
+# the ladder in hidden run 8f27806d; E alone (no W first) from 22.61,-15.40 yaw 0 also grabbed it.
+#
+# Expect (the viewer's script-observer.log; the guest for the host's climb, the host for the reversed one):
+#   partner_icon=built ... once, partner_icon=census; distinct=52/52; ...; verdict=ok
+#   partner_act; ...; edge=remote; remote=21(ladder); body=21(ladder); match_ms=0 (body 1 often enters 21 a frame
+#     before the act census sees the remote's 21: edge=body ... body=21 then edge=remote ... match_ms=0)
+#   partner_traverse=start; reason=near; ...; icon=ladder -> entered; reason=request; ...; body_act=21
+#   partner_traverse=icon; plugin=ladder; res=ok; seq=S; exec_ok=1; exec_fail=0; granted=1; ...; latched=0;
+#     viewer_changed=0; faults=0; restore_mismatch=0
+#   partner_traverse=icon_act; seq=S; act=21; ms=0 ... done; reason=left
+#   NO partner_recon=place; reason=vertical while body 1 is in 21.
+# Frames: <lad|lad2|rev>-climb (8 x 200 ms), -up and -top bursts: body 1 grabs the ladder, climbs it and goes over the
+# top onto the container roof while the viewer (local act 1 in every capture) stands still. lad-self-mid /
+# rev-self-mid are the climber's own view mid-ladder.
+# Result: hidden run 8f27806d (lab, scratch variant with the host attempts only): two grabs, each res=ok; exec_ok=1;
+# granted=1; req_queries=1; deny=none; latched=0; viewer_changed=0; faults=0; restore_mismatch=0 and edge 21/21
+# match_ms=0; frames show body 1 climbing the ladder and over the top. Hidden run 2596f6ae (this file, -Mode play
+# -WanSim bad, rtt ~185 ms, 0-15 % loss, key not named): partner_icon=built on both copies, the same lines for both
+# host climbs on the guest and for the reversed climb on the host, and the same frames with the play HUD.
+# Known cosmetic defect (open): while body 1 is on the ladder the VIEWER's HUD shows the stock ladder hint "C +
+# ladder" next to its own player (8f27806d ladA-up-01..04, ladC-climb-07..up-04; 2596f6ae lad-up-01..top-02 and
+# rev-up-01..top-02), although the viewer is on foot (act 1) and the climber's own view mid-ladder shows no hint.
+# Likely source: body 1's LadderActionImpl state handler 0x1411EC3A0 (case 4) calls P+0xD8 UiControllerImpl vt+0x260
+# (0x140FE6D10 -> [this+0x48] vt+0xF8(3, 8, 0, 1, 0, 0)) with no P+0x218 index check. No input path: body 1's slide
+# poll (0x1411EC54A) asks padop IsCompletedActionIcon with block 1's plugin, which never matches the viewer's slots.
+labsetting partner_act_log=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+host debug position
+guest debug position
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+wait 2000
+stance host stand
+stance guest stand
+waitlog guest 'partner_icon=built' 20
+waitlog host 'partner_icon=built' 20
+waitlog guest 'partner_icon=census; ' 20
+host debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance host stand
+host debug position
+placebehind guest host 5 -3
+wait 2500
+both capture lad-start
+host hold w 300
+host hold w+e 200 nowait
+guest burst lad-climb 8 200
+host hold w 1500 nowait
+guest burst lad-up 3 300
+host capture lad-self-mid
+host hold w 1500 nowait
+guest burst lad-top 4 300
+host release
+host debug position
+both capture lad-end
+waitlog guest 'partner_traverse=icon; plugin=ladder; res=ok' 3
+wait 1000
+host debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance host stand
+host debug position
+wait 1500
+both capture lad2-start
+host hold w 300
+host hold w+e 200 nowait
+guest burst lad2-climb 8 200
+host hold w 1500 nowait
+guest burst lad2-up 4 300
+host hold w 1500 nowait
+guest burst lad2-top 4 300
+host release
+both capture lad2-end
+wait 1000
+# Reversed: the guest climbs, the host films its body 1.
+guest debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance guest stand
+guest debug position
+placebehind host guest 5 -3
+wait 2500
+both capture rev-start
+guest hold w 300
+guest hold w+e 200 nowait
+host burst rev-climb 8 200
+guest hold w 1500 nowait
+host burst rev-up 3 300
+guest capture rev-self-mid
+guest hold w 1500 nowait
+host burst rev-top 4 300
+guest release
+guest debug position
+both capture rev-end
+waitlog host 'partner_traverse=icon; plugin=ladder; res=ok' 3
+wait 1000
+state

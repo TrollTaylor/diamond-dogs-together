@@ -158,6 +158,18 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # WS4 v1: native C4 placing and arm holds
     'partner_native_placed=1','partner_native_placed=0','guest:partner_native_placed=1','host:partner_native_placed=0',
     'partner_native_arm=1','partner_native_arm=0','guest:partner_native_arm=1','host:partner_native_arm=0',
+    # WS4 v2: the C4 place / detonate mirror
+    'partner_native_place_mirror=1','partner_native_place_mirror=0','guest:partner_native_place_mirror=1','host:partner_native_place_mirror=0',
+    # Traversal replay (on with the gun profile, lab and play)
+    'partner_native_traverse=1','partner_native_traverse=0','guest:partner_native_traverse=1','host:partner_native_traverse=0',
+    # F1 vehicles: the board block / back-seat passenger hook (passenger with the gun profile in lab and play)
+    'partner_ride_board=off','partner_ride_board=block','partner_ride_board=passenger','guest:partner_ride_board=passenger','host:partner_ride_board=block',
+    # F2: the native cardboard box on body 1 (lab only, default 0)
+    'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
+    # Gestures (on with the gun profile, lab and play)
+    'partner_native_gesture=1','partner_native_gesture=0','guest:partner_native_gesture=1','host:partner_native_gesture=0',
+    # Horse / D-Walker riders (hide with the gun profile in lab; play forces off)
+    'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
@@ -170,6 +182,12 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_placed_census=2','partner_placed_census=','partner_placed_census=on','both:partner_placed_census=1',
     'partner_native_placed=2','partner_native_placed=','partner_native_placed=on','both:partner_native_placed=1',
     'partner_native_arm=2','partner_native_arm=','partner_native_arm=yes','both:partner_native_arm=1','partner_native_arms=1',
+    'partner_native_place_mirror=2','partner_native_place_mirror=','partner_native_place_mirror=on','both:partner_native_place_mirror=1',
+    'partner_native_traverse=2','partner_native_traverse=','partner_native_traverse=on','both:partner_native_traverse=1','partner_native_traversal=1',
+    'partner_ride_board=1','partner_ride_board=','partner_ride_board=on','partner_ride_board=Block','partner_ride_board=passengers','both:partner_ride_board=block',
+    'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
+    'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
+    'partner_native_mount=1','partner_native_mount=','partner_native_mount=seat','both:partner_native_mount=hide','partner_native_mounts=hide',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
@@ -181,16 +199,24 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_ride_census=1','labsetting guest partner_ride_seat_id=1','labsetting host partner_ride_tilt=0',
         'labsetting partner_placed_census=1','labsetting host partner_placed_census=0',
         'labsetting partner_native_placed=1','labsetting guest partner_native_placed=0','labsetting partner_native_arm=1','labsetting host partner_native_arm=0',
+        'labsetting partner_native_place_mirror=1','labsetting guest partner_native_place_mirror=0',
+        'labsetting partner_native_traverse=1','labsetting host partner_native_traverse=0',
+        'labsetting partner_ride_board=passenger','labsetting guest partner_ride_board=block','labsetting host partner_ride_board=off',
+        'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
+        'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
+        'labsetting partner_native_mount=hide','labsetting guest partner_native_mount=hide','labsetting host partner_native_mount=off',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
-foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage')){
+foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage',
+        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
-foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1')){
+foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1',
+        'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 Assert-True ('labsetting partner_placed_census=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses an invalid placed census bool'
@@ -523,6 +549,82 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         $steps=@($cpSteps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'});$failed=$false
         try { & $validator } catch { $failed=$true }
         Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
+    }
+    # F5 (docs/mounts.md section 8): partner-mount.txt is play-rehearsal friendly. The D-Walker part runs before every
+    # horse part; a horse dismount E follows "host require localMounted=1" (the play rehearsal fbde3dcc stopped after a
+    # second E mounted the host's horse); the lab-only overlay probes sit in the marked Part 5; and the play copy the
+    # header describes (the mount / overlay labsetting lines and Part 5 removed) validates in play mode.
+    & {
+        $mountPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-mount.txt'
+        Assert-True (Test-Path -LiteralPath $mountPath -PathType Leaf) 'shipped F5 scenario partner-mount.txt'
+        $mountText=[IO.File]::ReadAllText($mountPath)
+        $mountLines=@([IO.File]::ReadAllLines($mountPath)|ForEach-Object{$_.Trim()})
+        $p5=@(for($i=0;$i -lt $mountLines.Count;$i++){if($mountLines[$i].StartsWith('# --- Part 5 (lab only)')){$i}})
+        $p5end=@(for($i=0;$i -lt $mountLines.Count;$i++){if($mountLines[$i].StartsWith('# --- end of Part 5')){$i}})
+        Assert-True ($p5.Count -eq 1 -and $p5end.Count -eq 1 -and $p5end[0] -gt $p5[0]) 'partner-mount marks its lab-only Part 5'
+        $playLines=@(for($i=0;$i -lt $mountLines.Count;$i++){if($i -lt $p5[0] -or $i -gt $p5end[0]){$mountLines[$i]}})
+        $playLines=@($playLines|Where-Object{$_ -cnotmatch '^labsetting\s+(?:(?:host|guest)\s+)?partner_native_(?:mount|overlay)='})
+        Assert-True (@($playLines|Where-Object{$_ -cmatch 'partner_native_(mount|overlay)=' -and !$_.StartsWith('#')}).Count -eq 0) 'partner-mount play copy names no mount / overlay key'
+        $steps=@($playLines|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $Mode='play'
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-mount play copy steps valid in play mode '+$failure)
+        Assert-True (@($steps|Where-Object{$_ -cmatch 'overlay_state'}).Count -eq 0) 'partner-mount keeps every overlay probe in Part 5'
+        $walker=[array]::IndexOf($steps,'host run walker_spawn')
+        $horse=[array]::IndexOf($steps,'host run horse_spawn')
+        $guestHorse=[array]::IndexOf($steps,'guest run horse_spawn')
+        $guestWalker=[array]::IndexOf($steps,'guest run walker_spawn')
+        Assert-True ($walker -ge 0 -and $horse -gt $walker -and $guestHorse -gt $horse -and $guestWalker -gt $guestHorse) 'partner-mount runs the D-Walker part before the horse parts'
+        $hostE=@(for($i=$horse;$i -lt $guestWalker;$i++){if($steps[$i] -ceq 'host press e 150'){$i}})
+        Assert-True ($hostE.Count -eq 4) 'partner-mount: two host horse rides, a mount and a dismount E each'
+        for($k=1;$k -lt $hostE.Count;$k+=2){
+            $between=@($steps[($hostE[$k-1]+1)..($hostE[$k]-1)])
+            Assert-True ($between -ccontains 'host require localMounted=1') ('partner-mount: horse dismount E '+$k+' only after host require localMounted=1')
+        }
+        $between=@($steps[($hostE[1]+1)..($hostE[2]-1)])
+        Assert-True ($between -ccontains 'host require localMounted=0') 'partner-mount: the second horse mount E only after the first dismount finished'
+        foreach($needle in @('-Mode play -WanSim bad','--- end of Part 5','partner_mount=configured; mode=hide',
+            'event=ride_body;action=refuse;reason=not_mirror;id=6656')){
+            Assert-True ($mountText.Contains($needle)) ('partner-mount header covers: '+$needle)
+        }
+        $steps=@($mountLines|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $Mode='lab'
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure -and @($steps|Where-Object{$_ -cmatch '^guest run overlay_state '}).Count -eq 3) ('partner-mount keeps its lab coverage (three probes) '+$failure)
+    }
+    # WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): partner-c4-v2.txt names the mirror key with the WS4 v1 C4 key and
+    # the census, places C4 at several spots and detonates, framing body 1 from the side before every phase.
+    & {
+        $Mode='lab'
+        $v2Path=Join-Path $RepoRoot 'tools\worker\scenarios\partner-c4-v2.txt'
+        Assert-True (Test-Path -LiteralPath $v2Path -PathType Leaf) 'shipped WS4 v2 scenario partner-c4-v2.txt'
+        $v2Lines=[IO.File]::ReadAllLines($v2Path)
+        $labsettings=@($v2Lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -cmatch '^labsetting(\s|$)'})
+        foreach($line in @('labsetting partner_native_place_mirror=1','labsetting partner_native_placed=1','labsetting partner_placed_census=1')){
+            Assert-True ($labsettings -ccontains $line) ('partner-c4-v2 names '+$line)
+        }
+        foreach($line in $labsettings){ Assert-True ($line -cmatch $lineMatch.Groups[1].Value) ('partner-c4-v2 labsetting is allow-listed: '+$line) }
+        $steps=@($v2Lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-c4-v2 steps valid in lab mode '+$failure)
+        $v2Text=[IO.File]::ReadAllText($v2Path)
+        foreach($needle in @('-PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab','place_mirror=1',
+            'partner_place_mirror=edge; act=place','partner_place_mirror=result; act=place; taken=1','reason=place','reason=detonate',
+            'mode=46','mode=47','owners=65535:0','NO partner_support=refused; ...; reason=placed_shared_write','reverted=2',
+            'counts=12,16383,12,8,12,12,8,8','v7_peer','RealSavesUnchanged')){
+            Assert-True ($v2Text.Contains($needle)) ('partner-c4-v2 covers: '+$needle)
+        }
+        $placeAttempts=@($steps|Where-Object{$_ -ceq 'host hold lmb 300 nowait'})
+        $detonate=@($steps|Where-Object{$_ -ceq 'host press e'})
+        Assert-True ($placeAttempts.Count -ge 3 -and $detonate.Count -ge 1) 'partner-c4-v2: several place attempts and a detonation'
+        $reframes=@($steps|Where-Object{$_ -cmatch '^placebehind guest host [0-9]+ [0-9]+$'})
+        Assert-True ($reframes.Count -ge ($placeAttempts.Count+$detonate.Count+1)) 'partner-c4-v2 re-frames the guest before every phase'
+        $guestCounts=@($steps|Where-Object{$_ -cmatch '^guest require support;.*counts=12,16383,12,8,12,12,8,8;'})
+        Assert-True ($guestCounts.Count -ge 3) 'partner-c4-v2 requires the guest seed counts unchanged around the C4'
+        Assert-True (@($steps|Where-Object{$_ -cmatch '^guest burst c4-(place|det)'}).Count -ge 5) 'partner-c4-v2 films every place and detonation'
     }
     # WS4 v1 (docs/anim-round2-throws.md "WS4 v1"): partner-c4.txt, a lab scenario that names both WS4 v1 keys and
     # the census, places C4 at several spots, detonates, then aims the arm, with every evidence line in its header.
