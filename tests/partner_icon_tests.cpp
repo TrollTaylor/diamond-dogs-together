@@ -69,6 +69,11 @@ void TestPure() {
     Check(!ic::SwapWanted(false, 1, 3, 100, 200) && !ic::SwapWanted(true, 0, 3, 100, 200) && !ic::SwapWanted(true, 5, 3, 100, 200) &&
               !ic::SwapWanted(true, 1, 0, 100, 200) && !ic::SwapWanted(true, 1, 3, 200, 200) && !ic::SwapWanted(true, 1, 3, 100, 0),
           "swap refusals: not native, no kind, unknown kind, no seq, expired, no expiry");
+    // Restore: the saved vtable goes back only over our copy; already back is left; anything else is never overwritten.
+    Check(ic::RestoreAction(0x5000, 0x5000, 0x9000) == ic::Restore::write, "restore: our copy, write the saved vtable");
+    Check(ic::RestoreAction(0x9000, 0x5000, 0x9000) == ic::Restore::already, "restore: already back (second post), leave it");
+    Check(ic::RestoreAction(0x7000, 0x5000, 0x9000) == ic::Restore::mismatch, "restore: a foreign vptr, mismatch");
+    Check(ic::RestoreAction(0, 0, 0x9000) == ic::Restore::mismatch, "restore: no copy built, never write");
     // Exec RVAs by kind.
     Check(ic::KindOfExec(0x11EA140) == ic::Kind::ladder && ic::KindOfExec(0x1211820) == ic::Kind::pipe &&
               ic::KindOfExec(0x114BEC0) == ic::Kind::climb && ic::KindOfExec(0x1293F60) == ic::Kind::step_on &&
@@ -277,8 +282,18 @@ void TestCopySlots() {
     Check(!Slot28()(g_padop, &g_ladder1, 0, &res) && g_orig_calls == 4, "after End: the original");
     // A new request id grants again; the P flag and the padop owner gate it.
     ic::Begin(P, Addr(g_blk1), static_cast<std::uint8_t>(ic::Kind::ladder), 8);
+    ic::Stats b{};
+    ic::ReadStats(b);
     Put<std::uint32_t>(P + ic::kPFlags, 0);
     Check(!Slot28()(g_padop, &g_ladder1, 0, &res) && g_exec_calls == 2, "P+0x204 bit 10 clear: false");
+    // Body 1's pipe poll runs after the requested ladder's in the same job: it counts in denied, but the
+    // requested plugin's deny stays p_flag.
+    Check(!Slot28()(g_padop, &g_pipe1, 0, &res) && g_exec_calls == 2, "another body-1 poll after the refusal: false");
+    ic::ReadStats(st);
+    Check(st.queries == b.queries + 2 && st.denied == b.denied + 2 && st.last_deny == static_cast<std::uint8_t>(ic::Deny::kind) &&
+              st.req_queries == b.req_queries + 1 && st.req_denied == b.req_denied + 1 &&
+              st.req_deny == static_cast<std::uint8_t>(ic::Deny::p_flag),
+          "the requested plugin's deny is kept apart from body 1's other polls");
     Put<std::uint32_t>(P + ic::kPFlags, ic::kPFlagIcons);
     Put<std::uintptr_t>(padop + ic::kPadopOwner, P + 8);
     Check(!Slot28()(g_padop, &g_ladder1, 0, &res) && g_exec_calls == 2, "padop of another P: false");
@@ -316,6 +331,21 @@ void TestCopySlots() {
     ic::End();
     ic::ReadStats(st);
     Check(st.granted == 3 && st.granted_seq == 10 && st.last_kind == static_cast<std::uint8_t>(ic::Kind::pipe), "three grants");
+    // ApplyPost's restore outcomes: a write or an already-restored vptr is quiet; a foreign vptr and a fault latch.
+    ic::Stats r0{};
+    ic::ReadStats(r0);
+    ic::NoteRestore(ic::Restore::write);
+    ic::NoteRestore(ic::Restore::already);
+    ic::ReadStats(st);
+    Check(!st.latched && st.restore_mismatch == r0.restore_mismatch && st.faults == r0.faults, "restore write/already: quiet");
+    ic::NoteRestore(ic::Restore::mismatch);
+    ic::ReadStats(st);
+    Check(st.latched && st.restore_mismatch == r0.restore_mismatch + 1 && st.faults == r0.faults, "restore mismatch: counted, latched");
+    ic::ResetMission();
+    ic::NoteRestore(ic::Restore::fault);
+    ic::ReadStats(st);
+    Check(st.latched && st.faults == r0.faults + 1, "restore fault: counted, latched");
+    ic::ResetMission();
     ic::detail::ResetForTest();
     Check(!ic::Ready() && ic::CopyTable() == 0, "reset");
     VirtualFree(image, 0, MEM_RELEASE);
@@ -357,7 +387,8 @@ int main() {
     TestReadCensus();
     std::printf("%u partner icon checks passed: route/grant/force/swap decisions, census verdicts, contract slots and pins, the copy "
                 "slots on fake objects (original out of scope / other thread / block 0, one grant per id, ray cache restore, viewer "
-                "latch, fault latch, force swallow), the read-only census reader\n",
+                "latch, fault latch, force swallow, the requested plugin's deny), the padop restore outcomes, the read-only census "
+                "reader\n",
                 checks);
     return 0;
 }

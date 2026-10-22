@@ -2641,6 +2641,28 @@ void TestJobWindow() {
         Check(hk::RunJobWindow(w->go, &param, 1, &IconJob::Job, pi::Consumer::drain0) && s_vptr == ic::CopyTable() && s_result && s_exec == 2 &&
                   Get<std::uintptr_t>(padop) == base + ic::kPadopVtableRva,
               "icon: a new request id grants again; the image vtable is back");
+        // A job that leaves a foreign vptr in the padop (the object replaced inside the window): ApplyPost
+        // restores the padop first and only over the copy, so the foreign vptr stays; counted and latched.
+        static std::uintptr_t s_foreign = 0;
+        struct ForeignJob {
+            static void Job(void* foreign_go, const void* foreign_param) noexcept {
+                IconJob::Job(foreign_go, foreign_param);
+                Put<std::uintptr_t>(Addr(iw->padop), s_foreign);
+            }
+        };
+        s_foreign = base + ic::kPadopVtableRva + 0x300;
+        ia.icon_seq = 79;
+        hk::PublishArm(ia);
+        hk::DrainStats(hs);
+        const ic::Stats before_foreign = hs.native.icon;
+        Check(hk::RunJobWindow(w->go, &param, 1, &ForeignJob::Job, pi::Consumer::drain0) && s_vptr == ic::CopyTable() && s_result &&
+                  s_exec == 3 && Get<std::uintptr_t>(padop) == s_foreign,
+              "icon: a foreign padop vptr after the job is never overwritten");
+        hk::DrainStats(hs);
+        Check(hs.native.icon.restore_mismatch == before_foreign.restore_mismatch + 1 && hs.native.icon.latched,
+              "icon: the foreign vptr is counted and latches the mission");
+        Put<std::uintptr_t>(padop, base + ic::kPadopVtableRva);
+        ic::ResetMission();
         ic::detail::ResetForTest();
         Put<std::uintptr_t>(P + ic::kPPadop, saved_padop);
         Put<std::uint32_t>(P + c::p_flags, saved_flags);

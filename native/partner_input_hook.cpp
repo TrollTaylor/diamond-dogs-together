@@ -707,10 +707,27 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save, const Window
     }
 }
 
+// F3: the padop vptr (ApplyPre's last swap) goes back first and under its own
+// SEH, so a fault in a later restore never leaves the copy installed past the
+// window, and only over our own copy (partner_icon::RestoreAction): a foreign
+// vptr is counted and latched, never overwritten.
+void RestorePadop(const Save& save) noexcept {
+    if (!save.padop_saved) return;
+    partner_icon::Restore outcome = partner_icon::Restore::fault;
+    __try {
+        outcome = partner_icon::RestoreAction(Load<std::uintptr_t>(save.padop), partner_icon::CopyTable(), save.padop_vt);
+        if (outcome == partner_icon::Restore::write) Store<std::uintptr_t>(save.padop, save.padop_vt);
+    } __except (OwnFilter(3, GetExceptionCode())) {
+        outcome = partner_icon::Restore::fault;
+    }
+    partner_icon::NoteRestore(outcome);
+}
+
 // Exact reverse of ApplyPre for the saved fields. capture_private keeps the
 // masks and shadows instance 1's update left as its private copy (only after
 // a real call).
 void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcept {
+    RestorePadop(save);
     if (save.rings_saved) {
         std::uintptr_t live[7]{};
         std::memcpy(live, reinterpret_cast<const void*>(a.src + c::src_rings), sizeof(live));
@@ -740,7 +757,6 @@ void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcep
         Store<std::uint32_t>(a.pp + c::pp_hold_latch, partner_native::LatchRestore(now, save.latch));
     }
     if (save.vt_saved) Store<std::uintptr_t>(a.pp, save.vt);
-    if (save.padop_saved) Store<std::uintptr_t>(save.padop, save.padop_vt);
     if (save.masks_saved) {
         if (capture_private) {
             std::memcpy(g_priv_masks, reinterpret_cast<void*>(a.pp + c::pp_masks), c::pp_masks_size);

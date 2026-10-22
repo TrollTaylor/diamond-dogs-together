@@ -1719,21 +1719,29 @@ namespace ptv = mgscoop::partner_traverse;
 namespace pic = mgscoop::partner_icon;
 inline constexpr std::uint64_t kIconActWindowMs = 2000;  // body act lines after a grant
 // partner_traverse=icon: one line per request (the hook's counters are
-// process totals; the deltas since the request started), once granted or
-// once the request ended without a grant; then body 1's act for 2 s. A
+// process totals; every count is the delta since the request started, and
+// `latched` is the mission latch now), once granted or once the request ended
+// without a grant; then body 1's act for 2 s. `deny` is the last refusal of
+// the requested plugin's own query (none when it had none in this request):
+// body 1's other polls query in the same job and only count in denied=. A
 // request is open from its first raised tick until the machine leaves the
 // request phase (entered, aborted) or a new id replaces it: a tick inside the
 // phase without the level (window not armed, a non-source body act) neither
 // ends it nor restarts its deltas.
 void LogIconResult(Mission& m, const Hooks& h, const pic::Stats& is, std::uint32_t granted) noexcept {
     m.icon_logged = true;
+    const pic::Stats& b = m.icon_base;
+    const std::uint32_t req_denied = is.req_denied - b.req_denied;
     EmitCapped(m.icon_cap, h, "partner_traverse",
                "partner_traverse=icon; plugin=%s; res=%s; seq=%u; exec_ok=%u; exec_fail=%u; granted=%u; queries=%u; denied=%u; "
-               "swaps=%u; swap_refused=%u; deny=%s; latched=%u; viewer_changed=%u; faults=%u\r\n",
-               ptv::IconName(m.icon_req_kind), granted > 0 ? "ok" : "none", m.icon_req_seq, is.exec_ok - m.icon_base.exec_ok,
-               is.exec_fail - m.icon_base.exec_fail, granted, is.queries - m.icon_base.queries, is.denied - m.icon_base.denied,
-               is.swaps - m.icon_base.swaps, is.swap_refused - m.icon_base.swap_refused,
-               pic::DenyName(static_cast<pic::Deny>(is.last_deny)), is.latched ? 1u : 0u, is.viewer_changed, is.faults);
+               "swaps=%u; swap_refused=%u; windows=%u; passed=%u; force_swallowed=%u; req_queries=%u; req_denied=%u; deny=%s; "
+               "latched=%u; viewer_changed=%u; faults=%u; restore_mismatch=%u\r\n",
+               ptv::IconName(m.icon_req_kind), granted > 0 ? "ok" : "none", m.icon_req_seq, is.exec_ok - b.exec_ok,
+               is.exec_fail - b.exec_fail, granted, is.queries - b.queries, is.denied - b.denied, is.swaps - b.swaps,
+               is.swap_refused - b.swap_refused, is.windows - b.windows, is.passed - b.passed, is.force_swallowed - b.force_swallowed,
+               is.req_queries - b.req_queries, req_denied,
+               req_denied ? pic::DenyName(static_cast<pic::Deny>(is.req_deny)) : pic::DenyName(pic::Deny::none), is.latched ? 1u : 0u,
+               is.viewer_changed - b.viewer_changed, is.faults - b.faults, is.restore_mismatch - b.restore_mismatch);
 }
 void LogIcon(Mission& m, const Hooks& h, const pic::Stats& is, const ptv::Out& o, std::uint64_t now, bool body_ok,
              std::uint16_t body_act) noexcept {

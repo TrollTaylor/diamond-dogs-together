@@ -8,8 +8,8 @@
 # Part 1 is the spot census: no traversal coordinates are verified in the repo, so the host walks into whatever is
 # ahead of the lab start in four headings and presses E (vault / step-on, wall climb, ladder, pipe). The guest's
 # partner_act lines name the host's act as `remote=`; any of 21 ladder, 22 pipe, 23 wall_climb, 24 step_on marks a
-# spot, and the `host debug position` result printed right before each probe is its coordinate. Copy a found spot
-# into Part 3 (one teleport per kind) for the next run.
+# spot, and the `host debug position` result printed right before each press (after the walk) is its coordinate.
+# Copy a found spot into Part 3 (one teleport per kind) for the next run.
 #
 # Expectations (guest script-observer.log; the host's log carries none of them for the guest, who never traverses):
 #   partner_icon=built; vtable=0x22e8f00; slots=96; ...                      once (lazy install, defer=on, key on)
@@ -18,18 +18,22 @@
 # Per probe whose host act reaches 21..24 (`partner_act; ...; edge=remote; remote=2X(...)`):
 #   partner_traverse=start; reason=near|placed; ...; remote_act=2X           the replay starts
 #   partner_traverse=request; reason=ladder|pipe|climb|step_on               the icon request is raised
-#   partner_traverse=icon; plugin=<kind>; res=ok; seq=S; exec_ok>=1; granted=1; ...; latched=0; viewer_changed=0; faults=0
+#   partner_traverse=icon; plugin=<kind>; res=ok; seq=S; exec_ok>=1; granted=1; ...; latched=0; viewer_changed=0; faults=0;
+#     restore_mismatch=0   (every count is this request's delta; latched is the mission latch)
 #   partner_traverse=icon_act; seq=S; act=2X; ms=<..>                        body 1's act within 2 s of the grant
 #   partner_act; ...; edge=body; remote=2X; body=2X; match_ms=<1500          the existing act edge
 #   partner_traverse=entered; reason=request ... done; reason=left
 #   NO `partner_recon=place; reason=vertical` while body 1 is in 21..24.
 # Frames: <probe>-start (both bodies before the press), <probe>-climb burst (8 x 200 ms: body 1 on the ladder / wall
 # / ledge next to the host), <probe>-end. The guest's own player (the viewer) never moves, never enters 21..24 and
-# never shows an action prompt it did not ask for: any `partner_traverse=icon; ...; latched=1` or viewer_changed>0
-# is a failure of the viewer guard, report it with the frames.
+# never shows an action prompt it did not ask for: any `partner_traverse=icon; ...; latched=1`, viewer_changed>0 or
+# restore_mismatch>0 is a failure of the viewer guard, report it with the frames.
 # Diagnosis of a res=none line: queries=0 (body 1's polls never ran inside a swapped drain: swaps=0 or
-# swap_refused>0), exec_fail>0 with exec_ok=0 (the plugin's own gates refused body 1 at that pose: check its act, the
-# placement and facing), deny=p_flag (P+0x204 bit 10 clear), deny=align|owner|fault (report).
+# swap_refused>0, windows=0, or passed>0 = calls through the copy outside the scope), queries>0 with req_queries=0
+# (the requested plugin's poll never reached the icon: its own gates, body act / upper act), exec_fail>0 with
+# exec_ok=0 and deny=exec (the plugin's own gates refused body 1 at that pose: check its act, the placement and
+# facing), deny=p_flag (P+0x204 bit 10 clear), deny=align|owner|fault (report). `deny` is the requested plugin's own
+# last refusal; body 1's other polls count only in denied=.
 labsetting partner_act_log=1
 labsetting partner_native_traverse=1
 title 200
@@ -49,13 +53,15 @@ placebehind guest host 5 3
 wait 5000
 both capture icon-start
 waitlog guest 'partner_icon=census; ' 20
-# --- Part 1 + 2: four headings from the lab start. Each probe: walk 3 s ahead, then W+E at whatever is there
-# (step-on onto a waist-high ledge, a wall climb, a ladder or a pipe), the guest filming from 5 m behind. ------------
-host debug position
+# --- Part 1 + 2: four headings from the lab start. Each probe: walk about 2.3 s ahead, re-place the guest 5 m
+# behind the stopped host (spec F3.8: film from 5 m at the press), then W+E at whatever is there (step-on onto a
+# waist-high ledge, a wall climb, a ladder or a pipe). -------------------------------------------------------------
 host hold w 1500 nowait
 wait 1500
-host hold w 1500 nowait
-wait 800
+host hold w 800
+placebehind guest host 5 3
+wait 1000
+host debug position
 guest capture probe1-start
 host hold w+e 200 nowait
 guest burst probe1-climb 8 200
@@ -72,11 +78,12 @@ host mouse 1500 0
 wait 500
 placebehind guest host 5 3
 wait 2500
-host debug position
 host hold w 1500 nowait
 wait 1500
-host hold w 1500 nowait
-wait 800
+host hold w 800
+placebehind guest host 5 3
+wait 1000
+host debug position
 guest capture probe2-start
 host hold w+e 200 nowait
 guest burst probe2-climb 8 200
@@ -97,11 +104,12 @@ host mouse -1500 0
 wait 500
 placebehind guest host 5 3
 wait 2500
-host debug position
 host hold w 1500 nowait
 wait 1500
-host hold w 1500 nowait
-wait 800
+host hold w 800
+placebehind guest host 5 3
+wait 1000
+host debug position
 guest capture probe3-start
 host hold w+e 200 nowait
 guest burst probe3-climb 8 200
@@ -126,11 +134,12 @@ host mouse 1500 0
 wait 500
 placebehind guest host 5 3
 wait 2500
-host debug position
 host hold w 1500 nowait
 wait 1500
-host hold w 1500 nowait
-wait 800
+host hold w 800
+placebehind guest host 5 3
+wait 1000
+host debug position
 guest capture probe4-start
 host hold w+e 200 nowait
 guest burst probe4-climb 8 200

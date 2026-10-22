@@ -300,7 +300,10 @@ contract pins `0xAFD870` and the slot {`0x22E8F00`, +0x28}).
    1..4, `icon_seq != 0`, `NowMs() < icon_until_ms`) and the padop identity
    is exact (vtable `image+0x22E8F00`, `padop+0x10 == P`, as
    `carry_plugin_read.hpp` checks); `ApplyPost` (every exit path, SEH and
-   `__finally` included) restores the image vtable.
+   `__finally` included) restores the image vtable first, under its own SEH
+   (a fault in a later restore never leaves the copy installed), and only
+   over the copy (`RestoreAction`): a vptr already back is left, a foreign
+   vptr is never overwritten (`restore_mismatch`, latches the mission).
 3. **Scope.** `partner_icon::Begin(P, blk1, kind, seq)` right before block
    1's job, `End` in `GuardedCall`'s `__finally` and the outer `__finally`.
    Outside the scope (another thread, outside the job) every call through the
@@ -351,23 +354,38 @@ missing0|missing1|blk0|blk1` (bits are 1 << kind: 0x1e = all four).
 **Logs** (from the driver tick; the hook only counts):
 - `partner_traverse=icon; plugin=ladder|pipe|climb|step_on; res=ok|none;
   seq=..; exec_ok=..; exec_fail=..; granted=..; queries=..; denied=..;
-  swaps=..; swap_refused=..; deny=<last Deny>; latched=0|1;
-  viewer_changed=..; faults=..` once per request (deltas since the request
-  started; `res=ok` as soon as the grant is counted, `res=none` when the
-  machine left the request phase without one: entered natively or aborted;
-  a tick inside the phase without the level, such as a disarmed window,
-  neither ends the request nor restarts its deltas).
+  swaps=..; swap_refused=..; windows=..; passed=..; force_swallowed=..;
+  req_queries=..; req_denied=..; deny=<Deny>; latched=0|1;
+  viewer_changed=..; faults=..; restore_mismatch=..` once per request. Every
+  count is the delta since the request started; `latched` is the mission
+  latch at the time of the line. `queries` / `denied` count every body-1
+  query in scope (body 1's other traversal polls and its kt > 0 plugins
+  query in the same job); `req_queries` / `req_denied` count only the
+  requested plugin's own queries (its vt[1] is the requested Exec), and
+  `deny` is that plugin's last refusal (`none` when it had none in this
+  request). `windows` counts scoped jobs (`Begin`), `passed` calls through
+  the copy that went to the original (another thread, another block, or
+  outside the scope). `res=ok` as soon as the grant is counted, `res=none`
+  when the machine left the request phase without one: entered natively or
+  aborted; a tick inside the phase without the level, such as a disarmed
+  window, neither ends the request nor restarts its deltas.
 - `partner_traverse=icon_act; seq=..; act=..; ms=..` for every body-1 act
   change in the 2 s after a grant, then one line with `final=1`.
 - The existing `partner_act` edges (`partner_act_log=1`): expect
   `edge=body; remote=X; body=X; match_ms<1500` after `res=ok`.
 
 Reading a failed run: `queries=0` means body 1's polls never ran inside a
-swapped drain window (the polls run elsewhere, or no window swapped:
-`swaps=0` / `swap_refused`); `exec_fail>0, exec_ok=0` means the plugin's own
-gates refused body 1 at that pose (placement, facing, act, upper act
-`Q+0x20[1]`); `res=ok` without `edge=body` means the poll or the Wake did not
-follow the completion.
+swapped drain window: no window swapped (`swaps=0` / `swap_refused>0`), the
+swapped windows never scoped block 1's job (`windows=0`), or the polls went
+through the copy outside the scope (`passed>0`: another thread or block).
+`queries>0, req_queries=0` means body 1's other polls ran but the requested
+plugin's poll never reached the icon (its own state gate refused first:
+act, upper act `Q+0x20[1]`). `exec_fail>0, exec_ok=0` (`deny=exec`) means
+the plugin's own gates refused body 1 at that pose (placement, facing, act,
+upper act); `deny=p_flag` means `P+0x204` bit 10 was clear;
+`deny=align|owner|fault`, `restore_mismatch>0` or `latched=1`: report.
+`res=ok` without `edge=body` means the poll or the Wake did not follow the
+completion.
 
 **Risks** (for the hidden run).
 - The ladder Exec reads `P+0xB0` pad +0x10/+0x14/+0x2C (instance 1's injected

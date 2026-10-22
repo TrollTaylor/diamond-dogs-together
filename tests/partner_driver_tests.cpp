@@ -3453,6 +3453,11 @@ void TestNativeTraverseIcon() {
         Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0 && s.fake.arms.back().icon_until_ms == 0,
               "icon: no request while both walk");
         const std::uint32_t gen = s.fake.arms.back().gen;
+        // The hook's process totals before this request (an earlier mission's latch, long cleared, and other
+        // requests' activity): the result lines carry deltas, and a stale requested-plugin deny never shows.
+        auto& is = s.fake.stats.native.icon;
+        is.viewer_changed = 2; is.faults = 1; is.windows = 40; is.passed = 7; is.force_swallowed = 4; is.restore_mismatch = 1;
+        is.req_queries = 9; is.req_denied = 5; is.req_deny = static_cast<std::uint8_t>(ic::Deny::p_flag);
         s.fake.sample.act = 21;
         bool raised = false;
         for (int i = 0; i < 10 && !raised; ++i) {
@@ -3470,7 +3475,6 @@ void TestNativeTraverseIcon() {
         Check(s.fake.Containing("partner_traverse=request; reason=ladder;") == 1, "icon: the request event");
         // One tick with a body act outside the ladder's sources (8, a running step) drops the level inside the
         // request phase: the request stays open (no result line), and the same id comes back.
-        auto& is = s.fake.stats.native.icon;
         is.queries += 2; is.denied += 2; is.swaps += 1;  // hook activity before the drop (part of this request's deltas)
         s.fake.anim.act[1] = 8;
         s.N();
@@ -3483,12 +3487,18 @@ void TestNativeTraverseIcon() {
         // The hook grants (process totals in the drained stats).
         is.ready = true;
         is.queries += 4; is.exec_ok += 1; is.granted += 1; is.swaps += 2; is.granted_seq = seq; is.last_kind = 1;
+        is.windows += 3; is.passed += 1; is.force_swallowed += 1; is.req_queries += 1;
+        is.last_deny = static_cast<std::uint8_t>(ic::Deny::kind);  // another body-1 poll's refusal
         s.N();
-        char want[192];
+        char want[384];
         std::snprintf(want, sizeof(want),
-                      "partner_traverse=icon; plugin=ladder; res=ok; seq=%u; exec_ok=1; exec_fail=0; granted=1; queries=6; denied=2; swaps=3;",
+                      "partner_traverse=icon; plugin=ladder; res=ok; seq=%u; exec_ok=1; exec_fail=0; granted=1; queries=6; denied=2; swaps=3; "
+                      "swap_refused=0; windows=3; passed=1; force_swallowed=1; req_queries=1; req_denied=0; deny=none; latched=0; "
+                      "viewer_changed=0; faults=0; restore_mismatch=0\r\n",
                       seq);
         Check(s.fake.Containing(want) == 1, "icon: res=ok logged once with the deltas (the drop did not restart them)");
+        Check(s.fake.Containing("deny=p_flag") == 0 && s.fake.Containing("deny=kind") == 0,
+              "icon: neither a stale requested-plugin deny nor another poll's deny is logged");
         s.fake.anim.act[1] = 21;
         s.N();
         Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0, "icon: body 1 on the ladder, the request drops");
@@ -3511,11 +3521,15 @@ void TestNativeTraverseIcon() {
         }
         Check(raised && s.fake.arms.back().icon_kind == static_cast<std::uint8_t>(ic::Kind::step_on) && s.fake.arms.back().icon_seq == seq + 1,
               "icon: the next episode gets the next id (step-on)");
-        is.queries += 9; is.exec_fail += 3; is.denied += 6; is.last_deny = static_cast<std::uint8_t>(ic::Deny::exec);
+        // The step-on plugin's Exec refuses three times; body 1's other polls (kind / kt refusals) run last.
+        is.queries += 9; is.exec_fail += 3; is.denied += 9; is.req_queries += 3; is.req_denied += 3;
+        is.req_deny = static_cast<std::uint8_t>(ic::Deny::exec);
+        is.last_deny = static_cast<std::uint8_t>(ic::Deny::kind);
         for (int i = 0; i < 60; ++i) s.N();
         std::snprintf(want, sizeof(want), "partner_traverse=icon; plugin=step_on; res=none; seq=%u; exec_ok=0; exec_fail=3; granted=0;", seq + 1);
-        Check(s.fake.arms.back().icon_kind == 0 && s.fake.Containing(want) == 1 && s.fake.Containing("deny=exec") == 1,
-              "icon: no entry within entry_ms: the request drops, res=none with the deltas");
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.Containing(want) == 1 && s.fake.Containing("deny=exec") == 1 &&
+                  s.fake.Containing("req_queries=3; req_denied=3; deny=exec; latched=0; viewer_changed=0; faults=0;") == 1,
+              "icon: no entry within entry_ms: the request drops, res=none with the deltas and the requested plugin's deny");
         Check(s.fake.Containing("partner_traverse=abort; reason=no_entry;") == 1, "icon: the episode aborts");
         Check(s.fake.icon_census_calls == 1, "icon: still one census this mission");
     }

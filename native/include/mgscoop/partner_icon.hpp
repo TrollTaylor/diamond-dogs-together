@@ -109,6 +109,15 @@ constexpr bool ForceSwallowed(bool active, bool same_thread) noexcept { return a
 constexpr bool SwapWanted(bool native, std::uint8_t kind, std::uint32_t seq, std::uint64_t now_ms, std::uint64_t until_ms) noexcept {
     return native && kind != 0 && kind < kKinds && seq != 0 && until_ms != 0 && now_ms < until_ms;
 }
+// ApplyPost's padop restore (first, under its own SEH, so a fault in a later
+// restore never leaves the copy installed): the saved image vtable is written
+// back only over our own copy; a vptr already back (a second post of the same
+// window) is left alone; anything else is a surprise that is counted and
+// latched, never overwritten. `fault`: the read or the write faulted.
+enum class Restore : std::uint8_t { write, already, mismatch, fault };
+constexpr Restore RestoreAction(std::uintptr_t vptr, std::uintptr_t copy, std::uintptr_t saved) noexcept {
+    return copy != 0 && vptr == copy ? Restore::write : vptr == saved ? Restore::already : Restore::mismatch;
+}
 
 // Read-only census (once per mission with the key on): block 1's PS+0x10
 // plugin list against block 0's, and *(plugin+8) == its block for the four
@@ -151,6 +160,9 @@ std::uintptr_t CopyTable() noexcept;
 // The swap bookkeeping (partner_input_hook ApplyPre): a window that installed
 // the copy, or one that wanted to but found the padop identity wrong.
 void NoteSwap(bool installed) noexcept;
+// The restore's outcome (partner_input_hook ApplyPost): mismatch counts
+// restore_mismatch and latches `uncertain`, fault counts a fault and latches.
+void NoteRestore(Restore outcome) noexcept;
 // Drain scope: Begin right before block 1's job (only when the window
 // installed the copy), End on every exit (idempotent).
 void Begin(std::uintptr_t P, std::uintptr_t blk1, std::uint8_t kind, std::uint32_t seq) noexcept;
@@ -164,13 +176,19 @@ struct Stats {
     std::uint32_t swaps, swap_refused, windows;   // copy installed, identity refused, Begin calls
     std::uint32_t queries;                         // body-1 queries through the copy in scope
     std::uint32_t passed;                          // queries of other blocks / threads / outside scope (original)
-    std::uint32_t denied;                          // body-1 queries answered false without Exec
+    std::uint32_t denied;                          // body-1 queries answered false (any plugin, Exec failures included)
     std::uint32_t exec_ok, exec_fail, granted;     // Exec true / false; grants (== exec_ok)
     std::uint32_t force_swallowed, force_passed;
     std::uint32_t viewer_changed, faults;          // digest surprises and SEH faults (both latch)
-    std::uint8_t last_kind, last_deny;             // Kind of the last Exec, Deny of the last denied query
+    std::uint8_t last_kind, last_deny;             // Kind of the last Exec, Deny of the last denied body-1 query (any plugin)
     std::uint32_t granted_seq;                     // the last granted request id
     bool latched;                                  // uncertain or faulted this mission
+    // The requested plugin's own queries (its vt[1] is the requested kind's
+    // Exec): body 1's other polls (other traversal kinds, kt > 0 plugins) also
+    // query in the same job and would overwrite last_deny.
+    std::uint32_t req_queries, req_denied;
+    std::uint8_t req_deny;                         // Deny of the requested plugin's last denied query
+    std::uint32_t restore_mismatch;                // ApplyPost found a foreign padop vptr (left alone, latched)
 };
 void ReadStats(Stats& out) noexcept;
 // Read-only census of block 0's and block 1's plugin lists (SEH; read=false on a fault).

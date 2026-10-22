@@ -50,6 +50,7 @@ volatile LONG g_uncertain = 0, g_faulted = 0;
 volatile LONG g_swaps = 0, g_swap_refused = 0, g_windows = 0, g_queries = 0, g_passed = 0, g_denied = 0;
 volatile LONG g_exec_ok = 0, g_exec_fail = 0, g_granted = 0, g_force_swallowed = 0, g_force_passed = 0;
 volatile LONG g_viewer_changed = 0, g_faults = 0, g_last_kind = 0, g_last_deny = 0;
+volatile LONG g_req_queries = 0, g_req_denied = 0, g_req_deny = 0, g_restore_mismatch = 0;
 
 bool InScope() noexcept { return g_active != 0 && static_cast<DWORD>(g_tid) == GetCurrentThreadId(); }
 
@@ -141,9 +142,16 @@ ExecResult CallExec(std::uintptr_t padop, std::uintptr_t plugin, std::uintptr_t 
     }
 }
 
-bool Refuse(Deny why) noexcept {
+// `requested`: the query is the requested plugin's own (its vt[1] is the
+// requested kind's Exec); only those set req_deny, so body 1's other polls in
+// the same job cannot overwrite the reason the request was refused.
+bool Refuse(Deny why, bool requested) noexcept {
     InterlockedIncrement(&g_denied);
     InterlockedExchange(&g_last_deny, static_cast<LONG>(why));
+    if (requested) {
+        InterlockedIncrement(&g_req_denied);
+        InterlockedExchange(&g_req_deny, static_cast<LONG>(why));
+    }
     return false;
 }
 
@@ -170,7 +178,7 @@ bool IconCompletedBody1(void* padop, void* plugin, std::int32_t kt, void* res) n
     if (!read) {
         InterlockedIncrement(&g_faults);
         InterlockedExchange(&g_faulted, 1);
-        return Refuse(Deny::fault);
+        return Refuse(Deny::fault, false);  // the plugin's kind is unknown
     }
     GrantIn in{};
     in.kt = kt;
@@ -182,8 +190,10 @@ bool IconCompletedBody1(void* padop, void* plugin, std::int32_t kt, void* res) n
     in.owner_ok = q.owner == g_P;
     in.p_flag = (q.p_flags & kPFlagIcons) != 0;
     in.res_aligned = res && (reinterpret_cast<std::uintptr_t>(res) & 0xFu) == 0;
+    const bool requested = in.exec_match;
+    if (requested) InterlockedIncrement(&g_req_queries);
     const Deny why = GrantCheck(in);
-    if (why != Deny::none) return Refuse(why);
+    if (why != Deny::none) return Refuse(why, requested);
     std::uint64_t before = 0, after = 0;
     const bool digest_before = ViewerDigest(pad, g_P, before);
     const ExecResult r = CallExec(pad, plug, q.prio, q.exec, res);
@@ -194,7 +204,7 @@ bool IconCompletedBody1(void* padop, void* plugin, std::int32_t kt, void* res) n
         InterlockedIncrement(&g_viewer_changed);
         InterlockedExchange(&g_uncertain, 1);
         if (r == ExecResult::ok) InterlockedIncrement(&g_exec_ok);
-        return Refuse(Deny::latched);
+        return Refuse(Deny::latched, true);
     }
     switch (r) {
     case ExecResult::ok:
@@ -204,12 +214,12 @@ bool IconCompletedBody1(void* padop, void* plugin, std::int32_t kt, void* res) n
         return true;  // the stock poll now sets its work state and wakes the plugin
     case ExecResult::fail:
         InterlockedIncrement(&g_exec_fail);
-        return Refuse(Deny::exec);
-    case ExecResult::priority: return Refuse(Deny::priority);
+        return Refuse(Deny::exec, true);
+    case ExecResult::priority: return Refuse(Deny::priority, true);
     default:
         InterlockedIncrement(&g_faults);
         InterlockedExchange(&g_faulted, 1);
-        return Refuse(Deny::fault);
+        return Refuse(Deny::fault, true);
     }
 }
 
@@ -356,6 +366,16 @@ std::uintptr_t CopyTable() noexcept { return g_ready ? reinterpret_cast<std::uin
 
 void NoteSwap(bool installed) noexcept { InterlockedIncrement(installed ? &g_swaps : &g_swap_refused); }
 
+void NoteRestore(Restore outcome) noexcept {
+    if (outcome == Restore::mismatch) {
+        InterlockedIncrement(&g_restore_mismatch);
+        InterlockedExchange(&g_uncertain, 1);
+    } else if (outcome == Restore::fault) {
+        InterlockedIncrement(&g_faults);
+        InterlockedExchange(&g_faulted, 1);
+    }
+}
+
 void Begin(std::uintptr_t P, std::uintptr_t blk1, std::uint8_t kind, std::uint32_t seq) noexcept {
     g_P = P;
     g_blk1 = blk1;
@@ -396,6 +416,10 @@ void ReadStats(Stats& out) noexcept {
     out.last_deny = static_cast<std::uint8_t>(g_last_deny);
     out.granted_seq = static_cast<std::uint32_t>(g_granted_seq);
     out.latched = g_uncertain != 0 || g_faulted != 0;
+    out.req_queries = static_cast<std::uint32_t>(g_req_queries);
+    out.req_denied = static_cast<std::uint32_t>(g_req_denied);
+    out.req_deny = static_cast<std::uint8_t>(g_req_deny);
+    out.restore_mismatch = static_cast<std::uint32_t>(g_restore_mismatch);
 }
 
 void ReadCensus(const void* base, std::uintptr_t blk0, std::uintptr_t blk1, Census& out) noexcept {
