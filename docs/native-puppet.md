@@ -273,32 +273,32 @@ does at a vehicle the partner drives, and the partner seated as a passenger in
 either player's vehicle. Key `partner_ride_board=off|block|passenger`, a named
 value records `partner_ride_board_given`:
 
-- **block is the default with the native gun profile, in lab and play.** Hidden
-  run `0348c4d8` (lab, `coop-vehicle-shared.txt`, both directions): the viewer
-  pressed E beside the jeep the partner drove, got no ride icon
-  (`board_block; site=prequery`), stayed on foot (`vehicle_not_riding`, no
-  `st=0x400`), and the partner kept driving in the viewer's frames; the ride
-  icon came back once the partner got out. Play rehearsal `fad26e25`
-  (`-Mode play -WanSim bad`, rtt ~180 ms, 1-3 % loss; the same scenario
-  without the key, so the default ran: `board_install; mode=block`): the same
-  in both directions, no `board_uncertain`.
-- **passenger stays lab-only and named-only** (play turns it into block). Hidden
-  run `59cfc415` (lab, `coop-vehicle-passenger.txt`): the back-door prompt
-  appears on the light vehicle, the viewer boards seat 2 (`board_passenger;
-  site=phase1`, `local_passenger; via=p120`, act 0x6E), rides with the
-  partner-driven jeep (RIDE_FAST applied) and gets off with the stock
-  GetOffBackLeft; the partner sees it in the back seat (`partner_ride_seat=
-  confirmed; seat=2`), both directions. But the passenger's **own camera is
-  unusable**: the viewer looks at the jeep's interior from boarding until it
-  gets off (frames `pass-guest-view`, `pass-drive-NN`, `pass-rev-drive-NN`);
-  the seat status lines show no vehicle camera connect (`cam1f0=0x0`) until
-  the get-off's own `0x8800000000006408`. The user approved camera work for
-  it (2026-10-22): see "Passenger camera" below (wp/pass-cam, not yet run in
-  the game). The truck half did not run: the host could not board
-  `veh_trc_0000` from the `goto_vehicle truck` spot and the guest's nearest
-  truck was another one 817 m away (the copies' trucks differ), so the truck
-  fallback (`reason=type`) is still only unit-tested. The light vehicle reads
-  `type=2; seats=4`.
+- **passenger is the default with the native gun profile, in lab and play**
+  (since hidden runs `495e7c3a` lab and `de949f80` play, see "Passenger
+  camera"): the viewer boards a free back seat (2/3) of a light vehicle the
+  partner drives; at trucks, armoured vehicles, a taken back seat or anything
+  else it blocks exactly like block. Hidden run `59cfc415` (lab,
+  `coop-vehicle-passenger.txt`): the back-door prompt appears on the light
+  vehicle, the viewer boards seat 2 (`board_passenger; site=phase1`,
+  `local_passenger; via=p120`, act 0x6E), rides with the partner-driven jeep
+  (RIDE_FAST applied) and gets off with the stock GetOffBackLeft; the partner
+  sees it in the back seat (`partner_ride_seat=confirmed; seat=2`), both
+  directions. There the passenger's own camera looked at the jeep's interior
+  (`cam1f0=0x0` until the get-off's own `0x8800000000006408`); the passenger
+  camera fixes it. The truck half did not run in any of the passenger runs:
+  the host could not board `veh_trc_0000` from the `goto_vehicle truck` spot
+  and the guest's nearest truck was another one 817 m away (the copies' trucks
+  differ), so the truck fallback (`reason=type`) is still only unit-tested. The
+  light vehicle reads `type=2; seats=4`.
+- **block** (named): hidden run `0348c4d8` (lab, `coop-vehicle-shared.txt`,
+  both directions): the viewer pressed E beside the jeep the partner drove, got
+  no ride icon (`board_block; site=prequery`), stayed on foot
+  (`vehicle_not_riding`, no `st=0x400`), and the partner kept driving in the
+  viewer's frames; the ride icon came back once the partner got out. Play
+  rehearsal `fad26e25` (`-Mode play -WanSim bad`, rtt ~180 ms, 1-3 % loss; the
+  same scenario without the key, when block was the default:
+  `board_install; mode=block`): the same in both directions, no
+  `board_uncertain`.
 
 **Why.** The partner is drawn in the viewer's copy of its vehicle by the DM
 seat chain (`partner_ride_seat`), never registered in the copy's `rider[]`.
@@ -391,9 +391,8 @@ branch lands inside either operand.
 offers the back door (the prompt appears; the "site B only" fallback is not
 needed), the Wakh Sind jeep is type 2 with 4 seats, and after a passenger exit
 the copy keeps following the driver's stream (`pass-after-exit-NN`). **Still
-unproven:** the truck numbering (3/4) and its block, a usable passenger camera
-(the stock one looks at the interior, above; the fix is "Passenger camera"
-below), the attach jitter against the
+unproven:** the truck numbering (3/4) and its block (the passenger camera
+is proven, see "Passenger camera"), the attach jitter against the
 20 Hz RIDE_FAST placement, and what the copy's phase-6
 `RequestVehicleToManualDrive` does to the next FAST placement. Research builds: `coop_passenger` and
 `coop_vehicle_mirror` SHA-pin `0x1245820` and `0x1251200` whole and refuse
@@ -403,12 +402,13 @@ lazy board install, so they never see the patched rel32; nothing re-runs them.
 
 ### Passenger camera
 
-`wp/pass-cam` (user decision 2026-10-22: new camera code may connect the
-vehicle camera for a local back-seat passenger; the camera files listed as
-protected and the P+C0 setter `0x11F6520` stay untouched). No new key: it is
-part of `partner_ride_board=passenger` (lab-only, named-only), the only mode in
-which the viewer becomes a stock passenger. Research (read-only Ghidra, raw
-dumps in the scratchpad `complete/re-passcam/`):
+User decision 2026-10-22: new camera code may connect the vehicle camera for a
+local back-seat passenger at boarding and release it at the get-off; the camera
+files listed as protected and the P+C0 setter `0x11F6520` stay untouched. No
+new key: it is part of `partner_ride_board=passenger` (the default with the
+native gun profile since hidden runs `495e7c3a` lab and `de949f80` play), the
+only mode in which the viewer becomes a stock passenger. Research (read-only
+Ghidra, raw dumps in the scratchpad `complete/re-passcam/`):
 
 - **How the stock camera picks its view.** The local player's camera
   `CAM = *(P+0xB8)` (PlayerCamera, vtable `0x23B8250`) holds six modules at
@@ -418,84 +418,103 @@ dumps in the scratchpad `complete/re-passcam/`):
   the old mode and the new module's `vt+0x00` runs. The modules come from data
   (`CAM vt+0x50 0x1111C50`); the classes found are the cut-in camera, a camera
   for act 0x68, the subjective camera, one keyed to player status bits, the
-  VehicleCamera and an always-true fallback (`0x23B29E0`, CanActivate
-  `0x84B020 mov al,1`), which must sit after the VehicleCamera because the
-  driver gets it.
+  VehicleCamera (index 3 in the lab) and an always-true fallback (`0x23B29E0`,
+  CanActivate `0x84B020 mov al,1`; index 5), which the on-foot player and a
+  seated passenger use.
 - **The VehicleCamera** (`tpp::gm::player::(anon)::VehicleCamera`, factory
   `0x12D0E20`, module vtable `0x23D67F0`, base `0x23D6720`). CanActivate
   `0x12D0F60` is `act = (*(Q+0x18))[P+0x218]; return act - 0x6F <= 1`, so it
   serves the driver (0x6F) and the get-off (0x70), never the passenger phase
-  (0x6E). Its update (`vt+0x20 0x12D2050 -> 0x12D1E80`) already handles 0x6E:
-  `CAM+0x20C = 0` (the camera base stays the body; the driver gets 4 and a
-  base at the vehicle), and it sets the camera's ignore-collision owner
-  `CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx)` with `CAM+0x200 = 1`
-  (`PlayerCamera::GetIgnoreColliosionGeoOwnerId 0x1114450` returns `+0x1F0`;
-  the camera query at `0x1121D30` passes a set handle on with flag 0x800000:
-  the camera's collision ignores that vehicle). `UpdateActionType`
-  (`0x12D1D40`) gives a light vehicle the driver's parameter set (0x11) unless
-  the act is 0x70. Its Deactivate (`0x12D0ED0`) and the ride's FinishState
+  (0x6E). Its update (`vt+0x20 0x12D2050 -> 0x12D1E80`) sets the camera's
+  ignore-collision owner `CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx)`
+  with `CAM+0x200 = 1`. Every module's position solve ends in PlayerCamera
+  `vt+0xA0 -> vt+0xA8` (`0x1121D30`), whose collision query ignores the owner
+  in `CAM+0x1F0` when bit 63 is set (copied to `CAM+0xC20`, query flags
+  `0x700 | 0x800000`; `PlayerCamera::GetIgnoreColliosionGeoOwnerId 0x1114450`
+  returns `+0x1F0`). Its Deactivate (`0x12D0ED0`) and the ride's FinishState
   (`0x124C850`, `0x124CD38..0x124CD86`) clear `CAM+0x1F0 / +0x1F8 / +0x200`.
-- **Why the passenger saw the interior.** With act 0x6E nothing selects the
-  VehicleCamera and the passenger phase `0x1250CF0` never touches the camera,
-  so the fallback camera orbits the seated body and its collision ray hits the
-  jeep (`cam1f0=0x0`). The get-off's `0x8800000000006408` came from the
-  VehicleCamera once act 0x70 selected it. The driver also writes the handle
-  every frame (`0x12594E0`, phase 3 at `0x124E908`) but only for camera modes
-  1 and 2; the get-off's `vt+0x140(id | 0x88..)` (`0x1250AA3`) is the
-  character transform's own collision ignore (`T+0x1E0`), not the camera.
-  No stock or MGO path selects a camera for a passenger (no other writer of
-  the CanActivate slots; the 0x6E branch in the VehicleCamera is unreachable
-  offline).
+- **Why the passenger saw the interior** (run `59cfc415`). With act 0x6E
+  nothing selects the VehicleCamera and the passenger phase `0x1250CF0` never
+  touches the camera, so the fallback camera orbits the seated body and its
+  collision ray hits the jeep (`cam1f0=0x0`). The get-off's
+  `0x8800000000006408` came from the VehicleCamera once act 0x70 selected it.
+- **The first fix did not work** (`wp/pass-cam` `27e5e19`, hidden run
+  `4ae70de7`). Granting the VehicleCamera to act 0x6E (a swap of its two
+  CanActivate slots) connected (`mode=3; cam1f0=0x8800000000006408`), but its
+  passenger branch (`CAM+0x20C = 0`, with the light vehicle's driver parameter
+  set 0x11 from `UpdateActionType 0x12D1D40`) left the passenger's camera where
+  the guest boarded: the frames show the jeep driving away from a stationary
+  camera (scratchpad `frames/passenger/grant-4ae70de7-...-DEFECT.jpg`). The
+  slot swap is gone.
 
-**The fix** (`native/partner_pass_camera.{hpp,cpp}`, pure
-`partner_pass_camera_policy.hpp`). Slot `+0x18` of both VehicleCamera vtables
-is swapped (`near_code::PatchQword`, the `partner_fire_filter` slot pattern) to
-a wrapper that calls the original first and returns true when it does (the
-driver, the get-off: no read at all); otherwise, only while the driver tick
-has armed it, it reads the module's own chain under SEH (module+8 = CAM,
-CAM+0x348 = P, `*(P+0xB8) == CAM` with the PlayerCamera vtable, the module's
-vtable one of the two, act `(*(Q+0x18))[P+0x218]`, the unit of
-`P+0x120[P+0x218]`) and grants only act 0x6E on the armed vehicle
-(`0x6400 | u16 unit+0x78`). The stock module then activates, connects the
-vehicle with the stock encoding and, once the act leaves 0x6E/0x70,
-deactivates and clears; FinishState clears too. Nothing of ours writes the
-camera, the player or body 1, and nothing calls a game function besides the
-original CanActivate. The driver tick (`TickPassCamera`, right after
-`TickBoard`) arms `{vehicle, seat, until = now + 1500 ms}` only for the local
-passenger report (seat 2/3), with the install live and no mission latch (the
-board's `board_uncertain` or its own `patch_lost` / `fault`); the lease lapses
-by itself if the tick stalls; mission start/end and stop disarm. Lazy install
-once per process after the code gate (`partner_pass_camera=installed|refused`),
-`PatchLive` each tick.
+**The fix** (`c5f272d`; `native/partner_pass_camera.{hpp,cpp}`, pure
+`partner_pass_camera_policy.hpp`). The passenger keeps the fallback camera, and
+the driver tick (`TickPassCamera`, right after `TickBoard`) writes the
+VehicleCamera's own encoding of the ridden vehicle to the local player's camera
+(`CAM+0x200 = 1`, `CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx)`) while the
+native local passenger report says seat 2/3 (act 0x6E): the fallback camera
+then orbits the seated passenger outside the jeep, whose geometry its collision
+query skips. `partner_pass_camera::Connect` reads the camera first (SEH;
+`*(P+0xB8)` must carry the PlayerCamera vtable) and writes only when
+`ConnectPlan` says so: never while the VehicleCamera is the active module (the
+driver, the get-off: stock owns the field), never over another owner, nothing
+when the handle is already there (`held`). The release is stock: at the get-off
+act 0x70 selects the VehicleCamera, whose Deactivate (and FinishState) clear the
+field; if our handle is still there 8 s after the report ended, the driver
+clears it (`ReleasePlan`: only our own handle, never under the VehicleCamera).
+No code or vtable is patched and no game function is called; the install
+(`partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=10`, once
+per process after the code gate) only verifies the pinned blocks. A write
+fault latches the mission (`state=refused; reason=fault; latch=mission`), as
+does the board's `board_uncertain`; nothing is written while the mission
+terminates.
 
 **Logs** (driver tick, board cap): `partner_ride=pass_camera; state=install;
 result=ok|refused; reason=..` once; per boarding `state=connect; vehicle=..;
-seat=..; reason=vehicle_camera; ms=..; cam1f0=0x88..; cam200=1; mode=..;
-prev=..; vmode=..; grants=..` (a grant of this boarding and the vehicle's
-handle in `CAM+0x1F0`), or `state=refused; reason=no_grant|not_connected|
-cam_read|install|patch_lost|uncertain|..; ...; last=..; act=..` (no connect
-within 3 s, or not armed); after the report ends `state=release; reason=stock|
-other|still_connected; ok=1|0; ms=..` (the stock clear within 8 s); the
-mission latch `state=refused; reason=patch_lost|fault; latch=mission`. `vmode`
-is the VehicleCamera's index among the six modules, `mode` the current one.
+seat=..; reason=handle; plan=connect|held; ms=..; cam1f0=0x88..; cam200=1;
+mode=..; prev=..; vmode=..; writes=..` (the vehicle's handle in `CAM+0x1F0`),
+or `state=refused; reason=other_owner|stock_module|not_connected|cam_read|
+install|uncertain|..; ...` (no connect within 3 s, or not armed); after the
+report ends `state=release; reason=stock|other|cleared|still_connected;
+ok=1|0; ms=..`. `vmode` is the VehicleCamera's index among the six modules,
+`mode` the current one (5, the fallback, while seated).
 
-**Pins.** `PASS_CAMERA_SITES` (9 blocks: the whole CanActivate, the connect's
-unit/act test, its 0x6E/0x70 branch and the store, the update's call, the
-Deactivate clear, the module selection and switch, FinishState's clear) and 7
-slots (the VehicleCamera's Activate / Deactivate / CanActivate / update /
-UpdateActionType, the base CanActivate, PlayerCamera `vt+0x50`);
-`pass_camera_assertions`: the CanActivate is reached only through the two
-slots (no rel32 call, no other pointer), only the factory stores the two
-vtables, the connect is called only by the update, the selection loops over
-six modules through `call [rax+0x18]`, and `0x1114450` returns `CAM+0x1F0`.
-Contract 742 code sites / 192 vtable slots (0.13.5: 733 / 185).
+**Pins.** `PASS_CAMERA_SITES` (10 blocks: the whole CanActivate, the connect's
+unit/act test, its 0x6E/0x70 branch and the store (the encoding we copy), the
+update's call, the Deactivate clear, the module selection and switch,
+FinishState's clear, and the collision query's `CAM+0x1F0` test at
+`0x1121D8F`) and 8 slots (the VehicleCamera's Activate / Deactivate /
+CanActivate / update / UpdateActionType, the base CanActivate, PlayerCamera
+`vt+0x50` and `vt+0xA8`); `pass_camera_assertions`: the CanActivate is reached
+only through the two slots, only the factory stores the two vtables, the
+connect is called only by the update, the selection loops over six modules
+through `call [rax+0x18]`, `0x1114450` returns `CAM+0x1F0`, and `vt+0xA0`
+tail-jumps to `vt+0xA8`. Contract 743 code sites / 193 vtable slots.
 
-**Unproven (needs the hidden run).** That no module before the VehicleCamera
-is true for a seated passenger (the log's `vmode` / `mode` and a `no_grant`
-refusal would show it), the view itself (frames from the passenger while the
-partner drives, both directions), aiming or the first-person view from the back
-seat (the aim and subjective modules take over and the passenger phase sets no
-collision ignore for them), and the release back to the on-foot camera.
+**Proven.** Hidden run `495e7c3a` (lab, `coop-vehicle-passenger.txt`, build
+`c5f272d`), both directions: `state=connect; reason=handle; plan=connect;
+ms=0; cam1f0=0x8800000000006408; cam200=1; mode=5; vmode=3; writes=1` at the
+boarding, `state=release; reason=stock; ok=1; ms=3059` (reverse `3083`) after
+the stock get-off. FRAMES: the passenger's own camera behind its seated body,
+outside the jeep, while the partner drives (`pass-guest-view`, `pass-drive-NN`,
+reverse `pass-rev-seated`, `pass-rev-drive-NN`: the street changes behind the
+jeep), the stock get-off, then the on-foot camera (`pass-exit-NN`,
+`pass-exited`, `pass-rev-exited`); the drivers' cameras are the stock chase
+camera with the partner body seated in the back (`pass-drive-host-NN`,
+`pass-rev-drive-driver-NN`) and the name tag sits at the seated head. Neither
+copy logged `viewer_changed`, `uncertain=1`, `board_uncertain` or
+`crash_probe=av`; the viewers' `st=0x400` appears only while they drove
+themselves. Play rehearsal `de949f80` (`-Mode play -WanSim bad`, rtt ~180 ms, 0-4 %
+loss; a scratch copy of the scenario without the key, so the new default ran:
+`board_install; mode=passenger` on both copies): the same connect / release
+lines (release `ms=3087` / `3067`) and the same frames in both directions,
+with the play HUD.
+
+**Unproven.** Aiming or the first-person view from the back seat (other
+modules take over; the handle stays set, so their collision skips the jeep
+too), a passenger in a truck (trucks block), and the attach jitter against the
+20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
+ride in both lab runs (also in `59cfc415`, godmode on, source not found).
 
 ## Traversal icon
 
@@ -1896,7 +1915,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 1 with the native gun profile in lab and play since hidden runs `05cffdd1` lab and `71e19d1e` play (-WanSim bad); play admits it only with link v2 connected; a named 0 opts out) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden run 104e9a47, ladder / pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
-| `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default block with the native gun profile in lab and play (hidden runs 0348c4d8 lab, fad26e25 play), otherwise off; passenger is lab only: play turns a named passenger into block; passenger includes the passenger camera, see "Passenger camera"; a named value records `partner_ride_board_given`) |
+| `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab (hidden run bfd6fcc4), off otherwise; play forces off) |
 

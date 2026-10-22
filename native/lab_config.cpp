@@ -1436,7 +1436,7 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.partner_native_traverse_given) c.partner_native_traverse = gun;
     // F1 vehicles: the board follows the gun profile as PASSENGER in lab and play (the
     // block half: hidden runs 0348c4d8 lab and fad26e25 play; the back seat with the
-    // passenger camera: hidden runs 495e7c3a lab and the play rehearsal, both
+    // passenger camera: hidden runs 495e7c3a lab and de949f80 play -WanSim bad, both
     // directions, the passenger's own view outside the moving jeep). Passenger offers
     // only the free back seats of a light vehicle; trucks and the rest block. A named
     // block or off still wins.
@@ -1483,7 +1483,7 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // Traversal replay runs in play too (user decision 2026-10-22; the icon
         // request needs only the native drain windows, as in the lab).
         // F1 vehicles: the board runs in play too, block (play rehearsal fad26e25) and the
-        // back-seat passenger (play rehearsal with -WanSim bad, see ResolveWeaponDefaults).
+        // back-seat passenger with its camera (play rehearsal de949f80, -WanSim bad).
         // F2: the native box on body 1 runs in play too (the observer admits play only with
         // link v2 connected).
         // Gestures run in play too (the sender needs a live link session).

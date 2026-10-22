@@ -469,7 +469,7 @@ try {
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_traverse'])|$($m['partner_native_traverse_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named traversal 0 opts out in play'
             # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board follows the native gun profile in play as
-            # passenger (the back seat with the passenger camera; hidden runs 495e7c3a lab and the play rehearsal; block:
+            # passenger (the back seat with the passenger camera; hidden runs 495e7c3a lab and de949f80 play; block:
             # 0348c4d8, fad26e25); a named block or passenger runs as named. Play-Coop never names the key.
             Assert-True (!$hostIni.Contains('partner_ride_board') -and !$guestIni.Contains('partner_ride_board') -and
                 !$clipsIni.Contains('partner_ride_board')) 'Play-Coop lab.ini never names partner_ride_board'

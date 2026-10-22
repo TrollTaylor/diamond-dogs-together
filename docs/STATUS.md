@@ -1,4 +1,4 @@
-## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block, F2's box, F3's traversal icon and F4's gestures on, F5's mount hide on in lab only, the rest lab-only and off)
+## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board as back-seat passenger with its camera, F2's box, F3's traversal icon and F4's gestures on, F5's mount hide on in lab only, the rest lab-only and off)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
@@ -8,9 +8,9 @@ packaged or installed. Hidden-worker runs: per feature below, then the final reg
 changes, so both copies need the same new package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`, `partner_cbox_tests`,
 `partner_icon_tests`, `partner_gesture_tests`, `partner_gesture_hook_tests` and `partner_mount_tests`).
 
-**Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs, except F1's board
-block** (default on with the native gun profile in lab and play after hidden runs `0348c4d8` lab and `fad26e25` play;
-see F1), **F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
+**Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs, except F1's board**
+(default **passenger**, the back seat with the passenger camera, with the native gun profile in lab and play after
+hidden runs `495e7c3a` lab and `de949f80` play; its block half after `0348c4d8` lab and `fad26e25` play; see F1), **F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
 lab and `71e19d1e` play; see F2), **F3's traversal icon** (default on with the native gun profile in lab and play by
 the user's decision of 2026-10-22, after the step-on FRAMES of hidden run `104e9a47`; ladder, pipe and wall climb are
 unproven and no play run exists yet; see F3) **and F4's gestures** (default on with the native gun profile in lab and
@@ -20,7 +20,7 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
 
 | Feature | Branch | Lab key (default) | Status |
 | --- | --- | --- | --- |
-| F1 vehicles: board block and back-seat passengers | `wp/board` | `partner_ride_board=off\|block\|passenger` (block with the gun profile, lab and play) | block proven (frames `0348c4d8` lab, `fad26e25` play bad WAN), default on; passenger lab-only, named-only (own camera unusable, `59cfc415`) |
+| F1 vehicles: board block and back-seat passengers | `wp/board`, `wp/pass-cam` | `partner_ride_board=off\|block\|passenger` (passenger with the gun profile, lab and play) | block proven (frames `0348c4d8` lab, `fad26e25` play bad WAN); passenger with the passenger camera proven both directions (frames `495e7c3a` lab, `de949f80` play bad WAN), default since; truck fallback unit-tested only |
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
 | F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (1 with the gun profile, lab and play; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found); default on by user decision 2026-10-22 (no play run yet) |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (1 with the gun profile, lab and play) | pickup proven (frames `0e343f72` lab, `75a7e7dc` play bad WAN), default on; hand signs / knock unproven (no lab spot) |
@@ -42,7 +42,7 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
 
 - **Vehicles: board block and passengers both ways** (`wp/board`; [native-puppet.md "Vehicle boarding"](native-puppet.md),
   research `re-vehicle.md`). New key `partner_ride_board=off|block|passenger` (`_given`; default block with the
-  native gun profile in lab and play since the runs below; passenger lab-only). `partner_board` retargets the ride action's two nearest-seat calls (site A `0x12458AC` in the pre-query,
+  native gun profile in lab and play after `0348c4d8` / `fad26e25`; **passenger** since `495e7c3a` / `de949f80`, below). `partner_board` retargets the ride action's two nearest-seat calls (site A `0x12458AC` in the pre-query,
   site B `0x1251479` in phase 1). **block**: while the partner drives a vehicle, the viewer gets no ride icon there
   and can no longer become a second driver of its copy. **passenger**: the viewer boards a free back seat (2/3) of a
   partner-driven light vehicle through the stock passenger phase; trucks and the rest block.
@@ -83,29 +83,56 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
     `pass-rev-drive-NN`: a close-up of the jeep's interior until the get-off). The truck half did not run: the host
     could not board `veh_trc_0000` from the `goto_vehicle truck` spot, and the guest's nearest truck was
     `veh_trc_0003` 817 m away (the copies' trucks differ); the guest's head showed a blood decal after the ride
-    (godmode on, source not found). **Passenger stays lab-only and named-only (default off).**
+    (godmode on, source not found). **Passenger stayed lab-only and named-only** until the passenger camera below.
 - **User decisions:** (1) the passenger camera: the stock passenger phase connects no vehicle camera for a player
-  offline (seat status `cam1f0=0x0` until the get-off's `0x8800000000006408`); a fix means camera work (for example
-  the phase-6 style vehicle camera connect at boarding), which these rules keep out of this step. (2) A truck spot
-  that both copies share (or a lab helper that places the guest at the host's truck) before the truck fallback can be
-  shown in a FRAME.
-- Still unproven: the truck numbering (3/4) and its block in a FRAME, the passenger camera, the attach jitter against
-  the 20 Hz RIDE_FAST placement.
-- **Passenger camera** (`wp/pass-cam` from `wp/integ9` `99153ae`; user decision 2026-10-22: new camera code may
-  connect the vehicle camera for a local back-seat passenger; [native-puppet.md "Passenger camera"](native-puppet.md)).
-  Root cause (read-only RE): the local camera takes the first of its six modules whose CanActivate is true, and the
-  stock VehicleCamera's CanActivate `0x12D0F60` accepts only act 0x6F (driver) and 0x70 (get-off), so a passenger
-  (0x6E) keeps the fallback camera, whose collision ray hits the jeep. The VehicleCamera's own update already handles
-  0x6E (camera base on the body, ignore-collision owner `CAM+0x1F0 = 0x88..|0x64xx`). Fix: `partner_pass_camera`
-  swaps slot +0x18 of both VehicleCamera vtables to a wrapper (stock answer first; true also for the armed local
-  passenger on its vehicle; reads only); the driver arms it per boarding from the native passenger report and logs
-  `partner_ride=pass_camera; state=install|connect|refused|release`. Part of `partner_ride_board=passenger` (no new
-  key). Also: the partner's name tag over a body seated by the seat flow uses a seated head height
-  (`nametag=visible; ...; seated=1`; run 59cfc415 had it about a metre above the head). Contract 742 / 192 (+9 / +7);
-  tests `partner_pass_camera_tests` (new, in `Get-WorkerTests`), `partner_driver_tests` (driver side),
-  `debug_menu_tests` (seated height). **Not run in the game yet**: the hidden run of `coop-vehicle-passenger.txt`
-  (now with `pass_camera` waitlogs) must show the passenger's own view of the road while the partner drives, both
-  directions, the on-foot camera back after the get-off, and the driver's camera unchanged.
+  offline (seat status `cam1f0=0x0` until the get-off's `0x8800000000006408`); on 2026-10-22 the user allowed new
+  camera code that connects the vehicle camera for a local back-seat passenger at boarding and releases it at the
+  get-off (protected camera files and `0x11F6520` untouched): done, see "Passenger camera" below, and passenger is
+  now the default board mode. (2) A truck spot that both copies share (or a lab helper that places the guest at the
+  host's truck) before the truck fallback can be shown in a FRAME (still open).
+- Still unproven: the truck numbering (3/4) and its block in a FRAME (the truck half of `coop-vehicle-passenger.txt`
+  never boarded the host in any run), the attach jitter against the 20 Hz RIDE_FAST placement, aiming or the
+  first-person view from the back seat.
+- **Passenger camera** (`wp/pass-cam` `27e5e19`, merged `ca495d8`, then `c5f272d`; user decision 2026-10-22;
+  [native-puppet.md "Passenger camera"](native-puppet.md)). Root cause (read-only RE): the local camera takes the
+  first of its six modules whose CanActivate is true; the stock VehicleCamera's CanActivate `0x12D0F60` accepts only
+  act 0x6F (driver) and 0x70 (get-off), so a passenger (0x6E) keeps the fallback camera, whose collision ray hits the
+  jeep (the interior close-up). `27e5e19` swapped the VehicleCamera's CanActivate slots to grant it to the passenger;
+  **hidden run `4ae70de7` (lab) showed that does not work**: it connected (`mode=3; cam1f0=0x8800000000006408`), but
+  the passenger's camera stayed where the guest boarded while the jeep drove away (its 0x6E branch keeps
+  `CAM+0x20C = 0` with the light vehicle's driver parameter set). **Fix `c5f272d`:** no patch at all; while the native
+  passenger report says seat 2/3, the driver tick writes the VehicleCamera's own encoding of the ridden vehicle on the
+  local camera (`CAM+0x1F0 = 0x88..|0x64xx`, `CAM+0x200 = 1`; never while the VehicleCamera is the active module,
+  never over another owner), so the fallback camera keeps orbiting the seated passenger and its collision query
+  (PlayerCamera vt+0xA8 `0x1121D30`) skips the jeep; the stock get-off (VehicleCamera Deactivate) and FinishState
+  clear it, and the driver clears only its own handle if still there 8 s after the report. Logs
+  `partner_ride=pass_camera; state=install|connect|refused|release`. Also: the partner's name tag over a body seated
+  by the seat flow uses a seated head height (`nametag=visible; ...; seated=1`). Contract 743 code sites / 193 vtable
+  slots (0.13.5 before: 733 / 185; + the collision query's `CAM+0x1F0` test and PlayerCamera vt+0xA8); tests
+  `partner_pass_camera_tests` (in `Get-WorkerTests`), `partner_driver_tests`, `debug_menu_tests` (seated height).
+  - `4ae70de7` lab, `coop-vehicle-passenger.txt` (build `ca495d8`, the slot-swap grant): connect and release logged
+    in the first half, but FRAMES `pass-guest-view`, `pass-drive-NN`, `pass-stopped`: the camera left behind at the
+    boarding spot. The reverse half did not board: the jeep ended against a wall and the host's E got an item prompt
+    (the scenario now backs the jeep away and re-warps the host first).
+  - `495e7c3a` lab, the same scenario (build `c5f272d`), **both directions pass**: `pass_camera; state=connect;
+    reason=handle; plan=connect; ms=0; cam1f0=0x8800000000006408; cam200=1; mode=5; vmode=3; writes=1`, then after
+    the stock get-off `state=release; reason=stock; ok=1; ms=3059` (reverse `3083`). FRAMES: the passenger's own
+    camera behind its seated body, outside the jeep, while the partner drives (`pass-guest-view`, `pass-drive-NN`;
+    reverse `pass-rev-seated`, `pass-rev-drive-NN`), the stock get-off and the on-foot camera after it
+    (`pass-exit-NN`, `pass-exited`, `pass-rev-exited`); the drivers' own cameras are the stock chase camera with the
+    partner seated in the back (`pass-drive-host-NN`, `pass-rev-drive-driver-NN`); the name tag sits at the seated
+    head. No `viewer_changed`, `uncertain=1`, `board_uncertain` or `crash_probe=av`; each viewer's `st=0x400` only
+    while it drove itself.
+  - `de949f80` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 0-4 % loss), a scratch copy of the scenario
+    **without** the key (build `8be9479`, the new default): `board_install; mode=passenger` on both copies, the same
+    connect / release lines (release `ms=3087` / `3067`) and the same frames in both directions, with the play HUD.
+  - **Default flipped** (`8be9479`): `partner_ride_board` resolves to **passenger** with the native gun profile in lab
+    and play (`ResolveWeaponDefaults`; trucks and the rest still block, a named block / off wins); play no longer turns
+    passenger into block (lab_config and the driver settings). Tests: `lab_config_tests`, `friend_package_tests`
+    (Play-Coop native: `passenger|0`; a named block or passenger in play runs as named), the -LabSetting help.
+    Full CTest 289/289 (`-Configure`). All three runs: Closed, BaselineRestored, RealSavesUnchanged, no visible
+    fallback (`de949f80` reported Forced=true at shutdown, as `59cfc415` did). The guest's own head showed the blood
+    decal after the ride again (godmode on; already in `59cfc415`, before any camera code).
 
 ### F2
 

@@ -47,6 +47,12 @@
 # jeep's interior: why passenger stays named-only); the truck half did NOT run: the host's goto_vehicle truck spot
 # beside veh_trc_0000 offers no ride icon, and the guest's nearest truck was veh_trc_0003 817 m away (each copy
 # places its trucks differently). It needs a truck spot both copies share before it can prove the block.
+# Run 4ae70de7 (the VehicleCamera CanActivate grant of wp/pass-cam): connected, but the passenger's camera stayed at the
+# boarding spot while the jeep drove away; the reverse half did not board (jeep against a wall, item prompt).
+# Run 495e7c3a (lab, c5f272d: the handle connect on the normal camera) and play rehearsal de949f80 (-Mode play -WanSim
+# bad, this scenario without the partner_ride_board line, so the new default passenger ran): both directions pass
+# (connect reason=handle mode=5, release reason=stock ok=1; the passenger's own view outside the moving jeep, the
+# drivers' cameras stock, the on-foot camera after the get-off). The truck half still never boarded the host.
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=passenger
 labsetting nametag=1

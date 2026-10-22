@@ -144,7 +144,7 @@ int main() {
     }
     // F1 vehicles (partner_ride_board, docs/native-puppet.md "Vehicle boarding"): off|block|passenger. Passenger (the
     // back seat with the passenger camera; trucks block) follows the native gun profile in lab and play (hidden runs
-    // 495e7c3a lab and the play rehearsal; block: 0348c4d8, fad26e25); anything else stays off unless named; a named
+    // 495e7c3a lab and de949f80 play; block: 0348c4d8, fad26e25); anything else stays off unless named; a named
     // value runs as named in either mode and records _given.
     {
         using mgscoop::PartnerRideBoard;
