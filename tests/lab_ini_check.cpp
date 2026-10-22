@@ -166,6 +166,9 @@ int main(int argc, char** argv) {
         // Gestures (lab only, default 0) and whether the key was named.
         std::printf("partner_native_gesture=%d\npartner_native_gesture_given=%d\n", c.partner_native_gesture ? 1 : 0,
                     c.partner_native_gesture_given ? 1 : 0);
+        // Horse / D-Walker riders (lab only, default off) and whether it was named.
+        std::printf("partner_native_mount=%s\npartner_native_mount_given=%d\n", mgscoop::PartnerNativeMountName(c.partner_native_mount),
+                    c.partner_native_mount_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

@@ -1,4 +1,5 @@
 #include "mgscoop/partner_ride_wire.hpp"
+#include "mgscoop/partner_mount_policy.hpp"
 #include <cmath>
 namespace mgscoop::partner_ride_wire {
 bool IsRide(const std::uint8_t* b, std::size_t n) noexcept { return b && n && b[0]==kMagic; }
@@ -95,11 +96,14 @@ void Observe(Visibility& s, const In& in) noexcept {
         s.generation=in.generation;
     }
     const bool heli=in.anim_valid && in.remote_act>=kHeliActFirst && in.remote_act<=kHeliActLast;
+    // partner_native_mount=hide: the remote's horse / D-Walker acts hide like the heli acts.
+    const bool mount=partner_mount_policy::Hide(in.mount_hide,in.anim_valid,in.remote_act);
     // Seat mode: a live vehicle ride in a usable seat is drawn seated, not hidden.
-    const bool seat_ok=in.seat_mode && !heli && in.ride_live && in.kind==Kind::vehicle && SeatUsable(in.seat,in.vehicle);
-    const bool riding=heli || (in.ride_live && in.kind!=Kind::foot && !seat_ok);
+    const bool seat_ok=in.seat_mode && !heli && !mount && in.ride_live && in.kind==Kind::vehicle && SeatUsable(in.seat,in.vehicle);
+    const bool riding=heli || mount || (in.ride_live && in.kind!=Kind::foot && !seat_ok);
     const bool stale=in.ride_have && !in.ride_live;
-    const bool foot=!heli && (!in.ride_have || (in.ride_live && in.kind==Kind::foot));
+    const bool foot=!heli && !mount && (!in.ride_have || (in.ride_live && in.kind==Kind::foot));
+    s.mount=mount;
     if(s.air && in.body_anim_valid && in.body_act!=25) s.air=false;
     if(in.body_anim_valid && in.body_act==40) {
         if(s.dead_retry && in.rearmed) s.dead_locked=true;

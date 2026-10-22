@@ -549,7 +549,9 @@ end
 for _, case in ipairs({{64, 'stateDamageBigFront', false}, {64 + 32 + 7, 'stateEludeIdle', true}, {64 + 4, 'stateDead', false},
     {64 + 32 + 12, 'stateStandIdleLeft', true},
     {64 + 32 + 20, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapdam/snapdam_p_die_idl.gani', true},
-    {64 + 21, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_s_fal_lp_l.gani', false}}) do
+    {64 + 21, '/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_s_fal_lp_l.gani', false},
+    -- Mount research probes (docs/mounts.md): rider states on body 1 without a mount.
+    {64 + 32 + 22, 'stateRideOnIdle', true}, {64 + 32 + 23, 'stateGallop', true}, {64 + 24, 'stateRideWalkerWalk', false}}) do
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, case[1]}
     mark = #c.calls
     update(env)
@@ -557,7 +559,7 @@ for _, case in ipairs({{64, 'stateDamageBigFront', false}, {64 + 32 + 7, 'stateE
         hasLog(c, 'event=dm_overlay;index=' .. ((case[1] - 64) % 32) .. ';loop=' .. (case[3] and 1 or 0)),
         'overlay reply ' .. case[1] .. ' plays ' .. case[2])
 end
-for _, bad in ipairs({64 + 22, 64 + 32 + 22, 127}) do
+for _, bad in ipairs({64 + 25, 64 + 32 + 25, 127}) do
     local notes = count(c.logs, 'event=dm_refused;reason=bad_overlay')
     mark = #c.calls
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}

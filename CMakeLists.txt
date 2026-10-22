@@ -226,6 +226,13 @@ if(MSVC)
   target_compile_options(partner_gesture_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME partner_gesture_tests COMMAND partner_gesture_tests)
+# Horse / D-Walker riders (docs/mounts.md): the act census, hide decision and episode lines.
+add_executable(partner_mount_tests tests/partner_mount_tests.cpp)
+target_link_libraries(partner_mount_tests PRIVATE mgs_coop_core)
+if(MSVC)
+  target_compile_options(partner_mount_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME partner_mount_tests COMMAND partner_mount_tests)
 # The overlay catalogue must match partner_sync.lua OVERLAY (order and strings).
 add_test(NAME partner_dm_overlay_tests COMMAND partner_dm_overlay_tests "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/partner_sync.lua")
 add_executable(client_reset_tests tests/client_reset_tests.cpp)

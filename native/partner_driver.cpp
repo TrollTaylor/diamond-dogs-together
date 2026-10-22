@@ -5346,6 +5346,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.traverse = lab.partner_native_traverse;
     d.settings.cbox = lab.partner_native_cbox;
     d.settings.ngesture = lab.partner_native_gesture;
+    // Mount riders (docs/mounts.md): lab only (lab_config forces it off in play).
+    d.settings.nmount = lab.partner_native_mount;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
     // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).
     // The one exception (WS2: the user asked for throws in play): the guarded slot-3
@@ -5431,6 +5433,11 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.settings.noverlay != PartnerNativeOverlay::off)
         EmitFormat(h, "partner_actions=configured; overlay=%s; act_log=%u\r\n", PartnerNativeOverlayName(d.settings.noverlay),
                d.settings.act_log ? 1u : 0u);
+    // Mount riders: an enabled act rule says so once per mission (it acts only where partner_native_ride hides).
+    if (d.settings.nmount != PartnerNativeMount::off)
+        EmitFormat(h, "partner_mount=configured; mode=%s; ride=%s; acts=%u..%u\r\n", PartnerNativeMountName(d.settings.nmount),
+                   PartnerNativeRideName(d.settings.nride), unsigned(partner_mount_policy::kHorseActFirst),
+                   unsigned(partner_mount_policy::kWalkerActLast));
     if (!h.take_trigger) return;
     char text[partner::max_trigger + 1]{};
     std::size_t length = 0;
@@ -5981,8 +5988,27 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         vi.lease_live = epoch && h.link_live && h.link_live(h.context);
         vi.rearmed = m.bits_set;
         vi.now_ms = now;
+        vi.mount_hide = set.nmount == PartnerNativeMount::hide;
         const bool hidden_before = m.visibility.hidden;
         rw::Observe(m.visibility, vi);
+        // partner_native_mount=hide: one line when the act rule starts hiding and one when it stops
+        // (kind is what the ride wire says at that moment: foot for a D-Walker rider).
+        namespace pm = partner_mount_policy;
+        const bool mount_holds = pm::Holds(m.visibility.mount, m.mount.active, m.visibility.hidden, visibility_sample.anim_valid);
+        switch (pm::Step(m.mount, mount_holds, visibility_sample.act, now)) {
+        case pm::Edge::begin:
+            EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=hide; mount=%s; act=%u; kind=%u; ride_live=%u; episode=%u\r\n",
+                       pm::MountName(m.mount.mount), unsigned(m.mount.act), unsigned(vi.kind), vi.ride_live ? 1u : 0u,
+                       m.mount.episodes);
+            break;
+        case pm::Edge::end:
+            EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=end; mount=%s; act=%u; ms=%llu; kind=%u\r\n",
+                       pm::MountName(m.mount.mount), unsigned(visibility_sample.act),
+                       static_cast<unsigned long long>(pm::EpisodeMs(m.mount, now)), unsigned(vi.kind));
+            break;
+        default:
+            break;
+        }
         if (m.visibility.hidden && !hidden_before) {
             m.range_needs_place = true; m.pose_applied = m.have_cmd = m.hybrid_placed = false;
             partner_dmmap::SpeedReset(m.dmmap_speed); partner_dmmap::CancelFiniteEvents(m.dmmap);

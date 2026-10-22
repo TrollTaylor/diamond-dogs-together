@@ -45,6 +45,7 @@
 #include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
+#include "mgscoop/partner_mount_policy.hpp"
 #include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/partner_board.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
@@ -548,6 +549,7 @@ struct Settings {
     bool traverse;     // traversal replay (partner_native_traverse)
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
     bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
+    PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -567,6 +569,9 @@ struct Mission {
     partner_ride_wire::Visibility visibility;
     LogCap ride_cap;       // partner_ride=rx (on a state/revision change only)
     LogCap ride_vis_cap;   // partner_ride=hide|foot_stable|seat_show
+    // partner_native_mount=hide: the act-rule episode (partner_mount=hide|end lines, capped).
+    partner_mount_policy::Episode mount;
+    LogCap mount_cap;
     // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md).
     struct Seat {
         SeatPhase phase;

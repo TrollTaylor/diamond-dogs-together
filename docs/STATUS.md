@@ -111,6 +111,43 @@ and play, until a hidden-worker FRAME proves it.
   end tests for body 1, whether tick sampling catches every edge, a hand sign or knock spot in the lab. A request no
   body-1 update took is logged as `refused; reason=unanswered; ...; body_calls=..; resolve=..`.
 
+### F5
+
+Horse and D-Walker riders, branch `wp/mount`. Research first ([mounts.md](mounts.md)); no mount is drawn. No hidden
+run yet.
+- **Still hidden, no mount drawn.**
+  - The viewer's copy holds no GameObject for the partner's mount: one buddy block per copy, declared count 1.
+  - The DM anchor `0x1198770` seats only GameObject types 50 and 4, not 13 (horse) or 44 (walker).
+  - The horse rider states follow a live horse's state.
+  - So any drawn rider would float. A real mount needs the private capacity-two buddy archive first (mounts.md
+    section 7).
+- **Finding: the D-Walker rider was never hidden.**
+  - PlayerInfo `0x1412CE870` sets `ON_HORSE` only for act 121, and no Lua-bound `ON_*` status for the D-Walker
+    drive act 125.
+  - So `partner_ride.lua` reports a D-Walker rider (and the horse get-on act 122) as kind 0 (foot), and the viewer
+    keeps it as an on-foot puppet.
+  - The 0.13.4 line "horse and D-Walker riders stay hidden" holds only for the horse.
+- **New lab key `partner_native_mount=off|hide`** (default off in lab and play, play forces off, `_given` flag).
+  - With `hide`, the viewer also hides body 1 while the remote's act is 121..126.
+  - Lines: `partner_mount=configured|hide|end`.
+  - The key is wired into the three `-LabSetting` regex copies and help, `LabCommon`, `worker_session_tests`,
+    `lab_config_tests`, `lab_ini_check`, `friend_package_tests`, and the native-puppet.md table and "Mounts"
+    section.
+- **Finding: RIDE_BODY (world op 42) moves the viewer's own idle D-Horse / D-Walker** onto the partner's mount
+  path when both players deploy the same type. This is unchanged here and needs a decision (mounts.md, Risks).
+- **Lab probes and levers.**
+  - Overlay probes 22..24 (`stateRideOnIdle`, `stateGallop`, `stateRideWalkerWalk`; `overlay_state`, debug
+    only), to see whether a rider state plays on body 1 without a mount.
+  - `walker_spawn` / `walker_status` / `goto_walker`. `walker_spawn` refuses with `player_mounted` while the local
+    player rides (`ON_HORSE`, `ON_VEHICLE` or the `HORSE_IDLE`..`HORSE_GALLOP` gait statuses of the D-Walker drive).
+  - Scenario `tools/worker/scenarios/partner-mount.txt` (probes, horse, both horses, walker with hide, walker
+    baseline).
+- **Act names:** 121 `horse_ride` (was `vehicle_passenger?`), 122 `horse_mount`, 123 `walker_mount`, 125
+  `walker_drive`, 126 `walker_off`.
+- **Tests:** new `partner_mount_tests` (CMake and `Get-WorkerTests`), `TestMountVisibility` in
+  `partner_driver_tests`, and additions to the lab config, act log, overlay, `partner_sync` and `debug_buddy`
+  checks. Contract unchanged at 677 code sites / 149 vtable slots.
+
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
 Branch `wp/integ8` from `dev/oct7-continue` `bf29f67` (0.13.2): merge commits of `wp/gameover-clock` `8324dd2`,

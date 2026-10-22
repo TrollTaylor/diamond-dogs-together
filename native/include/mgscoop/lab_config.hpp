@@ -217,6 +217,12 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 // passenger phase), trucks and the rest block. Default off in lab and play until
 // hidden-worker FRAMEs; play forces it off.
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
+// D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
+// ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
+// foot), hide (the viewer also hides body 1 while the remote's act is a horse
+// or D-Walker act 121..126). The viewer's copy holds no GameObject for the
+// partner's mount, so there is no seated value. Lab only, default off.
+enum class PartnerNativeMount : std::uint8_t { off, hide };
 // Round-1 actions track (docs/anim-round1-actions.md "DM overlay"): the
 // DirectMotion overlay lever for graph-0 action states on body 1: off (the
 // default), debug (only the debug commands overlay_state / overlay_stop) or
@@ -535,6 +541,11 @@ struct LabConfig {
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::getin;
     PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::getoff;
+    // Mount riders (docs/mounts.md): off in lab and play until a hidden-worker
+    // FRAME shows the D-Walker rider hidden; a named value records _given and
+    // is lab only (play forces off). Acts only where partner_native_ride hides.
+    PartnerNativeMount partner_native_mount = PartnerNativeMount::off;
+    bool partner_native_mount_given = false;
     // WS3 vehicles (docs/vehicle-ws3.md). partner_ride_census: the read-only
     // vehicle unit/body census lines, lab only (play forces it off), default
     // off. partner_ride_seat_id: the remote driver seated in an unnamed vehicle
@@ -685,6 +696,7 @@ const char* PartnerNativeStandinName(PartnerNativeStandin value) noexcept;
 const char* PartnerNativeAimIntentName(PartnerNativeAimIntent value) noexcept;
 const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept;
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
+const char* PartnerNativeMountName(PartnerNativeMount value) noexcept;
 const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
 const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
 const char* PartnerRideBoardName(PartnerRideBoard value) noexcept;
@@ -750,6 +762,7 @@ bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNative
 bool ParsePartnerNativeAimIntent(const char* text, std::size_t size, PartnerNativeAimIntent& out) noexcept;
 bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNativeReloadRate& out) noexcept;
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
+bool ParsePartnerNativeMount(const char* text, std::size_t size, PartnerNativeMount& out) noexcept;
 bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
 bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
 bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard& out) noexcept;

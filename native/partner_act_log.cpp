@@ -88,8 +88,13 @@ const char* ActName(std::uint16_t act) noexcept {
     case 110: return "vehicle_dismount?";
     case 111: return "vehicle_seated";
     case 112: return "vehicle_out";
-    case 121: return "vehicle_passenger?";
-    case 122: return "horse?";
+    // Mount acts from the writer census (docs/mounts.md, partner_mount_policy.hpp).
+    case 121: return "horse_ride";
+    case 122: return "horse_mount";
+    case 123: return "walker_mount";
+    case 124: return "walker?";
+    case 125: return "walker_drive";
+    case 126: return "walker_off";
     case 131: return "sleep_onset";
     case 132: return "sleep";
     case 133: return "sleep_wake";

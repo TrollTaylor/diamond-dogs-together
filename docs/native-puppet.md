@@ -654,6 +654,39 @@ whether the driver tick catches every 0x15 / 0x18 / 0x19 edge, and whether body
 1's own upper plugins take graph 2 back on the next frame (`override; cause=node`
 or `cause=pending`; `refused; reason=pending` when one already waits).
 
+## Mounts
+
+D-Horse and D-Walker riders are **hidden, never drawn** (docs/mounts.md has the
+research). The viewer's copy holds no GameObject for the partner's mount (one
+buddy block per copy, declared count 1), the DM anchor `0x1198770` seats only
+GameObject types 50 and 4, and the rider states follow a live horse's state, so
+any drawn rider would float.
+
+The ride wire hides a horse rider: Lua reports `ON_HORSE` as kind 3, and
+PlayerInfo `0x1412CE870` sets `ON_HORSE` only for act 121. It does **not** hide
+a D-Walker rider: act 125 (`RideWalkerGearActionImpl::StateDrive`) sets no
+`ON_*` status Lua binds, so the sender reports kind 0 (foot), and the viewer
+keeps body 1 as an on-foot puppet whose remote position is the cockpit and
+whose remote act (125) is no locomotion act; what that looks like is not yet
+captured. The horse get-on / get-off act 122 is reported as foot too.
+
+Lab key `partner_native_mount=off|hide` (**default off in lab and play**, play
+forces it off, a named value records `partner_native_mount_given`): with
+`hide` the viewer also hides body 1 while the remote's act is a mount act
+(121, 122 horse; 123..126 D-Walker), like the heli acts 97..108
+(`partner_mount_policy.hpp`, `partner_ride_wire::Observe`). It acts only where
+`partner_native_ride` hides (not off). The partner is shown again after the
+usual 500 ms of calm on-foot samples. Lines (driver tick, capped at 64):
+
+- `partner_mount=configured; mode=hide; ride=<partner_native_ride>; acts=121..126` once per mission;
+- `partner_mount=hide; mount=horse|walker; act=..; kind=<ride wire kind>; ride_live=..; episode=..` when the act rule starts hiding;
+- `partner_mount=end; mount=..; act=<the first valid non-mount act>; ms=..; kind=..` when it stops (a missing act sample does not end it);
+- the existing `partner_ride=hide; reason=ride; act=..` and `partner_ride=foot_stable; next=place`.
+
+It stays off until a hidden-worker FRAME shows the D-Walker rider hidden
+(`tools/worker/scenarios/partner-mount.txt` part 4) and the baseline (part 5)
+shows what the viewer draws today.
+
 ## Rates
 
 The locomotion speed is `base(0x109F7E0) * rate(0x109F690)` (callers
@@ -1667,6 +1700,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default off in lab and play, a named value records `partner_ride_board_given`, lab only: play forces off) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 0 in lab and play, lab only: play forces 0) |
+| `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default off in lab and play, lab only: play forces off) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and
