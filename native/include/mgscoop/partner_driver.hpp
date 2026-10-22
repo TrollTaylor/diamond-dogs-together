@@ -400,13 +400,14 @@ struct Hooks {
     void (*gesture_step)(void* context, const partner_gesture::Command& command, partner_gesture::Status& out) noexcept = nullptr;
     // --- F1 passenger camera (docs/native-puppet.md "Passenger camera"; passenger mode only;
     // any null: one partner_ride=pass_camera; state=install; result=refused; reason=unavailable
-    // and nothing is armed). Lazy install of the VehicleCamera CanActivate slot swap
-    // (partner_pass_camera::Install, after the code gate), its per-tick live check, the armed
-    // word (partner_pass_camera::Pack; 0 = off), the wrapper's counters and the local camera's
-    // connect fields (partner_pass_camera::ReadCamera; reads only).
+    // and nothing is connected). Lazy install (partner_pass_camera::Install: the pinned blocks,
+    // after the code gate; no patch), the connect / clear of the vehicle's ignore-collision
+    // handle on the local camera (partner_pass_camera::Connect: returns the plan's reason, `out`
+    // read after the write), the write counters and the local camera's connect fields
+    // (partner_pass_camera::ReadCamera; reads only).
     const char* (*pass_camera_install)(void* context) noexcept = nullptr;
-    bool (*pass_camera_live)(void* context) noexcept = nullptr;
-    void (*pass_camera_publish)(void* context, std::uint64_t word) noexcept = nullptr;
+    const char* (*pass_camera_connect)(void* context, const partner_player::State& state, std::uint16_t vehicle, bool on,
+                                       partner_pass_camera::Camera& out) noexcept = nullptr;
     void (*pass_camera_stats)(void* context, partner_pass_camera::Stats& out) noexcept = nullptr;
     bool (*pass_camera_read)(void* context, const partner_player::State& state, partner_pass_camera::Camera& out) noexcept = nullptr;
 };
@@ -647,12 +648,11 @@ struct Mission {
         LogCap cap;         // every other board line: policy, local_passenger, seated, refused, uncertain
         LogCap count_cap;   // the periodic board_block / board_passenger counter lines
     } board;
-    // F1 passenger camera (passenger mode): the armed word last published, the
-    // per-boarding episode (connect / refused / release lines, under board.cap),
-    // the wrapper's counters at this mission's first tick and the mission latch
-    // (patch_lost or fault: nothing is armed again this mission).
+    // F1 passenger camera (passenger mode): the per-boarding episode (connect /
+    // refused / release lines, under board.cap), the connect's counters at this
+    // mission's first tick and the mission latch (fault: nothing is connected
+    // again this mission).
     struct PassCamera {
-        std::uint64_t word;
         partner_pass_camera::Episode episode;
         partner_pass_camera::Stats seen;
         bool seen_have;

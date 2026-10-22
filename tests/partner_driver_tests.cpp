@@ -6103,21 +6103,37 @@ void TestBoardDriver() {
 }
 
 // --- F1 passenger camera (docs/native-puppet.md "Passenger camera"): the driver side
-// (passenger mode only; the lazy install, the armed word for the reported back seat, the
-// connect / refused / release lines, the mission latch and the withdrawals).
+// (passenger mode only; the lazy install, the connect of the reported back seat's vehicle
+// handle every tick, the connect / refused / release lines, the driver's clear, the
+// mission latch, and no write while the mission terminates).
 struct PassCameraFake {
     unsigned installs = 0;
     const char* install_result = nullptr;
-    bool live = true;
-    std::vector<std::uint64_t> published;
+    struct Call { std::uint16_t vehicle; bool on; };
+    std::vector<Call> calls;
+    const char* plan = "connect";
+    bool apply = true;  // a set plan shows the handle, a clear empties the field
     mgscoop::partner_pass_camera::Stats stats{};
     mgscoop::partner_pass_camera::Camera cam{};
     unsigned reads = 0;
 };
 PassCameraFake g_pass;
 const char* HookPassInstall(void*) noexcept { ++g_pass.installs; return g_pass.install_result; }
-bool HookPassLive(void*) noexcept { return g_pass.live; }
-void HookPassPublish(void*, std::uint64_t word) noexcept { g_pass.published.push_back(word); }
+const char* HookPassConnect(void*, const pp::State&, std::uint16_t vehicle, bool on, mgscoop::partner_pass_camera::Camera& out) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    g_pass.calls.push_back({vehicle, on});
+    const char* reason = g_pass.plan;
+    if (!on) {
+        const pc::Write w = pc::ReleasePlan(g_pass.cam, vehicle, reason);
+        if (w == pc::Write::clear && g_pass.apply) { g_pass.cam.connect = 0; g_pass.cam.on = 0; ++g_pass.stats.clears; }
+    } else if (std::strcmp(reason, "connect") == 0 && g_pass.apply) {
+        g_pass.cam.connect = pc::ConnectHandle(vehicle);
+        g_pass.cam.on = 1;
+        ++g_pass.stats.writes;
+    }
+    out = g_pass.cam;
+    return reason;
+}
 void HookPassStats(void*, mgscoop::partner_pass_camera::Stats& out) noexcept { out = g_pass.stats; }
 bool HookPassRead(void*, const pp::State&, mgscoop::partner_pass_camera::Camera& out) noexcept {
     ++g_pass.reads;
@@ -6127,101 +6143,104 @@ bool HookPassRead(void*, const pp::State&, mgscoop::partner_pass_camera::Camera&
 void AddPassCameraHooks(pd::Hooks& h) {
     g_pass = PassCameraFake{};
     h.pass_camera_install = HookPassInstall;
-    h.pass_camera_live = HookPassLive;
-    h.pass_camera_publish = HookPassPublish;
+    h.pass_camera_connect = HookPassConnect;
     h.pass_camera_stats = HookPassStats;
     h.pass_camera_read = HookPassRead;
 }
-mgscoop::partner_pass_camera::Camera PassCam(std::uint64_t connect, std::uint32_t on) {
+// mode 5 = the fallback module, 3 = the VehicleCamera.
+mgscoop::partner_pass_camera::Camera PassCam(std::uint64_t connect, std::uint32_t on, std::int32_t mode = 5) {
     mgscoop::partner_pass_camera::Camera k{};
-    k.ok = true; k.connect = connect; k.on = on; k.mode = connect ? 3 : 1; k.prev = connect ? 1 : 3; k.vehicle_mode = 3;
+    k.ok = true; k.connect = connect; k.on = on; k.mode = mode; k.prev = 1; k.vehicle_mode = 3;
     return k;
 }
-std::uint64_t PassLast() { return g_pass.published.empty() ? 0 : g_pass.published.back(); }
+unsigned PassConnects() {
+    unsigned n = 0;
+    for (const auto& c : g_pass.calls) n += c.on ? 1u : 0u;
+    return n;
+}
 
 void TestPassCameraDriver() {
     namespace pc = mgscoop::partner_pass_camera;
     namespace pb = mgscoop::partner_board;
     using mgscoop::PartnerRideBoard;
     {
-        // Block (and off): never installed, armed or logged.
+        // Block (and off): never installed, connected or logged.
         Session s(0);
         BoardSetup(s, PartnerRideBoard::block);
         AddPassCameraHooks(s.hooks);
         s.ride_suffix = " ride=0";
         g_board.lp = BoardPassenger(25608, 2);  // never read in block mode anyway
         for (int i = 0; i < 3; ++i) Check(s.Tick(0), "block ticks");
-        Check(g_pass.installs == 0 && g_pass.published.empty() && s.fake.Containing("partner_ride=pass_camera") == 0,
+        Check(g_pass.installs == 0 && g_pass.calls.empty() && g_pass.reads == 0 && s.fake.Containing("partner_ride=pass_camera") == 0,
               "block: no passenger camera at all");
     }
     {
-        // Passenger: one install; armed only for the reported back seat; connect after a grant and the
-        // vehicle's handle; disarmed at the get-off; release once the stock clear lands.
+        // Passenger: one install; the handle connected only for the reported back seat, every tick;
+        // the connect line once; nothing at the get-off; release once the stock clear lands.
         Session s(0);
         BoardSetup(s, PartnerRideBoard::passenger);
         AddPassCameraHooks(s.hooks);
         s.ride_suffix = " ride=0";
         Check(s.Tick(0) && g_pass.installs == 1 && s.fake.Containing("partner_ride=pass_camera; state=install; result=ok; reason=none") == 1,
               "installed on the first passenger-mode tick");
-        Check(PassLast() == 0 && g_pass.reads == 0, "on foot: disarmed, the camera unread");
+        Check(g_pass.calls.empty() && g_pass.reads == 0, "on foot: nothing connected, the camera unread");
         g_board.lp = BoardPassenger(25608, 2);
         g_pass.cam = PassCam(0, 0);
-        Check(s.Tick(0) && g_pass.installs == 1, "boarded");
-        const pc::Arm a = pc::Unpack(PassLast());
-        Check(a.armed && a.vehicle == 25608 && a.seat == 2 && a.until_ms == static_cast<std::uint32_t>(s.now + pc::kArmLeaseMs),
-              "armed for 25608 seat 2, a short lease from now");
-        g_pass.stats.grants = 4;
-        g_pass.cam = PassCam(pc::ConnectHandle(25608), 1);
-        Check(s.Tick(0) &&
-                  s.fake.Containing("partner_ride=pass_camera; state=connect; vehicle=25608; seat=2; reason=vehicle_camera; ms=") == 1 &&
-                  s.fake.Containing("cam1f0=0x8800000000006408; cam200=1; mode=3; prev=1; vmode=3; grants=4") == 1,
-              "the connect line");
-        Check(s.Tick(0) && s.fake.Containing("state=connect") == 1, "connect logs once");
-        // The get-off (act 0x70): the report ends, the word drops at once, the release waits for the stock clear.
+        Check(s.Tick(0) && g_pass.calls.size() == 1 && g_pass.calls[0].vehicle == 25608 && g_pass.calls[0].on, "boarded: connected");
+        Check(s.fake.Containing("partner_ride=pass_camera; state=connect; vehicle=25608; seat=2; reason=handle; plan=connect; ms=") == 1 &&
+                  s.fake.Containing("cam1f0=0x8800000000006408; cam200=1; mode=5; prev=1; vmode=3; writes=1") == 1,
+              "the connect line (the camera read after the write)");
+        g_pass.plan = "held";
+        Check(s.Tick(0) && PassConnects() == 2 && s.fake.Containing("state=connect") == 1, "re-asserted each tick; connect logs once");
+        // The get-off (act 0x70): the report ends, nothing is connected any more; the stock
+        // VehicleCamera holds the handle until its Deactivate.
         g_board.lp = pb::LocalPassenger{};
         g_board.lp.reason = "act";
-        Check(s.Tick(0) && PassLast() == 0 && s.fake.Containing("state=release") == 0, "get-off: disarmed, still connected");
+        g_pass.cam = PassCam(pc::ConnectHandle(25608), 1, 3);
+        Check(s.Tick(0) && PassConnects() == 2 && s.fake.Containing("state=release") == 0, "get-off: no connect, still held by stock");
         g_pass.cam = PassCam(0, 0);
         Check(s.Tick(0) && s.fake.Containing("partner_ride=pass_camera; state=release; vehicle=25608; seat=2; reason=stock; ok=1;") == 1,
               "the release line once the stock camera dropped the handle");
-        Check(s.Tick(0) && s.fake.Containing("state=release") == 1 && PassLast() == 0, "released once; on foot stays disarmed");
-        // Mission boundaries withdraw the word.
+        Check(s.Tick(0) && s.fake.Containing("state=release") == 1 && g_pass.calls.size() == 2, "released once; on foot nothing connects");
+        // A terminating mission writes nothing.
         g_board.lp = BoardPassenger(25608, 3);
-        Check(s.Tick(0) && pc::Unpack(PassLast()).armed, "a second boarding arms again");
-        pd::MissionEnd(s.driver, s.hooks);
-        Check(PassLast() == 0, "mission end withdraws");
+        s.Tick(0, 33, true);
+        Check(g_pass.calls.size() == 2, "terminating: no connect");
     }
     {
-        // No grant within the window (another module won): refused once with the camera's facts.
+        // Our handle outlives the ride (no stock clear within kReleaseMs): the driver clears it once.
         Session s(0);
         BoardSetup(s, PartnerRideBoard::passenger);
         AddPassCameraHooks(s.hooks);
         s.ride_suffix = " ride=0";
         g_board.lp = BoardPassenger(25608, 2);
         g_pass.cam = PassCam(0, 0);
-        g_pass.stats.last_reason = "act";
-        g_pass.stats.last_act = 0x6E;
+        Check(s.Tick(0) && s.fake.Containing("state=connect") == 1, "connected");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && s.Tick(0, 7000) && s.fake.Containing("state=release") == 0, "inside the release window");
+        Check(s.Tick(0, 1100) && !g_pass.calls.back().on && g_pass.cam.connect == 0 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=release; vehicle=25608; seat=2; reason=cleared; ok=1;") == 1,
+              "the driver cleared its own handle");
+    }
+    {
+        // Another owner: never overwritten; refused once with the plan's reason.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        AddPassCameraHooks(s.hooks);
+        s.ride_suffix = " ride=0";
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(pc::ConnectHandle(25601), 1);
+        g_pass.plan = "other_owner";
         Check(s.Tick(0) && s.Tick(0, 2900) && s.fake.Containing("state=refused") == 0, "inside the connect window");
-        Check(s.Tick(0, 200) && s.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=no_grant;") == 1,
-              "refused: no grant");
+        Check(s.Tick(0, 200) && s.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=other_owner;") == 1 &&
+                  g_pass.cam.connect == pc::ConnectHandle(25601),
+              "refused: another owner");
         Check(s.Tick(0, 5000) && s.fake.Containing("state=refused") == 1, "once per boarding");
     }
     {
-        // A lost slot or a wrapper fault latches the mission: disarmed, one refused line; the board's
-        // own latch disarms too. A refused install refuses each boarding with reason=install.
-        Session s(0);
-        BoardSetup(s, PartnerRideBoard::passenger);
-        AddPassCameraHooks(s.hooks);
-        s.ride_suffix = " ride=0";
-        g_board.lp = BoardPassenger(25608, 2);
-        g_pass.cam = PassCam(0, 0);
-        Check(s.Tick(0) && pc::Unpack(PassLast()).armed, "armed");
-        g_pass.live = false;
-        Check(s.Tick(0) && PassLast() == 0 &&
-                  s.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=patch_lost; latch=mission") == 1,
-              "patch lost: disarmed, latched");
-        g_pass.live = true;
-        Check(s.Tick(0) && PassLast() == 0, "the latch holds for the mission");
+        // A write fault latches the mission: nothing connected again, one refused line; the board's
+        // own latch stops it too. A refused install refuses each boarding with reason=install.
         Session f(0);
         BoardSetup(f, PartnerRideBoard::passenger);
         AddPassCameraHooks(f.hooks);
@@ -6229,19 +6248,21 @@ void TestPassCameraDriver() {
         Check(f.Tick(0), "first");
         g_pass.stats.faults = 1;
         g_board.lp = BoardPassenger(25608, 2);
-        Check(f.Tick(0) && PassLast() == 0 && f.fake.Containing("reason=fault; latch=mission; faults=1") == 1 &&
+        g_pass.cam = PassCam(0, 0);
+        Check(f.Tick(0) && g_pass.calls.empty() && f.fake.Containing("reason=fault; latch=mission; faults=1") == 1 &&
                   f.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=uncertain;") == 1,
-              "a wrapper fault latches; the boarding is refused as uncertain");
+              "a fault latches; the boarding is refused as uncertain");
+        Check(f.Tick(0) && g_pass.calls.empty(), "the latch holds for the mission");
         Session r(0);
         BoardSetup(r, PartnerRideBoard::passenger);
         AddPassCameraHooks(r.hooks);
         g_pass.install_result = "bytes";
         r.ride_suffix = " ride=0";
         g_board.lp = BoardPassenger(25608, 2);
-        Check(r.Tick(0) && r.Tick(0) && g_pass.installs == 1 && PassLast() == 0 &&
+        Check(r.Tick(0) && r.Tick(0) && g_pass.installs == 1 && g_pass.calls.empty() &&
                   r.fake.Containing("partner_ride=pass_camera; state=install; result=refused; reason=bytes") == 1 &&
                   r.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=2; reason=install;") == 1,
-              "a refused install never arms");
+              "a refused install never connects");
         Session u(0);
         BoardSetup(u, PartnerRideBoard::passenger);
         u.ride_suffix = " ride=0";

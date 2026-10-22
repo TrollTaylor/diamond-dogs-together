@@ -2549,9 +2549,8 @@ void BoardWithdraw(Driver& d, const Hooks& h) noexcept {
     if (h.board_publish) h.board_publish(h.context, 0);
     d.mission.board.policy = 0;
     d.local_passenger = partner_board::LocalPassenger{};
-    // The passenger camera is never armed across a mission boundary or a stop.
-    if (h.pass_camera_publish) h.pass_camera_publish(h.context, 0);
-    d.mission.pass_camera.word = 0;
+    // The passenger camera connects only from a tick's own report (cleared just above), so
+    // nothing of it outlives a mission boundary or a stop; the stock clears release the handle.
 }
 const char* BoardSiteName(unsigned site) noexcept { return site ? "phase1" : "prequery"; }
 
@@ -2688,28 +2687,22 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
 
 // F1 passenger camera (docs/native-puppet.md "Passenger camera"; partner_pass_camera):
 // one step per tick right after TickBoard, passenger mode only. The lazy install (once
-// per process, after the code gate), the patch-live check and the fault latch (mission
-// scoped: nothing is armed again), the armed word for the local back-seat passenger
-// (partner_pass_camera::ArmFor; it lapses by itself after kArmLeaseMs) and the
-// per-boarding episode lines, logged here from the wrapper's counters and the camera's
-// connect fields (the wrapper only counts). Never for the driver (stock) or body 1.
-void PassCameraPublish(Driver& d, const Hooks& h, std::uint64_t word) noexcept {
-    if (d.mission.pass_camera.word == word) return;
-    d.mission.pass_camera.word = word;
-    if (h.pass_camera_publish) h.pass_camera_publish(h.context, word);
-}
+// per process, after the code gate: the pinned blocks, no patch), the fault latch (mission
+// scoped: nothing is connected again), the connect of the ridden vehicle's ignore-collision
+// handle on the local camera while the local back-seat passenger is reported
+// (partner_pass_camera::ArmFor, Connect: never under the stock VehicleCamera, never over
+// another owner) and the per-boarding episode lines; after the report ends the stock
+// get-off / FinishState clear it, else our own handle is cleared after kReleaseMs. Never
+// for the driver (stock) or body 1; nothing is written while the mission terminates.
 void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pc = partner_pass_camera;
     Mission& m = d.mission;
     auto& c = m.pass_camera;
     if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
-    if (terminating) {
-        PassCameraPublish(d, h, 0);
-        return;
-    }
+    if (terminating) return;
     if (!d.pass_camera_install_tried) {
         d.pass_camera_install_tried = true;
-        const char* why = !h.pass_camera_install || !h.pass_camera_live || !h.pass_camera_publish || !h.pass_camera_stats || !h.pass_camera_read
+        const char* why = !h.pass_camera_install || !h.pass_camera_connect || !h.pass_camera_stats || !h.pass_camera_read
                               ? "unavailable"
                               : h.pass_camera_install(h.context);
         d.pass_camera_installed = why == nullptr;
@@ -2717,7 +2710,6 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         EmitFormat(h, "partner_ride=pass_camera; state=install; result=%s; reason=%s\r\n", why ? "refused" : "ok", why ? why : "none");
     }
     const partner_board::LocalPassenger& lp = d.local_passenger;
-    const bool live = d.pass_camera_installed && h.pass_camera_live(h.context);
     pc::Stats stats{};
     if (d.pass_camera_installed) h.pass_camera_stats(h.context, stats);
     if (!c.seen_have) {
@@ -2725,7 +2717,6 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         c.seen_have = true;
         c.seen = stats;
     }
-    if (!c.uncertain && d.pass_camera_installed && !live) c.uncertain = "patch_lost";
     if (!c.uncertain && stats.faults != c.seen.faults) c.uncertain = "fault";
     if (c.uncertain && !c.uncertain_logged) {
         c.uncertain_logged = true;
@@ -2735,49 +2726,57 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     pc::ArmIn ai{};
     ai.passenger_mode = true;
     ai.installed = d.pass_camera_installed;
-    ai.live = live;
     ai.uncertain = m.board.uncertain != nullptr || c.uncertain != nullptr;
     ai.passenger = lp.valid;
     ai.vehicle = lp.vehicle;
     ai.seat = lp.seat;
-    ai.now_ms = now;
     const char* arm_reason = "none";
     const pc::Arm arm = pc::ArmFor(ai, arm_reason);
-    PassCameraPublish(d, h, pc::Pack(arm));
     pc::Camera cam{};
-    if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
+    const char* plan = "none";
+    if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, true, cam);
+    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
     pc::StepIn in{};
     in.passenger = lp.valid;
     in.vehicle = lp.vehicle;
     in.seat = lp.seat;
     in.armed = arm.armed;
     in.arm_reason = arm_reason;
+    in.plan = plan ? plan : "none";
     in.cam = cam;
-    in.grants = stats.grants;
+    in.writes = stats.writes;
     in.now_ms = now;
-    const pc::StepOut out = pc::Step(c.episode, in);
-    const unsigned grants = stats.grants - c.episode.grants_at_start;
+    pc::StepOut out = pc::Step(c.episode, in);
+    // The lines count this boarding's writes including this tick's (the counters read again).
+    pc::Stats after = stats;
+    if (d.pass_camera_installed) h.pass_camera_stats(h.context, after);
+    const unsigned writes = after.writes - c.episode.writes_at_start;
     switch (out.event) {
     case pc::Event::connect:
         EmitBoard(m, h,
-                  "partner_ride=pass_camera; state=connect; vehicle=%u; seat=%u; reason=%s; ms=%u; cam1f0=0x%llx; cam200=%u; mode=%d; "
-                  "prev=%d; vmode=%d; grants=%u\r\n",
-                  unsigned(out.vehicle), unsigned(out.seat), out.reason, out.ms, static_cast<unsigned long long>(cam.connect), cam.on, cam.mode,
-                  cam.prev, cam.vehicle_mode, grants);
+                  "partner_ride=pass_camera; state=connect; vehicle=%u; seat=%u; reason=%s; plan=%s; ms=%u; cam1f0=0x%llx; cam200=%u; mode=%d; "
+                  "prev=%d; vmode=%d; writes=%u\r\n",
+                  unsigned(out.vehicle), unsigned(out.seat), out.reason, in.plan, out.ms, static_cast<unsigned long long>(cam.connect), cam.on,
+                  cam.mode, cam.prev, cam.vehicle_mode, writes);
         break;
     case pc::Event::refused:
         EmitBoard(m, h,
                   "partner_ride=pass_camera; state=refused; vehicle=%u; seat=%u; reason=%s; ms=%u; cam1f0=0x%llx; cam200=%u; mode=%d; vmode=%d; "
-                  "grants=%u; last=%s; act=0x%x\r\n",
+                  "writes=%u\r\n",
                   unsigned(out.vehicle), unsigned(out.seat), out.reason, out.ms, static_cast<unsigned long long>(cam.connect), cam.on, cam.mode,
-                  cam.vehicle_mode, grants, stats.last_reason ? stats.last_reason : "-", unsigned(stats.last_act));
+                  cam.vehicle_mode, writes);
         break;
     case pc::Event::release:
+        if (out.clear) {
+            // Our handle outlived the ride (no stock clear within kReleaseMs): clear it.
+            const char* why = h.pass_camera_connect(h.context, st, out.vehicle, false, cam);
+            out.ok = why && std::strcmp(why, "ours") == 0 && cam.ok && cam.connect == 0;
+        }
         EmitBoard(m, h,
                   "partner_ride=pass_camera; state=release; vehicle=%u; seat=%u; reason=%s; ok=%u; ms=%u; cam1f0=0x%llx; cam200=%u; mode=%d; "
-                  "grants=%u\r\n",
+                  "writes=%u\r\n",
                   unsigned(out.vehicle), unsigned(out.seat), out.reason, out.ok ? 1u : 0u, out.ms, static_cast<unsigned long long>(cam.connect),
-                  cam.on, cam.mode, grants);
+                  cam.on, cam.mode, writes);
         break;
     case pc::Event::none:
         break;

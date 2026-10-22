@@ -1001,14 +1001,19 @@ bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board
     return true;
 }
 // F1 passenger camera (docs/native-puppet.md "Passenger camera", partner_ride_board=passenger):
-// the VehicleCamera CanActivate slot swap installs lazily from the driver tick behind the code
-// gate (like the board); the armed word and the counters are atomics; the camera read only reads.
+// the pinned-block check runs lazily from the driver tick behind the code gate (like the board;
+// nothing is patched); the connect writes only the local camera's ignore-collision handle, on
+// this (the driver tick's) thread; the counters are atomics; the camera read only reads.
 const char* PartnerPassCameraInstall(void*) noexcept {
     if (!game_base || !partner_gate_ok) return "gate";
-    return mgscoop::partner_pass_camera::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log);
+    return mgscoop::partner_pass_camera::Install(game_base, game_span, Log);
 }
-bool PartnerPassCameraLive(void*) noexcept { return game_base && mgscoop::partner_pass_camera::PatchLive(game_base); }
-void PartnerPassCameraPublish(void*, std::uint64_t word) noexcept { mgscoop::partner_pass_camera::Publish(word); }
+const char* PartnerPassCameraConnect(void*, const pp::State& state, std::uint16_t vehicle, bool on,
+                                     mgscoop::partner_pass_camera::Camera& out) noexcept {
+    out = mgscoop::partner_pass_camera::Camera{};
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return "install";
+    return mgscoop::partner_pass_camera::Connect(game_base, state.P, vehicle, on, out);
+}
 void PartnerPassCameraStats(void*, mgscoop::partner_pass_camera::Stats& out) noexcept { mgscoop::partner_pass_camera::ReadStats(out); }
 bool PartnerPassCameraRead(void*, const pp::State& state, mgscoop::partner_pass_camera::Camera& out) noexcept {
     out = mgscoop::partner_pass_camera::Camera{};
@@ -1086,7 +1091,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
-    PartnerPassCameraInstall, PartnerPassCameraLive, PartnerPassCameraPublish, PartnerPassCameraStats, PartnerPassCameraRead};
+    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1378,8 +1383,7 @@ void PartnerShutdown() noexcept {
     mgscoop::partner_aim_point::Shutdown();
     // F1 vehicles: the board wrappers fall back to the stock searches (an atomic store).
     mgscoop::partner_board::Publish(0);
-    // F1 passenger camera: the VehicleCamera CanActivate wrapper answers stock only.
-    mgscoop::partner_pass_camera::Publish(0);
+    // F1 passenger camera: nothing to undo (no patch; the handle is cleared by the stock get-off / FinishState).
     mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);

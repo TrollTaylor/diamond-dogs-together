@@ -866,11 +866,12 @@ SITES += BOARD_SITES
 # --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera", research complete/re-passcam):
 # the local player's camera CAM = *(P+0xB8) takes the first of its six modules (CAM+0xBD0) whose vt+0x18 is true; the
 # VehicleCamera's CanActivate 0x12D0F60 is true only for act 0x6F (driver) / 0x70 (get-off), so a stock back-seat
-# passenger (act 0x6E) keeps the normal camera inside the jeep. partner_pass_camera swaps slot +0x18 of both
-# VehicleCamera vtables to a wrapper (stock answer, or true for the armed local passenger); the module's own update
-# connects the vehicle (CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx), CAM+0x200 = 1) for 0x6E as for 0x70, and its
-# Deactivate and the ride's FinishState clear it. Pinned: the replaced body, the module selection, the connect and
-# the two clears.
+# passenger (act 0x6E) keeps the fallback module, whose collision ray hits the jeep. partner_pass_camera writes the
+# VehicleCamera's own encoding of the ridden vehicle (CAM+0x1F0 = 0x8800000000000000 | (0x6400 | idx), CAM+0x200 = 1)
+# while the local passenger is seated and the VehicleCamera is not the active module; every module's position solve
+# (PlayerCamera vt+0xA8 0x1121D30) ignores that owner's geometry; the VehicleCamera's Deactivate (the get-off) and the
+# ride's FinishState clear it. No code or slot is patched. Pinned: the CanActivate (why 0x6E never selects the
+# VehicleCamera), the module selection, the connect encoding, the two clears and the collision query's use of +0x1F0.
 PASS_CAMERA_SITES = [
     (0x12D0F60, '488b4108488b80480300008b9018020000488b4060488b48180fb7045183c09183f8010f96c0c3',
      'VehicleCamera CanActivate 0x12D0F60 (whole body): P = CAM+0x348, act = (*(Q+0x18))[P+0x218]; act - 0x6F <= 1'),
@@ -898,6 +899,9 @@ PASS_CAMERA_SITES = [
     (0x124CD38, '488b89b8000000488d442420488944242848896c2420488b442420488981f001000089a900020000488d442420488944242848896c2420'
      '488b442420488981f8010000488b0141b0018bd6ff5028',
      'ride FinishState 0x124C850: CAM = *(P+0xB8); CAM+0x1F0 = 0, CAM+0x200 = 0, CAM+0x1F8 = 0, CAM vt+0x28(body, 1)'),
+    (0x1121D8F, '488b81f0010000488bf948b90000000000000080440f29bc24d0000000488bf241be000700004885c1740d488987200c000041be00078000',
+     'PlayerCamera vt+0xA8 0x1121D30 (the position solve every module ends in): CAM+0x1F0 with bit 63 set is the ignored '
+     'collision owner (copied to CAM+0xC20, query flags 0x700 | 0x800000)'),
 ]
 SITES += PASS_CAMERA_SITES
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
@@ -1380,16 +1384,17 @@ SLOTS += [
     (0x22AC8E0, 0x170, 0xA27220, 'vehicle service vt+0x170 = the attachment lookup (the seat count)'),
     (0x22AC8E0, 0x220, 0xA29530, 'vehicle service vt+0x220 = TryToRide (phase 1 registers the steered back seat)'),
 ]
-# F1 passenger camera (partner_pass_camera): the VehicleCamera module vtable (live 0x23D67F0, base 0x23D6720). Slot
-# +0x18 of both is swapped to the wrapper lazily, after the startup code gate checked these originals.
+# F1 passenger camera (partner_pass_camera): the VehicleCamera module vtable (live 0x23D67F0, base 0x23D6720), never
+# patched (the CanActivate keeps a passenger on the fallback module), and the PlayerCamera position solve.
 SLOTS += [
     (0x23D67F0, 0x00, 0x12D0D00, 'VehicleCamera vt+0x00 = Activate'),
     (0x23D67F0, 0x08, 0x12D0ED0, 'VehicleCamera vt+0x08 = Deactivate (clears CAM+0x1F0 / +0x200)'),
-    (0x23D67F0, 0x18, 0x12D0F60, 'VehicleCamera vt+0x18 = CanActivate (act 0x6F / 0x70; partner_pass_camera swaps it)'),
+    (0x23D67F0, 0x18, 0x12D0F60, 'VehicleCamera vt+0x18 = CanActivate (act 0x6F / 0x70 only)'),
     (0x23D67F0, 0x20, 0x12D2050, 'VehicleCamera vt+0x20 = update (calls the connect 0x12D1E80)'),
     (0x23D67F0, 0x58, 0x12D1D40, 'VehicleCamera vt+0x58 = UpdateActionType'),
-    (0x23D6720, 0x18, 0x12D0F60, 'VehicleCamera base vt+0x18 = CanActivate (partner_pass_camera swaps it)'),
+    (0x23D6720, 0x18, 0x12D0F60, 'VehicleCamera base vt+0x18 = CanActivate'),
     (0x23B8250, 0x50, 0x1111C50, 'PlayerCamera vt+0x50 = the module registration (CAM+0xBD0[index])'),
+    (0x23B8250, 0xA8, 0x1121D30, 'PlayerCamera vt+0xA8 = the position solve (collision query ignores CAM+0x1F0)'),
 ]
 # F3: the padop slots the vtable copy replaces (+0x28, +0x50) or relies on (+0x18 builder, +0x188 the ray with the
 # per-type cache the climb / pipe Exec use), and vt[0] / vt[1] of every traversal ActionPlugin vtable.
@@ -2278,8 +2283,9 @@ def board_assertions():
 
 
 def pass_camera_assertions():
-    """F1 passenger camera (partner_pass_camera): the swapped slots are the only way into the VehicleCamera's
-    CanActivate, only the module factory stores its vtables, and the module selection calls vt+0x18 over six modules."""
+    """F1 passenger camera (partner_pass_camera): the two slots are the only way into the VehicleCamera's
+    CanActivate, only the module factory stores its vtables, the module selection calls vt+0x18 over six modules, and
+    every module's final solve (vt+0xA0) tail-jumps to the vt+0xA8 collision solve that reads CAM+0x1F0."""
     out = []
 
     def need(cond, what):
@@ -2297,6 +2303,8 @@ def pass_camera_assertions():
          'the module selection: six modules (lea r12d,[rdi+6]), call [rax+0x18]')
     need(rd(0x1114450, 14) == bytes.fromhex('488b81f0010000488902488bc2c3'),
          'PlayerCamera::GetIgnoreColliosionGeoOwnerId 0x1114450 returns CAM+0x1F0')
+    need(qword_hits(0x1121D20) and rd(0x1121D20, 10) == bytes.fromhex('488b0148ffa0a8000000'),
+         'PlayerCamera vt+0xA0 0x1121D20 tail-jumps to vt+0xA8 (the collision solve)')
     return out
 
 
@@ -3057,7 +3065,7 @@ w('// only for act 0x6f / 0x70. The local camera CAM = *(P+0xb8) holds the six m
 w('// (the previous one at +0x33c); the module + 8 is its CAM and CAM+0x348 is P (the act index is u32 P+0x218).')
 w('inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam_module_vtable_rva=0x23d67f0, pass_cam_module_base_vtable_rva=0x23d6720;')
 w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;')
-w('// The contract blocks partner_pass_camera re-checks before the slot swap (code_sites rvas).')
+w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
