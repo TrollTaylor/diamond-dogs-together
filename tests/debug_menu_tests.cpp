@@ -203,6 +203,9 @@ void NametagTests() {
     Check(Near(tag::QuatYaw({0, 0.7071068f, 0, 0.7071068f}), 1.5707963f) && Near(tag::QuatYaw({0, 0, 0, 1}), 0.0f), "quaternion yaw");
     Check(Near(tag::StanceHeight(0), 1.8f) && Near(tag::StanceHeight(1), 1.25f) && Near(tag::StanceHeight(2), 0.55f) && Near(tag::StanceHeight(9), 1.8f),
           "stance heights");
+    Check(Near(tag::HeadHeight(0, false), 1.8f) && Near(tag::HeadHeight(2, false), 0.55f) && Near(tag::HeadHeight(0, true), 0.95f) &&
+              Near(tag::HeadHeight(2, true), 0.95f) && tag::CapsuleStance(0, true) == 1 && tag::CapsuleStance(2, false) == 2,
+          "a seated partner (the seat flow) uses the seated head height whatever the streamed stance");
 
     // --- Easing and fade ----------------------------------------------------------------
     tag::Ease ease{};

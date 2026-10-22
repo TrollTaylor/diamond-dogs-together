@@ -91,6 +91,21 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
   shown in a FRAME.
 - Still unproven: the truck numbering (3/4) and its block in a FRAME, the passenger camera, the attach jitter against
   the 20 Hz RIDE_FAST placement.
+- **Passenger camera** (`wp/pass-cam` from `wp/integ9` `99153ae`; user decision 2026-10-22: new camera code may
+  connect the vehicle camera for a local back-seat passenger; [native-puppet.md "Passenger camera"](native-puppet.md)).
+  Root cause (read-only RE): the local camera takes the first of its six modules whose CanActivate is true, and the
+  stock VehicleCamera's CanActivate `0x12D0F60` accepts only act 0x6F (driver) and 0x70 (get-off), so a passenger
+  (0x6E) keeps the fallback camera, whose collision ray hits the jeep. The VehicleCamera's own update already handles
+  0x6E (camera base on the body, ignore-collision owner `CAM+0x1F0 = 0x88..|0x64xx`). Fix: `partner_pass_camera`
+  swaps slot +0x18 of both VehicleCamera vtables to a wrapper (stock answer first; true also for the armed local
+  passenger on its vehicle; reads only); the driver arms it per boarding from the native passenger report and logs
+  `partner_ride=pass_camera; state=install|connect|refused|release`. Part of `partner_ride_board=passenger` (no new
+  key). Also: the partner's name tag over a body seated by the seat flow uses a seated head height
+  (`nametag=visible; ...; seated=1`; run 59cfc415 had it about a metre above the head). Contract 742 / 192 (+9 / +7);
+  tests `partner_pass_camera_tests` (new, in `Get-WorkerTests`), `partner_driver_tests` (driver side),
+  `debug_menu_tests` (seated height). **Not run in the game yet**: the hidden run of `coop-vehicle-passenger.txt`
+  (now with `pass_camera` waitlogs) must show the passenger's own view of the road while the partner drives, both
+  directions, the on-foot camera back after the get-off, and the driver's camera unchanged.
 
 ### F2
 

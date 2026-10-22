@@ -48,6 +48,7 @@
 #include "mgscoop/partner_mount_policy.hpp"
 #include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/partner_board.hpp"
+#include "mgscoop/partner_pass_camera.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_reload.hpp"
@@ -397,6 +398,17 @@ struct Hooks {
     const char* (*gesture_install)(void* context) noexcept = nullptr;
     // partner_gesture::Step: publishes the command, drains the receipts.
     void (*gesture_step)(void* context, const partner_gesture::Command& command, partner_gesture::Status& out) noexcept = nullptr;
+    // --- F1 passenger camera (docs/native-puppet.md "Passenger camera"; passenger mode only;
+    // any null: one partner_ride=pass_camera; state=install; result=refused; reason=unavailable
+    // and nothing is armed). Lazy install of the VehicleCamera CanActivate slot swap
+    // (partner_pass_camera::Install, after the code gate), its per-tick live check, the armed
+    // word (partner_pass_camera::Pack; 0 = off), the wrapper's counters and the local camera's
+    // connect fields (partner_pass_camera::ReadCamera; reads only).
+    const char* (*pass_camera_install)(void* context) noexcept = nullptr;
+    bool (*pass_camera_live)(void* context) noexcept = nullptr;
+    void (*pass_camera_publish)(void* context, std::uint64_t word) noexcept = nullptr;
+    void (*pass_camera_stats)(void* context, partner_pass_camera::Stats& out) noexcept = nullptr;
+    bool (*pass_camera_read)(void* context, const partner_player::State& state, partner_pass_camera::Camera& out) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -635,6 +647,18 @@ struct Mission {
         LogCap cap;         // every other board line: policy, local_passenger, seated, refused, uncertain
         LogCap count_cap;   // the periodic board_block / board_passenger counter lines
     } board;
+    // F1 passenger camera (passenger mode): the armed word last published, the
+    // per-boarding episode (connect / refused / release lines, under board.cap),
+    // the wrapper's counters at this mission's first tick and the mission latch
+    // (patch_lost or fault: nothing is armed again this mission).
+    struct PassCamera {
+        std::uint64_t word;
+        partner_pass_camera::Episode episode;
+        partner_pass_camera::Stats seen;
+        bool seen_have;
+        const char* uncertain;
+        bool uncertain_logged;
+    } pass_camera;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
     const char* seat_unavailable;
@@ -1282,6 +1306,9 @@ struct Driver {
     // The board hook's lazy install (once per process) and its result.
     bool board_install_tried, board_installed;
     const char* board_refusal;
+    // The passenger camera's lazy install (once per process, passenger mode) and its result.
+    bool pass_camera_install_tried, pass_camera_installed;
+    const char* pass_camera_refusal;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;

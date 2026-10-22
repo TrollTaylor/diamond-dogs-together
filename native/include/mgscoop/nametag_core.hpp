@@ -86,6 +86,14 @@ Mat4 Multiply(const Mat4& a, const Mat4& b) noexcept;
 inline constexpr float kStandHeight = 1.80f, kSquatHeight = 1.25f, kProneHeight = 0.55f, kHeadLift = 0.25f;
 inline constexpr float kCapsuleRadius = 0.30f, kProneHalfLength = 0.85f;
 float StanceHeight(std::uint32_t stance) noexcept;
+// A partner seated in a vehicle (the driver's seat flow owns body 1 in a seated
+// state): its T+0x10 "foot" is the seat, not the ground, and the remote's stance
+// stays 0 (stand), so the standing 1.80 m put the tag about a metre above the
+// seated head (run 59cfc415: ndc_y ~1.13 at 4.7 m). Seated: the head is ~0.95 m
+// above the seat point; the crosshair capsule uses the squat height.
+inline constexpr float kSeatedHeight = 0.95f;
+inline float HeadHeight(std::uint32_t stance, bool seated) noexcept { return seated ? kSeatedHeight : StanceHeight(stance); }
+inline std::uint32_t CapsuleStance(std::uint32_t stance, bool seated) noexcept { return seated ? 1u : stance; }
 struct Capsule { Vec3 a, b; float radius; };
 // Stand/squat: vertical from foot+0.15 to foot+height-0.15. Prone: horizontal,
 // +-0.85 m along the body's forward (sin yaw, 0, cos yaw) at foot+0.25.
