@@ -592,8 +592,9 @@ struct LabConfig {
     // pickup, hand sign Go / Stop and wall knock (its upper act Q+0x20 edges, a
     // new reliable channel-2 message) played on body 1's graph 2 through
     // SetCurrentNode / ReserveToResetNode inside body 1's own motion update. The
-    // same key gates the sender. Default 0 in lab and play: a named 1 is lab only
-    // (play forces it off) until a hidden-worker FRAME shows the clip on body 1.
+    // same key gates the sender. Default on with the native gun profile in lab
+    // and play (hidden run 0e343f72: the pickup clip on body 1, the viewer's own
+    // player unchanged); a named 0 opts out.
     bool partner_native_gesture = false;
     bool partner_native_gesture_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;

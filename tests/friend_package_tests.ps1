@@ -486,13 +486,14 @@ try {
             $file = Join-Path $fixture 'play-cbox-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_cbox=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_cbox'])|$($m['partner_native_cbox_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named native box 0 opts out in play'
-            # Gestures (docs/native-puppet.md "Gestures") are lab only and default 0; Play-Coop never names the key.
+            # Gestures (docs/native-puppet.md "Gestures") follow the native gun profile in play (hidden runs 0e343f72 lab and
+            # the play rehearsal); Play-Coop never names the key, and a named 0 opts out.
             Assert-True (!$hostIni.Contains('partner_native_gesture') -and !$guestIni.Contains('partner_native_gesture') -and
                 !$clipsIni.Contains('partner_native_gesture')) 'Play-Coop lab.ini never names partner_native_gesture'
-            Assert-Equal "$($n['partner_native_gesture'])|$($n['partner_native_gesture_given'])" '0|0' 'native: play leaves gestures off'
-            $file = Join-Path $fixture 'play-gesture-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_gesture=1`n", $utf8)
+            Assert-Equal "$($n['partner_native_gesture'])|$($n['partner_native_gesture_given'])" '1|0' 'native: play defaults gestures on'
+            $file = Join-Path $fixture 'play-gesture-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_gesture=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
-            Assert-Equal "$($m['partner_native_gesture'])|$($m['partner_native_gesture_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named gesture key off'
+            Assert-Equal "$($m['partner_native_gesture'])|$($m['partner_native_gesture_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named gesture 0 opts out in play'
             # Horse / D-Walker riders (docs/mounts.md) are lab only and default off; Play-Coop never names the key.
             Assert-True (!$hostIni.Contains('partner_native_mount') -and !$guestIni.Contains('partner_native_mount') -and
                 !$clipsIni.Contains('partner_native_mount')) 'Play-Coop lab.ini never names partner_native_mount'

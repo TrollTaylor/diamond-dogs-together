@@ -214,7 +214,7 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         if (ok) result.partner_native_cbox_given = true;
     }
     else if (Equals(key, "partner_native_gesture")) {
-        // Gestures on body 1 (lab only, default 0); a named value records _given.
+        // Gestures on body 1 (default on with the gun profile); a named value records _given.
         ok = ParseBool(value, result.partner_native_gesture);
         if (ok) result.partner_native_gesture_given = true;
     }
@@ -1443,9 +1443,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // taken off, both directions, its own player never boxed); play admits it
     // only with link v2 connected (the observer's SupportModeReason).
     if (!c.partner_native_cbox_given) c.partner_native_cbox = gun;
-    // Gestures: off unless named (no hidden-worker FRAME of a graph-2 clip on
-    // body 1 yet); play forces it off below.
-    if (!c.partner_native_gesture_given) c.partner_native_gesture = false;
+    // Gestures follow the gun profile in lab and play (hidden run 0e343f72: the
+    // viewer saw body 1 bend down and come back up for the remote's pickup, its
+    // own player unchanged); a named 0 opts out.
+    if (!c.partner_native_gesture_given) c.partner_native_gesture = gun;
     // Mount riders: off unless named (no hidden-worker FRAME of a hidden D-Walker
     // rider yet); play forces it off below.
     if (!c.partner_native_mount_given) c.partner_native_mount = PartnerNativeMount::off;
@@ -1481,8 +1482,7 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         if (c.partner_ride_board == PartnerRideBoard::passenger) c.partner_ride_board = PartnerRideBoard::block;
         // F2: the native box on body 1 runs in play too (the observer admits play only with
         // link v2 connected).
-        // Gestures stay lab-only (graph-2 visibility on body 1 is unproven, L8).
-        c.partner_native_gesture = false;
+        // Gestures run in play too (the sender needs a live link session).
         // Mount riders stay lab-only (the act hide is unproven in a FRAME).
         c.partner_native_mount = PartnerNativeMount::off;
     }

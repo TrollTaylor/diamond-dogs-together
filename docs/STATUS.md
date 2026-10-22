@@ -1,4 +1,4 @@
-## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block and F2's box on, the rest lab-only and off)
+## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block, F2's box and F4's gestures on, the rest lab-only and off)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
@@ -9,15 +9,17 @@ package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_t
 
 **Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs, except F1's board
 block** (default on with the native gun profile in lab and play after hidden runs `0348c4d8` lab and `fad26e25` play;
-see F1) **and F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
-lab and `71e19d1e` play; see F2). Each key records a `_given` flag and play forces the rest off.
+see F1), **F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
+lab and `71e19d1e` play; see F2) **and F4's gestures** (default on with the native gun profile in lab and play after
+hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4). Each key records a `_given` flag and
+play forces the rest off.
 
 | Feature | Branch | Lab key (default) | Status |
 | --- | --- | --- | --- |
 | F1 vehicles: board block and back-seat passengers | `wp/board` | `partner_ride_board=off\|block\|passenger` (block with the gun profile, lab and play) | block proven (frames `0348c4d8` lab, `fad26e25` play bad WAN), default on; passenger lab-only, named-only (own camera unusable, `59cfc415`) |
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
 | F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (0; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found), so lab-only and off |
-| F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (0) | lab-only, off, pending frames |
+| F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (1 with the gun profile, lab and play) | pickup proven (frames `0e343f72` lab, `75a7e7dc` play bad WAN), default on; hand signs / knock unproven (no lab spot) |
 | F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (off) | lab-only, off, pending frames; no mount drawn |
 
 - Contract after the merges: 733 code sites / 185 vtable slots (0.13.4: 677 / 149; F1 +19 / +3, F2 +10 / +6, F3 +14 /
@@ -198,7 +200,8 @@ lab and `71e19d1e` play; see F2). Each key records a `_given` flag and play forc
 ### F4
 
 - **Gestures on the partner body** (`wp/gesture`, docs/native-puppet.md "Gestures"): lab key
-  `partner_native_gesture`, **default 0 in lab and play** (a `_given` flag; play forces it off). The sender samples its
+  `partner_native_gesture` (a `_given` flag), **default on with the native gun profile in lab and play since the runs
+  below** (it was 0 with a play force-off as merged). The sender samples its
   own upper act byte `Q+0x20` every tick and sends rising edges of 0x15 pickup, 0x17 knock, 0x18 / 0x19 hand sign Go /
   Stop as a new 12-byte message on reliable channel 2 (first byte 0x47; an older build drops it through its manifest
   decoder, `partner_action_events` v1 is untouched). The receiver gates the edge (native active, body 1 in act 1..6
@@ -221,10 +224,36 @@ lab and `71e19d1e` play; see F2). Each key records a `_given` flag and play forc
   (fake image: filter, submission ABI, end paths, refusals, the uncertain latch, the SEH fault) in CMake and
   `Get-WorkerTests`; `partner_driver_tests` TestGestures; the key in `lab_config_tests`, `lab_ini_check`,
   `friend_package_tests`, `worker_session_tests`, the three `-LabSetting` regexes, LabCommon and the help.
-- Scenario `tools/worker/scenarios/partner-upper-gestures.txt` (not run: no hidden-worker run in this step). Unproven:
-  whether a graph-2 node renders on body 1 at all (L8), whether `IsGraphExistNode` accepts the `{0,0}` tag list, the
-  end tests for body 1, whether tick sampling catches every edge, a hand sign or knock spot in the lab. A request no
-  body-1 update took is logged as `refused; reason=unanswered; ...; body_calls=..; resolve=..`.
+- Scenario `tools/worker/scenarios/partner-upper-gestures.txt`. A request no body-1 update took is logged as
+  `refused; reason=unanswered; ...; body_calls=..; resolve=..`.
+- **Hidden runs (wp/integ9, research build, gun stage, lab seed; Closed, BaselineRestored, RealSavesUnchanged, no
+  visible fallback; the host picks up, the prone guest films body 1 from 4 m behind / 3 m right):**
+  - `97ab39cc` lab (the scenario as written: E presses): no `partner_gesture=local` at all. Census `b9fa7639`: the
+    swap panel over the dropped pistol shows the **R** glyph and E does nothing. The stock pickup polls the padop icon
+    with key type 1 (`FUN_1412086f0` -> padop vt+0x28(plugin, 1, res)) = pad bit 0x40 (RELOAD, table `0x22E86A8`);
+    over a dropped weapon a short R reloads and only the long press picks up. The scenario now holds R (scenario fix,
+    no code change).
+  - `ab16d947` lab (R press + R hold): the hold raised host `local; kind=pickup; upper=0x15; seq=1; stance=1` and
+    `seq=2; stance=2`; guest `submit; graph=2; node=0x1e904603eb7d; exist=1; method=set; body_act=1` -> `applied;
+    current=0x1e904603eb7d; ok=1` -> `ended; via=end; cause=clip; ms=625; null=1`, squat `0xff77b695370a` (`ms=609`).
+    One frame inside the clip shows body 1 bent forward (`hold-01`).
+  - `0e343f72` lab, the committed scenario (R held 1.2 s, guest burst during the hold): the same lines (`ms=656` both).
+    **FRAMES (checked by eye): body 1 bends down at the waist reaching for the ground (`gest-pickup-03`) and comes back
+    up (`-04`) while its legs stay planted, upright before (`-01`, `-02`) and after (`-05`..`-07`, `-end`); the
+    viewer's own player stays prone (act 5) in every capture.** The squat clip is hidden by grass in its frames.
+  - `75a7e7dc` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 0-3 % loss), the same scenario **without** the
+    key (scratch copy): `partner_gesture=configured; key=1` by default on both, the same lines (`ms=594` / `672`) and
+    the same frames (`gest-pickup-03` reaching down, `-04` rising).
+  - No `refused`, `uncertain`, `fault` or AV in any run; the viewer's `partner_status=local` never changed; the
+    MotionVars rate-record writes (`re-traverse-gesture.md` 5.3 "Optional") were not needed: graph 2 renders on body 1.
+- **Default flipped**: `partner_native_gesture` resolves to 1 with the native gun profile in lab and play
+  (`ResolveWeaponDefaults`; the play force-off is gone), 0 without it, a named 0 opts out. Tests: `lab_config_tests`,
+  `friend_package_tests` (Play-Coop native: 1|0; a named 0 in play: 0|1), help text, native-puppet.md.
+- Still unproven: the squat clip in a FRAME, the moving pickup (W+R held over the dropped back weapon never raised 0x15
+  on the host), the hand signs and the knock (no lab spot; E at the lab start pets D-Dog, act 94), the reverse
+  direction (the guest picking up, the host filming), graph 2 taken back by body 1's own upper plugins (never seen).
+- **User decisions:** a hand-sign / knock spot or trigger reachable from the lab seed (and a way past D-Dog) before
+  those kinds can be shown in a FRAME.
 
 ### F5
 

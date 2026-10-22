@@ -214,23 +214,22 @@ int main() {
                   "an invalid cbox value refuses");
         }
     }
-    // Gestures (partner_native_gesture, docs/native-puppet.md "Gestures"): default 0 in lab and play, also with the
-    // native gun profile (no hidden-worker FRAME of a graph-2 clip on body 1 yet); a named 1 runs in lab only, play
-    // forces it off; a named value records _given; independent of the traversal key.
+    // Gestures (partner_native_gesture, docs/native-puppet.md "Gestures"): on with the native gun profile in lab and
+    // play (hidden runs 0e343f72 lab and the play rehearsal: body 1's pickup in the frames), off without it; a named 1
+    // runs in either mode, a named 0 opts out; a named value records _given; independent of the traversal key.
     {
         Check(!LabConfig{}.partner_native_gesture && !LabConfig{}.partner_native_gesture_given && !Lab("").partner_native_gesture,
-              "gesture key defaults off");
+              "gesture key defaults off without the gun profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
-            const bool play = std::strcmp(mode, "mode=play\n") == 0;
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_native_gesture && !profile.partner_native_gesture_given && profile.invalid_values == 0,
-                  "the gun profile leaves gestures off in lab and play");
+            Check(profile.partner_native_gesture && !profile.partner_native_gesture_given && profile.invalid_values == 0,
+                  "the gun profile defaults gestures on in lab and play");
             const auto named = Lab(gun + mode + "partner_native_gesture=1\n");
-            Check(named.partner_native_gesture == !play && named.partner_native_gesture_given && named.invalid_values == 0 &&
+            Check(named.partner_native_gesture && named.partner_native_gesture_given && named.invalid_values == 0 &&
                       named.unknown_keys == 0 && named.play_refused == 0 && !named.partner_native_traverse,
-                  "a named gesture=1 runs in lab; play forces it off");
+                  "a named gesture=1 runs in lab and play");
             const auto off = Lab(gun + mode + "partner_native_gesture=0\n");
             Check(!off.partner_native_gesture && off.partner_native_gesture_given, "a named gesture=0 stays off");
         }

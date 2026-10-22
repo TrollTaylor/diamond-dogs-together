@@ -1,11 +1,17 @@
-# Gestures on the partner body (docs/native-puppet.md "Gestures"; lab key partner_native_gesture, default 0, lab only).
+# Gestures on the partner body (docs/native-puppet.md "Gestures"; key partner_native_gesture, default on with the native
+# gun profile in lab and play).
 # Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR unset,
 # no build running in any worktree, under the shared verify lock, one worker session.
+# Results (wp/integ9 0.13.5): hidden run 0e343f72 (lab, gun stage) passed both pickups (stand and squat: local ->
+# rx -> submit exist=1 -> applied ok=1 -> ended via=end cause=clip null=1) and its gest-pickup-03/-04 frames show body 1
+# bending down and rising; play rehearsal 75a7e7dc (-Mode play -WanSim bad, this file with the partner_native_gesture
+# labsetting line removed: the gun-profile default) passed the same way. The moving pickup and the hand sign / knock
+# part never raised an edge (no lab spot). The labsetting line below only makes the key explicit.
 # Static proof first: python tools/generate_partner_contract.py --check (690 code sites, 156 vtable slots).
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-upper-gestures.txt -PartnerProfile native -NativeStage loco -SaveSeed lab
 #   (or -NativeStage gun -BuildProfile research, the user's profile; the key is named below for both copies).
-# The HOST acts; the GUEST films its body 1 (the host's partner body) from 5 m behind, 3 m to the side. Both copies run
+# The HOST acts; the GUEST films its body 1 (the host's partner body) prone from 4 m behind, 3 m to the side. Both copies run
 # the same build: the host sends its own upper-act edges (Q+0x20: 0x15 pickup, 0x17 knock, 0x18 / 0x19 hand sign
 # Go / Stop) on reliable channel 2; the guest plays the stock graph-2 node on body 1 inside body 1's own motion update.
 # Evidence (script-observer.log; lines are capped at 400 per mission):
@@ -33,10 +39,17 @@
 #    NO partner_gesture=fault; NO crash; NO host partner_status=local change caused by the guest's gesture (the
 #      host's own player never changes: the guest writes only body 1);
 #    scenario.json Closed, BaselineRestored, RealSavesUnchanged.
-# Captures (guest): gest-idle, burst gest-pickup 8 x 150 ms from the host's E press (body 1 bends down on its upper body
-# while its legs stay in place), gest-pickup-end, gest-sign / gest-knock (best effort, see below), gest-end. If the
-# frames show nothing on body 1 while the guest logs submit + applied ok=1, that is L8 (graph-2 nodes invisible on body
-# 1, MotionVars): say so and try the rate-record writes of re-traverse-gesture.md 5.3 "Optional" in the lab.
+# The stock pickup key is R, not E: PickUpActionPluginImpl polls the padop icon with key type 1 (FUN_1412086f0 ->
+# padop vt+0x28(plugin, 1, res)), and key type 1 is pad bit 0x40 (RELOAD; table 0x22E86A8). Hidden census b9fa7639
+# showed the swap panel with the R glyph over the dropped weapon while E did nothing. Over a dropped weapon a short R
+# press is a reload (body 1 mirrors it, upper 5); only the long press picks it up (run ab16d947: the 0x15 edge came
+# ~0.3-0.7 s into a 900 ms hold, body 1's clip ended after ~0.6 s), so every pickup below holds R and the guest bursts
+# during the hold. The prone guest films from 4 m behind / 3 m right (standing, its own body hid most of body 1).
+# Captures (guest): gest-idle, burst gest-pickup during the host's R hold (body 1 bends down on its upper body while its
+# legs stay in place), gest-pickup-end, gest-pickup-squat, gest-pickup-moving, gest-sign / gest-knock (best effort, see
+# below), gest-end. If the frames show nothing on body 1 while the guest logs submit + applied ok=1, that is L8 (graph-2
+# nodes invisible on body 1, MotionVars): say so and try the rate-record writes of re-traverse-gesture.md 5.3
+# "Optional" in the lab.
 labsetting partner_native_gesture=1
 labsetting partner_act_log=1
 title 200
@@ -56,18 +69,16 @@ wait 5000
 both capture gest-idle
 waitlog guest 'partner_gesture=configured; key=1;' 30
 waitlog guest 'partner_gesture=install; result=ok' 30
-# --- Pickup 1: the host drops a resident item (its own secondary) and picks it up with E (stand, idle) ------------
+# --- Pickup 1: the host drops a resident item (its own secondary) and picks it up with a long R (stand, idle) -------
 host run inventory
 host debug drop_item current_secondary 1
 wait 2500
-placebehind guest host 5 3
+placebehind guest host 4 3
+stance guest prone
 wait 1500
-host press e
-guest burst gest-pickup 8 150
+host hold r 1200 nowait
+guest burst gest-pickup 8 100
 wait 1500
-host hold e 900
-guest burst gest-pickup-hold 6 150
-wait 2000
 guest capture gest-pickup-end
 waitlog host 'partner_gesture=local; kind=pickup; upper=0x15;' 10
 waitlog guest 'partner_gesture=submit; graph=2; node=0x[0-9a-f]+; exist=1; kind=pickup;' 10
@@ -77,24 +88,23 @@ waitlog guest 'partner_gesture=ended; via=' 10
 stance host crouch
 host debug drop_item current_secondary 1
 wait 2500
-placebehind guest host 5 3
+placebehind guest host 4 3
+stance guest prone
 wait 1500
-host press e
-guest burst gest-pickup-squat 8 150
-wait 1500
-host hold e 900
-wait 2500
+host hold r 1200 nowait
+guest burst gest-pickup-squat 8 100
+wait 2000
+waitlog guest 'partner_gesture=submit; graph=2; node=0xff77b695370a; exist=1; kind=pickup;' 10
 stance host stand
-# --- Pickup 3: a back weapon (another resident item), walk over it, E while moving --------------------------------
+# --- Pickup 3: a back weapon (another resident item), walk over it holding R (moving; best effort) ----------------
 host debug drop_item current_back 1
 wait 2500
 host hold s 600
-placebehind guest host 5 3
-wait 1000
-host hold w 700 nowait
-wait 400
-host press e
-guest burst gest-pickup-moving 8 150
+placebehind guest host 4 3
+stance guest prone
+wait 1500
+host hold w+r 1300 nowait
+guest burst gest-pickup-moving 8 100
 wait 2500
 # --- Hand sign / knock (best effort: no verified wall or buddy spot in the repo) -----------------------------------
 # A knock needs the host against a wall (cover) and E; a hand sign Go / Stop comes from the buddy command state. To

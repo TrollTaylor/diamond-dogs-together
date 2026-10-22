@@ -560,11 +560,12 @@ is the nearest action (act 94, petting).
 `partner_gesture` (`native/partner_gesture.*`, pure part
 `native/partner_gesture_policy.*`, driven by `SendGesture` / `ReceiveGesture` /
 `TickGesture` in `partner_driver.cpp`) plays the remote's pickup, hand sign Go
-/ Stop and wall knock on body 1's upper graph. Lab key
-`partner_native_gesture=0|1`: **default 0 in lab and play**, play forces it
-off, a named value records `partner_native_gesture_given`. The same key gates
-the sender. It stays off until a hidden-worker FRAME shows the clip on body 1
-(`tools/worker/scenarios/partner-upper-gestures.txt`).
+/ Stop and wall knock on body 1's upper graph. Key
+`partner_native_gesture=0|1`: **default on with the native gun profile in lab
+and play** (the pickup on body 1 in FRAMES: hidden runs `0e343f72` lab and
+`75a7e7dc` play with bad WAN, see "Status" below), off without it, a named 0
+opts out, a named value records `partner_native_gesture_given`. The same key
+gates the sender (`tools/worker/scenarios/partner-upper-gestures.txt`).
 
 **Why a new signal.** These are upper-only actions: the lower act `Q+0x18`
 does not change, so neither the snapshot's anim extension (act, stance, speed)
@@ -690,13 +691,36 @@ took within 500 ms is withdrawn with `refused; reason=unanswered; where=driver;
 ...; body_calls=<body-1 updates so far>; resolve=ok|<identity refusal>` (the
 update filter never had body 1's entry, or the caller never matched).
 
-**Status (0.13.5): unproven, off.** No hidden-worker run yet. Open: whether a
-graph-2 node renders on body 1 at all (L8: the MotionVars rate record, e.g.
-`rec+0x10 = 1.0f` for signs and `rec+0x28` for the pickup, may be needed; see
-`re-traverse-gesture.md` 5.3 "Optional"), the end tests' semantics for body 1,
-whether the driver tick catches every 0x15 / 0x18 / 0x19 edge, and whether body
-1's own upper plugins take graph 2 back on the next frame (`override; cause=node`
-or `cause=pending`; `refused; reason=pending` when one already waits).
+**Status (0.13.5): the pickup is proven, on with the gun profile in lab and
+play.** The stock pickup key is R, not E: `PickUpActionPluginImpl` polls the
+padop icon with key type 1 (`FUN_1412086f0` -> padop vt+0x28(plugin, 1, res)),
+and key type 1 is pad bit 0x40 (RELOAD, table `0x22E86A8`); over a dropped
+weapon a short R is a reload and only the long press picks it up (the swap
+panel shows the R glyph). Hidden runs (research build, gun stage, lab seed;
+Closed, BaselineRestored, RealSavesUnchanged, no visible fallback; the host
+picks up, the prone guest films body 1 from 4 m):
+- `ab16d947` / `0e343f72` lab (key named): host `local; kind=pickup;
+  upper=0x15; seq=1; stance=1` and `seq=2; stance=2`; guest `rx` -> `submit;
+  graph=2; node=0x1e904603eb7d; exist=1; method=set; body_act=1` -> `applied;
+  current=0x1e904603eb7d; queued=0x0; ok=1` -> `ended; via=end; cause=clip;
+  ms=625..656; null=1`, and the same for the squat node `0xff77b695370a`
+  (`body_act=3`). FRAMES: body 1 bends down at the waist reaching for the
+  ground and comes back up while its legs stay planted, then stands as before;
+  the viewer's own player stays prone (act 5) in every capture. `IsGraphExistNode`
+  accepts the `{0, 0}` tag list and the vt+0x228 end fires after ~0.6 s.
+- `75a7e7dc` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 0-3 %
+  loss), the same scenario without the key: `configured; key=1` by default on
+  both, the same lines (`ms=594` / `672`) and the same frames.
+- No `refused`, `uncertain`, `fault` or AV in any run; no viewer
+  `partner_status=local` change.
+
+Still unproven: the squat clip in a FRAME (grass hid body 1's arms), the
+moving pickup (a held W+R over the dropped back weapon never raised 0x15 on
+the host), the hand signs and the knock (no lab spot: E at the lab start pets
+D-Dog, act 94), the reverse direction (the guest picking up, the host
+filming), and whether body 1's own upper plugins ever take graph 2 back
+(`override; cause=node|pending`, never seen). The rate-record MotionVars
+writes of `re-traverse-gesture.md` 5.3 "Optional" were not needed.
 
 ## Mounts
 
@@ -1743,7 +1767,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default block with the native gun profile in lab and play (hidden runs 0348c4d8 lab, fad26e25 play), otherwise off; passenger is lab only: play turns a named passenger into block; a named value records `partner_ride_board_given`) |
-| `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 0 in lab and play, lab only: play forces 0) |
+| `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default off in lab and play, lab only: play forces off) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not

@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
         // F2: the native cardboard box on body 1 (lab only, default 0) and whether it was named.
         std::printf("partner_native_cbox=%d\npartner_native_cbox_given=%d\n", c.partner_native_cbox ? 1 : 0,
                     c.partner_native_cbox_given ? 1 : 0);
-        // Gestures (lab only, default 0) and whether the key was named.
+        // Gestures (on with the gun profile, lab and play) and whether the key was named.
         std::printf("partner_native_gesture=%d\npartner_native_gesture_given=%d\n", c.partner_native_gesture ? 1 : 0,
                     c.partner_native_gesture_given ? 1 : 0);
         // Horse / D-Walker riders (lab only, default off) and whether it was named.

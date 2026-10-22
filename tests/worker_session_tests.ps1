@@ -166,7 +166,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_ride_board=off','partner_ride_board=block','partner_ride_board=passenger','guest:partner_ride_board=passenger','host:partner_ride_board=block',
     # F2: the native cardboard box on body 1 (lab only, default 0)
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
-    # Gestures (lab only, default 0)
+    # Gestures (on with the gun profile, lab and play)
     'partner_native_gesture=1','partner_native_gesture=0','guest:partner_native_gesture=1','host:partner_native_gesture=0',
     # Horse / D-Walker riders (lab only, default off)
     'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
