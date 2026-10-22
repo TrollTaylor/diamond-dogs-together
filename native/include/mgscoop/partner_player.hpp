@@ -170,6 +170,10 @@ struct Anim {
     std::uint32_t m1d8, m1e0, m1f8;  // FNV-1a of the instance-0 motion records
 };
 bool ReadAnim(const State& state, Anim& out) noexcept;
+// Both ids' upper act byte (u8 *(Q+0x20)[id]: 0 none, 5 reload, 0x15 pickup,
+// 0x17 knock, 0x18 / 0x19 hand sign Go / Stop; the gesture sender). Zeros and
+// false when unreadable.
+bool ReadUpper(const State& state, std::uint8_t (&out)[2]) noexcept;
 // The sync form of slot `index` (stance/speed clamped to 0..3; flags valid).
 sync::AnimState AnimSlot(const Anim& anim, std::uint32_t index) noexcept;
 

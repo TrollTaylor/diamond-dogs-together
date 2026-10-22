@@ -2164,6 +2164,26 @@ void EmitNativeN(const Hooks& h, LogCap& cap, unsigned limit, const char* head, 
     if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
 }
 
+namespace gpol = mgscoop::partner_gesture_policy;
+namespace pges = mgscoop::partner_gesture;
+constexpr unsigned kGestureLogCap = 400;
+// Gestures (docs/native-puppet.md "Gestures"): a new edge of the remote's upper
+// act (first byte 'G' on channel 2). Stored with the key off too (counted, not
+// acted on); with the key on the newest one waits for TickGesture's gate.
+void ReceiveGesture(Driver& d, const Hooks& h, const std::uint8_t* message, std::size_t size, std::uint32_t epoch,
+                    std::uint64_t now) noexcept {
+    if (!gpol::Accept(d.gesture_rx, message, size, epoch, now) || !d.settings.ngesture) return;
+    Mission& m = d.mission;
+    const gpol::Packet& p = d.gesture_rx.packet;
+    m.gesture_pending = true;
+    m.gesture_rx_packet = p;
+    m.gesture_rx_ms = now;
+    ++m.gesture_rx;
+    EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                "partner_gesture=rx; kind=%s; seq=%u; stance=%u; speed=%u; moving=%u; epoch=%u\r\n", gpol::KindName(p.kind), unsigned(p.seq),
+                unsigned(p.stance), unsigned(p.speed), (p.flags & gpol::Flag::Moving) ? 1u : 0u, epoch);
+}
+
 // Reliable channel 2 (equipment manifest): drained every tick in every drive
 // mode so the sender's window never stalls; the receiver only stores it.
 void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
@@ -2217,6 +2237,12 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                 d.ride_invalid_logged = true;
                 Emit(h, "partner_ride=refused; reason=packet_or_session\r\n");
             }
+            continue;
+        }
+        // Gestures share channel 2 (first byte 0x47 'G'; an older build drops it
+        // through the manifest decoder as Result::magic).
+        if (gpol::IsGesture(message, size)) {
+            ReceiveGesture(d, h, message, size, epoch, now);
             continue;
         }
         // Online play: the capability message shares channel 2 (first byte 0x43).
@@ -4605,6 +4631,211 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     pnat::Push(t.ring, e);
 }
 
+// --- Gestures (partner_gesture, docs/native-puppet.md "Gestures") ------------------------------
+// Sender: every tick with the key on, this copy's own upper act byte
+// Q+0x20[local]; a rising edge into pickup / knock / hand sign Go / Stop goes
+// out once on reliable channel 2 (append). Receiver: ReceiveGesture (channel-2
+// drain) keeps the newest edge; TickGesture gates it, picks the stock node and
+// publishes the request to the body-1 update hook (partner_gesture::Step every
+// tick), then logs the hook's receipts.
+void SendGesture(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, bool anim_ok, const pp::Anim& anim,
+                 std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    m.gesture_upper_ok = false;
+    m.gesture_upper[0] = m.gesture_upper[1] = 0;
+    if (!set.ngesture || !h.read_upper) {
+        d.gesture_tx.ready = false;
+        d.gesture_tx_pending = false;
+        return;
+    }
+    std::uint8_t upper[2]{};
+    m.gesture_upper_ok = h.read_upper(h.context, st, upper);
+    m.gesture_upper[0] = upper[0];
+    m.gesture_upper[1] = upper[1];
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    const bool live = epoch && h.link_live && h.link_live(h.context) && h.send_reliable_append;
+    const std::uint32_t local = st.local < 2 ? st.local : 0;
+    const gpol::SenderIn in{live, m.gesture_upper_ok && anim_ok, upper[local], anim_ok ? anim.stance[local] : std::uint8_t{0},
+                            anim_ok ? anim.speed[local] : std::uint8_t{0}, epoch, now};
+    const gpol::SenderOut o = gpol::Observe(d.gesture_tx, in);
+    if (o.send) {
+        if (d.gesture_tx_pending)
+            EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                        "partner_gesture=local; kind=%s; upper=0x%02x; seq=%u; sent=0; reason=superseded\r\n",
+                        gpol::KindName(d.gesture_tx_packet.kind), unsigned(d.gesture_tx_upper), unsigned(d.gesture_tx_packet.seq));
+        d.gesture_tx_pending = true;
+        d.gesture_tx_packet = o.packet;
+        d.gesture_tx_upper = upper[local];
+        d.gesture_tx_ms = now;
+    }
+    if (!d.gesture_tx_pending) return;
+    const gpol::Packet& p = d.gesture_tx_packet;
+    const char* drop = !live ? "link" : now - d.gesture_tx_ms > gpol::kRequestMs ? "queue" : nullptr;
+    std::uint8_t bytes[gpol::kSize]{};
+    if (!drop && !gpol::Encode(p, bytes)) drop = "encode";
+    if (!drop && !h.send_reliable_append(h.context, gpol::kChannel, bytes, sizeof(bytes))) return;  // full: retried next tick
+    d.gesture_tx_pending = false;
+    EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                "partner_gesture=local; kind=%s; upper=0x%02x; seq=%u; stance=%u; speed=%u; moving=%u; sent=%u%s%s\r\n", gpol::KindName(p.kind),
+                unsigned(d.gesture_tx_upper), unsigned(p.seq), unsigned(p.stance), unsigned(p.speed),
+                (p.flags & gpol::Flag::Moving) ? 1u : 0u, drop ? 0u : 1u, drop ? "; reason=" : "", drop ? drop : "");
+}
+
+void LogGestureReceipt(Mission& m, const Hooks& h, const pges::Receipt& r) noexcept {
+    const unsigned long long node = r.node, current = r.current, queued = r.queued;
+    switch (r.stage) {
+    case pges::Stage::submit:
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=submit; graph=2; node=0x%llx; exist=%u; kind=%s; method=%s; seq=%u; stance=%u; moving=%u; body_act=%u\r\n",
+                    node, r.exist ? 1u : 0u, gpol::KindName(r.kind), gpol::MethodName(r.method), r.seq, unsigned(m.gesture_request_stance),
+                    m.gesture_request_moving ? 1u : 0u, unsigned(r.body_act));
+        break;
+    case pges::Stage::applied:
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=applied; seq=%u; kind=%s; node=0x%llx; current=0x%llx; queued=0x%llx; ok=%u\r\n", r.seq,
+                    gpol::KindName(r.kind), node, current, queued, r.ok ? 1u : 0u);
+        break;
+    case pges::Stage::ended:
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=ended; via=%s; cause=%s; seq=%u; kind=%s; ms=%u; null=%u; current=0x%llx%s%s\r\n", gpol::ViaName(r.via),
+                    r.cause ? r.cause : "-", r.seq, gpol::KindName(r.kind), r.ms, r.null_sent ? 1u : 0u, current,
+                    r.reason ? "; note=" : "", r.reason ? r.reason : "");
+        break;
+    case pges::Stage::refused:
+        ++m.gesture_refused;
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=refused; reason=%s; where=hook; kind=%s; seq=%u; node=0x%llx; body_act=%u; body_upper=0x%02x; body_q28=%u; "
+                    "age_ms=%u; current=0x%llx\r\n",
+                    r.reason ? r.reason : "-", gpol::KindName(r.kind), r.seq, node, unsigned(r.body_act), unsigned(r.body_upper),
+                    unsigned(r.body_q28), r.ms, current);
+        break;
+    case pges::Stage::uncertain:
+        EmitFormat(h, "partner_gesture=uncertain; reason=%s; seq=%u; kind=%s; node=0x%llx; latched=mission\r\n", r.reason ? r.reason : "-", r.seq,
+                   gpol::KindName(r.kind), node);
+        break;
+    default:
+        EmitFormat(h, "partner_gesture=fault; reason=%s; seq=%u; kind=%s; hook=passthrough\r\n", r.reason ? r.reason : "-", r.seq,
+                   gpol::KindName(r.kind));
+        break;
+    }
+}
+
+// The hook drops a running gesture without any write when the epoch changes.
+void WithdrawGesture(Driver& d, const Hooks& h) noexcept {
+    if (!++d.gesture_epoch) d.gesture_epoch = 1;
+    if (!h.gesture_step || !d.gesture_install_tried || d.gesture_install_refusal) return;
+    pges::Command command{};
+    command.epoch = d.gesture_epoch;
+    pges::Status status{};
+    h.gesture_step(h.context, command, status);
+}
+
+void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool realized, bool parts_loaded, bool anim_ok,
+                 const pp::Anim& anim, bool looks_ok, const pp::Looks& looks, const sync::AnimState& remote_anim, bool remote_live) noexcept {
+    Mission& m = d.mission;
+    if (!set.ngesture) {
+        m.gesture_pending = false;
+        return;
+    }
+    if (!m.gesture_configured_logged) {
+        m.gesture_configured_logged = true;
+        EmitFormat(h, "partner_gesture=configured; key=1; sender=%u; receiver=%u; epoch=%u\r\n", h.read_upper ? 1u : 0u,
+                   h.gesture_step && h.gesture_install ? 1u : 0u, d.gesture_epoch);
+    }
+    const char* block = m.carry_hold                                          ? "carry"
+                      : m.ride_seated || m.seat.phase != SeatPhase::idle      ? "seat"
+                      : mgscoop::partner_dm_overlay::Active(m.overlay)       ? "overlay"
+                      : (set.native_active && RemoteDowned(clock.tick_ms))    ? "downed"
+                      : m.vehicle_job                                         ? "vehicle"
+                                                                              : nullptr;
+    // Lazy install the first time the native drive is active with the key on.
+    if (set.native_active && !d.gesture_install_tried && h.gesture_install) {
+        d.gesture_install_tried = true;
+        d.gesture_install_refusal = h.gesture_install(h.context);
+        EmitFormat(h, "partner_gesture=install; result=%s\r\n", d.gesture_install_refusal ? d.gesture_install_refusal : "ok");
+    }
+    const bool installed = h.gesture_step && d.gesture_install_tried && !d.gesture_install_refusal;
+    if (m.gesture_request.seq && (clock.tick_ms < m.gesture_request.issued_ms || clock.tick_ms - m.gesture_request.issued_ms > gpol::kRequestMs)) {
+        // No body-1 update took it (the hook answers every request it sees with a
+        // submit or a refusal): the update filter never matched body 1's entry.
+        const pges::Request& q = m.gesture_request;
+        ++m.gesture_refused;
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                    "partner_gesture=refused; reason=unanswered; where=driver; kind=%s; seq=%u; node=0x%llx; age_ms=%llu; body_calls=%u; "
+                    "resolve=%s\r\n",
+                    gpol::KindName(q.kind), q.seq, static_cast<unsigned long long>(q.node),
+                    static_cast<unsigned long long>(clock.tick_ms >= q.issued_ms ? clock.tick_ms - q.issued_ms : 0), m.gesture_hook_body_calls,
+                    m.gesture_hook_resolve ? m.gesture_hook_resolve : "ok");
+        m.gesture_request = pges::Request{};
+    }
+    if (m.gesture_pending) {
+        m.gesture_pending = false;
+        const gpol::Packet& p = m.gesture_rx_packet;
+        gpol::GateIn g{};
+        g.enabled = true;
+        g.native = set.native_active;
+        g.realized = realized && parts_loaded;
+        g.remote_live = remote_live;
+        g.block = block;
+        g.body_ok = anim_ok && m.gesture_upper_ok;
+        g.body_act = anim_ok ? anim.act[1] : 0;
+        g.body_q28 = anim_ok ? anim.q28[1] : 0;
+        g.body_upper = m.gesture_upper[1];
+        g.installed = installed;
+        g.busy = m.gesture_active || m.gesture_request.seq != 0;
+        g.uncertain = m.gesture_uncertain;
+        const char* why = !h.gesture_step || !h.gesture_install ? "unavailable" : gpol::Gate(g);
+        if (!why && (clock.now_ms < m.gesture_rx_ms || clock.now_ms - m.gesture_rx_ms > gpol::kRequestMs)) why = "stale";
+        const bool moving = (p.flags & gpol::Flag::Moving) != 0;
+        gpol::Choice choice{};
+        if (!why) {
+            choice = gpol::NodeFor(p.kind, p.stance, moving, looks_ok && looks.look[1].hand != 0);
+            why = choice.refusal;
+        }
+        if (why) {
+            ++m.gesture_refused;
+            EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture",
+                        "partner_gesture=refused; reason=%s; where=driver; kind=%s; seq=%u; stance=%u; moving=%u; body_act=%u; body_upper=0x%02x; "
+                        "body_q28=%u\r\n",
+                        why, gpol::KindName(p.kind), unsigned(p.seq), unsigned(p.stance), moving ? 1u : 0u, unsigned(g.body_act),
+                        unsigned(g.body_upper), unsigned(g.body_q28));
+        } else {
+            if (!++d.gesture_seq) d.gesture_seq = 1;
+            m.gesture_request = pges::Request{d.gesture_seq, p.kind, choice.node, choice.method, choice.blend, clock.tick_ms};
+            m.gesture_request_stance = p.stance;
+            m.gesture_request_moving = moving;
+            ++m.gesture_requests;
+        }
+    }
+    if (!installed) return;
+    pges::Command command{};
+    command.enabled = set.native_active && realized && parts_loaded && !block && !m.gesture_uncertain;
+    command.epoch = d.gesture_epoch;
+    command.now_ms = clock.tick_ms;
+    command.request = m.gesture_request;
+    command.remote_known = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    command.remote_speed = remote_anim.speed;
+    pges::Status status{};
+    h.gesture_step(h.context, command, status);
+    for (unsigned i = 0; i < status.count && i < pges::kReceipts; ++i) {
+        const pges::Receipt& r = status.receipts[i];
+        LogGestureReceipt(m, h, r);
+        if (r.seq && r.seq == m.gesture_request.seq &&
+            (r.stage == pges::Stage::submit || r.stage == pges::Stage::refused || r.stage == pges::Stage::uncertain || r.stage == pges::Stage::fault))
+            m.gesture_request = pges::Request{};
+    }
+    if (status.dropped)
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture", "partner_gesture=receipts_dropped; n=%u\r\n", status.dropped);
+    m.gesture_active = status.active;
+    m.gesture_hook_resolve = status.resolve;
+    m.gesture_hook_body_calls = status.body_calls;
+    if (status.uncertain) m.gesture_uncertain = true;
+    if (!status.live && !m.gesture_patch_lost_logged) {
+        m.gesture_patch_lost_logged = true;
+        EmitFormat(h, "partner_gesture=patch_lost; installed=%u; faulted=%u\r\n", status.installed ? 1u : 0u, status.faulted ? 1u : 0u);
+    }
+}
+
 #include "partner_driver_seat.inc"
 } // namespace
 
@@ -4813,6 +5044,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.act_log = lab.partner_act_log;
     d.settings.stance_fast = lab.partner_native_stance_fast;
     d.settings.traverse = lab.partner_native_traverse;
+    d.settings.ngesture = lab.partner_native_gesture;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
     // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).
     // The one exception (WS2: the user asked for throws in play): the guarded slot-3
@@ -4849,6 +5081,8 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     // The seat dwords never outlive a mission (a missed MissionEnd included).
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_start");
+    // Gestures: a new hook epoch (a running gesture is dropped without a write).
+    WithdrawGesture(d, h);
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
@@ -4913,6 +5147,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_end");
+    WithdrawGesture(d, h);
     d.mission.seat.armed = false;
     d.mission.seat.phase = SeatPhase::idle;
     d.mission.ride_seated = false;
@@ -4976,6 +5211,7 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
+    WithdrawGesture(d, h);
     m.seat.armed = false;
     m.seat.phase = SeatPhase::idle;
     m.ride_seated = false;
@@ -5306,6 +5542,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const sync::AnimState local_anim = anim_ok ? pp::AnimSlot(anim, st.local) : sync::AnimState{};
     pp::Looks looks{};
     const bool looks_ok = h.read_looks && h.read_looks(h.context, st, looks);
+    // Gestures: this copy's upper act edges (sender) and both ids' upper bytes for the receiver's gate.
+    SendGesture(d, h, st, set, anim_ok, anim, now);
     // Pose source.
     partner::Pose pose{};
     bool pose_valid = false;
@@ -6162,6 +6400,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const Settings set_levers = EffectiveSettings(d.settings, m.native_out.active);
     TickInput(d, h, lab, st, set_levers, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);
+    // Gestures: the received edge's gate, the request and the body-1 hook's receipts.
+    TickGesture(d, h, set_levers, clock, realized, parts_loaded, anim_ok, anim, looks_ok, looks, remote_anim,
+                set.source == PartnerSource::net && sample_status == pose::Status::live);
     // Round-1 actions: the DM overlay lever owns the DM while it runs; dm=map
     // stands down (TickDm with dm=off only to release a clip it still owns).
     // A seat episode blocks the overlay (OverlayBlocked: seat), so one already

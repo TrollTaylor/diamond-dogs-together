@@ -192,6 +192,15 @@ struct Fake {
     std::vector<std::string> seat_target_order;  // "dm_live" when the target ran while the DM played
     const char* seat_target_result = nullptr;
     bool seat_target_named = false;
+    // Gestures (docs/native-puppet.md "Gestures"): both ids' upper act byte, the
+    // hook install, the published commands and the receipts the next step returns.
+    std::uint8_t upper[2]{};
+    bool upper_ok = true;
+    unsigned upper_reads = 0;
+    const char* gesture_install_result = nullptr;
+    unsigned gesture_installs = 0;
+    std::vector<mgscoop::partner_gesture::Command> gesture_commands;
+    mgscoop::partner_gesture::Status gesture_status{};
 
     Fake() {
         Ready();
@@ -599,6 +608,28 @@ bool HookEquipType(void* context, std::uint32_t equip, std::uint8_t& type) noexc
 bool HookPeerInputV5(void* context) noexcept { return F(context).peer_v5; }
 bool HookPeerInputV6(void* context) noexcept { return F(context).peer_v6; }
 bool HookPeerInputV7(void* context) noexcept { return F(context).peer_v7; }
+bool HookReadUpper(void* context, const pp::State&, std::uint8_t (&out)[2]) noexcept {
+    Fake& f = F(context);
+    ++f.upper_reads;
+    out[0] = f.upper[0];
+    out[1] = f.upper[1];
+    return f.upper_ok;
+}
+const char* HookGestureInstall(void* context) noexcept {
+    ++F(context).gesture_installs;
+    return F(context).gesture_install_result;
+}
+void HookGestureStep(void* context, const mgscoop::partner_gesture::Command& command, mgscoop::partner_gesture::Status& out) noexcept {
+    Fake& f = F(context);
+    f.gesture_commands.push_back(command);
+    out = f.gesture_status;
+    f.gesture_status.count = 0;  // receipts are delivered once
+}
+void AddGestureHooks(pd::Hooks& h) {
+    h.read_upper = HookReadUpper;
+    h.gesture_install = HookGestureInstall;
+    h.gesture_step = HookGestureStep;
+}
 void AddWeaponHooks(pd::Hooks& h) {
     h.read_slots = HookReadSlots;
     h.equip_type = HookEquipType;
@@ -6329,6 +6360,239 @@ void TestRound1Actions() {
     }
 }
 
+// Gestures (docs/native-puppet.md "Gestures"): the upper-act edge sender, the
+// channel-2 receiver, the driver's gate and stock node choice, the request
+// handed to the body-1 hook (partner_gesture::Step), its receipts in the log,
+// the epoch on mission boundaries, and a copy with the key off (as an older peer
+// sees the message: the manifest path is unaffected).
+std::vector<std::uint8_t> GestureBytes(mgscoop::partner_gesture_policy::Kind kind, std::uint16_t seq, std::uint8_t stance, std::uint8_t speed) {
+    namespace gp = mgscoop::partner_gesture_policy;
+    gp::Packet p{};
+    p.kind = kind;
+    p.seq = seq;
+    p.stance = stance;
+    p.speed = speed;
+    p.flags = speed ? gp::Flag::Moving : 0;
+    p.sender_ms = 1234;
+    std::uint8_t b[gp::kSize]{};
+    Check(gp::Encode(p, b), "gesture fixture encodes");
+    return std::vector<std::uint8_t>(b, b + sizeof(b));
+}
+void TestGestures() {
+    namespace gp = mgscoop::partner_gesture_policy;
+    namespace pg = mgscoop::partner_gesture;
+    namespace pn = mgscoop::partner_native;
+    // --- Sender: a rising edge of this copy's upper byte goes out once (append, channel 2).
+    {
+        Session s(0);
+        AddNativeHooks(s.hooks);
+        AddGestureHooks(s.hooks);
+        s.hooks.send_reliable_append = HookSendReliable;
+        s.driver.settings.ngesture = true;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[0] = 3;
+        s.fake.anim.stance[0] = 2;
+        s.fake.anim.speed[0] = 2;
+        const auto sent = [&]() {
+            unsigned n = 0;
+            for (const auto& m : s.fake.reliable_sent) if (gp::IsGesture(m.data(), m.size())) ++n;
+            return n;
+        };
+        s.Tick(1);
+        Check(sent() == 0 && s.fake.upper_reads >= 1, "the first sample is a baseline");
+        s.fake.upper[0] = 0x15;
+        s.Tick(1);
+        Check(sent() == 1, "a pickup edge goes out");
+        s.Tick(1);
+        Check(sent() == 1, "held: no repeat");
+        gp::Packet p{};
+        for (const auto& m : s.fake.reliable_sent)
+            if (gp::IsGesture(m.data(), m.size())) Check(gp::Decode(m.data(), m.size(), p), "the sent message decodes");
+        Check(p.kind == gp::Kind::pickup && p.stance == 2 && p.speed == 2 && (p.flags & gp::Flag::Moving) && p.seq == 1,
+              "the sender's own stance, speed and moving flag");
+        Check(s.fake.Count("partner_gesture=local; kind=pickup; upper=0x15; seq=1; stance=2; speed=2; moving=1; sent=1\r\n") == 1,
+              "one local line per edge");
+        // Body 1's upper byte (index 1) is never sent.
+        s.fake.upper[0] = 0;
+        s.fake.upper[1] = 0x18;
+        s.Tick(1);
+        Check(sent() == 1, "the partner body's own byte is not this copy's gesture");
+        // A refused send stays pending and goes out on the next tick.
+        s.fake.reliable_ok = false;
+        s.fake.upper[0] = 0x18;
+        s.Tick(1);
+        Check(sent() == 1 && s.driver.gesture_tx_pending, "queue refused: pending");
+        s.fake.reliable_ok = true;
+        s.Tick(1);
+        Check(sent() == 2 && !s.driver.gesture_tx_pending, "retried on the next tick");
+        // Key off: no read, nothing sent.
+        s.driver.settings.ngesture = false;
+        const unsigned reads = s.fake.upper_reads;
+        s.fake.upper[0] = 0x19;
+        s.Tick(1);
+        Check(sent() == 2 && s.fake.upper_reads == reads, "key off: the sender is idle");
+    }
+    // --- Receiver with the key off (what an older build does with the message too): the manifest still arrives.
+    {
+        MapSession s;
+        AddNativeHooks(s.hooks);
+        AddGestureHooks(s.hooks);
+        mgscoop::partner_equip_wire::Manifest m{};
+        m.revision = 3; m.epoch = 7; m.inv_slot = 1; m.slots[1].base_id = 46; m.slots[1].alias = 0x2E;
+        std::uint8_t bytes[mgscoop::partner_equip_wire::kSize]{};
+        Check(mgscoop::partner_equip_wire::Encode(m, bytes) == sizeof(bytes), "manifest encodes");
+        s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 1, 1, 0));
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        s.T();
+        Check(s.fake.channel2.empty() && s.driver.mission.equip.have && s.driver.mission.equip.manifest.revision == 3 &&
+                  s.driver.mission.equip.invalid == 0 && s.driver.gesture_rx.received == 1 && !s.driver.mission.gesture_pending &&
+                  s.fake.Containing("partner_gesture=") == 0 && s.fake.gesture_commands.empty() && s.fake.gesture_installs == 0,
+              "key off: the gesture is counted and dropped, the manifest is stored");
+    }
+    // --- Receiver with the key on, native active.
+    NativeSession s;
+    AddGestureHooks(s.hooks);
+    s.driver.settings.ngesture = true;
+    Check(s.Playing() >= 0 && s.Until(pn::Mode::active, 9000), "native active");
+    s.fake.anim_ok = true;
+    s.fake.anim.act[0] = 1;
+    s.fake.anim.act[1] = 1;
+    s.fake.anim.stance[1] = 1;
+    s.fake.lines.clear();
+    s.N();
+    Check(s.fake.gesture_installs == 1 && s.fake.Count("partner_gesture=install; result=ok\r\n") + s.fake.Count("partner_gesture=configured;") <= 2,
+          "the hook installs once with the key on and the native drive active");
+    Check(!s.fake.gesture_commands.empty() && s.fake.gesture_commands.back().enabled && !s.fake.gesture_commands.back().request.seq &&
+              s.fake.gesture_commands.back().epoch == s.driver.gesture_epoch && s.driver.gesture_epoch != 0,
+          "an enabled command with no request every tick");
+    // A received pickup: the stock node through SetCurrentNode.
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 1, 1, 0));
+    s.N();
+    Check(s.fake.Count("partner_gesture=rx; kind=pickup; seq=1; stance=1; speed=0; moving=0;") == 1, "rx line");
+    const pg::Request q = s.fake.gesture_commands.back().request;
+    Check(q.seq == 1 && q.kind == gp::Kind::pickup && q.node == 0x1E904603EB7DULL && q.method == gp::Method::set_current && q.blend == 0.5f,
+          "the request: statePickUpStandRight, set, 0.5");
+    s.N();
+    Check(s.fake.gesture_commands.back().request.seq == 1, "the request stays published until the hook answers");
+    // The hook's receipts.
+    pg::Status& st = s.fake.gesture_status;
+    st = pg::Status{};
+    st.installed = st.live = st.active = true;
+    st.active_seq = 1;
+    st.count = 2;
+    st.receipts[0].stage = pg::Stage::submit;
+    st.receipts[0].seq = 1;
+    st.receipts[0].kind = gp::Kind::pickup;
+    st.receipts[0].method = gp::Method::set_current;
+    st.receipts[0].node = q.node;
+    st.receipts[0].exist = true;
+    st.receipts[0].body_act = 1;
+    st.receipts[1].stage = pg::Stage::applied;
+    st.receipts[1].seq = 1;
+    st.receipts[1].kind = gp::Kind::pickup;
+    st.receipts[1].node = q.node;
+    st.receipts[1].current = q.node;
+    st.receipts[1].ok = true;
+    s.N();
+    Check(s.fake.Count("partner_gesture=submit; graph=2; node=0x1e904603eb7d; exist=1; kind=pickup; method=set; seq=1; stance=1; moving=0; "
+                       "body_act=1\r\n") == 1 &&
+              s.fake.Count("partner_gesture=applied; seq=1; kind=pickup; node=0x1e904603eb7d; current=0x1e904603eb7d; queued=0x0; ok=1\r\n") == 1,
+          "submit and applied lines");
+    s.N();
+    Check(!s.fake.gesture_commands.back().request.seq && s.driver.mission.gesture_active, "the answered request is withdrawn; busy");
+    // Busy: a second gesture while one runs is refused by the driver.
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::sign_go, 2, 1, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=busy; where=driver; kind=sign_go; seq=2;") == 1 &&
+              !s.fake.gesture_commands.back().request.seq,
+          "busy: refused, no request");
+    // The end.
+    st.active = false;
+    st.count = 1;
+    st.receipts[0] = pg::Receipt{};
+    st.receipts[0].stage = pg::Stage::ended;
+    st.receipts[0].seq = 1;
+    st.receipts[0].kind = gp::Kind::pickup;
+    st.receipts[0].via = gp::Via::end;
+    st.receipts[0].cause = "clip";
+    st.receipts[0].null_sent = true;
+    st.receipts[0].ms = 900;
+    s.N();
+    Check(s.fake.Count("partner_gesture=ended; via=end; cause=clip; seq=1; kind=pickup; ms=900; null=1; current=0x0\r\n") == 1 &&
+              !s.driver.mission.gesture_active,
+          "ended line");
+    // A knock with a non-zero hand on body 1 picks the hand variant (ReserveToResetNode, 1.0).
+    s.fake.looks.look[1].hand = 2;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::knock, 3, 1, 0));
+    s.N();
+    const pg::Request k = s.fake.gesture_commands.back().request;
+    Check(k.seq == 2 && k.kind == gp::Kind::knock && k.node == 0x7B2D4F836A92ULL && k.method == gp::Method::reserve_reset && k.blend == 1.0f,
+          "knock, hand variant, reserve");
+    // The hook refuses: the request is withdrawn and the refusal logged.
+    st.count = 1;
+    st.receipts[0] = pg::Receipt{};
+    st.receipts[0].stage = pg::Stage::refused;
+    st.receipts[0].seq = 2;
+    st.receipts[0].kind = gp::Kind::knock;
+    st.receipts[0].reason = "no_node";
+    s.N();
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=no_node; where=hook; kind=knock; seq=2;") == 1 &&
+              !s.fake.gesture_commands.back().request.seq,
+          "a hook refusal withdraws the request");
+    // An unanswered request expires after kRequestMs.
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::sign_stop, 4, 2, 0));
+    s.N();
+    Check(s.fake.gesture_commands.back().request.seq == 3 && s.fake.gesture_commands.back().request.node == 0x78CB18630AF1ULL,
+          "sign Stop squat");
+    // The hook's step reports why body 1's entry is not in its filter.
+    st.body_calls = 42;
+    st.resolve = "ps";
+    for (int i = 0; i < 20; ++i) s.N();
+    Check(!s.fake.gesture_commands.back().request.seq &&
+              s.fake.Containing("partner_gesture=refused; reason=unanswered; where=driver; kind=sign_stop; seq=3; node=0x78cb18630af1; age_ms=") == 1 &&
+              s.fake.Containing("; body_calls=42; resolve=ps\r\n") == 1,
+          "an unanswered request expires with one refusal line");
+    st.body_calls = 0;
+    st.resolve = nullptr;
+    // Gate refusals.
+    s.fake.anim.act[1] = 0x4D;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 5, 1, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=box; where=driver; kind=pickup; seq=5;") == 1, "body 1 boxed: refused");
+    s.fake.anim.act[1] = 1;
+    s.fake.upper[1] = 5;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 6, 1, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=body_upper; where=driver; kind=pickup; seq=6;") == 1, "body 1 reloading: refused");
+    s.fake.upper[1] = 0;
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 7, 3, 0));
+    s.N();
+    Check(s.fake.Containing("partner_gesture=refused; reason=stance; where=driver; kind=pickup; seq=7; stance=3;") == 1,
+          "a crawling pickup has no stock node");
+    // A repeated seq is a duplicate (reliable delivery repeats nothing, but a stale copy must not replay).
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 7, 1, 0));
+    s.N();
+    Check(s.fake.Count("partner_gesture=rx; kind=pickup; seq=7;") == 1 && s.driver.gesture_rx.duplicates >= 1, "a duplicate seq is dropped");
+    // The uncertain latch holds for the mission.
+    st.uncertain = true;
+    st.count = 0;
+    s.N();
+    s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 8, 1, 0));
+    s.N();
+    Check(s.driver.mission.gesture_uncertain && s.fake.Containing("partner_gesture=refused; reason=uncertain; where=driver;") == 1 &&
+              !s.fake.gesture_commands.back().enabled,
+          "uncertain: latched, the command disabled, requests refused");
+    // Mission end: a new epoch goes to the hook (drops a running gesture without a write).
+    const std::uint32_t before = s.driver.gesture_epoch;
+    const std::size_t commands = s.fake.gesture_commands.size();
+    pd::MissionEnd(s.driver, s.hooks);
+    Check(s.driver.gesture_epoch == before + 1 && s.fake.gesture_commands.size() == commands + 1 &&
+              !s.fake.gesture_commands.back().enabled && s.fake.gesture_commands.back().epoch == before + 1 &&
+              !s.fake.gesture_commands.back().request.seq,
+          "mission end: a disabled command of a new epoch");
+}
+
 int main() {
     TestRound1Actions();
     TestCfgAndMissionBoundaries();
@@ -6376,6 +6640,7 @@ int main() {
     TestDmMapCaps();
     TestNativeSleepPresentationAdmission();
     TestNativeEnterAndLeave();
+    TestGestures();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();

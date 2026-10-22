@@ -1,3 +1,37 @@
+## 0.13.5 (in progress)
+
+Unreleased; the version stays 0.13.4 until the integration step. Each feature branch keeps its notes under its own
+heading.
+
+### F4
+
+- **Gestures on the partner body** (`wp/gesture`, docs/native-puppet.md "Gestures"): lab key
+  `partner_native_gesture`, **default 0 in lab and play** (a `_given` flag; play forces it off). The sender samples its
+  own upper act byte `Q+0x20` every tick and sends rising edges of 0x15 pickup, 0x17 knock, 0x18 / 0x19 hand sign Go /
+  Stop as a new 12-byte message on reliable channel 2 (first byte 0x47; an older build drops it through its manifest
+  decoder, `partner_action_events` v1 is untouched). The receiver gates the edge (native active, body 1 in act 1..6
+  with `Q+0x28[1]` and `Q+0x20[1]` clear, no carry / seat / overlay / downed / vehicle, the remote live), picks the
+  stock graph-2 node from the remote's stance and moving flag, and a MinHook on `0xB6C410` (only ActMotionStart's call,
+  return `0xAF0381`, body 1's entry) submits it inside body 1's own motion update: `IsGraphExistNode(cs,1,2,node,{0,0})`,
+  then `SetCurrentNode(cs,1,2,node,0.5f,0)` (pickup) or `ReserveToResetNode(cs,1,2,node,1.0f,0)` (signs, knock); the
+  end (clip end, the remote's speed > 1 for signs, 2000 ms) returns graph 2 to stateNull only while it still shows our
+  node. Nine SHA-256 pinned bodies, five cs slots checked before every call, SEH on every call, a viewer (body 0)
+  digest around every write with a mission `uncertain` latch.
+- New code: `native/partner_gesture_policy.{hpp,cpp}` (pure: kinds, nodes, wire, sender, store, gate, end),
+  `native/partner_gesture.{hpp,cpp}` (the hook), `partner_player::ReadUpper`, driver `SendGesture` / `ReceiveGesture` /
+  `TickGesture` and three Hooks (`read_upper`, `gesture_install`, `gesture_step`).
+- Contract: 677 -> 688 code sites, 149 -> 156 vtable slots (`generate_partner_contract.py --check`), plus
+  `gesture_assertions` (the kPins against the executable, the 0xAF037C call, every node an imm64 operand of its stock
+  function, the 0.5 / 1.0 blend constants).
+- Tests: `partner_gesture_tests` (nodes, wire, older peers, sender, store, gate, end) and `partner_gesture_hook_tests`
+  (fake image: filter, submission ABI, end paths, refusals, the uncertain latch, the SEH fault) in CMake and
+  `Get-WorkerTests`; `partner_driver_tests` TestGestures; the key in `lab_config_tests`, `lab_ini_check`,
+  `friend_package_tests`, `worker_session_tests`, the three `-LabSetting` regexes, LabCommon and the help.
+- Scenario `tools/worker/scenarios/partner-upper-gestures.txt` (not run: no hidden-worker run in this step). Unproven:
+  whether a graph-2 node renders on body 1 at all (L8), whether `IsGraphExistNode` accepts the `{0,0}` tag list, the
+  end tests for body 1, whether tick sampling catches every edge, a hand sign or knock spot in the lab. A request no
+  body-1 update took is logged as `refused; reason=unanswered; ...; body_calls=..; resolve=..`.
+
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
 Branch `wp/integ8` from `dev/oct7-continue` `bf29f67` (0.13.2): merge commits of `wp/gameover-clock` `8324dd2`,

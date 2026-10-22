@@ -1001,6 +1001,16 @@ bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexc
 }
 // The driver's support verdict for partner_net's unknown slot/equip debounce.
 void PartnerPublishSupportIdentity(void*,std::uint16_t equip) noexcept { mgscoop::partner_net::SetSupportIdentity(equip); }
+// Gestures (docs/native-puppet.md "Gestures"): both ids' upper act byte, the
+// lazy body-1 update hook (only after the startup partner code gate) and its step.
+bool PartnerReadUpper(void*, const pp::State& state, std::uint8_t (&out)[2]) noexcept { return pp::ReadUpper(state, out); }
+const char* PartnerGestureInstall(void*) noexcept {
+    if (!game_base || !partner_gate_ok) return "gate";
+    return mgscoop::partner_gesture::Install(game_base, game_span, Log);
+}
+void PartnerGestureStep(void*, const mgscoop::partner_gesture::Command& command, mgscoop::partner_gesture::Status& out) noexcept {
+    mgscoop::partner_gesture::Step(command, out);
+}
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
@@ -1016,7 +1026,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
     PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
-    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7};
+    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
+    PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

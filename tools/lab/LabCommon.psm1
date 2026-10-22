@@ -344,6 +344,9 @@ $script:LabPartnerKeys = @(
     # Traversal replay (docs/native-puppet.md "Traversal"): the ladder / pipe / step-on placement and ACTION overlay
     # tap on the partner body (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_traverse'; Json = 'native_traverse'; Kind = 'bool' },
+    # Gestures (docs/native-puppet.md "Gestures"): the remote's pickup, hand signs and knock on the partner body's upper
+    # graph, and this copy's own upper-act edges as their sender (lab only: off unless set, forced off in play).
+    @{ Key = 'partner_native_gesture'; Json = 'native_gesture'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

@@ -208,6 +208,11 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         ok = ParseBool(value, result.partner_native_traverse);
         if (ok) result.partner_native_traverse_given = true;
     }
+    else if (Equals(key, "partner_native_gesture")) {
+        // Gestures on body 1 (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.partner_native_gesture);
+        if (ok) result.partner_native_gesture_given = true;
+    }
     else return false;
     return true;
 }
@@ -1406,6 +1411,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Traversal replay: off unless named (no hidden-worker FRAME of body 1 on a
     // ladder yet); play forces it off below.
     if (!c.partner_native_traverse_given) c.partner_native_traverse = false;
+    // Gestures: off unless named (no hidden-worker FRAME of a graph-2 clip on
+    // body 1 yet); play forces it off below.
+    if (!c.partner_native_gesture_given) c.partner_native_gesture = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1433,6 +1441,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_place_mirror = false;
         // Traversal replay stays lab-only (the ACTION tap on body 1 is unproven).
         c.partner_native_traverse = false;
+        // Gestures stay lab-only (graph-2 visibility on body 1 is unproven, L8).
+        c.partner_native_gesture = false;
     }
 }
 

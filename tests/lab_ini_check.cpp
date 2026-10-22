@@ -157,6 +157,9 @@ int main(int argc, char** argv) {
         // Traversal replay (lab only, default 0) and whether it was named.
         std::printf("partner_native_traverse=%d\npartner_native_traverse_given=%d\n", c.partner_native_traverse ? 1 : 0,
                     c.partner_native_traverse_given ? 1 : 0);
+        // Gestures (lab only, default 0) and whether the key was named.
+        std::printf("partner_native_gesture=%d\npartner_native_gesture_given=%d\n", c.partner_native_gesture ? 1 : 0,
+                    c.partner_native_gesture_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

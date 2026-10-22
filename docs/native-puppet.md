@@ -251,6 +251,130 @@ inside a running traversal (ladder `0x1411EFEEC`, `0x1411F02DD`; elude
 `0x1411A7967`) do read instance 1's pad, which is why the mask and strip
 wiring stays.
 
+## Gestures
+
+`partner_gesture` (`native/partner_gesture.*`, pure part
+`native/partner_gesture_policy.*`, driven by `SendGesture` / `ReceiveGesture` /
+`TickGesture` in `partner_driver.cpp`) plays the remote's pickup, hand sign Go
+/ Stop and wall knock on body 1's upper graph. Lab key
+`partner_native_gesture=0|1`: **default 0 in lab and play**, play forces it
+off, a named value records `partner_native_gesture_given`. The same key gates
+the sender. It stays off until a hidden-worker FRAME shows the clip on body 1
+(`tools/worker/scenarios/partner-upper-gestures.txt`).
+
+**Why a new signal.** These are upper-only actions: the lower act `Q+0x18`
+does not change, so neither the snapshot's anim extension (act, stance, speed)
+nor the Lua tick says anything. The stock plugins write the upper act byte
+`Q+0x20[id]`: 0x15 pickup (`PickUpActionPluginImpl` Wake `0x14120FD9A`,
+cleared in its Sleep `0x14120EB37`), 0x17 knock (`StateKnock` `0x1411E7210`),
+0x18 / 0x19 hand sign Go / Stop (`StateHandSignGo` `0x1411E6A40`,
+`StateHandSignStop` `0x1411E6C30`). The byte persists from the state's enter to
+its Sleep, so the driver tick samples it.
+
+**Sender.** Every driver tick with the key on, `partner_player::ReadUpper` reads
+both ids' byte; a rising edge of this copy's own byte (`P+0x214`, index 0) into
+one of the four values sends one 12-byte message on reliable channel 2, append
+mode (see "Wire"), with the sender's own stance `Q+0x30` and speed `Q+0x38`
+(moving = speed != 0). The first sample after enabling, after an unread tick or
+in a new link session is a baseline (a gesture already running is not sent). A
+refused send stays pending for up to 500 ms; a newer edge supersedes it.
+
+**Receiver.** `DrainEquip` hands a `'G'` message to `ReceiveGesture` (a
+strictly newer seq of the session is stored; with the key off it is only
+counted). `TickGesture` gates the newest edge, picks the stock node and
+publishes a request to the body-1 hook:
+
+| Gate (`partner_gesture_policy::Gate`, in order) | refusal |
+|---|---|
+| key on | `key_off` |
+| the mission's `uncertain` latch clear | `uncertain` |
+| native drive active, body 1 realized with its parts loaded | `not_native`, `unrealized` |
+| no carry, seated ride, DM overlay, downed remote or vehicle job | `carry`, `seat`, `overlay`, `downed`, `vehicle` |
+| the remote's pose sample live, the hook installed, no gesture running | `remote_stale`, `not_installed`, `busy` |
+| body 1 in plain locomotion: act 1..6 (not 0x4D box), `Q+0x28[1] == 0`, `Q+0x20[1] == 0` | `box`, `body_act`, `body_q28`, `body_upper` |
+| the edge is younger than 500 ms | `stale` |
+| (after publication) a body-1 update takes the request within 500 ms | `unanswered` |
+
+Nodes (the remote's stance from the message; the low-item / flag-0 rows of the
+stock tables; `NodeFor`, every value an imm64 operand inside the stock
+function, asserted by the contract generator):
+
+| Gesture | Method (cs vtable) | Blend | Stand (1) | Squat (2) | Crawl (3) | Other |
+|---|---|---|---|---|---|---|
+| pickup | SetCurrentNode vt+0x170 | 0.5 | idle `0x1E904603EB7D`, moving `0x82E84B26E4CE` | `0xFF77B695370A` | refused (`stance`) | refused |
+| hand sign Go | ReserveToResetNode vt+0x160 | 1.0 | `0xE74E11BABA4B` | `0x8881431FFF42` | `0x5FE632112A9A` | `0x2153458C564C` |
+| hand sign Stop | ReserveToResetNode vt+0x160 | 1.0 | `0xB98C80A7DDAE` | `0x78CB18630AF1` | `0x825F953B5437` | `0x724E8FE0F814` |
+| knock | ReserveToResetNode vt+0x160 | 1.0 | `0xD64283446A67` | `0x7BC06465D606` | `0xC1143CAC83B1` | `0x174A0F341288` |
+
+The knock takes the second node of each stock pair (`0x7B2D4F836A92`,
+`0xD08C8B213CAB`, `0x0430147D9D34`, `0x1EC34B25A344`) when body 1's hand look
+`Q+0x58[1]` is non-zero. The item height and the per-id Left/Right flag
+(`PS+0x2F0`) are not on the wire.
+
+**The body-1 hook.** A MinHook on the per-entry motion update `0x140B6C410`,
+installed lazily (the first native tick with the key on, after the startup
+partner code gate) and never removed. Everything but `ActMotionStart`'s call
+(return address `0x140AF0381`) for body 1's entry passes straight through (one
+atomic compare). For body 1 it re-resolves the identity (P, Q, block 1 with id
+1 only, PS, CS with base 1 and count 1, entry, graph and request-buffer
+layout, and a different CS / entry / buffer for body 0), then, right before
+the original update consumes it:
+
+1. `IsGraphExistNode(cs, 1, 2, node, {0, 0})` (vt+0x210 `0x140AF1F10`; the tag
+   list is walked until a zero entry, so it is never null);
+2. pickup `SetCurrentNode(cs, 1, 2, node, 0.5f, 0)` (vt+0x170 `0x140AF2BA0`),
+   signs and the knock `ReserveToResetNode(cs, 1, 2, node, 1.0f, 0)` (vt+0x160
+   `0x140AF2710`): both write only body 1's request buffer (`SetRequest`
+   `0x140B6E9F0` / `ReserveToReset` `0x140B6E6E0`);
+3. after the original update, graph 2's current / queued node is read back
+   (`applied; ok=`).
+
+Every later body-1 update tests the end (`partner_gesture_policy::End`):
+another body or controller ends it without a write (`identity`); a lost lease
+(the driver's command older than 250 ms, disabled, or a seat / carry / overlay
+taking body 1) ends it with the stateNull return if graph 2 still shows our node;
+another owner of graph 2 (after a 300 ms grace) ends it without a write
+(`node`); the clip end after 150 ms (pickup `vt+0x228(cs, 1, 2)` `0x140AF1F70`,
+signs and knock `vt+0x2B8(cs, 1, 3)` `0x140AF2110`), the remote's speed > 1 for
+signs and the knock, or the 2000 ms deadline end it with
+`SetCurrentNode(cs, 1, 2, stateNull 0xC1A2050D3802, 0.0f, 0)` (the validated
+`partner_upper_manual_idle` return), only while graph 2 still shows our node. A
+new mission epoch (MissionStart / MissionEnd / STOP) drops a running gesture
+without any write.
+
+Guards: the nine bodies are SHA-256 pinned (`partner_gesture.hpp` `kPins`,
+re-checked before the hook is created; the contract generator compares them
+with the executable); the five cs vtable slots are checked before every call;
+every call runs under SEH (a fault latches `fault` and the hook passes through
+for the rest of the process). Around every write the viewer's own body 0
+(request masks and graph-2 request record) is digested before and after, and
+body 1 may change only its graph-2 mask bit and must keep its graph-0 record:
+any surprise latches `uncertain` for the mission (no further writes, not even
+the stateNull return). A diagnostic build whose phase observer already hooks
+`0xB6C410` refuses the install (`phase_observer`).
+
+Logs (`partner_gesture=`, 400 lines per mission; uncertain / fault / install /
+configured / patch_lost uncapped): `configured; key=1; sender=..; receiver=..`,
+`install; result=ok|<reason>` (the hook's own `installed; hook=0xb6c410;
+caller=0xaf0381; pins=9; slots=5` or `install_refused; reason=..; rva=..`),
+`local; kind=..; upper=0x..; seq=..; stance=..; speed=..; moving=..; sent=0|1`,
+`rx; kind=..; seq=..; ...`, `refused; reason=..; where=driver|hook; ...`,
+`submit; graph=2; node=0x..; exist=1; kind=..; method=set|reserve; seq=..;
+stance=..; moving=..; body_act=..`, `applied; ...; current=0x..; queued=0x..;
+ok=0|1`, `ended; via=end|timeout|override; cause=..; seq=..; kind=..; ms=..;
+null=0|1; current=0x..`, `uncertain; reason=..`, `fault; reason=..`. The hook
+answers every request it sees (submit or refused); a request no body-1 update
+took within 500 ms is withdrawn with `refused; reason=unanswered; where=driver;
+...; body_calls=<body-1 updates so far>; resolve=ok|<identity refusal>` (the
+update filter never had body 1's entry, or the caller never matched).
+
+**Status (0.13.5): unproven, off.** No hidden-worker run yet. Open: whether a
+graph-2 node renders on body 1 at all (L8: the MotionVars rate record, e.g.
+`rec+0x10 = 1.0f` for signs and `rec+0x28` for the pickup, may be needed; see
+`re-traverse-gesture.md` 5.3 "Optional"), the end tests' semantics for body 1,
+whether the driver tick catches every 0x15 / 0x18 / 0x19 edge, and whether body
+1's own upper plugins take graph 2 back on the next frame (`override; cause=node`).
+
 ## Rates
 
 The locomotion speed is `base(0x109F7E0) * rate(0x109F690)` (callers
@@ -1261,6 +1385,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / step-on replay, see "Traversal"; default 0 in lab and play, lab only: play forces 0) |
+| `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 0 in lab and play, lab only: play forces 0) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and
@@ -1424,6 +1549,17 @@ stall hold are pure; the gun strip reads the already pinned gun record
   still decodes, any other size/version pairing is refused. The sender is
   native pure reads of vars and the type tables (see "Loadout mirroring");
   the receiver stores it, plans from it and logs the apply verdict.
+- Gesture edge (`partner_gesture_policy`, reliable channel 2, append mode,
+  only with `partner_native_gesture=1`; see "Gestures"): 12 bytes, `[0]` 0x47
+  ('G'), `[1]` version 1, `[2]` kind (1 pickup, 2 hand sign Go, 3 hand sign
+  Stop, 4 knock), `[3]` the sender's stance 0..3, `[4]` its speed 0..3, `[5]`
+  flags (bit 0 moving), `[6..7]` seq (LE16, never 0), `[8..11]` sender_ms
+  (LE32). Strict decode; the receiver keeps a strictly newer seq per link
+  session. An older build has no classifier for 0x47: the message reaches its
+  manifest decoder, which refuses it (`Result::magic`, the store's `invalid`
+  counter only), and every other channel-2 message is unaffected. The v1
+  action events (`partner_action_events`) are not touched: a new kind there
+  would make an older `Valid` reject the whole frame.
 
 ## Telemetry
 
