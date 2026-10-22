@@ -140,8 +140,10 @@ do
       local x, z = t[1] + 1.6 * dx / len, t[3] + 1.6 * dz / len
       local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok2, fmt("%s;via=%s;horse=%.2f,%.2f,%.2f", msg, via, t[1], t[2], t[3])
-    elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie"))) then
+    elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie" or a[2] == "truck"))) then
       -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition);
+      -- "jeep" / "truck": only the veh_lv_ / veh_trc_ locators (F1 vehicles: the
+      -- truck half of coop-vehicle-passenger.txt);
       -- "sortie": the nearest deployed/sortie vehicle instead: an id in 25600..25607
       -- that no authored veh_lv_/veh_trc_ locator names (no locator: the WS3
       -- seat-by-id case, docs/vehicle-ws3.md). In 30010 the authored trucks take
@@ -165,7 +167,7 @@ do
           end
         end
       else
-        for i = 0, 12 do names[#names + 1] = fmt("veh_lv_%04d", i) end
+        if a[2] ~= "truck" then for i = 0, 12 do names[#names + 1] = fmt("veh_lv_%04d", i) end end
         if a[2] ~= "jeep" then for i = 0, 5 do names[#names + 1] = fmt("veh_trc_%04d", i) end end
       end
       for _, entry in ipairs(names) do

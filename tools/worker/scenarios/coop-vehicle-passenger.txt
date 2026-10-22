@@ -1,0 +1,137 @@
+# F1 vehicles (docs/native-puppet.md "Vehicle boarding"): back-seat PASSENGERS both ways and the truck
+# fallback, partner_ride_board=passenger (the block companion is coop-vehicle-shared.txt; a session has
+# one lab.ini). Cloned from coop-vehicle-seat.txt in its passing scratch form (clear_enemies after each
+# goto_vehicle). The host drives the Wakh Sind jeep (4 seats); the guest, 1.9 m beside it, presses E:
+# the board hook offers only the free back seats 2..3 (never the driver's), stock phase 1 registers
+# rider[2|3] and plays the stock passenger phase (act 0x6E), and RIDE_FAST carries the guest with the
+# host's track. Then the roles reverse, then a truck (no stock back-seat states: block).
+#
+# Expected, first half (the guest boards behind the host):
+#   guest  partner_ride=board_install; mode=passenger; result=ok; reason=none
+#          partner_ride=board_policy; vehicle=256xx; seat=0; mode=passenger; uncertain=none
+#          partner_ride=board_passenger; vehicle=256xx; seat=2|3; site=prequery; ...; type=1|2; seats=4
+#          partner_ride=board_passenger; vehicle=256xx; seat=2|3; site=phase1; n=1; ...
+#          partner_ride=local_passenger; vehicle=256xx; seat=2|3; state=on; via=p120 (or qe0)
+#          partner_ride=board_seated; vehicle=256xx; seat=2|3; ms=..
+#          (the ride packet then says kind=2, seat=2|3: the host logs partner_ride=rx; kind=2; ...; seat=2|3)
+#          body act 110 (0x6E) in the act census; event=ride_fast;...;state=interpolate;applied>0 while the
+#          host drives; vehicle_names local=65535;seat=255 (Lua is blind to a passenger: no ON_VEHICLE)
+#          no partner_ride=board_uncertain, no partner_status=local; st=0x400
+#   host   partner_ride=rx; kind=2; ...; seat=2|3; vehicle=256xx
+#          partner_ride_seat=start; vehicle=256xx; seat=2|3; ... then
+#          partner_ride_seat=confirmed; vehicle=256xx; seat=2|3; state=0xc40b38a1a985 (back-left loop) or
+#          0x4b8ed7f43128 (back-right loop); no partner_ride=seat_far, no reason=local_vehicle / shared_seat
+#          run vehicle_seats: riders of the host's real jeep unchanged (body 1 is never in rider[])
+#   pass-guest-view: the stock passenger camera; pass-host-view: the guest seated in the back seat;
+#   pass-drive-NN: the guest carried with the moving jeep; pass-exit-NN: the stock GetOff of that seat;
+#   pass-after-exit-NN: the guest's copy is not dormant and keeps following the host.
+#   If no prompt appears for the guest (no board_passenger site=phase1 line): the light vehicle's entry
+#   scan has no back-door bit (re-vehicle.md 3.1) and passenger degrades to block; record it.
+# Second half: the same with the roles swapped (the host boards behind the guest).
+# Truck: the E press next to the host-driven truck: partner_ride=board_block; vehicle=..; site=prequery;
+#   ...; mode=passenger; reason=type; type=3|4 (no back seat on a truck), vehicle_not_riding.
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host press e 150
+wait 2500
+host run vehicle_seats
+host require vehicle;id=
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+both capture pass-host-drives
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=[23]; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
+guest capture pass-guest-view
+host capture pass-host-view
+host run vehicle_seats
+guest run vehicle_names
+host hold w 1500 nowait
+guest burst pass-drive 8 150
+host release
+host hold w+a 800 nowait
+host burst pass-drive-host 6 150
+host release
+wait 1500
+both capture pass-stopped
+guest press e 150
+guest burst pass-exit 6 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=off' 5
+both capture pass-exited
+host hold w 1500 nowait
+guest burst pass-after-exit 6 200
+host release
+wait 1500
+host press e 150
+wait 2500
+state
+both debug heal
+both debug godmode 1
+wait 1500
+host debug clear_enemies 100
+wait 1000
+guest debug goto_vehicle jeep
+host debug goto_vehicle jeep
+wait 4000
+guest press e 150
+wait 2500
+guest run vehicle_seats
+guest require vehicle;id=
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=[23]; site=phase1' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
+both capture pass-rev-seated
+guest hold w 1500 nowait
+host burst pass-rev-drive 8 150
+guest release
+wait 1500
+host press e 150
+host burst pass-rev-exit 6 300
+wait 2500
+both capture pass-rev-exited
+guest press e 150
+wait 2500
+state
+both debug heal
+wait 1000
+host debug goto_vehicle truck
+guest debug goto_vehicle truck
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host press e 150
+wait 2500
+host run vehicle_seats
+host expect vehicle;id=
+guest press e 150
+wait 2500
+both capture pass-truck-blocked
+guest run vehicle_seats
+guest expect vehicle_not_riding
+waitlog guest 'partner_ride=board_block; vehicle=[0-9]+; site=prequery; n=[0-9]+; mode=passenger; reason=type' 5
+host press e 150
+wait 2000
+state

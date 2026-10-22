@@ -332,6 +332,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_ride_census'; Json = 'ride_census'; Kind = 'bool' },
     @{ Key = 'partner_ride_seat_id'; Json = 'ride_seat_id'; Kind = 'bool' },
     @{ Key = 'partner_ride_tilt'; Json = 'ride_tilt'; Kind = 'bool' },
+    # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board block / back-seat passenger hook (lab only:
+    # the loader defaults it off in lab and forces it off in play; written only when set).
+    @{ Key = 'partner_ride_board'; Json = 'ride_board'; Kind = 'enum'; Values = @('off', 'block', 'passenger') },
     # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
     @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
     # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;

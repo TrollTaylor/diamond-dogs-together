@@ -251,6 +251,106 @@ inside a running traversal (ladder `0x1411EFEEC`, `0x1411F02DD`; elude
 `0x1411A7967`) do read instance 1's pad, which is why the mask and strip
 wiring stays.
 
+## Vehicle boarding
+
+F1 (0.13.5, research `re-vehicle.md`): what the viewer's **own** ride action
+does at a vehicle the partner drives, and the partner seated as a passenger in
+either player's vehicle. Lab key `partner_ride_board=off|block|passenger`:
+**default off in lab and play**, play forces it off, a named value records
+`partner_ride_board_given`. It stays off until hidden-worker FRAMEs show the
+block and the back seat (`coop-vehicle-shared.txt`, `coop-vehicle-passenger.txt`).
+
+**Why.** The partner is drawn in the viewer's copy of its vehicle by the DM
+seat chain (`partner_ride_seat`), never registered in the copy's `rider[]`.
+So the copy's `rider[0]` is empty: RideVehicle `CanExec` (`0x1246650`) passes
+its driver-seat test, the pre-query finds door 0/1 and phase 1 registers the
+viewer as a **second driver** of the copy (seat 0, the player-driver flag
+`rec+0x7C |= 0x4000`; on exit `TryToGetOff` makes the copy dormant).
+
+**The hook** (`native/partner_board.cpp`, `native/include/mgscoop/partner_board.hpp`;
+pure policy `partner_board_policy.hpp`). Two rel32 call sites of the stock ride
+action are retargeted to wrappers (`RetargetCall`, the `partner_defer` H2
+pattern; B failing reverts A), lazily from the driver tick after the code gate,
+once per process; `PatchLive` is checked every tick:
+
+| Site | Call | Stock range | 4 means |
+|---|---|---|---|
+| A `0x12458AC` (rel32 `0x00005AEF`) | pre-query `0x1245820` -> nearest free seat `0x124B3A0(unit, pos, first, last)` | 0..min(count-1, 1) | the pre-query fails, `CanExec` fails at `0x1246A56`: no ride icon |
+| B `0x1251479` (rel32 `0xFFFF9EE2`) | phase 1 `0x1251200` -> `SearchNearestRideSeatForDriver 0x124B360(unit, pos)` | the same | the stock "no seat" exit (FinishRideSerial): the race backstop |
+
+The driver publishes one policy word per tick (`partner_board::Pack`: vehicle,
+the peer's seat, mode, lease end), from the peer's live ride (same link epoch,
+within `kLeaseMs` 5000 ms of its last packet). Both wrappers decide the same:
+
+- **stock** unless the peer holds **seat 0** of exactly this unit
+  (`0x6400 | u16 unit+0x78`); a peer passenger leaves the driver's seat to the
+  viewer (the copy is then driven by the viewer's own RIDE_FAST stream);
+- **block**: 4 at both sites;
+- **passenger**: light vehicles only (`GetVehicleType 0x55E7F0` in {1, 2},
+  seat count `0xA27CC0` in 3..4): the original `0x124B3A0` over the free back
+  seats 2..min(count-1, 3), never the peer's seat; trucks (3, 4), armoured
+  vehicles and anything else block. Stock phase 1 passes a back seat
+  unchanged to `TryToRide` (`0x1251832..0x1251840`), selects the passenger
+  phase `0x1250CF0` (`0x1251894`), which writes act 0x6E, plays
+  GetOn/Loop/GetOff of that seat and attaches the viewer to the copy RIDE_FAST
+  moves. An exit from seat 2/3 never makes the copy dormant.
+
+The wrappers read only u16 `unit+0x78` and call the two getters (SEH; a fault
+blocks and counts); `rider[]` is never written by us.
+
+**The local passenger report** (sender). `PlayerStatus.ON_VEHICLE` is set only
+for the driver's act 0x6F (`UpdatePlayerInfo 0x12CE870`), so Lua reports a
+passenger on foot and `MgsCoopPartnerRideSeat` returns nil. Native reads it
+(`partner_board::ReadLocalPassenger`, passenger mode only): act
+`(*(Q+0x18))[local] == 0x6E`, the vehicle `0x6400 | u16 unit+0x78` of
+`(*(P+0x120))[local]` confirmed by the vehicle lookup (else
+`(*(Q+0xE0))[local]`, which is `vars.playerVehicleGameObjectId`), the seat
+s in {2, 3} with `rider[s] == local`. It replaces Lua's foot report in the
+tick the ride sender sees (kind vehicle, seat, vehicle). `local_vehicle` keeps
+meaning the vehicle the viewer **drives** (RIDE_TILT, the receiver's gate);
+the report is `Driver::local_passenger`.
+
+**Receiver** (`partner_driver_seat.inc`): the by-id gate lets the peer sit in a
+back seat (2/3) of the vehicle the viewer drives (passenger mode; any other
+seat keeps `local_vehicle`); the peer reporting the viewer's own back seat is
+refused natively as `shared_seat` (by id and at `TickSeat` start; Lua's guard
+needs ON_VEHICLE); passenger mode skips the 3 m far latch for the vehicle the
+viewer drives or rides (the peer's stream lags the real vehicle). RIDE_FAST
+needs no change: a passenger has no `R.localVehicle()`, so it never streams
+and keeps applying the driver's track (`world_ride_pose_lua_check`).
+
+**Logs** (from the driver tick; the hook only counts):
+`partner_ride=board_install; mode=..; result=ok|refused; reason=..`,
+`partner_ride=board_policy; vehicle=..; seat=..; mode=..; uncertain=..` (on a
+change), `partner_ride=board_block; vehicle=..; site=prequery|phase1; n=..;
+mode=..; reason=..; type=..; seats=..` and `partner_ride=board_passenger;
+vehicle=..; seat=..; site=..; n=..; type=..; seats=..` (mission counts, at most
+once a second per site), `partner_ride=board_seated` (a steered back seat seen
+as the local passenger), `partner_ride=local_passenger; vehicle=..; seat=..;
+state=on|off`, `partner_ride=board_refused; reason=patch_lost` and
+`partner_ride=board_uncertain; reason=patch_lost|fault|two_drivers|steer_unconfirmed|seat_mismatch`
+(mission latch, once; passenger then publishes block). Own cap 200 lines.
+
+**Pins.** `tools/generate_partner_contract.py` `BOARD_SITES` (19 blocks: both
+call sites and their contexts, CanExec's pre-query test, `0x124B360`, the
+nearest search's lookup / radius 100.0 / rider test, both getters and the two
+service lookups, phase 1's seat pass-through and phase select, TryToRide, the
+passenger act write, the `P+0x120` writer and the `Q+0xE0` read) and three
+vehicle service slots (+0x168, +0x170, +0x220); `board_assertions` checks the
+callers (`0x124B3A0`: site A and the `0x124B360` tail; `0x124B360`: site B;
+`0x1245820`: CanExec only), the rel32 values, the cache lines and that no
+branch lands inside either operand.
+
+**Unproven** (`re-vehicle.md` 9): whether the light vehicle's entry scan offers
+a back door (no prompt: passenger degrades to block; the lab fallback "site B
+only" is not implemented), the stock passenger camera and HUD offline, the
+type numbering (1/2 light, 3/4 truck), the attach jitter against the 20 Hz
+RIDE_FAST placement, and what the copy's phase-6 `RequestVehicleToManualDrive`
+does to the next FAST placement. Research builds: `coop_passenger` and
+`coop_vehicle_mirror` SHA-pin `0x1245820` and `0x1251200` whole and refuse
+(`exact_code`) once the board sites are live; `partner_upper_probe`'s code gate
+re-check refuses likewise.
+
 ## Rates
 
 The locomotion speed is `base(0x109F7E0) * rate(0x109F690)` (callers
@@ -1261,6 +1361,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / step-on replay, see "Traversal"; default 0 in lab and play, lab only: play forces 0) |
+| `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default off in lab and play, a named value records `partner_ride_board_given`, lab only: play forces off) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and

@@ -1,3 +1,30 @@
+## 0.13.5 (in progress)
+
+Unreleased; the version stays 0.13.4 until the integration bump. Every new behaviour is a lab key, default off in lab
+and play, until a hidden-worker FRAME proves it.
+
+### F1
+
+- **Vehicles: board block and passengers both ways** (`wp/board`; [native-puppet.md "Vehicle boarding"](native-puppet.md),
+  research `re-vehicle.md`). New lab key `partner_ride_board=off|block|passenger` (default off, `_given`, play forces
+  it off). `partner_board` retargets the ride action's two nearest-seat calls (site A `0x12458AC` in the pre-query,
+  site B `0x1251479` in phase 1). **block**: while the partner drives a vehicle, the viewer gets no ride icon there
+  and can no longer become a second driver of its copy. **passenger**: the viewer boards a free back seat (2/3) of a
+  partner-driven light vehicle through the stock passenger phase; trucks and the rest block.
+- A native local passenger report (act 0x6E, `P+0x120` / `Q+0xE0`, `rider[2|3]`) replaces Lua's foot report in the
+  ride packet; the receiver seats the partner in a back seat of the viewer's own vehicle (by id too), refuses
+  `shared_seat` natively and skips the far latch for the vehicle the viewer occupies; `rider[]` is never written.
+- Logs `partner_ride=board_install|board_policy|board_block|board_passenger|board_seated|local_passenger|
+  board_refused|board_uncertain` from the driver tick (the hook only counts); the mission-scoped `board_uncertain`
+  latch turns passenger into block.
+- Contract 696 code sites / 152 vtable slots (was 677/149): 19 board blocks and three vehicle service slots,
+  `board_assertions`. Tests: `partner_board_tests` (also in `Get-WorkerTests`), driver board / seat-gate cases,
+  lab_config, lab_ini_check, LabCommon, the -LabSetting allow-lists and the two Lua checks.
+- Scenarios (not run yet): `coop-vehicle-shared.txt` (block, both directions) and `coop-vehicle-passenger.txt`
+  (back seat both directions, then a truck that must block); `debug goto_vehicle truck` added for the latter.
+- Unproven until those FRAMEs: a back-door prompt on the light vehicle (else passenger degrades to block), the stock
+  passenger camera offline, the 1/2 light and 3/4 truck type numbers, the copy's state after a passenger exit.
+
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
 Branch `wp/integ8` from `dev/oct7-continue` `bf29f67` (0.13.2): merge commits of `wp/gameover-clock` `8324dd2`,
