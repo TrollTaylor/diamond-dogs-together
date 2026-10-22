@@ -1,7 +1,7 @@
 # Gestures on the partner body (docs/native-puppet.md "Gestures"; lab key partner_native_gesture, default 0, lab only).
 # Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR unset,
 # no build running in any worktree, under the shared verify lock, one worker session.
-# Static proof first: python tools/generate_partner_contract.py --check (688 code sites, 156 vtable slots).
+# Static proof first: python tools/generate_partner_contract.py --check (690 code sites, 156 vtable slots).
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-upper-gestures.txt -PartnerProfile native -NativeStage loco -SaveSeed lab
 #   (or -NativeStage gun -BuildProfile research, the user's profile; the key is named below for both copies).
@@ -21,10 +21,11 @@
 #           0xff77b695370a (squat); exist=1; kind=pickup; method=set; seq=..; stance=..; moving=..; body_act=1..6
 #         partner_gesture=applied; seq=..; kind=pickup; node=..; current=..; queued=..; ok=1   (ok=0 with the node
 #           neither current nor queued after the update: write down current=, it is the question of section 7.5/7.6)
-#         partner_gesture=ended; via=end|timeout|override; cause=clip|speed|deadline|node|lease; ...; ms=..; null=1|0
+#         partner_gesture=ended; via=end|timeout|override; cause=clip|speed|deadline|node|lease|pending; ...; ms=..; null=1|0
+#           (cause=pending, or note=pending with null=0: body 1's own plugin had a graph-2 request waiting; never overwritten)
 #         partner_gesture=refused; reason=..; where=driver|hook; ... (body_act / body_upper / body_q28 / box / busy /
-#           remote_stale / no_node / stale / lease / unanswered with body_calls= and resolve=: each one is a finding,
-#           not a failure of the run)
+#           remote_stale / no_node / stale / lease / pending / unanswered with body_calls= and resolve=: each one is a
+#           finding, not a failure of the run)
 #         partner_act; ... edge=body ... (body 1's lower act must NOT change for a gesture: upper-only)
 #  NEVER (any of them fails the run):
 #    NO partner_gesture=uncertain (the viewer's own body 0 request masks / graph-2 record moved around our call, or

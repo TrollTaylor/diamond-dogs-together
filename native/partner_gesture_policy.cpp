@@ -190,6 +190,10 @@ const char* ViaName(Via via) noexcept {
 EndOut End(const EndIn& in) noexcept {
     // Identity first: a different body or controller is never written.
     if (!in.identity) return {Via::override_, "identity", false};
+    // Never written: the window is closing, or another owner's graph-2 request
+    // is waiting for this update.
+    if (in.shutdown) return {Via::override_, "shutdown", false};
+    if (in.pending) return {Via::override_, "pending", false};
     if (!in.lease) return {Via::override_, "lease", in.ours};
     if (!in.ours) {
         if (in.elapsed_ms < kNodeGraceMs) return {Via::none, nullptr, false};

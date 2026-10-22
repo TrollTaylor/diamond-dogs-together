@@ -6583,6 +6583,22 @@ void TestGestures() {
     Check(s.driver.mission.gesture_uncertain && s.fake.Containing("partner_gesture=refused; reason=uncertain; where=driver;") == 1 &&
               !s.fake.gesture_commands.back().enabled,
           "uncertain: latched, the command disabled, requests refused");
+    // Receipts the hook queued since the last tick: the withdrawal's step drains them, so it logs them.
+    st.count = 2;
+    st.receipts[0] = pg::Receipt{};
+    st.receipts[0].stage = pg::Stage::uncertain;
+    st.receipts[0].seq = 9;
+    st.receipts[0].kind = gp::Kind::sign_go;
+    st.receipts[0].node = 0xE74E11BABA4BULL;
+    st.receipts[0].reason = "body1_foreign";
+    st.receipts[1] = pg::Receipt{};
+    st.receipts[1].stage = pg::Stage::ended;
+    st.receipts[1].seq = 9;
+    st.receipts[1].kind = gp::Kind::sign_go;
+    st.receipts[1].via = gp::Via::override_;
+    st.receipts[1].cause = "pending";
+    st.receipts[1].ms = 40;
+    st.dropped = 3;
     // Mission end: a new epoch goes to the hook (drops a running gesture without a write).
     const std::uint32_t before = s.driver.gesture_epoch;
     const std::size_t commands = s.fake.gesture_commands.size();
@@ -6591,6 +6607,11 @@ void TestGestures() {
               !s.fake.gesture_commands.back().enabled && s.fake.gesture_commands.back().epoch == before + 1 &&
               !s.fake.gesture_commands.back().request.seq,
           "mission end: a disabled command of a new epoch");
+    Check(s.fake.Count("partner_gesture=uncertain; reason=body1_foreign; seq=9; kind=sign_go; node=0xe74e11baba4b; latched=mission\r\n") == 1 &&
+              s.fake.Count("partner_gesture=ended; via=override; cause=pending; seq=9; kind=sign_go; ms=40; null=0; current=0x0\r\n") == 1 &&
+              s.fake.Count("partner_gesture=receipts_dropped; n=3\r\n") == 1,
+          "mission end: the drained receipts and the dropped count are logged");
+    st.dropped = 0;
 }
 
 int main() {

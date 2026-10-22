@@ -19,7 +19,11 @@
 // remote's speed > 1, or the 2000 ms deadline; then, only while graph 2 still
 // shows our node, SetCurrentNode(cs, 1, 2, stateNull 0xC1A2050D3802, 0.0f, 0)
 // (the validated manual_idle return). Another owner of graph 2 ends the
-// gesture without a write (via=override; cause=node).
+// gesture without a write (via=override; cause=node). So does another owner's
+// graph-2 request still waiting in body 1's request buffer at the update's
+// entry (mask bit 2; stock plugin code submits outside the motion update and
+// SetRequest / ReserveToReset overwrite a waiting record): cause=pending, and
+// a new request is refused (reason=pending) instead of overwriting it.
 //
 // Safety: body 1's identity (P, Q, block 1 with id 1 only, PS, CS with base 1
 // and count 1, entry, graph and buffer layout) is re-resolved on every body-1
@@ -30,7 +34,7 @@
 // mask bits and keep its graph-0 record: any surprise latches `uncertain` for
 // the mission epoch (no further submissions until the next epoch).
 //
-// Threads: Step on the game thread; the hook on whatever thread runs body 1's
+// Threads: Step on the game thread, Shutdown on any; the hook on whatever thread runs body 1's
 // motion update. The command and the receipts are behind one SRW lock (no game
 // call under it); the hook's own state is single-owner (one body-1 update at a
 // time, guarded by a try-flag).
@@ -116,6 +120,11 @@ struct Status {
 // slots | caller | minhook | module | hook | enable.
 const char* Install(const void* base, std::size_t span, LogFn log) noexcept;
 bool Installed() noexcept;
+// The game window is closing (PartnerShutdown, any thread; never cleared):
+// every later update passes straight through, so no game call is made and a
+// running gesture is left without any write (an update already inside the
+// hook drops it: via=override; cause=shutdown).
+void Shutdown() noexcept;
 // True while the hooked prologue still starts with the hook's jump.
 bool PatchLive() noexcept;
 // Game thread, every driver tick: publishes `command`, resolves body 1's entry

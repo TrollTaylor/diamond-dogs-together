@@ -329,8 +329,22 @@ the original update consumes it:
 3. after the original update, graph 2's current / queued node is read back
    (`applied; ok=`).
 
+Neither write method looks at a request already waiting: both set the mask
+bit and overwrite the graph's record, and the update clears the masks only
+after consuming them (`0x140B6C5E2`). Stock action-plugin state code (the
+pickup's `0x14120E520` through vt+0x170, `StateHandSignGo`'s call at
+`0x1411E6B98` through vt+0x160) submits graph-2 requests from the plugin
+update, not from the motion update, so a graph-2 mask bit in body 1's request
+buffer at the update's entry is another owner's request (ours is always
+consumed by the update it was made in). The hook then never writes: a new
+request is refused (`pending`, checked right before the write) and a running
+gesture ends (below).
+
 Every later body-1 update tests the end (`partner_gesture_policy::End`):
-another body or controller ends it without a write (`identity`); a lost lease
+another body or controller ends it without a write (`identity`); so do the
+window closing (`shutdown`) and another owner's waiting graph-2 request
+(`pending`, re-checked right before the stateNull write too: a late one ends
+the gesture with `null=0; note=pending`); a lost lease
 (the driver's command older than 250 ms, disabled, or a seat / carry / overlay
 taking body 1) ends it with the stateNull return if graph 2 still shows our node;
 another owner of graph 2 (after a 300 ms grace) ends it without a write
@@ -340,7 +354,11 @@ signs and the knock, or the 2000 ms deadline end it with
 `SetCurrentNode(cs, 1, 2, stateNull 0xC1A2050D3802, 0.0f, 0)` (the validated
 `partner_upper_manual_idle` return), only while graph 2 still shows our node. A
 new mission epoch (MissionStart / MissionEnd / STOP) drops a running gesture
-without any write.
+without any write; the withdrawal's step drains the hook's receipts, so it logs
+them (and `receipts_dropped`) for the ending mission like a tick does. When the
+game window closes (`PartnerShutdown`, any thread, next to the deferral and
+input-hook shutdowns) `partner_gesture::Shutdown` makes every later update pass
+straight through: no game call and no write, a running gesture included.
 
 Guards: the nine bodies are SHA-256 pinned (`partner_gesture.hpp` `kPins`,
 re-checked before the hook is created; the contract generator compares them
@@ -373,7 +391,8 @@ graph-2 node renders on body 1 at all (L8: the MotionVars rate record, e.g.
 `rec+0x10 = 1.0f` for signs and `rec+0x28` for the pickup, may be needed; see
 `re-traverse-gesture.md` 5.3 "Optional"), the end tests' semantics for body 1,
 whether the driver tick catches every 0x15 / 0x18 / 0x19 edge, and whether body
-1's own upper plugins take graph 2 back on the next frame (`override; cause=node`).
+1's own upper plugins take graph 2 back on the next frame (`override; cause=node`
+or `cause=pending`; `refused; reason=pending` when one already waits).
 
 ## Rates
 

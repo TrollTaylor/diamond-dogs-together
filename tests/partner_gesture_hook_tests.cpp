@@ -2,8 +2,9 @@
 // fake bodies: body 1's identity, the update filter (entry and caller), the
 // submission (IsGraphExistNode, SetCurrentNode / ReserveToResetNode with the
 // stock ABI), the readback, the end (clip, speed, deadline, override, lease,
-// epoch) with the stateNull return, the refusals, the viewer digest latch and
-// the SEH fault latch. No hook is installed and no game code runs.
+// epoch) with the stateNull return, the refusals, the viewer digest latch,
+// another owner's waiting graph-2 request (pending), the window close
+// (Shutdown) and the SEH fault latch. No hook is installed and no game code runs.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -134,6 +135,18 @@ std::vector<Call> calls;
 bool exist_result = true, motion_end_result = false, play_end_result = false;
 bool touch_viewer = false;  // the submission also moves body 0's masks (the uncertain latch)
 std::uint64_t pending = 0;  // the request the next fake update applies
+// Inside the end test / the exist query: another owner's graph-2 request
+// arrives, or the window starts closing (the races the re-reads cover).
+std::uint64_t foreign_on_end = 0;
+bool shutdown_on_end = false, shutdown_on_exist = false;
+// Another owner (stock plugin code outside the update) requests a graph-2 node on body 1.
+void Foreign(std::uint64_t node) {
+    const std::uintptr_t buffer = Buffer(1);
+    Put<std::uint16_t>(buffer, static_cast<std::uint16_t>(Get<std::uint16_t>(buffer) | 0x4));
+    Put<std::uint16_t>(buffer + 2, static_cast<std::uint16_t>(Get<std::uint16_t>(buffer + 2) | 0x4));
+    Put<std::uint64_t>(buffer + 0x20 + 2 * 0x28 + 0x20, node);
+    pending = node;
+}
 std::uintptr_t BufferOf(void* cs, std::uint32_t body) {
     const auto c = reinterpret_cast<std::uintptr_t>(cs);
     const std::uintptr_t entry = Get<std::uintptr_t>(c + 0x10) + (body - Get<std::uint32_t>(c + 0xc)) * 0xc0;
@@ -141,6 +154,7 @@ std::uintptr_t BufferOf(void* cs, std::uint32_t body) {
 }
 bool FakeExist(void* cs, std::uint32_t body, std::uint32_t graph, std::uint64_t node, const std::uint64_t* tags) {
     calls.push_back({'e', reinterpret_cast<std::uintptr_t>(cs), body, graph, node, 0.0f, 0, tags && tags[0] == 0});
+    if (shutdown_on_exist) pg::Shutdown();
     return exist_result;
 }
 void Request(void* cs, std::uint32_t body, std::uint32_t graph, std::uint64_t node, bool reserve) {
@@ -163,6 +177,8 @@ void FakeReserve(void* cs, std::uint32_t body, std::uint32_t graph, std::uint64_
 }
 bool FakeMotionEnd(void* cs, std::uint32_t body, std::uint32_t graph) {
     calls.push_back({'m', reinterpret_cast<std::uintptr_t>(cs), body, graph, 0, 0.0f, 0, true});
+    if (foreign_on_end) Foreign(foreign_on_end);
+    if (shutdown_on_end) pg::Shutdown();
     return motion_end_result;
 }
 bool FakePlayEnd(void* cs, std::uint32_t body, std::uint32_t layer) {
@@ -227,6 +243,8 @@ void Reset() {
     exist_result = true;
     motion_end_result = play_end_result = touch_viewer = false;
     pending = 0;
+    foreign_on_end = 0;
+    shutdown_on_end = shutdown_on_exist = false;
     originals = 0;
     ++epoch;
 }
@@ -486,6 +504,117 @@ void TestUncertain() {
     Check(Find(s, pg::Stage::submit) && !s.uncertain, "a new epoch clears the latch");
 }
 
+// Another owner's graph-2 request still waits in body 1's buffer at the
+// update's entry (stock plugin code submits outside the motion update, and
+// SetRequest / ReserveToReset overwrite a waiting record): never overwritten.
+void TestPending() {
+    Reset();
+    Foreign(kOther);
+    Step(Cmd(9));
+    Body1(now);
+    pg::Status s = Step(Cmd());
+    const pg::Receipt* r = Find(s, pg::Stage::refused);
+    Check(r && r->seq == 9 && r->reason && !std::strcmp(r->reason, "pending") && r->exist && !s.active && s.refusals == 1,
+          "a waiting foreign request: the submission is refused (pending)");
+    for (const Call& c : calls) Check(c.what != 's' && c.what != 'r', "pending: never submitted");
+    Check(Get<std::uintptr_t>(W(UPPER1) + 0x1a0) == NodeFor(kOther), "the update applied the other owner's request");
+    // A running gesture: the waiting request ends it at once, without the stateNull return.
+    Reset();
+    Step(Cmd(3));
+    Body1(now);
+    Step(Cmd(3));
+    motion_end_result = true;
+    Foreign(kOther);
+    calls.clear();
+    now += 200;
+    Body1(now);
+    s = Step(Cmd());
+    const pg::Receipt* end = Find(s, pg::Stage::ended);
+    Check(end && end->via == gp::Via::override_ && !std::strcmp(end->cause, "pending") && !end->null_sent && end->current == kPickup && !s.active,
+          "a waiting foreign request ends ours: override, pending, no write");
+    Check(calls.empty(), "no end test and no request while another owner's request waits");
+    Check(Get<std::uintptr_t>(W(UPPER1) + 0x1a0) == NodeFor(kOther), "the other owner's request survives the end");
+    // The lease is lost on the same update: still no write.
+    Reset();
+    Step(Cmd(4));
+    Body1(now);
+    pg::Command c = Cmd();
+    c.enabled = false;
+    Step(c);
+    Foreign(kOther);
+    calls.clear();
+    now += 20;
+    Body1(now);
+    s = Step(c);
+    end = Find(s, pg::Stage::ended);
+    Check(end && !std::strcmp(end->cause, "pending") && !end->null_sent && calls.empty(), "a lost lease with a waiting request: no write");
+    // The request arrives during the end test: the re-read right before the write keeps it.
+    Reset();
+    Step(Cmd(5));
+    Body1(now);
+    Step(Cmd(5));
+    motion_end_result = true;
+    foreign_on_end = kOther;
+    calls.clear();
+    now += 200;
+    Body1(now);
+    s = Step(Cmd());
+    end = Find(s, pg::Stage::ended);
+    Check(end && end->via == gp::Via::end && !std::strcmp(end->cause, "clip") && !end->null_sent && end->reason && !std::strcmp(end->reason, "pending"),
+          "a request arriving during the end test: ended without the write (note=pending)");
+    Check(calls.size() == 1 && calls[0].what == 'm', "only the end test ran");
+    Check(Get<std::uintptr_t>(W(UPPER1) + 0x1a0) == NodeFor(kOther), "the late request is applied, not overwritten");
+}
+
+// The game window closes (PartnerShutdown on another thread): no game call and
+// no write from then on, a running gesture included.
+void TestShutdown() {
+    Reset();
+    Step(Cmd(1));
+    Body1(now);
+    Step(Cmd(1));
+    pg::Shutdown();
+    pg::Command c = Cmd();
+    c.enabled = false;  // the lost lease would otherwise return our node to stateNull
+    const std::uint32_t body_calls = Step(c).body_calls;
+    calls.clear();
+    const unsigned before = originals;
+    now += 300;
+    SetLastError(0x42);
+    Check(Body1(now) == 0xABCD && GetLastError() == 0x5150 && originals == before + 1, "shut down: the original update still runs");
+    pg::Status s = Step(Cmd(2));
+    Check(calls.empty() && s.count == 0 && s.body_calls == body_calls, "shut down: straight through, no call, no receipt");
+    now += 16;
+    Body1(now);
+    s = Step(Cmd());
+    Check(calls.empty() && s.count == 0 && Get<std::uintptr_t>(W(UPPER1) + 0x1a0) == NodeFor(kPickup),
+          "shut down: a new request is never submitted and our node is never returned");
+    // The window starts closing during the end test: dropped without the stateNull return.
+    Reset();
+    Step(Cmd(3));
+    Body1(now);
+    Step(Cmd(3));
+    motion_end_result = true;
+    shutdown_on_end = true;
+    calls.clear();
+    now += 200;
+    Body1(now);
+    s = Step(Cmd());
+    const pg::Receipt* end = Find(s, pg::Stage::ended);
+    Check(end && end->via == gp::Via::override_ && !std::strcmp(end->cause, "shutdown") && !end->null_sent && !s.active && calls.size() == 1 &&
+              calls[0].what == 'm',
+          "closing during the end test: override, shutdown, no write");
+    // ... or during the exist query: refused, never submitted.
+    Reset();
+    shutdown_on_exist = true;
+    Step(Cmd(4));
+    Body1(now);
+    s = Step(Cmd());
+    const pg::Receipt* r = Find(s, pg::Stage::refused);
+    Check(r && r->seq == 4 && r->reason && !std::strcmp(r->reason, "shutdown") && !s.active && calls.size() == 1 && calls[0].what == 'e',
+          "closing during the exist query: refused (shutdown), never submitted");
+}
+
 void TestFault() {
     Reset();
     pg::detail::Calls c = Fakes();
@@ -521,6 +650,8 @@ int main() {
     TestOverride();
     TestRefusals();
     TestUncertain();
+    TestPending();
+    TestShutdown();
     TestFault();
     pg::detail::ResetForTest();
     std::printf("partner_gesture_hook_tests: %u checks passed\n", checks);

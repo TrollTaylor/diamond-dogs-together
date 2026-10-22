@@ -61,7 +61,7 @@ std::uintptr_t g_image = 0;
 detail::Calls g_calls{};
 OriginalFn g_original = nullptr;
 std::atomic<std::uintptr_t> g_entry{0};
-std::atomic<bool> g_installed{false}, g_faulted{false};
+std::atomic<bool> g_installed{false}, g_faulted{false}, g_shutdown{false};
 std::atomic<bool> g_pub_active{false}, g_pub_uncertain{false};
 std::atomic<std::uint32_t> g_pub_seq{0}, g_pub_epoch{0};
 std::atomic<std::uint32_t> g_body_calls{0}, g_submits{0}, g_ends{0}, g_refusals{0};
@@ -183,6 +183,13 @@ bool ReadDigest(const Identity& id, std::uint32_t k, std::uint32_t graph, Digest
     return Raw(id.buffer[k], out.masks, sizeof(out.masks)) && Raw(id.records[k] + graph * kRecord, out.record, sizeof(out.record));
 }
 bool SameDigest(const Digest& a, const Digest& b) noexcept { return std::memcmp(&a, &b, sizeof(Digest)) == 0; }
+// Body k's graph-2 request mask bit (buffer+0). SetRequest 0xB6E9F0 and
+// ReserveToReset 0xB6E6E0 set it and overwrite the record without looking at
+// a waiting one; the update 0xB6C410 clears the masks only after consuming
+// them (0xB6C5E2). The hook's own request is consumed by the update it was
+// made in, so a set bit at the update's entry is another owner's request.
+bool Pending(const Digest& d) noexcept { return (d.masks[0] & (1u << pol::kGraphUpper)) != 0; }
+bool ShuttingDown() noexcept { return g_shutdown.load(std::memory_order_acquire); }
 // Body 1 after our request: only the graph-2 mask bit may move, graph 0's record stays.
 bool Isolated(const Digest& a, const Digest& b) noexcept {
     for (unsigned i = 0; i < 3; ++i)
@@ -263,14 +270,16 @@ void TickActive(HookState& h, const Command& cmd, bool lease, const char* why, c
     const bool same = !why && id.entry[1] == a.entry && id.cs[1] == a.cs;
     const Nodes nodes = same ? UpperNodes(id.upper[1]) : Nodes{};
     const bool ours = nodes.ok && (nodes.current == a.node || nodes.queued == a.node);
+    Digest at_entry{};
+    const bool pending = same && ReadDigest(id, 1, 0, at_entry) && Pending(at_entry);
     const std::uint64_t elapsed = now >= a.submit_ms ? now - a.submit_ms : 0;
     bool clip = false;
-    if (same && ours && lease && elapsed >= pol::kMinPlayMs && SlotsOk(g_image) && (a.kind == pol::Kind::pickup || PlayEndReady(id.entry[1])) &&
-        !CallEnd(a.kind, id.cs[1], clip)) {
+    if (same && ours && lease && !pending && !ShuttingDown() && elapsed >= pol::kMinPlayMs && SlotsOk(g_image) &&
+        (a.kind == pol::Kind::pickup || PlayEndReady(id.entry[1])) && !CallEnd(a.kind, id.cs[1], clip)) {
         Fault(h, FromActive(a, Stage::fault), "end_call");
         return;
     }
-    const pol::EndOut e = pol::End({a.kind, lease, same, ours, clip, cmd.remote_known, cmd.remote_speed, elapsed});
+    const pol::EndOut e = pol::End({a.kind, lease, same, ours, clip, cmd.remote_known, cmd.remote_speed, elapsed, pending, ShuttingDown()});
     if (e.via == pol::Via::none) return;
     Receipt r = FromActive(a, Stage::ended);
     r.via = e.via;
@@ -280,8 +289,14 @@ void TickActive(HookState& h, const Command& cmd, bool lease, const char* why, c
     r.ms = elapsed > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(elapsed);
     if (e.null_return && same && ours && !h.uncertain && SlotsOk(g_image)) {
         Digest v0{}, v1{}, b0{}, b1{};
+        // Re-read right before the write: a request or the window close that
+        // arrived since the end test still keeps it from being written.
         if (!ReadDigest(id, 0, pol::kGraphUpper, v0) || !ReadDigest(id, 1, 0, b0)) {
             r.reason = "digest";
+        } else if (Pending(b0)) {
+            r.reason = "pending";
+        } else if (ShuttingDown()) {
+            r.reason = "shutdown";
         } else {
             if (!CallSubmit(pol::Method::set_current, id.cs[1], pol::kStateNull, pol::kNullBlend)) {
                 Fault(h, r, "null_call");
@@ -348,6 +363,7 @@ Ticket Before(std::uint64_t now) noexcept {
     r.body_upper = upper;
     r.body_q28 = q28;
     bool exist = false;
+    Digest v0{}, v1{}, b0{}, b1{};
     if (h.active.on) r.reason = "busy";
     else if (!lease) r.reason = "lease";
     else if (h.uncertain) r.reason = "uncertain";
@@ -360,19 +376,15 @@ Ticket Before(std::uint64_t now) noexcept {
     else if (!SlotsOk(g_image)) r.reason = "slots";
     else if (!CallExist(id.cs[1], q.node, exist)) { Fault(h, r, "exist_call"); Publish(h); return t; }
     else if (!exist) r.reason = "no_node";
+    // Both bodies right before the write.
+    else if (!ReadDigest(id, 0, pol::kGraphUpper, v0) || !ReadDigest(id, 1, 0, b0)) r.reason = "digest";
+    else if (Pending(b0)) r.reason = "pending";  // another owner's graph-2 request: ours would overwrite it
+    else if (ShuttingDown()) r.reason = "shutdown";
+    r.exist = exist;
     if (r.reason) {
         const Nodes nodes = !why ? UpperNodes(id.upper[1]) : Nodes{};
         r.current = nodes.current;
         r.queued = nodes.queued;
-        ++g_refusals;
-        Push(r);
-        Publish(h);
-        return t;
-    }
-    r.exist = true;
-    Digest v0{}, v1{}, b0{}, b1{};
-    if (!ReadDigest(id, 0, pol::kGraphUpper, v0) || !ReadDigest(id, 1, 0, b0)) {
-        r.reason = "digest";
         ++g_refusals;
         Push(r);
         Publish(h);
@@ -529,6 +541,8 @@ const char* Install(const void* base, std::size_t span, LogFn log) noexcept {
 
 bool Installed() noexcept { return g_installed.load(std::memory_order_acquire); }
 
+void Shutdown() noexcept { g_shutdown.store(true, std::memory_order_release); }
+
 bool PatchLive() noexcept {
     if (!g_installed.load(std::memory_order_acquire) || !g_original || !g_image) return false;
     std::uint8_t first = 0;
@@ -572,7 +586,7 @@ std::uintptr_t ForwardUpdate(OriginalFn original, void* entry, std::uintptr_t ca
     const DWORD error = GetLastError();
     const std::uintptr_t want = g_entry.load(std::memory_order_acquire);
     if (!original) return 0;
-    if (!g_installed.load(std::memory_order_acquire) || g_faulted.load(std::memory_order_acquire) || !want ||
+    if (!g_installed.load(std::memory_order_acquire) || g_faulted.load(std::memory_order_acquire) || ShuttingDown() || !want ||
         reinterpret_cast<std::uintptr_t>(entry) != want || caller != g_image + kCallerRva || g_busy.test_and_set(std::memory_order_acquire)) {
         SetLastError(error);
         return original(entry);
@@ -598,6 +612,7 @@ void ResetForTest() noexcept {
     g_entry.store(0);
     g_installed.store(false);
     g_faulted.store(false);
+    g_shutdown.store(false);
     g_pub_active.store(false);
     g_pub_uncertain.store(false);
     g_pub_seq.store(0);

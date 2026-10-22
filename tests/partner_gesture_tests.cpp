@@ -307,7 +307,7 @@ void TestGate() {
 }
 
 gp::EndIn Running(gp::Kind kind, std::uint64_t elapsed) {
-    return gp::EndIn{kind, true, true, true, false, true, 0, elapsed};
+    return gp::EndIn{kind, true, true, true, false, true, 0, elapsed, false, false};
 }
 
 void TestEnd() {
@@ -352,6 +352,24 @@ void TestEnd() {
     in.identity = false;
     e = gp::End(in);
     Check(e.via == gp::Via::override_ && !std::strcmp(e.cause, "identity") && !e.null_return, "another body: never written");
+    // Another owner's graph-2 request waits for this update: it takes graph 2 and is never overwritten.
+    in = Running(gp::Kind::pickup, 50);
+    in.pending = true;
+    e = gp::End(in);
+    Check(e.via == gp::Via::override_ && !std::strcmp(e.cause, "pending") && !e.null_return, "a waiting foreign request: override, no write");
+    in.clip_end = true;
+    in.elapsed_ms = 2500;
+    Check(!std::strcmp(gp::End(in).cause, "pending") && !gp::End(in).null_return, "it wins over the clip end and the deadline");
+    in.lease = false;
+    Check(!std::strcmp(gp::End(in).cause, "pending") && !gp::End(in).null_return, "and over a lost lease (which would return our node)");
+    in.identity = false;
+    Check(!std::strcmp(gp::End(in).cause, "identity"), "identity is still reported first");
+    // The window is closing: dropped, never written.
+    in = Running(gp::Kind::sign_go, 2500);
+    in.shutdown = true;
+    in.lease = false;
+    e = gp::End(in);
+    Check(e.via == gp::Via::override_ && !std::strcmp(e.cause, "shutdown") && !e.null_return, "shutdown: override, no write");
     Check(!std::strcmp(gp::ViaName(gp::Via::end), "end") && !std::strcmp(gp::ViaName(gp::Via::timeout), "timeout") &&
               !std::strcmp(gp::ViaName(gp::Via::override_), "override"),
           "via names");

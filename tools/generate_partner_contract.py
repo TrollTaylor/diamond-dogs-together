@@ -1016,6 +1016,12 @@ SITES += [
      'SetRequest 0xB6E9F0: buffer+0 |= bit, +2 |= bit (direct) and +4 &= ~bit; only the target body\'s buffer is written'),
     (0xB6E6E0, '4c894424184c8bc18bcab80100000066d3e06641090066410940026641094004410faf480c49034810',
      'ReserveToReset 0xB6E6E0: buffer+0/+2/+4 |= bit, then the record at [buffer+0x10] + graph*[buffer+0xC]'),
+    (0xB6EA1E, '66450910418b480c6641f7d26645215004498b010fafca49034810488901',
+     'SetRequest 0xB6E9F0: the mask bit is set and the record [buffer+0x10] + graph*[buffer+0xC] overwritten without '
+     'looking at a waiting request (so does ReserveToReset above): the gesture never writes over one (pending)'),
+    (0xB6C5E2, '488b85980000004489286644896804',
+     'per-entry update 0xB6C410: buffer+0/+2 (dword) and +4 cleared only after every channel consumed its request, so a '
+     'graph-2 mask bit at the hook\'s entry is another owner\'s request (the gesture refuses or ends without a write)'),
 ]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:

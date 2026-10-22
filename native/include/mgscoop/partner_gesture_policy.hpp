@@ -155,10 +155,16 @@ struct EndIn {
     bool remote_known;
     std::uint8_t remote_speed;  // the remote's Q+0x38 (sign / knock: > 1 ends, as stock)
     std::uint64_t elapsed_ms;
+    // Body 1's request buffer already holds a graph-2 request this update has
+    // not consumed (stock plugin code submits outside the motion update; the
+    // update clears the masks only after consuming them): another owner takes
+    // graph 2 now, and a stateNull would overwrite its request.
+    bool pending;
+    bool shutdown;       // the game window is closing (partner_gesture::Shutdown)
 };
 struct EndOut {
     Via via;
-    const char* cause;   // lease | identity | node | clip | speed | deadline
+    const char* cause;   // identity | shutdown | pending | lease | node | clip | speed | deadline
     bool null_return;    // return graph 2 to stateNull (only while it still shows our node)
 };
 EndOut End(const EndIn& in) noexcept;

@@ -4720,7 +4720,24 @@ void LogGestureReceipt(Mission& m, const Hooks& h, const pges::Receipt& r) noexc
     }
 }
 
+// Logs the receipts a step drained from the hook (every decision since the
+// previous step), forgets the request the hook answered and latches uncertain.
+void DrainGesture(Mission& m, const Hooks& h, const pges::Status& status) noexcept {
+    for (unsigned i = 0; i < status.count && i < pges::kReceipts; ++i) {
+        const pges::Receipt& r = status.receipts[i];
+        LogGestureReceipt(m, h, r);
+        if (r.seq && r.seq == m.gesture_request.seq &&
+            (r.stage == pges::Stage::submit || r.stage == pges::Stage::refused || r.stage == pges::Stage::uncertain || r.stage == pges::Stage::fault))
+            m.gesture_request = pges::Request{};
+    }
+    if (status.dropped)
+        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture", "partner_gesture=receipts_dropped; n=%u\r\n", status.dropped);
+    if (status.uncertain) m.gesture_uncertain = true;
+}
+
 // The hook drops a running gesture without any write when the epoch changes.
+// The step drains the receipts queued since the last tick: they are logged for
+// the ending mission (every caller runs before MissionStart's reset).
 void WithdrawGesture(Driver& d, const Hooks& h) noexcept {
     if (!++d.gesture_epoch) d.gesture_epoch = 1;
     if (!h.gesture_step || !d.gesture_install_tried || d.gesture_install_refusal) return;
@@ -4728,6 +4745,7 @@ void WithdrawGesture(Driver& d, const Hooks& h) noexcept {
     command.epoch = d.gesture_epoch;
     pges::Status status{};
     h.gesture_step(h.context, command, status);
+    DrainGesture(d.mission, h, status);
 }
 
 void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool realized, bool parts_loaded, bool anim_ok,
@@ -4817,19 +4835,10 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
     command.remote_speed = remote_anim.speed;
     pges::Status status{};
     h.gesture_step(h.context, command, status);
-    for (unsigned i = 0; i < status.count && i < pges::kReceipts; ++i) {
-        const pges::Receipt& r = status.receipts[i];
-        LogGestureReceipt(m, h, r);
-        if (r.seq && r.seq == m.gesture_request.seq &&
-            (r.stage == pges::Stage::submit || r.stage == pges::Stage::refused || r.stage == pges::Stage::uncertain || r.stage == pges::Stage::fault))
-            m.gesture_request = pges::Request{};
-    }
-    if (status.dropped)
-        EmitNativeN(h, m.gesture_cap, kGestureLogCap, "partner_gesture", "partner_gesture=receipts_dropped; n=%u\r\n", status.dropped);
+    DrainGesture(m, h, status);
     m.gesture_active = status.active;
     m.gesture_hook_resolve = status.resolve;
     m.gesture_hook_body_calls = status.body_calls;
-    if (status.uncertain) m.gesture_uncertain = true;
     if (!status.live && !m.gesture_patch_lost_logged) {
         m.gesture_patch_lost_logged = true;
         EmitFormat(h, "partner_gesture=patch_lost; installed=%u; faulted=%u\r\n", status.installed ? 1u : 0u, status.faulted ? 1u : 0u);

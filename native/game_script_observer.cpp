@@ -1317,6 +1317,7 @@ void PartnerShutdown() noexcept {
     mgscoop::partner_defer::Shutdown();
     mgscoop::partner_input_hook::Shutdown();
     mgscoop::partner_aim_point::Shutdown();
+    mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;

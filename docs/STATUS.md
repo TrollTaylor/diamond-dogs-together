@@ -16,11 +16,13 @@ heading.
   then `SetCurrentNode(cs,1,2,node,0.5f,0)` (pickup) or `ReserveToResetNode(cs,1,2,node,1.0f,0)` (signs, knock); the
   end (clip end, the remote's speed > 1 for signs, 2000 ms) returns graph 2 to stateNull only while it still shows our
   node. Nine SHA-256 pinned bodies, five cs slots checked before every call, SEH on every call, a viewer (body 0)
-  digest around every write with a mission `uncertain` latch.
+  digest around every write with a mission `uncertain` latch. Another owner's graph-2 request still waiting in body 1's
+  request buffer is never overwritten (`refused; reason=pending`, `ended; cause=pending`, no stateNull); the window
+  close (`PartnerShutdown`) turns the hook into a passthrough; the mission-boundary withdrawal logs the receipts it drains.
 - New code: `native/partner_gesture_policy.{hpp,cpp}` (pure: kinds, nodes, wire, sender, store, gate, end),
   `native/partner_gesture.{hpp,cpp}` (the hook), `partner_player::ReadUpper`, driver `SendGesture` / `ReceiveGesture` /
   `TickGesture` and three Hooks (`read_upper`, `gesture_install`, `gesture_step`).
-- Contract: 677 -> 688 code sites, 149 -> 156 vtable slots (`generate_partner_contract.py --check`), plus
+- Contract: 677 -> 690 code sites, 149 -> 156 vtable slots (`generate_partner_contract.py --check`), plus
   `gesture_assertions` (the kPins against the executable, the 0xAF037C call, every node an imm64 operand of its stock
   function, the 0.5 / 1.0 blend constants).
 - Tests: `partner_gesture_tests` (nodes, wire, older peers, sender, store, gate, end) and `partner_gesture_hook_tests`
