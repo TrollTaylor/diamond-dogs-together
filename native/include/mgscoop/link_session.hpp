@@ -87,6 +87,10 @@ struct SessionConfig {
     Endpoint peer{};
     char build[kBuildSize]{};  // NUL-padded, e.g. "0.12.0"
     HmacKey psk{};             // K_psk
+    // lab.ini link_session_skew (lab and the worker's play rehearsal only): Start
+    // raises the session counter to at least this value, so the first committed
+    // session is skew+1 (never lowers it: a restarted session never reuses a number).
+    std::uint32_t session_skew = 0;
 };
 
 struct SessionIo {

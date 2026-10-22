@@ -1,0 +1,92 @@
+# 0.13.6 online-net-epoch (docs/native-puppet.md "Loadout mirroring", "The link epoch"): the equipment manifest, the
+# capability message and the cardboard box mirror between copies whose link-session counters differ. The 0.13.5 online
+# session of 2026-10-22: after the guest relaunched (quit, then the save handoff) the host was on link session 3 and the
+# guest on 1; every manifest and caps message was dropped as stale_epoch (the receiver compared the SENDER's counter
+# with its own): no partner guns for the rest of the evening, remote=unknown/none, the host's box never on the guest.
+# The worker cannot relaunch one copy inside a session (tools/worker/README.md), so the host's counter is skewed
+# instead: lab.ini link_session_skew=2 (the lab and the worker's play rehearsal only; play refuses it), so its first
+# committed session is 3 while the fresh guest's is 1, exactly the counters of the online session.
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
+# unset, no build running in any worktree, under the shared verify lock, one worker session. Static proof first:
+#   python tools/generate_partner_contract.py --check
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/partner-equip-relaunch.txt
+#   then the same with -WanSim bad (regression only: drops and reconnects move both counters by one).
+#   Control (0.13.5 behaviour, optional): the same file on a 0.13.5 build fails the partner_equip=manifest waitlogs.
+# Before the fix (0.13.5): both partner_equip=manifest waitlogs time out (ExpectFailures); the guest's
+# equip_preload=refused; reason=no_manifest and equip_writer=refused; reason=no_manifest ~35 s after the body appears;
+# partner_slot=plan; ... remote_base=0,0,0; partner_weapon=mismatch; strip=0x58; remote=unknown/none in every
+# partner_native_net line; no partner_cbox=remote line on the guest.
+# Expected (both logs unless noted):
+#   host:  link=session_skew; skew=2; first_session=3, then link=connected; session=3; guest: link=connected; session=1
+#   partner_equip=sent; rev=1; epoch=3 (host) / epoch=1 (guest); on the PEER partner_equip=manifest; rev=1; ...;
+#     sender_epoch=<the sender's counter>; link_epoch=<its own> (host: sender_epoch=1; link_epoch=3; guest:
+#     sender_epoch=3; link_epoch=1)
+#   partner_caps=rx; drive=native; ...; epoch=<sender's>; rev=..; link_epoch=<own>, then partner_native_net; ...;
+#     remote=native/ok (the caps message is live in both copies)
+#   equip_preload=authorized; ...; manifest=1 at the 30010 allocation (never equip_preload=refused; reason=no_manifest)
+#   equip_writer=handle_bound (per slot, or handle_queued then observation_stopped), partner_weapon=match
+#   NEVER: partner_equip=refused or partner_caps=refused (nothing on channel 2 is refused in this run; a refusal line
+#     names reason, rev, sender_epoch and link_epoch: report it), equip_writer=refused; reason=no_manifest
+#   state.json (captures.jsonl): native.equip.rx_link_epoch 3 (host) / 1 (guest), rx_sender_epoch 1 / 3, rx_received
+#     >= 1, rx_invalid 0, rx_stale 0; native.net.caps.rx true, caps.link_epoch 3 / 1, caps.stale 0,
+#     caps.remote_drive "native"; link-status.json remote_drive "native", partner_gun "available" on both
+#   the host boxes (the box rides on the manifest): the guest logs partner_cbox=remote; id=4..; active=1;
+#     apply=native, partner_cbox=apply; ...; via=native; ...; result=0; reason=ok and partner_cbox=entered; act=77|78;
+#     unboxed again: partner_cbox=remote; ...; active=0 and partner_cbox=off; ...; via=native; reason=ok
+#   NEVER a guest partner_status=local; st=0x4 (the viewer's own player never boxes because of the partner)
+# Captures: equip-skew (the guest films the host's partner body: a gun in its hands, the host's own weapon), host-self,
+# cbox-on (body 1 in the box), cbox-off, equip-after (the gun back in body 1's hands).
+labsetting host link_session_skew=2
+labsetting partner_act_log=1
+title 200
+wait 4000
+waitlog host 'link=session_skew; skew=2; first_session=3;' 60
+waitlog host 'link=connected; session=3;' 120
+waitlog guest 'link=connected; session=1;' 120
+waitgameplay host 120
+waitgameplay guest 240
+waitlog host 'partner_equip=sent; rev=1; epoch=3;' 60
+waitlog guest 'partner_equip=sent; rev=1; epoch=1;' 60
+waitlog host 'partner_equip=manifest; rev=1; .*sender_epoch=1; link_epoch=3' 60
+waitlog guest 'partner_equip=manifest; rev=1; .*sender_epoch=3; link_epoch=1' 60
+waitlog host 'partner_native_net; .*remote=native/ok' 90
+waitlog guest 'partner_native_net; .*remote=native/ok' 90
+waitlog host 'equip_writer=handle_bound' 120
+waitlog guest 'equip_writer=handle_bound' 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+stance host stand
+stance guest stand
+wait 2000
+resetpose host
+stance host stand
+host debug clear_enemies 100
+placebehind guest host 4 3
+wait 2500
+both capture start
+guest capture equip-skew
+host capture host-self
+# --- The host boxes (sub 1 = 468 on the lab save); body 1 on the guest boxes natively. -----------------------------
+host run items
+host expect ^items;ids=0,468,
+host run slot item 1
+host expect ^submitted_slot;slot=item;native=4;sub=1;
+waitlog host 'partner_status=local; st=0x4' 10
+waitlog guest 'partner_cbox=remote; id=4[0-9][0-9]; active=1; apply=native;' 15
+waitlog guest 'partner_cbox=apply; id=4[0-9][0-9]; .*via=native; .*result=0; reason=ok;' 10
+waitlog guest 'partner_cbox=entered; act=7[78];' 10
+wait 1000
+guest capture cbox-on
+# Off: sub 2 = 451 unboxes the host (partner-cbox.txt), then sub 0.
+host run slot item 2
+waitlog guest 'partner_cbox=remote; id=4[0-9][0-9]; active=0;' 15
+waitlog guest 'partner_cbox=off; id=4[0-9][0-9]; via=native; reason=ok;' 10
+wait 3000
+guest capture cbox-off
+host run slot item 0
+wait 2500
+guest capture equip-after
+both capture end
+state

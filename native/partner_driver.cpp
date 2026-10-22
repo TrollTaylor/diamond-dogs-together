@@ -2291,6 +2291,42 @@ void ReceiveGesture(Driver& d, const Hooks& h, const std::uint8_t* message, std:
                 unsigned(p.stance), unsigned(p.speed), (p.flags & gpol::Flag::Moving) ? 1u : 0u, epoch);
 }
 
+// Refused channel-2 messages (0.13.6 online-net-epoch; before it a refused
+// manifest only bumped a counter nobody read): one line per change of (this
+// copy's link session, reason), at most kRefusedLogCap lines per process.
+constexpr unsigned kRefusedLogCap = 32;
+void LogRefusedEquip(Driver& d, const Hooks& h, const std::uint8_t* message, std::size_t size, std::uint32_t link_epoch) noexcept {
+    const partner_equip_wire::Store& st = d.mission.equip;
+    const auto result = static_cast<std::uint8_t>(st.last);
+    if (st.last == partner_equip_wire::Result::no_link) ++d.equip_rx_stale;
+    else ++d.equip_rx_invalid;
+    if (d.equip_refused_logged && d.equip_refused_link == link_epoch && d.equip_refused_result == result) return;
+    d.equip_refused_logged = true;
+    d.equip_refused_link = link_epoch;
+    d.equip_refused_result = result;
+    std::uint16_t revision = 0;
+    std::uint32_t sender_epoch = 0;
+    partner_equip_wire::PeekHeader(message, size, revision, sender_epoch);
+    EmitNativeN(h, d.equip_rx_cap, kRefusedLogCap, "partner_equip",
+                "partner_equip=refused; reason=%s; rev=%u; sender_epoch=%u; link_epoch=%u; size=%u; magic=0x%02x\r\n",
+                partner_equip_wire::ResultName(st.last), unsigned(revision), sender_epoch, link_epoch, unsigned(size),
+                size ? unsigned(message[0]) : 0u);
+}
+void LogRefusedCaps(Driver& d, const Hooks& h, const std::uint8_t* message, std::size_t size, std::uint32_t link_epoch) noexcept {
+    const partner_caps_wire::Store& st = d.caps_rx;
+    const auto result = static_cast<std::uint8_t>(st.last);
+    if (d.caps_refused_logged && d.caps_refused_link == link_epoch && d.caps_refused_result == result) return;
+    d.caps_refused_logged = true;
+    d.caps_refused_link = link_epoch;
+    d.caps_refused_result = result;
+    std::uint16_t revision = 0;
+    std::uint32_t sender_epoch = 0;
+    partner_equip_wire::PeekHeader(message, size, revision, sender_epoch);  // the same [2..3] / [4..7] header
+    EmitNativeN(h, d.caps_rx_cap, kRefusedLogCap, "partner_caps",
+                "partner_caps=refused; reason=%s; rev=%u; sender_epoch=%u; link_epoch=%u; size=%u\r\n",
+                partner_caps_wire::ResultName(st.last), unsigned(revision), sender_epoch, link_epoch, unsigned(size));
+}
+
 // Reliable channel 2 (equipment manifest): drained every tick in every drive
 // mode so the sender's window never stalls; the receiver only stores it.
 void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
@@ -2352,40 +2388,60 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             ReceiveGesture(d, h, message, size, epoch, now);
             continue;
         }
+        // The equipment manifest and the capability message are bound to THIS copy's
+        // link session the message was drained in (the authenticated origin's, else
+        // the current one), never compared with the sender's own session number
+        // (0.13.5 online: after a relaunch of one copy the counters differ for good).
+        const std::uint32_t link_epoch = authenticated && origin.session ? origin.session : epoch;
         // Online play: the capability message shares channel 2 (first byte 0x43).
         if (partner_caps_wire::IsCaps(message, size)) {
-            if (partner_caps_wire::Accept(d.caps_rx, message, size, epoch) &&
-                (d.caps_rx.caps.epoch != d.caps_logged_epoch || d.caps_rx.caps.revision != d.caps_logged_rev)) {
+            if (partner_caps_wire::Accept(d.caps_rx, message, size, link_epoch)) {
                 const partner_caps_wire::Caps& c = d.caps_rx.caps;
-                const bool changed_view = !d.caps_logged_epoch || c.drive != d.caps_logged_drive || c.reason != d.caps_logged_reason;
-                d.caps_logged_epoch = c.epoch;
-                d.caps_logged_rev = c.revision;
-                if (changed_view) {
-                    d.caps_logged_drive = c.drive;
-                    d.caps_logged_reason = c.reason;
-                    EmitNative(m, h, m.net_cap, "partner_caps",
-                               "partner_caps=rx; drive=%s; reason=%s; profile=%u; policy=%s; features=0x%02x; v4=%u; epoch=%u; rev=%u\r\n",
-                               partner_native_net::DriveName(static_cast<partner_native_net::Drive>(c.drive)),
-                               partner_native_net::ReasonName(c.reason), unsigned(c.profile), c.policy ? "online" : "lab",
-                               unsigned(c.features), (c.features & partner_caps_wire::Feature::InputSender) ? 1u : 0u, c.epoch,
-                               unsigned(c.revision));
+                const bool new_link = d.caps_rx.link_epoch != d.caps_logged_link;
+                if (new_link || c.epoch != d.caps_logged_epoch || c.revision != d.caps_logged_rev) {
+                    const bool changed_view =
+                        !d.caps_logged_epoch || new_link || c.drive != d.caps_logged_drive || c.reason != d.caps_logged_reason;
+                    d.caps_logged_epoch = c.epoch;
+                    d.caps_logged_rev = c.revision;
+                    d.caps_logged_link = d.caps_rx.link_epoch;
+                    if (changed_view) {
+                        d.caps_logged_drive = c.drive;
+                        d.caps_logged_reason = c.reason;
+                        EmitNative(m, h, m.net_cap, "partner_caps",
+                                   "partner_caps=rx; drive=%s; reason=%s; profile=%u; policy=%s; features=0x%02x; v4=%u; epoch=%u; rev=%u; "
+                                   "link_epoch=%u\r\n",
+                                   partner_native_net::DriveName(static_cast<partner_native_net::Drive>(c.drive)),
+                                   partner_native_net::ReasonName(c.reason), unsigned(c.profile), c.policy ? "online" : "lab",
+                                   unsigned(c.features), (c.features & partner_caps_wire::Feature::InputSender) ? 1u : 0u, c.epoch,
+                                   unsigned(c.revision), d.caps_rx.link_epoch);
+                    }
                 }
+            } else {
+                LogRefusedCaps(d, h, message, size, link_epoch);
             }
             continue;
         }
         const bool had = m.equip.have;
         const partner_equip_wire::Manifest before = m.equip.manifest;
-        const bool accepted = partner_equip_wire::Accept(m.equip, message, size, epoch);
+        const std::uint32_t before_link = m.equip.link_epoch;
+        const std::uint32_t duplicates = m.equip.duplicates;
+        const bool accepted = partner_equip_wire::Accept(m.equip, message, size, link_epoch);
         // Only the cardboard-box fields moved (the sender keeps the revision for a
-        // box toggle): the gun slots, their types and the apply verdict stand, so
-        // a box toggle never re-drives the gun writer (NoteCbox logs the box).
-        const bool box_only = accepted && had && before.revision == m.equip.manifest.revision &&
+        // box toggle) in the same link session: the gun slots, their types and the
+        // apply verdict stand, so a box toggle never re-drives the gun writer
+        // (NoteCbox logs the box). A new link session is never box-only.
+        const bool box_only = accepted && had && before_link == m.equip.link_epoch && before.revision == m.equip.manifest.revision &&
                               before.epoch == m.equip.manifest.epoch && before.version == m.equip.manifest.version &&
                               before.inv_slot == m.equip.manifest.inv_slot && partner_equip_wire::SameSlots(before, m.equip.manifest);
         if (accepted) {
+            ++d.equip_rx_received;
             d.equip_cache = m.equip.manifest;
             d.equip_cache_have = true;
-            d.equip_cache_epoch = epoch;
+            d.equip_cache_epoch = m.equip.link_epoch;
+        } else if (m.equip.duplicates != duplicates) {
+            ++d.equip_rx_duplicates;
+        } else {
+            LogRefusedEquip(d, h, message, size, link_epoch);
         }
         if (accepted && !box_only) {
             // New content (also under the stored revision number: a 0.12.0 sender
@@ -2398,11 +2454,12 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
             EmitNative(m, h, m.native_equip_cap, "partner_equip",
-                       "partner_equip=manifest; rev=%u; inv=%u; slots=%u:%u,%u:%u,%u:%u; type=%u,%u,%u; v=%u; mission=%u\r\n",
+                       "partner_equip=manifest; rev=%u; inv=%u; slots=%u:%u,%u:%u,%u:%u; type=%u,%u,%u; v=%u; mission=%u; sender_epoch=%u; "
+                       "link_epoch=%u\r\n",
                        unsigned(e.revision), unsigned(e.inv_slot), unsigned(e.slots[0].base_id), unsigned(e.slots[0].alias),
                        unsigned(e.slots[1].base_id), unsigned(e.slots[1].alias), unsigned(e.slots[2].base_id), unsigned(e.slots[2].alias),
                        unsigned(e.slots[0].type), unsigned(e.slots[1].type), unsigned(e.slots[2].type), unsigned(e.version),
-                       m.mission_code);
+                       m.mission_code, e.epoch, m.equip.link_epoch);
         }
     }
 }
@@ -3658,6 +3715,8 @@ void TickOnline(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t no
     n.caps_sent = d.caps_tx.sent;
     n.caps_received = d.caps_rx.received;
     n.caps_invalid = d.caps_rx.invalid;
+    n.caps_stale = d.caps_rx.stale;
+    n.caps_link_epoch = d.caps_rx.have ? d.caps_rx.link_epoch : 0u;
     const caps::Caps& rc = d.caps_rx.caps;
     n.remote_drive = caps_live ? static_cast<pnn::Drive>(rc.drive) : pnn::Drive::unknown;
     CopyText(n.remote_reason, sizeof(n.remote_reason), caps_live ? pnn::ReasonName(rc.reason) : "");
@@ -4200,7 +4259,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.quality_good_ms = partner_native_net::GoodMs(m.net_quality, now);
     in.remote_quiet = in.link_live && (!latest_ok || latest.age_ms > params.input_age_ms) && !pose_live;
     const std::uint32_t caps_session = h.link_session ? h.link_session(h.context) : 0;
-    const bool caps_live = d.caps_rx.have && caps_session && d.caps_rx.caps.epoch == caps_session;
+    // Received in this copy's current link session (never the sender's own session number).
+    const bool caps_live = partner_caps_wire::Live(d.caps_rx, caps_session);
     in.remote_caps_refused = caps_live && !(d.caps_rx.caps.features & partner_caps_wire::Feature::InputSender);
     in.dm_idle = m.dmmap.phase == pdm::Phase::idle && !m.dmmap.owned;
     in.dm_patched = m.dm_patched;
@@ -4797,6 +4857,16 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         }
         t.equip_tables_ok = d.equip_tables_ok;
         t.equip_rx_version = m.equip.have ? m.equip.manifest.version : 0u;
+        t.equip_rx_sender_epoch = m.equip.have ? m.equip.manifest.epoch : 0u;
+        t.equip_rx_link_epoch = m.equip.have ? m.equip.link_epoch : 0u;
+        t.equip_rx_received = d.equip_rx_received;
+        t.equip_rx_invalid = d.equip_rx_invalid;
+        t.equip_rx_stale = d.equip_rx_stale;
+        t.equip_rx_duplicates = d.equip_rx_duplicates;
+        CopyText(t.equip_rx_refused, sizeof(t.equip_rx_refused),
+                 d.equip_refused_logged
+                     ? partner_equip_wire::ResultName(static_cast<partner_equip_wire::Result>(d.equip_refused_result))
+                     : "none");
         CopyText(t.equip_apply, sizeof(t.equip_apply), m.equip_apply[0] ? m.equip_apply : "none");
         // The generalized writer and preload (the observer's last report).
         const equipment_stock_writer::Status& ws = d.equip_status;
@@ -5354,6 +5424,19 @@ void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
 
 void DrainEquipLink(Driver& d, const Hooks& h) noexcept { DrainEquip(d, h, 0); }
 
+bool RemoteManifest(const Driver& d, std::uint32_t link_session, partner_equip_wire::Manifest& out) noexcept {
+    const partner_equip_wire::Store& st = d.mission.equip;
+    if (st.have && (!link_session || st.link_epoch == link_session)) {
+        out = st.manifest;
+        return true;
+    }
+    if (d.equip_cache_have && link_session && d.equip_cache_epoch == link_session) {
+        out = d.equip_cache;
+        return true;
+    }
+    return false;
+}
+
 void Configure(Driver& d, const LabConfig& lab) noexcept {
     partner_upper_probe::Clear("configure");
     d = Driver{};
@@ -5499,12 +5582,18 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     // mission, the title or the ACC): the slot plan and the weapon gate start
     // with it; a new revision replaces it as before.
     d.equip_tx_cap = LogCap{};
+    // equip_cache_epoch is THIS copy's link session the cached manifest arrived in.
     const std::uint32_t session = h.link_session ? h.link_session(h.context) : 0;
     if (d.equip_cache_have && session && d.equip_cache_epoch == session) {
         d.mission.equip.have = true;
         d.mission.equip.manifest = d.equip_cache;
+        d.mission.equip.link_epoch = session;
         d.mission.equip_logged_rev = d.equip_cache.revision;
     }
+    // The sender resends its manifest once per mission start (64 bytes on the
+    // reliable channel; the receiver's dedupe absorbs an exact repeat): heals any
+    // loss the receiver could not see.
+    if (d.equip_tx_have) d.equip_tx_dirty = true;
     d.settings.fire_live = false;  // the native tick re-derives it (filter live, gun class)
     partner_native::Reset(d.mission.native, d.settings.drive == PartnerDrive::native);
     d.mission.mag_scale = 1.0;

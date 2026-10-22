@@ -171,7 +171,9 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # Horse / D-Walker riders (hide with the gun profile in lab; play forces off)
     'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
-    'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){
+    'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',
+    # 0.13.6 online-net-epoch: the link-session counter skew (lab and the play rehearsal only)
+    'link_session_skew=2','host:link_session_skew=2','guest:link_session_skew=0','link_session_skew=999')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
 }
 foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_native_reload=','partner_native_equip=any','partner_native_equip=','partner_native_gun=0',
@@ -188,7 +190,8 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
     'partner_native_mount=1','partner_native_mount=','partner_native_mount=seat','both:partner_native_mount=hide','partner_native_mounts=hide',
-    'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage')){
+    'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage',
+    'link_session_skew=','link_session_skew=1000','link_session_skew=-1','link_session_skew=on','both:link_session_skew=2','link_session_skews=2')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 $lineMatch=[regex]::Match($scenarioText,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)")
@@ -205,13 +208,15 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
         'labsetting partner_native_mount=hide','labsetting guest partner_native_mount=hide','labsetting host partner_native_mount=off',
-        'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0')){
+        'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
+        'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
 foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage',
-        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1')){
+        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1',
+        'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
@@ -441,6 +446,13 @@ Assert-Throws {ConvertTo-LabPartnerValue -Key save_handoff -Value auto} 'save_ha
 Assert-Throws {ConvertTo-LabPartnerValue -Key travel_lock -Value 2} 'travel_lock values'
 $roleSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:save_handoff=stage','guest:save_handoff=scene','travel_lock=1') -Role guest
 Assert-True ($roleSettings['save_handoff'] -ceq 'scene' -and $roleSettings['travel_lock'] -ceq '1') 'role-scoped save_handoff reaches only its role'
+# 0.13.6 online-net-epoch: the link-session skew is a LabCommon key too (lab runs), host-scoped in the scenario.
+Assert-True ((ConvertTo-LabPartnerValue -Key link_session_skew -Value 2) -ceq '2' -and (ConvertTo-LabPartnerValue -Key link_session_skew -Value 0) -ceq '0') 'link_session_skew is a LabCommon key'
+Assert-Throws {ConvertTo-LabPartnerValue -Key link_session_skew -Value 1001} 'link_session_skew range'
+$skewSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role guest
+Assert-True (!$skewSettings.Contains('link_session_skew')) 'a host-scoped link_session_skew never reaches the guest'
+$skewSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role host
+Assert-True ($skewSettings['link_session_skew'] -ceq '2') 'a host-scoped link_session_skew reaches the host'
 Assert-True ($startAssignments.graphics -ceq "`$graphics=Join-Path `$saveRoot '287700\local\TPP_GRAPHICS_CONFIG'") 'graphics edits target the fresh role copy'
 $stop=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Stop-WorkerSession.ps1'))
 Assert-True ($stop.Contains('Get-WorkerLeasedProcess') -and $stop.Contains('MGSWORKERCTL1')) 'owned control shutdown'

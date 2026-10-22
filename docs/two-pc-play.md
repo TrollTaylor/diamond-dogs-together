@@ -606,6 +606,16 @@ xform clip partner as the automatic fallback.
   (`partner_weapon=fire_reload_off; reason=shot_leak|ammo_leak`,
   state.json `native.weapon.leak_strip` 80); the generalized writer digests
   the viewer's ammo/weapon vars around each dispatch and stops on a change.
+- **After a relaunch of one copy** (0.13.6): the loadout manifest, the
+  capability message and the cardboard box survive a guest relaunch (a quit,
+  or the save handoff's automatic relaunch) while the host keeps running. In
+  0.13.5 the two copies' link-session counters then differed for good and
+  every manifest was dropped (no partner guns, `remote=unknown/none`, no
+  partner box for the rest of the evening; workaround there: both players
+  quit, the host starts, then the friend joins). The receiver now binds what
+  it receives to its own link session ([native-puppet.md](native-puppet.md)
+  "The link epoch"); a refused message logs `partner_equip=refused; reason=..`
+  / `partner_caps=refused; reason=..` once.
 
 ## Release build
 

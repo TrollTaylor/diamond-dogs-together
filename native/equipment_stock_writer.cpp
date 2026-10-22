@@ -536,8 +536,10 @@ void ResyncBody(void (*log)(const char*) noexcept,const BodyLease& lease,const s
             ++empty;
             g.dispatched_handles[slot]=0;g.dispatched_equips[slot]=0;
             // A permanent refusal stays (nothing in the slot can change it; a foreign handle
-            // that left can); anything else plans again.
-            if(!(s.state==SlotState::refused && PermanentReason(s.reason) && std::strcmp(s.reason,"foreign_handle")!=0)) {
+            // that left can); so does the manifest wait (only a manifest renews it:
+            // RenewManifestWait); anything else plans again.
+            if(!(s.state==SlotState::refused && (PermanentReason(s.reason) || ManifestWaitReason(s.reason)) &&
+                 std::strcmp(s.reason,"foreign_handle")!=0)) {
                 s.state=SlotState::idle;s.tier=Tier::none;s.equip=0;s.handle=0;s.bank=Bank::none;SetReason(s,"resync");
             }
         } else {
@@ -707,6 +709,26 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
         }
         if(++g.observations>=50) Finish(log,slot,SlotState::queued,"observation_stopped","model_wait_limit");
         return;
+    }
+    // 0.13.6 online-net-epoch: a manifest known only after the plan wait gave up
+    // (no_manifest) is picked up in the same body gen: the slots refused for want
+    // of it (nothing spent on them) plan again; if nothing else was decided, the
+    // order is computed again (the remote's current slot last).
+    if(c.manifest) {
+        unsigned renewed=0;
+        for(unsigned slot=0;slot<kSlots;++slot) {
+            if(!RenewManifestWait(status.slots[slot],g.sched[slot])) continue;
+            ++renewed;
+            g.readiness[slot].Reset();g.readiness_logged[slot]=false;
+            SetReason(status.slots[slot],"manifest_late");
+            if(g.retry_lines<kRetryLines) {++g.retry_lines;GeneralReceipt(log,"manifest_late",slot,"manifest");}
+        }
+        if(renewed) {
+            g.plan_waits=0;
+            bool still_decided=false;
+            for(const auto& s:status.slots) still_decided=still_decided || (s.state!=SlotState::idle && s.state!=SlotState::plan_wait);
+            if(!still_decided) g.ordered=false;
+        }
     }
     // The remote's current slot goes last; the order is fixed once a manifest
     // is known, never after a slot was decided.

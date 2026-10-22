@@ -8,7 +8,10 @@
 // (mgs_coop_core).
 //
 //   [0] 0x43 'C'  [1] version 1  [2..3] revision u16 (never 0)
-//   [4..7] epoch u32 (the partner_net link session; stale epochs dropped)
+//   [4..7] epoch u32 (the SENDER's partner_net link-session number: identity
+//          only, never compared with the receiver's own counter; the store
+//          binds the message to the receiver's own link session, link_epoch,
+//          as the equipment manifest does: partner_equip_wire.hpp)
 //   [8] features (Feature bits)  [9] profile (PartnerNativeProfile)
 //   [10] drive (partner_native_net::Drive)  [11] reason code (partner_native_net::ReasonCode)
 //   [12] arbiter mode (partner_native::Mode)  [13] net policy (PartnerNativeNet)  [14..15] 0
@@ -50,22 +53,34 @@ struct Caps {
 // kSize, or 0 (out zeroed) for revision 0, epoch 0 or a field out of range.
 std::size_t Encode(const Caps& caps, std::uint8_t (&out)[kSize]) noexcept;
 
-enum class Result : std::uint8_t { ok, size, magic, version, revision, epoch, stale_epoch, field, reserved };
+// no_link: no receiver link session to bind it to; older: an older revision
+// of the same sender epoch in the same receiver link session (Accept).
+enum class Result : std::uint8_t { ok, size, magic, version, revision, epoch, stale_epoch, field, reserved, no_link, older };
 const char* ResultName(Result result) noexcept;
-// Strict decode; current_epoch != 0 drops other epochs (stale_epoch).
+// Strict decode; current_epoch != 0 drops other epochs (stale_epoch). A strict
+// helper only: Accept passes 0.
 Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch, Caps& out) noexcept;
 // The first byte of a channel-2 message names its codec.
 inline bool IsCaps(const std::uint8_t* data, std::size_t size) noexcept { return data && size && data[0] == kMagic; }
 
-// Receiver store (driver-owned; one per mission) and counters.
+// Receiver store (driver-owned; it outlives missions) and counters. caps.epoch
+// is the sender's session number; link_epoch the receiver's own link session
+// the stored message was drained in (the "live" test compares only that).
 struct Store {
     bool have;
     Caps caps;
+    std::uint32_t link_epoch;
     std::uint32_t received, invalid, stale;
+    Result last;
 };
-// ok stores the message (newer or equal revisions of the same epoch, or a
-// new epoch) and returns true; anything else only counts.
-bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch) noexcept;
+// ok stores the message stamped with the receiver's link_epoch (newer or equal
+// revisions of the same sender epoch in the same link session, or anything
+// in a new link session) and returns true; anything else only counts.
+bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t link_epoch) noexcept;
+// The stored capabilities are of the receiver's current link session.
+inline bool Live(const Store& store, std::uint32_t link_session) noexcept {
+    return store.have && link_session && store.link_epoch == link_session;
+}
 
 // Sender pacing: whether to send `next` now (a new epoch at once; a change at
 // most every kMinGapMs; the same content every kHeartbeatMs).

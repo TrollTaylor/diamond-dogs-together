@@ -1155,7 +1155,28 @@ void TestOnline() {
         Check(pcw::Accept(st, b, sizeof(b), 7) && st.have && st.caps.revision == 5, "store");
         c.revision = 4;
         pcw::Encode(c, b);
-        Check(!pcw::Accept(st, b, sizeof(b), 7) && st.caps.revision == 5 && st.stale == 1, "an older revision is stale");
+        Check(!pcw::Accept(st, b, sizeof(b), 7) && st.caps.revision == 5 && st.stale == 1 && st.last == pcw::Result::older,
+              "an older revision is stale");
+        // R0 (0.13.6 online-net-epoch; failed on 0.13.5): the sender's session number (caps.epoch) is never compared
+        // with the receiver's own link session. A relaunched guest (epoch 1) under the host's link session 3 is live.
+        {
+            pcw::Store host{};
+            pcw::Caps g = c;
+            g.revision = 1;
+            g.epoch = 1;
+            std::uint8_t gb[pcw::kSize]{};
+            Check(pcw::Encode(g, gb) == pcw::kSize, "the relaunched guest's caps encode");
+            Check(pcw::Accept(host, gb, sizeof(gb), 3) && host.link_epoch == 3 && host.caps.epoch == 1 && host.stale == 0 &&
+                      pcw::Live(host, 3) && !pcw::Live(host, 4) && !pcw::Live(host, 0),
+                  "R0: caps epoch 1 under link session 3: stored and live in session 3 only");
+            // The guest relaunches again (revision 1, epoch 1 once more) in link session 4: a new sequence, accepted.
+            Check(pcw::Accept(host, gb, sizeof(gb), 4) && host.link_epoch == 4 && pcw::Live(host, 4) && host.received == 2,
+                  "R0: the same revision in a new link session is accepted");
+            Check(!pcw::Accept(host, gb, sizeof(gb), 0) && host.last == pcw::Result::no_link && host.stale == 1 && pcw::Live(host, 4),
+                  "no link session: refused, the stored caps stay");
+            Check(std::strcmp(pcw::ResultName(pcw::Result::no_link), "no_link") == 0 && std::strcmp(pcw::ResultName(pcw::Result::older), "older") == 0,
+                  "caps result names");
+        }
         // Sender pacing: at once per session, on change >= 1 s, heartbeat 5 s.
         pcw::Sender sd{};
         pcw::Caps next{};

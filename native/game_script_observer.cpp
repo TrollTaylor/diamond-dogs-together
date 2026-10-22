@@ -1705,16 +1705,11 @@ bool EquipPiecesAdmitted() noexcept { return EquipAdmissionReason() == nullptr; 
 // at MissionStart from the session cache, replaced by any newer revision) or
 // the last one accepted in the same link session (the preload runs at the
 // allocation, before the mission; the sender sends from the title and the ACC
-// too, so the first mission after connecting has it). Never another session's.
+// too, so the first mission after connecting has it). Never another session's:
+// THIS copy's link session the manifest arrived in (pd::RemoteManifest), never
+// the sender's own session number (0.13.5 online: they differ after a relaunch).
 bool EquipManifest(mgscoop::partner_equip_wire::Manifest& out) noexcept {
-    const auto& m = partner_driver.mission;
-    const auto session = mgscoop::partner_net::GetLinkInfo().session;
-    if (m.equip.have && (!session || m.equip.manifest.epoch == session)) { out = m.equip.manifest; return true; }
-    if (partner_driver.equip_cache_have && session && partner_driver.equip_cache_epoch == session) {
-        out = partner_driver.equip_cache;
-        return true;
-    }
-    return false;
+    return pd::RemoteManifest(partner_driver, mgscoop::partner_net::GetLinkInfo().session, out);
 }
 // The early manifest (docs/native-puppet.md "Loadout mirroring"): on the
 // observer's ~100 ms path of ANY mission (the title and the ACC included),
@@ -5461,6 +5456,9 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         net.impair.burst = labc.net_burst;
                         net.impair.seed = labc.net_seed;
                         net.impair.burst_model = labc.net_loss_model == mgscoop::NetLossModel::burst;
+                        // The epoch reproduction knob: the lab and the worker's play rehearsal only
+                        // (lab_config forces it to 0 in any other play; checked here again).
+                        net.session_skew = labc.mode == mgscoop::LabMode::lab || labc.play_rehearsal ? labc.link_session_skew : 0u;
                         net.interp_auto = labc.partner_interp == mgscoop::PartnerInterp::auto_;
                         net.interp_ms = labc.partner_interp_ms;
                         net.interp_min_ms = labc.partner_interp_min_ms;
