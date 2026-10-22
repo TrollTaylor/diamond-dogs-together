@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
         // WS3 vehicles (docs/vehicle-ws3.md): the census (lab only), the seat by id and RIDE_TILT (lab and play).
         std::printf("partner_ride_census=%d\npartner_ride_seat_id=%d\npartner_ride_tilt=%d\n", c.partner_ride_census ? 1 : 0,
                     c.partner_ride_seat_id ? 1 : 0, c.partner_ride_tilt ? 1 : 0);
-        // F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board key (lab only, default off) and whether it was named.
+        // F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board key (passenger with the gun profile) and whether it was named.
         std::printf("partner_ride_board=%s\npartner_ride_board_given=%d\n", mgscoop::PartnerRideBoardName(c.partner_ride_board),
                     c.partner_ride_board_given ? 1 : 0);
         // Native partner throws (docs/anim-round2-throws.md Stage B): the resolved key and whether it was named.

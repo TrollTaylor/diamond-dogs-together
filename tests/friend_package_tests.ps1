@@ -468,15 +468,16 @@ try {
             $file = Join-Path $fixture 'play-traverse-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_traverse=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_traverse'])|$($m['partner_native_traverse_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named traversal 0 opts out in play'
-            # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board block follows the native gun profile in play
-            # (hidden runs 0348c4d8 lab, fad26e25 play); the back-seat passenger is lab only. Play-Coop never names the key.
+            # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board follows the native gun profile in play as
+            # passenger (the back seat with the passenger camera; hidden runs 495e7c3a lab and the play rehearsal; block:
+            # 0348c4d8, fad26e25); a named block or passenger runs as named. Play-Coop never names the key.
             Assert-True (!$hostIni.Contains('partner_ride_board') -and !$guestIni.Contains('partner_ride_board') -and
                 !$clipsIni.Contains('partner_ride_board')) 'Play-Coop lab.ini never names partner_ride_board'
-            Assert-Equal "$($n['partner_ride_board'])|$($n['partner_ride_board_given'])" 'block|0' 'native: play defaults the board block'
+            Assert-Equal "$($n['partner_ride_board'])|$($n['partner_ride_board_given'])" 'passenger|0' 'native: play defaults the board to passenger'
             foreach ($value in @('block', 'passenger')) {
                 $file = Join-Path $fixture "play-board-$value-lab.ini"; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_board=$value`n", $utf8)
                 $m = Invoke-IniCheck lab $file
-                Assert-Equal "$($m['partner_ride_board'])|$($m['partner_ride_board_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'block|1|0x0|0/0' "native: play admits a named board $value as block"
+                Assert-Equal "$($m['partner_ride_board'])|$($m['partner_ride_board_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" "$value|1|0x0|0/0" "native: play admits a named board $value"
             }
             # F2: the native cardboard box on body 1 (docs/native-puppet.md "Cardboard box") follows the native gun profile in
             # play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link v2 connected).

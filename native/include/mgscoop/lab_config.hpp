@@ -214,8 +214,9 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 // viewer's own ride action does at a vehicle the partner drives. off: stock (the
 // viewer can become a second driver of that copy); block: no ride icon and no
 // second driver; passenger: the free back seats of a light vehicle (the stock
-// passenger phase), trucks and the rest block. Default off in lab and play until
-// hidden-worker FRAMEs; play forces it off.
+// passenger phase, with the passenger camera), trucks and the rest block. Default
+// passenger with the native gun profile in lab and play (ResolveWeaponDefaults),
+// off without it.
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
 // ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
@@ -562,8 +563,8 @@ struct LabConfig {
     bool partner_ride_census = false;
     bool partner_ride_seat_id = true;
     bool partner_ride_tilt = true;
-    // F1 vehicles (partner_board, see PartnerRideBoard): default off in lab and
-    // play; a named value records _given; play forces it off.
+    // F1 vehicles (partner_board, see PartnerRideBoard): off here; the native gun
+    // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census

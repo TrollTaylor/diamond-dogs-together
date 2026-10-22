@@ -223,8 +223,8 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
 }
 // WS3 vehicles (docs/vehicle-ws3.md): the ride census, seat by id and tilt
 // keys (booleans, lab only: ResolveWeaponDefaults turns them off in play), and
-// the F1 board key partner_ride_board=off|block|passenger (default block with the
-// gun profile in lab and play; passenger is lab only).
+// the F1 board key partner_ride_board=off|block|passenger (default passenger with
+// the gun profile in lab and play).
 bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
@@ -1434,12 +1434,13 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // the shelf through its own action icon, the viewer's guard clean; ladder,
     // pipe and wall climb are still unproven in a FRAME); a named 0 opts out.
     if (!c.partner_native_traverse_given) c.partner_native_traverse = gun;
-    // F1 vehicles: the board BLOCK follows the gun profile (hidden run 0348c4d8: the
-    // viewer stood beside the jeep the partner drove, got no ride icon and the
-    // partner kept driving, both directions); passenger stays named-only (the
-    // viewer's own stock passenger camera is unusable offline, run 59cfc415);
-    // play admits block and turns a named passenger into block below.
-    if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::block : PartnerRideBoard::off;
+    // F1 vehicles: the board follows the gun profile as PASSENGER in lab and play (the
+    // block half: hidden runs 0348c4d8 lab and fad26e25 play; the back seat with the
+    // passenger camera: hidden runs 495e7c3a lab and the play rehearsal, both
+    // directions, the passenger's own view outside the moving jeep). Passenger offers
+    // only the free back seats of a light vehicle; trucks and the rest block. A named
+    // block or off still wins.
+    if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
     // F2 cardboard box on body 1 follows the gun profile in lab and play (hidden
     // run 05cffdd1: the viewer saw the box model on the partner body, moving and
     // taken off, both directions, its own player never boxed); play admits it
@@ -1481,9 +1482,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_place_mirror = false;
         // Traversal replay runs in play too (user decision 2026-10-22; the icon
         // request needs only the native drain windows, as in the lab).
-        // F1 vehicles: the board block runs in play (play rehearsal fad26e25, -WanSim bad); the
-        // back-seat passenger stays lab-only, so a named passenger blocks.
-        if (c.partner_ride_board == PartnerRideBoard::passenger) c.partner_ride_board = PartnerRideBoard::block;
+        // F1 vehicles: the board runs in play too, block (play rehearsal fad26e25) and the
+        // back-seat passenger (play rehearsal with -WanSim bad, see ResolveWeaponDefaults).
         // F2: the native box on body 1 runs in play too (the observer admits play only with
         // link v2 connected).
         // Gestures run in play too (the sender needs a live link session).

@@ -107,8 +107,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    vehicles), partner_ride_tilt=0|1 RIDE_TILT (the driver's vehicle angles);
                                    partner_ride_board=off|block|passenger, F1 vehicles: the viewer cannot board as a
                                    second driver of the partner's vehicle (block) or boards its free back seat
-                                   (passenger; trucks and the rest block); default block with the gun
-                                   profile in lab and play, passenger lab only;
+                                   (passenger, with the passenger camera; trucks and the rest block);
+                                   default passenger with the gun profile in lab and play;
                                    partner_placed_census=0|1, the read-only WS4 C4 / bionic-arm census (lab only);
                                    partner_native_placed=0|1 / partner_native_arm=0|1, WS4 v1 native C4 placing
                                    (391..395) and arm holds (HOLD only) for the partner body (default on with the gun profile);

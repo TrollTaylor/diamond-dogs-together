@@ -5418,10 +5418,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_id = lab.partner_ride_seat_id;
     d.settings.ride_tilt = lab.partner_ride_tilt;
     d.local_vehicle = partner_ride_wire::kVehicleUnknown;
-    // F1 vehicles: the board hook (ResolveWeaponDefaults: block with the gun profile; play
-    // admits block only, the back-seat passenger stays lab-only).
-    d.settings.ride_board = lab.mode == LabMode::play && lab.partner_ride_board == PartnerRideBoard::passenger ? PartnerRideBoard::block
-                                                                                                           : lab.partner_ride_board;
+    // F1 vehicles: the board hook (ResolveWeaponDefaults: passenger with the gun profile, in
+    // lab and play; with it the passenger camera).
+    d.settings.ride_board = lab.partner_ride_board;
     d.local_passenger = partner_board::LocalPassenger{};
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
