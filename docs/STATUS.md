@@ -299,8 +299,9 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
     only), to see whether a rider state plays on body 1 without a mount.
   - `walker_spawn` / `walker_status` / `goto_walker`. `walker_spawn` refuses with `player_mounted` while the local
     player rides (`ON_HORSE`, `ON_VEHICLE` or the `HORSE_IDLE`..`HORSE_GALLOP` gait statuses of the D-Walker drive).
-  - Scenario `tools/worker/scenarios/partner-mount.txt` (probes, horse, both horses, walker with hide, walker
-    baseline).
+  - Scenario `tools/worker/scenarios/partner-mount.txt` (since the 2026-10-22 reorder below: walker with hide,
+    horse, both horses, walker baseline, then the lab-only probes; the runs here used the earlier order: probes,
+    horse, both horses, walker with hide, walker baseline).
 - **Act names:** 121 `horse_ride` (was `vehicle_passenger?`), 122 `horse_mount`, 123 `walker_mount`, 125
   `walker_drive`, 126 `walker_off`.
 - **Tests:** new `partner_mount_tests` (CMake and `Get-WorkerTests`), `TestMountVisibility` in
@@ -338,6 +339,7 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
     none), so `host require localMounted=0` stopped the run before the D-Walker part. **The D-Walker is unproven in
     play, so play keeps forcing the key off** (`lab_config_tests`, `friend_package_tests`: Play-Coop native off|0, a
     named hide in play off|1). Next: run the D-Walker part before Part 3 (or drop Part 3's second E) and repeat it.
+    The scenario now does both (2026-10-22 reorder below); the rehearsal has not been repeated.
   - Part 1 probes (`251abcef`, `bfd6fcc4`): `stateRideOnIdle` / `stateGallop` drop body 1 into a seated / hunched
     rider pose at ground level with nothing under it (`code_match=0` although the pose changes);
     `stateRideWalkerWalk` shows the standing pose. Not a display; the rider stays hidden.
@@ -360,6 +362,16 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
   15 partner poses; a registered index-1 mirror is the only horse moved; a vehicle's final pose still places it).
   **Not yet confirmed in a hidden run** (`partner-mount.txt` Part 3: the guest's own horse should stay put and the
   host's first E should mount its horse).
+- **Scenario reorder for a play rehearsal (2026-10-22; no game run).** `partner-mount.txt` now runs Part 1 D-Walker
+  (host rides, guest hide; two vantages), Part 2 D-Horse (host rides, guest hide), Part 3 both D-Horse (RIDE_BODY),
+  Part 4 the reverse D-Walker baseline, and the lab-only overlay probes last in a marked Part 5. A horse dismount E
+  follows `host require localMounted=1` (Parts 2 and 3) and the second horse mount follows `host require
+  localMounted=0`, so no E press can mount the host's horse by mistake (what stopped `fbde3dcc`), and the D-Walker
+  evidence comes before any horse part. One buddy switch fewer (the host keeps its D-Horse for Part 4). The header
+  says how to run it in play (drop the mount / overlay `labsetting` lines and Part 5, then `-Mode play -WanSim bad`;
+  on 0.13.5 play forces the mount key off, so rehearsing a play hide default needs a build that admits it).
+  `worker_session_tests` validates that play copy in play mode and pins the order, the dismount guard, the Part 5
+  markers and the lab coverage (three probes).
 
 ### Final regression
 

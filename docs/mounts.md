@@ -282,23 +282,31 @@ a frame proves it.
 
 ## 8. Hidden-run checks for the runtime phase (`partner-mount.txt`)
 
-1. **Part 1 (probes):** for each probe, `code_match` and `played_ms`, and the frame. Does a rider pose appear on
-   body 1, and does it float?
-2. **Part 2 (horse, guest hide):** `partner_ride=rx; kind=3` and `partner_ride=hide; reason=ride`. Does
+The scenario order changed on 2026-10-22 to suit a play rehearsal (the runs in section 9 used the earlier order:
+probes, horse, both D-Horse, D-Walker, baseline). The D-Walker part now runs first, so a horse problem can no longer
+cost the D-Walker evidence; a horse dismount E is pressed only after `host require localMounted=1`, so no E press can
+mount the host's horse by mistake (what stopped `fbde3dcc`); the lab-only overlay probes are last, in a marked Part
+5. The header says how to make the play copy (drop the mount / overlay `labsetting` lines and Part 5, then run with
+`-Mode play -WanSim bad`); `worker_session_tests` validates that copy in play mode and pins the order and the guard.
+
+1. **Part 1 (walker, guest hide):** `walker_status ... actor0=22528`, and the host mounted with E. On the guest:
+   ride kind stays 0, `partner_mount=hide; mount=walker; act=123|125; kind=0`, and **no body 1 in
+   `walker-riding` / `walker-drive`**. In play, this is the FRAME that may lift the play force-off.
+2. **Part 2 (horse, guest hide):** `walker_status ... localMounted=0` first (the Part 1 dismount finished), then
+   `horse_spawn`. `partner_ride=rx; kind=3` and `partner_ride=hide; reason=ride`. Does
    `partner_mount=hide; mount=horse; act=122` come before the kind-3 packet? No body 1 near the host in the riding
    frames. After the dismount: `partner_mount=end`, then `foot_stable`.
-3. **Part 3 (both D-Horse):** does the guest's own horse follow the host's ridden horse (RIDE_BODY)? Record where
-   it is in `horse-viewer-own`.
-4. **Part 4 (walker, guest hide):** `horse_status ... localMounted=0` first (the Part 3 dismount finished), then
-   `walker_status ... actor0=22528`, and the host mounted with E. On the guest:
-   ride kind stays 0, `partner_mount=hide; mount=walker; act=123|125; kind=0`, and **no body 1 in
-   `walker-riding` / `walker-drive`**. This is the FRAME that may flip the default later.
-5. **Part 5 (baseline, host off):** what the host draws for the guest's D-Walker ride today. First the host
-   switches its own buddy back to D-Horse (`walker_status ... localMounted=0`, `horse_spawn`, `horse_status`).
-   Otherwise RIDE_BODY (world=3 in the worker) would pull the host's own idle walker 22528 along the guest's
-   ridden walker under body 1 (section 2), and the baseline would not show a viewer without a walker, as in Part 4.
-   Expected: body 1 on foot at the cockpit position, falling, or recon placements, with no walker under it. Note
-   any `partner_ride=hide; reason=air`, `partner_recon=place` or runaway lines.
+3. **Part 3 (both D-Horse, RIDE_BODY):** since the section 2 fix, the guest's own horse must stay where CallBuddy
+   put it (`horse-viewer-own-spawned`, the `horse-viewer-own` / `horse-viewer-own-ride` bursts and
+   `horse-viewer-own-after` from the same spot; `horse-viewer-own-host` beside the host shows no guest horse), the
+   host's first E must mount its own horse (`host require localMounted=1`), and each copy logs
+   `world_lua=event=ride_body;action=refuse;reason=not_mirror;id=6656;kind=1` once.
+4. **Part 4 (baseline, host off):** what the host draws for the guest's D-Walker ride today. The host keeps its
+   D-Horse from Parts 2-3, so it has no walker of its own (and RIDE_BODY would no longer move one). Expected: body 1
+   on foot at the cockpit position, falling, or recon placements, with no walker under it. Note any
+   `partner_ride=hide; reason=air`, `partner_recon=place` or runaway lines.
+5. **Part 5 (probes, lab only):** for each probe, `code_match` and `played_ms`, and the frame. Does a rider pose
+   appear on body 1, and does it float?
 6. **Every part:** no `partner_status=local` with `ON_HORSE` / `ON_VEHICLE` on the copy that did not mount, and no
    `crash_probe=av` other than the known teardown `rva=0x21e72`.
 
@@ -306,7 +314,8 @@ a frame proves it.
 
 Research build, gun stage, lab seed; every run Closed, BaselineRestored, RealSavesUnchanged, no visible fallback,
 no `crash_probe=av`, no fault or uncertain line; the guest's own act stayed 1 and its `partner_status=local` stayed
-`st=0x0` in every capture.
+`st=0x0` in every capture. Part numbers in this table are the earlier order (1 probes, 2 horse, 3 both D-Horse, 4
+D-Walker, 5 baseline); section 8 has the current one.
 
 | Run | Mode | What it showed |
 | --- | --- | --- |
@@ -316,7 +325,8 @@ no `crash_probe=av`, no fault or uncertain line; the guest's own act stayed 1 an
 | `fbde3dcc` | play rehearsal, `-WanSim bad` (rtt ~180 ms, 1-2 % loss), key not named (the then-tested play default) | Horse part as in `bfd6fcc4` (frames, play HUD visible). Part 3's last E press mounted the host's horse (its first E found none), so `host require localMounted=0` stopped the run before the D-Walker part: **the D-Walker is unproven in play**, so play stays off. |
 
 Defaults after the runs: hide with the native gun profile in lab; play forces off. Suggested next step for play: run
-the D-Walker part before Part 3 (or drop Part 3's second E press) and repeat the play rehearsal.
+the D-Walker part before Part 3 (or drop Part 3's second E press) and repeat the play rehearsal. The scenario now
+does both (section 8, 2026-10-22); the play rehearsal itself has not been repeated.
 
 After these runs (user decision 2026-10-22) RIDE_BODY no longer moves the viewer's own horse or walker (section 2),
 so the Part 3 behaviour above (the viewer's horse in the air, the partner's first E finding no horse) should be gone;

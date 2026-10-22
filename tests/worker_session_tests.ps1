@@ -550,6 +550,50 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         try { & $validator } catch { $failed=$true }
         Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
     }
+    # F5 (docs/mounts.md section 8): partner-mount.txt is play-rehearsal friendly. The D-Walker part runs before every
+    # horse part; a horse dismount E follows "host require localMounted=1" (the play rehearsal fbde3dcc stopped after a
+    # second E mounted the host's horse); the lab-only overlay probes sit in the marked Part 5; and the play copy the
+    # header describes (the mount / overlay labsetting lines and Part 5 removed) validates in play mode.
+    & {
+        $mountPath=Join-Path $RepoRoot 'tools\worker\scenarios\partner-mount.txt'
+        Assert-True (Test-Path -LiteralPath $mountPath -PathType Leaf) 'shipped F5 scenario partner-mount.txt'
+        $mountText=[IO.File]::ReadAllText($mountPath)
+        $mountLines=@([IO.File]::ReadAllLines($mountPath)|ForEach-Object{$_.Trim()})
+        $p5=@(for($i=0;$i -lt $mountLines.Count;$i++){if($mountLines[$i].StartsWith('# --- Part 5 (lab only)')){$i}})
+        $p5end=@(for($i=0;$i -lt $mountLines.Count;$i++){if($mountLines[$i].StartsWith('# --- end of Part 5')){$i}})
+        Assert-True ($p5.Count -eq 1 -and $p5end.Count -eq 1 -and $p5end[0] -gt $p5[0]) 'partner-mount marks its lab-only Part 5'
+        $playLines=@(for($i=0;$i -lt $mountLines.Count;$i++){if($i -lt $p5[0] -or $i -gt $p5end[0]){$mountLines[$i]}})
+        $playLines=@($playLines|Where-Object{$_ -cnotmatch '^labsetting\s+(?:(?:host|guest)\s+)?partner_native_(?:mount|overlay)='})
+        Assert-True (@($playLines|Where-Object{$_ -cmatch 'partner_native_(mount|overlay)=' -and !$_.StartsWith('#')}).Count -eq 0) 'partner-mount play copy names no mount / overlay key'
+        $steps=@($playLines|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $Mode='play'
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('partner-mount play copy steps valid in play mode '+$failure)
+        Assert-True (@($steps|Where-Object{$_ -cmatch 'overlay_state'}).Count -eq 0) 'partner-mount keeps every overlay probe in Part 5'
+        $walker=[array]::IndexOf($steps,'host run walker_spawn')
+        $horse=[array]::IndexOf($steps,'host run horse_spawn')
+        $guestHorse=[array]::IndexOf($steps,'guest run horse_spawn')
+        $guestWalker=[array]::IndexOf($steps,'guest run walker_spawn')
+        Assert-True ($walker -ge 0 -and $horse -gt $walker -and $guestHorse -gt $horse -and $guestWalker -gt $guestHorse) 'partner-mount runs the D-Walker part before the horse parts'
+        $hostE=@(for($i=$horse;$i -lt $guestWalker;$i++){if($steps[$i] -ceq 'host press e 150'){$i}})
+        Assert-True ($hostE.Count -eq 4) 'partner-mount: two host horse rides, a mount and a dismount E each'
+        for($k=1;$k -lt $hostE.Count;$k+=2){
+            $between=@($steps[($hostE[$k-1]+1)..($hostE[$k]-1)])
+            Assert-True ($between -ccontains 'host require localMounted=1') ('partner-mount: horse dismount E '+$k+' only after host require localMounted=1')
+        }
+        $between=@($steps[($hostE[1]+1)..($hostE[2]-1)])
+        Assert-True ($between -ccontains 'host require localMounted=0') 'partner-mount: the second horse mount E only after the first dismount finished'
+        foreach($needle in @('-Mode play -WanSim bad','--- end of Part 5','partner_mount=configured; mode=hide',
+            'event=ride_body;action=refuse;reason=not_mirror;id=6656')){
+            Assert-True ($mountText.Contains($needle)) ('partner-mount header covers: '+$needle)
+        }
+        $steps=@($mountLines|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $Mode='lab'
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure -and @($steps|Where-Object{$_ -cmatch '^guest run overlay_state '}).Count -eq 3) ('partner-mount keeps its lab coverage (three probes) '+$failure)
+    }
     # WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): partner-c4-v2.txt names the mirror key with the WS4 v1 C4 key and
     # the census, places C4 at several spots and detonates, framing body 1 from the side before every phase.
     & {

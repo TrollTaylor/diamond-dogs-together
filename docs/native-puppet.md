@@ -751,7 +751,7 @@ a D-Walker rider: act 125 (`RideWalkerGearActionImpl::StateDrive`) sets no
 `ON_*` status Lua binds, so the sender reports kind 0 (foot), and the viewer
 keeps body 1 as an on-foot puppet whose remote position is the cockpit and
 whose remote act (125) is no locomotion act: in the baseline frames (key off,
-partner-mount.txt part 5) body 1 walks on foot along the walker's path with no
+partner-mount.txt's baseline part) body 1 walks on foot along the walker's path with no
 walker under it. The horse get-on / get-off act 122 is reported as foot too.
 
 Key `partner_native_mount=off|hide` (**default hide with the native gun profile in lab; play forces it off**, a
@@ -782,7 +782,10 @@ Hidden runs (`tools/worker/scenarios/partner-mount.txt`, research build, gun sta
 no partner body on the guest's screen while the host rode the D-Walker (two vantages) or the D-Horse, the body back
 at the dismount spot, the guest's own act and status unchanged; the lab default follows it. `fbde3dcc` (play
 rehearsal, `-WanSim bad`, key not named): the horse part passed the same way, but the run stopped before the
-D-Walker part (Part 3 left the host mounted), so play stays off.
+D-Walker part (Part 3 left the host mounted), so play stays off. Since 2026-10-22 the scenario runs the D-Walker
+part first and presses a horse dismount E only after `host require localMounted=1`; its header says how to make the
+play copy (docs/mounts.md section 8). The same day RIDE_BODY stopped moving the viewer's own D-Horse / D-Walker
+(docs/mounts.md section 2): the "Part 3" stop above came from it pulling the host's horse away.
 
 ## Rates
 
