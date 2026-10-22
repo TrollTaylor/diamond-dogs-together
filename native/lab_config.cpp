@@ -212,11 +212,17 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     return true;
 }
 // WS3 vehicles (docs/vehicle-ws3.md): the ride census, seat by id and tilt
-// keys (booleans, lab only: ResolveWeaponDefaults turns them off in play).
+// keys (booleans, lab only: ResolveWeaponDefaults turns them off in play), and
+// the F1 board key partner_ride_board=off|block|passenger (lab only, default off).
 bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
+    else if (Equals(key, "partner_ride_board")) {
+        // F1 vehicles: the board block / passenger hook (lab only, default off); a named value records _given.
+        ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
+        if (ok) result.partner_ride_board_given = true;
+    }
     else return false;
     return true;
 }
@@ -1406,6 +1412,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Traversal replay: off unless named (no hidden-worker FRAME of body 1 on a
     // ladder yet); play forces it off below.
     if (!c.partner_native_traverse_given) c.partner_native_traverse = false;
+    // F1 vehicles: the board hook is off unless named (no hidden-worker FRAME of the
+    // block or the back seat yet); play forces it off below.
+    if (!c.partner_ride_board_given) c.partner_ride_board = PartnerRideBoard::off;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1433,6 +1442,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_place_mirror = false;
         // Traversal replay stays lab-only (the ACTION tap on body 1 is unproven).
         c.partner_native_traverse = false;
+        // F1 vehicles: the board block / passenger hook stays lab-only (no FRAME yet).
+        c.partner_ride_board = PartnerRideBoard::off;
     }
 }
 
@@ -1516,6 +1527,20 @@ bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSe
     const Slice s{text, size};
     if (Equals(s, "direct")) out = PartnerRideSeatEnter::direct;
     else if (Equals(s, "getin")) out = PartnerRideSeatEnter::getin;
+    else return false;
+    return true;
+}
+
+const char* PartnerRideBoardName(PartnerRideBoard value) noexcept {
+    return value == PartnerRideBoard::block ? "block" : value == PartnerRideBoard::passenger ? "passenger" : "off";
+}
+
+bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerRideBoard::off;
+    else if (Equals(s, "block")) out = PartnerRideBoard::block;
+    else if (Equals(s, "passenger")) out = PartnerRideBoard::passenger;
     else return false;
     return true;
 }

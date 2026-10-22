@@ -736,6 +736,23 @@ do
     c.status = {[STATUS.ON_VEHICLE] = true}; update(env)
     check(fields(lastTick(c))[12] == 'ride=2' and #fields(lastTick(c)) == 12, 'missing helpers keep the plain ride suffix')
 end
+-- F1 vehicles (docs/native-puppet.md "Vehicle boarding"): a stock back-seat passenger (act 0x6E) has no
+-- ON_VEHICLE (UpdatePlayerInfo sets it only for the driver's act 0x6F), so Lua reports it on foot and never
+-- reads its riders, even with vars.playerVehicleGameObjectId naming the vehicle. The native passenger report
+-- (partner_board) replaces this foot report in the ride sender.
+do
+    local env, c = fixture(); call(env, 'OnMissionGameStart')
+    env.vars.playerVehicleGameObjectId = 25603
+    local riderReads = 0
+    env.GameObject.SendCommand = function(id, command)
+        if command.id == 'GetRiderId' then riderReads = riderReads + 1; return {65535, 65535, 0, 65535} end
+        c.warps[#c.warps + 1] = {id = id, command = command}
+    end
+    c.status = {}
+    update(env)
+    check(fields(lastTick(c))[12] == 'ride=0' and #fields(lastTick(c)) == 12 and riderReads == 0,
+        'a passenger without ON_VEHICLE reports foot (no veh=, no seat=, no rider read): ' .. lastTick(c))
+end
 -- DM_PLAY | SET_PARTS: parts first, then dmplay with the trailing gani.
 c.reply = {144, 1, 0, 0, 0, 0, 1, 0, 6, 27, 116, 0, 0, 1}
 mark = #c.calls

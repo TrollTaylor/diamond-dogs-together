@@ -228,4 +228,29 @@ do
     fakeRiding = false
     W.receipt = nil
 end
+-- F1 vehicles (docs/native-puppet.md "Vehicle boarding"): a stock back-seat passenger (act 0x6E) has no
+-- ON_VEHICLE, so R.localVehicle() is nil even with vars.playerVehicleGameObjectId naming the vehicle: the
+-- passenger never streams that vehicle and keeps placing the driver's track on its copy (the stock passenger
+-- phase attaches the viewer to that copy every frame).
+do
+    W.paired = true
+    R.fast.tracks = {}
+    R.fast.send.id = nil
+    env.PlayerInfo = {OrCheckStatus = function() return false end}
+    env.PlayerStatus = {ON_VEHICLE = 1}
+    env.vars = {playerVehicleGameObjectId = 4000}
+    clock = clock + 5000
+    local t0 = 200000
+    W.handlers[44]({t0, 3, 4000, 0, 0, 0, 0})
+    for i = 1, 6 do
+        clock = clock + 50
+        W.handlers[44]({t0 + i * 50, 3, 4000, i * 1000, 0, 0, 0})
+    end
+    sent = {}
+    local before = #placed
+    W.tick()
+    check(R.localVehicle() == nil and R.fast.localId == nil, 'a passenger without ON_VEHICLE has no local vehicle')
+    check(#placed == before + 1 and placed[#placed].id == 4000, 'the passenger keeps placing the driver track on its copy')
+    check(#sent == 0, 'the passenger streams nothing for that vehicle')
+end
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

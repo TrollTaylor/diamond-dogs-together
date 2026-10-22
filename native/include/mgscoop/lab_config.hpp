@@ -210,6 +210,13 @@ inline constexpr PartnerNativeRide kPartnerNativeRideDriven = PartnerNativeRide:
 // advances to it with RequestToGoNextDirectMotion, falling back to stop).
 enum class PartnerRideSeatEnter : std::uint8_t { direct, getin };
 enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
+// F1 vehicles (docs/native-puppet.md "Vehicle boarding"; partner_board): what the
+// viewer's own ride action does at a vehicle the partner drives. off: stock (the
+// viewer can become a second driver of that copy); block: no ride icon and no
+// second driver; passenger: the free back seats of a light vehicle (the stock
+// passenger phase), trucks and the rest block. Default off in lab and play until
+// hidden-worker FRAMEs; play forces it off.
+enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
 // Round-1 actions track (docs/anim-round1-actions.md "DM overlay"): the
 // DirectMotion overlay lever for graph-0 action states on body 1: off (the
 // default), debug (only the debug commands overlay_state / overlay_stop) or
@@ -540,6 +547,10 @@ struct LabConfig {
     bool partner_ride_census = false;
     bool partner_ride_seat_id = true;
     bool partner_ride_tilt = true;
+    // F1 vehicles (partner_board, see PartnerRideBoard): default off in lab and
+    // play; a named value records _given; play forces it off.
+    PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
+    bool partner_ride_board_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
@@ -659,6 +670,7 @@ const char* PartnerNativeReloadRateName(PartnerNativeReloadRate value) noexcept;
 const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
 const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
 const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
+const char* PartnerRideBoardName(PartnerRideBoard value) noexcept;
 const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // The effective travel lock (P2-11): the lab.ini travel_lock when given,
@@ -723,6 +735,7 @@ bool ParsePartnerNativeReloadRate(const char* text, std::size_t size, PartnerNat
 bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
 bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
 bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
+bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard& out) noexcept;
 bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.

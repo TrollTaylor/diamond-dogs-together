@@ -663,6 +663,8 @@ struct Session {
     int stance = 0, move = 0;
     std::vector<int> played;
     unsigned both_dm_ops = 0;
+    // F1 vehicles: an optional local ride suffix (" ride=2 veh=.. seat=..") every tick carries.
+    std::string ride_suffix;
 
     explicit Session(std::uint32_t stage, mgscoop::PartnerApply apply = mgscoop::PartnerApply::warp,
                      mgscoop::PartnerSource source = mgscoop::PartnerSource::fixed,
@@ -680,7 +682,8 @@ struct Session {
     // One frame: advances the clock, returns whether the tick was replied.
     bool Tick(int luaflags, std::uint64_t step_ms = 33, bool terminating = false) {
         now += step_ms;
-        const std::string source = TickSource(++frame, luaflags, 1000, 2000, 3000, 4500, 0, stance, move);
+        const std::string source = TickSource(++frame, luaflags, 1000, 2000, 3000, 4500, 0, stance, move) +
+                                   (ride_suffix.empty() ? std::string() : " 0 0" + ride_suffix);
         reply = partner::Reply{};
         const bool replied = pd::Tick(driver, hooks, lab, source.data(), source.size(), pd::Clock{now, now + 5000}, terminating, reply);
         if (replied && (reply.op & op::dm_play)) played.push_back(reply.gani);
@@ -5591,6 +5594,328 @@ void TestRideExtAndCensus() {
     Check(ktick(" ride=2 veh=25600 seat=0", 1100) && k.fake.Containing("partner_ride_census;") == lines, "never in play");
 }
 
+// --- F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board hook's driver side
+// (install, policy, counters, the local passenger report, the surprise latch) and the
+// receiver's seat gates (the viewer's own vehicle, shared_seat, the far latch).
+struct BoardFake {
+    unsigned installs = 0;
+    const char* install_result = nullptr;
+    bool live = true;
+    std::vector<std::uint64_t> published;
+    mgscoop::partner_board::Stats stats{};
+    mgscoop::partner_board::LocalPassenger lp{};
+    unsigned lp_reads = 0;
+};
+BoardFake g_board;
+const char* HookBoardInstall(void*) noexcept { ++g_board.installs; return g_board.install_result; }
+bool HookBoardLive(void*) noexcept { return g_board.live; }
+void HookBoardPublish(void*, std::uint64_t word) noexcept { g_board.published.push_back(word); }
+void HookBoardStats(void*, mgscoop::partner_board::Stats& out) noexcept { out = g_board.stats; }
+bool HookLocalPassenger(void*, const pp::State&, mgscoop::partner_board::LocalPassenger& out) noexcept {
+    ++g_board.lp_reads;
+    out = g_board.lp;
+    return true;
+}
+void AddBoardHooks(pd::Hooks& h) {
+    g_board = BoardFake{};
+    h.board_install = HookBoardInstall;
+    h.board_live = HookBoardLive;
+    h.board_publish = HookBoardPublish;
+    h.board_stats = HookBoardStats;
+    h.local_passenger = HookLocalPassenger;
+}
+void BoardSetup(Session& s, mgscoop::PartnerRideBoard mode) {
+    AddNativeHooks(s.hooks);
+    s.hooks.send_reliable_append = HookSendReliable;
+    AddBoardHooks(s.hooks);
+    s.driver.settings.ride_board = mode;
+}
+mgscoop::partner_board::LocalPassenger BoardPassenger(std::uint16_t vehicle, std::uint8_t seat) {
+    mgscoop::partner_board::LocalPassenger lp{};
+    lp.valid = true; lp.vehicle = vehicle; lp.seat = seat; lp.via = 1; lp.reason = "ok";
+    return lp;
+}
+std::uint64_t BoardLast() { return g_board.published.empty() ? 0 : g_board.published.back(); }
+void BoardRide(Session& s, std::uint16_t& rev, mgscoop::partner_ride_wire::Kind kind, std::uint8_t seat, std::uint16_t vehicle) {
+    namespace rw = mgscoop::partner_ride_wire;
+    rw::Packet p{kind, ++rev, static_cast<std::uint32_t>(s.now)};
+    p.seat = seat; p.vehicle = vehicle;
+    std::uint8_t bytes[rw::kSize]{};
+    Check(rw::Encode(p, bytes), "board ride encodes");
+    s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+}
+mgscoop::partner_ride_wire::Packet BoardSent(const Session& s) {
+    namespace rw = mgscoop::partner_ride_wire;
+    rw::Packet out{};
+    for (const auto& item : s.fake.reliable_sent)
+        if (rw::IsRide(item.data(), item.size())) rw::Decode(item.data(), item.size(), out);
+    return out;
+}
+
+void TestBoardDriver() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    {
+        // Key off (the default): nothing installed, read, published or logged.
+        Session s(0);
+        Check(s.driver.settings.ride_board == PartnerRideBoard::off, "the driver's default: board off");
+        BoardSetup(s, PartnerRideBoard::off);
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        s.ride_suffix = " ride=0";
+        for (int i = 0; i < 5; ++i) Check(s.Tick(0), "off ticks");
+        Check(g_board.installs == 0 && g_board.lp_reads == 0 && s.fake.Containing("partner_ride=board") == 0 &&
+                  s.fake.Containing("partner_ride=local_passenger") == 0 && BoardLast() == 0,
+              "key off: no install, no report, no policy, no line");
+    }
+    {
+        // Block: one install per process, the policy for the peer's live vehicle ride, the counters
+        // (mission-relative, at most once a second per site), a lost patch latches uncertain.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0) && g_board.installs == 1 &&
+                  s.fake.Containing("partner_ride=board_install; mode=block; result=ok; reason=none") == 1,
+              "installed on the first tick");
+        Check(s.fake.Containing("partner_ride=board_policy; vehicle=65535; seat=255; mode=off; uncertain=none") == 1 && BoardLast() == 0,
+              "no ride: no policy");
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        Check(s.Tick(0) && g_board.installs == 1, "installed once");
+        const pb::Policy p = pb::Unpack(BoardLast());
+        Check(p.mode == pb::Mode::block && p.vehicle == 25603 && p.peer_seat == 0 &&
+                  p.until_ms == static_cast<std::uint32_t>(s.driver.ride_rx.received_ms + pb::kLeaseMs),
+              "block policy for the peer's vehicle, the lease from its arrival");
+        Check(s.fake.Containing("partner_ride=board_policy; vehicle=25603; seat=0; mode=block; uncertain=none") == 1, "the policy line");
+        Check(g_board.lp_reads == 0 && BoardSent(s).kind == rw::Kind::foot, "block: no passenger report, Lua's foot goes out");
+        g_board.stats.block[0] = 5; g_board.stats.last_vehicle = 25603; g_board.stats.last_reason = "block";
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery; n=5; mode=block; reason=block;") == 1,
+              "the pre-query block line");
+        g_board.stats.block[0] = 9;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery;") == 1, "rate limited");
+        Check(s.Tick(0, 1000) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery; n=9;") == 1,
+              "the next second logs the total");
+        g_board.stats.block[1] = 1;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=phase1; n=1;") == 1, "the phase-1 backstop line");
+        BoardRide(s, rev, rw::Kind::foot, 0xFF, 0xFFFF);
+        Check(s.Tick(0) && BoardLast() == 0 && s.fake.Containing("partner_ride=board_policy; vehicle=65535; seat=255; mode=off;") == 2,
+              "the peer on foot: withdrawn");
+        // A new mission keeps the process install; the counters restart there.
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(BoardLast() == 0 && pd::Cfg(s.driver, s.hooks, nullptr, s.now), "mission start withdraws");
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        Check(s.Tick(0) && g_board.installs == 1 && pb::Unpack(BoardLast()).mode == pb::Mode::block, "no second install; the policy again");
+        g_board.stats.block[0] = 12;
+        Check(s.Tick(0, 1000) && s.fake.Containing("partner_ride=board_block; vehicle=25603; site=prequery; n=3;") == 1, "mission-relative count");
+        g_board.live = false;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_refused; reason=patch_lost") == 1 &&
+                  s.fake.Containing("partner_ride=board_uncertain; reason=patch_lost;") == 1 && BoardLast() == 0,
+              "a lost patch: refused, uncertain, withdrawn");
+        g_board.live = true;
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).mode == pb::Mode::block, "live again: block");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(BoardLast() == 0, "mission end withdraws");
+    }
+    {
+        // A refused install never publishes; it is tried once.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        g_board.install_result = "bytes";
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0) && s.Tick(0) && g_board.installs == 1 &&
+                  s.fake.Containing("partner_ride=board_install; mode=block; result=refused; reason=bytes") == 1 && BoardLast() == 0,
+              "a refused install never publishes");
+    }
+    {
+        // Passenger: the native report replaces Lua's foot report in the ride sender; local_vehicle
+        // keeps meaning the vehicle the viewer drives.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0) && BoardSent(s).kind == rw::Kind::foot, "on foot");
+        g_board.lp = BoardPassenger(25603, 2);
+        Check(s.Tick(0), "passenger tick");
+        const rw::Packet sent = BoardSent(s);
+        Check(sent.kind == rw::Kind::vehicle && sent.seat == 2 && sent.vehicle == 25603 && sent.version == 2,
+              "the ride goes out as kind=vehicle, seat 2 of 25603");
+        Check(pd::LocalVehicle(s.driver) == 0xFFFF && s.driver.local_passenger.valid, "local_vehicle stays the driven vehicle (none)");
+        Check(s.fake.Containing("partner_ride=local_passenger; vehicle=25603; seat=2; state=on; via=p120") == 1, "the report line");
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=local_passenger;") == 1, "logged on change only");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && BoardSent(s).kind == rw::Kind::foot &&
+                  s.fake.Containing("partner_ride=local_passenger; vehicle=25603; seat=2; state=off; reason=act") == 1,
+              "getting off: Lua's foot again");
+    }
+    {
+        // A steered phase-1 back seat is confirmed by the report; one never seen latches uncertain and
+        // passenger publishes block for the rest of the mission; the ride lease ends the policy.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.ride_suffix = " ride=0";
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).mode == pb::Mode::passenger, "the passenger policy");
+        g_board.stats.steer[1] = 1; g_board.stats.last_seat[1] = 3; g_board.stats.last_vehicle = 25603;
+        g_board.stats.last_type = 1; g_board.stats.last_count = 4;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_passenger; vehicle=25603; seat=3; site=phase1; n=1; type=1; seats=4") == 1,
+              "the steer line");
+        g_board.lp = BoardPassenger(25603, 3);
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_seated; vehicle=25603; seat=3;") == 1 &&
+                  s.fake.Containing("board_uncertain") == 0, "confirmed by the report");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.stats.steer[1] = 2; g_board.stats.last_seat[1] = 2;
+        Check(s.Tick(0) && s.Tick(0, 2000) && s.fake.Containing("board_uncertain") == 0, "inside the confirmation window");
+        Check(s.Tick(0, 1100) && s.fake.Containing("partner_ride=board_uncertain; reason=steer_unconfirmed;") == 1, "never seen: uncertain");
+        Check(pb::Unpack(BoardLast()).mode == pb::Mode::block &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25603; seat=0; mode=block; uncertain=steer_unconfirmed") == 1,
+              "passenger degrades to block for the mission");
+        Check(s.Tick(0, 5100) && BoardLast() == 0, "the ride lease ended: withdrawn");
+    }
+    {
+        // The viewer drives the vehicle the peer drives (two drivers), and a hook fault: uncertain.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25603);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "policy");
+        s.ride_suffix = " ride=2 veh=25603 seat=0";
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_uncertain; reason=two_drivers; vehicle=25603; local_vehicle=25603;") == 1,
+              "two drivers: uncertain");
+        Session f(0);
+        BoardSetup(f, PartnerRideBoard::block);
+        f.ride_suffix = " ride=0";
+        Check(f.Tick(0), "first");
+        g_board.stats.faults = 1;
+        Check(f.Tick(0) && f.fake.Containing("partner_ride=board_uncertain; reason=fault;") == 1, "a hook fault: uncertain");
+    }
+    {
+        // The counter lines have their own cap: a long stand at the peer's vehicle (a new pre-query
+        // count every second) never silences the latch lines.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "first");
+        g_board.stats.last_vehicle = 25603; g_board.stats.last_reason = "block";
+        for (unsigned i = 1; i <= pd::kBoardLogCap + 10; ++i) {
+            g_board.stats.block[0] = i;
+            s.Tick(0, 1000);
+        }
+        Check(s.fake.Containing("partner_ride=board_block;") == pd::kBoardLogCap &&
+                  s.fake.Containing("partner_ride=capped; limit=200; kind=board_count") == 1 &&
+                  s.fake.Containing("kind=board\r\n") == 0,
+              "the counter lines stop at their own cap");
+        g_board.live = false;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_refused; reason=patch_lost") == 1 &&
+                  s.fake.Containing("partner_ride=board_uncertain; reason=patch_lost;") == 1,
+              "the latch lines still log after the counter cap");
+    }
+}
+
+void TestBoardSeatGates() {
+    namespace rw = mgscoop::partner_ride_wire;
+    using mgscoop::PartnerRideBoard;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full, kBackLeftLoop = 0xc40b38a1a985ull;
+    const auto byid = [](SeatSession& s, PartnerRideBoard mode) {
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = mode;
+    };
+    const auto mb = [&](PartnerRideBoard mode, std::uint8_t seat, SeatSession& s) {
+        byid(s, mode);
+        s.Show();
+        s.ride_suffix = " ride=2 veh=25603 seat=0";  // the viewer drives the jeep
+        s.Ride(rw::Kind::vehicle, seat, 25603);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, seat, 1, 900));
+        s.fake.sample.act = 110;
+    };
+    {
+        // Mother Base by id: the peer in a back seat of the jeep the viewer drives is offered (passenger mode),
+        // seated, and the far latch is skipped while the viewer's real jeep outruns the peer's stream.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(PartnerRideBoard::passenger, 2, s);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 2 && s.reply.seat_vehicle == 25603 &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=2; offer=1; reason=none;") == 1,
+              "passenger: the peer's back seat in the viewer's own jeep is offered by id");
+        s.Playing(kBackLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed && s.fake.seat_targets.size() == 1, "targeted and confirmed in seat 2");
+        s.fake.body_pos[0] = 9.0f;
+        Check(s.Step() && s.Step(600) && s.Step(600) && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.fake.Containing("partner_ride=seat_far") == 0,
+              "no far latch for the viewer's own vehicle");
+    }
+    {
+        // Without the key: today's local_vehicle refusal; in passenger mode the front seats stay refused.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(PartnerRideBoard::off, 2, s);
+        Check(s.Step() && !(s.reply.op & op::ride_seat) &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=2; offer=0; reason=local_vehicle;") == 1,
+              "key off: refused (local_vehicle)");
+        SeatSession f(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(PartnerRideBoard::passenger, 1, f);
+        Check(f.Step() && !(f.reply.op & op::ride_seat) &&
+                  f.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=1; offer=0; reason=local_vehicle;") == 1,
+              "seat 1 of the viewer's own vehicle stays refused");
+    }
+    {
+        // shared_seat: the peer reports the viewer's own back seat (a named vehicle, 30010): refused before
+        // anything is armed, latched; the other back seat plays.
+        SeatSession s;
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = PartnerRideBoard::passenger;
+        g_board.lp = BoardPassenger(25608, 2);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 2, 25608);
+        s.fake.sample.act = 110;
+        Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 &&
+                  s.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=2; name=-; state=-; reason=shared_seat; manual=0") == 1,
+              "shared_seat refused at the start");
+        Check(s.Step() && s.driver.mission.seat.blocked, "latched");
+        SeatSession o;
+        AddBoardHooks(o.hooks);
+        o.driver.settings.ride_board = PartnerRideBoard::passenger;
+        g_board.lp = BoardPassenger(25608, 2);
+        o.Show();
+        o.Ride(rw::Kind::vehicle, 3, 25608);
+        o.fake.sample.act = 110;
+        Check(o.Step() && (o.reply.op & op::ride_seat) && o.reply.seat == 3 && o.fake.Containing("reason=shared_seat") == 0,
+              "the other back seat is seated");
+    }
+    {
+        // The viewer rides the peer-driven copy as a passenger: no far latch; block mode keeps it.
+        SeatSession s;
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = PartnerRideBoard::passenger;
+        g_board.lp = BoardPassenger(25608, 2);
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(s.Step(), "play");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed, "confirmed");
+        s.fake.body_pos[0] = 9.0f;
+        Check(s.Step() && s.Step(600) && s.Step(600) && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.fake.Containing("partner_ride=seat_far") == 0,
+              "passenger in that copy: no far latch");
+        SeatSession k;
+        AddBoardHooks(k.hooks);
+        k.driver.settings.ride_board = PartnerRideBoard::block;
+        k.Show();
+        k.Ride(rw::Kind::vehicle, 0, 25608);
+        Check(k.Step(), "play");
+        k.Playing(kFrontLeftLoop);
+        Check(k.Step() && k.driver.mission.seat.confirmed, "confirmed");
+        k.fake.body_pos[0] = 9.0f;
+        Check(k.Step() && k.Step(600) && k.Step(600) && k.fake.Containing("partner_ride=seat_far; vehicle=25608; seat=0;") == 1, "block mode keeps the far latch");
+    }
+}
+
 void TestRideSeat() {
     namespace rw = mgscoop::partner_ride_wire;
     constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full, kBackLeftLoop = 0xc40b38a1a985ull;
@@ -6345,6 +6670,8 @@ int main() {
     TestRideSeat();
     TestRideSeatById();
     TestRideExtAndCensus();
+    TestBoardDriver();
+    TestBoardSeatGates();
     TestHiddenLocalSender();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();

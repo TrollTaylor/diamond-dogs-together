@@ -2374,6 +2374,182 @@ void TickRideCensus(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     if (remote) one("remote", d.ride_rx.packet.vehicle);
 }
 
+// F1 vehicles (partner_ride_board; docs/native-puppet.md "Vehicle boarding").
+partner_board::Mode BoardMode(PartnerRideBoard value) noexcept {
+    return value == PartnerRideBoard::block ? partner_board::Mode::block
+         : value == PartnerRideBoard::passenger ? partner_board::Mode::passenger : partner_board::Mode::off;
+}
+// One board line under `cap` (kBoardLogCap per mission; `kind` names the family
+// in the capped line): Board::count_cap for the periodic counter lines,
+// Board::cap for the rest, so the counters never crowd out a latch line.
+void EmitBoardV(LogCap& cap, const char* kind, const Hooks& h, const char* format, va_list arguments) noexcept {
+    if (cap.lines >= kBoardLogCap) {
+        if (!cap.capped) {
+            cap.capped = true;
+            EmitFormat(h, "partner_ride=capped; limit=%u; kind=%s\r\n", kBoardLogCap, kind);
+        }
+        return;
+    }
+    char line[512]{};
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
+}
+void EmitBoard(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitBoardV(m.board.cap, "board", h, format, arguments);
+    va_end(arguments);
+}
+void EmitBoardCount(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitBoardV(m.board.count_cap, "board_count", h, format, arguments);
+    va_end(arguments);
+}
+void BoardPublish(Driver& d, const Hooks& h, std::uint64_t word) noexcept {
+    if (d.mission.board.policy == word) return;
+    d.mission.board.policy = word;
+    if (h.board_publish) h.board_publish(h.context, word);
+}
+// Mission boundaries and stop: the wrappers see no policy, the report restarts.
+void BoardWithdraw(Driver& d, const Hooks& h) noexcept {
+    if (h.board_publish) h.board_publish(h.context, 0);
+    d.mission.board.policy = 0;
+    d.local_passenger = partner_board::LocalPassenger{};
+}
+const char* BoardSiteName(unsigned site) noexcept { return site ? "phase1" : "prequery"; }
+
+// One step per tick, before the ride sender: the lazy install (once per process,
+// after the code gate), the local passenger report (passenger mode; it replaces
+// Lua's foot report in the tick the ride sender sees), the patch-live check, the
+// counters (logged here, never from the hook), the mission-scoped surprise latch
+// and the policy word for the peer's live ride. Key off: nothing at all.
+void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating, partner::Tick& ride) noexcept {
+    namespace pb = partner_board;
+    namespace rw = partner_ride_wire;
+    Mission& m = d.mission;
+    auto& b = m.board;
+    const pb::Mode mode = BoardMode(d.settings.ride_board);
+    if (mode == pb::Mode::off) return;
+    if (terminating) {
+        BoardPublish(d, h, 0);
+        return;
+    }
+    if (!d.board_install_tried) {
+        d.board_install_tried = true;
+        const char* why = !h.board_install || !h.board_live || !h.board_publish || !h.board_stats ? "unavailable" : h.board_install(h.context);
+        d.board_installed = why == nullptr;
+        d.board_refusal = why;
+        EmitFormat(h, "partner_ride=board_install; mode=%s; result=%s; reason=%s\r\n", pb::ModeName(mode), why ? "refused" : "ok",
+                   why ? why : "none");
+    }
+    // The local passenger report (passenger mode only: stock code never seats a player in 2/3).
+    pb::LocalPassenger lp{};
+    if (mode == pb::Mode::passenger && h.local_passenger && !h.local_passenger(h.context, st, lp)) lp = pb::LocalPassenger{};
+    if (!pb::SameReport(lp, d.local_passenger)) {
+        if (lp.valid)
+            EmitBoard(m, h, "partner_ride=local_passenger; vehicle=%u; seat=%u; state=on; via=%s\r\n", unsigned(lp.vehicle), unsigned(lp.seat),
+                      lp.via == 1 ? "p120" : "qe0");
+        else
+            EmitBoard(m, h, "partner_ride=local_passenger; vehicle=%u; seat=%u; state=off; reason=%s\r\n", unsigned(d.local_passenger.vehicle),
+                      unsigned(d.local_passenger.seat), lp.reason ? lp.reason : "-");
+    }
+    d.local_passenger = lp;
+    if (lp.valid) {
+        ride.has_ride = true;
+        ride.ride_kind = static_cast<std::uint8_t>(rw::Kind::vehicle);
+        ride.has_vehicle = true;
+        ride.vehicle = lp.vehicle;
+        ride.seat = lp.seat;
+    }
+    if (!d.board_installed) return;
+    const bool live = h.board_live(h.context);
+    if (!live && !b.live_refused) {
+        b.live_refused = true;
+        EmitBoard(m, h, "partner_ride=board_refused; reason=patch_lost\r\n");
+    }
+    pb::Stats stats{};
+    h.board_stats(h.context, stats);
+    if (!b.seen_have) {
+        // Process-lifetime counters: this mission counts from here.
+        b.seen_have = true;
+        b.seen = stats;
+        b.steer_count = stats.steer[1];
+    }
+    const std::uint32_t new_faults = stats.faults - b.seen.faults;
+    for (unsigned site = 0; site < 2; ++site) {
+        const std::uint32_t blocks = stats.block[site] - b.seen.block[site];
+        const std::uint32_t steers = stats.steer[site] - b.seen.steer[site];
+        if (blocks != b.logged_block[site] && (!b.block_log_ms[site] || now - b.block_log_ms[site] >= kBoardLogMs)) {
+            b.logged_block[site] = blocks;
+            b.block_log_ms[site] = now ? now : 1;
+            EmitBoardCount(m, h, "partner_ride=board_block; vehicle=%u; site=%s; n=%u; mode=%s; reason=%s; type=%u; seats=%u\r\n",
+                           unsigned(stats.last_vehicle), BoardSiteName(site), blocks, pb::ModeName(mode),
+                           stats.last_reason ? stats.last_reason : "-", unsigned(stats.last_type), unsigned(stats.last_count));
+        }
+        if (steers != b.logged_steer[site] && (!b.steer_log_ms[site] || now - b.steer_log_ms[site] >= kBoardLogMs)) {
+            b.logged_steer[site] = steers;
+            b.steer_log_ms[site] = now ? now : 1;
+            EmitBoardCount(m, h, "partner_ride=board_passenger; vehicle=%u; seat=%u; site=%s; n=%u; type=%u; seats=%u\r\n",
+                           unsigned(stats.last_vehicle), unsigned(stats.last_seat[site]), BoardSiteName(site), steers,
+                           unsigned(stats.last_type), unsigned(stats.last_count));
+        }
+    }
+    // A phase-1 back seat must show up as the local passenger (kSteerConfirmMs).
+    if (stats.steer[1] != b.steer_count) {
+        b.steer_count = stats.steer[1];
+        b.steer_pending = true;
+        b.steer_seat = stats.last_seat[1];
+        b.steer_vehicle = stats.last_vehicle;
+        b.steer_ms = now;
+    }
+    if (b.steer_pending && lp.valid && lp.seat == b.steer_seat && lp.vehicle == b.steer_vehicle) {
+        b.steer_pending = false;
+        EmitBoard(m, h, "partner_ride=board_seated; vehicle=%u; seat=%u; ms=%u\r\n", unsigned(lp.vehicle), unsigned(lp.seat),
+                  Clamp32(now - b.steer_ms));
+    }
+    const pb::Policy published = pb::Unpack(b.policy);
+    pb::SurpriseIn si{};
+    si.installed = d.board_installed;
+    si.live = live;
+    si.new_faults = new_faults - b.faults_seen;
+    si.peer_driver = b.policy != 0 && published.peer_seat == 0;
+    si.policy_vehicle = published.vehicle;
+    si.local_vehicle = d.local_vehicle;
+    si.steer_pending = b.steer_pending;
+    si.steer_seat = b.steer_seat;
+    si.steer_ms = b.steer_ms;
+    si.now_ms = now;
+    si.lp = lp;
+    b.faults_seen = new_faults;
+    if (const char* why = pb::SurpriseReason(si)) {
+        if (!b.uncertain) {
+            b.uncertain = why;
+            EmitBoard(m, h, "partner_ride=board_uncertain; reason=%s; vehicle=%u; local_vehicle=%u; passenger=%u,%u; mode=%s\r\n", why,
+                      unsigned(published.vehicle), unsigned(d.local_vehicle), unsigned(lp.vehicle), unsigned(lp.seat), pb::ModeName(mode));
+        }
+        if (b.steer_pending && (std::strcmp(why, "steer_unconfirmed") == 0 || std::strcmp(why, "seat_mismatch") == 0)) b.steer_pending = false;
+    }
+    // The policy for the peer's live ride (same link epoch, inside the lease).
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    pb::PublishIn in{};
+    in.mode = mode;
+    in.uncertain = b.uncertain != nullptr;
+    in.ride_live = live && epoch && d.ride_rx.have && d.ride_rx.epoch == epoch && rw::Live(d.ride_rx, epoch, now);
+    in.vehicle_kind = d.ride_rx.packet.kind == rw::Kind::vehicle;
+    in.seat = d.ride_rx.packet.seat;
+    in.vehicle = d.ride_rx.packet.vehicle;
+    in.received_ms = d.ride_rx.received_ms;
+    const pb::Policy p = pb::PolicyFor(in);
+    BoardPublish(d, h, p.mode == pb::Mode::off ? 0 : pb::Pack(p));
+    if (!b.policy_logged || p.mode != b.logged.mode || p.vehicle != b.logged.vehicle || p.peer_seat != b.logged.peer_seat) {
+        b.policy_logged = true;
+        b.logged = p;
+        EmitBoard(m, h, "partner_ride=board_policy; vehicle=%u; seat=%u; mode=%s; uncertain=%s\r\n", unsigned(p.vehicle), unsigned(p.peer_seat),
+                  pb::ModeName(p.mode), b.uncertain ? b.uncertain : "none");
+    }
+}
+
 // The loadout sender (docs/native-puppet.md "Loadout mirroring"): this copy's
 // manifest (pure reads, at most once per kEquipReadMs), a new revision on
 // change, resent after a new link session. Driver-level: it outlives missions
@@ -4790,6 +4966,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_id = lab.partner_ride_seat_id;
     d.settings.ride_tilt = lab.partner_ride_tilt;
     d.local_vehicle = partner_ride_wire::kVehicleUnknown;
+    // F1 vehicles: the board hook (lab only, default off; ResolveWeaponDefaults forces it off in play).
+    d.settings.ride_board = lab.mode == LabMode::play ? PartnerRideBoard::off : lab.partner_ride_board;
+    d.local_passenger = partner_board::LocalPassenger{};
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
     d.settings.nplaced = lab.partner_native_placed;
@@ -4851,6 +5030,8 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_start");
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
+    // F1 vehicles: no board policy outlives a mission (the lease would end it anyway).
+    BoardWithdraw(d, h);
     d.mission = Mission{};
     // Weapons4: the writer's body lease starts a generation; body 1's gun mode is unread.
     d.mission.realize_gen = 1;
@@ -4913,6 +5094,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_end");
+    BoardWithdraw(d, h);
     d.mission.seat.armed = false;
     d.mission.seat.phase = SeatPhase::idle;
     d.mission.ride_seated = false;
@@ -4976,6 +5158,7 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
+    BoardWithdraw(d, h);
     m.seat.armed = false;
     m.seat.phase = SeatPhase::idle;
     m.ride_seated = false;
@@ -5293,11 +5476,16 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // configured ones unless it is entering or active).
     const Settings set_effective = EffectiveSettings(d.settings, m.native_out.active);
     const Settings& set = set_effective;
-    SendRide(d, h, tick, now);
-    // WS3 vehicles: the local vehicle (the tick's veh=), the ride addendum and the census.
+    // WS3 vehicles: the local vehicle (the tick's veh=: the vehicle the viewer DRIVES, Lua's
+    // ON_VEHICLE), the ride addendum and the census.
     d.local_vehicle = tick.has_ride && tick.ride_kind == static_cast<std::uint8_t>(partner_ride_wire::Kind::vehicle) && tick.has_vehicle &&
                               tick.vehicle != partner_ride_wire::kVehicleUnknown
                           ? tick.vehicle : partner_ride_wire::kVehicleUnknown;
+    // F1 vehicles (partner_ride_board): the board hook and the local passenger report, which
+    // replaces Lua's foot report (act 0x6E has no ON_VEHICLE) in the tick the ride sender sees.
+    partner::Tick ride_tick = tick;
+    TickBoard(d, h, st, now, terminating, ride_tick);
+    SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
     TickRideCensus(d, h, now);
     // Local animation fields and looks (sender side; anim=mirror source).

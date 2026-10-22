@@ -290,7 +290,12 @@ const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept 
     if (!rw::ExtLive(d.ride_ext, epoch, now)) return "no_ext";
     s.remote_category = rw::RemoteCategory(d.ride_ext, d.ride_rx.packet, epoch, now);
     if (s.remote_category == rw::kCategoryUnknown) return "remote_category";
-    if (s.vehicle == d.local_vehicle) return "local_vehicle";
+    // F1 vehicles (partner_ride_board=passenger): the peer in a back seat of the vehicle the
+    // viewer drives is seated there (never rider[]); any other seat of it stays refused.
+    if (s.vehicle == d.local_vehicle && !partner_board::LocalVehicleSeatAllowed(BoardMode(d.settings.ride_board), s.seat))
+        return "local_vehicle";
+    // The viewer's own back seat (Lua's shared_seat guard needs ON_VEHICLE and cannot see a passenger).
+    if (partner_board::SharedWithLocal(d.local_passenger, s.vehicle, s.seat)) return "shared_seat";
     partner_vehicle::Read r{};
     h.vehicle_read(h.context, s.vehicle, r);
     if (r.refusal || r.unit.id != s.vehicle) return "local_read";
@@ -377,6 +382,9 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         // only refuse it (no_name), so it is refused here, before the release
         // or the arm touches anything (latched: it hides until the ride changes).
         if (!SeatMission(m.mission_code) && !s.byid) SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
+        // F1 vehicles: the remote in the viewer's own back seat (a named vehicle never reaches
+        // SeatByIdGate): refused before anything is armed (latched, it hides).
+        else if (partner_board::SharedWithLocal(d.local_passenger, s.vehicle, s.seat)) SeatRefuse(m, h, "shared_seat", now);
     }
     out.own = true;
     m.ride_seated = true;
@@ -550,7 +558,11 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         if (s.confirmed && in.pose_valid && h.read_body && h.read_body(h.context, st, body_pos, body_quat)) {
             err_mm = partner::DistanceMm(in.pose.x_mm, in.pose.y_mm, in.pose.z_mm, MetresToMm(body_pos[0]), MetresToMm(body_pos[1]),
                                          MetresToMm(body_pos[2]));
-            if (!s.manual && err_mm > kSeatFarMm) {
+            // F1 vehicles (passenger mode): no far latch for the vehicle the viewer occupies (it
+            // drives it, or rides that copy as a passenger): the peer's stream lags the real vehicle.
+            const bool far_exempt =
+                partner_board::FarExempt(BoardMode(d.settings.ride_board), s.vehicle, d.local_vehicle, d.local_passenger);
+            if (!s.manual && !far_exempt && err_mm > kSeatFarMm) {
                 if (!s.far_since_ms) s.far_since_ms = now ? now : 1;
                 if (now - s.far_since_ms >= kSeatFarMs) {
                     EmitCapped(m.ride_vis_cap, h, "partner_ride", "partner_ride=seat_far; vehicle=%u; seat=%u; err_mm=%u; ms=%u\r\n",

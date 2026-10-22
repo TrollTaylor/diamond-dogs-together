@@ -697,6 +697,13 @@ try {
     $placedOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_placed_census=1', 'host:partner_placed_census=0') -Role host
     Assert-Equal $placedOverride['partner_placed_census'] '0' 'placed census role override'
     Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_placed_census')) 'native gun JSON never auto-emits the placed census'
+    # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board key, off|block|passenger, written only when named.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_ride_board -Value block)/$(ConvertTo-LabPartnerValue -Key partner_ride_board -Value passenger)/$(ConvertTo-LabPartnerValue -Key partner_ride_board -Value off)" 'block/passenger/off' 'board key values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_ride_board -Value on } 'off|block|passenger' 'board key invalid value refused'
+    Assert-Equal (ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ ride_board = 'passenger' }))['partner_ride_board'] 'passenger' 'board key short JSON name'
+    $boardOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_ride_board=block', 'guest:partner_ride_board=passenger') -Role guest
+    Assert-Equal $boardOverride['partner_ride_board'] 'passenger' 'board key role override'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_ride_board')) 'native gun JSON never auto-emits the board key'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
