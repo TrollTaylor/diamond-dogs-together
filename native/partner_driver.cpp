@@ -5447,7 +5447,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.traverse = lab.partner_native_traverse;
     d.settings.cbox = lab.partner_native_cbox;
     d.settings.ngesture = lab.partner_native_gesture;
-    // Mount riders (docs/mounts.md): lab only (lab_config forces it off in play).
+    // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
     d.settings.nmount = lab.partner_native_mount;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
     // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).

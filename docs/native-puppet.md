@@ -905,7 +905,7 @@ whose remote act (125) is no locomotion act: in the baseline frames (key off,
 partner-mount.txt's baseline part) body 1 walks on foot along the walker's path with no
 walker under it. The horse get-on / get-off act 122 is reported as foot too.
 
-Key `partner_native_mount=off|hide` (**default hide with the native gun profile in lab; play forces it off**, a
+Key `partner_native_mount=off|hide` (**default hide with the native gun profile in lab and play**, a
 named value records `partner_native_mount_given`, a named off opts out): with `hide` the viewer also hides body 1
 while the remote's act is a mount act (121, 122 horse; 123..126 D-Walker), like the heli acts 97..108
 (`partner_mount_policy.hpp`, `partner_ride_wire::Observe`). It acts only where `partner_native_ride` hides (not off).
@@ -933,10 +933,16 @@ Hidden runs (`tools/worker/scenarios/partner-mount.txt`, research build, gun sta
 no partner body on the guest's screen while the host rode the D-Walker (two vantages) or the D-Horse, the body back
 at the dismount spot, the guest's own act and status unchanged; the lab default follows it. `fbde3dcc` (play
 rehearsal, `-WanSim bad`, key not named): the horse part passed the same way, but the run stopped before the
-D-Walker part (Part 3 left the host mounted), so play stays off. Since 2026-10-22 the scenario runs the D-Walker
-part first and presses a horse dismount E only after `host require localMounted=1`; its header says how to make the
-play copy (docs/mounts.md section 8). The same day RIDE_BODY stopped moving the viewer's own D-Horse / D-Walker
-(docs/mounts.md section 2): the "Part 3" stop above came from it pulling the host's horse away.
+D-Walker part (Part 3 left the host mounted). Since 2026-10-22 the scenario runs the D-Walker part first and
+presses a horse dismount E only after `host require localMounted=1`; its header says how to make the play copy
+(docs/mounts.md section 8). The same day RIDE_BODY stopped moving the viewer's own D-Horse / D-Walker (docs/mounts.md
+section 2): the "Part 3" stop above came from it pulling the host's horse away. On that build: `2ab88411` (lab, the
+reordered scenario) repeats the `bfd6fcc4` hide frames, and in Part 3 the viewer's own idle D-Horse stays where it
+stood while the host's first E mounts the host's own horse (each copy logs one `ride_body; action=refuse;
+reason=not_mirror` line per mount id). `5a044a4d` (play rehearsal, `-WanSim bad`, rtt ~180 ms, key not named on
+either copy): both copies log `partner_mount=configured; mode=hide`; no partner body while the host rides the D-Walker
+(two vantages) or the D-Horse, nor on the host's screen while the guest rides its D-Walker (Part 4); the body back
+after each dismount; Part 3 as in the lab. **Play now defaults hide too.**
 
 ## Rates
 
@@ -1951,7 +1957,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
-| `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab (hidden run bfd6fcc4), off otherwise; play forces off) |
+| `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and

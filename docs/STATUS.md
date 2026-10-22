@@ -1,4 +1,4 @@
-## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board as back-seat passenger with its camera, F2's box, F3's traversal icon and F4's gestures on, F5's mount hide on in lab only, the rest lab-only and off)
+## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board as back-seat passenger with its camera, F2's box, F3's traversal icon, F4's gestures and F5's mount hide on, the rest lab-only and off)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
@@ -14,10 +14,10 @@ hidden runs `495e7c3a` lab and `de949f80` play; its block half after `0348c4d8` 
 lab and `71e19d1e` play; see F2), **F3's traversal icon** (default on with the native gun profile in lab and play by
 the user's decision of 2026-10-22, after the step-on FRAMES of hidden run `104e9a47`; since then the step-on play
 rehearsal `04d3511f` and the Mother Base ladder `8f27806d` lab / `2596f6ae` play; pipe and wall climb are unproven;
-see F3) **and F4's gestures** (default on with the native gun profile in lab and
-play after hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4). **F5's mount hide** is on with the
-native gun profile in lab only (hidden run `bfd6fcc4`; its play rehearsal `fbde3dcc` covered the horse only, so play
-forces it off; see F5). Each key records a `_given` flag and play forces the rest off.
+see F3), **F4's gestures** (default on with the native gun profile in lab and
+play after hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4) **and F5's mount hide** (default
+hide with the native gun profile in lab and play after hidden runs `bfd6fcc4` / `2ab88411` lab and the play rehearsal
+`5a044a4d`, D-Walker and D-Horse in FRAMES; see F5). Each key records a `_given` flag and play forces the rest off.
 
 | Feature | Branch | Lab key (default) | Status |
 | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
 | F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (1 with the gun profile, lab and play; existing key, now the icon path) | step-on proven (frames `104e9a47` lab, `04d3511f` play bad WAN); ladder proven at Mother Base (frames `8f27806d` lab, `2596f6ae` play bad WAN, both directions); climb / pipe unproven (no spot found); default on by user decision 2026-10-22; open: the viewer's HUD shows the stock "C + ladder" hint while body 1 is on a ladder (cosmetic) |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (1 with the gun profile, lab and play) | pickup proven (frames `0e343f72` lab, `75a7e7dc` play bad WAN), default on; hand signs / knock unproven (no lab spot) |
-| F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (hide with the gun profile in lab; play off) | hide proven after an unrealize fix (frames `bfd6fcc4` lab: no partner body while it rides D-Walker or D-Horse); play rehearsal `fbde3dcc` horse only, so play stays off; no mount drawn; RIDE_BODY no longer moves the viewer's own horse / walker (user decision 2026-10-22; no run yet) |
+| F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (hide with the gun profile, lab and play) | hide proven after an unrealize fix (frames `bfd6fcc4` / `2ab88411` lab, `5a044a4d` play bad WAN, D-Walker both directions and D-Horse: no partner body while it rides), default hide in play since `5a044a4d`; no mount drawn; RIDE_BODY no longer moves the viewer's own horse / walker (user decision 2026-10-22; frames `2ab88411` lab, `5a044a4d` play: the viewer's idle horse stays put, the partner mounts its own horse on the first E) |
 
 - Contract after the merges: 733 code sites / 185 vtable slots (0.13.4: 677 / 149; F1 +19 / +3, F2 +10 / +6, F3 +14 /
   +20, F4 +13 / +7, F5 none); equip writer pins 118 SHA-256 gates (0.13.4: 113; F2 adds five). The per-feature
@@ -368,7 +368,7 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
     keeps it as an on-foot puppet.
   - The 0.13.4 line "horse and D-Walker riders stay hidden" holds only for the horse.
 - **New key `partner_native_mount=off|hide`** (`_given` flag; since the runtime below: hide with the native gun
-  profile in lab, off otherwise, play forces off).
+  profile in lab and play, off otherwise; a named off opts out).
   - With `hide`, the viewer also hides body 1 while the remote's act is 121..126.
   - Lines: `partner_mount=configured|hide|end`.
   - The key is wired into the three `-LabSetting` regex copies and help, `LabCommon`, `worker_session_tests`,
@@ -419,10 +419,8 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
   - `fbde3dcc` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 1-2 % loss; the scenario without the key and
     without the lab-only Part 1, against a build that defaulted hide in play too): the horse part passed as in
     `bfd6fcc4` (frames with the play HUD). Part 3's last E press mounted the host's horse (its first E had found
-    none), so `host require localMounted=0` stopped the run before the D-Walker part. **The D-Walker is unproven in
-    play, so play keeps forcing the key off** (`lab_config_tests`, `friend_package_tests`: Play-Coop native off|0, a
-    named hide in play off|1). Next: run the D-Walker part before Part 3 (or drop Part 3's second E) and repeat it.
-    The scenario now does both (2026-10-22 reorder below); the rehearsal has not been repeated.
+    none), so `host require localMounted=0` stopped the run before the D-Walker part. The D-Walker was unproven in
+    play, so play kept forcing the key off until `5a044a4d` (below).
   - Part 1 probes (`251abcef`, `bfd6fcc4`): `stateRideOnIdle` / `stateGallop` drop body 1 into a seated / hunched
     rider pose at ground level with nothing under it (`code_match=0` although the pose changes);
     `stateRideWalkerWalk` shows the standing pose. Not a display; the rider stays hidden.
@@ -434,7 +432,7 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
   same way). **Decided 2026-10-22: turn it off** (the RIDE_BODY fix below). (2) The other ride hides (the horse
   kind-3 hide without the key; heli and vehicle fallbacks use the same bit clear, not filmed) still leave a standing
   body at the get-on spot; extending the unrealize to them needs its own frames.
-- **RIDE_BODY fix (after the runtime, user decision 2026-10-22; no game run).** `lua/coop/world_ride_pose.lua` no
+- **RIDE_BODY fix (after the runtime, user decision 2026-10-22).** `lua/coop/world_ride_pose.lua` no
   longer applies a partner's horse or walker pose to any body that is not a registered mirror of the partner's mount
   (`R.mirrors`; none is registered in 0.13.5, and index 0, `6656` / `22528`, the copy's own declared buddy, can never
   be one). `R.decide` / `R.admit` refuse with `reason=not_mirror` (also for a vehicle-flagged horse / walker id), and
@@ -443,18 +441,47 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
   `RIDE_TILT`, the seats) and the rider hide are unchanged. `world_ride_pose_lua_check` pins it (every horse / walker
   id refused through `decide`, `admit`, `move`, `place` and the op-42 handler; no `SetCallHorse` / `SetPosition` for
   15 partner poses; a registered index-1 mirror is the only horse moved; a vehicle's final pose still places it).
-  **Not yet confirmed in a hidden run** (`partner-mount.txt` Part 3: the guest's own horse should stay put and the
-  host's first E should mount its horse).
-- **Scenario reorder for a play rehearsal (2026-10-22; no game run).** `partner-mount.txt` now runs Part 1 D-Walker
+  **Confirmed in hidden runs `2ab88411` (lab) and `5a044a4d` (play)**, see "Runtime after the RIDE_BODY fix" below.
+- **Scenario reorder for a play rehearsal (2026-10-22; run in `2ab88411` / `5a044a4d`).** `partner-mount.txt` now runs Part 1 D-Walker
   (host rides, guest hide; two vantages), Part 2 D-Horse (host rides, guest hide), Part 3 both D-Horse (RIDE_BODY),
   Part 4 the reverse D-Walker baseline, and the lab-only overlay probes last in a marked Part 5. A horse dismount E
   follows `host require localMounted=1` (Parts 2 and 3) and the second horse mount follows `host require
   localMounted=0`, so no E press can mount the host's horse by mistake (what stopped `fbde3dcc`), and the D-Walker
   evidence comes before any horse part. One buddy switch fewer (the host keeps its D-Horse for Part 4). The header
   says how to run it in play (drop the mount / overlay `labsetting` lines and Part 5, then `-Mode play -WanSim bad`;
-  on 0.13.5 play forces the mount key off, so rehearsing a play hide default needs a build that admits it).
+  since `5a044a4d` both copies then run the play default, hide, and Part 4 is the reverse hide).
   `worker_session_tests` validates that play copy in play mode and pins the order, the dismount guard, the Part 5
   markers and the lab coverage (three probes).
+- **Runtime after the RIDE_BODY fix (2026-10-22, `wp/integ9` `4f9396e` plus the play default change below; research
+  build, gun stage, lab seed; both runs Closed, BaselineRestored, RealSavesUnchanged, `visible_fallback=false`, every
+  require and expect passed; no `crash_probe=av`, `viewer_changed`, `uncertain=1`, latch or fault line; the guest's
+  own `partner_status=local` stayed `st=0x0`, and the host's changed only for its own two horse rides):**
+  - `2ab88411` lab, `partner-mount.txt` as shipped (guest named hide, host named off). Parts 1-2 repeat `bfd6fcc4`:
+    two walker episodes (acts 123 and 125) and two horse episodes (121) on the guest, each `hide`, `unrealize`,
+    `allactive_cleared`, then `end`, `allactive_set`, `partner_realized=1`. FRAMES: the host standing in
+    `walker-before` / `walker2-before` / `horse-before`, no partner body in the mounting, riding, drive and turn
+    frames (two D-Walker vantages and the D-Horse), back in `walker-off` / `walker2-off` / `horse-off`. **Part 3
+    (RIDE_BODY off):** the guest's own idle D-Horse stands on the ground beside the guest in every frame from
+    `horse-viewer-own-spawned` through the `horse-viewer-own` / `-ride` bursts to `horse-viewer-own-after`, and
+    `horse-viewer-own-host` shows it standing at a distance, no horse in the air; **the host's first E mounted its
+    own horse** (`host require localMounted=1`, `arrival=mounted`; host frame `horse-viewer-own-after` riding).
+    Each copy logged one `world_lua=event=ride_body; action=refuse; reason=not_mirror` line per mount id (6656 kind 1,
+    22528 kind 2). Part 4 baseline as before (body 1 on foot along the guest's walker path).
+  - `5a044a4d` play rehearsal (`-Mode play -WanSim bad`, rtt 175-187 ms, loss 0-4 %; the header's play copy, no key
+    named on either copy) on a build whose play default is hide: both copies logged `partner_mount=configured;
+    mode=hide`. The guest's two walker and two horse episodes and the host's walker episode (Part 4, the guest
+    rides) logged the same lines as the lab. FRAMES (play HUD): no partner body on the guest's screen while the host
+    rides the D-Walker (two vantages) or the D-Horse, none on the host's screen while the guest rides its D-Walker
+    (`base-walker-riding` / `-drive`), the body back after every dismount; Part 3 as in the lab. After each hidden
+    episode the native drive left to clips for a moment (`partner_native_net; ... reason=net_quality`, the ride is a
+    sample gap) and re-entered, as in `fbde3dcc`.
+  - **Play default flipped** (`ResolveWeaponDefaults` no longer forces the key off in play): with the native gun
+    profile `partner_native_mount` resolves to hide in lab and play, off without it; a named off opts out.
+    `lab_config_tests` (hide in both modes, named hide runs in both) and `friend_package_tests` (Play-Coop native
+    `hide|0`, a named off in play `off|1`) pin it. Run directories are archived under
+    `C:\Users\taylo\mgs-coop-run-archive\integ9\` (D: is nearly full).
+  - Still open: a drawn mount (mounts.md section 7); the other ride hides (the horse kind-3 hide without the key,
+    heli, vehicle fallback) still only clear the bits.
 
 ### Final regression
 

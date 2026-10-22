@@ -12,10 +12,9 @@
 #      play default), the "labsetting partner_native_overlay=debug" line, and Part 5 (from its "--- Part 5" marker
 #      line through the "--- end of Part 5" line). Nothing else is lab-only.
 #   2. pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath <copy> -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -Mode play -WanSim bad
-#   On the 0.13.5 build play forces partner_native_mount off (no partner_mount=configured line; the D-Walker rider is
-#   drawn on foot), so such a run covers RIDE_BODY (Part 3), the horse kind-3 hide and the order only. A rehearsal of a
-#   play hide default needs a build whose ResolveWeaponDefaults admits hide in play (as fbde3dcc's build did): both
-#   copies must then log partner_mount=configured; mode=hide with the key not named, and Part 1's frames decide.
+#   Since 5a044a4d play defaults partner_native_mount to hide with the gun profile: both copies log
+#   partner_mount=configured; mode=hide with the key not named, Part 1's and Part 2's frames show the hides, and Part 4
+#   is the reverse hide (the host runs the play default too) instead of the baseline.
 # Lab saves deploy D-Dog: horse_spawn / walker_spawn switch the local buddy with the stock CallBuddy. walker_spawn
 # refuses while the local player rides (player_mounted); after a ride the scenario requires localMounted=0 before the
 # rider's next buddy switch. The viewer is placed beside / behind the rider and turns its camera ("mouse") so its own
@@ -32,7 +31,15 @@
 #   lab-only parts removed): the horse part passed the same way; the both-D-Horse part's last E press mounted the
 #   host's horse (its first E found no horse: RIDE_BODY had moved it), so "host require localMounted=0" stopped the
 #   run before the D-Walker part. RIDE_BODY no longer moves a viewer's own horse or walker (user decision 2026-10-22,
-#   docs/mounts.md section 2); this order has not been run yet.
+#   docs/mounts.md section 2).
+# Results in this order (wp/integ9 4f9396e plus the play hide default; every require passed):
+#   2ab88411 (lab, this file): Parts 1 and 2 as bfd6fcc4 (no partner body while the host rode the D-Walker, two
+#   vantages, or the D-Horse; back after each dismount). Part 3: the guest's own idle horse stood beside the guest in
+#   every horse-viewer-own* frame and on the ground in horse-viewer-own-host; the host's first E mounted its own horse
+#   (localMounted=1, arrival=mounted); one ride_body refuse line per mount id on each copy. Part 4: the baseline.
+#   5a044a4d (the play copy, -Mode play -WanSim bad, rtt ~180 ms, no key named): both copies logged
+#   partner_mount=configured; mode=hide; the D-Walker (two vantages) and the D-Horse hidden on the guest's screen, the
+#   guest's D-Walker hidden on the host's screen (Part 4), each body back after the dismount; Part 3 as in the lab.
 #
 # Part 1, the host rides D-Walker, the guest watches (hide). Neither copy has a horse yet:
 #   guest: partner_mount=configured; mode=hide; ride=seat; acts=121..126 (once per mission, at its start)
@@ -52,7 +59,7 @@
 #          partner_lua=event=allactive_set, partner_realized=1
 #   Frames horse-before (the host standing) / horse-riding / horse-ride burst (no partner body) / horse-off (back).
 #   host: horse_status localMounted=1 while riding (stock mount; required before the dismount E); horse-host-riding.
-# Part 3, both copies deploy D-Horse (RIDE_BODY, world op 42). Expected since the 2026-10-22 fix (not yet run):
+# Part 3, both copies deploy D-Horse (RIDE_BODY, world op 42). Expected since the 2026-10-22 fix (2ab88411, 5a044a4d):
 #   both: world_lua=event=ride_body;action=refuse;reason=not_mirror;id=6656;kind=1 (once per copy), and never a
 #         SetCallHorse on the viewer's own horse;
 #   host: the first E press mounts its own horse (horse_status localMounted=1 is required): its horse is no longer
@@ -66,7 +73,8 @@
 #   The host keeps its D-Horse from Parts 2/3, so it has no walker of its own (RIDE_BODY would no longer move one).
 #   host: no partner_mount line; partner_ride shows no hide for the walker acts (kind=0)
 #   Frames base-walker-riding / base-walker-drive burst: body 1 walks on foot along the walker's path with no walker
-#   under it (b264ad58, 251abcef, bfd6fcc4).
+#   under it (b264ad58, 251abcef, bfd6fcc4, 2ab88411). In the play copy the host runs the play default (hide): one
+#   partner_mount=hide; mount=walker episode on the host and no partner body in those frames (5a044a4d).
 # Part 5 (lab only), overlay probes (both on foot; the guest's body 1 is the host's puppet): do the rider states play
 # on body 1 without a mount? Logged per state S, guest script-observer.log:
 #   partner_overlay=play; state=S; ... gani=118|119|120; partner_overlay=playing; ...; body_act=139; q18=0x1,0x8b;
