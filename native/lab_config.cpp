@@ -265,6 +265,14 @@ bool ParseAnimWeaponsKey(Slice key, Slice value, LabConfig& result, bool& ok) no
     }
     return true;
 }
+// Horse / D-Walker riders (docs/mounts.md): partner_native_mount=off|hide, lab
+// only and default off; a named value records _given.
+bool ParseMountKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (!Equals(key, "partner_native_mount")) return false;
+    ok = ParsePartnerNativeMount(value.data, value.size, result.partner_native_mount);
+    if (ok) result.partner_native_mount_given = true;
+    return true;
+}
 } // namespace
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const LabParseOptions& options) noexcept {
     LabConfig result{};
@@ -288,7 +296,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         // the main chain is at MSVC's block nesting limit.
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
             ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
-            ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok)) {
+            ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok) ||
+            ParseMountKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -1406,6 +1415,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Traversal replay: off unless named (no hidden-worker FRAME of body 1 on a
     // ladder yet); play forces it off below.
     if (!c.partner_native_traverse_given) c.partner_native_traverse = false;
+    // Mount riders: off unless named (no hidden-worker FRAME of a hidden D-Walker
+    // rider yet); play forces it off below.
+    if (!c.partner_native_mount_given) c.partner_native_mount = PartnerNativeMount::off;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1433,6 +1445,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_place_mirror = false;
         // Traversal replay stays lab-only (the ACTION tap on body 1 is unproven).
         c.partner_native_traverse = false;
+        // Mount riders stay lab-only (the act hide is unproven in a FRAME).
+        c.partner_native_mount = PartnerNativeMount::off;
     }
 }
 
@@ -1503,6 +1517,19 @@ bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRid
     if (Equals(s, "off")) out = PartnerNativeRide::off;
     else if (Equals(s, "hide")) out = PartnerNativeRide::hide;
     else if (Equals(s, "seat")) out = PartnerNativeRide::seat;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeMountName(PartnerNativeMount value) noexcept {
+    return value == PartnerNativeMount::hide ? "hide" : "off";
+}
+
+bool ParsePartnerNativeMount(const char* text, std::size_t size, PartnerNativeMount& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeMount::off;
+    else if (Equals(s, "hide")) out = PartnerNativeMount::hide;
     else return false;
     return true;
 }

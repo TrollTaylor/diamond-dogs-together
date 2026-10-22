@@ -697,6 +697,13 @@ try {
     $placedOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_placed_census=1', 'host:partner_placed_census=0') -Role host
     Assert-Equal $placedOverride['partner_placed_census'] '0' 'placed census role override'
     Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_placed_census')) 'native gun JSON never auto-emits the placed census'
+    # Horse / D-Walker riders (docs/mounts.md): partner_native_mount=off|hide, written only when named.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_mount -Value hide)/$(ConvertTo-LabPartnerValue -Key partner_native_mount -Value off)" 'hide/off' 'mount hide enum values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_mount -Value seat } 'off|hide' 'mount hide invalid value refused'
+    $mountOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_mount=off', 'guest:partner_native_mount=hide') -Role guest
+    Assert-Equal $mountOverride['partner_native_mount'] 'hide' 'mount hide role override'
+    Assert-Equal (ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_mount = 'hide' }))['partner_native_mount'] 'hide' 'mount hide short JSON name'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_mount')) 'native gun JSON never auto-emits the mount hide'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'

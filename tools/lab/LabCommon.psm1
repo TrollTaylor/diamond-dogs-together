@@ -344,6 +344,9 @@ $script:LabPartnerKeys = @(
     # Traversal replay (docs/native-puppet.md "Traversal"): the ladder / pipe / step-on placement and ACTION overlay
     # tap on the partner body (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_traverse'; Json = 'native_traverse'; Kind = 'bool' },
+    # Horse / D-Walker riders (docs/mounts.md): hide the partner body while the remote's act is a mount act
+    # (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
+    @{ Key = 'partner_native_mount'; Json = 'native_mount'; Kind = 'enum'; Values = @('off', 'hide') },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

@@ -31,7 +31,7 @@ do
         "stateCBoxIdle", "stateCBoxMove", "stateEludeIdle", "stateClimbIdle", "stateClimbMoveFront", "stateClimbMoveBack",
         "stateClimbIdleR", "stateStandIdleLeft", "stateSquatIdleLeft", "stateCqcDeath", "statePutDown", "stateFultonStart",
         "stateLedgeDrop", "stateCrawlSupineIdle", GMP .. "snapdam/snapdam_s_fre.gani", GMP .. "snapdam/snapdam_p_die_idl.gani",
-        DMP .. "snapnon_s_fal_lp_l.gani"}
+        DMP .. "snapnon_s_fal_lp_l.gani", "stateRideOnIdle", "stateGallop", "stateRideWalkerWalk"}
     local function receipt(source)
         local chunk = loadstring(source)
         if type(chunk) ~= "function" then return nil end

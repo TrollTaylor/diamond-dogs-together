@@ -4,7 +4,7 @@ do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local get, call, number, fmt, floor = A.get, A.call, A.number, string.format, math.floor
   local P = {handles = {heal = true, godmode = true, fulton_infinite = true, forward = true, goto_partner = true,
-    goto_carry = true, goto_horse = true, goto_vehicle = true, slowmo = true, time_add = true,
+    goto_carry = true, goto_horse = true, goto_walker = true, goto_vehicle = true, slowmo = true, time_add = true,
     overlay_state = true, overlay_stop = true}}
   D.player = P
   local function fill()
@@ -140,6 +140,23 @@ do
       local x, z = t[1] + 1.6 * dx / len, t[3] + 1.6 * dz / len
       local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok2, fmt("%s;via=%s;horse=%.2f,%.2f,%.2f", msg, via, t[1], t[2], t[3])
+    elseif cmd == "goto_walker" and #a == 1 then
+      -- 2 m beside the local D-Walker (instance 0, 22528), facing it: stock
+      -- TppWalkerGear2 GetPosition only (docs/mounts.md lab levers).
+      local okp, pos = pcall(GameObject.SendCommand, 22528, {id = "GetPosition"})
+      local t
+      if okp and pos ~= nil and (type(pos) == "userdata" or type(pos) == "table") then
+        local r2, x, y, z = pcall(function() return pos:GetX(), pos:GetY(), pos:GetZ() end)
+        if r2 and A.finite(x) and A.finite(y) and A.finite(z) and (x ~= 0 or z ~= 0) then t = {x, y, z} end
+      end
+      if not t then return false, "walker_position_unknown" end
+      local me = A.pose()
+      local dx, dz = me[1] - t[1], me[3] - t[3]
+      local len = math.sqrt(dx * dx + dz * dz)
+      if len < 0.1 then dx, dz, len = 1, 0, 1 end
+      local x, z = t[1] + 2 * dx / len, t[3] + 2 * dz / len
+      local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
+      return ok2, fmt("%s;via=get_position;walker=%.2f,%.2f,%.2f", msg, t[1], t[2], t[3])
     elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie"))) then
       -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition);
       -- "sortie": the nearest deployed/sortie vehicle instead: an id in 25600..25607

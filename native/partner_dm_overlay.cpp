@@ -40,6 +40,16 @@ constexpr Entry kEntries[] = {
     {"snapdam_s_fre", MGS_SNAP "snapdam/snapdam_s_fre.gani", 0xfc53062c44565522ull, true, false},
     {"snapdam_p_die_idl", MGS_SNAP "snapdam/snapdam_p_die_idl.gani", 0xfc5046c89dad210cull, true, true},
     {"snapnon_s_fal_lp_l", MGS_SNAP "snapnon/snapnon_s_fal_lp_l.gani", 0xfc50fb7461e1772cull, true, true},
+    // Mount research probes (docs/mounts.md: does a rider state play on body 1
+    // without a mount?). Each StrCode64 is present once in the retail
+    // TppPlayer2_layers.mog node pool. stateRideOnIdle and stateGallop are the
+    // rider's graph-0 nodes (RideHorse plugin 0x141236940 plays them through
+    // 0x141230B30(ctl, idx, 0, node)); stateRideWalkerWalk has no code
+    // reference (the walker drive node 0x23B9A991BFB has no known name).
+    // No map entry uses them: debug overlay_state only.
+    {"stateRideOnIdle", "stateRideOnIdle", 0xf241f3bcf60bull, false, true},
+    {"stateGallop", "stateGallop", 0xce7e8409eb61ull, false, true},
+    {"stateRideWalkerWalk", "stateRideWalkerWalk", 0x1b8b642289d5ull, false, true},
 };
 #undef MGS_SNAP
 constexpr std::uint8_t kCount = static_cast<std::uint8_t>(sizeof(kEntries) / sizeof(kEntries[0]));

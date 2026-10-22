@@ -1202,6 +1202,54 @@ void TestRideVisibility() {
     Check(out.kind==rw::Kind::foot && out.revision==2,"foot packet has next nonzero revision");
 }
 
+// partner_native_mount=hide (docs/mounts.md): the sender reports a D-Walker rider on foot (no ON_* status
+// for act 125), so only the remote's act can hide it. Off keeps today's on-foot drawing.
+void TestMountVisibility() {
+    for (const bool on : {false, true}) {
+        Session s(3,mgscoop::PartnerApply::warp,mgscoop::PartnerSource::net,30050);
+        AddNativeHooks(s.hooks); s.driver.settings.nride=mgscoop::PartnerNativeRide::hide;
+        s.driver.settings.nmount=on ? mgscoop::PartnerNativeMount::hide : mgscoop::PartnerNativeMount::off;
+        auto& sample=s.fake.sample;
+        sample.valid=sample.time_valid=sample.anim_valid=true; sample.status=mgscoop::pose::Status::live;
+        sample.act=125; sample.x=1; sample.y=2; sample.z=3; sample.sender_ms=1000;
+        if (!on) {
+            Check(s.Tick(1) && !s.driver.mission.visibility.hidden && (s.reply.op & op::warp) && s.fake.Containing("partner_mount=")==0,
+                  "mount off: a D-Walker act without a ride kind is drawn like a foot sample (today)");
+            continue;
+        }
+        Check(s.Tick(1) && s.driver.mission.visibility.hidden && s.reply.op==0 && s.fake.Writes("slot")==0 &&
+                  s.fake.Containing("partner_mount=hide; mount=walker; act=125; kind=0; ride_live=0; episode=1")==1 &&
+                  s.fake.Containing("partner_ride=hide; reason=ride; act=125")==1,
+              "mount hide: the D-Walker act hides body 1 as a ride, one partner_mount line");
+        sample.sender_ms=1100; sample.act=126;
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=")==1,
+              "the same episode across walker acts logs nothing more");
+        sample.anim_valid=false; sample.sender_ms=1200;
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=")==1,
+              "a missing act sample neither shows the body nor ends the episode");
+        sample.anim_valid=true; sample.act=1; sample.sender_ms=2000;
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=end; mount=walker; act=1; ms=")==1,
+              "a valid foot act ends the episode; the body waits for the stable-foot proof");
+        for (unsigned i=1;i<=5;++i) { sample.sender_ms=2000+i*100; Check(s.Tick(1,100),"mount: stable foot samples"); }
+        Check(!s.driver.mission.visibility.hidden && s.fake.Writes("slot")==1 && s.fake.Containing("partner_mount=")==2,
+              "after 500 ms of calm foot samples body 1 is shown and placed again");
+        sample.act=121; sample.sender_ms=2700;
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=hide; mount=horse; act=121")==1 &&
+                  s.fake.Containing("episode=2")==1, "a horse act opens a second episode");
+    }
+    // The once-per-mission configured line: only with the key on, naming the ride mode it depends on.
+    {
+        Session s(3,mgscoop::PartnerApply::warp,mgscoop::PartnerSource::net,30050);
+        s.lab.partner_native_ride=mgscoop::PartnerNativeRide::hide;
+        pd::Configure(s.driver,s.lab); pd::MissionStart(s.driver,s.hooks,30050);
+        Check(s.fake.Containing("partner_mount=")==0,"mount off: no partner_mount=configured line");
+        s.lab.partner_native_mount=mgscoop::PartnerNativeMount::hide;
+        pd::Configure(s.driver,s.lab); pd::MissionStart(s.driver,s.hooks,30050);
+        Check(s.fake.Containing("partner_mount=configured; mode=hide; ride=hide; acts=121..126")==1,
+              "mount hide: one partner_mount=configured line per mission start");
+    }
+}
+
 void TestFreeRoamRange() {
     for (std::uint32_t mission : {30010u, 30020u}) {
         Session s(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net, mission);
@@ -6342,6 +6390,7 @@ int main() {
     TestForceExistsAndPolicy();
     TestFreeRoamRange();
     TestRideVisibility();
+    TestMountVisibility();
     TestRideSeat();
     TestRideSeatById();
     TestRideExtAndCensus();

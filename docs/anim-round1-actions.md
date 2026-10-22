@@ -116,7 +116,7 @@ Family names (action-anims.md section 3 with critic 3.6; `?` marks likely/specul
 | 24 | step_on | 91..96 | cqc_hold? |
 | 25 / 26 | fall / land | 97 / 98..108 | heli_board? / heli |
 | 27 | evade | 109 / 110 / 111 / 112 | vehicle_in / vehicle_dismount? / vehicle_seated / vehicle_out |
-| 28 | cliff_drop | 121 / 122 / 123..126 | vehicle_passenger? / horse? / walker? |
+| 28 | cliff_drop | 121 / 122 / 123 / 124 / 125 / 126 | horse_ride / horse_mount / walker_mount / walker? / walker_drive / walker_off |
 | 29 | hit? | 131 / 132 / 133 | sleep_onset / sleep / sleep_wake |
 | 0 | none | 139 / 142 | dm / dive_variant? |
 
@@ -124,7 +124,10 @@ Everything else prints `?`. 0.13.4 renamed 21-24, 28, 75/76 and 79..83 from the 
 `Q+0x18[id]` on 1.0.15.4 (owners named by Ghidra): 21 `LadderActionImpl`, 22 `PipeActionPluginImpl`, 23
 `ClimbActionPluginImpl` (wall / cliff free-climb), 24 `StepOnActionImpl` (low vault, onto a ledge, up out of a hang),
 28 `CliffActionImpl` (edge drop), 75/76 Cure, 79..83 `TrashBoxActionPluginImpl`. They were heli?, ladder_climb?,
-fall_entry?, hop?, knockdown? and stun?.
+fall_entry?, hop?, knockdown? and stun?. 0.13.5 (F5, docs/mounts.md) renamed the mount acts the same way: 121 the
+RideHorse ride state (PlayerInfo sets ON_HORSE only for it; it was vehicle_passenger?), 122 the RideHorse get-on /
+get-off / turn states (it was horse?), 123 / 125 / 126 the D-Walker get-on, `StateDrive` and leave states; 124 has
+no writer and keeps walker?.
 
 **Dropped pad presses.** Per second, the remote's presses (its input frames' edge sets, i.e. the
 sender's pad before this copy's mask; v1 frames: rising held bits) that body 1's window did not pass,
@@ -233,6 +236,9 @@ are `player2_resident.mtar` PathCode64 entries (motion-levers `verified-clips.ts
 | 19 | snapdam_s_fre (clip) | fc53062c44565522 | 0 | - |
 | 20 | snapdam_p_die_idl (clip) | fc5046c89dad210c | 1 | - |
 | 21 | snapnon_s_fal_lp_l (clip) | fc50fb7461e1772c | 1 | - |
+| 22 | stateRideOnIdle | f241f3bcf60b | 1 | - (mount research probe, docs/mounts.md) |
+| 23 | stateGallop | ce7e8409eb61 | 1 | - (mount research probe) |
+| 24 | stateRideWalkerWalk | 1b8b642289d5 | 1 | - (mount research probe; no code reference, graph unverified) |
 
 The damage direction is not on the wire, so the map plays Front for every hit; the other directions
 are for the debug command. `vy` is the remote's vertical speed (EMA of the sampled y). The

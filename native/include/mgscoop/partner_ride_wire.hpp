@@ -55,6 +55,9 @@ struct Visibility {
     bool hidden{}, air{}, dead_retry{}, dead_locked{}, have_sample{}, stable{};
     // seat mode: the remote rides a usable seat of a vehicle (drawn seated, not hidden).
     bool seated{};
+    // partner_native_mount=hide: this observation hid by the remote's horse /
+    // D-Walker act (partner_mount_policy), whatever the ride kind says.
+    bool mount{};
     // The air candidate has held since air_since_ms (air_pending).
     bool air_pending{};
     std::uint64_t air_since_ms{};
@@ -73,6 +76,9 @@ struct In {
     // the live ride's seat and vehicle (kSeatUnknown / kVehicleUnknown otherwise).
     bool seat_mode{};
     std::uint8_t seat=kSeatUnknown; std::uint16_t vehicle=kVehicleUnknown;
+    // partner_native_mount=hide (docs/mounts.md): a remote horse / D-Walker act
+    // 121..126 hides like a ride even when the sender reports foot.
+    bool mount_hide{};
 };
 void Observe(Visibility&, const In&) noexcept;
 void Placed(Visibility&, std::uint64_t now) noexcept;

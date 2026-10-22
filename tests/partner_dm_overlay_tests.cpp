@@ -36,6 +36,15 @@ void TestCatalogue(const char* lua_path) {
         const std::uint8_t i = pdo::Find(v.name, std::strlen(v.name));
         Check(i != pdo::kNone && pdo::At(i)->code == v.code && !pdo::At(i)->path && Is(pdo::At(i)->lua, v.name), v.name);
     }
+    // The mount research probes (docs/mounts.md), appended at 22..24, looping, never mapped.
+    const struct { const char* name; std::uint64_t code; std::uint8_t index; } mount[] = {
+        {"stateRideOnIdle", 0xf241f3bcf60bull, 22}, {"stateGallop", 0xce7e8409eb61ull, 23}, {"stateRideWalkerWalk", 0x1b8b642289d5ull, 24}};
+    for (const auto& v : mount) {
+        const std::uint8_t i = pdo::Find(v.name, std::strlen(v.name));
+        Check(i == v.index && pdo::At(i)->code == v.code && !pdo::At(i)->path && pdo::At(i)->loop && Is(pdo::At(i)->lua, v.name), v.name);
+        for (std::uint16_t act = 0; act < 256; ++act)
+            if (pdo::MapAct(act, 0) == i || pdo::MapAct(act, 1000) == i || pdo::MapAct(act, -1000) == i) Check(false, "no act maps to a mount probe");
+    }
     Check(pdo::Find("stateGunHold", 12) == pdo::kNone && pdo::Find("statethrowholdend", 17) == pdo::kNone &&
               pdo::Find("stateDead ", 10) == pdo::kNone && pdo::Find("", 0) == pdo::kNone && pdo::Find(nullptr, 3) == pdo::kNone,
           "graph-2 states and near misses are not in the catalogue");

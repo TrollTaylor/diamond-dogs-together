@@ -162,6 +162,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_place_mirror=1','partner_native_place_mirror=0','guest:partner_native_place_mirror=1','host:partner_native_place_mirror=0',
     # Traversal replay (lab only, default 0)
     'partner_native_traverse=1','partner_native_traverse=0','guest:partner_native_traverse=1','host:partner_native_traverse=0',
+    # Horse / D-Walker riders (lab only, default off)
+    'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
@@ -176,6 +178,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_arm=2','partner_native_arm=','partner_native_arm=yes','both:partner_native_arm=1','partner_native_arms=1',
     'partner_native_place_mirror=2','partner_native_place_mirror=','partner_native_place_mirror=on','both:partner_native_place_mirror=1',
     'partner_native_traverse=2','partner_native_traverse=','partner_native_traverse=on','both:partner_native_traverse=1','partner_native_traversal=1',
+    'partner_native_mount=1','partner_native_mount=','partner_native_mount=seat','both:partner_native_mount=hide','partner_native_mounts=hide',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
@@ -189,12 +192,14 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_placed=1','labsetting guest partner_native_placed=0','labsetting partner_native_arm=1','labsetting host partner_native_arm=0',
         'labsetting partner_native_place_mirror=1','labsetting guest partner_native_place_mirror=0',
         'labsetting partner_native_traverse=1','labsetting host partner_native_traverse=0',
+        'labsetting partner_native_mount=hide','labsetting guest partner_native_mount=hide','labsetting host partner_native_mount=off',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
-foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage')){
+foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage',
+        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'

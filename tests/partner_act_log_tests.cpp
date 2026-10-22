@@ -55,6 +55,11 @@ void TestNames() {
               Is(pal::ActName(24), "step_on") && Is(pal::ActName(28), "cliff_drop") && Is(pal::ActName(75), "cure") &&
               Is(pal::ActName(76), "cure") && Is(pal::ActName(79), "trash_box") && Is(pal::ActName(83), "trash_box"),
           "writer-census names have no '?'");
+    // Mount acts (docs/mounts.md): 121 horse ride (ON_HORSE), 122 horse get on / off, 123 D-Walker get on,
+    // 125 D-Walker drive, 126 D-Walker leave; 124 has no writer.
+    Check(Is(pal::ActName(121), "horse_ride") && Is(pal::ActName(122), "horse_mount") && Is(pal::ActName(123), "walker_mount") &&
+              Is(pal::ActName(125), "walker_drive") && Is(pal::ActName(126), "walker_off"),
+          "mount writer-census names have no '?'");
     Check(Is(pal::ActName(55), "ledge_hang?") && Is(pal::ActName(77), "cbox?") &&
               Is(pal::ActName(70), "cover?") && Is(pal::ActName(93), "cqc_hold?") && Is(pal::ActName(104), "heli") &&
               Is(pal::ActName(124), "walker?") && Is(pal::ActName(29), "hit?"),
