@@ -257,6 +257,7 @@ struct Objects {
     std::uint16_t acts[2], qd8[2];
     unsigned char ps[0x300];
     unsigned char rec280[0x40];
+    unsigned char records[0x10 * 16];  // *(Q+0x160): the per-(id, sub) item records, (sub + id*8)*0x10
 };
 unsigned char* g_image = nullptr;
 std::uintptr_t g_base = 0;
@@ -279,8 +280,13 @@ std::uintptr_t g_call_ctl = 0;
 std::uint32_t g_call_id = 0, g_off_sub = 0xFF;
 std::uint16_t g_call_equip = 0;
 std::uint8_t g_call_flags = 0, g_off_flag = 0xFF;
-bool g_touch_viewer = false, g_touch_slot1 = false, g_no_activate = false;
+bool g_touch_viewer = false, g_touch_slot1 = false, g_no_activate = false, g_touch_record0 = false;
 std::uintptr_t Row(unsigned id) { return Addr(g_o->rows) + id * 0x3A; }
+// Both calls OR the shared equipment dirty mask Q+0x17C with 1 << id (0x11AFF64, 0x11AF9D9).
+void Dirty(std::uint32_t id) {
+    const std::uintptr_t mask = Addr(g_o->q) + 0x17C;
+    Put<std::uint32_t>(mask, Get<std::uint32_t>(mask) | (1u << id));
+}
 std::uint16_t ItemAt(unsigned id, unsigned sub) { return Get<std::uint16_t>(Row(id) + 0x1C + 2 * sub); }
 unsigned SubOf(unsigned id) { return Get<std::uint8_t>(Row(id) + 0x37) >> 4; }
 void SetSub(unsigned id, unsigned sub) {
@@ -295,6 +301,7 @@ std::int32_t* FakeChangeEquip(void* ctl, std::int32_t* result, std::uint32_t id,
     g_call_id = id;
     g_call_equip = request->equip;
     g_call_flags = request->flags;
+    Dirty(id);  // SetEquipState
     unsigned k = 0;
     for (unsigned s = 1; s < 8 && !k; ++s)
         if (ItemAt(id, s) == request->equip) k = s;
@@ -303,9 +310,13 @@ std::int32_t* FakeChangeEquip(void* ctl, std::int32_t* result, std::uint32_t id,
             k = s;
             Put<std::uint16_t>(Row(id) + 0x1C + 2 * s, request->equip);
         }
-    std::memset(g_o->q + 0x160 + (k + id * 8) * 0x10, 0x5A, 0x10);  // body 1's record (never the viewer's 0..7)
-    if (!g_no_activate) SetSub(id, k);
+    std::memset(g_o->records + (k + id * 8) * 0x10, 0x5A, 0x10);  // body 1's record (never the viewer's 0..7)
+    if (!g_no_activate) {
+        Dirty(id);  // SetCurrentItemIndex
+        SetSub(id, k);
+    }
     if (g_touch_viewer) g_o->stocks[0xE + 1] ^= 1;  // the viewer's stock word
+    if (g_touch_record0) g_o->records[1 * 0x10 + 4] ^= 1;  // the viewer's own record (id 0, sub 1)
     if (g_touch_slot1) g_o->handles[7 + 1] ^= 0x10000u;
     *result = 0;
     return result;
@@ -316,6 +327,7 @@ void FakeSetCurrentItemIndex(void* ctl, std::uint32_t id, std::uint32_t sub, std
     g_call_id = id;
     g_off_sub = sub;
     g_off_flag = flag;
+    Dirty(id);
     SetSub(id, sub);
     g_o->handles[7 + 4] = 0;  // OnRemoveItem -> UnsetSlot(1, 4)
 }
@@ -413,7 +425,9 @@ void Build() {
     }
     Put<std::uint16_t>(Row(0), 46);
     o.handles[0] = 0x00040000u | (46u << 5) | 1u;
-    std::memset(o.q + 0x160, 0x11, 8 * 0x10);  // the viewer's item records
+    // Q+0x160 is a pointer to the record array (0x11B0345 mov rax,[rdx+0x160]); the dirty mask Q+0x17C starts clear.
+    Put<std::uintptr_t>(q + 0x160, Addr(o.records));
+    std::memset(o.records, 0x11, 8 * 0x10);  // the viewer's item records (id 0, subs 0..7)
     o.acts[0] = 3;
     o.acts[1] = 3;
     // Body 1: its gun, no items, slot-4 handle empty.
@@ -423,7 +437,7 @@ void Build() {
     for (unsigned id = 0x1C8; id <= 0x1E2; ++id) g_types[id] = 0x11;
     g_types[451] = 0x11;
     g_on = g_off = 0;
-    g_touch_viewer = g_touch_slot1 = g_no_activate = false;
+    g_touch_viewer = g_touch_slot1 = g_no_activate = g_touch_record0 = false;
     g_pins_ok = true;
     g_call_id = g_off_sub = 0;
     g_call_equip = 0;
@@ -476,7 +490,7 @@ void TestOnOff() {
     g_o->acts[1] = 77;
     g_o->qd8[1] = 0x1234;
     cb::Observe(Ctx(true, 468, 1, m), &Log);
-    Check(g_on == 1 && Logged("partner_cbox=entered; ok=1; act=77;") && Logged("qd8=4660"), "entered: act 77, the box object word");
+    Check(g_on == 1 && Logged("partner_cbox=entered; act=77;") && Logged("qd8=4660"), "entered: act 77, the box object word");
     // A later edge while the box is current (a remote re-box of the same id): still no dispatch.
     cb::Observe(Ctx(true, 468, 2, m), &Log);
     Check(g_on == 1, "never re-dispatch while the box is body 1's current item");
@@ -719,6 +733,56 @@ void TestCarryWorld() {
     cb::Observe(Ctx(false, 0, 0, m), &Log);
     Check(g_log.find("carried") == g_log.rfind("carried"), "the carry is logged once");
 }
+void TestRecordsWorld() {
+    using namespace world;
+    // Q+0x17C (the dirty mask) is set by both calls for body 1, by any other equip write, and cleared by the engine:
+    // the apply, the watch and the off never see it.
+    Build();
+    std::uint32_t m = ++g_mission;
+    const std::uintptr_t mask = Addr(g_o->q) + 0x17C;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(g_on == 1 && (Get<std::uint32_t>(mask) & 2u) != 0 && Logged("partner_cbox=apply; id=468;") && Logged("reason=ok;") &&
+              !cb::Uncertain() && cb::GetStatus().applied == 468,
+          "dirty mask: the call's own Q+0x17C bit 1 is not a viewer change");
+    g_o->acts[1] = 77;
+    Put<std::uint32_t>(mask, 0);  // the engine's clear (Q vt slot 0 = 0x140FE0070)
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Put<std::uint32_t>(mask, 2u);  // another body-1 equip write (the W4 slot follower's SetCurrentSlot)
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Put<std::uint32_t>(mask, 3u);  // and one for the viewer's id
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(!Logged("viewer_changed") && !cb::GetStatus().watch_latched, "dirty mask: the watch ignores Q+0x17C");
+    // Body 1's own record (8 + k) changes while boxed (its box life): not the viewer's.
+    g_o->records[(1 + 8) * 0x10] ^= 0x40;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(!Logged("viewer_changed"), "body 1's own record is not a viewer change");
+    cb::Observe(Ctx(false, 468, 2, m), &Log);
+    Check(g_off == 1 && Logged("partner_cbox=off; id=468; via=native; reason=ok;") && !cb::Uncertain() && cb::GetStatus().applied == 0,
+          "dirty mask: the off still reads ok");
+    // The viewer's real record (id 0, sub 1 at *(Q+0x160) + 0x10) changes while boxed, the viewer idle: latched.
+    Build();
+    m = ++g_mission;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    g_o->acts[1] = 77;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    g_o->records[1 * 0x10 + 8] ^= 1;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(Logged("partner_cbox=viewer_changed; fields=0x20; viewer_act=3>3; latched=1;") && cb::GetStatus().watch_latched,
+          "the viewer's own record (id 0) while boxed: records, latched");
+    // The viewer's real record changes inside the call: viewer_changed, latched for the mission.
+    Build();
+    m = ++g_mission;
+    g_touch_record0 = true;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(g_on == 1 && Logged("partner_cbox=apply; id=468;") && Logged("reason=viewer_changed;") && cb::Uncertain(),
+          "the viewer's own record in the call: viewer_changed");
+    // No record array: no call.
+    Build();
+    m = ++g_mission;
+    Put<std::uintptr_t>(Addr(g_o->q) + 0x160, 0);
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(g_on == 0 && Logged("partner_cbox=refused; reason=local_snapshot;"), "a null *(Q+0x160): refused before the call");
+}
 void TestPins() {
     // The writer's SHA list covers the off call and the box chain whole (two generators, the same retail bytes).
     const std::uintptr_t want[] = {c::change_equip_rva, c::set_current_item_index_rva, c::get_item_stock_count_rva, c::get_equip_id_slot_rva,
@@ -756,6 +820,7 @@ int main() {
     TestUncertain();
     TestWatchesWorld();
     TestCarryWorld();
+    TestRecordsWorld();
     TestPins();
     std::printf("partner_cbox_tests: %u checks passed\n", checks);
     return 0;

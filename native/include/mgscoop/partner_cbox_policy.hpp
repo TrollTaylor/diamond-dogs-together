@@ -117,7 +117,7 @@ struct Decision {
     bool final = false;            // refuse: marks the edge attempted (never retried for this seq)
 };
 // On only for a fresh edge and never while the box is already body 1's current
-// item (a second ChangeEquip resets the box life record Q+0x160[8+k] and runs
+// item (a second ChangeEquip resets the box life record 8+k of *(Q+0x160) and runs
 // OnRemoveItem/OnEquipItem while boxed); off only for a box we put on.
 constexpr Decision Decide(const State& s, const DecideIn& in) noexcept {
     if (in.want) {
@@ -202,7 +202,7 @@ inline constexpr std::uint32_t row_current = 0x2;   // viewer row +0x37 high nib
 inline constexpr std::uint32_t stocks = 0x4;        // the viewer's item stock words
 inline constexpr std::uint32_t vars_items = 0x8;    // vars.items (+0x5A4)
 inline constexpr std::uint32_t vars_current = 0x10; // vars.currentItemIndex (+0x67C)
-inline constexpr std::uint32_t records = 0x20;      // the viewer's item records Q+0x160[0..7]
+inline constexpr std::uint32_t records = 0x20;      // the viewer's item records 0..7 of *(Q+0x160)
 inline constexpr std::uint32_t item_handle = 0x40;  // the viewer's slot-4 handle
 inline constexpr std::uint32_t row_other = 0x80;    // the rest of viewer row 0 (its weapons, slot nibble)
 inline constexpr std::uint32_t handles_other = 0x100;  // the viewer's other six slot handles

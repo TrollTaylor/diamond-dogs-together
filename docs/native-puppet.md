@@ -1335,7 +1335,8 @@ after `ObserveNativeSupport()`, the same natural owner, gates and body lease):
 - **on:** `ChangeEquip` 0x11AC2E0 `(ctl, &result, R8D = 1, {type 0x326C48DA30C0,
   equip = B, stock fields 0, flags = 4})`. For a non-local id and an item of
   type 0x11 it only writes body 1's item list (`row1+0x1C+2k` through
-  SetEquipState, the per-(id, sub) record `Q+0x160[8+k]`, `Q+0x17C` bit 1) and
+  SetEquipState, the per-(id, sub) record 8+k of the array `*(Q+0x160)`
+  (`+ (sub + id*8)*0x10`; `Q+0x160` is a pointer), `Q+0x17C` bit 1) and
   calls `SetCurrentItemIndex(ctl, 1, k, 0)` (`row1+0x37` high nibble = k).
   Every viewer-side write in those functions is gated on `idx == [P+0x214]`.
   The engine's `CBoxActionPluginImpl::PollingImpl` then wakes the box on its
@@ -1364,8 +1365,10 @@ vt+0x68/+0x88/+0x10, the type table); the full SHA gate
 OnRemoveItem, OnEquipItem, GetItemStockCount and GetEquipIdSlot); a late
 re-capture; the strict viewer digest around each call (row 0, its seven
 handles, its item stocks `*(Y+0x98)+(0xE+k)*2`, `vars.items` +0x5A4,
-`vars.currentItemIndex` +0x67C, the vars ammo block, `Q+0x160[0..7]`, its act
-and box word) and body 1's other slot handles (0..6 but 4); SEH around both
+`vars.currentItemIndex` +0x67C, the vars ammo block, its item records 0..7 at
+`*(Q+0x160) + 0..0x7F` (the pointer itself is part of the lease), its act
+and box word; never the `Q+0x17C` dirty mask, which both calls set for body 1
+and the engine clears) and body 1's other slot handles (0..6 but 4); SEH around both
 calls. Any surprise latches `uncertain` for the mission (no further call, not
 even an off); `not_current` (ChangeEquip returned 0 but the row does not show
 B) only ends the edge. The latches and the edge state are scoped to the
@@ -1403,7 +1406,7 @@ Logs (one per decision):
 - `partner_cbox=apply; id=B; want=W; mapped=same|viewer_box; via=native; sub=k; body_sub=k; result=..; reason=ok|..; act1=..; h4=..>..; uncertain=0|1; seq=..; mission=..`
 - `partner_cbox=off; id=B; via=native; reason=ok|still_current|..; act1=..; h4=..>..; uncertain=..`
 - `partner_cbox=refused; reason=viewer_no_box|type|body_items_full|full_body_gate|body_busy|gun_writer_active|support_uncertain|restriction|lease_changed|gates|uncertain_latched|viewer_changed_latched|<capture>; step=on|off|<gate>; ...`
-- `partner_cbox=entered; ok=1; act=77; ms=..; qd8=..` or `entered; ok=0; act=..; ms=..; rec8=0x..; recC=0x..; rec_ok=..; vstock=..; qd8=..`
+- `partner_cbox=entered; act=77; ms=..; qd8=..` or `entered; ok=0; act=..; ms=..; rec8=0x..; recC=0x..; rec_ok=..; vstock=..; qd8=..`
 - `partner_cbox=exited|viewer_changed|released|carried; ...`, `partner_cbox=hold; on=..; body_act=..; want=..; seq=..`
 
 **Lab tooling.** `debug items` (read-only): `items;ids=..;counts=..;current=..`

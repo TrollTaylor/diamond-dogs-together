@@ -20,7 +20,7 @@
 #   partner_cbox=apply; id=468; want=468; mapped=same|viewer_box; via=native; sub=k; body_sub=k; result=0; reason=ok;
 #     act1=..; h4=........>........; uncertain=0
 #   partner_act; edge=body; remote=77; body=77; match_ms<1000 (partner_act_log=1)
-#   partner_cbox=entered; ok=1; act=77|78; ms<1500; qd8=<nonzero, new>
+#   partner_cbox=entered; act=77|78; ms<1500; qd8=<nonzero, new>
 #   partner_cbox=hold; on=1; body_act=77; want=1   (no partner_recon=place; reason=vertical|far_error while boxed)
 #   cbox-move frames: body 1 moving in the box (act 78) with the remote's W
 #   partner_cbox=remote; id=468; active=0; apply=native; seq=N+1
@@ -68,7 +68,7 @@ host run slot item 1
 host expect ^submitted_slot;slot=item;native=4;sub=1;
 waitlog host 'partner_status=local; st=0x4' 10
 waitlog guest 'partner_cbox=apply; id=4[0-9][0-9]; want=468; mapped=(same|viewer_box); via=native; sub=[1-7]; body_sub=[1-7]; result=0; reason=ok;' 10
-waitlog guest 'partner_cbox=entered; ok=1; act=7[78];' 10
+waitlog guest 'partner_cbox=entered; act=7[78];' 10
 wait 1000
 guest capture cbox-on
 host capture host-boxed
@@ -96,7 +96,7 @@ guest run slot item 1
 guest expect ^submitted_slot;slot=item;native=4;sub=1;
 waitlog guest 'partner_status=local; st=0x4' 10
 waitlog host 'partner_cbox=apply; id=4[0-9][0-9]; want=4[0-9][0-9]; mapped=(same|viewer_box); via=native; sub=[1-7]; body_sub=[1-7]; result=0; reason=ok;' 10
-waitlog host 'partner_cbox=entered; ok=1; act=7[78];' 10
+waitlog host 'partner_cbox=entered; act=7[78];' 10
 wait 1000
 host capture rev-cbox-on
 guest capture guest-boxed

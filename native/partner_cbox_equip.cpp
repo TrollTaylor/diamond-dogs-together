@@ -1,7 +1,9 @@
 // F2: the remote's cardboard box on body 1 (docs/native-puppet.md "Cardboard box").
 // Static contract: re-cbox.md (ChangeEquip(1, box, flags 4) writes only body 1's
-// item list, its +0x37 item nibble, Q+0x160[8+k] and the Q+0x17C bit; the viewer's
-// writes in SetEquipState / SetCurrentItemIndex are gated on idx == [P+0x214]).
+// item list, its +0x37 item nibble, record 8+k of the array *(Q+0x160) and the
+// Q+0x17C bit; the viewer's writes in SetEquipState / SetCurrentItemIndex are
+// gated on idx == [P+0x214]). Q+0x17C is the shared equipment dirty mask (both
+// calls OR in 1 << idx, the engine clears it): never part of a viewer digest.
 // Template: partner_support_equip.cpp (Capture / SameViewer / Dispatch, SRW lock,
 // SEH, a mission-scoped uncertain latch and a late re-capture).
 #define WIN32_LEAN_AND_MEAN
@@ -34,13 +36,14 @@ bool Read(std::uintptr_t address, void* out, std::size_t size) noexcept {
 using Row = std::array<std::uint8_t, c::equip_row_stride>;
 struct Snapshot {
     std::uintptr_t ctl = 0, inventory = 0, stocks = 0, handles = 0, q = 0, rows = 0, vars = 0;
+    std::uintptr_t records = 0;                  // *(Q+0x160): the per-(id, sub) item records, (sub + id*8)*0x10
     Row row0{}, row1{};
     std::array<std::uint32_t, 7> local_handles{}, remote_handles{};
     std::uint16_t vstock[pol::kSubs]{};          // the viewer's item stocks *(stocks + (0xE + k)*2)
     std::array<std::uint8_t, 16> vars_items{};   // vars.items u16[8] (+0x5A4)
     std::uint32_t vars_current = 0;              // vars.currentItemIndex (+0x67C)
     std::array<std::uint8_t, c::vars_ammo_end - c::vars_ammo_begin> vars_ammo{};
-    std::array<std::uint8_t, pol::kSubs * c::q_item_record_size> records0{};  // Q+0x160[0..7] (the viewer's)
+    std::array<std::uint8_t, pol::kSubs * c::q_item_record_size> records0{};  // records + 0..0x7F (the viewer's, id 0)
     std::uint16_t act[2]{}, qd8[2]{};
     std::uint8_t restriction = 1;
     bool rec_ok = false;
@@ -113,7 +116,7 @@ const char* Capture(const Context& x, Snapshot& s) noexcept {
         !v.At(x.base, c::vars_slot_rva, s.vars) || !s.vars || !v.At(s.ctl, c::ctl_vars, current) || current != s.vars ||
         !v.At(s.vars, c::vars_items, s.vars_items) || !v.At(s.vars, c::vars_current_item, s.vars_current) ||
         !Read(s.vars + c::vars_ammo_begin, s.vars_ammo.data(), s.vars_ammo.size()) ||
-        !v.At(s.q, c::q_item_records, s.records0) ||
+        !v.At(s.q, c::q_item_records, s.records) || !s.records || !v.At(s.records, 0, s.records0) ||
         !v.At(s.q, c::q_anim_18, acts) || !v.At(acts, 0, s.act) || !v.At(s.q, c::q_box_object, qd8) || !v.At(qd8, 0, s.qd8)) return "local_snapshot";
     for (unsigned k = 0; k < pol::kSubs; ++k)
         if (!v.At(s.stocks, (c::inv_item_stock_base + k) * 2, s.vstock[k])) return "viewer_stocks";
@@ -141,7 +144,8 @@ bool SameBodySlots(const Snapshot& a, const Snapshot& b) noexcept {
 }
 bool SameLease(const Snapshot& a, const Snapshot& b) noexcept {
     return a.ctl == b.ctl && a.inventory == b.inventory && a.stocks == b.stocks && a.handles == b.handles && a.q == b.q &&
-           a.rows == b.rows && a.vars == b.vars && a.row1 == b.row1 && a.remote_handles == b.remote_handles && SameViewer(a, b);
+           a.rows == b.rows && a.vars == b.vars && a.records == b.records && a.row1 == b.row1 && a.remote_handles == b.remote_handles &&
+           SameViewer(a, b);
 }
 // The per-tick watch digest (field masks, partner_cbox_policy::field).
 struct Watch {
@@ -273,7 +277,7 @@ void WatchTick(const Context& x, const Snapshot& s, LogFn log) noexcept {
         const std::uint64_t ms = x.now_ms >= g_state.on_ms ? x.now_ms - g_state.on_ms : 0;
         if (verdict == pol::Entry::entered) {
             g_state.entered = g_state.enter_logged = true;
-            Event(log, "partner_cbox=entered; ok=1; act=%u; ms=%llu; qd8=%u; id=%u; mission=%u\r\n", unsigned(act1),
+            Event(log, "partner_cbox=entered; act=%u; ms=%llu; qd8=%u; id=%u; mission=%u\r\n", unsigned(act1),
                   static_cast<unsigned long long>(ms), unsigned(s.qd8[1]), unsigned(current), x.mission);
         } else if (verdict == pol::Entry::timeout) {
             g_state.enter_logged = true;

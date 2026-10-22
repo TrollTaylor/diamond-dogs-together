@@ -424,7 +424,8 @@ inline constexpr std::uintptr_t placed_owner_claim_rva=0xfc9c00, placed_can_plac
 // u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer's item stocks: u16 [*(Y+0x98) +
 // (0xe + sub)*2] (Y = *(ctl+8); ctl vt+0xb0 -> store vt+0x68 case 4 = 0xe + sub; store vt+0x88 0xee9050 reads it).
 // vars items u16[8] at +0x5a4 and currentItemIndex u32 at +0x67c (both written only for idx == [P+0x214]).
-// Per-(id, sub) item records Q+0x160 + (sub + id*8)*0x10 (box life / poster; SetEquipState rewrites them).
+// Per-(id, sub) item records *(Q+0x160) + (sub + id*8)*0x10 (Q+0x160 is a pointer: 0x11b0345 mov rax,[rdx+0x160];
+// box life / poster; SetEquipState rewrites them). Q+0x17c is the dirty mask (1 << id), never a viewer digest.
 // The box is worn when the can-wear predicate 0x10df430 passes for idx: the block-1 PS record (PS = *(block+0x78),
 // rec = *(PS+0x280) + (idx - *(PS+8))*0x20) has rec+8 bit 11 and rec+0xc bits 26..28 clear, idx's current item is a
 // box 0x1c8..0x1e2 and GetItemStockCount (the VIEWER's list) has stock for it; Wake writes act 0x4d (77, moving 78).
