@@ -69,6 +69,21 @@ void TestEpisode() {
     Check(!pm::Holds(false, true, true, true), "a valid non-mount act ends it although the body is still hidden");
     Check(!pm::Holds(false, true, false, false), "a shown body ends it");
     Check(!pm::Holds(false, false, true, false), "no open episode: nothing holds");
+    // The per-episode unrealize line resets when a new episode begins.
+    e.unrealize_logged = true;
+    Check(pm::Step(e, false, 1, 4100) == pm::Edge::end && e.unrealize_logged, "the end keeps the flag of the episode that ended");
+    Check(pm::Step(e, true, 125, 4200) == pm::Edge::begin && !e.unrealize_logged && e.episodes == 3, "a new episode logs its own unrealize");
+}
+
+void TestUnrealize() {
+    // Hidden runs b264ad58 / 251abcef: the cleared bits left body 1 standing at the get-on spot while Lua's all-active
+    // mode stayed on. A hidden mount episode asks Lua to clear the mode; nothing else does.
+    Check(pm::Unrealize(true, true, true), "an open, hidden episode with Lua all-active: unrealize");
+    Check(!pm::Unrealize(true, true, false), "Lua already reports all-active off: nothing to clear");
+    Check(!pm::Unrealize(false, true, true), "no mount episode (a horse kind-3 or heli hide, the far latch): unchanged");
+    Check(!pm::Unrealize(true, false, true), "a shown body is never unrealized");
+    Check(!pm::Unrealize(false, false, false), "nothing at all");
+    static_assert(pm::Unrealize(true, true, true) && !pm::Unrealize(false, true, true), "constexpr");
 }
 
 rw::In Sample(std::uint16_t act, std::int64_t sender_ms) {
@@ -169,9 +184,10 @@ int main() {
     TestActs();
     TestHide();
     TestEpisode();
+    TestUnrealize();
     TestVisibility();
     std::printf("%u partner mount checks passed: horse 121/122 and D-Walker 123..126 acts, hide decision, episode lines, "
-                "ride visibility with partner_native_mount=hide\n",
+                "unrealize decision, ride visibility with partner_native_mount=hide\n",
                 checks);
     return 0;
 }

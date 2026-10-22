@@ -244,23 +244,23 @@ int main() {
                   "an invalid gesture value refuses");
         }
     }
-    // Horse / D-Walker riders (partner_native_mount=off|hide, docs/mounts.md): default off in lab and play, also with
-    // the native gun profile (no hidden-worker FRAME of a hidden D-Walker rider yet); a named hide runs in lab only,
-    // play forces it off; a named value records _given.
+    // Horse / D-Walker riders (partner_native_mount=off|hide, docs/mounts.md): hide with the native gun profile in lab
+    // (hidden run bfd6fcc4: no partner body while the partner rode), off without it; play forces it off (the play
+    // rehearsal fbde3dcc covered the horse only); a named off opts out; a named value records _given.
     {
         Check(LabConfig{}.partner_native_mount == PartnerNativeMount::off && !LabConfig{}.partner_native_mount_given &&
                   Lab("").partner_native_mount == PartnerNativeMount::off,
-              "mount key defaults off");
+              "mount key defaults off without the gun profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto want = play ? PartnerNativeMount::off : PartnerNativeMount::hide;
             const auto profile = Lab(gun + mode);
-            Check(profile.partner_native_mount == PartnerNativeMount::off && !profile.partner_native_mount_given &&
-                      profile.invalid_values == 0,
-                  "the gun profile leaves the mount hide off in lab and play");
+            Check(profile.partner_native_mount == want && !profile.partner_native_mount_given && profile.invalid_values == 0,
+                  "the gun profile defaults the mount hide on in lab; play forces it off");
             const auto named = Lab(gun + mode + "partner_native_mount=hide\n");
-            Check(named.partner_native_mount == (play ? PartnerNativeMount::off : PartnerNativeMount::hide) &&
+            Check(named.partner_native_mount == want &&
                       named.partner_native_mount_given && named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
                   "a named mount=hide runs in lab; play forces it off");
             const auto off = Lab(gun + mode + "partner_native_mount=off\n");

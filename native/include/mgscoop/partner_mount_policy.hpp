@@ -57,8 +57,20 @@ struct Episode {
     std::uint16_t act{};
     std::uint64_t since_ms{};
     unsigned episodes{};
+    bool unrealize_logged{};  // this episode's partner_mount=unrealize line
 };
 enum class Edge : std::uint8_t { none, begin, end };
+
+// Clearing the native realize bits alone does not take body 1 off the screen:
+// Lua's all-instance-active mode (Player.SetAllInstanceActiveMode, P+0x204 bit
+// 0x2000) keeps instance 1 realized, and the body stood idle at the get-on spot
+// for the whole ride (hidden runs b264ad58 / 251abcef, horse and D-Walker). While
+// a mount episode hides body 1 and Lua still reports all-active, the hidden reply
+// carries CLEAR_ALLACTIVE (Lua sets the mode off: instance 1 unrealized, the stock
+// single-player state); the show path's stage policy sends SET_ALLACTIVE again.
+constexpr bool Unrealize(bool episode_active, bool hidden, bool lua_all_active) noexcept {
+    return episode_active && hidden && lua_all_active;
+}
 
 // Whether the episode holds this tick: the act rule hid (rule), or an open
 // episode is still hidden and this tick's act sample is not valid (a missing
@@ -73,6 +85,7 @@ inline Edge Step(Episode& e, bool hiding, std::uint16_t act, std::uint64_t now_m
         e.mount = MountOf(act);
         e.act = act;
         e.since_ms = now_ms;
+        e.unrealize_logged = false;
         ++e.episodes;
         return Edge::begin;
     }

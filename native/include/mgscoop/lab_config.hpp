@@ -220,8 +220,9 @@ enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
 // ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
 // foot), hide (the viewer also hides body 1 while the remote's act is a horse
-// or D-Walker act 121..126). The viewer's copy holds no GameObject for the
-// partner's mount, so there is no seated value. Lab only, default off.
+// or D-Walker act 121..126, and unrealizes it through Lua's all-active mode).
+// The viewer's copy holds no GameObject for the partner's mount, so there is no
+// seated value. Default hide with the native gun profile in lab; play forces off.
 enum class PartnerNativeMount : std::uint8_t { off, hide };
 // Round-1 actions track (docs/anim-round1-actions.md "DM overlay"): the
 // DirectMotion overlay lever for graph-0 action states on body 1: off (the
@@ -541,9 +542,12 @@ struct LabConfig {
     bool partner_native_ride_given = false;
     PartnerRideSeatEnter partner_ride_seat_enter = PartnerRideSeatEnter::getin;
     PartnerRideSeatExit partner_ride_seat_exit = PartnerRideSeatExit::getoff;
-    // Mount riders (docs/mounts.md): off in lab and play until a hidden-worker
-    // FRAME shows the D-Walker rider hidden; a named value records _given and
-    // is lab only (play forces off). Acts only where partner_native_ride hides.
+    // Mount riders (docs/mounts.md): hide with the native gun profile in lab
+    // (hidden run bfd6fcc4: no partner body on the viewer's screen while the
+    // partner rode, the body back after the dismount), off without it; a named
+    // value records _given (a named off opts out). Play forces it off (its
+    // rehearsal fbde3dcc covered the horse only). Acts only where
+    // partner_native_ride hides.
     PartnerNativeMount partner_native_mount = PartnerNativeMount::off;
     bool partner_native_mount_given = false;
     // WS3 vehicles (docs/vehicle-ws3.md). partner_ride_census: the read-only

@@ -6,9 +6,16 @@ Branch `wp/mount` from `wp/integ8` `228eecb`. Static research only (mgsvtpp.exe 
 
 **Decision.** There is no sound way to draw the partner on a horse or a D-Walker today, so the rider stays
 hidden. The research found one gap in "hidden": the D-Walker rider was never hidden, because the sender reports it
-as on foot. This branch adds a lab key that closes that gap (`partner_native_mount=hide`, default off), lab
+as on foot. This branch adds a lab key that closes that gap (`partner_native_mount=hide`), lab
 probes for the open runtime questions, and the scenario `tools/worker/scenarios/partner-mount.txt`. It draws
 no mount.
+
+**Runtime (0.13.5, section 9).** The first hidden runs showed that "hidden" was not hidden for any ride: clearing
+the native realize bits leaves instance 1 realized under Lua's all-active mode, so the partner body stood idle at
+the get-on spot for the whole horse or D-Walker ride. The mount hide now also unrealizes body 1 through Lua
+(`CLEAR_ALLACTIVE`) for the length of a mount episode; with that, hidden run `bfd6fcc4` shows no partner body while
+the partner rides either mount, and the key defaults to hide with the native gun profile in lab. Play stays off: the
+play rehearsal `fbde3dcc` showed the horse only.
 
 ## 1. The four questions
 
@@ -165,10 +172,11 @@ act maps to them. Scenario part 1 plays each on the guest's body 1 while the hos
 plays: `partner_overlay=playing; ...; code_match=1` and a seated rider pose with nothing under it. If it does not
 play: `finished` at once, or the idle pose.
 
-## 6. What this branch adds (lab only, default off)
+## 6. What this branch adds
 
 - **`partner_native_mount=off|hide`.**
-  - Defaults: off in lab and play. Play forces it off, and a named value records `partner_native_mount_given`.
+  - Defaults (0.13.5 runtime, section 9): hide with the native gun profile in lab, off otherwise; play forces it
+    off; a named value records `partner_native_mount_given` (a named off opts out).
   - Where the key is wired: `lab_config` (`ParseMountKey`, kept out of the main chain, which is at MSVC's nesting
     limit), the three `-LabSetting` regex copies and the help, `LabCommon`, `worker_session_tests`,
     `lab_config_tests`, `lab_ini_check`, `friend_package_tests`, and the docs/native-puppet.md table and "Mounts"
@@ -176,11 +184,16 @@ play: `finished` at once, or the idle pose.
   - What it does: with `hide`, `partner_ride_wire::Observe` treats a valid remote act 121..126 like the heli acts
     (`partner_mount_policy::Hide`). Body 1 is hidden with `reason=ride`, a mount act is never a usable vehicle
     seat, and the partner returns after 500 ms of calm on-foot samples.
+  - Unrealize (added in the runtime phase, `partner_mount_policy::Unrealize`): while a mount episode hides body 1
+    and Lua reports all-active mode, the hidden reply carries `CLEAR_ALLACTIVE` (op 8, the existing stage-0 op);
+    Lua's `Player.SetAllInstanceActiveMode(false)` unrealizes instance 1. The show path's stage policy sends
+    `SET_ALLACTIVE` again after the placement. Line `partner_mount=unrealize; mount=..; act=..; episode=..;
+    op=clear_allactive`, once per episode.
   - Scope: it acts only where `partner_native_ride` is not off. It changes nothing on the wire, so an old peer
     is unaffected.
   - Lines (driver tick, capped): `partner_mount=configured`, `partner_mount=hide; mount=..; act=..; kind=..;
-    ride_live=..; episode=..` and `partner_mount=end; mount=..; act=..; ms=..; kind=..`. A missing act sample keeps
-    the episode open (`partner_mount_policy::Holds`).
+    ride_live=..; episode=..`, `partner_mount=unrealize; ...` and `partner_mount=end; mount=..; act=..; ms=..;
+    kind=..`. A missing act sample keeps the episode open (`partner_mount_policy::Holds`).
 - **Overlay probes 22..24** (section 5).
 - **Lab levers.**
   - `walker_spawn` / `walker_status` (`lua/coop/debug_buddy.lua`): the horse lever's stock `CallBuddy`, with
@@ -263,11 +276,32 @@ a frame proves it.
 6. **Every part:** no `partner_status=local` with `ON_HORSE` / `ON_VEHICLE` on the copy that did not mount, and no
    `crash_probe=av` other than the known teardown `rva=0x21e72`.
 
+## 9. Hidden runs (0.13.5 runtime, `wp/integ9`)
+
+Research build, gun stage, lab seed; every run Closed, BaselineRestored, RealSavesUnchanged, no visible fallback,
+no `crash_probe=av`, no fault or uncertain line; the guest's own act stayed 1 and its `partner_status=local` stayed
+`st=0x0` in every capture.
+
+| Run | Mode | What it showed |
+| --- | --- | --- |
+| `b264ad58` | lab, key named on the guest | Lines as expected (`partner_mount=hide; mount=horse; act=121; kind=3`, `mount=walker; act=123; kind=0`, `end`, `foot_stable`). Frames useless for the hide: a rock and the viewer's own model covered the host. Part 3: the guest's own idle horse leaping and hanging in the air around the host; the host could not mount its own horse. Part 5 baseline: body 1 walks on foot along the guest's D-Walker path, no walker under it. |
+| `251abcef` | lab, vantage fixes (scratch copy) | **The hide did not hide.** Clear frames: from the get-on to the dismount the partner body stood idle at the get-on spot, turned to the camera, no name tag (`partner_bits=cleared; reason=ride`, probe still `rbits=0x3; parts=3,3`), for both D-Walker rides and the horse ride (the horse's kind-3 hide too). Part 1 probes: `stateRideOnIdle` / `stateGallop` drop body 1 into a seated / hunched rider pose at ground level with nothing under it (`code_match=0` although the pose changed); `stateRideWalkerWalk` shows the standing pose. |
+| `bfd6fcc4` | lab, with the unrealize | **Proven.** `partner_mount=unrealize` and `allactive_cleared` at each episode (probe `pool=00,ff; rbits=0x1`), `allactive_set` and `partner_realized=1` after each dismount. Frames: the host standing (`walker-before`, `walker2-before`, `horse-before`), then no partner body anywhere while it mounts, rides, drives and turns (`walker-mounting`, `walker-riding`, `walker-drive`, `walker-turn`, `walker2-*`, `horse-riding`, `horse-ride`), the body back at the dismount spot with its look (`walker-off`, `walker2-off`, `horse-off`). The host's own view shows it in the walker / on the horse. |
+| `fbde3dcc` | play rehearsal, `-WanSim bad` (rtt ~180 ms, 1-2 % loss), key not named (the then-tested play default) | Horse part as in `bfd6fcc4` (frames, play HUD visible). Part 3's last E press mounted the host's horse (its first E found none), so `host require localMounted=0` stopped the run before the D-Walker part: **the D-Walker is unproven in play**, so play stays off. |
+
+Defaults after the runs: hide with the native gun profile in lab; play forces off. Suggested next step for play: run
+the D-Walker part before Part 3 (or drop Part 3's second E press) and repeat the play rehearsal.
+
 ## Risks
 
 - **RIDE_BODY moves the viewer's own buddy** (section 2) when both players deploy the same mount type. This is
-  today's behaviour, unchanged here, and needs a decision. Options: keep it; restrict it to the capacity-two
-  mirror index; or turn it off.
+  today's behaviour, unchanged here, and needs a decision. Observed (section 9, all four runs): the viewer's own idle
+  D-Horse leaps and hangs in the air around the partner, and the partner's first E press finds no horse to mount
+  (its horse is apparently pulled the same way). Options: keep it; restrict it to the capacity-two mirror index; or
+  turn it off.
+- **The other ride hides still only clear the bits.** Without the key, a horse rider's kind-3 hide leaves the partner
+  drawn as a standing body at the spot where it got on (section 9, `251abcef`); the heli and vehicle-fallback ride
+  hides use the same bit clear and presumably look the same (not filmed).
 - **The walker hide depends on the remote act stream.** An act sample that never arrives (`anim_valid` false) keeps
   today's on-foot drawing until the first valid mount act.
 - **The overlay probes are append-only catalogue entries 22..24.** A branch that also appends entries must keep the

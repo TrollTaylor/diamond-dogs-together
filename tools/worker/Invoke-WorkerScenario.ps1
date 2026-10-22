@@ -121,7 +121,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_native_gesture=0|1, the remote's pickup / hand sign / knock on the partner
                                    body's upper graph (SetCurrentNode / ReserveToResetNode; default on with the gun profile, lab and play);
                                    partner_native_mount=off|hide, hide the partner body while the remote's act is a
-                                   D-Horse / D-Walker act 121..126 (docs/mounts.md; lab only, default off);
+                                   D-Horse / D-Walker act 121..126 (docs/mounts.md; default hide with the gun profile in lab, play forces off);
                                    partner_fire_census=0|1, the owner census for support and other requests;
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
                                    partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the

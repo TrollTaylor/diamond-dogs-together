@@ -494,7 +494,8 @@ try {
             $file = Join-Path $fixture 'play-gesture-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_gesture=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_gesture'])|$($m['partner_native_gesture_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named gesture 0 opts out in play'
-            # Horse / D-Walker riders (docs/mounts.md) are lab only and default off; Play-Coop never names the key.
+            # Horse / D-Walker riders (docs/mounts.md): hide with the native gun profile in lab only (hidden run bfd6fcc4;
+            # the play rehearsal fbde3dcc covered the horse only), so play stays off; Play-Coop never names the key.
             Assert-True (!$hostIni.Contains('partner_native_mount') -and !$guestIni.Contains('partner_native_mount') -and
                 !$clipsIni.Contains('partner_native_mount')) 'Play-Coop lab.ini never names partner_native_mount'
             Assert-Equal "$($n['partner_native_mount'])|$($n['partner_native_mount_given'])" 'off|0' 'native: play leaves the mount hide off'

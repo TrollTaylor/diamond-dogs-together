@@ -6149,8 +6149,21 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                                    status, age_ms, partner::Look{}, 0};
             return true;
         };
-        if (m.range_hidden || (ride_guard && (m.visibility.hidden || ((m.bits_set || m.dm_patched) && m.visibility_logged))))
-            return deferred_reply();
+        if (m.range_hidden || (ride_guard && (m.visibility.hidden || ((m.bits_set || m.dm_patched) && m.visibility_logged)))) {
+            const bool replied = deferred_reply();
+            // partner_native_mount=hide: the cleared bits leave instance 1 realized while Lua's
+            // all-active mode is on, so a mount episode also asks Lua to clear it (body 1 off screen).
+            if (ride_guard && partner_mount_policy::Unrealize(m.mount.active, m.visibility.hidden,
+                                                              (tick.luaflags & partner::luaflag::all_active) != 0)) {
+                reply.op |= partner::op::clear_all_active;
+                if (!m.mount.unrealize_logged) {
+                    m.mount.unrealize_logged = true;
+                    EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=unrealize; mount=%s; act=%u; episode=%u; op=clear_allactive\r\n",
+                               partner_mount_policy::MountName(m.mount.mount), unsigned(visibility_sample.act), m.mount.episodes);
+                }
+            }
+            return replied;
+        }
         if (m.range_needs_place) {
             if (fresh && set.stage >= 1 && !m.bits_set &&
                 (!ride_guard || !m.visibility_place_try_ms || now-m.visibility_place_try_ms >= 1000)) {

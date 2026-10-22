@@ -1,4 +1,4 @@
-## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block, F2's box and F4's gestures on, the rest lab-only and off)
+## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block, F2's box and F4's gestures on, F5's mount hide on in lab only, the rest lab-only and off)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
@@ -11,8 +11,9 @@ package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_t
 block** (default on with the native gun profile in lab and play after hidden runs `0348c4d8` lab and `fad26e25` play;
 see F1), **F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
 lab and `71e19d1e` play; see F2) **and F4's gestures** (default on with the native gun profile in lab and play after
-hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4). Each key records a `_given` flag and
-play forces the rest off.
+hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4). **F5's mount hide** is on with the
+native gun profile in lab only (hidden run `bfd6fcc4`; its play rehearsal `fbde3dcc` covered the horse only, so play
+forces it off; see F5). Each key records a `_given` flag and play forces the rest off.
 
 | Feature | Branch | Lab key (default) | Status |
 | --- | --- | --- | --- |
@@ -20,13 +21,14 @@ play forces the rest off.
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
 | F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (0; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found), so lab-only and off |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (1 with the gun profile, lab and play) | pickup proven (frames `0e343f72` lab, `75a7e7dc` play bad WAN), default on; hand signs / knock unproven (no lab spot) |
-| F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (off) | lab-only, off, pending frames; no mount drawn |
+| F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (hide with the gun profile in lab; play off) | hide proven after an unrealize fix (frames `bfd6fcc4` lab: no partner body while it rides D-Walker or D-Horse); play rehearsal `fbde3dcc` horse only, so play stays off; no mount drawn; RIDE_BODY's own-horse pull is a user decision |
 
 - Contract after the merges: 733 code sites / 185 vtable slots (0.13.4: 677 / 149; F1 +19 / +3, F2 +10 / +6, F3 +14 /
   +20, F4 +13 / +7, F5 none); equip writer pins 118 SHA-256 gates (0.13.4: 113; F2 adds five). The per-feature
   counts in the subsections below are each branch alone on top of 0.13.4.
 - Wire: F4's gesture message is new (an older build drops it); F1's local passenger report rides the existing ride
-  packet; F5 only changes how the viewer reads the remote's act. No existing frame layout changes.
+  packet; F5 only changes how the viewer reads the remote's act (and sends its own Lua the existing
+  `CLEAR_ALLACTIVE` op). No existing frame layout changes.
 - Scenarios written: `coop-vehicle-shared.txt` and `coop-vehicle-passenger.txt` (run, see F1),
   `partner-cbox-census.txt`, `partner-cbox.txt`, `partner-traverse-icon.txt`, `partner-upper-gestures.txt`,
   `partner-mount.txt`.
@@ -257,8 +259,8 @@ play forces the rest off.
 
 ### F5
 
-Horse and D-Walker riders, branch `wp/mount`. Research first ([mounts.md](mounts.md)); no mount is drawn. No hidden
-run yet.
+Horse and D-Walker riders, branch `wp/mount`. Research first ([mounts.md](mounts.md)); no mount is drawn. Hidden
+runs and the unrealize fix: see "Runtime" at the end of this section.
 - **Still hidden, no mount drawn.**
   - The viewer's copy holds no GameObject for the partner's mount: one buddy block per copy, declared count 1.
   - The DM anchor `0x1198770` seats only GameObject types 50 and 4, not 13 (horse) or 44 (walker).
@@ -271,7 +273,8 @@ run yet.
   - So `partner_ride.lua` reports a D-Walker rider (and the horse get-on act 122) as kind 0 (foot), and the viewer
     keeps it as an on-foot puppet.
   - The 0.13.4 line "horse and D-Walker riders stay hidden" holds only for the horse.
-- **New lab key `partner_native_mount=off|hide`** (default off in lab and play, play forces off, `_given` flag).
+- **New key `partner_native_mount=off|hide`** (`_given` flag; since the runtime below: hide with the native gun
+  profile in lab, off otherwise, play forces off).
   - With `hide`, the viewer also hides body 1 while the remote's act is 121..126.
   - Lines: `partner_mount=configured|hide|end`.
   - The key is wired into the three `-LabSetting` regex copies and help, `LabCommon`, `worker_session_tests`,
@@ -291,6 +294,50 @@ run yet.
 - **Tests:** new `partner_mount_tests` (CMake and `Get-WorkerTests`), `TestMountVisibility` in
   `partner_driver_tests`, and additions to the lab config, act log, overlay, `partner_sync` and `debug_buddy`
   checks. Contract unchanged at 677 code sites / 149 vtable slots.
+- **Runtime (wp/integ9, research build, gun stage, lab seed; every run Closed, BaselineRestored,
+  RealSavesUnchanged, no visible fallback, no AV, fault or uncertain line; the viewer's own act stayed 1 and its
+  `partner_status=local` stayed `st=0x0` in every capture):**
+  - `b264ad58` lab, `partner-mount.txt` as merged (key named on the guest): the lines as expected
+    (`partner_mount=hide; mount=horse; act=121; kind=3`, `mount=walker; act=123; kind=0`, `end`, `foot_stable`), but
+    a rock and the viewer's own model covered the host in every hide frame. The scenario now places the viewer beside
+    / behind the rider and turns its camera (`mouse`), and films a second D-Walker ride from the other side.
+  - `251abcef` lab (those vantage fixes): **the hide did not hide.** From the get-on to the dismount the partner
+    body stood idle at the get-on spot, turned to the camera, without its name tag, for both D-Walker rides and the
+    horse ride (the horse's kind-3 hide as well): `partner_bits=cleared; reason=ride` only clears the native realize
+    bits, and Lua's all-instance-active mode keeps instance 1 realized (probe `rbits=0x3; parts=3,3`).
+  - **Fix** (`partner_mount_policy::Unrealize`, `partner_driver.cpp` hidden reply): while a mount episode hides body 1
+    and Lua reports all-active mode, the reply also carries the existing `CLEAR_ALLACTIVE` op (Lua
+    `SetAllInstanceActiveMode(false)`, `partner_lua=event=allactive_cleared`); the show path's stage policy sends
+    `SET_ALLACTIVE` again after the placement. One `partner_mount=unrealize; mount=..; act=..; episode=..;
+    op=clear_allactive` line per episode. Tests: `partner_mount_tests` (`TestUnrealize`, the per-episode flag),
+    `partner_driver_tests` `TestMountVisibility` (CLEAR while Lua reports all-active, none after the episode, SET on
+    the show). Contract unchanged.
+  - `bfd6fcc4` lab (the fix): **the hide proven.** Each episode: `partner_mount=unrealize`, `allactive_cleared`
+    (probe `pool=00,ff; rbits=0x1`), then after the dismount `allactive_set`, `partner_realized=1` (look kept, no
+    look timeout). FRAMES: the host standing (`walker-before`, `walker2-before`, `horse-before`), then no partner body
+    anywhere on the guest's screen while the host mounts, rides, drives and turns the D-Walker (two vantages) or rides
+    the D-Horse (`walker-mounting`, `walker-riding`, `walker-drive`, `walker-turn`, `walker2-*`, `horse-riding`,
+    `horse-ride`), the body back at the dismount spot (`walker-off`, `walker2-off`, `horse-off`); the host's own view
+    shows it in the walker and on the horse. **Lab default flipped**: `partner_native_mount` resolves to hide with
+    the native gun profile in lab (`ResolveWeaponDefaults`), off otherwise; a named off opts out.
+  - `fbde3dcc` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 1-2 % loss; the scenario without the key and
+    without the lab-only Part 1, against a build that defaulted hide in play too): the horse part passed as in
+    `bfd6fcc4` (frames with the play HUD). Part 3's last E press mounted the host's horse (its first E had found
+    none), so `host require localMounted=0` stopped the run before the D-Walker part. **The D-Walker is unproven in
+    play, so play keeps forcing the key off** (`lab_config_tests`, `friend_package_tests`: Play-Coop native off|0, a
+    named hide in play off|1). Next: run the D-Walker part before Part 3 (or drop Part 3's second E) and repeat it.
+  - Part 1 probes (`251abcef`, `bfd6fcc4`): `stateRideOnIdle` / `stateGallop` drop body 1 into a seated / hunched
+    rider pose at ground level with nothing under it (`code_match=0` although the pose changes);
+    `stateRideWalkerWalk` shows the standing pose. Not a display; the rider stays hidden.
+  - Part 5 baseline (the host with the key off watching the guest's D-Walker ride): body 1 walks on foot along the
+    walker's path with no walker under it (`b264ad58`, `251abcef`, `bfd6fcc4`).
+- **User decisions:** (1) **RIDE_BODY (world op 42) and the viewer's own horse.** When both copies deploy D-Horse,
+  the viewer's own idle horse leaps and hangs in the air around the partner (`horse-viewer-own-*` in all four runs),
+  and the partner's first E press found no horse to mount in all four runs (its own horse is apparently pulled the
+  same way). Unchanged here; options in mounts.md "Risks" (keep, restrict to the capacity-two mirror index, or turn
+  it off). (2) The other ride hides (the horse kind-3 hide without the key; heli and vehicle fallbacks use the same
+  bit clear, not filmed) still leave a standing body at the get-on spot; extending the unrealize to them needs its
+  own frames.
 
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 

@@ -168,7 +168,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
     # Gestures (on with the gun profile, lab and play)
     'partner_native_gesture=1','partner_native_gesture=0','guest:partner_native_gesture=1','host:partner_native_gesture=0',
-    # Horse / D-Walker riders (lab only, default off)
+    # Horse / D-Walker riders (hide with the gun profile in lab; play forces off)
     'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){

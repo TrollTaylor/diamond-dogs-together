@@ -1262,25 +1262,37 @@ void TestMountVisibility() {
                   "mount off: a D-Walker act without a ride kind is drawn like a foot sample (today)");
             continue;
         }
-        Check(s.Tick(1) && s.driver.mission.visibility.hidden && s.reply.op==0 && s.fake.Writes("slot")==0 &&
+        // The cleared bits alone leave instance 1 drawn (hidden runs b264ad58 / 251abcef): while Lua reports all-active
+        // mode the hidden reply carries CLEAR_ALLACTIVE, one partner_mount=unrealize line per episode.
+        Check(s.Tick(1) && s.driver.mission.visibility.hidden && s.reply.op==op::clear_all_active && s.fake.Writes("slot")==0 &&
                   s.fake.Containing("partner_mount=hide; mount=walker; act=125; kind=0; ride_live=0; episode=1")==1 &&
+                  s.fake.Containing("partner_mount=unrealize; mount=walker; act=125; episode=1; op=clear_allactive")==1 &&
                   s.fake.Containing("partner_ride=hide; reason=ride; act=125")==1,
-              "mount hide: the D-Walker act hides body 1 as a ride, one partner_mount line");
+              "mount hide: the D-Walker act hides body 1 as a ride and asks Lua to unrealize it, one line each");
         sample.sender_ms=1100; sample.act=126;
-        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=")==1,
-              "the same episode across walker acts logs nothing more");
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.reply.op==op::clear_all_active &&
+                  s.fake.Containing("partner_mount=")==2,
+              "the same episode across walker acts logs nothing more (CLEAR repeats while Lua reports all-active)");
+        sample.sender_ms=1150;
+        Check(s.Tick(0,50) && s.driver.mission.visibility.hidden && s.reply.op==0 && s.fake.Containing("partner_mount=")==2,
+              "Lua reports all-active off: nothing more to clear");
         sample.anim_valid=false; sample.sender_ms=1200;
-        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=")==1,
+        Check(s.Tick(1,50) && s.driver.mission.visibility.hidden && s.reply.op==op::clear_all_active && s.fake.Containing("partner_mount=")==2,
               "a missing act sample neither shows the body nor ends the episode");
         sample.anim_valid=true; sample.act=1; sample.sender_ms=2000;
-        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=end; mount=walker; act=1; ms=")==1,
-              "a valid foot act ends the episode; the body waits for the stable-foot proof");
-        for (unsigned i=1;i<=5;++i) { sample.sender_ms=2000+i*100; Check(s.Tick(1,100),"mount: stable foot samples"); }
-        Check(!s.driver.mission.visibility.hidden && s.fake.Writes("slot")==1 && s.fake.Containing("partner_mount=")==2,
+        Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.reply.op==0 &&
+                  s.fake.Containing("partner_mount=end; mount=walker; act=1; ms=")==1,
+              "a valid foot act ends the episode (no CLEAR after it); the body waits for the stable-foot proof");
+        for (unsigned i=1;i<=5;++i) { sample.sender_ms=2000+i*100; Check(s.Tick(1,100) && s.reply.op==0,"mount: stable foot samples"); }
+        Check(!s.driver.mission.visibility.hidden && s.fake.Writes("slot")==1 && s.fake.Containing("partner_mount=")==3,
               "after 500 ms of calm foot samples body 1 is shown and placed again");
+        sample.sender_ms=2600;
+        Check(s.Tick(0,100) && (s.reply.op & op::set_all_active) && !(s.reply.op & op::clear_all_active),
+              "the show path asks Lua for all-active mode again");
         sample.act=121; sample.sender_ms=2700;
         Check(s.Tick(1,100) && s.driver.mission.visibility.hidden && s.fake.Containing("partner_mount=hide; mount=horse; act=121")==1 &&
-                  s.fake.Containing("episode=2")==1, "a horse act opens a second episode");
+                  s.fake.Containing("partner_mount=unrealize; mount=horse; act=121; episode=2")==1 && s.reply.op==op::clear_all_active,
+              "a horse act opens a second episode, unrealized as well");
     }
     // The once-per-mission configured line: only with the key on, naming the ride mode it depends on.
     {

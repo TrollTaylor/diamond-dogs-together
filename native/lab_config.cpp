@@ -1447,9 +1447,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // viewer saw body 1 bend down and come back up for the remote's pickup, its
     // own player unchanged); a named 0 opts out.
     if (!c.partner_native_gesture_given) c.partner_native_gesture = gun;
-    // Mount riders: off unless named (no hidden-worker FRAME of a hidden D-Walker
-    // rider yet); play forces it off below.
-    if (!c.partner_native_mount_given) c.partner_native_mount = PartnerNativeMount::off;
+    // Mount riders follow the gun profile in lab (hidden run bfd6fcc4: the viewer saw
+    // no partner body while the partner rode a D-Walker or D-Horse, the body back
+    // after the dismount, its own player unchanged); a named off opts out. Play
+    // forces it off below (the play rehearsal fbde3dcc proved the horse only).
+    if (!c.partner_native_mount_given) c.partner_native_mount = gun ? PartnerNativeMount::hide : PartnerNativeMount::off;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1483,7 +1485,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // F2: the native box on body 1 runs in play too (the observer admits play only with
         // link v2 connected).
         // Gestures run in play too (the sender needs a live link session).
-        // Mount riders stay lab-only (the act hide is unproven in a FRAME).
+        // Mount riders stay lab-only: the play rehearsal fbde3dcc (-WanSim bad) showed the
+        // hidden horse rider but stopped before its D-Walker part.
         c.partner_native_mount = PartnerNativeMount::off;
     }
 }

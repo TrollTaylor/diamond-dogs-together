@@ -735,25 +735,39 @@ PlayerInfo `0x1412CE870` sets `ON_HORSE` only for act 121. It does **not** hide
 a D-Walker rider: act 125 (`RideWalkerGearActionImpl::StateDrive`) sets no
 `ON_*` status Lua binds, so the sender reports kind 0 (foot), and the viewer
 keeps body 1 as an on-foot puppet whose remote position is the cockpit and
-whose remote act (125) is no locomotion act; what that looks like is not yet
-captured. The horse get-on / get-off act 122 is reported as foot too.
+whose remote act (125) is no locomotion act: in the baseline frames (key off,
+partner-mount.txt part 5) body 1 walks on foot along the walker's path with no
+walker under it. The horse get-on / get-off act 122 is reported as foot too.
 
-Lab key `partner_native_mount=off|hide` (**default off in lab and play**, play
-forces it off, a named value records `partner_native_mount_given`): with
-`hide` the viewer also hides body 1 while the remote's act is a mount act
-(121, 122 horse; 123..126 D-Walker), like the heli acts 97..108
-(`partner_mount_policy.hpp`, `partner_ride_wire::Observe`). It acts only where
-`partner_native_ride` hides (not off). The partner is shown again after the
-usual 500 ms of calm on-foot samples. Lines (driver tick, capped at 64):
+Key `partner_native_mount=off|hide` (**default hide with the native gun profile in lab; play forces it off**, a
+named value records `partner_native_mount_given`, a named off opts out): with `hide` the viewer also hides body 1
+while the remote's act is a mount act (121, 122 horse; 123..126 D-Walker), like the heli acts 97..108
+(`partner_mount_policy.hpp`, `partner_ride_wire::Observe`). It acts only where `partner_native_ride` hides (not off).
+
+Clearing the native realize bits (the ride hide's `partner_bits=cleared; reason=ride`) does **not** take body 1 off
+the screen: Lua's all-instance-active mode (`Player.SetAllInstanceActiveMode`, P+0x204 bit 0x2000) keeps instance 1
+realized, and in hidden runs `b264ad58` / `251abcef` the partner body stood idle at the get-on spot, turned to the
+camera and without its name tag, for the whole horse or D-Walker ride. So while a mount episode hides body 1 and Lua
+reports all-active, the hidden reply also carries `CLEAR_ALLACTIVE` (op 8; `partner_mount_policy::Unrealize`): Lua
+sets the mode off (`partner_lua=event=allactive_cleared`), instance 1 is unrealized (probe `pool=00,ff`,
+`rbits=0x1`; instance 0 untouched, it is the stock single-player state). The partner is shown again after the usual
+500 ms of calm on-foot samples: placed, then the stage policy's `SET_ALLACTIVE` realizes it again
+(`allactive_set`, `partner_realized=1`; the look is kept). Lines (driver tick, capped at 64):
 
 - `partner_mount=configured; mode=hide; ride=<partner_native_ride>; acts=121..126` once per mission;
 - `partner_mount=hide; mount=horse|walker; act=..; kind=<ride wire kind>; ride_live=..; episode=..` when the act rule starts hiding;
+- `partner_mount=unrealize; mount=..; act=..; episode=..; op=clear_allactive` once per episode;
 - `partner_mount=end; mount=..; act=<the first valid non-mount act>; ms=..; kind=..` when it stops (a missing act sample does not end it);
 - the existing `partner_ride=hide; reason=ride; act=..` and `partner_ride=foot_stable; next=place`.
 
-It stays off until a hidden-worker FRAME shows the D-Walker rider hidden
-(`tools/worker/scenarios/partner-mount.txt` part 4) and the baseline (part 5)
-shows what the viewer draws today.
+The horse kind-3 hide without the key still only clears the bits and leaves that standing body (filmed in
+`251abcef`); the heli and vehicle-fallback ride hides use the same bit clear (not filmed).
+
+Hidden runs (`tools/worker/scenarios/partner-mount.txt`, research build, gun stage, lab seed): `bfd6fcc4` (lab):
+no partner body on the guest's screen while the host rode the D-Walker (two vantages) or the D-Horse, the body back
+at the dismount spot, the guest's own act and status unchanged; the lab default follows it. `fbde3dcc` (play
+rehearsal, `-WanSim bad`, key not named): the horse part passed the same way, but the run stopped before the
+D-Walker part (Part 3 left the host mounted), so play stays off.
 
 ## Rates
 
@@ -1768,7 +1782,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default block with the native gun profile in lab and play (hidden runs 0348c4d8 lab, fad26e25 play), otherwise off; passenger is lab only: play turns a named passenger into block; a named value records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
-| `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default off in lab and play, lab only: play forces off) |
+| `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab (hidden run bfd6fcc4), off otherwise; play forces off) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and
