@@ -23,6 +23,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_icon.hpp"
 #include "mgscoop/partner_placed_census.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "partner_player_contract.hpp"
@@ -2540,6 +2541,131 @@ void TestJobWindow() {
         hk::detail::BindNativePoseForTest({});hk::RegisterNativePoseJobHooks(nullptr,nullptr,nullptr);
         a=oldArm;Put<std::uintptr_t>(blk1+c::blk_ps,0);
         Put<std::uintptr_t>(P+0xc0,0);Put<std::uint32_t>(P+0x204,0);
+        hk::PublishArm(a);
+    }
+    // F3 (docs/native-puppet.md "Traversal icon"): the padop vtable copy in the real drain window. With a pending,
+    // unexpired icon request in the Arm, block 1's job sees P's padop through the copy (body 1's ladder query runs the
+    // plugin's own Exec for idx 1, once per request id; its step-on force is swallowed); the image vtable is back
+    // after the window; no request, an expired request or a padop of another P never swap.
+    {
+        namespace ic = mgscoop::partner_icon;
+        struct IconWorld {
+            alignas(16) unsigned char padop[0x3F30];
+            alignas(16) unsigned char res[0x60];
+            std::uintptr_t vt_ladder[2];
+            std::uintptr_t ladder1[2];  // {vtable, block}
+        };
+        static IconWorld* iw = new IconWorld();
+        std::memset(iw, 0, sizeof(*iw));
+        static std::uintptr_t s_vptr = 0;
+        static bool s_result = false;
+        static unsigned s_exec = 0, s_force_orig = 0, s_completed_orig = 0;
+        struct IconJob {
+            static std::uint8_t Prio(void*, std::uint32_t, std::uint32_t kt) noexcept { return kt == 0 ? 6 : 0; }
+            static bool Exec(void*, std::uint32_t idx, std::uint32_t kt, void*) noexcept {
+                ++s_exec;
+                return idx == 1 && kt == 0;
+            }
+            static bool Completed(void*, void*, std::int32_t, void*) noexcept {
+                ++s_completed_orig;
+                return false;
+            }
+            static void Force(void*, std::int32_t, bool, void*) noexcept { ++s_force_orig; }
+            // Block 1's job: the polls call [P+0xD0] vt+0x28 (and the step-on vt+0x50 after a completion).
+            static void Job(void*, const void*) noexcept {
+                s_vptr = Get<std::uintptr_t>(Addr(iw->padop));
+                s_result = false;
+                if (s_vptr != ic::CopyTable()) return;  // the synthetic image's own slots are not callable
+                using CompletedFn = bool (*)(void*, void*, std::int32_t, void*);
+                using ForceFn = void (*)(void*, std::int32_t, bool, void*);
+                s_result = reinterpret_cast<CompletedFn>(Get<std::uintptr_t>(s_vptr + ic::kSlotCompleted))(iw->padop, iw->ladder1, 0, iw->res);
+                if (s_result) reinterpret_cast<ForceFn>(Get<std::uintptr_t>(s_vptr + ic::kSlotForce))(iw->padop, 0, true, iw->res);
+            }
+        };
+        const std::uintptr_t padop = Addr(iw->padop);
+        const std::uintptr_t saved_padop = Get<std::uintptr_t>(P + ic::kPPadop);
+        const std::uint32_t saved_flags = Get<std::uint32_t>(P + c::p_flags);
+        Put<std::uintptr_t>(P + ic::kPPadop, padop);
+        Put<std::uintptr_t>(padop, base + ic::kPadopVtableRva);
+        Put<std::uintptr_t>(padop + ic::kPadopOwner, P);
+        Put<std::uint32_t>(P + c::p_flags, saved_flags | ic::kPFlagIcons);
+        iw->vt_ladder[0] = Addr(reinterpret_cast<const void*>(&IconJob::Prio));
+        iw->vt_ladder[1] = Addr(reinterpret_cast<const void*>(&IconJob::Exec));
+        iw->ladder1[0] = Addr(iw->vt_ladder);
+        iw->ladder1[1] = blk1;
+        const std::uintptr_t exec[ic::kKinds] = {0, iw->vt_ladder[1], 0x7001, 0x7002, 0x7003};
+        ic::detail::BindForTest(reinterpret_cast<void*>(base), &IconJob::Completed, &IconJob::Force, exec);
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        hk::PublishArm(a);
+        g_hook_sample.packet.held = kRemoteHeld;
+        dispatch(w->root1, 8);
+        Check(hk::RunJobWindow(w->go, &param, 1, &IconJob::Job, pi::Consumer::drain0) && s_vptr == base + ic::kPadopVtableRva && s_exec == 0,
+              "icon: no request in the Arm, the job sees the image vtable");
+        pi::Arm ia = a;
+        ia.icon_kind = static_cast<std::uint8_t>(ic::Kind::ladder);
+        ia.icon_seq = 77;
+        ia.icon_until_ms = ~0ull;
+        hk::PublishArm(ia);
+        hk::DrainStats(hs);
+        const ic::Stats before = hs.native.icon;
+        Check(hk::RunJobWindow(w->go, &param, 1, &IconJob::Job, pi::Consumer::drain0) && s_vptr == ic::CopyTable() && s_result &&
+                  s_exec == 1 && s_force_orig == 0 && s_completed_orig == 0,
+              "icon: the copy answers body 1's ladder query with the plugin's Exec (idx 1) and swallows its force");
+        Check(Get<std::uintptr_t>(padop) == base + ic::kPadopVtableRva, "icon: the image vtable is back after the window");
+        hk::DrainStats(hs);
+        Check(hs.native.icon.swaps == before.swaps + 1 && hs.native.icon.windows == before.windows + 1 &&
+                  hs.native.icon.granted == before.granted + 1 && hs.native.icon.granted_seq == 77 && hs.native.icon.force_swallowed == before.force_swallowed + 1,
+              "icon: the drained stats count the swap, the scope and the grant");
+        Check(hk::RunJobWindow(w->go, &param, 1, &IconJob::Job, pi::Consumer::drain0) && s_vptr == ic::CopyTable() && !s_result && s_exec == 1,
+              "icon: the same request id is never granted twice");
+        // Outside any window the copy is not installed; a call through it (no scope) goes to the original.
+        using CompletedFn = bool (*)(void*, void*, std::int32_t, void*);
+        Check(!reinterpret_cast<CompletedFn>(Get<std::uintptr_t>(ic::CopyTable() + ic::kSlotCompleted))(iw->padop, iw->ladder1, 0, iw->res) &&
+                  s_completed_orig == 1 && s_exec == 1,
+              "icon: outside the drain scope the copy forwards to the original");
+        ia.icon_seq = 78;
+        ia.icon_until_ms = 1;  // expired
+        hk::PublishArm(ia);
+        Check(hk::RunJobWindow(w->go, &param, 1, &IconJob::Job, pi::Consumer::drain0) && s_vptr == base + ic::kPadopVtableRva && s_exec == 1,
+              "icon: an expired request never swaps");
+        ia.icon_until_ms = ~0ull;
+        Put<std::uintptr_t>(padop + ic::kPadopOwner, P + 8);
+        hk::PublishArm(ia);
+        hk::DrainStats(hs);
+        const std::uint32_t refused = hs.native.icon.swap_refused;
+        Check(hk::RunJobWindow(w->go, &param, 1, &IconJob::Job, pi::Consumer::drain0) && s_vptr == base + ic::kPadopVtableRva && s_exec == 1,
+              "icon: a padop of another P never swaps");
+        hk::DrainStats(hs);
+        Check(hs.native.icon.swap_refused == refused + 1, "icon: the refused swap is counted");
+        Put<std::uintptr_t>(padop + ic::kPadopOwner, P);
+        Check(hk::RunJobWindow(w->go, &param, 1, &IconJob::Job, pi::Consumer::drain0) && s_vptr == ic::CopyTable() && s_result && s_exec == 2 &&
+                  Get<std::uintptr_t>(padop) == base + ic::kPadopVtableRva,
+              "icon: a new request id grants again; the image vtable is back");
+        // A job that leaves a foreign vptr in the padop (the object replaced inside the window): ApplyPost
+        // restores the padop first and only over the copy, so the foreign vptr stays; counted and latched.
+        static std::uintptr_t s_foreign = 0;
+        struct ForeignJob {
+            static void Job(void* foreign_go, const void* foreign_param) noexcept {
+                IconJob::Job(foreign_go, foreign_param);
+                Put<std::uintptr_t>(Addr(iw->padop), s_foreign);
+            }
+        };
+        s_foreign = base + ic::kPadopVtableRva + 0x300;
+        ia.icon_seq = 79;
+        hk::PublishArm(ia);
+        hk::DrainStats(hs);
+        const ic::Stats before_foreign = hs.native.icon;
+        Check(hk::RunJobWindow(w->go, &param, 1, &ForeignJob::Job, pi::Consumer::drain0) && s_vptr == ic::CopyTable() && s_result &&
+                  s_exec == 3 && Get<std::uintptr_t>(padop) == s_foreign,
+              "icon: a foreign padop vptr after the job is never overwritten");
+        hk::DrainStats(hs);
+        Check(hs.native.icon.restore_mismatch == before_foreign.restore_mismatch + 1 && hs.native.icon.latched,
+              "icon: the foreign vptr is counted and latches the mission");
+        Put<std::uintptr_t>(padop, base + ic::kPadopVtableRva);
+        ic::ResetMission();
+        ic::detail::ResetForTest();
+        Put<std::uintptr_t>(P + ic::kPPadop, saved_padop);
+        Put<std::uint32_t>(P + c::p_flags, saved_flags);
         hk::PublishArm(a);
     }
     // The game window closes (debug_overlay WM_CLOSE -> PartnerShutdown on

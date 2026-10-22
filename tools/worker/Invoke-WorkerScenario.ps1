@@ -113,8 +113,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    (391..395) and arm holds (HOLD only) for the partner body (default on with the gun profile);
                                    partner_native_place_mirror=0|1, WS4 v2: the remote's C4 place kneel and detonate motion
                                    on the partner body (lab only, default on with the gun profile);
-                                   partner_native_traverse=0|1, the ladder / pipe / step-on replay on the partner body
-                                   (placement plus a state-verified ACTION overlay tap; lab only, default 0);
+                                   partner_native_traverse=0|1, the ladder / pipe / climb / step-on replay on the partner body
+                                   (placement plus body 1's action-icon request; lab only, default 0);
                                    partner_native_cbox=0|1, the remote's cardboard box on the partner body through
                                    ChangeEquip / SetCurrentItemIndex for instance 1 (lab only, default 0);
                                    partner_fire_census=0|1, the owner census for support and other requests;

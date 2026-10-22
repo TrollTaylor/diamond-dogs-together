@@ -149,7 +149,7 @@ contract with its string; keyboard bit i is key binding i, `0x1206C21..0x1206CF2
 | 0x2000000 | keyboard binding 25 (walk) | Ctrl | always |
 | 0x8 / 0x40 | HOLD / RELOAD = CARRY | RMB / R | gun stage |
 | 0x10 | FIRE | LMB aimed | fire gate only |
-| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never from the remote's pad; with `partner_native_traverse=1` (lab only, default 0) only the traversal replay's overlay tap ("Traversal") |
+| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never from the remote's pad; with `partner_native_traverse=1` (lab only, default 0) it stays in the mask, but since 0.13.5 no replay step taps it (the icon request replaces the tap: "Traversal icon") |
 | 0x200, 0x400, 0x8000, ... | CALL/INTERROGATE, SUBJECT, CQC, weapons, markers | | never |
 
 The movement base is `kPartnerNativeBaseMask = 0x2240006`; the gun stage
@@ -171,9 +171,10 @@ with ACTION masked, is not verified (open item; the action census records
 `remote_act`/`body.act`). The remote's own ACTION never reaches body 1: it
 aliases ride, knife kill and pickup, which would act on the receiver's world.
 RELOAD aliases CARRY (gun stage only; gating it on the remote's aim state is
-an open item). The traversal replay ("Traversal") is the only path that may
-press ACTION on body 1, as a state-verified overlay tap, and it is off by
-default.
+an open item). Nothing presses ACTION on body 1: since 0.13.5 the traversal
+replay ("Traversal", off by default) starts body 1's ladder, pipe, climb or
+step-on through its action icon ("Traversal icon"), not through an overlay
+tap.
 
 Reconciliation (native preset, `partner_recon::NativeParams`): the moving
 runaway compares the body's own velocity with the remote's along and across
@@ -190,8 +191,9 @@ with `runaway`.
 ## Traversal
 
 `partner_traverse` (`native/partner_traverse.*`, driven by `TickTraverse` in
-`partner_driver.cpp`) replays a remote ladder (act 21), drain pipe (22) or
-step-on (24: low vault, onto a ledge, up out of a hang) on body 1. Lab key
+`partner_driver.cpp`) replays a remote ladder (act 21), drain pipe (22), wall
+climb (23) or step-on (24: low vault, onto a ledge, up out of a hang) on body
+1. Lab key
 `partner_native_traverse=0|1`: **default 0 in lab and play**, play forces it
 off, a named value records `partner_native_traverse_given`. It stays off until
 a hidden-worker FRAME shows body 1 on a ladder.
@@ -206,22 +208,30 @@ EVADE reach body 1). There is no player door act: door states belong to the
 toilet (84..89), trash box (79..83) and the 67..74 plugin. 49/50/59 are Fulton
 acts.
 
-One episode, per remote edge into 21/22/24 that body 1 does not show:
+One episode, per remote edge into 21..24 that body 1 does not show (25..28
+and 54..56 are never requested: they arrive natively):
 
-1. **Source gate.** Body 1's act must be a plausible start. A ladder admits
-   only the game's own mask (`LadderActionImpl::CheckEnableStartLadder`
-   `0x1411E9B70` -> `FUN_1411E9A70`, `0x18200001E`: acts 1..4, 25, 31, 32);
-   a pipe or a step-on admits locomotion 1..8 and the hang 54..56 (not yet
-   read from their plugins).
+1. **Source gate.** Body 1's act must be a start the plugin's own gate
+   accepts. A ladder admits only the game's own mask
+   (`LadderActionImpl::CheckEnableStartLadder` `0x1411E9B70` ->
+   `FUN_1411E9A70`, `0x18200001E`: acts 1..4, 25, 31, 32); a pipe
+   (`FUN_141210510`) or a wall climb (`CheckActionState` `0x14114A900`)
+   acts 1..20; a step-on (`FUN_141293790` and Exec's act 0x36 path) acts
+   1..20, 31, 32 and the hang 54.
 2. **Placement.** One reconciliation placement at the aligned remote pose
    (`PlaceReason::traverse`: the Lua Warp with a neutral pad), skipped when body
    1 is within 300 mm and 0.35 rad; no replay beyond 8 m (the reconciliation
    places normally). The placement must verify within 1200 ms.
-3. **Tap.** Only after the window is armed again with a live pad on this and
-   the previous tick: a 4-frame ACTION overlay tap (`BumpTap`), at most 3 taps
-   per episode 350 ms apart while the remote stays in the traversal; body 1
-   must enter within 1500 ms of the first tap or the episode aborts
-   (`no_entry`).
+3. **Icon request (0.13.5).** Only after the window is armed again with a
+   live pad and while body 1's act is a source act of the plugin: the
+   machine raises `Out::icon` (ladder, pipe, climb or step-on) as a level
+   with one `icon_seq` per episode; the driver turns it into a
+   process-unique request id and publishes `Arm.icon_kind` / `icon_seq` /
+   `icon_until_ms` (now + 250 ms, not compared by `SameArm`). The drain
+   window answers body 1's icon query once per id ("Traversal icon"). Body 1
+   must enter a traversal act within 1500 ms of the request phase or the
+   episode aborts (`no_entry`). The 0.13.4 ACTION overlay tap (`BumpTap`,
+   up to 3 per episode) is gone.
 4. **Hold.** While an episode runs and while body 1 runs any traversal act
    natively (21..24, 28, 54..56), the reconciliation's far, vertical and
    runaway placements are held (`traverse_hold`, `partner_recon.cpp`); a
@@ -229,15 +239,17 @@ One episode, per remote edge into 21/22/24 that body 1 does not show:
    traversal, 3 s after the remote left every traversal act, or after 45 s.
 
 ACTION is added to the Arm's `mask` and `sample_strip` only with
-`native_active && traverse` (`BuildArm`): the overlay tap passes, the remote's
-raw E (held, edges, words, tap12/long12) never does. `kNativeBase` and
-`kMovementOnlyBits` are unchanged. Carry, a seated ride, the DM overlay and a
-downed remote block the replay (`block=` in the log). Every edge logs
-`partner_traverse=<start|placed|tap|entered|done|abort>; reason=..; phase=..;
-act=..; remote_act=..; body_act=..; taps=..; episodes=..; entered=..;
+`native_active && traverse` (`BuildArm`): the remote's raw E (held, edges,
+words, tap12/long12) never passes; nothing in the replay taps it any more
+(the mask stays for a later in-traversal ACTION replay, see below).
+`kNativeBase` and `kMovementOnlyBits` are unchanged. Carry, a seated ride, the
+DM overlay and a downed remote block the replay (`block=` in the log). Every
+edge logs `partner_traverse=<start|placed|request|entered|done|abort>;
+reason=..; phase=idle|place|request|native; act=..; remote_act=..;
+body_act=..; icon=..; seq=..; episodes=..; requests=..; entered=..;
 aborted=..; block=..`.
 
-**Status (0.13.4): unproven, off.** The 0.13.3 build that shipped this machine
+**Status (0.13.4, unchanged in 0.13.5): unproven, off.** The 0.13.3 build that shipped this machine
 on by default logged 0 `partner_traverse` lines in play. A stock ladder, pipe,
 wall-climb or step-on start goes through the HUD action icon:
 `CorePluginImpl::ExecParallelStart` runs the icon builder `[[P+0xD0]]+0x18`
@@ -245,10 +257,10 @@ wall-climb or step-on start goes through the HUD action icon:
 polls read `IsCompletedActionIcon` (`0x140AFD870`, no player index) at
 `0x1411EB00D` (ladder), `0x141213DBC` (pipe), `0x14114DEC8` (climb) and
 `0x14129BF86` (step-on). An ACTION press on instance 1's pad has no consumer
-there, so the tap step is expected to be replaced by an icon request for body
-1 (the plugin's own `ExecActionButtonFunction` for idx 1). The ACTION reads
-inside a running traversal (ladder `0x1411EFEEC`, `0x1411F02DD`; elude
-`0x1411A7967`) do read instance 1's pad, which is why the mask and strip
+there, so 0.13.5 replaces the tap step with an icon request for body 1 (the
+plugin's own `ExecActionButtonFunction` for idx 1, "Traversal icon"). The
+ACTION reads inside a running traversal (ladder `0x1411EFEEC`, `0x1411F02DD`;
+elude `0x1411A7967`) do read instance 1's pad, which is why the mask and strip
 wiring stays.
 
 ## Vehicle boarding
@@ -357,6 +369,147 @@ does to the next FAST placement. Research builds: `coop_passenger` and
 (`exact_code`) once the board sites are live. The startup partner code gate
 and `partner_upper_probe`'s one-time gate both run at configure, before the
 lazy board install, so they never see the patched rel32; nothing re-runs them.
+
+## Traversal icon
+
+F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research
+note `re-traverse-gesture.md` sections 1-4). Same key as "Traversal":
+`partner_native_traverse`, **default 0 in lab and play**, play forces it off;
+no new key. Unproven until a hidden-worker FRAME shows body 1 on a ladder, a
+wall or a ledge.
+
+**Why body 1 never starts a traversal.** The icon controller "padop"
+(`Player2PadOperatorControllerImpl`, vtable `0x1422E8F00`, 96 slots, one object
+per P at `P+0xD0`, allocated by `0x140AFC770` -> ctor `0x140AFAE90`) is shared
+by both bodies. Its builder (vt+0x18 `0x140AFCCE0`) runs only for
+`idx == P+0x218` (`0x141155B87`) and fills the key-type slots
+`padop+0x980+kt*0xE0` with block 0's plugin pointers (`[block+0x78]+0x10`, 0x45
+`ActionPlugin*`). Action plugins are per block (`ActionPlugin+8` = its block),
+so body 1's polls (ladder `0x1411EB00D`, pipe `0x141213DBC`, climb
+`0x14114DEC8`, step-on `0x14129BF86`) pass block 1's own plugin objects to
+`IsCompletedActionIcon` (vt+0x28 `0x140AFD870`), whose first compare
+`[padop+0x980+kt*0xE0] == plugin` (`0x140AFD88D`) never holds for them. The
+same static evidence says body 1 never reads the viewer's icon either.
+
+**Mechanism.** No code byte and no image vtable slot is written (the carry
+contract pins `0xAFD870` and the slot {`0x22E8F00`, +0x28}).
+
+1. `partner_icon::Build` (once per process, lazily from `PartnerInstallDefer`
+   with defer=on and the key on, after the code gate): the live image slots
+   +0x28 / +0x50 must be the originals and the complete bodies of `0xAFD870`
+   (0x1AE), `0xB02480` (0x135) and the traversal priority `0x12128C0` must
+   match their SHA-256 pins (`icon_bodies` in `partner_player_contract.hpp`).
+   It copies vt[-1] and the 96 slots and replaces +0x28 with
+   `IconCompletedBody1` and +0x50 with `IconForceBody1`. Logs
+   `partner_icon=built; ...` or `partner_icon=refused; reason=slots|pins|..`.
+2. **Swap.** `ApplyPre` (drain windows only, `WindowOpts::icon`) installs the
+   copy into `[P+0xD0]` when `SwapWanted` holds (native Arm, `icon_kind`
+   1..4, `icon_seq != 0`, `NowMs() < icon_until_ms`) and the padop identity
+   is exact (vtable `image+0x22E8F00`, `padop+0x10 == P`, as
+   `carry_plugin_read.hpp` checks); `ApplyPost` (every exit path, SEH and
+   `__finally` included) restores the image vtable first, under its own SEH
+   (a fault in a later restore never leaves the copy installed), and only
+   over the copy (`RestoreAction`): a vptr already back is left, a foreign
+   vptr is never overwritten (`restore_mismatch`, latches the mission).
+3. **Scope.** `partner_icon::Begin(P, blk1, kind, seq)` right before block
+   1's job, `End` in `GuardedCall`'s `__finally` and the outer `__finally`.
+   Outside the scope (another thread, outside the job) every call through the
+   copy goes to the original.
+4. **`IconCompletedBody1`.** A query is body 1's when the scope is active on
+   this thread and `*(plugin+8) == blk1`; anything else goes to the original.
+   Body 1's query is answered `true` only when (in this order, `GrantCheck`)
+   kt == 0, a request is pending, the mission latch is clear, this request
+   id was not granted yet, the plugin's vt[1] is the requested kind's Exec
+   (`0x11EA140` ladder, `0x1211820` pipe, `0x114BEC0` climb, `0x1293F60`
+   step-on), `padop+0x10 == P`, `P+0x204` bit 10 (the stock gate at
+   `0x140AFD90C`) and `res` is 16-byte aligned; then priority
+   `vt[0](plugin, 1, 0)` (`0x12128C0`: 6 for kt 0) and
+   `Exec(plugin, 1, 0, res)` under SEH, with the shared ray-cache entry
+   `padop+0x7F0..+0x840` (vt+0x188 type 0x19, used by the climb and pipe
+   Exec) saved and restored. Exec fills body 1's own work and geo path; the
+   stock poll then sets its work state and the plugin's Wake writes act
+   21..24 in that frame. Every other body-1 query returns `false` (what stock
+   returns for body 1).
+5. **Viewer guard.** Around Exec the module digests the viewer's state Exec
+   must never touch: the six key-type slots (`padop+0x980..+0xEC0`), the six
+   icon input states (`padop+0x1240..+0x1330`) and the viewer's act words
+   `Q+0x18[local]` / `Q+0x20[local]`. Any change, or an SEH fault, latches the
+   mission-scoped `uncertain` flag: no further grants until MissionStart
+   (`partner_input_hook::ResetFault` -> `partner_icon::ResetMission`).
+6. **`IconForceBody1`** (+0x50): body 1's step-on poll calls it right after a
+   completion (`0x14129C129`); stock would set the viewer's input-state bit 7
+   (`padop+0x1260`) and copy the viewer's slot result into a local the poll
+   discards. In scope it is swallowed; outside it goes to the original.
+
+**Contract.** `tools/generate_partner_contract.py` pins the four Exec
+prologues, the priority body, the two forwarded prologues, the builder gate
+(`0x1155B79`, `0x1155BC3`), the four poll call sites and the step-on force
+call (`ICON_SITES`), the padop slots +0x18/+0x28/+0x50/+0x188 and vt[0]/vt[1]
+of every traversal `ActionPlugin` vtable (`0x23C6000`, `0x23C60C0`,
+`0x23C9BE0`, `0x23C9CB0`, `0x23BB850`, `0x23BB930`, `0x23D13E0`,
+`0x23D1490`), and asserts that only the ctor/dtor store the padop vtable and
+that `0xAFD870` / `0xB02480` / the Exec functions are reached only through
+those slots.
+
+**Census (read-only).** Once per mission with the key on and the block-1
+targets read: block 1's `PS+0x10` plugin list against block 0's, and
+`*(p+8) == its block` for the four traversal plugins (found by vt[1]):
+`partner_icon=census; distinct=<differ>/<both non-null>; blk_ok=0x<b0>/0x<b1>;
+found=0x<b0>/0x<b1>; null=<n0>/<n1>; read=0|1; verdict=ok|unread|empty|shared|
+missing0|missing1|blk0|blk1` (bits are 1 << kind: 0x1e = all four).
+
+**Logs** (from the driver tick; the hook only counts):
+- `partner_traverse=icon; plugin=ladder|pipe|climb|step_on; res=ok|none;
+  seq=..; exec_ok=..; exec_fail=..; granted=..; queries=..; denied=..;
+  swaps=..; swap_refused=..; windows=..; passed=..; force_swallowed=..;
+  req_queries=..; req_denied=..; deny=<Deny>; latched=0|1;
+  viewer_changed=..; faults=..; restore_mismatch=..` once per request. Every
+  count is the delta since the request started; `latched` is the mission
+  latch at the time of the line. `queries` / `denied` count every body-1
+  query in scope (body 1's other traversal polls and its kt > 0 plugins
+  query in the same job); `req_queries` / `req_denied` count only the
+  requested plugin's own queries (its vt[1] is the requested Exec), and
+  `deny` is that plugin's last refusal (`none` when it had none in this
+  request). `windows` counts scoped jobs (`Begin`), `passed` calls through
+  the copy that went to the original (another thread, another block, or
+  outside the scope). `res=ok` as soon as the grant is counted, `res=none`
+  when the machine left the request phase without one: entered natively or
+  aborted; a tick inside the phase without the level, such as a disarmed
+  window, neither ends the request nor restarts its deltas.
+- `partner_traverse=icon_act; seq=..; act=..; ms=..` for every body-1 act
+  change in the 2 s after a grant, then one line with `final=1`.
+- The existing `partner_act` edges (`partner_act_log=1`): expect
+  `edge=body; remote=X; body=X; match_ms<1500` after `res=ok`.
+
+Reading a failed run: `queries=0` means body 1's polls never ran inside a
+swapped drain window: no window swapped (`swaps=0` / `swap_refused>0`), the
+swapped windows never scoped block 1's job (`windows=0`), or the polls went
+through the copy outside the scope (`passed>0`: another thread or block).
+`queries>0, req_queries=0` means body 1's other polls ran but the requested
+plugin's poll never reached the icon (its own state gate refused first:
+act, upper act `Q+0x20[1]`). `exec_fail>0, exec_ok=0` (`deny=exec`) means
+the plugin's own gates refused body 1 at that pose (placement, facing, act,
+upper act); `deny=p_flag` means `P+0x204` bit 10 was clear;
+`deny=align|owner|fault`, `restore_mismatch>0` or `latched=1`: report.
+`res=ok` without `edge=body` means the poll or the Wake did not follow the
+completion.
+
+**Risks** (for the hidden run).
+- The ladder Exec reads `P+0xB0` pad +0x10/+0x14/+0x2C (instance 1's injected
+  pad inside the drain) and body 1's facing; the climb and pipe Exec cast a
+  ray whose default path passes `P+0x214` (the local index), so body 1's ray
+  may exclude the viewer instead of itself (effect unknown).
+- `P+0x204` bit 10's meaning and writer are unknown; it is set whenever the
+  viewer's own icons work.
+- Readers that check the padop vtable on other threads during a swapped
+  window (carry, sleep, horse readers) see the copy and refuse for that read;
+  the carry readers already avoid windows through `WindowSeq`.
+- With `P+0x218 = 1` inside a window (`p218`, pose-owned windows) the
+  builder would run for body 1 and fill the shared slots with block 1's
+  plugins; while a request is pending the copy still answers only the
+  requested plugin (no viewer E reaches body 1).
+- Body 1 reloading (upper act 5) or picking up (0x15) cannot start a
+  traversal, as in stock.
 
 ## Rates
 
@@ -1368,7 +1521,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
 | `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
-| `partner_native_traverse` | 0, 1 (the ladder / pipe / step-on replay, see "Traversal"; default 0 in lab and play, lab only: play forces 0) |
+| `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default off in lab and play, a named value records `partner_ride_board_given`, lab only: play forces off) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not

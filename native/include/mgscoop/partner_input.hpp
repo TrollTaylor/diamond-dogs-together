@@ -648,9 +648,17 @@ struct Arm {
     // viewer's gun mode, read-only, to attribute a slot-3 stock change between
     // two body-1 jobs to the viewer's own throw (0 = none).
     std::uintptr_t viewer_gun_prim, viewer_gun_rec;
+    // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
+    // by SameArm, so a request never bumps gen): body 1's pending icon request
+    // from partner_traverse (partner_icon::Kind, 0 = none), its process-unique
+    // id and its expiry (a stale Arm drops it). A drain window swaps the padop
+    // vtable copy in only while all three hold (partner_icon::SwapWanted).
+    std::uint8_t icon_kind;
+    std::uint32_t icon_seq;
+    std::uint64_t icon_until_ms;
 };
 
-// Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.
+// Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip, the icon request and the one-shots.
 bool SameArm(const Arm& a, const Arm& b) noexcept;
 
 // Hook statistics drained by the driver (the hook keeps atomics).

@@ -344,8 +344,9 @@ $script:LabPartnerKeys = @(
     # WS4 v2: the remote's C4 place kneel and detonate motion on the partner body (lab only: the loader defaults it on
     # with the gun profile in lab and off in play; written only when set).
     @{ Key = 'partner_native_place_mirror'; Json = 'native_place_mirror'; Kind = 'bool' },
-    # Traversal replay (docs/native-puppet.md "Traversal"): the ladder / pipe / step-on placement and ACTION overlay
-    # tap on the partner body (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
+    # Traversal replay (docs/native-puppet.md "Traversal", "Traversal icon"): the ladder / pipe / climb / step-on placement
+    # and action-icon request on the partner body (lab only: the loader defaults it off in lab and forces it off in play;
+    # written only when set).
     @{ Key = 'partner_native_traverse'; Json = 'native_traverse'; Kind = 'bool' },
     # F2 (docs/native-puppet.md "Cardboard box"): the remote's cardboard box on the partner body through two native
     # calls (lab only: the loader defaults it off in lab and forces it off in play; written only when set).

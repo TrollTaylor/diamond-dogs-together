@@ -192,6 +192,10 @@ struct Fake {
     std::vector<std::string> seat_target_order;  // "dm_live" when the target ran while the DM played
     const char* seat_target_result = nullptr;
     bool seat_target_named = false;
+    // F3 traversal icon: the census the hook returns and its calls.
+    mgscoop::partner_icon::Census icon_census{};
+    unsigned icon_census_calls = 0;
+    std::uintptr_t icon_census_blk[2] = {0, 0};
 
     Fake() {
         Ready();
@@ -515,6 +519,13 @@ bool HookReadLookSource(void* context, const pp::State&, pp::LookSource& out) no
     return F(context).look_source_ok;
 }
 std::uint32_t HookWindowSeq(void* context) noexcept { return F(context).window_seq; }
+void HookIconCensus(void* context, const pp::InputTargets& targets, mgscoop::partner_icon::Census& out) noexcept {
+    auto& f = F(context);
+    ++f.icon_census_calls;
+    f.icon_census_blk[0] = targets.blk0;
+    f.icon_census_blk[1] = targets.blk1;
+    out = f.icon_census;
+}
 bool HookReadRates(void* context, const pp::State&, std::uint32_t index, pp::RateRead& out) noexcept {
     if (index < 2) ++F(context).rates_reads[index];
     out = index < 2 ? F(context).rates[index] : pp::RateRead{};
@@ -3414,6 +3425,141 @@ std::vector<std::uint8_t> CapsBytes(std::uint16_t revision, std::uint32_t epoch,
     return std::vector<std::uint8_t>(b, b + sizeof(b));
 }
 void SetVisualFire(NativeSession& s);
+// F3 (docs/native-puppet.md "Traversal icon"): with partner_native_traverse
+// on, a remote ladder edge next to body 1 raises the icon request in the
+// published Arm (kind, a process-unique id, an expiry) without a gen bump; the
+// hook's grant (its process totals) logs res=ok once, body 1's act follows for
+// 2 s, a request that ends without a grant logs res=none; the read-only census
+// runs once per mission; the key off never requests.
+void TestNativeTraverseIcon() {
+    namespace pn = mgscoop::partner_native;
+    namespace ic = mgscoop::partner_icon;
+    {
+        NativeSession s;
+        s.hooks.icon_census = HookIconCensus;
+        s.fake.input_targets.blk0 = 0x8000;
+        s.fake.input_targets.blk1 = 0x8800;
+        s.fake.icon_census.read = true;
+        s.fake.icon_census.plugins = s.fake.icon_census.distinct = 0x40;
+        s.fake.icon_census.found0 = s.fake.icon_census.found1 = ic::kAllKinds;
+        s.fake.icon_census.blk_ok0 = s.fake.icon_census.blk_ok1 = ic::kAllKinds;
+        s.driver.settings.traverse = true;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true;
+        s.fake.sample.act = 2;
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "icon: native active with traverse on");
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.icon_census_calls == 1 && s.fake.icon_census_blk[0] == 0x8000 && s.fake.icon_census_blk[1] == 0x8800 &&
+                  s.fake.Containing("partner_icon=census; distinct=64/64; blk_ok=0x1e/0x1e; found=0x1e/0x1e; null=0/0; read=1; verdict=ok") == 1,
+              "icon: the census runs once per mission with both blocks");
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0 && s.fake.arms.back().icon_until_ms == 0,
+              "icon: no request while both walk");
+        const std::uint32_t gen = s.fake.arms.back().gen;
+        // The hook's process totals before this request (an earlier mission's latch, long cleared, and other
+        // requests' activity): the result lines carry deltas, and a stale requested-plugin deny never shows.
+        auto& is = s.fake.stats.native.icon;
+        is.viewer_changed = 2; is.faults = 1; is.windows = 40; is.passed = 7; is.force_swallowed = 4; is.restore_mismatch = 1;
+        is.req_queries = 9; is.req_denied = 5; is.req_deny = static_cast<std::uint8_t>(ic::Deny::p_flag);
+        s.fake.sample.act = 21;
+        bool raised = false;
+        for (int i = 0; i < 10 && !raised; ++i) {
+            s.N();
+            raised = s.fake.arms.back().icon_kind != 0;
+        }
+        const auto a = s.fake.arms.back();
+        Check(raised && a.icon_kind == static_cast<std::uint8_t>(ic::Kind::ladder) && a.icon_seq != 0 && a.icon_until_ms > 0 &&
+                  a.gen == gen && a.enabled && a.native,
+              "icon: a remote ladder edge next to body 1 raises the ladder request (no gen bump)");
+        Check(s.fake.Containing("partner_traverse=start; reason=near;") == 1, "icon: start near logged");
+        const std::uint32_t seq = a.icon_seq;
+        s.N();
+        Check(s.fake.arms.back().icon_seq == seq && s.fake.arms.back().icon_kind == a.icon_kind, "icon: the same request id while it waits");
+        Check(s.fake.Containing("partner_traverse=request; reason=ladder;") == 1, "icon: the request event");
+        // One tick with a body act outside the ladder's sources (8, a running step) drops the level inside the
+        // request phase: the request stays open (no result line), and the same id comes back.
+        is.queries += 2; is.denied += 2; is.swaps += 1;  // hook activity before the drop (part of this request's deltas)
+        s.fake.anim.act[1] = 8;
+        s.N();
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0 && s.fake.Containing("partner_traverse=icon; ") == 0,
+              "icon: a non-source tick drops the level without a result line");
+        s.fake.anim.act[1] = 2;
+        s.N();
+        Check(s.fake.arms.back().icon_seq == seq && s.fake.arms.back().icon_kind == a.icon_kind && s.fake.Containing("partner_traverse=icon; ") == 0,
+              "icon: the same request id after the drop");
+        // The hook grants (process totals in the drained stats).
+        is.ready = true;
+        is.queries += 4; is.exec_ok += 1; is.granted += 1; is.swaps += 2; is.granted_seq = seq; is.last_kind = 1;
+        is.windows += 3; is.passed += 1; is.force_swallowed += 1; is.req_queries += 1;
+        is.last_deny = static_cast<std::uint8_t>(ic::Deny::kind);  // another body-1 poll's refusal
+        s.N();
+        char want[384];
+        std::snprintf(want, sizeof(want),
+                      "partner_traverse=icon; plugin=ladder; res=ok; seq=%u; exec_ok=1; exec_fail=0; granted=1; queries=6; denied=2; swaps=3; "
+                      "swap_refused=0; windows=3; passed=1; force_swallowed=1; req_queries=1; req_denied=0; deny=none; latched=0; "
+                      "viewer_changed=0; faults=0; restore_mismatch=0\r\n",
+                      seq);
+        Check(s.fake.Containing(want) == 1, "icon: res=ok logged once with the deltas (the drop did not restart them)");
+        Check(s.fake.Containing("deny=p_flag") == 0 && s.fake.Containing("deny=kind") == 0,
+              "icon: neither a stale requested-plugin deny nor another poll's deny is logged");
+        s.fake.anim.act[1] = 21;
+        s.N();
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.arms.back().icon_seq == 0, "icon: body 1 on the ladder, the request drops");
+        Check(s.fake.Containing("partner_traverse=entered; reason=request;") == 1, "icon: entered through the request");
+        std::snprintf(want, sizeof(want), "partner_traverse=icon_act; seq=%u; act=21;", seq);
+        Check(s.fake.Containing(want) == 1, "icon: body 1's act after the grant");
+        for (int i = 0; i < 70; ++i) s.N();
+        std::snprintf(want, sizeof(want), "partner_traverse=icon_act; seq=%u; act=21; ms=", seq);
+        Check(s.fake.Containing(want) == 2 && s.fake.Containing("final=1") == 1, "icon: the 2 s act window closes");
+        Check(s.fake.Containing("res=ok") == 1 && s.fake.Containing("res=none") == 0, "icon: one result line");
+        // A second request without a grant: res=none when it ends (entry timeout).
+        s.fake.anim.act[1] = 2;
+        s.fake.sample.act = 2;
+        for (int i = 0; i < 120; ++i) s.N();
+        s.fake.sample.act = 24;
+        raised = false;
+        for (int i = 0; i < 10 && !raised; ++i) {
+            s.N();
+            raised = s.fake.arms.back().icon_kind != 0;
+        }
+        Check(raised && s.fake.arms.back().icon_kind == static_cast<std::uint8_t>(ic::Kind::step_on) && s.fake.arms.back().icon_seq == seq + 1,
+              "icon: the next episode gets the next id (step-on)");
+        // The step-on plugin's Exec refuses three times; body 1's other polls (kind / kt refusals) run last.
+        is.queries += 9; is.exec_fail += 3; is.denied += 9; is.req_queries += 3; is.req_denied += 3;
+        is.req_deny = static_cast<std::uint8_t>(ic::Deny::exec);
+        is.last_deny = static_cast<std::uint8_t>(ic::Deny::kind);
+        for (int i = 0; i < 60; ++i) s.N();
+        std::snprintf(want, sizeof(want), "partner_traverse=icon; plugin=step_on; res=none; seq=%u; exec_ok=0; exec_fail=3; granted=0;", seq + 1);
+        Check(s.fake.arms.back().icon_kind == 0 && s.fake.Containing(want) == 1 && s.fake.Containing("deny=exec") == 1 &&
+                  s.fake.Containing("req_queries=3; req_denied=3; deny=exec; latched=0; viewer_changed=0; faults=0;") == 1,
+              "icon: no entry within entry_ms: the request drops, res=none with the deltas and the requested plugin's deny");
+        Check(s.fake.Containing("partner_traverse=abort; reason=no_entry;") == 1, "icon: the episode aborts");
+        Check(s.fake.icon_census_calls == 1, "icon: still one census this mission");
+    }
+    {
+        // The key off: the same edge never requests, no census.
+        NativeSession s;
+        s.hooks.icon_census = HookIconCensus;
+        s.fake.input_targets.blk0 = 0x8000;
+        s.fake.input_targets.blk1 = 0x8800;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true;
+        s.fake.sample.act = 2;
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "icon off: native active");
+        for (int i = 0; i < 20; ++i) s.N();
+        s.fake.sample.act = 21;
+        bool raised = false;
+        for (int i = 0; i < 20; ++i) {
+            s.N();
+            raised = raised || s.fake.arms.back().icon_kind != 0;
+        }
+        Check(!raised && s.fake.icon_census_calls == 0 && s.fake.Containing("partner_traverse=") == 0 &&
+                  s.fake.Containing("partner_icon=") == 0,
+              "icon off: no request, no census, no lines");
+    }
+}
+
 void TestNativeOnline() {
     namespace pn = mgscoop::partner_native;
     namespace pnn = mgscoop::partner_native_net;
@@ -3624,8 +3770,8 @@ void TestNativeEnterAndLeave() {
         Check(s.fake.arms.back().enabled && s.fake.arms.back().gen == gen, "steering changes never bump the Arm gen");
         s.fake.sample.x = 1.0f;
     }
-    // partner_native_traverse=1 (lab only): ACTION joins the mask (the state-verified overlay tap reaches
-    // body 1) and the sample strip (the remote's raw E never passes); off again restores the Arm.
+    // partner_native_traverse=1 (lab only): ACTION joins the mask (kept for a later in-traversal ACTION replay; since
+    // 0.13.5 no replay step taps it) and the sample strip (the remote's raw E never passes); off again restores the Arm.
     {
         s.driver.settings.traverse = true;
         s.N();
@@ -6751,6 +6897,7 @@ int main() {
     TestDmMapCaps();
     TestNativeSleepPresentationAdmission();
     TestNativeEnterAndLeave();
+    TestNativeTraverseIcon();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
