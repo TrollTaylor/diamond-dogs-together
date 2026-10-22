@@ -653,14 +653,23 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.reload_reconcile = gun_stage && m.reload_out.reconcile;
     a.reload_release = gun_stage && m.reload_out.release;
     a.config.sample_strip = gun_stage && set.nreload == PartnerNativeReload::event && m.remote_v5 ? pnat::kPadReload : 0u;
-    // Traversal replay (partner_traverse): ACTION is in the mask so the
-    // overlay's state-verified tap reaches body 1, and in sample_strip so the
-    // remote's own ACTION (ride, knife kill, pickup) never passes raw from the
-    // network pad (Compose: held, edges, taps, words, tap12/long12 all use
-    // ~sample_strip; only overlay.bits is filtered by the mask alone).
+    // Traversal replay (partner_traverse): ACTION stays in the mask (no
+    // replay step taps it any more; an in-traversal ACTION replay would need
+    // it) and in sample_strip so the remote's own ACTION (ride, knife kill,
+    // pickup) never passes raw from the network pad (Compose: held, edges,
+    // taps, words, tap12/long12 all use ~sample_strip; only overlay.bits is
+    // filtered by the mask alone).
     if (set.native_active && set.traverse) {
         a.config.mask |= partner_pad::kAction;
         a.config.sample_strip |= partner_pad::kAction;
+    }
+    // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
+    // by SameArm): body 1's pending icon request, valid for kHoldMs, so a
+    // stale Arm drops it.
+    if (set.native_active && set.traverse && m.icon_kind != partner_traverse::Icon::none && m.icon_seq != 0) {
+        a.icon_kind = static_cast<std::uint8_t>(m.icon_kind);
+        a.icon_seq = m.icon_seq;
+        a.icon_until_ms = now + partner_icon::kHoldMs;
     }
     a.slot_follow = !gun_stage ? PartnerNativeSlot::off
                     : (set.play_mode && set.nslot == PartnerNativeSlot::call) ? PartnerNativeSlot::write
@@ -1699,14 +1708,73 @@ bool VehicleAttached(const Hooks& h,const pp::State& st) noexcept {
     return h.native_vehicle_attached&&h.native_vehicle_attached(h.context,st);
 }
 // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal"): a
-// remote ladder/pipe/step-on start is replayed on body 1 as one reconciliation
-// placement at the aligned remote pose, then (window armed and live on this and
-// the previous tick) a 4-frame ACTION overlay tap, retried at most twice while
-// the remote stays in the traversal. The hold keeps the far/vertical/runaway
-// placements off (next StepRecon) until body 1 has finished its own traversal.
+// remote ladder/pipe/climb/step-on start is replayed on body 1 as one
+// reconciliation placement at the aligned remote pose, then (window armed and
+// live) an icon request for that plugin (F3, "Traversal icon": Arm.icon_kind /
+// icon_seq, granted at most once per request by partner_icon inside the drain
+// window) until body 1 enters or entry_ms passes. The hold keeps the
+// far/vertical/runaway placements off (next StepRecon) until body 1 has
+// finished its own traversal.
 namespace ptv = mgscoop::partner_traverse;
+namespace pic = mgscoop::partner_icon;
+inline constexpr std::uint64_t kIconActWindowMs = 2000;  // body act lines after a grant
+// partner_traverse=icon: one line per request (the hook's counters are
+// process totals; the deltas since the request started), once granted or
+// once the request ended without a grant; then body 1's act for 2 s. A
+// request is open from its first raised tick until the machine leaves the
+// request phase (entered, aborted) or a new id replaces it: a tick inside the
+// phase without the level (window not armed, a non-source body act) neither
+// ends it nor restarts its deltas.
+void LogIconResult(Mission& m, const Hooks& h, const pic::Stats& is, std::uint32_t granted) noexcept {
+    m.icon_logged = true;
+    EmitCapped(m.icon_cap, h, "partner_traverse",
+               "partner_traverse=icon; plugin=%s; res=%s; seq=%u; exec_ok=%u; exec_fail=%u; granted=%u; queries=%u; denied=%u; "
+               "swaps=%u; swap_refused=%u; deny=%s; latched=%u; viewer_changed=%u; faults=%u\r\n",
+               ptv::IconName(m.icon_req_kind), granted > 0 ? "ok" : "none", m.icon_req_seq, is.exec_ok - m.icon_base.exec_ok,
+               is.exec_fail - m.icon_base.exec_fail, granted, is.queries - m.icon_base.queries, is.denied - m.icon_base.denied,
+               is.swaps - m.icon_base.swaps, is.swap_refused - m.icon_base.swap_refused,
+               pic::DenyName(static_cast<pic::Deny>(is.last_deny)), is.latched ? 1u : 0u, is.viewer_changed, is.faults);
+}
+void LogIcon(Mission& m, const Hooks& h, const pic::Stats& is, const ptv::Out& o, std::uint64_t now, bool body_ok,
+             std::uint16_t body_act) noexcept {
+    const bool req = o.icon != ptv::Icon::none;
+    if (req && (!m.icon_req || m.icon_req_seq != m.icon_seq)) {
+        // A new id replaced an open request that never logged (no grant): close it first.
+        if (m.icon_req && !m.icon_logged) LogIconResult(m, h, is, 0);
+        m.icon_base = is;
+        m.icon_logged = false;
+        m.icon_req = true;
+        m.icon_req_seq = m.icon_seq;
+        m.icon_req_kind = o.icon;
+    }
+    if (m.icon_req) {
+        const std::uint32_t granted = is.granted - m.icon_base.granted;
+        const bool ended = m.traverse.phase != ptv::Phase::request;
+        if (!m.icon_logged && (granted > 0 || ended)) {
+            LogIconResult(m, h, is, granted);
+            if (granted > 0) {
+                m.icon_grant_ms = now ? now : 1;
+                m.icon_act_last = 0xFFFF;
+            }
+        }
+        if (ended) m.icon_req = false;
+    }
+    // Body 1's act for 2 s after a grant (each change, the first one at once).
+    if (m.icon_grant_ms) {
+        const std::uint64_t since = now - m.icon_grant_ms;
+        if (since > kIconActWindowMs) {
+            EmitCapped(m.icon_cap, h, "partner_traverse", "partner_traverse=icon_act; seq=%u; act=%u; ms=%u; final=1\r\n", m.icon_req_seq,
+                       body_ok ? unsigned(body_act) : 0xFFFFu, static_cast<unsigned>(since));
+            m.icon_grant_ms = 0;
+        } else if (body_ok && body_act != m.icon_act_last) {
+            m.icon_act_last = body_act;
+            EmitCapped(m.icon_cap, h, "partner_traverse", "partner_traverse=icon_act; seq=%u; act=%u; ms=%u\r\n", m.icon_req_seq,
+                       unsigned(body_act), static_cast<unsigned>(since));
+        }
+    }
+}
 void TickTraverse(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool recon_used, bool carry_hold, bool arm_now,
-                  const pr::Out& ro, bool anim_ok, const pp::Anim& anim) noexcept {
+                  const pr::Out& ro, bool anim_ok, const pp::Anim& anim, const InputStats& stats) noexcept {
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
     ptv::In in{};
@@ -1736,16 +1804,25 @@ void TickTraverse(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.body_yaw = partner::QuatToYaw(m.body_quat);
     const ptv::Out o = ptv::Step(m.traverse, in);
     if (o.request_place) d.recon_place_request = pr::PlaceReason::traverse;
-    if (o.tap) BumpTap(d, m, partner_pad::kAction, now);
+    // The icon request for the Arm (BuildArm, this tick): the machine's
+    // episode id becomes a process-unique request id (the hook grants once per id).
+    if (o.icon != ptv::Icon::none && o.icon_seq != 0 && o.icon_seq != m.icon_episode) {
+        m.icon_episode = o.icon_seq;
+        if (++d.icon_seq == 0) d.icon_seq = 1;
+        m.icon_seq = d.icon_seq;
+    }
+    m.icon_kind = o.icon;
     m.traverse_hold = o.hold;
     if (o.event != ptv::Out::Event::none) {
         EmitCapped(m.traverse_cap, h, "partner_traverse",
-                   "partner_traverse=%s; reason=%s; phase=%s; act=%u; remote_act=%u; body_act=%u; taps=%u; episodes=%u; entered=%u; "
-                   "aborted=%u; block=%s\r\n",
+                   "partner_traverse=%s; reason=%s; phase=%s; act=%u; remote_act=%u; body_act=%u; icon=%s; seq=%u; episodes=%u; "
+                   "requests=%u; entered=%u; aborted=%u; block=%s\r\n",
                    ptv::EventName(o.event), o.reason ? o.reason : "-", ptv::PhaseName(m.traverse.phase), unsigned(m.traverse.act),
-                   unsigned(in.remote_act), unsigned(in.body_act), m.traverse.taps, m.traverse.episodes, m.traverse.entered,
-                   m.traverse.aborted, block ? block : "-");
+                   unsigned(in.remote_act), unsigned(in.body_act), ptv::IconName(ptv::IconFor(m.traverse.act)),
+                   m.icon_episode == m.traverse.icon_seq ? m.icon_seq : 0u,
+                   m.traverse.episodes, m.traverse.requests, m.traverse.entered, m.traverse.aborted, block ? block : "-");
     }
+    if (in.enabled || m.icon_req || m.icon_grant_ms) LogIcon(m, h, stats.native.icon, o, now, in.body_ok, in.body_act);
 }
 
 void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
@@ -1968,7 +2045,18 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         EmitRecon(m, h, kRcFix, "partner_recon=dashfix; act=%u; speed=%u; attempts=%u\r\n",
                   anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.speed[1]) : 0u, m.dash.attempts);
     }
-    TickTraverse(d, h, set, clock, recon_used, carry_hold, arm_now, ro, anim_ok, anim);
+    // F3 (docs/native-puppet.md "Traversal icon"): the read-only plugin-list
+    // census, once per mission with the key on and the block-1 targets read.
+    if (set.native_active && set.traverse && !m.icon_census_done && h.icon_census && !census && targets.blk0 && targets.blk1) {
+        m.icon_census_done = true;
+        pic::Census ic{};
+        h.icon_census(h.context, targets, ic);
+        EmitFormat(h,
+                   "partner_icon=census; distinct=%u/%u; blk_ok=0x%x/0x%x; found=0x%x/0x%x; null=%u/%u; read=%u; verdict=%s\r\n",
+                   ic.distinct, ic.plugins, ic.blk_ok0, ic.blk_ok1, ic.found0, ic.found1, ic.null0, ic.null1, ic.read ? 1u : 0u,
+                   pic::CensusVerdict(ic));
+    }
+    TickTraverse(d, h, set, clock, recon_used, carry_hold, arm_now, ro, anim_ok, anim, s);
     // One-shot acceptance (only while about to be armed and within the mask).
     if (d.tap_pending) {
         d.tap_pending = false;

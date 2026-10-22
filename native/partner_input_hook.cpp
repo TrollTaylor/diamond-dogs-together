@@ -44,6 +44,7 @@
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_icon.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_rates.hpp"
@@ -517,6 +518,9 @@ struct Save {
     std::uintptr_t ring_ptr[7];
     std::uint32_t ring_count;
     bool rings_saved;
+    // F3 (drain windows with an icon request): P+0xD0's padop and its image vtable.
+    std::uintptr_t padop, padop_vt;
+    bool padop_saved;
 };
 // What a window does beyond the round-3/4 swap.
 struct WindowOpts {
@@ -524,6 +528,7 @@ struct WindowOpts {
     bool native;     // HOLD latch, CamSub (aim stage), lookcam
     bool rings;      // F1: the private sample rings (drain windows)
     std::uint8_t consumer;
+    bool icon;       // F3: the padop vtable copy (drain windows with a pending icon request)
 };
 // What a native window injects: the composed view, or Neutral() while the
 // body is placed (Arm.neutral), without the weapon gate's bits (Arm.strip).
@@ -682,6 +687,24 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save, const Window
             InterlockedExchange(&g_r_last, static_cast<LONG>(RingRefusal::none));
         }
     }
+    // F3 (docs/native-puppet.md "Traversal icon"): with a pending, unexpired
+    // icon request, P's padop answers body 1's icon queries through the
+    // partner_icon vtable copy for this window only. The padop identity is
+    // the one carry_plugin_read checks (image vtable, padop+0x10 == P).
+    if (o.icon && partner_icon::SwapWanted(a.native, a.icon_kind, a.icon_seq, NowMs(), a.icon_until_ms) && partner_icon::Ready()) {
+        const std::uintptr_t table = partner_icon::CopyTable();
+        const std::uintptr_t padop = Load<std::uintptr_t>(a.P + partner_icon::kPPadop);
+        if (table && padop && (padop & 7u) == 0 && Load<std::uintptr_t>(padop) == g_base + partner_icon::kPadopVtableRva &&
+            Load<std::uintptr_t>(padop + partner_icon::kPadopOwner) == a.P) {
+            save.padop = padop;
+            save.padop_vt = Load<std::uintptr_t>(padop);
+            save.padop_saved = true;
+            Store<std::uintptr_t>(padop, table);
+            partner_icon::NoteSwap(true);
+        } else {
+            partner_icon::NoteSwap(false);
+        }
+    }
 }
 
 // Exact reverse of ApplyPre for the saved fields. capture_private keeps the
@@ -717,6 +740,7 @@ void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcep
         Store<std::uint32_t>(a.pp + c::pp_hold_latch, partner_native::LatchRestore(now, save.latch));
     }
     if (save.vt_saved) Store<std::uintptr_t>(a.pp, save.vt);
+    if (save.padop_saved) Store<std::uintptr_t>(save.padop, save.padop_vt);
     if (save.masks_saved) {
         if (capture_private) {
             std::memcpy(g_priv_masks, reinterpret_cast<void*>(a.pp + c::pp_masks), c::pp_masks_size);
@@ -829,6 +853,7 @@ void GuardedCall(const pi::Arm& a, const Save& save, const Call& k, bool detour 
                 // The UI scope must end even when the native job unwinds.
                 teammate_targeting::EndQuietJob();
                 partner_local_detour::Release();
+                partner_icon::End();
                 partner_look_source::Withdraw();
             }
             if (AbnormalTermination() && !PoseOwned()) {
@@ -3297,7 +3322,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         InterlockedExchange(&g_r_on, 0);
     }
     timing=native_work_timing::Begin(native_work_timing::Kind::pose_pre);
-    const bool pre=SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer)});
+    const bool pre=SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer), true});
     native_work_timing::End(timing);
     if (!pre) {
         EndWindow();
@@ -3358,6 +3383,9 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     // into body 1's own rec+0x3CC, last before its job (partner_place_mirror).
     PlaceMirrorPre(a, j, support_window);
     timing=native_work_timing::Begin(native_work_timing::Kind::native_job);
+    // F3: the icon answer is scoped to (this thread, P, blk1) for block 1's
+    // job only, and only when ApplyPre installed the padop copy (End: GuardedCall).
+    if (save.padop_saved) partner_icon::Begin(a.P, a.blk1, a.icon_kind, a.icon_seq);
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
     if(support_window)partner_support_guard::Leave();
     native_work_timing::End(timing);
@@ -3389,6 +3417,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     } __finally {
         if(support_window)partner_support_guard::Leave();
         native_work_timing::End(timing);
+        partner_icon::End();
         if (PoseOwned()) {
             teammate_targeting::EndQuietJob();
             partner_local_detour::Release();
@@ -3476,6 +3505,7 @@ void LatchNativeSupportOff() noexcept {InterlockedExchange(&g_support_leak,1);}
 bool NativeArmLatchedOff() noexcept {return g_arm_latch!=0;}
 void LatchNativeArmOff() noexcept {InterlockedExchange(&g_arm_latch,1);}
 void ResetFault() noexcept {
+    partner_icon::ResetMission();
     InterlockedExchange(&g_support_leak,0);
     InterlockedExchange(&g_arm_latch,0);
     InterlockedExchange(&g_support_reset,1);
@@ -3586,6 +3616,7 @@ void DrainStats(Stats& out) noexcept {
     n.p1_forced = p1.forced;
     n.p1_refused = p1.refused;
     n.p1_windows = p1.windows;
+    partner_icon::ReadStats(n.icon);
     n.drain_held = static_cast<std::uint32_t>(g_d_held);
     n.drain_mag = g_d_mag;
     n.drain_view = static_cast<std::uint32_t>(g_d_view);

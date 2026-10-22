@@ -1,5 +1,6 @@
-// partner_traverse: the traversal replay machine (ladder/pipe/step-on ACTION
-// replay with a verified placement, bounded taps and the reconciliation hold).
+// partner_traverse: the traversal replay machine (ladder/pipe/climb/step-on
+// replay with a verified placement, the F3 icon request level with one id per
+// episode, and the reconciliation hold).
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
@@ -18,7 +19,9 @@ struct World {
     tv::State st{};
     tv::In in{};
     tv::Out out{};
-    unsigned taps = 0, places = 0;
+    unsigned icon_ticks = 0, places = 0, requested_events = 0;
+    tv::Icon last_icon = tv::Icon::none;
+    std::uint32_t last_seq = 0;
     World() {
         in.now_ms = 1000;
         in.enabled = true;
@@ -32,17 +35,33 @@ struct World {
     tv::Out Tick(std::uint32_t dt = 16) {
         in.now_ms += dt;
         out = tv::Step(st, in);
-        if (out.tap) ++taps;
+        if (out.icon != tv::Icon::none) {
+            ++icon_ticks;
+            last_icon = out.icon;
+            last_seq = out.icon_seq;
+            Check(out.icon_seq != 0, "a raised icon always carries its request id");
+        } else {
+            Check(out.icon_seq == 0, "no request id without an icon");
+        }
         if (out.request_place) ++places;
+        if (out.event == tv::Out::Event::requested) ++requested_events;
         return out;
     }
     void Run(std::uint32_t ms) { for (std::uint32_t t = 0; t < ms; t += 16) Tick(); }
 };
 
 void TestActSets() {
-    // Static writer census (1.0.15.4): 21 ladder, 22 pipe, 24 step-on (ACTION starts).
-    Check(tv::ReplayAct(21) && tv::ReplayAct(22) && tv::ReplayAct(24), "replay acts 21/22/24");
-    Check(!tv::ReplayAct(28) && !tv::ReplayAct(54) && !tv::ReplayAct(23), "hop/hang/climb are native (no replay)");
+    // Static writer census (1.0.15.4): 21 ladder, 22 pipe, 23 wall climb, 24 step-on: all icon starts.
+    for (std::uint16_t a : {std::uint16_t(21), std::uint16_t(22), std::uint16_t(23), std::uint16_t(24)})
+        Check(tv::ReplayAct(a) && tv::TraverseAct(a), "replay acts 21..24 (23 included)");
+    Check(tv::IconFor(21) == tv::Icon::ladder && tv::IconFor(22) == tv::Icon::pipe && tv::IconFor(23) == tv::Icon::climb &&
+              tv::IconFor(24) == tv::Icon::step_on,
+          "IconFor: 21 ladder, 22 pipe, 23 climb, 24 step-on");
+    // Automatic acts are never request targets (they arrive natively): falls, landing, evade, drops, hangs.
+    for (std::uint16_t a : {std::uint16_t(25), std::uint16_t(26), std::uint16_t(27), std::uint16_t(28), std::uint16_t(54), std::uint16_t(55),
+                            std::uint16_t(56)})
+        Check(!tv::ReplayAct(a) && tv::IconFor(a) == tv::Icon::none, "automatic act: no request");
+    Check(std::strcmp(tv::IconName(tv::Icon::climb), "climb") == 0 && std::strcmp(tv::IconName(tv::Icon::none), "none") == 0, "icon names");
     // 49/50/59 are Fulton plugins, 72/73 doors, 77/78 box: never traversals.
     const std::uint16_t notTrav[] = {49, 50, 59, 72, 73, 77, 78, 1, 2, 25, 26, 27, 57, 112};
     for (std::uint16_t a : notTrav) Check(!tv::TraverseAct(a) && !tv::ReplayAct(a), "not a traversal act");
@@ -51,17 +70,28 @@ void TestActSets() {
     // Ladder sources: the game's own mask 0x18200001E (FUN_1411E9A70) = acts 1..4, 25, 31, 32.
     const std::uint16_t ladderFrom[] = {1, 2, 3, 4, 25, 31, 32};
     for (std::uint16_t a : ladderFrom) Check(tv::LadderSourceAct(a) && tv::SourceAct(21, a), "ladder source act");
-    const std::uint16_t ladderNot[] = {0, 5, 6, 7, 8, 21, 24, 26, 30, 33, 54, 55, 56, 63, 64, 139};
+    const std::uint16_t ladderNot[] = {0, 5, 6, 7, 8, 20, 21, 24, 26, 30, 33, 54, 55, 56, 63, 64, 139};
     for (std::uint16_t a : ladderNot) Check(!tv::LadderSourceAct(a) && !tv::SourceAct(21, a), "not a ladder source act");
-    // Pipe and step-on sources: locomotion 1..8 and the ledge hang.
-    for (std::uint16_t r : {std::uint16_t(22), std::uint16_t(24)})
-        Check(tv::SourceAct(r, 1) && tv::SourceAct(r, 8) && tv::SourceAct(r, 54) && !tv::SourceAct(r, 25) && !tv::SourceAct(r, 139),
-              "pipe/step-on source acts");
+    // Pipe (FUN_141210510) and climb (CheckActionState 0x14114A900): acts 1..20.
+    for (std::uint16_t r : {std::uint16_t(22), std::uint16_t(23)}) {
+        Check(tv::SourceAct(r, 1) && tv::SourceAct(r, 5) && tv::SourceAct(r, 8) && tv::SourceAct(r, 20), "pipe/climb: acts 1..20");
+        for (std::uint16_t a : {std::uint16_t(0), std::uint16_t(21), std::uint16_t(25), std::uint16_t(31), std::uint16_t(32), std::uint16_t(54),
+                                std::uint16_t(139)})
+            Check(!tv::SourceAct(r, a), "pipe/climb: nothing else");
+    }
+    // Step-on (FUN_141293790, Exec's act 0x36 path): 1..20, 31, 32 and the hang 54.
+    for (std::uint16_t a : {std::uint16_t(1), std::uint16_t(8), std::uint16_t(20), std::uint16_t(31), std::uint16_t(32), std::uint16_t(54)})
+        Check(tv::SourceAct(24, a), "step-on source act");
+    for (std::uint16_t a : {std::uint16_t(0), std::uint16_t(21), std::uint16_t(25), std::uint16_t(30), std::uint16_t(55), std::uint16_t(56),
+                            std::uint16_t(139)})
+        Check(!tv::SourceAct(24, a), "not a step-on source act");
+    // Non-replay acts never have a source.
+    Check(!tv::SourceAct(28, 2) && !tv::SourceAct(54, 2) && !tv::SourceAct(0, 2), "no source for a non-replay act");
 }
 
-// Remote 2 -> 21: one placement, then one tap only after the placement
-// verified with the window armed; body 1 enters 21; the hold lasts until body
-// 1 left the ladder plus the grace.
+// Remote 2 -> 21: one placement, then the ladder icon only after the placement
+// verified with the window armed, as a level with one request id until body 1
+// enters 21; the hold lasts until body 1 left the ladder plus the grace.
 void TestLadderReplay() {
     World w;
     w.Tick();
@@ -70,24 +100,39 @@ void TestLadderReplay() {
     w.Tick();
     Check(w.out.request_place && w.out.hold && w.out.event == tv::Out::Event::start && std::strcmp(w.out.reason, "placed") == 0,
           "edge into 21: request a placement, hold");
-    Check(w.taps == 0, "no tap before the placement");
+    Check(w.icon_ticks == 0, "no icon before the placement");
     // The reconciliation places/verifies (window neutral or disarmed).
     w.in.placing = true; w.in.armed = false;
     w.Tick(); w.Tick();
-    Check(w.taps == 0 && w.st.phase == tv::Phase::place, "no tap while placing");
+    Check(w.icon_ticks == 0 && w.st.phase == tv::Phase::place, "no icon while placing");
     w.in.placing = false;
     w.Tick();
-    Check(w.taps == 0, "no tap until the window is armed again");
+    Check(w.icon_ticks == 0, "no icon until the window is armed again");
     w.in.armed = true;
     w.Tick();
-    Check(w.st.phase == tv::Phase::tap && w.taps == 1, "placed and armed: one tap");
+    Check(w.st.phase == tv::Phase::request && w.icon_ticks == 1 && w.out.icon == tv::Icon::ladder && w.out.icon_seq == w.st.icon_seq &&
+              w.out.event == tv::Out::Event::placed && w.st.requests == 1,
+          "placed and armed: the ladder icon is requested at once (the placed event goes first)");
+    const std::uint32_t seq = w.out.icon_seq;
     w.Tick();
-    Check(w.taps == 1, "no repeat before retap_ms");
+    Check(w.out.event == tv::Out::Event::requested && std::strcmp(w.out.reason, "ladder") == 0, "the request event on the next free tick");
+    w.Tick();
+    Check(w.icon_ticks == 3 && w.out.icon == tv::Icon::ladder && w.out.icon_seq == seq && w.requested_events == 1,
+          "a level: every tick, the same id, one event");
+    // A disarmed tick drops the level; it comes back with the same id.
+    w.in.armed = false;
+    w.Tick();
+    Check(w.out.icon == tv::Icon::none && w.st.phase == tv::Phase::request, "not armed: no icon this tick");
+    w.in.armed = true;
+    w.Tick();
+    Check(w.out.icon == tv::Icon::ladder && w.out.icon_seq == seq, "armed again: same request");
     w.in.body_act = 21;
     w.Tick();
-    Check(w.st.phase == tv::Phase::native && w.out.hold && w.st.entered == 1, "body 1 entered the ladder: native, held");
+    Check(w.st.phase == tv::Phase::native && w.out.hold && w.st.entered == 1 && w.out.icon == tv::Icon::none,
+          "body 1 entered the ladder: native, held, no icon");
+    const unsigned ticks = w.icon_ticks;
     w.Run(5000);
-    Check(w.out.hold && w.taps == 1, "held through the climb, no more taps");
+    Check(w.out.hold && w.icon_ticks == ticks, "held through the climb, no more icon");
     w.in.body_act = 3; w.in.remote_act = 3;
     w.Run(1000);
     Check(w.out.hold, "grace after the ladder");
@@ -96,29 +141,72 @@ void TestLadderReplay() {
     Check(w.places == 1, "exactly one placement");
 }
 
-// Close and facing: no placement, tap at once; bounded retaps; no entry aborts.
-void TestNearAndRetaps() {
+// Close and facing: no placement, the icon at once; no entry aborts after entry_ms.
+void TestNearAndTimeout() {
     World w;
     w.in.target[0] = 100.0; w.in.target_yaw = 0.1;
     w.Tick();
     w.in.remote_act = 24;
     w.Tick();
-    Check(w.places == 0 && w.taps == 1 && std::strcmp(w.st.phase == tv::Phase::tap ? "tap" : "x", "tap") == 0, "near: tap without placement");
-    w.Run(400);
-    Check(w.taps == 2, "a retap after retap_ms while the remote stays in 24");
-    w.Run(400);
-    Check(w.taps == 3, "third tap");
-    w.Run(600);
-    Check(w.taps == 3, "taps bounded at 3");
-    w.Run(400);
-    Check(w.st.phase == tv::Phase::idle && w.st.aborted == 1 && !w.out.hold, "no entry: abort, hold released");
+    Check(w.places == 0 && w.icon_ticks == 1 && w.out.icon == tv::Icon::step_on && w.st.phase == tv::Phase::request &&
+              w.out.event == tv::Out::Event::start && std::strcmp(w.out.reason, "near") == 0,
+          "near: the step-on icon without a placement");
+    w.Run(1400);
+    Check(w.out.icon == tv::Icon::step_on && w.st.phase == tv::Phase::request, "still requested within entry_ms");
+    w.Run(200);
+    Check(w.st.phase == tv::Phase::idle && w.st.aborted == 1 && !w.out.hold && w.out.icon == tv::Icon::none, "no entry: abort, no icon");
+    const unsigned ticks = w.icon_ticks;
+    w.Run(500);
+    Check(w.icon_ticks == ticks, "nothing after the abort");
 }
 
-// Refusals: blocked, disabled, a body that is falling, far away, already there.
+// Each episode gets its own request id; the id never repeats within a mission.
+void TestSeqPerEpisode() {
+    World w;
+    w.in.target[0] = 100.0; w.in.target_yaw = 0.1;
+    w.Tick();
+    w.in.remote_act = 22;
+    w.Tick();
+    const std::uint32_t first = w.out.icon_seq;
+    Check(w.out.icon == tv::Icon::pipe && first != 0, "pipe: first request");
+    w.in.body_act = 22;
+    w.Tick();
+    Check(w.st.phase == tv::Phase::native && w.out.icon == tv::Icon::none, "entered the pipe");
+    w.in.body_act = 2; w.in.remote_act = 2;
+    w.Run(1600);
+    Check(w.st.phase == tv::Phase::idle, "pipe episode over");
+    w.in.remote_act = 23;
+    w.Tick();
+    Check(w.out.icon == tv::Icon::climb && w.out.icon_seq != first && w.out.icon_seq == first + 1, "climb: a new request id");
+    Check(w.st.episodes == 2 && w.st.requests == 2, "two episodes, two requests");
+}
+
+// The wall climb (23) is replayed now; its sources are acts 1..20.
+void TestClimbReplay() {
+    World w;
+    w.in.target[0] = 100.0; w.in.target_yaw = 0.1;
+    w.in.body_act = 5;  // prone: a climb admits 1..20
+    w.Tick();
+    w.in.remote_act = 23;
+    w.Tick();
+    Check(w.out.icon == tv::Icon::climb, "climb from prone (5)");
+    w.in.body_act = 23;
+    w.Tick();
+    Check(w.st.phase == tv::Phase::native && w.st.entered == 1, "body 1 climbs");
+    World f;
+    f.in.body_act = 25;
+    f.Tick();
+    f.in.remote_act = 23;
+    f.Tick();
+    Check(f.st.episodes == 0 && f.icon_ticks == 0, "falling (25): no climb request");
+}
+
+// Refusals: blocked, disabled, a body that is falling, far away, already there,
+// and automatic remote acts.
 void TestRefusals() {
     {
         World w; w.Tick(); w.in.blocked = true; w.in.remote_act = 21; w.Tick();
-        Check(!w.out.request_place && !w.out.tap && !w.out.hold, "blocked: no replay");
+        Check(!w.out.request_place && w.out.icon == tv::Icon::none && !w.out.hold, "blocked: no replay");
     }
     {
         World w; w.Tick(); w.in.enabled = false; w.in.remote_act = 21; w.Tick();
@@ -126,7 +214,7 @@ void TestRefusals() {
     }
     {
         World w; w.in.body_act = 25; w.Tick(); w.in.remote_act = 22; w.Tick();
-        Check(!w.out.request_place && !w.out.tap, "body falling (25): no pipe replay");
+        Check(!w.out.request_place && w.icon_ticks == 0, "body falling (25): no pipe replay");
     }
     {
         // The ladder mask admits a fall (25) but not prone (5) or a running step (8).
@@ -134,11 +222,11 @@ void TestRefusals() {
         Check(w.out.request_place && w.st.episodes == 1, "body falling (25): a ladder replay (game mask)");
         for (std::uint16_t from : {std::uint16_t(5), std::uint16_t(8)}) {
             World p; p.in.body_act = from; p.Tick(); p.in.remote_act = 21; p.Tick();
-            Check(!p.out.request_place && !p.out.tap && p.st.episodes == 0, "prone or running step: no ladder replay");
+            Check(!p.out.request_place && p.icon_ticks == 0 && p.st.episodes == 0, "prone or running step: no ladder replay");
         }
     }
     {
-        // A pipe from prone is still admitted (1..8): the ladder mask is the ladder's only.
+        // A pipe from prone is admitted (1..20): the ladder mask is the ladder's only.
         World w; w.in.body_act = 5; w.Tick(); w.in.remote_act = 22; w.Tick();
         Check(w.out.request_place && w.st.episodes == 1, "prone: a pipe replay");
     }
@@ -148,23 +236,40 @@ void TestRefusals() {
     }
     {
         World w; w.in.body_act = 21; w.Tick();
-        Check(w.st.phase == tv::Phase::native && w.taps == 0, "body already on the ladder: native hold, no tap");
+        Check(w.st.phase == tv::Phase::native && w.icon_ticks == 0, "body already on the ladder: native hold, no icon");
     }
     {
         // Placement never verified: aborted, hold released.
         World w; w.Tick(); w.in.remote_act = 21; w.Tick();
         w.Run(1300);
-        Check(w.st.phase == tv::Phase::idle && w.st.aborted == 1 && !w.out.hold && w.taps == 0, "placement timeout aborts");
+        Check(w.st.phase == tv::Phase::idle && w.st.aborted == 1 && !w.out.hold && w.icon_ticks == 0, "placement timeout aborts");
     }
     {
         // Abort mid-episode when a carry takes the body.
-        World w; w.Tick(); w.in.remote_act = 21; w.Tick();
+        World w; w.in.target[0] = 100.0; w.in.target_yaw = 0.1; w.Tick(); w.in.remote_act = 21; w.Tick();
+        Check(w.out.icon == tv::Icon::ladder, "requesting");
         w.in.blocked = true; w.Tick();
-        Check(w.st.phase == tv::Phase::idle && w.out.event == tv::Out::Event::abort && !w.out.hold, "blocked mid-episode: abort");
+        Check(w.st.phase == tv::Phase::idle && w.out.event == tv::Out::Event::abort && !w.out.hold && w.out.icon == tv::Icon::none,
+              "blocked mid-episode: abort, no icon");
+    }
+    {
+        // The remote's automatic acts are never requested (falls, landing, evade, drop, hang).
+        for (std::uint16_t a : {std::uint16_t(25), std::uint16_t(26), std::uint16_t(27), std::uint16_t(28), std::uint16_t(54),
+                                std::uint16_t(55), std::uint16_t(56)}) {
+            World w; w.in.target[0] = 100.0; w.in.target_yaw = 0.1; w.Tick(); w.in.remote_act = a; w.Run(500);
+            Check(w.icon_ticks == 0 && w.st.episodes == 0 && w.places == 0, "automatic remote act: no request, no placement");
+        }
+    }
+    {
+        // A body act outside the plugin's sources drops the level (Exec would refuse it anyway).
+        World w; w.in.target[0] = 100.0; w.in.target_yaw = 0.1; w.Tick(); w.in.remote_act = 21; w.Tick();
+        Check(w.out.icon == tv::Icon::ladder, "requesting from 2");
+        w.in.body_act = 5; w.Tick();
+        Check(w.out.icon == tv::Icon::none && w.st.phase == tv::Phase::request, "prone while waiting: no ladder icon");
     }
 }
 
-// A native ledge grab (54) is held; the remote climbing up (54 -> 24) replays
+// A native ledge grab (54) is held; the remote climbing up (54 -> 24) requests
 // the step-on from the hang.
 void TestHangClimbUp() {
     World w;
@@ -175,10 +280,10 @@ void TestHangClimbUp() {
     w.Run(500);
     w.in.remote_act = 24;
     w.Tick();
-    Check(w.taps == 1 && w.st.phase == tv::Phase::tap, "remote climbs up: tap from the hang");
+    Check(w.out.icon == tv::Icon::step_on && w.st.phase == tv::Phase::request, "remote climbs up: the step-on icon from the hang");
     w.in.body_act = 24;
     w.Tick();
-    Check(w.st.phase == tv::Phase::native, "body 1 climbs up");
+    Check(w.st.phase == tv::Phase::native && w.out.icon == tv::Icon::none, "body 1 climbs up");
 }
 
 // Body 1 left on a ladder the remote left long ago: released.
@@ -198,12 +303,15 @@ void TestRemoteLeft() {
 int main() {
     TestActSets();
     TestLadderReplay();
-    TestNearAndRetaps();
+    TestNearAndTimeout();
+    TestSeqPerEpisode();
+    TestClimbReplay();
     TestRefusals();
     TestHangClimbUp();
     TestRemoteLeft();
-    std::printf("%u partner traverse checks passed: act sets (static writer census), ladder replay (one placement, tap after "
-                "verify, native hold, grace), near tap and bounded retaps, refusals (ladder source mask), hang climb-up, remote left\n",
+    std::printf("%u partner traverse checks passed: act sets (21..24 replayed, IconFor, per-kind source acts, automatic acts never "
+                "requested), ladder replay (one placement, icon level after verify with one id, native hold, grace), near request "
+                "and entry timeout, one request id per episode, climb replay, refusals, hang climb-up, remote left\n",
                 checks);
     return 0;
 }

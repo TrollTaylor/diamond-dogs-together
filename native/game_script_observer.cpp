@@ -90,6 +90,7 @@
 #include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_icon.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
@@ -753,6 +754,11 @@ const char* PartnerInstallDefer(void*, mgscoop::PartnerDefer mode) noexcept {
     // The phase-1 local detour only where a drain can arm it (defer=on).
     if (mode == mgscoop::PartnerDefer::on)
         if (const char* why = mgscoop::partner_local_detour::Install(game_base, Log)) return why;
+    // F3 (docs/native-puppet.md "Traversal icon"): the padop vtable copy for
+    // body 1's traversal start, only with the lab key and a drain (defer=on).
+    // No patch; a refusal is logged and leaves the copy unused (no swap).
+    if (mode == mgscoop::PartnerDefer::on && mgscoop::GetLabConfig().partner_native_traverse)
+        mgscoop::partner_icon::Build(game_base, Log);
     return nullptr;
 }
 void PartnerNativeInstall(void*, pd::NativeInstall& out) noexcept {
@@ -1001,6 +1007,12 @@ bool PartnerSupportReady(void*,const pp::State& state,std::uint16_t equip) noexc
 }
 // The driver's support verdict for partner_net's unknown slot/equip debounce.
 void PartnerPublishSupportIdentity(void*,std::uint16_t equip) noexcept { mgscoop::partner_net::SetSupportIdentity(equip); }
+// F3: the read-only census of block 0's / block 1's action plugin lists (behind the code gate).
+void PartnerIconCensus(void*, const pp::InputTargets& targets, mgscoop::partner_icon::Census& out) noexcept {
+    out = mgscoop::partner_icon::Census{};
+    if (!game_base || !partner_gate_ok) return;
+    mgscoop::partner_icon::ReadCensus(game_base, targets.blk0, targets.blk1, out);
+}
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
@@ -1016,7 +1028,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
     PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
-    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7};
+    PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,PartnerIconCensus};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

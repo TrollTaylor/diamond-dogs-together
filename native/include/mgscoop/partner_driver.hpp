@@ -55,6 +55,7 @@
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/partner_traverse.hpp"
+#include "mgscoop/partner_icon.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/pose_interp.hpp"
@@ -368,6 +369,10 @@ struct Hooks {
     // Input frame v7 (WS4 v2, the sender's C4 place word): whether the peer was
     // seen sending v7 (partner_net::PeerSendsInputV7). Null: v7 is never sent.
     bool (*peer_input_v7)(void* context) noexcept = nullptr;
+    // F3 traversal icon (docs/native-puppet.md "Traversal icon"; null: no
+    // census line): the read-only census of block 0's and block 1's action
+    // plugin lists (partner_icon::ReadCensus), once per mission with the key on.
+    void (*icon_census)(void* context, const partner_player::InputTargets& targets, partner_icon::Census& out) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -716,6 +721,21 @@ struct Mission {
     partner_traverse::State traverse;
     bool traverse_hold;
     LogCap traverse_cap;
+    // F3 traversal icon: this tick's request for the Arm (kind, the process-
+    // unique id Driver::icon_seq gave the machine's episode icon_episode), the
+    // request log state (icon_req: a request is open, from its first raised
+    // tick until the request phase ends; stats at its start; logged once),
+    // the 2 s body-act window after a grant and the once-per-mission census.
+    partner_traverse::Icon icon_kind;
+    std::uint32_t icon_seq, icon_episode;
+    bool icon_req, icon_logged;
+    partner_traverse::Icon icon_req_kind;
+    std::uint32_t icon_req_seq;
+    partner_icon::Stats icon_base;
+    std::uint64_t icon_grant_ms;
+    std::uint16_t icon_act_last;
+    bool icon_census_done;
+    LogCap icon_cap;
     bool recon_active;             // apply=input with input != off this mission (recon state in use)
     bool recon_last_ok;            // the previous recon action was executed
     partner_recon::Out recon_out;  // the last step (logs, status)
@@ -1097,6 +1117,9 @@ struct Driver {
     // tap= sequence: process-lifetime (the hook keeps its last seen value
     // across gens and missions, so a value is never reused).
     std::uint32_t tap_seq;
+    // F3: the icon request id, process-lifetime for the same reason (the hook
+    // grants at most once per id; 0 is never used).
+    std::uint32_t icon_seq;
     // rtap=1: one test reload tap through the event machine on the next native tick.
     bool rtap_pending;
     // Round-1 actions: the DM overlay debug one-shot (overlay=, oloop=, oms=),

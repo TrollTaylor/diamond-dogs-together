@@ -1,3 +1,40 @@
+## 0.13.5 (in progress)
+
+Unreleased; the feature branches merge into `wp/integ8`, the integration step bumps the version. Nothing here has run
+in the game yet (no hidden-worker run in the implementation phase).
+
+### F3
+- **Traversal start for body 1 through the action icon** (`wp/traverse-icon`, `native/partner_icon.*`,
+  [native-puppet.md "Traversal icon"](native-puppet.md)). The stock ladder / pipe / wall-climb / step-on start goes
+  through the shared padop icon controller (`P+0xD0`, vtable `0x22E8F00`), whose builder runs for the local id only
+  and fills the slots with block 0's plugins, so body 1's polls (block 1's own plugin objects) never complete. A copy
+  of the padop vtable (96 slots, +0x28 `IconCompletedBody1`, +0x50 `IconForceBody1`) is swapped into P's padop only
+  inside instance 1's drain windows that carry a pending request, scoped to (thread, P, blk1) around block 1's job:
+  body 1's query of the requested plugin runs that plugin's own priority and `ExecActionButtonFunction(plugin, 1, 0,
+  res)` once per request id (ray cache `padop+0x7F0` saved/restored, the viewer's icon slots, input states and act
+  words digested before/after: a change or an SEH fault latches the mission); every other body-1 query returns false;
+  body 1's step-on force-complete is swallowed. No code byte and no image vtable slot is written.
+- `partner_traverse`: replay acts 21..24 (23 wall climb added), `IconFor(act)`, per-kind source acts from the plugins'
+  own gates (ladder 1..4/25/31/32, pipe and climb 1..20, step-on 1..20/31/32/54), `Out.icon` level with one `icon_seq`
+  per episode instead of the ACTION tap (the `BumpTap(kAction)` step is gone; ACTION stays in the native mask and the
+  sample strip with the key on). 25..28 and 54..56 are never requested.
+- Driver: `Arm.icon_kind` / `icon_seq` (process-unique) / `icon_until_ms` (now + 250 ms), not compared by `SameArm`;
+  logs `partner_traverse=icon; plugin=..; res=ok|none; seq=..; exec_ok=..; exec_fail=..; granted=..; ...` once per
+  request, `partner_traverse=icon_act` for 2 s after a grant, and the read-only `partner_icon=census; distinct=..;
+  blk_ok=..; ...; verdict=..` once per mission.
+- Key: still `partner_native_traverse` (default 0 in lab and play, play forces 0); no new key. The copy is built only
+  with the key on and defer=on (`partner_icon=built|refused`).
+- Contract: 691 code sites / 169 vtable slots (was 677 / 149): the Exec prologues, the priority body, the builder
+  gate, the four poll call sites, the step-on force call, padop +0x18/+0x28/+0x50/+0x188 and vt[0]/vt[1] of the eight
+  traversal ActionPlugin vtables; complete-body SHA-256 pins of `0xAFD870`, `0xB02480`, `0x12128C0`
+  (`icon_bodies`, re-checked at Build) and reference assertions (only the ctor/dtor store the padop vtable; the
+  forwarded functions are reached only through their slots).
+- Tests: `partner_icon_tests` (new, in `Get-WorkerTests`), `partner_traverse_tests` rewritten for the icon level,
+  `partner_driver_tests` `TestNativeTraverseIcon`, `partner_defer_tests` drives the copy through the real drain
+  window. Scenario `tools/worker/scenarios/partner-traverse-icon.txt` (spot census in four headings plus captures).
+- Unproven (hidden run): the census verdict, `res=ok` followed by `edge=body; remote=X; body=X`, frames of body 1 on
+  the ladder / wall / ledge, and that the viewer never changes (`latched=0`, `viewer_changed=0`).
+
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
 Branch `wp/integ8` from `dev/oct7-continue` `bf29f67` (0.13.2): merge commits of `wp/gameover-clock` `8324dd2`,

@@ -980,6 +980,48 @@ SITES += [
      'registration the mirror must never cause)'),
     (0x107C2AB, '81a7cc030000ffff0ffe', 'place (mode 46) op 2: rec+0x3CC &= ~0x1F00000 (bits 20-24, the classes) on the way out'),
 ]
+# --- F3 (0.13.5, docs/native-puppet.md "Traversal icon"): body 1's traversal start through the action icon. No patch:
+# partner_icon keeps a copy of the padop vtable 0x22E8F00 (96 slots) whose +0x28 answers body 1's query of the
+# requested plugin with that plugin's own Exec for idx 1 and whose +0x50 swallows body 1's step-on force-complete;
+# partner_input_hook swaps the copy into P+0xD0's padop only inside instance 1's drain windows with a request.
+ICON_SITES = [
+    (0xAFD870, '48895c2420564883ec204963c0498bf1', 'IsCompletedActionIcon (padop vt+0x28) prologue; complete body in icon_bodies'),
+    (0xB02480, '48895c24084889742410574883ec2048', 'padop vt+0x50 force-complete prologue; complete body in icon_bodies'),
+    (0x12128C0, '33c0b9060000004584c00f44c1c3', 'ActionPlugin vt[0] of the traversal plugins: kt (r8b) == 0 ? 6 : 0'),
+    (0x11EA140, '48895c241048896c2418488974242041', 'ladder ExecActionButtonFunction (ActionPlugin vt[1], this = F+0x38) prologue'),
+    (0x1211820, '4055565741564157488dac2430ffffff', 'pipe ExecActionButtonFunction (this = F) prologue'),
+    (0x114BEC0, '4055565741564157488dac2450ffffff', 'climb ExecActionButtonFunction (this = F) prologue'),
+    (0x1293F60, '4055535641564157488dac24f0fcffff', 'step-on ExecActionButtonFunction (this = F+0x38) prologue'),
+    (0x1155B79, '4c8b87a0010000498bb0380100003b9e18020000',
+     'ExecParallelStart: block = [core+0x1A0], P = [block+0x138]; cmp idx, [P+0x218] (the icon builder runs for the local id only)'),
+    (0x1155BC3, '488b87a0010000488b8ed00000008bd34c8b40784c8b094983c01041ff5118',
+     'ExecParallelStart: [[P+0xD0]]+0x18(padop, idx, [block+0x78]+0x10): the builder reads the plugin list PS+0x10'),
+    (0x114DEB3, '488b8dd00000004c8d4c2420488b014533c0488bd7ff502884c07406c6431102',
+     'climb poll: [P+0xD0] vt+0x28(padop, plugin, kt 0, &res); true -> work+0x11 = 2'),
+    (0x11EAFF8, '488b4208488b8838010000488b89d0000000488b01ff502884c0743c',
+     'ladder poll: padop = [[[plugin+8]+0x138]+0xD0] (plugin+8 = its block), vt+0x28(padop, plugin, kt 0, &res)'),
+    (0x1213DA8, '488b8838010000488bd3488b89d0000000488b01ff502884c07544',
+     'pipe poll: padop = [[block+0x138]+0xD0], vt+0x28(padop, plugin, kt 0, &res); true -> work+0x11 = 1'),
+    (0x129BF69, '488b88380100004c8d4c2420488b89d0000000488d56384533c0488b01ff5028',
+     'step-on poll: vt+0x28(padop, F+0x38, kt 0, &res)'),
+    (0x129C10E, '498b80380100004c8d4c242033d2488b88d000000041b001488b01ff5050b001',
+     'step-on poll after a completion: vt+0x50(padop, kt 0, 1, &res), then al = 1 (res is not read again)'),
+]
+SITES += ICON_SITES
+# Complete-body SHA-256 pins (partner_icon::Build re-checks them in the running image before the copy is built).
+ICON_BODIES = [
+    (0xAFD870, 0x1AE, 'a83ca7af582197da1796e12dad3b619b908f447430205df07e502a3e9370a8a5', 'IsCompletedActionIcon'),
+    (0xB02480, 0x135, '6cbf174286d4f4d5f6c1229114fcf1d8aa0b2ce180cddbfad1230a5a0d409afe', 'padop vt+0x50 force-complete'),
+    (0x12128C0, 0xE, '97fe4df6a153d13e7757e418a08517464cba11ec71ac0080ff12f4ddcb2a65c7', 'traversal plugin priority'),
+]
+# The ActionPlugin vtables whose vt[0]/vt[1] the copy's answer relies on (from the constructors; every image pointer
+# to the four Exec functions).
+ICON_PLUGIN_VTS = [
+    (0x23C6000, 0x11EA140, 'ladder (base)'), (0x23C60C0, 0x11EA140, 'ladder (derived)'),
+    (0x23C9BE0, 0x1211820, 'pipe'), (0x23C9CB0, 0x1211820, 'pipe (second)'),
+    (0x23BB850, 0x114BEC0, 'climb'), (0x23BB930, 0x114BEC0, 'climb (second)'),
+    (0x23D13E0, 0x1293F60, 'step-on'), (0x23D1490, 0x1293F60, 'step-on (second)'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -1156,6 +1198,16 @@ SLOTS += [
     (0x23895D0, 0x88, 0xEE9050, 'store derived vt+0x88 = the stock / energy word read'),
 ]
 SLOTS += partner_aim_sites.SLOTS
+# F3: the padop slots the vtable copy replaces (+0x28, +0x50) or relies on (+0x18 builder, +0x188 the ray with the
+# per-type cache the climb / pipe Exec use), and vt[0] / vt[1] of every traversal ActionPlugin vtable.
+SLOTS += [
+    (0x22E8F00, 0x18, 0xAFCCE0, 'padop vt+0x18 = the icon builder (local id only)'),
+    (0x22E8F00, 0x28, 0xAFD870, 'padop vt+0x28 = IsCompletedActionIcon (the copy forwards every non-body-1 query here)'),
+    (0x22E8F00, 0x50, 0xB02480, 'padop vt+0x50 = force-complete (the copy forwards outside the drain scope)'),
+    (0x22E8F00, 0x188, 0xAFBEC0, 'padop vt+0x188 = the ray with the per-type cache (entry 0x19 = padop+0x7F0)'),
+]
+SLOTS += [(vt, 0x0, 0x12128C0, f'{what} ActionPlugin vt[0] = priority') for vt, _, what in ICON_PLUGIN_VTS]
+SLOTS += [(vt, 0x8, ex, f'{what} ActionPlugin vt[1] = ExecActionButtonFunction') for vt, ex, what in ICON_PLUGIN_VTS]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -2240,6 +2292,33 @@ failures += ws4_v2_assertions()
 failures += support_native_assertions()
 failures += vehicle_assertions()
 failures += handle_call_assertions()
+
+
+def traverse_icon_assertions():
+    """F3 (docs/native-puppet.md "Traversal icon"): the facts behind the padop vtable copy."""
+    out = []
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    for rva, size, digest, what in ICON_BODIES:
+        need(hashlib.sha256(rd(rva, size)).hexdigest() == digest, f'{what} {rva:#x} complete body matches its SHA-256 pin')
+    # 96 code slots, then data: the copy covers the whole table.
+    slots = [struct.unpack('<Q', rd(0x22E8F00 + 8 * i, 8))[0] - IB for i in range(97)]
+    need(all(section_of(v) == '.xtext' for v in slots[:96]), 'padop vtable: slots +0x0..+0x2F8 are code')
+    need(section_of(slots[96]) != '.xtext', 'padop vtable: +0x300 is not a code slot (96 slots)')
+    # Only the constructor (0xAFAE90) and the destructor (vt[0] 0xAFBA10) store the padop vtable: an object with it is
+    # always a padop. The two replaced functions are reached only through their slots (no direct call, no other pointer).
+    need(lea_rip_refs(0x22E8F00) == [0xAFAED2, 0xAFBA26], f'padop vtable stores: {[hex(x) for x in lea_rip_refs(0x22E8F00)]}')
+    need(qword_hits(0xAFD870) == [0x22E8F28] and rel_refs(0xAFD870) == [], 'IsCompletedActionIcon only through padop vt+0x28')
+    need(qword_hits(0xB02480) == [0x22E8F50] and rel_refs(0xB02480) == [], 'force-complete only through padop vt+0x50')
+    for ex in sorted({e for _, e, _ in ICON_PLUGIN_VTS}):
+        need(sorted(qword_hits(ex)) == sorted(vt + 8 for vt, e, _ in ICON_PLUGIN_VTS if e == ex) and rel_refs(ex) == [],
+             f'Exec {ex:#x} only through the listed ActionPlugin vtables')
+    need(sorted(qword_hits(0x12128C0)) == sorted(vt for vt, _, _ in ICON_PLUGIN_VTS), 'the priority is vt[0] of exactly these vtables')
+    return out
+
+
+failures += traverse_icon_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -2652,6 +2731,14 @@ w('// rec+0x3c0 bit 26: set by 46 op 1, cleared by 46 op 2 (the decode\'s class-
 w('inline constexpr std::size_t pp_vt_press=0x40, src_press=0x50, pp_press_fallback=0x468;')
 w('inline constexpr std::uint32_t pad_press_fire=0x10, gun3c0_place_busy=0x4000000;')
 w('inline constexpr std::uintptr_t placed_owner_claim_rva=0xfc9c00, placed_can_place_rva=0xfcb1f0, pp_press_word_rva=0x1205e80;')
+w('// --- F3 traversal icon (partner_icon; docs/native-puppet.md "Traversal icon") ---------------------------')
+w('// The padop vtable copy forwards to these bodies; partner_icon::Build re-hashes them in the running image.')
+w('struct BodyPin { std::uintptr_t rva; std::size_t size; std::uint8_t sha256[32]; };')
+w('inline constexpr BodyPin icon_bodies[]={')
+for rva, size, digest, what in ICON_BODIES:
+    w(f'    {{0x{rva:x},0x{size:x},{{{cbytes(digest)}}}}}, // {what}')
+w('};')
+w('inline constexpr std::uintptr_t icon_plugin_vts[]={' + ','.join(f'0x{vt:x}' for vt, _, _ in ICON_PLUGIN_VTS) + '};')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:
