@@ -112,7 +112,7 @@ trap {
 }
 # The loader versions whose native side implements the play mode. The
 # integrator keeps this list matched to the packaged loader version.
-$script:SupportedLoaderVersions = @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4')
+$script:SupportedLoaderVersions = @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5')
 if ($TestNoLaunch) { $env:MGS_COOP_TEST_NO_LAUNCH = '1' }
 
 function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {

@@ -1,7 +1,33 @@
-## 0.13.5 (in progress)
+## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; all lab-only and off)
 
-Unreleased; the version stays 0.13.4 until the integration bump. Every new behaviour is a lab key, default off in lab
-and play, until a hidden-worker FRAME proves it.
+Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
+`6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
+resolved by union, the contract header regenerated inside each merge), then the version commit. No rebase. Not
+packaged or installed; no hidden-worker run on this merge yet. The build id changes, so both copies need the same new
+package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`, `partner_cbox_tests`,
+`partner_icon_tests`, `partner_gesture_tests`, `partner_gesture_hook_tests` and `partner_mount_tests`).
+
+**Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs.** Each key records a
+`_given` flag and play forces it off; nothing below changes a 0.13.4 play session unless the key is named in lab.
+
+| Feature | Branch | Lab key (default) | Status |
+| --- | --- | --- | --- |
+| F1 vehicles: board block and back-seat passengers | `wp/board` | `partner_ride_board=off\|block\|passenger` (off) | lab-only, off, pending frames |
+| F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (0) | lab-only, off, pending frames |
+| F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (0; existing key, now the icon path) | lab-only, off, pending frames |
+| F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (0) | lab-only, off, pending frames |
+| F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (off) | lab-only, off, pending frames; no mount drawn |
+
+- Contract after the merges: 733 code sites / 185 vtable slots (0.13.4: 677 / 149; F1 +19 / +3, F2 +10 / +6, F3 +14 /
+  +20, F4 +13 / +7, F5 none); equip writer pins 118 SHA-256 gates (0.13.4: 113; F2 adds five). The per-feature
+  counts in the subsections below are each branch alone on top of 0.13.4.
+- Wire: F4's gesture message is new (an older build drops it); F1's local passenger report rides the existing ride
+  packet; F5 only changes how the viewer reads the remote's act. No existing frame layout changes.
+- Scenarios written, none run yet: `coop-vehicle-shared.txt`, `coop-vehicle-passenger.txt`,
+  `partner-cbox-census.txt`, `partner-cbox.txt`, `partner-traverse-icon.txt`, `partner-upper-gestures.txt`,
+  `partner-mount.txt`.
+- Version 0.13.5 (CMakeLists, package.ps1, probe.ps1, the Play-Coop / Play-LocalCoop / package-install /
+  set-session-mode allow-lists, which keep 0.13.4, FRIEND-GUIDE).
 
 ### F1
 
