@@ -401,8 +401,9 @@ lazy board install, so they never see the patched rel32; nothing re-runs them.
 F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research
 note `re-traverse-gesture.md` sections 1-4). Same key as "Traversal":
 `partner_native_traverse`, **default 0 in lab and play**, play forces it off;
-no new key. Unproven until a hidden-worker FRAME shows body 1 on a ladder, a
-wall or a ledge.
+no new key. **Step-on (24) is proven in FRAMES** (hidden run `104e9a47`,
+below); wall climb (23), ladder (21) and pipe (22) are unproven because no
+spot was found, so the key stays off.
 
 **Why body 1 never starts a traversal.** The icon controller "padop"
 (`Player2PadOperatorControllerImpl`, vtable `0x1422E8F00`, 96 slots, one object
@@ -536,6 +537,23 @@ completion.
   requested plugin (no viewer E reaches body 1).
 - Body 1 reloading (upper act 5) or picking up (0x15) cannot start a
   traversal, as in stock.
+
+**Hidden runs** (research build, gun stage, lab seed, key named; STATUS.md
+0.13.5 F3). The census reads `distinct=52/52; blk_ok=0x1e/0x1e;
+found=0x1e/0x1e; verdict=ok` on both copies. Step-on spot: the rock shelf east
+of the lab start, the host at 828.18,337.20,1630.51 facing yaw 95, W then W+E
+(`partner-traverse-icon.txt` Part 3). In `104e9a47` both attempts logged
+`icon; plugin=step_on; res=ok; exec_ok=1; granted=1; req_queries=1;
+latched=0; viewer_changed=0; faults=0; restore_mismatch=0` and `edge=remote;
+remote=24; body=24; match_ms=0`, with no vertical placement and the viewer's
+act at 1 throughout; the frames show body 1 reaching up, pulling itself onto
+the shelf and standing on it. In `d10ddf39` the same spot needed a placement
+first (`start; reason=placed`, body edge `match_ms=43`). Spot search for the
+rest (lab start, Wialo Village, Mission 1's horse start, the slopedTown
+outpost, Wakh Sind Barracks) found no 21/22/23: the climb Exec only accepts an
+authored crack-climb geo path whose end is within 2.5 m and +-1.5 m of the
+player (`0x14114AA50`), and the lab seed's D-Dog takes the E press whenever it
+is the nearest action (act 94, petting).
 
 ## Gestures
 

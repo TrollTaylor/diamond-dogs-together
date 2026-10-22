@@ -16,7 +16,7 @@ lab and `71e19d1e` play; see F2). Each key records a `_given` flag and play forc
 | --- | --- | --- | --- |
 | F1 vehicles: board block and back-seat passengers | `wp/board` | `partner_ride_board=off\|block\|passenger` (block with the gun profile, lab and play) | block proven (frames `0348c4d8` lab, `fad26e25` play bad WAN), default on; passenger lab-only, named-only (own camera unusable, `59cfc415`) |
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
-| F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (0; existing key, now the icon path) | lab-only, off, pending frames |
+| F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (0; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found), so lab-only and off |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (0) | lab-only, off, pending frames |
 | F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (off) | lab-only, off, pending frames; no mount drawn |
 
@@ -161,8 +161,39 @@ lab and `71e19d1e` play; see F2). Each key records a `_given` flag and play forc
 - Tests: `partner_icon_tests` (new, in `Get-WorkerTests`), `partner_traverse_tests` rewritten for the icon level,
   `partner_driver_tests` `TestNativeTraverseIcon`, `partner_defer_tests` drives the copy through the real drain
   window. Scenario `tools/worker/scenarios/partner-traverse-icon.txt` (spot census in four headings plus captures).
-- Unproven (hidden run): the census verdict, `res=ok` followed by `edge=body; remote=X; body=X`, frames of body 1 on
-  the ladder / wall / ledge, and that the viewer never changes (`latched=0`, `viewer_changed=0`).
+- **Hidden runs (wp/integ9 `19a5809`, research build, gun stage, lab seed, key named; Closed, BaselineRestored,
+  RealSavesUnchanged, no visible fallback):**
+  - Census, every run: `partner_icon=census; distinct=52/52; blk_ok=0x1e/0x1e; found=0x1e/0x1e; null=17/17; read=1;
+    verdict=ok` on both copies, so block 1 owns its own traversal plugins as the research note says.
+  - Spot census `27af27fa` and `d10ddf39` (scratch sweeps, W then W+E with a host capture per step): the lab start's
+    four headings and Wialo Village around `veh_lv_0000` (the F1 jeep, 577.6,320.0,1157.4, not Wakh Sind) gave no
+    traversal (E petted D-Dog, act 94, or boarded the jeep). The rock shelf east of the lab start did: from
+    828.18,337.20,1630.51 at yaw 95 the host reached act 24. In `d10ddf39` body 1 replayed it from 20 m (`start;
+    reason=placed` -> `icon; plugin=step_on; res=ok; exec_ok=1; granted=1; latched=0; viewer_changed=0; faults=0;
+    restore_mismatch=0` -> `edge=body; remote=24; body=24; match_ms=43`, then 28 natively off the far side).
+  - `104e9a47` lab, `partner-traverse-icon.txt` with Part 3 filled (two step-on blocks at that spot; the scenario
+    ran with the committed steps, followed by scratch camp views): **step-on proven on body 1.** Both blocks: `start;
+    reason=near` -> `entered; reason=request` -> `icon; plugin=step_on; res=ok; seq=1|2; exec_ok=1; exec_fail=0;
+    granted=1; queries=14; denied=13; swaps=2; windows=2; passed=0; force_swallowed=1; req_queries=1; deny=none;
+    latched=0; viewer_changed=0; faults=0; restore_mismatch=0` -> `edge=remote; remote=24; body=24; match_ms=0` ->
+    `done; reason=left`; no `partner_recon=place; reason=vertical`; the viewer's own act stayed 1 from start to done
+    (its only 25/26 are the scripted landing of `placebehind`). FRAMES (`stepon-climb-02..07`, `stepon2-climb-02..03`,
+    checked by eye): from 5 m the viewer sees body 1 reach up, pull itself onto the shelf and stand on it, both
+    attempts, while the viewer stands still.
+  - Climb / ladder / pipe search `29052784`, `9b0d5500`, `c3c74e24` (the walls at Mission 1's horse start
+    1458.9,356.3,1430.1, the slopedTown outpost 562.8,325.3,70.4, Wakh Sind Barracks -497.5,322.8,500.1 with its
+    watchtower, barriers and cliff bases; the far camps reached by ~1 km hops, a direct 2.5 km warp to cliffTown fell
+    through the world in `104e9a47`): the host's own act reached 24 once more (a Wakh Sind jersey barrier) and never
+    21, 22 or 23. D-Dog took most E presses at Wakh Sind; after the hops the guest's native drive latched
+    (`enter_timeout`), so nothing was replayed there.
+- **Unproven: wall climb (23), ladder (21) and pipe (22).** No spot was found. The climb Exec (`0x14114BEC0`) only
+  accepts an authored crack-climb geo path whose end lies within 2.5 m and +-1.5 m of the player (`FUN_14114AA50`;
+  the game's own record calls it `crack_climb`), so it needs a known crack. Mother Base has ladders (21 appears in
+  older 30050 logs) but the lab runs in 30010. **Defaults unchanged** (`partner_native_traverse` 0 in lab and play,
+  play forces 0): the bar for this step was step-on and wall climb in FRAMES, and only step-on is met.
+- **User decisions:** (1) a crack-climb (and ladder) spot reachable from the lab seed, or a lab way to dismiss D-Dog
+  for E-press censuses (it takes the E press whenever it is the nearest action); (2) whether step-on alone, with the
+  viewer guard clean in both attempts, is enough to turn the key on.
 
 ### F4
 

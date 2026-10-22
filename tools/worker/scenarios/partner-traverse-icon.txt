@@ -4,6 +4,8 @@
 # watches its body 1 (the host's puppet) from 5 m; the guest never presses E.
 # Run (hidden worker, coordinator only, one at a time, no builds running):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-traverse-icon.txt -PartnerProfile native -NativeStage loco
+#   (or -NativeStage gun -BuildProfile research -SaveSeed lab, the user's profile, as the 0.13.5 runs did)
+# The lab seed's D-Dog follows the host: an E press next to it pets it (act 94) instead of a traversal.
 #
 # Part 1 is the spot census: no traversal coordinates are verified in the repo, so the host walks into whatever is
 # ahead of the lab start in four headings and presses E (vault / step-on, wall climb, ladder, pipe). The guest's
@@ -34,6 +36,12 @@
 # exec_ok=0 and deny=exec (the plugin's own gates refused body 1 at that pose: check its act, the placement and
 # facing), deny=p_flag (P+0x204 bit 10 clear), deny=align|owner|fault (report). `deny` is the requested plugin's own
 # last refusal; body 1's other polls count only in denied=.
+# Result (hidden run 104e9a47, research build, gun stage, lab seed): census verdict=ok (distinct=52/52, blk_ok=0x1e/0x1e);
+# both Part 3 step-on blocks: start reason=near -> entered reason=request -> icon; plugin=step_on; res=ok; exec_ok=1;
+# granted=1; req_queries=1; latched=0; viewer_changed=0; faults=0; restore_mismatch=0 -> edge=remote remote=24 body=24
+# match_ms=0 -> done reason=left; no reason=vertical. (A request folded into the same tick as start/placed/entered logs
+# no separate partner_traverse=request line.) Frames stepon-climb-02..07: body 1 reaches up, pulls itself onto the
+# shelf and stands on it; the viewer's act stays 1 from start to done. Parts 1/2 found nothing at the lab start.
 labsetting partner_act_log=1
 labsetting partner_native_traverse=1
 title 200
@@ -163,6 +171,45 @@ wait 1000
 #   waitlog guest 'partner_traverse=icon; plugin=step_on; res=ok' 3
 #   host release
 #   wait 1000
+# Step-on (24), verified by the spot census (hidden run d10ddf39, sweep rb): the rock shelf east of the lab start.
+# From 828.18,337.20,1630.51 at yaw 95 the host's W 500 ms + W+E reached act 24 at 830.64,337.81,1630.41 (yaw
+# 118, aligned to the shelf); body 1 replayed it (res=ok, edge=body remote=24 body=24 match_ms=43) and then dropped
+# off the far side (28 natively). Two attempts.
+host debug teleport 828.18 338.20 1630.51 95
+wait 1500
+stance host stand
+placebehind guest host 5 3
+wait 2500
+guest capture stepon-start
+host hold w 500
+host hold w+e 200 nowait
+guest burst stepon-climb 8 200
+wait 800
+guest capture stepon-end
+host release
+waitlog guest 'partner_traverse=icon; plugin=step_on; res=ok' 3
+wait 1000
+host debug teleport 828.18 338.20 1630.51 95
+wait 1500
+stance host stand
+placebehind guest host 5 3
+wait 2500
+guest capture stepon2-start
+host hold w 500
+host hold w+e 200 nowait
+guest burst stepon2-climb 8 200
+wait 800
+guest capture stepon2-end
+host release
+wait 1000
+# Wall climb (23), ladder (21), pipe (22): no spot verified yet. Hidden census/exploration runs 27af27fa, d10ddf39,
+# 29052784, 9b0d5500, c3c74e24 swept with W+E: the lab start (four headings and the rock formation east of it),
+# Wialo Village around veh_lv_0000 (577.6,320.0,1157.4: walls, hay bales, crates, sandbags), the walls at Mission 1's
+# horse start (1458.9,356.3,1430.1), the slopedTown outpost (562.8,325.3,70.4) and Wakh Sind Barracks
+# (-497.5,322.8,500.1: watchtower, barriers, cliff bases). The host's own act reached only 24 (here and on a Wakh
+# Sind jersey barrier) and never 21/22/23; D-Dog took most E presses at Wakh Sind (act 94). The climb plugin's Exec
+# (0x14114BEC0) needs an authored crack-climb geo path whose end lies within 2.5 m and +-1.5 m of the player
+# (FUN_14114AA50, the game counts these as "crack_climb"), so a climb block needs a known crack.
 resetpose host
 both capture icon-end
 state
