@@ -125,11 +125,23 @@ void TestEnter() {
     pol::Enter(s, 30010, 7000, 5);
     Check(!s.done && s.applied == 468 && s.uncertain && s.realize_gen == 5, "a re-realize re-arms the edge, keeps the box and latches");
     s.done = true;
+    s.watch_latched = true;
+    s.on_ms = 123;
+    s.entered = true;
     pol::Enter(s, 30010, 9000, 5);
-    Check(!s.done && !s.applied && !s.uncertain && s.epoch == 9000, "a new mission with the same code (a new start epoch) clears everything");
+    Check(!s.done && !s.done_seq && !s.uncertain && !s.watch_latched && s.epoch == 9000 && s.applied == 468 && s.enter_logged &&
+              !s.entered && !s.exit_logged && !s.on_ms,
+          "a new mission with the same code (a new start epoch) clears the edge and the latches, carries our box (no watch)");
     s.uncertain = true;
     pol::Enter(s, 30020, 9000, 5);
-    Check(!s.done && !s.applied && !s.uncertain && s.mission == 30020, "a new mission clears everything");
+    Check(!s.done && !s.uncertain && s.mission == 30020 && s.applied == 468, "a new mission code carries our box too");
+    s.applied = 0;
+    pol::Enter(s, 30010, 9000, 5);
+    Check(!s.applied && !s.enter_logged && s.mission == 30010, "nothing carried without a box of ours");
+    // A carried box is still ours: off when the remote is not boxed, kept when it is (never re-dispatched).
+    s.applied = 468;
+    Check(pol::Decide(s, {false, 0, 468, 0}).step == pol::Step::off, "a carried box comes off when the remote is not boxed");
+    Check(pol::Decide(s, {true, 1, 468, 468}).step == pol::Step::keep, "a carried box stays while the remote is boxed");
 }
 void TestVerdicts() {
     Check(pol::FinalRefusal("viewer_no_box") && pol::FinalRefusal("type") && pol::FinalRefusal("body_items_full") &&
@@ -662,6 +674,51 @@ void TestWatchesWorld() {
     cb::Observe(Ctx(false, 468, 2, m), &Log);
     Check(Logged("partner_cbox=released; id=468; body_item=0;") && g_off == 0, "released: nothing to take off");
 }
+void TestCarryWorld() {
+    using namespace world;
+    // A restarted mission (same code, new start epoch: the driver's edge counter restarts at 0) whose body-1 row kept
+    // our box: carried, and taken off because the remote is not boxed.
+    Build();
+    std::uint32_t m = ++g_mission;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(g_on == 1 && cb::GetStatus().applied == 468, "carry: the box is on");
+    auto restarted = Ctx(false, 0, 0, m);
+    restarted.epoch += 7;
+    cb::Observe(restarted, &Log);
+    Check(Logged("partner_cbox=carried; id=468;") && g_off == 1 && Logged("partner_cbox=off; id=468; via=native; reason=ok;") &&
+              SubOf(1) == 0 && cb::GetStatus().applied == 0,
+          "a restarted mission that kept body 1's row: our carried box comes off");
+    // A new mission whose remote is boxed again: the carried box stays (never re-dispatched, no entry watch).
+    Build();
+    m = ++g_mission;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    m = ++g_mission;
+    for (int i = 0; i < 20; ++i) cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Check(g_on == 1 && g_off == 0 && Logged("partner_cbox=carried; id=468;") && !Logged("entered; ok=0") &&
+              cb::GetStatus().applied == 468,
+          "a carried box while the remote is boxed: kept, no second ChangeEquip, no entry timeout");
+    // A new mission that rebuilt body 1's row: carried, then released; nothing to take off.
+    Build();
+    m = ++g_mission;
+    cb::Observe(Ctx(false, 0, 0, m), &Log);
+    Check(Logged("partner_cbox=carried; id=468;") && Logged("partner_cbox=released; id=468; body_item=0;") && g_off == 0 &&
+              cb::GetStatus().applied == 0,
+          "a rebuilt row: the carried box is released, no off call");
+    // Key off: a carried box is not even logged.
+    Build();
+    m = ++g_mission;
+    cb::Observe(Ctx(true, 468, 1, m), &Log);
+    Build();
+    m = ++g_mission;
+    auto off = Ctx(false, 0, 0, m);
+    off.enabled = false;
+    cb::Observe(off, &Log);
+    Check(g_log.empty() && g_off == 0, "key off: silent, also with a carried box");
+    cb::Observe(Ctx(false, 0, 0, m), &Log);
+    Check(Logged("partner_cbox=carried; id=468;") && Logged("partner_cbox=released;"), "the carry is reported once the key is on");
+    cb::Observe(Ctx(false, 0, 0, m), &Log);
+    Check(g_log.find("carried") == g_log.rfind("carried"), "the carry is logged once");
+}
 void TestPins() {
     // The writer's SHA list covers the off call and the box chain whole (two generators, the same retail bytes).
     const std::uintptr_t want[] = {c::change_equip_rva, c::set_current_item_index_rva, c::get_item_stock_count_rva, c::get_equip_id_slot_rva,
@@ -698,6 +755,7 @@ int main() {
     TestMappingAndRefusals();
     TestUncertain();
     TestWatchesWorld();
+    TestCarryWorld();
     TestPins();
     std::printf("partner_cbox_tests: %u checks passed\n", checks);
     return 0;

@@ -78,15 +78,23 @@ struct State {
     bool watch_latched = false;
 };
 // A new mission (code or start epoch: the driver's edge counter restarts with
-// it) clears everything; a new body realize generation re-arms the edge (the
-// next tick attempts the remote's current state once more) and keeps the box we
-// put on (body 1's equipment row lives in Q, not in the realized body).
+// it) clears the edge state and both latches but carries the box we put on: if
+// body 1's equipment row survived the restart (it lives in Q, which a restart
+// may or may not rebuild), that box is still ours to take off, and the engine
+// would keep body 1 boxed for as long as the viewer has stock. The module
+// releases it on the next read when the row no longer shows it; a carried box
+// has no entry / exit watch (its apply time belongs to the old mission). A new
+// body realize generation re-arms the edge (the next tick attempts the remote's
+// current state once more) and keeps the box and the latches.
 constexpr void Enter(State& s, std::uint32_t mission, std::uint64_t epoch, std::uint32_t realize_gen) noexcept {
     if (s.mission != mission || s.epoch != epoch) {
+        const std::uint16_t carried = s.applied;
         s = State{};
         s.mission = mission;
         s.epoch = epoch;
         s.realize_gen = realize_gen;
+        s.applied = carried;
+        s.enter_logged = carried != 0;
         return;
     }
     if (s.realize_gen != realize_gen) {

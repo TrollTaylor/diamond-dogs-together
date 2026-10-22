@@ -13,7 +13,9 @@ Unreleased feature branches on top of `wp/integ8`; the version stays 0.13.4 unti
 - Guards as the support lane: SRW lock, SEH, every chain re-read, the full SHA gate, a late re-capture, the strict
   viewer digest and body 1's other slots around each call, a mission-scoped uncertain latch; one attempt per remote
   edge (`Mission::cbox_seq`), never a second ChangeEquip while the box is current; busy while the gun or support
-  writers are mid-flight. Watches: `entered` (77/78 within 1500 ms), `exited`, `viewer_changed`.
+  writers are mid-flight. Watches: `entered` (77/78 within 1500 ms), `exited`, `viewer_changed`. A box this lane put
+  on is carried into a restarted or new mission (`partner_cbox=carried`): taken off if body 1's row still shows it
+  and the remote is not boxed, released with no call if the row was rebuilt.
 - Driver: `partner_cbox=remote; ...; apply=native|off; seq=..`; the reconciliation holds its placements while body 1
   is boxed (`partner_cbox=hold`).
 - Contract: 687 code sites / 155 vtable slots (was 677 / 149); writer pins 118 gates (was 113: SetCurrentItemIndex,

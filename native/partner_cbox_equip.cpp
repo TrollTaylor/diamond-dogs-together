@@ -25,6 +25,7 @@ std::uint32_t g_dispatches_on = 0, g_dispatches_off = 0;
 unsigned g_lines = 0, g_key_lines = 0;
 std::uint64_t g_log_ms = 0;
 const char* g_reason = nullptr;
+std::uint16_t g_carried = 0;  // a box carried into a new mission, logged once (partner_cbox=carried)
 bool Read(std::uintptr_t address, void* out, std::size_t size) noexcept {
     if (!address || address > UINTPTR_MAX - size) return false;
     SIZE_T copied = 0;
@@ -419,11 +420,19 @@ void Observe(const Context& x, LogFn log) noexcept {
         g_lines = g_key_lines = 0;
         g_reason = nullptr;
         g_watch = Watch{};
+        pol::Enter(g_state, x.mission, x.epoch, x.realize_gen);
+        // A box this lane put on in the previous mission stays ours (partner_cbox_policy::Enter).
+        g_carried = g_state.applied;
+    } else {
+        pol::Enter(g_state, x.mission, x.epoch, x.realize_gen);
     }
-    pol::Enter(g_state, x.mission, x.epoch, x.realize_gen);
     if (!x.enabled) {
         ReleaseSRWLockExclusive(&g_lock);
         return;
+    }
+    if (g_carried) {
+        Event(log, "partner_cbox=carried; id=%u; mission=%u\r\n", unsigned(g_carried), x.mission);
+        g_carried = 0;
     }
     // Work is pending for a fresh remote edge, or for an off of our own box.
     const bool pending = (x.want && !(g_state.done && g_state.done_seq == x.seq)) || (!x.want && g_state.applied);
@@ -440,8 +449,9 @@ void Observe(const Context& x, LogFn log) noexcept {
     WatchTick(x, s, log);
     const std::uint16_t current = Current(s.row1);
     if (g_state.applied && current != g_state.applied) {
-        // Our box is no longer body 1's current item (a re-realize reset the row,
-        // or another equip changed it): nothing of ours is on any more.
+        // Our box is no longer body 1's current item (a re-realize or a restarted
+        // mission reset the row, or another equip changed it): nothing of ours is
+        // on any more.
         Event(log, "partner_cbox=released; id=%u; body_item=%u; act1=%u; mission=%u\r\n", unsigned(g_state.applied), unsigned(current),
               unsigned(s.act[1]), x.mission);
         g_state.applied = 0;

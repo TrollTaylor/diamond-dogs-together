@@ -1370,7 +1370,12 @@ calls. Any surprise latches `uncertain` for the mission (no further call, not
 even an off); `not_current` (ChangeEquip returned 0 but the row does not show
 B) only ends the edge. The latches and the edge state are scoped to the
 mission code and the driver's mission start (`Mission::start_ms`, so a
-restarted mission with the same code starts clean); the observer waits for the
+restarted mission with the same code starts clean); the box this lane put on
+is carried across that reset (`partner_cbox=carried; id=..`): if body 1's row
+survived the restart it is still ours, and it comes off when the remote is not
+boxed (the engine would otherwise keep body 1 boxed while the viewer has
+stock); a rebuilt row releases it with no call (`partner_cbox=released`). The
+observer waits for the
 driver's CFG (`step=partner_cfg`). One attempt per remote edge (`Mission::cbox_seq`); never
 a second ChangeEquip while B is body 1's current item (it would reset the box
 life record and run OnRemoveItem / OnEquipItem while boxed). Busy (transient)
@@ -1399,7 +1404,7 @@ Logs (one per decision):
 - `partner_cbox=off; id=B; via=native; reason=ok|still_current|..; act1=..; h4=..>..; uncertain=..`
 - `partner_cbox=refused; reason=viewer_no_box|type|body_items_full|full_body_gate|body_busy|gun_writer_active|support_uncertain|restriction|lease_changed|gates|uncertain_latched|viewer_changed_latched|<capture>; step=on|off|<gate>; ...`
 - `partner_cbox=entered; ok=1; act=77; ms=..; qd8=..` or `entered; ok=0; act=..; ms=..; rec8=0x..; recC=0x..; rec_ok=..; vstock=..; qd8=..`
-- `partner_cbox=exited|viewer_changed|released; ...`, `partner_cbox=hold; on=..; body_act=..; want=..; seq=..`
+- `partner_cbox=exited|viewer_changed|released|carried; ...`, `partner_cbox=hold; on=..; body_act=..; want=..; seq=..`
 
 **Lab tooling.** `debug items` (read-only): `items;ids=..;counts=..;current=..`
 (`vars.items`, `Player.GetAmmoStockBySlot(ITEM, i)`, `vars.currentItemIndex`).
