@@ -2,7 +2,8 @@
 // F3 (0.13.5, docs/native-puppet.md "Traversal icon"): the traversal start of
 // body 1 (instance 1) through the stock action icon. Key
 // partner_native_traverse, default on with the native gun profile in lab and
-// play (user decision 2026-10-22; step-on proven in hidden run 104e9a47).
+// play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab and
+// 04d3511f play, the Mother Base ladder in 8f27806d lab and 2596f6ae play).
 //
 // The icon controller "padop" (Player2PadOperatorControllerImpl, vtable
 // 0x22E8F00, 96 slots, one object per P at P+0xD0) is shared by both bodies.

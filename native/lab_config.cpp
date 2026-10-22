@@ -1431,7 +1431,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.partner_native_place_mirror_given) c.partner_native_place_mirror = gun;
     // Traversal replay (the F3 icon path) follows the gun profile in lab and play
     // (user decision 2026-10-22, after hidden run 104e9a47: body 1 stepped onto
-    // the shelf through its own action icon, the viewer's guard clean; ladder,
+    // the shelf through its own action icon, the viewer's guard clean; play
+    // rehearsal 04d3511f; the Mother Base ladder in 8f27806d lab / 2596f6ae play;
     // pipe and wall climb are still unproven in a FRAME); a named 0 opts out.
     if (!c.partner_native_traverse_given) c.partner_native_traverse = gun;
     // F1 vehicles: the board follows the gun profile as PASSENGER in lab and play (the

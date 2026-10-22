@@ -5,7 +5,11 @@
 # guest watches its body 1 (the host's puppet) from 5 m; the guest never presses E.
 # Play rehearsal of the default: a copy without the partner_native_traverse line, run with -NativeStage gun
 # -BuildProfile research -SaveSeed lab -Mode play -WanSim bad (Part 3 only is enough; the logs must show
-# partner_icon=built on both copies without the key named).
+# partner_icon=built on both copies without the key named). Done in hidden run 04d3511f (-WanSim bad, rtt ~185 ms,
+# 0-13 % loss): partner_icon=built on both copies, both host step-ons res=ok; exec_ok=1; granted=1; latched=0;
+# viewer_changed=0; faults=0; restore_mismatch=0 and edge 24/24 (match_ms 50 and 16), plus one reversed block (the
+# guest steps on at the same spot, the host films: res=ok, edge 24/24); frames show body 1 climbing onto the shelf
+# with the play HUD and the viewer's act at 1 in every capture. Ladder (21): partner-traverse-ladder-mb.txt.
 # Run (hidden worker, coordinator only, one at a time, no builds running):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-traverse-icon.txt -PartnerProfile native -NativeStage loco
 #   (or -NativeStage gun -BuildProfile research -SaveSeed lab, the user's profile, as the 0.13.5 runs did)
@@ -206,14 +210,18 @@ wait 800
 guest capture stepon2-end
 host release
 wait 1000
-# Wall climb (23), ladder (21), pipe (22): no spot verified yet. Hidden census/exploration runs 27af27fa, d10ddf39,
+# Ladder (21): proven at Mother Base (real seed), see partner-traverse-ladder-mb.txt (hidden runs 8f27806d lab,
+# 2596f6ae play). Wall climb (23), pipe (22): no spot verified yet. Hidden census/exploration runs 27af27fa, d10ddf39,
 # 29052784, 9b0d5500, c3c74e24 swept with W+E: the lab start (four headings and the rock formation east of it),
 # Wialo Village around veh_lv_0000 (577.6,320.0,1157.4: walls, hay bales, crates, sandbags), the walls at Mission 1's
 # horse start (1458.9,356.3,1430.1), the slopedTown outpost (562.8,325.3,70.4) and Wakh Sind Barracks
 # (-497.5,322.8,500.1: watchtower, barriers, cliff bases). The host's own act reached only 24 (here and on a Wakh
 # Sind jersey barrier) and never 21/22/23; D-Dog took most E presses at Wakh Sind (act 94). The climb plugin's Exec
 # (0x14114BEC0) needs an authored crack-climb geo path whose end lies within 2.5 m and +-1.5 m of the player
-# (FUN_14114AA50, the game counts these as "crack_climb"), so a climb block needs a known crack.
+# (FUN_14114AA50, the game counts these as "crack_climb"), so a climb block needs a known crack. Lead: the game's own
+# Lua hands its crack points to the UI as a Vector3 list through TppUiCommand.RegisterCrackPoints (0x1408D5010, up to
+# 64 points in the UI common data); none of the extracted library scripts (TppMain, TppUI, TppMission, TppPlayer, ...)
+# calls it, so the caller is a location or mission script; logging that call's argument would give the crack spots.
 resetpose host
 both capture icon-end
 state

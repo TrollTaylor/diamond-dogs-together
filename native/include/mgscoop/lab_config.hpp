@@ -582,7 +582,8 @@ struct LabConfig {
     // own Exec for idx 1. Nothing presses ACTION on body 1. Default on with the
     // native gun profile in lab and play (user decision 2026-10-22; hidden run
     // 104e9a47: body 1's step-on in FRAMES, the viewer's own player unchanged;
-    // ladder, pipe and wall climb unproven); a named 0 opts out.
+    // play rehearsal 04d3511f; the Mother Base ladder in 8f27806d lab and
+    // 2596f6ae play; pipe and wall climb unproven); a named 0 opts out.
     bool partner_native_traverse = false;
     bool partner_native_traverse_given = false;
     // F2 (partner_cbox_equip, docs/native-puppet.md "Cardboard box"): the

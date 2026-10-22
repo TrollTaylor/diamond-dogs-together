@@ -12,8 +12,9 @@ changes, so both copies need the same new package. Full CTest 288/288 (`-Configu
 (default **passenger**, the back seat with the passenger camera, with the native gun profile in lab and play after
 hidden runs `495e7c3a` lab and `de949f80` play; its block half after `0348c4d8` lab and `fad26e25` play; see F1), **F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
 lab and `71e19d1e` play; see F2), **F3's traversal icon** (default on with the native gun profile in lab and play by
-the user's decision of 2026-10-22, after the step-on FRAMES of hidden run `104e9a47`; ladder, pipe and wall climb are
-unproven and no play run exists yet; see F3) **and F4's gestures** (default on with the native gun profile in lab and
+the user's decision of 2026-10-22, after the step-on FRAMES of hidden run `104e9a47`; since then the step-on play
+rehearsal `04d3511f` and the Mother Base ladder `8f27806d` lab / `2596f6ae` play; pipe and wall climb are unproven;
+see F3) **and F4's gestures** (default on with the native gun profile in lab and
 play after hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4). **F5's mount hide** is on with the
 native gun profile in lab only (hidden run `bfd6fcc4`; its play rehearsal `fbde3dcc` covered the horse only, so play
 forces it off; see F5). Each key records a `_given` flag and play forces the rest off.
@@ -22,7 +23,7 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
 | --- | --- | --- | --- |
 | F1 vehicles: board block and back-seat passengers | `wp/board`, `wp/pass-cam` | `partner_ride_board=off\|block\|passenger` (passenger with the gun profile, lab and play) | block proven (frames `0348c4d8` lab, `fad26e25` play bad WAN); passenger with the passenger camera proven both directions (frames `495e7c3a` lab, `de949f80` play bad WAN), default since; truck fallback unit-tested only |
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
-| F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (1 with the gun profile, lab and play; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found); default on by user decision 2026-10-22 (no play run yet) |
+| F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (1 with the gun profile, lab and play; existing key, now the icon path) | step-on proven (frames `104e9a47` lab, `04d3511f` play bad WAN); ladder proven at Mother Base (frames `8f27806d` lab, `2596f6ae` play bad WAN, both directions); climb / pipe unproven (no spot found); default on by user decision 2026-10-22; open: the viewer's HUD shows the stock "C + ladder" hint while body 1 is on a ladder (cosmetic) |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (1 with the gun profile, lab and play) | pickup proven (frames `0e343f72` lab, `75a7e7dc` play bad WAN), default on; hand signs / knock unproven (no lab spot) |
 | F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (hide with the gun profile in lab; play off) | hide proven after an unrealize fix (frames `bfd6fcc4` lab: no partner body while it rides D-Walker or D-Horse); play rehearsal `fbde3dcc` horse only, so play stays off; no mount drawn; RIDE_BODY no longer moves the viewer's own horse / walker (user decision 2026-10-22; no run yet) |
 
@@ -236,21 +237,61 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
     through the world in `104e9a47`): the host's own act reached 24 once more (a Wakh Sind jersey barrier) and never
     21, 22 or 23. D-Dog took most E presses at Wakh Sind; after the hops the guest's native drive latched
     (`enter_timeout`), so nothing was replayed there.
-- **Unproven: wall climb (23), ladder (21) and pipe (22).** No spot was found. The climb Exec (`0x14114BEC0`) only
-  accepts an authored crack-climb geo path whose end lies within 2.5 m and +-1.5 m of the player (`FUN_14114AA50`;
-  the game's own record calls it `crack_climb`), so it needs a known crack. Mother Base has ladders (21 appears in
-  older 30050 logs) but the lab runs in 30010. The runtime step left the defaults unchanged (the bar was step-on and
-  wall climb in FRAMES, and only step-on was met).
+- **Unproven after the first runtime step: wall climb (23), ladder (21) and pipe (22).** No spot was found. The climb
+  Exec (`0x14114BEC0`) only accepts an authored crack-climb geo path whose end lies within 2.5 m and +-1.5 m of the
+  player (`FUN_14114AA50`; the game's own record calls it `crack_climb`), so it needs a known crack. Mother Base has
+  ladders (21 appears in older 30050 logs) but the lab runs in 30010. The runtime step left the defaults unchanged
+  (the bar was step-on and wall climb in FRAMES, and only step-on was met). The ladder is proven since (below).
 - **User decision (2026-10-22): on by default.** Step-on alone, with the viewer guard clean in both attempts, is
   enough: `partner_native_traverse` now resolves to 1 with the native gun profile in lab and play
   (`ResolveWeaponDefaults`; the play force-off is removed), 0 without it, and a named 0 opts out. `lab_config_tests`
   (the gun profile defaults it on in lab and play; a named 1 runs in both) and `friend_package_tests` (Play-Coop
   native `1|0`, a named 0 in play `0|1`) follow; native-puppet.md "Traversal" / "Traversal icon", its config table,
-  the `-LabSetting` help and the scenario header say so. **No play-mode run of the icon path exists yet**; the next
-  hidden runs add one (`-Mode play -WanSim bad`, `partner-traverse-icon.txt` Part 3 without the key line).
-- **Still open:** ladder (21) and wall-climb (23) proof. Keep looking: the Mother Base (30050) ladders, and an
-  authored crack-climb spot reachable from the lab seed; D-Dog still takes the E press whenever it is the nearest
-  action (a lab way to dismiss it would help E-press censuses).
+  the `-LabSetting` help and the scenario header say so.
+- **Hidden runs after the default flip (wp/integ9 `b9b391f`, research build, gun stage, key NOT named, so the
+  default ran; Closed, BaselineRestored, RealSavesUnchanged, no visible fallback, research worker checks receipt
+  `20261022-152413-153d2411a9344c23a6b6fafaa2d1aac9`):**
+  - `04d3511f` **step-on play rehearsal** (scratch copy of `partner-traverse-icon.txt` Part 3 plus one reversed
+    block; `-Mode play -WanSim bad`, rtt ~185 ms, 0-13 % loss, lab seed). `partner_icon=built` and `census; ...;
+    verdict=ok` on both copies. Both host step-ons on the guest: `start; reason=placed|near` -> `entered;
+    reason=request` -> `icon; plugin=step_on; res=ok; exec_ok=1; exec_fail=0; granted=1; req_queries=1; deny=none;
+    latched=0; viewer_changed=0; faults=0; restore_mismatch=0` -> `edge=body; remote=24; body=24; match_ms=50|16` ->
+    `done; reason=left`; the reversed step-on on the host the same (`res=ok`, edge 24/24). The only `partner_recon=place;
+    reason=vertical` came when `placebehind` teleported the partner (body act 1). FRAMES (checked by eye):
+    `stepon-climb-02..07` on the guest and `rev-stepon-climb-02..07` on the host show body 1 reaching up, pulling
+    itself onto the shelf and standing on it, with the play HUD; the viewer's local act was 1 in every capture.
+  - `8f27806d` **Mother Base ladder, lab** (real seed, scratch scenario: three host attempts at the ladder on the red
+    container, rungs at x=22.61, z=-14.86, deck y=0.80, the climber facing +z; the spot comes from the user's 0.13.2
+    MB play, assess `host_0132` ~2876-2909). Attempts A (W then W+E from 22.61,-15.55 yaw 0) and C (E alone from
+    22.61,-15.40) grabbed the ladder; B (from the west, yaw 95) walked past it. Both grabs on the guest: `start;
+    reason=near` -> `entered; reason=request; body_act=21` -> `icon; plugin=ladder; res=ok; exec_ok=1; exec_fail=0;
+    granted=1; queries=8; denied=7; req_queries=1; deny=none; latched=0; viewer_changed=0; faults=0;
+    restore_mismatch=0` -> `edge=remote; remote=21; body=21; match_ms=0` -> `done; reason=left`; no vertical
+    placement. FRAMES: `ladA-climb-01..08`, `ladA-up-01..04`, `ladA-top-01..03` and the `ladC` bursts show body 1 grab
+    the ladder, climb it and go over the top onto the container roof while the viewer stands still (act 1).
+  - `2596f6ae` **Mother Base ladder, play rehearsal, both directions** (`partner-traverse-ladder-mb.txt` as committed,
+    `-Mode play -WanSim bad`, rtt ~185 ms, 0-15 % loss, real seed). `partner_icon=built` on both copies; the two host
+    climbs on the guest and the reversed guest climb on the host each logged `icon; plugin=ladder; res=ok; exec_ok=1;
+    granted=1; latched=0; viewer_changed=0; faults=0; restore_mismatch=0` and edge 21/21 `match_ms=0`; the same
+    frames as the lab run in both directions, with the play HUD.
+  - **Viewer safety:** no `viewer_changed`, `uncertain=1`, latch, fault or `crash_probe=av` line in any of the three
+    runs (only `crash_probe=installed`); every viewer's own `partner_status=local` stayed `st=0x0` (the one `st=0x40`,
+    on the host in `8f27806d`, came during the host's own climb); the viewer's local act was 1 in every capture.
+  - **Found, open (cosmetic, not fixed):** while body 1 is on the ladder, the VIEWER's HUD shows the stock ladder
+    hint "C + ladder" beside its own player (`8f27806d` `ladA-up-01..04`, `ladC-climb-07..up-04`; `2596f6ae`
+    `lad-up-01..top-02` and the host's `rev-up-01..top-02`), although the viewer is on foot and the climber's own view
+    mid-ladder (`lad-self-mid`, `rev-self-mid`) shows no hint. Likely source (Ghidra, read-only): body 1's
+    LadderActionImpl state handler `0x1411EC3A0` case 4 calls `P+0xD8` (`UiControllerImpl`, vtable `0x1423AF358`)
+    vt+0x260 = `0x140FE6D10` -> `[this+0x48]` vt+0xF8(3, 8, 0, 1, 0, 0) with no `P+0x218` check (its case 2 does check
+    `P+0x218` before `P` vt+0x90). It has no input path: body 1's slide poll (`0x1411EC54A`) asks the padop's
+    IsCompletedActionIcon with block 1's plugin, which never matches the viewer's slots. A fix would be a new scoped
+    filter of that UI call for body 1 (a user decision; not attempted here).
+- **Still open:** wall-climb (23) and pipe (22) proof. No crack-climb run was made this round: no candidate spot is
+  known. Lead for finding one: the game's own Lua registers its crack points with the UI as a Vector3 list through
+  `TppUiCommand.RegisterCrackPoints` (`0x1408D5010`, up to 64 points in the UI common data); none of the library
+  scripts read with `tools/archive_probe` (TppMain, TppUI, TppMission, TppPlayer, TppQuest, TppTerminal, TppEnemy and
+  others) calls it, so the caller is a location or mission script, and logging that call's argument would list the
+  crack spots. D-Dog still takes the E press whenever it is the nearest action in 30010.
 
 ### F4
 
@@ -427,8 +468,9 @@ On `b847585` (F5's commit, the last code change; the commit recording this chang
   - `partner_cbox=mode; ...; enabled=1`;
   - `partner_gesture=configured; key=1`;
   - lab `partner_mount=configured; mode=hide`;
-  - no `partner_icon=built` (traverse was still off on `b847585`; the later default flip of 2026-10-22 has no
-    regression run of its own yet).
+  - no `partner_icon=built` (traverse was still off on `b847585`; after the default flip of 2026-10-22 the F3 runs
+    `04d3511f`, `8f27806d` and `2596f6ae` on `b9b391f` show `partner_icon=built` on both copies with the key not
+    named; see F3).
 - **What every run showed:** Closed, BaselineRestored, RealSavesUnchanged, `visible_fallback=false`. No
   `crash_probe=av`, `viewer_changed`, `uncertain=1`, `board_uncertain`, latch or fault line. The viewer's own
   `partner_status=local` changed only for its own presses or drives.

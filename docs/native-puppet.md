@@ -197,8 +197,9 @@ climb (23) or step-on (24: low vault, onto a ledge, up out of a hang) on body
 `partner_native_traverse=0|1`: **default on with the native gun profile in
 lab and play** (user decision 2026-10-22, after the step-on FRAMES of hidden
 run `104e9a47`, "Traversal icon"), off without the profile; a named value
-records `partner_native_traverse_given` and a named 0 opts out. Ladder (21),
-pipe (22) and wall climb (23) are still unproven in a FRAME.
+records `partner_native_traverse_given` and a named 0 opts out. The Mother
+Base ladder (21) is proven since (hidden runs `8f27806d` lab, `2596f6ae`
+play); pipe (22) and wall climb (23) are still unproven in a FRAME.
 
 Act ids come from a static writer census of `Q+0x18[id]` on 1.0.15.4 (owners
 named by Ghidra): 21 `LadderActionImpl`, 22 `PipeActionPluginImpl`, 23
@@ -251,7 +252,7 @@ reason=..; phase=idle|place|request|native; act=..; remote_act=..;
 body_act=..; icon=..; seq=..; episodes=..; requests=..; entered=..;
 aborted=..; block=..`.
 
-**Status (0.13.5): on with the gun profile; step-on proven, ladder / pipe / wall climb unproven.** The 0.13.4
+**Status (0.13.5): on with the gun profile; step-on and ladder proven (lab and play), pipe / wall climb unproven.** The 0.13.4
 tap path stayed off; the 0.13.3 build that shipped this machine on by default logged 0 `partner_traverse` lines in
 play. A stock ladder, pipe,
 wall-climb or step-on start goes through the HUD action icon:
@@ -523,10 +524,10 @@ note `re-traverse-gesture.md` sections 1-4). Same key as "Traversal":
 `partner_native_traverse`, **default on with the native gun profile in lab
 and play** (user decision 2026-10-22; the play force-off is gone), off without
 the profile, a named 0 opts out; no new key. **Step-on (24) is proven in
-FRAMES** (hidden run `104e9a47`, below); wall climb (23), ladder (21) and pipe
-(22) are unproven because no spot was found. The search continues: Mother Base
-(30050) ladders, where older logs show the host's own act 21, and an authored
-crack-climb spot for 23 ("Hidden runs" below).
+FRAMES** (hidden runs `104e9a47` lab and `04d3511f` play, below) **and so is
+the ladder (21)** at Mother Base (`8f27806d` lab, `2596f6ae` play, both
+directions; `partner-traverse-ladder-mb.txt`); wall climb (23) and pipe (22)
+are unproven because no spot was found ("Hidden runs" below).
 
 **Why body 1 never starts a traversal.** The icon controller "padop"
 (`Player2PadOperatorControllerImpl`, vtable `0x1422E8F00`, 96 slots, one object
@@ -681,11 +682,44 @@ is the nearest action (act 94, petting).
 **Default (user decision 2026-10-22).** The key is on with the native gun
 profile in lab and play on the strength of the step-on proof and the clean
 viewer guard (`latched=0; viewer_changed=0; faults=0; restore_mismatch=0` in
-every request). No play-mode run of the icon path exists yet; the next hidden
-runs should add one (`-Mode play -WanSim bad`, the step-on block of
-`partner-traverse-icon.txt` without its key line) and keep looking for ladder
-and wall-climb proof: the Mother Base (30050) ladders, and a crack-climb spot
-(the climb Exec's authored geo path; not found near the lab start).
+every request).
+
+**Runs after the flip** (key not named, so the default ran; `b9b391f`;
+STATUS.md 0.13.5 F3). `04d3511f` is the step-on play rehearsal
+(`-Mode play -WanSim bad`, rtt ~185 ms): `partner_icon=built` on both copies,
+both host step-ons and one reversed step-on `res=ok` with edge 24/24, and the
+same frames as the lab run with the play HUD. Ladder: Mother Base (real seed),
+the ladder on the red container with its rungs at x=22.61, z=-14.86 (deck
+y=0.80, the climber faces +z), from the user's 0.13.2 MB play. The host
+teleports to 22.61,1.80,-15.55 yaw 0, W 300 ms, W+E 200 ms, then holds W; E
+alone from 22.61,-15.40 also grabs it, an approach from the west (yaw 95)
+walks past. `8f27806d` (lab) and `2596f6ae` (play, both directions) logged
+`icon; plugin=ladder; res=ok; exec_ok=1; granted=1; req_queries=1;
+deny=none; latched=0; viewer_changed=0; faults=0; restore_mismatch=0` and
+`edge=remote; remote=21; body=21; match_ms=0` for every grab (body 1 often
+enters 21 a frame before the act census sees the remote's 21), with no
+vertical placement; the frames show body 1 grab the ladder, climb it and go
+over the top onto the container roof while the viewer (act 1) stands still.
+
+**Open (cosmetic): the viewer's HUD shows the ladder hint.** While body 1 is on
+the ladder, the viewer's HUD shows the stock "C + ladder" hint beside its own
+player (frames `8f27806d` `ladA-up-01..04`; `2596f6ae` `lad-up-01..top-02` and
+the host's `rev-up-01..top-02`), although the viewer is on foot and the
+climber's own view mid-ladder shows no hint. Likely source (read-only Ghidra):
+body 1's LadderActionImpl state handler `0x1411EC3A0` case 4 calls `P+0xD8`
+(`UiControllerImpl`, vtable `0x1423AF358`) vt+0x260 (`0x140FE6D10` ->
+`[this+0x48]` vt+0xF8 with 3, 8, 0, 1, 0, 0) with no `P+0x218` check, while its
+case 2 checks `P+0x218` before `P` vt+0x90. There is no input path: body 1's
+slide poll (`0x1411EC54A`) asks IsCompletedActionIcon with block 1's plugin,
+which never matches the viewer's icon slots. Suppressing it would need a new
+scoped filter of that UI call for body 1 (not attempted).
+
+**Wall climb (23) and pipe (22)** stay unproven: no spot is known. The game's
+own Lua registers its crack points with the UI as a Vector3 list through
+`TppUiCommand.RegisterCrackPoints` (`0x1408D5010`, up to 64 points); none of
+the library scripts read with `tools/archive_probe` calls it, so the caller is
+a location or mission script, and logging that call's argument would list the
+crack-climb spots.
 
 ## Gestures
 
@@ -1914,7 +1948,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
 | `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 1 with the native gun profile in lab and play since hidden runs `05cffdd1` lab and `71e19d1e` play (-WanSim bad); play admits it only with link v2 connected; a named 0 opts out) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
-| `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden run 104e9a47, ladder / pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
+| `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab (hidden run bfd6fcc4), off otherwise; play forces off) |
