@@ -604,6 +604,15 @@ struct LabConfig {
     // player unchanged); a named 0 opts out.
     bool partner_native_gesture = false;
     bool partner_native_gesture_given = false;
+    // G1 partner HUD hints (partner_ui_filter, docs/native-puppet.md "Partner HUD
+    // hints"): body 1's HUD hint requests (the UiControllerImpl hint queues
+    // vt+0x240..+0x260 its ladder / climb / pipe / hang states post every frame,
+    // e.g. the "C + ladder" slide hint) are swallowed inside its own drain job, so
+    // they never show beside the viewer's player; the viewer's own hints pass.
+    // Default 0 in lab and play: a named 1 is lab only (play forces it off) until
+    // a hidden-worker FRAME shows the viewer's HUD clean while body 1 climbs.
+    bool partner_native_ui_filter = false;
+    bool partner_native_ui_filter_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute

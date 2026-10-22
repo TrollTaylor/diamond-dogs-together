@@ -1,3 +1,41 @@
+## 0.13.6 (in progress)
+
+### partner_native_ui_filter
+- **G1, the viewer's HUD shows the partner's ladder hint** (`wp/ladder-hint`, from `dev/oct7-continue` `cc973a8`;
+  docs/native-puppet.md "Partner HUD hints"). New lab key `partner_native_ui_filter=0|1` with `_given`: **default 0
+  in lab and play** (also with the native gun profile); a named 1 runs in the lab only, play forces it off (not a
+  play refusal). Version unchanged (0.13.5).
+- Cause (read-only Ghidra and the `.text` dump): `P+0xD8` is one `UiControllerImpl` (vtable `0x1423AF700`) for both
+  bodies; its hint queues vt+0x240..+0x288 are ten identical leaves over request records at ui+0x1E0+k*0x50 with no
+  body check. Phase 1 of the ladder plugin (`0x1411EA220`) runs the state callback with the local event 4 for every
+  idx while S_IS_ONLINE is clear (always in this mod); the ladder states' event 4 (`0x1411EC3A0` case 4 and three
+  more) post hint 3 / priority 8 through vt+0x260 = `0x140FE8480` (record 0x320) with no local-index check, from
+  inside instance 1's drain job. The 0.13.5 note's vtable `0x1423AF358` / `0x140FE6D10` was another UI controller table (likely the base class).
+- Census: climb (0x61), pipe (0x60) and the ledge hang (2) post into the same queue (their IsNeedToSync guard is
+  S_IS_ONLINE-gated, false offline); step-on, the pickup plugin and the box use no hint queue; interactive, trash
+  box, the ride plugins and attack use vt+0x240 / +0x250 / +0x258. vt+0x268 / +0x270 / +0x278 / +0x288 / +0x280
+  already have a body-1 filter (teammate_targeting, the pose window). Body 1's other UI calls found are guarded by
+  `P+0x218` or read-only.
+- Fix: `native/partner_ui_filter` MinHooks the five unfiltered leaves (`0xFE84F0`, `0xFE8970`, `0xFE8560`,
+  `0xFE87E0`, `0xFE8480`), lazily with the defer install once the five slots and the SHA-256 body pins match. A
+  request is swallowed only inside the scope `partner_ui_filter::Begin(P)` / `End` opens around block 1's drain job
+  (the hook thread, P+0xD8's validated UI: vtable, primary, owner); everything else, the viewer's own update
+  included, goes to the original leaf. No vtable copy: swapping the UI object's vptr for the window would break the
+  identity checks that teammate_targeting, the pose window, nametag's HUD probe and the sleep / vehicle readers make
+  during body 1's job. Counts from the hooks, lines from the driver tick (`partner_ui_filter=installed|configured|
+  swallowed|key|patch_lost`).
+- Contract 743 -> 765 code sites, 193 -> 199 vtable slots (`UI_FILTER_*`, with assertions: one leaf body modulo the
+  record, slot-only reachability, the factory's vtable stores, the census return addresses).
+- Tests: `partner_ui_filter_tests` (route / identity / key / log decisions, the contract pins, the detours on fake
+  objects: scope, thread, receiver, ABI forwarding, refusals, fault latch, records digest, keys, Shutdown, Install
+  refusals on a fake image), `partner_driver_tests` TestUiFilterLog, the key in `lab_config_tests`,
+  `lab_ini_check`, `friend_package_tests`, `worker_session_tests` and the three `-LabSetting` regexes.
+- Scenario `tools/worker/scenarios/partner-ui-filter-ladder-mb.txt` (not run): the Mother Base ladder with the key on
+  both copies.
+- Open: no hidden-worker run yet (none in this step); the default stays 0 until a FRAME shows the viewer's HUD
+  without the hint while body 1 climbs. Why the climber's own HUD shows no hint mid-ladder in stock is not
+  explained; if the viewer's hint survives with `q260` growing, it is not the vt+0x260 queue.
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

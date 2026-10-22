@@ -45,6 +45,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_rates.hpp"
@@ -870,6 +871,7 @@ void GuardedCall(const pi::Arm& a, const Save& save, const Call& k, bool detour 
                 teammate_targeting::EndQuietJob();
                 partner_local_detour::Release();
                 partner_icon::End();
+                partner_ui_filter::End();
                 partner_look_source::Withdraw();
             }
             if (AbnormalTermination() && !PoseOwned()) {
@@ -3402,6 +3404,11 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     // F3: the icon answer is scoped to (this thread, P, blk1) for block 1's
     // job only, and only when ApplyPre installed the padop copy (End: GuardedCall).
     if (save.padop_saved) partner_icon::Begin(a.P, a.blk1, a.icon_kind, a.icon_seq);
+    // G1: body 1's HUD hint requests (UiControllerImpl queues vt+0x240..+0x260)
+    // are swallowed for block 1's job only, on this thread, for P+0xD8's
+    // validated UI (a no-op unless the lab key installed the leaf hooks; End:
+    // GuardedCall and the __finally below).
+    partner_ui_filter::Begin(a.P);
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
     if(support_window)partner_support_guard::Leave();
     native_work_timing::End(timing);
@@ -3434,6 +3441,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         if(support_window)partner_support_guard::Leave();
         native_work_timing::End(timing);
         partner_icon::End();
+        partner_ui_filter::End();
         if (PoseOwned()) {
             teammate_targeting::EndQuietJob();
             partner_local_detour::Release();
@@ -3522,6 +3530,7 @@ bool NativeArmLatchedOff() noexcept {return g_arm_latch!=0;}
 void LatchNativeArmOff() noexcept {InterlockedExchange(&g_arm_latch,1);}
 void ResetFault() noexcept {
     partner_icon::ResetMission();
+    partner_ui_filter::ResetMission();
     InterlockedExchange(&g_support_leak,0);
     InterlockedExchange(&g_arm_latch,0);
     InterlockedExchange(&g_support_reset,1);
@@ -3633,6 +3642,7 @@ void DrainStats(Stats& out) noexcept {
     n.p1_refused = p1.refused;
     n.p1_windows = p1.windows;
     partner_icon::ReadStats(n.icon);
+    partner_ui_filter::ReadStats(n.ui_filter);
     n.drain_held = static_cast<std::uint32_t>(g_d_held);
     n.drain_mag = g_d_mag;
     n.drain_view = static_cast<std::uint32_t>(g_d_view);

@@ -59,6 +59,7 @@
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/partner_traverse.hpp"
 #include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_gesture.hpp"
 #include "mgscoop/partner_gesture_policy.hpp"
 #include "mgscoop/partner_receipt.hpp"
@@ -563,6 +564,7 @@ struct Settings {
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
     bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
+    bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -826,6 +828,16 @@ struct Mission {
     std::uint16_t icon_act_last;
     bool icon_census_done;
     LogCap icon_cap;
+    // G1 partner HUD hints (partner_ui_filter): seeded from the process totals
+    // on the mission's first tick with the hooks installed; the totals at the
+    // last swallowed line and its time, the census keys already logged, the
+    // patch-lost latch and the log family.
+    bool ui_filter_seeded;
+    partner_ui_filter::Stats ui_filter_base;
+    std::uint64_t ui_filter_ms;
+    std::uint32_t ui_filter_keys_logged;
+    bool ui_filter_lost_logged;
+    LogCap ui_filter_cap;
     bool recon_active;             // apply=input with input != off this mission (recon state in use)
     bool recon_last_ok;            // the previous recon action was executed
     partner_recon::Out recon_out;  // the last step (logs, status)
