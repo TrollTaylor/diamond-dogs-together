@@ -1,23 +1,48 @@
-## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board as back-seat passenger with its camera, F2's box, F3's traversal icon, F4's gestures and F5's mount hide on, the rest lab-only and off)
+## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
-resolved by union, the contract header regenerated inside each merge), then the version commit. No rebase. Not
-packaged or installed. Hidden-worker runs: per feature below, then the final regression on `b847585` (the seven
-0.13.4 scenarios with the default lab settings all pass as on 0.13.4; see "Final regression" after F5). The build id
-changes, so both copies need the same new package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`, `partner_cbox_tests`,
-`partner_icon_tests`, `partner_gesture_tests`, `partner_gesture_hook_tests` and `partner_mount_tests`).
+resolved by union, the contract header regenerated inside each merge), then the version commit, the per-feature
+runtime commits and `wp/pass-cam` (merged `ca495d8`). No rebase. Hidden-worker runs: per feature below, the final
+regression on `b847585` and the release regression on `766aaad` (the 0.13.4 scenarios plus the board block, default
+lab settings: no regression; see "Release regression" at the end of this entry). The build id changes, so both
+copies need the same new package. Full CTest 289/289 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`,
+`partner_cbox_tests`, `partner_icon_tests`, `partner_gesture_tests`, `partner_gesture_hook_tests`,
+`partner_mount_tests` and `partner_pass_camera_tests`). Contract 743 code sites / 193 vtable slots, equip writer
+pins 118 SHA-256 gates.
 
-**Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs, except F1's board**
-(default **passenger**, the back seat with the passenger camera, with the native gun profile in lab and play after
-hidden runs `495e7c3a` lab and `de949f80` play; its block half after `0348c4d8` lab and `fad26e25` play; see F1), **F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
-lab and `71e19d1e` play; see F2), **F3's traversal icon** (default on with the native gun profile in lab and play by
-the user's decision of 2026-10-22, after the step-on FRAMES of hidden run `104e9a47`; since then the step-on play
-rehearsal `04d3511f` and the Mother Base ladder `8f27806d` lab / `2596f6ae` play; pipe and wall climb are unproven;
-see F3), **F4's gestures** (default on with the native gun profile in lab and
-play after hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4) **and F5's mount hide** (default
-hide with the native gun profile in lab and play after hidden runs `bfd6fcc4` / `2ab88411` lab and the play rehearsal
-`5a044a4d`, D-Walker and D-Horse in FRAMES; see F5). Each key records a `_given` flag and play forces the rest off.
+**Defaults.** All five 0.13.5 features are **on with the native gun profile in lab and play** (the play default of
+Play-Coop and the worker gun stage); without the gun profile they stay off, and a named key (`_given`) always wins.
+- `partner_ride_board=passenger` (F1): the viewer boards a free back seat (2/3) of a partner-driven light vehicle,
+  with the passenger camera; trucks, armoured vehicles and a taken or absent back seat block (no second driver).
+  Proof: `495e7c3a` lab, `de949f80` play bad WAN (block half `0348c4d8` / `fad26e25`).
+- `partner_native_cbox=1` (F2): the remote's box model on body 1 (play needs link v2 connected). Proof: `05cffdd1`
+  lab, `71e19d1e` play.
+- `partner_native_traverse=1` (F3, the icon path; user decision 2026-10-22): step-on and the Mother Base ladder on
+  body 1. Proof: `104e9a47` lab, `04d3511f` play; ladder `8f27806d` lab, `2596f6ae` play.
+- `partner_native_gesture=1` (F4): the pickup on body 1 (graph 2). Proof: `0e343f72` lab, `75a7e7dc` play.
+- `partner_native_mount=hide` (F5): no partner body while the remote rides D-Horse or D-Walker; RIDE_BODY no longer
+  moves the viewer's own horse / walker (user decision 2026-10-22). Proof: `bfd6fcc4` / `2ab88411` lab, `5a044a4d`
+  play.
+- Unchanged from 0.13.4: play still forces off the C4 place / detonate mirror (`partner_native_place_mirror`, no
+  play-mode C4 run) and the censuses.
+
+**Known limits (0.13.5):**
+- Vehicles: no aiming, shooting or first-person view from the back seat (not supported / not exercised); the truck
+  fallback is unit-tested only (no truck both copies place at the same spot); the attach jitter against the 20 Hz
+  RIDE_FAST placement was not measured; the 8 s self-clear of the passenger camera is unit-tested only; the guest's
+  own head showed a blood decal after rides (godmode on; source not found, already before the camera code).
+- Box: act 78 (moving box) never appears (the box still moves); the exit is cosmetic (77 -> 3, no exit motion); a
+  viewer without the remote's box id (`viewer_box` / `viewer_no_box`) was not run.
+- Traversal: wall climb (23) and pipe (22) unproven (no spot found); the viewer's HUD shows the stock "C + ladder"
+  hint while body 1 is on a ladder (cosmetic, no input path).
+- Gestures: only the standing pickup is in FRAMES; the squat and moving pickup, hand signs Go / Stop, the knock and
+  the reverse direction are unproven.
+- Mounts: the rider is hidden, no mount is drawn; the other ride hides (the horse kind-3 hide without the key, heli,
+  vehicle fallback) still only clear the realize bits.
+- Pre-existing, not fixed: the Ctrl+W walk makes body 1 play the run gait in place (also 0.13.4); the teardown AV
+  `crash_probe=av; rva=0x21e72` at WM_CLOSE after `partner_shutdown=hooks_off; teardown=other_thread` (seen again
+  in `0bb25613`). Not yet tested in a real two-PC Steam session.
 
 | Feature | Branch | Lab key (default) | Status |
 | --- | --- | --- | --- |
@@ -548,6 +573,51 @@ On `b847585` (F5's commit, the last code change; the commit recording this chang
     were still true.
   - This regression's own run directories were moved to the session scratchpad on C:, leaving D: with about 2 GB.
     That is not enough for many more hidden runs (one run takes 0.3..0.8 GB).
+
+### Release regression
+
+On `766aaad` (the last code commit before the package; F1 passenger camera, F3 traversal on, F5 RIDE_BODY off and
+mount hide in play are all in it).
+- **Static:** full CTest 289/289 (`-Configure`, build id `0.13.5+766aaad`). `generate_partner_contract.py --check`:
+  743 code sites / 193 vtable slots; `generate_equip_writer_pins.py --check`: 118 SHA-256 gates. Worker checks
+  passed: Research receipt `20261022-165122-6e46a2800ae3450c91b02700f485330a` (the runs below), Release receipt
+  `20261022-165355-08fc9dab237a4cd3a3f3303a5f6f7526` (283 audited tests).
+- **How the hidden runs ran:** research build, native gun stage, lab seed, the **default** settings (no 0.13.5 key
+  passed on the command line; `coop-vehicle-shared.txt` pins `partner_ride_board=block` in its own file, as shipped).
+  The defaults were live on both copies in every run: `partner_ride=board_install; mode=passenger` (block where the
+  scenario names it), `partner_cbox=mode; ...; enabled=1`, `partner_gesture=configured; key=1`,
+  `partner_mount=configured; mode=hide`, `partner_icon=built` with `census; ...; verdict=ok`.
+- **What every run showed:** Closed, BaselineRestored, RealSavesUnchanged, `visible_fallback=false`, no expect
+  failure. No `viewer_changed`, `uncertain=1`, `board_uncertain`, latch, fault, `placed_shared_write`, stock gap /
+  leak or rec240 line. The viewer's own `partner_status=local` changed only for its own presses or drives.
+  - `0bb25613` `partner-c4-v2.txt` (lab; `b847585`: `2eb956ce`): passes. The host's first spot did not take (three
+    valid places this time, as in 0.13.4's `646362fa`); body 1 took 3/3 places and 2/2 detonations, the guest's
+    placed table stayed `owners=65535:0`, `owner1=-1`. FRAMES: body 1 kneels at P2..P4 and raises the detonator
+    (`c4-det-01` against `c4-ready-01`). The host logged the known teardown AV (`rva=0x21e72`, write 0x38, after
+    `partner_shutdown=hooks_off; teardown=other_thread`) at WM_CLOSE.
+  - `57eec21e` `partner-support-play.txt`, `-Mode play -WanSim bad` (rtt 173..188 ms; `b15c7bd4`): passes. Four
+    `throw_release`, `viewer_own; changed=0; before=12; after=11`, every `stock_check` `changed=0`. FRAMES: body 1
+    winds up and throws (`grenade-throw-1-0N`, `-3-0N`).
+  - `c8b9046c` vehicle seat (scratch `vehicle-seat-rev2.txt` with `clear_enemies`; `47e09b5f`): passes. Both
+    directions `seat_show`, `confirmed; state=0xdfb7fc6173d0; ms=34|38`, `exit; ...; confirmed=1`; while the partner
+    drove `board_policy; vehicle=25608; seat=0; mode=passenger` (nobody pressed E beside it). FRAMES: the driver
+    seated both ways.
+  - `6a5280d4` `coop-vehicle-shared.txt` as shipped (block; `0348c4d8`): passes. Both directions `board_block;
+    vehicle=25608; site=prequery; reason=block`, `vehicle_seats` -> `vehicle_not_riding`, the viewer's `st=0x400`
+    only while it drove itself, no `reason=local_vehicle`. FRAMES: the viewer beside the partner-driven jeep, the
+    jeep leaving with the partner, the reversed half the same.
+  - `8cdfcfdb` `box-regress.txt` (scratch; `42a3c0da`): passes for the viewer. The guest is never `st=0x4`; six
+    `apply` (468 / 472 / 466 twice), six `entered; act=77; ms=100`, five `off; via=native` (the host ends boxed).
+    FRAMES: the three box models on body 1 beside the standing guest. Reported `Forced=true` at shutdown (as `59cfc415`
+    and `de949f80`); Closed, BaselineRestored and RealSavesUnchanged true.
+  - `e29c1043` `gameover-clock.txt` (`9dacaa70`): passes. All five waitlogs (`held_ms=6600`, `host_continue` ok, the
+    guest's kind-4 follow replay). FRAMES: the pause menu, MISSION FAILED on both, both back in 30010.
+  - `6ef9727c` `partner-native.txt` (`6e1a25d5`): passes. Native active in every capture, not latched, 0 snaps;
+    stances and acts match; run / sprint / crouch-move / crawl speeds track the remote; leak captures 0; aim
+    `bit18=1`; the reload entered and completed. The Ctrl+W walk shows the pre-existing run gait in place (4.1..4.7
+    m/s against 1.2), the same as 0.13.4.
+- **No regression, so no code change.** Proof frames (small JPEGs) are in the session scratchpad
+  `complete/frames/release-0135/`; the run directories are archived under `C:\Users\taylo\mgs-coop-run-archive\integ9\`.
 
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
