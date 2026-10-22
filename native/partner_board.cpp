@@ -263,7 +263,7 @@ const char* Install(const void* base, std::size_t span, NowFn now, LogFn log) no
     g_now = now;
     std::uintptr_t mismatch = 0;
     if (const char* why = detail::VerifyImage(base, span, mismatch)) {
-        g_refusal = "bytes";
+        g_refusal = why;
         LogFormat("partner_board=refused; reason=%s; rva=0x%llx; installed_before=none\r\n", why, static_cast<unsigned long long>(mismatch));
         SetLastError(error);
         return g_refusal;

@@ -2379,20 +2379,32 @@ partner_board::Mode BoardMode(PartnerRideBoard value) noexcept {
     return value == PartnerRideBoard::block ? partner_board::Mode::block
          : value == PartnerRideBoard::passenger ? partner_board::Mode::passenger : partner_board::Mode::off;
 }
-void EmitBoard(Mission& m, const Hooks& h, const char* format, ...) noexcept {
-    if (m.board.cap.lines >= kBoardLogCap) {
-        if (!m.board.cap.capped) {
-            m.board.cap.capped = true;
-            EmitFormat(h, "partner_ride=capped; limit=%u; kind=board\r\n", kBoardLogCap);
+// One board line under `cap` (kBoardLogCap per mission; `kind` names the family
+// in the capped line): Board::count_cap for the periodic counter lines,
+// Board::cap for the rest, so the counters never crowd out a latch line.
+void EmitBoardV(LogCap& cap, const char* kind, const Hooks& h, const char* format, va_list arguments) noexcept {
+    if (cap.lines >= kBoardLogCap) {
+        if (!cap.capped) {
+            cap.capped = true;
+            EmitFormat(h, "partner_ride=capped; limit=%u; kind=%s\r\n", kBoardLogCap, kind);
         }
         return;
     }
     char line[512]{};
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
+}
+void EmitBoard(Mission& m, const Hooks& h, const char* format, ...) noexcept {
     va_list arguments;
     va_start(arguments, format);
-    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    EmitBoardV(m.board.cap, "board", h, format, arguments);
     va_end(arguments);
-    if (SUCCEEDED(result)) { ++m.board.cap.lines; Emit(h, line); }
+}
+void EmitBoardCount(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitBoardV(m.board.count_cap, "board_count", h, format, arguments);
+    va_end(arguments);
 }
 void BoardPublish(Driver& d, const Hooks& h, std::uint64_t word) noexcept {
     if (d.mission.board.policy == word) return;
@@ -2471,16 +2483,16 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
         if (blocks != b.logged_block[site] && (!b.block_log_ms[site] || now - b.block_log_ms[site] >= kBoardLogMs)) {
             b.logged_block[site] = blocks;
             b.block_log_ms[site] = now ? now : 1;
-            EmitBoard(m, h, "partner_ride=board_block; vehicle=%u; site=%s; n=%u; mode=%s; reason=%s; type=%u; seats=%u\r\n",
-                      unsigned(stats.last_vehicle), BoardSiteName(site), blocks, pb::ModeName(mode),
-                      stats.last_reason ? stats.last_reason : "-", unsigned(stats.last_type), unsigned(stats.last_count));
+            EmitBoardCount(m, h, "partner_ride=board_block; vehicle=%u; site=%s; n=%u; mode=%s; reason=%s; type=%u; seats=%u\r\n",
+                           unsigned(stats.last_vehicle), BoardSiteName(site), blocks, pb::ModeName(mode),
+                           stats.last_reason ? stats.last_reason : "-", unsigned(stats.last_type), unsigned(stats.last_count));
         }
         if (steers != b.logged_steer[site] && (!b.steer_log_ms[site] || now - b.steer_log_ms[site] >= kBoardLogMs)) {
             b.logged_steer[site] = steers;
             b.steer_log_ms[site] = now ? now : 1;
-            EmitBoard(m, h, "partner_ride=board_passenger; vehicle=%u; seat=%u; site=%s; n=%u; type=%u; seats=%u\r\n",
-                      unsigned(stats.last_vehicle), unsigned(stats.last_seat[site]), BoardSiteName(site), steers, unsigned(stats.last_type),
-                      unsigned(stats.last_count));
+            EmitBoardCount(m, h, "partner_ride=board_passenger; vehicle=%u; seat=%u; site=%s; n=%u; type=%u; seats=%u\r\n",
+                           unsigned(stats.last_vehicle), unsigned(stats.last_seat[site]), BoardSiteName(site), steers,
+                           unsigned(stats.last_type), unsigned(stats.last_count));
         }
     }
     // A phase-1 back seat must show up as the local passenger (kSteerConfirmMs).

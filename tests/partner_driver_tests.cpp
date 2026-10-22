@@ -5793,6 +5793,27 @@ void TestBoardDriver() {
         g_board.stats.faults = 1;
         Check(f.Tick(0) && f.fake.Containing("partner_ride=board_uncertain; reason=fault;") == 1, "a hook fault: uncertain");
     }
+    {
+        // The counter lines have their own cap: a long stand at the peer's vehicle (a new pre-query
+        // count every second) never silences the latch lines.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::block);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "first");
+        g_board.stats.last_vehicle = 25603; g_board.stats.last_reason = "block";
+        for (unsigned i = 1; i <= pd::kBoardLogCap + 10; ++i) {
+            g_board.stats.block[0] = i;
+            s.Tick(0, 1000);
+        }
+        Check(s.fake.Containing("partner_ride=board_block;") == pd::kBoardLogCap &&
+                  s.fake.Containing("partner_ride=capped; limit=200; kind=board_count") == 1 &&
+                  s.fake.Containing("kind=board\r\n") == 0,
+              "the counter lines stop at their own cap");
+        g_board.live = false;
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=board_refused; reason=patch_lost") == 1 &&
+                  s.fake.Containing("partner_ride=board_uncertain; reason=patch_lost;") == 1,
+              "the latch lines still log after the counter cap");
+    }
 }
 
 void TestBoardSeatGates() {

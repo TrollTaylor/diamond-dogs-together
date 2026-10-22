@@ -10,10 +10,12 @@
 // The wrappers run the pure partner_board_policy decision on the published
 // policy word (the driver tick, one atomic u64, valid only inside the ride
 // lease): stock (the original call), block (4) or passenger (the original
-// 0x124B3A0 over the free back seats only). Their only native calls besides the
-// original search are the two read-only getters GetVehicleType 0x55E7F0 and the
-// seat count 0xA27CC0, under SEH (a fault blocks and is counted). Counters only:
-// the driver logs them from its tick.
+// 0x124B3A0 over the free back seats only). They read u16 unit+0x78 and, in
+// passenger mode, call the two read-only getters GetVehicleType 0x55E7F0 and the
+// seat count 0xA27CC0 (their only native calls besides the original search), all
+// under SEH: a getter fault blocks; an index-read fault passes through to stock
+// (the vehicle is unknown, and the stock search reads the same unit first); both
+// are counted. Counters only: the driver logs them from its tick.
 //
 // Lazy install from the driver after the partner code gate passed (the observer
 // glue refuses without it), once per process; never reverted (with the policy
@@ -28,7 +30,8 @@ using LogFn = void (*)(const char* line) noexcept;
 using NowFn = std::uint64_t (*)() noexcept;
 
 // nullptr when both sites are live (also on a second call), else a static
-// reason: bytes (a pinned block differs), a_<RetargetCall reason>, b_failed
+// reason: VerifyImage's base / contract / span / read / bytes (nothing patched;
+// the partner_board=refused line carries the block rva), a_<RetargetCall reason>, b_failed
 // (B refused, A reverted) or b_revert (B refused and A could not be reverted:
 // its wrapper stays and passes through, the policy is never published). Logs
 // partner_board=installed|refused once.
@@ -57,8 +60,10 @@ void ReadStats(Stats& out) noexcept;
 
 namespace detail {
 // The pinned blocks against an image of at least `span` bytes (the site A/B
-// rel32 operands masked): nullptr or "span" / "contract" / "block_0x<rva>"-style
-// static reasons ("bytes").
+// rel32 operands masked): nullptr, or the static reason "base" (no image),
+// "contract" (a block missing from code_sites), "span" (a block past `span`),
+// "read" (an SEH-caught read) or "bytes" (a block differs), with that block's
+// rva in mismatch_rva.
 const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
 // Fixture seams (never called in the game): the originals, the getters and the
 // clock bound without patching anything; the wrappers called directly.

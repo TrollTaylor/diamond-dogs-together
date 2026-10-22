@@ -295,8 +295,10 @@ within `kLeaseMs` 5000 ms of its last packet). Both wrappers decide the same:
   GetOn/Loop/GetOff of that seat and attaches the viewer to the copy RIDE_FAST
   moves. An exit from seat 2/3 never makes the copy dormant.
 
-The wrappers read only u16 `unit+0x78` and call the two getters (SEH; a fault
-blocks and counts); `rider[]` is never written by us.
+The wrappers read only u16 `unit+0x78` and call the two getters, under SEH: a
+getter fault blocks, an index-read fault passes through to stock (the vehicle
+is unknown, and the stock search reads the same unit first), and both count;
+`rider[]` is never written by us.
 
 **The local passenger report** (sender). `PlayerStatus.ON_VEHICLE` is set only
 for the driver's act 0x6F (`UpdatePlayerInfo 0x12CE870`), so Lua reports a
@@ -329,7 +331,11 @@ once a second per site), `partner_ride=board_seated` (a steered back seat seen
 as the local passenger), `partner_ride=local_passenger; vehicle=..; seat=..;
 state=on|off`, `partner_ride=board_refused; reason=patch_lost` and
 `partner_ride=board_uncertain; reason=patch_lost|fault|two_drivers|steer_unconfirmed|seat_mismatch`
-(mission latch, once; passenger then publishes block). Own cap 200 lines.
+(mission latch, once; passenger then publishes block). Two caps of 200 lines
+per mission: one for the periodic `board_block` / `board_passenger` counter
+lines (`partner_ride=capped; kind=board_count`), one for every other board
+line (`kind=board`), so a long stand at the peer's vehicle never silences the
+latch and report lines.
 
 **Pins.** `tools/generate_partner_contract.py` `BOARD_SITES` (19 blocks: both
 call sites and their contexts, CanExec's pre-query test, `0x124B360`, the
@@ -348,8 +354,9 @@ type numbering (1/2 light, 3/4 truck), the attach jitter against the 20 Hz
 RIDE_FAST placement, and what the copy's phase-6 `RequestVehicleToManualDrive`
 does to the next FAST placement. Research builds: `coop_passenger` and
 `coop_vehicle_mirror` SHA-pin `0x1245820` and `0x1251200` whole and refuse
-(`exact_code`) once the board sites are live; `partner_upper_probe`'s code gate
-re-check refuses likewise.
+(`exact_code`) once the board sites are live. The startup partner code gate
+and `partner_upper_probe`'s one-time gate both run at configure, before the
+lazy board install, so they never see the patched rel32; nothing re-runs them.
 
 ## Rates
 

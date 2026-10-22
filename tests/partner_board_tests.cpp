@@ -313,6 +313,15 @@ void TestVerifyAndInstall() {
                   Logged("partner_board=refused; reason=bytes; rva=0x1250e96;"), "a changed block refuses before any patch");
         pb::detail::ResetForTest();
     }
+    {
+        // Every VerifyImage refusal keeps its own reason (the driver's board_install line).
+        g_lines.clear();
+        Image img;
+        Check(Same(pb::Install(img.base, 0x1000000, &FakeNow, &Log), "span") && Same(pb::InstallRefusal(), "span") &&
+                  img.Rel(c::board_a_site) == c::board_a_rel32_orig && Logged("partner_board=refused; reason=span;"),
+              "a short span refuses as span, nothing patched");
+        pb::detail::ResetForTest();
+    }
 }
 
 // --- The local passenger report ------------------------------------------------

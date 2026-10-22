@@ -403,7 +403,9 @@ inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
 inline constexpr std::uint64_t kRideCensusMs = 1000;
 inline constexpr unsigned kRideCensusCap = 400;
 // F1 vehicles (partner_ride_board): a board counter line at most once a second
-// per site and kind (the pre-query runs every frame near the vehicle), own cap.
+// per site and kind (the pre-query runs every frame near the vehicle). Two caps
+// of kBoardLogCap per mission: the counter lines (Board::count_cap) and every
+// other board line (Board::cap), so the counters never crowd out a latch line.
 inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
 // The seat flow's phases (Mission::seat.phase).
@@ -608,7 +610,8 @@ struct Mission {
         std::uint64_t steer_ms;
         const char* uncertain;
         bool live_refused;
-        LogCap cap;
+        LogCap cap;         // every other board line: policy, local_passenger, seated, refused, uncertain
+        LogCap count_cap;   // the periodic board_block / board_passenger counter lines
     } board;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
