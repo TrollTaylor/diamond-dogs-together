@@ -57,6 +57,8 @@
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/partner_traverse.hpp"
 #include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_gesture.hpp"
+#include "mgscoop/partner_gesture_policy.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/pose_interp.hpp"
@@ -386,6 +388,14 @@ struct Hooks {
     // census line): the read-only census of block 0's and block 1's action
     // plugin lists (partner_icon::ReadCensus), once per mission with the key on.
     void (*icon_census)(void* context, const partner_player::InputTargets& targets, partner_icon::Census& out) noexcept = nullptr;
+    // --- Gestures (docs/native-puppet.md "Gestures"; any null: the sender
+    // sends nothing and a received gesture refuses with reason=unavailable).
+    // Both ids' upper act byte Q+0x20 (partner_player::ReadUpper).
+    bool (*read_upper)(void* context, const partner_player::State& state, std::uint8_t (&out)[2]) noexcept = nullptr;
+    // Lazy install of the body-1 update hook (partner_gesture::Install): nullptr ok, else a static reason.
+    const char* (*gesture_install)(void* context) noexcept = nullptr;
+    // partner_gesture::Step: publishes the command, drains the receipts.
+    void (*gesture_step)(void* context, const partner_gesture::Command& command, partner_gesture::Status& out) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -537,6 +547,7 @@ struct Settings {
     bool stance_fast;  // the native stance window (partner_native_stance_fast)
     bool traverse;     // traversal replay (partner_native_traverse)
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
+    bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
 };
 
 // A capped change-only log family (one per experiment head).
@@ -1142,6 +1153,27 @@ struct Mission {
     partner_dm_overlay::State overlay;
     partner_dm_overlay::Out overlay_out;
     LogCap overlay_cap;
+    // --- Gestures (partner_gesture, docs/native-puppet.md "Gestures").
+    // This tick's upper act bytes (both ids), the newest received edge waiting
+    // for the gate (driver clock), the request in flight (its seq stays in the
+    // hook's command until a receipt names it or kRequestMs passes), the
+    // stance/moving it was chosen for, the hook's last status, the mission
+    // latch and the line family.
+    bool gesture_upper_ok;
+    std::uint8_t gesture_upper[2];
+    bool gesture_pending;
+    partner_gesture_policy::Packet gesture_rx_packet;
+    std::uint64_t gesture_rx_ms;
+    partner_gesture::Request gesture_request;
+    std::uint8_t gesture_request_stance;
+    bool gesture_request_moving;
+    bool gesture_active, gesture_uncertain, gesture_patch_lost_logged, gesture_configured_logged;
+    std::uint32_t gesture_rx, gesture_requests, gesture_refused;
+    // The hook's last step (for a request no body-1 update answered): body 1's
+    // identity verdict (nullptr resolved) and the process count of body-1 updates.
+    const char* gesture_hook_resolve;
+    std::uint32_t gesture_hook_body_calls;
+    LogCap gesture_cap;
 };
 
 struct Driver {
@@ -1250,6 +1282,20 @@ struct Driver {
     std::uint8_t preload_count;
     char preload_verdict[24], preload_reason[32];
     std::uint32_t preload_mission, preload_new_hashes;
+    // Gestures (docs/native-puppet.md "Gestures"), process-lifetime: the
+    // upper-act edge sender (link-session scoped) and its one pending message,
+    // the receiver's store, the request serial (never reused), the hook's
+    // mission epoch (bumped at every MissionStart/MissionEnd/Stop: the hook
+    // drops a running gesture without a write) and the lazy install verdict.
+    partner_gesture_policy::Sender gesture_tx;
+    bool gesture_tx_pending;
+    partner_gesture_policy::Packet gesture_tx_packet;
+    std::uint8_t gesture_tx_upper;
+    std::uint64_t gesture_tx_ms;
+    partner_gesture_policy::Store gesture_rx;
+    std::uint32_t gesture_seq, gesture_epoch;
+    bool gesture_install_tried;
+    const char* gesture_install_refusal;
     Mission mission;
 };
 

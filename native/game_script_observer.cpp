@@ -1041,6 +1041,16 @@ void PartnerIconCensus(void*, const pp::InputTargets& targets, mgscoop::partner_
     if (!game_base || !partner_gate_ok) return;
     mgscoop::partner_icon::ReadCensus(game_base, targets.blk0, targets.blk1, out);
 }
+// Gestures (docs/native-puppet.md "Gestures"): both ids' upper act byte, the
+// lazy body-1 update hook (only after the startup partner code gate) and its step.
+bool PartnerReadUpper(void*, const pp::State& state, std::uint8_t (&out)[2]) noexcept { return pp::ReadUpper(state, out); }
+const char* PartnerGestureInstall(void*) noexcept {
+    if (!game_base || !partner_gate_ok) return "gate";
+    return mgscoop::partner_gesture::Install(game_base, game_span, Log);
+}
+void PartnerGestureStep(void*, const mgscoop::partner_gesture::Command& command, mgscoop::partner_gesture::Status& out) noexcept {
+    mgscoop::partner_gesture::Step(command, out);
+}
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
@@ -1057,7 +1067,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed,
     PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
-    PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus};
+    PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
+    PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1349,6 +1360,7 @@ void PartnerShutdown() noexcept {
     mgscoop::partner_aim_point::Shutdown();
     // F1 vehicles: the board wrappers fall back to the stock searches (an atomic store).
     mgscoop::partner_board::Publish(0);
+    mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;

@@ -576,6 +576,14 @@ struct LabConfig {
     // boxed with the viewer's own state unchanged.
     bool partner_native_cbox = false;
     bool partner_native_cbox_given = false;
+    // Gestures (partner_gesture, docs/native-puppet.md "Gestures"): the remote's
+    // pickup, hand sign Go / Stop and wall knock (its upper act Q+0x20 edges, a
+    // new reliable channel-2 message) played on body 1's graph 2 through
+    // SetCurrentNode / ReserveToResetNode inside body 1's own motion update. The
+    // same key gates the sender. Default 0 in lab and play: a named 1 is lab only
+    // (play forces it off) until a hidden-worker FRAME shows the clip on body 1.
+    bool partner_native_gesture = false;
+    bool partner_native_gesture_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute

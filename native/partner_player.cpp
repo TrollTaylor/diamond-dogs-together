@@ -395,6 +395,18 @@ bool ReadAnim(const State& s, Anim& out) noexcept {
     return true;
 }
 
+bool ReadUpper(const State& s, std::uint8_t (&out)[2]) noexcept {
+    const Preserve preserve;
+    out[0] = out[1] = 0;
+    if (!s.Q) return false;
+    std::uintptr_t p20 = 0;
+    std::uint8_t v[2]{};
+    if (!ReadValue(s.Q + c::q_upper, p20) || !p20 || !ReadBlock(p20, v, sizeof(v))) return false;
+    out[0] = v[0];
+    out[1] = v[1];
+    return true;
+}
+
 sync::AnimState AnimSlot(const Anim& anim, std::uint32_t index) noexcept {
     sync::AnimState state{};
     if (index >= 2) return state;

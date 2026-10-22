@@ -1097,6 +1097,49 @@ ICON_PLUGIN_VTS = [
     (0x23BB850, 0x114BEC0, 'climb'), (0x23BB930, 0x114BEC0, 'climb (second)'),
     (0x23D13E0, 0x1293F60, 'step-on'), (0x23D1490, 0x1293F60, 'step-on (second)'),
 ]
+# --- Gestures (docs/native-puppet.md "Gestures"; partner_gesture, lab key partner_native_gesture): the remote's pickup,
+# hand signs and knock on body 1's graph 2. A MinHook on the per-entry motion update 0xB6C410 (installed lazily, after
+# this gate), filtered to ActMotionStart's call (return address 0xAF0381) for body 1's entry; inside it the cs methods
+# below with the stock ABI. The nine bodies' SHA-256 pins are partner_gesture.hpp kPins (gesture_assertions re-reads
+# them; the hook checks them again before it is created). No other byte is patched.
+SITES += [
+    (0xAF0360, '488b4e104803cbf681ac0000000174118b81ac000000d1e8a8017505e88fc007004881c3c000000048ffcf75d3',
+     'ActMotionStart 0xAF0340: per entry (+0xC0), when [entry+0xAC] bit 0 set and bit 1 clear, call 0xB6C410(entry); '
+     'the next ip 0xAF0381 is the gesture update filter'),
+    (0xB6C410, '405556574154415541574881ec88000000488b8198000000',
+     'per-entry update 0xB6C410 prologue (MinHook relocates the first 6 bytes; no rip-relative operand) and the request '
+     'buffer [entry+0x98] it consumes'),
+    (0xAF2BD7, '2b5f0cf30f10842480000000f30f114424308b842488000000488b4f104c8b4424788944243c4c8d145b4c8d4c243049c1e2068bd6c644242001'
+     '498b8c0a98000000e8d2bd0700',
+     'SetCurrentNode (cs vt+0x170): entry = [cs+0x10] + (body - [cs+0xC])*0xC0; blend = 5th arg, option = 6th, node = r9; '
+     'SetRequest 0xB6E9F0([entry+0x98], graph, node, &params, direct 1)'),
+    (0xAF2747, '2b5f0cf30f10442470f30f114424208b442478488b4f104c8b4424688944242c4c8d145b4c8d4c242049c1e2068bd6498b8c0a98000000'
+     'e85dbf0700',
+     'ReserveToResetNode (cs vt+0x160): the same entry and arguments; ReserveToReset 0xB6E6E0([entry+0x98], graph, node, &params)'),
+    (0xAF1F10, '4c894c24204883ec282b510c488b4110418bc8488d145248c1e206488b840290000000488b0cc84885c9750732c04883c428c3',
+     'IsGraphExistNode (cs vt+0x210, 1/2): graph = [[entry+0x90] + graph*8]; a null graph returns 0'),
+    (0xAF1F43, '488b54245048c744243000000000488b014c8d4c24484c8d442430ff50404883c428c3',
+     'IsGraphExistNode (2/2): graph vt+0x40(graph, tags = the 5th argument, &0, &node)'),
+    (0x1C6FEE5, '48b9ffffffffffff000033db4889bc240002000048850e740a6690ffc348850cde75f8',
+     'graph vt+0x40 0x1C6FEA0 walks the tag list until a zero 48-bit entry: the gesture passes {0, 0}, never null'),
+    (0xAF1F70, '2b510c488b4110418bc8488d145248c1e206488b840290000000488b0cc8488b0148ffa0d8000000',
+     'cs vt+0x228 (the pickup end test): jmp graph vt+0xD8 of [[entry+0x90] + graph*8] without a null check'),
+    (0xAF2110, '2b510c488b41104963c8488d145248c1e206488b440270488b4010488b94c8f80000008b424c24033c01740332c0c348634a4848c1e10548'
+     '03ca33d2e91fc4f800',
+     'cs vt+0x2B8 (the hand-sign end test, layer 3): [[[entry+0x70]+0x10]+0xF8+layer*8] state & 3 == 1 -> 0x1A7E570, '
+     'no null check'),
+    (0xB6E9F0, '4c894424184c8bc141ba010000008bca6641d3e2807c24280074076645095002eb0c410fb7c266f7d0664121400266450910418b480c6641f7'
+     'd26645215004',
+     'SetRequest 0xB6E9F0: buffer+0 |= bit, +2 |= bit (direct) and +4 &= ~bit; only the target body\'s buffer is written'),
+    (0xB6E6E0, '4c894424184c8bc18bcab80100000066d3e06641090066410940026641094004410faf480c49034810',
+     'ReserveToReset 0xB6E6E0: buffer+0/+2/+4 |= bit, then the record at [buffer+0x10] + graph*[buffer+0xC]'),
+    (0xB6EA1E, '66450910418b480c6641f7d26645215004498b010fafca49034810488901',
+     'SetRequest 0xB6E9F0: the mask bit is set and the record [buffer+0x10] + graph*[buffer+0xC] overwritten without '
+     'looking at a waiting request (so does ReserveToReset above): the gesture never writes over one (pending)'),
+    (0xB6C5E2, '488b85980000004489286644896804',
+     'per-entry update 0xB6C410: buffer+0/+2 (dword) and +4 cleared only after every channel consumed its request, so a '
+     'graph-2 mask bit at the hook\'s entry is another owner\'s request (the gesture refuses or ends without a write)'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -1280,6 +1323,17 @@ SLOTS += [
     (0x23C1720, 0x20, 0x11B2490, 'cbox: ctl vt+0x20 = UnsetSlot(id, slot) (OnRemoveItem of the old current item)'),
     (0x23894B0, 0x68, 0xEE90A0, 'cbox: store base vt+0x68 = the stock index (slot 4: 0xE + sub)'),
     (0x23895D0, 0x68, 0xEE90A0, 'cbox: store derived vt+0x68 = the stock index (slot 4: 0xE + sub)'),
+]
+# Gestures: the five cs methods the body-1 hook calls (also re-checked before every call) and the graph methods behind
+# IsGraphExistNode (vt+0x40) and the pickup end test (vt+0xD8).
+SLOTS += [
+    (0x22E6070, 0x160, 0xAF2710, 'cs vt+0x160 = ReserveToResetNode (hand signs, knock)'),
+    (0x22E6070, 0x170, 0xAF2BA0, 'cs vt+0x170 = SetCurrentNode (pickup, the stateNull return)'),
+    (0x22E6070, 0x210, 0xAF1F10, 'cs vt+0x210 = IsGraphExistNode'),
+    (0x22E6070, 0x228, 0xAF1F70, 'cs vt+0x228 = the graph motion-end test (pickup end)'),
+    (0x22E6070, 0x2B8, 0xAF2110, 'cs vt+0x2B8 = BlendControl IsPlayEnd (hand sign / knock end, layer 3)'),
+    (0x250BA50, 0x40, 0x1C6FEA0, 'graph vt+0x40 = the node lookup IsGraphExistNode forwards to'),
+    (0x250BA50, 0xD8, 0x1C70150, 'graph vt+0xD8 = the motion-end test cs vt+0x228 jumps to'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 # F1 vehicles (partner_board): the vehicle service slots behind the getters the board wrappers call and phase 1's
@@ -2417,6 +2471,54 @@ def handle_call_assertions():
     return out
 
 
+# The stock graph-2 nodes the gesture tables use (partner_gesture_policy.cpp NodeFor), each an imm64 operand inside its
+# stock state function, and the update hook's callers (docs/native-puppet.md "Gestures").
+GESTURE_NODES = [
+    (0x120E520, 0x120E960, 'PickUpActionPluginImpl enter FUN_14120E520', (0x1E904603EB7D, 0x82E84B26E4CE, 0xFF77B695370A)),
+    (0x11E6A40, 0x11E6C30, 'KnockActionPluginImpl::StateHandSignGo', (0xE74E11BABA4B, 0x8881431FFF42, 0x5FE632112A9A, 0x2153458C564C)),
+    (0x11E6C30, 0x11E6E00, 'KnockActionPluginImpl::StateHandSignStop', (0xB98C80A7DDAE, 0x78CB18630AF1, 0x825F953B5437, 0x724E8FE0F814)),
+    (0x11E7210, 0x11E7990, 'KnockActionPluginImpl::StateKnock',
+     (0xD64283446A67, 0x7B2D4F836A92, 0x7BC06465D606, 0xD08C8B213CAB, 0xC1143CAC83B1, 0x0430147D9D34, 0x174A0F341288, 0x1EC34B25A344)),
+]
+
+
+def gesture_assertions():
+    """Gestures: the pinned bodies (partner_gesture.hpp kPins), the caller filter, the stock nodes and blend constants."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    import re
+    header = (ROOT / 'native' / 'include' / 'mgscoop' / 'partner_gesture.hpp').read_text(encoding='utf-8')
+    pins = [(int(r, 16), int(n, 16), h) for r, n, h in re.findall(r'\{0x([0-9a-f]+), 0x([0-9a-f]+), "([0-9a-f]{64})"\}', header)]
+    need(len(pins) == 9, f'partner_gesture.hpp kPins: 9 bodies ({len(pins)})')
+    for rva, size, sha in pins:
+        need(hashlib.sha256(rd(rva, size)).hexdigest() == sha, f'gesture pin {rva:#x}+{size:#x} matches the executable')
+    # The pins overlapping partner_upper_manual_idle / end_observer carry the same values.
+    idle = (ROOT / 'native' / 'include' / 'mgscoop' / 'partner_upper_manual_idle.hpp').read_text(encoding='utf-8')
+    for rva, size, sha in pins:
+        m = re.search(r'\{0x%x,0x%x,"([0-9a-f]{64})"\}' % (rva, size), idle)
+        need(m is None or m.group(1) == sha, f'gesture pin {rva:#x} equals the manual idle pin')
+    # The filter: ActMotionStart's one call; the return address 0xAF0381.
+    need(0xAF037C + 5 + struct.unpack('<i', rd(0xAF037D, 4))[0] == 0xB6C410 and rd(0xAF037C, 1) == b'\xe8',
+         'ActMotionStart 0xAF037C calls 0xB6C410 (next ip 0xAF0381)')
+    callers = rel_refs(0xB6C410)
+    need(0xAF037C in callers, f'0xAF037C is a direct caller of 0xB6C410: {[hex(x) for x in callers]}')
+    need(rel_refs(0xAF0340) != [] or qword_hits(0xAF0340) != [], 'ActMotionStart is reachable (direct call or vtable)')
+    for start, end, name, nodes in GESTURE_NODES:
+        body = rd(start, end - start)
+        for node in nodes:
+            i = body.find(struct.pack('<Q', node))
+            need(i >= 2 and body[i - 2] in (0x48, 0x49) and 0xB8 <= body[i - 1] <= 0xBF,
+                 f'{name}: node {node:#x} is a mov r64, imm64 operand')
+    need(struct.unpack('<f', rd(0x20A72C4, 4))[0] == 0.5 and struct.unpack('<f', rd(0x20A72CC, 4))[0] == 1.0,
+         'the stock pickup blend 0.5f (0x20A72C4) and hand-sign blend 1.0f (0x20A72CC)')
+    # The stock hand-sign call: vt+0x160 with graph 2 and the 1.0 blend (0x11E6B98).
+    need(rd(0x11E6B98, 6) == bytes.fromhex('ff9060010000'), 'StateHandSignGo calls cs vt+0x160 at 0x11E6B98')
+    return out
+
+
 failures += anim_round1_assertions()
 failures += ws4_v2_assertions()
 failures += support_native_assertions()
@@ -2450,6 +2552,7 @@ def traverse_icon_assertions():
 
 
 failures += traverse_icon_assertions()
+failures += gesture_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
