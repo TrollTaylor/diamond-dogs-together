@@ -1974,7 +1974,8 @@ void ObserveNativeSupport() noexcept {
 
 // F2 (docs/native-puppet.md "Cardboard box"): the remote's cardboard box on body 1
 // through partner_cbox_equip (ChangeEquip(1, box, flags 4) on, SetCurrentItemIndex(1,
-// 0) off). Lab key partner_native_cbox (default 0; play forces it off). Same natural
+// 0) off). Lab key partner_native_cbox (default on with the gun profile; play is
+// admitted like the support lane, only with link v2 connected). Same natural
 // owner, 10 Hz tick, admission gates and body lease as ObserveNativeSupport, right
 // after it: serialized with the gun and support writers, and busy while either is
 // mid-flight (a gun writer slot in readiness / tracking, body 1 switching or
@@ -1987,15 +1988,18 @@ void ObserveNativeCbox() noexcept {
     const auto& config=mgscoop::GetLabConfig();
     const auto& mission=partner_driver.mission;
     cb::Context context{};
-    context.enabled=config.partner_native_cbox && config.mode==mgscoop::LabMode::lab;
+    const char* mode_reason=SupportModeReason();
+    context.enabled=config.partner_native_cbox && !mode_reason;
     {
-        // One line per change of the verdict (only with the key named).
+        // One line per change of the verdict (only with the key on).
         static int logged=-1;
+        static const char* logged_reason="";
         const int now=context.enabled ? 1 : 0;
-        if(config.partner_native_cbox && now!=logged) {
-            logged=now;
-            LogFormat("partner_cbox=mode; mode=%s; enabled=%u\r\n",config.mode==mgscoop::LabMode::play ? "play" :
-                config.mode==mgscoop::LabMode::lab ? "lab" : "other",unsigned(now));
+        const char* reason=mode_reason ? mode_reason : "ok";
+        if(config.partner_native_cbox && (now!=logged || std::strcmp(reason,logged_reason)!=0)) {
+            logged=now;logged_reason=reason;
+            LogFormat("partner_cbox=mode; mode=%s; enabled=%u; reason=%s\r\n",config.mode==mgscoop::LabMode::play ? "play" :
+                config.mode==mgscoop::LabMode::lab ? "lab" : "other",unsigned(now),reason);
         }
     }
     context.owner=OnRuntimeThread();context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;

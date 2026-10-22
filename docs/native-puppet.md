@@ -1721,7 +1721,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_shared` | off, on, prefer (gun profile: on; prefer is lab-only; fresh shape/bank/ref/ownership gates remain mandatory) |
 | `partner_native_standin` | off, on (gun profile: on; closest already-filled class when the remote slot is unavailable) |
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
-| `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 0 in lab and play, lab only: play forces 0) |
+| `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 1 with the native gun profile in lab and play since hidden runs `05cffdd1` lab and `71e19d1e` play (-WanSim bad); play admits it only with link v2 connected; a named 0 opts out) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default block with the native gun profile in lab and play (hidden runs 0348c4d8 lab, fad26e25 play), otherwise off; passenger is lab only: play turns a named passenger into block; a named value records `partner_ride_board_given`) |
@@ -1785,9 +1785,11 @@ native. Module `native/partner_cbox_equip.{hpp,cpp}`, pure policy
 `native/include/mgscoop/partner_cbox_policy.hpp`, tests
 `tests/partner_cbox_tests.cpp`, static contract in the research note
 `re-cbox.md` (sections 3-6, 9, 12). Lab key `partner_native_cbox=0|1`:
-**default 0 in lab and play**, play forces it off, a named value records
-`partner_native_cbox_given`. It stays off until a hidden-worker FRAME shows
-body 1 boxed with the viewer's own state unchanged.
+**default 1 with the native gun profile in lab and play** (hidden runs
+`05cffdd1` lab and `71e19d1e` play rehearsal, see Status below), off without
+the gun profile; play admits it like the support lane, only with link v2
+connected (`SupportModeReason`); a named value records
+`partner_native_cbox_given` and a named 0 opts out.
 
 **Why native.** The 0.13.3 Lua apply (`Player.ChangeEquip`, 0x9D0D60) ignores
 `playerIndex` and passes `R8D = [P+0x214]`: it boxed the VIEWER's own player.
@@ -1867,7 +1869,7 @@ remote's off (`partner_cbox=hold; on=1|0`): a placement would teleport the box.
 Logs (one per decision):
 
 - `partner_cbox=remote; id=..; active=0|1; apply=native|off; seq=..` (driver)
-- `partner_cbox=mode; mode=lab|play|other; enabled=0|1`
+- `partner_cbox=mode; mode=lab|play|other; enabled=0|1; reason=ok|link_not_connected|mode`
 - `partner_cbox=apply; id=B; want=W; mapped=same|viewer_box; via=native; sub=k; body_sub=k; result=..; reason=ok|..; act1=..; h4=..>..; uncertain=0|1; seq=..; mission=..`
 - `partner_cbox=off; id=B; via=native; reason=ok|still_current|..; act1=..; h4=..>..; uncertain=..`
 - `partner_cbox=refused; reason=viewer_no_box|type|body_items_full|full_body_gate|body_busy|gun_writer_active|support_uncertain|restriction|lease_changed|gates|uncertain_latched|viewer_changed_latched|<capture>; step=on|off|<gate>; ...`
@@ -1885,20 +1887,48 @@ that run's copied save (never a real save), and the box model's assets may
 not be resident for an item that was not in the sortie loadout.
 
 **Scenarios.** `tools/worker/scenarios/partner-cbox-census.txt` (both
-`run items`; the host seed's subs 1..7 hold 468, 451, 492, 483, 484, 472, 466,
-boxes 468 / 472 / 466), then `partner-cbox.txt` (host boxes with `run slot
+`run items`; both lab seeds' subs 1..7 hold 468, 451, 492, 483, 484, 472, 466
+with stocks 8, 10, 54000, 10, 4, 8, 8, boxes 468 / 472 / 466: run `ea1abea5`),
+then `partner-cbox.txt` (host boxes with `run slot
 item 1`, the prone guest films `cbox-on`, a `cbox-move` burst, `cbox-off`,
 `guest-self`; then the roles reversed). Hard requirement: no viewer
 `partner_status=local; st=0x4` it did not press.
 
-**Status (0.13.5 work): unproven, off.** Static reading only; open: whether
-PollingImpl runs for idx 1 every frame under the native drive (and is not
-blocked by a DM / active plugin), whether the box model renders on body 1
-(object capacity, asset residency for the mapped id), whether body 1's box
-damage changes the viewer's stock (the stock array has no player stride:
-watched by `viewer_changed`), the consumers of `Q+0x17C` and `*(P+0x130)`
-vt+0x48, the PS record bits' meaning, and pad cross-effects while boxed (the
-remote's ACTION hold with an icon 0x31 reaches body 1's delivery-point state).
+**Status (0.13.5): proven, on by default with the gun profile (lab and
+play).** Hidden runs on `wp/integ9` (research build, lab seed, Closed,
+BaselineRestored, RealSavesUnchanged, no visible fallback):
+
+- `05cffdd1` lab, `partner-cbox.txt` (key named): both directions
+  `partner_cbox=apply; id=468; want=468; mapped=same; ...; result=0;
+  reason=ok; h4=00000000>00000000; uncertain=0`, `entered; act=77; ms=109|115;
+  qd8=33806|33807`, `partner_act; edge=body; remote=77; body=77;
+  match_ms=789|793`, `hold; on=1`, then `off; reason=ok` and body 1 77 -> 3,
+  `hold; on=0`. The viewer's own `partner_status=local; st=0x4` and its act
+  0x4D appear only in the half where that viewer pressed `slot item 1`; no
+  `viewer_changed`, `refused`, `exited`, `uncertain=1`, writer latch or AV;
+  both viewers' `run items` lines after the run equal the census. FRAMES: the
+  box MODEL (the 468 camo) stands where the partner was on the viewer's screen
+  (`cbox-on`, `rev-cbox-on`), slides away across the `cbox-move` bursts with
+  the flaps of the moving box, is gone with the partner crouched beside it
+  (`cbox-off`), and the viewer's own player stands unboxed (`guest-self`,
+  `host-self`); the viewer's act stays 5 (prone) in every capture while it
+  films the box (on, move, off).
+- `71e19d1e` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 1-3 %
+  loss), the same scenario with the key NOT named: `partner_cbox=mode;
+  mode=play; enabled=1; reason=ok` on both, then the same lines (ms=101|102)
+  and frames both directions.
+
+Notes: the remote's act stays 77 while it walks in the box (no 78 seen on
+either side), and body 1 leaves the box 77 -> 3 directly while the remote
+shows its exit act 61 for ~2.7 s (`edge=miss; remote=61`): cosmetic. The
+prone viewer's "E + standing figure" prompt in some frames is the stock prone
+prompt (also in 0.13.4 C4 runs without a box). Still open (not seen in these
+runs): whether body 1's box damage changes the viewer's stock (watched by
+`viewer_changed`), the consumers of `Q+0x17C` and `*(P+0x130)` vt+0x48, the PS
+record bits' meaning, a viewer without the remote's box id (`viewer_box` /
+`viewer_no_box`: both seeds hold 468), and pad cross-effects while boxed (the
+remote's ACTION hold with an icon 0x31 reaches body 1's delivery-point
+state).
 
 ## Online
 

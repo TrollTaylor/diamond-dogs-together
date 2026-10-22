@@ -184,23 +184,22 @@ int main() {
                   std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::passenger), "passenger") == 0,
               "board names");
     }
-    // F2 cardboard box on body 1 (partner_native_cbox, docs/native-puppet.md "Cardboard box"): default 0 in lab and play,
-    // also with the native gun profile (no hidden-worker FRAME of body 1 boxed yet); a named 1 runs in lab only, play
-    // forces it off; a named value records _given.
+    // F2 cardboard box on body 1 (partner_native_cbox, docs/native-puppet.md "Cardboard box"): on with the native gun
+    // profile in lab and play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link
+    // v2 connected), off without it; a named 1 runs in either mode, a named 0 opts out; a named value records _given.
     {
         Check(!LabConfig{}.partner_native_cbox && !LabConfig{}.partner_native_cbox_given && !Lab("").partner_native_cbox,
-              "cbox key defaults off");
+              "cbox key defaults off without the gun profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
-            const bool play = std::strcmp(mode, "mode=play\n") == 0;
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_native_cbox && !profile.partner_native_cbox_given && profile.invalid_values == 0,
-                  "the gun profile leaves the box off in lab and play");
+            Check(profile.partner_native_cbox && !profile.partner_native_cbox_given && profile.invalid_values == 0,
+                  "the gun profile defaults the box on in lab and play");
             const auto named = Lab(gun + mode + "partner_native_cbox=1\n");
-            Check(named.partner_native_cbox == !play && named.partner_native_cbox_given && named.invalid_values == 0 &&
+            Check(named.partner_native_cbox && named.partner_native_cbox_given && named.invalid_values == 0 &&
                       named.unknown_keys == 0 && named.play_refused == 0,
-                  "a named cbox=1 runs in lab; play forces it off");
+                  "a named cbox=1 runs in lab and play");
             const auto off = Lab(gun + mode + "partner_native_cbox=0\n");
             Check(!off.partner_native_cbox && off.partner_native_cbox_given, "a named cbox=0 stays off");
         }

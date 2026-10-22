@@ -209,7 +209,7 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         if (ok) result.partner_native_traverse_given = true;
     }
     else if (Equals(key, "partner_native_cbox")) {
-        // F2: the cardboard box on body 1 (lab only, default 0); a named value records _given.
+        // F2: the cardboard box on body 1 (default on with the gun profile); a named value records _given.
         ok = ParseBool(value, result.partner_native_cbox);
         if (ok) result.partner_native_cbox_given = true;
     }
@@ -1438,9 +1438,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // viewer's own stock passenger camera is unusable offline, run 59cfc415);
     // play admits block and turns a named passenger into block below.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::block : PartnerRideBoard::off;
-    // F2 cardboard box on body 1: off unless named (no hidden-worker FRAME of
-    // body 1 boxed yet); play forces it off below.
-    if (!c.partner_native_cbox_given) c.partner_native_cbox = false;
+    // F2 cardboard box on body 1 follows the gun profile in lab and play (hidden
+    // run 05cffdd1: the viewer saw the box model on the partner body, moving and
+    // taken off, both directions, its own player never boxed); play admits it
+    // only with link v2 connected (the observer's SupportModeReason).
+    if (!c.partner_native_cbox_given) c.partner_native_cbox = gun;
     // Gestures: off unless named (no hidden-worker FRAME of a graph-2 clip on
     // body 1 yet); play forces it off below.
     if (!c.partner_native_gesture_given) c.partner_native_gesture = false;
@@ -1477,8 +1479,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // F1 vehicles: the board block runs in play (play rehearsal fad26e25, -WanSim bad); the
         // back-seat passenger stays lab-only, so a named passenger blocks.
         if (c.partner_ride_board == PartnerRideBoard::passenger) c.partner_ride_board = PartnerRideBoard::block;
-        // F2: the native box on body 1 stays lab-only (no FRAME, no play run yet).
-        c.partner_native_cbox = false;
+        // F2: the native box on body 1 runs in play too (the observer admits play only with
+        // link v2 connected).
         // Gestures stay lab-only (graph-2 visibility on body 1 is unproven, L8).
         c.partner_native_gesture = false;
         // Mount riders stay lab-only (the act hide is unproven in a FRAME).

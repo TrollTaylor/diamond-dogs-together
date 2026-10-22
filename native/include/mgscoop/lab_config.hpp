@@ -582,9 +582,10 @@ struct LabConfig {
     // F2 (partner_cbox_equip, docs/native-puppet.md "Cardboard box"): the
     // remote's cardboard box on body 1 through two native calls on the
     // equipment observer tick (ChangeEquip(1, box, flags 4) on, then
-    // SetCurrentItemIndex(1, 0) off). Default 0 in lab and play; a named 1 is
-    // lab only (play forces it off) until a hidden-worker FRAME shows body 1
-    // boxed with the viewer's own state unchanged.
+    // SetCurrentItemIndex(1, 0) off). Default on with the native gun profile in
+    // lab and play (hidden run 05cffdd1: the box model on body 1, both
+    // directions, the viewer's own state unchanged); play admits it only with
+    // link v2 connected; a named 0 opts out.
     bool partner_native_cbox = false;
     bool partner_native_cbox_given = false;
     // Gestures (partner_gesture, docs/native-puppet.md "Gestures"): the remote's

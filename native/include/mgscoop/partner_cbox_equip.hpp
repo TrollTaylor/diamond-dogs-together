@@ -9,14 +9,14 @@
 //        for a box this module put on.
 // B is a box the VIEWER owns with stock (partner_cbox_policy::MapViewerBox): the
 // engine's box wake checks the viewer's item list, not body 1's. Lab key
-// partner_native_cbox (default 0; play forces it off).
+// partner_native_cbox (default on with the gun profile; play only with link v2 connected).
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/partner_cbox_policy.hpp"
 namespace mgscoop::partner_cbox_equip {
 using LogFn = void (*)(const char*) noexcept;
 struct Context {
-    bool enabled = false;       // partner_native_cbox in lab mode
+    bool enabled = false;       // partner_native_cbox in lab, or in play with link v2 connected
     bool owner = false;         // the natural mission owner thread
     bool gates = false;         // the support lane's admission gates (copied)
     const char* gate_reason = nullptr;  // the first failing gate (static; nullptr when gates)

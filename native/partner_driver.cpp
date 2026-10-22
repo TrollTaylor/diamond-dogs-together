@@ -5220,7 +5220,7 @@ bool NativeSleepPresentationReady(const Driver& d) noexcept {
 // once and counted (cbox_seq). The 0.13.3 apply (op::cbox -> Lua
 // Player.ChangeEquip) boxed the VIEWER's own player, because that binding
 // (0x9D0D60) ignores playerIndex and passes [P+0x214] in R8D; it stays gone.
-// With partner_native_cbox (lab only) the equipment observer's
+// With partner_native_cbox (on with the gun profile) the equipment observer's
 // partner_cbox_equip applies the box to body 1 natively from cbox_want /
 // cbox_id / cbox_seq (apply=native); otherwise only the transport runs.
 void NoteCbox(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {

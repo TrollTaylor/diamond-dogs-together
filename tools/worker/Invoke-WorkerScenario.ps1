@@ -117,7 +117,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_native_traverse=0|1, the ladder / pipe / climb / step-on replay on the partner body
                                    (placement plus body 1's action-icon request; lab only, default 0);
                                    partner_native_cbox=0|1, the remote's cardboard box on the partner body through
-                                   ChangeEquip / SetCurrentItemIndex for instance 1 (lab only, default 0);
+                                   ChangeEquip / SetCurrentItemIndex for instance 1 (default on with the gun profile, lab and play);
                                    partner_native_gesture=0|1, the remote's pickup / hand sign / knock on the partner
                                    body's upper graph (SetCurrentNode / ReserveToResetNode; lab only, default 0);
                                    partner_native_mount=off|hide, hide the partner body while the remote's act is a

@@ -6,6 +6,10 @@
 # python tools/generate_equip_writer_pins.py --check (118 gates).
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-cbox.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# Results (wp/integ9 0.13.5): hidden run 05cffdd1 (lab) passed both directions with every expectation below except
+# act 78 (the remote's own act stays 77 while it walks boxed, so body 1 does too); play rehearsal 71e19d1e
+# (-Mode play -WanSim bad, this file with the labsetting line removed: the gun-profile default) passed the same way.
+# The key is on by default with the native gun profile since; the labsetting line below only makes it explicit.
 # What runs (the viewer's copy, on the 10 Hz equipment tick right after the support lane):
 #   on:  ChangeEquip 0x11AC2E0 (ctl, &r, R8D 1, {equip = B, flags 4}): body 1's item list gets B, its +0x37 item nibble
 #        points at it; the engine's CBox PollingImpl then wakes the box on body 1 (act 77, Q+0xD8[1] = the box object).
@@ -15,7 +19,7 @@
 # own st=0x4 / act 77 is expected. The prone GUEST films body 1 (the host's partner body) from 4 m behind / 3 m right.
 # Then the roles reverse (the guest boxes, the host films).
 # Expected on the VIEWER (guest in the first half, host in the second):
-#   partner_cbox=mode; mode=lab; enabled=1
+#   partner_cbox=mode; mode=lab; enabled=1; reason=ok
 #   partner_cbox=remote; id=468; active=1; apply=native; seq=N
 #   partner_cbox=apply; id=468; want=468; mapped=same|viewer_box; via=native; sub=k; body_sub=k; result=0; reason=ok;
 #     act1=..; h4=........>........; uncertain=0

@@ -1,4 +1,4 @@
-## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block on, the rest lab-only and off)
+## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block and F2's box on, the rest lab-only and off)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
@@ -9,12 +9,13 @@ package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_t
 
 **Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs, except F1's board
 block** (default on with the native gun profile in lab and play after hidden runs `0348c4d8` lab and `fad26e25` play;
-see F1). Each key records a `_given` flag and play forces the rest off.
+see F1) **and F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
+lab and `71e19d1e` play; see F2). Each key records a `_given` flag and play forces the rest off.
 
 | Feature | Branch | Lab key (default) | Status |
 | --- | --- | --- | --- |
 | F1 vehicles: board block and back-seat passengers | `wp/board` | `partner_ride_board=off\|block\|passenger` (block with the gun profile, lab and play) | block proven (frames `0348c4d8` lab, `fad26e25` play bad WAN), default on; passenger lab-only, named-only (own camera unusable, `59cfc415`) |
-| F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (0) | lab-only, off, pending frames |
+| F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
 | F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (0; existing key, now the icon path) | lab-only, off, pending frames |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (0) | lab-only, off, pending frames |
 | F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (off) | lab-only, off, pending frames; no mount drawn |
@@ -87,7 +88,8 @@ see F1). Each key records a `_given` flag and play forces the rest off.
 ### F2
 
 - **Cardboard box on body 1, native (`wp/cbox-native`; docs/native-puppet.md "Cardboard box").** New lab key
-  `partner_native_cbox` (default 0 in lab and play, play forces it off, `_given` flag). With it, the viewer's
+  `partner_native_cbox` (`_given` flag; default on with the native gun profile in lab and play since the runs below,
+  play admitted only with link v2 connected like the support lane, a named 0 opts out). With it, the viewer's
   equipment observer (`ObserveNativeCbox`, right after the support lane) calls `ChangeEquip(ctl, &r, 1, {box,
   flags 4})` for the remote's box edge and `SetCurrentItemIndex(ctl, 1, 0, 0)` for its off (only a box it put on);
   the engine's own CBox polling wakes the box on body 1. The box id is one the VIEWER owns with stock
@@ -103,9 +105,32 @@ see F1). Each key records a `_given` flag and play forces the rest off.
 - Contract: 687 code sites / 155 vtable slots (was 677 / 149); writer pins 118 gates (was 113: SetCurrentItemIndex,
   OnRemoveItem, OnEquipItem, GetItemStockCount, GetEquipIdSlot).
 - Lab tooling: `debug items` (read-only census) and the lab-only `debug give_item cbox` (refused natively outside
-  mode=lab). Scenarios `partner-cbox-census.txt` and `partner-cbox.txt` (not run yet: no hidden-worker run in this
-  phase). Tests: `partner_cbox_tests` (policy + the module on a fake world), driver, lab config, debug Lua checks.
-- **Unproven, off:** no FRAME of body 1 boxed yet; the open items are listed in "Cardboard box".
+  mode=lab). Scenarios `partner-cbox-census.txt` and `partner-cbox.txt`. Tests: `partner_cbox_tests` (policy + the
+  module on a fake world), driver, lab config, debug Lua checks.
+- **Hidden runs (wp/integ9, research build, lab seed; Closed, BaselineRestored, RealSavesUnchanged, no visible
+  fallback):**
+  - `ea1abea5` lab, `partner-cbox-census.txt`: both seeds `items;ids=0,468,451,492,483,484,472,466;
+    counts=0,8,10,54000,10,4,8,8;current=0` (boxes 468 / 472 / 466), so each viewer owns the other's 468.
+  - `05cffdd1` lab, `partner-cbox.txt` (key named): **the box on the partner body proven both directions.** The
+    viewer logs `partner_cbox=remote; id=468; active=1; apply=native`, `apply; id=468; want=468; mapped=same; sub=1;
+    body_sub=1; result=0; reason=ok; h4=00000000>00000000; uncertain=0`, `entered; act=77; ms=115` (reversed 109),
+    `partner_act; edge=body; remote=77; body=77; match_ms=793` (789), `hold; on=1`, then `off; reason=ok`, body 1
+    77 -> 3, `hold; on=0`. The viewer's own `partner_status=local; st=0x4` / act 0x4D appear only in the half where
+    it pressed `slot item 1`; no `viewer_changed`, `refused`, `exited`, `uncertain=1`, writer latch or AV; the
+    post-run `run items` lines equal the census. FRAMES: the box model on the partner's spot on the viewer's
+    screen (`cbox-on`, `rev-cbox-on`), moving away across the `cbox-move` bursts, gone with the partner crouched
+    (`cbox-off`, `rev-cbox-off`), the viewer standing unboxed (`guest-self`, `host-self`); the viewer's act stays 5
+    (prone) in every capture while it films the box (on, move, off).
+  - `71e19d1e` play rehearsal (`-Mode play -WanSim bad`, rtt ~180 ms, 1-3 % loss), the same scenario **without**
+    the key (scratch copy): `partner_cbox=mode; mode=play; enabled=1; reason=ok` by default on both, the same lines
+    (`entered` ms 101 / 102) and frames both directions. **Default flipped**: `partner_native_cbox` resolves to 1
+    with the native gun profile in lab and play (`ResolveWeaponDefaults`); the observer admits play through
+    `SupportModeReason` (link v2 connected) and logs the reason on `partner_cbox=mode`. Tests: `lab_config_tests`,
+    `friend_package_tests` (Play-Coop native: 1|0; a named 0 in play: 0|1), help text, native-puppet.md.
+- Notes: the remote's act stays 77 while it walks boxed (no 78 on either side); body 1 leaves 77 -> 3 directly
+  while the remote shows its exit act 61 for ~2.7 s (cosmetic). Still unproven: a viewer without the remote's box id
+  (`viewer_box` / `viewer_no_box`; both seeds hold 468), body-1 box damage against the viewer's stock, the consumers
+  of `Q+0x17C` / `*(P+0x130)` vt+0x48, and pad cross-effects while boxed.
 
 ### F3
 - **Traversal start for body 1 through the action icon** (`wp/traverse-icon`, `native/partner_icon.*`,

@@ -16,6 +16,8 @@
 #     a checkpoint save writes it into that run's copied save, and the box model's assets may not be resident for an
 #     item that was not in the sortie loadout (docs/native-puppet.md "Cardboard box").
 # Expected: both "items;ids=0,468,451,492,483,484,472,466;counts=0,1,..;current=0" (the guest's may differ: record it).
+# Result (hidden run ea1abea5, wp/integ9 0.13.5): host AND guest "items;ids=0,468,451,492,483,484,472,466;
+# counts=0,8,10,54000,10,4,8,8;current=0": each viewer owns the other's 468 with stock 8 (mapped=same; no give_item).
 title 200
 wait 4000
 waitgameplay host 120
