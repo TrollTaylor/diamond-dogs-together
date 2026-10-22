@@ -499,7 +499,7 @@ void Tick(const TickInput& in) noexcept {
         t.body_ok = true;
         t.body[0] = body.pos.x; t.body[1] = body.pos.y; t.body[2] = body.pos.z;
         t.foot[0] = body.foot.x; t.foot[1] = body.foot.y; t.foot[2] = body.foot.z;
-        const float h = nt::EaseToward(height, nt::StanceHeight(stance), now, 150);
+        const float h = nt::EaseToward(height, nt::HeadHeight(stance, in.seated), now, 150);
         const nt::Vec3 head{body.foot.x, body.foot.y + h + nt::kHeadLift, body.foot.z};
         t.head[0] = head.x; t.head[1] = head.y; t.head[2] = head.z;
         if (ct.ok) {
@@ -508,7 +508,8 @@ void Tick(const TickInput& in) noexcept {
             dist = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
             t.projected = projected.in_front; t.ndc[0] = projected.ndc[0]; t.ndc[1] = projected.ndc[1]; t.w = projected.w;
             t.dist_m = dist;
-            const nt::Aim aim = nt::CentreRay(camera.view, camera.proj, nt::BodyCapsule(body.foot, nt::QuatYaw(body.quat), stance));
+            const nt::Aim aim = nt::CentreRay(camera.view, camera.proj,
+                                              nt::BodyCapsule(body.foot, nt::QuatYaw(body.quat), nt::CapsuleStance(stance, in.seated)));
             t.hover = aim.hit; t.miss_yaw_deg = aim.miss_yaw_deg; t.miss_pitch_deg = aim.miss_pitch_deg;
         }
     }
@@ -537,9 +538,9 @@ void Tick(const TickInput& in) noexcept {
         logged_any = true; logged_visible = t.visible; logged_reason = reason; logged_refusal = refusal;
         if (log_lines < kLogCap) {
             ++log_lines;
-            if (t.visible) LogFormat("nametag=visible; mission=%u; src=%s; d_mm=%d; ndc_permille=%d,%d; stance=%u; foot=%s\r\n", mission,
+            if (t.visible) LogFormat("nametag=visible; mission=%u; src=%s; d_mm=%d; ndc_permille=%d,%d; stance=%u; foot=%s; seated=%u\r\n", mission,
                 t.name_src == nt::NameSource::remote ? "remote" : "fallback", Mm(dist), Mm(projected.ndc[0]), Mm(projected.ndc[1]),
-                stance, body.foot_from_t ? "t10" : "centre");
+                stance, body.foot_from_t ? "t10" : "centre", in.seated ? 1u : 0u);
             else LogFormat("nametag=hidden; mission=%u; reason=%s; refusal=%s\r\n", mission, nt::ReasonName(reason), nt::RefusalName(refusal));
         }
     }

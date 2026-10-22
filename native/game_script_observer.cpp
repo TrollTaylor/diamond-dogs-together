@@ -103,6 +103,7 @@
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/partner_board.hpp"
+#include "mgscoop/partner_pass_camera.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
 #include "mgscoop/partner_upper_phase_observer.hpp"
@@ -998,6 +999,21 @@ bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board
     out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local);
     return true;
 }
+// F1 passenger camera (docs/native-puppet.md "Passenger camera", partner_ride_board=passenger):
+// the VehicleCamera CanActivate slot swap installs lazily from the driver tick behind the code
+// gate (like the board); the armed word and the counters are atomics; the camera read only reads.
+const char* PartnerPassCameraInstall(void*) noexcept {
+    if (!game_base || !partner_gate_ok) return "gate";
+    return mgscoop::partner_pass_camera::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log);
+}
+bool PartnerPassCameraLive(void*) noexcept { return game_base && mgscoop::partner_pass_camera::PatchLive(game_base); }
+void PartnerPassCameraPublish(void*, std::uint64_t word) noexcept { mgscoop::partner_pass_camera::Publish(word); }
+void PartnerPassCameraStats(void*, mgscoop::partner_pass_camera::Stats& out) noexcept { mgscoop::partner_pass_camera::ReadStats(out); }
+bool PartnerPassCameraRead(void*, const pp::State& state, mgscoop::partner_pass_camera::Camera& out) noexcept {
+    out = mgscoop::partner_pass_camera::Camera{};
+    if (!game_base || !partner_gate_ok) return false;
+    return mgscoop::partner_pass_camera::ReadCamera(game_base, state.P, out);
+}
 // WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
 // native type-12 support runs in the one-PC lab, and in two-PC play only while
 // link v2 is connected. Both observer gates use it. After a link drop the guard
@@ -1068,7 +1084,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerDrainReliableOrigin,PartnerReceiveVehicle,PartnerVehicleAttached,PartnerVehicleJob,PartnerRideSeatArm,PartnerRideSeatRevert,nullptr,PartnerSupportReady,
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
-    PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep};
+    PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
+    PartnerPassCameraInstall, PartnerPassCameraLive, PartnerPassCameraPublish, PartnerPassCameraStats, PartnerPassCameraRead};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1360,6 +1377,8 @@ void PartnerShutdown() noexcept {
     mgscoop::partner_aim_point::Shutdown();
     // F1 vehicles: the board wrappers fall back to the stock searches (an atomic store).
     mgscoop::partner_board::Publish(0);
+    // F1 passenger camera: the VehicleCamera CanActivate wrapper answers stock only.
+    mgscoop::partner_pass_camera::Publish(0);
     mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
@@ -1500,8 +1519,10 @@ void NametagTick(const char* buffer, std::size_t size) noexcept {
     else if (m.lost_hidden) hidden = nt::Reason::lost;
     partner::Tick tick{};
     const bool aim = partner::ParseTick(buffer, size, tick) && (tick.action_flags & mgscoop::sync::ActionFlag::Aiming) != 0;
+    // Body 1 seated in a vehicle by the seat flow: the tag uses the seated head height.
+    const bool seated = m.ride_seated && m.seat.phase == mgscoop::partner_driver::SeatPhase::seated;
     mgscoop::nametag_game::Tick({&partner_addresses, OnRuntimeThread(), mission_terminating, hidden, mgscoop::debug_menu::LuaHud(),
-        mgscoop::partner_net::EffectiveInterpMs(mgscoop::GetLabConfig().partner_interp_ms), aim});
+        mgscoop::partner_net::EffectiveInterpMs(mgscoop::GetLabConfig().partner_interp_ms), aim, seated});
 }
 
 // The per-frame tick. Returns the quiet reply, or nullptr to leave the literal

@@ -53,6 +53,7 @@ struct TickInput {
     std::uint32_t hud;            // debug_menu::LuaHud()
     std::uint32_t interp_ms;      // the remote sample delay (stance)
     bool tick_aim;                // the local tick's HOLD level (action_flags Aiming)
+    bool seated;                  // the driver's seat flow holds body 1 seated in a vehicle (nametag::HeadHeight)
 };
 void Tick(const TickInput& input) noexcept;
 // "nametag ..." text commands, handled natively (never Lua or the game).

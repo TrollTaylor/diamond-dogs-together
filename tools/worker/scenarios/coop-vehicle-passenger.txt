@@ -22,7 +22,14 @@
 #          partner_ride_seat=confirmed; vehicle=256xx; seat=2|3; state=0xc40b38a1a985 (back-left loop) or
 #          0x4b8ed7f43128 (back-right loop); no partner_ride=seat_far, no reason=local_vehicle / shared_seat
 #          run vehicle_seats: riders of the host's real jeep unchanged (body 1 is never in rider[])
-#   pass-guest-view: the stock passenger camera; pass-host-view: the guest seated in the back seat;
+#   guest  (passenger camera, wp/pass-cam) partner_ride=pass_camera; state=install; result=ok, then per boarding
+#          partner_ride=pass_camera; state=connect; vehicle=256xx; seat=2|3; reason=vehicle_camera; ms=..;
+#          cam1f0=0x88000000000064xx; cam200=1; mode=<VehicleCamera index>; vmode=<same>; grants>0, and after
+#          the stock get-off partner_ride=pass_camera; state=release; ...; reason=stock; ok=1 (cam1f0=0x0).
+#          A state=refused line names why (no_grant: another camera module won; not_connected; install).
+#   host   (the driver) no partner_ride=pass_camera; state=connect line: stock owns the driver's camera.
+#   pass-guest-view / pass-drive-NN: the passenger's OWN view must show the road around the moving jeep from
+#   the vehicle camera (not the jeep's interior: the defect of run 59cfc415); pass-host-view: the guest seated in the back seat;
 #   pass-drive-NN: the guest carried with the moving jeep; pass-exit-NN: the stock GetOff of that seat;
 #   pass-after-exit-NN: the guest's copy is not dormant and keeps following the host.
 #   If no prompt appears for the guest (no board_passenger site=phase1 line): the light vehicle's entry
@@ -66,6 +73,8 @@ wait 3500
 waitlog guest 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=[23]; site=phase1' 5
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
 waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
+waitlog guest 'partner_ride=pass_camera; state=connect; vehicle=256[0-9][0-9]; seat=[23]; reason=vehicle_camera' 5
+wait 1000
 guest capture pass-guest-view
 host capture pass-host-view
 host run vehicle_seats
@@ -82,6 +91,7 @@ guest press e 150
 guest burst pass-exit 6 300
 wait 2500
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=256[0-9][0-9]; seat=[23]; reason=stock; ok=1' 10
 both capture pass-exited
 host hold w 1500 nowait
 guest burst pass-after-exit 6 200
@@ -107,6 +117,8 @@ host press e 150
 wait 3500
 waitlog host 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=[23]; site=phase1' 5
 waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
+waitlog host 'partner_ride=pass_camera; state=connect; vehicle=256[0-9][0-9]; seat=[23]; reason=vehicle_camera' 5
+wait 1000
 both capture pass-rev-seated
 guest hold w 1500 nowait
 host burst pass-rev-drive 8 150
@@ -115,6 +127,7 @@ wait 1500
 host press e 150
 host burst pass-rev-exit 6 300
 wait 2500
+waitlog host 'partner_ride=pass_camera; state=release; vehicle=256[0-9][0-9]; seat=[23]; reason=stock; ok=1' 10
 both capture pass-rev-exited
 guest press e 150
 wait 2500
