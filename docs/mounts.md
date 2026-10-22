@@ -17,6 +17,10 @@ the get-on spot for the whole horse or D-Walker ride. The mount hide now also un
 the partner rides either mount, and the key defaults to hide with the native gun profile in lab. Play stays off: the
 play rehearsal `fbde3dcc` showed the horse only.
 
+**RIDE_BODY (user decision 2026-10-22, section 2).** The partner's RIDE_BODY stream (world op 42) no longer moves
+the viewer's own D-Horse or D-Walker: a horse or walker pose applies only to a registered mirror of the partner's
+mount, and 0.13.5 registers none. Vehicles (RIDE_BODY's final pose, RIDE_FAST, seats) are unchanged.
+
 ## 1. The four questions
 
 | Question | Answer |
@@ -42,19 +46,39 @@ The heli acts 97..108 hide by act. Every non-foot kind hides with `reason=ride`.
   buddy on both machines.
 - The lab saves deploy D-Dog, so the viewer's copy normally holds no horse or walker at all while the partner rides.
 
-**RIDE_BODY moves the viewer's own buddy.** World op 42 (`lua/coop/world_ride_pose.lua`) is live at world level 3,
-the Play-OfflineCoop default. It works like this:
-1. Each copy sends the census pose of its own realized horse or walker every 250 ms (`R.send`, :249).
-2. The other copy applies a pose only to an id its own census realized and that is not locally occupied (`R.move`,
-   :231-234).
-3. The horse is moved with `SetCallHorse` (start = pose, goal = 1 m along the heading); the walker with
+**RIDE_BODY and the viewer's own buddy.** World op 42 (`lua/coop/world_ride_pose.lua`) is live at world level 3,
+the Play-OfflineCoop default. Until the 0.13.5 fix below it worked like this:
+1. Each copy sends the census pose of its own realized horse or walker every 250 ms (`R.send`).
+2. The other copy applied a pose to any id its own census realized and that was not locally occupied (`R.move`).
+3. The horse was moved with `SetCallHorse` (start = pose, goal = 1 m along the heading); the walker with
    `SetPosition`.
 
-So when **both** players deploy the same mount type, the viewer's own idle D-Horse or D-Walker is pulled along the
-partner's mount path. It is the only "partner mount" on the viewer's copy today, but it is the viewer's buddy (the
-spec rules it out as the partner's mount), and `SetCallHorse` is a call (the horse runs to a goal), not a
-placement. The body 1 rider stays hidden. Scenario part 3 records what this looks like. This branch does not change
-it (see Risks).
+So when **both** players deployed the same mount type, the viewer's own idle D-Horse or D-Walker was pulled along
+the partner's mount path. The ids are per-copy instance ids, so `6656` / `22528` name each copy's **own** buddy: the
+pose of the partner's horse moved the viewer's horse. It was the only "partner mount" on the viewer's copy, but it is
+the viewer's buddy (the spec rules it out as the partner's mount), and `SetCallHorse` is a call (the horse runs to a
+goal), not a placement. The hidden runs filmed it (section 9): the viewer's idle horse leapt and hung in the air
+around the partner, and the partner's own horse was pulled toward the viewer's idle horse the same way (its first E
+press found no horse to mount in all four runs).
+
+**The fix (user decision 2026-10-22: turn this sync off).** A horse or walker pose now applies only to a dedicated
+mirror of the partner's mount, never to the viewer's own buddy:
+- `R.decide` / `R.admit` refuse a horse or walker id (6656, 6657, 22528, 22529) with `reason=not_mirror` unless the
+  id is registered in `R.mirrors`. **Nothing registers a mirror in 0.13.5**: the shipped buddy archives realize one
+  buddy per copy, and that body is the viewer's own. Index 0 (`6656` / `22528`, the copy's declared buddy) is never a
+  mirror, even if named (`R.mirror`), as section 7 step 0 requires. A vehicle flag on a horse or walker id changes
+  nothing.
+- `R.move` and `R.place` refuse the same bodies again (defence in depth), so no code path in the file can command
+  the viewer's horse or walker from a partner pose.
+- One `world_lua=event=ride_body;action=refuse;reason=not_mirror;id=..;kind=..` line per refused body id; the
+  handler counts every refusal in `R.refused[id]`.
+- Unchanged: the sender still streams its own census poses (the wire and an old peer's view are unchanged), the
+  vehicle path (the reliable final pose after a ride, `RIDE_FAST` / `RIDE_TILT` placement, the seats) and the body 1
+  rider hide.
+- `tests/world_ride_pose_lua_check.lua` pins it: no mirror registered; every horse / walker id refused by `decide`,
+  `admit` (also vehicle-flagged), `move` and `place`; the end-to-end handler sends no `SetCallHorse` / `SetPosition`
+  for 15 partner poses of all four ids and logs one line per id; a registered index-1 mirror is the only horse moved
+  (index 0 never); a vehicle's final pose still places the vehicle.
 
 **Two mounts per copy exist only in the private capacity archive.**
 - What it is: the lab-only worker profile `buddy_capacity_two_v1`, built by `tools/stage_buddy_runtime.py` and
@@ -228,8 +252,10 @@ Every step needs its own hidden-worker FRAME before the next step starts.
    `TppHorse2` / `TppWalkerGear2` instance) outside the private worker profile. Census proof exists for allocation
    and realization only, and the memory budget is unmeasured. On each copy, index 0 is the local player's buddy
    and index 1 is the partner's mount mirror; `world_buddy_ride.lua` `R.assign` already pairs host 0 / guest 1.
-   RIDE_BODY must then map the remote's own index 0 to the local index 1 and **never** move the local index 0
-   (this also fixes the Risk below).
+   RIDE_BODY must then map the remote's own index 0 to the local index 1 and **never** move the local index 0.
+   Since 0.13.5 RIDE_BODY refuses every horse / walker pose unless its id is registered in `R.mirrors`, and index 0
+   can never be registered (section 2); this step registers index 1 and adds the id mapping (today a pose applies
+   to the same id on the viewer's copy, which for a mirror would be the wrong body).
 1. **Mount transform.** Stream the partner's mount pose like `RIDE_FAST` (20 Hz, 100 ms render delay; today
    `W.handlers[FAST]` drops horse and walker ids) and place the mirror every frame:
    - walker: `SetPosition{pos, rotY}`, which is in the verified `TppWalkerGear2` dispatcher;
@@ -292,13 +318,19 @@ no `crash_probe=av`, no fault or uncertain line; the guest's own act stayed 1 an
 Defaults after the runs: hide with the native gun profile in lab; play forces off. Suggested next step for play: run
 the D-Walker part before Part 3 (or drop Part 3's second E press) and repeat the play rehearsal.
 
+After these runs (user decision 2026-10-22) RIDE_BODY no longer moves the viewer's own horse or walker (section 2),
+so the Part 3 behaviour above (the viewer's horse in the air, the partner's first E finding no horse) should be gone;
+no hidden run has confirmed it yet.
+
 ## Risks
 
-- **RIDE_BODY moves the viewer's own buddy** (section 2) when both players deploy the same mount type. This is
-  today's behaviour, unchanged here, and needs a decision. Observed (section 9, all four runs): the viewer's own idle
-  D-Horse leaps and hangs in the air around the partner, and the partner's first E press finds no horse to mount
-  (its horse is apparently pulled the same way). Options: keep it; restrict it to the capacity-two mirror index; or
-  turn it off.
+- **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed
+  (section 9, all four runs): the viewer's own idle D-Horse leapt and hung in the air around the partner, and the
+  partner's first E press found no horse to mount (its horse was pulled the same way). **Resolved by the user
+  decision of 2026-10-22 (turn it off):** a horse or walker pose now applies only to a registered mirror, and none
+  is registered (section 2). Not yet confirmed in a hidden run: `partner-mount.txt` Part 3 (both D-Horse) should
+  now show the guest's own horse standing where CallBuddy put it and the host's first E press mounting its own
+  horse, with `world_lua=event=ride_body;action=refuse;reason=not_mirror;id=6656;kind=1` on both copies.
 - **The other ride hides still only clear the bits.** Without the key, a horse rider's kind-3 hide leaves the partner
   drawn as a standing body at the spot where it got on (section 9, `251abcef`); the heli and vehicle-fallback ride
   hides use the same bit clear and presumably look the same (not filmed).

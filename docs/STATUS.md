@@ -24,7 +24,7 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
 | F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (1 with the gun profile, lab and play; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found); default on by user decision 2026-10-22 (no play run yet) |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (1 with the gun profile, lab and play) | pickup proven (frames `0e343f72` lab, `75a7e7dc` play bad WAN), default on; hand signs / knock unproven (no lab spot) |
-| F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (hide with the gun profile in lab; play off) | hide proven after an unrealize fix (frames `bfd6fcc4` lab: no partner body while it rides D-Walker or D-Horse); play rehearsal `fbde3dcc` horse only, so play stays off; no mount drawn; RIDE_BODY's own-horse pull is a user decision |
+| F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (hide with the gun profile in lab; play off) | hide proven after an unrealize fix (frames `bfd6fcc4` lab: no partner body while it rides D-Walker or D-Horse); play rehearsal `fbde3dcc` horse only, so play stays off; no mount drawn; RIDE_BODY no longer moves the viewer's own horse / walker (user decision 2026-10-22; no run yet) |
 
 - Contract after the merges: 733 code sites / 185 vtable slots (0.13.4: 677 / 149; F1 +19 / +3, F2 +10 / +6, F3 +14 /
   +20, F4 +13 / +7, F5 none); equip writer pins 118 SHA-256 gates (0.13.4: 113; F2 adds five). The per-feature
@@ -291,8 +291,9 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
   - The key is wired into the three `-LabSetting` regex copies and help, `LabCommon`, `worker_session_tests`,
     `lab_config_tests`, `lab_ini_check`, `friend_package_tests`, and the native-puppet.md table and "Mounts"
     section.
-- **Finding: RIDE_BODY (world op 42) moves the viewer's own idle D-Horse / D-Walker** onto the partner's mount
-  path when both players deploy the same type. This is unchanged here and needs a decision (mounts.md, Risks).
+- **Finding: RIDE_BODY (world op 42) moved the viewer's own idle D-Horse / D-Walker** onto the partner's mount
+  path when both players deployed the same type. Turned off after the runtime by the user decision of 2026-10-22
+  (see "RIDE_BODY fix" below; mounts.md section 2).
 - **Lab probes and levers.**
   - Overlay probes 22..24 (`stateRideOnIdle`, `stateGallop`, `stateRideWalkerWalk`; `overlay_state`, debug
     only), to see whether a rider state plays on body 1 without a mount.
@@ -345,10 +346,20 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
 - **User decisions:** (1) **RIDE_BODY (world op 42) and the viewer's own horse.** When both copies deploy D-Horse,
   the viewer's own idle horse leaps and hangs in the air around the partner (`horse-viewer-own-*` in all four runs),
   and the partner's first E press found no horse to mount in all four runs (its own horse is apparently pulled the
-  same way). Unchanged here; options in mounts.md "Risks" (keep, restrict to the capacity-two mirror index, or turn
-  it off). (2) The other ride hides (the horse kind-3 hide without the key; heli and vehicle fallbacks use the same
-  bit clear, not filmed) still leave a standing body at the get-on spot; extending the unrealize to them needs its
-  own frames.
+  same way). **Decided 2026-10-22: turn it off** (the RIDE_BODY fix below). (2) The other ride hides (the horse
+  kind-3 hide without the key; heli and vehicle fallbacks use the same bit clear, not filmed) still leave a standing
+  body at the get-on spot; extending the unrealize to them needs its own frames.
+- **RIDE_BODY fix (after the runtime, user decision 2026-10-22; no game run).** `lua/coop/world_ride_pose.lua` no
+  longer applies a partner's horse or walker pose to any body that is not a registered mirror of the partner's mount
+  (`R.mirrors`; none is registered in 0.13.5, and index 0, `6656` / `22528`, the copy's own declared buddy, can never
+  be one). `R.decide` / `R.admit` refuse with `reason=not_mirror` (also for a vehicle-flagged horse / walker id), and
+  `R.move` / `R.place` refuse the same bodies again; one `world_lua=event=ride_body;action=refuse;reason=not_mirror;
+  id=..;kind=..` line per refused id. The sender, the wire, the vehicle path (RIDE_BODY's final pose, `RIDE_FAST`,
+  `RIDE_TILT`, the seats) and the rider hide are unchanged. `world_ride_pose_lua_check` pins it (every horse / walker
+  id refused through `decide`, `admit`, `move`, `place` and the op-42 handler; no `SetCallHorse` / `SetPosition` for
+  15 partner poses; a registered index-1 mirror is the only horse moved; a vehicle's final pose still places it).
+  **Not yet confirmed in a hidden run** (`partner-mount.txt` Part 3: the guest's own horse should stay put and the
+  host's first E should mount its horse).
 
 ### Final regression
 

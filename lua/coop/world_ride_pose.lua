@@ -1,4 +1,6 @@
--- Realized horse, walker, and occupied-vehicle poses.
+-- Realized horse, walker, and occupied-vehicle poses (RIDE_BODY, op 42).
+-- Since 0.13.5 a horse or walker pose moves only a dedicated mirror body
+-- (R.mirrors, none today), never the viewer's own buddy (see R.mirror).
 -- Walker placement is SetPosition with pos and rotY. Horse placement is
 -- SetCallHorse. Its consumer writes heading as atan2(goal.x-start.x, goal.z-start.z),
 -- so the goal is one metre along the census heading. A vehicle uses TppVehicle2
@@ -28,16 +30,28 @@ local function integer(n, lo, hi)
 end
 local function horse(id) return id == 6656 or id == 6657 end
 local function walker(id) return id == 22528 or id == 22529 end
-function R.decide(pose, realized)
+-- RIDE_BODY never moves the viewer's own D-Horse / D-Walker (user decision 2026-10-22,
+-- docs/mounts.md "RIDE_BODY and the viewer's own buddy"): a horse or walker pose applies
+-- only to a dedicated mirror of the partner's mount, named in R.mirrors (id -> true).
+-- Nothing registers one in 0.13.5: the shipped buddy archives realize one buddy per copy,
+-- and that body is the viewer's own. Index 0 (6656 / 22528, the copy's declared buddy)
+-- is never a mirror (docs/mounts.md section 7, step 0). Vehicles are unchanged.
+R.mirrors, R.refused = {}, {}
+function R.mirror(id, mirrors)
+    return (id == 6657 or id == 22529) and type(mirrors) == "table" and mirrors[id] == true
+end
+local function ownBody(id) return (horse(id) or walker(id)) and not R.mirror(id, R.mirrors) end
+function R.decide(pose, realized, mirrors)
     if type(pose) ~= "table" or not integer(pose.id, 0, 65535) then return {action = "drop"} end
     local body = horse(pose.id) and "SetCallHorse" or walker(pose.id) and "SetPosition" or nil
     if not body and pose.kind ~= 3 then return {action = "drop"} end
+    if body and not R.mirror(pose.id, mirrors) then return {action = "refuse", id = pose.id, reason = "not_mirror"} end
     if type(realized) ~= "table" or realized[pose.id] ~= true then return {action = "refuse", id = pose.id} end
     if body then return {action = "apply", id = pose.id, command = body} end
     return {action = "apply", id = pose.id, command = "SetPosition", field = "position"}
 end
-function R.admit(pose, realized, isVehicle)
-    local decision = R.decide(pose, realized)
+function R.admit(pose, realized, isVehicle, mirrors)
+    local decision = R.decide(pose, realized, mirrors)
     if decision.action == "apply" or type(pose) ~= "table" or pose.kind ~= 3 or isVehicle ~= true then return decision end
     if not integer(pose.id, 0, 65534) or horse(pose.id) or walker(pose.id) then return decision end
     return {action = "apply", id = pose.id, command = "SetPosition", field = "position"}
@@ -222,6 +236,7 @@ function R.tiltWrite(id, a, b)
 end
 function R.place(id, x, y, z, yaw)
     local api = W.api
+    if ownBody(id) then return false end
     if type(api) ~= "table" or type(api.send) ~= "function" or type(api.buddyVector) ~= "function" then return false end
     local made, point = pcall(api.buddyVector, x / 1000, y / 1000, z / 1000)
     if not made or not point then return false end
@@ -230,6 +245,7 @@ function R.place(id, x, y, z, yaw)
 end
 function R.move(pose, command, field)
     local api = W.api
+    if type(pose) ~= "table" or ownBody(pose.id) then return false end
     if type(api) ~= "table" or type(api.send) ~= "function" then return false end
     if R.occupied[pose.id] then return false end
     local x, y, z, yaw = pose.x / 1000, pose.y / 1000, pose.z / 1000, pose.yaw / 1000
@@ -330,7 +346,16 @@ W.handlers[OP] = function(v)
         R.fast.tracks[pose.id] = nil
         R.fast.closed[pose.id] = W.now and W.now() or 0
     end
-    local decision = R.admit(pose, R.realized, vehicle)
+    local decision = R.admit(pose, R.realized, vehicle, R.mirrors)
+    if decision.reason == "not_mirror" then
+        -- The partner's horse / walker pose names a body that is not a mirror (the viewer's
+        -- own buddy): never moved; one world_lua line per body id.
+        local n = (R.refused[decision.id] or 0) + 1
+        R.refused[decision.id] = n
+        if n == 1 and type(W.log) == "function" then
+            W.log(string.format("event=ride_body;action=refuse;reason=not_mirror;id=%d;kind=%s", decision.id, tostring(pose.kind)))
+        end
+    end
     if decision.action ~= "apply" then return end
     R.move(pose, decision.command, decision.field)
 end
