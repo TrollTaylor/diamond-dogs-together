@@ -1,7 +1,8 @@
 #pragma once
 // F3 (0.13.5, docs/native-puppet.md "Traversal icon"): the traversal start of
-// body 1 (instance 1) through the stock action icon. Lab key
-// partner_native_traverse, default off in lab and play (play forces it off).
+// body 1 (instance 1) through the stock action icon. Key
+// partner_native_traverse, default on with the native gun profile in lab and
+// play (user decision 2026-10-22; step-on proven in hidden run 104e9a47).
 //
 // The icon controller "padop" (Player2PadOperatorControllerImpl, vtable
 // 0x22E8F00, 96 slots, one object per P at P+0xD0) is shared by both bodies.

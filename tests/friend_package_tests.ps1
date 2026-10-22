@@ -460,13 +460,14 @@ try {
             $file = Join-Path $fixture 'play-ws4v2-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_place_mirror=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_place_mirror'])|$($m['partner_native_placed'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named WS4 v2 mirror off'
-            # Traversal replay (docs/native-puppet.md "Traversal") is lab only and default 0; Play-Coop never names it.
+            # Traversal replay (docs/native-puppet.md "Traversal icon") follows the native gun profile in play (user decision
+            # 2026-10-22; step-on proven in hidden run 104e9a47); Play-Coop never names it, and a named 0 opts out.
             Assert-True (!$hostIni.Contains('partner_native_traverse') -and !$guestIni.Contains('partner_native_traverse') -and
                 !$clipsIni.Contains('partner_native_traverse')) 'Play-Coop lab.ini never names partner_native_traverse'
-            Assert-Equal "$($n['partner_native_traverse'])|$($n['partner_native_traverse_given'])" '0|0' 'native: play leaves the traversal replay off'
-            $file = Join-Path $fixture 'play-traverse-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_traverse=1`n", $utf8)
+            Assert-Equal "$($n['partner_native_traverse'])|$($n['partner_native_traverse_given'])" '1|0' 'native: play defaults the traversal replay on'
+            $file = Join-Path $fixture 'play-traverse-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_traverse=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
-            Assert-Equal "$($m['partner_native_traverse'])|$($m['partner_native_traverse_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named traversal replay off'
+            Assert-Equal "$($m['partner_native_traverse'])|$($m['partner_native_traverse_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named traversal 0 opts out in play'
             # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board block follows the native gun profile in play
             # (hidden runs 0348c4d8 lab, fad26e25 play); the back-seat passenger is lab only. Play-Coop never names the key.
             Assert-True (!$hostIni.Contains('partner_ride_board') -and !$guestIni.Contains('partner_ride_board') -and

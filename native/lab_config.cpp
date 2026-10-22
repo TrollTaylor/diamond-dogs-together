@@ -204,7 +204,7 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
     else if (Equals(key, "partner_native_traverse")) {
-        // Traversal replay (lab only, default 0); a named value records _given.
+        // Traversal replay (default on with the gun profile); a named value records _given.
         ok = ParseBool(value, result.partner_native_traverse);
         if (ok) result.partner_native_traverse_given = true;
     }
@@ -1429,9 +1429,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // its hidden runs showed body 1's kneel and detonator motion with every
     // placed digest unchanged); play forces it off below.
     if (!c.partner_native_place_mirror_given) c.partner_native_place_mirror = gun;
-    // Traversal replay: off unless named (no hidden-worker FRAME of body 1 on a
-    // ladder yet); play forces it off below.
-    if (!c.partner_native_traverse_given) c.partner_native_traverse = false;
+    // Traversal replay (the F3 icon path) follows the gun profile in lab and play
+    // (user decision 2026-10-22, after hidden run 104e9a47: body 1 stepped onto
+    // the shelf through its own action icon, the viewer's guard clean; ladder,
+    // pipe and wall climb are still unproven in a FRAME); a named 0 opts out.
+    if (!c.partner_native_traverse_given) c.partner_native_traverse = gun;
     // F1 vehicles: the board BLOCK follows the gun profile (hidden run 0348c4d8: the
     // viewer stood beside the jeep the partner drove, got no ride icon and the
     // partner kept driving, both directions); passenger stays named-only (the
@@ -1477,8 +1479,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_placed_census = false;
         // WS4 v2: the place / detonate mirror stays lab-only (no play-mode C4 run yet).
         c.partner_native_place_mirror = false;
-        // Traversal replay stays lab-only (the ACTION tap on body 1 is unproven).
-        c.partner_native_traverse = false;
+        // Traversal replay runs in play too (user decision 2026-10-22; the icon
+        // request needs only the native drain windows, as in the lab).
         // F1 vehicles: the board block runs in play (play rehearsal fad26e25, -WanSim bad); the
         // back-seat passenger stays lab-only, so a named passenger blocks.
         if (c.partner_ride_board == PartnerRideBoard::passenger) c.partner_ride_board = PartnerRideBoard::block;

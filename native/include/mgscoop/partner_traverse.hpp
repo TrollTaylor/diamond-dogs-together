@@ -22,8 +22,9 @@
 // pass block 1's own plugin objects) never complete. Inside instance 1's drain
 // window a padop vtable copy answers body 1's query of the requested plugin by
 // running that plugin's own ExecActionButtonFunction for idx 1, once per
-// icon_seq. Unproven and off by default (lab key partner_native_traverse, play
-// forces 0) until a hidden-worker FRAME shows body 1 on a ladder.
+// icon_seq. Key partner_native_traverse: on with the native gun profile in lab
+// and play (user decision 2026-10-22); step-on is proven in FRAMES (hidden run
+// 104e9a47), ladder, pipe and wall climb are not.
 //
 // Act ids are the exe's own writers of Q+0x18[id] (1.0.15.4, static census of
 // `mov word [act + id*2], imm` after the [+0x138]+0x60 -> +0x18 chain, owners

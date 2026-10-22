@@ -578,9 +578,10 @@ struct LabConfig {
     // remote starts through its action icon are replayed on body 1 as a
     // placement and (0.13.5, partner_icon) an icon request that the padop
     // vtable copy answers inside instance 1's drain windows with the plugin's
-    // own Exec for idx 1. Nothing presses ACTION on body 1. Default 0 in lab
-    // and play: unproven; a named 1 is lab only (play forces it off) until a
-    // hidden-worker FRAME shows body 1 on the ladder.
+    // own Exec for idx 1. Nothing presses ACTION on body 1. Default on with the
+    // native gun profile in lab and play (user decision 2026-10-22; hidden run
+    // 104e9a47: body 1's step-on in FRAMES, the viewer's own player unchanged;
+    // ladder, pipe and wall climb unproven); a named 0 opts out.
     bool partner_native_traverse = false;
     bool partner_native_traverse_given = false;
     // F2 (partner_cbox_equip, docs/native-puppet.md "Cardboard box"): the

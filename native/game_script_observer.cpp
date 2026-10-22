@@ -757,7 +757,8 @@ const char* PartnerInstallDefer(void*, mgscoop::PartnerDefer mode) noexcept {
     if (mode == mgscoop::PartnerDefer::on)
         if (const char* why = mgscoop::partner_local_detour::Install(game_base, Log)) return why;
     // F3 (docs/native-puppet.md "Traversal icon"): the padop vtable copy for
-    // body 1's traversal start, only with the lab key and a drain (defer=on).
+    // body 1's traversal start, only with the key on (default with the gun
+    // profile, lab and play) and a drain (defer=on).
     // No patch; a refusal is logged and leaves the copy unused (no swap).
     if (mode == mgscoop::PartnerDefer::on && mgscoop::GetLabConfig().partner_native_traverse)
         mgscoop::partner_icon::Build(game_base, Log);

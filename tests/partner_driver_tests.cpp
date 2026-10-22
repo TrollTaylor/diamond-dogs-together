@@ -3834,7 +3834,8 @@ void TestNativeEnterAndLeave() {
     Check(s.fake.Containing("partner_native=enter; step=place") == 1 && s.fake.Containing("partner_native=enter; step=armed") == 1,
           "every enter step logged once");
     const auto& arm = s.fake.arms.back();
-    // partner_native_traverse defaults off: no ACTION in the mask or the sample strip.
+    // traverse off (this session sets the driver settings directly and leaves it off; lab_config resolves the key on
+    // with the gun profile): no ACTION in the mask or the sample strip.
     Check(!s.driver.settings.traverse && arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net &&
           arm.config.mask == 0x2240006u && arm.config.sample_strip == 0u &&
           arm.wrap == mgscoop::PartnerWrap::window && arm.hold == mgscoop::PartnerInputHold::own && arm.go == 0x1000 - 0x20 &&
@@ -3861,7 +3862,7 @@ void TestNativeEnterAndLeave() {
         Check(s.fake.arms.back().enabled && s.fake.arms.back().gen == gen, "steering changes never bump the Arm gen");
         s.fake.sample.x = 1.0f;
     }
-    // partner_native_traverse=1 (lab only): ACTION joins the mask (kept for a later in-traversal ACTION replay; since
+    // partner_native_traverse=1 (the gun profile's default, lab and play): ACTION joins the mask (kept for a later in-traversal ACTION replay; since
     // 0.13.5 no replay step taps it) and the sample strip (the remote's raw E never passes); off again restores the Arm.
     {
         s.driver.settings.traverse = true;

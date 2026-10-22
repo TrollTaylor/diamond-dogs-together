@@ -160,7 +160,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_arm=1','partner_native_arm=0','guest:partner_native_arm=1','host:partner_native_arm=0',
     # WS4 v2: the C4 place / detonate mirror
     'partner_native_place_mirror=1','partner_native_place_mirror=0','guest:partner_native_place_mirror=1','host:partner_native_place_mirror=0',
-    # Traversal replay (lab only, default 0)
+    # Traversal replay (on with the gun profile, lab and play)
     'partner_native_traverse=1','partner_native_traverse=0','guest:partner_native_traverse=1','host:partner_native_traverse=0',
     # F1 vehicles: the board block / back-seat passenger hook (lab only, default off)
     'partner_ride_board=off','partner_ride_board=block','partner_ride_board=passenger','guest:partner_ride_board=passenger','host:partner_ride_board=block',

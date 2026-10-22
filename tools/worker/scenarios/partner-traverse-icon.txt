@@ -1,7 +1,11 @@
 # F3 (0.13.5, docs/native-puppet.md "Traversal icon"): body 1's ladder / pipe / wall-climb / step-on start through
-# its own action icon (partner_icon's padop vtable copy inside instance 1's drain windows). Lab key
-# partner_native_traverse=1 on both copies (default 0 everywhere; play forces it off). The host performs, the guest
-# watches its body 1 (the host's puppet) from 5 m; the guest never presses E.
+# its own action icon (partner_icon's padop vtable copy inside instance 1's drain windows). Key
+# partner_native_traverse=1 named on both copies: since the user decision of 2026-10-22 it defaults on with the native
+# gun profile in lab and play, and the named line keeps the loco stage (no gun profile) covered. The host performs, the
+# guest watches its body 1 (the host's puppet) from 5 m; the guest never presses E.
+# Play rehearsal of the default: a copy without the partner_native_traverse line, run with -NativeStage gun
+# -BuildProfile research -SaveSeed lab -Mode play -WanSim bad (Part 3 only is enough; the logs must show
+# partner_icon=built on both copies without the key named).
 # Run (hidden worker, coordinator only, one at a time, no builds running):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-traverse-icon.txt -PartnerProfile native -NativeStage loco
 #   (or -NativeStage gun -BuildProfile research -SaveSeed lab, the user's profile, as the 0.13.5 runs did)

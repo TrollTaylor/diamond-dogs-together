@@ -149,7 +149,7 @@ contract with its string; keyboard bit i is key binding i, `0x1206C21..0x1206CF2
 | 0x2000000 | keyboard binding 25 (walk) | Ctrl | always |
 | 0x8 / 0x40 | HOLD / RELOAD = CARRY | RMB / R | gun stage |
 | 0x10 | FIRE | LMB aimed | fire gate only |
-| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never from the remote's pad; with `partner_native_traverse=1` (lab only, default 0) it stays in the mask, but since 0.13.5 no replay step taps it (the icon request replaces the tap: "Traversal icon") |
+| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never from the remote's pad; with `partner_native_traverse=1` (default on with the gun profile, lab and play) it stays in the mask, but since 0.13.5 no replay step taps it (the icon request replaces the tap: "Traversal icon") |
 | 0x200, 0x400, 0x8000, ... | CALL/INTERROGATE, SUBJECT, CQC, weapons, markers | | never |
 
 The movement base is `kPartnerNativeBaseMask = 0x2240006`; the gun stage
@@ -172,7 +172,7 @@ with ACTION masked, is not verified (open item; the action census records
 aliases ride, knife kill and pickup, which would act on the receiver's world.
 RELOAD aliases CARRY (gun stage only; gating it on the remote's aim state is
 an open item). Nothing presses ACTION on body 1: since 0.13.5 the traversal
-replay ("Traversal", off by default) starts body 1's ladder, pipe, climb or
+replay ("Traversal", on with the gun profile) starts body 1's ladder, pipe, climb or
 step-on through its action icon ("Traversal icon"), not through an overlay
 tap.
 
@@ -193,10 +193,12 @@ with `runaway`.
 `partner_traverse` (`native/partner_traverse.*`, driven by `TickTraverse` in
 `partner_driver.cpp`) replays a remote ladder (act 21), drain pipe (22), wall
 climb (23) or step-on (24: low vault, onto a ledge, up out of a hang) on body
-1. Lab key
-`partner_native_traverse=0|1`: **default 0 in lab and play**, play forces it
-off, a named value records `partner_native_traverse_given`. It stays off until
-a hidden-worker FRAME shows body 1 on a ladder.
+1. Key
+`partner_native_traverse=0|1`: **default on with the native gun profile in
+lab and play** (user decision 2026-10-22, after the step-on FRAMES of hidden
+run `104e9a47`, "Traversal icon"), off without the profile; a named value
+records `partner_native_traverse_given` and a named 0 opts out. Ladder (21),
+pipe (22) and wall climb (23) are still unproven in a FRAME.
 
 Act ids come from a static writer census of `Q+0x18[id]` on 1.0.15.4 (owners
 named by Ghidra): 21 `LadderActionImpl`, 22 `PipeActionPluginImpl`, 23
@@ -249,8 +251,9 @@ reason=..; phase=idle|place|request|native; act=..; remote_act=..;
 body_act=..; icon=..; seq=..; episodes=..; requests=..; entered=..;
 aborted=..; block=..`.
 
-**Status (0.13.4, unchanged in 0.13.5): unproven, off.** The 0.13.3 build that shipped this machine
-on by default logged 0 `partner_traverse` lines in play. A stock ladder, pipe,
+**Status (0.13.5): on with the gun profile; step-on proven, ladder / pipe / wall climb unproven.** The 0.13.4
+tap path stayed off; the 0.13.3 build that shipped this machine on by default logged 0 `partner_traverse` lines in
+play. A stock ladder, pipe,
 wall-climb or step-on start goes through the HUD action icon:
 `CorePluginImpl::ExecParallelStart` runs the icon builder `[[P+0xD0]]+0x18`
 (`0x140AFCCE0`) only for `idx == [P+0x218]` (`0x141155B87`), and the plugin
@@ -400,10 +403,13 @@ lazy board install, so they never see the patched rel32; nothing re-runs them.
 
 F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research
 note `re-traverse-gesture.md` sections 1-4). Same key as "Traversal":
-`partner_native_traverse`, **default 0 in lab and play**, play forces it off;
-no new key. **Step-on (24) is proven in FRAMES** (hidden run `104e9a47`,
-below); wall climb (23), ladder (21) and pipe (22) are unproven because no
-spot was found, so the key stays off.
+`partner_native_traverse`, **default on with the native gun profile in lab
+and play** (user decision 2026-10-22; the play force-off is gone), off without
+the profile, a named 0 opts out; no new key. **Step-on (24) is proven in
+FRAMES** (hidden run `104e9a47`, below); wall climb (23), ladder (21) and pipe
+(22) are unproven because no spot was found. The search continues: Mother Base
+(30050) ladders, where older logs show the host's own act 21, and an authored
+crack-climb spot for 23 ("Hidden runs" below).
 
 **Why body 1 never starts a traversal.** The icon controller "padop"
 (`Player2PadOperatorControllerImpl`, vtable `0x1422E8F00`, 96 slots, one object
@@ -554,6 +560,15 @@ outpost, Wakh Sind Barracks) found no 21/22/23: the climb Exec only accepts an
 authored crack-climb geo path whose end is within 2.5 m and +-1.5 m of the
 player (`0x14114AA50`), and the lab seed's D-Dog takes the E press whenever it
 is the nearest action (act 94, petting).
+
+**Default (user decision 2026-10-22).** The key is on with the native gun
+profile in lab and play on the strength of the step-on proof and the clean
+viewer guard (`latched=0; viewer_changed=0; faults=0; restore_mismatch=0` in
+every request). No play-mode run of the icon path exists yet; the next hidden
+runs should add one (`-Mode play -WanSim bad`, the step-on block of
+`partner-traverse-icon.txt` without its key line) and keep looking for ladder
+and wall-climb proof: the Mother Base (30050) ladders, and a crack-climb spot
+(the climb Exec's authored geo path; not found near the lab start).
 
 ## Gestures
 
@@ -1779,7 +1794,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
 | `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 1 with the native gun profile in lab and play since hidden runs `05cffdd1` lab and `71e19d1e` play (-WanSim bad); play admits it only with link v2 connected; a named 0 opts out) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
-| `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 0 in lab and play, lab only: play forces 0) |
+| `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden run 104e9a47, ladder / pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default block with the native gun profile in lab and play (hidden runs 0348c4d8 lab, fad26e25 play), otherwise off; passenger is lab only: play turns a named passenger into block; a named value records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab (hidden run bfd6fcc4), off otherwise; play forces off) |

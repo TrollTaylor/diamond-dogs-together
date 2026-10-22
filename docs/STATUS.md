@@ -1,4 +1,4 @@
-## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block, F2's box and F4's gestures on, F5's mount hide on in lab only, the rest lab-only and off)
+## October 22, 2026: 0.13.5 source (vehicle boarding, native box, traversal icon, gestures, mount hide; F1's board block, F2's box, F3's traversal icon and F4's gestures on, F5's mount hide on in lab only, the rest lab-only and off)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
@@ -11,8 +11,10 @@ changes, so both copies need the same new package. Full CTest 288/288 (`-Configu
 **Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs, except F1's board
 block** (default on with the native gun profile in lab and play after hidden runs `0348c4d8` lab and `fad26e25` play;
 see F1), **F2's native box** (default on with the native gun profile in lab and play after hidden runs `05cffdd1`
-lab and `71e19d1e` play; see F2) **and F4's gestures** (default on with the native gun profile in lab and play after
-hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4). **F5's mount hide** is on with the
+lab and `71e19d1e` play; see F2), **F3's traversal icon** (default on with the native gun profile in lab and play by
+the user's decision of 2026-10-22, after the step-on FRAMES of hidden run `104e9a47`; ladder, pipe and wall climb are
+unproven and no play run exists yet; see F3) **and F4's gestures** (default on with the native gun profile in lab and
+play after hidden runs `0e343f72` lab and `75a7e7dc` play, the pickup in FRAMES; see F4). **F5's mount hide** is on with the
 native gun profile in lab only (hidden run `bfd6fcc4`; its play rehearsal `fbde3dcc` covered the horse only, so play
 forces it off; see F5). Each key records a `_given` flag and play forces the rest off.
 
@@ -20,7 +22,7 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
 | --- | --- | --- | --- |
 | F1 vehicles: board block and back-seat passengers | `wp/board` | `partner_ride_board=off\|block\|passenger` (block with the gun profile, lab and play) | block proven (frames `0348c4d8` lab, `fad26e25` play bad WAN), default on; passenger lab-only, named-only (own camera unusable, `59cfc415`) |
 | F2 cardboard box on body 1, native | `wp/cbox-native` | `partner_native_cbox=0\|1` (1 with the gun profile, lab and play) | proven both directions (frames `05cffdd1` lab, `71e19d1e` play bad WAN), default on; play needs link v2 connected |
-| F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (0; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found), so lab-only and off |
+| F3 traversal start through body 1's action icon | `wp/traverse-icon` | `partner_native_traverse=0\|1` (1 with the gun profile, lab and play; existing key, now the icon path) | step-on proven (frames `104e9a47` lab); climb / ladder / pipe unproven (no spot found); default on by user decision 2026-10-22 (no play run yet) |
 | F4 gestures through SetCurrentNode / ReserveToResetNode | `wp/gesture` | `partner_native_gesture=0\|1` (1 with the gun profile, lab and play) | pickup proven (frames `0e343f72` lab, `75a7e7dc` play bad WAN), default on; hand signs / knock unproven (no lab spot) |
 | F5 horse / D-Walker riders: research, hide by act | `wp/mount` | `partner_native_mount=off\|hide` (hide with the gun profile in lab; play off) | hide proven after an unrealize fix (frames `bfd6fcc4` lab: no partner body while it rides D-Walker or D-Horse); play rehearsal `fbde3dcc` horse only, so play stays off; no mount drawn; RIDE_BODY's own-horse pull is a user decision |
 
@@ -156,8 +158,9 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
   logs `partner_traverse=icon; plugin=..; res=ok|none; seq=..; exec_ok=..; exec_fail=..; granted=..; ...` once per
   request, `partner_traverse=icon_act` for 2 s after a grant, and the read-only `partner_icon=census; distinct=..;
   blk_ok=..; ...; verdict=..` once per mission.
-- Key: still `partner_native_traverse` (default 0 in lab and play, play forces 0); no new key. The copy is built only
-  with the key on and defer=on (`partner_icon=built|refused`).
+- Key: still `partner_native_traverse`; no new key. Since the user decision of 2026-10-22 (below) it defaults on with
+  the native gun profile in lab and play, 0 without it, and a named 0 opts out. The copy is built only with the key
+  on and defer=on (`partner_icon=built|refused`).
 - Contract: 691 code sites / 169 vtable slots (was 677 / 149): the Exec prologues, the priority body, the builder
   gate, the four poll call sites, the step-on force call, padop +0x18/+0x28/+0x50/+0x188 and vt[0]/vt[1] of the eight
   traversal ActionPlugin vtables; complete-body SHA-256 pins of `0xAFD870`, `0xB02480`, `0x12128C0`
@@ -194,11 +197,18 @@ forces it off; see F5). Each key records a `_given` flag and play forces the res
 - **Unproven: wall climb (23), ladder (21) and pipe (22).** No spot was found. The climb Exec (`0x14114BEC0`) only
   accepts an authored crack-climb geo path whose end lies within 2.5 m and +-1.5 m of the player (`FUN_14114AA50`;
   the game's own record calls it `crack_climb`), so it needs a known crack. Mother Base has ladders (21 appears in
-  older 30050 logs) but the lab runs in 30010. **Defaults unchanged** (`partner_native_traverse` 0 in lab and play,
-  play forces 0): the bar for this step was step-on and wall climb in FRAMES, and only step-on is met.
-- **User decisions:** (1) a crack-climb (and ladder) spot reachable from the lab seed, or a lab way to dismiss D-Dog
-  for E-press censuses (it takes the E press whenever it is the nearest action); (2) whether step-on alone, with the
-  viewer guard clean in both attempts, is enough to turn the key on.
+  older 30050 logs) but the lab runs in 30010. The runtime step left the defaults unchanged (the bar was step-on and
+  wall climb in FRAMES, and only step-on was met).
+- **User decision (2026-10-22): on by default.** Step-on alone, with the viewer guard clean in both attempts, is
+  enough: `partner_native_traverse` now resolves to 1 with the native gun profile in lab and play
+  (`ResolveWeaponDefaults`; the play force-off is removed), 0 without it, and a named 0 opts out. `lab_config_tests`
+  (the gun profile defaults it on in lab and play; a named 1 runs in both) and `friend_package_tests` (Play-Coop
+  native `1|0`, a named 0 in play `0|1`) follow; native-puppet.md "Traversal" / "Traversal icon", its config table,
+  the `-LabSetting` help and the scenario header say so. **No play-mode run of the icon path exists yet**; the next
+  hidden runs add one (`-Mode play -WanSim bad`, `partner-traverse-icon.txt` Part 3 without the key line).
+- **Still open:** ladder (21) and wall-climb (23) proof. Keep looking: the Mother Base (30050) ladders, and an
+  authored crack-climb spot reachable from the lab seed; D-Dog still takes the E press whenever it is the nearest
+  action (a lab way to dismiss it would help E-press censuses).
 
 ### F4
 
@@ -352,7 +362,8 @@ On `b847585` (F5's commit, the last code change; the commit recording this chang
   - `partner_cbox=mode; ...; enabled=1`;
   - `partner_gesture=configured; key=1`;
   - lab `partner_mount=configured; mode=hide`;
-  - no `partner_icon=built` (traverse stays off).
+  - no `partner_icon=built` (traverse was still off on `b847585`; the later default flip of 2026-10-22 has no
+    regression run of its own yet).
 - **What every run showed:** Closed, BaselineRestored, RealSavesUnchanged, `visible_fallback=false`. No
   `crash_probe=av`, `viewer_changed`, `uncertain=1`, `board_uncertain`, latch or fault line. The viewer's own
   `partner_status=local` changed only for its own presses or drives.
