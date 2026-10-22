@@ -27,7 +27,8 @@ run yet.
 - **Lab probes and levers.**
   - Overlay probes 22..24 (`stateRideOnIdle`, `stateGallop`, `stateRideWalkerWalk`; `overlay_state`, debug
     only), to see whether a rider state plays on body 1 without a mount.
-  - `walker_spawn` / `walker_status` / `goto_walker`.
+  - `walker_spawn` / `walker_status` / `goto_walker`. `walker_spawn` refuses with `player_mounted` while the local
+    player rides (`ON_HORSE`, `ON_VEHICLE` or the `HORSE_IDLE`..`HORSE_GALLOP` gait statuses of the D-Walker drive).
   - Scenario `tools/worker/scenarios/partner-mount.txt` (probes, horse, both horses, walker with hide, walker
     baseline).
 - **Act names:** 121 `horse_ride` (was `vehicle_passenger?`), 122 `horse_mount`, 123 `walker_mount`, 125

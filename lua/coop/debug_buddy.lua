@@ -82,13 +82,21 @@ do
   return true,"submitted_horse_deploy;block=loading;arrival=unverified;close_F9;mount=normal_action"
  end
  -- D-Walker lab lever for the mount hide (docs/mounts.md): the same stock
- -- CallBuddy with BuddyType.WALKER_GEAR four metres to the right, the same
- -- guards and dog yield; an active buddy block only, never a mount.
+ -- CallBuddy with BuddyType.WALKER_GEAR four metres to the right, the horse
+ -- lever's guards and dog yield; an active buddy block only, never a mount.
+ -- Refused while the local player rides: ON_HORSE / ON_VEHICLE, or the gait
+ -- statuses PlayerInfo 0x1412CE870 sets for a horse ride (0x79) and a D-Walker
+ -- drive (0x7D, no ON_*). The get-on / leave acts 122/123/126 set none.
+ local MOUNTED={"ON_HORSE","ON_VEHICLE","HORSE_IDLE","HORSE_TROT","HORSE_CANTER","HORSE_GALLOP"}
  local function walkerSample(W)
   local a=W.api
   if not A.integer(a.buddyWalker,0,255) or type(a.buddyType)~="function" then return nil,"walker_binding" end
   local t=a.buddyType()
   if not A.integer(t,0,4) then return nil,"buddy_type" end
+  local ids={}
+  for i,n in ipairs(MOUNTED) do ids[i]=get(PlayerStatus,n);if not A.integer(ids[i],0,65535) then return nil,"walker_posture_binding" end end
+  local mounted=call(PlayerInfo,"OrCheckStatus",ids)
+  if type(mounted)~="boolean" then return nil,"walker_posture" end
   local exists=call(GameObject,"DoesGameObjectExistWithTypeName","TppWalkerGear2")
   if type(exists)~="boolean" then return nil,"walker_availability" end
   local actor=65535
@@ -97,16 +105,17 @@ do
    actor=a.buddyId("TppWalkerGear2",0)
    if actor~=22528 then return nil,fmt("walker_actor0;id=%d",A.integer(actor,0,65535) and actor or -1) end
   end
-  return {walker=t==a.buddyWalker,name=({[0]="none",[1]="horse",[2]="dog",[3]="quiet",[4]="walker"})[t],exists=exists,actor=actor}
+  return {walker=t==a.buddyWalker,name=({[0]="none",[1]="horse",[2]="dog",[3]="quiet",[4]="walker"})[t],mounted=mounted,exists=exists,actor=actor}
  end
  local function walkerReport(r)
-  return fmt("walker;selected=%s;available=%d;actor0=%d;arrival=unverified",r.name,r.exists and 1 or 0,r.actor)
+  return fmt("walker;selected=%s;available=%d;actor0=%d;localMounted=%d;arrival=unverified",r.name,r.exists and 1 or 0,r.actor,r.mounted and 1 or 0)
  end
  local function walker(cmd,id)
   local W,B,why=context()
   if not W then return false,why=="buddy_block_inactive" and "walker_block_inactive" or why end
   local r,why=walkerSample(W);if not r then return false,why end
   if cmd=="walker_status" then return true,walkerReport(r) end
+  if r.mounted then return false,"player_mounted" end
   local down=get(W,"downed")
   if get(down,"maskOwned") or get(down,"nativePending") then return false,"player_downed" end
   if type(W.now)~="function" then return false,"buddy_clock" end
@@ -119,7 +128,13 @@ do
   local x,y,z=p[1]+4*math.cos(rad),p[2],p[3]-4*math.sin(rad)
   if not A.finite(x) or not A.finite(y) or not A.finite(z) or math.abs(x)>999996 or math.abs(y)>999996 or math.abs(z)>999996 then return false,"walker_position" end
   local made,v=pcall(api.buddyVector,x,y,z)
-  if not made or not v then return false,"walker_vector" end
+  local read,vx,vy,vz=pcall(function()return v:GetX(),v:GetY(),v:GetZ()end)
+  if not made or not read or not A.finite(vx) or not A.finite(vy) or not A.finite(vz) or
+   math.abs(vx-x)>.001 or math.abs(vy-y)>.001 or math.abs(vz-z)>.001 then return false,"walker_vector" end
+  local current,owner,why=context()
+  if current~=W or owner~=B then return false,why or "buddy_context_changed" end
+  local fresh,why=walkerSample(W)
+  if not fresh or fresh.name~=r.name or fresh.mounted or fresh.exists~=r.exists or fresh.actor~=r.actor then return false,why or "buddy_context_changed" end
   local owned=B.s and B.s.owned;local yielded=false
   if owned then
    if type(B.yieldForRide)~="function" then return false,"dog_borrowed" end

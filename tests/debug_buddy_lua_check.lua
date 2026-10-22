@@ -7,13 +7,16 @@ local source=slurp(helper)
 check(#source:gsub("\r\n","\n")<=16000 and #source:gsub("\r?\n","\r\n")<=16000,"literal under limit in both checkout modes")
 check(not source:find("SendCommand",1,true) and not source:find("GetGameObjectIdByIndex",1,true) and not source:find("GetGameObjectIdIsRiddenToLocal",1,true),"no per-instance, unsafe capacity or unqualified rider call")
 local function F()
- local c={calls=0,reads=0,kind=2,exists=false,mounted=false,time=1000,logs={},countReads=0}
+ local c={calls=0,reads=0,kind=2,exists=false,mounted=false,walkerMounted=false,time=1000,logs={},countReads=0}
  local env=setmetatable({},{__index=_G})
  local function vec(x,y,z)
   local p={x=x,y=y,z=z};function p:GetX()return self.x end;function p:GetY()return self.y end;function p:GetZ()return self.z end;return p
  end
- env.PlayerStatus={ON_HORSE=8}
- env.PlayerInfo={OrCheckStatus=function(a)check(#a==1 and a[1]==8,"only native horse posture is read");c.reads=c.reads+1;return c.mounted end}
+ env.PlayerStatus={ON_HORSE=8,ON_VEHICLE=26,HORSE_IDLE=44,HORSE_TROT=45,HORSE_CANTER=46,HORSE_GALLOP=47}
+ env.PlayerInfo={OrCheckStatus=function(a)
+  c.reads=c.reads+1
+  if #a==6 then check(a[1]==8 and a[2]==26 and a[3]==44 and a[4]==45 and a[5]==46 and a[6]==47,"walker lever reads exactly the ride / vehicle / gait postures");return c.walkerMounted end
+  check(#a==1 and a[1]==8,"only native horse posture is read");return c.mounted end}
  env.GameObject={DoesGameObjectExistWithTypeName=function(t)check(t=="TppHorse2" or t=="TppWalkerGear2","exact horse / walker class existence query");c.reads=c.reads+1;if t=="TppWalkerGear2" then return c.walkerExists==true end;return c.exists end}
  local B={s={}}
  B.guard=function(active)c.guards=(c.guards or 0)+1;check(active==true,"public actions use existing live buddy guard");if c.guardError then error("fixture")end;return not c.refuse,c.refuse end
@@ -24,7 +27,11 @@ local function F()
   if t=="TppWalkerGear2" then check(i==0 and c.kind==4 and c.walkerExists==true,"walker actor-zero lookup only after typed native availability");return c.walkerActor0 or 22528 end
   check(t=="TppHorse2"and i==0 and c.kind==1 and c.exists==true,"actor-zero lookup only after typed native availability");c.idReads=(c.idReads or 0)+1;return c.actor0 or 6656 end
  W.api.buddyType=function()c.reads=c.reads+1;return c.kind end
- W.api.buddyVector=function(x,y,z)if c.vectorError then error("fixture")end;if c.badVector then return vec(x+1,y,z)end;return vec(x,y,z)end
+ W.api.buddyVector=function(x,y,z)
+  if c.vectorError then error("fixture")end
+  if c.mountOnVector then c.walkerMounted=true end
+  if c.kindOnVector then c.kind=c.kindOnVector end
+  if c.badVector then return vec(x+1,y,z)end;return vec(x,y,z)end
  W.api.buddyCall=function(t,p,yaw)
   check(t==(c.expectType or 1),"exact HORSE enum1 (WALKER_GEAR 4 for walker_spawn)");c.calls=c.calls+1;c.args={t,p,yaw}
   if c.callError then error("fixture")end
@@ -108,7 +115,7 @@ check(not ok and msg=="dog_borrowed"and c.calls==0,"still-owned dog cannot be cl
 c=F();ok,msg=c.S.run({"horse_spawn","2"},1);check(not ok and msg=="horse_args"and c.calls==0,"no count or arbitrary parameters accepted")
 -- D-Walker lab lever (docs/mounts.md): the same stock selector with WALKER_GEAR, read-only status, no mount.
 c=F();ok,msg=c:run("walker_status")
-check(ok and msg=="walker;selected=dog;available=0;actor0=65535;arrival=unverified" and c.calls==0,"walker status is read-only")
+check(ok and msg=="walker;selected=dog;available=0;actor0=65535;localMounted=0;arrival=unverified" and c.calls==0,"walker status is read-only")
 c=F();c.expectType=4;ok,msg=c:run("walker_spawn")
 check(ok and msg=="submitted_walker;scope=local;stock_loader;arrival=unverified;mount=normal_action" and c.calls==1 and c.args[1]==4 and
  c.D.pending and c.D.pending.kind=="spawn","one stock WALKER_GEAR selection request")
@@ -116,7 +123,7 @@ p,yaw=c.args[2],c.args[3]
 check(math.abs(p:GetX()-12)<1e-8 and p:GetY()==20 and math.abs(p:GetZ()-(30+2*math.sqrt(3)))<1e-8 and math.abs(yaw+math.pi/3)<1e-8,"walker four metres to the right")
 c:poll(10);check(c.D.pending and c.calls==1,"walker loading wait never repeats the selector")
 c.kind,c.walkerExists=4,true;c:poll()
-check(not c.D.pending and c.logs[#c.logs][2] and c.logs[#c.logs][3]=="walker_selected;walker;selected=walker;available=1;actor0=22528;arrival=unverified","walker selected, arrival unverified")
+check(not c.D.pending and c.logs[#c.logs][2] and c.logs[#c.logs][3]=="walker_selected;walker;selected=walker;available=1;actor0=22528;localMounted=0;arrival=unverified","walker selected, arrival unverified")
 ok,msg=c:run("walker_spawn");check(not ok and msg=="walker_cooldown" and c.calls==1,"walker click bounded")
 c=F();c.expectType=4;c:run("walker_spawn");c:poll(600)
 check(not c.D.pending and not c.logs[#c.logs][2] and c.logs[#c.logs][3]:find("walker_load_timeout",1,true) and c.calls==1,"bounded walker loading timeout")
@@ -127,6 +134,26 @@ check(not ok and msg=="walker_actor0;id=22529" and c.calls==0,"an unexpected wal
 c=F();c.expectType=4;c.B.s.owned=true;ok,msg=c:run("walker_spawn")
 check(not ok and msg=="dog_borrowed" and c.calls==0,"walker: a borrowed dog without yield refuses")
 c=F();ok,msg=c.S.run({"walker_spawn","2"},1);check(not ok and msg=="horse_args" and c.calls==0,"walker: no parameters accepted")
+-- The horse lever's guards: never while the local player rides (horse, vehicle, or the D-Walker drive's gait
+-- statuses), vector read-back, and a fresh re-sample right before the stock call.
+c=F();c.kind,c.walkerExists,c.walkerMounted=4,true,true;ok,msg=c:run("walker_status")
+check(ok and msg=="walker;selected=walker;available=1;actor0=22528;localMounted=1;arrival=unverified" and c.calls==0,"walker status reports the local ride posture")
+c=F();c.expectType=4;c.kind,c.walkerExists,c.walkerMounted=4,true,true;ok,msg=c:run("walker_spawn")
+check(not ok and msg=="player_mounted" and c.calls==0 and not c.D.pending,"the ridden D-Walker is never re-called")
+c=F();c.expectType=4;c.kind,c.exists,c.walkerMounted=1,true,true;ok,msg=c:run("walker_spawn")
+check(not ok and msg=="player_mounted" and c.calls==0,"the ridden D-Horse block is never swapped out")
+c=F();c.expectType=4;c.badVector=true;ok,msg=c:run("walker_spawn")
+check(not ok and msg=="walker_vector" and c.calls==0,"walker vector read-back mismatch refuses")
+c=F();c.expectType=4;c.vectorError=true;ok,msg=c:run("walker_spawn")
+check(not ok and msg=="walker_vector" and c.calls==0,"walker vector construction failure refuses")
+c=F();c.expectType=4;c.mountOnVector=true;ok,msg=c:run("walker_spawn")
+check(not ok and msg=="buddy_context_changed" and c.calls==0,"a mount between sample and call refuses on the fresh sample")
+c=F();c.expectType=4;c.kindOnVector=1;ok,msg=c:run("walker_spawn")
+check(not ok and msg=="buddy_context_changed" and c.calls==0,"a buddy change between sample and call refuses")
+c=F();c.expectType=4;c.walkerMounted=0;ok,msg=c:run("walker_spawn")
+check(not ok and msg=="walker_posture" and c.calls==0,"a malformed posture result refuses")
+c=F();c.expectType=4;c.env.PlayerStatus.HORSE_GALLOP=nil;ok,msg=c:run("walker_status")
+check(not ok and msg=="walker_posture_binding" and c.calls==0,"a missing gait status binding refuses")
 local raw=slurp(menu)
 check(raw:find('{"player", "spawn", "buddy", "vehicle"}',1,true)and raw:find('a[1] == "horse_status"',1,true),"normal debug route and read-only mounted exception composed")
 check(raw:find('{"enemy", "player", "spawn", "buddy", "vehicle"}',1,true),"stop clears new helper metadata")

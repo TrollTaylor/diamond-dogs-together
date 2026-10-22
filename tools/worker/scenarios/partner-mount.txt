@@ -3,7 +3,9 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-mount.txt -PartnerProfile native -NativeStage loco
 # The guest runs partner_native_mount=hide (it watches the host first); the host keeps the default off, so the
 # second half (the guest rides a D-Walker, the host watches) is today's baseline.
-# Lab saves deploy D-Dog: horse_spawn / walker_spawn switch the local buddy with the stock CallBuddy.
+# Lab saves deploy D-Dog: horse_spawn / walker_spawn switch the local buddy with the stock CallBuddy. walker_spawn
+# refuses while the local player rides (player_mounted); after a ride the scenario requires localMounted=0 before the
+# rider's next buddy switch.
 #
 # Part 1, overlay probes (both on foot; the guest's body 1 is the host's puppet): do the rider states play on
 # body 1 without a mount? Expected per state S, guest script-observer.log:
@@ -21,16 +23,21 @@
 # Part 3, both copies deploy D-Horse (RIDE_BODY, world op 42): does the guest's OWN idle horse 6656 follow the host's
 # ridden horse (SetCallHorse every 250 ms)? Frames horse-viewer-own: record where the guest's horse is. This is today's
 # behaviour, not part of the hide; docs/mounts.md "RIDE_BODY moves the viewer's own buddy".
-# Part 4, the host rides D-Walker, the guest watches (hide):
-#   host: walker_status walker;selected=walker;available=1;actor0=22528
+# Part 4, the host rides D-Walker, the guest watches (hide). The guest's buddy is still its Part 3 D-Horse, so the
+# guest has no walker of its own for RIDE_BODY to move:
+#   host: horse_status localMounted=0 (the Part 3 dismount finished) before walker_spawn
+#   host: walker_status walker;selected=walker;available=1;actor0=22528;localMounted=0
 #   guest: partner_ride=rx stays kind=0 (the sender reports a D-Walker rider on foot: no ON_* status for act 125)
 #   guest: partner_mount=hide; mount=walker; act=123|125; kind=0; ...  and partner_ride=hide; reason=ride; act=12x
 #   guest: partner_mount=end; mount=walker; ... after the dismount
 #   Frames walker-riding / walker-drive burst: no partner body (hidden); walker-off: the host on foot again.
 # Part 5, the reverse: the guest rides D-Walker, the host (mount off) watches: today's baseline.
+#   First the host switches its own buddy back to D-Horse (walker_status localMounted=0, horse_spawn, horse_status):
+#   with world=3, RIDE_BODY would otherwise pull the host's own idle walker 22528 along the guest's ridden walker
+#   under body 1 (Part 3), and the baseline would not show a viewer without a walker, as Part 4's guest is.
 #   host: no partner_mount line; partner_ride shows no hide for the walker acts (kind=0)
 #   Frames base-walker-riding / base-walker-drive burst: what the viewer draws today (expected: body 1 on foot at the
-#   remote's position, floating at cockpit height or falling, or recon placements; record it).
+#   remote's position, floating at cockpit height or falling, or recon placements, and no walker under it; record it).
 # Never: a guest partner_status=local line with ON_HORSE / ON_VEHICLE unless the guest itself mounted.
 labsetting guest partner_native_mount=hide
 labsetting partner_native_overlay=debug
@@ -124,6 +131,9 @@ guest capture horse-viewer-own-after
 host press e 150
 wait 3000
 # --- Part 4: the host rides D-Walker, the guest (hide) watches ---------------------------------------------------
+# The Part 3 dismount must have finished: never switch the buddy block under a mounted host.
+host run horse_status
+host require localMounted=0
 stance host stand
 host run walker_spawn
 wait 12000
@@ -152,6 +162,14 @@ guest burst walker-dismount 8 300
 wait 3000
 guest capture walker-off
 # --- Part 5: the reverse; the guest rides D-Walker, the host (mount off) watches: today's baseline -----------------
+# The host leaves the D-Walker selection first, so the viewer has no walker of its own for RIDE_BODY to move.
+host run walker_status
+host require localMounted=0
+stance host stand
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656
 stance guest stand
 guest run walker_spawn
 wait 12000

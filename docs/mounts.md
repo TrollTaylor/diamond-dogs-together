@@ -137,7 +137,9 @@ But the branch needs a mount GameObject on the viewer's copy to read. On today's
 | `stateGallop` | `ce7e8409eb61` |
 | `stateRideWalkerWalk` | `1b8b642289d5` |
 
-The check used the investigators' `foxhash.sc64` (validated: `stateGunHold` = `aa0ea22a5e0e`).
+The check used the investigators' `foxhash.sc64` (validated: `stateGunHold` = `aa0ea22a5e0e`) and
+`tools/partner_overlay_mogcheck.py` (pool=1 each). Unlike the earlier overlay states, their absence from the SQ-4
+graph 2/3 node list was **not** checked (`mog-nodes-2_3.json` was not available; docs/anim-round1-actions.md 4.3).
 
 **The horse rider follows the live horse.** `RideHorseActionPluginImpl`'s phase handler `0x141236940` keeps a
 `0x2B0` record per player. Its `+0x18` points at the horse's communication record: state at `+0x58`, rider id at
@@ -182,8 +184,17 @@ play: `finished` at once, or the idle pose.
 - **Overlay probes 22..24** (section 5).
 - **Lab levers.**
   - `walker_spawn` / `walker_status` (`lua/coop/debug_buddy.lua`): the horse lever's stock `CallBuddy`, with
-    `BuddyType.WALKER_GEAR`, 4 m to the right. Same guards and dog yield, an active buddy block only, never a mount
-    (mount with E).
+    `BuddyType.WALKER_GEAR`, 4 m to the right. An active buddy block only, never a mount (mount with E). The horse
+    lever's guards and dog yield:
+    - it refuses with `player_mounted` while the local player rides. The check is one `PlayerInfo.OrCheckStatus`
+      over `ON_HORSE`, `ON_VEHICLE` and `HORSE_IDLE`..`HORSE_GALLOP` (44..47). PlayerInfo sets the gait statuses
+      for the horse ride 0x79 and for the D-Walker drive 0x7D (while the walker attachment exists), and the drive
+      sets no `ON_*`. `walker_status` reports the same posture as `localMounted`;
+    - it reads the vector back and re-samples the context and the walker right before the call.
+
+    The get-on / leave acts 122, 123 and 126 set none of these statuses, and Lua has no local act read, so
+    `partner-mount.txt` requires `localMounted=0` before each buddy switch that follows a ride. CallBuddyInit `0x140A44740` itself
+    checks only its pending flags and the type mask, not whether the local player rides.
   - `goto_walker` (`lua/coop/debug_player.lua`): 2 m beside walker 22528, facing it (stock `GetPosition`).
 - **Act names** (section 3).
 - **Tests.**
@@ -239,12 +250,16 @@ a frame proves it.
    frames. After the dismount: `partner_mount=end`, then `foot_stable`.
 3. **Part 3 (both D-Horse):** does the guest's own horse follow the host's ridden horse (RIDE_BODY)? Record where
    it is in `horse-viewer-own`.
-4. **Part 4 (walker, guest hide):** `walker_status ... actor0=22528`, and the host mounted with E. On the guest:
+4. **Part 4 (walker, guest hide):** `horse_status ... localMounted=0` first (the Part 3 dismount finished), then
+   `walker_status ... actor0=22528`, and the host mounted with E. On the guest:
    ride kind stays 0, `partner_mount=hide; mount=walker; act=123|125; kind=0`, and **no body 1 in
    `walker-riding` / `walker-drive`**. This is the FRAME that may flip the default later.
-5. **Part 5 (baseline, host off):** what the host draws for the guest's D-Walker ride today. Expected: body 1 on
-   foot at the cockpit position, falling, or recon placements. Note any `partner_ride=hide; reason=air`,
-   `partner_recon=place` or runaway lines.
+5. **Part 5 (baseline, host off):** what the host draws for the guest's D-Walker ride today. First the host
+   switches its own buddy back to D-Horse (`walker_status ... localMounted=0`, `horse_spawn`, `horse_status`).
+   Otherwise RIDE_BODY (world=3 in the worker) would pull the host's own idle walker 22528 along the guest's
+   ridden walker under body 1 (section 2), and the baseline would not show a viewer without a walker, as in Part 4.
+   Expected: body 1 on foot at the cockpit position, falling, or recon placements, with no walker under it. Note
+   any `partner_ride=hide; reason=air`, `partner_recon=place` or runaway lines.
 6. **Every part:** no `partner_status=local` with `ON_HORSE` / `ON_VEHICLE` on the copy that did not mount, and no
    `crash_probe=av` other than the known teardown `rva=0x21e72`.
 
@@ -260,4 +275,5 @@ a frame proves it.
   index is the reply's low 5 bits; 25 of 32 are now used.
 - **`walker_spawn` changes the local buddy** (lab saves: D-Dog to D-Walker) through the same stock call as
   `horse_spawn`. It is a lab lever; it never touches a save file beyond what the stock buddy selection does in the
-  running lab copy.
+  running lab copy. Its `player_mounted` refusal misses the get-on / leave acts 122, 123 and 126 (no status), so
+  callers wait for and require `localMounted=0`.
