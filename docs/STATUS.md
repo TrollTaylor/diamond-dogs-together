@@ -5,8 +5,9 @@ Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/boa
 resolved by union, the contract header regenerated inside each merge), then the version commit, the per-feature
 runtime commits and `wp/pass-cam` (merged `ca495d8`). No rebase. Hidden-worker runs: per feature below, the final
 regression on `b847585` and the release regression on `766aaad` (the 0.13.4 scenarios plus the board block, default
-lab settings: no regression; see "Release regression" at the end of this entry). The build id changes, so both
-copies need the same new package. Full CTest 289/289 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`,
+lab settings: no regression; see "Release regression" at the end of this entry). Packaged and installed in both
+copies (`mgs-coop-friend-0.13.5-20261022T173336Z-3944df14`, see "Package and install" at the end of this entry); the
+build id changes, so both players need this package. Full CTest 289/289 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`,
 `partner_cbox_tests`, `partner_icon_tests`, `partner_gesture_tests`, `partner_gesture_hook_tests`,
 `partner_mount_tests` and `partner_pass_camera_tests`). Contract 743 code sites / 193 vtable slots, equip writer
 pins 118 SHA-256 gates.
@@ -618,6 +619,23 @@ mount hide in play are all in it).
     m/s against 1.2), the same as 0.13.4.
 - **No regression, so no code change.** Proof frames (small JPEGs) are in the session scratchpad
   `complete/frames/release-0135/`; the run directories are archived under `C:\Users\taylo\mgs-coop-run-archive\integ9\`.
+
+### Package and install
+
+Package `mgs-coop-friend-0.13.5-20261022T173336Z-3944df14` (`dist/...zip`, 9,331,620 bytes, ZIP SHA-256
+`2bcc902f82a12a4c59cf9238eed6ffc97f47fcac1d243e459aae5489e4b85611`), built by `tools/package.ps1 -Friend
+-CheckReceipt` from `wp/integ9` `c929cda` (clean tree) with Release receipt
+`20261022-173055-75ff966e3d8d470ca2865b7e55855b51` (283 audited tests, receipt SHA-256 `bf83240b...e342`); loader
+SHA-256 `8bfeae657a497f34b3a25f258cd9782cb5f7fadf77fa6b9b03550c25274f8e08`, build id `0.13.5+c929cda`. The link
+build id changed, so it will not connect to 0.13.4 or older packages; both players need this package.
+- **Installed in both owned copies** (2026-10-22 17:34Z, no game launched): host through `Install-Coop.ps1 -Role Host
+  -Character snake -NonInteractive -Yes` (kept the existing co-op save copy, real-save backup
+  `real-save-backups\20261022-123418`, rollback `2a47b06b2492469a9b16d0dfaac18070`), guest through the owned
+  `install.ps1 -NoInitialMode` (rollback `d9b3660a98974cf3a769cf7a7ff35064`; no `script-observe.enabled` left in
+  `MGS_TPP_guest\mgs-coop`). Both `dinput8.dll` hash `8bfeae65...8e08` and carry `0.13.5+c929cda`; both
+  `probe-install.json` say version 0.13.5 with that loader hash, the host's `friend-install.json` 0.13.5. Both
+  executables, both Steam DLLs and all 17 save-folder files are hash-identical before and after.
+- Replaces 0.13.3 (`bf29f67`, loader `1f3e6d12...`) in both copies; 0.13.4 was never packaged.
 
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
