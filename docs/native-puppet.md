@@ -267,10 +267,34 @@ wiring stays.
 
 F1 (0.13.5, research `re-vehicle.md`): what the viewer's **own** ride action
 does at a vehicle the partner drives, and the partner seated as a passenger in
-either player's vehicle. Lab key `partner_ride_board=off|block|passenger`:
-**default off in lab and play**, play forces it off, a named value records
-`partner_ride_board_given`. It stays off until hidden-worker FRAMEs show the
-block and the back seat (`coop-vehicle-shared.txt`, `coop-vehicle-passenger.txt`).
+either player's vehicle. Key `partner_ride_board=off|block|passenger`, a named
+value records `partner_ride_board_given`:
+
+- **block is the default with the native gun profile, in lab and play.** Hidden
+  run `0348c4d8` (lab, `coop-vehicle-shared.txt`, both directions): the viewer
+  pressed E beside the jeep the partner drove, got no ride icon
+  (`board_block; site=prequery`), stayed on foot (`vehicle_not_riding`, no
+  `st=0x400`), and the partner kept driving in the viewer's frames; the ride
+  icon came back once the partner got out. Play rehearsal `fad26e25`
+  (`-Mode play -WanSim bad`, rtt ~180 ms, 1-3 % loss; the same scenario
+  without the key, so the default ran: `board_install; mode=block`): the same
+  in both directions, no `board_uncertain`.
+- **passenger stays lab-only and named-only** (play turns it into block). Hidden
+  run `59cfc415` (lab, `coop-vehicle-passenger.txt`): the back-door prompt
+  appears on the light vehicle, the viewer boards seat 2 (`board_passenger;
+  site=phase1`, `local_passenger; via=p120`, act 0x6E), rides with the
+  partner-driven jeep (RIDE_FAST applied) and gets off with the stock
+  GetOffBackLeft; the partner sees it in the back seat (`partner_ride_seat=
+  confirmed; seat=2`), both directions. But the passenger's **own camera is
+  unusable**: the viewer looks at the jeep's interior from boarding until it
+  gets off (frames `pass-guest-view`, `pass-drive-NN`, `pass-rev-drive-NN`);
+  the seat status lines show no vehicle camera connect (`cam1f0=0x0`) until
+  the get-off's own `0x8800000000006408`. Fixing it is camera work (left to
+  the user). The truck half did not run: the host could not board
+  `veh_trc_0000` from the `goto_vehicle truck` spot and the guest's nearest
+  truck was another one 817 m away (the copies' trucks differ), so the truck
+  fallback (`reason=type`) is still only unit-tested. The light vehicle reads
+  `type=2; seats=4`.
 
 **Why.** The partner is drawn in the viewer's copy of its vehicle by the DM
 seat chain (`partner_ride_seat`), never registered in the copy's `rider[]`.
@@ -359,12 +383,14 @@ callers (`0x124B3A0`: site A and the `0x124B360` tail; `0x124B360`: site B;
 `0x1245820`: CanExec only), the rel32 values, the cache lines and that no
 branch lands inside either operand.
 
-**Unproven** (`re-vehicle.md` 9): whether the light vehicle's entry scan offers
-a back door (no prompt: passenger degrades to block; the lab fallback "site B
-only" is not implemented), the stock passenger camera and HUD offline, the
-type numbering (1/2 light, 3/4 truck), the attach jitter against the 20 Hz
-RIDE_FAST placement, and what the copy's phase-6 `RequestVehicleToManualDrive`
-does to the next FAST placement. Research builds: `coop_passenger` and
+**Proven in `59cfc415`** (`re-vehicle.md` 9): the light vehicle's entry scan
+offers the back door (the prompt appears; the "site B only" fallback is not
+needed), the Wakh Sind jeep is type 2 with 4 seats, and after a passenger exit
+the copy keeps following the driver's stream (`pass-after-exit-NN`). **Still
+unproven:** the truck numbering (3/4) and its block, a usable passenger camera
+(the stock one looks at the interior, above), the attach jitter against the
+20 Hz RIDE_FAST placement, and what the copy's phase-6
+`RequestVehicleToManualDrive` does to the next FAST placement. Research builds: `coop_passenger` and
 `coop_vehicle_mirror` SHA-pin `0x1245820` and `0x1251200` whole and refuse
 (`exact_code`) once the board sites are live. The startup partner code gate
 and `partner_upper_probe`'s one-time gate both run at configure, before the
@@ -1698,7 +1724,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_cbox` | 0, 1 (F2: the remote's cardboard box on body 1 through ChangeEquip / SetCurrentItemIndex for instance 1, see "Cardboard box"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 0 in lab and play, lab only: play forces 0) |
-| `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default off in lab and play, a named value records `partner_ride_board_given`, lab only: play forces off) |
+| `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default block with the native gun profile in lab and play (hidden runs 0348c4d8 lab, fad26e25 play), otherwise off; passenger is lab only: play turns a named passenger into block; a named value records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 0 in lab and play, lab only: play forces 0) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default off in lab and play, lab only: play forces off) |
 

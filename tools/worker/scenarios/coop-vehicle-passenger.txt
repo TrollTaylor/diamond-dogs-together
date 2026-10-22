@@ -30,6 +30,10 @@
 # Second half: the same with the roles swapped (the host boards behind the guest).
 # Truck: the E press next to the host-driven truck: partner_ride=board_block; vehicle=..; site=prequery;
 #   ...; mode=passenger; reason=type; type=3|4 (no back seat on a truck), vehicle_not_riding.
+# Run 59cfc415 (docs/STATUS.md 0.13.5 F1): both passenger halves passed (the passenger's own camera looks at the
+# jeep's interior: why passenger stays named-only); the truck half did NOT run: the host's goto_vehicle truck spot
+# beside veh_trc_0000 offers no ride icon, and the guest's nearest truck was veh_trc_0003 817 m away (each copy
+# places its trucks differently). It needs a truck spot both copies share before it can prove the block.
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=passenger
 labsetting nametag=1

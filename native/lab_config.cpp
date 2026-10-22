@@ -223,13 +223,14 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
 }
 // WS3 vehicles (docs/vehicle-ws3.md): the ride census, seat by id and tilt
 // keys (booleans, lab only: ResolveWeaponDefaults turns them off in play), and
-// the F1 board key partner_ride_board=off|block|passenger (lab only, default off).
+// the F1 board key partner_ride_board=off|block|passenger (default block with the
+// gun profile in lab and play; passenger is lab only).
 bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
-        // F1 vehicles: the board block / passenger hook (lab only, default off); a named value records _given.
+        // F1 vehicles: the board block / passenger hook (defaults in ResolveWeaponDefaults); a named value records _given.
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
         if (ok) result.partner_ride_board_given = true;
     }
@@ -1431,9 +1432,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Traversal replay: off unless named (no hidden-worker FRAME of body 1 on a
     // ladder yet); play forces it off below.
     if (!c.partner_native_traverse_given) c.partner_native_traverse = false;
-    // F1 vehicles: the board hook is off unless named (no hidden-worker FRAME of the
-    // block or the back seat yet); play forces it off below.
-    if (!c.partner_ride_board_given) c.partner_ride_board = PartnerRideBoard::off;
+    // F1 vehicles: the board BLOCK follows the gun profile (hidden run 0348c4d8: the
+    // viewer stood beside the jeep the partner drove, got no ride icon and the
+    // partner kept driving, both directions); passenger stays named-only (the
+    // viewer's own stock passenger camera is unusable offline, run 59cfc415);
+    // play admits block and turns a named passenger into block below.
+    if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::block : PartnerRideBoard::off;
     // F2 cardboard box on body 1: off unless named (no hidden-worker FRAME of
     // body 1 boxed yet); play forces it off below.
     if (!c.partner_native_cbox_given) c.partner_native_cbox = false;
@@ -1470,8 +1474,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_place_mirror = false;
         // Traversal replay stays lab-only (the ACTION tap on body 1 is unproven).
         c.partner_native_traverse = false;
-        // F1 vehicles: the board block / passenger hook stays lab-only (no FRAME yet).
-        c.partner_ride_board = PartnerRideBoard::off;
+        // F1 vehicles: the board block runs in play (play rehearsal fad26e25, -WanSim bad); the
+        // back-seat passenger stays lab-only, so a named passenger blocks.
+        if (c.partner_ride_board == PartnerRideBoard::passenger) c.partner_ride_board = PartnerRideBoard::block;
         // F2: the native box on body 1 stays lab-only (no FRAME, no play run yet).
         c.partner_native_cbox = false;
         // Gestures stay lab-only (graph-2 visibility on body 1 is unproven, L8).

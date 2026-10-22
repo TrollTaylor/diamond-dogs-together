@@ -467,14 +467,15 @@ try {
             $file = Join-Path $fixture 'play-traverse-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_traverse=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_traverse'])|$($m['partner_native_traverse_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named traversal replay off'
-            # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board hook is lab only and default off; Play-Coop never names it.
+            # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board block follows the native gun profile in play
+            # (hidden runs 0348c4d8 lab, fad26e25 play); the back-seat passenger is lab only. Play-Coop never names the key.
             Assert-True (!$hostIni.Contains('partner_ride_board') -and !$guestIni.Contains('partner_ride_board') -and
                 !$clipsIni.Contains('partner_ride_board')) 'Play-Coop lab.ini never names partner_ride_board'
-            Assert-Equal "$($n['partner_ride_board'])|$($n['partner_ride_board_given'])" 'off|0' 'native: play leaves the board hook off'
+            Assert-Equal "$($n['partner_ride_board'])|$($n['partner_ride_board_given'])" 'block|0' 'native: play defaults the board block'
             foreach ($value in @('block', 'passenger')) {
                 $file = Join-Path $fixture "play-board-$value-lab.ini"; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_board=$value`n", $utf8)
                 $m = Invoke-IniCheck lab $file
-                Assert-Equal "$($m['partner_ride_board'])|$($m['partner_ride_board_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'off|1|0x0|0/0' "native: play forces a named board $value off"
+                Assert-Equal "$($m['partner_ride_board'])|$($m['partner_ride_board_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'block|1|0x0|0/0' "native: play admits a named board $value as block"
             }
             # F2: the native cardboard box on body 1 (docs/native-puppet.md "Cardboard box") is lab only and default 0; Play-Coop never names it.
             Assert-True (!$hostIni.Contains('partner_native_cbox') -and !$guestIni.Contains('partner_native_cbox') -and

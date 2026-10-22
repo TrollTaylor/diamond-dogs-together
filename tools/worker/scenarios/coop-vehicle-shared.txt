@@ -19,6 +19,8 @@
 # Second half: the same with the roles swapped (the host's log has the board_block lines).
 # Captures: shared-host-drives, shared-blocked, shared-host-view, shared-drive-away-NN, shared-exited,
 # shared-rev-guest-drives, shared-rev-blocked, shared-rev-guest-view, shared-rev-exited.
+# Passed: run 0348c4d8 (lab) and the play rehearsal fad26e25 (-Mode play -WanSim bad, with the board line below
+# removed: block is the gun-profile default since then, so the line only pins it).
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=block
 labsetting nametag=1
