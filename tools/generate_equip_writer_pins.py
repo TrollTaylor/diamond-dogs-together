@@ -222,6 +222,16 @@ GENERAL_RANGES = [
     # WS4 v1 review (WS4-2): ctl vt+0x1F0, the one callee only the slot-6 (arm) dispatch runs (ChangeEquip type 14
     # calls it instead of the restriction predicate and the lower writer). Whole body, ret at 0x11B1D66.
     ("arm_equip_dispatch", 0x11B1B60, 0x11B1D67, 0x11B1D67),
+    # F2 (partner_cbox_equip, docs/native-puppet.md "Cardboard box"): the box off call ctl vt+0x68 (its tail jmp to
+    # OnEquipItem at 0x11AFA75), the item remove / equip hooks both run, and the two pure reads the box wake and the
+    # writer's own mapping rely on. GetEquipIdSlot (ctl vt+0x90, no Ghidra function) ends with its 7-entry jump table
+    # 0x11AD4A0..0x11AD4BC: the range covers the table, the decode stops at the last case's ret (0x11AD49A).
+    # OnRemoveItem ends with a two-byte repz ret at 0x11AF09E.
+    ("set_current_item_index", 0x11AF9A0, 0x11AFA7A, 0x11AFA7A),
+    ("on_remove_item", 0x11AF000, 0x11AF0A0, 0x11AF0A0),
+    ("on_equip_item", 0x11AEF10, 0x11AEFF7, 0x11AEFF7),
+    ("get_item_stock_count", 0x11AD660, 0x11AD6FB, 0x11AD6FB),
+    ("get_equip_id_slot", 0x11AD420, 0x11AD4BC, 0x11AD49A),
 ]
 GENERAL_NAMES = {
     "recipe_dependency_selection", "dependency_hash_getter", "public_mission_preload",

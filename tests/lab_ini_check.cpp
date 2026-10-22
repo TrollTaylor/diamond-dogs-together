@@ -160,6 +160,9 @@ int main(int argc, char** argv) {
         // Traversal replay (lab only, default 0) and whether it was named.
         std::printf("partner_native_traverse=%d\npartner_native_traverse_given=%d\n", c.partner_native_traverse ? 1 : 0,
                     c.partner_native_traverse_given ? 1 : 0);
+        // F2: the native cardboard box on body 1 (lab only, default 0) and whether it was named.
+        std::printf("partner_native_cbox=%d\npartner_native_cbox_given=%d\n", c.partner_native_cbox ? 1 : 0,
+                    c.partner_native_cbox_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

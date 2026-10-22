@@ -31,6 +31,11 @@ local function fixture(options)
     end, ChangeEquip = function(a)
         record('equip', a)
         if c.equipRefuse then return false end
+        if a.equipId == 456 then
+            -- F2 give_item cbox: the retail item path fills the first free sub (unless the test withholds it).
+            if not c.itemWithhold then for i = 1, 7 do if env.vars.items[i] == 0 then env.vars.items[i] = 456; break end end end
+            return
+        end
         if not c.weaponReject then
             local slot = a.equipId == 301 and 0 or 2
             env.vars.ammoInWeapons[slot], env.vars.ammoSubInWeapons[slot] = a.ammo, a.ammoSub
@@ -42,6 +47,10 @@ local function fixture(options)
             if c.supportStockError == sub then error('stock unreadable') end
             return c.supportCounts[sub], 0
         end
+        if slot == 12 then
+            check(sub >= 0 and sub <= 7 and sub % 1 == 0, 'item stock uses retail item enum and sub-index')
+            return c.itemCounts[sub], 0
+        end
         check((slot == 5 or slot == 7 or slot == 9) and sub == 0, 'native slot enum, not vars slot index')
         return c.stock, c.stockSub
     end}
@@ -49,6 +58,10 @@ local function fixture(options)
     env.Player.SetCurrentSlot = function(a) record('slot', a); if c.slotRefuse then return false end; env.vars.currentInventorySlot = a.slotType end
     env.vars.supportWeapons = {[0] = 354, [1] = 391, [2] = 0}
     c.supportCounts = {[0] = 12, [1] = 6, [2] = 0, [3] = -1, [4] = "invalid", [5] = 65535, [6] = 1.5}
+    -- F2: the lab seed's item list (subs 1..7; 468, 472 and 466 are boxes) and its stocks.
+    env.vars.items = {[0] = 0, [1] = 468, [2] = 451, [3] = 492, [4] = 483, [5] = 0, [6] = 472, [7] = 466}
+    env.vars.currentItemIndex = 0
+    c.itemCounts = {[0] = 0, [1] = 1, [2] = 3, [3] = 1, [4] = 1, [5] = 0, [6] = 1, [7] = 1}
     env.DemoDaemon = {IsDemoPlaying = function() return c.demo or false end}
     env.TppMission = {CheckMissionState = function() return not c.loading end, IsMissionStart = function() return not c.ended end}
     env.Tpp = {IsHelicopter = function(v) return c.heli or false end}
@@ -66,7 +79,7 @@ local function fixture(options)
     env.TppMarker = {Enable = function(...) record('mark', ...) end, Disable = function(id) record('unmark', id) end}
     env.TppDefine = {WEAPONSLOT = {PRIMARY_HIP = 0, PRIMARY_BACK = 1, SECONDARY = 2},
         WEATHER = {SUNNY = 0, CLOUDY = 1, RAINY = 2, SANDSTORM = 3, FOGGY = 4}}
-    env.TppEquip = {EQP_WP_30101 = 301, EQP_WP_10101 = 101, EQP_WP_10004 = 104,
+    env.TppEquip = {EQP_WP_30101 = 301, EQP_WP_10101 = 101, EQP_WP_10004 = 104, EQP_IT_CBox = 456,
         GetAmmoInfo = function(id) record('metadata', id); return 11, 30, 90, 0, 0, 0 end}
     env.TppPlayer = {Warp = function(a)
         record('warp', a); if c.warpError then error(c.warpFailure or 'warp error') end
@@ -236,6 +249,28 @@ c.slotRefuse = true
 check(c:send('slot back 0')[3] == 'slot_refused', 'a refused selection is reported')
 c.slotRefuse = nil
 check(c:send('slot hip 0')[2] == 1, 'back to the hip slot')
+-- F2 (docs/native-puppet.md "Cardboard box"): the read-only item census and the lab-only box gift.
+local itemCalls = #c.calls
+check(c:send('items')[3] == 'items;ids=0,468,451,492,483,0,472,466;counts=0,1,3,1,1,0,1,1;current=0' and #c.calls == itemCalls,
+    'item ids, stocks (retail ITEM enum) and the current item, read-only')
+c.env.vars.currentItemIndex = 9
+check(c:send('items')[3]:find(';current=na', 1, true) and #c.calls == itemCalls, 'an out-of-range current item is unknown')
+c.env.vars.currentItemIndex = 0
+check(c:send('give_item')[3] == 'command_args' and c:send('give_item c4')[3] == 'give_item_args' and #c.calls == itemCalls, 'give_item arguments')
+local gifts = c:count('equip')
+local g = c:send('give_item cbox')
+local gc = c.calls[#c.calls]
+check(g[2] == 2 and g[3] == 'submitted_give_item;equip=456;free=5' and c:count('equip') == gifts + 1 and gc[2].equipId == 456 and
+    gc[2].toActive == false and gc[2].dropPrevEquip == false, 'give_item: one ChangeEquip (not active, no drop) into the free sub')
+c:tick(); check(c.logs[#c.logs][3] == 'give_item_readback;equip=456;sub=5' and c.env.vars.items[5] == 456, 'give_item: vars.items readback')
+check(c:send('give_item cbox')[3] == 'give_item;equip=456;sub=5;already=1' and c:count('equip') == gifts + 1, 'a box already listed: no call')
+c.env.vars.items[5] = 999
+check(c:send('give_item cbox')[3] == 'items_full' and c:count('equip') == gifts + 1, 'a full item list is refused (never replaced)')
+c.env.vars.items[5] = 0; c.itemWithhold = true
+check(c:send('give_item cbox')[2] == 2, 'withheld gift submitted')
+for _ = 1, 300 do c:tick() end
+check(c.logs[#c.logs][3] == 'give_item_readback_timeout' and c.env.vars.items[5] == 0, 'no item appeared: timeout, not a fake success')
+c.itemWithhold = nil
 check(c:send('time 86399')[2] == 1 and c.env.vars.clock == 86399, 'clock boundary')
 check(c:send('weather rainy')[2] == 1 and c:count('weather') == 1, 'weather submits exact API')
 check(c:send('weather auto')[2] == 1 and c:count('weather_auto') == 1, 'weather cancel')

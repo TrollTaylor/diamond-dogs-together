@@ -476,6 +476,13 @@ try {
                 $m = Invoke-IniCheck lab $file
                 Assert-Equal "$($m['partner_ride_board'])|$($m['partner_ride_board_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'off|1|0x0|0/0' "native: play forces a named board $value off"
             }
+            # F2: the native cardboard box on body 1 (docs/native-puppet.md "Cardboard box") is lab only and default 0; Play-Coop never names it.
+            Assert-True (!$hostIni.Contains('partner_native_cbox') -and !$guestIni.Contains('partner_native_cbox') -and
+                !$clipsIni.Contains('partner_native_cbox')) 'Play-Coop lab.ini never names partner_native_cbox'
+            Assert-Equal "$($n['partner_native_cbox'])|$($n['partner_native_cbox_given'])" '0|0' 'native: play leaves the native box off'
+            $file = Join-Path $fixture 'play-cbox-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_cbox=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_cbox'])|$($m['partner_native_cbox_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named native box off'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'

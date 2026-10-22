@@ -208,6 +208,11 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         ok = ParseBool(value, result.partner_native_traverse);
         if (ok) result.partner_native_traverse_given = true;
     }
+    else if (Equals(key, "partner_native_cbox")) {
+        // F2: the cardboard box on body 1 (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.partner_native_cbox);
+        if (ok) result.partner_native_cbox_given = true;
+    }
     else return false;
     return true;
 }
@@ -1415,6 +1420,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // F1 vehicles: the board hook is off unless named (no hidden-worker FRAME of the
     // block or the back seat yet); play forces it off below.
     if (!c.partner_ride_board_given) c.partner_ride_board = PartnerRideBoard::off;
+    // F2 cardboard box on body 1: off unless named (no hidden-worker FRAME of
+    // body 1 boxed yet); play forces it off below.
+    if (!c.partner_native_cbox_given) c.partner_native_cbox = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1444,6 +1452,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_traverse = false;
         // F1 vehicles: the board block / passenger hook stays lab-only (no FRAME yet).
         c.partner_ride_board = PartnerRideBoard::off;
+        // F2: the native box on body 1 stays lab-only (no FRAME, no play run yet).
+        c.partner_native_cbox = false;
     }
 }
 

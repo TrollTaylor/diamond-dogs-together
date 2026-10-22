@@ -3637,6 +3637,34 @@ void TestNativeEnterAndLeave() {
         Check(s.fake.arms.back().config.mask == 0x2240006u && s.fake.arms.back().config.sample_strip == 0u,
               "traverse off: no ACTION again");
     }
+    // F2 (partner_native_cbox=1, lab only): body 1 boxed (77/78) for the remote's box holds the
+    // reconciliation's far / vertical / runaway placements (one partner_cbox=hold line per edge);
+    // leaving the box releases it; with the key off nothing changes.
+    {
+        const bool anim_ok = s.fake.anim_ok;
+        const std::uint16_t act1 = s.fake.anim.act[1];
+        s.driver.settings.cbox = true;
+        s.driver.mission.cbox_want = true;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 77;
+        s.N();
+        Check(s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold; on=1; body_act=77; want=1;") == 1,
+              "cbox on: body 1 in the box holds the placements");
+        s.fake.anim.act[1] = 78;
+        s.N();
+        Check(s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold;") == 1, "the moving box (78) keeps the hold, no new line");
+        s.fake.anim.act[1] = 3;
+        s.N();
+        Check(!s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold; on=0; body_act=3;") == 1, "out of the box: released");
+        s.driver.settings.cbox = false;
+        s.fake.anim.act[1] = 77;
+        s.N();
+        Check(!s.driver.mission.cbox_hold && s.fake.Containing("partner_cbox=hold;") == 2, "key off: no hold");
+        s.driver.mission.cbox_want = false;
+        s.fake.anim_ok = anim_ok;
+        s.fake.anim.act[1] = act1;
+        s.N();
+    }
     // Telemetry for the worker state.json.
     const auto& tele = s.driver.mission.tele;
     Check(tele.configured && tele.mode == pn::Mode::active && tele.armed && tele.h1 && tele.h2 && tele.thread_ok &&
@@ -4569,15 +4597,35 @@ void TestNativeWeapons() {
         for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
         Check(s.driver.mission.equip.manifest.cbox_active && s.driver.mission.equip.manifest.revision == 5 &&
                   s.fake.Containing("partner_equip=apply;") == applies && s.fake.Containing("partner_equip=manifest;") == manifests &&
-                  s.fake.Has("partner_cbox=remote; id=456; active=1; apply=off\r\n") && !cbox_op,
+                  s.fake.Has("partner_cbox=remote; id=456; active=1; apply=off; seq=1\r\n") && !cbox_op &&
+                  s.driver.mission.cbox_want && s.driver.mission.cbox_id == 456 && s.driver.mission.cbox_seq == 1,
               "a box toggle: logged, no gun re-apply, no op::cbox");
         rx.cbox_active = false; rx.active_item_id = 0;
         Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box-off manifest encodes");
         s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
         for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
         Check(!s.driver.mission.equip.manifest.cbox_active && s.fake.Containing("partner_equip=apply;") == applies &&
-                  s.fake.Has("partner_cbox=remote; id=456; active=0; apply=off\r\n") && !cbox_op,
+                  s.fake.Has("partner_cbox=remote; id=456; active=0; apply=off; seq=2\r\n") && !cbox_op &&
+                  !s.driver.mission.cbox_want && s.driver.mission.cbox_seq == 2 && s.driver.mission.cbox_off_ms != 0,
               "box off: logged, no gun re-apply, no op::cbox");
+        // F2 (partner_native_cbox=1, lab only): the same edges say apply=native and count on (the
+        // equipment observer's partner_cbox_equip reads cbox_want / cbox_id / cbox_seq); still no op::cbox.
+        s.driver.settings.cbox = true;
+        rx.cbox_active = true; rx.active_item_id = 472;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box 472 manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        for (int i = 0; i < 6; ++i) { s.N(); cbox_op = cbox_op || (s.reply.op & op::cbox) != 0; }
+        Check(s.fake.Has("partner_cbox=remote; id=472; active=1; apply=native; seq=3\r\n") && !cbox_op &&
+                  s.driver.mission.cbox_want && s.driver.mission.cbox_id == 472 && s.driver.mission.cbox_seq == 3 &&
+                  s.fake.Containing("partner_equip=apply;") == applies,
+              "key on: apply=native, the edge counted, no op::cbox, no gun re-apply");
+        rx.active_item_id = 466;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx box 466 manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        for (int i = 0; i < 6; ++i) s.N();
+        Check(s.fake.Has("partner_cbox=remote; id=466; active=1; apply=native; seq=4\r\n") && s.driver.mission.cbox_id == 466,
+              "a different box id while boxed is a new edge");
+        s.driver.settings.cbox = false;
     }
 }
 
