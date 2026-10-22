@@ -3,8 +3,9 @@
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
 `6d58e18`, `wp/traverse-icon` `e6b3b9c`, `wp/gesture` `9eea4a5` and `wp/mount` `900eefc` (in that order, conflicts
 resolved by union, the contract header regenerated inside each merge), then the version commit. No rebase. Not
-packaged or installed; no hidden-worker run on this merge yet. The build id changes, so both copies need the same new
-package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`, `partner_cbox_tests`,
+packaged or installed. Hidden-worker runs: per feature below, then the final regression on `b847585` (the seven
+0.13.4 scenarios with the default lab settings all pass as on 0.13.4; see "Final regression" after F5). The build id
+changes, so both copies need the same new package. Full CTest 288/288 (`-Configure`; 0.13.4 had 282, plus `partner_board_tests`, `partner_cbox_tests`,
 `partner_icon_tests`, `partner_gesture_tests`, `partner_gesture_hook_tests` and `partner_mount_tests`).
 
 **Every 0.13.5 feature is lab-only and default off in lab and play, pending hidden-worker FRAMEs, except F1's board
@@ -338,6 +339,70 @@ runs and the unrealize fix: see "Runtime" at the end of this section.
   it off). (2) The other ride hides (the horse kind-3 hide without the key; heli and vehicle fallbacks use the same
   bit clear, not filmed) still leave a standing body at the get-on spot; extending the unrealize to them needs its
   own frames.
+
+### Final regression
+
+On `b847585` (F5's commit, the last code change; the commit recording this changes STATUS.md only).
+- **Static:** full CTest 288/288 (`-Configure`, build id `0.13.5+b847585`). `generate_partner_contract.py --check`
+  gives 733 code sites / 185 vtable slots, and `generate_equip_writer_pins.py --check` gives 118 SHA-256 gates. The
+  Research worker checks passed (receipt `20261022-113154-4d0a46756cbd432e850fd0d8b38b3a15`).
+- **How the hidden runs ran:** research build, native gun stage, lab seed, the **default** lab settings (no 0.13.5 key
+  named). The defaults were live:
+  - `partner_ride=board_install; mode=block`;
+  - `partner_cbox=mode; ...; enabled=1`;
+  - `partner_gesture=configured; key=1`;
+  - lab `partner_mount=configured; mode=hide`;
+  - no `partner_icon=built` (traverse stays off).
+- **What every run showed:** Closed, BaselineRestored, RealSavesUnchanged, `visible_fallback=false`. No
+  `crash_probe=av`, `viewer_changed`, `uncertain=1`, `board_uncertain`, latch or fault line. The viewer's own
+  `partner_status=local` changed only for its own presses or drives.
+  - `2eb956ce` `partner-c4-v2.txt` (0.13.4: `646362fa`): passes.
+    - Body 1 took 4/4 places (0.13.4: 3) and 2/2 detonations.
+    - The guest's placed table stayed `owners=65535:0`, `owner1=-1` throughout.
+    - No `placed_shared_write`, stock gap or leak, rec240 line, writer latch or `reverted=2`. Every support require
+      passed.
+    - FRAMES: body 1 kneels at P1..P4 (`c4-place-pN-03`) and raises the detonator (`c4-det-01`, `c4-det2-01`).
+  - `b15c7bd4` `partner-support-play.txt`, `-Mode play -WanSim bad` (0.13.4: `bbee9f8e`): passes.
+    - Four `throw_release` (three, then the last phase), and `viewer_own; changed=0; before=12; after=11`.
+    - Every `stock_check` has `changed=0`; no gap, leak or latch; every require passed.
+    - Play also showed `partner_cbox=mode; mode=play; enabled=1`, board block and gesture key 1.
+    - FRAMES: body 1 winds up and throws (`grenade-throw-1-0N`, `-3-0N`).
+  - `47e09b5f` vehicle seat, the scratch `vehicle-seat-rev2.txt` with `clear_enemies` (0.13.4: `4a9f053f`): passes.
+    - Both directions: `seat_show`, then `confirmed; state=0xdfb7fc6173d0; ms=33|34`, then `exit; ...; confirmed=1`.
+    - While the partner drove: `board_policy; vehicle=25608; seat=0; mode=block`. There was no `board_block`, since
+      nobody pressed E beside it.
+    - FRAMES: the seated driver in both directions.
+  - `3abff2e6` `partner-overlay-states.txt` (compared with `873d7197`): passes.
+    - All 14 guest states and both host states played and went back to native active.
+    - The last one logged `stop; reason=debug` before its timeout.
+    - The frames match `873d7197`: the stagger, ledge-hang arms, climb poses and die clip; `stateDead` standing; the
+      CBox states crouched without a box.
+  - `9dacaa70` `gameover-clock.txt` (0.13.4: `29fc8cab`): passes.
+    - All five waitlogs matched (`held_ms=6573`, `host_continue` ok, the guest's kind-4 follow replay).
+    - FRAMES: the pause menu, MISSION FAILED on both, both back in 30010.
+  - `42a3c0da` `box-regress.txt` (scratch; 0.13.4: `28094e48`): passes for the viewer, the same as 0.13.4.
+    - The guest is never `st=0x4`, and its `coop_carry` shows act 0x4D only on body 1.
+    - The host's six `st=0x4` are its own boxes.
+    - The 0.13.5 change: six `apply=native` (468, 472, 466, twice, `mapped=same`), six `entered; act=77` (100..122
+      ms) and five `off; reason=ok` (the host ends boxed).
+    - FRAMES: the three box models on body 1 beside the standing, unboxed guest.
+  - `6e1a25d5` `partner-native.txt`: passes against its own 0.13.4 baseline.
+    - Native mode was active in every capture: not latched, 0 snaps, the defer counters 0.
+    - Stances and acts match. Run, sprint, crouch-move, crawl and g-run speeds are within about 10 %, and the leak
+      captures read 0.
+    - Aim `bit18=1` and leak-aim 0; the reload was entered and completed (adapt `k_milli` 1326).
+- **Pre-existing, not a regression (not fixed here):** during the Ctrl+W walk, body 1 plays the run gait at 4.4..4.8
+  m/s while the remote walks at 1.2..1.3 m/s.
+  - The walk bit does arrive: `held=0x2200000`.
+  - Recon (`runaway; action=pin`) keeps the body on the remote's track, so it runs in place.
+  - The same scenario on the 0.13.4 build (`wp/integ8` `228eecb`, run `4f23f674`) shows the same: 3.1..4.8 vs
+    0.95..1.25 m/s, with identical frames.
+- **No regression, so no code change.**
+- **Environment:** D: was full (0 bytes free) at the first `partner-native.txt` attempt (`c6b0712f`).
+  - The worker's runtime.dat copy failed before the game launched. Closed, BaselineRestored and RealSavesUnchanged
+    were still true.
+  - This regression's own run directories were moved to the session scratchpad on C:, leaving D: with about 2 GB.
+    That is not enough for many more hidden runs (one run takes 0.3..0.8 GB).
 
 ## October 21, 2026: 0.13.4 source (gameover clock + C4 v2 + the 0.13.3 rework, with the box apply removed)
 
