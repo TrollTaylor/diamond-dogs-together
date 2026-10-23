@@ -1343,6 +1343,11 @@ inline bool NativeActive(const Driver& d) noexcept {
 // the peer's live ride addendum advertises RIDE_TILT (docs/vehicle-ws3.md).
 std::uint16_t LocalVehicle(const Driver& driver) noexcept;
 bool RideTiltPeer(const Driver& driver, std::uint32_t epoch, std::uint64_t now_ms) noexcept;
+// G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the
+// peer's live ride packet (this link epoch, inside the lease) of kind vehicle with a vehicle-type
+// id gives that id and the peer's seat (true); otherwise false with 0xFFFF / 0xFF. Read only.
+bool RidePeerVehicle(const Driver& driver, std::uint32_t epoch, std::uint64_t now_ms, std::uint16_t& vehicle,
+                     std::uint8_t& seat) noexcept;
 
 // Read-only admission from the same effective settings as Tick. The caller
 // must serialize with driver ticks; no caller-supplied active flag is accepted.

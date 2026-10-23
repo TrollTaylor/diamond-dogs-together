@@ -234,6 +234,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
         if (ok) result.partner_ride_board_given = true;
     }
+    else if (Equals(key, "debug_vehicle_door")) {
+        // G4 truck test levers (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.debug_vehicle_door);
+        if (ok) result.debug_vehicle_door_given = true;
+    }
     else return false;
     return true;
 }
@@ -1456,6 +1461,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // body while the partner rode a D-Walker or D-Horse, the body back after the
     // dismount, its own player unchanged); a named off opts out.
     if (!c.partner_native_mount_given) c.partner_native_mount = gun ? PartnerNativeMount::hide : PartnerNativeMount::off;
+    // G4 truck test levers: off unless named (no hidden-run FRAME of the truck door spot yet);
+    // play forces it off below.
+    if (!c.debug_vehicle_door_given) c.debug_vehicle_door = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1490,6 +1498,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // Gestures run in play too (the sender needs a live link session).
         // Mount riders run in play too: the play rehearsal 5a044a4d (-WanSim bad, key not
         // named) hid the D-Walker and the D-Horse rider as the lab runs did.
+        // G4 truck test levers are a lab tool (the receipt also refuses outside the lab).
+        c.debug_vehicle_door = false;
     }
 }
 

@@ -1,3 +1,34 @@
+## 0.13.6 (in progress)
+
+### debug_vehicle_door
+
+- G4 truck test setup for the passenger fallback proof (`wp/truck-helper`, docs/native-puppet.md "Truck test levers").
+  Not run in the game yet; the version stays 0.13.5.
+- Cause of the missing truck proof (runs `59cfc415`, `495e7c3a`, `de949f80`): RideVehicle CanExec gates trucks (types
+  3/4) on the door (within 1.4 m of `seat + 0.4 m` outward, on its outer side; `0x1246B13..0x1246CA0`), and the old
+  `goto_vehicle truck` spot was 1.9 m beside the record's centre, at the cargo bed. The two copies place their trucks
+  independently, so the guest's nearest truck was another one.
+- New lab key `debug_vehicle_door=0|1` (default 0 in lab and play, `_given` flag, play forces it off; the receipt also
+  refuses outside mode=lab with offline and redirected saves). Added to lab_config, the three `-LabSetting` regex copies
+  and help, LabCommon, worker_session_tests, lab_config_tests, lab_ini_check, friend_package_tests and the
+  native-puppet.md configuration table.
+- Native `MGS_COOP_VEHICLE_DOOR_V1` receipt (`native/vehicle_door.{hpp,cpp}`): this copy's record of a vehicle (or of
+  the vehicle in the partner's live ride packet), GetVehicleType / the seat count / the seat matrix `0xB7AF90` for
+  seats 0 and 1 under SEH with the record identity and the viewer's own act and ridden unit digested around them (a
+  surprise latches the mission); answers the stock door point and a stand spot. Read only, no patch.
+- Lua levers: `goto_vehicle truck [driver|passenger] [cm]` (the nearest truck with a free driver seat, its door's
+  stand spot; key off without arguments: the old spot), `goto_partner_vehicle [driver|passenger] [cm]` (the guest to
+  the host's current vehicle, passenger door by default) and the read-only `vehicle_door` report of the stock gate.
+- `coop-vehicle-passenger.txt` truck half rewritten: host boards a truck at its driver door and drives 1.5 s, the guest
+  warps beside this copy of it and presses E; expected `board_block; ...; mode=passenger; reason=type; type=3|4`.
+- Contract: `DOOR_SITES` (7 blocks), `DOOR_DATA` (0.4f x3, 1.4f), `door_assertions`; 750 code sites / 193 vtable slots
+  (was 743/193). Tests: `vehicle_door_tests` (new, in Get-WorkerTests), `partner_driver_tests`
+  (`RidePeerVehicle`), `lab_config_tests`, `debug_vehicle_lua_check`, `debug_menu_lua_check`.
+- Runtime still to prove (hidden runs): the host gets the truck's ride prompt at the stand spot (`vehicle_door`
+  `gate=pass`, frame `truck-door`, the E press boards), the guest's copy of the host's truck is where RIDE_FAST put it
+  (`fast=1`, `rider0=65535`), and the guest's E press logs `board_block; reason=type; type=3|4` with
+  `vehicle_not_riding`. Only then may a default change.
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
