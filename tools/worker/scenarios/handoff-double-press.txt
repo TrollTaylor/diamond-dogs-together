@@ -1,0 +1,45 @@
+# Title double press while the host's save is pending (online 2026-10-22 P2; docs/save-handoff.md
+# "Title Continue"). The host stays at its 40010 title with an unbound save (elig=4), so the guest
+# (real-save copy at 40050, need=1 why=location) waits for it (CFG r[12]=1): its first Continue is
+# refused with note 7 b=3. Presses 3 s apart, within the first 60 s of the pending handoff at this
+# title, never escape (no decision=repeat, no save_handoff=declined): the guest stays at 40050. Then
+# the host Continues into 30010, binds its set and offers it; the guest stages it (stage mode).
+# Run (coordinator only, hidden worker):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/handoff-double-press.txt -SaveSeed lab -GuestSaveSeed real -LabSetting save_handoff=stage -LabSetting travel_lock=1 -GraphicsQuality low
+#   remote-only guest save (P1): the same with -GuestSaveSeed real-remote (the guest logs
+#   save_handoff=set; ok=1; ...; local=0 and save_handoff=need; need=1 before its first Continue).
+# Before the fix: the third press logs decision=repeat, world=note; code=10,
+# save_handoff=declined; source=second_continue, and the guest leaves 40050.
+# Evidence (after):
+#  - guest script-observer.log: world=note; code=7; ...; b=3, later decision=held, no decision=repeat,
+#    no save_handoff=declined; hud=toast; kind=world_note; code=7 lines;
+#  - host: save_handoff=provenance; ...; mission=30010, save_handoff=offer; guest: save_handoff=staged.
+#  - Closed, BaselineRestored and RealSavesUnchanged true.
+# Variant (manual): wait 60 s at the title after the first refusal, then two presses 3 to 10 s apart
+# play the guest's own save (decision=repeat, note 10); F9 > Shared save > Keep my own save works at once.
+# The 60 s run from the guest's first title tick that sees r[12] 1..4 (X.pendingAt), not from its
+# first press: the host reaches its title first, and the guest's boot screens get their Enter only
+# then, so the guest's title (and its hold) starts right before the presses below.
+labsetting coop_hud=full
+titlemenu host 240
+titlemenu guest 240
+# The title opens on its press-any-button screen: the first Enter only opens the menu (travel-lock.txt).
+guest press enter
+wait 3000
+guest press enter
+waitlog guest 'world=note; code=7; .*b=3' 20
+wait 2000
+guest press enter
+wait 3000
+expectstate guest mission ^40050$
+# This press is 3 to 10 s after the refusal (a repeat before 0.13.6): held now.
+guest press enter
+waitlog guest 'step=lock; fn=TitleContinue; kind=4; .*decision=held' 10
+wait 3500
+guest press enter
+wait 3000
+expectstate guest mission ^40050$
+title host 240
+waitlog host 'save_handoff=offer; ' 120
+waitlog guest 'save_handoff=staged; ' 90
+expectstate guest mission ^40050$

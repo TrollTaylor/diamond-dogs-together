@@ -88,7 +88,14 @@ staged set is reused.
 | 4 | remote/TPP_GAME_DATA | `<save_dir>\remote` (the save redirect's RemoteStorage folder) |
 | 5 | remote/PERSONAL_DATA | |
 
-Slot 0 or 1 must be present. Any other name matching
+Slot 0 or 1 must be present for a set the host offers (its snapshot, the
+OFFER decode and the guest's manifest check). The guest's own set may also be
+identified by slot 4 alone (`remote\TPP_GAME_DATA`, with or without
+`PERSONAL_DATA`): a co-op copy seeded from an old Steam save has only the
+remote files until the game first writes a local slot, and without a set the
+guest never decided its need (online 2026-10-22 P1: STATE `need=0
+set=00000000`, the travel lock fell back to its story-start escape and the
+friend's second press loaded its own story mission alone). Any other name matching
 `^(TPP_GAME_DATA[0-9]?|PERSONAL_DATA[0-9]?)$` in either folder makes the set
 `unexpected_files`. `set_sha256` = SHA-256 over the present slots in ascending
 order, each contributing u8 slot, u32 size LE and its raw 32-byte SHA-256; hex
@@ -103,7 +110,10 @@ while RS_FileWrite / RS_FileDelete take it exclusive: a game write that arrives
 during the read waits for it (it never fails on a sharing violation) and the
 read never sees half a file. A file is read again only when its size or
 last-write time changed. An empty slot file gives an invalid set; a file over
-4 MiB is not read and makes the total exceed 8 MiB (too_large). The host
+4 MiB is not read and makes the total exceed 8 MiB (too_large). The glue
+logs its own set once per change: `save_handoff=set; ok=1; set=<8 hex>;
+files=N; local=0|1` or `save_handoff=set; ok=0; why=read|no_primary|hash;
+files=N` (an unstable pass logs nothing; the next one decides). The host
 snapshot reads the set into one VirtualAlloc block (at most 8 MiB), then
 hashes every file again at least 500 ms later; any difference refuses it. The
 memory is freed on release, failure and shutdown.
@@ -136,14 +146,47 @@ a different set; the host is eligible; the peer build passed; and fewer than 3
 offers went out for this set in this link session.
 
 Provenance binds a set to the mission it continues into: (a) a Lua CONTINUE
-(k==4) into M, after a double read 500 ms apart (source `continue`); (b) 30 s
-in game in 30010/30020/30050 with saving=0 and an unchanged set (source
-`settle`). Up to 8 entries (LRU) in `<save_dir>-handoff\provenance.json`
+(k==4) into M, after a double read 500 ms apart (source `continue`); (b) 10 s
+in game in 30010/30020/30050 with saving=0, fresh reports and an unchanged set
+(source `settle`; `kSettleBindMs`, 30 s until 0.13.5). The window was never
+the guard against a set saved for the next mission (SaveGameData(next) right
+before a load): every mission load reports loading at once (world_handoff
+`X.leaving` in `e.ReservePlayerLoadingPosition`), which ends the window before
+the vanilla load, and a report gap over 3 s, saving=1 or any set change
+restarts it. In the 2026-10-22 session a guest waited 16 s at its title for
+the host's 30 s in Mother Base after a deploy (a deploy is no Continue bind).
+Up to 8 entries (LRU) in `<save_dir>-handoff\provenance.json`
 (written with WriteFileAtomic, read at Configure, rewritten when malformed):
 
 ```
 {"format":"mgs-coop-save-provenance","v":1,"entries":[{"set":"<64 HEX>","mission":30010,"source":"continue|settle","utc":"...Z"}]}
 ```
+
+### Messages while the guest waits (online 2026-10-22 P3, P6)
+
+| Situation | Guest | Host |
+|---|---|---|
+| Host's set not bound, host in game in 30010/30020/30050 (the settle bind runs) | G11 "The host is in <M>: their save is checked there (about 10 s), then copied to you at the title screen and MGSV restarts once." (the seconds only for a host build at least 0.13.6, `kSettle10Min*`: a 0.13.5 host still takes 30 s, so an older host gets the sentence without them); F9 `wait_host` why 2 "The host's save is checked in their mission, then copied to you at the title screen." | H8 "Checking your save here (about 10 s; stay in this mission), then it is copied to <partner>."; F9 refused why 4: "Your save is shared once it is known to continue into Mother Base or free roam: Continue there, or stay there a few seconds." |
+| Host's set not bound, host elsewhere | G4 (now "...copied to you at the title screen...") | H3 |
+| Host eligible, guest in game in a mission (the OFFER needs its title) | G12 once per link session "The host's save is ready for you: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. MGSV then restarts once on it."; F9 `wait_host` why 1 | (idle) |
+| Nothing decided yet (`idle`) | F9 "Comparing your save with the host's; nothing to share yet." (it shared the `same` sentence) | the same for the host |
+
+`View.why` for `wait_host` is `save_handoff_state::WaitWhy` (0 host_elsewhere,
+1 title, 2 settling). G11 / H8 replace G4 / H3 per state: a host that leaves
+Mother Base for its helicopter before the bind still gets H3 (and the guest
+G4), each once per state and link session. The Lua title refusal says the
+same: NOTE 7 b=4 "The host is in <M>; their save is checked there and then
+copied to you." when the host is in game in a co-op scene (b=3 otherwise;
+no duration, since the window is the host build's).
+
+The guest's start-up mission 1 (the Lua report says ingame=1, title=0 there)
+is no location and no "in game" (review of the online 2026-10-22 fixes): the
+location rule (`Loc(1)` = 0 against the host's) decides nothing there, the
+last decision stands (none at a boot: `idle`) until a real mission, normally
+the title; the story and set rules still decide at once. G12 / why 1 need a
+mission of 10000 or more. Before, a guest whose title is at the host's place
+got need=1 why=location while booting, G11 / H8 for that boot, and with the
+host eligible the once-per-session G12 ("go back to the title screen").
 
 ## Staging (P2-9)
 
@@ -190,6 +233,34 @@ failed, applied`. CFG r[12] (Lua): 0 none/off/host, 1 wait_host, 2 receiving,
 travel lock bit (the effective `lab.ini` `travel_lock`, the F9 unlock not set,
 guest role).
 
+## Title Continue (online 2026-10-22 P2)
+
+The first refused title Continue reopens the menu, and players press again: in
+the session the second press 2.1 s later played the guest's own save alone
+(and with a handoff pending it would have declined it for the whole process).
+Since then (`lua/coop/world_handoff.lua` `again()` and `X.decline`):
+
+- At the title, presses under 3 s apart are one double press: never an escape
+  or a decline (no new note either). The deliberate repeat is 3 to 10 s after
+  the refusal (NOTE 7 b=1/b=2 say so).
+- A pending handoff (CFG r[12] 1..4: NOTE 7 b=3/b=4 and NOTE 9) has no
+  Continue escape for its first 60 s at this title, counted from the first
+  tick or press that saw the pending code (`X.pendingAt`, reset when the code
+  leaves 1..4 or the mission changes). A press in the repeat window logs
+  `decision=held` and posts the note again. F9 > Partner / Co-op > Shared save
+  > Keep my own save is the explicit way out at any time; after the 60 s a
+  repeat 3-10 s apart still declines (SAVE op 3, NOTE 10) and plays the own
+  save.
+- Code 1 (wait_host) at the title is a travel-lock rule: with the lock on it
+  is refused (NOTE 7 b=3/b=4) before the peer rules, so also while the host
+  loads (CFG peer mission 0, as at 17:46:14 in the session), is in a story
+  mission, is not linked or a host transition is queued (the replay hold keeps
+  it). Before the review fix those returned allow ahead of the title rule, and
+  the first press loaded the guest's own save. With the lock off (F9 Travel
+  lock unchecked) code 1 is allowed at once; only codes 2..4 (NOTE 9) are
+  refused without the lock.
+- Away from the title (in-mission Continue, travel) nothing changed.
+
 ## Exit (P2-10)
 
 PostExit happens only when the mode is scene or always; the stage is
@@ -197,10 +268,22 @@ committed, the request written and RESULT staged sent; the last Lua report is
 at most 1.5 s old with title=1, saving=0 and ingame=0; no partner mission is
 armed and the game is not terminating (the glue passes the runtime mission
 from the observer and counts a title 4xxxx or start-up mission as none); the
-10 s countdown ran with the title held throughout; and no decline arrived (Lua
-DECLINE: Continue pressed twice, or F9 'Keep my own save'). Then RESULT
-exiting goes out and the largest visible, unowned top-level window of this
-process gets `WM_CLOSE` (EnumWindows; debug_overlay is not involved). Without
+10 s countdown ran with the title held throughout; and no decline arrived (F9
+'Keep my own save', or a Lua DECLINE: Continue pressed twice after the first
+60 s, see "Title Continue"). Then RESULT exiting goes out and, once channel 4
+is empty (`ReliableQueued(4)` 0: RESULT exiting acknowledged), it was refused
+unsent, or at most `kExitFlushMs` (1 s) later, the largest visible, unowned
+top-level window of this process gets `WM_CLOSE` (EnumWindows; debug_overlay
+is not involved): `save_handoff=exit_flush; ms=N; acked=0|1`. Before online
+2026-10-22 P4 the WM_CLOSE went out in the same drain; the overlay's
+PartnerShutdown parked the Steam link before the RESULT left, so the host
+never got H2. The host now also infers the restart: a scene/always guest
+(its last STATE mode) with a verified stage (`partner_staged`, host phase
+done) whose link closes is restarting on the host's save (its countdown exit,
+a manual quit or a crash; the tooling applies the request on any exit):
+`partner_restarting`, H2 and `save_handoff=partner_restarting;
+how=link_closed`. A stage-mode guest never exits, so its leaving stays
+`partner_staged`. Without
 a window: `save_handoff=exit; how=no_window` and toast G9; still alive 20 s
 later: `save_handoff=exit_slow` and G9. After a WM_CLOSE the overlay's
 PartnerShutdown stops the Core (and a Steam link parks), so the glue arms its
@@ -262,11 +345,17 @@ Glue: `save_handoff=configured; role=host|guest; mode=<mode>; channel=4; dir=ok`
 `save_handoff=disabled; reason=<reason>`, `save_handoff=cleanup; removed=N`,
 `save_handoff=io_error; op=<action>; error=<win32>` (at most once per 10 s),
 `save_handoff=rejoin; written=0`, `save_handoff=exit_slow` (the timer after a
-WM_CLOSE). Core (P2-16): `state_rx`, `need`, `provenance`, `offer`, `decide`,
-`progress`, `staged`, `countdown`, `exit`, `exit_slow` (no_window), `abort`,
-`failed`, `result_rx`, `applied_seen`, and the single
+WM_CLOSE), `save_handoff=set; ok=..` (the own set, once per change). Core
+(P2-16): `state_rx`, `need`, `provenance`, `offer`, `decide`, `progress`,
+`staged`, `countdown`, `exit_flush`, `exit`, `exit_slow` (no_window), `abort`,
+`failed`, `result_rx`, `partner_restarting; how=link_closed`, `applied_seen`,
+and the single
 `save_handoff=bad_msg; why=<short|magic|version|kind|size|bounds|role|direction>; count=N`
 (at most once per 10 s; role and direction extend P2-5's decode reasons).
+The HUD (online 2026-10-22 P8) logs every world note and save handoff toast it
+is given: `hud=toast; kind=world_note|save_handoff; code=N; a=..; b=..[;
+partner=..; local=..]; on=0|1[; skipped=N]`, one (kind, code) at most once per
+10 s (`coop_hud::SetEventLog`, set by partner_net::Start).
 
 ## link-status.json, state.json and the HUD
 
@@ -291,6 +380,32 @@ after `world_pair_wait`. The HUD LinkView carries `handoff` and `handoff_pct`.
   guest, records every new file hash, sets `relaunching` (count 1) and starts
   MGSV through Steam. One restart per session; any failure leaves the co-op
   save unchanged.
+- The relaunch (online 2026-10-22 P5: Steam ignored the request and MGSV came
+  back 3 minutes later): `Wait-CoopSteamAppStopped` waits up to 30 s until
+  Steam no longer marks MGSV as running (`Get-CoopSteamAppRunning`, read only:
+  `HKCU:\Software\Valve\Steam\Apps\287700` `Running` or `HKCU:\Software\Valve\Steam`
+  `RunningAppID` = 287700), then 2 s (5 s when the flag cannot be read) before
+  `steam://rungameid/287700`. The Play-Coop window asks Steam again every 20 s
+  while no game runs and Steam does not mark it running, and prints the
+  manual line ("MGSV is not back yet: start MGS V from Steam yourself (press
+  Play); co-op stays on for N more seconds.") at 45 s instead of 120 s; the
+  helper retries the same way once the
+  window is gone. The manual line needs the window's own relaunch check: a
+  retry that passed or, when Steam still marked MGSV as running so no retry
+  went out, `Start-CoopRelaunch -CheckOnly` at 45 s (the same checks, no
+  request; `relaunch=checked`); with Steam's flag still set it reads "MGSV is
+  not back yet, and Steam still shows MGS V as running: once Steam shows Play
+  again, press it; co-op stays on for N more seconds." (review fix: before, a
+  stuck flag gave no line at all until the 300 s limit). The window prints
+  the applied save and "Waiting for Steam to let MGSV start again (up to
+  30 s)..." before that Steam wait (`Invoke-CoopHandoffAfterExit -OnApplied`),
+  not after it. Every step goes to `mgs-coop\play-coop.log` (`Write-CoopPlayLog`:
+  launch, game seen/exited, claim, apply, Steam's flag, each request or retry,
+  the manual hint; states, times and pids only, never a code or a SteamID;
+  over 1 MB it moves to `play-coop.old.log`), and Collect-Logs collects it.
+  `Get-CoopRelaunchWait` reads `play-session.json` again for up to 1 s before
+  it reports co-op as switched off: a read that races the helper's File.Replace
+  is no switch-off.
 - `Invoke-CoopPlayCleanup` does nothing while `handoff.state` is `applying` or
   `relaunching`, the claim is under 300 s old and its process lives (`-Force`
   bypasses it).
@@ -313,3 +428,12 @@ the status keys and the 1536-byte worst case), `world_receipt_tests`,
 remote snapshot under concurrent writes), `worker_debug_tests`, and the Lua
 checks. Hidden worker runs R2..R7 in the phase-2 spec (handoff-stage,
 handoff-restart, handoff-after-restart, travel-lock and the regressions).
+Online 2026-10-22: `save_handoff_core_tests` TestRemoteOnlyGuest,
+TestSettleWait, TestGuestInGame, TestExitFlush, TestHostInfersRestart;
+`save_handoff_io_tests` (the remote-only guest set and its log line);
+`steam_transport_tests` (the texts and the toast log); the Lua checks (the
+title double press and the 60 s hold, NOTE 7 b=4, NOTE 3 b=5, no NOTE 6 into
+the partner's mission); `friend_package_tests` (Steam's flag, the wait,
+play-coop.log, Collect-Logs); `worker_session_tests` (`-GuestSaveSeed
+real-remote`). Worker scenario `handoff-double-press.txt` (with `-GuestSaveSeed
+real` or `real-remote`).

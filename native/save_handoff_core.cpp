@@ -23,6 +23,10 @@ template <typename E>
 std::uint8_t U8(E value) noexcept {
     return static_cast<std::uint8_t>(value);
 }
+// Machine::toasted for continue_unknown while the host settles in game (G11 /
+// H8 instead of G4 / H3); not a wire::Elig value.
+constexpr std::uint8_t kSettleToast = 0x40;
+std::uint32_t SettleSeconds() noexcept { return static_cast<std::uint32_t>((kSettleBindMs + 999) / 1000); }
 
 void CopyText(char* out, std::size_t capacity, const char* text) noexcept {
     if (!capacity) return;
@@ -1094,6 +1098,7 @@ void Core::OnSession(std::uint32_t session, std::uint64_t now_ms) noexcept {
     m_.state_force = true;
     m_.offers = 0;
     m_.toasted = 0xFF;
+    m_.g12_toasted = false;
     m_.stop = false;
     m_.retry_at = 0;
     if (config_.role == wire::Role::host) {
@@ -1117,10 +1122,22 @@ void Core::OnPeerClose(std::uint64_t now_ms) noexcept {
     m_.peer_seen = false;
     m_.need_known = false;
     if (config_.role == wire::Role::host) {
-        if (m_.host == HostPhase::offered || m_.host == HostPhase::sending || m_.host == HostPhase::end_sent)
+        if (m_.host == HostPhase::offered || m_.host == HostPhase::sending || m_.host == HostPhase::end_sent) {
             HostFail(wire::Fail::link_lost, wire::AbortReason::none, now_ms);
-        else if (m_.host == HostPhase::snapshot)
+        } else if (m_.host == HostPhase::snapshot) {
             m_.host = HostPhase::idle;
+        } else if (m_.host == HostPhase::done && static_cast<Token>(view_.token) == Token::partner_staged &&
+                   (m_.peer.mode == wire::Mode::scene || m_.peer.mode == wire::Mode::always)) {
+            // Online 2026-10-22 P4: a scene/always guest with a verified stage
+            // that leaves is restarting on this save (its countdown exit, a
+            // manual quit or a crash: the tooling applies the request on any
+            // exit). Its RESULT exiting can be lost when its link shuts down
+            // right after it (Steam parks at the WM_CLOSE), so the host infers it.
+            SetToken(Token::partner_restarting, 0);
+            m_.sticky = true;
+            Log("save_handoff=partner_restarting; how=link_closed");
+            PostToast(Toast::h2_partner_restarting, m_.offer.bound_mission, 0);
+        }
     } else if (config_.role == wire::Role::guest) {
         if (m_.guest == GuestPhase::receiving) GuestFail(wire::Fail::link_lost, wire::Kind::state, now_ms);
     }
@@ -1302,6 +1319,9 @@ void Core::OnSendResult(const Action& sent, bool queued, std::uint64_t now_ms) n
     case wire::Kind::result:
         if (!host && sent.xfer == m_.xfer && sent.data[8] == U8(wire::ResultStatus::staged) && m_.stage_ok)
             m_.result_retry = true;
+        // RESULT exiting refused (not connected): nothing to wait for before the WM_CLOSE.
+        if (!host && sent.xfer == m_.xfer && sent.data[8] == U8(wire::ResultStatus::exiting) && m_.exit_pending)
+            m_.exit_unsent = true;
         break;
     default: break;
     }
@@ -1370,7 +1390,7 @@ void Core::Tick(std::uint64_t now_ms, unsigned queued) noexcept {
     if (m_.cb_active && now_ms - m_.cb_at > kContinueBindMs) m_.cb_active = false;
     TickHash(now_ms);
     if (config_.role == wire::Role::host) HostTick(now_ms, queued);
-    else if (config_.role == wire::Role::guest) GuestTick(now_ms);
+    else if (config_.role == wire::Role::guest) GuestTick(now_ms, queued);
     TickState(now_ms);
     Flush();
 }
@@ -1438,7 +1458,7 @@ void Core::HostTick(std::uint64_t now_ms, unsigned queued) noexcept {
                 CopySet(m_.snap_set, m_.set.set);
             }
         } else {
-            HostRest();
+            HostRest(now_ms);
         }
         break;
     case HostPhase::snapshot:
@@ -1497,7 +1517,7 @@ void Core::HostTick(std::uint64_t now_ms, unsigned queued) noexcept {
     }
 }
 
-void Core::HostRest() noexcept {
+void Core::HostRest(std::uint64_t now_ms) noexcept {
     if (m_.host != HostPhase::idle || m_.sticky) return;
     if (!m_.peer_seen) {
         SetToken(Token::idle, 0);
@@ -1512,15 +1532,22 @@ void Core::HostRest() noexcept {
     case wire::Elig::unknown:
     case wire::Elig::saving:
     case wire::Elig::story_unknown: break;  // transient: keep the token
-    default:
+    default: {
         SetToken(Token::refused, U8(m_.elig));
-        if (m_.toasted != U8(m_.elig)) {
-            m_.toasted = U8(m_.elig);
-            if (m_.elig == wire::Elig::continue_unknown) PostToast(Toast::h3_partner_elsewhere, 0, 0);
+        // Online 2026-10-22 P3: in game in 30010/30020/30050 the settle bind is
+        // under way (H8), so "go to Mother Base or free roam" (H3) is wrong there.
+        const bool settling = m_.elig == wire::Elig::continue_unknown && Fresh(now_ms, kPhaseFreshMs) && m_.report.ingame &&
+                              !m_.report.title && SettleMission(m_.report.mission);
+        const std::uint8_t key = settling ? kSettleToast : U8(m_.elig);
+        if (m_.toasted != key) {
+            m_.toasted = key;
+            if (settling) PostToast(Toast::h8_settling, SettleSeconds(), 0);
+            else if (m_.elig == wire::Elig::continue_unknown) PostToast(Toast::h3_partner_elsewhere, 0, 0);
             else if (m_.elig == wire::Elig::story_opening) PostToast(Toast::h4_story_opening, 0, 0);
             else if (m_.elig == wire::Elig::continue_unsupported) PostToast(Toast::h7_unsupported, OwnBound(), 0);
         }
         break;
+    }
     }
 }
 
@@ -1724,6 +1751,11 @@ void Core::GuestNeedUpdate(std::uint64_t now_ms) noexcept {
     host.bound_mission = m_.peer.bound_mission;
     NeedWhy why = NeedWhy::off;
     const std::uint8_t need = GuestNeed(config_.mode, own, host, why);
+    // Review (online 2026-10-22): the start-up mission 1 (or 0) is no location;
+    // Loc 0 against the host's would give need=1 why=location to a guest whose
+    // title is at the host's place (G11 / H8 at its boot). That rule waits for
+    // a real mission (the title); the other rules decide at once.
+    if (why == NeedWhy::location && own.mission < 10000) return;
     if (!m_.need_logged || need != m_.need || why != m_.need_why) {
         Log("save_handoff=need; need=%u; why=%s", unsigned{need}, NeedWhyName(why));
         m_.need_logged = true;
@@ -1733,7 +1765,7 @@ void Core::GuestNeedUpdate(std::uint64_t now_ms) noexcept {
     m_.need_known = true;
 }
 
-void Core::GuestRest() noexcept {
+void Core::GuestRest(std::uint64_t now_ms) noexcept {
     if (m_.guest != GuestPhase::idle || m_.sticky) return;
     if (m_.applied && (!m_.need_known || !m_.need)) {
         SetToken(Token::applied, 0);
@@ -1748,8 +1780,17 @@ void Core::GuestRest() noexcept {
         SetToken(Token::same, 0);
         return;
     }
+    using save_handoff_state::WaitWhy;
     const wire::Elig elig = m_.peer.elig;
-    const bool first = m_.toasted != U8(elig);
+    // Online 2026-10-22 P3: the host is in game in 30010/30020/30050 with a set
+    // not bound yet: its settle bind is under way (G11), it need not go anywhere (G4).
+    const bool settling = elig == wire::Elig::continue_unknown && m_.peer.phase == wire::Phase::ingame &&
+                          SettleMission(m_.peer.mission);
+    // P6: the OFFER comes only at this guest's title (GuestWants); in game it is told so (G12).
+    // Not in the start-up mission 1 (ingame=1 there): that guest reaches its title anyway.
+    const bool away = Fresh(now_ms, kPhaseFreshMs) && m_.report.ingame && !m_.report.title && m_.report.mission >= 10000;
+    const std::uint8_t key = settling ? kSettleToast : U8(elig);
+    const bool first = m_.toasted != key;
     switch (elig) {
     case wire::Elig::story_opening:
         SetToken(Token::refused, U8(elig));
@@ -1759,27 +1800,43 @@ void Core::GuestRest() noexcept {
     case wire::Elig::too_large:
     case wire::Elig::off: SetToken(Token::refused, U8(elig)); break;
     case wire::Elig::continue_unknown:
-        SetToken(Token::wait_host, 0);
-        if (first) PostToast(Toast::g4_wait_host, 0, 0);
+        SetToken(Token::wait_host, U8(settling ? WaitWhy::settling : WaitWhy::host_elsewhere));
+        if (first) {
+            // The seconds are the host's window: only a host with this build's 10 s.
+            if (settling)
+                PostToast(Toast::g11_host_settling, m_.peer.mission,
+                          wire::RemoteBuildAtLeast(m_.remote_build, kSettle10MinMajor, kSettle10MinMinor, kSettle10MinPatch)
+                              ? SettleSeconds()
+                              : 0);
+            else PostToast(Toast::g4_wait_host, 0, 0);
+        }
         break;
     case wire::Elig::continue_unsupported:
         SetToken(Token::wait_host, 0);
         if (first) PostToast(Toast::g6_host_unsupported, m_.peer.bound_mission, 0);
         break;
-    default: SetToken(Token::wait_host, 0); break;  // eligible (the OFFER follows) or transient
+    case wire::Elig::eligible:
+        // The OFFER follows at the title; in game the guest must go there first.
+        SetToken(Token::wait_host, U8(away ? WaitWhy::title : WaitWhy::host_elsewhere));
+        if (away && !m_.g12_toasted) {
+            m_.g12_toasted = true;
+            PostToast(Toast::g12_go_to_title, m_.peer.bound_mission, 0);
+        }
+        break;
+    default: SetToken(Token::wait_host, 0); break;  // transient
     }
     if (elig == wire::Elig::story_opening || elig == wire::Elig::continue_unknown || elig == wire::Elig::continue_unsupported)
-        m_.toasted = U8(elig);
+        m_.toasted = key;
 }
 
-void Core::GuestTick(std::uint64_t now_ms) noexcept {
+void Core::GuestTick(std::uint64_t now_ms, unsigned queued) noexcept {
     GuestNeedUpdate(now_ms);
     if ((m_.guest == GuestPhase::staged || m_.guest == GuestPhase::countdown) && m_.result_retry) {
         m_.result_retry = false;
         SendSmall(wire::Kind::result, m_.xfer, U8(wire::ResultStatus::staged), 0);
     }
     switch (m_.guest) {
-    case GuestPhase::idle: GuestRest(); break;
+    case GuestPhase::idle: GuestRest(now_ms); break;
     case GuestPhase::receiving:
         if (now_ms - m_.last_chunk >= kChunkStallMs) GuestFail(wire::Fail::stall, wire::Kind::abort, now_ms);
         break;
@@ -1820,6 +1877,16 @@ void Core::GuestTick(std::uint64_t now_ms) noexcept {
         break;
     }
     case GuestPhase::exiting:
+        // P4: the WM_CLOSE once RESULT exiting (and everything before it) is
+        // acknowledged, it was refused unsent, or kExitFlushMs passed.
+        if (m_.exit_pending && (queued == 0 || m_.exit_unsent || now_ms - m_.exit_req_at >= kExitFlushMs)) {
+            m_.exit_pending = false;
+            m_.exit_at = now_ms;
+            Log("save_handoff=exit_flush; ms=%u; acked=%u", static_cast<unsigned>(now_ms - m_.exit_req_at),
+                queued == 0 && !m_.exit_unsent ? 1u : 0u);
+            Emit(ActionKind::post_exit);
+            break;
+        }
         // no_window only (G9 already shown; the game keeps running and ticking).
         // After a WM_CLOSE the overlay's PartnerShutdown stops this core (and a
         // Steam link parks), so the glue's own timer logs exit_slow and shows G9.
@@ -1832,11 +1899,14 @@ void Core::GuestTick(std::uint64_t now_ms) noexcept {
 }
 
 void Core::DoExit(std::uint64_t now_ms) noexcept {
+    m_.exit_pending = true;  // before the send: its refusal (OnSendResult) clears the wait
+    m_.exit_unsent = false;
+    m_.exit_req_at = now_ms;
     SendSmall(wire::Kind::result, m_.xfer, U8(wire::ResultStatus::exiting), 0);
     m_.guest = GuestPhase::exiting;
     SetToken(Token::exiting, 0);
     if (config_.rejoin) Emit(ActionKind::write_rejoin);
-    Emit(ActionKind::post_exit);
+    // post_exit follows in GuestTick (P4: the host must learn about the restart first).
     m_.exit_posted = false;
     m_.exit_at = now_ms;
 }
@@ -2079,6 +2149,7 @@ void Core::GuestAbortStage(wire::AbortReason reason, std::uint64_t now_ms) noexc
 void Core::GuestCancelExit(wire::AbortReason reason, std::uint64_t now_ms) noexcept {
     GuestAbortStage(reason, now_ms);
     m_.exit_posted = m_.exit_window = m_.exit_slow = false;
+    m_.exit_pending = m_.exit_unsent = false;  // a WM_CLOSE still waiting for the flush never goes out
 }
 
 }  // namespace mgscoop::save_handoff_core

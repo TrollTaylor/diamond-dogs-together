@@ -1,8 +1,6 @@
--- Join-fix phase 2 (docs/join-fix-phase2-spec.md C1-C6): the SAVE report for the
--- native save handoff, the guest travel lock (inner wrappers below world_follow's
--- armed-guest suppression), travel warnings and the title replay hold. A title
--- Continue is gated at the title menu itself (title_sequence Seq_Game_TitleMenu):
--- the game's title Continue never calls TppMission's Continue functions.
+-- Join-fix phase 2 (docs/join-fix-phase2-spec.md C1-C6): SAVE report, guest travel lock
+-- (below world_follow's armed-guest suppression), travel warnings, title replay hold.
+-- A title Continue is gated at the title menu (title_sequence Seq_Game_TitleMenu).
 do
 local W = e.MgsCoopWorld
 local F = W.follow
@@ -25,7 +23,7 @@ local function line(fn, kind, target, host, decision)
 log(fmt("step=lock;fn=%s;kind=%d;target=%d;host=%d;decision=%s", fn, kind, target or 0, host or 0, decision))
 end
 function X.title() return W.get(gvars, "ini_isTitleMode") == true and floor((W.mission or 0) / 10000) == 4 end
--- 0 unknown (unreadable or unordered constants), 1 story opening, 2 open (Mother Base reached).
+-- 0 unknown (unreadable/unordered constants), 1 story opening, 2 open (Mother Base reached).
 function X.story()
 local d = W.get(TppDefine, "STORY_SEQUENCE")
 local q, a, b, c = num(W.get(gvars, "str_storySequence")), num(W.get(d, "CLEARD_ESCAPE_THE_HOSPITAL")),
@@ -40,7 +38,7 @@ local ok, v = pcall(f)
 return ok and v == true
 end
 function X.ingame() return W.active and not X.title() and not X.leaving and W.inGame() == true end
--- CFG r[12] (handoff code) and r[13] (lock); nil reads as 0. maxAge: reuse a read that recent.
+-- CFG r[12] (handoff code) and r[13] (lock); nil reads as 0; maxAge reuses a recent read.
 function X.code(maxAge)
 local now = W.now()
 local age = X.codeAt and now - X.codeAt
@@ -84,7 +82,7 @@ if not F.enabled or not W.active or (W.level or 0) < 3 or not F.session() then r
 local h, lock = X.code()
 local esc = X.esc[kind .. ":" .. (target or 0)]
 if esc and now <= esc then return "allow" end
--- A pending handoff vetoes a title Continue (note 9, twice declines) with or without the lock.
+-- A pending handoff vetoes a title Continue (note 9) with or without the lock.
 local title = kind == 4 and X.title()
 if title and h >= 2 and h <= 4 then
     local p = peer()
@@ -92,11 +90,15 @@ if title and h >= 2 and h <= 4 then
 end
 if lock ~= 1 then return "allow" end
 local p = peer()
+-- Code 1 at the title: refused (held, P2) also while the host loads or a follow is queued.
+if title and h == 1 then
+    local m = p and num(p.mission) or 0
+    return "refuse", 7, m, SUPPORTED[m] and floor(m / 10000) == 3 and 4 or 3, m
+end
 if not p or not p.linked or (num(p.level) or 0) < 3 then return "allow" end
 local m = p.mission
 if m == 0 or m == 1 or not SUPPORTED[m] or F.current or #F.queue > 0 then return "allow" end
 if title then
-    if h == 1 then return "refuse", 7, m, 3, m end
     if heli then return "allow" end
     if X.story() == 1 then return "refuse", 7, m, 2, m end
     if SUPPORTED[W.mission] ~= SUPPORTED[m] then return "refuse", 7, m, 1, m end
@@ -126,24 +128,36 @@ elseif kind == 6 then
 elseif type(args) == "table" and args.isTitleMode ~= true then t = args.nextMissionId end
 return num(t)
 end
--- A refused call: noted at most once per 1 s; true for the repeat 1-10 s (Continue)
+-- Title (P2): presses under 3 s apart are no escape; a pending handoff (note 9,
+-- 7 b=3/4) has none for 60 s (F9 Keep my own save escapes).
+local GAP = 3000
+local function pending(code, b) return code == 9 or (code == 7 and b >= 3) end
+local function held(now)
+X.pendingAt = X.pendingAt or now
+return now - X.pendingAt < 60000
+end
+-- A refused call: noted at most once per gap; true for the repeat gap-10 s (Continue)
 -- or 1-30 s (travel) later, which runs once (travelling alone; quiet: no note 8).
 local function again(name, kind, t, now, code, a, b, m, quiet)
 local key, r = kind .. ":" .. (t or 0), X.refused
+local title = kind == 4 and X.title()
+local gap = title and GAP or 1000
+local hold = title and pending(code, b) and held(now)
 local span = r and r.key == key and r.mission == W.mission and now - r.at
-if span and span >= 1000 and span <= (kind == 4 and 10000 or 30000) then
+local window = span and span >= gap and span <= (kind == 4 and 10000 or 30000)
+if window and not hold then
     X.refused = nil
     X.esc[key] = now + 2000
-    if code == 9 or (code == 7 and b == 3) then X.save(3, 1, 0, 0, 0, 0); note(10, 0, 0) end
+    if pending(code, b) then X.save(3, 1, 0, 0, 0, 0); note(10, 0, 0) end
     if not quiet then note(8, t, 1) end
     line(name, kind, t, m, "repeat")
     return true
 end
-if not (span and span >= 0 and span < 1000) then
+if not (span and span >= 0 and span < gap) then
     X.refused = {key = key, mission = W.mission, at = now}
     note(code, a, b)
 end
-line(name, kind, t, m, "refuse")
+line(name, kind, t, m, window and "held" or "refuse")
 return false
 end
 local function wrap(name, kind)
@@ -189,9 +203,9 @@ line(DEPLOY, 6, hd.target, hd.host, why)
 X.call(hd.fn, unpack(hd, 1, hd.n))
 end
 -- The held sortie: dropped on a mission change, a follow, or once the prep screen
--- no longer names it (cancelled or changed: the vanilla deploy re-reads gvars);
--- released when world sync stopped (world_sync calls this while inactive), by the
--- F9 unlock, after 120 s, or once the lock no longer applies; the note every 3 s.
+-- no longer names it (the vanilla deploy re-reads gvars); released when world sync
+-- stopped (world_sync calls this while inactive), by the F9 unlock, after 120 s,
+-- or once the lock no longer applies; the note every 3 s.
 function X.hold(now)
 local hd = X.held
 if not hd then return end
@@ -221,6 +235,8 @@ end
 function X.tick(now)
 report(now)
 for k, t in pairs(X.esc) do if now > t then X.esc[k] = nil end end
+local h = not W.host and W.active and X.title() and X.code(1000) or 0
+if h < 1 or h > 4 then X.pendingAt = nil else X.pendingAt = X.pendingAt or now end
 X.hold(now)
 end
 local tick = F.tick
@@ -242,14 +258,16 @@ if h < 2 or h > 4 then return end
 t = t or W.mission
 local now, key, r = W.now(), "4:" .. t, X.refused
 local span = r and r.key == key and r.mission == W.mission and now - r.at
-if span and span >= 1000 and span <= 10000 then
+local window, hold = span and span >= GAP and span <= 10000, held(now)
+if window and not hold then
     X.refused = nil
     X.save(3, 1, 0, 0, 0, 0)
     note(10, 0, 0)
     line("TitleContinue", 4, t, 0, "decline")
-elseif not (span and span >= 0 and span < 1000) then
+elseif not (span and span >= 0 and span < GAP) then
     X.refused = {key = key, mission = W.mission, at = now}
     note(9, 0, 0)
+    if window then line("TitleContinue", 4, t, 0, "held") end
 end
 end
 -- world_follow's guest(): an armed guest follows the host's travel.
@@ -279,7 +297,7 @@ X.fromTitle = not heli
 if X.pass or F.token or W.host or not W.active then return original(...) end
 local now, t = W.now(), nxt ~= 0 and nxt or W.mission
 local name = heli and "TitleRestartHeli" or "TitleContinue"
--- An armed guest is world_follow's (its step=request line); it never reaches the lock.
+-- An armed guest is world_follow's (step=request); it never reaches the lock.
 if not heli and armed() then
     pcall(X.decline, t)
     F.request(4)
@@ -321,7 +339,7 @@ report(now, true)
 if not (t and p and p.linked) then return end
 if W.host then
     local key = tostring(W.mission) .. ":" .. t
-    if not SUPPORTED[t] and not X.warned[key] then
+    if not SUPPORTED[t] and p.mission ~= t and not X.warned[key] then
         X.warned[key] = true
         note(6, t, p.mission)
         log(fmt("step=warn;reason=partner_cannot_join;target=%d", t))
@@ -349,7 +367,7 @@ if type(reserve) == "function" then
 end
 end
 W.startHooks[#W.startHooks + 1] = function()
-X.held, X.refused, X.leaving, X.last, X.replayCode, X.fromTitle = nil, nil, false, nil, nil, false
+X.held, X.refused, X.leaving, X.last, X.replayCode, X.fromTitle, X.pendingAt = nil, nil, false, nil, nil, false, nil
 X.esc, X.warned = {}, {}
 end
 end

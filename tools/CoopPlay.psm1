@@ -72,6 +72,8 @@ function Get-InstancePaths {
         CoopSavesHandoff = Join-Path $mod 'coop-saves-handoff'
         CoopSavesReplaced = Join-Path $mod 'coop-saves-replaced'
         LinkRejoin = Join-Path $mod 'link-rejoin.txt'
+        # Play-Coop's own steps (the handoff restart through Steam; Collect-Logs collects it).
+        PlayCoopLog = Join-Path $mod 'play-coop.log'
     }
 }
 
@@ -1125,7 +1127,7 @@ function Get-CoopHandoffText {
     switch -CaseSensitive ([string]$Token) {
         'wait_host' {
             $segment = " | waiting for the host's save"
-            $line = "Your save starts somewhere other than the host's. Once the host is in Mother Base or free roam, their save is copied to you and MGSV restarts once."
+            $line = "Your save starts somewhere other than the host's. Once the host is in Mother Base or free roam, their save is copied to you at the title screen and MGSV restarts once."
         }
         'receiving' {
             $segment = " | getting the host's save $Pct%"
@@ -1133,7 +1135,8 @@ function Get-CoopHandoffText {
         }
         { $_ -in @('staged', 'countdown') } {
             $segment = ' | host save ready, MGSV restarts'
-            $line = "Host's save ready: MGSV restarts at the title screen and Play-Coop starts it again on the host's save. Press Continue twice in the game to keep your own save."
+            # (Online 2026-10-22 P2: no "press Continue twice", a natural double press.)
+            $line = "Host's save ready: MGSV restarts at the title screen and Play-Coop starts it again on the host's save. To keep your own save: F9 > Partner / Co-op > Shared save > Keep my own save in the game."
         }
         'exiting' {
             $segment = ' | host save ready, MGSV restarts'
@@ -1162,7 +1165,7 @@ function Get-CoopHandoffText {
                 $line = "The host's save cannot be shared yet: the host should Continue into Mother Base or free roam first (a save in the story opening is never shared)."
             } else {
                 $segment = ' | save not shared: your save does not continue into Mother Base or free roam yet'
-                $line = 'Your save is not shared yet: Continue into Mother Base or free roam first (a save in the story opening is never shared).'
+                $line = 'Your save is not shared yet: Continue into Mother Base or free roam, or stay there a few seconds (a save in the story opening is never shared).'
             }
         }
         'failed' {

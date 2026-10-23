@@ -160,14 +160,15 @@ the helicopter as well. One status line:
 | State (link-status `handoff`) | Line |
 |---|---|
 | `off` | Automatic save sharing is off (Play-Coop -SaveHandoff off). |
-| `idle`, `same` | Your save matches the host's place; nothing to share. (host: Your save matches your partner's place; nothing to share.) |
-| `wait_host` | Waiting for the host to reach Mother Base or free roam; their save is then copied to you. |
+| `idle` | Comparing your save with the host's; nothing to share yet. (host: Comparing your save with your partner's; nothing to share yet.) |
+| `same` | Your save matches the host's place; nothing to share. (host: Your save matches your partner's place; nothing to share.) |
+| `wait_host` | Waiting for the host to reach Mother Base or free roam; their save is then copied to you. (why 1, the joiner in game: The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. why 2, the host settling in its mission: The host's save is checked in their mission, then copied to you at the title screen.) |
 | `receiving` | Receiving the host's save: 42% of 594 KB. |
 | `staged` | Host's save received and checked (594 KB). |
 | `countdown` | Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Share-Save.bat [R]). |
-| `exiting` | MGSV is closing to load the host's save; Play-Coop starts it again. |
+| `exiting` | MGSV is closing to load the host's save; Play-Coop starts it again (not back within a minute? Press Play in Steam). |
 | `kept` | You kept your own save for this session. (host: Your partner kept their own save.) |
-| `refused` | The host's save cannot be shared: `<reason>`. (host: Your save cannot be shared: `<reason>`.) |
+| `refused` | The host's save cannot be shared: `<reason>`. (host: Your save cannot be shared: `<reason>`; not bound yet: Your save is shared once it is known to continue into Mother Base or free roam: Continue there, or stay there a few seconds.) |
 | `failed` | Getting the host's save failed: `<reason>`. Nothing was changed. (host: Sending your save failed: `<reason>`.) |
 | `applied` | You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back. |
 | host `offered`, `sending`, `partner_staged`, `partner_restarting` | Offering your save to your partner. / Sending your save: 42% / Your partner received your save. / Your partner is restarting on your save. |
@@ -182,7 +183,8 @@ For the joiner (the host has neither row):
 - **Keep my own save** (enabled while the host's save is awaited, on its way, ready
   or counting down) asks the save handoff to stop for this session: MGSV does not
   restart and your co-op save stays. It records `last_ui_action=handoff_keep`. Pressing
-  Continue twice at the title does the same.
+  Continue twice at the title (3 to 10 s apart) does the same only after the first
+  60 s of the wait (online 2026-10-22: a natural double press is no decline).
 - **Travel lock (you follow the host's travel)**, checked by default: unchecking it
   turns the joiner's travel lock off for the rest of this game session
   (`last_ui_action=travel_unlock`; checking it again records `travel_lock`). Play-Coop

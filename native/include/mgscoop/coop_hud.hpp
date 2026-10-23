@@ -161,10 +161,25 @@ void Post(EventKind kind, std::int32_t arg, const char* text) noexcept;
 // event; the sentence is coop_text::FormatWorldNote's. Any thread.
 void PostWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint32_t partner,
                    std::uint32_t local) noexcept;
-// An automatic save handoff toast (save_handoff_state::Toast code, G1..G10 /
-// H1..H7) as a save_handoff event with the text "<a> <b>"; the sentence is
+// An automatic save handoff toast (save_handoff_state::Toast code, G1..G12 /
+// H1..H8) as a save_handoff event with the text "<a> <b>"; the sentence is
 // coop_text::FormatSaveHandoff's. The same as Post(save_handoff, code, "<a> <b>"). Any thread.
 void PostSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b) noexcept;
+// The toast log (online 2026-10-22 P8: no toast reached any log). With a log
+// set, Post writes "hud=toast; kind=world_note|save_handoff; code=N; a=..;
+// b=..[; partner=..; local=..]; on=0|1[; skipped=N]; t_ms=N" for those two
+// kinds: one (kind, code) at most once per kToastLogGapMs (skipped counts the
+// suppressed ones since its last line; on = the HUD draws toasts). The line is
+// written outside every lock of this module. partner_net::Start sets it;
+// nullptr stops it.
+using LogFn = void (*)(const char* line) noexcept;
+using ClockFn = std::uint64_t (*)() noexcept;
+inline constexpr std::uint64_t kToastLogGapMs = 10000;
+void SetEventLog(LogFn log, ClockFn now_ms) noexcept;
+// Pure: the toast log line (CRLF-terminated) for one event; false and "" for
+// another kind, a code outside 0..255 or a malformed text.
+bool FormatToastLog(EventKind kind, std::int32_t code, const char* text, bool on, unsigned skipped, std::uint64_t now_ms,
+                    char* out, std::size_t capacity) noexcept;
 // Copies the events newer than `cursor` (oldest first) and advances it.
 unsigned Take(Event* out, unsigned max, std::uint32_t& cursor) noexcept;
 

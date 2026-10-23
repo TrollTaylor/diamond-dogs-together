@@ -519,9 +519,18 @@ check(called(s4, 'deploy') == 0 and noted(s4, 4, 30010, 0) == 1, 'an emergency d
 local s5 = heli(10020); s5.link = 0
 s5.env.TppMission.OnEndMissionPreparation(1, 2)
 check(called(s5, 'deploy') == 1 and noted(s5, 3, 10020, 1) == 1 and #s5.notes == 1, 'nobody can come: allowed at once')
-local s6 = heli(10020); s6.peer = elsewhere
+local s6 = heli(10020); s6.peer = {mission = 10036, level = 3, wait = 9, linked = true, session = 55}
 s6.env.TppMission.OnEndMissionPreparation(1, 2)
 check(called(s6, 'deploy') == 1 and noted(s6, 3, 10020, 2) == 1, 'partner elsewhere: allowed at once')
+-- Online 2026-10-22 P7: into the partner's own story mission it is a join (b=5), not "flying alone".
+local s6j = heli(10020); s6j.peer = elsewhere
+s6j.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(s6j, 'deploy') == 1 and noted(s6j, 3, 10020, 5) == 1 and noted(s6j, 3, 10020, 2) == 0 and
+    logged(s6j, 'step=deploy_alone;reason=join_partner;target=10020'), 'into the partner mission: note 3 b=5 (join_partner)')
+-- The supported sortie into the partner's scene says so too.
+local s6m = heli(30050); s6m.peer = {mission = 30050, level = 3, wait = 9, linked = true, session = 55}
+s6m.env.TppMission.OnEndMissionPreparation(1, 2)
+check(called(s6m, 'deploy') == 1 and noted(s6m, 3, 30050, 5) == 1, 'into the partner scene: note 3 b=5')
 local s7 = heli(10020)
 s7.env.TppMission.OnEndMissionPreparation(1, 2)
 check(called(s7, 'deploy') == 0 and s7.F.hostDeploy == nil and noted(s7, 4, 10020, 0) == 1, 'legacy loader unpaired: refused once')

@@ -217,6 +217,92 @@ launch and no hidden run yet.
     the IsAlive sentence and the Despawn / Kill description corrected; addresses as RVAs.
   - Rejected: none.
 
+### online-handoff-join
+
+Branch `wp/online-handoff-join` from `dev/oct7-continue` `cc973a8`. Joining without the same save was finicky: the
+friend's first launch went alone into story mission 10020, the second waited at the title with wrong messages, MGSV
+took 3 minutes to come back after the handoff and the host only saw "partner left". Bug fixes, on by default, no new
+lab.ini key (details in docs/save-handoff.md "Messages while the guest waits", "Title Continue", "Exit" and the tooling
+contract). Unit-tested; no game launch and no hidden run in this phase (the runtime checks are for the hidden-run
+phase). Contract unchanged (743 code sites / 193 vtable slots; no new game address).
+- **P1, a co-op copy with remote files only.** The friend's copy was seeded from a 2015 Steam save with only
+  `remote\TPP_GAME_DATA` / `PERSONAL_DATA`; the set hash needed slot 0 or 1, so the guest never had a set, never
+  decided its need (STATE `need=0 set=00000000`) and the title lock fell back to "story start: press again". The
+  guest's own set may now be identified by slot 4 (`io::HashStep(..., remote_primary)` for the guest only; the host's
+  snapshot, the OFFER decode and the manifest still need slot 0/1). New line `save_handoff=set; ok=1; set=..; files=N;
+  local=0|1` / `ok=0; why=read|no_primary|hash` once per change (an invalid set was silent). F9 `idle` has its own
+  sentence ("Comparing your save with the host's; nothing to share yet.") instead of the `same` one.
+- **P2, the natural double press.** At the title, presses under 3 s apart are no escape and no decline; a pending
+  handoff (CFG r[12] 1..4: NOTE 7 b=3/4, NOTE 9) has no Continue escape for its first 60 s at this title
+  (`decision=held`); F9 > Shared save > Keep my own save stays the way out, and after 60 s a repeat 3-10 s apart still
+  plays the own save. NOTE 7 b=1/2/3, NOTE 9, G2, the Play-Coop countdown line, docs/debug-menu.md and the FRIEND-GUIDE
+  no longer say "press Continue twice".
+- **P3, the settle wait.** `kSettleBindMs` 30 s -> 10 s: the window never guarded against a set saved for the next
+  mission (every load reports loading at once and ends it; the set must stay unchanged with saving=0 and fresh
+  reports); a deploy into Mother Base made the friend wait 16 s at the title. New toasts G11 (guest: "The host is in
+  <M>: their save is checked there (about 10 s), then copied to you at the title screen...") and H8 (host: "Checking
+  your save here (about 10 s; stay in this mission)...") replace G4/H3 while the host settles in 30010/30020/30050;
+  NOTE 7 b=4 at the title; the host's F9 continue_unknown line is no longer "cannot be shared".
+- **P4, the restart the host never heard of.** The guest posts its WM_CLOSE only once RESULT exiting left channel 4
+  (`ReliableQueued(4)` 0), it was refused unsent, or 1 s passed (`save_handoff=exit_flush; ms=..; acked=0|1`); the
+  host infers the restart when a scene/always guest with a verified stage leaves (`partner_restarting`, H2,
+  `save_handoff=partner_restarting; how=link_closed`); a stage-mode guest leaving stays `partner_staged`.
+- **P5, the 3-minute Steam relaunch.** The relaunch waits (read only, at most 30 s) until Steam no longer marks MGSV as
+  running (`HKCU:\Software\Valve\Steam\Apps\287700` `Running`, `HKCU:\Software\Valve\Steam` `RunningAppID`; both read
+  on this PC on 2026-10-22: 0 while MGSV is not running), then 2 s; the Play-Coop window retries every 20 s while no
+  game runs and Steam does not mark it running, and asks for a manual start at 45 s (was once at 60 s and at 120 s);
+  the helper retries the same way when the window is gone. Every step goes to `mgs-coop\play-coop.log`
+  (`Write-CoopPlayLog`, no codes or SteamIDs, rotated at 1 MB), which Collect-Logs now collects. G2, the F9 exiting
+  line and the FRIEND-GUIDE: "not back within a minute? Press Play in Steam". The window's restart wait
+  (`Get-CoopRelaunchWait`) reads `play-session.json` again for up to 1 s before it concludes "co-op was switched off": a
+  read that raced the helper's File.Replace stopped the wait and switched co-op off (found as a friend_package_tests
+  flake in this branch's second full CTest).
+- **P6, in game with need=1.** G12 once per link session ("The host's save is ready for you: go back to the title
+  screen (or quit MGSV and start Play-Coop again) to get it...") and F9 `wait_host` why 1.
+- **P7, contradictory host notes.** A sortie into the partner's own mission is a join: `deploy_alone;reason=join_partner`
+  and NOTE 3 b=5 ("Joining your partner in <M>; co-op travel does not follow in story missions." / "Flying to your
+  partner in <M>."), and no NOTE 6 when the partner is in that very mission.
+- **P8, invisible toasts.** `hud=toast; kind=world_note|save_handoff; code=N; a=..; b=..[; partner=..; local=..];
+  on=0|1[; skipped=N]` in script-observer.log, one (kind, code) per 10 s (`coop_hud::SetEventLog`).
+- **Lab tooling.** `-GuestSaveSeed real-remote` (worker only, guest only): the real seed with 287700\local's progress
+  files removed from the run's own copy (`Remove-WorkerLocalProgress`); scenario
+  `tools/worker/scenarios/handoff-double-press.txt`.
+- **Tests (each fails before the fix, passes after).** `save_handoff_core_tests` TestSettleWait, TestGuestInGame,
+  TestExitFlush, TestHostInfersRestart (+ TestRemoteOnlyGuest, TestSettle for 10 s and a load ending the window);
+  `save_handoff_io_tests` (a remote-only tree: the guest's set, `no_primary` for the host, the module's one
+  `save_handoff=set` line); `steam_transport_tests` (every new or changed sentence, the toast log and its rate limit);
+  `debug_overlay_tests` (F9 lines); `world_handoff_lua_check` (3 s gap, 60 s hold from the first tick, NOTE 7 b=4, no
+  NOTE 6 into the partner's mission); `world_follow_lua_check` (NOTE 3 b=5); `friend_package_tests` (Steam's flag, the
+  wait, play-coop.log in the apply, the launcher and Collect-Logs); `worker_session_tests` (`real-remote`).
+- **Review fixes (two reviewers; on by default, no new key).**
+  - The title hold for code 1 (wait_host) now also applies while the host loads: `X.decide` refused it only after the
+    peer rules, which returned allow for peer mission 0 (the logged 17:46:14 host Continue), a story mission, no link
+    or a queued follow, so the first press loaded the guest's own save with no note. It is now checked right after
+    the lock bit (`world_handoff_lua_check`: host loading / in 10020 / unlinked / queued follow, refused then held;
+    fails before). With the travel lock off code 1 stays allowed (a lock rule): the FRIEND-GUIDE and
+    save-handoff.md "Title Continue" say "with the travel lock on (the default)".
+  - The guest's start-up mission 1 (ingame=1, title=0) is no location and no "in game": the location rule waits for
+    a real mission and G12 / F9 why 1 need a mission >= 10000 (`TestGuestStartup`: no need=1 why=location, G12, G11
+    or H8 at the boot, need=0 at a title at the host's place; a story-opening guest decides need=1 why=story at
+    mission 1 but gets no G12; fails before).
+  - G11 names the seconds only for a host build >= 0.13.6 (`kSettle10Min*`; a 0.13.5 host takes 30 s); NOTE 7 b=4
+    and F9 `wait_host` why 2 no longer say "(a few seconds)" (`TestSettleWait`, `steam_transport_tests`).
+  - The manual-start hint no longer depends on a retry: when Steam still marks MGSV as running (no retry goes out) the
+    window runs `Start-CoopRelaunch -CheckOnly` at 45 s and says "...Steam still shows MGS V as running: once Steam
+    shows Play again, press it..." (before: no line until the 300 s limit). The applied save and "Waiting for Steam to
+    let MGSV start again (up to 30 s)..." print before that wait (`-OnApplied`), not after it. Test knob
+    `MGS_COOP_TEST_RELAUNCH_HINT_SEC`; friend_package_tests [handoff] covers both.
+  - friend_package_tests SS-4 ([claimed failed/off]) flake: the claim is written only once the window recorded the
+    game (`game_pid`); a claim written before Set-CoopPlayGame became `relaunched` and the exit found none.
+  - handoff-double-press.txt: the host reaches its title first (the 60 s start at the guest's own title) and the held
+    press is asserted (`waitlog ... decision=held`).
+  - Rejected: NOTE 7 b=4 for a host whose save is `continue_unsupported` in 30010/30020/30050 (the set changes on the
+    arrival save, so that state is transient there; the eligible and settling states fit b=4).
+- **Runtime checks for the hidden-run phase:** handoff-double-press (real and real-remote guest seeds), R2
+  handoff-stage with `-GuestSaveSeed real-remote`, R4 handoff-restart with `-Mode play -WanSim bad` three times
+  (`result_rx; status=exiting` or `partner_restarting; how=link_closed`, `exit_flush`), R5, R6 travel-lock (now presses
+  3 s apart), and the manual Steam relaunch check on one PC (diag-join.md P5).
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

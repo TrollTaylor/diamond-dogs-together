@@ -499,9 +499,12 @@ check(locked.press() == false and not locked.selects and not locked.restores and
     locked.notes[1][2] == 30010 and locked.notes[1][3] == 1,
     'locked guest title Continue: refused at the menu select, before the fade, VarRestore or load (note 7 b=1)')
 check(locked.reboots == 1 and locked.menuStarts == 1 and #locked.tx == 0, 'the menu takes input again; no world op sent')
+-- Online 2026-10-22 P2: a natural double press (2 s) is no escape; the repeat needs 3-10 s.
 locked.time = locked.time + 2000
+check(locked.press() == false and not locked.restores and #locked.notes == 1, 'a press 2 s later is refused again (no escape, no new note)')
+locked.time = locked.time + 1000
 check(locked.press() == true and locked.restores == 1 and locked.loaded and locked.loaded[1] == 30050 and
-    locked.env.vars.missionCode == 30050, 'the repeat 2 s later runs the vanilla title flow into its own checkpoint')
+    locked.env.vars.missionCode == 30050, 'the repeat 3 s later runs the vanilla title flow into its own checkpoint')
 local continued, landing
 for _, v in ipairs(locked.saves) do if v[1] == 2 then continued = v end end
 for _, v in ipairs(locked.notes) do if v[1] == 11 then landing = v end end
@@ -514,7 +517,12 @@ check(unlocked.press() == true and unlocked.restores == 1 and #unlocked.notes ==
 local pending = titleGuest(false, 3)
 pending.lock = 0
 check(pending.press() == false and not pending.restores and noted(pending, 9) == 1, 'handoff pending, lock off: refused with note 9')
-pending.time = pending.time + 2000
+-- P2: no Continue escape in the first 60 s of the pending handoff (F9 Keep my own save is the way out).
+pending.time = pending.time + 4000
+check(pending.press() == false and not pending.restores and noted(pending, 9) == 2, 'the repeat within the first 60 s is held')
+pending.time = pending.time + 57000
+check(pending.press() == false and not pending.restores, 'after 60 s: refused once more (a new window)')
+pending.time = pending.time + 3000
 local declines = 0
 check(pending.press() == true and pending.restores == 1, 'the repeat continues the guest own save')
 for _, v in ipairs(pending.saves) do if v[1] == 3 then declines = declines + 1 end end
@@ -524,7 +532,11 @@ check(declines == 1 and noted(pending, 10) == 1, 'and declines the handoff first
 local follower = titleGuest(true, 3)
 check(follower.F.armed and follower.press() == false and not follower.restores and noted(follower, 9) == 1 and
     follower.tx[#follower.tx].op == OP.REQ_MISSION and follower.reboots == 1, 'armed guest: suppressed (REQ_MISSION), note 9')
-follower.time = follower.time + 2000
+follower.time = follower.time + 4000
+check(follower.press() == false and not follower.restores and noted(follower, 10) == 0, 'armed guest: the second press within 60 s is held')
+follower.time = follower.time + 57000
+follower.press()
+follower.time = follower.time + 3000
 local followerDeclines = 0
 check(follower.press() == false and not follower.restores, 'armed guest: still no own Continue')
 for _, v in ipairs(follower.saves) do if v[1] == 3 then followerDeclines = followerDeclines + 1 end end

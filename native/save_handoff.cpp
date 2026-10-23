@@ -356,7 +356,7 @@ void HashBegin(HashJob& job) noexcept {
     job.active = true;
 }
 
-bool HashStep(const Dirs& dirs, HashJob& job, HashCache& cache, core::SetInfo& out) noexcept {
+bool HashStep(const Dirs& dirs, HashJob& job, HashCache& cache, core::SetInfo& out, bool remote_primary) noexcept {
     if (!job.active) return false;
     if (job.next == 0 && !StatSet(dirs, job.before)) job.failed = true;
     // At most one actual read per step; cache hits do not count.
@@ -396,7 +396,10 @@ bool HashStep(const Dirs& dirs, HashJob& job, HashCache& cache, core::SetInfo& o
         const Stamp& st = job.before.slot[s];
         if (!st.present) continue;
         total += st.size;
-        if (s == 0 || s == 1) primary = true;
+        // Online 2026-10-22 P1: an old Steam save copy has only remote\TPP_GAME_DATA
+        // (+ PERSONAL_DATA) until the game first writes a local slot; for the guest
+        // that is its own set (its need is decided), the host still needs 0 or 1.
+        if (s == 0 || s == 1 || (remote_primary && s == 4)) primary = true;
         if (out.n >= wire::kMaxFiles) continue;
         wire::FileEntry& entry = out.files[out.n++];
         entry.slot = s;
@@ -410,18 +413,26 @@ bool HashStep(const Dirs& dirs, HashJob& job, HashCache& cache, core::SetInfo& o
     out.total = total;
     // An oversize file keeps a zero hash in its entry: the set stays defined
     // and the total carries the refusal.
+    job.no_primary = !primary || out.n == 0;
     out.ok = !job.failed && primary && out.n > 0;
     if (out.ok && !wire::SetSha256(out.files, out.n, out.set)) out.ok = false;
     job.active = false;
     return true;
 }
 
-bool HashSetNow(const Dirs& dirs, HashCache& cache, core::SetInfo& out) noexcept {
+bool HashSetNow(const Dirs& dirs, HashCache& cache, core::SetInfo& out, bool remote_primary) noexcept {
     HashJob job{};
     HashBegin(job);
     for (unsigned guard = 0; guard <= wire::kSlots + 1; ++guard)
-        if (HashStep(dirs, job, cache, out)) return true;
+        if (HashStep(dirs, job, cache, out, remote_primary)) return true;
     return false;
+}
+
+const char* SetProblem(const HashJob& job, const core::SetInfo& out) noexcept {
+    if (out.ok) return nullptr;
+    if (job.failed) return "read";
+    if (job.no_primary) return "no_primary";
+    return "hash";
 }
 
 bool SnapshotRead(const Dirs& dirs, SnapshotBuffer& out) noexcept {
@@ -788,6 +799,7 @@ bool g_shutdown_done = false;
 bool g_applied_pending = false;
 core::Applied g_applied{};
 std::uint64_t g_io_log_ms = 0;
+char g_set_logged[24]{};  // the last "save_handoff=set" key ("ok:<8 hex>" or "no:<why>")
 // P2-10 exit_slow after a WM_CLOSE: a one-shot timer-queue timer, independent of
 // the core and the link thread (the overlay's PartnerShutdown stops the core and
 // a Steam link parks). g_exit_armed holds the armed generation (0 disarmed); the
@@ -1038,9 +1050,36 @@ void Drain(std::uint64_t now_ms) noexcept {
     for (unsigned guard = 0; guard < 4096 && g_core.PopAction(g_action); ++guard) Execute(g_action, now_ms, chunk_refused);
 }
 
+// The own on-disk set, one line per change (online 2026-10-22 P1/P8: a set
+// without slot 0/1 was silent): "save_handoff=set; ok=1; set=..; files=..;
+// local=0|1" or "save_handoff=set; ok=0; why=read|no_primary|hash; files=..".
+// An unstable pass (a file changed while it was read) logs nothing.
+void LogSet(std::uint64_t now_ms) noexcept {
+    const core::SetInfo& s = g_hash_out;
+    if (s.ok && !s.stable) return;
+    char key[24]{}, text[128]{};
+    if (const char* problem = io::SetProblem(g_hash, s)) {
+        StringCchPrintfA(key, ARRAYSIZE(key), "no:%s", problem);
+        StringCchPrintfA(text, ARRAYSIZE(text), "save_handoff=set; ok=0; why=%s; files=%u", problem, unsigned{s.n});
+    } else {
+        char hex[wire::kShaHexChars + 1]{};
+        wire::FormatShaHex(s.set, hex);
+        bool local = false;
+        for (unsigned i = 0; i < s.n; ++i) local = local || !wire::SlotIsRemote(s.files[i].slot);
+        StringCchPrintfA(key, ARRAYSIZE(key), "ok:%.8s", hex);
+        StringCchPrintfA(text, ARRAYSIZE(text), "save_handoff=set; ok=1; set=%.8s; files=%u; local=%u", hex, unsigned{s.n},
+                         local ? 1u : 0u);
+    }
+    if (lstrcmpA(key, g_set_logged) == 0) return;
+    StringCchCopyA(g_set_logged, ARRAYSIZE(g_set_logged), key);
+    Write(text, now_ms);
+}
+
 void StepHash(std::uint64_t now_ms) noexcept {
     if (!g_hash.active || !FilesQuiet(now_ms)) return;
-    if (!io::HashStep(g_dirs, g_hash, g_cache, g_hash_out)) return;
+    // The guest's own set may be remote-only (P1); the host's never is (its snapshot needs slot 0/1).
+    if (!io::HashStep(g_dirs, g_hash, g_cache, g_hash_out, g_role == 2)) return;
+    LogSet(now_ms);
     g_core.OnSetHashed(g_hash_out, now_ms);
     Drain(now_ms);
 }
@@ -1276,6 +1315,7 @@ bool Configure(const Config& config) noexcept {
         return false;
     }
     g_dirs = dirs;
+    g_set_logged[0] = 0;
     g_policy = static_cast<wire::Mode>(static_cast<std::uint8_t>(config.mode));
     InterlockedExchange(&g_mode, static_cast<LONG>(g_policy));
     core::Config cc{};
@@ -1421,6 +1461,7 @@ void ResetForTest() noexcept {
     ReleaseSnapshot();
     g_hash = io::HashJob{};
     g_cache = io::HashCache{};
+    g_set_logged[0] = 0;
     g_build_known = g_build_ok = false;
     g_have_report = false;
     g_shutdown_done = false;

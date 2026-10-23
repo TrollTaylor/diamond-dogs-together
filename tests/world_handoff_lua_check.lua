@@ -274,10 +274,15 @@ do
     c.time = 1500
     c.menu.Continue()
     check(called(c, 'select_continue') == 0 and #c.notes == 1 and logged(c, 'decision=refuse') == 2, '+0.5 s: refused again, no new note')
+    -- Online 2026-10-22 P2: a natural double press (2.1 s in the session) is no escape at the title.
     c.time = 3000
     c.menu.Continue()
+    check(called(c, 'select_continue') == 0 and #c.notes == 1 and logged(c, 'decision=refuse') == 3 and logged(c, 'decision=repeat') == 0,
+        '+2 s: still refused, no new note (under 3 s apart)')
+    c.time = 4000
+    c.menu.Continue()
     check(called(c, 'select_continue') == 1 and noted(c, 8, 30050, 1) == 1 and #saved(c, 3) == 0 and logged(c, 'decision=repeat') == 1,
-        '+2 s: the vanilla select runs once (travel alone)')
+        '+3 s: the vanilla select runs once (travel alone)')
     local late = fixture(2)
     late.menu.Continue()
     late.time = late.time + 11000
@@ -285,13 +290,25 @@ do
     check(called(late, 'select_continue') == 0 and noted(late, 7, 30010, 1) == 2, '+11 s: refused again with a new note')
     late.time = late.time + 1000
     late.menu.Continue()
-    check(called(late, 'select_continue') == 1, 'the new refusal opens a new repeat window')
+    check(called(late, 'select_continue') == 0 and noted(late, 7, 30010, 1) == 2, '+1 s after the new refusal: no escape yet')
+    late.time = late.time + 2000
+    late.menu.Continue()
+    check(called(late, 'select_continue') == 1, 'the new refusal opens a new repeat window (3-10 s)')
+    local edge = fixture(2)
+    edge.menu.Continue(); edge.time = edge.time + 2999; edge.menu.Continue()
+    check(called(edge, 'select_continue') == 0, '2999 ms: no escape')
+    edge.time = edge.time + 1; edge.menu.Continue()
+    check(called(edge, 'select_continue') == 1, '3000 ms: the escape')
     local story = fixture(2, {mission = 40010, seq = 110})
     story.menu.Continue()
     check(called(story, 'select_continue') == 0 and noted(story, 7, 30010, 2) == 1, 'story opening: note 7 b=2')
     local wait = fixture(2, {mission = 40010, r12 = 1, seq = 110})
     wait.menu.Continue()
-    check(called(wait, 'select_continue') == 0 and noted(wait, 7, 30010, 3) == 1, 'waiting for the host save first: note 7 b=3')
+    check(called(wait, 'select_continue') == 0 and noted(wait, 7, 30010, 4) == 1,
+        'waiting for the host save, the host in game in 30010: note 7 b=4 (its save is checked there, P3)')
+    local waitTitle = fixture(2, {mission = 40010, r12 = 1, seq = 110, peer = {mission = 40050, level = 3, wait = 9, linked = true, session = 55}})
+    waitTitle.menu.Continue()
+    check(called(waitTitle, 'select_continue') == 0 and noted(waitTitle, 7, 40050, 3) == 1, 'the host at its title: note 7 b=3')
     for _, h in ipairs({2, 3, 4}) do
         local busy = fixture(2, {mission = 40010, r12 = h})
         busy.menu.Continue()
@@ -309,17 +326,56 @@ do
     unknown.env.TppDefine.STORY_SEQUENCE = nil
     unknown.menu.Continue()
     check(called(unknown, 'select_continue') == 1, 'unknown story at the same location: allowed')
-    -- A repeat while the handoff is pending declines it (op 3) and notes 10 before 8.
+    -- P2: a pending handoff has no Continue escape for its first 60 s at the
+    -- title (the 0.13.5 repeat declined it 2 s later); after that a repeat
+    -- 3-10 s apart declines it (op 3) and notes 10 before 8.
     local p = fixture(2, {r12 = 3})
     p.menu.Continue()
     p.time = p.time + 2000
     p.menu.Continue()
+    p.time = p.time + 3000
+    p.menu.Continue()
+    check(called(p, 'select_continue') == 0 and #saved(p, 3) == 0 and noted(p, 9, 0, 0) == 2 and logged(p, 'decision=held') == 1 and
+        logged(p, 'decision=repeat') == 0, 'pending, +2 s and +5 s: held (no escape, no decline), note 9 again')
+    p.time = p.time + 56000
+    p.menu.Continue()
+    check(called(p, 'select_continue') == 0 and #saved(p, 3) == 0, '+61 s: refused (a new window)')
+    p.time = p.time + 3000
+    p.menu.Continue()
     local n = #p.notes
     check(called(p, 'select_continue') == 1 and #saved(p, 3) == 1 and same(saved(p, 3)[1], {3, 1, 0, 0, 0, 0}) and
-        p.notes[n - 1][1] == 10 and p.notes[n][1] == 8, 'pending repeat: SAVE op 3 decline, note 10 then note 8')
+        p.notes[n - 1][1] == 10 and p.notes[n][1] == 8, 'after the 60 s: the repeat declines (SAVE op 3), note 10 then note 8')
     local w = fixture(2, {r12 = 1})
-    w.menu.Continue(); w.time = w.time + 2000; w.menu.Continue()
-    check(called(w, 'select_continue') == 1 and #saved(w, 3) == 1, 'waiting repeat: declined too')
+    w.menu.Continue(); w.time = w.time + 4000; w.menu.Continue()
+    check(called(w, 'select_continue') == 0 and #saved(w, 3) == 0 and logged(w, 'decision=held') == 1, 'waiting (r12 1): held too')
+    -- Review (online 2026-10-22 L1): r12 1 is also held while the host loads (CFG peer mission 0, as at
+    -- 17:46:14), is in a story mission, is not linked, or a host transition is queued (the replay hold
+    -- keeps it); before, these returned allow ahead of the title rule and the first press loaded the own save.
+    for _, case in ipairs({{'host loading', {mission = 0, level = 3, wait = 8, linked = true, session = 55}, 0, 3},
+        {'host in 10020', {mission = 10020, level = 3, wait = 9, linked = true, session = 55}, 10020, 3},
+        {'host unlinked', {mission = 0, level = 0, wait = 3, linked = false}, 0, 3},
+        {'queued follow', nil, 30010, 4}}) do
+        local g = fixture(2, {mission = 40010, r12 = 1, seq = 200, peer = case[2]})
+        if not case[2] then g.F.queue[1] = {9, 1, 40050, 30010, since = g.time} end
+        at(g, g.time)
+        g.menu.Continue(); g.time = g.time + 3000; g.menu.Continue()
+        check(called(g, 'select_continue') == 0 and #saved(g, 3) == 0 and noted(g, 7, case[3], case[4]) == 2 and noted(g, 8) == 0 and
+            logged(g, 'decision=held') == 1 and logged(g, 'decision=repeat') == 0, case[1] .. ', r12 1: refused, then held (no own save)')
+    end
+    -- The hold starts when the title first sees the pending code (X.tick), not at the first press.
+    local t = fixture(2, {r12 = 1})
+    at(t, 1000)
+    at(t, 61500)
+    t.menu.Continue(); t.time = t.time + 3000; t.menu.Continue()
+    check(called(t, 'select_continue') == 1 and #saved(t, 3) == 1, 'pending for 60 s before the first press: the repeat declines at once')
+    local reset = fixture(2, {r12 = 1})
+    at(reset, 1000)
+    reset.r12 = 0
+    at(reset, 30000)
+    reset.r12 = 1
+    at(reset, 62000)
+    reset.menu.Continue(); reset.time = reset.time + 3000; reset.menu.Continue()
+    check(called(reset, 'select_continue') == 0 and logged(reset, 'decision=held') == 1, 'a pause in the pending code restarts the hold')
     -- At a title the TppMission Continue wrappers pass (the menu owns the title Continue).
     local direct = fixture(2)
     direct.nestedContinue = true
@@ -341,13 +397,19 @@ do
     heliBusy.menu.RestartHeli()
     check(called(heliBusy, 'select_heli') == 0 and noted(heliBusy, 9, 0, 0) == 1 and
         logged(heliBusy, 'fn=TitleRestartHeli;kind=4;target=30050;host=30010;decision=refuse') == 1, 'RestartHeli while the handoff is pending: note 9')
-    heliBusy.time = heliBusy.time + 2000
+    heliBusy.time = heliBusy.time + 4000
+    heliBusy.menu.RestartHeli()
+    check(called(heliBusy, 'select_heli') == 0 and #saved(heliBusy, 3) == 0 and logged(heliBusy, 'decision=held') == 1,
+        'its repeat within the first 60 s is held')
+    heliBusy.time = heliBusy.time + 57000
+    heliBusy.menu.RestartHeli()
+    heliBusy.time = heliBusy.time + 3000
     heliBusy.menu.RestartHeli()
     check(called(heliBusy, 'select_heli') == 1 and #saved(heliBusy, 3) == 1 and noted(heliBusy, 10) == 1 and noted(heliBusy, 8) == 0,
-        'its repeat declines (op 3, note 10) and stays in the helicopter (no note 8)')
+        'later the repeat declines (op 3, note 10) and stays in the helicopter (no note 8)')
     local heliWait = fixture(2, {r12 = 1})
     heliWait.menu.RestartHeli()
-    check(called(heliWait, 'select_heli') == 0 and noted(heliWait, 7, 30010, 3) == 1, 'RestartHeli while waiting for the host save: note 7 b=3')
+    check(called(heliWait, 'select_heli') == 0 and noted(heliWait, 7, 30010, 4) == 1, 'RestartHeli while waiting for the host save: note 7 b=4')
     -- The host and a replay pass; outside title mode the select is the vanilla one.
     local host = fixture(1)
     host.menu.Continue()
@@ -362,10 +424,15 @@ do
     local c = fixture(2, {mission = 40010, r12 = 3, r13 = 0})
     c.menu.Continue()
     check(called(c, 'select_continue') == 0 and noted(c, 9, 0, 0) == 1 and #saved(c, 3) == 0, 'lock off, handoff pending: note 9')
-    c.time = c.time + 2000
+    c.time = c.time + 4000
+    c.menu.Continue()
+    check(called(c, 'select_continue') == 0 and #saved(c, 3) == 0, 'lock off: held for the first 60 s too')
+    c.time = c.time + 57000
+    c.menu.Continue()
+    c.time = c.time + 3000
     c.menu.Continue()
     check(called(c, 'select_continue') == 1 and #saved(c, 3) == 1 and same(saved(c, 3)[1], {3, 1, 0, 0, 0, 0}) and noted(c, 10) == 1,
-        'lock off: the repeat sends SAVE op 3 and runs the select once')
+        'lock off: the later repeat sends SAVE op 3 and runs the select once')
     -- After the repeat, with r12 still 3, the follow-up Continue calls are not swallowed.
     c.nestedContinue = true
     c.M.ContinueFromCheckPoint()
@@ -562,6 +629,14 @@ do
     h.env.vars.missionCode = 30020
     h.env.e.ReservePlayerLoadingPosition(1)
     check(noted(h, 6) == 2, 'a supported target never warns')
+    -- Online 2026-10-22 P7: into the partner's own (story) mission they pair there: no note 6.
+    local join = fixture(1, {mission = 40050, title = false, peer = {mission = 10020, level = 3, wait = 9, linked = true, session = 55}})
+    join.env.vars.missionCode = 10020
+    join.env.e.ReservePlayerLoadingPosition(1)
+    check(noted(join, 6) == 0 and logged(join, 'reason=partner_cannot_join') == 0, 'host loading into the partner mission 10020: no note 6')
+    join.env.vars.missionCode = 10036
+    join.env.e.ReservePlayerLoadingPosition(1)
+    check(noted(join, 6, 10036, 10020) == 1, 'another story mission still warns')
     local alone = fixture(1, {mission = 30010, title = false, peer = {mission = 30010, level = 3, wait = 3, linked = false, session = 55}})
     alone.env.vars.missionCode = 10020
     alone.env.e.ReservePlayerLoadingPosition(1)
@@ -573,7 +648,7 @@ do
     check(same(hc.saves[#hc.saves], {1, 40050, 0, 2, 0, 0}), 'then a final report: leaving the title, not in game')
     -- The guest Continued alone into 30050 while the host is in 30010.
     local g = fixture(2)
-    g.menu.Continue(); g.time = g.time + 2000; g.menu.Continue()
+    g.menu.Continue(); g.time = g.time + 3000; g.menu.Continue()
     -- The vanilla OnEndFadeOutSelectContinue: VarRestore, ClearTitleMode, then the reserve.
     g.env.vars.missionCode, g.env.gvars.ini_isTitleMode = 30050, false
     g.env.e.ReservePlayerLoadingPosition(4)
@@ -643,8 +718,17 @@ do
     check(#saved(c, 3) == 0 and noted(c, 9) == 1, '+0.5 s: nothing')
     c.time = c.time + 1500
     c.menu.Continue()
+    check(#saved(c, 3) == 0 and noted(c, 9) == 1, '+2 s: a double press, nothing (P2)')
+    c.time = c.time + 2000
+    c.menu.Continue()
+    check(#saved(c, 3) == 0 and noted(c, 9) == 2 and logged(c, 'fn=TitleContinue;kind=4;target=30010;host=0;decision=held') == 1,
+        '+4 s within the first 60 s: held, note 9 again')
+    c.time = c.time + 57000
+    c.menu.Continue()
+    c.time = c.time + 3000
+    c.menu.Continue()
     check(called(c, 'select_continue') == 0 and #saved(c, 3) == 1 and noted(c, 10) == 1 and
-        logged(c, 'fn=TitleContinue;kind=4;target=30010;host=0;decision=decline') == 1, '+2 s: SAVE op 3 and note 10, still suppressed')
+        logged(c, 'fn=TitleContinue;kind=4;target=30010;host=0;decision=decline') == 1, 'after 60 s: SAVE op 3 and note 10, still suppressed')
     local idle = fixture(2, {mission = 40010, r12 = 1, paired = true})
     idle.menu.Continue(); idle.time = idle.time + 2000; idle.menu.Continue()
     check(#idle.notes == 0 and #saved(idle, 3) == 0 and called(idle, 'select_continue') == 0,

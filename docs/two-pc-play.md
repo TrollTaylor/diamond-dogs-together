@@ -56,12 +56,18 @@ another region) gets the host's save over link channel 4 at the title
 screen, and MGSV restarts once on it:
 
 1. The host's save is offered only once it is bound to Mother Base or free
-   roam (a Continue into 30010/30020/30050 or their helicopters, or 30 s in
-   free roam/Mother Base) and its story is open; never from the story
-   opening. The guest stages it in `mgs-coop\coop-saves-handoff\<xfer>`
+   roam (a Continue into 30010/30020/30050 or their helicopters, or 10 s in
+   free roam/Mother Base; 30 s until 0.13.5) and its story is open; never
+   from the story opening. A joiner whose co-op copy is an old Steam save
+   with remote files only takes part as well (online 2026-10-22 P1). The
+   transfer needs the joiner's title screen (in game it is told to go there,
+   G12). The guest stages it in `mgs-coop\coop-saves-handoff\<xfer>`
    (verified against `handoff.json`), writes `request.json` last, counts
-   down 10 s at the title (Continue twice or F9 > Partner / Co-op > Shared
-   save > Keep my own save declines) and closes its own window (WM_CLOSE).
+   down 10 s at the title (F9 > Partner / Co-op > Shared save > Keep my own
+   save declines; a Continue at the title does not during the first 60 s of
+   the wait, and presses under 3 s apart never count, save-handoff.md "Title
+   Continue") and closes its own window (WM_CLOSE) once RESULT exiting left
+   the link (at most 1 s).
    A waiting Steam guest also writes `link-rejoin.txt` (the join code it was
    armed with; never collected, removed at once).
 2. After the game process exited, `Invoke-CoopHandoffAfterExit`
@@ -80,12 +86,17 @@ screen, and MGSV restarts once on it:
    `link-secret.txt`), recording every new hash before its write, deletes
    the request, the stage and `link-rejoin.txt`, and sets `relaunching`
    with `count` 1.
-3. `Start-CoopRelaunch` starts `steam://rungameid/287700` 5 s later, only
-   while the session is active and every recorded co-op file (marker
-   exactly `offline-v1`) is in place with its hash: a restart never starts
-   plain MGSV on the real saves. Play-Coop waits for the new game (once more
-   at 60 s, a manual-start line at 120 s, co-op off after 300 s), marks
-   `relaunched` and continues with the start evidence and the status line.
+3. `Start-CoopRelaunch` starts `steam://rungameid/287700` once Steam no
+   longer marks MGSV as running (`Wait-CoopSteamAppStopped`, read only, at
+   most 30 s) and 2 s more, only while the session is active and every
+   recorded co-op file (marker exactly `offline-v1`) is in place with its
+   hash: a restart never starts plain MGSV on the real saves. Play-Coop
+   waits for the new game (again every 20 s while Steam does not mark it
+   running, a manual-start line at 45 s also while it still does, after a
+   check-only `Start-CoopRelaunch -CheckOnly`, co-op off after 300 s; online
+   2026-10-22 P5), marks `relaunched` and continues with the start evidence
+   and the status line. Each step is logged to `mgs-coop\play-coop.log`
+   (collected by Collect-Logs).
 4. Cleanup guard (P2-17): while `handoff.state` is `applying` or
    `relaunching`, the claim is under 300 s old and its claimant runs,
    `Invoke-CoopPlayCleanup` does nothing ("a save handoff restart is in
