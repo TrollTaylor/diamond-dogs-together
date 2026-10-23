@@ -6,8 +6,15 @@
 # rx -> submit exist=1 -> applied ok=1 -> ended via=end cause=clip null=1) and its gest-pickup-03/-04 frames show body 1
 # bending down and rising; play rehearsal 75a7e7dc (-Mode play -WanSim bad, this file with the partner_native_gesture
 # labsetting line removed: the gun-profile default) passed the same way. The moving pickup and the hand sign / knock
-# part never raised an edge (no lab spot). The labsetting line below only makes the key explicit.
-# Static proof first: python tools/generate_partner_contract.py --check (690 code sites, 156 vtable slots).
+# part never raised an edge there (E at the lab start pets D-Dog; the stock trigger is the call menu, see below). The
+# partner_native_gesture labsetting line below only makes the key explicit.
+# 0.13.6 (wp/sign-knock): the knock and hand-sign part now uses the HOST-only lab lever partner_gesture_lever (the native
+# debug command "gesture_lever knock|sign_go|sign_stop": the host's own KnockActionPluginImpl request slot, the call the
+# stock call menu makes; docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs"). Not run yet.
+# The lever is lab-only (play forces partner_gesture_lever off and it refuses key_off): a play rehearsal made like
+# 75a7e7dc must ALSO drop the "labsetting host partner_gesture_lever=1" line and the whole "Knock and hand signs" block
+# below (its host run / expect / waitlog steps and the guest key_off check), or every lever expectation fails.
+# Static proof first: python tools/generate_partner_contract.py --check (766 code sites, 197 vtable slots).
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-upper-gestures.txt -PartnerProfile native -NativeStage loco -SaveSeed lab
 #   (or -NativeStage gun -BuildProfile research, the user's profile; the key is named below for both copies).
@@ -21,6 +28,14 @@
 #  host (sender, its own pickup):
 #         partner_gesture=local; kind=pickup; upper=0x15; seq=N; stance=1|2; speed=..; moving=..; sent=1
 #         (no line: the upper byte never showed 0x15 at tick rate; record it, the census question of re-traverse-gesture.md 7.7)
+#  host (the lever, its own knock / signs; one line per command, before the local edge):
+#         partner_gesture=lever; result=requested; reason=none; kind=knock|sign_go|sign_stop; id=0; act=..; upper=0x00;
+#           q28=0; stance=..; speed=..; called=1; row_kind=1|2|3; row_d0=0x.1; row_life=2; frame=..; rec4=..; rec8=..;
+#           recc=..; other_same=1   (the run result: gesture_lever=requested;kind=..;id=0;...)
+#         partner_gesture=local; kind=knock; upper=0x17 | kind=sign_go; upper=0x18 | kind=sign_stop; upper=0x19; ...; sent=1
+#           (requested but no local line: the polling refused the request, or the state never wrote the byte at
+#           tick rate; recc= shows PS rec+0xC: for a sign the lever already refuses bit 28 (rec_c28) and a crawl with
+#           bit 20 (stance), as FUN_11E3A20 and GetStance would)
 #  guest (receiver, body 1):
 #         partner_gesture=rx; kind=pickup; seq=N; stance=..; speed=..; moving=..; epoch=..
 #         partner_gesture=submit; graph=2; node=0x1e904603eb7d (stand idle) | 0x82e84b26e4ce (stand moving) |
@@ -38,6 +53,8 @@
 #      body 1's graph-0 record or a foreign mask bit moved);
 #    NO partner_gesture=fault; NO crash; NO host partner_status=local change caused by the guest's gesture (the
 #      host's own player never changes: the guest writes only body 1);
+#    NO partner_gesture=lever line on the guest other than its one refused key_off check below (the lever is host only),
+#      NO lever result=refused; reason=other_changed|fault on the host;
 #    scenario.json Closed, BaselineRestored, RealSavesUnchanged.
 # The stock pickup key is R, not E: PickUpActionPluginImpl polls the padop icon with key type 1 (FUN_1412086f0 ->
 # padop vt+0x28(plugin, 1, res)), and key type 1 is pad bit 0x40 (RELOAD; table 0x22E86A8). Hidden census b9fa7639
@@ -46,11 +63,27 @@
 # ~0.3-0.7 s into a 900 ms hold, body 1's clip ended after ~0.6 s), so every pickup below holds R and the guest bursts
 # during the hold. The prone guest films from 4 m behind / 3 m right (standing, its own body hid most of body 1).
 # Captures (guest): gest-idle, burst gest-pickup during the host's R hold (body 1 bends down on its upper body while its
-# legs stay in place), gest-pickup-end, gest-pickup-squat, gest-pickup-moving, gest-sign / gest-knock (best effort, see
-# below), gest-end. If the frames show nothing on body 1 while the guest logs submit + applied ok=1, that is L8 (graph-2
+# legs stay in place), gest-pickup-end, gest-pickup-squat, gest-pickup-moving, burst gest-knock and gest-knock-end
+# (body 1's knock, its right arm raised to knock), burst gest-sign / gest-sign-end (hand sign Go: an arm forward), burst
+# gest-sign-stop / gest-sign-stop-end (hand sign Stop: a raised flat hand), burst gest-knock-squat (the crouched knock),
+# gest-end; host captures callmenu-open, callmenu-select1, callmenu-decide-e (the stock call menu and a keyboard
+# selection attempt, census only). If the frames show nothing on body 1 while
+# the guest logs submit + applied ok=1, that is L8 (graph-2
 # nodes invisible on body 1, MotionVars): say so and try the rate-record writes of re-traverse-gesture.md 5.3
 # "Optional" in the lab.
+# Run 260da3e5 (0.13.6 runtime phase, wp/integ10 32ac240, lab seed, gun stage, research build): every expectation
+# passed. The host's lever: gesture_lever=requested for knock, sign_go, sign_stop and the crouched knock (other=same),
+# then partner_gesture=local; kind=knock; upper=0x17 / sign_go 0x18 / sign_stop 0x19; the guest: rx, submit graph=2
+# method=reserve (knock 0x7b2d4f836a92, sign_go 0xe74e11baba4b, sign_stop 0xb98c80a7ddae, crouched 0xd08c8b213cab),
+# applied ok=1 (current = node), ended via=timeout; cause=deadline; ms=2000 (the pickups end via=end; cause=clip);
+# the guest's own lever refused key_off; no uncertain / fault / other_changed. FRAMES: gest-knock-NN, gest-sign-NN and
+# gest-sign-stop-NN show NO arm movement on body 1 (the pickup bursts in the same run show body 1 bending down): the
+# knock / sign nodes are current on body 1 but not drawn, the L8 case above. Census: holding CALL (Q) opens the stock
+# menu "1:Knock (lure enemy), 2:Wait, 3:Get it, 4:DD (call), 5:Sonar"; pressing 1 while Q is held runs the knock (frame
+# callmenu-select1: the host's Snake knocks; a host partner_gesture=local; kind=knock; seq=7 without a lever line);
+# E did nothing.
 labsetting partner_native_gesture=1
+labsetting host partner_gesture_lever=1
 labsetting partner_act_log=1
 title 200
 wait 4000
@@ -106,25 +139,89 @@ wait 1500
 host hold w+r 1300 nowait
 guest burst gest-pickup-moving 8 100
 wait 2500
-# --- Hand sign / knock (best effort: no verified wall or buddy spot in the repo) -----------------------------------
-# A knock needs the host against a wall (cover) and E; a hand sign Go / Stop comes from the buddy command state. To
-# extend: teleport the host to a known wall of the lab start (host debug teleport <x> <y> <z> <yaw>), walk into it,
-# then press E and burst as below. Without a wall these presses only record what the upper byte did.
+# --- Knock and hand signs: the host-only lab lever ---------------------------------------------------------------
+# The stock trigger is the call menu, not E: hold CALL (Q, pad 0x200; PP vt+0x90(9, 12 frames) == 3 hold) and pick a
+# command. Command set 0 is the knock (0x110CCE0 -> the block's KnockActionPluginImpl vt+0x28 RequestKnock; no wall is
+# needed). Hand sign Go comes only from Quiet's "Cover me", D-Horse's "Do it" or the child-soldier "go" order, Stop
+# from Quiet's "Cease cover" or the child-soldier "stop" order (vt+0x30 / vt+0x38); no D-Dog command signs, and the
+# lab seed's buddy is D-Dog. The menu cursor is UI-side (CallMenuImpl), so the host uses the lever: the very request
+# call those commands make, on its own player only.
 resetpose host
 stance host stand
-placebehind guest host 5 3
-wait 2000
-host hold w 1200 nowait
-wait 900
-host press e
-guest burst gest-knock 6 150
 wait 1500
-host press q
-wait 600
-host press e
-guest burst gest-sign 6 150
+placebehind guest host 4 3
+stance guest prone
 wait 2000
-waitlog host 'partner_gesture=local; kind=(knock|sign_go|sign_stop);' 5
+guest capture gest-knock-before
+host run gesture_lever knock
+host expect ^gesture_lever=requested;kind=knock;id=0;
+guest burst gest-knock 10 150
+wait 1500
+guest capture gest-knock-end
+waitlog host 'partner_gesture=lever; result=requested; reason=none; kind=knock; id=0;' 10
+waitlog host 'partner_gesture=local; kind=knock; upper=0x17;' 10
+waitlog guest 'partner_gesture=rx; kind=knock;' 10
+waitlog guest 'partner_gesture=submit; graph=2; node=0x[0-9a-f]+; exist=1; kind=knock; method=reserve;' 10
+waitlog guest 'partner_gesture=applied; seq=[0-9]+; kind=knock;' 10
+waitlog guest 'partner_gesture=ended; via=[a-z]+; cause=[a-z_]+; seq=[0-9]+; kind=knock;' 10
+wait 1500
+host run gesture_lever sign_go
+host expect ^gesture_lever=requested;kind=sign_go;id=0;
+guest burst gest-sign 10 150
+wait 1500
+guest capture gest-sign-end
+waitlog host 'partner_gesture=local; kind=sign_go; upper=0x18;' 10
+waitlog guest 'partner_gesture=submit; graph=2; node=0x[0-9a-f]+; exist=1; kind=sign_go; method=reserve;' 10
+waitlog guest 'partner_gesture=applied; seq=[0-9]+; kind=sign_go;' 10
+waitlog guest 'partner_gesture=ended; via=[a-z]+; cause=[a-z_]+; seq=[0-9]+; kind=sign_go;' 10
+wait 1500
+host run gesture_lever sign_stop
+host expect ^gesture_lever=requested;kind=sign_stop;id=0;
+guest burst gest-sign-stop 10 150
+wait 1500
+guest capture gest-sign-stop-end
+waitlog host 'partner_gesture=local; kind=sign_stop; upper=0x19;' 10
+waitlog guest 'partner_gesture=submit; graph=2; node=0x[0-9a-f]+; exist=1; kind=sign_stop; method=reserve;' 10
+waitlog guest 'partner_gesture=applied; seq=[0-9]+; kind=sign_stop;' 10
+waitlog guest 'partner_gesture=ended; via=[a-z]+; cause=[a-z_]+; seq=[0-9]+; kind=sign_stop;' 10
+wait 1500
+# The crouched knock (squat nodes 0x7bc06465d606, with a hand look 0xd08c8b213cab).
+stance host crouch
+wait 1500
+host run gesture_lever knock
+host expect ^gesture_lever=requested;kind=knock;id=0;
+guest burst gest-knock-squat 8 150
+wait 2000
+waitlog guest 'partner_gesture=submit; graph=2; node=0x(7bc06465d606|d08c8b213cab); exist=1; kind=knock;' 10
+stance host stand
+# The lever is lab-only and keyed per copy: the guest's key is off, so its command refuses and nothing runs there.
+guest run gesture_lever knock
+guest expect ^gesture_lever=refused;reason=key_off;kind=knock;
+# Census only (not a gate; docs/native-puppet.md "Gestures": the call menu is only partly mapped). Hold CALL on the
+# host (renewed: each key keeps its own release time, so Q stays down), film the menu it opens, press 1 (the UI's
+# record number 1: CallMenuImpl::UpdateSelectKeyboard selects the enabled record numbered 1..8 through eight hashed
+# key inputs that were not resolved to keys) and then E (a decide candidate; the decide input is PP vt+0x40 bit 24 or
+# the hashed input 0x7f4d42602d29, not resolved) while CALL is still down, then let go (a release without a decision
+# hides the menu with no command). A host partner_gesture=local; kind=knock line here WITHOUT a partner_gesture=lever
+# line before it would be the stock keyboard route: write down which press raised it. E may instead pet D-Dog (act 94)
+# and 1 may change the weapon: record them, neither is a failure.
+# Q is renewed before every capture and press (a capture can take longer than the 700 ms left of a hold; a renewed key
+# stays down without a new edge), and each press waits 200 ms after the renewal so a menu that closed opens again.
+host hold q 1500 nowait
+wait 700
+host hold q 1500 nowait
+host capture callmenu-open
+host hold q 1500 nowait
+wait 200
+host press 1
+wait 300
+host capture callmenu-select1
+host hold q 1500 nowait
+wait 200
+host press e
+wait 300
+host capture callmenu-decide-e
+wait 2500
 resetpose host
 both capture gest-end
 state

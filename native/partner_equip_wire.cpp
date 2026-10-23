@@ -63,8 +63,17 @@ const char* ResultName(Result r) noexcept {
     case Result::inv_slot: return "inv_slot";
     case Result::slot_count: return "slot_count";
     case Result::type: return "type";
+    case Result::no_link: return "no_link";
     default: return "reserved";
     }
+}
+
+void PeekHeader(const std::uint8_t* data, std::size_t size, std::uint16_t& revision, std::uint32_t& epoch) noexcept {
+    revision = 0;
+    epoch = 0;
+    if (!data || size < 8) return;
+    revision = Get16(data + 2);
+    epoch = Get32(data + 4);
 }
 
 Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch, Manifest& out) noexcept {
@@ -106,23 +115,31 @@ Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_
     return Result::ok;
 }
 
-bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch) noexcept {
+bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t link_epoch) noexcept {
     Manifest m{};
-    const Result r = Decode(data, size, current_epoch, m);
-    if (r == Result::stale_epoch) { ++store.stale; return false; }
-    if (r != Result::ok) { ++store.invalid; return false; }
-    // A duplicate repeats the stored message: the same revision and epoch AND the same content. A
-    // 0.12.0 sender restarts at revision 1 every mission (its sender was per mission) while this
-    // receiver keeps the session's manifest across missions (MissionStart seeds it): its new
-    // loadout under the old revision number must replace the stored one, never be dropped.
-    if (store.have && store.manifest.revision == m.revision && store.manifest.epoch == m.epoch &&
+    // Never the sender's session number against ours (0.13.5: every manifest of a
+    // relaunched copy was dropped as stale_epoch): the decode is unconditional.
+    const Result r = Decode(data, size, 0, m);
+    if (r != Result::ok) { ++store.invalid; store.last = r; return false; }
+    // No link session of ours to bind it to.
+    if (!link_epoch) { ++store.stale; store.last = Result::no_link; return false; }
+    // A duplicate repeats the stored message in the SAME link session: the same revision and
+    // sender epoch AND the same content. A new link session is never a duplicate (a relaunched
+    // guest on the same save sends the identical revision 1 again; the old one is bound to the
+    // previous session). A 0.12.0 sender restarts at revision 1 every mission (its sender was per
+    // mission) while this receiver keeps the session's manifest across missions (MissionStart
+    // seeds it): its new loadout under the old revision number must replace the stored one.
+    if (store.have && store.link_epoch == link_epoch && store.manifest.revision == m.revision && store.manifest.epoch == m.epoch &&
         store.manifest.version == m.version && store.manifest.inv_slot == m.inv_slot && SameSlots(store.manifest, m) &&
         SameBox(store.manifest, m)) {
         ++store.duplicates;
+        store.last = Result::ok;
         return false;
     }
     store.have = true;
     store.manifest = m;
+    store.link_epoch = link_epoch;
+    store.last = Result::ok;
     ++store.received;
     return true;
 }

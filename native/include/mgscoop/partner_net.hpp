@@ -82,6 +82,9 @@ struct Config {
     std::uint32_t bind_address = 0x7F000001;  // host byte order; 0 = any
     std::uint32_t peer_address = 0x7F000001;  // guest target
     lab::Impairment impair{};                 // jitter / dup / reorder / burst / seed (latency and loss above)
+    // lab.ini link_session_skew (the lab and the worker's play rehearsal only;
+    // play forces 0): the link-session counter starts there (SessionConfig).
+    std::uint32_t session_skew = 0;
     bool interp_auto = false;
     std::uint32_t interp_ms = 100;            // partner_interp_ms (fixed mode; reported in status)
     std::uint32_t interp_min_ms = 60;

@@ -140,4 +140,110 @@ check(ok and msg=="seat_dm=stop" and c.stops==1 and c.receipts[1]=="return 'MGS_
 c=G();c.seatOk=false;ok,msg=lever(c,"seat_dm stop");check(not ok and msg=="seat_dm_stop_refused" and c.stops==1,"stop refused natively")
 c=G();c.env.Player.RequestToPlayDirectMotion=nil;ok,msg=lever(c,"seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000")
 check(not ok and msg=="vehicle_binding","a missing DM binding is a binding refusal")
+-- 0.13.6 online-vehicle-gone: vehicle_remove nearest [sync] and vehicle_gone_status route to
+-- lua/coop/world_vehicle.lua (W.vehicleGone); anything else is vehicle_args (before: command_args).
+c=G();check(c.V.handles.vehicle_remove and c.V.handles.vehicle_gone_status,"the vehicle-gone levers are handled here")
+ok,msg=lever(c,"vehicle_remove nearest");check(not ok and msg=="vehicle_gone_unavailable" and c.reads==0,"no module: refused, nothing read")
+local calls={}
+local fultons={}
+c=G();c.W.vehicleGone={lever=function(sync,fulton)calls[#calls+1]=sync;fultons[#calls]=fulton;return true,"vehicle_remove;id=25603"end,status=function()return "vgone;on=1"end}
+ok,msg=lever(c,"vehicle_remove nearest");check(ok and msg=="vehicle_remove;id=25603" and calls[1]==false and not fultons[1],"vehicle_remove nearest: this copy only")
+ok,msg=lever(c,"vehicle_remove nearest sync");check(ok and calls[2]==true and not fultons[2],"vehicle_remove nearest sync: through the world op")
+ok,msg=lever(c,"vehicle_remove nearest fulton");check(ok and calls[3]==true and fultons[3]==true,"vehicle_remove nearest fulton: the engine's Fulton, synced")
+ok,msg=lever(c,"vehicle_gone_status");check(ok and msg=="vgone;on=1" and #calls==3,"vehicle_gone_status is read-only")
+for _,bad in ipairs({"vehicle_remove","vehicle_remove 25603","vehicle_remove nearest now","vehicle_remove nearest sync 1","vehicle_remove nearest fulton sync","vehicle_gone_status x"})do
+ ok,msg=lever(c,bad);check(not ok and msg=="vehicle_args" and #calls==3,"strict vehicle-gone arguments: "..bad)
+end
+-- G4 truck test levers (docs/native-puppet.md "Truck test levers"): goto_vehicle truck (gotoTruck), goto_partner_vehicle
+-- and vehicle_door over a stubbed MGS_COOP_VEHICLE_DOOR_V1 receipt (lab.ini debug_vehicle_door=1; doorOff = its refusal).
+-- The stub's door: point (99, 2, 2) m, outward axis +x, the stand spot cm further out at y 1.5, facing the seat (-x).
+local function H()
+ local c=F()
+ c.trucks={veh_trc_0000={25602,{100,0,0},65535},veh_trc_0001={25603,{10,0,0},41},veh_trc_0002={25604,{50,0,0},65535}}
+ c.doors,c.warps,c.wlogs,c.me={},{},{},{0,0,0}
+ c.answer=function(target,seat,cm)
+  return {ok=true,id=tonumber(target) or 25602,peer=target=="partner" and 1 or 0,pseat=target=="partner" and 0 or 255,type=3,seats=2,
+   rider0=65535,x=99000+cm*10,y=1500,z=2000,face=-1571,dx=99000,dy=2000,dz=2000,ax=1000,az=0,rx=100000,ry=1000,rz=0}
+ end
+ local byId={}
+ for _,t in pairs(c.trucks)do byId[t[1]]=t end
+ c.env.GameObject={NULL_ID=65535,GetGameObjectId=function(t,n)check(t=="TppVehicle2","vehicle lookups only");local v=c.trucks[n];return v and v[1] or 65535 end,
+  SendCommand=function(id,q)
+   local t=byId[id];check(t~=nil and next(q,"id")==nil,"only listed trucks, no mutation fields")
+   if q.id=="GetRiderId"then return {t[3],65535}end
+   check(q.id=="GetPosition","read-only truck commands only")
+   local p=t[2];return {GetX=function()return p[1]end,GetY=function()return p[2]end,GetZ=function()return p[3]end}
+  end}
+ c.D.api.receipt=function(text)
+  c.doors[#c.doors+1]=text
+  local target,seat,cm=text:match("^return 'MGS_COOP_VEHICLE_DOOR_V1' %-%- (%w+) ([01]) (%d+)$")
+  check(target~=nil and (target=="partner" or tonumber(target)),"strict door receipt grammar: "..text)
+  if c.doorOff then return {ok=false,reason=c.doorOff}end
+  return c.answer(target,tonumber(seat),tonumber(cm))
+ end
+ c.D.api.pose=function()return {c.me[1],c.me[2],c.me[3],0}end
+ c.D.api.finite=function(n)return type(n)=="number" and n==n and math.abs(n)<1e15 end
+ c.D.api.warp=function(p,id)c.warps[#c.warps+1]={p,id};return true,"submitted_warp"end
+ c.W.log=function(s)c.wlogs[#c.wlogs+1]=s end
+ return c
+end
+local function truck(c,...)return c.V.gotoTruck({"goto_vehicle","truck",...},9)end
+local function near(a,b)return math.abs(a-b)<1e-6 end
+c=H();ok,msg=truck(c)
+local w=c.warps[1]
+check(ok and c.doors[1]=="return 'MGS_COOP_VEHICLE_DOOR_V1' -- 25604 0 60" and #c.warps==1 and w[2]==9 and near(w[1][1],99.6) and
+ near(w[1][2],1.5) and near(w[1][3],2) and math.abs(w[1][4]+90)<0.02 and
+ msg=="submitted_warp;goto_vehicle;name=veh_trc_0002;id=25604;dist=50;door=0;type=3;rider0=65535;out=60" and
+ c.wlogs[1]=="goto_vehicle;name=veh_trc_0002;id=25604;dist=50;door=0;type=3;rider0=65535;out=60" and
+ c.V.last[1]=="25604" and c.V.last[2]==0,"the nearest truck with a free driver seat (not veh_trc_0001: an AI driver), its driver door 60 cm out "..tostring(msg))
+c=H();ok,msg=truck(c,"passenger","30")
+check(ok and c.doors[1]=="return 'MGS_COOP_VEHICLE_DOOR_V1' -- 25604 1 30" and near(c.warps[1][1][1],99.3) and msg:find(";door=1;",1,true),
+ "the passenger door and the distance argument")
+c=H();ok,msg=truck(c,"0");check(ok and c.doors[1]:sub(-9)=="25604 0 0","0 cm: the door point itself")
+for _,bad in ipairs({{"left"},{"151"},{"60","driver"},{"0601"},{"-5"},{"driver","passenger"},{"6.5"}})do
+ c=H();ok,msg=truck(c,unpack(bad));check(not ok and msg=="goto_vehicle_args" and #c.doors==0 and #c.warps==0,"strict door arguments: "..table.concat(bad," "))
+end
+c=H();c.doorOff="off";ok,msg=truck(c);check(ok==nil and msg==nil and #c.warps==0,"key off: nil (debug_player.lua keeps the old 1.9 m spot)")
+c=H();c.doorOff="off";ok,msg=truck(c,"60");check(not ok and msg=="door_off" and #c.warps==0,"key off with a door argument refuses")
+c=H();c.doorOff="lab_only";ok,msg=truck(c);check(not ok and msg=="door_lab_only" and #c.warps==0,"outside the lab: refused, no fallback")
+c=H();c.doorOff="bad reason!";ok,msg=truck(c);check(not ok and msg=="door_refused","an odd native reason is not echoed")
+c=H();for _,t in pairs(c.trucks)do t[3]=41 end;ok,msg=truck(c)
+check(not ok and msg=="vehicle_driver_taken;id=25603;rider0=65535" and c.doors[1]:sub(-10)=="25603 0 60" and #c.warps==0,
+ "every driver seat taken: the nearest truck is named, no warp")
+c=H();for _,t in pairs(c.trucks)do t[3]=41 end;c.doorOff="off";ok,msg=truck(c);check(ok==nil,"taken drivers with the key off: the old spot")
+c=H();c.trucks={};ok,msg=truck(c);check(ok==nil and #c.doors==0,"no truck, no argument: the old path reports it")
+c=H();c.trucks={};ok,msg=truck(c,"60");check(not ok and msg=="vehicle_none","no truck with a door argument")
+c=H();c.answer=function()return {ok=true,id=25604,pseat=255,type=3,seats=2,rider0=65535,x=1,y=1,z=1,dx=1,dy=1,dz=1,ax=1,az=0}end
+ok,msg=truck(c);check(not ok and msg=="door_answer" and #c.warps==0,"an answer without face refuses")
+c=H();c.D.api.receipt=function()return nil end;ok,msg=truck(c);check(not ok and msg=="door_receipt","no receipt answer")
+-- goto_partner_vehicle: the vehicle of the partner's live ride packet, the passenger door by default.
+c=H();ok,msg=c.V.run({"goto_partner_vehicle"},7)
+check(ok and c.doors[1]=="return 'MGS_COOP_VEHICLE_DOOR_V1' -- partner 1 60" and c.warps[1][2]==7 and
+ msg=="submitted_warp;goto_partner_vehicle;id=25602;pseat=0;door=1;type=3;rider0=65535;fast=0;out=60" and c.V.last[1]=="partner" and
+ c.V.last[2]==1,"goto_partner_vehicle "..tostring(msg))
+c=H();c.W.ridePose={fast={tracks={[25602]={samples={}}}}};ok,msg=c.V.run({"goto_partner_vehicle","driver","40"},7)
+check(ok and c.doors[1]:sub(-12)=="partner 0 40" and msg:find(";door=0;",1,true) and msg:find(";fast=1;out=40",1,true),
+ "the driver door, 40 cm, and the RIDE_FAST track of that vehicle")
+c=H();c.doorOff="partner_ride";ok,msg=c.V.run({"goto_partner_vehicle"},7)
+check(not ok and msg=="door_partner_ride" and #c.warps==0,"no live vehicle ride from the partner: refused")
+for _,bad in ipairs({{"40","driver"},{"front"},{"200"},{"driver","1","2"}})do
+ c=H();ok,msg=c.V.run({"goto_partner_vehicle",unpack(bad)},7)
+ check(not ok and msg=="goto_partner_vehicle_args" and #c.doors==0,"strict partner arguments: "..table.concat(bad," "))
+end
+-- vehicle_door: the stock truck gate (1.4 m of the door point, outer side) at the local position.
+c=H();ok,msg=c.V.run({"vehicle_door"},7);check(not ok and msg=="vehicle_door_args" and #c.doors==0,"no target before a goto")
+c=H();truck(c);c.me={99.6,1.5,2};ok,msg=c.V.run({"vehicle_door"},7)
+check(ok and c.doors[2]=="return 'MGS_COOP_VEHICLE_DOOR_V1' -- 25604 0 0" and
+ msg=="vehicle_door;id=25604;type=3;seat=0;rider0=65535;gate=pass;d3=0.78;dot=0.60;dy=-0.50","the last goto's door, gate pass "..tostring(msg))
+c.me={98.8,1.5,2};ok,msg=c.V.run({"vehicle_door"},7);check(ok and msg:find(";gate=inside;",1,true),"inside the door point: inside")
+c.me={101,0,2};ok,msg=c.V.run({"vehicle_door"},7);check(ok and msg:find(";gate=far;",1,true),"beyond 1.4 m: far")
+c.V.stop();ok,msg=c.V.run({"vehicle_door"},7);check(not ok and msg=="vehicle_door_args","stop forgets the last door")
+c=H();ok,msg=c.V.run({"vehicle_door","partner","passenger"},7);check(ok and c.doors[1]:sub(-11)=="partner 1 0","partner, passenger door")
+c=H();ok,msg=c.V.run({"vehicle_door","partner"},7);check(ok and c.doors[1]:sub(-11)=="partner 1 0","partner defaults to the passenger door (goto_partner_vehicle's)")
+c=H();ok,msg=c.V.run({"vehicle_door","partner","driver"},7);check(ok and c.doors[1]:sub(-11)=="partner 0 0","partner, driver door named")
+c=H();ok,msg=c.V.run({"vehicle_door","veh_trc_0000"},7);check(ok and c.doors[1]:sub(-9)=="25602 0 0","a locator, the driver door")
+c=H();ok,msg=c.V.run({"vehicle_door","veh_trc_0009"},7);check(not ok and msg=="vehicle_door_locator" and #c.doors==0,"an unresolved locator")
+for _,bad in ipairs({{"bogus"},{"partner","left"},{"partner","driver","x"},{"12345"}})do
+ c=H();ok,msg=c.V.run({"vehicle_door",unpack(bad)},7);check(not ok and msg=="vehicle_door_args" and #c.doors==0,"strict report arguments: "..table.concat(bad," "))
+end
 print("debug_vehicle_lua_check: "..checks.." checks PASS")

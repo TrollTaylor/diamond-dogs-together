@@ -35,9 +35,11 @@
 # Known cosmetic defect (open): while body 1 is on the ladder the VIEWER's HUD shows the stock ladder hint "C +
 # ladder" next to its own player (8f27806d ladA-up-01..04, ladC-climb-07..up-04; 2596f6ae lad-up-01..top-02 and
 # rev-up-01..top-02), although the viewer is on foot (act 1) and the climber's own view mid-ladder shows no hint.
-# Likely source: body 1's LadderActionImpl state handler 0x1411EC3A0 (case 4) calls P+0xD8 UiControllerImpl vt+0x260
-# (0x140FE6D10 -> [this+0x48] vt+0xF8(3, 8, 0, 1, 0, 0)) with no P+0x218 index check. No input path: body 1's slide
-# poll (0x1411EC54A) asks padop IsCompletedActionIcon with block 1's plugin, which never matches the viewer's slots.
+# Source (0.13.6, docs/native-puppet.md "Partner HUD hints"): body 1's ladder state 0x1411EC3A0 (case 4, every frame)
+# calls P+0xD8 UiControllerImpl (vtable 0x1423AF700) vt+0x260 = the hint-queue leaf 0x140FE8480 (3, 8, 0, 1, 0, 0)
+# with no P+0x218 index check. No input path: body 1's slide poll (0x1411EC54A) asks padop IsCompletedActionIcon with
+# block 1's plugin, which never matches the viewer's slots. Lab fix: partner_native_ui_filter=1, scenario
+# partner-ui-filter-ladder-mb.txt.
 labsetting partner_act_log=1
 title 200
 waitgameplay host 150

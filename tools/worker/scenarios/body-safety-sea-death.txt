@@ -1,0 +1,68 @@
+# 0.13.6 online-body-safety (docs/native-puppet.md "Body safety", the 2026-10-22 session diag-other #5): a lethal
+# fall into the sea is the stock death and drives the shared game over, never "downed in the water".
+# The session: the friend fell off Mother Base into the sea and lay downed for 18 s (F:12695-12698: part=12;
+# flags=0x2419; damage=10000 -> downed; step=entered; no controls timeout) until the host left the map; the host
+# drove into the sea and was downed 12 s before the controls timeout game over (H:11467-11644). Part 12 is not a
+# collision part: the only player collision-hit builder (DefenseCallback::TargetCallbackExec, whose call at 0xFFA138
+# is the only caller of GetPartsIdFromName 0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1
+# for shields; ~1400 downed_damage samples in all logs show lethal part 12 only with flags 0x2419, damage 10000,
+# attacker = self (the other 4 part-12 samples: flags 0x401, damage 0, while carrying the partner; never lethal).
+# Run (hidden worker, coordinator only, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/body-safety-sea-death.txt
+#     -PartnerProfile native -NativeStage gun -SaveSeed real -Mode play -WanSim bad
+#   (the host-role half: body-safety-sea-death-host.txt with the same flags)
+# Mother Base needs the real seed; its arrival demo blocks guest debug commands for a while (wait 60 s first).
+# The spot (222.0, 10.0, 407.0) is the sea next to the platform edge of the session (diag-other #4/#5); check both
+# `debug position` lines: if the real seed's copy is not that platform, use the session's coordinates the copies share
+# or any spot 10 m over open water next to a deck edge, and record it here.
+#
+# Expect (guest script-observer.log):
+#   downed_damage=sample;id=0;...;flags=0x2419,0x2419;part=12;...;damage=10000.0 (the environment kill)
+#   downed_damage=stock_death;reason=environment;id=0;life=..;damage=10000.0;flags=0x2419;part=12
+#   NO downed_damage=lethal_capture / downed_damage=intercept;cause=lethal and NO downed; step=entered for it
+#   world_lua=event=recovery; step=game_over_applied (shared game over within a few seconds)
+# Expect (host): world_lua=event=recovery; step=shared_game_over; ... within ~5 s of the guest's death; on the
+#   host's copy the guest's replica falls into the sea and stays protected (downed_damage=intercept;cause=replica).
+# Fails today (0.13.5): the guest logs lethal_capture + intercept;cause=lethal + downed; step=entered and the host
+#   never reaches shared_game_over until the host leaves.
+# Result (0.13.6 runtime phase, wp/integ10 32ac240, play -WanSim bad, real seed): run de7b3e09 (the first version,
+# the guest teleported alone 500 m from the host) sampled the sea kill with exact=0 (body 1 unrealized, the shield not
+# live) and logged no stock_death line, although the stock death drove the shared game over 1.3 s later. Run b8ab039e
+# (both on the deck first, as below) passed: downed_damage=sample;id=0;exact=1;scoped=1;...;part=12;life=6000;
+# damage=10000 -> downed_damage=stock_death;reason=environment;id=0;...;part=12, no lethal_capture / intercept /
+# downed; step=entered on either copy, host shared_game_over; type=2; cause=2 and guest game_over_applied 0.13 s apart;
+# frames sea-fall-01..06 the guest falling past the deck into the sea, sea-gameover MISSION FAILED on both copies.
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+# Both copies first stand on the deck next to the sea spot: the downed shield (and with it the fix) is live only while
+# body 1 is realized on the falling copy (downed_player Live: both instances realized). Run de7b3e09 (0.13.6+32ac240)
+# teleported the guest alone 500 m from the host: its body 1 was unrealized by the range rearm, the hit sampled
+# exact=0, the stock death ran without the shield (shared game over 1.3 s later) and the fix was never exercised.
+# The deck spots are the friend's own on-deck poses of the session (H:11280-11290 target_mm 208488,800,400272 and
+# 210134,800,402872; this platform's walkway is only x 206..212 here). (205.0, 0.9, 403.0) is open water: run
+# e9e5301b put the host there, and the host's own sea death proved the host half (exact=1; scoped=1 -> stock_death).
+host debug teleport 208.5 0.9 400.3 0
+guest debug teleport 210.1 0.9 402.9 0
+wait 8000
+host debug position
+guest debug position
+guest run downed_status
+both capture sea-before
+guest debug teleport 222.0 10.0 407.0 0
+guest burst sea-fall 6 300
+waitlog guest 'downed_damage=stock_death;reason=environment;id=0;.*part=12' 30
+waitlog host 'world_lua=event=recovery; step=shared_game_over;' 30
+waitlog guest 'world_lua=event=recovery; step=game_over_applied;' 30
+wait 3000
+both capture sea-gameover
+guest run downed_status
+host run downed_status
+state

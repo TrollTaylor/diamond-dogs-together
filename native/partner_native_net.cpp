@@ -51,6 +51,17 @@ const char* Bool(bool value) noexcept { return value ? "true" : "false"; }
 
 void Reset(Quality& q) noexcept { q = Quality{}; }
 
+void Rebase(Quality& q) noexcept {
+    q.have = false;
+    q.last_seq = 0;
+    q.last_rx_ms = 0;
+    q.head = q.count = 0;
+    q.p50_ms = q.p95_ms = 0;
+    // good / good_since_ms stay (as 0.13.5 kept them up to the first frame after
+    // the ride): a late or bad first frame, or a gap after it, still turns it
+    // bad through Observe; a good one re-enters native after the settle alone.
+}
+
 void Observe(Quality& q, const QualityIn& in, const QualityParams& p) noexcept {
     const std::uint64_t now = in.now_ms;
     bool bad = !in.link_live || !in.valid || in.age_ms > p.gap_bad_ms;
@@ -149,8 +160,9 @@ std::size_t FormatNetJson(const NetTelemetry& t, char* out, std::size_t capacity
     w.Text(t.last_net_reason, sizeof(t.last_net_reason));
     w.Add(",\"local_drive\":\"%s\",\"local_reason\":", DriveName(t.local_drive));
     w.Text(t.local_reason, sizeof(t.local_reason));
-    w.Add(",\"caps\":{\"rx\":%s,\"sent\":%u,\"received\":%u,\"invalid\":%u,\"remote_drive\":\"%s\",\"remote_reason\":", Bool(t.caps_rx),
-          t.caps_sent, t.caps_received, t.caps_invalid, DriveName(t.remote_drive));
+    w.Add(",\"caps\":{\"rx\":%s,\"sent\":%u,\"received\":%u,\"invalid\":%u,\"stale\":%u,\"link_epoch\":%u,\"remote_drive\":\"%s\","
+          "\"remote_reason\":",
+          Bool(t.caps_rx), t.caps_sent, t.caps_received, t.caps_invalid, t.caps_stale, t.caps_link_epoch, DriveName(t.remote_drive));
     w.Text(t.remote_reason, sizeof(t.remote_reason));
     w.Add(",\"remote_profile\":");
     w.Text(t.remote_profile, sizeof(t.remote_profile));

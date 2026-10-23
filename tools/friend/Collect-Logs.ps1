@@ -7,6 +7,7 @@ Collects the MGS Co-op logs of one PC into a ZIP on the Desktop
 Included (bounded, read-only, the game may still be running):
   probe.log (tail), script-observer.log (the last 3 sessions: from the
   3rd-last "script adapter" start line), steam-observer.log (tail), early.log,
+  play-coop.log (tail; Play-Coop's own steps such as the handoff restart),
   lab-status.json, link-status.json, play-session.json, lab.ini, coop.ini,
   script-observe.enabled, probe-install.json, client-host.txt,
   host-steamid.txt and friend-install.json, coop-saves.txt (the co-op save
@@ -106,7 +107,8 @@ try {
         Save 'script-observer.log' (Limit-TextTail -Text (Get-TextFromLastMarkers -Text $observer -Marker 'MGS Co-op script adapter' -Count 3) -MaxChars $observerLimitChars)
         $included.Add('script-observer.log')
     } else { $missing.Add('script-observer.log') }
-    foreach ($row in @(@('probe.log', 262144), @('steam-observer.log', 262144), @('early.log', 65536))) {
+    # play-coop.log: Play-Coop's own steps (the handoff restart through Steam, online 2026-10-22 P5).
+    foreach ($row in @(@('probe.log', 262144), @('steam-observer.log', 262144), @('early.log', 65536), @('play-coop.log', 131072))) {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $row[0]) -MaxBytes ([Math]::Min($MaxLogBytes, [int]$row[1]))
         if ($text) { Save $row[0] $text; $included.Add($row[0]) } else { $missing.Add($row[0]) }
     }

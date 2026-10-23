@@ -64,6 +64,11 @@ inline constexpr std::uint8_t downed_status = 0x24, downed_commit = 0x25, revive
 // WS3 vehicles (docs/vehicle-ws3.md): the driven vehicle's record angles next
 // to RIDE_FAST (lab only; sent only to a peer whose ride addendum advertises it).
 inline constexpr std::uint8_t ride_tilt = 0x2D;
+// 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): a vehicle
+// the host's copy lost (Fulton, destroyed) or a guest's request for one it lost
+// by its own hand; host-authoritative, applied by the receiver's Lua only with the
+// lab.ini key world_vehicle_gone=1 (CFG r[15]).
+inline constexpr std::uint8_t vehicle_gone = 0x2E, req_vehicle_gone = 0x2F;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -209,6 +214,9 @@ struct CfgReply {
     // WS4 step 0 (lab key partner_placed_census): r[14] 1 asks the Lua observer for the
     // event=obs_att attacker census lines, else 0; filled only by world_link::HandleCfg.
     std::uint8_t census;
+    // 0.13.6 online-vehicle-gone: r[15] 1 turns on lua/coop/world_vehicle.lua (lab key
+    // world_vehicle_gone, lab and play), else 0; filled only by world_link::HandleCfg.
+    std::uint8_t vehicle_gone;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

@@ -332,8 +332,12 @@ int main() {
     ew::Encode(m, buf);
     Check(ew::Accept(st, buf, sizeof(buf), m.epoch) && st.have && st.received == 1 && st.manifest.revision == 7, "store accepts");
     Check(!ew::Accept(st, buf, sizeof(buf), m.epoch) && st.duplicates == 1 && st.received == 1, "duplicate counted");
-    Check(!ew::Accept(st, buf, sizeof(buf), m.epoch + 1) && st.stale == 1, "stale epoch counted");
-    Check(!ew::Accept(st, buf, 3, m.epoch) && st.invalid == 1 && st.manifest.revision == 7, "invalid counted, store kept");
+    // 0.13.6: no receiver link session to bind it to is the only "stale" refusal left (the sender's
+    // session number is never compared with ours: the R0 block below).
+    Check(!ew::Accept(st, buf, sizeof(buf), 0) && st.stale == 1 && st.last == ew::Result::no_link && st.link_epoch == m.epoch,
+          "no link session: counted as stale, store kept");
+    Check(!ew::Accept(st, buf, 3, m.epoch) && st.invalid == 1 && st.manifest.revision == 7 && st.last == ew::Result::size,
+          "invalid counted, store kept");
     ew::Manifest next = m;
     next.revision = 8;
     ew::Encode(next, buf);
@@ -359,6 +363,53 @@ int main() {
         Check(ew::Accept(old, buf, sizeof(buf), m.epoch) && old.manifest.version == 2 && old.manifest.slots[2].type == 2 && old.received == 4,
               "the same revision as version 2 (types): replaced");
         Check(!ew::Accept(old, buf, sizeof(buf), m.epoch) && old.duplicates == 2, "and its repeat is a duplicate");
+    }
+    // R0 (0.13.6 online-net-epoch; failed on 0.13.5): the receiver binds the manifest to ITS OWN link session and
+    // never compares the sender's session number with it. The 0.13.5 online session: after the guest relaunched,
+    // the host was on link session 3 and the guest on 1, and every manifest was refused as stale_epoch.
+    {
+        ew::Manifest guest = m;
+        guest.revision = 1;
+        guest.epoch = 1;  // a freshly launched guest's first link session
+        std::uint8_t g[ew::kSize]{};
+        Check(ew::Encode(guest, g) == ew::kSize, "the relaunched guest's manifest encodes");
+        ew::Store host{};
+        Check(ew::Accept(host, g, sizeof(g), 3) && host.have && host.link_epoch == 3 && host.manifest.epoch == 1 && host.stale == 0 &&
+                  host.received == 1 && host.last == ew::Result::ok,
+              "R0: sender epoch 1 under the receiver's link session 3 is accepted and stamped link_epoch 3");
+        Check(!ew::Accept(host, g, sizeof(g), 3) && host.duplicates == 1 && host.received == 1 && host.link_epoch == 3,
+              "R0: the same bytes again in link session 3 are a duplicate");
+        // The guest relaunches on the SAME save: the identical revision 1 (epoch 1, the same loadout) arrives in the
+        // host's next link session. A new link session is never a duplicate (0.13.5 naive-hotfix trap).
+        Check(ew::Accept(host, g, sizeof(g), 4) && host.link_epoch == 4 && host.received == 2 && host.duplicates == 1,
+              "R0: the identical manifest in link session 4 is accepted again (re-stamped)");
+        Check(!ew::Accept(host, g, sizeof(g), 4) && host.duplicates == 2, "R0: and repeated in session 4 it is a duplicate");
+        // The other direction: the host (session 3) sends to the guest (session 1).
+        ew::Manifest hostm = m;
+        hostm.revision = 1;
+        hostm.epoch = 3;
+        std::uint8_t hb[ew::kSize]{};
+        Check(ew::Encode(hostm, hb) == ew::kSize, "the host's manifest encodes");
+        ew::Store guest_store{};
+        Check(ew::Accept(guest_store, hb, sizeof(hb), 1) && guest_store.link_epoch == 1 && guest_store.manifest.epoch == 3,
+              "R0: sender epoch 3 under the receiver's link session 1 is accepted");
+        // A box toggle under the same revision in the same session: new content (the box rides on the manifest).
+        hostm.cbox_active = true;
+        hostm.active_item_id = 0x1D4;
+        Check(ew::Encode(hostm, hb) == ew::kSize && ew::Accept(guest_store, hb, sizeof(hb), 1) && guest_store.manifest.cbox_active &&
+                  guest_store.manifest.active_item_id == 0x1D4 && guest_store.received == 2,
+              "R0: the host's box toggle reaches the guest across the session mismatch");
+        // The strict decode helper still names a mismatch (diagnostics only; Accept never uses it).
+        ew::Manifest out{};
+        Check(ew::Decode(hb, sizeof(hb), 1, out) == ew::Result::stale_epoch && ew::Decode(hb, sizeof(hb), 0, out) == ew::Result::ok,
+              "Decode(current_epoch) stays a strict helper");
+        std::uint16_t rev = 0;
+        std::uint32_t sender = 0;
+        ew::PeekHeader(hb, sizeof(hb), rev, sender);
+        Check(rev == 1 && sender == 3, "PeekHeader: revision and sender epoch for the refusal log");
+        ew::PeekHeader(hb, 7, rev, sender);
+        Check(rev == 0 && sender == 0, "PeekHeader: a short message yields zeros");
+        Check(std::strcmp(ew::ResultName(ew::Result::no_link), "no_link") == 0, "no_link name");
     }
     Check(std::strcmp(ew::ResultName(ew::Result::stale_epoch), "stale_epoch") == 0 && std::strcmp(ew::ResultName(ew::Result::type), "type") == 0,
           "result names");

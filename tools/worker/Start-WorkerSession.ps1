@@ -38,19 +38,22 @@ param(
     # Per-role seeds (docs/join-fix-phase2-spec.md P2-19): '' takes -SaveSeed.
     # -GuestSaveSeedRun <runId> seeds the guest from that earlier, closed run's
     # guest-saves\{287700,remote} (read only; the second session of the save
-    # handoff restart proof). It excludes -GuestSaveSeed.
+    # handoff restart proof). It excludes -GuestSaveSeed. -GuestSaveSeed
+    # real-remote: the real seed without 287700\local's progress files (an old
+    # Steam save with remote files only; online 2026-10-22 P1), guest only.
     [ValidateSet('','real','lab')][string]$HostSaveSeed='',
-    [ValidateSet('','real','lab')][string]$GuestSaveSeed='',
+    [ValidateSet('','real','lab','real-remote')][string]$GuestSaveSeed='',
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$GuestSaveSeedRun='',
     # Optional quality preset, applied only to this run's fresh role save copies.
     [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
     # Extra lab.ini keys for this run: allow-listed lab experiments, the facing
     # A/B keys, the name tag keys, the Steam self-test, the online-play A/B
     # keys, the reload/switch/writer A/B keys, the native support key and the
-    # join-fix phase 2 save_handoff / travel_lock keys (Invoke-WorkerScenario
+    # join-fix phase 2 save_handoff / travel_lock keys, the 0.13.6
+    # link_session_skew reproduction knob (Invoke-WorkerScenario
     # "labsetting" lines); key=value for both copies, host:key=value /
     # guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_mount=(off|hide)|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01])$')][string[]]$LabSetting=@(),
     # lab: the one-PC lab (OfflineLab). play: the play rehearsal: both copies
     # run mode=play exactly as Play-Coop writes it, moved onto 127.0.0.1 with
     # the worker-only play_rehearsal=1, the real identity and a fresh link
@@ -85,13 +88,33 @@ function Get-WorkerSeedRunSaves([string]$Repo,[string]$SeedRunId,[string]$Curren
     return $saves
 }
 # The seed of each role: -HostSaveSeed / -GuestSaveSeed ('' = -SaveSeed), or 'run' for -GuestSaveSeedRun.
+# real-remote is a guest seed only.
 function Get-WorkerRoleSeeds([string]$SaveSeed,[string]$HostSaveSeed,[string]$GuestSaveSeed,[string]$GuestSaveSeedRun) {
     if($GuestSaveSeedRun -and $GuestSaveSeed){throw '-GuestSaveSeedRun excludes -GuestSaveSeed.'}
     if($GuestSaveSeedRun -and !(Test-WorkerRunId $GuestSaveSeedRun)){throw '-GuestSaveSeedRun must be one exact lower-case worker run id.'}
     $hostSeed=if($HostSaveSeed){$HostSaveSeed}else{$SaveSeed}
     $guestSeed=if($GuestSaveSeedRun){'run'}elseif($GuestSaveSeed){$GuestSaveSeed}else{$SaveSeed}
-    foreach($value in @($hostSeed,$guestSeed)){if($value -cnotin @('real','lab','run')){throw "Unknown save seed: $value"}}
+    if($hostSeed -cnotin @('real','lab')){throw "Unknown host save seed: $hostSeed"}
+    if($guestSeed -cnotin @('real','lab','run','real-remote')){throw "Unknown guest save seed: $guestSeed"}
     return @{host=$hostSeed;guest=$guestSeed}
+}
+# -GuestSaveSeed real-remote (lab worker only): removes the progress files
+# (TPP_GAME_DATA / PERSONAL_DATA with an optional digit) from 287700\local of
+# this run's own fresh save copy, so the guest starts like a co-op copy seeded
+# from an old Steam save with remote files only. Refuses any path outside the
+# run directory or a link. Returns the removed names.
+function Remove-WorkerLocalProgress([string]$SaveRoot,[string]$RunDirectory) {
+    if(!(Test-WorkerDescendant $SaveRoot $RunDirectory)){throw 'real-remote: the save copy is not this run''s own.'}
+    $local=Assert-WorkerPlainPath (Join-Path $SaveRoot '287700\local') -MustExist
+    $removed=New-Object Collections.Generic.List[string]
+    foreach($f in @(Get-ChildItem -LiteralPath $local -File -Force)){
+        if($f.Name -cnotmatch '^(TPP_GAME_DATA|PERSONAL_DATA)[0-9]?$'){continue}
+        if($f.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'real-remote: a linked progress file.'}
+        Remove-Item -LiteralPath $f.FullName -Force
+        $removed.Add($f.Name)
+    }
+    if(!@(Get-ChildItem -LiteralPath (Join-Path $SaveRoot 'remote') -File -Force|Where-Object{$_.Name -ceq 'TPP_GAME_DATA'}).Count){throw 'real-remote: the seed has no remote TPP_GAME_DATA.'}
+    return @($removed)
 }
 $roleSeeds=Get-WorkerRoleSeeds $SaveSeed $HostSaveSeed $GuestSaveSeed $GuestSaveSeedRun
 # Refuse a wrong seed run before any probe, staging or install work.
@@ -368,6 +391,8 @@ try {
             $seed=[pscustomobject]@{Seeded=$true;Files=@(Get-ChildItem -LiteralPath $saveRoot -Recurse -File).Count}
         } else {
             $seed=Copy-SaveSeed -BackupDirectory $freshBackup -SaveDir $saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'
+            # The guest only (Get-WorkerRoleSeeds): the same copy without its local progress files.
+            if($roleSeed -ceq 'real-remote'){$row.save_seed_removed=@(Remove-WorkerLocalProgress $saveRoot $runDirectory)}
         }
         if(!$seed.Seeded -or !$seed.Files){throw 'Fresh worker save copy was not seeded from the verified backup.'}
         $row.save_seed_kind=$roleSeed

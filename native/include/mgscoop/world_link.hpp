@@ -32,6 +32,9 @@ struct Config {
     // WS4 step 0: lab key partner_placed_census (lab mode only): CFG r[14] = 1
     // asks the Lua observer for its event=obs_att attacker census lines.
     bool placed_census = false;
+    // 0.13.6 online-vehicle-gone: lab.ini world_vehicle_gone (lab and play): CFG
+    // r[15] = 1 turns on the Lua VEHICLE_GONE module (lua/coop/world_vehicle.lua).
+    bool vehicle_gone = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

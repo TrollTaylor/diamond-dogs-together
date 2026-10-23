@@ -59,6 +59,18 @@ std::uint32_t g_event_sequence = 0;  // the newest event's sequence (0 = none ye
 SpinLock g_telemetry_lock;
 Telemetry g_telemetry{};
 
+// The toast log (SetEventLog): one slot per (kind, code) of world_note and
+// save_handoff events. Codes are a byte (world notes 1..16, toasts 1..28).
+SpinLock g_toast_log_lock;
+std::atomic<LogFn> g_toast_log{nullptr};
+std::atomic<ClockFn> g_toast_clock{nullptr};
+struct ToastLogSlot {
+    bool used;
+    std::uint64_t at_ms;
+    unsigned skipped;
+};
+ToastLogSlot g_toast_slots[2][256]{};
+
 template <std::size_t N>
 void Copy(char (&dst)[N], const char* src) noexcept {
     std::size_t i = 0;
@@ -387,14 +399,70 @@ const char* RescueName(Rescue state) noexcept {
     }
 }
 
+bool FormatToastLog(EventKind kind, std::int32_t code, const char* text, bool on, unsigned skipped, std::uint64_t now_ms,
+                    char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    out[0] = 0;
+    if ((kind != EventKind::world_note && kind != EventKind::save_handoff) || code < 0 || code > 255 || !text) return false;
+    const bool note = kind == EventKind::world_note;
+    std::uint32_t v[4]{}, pair[2]{};
+    if (note ? !ParseEventValues(text, v) : !ParseEventValues(text, pair)) return false;
+    if (!note) {
+        v[0] = pair[0];
+        v[1] = pair[1];
+    }
+    char tail[32]{};
+    if (skipped) std::snprintf(tail, sizeof(tail), "; skipped=%u", skipped);
+    const int n =
+        note ? std::snprintf(out, capacity, "hud=toast; kind=world_note; code=%d; a=%u; b=%u; partner=%u; local=%u; on=%u%s; t_ms=%llu\r\n",
+                             static_cast<int>(code), static_cast<unsigned>(v[0]), static_cast<unsigned>(v[1]), static_cast<unsigned>(v[2]),
+                             static_cast<unsigned>(v[3]), on ? 1u : 0u, tail, static_cast<unsigned long long>(now_ms))
+             : std::snprintf(out, capacity, "hud=toast; kind=save_handoff; code=%d; a=%u; b=%u; on=%u%s; t_ms=%llu\r\n",
+                             static_cast<int>(code), static_cast<unsigned>(v[0]), static_cast<unsigned>(v[1]), on ? 1u : 0u, tail,
+                             static_cast<unsigned long long>(now_ms));
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) {
+        out[0] = 0;
+        return false;
+    }
+    return true;
+}
+
+void SetEventLog(LogFn log, ClockFn now_ms) noexcept {
+    Guard guard(g_toast_log_lock);
+    for (auto& kind : g_toast_slots)
+        for (auto& slot : kind) slot = ToastLogSlot{};
+    g_toast_clock.store(now_ms, std::memory_order_release);
+    g_toast_log.store(log, std::memory_order_release);
+}
+
 void Post(EventKind kind, std::int32_t arg, const char* text) noexcept {
     Event e{};
     e.kind = kind;
     e.arg = arg;
     Copy(e.text, text);
-    Guard guard(g_event_lock);
-    e.sequence = ++g_event_sequence;
-    g_events[e.sequence % kEvents] = e;
+    {
+        Guard guard(g_event_lock);
+        e.sequence = ++g_event_sequence;
+        g_events[e.sequence % kEvents] = e;
+    }
+    // The toast log (P8), rate limited per (kind, code); written outside the locks.
+    const LogFn log = g_toast_log.load(std::memory_order_acquire);
+    const ClockFn clock = g_toast_clock.load(std::memory_order_acquire);
+    if (!log || !clock || (kind != EventKind::world_note && kind != EventKind::save_handoff) || arg < 0 || arg > 255) return;
+    const std::uint64_t now = clock();
+    unsigned skipped = 0;
+    {
+        Guard guard(g_toast_log_lock);
+        ToastLogSlot& slot = g_toast_slots[kind == EventKind::world_note ? 0 : 1][arg];
+        if (slot.used && now >= slot.at_ms && now - slot.at_ms < kToastLogGapMs) {
+            ++slot.skipped;
+            return;
+        }
+        skipped = slot.skipped;
+        slot = ToastLogSlot{true, now, 0};
+    }
+    char line[192]{};
+    if (FormatToastLog(kind, arg, e.text, Enabled(), skipped, now, line, sizeof(line))) log(line);
 }
 
 void PostWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::uint32_t partner, std::uint32_t local) noexcept {
@@ -729,6 +797,7 @@ bool FormatStatus(const Telemetry& t, char* out, std::size_t capacity) noexcept 
 void ResetForTest() noexcept {
     g_mode.store(static_cast<int>(Mode::off));
     g_enabled.store(false);
+    SetEventLog(nullptr, nullptr);
     {
         Guard guard(g_view_lock);
         g_view = LinkView{};

@@ -1,0 +1,56 @@
+# G5 heli ride hide (docs/native-puppet.md "Ride hides"; key partner_native_unrealize_all, lab only, default 0): the
+# heli arrival. The only scripted heli ride is the lab goto (heli-alone.txt, pack-mafr-real.txt): from free roam it
+# leaves at once through TppMission.ReserveMissionClearOnRideOnHelicopter (no in-field boarding, the partner's pose
+# just freezes on the viewer's copy until the mission changes), and both copies then arrive at the 30020 landing zone
+# riding their own support heli (acts 100..108, ride kind 1; waitgameplay presses E only for a verified heli state).
+# Here the guest gets off first and watches the host still aboard, then the host gets off. Both copies name the key.
+# What this proves and what it cannot:
+#   - the arrival hide with the key: the partner is hidden from the mission start, before Lua ever had all-active on,
+#     so the ride episode opens (partner_ride=unrealize_begin; ride=heli) but sends no CLEAR (no partner_ride=unrealize
+#     line, unrealize_end ... cleared=0); no partner body at the landing zone while the host is aboard; the body appears
+#     only after it got off (foot_stable, allactive_set, partner_realized=1); no net_quality hold after it.
+#   - NOT the in-field boarding (act 97 after the body was shown, the case the unrealize is for): no scenario or debug
+#     command calls the support heli to a landing zone, so that needs a manual run (the iDroid's heli call, the partner
+#     boards while the viewer watches its get-on spot).
+# Run (hidden worker, coordinator only, one session at a time, no builds running anywhere; stays under 600 s):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-ride-unrealize-heli.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+#
+# Expected (guest script-observer.log, the 30020 mission):
+#   partner_ride=unrealize_configured; ride=seat; mount=hide; heli_acts=97..108; net_rebased_line=1
+#   partner_ride=hide; reason=ride_stale; act=0 (mission start), partner_ride=rx; kind=1, partner_ride=hide; reason=ride;
+#   act=10x; partner_ride=unrealize_begin; ride=heli; act=10x; kind=0|1; seat=-; vehicle=65535; ride_live=0|1; episode=1
+#   (the act sample may arrive before the first heli ride packet)
+#   after the host got off: partner_ride=unrealize_end; ride=heli; act=..; ms=..; kind=0; cleared=0; ...;
+#   partner_ride=foot_stable; next=place; partner_lua=event=allactive_set; partner_realized=1; then
+#   partner_ride=net_rebased; ... (good may read 0: the link quality had no good second before the arrival) and NO
+#   partner_native_net; ...; reason=net_quality after it.
+#   Frames: heli-host-aboard and the heli-lz burst (the landing zone: no partner body while the host is still in its
+#   heli on its own copy), heli-host-off (the host's body on foot after it got off). The host's own frames heli-host-self-aboard /
+#   heli-host-self-off show where it was.
+# Viewer safety: the guest's own act stays 1 after it got off; no viewer_changed, uncertain=1, fault or crash_probe=av.
+labsetting partner_native_unrealize_all=1
+labsetting partner_act_log=1
+labsetting nametag=1
+title 200
+wait 4000
+waitgameplay host 150
+waitgameplay guest 240
+both debug godmode 1
+wait 4000
+host worldtrigger goto=30020
+waitmission host 30020 300
+waitmission guest 30020 120
+# The guest gets off its own heli first; the host stays aboard its heli at the landing zone.
+waitgameplay guest 120
+wait 3000
+host capture heli-host-self-aboard
+guest capture heli-host-aboard
+guest burst heli-lz 6 500
+waitlog guest 'partner_ride=unrealize_begin; ride=heli; ' 10
+waitgameplay host 120
+wait 4000
+guest capture heli-host-off
+host capture heli-host-self-off
+waitlog guest 'partner_ride=unrealize_end; ride=heli; ' 20
+waitlog guest 'partner_ride=foot_stable; ' 20
+state

@@ -98,6 +98,9 @@ struct Fake {
     const char* dm_patch_reason = nullptr;
     bool dm_cleared = false;
     unsigned dm_clear_calls = 0;
+    // 0.13.6 dm_clear_stale: the calls, the last mask (the fake applies ClearDmBits' owner rules).
+    unsigned dm_stale_calls = 0;
+    std::uint8_t dm_stale_mask = 0;
     // dm=map: the game reacts to the reply's DM ops (dm_auto): a play starts
     // the clip (q18[1] = 0x8b) or, unconsumed, stays pending (g388 bit 4); a
     // stop ends it and clears g388 0x3C. A failing patch logs like the
@@ -150,6 +153,7 @@ struct Fake {
     bool aim_read_ok = false;
     std::vector<std::vector<std::uint8_t>> channel2;
     unsigned channel2_drains = 0;
+    std::uint32_t origin_session = 0;  // HookDrainReliableOrigin's origin.session (0: link_session)
     // Native weapons fakes (docs/native-puppet.md "Weapons").
     const char* fire_install_result = nullptr;
     unsigned fire_installs = 0;
@@ -392,6 +396,18 @@ bool HookDmClearPending(void* context) noexcept {
     if (f.dm_cleared) f.dm.g388 = static_cast<std::uint8_t>(f.dm.g388 & ~4u);
     return f.dm_cleared;
 }
+// partner_player::ClearDmBits' rules (tested on synthetic memory in partner_player_tests):
+// Play/Stop/GoNext only, request byte 0 == 1, Stop/GoNext never while the viewer's DM runs.
+std::uint8_t HookDmClearStale(void* context, std::uint8_t mask) noexcept {
+    Fake& f = F(context);
+    ++f.dm_stale_calls;
+    f.dm_stale_mask = mask;
+    if (f.dm.req0 != 1) return 0;
+    std::uint8_t clear = static_cast<std::uint8_t>(f.dm.g388 & mask & 0x1C);
+    if (f.dm.q18[0] == c::q18_dm_act) clear = static_cast<std::uint8_t>(clear & ~0x18);
+    f.dm.g388 = static_cast<std::uint8_t>(f.dm.g388 & ~clear);
+    return clear;
+}
 void HookResetFault(void* context) noexcept {
     ++F(context).fault_resets;
     F(context).stats.window.fault_phase = 0;
@@ -554,6 +570,16 @@ bool HookDrainReliable(void* context, std::uint8_t channel, std::uint8_t* out, s
     size = f.channel2.front().size();
     std::memcpy(out, f.channel2.front().data(), size);
     f.channel2.erase(f.channel2.begin());
+    return true;
+}
+// The game's channel-2 drain (PartnerDrainReliableOrigin -> partner_net::DrainReliableAuthenticated): the origin
+// names the receiver's own link session the message was received in (origin_session; 0: the current link_session).
+bool HookDrainReliableOrigin(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size,
+                             mgscoop::partner_net::ReliableOrigin& origin) noexcept {
+    if (!HookDrainReliable(context, channel, out, capacity, size)) return false;
+    const Fake& f = F(context);
+    origin = {};
+    origin.session = f.origin_session ? f.origin_session : f.link_session;
     return true;
 }
 const char* HookInstallFire(void* context, std::uint16_t owner) noexcept {
@@ -1633,6 +1659,141 @@ void PlaceAndArm(Session& s) {
     s.fake.body_pos[0] = 1.0f; s.fake.body_pos[2] = 3.0f;  // the Lua Warp landed
     Check(s.Tick(1) && s.fake.Count("partner_recon=placed; ok=1;") == 1 && s.fake.arms.back().enabled &&
           s.fake.Count("partner_input=armed;") == 1 && !(s.reply.op & op::warp), "verified, then armed without a Warp");
+}
+
+// 0.13.6 body safety (docs/native-puppet.md "Body safety"; the 2026-10-22 two-PC session): the
+// driver's wiring of the partner_body_safety guards (their policies: partner_body_safety_tests).
+// 0.13.5 had none of these lines and did nothing in each case.
+void TestBodySafety() {
+    // Drop: body 1 cliff-drops (28 -> 25) while the remote walks on the deck: 500 ms later a
+    // vertical placement (a Warp at the target) instead of waiting for the 10 m far rule.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 2;
+        for (int i = 0; i < 5; ++i) s.Tick(1, 33);
+        s.fake.anim.act[1] = 28;
+        s.Tick(1, 33);
+        s.fake.anim.act[1] = 25; s.fake.body_pos[1] = 1.2f;
+        bool warped = false;
+        for (int i = 0; i < 20 && !warped; ++i) {
+            s.Tick(1, 33);
+            warped = (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=vertical;") == 1;
+        }
+        Check(s.fake.Count("partner_body_safety=drop; verdict=place; act=28;") == 1 && warped && s.reply.y_mm == 2000 &&
+                  s.reply.x_mm == 1000 && s.reply.z_mm == 3000,
+              "drop: a lone edge drop is placed back at the remote's pose");
+    }
+    // The remote fell too (its act sample shows the drop): no placement.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 2;
+        for (int i = 0; i < 5; ++i) s.Tick(1, 33);
+        s.fake.sample.act = 28; s.fake.anim.act[1] = 28;
+        s.Tick(1, 33);
+        s.fake.sample.act = 25; s.fake.anim.act[1] = 25; s.fake.body_pos[1] = 1.2f;
+        for (int i = 0; i < 20; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_body_safety=drop; verdict=matched;") == 1 && s.fake.Count("partner_recon=place; reason=vertical;") == 0,
+              "drop: the remote's own fall matches: no placement");
+    }
+    // Put-down: the remote is asleep (132) and body 1, released (44), falls below the deck: a Warp at
+    // the target at once, then an xform pin there every tick, until it holds 500 ms at the target.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 44;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 132;
+        for (int i = 0; i < 3; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_body_safety=putdown;") == 0, "put-down at the target: nothing");
+        s.fake.body_pos[1] = -1.0f;
+        Check(s.Tick(1, 33) && (s.reply.op & op::warp) && s.reply.y_mm == 2000 &&
+                  s.fake.Count("partner_body_safety=putdown; step=start; body_act=44; remote_act=132;") == 1,
+              "put-down: body 3 m below the target: a Warp at the target");
+        const auto xforms = s.fake.Calls("xform:");
+        s.fake.body_pos[1] = -6.0f;
+        Check(s.Tick(1, 33) && s.fake.Calls("xform:") == xforms + 1 && s.fake.xform_pos[1] == 2.0f && !(s.reply.op & op::warp),
+              "put-down: then pinned at the target (xform)");
+        s.fake.body_pos[1] = 2.0f; s.fake.anim.act[1] = 132;
+        for (int i = 0; i < 20; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_body_safety=putdown; step=end; reason=held;") == 1, "put-down: held at the target: end");
+    }
+    // Stuck: three failed placements while body 1 hangs at a ledge (54) and the remote stands on
+    // the deck 25 m away: the free-roam re-show. Bits cleared, body 1 held hidden (clear_all_active
+    // while Lua's all-active mode is on) until the engine unrealizes it, then the range placement at
+    // the target and the realize on the next fresh tick.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net, 30010);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        auto& sm = s.fake.sample;
+        sm.valid = true; sm.x = 1.0f; sm.y = 2.0f; sm.z = 3.0f; sm.status = mgscoop::pose::Status::live;
+        sm.anim_valid = true; sm.act = 2;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+        s.fake.body_ok = true; s.fake.body_pos[0] = 1.0f; s.fake.body_pos[1] = 2.0f; s.fake.body_pos[2] = 3.0f;
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 1;
+        for (int i = 0; i < 3; ++i) s.Tick(1);
+        Loaded(s);
+        for (int i = 0; i < 40; ++i) s.Tick(1);  // past the 700 ms settle
+        Check(s.driver.mission.bits_set && s.driver.mission.recon.mode == mgscoop::partner_recon::Mode::track,
+              "stuck: free-roam input body tracked");
+        s.fake.anim.act[1] = 54;
+        sm.x = 26.0f;
+        bool fail = false;
+        for (int i = 0; i < 40 && !fail; ++i) { s.Tick(1); fail = s.fake.Count("partner_recon=placed; ok=0;") == 1; }
+        Check(fail && s.fake.Count("partner_body_safety=stuck; verdict=reshow; body_act=54; remote_act=2;") == 1 &&
+                  s.driver.mission.body_reshow != nullptr,
+              "stuck: placed ok=0 on a hanging body asks for the re-show");
+        const auto slots = s.fake.Writes("slot");
+        Check(s.Tick(1) && s.fake.Has("partner_bits=cleared; reason=recon_stuck\r\n") &&
+                  s.fake.Count("partner_body_safety=reshow; step=hide; reason=recon_stuck;") == 1 && (s.reply.op & op::clear_all_active) &&
+                  !(s.reply.op & op::warp) && s.driver.mission.reshow_wait,
+              "stuck: bits cleared, body 1 held hidden with clear_all_active");
+        Check(s.Tick(1) && (s.reply.op & op::clear_all_active) && s.fake.Writes("slot") == slots, "stuck: held until unrealized");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Tick(1) && s.fake.Count("partner_body_safety=reshow; step=place; reason=recon_stuck; unrealized=1;") == 1 &&
+                  s.fake.Writes("slot") == slots + 1 && s.fake.state.slot[1][0] == 26.0f && !s.driver.mission.reshow_wait,
+              "stuck: unrealized: the slot is placed at the target");
+        const auto ors = s.fake.Writes("or");
+        Check(s.Tick(1) && s.fake.Writes("or") == ors + 1 && s.driver.mission.bits_set, "stuck: realized again at the target");
+    }
+    // Log budgets in the driver (log_budget::Admit fed m.log_now_ms): a recon family rotates. 64 frozen-family
+    // lines (frozen/unfrozen on each body act change), one capped line per window, then a resumed line with the
+    // dropped count before the first line of the next 2 min window. 0.13.5 closed the family for the mission.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 2;
+        const auto frozen_lines = [&]() { return s.fake.Count("partner_recon=frozen;") + s.fake.Count("partner_recon=unfrozen"); };
+        for (int i = 0; i < 100; ++i) {
+            s.fake.anim.act[1] = (i & 1) ? 11 : 2;  // aim stand idle (frozen=act) / stand move
+            s.Tick(1, 33);
+        }
+        const auto capped = frozen_lines();
+        Check(capped == 64 && s.fake.Count("partner_recon=capped; limit=64; kind=frozen; window_ms=120000\r\n") == 1 &&
+                  s.fake.Count("partner_recon=resumed;") == 0,
+              "log budget: the frozen family stops at 64 lines in the window, one capped line");
+        s.fake.anim.act[1] = 2;
+        for (int i = 0; i < 3700; ++i) s.Tick(1, 33);  // past the 2 min window
+        Check(frozen_lines() == capped, "log budget: nothing while quiet");
+        s.fake.anim.act[1] = 11;
+        s.Tick(1, 33);
+        const auto find = [&](const char* prefix) {
+            for (std::size_t i = 0; i < s.fake.lines.size(); ++i)
+                if (s.fake.lines[i].compare(0, std::strlen(prefix), prefix) == 0) return static_cast<long>(i);
+            return -1L;
+        };
+        const long resumed = find("partner_recon=resumed; kind=frozen; dropped=");
+        Check(resumed >= 0 && frozen_lines() == capped + 1 && resumed + 1 < static_cast<long>(s.fake.lines.size()) &&
+                  s.fake.lines[static_cast<std::size_t>(resumed) + 1].compare(0, 32, "partner_recon=frozen; reason=act") == 0,
+              "log budget: the next window resumes with the dropped count right before the line");
+    }
 }
 
 void TestAnimationApply() {
@@ -3651,6 +3812,116 @@ void TestNativeTraverseIcon() {
     }
 }
 
+// 0.13.6 body safety (docs/native-puppet.md "Body safety") with the native drive and
+// partner_native_traverse on, as in play: the session's cliff drop (H:11285..11309) on the driver.
+// Body 1's own 28 enters the native traversal hold on its edge tick; the drop guard keeps its
+// episode through that hold, waits on the landing at the deck's height (+500 ms) and places body 1
+// back at the remote's pose (reason=vertical) when it falls again, before the ledge hang. The first
+// 0.13.6 guard closed the episode on the hold a tick after the edge: no placement.
+void TestBodySafetyNativeDrop() {
+    namespace pn = mgscoop::partner_native;
+    NativeSession s;
+    s.driver.settings.traverse = true;
+    s.fake.anim_ok = true;
+    s.fake.anim.act[1] = 2;
+    s.fake.sample.anim_valid = true;
+    s.fake.sample.act = 2;
+    Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "native drop: native active with traverse on");
+    for (int i = 0; i < 80; ++i) s.N(16);  // past the settle
+    Check(s.driver.mission.recon.mode == mgscoop::partner_recon::Mode::track && s.driver.mission.input_armed && !s.driver.mission.traverse_hold,
+          "native drop: the input-driven body tracks the remote on the deck");
+    const auto body_act = [&](std::uint16_t act, float y, int ticks) {
+        s.fake.anim.act[1] = act;
+        s.fake.body_pos[1] = y;
+        for (int i = 0; i < ticks; ++i) s.N(16);
+    };
+    body_act(28, 2.0f, 1);  // over the railing
+    body_act(28, 2.5f, 3);
+    Check(s.fake.Containing("partner_traverse=entered; reason=native;") == 1 && s.driver.mission.traverse_hold &&
+              s.driver.mission.body_drop.drop_ms != 0,
+          "native drop: body 1's cliff drop enters the traversal hold; the drop episode stays open");
+    body_act(25, 2.7f, 1);
+    body_act(26, 2.7f, 1);
+    body_act(25, 2.6f, 19);
+    body_act(26, 2.0f, 25);  // on the lip outside the railing at the deck's height, past +500 ms
+    Check(s.fake.Count("partner_body_safety=drop;") == 0 && s.driver.mission.body_drop.drop_ms != 0 &&
+              s.fake.Count("partner_recon=place; reason=vertical;") == 0,
+          "native drop: a landing at the remote's level waits");
+    body_act(25, 1.98f, 1);  // falls again
+    Check(s.fake.Count("partner_body_safety=drop; verdict=place; act=28;") == 1, "native drop: the fall after the landing: place");
+    bool warped = false;
+    for (int i = 0; i < 3 && !warped; ++i) {
+        s.N(16);
+        warped = (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=vertical;") == 1;
+    }
+    Check(warped && s.reply.x_mm == 1000 && s.reply.y_mm == 2000 && s.reply.z_mm == 3000,
+          "native drop: a Warp at the remote's pose before the ledge hang");
+}
+
+// G1 (docs/native-puppet.md "Partner HUD hints"): the hook counts, the driver
+// tick logs. With partner_native_ui_filter on and the hooks installed: one
+// configured line per mission (seeded from the process totals), a swallowed
+// line with the per-queue deltas when a total moves (at most one per
+// kLogGapMs), one key line per new census key with the plugin name, one
+// patch_lost line; the key off, or the hooks not installed, logs nothing.
+void TestUiFilterLog() {
+    namespace pn = mgscoop::partner_native;
+    namespace uf = mgscoop::partner_ui_filter;
+    {
+        NativeSession s;
+        s.driver.settings.ui_filter = true;
+        auto& u = s.fake.stats.native.ui_filter;
+        // Earlier missions' totals: never logged as this mission's deltas.
+        u.installed = true; u.live = true; u.windows = 500; u.passed = 9000; u.swallowed[4] = 77; u.refused = 2;
+        u.keys = 1; u.key[0] = uf::Key(4, 3, 8, 0x11EC60C);
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "ui filter: native active");
+        for (int i = 0; i < 5; ++i) s.N();
+        Check(s.fake.Count("partner_ui_filter=configured; key=1; installed=1; live=1; windows=500; latched=0\r\n") == 1 &&
+                  s.fake.Containing("partner_ui_filter=swallowed") == 0 && s.fake.Containing("partner_ui_filter=key") == 0,
+              "ui filter: configured once, the earlier totals and keys are the baseline");
+        u.windows += 30; u.passed += 400; u.swallowed[4] += 12; u.swallowed[0] += 1;
+        u.keys = 3; u.key[1] = uf::Key(4, 0x61, 8, 0x114FC4E); u.key[2] = uf::Key(0, 0x4a, 8, 0x124C816);
+        s.N();
+        Check(s.fake.Count("partner_ui_filter=swallowed; q240=1; q248=0; q250=0; q258=0; q260=12; windows=30; passed=400; foreign=0; "
+                           "changed=0; refused=0; refusal=none; faults=0; latched=0; live=1\r\n") == 1,
+              "ui filter: the per-queue deltas since the baseline");
+        Check(s.fake.Count("partner_ui_filter=key; queue=0x260; id=97; prio=8; caller=0x114fc4e; plugin=climb\r\n") == 1 &&
+                  s.fake.Count("partner_ui_filter=key; queue=0x240; id=74; prio=8; caller=0x124c816; plugin=ride_vehicle\r\n") == 1 &&
+                  s.fake.Containing("caller=0x11ec60c") == 0,
+              "ui filter: one key line per new census key");
+        // More swallows within the gap: no second line until 1000 ms passed.
+        u.swallowed[4] += 5;
+        s.N();
+        Check(s.fake.Containing("partner_ui_filter=swallowed") == 1, "ui filter: at most one swallowed line per second");
+        for (int i = 0; i < 32; ++i) s.N();
+        Check(s.fake.Count("partner_ui_filter=swallowed; q240=0; q248=0; q250=0; q258=0; q260=5; windows=0; passed=0;") == 1,
+              "ui filter: the next line after the gap carries the rest");
+        // Nothing moved: no line.
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.Containing("partner_ui_filter=swallowed") == 2, "ui filter: no line while nothing moves");
+        // A refused scope and a lost patch.
+        u.refused += 3; u.last_refusal = static_cast<std::uint8_t>(uf::Refusal::vtable); u.live = false;
+        s.N();
+        Check(s.fake.Count("partner_ui_filter=swallowed; q240=0; q248=0; q250=0; q258=0; q260=0; windows=0; passed=0; foreign=0; "
+                           "changed=0; refused=3; refusal=vtable; faults=0; latched=0; live=0\r\n") == 1 &&
+                  s.fake.Count("partner_ui_filter=patch_lost; installed=1; live=0\r\n") == 1,
+              "ui filter: refusals and the lost patch are logged");
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.Count("partner_ui_filter=patch_lost") == 1, "ui filter: patch_lost once");
+    }
+    // The key off or the hooks not installed: no line.
+    for (int variant = 0; variant < 2; ++variant) {
+        NativeSession s;
+        s.driver.settings.ui_filter = variant == 1;
+        auto& u = s.fake.stats.native.ui_filter;
+        u.installed = variant == 0; u.live = variant == 0; u.swallowed[4] = 10; u.keys = 1; u.key[0] = uf::Key(4, 3, 8, 0x11EC60C);
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "ui filter off: native active");
+        u.swallowed[4] += 10;
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.Containing("partner_ui_filter=") == 0, variant == 0 ? "ui filter: the key off logs nothing" : "ui filter: not installed logs nothing");
+    }
+}
+
 void TestNativeOnline() {
     namespace pn = mgscoop::partner_native;
     namespace pnn = mgscoop::partner_native_net;
@@ -4006,8 +4277,17 @@ void TestNativeChannel2AndSender() {
         s.T();
         Check(s.fake.channel2.empty() && s.driver.mission.equip.have && s.driver.mission.equip.manifest.revision == 3 &&
               s.driver.mission.equip.invalid == 1 &&
-              s.fake.Has("partner_equip=manifest; rev=3; inv=1; slots=0:0,46:46,0:0; type=0,0,0; v=2; mission=30050\r\n"),
+              s.fake.Has("partner_equip=manifest; rev=3; inv=1; slots=0:0,46:46,0:0; type=0,0,0; v=2; mission=30050; sender_epoch=7; "
+                         "link_epoch=7\r\n"),
               "channel 2 drained in legacy: stored, invalid counted, logged");
+        // 0.13.6: the refused message is logged once (reason, its header, this copy's link session) and counted.
+        Check(s.fake.Has("partner_equip=refused; reason=size; rev=0; sender_epoch=0; link_epoch=7; size=3; magic=0x01\r\n") &&
+                  s.driver.equip_rx_invalid == 1 && s.driver.equip_rx_received == 1,
+              "a refused channel-2 message is logged with its reason and link session");
+        s.fake.channel2.emplace_back(std::vector<std::uint8_t>{1, 2, 3});
+        s.T();
+        Check(s.fake.Containing("partner_equip=refused;") == 1 && s.driver.equip_rx_invalid == 2,
+              "the same refusal in the same link session: counted, not logged again");
         const unsigned drains = s.fake.channel2_drains;
         s.T();
         Check(s.fake.channel2_drains > drains, "drained every tick");
@@ -4194,6 +4474,23 @@ void TestNativeGunDirectionWire() {
     r.stance[0]=2;
     r.gun_flags[0]=0x2000; s.N();
     Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir), "v6 sender refuses camera-relative mapping and clears old direction");
+    // 0.13.6: riding (here driving: the tick's ride=2 veh=) runs no convention check and sends no
+    // direction (the 2026-10-22 session latched 20/20 seated misses for the mission); on foot it returns.
+    r.gun_flags[0]=0; s.N();
+    Check((s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) != 0, "v6 sender: a direction on foot");
+    const auto checks_before = s.driver.mission.dir_check.checks;
+    s.ride_suffix = " ride=2 veh=25600 seat=0";
+    for (unsigned n=0;n<30;++n) s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) &&
+              s.driver.mission.dir_reason == mgscoop::partner_aim::DirReason::ride &&
+              s.driver.mission.dir_check.checks == checks_before && !s.driver.mission.dir_check.latched &&
+              s.fake.Containing("aim_dir=refused; reason=ride;") == 1,
+          "v6 sender: riding sends no direction and runs no convention check (one change-only line)");
+    s.ride_suffix.clear();
+    for (unsigned n=0;n<3;++n) s.N();
+    Check((s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) != 0 && !s.driver.mission.dir_check.latched &&
+              s.driver.mission.dir_reason == mgscoop::partner_aim::DirReason::none,
+          "v6 sender: the direction returns after the ride");
     // Receiver point direction chooses the received group, stale input cannot retain it.
     s.driver.settings.naimpt=mgscoop::PartnerNativeAimPt::point;
     s.hooks.publish_aim=HookPublishAim; s.hooks.aim_stats=HookAimStats;
@@ -4940,7 +5237,8 @@ void TestEquipEarlyManifest() {
     pd::DrainEquipLink(d, hooks);
     Check(fake.channel2.empty() && d.equip_cache_have && d.equip_cache_epoch == 9 && d.equip_cache.revision == 3 &&
               d.mission.equip.have && fake.reliable_sent.size() == 3 &&
-              fake.Has("partner_equip=manifest; rev=3; inv=255; slots=0:871,46:873,0:0; type=1,4,0; v=2; mission=40010\r\n"),
+              fake.Has("partner_equip=manifest; rev=3; inv=255; slots=0:871,46:873,0:0; type=1,4,0; v=2; mission=40010; sender_epoch=9; "
+                       "link_epoch=9\r\n"),
           "DrainEquipLink: drained in the title, cached, nothing sent");
     Check(fake.state_reads == state_reads, "the early manifest never reads partner state");
     // The first partner mission after connecting starts with it (no resend needed).
@@ -4998,6 +5296,192 @@ void TestEquipEarlyManifest() {
     const std::size_t sent = fake.reliable_sent.size();
     pd::TickEquipLink(quiet, hooks, 9000);
     Check(fake.reliable_sent.size() == sent, "no native drive and no input sender: no manifest");
+}
+
+// R0 (0.13.6 online-net-epoch; failed on 0.13.5): the 2026-10-22 online session. The guest relaunched (quit, then
+// the save handoff) while the host kept running, so the host was on link session 3 and the guest on 1; every
+// manifest and capability message carried the SENDER's counter and the receiver dropped it as stale_epoch: no
+// partner guns, remote=unknown/none and no partner box for the rest of the evening. The receiver now binds them to
+// its OWN link session (the one they were drained in) and never compares the sender's counter with it.
+void TestEquipCrossProcessSession() {
+    namespace ew = mgscoop::partner_equip_wire;
+    namespace pcw = mgscoop::partner_caps_wire;
+    namespace pnn = mgscoop::partner_native_net;
+    {
+        Fake fake;
+        pd::Hooks hooks = HooksFor(fake);
+        AddWeaponHooks(hooks);
+        hooks.link_session = HookLinkSession;
+        hooks.drain_reliable = HookDrainReliable;
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.partner = true;
+        lab.partner_input_send = true;
+        pd::Configure(d, lab);
+        pd::MissionStart(d, hooks, 40010);
+        fake.lines.clear();
+        // 1. The host (link session 3) receives the relaunched guest's manifest (its first session: epoch 1).
+        fake.link_session = 3;
+        ew::Manifest g{};
+        g.revision = 1; g.epoch = 1; g.inv_slot = 0xFF;
+        g.slots[0].base_id = 27; g.slots[0].alias = 27; g.slots[0].type = 1;
+        g.slots[2].base_id = 7; g.slots[2].alias = 7; g.slots[2].type = 2;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "guest manifest encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1000);
+        ew::Manifest out{};
+        Check(d.mission.equip.have && d.mission.equip.link_epoch == 3 && d.mission.equip.manifest.epoch == 1 && d.equip_cache_have &&
+                  d.equip_cache_epoch == 3 && d.equip_rx_received == 1 && d.equip_rx_stale == 0 &&
+                  fake.Containing("partner_equip=manifest; rev=1; inv=255; slots=27:27,0:0,7:7; type=1,0,2; v=2; mission=40010; "
+                                  "sender_epoch=1; link_epoch=3\r\n") == 1 &&
+                  fake.Containing("partner_equip=refused") == 0,
+              "R0: sender epoch 1 under link session 3: stored, cached with the receiver's session, logged");
+        Check(pd::RemoteManifest(d, 3, out) && out.slots[0].base_id == 27 && !pd::RemoteManifest(d, 4, out),
+              "R0: the planning manifest (EquipManifest) is this link session's, never another's");
+        // 2. A mission change seeds the store from the session cache with the receiver's link session.
+        pd::MissionEnd(d, hooks);
+        pd::MissionStart(d, hooks, 30050);
+        Check(d.mission.equip.have && d.mission.equip.link_epoch == 3 && d.mission.equip.manifest.revision == 1 &&
+                  pd::RemoteManifest(d, 3, out) && out.slots[2].base_id == 7,
+              "R0: MissionStart seeds link_epoch 3 (the planning manifest survives the mission change)");
+        // 3. The guest relaunches on the SAME save: link session 4 here, the identical revision 1 / epoch 1 again.
+        fake.link_session = 4;
+        Check(!pd::RemoteManifest(d, 4, out), "R0: the previous session's manifest is not this session's");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1100);
+        Check(d.mission.equip.link_epoch == 4 && d.equip_cache_epoch == 4 && d.mission.equip.duplicates == 0 && d.equip_rx_received == 2 &&
+                  pd::RemoteManifest(d, 4, out) && out.slots[0].base_id == 27 &&
+                  fake.Containing("partner_equip=manifest; rev=1;") == 2 && fake.Containing("link_epoch=4\r\n") == 1,
+              "R0: the identical manifest in a new link session is accepted, re-stamped and re-planned (no duplicate trap)");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1200);
+        Check(d.mission.equip.duplicates == 1 && d.equip_rx_duplicates == 1 && fake.Containing("partner_equip=manifest; rev=1;") == 2,
+              "R0: its repeat in session 4 is a duplicate (not logged)");
+        // 4. The relaunched guest's capability message (epoch 1) under link session 4: live.
+        fake.channel2.push_back(CapsBytes(1, 1, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok"));
+        pd::TickEquipLink(d, hooks, 1300);
+        Check(pcw::Live(d.caps_rx, 4) && d.caps_rx.caps.epoch == 1 && d.caps_rx.link_epoch == 4 && d.caps_rx.stale == 0,
+              "R0: caps epoch 1 under link session 4 are live");
+        // 5. No link session of ours (between sessions): refused and logged once with its fields.
+        fake.link_session = 0;
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1400);
+        Check(fake.Containing("partner_equip=refused; reason=no_link; rev=1; sender_epoch=1; link_epoch=0; size=64; magic=0x45\r\n") == 1 &&
+                  d.equip_rx_stale == 2 && d.mission.equip.link_epoch == 4,
+              "Fix 2: a refusal logs reason, revision, sender epoch and link epoch once per change; counted");
+        // The capability message: one partner_caps=refused line per (link session, reason) as well.
+        const auto caps = [](std::uint16_t revision) {
+            return CapsBytes(revision, 1, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok");
+        };
+        fake.channel2.push_back(caps(1));
+        fake.channel2.push_back(caps(1));
+        pd::TickEquipLink(d, hooks, 1450);
+        Check(fake.Containing("partner_caps=refused; reason=no_link; rev=1; sender_epoch=1; link_epoch=0; size=16\r\n") == 1 &&
+                  fake.Containing("partner_caps=refused;") == 1 && d.caps_rx.stale == 2 && pcw::Live(d.caps_rx, 4),
+              "Fix 2: a refused caps message logs reason, revision, sender epoch and link epoch once; the live caps stay");
+        fake.link_session = 4;
+        fake.channel2.push_back(caps(3));
+        fake.channel2.push_back(caps(2));
+        fake.channel2.push_back(caps(2));
+        pd::TickEquipLink(d, hooks, 1500);
+        Check(d.caps_rx.caps.revision == 3 &&
+                  fake.Containing("partner_caps=refused; reason=older; rev=2; sender_epoch=1; link_epoch=4; size=16\r\n") == 1 &&
+                  fake.Containing("partner_caps=refused;") == 2,
+              "Fix 2: a late older caps revision in the same link session: one reason=older line, the newer revision stays");
+        // 6. Fix 4: the sender resends once per mission start (the receiver's dedupe absorbs it).
+        fake.link_session = 4;
+        fake.loadout_ok = true;
+        fake.loadout.ok = fake.loadout.tables_ok = true;
+        fake.loadout.weapons[1] = 873; fake.loadout.base[1] = 46; fake.loadout.type[1] = 4;
+        pd::TickEquipLink(d, hooks, 5000);
+        const std::size_t first = fake.reliable_sent.size();
+        pd::TickEquipLink(d, hooks, 6100);
+        Check(first == 1 && fake.reliable_sent.size() == 1, "sent once, unchanged afterwards");
+        pd::MissionEnd(d, hooks);
+        pd::MissionStart(d, hooks, 30010);
+        pd::TickEquipLink(d, hooks, 7200);
+        Check(fake.reliable_sent.size() == 2 &&
+                  ew::Decode(fake.reliable_sent[1].data(), fake.reliable_sent[1].size(), 4, out) == ew::Result::ok && out.revision == 1,
+              "Fix 4: a mission start resends the manifest once under the same revision");
+    }
+    {
+        // The game drains channel 2 through the authenticated origin hook (PartnerDrainReliableOrigin ->
+        // partner_net::DrainReliableAuthenticated): the stored link epoch is the origin's session (this copy's own
+        // counter, stamped at the session commit), never the sender's epoch in the message.
+        Fake fake;
+        pd::Hooks hooks = HooksFor(fake);
+        AddWeaponHooks(hooks);
+        hooks.link_session = HookLinkSession;
+        hooks.drain_reliable = nullptr;
+        hooks.drain_reliable_origin = HookDrainReliableOrigin;
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.partner = true;
+        lab.partner_input_send = true;
+        pd::Configure(d, lab);
+        pd::MissionStart(d, hooks, 40010);
+        fake.lines.clear();
+        fake.link_session = 3;
+        ew::Manifest g{};
+        g.revision = 1; g.epoch = 1; g.inv_slot = 0xFF;
+        g.slots[0].base_id = 27; g.slots[0].alias = 27; g.slots[0].type = 1;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "origin: guest manifest encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        fake.channel2.push_back(CapsBytes(1, 1, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok"));
+        pd::TickEquipLink(d, hooks, 1000);
+        ew::Manifest out{};
+        Check(fake.channel2.empty() && d.mission.equip.have && d.mission.equip.link_epoch == 3 && d.equip_cache_have &&
+                  d.equip_cache_epoch == 3 && pd::RemoteManifest(d, 3, out) && out.slots[0].base_id == 27 &&
+                  pcw::Live(d.caps_rx, 3) && d.caps_rx.caps.epoch == 1 &&
+                  fake.Containing("partner_equip=manifest; rev=1;") == 1 && fake.Containing("sender_epoch=1; link_epoch=3\r\n") == 1 &&
+                  fake.Containing("partner_equip=refused") == 0 && fake.Containing("partner_caps=refused") == 0,
+              "origin: sender epoch 1 drained in origin session 3: cache live, RemoteManifest(3), caps Live(3)");
+        // The origin's session is the one stored, even where it differs from the link_session hook's value.
+        fake.origin_session = 5;
+        g.revision = 2; g.slots[1].base_id = 46; g.slots[1].alias = 873; g.slots[1].type = 4;
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "origin: revision 2 encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        fake.channel2.push_back(CapsBytes(2, 1, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok"));
+        pd::TickEquipLink(d, hooks, 1100);
+        Check(d.mission.equip.link_epoch == 5 && d.equip_cache_epoch == 5 && pd::RemoteManifest(d, 5, out) && out.slots[1].base_id == 46 &&
+                  !pd::RemoteManifest(d, 3, out) && pcw::Live(d.caps_rx, 5) && !pcw::Live(d.caps_rx, 3) && d.caps_rx.link_epoch == 5 &&
+                  fake.Containing("partner_equip=manifest; rev=2;") == 1 && fake.Containing("sender_epoch=1; link_epoch=5\r\n") == 1,
+              "origin: the origin's session (5) is stored, not the link_session hook's (3) nor the sender's (1)");
+    }
+    {
+        // The cardboard box rides on the manifest (P3): the host's box toggle reaches body 1's edge detector on a
+        // guest whose link session differs from the host's counter.
+        NativeSession s;
+        s.fake.link_session = 1;  // the relaunched guest
+        ew::Manifest hm{};
+        hm.revision = 1; hm.epoch = 3; hm.inv_slot = 0xFF; hm.slots[1].base_id = 46; hm.slots[1].alias = 873; hm.slots[1].type = 4;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(hm, bytes) == sizeof(bytes), "host manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        s.N();
+        Check(s.driver.mission.equip.have && s.driver.mission.equip.link_epoch == 1 && s.driver.mission.equip.manifest.epoch == 3,
+              "R0: the host's manifest (epoch 3) is stored on the guest (session 1)");
+        hm.cbox_active = true; hm.active_item_id = 468;
+        Check(ew::Encode(hm, bytes) == sizeof(bytes), "host box manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        for (int i = 0; i < 6; ++i) s.N();
+        Check(s.fake.Containing("partner_cbox=remote; id=468; active=1;") == 1 && s.driver.mission.cbox_want &&
+                  s.fake.Containing("partner_equip=manifest;") == 1,
+              "R0: the host's box toggle (same revision) reaches the guest: partner_cbox=remote, no gun re-plan");
+        // The host's capabilities (epoch 3) on the guest (session 1): live, remote=native.
+        s.fake.channel2.push_back(CapsBytes(2, 3, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok"));
+        for (int i = 0; i < 3; ++i) s.N();
+        Check(s.driver.mission.tele.net.caps_rx && s.driver.mission.tele.net.remote_drive == pnn::Drive::native &&
+                  s.driver.mission.tele.net.caps_link_epoch == 1 &&
+                  s.fake.Containing("partner_caps=rx; drive=native; reason=ok;") == 1 && s.fake.Containing("link_epoch=1\r\n") >= 1,
+              "R0: the host's caps (epoch 3) are live on the guest (session 1): remote=native/ok");
+        Check(s.driver.mission.tele.equip_rx_link_epoch == 1 && s.driver.mission.tele.equip_rx_sender_epoch == 3 &&
+                  s.driver.mission.tele.equip_rx_stale == 0 && s.driver.mission.tele.equip_rx_received == 2,
+              "telemetry: native.equip.rx_link_epoch / rx_sender_epoch / counters");
+    }
 }
 
 // Review fixes: play mode never takes the native drive from the trigger file;
@@ -5509,12 +5993,14 @@ struct SeatSession : Session {
     std::uint16_t ride_vehicle = 0xFFFF;
     explicit SeatSession(mgscoop::PartnerRideSeatExit exit = mgscoop::PartnerRideSeatExit::stop,
                          mgscoop::PartnerRideSeatEnter enter = mgscoop::PartnerRideSeatEnter::direct,
-                         mgscoop::PartnerNativeRide ride = mgscoop::PartnerNativeRide::seat, std::uint32_t mission = 30010)
-        : Session(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net, mission) {
+                         mgscoop::PartnerNativeRide ride = mgscoop::PartnerNativeRide::seat, std::uint32_t mission = 30010,
+                         mgscoop::PartnerApply apply = mgscoop::PartnerApply::xform)
+        : Session(3, apply, mgscoop::PartnerSource::net, mission) {
         AddNativeHooks(hooks);
         hooks.send_reliable_append = HookSendReliable;
         hooks.ride_seat_arm = HookRideSeatArm;
         hooks.ride_seat_revert = HookRideSeatRevert;
+        hooks.dm_clear_stale = HookDmClearStale;
         lab.partner_native_ride = ride;
         driver.settings.nride = ride;
         driver.settings.seat_exit = exit;
@@ -5557,6 +6043,228 @@ struct SeatSession : Session {
     }
     void Ended() { fake.dm.q18[1] = 1; fake.dm.rec248 = 0; fake.dm.g388 = 0; }
 };
+
+// G5 (partner_native_unrealize_all, docs/native-puppet.md "Ride hides"): the other ride hides (a vehicle drawn
+// hidden, the heli acts, the horse rider by kind 3 without the mount key) cleared only the realize bits, which left a
+// frozen standing body at the get-on spot (251abcef, the horse kind-3 hide). With the key they unrealize like the
+// mount hide (CLEAR_ALLACTIVE while Lua reports all-active, one line per episode; the show's SET_ALLACTIVE realizes
+// the body again). The link-quality window after the ride is the single rebase of online-ride-robust (with or
+// without the key); the key only adds the partner_ride=net_rebased line.
+void TestRideUnrealize() {
+    namespace rw = mgscoop::partner_ride_wire;
+    // Lua's answer to CLEAR_ALLACTIVE: all-active off and instance 1 unrealized (the hidden path already publishes body 1
+    // as not realized, without a partner_realized=0 line).
+    const auto lua_unrealized = [](SeatSession& s) {
+        s.fake.sample.sender_ms += 33;
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        return s.Tick(0) && s.driver.mission.visibility.hidden && s.reply.op == 0 && !s.driver.mission.realized;
+    };
+    const auto stable_show = [](SeatSession& s) {
+        // 500 ms of calm foot samples show the body, then the free-roam placement; Lua reports all-active off until
+        // the show's SET_ALLACTIVE with the bits set, then all-active on and instance 1 realized and loaded again.
+        bool set_all_active = false, lua_on = false;
+        const auto realized = s.fake.Count("partner_realized=1");
+        for (unsigned i = 0; i < 16; ++i) {
+            s.fake.sample.sender_ms += 100;
+            Check(s.Tick(lua_on ? 1 : 0, 100), "foot samples");
+            set_all_active = set_all_active || (s.reply.op & op::set_all_active) != 0;
+            Check(!(s.reply.op & op::clear_all_active), "no CLEAR after the episode");
+            if (set_all_active && s.driver.mission.bits_set && !lua_on) {
+                lua_on = true;
+                s.fake.Realize(true); s.fake.state.parts[1] = 3;
+            }
+        }
+        Check(lua_on && s.driver.mission.realized && s.fake.Count("partner_realized=1") == realized + 1,
+              "the show realizes body 1 again: one more partner_realized=1, Lua all-active back on");
+        return set_all_active;
+    };
+    for (const bool key : {false, true}) {
+        // A vehicle drawn hidden (partner_native_ride=hide): today's bits-only hide without the key.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
+        s.driver.settings.unrealize_all = key;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.driver.mission.visibility.hidden && !s.driver.mission.bits_set &&
+                  s.fake.Containing("partner_ride=hide; reason=ride; act=111") == 1,
+              "the vehicle ride hides body 1 and clears the bits (both)");
+        if (!key) {
+            Check(s.reply.op == 0 && s.fake.Containing("partner_ride=unrealize") == 0 && s.fake.Containing("partner_ride=net_rebased") == 0,
+                  "key off: no CLEAR, no unrealize line, no net_rebased line (0.13.5)");
+            continue;
+        }
+        Check(s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=111; kind=2; seat=ride_hide; vehicle=25600; ride_live=1; episode=1") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize; ride=vehicle; act=111; kind=2; episode=1; op=clear_allactive") == 1,
+              "key: the hidden reply asks Lua to unrealize body 1, one begin and one unrealize line");
+        Check(s.Step() && s.reply.op == op::clear_all_active && s.fake.Containing("partner_ride=unrealize; ride=") == 1,
+              "CLEAR repeats while Lua reports all-active; the line does not");
+        Check(lua_unrealized(s), "Lua reports all-active off (body 1 unrealized): nothing more to clear");
+        s.fake.sample.anim_valid = false;
+        Check(s.Step() && s.driver.mission.ride_ep.active && s.reply.op == op::clear_all_active,
+              "a missing act sample neither ends the episode nor shows the body");
+        s.fake.sample.anim_valid = true;
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && s.driver.mission.visibility.hidden && !s.driver.mission.ride_ep.active && s.reply.op == 0 &&
+                  s.fake.Containing("partner_ride=unrealize_end; ride=vehicle; act=1; ms=") == 1 &&
+                  s.fake.Containing("kind=0; cleared=1; shown=0; episode=1") == 1,
+              "foot ends the episode (no CLEAR after it); the body waits for the stable-foot proof");
+        Check(s.fake.Containing("partner_ride=net_rebased") == 0, "no rebase line while the ride hides body 1");
+        Check(stable_show(s), "the show path asks Lua for all-active mode again (SET_ALLACTIVE)");
+        Check(!s.driver.mission.visibility.hidden && !s.driver.mission.net_quality_rebase &&
+                  s.fake.Containing("partner_ride=net_rebased; skipped_ms=") == 1 && s.fake.Containing("partner_ride=unrealize_begin") == 1,
+              "shown again: the ride hide's end rebased the link quality once, one net_rebased line");
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize; ride=vehicle; act=111; kind=2; episode=2; op=clear_allactive") == 1,
+              "a second ride opens a second episode");
+    }
+    {
+        // Seat mode with a seat it cannot use (the seat fallback hide): the seat's reason names it.
+        SeatSession s;
+        s.driver.settings.unrealize_all = true;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, rw::kSeatUnknown, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride_seat=unavailable; vehicle=25600; seat=255; reason=seat_unknown") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=111; kind=2; seat=seat_unknown; vehicle=25600;") == 1,
+              "seat unavailable: hidden and unrealized, seat=seat_unknown");
+    }
+    {
+        // The GetOff latch (the (vehicle, seat) a refusal or a get-off ended): hidden as blocked, unrealized.
+        constexpr std::uint64_t kBackLeftLoop = 0xc40b38a1a985ull;
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff);
+        s.driver.settings.unrealize_all = true;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 2, 25609);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && !(s.reply.op & op::clear_all_active), "seated: no CLEAR (the seat draws it)");
+        s.Playing(kBackLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed, "rear-left confirmed");
+        s.fake.sample.act = 112;
+        Check(s.Step() && s.reply.seat_action == partner::seat_action::next, "remote act 112 advances to GetOff");
+        Check(s.Step(), "the GetOff plays out");
+        s.Ended();
+        Check(s.Step() && s.driver.mission.seat.blocked, "GetOff end latches the (vehicle, seat)");
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=112; kind=2; seat=blocked; vehicle=25609;") == 1,
+              "the latched seat hides as blocked and is unrealized");
+    }
+    {
+        // The heli acts (no ride packet: the legacy act rule).
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
+        s.driver.settings.unrealize_all = true;
+        s.Show();
+        s.fake.sample.act = 97;
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=heli; act=97; kind=0; seat=-; vehicle=65535; ride_live=0; episode=1") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize; ride=heli; act=97;") == 1,
+              "heli boarding act 97: hidden and unrealized");
+        s.fake.sample.act = 102;
+        s.Ride(rw::Kind::heli);
+        Check(s.Step() && s.driver.mission.ride_ep.active && s.driver.mission.ride_ep.episodes == 1, "the flight is the same episode");
+        s.Ride(rw::Kind::foot);
+        Check(s.Step() && s.driver.mission.ride_ep.active, "a heli act with a foot ride state is still the ride (getting off)");
+        s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.ride_ep.active && s.fake.Containing("partner_ride=unrealize_end; ride=heli; act=1;") == 1,
+              "a foot act ends it");
+    }
+    for (const bool mount : {false, true}) {
+        // The horse rider by kind 3: the ride episode without the mount key, the mount episode with it.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
+        s.driver.settings.unrealize_all = true;
+        s.driver.settings.nmount = mount ? mgscoop::PartnerNativeMount::hide : mgscoop::PartnerNativeMount::off;
+        s.Show();
+        s.Ride(rw::Kind::horse);
+        s.fake.sample.act = 121;
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active, "the horse rider is hidden and unrealized");
+        if (!mount)
+            Check(s.fake.Containing("partner_ride=unrealize_begin; ride=horse; act=121; kind=3; seat=-;") == 1 &&
+                      s.fake.Containing("partner_ride=unrealize; ride=horse;") == 1 && s.fake.Containing("partner_mount=") == 0,
+                  "mount off: the horse kind-3 hide opens a ride episode");
+        else
+            Check(s.fake.Containing("partner_mount=unrealize; mount=horse; act=121; episode=1") == 1 &&
+                      s.fake.Containing("partner_ride=unrealize") == 0 && !s.driver.mission.ride_ep.active,
+                  "mount hide: the mount episode owns body 1, no ride episode");
+        Check(lua_unrealized(s), "horse: Lua reports all-active off (body 1 unrealized)");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && s.driver.mission.visibility.hidden && !s.driver.mission.ride_ep.active && !s.driver.mission.mount.active &&
+                  s.reply.op == 0,
+              "horse: foot ends the episode (no CLEAR after it)");
+        Check(stable_show(s) && !s.driver.mission.visibility.hidden, "horse: the show asks Lua for all-active mode again (SET_ALLACTIVE)");
+    }
+    std::uint64_t back_after_ride[2]{};
+    for (const bool key : {false, true}) {
+        // The online native drive after a 10 s hidden heli ride (play runs fbde3dcc / 5a044a4d after each hidden
+        // mount: in 0.13.5 the unfed ride was one 10 s inter-arrival gap, so re-entry waited for net_quality). The
+        // single rebase after the ride hide (online-ride-robust) brings the drive back without that hold with or
+        // without the key; the key adds one net_rebased line and does not change the re-entry time.
+        namespace pn = mgscoop::partner_native;
+        NativeSession s;
+        s.driver.settings.nnet = mgscoop::PartnerNativeNet::online;
+        s.driver.settings.nride = mgscoop::PartnerNativeRide::hide;
+        s.driver.settings.unrealize_all = key;
+        auto& sample = s.fake.sample;
+        sample.time_valid = sample.anim_valid = true;
+        sample.act = 1;
+        sample.sender_ms = 1000;
+        const auto tick = [&]() {
+            sample.sender_ms += 33;
+            ++s.fake.latest.seq;  // the remote's input frames keep arriving
+            return s.N();
+        };
+        bool active = false;
+        for (int i = 0; i < 600 && !active; ++i) {
+            tick();
+            active = s.driver.mission.native_out.mode == pn::Mode::active;
+        }
+        Check(active, "online native drive active before the ride");
+        sample.act = 102;
+        for (int i = 0; i < 300; ++i) tick();
+        Check(s.driver.mission.visibility.hidden && s.driver.mission.native_out.mode != pn::Mode::active &&
+                  s.driver.mission.native.left_reason && std::strcmp(s.driver.mission.native.left_reason, "ride") == 0,
+              "the heli ride hides body 1 and leaves the native drive (reason ride)");
+        sample.act = 1;
+        bool quality_hold = false;
+        std::uint64_t back_ms = 0;
+        const std::uint64_t foot_ms = s.now;
+        for (int i = 0; i < 400 && !back_ms; ++i) {
+            tick();
+            if (!s.driver.mission.visibility.hidden) {
+                s.fake.Realize(true);
+                s.fake.state.parts[1] = 3;
+            }
+            const char* reason = s.driver.mission.native_out.reason;
+            quality_hold = quality_hold || (reason && std::strcmp(reason, "net_quality") == 0);
+            if (s.driver.mission.native_out.mode == pn::Mode::active) back_ms = s.now - foot_ms;
+        }
+        Check(back_ms > 0, "the native drive comes back after the ride");
+        back_after_ride[key ? 1 : 0] = back_ms;
+        Check(!quality_hold && s.driver.mission.net_quality.max_gap_ms < 250 && s.driver.mission.net_quality.gaps_1000 == 0,
+              key ? "key: no net_quality hold, no ride-long gap" : "key off: no net_quality hold, no ride-long gap (the rebase)");
+        Check(s.fake.Containing("partner_ride=net_rebased; skipped_ms=") == (key ? 1u : 0u),
+              key ? "key: one net_rebased line" : "key off: no net_rebased line");
+    }
+    Check(back_after_ride[1] <= back_after_ride[0] + 500 && back_after_ride[0] <= back_after_ride[1] + 500,
+          "the key does not change the time back to native after the ride (one rebase path)");
+    {
+        // The once-per-mission configured line: only with the key on.
+        Session s(3, mgscoop::PartnerApply::warp, mgscoop::PartnerSource::net, 30050);
+        s.lab.partner_native_ride = mgscoop::PartnerNativeRide::hide;
+        pd::Configure(s.driver, s.lab);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(s.fake.Containing("partner_ride=unrealize_configured") == 0 && !s.driver.settings.unrealize_all, "key off: no configured line");
+        s.lab.partner_native_unrealize_all = true;
+        pd::Configure(s.driver, s.lab);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(s.driver.settings.unrealize_all &&
+                  s.fake.Containing("partner_ride=unrealize_configured; ride=hide; mount=off; heli_acts=97..108; net_rebased_line=1") == 1,
+              "key on: one configured line per mission start");
+    }
+}
 
 // WS3 B1 (docs/vehicle-ws3.md): the remote driver seated in an unnamed vehicle
 // by id. The offer needs the key (default on), the peer's live ride addendum naming the
@@ -6371,6 +7079,90 @@ void TestBoardSeatGates() {
     }
 }
 
+// 0.13.6 body safety under the ride guard (partner_native_ride=seat, the play default).
+void TestBodySafetyRideGuard() {
+    namespace rw = mgscoop::partner_ride_wire;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full;
+    // Stuck on Mother Base (30050, the session's ledge hang H:11366..11724): free_roam_net is off there and
+    // only the ride guard runs the re-show (no seat episode: Mother Base seats by id only), through its own
+    // range-placement gate (visibility_place_try_ms, partner_ride_wire::Placed).
+    {
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050,
+                      mgscoop::PartnerApply::input);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        auto& sm = s.fake.sample;
+        sm.act = 2;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;  // the remote's live input frames
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 1;
+        s.Ride(rw::Kind::foot);
+        s.Show();
+        for (int i = 0; i < 40; ++i) s.Step();
+        auto& m = s.driver.mission;
+        Check(m.bits_set && m.recon.mode == mgscoop::partner_recon::Mode::track && m.reshow_capable && !m.visibility.hidden,
+              "stuck 30050: the ride-guarded input body tracked, re-show capable");
+        s.fake.anim.act[1] = 54;
+        sm.x = 26.0f;
+        bool fail = false;
+        for (int i = 0; i < 40 && !fail; ++i) { s.Step(); fail = s.fake.Count("partner_recon=placed; ok=0;") == 1; }
+        Check(fail && s.fake.Count("partner_body_safety=stuck; verdict=reshow; body_act=54; remote_act=2;") == 1 && m.body_reshow != nullptr,
+              "stuck 30050: placed ok=0 on a hanging body asks for the re-show");
+        const auto slots = s.fake.Writes("slot");
+        const auto placed = s.fake.Count("partner_range=placed; next=realize");
+        Check(s.Step() && s.fake.Has("partner_bits=cleared; reason=recon_stuck\r\n") &&
+                  s.fake.Count("partner_body_safety=reshow; step=hide; reason=recon_stuck;") == 1 && (s.reply.op & op::clear_all_active) &&
+                  !(s.reply.op & op::warp) && m.reshow_wait,
+              "stuck 30050: bits cleared, body 1 held hidden with clear_all_active");
+        Check(s.Step() && (s.reply.op & op::clear_all_active) && s.fake.Writes("slot") == slots, "stuck 30050: held until unrealized");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Step() && s.fake.Count("partner_body_safety=reshow; step=place; reason=recon_stuck; unrealized=1;") == 1 &&
+                  s.fake.Writes("slot") == slots + 1 && s.fake.state.slot[1][0] == 26.0f && !m.reshow_wait &&
+                  s.fake.Count("partner_range=placed; next=realize") == placed + 1 && m.visibility_place_try_ms != 0,
+              "stuck 30050: unrealized: the ride guard's range placement at the target");
+        const auto ors = s.fake.Writes("or");
+        bool shown = false;
+        for (int i = 0; i < 40 && !shown; ++i) { s.Step(); shown = m.bits_set; }
+        Check(shown && s.fake.Writes("or") == ors + 1 && s.fake.Count("partner_body_safety=reshow;") == 2,
+              "stuck 30050: realized again at the target");
+    }
+    // A seat episode that takes body 1 drops a pending re-show, as a range or ride hide does (the seat exit
+    // re-shows body 1 itself). The stuck guard's request of the last tick and a re-show hold kept by a
+    // refused bit clear (bits still set, so the seat may start) must not hide and re-place body 1 a second
+    // time right after the ride. The first 0.13.6 driver ran them after the seat exit.
+    {
+        SeatSession s;
+        s.Show();
+        auto& m = s.driver.mission;
+        m.body_reshow = "recon_stuck";
+        m.body_reshow_ms = s.now;
+        m.reshow_wait = true;
+        m.reshow_since_ms = s.now;
+        m.reshow_reason = "recon_stuck";
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat) && m.seat.phase == pd::SeatPhase::seated && m.body_reshow == nullptr && !m.reshow_wait,
+              "seat re-show: the seat takes body 1 and drops the pending re-show");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && m.seat.confirmed, "seat re-show: seated");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && s.reply.op == op::dm_stop && m.seat.phase == pd::SeatPhase::exit, "seat re-show: the remote leaves");
+        s.Ended();
+        const auto slots = s.fake.Writes("slot");
+        const auto placed = s.fake.Count("partner_range=placed; next=realize");
+        Check(s.Step() && !m.bits_set && m.range_needs_place && m.seat.phase == pd::SeatPhase::idle && s.fake.Writes("clear") == 1,
+              "seat re-show: the seat exit's own re-show");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Step() && s.fake.Writes("slot") == slots + 1 && s.fake.Count("partner_range=placed; next=realize") == placed + 1,
+              "seat re-show: re-placed on foot");
+        Check(s.Step() && m.bits_set, "seat re-show: re-realized");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        for (int i = 0; i < 10; ++i) s.Step();
+        Check(s.fake.Count("partner_body_safety=reshow;") == 0 && s.fake.Writes("clear") == 1 &&
+                  s.fake.Count("partner_range=placed; next=realize") == placed + 1 && m.bits_set,
+              "seat re-show: no second hide or placement after the ride");
+    }
+}
+
 void TestRideSeat() {
     namespace rw = mgscoop::partner_ride_wire;
     constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full, kBackLeftLoop = 0xc40b38a1a985ull;
@@ -6669,6 +7461,437 @@ void TestRideSeat() {
                   sender.fake.Containing("partner_status=local; st=0x1; names=binocle;") == 1, "foot sends v1; binoculars logged");
         Check(send(" ride=2 veh=65535 seat=255", 1) && last().version == 1 && last().kind == rw::Kind::vehicle,
               "an unknown vehicle and seat keep v1");
+    }
+}
+
+// 0.13.6 online ride (the first two-PC session, 2026-10-22; diag-other #1, #2, #9). Every block
+// fails on 0.13.5: there the unrealized body got three stops (and g388 bit 8 stayed), pending
+// latched a hide, a Fultoned jeep hid the driver, the slot stayed at the boarding spot and the
+// ride counted as one link-quality gap.
+void TestRideRobust() {
+    namespace rw = mgscoop::partner_ride_wire;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full;
+    const auto seated = [&](SeatSession& s, std::uint16_t vehicle) {
+        s.Ride(rw::Kind::vehicle, 0, vehicle);
+        s.fake.sample.act = 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat), "the seat plays");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed && s.driver.mission.seat.phase == pd::SeatPhase::seated, "seated, confirmed");
+    };
+    const auto reshow = [](SeatSession& s) {
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) s.Step(50);
+        Check(s.driver.mission.bits_set, "re-placed and re-realized");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+    };
+    {
+        // Vanish (friend F:6432-6579, host H:7867-8003): the engine unrealizes body 1 mid-ride; its
+        // DM ended with it, q18[1] still reads 0x8B. No stop goes to it, the dwords revert at once,
+        // nothing is latched, and the body re-seats without a pending refusal.
+        SeatSession s;
+        s.Show();
+        seated(s, 25608);
+        const auto hides = s.fake.Containing("partner_ride=hide");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        s.fake.dm.rec_ok = false; s.fake.dm.rec18 = 0; s.fake.dm.rec248 = 0;
+        Check(s.Step() && !(s.reply.op & op::dm_stop) && s.fake.seat_armed == -1 && s.driver.mission.seat.phase == pd::SeatPhase::idle &&
+                  s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=unrealized; via=gone;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=exit_request;") == 0 && s.fake.Containing("partner_ride_seat=dm; when=exit_gone;") == 1,
+              "vanish: no stop to an unrealized body; reverted at once");
+        Check(!s.driver.mission.seat.blocked && s.driver.mission.range_needs_place && s.fake.dm.g388 == 0,
+              "vanish: not latched, no stale stop bit; the re-show flow re-places it");
+        s.fake.dm.q18[1] = 1;
+        reshow(s);
+        bool replayed = false;
+        for (unsigned i = 0; i < 10 && !replayed; ++i) replayed = s.Step() && (s.reply.op & op::ride_seat);
+        Check(replayed && s.fake.Containing("reason=pending") == 0 && s.fake.Containing("partner_ride=hide") == hides &&
+                  s.fake.Containing("partner_ride_seat=unavailable;") == 0,
+              "vanish: re-seated at once, never refused pending, never hidden");
+    }
+    {
+        // An exit that gives up (exit_timeout): the stops were never consumed and bit 8 is ours
+        // (request byte 0 == 1, no viewer DM): cleared at settle, so the next seat is not pending.
+        SeatSession s;
+        s.Show();
+        seated(s, 25608);
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && s.reply.op == op::dm_stop, "exit: stop");
+        s.fake.dm.g388 = 0x08; s.fake.dm.req0 = 1;
+        for (unsigned i = 0; i < 9 && s.driver.mission.seat.phase != pd::SeatPhase::idle; ++i) s.Step(1000);
+        Check(s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=exit_timeout; via=stop;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=stale_cleared; vehicle=25608; seat=0; bits=0x08; when=settle; reason=exit_timeout") == 1 &&
+                  s.fake.dm.g388 == 0 && (s.fake.dm_stale_mask & 0x0C) == 0x0C,
+              "exit_timeout: our unconsumed stop bit is cleared at settle");
+        // A foreign stop (the last Play named instance 0) is never touched.
+        SeatSession f;
+        f.Show();
+        seated(f, 25608);
+        f.Ride(rw::Kind::foot); f.fake.sample.act = 1;
+        Check(f.Step() && f.reply.op == op::dm_stop, "exit: stop");
+        f.fake.dm.g388 = 0x08; f.fake.dm.req0 = 0;
+        for (unsigned i = 0; i < 9 && f.driver.mission.seat.phase != pd::SeatPhase::idle; ++i) f.Step(1000);
+        Check(f.fake.dm.g388 == 0x08 && f.fake.Containing("stale_cleared") == 0, "exit_timeout: a request that is not ours stays");
+    }
+    {
+        // A pending request at the arm (foreign: request byte 0 is 0) is a moment, not the vehicle:
+        // refused without a latch and retried through the re-show flow. This vehicle exists on this
+        // copy (it may be the jeep the viewer drives), so body 1 is never Warped into it (no fallback).
+        // Only the third refusal in a row latches (hidden as in 0.13.5 until the ride changes).
+        SeatSession s;
+        s.Show();
+        const auto hides = s.fake.Containing("partner_ride=hide");
+        s.fake.dm.g388 = 0x08; s.fake.dm.req0 = 0;
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        unsigned warps = 0;
+        const auto wait = [&](std::uint64_t ms) {
+            const bool replied = s.Step(ms);
+            if (s.reply.op & op::warp) ++warps;
+            return replied;
+        };
+        const char* const refused = "partner_ride_seat=refused; vehicle=25608; seat=0; name=-; state=-; reason=pending;";
+        Check(wait(33) && s.driver.mission.seat.phase == pd::SeatPhase::arm && s.reply.op == 0, "pending: the arm waits");
+        Check(wait(3100) && s.fake.Containing(refused) == 1 && s.driver.mission.seat.phase == pd::SeatPhase::idle &&
+                  !s.driver.mission.seat.blocked && s.fake.seat_arms == 0 && s.fake.Containing("partner_ride_seat=fallback;") == 0 &&
+                  s.fake.Containing("partner_ride=hide") == hides && s.fake.dm.g388 == 0x08,
+              "pending: refused without a latch, no fallback; a foreign request is kept");
+        reshow(s);
+        Check(wait(33) && s.driver.mission.seat.phase == pd::SeatPhase::arm, "pending: retried (the arm waits again)");
+        Check(wait(3100) && s.fake.Containing(refused) == 2 && !s.driver.mission.seat.blocked, "pending: the second refusal is not latched");
+        reshow(s);
+        Check(wait(33) && wait(3100) && s.fake.Containing(refused) == 3 && s.driver.mission.seat.blocked &&
+                  s.fake.Containing("partner_ride_seat=retries; vehicle=25608; seat=0; reason=pending; tries=3; latch=1") == 1,
+              "pending: the third refusal in a row latches");
+        Check(wait(33) && s.driver.mission.visibility.hidden &&
+                  s.fake.Containing("partner_ride_seat=unavailable; vehicle=25608; seat=0; reason=blocked; mission=30010; byid=1; block=pending") == 1,
+              "pending: then hidden until the ride changes (no endless re-show cycle)");
+        Check(warps == 0 && s.fake.Containing("show=warp") == 0, "pending: body 1 is never Warped into a vehicle this copy has");
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.seat.blocked && s.driver.mission.seat.transient_refusals == 0, "a new ride starts a new count");
+        // A foreign request that ends between two attempts: seated; the confirmation resets the count.
+        SeatSession e;
+        e.Show();
+        e.fake.dm.g388 = 0x08; e.fake.dm.req0 = 0;
+        e.Ride(rw::Kind::vehicle, 0, 25608);
+        e.fake.sample.act = 111;
+        Check(e.Step() && e.Step(3100) && e.driver.mission.seat.transient_refusals == 1 && !e.driver.mission.seat.blocked, "refused once");
+        e.fake.dm.g388 = 0;
+        reshow(e);
+        Check(e.Step() && (e.reply.op & op::ride_seat), "the request ended: seated on the next attempt");
+        e.Playing(kFrontLeftLoop);
+        Check(e.Step() && e.driver.mission.seat.confirmed && e.driver.mission.seat.transient_refusals == 0, "confirmed: the count restarts");
+        // Ours (request byte 0 == 1) with no DM on either body: the arm clears it (after kSeatStopMs) and plays.
+        SeatSession o;
+        o.Show();
+        o.fake.dm.g388 = 0x08; o.fake.dm.req0 = 1;
+        o.Ride(rw::Kind::vehicle, 0, 25608);
+        o.fake.sample.act = 111;
+        Check(o.Step() && o.driver.mission.seat.phase == pd::SeatPhase::arm, "ours: the arm waits");
+        Check(o.Step(500) && o.fake.dm.g388 == 0x08 && o.fake.dm_stale_calls == 0, "ours: not before kSeatStopMs");
+        Check(o.Step(600) && o.fake.dm.g388 == 0 && (o.fake.dm_stale_mask & 0x1C) == 0x1C &&
+                  o.fake.Containing("partner_ride_seat=stale_cleared; vehicle=25608; seat=0; bits=0x08; when=arm; reason=pending") == 1,
+              "ours: our stale request is cleared by the arm");
+        Check(o.Step() && (o.reply.op & op::ride_seat) && !(o.reply.op & op::warp) && o.fake.Containing("partner_ride_seat=refused;") == 0,
+              "ours: then seated, never refused");
+        // F1 (friend F:6203-6217): the viewer drives the jeep, the remote rides its back seat 3 and the
+        // viewer's own DM holds the arm: refused (retried), never Warped into the viewer's own jeep.
+        SeatSession v;
+        v.Show();
+        v.ride_suffix = " ride=2 veh=25608 seat=0";
+        v.fake.dm.q18[0] = c::q18_dm_act;
+        v.Ride(rw::Kind::vehicle, 3, 25608);
+        v.fake.sample.act = 110;
+        Check(v.Step() && v.driver.mission.seat.phase == pd::SeatPhase::arm && v.driver.local_vehicle == 25608, "host_dm: the arm waits");
+        Check(v.Step(3100) && v.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=3; name=-; state=-; reason=host_dm;") == 1 &&
+                  !v.driver.mission.seat.blocked && !(v.reply.op & op::warp) && v.fake.Containing("partner_ride_seat=fallback;") == 0 &&
+                  v.fake.seat_arms == 0,
+              "host_dm in the viewer's own jeep: refused without a latch, no fallback, no Warp");
+        // dm_read for the whole ride (finding: it blinked body 1 every 3-4 s): retried twice, then latched.
+        SeatSession r;
+        r.Show();
+        r.fake.dm_ok = false;
+        r.Ride(rw::Kind::vehicle, 0, 25608);
+        r.fake.sample.act = 111;
+        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 1 && !r.driver.mission.seat.blocked,
+              "dm_read refused, not latched");
+        reshow(r);
+        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 2 && !r.driver.mission.seat.blocked,
+              "dm_read: retried, refused again, still not latched");
+        reshow(r);
+        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 3 && r.driver.mission.seat.blocked &&
+                  r.fake.Containing("partner_ride_seat=retries; vehicle=25608; seat=0; reason=dm_read; tries=3; latch=1") == 1,
+              "dm_read: the third refusal in a row latches");
+        const auto clears = r.fake.Writes("clear");
+        for (unsigned i = 0; i < 12; ++i) r.Step(1000);
+        Check(r.driver.mission.visibility.hidden && r.fake.Containing("reason=dm_read; manual=0") == 3 && r.fake.Writes("clear") <= clears + 1 &&
+                  r.driver.mission.seat.phase == pd::SeatPhase::idle,
+              "dm_read: hidden for the rest of the ride, no further re-show cycles");
+    }
+    {
+        // A Fultoned jeep (friend F:9631 Fulton, F:10059-10071): this copy has no vehicle 25603 while the
+        // host drives it in Mother Base (seat by id only). 0.13.5 refused local_read and hid the host for
+        // 25 s; now body 1 stays shown at the host's streamed pose, and seats once the jeep exists here.
+        const auto mb = [](SeatSession& s) {
+            s.driver.settings.seat_id = true;
+            s.hooks.vehicle_read = HookVehicleRead;
+            s.hooks.seat_target = HookSeatTarget;
+            s.Show();
+            s.Ride(rw::Kind::vehicle, 0, 25603);
+            s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
+            s.fake.sample.act = 111;
+        };
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s);
+        const auto hides = s.fake.Containing("partner_ride=hide");
+        Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 && !s.fake.dm_patched &&
+                  s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=0; offer=0; reason=local_read;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read; show=warp; byid=0") == 1 &&
+                  s.fake.Containing("partner_ride_seat=refused;") == 0,
+              "Fultoned jeep: local_read shows body 1 without a seat (nothing armed or played)");
+        Check(s.Step() && s.reply.op == op::warp && !s.driver.mission.visibility.hidden && !s.driver.mission.seat.blocked &&
+                  s.fake.Containing("partner_ride=hide") == hides && s.fake.Containing("partner_ride_seat=unavailable;") == 0,
+              "Fultoned jeep: visible, Warped every tick, never hidden");
+        // The vehicle appears on this copy (realized, same category): seated by id at the next check.
+        s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
+        Check(s.Step(2100) && (s.reply.op & op::ride_seat) && s.reply.seat_entry == partner::seat_entry::by_id && s.driver.mission.seat.byid &&
+                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25603; seat=0; reason=local_read; next=release;") == 1,
+              "the vehicle exists here again: seated by id");
+        // The remote gets off while shown in the fallback: nothing to stop, not latched.
+        SeatSession g(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(g);
+        Check(g.Step() && g.driver.mission.seat.phase == pd::SeatPhase::fallback, "fallback");
+        const auto reverts = g.fake.seat_reverts;
+        g.Ride(rw::Kind::foot); g.fake.sample.act = 1;
+        Check(g.Step() && !(g.reply.op & op::dm_stop) && g.driver.mission.seat.phase == pd::SeatPhase::idle && !g.driver.mission.seat.blocked &&
+                  g.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=0; reason=foot; via=fallback;") == 1 &&
+                  g.fake.seat_reverts == reverts,
+              "fallback exit: no stop, no revert, not latched");
+        // An unrealized copy (far on this copy) is shown the same way.
+        SeatSession u(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        u.fake.vehicles.push_back(VehicleRead(25603, 0x10, 0xFF));
+        mb(u);
+        Check(u.Step() && u.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  u.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=unrealized;") == 1,
+              "an unrealized copy: shown without a seat");
+        // Defensive: never a Warp into a vehicle the viewer occupies on this copy.
+        Check(u.Step() && u.reply.op == op::warp, "fallback Warp");
+        u.ride_suffix = " ride=2 veh=25603 seat=1";
+        Check(u.Step() && !(u.reply.op & op::warp) && u.driver.mission.seat.phase == pd::SeatPhase::fallback,
+              "the viewer in that vehicle: no Warp");
+        // The copy vanishes between the offer and the id write (a target refusal, local_read): not
+        // latched where only the id can seat; the next episode shows body 1 without a seat.
+        SeatSession t(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        t.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        mb(t);
+        const auto t_hides = t.fake.Containing("partner_ride=hide");
+        Check(t.Step() && (t.reply.op & op::ride_seat) && t.reply.seat_entry == partner::seat_entry::by_id, "offered by id and played");
+        t.fake.vehicles.clear();
+        t.Playing(kFrontLeftLoop);
+        Check(t.Step() && t.fake.Containing("partner_ride_seat=target; vehicle=25603; seat=0; wrote=0; reason=local_read;") == 1 &&
+                  t.fake.Containing("partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-; reason=local_read;") == 1 &&
+                  t.reply.op == op::dm_stop && t.fake.seat_targets.empty(),
+              "target refused (local_read): the seat DM is stopped");
+        t.Ended();
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && !t.driver.mission.seat.blocked &&
+                  t.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=0; reason=local_read; via=stop;") == 1,
+              "Mother Base target refusal for a missing copy: not latched");
+        reshow(t);
+        t.fake.channel2.push_back(ExtBytes(t.ride_rev, 25603, 0, 1, 900));
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  t.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read; show=warp; byid=0") == 1 &&
+                  t.fake.Containing("partner_ride=hide") == t_hides && t.fake.Containing("partner_ride_seat=unavailable;") == 0,
+              "the next episode shows body 1 without a seat instead of hiding it");
+        // Other by-id refusals still hide (latched) as before.
+        SeatSession c(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        c.fake.vehicles.push_back(VehicleRead(25603, 0x20));
+        mb(c);
+        Check(c.Step() && c.fake.Containing("partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-; reason=category;") == 1 &&
+                  c.driver.mission.seat.blocked, "a category mismatch still refuses (latched)");
+    }
+    {
+        // Prevention: the realize policy reads body 1's slot (0x14121B8B7..0x14121B8CC); the seated body
+        // moves with the jeep, so the slot follows it (at most 1 Hz, past 25 m of drift).
+        SeatSession s;
+        s.Show();
+        seated(s, 25608);
+        const auto slots = s.fake.Writes("slot");
+        s.fake.body_pos[0] = s.fake.sample.x = 41.0f;
+        Check(s.Step(1000) && s.fake.Writes("slot") == slots + 1 && s.fake.state.slot[1][0] == 41.0f && s.fake.state.slot[1][2] == 4.0f &&
+                  s.fake.Containing("partner_ride_seat=slot_follow; vehicle=25608; seat=0; drift_mm=40000; body_mm=41000,2000,4000") == 1,
+              "the slot follows the seated body");
+        s.fake.body_pos[0] = s.fake.sample.x = 71.0f;
+        Check(s.Step(100) && s.fake.Writes("slot") == slots + 1, "at most once a second");
+        s.fake.body_pos[0] = s.fake.sample.x = 61.0f;
+        Check(s.Step(1000) && s.fake.Writes("slot") == slots + 1, "20 m of drift: kept");
+        s.fake.body_pos[0] = s.fake.sample.x = 71.0f;
+        Check(s.Step(1000) && s.fake.Writes("slot") == slots + 2 && s.fake.Containing("partner_ride_seat=slot_follow;") == 1 &&
+                  s.driver.mission.seat.phase == pd::SeatPhase::seated && s.fake.Containing("seat_far") == 0,
+              "30 m of drift: written again (logged once), still seated");
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && s.reply.op == op::dm_stop, "exit");
+        s.Ended();
+        Check(s.Step() && s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=foot; via=stop;") == 1 &&
+                  s.fake.Containing("; follows=2\r\n") == 1, "the exit line counts the follows");
+    }
+    {
+        // ~4 s of clips after every ride (F:6174 p50=85650): the arbiter's link-quality window restarts
+        // after a seat episode instead of counting the ride as one arrival gap.
+        SeatSession s;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+        std::uint32_t seq = 1;
+        const auto frame = [&](std::uint64_t ms) { s.fake.latest.seq = seq++; return s.Step(ms); };
+        s.Show();
+        for (unsigned i = 0; i < 20; ++i) frame(33);
+        Check(s.driver.mission.net_quality.have && s.driver.mission.net_quality.gaps_1000 == 0, "observed on foot");
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(frame(33) && (s.reply.op & op::ride_seat), "play");
+        s.Playing(kFrontLeftLoop);
+        for (unsigned i = 0; i < 60; ++i) frame(1000);
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        frame(33);
+        s.Ended();
+        frame(33);
+        Check(s.driver.mission.seat.phase == pd::SeatPhase::idle && s.driver.mission.net_quality_rebase, "settled: rebase pending");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) frame(50);
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        for (unsigned i = 0; i < 10; ++i) frame(33);
+        Check(!s.driver.mission.net_quality_rebase && s.driver.mission.net_quality.gaps_1000 == 0 &&
+                  s.driver.mission.net_quality.max_gap_ms < 1000,
+              "the 60 s ride is not one arrival gap");
+    }
+    {
+        // A leave the link itself caused (the lease, ride_stale) is a real gap: no rebase, so the
+        // quality hold applies after it as in 0.13.5. Only a seat episode or a ride hide that merely
+        // skipped the observer restarts the window (review: a rebase that keeps the good state must
+        // not forgive an outage).
+        SeatSession s;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+        std::uint32_t seq = 1;
+        const auto frame = [&](std::uint64_t ms) { s.fake.latest.seq = seq++; return s.Step(ms); };
+        s.Show();
+        for (unsigned i = 0; i < 20; ++i) frame(33);
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(frame(33) && (s.reply.op & op::ride_seat), "lease: play");
+        s.Playing(kFrontLeftLoop);
+        for (unsigned i = 0; i < 10; ++i) frame(1000);
+        Check(s.driver.mission.seat.confirmed, "lease: seated");
+        const auto stale_hides = s.fake.Containing("partner_ride=hide; reason=ride_stale;");
+        s.fake.link_live = false;
+        Check(frame(33) && s.reply.op == op::dm_stop, "lease lost: the seat exits (stop)");
+        s.Ended();
+        frame(33);
+        Check(s.driver.mission.seat.phase == pd::SeatPhase::idle && !s.driver.mission.net_quality_rebase &&
+                  s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=lease; via=stop;") == 1,
+              "lease: settled without a rebase");
+        for (unsigned i = 0; i < 6; ++i) frame(1000);
+        Check(s.driver.mission.visibility.hidden && s.fake.Containing("partner_ride=hide; reason=ride_stale;") == stale_hides + 1,
+              "lease: hidden");
+        s.fake.link_live = true;
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        for (unsigned i = 0; i < 40 && s.driver.mission.visibility.hidden; ++i) frame(50);
+        Check(!s.driver.mission.visibility.hidden && !s.driver.mission.net_quality_rebase, "lease: the ride_stale hide ends without a rebase");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) frame(50);
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        for (unsigned i = 0; i < 10; ++i) frame(33);
+        Check(s.driver.mission.net_quality.gaps_1000 == 1 && s.driver.mission.net_quality.max_gap_ms >= 10000 && !s.driver.mission.net_quality.good,
+              "lease: the outage counts as one gap (the quality hold applies)");
+        // A ride hide (the remote in the helicopter) that ended normally: rebased, no gap.
+        SeatSession r;
+        r.fake.latest.valid = true; r.fake.latest.age_ms = 5;
+        std::uint32_t rseq = 1;
+        const auto rframe = [&](std::uint64_t ms) { r.fake.latest.seq = rseq++; return r.Step(ms); };
+        r.Show();
+        for (unsigned i = 0; i < 20; ++i) rframe(33);
+        r.Ride(rw::Kind::heli);
+        for (unsigned i = 0; i < 20; ++i) rframe(1000);
+        Check(r.driver.mission.visibility.hidden && r.fake.Containing("partner_ride=hide; reason=ride;") == 1, "heli: hidden");
+        r.Ride(rw::Kind::foot); r.fake.sample.act = 1;
+        bool rebased = false;
+        for (unsigned i = 0; i < 40 && !rebased; ++i) rebased = rframe(50) && r.driver.mission.net_quality_rebase;
+        Check(rebased, "heli: the ride hide ends with a rebase");
+        r.fake.Realize(false); r.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !r.driver.mission.bits_set; ++i) rframe(50);
+        r.fake.Realize(true); r.fake.state.parts[1] = 3;
+        for (unsigned i = 0; i < 10; ++i) rframe(33);
+        Check(r.driver.mission.net_quality.gaps_1000 == 0 && r.driver.mission.net_quality.max_gap_ms < 1000, "heli: the hide is not one gap");
+    }
+    {
+        // The time back to native after a ride (friend F:6713 net_quality, F:6856 native at good_ms=4004):
+        // the online native drive, a 30 s seat episode, then the get-off. The arbiter re-enters native
+        // about enter_hold_ms after the body is back (the link was good before the ride and is good
+        // after it). Control: without the rebase (0.13.5) the ride is one gap: ~6 s of clips; a Rebase
+        // that also restarts the good state still holds quality_ms first: ~4 s.
+        const auto back_ms = [&](bool rebase) -> std::uint64_t {
+            SeatSession s;
+            s.lab.partner_drive = mgscoop::PartnerDrive::native;
+            s.lab.partner_input_defer = mgscoop::PartnerDefer::on;
+            s.lab.partner_input_hook = true;
+            s.lab.partner_input_wrap = mgscoop::PartnerWrap::window;
+            s.lab.partner_input_send = true;
+            s.driver.settings.drive = mgscoop::PartnerDrive::native;
+            s.driver.settings.defer = mgscoop::PartnerDefer::on;
+            s.driver.settings.isend = true;
+            s.driver.settings.steer_deg = 15;
+            s.driver.settings.nnet = mgscoop::PartnerNativeNet::online;
+            mgscoop::partner_native::Reset(s.driver.mission.native, true);
+            s.driver.mission.mag_scale = 1.0;
+            NativeHealthy(s.fake);
+            s.fake.latest.valid = true; s.fake.latest.age_ms = 5; s.fake.latest.packet.version = 3;
+            s.fake.latest_ok = true;
+            s.fake.dm.q18[0] = 3; s.fake.dm.q18[1] = 3; s.fake.dm.g388 = 0; s.fake.dm.cam_ok = true;
+            std::uint32_t seq = 1;
+            std::uint64_t since_ride = 0;
+            const auto frame = [&](std::uint64_t ms = 33) {
+                NativeFrame(s.fake);
+                s.fake.latest.seq = seq++;
+                s.fake.sample.sender_ms += static_cast<std::int64_t>(ms);
+                since_ride += ms;
+                if (since_ride >= 1000 && s.ride_sent) {
+                    since_ride = 0;
+                    s.now += 1; s.Ride(s.ride_kind, s.ride_seat, s.ride_vehicle, false); s.now -= 1;
+                }
+                return s.Tick(3, ms);
+            };
+            for (unsigned i = 0; i < 60 && !s.driver.mission.bits_set; ++i) frame(50);
+            s.fake.Realize(true); s.fake.state.parts[1] = 3;
+            for (unsigned i = 0; i < 400 && s.driver.mission.native_out.mode != mgscoop::partner_native::Mode::active; ++i) frame();
+            Check(s.driver.mission.native_out.mode == mgscoop::partner_native::Mode::active, "online native: active on foot");
+            s.Ride(rw::Kind::vehicle, 0, 25608);
+            s.fake.sample.act = 111;
+            for (unsigned i = 0; i < 10 && !(s.reply.op & op::ride_seat); ++i) frame();
+            Check((s.reply.op & op::ride_seat) && s.driver.mission.native_out.mode != mgscoop::partner_native::Mode::active,
+                  "the seat owns body 1 (native left: seat)");
+            s.Playing(kFrontLeftLoop);
+            for (unsigned i = 0; i < 900; ++i) frame();  // a 30 s ride
+            Check(s.driver.mission.seat.confirmed, "seated for the ride");
+            s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+            frame();
+            s.Ended();
+            frame();
+            Check(s.driver.mission.seat.phase == pd::SeatPhase::idle && s.driver.mission.net_quality_rebase, "settled");
+            if (!rebase) s.driver.mission.net_quality_rebase = false;  // the control: 0.13.5 had no rebase
+            const std::uint64_t settled = s.now;
+            s.fake.Realize(false); s.fake.state.parts[1] = 0;
+            for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) frame(50);
+            s.fake.Realize(true); s.fake.state.parts[1] = 3;
+            for (unsigned i = 0; i < 400; ++i) {
+                frame();
+                const auto mode = s.driver.mission.native_out.mode;
+                if (mode == mgscoop::partner_native::Mode::entering || mode == mgscoop::partner_native::Mode::active) return s.now - settled;
+            }
+            return ~0ull;
+        };
+        const std::uint64_t fixed = back_ms(true), control = back_ms(false);
+        std::printf("ride robust: native back after %llu ms (rebase), %llu ms (control)\n", static_cast<unsigned long long>(fixed),
+                    static_cast<unsigned long long>(control));
+        Check(fixed <= 2000 + 1200, "native re-entry about enter_hold_ms after the ride (no fresh quality_ms hold)");
+        Check(control != ~0ull && control >= fixed + 3000, "control: without the rebase the ride costs ~4 s more of clips");
     }
 }
 
@@ -7363,6 +8586,36 @@ void TestGestures() {
     st.dropped = 0;
 }
 
+// G4 truck test levers (vehicle_door; docs/native-puppet.md "Truck test levers"): the peer's live vehicle ride
+// (its link epoch, inside the lease) names the vehicle goto_partner_vehicle reads on this copy; nothing else does.
+void TestRidePeerVehicle() {
+    namespace rw = mgscoop::partner_ride_wire;
+    Session s(0);
+    BoardSetup(s, mgscoop::PartnerRideBoard::off);
+    s.ride_suffix = " ride=0";
+    std::uint16_t vehicle = 1;
+    std::uint8_t seat = 1;
+    Check(s.Tick(0) && !pd::RidePeerVehicle(s.driver, 7, s.now, vehicle, seat) && vehicle == rw::kVehicleUnknown && seat == rw::kSeatUnknown,
+          "no ride packet: no vehicle");
+    std::uint16_t rev = 0;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25602);
+    Check(s.Tick(0), "the ride packet arrives");
+    const std::uint64_t at = s.driver.ride_rx.received_ms;
+    Check(pd::RidePeerVehicle(s.driver, 7, at, vehicle, seat) && vehicle == 25602 && seat == 0, "the peer drives 25602");
+    Check(pd::RidePeerVehicle(s.driver, 7, at + rw::kLeaseMs, vehicle, seat) && vehicle == 25602, "live to the end of the lease");
+    Check(!pd::RidePeerVehicle(s.driver, 7, at + rw::kLeaseMs + 1, vehicle, seat) && vehicle == rw::kVehicleUnknown, "past the lease");
+    Check(!pd::RidePeerVehicle(s.driver, 8, at, vehicle, seat) && !pd::RidePeerVehicle(s.driver, 0, at, vehicle, seat),
+          "another or no link epoch");
+    BoardRide(s, rev, rw::Kind::vehicle, 2, 25602);
+    Check(s.Tick(0) && pd::RidePeerVehicle(s.driver, 7, s.driver.ride_rx.received_ms, vehicle, seat) && vehicle == 25602 && seat == 2,
+          "a back-seat ride names the vehicle and seat 2");
+    BoardRide(s, rev, rw::Kind::horse, rw::kSeatUnknown, rw::kVehicleUnknown);
+    Check(s.Tick(0) && !pd::RidePeerVehicle(s.driver, 7, s.driver.ride_rx.received_ms, vehicle, seat) && seat == rw::kSeatUnknown,
+          "a horse ride is no vehicle");
+    BoardRide(s, rev, rw::Kind::foot, rw::kSeatUnknown, rw::kVehicleUnknown);
+    Check(s.Tick(0) && !pd::RidePeerVehicle(s.driver, 7, s.driver.ride_rx.received_ms, vehicle, seat), "on foot: no vehicle");
+}
+
 int main() {
     TestRound1Actions();
     TestCfgAndMissionBoundaries();
@@ -7377,10 +8630,13 @@ int main() {
     TestFreeRoamRange();
     TestRideVisibility();
     TestMountVisibility();
+    TestRideUnrealize();
     TestRideSeat();
     TestRideSeatById();
+    TestRideRobust();
     TestRideExtAndCensus();
     TestBoardDriver();
+    TestRidePeerVehicle();
     TestPassCameraDriver();
     TestBoardSeatGates();
     TestHiddenLocalSender();
@@ -7397,6 +8653,8 @@ int main() {
     TestCensusAndProbes();
     TestLookFix();
     TestInputArming();
+    TestBodySafety();
+    TestBodySafetyRideGuard();
     TestDm();
     TestReviewFixes();
     TestRound4Review();
@@ -7415,11 +8673,14 @@ int main() {
     TestNativeSleepPresentationAdmission();
     TestNativeEnterAndLeave();
     TestNativeTraverseIcon();
+    TestBodySafetyNativeDrop();
+    TestUiFilterLog();
     TestGestures();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
     TestEquipEarlyManifest();
+    TestEquipCrossProcessSession();
     TestNativeRates();
     TestNativeAim();
     TestNativeGunDirectionWire();

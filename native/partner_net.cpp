@@ -1205,10 +1205,17 @@ void StartLink() noexcept {
     session.play = g_config.play;
     session.exact_filter = g_config.bind_loopback;
     session.peer = lab::Endpoint{g_config.peer_address, g_config.peer_port};
+    session.session_skew = g_config.session_skew;
     for (std::size_t i = 0; i < link::kBuildSize && g_config.build && g_config.build[i]; ++i) g_build[i] = g_config.build[i];
     for (std::size_t i = 0; i < link::kBuildSize; ++i) session.build[i] = g_build[i];
     link::DerivePsk(secret, session.psk);
     link::SecureZero(secret, sizeof(secret));
+    if (g_config.session_skew) {
+        char skew[96]{};
+        if (SUCCEEDED(StringCchPrintfA(skew, ARRAYSIZE(skew), "link=session_skew; skew=%u; first_session=%u; reason=lab\r\n",
+                                       g_config.session_skew, g_config.session_skew + 1)))
+            Log(skew);
+    }
 
     lab::TransportConfig transport{};
     transport.listen_port = g_config.listen_port;
@@ -1564,6 +1571,8 @@ BOOL CALLBACK StartOnce(PINIT_ONCE, PVOID parameter, PVOID*) noexcept {
     g_config = *static_cast<const Config*>(parameter);
     // The in-game status line exists with a link v2 session only.
     coop_hud::Configure(g_config.hud, g_config.link_v2);
+    // World notes and save handoff toasts reach this log (online 2026-10-22 P8).
+    if (g_config.link_v2) coop_hud::SetEventLog(g_config.log, &NowMs);
     if (g_config.rate_hz < 1) g_config.rate_hz = 1;
     if (g_config.rate_hz > 60) g_config.rate_hz = 60;
     if (g_config.directory &&

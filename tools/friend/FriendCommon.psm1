@@ -1393,14 +1393,89 @@ function Write-CoopAtomicBytes {
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
 
+function Write-CoopPlayLog {
+    # Appends "<utc> pid=<this process> <text>" to mgs-coop\play-coop.log
+    # (online 2026-10-22 P5/P8: the handoff restart through Steam left no trace).
+    # Only states, times, process ids and Steam's running flag go in, never a code,
+    # a SteamID or a path. Over 1 MB the log moves to play-coop.old.log first.
+    # Never throws (the console and the helper may write at the same time).
+    param([Parameter(Mandatory)][string]$GameRoot, [Parameter(Mandatory)][string]$Text)
+    try {
+        $paths = Get-InstancePaths -GameDirectory $GameRoot
+        if (!(Test-Path -LiteralPath $paths.Mod -PathType Container)) { return }
+        $line = '{0} pid={1} {2}' -f [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture), $PID, ($Text -replace '[\r\n]', ' ')
+        $log = $paths.PlayCoopLog
+        if ((Test-Path -LiteralPath $log -PathType Leaf) -and (Get-Item -LiteralPath $log -Force).Length -gt 1048576) {
+            Move-Item -LiteralPath $log -Destination (Join-Path $paths.Mod 'play-coop.old.log') -Force
+        }
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try { [IO.File]::AppendAllText($log, $line + "`r`n", $script:Utf8NoBom); return }
+            catch [IO.IOException] { Start-Sleep -Milliseconds (20 * $attempt) }
+        }
+    } catch { }
+}
+
+function Get-CoopSteamAppRunning {
+    # Read-only: whether Steam marks the app as running. Steam keeps
+    # HKCU:\Software\Valve\Steam\Apps\<id> 'Running' (1 while it runs or is
+    # still closing) and HKCU:\Software\Valve\Steam 'RunningAppID' (checked on a
+    # Steam PC on 2026-10-22: both present, 0 while MGSV is not running); either
+    # one set means running. Returns @{ Known; Running; Text }: Known = $false
+    # when neither value can be read (no Steam, another layout). Tests:
+    # MGS_COOP_TEST_STEAM_RUNNING_FILE names a file whose first line (1, 0 or
+    # unknown) replaces the registry. Nothing is ever written.
+    param([int]$AppId = 287700)
+    $out = [pscustomobject]@{ Known = $false; Running = $false; Text = 'unknown' }
+    $testFile = [string]$env:MGS_COOP_TEST_STEAM_RUNNING_FILE
+    if ($testFile) {
+        $value = ''
+        try { $value = ([string](@(Get-Content -LiteralPath $testFile -TotalCount 1 -ErrorAction Stop)[0])).Trim() } catch { $value = '' }
+        if ($value -ceq '1' -or $value -ceq '0') { $out.Known = $true; $out.Running = $value -ceq '1'; $out.Text = $value }
+        return $out
+    }
+    $running = $null
+    $runningApp = $null
+    try {
+        $p = Get-ItemProperty -LiteralPath ("HKCU:\Software\Valve\Steam\Apps\{0}" -f $AppId) -Name 'Running' -ErrorAction Stop
+        $running = [int]$p.Running
+    } catch { $running = $null }
+    try {
+        $p = Get-ItemProperty -LiteralPath 'HKCU:\Software\Valve\Steam' -Name 'RunningAppID' -ErrorAction Stop
+        $runningApp = [int]$p.RunningAppID
+    } catch { $runningApp = $null }
+    if ($null -eq $running -and $null -eq $runningApp) { return $out }
+    $out.Known = $true
+    $out.Running = ($null -ne $running -and $running -ne 0) -or ($null -ne $runningApp -and $runningApp -eq $AppId)
+    $out.Text = 'running={0};running_app={1}' -f $(if ($null -eq $running) { 'none' } else { $running }), $(if ($null -eq $runningApp) { 'none' } else { $runningApp })
+    return $out
+}
+
+function Wait-CoopSteamAppStopped {
+    # After the game exited: waits until Steam no longer marks the app as
+    # running (Get-CoopSteamAppRunning), at most -TimeoutSec. Steam silently
+    # ignores steam://rungameid while it still does (online 2026-10-22 P5: the
+    # restart took 3 minutes). Returns @{ Stopped; Known; WaitedMs; Last }:
+    # Stopped is $true at once when the flag cannot be read (nothing to wait for).
+    param([int]$AppId = 287700, [int]$TimeoutSec = 30, [int]$PollMs = 500)
+    $start = [DateTime]::UtcNow
+    $deadline = $start.AddSeconds($TimeoutSec)
+    $state = Get-CoopSteamAppRunning -AppId $AppId
+    while ($state.Known -and $state.Running -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds $PollMs
+        $state = Get-CoopSteamAppRunning -AppId $AppId
+    }
+    return [pscustomobject]@{ Stopped = !($state.Known -and $state.Running); Known = $state.Known; WaitedMs = [int]([DateTime]::UtcNow - $start).TotalMilliseconds; Last = $state.Text }
+}
+
 function Start-CoopRelaunch {
     # Starts MGSV again through Steam for a claimed save handoff - only while the
     # session is active and relaunching, every co-op file it recorded is in
     # place with its recorded hash (the marker exactly offline-v1) and no game
     # runs from the folder, all checked under the play mutex: a relaunch never
     # starts plain MGSV on the real saves. MGS_COOP_TEST_NO_LAUNCH=1 (tests)
-    # checks everything and starts nothing. Returns @{ Ok; Problem; Started }.
-    param([Parameter(Mandatory)][string]$GameRoot)
+    # and -CheckOnly (Play-Coop's manual-start hint while Steam still marks MGSV
+    # as running) check everything and start nothing. Returns @{ Ok; Problem; Started }.
+    param([Parameter(Mandatory)][string]$GameRoot, [switch]$CheckOnly)
     $out = [pscustomobject]@{ Ok = $false; Problem = ''; Started = $false }
     $paths = Get-InstancePaths -GameDirectory $GameRoot
     Use-CoopPlayMutex -GameRoot $GameRoot -Script {
@@ -1421,12 +1496,17 @@ function Start-CoopRelaunch {
             if ((Get-CoopTextSha256 -Bytes $bytes) -cne $records[$name]) { $out.Problem = "mgs-coop\$name changed"; return }
             if ($name -ceq 'script-observe.enabled' -and [Text.Encoding]::ASCII.GetString($bytes) -cne "offline-v1`n") { $out.Problem = 'the co-op marker changed'; return }
         }
-        if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1') {
+        if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1' -and !$CheckOnly) {
             Start-Process 'steam://rungameid/287700'
             $out.Started = $true
         }
         $out.Ok = $true
     }
+    $steam = Get-CoopSteamAppRunning
+    if ($CheckOnly) { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=checked; ok={0}; problem={1}; steam={2}' -f $(if ($out.Ok) { 1 } else { 0 }), $out.Problem, $steam.Text) }
+    elseif ($out.Ok -and !$out.Started -and $env:MGS_COOP_TEST_NO_LAUNCH -ne '1') { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=skipped; reason=game_running; steam=' + $steam.Text) }
+    elseif ($out.Ok) { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=requested; started={0}; steam={1}' -f $(if ($out.Started) { 1 } else { 0 }), $steam.Text) }
+    else { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=refused; problem=' + $out.Problem) }
     return $out
 }
 
@@ -1440,6 +1520,13 @@ function Get-CoopRelaunchWait {
     param([Parameter(Mandatory)][string]$GameRoot, [string]$SessionId = '')
     $out = [pscustomobject]@{ Stop = $false; Off = $false; Lines = @(); ClaimedUtc = $null }
     $s = Read-CoopPlaySession -GameRoot $GameRoot
+    # A read that raced a write of play-session.json (the helper's or a test's
+    # File.Replace: a sharing violation or a moment without the file) is no
+    # switch-off: the file is read again for up to 1 s first.
+    for ($retry = 0; !$s -and $retry -lt 5; $retry++) {
+        Start-Sleep -Milliseconds 200
+        $s = Read-CoopPlaySession -GameRoot $GameRoot
+    }
     if (!$s -or [string](Get-FriendProperty $s 'state' '') -ne 'active' -or ($SessionId -and [string](Get-FriendProperty $s 'session_id' '') -cne $SessionId)) {
         $out.Stop = $true
         $out.Off = $true
@@ -1495,14 +1582,19 @@ function Invoke-CoopHandoffAfterExit {
     #   stage and link-rejoin.txt deleted, state relaunching, count 1.
     # stale, limit and a failed apply delete link-rejoin.txt as well (no rejoin
     # follows); the none returns outside the mutex never touch it.
-    # Then (outside the mutex) 5 s for Steam, and Start-CoopRelaunch. Any failure:
-    # state failed, no relaunch: failed (the caller switches co-op off).
+    # Then (outside the mutex) Steam's running flag clears (Wait-CoopSteamAppStopped,
+    # at most 30 s; online 2026-10-22 P5), 2 s more (5 s when the flag cannot be
+    # read), and Start-CoopRelaunch. Any failure: state failed, no relaunch:
+    # failed (the caller switches co-op off). Each step goes to play-coop.log.
     # Returns @{ Action = none|deferred|relaunched|claimed_by_other|limit|stale|failed;
     # Messages; Aside (the folder name below coop-saves-replaced); Files; Bytes }.
     param([Parameter(Mandatory)][string]$GameRoot, [int]$ExitedPid = 0, [AllowNull()]$ExitedStartUtc = '',
         [Parameter(Mandatory)][ValidateSet('console', 'watchdog')][string]$Owner, [switch]$LauncherAlive,
         # When the caller first saw the game gone (the watchdog's defer window); default now.
-        [AllowNull()]$ExitSeenUtc = $null)
+        [AllowNull()]$ExitSeenUtc = $null,
+        # Called with the result (Files, Bytes, Aside) once the save is applied, before
+        # the Steam wait (up to about 32 s): the console says what happens meanwhile.
+        [scriptblock]$OnApplied = $null)
     $result = [pscustomobject]@{ Action = 'none'; Messages = @(); Aside = ''; Files = 0; Bytes = [Int64]0 }
     $paths = Get-InstancePaths -GameDirectory $GameRoot
     if (!(Test-Path -LiteralPath $paths.PlaySession -PathType Leaf)) { return $result }
@@ -1564,6 +1656,7 @@ function Invoke-CoopHandoffAfterExit {
             xfer = $req.Xfer; set_sha256 = $req.SetSha256; count = 0; aside = ''; message = '' }
         $table['handoff'] = $claim
         Save-CoopPlaySession -GameRoot $GameRoot -Session $table
+        Write-CoopPlayLog -GameRoot $GameRoot -Text ('handoff=claimed; owner={0}; exited_pid={1}; xfer={2}' -f $Owner, $ExitedPid, $req.Xfer)
         try {
             Assert-NoReparsePoint -Path $paths.Mod -StopAt $paths.Game
             # lab.ini must still be the one Play-Coop wrote from the recorded settings.
@@ -1639,6 +1732,7 @@ function Invoke-CoopHandoffAfterExit {
             $table['handoff'] = $claim
             Save-CoopPlaySession -GameRoot $GameRoot -Session $table
             $state.Launch = $true
+            Write-CoopPlayLog -GameRoot $GameRoot -Text ('handoff=applied; files={0}; bytes={1}; aside={2}' -f $result.Files, $result.Bytes, $result.Aside)
         } catch {
             $reason = $_.Exception.Message
             $claim['state'] = 'failed'
@@ -1650,6 +1744,7 @@ function Invoke-CoopHandoffAfterExit {
             Remove-Item -LiteralPath $req.RequestPath -Force -ErrorAction SilentlyContinue
             try { $null = Remove-CoopLinkRejoin -Paths $paths } catch { }
             $result.Action = 'failed'
+            Write-CoopPlayLog -GameRoot $GameRoot -Text ('handoff=failed; imported={0}' -f $(if ($state.Imported) { 1 } else { 0 }))
             if ($state.Imported) {
                 $result.Messages = @("The host's save was applied, but MGSV could not be started again: $reason. Start Play-Coop.bat again; your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($result.Aside) (Share-Save.bat [R] brings it back).")
             } else {
@@ -1657,9 +1752,17 @@ function Invoke-CoopHandoffAfterExit {
             }
         }
     }
-    if (!$state.Launch) { return $result }
-    # Steam needs a moment after the game exits before it starts it again.
-    $delay = 5
+    if (!$state.Launch) {
+        if ($result.Action -cin @('stale', 'limit')) { Write-CoopPlayLog -GameRoot $GameRoot -Text ('handoff=' + $result.Action) }
+        return $result
+    }
+    if ($OnApplied) { try { & $OnApplied $result } catch { } }
+    # Steam ignores a launch request while it still marks MGSV as running (or
+    # closing): wait for its flag (online 2026-10-22 P5), then a moment more.
+    $steamWait = Wait-CoopSteamAppStopped -AppId 287700 -TimeoutSec 30
+    Write-CoopPlayLog -GameRoot $GameRoot -Text ('steam_wait; stopped={0}; known={1}; ms={2}; last={3}' -f $(if ($steamWait.Stopped) { 1 } else { 0 }), $(if ($steamWait.Known) { 1 } else { 0 }), $steamWait.WaitedMs, $steamWait.Last)
+    $delay = 2
+    if (!$steamWait.Known) { $delay = 5 }
     $override = 0
     if ($env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC -and [int]::TryParse($env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC, [ref]$override) -and $override -ge 0) { $delay = $override }
     if ($delay -gt 0) { Start-Sleep -Seconds $delay }

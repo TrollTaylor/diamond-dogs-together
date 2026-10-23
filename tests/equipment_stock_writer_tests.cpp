@@ -341,6 +341,28 @@ int main() {
         schedule={};Check(!p::RenewCacheReadiness(slot,schedule,42,42) && !p::RenewCacheReadiness(slot,schedule,0,99));
         slot.handle=42;Check(!p::RenewCacheReadiness(slot,schedule,0,0) && slot.handle==42);
     }
+    // 0.13.6 online-net-epoch (Fix 3; failed on 0.13.5, where no_manifest was permanent): the plan wait for a
+    // manifest is not a permanent refusal. A slot refused no_manifest (nothing spent) plans again as soon as a
+    // manifest is known, in the same body gen; a dispatched, uncertain or handle-holding slot never does.
+    {
+        Check(!p::PermanentReason("no_manifest") && p::ManifestWaitReason("no_manifest") && !p::ManifestWaitReason("no_manifest_x") &&
+              !p::ManifestWaitReason("no_base") && !p::ManifestWaitReason(nullptr) && p::PermanentReason("no_base"));
+        p::SlotStatus slot{};slot.state=p::SlotState::refused;slot.tier=p::Tier::d;std::memcpy(slot.reason,"no_manifest",12);
+        p::SlotSchedule schedule{};schedule.visited=true;
+        Check(p::RenewManifestWait(slot,schedule) && slot.state==p::SlotState::idle && slot.tier==p::Tier::none && slot.equip==0 &&
+              !schedule.visited && schedule.retries==0 && schedule.retry_at==0);
+        // Only the refused manifest wait: a waiting slot (plan_wait) plans by itself, other refusals stay.
+        slot.state=p::SlotState::plan_wait;Check(!p::RenewManifestWait(slot,schedule) && slot.state==p::SlotState::plan_wait);
+        for(const char* other:{"no_base","type_mismatch","foreign_handle","no_resident"}) {
+            p::SlotStatus refused{};refused.state=p::SlotState::refused;std::memcpy(refused.reason,other,std::strlen(other)+1);
+            p::SlotSchedule s{};
+            Check(!p::RenewManifestWait(refused,s) && refused.state==p::SlotState::refused);
+        }
+        slot.state=p::SlotState::refused;
+        schedule={};schedule.uncertain=true;Check(!p::RenewManifestWait(slot,schedule) && slot.state==p::SlotState::refused);
+        schedule={};schedule.gen_dispatches=1;Check(!p::RenewManifestWait(slot,schedule) && slot.state==p::SlotState::refused);
+        schedule={};slot.handle=42;Check(!p::RenewManifestWait(slot,schedule) && slot.state==p::SlotState::refused);
+    }
     // The request amounts: the qualified writer asks 0/0; only the research
     // ammo experiment (MGS_LOCAL_STOCK46_AMMO_TEST, default OFF) asks 30 rounds / 210 stock.
     Check(p::kQualifiedAmounts.stock==0 && p::kQualifiedAmounts.ammo==0 && p::kAmmoTestAmounts.stock==210 && p::kAmmoTestAmounts.ammo==30);

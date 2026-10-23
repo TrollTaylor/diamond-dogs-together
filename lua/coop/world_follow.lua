@@ -179,10 +179,16 @@ if not p.linked or p.level < 3 then return 1, p end
 if p.mission ~= 0 and p.mission ~= W.mission and not F.following(p) then return 2, p end
 return nil, p
 end
-local ALONE = {"no_partner", "partner_elsewhere", "repeat", "timeout"}
+local ALONE = {"no_partner", "partner_elsewhere", "repeat", "timeout", "join_partner"}
 -- A sortie that leaves without the partner: log, note, and no kind-6 follow.
+-- Into the partner's own mission it is a join, not "flying alone" (online
+-- 2026-10-22 P7: both then load that mission and pair there): why 5.
 local function solo(why, target)
 F.deploying = false
+if why == 2 and target and target ~= 0 then
+    local p = peer()
+    if p and p.mission == target then why = 5 end
+end
 log(fmt("step=deploy_alone;reason=%s;target=%s", ALONE[why] or "disabled", tostring(target or 0)))
 note(3, target or 0, why)
 end

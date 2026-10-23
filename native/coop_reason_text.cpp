@@ -193,6 +193,10 @@ bool NameMission(std::uint32_t mission, bool long_name, char* out, std::size_t c
     if (mission >= 10000 && mission <= 11999) return PutF(out, capacity, "story mission %u", value);
     return PutF(out, capacity, "mission %u", value);
 }
+// world_follow's SUPPORTED scenes (co-op travel follows there).
+bool CoopScene(std::uint32_t mission) noexcept {
+    return mission == 30010 || mission == 30020 || mission == 30050 || mission == 40010 || mission == 40020 || mission == 40050;
+}
 }  // namespace
 
 bool FormatMission(std::uint32_t mission, char* out, std::size_t capacity) noexcept {
@@ -248,6 +252,10 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
                         first);
         case 3: return Put(out, capacity, "Flying alone, as you chose the deployment again.");
         case 4: return Put(out, capacity, "Your partner did not reach this helicopter within 2 min: flying alone.");
+        case 5:  // join_partner (online 2026-10-22 P7): the target is the partner's own mission
+            if (!FormatMission(a, first, sizeof(first))) return false;
+            if (CoopScene(a)) return PutF(out, capacity, "Flying to your partner in %s.", first);
+            return PutF(out, capacity, "Joining your partner in %s; co-op travel does not follow in story missions.", first);
         default: return Put(out, capacity, "Flying alone.");
         }
     case 4:  // HELI_REFUSED{a=target}
@@ -262,19 +270,30 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         if (!FormatMission(a, first, sizeof(first))) return false;
         return PutF(out, capacity,
                     "Your partner cannot join %s (no co-op there). Meet in Mother Base, free roam or the helicopter.", first);
-    case 7:  // TITLE_CONTINUE_LOCKED{a=host mission, b=1 location_differs | 2 story_start | 3 waiting_for_host_save}
+    case 7:  // TITLE_CONTINUE_LOCKED{a=host mission, b=1 location_differs | 2 story_start | 3 waiting_for_host_save |
+             //                       4 host_save_checked (the host is in game in 30010/30020/30050)}
+        // Online 2026-10-22 P2: the title repeat needs 3 s (a double press is
+        // no escape), and a pending handoff has no Continue escape for 60 s:
+        // F9 Keep my own save is the way out.
         switch (b) {
         case 1:
             if (!FormatMission(a, first, sizeof(first))) return false;
             return PutF(out, capacity,
-                        "The host is in %s, but your save continues elsewhere. Press Continue again within 10 s to play alone.", first);
+                        "The host is in %s, but your save continues elsewhere. Press Continue again 3 to 10 s later to play alone.", first);
         case 2:
             return Put(out, capacity,
-                       "Your save is at the story start; the host cannot join it. Press Continue again within 10 s to play it anyway.");
+                       "Your save is at the story start; the host cannot join it. Press Continue again 3 to 10 s later to play it anyway.");
         case 3:
             return Put(out, capacity,
-                       "The host's save is copied to you once they are in Mother Base or free roam. Press Continue again within 10 s to "
-                       "play your own save.");
+                       "The host's save is copied to you once they are in Mother Base or free roam. Stay here; F9 > Partner / Co-op > "
+                       "Shared save > Keep my own save plays yours.");
+        case 4:
+            if (!FormatMission(a, first, sizeof(first))) return false;
+            return PutF(out, capacity,
+                        // (No duration: the host's settle window depends on its build.)
+                        "The host is in %s; their save is checked there and then copied to you. Stay here; F9 > Partner / "
+                        "Co-op > Shared save > Keep my own save plays yours.",
+                        first);
         default: return false;
         }
     case 8:  // TRAVEL_ALONE{a=target, b=1 repeat | 2 f9_unlock | 3 timeout}
@@ -282,7 +301,8 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
     case 9:  // CONTINUE_DURING_HANDOFF{a=pct 0..100}
         if (a > 100) return false;
         return PutF(out, capacity,
-                    "Getting the host's save (%u%%); MGSV restarts on it. Press Continue again within 10 s to keep your own save.",
+                    "Getting the host's save (%u%%); MGSV restarts on it. Stay here; F9 > Partner / Co-op > Shared save > Keep my own save "
+                    "plays yours.",
                     static_cast<unsigned>(a));
     case 10:  // HANDOFF_KEPT_OWN
         return Put(out, capacity, "Keeping your own save for this session.");
@@ -355,7 +375,6 @@ bool MissionOr(std::uint32_t mission, const char* fallback, char* out, std::size
 
 bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, const char* partner, char* out,
                        std::size_t capacity) noexcept {
-    (void)b;  // no current sentence uses b (docs/save-handoff.md)
     if (!out || !capacity) return false;
     out[0] = 0;
     char name[25]{};
@@ -371,16 +390,18 @@ bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, cons
                     "brings it back).",
                     value);
     case 2:  // G2 countdown {a=seconds left}
+        // Online 2026-10-22: no "press Continue twice" (a natural double press,
+        // P2) and a hint for a Steam relaunch that does not come (P5).
         return PutF(out, capacity,
-                    "Host's save ready. MGSV restarts in %u s and Play-Coop starts it again on the host's save. Press Continue twice to "
-                    "keep your own save.",
+                    "Host's save ready: MGSV restarts in %u s and Play-Coop starts it again (not back within a minute? Press Play in "
+                    "Steam). Keep yours: F9 > Partner / Co-op > Shared save > Keep my own save.",
                     value);
     case 3:  // G3 stage only
         return Put(out, capacity, "Host's save stored for a test; it is not applied.");
     case 4:  // G4 wait for the host
         return Put(out, capacity,
                    "Your save starts somewhere other than the host's. Once the host is in Mother Base or free roam, their save is copied "
-                   "to you and MGSV restarts once.");
+                   "to you at the title screen and MGSV restarts once.");
     case 5:  // G5 the host's save is in the story opening
         return Put(out, capacity,
                    "The host's save is still in the story opening, so it is not shared. The player whose save reaches Mother Base should "
@@ -400,6 +421,20 @@ bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, cons
                    "Host's save ready: quit MGSV (title menu > Exit) and Play-Coop starts it again on the host's save.");
     case 10:  // G10 applied
         return Put(out, capacity, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back.");
+    case 11:  // G11 {a=the host's mission, b=the settle seconds} (online 2026-10-22 P3)
+        if (!MissionOr(a, "Mother Base or free roam", mission, sizeof(mission))) return false;
+        if (!b || b > 600)
+            return PutF(out, capacity, "The host is in %s: their save is checked there, then copied to you at the title screen and MGSV "
+                                       "restarts once.",
+                        mission);
+        return PutF(out, capacity,
+                    "The host is in %s: their save is checked there (about %u s), then copied to you at the title screen and MGSV "
+                    "restarts once.",
+                    mission, static_cast<unsigned>(b));
+    case 12:  // G12 the host's save is ready, the guest is in game (P6)
+        return Put(out, capacity,
+                   "The host's save is ready for you: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. "
+                   "MGSV then restarts once on it.");
     case 21:  // H1 sending
         return PutF(out, capacity, "Sending your save to %s so you both start in the same place.", who);
     case 22:  // H2 {a=the mission the guest arrives in}
@@ -422,6 +457,9 @@ bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, cons
         if (!MissionOr(a, "a mission", mission, sizeof(mission))) return false;
         return PutF(out, capacity, "Your save continues into %s, which co-op cannot join. Go to Mother Base or free roam first.",
                     mission);
+    case 28:  // H8 {a=the settle seconds} (online 2026-10-22 P3)
+        if (!a || a > 600) return PutF(out, capacity, "Checking your save here (stay in this mission), then it is copied to %s.", who);
+        return PutF(out, capacity, "Checking your save here (about %u s; stay in this mission), then it is copied to %s.", value, who);
     default:
         return false;
     }
@@ -435,11 +473,18 @@ bool FormatSaveHandoffStatus(std::uint8_t role, std::uint8_t token, std::uint8_t
     const unsigned percent = pct > 100 ? 100u : pct;
     const auto kb = static_cast<unsigned>((static_cast<std::uint64_t>(bytes) + 1023u) / 1024u);
     switch (token) {
-    case 1:  // idle
+    case 1:  // idle (online 2026-10-22 P1: not the "matches" sentence, nothing is decided yet)
+        return Put(out, capacity,
+                   host ? "Comparing your save with your partner's; nothing to share yet." : "Comparing your save with the host's; nothing to share yet.");
     case 2:  // same
         return Put(out, capacity,
                    host ? "Your save matches your partner's place; nothing to share." : "Your save matches the host's place; nothing to share.");
-    case 3:  // wait_host
+    case 3:  // wait_host {why=save_handoff_state::WaitWhy}
+        if (why == 1)  // title (P6)
+            return Put(out, capacity,
+                       "The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it.");
+        if (why == 2)  // settling (P3)
+            return Put(out, capacity, "The host's save is checked in their mission, then copied to you at the title screen.");
         return Put(out, capacity, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you.");
     case 4:  // offered
         return Put(out, capacity, "Offering your save to your partner.");
@@ -459,11 +504,17 @@ bool FormatSaveHandoffStatus(std::uint8_t role, std::uint8_t token, std::uint8_t
         return PutF(out, capacity,
                     "Host's save ready: MGSV restarts in %u s. Your current co-op save is kept aside (Share-Save.bat [R]).",
                     static_cast<unsigned>(seconds_left));
-    case 11:  // exiting
-        return Put(out, capacity, "MGSV is closing to load the host's save; Play-Coop starts it again.");
+    case 11:  // exiting (P5: Steam may not act on the relaunch)
+        return Put(out, capacity,
+                   "MGSV is closing to load the host's save; Play-Coop starts it again (not back within a minute? Press Play in Steam).");
     case 12:  // kept
         return Put(out, capacity, host ? "Your partner kept their own save." : "You kept your own save for this session.");
     case 13:  // refused
+        // continue_unknown (P3): not final; a Continue or a short stay in a co-op scene binds it.
+        if (host && why == 4)
+            return Put(out, capacity,
+                       "Your save is shared once it is known to continue into Mother Base or free roam: Continue there, or stay there a "
+                       "few seconds.");
         return PutF(out, capacity, host ? "Your save cannot be shared: %s." : "The host's save cannot be shared: %s.",
                     SaveHandoffEligText(why));
     case 14:  // failed

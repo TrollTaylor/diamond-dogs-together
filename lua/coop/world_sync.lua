@@ -198,7 +198,7 @@ do
   function W.reset()
     W.active, W.observing, W.isStarted, W.failed, W.paired, W.w1 = false, false, false, false, false, false
     W.eff, W.epoch, W.rid, W.flags, W.obsCount, W.badAt = 0, 0, 0, 0, 0, nil
-    W.census, W.censusKills, W.censusDamage = false, 0, 0
+    W.census, W.censusKills, W.censusDamage, W.vehicleGoneOn = false, 0, 0, false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
   end
@@ -211,6 +211,8 @@ do
     W.level, W.role, W.epoch, W.probeId, W.mode = r[1], r[2], r[5] or 0, r[6] or 0, r[7] or 0
     -- WS4 step 0 (lab key partner_placed_census): r[14] asks for the event=obs_att lines.
     W.census = r[14] == 1
+    -- 0.13.6 online-vehicle-gone (lab key world_vehicle_gone): r[15] turns on world_vehicle.lua.
+    W.vehicleGoneOn = r[15] == 1
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
     local missing, required = W.bind()
@@ -344,7 +346,11 @@ do
         W.log("event=obs_cap")
       end
     end
-    if not h then return end
+    if not h then
+      -- 0.13.6: an unmapped id may be a vehicle (world_vehicle.lua; its own errors stay its own).
+      if W.vehicleGone then pcall(W.vehicleGone.observe, kind, a0, class2, a1) end
+      return
+    end
     if kind == "ChangePhase" then
       if W.phase then W.phase.onLocal(h, a1) end
     elseif W.enemy then

@@ -218,6 +218,16 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         ok = ParseBool(value, result.partner_native_gesture);
         if (ok) result.partner_native_gesture_given = true;
     }
+    else if (Equals(key, "partner_native_ui_filter")) {
+        // G1: body 1's HUD hints swallowed in its drain job (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.partner_native_ui_filter);
+        if (ok) result.partner_native_ui_filter_given = true;
+    }
+    else if (Equals(key, "partner_gesture_lever")) {
+        // The gesture lab lever (lab only, default 0, play forces it off); a named value records _given.
+        ok = ParseBool(value, result.partner_gesture_lever);
+        if (ok) result.partner_gesture_lever_given = true;
+    }
     else return false;
     return true;
 }
@@ -227,12 +237,19 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
 // the gun profile in lab and play).
 bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
+    // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op (lab and play, default off).
+    else if (Equals(key, "world_vehicle_gone")) ok = ParseBool(value, result.world_vehicle_gone);
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
         // F1 vehicles: the board block / passenger hook (defaults in ResolveWeaponDefaults); a named value records _given.
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
         if (ok) result.partner_ride_board_given = true;
+    }
+    else if (Equals(key, "debug_vehicle_door")) {
+        // G4 truck test levers (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.debug_vehicle_door);
+        if (ok) result.debug_vehicle_door_given = true;
     }
     else return false;
     return true;
@@ -251,6 +268,16 @@ bool ParseSaveHandoffKey(Slice key, Slice value, LabConfig& result, bool& ok) no
     } else {
         return false;
     }
+    return true;
+}
+// 0.13.6 online-net-epoch: link_session_skew=0..999, the epoch reproduction knob
+// (a link impairment: the play refusal below forces it to 0 outside the
+// worker's play rehearsal).
+bool ParseLinkSkewKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (!Equals(key, "link_session_skew")) return false;
+    std::uint32_t skew = 0;
+    ok = ParseU32(value, 999, skew);  // the worker allow-lists: [0-9]{1,3}
+    if (ok) result.link_session_skew = skew;
     return true;
 }
 } // namespace
@@ -282,12 +309,19 @@ bool ParseAnimWeaponsKey(Slice key, Slice value, LabConfig& result, bool& ok) no
     }
     return true;
 }
-// Horse / D-Walker riders (docs/mounts.md): partner_native_mount=off|hide, lab
-// only and default off; a named value records _given.
+// Horse / D-Walker riders (docs/mounts.md): partner_native_mount=off|hide (hide
+// with the gun profile, ResolveWeaponDefaults), and G5's partner_native_unrealize_all=0|1
+// (the other ride hides unrealize body 1; lab only, default 0); a named value records _given.
 bool ParseMountKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
-    if (!Equals(key, "partner_native_mount")) return false;
-    ok = ParsePartnerNativeMount(value.data, value.size, result.partner_native_mount);
-    if (ok) result.partner_native_mount_given = true;
+    if (Equals(key, "partner_native_mount")) {
+        ok = ParsePartnerNativeMount(value.data, value.size, result.partner_native_mount);
+        if (ok) result.partner_native_mount_given = true;
+    } else if (Equals(key, "partner_native_unrealize_all")) {
+        ok = ParseBool(value, result.partner_native_unrealize_all);
+        if (ok) result.partner_native_unrealize_all_given = true;
+    } else {
+        return false;
+    }
     return true;
 }
 } // namespace
@@ -314,7 +348,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
             ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
             ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok) ||
-            ParseMountKey(key, value, result, ok)) {
+            ParseMountKey(key, value, result, ok) || ParseLinkSkewKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -644,8 +678,10 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (refuse(result.net_link == NetLink::legacy, kPlayRefusedLegacyLink)) result.net_link = NetLink::v2;
         refuse(result.save_dir[0] == 0, kPlayRefusedNoSaveDir);
         if (refuse(!steam && result.role == LabRole::guest && !peer_addr_valid, kPlayRefusedGuestNoPeer)) result.net = false;
+        // link_session_skew (the 0.13.6 epoch reproduction) is a link impairment too: the
+        // worker's play rehearsal only, never a friend's play.
         std::uint32_t* const impairments[] = {&result.net_latency_ms, &result.net_loss_permille, &result.net_jitter_ms,
-                                              &result.net_dup_permille, &result.net_reorder_permille};
+                                              &result.net_dup_permille, &result.net_reorder_permille, &result.link_session_skew};
         for (std::uint32_t* value : impairments)
             if (refuse(*value != 0 && !rehearsal, kPlayRefusedImpairment)) *value = 0;
         // World-sync probes are lab experiments; world itself is allowed in play.
@@ -1456,6 +1492,16 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // body while the partner rode a D-Walker or D-Horse, the body back after the
     // dismount, its own player unchanged); a named off opts out.
     if (!c.partner_native_mount_given) c.partner_native_mount = gun ? PartnerNativeMount::hide : PartnerNativeMount::off;
+    // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
+    // viewer's HUD without body 1's ladder hint yet); play forces it off below.
+    if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;
+    // G4 truck test levers: off unless named (no hidden-run FRAME of the truck door spot yet);
+    // play forces it off below.
+    if (!c.debug_vehicle_door_given) c.debug_vehicle_door = false;
+    // G5 (the other ride hides unrealize body 1; the net-quality rebase after a ride
+    // logs a line): off unless named (no hidden-worker FRAME of a heli / vehicle-fallback /
+    // horse kind-3 hide with it yet); play forces it off below.
+    if (!c.partner_native_unrealize_all_given) c.partner_native_unrealize_all = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1488,8 +1534,17 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // F2: the native box on body 1 runs in play too (the observer admits play only with
         // link v2 connected).
         // Gestures run in play too (the sender needs a live link session).
+        // The gesture lab lever (the host's own knock / hand sign through the stock
+        // request slots, for the hidden-run proof) never runs in play.
+        c.partner_gesture_lever = false;
         // Mount riders run in play too: the play rehearsal 5a044a4d (-WanSim bad, key not
         // named) hid the D-Walker and the D-Horse rider as the lab runs did.
+        // G1 partner HUD hints stay lab-only (no hidden-worker FRAME yet).
+        c.partner_native_ui_filter = false;
+        // G4 truck test levers are a lab tool (the receipt also refuses outside the lab).
+        c.debug_vehicle_door = false;
+        // G5 stays lab-only (the unrealize of the other ride hides is unproven in a FRAME).
+        c.partner_native_unrealize_all = false;
     }
 }
 

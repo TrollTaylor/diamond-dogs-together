@@ -258,6 +258,10 @@ exit and apply a staged save inside the run folder.
 
 Seeds: `-SaveSeed real|lab` still seeds both copies. `-HostSaveSeed` and
 `-GuestSaveSeed` (`real`, `lab`, or `''` for `-SaveSeed`) seed one role.
+`-GuestSaveSeed real-remote` (the guest only; online 2026-10-22 P1) is the real
+seed with `287700\local`'s `TPP_GAME_DATA*` / `PERSONAL_DATA*` removed from the
+run's own copy (`Remove-WorkerLocalProgress`; the row's `save_seed_removed`):
+a co-op copy seeded from an old Steam save with remote files only.
 `-GuestSaveSeedRun <runId>` seeds the guest from an earlier, closed run's
 `guest-saves\{287700,remote}`. The source must be an exact
 `build\worker-runtime\<runId>` folder with `session.json` status `closed`. It is
@@ -266,7 +270,8 @@ read only: links, more than 4096 entries or oversized files refuse, and its
 `-GuestSaveSeed`. `session.json` records `save_seeds` and each role row's
 `save_seed_kind` / `save_seed_run`. `-LabSetting` (and the scenario
 `labsetting` line, all three allow-lists identical) also takes
-`save_handoff=off|stage|scene|always` and `travel_lock=0|1`.
+`save_handoff=off|stage|scene|always` and `travel_lock=0|1`, and (0.13.6)
+`link_session_skew=0..999` (see the relaunch note below).
 
 Steps:
 
@@ -309,9 +314,22 @@ its window, exits, and gets the staged set applied. Then run
 `scenarios/handoff-after-restart.txt` with `-GuestSaveSeedRun <that run id>`.
 Both titles must be 40010, the guest logs `need=0`, and both pair and follow
 into 30010. `scenarios/handoff-stage.txt` is the transfer alone (R2, R3).
-`scenarios/travel-lock.txt` is the guest lock and its escape (R6). Each header
+`scenarios/travel-lock.txt` is the guest lock and its escape (R6).
+`scenarios/handoff-double-press.txt` is the title double press while the host's
+save is pending (online 2026-10-22 P2: presses 3 s apart within the first 60 s
+never escape and log `decision=held`, then the guest stages; the host reaches
+its title first, because the 60 s start at the guest's own title). Each header
 gives the run command and the evidence. The worker has no "relaunch guest"
 control, so a restart always takes two sessions.
+
+What a relaunch does to the link (0.13.6 online-net-epoch) is reproduced in one
+session instead: the lab.ini key `link_session_skew=<n>` (`-LabSetting
+host:link_session_skew=2` or a scenario `labsetting host link_session_skew=2`;
+the lab and the play rehearsal only, a friend's play refuses it) starts that
+copy's link-session counter at n, so its first session is n+1 while the fresh
+peer's is 1, exactly the counters of a host that saw two guest relaunches.
+`scenarios/partner-equip-relaunch.txt` runs the manifest, caps and box checks
+on it.
 
 ## Primary API contracts and acceptance limits
 

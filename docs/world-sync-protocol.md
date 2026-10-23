@@ -26,7 +26,7 @@ Code:
 | Link DATAGRAM and hooks | `native/link_protocol.cpp`, `native/partner_net.cpp` |
 | Core (pure, unit tested) | `native/world_wire.cpp` (op table, codec, queues, pairing, schedulers), `native/world_receipt.cpp` (receipts, trigger grammar) |
 | Glue (Win32) | `native/world_link.cpp` (lock, hooks, pump, `world.trigger`), `native/game_script_observer.cpp` (receipt routing, install) |
-| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_outcome.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua`, `world_follow_seed.lua`, `world_follow.lua`, `world_align.lua`, `world_recovery.lua` |
+| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_outcome.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua`, `world_follow_seed.lua`, `world_follow.lua`, `world_align.lua`, `world_recovery.lua`, ..., `world_vehicle.lua` (spliced last; section 16) |
 | Config and tools | `lab.ini` `world` / `world_probe`, `tools/lab/Set-WorldTrigger.ps1`, `tools/lab/WorldSync.psm1`, `Play-OfflineCoop.ps1 -World`, `Play-Coop.ps1 -World` |
 | Tests | `tests/world_wire_tests.cpp`, `tests/world_receipt_tests.cpp`, `tests/world_sync_lua_check.lua` (fragment and composed TppMain), additions to the link, lab config, host-trial patch and script suites |
 
@@ -230,12 +230,12 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 
 | Receipt | Source | Reply | Threads |
 |---|---|---|---|
-| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait,handoff,lock` (13 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Join-fix phase 2: r[12] the save handoff code (0 none/off/host, 1 wait_host, 2 receiving, 3 staged or countdown, 4 exiting, 5 kept, 6 failed or refused; Lua `pending` = 1..4, `busy` = 2..4) and r[13] the travel lock (1 when it may apply: the effective `lab.ini` `travel_lock`, the F9 unlock not set, guest role; else 0), both filled by `world_link::HandleCfg` after the core from the save handoff's published state. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader and a missing r[12]/r[13] as 0) | query any; start runtime, not terminating |
+| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait,handoff,lock,census,vehicle_gone` (15 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Join-fix phase 2: r[12] the save handoff code (0 none/off/host, 1 wait_host, 2 receiving, 3 staged or countdown, 4 exiting, 5 kept, 6 failed or refused; Lua `pending` = 1..4, `busy` = 2..4) and r[13] the travel lock (1 when it may apply: the effective `lab.ini` `travel_lock`, the F9 unlock not set, guest role; else 0), both filled by `world_link::HandleCfg` after the core from the save handoff's published state. r[14] the WS4 attacker census 0/1 (lab key `partner_placed_census`, lab only) and r[15] the 0.13.6 VEHICLE_GONE module 0/1 (lab key `world_vehicle_gone`, lab and play; section 16), also from `HandleCfg`. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader and a missing r[12]..r[15] as 0) | query any; start runtime, not terminating |
 | TX | `return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>` | `return 1` / `return 0,<reason>`: 1 syntax, 2 unknown_op, 3 bad_args, 4 wrong_role, 5 not_paired, 6 queue_full, 7 disabled, 8 lab_only | runtime; MISSION_END also termination |
 | RX | `return 'MGS_COOP_WORLD_RX_V1' -- <mask>` (1 control; 3 control, world, U slots) | `return queue,op,v...` or empty `return 0,0,flags,qctrl,qworld,epoch` (flags 1 link, 2 paired, 4 resync_needed, 8 level0) | runtime |
-| LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; at most 200 lines per 10 s, then `world=log_cap`) | runtime or termination |
+| LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; 0.13.6: a token bucket of 600 lines refilled at 20 lines/s, the old 200 per 10 s on average with room for a mission arrival's burst; the dropped count is logged as `world=log_cap; dropped=` before the next admitted line) | runtime or termination |
 | WARP | `return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>` (guest spawn sync) | `return {r=,h=,leaf=}` or `return {refused="<reason>"}`: one native placement of the grant the core recorded when the guest's RX popped ENEMY_DEBUG `seq` (kind warp/correct, same epoch, at most 15 s old); the target never comes from Lua ([debug-menu.md](debug-menu.md) "Spawn sync") | runtime |
-| NOTE | `return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>` (code 1..15; a, b 0..4294967295, no sign) | `return true` (handled, or skipped by the rate gate) or `return false` (a code with no meaning yet: 13..15). Codes: 1 PROGRESS{a title-mode ACC mission, b 1 story start, 0 not}, 2 HELI_WAIT{a target, 0}, 3 HELI_ALONE{a target, b reason 1 no_partner, 2 partner_elsewhere, 3 repeat, 4 timeout}, 4 HELI_REFUSED{a unsupported target or nextMissionId, 0}; join-fix phase 2: 5 TRAVEL_LOCKED{a host mission, b target}, 6 HOST_PARTNER_CANNOT_JOIN{a target, b partner mission}, 7 TITLE_CONTINUE_LOCKED{a host mission, b 1 location_differs, 2 story_start, 3 waiting_for_host_save}, 8 TRAVEL_ALONE{a target, b 1 repeat, 2 f9_unlock, 3 timeout}, 9 CONTINUE_DURING_HANDOFF{a pct 0..100, 0}, 10 HANDOFF_KEPT_OWN{0, 0}, 11 GUEST_LANDING_ELSEWHERE{a target, b host mission}, 12 SORTIE_HELD{a target, b host mission}; native alone posts 16 MISMATCH{a local, b partner mission} (section 3). Rate gate per code: the same (a, b) posts at most once per 1 s and logs `world=note; code=; a=; b=; partner=; t_ms=` at most once per 10 s (`world=note; code=; result=unknown; t_ms=` for 13..15). Code 1 records the title progress (b 1 story_start, else ok) and posts only for b 1, and not while a save handoff runs for this guest (`save_handoff::GuestHandoffActive`: guest, `save_handoff=scene` or `always`, a host STATE seen; the handoff toasts replace it, the log line stays); 2..12 post a toast with the partner's and the local mission (sentences in `coop_text::FormatWorldNote`). Lua ignores the result | runtime or termination |
+| NOTE | `return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>` (code 1..15; a, b 0..4294967295, no sign) | `return true` (handled, or skipped by the rate gate) or `return false` (a code with no meaning yet: 13..15). Codes: 1 PROGRESS{a title-mode ACC mission, b 1 story start, 0 not}, 2 HELI_WAIT{a target, 0}, 3 HELI_ALONE{a target, b reason 1 no_partner, 2 partner_elsewhere, 3 repeat, 4 timeout, 5 join_partner: the target is the partner's own mission (online 2026-10-22 P7)}, 4 HELI_REFUSED{a unsupported target or nextMissionId, 0}; join-fix phase 2: 5 TRAVEL_LOCKED{a host mission, b target}, 6 HOST_PARTNER_CANNOT_JOIN{a target, b partner mission}, 7 TITLE_CONTINUE_LOCKED{a host mission, b 1 location_differs, 2 story_start, 3 waiting_for_host_save, 4 host_save_checked (waiting, the host in game in 30010/30020/30050; online 2026-10-22 P3)}, 8 TRAVEL_ALONE{a target, b 1 repeat, 2 f9_unlock, 3 timeout}, 9 CONTINUE_DURING_HANDOFF{a pct 0..100, 0}, 10 HANDOFF_KEPT_OWN{0, 0}, 11 GUEST_LANDING_ELSEWHERE{a target, b host mission}, 12 SORTIE_HELD{a target, b host mission}; native alone posts 16 MISMATCH{a local, b partner mission} (section 3). Rate gate per code: the same (a, b) posts at most once per 1 s and logs `world=note; code=; a=; b=; partner=; t_ms=` at most once per 10 s (`world=note; code=; result=unknown; t_ms=` for 13..15). Code 1 records the title progress (b 1 story_start, else ok) and posts only for b 1, and not while a save handoff runs for this guest (`save_handoff::GuestHandoffActive`: guest, `save_handoff=scene` or `always`, a host STATE seen; the handoff toasts replace it, the log line stays); 2..12 post a toast with the partner's and the local mission (sentences in `coop_text::FormatWorldNote`). Lua ignores the result | runtime or termination |
 | SAVE | `return 'MGS_COOP_WORLD_SAVE_V1' -- <op> <a> <b> <c> <d> <e>` (exactly 6 integers, no sign; join-fix phase 2, [save-handoff.md](save-handoff.md)): op 1 REPORT{a mission 0..99999, b title 0/1, c story 0 unknown, 1 opening, 2 open, d saving 0/1, e ingame 0/1}, sent on any change, otherwise every 1000 ms while active; op 2 CONTINUE{a target 1..99999 (vars.missionCode at ReservePlayerLoadingPosition k==4), b title, c story, 0, 0}; op 3 DECLINE{a 1 second_continue or 2 f9, 0, 0, 0, 0} | `return true` (accepted), `return false` (the module is off, or rate-gated: more than 4 per second; a DECLINE is never rate-gated), the literal when malformed. `save_handoff::HandleLua` only parses and stores (the report in a seqlock, CONTINUE and DECLINE in a small mailbox) for the link thread. Lua ignores the result | runtime |
 
 Exact classification (name == source, NUL-free, at most 240 bytes). Integers
@@ -608,7 +608,7 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 `req_phase`, `floor`, `phase_vec`, `area`, `digest_mismatch`, `resync`,
 `resync_needed`, `clock`, `clock_tx`, `clock_check`, `weather`,
 `weather_check`, `roster`, `stats`, `bad_value`, `probe`, `goto`,
-`raw_clock` (section 7, Clock).
+`raw_clock` (section 7, Clock), `vehicle_gone` (section 16).
 
 ## 11. Deviations from the corrected spec
 
@@ -878,7 +878,9 @@ partner in the source mission or loading). It never waits with no link, a
 partner that is not linked or below level 3, or a partner known to be in
 another mission that is not following; then it flies at once
 (`event=follow;step=deploy_alone;reason=no_partner|partner_elsewhere`,
-NOTE 3). A hold logs `step=deploy_wait;reason=ready;target=;partner=` and
+NOTE 3; `reason=join_partner`, NOTE 3 b=5, when the target is the
+partner's own mission: they load it and pair there, online 2026-10-22 P7).
+A hold logs `step=deploy_wait;reason=ready;target=;partner=` and
 shows NOTE 2 on screen, re-posted every 3 s. It ends when the copies pair
 (the held deployment runs paired), when the deployment is chosen again
 (after a 1 s debounce; `reason=repeat`, NOTE 3 b=3), or after 120 s
@@ -912,14 +914,17 @@ mission, any helicopter (4xxxx), restart, reload and return to title are
 always allowed, and it is inert while a transition is replayed or queued.
 A title Continue is refused softly (NOTE 7) when the guest's title location
 differs from the host's, when its save is at the story start, or while a
-handoff is pending (NOTE 9 while busy); pressing again within 10 s goes
+handoff is pending (NOTE 9 while busy); pressing again 3 to 10 s later goes
 alone (NOTE 8 b=1; while a handoff is pending this also sends SAVE op 3 and
-NOTE 10). A sortie is held with its arguments (NOTE 12, re-posted every 3 s)
+NOTE 10). Online 2026-10-22 P2: at the title presses under 3 s apart never
+escape, and a pending handoff has no Continue escape for its first 60 s
+(`decision=held`; F9 Keep my own save is the way out); see save-handoff.md
+"Title Continue". A sortie is held with its arguments (NOTE 12, re-posted every 3 s)
 and released by choosing it again, by the F9 Travel lock checkbox (r[13]
 drops to 0; NOTE 8 b=2), after 120 s (NOTE 8 b=3) or when it turns into a
 follow. An iDroid ReserveMissionClear is refused (NOTE 5) and a repeat within
 1-30 s goes alone. The host is warned (NOTE 6) when it loads into a mission
-the partner cannot join; the guest is warned (NOTE 11) when its Continue
+the partner cannot join, unless the partner is in that very mission (P7); the guest is warned (NOTE 11) when its Continue
 lands elsewhere. The replay hold: while a handoff is pending at the title
 (r[12] 1..4) the guest's follow replay waits (the 120 s queue timeout still
 refuses the TRANSITION with FOLLOW_ACK 0). Lua log lines:
@@ -953,10 +958,13 @@ reports NORMAL: the divergence is logged as `action=no_revive`. Unknown
 host entities are discovered when their areas become readable. Unknown
 does not mean VANISHED and does not establish fully identical enemy AI or
 positions. Full story progress, arbitrary svars, hostages and vehicles are
-not copied.
+not copied (0.13.6: with `world_vehicle_gone=1` a vehicle one copy loses to a
+Fulton or destruction is removed on the other, section 16; positions and
+damage of vehicles are still not copied).
 
 **Recovery.** Either player's PLAYER_DEAD/PLAYER_FALL_DEAD reserves shared
-game over. The host retains menu authority; its Continue/restart travels
+game over. A lethal fall into the sea or out of bounds (damage part 12, flags 0x2419) is that
+stock death since 0.13.6, never "downed" (native-puppet.md "Body safety"). The host retains menu authority; its Continue/restart travels
 both copies and starts another alignment. Accepted host checkpoint saves
 are versioned and copied via vanilla checkpoint APIs on the guest's
 redirected save. Hash-zero/current-position checkpoints carry the host's
@@ -989,7 +997,8 @@ pressure, session replacement and mixed levels, not physical game input.
 ## 14. Remaining extension points
 
 W5 full campaign/progression and W6 AI transforms remain design work.
-World op codes 0x1D-0x1F and 0x2A onward are available; control codes
+World op codes 0x1D-0x1F and 0x30 onward are available (0x2A-0x2D are the
+ride ops, 0x2E/0x2F VEHICLE_GONE, section 16); control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
 rendering and input drive are independent of these world modules.
@@ -1159,3 +1168,134 @@ in that horse's record+0xE and occupied state+0x2DD, but its event caller
 ownership/ABI is not qualified for synthetic force-mount calls. Normal local
 mount input and actual Player.GetGameObjectIdIsRiddenToLocal readback are
 required. Remote player attachment and ride replication remain unfinished.
+
+## 16. Vehicles gone (0.13.6 online-vehicle-gone)
+
+Vehicles are not world-synced (positions, damage and seats stay per copy; the
+driven vehicle is only mirrored by RIDE_FAST). In the first real two-PC
+session (2026-10-22, 0.13.5) the guest Fultoned the Mother Base sortie jeep
+25603; the host then drove his copy of it, the guest's seat-by-id read
+failed (`partner_ride_seat=byid; ...; reason=local_read`), the host was
+hidden for ~25 s and drove into the sea. VEHICLE_GONE makes the loss of a
+vehicle host-authoritative. It is a new mechanism that removes vehicles from
+a copy, so it is gated: lab.ini `world_vehicle_gone=0|1` (lab and play, not
+a play refusal; default **0** until hidden-run frames prove the receiver's
+Despawn), carried to Lua as CFG **r[15]** (`world_link::HandleCfg`; r[14] is
+the WS4 census flag; a missing value is 0). Both copies need it; a host
+without it answers every request with REJECT 11, a guest without it logs
+`event=vehicle_gone;step=ignored;reason=off` once and keeps its vehicles.
+
+| Code | Name | Dir | Wire | Lua fields | Queue | Body |
+|---|---|---|---|---|---|---|
+| 0x2E | VEHICLE_GONE | H->G | R | seq 1.., id 25600..26111, cause 1 fulton / 2 destroyed / 3 lab, actor 0 host / 1 guest / 2 lab, rid (0 none), vehicle type (255 unknown), x, y, z mm | world | 21 |
+| 0x2F | REQ_VEHICLE_GONE | G->H | R | rid 1.., id 25600..26111, cause, vehicle type, x, y, z mm (the guest's copy) | world (request) | 18 |
+
+Both are level 3, lab and play, epoch-checked world ops (`native/world_wire.cpp`);
+the id is a TppVehicle2 GameObjectId (class 50: 25600 + pool index). The host
+answers a request natively with RECEIVED (REJECT 5 for another epoch, 10
+below level 3), then from Lua (`lua/coop/world_vehicle.lua`, spliced last):
+
+- **Detection.** `W.observe` hands every message whose id no soldier map names
+  to the module (`pcall`: its errors never fail world sync; the module's own
+  handlers, hooks and poll run in `pcall` too). The host watches a
+  vehicle after Fulton, FultonInfo, Dead or VehicleBroken (registered as an
+  observed message kind only while the key is on); the guest only after its
+  own FultonInfo or Dead (attacker `local`) or a VehicleBroken within 10 s of a
+  local Damage. The pose (mm) and `GetVehicleType` are read at that message.
+  FultonFailed cancels; the loss counts when the instance stops answering
+  `GetPosition` (its pool slot released), or when `IsAlive` reads back false:
+  at once for a destroyed vehicle (its wreck stays in the pool), but for a
+  Fulton only after 10 s of not alive with no FultonFailed and no `IsAlive`
+  true again (`step=settle;dy_mm=`), so a balloon that fails after `IsAlive`
+  dropped never leaves a one-sided removal. Within 30 s of the message (else
+  `step=watch_drop;reason=still_alive;dy_mm=<rise since the message>`, the
+  evidence that a Fultoned instance stays alive: then this detection does not
+  work). **Unverified for a real Fulton:** nothing ties a Fulton to the
+  `0x800004` bits; the lab lever's `fulton` form (the engine's own `Seize`)
+  and a player's real Fulton are the checks (STATUS 0.13.6).
+- **Host loss:** VEHICLE_GONE {seq, id, cause, actor 0, rid 0, type, pose};
+  kept (64) and re-sent at the next PAIRED of the mission. **Guest loss:**
+  REQ_VEHICLE_GONE; no RECEIVED in 5 s sends it once more; while unpaired it
+  waits for the next PAIRED (dropped when the host epoch changed). The guest
+  never announces.
+- **Receiver** (the guest for VEHICLE_GONE, the host for a request): the id
+  must be a live TppVehicle2 within 40 m of the reported position with the same
+  type (when both are known) and, beyond 1 m, the nearest vehicle of its type
+  there (a tie counts as nearer; `reason=not_nearest`). An id this copy lost
+  itself (`step=absent;reason=lost_here`) or a wreck (still in the pool:
+  `GetPosition` answers, `IsAlive` false; `reason=wreck`) is already gone here
+  and is never matched. Pool indices can differ between copies, so an id with
+  no instance (`reason=no_instance`), or a far, other-type or not-nearest one,
+  is matched to the ONE live vehicle of that type within 5 m of the position
+  (two: `reason=ambiguous`, nothing removed; never one this copy is watching or
+  lost itself). Nothing is removed while unlinked (unpaired or below level 3:
+  `step=hold;reason=unpaired`). It is removed only while free: never the local
+  player's vehicle (`vars.playerVehicleGameObjectId` with ON_VEHICLE), any
+  occupied `GetRiderId` seat (the local back-seat passenger, a soldier; body 1
+  is never in rider[]), one this copy is watching itself (`own_watch`) or a
+  vehicle the partner drives here: a RIDE_FAST datagram that keeps a track
+  latches it for 10 s past the last one (a datagram gap; the clock stands while
+  unlinked, when world_ride_pose wipes its tracks) until its exit RIDE_BODY
+  (kind 3, occupied 0). Otherwise it is held and re-checked every 250 ms
+  (`step=hold;reason=local_rider|occupied|own_watch|partner_ride|unpaired|riders_unreadable|pose_unreadable`)
+  for 120 s (`step=hold_timeout`; a held request then gets REJECT 9). The
+  viewer's own player is never moved or dismounted.
+- **Removal:** the TppVehicle2 class command `Despawn` (`0xB30AF0`,
+  StrCode32 `0xE22EC430`, dispatched by `TppVehicle2_LuaCommands` `0xB305B0`):
+  an authored vehicle by its locator (`veh_lv_0000..0031`, `veh_trc_0000..0015`,
+  `veh_wav_0000..0015` resolving to the id: the retail `TppEnemy.DespawnVehicle`
+  form), an unnamed (sortie / supply) vehicle by `index = id % 512`
+  (`ParseLuaSpawnIndex` `0xB304E0` reads the command's `index`; index 0, the
+  relief vehicle, is an engine error and is refused here as `index0`) **only at
+  Mother Base (30050)**. Despawn releases the pool instance itself (the
+  manager's `+0x1C8` vtable+8 and `VehicleCommunicationInfo::Clear`). For a
+  named record it then calls `GameObjectImpl::Kill` `0xB2F850` on the old
+  name, which erases the name->index entry; the locator form writes the name
+  back and re-inserts it, the index form does not (the record stays
+  empty-named and `FastHashIndexMap::Insert` gets the empty hash), so retail
+  scripts would no longer find that vehicle by name. Elsewhere a vehicle
+  outside the scanned families is therefore refused (`no_locator`). There is
+  no Fulton, no balloon and no resource on the receiver (the Fultoning copy
+  keeps its stock vehicle). Read back with `IsAlive` (`0xED0E1BD6`: the class
+  dispatcher answers false when the index's pool bit is clear, nothing for an
+  index past the pool; the instance dispatcher `0xB2B710` answers record+0x70
+  & 0x800004 clear): `step=applied;id=;via=locator|index;src=rx|req;ok=1|0`.
+  On the host an applied (or already absent) request is announced with actor 1,
+  the rid and the id **the guest sent** (when it was matched to another pool
+  index here, the guest's index: the host keeps its own id in its gone list),
+  which ends the guest's request (`step=req_done;result=gone`, closed only when
+  the rid's request names that id; a re-request of it is answered again);
+  refusals are REJECT 1 (not a vehicle) or 8 (far, type, not_nearest,
+  ambiguous, index0, no_locator, send_error).
+  The stock `Seize` instance command (`0x12E8F866`, options Fulton / FadeOut /
+  Instant, CheckFultonType / CheckFarFromPlayer / DirectAccount) also removes a
+  vehicle but accounts it as a resource; it is not used.
+- **Lab lever** (`debug vehicle_remove nearest [sync|fulton]`, refused natively
+  outside mode=lab with offline redirected saves and in Lua outside mode=lab):
+  the nearest free vehicle within 60 m of this copy's player (never the local
+  one or an occupied one). Without `sync` only this copy loses it (the session's
+  divergence; `vehicle_gone_status` marks it `L`); with `sync` (key on) it is
+  lost as cause 3 through the path above (it calls the loss path directly, so
+  it skips the detection). With `fulton` (key on) the engine's own vehicle
+  Fulton runs instead: the stock `Seize` instance command (`0x12E8F866`) with
+  options `{"Fulton"}` (the retail `TppMission` relief-vehicle form without
+  CheckFultonType / DirectAccount), watched as cause 1 like the local player's
+  FultonInfo (`step=watch;m=Seize;att=lever`), so the real readback decides. `debug vehicle_gone_status` is
+  read-only: `vgone;on=;role=;gone=;held=;watch=;req=`.
+- Lua lines (`world_lua=event=vehicle_gone;step=...`): `on`, `watch`,
+  `settle`, `watch_drop`, `lost`, `tx`, `req`, `rx`, `rx_req`, `matched`, `hold`,
+  `hold_timeout`, `refused`, `absent`, `applied`, `req_done`, `req_timeout`,
+  `resend`, `lever`, `ignored`, `error` (one error turns only this module off
+  for the mission).
+
+Tests: `world_wire_tests` (VehicleGone: table, bounds, world queue delivery,
+RECEIVED, REJECT 5 and 10, stale purge), `world_receipt_tests` (r[15]),
+`lab_config_tests`, `world_vehicle_lua_check` (the module against a fake pool,
+then with `world_sync.lua`: the observer hook and r[15]), `debug_vehicle_lua_check`,
+`worker_session_tests`, `lab_scripts_tests`; `world_vehicle_lua_check` is in
+the worker gate (`Get-WorkerTests`). Hidden-worker scenarios:
+`tools/worker/scenarios/coop-vehicle-gone.txt` (lab seed, Wakh Sind: the
+guest's loss reaches the host, the divergence, the hold under a seated guest,
+the engine's own Fulton through the detection path) and
+`coop-vehicle-gone-mb.txt` (real seed, the Mother Base sortie jeep: the
+index path). Not yet run.

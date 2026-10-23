@@ -1,0 +1,46 @@
+# 0.13.6 online-body-safety: the host-role half of body-safety-sea-death.txt (read its header). The HOST falls
+# into the sea next to the Mother Base deck edge; the lethal environment kill (part 12, flags 0x2419) must stay the
+# stock death and the host's PLAYER_FALL_DEAD must reserve the shared game over at once (the session: H:11467
+# intercepted as downed, game over only by the 12 s controls timeout H:11643).
+# Run: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/body-safety-sea-death-host.txt
+#        -PartnerProfile native -NativeStage gun -SaveSeed real -Mode play -WanSim bad
+#
+# Expect (host): downed_damage=stock_death;reason=environment;id=0;...;part=12, no lethal_capture / intercept;cause=lethal,
+#   no downed_control=refused;command=0;reason=controls_timeout, then world_lua=event=recovery; step=shared_game_over.
+# Expect (guest): world_lua=event=recovery; step=game_over_applied; the host's replica on the guest's copy stays
+#   protected (downed_damage=intercept;cause=replica, never a replica death).
+# Result (0.13.6 runtime phase): not run as this file; its proof came from run e9e5301b of body-safety-sea-death.txt,
+# whose first deck spot (205.0, 0.9, 403.0) put the HOST in the sea (play -WanSim bad, real seed): host
+# downed_damage=sample;id=0;exact=1;scoped=1;...;part=12;life=7200;damage=10000 -> stock_death;reason=environment ->
+# world_lua=event=recovery; step=shared_game_over; type=2; cause=1, guest game_over_applied 0.13 s later, no
+# lethal_capture / intercept;cause=lethal / controls_timeout; frames: MISSION FAILED on both copies. The spots below are
+# the corrected deck spots (not run).
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+# Both copies first stand on the deck next to the sea spot (the shield is live only while body 1 is realized on the
+# falling copy; read body-safety-sea-death.txt, run de7b3e09).
+guest debug teleport 208.5 0.9 400.3 0
+host debug teleport 210.1 0.9 402.9 0
+wait 8000
+host debug position
+guest debug position
+host run downed_status
+both capture seah-before
+host debug teleport 222.0 10.0 407.0 0
+host burst seah-fall 6 300
+waitlog host 'downed_damage=stock_death;reason=environment;id=0;.*part=12' 30
+waitlog host 'world_lua=event=recovery; step=shared_game_over;' 30
+waitlog guest 'world_lua=event=recovery; step=game_over_applied;' 30
+wait 3000
+both capture seah-gameover
+host run downed_status
+guest run downed_status
+state

@@ -91,8 +91,10 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_aim_point.hpp"
+#include "mgscoop/partner_gesture_lever.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_support_equip.hpp"
 #include "mgscoop/partner_cbox_equip.hpp"
@@ -103,6 +105,7 @@
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/partner_board.hpp"
+#include "mgscoop/vehicle_door.hpp"
 #include "mgscoop/partner_pass_camera.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
@@ -763,6 +766,12 @@ const char* PartnerInstallDefer(void*, mgscoop::PartnerDefer mode) noexcept {
     // No patch; a refusal is logged and leaves the copy unused (no swap).
     if (mode == mgscoop::PartnerDefer::on && mgscoop::GetLabConfig().partner_native_traverse)
         mgscoop::partner_icon::Build(game_base, Log);
+    // G1 (docs/native-puppet.md "Partner HUD hints"): the five hint-queue leaf
+    // hooks that swallow body 1's HUD hints inside its drain job, only with the
+    // lab key on (default off in lab and play) and a drain (defer=on). A
+    // refusal is logged once and installs nothing (stock hints, as before).
+    if (mode == mgscoop::PartnerDefer::on && mgscoop::GetLabConfig().partner_native_ui_filter)
+        mgscoop::partner_ui_filter::Install(game_base, game_span, Log);
     return nullptr;
 }
 void PartnerNativeInstall(void*, pd::NativeInstall& out) noexcept {
@@ -916,6 +925,11 @@ void PartnerRideSeatRevert(void*, const char* reason) noexcept {
 bool PartnerDmClearPending(void*) noexcept {
     bool cleared = false;
     mgscoop::partner_player::ClearDmPending(partner_addresses, mission_terminating, cleared);
+    return cleared;
+}
+std::uint8_t PartnerDmClearStale(void*, std::uint8_t mask) noexcept {
+    std::uint8_t cleared = 0;
+    mgscoop::partner_player::ClearDmBits(partner_addresses, mission_terminating, mask, cleared);
     return cleared;
 }
 unsigned PartnerDmMotionCount(void*) noexcept { return MountedPlayerMotionCount(); }
@@ -1073,6 +1087,30 @@ const char* PartnerGestureInstall(void*) noexcept {
 void PartnerGestureStep(void*, const mgscoop::partner_gesture::Command& command, mgscoop::partner_gesture::Status& out) noexcept {
     mgscoop::partner_gesture::Step(command, out);
 }
+// The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and
+// hand signs"): the debug command "gesture_lever knock|sign_go|sign_stop" on the
+// runtime thread. Lab only (the key, which play forces off, mode=lab, lab active,
+// copied saves, the offline branch, the partner code gate, gameplay); this
+// copy's own player only. One result and one partner_gesture=lever line.
+void HandleGestureLever(std::uint32_t command_id, const char* text) noexcept {
+    namespace gl = mgscoop::partner_gesture_lever;
+    const auto& labc = mgscoop::GetLabConfig();
+    const auto snapshot = mgscoop::debug_menu::GetSnapshot();
+    const gl::Gate gate{labc.partner_gesture_lever, labc.mode == mgscoop::LabMode::lab, lab_active, lab::SavesRedirected(),
+                        offline_enabled, partner_on, partner_gate_ok && game_base != nullptr,
+                        snapshot.gameplay_ready && !snapshot.terminating && !mission_terminating,
+                        mgscoop::partner_defer::ShuttingDown(), gl::Latched()};
+    gl::Outcome outcome{};
+    outcome.request = gl::Parse(text);
+    if (const char* why = gl::Admit(gate)) outcome.refusal = why;
+    else if (outcome.request == gl::Request::none) outcome.refusal = "args";
+    else outcome = gl::Fire(reinterpret_cast<std::uintptr_t>(game_base), outcome.request);
+    char result[161]{}, line[400]{};
+    gl::FormatResult(outcome, result, sizeof(result));
+    gl::FormatLog(outcome, line, sizeof(line));
+    mgscoop::debug_menu::Result(command_id, outcome.refusal ? 0u : 1u, result[0] ? result : "gesture_lever=refused;reason=format");
+    if (line[0]) Log(line);
+}
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
@@ -1091,7 +1129,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
-    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead};
+    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1385,6 +1423,7 @@ void PartnerShutdown() noexcept {
     mgscoop::partner_board::Publish(0);
     // F1 passenger camera: nothing to undo (no patch; the handle is cleared by the stock get-off / FinishState).
     mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
+    mgscoop::partner_ui_filter::Shutdown();  // G1: the hint-queue leaf hooks pass every request through
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;
@@ -1413,6 +1452,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.build = mgscoop::world_link::ParseBuild(lab::ProbeVersion());
     world.log = Log;
     world.placed_census = labc.partner_placed_census && labc.mode == mgscoop::LabMode::lab;
+    world.vehicle_gone = labc.world_vehicle_gone;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -1705,16 +1745,11 @@ bool EquipPiecesAdmitted() noexcept { return EquipAdmissionReason() == nullptr; 
 // at MissionStart from the session cache, replaced by any newer revision) or
 // the last one accepted in the same link session (the preload runs at the
 // allocation, before the mission; the sender sends from the title and the ACC
-// too, so the first mission after connecting has it). Never another session's.
+// too, so the first mission after connecting has it). Never another session's:
+// THIS copy's link session the manifest arrived in (pd::RemoteManifest), never
+// the sender's own session number (0.13.5 online: they differ after a relaunch).
 bool EquipManifest(mgscoop::partner_equip_wire::Manifest& out) noexcept {
-    const auto& m = partner_driver.mission;
-    const auto session = mgscoop::partner_net::GetLinkInfo().session;
-    if (m.equip.have && (!session || m.equip.manifest.epoch == session)) { out = m.equip.manifest; return true; }
-    if (partner_driver.equip_cache_have && session && partner_driver.equip_cache_epoch == session) {
-        out = partner_driver.equip_cache;
-        return true;
-    }
-    return false;
+    return pd::RemoteManifest(partner_driver, mgscoop::partner_net::GetLinkInfo().session, out);
 }
 // The early manifest (docs/native-puppet.md "Loadout mirroring"): on the
 // observer's ~100 ms path of ANY mission (the title and the ACC included),
@@ -2526,6 +2561,15 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 debug_quiet = true;
                 return true;
             }
+            // "gesture_lever knock|sign_go|sign_stop" (docs/native-puppet.md "Gestures",
+            // "Lab lever: knock and hand signs"): this copy's own knock / hand sign through
+            // the stock request slots; lab only (partner_gesture_lever, play forces it off).
+            if (mgscoop::partner_gesture_lever::IsCommand(pending.text)) {
+                HandleGestureLever(pending.id, pending.text);
+                replacement = {reply, std::strlen(reply)};
+                debug_quiet = true;
+                return true;
+            }
         }
         if (pending.id && std::strcmp(pending.text, "steam_status") == 0) {
             // Read-only (docs/steam-online.md 14), like world_status: the self-test line.
@@ -3085,6 +3129,13 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             // (mode=lab, offline, redirected saves); in the lab it goes on to Lua below.
             debug::Result(pending.id, 0, "give_item=refused;reason=lab_only");
             LogFormat("debug_menu=give_item; id=%u; ok=0; reason=lab_only\r\n", pending.id);
+        } else if (pending.id && std::strncmp(pending.text, "vehicle_remove", 14) == 0 && (pending.text[14] == 0 || pending.text[14] == ' ') &&
+                   !(mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab && offline_enabled && lab::SavesRedirected())) {
+            // 0.13.6 online-vehicle-gone lab lever (debug_vehicle.lua "vehicle_remove nearest [sync]"): it
+            // despawns a vehicle of the running copy, so it is refused outside the one-PC lab like
+            // give_item (Lua refuses it outside mode=lab too); in the lab it goes on to Lua below.
+            debug::Result(pending.id, 0, "vehicle_remove=refused;reason=lab_only");
+            LogFormat("debug_menu=vehicle_remove; id=%u; ok=0; reason=lab_only\r\n", pending.id);
         } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {
             // Read-only: the in-game status line as the overlay last drew it.
             char status[161]{};
@@ -4177,6 +4228,75 @@ bool SelectRideTiltReceipt(const char* buffer, std::size_t size, mgscoop::script
                   v::Mrad(first.unit.a44), v::Mrad(first.unit.a48), ride_tilt_log.writes);
     return finish("return true");
 }
+// G4 truck test levers (docs/native-puppet.md "Truck test levers"; lab.ini debug_vehicle_door=1, lab only):
+//   return 'MGS_COOP_VEHICLE_DOOR_V1' -- <id|partner> <seat 0|1> <out_cm>
+// answers this copy's stock door spot of one vehicle (mgscoop/vehicle_door.hpp) for the lua/coop/debug_vehicle.lua
+// goto levers. Off unless named; refused outside mode=lab with offline and redirected saves (the give_item rule),
+// off the runtime thread and while the mission terminates. "partner" takes the id from the partner's live ride
+// packet. A fault or a digest change in the read-only native calls latches the mission (reason=uncertain).
+struct VehicleDoorState { std::uint32_t mission; const char* uncertain; int pins; } vehicle_door_state{0, nullptr, -1};
+bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace vd = mgscoop::vehicle_door;
+    constexpr std::size_t prefix = sizeof(vd::kPrefix) - 1;
+    if (!buffer || size <= prefix || size > 96 || std::memcmp(buffer, vd::kPrefix, prefix) != 0) return false;
+    world_quiet = true;
+    static char reply[400]{};
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    vd::Request request{};
+    if (!vd::ParseRequest(buffer + prefix, size - prefix, request)) return finish("return {ok=false,reason='request'}");
+    if (vehicle_door_state.mission != partner_mission) {
+        vehicle_door_state.mission = partner_mission;
+        vehicle_door_state.uncertain = nullptr;
+    }
+    const auto& config = mgscoop::GetLabConfig();
+    unsigned short mission = 0;
+    vd::GateIn gate{};
+    gate.enabled = config.debug_vehicle_door;
+    gate.lab = config.mode == mgscoop::LabMode::lab && offline_enabled && lab::SavesRedirected();
+    gate.runtime = OnRuntimeThread() && !mission_terminating && ReadMission(mission) && mission == partner_mission;
+    // The door blocks are checked once per process, only for an admitted lab request.
+    if (gate.enabled && gate.lab && gate.runtime && vehicle_door_state.pins < 0) {
+        const char* why = !game_base || !partner_gate_ok ? "gate" : vd::VerifyImage(game_base, game_span);
+        vehicle_door_state.pins = why ? 0 : 1;
+        LogFormat("partner_vehicle_door=pins; result=%s; reason=%s\r\n", why ? "refused" : "ok", why ? why : "none");
+    }
+    gate.pins = vehicle_door_state.pins == 1 && game_base && partner_gate_ok;
+    gate.uncertain = vehicle_door_state.uncertain != nullptr;
+    vd::Answer answer{};
+    vd::Facts facts{};
+    vd::Spot spot{};
+    answer.refusal = vd::GateRefusal(gate);
+    std::uint16_t id = request.id;
+    if (!answer.refusal && request.target == vd::Target::partner) {
+        std::uint16_t vehicle = vd::kNone;
+        std::uint8_t seat = vd::kSeatNone;
+        const bool live = pd::RidePeerVehicle(partner_driver, PartnerLinkSession(nullptr), mgscoop::partner_net::NowMs(), vehicle, seat);
+        answer.refusal = vd::PartnerTarget(live, vehicle, id);
+        answer.peer = true;
+        answer.peer_seat = seat;
+        request.id = id;
+    }
+    if (!answer.refusal) {
+        pp::State player{};
+        const bool state = pp::ReadState(partner_addresses, player) == pp::Refusal::none;
+        answer.refusal = vd::ReadFacts(game_base, id, state ? player.P : 0, state ? player.Q : 0, state ? player.local : 0, facts);
+        if (answer.refusal && (std::strcmp(answer.refusal, "fault") == 0 || std::strcmp(answer.refusal, "changed") == 0)) {
+            vehicle_door_state.uncertain = answer.refusal;
+            LogFormat("partner_vehicle_door=uncertain; id=%u; reason=%s; latch=mission\r\n", unsigned(id), answer.refusal);
+        }
+    }
+    if (!answer.refusal) {
+        spot = vd::DoorSpot(facts, request.seat, request.out_cm);
+        answer.refusal = spot.refusal;
+        answer.facts = &facts;
+        answer.spot = &spot;
+    }
+    // One line per answer while the key is named (a key-off refusal stays quiet).
+    char line[512]{};
+    if (gate.enabled && vd::FormatLog(request, answer, line, sizeof(line))) Log(line);
+    if (!vd::FormatAnswer(answer, reply, sizeof(reply))) return finish("return {ok=false,reason='format'}");
+    return finish(reply);
+}
 bool SelectBuddyCapacityReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
     constexpr char prefix[]="return 'MGS_COOP_BUDDY_CAPACITY_V1' -- ";
@@ -4788,6 +4908,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
+    if (SelectVehicleDoorReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;
@@ -5461,6 +5582,9 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         net.impair.burst = labc.net_burst;
                         net.impair.seed = labc.net_seed;
                         net.impair.burst_model = labc.net_loss_model == mgscoop::NetLossModel::burst;
+                        // The epoch reproduction knob: the lab and the worker's play rehearsal only
+                        // (lab_config forces it to 0 in any other play; checked here again).
+                        net.session_skew = labc.mode == mgscoop::LabMode::lab || labc.play_rehearsal ? labc.link_session_skew : 0u;
                         net.interp_auto = labc.partner_interp == mgscoop::PartnerInterp::auto_;
                         net.interp_ms = labc.partner_interp_ms;
                         net.interp_min_ms = labc.partner_interp_min_ms;

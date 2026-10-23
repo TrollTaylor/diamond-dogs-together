@@ -1,0 +1,111 @@
+# G1 partner HUD hints (docs/native-puppet.md "Partner HUD hints"): the Mother Base ladder of
+# partner-traverse-ladder-mb.txt with partner_native_ui_filter=1 on both copies (lab only, default 0). While body 1
+# climbs, the VIEWER's HUD must no longer show the stock "C + ladder" slide hint beside its own player (0.13.5 frames
+# 8f27806d ladA-up-01..04, 2596f6ae lad-up-01..top-02 and rev-up-01..top-02 showed it). Same spot, steps and captures
+# as partner-traverse-ladder-mb.txt (real seed, Mother Base; the key partner_native_traverse is not named).
+# Run (hidden worker, coordinator only, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-ui-filter-ladder-mb.txt
+#     -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real            (lab)
+# The MB arrival demo blocks guest debug commands for a while after gameplay (cc3a74b): wait 60 s before the first.
+#
+# Expect (each copy's script-observer.log):
+#   partner_ui_filter=installed; vtable=0x23af700; queues=0x240,0x248,0x250,0x258,0x260; ...; pins=5 once (next to
+#     partner_icon=built), then partner_ui_filter=configured; key=1; installed=1; live=1 once per mission.
+#   The VIEWER of a climb (the guest for the host's climbs, the host for the reversed one): partner_ui_filter=key;
+#     queue=0x260; id=3; prio=8; caller=0x11e....; plugin=ladder (one of 0x11eb5a6 / 0x11ebff4 / 0x11ec60c /
+#     0x11edb17), and partner_ui_filter=swallowed lines whose q260 grows only while body 1 is in act 21, with
+#     foreign=0, faults=0, latched=0, refused=0, live=1. The CLIMBER's own copy swallows nothing for its own climb
+#     (its body 1 stands still): no q260 growth there during its own climb, while passed= keeps growing.
+#   Unchanged from partner-traverse-ladder-mb.txt: partner_traverse=icon; plugin=ladder; res=ok; ... latched=0;
+#     viewer_changed=0; faults=0; restore_mismatch=0, edge 21/21 match_ms=0, no partner_recon=place; reason=vertical
+#     while body 1 is in 21, no viewer_changed / uncertain=1 / crash_probe=av, every own partner_status=local st=0x0.
+# Frames: the viewer's <lad|lad2|rev>-climb / -up / -top bursts show body 1 on the ladder and NO "C + ladder" hint
+# beside the viewer's player; lad-self-mid / rev-self-mid (the climber's own view) match 0.13.5 (no hint mid-ladder).
+# If the hint is still there with q260 growing, the hint does not come from the vt+0x260 queue: report the key lines.
+# The two swallowed waitlogs need q260 > 0 (waitlog reads from the session start, so a plain match could be another
+# queue's earlier line); on the host only the guest's reversed climb can post into q260 (its body stood still before).
+# Run 6c755769 (0.13.6 runtime phase, wp/integ10 32ac240, lab, real seed): passed. Both copies installed=1 / live=1;
+# the viewer swallowed q260 only while body 1 was in act 21 (key lines queue=0x260; id=3; prio=8; caller=0x11edb17 /
+# 0x11ebff4; plugin=ladder), foreign=0, faults=0, latched=0, refused=0; the climber's own copy passed its own hints
+# (passed=400). Frames: the guest's lad-climb / lad-up / lad-top and the host's rev-climb / rev-up / rev-top bursts show
+# body 1 on the ladder and NO "C + ladder" hint beside the viewer's player (0.13.5 8f27806d showed it in the same shot).
+labsetting partner_native_ui_filter=1
+labsetting partner_act_log=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+host debug position
+guest debug position
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+wait 2000
+stance host stand
+stance guest stand
+waitlog guest 'partner_icon=built' 20
+waitlog host 'partner_icon=built' 20
+waitlog guest 'partner_ui_filter=installed' 20
+waitlog host 'partner_ui_filter=installed' 20
+waitlog guest 'partner_icon=census; ' 20
+host debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance host stand
+host debug position
+placebehind guest host 5 -3
+wait 2500
+both capture lad-start
+host hold w 300
+host hold w+e 200 nowait
+guest burst lad-climb 8 200
+host hold w 1500 nowait
+guest burst lad-up 3 300
+host capture lad-self-mid
+host hold w 1500 nowait
+guest burst lad-top 4 300
+host release
+host debug position
+both capture lad-end
+waitlog guest 'partner_traverse=icon; plugin=ladder; res=ok' 3
+waitlog guest 'partner_ui_filter=swallowed; q240=[0-9]+; q248=[0-9]+; q250=[0-9]+; q258=[0-9]+; q260=[1-9]' 3
+wait 1000
+host debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance host stand
+host debug position
+wait 1500
+both capture lad2-start
+host hold w 300
+host hold w+e 200 nowait
+guest burst lad2-climb 8 200
+host hold w 1500 nowait
+guest burst lad2-up 4 300
+host hold w 1500 nowait
+guest burst lad2-top 4 300
+host release
+both capture lad2-end
+wait 1000
+# Reversed: the guest climbs, the host films its body 1.
+guest debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance guest stand
+guest debug position
+placebehind host guest 5 -3
+wait 2500
+both capture rev-start
+guest hold w 300
+guest hold w+e 200 nowait
+host burst rev-climb 8 200
+guest hold w 1500 nowait
+host burst rev-up 3 300
+guest capture rev-self-mid
+guest hold w 1500 nowait
+host burst rev-top 4 300
+guest release
+guest debug position
+both capture rev-end
+waitlog host 'partner_traverse=icon; plugin=ladder; res=ok' 3
+waitlog host 'partner_ui_filter=swallowed; q240=[0-9]+; q248=[0-9]+; q250=[0-9]+; q258=[0-9]+; q260=[1-9]' 3
+wait 1000
+state

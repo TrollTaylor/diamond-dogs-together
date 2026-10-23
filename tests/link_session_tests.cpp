@@ -848,6 +848,43 @@ void Names() {
           std::strcmp(link::DropReasonName(link::DropReason::malformed), "malformed") == 0, "drop names");
     Check(std::strcmp(link::HandshakeStepName(link::HandshakeStep::confirm_rx), "confirm_rx") == 0, "step names");
 }
+
+// 0.13.6 online-net-epoch: lab.ini link_session_skew (the lab and the worker's play rehearsal only) starts the
+// host's counter at 2, so its first committed session is 3 while the fresh guest's is 1: the counters of the
+// 0.13.5 online session after a guest relaunch, inside one hidden session. The numbers are local only (the
+// handshake never carries them), so the link connects as usual; a restart never lowers the counter.
+void SessionSkew() {
+    auto host = std::make_unique<Node>();
+    host->self = kHostEp;
+    host->rng = 11;
+    link::SessionConfig config{};
+    config.role = link::Role::host;
+    config.play = true;
+    config.exact_filter = false;
+    CopyBuild(config.build, "0.13.6");
+    config.psk = Psk(kSecret);
+    config.session_skew = 2;
+    host->session.Start(config, link::SessionIo{host.get(), &NodeSend, &NodeRandom}, 1000);
+    host->Collect();
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.13.6", 1000, 12);
+    Connect(*host, *guest, 1000);
+    Check(host->session.state() == link::LinkState::connected && guest->session.state() == link::LinkState::connected,
+          "skewed host: both connected");
+    Check(host->session.session_number() == 3 && guest->session.session_number() == 1, "skew 2: host session 3, guest session 1");
+    bool host_event = false;
+    for (const auto& e : host->events) host_event = host_event || (e.kind == link::EventKind::connected && e.session == 3);
+    Check(host_event, "the host's connected event names session 3 (link=connected; session=3)");
+    // A second Start (another session object configuration) never lowers the counter.
+    config.session_skew = 1;
+    host->session.Start(config, link::SessionIo{host.get(), &NodeSend, &NodeRandom}, 5000);
+    Check(host->session.session_number() == 3, "a smaller skew never lowers the counter");
+    link::Session plain{};
+    link::SessionConfig none{};
+    none.role = link::Role::host;
+    none.psk = Psk(kSecret);
+    plain.Start(none, link::SessionIo{host.get(), &NodeSend, &NodeRandom}, 1000);
+    Check(plain.session_number() == 0, "no skew: the counter starts at 0 (first session 1)");
+}
 } // namespace
 
 int main() {
@@ -872,6 +909,7 @@ int main() {
     GuestBackoff();
     SeqExhaustion();
     ExactFilter();
+    SessionSkew();
     std::printf("link_session_tests: %u checks passed\n", checks);
     return 0;
 }

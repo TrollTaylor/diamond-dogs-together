@@ -164,14 +164,24 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_traverse=1','partner_native_traverse=0','guest:partner_native_traverse=1','host:partner_native_traverse=0',
     # F1 vehicles: the board block / back-seat passenger hook (passenger with the gun profile in lab and play)
     'partner_ride_board=off','partner_ride_board=block','partner_ride_board=passenger','guest:partner_ride_board=passenger','host:partner_ride_board=block',
+    # G4 truck test levers: the native door spot (lab only, default 0)
+    'debug_vehicle_door=1','debug_vehicle_door=0','guest:debug_vehicle_door=1','host:debug_vehicle_door=0',
     # F2: the native cardboard box on body 1 (lab only, default 0)
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
     # Gestures (on with the gun profile, lab and play)
     'partner_native_gesture=1','partner_native_gesture=0','guest:partner_native_gesture=1','host:partner_native_gesture=0',
+    # G1 partner HUD hints (lab only, default 0)
+    'partner_native_ui_filter=1','partner_native_ui_filter=0','guest:partner_native_ui_filter=1','host:partner_native_ui_filter=0',
+    # The gesture lab lever (lab only, default 0)
+    'partner_gesture_lever=1','partner_gesture_lever=0','host:partner_gesture_lever=1','guest:partner_gesture_lever=0',
     # Horse / D-Walker riders (hide with the gun profile in lab; play forces off)
     'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
+    # G5: the other ride hides unrealize body 1 (lab only, default 0)
+    'partner_native_unrealize_all=1','partner_native_unrealize_all=0','guest:partner_native_unrealize_all=1','host:partner_native_unrealize_all=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
-    'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1')){
+    'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',
+    # 0.13.6 online-net-epoch: the link-session counter skew (lab and the play rehearsal only)
+    'link_session_skew=2','host:link_session_skew=2','guest:link_session_skew=0','link_session_skew=999')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
 }
 foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_native_reload=','partner_native_equip=any','partner_native_equip=','partner_native_gun=0',
@@ -185,10 +195,15 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_place_mirror=2','partner_native_place_mirror=','partner_native_place_mirror=on','both:partner_native_place_mirror=1',
     'partner_native_traverse=2','partner_native_traverse=','partner_native_traverse=on','both:partner_native_traverse=1','partner_native_traversal=1',
     'partner_ride_board=1','partner_ride_board=','partner_ride_board=on','partner_ride_board=Block','partner_ride_board=passengers','both:partner_ride_board=block',
+    'debug_vehicle_door=2','debug_vehicle_door=','debug_vehicle_door=on','both:debug_vehicle_door=1','debug_vehicle_doors=1',
     'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
+    'partner_native_ui_filter=2','partner_native_ui_filter=','partner_native_ui_filter=on','both:partner_native_ui_filter=1','partner_native_ui_filters=1',
+    'partner_gesture_lever=2','partner_gesture_lever=','partner_gesture_lever=on','both:partner_gesture_lever=1','partner_gesture_levers=1','partner_native_gesture_lever=1',
     'partner_native_mount=1','partner_native_mount=','partner_native_mount=seat','both:partner_native_mount=hide','partner_native_mounts=hide',
-    'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage')){
+    'partner_native_unrealize_all=2','partner_native_unrealize_all=','partner_native_unrealize_all=on','both:partner_native_unrealize_all=1','partner_native_unrealize=1',
+    'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage',
+    'link_session_skew=','link_session_skew=1000','link_session_skew=-1','link_session_skew=on','both:link_session_skew=2','link_session_skews=2')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 $lineMatch=[regex]::Match($scenarioText,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)")
@@ -202,23 +217,41 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_place_mirror=1','labsetting guest partner_native_place_mirror=0',
         'labsetting partner_native_traverse=1','labsetting host partner_native_traverse=0',
         'labsetting partner_ride_board=passenger','labsetting guest partner_ride_board=block','labsetting host partner_ride_board=off',
+        'labsetting debug_vehicle_door=1','labsetting guest debug_vehicle_door=1','labsetting host debug_vehicle_door=0',
         'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
+        'labsetting partner_native_ui_filter=1','labsetting host partner_native_ui_filter=0',
+        'labsetting host partner_gesture_lever=1','labsetting partner_gesture_lever=0',
         'labsetting partner_native_mount=hide','labsetting guest partner_native_mount=hide','labsetting host partner_native_mount=off',
-        'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0')){
+        'labsetting partner_native_unrealize_all=1','labsetting guest partner_native_unrealize_all=1','labsetting host partner_native_unrealize_all=0',
+        'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
+        'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
 foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage',
-        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1')){
+        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1',
+        'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=',
+        'labsetting partner_native_unrealize_all=2','labsetting partner_native_unrealize_all=on','labsetting both partner_native_unrealize_all=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
 foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1',
-        'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block')){
+        'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block',
+        'labsetting debug_vehicle_door=2','labsetting debug_vehicle_door=on','labsetting both debug_vehicle_door=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
+# 0.13.6 online-vehicle-gone: world_vehicle_gone=0|1 (the VEHICLE_GONE world op, lab and play) in both
+# -LabSetting allow-lists and the scenario labsetting line (coop-vehicle-gone.txt).
+foreach($ok in @('world_vehicle_gone=1','world_vehicle_gone=0','host:world_vehicle_gone=1','guest:world_vehicle_gone=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('world_vehicle_gone=2','world_vehicle_gone=','world_vehicle_gone=on','both:world_vehicle_gone=1','world_vehicle_gones=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting world_vehicle_gone=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_gone=0' -cmatch $lineMatch.Groups[1].Value -and
+    'labsetting world_vehicle_gone=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_gone=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_gone=0|1 only'
 Assert-True ('labsetting partner_placed_census=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses an invalid placed census bool'
 Assert-True ('labsetting partner_native_placed=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting partner_native_arm=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid WS4 v1 bools'
 Assert-True ($scenarioText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'") -and
@@ -405,7 +438,7 @@ $seedDefinitions=@($startAst.FindAll({param($node)$node -is [Management.Automati
 Assert-True ($seedDefinitions.Count -eq 3) 'three seed forms'
 Assert-True ($seedDefinitions -ccontains "`$seed=Copy-SaveSeed -BackupDirectory `$freshBackup -SaveDir `$saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'") 'default role seed reads only this run verified backup'
 Assert-True ($start.Contains("[ValidateSet('real','lab')][string]`$SaveSeed='real'") -and $start.Contains("`$labSaves=Assert-WorkerPlainPath `$p.SaveDir -MustExist")) 'lab seed is an explicit opt-in from the folder lab save copy'
-Assert-True ($start.Contains("[ValidateSet('','real','lab')][string]`$HostSaveSeed=''") -and $start.Contains("[ValidateSet('','real','lab')][string]`$GuestSaveSeed=''") -and
+Assert-True ($start.Contains("[ValidateSet('','real','lab')][string]`$HostSaveSeed=''") -and $start.Contains("[ValidateSet('','real','lab','real-remote')][string]`$GuestSaveSeed=''") -and
     $start.Contains("[ValidatePattern('^`$|^[0-9a-f]{32}`$')][string]`$GuestSaveSeedRun=''")) 'per-role seed parameters (P2-19)'
 Assert-True ($start.Contains('$seedRunSaves=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun $runId') -and $start.Contains('$roleSeed=$roleSeeds[$role]') -and
     $start.Contains('$row.save_seed_kind=$roleSeed')) 'the role loop picks each role''s seed and records it'
@@ -418,7 +451,8 @@ foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     Assert-True ((& $bind @fixtureArgs) -ceq '||') ('seed defaults are empty in '+$name)
     Assert-True ((& $bind @fixtureArgs -HostSaveSeed lab -GuestSaveSeed real) -ceq 'lab|real|') ('seeds bind in '+$name)
     Assert-True ((& $bind @fixtureArgs -GuestSaveSeedRun $id) -ceq ('||'+$id)) ('seed run binds in '+$name)
-    foreach($bad in @(@{HostSaveSeed='run'},@{GuestSaveSeed='both'},@{GuestSaveSeedRun='0123'},@{GuestSaveSeedRun=($id+'0')})){
+    Assert-True ((& $bind @fixtureArgs -GuestSaveSeed real-remote) -ceq '|real-remote|') ('the guest real-remote seed binds in '+$name)
+    foreach($bad in @(@{HostSaveSeed='run'},@{HostSaveSeed='real-remote'},@{GuestSaveSeed='both'},@{GuestSaveSeedRun='0123'},@{GuestSaveSeedRun=($id+'0')})){
         Assert-Throws {& $bind @fixtureArgs @bad} ('seed parameter refuses '+(($bad.Keys|ForEach-Object{$_+'='+$bad[$_]}) -join ',')+' in '+$name)
     }
 }
@@ -431,6 +465,9 @@ foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     $s=Get-WorkerRoleSeeds 'lab' '' 'real' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real') 'guest seed overrides only the guest'
     $s=Get-WorkerRoleSeeds 'real' 'lab' '' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real') 'host seed overrides only the host'
     $s=Get-WorkerRoleSeeds 'lab' '' '' $id;Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'run') 'a seed run seeds the guest only'
+    $s=Get-WorkerRoleSeeds 'lab' '' 'real-remote' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real-remote') 'real-remote seeds the guest only'
+    Assert-Throws {Get-WorkerRoleSeeds 'lab' 'real-remote' '' ''} 'real-remote is no host seed'
+    Assert-Throws {Get-WorkerRoleSeeds 'real-remote' '' '' ''} 'real-remote is no -SaveSeed'
     Assert-Throws {Get-WorkerRoleSeeds 'lab' '' 'real' $id} 'a seed run excludes -GuestSaveSeed'
     Assert-Throws {Get-WorkerRoleSeeds 'lab' '' '' $id.ToUpperInvariant()} 'a seed run id is exact lower case'
 }
@@ -441,6 +478,14 @@ Assert-Throws {ConvertTo-LabPartnerValue -Key save_handoff -Value auto} 'save_ha
 Assert-Throws {ConvertTo-LabPartnerValue -Key travel_lock -Value 2} 'travel_lock values'
 $roleSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:save_handoff=stage','guest:save_handoff=scene','travel_lock=1') -Role guest
 Assert-True ($roleSettings['save_handoff'] -ceq 'scene' -and $roleSettings['travel_lock'] -ceq '1') 'role-scoped save_handoff reaches only its role'
+# 0.13.6 online-net-epoch: the link-session skew is a LabCommon key too (lab runs), host-scoped in the scenario.
+Assert-True ((ConvertTo-LabPartnerValue -Key link_session_skew -Value 2) -ceq '2' -and (ConvertTo-LabPartnerValue -Key link_session_skew -Value 0) -ceq '0') 'link_session_skew is a LabCommon key'
+Assert-True ((ConvertTo-LabPartnerValue -Key link_session_skew -Value 999) -ceq '999') 'link_session_skew 999 (the allow-list maximum)'
+Assert-Throws {ConvertTo-LabPartnerValue -Key link_session_skew -Value 1000} 'link_session_skew range (0..999, as the allow-lists)'
+$skewSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role guest
+Assert-True (!$skewSettings.Contains('link_session_skew')) 'a host-scoped link_session_skew never reaches the guest'
+$skewSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role host
+Assert-True ($skewSettings['link_session_skew'] -ceq '2') 'a host-scoped link_session_skew reaches the host'
 Assert-True ($startAssignments.graphics -ceq "`$graphics=Join-Path `$saveRoot '287700\local\TPP_GRAPHICS_CONFIG'") 'graphics edits target the fresh role copy'
 $stop=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Stop-WorkerSession.ps1'))
 Assert-True ($stop.Contains('Get-WorkerLeasedProcess') -and $stop.Contains('MGSWORKERCTL1')) 'owned control shutdown'
@@ -593,6 +638,23 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         $failure=$null
         try { & $validator } catch { $failure=$_.Exception.Message }
         Assert-True (!$failure -and @($steps|Where-Object{$_ -cmatch '^guest run overlay_state '}).Count -eq 3) ('partner-mount keeps its lab coverage (three probes) '+$failure)
+    }
+    # G5 (docs/native-puppet.md "Ride hides"): the three ride-hide scenarios name partner_native_unrealize_all (the guest in
+    # the lab and seat files, both copies in the heli file), and their headers name the lines and the known gap.
+    & {
+        foreach($case in @(@('partner-ride-unrealize.txt','labsetting guest partner_native_unrealize_all=1','ride=horse','ride=vehicle','seat=ride_hide'),
+                @('partner-ride-unrealize-seat.txt','labsetting guest partner_native_unrealize_all=1','labsetting host partner_ride_seat_id=0','reason=remote_category','seat=blocked'),
+                @('partner-ride-unrealize-heli.txt','labsetting partner_native_unrealize_all=1','host worldtrigger goto=30020','ride=heli','manual run'))){
+            $path=Join-Path (Join-Path $RepoRoot 'tools\worker\scenarios') $case[0]
+            Assert-True (Test-Path -LiteralPath $path -PathType Leaf) ('G5 scenario '+$case[0])
+            $text=[IO.File]::ReadAllText($path)
+            $lines=@([IO.File]::ReadAllLines($path)|ForEach-Object{$_.Trim()})
+            Assert-True ($lines -ccontains $case[1]) ($case[0]+' names the key: '+$case[1])
+            foreach($needle in @($case[2..($case.Count-1)]+@('partner_ride=unrealize_begin','partner_ride=net_rebased','-NativeStage gun'))){
+                Assert-True ($text.Contains($needle)) ($case[0]+' covers: '+$needle)
+            }
+            Assert-True (@($lines|Where-Object{$_ -cmatch '^labsetting\s+(?:(?:host|guest)\s+)?partner_native_unrealize_all=0'}).Count -eq 0) ($case[0]+' never names the key off')
+        }
     }
     # WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): partner-c4-v2.txt names the mirror key with the WS4 v1 C4 key and
     # the census, places C4 at several spots and detonates, framing body 1 from the side before every phase.
@@ -1224,6 +1286,26 @@ try {
     }
     [IO.File]::WriteAllText((Join-Path $runDirectory 'host-saves\287700\local\TPP_GAME_DATA'),"host copy may progress independently`n")
     Assert-True ((Get-WorkerHash (Join-Path $runDirectory 'guest-saves\287700\local\TPP_GAME_DATA')) -ceq (Get-WorkerHash (Join-Path $source '287700\local\TPP_GAME_DATA'))) 'fresh role copies have independent files'
+    # -GuestSaveSeed real-remote (online 2026-10-22 P1): the actual Start helper on a copy of
+    # the fresh guest seed removes only 287700\local's progress files of this run's copy.
+    & {
+        $definition=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Remove-WorkerLocalProgress'},$true))
+        Assert-True ($definition.Count -eq 1) 'one actual real-remote helper'
+        . ([scriptblock]::Create($definition[0].Extent.Text))
+        $remoteOnly=Join-Path $runDirectory 'remote-only-saves'
+        Copy-Item -LiteralPath (Join-Path $runDirectory 'guest-saves') -Destination $remoteOnly -Recurse
+        foreach($n in @('TPP_GAME_DATA0','PERSONAL_DATA1')){[IO.File]::WriteAllText((Join-Path $remoteOnly "287700\local\$n"),"local slot $n`n")}
+        [IO.File]::WriteAllText((Join-Path $remoteOnly '287700\local\TPP_CONFIG_DATA0'),"settings stay`n")
+        $removed=@(Remove-WorkerLocalProgress $remoteOnly $runDirectory)
+        Assert-True ((($removed|Sort-Object) -join ',') -ceq 'PERSONAL_DATA1,TPP_GAME_DATA,TPP_GAME_DATA0') ('real-remote removes the local progress files: '+($removed -join ','))
+        $left=@(Get-ChildItem -LiteralPath (Join-Path $remoteOnly '287700\local') -File|ForEach-Object{$_.Name}|Sort-Object)
+        Assert-True (($left -join ',') -ceq 'TPP_CONFIG_DATA0,TPP_GRAPHICS_CONFIG' -and (Test-Path -LiteralPath (Join-Path $remoteOnly 'remote\TPP_GAME_DATA') -PathType Leaf)) 'settings, graphics and the remote progress stay'
+        Assert-True ((Get-WorkerHash (Join-Path $runDirectory 'guest-saves\287700\local\TPP_GAME_DATA')) -ceq (Get-WorkerHash (Join-Path $source '287700\local\TPP_GAME_DATA'))) 'the other copies are untouched'
+        Assert-Throws {Remove-WorkerLocalProgress (Join-Path $source '..\fake-userdata') $runDirectory} 'real-remote refuses a folder outside the run directory'
+        Remove-Item -LiteralPath (Join-Path $remoteOnly 'remote\TPP_GAME_DATA')
+        Assert-Throws {Remove-WorkerLocalProgress $remoteOnly $runDirectory} 'real-remote refuses a seed without remote progress'
+        Remove-Item -LiteralPath $remoteOnly -Recurse -Force
+    }
     $realSaves=[ordered]@{root=$source;before=$before}
     Assert-True ((Get-WorkerRealSaveComparison $realSaves).Same) 'actual Stop comparison accepts unchanged three-file source manifest'
     [IO.File]::WriteAllText((Join-Path $source '287700\local\TPP_GAME_DATA'),"changed fake source must be detected`n")

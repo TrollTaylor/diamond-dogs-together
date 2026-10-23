@@ -82,6 +82,11 @@ SITES = [
     (0x121B614, '488b7060', 'policy: Q = P+0x60'),
     (0x121B8FF, '41385d10', 'policy: relax byte this+0x10 (area rectangle)'),
     (0x121B933, '41385d10', 'policy: relax byte this+0x10 (area callback)'),
+    # 0.13.6 online ride: the realize test reads the SLOT (*(S+0x20))[i] (x at +0, z at +8), never the
+    # body or the record, so the seated rider keeps body 1's slot with its body (kSeatSlotFollowMm).
+    (0x121B8B7, '48c1e7040f57c949037920f30f104708f30f105704f30f101f',
+     'policy: rdi = *(S+0x20) + i*16 (the slot); z = [rdi+8], y = [rdi+4], x = [rdi]'),
+    (0x121B920, '488b01410f95c144894c2420ff5020', 'policy: area vt+0x20((int)slot x, (int)slot z) (the loaded-area test)'),
     (0x121B5B5, '884830', 'policy factory zeroes the relax byte (object+0x30)'),
     (0x121B5C2, '488d0defeb1a0148894820', 'policy factory stores final interface vtable 0x23CA1B8 at object+0x20'),
     (0x121B4B0, '488d05a1ec1a0148894120', 'policy destructor writes the base vtable 0x23CA158 back (base = mid-destruction: refused)'),
@@ -104,6 +109,10 @@ SITES = [
     (0x53CA10, 'b8010000008bc92b05b37569024898', 'record writer bank (1 - [0x2BD3FD0])'),
     (0x53CA26, '488d0dc37569024869c0e0000000', 'record base 0x2BD3FF0, stride 0xE0'),
     (0x9DCD5C, '81a704020000ffdfffff', 'SetAllInstanceActiveMode(false) clears P+0x204 bit 0x2000; P is not null-checked'),
+    # The F5 mount hide and G5 (0.13.6, partner_native_unrealize_all, docs/native-puppet.md "Ride hides": the heli,
+    # vehicle-fallback and horse kind-3 hides) unrealize body 1 only through Lua's SetAllInstanceActiveMode(false) and
+    # re-realize it through SetAllInstanceActiveMode(true): the 0x9DCD20 / 0x9DCD2D / 0x9DCD45 / 0x9DCD5C sites above
+    # and the pre-update's all-active branch 0x12CC633. No further site, slot or patch.
     (0x9DF320, '40534883ec2083caffe8922d030185c00f95c3e898d51000', 'Player.SetOtherInstanceIsForMirrorMode prologue'),
     (0x9DF338, '488b480884db741281890402000000400000', 'mirror: P = [root+8] (no null check); true ORs P+0x204 bit 0x4000'),
     (0x9DF352, '488b01ff5028', 'mirror(false): calls P vtable +0x28'),
@@ -223,6 +232,10 @@ SITES = [
     (0x1197D0E, '488d0593812201488901', 'DM primary vtable'), (0x1197D23, '488d05d6812201488941', 'DM iface vtable'),
     (0x9BCC3C, '498984c9b8030000', 'blk+0x3B8[idx] interfaces'), (0x9D2650, '488d05c9982402c3', 'g = 0x2C1BF20'),
     (0x9BA9BA, 'e8917c010048894668', 'P+0x48 = g'), (0x9DAC99, '800d0816240204', 'Play: g+0x388 |= 4'),
+    # 0.13.6 online ride: Stop and GoNext are global request bits that only DM End (0x11992FB) clears;
+    # a stop sent to an unrealized body 1 is never consumed (partner_player::ClearDmBits).
+    (0x9DB4C0, '800de10d24020833c0c3', 'RequestToStopDirectMotion: g+0x388 |= 8; return 0'),
+    (0x9D8F20, '800d813324021033c0c3', 'RequestToGoNextDirectMotion: g+0x388 |= 0x10; return 0'),
     # Snake-load fix (round 3 part L).
     (0x9B4368, '488dbbf0000000', 'rdi = desc+0xF0'), (0x9B442D, '4b89bce500110000', 'M+0x1100[slot] = desc+0xF0'),
     (0x9B42C1, '3883f0000000', 'descriptor look compare starts at desc+0xF0 (type)'),
@@ -904,6 +917,33 @@ PASS_CAMERA_SITES = [
      'collision owner (copied to CAM+0xC20, query flags 0x700 | 0x800000)'),
 ]
 SITES += PASS_CAMERA_SITES
+# --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
+# vehicle for the lab's goto levers. RideVehicle CanExec 0x1246650 switches on GetVehicleType 0x55E7F0 (table
+# 0x1246EC8: types 3/4, the trucks, -> 0x1246B13; 1/2 -> 0x1246CBB, no gate): the seat world matrices 0xB7AF90(unit,
+# out, 1) and (unit, out, 0); for the pre-query's seat s ([rsp+0x40], 0 the driver's) and the other o, door = seat_s +
+# 0.4 (0x21124C0) * unit(seat_s - seat_o); the player (CS vt+0x388(body)+0x20, xmm9) must be within 1.4 (0x218D51C, 3D)
+# of it and on its outer side ((player - door) with y zeroed . (seat_s - seat_o) >= 0, xmm8 = 0), else no ride icon.
+# vehicle_door calls 0xB7AF90 (pinned above with 0xB79A3F), GetVehicleType 0x55E7F0 and the seat count 0xA27CC0 (board
+# sites) on this copy's record and reads its rider[0] (+0x30); it patches nothing.
+DOOR_SITES = [
+    (0x1246AEE, 'e8fd7c31ffffc883f8070f87bd010000488d15fb94dbfe48988b8c82c86e24014803caffe1',
+     'RideVehicle CanExec: switch on GetVehicleType 0x55E7F0 - 1 (< 8) through the table 0x1246EC8'),
+    (0x1246B13, '488b4c2450488d54247041b001e86b4493ff488b4c2450488d55b04533c0e85a4493ff0f2835e3a1e70044386c24407552',
+     'CanExec trucks: 0xB7AF90(unit, out, 1) and (unit, out, 0); the pre-query seat [rsp+0x40] == 0 (r13b) -> the driver door'),
+    (0x1246B89, '0f593530b9ec000f5875e0eb50', 'CanExec trucks: driver door = seat0 + 0.4 (0x21124C0) * unit(seat0 - seat1)'),
+    (0x1246BDB, '0f5935deb8ec000f5875a0', 'CanExec trucks: passenger door = seat1 + 0.4 (0x21124C0) * unit(seat1 - seat0)'),
+    (0x1246C1E, '0f58ca0f51c90f2f0df168f4000f8342020000', 'CanExec trucks: |player - door| (3D) < 1.4 (0x218D51C), else no ride'),
+    (0x1246C31, '4489adb0010000c785b4010000ffffffff4c89adb80100000f2885b00100000f57f6488d8db00100000f54f0410f55c10f56f00f29b5b0010000'
+     'e8b0b221ff84c07407',
+     'CanExec trucks: player - door with y zeroed (mask {r13d = 0, ~0, 0, 0}), the IsNan 0x461F20 fallback'),
+    (0x1246C96, '410f2fc00f82d301000041be45000000', 'CanExec trucks: (player - door).xz . (seat - other) >= 0 (xmm8 = 0), else no ride'),
+]
+SITES += DOOR_SITES
+# The door offset 0.4f (x4) and the radius 1.4f (read-only .edata; door_assertions and vehicle_door::VerifyImage).
+DOOR_DATA = [(0x21124C0, 0x3ECCCCCD), (0x21124C4, 0x3ECCCCCD), (0x21124C8, 0x3ECCCCCD), (0x218D51C, 0x3FB33333)]
+# The blocks vehicle_door re-checks before its first native call (DOOR_SITES plus the seat matrix, its seat-1 remap,
+# the record world matrix and the two getters it calls).
+DOOR_BLOCKS = [rva for rva, _, _ in DOOR_SITES] + [0xB7AF90, 0xB79A3F, 0x55DBC8, 0x55E7F0, 0xA27CC0, 0xA27D07]
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -1181,6 +1221,133 @@ SITES += [
      'per-entry update 0xB6C410: buffer+0/+2 (dword) and +4 cleared only after every channel consumed its request, so a '
      'graph-2 mask bit at the hook\'s entry is another owner\'s request (the gesture refuses or ends without a write)'),
 ]
+# --- G1 (0.13.6, docs/native-puppet.md "Partner HUD hints"; partner_ui_filter, lab key partner_native_ui_filter): body
+# 1's HUD hint requests never reach the viewer's HUD. P+0xD8 is the one UiControllerImpl (secondary interface, vtable
+# 0x23AF700; primary 0x23AF6D0 at ui-0x20; ui+0x28 == P). Its hint queues vt+0x240..+0x288 are ten identical 0x70-byte
+# leaves over the request records ui+0x1E0+k*0x50 (no body check). vt+0x268/0x270/0x278/0x288/0x280 already have a
+# body-1 filter (native_ui_contract; teammate_targeting and the pose window). partner_ui_filter MinHooks the other five
+# leaves (installed lazily after this gate; the prologues relocate cleanly, no rip-relative operand) and swallows a
+# request only inside block 1's drain job for that job's UiControllerImpl. The call sites below are the static census:
+# the traversal plugins' per-frame state update (event 4) posts into vt+0x260 without a local-index check.
+UI_FILTER_QUEUES = [  # (slot, leaf, record)
+    (0x240, 0xFE84F0, 0x1E0), (0x248, 0xFE8970, 0x230), (0x250, 0xFE8560, 0x280), (0x258, 0xFE87E0, 0x2D0), (0x260, 0xFE8480, 0x320),
+]
+UI_FILTER_SITES = [
+    (0xFE84F0, '0fb681130200004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x240 hint-queue leaf (record 0x1E0) prologue; complete body in ui_filter_bodies'),
+    (0xFE8970, '0fb681630200004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x248 hint-queue leaf (record 0x230) prologue'),
+    (0xFE8560, '0fb681b30200004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x250 hint-queue leaf (record 0x280) prologue'),
+    (0xFE87E0, '0fb681030300004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x258 hint-queue leaf (record 0x2D0) prologue'),
+    (0xFE8480, '0fb681530300004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x260 hint-queue leaf (record 0x320: the ladder "C" slide hint) prologue'),
+    (0xFE6FDA, '488d05ef863c01488903488d0515873c0148894320',
+     'UI factory: [obj] = primary vtable 0x23AF6D0, [obj+0x20] = UiControllerImpl vtable 0x23AF700 (P+0xD8 = obj+0x20)'),
+    (0xFE7956, '488b02488bd9ba0100000048894148',
+     'UI init (primary vt+0x8 = 0xFE7950): primary+0x48 = [arg] = P, so ui+0x28 == P (partner_ui_filter kUiOwner, Begin owner check)'),
+    (0x11EA8B0, '83fa06776a4c8d0d4457e1fe8bc2418b948124a91e014903d1ffe2',
+     'ladder plugin interface vt+0x18: the per-phase update (phase 0..6 jump table)'),
+    (0x11EA8D7, '4883c1e0418bd0e93df9ffff', 'ladder phase 1 -> 0x11EA220(F, idx)'),
+    (0x11EA249, '4c8b8038010000488bf9418b800402000048c1e30448035960c1e808a801742f',
+     'ladder phase 1: P = [[F+0x40]+0x138]; [P+0x204] bit 8 (S_IS_ONLINE) clear -> the local event for every idx'),
+    (0x11EA2D1, '4084ed752e458d4104ffd0', 'ladder phase 1: not remote -> the state callback (work+0x10)(F, idx, event 4)'),
+    (0x114DB2A, '488b41088bfa488bd94c8b8038010000418b8004020000c1e808a8017437e80315abff488b8888000000488b01ff504883f8027413488b4308488b88380100003bb918020000740db001',
+     'IsNeedToSync (the climb / pipe / hang guard): true only with S_IS_ONLINE and (mode 2 or idx != [P+0x218]), so offline false'),
+    (0x11EB588, '488b8ad8000000ba03000000c644242001488b01448d4205ff9060020000',
+     'ladder states 10/11 event 4: [P+0xD8] vt+0x260(ui, 3, 8, 0, 1, ..) with no local-index check (return 0x11EB5A6)'),
+    (0x11EBFD6, '488b8ad8000000ba03000000c644242001488b01448d4205ff9060020000',
+     'ladder states 6..8 event 4: vt+0x260(ui, 3, 8, ..) (return 0x11EBFF4)'),
+    (0x11EC5D6, '488b4640ba03000000488b8838010000c644243000448d4205488b89d80000004533c9c644242800488b01c644242001ff9060020000',
+     'ladder state 9 (0x11EC3A0 case 4) event 4: vt+0x260(ui, 3, 8, 0, 1, 0, 0) (return 0x11EC60C; case 2 checks [P+0x218], case 4 not)'),
+    (0x11EDAFA, '488b89d80000004533c9c644242800488b01c644242001ff9060020000',
+     'ladder state 5 event 4: vt+0x260(ui, 3, 8, ..) (return 0x11EDB17)'),
+    (0x114FC34, '488b89d8000000c644242800c644242001488b01ff9060020000', 'climb state event 4: vt+0x260(ui, 0x61, 8, ..) (return 0x114FC4E)'),
+    (0x121687F, '488b89d8000000c644242800c644242001488b01ff9060020000', 'pipe state event 4: vt+0x260(ui, 0x60, 8, ..) (return 0x1216899)'),
+    (0x11A209B, '488b89d8000000488b014484832f0200007417c6442430014488742428c644242001ff9060020000',
+     'hang (elude) state: vt+0x260(ui, 2, 8, ..) (return 0x11A20C3)'),
+    (0x11A2BB1, '488b89d8000000c644242800c644242001488b01ff9060020000', 'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A2BCB)'),
+    (0x11A78FB, '488b89d80000004180e001488b014488442430c6442428004488442420448d4206ff9060020000',
+     'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A7922)'),
+    (0x11A85B1, '488b89d80000004180e001488b014488442430c6442428004488442420448d4206ff9060020000',
+     'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A85D8)'),
+    (0x11A91E4, '488b89d80000004180e001488b014488442430c6442428004488442420448d4206ff9060020000',
+     'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A920B)'),
+]
+SITES += UI_FILTER_SITES
+# Complete-body SHA-256 pins (partner_ui_filter::Install re-checks them in the running image before it hooks).
+UI_FILTER_BODIES = [
+    (0xFE84F0, 0x70, '5da674e3da4ef76a51348c08af81b107b2864427128c820a0f1f8e970b8d009d', 'hint queue vt+0x240'),
+    (0xFE8970, 0x70, '5931372662f44c5bf7c8edb72954a3cb00d5302789f67f0c4e8427ebfe931348', 'hint queue vt+0x248'),
+    (0xFE8560, 0x70, 'c3d403e33e0a219665a4411cae8f14cd4ecd1b4557883000a57ecd54f0f2c2f8', 'hint queue vt+0x250'),
+    (0xFE87E0, 0x70, '5a2609f019ec3ab3f317dcec53fa96e496ea1760449e59e26009aded98939fda', 'hint queue vt+0x258'),
+    (0xFE8480, 0x70, '33dfab551b203f8b32fd3c5900e8648a7b36d2c9c855cc98f6c8aa6ab4ae06c8', 'hint queue vt+0x260'),
+]
+# --- The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs"; partner_gesture_lever,
+# lab key partner_gesture_lever, default 0, play forces it off): the debug command gesture_lever knock|sign_go|sign_stop
+# calls this copy's own KnockActionPluginImpl request slot (vt+0x28 / +0x30 / +0x38 of 0x23C5A20, the block's *(blk+0xF8))
+# with id 0, exactly as the stock call-menu / buddy-command callbacks below do. Nothing is patched.
+GESTURE_LEVER_SITES = [
+    (0x11E5100, '40534883ec20488b41382b50248bda4869dbe000000048035968e8319fa1ff488b48408b4138808bd000000001c643240148894318'
+     'c74320020000004883c4205bc3',
+     'RequestKnock (Knock vt+0x28, complete body): row = [plugin+0x68] + (id - [[plugin+0x38]+0x24])*0xE0; row+0xD0 |= 1, '
+     'row+0x24 = 1, row+0x18 = the frame [QST+0x40]+0x38, row+0x20 = 2'),
+    (0x11E5060, '40534883ec20488b41382b50248bda4869dbe000000048035968e8d19fa1ff488b48408b4138808bd000000001c643240248894318'
+     'c74320020000004883c4205bc3',
+     'RequestHandSignGo (Knock vt+0x30, complete body): the same row write with row+0x24 = 2'),
+    (0x11E50B0, '40534883ec20488b41382b50248bda4869dbe000000048035968e8819fa1ff488b48408b4138808bd000000001c643240348894318'
+     'c74320020000004883c4205bc3',
+     'RequestHandSignStop (Knock vt+0x38, complete body): the same row write with row+0x24 = 3'),
+    (0x11E3A2F, '488b41388bda8bfa2b5824488bf14869dbe0000000480359680fb683d0000000a8010f843f01000024fe8883d0000000e8ecb5a1ff488b'
+     '48408b4320448b593848034318493bc30f821a010000',
+     'FUN_11E3A20 (the request test of the polling, 1/4): row+0xD0 bit 0 taken and cleared, refused once the frame passes '
+     'row+0x18 + row+0x20'),
+    (0x11E3A7C, '4c8b56080fb64b24498b8238010000488b5060488b4238440fb60c38ffc90f843e010000ffc90f8400010000ffc90f84b0000000ffc90f'
+     '85de000000',
+     'FUN_11E3A20 (2/4): r9d = the speed Q+0x38[id], then the row+0x24 kind dispatch 1 (knock: taken) / 2 (0x11E3BA8) / '
+     '3 (0x11E3B60) / 4; the sign tests are the next two sites'),
+    (0x11E3B60, '4183f9017730488b42180fb70c7883c18783f9017620498b42782b7808488b80800200008bcf48c1e1058b54010cc1ea1cf6c201744832c0'
+     '488b5c2430488b7424384883c4205fc3',
+     'FUN_11E3A20 (3/4): kind 3 (Stop) is taken only while the speed <= 1, the act Q+0x18[id] is not 0x79 / 0x7A and PS '
+     'rec+0xC bit 28 (shr 0x1C) is clear; otherwise it returns 0 (the lever\'s sign speed / act / rec_c28 refusals)'),
+    (0x11E3BA8, '4183f90177e8488b42180fb70c7883c18783f90176d8498b42782b7808488b80800200008bcf48c1e1058b54010cc1ea1cf6c20175b8488b'
+     '5c2430488b742438b0014883c4205fc3',
+     'FUN_11E3A20 (4/4): kind 2 (Go) the same three tests; the taken return 1 (shared by kind 1)'),
+    (0x1002350, '4c8b41088bca498b8038010000488b4060488b4030440fb60c08498b40782b5008488b80800200008bca48c1e1058b54010cc1ea14f6c201'
+     '740bb8040000004183f9037403418bc1f3c3',
+     'GetStance 0x1002350 (complete body; the polling\'s sign test): the raw Q+0x30[id] (1 stand, 2 squat, 3 crawl), '
+     'but 4 when it is 3 and PS rec+0xC bit 20 (shr 0x14) is set (the lever\'s sign stance refusal)'),
+    (0x11E5484, 'e897e5ffff', 'the polling 0x11E5160 calls the request test 0x11E3A20'),
+    (0x11E5499, '0fb64f24ffc90f84d9000000ffc90f84b2000000ffc90f848b000000ffc90f85dd010000',
+     'the polling: a taken request dispatches on row+0x24'),
+    (0x11E5540, '418bd6488bcee805cee1ff83f8040f8446010000c6471103b001e93d010000418bd6488bcee8e6cde1ff83f8040f8427010000c6471102b001'
+     'e91e010000c6471101b001',
+     'the polling: kind 3 -> state 3 (StateHandSignStop) and kind 2 -> state 2 (StateHandSignGo) unless GetStance is 4; '
+     'kind 1 -> state 1 (StateKnock)'),
+    (0x11E75AA, 'c6040317', 'StateKnock (event 2): Q+0x20[id] = 0x17 (the sender\'s knock edge)'),
+    (0x11E6AED, 'c6040318', 'StateHandSignGo (event 2): Q+0x20[id] = 0x18'),
+    (0x11E6CDD, 'c6040319', 'StateHandSignStop (event 2): Q+0x20[id] = 0x19'),
+    # The stock callers: the [blk+0xF8] loads a .text scan finds feeding these slots (the call menu, the buddy commands, the
+    # child-soldier orders); each passes the u16 id ids[k] of the menu owner, the local id.
+    (0x110CD09, '488b89f8000000488b42704c8b01420fb7144841ff5028',
+     'call-menu knock 0x110CCE0: [blk+0xF8] vt+0x28(ids[k]) (RequestKnock)'),
+    (0x110F959, '488b4718420fb72c48488b4720460fb63408488b4260488b48388d45ff460fb6040183f813762a8d45e183f8067622',
+     'UpdateCommandSetKnock 0x110F8D0, the knock enable test (1/2): act Q+0x18[id], upper Q+0x20[id], the speed Q+0x38 '
+     '(at the menu index); act 1..20 or 31..37 skips the next test (the lever\'s knock act refusal)'),
+    (0x110F988, '498b4778442b4808488b8080020000418bc948c1e1058b540108c1ea11f6c201741f4585f6751a488b4728443834067510418d40fe83f8'
+     '01760741804a1001eb0541806210fe',
+     'UpdateCommandSetKnock (2/2): otherwise PS rec+8 bit 17 (shr 0x11) must be set; then upper == 0, Q+0x28[id] == 0 and '
+     'the speed not 2..3 set the entry\'s enable bit (record +0x10 bit 0), else clear it (the lever\'s upper / q28 / speed '
+     'refusals; it leaves out the rec+8 bit 17 alternative)'),
+    (0x110F9D3, '488d0506d3ffff488d151f792a0149894208',
+     'UpdateCommandSetKnock 0x110F8D0: command set 0 slot 0 runs 0x110CCE0'),
+    (0x110CFD0, '83ef047409ffcf744d83ff0e750d498b8af8000000488b01ff5030',
+     'ExecCommandSendCommandToBuddy 0x110CF10: buddy command 4 (Quiet cover me) or 0x13 (D-Horse do it) -> [blk+0xF8] '
+     'vt+0x30 (hand sign Go); 5 jumps to the Stop call'),
+    (0x110D026, '498b8af8000000488b01ff5038', 'ExecCommandSendCommandToBuddy: buddy command 5 (Quiet cease cover) -> vt+0x38 (Stop)'),
+    (0x110CDFB, '488b89f8000000488b42704c8b01420fb7144841ff5030', 'child-soldier order 0x110CD30: [blk+0xF8] vt+0x30 (Go)'),
+    (0x110CEEB, '488b89f8000000488b42704c8b01420fb7144841ff5038', 'child-soldier order 0x110CE20: [blk+0xF8] vt+0x38 (Stop)'),
+    (0x110FF0B, '488bb8b0000000ba09000000488bd9488b07448d4203488bcfff909000000083f8027505',
+     'CallMenuManagerImpl::UpdatePadState 0x110FEF0: PP vt+0x90(button 9 = CALL 0x200, 12 frames): 2 tap, 3 hold (the '
+     'hold shows the call menu)'),
+]
+SITES += GESTURE_LEVER_SITES
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -1406,6 +1573,18 @@ SLOTS += [
 ]
 SLOTS += [(vt, 0x0, 0x12128C0, f'{what} ActionPlugin vt[0] = priority') for vt, _, what in ICON_PLUGIN_VTS]
 SLOTS += [(vt, 0x8, ex, f'{what} ActionPlugin vt[1] = ExecActionButtonFunction') for vt, ex, what in ICON_PLUGIN_VTS]
+# G1: the UiControllerImpl hint-queue slots in front of partner_ui_filter's leaf hooks, and the ladder plugin interface's
+# per-phase update (its phase 1 runs the state callback with the local event 4 for body 1 too).
+SLOTS += [(0x23AF700, slot, leaf, f'UiControllerImpl vt+{slot:#x} = hint-queue leaf (record {rec:#x})') for slot, leaf, rec in UI_FILTER_QUEUES]
+SLOTS += [(0x23C6080, 0x18, 0x11EA8B0, 'ladder plugin interface vt+0x18 = the per-phase update (phase 1 -> 0x11EA220)')]
+SLOTS += [(0x23AF6D0, 0x8, 0xFE7950, 'UiControllerImpl primary vt+0x8 = the UI init (stores the owner P at primary+0x48 = ui+0x28)')]
+# The gesture lab lever: KnockActionPluginImpl's primary vtable (the block's *(blk+0xF8)), its request slots and polling.
+SLOTS += [
+    (0x23C5A20, 0x28, 0x11E5100, 'KnockActionPluginImpl vt+0x28 = RequestKnock (the lever\'s knock)'),
+    (0x23C5A20, 0x30, 0x11E5060, 'KnockActionPluginImpl vt+0x30 = RequestHandSignGo (the lever\'s sign_go)'),
+    (0x23C5A20, 0x38, 0x11E50B0, 'KnockActionPluginImpl vt+0x38 = RequestHandSignStop (the lever\'s sign_stop)'),
+    (0x23C5A20, 0x58, 0x11E5160, 'KnockActionPluginImpl vt+0x58 = the polling that takes the request'),
+]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -2603,6 +2782,40 @@ failures += ws4_v2_assertions()
 failures += support_native_assertions()
 failures += vehicle_assertions()
 failures += board_assertions()
+
+
+def door_assertions():
+    """G4 truck test levers (vehicle_door): the stock truck door gate and the calls the door spot mirrors."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+
+    def call_target(site):
+        return site + 5 + struct.unpack('<i', rd(site + 1, 4))[0]
+    table = [struct.unpack('<I', rd(0x1246EC8 + 4 * i, 4))[0] for i in range(8)]
+    need(table[2] == 0x1246B13 and table[3] == 0x1246B13, f'CanExec: types 3/4 take the truck gate 0x1246B13: {[hex(x) for x in table]}')
+    need(table[0] == 0x1246CBB and table[1] == 0x1246CBB, 'CanExec: types 1/2 (light vehicles) skip the door gate')
+    need(rip_target(0x1246AFE, 7) == 0, 'CanExec: the switch table is image-relative (lea rdx, [image])')
+    need(call_target(0x1246AEE) == 0x55E7F0, 'CanExec: the switch reads GetVehicleType 0x55E7F0')
+    need(call_target(0x1246B20) == 0xB7AF90 and call_target(0x1246B31) == 0xB7AF90, 'CanExec trucks: both seat matrices through 0xB7AF90')
+    need(rd(0x1246B1D, 3) == bytes.fromhex('41b001') and rd(0x1246B2E, 3) == bytes.fromhex('4533c0'),
+         'CanExec trucks: seat 1 first (r8b = 1), then seat 0 (r8d = 0)')
+    need(rip_target(0x1246B89, 7) == 0x21124C0 and rip_target(0x1246BDB, 7) == 0x21124C0, 'CanExec trucks: the door offset at 0x21124C0')
+    need(rip_target(0x1246C24, 7) == 0x218D51C, 'CanExec trucks: the door radius at 0x218D51C')
+    need(call_target(0x1246C6B) == 0x461F20, 'CanExec trucks: the IsNan fallback 0x461F20')
+    need(abs(struct.unpack('<f', rd(0x21124C0, 4))[0] - 0.4) < 1e-7 and abs(struct.unpack('<f', rd(0x218D51C, 4))[0] - 1.4) < 1e-6,
+         'the door offset is 0.4f and the radius 1.4f')
+    for rva, value in DOOR_DATA:
+        need(struct.unpack('<I', rd(rva, 4))[0] == value and section_of(rva) == '.edata', f'door data {rva:#x} = {value:#x} in .edata')
+    sites = {rva for rva, _, _ in SITES}
+    need(all(rva in sites for rva in DOOR_BLOCKS), 'every door block is a code site')
+    need(call_target(0xB7AFC9) == 0x55DB80 and call_target(0xB7AFDA) == 0xB799C0, 'the seat matrix 0xB7AF90: 0x55DB80, then 0xB799C0')
+    return out
+
+
+failures += door_assertions()
 failures += pass_camera_assertions()
 failures += handle_call_assertions()
 
@@ -2631,8 +2844,78 @@ def traverse_icon_assertions():
     return out
 
 
+def gesture_lever_assertions():
+    """The gesture lab lever: the vtable's only store, the request functions' only references, the key-type table."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    # Only the constructor 0x11E3750 stores the primary vtable: an object with it is a KnockActionPluginImpl.
+    need(lea_rip_refs(0x23C5A20) == [0x11E37DC], f'Knock vtable stores: {[hex(x) for x in lea_rip_refs(0x23C5A20)]}')
+    # The three request functions are reached only through their slots (no direct call, no code reference).
+    for fn, slot in ((0x11E5100, 0x28), (0x11E5060, 0x30), (0x11E50B0, 0x38)):
+        hits = qword_hits(fn)
+        need(rel_refs(fn) == [], f'{fn:#x} has no direct caller')
+        need(0x23C5A20 + slot in hits and all(section_of(x) != '.xtext' for x in hits),
+             f'{fn:#x} is slot +{slot:#x} of 0x23C5A20 and has only data references: {[hex(x) for x in hits]}')
+    # The padop key-type table: key type 0..9 -> pad bit 5, 6, 15, 3, 1, 11, 10, 2, 18, 7 (the pickup's key type 1 is
+    # RELOAD; the Knock plugin's only icon query, key type 0 / result 0x70, is the high-grass crawl, not the knock).
+    need(struct.unpack('<10i', rd(0x22E86A8, 40)) == (5, 6, 15, 3, 1, 11, 10, 2, 18, 7), 'the key-type table 0x22E86A8')
+    return out
+
+
 failures += traverse_icon_assertions()
+
+
+def ui_filter_assertions():
+    """G1 (docs/native-puppet.md "Partner HUD hints"): the facts behind partner_ui_filter's leaf hooks."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    for rva, size, digest, what in UI_FILTER_BODIES:
+        need(hashlib.sha256(rd(rva, size)).hexdigest() == digest, f'{what} {rva:#x} complete body matches its SHA-256 pin')
+    need([b[0] for b in UI_FILTER_BODIES] == [q[1] for q in UI_FILTER_QUEUES], 'ui_filter_bodies follow UI_FILTER_QUEUES order')
+    # The ten queue leaves vt+0x240..+0x288 are one body over their own record: the same bytes once the four record
+    # displacements (priority +0x33 twice, flags +4 twice, id +0, active +0x30) are masked; each priority operand is
+    # record + 0x33. The five filtered leaves are reached only through UiControllerImpl (0x23AF700) and the base vtable
+    # 0x23AF358 (its slots +0x278..+0x298), never by a direct call.
+    leaves = [struct.unpack('<Q', rd(0x23AF700 + s, 8))[0] - IB for s in range(0x240, 0x290, 8)]
+    def shape(leaf):
+        b = bytearray(rd(leaf, 0x70))
+        rec = struct.unpack_from('<I', b, 3)[0] - 0x33
+        out_b = bytes(b)
+        for k in range(0, 0x70 - 3):
+            v = struct.unpack_from('<I', out_b, k)[0]
+            if v in (rec, rec + 4, rec + 0x30, rec + 0x33):
+                b[k:k + 4] = b'\0\0\0\0'
+        return rec, bytes(b)
+    shapes = [shape(leaf) for leaf in leaves]
+    need(len({s for _, s in shapes}) == 1, 'the ten UiControllerImpl hint-queue leaves share one body modulo their record')
+    need([r for r, _ in shapes] == [0x1E0, 0x230, 0x280, 0x2D0, 0x320, 0x3C0, 0x460, 0x4B0, 0x370, 0x410],
+         f'hint-queue records by slot: {[hex(r) for r, _ in shapes]}')
+    for slot, leaf, rec in UI_FILTER_QUEUES:
+        need(leaves[(slot - 0x240) // 8] == leaf and shapes[(slot - 0x240) // 8][0] == rec, f'vt+{slot:#x} -> {leaf:#x} record {rec:#x}')
+        need(qword_hits(leaf) == [0x23AF358 + 0x38 + slot, 0x23AF700 + slot] and rel_refs(leaf) == [],
+             f'{leaf:#x} only through 0x23AF358+{0x38 + slot:#x} / 0x23AF700+{slot:#x}: {[hex(x) for x in qword_hits(leaf)]}')
+    # Only the UI factory stores the UiControllerImpl and primary vtables: an object with 0x23AF700 is P+0xD8's UI.
+    need(lea_rip_refs(0x23AF700) == [0xFE6FE4] and lea_rip_refs(0x23AF6D0) == [0xFE6FDA],
+         f'UiControllerImpl vtable stores: {[hex(x) for x in lea_rip_refs(0x23AF700)]} / {[hex(x) for x in lea_rip_refs(0x23AF6D0)]}')
+    # The census call sites are 6-byte calls through vt+0x260 whose return addresses partner_ui_filter::CallerName names.
+    for ret in (0x11EB5A6, 0x11EBFF4, 0x11EC60C, 0x11EDB17, 0x114FC4E, 0x1216899, 0x11A20C3, 0x11A2BCB, 0x11A7922, 0x11A85D8, 0x11A920B):
+        need(rd(ret - 6, 6) == bytes.fromhex('ff9060020000'), f'{ret - 6:#x}: call [rax+0x260] returning to {ret:#x}')
+    for ret, slot in ((0x11D03A7, 0x240), (0x11D5132, 0x250), (0x11D9C87, 0x250), (0x11D9DB8, 0x250), (0x11D9F83, 0x250),
+                      (0x12C178C, 0x240), (0x12C1DBC, 0x240), (0x12C2130, 0x240), (0x1223E28, 0x240), (0x122F4E5, 0x240),
+                      (0x124C816, 0x240), (0x12610A1, 0x240), (0x126154C, 0x258), (0x1053CE4, 0x258)):
+        need(rd(ret - 6, 6) == b'\xff\x90' + struct.pack('<I', slot), f'{ret - 6:#x}: call [rax+{slot:#x}] returning to {ret:#x}')
+    return out
+
+
+failures += ui_filter_assertions()
 failures += gesture_assertions()
+failures += gesture_lever_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -3067,6 +3350,15 @@ w('inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam
 w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
+w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')
+w('// The stock truck door gate (RideVehicle CanExec types 3/4, 0x1246b13): door = seat_s + door_offset * unit(seat_s -')
+w('// seat_o) for the front seat s (0 driver, 1 passenger) and the other o, the seat world matrix 0xb7af90(unit, out, seat)')
+w('// (translation at out+0x30); the player within door_radius (3D) of the door and on its outer side (xz dot >= 0).')
+w('inline constexpr std::uintptr_t door_seat_matrix_rva=0xb7af90, door_gate_rva=0x1246b13;')
+w('inline constexpr float door_offset_m=0.4f, door_radius_m=1.4f;')
+w('// The contract blocks vehicle_door re-checks before its first native call (code_sites rvas) and the two constants.')
+w('inline constexpr std::uintptr_t door_blocks[]={' + ','.join(f'0x{rva:x}' for rva in DOOR_BLOCKS) + '};')
+w('inline constexpr DataWord door_data[]={' + ','.join(f'{{0x{rva:x},0x{value:08x}}}' for rva, value in DOOR_DATA) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
 w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')
@@ -3095,6 +3387,13 @@ for rva, size, digest, what in ICON_BODIES:
     w(f'    {{0x{rva:x},0x{size:x},{{{cbytes(digest)}}}}}, // {what}')
 w('};')
 w('inline constexpr std::uintptr_t icon_plugin_vts[]={' + ','.join(f'0x{vt:x}' for vt, _, _ in ICON_PLUGIN_VTS) + '};')
+w('// --- G1 partner HUD hints (partner_ui_filter; docs/native-puppet.md "Partner HUD hints") -----------------------')
+w('// The UiControllerImpl hint-queue leaves vt+0x240..+0x260 (kQueue order); partner_ui_filter::Install re-hashes them')
+w('// in the running image before it hooks them.')
+w('inline constexpr BodyPin ui_filter_bodies[]={')
+for rva, size, digest, what in UI_FILTER_BODIES:
+    w(f'    {{0x{rva:x},0x{size:x},{{{cbytes(digest)}}}}}, // {what}')
+w('};')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:
