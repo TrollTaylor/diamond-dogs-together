@@ -28,7 +28,8 @@ Feature branches on top of 0.13.5 (`dev/oct7-continue` `cc973a8`); the version s
 - Tests: `partner_mount_tests` (ride kinds, rule, off-ride proof, episodes, the exclusion decision, against
   `partner_ride_wire::Observe`), `partner_native_tests` (the excluded tracker), `partner_driver_tests`
   `TestRideUnrealize` (key off unchanged; vehicle hide, unavailable seat, GetOff latch, heli acts, horse kind 3 with and
-  without the mount key, the seat flow's exclusion, and the online native drive after a 10 s hidden heli ride:
+  without the mount key, the show's `SET_ALLACTIVE` and `partner_realized=1` after the vehicle and horse episodes, the
+  seat flow's exclusion, and the online native drive after a 10 s hidden heli ride:
   `net_quality` without the key, none with it), `lab_config_tests`, `friend_package_tests`, `worker_session_tests`.
 - Scenarios (not run yet): `partner-ride-unrealize.txt` (lab seed: horse kind 3, a vehicle drawn hidden, guest
   `partner_native_net=online`), `partner-ride-unrealize-seat.txt` (real seed, Mother Base: the refused-seat fallback;

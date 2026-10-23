@@ -5565,15 +5565,30 @@ struct SeatSession : Session {
 // the body again), and every tick a ride owns body 1 is excluded from the net-quality gap measure.
 void TestRideUnrealize() {
     namespace rw = mgscoop::partner_ride_wire;
+    // Lua's answer to CLEAR_ALLACTIVE: all-active off and instance 1 unrealized (the hidden path already publishes body 1
+    // as not realized, without a partner_realized=0 line).
+    const auto lua_unrealized = [](SeatSession& s) {
+        s.fake.sample.sender_ms += 33;
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        return s.Tick(0) && s.driver.mission.visibility.hidden && s.reply.op == 0 && !s.driver.mission.realized;
+    };
     const auto stable_show = [](SeatSession& s) {
-        // 500 ms of calm foot samples show the body, then the free-roam placement; Lua reports all-active off.
-        bool set_all_active = false;
+        // 500 ms of calm foot samples show the body, then the free-roam placement; Lua reports all-active off until
+        // the show's SET_ALLACTIVE with the bits set, then all-active on and instance 1 realized and loaded again.
+        bool set_all_active = false, lua_on = false;
+        const auto realized = s.fake.Count("partner_realized=1");
         for (unsigned i = 0; i < 16; ++i) {
             s.fake.sample.sender_ms += 100;
-            Check(s.Tick(0, 100), "foot samples");
+            Check(s.Tick(lua_on ? 1 : 0, 100), "foot samples");
             set_all_active = set_all_active || (s.reply.op & op::set_all_active) != 0;
             Check(!(s.reply.op & op::clear_all_active), "no CLEAR after the episode");
+            if (set_all_active && s.driver.mission.bits_set && !lua_on) {
+                lua_on = true;
+                s.fake.Realize(true); s.fake.state.parts[1] = 3;
+            }
         }
+        Check(lua_on && s.driver.mission.realized && s.fake.Count("partner_realized=1") == realized + 1,
+              "the show realizes body 1 again: one more partner_realized=1, Lua all-active back on");
         return set_all_active;
     };
     for (const bool key : {false, true}) {
@@ -5598,8 +5613,7 @@ void TestRideUnrealize() {
         Check(s.driver.mission.net_quality.excluded_ticks == 1 && s.driver.mission.net_excluding, "the hidden tick is excluded from the net quality");
         Check(s.Step() && s.reply.op == op::clear_all_active && s.fake.Containing("partner_ride=unrealize; ride=") == 1,
               "CLEAR repeats while Lua reports all-active; the line does not");
-        s.fake.sample.sender_ms += 33;
-        Check(s.Tick(0) && s.driver.mission.visibility.hidden && s.reply.op == 0, "Lua reports all-active off: nothing more to clear");
+        Check(lua_unrealized(s), "Lua reports all-active off (body 1 unrealized): nothing more to clear");
         s.fake.sample.anim_valid = false;
         Check(s.Step() && s.driver.mission.ride_ep.active && s.reply.op == op::clear_all_active,
               "a missing act sample neither ends the episode nor shows the body");
@@ -5690,6 +5704,13 @@ void TestRideUnrealize() {
             Check(s.fake.Containing("partner_mount=unrealize; mount=horse; act=121; episode=1") == 1 &&
                       s.fake.Containing("partner_ride=unrealize") == 0 && !s.driver.mission.ride_ep.active,
                   "mount hide: the mount episode owns body 1, no ride episode");
+        Check(lua_unrealized(s), "horse: Lua reports all-active off (body 1 unrealized)");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && s.driver.mission.visibility.hidden && !s.driver.mission.ride_ep.active && !s.driver.mission.mount.active &&
+                  s.reply.op == 0,
+              "horse: foot ends the episode (no CLEAR after it)");
+        Check(stable_show(s) && !s.driver.mission.visibility.hidden, "horse: the show asks Lua for all-active mode again (SET_ALLACTIVE)");
     }
     std::uint64_t back_after_ride[2]{};
     for (const bool key : {false, true}) {

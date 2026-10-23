@@ -1002,8 +1002,9 @@ Unit tests: `partner_mount_tests` (ride kinds, rule, off-ride proof, episode edg
 policy against `partner_ride_wire::Observe`), `partner_native_tests` (the excluded tracker: no gap with frames arriving
 or with the sender paused, a link drop during the ride still bad, the pending re-base) and `partner_driver_tests`
 `TestRideUnrealize` (key off unchanged; the vehicle hide under `partner_native_ride=hide`, an unavailable seat, the GetOff
-latch, the heli acts and the horse kind 3 with and without the mount key; the seat flow's exclusion; the online native
-drive after a 10 s hidden heli ride: `net_quality` without the key, none and back at least 1.5 s sooner with it).
+latch, the heli acts and the horse kind 3 with and without the mount key; after the vehicle and horse episodes the
+show's `SET_ALLACTIVE` and one more `partner_realized=1` once Lua realizes body 1 again; the seat flow's exclusion; the
+online native drive after a 10 s hidden heli ride: `net_quality` without the key, none and back at least 1.5 s sooner with it).
 
 Scenarios (header lists the expected lines and frames): `tools/worker/scenarios/partner-ride-unrealize.txt` (lab seed:
 the horse kind-3 hide and a vehicle drawn hidden, guest key on with `partner_native_net=online`),
