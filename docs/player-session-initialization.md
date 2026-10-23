@@ -29,12 +29,12 @@ All 14 native suites pass. These existing suites verify build/integration regres
 
 Next finish the identified persistent network allocations and asynchronous release path. Retain early session/online setup for the controlled trial, with later actor validation as its own stage. A supported late reinitialization path has not been ruled out exhaustively, but none has been established and a later successful readiness check is insufficient justification for one.
 
-Reproduce:
+Reproduce with the archived analyzer (`archive/research-2026-10-23:tools/analyze_player_session_setup.py`, removed on 2026-10-23; it also needs `tools/inspect_player_system.py` from the same tag):
 
 ```powershell
 C:/Python314/python.exe tools/analyze_player_session_setup.py --output build/player-session-setup-analysis.json
 ```
 
-Evidence: [complete static analysis](evidence/player-session-setup-analysis-2026-09-09.json), [build results](evidence/player-session-prerequisites-build-2026-09-09.log), [preserved live sample](evidence/host-readiness-player-storage-2026-09-09.json), [prior timing trial](host-readiness-timing.md).
+Evidence: [complete static analysis](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/player-session-setup-analysis-2026-09-09.json), [build results](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/player-session-prerequisites-build-2026-09-09.log), [preserved live sample](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/host-readiness-player-storage-2026-09-09.json), [prior timing trial](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/host-readiness-timing.md).
 
 Attribution: pinned tpp-mod `301bf797b7f8032941b21ed56a3570338de6ead4`, `structs.hpp` and `symbols.hpp`; pinned Dynamite `c90f252f8200765f66c005d6bf4357fda0c0d98e`, `TppGameStatusFlag.h`. The analyzer and diagnostic correction are project-authored. [Third-party notices](../THIRD_PARTY_NOTICES.md).

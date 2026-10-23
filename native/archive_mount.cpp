@@ -1,6 +1,6 @@
 // Project-authored bounded startup adapter. ABI/address informed by tpp-mod
 // 301bf797b7f8032941b21ed56a3570338de6ead4 (GPLv3), independently decoded and
-// naturally observed: docs/archive-mount-observation.md. No upstream body copied.
+// naturally observed: archive/research-2026-10-23:docs/archive-mount-observation.md. No upstream body copied.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>

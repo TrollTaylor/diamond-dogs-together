@@ -23,7 +23,7 @@ inline std::uint64_t ParseClientHostIdentity(std::string_view text) noexcept {
 
 // The stale guest folder ships this value in client-host.txt; it is a valid
 // individual-format ID that may belong to a real stranger, so a v1 join must
-// never target it. See docs/analysis-2026-10-03/synthesis.md (§7 item 3).
+// never target it. See archive/research-2026-10-23:docs/analysis-2026-10-03/synthesis.md (§7 item 3).
 constexpr std::uint64_t kPlaceholderClientHostId = 76561198000000001ULL;
 
 // Returns a static refusal reason when `id` must not be used for a client-v1
