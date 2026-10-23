@@ -509,6 +509,14 @@ try {
             $file = Join-Path $fixture 'play-gesture-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_gesture=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_gesture'])|$($m['partner_native_gesture_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named gesture 0 opts out in play'
+            # G1 partner HUD hints (docs/native-puppet.md "Partner HUD hints") are lab only and default 0; Play-Coop never
+            # names the key, and play forces a named 1 off (not a play refusal).
+            Assert-True (!$hostIni.Contains('partner_native_ui_filter') -and !$guestIni.Contains('partner_native_ui_filter') -and
+                !$clipsIni.Contains('partner_native_ui_filter')) 'Play-Coop lab.ini never names partner_native_ui_filter'
+            Assert-Equal "$($n['partner_native_ui_filter'])|$($n['partner_native_ui_filter_given'])" '0|0' 'native: play leaves the ui filter off'
+            $file = Join-Path $fixture 'play-ui-filter-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_ui_filter=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_ui_filter'])|$($m['partner_native_ui_filter_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named ui filter off'
             # Horse / D-Walker riders (docs/mounts.md): hide with the native gun profile in lab and play (hidden runs
             # bfd6fcc4 / 2ab88411 lab and the play rehearsal 5a044a4d); Play-Coop never names the key, and a named off opts out.
             Assert-True (!$hostIni.Contains('partner_native_mount') -and !$guestIni.Contains('partner_native_mount') -and

@@ -3858,6 +3858,70 @@ void TestBodySafetyNativeDrop() {
           "native drop: a Warp at the remote's pose before the ledge hang");
 }
 
+// G1 (docs/native-puppet.md "Partner HUD hints"): the hook counts, the driver
+// tick logs. With partner_native_ui_filter on and the hooks installed: one
+// configured line per mission (seeded from the process totals), a swallowed
+// line with the per-queue deltas when a total moves (at most one per
+// kLogGapMs), one key line per new census key with the plugin name, one
+// patch_lost line; the key off, or the hooks not installed, logs nothing.
+void TestUiFilterLog() {
+    namespace pn = mgscoop::partner_native;
+    namespace uf = mgscoop::partner_ui_filter;
+    {
+        NativeSession s;
+        s.driver.settings.ui_filter = true;
+        auto& u = s.fake.stats.native.ui_filter;
+        // Earlier missions' totals: never logged as this mission's deltas.
+        u.installed = true; u.live = true; u.windows = 500; u.passed = 9000; u.swallowed[4] = 77; u.refused = 2;
+        u.keys = 1; u.key[0] = uf::Key(4, 3, 8, 0x11EC60C);
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "ui filter: native active");
+        for (int i = 0; i < 5; ++i) s.N();
+        Check(s.fake.Count("partner_ui_filter=configured; key=1; installed=1; live=1; windows=500; latched=0\r\n") == 1 &&
+                  s.fake.Containing("partner_ui_filter=swallowed") == 0 && s.fake.Containing("partner_ui_filter=key") == 0,
+              "ui filter: configured once, the earlier totals and keys are the baseline");
+        u.windows += 30; u.passed += 400; u.swallowed[4] += 12; u.swallowed[0] += 1;
+        u.keys = 3; u.key[1] = uf::Key(4, 0x61, 8, 0x114FC4E); u.key[2] = uf::Key(0, 0x4a, 8, 0x124C816);
+        s.N();
+        Check(s.fake.Count("partner_ui_filter=swallowed; q240=1; q248=0; q250=0; q258=0; q260=12; windows=30; passed=400; foreign=0; "
+                           "changed=0; refused=0; refusal=none; faults=0; latched=0; live=1\r\n") == 1,
+              "ui filter: the per-queue deltas since the baseline");
+        Check(s.fake.Count("partner_ui_filter=key; queue=0x260; id=97; prio=8; caller=0x114fc4e; plugin=climb\r\n") == 1 &&
+                  s.fake.Count("partner_ui_filter=key; queue=0x240; id=74; prio=8; caller=0x124c816; plugin=ride_vehicle\r\n") == 1 &&
+                  s.fake.Containing("caller=0x11ec60c") == 0,
+              "ui filter: one key line per new census key");
+        // More swallows within the gap: no second line until 1000 ms passed.
+        u.swallowed[4] += 5;
+        s.N();
+        Check(s.fake.Containing("partner_ui_filter=swallowed") == 1, "ui filter: at most one swallowed line per second");
+        for (int i = 0; i < 32; ++i) s.N();
+        Check(s.fake.Count("partner_ui_filter=swallowed; q240=0; q248=0; q250=0; q258=0; q260=5; windows=0; passed=0;") == 1,
+              "ui filter: the next line after the gap carries the rest");
+        // Nothing moved: no line.
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.Containing("partner_ui_filter=swallowed") == 2, "ui filter: no line while nothing moves");
+        // A refused scope and a lost patch.
+        u.refused += 3; u.last_refusal = static_cast<std::uint8_t>(uf::Refusal::vtable); u.live = false;
+        s.N();
+        Check(s.fake.Count("partner_ui_filter=swallowed; q240=0; q248=0; q250=0; q258=0; q260=0; windows=0; passed=0; foreign=0; "
+                           "changed=0; refused=3; refusal=vtable; faults=0; latched=0; live=0\r\n") == 1 &&
+                  s.fake.Count("partner_ui_filter=patch_lost; installed=1; live=0\r\n") == 1,
+              "ui filter: refusals and the lost patch are logged");
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.Count("partner_ui_filter=patch_lost") == 1, "ui filter: patch_lost once");
+    }
+    // The key off or the hooks not installed: no line.
+    for (int variant = 0; variant < 2; ++variant) {
+        NativeSession s;
+        s.driver.settings.ui_filter = variant == 1;
+        auto& u = s.fake.stats.native.ui_filter;
+        u.installed = variant == 0; u.live = variant == 0; u.swallowed[4] = 10; u.keys = 1; u.key[0] = uf::Key(4, 3, 8, 0x11EC60C);
+        Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "ui filter off: native active");
+        u.swallowed[4] += 10;
+        for (int i = 0; i < 40; ++i) s.N();
+        Check(s.fake.Containing("partner_ui_filter=") == 0, variant == 0 ? "ui filter: the key off logs nothing" : "ui filter: not installed logs nothing");
+    }
+}
+
 void TestNativeOnline() {
     namespace pn = mgscoop::partner_native;
     namespace pnn = mgscoop::partner_native_net;
@@ -8356,6 +8420,7 @@ int main() {
     TestNativeEnterAndLeave();
     TestNativeTraverseIcon();
     TestBodySafetyNativeDrop();
+    TestUiFilterLog();
     TestGestures();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();

@@ -246,6 +246,39 @@ int main() {
                   "an invalid gesture value refuses");
         }
     }
+    // G1 partner HUD hints (partner_native_ui_filter, docs/native-puppet.md "Partner HUD hints"): default 0 in lab and
+    // play, also with the native gun profile (no hidden-worker FRAME yet); a named 1 runs in lab only (play forces it
+    // off, not a play refusal); a named value records _given; independent of the traversal and gesture keys.
+    {
+        Check(!LabConfig{}.partner_native_ui_filter && !LabConfig{}.partner_native_ui_filter_given && !Lab("").partner_native_ui_filter,
+              "ui filter key defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_native_ui_filter && !profile.partner_native_ui_filter_given && profile.invalid_values == 0 &&
+                      profile.partner_native_traverse,
+                  "the gun profile leaves the ui filter off in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_ui_filter=1\n");
+            Check(named.partner_native_ui_filter == !play && named.partner_native_ui_filter_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0 && named.partner_native_traverse == profile.partner_native_traverse &&
+                      named.partner_native_gesture == profile.partner_native_gesture,
+                  "a named ui_filter=1 runs in lab, play forces it off (no refusal)");
+            const auto off = Lab(gun + mode + "partner_native_ui_filter=0\n");
+            Check(!off.partner_native_ui_filter && off.partner_native_ui_filter_given, "a named ui_filter=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_ui_filter=1\n");
+        Check(alone.partner_native_ui_filter && alone.partner_native_ui_filter_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_native_ui_filter=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_ui_filter=1\npartner_native_ui_filter=0\n");
+        Check(!later.partner_native_ui_filter, "a later 0 turns the ui filter off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_ui_filter=") + value + "\n");
+            Check(!invalid.partner_native_ui_filter && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid ui filter value refuses");
+        }
+    }
     // Horse / D-Walker riders (partner_native_mount=off|hide, docs/mounts.md): hide with the native gun profile in lab
     // and play (hidden runs bfd6fcc4 / 2ab88411 lab, play rehearsal 5a044a4d: no partner body while the partner rode), off
     // without it; a named off opts out in either mode; a named value records _given.

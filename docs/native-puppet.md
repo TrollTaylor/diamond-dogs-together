@@ -705,14 +705,14 @@ over the top onto the container roof while the viewer (act 1) stands still.
 the ladder, the viewer's HUD shows the stock "C + ladder" hint beside its own
 player (frames `8f27806d` `ladA-up-01..04`; `2596f6ae` `lad-up-01..top-02` and
 the host's `rev-up-01..top-02`), although the viewer is on foot and the
-climber's own view mid-ladder shows no hint. Likely source (read-only Ghidra):
-body 1's LadderActionImpl state handler `0x1411EC3A0` case 4 calls `P+0xD8`
-(`UiControllerImpl`, vtable `0x1423AF358`) vt+0x260 (`0x140FE6D10` ->
-`[this+0x48]` vt+0xF8 with 3, 8, 0, 1, 0, 0) with no `P+0x218` check, while its
-case 2 checks `P+0x218` before `P` vt+0x90. There is no input path: body 1's
-slide poll (`0x1411EC54A`) asks IsCompletedActionIcon with block 1's plugin,
-which never matches the viewer's icon slots. Suppressing it would need a new
-scoped filter of that UI call for body 1 (not attempted).
+climber's own view mid-ladder shows no hint. Body 1's ladder states post the
+hint into the shared UI controller's hint queue every frame; there is no
+input path (body 1's slide poll `0x1411EC54A` asks IsCompletedActionIcon with
+block 1's plugin, which never matches the viewer's icon slots). The 0.13.6
+fix, behind the lab key `partner_native_ui_filter` (default 0), is in
+"Partner HUD hints" below, which also corrects the call path noted here in
+0.13.5 (the receiver's vtable is `0x1423AF700`, so vt+0x260 is the queue leaf
+`0x140FE8480`, not `0x140FE6D10`).
 
 **Wall climb (23) and pipe (22)** stay unproven: no spot is known. The game's
 own Lua registers its crack points with the UI as a Vector3 list through
@@ -720,6 +720,144 @@ own Lua registers its crack points with the UI as a Vector3 list through
 the library scripts read with `tools/archive_probe` calls it, so the caller is
 a location or mission script, and logging that call's argument would list the
 crack-climb spots.
+
+## Partner HUD hints
+
+G1 (0.13.6, `native/partner_ui_filter.{hpp,cpp}`), lab key
+`partner_native_ui_filter=0|1`: **default 0 in lab and play** (also with the
+native gun profile); a named 1 runs in the lab only (play forces it off, not a
+play refusal) until a hidden-worker FRAME shows the viewer's HUD without body
+1's hints. A named value records `partner_native_ui_filter_given`.
+
+**The defect.** While body 1 climbs a ladder, the viewer's HUD shows the stock
+"C + ladder" slide hint beside the viewer's own player (0.13.5 runs `8f27806d`
+and `2596f6ae`, see "Traversal icon").
+
+**The call path (read-only Ghidra and the `.text` dump).**
+- `P+0xD8` is one UI controller for every body: `UiControllerImpl`'s secondary
+  interface (vtable `0x1423AF700`; its primary `0x1423AF6D0` sits at ui-0x20;
+  ui+0x28 == P: the UI init, primary vt+0x8 `0x140FE7950`, stores its owner at
+  primary+0x48 in `0x140FE7956`). Only the UI factory (`0x140FE6FDA`) stores the
+  two vtables, and nametag's HUD probe validates the same identity live (its
+  `partner_hud_job_census` lines in `8f27806d`).
+- Its hint queues are ten identical 0x70-byte leaves at vt+0x240..+0x288, one
+  request record each at ui+0x1E0+k*0x50 (id +0, flags +4, active +0x30,
+  priority +0x33). A request only replaces a record whose priority is
+  numerically higher; the HUD shows it beside the local player (what the
+  frames show). Between requests a record reads idle: priority 255 was seen
+  only on the vt+0x280 record (0x370, the Quiet hint) in nametag's
+  `partner_hint_job_census` lines; no log reads record 0x320 (vt+0x260), and
+  it is assumed idle the same way because all ten leaves are one body. No leaf
+  looks at the body.
+- The ladder plugin's per-phase update (interface vt+0x18 `0x1411EA8B0`) runs
+  phase 1 in `0x1411EA220`: with `P+0x204` bit 8 (S_IS_ONLINE) clear, which is
+  always the case in this mod, it calls the state callback with event 4 (the
+  local update) for every idx, body 1 included. Body 1's update runs inside
+  instance 1's drain job (`partner_input_hook` RunJobWindow), on the hook
+  thread.
+- Event 4 of the ladder states 10/11, 6..8, 9 and 5 (`0x1411EB3C0`,
+  `0x1411EBE80`, `0x1411EC3A0` case 4, `0x1411ED8A0`) calls
+  `[P+0xD8]` vt+0x260 = `0x140FE8480` (record 0x320) with hint 3, priority 8,
+  and no local-index check (the same handler's case 2 does check `P+0x218`).
+  The 0.13.5 note named vtable `0x1423AF358` and `0x140FE6D10`: that is
+  another UI controller table, stored only at `0x140FE648A` / `0x140FE679B`
+  (another UI class's table: it holds the same leaves at +0x278..+0x298, 0x38
+  bytes further in than UiControllerImpl's, so it is not `P+0xD8`'s interface), and
+  `0x140FE6D10` is UiControllerImpl's vt+0x228.
+
+**Census of body 1's other UI calls (static).**
+
+| Plugin | Call (return RVA) | Queue | Hint, priority | Local guard |
+|---|---|---|---|---|
+| Ladder states 5..11 | `0x11EB5A6`, `0x11EBFF4`, `0x11EC60C`, `0x11EDB17` | vt+0x260 | 3, 8 | none |
+| Climb (wall climb) | `0x114FC4E` | vt+0x260 | 0x61, 8 | IsNeedToSync only (S_IS_ONLINE-gated: false offline) |
+| Pipe | `0x1216899` | vt+0x260 | 0x60, 8 | IsNeedToSync only |
+| Hang (elude) | `0x11A20C3`, `0x11A2BCB`, `0x11A7922`, `0x11A85D8`, `0x11A920B` | vt+0x260 | 2, 8 | IsNeedToSync only |
+| Step-on, pickup plugin, cardboard box | none through the hint queues | - | - | - |
+| Interactive, trash box, ride (vehicle / horse / heli / walker), attack | `0x11D03A7`.., `0x12C178C`.., `0x124C816`, `0x122F4E5`, `0x1223E28`, `0x12610A1`, `0x1053CE4` | vt+0x240 / +0x250 / +0x258 | various | not checked one by one; the filter covers these queues |
+
+The queues vt+0x268 / +0x270 / +0x278 / +0x288 (+0x280, the Quiet hint)
+already have a body-1 filter: teammate_targeting's MinHooks (and the private
+pose window's for vt+0x268) gated by nametag's HUD probe job scope. Body 1's
+other UI calls found in these plugins are guarded or harmless: the climb
+core's vt+0x08 / +0x10 (`0x1155A64`) and the box's vt+0x100 (`0x10E232A`)
+check `P+0x218` at the call; the box's vt+0xF0 / +0xF8 / +0x310 check
+`P+0x218` / `P+0x214` inside the callee; vt+0x58 / +0x190 only read; the
+pickup plugin's AnnounceLogGetAmmo (vt+0x2F8, `0x120D8B5`) never runs on body
+1 (gestures play the node only). All of these pass a `P+0x218` check only
+while a window sets `P+0x218` to 1 (the `p218` receipt and the private pose
+window of worker builds), never in a release build.
+
+**The fix.** One MinHook on each of the five unfiltered leaves (`0xFE84F0`
+vt+0x240, `0xFE8970` +0x248, `0xFE8560` +0x250, `0xFE87E0` +0x258,
+`0xFE8480` +0x260), installed lazily with the defer install (key on, drain
+mode on, after the code gate) once the five UiControllerImpl slots point at
+them and their complete bodies match the SHA-256 pins (`ui_filter_bodies`).
+`partner_ui_filter::Begin(P)` runs right before block 1's drain job (next to
+`partner_icon::Begin`): it validates `P+0xD8` (the vtable, the primary, the
+owner) under SEH, digests the five records and opens a scope for this thread
+and that UI. A hint request through a hooked leaf is swallowed only when the
+scope is open, the call is on the scoped thread and the receiver is the scoped
+UI; everything else, including every request of the viewer's own update (block
+0's job, outside the scope) and every other thread, goes to the original leaf
+unchanged. `End` (GuardedCall's cleanup and the window's `__finally`, also on
+an unwinding job) closes the scope and compares the records digest. A swallowed
+request never enters the leaf, so the record keeps the viewer's own request (a
+body-1 request with a lower priority number can no longer displace it either).
+Nothing is written to the UI object, no vtable or code byte besides the five
+MinHook prologues, and the viewer's own HUD path never changes.
+
+**Why not a vtable copy.** The padop pattern (`partner_icon`: a vtable copy
+swapped into the object for the window) would change the UI object's vptr for
+the whole job. teammate_targeting's partner-prompt and Quiet-hint filters, the
+pose window's sleep-hint owner check, nametag's HUD probe and the sleep /
+vehicle readers all re-read that vptr during body 1's job and require
+`0x23AF700` (they would refuse, so the existing filters would stop filtering,
+and the pose window would fail); other threads use the same object
+concurrently. The leaf hooks leave the object untouched.
+
+**Contract.** `tools/generate_partner_contract.py` (`UI_FILTER_*`): the five
+slots, the leaf prologues and complete bodies, the factory's vtable stores, the
+UI init's owner store (`0xFE7956`, primary+0x48 = ui+0x28 = P, with its slot
+primary vt+0x8 = `0xFE7950`: Begin's owner check), the ladder interface's
+per-phase update and phase-1 event choice, IsNeedToSync, and
+the eleven traversal call sites; its assertions check that the ten leaves share
+one body modulo their record, that each filtered leaf is reached only through
+`0x23AF700` / `0x23AF358` (no direct call), that only the factory stores the
+UiControllerImpl vtables, and that every census return address is a call
+through the named slot. 743 -> 766 code sites, 193 -> 200 vtable slots.
+
+**Logs** (the hooks only count; the driver's input tick logs, also while a
+vehicle job is current, so the ride hints show during the ride):
+- `partner_ui_filter=installed; vtable=0x23af700; queues=0x240,..,0x260;
+  leaves=..; pins=5; scope=drain_job_body1` or `install_refused; reason=image|
+  slots|pins|minhook|module|hook|enable; hooks=none` (once per process);
+- `partner_ui_filter=configured; key=1; installed=1; live=..; windows=..;
+  latched=..` (once per mission);
+- `partner_ui_filter=swallowed; q240=..; q248=..; q250=..; q258=..; q260=..;
+  windows=..; passed=..; foreign=..; changed=..; refused=..; refusal=..;
+  faults=..; latched=..; live=..` (deltas, at most one per second while a
+  total moves; capped at 300 lines per mission). `foreign` counts in-scope
+  requests to another receiver (expected 0), `changed` the jobs whose records
+  changed anyway (an unhooked writer or a concurrent consumer; diagnostic);
+- `partner_ui_filter=key; queue=0x260; id=3; prio=8; caller=0x11ec60c;
+  plugin=ladder` once per new distinct swallowed request (up to 16 per
+  process; `plugin` names the census's caller, `other` for anything else);
+- `partner_ui_filter=patch_lost; installed=1; live=0` once if a leaf no longer
+  starts with the hook's jump.
+
+**Proof needed (hidden worker, runtime phase).** Scenario
+`tools/worker/scenarios/partner-ui-filter-ladder-mb.txt` (the Mother Base
+ladder of `partner-traverse-ladder-mb.txt` with the key named on both copies,
+real seed, lab): the viewer's frames while body 1 climbs (`lad-up` / `lad-top`,
+the host's `rev-up` / `rev-top`) show no "C + ladder" hint; the viewer's log
+has `installed`, `configured` and `key; queue=0x260; id=3; prio=8;
+caller=0x11ec..; plugin=ladder` with `swallowed` lines whose `q260` grows only
+while body 1 is on the ladder, `foreign=0`, `faults=0`, `latched=0`; the
+climber's own frames (`lad-self-mid`, `rev-self-mid`) match 0.13.5; the
+traversal lines (`icon; plugin=ladder; res=ok`, edge 21/21) and the viewer
+guard (no `viewer_changed`, every own `partner_status=local; st=0x0`) are
+unchanged.
 
 ## Gestures
 
@@ -2011,6 +2149,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
+| `partner_native_ui_filter` | 0, 1 (G1, 0.13.6: body 1's HUD hint requests, e.g. the ladder "C" slide hint, swallowed inside its drain job by MinHooks on the UiControllerImpl hint-queue leaves vt+0x240..+0x260, see "Partner HUD hints"; default 0 in lab and play, also with the gun profile; a named 1 is lab only, play forces it off; no hidden-worker FRAME yet) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not

@@ -91,6 +91,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
@@ -763,6 +764,12 @@ const char* PartnerInstallDefer(void*, mgscoop::PartnerDefer mode) noexcept {
     // No patch; a refusal is logged and leaves the copy unused (no swap).
     if (mode == mgscoop::PartnerDefer::on && mgscoop::GetLabConfig().partner_native_traverse)
         mgscoop::partner_icon::Build(game_base, Log);
+    // G1 (docs/native-puppet.md "Partner HUD hints"): the five hint-queue leaf
+    // hooks that swallow body 1's HUD hints inside its drain job, only with the
+    // lab key on (default off in lab and play) and a drain (defer=on). A
+    // refusal is logged once and installs nothing (stock hints, as before).
+    if (mode == mgscoop::PartnerDefer::on && mgscoop::GetLabConfig().partner_native_ui_filter)
+        mgscoop::partner_ui_filter::Install(game_base, game_span, Log);
     return nullptr;
 }
 void PartnerNativeInstall(void*, pd::NativeInstall& out) noexcept {
@@ -1390,6 +1397,7 @@ void PartnerShutdown() noexcept {
     mgscoop::partner_board::Publish(0);
     // F1 passenger camera: nothing to undo (no patch; the handle is cleared by the stock get-off / FinishState).
     mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
+    mgscoop::partner_ui_filter::Shutdown();  // G1: the hint-queue leaf hooks pass every request through
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;

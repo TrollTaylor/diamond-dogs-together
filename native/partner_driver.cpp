@@ -2002,16 +2002,74 @@ void TickTraverse(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     if (in.enabled || m.icon_req || m.icon_grant_ms) LogIcon(m, h, stats.native.icon, o, now, in.body_ok, in.body_act);
 }
 
+// G1 partner HUD hints (partner_ui_filter, docs/native-puppet.md "Partner HUD
+// hints"): the hook's counters are process totals and are only counted inside
+// the hooks; this tick logs them. Seeded on the mission's first tick with the
+// hooks installed (configured line), then partner_ui_filter=swallowed with the
+// deltas since the previous line whenever a total moved (at most one per
+// kLogGapMs), one partner_ui_filter=key line per new distinct swallowed request
+// (queue, hint id, priority, caller and the census's plugin name) and one
+// patch_lost line if a leaf no longer starts with the hook's jump.
+namespace puf = mgscoop::partner_ui_filter;
+constexpr unsigned kUiFilterLogCap = 300;
+void TickUiFilter(Driver& d, const Hooks& h, const Settings& set, std::uint64_t now, const InputStats& s) noexcept {
+    Mission& m = d.mission;
+    const puf::Stats& u = s.native.ui_filter;
+    if (!set.ui_filter || !u.installed) return;
+    if (!m.ui_filter_seeded) {
+        m.ui_filter_seeded = true;
+        m.ui_filter_base = u;
+        m.ui_filter_keys_logged = u.keys;
+        EmitFormat(h, "partner_ui_filter=configured; key=1; installed=1; live=%u; windows=%u; latched=%u\r\n", u.live ? 1u : 0u, u.windows,
+                   u.latched ? 1u : 0u);
+    }
+    const puf::Stats& b = m.ui_filter_base;
+    std::uint32_t q[puf::kQueues]{};
+    bool moved = u.refused != b.refused || u.faults != b.faults || u.foreign != b.foreign || u.changed != b.changed;
+    for (unsigned k = 0; k < puf::kQueues; ++k) {
+        q[k] = u.swallowed[k] - b.swallowed[k];
+        if (q[k]) moved = true;
+    }
+    if (puf::LogDue(moved, now, m.ui_filter_ms)) {
+        EmitNativeN(h, m.ui_filter_cap, kUiFilterLogCap, "partner_ui_filter",
+                    "partner_ui_filter=swallowed; q240=%u; q248=%u; q250=%u; q258=%u; q260=%u; windows=%u; passed=%u; foreign=%u; "
+                    "changed=%u; refused=%u; refusal=%s; faults=%u; latched=%u; live=%u\r\n",
+                    q[0], q[1], q[2], q[3], q[4], u.windows - b.windows, u.passed - b.passed, u.foreign - b.foreign, u.changed - b.changed,
+                    u.refused - b.refused, puf::RefusalName(static_cast<puf::Refusal>(u.last_refusal)), u.faults - b.faults,
+                    u.latched ? 1u : 0u, u.live ? 1u : 0u);
+        m.ui_filter_base = u;
+        m.ui_filter_ms = now ? now : 1;
+    }
+    for (std::uint32_t i = m.ui_filter_keys_logged; i < u.keys && i < puf::kKeys; ++i) {
+        const std::uint64_t key = u.key[i];
+        const unsigned queue = puf::KeyQueue(key);
+        EmitNativeN(h, m.ui_filter_cap, kUiFilterLogCap, "partner_ui_filter",
+                    "partner_ui_filter=key; queue=0x%x; id=%u; prio=%u; caller=0x%x; plugin=%s\r\n",
+                    queue < puf::kQueues ? static_cast<unsigned>(puf::kQueue[queue].slot) : 0u, unsigned(puf::KeyId(key)),
+                    puf::KeyPriority(key), puf::KeyCaller(key), puf::CallerName(puf::KeyCaller(key)));
+    }
+    if (u.keys > m.ui_filter_keys_logged) m.ui_filter_keys_logged = u.keys;
+    if (!u.live && !m.ui_filter_lost_logged) {
+        m.ui_filter_lost_logged = true;
+        EmitFormat(h, "partner_ui_filter=patch_lost; installed=1; live=0\r\n");
+    }
+}
+
 void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
                const Clock& clock, bool terminating, bool parts_loaded, bool pose_valid, const partner::Pose& pose, bool relink,
                bool anim_ok, const pp::Anim& anim, const sync::AnimState& remote_anim, std::uint32_t& ops, InputTick& out) noexcept {
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
     (void)parts_loaded;
+    // Hook statistics, read once per tick (a snapshot of process totals).
+    InputStats s{};
+    if (h.drain_input_stats) h.drain_input_stats(h.context, s);
     // A real current lease (including phase6 cleanup after wire expiry), or
     // fresh authenticated mount intent, keeps the exact already-admitted Arm.
     // Hook composition still expires stale input; no drive sample is refreshed.
     if(VehicleJobCurrent(d,h,st,terminating)){
+        // G1: the ride plugins' hints (vt+0x240/+0x258) are logged during the ride.
+        TickUiFilter(d, h, set, now, s);
         SendLocalInput(d,h,st,set,tick,clock,false);
         out.suppress_fallback=VehicleAttached(h,st);
         return;
@@ -2052,10 +2110,8 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         if (set.holdlog && !lab.partner_input_holdlog) Emit(h, "partner_input=holdlog_refused; reason=not_allowed\r\n");
         else EmitFormat(h, "partner_input=holdlog; on=%u\r\n", set.holdlog ? 1u : 0u);
     }
-    // Hook statistics, drained once per tick. A recorded window fault disables
-    // native calls, the window and the DM patch for the rest of the mission.
-    InputStats s{};
-    if (h.drain_input_stats) h.drain_input_stats(h.context, s);
+    // A recorded window fault disables native calls, the window and the DM
+    // patch for the rest of the mission.
     if (s.window.us_max > m.us_max_acc) m.us_max_acc = s.window.us_max;
     if (s.window.fault_phase && !m.input_faulted) {
         m.input_faulted = true;
@@ -2064,6 +2120,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         DisarmInput(d, h, "fault");
         if (m.dm_patched) RevertDm(d, h, "fault");
     }
+    TickUiFilter(d, h, set, now, s);
     SendLocalInput(d, h, st, set, tick, clock, false);
     // Pad probe (read-only), change-only, at most 20 Hz.
     if (set.pad_probe && h.read_pad && now - m.pad_probe_ms >= kPadProbeMs && m.pad_probe_lines < kPadProbeCap) {
@@ -5700,6 +5757,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.traverse = lab.partner_native_traverse;
     d.settings.cbox = lab.partner_native_cbox;
     d.settings.ngesture = lab.partner_native_gesture;
+    // G1 partner HUD hints (lab only, default 0; play forces it off in the loader).
+    d.settings.ui_filter = lab.partner_native_ui_filter;
     // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
     d.settings.nmount = lab.partner_native_mount;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):

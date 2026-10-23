@@ -1190,6 +1190,64 @@ SITES += [
      'per-entry update 0xB6C410: buffer+0/+2 (dword) and +4 cleared only after every channel consumed its request, so a '
      'graph-2 mask bit at the hook\'s entry is another owner\'s request (the gesture refuses or ends without a write)'),
 ]
+# --- G1 (0.13.6, docs/native-puppet.md "Partner HUD hints"; partner_ui_filter, lab key partner_native_ui_filter): body
+# 1's HUD hint requests never reach the viewer's HUD. P+0xD8 is the one UiControllerImpl (secondary interface, vtable
+# 0x23AF700; primary 0x23AF6D0 at ui-0x20; ui+0x28 == P). Its hint queues vt+0x240..+0x288 are ten identical 0x70-byte
+# leaves over the request records ui+0x1E0+k*0x50 (no body check). vt+0x268/0x270/0x278/0x288/0x280 already have a
+# body-1 filter (native_ui_contract; teammate_targeting and the pose window). partner_ui_filter MinHooks the other five
+# leaves (installed lazily after this gate; the prologues relocate cleanly, no rip-relative operand) and swallows a
+# request only inside block 1's drain job for that job's UiControllerImpl. The call sites below are the static census:
+# the traversal plugins' per-frame state update (event 4) posts into vt+0x260 without a local-index check.
+UI_FILTER_QUEUES = [  # (slot, leaf, record)
+    (0x240, 0xFE84F0, 0x1E0), (0x248, 0xFE8970, 0x230), (0x250, 0xFE8560, 0x280), (0x258, 0xFE87E0, 0x2D0), (0x260, 0xFE8480, 0x320),
+]
+UI_FILTER_SITES = [
+    (0xFE84F0, '0fb681130200004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x240 hint-queue leaf (record 0x1E0) prologue; complete body in ui_filter_bodies'),
+    (0xFE8970, '0fb681630200004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x248 hint-queue leaf (record 0x230) prologue'),
+    (0xFE8560, '0fb681b30200004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x250 hint-queue leaf (record 0x280) prologue'),
+    (0xFE87E0, '0fb681030300004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x258 hint-queue leaf (record 0x2D0) prologue'),
+    (0xFE8480, '0fb681530300004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x260 hint-queue leaf (record 0x320: the ladder "C" slide hint) prologue'),
+    (0xFE6FDA, '488d05ef863c01488903488d0515873c0148894320',
+     'UI factory: [obj] = primary vtable 0x23AF6D0, [obj+0x20] = UiControllerImpl vtable 0x23AF700 (P+0xD8 = obj+0x20)'),
+    (0xFE7956, '488b02488bd9ba0100000048894148',
+     'UI init (primary vt+0x8 = 0xFE7950): primary+0x48 = [arg] = P, so ui+0x28 == P (partner_ui_filter kUiOwner, Begin owner check)'),
+    (0x11EA8B0, '83fa06776a4c8d0d4457e1fe8bc2418b948124a91e014903d1ffe2',
+     'ladder plugin interface vt+0x18: the per-phase update (phase 0..6 jump table)'),
+    (0x11EA8D7, '4883c1e0418bd0e93df9ffff', 'ladder phase 1 -> 0x11EA220(F, idx)'),
+    (0x11EA249, '4c8b8038010000488bf9418b800402000048c1e30448035960c1e808a801742f',
+     'ladder phase 1: P = [[F+0x40]+0x138]; [P+0x204] bit 8 (S_IS_ONLINE) clear -> the local event for every idx'),
+    (0x11EA2D1, '4084ed752e458d4104ffd0', 'ladder phase 1: not remote -> the state callback (work+0x10)(F, idx, event 4)'),
+    (0x114DB2A, '488b41088bfa488bd94c8b8038010000418b8004020000c1e808a8017437e80315abff488b8888000000488b01ff504883f8027413488b4308488b88380100003bb918020000740db001',
+     'IsNeedToSync (the climb / pipe / hang guard): true only with S_IS_ONLINE and (mode 2 or idx != [P+0x218]), so offline false'),
+    (0x11EB588, '488b8ad8000000ba03000000c644242001488b01448d4205ff9060020000',
+     'ladder states 10/11 event 4: [P+0xD8] vt+0x260(ui, 3, 8, 0, 1, ..) with no local-index check (return 0x11EB5A6)'),
+    (0x11EBFD6, '488b8ad8000000ba03000000c644242001488b01448d4205ff9060020000',
+     'ladder states 6..8 event 4: vt+0x260(ui, 3, 8, ..) (return 0x11EBFF4)'),
+    (0x11EC5D6, '488b4640ba03000000488b8838010000c644243000448d4205488b89d80000004533c9c644242800488b01c644242001ff9060020000',
+     'ladder state 9 (0x11EC3A0 case 4) event 4: vt+0x260(ui, 3, 8, 0, 1, 0, 0) (return 0x11EC60C; case 2 checks [P+0x218], case 4 not)'),
+    (0x11EDAFA, '488b89d80000004533c9c644242800488b01c644242001ff9060020000',
+     'ladder state 5 event 4: vt+0x260(ui, 3, 8, ..) (return 0x11EDB17)'),
+    (0x114FC34, '488b89d8000000c644242800c644242001488b01ff9060020000', 'climb state event 4: vt+0x260(ui, 0x61, 8, ..) (return 0x114FC4E)'),
+    (0x121687F, '488b89d8000000c644242800c644242001488b01ff9060020000', 'pipe state event 4: vt+0x260(ui, 0x60, 8, ..) (return 0x1216899)'),
+    (0x11A209B, '488b89d8000000488b014484832f0200007417c6442430014488742428c644242001ff9060020000',
+     'hang (elude) state: vt+0x260(ui, 2, 8, ..) (return 0x11A20C3)'),
+    (0x11A2BB1, '488b89d8000000c644242800c644242001488b01ff9060020000', 'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A2BCB)'),
+    (0x11A78FB, '488b89d80000004180e001488b014488442430c6442428004488442420448d4206ff9060020000',
+     'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A7922)'),
+    (0x11A85B1, '488b89d80000004180e001488b014488442430c6442428004488442420448d4206ff9060020000',
+     'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A85D8)'),
+    (0x11A91E4, '488b89d80000004180e001488b014488442430c6442428004488442420448d4206ff9060020000',
+     'hang state: vt+0x260(ui, 2, 8, ..) (return 0x11A920B)'),
+]
+SITES += UI_FILTER_SITES
+# Complete-body SHA-256 pins (partner_ui_filter::Install re-checks them in the running image before it hooks).
+UI_FILTER_BODIES = [
+    (0xFE84F0, 0x70, '5da674e3da4ef76a51348c08af81b107b2864427128c820a0f1f8e970b8d009d', 'hint queue vt+0x240'),
+    (0xFE8970, 0x70, '5931372662f44c5bf7c8edb72954a3cb00d5302789f67f0c4e8427ebfe931348', 'hint queue vt+0x248'),
+    (0xFE8560, 0x70, 'c3d403e33e0a219665a4411cae8f14cd4ecd1b4557883000a57ecd54f0f2c2f8', 'hint queue vt+0x250'),
+    (0xFE87E0, 0x70, '5a2609f019ec3ab3f317dcec53fa96e496ea1760449e59e26009aded98939fda', 'hint queue vt+0x258'),
+    (0xFE8480, 0x70, '33dfab551b203f8b32fd3c5900e8648a7b36d2c9c855cc98f6c8aa6ab4ae06c8', 'hint queue vt+0x260'),
+]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -1415,6 +1473,11 @@ SLOTS += [
 ]
 SLOTS += [(vt, 0x0, 0x12128C0, f'{what} ActionPlugin vt[0] = priority') for vt, _, what in ICON_PLUGIN_VTS]
 SLOTS += [(vt, 0x8, ex, f'{what} ActionPlugin vt[1] = ExecActionButtonFunction') for vt, ex, what in ICON_PLUGIN_VTS]
+# G1: the UiControllerImpl hint-queue slots in front of partner_ui_filter's leaf hooks, and the ladder plugin interface's
+# per-phase update (its phase 1 runs the state callback with the local event 4 for body 1 too).
+SLOTS += [(0x23AF700, slot, leaf, f'UiControllerImpl vt+{slot:#x} = hint-queue leaf (record {rec:#x})') for slot, leaf, rec in UI_FILTER_QUEUES]
+SLOTS += [(0x23C6080, 0x18, 0x11EA8B0, 'ladder plugin interface vt+0x18 = the per-phase update (phase 1 -> 0x11EA220)')]
+SLOTS += [(0x23AF6D0, 0x8, 0xFE7950, 'UiControllerImpl primary vt+0x8 = the UI init (stores the owner P at primary+0x48 = ui+0x28)')]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -2641,6 +2704,54 @@ def traverse_icon_assertions():
 
 
 failures += traverse_icon_assertions()
+
+
+def ui_filter_assertions():
+    """G1 (docs/native-puppet.md "Partner HUD hints"): the facts behind partner_ui_filter's leaf hooks."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    for rva, size, digest, what in UI_FILTER_BODIES:
+        need(hashlib.sha256(rd(rva, size)).hexdigest() == digest, f'{what} {rva:#x} complete body matches its SHA-256 pin')
+    need([b[0] for b in UI_FILTER_BODIES] == [q[1] for q in UI_FILTER_QUEUES], 'ui_filter_bodies follow UI_FILTER_QUEUES order')
+    # The ten queue leaves vt+0x240..+0x288 are one body over their own record: the same bytes once the four record
+    # displacements (priority +0x33 twice, flags +4 twice, id +0, active +0x30) are masked; each priority operand is
+    # record + 0x33. The five filtered leaves are reached only through UiControllerImpl (0x23AF700) and the base vtable
+    # 0x23AF358 (its slots +0x278..+0x298), never by a direct call.
+    leaves = [struct.unpack('<Q', rd(0x23AF700 + s, 8))[0] - IB for s in range(0x240, 0x290, 8)]
+    def shape(leaf):
+        b = bytearray(rd(leaf, 0x70))
+        rec = struct.unpack_from('<I', b, 3)[0] - 0x33
+        out_b = bytes(b)
+        for k in range(0, 0x70 - 3):
+            v = struct.unpack_from('<I', out_b, k)[0]
+            if v in (rec, rec + 4, rec + 0x30, rec + 0x33):
+                b[k:k + 4] = b'\0\0\0\0'
+        return rec, bytes(b)
+    shapes = [shape(leaf) for leaf in leaves]
+    need(len({s for _, s in shapes}) == 1, 'the ten UiControllerImpl hint-queue leaves share one body modulo their record')
+    need([r for r, _ in shapes] == [0x1E0, 0x230, 0x280, 0x2D0, 0x320, 0x3C0, 0x460, 0x4B0, 0x370, 0x410],
+         f'hint-queue records by slot: {[hex(r) for r, _ in shapes]}')
+    for slot, leaf, rec in UI_FILTER_QUEUES:
+        need(leaves[(slot - 0x240) // 8] == leaf and shapes[(slot - 0x240) // 8][0] == rec, f'vt+{slot:#x} -> {leaf:#x} record {rec:#x}')
+        need(qword_hits(leaf) == [0x23AF358 + 0x38 + slot, 0x23AF700 + slot] and rel_refs(leaf) == [],
+             f'{leaf:#x} only through 0x23AF358+{0x38 + slot:#x} / 0x23AF700+{slot:#x}: {[hex(x) for x in qword_hits(leaf)]}')
+    # Only the UI factory stores the UiControllerImpl and primary vtables: an object with 0x23AF700 is P+0xD8's UI.
+    need(lea_rip_refs(0x23AF700) == [0xFE6FE4] and lea_rip_refs(0x23AF6D0) == [0xFE6FDA],
+         f'UiControllerImpl vtable stores: {[hex(x) for x in lea_rip_refs(0x23AF700)]} / {[hex(x) for x in lea_rip_refs(0x23AF6D0)]}')
+    # The census call sites are 6-byte calls through vt+0x260 whose return addresses partner_ui_filter::CallerName names.
+    for ret in (0x11EB5A6, 0x11EBFF4, 0x11EC60C, 0x11EDB17, 0x114FC4E, 0x1216899, 0x11A20C3, 0x11A2BCB, 0x11A7922, 0x11A85D8, 0x11A920B):
+        need(rd(ret - 6, 6) == bytes.fromhex('ff9060020000'), f'{ret - 6:#x}: call [rax+0x260] returning to {ret:#x}')
+    for ret, slot in ((0x11D03A7, 0x240), (0x11D5132, 0x250), (0x11D9C87, 0x250), (0x11D9DB8, 0x250), (0x11D9F83, 0x250),
+                      (0x12C178C, 0x240), (0x12C1DBC, 0x240), (0x12C2130, 0x240), (0x1223E28, 0x240), (0x122F4E5, 0x240),
+                      (0x124C816, 0x240), (0x12610A1, 0x240), (0x126154C, 0x258), (0x1053CE4, 0x258)):
+        need(rd(ret - 6, 6) == b'\xff\x90' + struct.pack('<I', slot), f'{ret - 6:#x}: call [rax+{slot:#x}] returning to {ret:#x}')
+    return out
+
+
+failures += ui_filter_assertions()
 failures += gesture_assertions()
 if failures:
     print('\n'.join(failures))
@@ -3104,6 +3215,13 @@ for rva, size, digest, what in ICON_BODIES:
     w(f'    {{0x{rva:x},0x{size:x},{{{cbytes(digest)}}}}}, // {what}')
 w('};')
 w('inline constexpr std::uintptr_t icon_plugin_vts[]={' + ','.join(f'0x{vt:x}' for vt, _, _ in ICON_PLUGIN_VTS) + '};')
+w('// --- G1 partner HUD hints (partner_ui_filter; docs/native-puppet.md "Partner HUD hints") -----------------------')
+w('// The UiControllerImpl hint-queue leaves vt+0x240..+0x260 (kQueue order); partner_ui_filter::Install re-hashes them')
+w('// in the running image before it hooks them.')
+w('inline constexpr BodyPin ui_filter_bodies[]={')
+for rva, size, digest, what in UI_FILTER_BODIES:
+    w(f'    {{0x{rva:x},0x{size:x},{{{cbytes(digest)}}}}}, // {what}')
+w('};')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

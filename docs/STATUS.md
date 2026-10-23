@@ -361,6 +361,64 @@ hidden-worker phase runs the five new scenarios.
     recon log caps in the driver (`capped` then `resumed; dropped=` after the 2 min window), both in
     `partner_driver_tests`. The world LOG bucket keeps its pure `log_budget_tests` (world_link runs on real time).
 
+### partner_native_ui_filter
+- **G1, the viewer's HUD shows the partner's ladder hint** (`wp/ladder-hint`, from `dev/oct7-continue` `cc973a8`;
+  docs/native-puppet.md "Partner HUD hints"). New lab key `partner_native_ui_filter=0|1` with `_given`: **default 0
+  in lab and play** (also with the native gun profile); a named 1 runs in the lab only, play forces it off (not a
+  play refusal). Version unchanged (0.13.5).
+- Cause (read-only Ghidra and the `.text` dump): `P+0xD8` is one `UiControllerImpl` (vtable `0x1423AF700`) for both
+  bodies; its hint queues vt+0x240..+0x288 are ten identical leaves over request records at ui+0x1E0+k*0x50 with no
+  body check. Phase 1 of the ladder plugin (`0x1411EA220`) runs the state callback with the local event 4 for every
+  idx while S_IS_ONLINE is clear (always in this mod); the ladder states' event 4 (`0x1411EC3A0` case 4 and three
+  more) post hint 3 / priority 8 through vt+0x260 = `0x140FE8480` (record 0x320) with no local-index check, from
+  inside instance 1's drain job. The 0.13.5 note's vtable `0x1423AF358` / `0x140FE6D10` was another UI class's
+  table (stored at `0x140FE648A` / `0x140FE679B`; it holds the same leaves 0x38 bytes further in, so it is not
+  `P+0xD8`'s interface); `0x140FE6D10` is UiControllerImpl's vt+0x228.
+- Census: climb (0x61), pipe (0x60) and the ledge hang (2) post into the same queue (their IsNeedToSync guard is
+  S_IS_ONLINE-gated, false offline); step-on, the pickup plugin and the box use no hint queue; interactive, trash
+  box, the ride plugins and attack use vt+0x240 / +0x250 / +0x258. vt+0x268 / +0x270 / +0x278 / +0x288 / +0x280
+  already have a body-1 filter (teammate_targeting, the pose window). Body 1's other UI calls found are guarded by
+  `P+0x218` or read-only.
+- Fix: `native/partner_ui_filter` MinHooks the five unfiltered leaves (`0xFE84F0`, `0xFE8970`, `0xFE8560`,
+  `0xFE87E0`, `0xFE8480`), lazily with the defer install once the five slots and the SHA-256 body pins match. A
+  request is swallowed only inside the scope `partner_ui_filter::Begin(P)` / `End` opens around block 1's drain job
+  (the hook thread, P+0xD8's validated UI: vtable, primary, owner); everything else, the viewer's own update
+  included, goes to the original leaf. No vtable copy: swapping the UI object's vptr for the window would break the
+  identity checks that teammate_targeting, the pose window, nametag's HUD probe and the sleep / vehicle readers make
+  during body 1's job. Counts from the hooks, lines from the driver tick (`partner_ui_filter=installed|configured|
+  swallowed|key|patch_lost`).
+- Contract 743 -> 765 code sites, 193 -> 199 vtable slots (`UI_FILTER_*`, with assertions: one leaf body modulo the
+  record, slot-only reachability, the factory's vtable stores, the census return addresses).
+- Tests: `partner_ui_filter_tests` (route / identity / key / log decisions, the contract pins, the detours on fake
+  objects: scope, thread, receiver, ABI forwarding, refusals, fault latch, records digest, keys, Shutdown, Install
+  refusals on a fake image), `partner_driver_tests` TestUiFilterLog, the key in `lab_config_tests`,
+  `lab_ini_check`, `friend_package_tests`, `worker_session_tests` and the three `-LabSetting` regexes.
+- Scenario `tools/worker/scenarios/partner-ui-filter-ladder-mb.txt` (not run): the Mother Base ladder with the key on
+  both copies.
+- Open: no hidden-worker run yet (none in this step); the default stays 0 until a FRAME shows the viewer's HUD
+  without the hint while body 1 climbs. Why the climber's own HUD shows no hint mid-ladder in stock is not
+  explained; if the viewer's hint survives with `q260` growing, it is not the vt+0x260 queue. A block-1 job that
+  runs without a window (the legacy fallback after a refused drain) opens no scope, so its hints still pass.
+- Second pass (same branch, no code change): re-checked against the image and Ghidra (read-only) that `0x1411EC3A0`
+  case 4 posts vt+0x260(3, 8) unconditionally (the IsCompletedActionIcon call at `0x1411EC54A` belongs to case 1),
+  that `0x1411EA220` picks event 4 for every idx while `P+0x204` bit 8 is clear, that only the window runs block 1's
+  job (`block == a.pool1`), that no other contract pins or hooks the five leaves (the camera agent's native_ui /
+  pose window cover `0xFE8690` / `0xFE8700` / `0xFE8770` / `0xFE89E0` / `0xFE8C70` only), and that the pose
+  window's sleep-hint detour requires `[ui] == 0x23AF700` during body 1's job (a vptr swap would make it fail).
+  The leaf ABI (rcx ui, dx id, r8d priority, r9b flag, three stack bytes at +0x28 / +0x30 / +0x38) matches the
+  detours, and the call at `0x1411EC606` loads `[[[rsi+0x40]+0x138]+0xD8]` with id 3 / priority 8.
+  `generate_partner_contract.py --check` 765 / 199; full CTest 290/290 green (`-Configure`).
+- Review fixes (same branch): the contract now pins the UI init's owner store `0xFE7956` (primary+0x48 = ui+0x28 =
+  P, Begin's owner check) and its slot (primary vtable `0x23AF6D0` vt+0x8 = `0xFE7950`): 766 code sites, 200 vtable
+  slots. The driver reads the hook stats before the vehicle-job early return and runs the ui-filter log there too, so
+  the ride hints (vt+0x240 / +0x258) are logged during the ride (`vehicle_driver_wiring_tests`). `partner_defer_tests`
+  drives the scope through the real drain window: body 1's vt+0x260 request from block 1's job is swallowed; block 0's
+  job, a refused block-1 job (no armed Arm, the legacy call), the thread after the window and after a job that unwound
+  through GuardedCall all reach the original. native-puppet.md: priority 255 was read only on the vt+0x280 record
+  (0x370); record 0x320's idle value is assumed from the shared leaf body. The scenario's two `swallowed` waitlogs
+  now need `q260` > 0, so a line from another queue cannot pass them. `--check` 766 / 200; full CTest 290/290 green
+  (`-Configure`). No game launch and no hidden-worker run.
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

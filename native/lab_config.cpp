@@ -218,6 +218,11 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         ok = ParseBool(value, result.partner_native_gesture);
         if (ok) result.partner_native_gesture_given = true;
     }
+    else if (Equals(key, "partner_native_ui_filter")) {
+        // G1: body 1's HUD hints swallowed in its drain job (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.partner_native_ui_filter);
+        if (ok) result.partner_native_ui_filter_given = true;
+    }
     else return false;
     return true;
 }
@@ -1470,6 +1475,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // body while the partner rode a D-Walker or D-Horse, the body back after the
     // dismount, its own player unchanged); a named off opts out.
     if (!c.partner_native_mount_given) c.partner_native_mount = gun ? PartnerNativeMount::hide : PartnerNativeMount::off;
+    // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
+    // viewer's HUD without body 1's ladder hint yet); play forces it off below.
+    if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1504,6 +1512,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // Gestures run in play too (the sender needs a live link session).
         // Mount riders run in play too: the play rehearsal 5a044a4d (-WanSim bad, key not
         // named) hid the D-Walker and the D-Horse rider as the lab runs did.
+        // G1 partner HUD hints stay lab-only (no hidden-worker FRAME yet).
+        c.partner_native_ui_filter = false;
     }
 }
 
