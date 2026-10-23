@@ -1183,7 +1183,7 @@ try {
         $dependency = Join-Path $fixture 'junction-package-dependency'
         $junction = Join-Path $linkedRoot 'third_party\minhook'
         foreach ($path in @($linkedRoot, $dependency, $junction)) { Assert-InFixture $path }
-        foreach ($dir in @('native','lua','tests','tools\friend','tools\worker','third_party','data','cmake','docs')) {
+        foreach ($dir in @('native','lua','tests','tools\friend','tools\worker','third_party','cmake','docs')) {
             $null = New-Item -ItemType Directory -Path (Join-Path $linkedRoot $dir) -Force
         }
         $null = New-Item -ItemType Directory -Path (Join-Path $dependency 'src'), (Join-Path $dependency 'include') -Force
