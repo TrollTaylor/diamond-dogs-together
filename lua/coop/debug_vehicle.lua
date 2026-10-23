@@ -3,7 +3,7 @@
 do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,integer,fmt=A.get,A.call,A.integer,string.format
- local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true}};D.vehicle=V
+ local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true,vehicle_remove=true,vehicle_gone_status=true}};D.vehicle=V
  function V.stop()end -- No native state, borrowed objects or cached IDs.
  local function name(v)return type(v)=="string" and #v>0 and #v<=64 and v:match("^[%w_]+$")~=nil end
  local function context()
@@ -146,8 +146,18 @@ do
   call(Player,"RequestToPlayDirectMotion",{{"coopRide",1},{a[2],true,a[4],"CNP_ppos_c","MTP_GLOBAL_C",true}})
   return true,fmt("seat_dm;id=%d;seat=%d;name=%s;state=%s",vid,seat,a[4],a[2])
  end
+ -- 0.13.6 online-vehicle-gone (lua/coop/world_vehicle.lua): vehicle_remove nearest [sync|fulton], the
+ -- lab lever (this copy only, synced as a lab loss, or the engine's own vehicle Fulton watched like a
+ -- local one; native and Lua refuse it outside mode=lab), and the read-only vehicle_gone_status.
+ local function gone(a)
+  local G=get(get(e,"MgsCoopWorld"),"vehicleGone")
+  if type(G)~="table" or type(G.lever)~="function" then return false,"vehicle_gone_unavailable" end
+  if a[1]=="vehicle_gone_status" and #a==1 then return true,G.status() end
+  if a[1]=="vehicle_remove" and a[2]=="nearest" and (#a==2 or #a==3 and (a[3]=="sync" or a[3]=="fulton")) then return G.lever(a[3]~=nil,a[3]=="fulton") end
+  return false,"vehicle_args"
+ end
  function V.run(a,id)
-  local f=a[1]=="vehicle_names" and names or a[1]=="seat_dm" and seatDm or read
+  local f=a[1]=="vehicle_names" and names or a[1]=="seat_dm" and seatDm or (a[1]=="vehicle_remove" or a[1]=="vehicle_gone_status") and gone or read
   local ok,yes,why=pcall(f,a)
   if not ok then return false,"vehicle_binding" end
   return yes,why

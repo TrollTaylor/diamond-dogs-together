@@ -224,6 +224,16 @@ foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_se
         'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
+# 0.13.6 online-vehicle-gone: world_vehicle_gone=0|1 (the VEHICLE_GONE world op, lab and play) in both
+# -LabSetting allow-lists and the scenario labsetting line (coop-vehicle-gone.txt).
+foreach($ok in @('world_vehicle_gone=1','world_vehicle_gone=0','host:world_vehicle_gone=1','guest:world_vehicle_gone=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('world_vehicle_gone=2','world_vehicle_gone=','world_vehicle_gone=on','both:world_vehicle_gone=1','world_vehicle_gones=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting world_vehicle_gone=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_gone=0' -cmatch $lineMatch.Groups[1].Value -and
+    'labsetting world_vehicle_gone=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_gone=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_gone=0|1 only'
 Assert-True ('labsetting partner_placed_census=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses an invalid placed census bool'
 Assert-True ('labsetting partner_native_placed=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting partner_native_arm=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid WS4 v1 bools'
 Assert-True ($scenarioText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'") -and

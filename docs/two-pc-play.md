@@ -399,6 +399,19 @@ and separate live acceptance requirements. Recorded live verification uses
 two game instances on one PC; actual two-PC play and full campaign progression
 have not been validated.
 
+Vehicles (0.13.6, **off, and not yet available in two-PC play**): the lab key
+`world_vehicle_gone=1` (both copies, world level 3) makes a vehicle the host
+Fultons or destroys disappear from the guest's copy too, and one the guest
+Fultons or destroys itself disappear from the host's copy (the host decides);
+a vehicle somebody sits in is never removed under them (it goes once they get
+out). It is a lab / hidden-run key until the hidden runs' frames and a real
+Fulton check prove it: Play-Coop has no option for it yet and writes the play
+`lab.ini` itself (an edited play `lab.ini` is kept at game exit, and the next
+Play-Coop refuses to start until it is moved), so two-PC play keeps the
+0.13.5 behaviour: a Fultoned vehicle
+stays on the other copy, and a player driving it can vanish on the partner's
+screen. Protocol: [world-sync-protocol.md](world-sync-protocol.md) section 16.
+
 ## Online (Steam)
 
 The recommended way since the Steam transport ([steam-online.md](steam-online.md)).

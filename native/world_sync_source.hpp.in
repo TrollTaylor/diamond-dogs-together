@@ -72,3 +72,7 @@ constexpr char world_place_source[] = R"MGS_WORLD(
 constexpr char world_place_guest_source[] = R"MGS_WORLD(
 @MGS_WORLD_PLACE_GUEST_SOURCE@
 )MGS_WORLD";
+// 0.13.6 online-vehicle-gone: VEHICLE_GONE / REQ_VEHICLE_GONE (spliced last).
+constexpr char world_vehicle_source[] = R"MGS_WORLD(
+@MGS_WORLD_VEHICLE_SOURCE@
+)MGS_WORLD";

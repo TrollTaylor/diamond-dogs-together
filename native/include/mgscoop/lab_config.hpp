@@ -637,6 +637,11 @@ struct LabConfig {
     // only (play forces none and sets kPlayRefusedWorldProbe).
     std::uint32_t world = 0;
     WorldProbe world_probe = WorldProbe::none;
+    // world_vehicle_gone=0|1 (0.13.6 online-vehicle-gone, docs/world-sync-protocol.md
+    // section 16): the host-authoritative VEHICLE_GONE world op for Fultoned and
+    // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
+    // default off until hidden-run frames prove the receiver's Despawn.
+    bool world_vehicle_gone = false;
     // Automatic save handoff and the guest travel lock (P2-11): save_handoff
     // absent = off; travel_lock 0|1, kTravelLockAbsent when not named (the
     // effective value is then 1 in play and 0 in lab).

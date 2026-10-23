@@ -127,6 +127,16 @@ constexpr OpSpec kOps[] = {
     {op::cargo, "CARGO", 0, Dir::both, Wire::reliable, 3, false, false, 6, 0, 0, 19,
      {U16(1), U8(0, 3), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-31416, 31416)}},
+    // VEHICLE_GONE (0.13.6, section 16): seq, TppVehicle2 id (class 50: 25600..26111), cause
+    // (1 fulton, 2 destroyed, 3 lab), actor (0 host, 1 guest, 2 lab), the guest's rid (0 none),
+    // vehicle type (255 unknown), xyz mm where the sender's copy last had it.
+    {op::vehicle_gone, "VEHICLE_GONE", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 9, 0, 0, 21,
+     {U16(1), U16(25600, 26111), U8(1, 3), U8(0, 2), U16(), U8(), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-1000000000, 1000000000)}},
+    // REQ_VEHICLE_GONE: rid, vehicle id, cause, vehicle type, xyz mm (the guest's copy).
+    {op::req_vehicle_gone, "REQ_VEHICLE_GONE", 1, Dir::guest_to_host, Wire::reliable, 3, true, false, 7, 0, 0, 18,
+     {Rid(), U16(25600, 26111), U8(1, 3), U8(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

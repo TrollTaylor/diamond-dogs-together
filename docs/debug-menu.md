@@ -478,6 +478,23 @@ In the hidden worker the menu is never opened with F9. Scenario steps:
   sync on (`w1=1` on both), the guest 3 m behind the host, the guard landed within
   10 m of the host's body on the guest's screen, then sleep, come and Clear nearby
   readbacks on the guest's copy.
+- 0.13.6 vehicle levers (typed commands only, no menu row; lua/coop/debug_vehicle.lua ->
+  lua/coop/world_vehicle.lua, [world-sync-protocol.md](world-sync-protocol.md) section 16):
+  `vehicle_remove nearest [sync|fulton]` removes this copy's nearest free vehicle (within
+  60 m; never the one the player rides or an occupied one) with the stock TppVehicle2
+  Despawn: without `sync` on this copy only (the divergence of the 2026-10-22 session),
+  with `sync` (lab.ini `world_vehicle_gone=1`) as a lab loss through VEHICLE_GONE.
+  Result `vehicle_remove;id=;via=locator|index;sync=;alive=;dist=` (the index form only
+  at Mother Base; elsewhere an unnamed vehicle is refused `vehicle_remove_no_locator`).
+  With `fulton` (key on) it runs the engine's own vehicle Fulton instead (the stock
+  `Seize` with options `{"Fulton"}`, no Despawn) and watches it like the local player's
+  FultonInfo, so the real readback decides (`step=settle` / `lost`, or `watch_drop`):
+  result `vehicle_remove;id=;via=seize;sync=1;fulton=1;dist=`. Lab only: native
+  refuses it outside mode=lab with offline redirected saves
+  (`vehicle_remove=refused;reason=lab_only`), Lua outside mode=lab.
+  `vehicle_gone_status` (read-only) answers `vgone;on=;role=;gone=<ids, L = this copy
+  only>;held=;watch=;req=`. Scenarios `coop-vehicle-gone.txt` (lab seed) and
+  `coop-vehicle-gone-mb.txt` (real seed).
 
 ## Not available
 

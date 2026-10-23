@@ -140,4 +140,18 @@ check(ok and msg=="seat_dm=stop" and c.stops==1 and c.receipts[1]=="return 'MGS_
 c=G();c.seatOk=false;ok,msg=lever(c,"seat_dm stop");check(not ok and msg=="seat_dm_stop_refused" and c.stops==1,"stop refused natively")
 c=G();c.env.Player.RequestToPlayDirectMotion=nil;ok,msg=lever(c,"seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000")
 check(not ok and msg=="vehicle_binding","a missing DM binding is a binding refusal")
+-- 0.13.6 online-vehicle-gone: vehicle_remove nearest [sync] and vehicle_gone_status route to
+-- lua/coop/world_vehicle.lua (W.vehicleGone); anything else is vehicle_args (before: command_args).
+c=G();check(c.V.handles.vehicle_remove and c.V.handles.vehicle_gone_status,"the vehicle-gone levers are handled here")
+ok,msg=lever(c,"vehicle_remove nearest");check(not ok and msg=="vehicle_gone_unavailable" and c.reads==0,"no module: refused, nothing read")
+local calls={}
+local fultons={}
+c=G();c.W.vehicleGone={lever=function(sync,fulton)calls[#calls+1]=sync;fultons[#calls]=fulton;return true,"vehicle_remove;id=25603"end,status=function()return "vgone;on=1"end}
+ok,msg=lever(c,"vehicle_remove nearest");check(ok and msg=="vehicle_remove;id=25603" and calls[1]==false and not fultons[1],"vehicle_remove nearest: this copy only")
+ok,msg=lever(c,"vehicle_remove nearest sync");check(ok and calls[2]==true and not fultons[2],"vehicle_remove nearest sync: through the world op")
+ok,msg=lever(c,"vehicle_remove nearest fulton");check(ok and calls[3]==true and fultons[3]==true,"vehicle_remove nearest fulton: the engine's Fulton, synced")
+ok,msg=lever(c,"vehicle_gone_status");check(ok and msg=="vgone;on=1" and #calls==3,"vehicle_gone_status is read-only")
+for _,bad in ipairs({"vehicle_remove","vehicle_remove 25603","vehicle_remove nearest now","vehicle_remove nearest sync 1","vehicle_remove nearest fulton sync","vehicle_gone_status x"})do
+ ok,msg=lever(c,bad);check(not ok and msg=="vehicle_args" and #calls==3,"strict vehicle-gone arguments: "..bad)
+end
 print("debug_vehicle_lua_check: "..checks.." checks PASS")
