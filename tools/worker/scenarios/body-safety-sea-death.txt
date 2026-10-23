@@ -3,9 +3,10 @@
 # The session: the friend fell off Mother Base into the sea and lay downed for 18 s (F:12695-12698: part=12;
 # flags=0x2419; damage=10000 -> downed; step=entered; no controls timeout) until the host left the map; the host
 # drove into the sea and was downed 12 s before the controls timeout game over (H:11467-11644). Part 12 is not a
-# collision part: the only player collision-hit builder (DefenseCallback::TargetCallbackExec, 0xFFA138 the only
-# caller of GetPartsIdFromName 0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1 for shields;
-# ~1000 downed_damage samples in all logs show part 12 only with flags 0x2419, damage 10000, attacker = self.
+# collision part: the only player collision-hit builder (DefenseCallback::TargetCallbackExec, whose call at 0xFFA138
+# is the only caller of GetPartsIdFromName 0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1
+# for shields; ~1400 downed_damage samples in all logs show lethal part 12 only with flags 0x2419, damage 10000,
+# attacker = self (the other 4 part-12 samples: flags 0x401, damage 0, while carrying the partner; never lethal).
 # Run (hidden worker, coordinator only, one session at a time, no builds running):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/body-safety-sea-death.txt
 #     -PartnerProfile native -NativeStage gun -SaveSeed real -Mode play -WanSim bad

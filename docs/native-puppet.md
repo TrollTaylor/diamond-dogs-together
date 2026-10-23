@@ -2266,8 +2266,8 @@ already owns: the reconciliation's Warp placement, its xform pin and the range b
   (put-down 44, asleep 131/132, fall/land 25/26 after it), body 1 more than 2 m below the target is falling
   off a platform edge (the session: 79 m in 3 s, H:8992..9071; the stock carry hold, `PartnerCarryHold`,
   kept every correction off during act 44). The guard owns body 1 for that episode: a Warp at the target at
-  once (at most 4, one per second while it is still more than 2 m below), an xform pin at the target every
-  other tick, until it holds within 0.5 m vertically and 1 m horizontally for 500 ms (`reason=held`), the
+  once (at most 4, one per second while it is still more than 2 m below), an xform pin at the target on
+  every tick without a Warp, until it holds within 0.5 m vertically and 1 m horizontally for 500 ms (`reason=held`), the
   scope ends (`scope`: the remote woke) or 8 s passed (`timeout`). While it owns body 1 the reconciliation's
   own execution and the carry hold are skipped for that tick (the carry attachment has already released
   it: acts 42/43, the attached carry, are never in scope). A normal put-down (the body on the deck) never
@@ -2288,8 +2288,14 @@ already owns: the reconciliation's Warp placement, its xform pin and the range b
   Read-only proof that no weapon uses part 12: the only player collision-hit builder,
   `DefenseCallback::TargetCallbackExec` (the only caller of `GetPartsIdFromName` 0xFF3480), writes
   packet+0x26 from that classifier (0..11, default 1) or 1 for a shield; explosions arrive through it too
-  (the session's blast: parts 4 and 10); about 1000 `downed_damage=sample` lines in every log on hand show
-  part 12 only as flags 0x2419, damage 10000, attacker 0 (5 samples, all sea or fall deaths). The replica
+  (the session's blast: parts 4 and 10). About 1400 `downed_damage=sample` / `lethal_capture` lines (the
+  game folder's lab log and the session's two logs) show part 12 only as the lethal flags 0x2419, damage 10000,
+  attacker 0 (9 samples, all sea deaths) and as 4 harmless flags 0x401 packets with damage 0 (attacker 0 on
+  the local player while it carried the partner, body act 42); a damage-0 packet is never lethal, so the
+  change does not touch it. Fall damage (`StepDownActionImpl::GetFallDamage`,
+  `RideHorseActionPluginImpl::GetFallDamage`) is requested through the action core's damage requester, not
+  the collision builder; no log on hand has a lethal land fall, so its part is unproven: if it is 12, a
+  lethal land fall is the stock death too (the hidden-run phase checks it). The replica
   (body 1) stays protected from every lethal hit, part 12 included (it must never die on the viewer's copy),
   and an already downed (protected) player keeps its full shield.
 - **Log caps.** The partner_recon event families (place, placed, snap, runaway, frozen, stance, yaw,

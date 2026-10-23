@@ -14,9 +14,10 @@ hidden-worker phase runs the five new scenarios.
   so PLAYER_FALL_DEAD drives the shared game over at once (`downed_damage=stock_death; reason=environment`); the
   session downed both players in the sea (H:11467, F:12698). Read-only proof that no weapon uses part 12: the only
   player collision-hit builder `DefenseCallback::TargetCallbackExec` (the only caller of `GetPartsIdFromName`
-  0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1 for shields; ~1000 logged samples show
-  part 12 only as the environment kill. The replica stays protected from every lethal hit; a downed player keeps its
-  shield. Tests: `downed_damage_tests` (fails on 0.13.5: part 12 on the local player returned cause 1).
+  0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1 for shields; ~1400 logged samples show
+  lethal part 12 only as the environment kill (9, all sea deaths; the other 4 part-12 samples are damage-0 0x401
+  packets while carrying, never lethal). A lethal land fall's part is unproven (no sample): if it is 12, it is the
+  stock death too. The replica stays protected from every lethal hit; a downed player keeps its shield. Tests: `downed_damage_tests` (fails on 0.13.5: part 12 on the local player returned cause 1).
 - Ledge falls (#4): `partner_body_safety` drop guard (a cliff drop / fall of body 1 with no matching remote vertical act
   within 500 ms and an unchanged remote height: a vertical placement at once) and stuck guard (placed ok=0 while body 1
   falls or hangs at a ledge and the remote is on foot: the re-show flow at the target; bits cleared, held hidden with
