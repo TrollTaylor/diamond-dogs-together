@@ -183,10 +183,16 @@ The guest's start-up mission 1 (the Lua report says ingame=1, title=0 there)
 is no location and no "in game" (review of the online 2026-10-22 fixes): the
 location rule (`Loc(1)` = 0 against the host's) decides nothing there, the
 last decision stands (none at a boot: `idle`) until a real mission, normally
-the title; the story and set rules still decide at once. G12 / why 1 need a
+the title; the set rules (same, always, unsupported) still decide at once. G12 / why 1 need a
 mission of 10000 or more. Before, a guest whose title is at the host's place
 got need=1 why=location while booting, G11 / H8 for that boot, and with the
 host eligible the once-per-session G12 ("go back to the title screen").
+The story rule waits for the title as well, and a host in its own start-up
+mission counts its story as unknown (transient, no H4 / G5): the boot reports
+the story sequence's default, the opening, until the save loads (0.13.6 hidden
+runs 247ae49a / 1eff8016: story=1, then 2, inside mission 1, which gave a
+booting guest need=1 why=story, and two copies booting together H4 on the host
+and G5 on the guest, "story opening", for saves that reach Mother Base).
 
 ## Staging (P2-9)
 

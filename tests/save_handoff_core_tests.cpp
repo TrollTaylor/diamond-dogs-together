@@ -1777,8 +1777,9 @@ void TestGuestInGame() {
 // need=1 why=location and gets no G12 while booting; at its title at the
 // host's place need=0. Before: need=1 why=location at mission 1 (Loc 0) and
 // G12, once per link session, used up at the boot. A host settling in Mother
-// Base got H8 (and the guest G11) for that boot as well. A story-opening guest
-// still decides need=1 why=story at mission 1, but G12 waits for a mission.
+// Base got H8 (and the guest G11) for that boot as well. The story rule waits
+// for the title as well (the boot reads the opening), and a host booting with
+// the guest gets no H4 (the guest no G5) for its boot.
 void TestGuestStartup() {
     Setup(wire::Mode::scene, wire::Mode::scene);
     BindHost(30050);
@@ -1798,19 +1799,39 @@ void TestGuestStartup() {
     CHECK(!HasLog(g_guest, "save_handoff=need;") && CountToast(g_guest, Toast::g11_host_settling) == 0 &&
           CountToast(g_guest, Toast::g4_wait_host) == 0);
     CHECK(CountToast(g_host, Toast::h8_settling) == 0 && CountToast(g_host, Toast::h3_partner_elsewhere) == 0);
-    // A story-opening guest: need=1 why=story at mission 1, no G12 there; the OFFER at its title.
+    // The boot reports the story opening before the save loads (hidden runs
+    // 247ae49a / 1eff8016: story=1, then 2, in mission 1), so the story rule waits
+    // for the title too: no need, no G12 at mission 1; a story-opening guest
+    // decides need=1 why=story at its title and gets the OFFER there.
     Setup(wire::Mode::scene, wire::Mode::scene);
     BindHost(30050);
     core::Report boot = InGame(1);
     boot.story = wire::Story::opening;
     g_guest.rep = boot;
     Run(10000);
-    CHECK(HasLog(g_guest, "save_handoff=need; need=1; why=story") && !HasLog(g_host, "save_handoff=offer;"));
-    CHECK(TokenOf(g_guest) == Token::wait_host && g_guest.view.why == WhyOf(hs::WaitWhy::host_elsewhere) &&
-          CountToast(g_guest, Toast::g12_go_to_title) == 0);
+    CHECK(!HasLog(g_guest, "save_handoff=need;") && !HasLog(g_host, "save_handoff=offer;"));
+    CHECK(TokenOf(g_guest) == Token::idle && g_guest.view.lua_code == 0 && CountToast(g_guest, Toast::g12_go_to_title) == 0);
+    CHECK(CountToast(g_host, Toast::h3_partner_elsewhere) == 0 && CountToast(g_host, Toast::h8_settling) == 0);
     g_guest.rep = Title(40010, wire::Story::opening);
     CHECK(Run(20000, GuestCountdown) && StagedEqualsHost());
+    CHECK(HasLog(g_guest, "save_handoff=need; need=1; why=story"));
     CHECK(CountToast(g_guest, Toast::g12_go_to_title) == 0);
+    // Both copies booting together (the same boot story): the host's own story is
+    // unknown in mission 1 (transient), so neither copy is told "story opening"
+    // (before: H4 on the host and G5 on the guest at the boot). At the titles,
+    // with the host's save open, still none.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_host.rep = boot;
+    g_guest.rep = boot;
+    Run(10000);
+    CHECK(HasLog(g_guest, "; elig=3; set=") && !HasLog(g_guest, "; elig=2; set="));
+    CHECK(CountToast(g_host, Toast::h4_story_opening) == 0 && CountToast(g_guest, Toast::g5_host_story_opening) == 0);
+    CHECK(!HasLog(g_guest, "save_handoff=need;") && g_host.toasts.empty() && g_guest.toasts.empty());
+    g_host.rep = Title(40010);
+    g_guest.rep = Title(40050);
+    Run(5000);
+    CHECK(HasLog(g_guest, "save_handoff=need; need=1; why=location"));
+    CHECK(CountToast(g_host, Toast::h4_story_opening) == 0 && CountToast(g_guest, Toast::g5_host_story_opening) == 0);
 }
 
 // P4 (guest): the WM_CLOSE waits until RESULT exiting left channel 4 (here:

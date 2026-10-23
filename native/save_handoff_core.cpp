@@ -1434,7 +1434,10 @@ void Core::HostTick(std::uint64_t now_ms, unsigned queued) noexcept {
     HostFacts f{};
     f.mode = config_.mode;
     f.report_fresh = Fresh(now_ms, kPhaseFreshMs);
-    f.story = m_.report.story;
+    // Hidden runs 247ae49a / 1eff8016 (0.13.6): in the start-up mission 1 (or 0)
+    // the story sequence is not loaded yet (its default reads as the opening),
+    // so the own story is unknown there (transient, no H4 / G5) until a real mission.
+    f.story = m_.report.mission < 10000 ? wire::Story::unknown : m_.report.story;
     f.saving = m_.report.saving;
     f.set_known = m_.set_known;
     f.unexpected = m_.set.unexpected;
@@ -1753,9 +1756,11 @@ void Core::GuestNeedUpdate(std::uint64_t now_ms) noexcept {
     const std::uint8_t need = GuestNeed(config_.mode, own, host, why);
     // Review (online 2026-10-22): the start-up mission 1 (or 0) is no location;
     // Loc 0 against the host's would give need=1 why=location to a guest whose
-    // title is at the host's place (G11 / H8 at its boot). That rule waits for
-    // a real mission (the title); the other rules decide at once.
-    if (why == NeedWhy::location && own.mission < 10000) return;
+    // title is at the host's place (G11 / H8 at its boot). The story rule is no
+    // better there: the boot reads the story sequence's default (the opening)
+    // before the save loads (hidden runs 247ae49a / 1eff8016: story=1, then 2, in
+    // mission 1). Both wait for a real mission (the title); the others decide at once.
+    if ((why == NeedWhy::location || why == NeedWhy::story) && own.mission < 10000) return;
     if (!m_.need_logged || need != m_.need || why != m_.need_why) {
         Log("save_handoff=need; need=%u; why=%s", unsigned{need}, NeedWhyName(why));
         m_.need_logged = true;

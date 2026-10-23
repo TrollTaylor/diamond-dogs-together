@@ -23,6 +23,10 @@
 labsetting coop_hud=full
 titlemenu host 240
 titlemenu guest 240
+# titlemenu returns at the title's start, but the title plays its logos first and takes no input
+# for about 25 s (hidden run 1eff8016: Enters at +1 s and +4 s were lost; PRESS ENTER KEY was still
+# up at +25 s). The presses below stay inside the 60 s hold that starts with the title.
+wait 25000
 # The title opens on its press-any-button screen: the first Enter only opens the menu (travel-lock.txt).
 guest press enter
 wait 3000
