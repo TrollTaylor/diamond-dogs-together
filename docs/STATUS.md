@@ -1,5 +1,7 @@
 ## October 23, 2026: 0.13.6 (fixes from the first two-PC Steam session: guns and the box after a relaunch, long shared rides, a Fultoned vehicle, joining with different saves, sea / ledge / carry falls; lab levers for the HUD hint, truck, ride-hide and gesture proofs)
 
+**Package and install (2026-10-23):** `mgs-coop-friend-0.13.6-20261023T181349Z-8a864a81.zip` (9,643,361 bytes), SHA-256 `ffd7f05ff1f62641ace423b3f3d797ec3ae0918e77674f78d21733e9e0452e71`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at f9c22b0 with Release receipt `20261023-181036-183f3c8c3e8c463c986568161a5b77ed` (passed). Installed in both local copies (host Install-Coop -Role Host -Character snake; guest install.ps1 -NoInitialMode); both dinput8.dll SHA-256 00E2FA1E...99DA, probe-install.json version 0.13.6, 17 protected files unchanged, no script-observe.enabled left in the guest copy. Hidden-run proofs for this release: guns after a simulated relaunch b5dd1111 (play), long ride 197fc3c6 / 80a324d7 (play), join 247ae49a, c186abfb, e5f15c7e, 640abf2f, 5e44cb65 (play), sea death e9e5301b / b8ab039e (play), put-down 4078bbe7 (play). The 0.13.5 regression set was not re-run on this build.
+
 Branch `wp/integ10` from `dev/oct7-continue` `0a2821d` (0.13.5 released at `cc973a8`, plus the README rewrite): merge
 commits of the five online fixes from the first real two-PC Steam session (2026-10-22, 0.13.5; `diag-*.md` of that
 session), in this order, `wp/online-net-epoch` `55b5aea`, `wp/online-ride-robust` `636d706`, `wp/online-vehicle-gone`
