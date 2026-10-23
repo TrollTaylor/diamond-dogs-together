@@ -178,6 +178,9 @@ int main(int argc, char** argv) {
                     c.partner_native_mount_given ? 1 : 0);
         // G4 truck test levers (lab only, default 0; play forces it off) and whether the key was named.
         std::printf("debug_vehicle_door=%d\ndebug_vehicle_door_given=%d\n", c.debug_vehicle_door ? 1 : 0, c.debug_vehicle_door_given ? 1 : 0);
+        // G5: the other ride hides unrealize body 1 (lab only, default 0; play forces off) and whether it was named.
+        std::printf("partner_native_unrealize_all=%d\npartner_native_unrealize_all_given=%d\n", c.partner_native_unrealize_all ? 1 : 0,
+                    c.partner_native_unrealize_all_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

@@ -304,12 +304,19 @@ bool ParseAnimWeaponsKey(Slice key, Slice value, LabConfig& result, bool& ok) no
     }
     return true;
 }
-// Horse / D-Walker riders (docs/mounts.md): partner_native_mount=off|hide, lab
-// only and default off; a named value records _given.
+// Horse / D-Walker riders (docs/mounts.md): partner_native_mount=off|hide (hide
+// with the gun profile, ResolveWeaponDefaults), and G5's partner_native_unrealize_all=0|1
+// (the other ride hides unrealize body 1; lab only, default 0); a named value records _given.
 bool ParseMountKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
-    if (!Equals(key, "partner_native_mount")) return false;
-    ok = ParsePartnerNativeMount(value.data, value.size, result.partner_native_mount);
-    if (ok) result.partner_native_mount_given = true;
+    if (Equals(key, "partner_native_mount")) {
+        ok = ParsePartnerNativeMount(value.data, value.size, result.partner_native_mount);
+        if (ok) result.partner_native_mount_given = true;
+    } else if (Equals(key, "partner_native_unrealize_all")) {
+        ok = ParseBool(value, result.partner_native_unrealize_all);
+        if (ok) result.partner_native_unrealize_all_given = true;
+    } else {
+        return false;
+    }
     return true;
 }
 } // namespace
@@ -1486,6 +1493,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // G4 truck test levers: off unless named (no hidden-run FRAME of the truck door spot yet);
     // play forces it off below.
     if (!c.debug_vehicle_door_given) c.debug_vehicle_door = false;
+    // G5 (the other ride hides unrealize body 1; the net-quality rebase after a ride
+    // logs a line): off unless named (no hidden-worker FRAME of a heli / vehicle-fallback /
+    // horse kind-3 hide with it yet); play forces it off below.
+    if (!c.partner_native_unrealize_all_given) c.partner_native_unrealize_all = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1524,6 +1535,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_native_ui_filter = false;
         // G4 truck test levers are a lab tool (the receipt also refuses outside the lab).
         c.debug_vehicle_door = false;
+        // G5 stays lab-only (the unrealize of the other ride hides is unproven in a FRAME).
+        c.partner_native_unrealize_all = false;
     }
 }
 

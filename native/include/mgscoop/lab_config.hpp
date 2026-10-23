@@ -551,6 +551,16 @@ struct LabConfig {
     // partner_native_ride hides.
     PartnerNativeMount partner_native_mount = PartnerNativeMount::off;
     bool partner_native_mount_given = false;
+    // G5 (docs/native-puppet.md "Ride hides"): the other ride hides (the heli acts
+    // 97..108 or a heli ride, a vehicle ride drawn hidden: partner_native_ride=hide
+    // or a refused / unavailable seat, a horse rider by its ride kind 3 when
+    // partner_native_mount is off) unrealize body 1 through Lua's all-active mode
+    // like the mount hide, and logs the link-quality rebase after a ride
+    // (partner_ride=net_rebased; the rebase itself is always on). Default 0 in lab
+    // and play until a hidden-worker FRAME proves it; a named value records _given
+    // and is lab only (play forces it off). Acts only where partner_native_ride hides.
+    bool partner_native_unrealize_all = false;
+    bool partner_native_unrealize_all_given = false;
     // WS3 vehicles (docs/vehicle-ws3.md). partner_ride_census: the read-only
     // vehicle unit/body census lines, lab only (play forces it off), default
     // off. partner_ride_seat_id: the remote driver seated in an unnamed vehicle

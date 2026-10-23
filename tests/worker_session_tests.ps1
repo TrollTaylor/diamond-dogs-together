@@ -174,6 +174,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_ui_filter=1','partner_native_ui_filter=0','guest:partner_native_ui_filter=1','host:partner_native_ui_filter=0',
     # Horse / D-Walker riders (hide with the gun profile in lab; play forces off)
     'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
+    # G5: the other ride hides unrealize body 1 (lab only, default 0)
+    'partner_native_unrealize_all=1','partner_native_unrealize_all=0','guest:partner_native_unrealize_all=1','host:partner_native_unrealize_all=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',
     # 0.13.6 online-net-epoch: the link-session counter skew (lab and the play rehearsal only)
@@ -196,6 +198,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
     'partner_native_ui_filter=2','partner_native_ui_filter=','partner_native_ui_filter=on','both:partner_native_ui_filter=1','partner_native_ui_filters=1',
     'partner_native_mount=1','partner_native_mount=','partner_native_mount=seat','both:partner_native_mount=hide','partner_native_mounts=hide',
+    'partner_native_unrealize_all=2','partner_native_unrealize_all=','partner_native_unrealize_all=on','both:partner_native_unrealize_all=1','partner_native_unrealize=1',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage',
     'link_session_skew=','link_session_skew=1000','link_session_skew=-1','link_session_skew=on','both:link_session_skew=2','link_session_skews=2')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
@@ -216,6 +219,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
         'labsetting partner_native_ui_filter=1','labsetting host partner_native_ui_filter=0',
         'labsetting partner_native_mount=hide','labsetting guest partner_native_mount=hide','labsetting host partner_native_mount=off',
+        'labsetting partner_native_unrealize_all=1','labsetting guest partner_native_unrealize_all=1','labsetting host partner_native_unrealize_all=0',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
         'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
@@ -224,7 +228,8 @@ Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1]
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
 foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage',
         'labsetting partner_native_mount=seat','labsetting partner_native_mount=1',
-        'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=')){
+        'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=',
+        'labsetting partner_native_unrealize_all=2','labsetting partner_native_unrealize_all=on','labsetting both partner_native_unrealize_all=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
@@ -629,6 +634,23 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         $failure=$null
         try { & $validator } catch { $failure=$_.Exception.Message }
         Assert-True (!$failure -and @($steps|Where-Object{$_ -cmatch '^guest run overlay_state '}).Count -eq 3) ('partner-mount keeps its lab coverage (three probes) '+$failure)
+    }
+    # G5 (docs/native-puppet.md "Ride hides"): the three ride-hide scenarios name partner_native_unrealize_all (the guest in
+    # the lab and seat files, both copies in the heli file), and their headers name the lines and the known gap.
+    & {
+        foreach($case in @(@('partner-ride-unrealize.txt','labsetting guest partner_native_unrealize_all=1','ride=horse','ride=vehicle','seat=ride_hide'),
+                @('partner-ride-unrealize-seat.txt','labsetting guest partner_native_unrealize_all=1','labsetting host partner_ride_seat_id=0','reason=remote_category','seat=blocked'),
+                @('partner-ride-unrealize-heli.txt','labsetting partner_native_unrealize_all=1','host worldtrigger goto=30020','ride=heli','manual run'))){
+            $path=Join-Path (Join-Path $RepoRoot 'tools\worker\scenarios') $case[0]
+            Assert-True (Test-Path -LiteralPath $path -PathType Leaf) ('G5 scenario '+$case[0])
+            $text=[IO.File]::ReadAllText($path)
+            $lines=@([IO.File]::ReadAllLines($path)|ForEach-Object{$_.Trim()})
+            Assert-True ($lines -ccontains $case[1]) ($case[0]+' names the key: '+$case[1])
+            foreach($needle in @($case[2..($case.Count-1)]+@('partner_ride=unrealize_begin','partner_ride=net_rebased','-NativeStage gun'))){
+                Assert-True ($text.Contains($needle)) ($case[0]+' covers: '+$needle)
+            }
+            Assert-True (@($lines|Where-Object{$_ -cmatch '^labsetting\s+(?:(?:host|guest)\s+)?partner_native_unrealize_all=0'}).Count -eq 0) ($case[0]+' never names the key off')
+        }
     }
     # WS4 v2 (docs/anim-round2-throws.md "WS4 v2"): partner-c4-v2.txt names the mirror key with the WS4 v1 C4 key and
     # the census, places C4 at several spots and detonates, framing body 1 from the side before every phase.

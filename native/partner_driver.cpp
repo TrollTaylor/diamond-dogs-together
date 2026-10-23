@@ -4351,6 +4351,31 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     return o.owns_dm;
 }
 
+// G5 (partner_native_unrealize_all): the partner_ride=unrealize* and net_rebased lines share one cap; its
+// capped line names kind=unrealize (the ride visibility lines keep their own partner_ride cap).
+void EmitUnrealize(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitCappedV(m.unrealize_cap, h, "partner_ride", "unrealize", format, arguments);
+    va_end(arguments);
+}
+
+// The link-quality window after a ride (docs/native-puppet.md "Ride hides"). The native tick (the
+// tracker's only feed) does not run while body 1 is hidden or the seat flow owns it, so the ride itself
+// was one inter-arrival gap as long as the ride (play runs fbde3dcc / 5a044a4d after every hidden mount,
+// fad26e25 after a seated ride, the 2026-10-22 two-PC session). One mechanism handles it, on by default
+// since 0.13.6 online-ride-robust: a seat episode that settles or a ride hide that ends sets
+// m.net_quality_rebase (not after a leave the link caused: lease, ride_stale), and the next TickNative
+// rebases the tracker (partner_native_net::Rebase) before it observes. With G5's
+// partner_native_unrealize_all that rebase logs one line: the time the observer did not see
+// (skipped_ms, since the last frame it observed) and whether the quality held through the ride
+// (good_ms counts from before the ride when it did).
+void NetRebasedLine(Mission& m, const Hooks& h, std::uint64_t now, std::uint64_t skipped_ms) noexcept {
+    EmitUnrealize(m, h, "partner_ride=net_rebased; skipped_ms=%u; good=%u; good_ms=%u; max_gap=%u; gaps=%u,%u,%u\r\n",
+                  Clamp32(skipped_ms), m.net_quality.good ? 1u : 0u, partner_native_net::GoodMs(m.net_quality, now),
+                  m.net_quality.max_gap_ms, m.net_quality.gaps_100, m.net_quality.gaps_250, m.net_quality.gaps_1000);
+}
+
 void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const partner::Tick& tick, const Clock& clock,
                 bool terminating, bool realized, bool parts_loaded, bool anim_ok, const pp::Anim& anim,
                 const sync::AnimState& remote_anim, std::uint32_t remote_flags, std::uint32_t remote_equip, bool pose_live) noexcept {
@@ -4475,10 +4500,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     const pnat::Params params = set.nnet == PartnerNativeNet::online ? pnat::OnlineParams() : pnat::Params{};
     // A seat episode or a ride hide owned body 1 and skipped this observer: the
     // first frame after it is not one huge arrival gap (0.13.6: ~4 s of clips
-    // after every ride, net_quality with p50 = the ride's length).
+    // after every ride, net_quality with p50 = the ride's length). The only
+    // net-quality reset after a ride (G5's line below only reports it).
     if (m.net_quality_rebase) {
         m.net_quality_rebase = false;
+        const std::uint64_t skipped_ms = m.net_quality.have && now >= m.net_quality.last_rx_ms ? now - m.net_quality.last_rx_ms : 0;
         partner_native_net::Rebase(m.net_quality);
+        if (set.unrealize_all) NetRebasedLine(m, h, now, skipped_ms);
     }
     partner_native_net::Observe(m.net_quality, partner_native_net::QualityIn{now, in.link_live, latest_ok, latest_ok ? latest.seq : 0u,
                                                                              latest_ok ? latest.age_ms : 0u});
@@ -5772,6 +5800,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.ui_filter = lab.partner_native_ui_filter;
     // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
     d.settings.nmount = lab.partner_native_mount;
+    // G5 (docs/native-puppet.md "Ride hides"): lab only, default off (lab_config forces it off in play).
+    d.settings.unrealize_all = lab.partner_native_unrealize_all;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
     // the setting the telemetry reports is the one that runs (BuildArm downgrades it again).
     // The one exception (WS2: the user asked for throws in play): the guarded slot-3
@@ -5868,6 +5898,11 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
         EmitFormat(h, "partner_mount=configured; mode=%s; ride=%s; acts=%u..%u\r\n", PartnerNativeMountName(d.settings.nmount),
                    PartnerNativeRideName(d.settings.nride), unsigned(partner_mount_policy::kHorseActFirst),
                    unsigned(partner_mount_policy::kWalkerActLast));
+    // G5: the other ride hides unrealize body 1 (it acts only where partner_native_ride hides).
+    if (d.settings.unrealize_all)
+        EmitFormat(h, "partner_ride=unrealize_configured; ride=%s; mount=%s; heli_acts=%u..%u; net_rebased_line=1\r\n",
+                   PartnerNativeRideName(d.settings.nride), PartnerNativeMountName(d.settings.nmount),
+                   unsigned(partner_ride_wire::kHeliActFirst), unsigned(partner_ride_wire::kHeliActLast));
     if (!h.take_trigger) return;
     char text[partner::max_trigger + 1]{};
     std::size_t length = 0;
@@ -6416,7 +6451,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         vi.ride_live = rw::Live(d.ride_rx, epoch, now);
         vi.kind = d.ride_rx.packet.kind;
         vi.seat_mode = seat_capable && !SeatBlocked(m.seat, d.ride_rx.packet);
-        SeatLogUnavailable(d, h, SeatUnavailable(d, h, vi.ride_live));
+        const char* const seat_unavailable = SeatUnavailable(d, h, vi.ride_live);
+        SeatLogUnavailable(d, h, seat_unavailable);
         vi.seat = d.ride_rx.packet.seat;
         vi.vehicle = d.ride_rx.packet.vehicle;
         vi.lease_live = epoch && h.link_live && h.link_live(h.context);
@@ -6442,6 +6478,41 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             break;
         default:
             break;
+        }
+        // G5 (partner_native_unrealize_all, "Ride hides"): the other ride hides' episode (heli acts or a heli
+        // ride, a vehicle drawn hidden, a horse rider by kind 3 without the mount key). A mount episode owns
+        // body 1 first; the episode ends once a tick proves the remote off the ride or body 1 is shown.
+        {
+            const bool hidden_as_ride = m.visibility.hidden && m.visibility.reason && std::strcmp(m.visibility.reason, "ride") == 0;
+            const pm::Ride ride = pm::RideOf(visibility_sample.anim_valid, visibility_sample.act, vi.ride_live, vi.kind);
+            const bool rule = pm::RideRule(set.unrealize_all, ride, hidden_as_ride, m.mount.active);
+            const bool off = pm::OffRide(visibility_sample.anim_valid, visibility_sample.act, vi.ride_have, vi.ride_live, vi.kind);
+            switch (pm::StepRide(m.ride_ep, pm::RideHolds(rule, m.ride_ep.active, m.visibility.hidden, off), ride,
+                                 visibility_sample.act, static_cast<std::uint8_t>(vi.kind), now)) {
+            case pm::Edge::begin: {
+                // The vehicle's seat detail: why seat mode draws it hidden (partner_ride_seat=unavailable's
+                // reason), ride_hide under partner_native_ride=hide.
+                const char* seat = ride != pm::Ride::vehicle ? "-"
+                                   : seat_unavailable                   ? seat_unavailable
+                                   : set.nride == PartnerNativeRide::hide ? "ride_hide"
+                                                                          : "-";
+                EmitUnrealize(m, h,
+                              "partner_ride=unrealize_begin; ride=%s; act=%u; kind=%u; seat=%s; vehicle=%u; ride_live=%u; episode=%u\r\n",
+                              pm::RideName(ride), unsigned(visibility_sample.act), unsigned(vi.kind), seat,
+                              ride == pm::Ride::vehicle ? unsigned(vi.vehicle) : unsigned(partner_ride_wire::kVehicleUnknown),
+                              vi.ride_live ? 1u : 0u, m.ride_ep.episodes);
+                break;
+            }
+            case pm::Edge::end:
+                EmitUnrealize(m, h,
+                              "partner_ride=unrealize_end; ride=%s; act=%u; ms=%llu; kind=%u; cleared=%u; shown=%u; episode=%u\r\n",
+                              pm::RideName(m.ride_ep.ride), unsigned(visibility_sample.act),
+                              static_cast<unsigned long long>(pm::EpisodeMs(m.ride_ep, now)), unsigned(vi.kind),
+                              m.ride_ep.unrealize_logged ? 1u : 0u, m.visibility.hidden ? 0u : 1u, m.ride_ep.episodes);
+                break;
+            default:
+                break;
+            }
         }
         if (m.visibility.hidden && !hidden_before) {
             m.range_needs_place = true; m.pose_applied = m.have_cmd = m.hybrid_placed = false;
@@ -6594,15 +6665,25 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             m.body_reshow = nullptr;
             m.reshow_wait = false;
             const bool replied = deferred_reply();
+            const bool lua_all_active = (tick.luaflags & partner::luaflag::all_active) != 0;
             // partner_native_mount=hide: the cleared bits leave instance 1 realized while Lua's
             // all-active mode is on, so a mount episode also asks Lua to clear it (body 1 off screen).
-            if (ride_guard && partner_mount_policy::Unrealize(m.mount.active, m.visibility.hidden,
-                                                              (tick.luaflags & partner::luaflag::all_active) != 0)) {
+            if (ride_guard && partner_mount_policy::Unrealize(m.mount.active, m.visibility.hidden, lua_all_active)) {
                 reply.op |= partner::op::clear_all_active;
                 if (!m.mount.unrealize_logged) {
                     m.mount.unrealize_logged = true;
                     EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=unrealize; mount=%s; act=%u; episode=%u; op=clear_allactive\r\n",
                                partner_mount_policy::MountName(m.mount.mount), unsigned(visibility_sample.act), m.mount.episodes);
+                }
+            } else if (ride_guard && partner_mount_policy::Unrealize(m.ride_ep.active, m.visibility.hidden, lua_all_active)) {
+                // G5 (partner_native_unrealize_all): the other ride hides the same way (heli, vehicle, horse kind 3);
+                // the episode only opens with the key, so without it this reply is unchanged.
+                reply.op |= partner::op::clear_all_active;
+                if (!m.ride_ep.unrealize_logged) {
+                    m.ride_ep.unrealize_logged = true;
+                    EmitUnrealize(m, h, "partner_ride=unrealize; ride=%s; act=%u; kind=%u; episode=%u; op=clear_allactive\r\n",
+                                  partner_mount_policy::RideName(m.ride_ep.ride), unsigned(visibility_sample.act),
+                                  unsigned(d.ride_rx.packet.kind), m.ride_ep.episodes);
                 }
             }
             return replied;

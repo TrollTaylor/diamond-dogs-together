@@ -1134,6 +1134,25 @@ void TestOnline() {
         Check(!late.first_good && late.first_good_ms == 0 && !late.good && late.good_ms == 0,
               "a late first frame after the ride still turns it bad (the quality_ms hold applies again)");
     }
+    // G5's hidden-ride cases on the single rebase path (0.13.6 integration: G5's per-tick exclusion is folded into
+    // online-ride-robust's Rebase, which runs after every seat episode or ride hide with or without the G5 key): a
+    // 12 s ride the observer never saw, with frames arriving meanwhile or the sender paused, then the rebase and the
+    // first new frame: no gap, no sample for the anchor, and the good state held through the ride.
+    for (const bool frames : {true, false}) {
+        pnn::Quality q{};
+        std::uint64_t now = 1000;
+        std::uint32_t seq = 1;
+        for (int i = 0; i < 200; ++i, now += 33) pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        const std::uint64_t ride_start = now;
+        now += 360 * 33;
+        if (frames) seq += 360;
+        pnn::Rebase(q);
+        pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        Check(q.good && q.max_gap_ms < 100 && q.gaps_100 == 0 && q.gaps_1000 == 0 && pnn::GoodMs(q, now) > now - ride_start &&
+                  q.samples == 199,
+              frames ? "rebase: frames arriving during the unobserved ride, no gap, the quality held through it"
+                     : "rebase: the sender paused during the unobserved ride, no gap, the quality held through it");
+    }
     // Reason codes and the native.net JSON.
     {
         Check(pnn::ReasonCode("ok") == 1 && pnn::ReasonCode(nullptr) == pnn::kReasonNone && pnn::ReasonCode("") == pnn::kReasonNone &&

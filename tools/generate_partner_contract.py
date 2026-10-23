@@ -109,6 +109,10 @@ SITES = [
     (0x53CA10, 'b8010000008bc92b05b37569024898', 'record writer bank (1 - [0x2BD3FD0])'),
     (0x53CA26, '488d0dc37569024869c0e0000000', 'record base 0x2BD3FF0, stride 0xE0'),
     (0x9DCD5C, '81a704020000ffdfffff', 'SetAllInstanceActiveMode(false) clears P+0x204 bit 0x2000; P is not null-checked'),
+    # The F5 mount hide and G5 (0.13.6, partner_native_unrealize_all, docs/native-puppet.md "Ride hides": the heli,
+    # vehicle-fallback and horse kind-3 hides) unrealize body 1 only through Lua's SetAllInstanceActiveMode(false) and
+    # re-realize it through SetAllInstanceActiveMode(true): the 0x9DCD20 / 0x9DCD2D / 0x9DCD45 / 0x9DCD5C sites above
+    # and the pre-update's all-active branch 0x12CC633. No further site, slot or patch.
     (0x9DF320, '40534883ec2083caffe8922d030185c00f95c3e898d51000', 'Player.SetOtherInstanceIsForMirrorMode prologue'),
     (0x9DF338, '488b480884db741281890402000000400000', 'mirror: P = [root+8] (no null check); true ORs P+0x204 bit 0x4000'),
     (0x9DF352, '488b01ff5028', 'mirror(false): calls P vtable +0x28'),

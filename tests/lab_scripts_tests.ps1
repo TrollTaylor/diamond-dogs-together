@@ -714,6 +714,12 @@ try {
     Assert-Equal $mountOverride['partner_native_mount'] 'hide' 'mount hide role override'
     Assert-Equal (ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_mount = 'hide' }))['partner_native_mount'] 'hide' 'mount hide short JSON name'
     Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_mount')) 'native gun JSON never auto-emits the mount hide'
+    # G5 (docs/native-puppet.md "Ride hides"): partner_native_unrealize_all=0|1, written only when named.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_unrealize_all -Value 1)/$(ConvertTo-LabPartnerValue -Key partner_native_unrealize_all -Value 0)" '1/0' 'unrealize_all values'
+    $unrealizeOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_unrealize_all=0', 'guest:partner_native_unrealize_all=1') -Role guest
+    Assert-Equal $unrealizeOverride['partner_native_unrealize_all'] '1' 'unrealize_all role override'
+    Assert-Equal (ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_unrealize_all = $true }))['partner_native_unrealize_all'] '1' 'unrealize_all short JSON name'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_unrealize_all')) 'native gun JSON never auto-emits partner_native_unrealize_all'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'

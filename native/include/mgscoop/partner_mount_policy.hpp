@@ -24,6 +24,7 @@
 //   126 (0x7E) D-Walker leave / fall. 0x1412604D0 (store 0x141260617) and
 //       0x141260A3B, 0x1412624EB, 0x1412629FA.
 #include <cstdint>
+#include "mgscoop/partner_ride_wire.hpp"
 
 namespace mgscoop::partner_mount_policy {
 
@@ -68,6 +69,7 @@ enum class Edge : std::uint8_t { none, begin, end };
 // a mount episode hides body 1 and Lua still reports all-active, the hidden reply
 // carries CLEAR_ALLACTIVE (Lua sets the mode off: instance 1 unrealized, the stock
 // single-player state); the show path's stage policy sends SET_ALLACTIVE again.
+// G5 (partner_native_unrealize_all) applies the same rule to a RideEpisode.
 constexpr bool Unrealize(bool episode_active, bool hidden, bool lua_all_active) noexcept {
     return episode_active && hidden && lua_all_active;
 }
@@ -100,5 +102,95 @@ inline Edge Step(Episode& e, bool hiding, std::uint16_t act, std::uint64_t now_m
 constexpr std::uint64_t EpisodeMs(const Episode& e, std::uint64_t now_ms) noexcept {
     return now_ms >= e.since_ms ? now_ms - e.since_ms : 0;
 }
+
+// --- G5: the other ride hides (partner_native_unrealize_all, docs/native-puppet.md "Ride hides") ---
+// The heli acts 97..108 or a heli ride, a vehicle ride drawn hidden (partner_native_ride=hide, or seat mode
+// refused / unavailable for this vehicle and seat: the seat fallback hide) and a horse rider by its ride kind
+// 3 (partner_native_mount off) clear only the native realize bits as well, so the body stays drawn as a frozen
+// standing body at the get-on spot while Lua's all-active mode is on (filmed for the horse kind-3 hide in
+// 251abcef). With the key they unrealize like a mount episode: CLEAR_ALLACTIVE while Lua reports all-active,
+// one partner_ride=unrealize line per episode; the show path's SET_ALLACTIVE realizes the body again.
+enum class Ride : std::uint8_t { none, heli, vehicle, horse, other };
+
+constexpr bool HeliAct(bool act_valid, std::uint16_t act) noexcept {
+    return act_valid && act >= partner_ride_wire::kHeliActFirst && act <= partner_ride_wire::kHeliActLast;
+}
+
+// The ride this tick hides for: the remote's heli act first (as partner_ride_wire::Observe), then the live
+// ride kind (a stale or missing ride state names none).
+constexpr Ride RideOf(bool act_valid, std::uint16_t act, bool ride_live, partner_ride_wire::Kind kind) noexcept {
+    namespace rw = partner_ride_wire;
+    if (HeliAct(act_valid, act)) return Ride::heli;
+    if (!ride_live) return Ride::none;
+    return kind == rw::Kind::heli      ? Ride::heli
+           : kind == rw::Kind::vehicle ? Ride::vehicle
+           : kind == rw::Kind::horse   ? Ride::horse
+           : kind == rw::Kind::foot    ? Ride::none
+                                       : Ride::other;
+}
+
+constexpr const char* RideName(Ride ride) noexcept {
+    return ride == Ride::heli      ? "heli"
+           : ride == Ride::vehicle ? "vehicle"
+           : ride == Ride::horse   ? "horse"
+           : ride == Ride::other   ? "other"
+                                   : "none";
+}
+
+// A ride episode starts: the key is on, the visibility hid body 1 as a ride this tick (Visibility reason
+// "ride": not air, dead or a stale ride lease), it is a heli / vehicle / horse / other ride, and no mount
+// episode owns body 1 (partner_native_mount=hide logs its own partner_mount=unrealize).
+constexpr bool RideRule(bool key, Ride ride, bool hidden_as_ride, bool mount_episode) noexcept {
+    return key && ride != Ride::none && hidden_as_ride && !mount_episode;
+}
+
+// This tick proves the remote is off the ride: a valid act that is no heli act, and the ride wire says foot
+// (or carries no ride state at all). A missing act sample or a stale ride lease proves nothing.
+constexpr bool OffRide(bool act_valid, std::uint16_t act, bool ride_have, bool ride_live, partner_ride_wire::Kind kind) noexcept {
+    return act_valid && !HeliAct(act_valid, act) && (!ride_have || (ride_live && kind == partner_ride_wire::Kind::foot));
+}
+
+// The ride episode holds: the rule, or an open episode whose body is still hidden and no tick proved the
+// remote off the ride (a shown body ends it: a seated vehicle rider, the stable-foot show).
+constexpr bool RideHolds(bool rule, bool episode_active, bool hidden, bool off_ride) noexcept {
+    return rule || (episode_active && hidden && !off_ride);
+}
+
+struct RideEpisode {
+    bool active{};
+    Ride ride{};
+    std::uint16_t act{};
+    std::uint8_t kind{};
+    std::uint64_t since_ms{};
+    unsigned episodes{};
+    bool unrealize_logged{};  // this episode's partner_ride=unrealize line (a CLEAR went out)
+};
+
+inline Edge StepRide(RideEpisode& e, bool holding, Ride ride, std::uint16_t act, std::uint8_t kind, std::uint64_t now_ms) noexcept {
+    if (holding && !e.active) {
+        e.active = true;
+        e.ride = ride;
+        e.act = act;
+        e.kind = kind;
+        e.since_ms = now_ms;
+        e.unrealize_logged = false;
+        ++e.episodes;
+        return Edge::begin;
+    }
+    if (!holding && e.active) {
+        e.active = false;
+        return Edge::end;
+    }
+    return Edge::none;
+}
+
+constexpr std::uint64_t EpisodeMs(const RideEpisode& e, std::uint64_t now_ms) noexcept {
+    return now_ms >= e.since_ms ? now_ms - e.since_ms : 0;
+}
+
+// The hidden-ride sample gap (play runs fbde3dcc / 5a044a4d after each hidden mount episode, fad26e25
+// after a 13 s seated ride) is not handled here: the single link-quality rebase after a seat episode or a
+// ride hide (0.13.6 online-ride-robust, Mission::net_quality_rebase / partner_native_net::Rebase) covers
+// every ride with or without the key; G5 only logs it (partner_ride=net_rebased).
 
 } // namespace mgscoop::partner_mount_policy
