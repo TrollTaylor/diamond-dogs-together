@@ -191,6 +191,24 @@ try {
     $bad.tests[1].properties[0].value=@('unaudited_launch')
     Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited ordered dependency'
 
+    # Diamond Dogs Together (the Release receipt hashes and keeps DiamondDogsTogether.exe):
+    # the core and UI fixtures are plain executables; the exe itself runs only --selftest.
+    Check (@(@('ddt_archive_tests','ddt_core_tests','launcher_ui_tests','ddt_launcher_selftest') | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits the launcher fixtures and its --selftest'
+    Check ($release.tests -cnotcontains 'ddt_runtime_dat_integration' -and $release.tests -cnotcontains 'ddt_launcher_screens') 'the game-folder .dat build and the window screenshots stay outside the audited set'
+    $ddtNames=@('ddt_core_tests','ddt_launcher_selftest')
+    $ddtInventory=[pscustomobject]@{tests=@(
+        [pscustomobject]@{name='ddt_core_tests';command=@((Join-Path $directory 'ddt_core_tests.exe'));properties=@([pscustomobject]@{name='TIMEOUT';value=300})},
+        [pscustomobject]@{name='ddt_launcher_selftest';command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--selftest');properties=@()}
+    )}
+    Assert-WorkerInventory $ddtInventory $fixture $directory $ddtNames
+    Check $true 'the launcher --selftest and the core fixture are accepted'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[1]='--screenshot-all'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--write-session','host')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[0]=Join-Path $fixture 'DiamondDogsTogether.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited fixture executable'
+
     # Local session fixtures additionally require the one parser in this exact
     # owned build directory. No fixture can introduce runtime flags or a foreign tool.
     Check ($release.tests -ccontains 'local_coop_windows_tests') 'release inventory admits the inert window geometry fixture'

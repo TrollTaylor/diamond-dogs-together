@@ -1,5 +1,6 @@
 // Diamond Dogs Together launcher core: a co-op game session in one game folder
-// (ports of tools/friend/FriendCommon.psm1 and Play-Coop.ps1, Steam only).
+// (ports of tools/friend/FriendCommon.psm1 and Play-Coop.ps1 of 0.13.x, now
+// tools/dev/FriendCommon.psm1; Steam only).
 //
 //  - play-session.json (v2) records the session; every file's SHA-256 is
 //    recorded BEFORE the file is written, in the order lab.ini,

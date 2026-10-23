@@ -10,7 +10,10 @@ fixtures and installer flows are excluded. This is not a runtime game worker.
 -Profile Release is the friend/release loader (docs/two-pc-play.md "Release
 build"): exactly the stock46 gun pieces (offline equipment, preload, writer;
 runtime-gated on the native gun profile), every other experiment and the
-background worker OFF. tools/package.ps1 -Friend packages its loader.
+background worker OFF. tools/package.ps1 -Friend packages its loader and its
+launcher: a passing receipt keeps dinput8.dll and DiamondDogsTogether.exe of
+this build (artifacts.loader_sha256 / launcher_sha256), so the player zip's two
+programs come from one checked build of one source snapshot.
 #>
 [CmdletBinding()]
 param(
@@ -86,7 +89,11 @@ function Get-WorkerTests {
         'death_policy_patch_check', 'death_policy_composed_lua_check',
         'player_package_patch_check', 'player_package_lua_check', 'player_package_mission_list_lua_check', 'damage_parameters_patch_check',
         'damage_parameters_composed_lua_check', 'character_receipt_tests', 'player_type_patch_tests',
-        'character_lua_check', 'character_game_lua_check', 'character_composed_lua_check'
+        'character_lua_check', 'character_game_lua_check', 'character_composed_lua_check',
+        # Diamond Dogs Together (DiamondDogsTogether.exe): archive utilities, the
+        # core on temp folders with a fake environment, the UI logic, and the
+        # exe's own --selftest (read-only for its folder; a throwaway model in %TEMP%).
+        'ddt_archive_tests', 'ddt_core_tests', 'launcher_ui_tests', 'ddt_launcher_selftest'
     )
 }
 function Get-WorkerHash([string]$Text) {
@@ -234,7 +241,7 @@ function Assert-WorkerInventory {
         character_composed_lua_check='character_lua_check'; character_game_lua_check='character_lua_check'
         player_package_mission_list_lua_check='player_package_lua_check'
     }
-    $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke'; partner_defer_pose_nested_foreign_tests='partner_defer_tests'; partner_defer_pose_held_generation_tests='partner_defer_tests';
+    $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke'; ddt_launcher_selftest='DiamondDogsTogether'; partner_defer_pose_nested_foreign_tests='partner_defer_tests'; partner_defer_pose_held_generation_tests='partner_defer_tests';
         master_server_patch_retarget_tests='master_server_patch_tests'; master_server_patch_retarget_loopback_tests='master_server_patch_tests' }
     foreach ($name in $Allowed) {
         if (!$byName.ContainsKey($name)) { throw "Required audited test is missing: $name" }
@@ -287,6 +294,8 @@ function Assert-WorkerInventory {
             } elseif ($exeAliases.ContainsKey($name) -and $name -like 'master_server_patch_retarget*') {
                 $mode = if ($name -eq 'master_server_patch_retarget_tests') { 'retarget' } else { 'retarget_loopback' }
                 if ($command.Count -ne 2 -or $command[1] -cne $mode) { throw "Unaudited patch fixture mode: $name" }
+            } elseif ($name -eq 'ddt_launcher_selftest') {
+                if ($command.Count -ne 2 -or $command[1] -cne '--selftest') { throw 'The launcher runs only its --selftest here' }
             } elseif ($name -eq 'partner_defer_pose_nested_foreign_tests') {
                 if ($command.Count -ne 2 -or $command[1] -cne '--pose-nested-foreign') { throw 'Unexpected pose-window fixture mode' }
             } elseif ($name -eq 'partner_defer_pose_held_generation_tests') {
@@ -450,6 +459,10 @@ try {
     $loader = Join-Path $plan.build_directory 'dinput8.dll'
     $receipt.artifacts.loader_sha256 = (Get-FileHash -LiteralPath $loader -Algorithm SHA256).Hash
     [IO.File]::Copy($loader, (Join-Path $runDirectory 'dinput8.dll'), $false)
+    # The launcher of the same build (tools/package.ps1 -Friend ships both).
+    $launcher = Join-Path $plan.build_directory 'DiamondDogsTogether.exe'
+    $receipt.artifacts.launcher_sha256 = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash
+    [IO.File]::Copy($launcher, (Join-Path $runDirectory 'DiamondDogsTogether.exe'), $false)
     [IO.File]::Copy((Join-Path $plan.build_directory 'CMakeCache.txt'), (Join-Path $runDirectory 'CMakeCache.txt'), $false)
     $receipt.status = 'passed'
 } catch {

@@ -6,6 +6,9 @@
 //   --watch <session>          no window (the background helper, launcher core)
 //   --selftest                 built-in checks, exit code 0 = passed
 //   --screenshot-all <dir>     renders every page once, hidden, and saves PNGs
+//   --write-session host|join  developer only: setup if needed, then the session
+//                              files exactly as Host / Join, without Steam
+//   --end-session              developer only: switch co-op off again
 // Rendering is event driven: a frame is drawn on input, and otherwise only on a
 // timer (1 s when idle, 4-10 Hz while setup or a game runs).
 #ifndef NOMINMAX
@@ -690,6 +693,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     switch (o.mode) {
     case Options::Mode::help: Print(ddt::ui::UsageText()); return 0;
     case Options::Mode::watch: return ddt::RunWatch(o.watch_session);
+    case Options::Mode::write_session: {
+        std::string report;
+        const int code = ddt::RunWriteSession(o.game_dir, o.write_host, o.write_code, o.write_character, report);
+        Print(Wide(report));
+        return code;
+    }
+    case Options::Mode::end_session: {
+        std::string report;
+        const int code = ddt::RunEndSession(o.game_dir, report);
+        Print(Wide(report));
+        return code;
+    }
     case Options::Mode::selftest: {
         std::string report;
         const int code = ddt::RunSelfTest(report);

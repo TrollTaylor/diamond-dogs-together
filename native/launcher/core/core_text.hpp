@@ -1,5 +1,5 @@
 // Diamond Dogs Together launcher core: the pure text of the co-op session
-// (ports of tools/CoopPlay.psm1 and tools/friend/FriendCommon.psm1, Steam
+// (ports of tools/CoopPlay.psm1 and tools/friend/FriendCommon.psm1 of 0.13.x, Steam
 // transport only): lab.ini / coop.ini, the link secret, the status line and
 // its sentences, the launch evidence, and log redaction. No I/O.
 #pragma once

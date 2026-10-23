@@ -1,3 +1,59 @@
+## October 23, 2026: 0.14.0 (Diamond Dogs Together launcher: one exe, drag-and-drop install, Steam only; repo cleanup; story character)
+
+Branch `wp/launcher-integ` from `dev/oct7-continue` `cd25f22` (0.13.6): merge commits of `wp/repo-cleanup` `e4ad16a`
+(about 855 research / stale files deleted in place; tag `archive/research-2026-10-23` holds them), `wp/character-story`
+`a3f828b` and `wp/launcher-core` `cc97405` (which contains `wp/launcher-dat` `37eff7c` and `wp/launcher-gui` `705ef1d`),
+in that order, with no conflicts, then the integration commit. No rebase. Full CTest after each merge: 296/296, 296/296,
+302/302 (`-Configure`; `ddt_runtime_dat_integration` built the runtime archive from `D:/Games/steamapps/common/MGS_TPP`
+and matched the pin). `generate_partner_contract.py --check` 800 code sites / 204 vtable slots (unchanged).
+
+**What changed for players.**
+- One program, `DiamondDogsTogether.exe` (Win32 + DX11 + Dear ImGui, no console): first-run setup (game check, real-save
+  backup, co-op save copy, the runtime archive built from the player's own game files), Play (Host is Snake; Join picks
+  Story / Ocelot / DD soldier m/f / avatar; a code or a Steam invite), In game status, Tools (Share save, Collect logs,
+  Uninstall, About). Steam online only: no LAN/VPN codes, UPnP, firewall helpers or local test for players.
+- Install is drag and drop: the zip's root goes into the game folder (`DiamondDogsTogether.exe`, `dinput8.dll`,
+  `mgs-coop\` with the licences, `THIRD_PARTY_NOTICES.md`, `README.txt`, `package.json` and `source.zip`). The zip
+  holds no `.bat` / `.ps1` and never the runtime `.dat`. `tools/package.ps1 -Friend` writes
+  `dist/DiamondDogsTogether-<version>-<stamp>/DiamondDogsTogether-<version>.zip` plus the unpacked `package/`.
+- The PowerShell player tooling is retired: `tools/friend/{Install-Coop,Play-Coop,Share-Save,Collect-Logs,Uninstall-Coop,
+  Start-Coop}.ps1`, `FRIEND-GUIDE.txt`, `RUNTIME-ARCHIVE.txt` and the root `Play-Coop.bat` are removed (history and the
+  0.13.6 release keep them). The C++ core (`native/launcher/core`, `tests/ddt_core_tests.cpp`) is their port.
+- In-game texts (`native/coop_reason_text.cpp`, `tests/fixtures/link-reasons.json`, `tools/CoopPlay.psm1`) use the
+  launcher's words ("Diamond Dogs Together", "Tools > Share save", "Tools > Collect logs"), with no Play-Coop.bat,
+  Share-Save.bat or LAN/VPN code. `character=story` (Quiet while she is on the team, else Ocelot).
+
+**Release and developer tooling.**
+- `tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` now also audits `ddt_archive_tests`, `ddt_core_tests`,
+  `launcher_ui_tests` and `DiamondDogsTogether.exe --selftest`, and the receipt hashes and keeps
+  `DiamondDogsTogether.exe` next to `dinput8.dll` (`artifacts.launcher_sha256`). The source snapshot covers the
+  launcher's embedded assets (`.bin`, `.ico`, `.png`, `.manifest`). `tools/package.ps1 -Friend` refuses a receipt
+  without the launcher, a changed launcher and a `-LauncherPath` that differs from the receipt.
+- `package.json` (drop-in layout): product `mgs-coop-local-package`, version = the exe's X.Y.Z, the pinned game hashes,
+  one `files[]` row per file of the zip (exactly one `dinput8.dll` row), `runtime_archive` target / SHA-256 / bytes.
+  `tools/package-install.ps1` (lab, worker, local test) accepts it: it reads `mgs-coop/package.json` and installs only
+  the loader and its licences.
+- The developer two-window test moved to `tools/dev/` (`Play-LocalCoop.ps1`, `LocalCoopSession.psm1`,
+  `LocalCoopWindows.psm1`, `FriendCommon.psm1`, new `Start-LocalCoop.ps1`); the root `Play-Offline-Coop.bat` starts it
+  with the newest `dist/DiamondDogsTogether-*/package` (or `-PackageDirectory`). The host plays Snake, the guest Quiet;
+  a drag-and-drop copy (the package's loader, no `probe-install.json`) is accepted, an owned older loader is upgraded.
+- Developer flags (not for players): `DiamondDogsTogether.exe --write-session host|join [--code <code>]
+  [--character <c>] [--game-dir <dir>]` runs the setup when needed and writes the session files exactly as Host / Join
+  (same checks and order), but starts neither the helper nor Steam and leaves the clipboard alone; it prints
+  `session=` / `role=` / `code=` (host). `--end-session [--game-dir <dir>]` switches co-op off (never under a running
+  game). For the release gate's hidden-worker run.
+- `tests/friend_package_tests.ps1` now covers the drop-in package, `tools/CoopPlay.psm1`, `tools/dev/FriendCommon.psm1`
+  (cleanup, import core, save handoff) and the local test (1,154 checks, 38 s); the tests of the removed scripts are gone.
+- Version 0.14.0 (CMakeLists, package.ps1, probe.ps1; the package-install / set-session-mode / Play-LocalCoop
+  allow-lists keep 0.13.6 and add 0.14.0). The exe and the dll report `0.14.0+<commit>`.
+
+**Known limits and what is untested (0.14.0).** No game launch in this integration. Not yet run: the hidden-worker gate
+that starts both copies on exe-written session files (`--write-session`), a drag-and-drop install on a clean game
+folder outside the fixtures, the GUI on a real install (setup against real Steam userdata, Host / Join through Steam,
+the watchdog relaunch after a save handoff), the adoption of an existing 0.13.6 PowerShell install by the setup, and a
+real two-PC session. The avatar may still appear as Snake to the partner (researched in `wp/character-story`, not
+built). Both players need 0.14.0 (the build id changes).
+
 ## October 23, 2026: 0.13.6 (fixes from the first two-PC Steam session: guns and the box after a relaunch, long shared rides, a Fultoned vehicle, joining with different saves, sea / ledge / carry falls; lab levers for the HUD hint, truck, ride-hide and gesture proofs)
 
 **Package and install (2026-10-23):** `mgs-coop-friend-0.13.6-20261023T181349Z-8a864a81.zip` (9,643,361 bytes), SHA-256 `ffd7f05ff1f62641ace423b3f3d797ec3ae0918e77674f78d21733e9e0452e71`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at f9c22b0 with Release receipt `20261023-181036-183f3c8c3e8c463c986568161a5b77ed` (passed). Installed in both local copies (host Install-Coop -Role Host -Character snake; guest install.ps1 -NoInitialMode); both dinput8.dll SHA-256 00E2FA1E...99DA, probe-install.json version 0.13.6, 17 protected files unchanged, no script-observe.enabled left in the guest copy. Hidden-run proofs for this release: guns after a simulated relaunch b5dd1111 (play), long ride 197fc3c6 / 80a324d7 (play), join 247ae49a, c186abfb, e5f15c7e, 640abf2f, 5e44cb65 (play), sea death e9e5301b / b8ab039e (play), put-down 4078bbe7 (play). The 0.13.5 regression set was not re-run on this build.

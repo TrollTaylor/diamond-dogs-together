@@ -39,6 +39,34 @@ int RunWatch(const std::wstring& session) {
     return core::RunWatch(ExeFolder(), core::Utf8(session));
 }
 
+namespace {
+std::wstring SessionFolder(const std::wstring& game_dir) {
+    if (game_dir.empty()) return ExeFolder();
+    std::wstring full(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD n = GetFullPathNameW(game_dir.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
+        if (n == 0) return game_dir;
+        if (n < full.size()) {
+            full.resize(n);
+            break;
+        }
+        full.resize(n + 1);
+    }
+    while (full.size() > 3 && (full.back() == L'\\' || full.back() == L'/')) full.pop_back();
+    return full;
+}
+}  // namespace
+
+int RunWriteSession(const std::wstring& game_dir, bool host, const std::wstring& code, const std::wstring& character, std::string& report) {
+    core::WriteSessionRequest request;
+    request.host = host;
+    request.code = core::Utf8(code);
+    request.character = core::Utf8(character);
+    return core::RunWriteSession(SessionFolder(game_dir), request, report);
+}
+
+int RunEndSession(const std::wstring& game_dir, std::string& report) { return core::RunEndSession(SessionFolder(game_dir), report); }
+
 int RunSelfTest(std::string& report) {
     int checks = 0, failures = 0;
     auto check = [&](bool ok, const char* what) {

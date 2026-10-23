@@ -2,10 +2,16 @@
 .SYNOPSIS
 Two locally controlled MGSV copies, launched from the normal startup screens.
 .DESCRIPTION
-The release package's local test. No title/menu input or mission commands are
+Developer only (tools/dev, never shipped; start it with tools/dev/Start-LocalCoop.ps1
+or the repo's Play-Offline-Coop.bat). No title/menu input or mission commands are
 sent. Keyboard/mouse controls the clicked game, controller 0 controls the guest.
 Only separate local-test save copies are used. Activation files are restored
 from a hash-checked journal after BOTH games exit, including a closed launcher.
+-PackageDirectory is a Diamond Dogs Together package (the zip's contents, with
+mgs-coop\package.json) or an older package with package.json at its root. Each
+copy needs the package's loader, or an owned loader (probe-install.json) that is
+then upgraded through tools/package-install.ps1. The host plays Snake (as with
+DiamondDogsTogether.exe), the guest Quiet.
 #>
 [CmdletBinding()]
 param(
@@ -66,8 +72,11 @@ if ($gameRoot.Equals($guestRoot,[StringComparison]::OrdinalIgnoreCase) -or (Test
 $roots = [ordered]@{host=$gameRoot;guest=$guestRoot}
 Assert-LocalGamesClosed @($roots.Values)
 foreach ($root in $roots.Values) { $null = Invoke-LocalCoopRecovery -HostRoot $root }
-$package = Read-FriendJson (Join-Path $PackageDirectory 'package.json')
-if (!$package -or [string]$package.product -ne 'mgs-coop-local-package') { throw 'Run Play-Coop from the complete extracted release package.' }
+# A Diamond Dogs Together package keeps package.json in mgs-coop\ (the zip's root is the game folder).
+$manifestPath = Join-Path $PackageDirectory 'mgs-coop\package.json'
+if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { $manifestPath = Join-Path $PackageDirectory 'package.json' }
+$package = Read-FriendJson $manifestPath
+if (!$package -or [string]$package.product -ne 'mgs-coop-local-package') { throw 'Pass -PackageDirectory: a Diamond Dogs Together package folder (the zip''s contents, built by tools\package.ps1 -Friend).' }
 $payload = @($package.files | Where-Object { $_.target -ceq 'dinput8.dll' })
 if ($payload.Count -ne 1) { throw 'The release package has no unique loader entry.' }
 $loaderSource = Join-Path $PackageDirectory ([string]$payload[0].source)
@@ -80,10 +89,14 @@ foreach ($role in $roots.Keys) {
     if (Test-CoopPlaySessionLive -GameRoot $p.Game) { throw "[$role] Another co-op launcher is using this game folder. Quit that session first." }
     $null = Invoke-CoopPlayCleanup -GameRoot $p.Game
     if (!(Test-FileHash -Path $p.Exe -Expected ([string]$package.executable_sha256)) -or !(Test-FileHash -Path $p.SteamApi -Expected ([string]$package.steam_dll_sha256))) { throw "[$role] The retail game or Steam DLL does not match this release. Verify the game in Steam first." }
-    if (!(Test-FileHash -Path $p.Archive -Expected ([string]$package.runtime_archive.sha256))) { throw "[$role] The checked two-player runtime archive is missing. Install co-op in this game copy first." }
-    $record = Read-FriendJson $p.Record
-    if (!$record -or [string]$record.product -cne 'mgs-coop-original-loader-probe' -or [string]$record.game_directory -cne $p.Game -or !(Test-FileHash -Path $p.Loader -Expected ([string]$record.dll_sha256))) { throw "[$role] This game copy has no matching owned co-op loader. Install co-op in it first; unrelated loaders are never replaced." }
-    if (@($record.PSObject.Properties.Name) -notcontains 'version' -or [string]$record.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5','0.13.6')) { throw "[$role] Install this release in the game copy first." }
+    if (!(Test-FileHash -Path $p.Archive -Expected ([string]$package.runtime_archive.sha256))) { throw "[$role] The checked two-player runtime archive is missing. Run DiamondDogsTogether.exe's setup in this game copy (or copy mgs-coop\mgs-coop-player-runtime.dat) first." }
+    # A drag-and-drop install (DiamondDogsTogether.exe) has the package's own
+    # loader and no ownership record; an owned install has probe-install.json.
+    if (!(Test-FileHash -Path $p.Loader -Expected ([string]$payload[0].sha256))) {
+        $record = Read-FriendJson $p.Record
+        if (!$record -or [string]$record.product -cne 'mgs-coop-original-loader-probe' -or [string]$record.game_directory -cne $p.Game -or !(Test-FileHash -Path $p.Loader -Expected ([string]$record.dll_sha256))) { throw "[$role] This game copy has no matching owned co-op loader. Put this package's dinput8.dll into it, or install it with tools\package-install.ps1; unrelated loaders are never replaced." }
+        if (@($record.PSObject.Properties.Name) -notcontains 'version' -or [string]$record.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5','0.13.6','0.14.0')) { throw "[$role] Install this release in the game copy first." }
+    }
     foreach ($name in @('partner.trigger','world.trigger','join.trigger','reset.trigger','worker.ini','worker.enabled')) {
         if (Test-Path -LiteralPath (Join-Path $p.Mod $name)) { throw "[$role] $name belongs to a developer test. Finish that test before local play." }
     }
@@ -94,14 +107,13 @@ foreach ($role in $roots.Keys) {
     $p = $paths[$role]
     if (!(Test-FileHash -Path $p.Loader -Expected ([string]$payload[0].sha256))) {
         Write-Host "[$role] Updating this owned co-op loader to the release in this package."
-        $installer = Join-Path $PSScriptRoot 'install.ps1'
-        if (!(Test-Path -LiteralPath $installer)) { $installer = Join-Path (Split-Path -Parent $PSScriptRoot) 'package-install.ps1' }
+        $installer = Join-Path (Split-Path -Parent $PSScriptRoot) 'package-install.ps1'
         & $installer -Action Install -GameDirectory $p.Game -PackageDirectory $PackageDirectory -NoPrompt -NoInitialMode
         if (!(Test-FileHash -Path $p.Loader -Expected ([string]$payload[0].sha256))) { throw "[$role] The owned loader upgrade did not finish." }
     }
 }
 $hostState = Read-FriendJson (Join-Path $paths.host.Mod 'friend-install.json')
-if (!$hostState -or [string]$hostState.status -cne 'installed' -or !(Test-Path -LiteralPath $paths.host.CoopSaves -PathType Container)) { throw 'Run Install-Coop.bat for the main game first; its co-op save copy seeds the local test.' }
+if (!$hostState -or [string]$hostState.status -cne 'installed' -or !(Test-Path -LiteralPath $paths.host.CoopSaves -PathType Container)) { throw 'Run DiamondDogsTogether.exe once in the main game folder first (its setup makes the co-op save copy that seeds the local test).' }
 $hostSteam = 'learn'
 if (!$fixtureOnly) {
     $hostSteam = Get-CoopSteamId64 -ActiveUser (Get-SteamActiveUser)
@@ -188,9 +200,9 @@ try {
             $secret = New-CoopSecret
             foreach ($role in $roots.Keys) {
                 $text = New-LocalCoopLabIniText -Role $role -SaveDir $saveDirs[$role] -HostPort 47820 -GuestPort 47821 -World $World -Partner $Partner -HostSteamId $hostSteam
+                # The host plays Snake, as with Diamond Dogs Together; the guest Quiet.
                 $character = 'quiet'
-                if ($role -eq 'host') { $character = [string](Get-FriendProperty $hostState 'character' 'default') }
-                if (!(Test-FriendCharacter $character)) { $character = 'default' }
+                if ($role -eq 'host') { $character = 'snake' }
                 $coop = New-CoopPlayCoopIniText -Character $character -Hud $Hud
                 $utf8 = New-Object Text.UTF8Encoding $false
                 Set-LocalCoopSessionFile -Session $s -Role $role -Name 'lab.ini' -Bytes $utf8.GetBytes($text)

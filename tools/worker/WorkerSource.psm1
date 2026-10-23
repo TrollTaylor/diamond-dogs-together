@@ -20,7 +20,8 @@ function Get-WorkerSourceHashes([string]$Root) {
             }
         }
         foreach ($file in Get-ChildItem -LiteralPath $path -Recurse -File) {
-            if ($file.Extension -in @('.cpp','.hpp','.h','.c','.lua','.ps1','.psm1','.cmake','.in','.def','.rc') -or $file.Name -eq 'CMakeLists.txt') {
+            # The launcher's embedded assets (controller FPKDs, icon, logo, manifest) are compiled into the exe.
+            if ($file.Extension -in @('.cpp','.hpp','.h','.c','.lua','.ps1','.psm1','.cmake','.in','.def','.rc','.bin','.ico','.png','.manifest') -or $file.Name -eq 'CMakeLists.txt') {
                 if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Source snapshot refuses links: $($file.FullName)" }
                 $paths[[IO.Path]::GetRelativePath($Root, $file.FullName)] = $file.FullName
             }

@@ -2,7 +2,7 @@
 // from Steam\userdata), the co-op copy and its seeding, progress imports
 // (Share save and the automatic save handoff), the handoff request check and
 // the Share save zip. Ports of tools/CoopPlay.psm1 and
-// tools/friend/FriendCommon.psm1 / Share-Save.ps1. Nothing here writes below
+// tools/friend/FriendCommon.psm1 / Share-Save.ps1 of 0.13.x. Nothing here writes below
 // Steam\userdata.
 #pragma once
 #include <cstdint>

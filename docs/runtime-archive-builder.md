@@ -100,7 +100,7 @@ Rewriting every one of the nine source packages gives back the same bytes. Entry
 ## Embedded data
 
 - **The controller packages.** `native/launcher/assets/mgs_coop_four_player_controller.fpkd.bin` (entry 3) and `mgs_coop_two_player_scarf_controller.fpkd.bin` (entry 8) are 6,624 bytes each. They were extracted once from the installed 0.13.6 runtime archive.
-- **Their origin.** They hold FOX2 compiled from Dynamite's controller XML with project edits (`third_party/dynamite/player-runtime-source.json`, `player-asset-source.json`). They are covered by Dynamite's GPLv3 with Commons Clause, the same notice as the loader's Dynamite-derived code. The release notices still say that no game-derived runtime archive is shipped, so they must be updated when the launcher is packaged.
+- **Their origin.** They hold FOX2 compiled from Dynamite's controller XML with project edits (`third_party/dynamite/player-runtime-source.json`, `player-asset-source.json`). They are covered by Dynamite's GPLv3 with Commons Clause, the same notice as the loader's Dynamite-derived code. THIRD_PARTY_NOTICES.md ("Diamond Dogs Together launcher and player package") names them as part of the exe since 0.14.0; the runtime archive itself is still never shipped, and the player package carries their source (`mgs-coop/source.zip`).
 - **How they are built in.** `cmake/ddt_embed.cmake` turns the two `.bin` files and `lua/coop/archive_probe.lua` into generated headers (`build/.../generated/ddt/ddt_asset_*.hpp`).
 - **The self-check.** `CheckEmbeddedRuntimeAssets()` checks all three against their pinned SHA-256. Editing `archive_probe.lua` therefore breaks the build of the archive, by design.
 

@@ -92,9 +92,16 @@ int IdleWaitMs(Phase phase, bool animating);
 
 // ---- Command line ----------------------------------------------------------
 struct Options {
-    enum class Mode { gui, watch, selftest, screenshots, help } mode = Mode::gui;
+    enum class Mode { gui, watch, selftest, screenshots, help, write_session, end_session } mode = Mode::gui;
     bool mock = false;              // --mock (developer flag; the real model is the default)
     std::wstring watch_session;     // --watch <session>
+    // Developer flags for the release gate's hidden-worker runs (no window, no Steam):
+    // --write-session host|join [--code <code>] [--character <c>] [--game-dir <dir>]
+    // and --end-session [--game-dir <dir>].
+    bool write_host = true;         // --write-session host (else join)
+    std::wstring write_code;        // --code <code> (join; none = wait for a Steam invite)
+    std::wstring write_character;   // --character <c> (join)
+    std::wstring game_dir;          // --game-dir <dir> (default: the exe's folder)
     std::wstring screenshot_dir;    // --screenshot-all <dir>
     std::wstring scenario;          // --mock-scenario <name>
     double mock_speed = 1.0;        // --mock-speed <factor>

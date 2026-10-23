@@ -210,8 +210,10 @@ std::string Join(const std::vector<std::string>& lines) {
 
 class RealModel final : public LauncherModel {
 public:
-    RealModel(const std::wstring& exe_dir, std::shared_ptr<Env> env, bool exit_if_busy)
-        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy) {
+    // no_launch: --write-session (developer): Host / Join write the session
+    // files and stop there (no helper, no Steam, no clipboard).
+    RealModel(const std::wstring& exe_dir, std::shared_ptr<Env> env, bool exit_if_busy, bool no_launch = false)
+        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch) {
         paths_ = GetInstancePaths(game_dir_);
         LoadSettings(paths_, settings_);
         Recheck();
@@ -248,6 +250,7 @@ public:
     }
 
     Phase phase() const override { return phase_; }
+    std::string session_id() const { return session_id_; }   // --write-session
     std::string version() const override { return CoreBuildId(); }
     std::string game_dir() const override { return Utf8(paths_.game); }
 
@@ -329,9 +332,10 @@ public:
         }
         role_ = Role::host;
         // The code's hash is recorded with the session; the cleanup clears the
-        // clipboard only while it still holds exactly this code.
-        if (!StartSession(true, secret, 0, false, self, Sha256Hex(code), error_out)) return false;
-        env_->SetClipboardText(code);
+        // clipboard only while it still holds exactly this code. --write-session
+        // never touches the clipboard.
+        if (!StartSession(true, secret, 0, false, self, no_launch_ ? std::string() : Sha256Hex(code), error_out)) return false;
+        if (!no_launch_) env_->SetClipboardText(code);
         code_ = code;
         code_out = code;
         return true;
@@ -728,6 +732,13 @@ private:
         session_id_ = id;
         wait_invite_ = !host && wait;
         notice_.clear();
+        if (no_launch_) {
+            // --write-session (developer): the files are in place exactly as for a
+            // launch; the caller starts the game and runs --end-session afterwards.
+            Log("play=written; role=" + req.lab.role + "; wait=" + (wait_invite_ ? "1" : "0") + "; launch=0");
+            last_error_.clear();
+            return true;
+        }
         if (!StartWatchdogFor(*env_, paths_, session_id_))
             notice_ = "The background helper could not start: keep Diamond Dogs Together open until you quit MGSV (it switches co-op off then).";
         for (int i = 0; i < 3; ++i) offsets_[i] = static_cast<std::int64_t>(FileSizeOrZero(JoinPath2(paths_.mod, Wide(kLogNames[i]))));
@@ -1100,6 +1111,7 @@ private:
     std::wstring game_dir_;
     std::shared_ptr<Env> env_;
     bool exit_if_busy_ = false;
+    bool no_launch_ = false;
     InstancePaths paths_;
     std::shared_ptr<Shared> shared_ = std::make_shared<Shared>();
     std::thread setup_thread_;
@@ -1141,6 +1153,91 @@ int RunWatch(const std::wstring& exe_dir, const std::string& session_id) {
     auto env = MakeWin32Env();
     return RunWatchdog(*env, exe_dir, LowerAscii(session_id));
 }
+
+// ---- Developer flags: --write-session / --end-session ---------------------------------
+namespace {
+std::string OneLine(std::string text) {
+    for (char& c : text)
+        if (c == '\r' || c == '\n') c = ' ';
+    return text;
+}
+}  // namespace
+
+int RunWriteSessionWithEnv(const std::wstring& game_dir, std::shared_ptr<Env> env, const WriteSessionRequest& request, std::string& out) {
+    if (request.host && (!request.code.empty() || !request.character.empty())) {
+        out += "error=the host plays Snake and makes its own code: --code and --character are for join\n";
+        return 2;
+    }
+    Character chosen = Character::dd_male;
+    if (!request.character.empty() && !CharacterFromName(request.character, chosen)) {
+        out += "error=unknown character (story, ocelot, dd_male, dd_female or avatar)\n";
+        return 2;
+    }
+    RealModel model(game_dir, std::move(env), false, true);
+    if (!request.character.empty()) model.set_character(chosen);
+    if (model.phase() == Phase::needs_setup) {
+        out += "setup=start\n";
+        model.start_setup();
+        while (model.phase() == Phase::setting_up) {
+            Sleep(50);
+            model.tick();
+        }
+        out += model.phase() == Phase::ready ? "setup=done\n" : "setup=failed\n";
+    }
+    if (model.phase() != Phase::ready) {
+        const std::string why = model.last_error().empty() ? std::string("co-op is not ready in this folder") : model.last_error();
+        out += "error=" + OneLine(why) + "\n";
+        return 1;
+    }
+    std::string code, error;
+    const bool ok = request.host ? model.host(code, error) : model.join(request.code, error);
+    if (!ok) {
+        out += "error=" + OneLine(error.empty() ? model.last_error() : error) + "\n";
+        return 1;
+    }
+    out += std::string("role=") + (request.host ? "host" : "guest") + "\n";
+    out += "session=" + model.session_id() + "\n";
+    if (request.host) out += "code=" + code + "\n";
+    else out += std::string("wait_invite=") + (Trim(request.code).empty() ? "1" : "0") + "\n";
+    out += "launch=0\n";
+    std::fill(code.begin(), code.end(), '\0');
+    return 0;
+}
+
+int RunWriteSession(const std::wstring& game_dir, const WriteSessionRequest& request, std::string& out) {
+    return RunWriteSessionWithEnv(game_dir, MakeWin32Env(), request, out);
+}
+
+int RunEndSessionWithEnv(const std::wstring& game_dir, std::shared_ptr<Env> env, std::string& out) {
+    const InstancePaths paths = GetInstancePaths(game_dir);
+    if (!IsFile(paths.exe)) {
+        out += "error=no mgsvtpp.exe in this folder\n";
+        return 1;
+    }
+    if (AnyGameRunningIn(*env, paths.game)) {
+        out += "error=MGSV is running from this folder; co-op is switched off only after it exits\n";
+        return 1;
+    }
+    if (!IsDir(paths.mod)) {
+        out += "session=none\n";
+        return 0;
+    }
+    if (PlaySessionLive(*env, paths)) {
+        out += "error=a Diamond Dogs Together window or its helper still owns this session; close it or quit MGSV\n";
+        return 1;
+    }
+    const CleanupResult r = CleanupSession(*env, paths, false);
+    const StaleResult stale = RemoveStaleHandoff(*env, paths);
+    LauncherLog(*env, paths, "play=ended; removed=" + std::to_string(r.removed.size()) + "; kept=" + std::to_string(r.kept.size()));
+    out += std::string("cleanup=") + (r.ran ? "ran" : "skipped") + "\n";
+    for (const std::string& name : r.removed) out += "removed=" + name + "\n";
+    for (const std::string& name : r.kept) out += "kept=" + name + "\n";
+    for (const std::string& name : stale.removed) out += "removed=" + name + "\n";
+    for (const std::string& m : r.messages) out += "note=" + OneLine(m) + "\n";
+    return r.kept.empty() ? 0 : 1;
+}
+
+int RunEndSession(const std::wstring& game_dir, std::string& out) { return RunEndSessionWithEnv(game_dir, MakeWin32Env(), out); }
 
 }  // namespace ddt::core
 

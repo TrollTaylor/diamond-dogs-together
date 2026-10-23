@@ -1,14 +1,17 @@
-# Helpers for the two-PC friend package (tools/friend/*.ps1): install,
-# Play-Coop (Host/Join over our own Steam or UDP link, docs/two-pc-play.md), uninstall
-# and log collection.
+# Developer helpers (tools/dev, never shipped). Until 0.13.6 this module served
+# the PowerShell player package (Install-Coop / Play-Coop / Share-Save /
+# Collect-Logs / Uninstall-Coop); DiamondDogsTogether.exe replaced those in
+# 0.14.0 (native/launcher/core, tests/ddt_core_tests.cpp). It stays for the
+# developer's local two-window test (Play-LocalCoop.ps1, LocalCoopSession.psm1)
+# and the hidden worker (Import-CoopProgressFiles), and it still reads and
+# writes the same play-session.json / friend-install.json formats as the exe.
 #
-# Runs under Windows PowerShell 5.1 (the friend's PC; the .bat files start
-# powershell.exe) and PowerShell 7 (CTest). Keep this file ASCII-only and
+# Runs under Windows PowerShell 5.1 (Play-Offline-Coop.bat starts powershell.exe)
+# and PowerShell 7 (CTest). Keep this file ASCII-only and
 # 5.1-compatible: no ternary/null-coalescing operators, no
 # [IO.Path]::GetRelativePath, no three-argument Join-Path.
 #
-# Imports tools/CoopPlay.psm1 (packaged next to this file in scripts\) and
-# re-exports it, so the friend scripts import only this module.
+# Imports tools/CoopPlay.psm1 (one folder up) and re-exports it.
 # Pure helpers are unit tested by tests/friend_package_tests.ps1. Nothing here
 # launches the game or Steam, except Start-CoopRelaunch (MGSV again through
 # Steam after an automatic save handoff, only with every co-op file in place;

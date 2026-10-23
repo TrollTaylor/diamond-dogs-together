@@ -6,7 +6,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
-$modulePath=Join-Path $root 'tools\friend\LocalCoopWindows.psm1'
+$modulePath=Join-Path $root 'tools\dev\LocalCoopWindows.psm1'
 Import-Module $modulePath -Force -DisableNameChecking
 $script:checks=0
 function Check([bool]$Value,[string]$Message) {

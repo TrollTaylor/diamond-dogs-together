@@ -126,12 +126,21 @@ try {
         Write-Output 'Previous loader and managed mod files restored. Role configuration and logs are retained.'
         return
     }
-    $package=Get-Content -LiteralPath (Join-Path $packageRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    # A Diamond Dogs Together drop-in package (0.14.0+, tools/package.ps1 -Friend)
+    # keeps package.json in mgs-coop\ and also lists the launcher, its README and
+    # the source archive. This owned installer (developer and lab use) installs
+    # only the loader and its licences from it; players copy the zip instead.
+    $packageJson=Join-Path $packageRoot 'package.json'
+    if(!(Test-Path -LiteralPath $packageJson -PathType Leaf)) { $packageJson=Join-Path $packageRoot 'mgs-coop/package.json' }
+    $package=Get-Content -LiteralPath $packageJson -Raw -Encoding UTF8 | ConvertFrom-Json
+    if(@($package.PSObject.Properties.Name) -contains 'layout' -and [string]$package.layout -ceq 'drop-in') {
+        $package.files=@($package.files | Where-Object { $_.target -cnotin @('DiamondDogsTogether.exe','mgs-coop/README.txt','mgs-coop/source.zip') })
+    }
     # Older packages bundled the archive; current packages record only its hash.
     $bundlesArchive=@($package.files | ForEach-Object { $_.target }) -contains $archiveTarget
     $packageAllowed=if(@($package.files.target) -ccontains 'mgs-coop/ImGui-LICENSE.txt') { $allowed } else { $legacyAllowed }
     $packageFileCount=if($bundlesArchive) { $packageAllowed.Count-1 } else { $packageAllowed.Count-2 }
-    if($package.product -ne 'mgs-coop-local-package' -or $package.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5','0.13.6') -or
+    if($package.product -ne 'mgs-coop-local-package' -or $package.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5','0.13.6','0.14.0') -or
         @($package.files).Count -ne $packageFileCount -or @($package.files.target | Select-Object -Unique).Count -ne $packageFileCount -or
         @($package.files.target | Where-Object { $_ -cnotin $packageAllowed -or $_ -ceq 'mgs-coop/probe-install.json' }).Count) { throw 'Unexpected package manifest.' }
     $archiveHash=$null
@@ -158,7 +167,7 @@ try {
             !@([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^-NonI' }).Count
         $archiveInput=$RuntimeArchive
         if(!$archiveInput -and !((Test-Path -LiteralPath $archivePath -PathType Leaf) -and (Hash $archivePath) -eq $archiveHash) -and $interactive) {
-            Write-Host "This package contains no game-derived files. The two-player runtime archive (mgs-coop-player-runtime.dat, SHA-256 $archiveHash) is generated or copied on your own PC; see RUNTIME-ARCHIVE.txt."
+            Write-Host "This package contains no game-derived files. The two-player runtime archive (mgs-coop-player-runtime.dat, SHA-256 $archiveHash) is built on your own PC (DiamondDogsTogether.exe, or ddt_datbuild.exe build) or copied; see RUNTIME-ARCHIVE.txt."
             $archiveInput=([string](Read-Host 'Full path of mgs-coop-player-runtime.dat')).Trim().Trim('"')
             if(!$archiveInput) { throw 'No runtime archive path was entered; nothing was installed.' }
         }

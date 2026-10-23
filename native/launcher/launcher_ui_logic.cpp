@@ -283,12 +283,40 @@ Options ParseCommandLine(const std::vector<std::wstring>& args) {
         } else if (Is(a, L"--help") || Is(a, L"-h") || Is(a, L"/?")) {
             o.mode = Options::Mode::help;
             ++modes;
+        } else if (Is(a, L"--write-session")) {
+            if (!has_value || (!Is(args[i + 1], L"host") && !Is(args[i + 1], L"join"))) {
+                o.error = L"--write-session needs host or join.";
+                return o;
+            }
+            o.mode = Options::Mode::write_session;
+            o.write_host = Is(args[++i], L"host");
+            ++modes;
+        } else if (Is(a, L"--end-session")) {
+            o.mode = Options::Mode::end_session;
+            ++modes;
+        } else if (Is(a, L"--code")) {
+            if (!has_value || args[i + 1].empty()) { o.error = L"--code needs the host's join code."; return o; }
+            o.write_code = args[++i];
+        } else if (Is(a, L"--character")) {
+            if (!has_value || args[i + 1].empty()) { o.error = L"--character needs a name."; return o; }
+            o.write_character = args[++i];
+        } else if (Is(a, L"--game-dir")) {
+            if (!has_value || args[i + 1].empty()) { o.error = L"--game-dir needs a folder."; return o; }
+            o.game_dir = args[++i];
         } else {
             o.error = L"Unknown option: " + a;
             return o;
         }
     }
-    if (modes > 1) o.error = L"Use only one of --watch, --selftest, --screenshot-all and --help.";
+    if (modes > 1) {
+        o.error = L"Use only one of --watch, --selftest, --screenshot-all, --write-session, --end-session and --help.";
+        return o;
+    }
+    const bool session_flag = o.mode == Options::Mode::write_session || o.mode == Options::Mode::end_session;
+    if (!o.game_dir.empty() && !session_flag) o.error = L"--game-dir goes with --write-session or --end-session.";
+    else if ((!o.write_code.empty() || !o.write_character.empty()) && !(o.mode == Options::Mode::write_session && !o.write_host))
+        o.error = L"--code and --character go with --write-session join.";
+    else if (session_flag && o.mock) o.error = L"--mock does not go with --write-session or --end-session.";
     return o;
 }
 
@@ -302,7 +330,14 @@ const wchar_t* UsageText() {
            L"  --scale <factor>          force a UI scale instead of the monitor's DPI\n"
            L"  --screenshot-all <dir>    render every page once (hidden) and save PNGs\n"
            L"  --selftest                run the built-in checks; exit code 0 = passed\n"
-           L"  --watch <session>         background helper while the game runs (no window)\n";
+           L"  --watch <session>         background helper while the game runs (no window)\n"
+           L"Developer only (release-gate checks; no window, no Steam, no clipboard):\n"
+           L"  --write-session host|join run the setup if needed and write the session files\n"
+           L"                            exactly as Host / Join do, without starting Steam\n"
+           L"    --code <code>           join: the host's code (none = wait for a Steam invite)\n"
+           L"    --character <name>      join: story | ocelot | dd_male | dd_female | avatar\n"
+           L"    --game-dir <dir>        the game folder (default: this program's folder)\n"
+           L"  --end-session [--game-dir <dir>]  switch co-op off again (not while MGSV runs)\n";
 }
 
 }  // namespace ddt::ui

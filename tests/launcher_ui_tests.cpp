@@ -210,6 +210,25 @@ void TestCommandLine() {
     Check(!ui::ParseCommandLine({L"--selftest", L"--watch", L"abc"}).error.empty(), "one mode only");
     Check(!ui::ParseCommandLine({L"--frobnicate"}).error.empty(), "unknown option");
     Check(ui::ParseCommandLine({L"/?"}).mode == ui::Options::Mode::help, "help");
+    // Developer flags for the release gate (no window, no Steam).
+    o = ui::ParseCommandLine({L"--write-session", L"join", L"--code", L"MGS2-X", L"--character", L"story", L"--game-dir", L"D:\\G"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::write_session && !o.write_host && o.write_code == L"MGS2-X" &&
+              o.write_character == L"story" && o.game_dir == L"D:\\G",
+          "--write-session join with a code, a character and a folder");
+    o = ui::ParseCommandLine({L"--write-session", L"host"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::write_session && o.write_host && o.game_dir.empty(), "--write-session host");
+    Check(!ui::ParseCommandLine({L"--write-session"}).error.empty(), "--write-session needs host or join");
+    Check(!ui::ParseCommandLine({L"--write-session", L"guest"}).error.empty(), "--write-session takes host or join only");
+    Check(!ui::ParseCommandLine({L"--write-session", L"host", L"--code", L"MGS2-X"}).error.empty(), "the host makes its own code");
+    Check(!ui::ParseCommandLine({L"--code", L"MGS2-X"}).error.empty(), "--code only with --write-session join");
+    Check(!ui::ParseCommandLine({L"--game-dir", L"D:\\G"}).error.empty(), "--game-dir only with the session flags");
+    o = ui::ParseCommandLine({L"--end-session", L"--game-dir", L"D:\\G"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::end_session && o.game_dir == L"D:\\G", "--end-session");
+    Check(!ui::ParseCommandLine({L"--end-session", L"--write-session", L"host"}).error.empty(), "one session flag at a time");
+    Check(!ui::ParseCommandLine({L"--write-session", L"host", L"--mock"}).error.empty(), "no simulated model for the session flags");
+    Check(std::wstring(ui::UsageText()).find(L"Developer only") != std::wstring::npos &&
+              std::wstring(ui::UsageText()).find(L"--end-session") != std::wstring::npos,
+          "the usage text marks the session flags developer-only");
 }
 
 void TestMock() {

@@ -2457,7 +2457,7 @@ void TestHud() {
     for (const hud::Toast* t : toasts) {
         connected = connected || std::strcmp(t->text, "Connected to Snake_Fan (Steam relay).") == 0;
         ended = ended || std::strncmp(t->text, "The host's game did not answer.", 31) == 0;
-        version = version || std::strcmp(t->text, "Your friend runs mgs-coop 0.11.0+1234567; you run 0.12.0+f64a8e9. Both must install the same package.") == 0;
+        version = version || std::strcmp(t->text, "Your partner runs Diamond Dogs Together 0.11.0+1234567; you run 0.12.0+f64a8e9. Both must use the same version.") == 0;
     }
     Check(connected && ended && version, "toast sentences (coop_text)");
     model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 12000);
@@ -2477,9 +2477,9 @@ void TestHud() {
             {"demo_stage", "No partner body in this scene (Mother Base demo stage). It returns when the scene reloads normally."},
             {"hangar", "No partner body in this scene (battle-gear hangar). It returns when the scene reloads normally."},
             {"story", "No partner body in this scene (story variant). It returns when the scene reloads normally."},
-            {"layout", "No partner body in this scene (unknown Mother Base layout). Please send Collect-Logs."},
-            {"other", "No partner body in this scene (unexpected pack list). Please send Collect-Logs."},
-            {"", "No partner body in this scene (unexpected pack list). Please send Collect-Logs."},
+            {"layout", "No partner body in this scene (unknown Mother Base layout). Please send your logs (Tools > Collect logs)."},
+            {"other", "No partner body in this scene (unexpected pack list). Please send your logs (Tools > Collect logs)."},
+            {"", "No partner body in this scene (unexpected pack list). Please send your logs (Tools > Collect logs)."},
         };
         for (const auto& c : cases) {
             std::snprintf(e.text, sizeof(e.text), "%s", c.scene);
@@ -2537,7 +2537,7 @@ void TestHud() {
              "Base, free roam or helicopter."},
             {1, 40010, 1, 0, 40010,
              "Your co-op save is at the story start, so Continue goes to a story mission that co-op cannot join. Quit and import your "
-             "partner's save with Share-Save.bat (option I)."},
+             "partner's save (Tools > Share save > Import)."},
             {2, 30010, 0, 30050, 40050,
              "Waiting up to 2 min for your partner (now in Mother Base) to reach this helicopter. Choose the deployment again to fly "
              "alone."},
@@ -2791,10 +2791,10 @@ void TestSaveHandoffHud() {
         const char* sentence;
     } toasts[] = {
         {1, 594, "Snake_Fan", hud::Tone::info,
-         "Getting the host's save (594 KB) so you both start in the same place. Your own co-op save is kept (Share-Save.bat [R] brings it "
-         "back)."},
+         "Getting the host's save (594 KB) so you both start in the same place. Your own co-op save is kept (Tools > Share save > Restore "
+         "previous brings it back)."},
         {2, 7, "Snake_Fan", hud::Tone::info,
-         "Host's save ready: MGSV restarts in 7 s and Play-Coop starts it again (not back within a minute? Press Play in Steam). Keep "
+         "Host's save ready: MGSV restarts in 7 s and the launcher starts it again (not back within a minute? Press Play in Steam). Keep "
          "yours: F9 > Partner / Co-op > Shared save > Keep my own save."},
         {3, 0, "Snake_Fan", hud::Tone::info, "Host's save stored for a test; it is not applied."},
         {4, 0, "Snake_Fan", hud::Tone::info,
@@ -2812,8 +2812,9 @@ void TestSaveHandoffHud() {
         {7, 99, "Snake_Fan", hud::Tone::warn, "Getting the host's save failed (unknown error). Nothing was changed."},
         {8, 0, "Snake_Fan", hud::Tone::info, "You kept your own save for this session."},
         {9, 0, "Snake_Fan", hud::Tone::warn,
-         "Host's save ready: quit MGSV (title menu > Exit) and Play-Coop starts it again on the host's save."},
-        {10, 0, "Snake_Fan", hud::Tone::info, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
+         "Host's save ready: quit MGSV (title menu > Exit) and Diamond Dogs Together starts it again on the host's save."},
+        {10, 0, "Snake_Fan", hud::Tone::info,
+         "You now play on the host's save. Tools > Share save > Restore previous brings your previous co-op save back."},
         // Online 2026-10-22 P3 / P6 (a = the host's mission; G11's b, the settle seconds, is 0 here).
         {11, 30050, "Snake_Fan", hud::Tone::info,
          "The host is in Mother Base: their save is checked there, then copied to you at the title screen and MGSV restarts once."},
@@ -2821,8 +2822,8 @@ void TestSaveHandoffHud() {
          "The host is in Mother Base or free roam: their save is checked there, then copied to you at the title screen and MGSV restarts "
          "once."},
         {12, 30010, "Snake_Fan", hud::Tone::info,
-         "The host's save is ready for you: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. MGSV then "
-         "restarts once on it."},
+         "The host's save is ready for you: go back to the title screen (or quit MGSV and join again in Diamond Dogs Together) to get it. "
+         "MGSV then restarts once on it."},
         {21, 0, "Snake_Fan", hud::Tone::info, "Sending your save to Snake_Fan so you both start in the same place."},
         {21, 0, "", hud::Tone::info, "Sending your save to your partner so you both start in the same place."},
         {22, 30010, "Snake_Fan", hud::Tone::info,
@@ -2840,7 +2841,7 @@ void TestSaveHandoffHud() {
          "Your save is still in the story opening, so it is not shared. Let your partner host if their save reaches Mother Base."},
         {25, 0, "Snake_Fan", hud::Tone::info, "Snake_Fan kept their own save."},
         {25, 0, "", hud::Tone::info, "Your partner kept their own save."},
-        {26, 3, "Snake_Fan", hud::Tone::warn, "Sending your save failed (not enough disk space). Use Share-Save.bat instead."},
+        {26, 3, "Snake_Fan", hud::Tone::warn, "Sending your save failed (not enough disk space). Use Tools > Share save instead."},
         {27, 10020, "Snake_Fan", hud::Tone::warn,
          "Your save continues into story mission 10020, which co-op cannot join. Go to Mother Base or free roam first."},
         {28, 10, "Snake_Fan", hud::Tone::info, "Checking your save here (about 10 s; stay in this mission), then it is copied to Snake_Fan."},
@@ -2932,7 +2933,7 @@ void TestSaveHandoffHud() {
         const hud::Toast* active[hud::kMaxToasts]{};
         Check(model.Active(11000, active, hud::kMaxToasts) == 2, "the countdown re-post updates its toast (G1 + one G2)");
         CheckText(true, active[0]->text,
-                  "Host's save ready: MGSV restarts in 9 s and Play-Coop starts it again (not back within a minute? Press Play in Steam). Keep "
+                  "Host's save ready: MGSV restarts in 9 s and the launcher starts it again (not back within a minute? Press Play in Steam). Keep "
                   "yours: F9 > Partner / Co-op > Shared save > Keep my own save.",
                   "the newest countdown text replaces the older one");
         Check(active[0]->until_ms == 11000 + hud::kToastMs && std::strncmp(active[1]->text, "Getting the host's save (594 KB)", 32) == 0,
@@ -3103,24 +3104,24 @@ void TestSaveHandoffHud() {
         std::uint32_t seconds;
         const char* line;
     } lines[] = {
-        {2, T::off, 0, 0, 0, "Automatic save sharing is off (Play-Coop -SaveHandoff off)."},
+        {2, T::off, 0, 0, 0, "Automatic save sharing is off for this session."},
         {2, T::idle, 0, 0, 0, "Comparing your save with the host's; nothing to share yet."},
         {2, T::same, 0, 0, 0, "Your save matches the host's place; nothing to share."},
         {2, T::wait_host, 0, 0, 0, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you."},
-        {2, T::wait_host, 0, 1, 0, "The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it."},
+        {2, T::wait_host, 0, 1, 0, "The host's save is ready: go back to the title screen (or quit MGSV and join again in Diamond Dogs Together) to get it."},
         {2, T::wait_host, 0, 2, 0, "The host's save is checked in their mission, then copied to you at the title screen."},
         {2, T::receiving, 42, 0, 0, "Receiving the host's save: 42% of 594 KB."},
         {2, T::receiving, 230, 0, 0, "Receiving the host's save: 100% of 594 KB."},
         {2, T::staged, 100, 0, 0, "Host's save received and checked (594 KB)."},
         {2, T::countdown, 100, 0, 7,
-         "Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Share-Save.bat [R])."},
-        {2, T::countdown, 100, 0, 0, "Host's save ready: MGSV restarts now. Your current co-op save is kept aside (Share-Save.bat [R])."},
+         "Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Tools > Share save > Restore previous)."},
+        {2, T::countdown, 100, 0, 0, "Host's save ready: MGSV restarts now. Your current co-op save is kept aside (Tools > Share save > Restore previous)."},
         {2, T::exiting, 100, 0, 0,
-         "MGSV is closing to load the host's save; Play-Coop starts it again (not back within a minute? Press Play in Steam)."},
+         "MGSV is closing to load the host's save; Diamond Dogs Together starts it again (not back within a minute? Press Play in Steam)."},
         {2, T::kept, 0, 5, 0, "You kept your own save for this session."},
         {2, T::refused, 0, 2, 0, "The host's save cannot be shared: it is still in the story opening."},
         {2, T::failed, 0, 5, 0, "Getting the host's save failed: the connection dropped. Nothing was changed."},
-        {2, T::applied, 0, 0, 0, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
+        {2, T::applied, 0, 0, 0, "You now play on the host's save. Tools > Share save > Restore previous brings your previous co-op save back."},
         {1, T::idle, 0, 0, 0, "Comparing your save with your partner's; nothing to share yet."},
         {1, T::same, 0, 0, 0, "Your save matches your partner's place; nothing to share."},
         {1, T::offered, 0, 0, 0, "Offering your save to your partner."},
@@ -3143,7 +3144,7 @@ void TestSaveHandoffHud() {
                       status[0] && std::strlen(status) <= 199 && PrintableAscii(status),
                   "every F9 Shared save line is bounded ASCII");
     CheckText(text::FormatSaveHandoffStatus(2, 16, 0, 0, 0, 0, status, sizeof(status)), status,
-              "Automatic save sharing is off (Play-Coop -SaveHandoff off).", "an unknown token reads as off");
+              "Automatic save sharing is off for this session.", "an unknown token reads as off");
     {
         char tiny[12]{};
         Check(!text::FormatSaveHandoffStatus(2, token(T::receiving), 42, 0, 608012, 0, tiny, sizeof(tiny)) && tiny[0] == 0 &&

@@ -1,13 +1,16 @@
 #Requires -Version 7
-# Tests for the two-PC play package (tools/friend, tools/CoopPlay.psm1,
-# tools/package.ps1 -Friend; docs/two-pc-play.md).
+# Tests for the Diamond Dogs Together package (tools/package.ps1 -Friend: the
+# drop-in zip whose root is the game folder) and for the developer tools that
+# remain after the PowerShell player tooling was retired in 0.14.0:
+# tools/CoopPlay.psm1, tools/dev/FriendCommon.psm1 (the session, cleanup and
+# save-handoff helpers that the local test and the hidden worker use), the owned
+# installer's drop-in support and the local two-window test (tools/dev).
+# DiamondDogsTogether.exe's own behaviour is tested in C++ (tests/ddt_core_tests.cpp).
 # Everything runs inside an owned temporary folder under build/: fixture game
 # folders hold inert stand-in files, a fixture Steam folder holds fixture saves.
-# No real game folder, Steam folder, router, firewall setting or game process
-# is touched, and nothing contacts the network (Play-Coop runs with
-# -HostAddress, its optional steps answered No, and the launch skipped).
-# The friend scripts run as child processes under Windows PowerShell 5.1 (what
-# the .bat files start on a friend's PC) and, for one flow, PowerShell 7.
+# No real game folder, Steam folder or game process is touched, and nothing
+# contacts the network. The developer scripts run as child processes under
+# Windows PowerShell 5.1 (what Play-Offline-Coop.bat starts).
 [CmdletBinding()]
 param([string]$IniCheck, [string]$FakeProcess)
 
@@ -17,7 +20,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $projectRoot 'tools\worker\WorkerSource.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $projectRoot 'tools/lab/LabCommon.psm1') -Force -DisableNameChecking
-Import-Module (Join-Path $projectRoot 'tools/friend/FriendCommon.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $projectRoot 'tools/dev/FriendCommon.psm1') -Force -DisableNameChecking
 $buildRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'build'))
 $nonce = [Guid]::NewGuid().ToString('N')
 $fixture = Join-Path $buildRoot ('friend-package-tests-' + $nonce)
@@ -79,27 +82,6 @@ function Invoke-Friend([string]$Script, [string[]]$Arguments, [string]$HostExe =
     # Windows PowerShell 5.1 wraps error records at the console width, even
     # inside words: messages are compared with all whitespace removed.
     return [pscustomobject]@{ Exit = $code; Raw = $raw; Text = ($raw -replace '\s', '') }
-}
-function Invoke-FriendAnswers([string]$Script, [string[]]$Arguments, [string[]]$Answers) {
-    # The prompt path: answers arrive on stdin, one per Read-Host
-    # (MGS_COOP_TEST_INTERACTIVE makes the scripts treat redirected input as a console).
-    foreach ($a in $Arguments) { if ($a -and [IO.Path]::IsPathRooted($a) -and $a -notmatch '^[0-9]') { Assert-InFixture $a } }
-    $env:MGS_COOP_TEST_INTERACTIVE = '1'
-    try { $raw = $Answers | & $winPs -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments 2>&1 | Out-String }
-    finally { Remove-Item Env:MGS_COOP_TEST_INTERACTIVE -ErrorAction SilentlyContinue }
-    $code = $LASTEXITCODE
-    return [pscustomobject]@{ Exit = $code; Raw = $raw; Text = ($raw -replace '\s', '') }
-}
-function Invoke-Play([string]$Script, [string[]]$Arguments, [string[]]$Answers = @(''), [switch]$NoWatchdog, [switch]$Full) {
-    # Play-Coop through its prompt path; it leaves right after the activation
-    # (like a closed window) unless -Full, so no Steam launch ever happens.
-    if (!$Full) { $env:MGS_COOP_TEST_EXIT_AFTER_ACTIVATE = '1' }
-    if ($NoWatchdog) { $env:MGS_COOP_TEST_NO_WATCHDOG = '1' }
-    try { return Invoke-FriendAnswers $Script $Arguments $Answers }
-    finally {
-        Remove-Item Env:MGS_COOP_TEST_EXIT_AFTER_ACTIVATE -ErrorAction SilentlyContinue
-        Remove-Item Env:MGS_COOP_TEST_NO_WATCHDOG -ErrorAction SilentlyContinue
-    }
 }
 function Has($Result, [string]$Needle) { return $Result.Text.Contains(($Needle -replace '\s', '')) }
 function Get-TreeHashes([string]$Root) {
@@ -173,11 +155,6 @@ function Get-SessionJson($Paths) {
         }
     }
 }
-function Get-CodeFromOutput([string]$Raw) {
-    $m = [regex]::Match($Raw, 'MGS1-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{2}@[^\s]+')
-    if (!$m.Success) { throw "No join code in the output: $Raw" }
-    return $m.Value
-}
 function Remove-OwnedFixture {
     if (!(Test-Path -LiteralPath $fixture)) { return }
     if ((Split-Path -Parent $fixture) -ne $buildRoot -or !(Test-Path -LiteralPath $ownerMarker -PathType Leaf) -or
@@ -191,8 +168,6 @@ function Remove-OwnedFixture {
 if (!(Test-Path -LiteralPath $buildRoot)) { $null = New-Item -ItemType Directory -Path $buildRoot }
 $null = New-Item -ItemType Directory -Path $fixture
 [IO.File]::WriteAllText($ownerMarker, $nonce)
-$fakeGame = $null
-$watchdogs = New-Object Collections.Generic.List[int]
 # Steam's running flag for MGSV (Get-CoopSteamAppRunning, online 2026-10-22 P5)
 # comes from this fixture file in this process and every script it starts, never
 # from the registry.
@@ -653,7 +628,7 @@ try {
         $sentence = Get-CoopLinkReasonText -Reason $reason
         Assert-True ([bool]$sentence -and !$sentence.StartsWith('The connection was refused')) "Steam sentence for $reason"
     }
-    Assert-True ((Get-CoopLinkReasonText -Reason steam_iface_shape).Contains('LAN/VPN')) 'a Steam networking change points to the LAN/VPN code'
+    Assert-True ((Get-CoopLinkReasonText -Reason steam_iface_shape).Contains('Tools > Collect logs') -and !(Get-CoopLinkReasonText -Reason steam_iface_shape).Contains('LAN/VPN')) 'a Steam networking change points to Collect logs (Steam only: no LAN/VPN code)'
     $steamStatus = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"steam:...1111","local_port":0,"rtt_ms":61,"jitter_ms":3,"loss_permille":0,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","transport":"steam","route":"relay","accepting":1,"steam":"ok","time_utc":"2026-10-05T12:00:00Z"}'
     $sst = ConvertFrom-CoopStatusText -Text $steamStatus -ExpectedPid 4242
     $snow = [DateTime]::Parse('2026-10-05T12:00:03Z').ToUniversalTime()
@@ -716,7 +691,7 @@ try {
     $elsewhere = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":10020'))
     Assert-True ((Format-CoopStatusLine -Status $elsewhere -Role host -NowUtc $now).EndsWith('mission 10020 - Partner body unavailable in this mission; use Mother Base or free roam.')) 'story mission reports unavailable partner body'
     $rejected = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"state":"connected","reason":""', '"state":"rejected","reason":"build_mismatch"').Replace('"remote_build":"0.12.0"', '"remote_build":"0.12.1"'))
-    Assert-True ((Format-CoopStatusLine -Status $rejected -Role guest -NowUtc $now -OwnBuild '0.12.0').Contains('Your friend runs mgs-coop 0.12.1; you run 0.12.0. Both must install the same package.')) 'build mismatch sentence'
+    Assert-True ((Format-CoopStatusLine -Status $rejected -Role guest -NowUtc $now -OwnBuild '0.12.0').Contains('Your partner runs Diamond Dogs Together 0.12.1; you run 0.12.0. Both must use the same version.')) 'build mismatch sentence'
     Assert-Equal (Get-CoopLinkReasonText -Reason busy) 'The host is already connected to someone.' 'busy sentence'
     Assert-True ((Get-CoopLinkReasonText -Reason bad_code -Verified 0).Contains('Possibly a wrong code')) 'bad_code sentence'
     foreach ($reason in 'proto_mismatch', 'mode_mismatch', 'role_mismatch', 'secret_missing', 'secret_bad_char', 'crypto', 'no_peer_addr', 'transport_bind', 'transport_socket', 'something_new') {
@@ -1036,36 +1011,25 @@ try {
     $fwScript = New-CoopFirewallScript -Port 47830 -ExePath $quoteExe -RemoveRuleNames @('{b}') -DisplayName 'mgs-coop play UDP 47830'
     Assert-True ($fwScript.Contains("-Program 'C:\Games\O''Brien`$x\MGS_TPP\mgsvtpp.exe'") -and $fwScript.Contains('-Profile Any') -and $fwScript.Contains('-Protocol UDP -LocalPort 47830') -and $fwScript.Contains("Remove-NetFirewallRule -Name '{b}'")) 'firewall script: quoted path, Profile Any, Block rules removed first'
     Assert-True ($fwScript.IndexOf('Remove-NetFirewallRule -Name') -lt $fwScript.IndexOf('New-NetFirewallRule')) 'firewall script removes the Block rules before adding the Allow rule'
-    $playText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/Play-Coop.ps1'))
-    Assert-True ($playText.Contains('[ValidateRange(0, 3)][int]$World = 3') -and
-        $playText.Contains('New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World') -and
-        $playText.Contains('World sync level $World (experimental)')) 'Play-Coop -World 0..3 (default 3) reaches lab.ini and is announced'
-    Assert-Equal ([regex]::Matches($playText, [regex]::Escape('-Partner $Partner -SaveHandoff $SaveHandoff -TravelLock $TravelLock')).Count) 2 'both lab.ini calls get -SaveHandoff and -TravelLock'
-    Assert-True ($playText.Contains("[ValidateSet('scene', 'always', 'off')][string]`$SaveHandoff = 'scene'") -and $playText.Contains("[ValidateSet('on', 'off')][string]`$TravelLock = 'on'")) 'Play-Coop -SaveHandoff (default scene) and -TravelLock (default on)'
-    $supported = [regex]::Match($playText, "SupportedLoaderVersions = @\(([^)]*)\)").Groups[1].Value
-    Assert-True ($supported.Contains("'$packageVersion'") -and $supported.Contains("'0.13.0'")) 'Play-Coop supports this package version and the phase-2 loader 0.13.0'
-    $shareText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/Share-Save.ps1'))
-    Assert-True ($shareText.Contains("'  [R] Restore the co-op copy the last import or automatic save handoff replaced'")) 'Share-Save menu names the save handoff for [R]'
-    $collectText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/Collect-Logs.ps1'))
-    Assert-True ($collectText.Contains('link-rejoin.txt (a join code)') -and !$collectText.Contains("'link-rejoin.txt'")) 'Collect-Logs names link-rejoin.txt as never collected and never reads it'
-    Assert-True ($playText.Contains("`$display = 'mgs-coop play'") -and !$playText.Contains('mgs-coop play UDP')) 'one fixed firewall rule name: a later [F] on another port replaces the earlier rule'
     $fixedScript = New-CoopFirewallScript -Port 47900 -ExePath $quoteExe -DisplayName 'mgs-coop play'
     Assert-True ($fixedScript.Contains("Get-NetFirewallRule -DisplayName 'mgs-coop play' -ErrorAction SilentlyContinue | Remove-NetFirewallRule") -and
         $fixedScript.IndexOf('Remove-NetFirewallRule') -lt $fixedScript.IndexOf('New-NetFirewallRule')) 'the [F] script replaces the rule of the same name'
-    # [Q] in the status loop hands the cleanup only to a live helper (a key press cannot be scripted here).
-    Assert-True ($playText.Contains("if (Test-CoopProcessAlive -Id ([int]`$session.watchdog_pid) -StartUtc ([string]`$session.watchdog_start_utc)) { Write-Host 'Closing this window") -and
-        $playText.Contains('No helper is running: keep this window open') -and $playText.Contains('MGSV is still running and no helper is')) '[Q] and an early loop end never skip the cleanup without a live helper'
     $tokens = $null; $errors = $null
     $null = [System.Management.Automation.Language.Parser]::ParseInput($fwScript, [ref]$tokens, [ref]$errors)
     Assert-Equal @($errors).Count 0 'firewall script parses (a quote in the path cannot break it)'
     Assert-Equal ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String((ConvertTo-CoopEncodedCommand -Script $fwScript)))) $fwScript 'the elevated command is passed with -EncodedCommand (UTF-16LE base64)'
-    $friendCommonText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/FriendCommon.psm1'))
+    $friendCommonText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/dev/FriendCommon.psm1'))
     Assert-True ($friendCommonText.Contains("'-EncodedCommand', (ConvertTo-CoopEncodedCommand -Script `$Script)") -and $friendCommonText.Contains('-Verb RunAs')) 'Invoke-CoopElevated uses RunAs with -EncodedCommand'
     Assert-True ($friendCommonText.Contains('Start-Job') -and $friendCommonText.Contains('Wait-Job -Job $job -Timeout $TimeoutSec') -and $friendCommonText.Contains("if (`$null -eq `$maps) { return 'unavailable|' }")) 'UPnP runs in a job with a timeout and handles a missing mapping collection'
 
-    # ------------------------------------------------------------ package contents
+    # ------------------------------------------------------------ the Diamond Dogs Together package (tools/package.ps1 -Friend)
+    # The drop-in zip: its root is what goes into the game folder. Inert loader and
+    # launcher bytes with a synthetic passing Release receipt; nothing is built,
+    # installed or started.
     $fakeLoader = Join-Path $fixture 'fake-loader.dll'
     [IO.File]::WriteAllText($fakeLoader, 'INERT loader stand-in for the package test')
+    $fakeLauncher = Join-Path $fixture 'fake-launcher.exe'
+    [IO.File]::WriteAllText($fakeLauncher, 'INERT launcher stand-in for the package test; never executed')
     # Actual shared snapshot policy on small inert source trees: no check runner,
     # build, installer, native fixture or game process is invoked.
     $sourceFx = Join-Path $fixture 'source-snapshot'
@@ -1089,6 +1053,12 @@ try {
     [IO.File]::WriteAllText($addedSource, '// new untested source')
     Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'added source refused'
     Remove-Item -LiteralPath $addedSource
+    # The launcher's embedded assets are compiled into the exe: the snapshot covers them.
+    $assetFile = Join-Path $sourceFx 'native\launcher\assets\fixture.fpkd.bin'
+    $null = New-Item -ItemType Directory -Path (Split-Path -Parent $assetFile) -Force
+    [IO.File]::WriteAllBytes($assetFile, [byte[]](1, 2, 3))
+    Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'an embedded launcher asset is part of the checked source'
+    Remove-Item -LiteralPath (Join-Path $sourceFx 'native\launcher') -Recurse
     Remove-Item -LiteralPath $sourceFile
     Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'removed source refused'
     [IO.File]::WriteAllText($sourceFile, '// checked source')
@@ -1096,15 +1066,16 @@ try {
     $changedDependency.source_dependencies['third_party\minhook'].resolved_path += '-other'
     Assert-Throws { Assert-WorkerReceiptSource $changedDependency (Get-WorkerSourceHashes $sourceFx) } 'dependency target changed' 'changed dependency target refused with same source hashes'
 
-    # The contents test supplies inert DLL bytes with a synthetic passing receipt.
-    # Even the override route must match that receipt and today's exact source scope.
+    # Receipt admission: the loader AND the launcher come from one passing Release run.
     $packageScript = Join-Path $projectRoot 'tools\package.ps1'
     $distFx = Join-Path $fixture 'dist'
-    Assert-Throws { & $packageScript -Friend -LoaderPath $fakeLoader -OutputRoot $distFx } 'requires a passing Release check receipt' 'friend override cannot bypass receipt'
+    Assert-Throws { & $packageScript -Friend -LoaderPath $fakeLoader -OutputRoot $distFx } 'requires a passing Release check receipt' 'friend loader override cannot bypass the receipt'
+    Assert-Throws { & $packageScript -Friend -LauncherPath $fakeLauncher -OutputRoot $distFx } 'LauncherPath requires a passing Release check receipt' 'friend launcher override cannot bypass the receipt'
     Assert-True (-not (Test-Path -LiteralPath $distFx)) 'missing receipt refuses before staging'
     $receiptFx = Join-Path $fixture 'release-receipt'
     $null = New-Item -ItemType Directory -Path $receiptFx
     [IO.File]::Copy($fakeLoader, (Join-Path $receiptFx 'dinput8.dll'))
+    [IO.File]::Copy($fakeLauncher, (Join-Path $receiptFx 'DiamondDogsTogether.exe'))
     $releaseFlags = [ordered]@{}
     foreach ($name in @('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST',
             'MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE',
@@ -1115,67 +1086,121 @@ try {
     }
     $releaseFlags['MGS_BACKGROUND_WORKER'] = 'OFF'
     $currentSource = Get-WorkerSourceHashes $projectRoot
-    $releaseReceipt = [ordered]@{schema=1;status='passed';plan=[ordered]@{profile='Release';flags=$releaseFlags;tests=@('inert-fixture-only')};
-        artifacts=[ordered]@{loader_sha256=(Get-Sha256 $fakeLoader)};source_hashes=$currentSource.hashes;source_dependencies=$currentSource.dependencies}
-    $receiptPath = Join-Path $receiptFx 'receipt.json'
-    [IO.File]::WriteAllText($receiptPath, ($releaseReceipt | ConvertTo-Json -Depth 12), $utf8)
+    function New-FixtureReceipt([string]$Directory, [string]$Name, $Artifacts, $Source = $currentSource) {
+        $receipt = [ordered]@{schema=1;status='passed';plan=[ordered]@{profile='Release';flags=$releaseFlags;tests=@('inert-fixture-only')};
+            artifacts=$Artifacts;source_hashes=$Source.hashes;source_dependencies=$Source.dependencies}
+        $path = Join-Path $Directory $Name
+        [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 12), $utf8)
+        return $path
+    }
+    $bothArtifacts = [ordered]@{loader_sha256=(Get-Sha256 $fakeLoader);launcher_sha256=(Get-Sha256 $fakeLauncher)}
+    $receiptPath = New-FixtureReceipt $receiptFx 'receipt.json' $bothArtifacts
     $wrongLoader = Join-Path $fixture 'wrong-loader.dll'
     [IO.File]::WriteAllText($wrongLoader, 'OTHER inert loader')
-    Assert-Throws { & $packageScript -Friend -LoaderPath $wrongLoader -CheckReceipt $receiptPath -OutputRoot $distFx } 'does not match the Release receipt loader' 'friend override hash mismatch refused'
-    Assert-True (-not (Test-Path -LiteralPath $distFx)) 'mismatched override refuses before staging'
-    $staleReceipt = $releaseReceipt | ConvertTo-Json -Depth 12 | ConvertFrom-Json -AsHashtable
+    Assert-Throws { & $packageScript -Friend -LoaderPath $wrongLoader -CheckReceipt $receiptPath -OutputRoot $distFx } 'does not match the Release receipt loader' 'friend loader override hash mismatch refused'
+    $wrongLauncher = Join-Path $fixture 'wrong-launcher.exe'
+    [IO.File]::WriteAllText($wrongLauncher, 'OTHER inert launcher')
+    Assert-Throws { & $packageScript -Friend -LauncherPath $wrongLauncher -CheckReceipt $receiptPath -OutputRoot $distFx } 'does not match the Release receipt launcher' 'friend launcher override hash mismatch refused'
+    $noLauncher = New-FixtureReceipt $receiptFx 'no-launcher.json' ([ordered]@{loader_sha256=(Get-Sha256 $fakeLoader)})
+    Assert-Throws { & $packageScript -Friend -CheckReceipt $noLauncher -OutputRoot $distFx } 'has no launcher' 'a receipt from before the launcher (loader only) is refused'
+    $otherFx = Join-Path $fixture 'release-receipt-changed'
+    $null = New-Item -ItemType Directory -Path $otherFx
+    [IO.File]::Copy($fakeLoader, (Join-Path $otherFx 'dinput8.dll'))
+    [IO.File]::Copy($wrongLauncher, (Join-Path $otherFx 'DiamondDogsTogether.exe'))
+    $changedLauncher = New-FixtureReceipt $otherFx 'receipt.json' $bothArtifacts
+    Assert-Throws { & $packageScript -Friend -CheckReceipt $changedLauncher -OutputRoot $distFx } 'The receipt launcher changed since its checks' 'a launcher changed after its checks is refused'
+    $staleReceipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable
     $staleReceipt.source_hashes['CMakeLists.txt'] = '0' * 64
     $stalePath = Join-Path $receiptFx 'stale.json'
     [IO.File]::WriteAllText($stalePath, ($staleReceipt | ConvertTo-Json -Depth 12), $utf8)
     Assert-Throws { & $packageScript -Friend -CheckReceipt $stalePath -OutputRoot $distFx } 'Release source does not match check receipt' 'real package admission rejects stale source receipt'
-    Assert-True (-not (Test-Path -LiteralPath $distFx)) 'stale source refuses before staging'
-    $null = & $packageScript -Friend -LoaderPath $fakeLoader -CheckReceipt $receiptPath -OutputRoot $distFx
-    $packages = @(Get-ChildItem -LiteralPath $distFx -Directory)
-    Assert-Equal $packages.Count 1 'one friend package staged'
-    $pkg = $packages[0].FullName
-    Assert-True ($packages[0].Name -cmatch ('^mgs-coop-friend-' + [regex]::Escape($packageVersion) + '-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$')) 'package folder name'
-    Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
-    $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Play-Offline-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'Share-Save.bat', 'scripts/Share-Save.ps1', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
-        'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
-        'scripts/Install-Coop.ps1', 'scripts/Play-Coop.ps1', 'scripts/Play-LocalCoop.ps1', 'scripts/LocalCoopSession.psm1', 'scripts/LocalCoopWindows.psm1', 'scripts/Uninstall-Coop.ps1', 'scripts/Collect-Logs.ps1', 'scripts/FriendCommon.psm1', 'scripts/CoopPlay.psm1',
-        'scripts/install.ps1', 'source/tools/friend/Play-Coop.ps1', 'source/tools/friend/Play-LocalCoop.ps1', 'source/tools/friend/LocalCoopSession.psm1', 'source/tools/friend/LocalCoopWindows.psm1', 'source/tools/CoopPlay.psm1', 'source/lua/coop/session_feedback.lua',
-        'source/cmake/lua_checks.cmake', 'source/native/debug_overlay.cpp', 'source/lua/coop/debug_menu.lua', 'source/third_party/imgui/imgui.cpp')
-    foreach ($r in $required) { Assert-True (Test-Path -LiteralPath (Join-Path $pkg $r) -PathType Leaf) "package contains $r" }
-    # The build dependency is source, not just its payload license. Verify the
-    # actual checked files and one manifest row even when rg skips a junction.
-    foreach ($relative in @('third_party\minhook\CMakeLists.txt', 'third_party\minhook\include\MinHook.h', 'third_party\minhook\src\hook.c')) {
-        Assert-True (Test-Path -LiteralPath (Join-Path $pkg ('source\' + $relative)) -PathType Leaf) "package includes checked dependency $relative"
-        Assert-Equal (Get-Sha256 (Join-Path $pkg ('source\' + $relative))) $currentSource.hashes[$relative] "package dependency matches Release snapshot $relative"
+    Assert-True (-not (Test-Path -LiteralPath $distFx)) 'every refusal comes before staging'
+
+    $null = & $packageScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptPath -OutputRoot $distFx
+    $runs = @(Get-ChildItem -LiteralPath $distFx -Directory)
+    Assert-Equal $runs.Count 1 'one package run folder'
+    Assert-True ($runs[0].Name -cmatch ('^DiamondDogsTogether-' + [regex]::Escape($packageVersion) + '-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$')) "package run folder name: $($runs[0].Name)"
+    $pkg = Join-Path $runs[0].FullName 'package'
+    $zipPath = Join-Path $runs[0].FullName "DiamondDogsTogether-$packageVersion.zip"
+    Assert-True (Test-Path -LiteralPath $zipPath -PathType Leaf) 'the player zip is DiamondDogsTogether-<version>.zip'
+    Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -Force | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'DiamondDogsTogether.exe,dinput8.dll,mgs-coop' 'the package root: the exe, the loader and the mgs-coop folder'
+    $modFiles = @('DYNAMITE-LICENSE', 'ImGui-LICENSE.txt', 'MinHook-LICENSE.txt', 'package.json', 'README.txt', 'source.zip', 'THIRD_PARTY_NOTICES.md', 'tpp-mod-LICENSE')
+    Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'mgs-coop') -Force | ForEach-Object { $_.Name } | Sort-Object)) -join ',') (($modFiles | Sort-Object) -join ',') 'mgs-coop: the licences, notices, README.txt, package.json and source.zip'
+    Assert-Equal (Get-Sha256 (Join-Path $pkg 'DiamondDogsTogether.exe')) (Get-Sha256 $fakeLauncher) 'the receipt launcher is packaged'
+    Assert-Equal (Get-Sha256 (Join-Path $pkg 'dinput8.dll')) (Get-Sha256 $fakeLoader) 'the receipt loader is packaged'
+    $licenseSources = [ordered]@{ 'DYNAMITE-LICENSE' = 'third_party/dynamite/LICENSE'; 'MinHook-LICENSE.txt' = 'third_party/minhook/LICENSE.txt'; 'ImGui-LICENSE.txt' = 'third_party/imgui/LICENSE.txt'
+        'tpp-mod-LICENSE' = 'third_party/tpp-mod/LICENSE'; 'THIRD_PARTY_NOTICES.md' = 'THIRD_PARTY_NOTICES.md' }
+    foreach ($name in $licenseSources.Keys) { Assert-Equal (Get-Sha256 (Join-Path $pkg "mgs-coop/$name")) (Get-Sha256 (Join-Path $projectRoot $licenseSources[$name])) "licence packaged intact: $name" }
+    # package.json in the format the launcher core reads (core_install.cpp ReadPackage).
+    $manifest = Get-Content -LiteralPath (Join-Path $pkg 'mgs-coop/package.json') -Raw | ConvertFrom-Json
+    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.layout)|$($manifest.flavor)" "mgs-coop-local-package|$packageVersion|drop-in|friend-play" 'package manifest identity'
+    Assert-Equal $manifest.version (Get-ProjectVersion $projectRoot) 'package.json names the CMake project version (the exe refuses any other)'
+    Assert-Equal "$($manifest.executable_sha256)|$($manifest.steam_dll_sha256)" '085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45|08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A' 'the pinned game hashes'
+    Assert-Equal "$($manifest.runtime_archive.target)|$($manifest.runtime_archive.sha256)|$($manifest.runtime_archive.bytes)" 'mgs-coop/mgs-coop-player-runtime.dat|87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96|16333824' 'runtime archive referenced by hash and size only'
+    $rows = @($manifest.files)
+    $wantTargets = @('DiamondDogsTogether.exe', 'dinput8.dll') + @($modFiles | Where-Object { $_ -cne 'package.json' } | ForEach-Object { "mgs-coop/$_" })
+    Assert-Equal ((@($rows | ForEach-Object { $_.target }) | Sort-Object) -join ',') (($wantTargets | Sort-Object) -join ',') 'files[]: one row per file of the zip (package.json itself excepted)'
+    Assert-Equal @($rows | Where-Object { $_.target -ceq 'dinput8.dll' }).Count 1 'exactly one dinput8.dll row'
+    foreach ($row in $rows) {
+        Assert-Equal $row.source $row.target "drop-in row: source = target ($($row.target))"
+        Assert-Equal $row.sha256 (Get-Sha256 (Join-Path $pkg $row.target)) "files[] hash of $($row.target)"
     }
-    $wantScripts = @('Install-Coop.ps1', 'Play-Coop.ps1', 'Play-LocalCoop.ps1', 'LocalCoopSession.psm1', 'LocalCoopWindows.psm1', 'Uninstall-Coop.ps1', 'Collect-Logs.ps1', 'Share-Save.ps1', 'FriendCommon.psm1', 'CoopPlay.psm1', 'install.ps1') | Sort-Object
-    Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
-    Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Play-Offline-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the six double-click entry points'
-    $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" "mgs-coop-local-package|$packageVersion|friend-play" 'package manifest identity'
-    # A matching override still packages the receipt's immutable checked copy.
-    Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)" 'release_receipt|Release' 'friend build always records the Release receipt'
-    Assert-Equal $manifest.build.receipt ([IO.Path]::GetRelativePath($projectRoot, $receiptPath)) 'package.json records the supplied matching receipt'
+    Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)" 'release_receipt|Release' 'the build is the Release receipt'
+    Assert-Equal $manifest.build.receipt ([IO.Path]::GetRelativePath($projectRoot, $receiptPath)) 'package.json records the receipt'
     Assert-Equal $manifest.build.receipt_sha256 (Get-Sha256 $receiptPath) 'package.json records the receipt hash'
-    Assert-Equal $manifest.build.loader_sha256 (Get-Sha256 $fakeLoader) 'package.json build: the packaged loader hash'
-    Assert-Equal @($manifest.files).Count 6 'six payload files (loader + licenses)'
-    Assert-Equal ($manifest.files | Where-Object target -eq 'mgs-coop/ImGui-LICENSE.txt').sha256 (Get-Sha256 (Join-Path $projectRoot 'third_party/imgui/LICENSE.txt')) 'overlay MIT license packaged intact'
-    Assert-Equal ($manifest.files | Where-Object target -eq 'dinput8.dll').sha256 (Get-Sha256 $fakeLoader) 'payload loader hash'
-    Assert-Equal $manifest.runtime_archive.sha256 '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96' 'runtime archive referenced by hash'
-    Assert-True (-not (@($manifest.files.target) -contains 'mgs-coop/mgs-coop-player-runtime.dat')) 'runtime archive not bundled'
-    $all = @(Get-ChildItem -LiteralPath $pkg -File -Recurse -Force)
-    $gameExtensions = @('.dat', '.fpk', '.fpkd', '.fox2', '.mtar', '.qar', '.ftex', '.fmdl', '.subp', '.lng', '.lng2', '.sbp', '.gani', '.frig', '.fv2', '.fsm', '.fpkl')
-    Assert-Equal @($all | Where-Object { $gameExtensions -contains $_.Extension.ToLowerInvariant() }).Count 0 'no game archive or asset file types'
-    Assert-Equal @($all | Where-Object { $_.Name -like 'mgs-coop-player-runtime*' }).Count 0 'no runtime archive by name'
-    Assert-Equal @($all | Where-Object { $_.Length -eq 3720192 }).Count 0 'no file of the runtime archive size'
-    Assert-Equal @($all | Where-Object { $_.Name -like 'link-secret*' }).Count 0 'no link secret anywhere in the package'
-    $zipEntries = @()
+    Assert-Equal "$($manifest.build.loader_sha256)|$($manifest.build.launcher_sha256)" "$(Get-Sha256 $fakeLoader)|$(Get-Sha256 $fakeLauncher)" 'package.json build: the loader and launcher hashes'
+    # The player zip: exactly the staged files at its root, and nothing to run but the exe.
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [IO.Compression.ZipFile]::OpenRead($pkg + '.zip')
-    try { $zipEntries = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }) } finally { $zip.Dispose() }
-    $prefix = $packages[0].Name + '/'
-    foreach ($r in $required) { Assert-True ($zipEntries -contains ($prefix + $r)) "zip contains $r" }
-    Assert-Equal @($zipEntries | Where-Object { $_ -like '*/scripts/LabCommon.psm1' -or $_ -like '*/scripts/set-session-mode.ps1' -or $_ -match '(^|/)link-secret' -or $_ -like '*mgs-coop-player-runtime*' }).Count 0 'zip: no lab module or role command among the scripts, no link secret, no runtime archive'
-    Assert-Equal @($zipEntries | Where-Object { $gameExtensions -contains [IO.Path]::GetExtension($_).ToLowerInvariant() }).Count 0 'zip has no game file types'
+    $zipNames = @()
+    $zip = [IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        $zipNames = @($zip.Entries | ForEach-Object { $_.FullName })
+        foreach ($entry in $zip.Entries) {
+            $stream = $entry.Open(); $sha = [Security.Cryptography.SHA256]::Create()
+            try { $hash = [Convert]::ToHexString($sha.ComputeHash($stream)) } finally { $sha.Dispose(); $stream.Dispose() }
+            Assert-Equal $hash (Get-Sha256 (Join-Path $pkg $entry.FullName)) "zip entry bytes: $($entry.FullName)"
+        }
+    } finally { $zip.Dispose() }
+    $wantEntries = @('DiamondDogsTogether.exe', 'dinput8.dll') + @($modFiles | ForEach-Object { "mgs-coop/$_" })
+    Assert-Equal (($zipNames | Sort-Object) -join ',') (($wantEntries | Sort-Object) -join ',') 'the zip root is the game folder: the exe, the loader and mgs-coop/...'
+    Assert-Equal @($zipNames | Where-Object { $_.Contains('\') }).Count 0 'zip entry names use forward slashes'
+    Assert-Equal @($zipNames | Where-Object { [IO.Path]::GetExtension($_).ToLowerInvariant() -in @('.bat', '.cmd', '.ps1', '.psm1') }).Count 0 'no .bat, .ps1 or .psm1 for players'
+    $gameExtensions = @('.dat', '.fpk', '.fpkd', '.fox2', '.mtar', '.qar', '.ftex', '.fmdl', '.subp', '.lng', '.lng2', '.sbp', '.gani', '.frig', '.fv2', '.fsm', '.fpkl')
+    Assert-Equal @($zipNames | Where-Object { $gameExtensions -contains [IO.Path]::GetExtension($_).ToLowerInvariant() }).Count 0 'no game archive or asset file types'
+    Assert-Equal @($zipNames | Where-Object { $_ -match '(^|/)link-secret' -or $_ -like '*mgs-coop-player-runtime*' -or $_ -like '*FRIEND-GUIDE*' -or $_ -like '*RUNTIME-ARCHIVE*' }).Count 0 'no link secret, runtime archive or old guide'
+    Assert-Equal @(Get-ChildItem -LiteralPath $pkg -File -Recurse -Force | Where-Object { $_.Length -eq 16333824 }).Count 0 'no file of the runtime archive size'
+    # README.txt for players: ASCII + CRLF, the drag-and-drop flow, no PowerShell tool.
+    $readmeBytes = [IO.File]::ReadAllBytes((Join-Path $pkg 'mgs-coop/README.txt'))
+    Assert-Equal @($readmeBytes | Where-Object { $_ -gt 127 }).Count 0 'README.txt is ASCII'
+    $readme = [Text.Encoding]::ASCII.GetString($readmeBytes)
+    Assert-True ($readme.Contains("`r`n") -and !($readme -replace "`r`n", '').Contains("`n")) 'README.txt has CRLF line endings'
+    foreach ($needle in "Diamond Dogs Together $packageVersion", 'DiamondDogsTogether.exe', 'mgsvtpp.exe', 'dinput8.dll', 'Host game', 'Join game', 'Wait for a Steam invite',
+            'Tools > Share save', 'Tools > Collect logs', 'Uninstall', 'source.zip', 'THIRD_PARTY_NOTICES.md', '1.0.15.4', 'Failed to log in') {
+        Assert-True $readme.Contains($needle) "README.txt mentions $needle"
+    }
+    foreach ($needle in '.bat', 'Play-Coop', 'Install-Coop', 'Share-Save', 'LAN', 'VPN', 'UDP', '@VERSION@', 'SteamID64') { Assert-True (!$readme.Contains($needle)) "README.txt no longer mentions $needle" }
+    # source.zip: the complete corresponding source (GPL), launcher and its embedded assets included.
+    $sourceZip = [IO.Compression.ZipFile]::OpenRead((Join-Path $pkg 'mgs-coop/source.zip'))
+    try {
+        $sourceNames = @($sourceZip.Entries | ForEach-Object { $_.FullName })
+        $reader = [IO.StreamReader]::new($sourceZip.GetEntry('source-files.json').Open())
+        try { $sourceRows = @($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
+        foreach ($relative in @('CMakeLists.txt', 'README.md', 'THIRD_PARTY_NOTICES.md', 'native/probe.cpp', 'native/coop_reason_text.cpp', 'native/launcher/launcher_main.cpp',
+                'native/launcher/runtime_dat.cpp', 'native/launcher/core/core_model.cpp', 'native/launcher/assets/mgs_coop_four_player_controller.fpkd.bin',
+                'native/launcher/assets/mgs_coop_two_player_scarf_controller.fpkd.bin', 'native/launcher/resources/ddt_launcher.rc', 'native/launcher/resources/ddt_launcher.ico',
+                'lua/coop/character.lua', 'cmake/launcher_gui.cmake', 'third_party/imgui/imgui.cpp', 'third_party/dynamite/LICENSE', 'tools/package.ps1', 'tools/dev/Play-LocalCoop.ps1')) {
+            Assert-True ($sourceNames -ccontains $relative) "source.zip holds $relative"
+            $row = @($sourceRows | Where-Object { $_.path -ceq $relative })
+            Assert-True ($row.Count -eq 1 -and $row[0].sha256 -ceq (Get-Sha256 (Join-Path $projectRoot $relative))) "source-files.json lists $relative with its hash"
+        }
+        foreach ($relative in @('third_party/minhook/CMakeLists.txt', 'third_party/minhook/include/MinHook.h', 'third_party/minhook/src/hook.c')) {
+            Assert-True ($sourceNames -ccontains $relative) "source.zip includes the checked dependency $relative"
+            $row = @($sourceRows | Where-Object { $_.path -ceq $relative })
+            Assert-Equal $row[0].sha256 $currentSource.hashes[$relative.Replace('/', '\')] "source dependency matches the Release snapshot $relative"
+        }
+        Assert-Equal @($sourceNames | Where-Object { $_.Contains('\') -or $_ -like '*mgs-coop-player-runtime*' -or $_ -match '(^|/)link-secret' -or [IO.Path]::GetExtension($_) -in @('.exe', '.dll', '.obj') }).Count 0 'source.zip: forward slashes, no binaries, no runtime archive, no link secret'
+        Assert-Equal @($sourceNames | Where-Object { $_ -like 'tools/friend/*' -or $_ -like 'build/*' }).Count 0 'source.zip: no retired player scripts, no build output'
+    } finally { $sourceZip.Dispose() }
     # Regression: an owned, ordinary dependency lives outside the staged source
     # root, reached only by the exact supported third_party/minhook junction.
     # No source is compiled, no game is installed and no external target is used.
@@ -1184,14 +1209,11 @@ try {
         $dependency = Join-Path $fixture 'junction-package-dependency'
         $junction = Join-Path $linkedRoot 'third_party\minhook'
         foreach ($path in @($linkedRoot, $dependency, $junction)) { Assert-InFixture $path }
-        foreach ($dir in @('native','lua','tests','tools\friend','tools\worker','third_party','cmake','docs')) {
+        foreach ($dir in @('native','lua','tests','tools\worker','third_party','cmake','docs')) {
             $null = New-Item -ItemType Directory -Path (Join-Path $linkedRoot $dir) -Force
         }
         $null = New-Item -ItemType Directory -Path (Join-Path $dependency 'src'), (Join-Path $dependency 'include') -Force
-        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','tools\package.ps1','tools\package-install.ps1',
-            'tools\CoopPlay.psm1','tools\worker\WorkerSource.psm1','tools\friend\Install-Coop.ps1','tools\friend\Play-Coop.ps1',
-            'tools\friend\Uninstall-Coop.ps1','tools\friend\Collect-Logs.ps1','tools\friend\Share-Save.ps1',
-            'tools\friend\FriendCommon.psm1','tools\friend\Play-LocalCoop.ps1','tools\friend\LocalCoopSession.psm1','tools\friend\LocalCoopWindows.psm1','tools\friend\FRIEND-GUIDE.txt','tools\friend\RUNTIME-ARCHIVE.txt')) {
+        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','tools\package.ps1','tools\package-readme-player.txt','tools\worker\WorkerSource.psm1')) {
             [IO.File]::Copy((Join-Path $projectRoot $file), (Join-Path $linkedRoot $file), $false)
         }
         [IO.File]::WriteAllText((Join-Path $linkedRoot 'docs\fixture.md'), '# Owned source-only package fixture', $utf8)
@@ -1216,34 +1238,30 @@ try {
             Assert-Equal $link.ResolveLinkTarget($true).FullName $dependency 'junction target is the separately owned dependency'
             $snapshot = Get-WorkerSourceHashes $linkedRoot
             Assert-True $snapshot.dependencies['third_party\minhook'].linked 'Release snapshot records the linked dependency'
-            $linkedReceipt = [ordered]@{schema=1;status='passed';plan=[ordered]@{profile='Release';flags=$releaseFlags;tests=@('owned-junction-fixture-only')};
-                artifacts=[ordered]@{loader_sha256=(Get-Sha256 $fakeLoader)};source_hashes=$snapshot.hashes;source_dependencies=$snapshot.dependencies}
-            $receipt = Join-Path $receiptFx 'junction.json'
-            [IO.File]::WriteAllText($receipt, ($linkedReceipt | ConvertTo-Json -Depth 12), $utf8)
+            $receipt = New-FixtureReceipt $receiptFx 'junction.json' $bothArtifacts $snapshot
             $dist = Join-Path $fixture 'junction-package-dist'
-            $null = & (Join-Path $linkedRoot 'tools\package.ps1') -Friend -LoaderPath $fakeLoader -CheckReceipt $receipt -OutputRoot $dist
-            $packages = @(Get-ChildItem -LiteralPath $dist -Directory)
-            Assert-Equal $packages.Count 1 'junction fixture stages exactly one package'
-            $package = $packages[0].FullName
-            $sourceRows = @(Get-Content -LiteralPath (Join-Path $package 'source-files.json') -Raw | ConvertFrom-Json)
-            $zip = [IO.Compression.ZipFile]::OpenRead($package + '.zip')
+            $null = & (Join-Path $linkedRoot 'tools\package.ps1') -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
+            $linkedRuns = @(Get-ChildItem -LiteralPath $dist -Directory)
+            Assert-Equal $linkedRuns.Count 1 'junction fixture stages exactly one package'
+            $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $linkedRuns[0].FullName 'package\mgs-coop\source.zip'))
             try {
+                $reader = [IO.StreamReader]::new($zip.GetEntry('source-files.json').Open())
+                try { $linkedRows = @($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
                 foreach ($relative in $minhookFiles.Keys) {
                     $logical = 'third_party\minhook\' + $relative
+                    $name = $logical.Replace('\', '/')
                     $expected = Get-Sha256 (Join-Path $dependency $relative)
                     Assert-Equal $snapshot.hashes[$logical] $expected "Release checks linked dependency $relative"
-                    Assert-Equal (Get-Sha256 (Join-Path $package ('source\' + $logical))) $expected "staged linked dependency is intact $relative"
-                    $rows = @($sourceRows | Where-Object { $_.path.Replace('\','/') -ceq $logical.Replace('\','/') })
+                    $rows = @($linkedRows | Where-Object { $_.path -ceq $name })
                     Assert-Equal $rows.Count 1 "source manifest includes linked dependency once $relative"
                     Assert-Equal $rows[0].sha256 $expected "source manifest hash matches linked dependency $relative"
-                    $name = $packages[0].Name + '/source/' + $logical.Replace('\','/')
-                    $entries = @($zip.Entries | Where-Object { $_.FullName.Replace('\','/') -ceq $name })
-                    Assert-Equal $entries.Count 1 "ZIP includes linked dependency once $relative"
+                    $entries = @($zip.Entries | Where-Object { $_.FullName -ceq $name })
+                    Assert-Equal $entries.Count 1 "source.zip includes linked dependency once $relative"
                     $stream = $entries[0].Open()
                     $sha = [Security.Cryptography.SHA256]::Create()
-                    try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+                    try { $hash = [Convert]::ToHexString($sha.ComputeHash($stream)) }
                     finally { $sha.Dispose(); $stream.Dispose() }
-                    Assert-Equal $hash $expected "ZIP source bytes match linked dependency $relative"
+                    Assert-Equal $hash $expected "source.zip bytes match linked dependency $relative"
                 }
             } finally { $zip.Dispose() }
         } finally {
@@ -1259,77 +1277,18 @@ try {
         }
         Assert-True (Test-Path -LiteralPath (Join-Path $dependency 'src\hook.c') -PathType Leaf) 'junction removal preserves owned dependency files'
     }
-    foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File) + @(Get-Item -LiteralPath (Join-Path $pkg 'FRIEND-GUIDE.txt'), (Join-Path $pkg 'RUNTIME-ARCHIVE.txt'))) {
-        $bytes = [IO.File]::ReadAllBytes($f.FullName)
-        Assert-Equal @($bytes | Where-Object { $_ -gt 127 }).Count 0 "$($f.Name) is ASCII (Windows PowerShell 5.1 / Notepad)"
-        $text = [Text.Encoding]::ASCII.GetString($bytes)
-        Assert-True (!$text.Contains('@VERSION@') -and !$text.Contains('@ARCHIVE_SHA256@')) "$($f.Name) placeholders replaced"
-        Assert-True ($text.Contains("`r`n") -and !($text -replace "`r`n", '').Contains("`n")) "$($f.Name) has CRLF line endings"
+    # The repository keeps no player scripts: the PowerShell player tooling was
+    # retired in 0.14.0 (DiamondDogsTogether.exe replaces it, tests/ddt_core_tests).
+    foreach ($retired in @('tools/friend', 'Play-Coop.bat', 'Play-World-Coop.bat')) {
+        Assert-True (!(Test-Path -LiteralPath (Join-Path $projectRoot $retired))) "retired player tooling is gone: $retired"
     }
-    # Every shipped script and module parses under Windows PowerShell 5.1 itself.
-    $scriptsDir = (Join-Path $pkg 'scripts').Replace("'", "''")
-    $parseCheck = "foreach (`$f in Get-ChildItem -LiteralPath '$scriptsDir' -File) { `$t = `$null; `$e = `$null; `$null = [System.Management.Automation.Language.Parser]::ParseFile(`$f.FullName, [ref]`$t, [ref]`$e); if (`$e) { Write-Output (`$f.Name + ': ' + `$e[0].Message) } }; Write-Output 'parsed'"
-    $parsed = @(& $winPs -NoProfile -NonInteractive -Command $parseCheck 2>&1 | ForEach-Object { "$_" })
-    Assert-Equal ($parsed -join ' | ') 'parsed' 'every shipped script and module parses under Windows PowerShell 5.1'
-    foreach ($b in 'Install-Coop', 'Play-Coop', 'Uninstall-Coop', 'Collect-Logs', 'Share-Save') {
-        $text = [IO.File]::ReadAllText((Join-Path $pkg "$b.bat"))
-        Assert-True ($text.Contains("powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\$b.ps1`" %*") -and $text.Contains("`r`n") -and $text.Contains('pause') -and $text.Contains('set "PSModulePath="')) "$b.bat runs its script with Windows PowerShell (own module path)"
-    }
-    $offlineBat = [IO.File]::ReadAllText((Join-Path $pkg 'Play-Offline-Coop.bat'))
-    Assert-True ($offlineBat.Contains('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Play-Coop.ps1" -LocalTest %*') -and
-        $offlineBat.Contains("`r`n") -and $offlineBat.Contains('pause') -and $offlineBat.Contains('set "PSModulePath="')) 'offline BAT delegates to the unified launcher with Windows PowerShell and all caller arguments'
-    $localSourceRows = @(Get-Content -LiteralPath (Join-Path $pkg 'source-files.json') -Raw | ConvertFrom-Json)
-    $localZip = [IO.Compression.ZipFile]::OpenRead($pkg + '.zip')
-    try {
-        foreach ($localPiece in 'Play-LocalCoop.ps1', 'LocalCoopSession.psm1', 'LocalCoopWindows.psm1') {
-            $relative = 'tools\friend\' + $localPiece
-            $expected = Get-Sha256 (Join-Path $projectRoot $relative)
-            Assert-Equal $currentSource.hashes[$relative] $expected "Release source snapshot covers local test $localPiece"
-            Assert-Equal (Get-Sha256 (Join-Path $pkg ('source\' + $relative))) $expected "local test source bytes preserved $localPiece"
-            $rows = @($localSourceRows | Where-Object { $_.path.Replace('\','/') -ceq $relative.Replace('\','/') })
-            Assert-Equal $rows.Count 1 "local test source listed exactly once $localPiece"
-            Assert-Equal $rows[0].sha256 $expected "local test source manifest hash $localPiece"
-            foreach ($path in @(('scripts/' + $localPiece), ('source/' + $relative.Replace('\','/')))) {
-                $entries = @($localZip.Entries | Where-Object { $_.FullName.Replace('\','/') -ceq ($prefix + $path) })
-                Assert-Equal $entries.Count 1 "local test ZIP includes exactly once $path"
-                $stream = $entries[0].Open()
-                $sha = [Security.Cryptography.SHA256]::Create()
-                try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
-                finally { $sha.Dispose(); $stream.Dispose() }
-                $expectedEntry = Get-Sha256 (Join-Path $pkg $path)
-                Assert-Equal $hash $expectedEntry "local test ZIP bytes match staged piece $path"
-            }
-        }
-    } finally { $localZip.Dispose() }
-    $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
-    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', "Version $packageVersion", 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves',
-            'Share-Save.bat', 'SAME PROGRESS FOR BOTH', 'SAME PROGRESS AUTOMATICALLY', '-SaveHandoff off', 'TRAVEL LOCK', '-TravelLock off', 'Keep my own save') {
-        Assert-True $guide.Contains($needle) "guide mentions $needle"
-    }
-    # Section 8 describes everything the logs ZIP holds (Collect-Logs coop-saves.txt, 3 sessions).
-    $logsSection = $guide.Substring($guide.IndexOf('8. COLLECT AND SEND THE LOGS'), $guide.IndexOf('9. UNINSTALL') - $guide.IndexOf('8. COLLECT AND SEND THE LOGS')) -replace '\s+', ' '
-    Assert-True ($logsSection.Contains('a list of the co-op save folders (file names, sizes and times only, never save contents)') -and
-        $logsSection.Contains('the script log covers your last 3 game starts')) 'guide section 8 names the save-folder list and the 3 game starts'
-    foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }
-    $statusExample = [regex]::Match($guide, '\[HOST\] link=connected[^\r\n]+').Value
-    Assert-Equal $statusExample (Format-CoopStatusLine -Status $st -Role host -NowUtc $now) 'the guide quotes the launcher status line exactly'
-    # The online example (Steam relay, the native partner on both PCs; docs/two-pc-play.md "Quick start").
-    $onlineExample = [regex]::Match($guide, '\[JOIN\] link=connected via Steam[^\r\n]+').Value
-    $onlineText = $statusText.Replace('"role":"host"', '"role":"guest"').Replace('"rtt_ms":42,"jitter_ms":3,"loss_permille":4', '"rtt_ms":61,"jitter_ms":4,"loss_permille":0')
-    $onlineText = $onlineText.Replace('"interp_ms":80', '"interp_ms":100').Replace('"mission":30050', '"mission":30010')
-    $onlineText = $onlineText.Replace('"saves":"redirected"', '"saves":"redirected","transport":"steam","route":"relay","partner_drive":"native","partner_reason":"ok","remote_drive":"native","remote_reason":"ok"')
-    $onlineSt = ConvertFrom-CoopStatusText -Text $onlineText
-    Assert-True ([bool]$onlineExample) 'the guide shows an online status line'
-    Assert-Equal $onlineExample (Format-CoopStatusLine -Status $onlineSt -Role guest -NowUtc $now) 'the guide quotes the online status line exactly'
-    foreach ($needle in 'Host online', 'Join online', 'Invite a friend', 'start Play-Coop.bat FIRST', 'Play-Coop.bat -Partner clips', 'native partner', '[T] Local two-window test', 'Play-Offline-Coop.bat', 'local-test-saves', '-GuestDirectory', '[R]', 'Continue') {
-        Assert-True $guide.Contains($needle) "guide describes the online flow: $needle"
-    }
-    $archiveNote = [IO.File]::ReadAllText((Join-Path $pkg 'RUNTIME-ARCHIVE.txt'))
-    Assert-True ($archiveNote.Contains('87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') -and $archiveNote.Contains('16,333,824') -and !$archiveNote.Contains('Ctrl+F8') -and !$archiveNote.Contains('SteamID')) 'archive note names hash and size, nothing of the online route'
+    $offlineBatText = [IO.File]::ReadAllText((Join-Path $projectRoot 'Play-Offline-Coop.bat'))
+    Assert-True ($offlineBatText.Contains('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev\Start-LocalCoop.ps1" %*') -and $offlineBatText.Contains('set "PSModulePath="') -and
+        $offlineBatText.Contains("`r`n") -and $offlineBatText.Contains('pause')) 'Play-Offline-Coop.bat: the developer local test in tools\dev with Windows PowerShell and all arguments'
 
-    # ------------------------------------------------------------ installer fixtures
-    # Steam fixture: account 7 with saves; staged package with fixture hashes and
-    # the packaged scripts\ layout from the friend package above.
+    # ------------------------------------------------------------ installed-game fixtures (in process)
+    # Steam fixture: account 7 with saves (only ever compared, never written);
+    # a lab-staged package with fixture hashes for the owned installer.
     $steam = Join-Path $fixture 'steam'
     $userdata = Join-Path $steam 'userdata/7'
     foreach ($f in '287700/local/TPP_GAME_DATA0', '287700/local/PERSONAL_DATA0', '287700/remotecache.vdf', '311340/remote/TPP_GAME_DATA') {
@@ -1340,192 +1299,40 @@ try {
     $userdataBefore = Get-TreeHashes $userdata
     $archiveFx = Join-Path $fixture 'runtime-archive-fixture.dat'
     [IO.File]::WriteAllText($archiveFx, 'INERT runtime archive fixture')
-    $wrongArchive = Join-Path $fixture 'wrong-archive.bin'
-    [IO.File]::WriteAllText($wrongArchive, 'not the archive')
     $templateGame = New-GameFixture 'template'
     $exeHash = Get-Sha256 (Join-Path $templateGame 'mgsvtpp.exe')
     $steamHash = Get-Sha256 (Join-Path $templateGame 'steam_api64.dll')
-    $loader1 = Join-Path $fixture 'loader1.dll'; [IO.File]::WriteAllText($loader1, 'INERT friend loader')
-    $loaderPrev = Join-Path $fixture 'loader-prev.dll'; [IO.File]::WriteAllText($loaderPrev, 'INERT earlier loader')
+    $loader1 = Join-Path $fixture 'loader1.dll'; [IO.File]::WriteAllText($loader1, 'INERT earlier loader')
     $stage = Join-Path $fixture 'stage'
-    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage -LoaderPath $loader1 -Version '0.12.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
-    Copy-Item -LiteralPath (Join-Path $pkg 'scripts') -Destination (Join-Path $stage 'scripts') -Recurse
-    foreach ($b in 'Install-Coop.bat', 'Play-Coop.bat', 'Play-Offline-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat') { Copy-Item -LiteralPath (Join-Path $pkg $b) -Destination $stage }
-    $install = Join-Path $stage 'scripts/Install-Coop.ps1'
-    $play = Join-Path $stage 'scripts/Play-Coop.ps1'
-    $uninstall = Join-Path $stage 'scripts/Uninstall-Coop.ps1'
-    $collect = Join-Path $stage 'scripts/Collect-Logs.ps1'
-    $common = @('-SteamPath', $steam, '-NonInteractive', '-Yes', '-SkipNetworkReport')
+    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage -LoaderPath $loader1 -Version '0.13.6' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
+    $coreInstaller = Join-Path $projectRoot 'tools/package-install.ps1'
     function Assert-PassThrough($Paths, [string]$What) {
         Assert-True (-not (Test-Path -LiteralPath $Paths.Marker) -and -not (Test-Path -LiteralPath $Paths.LabIni) -and -not (Test-Path -LiteralPath $Paths.CoopIni) -and
             -not (Test-Path -LiteralPath $Paths.LinkSecret) -and -not (Test-Path -LiteralPath $Paths.ClientHost)) "${What}: pass-through (no marker, lab.ini, coop.ini, link secret or client-host.txt)"
     }
-
-    # Refusals change nothing.
-    $refuse = New-GameFixture 'refuse'
-    $r = Invoke-Friend $install (@('-GameDirectory', $refuse, '-Role', 'Host', '-Character', 'dog', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Refused $r "Unknown character 'dog'" 'unknown character refused'
-    $r = Invoke-Friend $install (@('-GameDirectory', $refuse, '-Role', 'Host', '-RuntimeArchive', $wrongArchive) + $common)
-    Assert-Refused $r 'not the expected runtime archive' 'wrong archive hash refused'
-    $r = Invoke-Friend $install (@('-GameDirectory', $refuse, '-Role', 'Host') + $common)
-    Assert-True ($r.Exit -ne 0 -and (Has $r 'Missing input') -and (Has $r 'mgs-coop-player-runtime.dat')) 'no archive in non-interactive mode: no prompt, clear error'
-    $r = Invoke-Friend $install (@('-GameDirectory', $refuse, '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Refused $r 'Missing input' 'no role in non-interactive mode'
-    $modified = New-GameFixture 'modified'
-    [IO.File]::WriteAllText((Join-Path $modified 'mgsvtpp.exe'), 'a different executable')
-    $r = Invoke-Friend $install (@('-GameDirectory', $modified, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Refused $r '1.0.15.4' 'unexpected executable refused'
-    [IO.File]::WriteAllText((Join-Path $modified 'mgsvtpp.exe'), 'INERT executable fixture; never executed')
-    [IO.File]::WriteAllText((Join-Path $modified 'steam_api64.dll'), 'patched steam dll')
-    $r = Invoke-Friend $install (@('-GameDirectory', $modified, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Refused $r 'steam_api64.dll' 'modified Steam DLL refused'
-    $emptySteam = Join-Path $fixture 'steam-empty'
-    $null = New-Item -ItemType Directory -Path (Join-Path $emptySteam 'userdata') -Force
-    $r = Invoke-Friend $install @('-GameDirectory', $refuse, '-Role', 'Host', '-RuntimeArchive', $archiveFx, '-SteamPath', $emptySteam, '-NonInteractive', '-Yes', '-SkipNetworkReport')
-    Assert-Refused $r 'Steam account' 'no Steam account with saves refused'
-    foreach ($g in $refuse, $modified) {
-        Assert-Equal @(Get-ChildItem -LiteralPath $g -Force).Count 2 "refusals left $([IO.Path]::GetFileName($g)) untouched"
+    function New-InstalledGame([string]$Name, [switch]$Record) {
+        # A game folder as DiamondDogsTogether.exe's setup leaves it (owned loader,
+        # runtime archive, co-op save copy and, with -Record, friend-install.json).
+        $g = New-GameFixture $Name
+        $r = Invoke-Friend $coreInstaller @('-GameDirectory', $g, '-PackageDirectory', $stage, '-RuntimeArchive', $archiveFx, '-NoPrompt', '-NoInitialMode') $pwshPath
+        Assert-Equal $r.Exit 0 "owned installer for the $Name fixture: $($r.Raw)"
+        $gp = Get-InstancePaths -GameDirectory $g
+        foreach ($f in @(@('287700\local\TPP_GAME_DATA0', 'fixture co-op progress'), @('287700\local\PERSONAL_DATA0', 'fixture co-op personal'), @('remote\TPP_GAME_DATA', 'fixture co-op remote'))) {
+            $p = Join-Path $gp.CoopSaves $f[0]
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $p) -Force
+            [IO.File]::WriteAllText($p, $f[1])
+        }
+        if ($Record) {
+            $state = [ordered]@{ product = 'mgs-coop-friend-install'; version = $packageVersion; game_directory = $g; role_hint = 'Join'; character = 'story'
+                save_dir = $gp.CoopSaves; status = 'installed'; launcher = 'Diamond Dogs Together' }
+            [IO.File]::WriteAllText((Join-Path $gp.Mod 'friend-install.json'), ($state | ConvertTo-Json) + "`n", $utf8)
+        }
+        return $gp
     }
-    $foreign = New-GameFixture 'foreign'
-    [IO.File]::WriteAllText((Join-Path $foreign 'dinput8.dll'), 'another mod')
-    $r = Invoke-Friend $install (@('-GameDirectory', $foreign, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Refused $r 'Another mod''s dinput8.dll' 'unrelated loader refused before any change'
-    Assert-Equal @(Get-ChildItem -LiteralPath $foreign -Force).Count 3 'unrelated loader: no backup or mod folder created'
-    $gamesRoot = [IO.Path]::GetFullPath((Join-Path $fixture 'games'))
-    $longGame = New-GameFixture ('long-' + ('x' * (180 - $gamesRoot.Length - 1 - 5)))
-    Assert-Equal $longGame.Length 180 'long game path fixture length'
-    $r = Invoke-Friend $install (@('-GameDirectory', $longGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Refused $r 'game folder path is too long' 'game path too long for the installer paths refused'
-    Assert-Equal @(Get-ChildItem -LiteralPath $longGame -Force).Count 2 'too long: folder untouched'
-
-    # Host install (Windows PowerShell 5.1, packaged layout): pass-through.
-    $hostGame = New-GameFixture 'host'
-    $hp = Get-InstancePaths -GameDirectory $hostGame
-    $r = Invoke-Friend $install (@('-GameDirectory', $hostGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Equal $r.Exit 0 "host install succeeds: $($r.Raw)"
-    Assert-True ((Has $r 'Play-Coop.bat') -and !(Has $r 'SteamID64') -and !(Has $r 'Ctrl+F8')) 'install points to Play-Coop.bat; no SteamID exchange'
-    Assert-Equal (Get-Sha256 $hp.Loader) (Get-Sha256 $loader1) 'loader installed'
-    Assert-Equal (Get-Sha256 $hp.Archive) (Get-Sha256 $archiveFx) 'runtime archive installed'
-    Assert-PassThrough $hp 'host install'
-    $hostSaveDir = Join-Path $hp.Mod 'coop-saves'
-    Assert-True (Test-Path -LiteralPath (Join-Path $hostSaveDir '287700/local/TPP_GAME_DATA0') -PathType Leaf) 'save copy seeded (local)'
-    Assert-True (Test-Path -LiteralPath (Join-Path $hostSaveDir 'remote/TPP_GAME_DATA') -PathType Leaf) 'save copy seeded (remote)'
-    $state = Get-Content -LiteralPath (Join-Path $hp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($state.role_hint)|$($state.character)|$($state.status)|$(@($state.rollback_ids).Count)|$(@($state.online_archived).Count)" 'Host|default|installed|1|0' 'install record (role_hint, character)'
-    $backupManifest = Get-Content -LiteralPath (Join-Path $state.latest_backup 'manifest.json') -Raw | ConvertFrom-Json
-    Assert-Equal @($backupManifest.verified).Count 3 'backup manifest hashes the verified save files'
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by the install'
-    Assert-Equal (Get-Sha256 $hp.Exe) $exeHash 'executable untouched'
-    Assert-Equal (Get-Content -LiteralPath (Join-Path $stage 'installed-location.json') -Raw | ConvertFrom-Json).game_directory $hostGame 'installed location recorded in the package'
-
-    # Reinstall (character change) reuses the installed archive and keeps the save copy.
-    [IO.File]::WriteAllText((Join-Path $hostSaveDir '287700/local/COOP_PROGRESS'), 'progress made in the co-op copy')
-    $r = Invoke-Friend $install (@('-GameDirectory', $hostGame, '-Role', 'Host', '-Character', 'quiet') + $common)
-    Assert-Equal $r.Exit 0 "host reinstall succeeds: $($r.Raw)"
-    Assert-True (Test-Path -LiteralPath (Join-Path $hostSaveDir '287700/local/COOP_PROGRESS')) 'reinstall keeps the existing save copy'
-    $state = Get-Content -LiteralPath (Join-Path $hp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($state.character)|$(@($state.rollback_ids).Count)|$(@($state.backups).Count)" 'quiet|2|2' 'reinstall: new character, both install states and backups recorded'
-    Assert-PassThrough $hp 'reinstall'
-
-    # Join install under PowerShell 7 (same scripts).
-    $joinGame = New-GameFixture 'join'
-    $jp = Get-InstancePaths -GameDirectory $joinGame
-    $r = Invoke-Friend $install (@('-GameDirectory', $joinGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common) -HostExe $pwshPath
-    Assert-Equal $r.Exit 0 "join install succeeds (PowerShell 7): $($r.Raw)"
-    $js = Get-Content -LiteralPath (Join-Path $jp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($js.role_hint)|$($js.character)" 'Join|quiet' 'joiner defaults to Quiet'
-    Assert-PassThrough $jp 'join install'
-
-    # ------------------------------------------------------------ Share-Save (same progress for both; docs/two-pc-play.md)
-    # The host exports its co-op copy, the joiner imports it (with the import
-    # marker, K18) and restores its own copy again. The real saves are never touched.
-    $shareSave = Join-Path $stage 'scripts/Share-Save.ps1'
-    $shareOut = Join-Path $fixture 'share-out'
-    $null = New-Item -ItemType Directory -Path $shareOut
-    $joinCoop = Join-Path $jp.Mod 'coop-saves'
-    $joinLocal = Join-Path $joinCoop '287700/local'
-    $joinReplaced = Join-Path $jp.Mod 'coop-saves-replaced'
-    $joinOwnData = [IO.File]::ReadAllBytes((Join-Path $joinLocal 'TPP_GAME_DATA0'))
-    [IO.File]::WriteAllText((Join-Path $joinLocal 'TPP_GAME_DATA0'), 'join own early progress')
-    [IO.File]::WriteAllText((Join-Path $joinLocal 'TPP_CONFIG_DATA'), 'join own settings')
-    $hostCoopBefore = Get-TreeHashes $hostSaveDir
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $hostGame, '-Mode', 'Export', '-NonInteractive', '-OutputDirectory', $shareOut)
-    Assert-Equal $r.Exit 0 "Share-Save export: $($r.Raw)"
-    $shareZips = @(Get-ChildItem -LiteralPath $shareOut -Filter 'mgs-coop-save-*.zip')
-    Assert-Equal $shareZips.Count 1 'Share-Save export writes one zip'
-    Assert-Equal (Get-TreeHashes $hostSaveDir) $hostCoopBefore 'Share-Save export only reads the co-op copy'
-    $shareZip = [IO.Compression.ZipFile]::OpenRead($shareZips[0].FullName)
-    try {
-        $reader = [IO.StreamReader]::new($shareZip.GetEntry('share-save.json').Open())
-        try { $shareManifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-    } finally { $shareZip.Dispose() }
-    $manifestRows = (@($shareManifest.files) | ForEach-Object { "$($_.entry)|$($_.bytes)|$(([string]$_.sha256).ToUpperInvariant())" } | Sort-Object) -join ','
-    Assert-True ($manifestRows.Contains('287700/local/TPP_GAME_DATA0|') -and !$manifestRows.Contains('CONFIG')) 'the export carries the progress files only'
-    # The export re-check (Assert-FriendShareZip) and its cleanup (Write-FriendShareZip):
-    # a damaged or partial export never stays behind; a same-named file is never ours to delete.
-    $shareRows = @($shareManifest.files)
-    Assert-FriendShareZip -ZipPath $shareZips[0].FullName -ManifestFiles $shareRows
-    $checkDir = Join-Path $fixture 'share-check'
-    $null = New-Item -ItemType Directory -Path $checkDir
-    $tampered = Join-Path $checkDir 'tampered.zip'
-    Copy-Item -LiteralPath $shareZips[0].FullName -Destination $tampered
-    $tamperZip = [IO.Compression.ZipFile]::Open($tampered, [IO.Compression.ZipArchiveMode]::Update)
-    try {
-        $tamperZip.GetEntry('287700/local/TPP_GAME_DATA0').Delete()
-        $tamperWriter = [IO.StreamWriter]::new($tamperZip.CreateEntry('287700/local/TPP_GAME_DATA0').Open())
-        try { $tamperWriter.Write('other bytes') } finally { $tamperWriter.Dispose() }
-    } finally { $tamperZip.Dispose() }
-    Assert-Throws { Assert-FriendShareZip -ZipPath $tampered -ManifestFiles $shareRows } 'differs from the save file' 'export check: a rewritten entry is damage'
-    $incomplete = Join-Path $checkDir 'incomplete.zip'
-    Copy-Item -LiteralPath $shareZips[0].FullName -Destination $incomplete
-    $tamperZip = [IO.Compression.ZipFile]::Open($incomplete, [IO.Compression.ZipArchiveMode]::Update)
-    try { $tamperZip.GetEntry('287700/local/TPP_GAME_DATA0').Delete() } finally { $tamperZip.Dispose() }
-    Assert-Throws { Assert-FriendShareZip -ZipPath $incomplete -ManifestFiles $shareRows } 'The written zip is incomplete' 'export check: a missing entry'
-    $exportSource = Join-Path $hostSaveDir '287700/local/TPP_GAME_DATA0'
-    $exportFiles = @([pscustomobject]@{ Path = $exportSource; Entry = '287700/local/TPP_GAME_DATA0' })
-    $goodRows = @([ordered]@{ entry = '287700/local/TPP_GAME_DATA0'; bytes = 1; sha256 = (Get-Sha256 $exportSource) })
-    $badRows = @([ordered]@{ entry = '287700/local/TPP_GAME_DATA0'; bytes = 1; sha256 = ('0' * 64) })
-    $verified = Join-Path $checkDir 'mgs-coop-save-verified.zip'
-    Write-FriendShareZip -ZipPath $verified -Files $exportFiles -ManifestFiles $goodRows -ManifestText '{"format":"mgs-coop-save-share"}'
-    Assert-True (Test-Path -LiteralPath $verified -PathType Leaf) 'export: a verified zip stays'
-    $damaged = Join-Path $checkDir 'mgs-coop-save-damaged.zip'
-    Assert-Throws { Write-FriendShareZip -ZipPath $damaged -Files $exportFiles -ManifestFiles $badRows -ManifestText '{}' } 'differs from the save file' 'export: a hash mismatch fails'
-    Assert-True (!(Test-Path -LiteralPath $damaged)) 'export: the damaged zip is deleted'
-    $partial = Join-Path $checkDir 'mgs-coop-save-partial.zip'
-    $missingFiles = @([pscustomobject]@{ Path = (Join-Path $checkDir 'NO_SUCH_SAVE'); Entry = '287700/local/TPP_GAME_DATA0' })
-    Assert-Throws { Write-FriendShareZip -ZipPath $partial -Files $missingFiles -ManifestFiles $goodRows -ManifestText '{}' } '' 'export: a write error fails'
-    Assert-True (!(Test-Path -LiteralPath $partial)) 'export: the partial zip is deleted'
-    $verifiedHash = Get-Sha256 $verified
-    Assert-Throws { Write-FriendShareZip -ZipPath $verified -Files $exportFiles -ManifestFiles $badRows -ManifestText '{}' } '' 'export: an existing file is refused'
-    Assert-Equal (Get-Sha256 $verified) $verifiedHash 'export: a file of the same name is never deleted'
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $joinGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
-    Assert-Equal $r.Exit 0 "Share-Save import: $($r.Raw)"
-    Assert-True (Has $r 'Keep the zip: if this copy is ever replaced, import it again.') 'import: keep the zip'
-    $joinMarker = Join-Path $joinCoop 'imported-progress.json'
-    $importMarker = [IO.File]::ReadAllText($joinMarker) | ConvertFrom-Json
-    Assert-Equal "$($importMarker.format)|$($importMarker.v)|$($importMarker.source)" 'mgs-coop-imported-progress|1|share-save' 'import: the marker is written into the new copy'
-    $markerRows = (@($importMarker.files) | ForEach-Object { "$($_.entry)|$($_.bytes)|$($_.sha256)" } | Sort-Object) -join ','
-    Assert-Equal $markerRows $manifestRows 'import: the marker hashes equal the zip manifest'
-    Assert-True (![IO.File]::ReadAllText($joinMarker).Contains('fixture save')) 'import: the marker holds no save bytes'
-    Assert-Equal (Get-Sha256 (Join-Path $joinLocal 'TPP_GAME_DATA0')) (Get-Sha256 (Join-Path $hostSaveDir '287700/local/TPP_GAME_DATA0')) 'import: the partner''s progress is in the co-op copy'
-    Assert-Equal ([IO.File]::ReadAllText((Join-Path $joinLocal 'TPP_CONFIG_DATA'))) 'join own settings' 'import: own settings kept'
-    Assert-Equal @(Get-ChildItem -LiteralPath $joinReplaced -Directory -Filter '*-before-import').Count 1 'import: the previous copy is kept aside'
-    Assert-Equal (Get-FriendImportedSaveInfo -SaveDir $joinCoop -ReplacedRoot $joinReplaced).Source 'marker' 'import: detected by its marker'
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $joinGame, '-Mode', 'Restore', '-NonInteractive')
-    Assert-Equal $r.Exit 0 "Share-Save restore: $($r.Raw)"
-    $restoreAside = @(Get-ChildItem -LiteralPath $joinReplaced -Directory -Filter '*-before-restore')
-    Assert-True (!(Test-Path -LiteralPath $joinMarker) -and $restoreAside.Count -eq 1 -and (Test-Path -LiteralPath (Join-Path $restoreAside[0].FullName 'imported-progress.json'))) 'restore: the marker is moved aside with the imported copy'
-    Assert-Equal ([IO.File]::ReadAllText((Join-Path $joinLocal 'TPP_GAME_DATA0'))) 'join own early progress' 'restore: the own copy is back'
-    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $joinCoop -ReplacedRoot $joinReplaced)) 'restore: the copy no longer counts as imported'
-    [IO.File]::WriteAllBytes((Join-Path $joinLocal 'TPP_GAME_DATA0'), $joinOwnData)
-    Remove-Item -LiteralPath (Join-Path $joinLocal 'TPP_CONFIG_DATA')
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'Share-Save never touches the real saves'
 
     # ------------------------------------------------------------ the import core with a save handoff stage (Import-CoopProgressFiles, P2-18)
-    $coreGame = New-GameFixture 'handoff-core'
-    $kp = Get-InstancePaths -GameDirectory $coreGame
-    $r = Invoke-Friend $install (@('-GameDirectory', $coreGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Equal $r.Exit 0 "install for the import core: $($r.Raw)"
+    $kp = New-InstalledGame 'handoff-core'
+    $coreGame = $kp.Game
     $coreLocal = Join-Path $kp.CoopSaves '287700\local'
     foreach ($f in @(@('TPP_GAME_DATA0', 'core own progress'), @('PERSONAL_DATA1', 'core own old personal slot'), @('TPP_CONFIG_DATA', 'core own settings'), @('TPP_GRAPHICS_CONFIG', 'core own graphics'))) {
         [IO.File]::WriteAllText((Join-Path $coreLocal $f[0]), $f[1])
@@ -1564,15 +1371,6 @@ try {
     Assert-True (Remove-CoopProgressStage -StageRoot $rollStage.Stage) 'the stage is removed by its known names'
     Assert-Throws { Import-CoopProgressFiles -StageRoot $rollStage.Stage -SaveDir $kp.CoopSaves -ReplacedRoot $kp.CoopSavesReplaced -Suffix '-before-handoff' -Marker @{ Source = 'handoff' } } 'missing' 'a missing stage is refused'
     Assert-Equal (Get-RelativeTreeHashes $kp.CoopSaves) $afterHandoff 'a refused stage changes nothing'
-    # Share-Save [R] restores the newest of -before-import and -before-handoff and names which one.
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $coreGame, '-Mode', 'Restore', '-NonInteractive')
-    Assert-True ($r.Exit -eq 0 -and (Has $r "Restoring the co-op save copy kept before the automatic save handoff at $coreAside")) "[R] picks the newer handoff copy: $($r.Raw)"
-    Assert-Equal (Get-RelativeTreeHashes $kp.CoopSaves) $coreBefore '[R] brings back the copy from before the handoff'
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $coreGame, '-Mode', 'Restore', '-NonInteractive')
-    Assert-True ($r.Exit -eq 0 -and (Has $r "Restoring the co-op save copy kept before the import at $olderImport")) "[R] again: the older import copy: $($r.Raw)"
-    Assert-Equal ([IO.File]::ReadAllText((Join-Path $coreLocal 'TPP_GAME_DATA0'))) 'an old imported copy' '[R] again restored the import copy'
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $coreGame, '-Mode', 'Restore', '-NonInteractive')
-    Assert-Refused $r 'No co-op save copy from before an import or an automatic save handoff was found' '[R] with nothing left changes nothing'
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'the import core never touches the real saves'
 
     # ------------------------------------------------------------ the save handoff after the joiner's game exits (Invoke-CoopHandoffAfterExit, P2-17/18)
@@ -1907,88 +1705,23 @@ try {
         if ($sleeper -and !$sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue }
     }
 
-    # The reseed guard (Install-Coop): a copy that holds the partner's imported
-    # progress is replaced only after two answers; the marker leaves with it.
-    $impGame = New-GameFixture 'imported'
-    $ip = Get-InstancePaths -GameDirectory $impGame
-    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Equal $r.Exit 0 "install for the reseed guard: $($r.Raw)"
-    $impCoop = Join-Path $ip.Mod 'coop-saves'
-    $impReplaced = Join-Path $ip.Mod 'coop-saves-replaced'
-    $impMarker = Join-Path $impCoop 'imported-progress.json'
-    [IO.File]::WriteAllText((Join-Path $impCoop '287700/local/TPP_GAME_DATA0'), 'own early progress')
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $impGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
-    Assert-Equal $r.Exit 0 "import for the reseed guard: $($r.Raw)"
-    $importedTree = Get-TreeHashes $impCoop
-    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'Your co-op save copy holds your partner''s progress (imported with Share-Save on') -and
-        (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).')) "non-interactive reinstall keeps an imported copy: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $impCoop) $importedTree 'non-interactive reinstall: copy and marker unchanged'
-    $r = Invoke-FriendAnswers $install @('-GameDirectory', $impGame, '-SteamPath', $steam, '-SkipNetworkReport') @('1', '', 'y', 'y', 'KEEP')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'removes that progress from co-op games (it is only moved aside; Share-Save [R] cannot bring it back)') -and
-        (Has $r 'Kept the co-op save copy with your partner''s progress.')) "prompted reinstall, KEEP: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $impCoop) $importedTree 'KEEP: copy and marker unchanged'
-    $r = Invoke-FriendAnswers $install @('-GameDirectory', $impGame, '-SteamPath', $steam, '-SkipNetworkReport') @('1', '', 'y', 'y', 'REPLACE')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'To play on it again, import your partner''s zip again with Share-Save.bat (option I).')) "prompted reinstall, REPLACE: $($r.Text)"
-    Assert-True (!(Test-Path -LiteralPath $impMarker)) 'REPLACE: no marker in the fresh copy'
-    Assert-Equal ([IO.File]::ReadAllText((Join-Path $impCoop '287700/local/TPP_GAME_DATA0'))) 'fixture save 287700/local/TPP_GAME_DATA0' 'REPLACE: a fresh copy of the real save'
-    $movedMarkers = @(Get-ChildItem -LiteralPath $impReplaced -Directory | Where-Object { $_.Name -cmatch '^[0-9]{8}-[0-9]{6}(-[0-9]+)?$' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'imported-progress.json')) })
-    Assert-Equal $movedMarkers.Count 1 'REPLACE: the marker moved to coop-saves-replaced\<stamp> with the imported copy'
-    Assert-True ($null -eq (Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced)) 'REPLACE: the fresh copy is not imported'
-    # An import made before the marker existed: the newest '-before-import' folder counts the same way.
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $impGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
-    Assert-Equal $r.Exit 0 "second import for the folder fallback: $($r.Raw)"
-    Remove-Item -LiteralPath $impMarker
-    Assert-Equal (Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced).Source 'folder' 'folder fallback: detected without a marker'
-    $fallbackTree = Get-TreeHashes $impCoop
-    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).')) "folder fallback keeps the copy: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $impCoop) $fallbackTree 'folder fallback: copy unchanged'
-    # The first install after Uninstall-Coop (no active install record, which otherwise
-    # always reseeds) keeps an imported copy the same way.
-    $r = Invoke-Friend $shareSave @('-GameDirectory', $impGame, '-Mode', 'Import', '-ZipPath', $shareZips[0].FullName, '-NonInteractive')
-    Assert-Equal $r.Exit 0 "import before the uninstall: $($r.Raw)"
-    Assert-Equal (Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced).Source 'marker' 'import before the uninstall: detected by its marker'
-    $uninstalledTree = Get-TreeHashes $impCoop
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $impGame, '-NonInteractive', '-Yes')
-    Assert-Equal $r.Exit 0 "uninstall with an imported copy: $($r.Raw)"
-    Assert-True (!(Test-Path -LiteralPath (Join-Path $ip.Mod 'friend-install.json'))) 'uninstall: no active install record'
-    Assert-Equal (Get-TreeHashes $impCoop) $uninstalledTree 'uninstall keeps the imported copy and its marker'
-    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).') -and
-        !(Has $r 'A co-op save copy from an earlier test exists')) "first install after an uninstall keeps an imported copy: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $impCoop) $uninstalledTree 'first install after an uninstall: copy and marker unchanged'
-    # An automatic save handoff is guarded the same way; the prompt names the partner's save.
-    Remove-Item -LiteralPath $impMarker
-    $futureHandoff = Join-Path $impReplaced '20991231-235959-before-handoff'
-    $null = New-Item -ItemType Directory -Path $futureHandoff
-    Assert-Equal "$((Get-FriendImportedSaveInfo -SaveDir $impCoop -ReplacedRoot $impReplaced).Kind)" 'handoff' 'a newest -before-handoff folder is detected'
-    $handoffTree = Get-TreeHashes $impCoop
-    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r "Your co-op save copy holds your partner's save (automatic save handoff on 2099-12-31 23:59).") -and
-        (Has $r 'Kept the co-op save copy with your partner''s imported progress (run with -ReseedSaves to replace it).')) "install keeps a copy from an automatic save handoff: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $impCoop) $handoffTree 'the handoff copy is unchanged'
-    $r = Invoke-FriendAnswers $install @('-GameDirectory', $impGame, '-SteamPath', $steam, '-SkipNetworkReport') @('1', '', 'y', 'y', 'KEEP')
-    Assert-True ($r.Exit -eq 0 -and (Has $r "Your co-op save copy holds your partner's save (automatic save handoff on") -and (Has $r 'Kept the co-op save copy with your partner''s progress.')) "prompted reinstall with a handoff copy, KEEP: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $impCoop) $handoffTree 'KEEP: the handoff copy is unchanged'
-    Remove-Item -LiteralPath $futureHandoff
-    [IO.File]::WriteAllText($impMarker, (New-FriendImportMarkerText -Source 'handoff' -Files @()))
-    $r = Invoke-Friend $install (@('-GameDirectory', $impGame, '-Role', 'Join') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r "Your co-op save copy holds your partner's save (automatic save handoff on")) "a handoff marker is detected too: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'reseed guard: real saves untouched'
-
-    # ------------------------------------------------------------ packaged local two-window flow
-    # Dedicated inert copies: only the host uses the friend installer; the
-    # guest has the owned core installation and its earlier offline baseline.
-    $localHost = New-GameFixture 'local-host'
-    $localGuest = New-GameFixture 'local-host_guest'
-    $lhp = Get-InstancePaths -GameDirectory $localHost
-    $lgp = Get-InstancePaths -GameDirectory $localGuest
-    $r = Invoke-Friend $install (@('-GameDirectory', $localHost, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Equal $r.Exit 0 "local host fixture installs: $($r.Raw)"
-    $r = Invoke-Friend (Join-Path $stage 'scripts/install.ps1') @('-GameDirectory', $localGuest, '-PackageDirectory', $stage, '-RuntimeArchive', $archiveFx, '-NoPrompt', '-NoInitialMode')
-    Assert-Equal $r.Exit 0 "local guest core fixture installs: $($r.Raw)"
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $lgp.Mod 'friend-install.json'))) 'local guest needs the owned core install, not a second friend-account install'
+    # ------------------------------------------------------------ the developer's local two-window test (tools/dev; never shipped)
+    # A drop-in package as tools/package.ps1 -Friend stages it, with fixture game
+    # hashes and a newer inert loader; dedicated inert copies; MGS_COOP_TEST_NO_LAUNCH
+    # checks the activation and restores it without starting a game.
+    $loader2 = Join-Path $fixture 'loader2.dll'; [IO.File]::WriteAllText($loader2, 'INERT drop-in package loader')
+    $devPkg = Join-Path $fixture 'dev-package'
+    Copy-Item -LiteralPath $pkg -Destination $devPkg -Recurse
+    [IO.File]::Copy($loader2, (Join-Path $devPkg 'dinput8.dll'), $true)
+    $devManifest = Get-Content -LiteralPath (Join-Path $devPkg 'mgs-coop/package.json') -Raw | ConvertFrom-Json
+    $devManifest.executable_sha256 = $exeHash; $devManifest.steam_dll_sha256 = $steamHash; $devManifest.runtime_archive.sha256 = Get-Sha256 $archiveFx
+    ($devManifest.files | Where-Object { $_.target -ceq 'dinput8.dll' }).sha256 = Get-Sha256 $loader2
+    [IO.File]::WriteAllText((Join-Path $devPkg 'mgs-coop/package.json'), ($devManifest | ConvertTo-Json -Depth 6) + "`n", $utf8)
+    $startLocal = Join-Path $projectRoot 'tools/dev/Start-LocalCoop.ps1'
+    $lhp = New-InstalledGame 'local-host' -Record
+    $lgp = New-InstalledGame 'local-host_guest'
+    $localHost = $lhp.Game; $localGuest = $lgp.Game
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $lgp.Mod 'friend-install.json'))) 'the local guest needs only the owned core install'
     # Reuse the existing validated retail graphics fixture, never a real save.
     $graphicsTokens = $null; $graphicsErrors = $null
     $graphicsAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $projectRoot 'tests/lab_scripts_tests.ps1'), [ref]$graphicsTokens, [ref]$graphicsErrors)
@@ -2007,37 +1740,43 @@ try {
     foreach ($name in $localBaseline.Keys) { [IO.File]::WriteAllText((Join-Path $lgp.Mod $name), $localBaseline[$name], $utf8) }
     $localNormalSaves = Get-TreeHashes $lhp.CoopSaves
     $localRealSaves = Get-TreeHashes $userdata
-    $localFixedHashes = [ordered]@{}
-    foreach ($p in @($lhp, $lgp)) { foreach ($file in @($p.Exe, $p.SteamApi, $p.Loader, $p.Archive, $p.Record)) { $localFixedHashes[$file] = Get-Sha256 $file } }
+    $localArgs = @('-GameDirectory', $localHost, '-GuestDirectory', $localGuest, '-PackageDirectory', $devPkg, '-NonInteractive')
     $env:MGS_COOP_TEST_NO_LAUNCH = '1'
     $env:MGS_COOP_TEST_NO_WATCHDOG = '1'
     try {
-        # Invalid selection refuses before any local save or activation mutation.
+        # Refusals change nothing.
         $beforeHost = Get-TreeHashes $localHost; $beforeGuest = Get-TreeHashes $localGuest
-        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localHost, '-NonInteractive')
+        $r = Invoke-Friend $startLocal @('-GameDirectory', $localHost, '-GuestDirectory', $localHost, '-PackageDirectory', $devPkg, '-NonInteractive')
         Assert-Refused $r 'Choose two separate game folders' 'local test rejects using the same game twice'
         Assert-Equal (Get-TreeHashes $localHost) $beforeHost 'same-folder refusal preserves the host'
         Assert-Equal (Get-TreeHashes $localGuest) $beforeGuest 'same-folder refusal preserves the guest'
         [IO.File]::WriteAllText((Join-Path $lgp.Mod 'worker.enabled'), 'INERT foreign developer marker', $utf8)
-        $beforeHost = Get-TreeHashes $localHost; $beforeGuest = Get-TreeHashes $localGuest
-        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localGuest, '-NonInteractive')
+        $r = Invoke-Friend $startLocal $localArgs
         Assert-Refused $r 'belongs to a developer test' 'local play leaves an active developer fixture alone'
         Assert-Equal (Get-TreeHashes $localHost) $beforeHost 'developer refusal preserves host configuration and saves'
-        Assert-Equal (Get-TreeHashes $localGuest) $beforeGuest 'developer refusal preserves guest configuration and saves'
         Remove-Item -LiteralPath (Join-Path $lgp.Mod 'worker.enabled')
+        Assert-Equal (Get-TreeHashes $localGuest) $beforeGuest 'developer refusal preserves guest configuration and saves'
         $originalGuestLoader = [IO.File]::ReadAllBytes($lgp.Loader)
         [IO.File]::WriteAllText($lgp.Loader, 'INERT unrelated loader', $utf8)
-        $beforeHost = Get-TreeHashes $localHost; $beforeGuest = Get-TreeHashes $localGuest
-        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localGuest, '-NonInteractive')
-        Assert-Refused $r 'no matching owned co-op loader' 'local play refuses a guest loader that no longer matches ownership'
+        $beforeGuest = Get-TreeHashes $localGuest
+        $r = Invoke-Friend $startLocal $localArgs
+        Assert-Refused $r 'no matching owned co-op loader' 'local play refuses a guest loader that is neither owned nor the package one'
         Assert-Equal (Get-TreeHashes $localHost) $beforeHost 'loader refusal preserves the other game before activation'
         Assert-Equal (Get-TreeHashes $localGuest) $beforeGuest 'loader refusal never replaces an unrelated guest loader'
         [IO.File]::WriteAllBytes($lgp.Loader, $originalGuestLoader)
 
-        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localGuest, '-World', '3', '-Partner', 'native', '-NonInteractive')
-        Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: local two-window activation checked; no games launched.')) "packaged explicit LocalTest flow: $($r.Raw)"
+        # Both owned loaders are upgraded to the package's through the owned installer
+        # (a drop-in package: package.json in mgs-coop\, the launcher-only rows skipped).
+        $r = Invoke-Friend $startLocal (@('-World', '3', '-Partner', 'native') + $localArgs)
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: local two-window activation checked; no games launched.')) "developer local test flow: $($r.Raw)"
         Assert-True (Has $r 'Both game folders returned to their previous setup') 'fixture launch path restores both baselines before returning'
-        Assert-PassThrough $lhp 'local explicit flow host returned to pass-through'
+        foreach ($p in @($lhp, $lgp)) {
+            Assert-Equal (Get-Sha256 $p.Loader) (Get-Sha256 $loader2) "the owned loader was upgraded to the package's ($([IO.Path]::GetFileName($p.Game)))"
+            $record = Get-Content -LiteralPath $p.Record -Raw | ConvertFrom-Json
+            Assert-Equal "$($record.version)|$($record.dll_sha256)" "$packageVersion|$(Get-Sha256 $loader2)" 'the ownership record names the drop-in package'
+            Assert-True (!(Test-Path -LiteralPath (Join-Path $p.Game 'DiamondDogsTogether.exe')) -and !(Test-Path -LiteralPath (Join-Path $p.Mod 'source.zip'))) 'the owned installer installs only the loader and its licences'
+        }
+        Assert-PassThrough $lhp 'local flow host returned to pass-through'
         foreach ($name in $localBaseline.Keys) { Assert-Equal ([IO.File]::ReadAllText((Join-Path $lgp.Mod $name), [Text.Encoding]::UTF8)) $localBaseline[$name] "local guest restores its earlier offline bytes $name" }
         $localHostSaves = Join-Path $lhp.Mod 'local-test-saves'
         $localGuestSaves = Join-Path $lgp.Mod 'local-test-saves'
@@ -2047,36 +1786,44 @@ try {
             Assert-True ($info.Valid -and $info.WindowMode -ceq 'Windowed' -and $info.Width -ge 640 -and $info.Height -ge 480) 'only the local test saves get tagged windowed graphics'
         }
         $localJournals = @(Get-ChildItem -LiteralPath (Join-Path $lhp.Mod 'local-test-runs') -Directory)
-        Assert-Equal $localJournals.Count 1 'one explicit local test journal'
+        Assert-Equal $localJournals.Count 1 'one local test journal'
         $localJournal = Get-Content -LiteralPath (Join-Path $localJournals[0].FullName 'session.json') -Raw | ConvertFrom-Json
-        Assert-Equal $localJournal.state 'off' 'explicit local activation journal is off after fixture cleanup'
+        Assert-Equal $localJournal.state 'off' 'local activation journal is off after fixture cleanup'
         Assert-Equal @($localJournal.files).Count 8 'local activation records four files separately for each role'
         Assert-Equal @($localJournal.files | Where-Object { $_.role -ceq 'guest' -and $_.original_exists }).Count 4 'guest journal preserves all four earlier offline activation files'
         Assert-Equal @($localJournal.files | Where-Object { $_.phase -cne 'restored' }).Count 0 'all local activation entries are restored'
         Assert-True (![IO.File]::ReadAllText((Join-Path $localJournals[0].FullName 'session.json')).Contains($s7)) 'guest original secret is not printed as plain text in the local journal'
+        # The host plays Snake (as with Diamond Dogs Together), the guest Quiet.
+        foreach ($row in @(@('host', 'snake'), @('guest', 'quiet'))) {
+            $want = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($utf8.GetBytes((New-CoopPlayCoopIniText -Character $row[1]))))
+            $entry = @($localJournal.files | Where-Object { $_.role -ceq $row[0] -and $_.name -ceq 'coop.ini' })
+            Assert-True ($entry.Count -eq 1 -and ([string]$entry[0].written_sha256) -ieq $want) "local test coop.ini: the $($row[0]) plays $($row[1])"
+        }
         [IO.File]::WriteAllText((Join-Path $localGuestSaves '287700/local/LOCAL_PROGRESS'), 'guest local test progress', $utf8)
         $savedLocalHost = Get-TreeHashes $localHostSaves; $savedLocalGuest = Get-TreeHashes $localGuestSaves
-        # A real menu choice, followed by sibling _guest autodetection.
-        $r = Invoke-FriendAnswers $play @('-GameDirectory', $localHost) @('T')
-        Assert-True ($r.Exit -eq 0 -and (Has $r '[T] Local two-window test') -and (Has $r 'TEST: local two-window activation checked; no games launched.')) "packaged T menu flow finds the sibling guest: $($r.Raw)"
+        # A drag-and-drop install has no ownership record: the package's own loader is accepted.
+        $recordAside = $lhp.Record + '.aside'
+        Move-Item -LiteralPath $lhp.Record -Destination $recordAside
+        try {
+            $r = Invoke-Friend $startLocal @('-GameDirectory', $localHost, '-PackageDirectory', $devPkg, '-NonInteractive')
+            Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: local two-window activation checked; no games launched.')) "a drop-in host (no ownership record) and the sibling _guest copy: $($r.Raw)"
+        } finally { Move-Item -LiteralPath $recordAside -Destination $lhp.Record }
         Assert-Equal (Get-TreeHashes $localHostSaves) $savedLocalHost 'repeat local test retains the host local progress'
         Assert-Equal (Get-TreeHashes $localGuestSaves) $savedLocalGuest 'repeat local test retains the guest local progress'
-        # The old BAT name is an alias, not another independent launcher.
-        $batOut = '' | & cmd.exe /c (Join-Path $stage 'Play-Offline-Coop.bat') -GameDirectory $localHost -GuestDirectory $localGuest -NonInteractive 2>&1 | Out-String
-        Assert-True ($LASTEXITCODE -eq 0 -and $batOut.Contains('TEST: local two-window activation checked; no games launched.')) "offline BAT uses the unified inert local flow: $batOut"
+        # The repository's Play-Offline-Coop.bat is the developer entry point (all arguments pass through).
+        $batOut = '' | & cmd.exe /c (Join-Path $projectRoot 'Play-Offline-Coop.bat') -GameDirectory $localHost -GuestDirectory $localGuest -PackageDirectory $devPkg -NonInteractive 2>&1 | Out-String
+        Assert-True ($LASTEXITCODE -eq 0 -and $batOut.Contains('TEST: local two-window activation checked; no games launched.')) "Play-Offline-Coop.bat runs the developer local test: $batOut"
         $localJournals = @(Get-ChildItem -LiteralPath (Join-Path $lhp.Mod 'local-test-runs') -Directory)
-        Assert-Equal $localJournals.Count 3 'explicit, menu and offline alias each journal their own local run'
-        foreach ($journal in $localJournals) { Assert-Equal (Get-Content -LiteralPath (Join-Path $journal.FullName 'session.json') -Raw | ConvertFrom-Json).state 'off' 'each packaged local path cleans up its session' }
-        Assert-PassThrough $lhp 'all local fixture paths leave host pass-through'
-        foreach ($name in $localBaseline.Keys) { Assert-Equal ([IO.File]::ReadAllText((Join-Path $lgp.Mod $name), [Text.Encoding]::UTF8)) $localBaseline[$name] "all local fixture paths preserve guest baseline $name" }
-        Assert-Equal (Get-TreeHashes $lhp.CoopSaves) $localNormalSaves 'local flow never changes ordinary online/LAN co-op progress or graphics'
-        Assert-Equal (Get-TreeHashes $userdata) $localRealSaves 'local flow never reads or changes fixture real save data'
-        foreach ($file in $localFixedHashes.Keys) { Assert-Equal (Get-Sha256 $file) $localFixedHashes[$file] "local flow preserves exact game, archive and owned install bytes $([IO.Path]::GetFileName($file))" }
-        # A launcher owns both folders before either game starts. Install,
-        # Uninstall, online Play and the core installer must leave that live
-        # local journal, configuration and copied saves alone during this gap.
+        Assert-Equal $localJournals.Count 3 'each local test run journals its own session'
+        foreach ($journal in $localJournals) { Assert-Equal (Get-Content -LiteralPath (Join-Path $journal.FullName 'session.json') -Raw | ConvertFrom-Json).state 'off' 'each local run cleans up its session' }
+        Assert-PassThrough $lhp 'all local runs leave the host pass-through'
+        foreach ($name in $localBaseline.Keys) { Assert-Equal ([IO.File]::ReadAllText((Join-Path $lgp.Mod $name), [Text.Encoding]::UTF8)) $localBaseline[$name] "all local runs preserve guest baseline $name" }
+        Assert-Equal (Get-TreeHashes $lhp.CoopSaves) $localNormalSaves 'the local test never changes the ordinary co-op progress or graphics'
+        Assert-Equal (Get-TreeHashes $userdata) $localRealSaves 'the local test never reads or changes fixture real save data'
+        # A live local launcher owns both folders before either game starts: the
+        # owned installer leaves that journal, configuration and copied saves alone.
         & {
-            Import-Module (Join-Path $stage 'scripts/LocalCoopSession.psm1') -Force -DisableNameChecking
+            Import-Module (Join-Path $projectRoot 'tools/dev/LocalCoopSession.psm1') -Force -DisableNameChecking
             $activeRun = Join-Path $lhp.Mod ('local-test-runs\' + [Guid]::NewGuid().ToString('N'))
             $liveLocal = New-LocalCoopSession -HostRoot $localHost -GuestRoot $localGuest -RunDirectory $activeRun
             try {
@@ -2087,18 +1834,12 @@ try {
                 }
                 Assert-True (Test-LocalCoopSessionOwnerLive -Session $liveLocal) 'local activation fixture has an exact live launcher process identity'
                 $activeHostHashes = Get-TreeHashes $localHost; $activeGuestHashes = Get-TreeHashes $localGuest
-                foreach ($operation in @(
-                    @{Name='friend install';Script=$install;Arguments=(@('-GameDirectory', $localHost, '-Role', 'Host') + $common);Needle='Another local two-window launcher'},
-                    @{Name='friend uninstall';Script=$uninstall;Arguments=@('-GameDirectory', $localHost, '-NonInteractive', '-Yes');Needle='Another local two-window launcher'},
-                    @{Name='online play';Script=$play;Arguments=@('-GameDirectory', $localHost, '-Role', 'Host', '-Transport', 'steam', '-NonInteractive');Needle='Another local two-window launcher'},
-                    @{Name='core guest install';Script=(Join-Path $stage 'scripts/install.ps1');Arguments=@('-GameDirectory', $localGuest, '-PackageDirectory', $stage, '-NoPrompt', '-NoInitialMode');Needle='local two-window session owns this folder'}
-                )) {
-                    $result = Invoke-Friend $operation.Script $operation.Arguments
-                    Assert-Refused $result $operation.Needle ("$($operation.Name) refuses a live local launcher before mutation")
-                    Assert-Equal (Get-TreeHashes $localHost) $activeHostHashes "$($operation.Name) leaves the entire host fixture unchanged"
-                    Assert-Equal (Get-TreeHashes $localGuest) $activeGuestHashes "$($operation.Name) leaves the entire guest fixture unchanged"
-                    Assert-Equal (Get-TreeHashes $userdata) $localRealSaves "$($operation.Name) leaves fixture real saves unchanged"
-                }
+                $result = Invoke-Friend $coreInstaller @('-GameDirectory', $localGuest, '-PackageDirectory', $devPkg, '-NoPrompt', '-NoInitialMode')
+                Assert-Refused $result 'local two-window session owns this folder' 'the owned installer refuses a live local launcher before mutation'
+                $result = Invoke-Friend $startLocal $localArgs
+                Assert-Refused $result 'still active' 'a second local test refuses a live local launcher'
+                Assert-Equal (Get-TreeHashes $localHost) $activeHostHashes 'the refusals leave the entire host fixture unchanged'
+                Assert-Equal (Get-TreeHashes $localGuest) $activeGuestHashes 'the refusals leave the entire guest fixture unchanged'
             } finally {
                 $restored = Restore-LocalCoopSession -Session (Read-LocalCoopSession -RunDirectory $activeRun)
                 Assert-Equal $restored.State 'off' 'the exact owner can clean up its own live local fixture after both games remain stopped'
@@ -2110,966 +1851,8 @@ try {
         Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
         Remove-Item Env:MGS_COOP_TEST_NO_WATCHDOG -ErrorAction SilentlyContinue
     }
-
-    # The read-only network report (no -SkipNetworkReport): reported, nothing changed.
-    $reportGame = New-GameFixture 'report'
-    $r = Invoke-Friend $install @('-GameDirectory', $reportGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx, '-SteamPath', $steam, '-NonInteractive', '-Yes')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'Network check (read-only; nothing is changed)') -and (Has $r 'Block rule')) "install prints the read-only firewall report: $($r.Text)"
-
-    # Prompt path (a double-clicked Install-Coop.bat): usually Join, character 4, the archive in quotes, Enter.
-    $askGame = New-GameFixture 'prompts'
-    $ap = Get-InstancePaths -GameDirectory $askGame
-    $r = Invoke-FriendAnswers $install @('-GameDirectory', $askGame, '-SteamPath', $steam, '-SkipNetworkReport') @('2', '4', ('"' + $archiveFx + '"'), '')
-    Assert-Equal $r.Exit 0 "prompted join install succeeds: $($r.Raw)"
-    $as = Get-Content -LiteralPath (Join-Path $ap.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($as.role_hint)|$($as.character)" 'Join|dd_female' 'prompted: usually Join, character chosen by number'
-    # Reinstall through the prompts: Host, Enter for the default character, yes, refresh the save copy.
-    [IO.File]::WriteAllText((Join-Path $ap.Mod 'coop-saves/287700/local/COOP_PROGRESS'), 'old copy progress')
-    $r = Invoke-FriendAnswers $install @('-GameDirectory', $askGame, '-SteamPath', $steam, '-SkipNetworkReport') @('1', '', 'y', 'y')
-    Assert-Equal $r.Exit 0 "prompted reinstall succeeds: $($r.Raw)"
-    $as = Get-Content -LiteralPath (Join-Path $ap.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($as.role_hint)|$($as.character)" 'Host|default' 'Enter keeps the host default'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $ap.Mod 'coop-saves/287700/local/COOP_PROGRESS'))) 'save copy refreshed on request'
-    Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $ap.Mod 'coop-saves-replaced') -Recurse -File -Filter COOP_PROGRESS).Count 1 'old save copy moved aside, not deleted'
-    $before = Get-TreeHashes $askGame
-    $r = Invoke-FriendAnswers $install @('-GameDirectory', $askGame, '-SteamPath', $steam, '-SkipNetworkReport') @('2', '', 'n')
-    Assert-True ($r.Exit -eq 1 -and (Has $r 'Cancelled. Nothing was changed.')) "cancel at the confirmation: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $askGame) $before 'cancel left the folder unchanged'
-    $r = Invoke-FriendAnswers $uninstall @('-GameDirectory', $askGame) @('')
-    Assert-Equal $r.Exit 0 "prompted uninstall succeeds: $($r.Raw)"
-    Assert-True (-not (Test-Path -LiteralPath $ap.Loader)) 'prompted uninstall removed the loader'
-
-    # The install record cannot be written: nothing was changed yet, everything is put back.
-    $failGame = New-GameFixture 'fail'
-    $fp = Get-InstancePaths -GameDirectory $failGame
-    $null = New-Item -ItemType Directory -Path (Join-Path $fp.Mod 'friend-install.json') -Force
-    $r = Invoke-Friend $install (@('-GameDirectory', $failGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-True ($r.Exit -ne 0 -and (Has $r 'undoing the changes') -and (Has $r 'back to its state before this run')) "failed record write is undone: $($r.Text)"
-    Assert-True (-not (Test-Path -LiteralPath $fp.Loader) -and -not (Test-Path -LiteralPath $fp.Record)) 'record failure: the loader was never installed'
-
-    # Failures AFTER the loader install, through a staged copy of Install-Coop.ps1
-    # with a stand-in inserted after the install (test only): it fails, damages the
-    # loader first (so the automatic restore fails too), or ends the process (window closed).
-    $stageFaulty = Join-Path $fixture 'stage-faulty'
-    Copy-Item -LiteralPath $stage -Destination $stageFaulty -Recurse
-    $installFaulty = Join-Path $stageFaulty 'scripts/Install-Coop.ps1'
-    $faultyText = [IO.File]::ReadAllText($installFaulty)
-    $faultPoint = '    # (tests/friend_package_tests.ps1 inserts its failure stand-ins after this line.)'
-    Assert-Equal ([regex]::Matches($faultyText, [regex]::Escape($faultPoint)).Count) 1 'Install-Coop has one fault injection point'
-    $faultCode = @($faultPoint,
-        '    switch ($env:MGS_COOP_TEST_INSTALL_FAULT) {',
-        '        ''throw'' { throw ''simulated failure after the loader install'' }',
-        '        ''damage'' { [IO.File]::AppendAllText($paths.Loader, ''changed''); throw ''simulated failure after the loader changed'' }',
-        '        ''exit'' { [Environment]::Exit(9) }',
-        '    }') -join "`r`n"
-    [IO.File]::WriteAllText($installFaulty, $faultyText.Replace($faultPoint, $faultCode), [Text.Encoding]::ASCII)
-    function Invoke-Faulty([string]$Mode, [string]$Game) {
-        $env:MGS_COOP_TEST_INSTALL_FAULT = $Mode
-        try { return Invoke-Friend $installFaulty (@('-GameDirectory', $Game, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common) }
-        finally { Remove-Item Env:MGS_COOP_TEST_INSTALL_FAULT -ErrorAction SilentlyContinue }
-    }
-    # 1. A failure after the install; the restore works: everything is put back.
-    $throwGame = New-GameFixture 'fault-throw'
-    $tp = Get-InstancePaths -GameDirectory $throwGame
-    $null = New-Item -ItemType Directory -Path $tp.Mod -Force
-    [IO.File]::WriteAllText((Join-Path $tp.Mod 'coop.ini'), "character=snake`n")
-    $r = Invoke-Faulty 'throw' $throwGame
-    Assert-True ($r.Exit -ne 0 -and (Has $r 'previous loader state was restored') -and (Has $r 'back to its state before this run') -and (Has $r 'simulated failure after the loader install')) "failure after the loader install is rolled back: $($r.Text)"
-    Assert-True (-not (Test-Path -LiteralPath $tp.Loader) -and -not (Test-Path -LiteralPath $tp.Record)) 'rollback removed the loader and record'
-    Assert-Equal ([IO.File]::ReadAllText($tp.CoopIni)) "character=snake`n" 'rollback put the user coop.ini back'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $tp.Mod 'friend-install.json')) -and -not (Test-Path -LiteralPath $tp.Marker)) 'no install record or marker after a rollback'
-    # 2. The restore fails as well: the loader stays (pass-through) with a pending record.
-    $damageGame = New-GameFixture 'fault-damage'
-    $dp = Get-InstancePaths -GameDirectory $damageGame
-    $r = Invoke-Faulty 'damage' $damageGame
-    Assert-True ($r.Exit -ne 0 -and (Has $r 'could NOT be removed automatically') -and (Has $r 'stays in pass-through') -and (Has $r 'run Uninstall-Coop.bat')) "failed restore: pass-through, uninstall advised: $($r.Text)"
-    Assert-True (Test-Path -LiteralPath $dp.Loader -PathType Leaf) 'loader still present after the failed restore'
-    Assert-PassThrough $dp 'failed restore'
-    $pending = Get-Content -LiteralPath (Join-Path $dp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($pending.status)|$($pending.pending_record_before)|$(@($pending.rollback_ids).Count)" 'pending||0' 'pending install record kept'
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $damageGame, '-NonInteractive', '-Yes')
-    Assert-True ($r.Exit -eq 2 -and (Has $r 'did not finish') -and (Has $r 'could not be restored') -and (Has $r 'stays in pass-through')) "uninstall adopts the pending loader, reports the failed restore: $($r.Text)"
-    Copy-Item -LiteralPath $loader1 -Destination $dp.Loader -Force
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $damageGame, '-NonInteractive', '-Yes')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'did not finish') -and (Has $r 'Loader removed (restored 1 install state(s))')) "uninstall succeeds once the cause is gone: $($r.Text)"
-    Assert-True (-not (Test-Path -LiteralPath $dp.Loader) -and -not (Test-Path -LiteralPath $dp.Record)) 'pending install fully undone'
-    # 3. The process ends halfway (window closed): pending record; the next
-    #    Install-Coop adopts that loader state and Uninstall-Coop undoes both.
-    $exitGame = New-GameFixture 'fault-exit'
-    $xp = Get-InstancePaths -GameDirectory $exitGame
-    $r = Invoke-Faulty 'exit' $exitGame
-    Assert-Equal $r.Exit 9 "process ended after the loader install: $($r.Text)"
-    Assert-True (Test-Path -LiteralPath $xp.Loader -PathType Leaf) 'interrupted run: loader present'
-    Assert-Equal (Get-Content -LiteralPath (Join-Path $xp.Mod 'friend-install.json') -Raw | ConvertFrom-Json).status 'pending' 'interrupted run left a pending record'
-    $r = Invoke-Friend $install (@('-GameDirectory', $exitGame, '-Role', 'Host') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'did not finish')) "install after an interrupted run: $($r.Text)"
-    Assert-PassThrough $xp 'install after an interrupted run'
-    $xs = Get-Content -LiteralPath (Join-Path $xp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($xs.status)|$(@($xs.rollback_ids).Count)" 'installed|2' 'interrupted run adopted into the install record'
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $exitGame, '-NonInteractive', '-Yes')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'Loader removed (restored 2 install state(s))')) "uninstall undoes the interrupted and the later run: $($r.Text)"
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by the failure tests'
-
-    # ------------------------------------------------------------ Play-Coop (Windows PowerShell 5.1, packaged)
-    # Not installed: refused, nothing written.
-    $bare = New-GameFixture 'play-bare'
-    $r = Invoke-Play $play @('-GameDirectory', $bare, '-Role', 'Host', '-HostAddress', '192.0.2.10')
-    Assert-Refused $r 'not installed in this folder' 'Play-Coop refuses a folder without an install'
-    Assert-Equal @(Get-ChildItem -LiteralPath $bare -Force).Count 2 'Play-Coop refusal wrote nothing'
-    # The online launcher must start this package's exact loader, including
-    # different builds with the same version; ownership alone is insufficient.
-    $ownedRecordBytes = [IO.File]::ReadAllBytes($hp.Record)
-    $ownedLoaderBytes = [IO.File]::ReadAllBytes($hp.Loader)
-    $releaseManifestPath = Join-Path $stage 'package.json'
-    $releaseManifestBytes = [IO.File]::ReadAllBytes($releaseManifestPath)
-    $releaseLoaderPath = Join-Path $stage 'payload\dinput8.dll'
-    $releaseLoaderBytes = [IO.File]::ReadAllBytes($releaseLoaderPath)
-    $ownedBefore = Get-TreeHashes $hostGame
-    try {
-        $newRelease = Read-FriendJson $releaseManifestPath
-        $newRelease.version = '0.12.2'
-        [IO.File]::WriteAllText($releaseManifestPath, ($newRelease | ConvertTo-Json -Depth 8), $utf8)
-        $oldBefore = Get-TreeHashes $hostGame
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
-        Assert-Refused $r 'not this exact release' '0.12.2 package refuses an older owned 0.12.0 loader'
-        Assert-Equal (Get-TreeHashes $hostGame) $oldBefore 'different version refusal changes no game or save files'
-        [IO.File]::WriteAllBytes($releaseManifestPath, $releaseManifestBytes)
-
-        [IO.File]::Copy($loaderPrev, $hp.Loader, $true)
-        $otherRecord = Read-FriendJson $hp.Record
-        $otherRecord.dll_sha256 = Get-Sha256 $hp.Loader
-        [IO.File]::WriteAllText($hp.Record, ($otherRecord | ConvertTo-Json -Depth 8), $utf8)
-        $otherBefore = Get-TreeHashes $hostGame
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
-        Assert-Refused $r 'not this exact release' 'same version with a different owned loader refuses'
-        Assert-Equal (Get-TreeHashes $hostGame) $otherBefore 'different build refusal changes no game or save files'
-        [IO.File]::WriteAllBytes($hp.Record, $ownedRecordBytes)
-        [IO.File]::WriteAllBytes($hp.Loader, $ownedLoaderBytes)
-
-        [IO.File]::AppendAllText($releaseLoaderPath, 'changed')
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
-        Assert-Refused $r 'release package loader has changed' 'tampered package payload refuses before activation'
-        Assert-Equal (Get-TreeHashes $hostGame) $ownedBefore 'tampered package refusal changes no game or save files'
-        [IO.File]::WriteAllBytes($releaseLoaderPath, $releaseLoaderBytes)
-
-        $duplicateManifest = Read-FriendJson $releaseManifestPath
-        $duplicateManifest.files = @($duplicateManifest.files) + @($duplicateManifest.files | Where-Object target -ceq 'dinput8.dll')
-        [IO.File]::WriteAllText($releaseManifestPath, ($duplicateManifest | ConvertTo-Json -Depth 8), $utf8)
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
-        Assert-Refused $r 'no unique checked loader entry' 'ambiguous loader payload refuses before activation'
-        Assert-Equal (Get-TreeHashes $hostGame) $ownedBefore 'ambiguous package refusal changes no game or save files'
-    } finally {
-        [IO.File]::WriteAllBytes($hp.Record, $ownedRecordBytes)
-        [IO.File]::WriteAllBytes($hp.Loader, $ownedLoaderBytes)
-        [IO.File]::WriteAllBytes($releaseManifestPath, $releaseManifestBytes)
-        [IO.File]::WriteAllBytes($releaseLoaderPath, $releaseLoaderBytes)
-    }
-    # Change the actual manifest only after preflight and the first activation
-    # files, immediately before the marker. The fresh check refuses and the
-    # launcher's ordinary finally removes its partial activation.
-    $stagePlayRace = Join-Path $fixture 'stage-play-release-race'
-    Copy-Item -LiteralPath $stage -Destination $stagePlayRace -Recurse
-    $playRace = Join-Path $stagePlayRace 'scripts\Play-Coop.ps1'
-    $playRaceText = [IO.File]::ReadAllText($playRace)
-    $playRacePoint = '            if ($w.Name -eq ''script-observe.enabled'') {'
-    Assert-Equal ([regex]::Matches($playRaceText, [regex]::Escape($playRacePoint)).Count) 1 'Play-Coop has one pre-marker fixture injection point'
-    $playRaceCode = $playRacePoint + "`r`n" + '                [IO.File]::AppendAllText((Join-Path $PackageDirectory ''package.json''), '' '')'
-    [IO.File]::WriteAllText($playRace, $playRaceText.Replace($playRacePoint, $playRaceCode), $utf8)
-    $r = Invoke-Play $playRace @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
-    Assert-Refused $r 'release package changed while Play-Coop was preparing' 'manifest race refuses immediately before the activation marker'
-    Assert-PassThrough $hp 'release race removes partial activation'
-    Assert-Equal (Get-Sha256 $hp.Loader) (Get-Sha256 $loader1) 'release race preserves the installed owned loader'
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'release identity refusals preserve real saves'
-
-    # Host activation (the window "closes" right after it; the watchdog cleans up).
-    $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10', '-Port', '47835')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: leaving after the activation.')) "Play-Coop host activates: $($r.Raw)"
-    $code = Get-CodeFromOutput $r.Raw
-    $parsedCode = ConvertFrom-CoopJoinCode $code
-    Assert-Equal "$($parsedCode.Status)|$($parsedCode.HostName)|$($parsedCode.Port)" 'ok|192.0.2.10|47835' 'the host shows a valid code for its address and port'
-    Assert-Equal ([regex]::Matches($r.Raw, [regex]::Escape($code)).Count) 1 'the code (the secret) is shown once, to the host'
-    Assert-True (!$r.Raw.Contains($parsedCode.Secret)) 'the bare secret is never printed'
-    Assert-True ((Has $r 'Mother Base') -and (Has $r 'Tailscale')) 'host guidance: Mother Base only, VPN recommended'
-    Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Port 47835 -SaveHandoff scene) 'host play lab.ini (save_handoff=scene by default)'
-    Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($hp.LinkSecret))) ([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($parsedCode.Secret + "`r`n"))) 'link-secret.txt: the code''s secret + CRLF (ASCII)'
-    Assert-Equal ([IO.File]::ReadAllText($hp.CoopIni)) (New-CoopPlayCoopIniText -Character quiet) 'play coop.ini: closed master port, the installed character'
-    Assert-Equal ([IO.File]::ReadAllText($hp.Marker)) "offline-v1`n" 'marker offline-v1'
-    $session = Get-SessionJson $hp
-    $watchdogs.Add([int]$session.watchdog_pid)
-    Assert-Equal "$($session.v)|$($session.state)|$($session.role)|$($session.port)" '2|active|host|47835' 'play-session.json'
-    Assert-Equal (@($session.files | ForEach-Object { $_.name }) -join ',') 'lab.ini,link-secret.txt,coop.ini,script-observe.enabled' 'activation order recorded'
-    foreach ($f in @($session.files)) { Assert-Equal $f.sha256 (Get-Sha256 (Join-Path $hp.Mod $f.name)) "recorded hash of $($f.name)" }
-    Assert-True ([int]$session.watchdog_pid -gt 0 -and [int]$session.launcher_pid -gt 0) 'launcher and watchdog recorded'
-    Assert-True (![IO.File]::ReadAllText($hp.PlaySession).Contains($parsedCode.Secret)) 'play-session.json holds no secret'
-    # The launcher is gone and no game started: the watchdog switches co-op off.
-    Assert-True (Wait-Until { (Get-PlayFilesPresent $hp) -eq 0 } 45) 'watchdog cleanup after the launcher died without a game'
-    Assert-True (Wait-Until { (Get-SessionJson $hp).state -eq 'off' } 15) 'watchdog set the session off'
-    Assert-True (Wait-Until { $null -eq (Get-Process -Id $session.watchdog_pid -ErrorAction SilentlyContinue) } 15) 'watchdog exits after its cleanup'
-    Assert-PassThrough $hp 'after the watchdog cleanup'
-
-    # Join: a typo first, then the code with blanks and lower case; the host address from the code.
-    $joinCode = New-CoopJoinCode -Secret $s7 -HostName '192.0.2.44' -Port 47831
-    $typo = $joinCode.Replace('-RVN6B-', '-RVN6C-')
-    $joinAnswers = @($typo, (' ' + $joinCode.ToLowerInvariant().Replace('-', ' - ') + ' '))
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') $joinAnswers -NoWatchdog
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'The code has a typo; copy it again.') -and (Has $r 'Code OK: host 192.0.2.44:47831')) "Play-Coop join: $($r.Raw)"
-    # (Windows PowerShell echoes redirected Read-Host input; in a window that is the pasted text itself.)
-    $printed = $r.Raw
-    foreach ($a in $joinAnswers) { $printed = $printed.Replace($a, '') }
-    Assert-True (!$printed.Contains($s7) -and !$printed.ToUpperInvariant().Contains('7K3QZ')) 'the joiner never prints the secret'
-    $jSaveDir = Join-Path $jp.Mod 'coop-saves'
-    Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDir -Port 47831 -PeerAddress '192.0.2.44' -SaveHandoff scene) 'guest play lab.ini (listen 0, peer address and port from the code)'
-    Assert-True (Has $r "Save sharing: if your co-op save starts somewhere else than the host's, you get the host's save at the title screen and MGSV restarts once (your own copy is kept; Share-Save.bat [R]). -SaveHandoff off turns this off.") 'the joiner is told about the automatic save handoff'
-    $joinLab = (Get-SessionJson $jp).lab
-    Assert-Equal "$($joinLab.role)|$($joinLab.transport)|$($joinLab.port)|$($joinLab.peer)|$($joinLab.world)|$($joinLab.partner)|$($joinLab.save_handoff)|$($joinLab.travel_lock)" 'guest|udp|47831|192.0.2.44|3|native|scene|on' 'play-session.json records the lab.ini settings'
-    Assert-Equal ([IO.File]::ReadAllText($jp.LinkSecret)) "$s7`r`n" 'guest link secret from the code'
-    Assert-Equal ([IO.File]::ReadAllText($jp.CoopIni)) (New-CoopPlayCoopIniText -Character quiet) 'guest coop.ini: Quiet'
-    # Deactivation keeps a file that changed after Play-Coop wrote it.
-    [IO.File]::AppendAllText($jp.LabIni, "partner_lost=hide`n")
-    $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'lab.ini was changed after Play-Coop wrote it')) "cleanup reports the changed file: $($r.Text)"
-    Assert-True ((Test-Path -LiteralPath $jp.LabIni) -and !(Test-Path -LiteralPath $jp.LinkSecret) -and !(Test-Path -LiteralPath $jp.CoopIni) -and !(Test-Path -LiteralPath $jp.Marker)) 'only the owned, unchanged files were deleted (marker first)'
-    Assert-Equal (Get-SessionJson $jp).state 'off' 'cleanup set the session off'
-    $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'nothing to clean up')) 'cleanup is idempotent'
-    # The changed lab.ini is not ours any more: the next start refuses to overwrite it.
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Refused $r 'a Play-Coop file that was changed afterwards' 'a modified play lab.ini is refused'
-    Remove-Item -LiteralPath $jp.LabIni
-    # A foreign lab.ini / coop.ini / marker is refused and never overwritten.
-    $labIniText = "# Generated by tools/lab/Prepare-LabInstance.ps1 - single-PC lab harness only.`nenabled=1`nrole=guest`n"
-    [IO.File]::WriteAllText($jp.LabIni, $labIniText)
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Refused $r 'a file Play-Coop did not write' 'a lab lab.ini is refused'
-    Assert-Equal ([IO.File]::ReadAllText($jp.LabIni)) $labIniText 'the foreign lab.ini is unchanged'
-    Remove-Item -LiteralPath $jp.LabIni
-    [IO.File]::WriteAllText($jp.CoopIni, "character=snake`n")
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Refused $r 'coop.ini exists' 'a user coop.ini is refused'
-    Remove-Item -LiteralPath $jp.CoopIni
-    [IO.File]::WriteAllText($jp.Marker, "client-v1`n")
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Refused $r 'script-observe.enabled exists but was not written by this Play-Coop session' 'a foreign marker is refused'
-    Assert-Equal ([IO.File]::ReadAllText($jp.Marker)) "client-v1`n" 'the foreign marker is unchanged'
-    Remove-Item -LiteralPath $jp.Marker
-    # A marker that is not exactly offline-v1 is kept by the cleanup.
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Equal $r.Exit 0 "join again: $($r.Raw)"
-    [IO.File]::WriteAllText($jp.Marker, "offline-v1`r`n")
-    $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-    Assert-True ((Has $r 'script-observe.enabled was changed after Play-Coop wrote it') -and (Test-Path -LiteralPath $jp.Marker) -and !(Test-Path -LiteralPath $jp.LabIni)) 'a non-ours marker is kept, the owned files go'
-    Remove-Item -LiteralPath $jp.Marker
-    # Leftover cleanup at the next start: a session whose window and helper are gone.
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Equal $r.Exit 0 "join without a helper: $($r.Raw)"
-    $firstSession = (Get-SessionJson $jp).session_id
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'did not end cleanly; its files were cleaned up')) "the next Play-Coop cleans up first: $($r.Text)"
-    Assert-True ((Get-SessionJson $jp).session_id -cne $firstSession -and (Get-PlayFilesPresent $jp) -eq 4) 'a new session after the leftover cleanup'
-    # Install-Coop cleans up an active session too (and stays pass-through).
-    $r = Invoke-Friend $install (@('-GameDirectory', $joinGame, '-Role', 'Join') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'Co-op files of an earlier Play-Coop session were removed')) "install cleans up a play session: $($r.Text)"
-    Assert-PassThrough $jp 'install after a play session'
-    # A session whose launcher window still runs is not a leftover: Play-Coop,
-    # Install-Coop and Uninstall-Coop refuse; -Cleanup still forces it.
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Equal $r.Exit 0 "join for the live-session test: $($r.Raw)"
-    $liveTable = ConvertTo-CoopSessionTable -Session (Get-SessionJson $jp)
-    $liveTable['launcher_pid'] = $PID
-    $liveTable['launcher_start_utc'] = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
-    Save-CoopPlaySession -GameRoot $joinGame -Session $liveTable
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Refused $r 'Another Play-Coop window is active for this folder' 'a second Play-Coop leaves a live session alone'
-    $r = Invoke-Friend $install (@('-GameDirectory', $joinGame, '-Role', 'Join') + $common)
-    Assert-Refused $r 'Another Play-Coop window is active for this folder' 'Install-Coop leaves a live session alone'
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $joinGame, '-NonInteractive', '-Yes')
-    Assert-Refused $r 'Another Play-Coop window is active for this folder' 'Uninstall-Coop leaves a live session alone'
-    Assert-True ((Get-PlayFilesPresent $jp) -eq 4 -and (Get-SessionJson $jp).state -eq 'active') 'the live session keeps its files'
-    $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-    Assert-True ($r.Exit -eq 0 -and (Get-PlayFilesPresent $jp) -eq 0) "-Cleanup forces a live session off: $($r.Text)"
-    # A stray link-secret.txt (for example from the single-PC lab -Lan) stops
-    # Play-Coop; Install-Coop sets it aside (never copied), then Play-Coop works.
-    $secretsBefore = @(Get-ChildItem -LiteralPath $jp.Mod -Filter 'link-secret.txt.*' -Force | ForEach-Object { $_.Name })
-    [IO.File]::WriteAllText($jp.LinkSecret, "$s7`r`n")
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Refused $r 'link-secret.txt exists but was not written by this Play-Coop session' 'a stray link secret is refused'
-    $r = Invoke-Friend $install (@('-GameDirectory', $joinGame, '-Role', 'Join') + $common)
-    $asideSecrets = @(Get-ChildItem -LiteralPath $jp.Mod -Filter 'link-secret.txt.*' -Force | Where-Object { $secretsBefore -notcontains $_.Name })
-    Assert-True ($r.Exit -eq 0 -and !(Test-Path -LiteralPath $jp.LinkSecret) -and $asideSecrets.Count -eq 1 -and $asideSecrets[0].Name -like 'link-secret.txt.disabled-*') "install sets a stray link secret aside (never copied): $($r.Text)"
-    $asideRecords = @((Get-Content -LiteralPath (Join-Path $jp.Mod 'friend-install.json') -Raw | ConvertFrom-Json).set_aside | Where-Object { $_ -and $_.name -eq 'link-secret.txt' })
-    Assert-True ($asideRecords.Count -ge 1) 'set_aside records the link secret'
-    Assert-True (!$r.Raw.Contains($s7)) 'the set-aside secret is never printed'
-    Remove-Item -LiteralPath $asideSecrets[0].FullName
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-    Assert-Equal $r.Exit 0 "Play-Coop works after the install set the secret aside: $($r.Raw)"
-    $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-    Assert-PassThrough $jp 'cleanup after the stray-secret test'
-    # A DNS name that points to this PC is refused (the launcher resolves names, IPv4 only).
-    $localCode = New-CoopJoinCode -Secret $s7 -HostName 'localhost' -Port 47830
-    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($localCode) -NoWatchdog
-    Assert-True ($r.Exit -ne 0 -and ((Has $r 'cannot be used') -or (Has $r 'no IPv4 address'))) "a name resolving to this PC is refused: $($r.Text)"
-    Assert-PassThrough $jp 'refused join'
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by Play-Coop'
-
-    # ------------------------------------------------------------ Play-Coop online (Steam; docs/steam-online.md 10.1)
-    try {
-        # Steam not running / not logged in: refused, nothing written.
-        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '0'
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-Transport', 'steam') -NoWatchdog
-        Assert-Refused $r 'Steam is not running or not logged in' 'online host needs Steam logged in'
-        Assert-PassThrough $hp 'refused online host'
-        # Host online: an MGS2 code for this Steam account; no UDP, UPnP or firewall steps.
-        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '97000001'
-        $hostSteam = Get-CoopSteamId64 -ActiveUser 97000001
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-Transport', 'steam') -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: leaving after the activation.')) "online host activates: $($r.Raw)"
-        $steamMatch = [regex]::Match($r.Raw, 'MGS2-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{2}@[0-9]{17}')
-        Assert-True $steamMatch.Success "the online host shows an MGS2 code: $($r.Raw)"
-        $steamParsed = ConvertFrom-CoopSteamJoinCode $steamMatch.Value
-        Assert-Equal "$($steamParsed.Status)|$($steamParsed.SteamId)" "ok|$hostSteam" 'the code names this Steam account'
-        Assert-Equal ([regex]::Matches($r.Raw, [regex]::Escape($steamMatch.Value)).Count) 1 'the online code is shown once'
-        Assert-True ((Has $r 'F9 -> Partner / Co-op -> Online -> Invite') -and !(Has $r 'Tailscale') -and !(Has $r 'api.ipify.org') -and !(Has $r 'UPnP') -and !(Has $r 'Firewall rule')) 'online host: invite hint; no VPN, public IP, UPnP or firewall steps'
-        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Transport steam -SteamSelf $hostSteam -SaveHandoff scene) 'online host lab.ini'
-        Assert-Equal ([IO.File]::ReadAllText($hp.LinkSecret)) "$($steamParsed.Secret)`r`n" 'online host link secret = the code''s secret'
-        $session = Get-SessionJson $hp
-        Assert-Equal "$($session.role)|$($session.transport)|$(@($session.files | ForEach-Object { $_.name }) -join ',')" 'host|steam|lab.ini,link-secret.txt,coop.ini,script-observe.enabled' 'online host session'
-        Assert-True (![IO.File]::ReadAllText($hp.PlaySession).Contains($steamParsed.Secret)) 'play-session.json holds no secret'
-        $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
-        Assert-PassThrough $hp 'online host cleanup'
-        # Join online with the code (blanks and lower case).
-        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '97000002'
-        $guestSteam = Get-CoopSteamId64 -ActiveUser 97000002
-        $jSaveDirOnline = Join-Path $jp.Mod 'coop-saves'
-        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @(' ' + $steamMatch.Value.ToLowerInvariant() + ' ') -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r ('Code OK: host Steam account ...' + $hostSteam.Substring(13)))) "online join with a code: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamPeer $hostSteam -SaveHandoff scene) 'online guest lab.ini'
-        Assert-Equal ([IO.File]::ReadAllText($jp.LinkSecret)) "$($steamParsed.Secret)`r`n" 'online guest secret from the code'
-        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-        Assert-PassThrough $jp 'online join cleanup'
-        # Wait for an invite (Enter): no secret is written.
-        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @('') -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r 'Waiting for an invite')) "online join waits for an invite: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamWait -SaveHandoff scene) 'waiting guest lab.ini'
-        $waitLab = (Get-SessionJson $jp).lab
-        Assert-Equal "$($waitLab.transport)|$($waitLab.steam_self)|$($waitLab.steam_peer)|$($waitLab.steam_wait)|$($waitLab.peer)" "steam|$guestSteam||True|" 'a waiting guest records steam_wait (the save handoff rejoin needs it)'
-        Assert-True (!(Test-Path -LiteralPath $jp.LinkSecret)) 'a waiting guest has no link secret'
-        Assert-Equal (@((Get-SessionJson $jp).files | ForEach-Object { $_.name }) -join ',') 'lab.ini,coop.ini,script-observe.enabled' 'waiting guest session files'
-        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-        Assert-PassThrough $jp 'waiting join cleanup'
-        # One's own code is refused (then wait).
-        $ownCode = New-CoopSteamJoinCode -Secret $s7 -SteamId $guestSteam
-        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @($ownCode, '') -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r 'That is your own code') -and !(Test-Path -LiteralPath $jp.LinkSecret)) "own code refused: $($r.Raw)"
-        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-        # An MGS1 code in Join online joins over LAN/VPN.
-        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @($joinCode) -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r 'joining over the LAN/VPN link')) "MGS1 falls through to LAN/VPN: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Port 47831 -PeerAddress '192.0.2.44' -SaveHandoff scene) 'MGS1 in Join online: the UDP lab.ini'
-        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
-        # The menu: O hosts online; L then H is the LAN/VPN host; Q changes nothing.
-        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '97000001'
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame) @('O') -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r '[O] Host online (Steam, recommended)') -and [regex]::IsMatch($r.Raw, 'MGS2-[0-9A-Z]{5}-')) "menu O: $($r.Raw)"
-        $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-HostAddress', '192.0.2.10') @('L', 'H') -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r 'Host or Join?') -and [regex]::IsMatch($r.Raw, 'MGS1-[0-9A-Z]{5}-')) "menu L, H: the LAN/VPN host: $($r.Raw)"
-        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Port 47830 -SaveHandoff scene) 'menu L, H: UDP lab.ini unchanged'
-        $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
-        Assert-PassThrough $hp 'menu cleanup'
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame) @('Q') -NoWatchdog
-        Assert-True ($r.Exit -eq 0 -and (Has $r 'Nothing was changed.')) 'menu Q'
-        Assert-PassThrough $hp 'menu Q writes nothing'
-    } finally { Remove-Item Env:MGS_COOP_TEST_STEAM_ACTIVE_USER -ErrorAction SilentlyContinue }
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by Play-Coop online'
-
-    # The helper waits for the game: a stand-in mgsvtpp.exe runs from the folder.
-    if ($FakeProcess) {
-        $realExe = [IO.File]::ReadAllBytes($hp.Exe)
-        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10')
-        Assert-Equal $r.Exit 0 "activation for the game-exit test: $($r.Raw)"
-        Copy-Item -LiteralPath $FakeProcess -Destination $hp.Exe -Force
-        $port = 0
-        foreach ($i in 1..50) { $candidate = Get-Random -Minimum 49152 -Maximum 65000; if (Test-LocalPortFree -Port $candidate) { $port = $candidate; break } }
-        $fakeGame = Start-Process -FilePath $hp.Exe -ArgumentList '-standalone', '-listenAddr', "127.0.0.1:$port" -WorkingDirectory $hostGame -PassThru
-        $watchdogs.Add([int](Get-SessionJson $hp).watchdog_pid)
-        Start-Sleep -Seconds 8
-        Assert-True (!$fakeGame.HasExited -and (Get-PlayFilesPresent $hp) -eq 4) 'while the game runs, co-op stays on (window gone)'
-        $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
-        Assert-Refused $r 'MGSV is running from this folder' '-Cleanup waits for the game to exit'
-        Stop-Process -Id $fakeGame.Id -Force
-        $fakeGame.WaitForExit(5000) | Out-Null
-        $fakeGame = $null
-        Assert-True (Wait-Until { (Get-PlayFilesPresent $hp) -eq 0 } 30) 'the helper switches co-op off when the game exits'
-        [IO.File]::WriteAllBytes($hp.Exe, $realExe)
-
-        # The whole launcher: activation, launch (a stand-in game instead of Steam),
-        # the start evidence in the new log bytes, the status line, cleanup at game exit.
-        function Invoke-PlayLaunch([string]$Name, [string[]]$EarlyLines, [string[]]$SteamLines, [string[]]$ObserverLines, [string]$StatusJson, [string]$WaitFor) {
-            $in = Join-Path $fixture "$Name-in.txt"; $outFile = Join-Path $fixture "$Name-out.txt"; $errFile = Join-Path $fixture "$Name-err.txt"
-            [IO.File]::WriteAllText($in, "`r`n`r`n")
-            $env:MGS_COOP_TEST_INTERACTIVE = '1'; $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_NO_WATCHDOG = '1'
-            # Windows PowerShell uses its own module path (as the .bat files arrange).
-            $savedModulePath = $env:PSModulePath
-            $env:PSModulePath = ''
-            try {
-                $launcher = Start-Process -FilePath $winPs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $play + '"'), '-GameDirectory', ('"' + $hostGame + '"'), '-Role', 'Host', '-HostAddress', '192.0.2.10') `
-                    -RedirectStandardInput $in -RedirectStandardOutput $outFile -RedirectStandardError $errFile -NoNewWindow -PassThru
-            } finally {
-                $env:PSModulePath = $savedModulePath
-                foreach ($v in 'MGS_COOP_TEST_INTERACTIVE', 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_NO_WATCHDOG') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
-            }
-            $read = { if (Test-Path -LiteralPath $outFile) { Read-SharedText -Path $outFile } else { '' } }
-            try {
-                Assert-True (Wait-Until { (& $read).Contains('Waiting for MGSV') } 90) "[$Name] the launcher waits for the game: $(& $read)"
-                Copy-Item -LiteralPath $FakeProcess -Destination $hp.Exe -Force
-                $gamePort = 0
-                foreach ($i in 1..50) { $candidate = Get-Random -Minimum 49152 -Maximum 65000; if (Test-LocalPortFree -Port $candidate) { $gamePort = $candidate; break } }
-                $script:fakeGame = Start-Process -FilePath $hp.Exe -ArgumentList '-standalone', '-listenAddr', "127.0.0.1:$gamePort" -WorkingDirectory $hostGame -PassThru
-                Assert-True (Wait-Until { (& $read).Contains('MGSV started') } 30) "[$Name] the launcher sees the game"
-                [IO.File]::AppendAllText((Join-Path $hp.Mod 'early.log'), (($EarlyLines -join "`r`n") + "`r`n"))
-                [IO.File]::AppendAllText((Join-Path $hp.Mod 'steam-observer.log'), (($SteamLines -join "`r`n") + "`r`n"))
-                [IO.File]::AppendAllText((Join-Path $hp.Mod 'script-observer.log'), (($ObserverLines -join "`r`n") + "`r`n"))
-                [IO.File]::WriteAllText($hp.LinkStatus, $StatusJson.Replace('@PID@', [string]$script:fakeGame.Id).Replace('@NOW@', [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')))
-                Assert-True (Wait-Until { (& $read).Contains($WaitFor) } 30) "[$Name] the launcher shows '$WaitFor': $(& $read)"
-                Assert-True ((Get-PlayFilesPresent $hp) -eq 4) "[$Name] co-op stays on while the game runs"
-                Stop-Process -Id $script:fakeGame.Id -Force
-                $script:fakeGame.WaitForExit(5000) | Out-Null
-                $script:fakeGame = $null
-                Assert-True ($launcher.WaitForExit(30000)) "[$Name] the launcher ends when the game exits"
-                return (& $read)
-            } finally {
-                if (!$launcher.HasExited) { Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue }
-                [IO.File]::WriteAllBytes($hp.Exe, $realExe)
-            }
-        }
-        $liveStatus = '{"v":1,"pid":@PID@,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"192.0.2.44:51234","local_port":47830,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","time_utc":"@NOW@"}'
-        $out = Invoke-PlayLaunch 'launch-ok' @('early=start; version=0.12.0', "saves=redirected; dir=$hostSaveDir", 'play=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected') `
-            @('master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate') @('play=active; role=host; partner=1; refused=0x0') $liveStatus '[HOST] link=connected rtt=42ms'
-        Assert-True ($out.Contains('Co-op is active and the game plays from the save COPY.') -and $out.Contains('| partner=live shown look | mission 30050') -and $out.Contains('MGSV exited.') -and !$out.Contains('NOT active')) 'launcher: evidence ok, status line, game exit'
-        Assert-True ((Get-PlayFilesPresent $hp) -eq 0 -and (Get-SessionJson $hp).state -eq 'off') 'launcher: co-op switched off at game exit'
-        $out = Invoke-PlayLaunch 'launch-refused' @('early=start; version=0.12.0', 'saves=unchanged') @('master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate') `
-            @('play=refused; reason=saves_not_redirected; refused=0x0') ($liveStatus.Replace('"state":"connected"', '"state":"off"')) 'save protection is NOT active'
-        Assert-True ($out.Contains('Co-op did NOT start and save protection is NOT active: this game is normal offline play on your REAL saves. Quit MGSV now if you do not want that.')) 'launcher: the red banner when the saves are not redirected'
-        Assert-True ((Get-PlayFilesPresent $hp) -eq 0) 'launcher: cleanup after the refused start as well'
-
-        # The automatic save handoff through the whole launcher (a joiner, docs/two-pc-play.md
-        # "Save handoff"): the stand-in game stages the host's save (handoff.json, then
-        # request.json with its own pid and start) and exits; Play-Coop applies it and starts
-        # MGSV again with no cleanup in between, attaches to a second stand-in and switches
-        # co-op off only after that one exits. Steam is never started (MGS_COOP_TEST_NO_LAUNCH=1).
-        function Start-StandIn([string]$Game) {
-            $exe = Join-Path $Game 'mgsvtpp.exe'
-            Copy-Item -LiteralPath $FakeProcess -Destination $exe -Force
-            $standInPort = 0
-            foreach ($i in 1..50) { $candidate = Get-Random -Minimum 49152 -Maximum 65000; if (Test-LocalPortFree -Port $candidate) { $standInPort = $candidate; break } }
-            return (Start-Process -FilePath $exe -ArgumentList '-standalone', '-listenAddr', "127.0.0.1:$standInPort" -WorkingDirectory $Game -PassThru)
-        }
-        function Stop-StandIn($Process) { if ($Process -and !$Process.HasExited) { Stop-Process -Id $Process.Id -Force; $null = $Process.WaitForExit(5000) } }
-        function Get-StandInStartUtc($Process) { return $Process.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
-        function Add-StandInEvidence($Paths) {
-            [IO.File]::AppendAllText((Join-Path $Paths.Mod 'early.log'), "early=start; version=$packageVersion`r`nsaves=redirected; dir=$($Paths.CoopSaves)`r`nplay=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected`r`n")
-            [IO.File]::AppendAllText((Join-Path $Paths.Mod 'steam-observer.log'), "master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate`r`n")
-            [IO.File]::AppendAllText((Join-Path $Paths.Mod 'script-observer.log'), "play=active; role=guest; partner=1; refused=0x0`r`n")
-        }
-        $hoGame = New-GameFixture 'handoff-launch'
-        $hop = Get-InstancePaths -GameDirectory $hoGame
-        $r = Invoke-Friend $install (@('-GameDirectory', $hoGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
-        Assert-Equal $r.Exit 0 "install for the handoff launcher test: $($r.Raw)"
-        $hoRealExe = [IO.File]::ReadAllBytes($hop.Exe)
-        $hoIn = Join-Path $fixture 'handoff-launch-in.txt'; $hoOut = Join-Path $fixture 'handoff-launch-out.txt'; $hoErr = Join-Path $fixture 'handoff-launch-err.txt'
-        [IO.File]::WriteAllText($hoIn, "$joinCode`r`n`r`n`r`n")
-        # The manual-start hint 6 s into the restart wait (45 s in play).
-        $env:MGS_COOP_TEST_INTERACTIVE = '1'; $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_NO_WATCHDOG = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'; $env:MGS_COOP_TEST_RELAUNCH_HINT_SEC = '6'
-        $savedModulePath = $env:PSModulePath
-        $env:PSModulePath = ''
-        try {
-            $hoLauncher = Start-Process -FilePath $winPs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $play + '"'), '-GameDirectory', ('"' + $hoGame + '"'), '-Role', 'Join') `
-                -RedirectStandardInput $hoIn -RedirectStandardOutput $hoOut -RedirectStandardError $hoErr -NoNewWindow -PassThru
-        } finally {
-            $env:PSModulePath = $savedModulePath
-            foreach ($v in 'MGS_COOP_TEST_INTERACTIVE', 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_NO_WATCHDOG', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC', 'MGS_COOP_TEST_RELAUNCH_HINT_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
-        }
-        $hoRead = { if (Test-Path -LiteralPath $hoOut) { Read-SharedText -Path $hoOut } else { '' } }
-        $standIn1 = $null; $standIn2 = $null
-        try {
-            Assert-True (Wait-Until { (& $hoRead).Contains('Waiting for MGSV') } 90) "[handoff] the launcher waits for the game: $(& $hoRead)"
-            $hoOwnBefore = Get-RelativeTreeHashes $hop.CoopSaves
-            $standIn1 = Start-StandIn $hoGame
-            Assert-True (Wait-Until { (& $hoRead).Contains('MGSV started') } 30) '[handoff] the launcher sees the first game'
-            Add-StandInEvidence $hop
-            $hoStatus = '{"v":1,"pid":@PID@,"mode":"play","role":"guest","state":"connected","reason":"","verified":1,"session":1,"peer":"192.0.2.44:47831","local_port":0,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":40050,"saves":"redirected","handoff":"countdown","handoff_pct":100,"time_utc":"@NOW@"}'
-            [IO.File]::WriteAllText($hop.LinkStatus, $hoStatus.Replace('@PID@', [string]$standIn1.Id).Replace('@NOW@', [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')))
-            Assert-True (Wait-Until { $t = & $hoRead; $t.Contains('| host save ready, MGSV restarts | mission 40050') -and $t.Contains("Host's save ready: MGSV restarts at the title screen") } 30) "[handoff] the status segment and the one-time sentence: $(& $hoRead)"
-            # The stand-in stages the host's save, writes its request last and exits.
-            $hoStage = New-HandoffStage $hop.CoopSavesHandoff '9CADBECF' @{ '287700/local/TPP_GAME_DATA0' = 'host progress for the launcher'; 'remote/TPP_GAME_DATA' = 'host remote for the launcher' }
-            $null = New-HandoffRequest $hop.CoopSavesHandoff $hoStage $standIn1.Id (Get-StandInStartUtc $standIn1)
-            Stop-StandIn $standIn1
-            Assert-True (Wait-Until { (& $hoRead).Contains('Starting MGSV again with the same join code...') } 60) "[handoff] the launcher applies and restarts: $(& $hoRead)"
-            # Review (online 2026-10-22): Steam still marks MGSV as running, so no retry goes out; the
-            # manual-start hint still comes (its own check-only pass) and says so.
-            [IO.File]::WriteAllText($steamRunningFile, "1`n")
-            $hoText = & $hoRead
-            Assert-True ($hoText.Contains("MGSV closed to load the host's save.") -and $hoText.Contains("Applying the host's save (2 files, 1 KB)...") -and
-                [regex]::IsMatch($hoText, 'Your previous co-op save is kept at mgs-coop\\coop-saves-replaced\\[0-9]{8}-[0-9]{6}(-[0-9]+)?-before-handoff \(Share-Save\.bat \[R\] brings it back\)\.') -and
-                !$hoText.Contains('MGSV exited.')) "[handoff] the restart lines and no exit line: $hoText"
-            # Review: the applied save is reported before the Steam wait (the window is not silent during it).
-            $hoWaitAt = $hoText.IndexOf('Waiting for Steam to let MGSV start again (up to 30 s)...')
-            Assert-True ($hoWaitAt -gt $hoText.IndexOf("Applying the host's save (2 files, 1 KB)...") -and $hoWaitAt -lt $hoText.IndexOf('Starting MGSV again with the same join code...') -and
-                ([regex]::Matches($hoText, [regex]::Escape("MGSV closed to load the host's save."))).Count -eq 1) "[handoff] the Steam wait line between the applied save and the restart: $hoText"
-            Assert-True ((Get-PlayFilesPresent $hop) -eq 4) '[handoff] no cleanup in between: all four co-op files stay'
-            $hoSession = Get-SessionJson $hop
-            Assert-Equal "$($hoSession.state)|$(Get-HandoffField $hop 'state')|$(Get-HandoffField $hop 'count')|$(Get-HandoffField $hop 'claimed_by_pid')" "active|relaunching|1|$($hoLauncher.Id)" '[handoff] the launcher claimed and restarted'
-            Assert-True ([IO.File]::ReadAllText($hop.LabIni).Contains("save_handoff=off`n") -and (@($hoSession.files | Where-Object { $_.name -eq 'lab.ini' })[0]).sha256 -eq (Get-Sha256 $hop.LabIni)) '[handoff] lab.ini again with save_handoff=off, its hash recorded'
-            foreach ($row in $hoStage.Rows) { Assert-Equal (Get-Sha256 (Join-Path $hop.CoopSaves $row.entry.Replace('/', '\'))) $row.sha256 "[handoff] the host's $($row.entry) is in the co-op copy" }
-            $hoAside = @(Get-CoopProgressBackups -ReplacedRoot $hop.CoopSavesReplaced | Where-Object { $_.Kind -eq 'handoff' })
-            Assert-True ($hoAside.Count -eq 1 -and (Get-RelativeTreeHashes $hoAside[0].Path) -eq $hoOwnBefore) '[handoff] the own copy is kept aside'
-            Assert-True (Wait-Until { (& $hoRead).Contains('MGSV is not back yet, and Steam still shows MGS V as running: once Steam shows Play again, press it; co-op stays on for ') } 30) "[handoff] the manual-start hint while Steam still marks MGSV as running (no retry): $(& $hoRead)"
-            Assert-True (!(& $hoRead).Contains('start MGS V from Steam yourself')) '[handoff] the Steam-running variant only'
-            [IO.File]::WriteAllText($steamRunningFile, "0`n")
-            # Steam would start MGSV now: the second stand-in.
-            $standIn2 = Start-StandIn $hoGame
-            Assert-True (Wait-Until { (& $hoRead).Contains("MGSV restarted (process $($standIn2.Id)).") } 30) "[handoff] the launcher attaches to the restarted game: $(& $hoRead)"
-            Add-StandInEvidence $hop
-            Assert-True (Wait-Until { (Get-HandoffField $hop 'state') -eq 'relaunched' -and [int](Get-FriendProperty (Get-SessionJson $hop) 'game_pid' 0) -eq $standIn2.Id } 15) '[handoff] state relaunched with the new game recorded'
-            [IO.File]::WriteAllText($hop.LinkStatus, $hoStatus.Replace('"handoff":"countdown","handoff_pct":100', '"handoff":"applied","handoff_pct":0').Replace('"mission":40050', '"mission":30010').Replace('@PID@', [string]$standIn2.Id).Replace('@NOW@', [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')))
-            Assert-True (Wait-Until { (& $hoRead).Contains("| playing on the host's save | mission 30010") } 30) "[handoff] the status line after the restart: $(& $hoRead)"
-            Assert-True ((Get-PlayFilesPresent $hop) -eq 4) '[handoff] co-op stays on while the restarted game runs'
-            Stop-StandIn $standIn2
-            Assert-True ($hoLauncher.WaitForExit(60000)) '[handoff] the launcher ends when the restarted game exits'
-            $hoText = & $hoRead
-            Assert-True ($hoText.Contains('MGSV exited.') -and (Get-PlayFilesPresent $hop) -eq 0 -and (Get-SessionJson $hop).state -eq 'off') "[handoff] 'MGSV exited.' and the cleanup after the second game: $hoText"
-            # Online 2026-10-22 P5: every step of the restart is in play-coop.log (Collect-Logs takes it).
-            $hoLog = [IO.File]::ReadAllText($hop.PlayCoopLog)
-            $hoSteps = @('play=launch; role=guest', "game=seen; run=0; game_pid=$($standIn1.Id)", "game=exited; run=0; game_pid=$($standIn1.Id)", 'handoff=claimed; owner=console',
-                'handoff=applied; files=2', 'steam_wait; stopped=1; known=1', 'relaunch=requested; started=0', 'handoff_after_exit; owner=console; action=relaunched',
-                'relaunch=checked; ok=1; problem=; steam=1', 'relaunch_hint; shown=1; left_s=', "game=seen; run=1; game_pid=$($standIn2.Id)", "game=exited; run=1; game_pid=$($standIn2.Id)")
-            $hoAt = -1
-            foreach ($step in $hoSteps) { $i = $hoLog.IndexOf($step); Assert-True ($i -gt $hoAt) "[handoff] play-coop.log has '$step' in order: $hoLog"; $hoAt = $i }
-        } finally {
-            [IO.File]::WriteAllText($steamRunningFile, "0`n")
-            Stop-StandIn $standIn1; Stop-StandIn $standIn2
-            if (!$hoLauncher.HasExited) { Stop-Process -Id $hoLauncher.Id -Force -ErrorAction SilentlyContinue }
-            [IO.File]::WriteAllBytes($hop.Exe, $hoRealExe)
-        }
-
-        # Review SS-4: the launcher waits for a restart the helper claimed (claimed_by_other); the
-        # helper's restart then fails (state failed, co-op still on) or the helper switches co-op off.
-        # The window stops waiting at once, never says "start MGS V from Steam yourself", and exits 0
-        # with co-op off.
-        foreach ($outcome in @('failed', 'off')) {
-            $coIn = Join-Path $fixture "handoff-claimed-$outcome-in.txt"; $coOut = Join-Path $fixture "handoff-claimed-$outcome-out.txt"; $coErr = Join-Path $fixture "handoff-claimed-$outcome-err.txt"
-            [IO.File]::WriteAllText($coIn, "$joinCode`r`n`r`n`r`n")
-            $env:MGS_COOP_TEST_INTERACTIVE = '1'; $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_NO_WATCHDOG = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'
-            $savedModulePath = $env:PSModulePath
-            $env:PSModulePath = ''
-            try {
-                $coLauncher = Start-Process -FilePath $winPs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $play + '"'), '-GameDirectory', ('"' + $hoGame + '"'), '-Role', 'Join') `
-                    -RedirectStandardInput $coIn -RedirectStandardOutput $coOut -RedirectStandardError $coErr -NoNewWindow -PassThru
-                $null = $coLauncher.Handle  # keeps the exit code readable after WaitForExit
-            } finally {
-                $env:PSModulePath = $savedModulePath
-                foreach ($v in 'MGS_COOP_TEST_INTERACTIVE', 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_NO_WATCHDOG', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
-            }
-            $coRead = { if (Test-Path -LiteralPath $coOut) { Read-SharedText -Path $coOut } else { '' } }
-            $standIn1 = $null; $coHelper = $null
-            try {
-                Assert-True (Wait-Until { (& $coRead).Contains('Waiting for MGSV') } 90) "[claimed $outcome] the launcher waits for the game: $(& $coRead)"
-                $standIn1 = Start-StandIn $hoGame
-                Assert-True (Wait-Until { (& $coRead).Contains('MGSV started') } 30) "[claimed $outcome] the launcher sees the game"
-                Add-StandInEvidence $hop
-                # Only once the window recorded the game (Set-CoopPlayGame turns a relaunching claim
-                # written before that into relaunched, and the exit then finds no live claim: a flake).
-                Assert-True (Wait-Until { [int](Get-FriendProperty (Get-SessionJson $hop) 'game_pid' 0) -eq $standIn1.Id } 30) "[claimed $outcome] the window recorded the game"
-                # The helper (a live stand-in process) claimed the restart while this window was busy.
-                $coHelper = Start-Process -FilePath $winPs -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 300' -WindowStyle Hidden -PassThru
-                $coHelperStart = Get-CoopProcessStartUtc -Id $coHelper.Id
-                $null = Update-CoopPlaySession -GameRoot $hoGame -Update {
-                    param($t)
-                    $t['handoff'] = [ordered]@{ state = 'relaunching'; claimed_by_pid = $coHelper.Id; claimed_start_utc = $coHelperStart; claimed_utc = [DateTime]::UtcNow.ToString('o')
-                        xfer = '8E9FA0B1'; set_sha256 = ('C' * 64); count = 1; aside = '20261015-120000-before-handoff'; message = '' }
-                }
-                Stop-StandIn $standIn1
-                Assert-True (Wait-Until { (& $coRead).Contains("The background helper is restarting MGSV with the host's save...") } 60) "[claimed $outcome] claimed_by_other: the window waits: $(& $coRead)"
-                Start-Sleep -Seconds 2
-                Assert-True (!$coLauncher.HasExited -and (Get-PlayFilesPresent $hop) -eq 4) "[claimed $outcome] the restart is pending: co-op stays on"
-                if ($outcome -eq 'failed') {
-                    # The helper's own Start-CoopRelaunch failed; its cleanup has not run yet.
-                    $null = Update-CoopPlaySession -GameRoot $hoGame -Update { param($t) $h = Get-CoopSessionHandoff $t; $h['state'] = 'failed'; $h['message'] = 'mgs-coop\coop.ini changed'; $t['handoff'] = $h }
-                } else {
-                    $null = Invoke-CoopPlayCleanup -GameRoot $hoGame -Force
-                }
-                Assert-True ($coLauncher.WaitForExit(15000)) "[claimed $outcome] the window stops waiting at once: $(& $coRead)"
-                $coText = & $coRead
-                Assert-Equal $coLauncher.ExitCode 0 "[claimed $outcome] exit code 0"
-                Assert-True (!$coText.Contains('start MGS V from Steam yourself') -and !$coText.Contains('co-op stays on for')) "[claimed $outcome] never asks for a manual start: $coText"
-                if ($outcome -eq 'failed') {
-                    Assert-True ($coText.Contains('MGSV could not be started again: mgs-coop\coop.ini changed. Do not start MGS V from Steam now; start Play-Coop.bat again.') -and
-                        $coText.Contains('Your previous co-op save is kept at mgs-coop\coop-saves-replaced\20261015-120000-before-handoff (Share-Save.bat [R] brings it back).')) "[claimed failed] the reason and the kept copy: $coText"
-                } else {
-                    Assert-True ($coText.Contains('Co-op was switched off while MGSV was restarting (the helper could not start it again); do not start MGS V from Steam now. Start Play-Coop.bat again.')) "[claimed off] co-op was switched off: $coText"
-                }
-                Assert-True ((Get-PlayFilesPresent $hop) -eq 0 -and (Get-SessionJson $hop).state -eq 'off') "[claimed $outcome] co-op is off (the window's finally block switches a failed restart off)"
-            } finally {
-                Stop-StandIn $standIn1
-                if ($coHelper -and !$coHelper.HasExited) { Stop-Process -Id $coHelper.Id -Force -ErrorAction SilentlyContinue }
-                if (!$coLauncher.HasExited) { Stop-Process -Id $coLauncher.Id -Force -ErrorAction SilentlyContinue }
-                [IO.File]::WriteAllBytes($hop.Exe, $hoRealExe)
-            }
-        }
-
-        # The same with the window gone (-Watch): the helper applies, waits for the restarted game
-        # and switches co-op off only after that one exits.
-        $wdGame = New-GameFixture 'handoff-watch'
-        $wdp = Get-InstancePaths -GameDirectory $wdGame
-        $r = Invoke-Friend $install (@('-GameDirectory', $wdGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
-        Assert-Equal $r.Exit 0 "install for the handoff helper test: $($r.Raw)"
-        $wdRealExe = [IO.File]::ReadAllBytes($wdp.Exe)
-        $r = Invoke-Play $play @('-GameDirectory', $wdGame, '-Role', 'Join') @($joinCode) -NoWatchdog
-        Assert-Equal $r.Exit 0 "activation for the handoff helper test (the window closes right after it): $($r.Raw)"
-        $wdSessionId = [string](Get-SessionJson $wdp).session_id
-        $standIn1 = $null; $standIn2 = $null; $wdHelper = $null
-        try {
-            $standIn1 = Start-StandIn $wdGame
-            # Started like Start-CoopWatchdog's command (Start-Process keeps this test's environment).
-            $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'; $env:MGS_COOP_TEST_RESTART_WAIT_SEC = '120'
-            $savedModulePath = $env:PSModulePath
-            $env:PSModulePath = ''
-            try {
-                $wdHelper = Start-Process -FilePath $winPs -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $play + '"'), '-GameDirectory', ('"' + $wdGame + '"'), '-Watch', $wdSessionId, '-TestNoLaunch') -WindowStyle Hidden -PassThru
-            } finally {
-                $env:PSModulePath = $savedModulePath
-                foreach ($v in 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC', 'MGS_COOP_TEST_RESTART_WAIT_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
-            }
-            $watchdogs.Add($wdHelper.Id)
-            $wdHelperStart = Get-CoopProcessStartUtc -Id $wdHelper.Id
-            $null = Update-CoopPlaySession -GameRoot $wdGame -Update { param($t) $t['watchdog_pid'] = $wdHelper.Id; $t['watchdog_start_utc'] = $wdHelperStart }
-            Assert-True (Wait-Until { [int](Get-FriendProperty (Get-SessionJson $wdp) 'game_pid' 0) -eq $standIn1.Id } 30) '[helper] the helper records the running game'
-            $wdOwnBefore = Get-RelativeTreeHashes $wdp.CoopSaves
-            $wdStage = New-HandoffStage $wdp.CoopSavesHandoff 'ADBECFD0' @{ '287700/local/TPP_GAME_DATA0' = 'host progress for the helper' }
-            $null = New-HandoffRequest $wdp.CoopSavesHandoff $wdStage $standIn1.Id (Get-StandInStartUtc $standIn1)
-            Stop-StandIn $standIn1
-            Assert-True (Wait-Until { (Get-HandoffField $wdp 'state') -eq 'relaunching' -and (Get-HandoffField $wdp 'count') -eq '1' } 60) "[helper] the helper applies the host's save: $([IO.File]::ReadAllText($wdp.PlaySession))"
-            Assert-Equal (Get-HandoffField $wdp 'claimed_by_pid') ([string]$wdHelper.Id) '[helper] the helper claimed it'
-            Assert-True ([IO.File]::ReadAllText($wdp.LabIni).Contains("save_handoff=off`n") -and (Get-Sha256 (Join-Path $wdp.CoopSaves '287700\local\TPP_GAME_DATA0')) -eq $wdStage.Rows[0].sha256) "[helper] applied: lab.ini and the host's progress"
-            $wdAside = @(Get-CoopProgressBackups -ReplacedRoot $wdp.CoopSavesReplaced | Where-Object { $_.Kind -eq 'handoff' })
-            Assert-True ($wdAside.Count -eq 1 -and (Get-RelativeTreeHashes $wdAside[0].Path) -eq $wdOwnBefore) '[helper] the own copy is kept aside'
-            Start-Sleep -Seconds 6
-            Assert-True ((Get-PlayFilesPresent $wdp) -eq 4 -and !$wdHelper.HasExited) '[helper] while the restart is pending, co-op stays on and the helper waits'
-            $standIn2 = Start-StandIn $wdGame
-            Assert-True (Wait-Until { (Get-HandoffField $wdp 'state') -eq 'relaunched' -and [int](Get-FriendProperty (Get-SessionJson $wdp) 'game_pid' 0) -eq $standIn2.Id } 30) '[helper] the restarted game is recorded (relaunched)'
-            Start-Sleep -Seconds 4
-            Assert-True ((Get-PlayFilesPresent $wdp) -eq 4 -and !$wdHelper.HasExited) '[helper] co-op stays on while the restarted game runs'
-            Stop-StandIn $standIn2
-            Assert-True (Wait-Until { (Get-PlayFilesPresent $wdp) -eq 0 -and (Get-SessionJson $wdp).state -eq 'off' } 45) '[helper] co-op is switched off after the restarted game exits'
-            Assert-True ($wdHelper.WaitForExit(15000)) '[helper] the helper exits after its cleanup'
-        } finally {
-            Stop-StandIn $standIn1; Stop-StandIn $standIn2
-            if ($wdHelper -and !$wdHelper.HasExited) { Stop-Process -Id $wdHelper.Id -Force -ErrorAction SilentlyContinue }
-            [IO.File]::WriteAllBytes($wdp.Exe, $wdRealExe)
-        }
-        Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'the save handoff launcher tests never touch the real saves'
-    } else { Write-Warning 'lab_fake_process not supplied; the helper''s game-exit path and the launcher are not tested.' }
-
-    # ------------------------------------------------------------ Collect-Logs
-    $secretOnDisk = 'ZZZZZZZZZZZZZZZZZZZZ'
-    [IO.File]::WriteAllText($hp.LinkSecret, "$secretOnDisk`r`n")
-    $hostCode = New-CoopJoinCode -Secret $s7 -HostName '203.0.113.7'
-    [IO.File]::WriteAllText((Join-Path $hp.Mod 'script-observer.log'), "`r`nMGS Co-op script adapter 0.12.0; first run`r`nfirst_session_secret_line`r`n`r`nMGS Co-op script adapter 0.12.0; second run`r`nsecond_session_line`r`nMGS Co-op script adapter 0.12.0; third run`r`nthird_session_line`r`n`r`nMGS Co-op script adapter 0.12.0; executable_fingerprint=accepted`r`nmode=offline_v1; x`r`nplay=active; role=host; partner=1; refused=0x0`r`nlink=connected; session=1; peer=203.0.113.7:51234; rtt_ms=40; remote_build=0.12.0`r`npasted $hostCode and " + $hostCode.ToLowerInvariant() + "`r`nlobby=76561198012345678 path=C:\Users\Alice\AppData\x exe 1.0.15.4`r`n")
-    [IO.File]::WriteAllText((Join-Path $hp.Mod 'probe.log'), ((1..40000 | ForEach-Object { "probe line $_ steam=76561197960265735" }) -join "`r`n") + "`r`n")
-    [IO.File]::WriteAllText((Join-Path $hp.Mod 'early.log'), "early=start; version=0.12.0; lab=1; role=host`r`nsaves=redirected; dir=$hostSaveDir`r`n")
-    [IO.File]::WriteAllText((Join-Path $hp.Mod 'link-status.json'), '{"v":1,"pid":1,"state":"connected","peer":"203.0.113.7:51234","mission":30050}')
-    # Play-Coop's own steps (online 2026-10-22 P5) are collected too.
-    [IO.File]::WriteAllText($hp.PlayCoopLog, "2026-10-22T17:54:42.000Z pid=54332 relaunch=requested; started=1; steam=running=0;running_app=0`r`n")
-    $rejoinOnDisk = 'QQQQQRRRRRSSSSSTTTTT'
-    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198011111111') + "`r`n")
-    $null = New-Item -ItemType Directory -Path $hp.CoopSavesHandoff -Force
-    [IO.File]::WriteAllText((Join-Path $hp.CoopSavesHandoff 'provenance.json'), '{"format":"mgs-coop-save-provenance","v":1,"entries":[{"set":"' + ('A' * 64) + '","mission":30010,"source":"continue","utc":"2026-10-15T12:00:00Z"}]}')
-    [IO.File]::WriteAllText((Join-Path $hp.CoopSavesHandoff 'applied.json'), '{"format":"mgs-coop-save-handoff-applied","v":1,"set_sha256":"' + ('B' * 64) + '","applied_utc":"2026-10-15T12:01:00Z","aside":"20000101-000000-before-handoff"}')
-    $collectStage = New-HandoffStage $hp.CoopSavesHandoff '6A7B8C9D' @{ '287700/local/TPP_GAME_DATA0' = 'staged host progress, never collected' }
-    $null = New-HandoffRequest $hp.CoopSavesHandoff $collectStage 4242 '2026-10-15T11:59:00Z'
-    $handoffAside = Join-Path $hp.CoopSavesReplaced '20000101-000000-before-handoff'
-    $null = New-Item -ItemType Directory -Path $handoffAside -Force
-    $outDir = Join-Path $fixture 'desktop'
-    $null = New-Item -ItemType Directory -Path $outDir
-    $r = Invoke-Friend $collect @('-GameDirectory', $hostGame, '-OutputDirectory', $outDir, '-NonInteractive', '-MaxLogBytes', '65536')
-    Assert-Equal $r.Exit 0 "collect logs succeeds: $($r.Raw)"
-    Assert-True (Has $r 'Co-op save folders are listed by name, size and time only; no save file is included.') 'collect logs: the closing text names the save-folder list'
-    $zips = @(Get-ChildItem -LiteralPath $outDir -Filter '*.zip')
-    Assert-True ($zips.Count -eq 1 -and $zips[0].Name -cmatch '^mgs-coop-logs-host-[0-9]{8}-[0-9]{6}\.zip$') 'zip named by the last play role and time'
-    Assert-True ($zips[0].Length -lt 400KB) 'zip size bounded'
-    $extract = Join-Path $fixture 'collected'
-    Expand-Archive -LiteralPath $zips[0].FullName -DestinationPath $extract
-    $collected = @(Get-ChildItem -LiteralPath $extract -Directory)[0].FullName
-    foreach ($n in 'summary.txt', 'script-observer.log', 'probe.log', 'early.log', 'link-status.json', 'play-session.json', 'probe-install.json', 'friend-install.json', 'coop-saves.txt', 'play-coop.log') {
-        Assert-True (Test-Path -LiteralPath (Join-Path $collected $n) -PathType Leaf) "collected $n"
-    }
-    Assert-True ([IO.File]::ReadAllText((Join-Path $collected 'play-coop.log')).Contains('relaunch=requested; started=1')) 'play-coop.log content is collected'
-    Assert-True (!(Test-Path -LiteralPath (Join-Path $collected 'link-secret.txt'))) 'link-secret.txt is never collected'
-    foreach ($n in 'handoff-provenance.json', 'handoff-applied.json', 'handoff-request.json') { Assert-True (Test-Path -LiteralPath (Join-Path $collected $n) -PathType Leaf) "collected $n" }
-    Assert-True (!@(Get-ChildItem -LiteralPath $collected -File | Where-Object { $_.Name -like '*rejoin*' -or $_.Name -like 'TPP_GAME_DATA*' }).Count) 'link-rejoin.txt and staged save files are never collected'
-    $everything = (Get-ChildItem -LiteralPath $collected -File | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
-    Assert-True (!$everything.Contains($secretOnDisk) -and !$everything.ToUpperInvariant().Contains('7K3QZ')) 'neither the link key nor a pasted code is in the logs ZIP'
-    Assert-True (!$everything.Contains($rejoinOnDisk) -and !$everything.Contains('staged host progress')) 'neither the rejoin code nor staged save bytes are in the logs ZIP'
-    Assert-True ($everything.Contains('MGS1-<redacted>') -and $everything.Contains('peer=203.0.x.x:51234') -and $everything.Contains('"peer":"203.0.x.x:51234"') -and $everything.Contains('1.0.15.4')) 'codes redacted, public peers masked, versions kept'
-    Assert-True ($everything -notmatch '(?<![0-9])7656119[0-9]{10}(?![0-9])' -and !$everything.Contains('Alice')) 'no complete SteamID or user name'
-    $observer = [IO.File]::ReadAllText((Join-Path $collected 'script-observer.log'))
-    Assert-True ($observer.StartsWith('MGS Co-op script adapter 0.12.0; second run') -and $observer.Contains('third_session_line') -and $observer.Contains('executable_fingerprint=accepted') -and
-        !$observer.Contains('first_session_secret_line')) 'script-observer.log: the last 3 sessions (from the 3rd-last adapter start)'
-    # The co-op save folders: names, sizes and times, never contents (K19).
-    $saveListing = [IO.File]::ReadAllText((Join-Path $collected 'coop-saves.txt'))
-    Assert-True ($saveListing.StartsWith("# MGS Co-op save folders: names, sizes and times only (no save contents)`r`n# path`tbytes|dir`tlast_write_utc`r`n")) 'coop-saves.txt header'
-    Assert-True ($saveListing -cmatch "(?m)^coop-saves/287700/local/COOP_PROGRESS`t[0-9]+`t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\r?$" -and
-        $saveListing -cmatch "(?m)^coop-saves/287700/local`tdir`t") 'coop-saves.txt lists files with sizes and folders'
-    Assert-True (!$saveListing.Contains('progress made in the co-op copy') -and !$saveListing.Contains('fixture save') -and !$saveListing.Contains($hostGame)) 'coop-saves.txt holds no save contents and no absolute path'
-    Assert-True ($saveListing -cmatch "(?m)^coop-saves-handoff`tdir`t" -and $saveListing -cmatch "(?m)^coop-saves-handoff/6A7B8C9D/287700/local/TPP_GAME_DATA0`t[0-9]+`t" -and
-        $saveListing -cmatch "(?m)^coop-saves-handoff/request.json`t[0-9]+`t" -and !$saveListing.Contains('staged host progress')) 'coop-saves.txt lists coop-saves-handoff (names and sizes only)'
-    $summary = [IO.File]::ReadAllText((Join-Path $collected 'summary.txt'))
-    Assert-True ($summary -cmatch 'coop_saves=files=[0-9]+; import_marker=absent; newest_replaced=') 'summary: the co-op save state'
-    Assert-True ($summary.Contains('handoff=none; asides_handoff=1')) 'summary: the save handoff state and its asides'
-    Assert-True ($summary.Contains('real_saves=UNCHANGED') -and $summary.Contains('mgsvtpp.exe sha256=' + $exeHash) -and $summary.Contains('matches_install_record=True') -and $summary.Contains('play_session=off; role=host') -and $summary.Contains('link_secret_present=True (never collected)')) 'summary: save check, hashes, play session, link secret not collected'
-    Remove-Item -LiteralPath $hp.LinkSecret
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'collecting logs reads the saves only'
-    $batOut = '' | & cmd.exe /c (Join-Path $stage 'Collect-Logs.bat') -GameDirectory $joinGame -OutputDirectory $outDir -NonInteractive 2>&1 | Out-String
-    Assert-True ($LASTEXITCODE -eq 0 -and @(Get-ChildItem -LiteralPath $outDir -Filter 'mgs-coop-logs-join-*.zip').Count -eq 1) "Collect-Logs.bat works: $batOut"
-    # The save listing itself (K19): the row cap with its truncation line; a link is listed, never followed.
-    $listMod = [IO.Path]::GetFullPath((Join-Path $fixture 'listing\mgs-coop'))
-    $listOutside = [IO.Path]::GetFullPath((Join-Path $fixture 'listing\outside'))
-    $listLink = Join-Path $listMod 'coop-saves-replaced\link'
-    foreach ($path in @($listMod, $listOutside, $listLink)) { Assert-InFixture $path }
-    foreach ($name in 'F1', 'F2', 'F3', 'F4') {
-        $path = Join-Path $listMod "coop-saves\287700\local\$name"
-        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
-        [IO.File]::WriteAllText($path, "listing fixture $name")
-    }
-    $null = New-Item -ItemType Directory -Path (Join-Path $listMod 'coop-saves-replaced'), $listOutside -Force
-    [IO.File]::WriteAllText((Join-Path $listOutside 'LINKTARGET'), 'outside the save folders')
-    try {
-        $null = New-Item -ItemType Junction -Path $listLink -Target $listOutside
-        $fullListing = @(Get-FriendSaveListing -ModDirectory $listMod)
-        Assert-Equal $fullListing.Count 11 'listing: 2 header lines and 9 rows (4 folders, 4 files, the link)'
-        Assert-Equal @($fullListing | Where-Object { $_ -cmatch "^coop-saves-replaced/link`tdir`t" }).Count 1 'listing: the link is one dir row'
-        Assert-True (!@($fullListing | Where-Object { $_.StartsWith('coop-saves-replaced/link/') }).Count -and !($fullListing -join "`n").Contains('LINKTARGET')) 'listing: the link is never followed'
-        Assert-True (!($fullListing -join "`n").Contains('# truncated')) 'listing: no truncation line under the cap'
-        $capped = @(Get-FriendSaveListing -ModDirectory $listMod -MaxEntries 3)
-        Assert-Equal $capped.Count 6 'capped listing: 2 header lines, 3 rows and the truncation line'
-        Assert-Equal (($capped[0..4]) -join "`n") (($fullListing[0..4]) -join "`n") 'capped listing: the first rows in order'
-        Assert-Equal $capped[5] '# truncated: 6 more' 'capped listing: the truncation line counts the rest'
-    } finally {
-        # Remove only the owned junction before the no-links fixture cleanup; never recurse into its target.
-        if (Test-Path -LiteralPath $listLink) {
-            $link = Get-Item -LiteralPath $listLink -Force
-            if (!($link.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $link.LinkType -cne 'Junction' -or
-                $link.ResolveLinkTarget($true).FullName -cne $listOutside) { throw 'Listing junction cleanup ownership changed' }
-            [IO.Directory]::Delete($listLink)
-        }
-    }
-    Assert-True (Test-Path -LiteralPath (Join-Path $listOutside 'LINKTARGET') -PathType Leaf) 'listing: the link target is untouched'
-
-    # ------------------------------------------------------------ Uninstall
-    if ($FakeProcess) {
-        # A stand-in process named mgsvtpp.exe running from the folder blocks the uninstall.
-        $realExe = [IO.File]::ReadAllBytes($hp.Exe)
-        Copy-Item -LiteralPath $FakeProcess -Destination $hp.Exe -Force
-        $port = 0
-        foreach ($i in 1..50) { $candidate = Get-Random -Minimum 49152 -Maximum 65000; if (Test-LocalPortFree -Port $candidate) { $port = $candidate; break } }
-        $fakeGame = Start-Process -FilePath $hp.Exe -ArgumentList '-standalone', '-listenAddr', "127.0.0.1:$port" -WorkingDirectory $hostGame -PassThru
-        Start-Sleep -Milliseconds 500
-        Assert-True (-not $fakeGame.HasExited) 'stand-in game process runs'
-        $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
-        Assert-Refused $r 'MGSV is running from this folder' 'uninstall refused while the game runs'
-        Assert-True (Test-Path -LiteralPath $hp.Loader) 'nothing removed while the game runs'
-        Stop-Process -Id $fakeGame.Id -Force
-        $fakeGame.WaitForExit(5000) | Out-Null
-        $fakeGame = $null
-        Start-Sleep -Milliseconds 300
-        [IO.File]::WriteAllBytes($hp.Exe, $realExe)
-    } else { Write-Warning 'lab_fake_process not supplied; running-game refusal not tested.' }
-    # Uninstall switches off an active play session first. (The Play-Coop preflight first
-    # removes what an unapplied save handoff left: request, stage and link-rejoin.txt.)
-    $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
-    Assert-Equal $r.Exit 0 "activation before the uninstall: $($r.Raw)"
-    Assert-True ((Has $r 'A host save from an earlier session was not applied and was removed.') -and !(Test-Path -LiteralPath $hp.LinkRejoin) -and
-        !(Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'request.json')) -and !(Test-Path -LiteralPath $collectStage.Stage) -and
-        (Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'provenance.json')) -and (Test-Path -LiteralPath $handoffAside)) "Play-Coop removes an unapplied save handoff first: $($r.Text)"
-    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198011111111') + "`r`n")
-    $uninstallStage = New-HandoffStage $hp.CoopSavesHandoff '7B8C9DAE.partial' @{ '287700/local/TPP_GAME_DATA0' = 'half a host save' }
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
-    Assert-Equal $r.Exit 0 "host uninstall succeeds: $($r.Raw)"
-    Assert-True ((Has $r 'Step 0: switching off the last Play-Coop session') -and (Has $r 'restored 2 install state(s)') -and (Has $r 'UNCHANGED')) 'play session switched off, both installs undone, saves verified'
-    Assert-True (!(Test-Path -LiteralPath $hp.LinkRejoin) -and !(Test-Path -LiteralPath $uninstallStage.Stage) -and (Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'provenance.json')) -and
-        (Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'applied.json')) -and (Test-Path -LiteralPath $handoffAside) -and (Has $r 'link-rejoin.txt')) "uninstall removes link-rejoin.txt and staged handoff files, keeps provenance, applied and coop-saves-replaced: $($r.Text)"
-    Remove-Item -LiteralPath $handoffAside
-    Assert-True (-not (Test-Path -LiteralPath $hp.Loader) -and -not (Test-Path -LiteralPath $hp.Record)) 'loader and record removed (none before)'
-    Assert-PassThrough $hp 'after the uninstall'
-    Assert-Equal @(Get-ChildItem -LiteralPath $hp.Mod -Filter 'friend-install.json.uninstalled-*').Count 1 'install record retired'
-    Assert-True ((Test-Path -LiteralPath (Join-Path $hostSaveDir '287700/local/COOP_PROGRESS')) -and (Test-Path -LiteralPath $state.latest_backup)) 'save copy and backups kept'
-    Assert-True (-not (Test-Path -LiteralPath $hp.Archive)) 'runtime archive removed with the managed files'
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by the uninstall'
-    $r = Invoke-Friend $install (@('-GameDirectory', $hostGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'co-op save copy from an earlier test exists')) "install after an uninstall: $($r.Text)"
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $hostSaveDir '287700/local/COOP_PROGRESS'))) 'install after an uninstall refreshes the save copy'
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
-    Assert-Equal $r.Exit 0 "second host uninstall: $($r.Raw)"
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
-    Assert-Refused $r 'No friend-test install record' 'uninstall without an install changes nothing'
-
-    # Changed real saves are reported, never overwritten.
-    $savePath = Join-Path $userdata '287700/local/TPP_GAME_DATA0'
-    [IO.File]::WriteAllText($savePath, 'played normally in between')
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $joinGame, '-NonInteractive', '-Yes')
-    Assert-Equal $r.Exit 4 "join uninstall reports changed saves (exit 4): $($r.Raw)"
-    Assert-True ((Has $r 'DIFFERENT') -and (Has $r 'changed: 287700/local/TPP_GAME_DATA0') -and (Has $r 'Nothing was overwritten')) 'difference listed'
-    Assert-True ((Has $r 'files\287700\local  ->') -and (Has $r 'files\311340\remote  ->') -and (Has $r 'leave remotecache.vdf')) 'restore instructions name the two verified folders, not remotecache.vdf'
-    Assert-Equal ([IO.File]::ReadAllText($savePath)) 'played normally in between' 'real save not overwritten'
-    [IO.File]::WriteAllText($savePath, 'fixture save 287700/local/TPP_GAME_DATA0')
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'fixture saves back to the start'
-
-    # Real saves that change while the mod is installed (normal play in
-    # pass-through): a reinstall reports it and proceeds, but never takes a new
-    # reference; uninstall compares with the FIRST backup.
-    $chgGame = New-GameFixture 'changed'
-    $cp = Get-InstancePaths -GameDirectory $chgGame
-    $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Equal $r.Exit 0 "install for the changed-save test: $($r.Raw)"
-    $chgStatePath = Join-Path $cp.Mod 'friend-install.json'
-    $firstBackup = [string](Get-Content -LiteralPath $chgStatePath -Raw | ConvertFrom-Json).backups[0]
-    [IO.File]::WriteAllText($savePath, 'changed while the mod was installed')
-    $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-Character', 'quiet') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'Real save files changed since the backup made before the friend test (expected after normal play') -and
-        !(Has $r 'WARNING: your REAL')) "reinstall after normal play reports the change and proceeds: $($r.Text)"
-    Assert-True ((Has $r 'changed: 287700/local/TPP_GAME_DATA0') -and (Has $r $firstBackup)) 'reinstall lists the change and the first backup'
-    $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-Character', 'quiet', '-AcceptChangedSaves') + $common)
-    Assert-Equal $r.Exit 0 "-AcceptChangedSaves is still accepted: $($r.Text)"
-    $cs = Get-Content -LiteralPath $chgStatePath -Raw | ConvertFrom-Json
-    Assert-Equal "$(@($cs.backups).Count)|$($cs.first_backup)" "3|$firstBackup" 'the first backup stays the reference'
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $chgGame, '-NonInteractive', '-Yes')
-    Assert-True ($r.Exit -eq 4 -and (Has $r 'DIFFERENT from the backup made before the friend test') -and (Has $r ($firstBackup + '\files\287700\local'))) "uninstall compares with the first backup, not the latest: $($r.Text)"
-    [IO.File]::WriteAllText($savePath, 'fixture save 287700/local/TPP_GAME_DATA0')
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'fixture saves back to the start (changed-save test)'
-
-    # Upgrade from the online friend-test package: its files are archived as
-    # *.online-old-<time> and never restored; the configuration from before the
-    # first friend install (previous_files) keeps its restore semantics.
-    $upGame = New-GameFixture 'upgrade'
-    $up = Get-InstancePaths -GameDirectory $upGame
-    $r = Invoke-Friend $install (@('-GameDirectory', $upGame, '-Role', 'Join', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Equal $r.Exit 0 "install for the upgrade test: $($r.Raw)"
-    $onlineLab = "$friendHeader`n# Two-PC friend test, diagnostic mode`nenabled=1`nrole=guest`nloopback=0`nself_steamid=real`nsave_dir=$($up.Mod)\coop-saves`n"
-    [IO.File]::WriteAllText($up.LabIni, $onlineLab)
-    [IO.File]::WriteAllText($up.CoopIni, "$friendHeader`ncharacter=quiet`n")
-    [IO.File]::WriteAllText($up.Marker, "client-v1`n")
-    [IO.File]::WriteAllText($up.ClientHost, "76561198012345678`n")
-    $r = Invoke-Friend $install (@('-GameDirectory', $upGame, '-Role', 'Join') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'kept, never restored')) "upgrade over the online files: $($r.Text)"
-    Assert-PassThrough $up 'upgrade'
-    foreach ($n in 'lab.ini', 'coop.ini', 'script-observe.enabled', 'client-host.txt') {
-        Assert-Equal @(Get-ChildItem -LiteralPath $up.Mod -Filter "$n.online-old-*").Count 1 "$n archived as *.online-old-*"
-    }
-    $us = Get-Content -LiteralPath (Join-Path $up.Mod 'friend-install.json') -Raw | ConvertFrom-Json
-    Assert-Equal (@($us.online_archived | ForEach-Object { $_.name }) -join ',') 'lab.ini,coop.ini,script-observe.enabled,client-host.txt' 'online_archived recorded'
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $upGame, '-NonInteractive', '-Yes')
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'they are not restored')) "uninstall after the upgrade: $($r.Text)"
-    Assert-PassThrough $up 'uninstall after the upgrade (no online file restored)'
-    Assert-Equal @(Get-ChildItem -LiteralPath $up.Mod -Filter '*.online-old-*').Count 4 'the archived online files are kept'
-
-    # An earlier MGS Co-op install (owned loader, own role and lab.ini) is put back.
-    $prevGame = New-GameFixture 'previous'
-    $pp = Get-InstancePaths -GameDirectory $prevGame
-    $stagePrev = Join-Path $fixture 'stage-prev'
-    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stagePrev -LoaderPath $loaderPrev -Version '0.12.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
-    $null = & (Join-Path $projectRoot 'tools/package-install.ps1') -Action Install -GameDirectory $prevGame -PackageDirectory $stagePrev -RuntimeArchive $archiveFx -NoPrompt
-    [IO.File]::WriteAllText($pp.Marker, "host-v3`n")
-    $earlierLab = "# my own lab.ini`nenabled=1`nrole=host`nsave_dir=C:\lab\saves`n"
-    $earlierCoop = "master_url=http://127.0.0.1:6667/tppstm/gate`ncharacter=snake`n"
-    [IO.File]::WriteAllText($pp.LabIni, $earlierLab)
-    [IO.File]::WriteAllText($pp.CoopIni, $earlierCoop)
-    $r = Invoke-Friend $install (@('-GameDirectory', $prevGame, '-Role', 'Join', '-Character', 'dd_female') + $common)
-    Assert-Equal $r.Exit 0 "install over an earlier owned loader: $($r.Raw)"
-    Assert-PassThrough $pp 'install over an earlier loader'
-    Assert-Equal @(Get-ChildItem -LiteralPath $pp.Mod -Filter 'coop.ini.before-friend-*').Count 1 'earlier coop.ini copied aside'
-    Assert-Equal @(Get-ChildItem -LiteralPath $pp.Mod -Filter 'lab.ini.disabled-*').Count 1 'earlier lab.ini set aside (pass-through)'
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $prevGame, '-NonInteractive', '-Yes')
-    Assert-Equal $r.Exit 0 "uninstall back to the earlier loader: $($r.Raw)"
-    Assert-True ((Has $r 'from BEFORE the friend test is back in place (restored 1 friend install state(s))')) 'earlier loader reported as such'
-    Assert-Equal (Get-Sha256 $pp.Loader) (Get-Sha256 $loaderPrev) 'earlier loader restored'
-    Assert-Equal ([IO.File]::ReadAllText($pp.Marker)) "host-v3`n" 'earlier role marker restored (previous_files)'
-    Assert-Equal ([IO.File]::ReadAllText($pp.LabIni)) $earlierLab 'earlier lab.ini restored with the earlier loader'
-    Assert-Equal ([IO.File]::ReadAllText($pp.CoopIni)) $earlierCoop 'earlier coop.ini restored with the earlier loader'
-    Assert-True ((Has $r 'stays ACTIVE') -and (Has $r 'redirects the saves to: C:\lab\saves')) 'remaining loader named active, with its save redirection'
-
-    # A loader installed ON TOP of the friend install (developer package) is not
-    # called the earlier one; the output says it stays active on the real saves.
-    $topGame = New-GameFixture 'on-top'
-    $op = Get-InstancePaths -GameDirectory $topGame
-    $r = Invoke-Friend $install (@('-GameDirectory', $topGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-Equal $r.Exit 0 "friend install before a developer install: $($r.Raw)"
-    $null = & (Join-Path $projectRoot 'tools/package-install.ps1') -Action Install -GameDirectory $topGame -PackageDirectory $stagePrev -NoPrompt
-    $r = Invoke-Friend $uninstall @('-GameDirectory', $topGame, '-NonInteractive', '-Yes')
-    Assert-Equal $r.Exit 0 "uninstall with a developer loader on top: $($r.Raw)"
-    Assert-True ((Has $r 'that the friend test did NOT install') -and (Has $r 'restored 0 friend install state(s)')) 'loader on top named as not installed by the friend test'
-    Assert-True ((Has $r 'stays ACTIVE') -and (Has $r 'uses your REAL save files')) 'remaining loader without lab.ini: real saves stated'
-    Assert-Equal (Get-Sha256 $op.Loader) (Get-Sha256 $loaderPrev) 'developer loader left unchanged'
-    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched overall'
-
-    # Non-ASCII game, Steam and package folders under Windows PowerShell 5.1
-    # (all JSON records are read as UTF-8, lab.ini is UTF-8), uninstall through the .bat file.
-    $e = [string][char]0x00E9
-    $u = [string][char]0x00FC
-    $uniSteam = Join-Path $fixture ('steam-M' + $u + 'ller')
-    $null = New-Item -ItemType Directory -Path $uniSteam
-    Copy-Item -LiteralPath (Join-Path $steam 'userdata') -Destination (Join-Path $uniSteam 'userdata') -Recurse
-    $uniUserdata = Join-Path $uniSteam 'userdata/7'
-    $uniBefore = Get-TreeHashes $uniUserdata
-    $uniStage = Join-Path $fixture ('stage-Pak' + $e + 't')
-    Copy-Item -LiteralPath $stage -Destination $uniStage -Recurse
-    $uniInstall = Join-Path $uniStage 'scripts/Install-Coop.ps1'
-    $uniGame = New-GameFixture ('Jeux Vid' + $e + 'o/MGS_TPP')
-    $unp = Get-InstancePaths -GameDirectory $uniGame
-    $uniCommon = @('-SteamPath', $uniSteam, '-NonInteractive', '-Yes', '-SkipNetworkReport')
-    $r = Invoke-Friend $uniInstall (@('-GameDirectory', $uniGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $uniCommon)
-    Assert-Equal $r.Exit 0 "host install in a non-ASCII folder (Windows PowerShell 5.1): $($r.Raw)"
-    Assert-Equal ([IO.File]::ReadAllText($unp.Record, [Text.Encoding]::UTF8) | ConvertFrom-Json).game_directory $uniGame 'non-ASCII: ownership record names the folder'
-    $uns = [IO.File]::ReadAllText((Join-Path $unp.Mod 'friend-install.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
-    Assert-True ($uns.game_directory -ceq $uniGame -and $uns.status -eq 'installed') 'non-ASCII: install record'
-    $r = Invoke-Play (Join-Path $uniStage 'scripts/Play-Coop.ps1') @('-GameDirectory', $uniGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
-    Assert-Equal $r.Exit 0 "non-ASCII: Play-Coop host: $($r.Raw)"
-    $uniLabBytes = [IO.File]::ReadAllBytes($unp.LabIni)
-    Assert-Equal ([Text.Encoding]::UTF8.GetString($uniLabBytes)) (New-CoopPlayLabIniText -Role host -SaveDir (Join-Path $unp.Mod 'coop-saves') -Port 47830 -SaveHandoff scene) 'non-ASCII: play lab.ini save_dir in UTF-8'
-    Assert-True ($uniLabBytes[0] -ne 0xEF -and @($uniLabBytes | Where-Object { $_ -eq 0x3F }).Count -eq 0) 'non-ASCII: no BOM and no ? in the play lab.ini'
-    if ($linkKeys) {
-        # The native helper opens its argument with the ANSI API: check a copy
-        # with an ASCII file name (the content keeps the UTF-8 save_dir).
-        $uniLabCopy = Join-Path $fixture 'uni-lab.ini'
-        Copy-Item -LiteralPath $unp.LabIni -Destination $uniLabCopy
-        $n = Invoke-IniCheck lab $uniLabCopy
-        # Play-Coop writes save_handoff=scene, a key the loader parses.
-        Assert-Equal "$($n['present'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])|$($n['save_handoff'])" '1|play|0x0|0/0|scene' 'native: play lab.ini with a UTF-8 save_dir accepted'
-        Assert-Equal $n['save_dir'] (Join-Path $unp.Mod 'coop-saves') 'native: UTF-8 save_dir kept'
-    }
-    $r = Invoke-Friend (Join-Path $uniStage 'scripts/Play-Coop.ps1') @('-GameDirectory', $uniGame, '-Cleanup', '-NonInteractive')
-    Assert-True ($r.Exit -eq 0 -and (Get-PlayFilesPresent $unp) -eq 0) "non-ASCII: cleanup: $($r.Text)"
-    $uniOut = Join-Path $fixture ('desktop-' + $e)
-    $null = New-Item -ItemType Directory -Path $uniOut
-    $r = Invoke-Friend (Join-Path $uniStage 'scripts/Collect-Logs.ps1') @('-GameDirectory', $uniGame, '-OutputDirectory', $uniOut, '-NonInteractive')
-    Assert-Equal $r.Exit 0 "non-ASCII: collect logs: $($r.Raw)"
-    $uniZip = @(Get-ChildItem -LiteralPath $uniOut -Filter 'mgs-coop-logs-host-*.zip')
-    Assert-Equal $uniZip.Count 1 'non-ASCII: log zip written'
-    $uniExtract = Join-Path $fixture 'collected-uni'
-    Expand-Archive -LiteralPath $uniZip[0].FullName -DestinationPath $uniExtract
-    $uniSummary = [IO.File]::ReadAllText((Get-ChildItem -LiteralPath $uniExtract -Recurse -Filter summary.txt)[0].FullName)
-    Assert-True ($uniSummary.Contains('real_saves=UNCHANGED') -and $uniSummary.Contains('matches_install_record=True') -and $uniSummary.Contains('status=installed')) 'non-ASCII: summary save check and loader match'
-    $batOut = '' | & cmd.exe /c (Join-Path $uniStage 'Uninstall-Coop.bat') -GameDirectory $uniGame -NonInteractive -Yes 2>&1 | Out-String
-    Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $unp.Loader)) "non-ASCII: Uninstall-Coop.bat removes the install: $batOut"
-    Assert-Equal @(Get-ChildItem -LiteralPath $unp.Mod -Filter 'friend-install.json.uninstalled-*').Count 1 'non-ASCII: install record retired'
-    Assert-Equal (Get-TreeHashes $uniUserdata) $uniBefore 'non-ASCII: real saves untouched'
-    Write-Output "friend package tests passed: $script:checks checks (scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
+    Write-Output "friend package tests passed: $script:checks checks (the Diamond Dogs Together package, the developer tools in tools/dev and tools/CoopPlay.psm1; scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
 } finally {
-    if ($fakeGame -and !$fakeGame.HasExited) { Stop-Process -Id $fakeGame.Id -Force -ErrorAction SilentlyContinue; $fakeGame.WaitForExit(5000) | Out-Null }
-    foreach ($w in $watchdogs) {
-        # A helper of this test that is still waiting (a failed assertion) is stopped.
-        $wp = Get-Process -Id $w -ErrorAction SilentlyContinue
-        if ($wp -and $wp.ProcessName -eq 'powershell') { Stop-Process -Id $w -Force -ErrorAction SilentlyContinue }
-    }
     Start-Sleep -Milliseconds 300
     Remove-Item Env:MGS_COOP_TEST_STEAM_RUNNING_FILE -ErrorAction SilentlyContinue
     Remove-OwnedFixture

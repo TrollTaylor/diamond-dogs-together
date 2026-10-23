@@ -549,7 +549,7 @@ void TestStatusLine() {
     const json::Value rejected = ParseStatusText(Replace(Replace(status_text, "\"state\":\"connected\",\"reason\":\"\"", "\"state\":\"rejected\",\"reason\":\"build_mismatch\""),
                                                          "\"remote_build\":\"0.12.0\"", "\"remote_build\":\"0.12.1\""),
                                                  0);
-    CHECK(Has(FormatStatusLine(rejected, false, now, "0.12.0"), "Your friend runs mgs-coop 0.12.1; you run 0.12.0. Both must install the same package."));
+    CHECK(Has(FormatStatusLine(rejected, false, now, "0.12.0"), "Your partner runs Diamond Dogs Together 0.12.1; you run 0.12.0. Both must use the same version."));
     CHECK_EQ(FormatStatusLine(ParseStatusText("{\"v\":1,\"state\":\"connecting\"}", 0), false, now, ""), "[JOIN] link=connecting | partner=none | mission 0");
     const std::string world_keys = ",\"world\":3,\"paired\":0,\"partner_mission\":30010,\"pair_wait\":\"different_mission\",\"progress\":\"ok\",\"time_utc\"";
     const json::Value apart = ParseStatusText(Replace(Replace(status_text, "\"mission\":30050", "\"mission\":10020"), ",\"time_utc\"", world_keys), 0);
@@ -1651,6 +1651,91 @@ void TestHandoffThroughModel() {
     CHECK(Has(ReadText(f.paths.launcher_log), "relaunch_hint"));
 }
 
+// --write-session / --end-session (developer flags for the release gate's hidden
+// runs): the setup when needed, then exactly Host's / Join's files, but no helper,
+// no Steam and no clipboard; --end-session switches co-op off again.
+std::string ValueOf(const std::string& out, const std::string& key) {
+    const std::size_t at = out.find(key + "=");
+    if (at == std::string::npos) return {};
+    const std::size_t end = out.find('\n', at);
+    return out.substr(at + key.size() + 1, end == std::string::npos ? std::string::npos : end - at - key.size() - 1);
+}
+
+void TestWriteSession() {
+    Fixture f(L"write-session");
+    std::string out;
+    {
+        WriteSessionRequest bad;
+        bad.code = "MGS2-ANY";
+        CHECK(RunWriteSessionWithEnv(f.game, f.env, bad, out) == 2 && Has(out, "error="));
+        out.clear();
+        WriteSessionRequest dog;
+        dog.host = false;
+        dog.character = "dog";
+        CHECK(RunWriteSessionWithEnv(f.game, f.env, dog, out) == 2 && Has(out, "unknown character"));
+        CHECK(!PathExists(f.paths.friend_install) && !PathExists(f.paths.marker));
+    }
+    // Host: the setup runs first (the folder needs it), then the session files.
+    out.clear();
+    WriteSessionRequest host;
+    CHECK(RunWriteSessionWithEnv(f.game, f.env, host, out) == 0);
+    if (!Has(out, "session=")) std::fprintf(stderr, "write-session host: %s\n", out.c_str());
+    CHECK(Has(out, "setup=start\n") && Has(out, "setup=done\n") && Has(out, "role=host\n") && Has(out, "launch=0\n"));
+    CHECK(f.env->UrlCount() == 0 && f.env->watchdog_sessions.empty() && !f.env->clip_set);
+    const std::string code = ValueOf(out, "code");
+    CHECK(CheckJoinCode(code, 0).ok && !CheckJoinCode(code, 76561197960265728ull + 12345).ok);
+    json::Value s;
+    CHECK(ReadPlaySession(f.paths, s) && SessionIsActive(s) && s.Str("role") == "host" && s.Str("clip_sha256").empty());
+    CHECK_EQ(ValueOf(out, "session"), s.Str("session_id"));
+    CHECK(StartsWith(ReadText(f.paths.lab_ini), kHeader) && Has(ReadText(f.paths.lab_ini), "net_steam_self=76561197960278073\n"));
+    CHECK(Has(ReadText(f.paths.coop_ini), "character=snake\n") && ReadText(f.paths.marker) == "offline-v1\n" && IsFile(f.paths.link_secret));
+    const std::string log = ReadText(f.paths.launcher_log);
+    CHECK(Has(log, "play=written; role=host") && !Has(log, "play=launch") && !Has(log, code.substr(5, 5)));
+    // --end-session: never under a running game; afterwards the files are gone.
+    f.env->AddGame(7100, f.GameExe(), f.env->NowMs());
+    out.clear();
+    CHECK(RunEndSessionWithEnv(f.game, f.env, out) == 1 && Has(out, "MGSV is running") && PathExists(f.paths.marker));
+    f.env->Kill(7100);
+    out.clear();
+    CHECK(RunEndSessionWithEnv(f.game, f.env, out) == 0 && Has(out, "cleanup=ran\n") && Has(out, "removed=script-observe.enabled\n"));
+    CHECK(!PathExists(f.paths.marker) && !PathExists(f.paths.lab_ini) && !PathExists(f.paths.coop_ini) && !PathExists(f.paths.link_secret));
+    CHECK(ReadPlaySession(f.paths, s) && !SessionIsActive(s));
+    // Join with a code and a character (persisted as the joiner's choice).
+    out.clear();
+    WriteSessionRequest join;
+    join.host = false;
+    join.code = FormatJoinCode("C00PC00PC00PC00PC00P", 76561197960365728ull);
+    join.character = "story";
+    CHECK(RunWriteSessionWithEnv(f.game, f.env, join, out) == 0 && Has(out, "role=guest\n") && Has(out, "wait_invite=0\n") && !Has(out, "code="));
+    CHECK(!Has(out, "setup=") && Has(ReadText(f.paths.lab_ini), "net_peer_steam=76561197960365728\n") && Has(ReadText(f.paths.coop_ini), "character=story\n"));
+    CHECK_EQ(ReadText(f.paths.link_secret), std::string("C00PC00PC00PC00PC00P\r\n"));
+    json::Value state;
+    CHECK(ReadInstallState(f.paths, state) && state.Str("character") == "story");
+    // A second write first tidies the earlier session (its writer is gone), like a new Join in the window.
+    out.clear();
+    WriteSessionRequest wait;
+    wait.host = false;
+    CHECK(RunWriteSessionWithEnv(f.game, f.env, wait, out) == 0 && Has(out, "wait_invite=1\n"));
+    CHECK(!PathExists(f.paths.link_secret) && Has(ReadText(f.paths.lab_ini), "net_steam_wait=1\n") && Has(ReadText(f.paths.coop_ini), "character=story\n"));
+    // The player's own code is refused, and nothing is left switched on.
+    out.clear();
+    CHECK(RunEndSessionWithEnv(f.game, f.env, out) == 0);
+    out.clear();
+    WriteSessionRequest own;
+    own.host = false;
+    own.code = code;
+    CHECK(RunWriteSessionWithEnv(f.game, f.env, own, out) == 1 && Has(out, "own code") && !PathExists(f.paths.marker));
+    CHECK(f.env->UrlCount() == 0 && f.env->watchdog_sessions.empty() && !f.env->clip_set);
+    // Nothing to switch off in a folder without the mod folder.
+    {
+        Fixture g(L"write-session-empty", false);
+        WriteText(g.paths.exe, "FAKE-EXE");
+        out.clear();
+        CHECK(RunEndSessionWithEnv(g.game, g.env, out) == 0 && Has(out, "session=none\n"));
+    }
+    CHECK(f.RealSavesUntouched());
+}
+
 void TestSelfTest() {
     std::string report;
     const std::wstring dir = g_root + L"\\selftest";
@@ -1692,6 +1777,7 @@ int main() {
     TestWatchdog();
     TestModel();
     TestHandoffThroughModel();
+    TestWriteSession();
     TestSelfTest();
 
     RemoveTree(g_root);

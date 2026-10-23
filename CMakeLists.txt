@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mgs_coop VERSION 0.13.6 LANGUAGES CXX)
+project(mgs_coop VERSION 0.14.0 LANGUAGES CXX)
 option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)
 option(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER "Private copied-save worker: observe native actor reactivation completion" OFF)
 if(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER AND (NOT MGS_BACKGROUND_WORKER OR NOT MGS_LOCAL_OFFLINE_EQUIPMENT_TEST OR NOT MGS_LOCAL_STOCK46_PRELOAD_TEST OR NOT MGS_LOCAL_STOCK46_WRITER_TEST))
@@ -1160,9 +1160,11 @@ if(WIN32)
     add_test(NAME local_coop_windows_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_windows_tests.ps1")
     add_test(NAME local_coop_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_session_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check>)
     add_test(NAME lab_scripts_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/lab_scripts_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
-    # Friend-test package (tools/friend, tools/package.ps1 -Friend). The test
-    # itself needs PowerShell 7; it runs the friend scripts under Windows
-    # PowerShell 5.1 (what the package's .bat files use) when available.
+    # The Diamond Dogs Together package (tools/package.ps1 -Friend, the drop-in
+    # zip) and the developer tools that remain (tools/CoopPlay.psm1, tools/dev:
+    # FriendCommon.psm1 and the local two-window test). The test needs
+    # PowerShell 7; it runs the developer scripts under Windows PowerShell 5.1
+    # (what Play-Offline-Coop.bat uses) when available.
     add_test(NAME friend_package_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
   else()
     # Keep the gap visible: CTest lists the suite as skipped instead of omitting it.
