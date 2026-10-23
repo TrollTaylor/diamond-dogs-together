@@ -78,7 +78,7 @@ function Get-WorkerTests {
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
         'partner_sync_lua_check', 'partner_actions_lua_check', 'debug_menu_lua_check', 'debug_buddy_lua_check', 'debug_vehicle_lua_check',
-        'world_sync_lua_check', 'world_downed_lua_check', 'world_revive_input_lua_check', 'world_buddy_lua_check', 'world_ride_pose_lua_check', 'world_horse_cargo_lua_check', 'world_buddy_ride_lua_check', 'world_follow_lua_check', 'world_handoff_lua_check', 'world_goto_lua_check', 'world_align_lua_check',
+        'world_sync_lua_check', 'world_downed_lua_check', 'world_revive_input_lua_check', 'world_buddy_lua_check', 'world_ride_pose_lua_check', 'world_horse_cargo_lua_check', 'world_buddy_ride_lua_check', 'world_vehicle_lua_check', 'world_follow_lua_check', 'world_handoff_lua_check', 'world_goto_lua_check', 'world_align_lua_check',
         'world_follow_game_lua_check', 'world_env_game_lua_check', 'debug_menu_game_lua_check',
         'bootstrap_patch_check', 'bootstrap_lua_check', 'host_trial_patch_check', 'host_trial_lua_check',
         'partner_sync_composed_lua_check', 'world_sync_composed_lua_check',

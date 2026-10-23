@@ -126,7 +126,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
                                    partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the
                                    native stance window (0: the previous 2 s rule); docs/anim-round1-actions.md);
-                                   join-fix phase 2: save_handoff=off|stage|scene|always, travel_lock=0|1
+                                   join-fix phase 2: save_handoff=off|stage|scene|always, travel_lock=0|1;
+                                   world_vehicle_gone=0|1, the host-authoritative VEHICLE_GONE world op (lab and play,
+                                   default 0; docs/world-sync-protocol.md section 16)
 
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
 or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the

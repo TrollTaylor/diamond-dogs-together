@@ -145,11 +145,13 @@ check(not ok and msg=="vehicle_binding","a missing DM binding is a binding refus
 c=G();check(c.V.handles.vehicle_remove and c.V.handles.vehicle_gone_status,"the vehicle-gone levers are handled here")
 ok,msg=lever(c,"vehicle_remove nearest");check(not ok and msg=="vehicle_gone_unavailable" and c.reads==0,"no module: refused, nothing read")
 local calls={}
-c=G();c.W.vehicleGone={lever=function(sync)calls[#calls+1]=sync;return true,"vehicle_remove;id=25603"end,status=function()return "vgone;on=1"end}
-ok,msg=lever(c,"vehicle_remove nearest");check(ok and msg=="vehicle_remove;id=25603" and calls[1]==false,"vehicle_remove nearest: this copy only")
-ok,msg=lever(c,"vehicle_remove nearest sync");check(ok and calls[2]==true,"vehicle_remove nearest sync: through the world op")
-ok,msg=lever(c,"vehicle_gone_status");check(ok and msg=="vgone;on=1" and #calls==2,"vehicle_gone_status is read-only")
-for _,bad in ipairs({"vehicle_remove","vehicle_remove 25603","vehicle_remove nearest now","vehicle_remove nearest sync 1","vehicle_gone_status x"})do
- ok,msg=lever(c,bad);check(not ok and msg=="vehicle_args" and #calls==2,"strict vehicle-gone arguments: "..bad)
+local fultons={}
+c=G();c.W.vehicleGone={lever=function(sync,fulton)calls[#calls+1]=sync;fultons[#calls]=fulton;return true,"vehicle_remove;id=25603"end,status=function()return "vgone;on=1"end}
+ok,msg=lever(c,"vehicle_remove nearest");check(ok and msg=="vehicle_remove;id=25603" and calls[1]==false and not fultons[1],"vehicle_remove nearest: this copy only")
+ok,msg=lever(c,"vehicle_remove nearest sync");check(ok and calls[2]==true and not fultons[2],"vehicle_remove nearest sync: through the world op")
+ok,msg=lever(c,"vehicle_remove nearest fulton");check(ok and calls[3]==true and fultons[3]==true,"vehicle_remove nearest fulton: the engine's Fulton, synced")
+ok,msg=lever(c,"vehicle_gone_status");check(ok and msg=="vgone;on=1" and #calls==3,"vehicle_gone_status is read-only")
+for _,bad in ipairs({"vehicle_remove","vehicle_remove 25603","vehicle_remove nearest now","vehicle_remove nearest sync 1","vehicle_remove nearest fulton sync","vehicle_gone_status x"})do
+ ok,msg=lever(c,bad);check(not ok and msg=="vehicle_args" and #calls==3,"strict vehicle-gone arguments: "..bad)
 end
 print("debug_vehicle_lua_check: "..checks.." checks PASS")

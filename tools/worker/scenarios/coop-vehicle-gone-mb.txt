@@ -1,9 +1,10 @@
 # 0.13.6 online-vehicle-gone, Mother Base companion of coop-vehicle-gone.txt (docs/world-sync-protocol.md
 # section 16): the session's own vehicle. In the 2026-10-22 two-PC session the guest Fultoned the unnamed sortie
 # jeep 25603 (sortie_3, no authored locator) in Mother Base; the host then drove his copy of it, invisible on the
-# guest's screen. Here the guest loses the sortie jeep (the lab lever vehicle_remove nearest sync, the same loss path
-# as a FultonInfo by the local player) and the HOST's copy must lose it too: an unnamed vehicle is removed with the
-# class Despawn by POOL INDEX (ParseLuaSpawnIndex 0x140B304E0), the path coop-vehicle-gone.txt (authored jeeps,
+# guest's screen. Here the guest loses the sortie jeep (the lab lever vehicle_remove nearest sync: it calls the loss
+# path directly and skips the FultonInfo detection, which coop-vehicle-gone.txt part D covers) and the HOST's copy
+# must lose it too: an unnamed vehicle is removed with the class Despawn by POOL INDEX (ParseLuaSpawnIndex
+# 0xB304E0; Mother Base only), the path coop-vehicle-gone.txt (authored jeeps,
 # Despawn by locator) never takes. Needs the real seed: Mother Base with 25603 live on both copies (hidden runs
 # bf0388c3, abb0b7cf); the lab seed has no live unnamed vehicle (goto_vehicle sortie answers vehicle_none).
 # Coordinator only, hidden worker (never visible), copied saves, MGS_GAME_LUA_DIR unset, no build running, under the
