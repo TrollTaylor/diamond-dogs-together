@@ -1,6 +1,6 @@
 # Two-PC friend test package
 
-The single-PC lab cannot form a session (see [October 3 testing](testing-2026-10-03.md)):
+The single-PC lab cannot form a session (see [October 3 testing](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/testing-2026-10-03.md)):
 co-op needs the game's online login, and the local fuse server does not support
 exe 1.0.15.4. The friend test therefore uses two PCs. Each player has their own
 Steam account and logs into the game's normal online service as usual. The

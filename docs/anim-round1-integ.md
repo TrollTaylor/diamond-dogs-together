@@ -41,7 +41,7 @@ Full ReleaseGun CTest under the verify lock: **267/267**.
 Worker note: `Invoke-WorkerChecks` refuses `MGS_GAME_LUA_DIR` pointing at the **main
 checkout** (`Unaudited patch input: bootstrap_patch_check`). Keep extracted Lua inputs
 under `D:/mgs-coop-wt/anim/build`. Copy from the main checkout's `build/` if a fresh
-cache is needed; do not point the env at `C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop`.
+cache is needed; do not point the env at the main checkout.
 
 ## Hidden seat run b8102e6e (inconclusive visuals)
 
@@ -50,7 +50,7 @@ Command: `Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-ve
 
 Closed / BaselineRestored / RealSavesUnchanged. Frames:
 `D:/mgs-coop-wt/anim/build/worker-runtime/b8102e6eced44c6c93e8778d84cb62ba`
-and PNGs in `C:/Users/taylo/AppData/Local/Temp/mgs-caps/seat1/`.
+and PNGs in `%TEMP%/mgs-caps/seat1/`.
 
 **Logs (guest, first half) passed the pipeline:** seat patch applied, Lua
 `event=ride_seat; name=veh_lv_0000; state=stateVehicleFrontLeftLoop`, confirmed
@@ -92,7 +92,7 @@ seated. If those frames pass, then flip `kPartnerNativeRideDriven` (one line in
 ## Hidden seat run 8b8e5bbc (logs pass, visuals still not a default-flip)
 
 Same Invoke-WorkerScenario line, scenario HEAD `5d50e45`. Closed / BaselineRestored /
-RealSavesUnchanged. PNGs: `C:/Users/taylo/AppData/Local/Temp/mgs-caps/seat2/`.
+RealSavesUnchanged. PNGs: `%TEMP%/mgs-caps/seat2/`.
 Run folder: `D:/mgs-coop-wt/anim/build/worker-runtime/8b8e5bbc2acc4b2a967da44aa1aaab6f`.
 
 Guest first half (and host reverse) again confirmed `veh_lv_0000` / 25608 / state
@@ -100,7 +100,7 @@ Guest first half (and host reverse) again confirmed `veh_lv_0000` / 25608 / stat
 boarded (`vehicle;id=25608; localSeat=1`).
 
 Guest `seat-entered` / drive / turn frames: watcher 6 m behind a driver whose yaw
-(-83) faced a building, so the camera is a wall with Taylor's nametag ~9 m through
+(-83) faced a building, so the camera is a wall with the host's nametag ~9 m through
 it. The jeep is on the other side. **Not a seated-mesh proof.**
 
 Host `seat-rev-entered` / `seat-rev-drive-04`: host prone in the grass with a **clear
@@ -134,8 +134,8 @@ the jeep's passenger seat (native seat 1) whenever its owner drives, on that own
 Sind plaza `(585.0, 323.1, 1176.9)` facing -90 (toward -x, the placebehind convention) *after*
 the host boards, with a plain `debug teleport` (no `Wait-ViewerLanding`, which needs a partner
 pose that seat mode owns). Closed / BaselineRestored / RealSavesUnchanged. Frames
-(PNG copies in `C:/Users/taylo/AppData/Local/Temp/mgs-caps/seat3/`):
-- `guest-seat-drive-a-08`: the jeep arriving from the alley with **Snake (the host, "Taylor")
+(PNG copies in `%TEMP%/mgs-caps/seat3/`):
+- `guest-seat-drive-a-08`: the jeep arriving from the alley with **Snake (the host)
   seated in the driver seat**, hands on the wheel, motion-blurred while moving;
 - `guest-seat-plaza-parked`: the same, parked, seated pose sharp;
 - `guest-seat-exiting-04` / `guest-seat-exited`: Snake climbs out of the driver seat, then
@@ -185,7 +185,7 @@ BaselineRestored / RealSavesUnchanged, no ExpectFailures. Per-run log slices wer
 - **Overlay states `873d7197`** (`partner-overlay-states.txt`, `partner_native_overlay=debug`; the first
   run `cf395755` was occluded the same way and the watcher is now prone 7 m back). Every request played
   (body act 139) and resumed native without a fallback latch. Frames
-  (`C:/Users/taylo/AppData/Local/Temp/mgs-caps/overlay2/zoom.png`): `stateDamageBigFront` a real
+  (`%TEMP%/mgs-caps/overlay2/zoom.png`): `stateDamageBigFront` a real
   stagger then recovery; `stateEludeIdle` the ledge-hang arms-up pose; `stateClimbIdle` /
   `stateClimbMoveFront` ladder poses; the clip `snapdam_p_die_idl` lying on the ground;
   `stateCBoxIdle`/`Move` a crouch with no box model (the item is not equipped on body 1);

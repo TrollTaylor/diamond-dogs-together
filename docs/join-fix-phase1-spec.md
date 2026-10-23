@@ -372,8 +372,8 @@ All are exported by the existing *-* rule.
 ## hidden_runtime_checks
 - H0 Preconditions:
 - Work only in D:/mgs-coop-wt/join-fix.
-- Leave MGS_GAME_LUA_DIR unset (it defaults to <worktree>/build) and never point it at C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop.
-- Take the verify lock: mkdir C:\Users\taylo\AppData\Local\Temp\mgs-coop-verify.lock plus owner.txt '<name> <worktree> <ISO time>'. Check owner.txt first, because a join-fix CTest held it at 11:04.
+- Leave MGS_GAME_LUA_DIR unset (it defaults to <worktree>/build) and never point it at the main checkout.
+- Take the verify lock: mkdir %TEMP%\mgs-coop-verify.lock plus owner.txt '<name> <worktree> <ISO time>'. Check owner.txt first, because a join-fix CTest held it at 11:04.
 - Run one worker session at a time (Local\MGSCoopBackgroundSession).
 - Never launch the game on the visible desktop.
 - H1 Full CTest:

@@ -1,4 +1,6 @@
-// Original MGS Co-op plain-language link reasons (shared with CoopPlay.psm1).
+// Original MGS Co-op plain-language link reasons, in the words of the Diamond Dogs
+// Together launcher (Steam online play; shared with tools/CoopPlay.psm1 and the
+// launcher core through tests/fixtures/link-reasons.json).
 #include "mgscoop/coop_reason_text.hpp"
 
 #include <cstdio>
@@ -43,53 +45,51 @@ bool FormatLinkReason(const char* reason, const char* remote_build, const char* 
     const char* own = own_build ? own_build : "";
     if (!r[0]) return Put(out, capacity, "");
     if (Is(r, "build_mismatch"))
-        return PutF(out, capacity, "Your friend runs mgs-coop %s; you run %s. Both must install the same package.", remote, own);
+        return PutF(out, capacity, "Your partner runs Diamond Dogs Together %s; you run %s. Both must use the same version.", remote, own);
     if (Is(r, "proto_mismatch"))
-        return PutF(out, capacity, "Your friend's mgs-coop (%s) speaks another link version. Both must install the same package.", remote);
+        return PutF(out, capacity, "Your partner's Diamond Dogs Together (%s) speaks another link version. Both must use the same version.", remote);
     if (Is(r, "mode_mismatch"))
-        return Put(out, capacity, "One side is in the single-PC lab mode. Both players must start the game with Play-Coop.bat.");
+        return Put(out, capacity, "One side is in the single-PC lab mode. Both players must start the game with Diamond Dogs Together.");
     if (Is(r, "role_mismatch")) return Put(out, capacity, "Both players chose the same role: one must Host, the other Join.");
     if (Is(r, "busy")) return Put(out, capacity, "The host is already connected to someone.");
     if (Is(r, "bad_code"))
         return Put(out, capacity,
-                   "The host did not accept the connection. Possibly a wrong code: copy it again (or the host restarted Play-Coop: ask for the "
-                   "new code).");
-    if (Starts(r, "secret_")) return Put(out, capacity, "The link secret file is missing or damaged. Quit MGSV and start Play-Coop again.");
+                   "The host did not accept the connection. Possibly a wrong code: copy it again (or the host started a new game: ask for "
+                   "the new code).");
+    if (Starts(r, "secret_")) return Put(out, capacity, "The link secret file is missing or damaged. Quit MGSV and host or join again in Diamond Dogs Together.");
     if (Is(r, "crypto")) return Put(out, capacity, "Windows could not provide random numbers for the link. Restart the PC and try again.");
-    if (Is(r, "no_peer_addr")) return Put(out, capacity, "The host address is missing. Quit MGSV and run Join again.");
+    if (Is(r, "no_peer_addr")) return Put(out, capacity, "The host address is missing. Quit MGSV and join again.");
     if (Is(r, "no_peer_steam"))
         return Put(out, capacity,
-                   "The host's Steam account is missing. Quit MGSV and run Join online again (paste the code or wait for an invite).");
+                   "The host's Steam account is missing. Quit MGSV and join again (paste the code or wait for an invite).");
     if (Is(r, "steam_offline"))
-        return Put(out, capacity, "Steam is offline or not logged in. Quit MGSV, start Steam and log in (online), then start Play-Coop again.");
+        return Put(out, capacity, "Steam is offline or not logged in. Quit MGSV, start Steam and log in (online), then host or join again.");
     if (Is(r, "steam_self_mismatch"))
-        return Put(out, capacity, "Steam is logged in to another account than when Play-Coop started. Quit MGSV and start Play-Coop again.");
+        return Put(out, capacity, "Steam is logged in to another account than when you pressed Host or Join. Quit MGSV and try again.");
     if (Is(r, "steam_peer_is_self")) return Put(out, capacity, "That join code is your own. Ask your friend for theirs.");
     if (Is(r, "steam_api"))
-        return Put(out, capacity, "steam_api64.dll is not the expected file. Verify the game files in Steam, then run Install-Coop.bat again.");
+        return Put(out, capacity, "steam_api64.dll is not the expected file. Verify the game files in Steam, then start Diamond Dogs Together again.");
     if (Is(r, "steam_not_initialized"))
-        return Put(out, capacity, "Steam did not start for MGSV. Quit the game and start Play-Coop again (it starts MGSV through Steam).");
+        return Put(out, capacity, "Steam did not start for MGSV. Quit the game and host or join again (Diamond Dogs Together starts MGSV through Steam).");
     for (const char* changed : kSteamChanged)
         if (Is(r, changed))
             return Put(out, capacity,
-                       "Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for "
-                       "the developer.");
+                       "Steam networking changed (probably a Steam update). Use Tools > Collect logs and send the file to the developer.");
     if (Is(r, "steam_owner_unavailable"))
-        return Put(out, capacity, "The co-op loader could not attach to Steam. Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat.");
+        return Put(out, capacity, "The co-op loader could not attach to Steam. Use Tools > Collect logs and send the file to the developer.");
     if (Is(r, "steam_fault"))
         return Put(out, capacity,
-                   "Steam networking failed inside Steam: restart the game. If it happens again, use a LAN/VPN code ([L]) and run "
-                   "Collect-Logs.bat.");
+                   "Steam networking failed inside Steam: restart the game. If it happens again, use Tools > Collect logs.");
     if (Is(r, "steam_acquire_timeout"))
         return Put(out, capacity, "Steam networking did not start within two minutes. Check that Steam is online, then restart the game.");
     if (Starts(r, "steam_"))
         return PutF(out, capacity,
-                    "The Steam link could not start (%s). Restart the game; if it repeats, use a LAN/VPN code ([L]) and run Collect-Logs.bat.", r);
+                    "The Steam link could not start (%s). Restart the game; if it repeats, use Tools > Collect logs.", r);
     if (Is(r, "transport_bind"))
         return Put(out, capacity,
                    "The UDP port is already in use by another program on this PC (or a second MGSV). Close it, or use another port.");
     if (Starts(r, "transport_"))
-        return PutF(out, capacity, "The network link could not start (%s). Restart the PC and try again; if it repeats, run Collect-Logs.bat.", r);
+        return PutF(out, capacity, "The network link could not start (%s). Restart the PC and try again; if it repeats, use Tools > Collect logs.", r);
     if (!verified) return PutF(out, capacity, "The connection was refused (%s). Possibly a wrong code.", r);
     return PutF(out, capacity, "The connection was refused (%s).", r);
 }
@@ -100,10 +100,11 @@ bool FormatSteamEnd(std::int32_t end, char* out, std::size_t capacity) noexcept 
     case 5003:  // Misc_Timeout
     case 4001:  // Remote_Timeout
         return Put(out, capacity,
-                   "The host's game did not answer. Is it running from Play-Coop (Host online), with Accept joins on, and is your code current?");
+                   "The host's game did not answer. Is the host's game running (Host in Diamond Dogs Together), with Accept joins on, and is "
+                   "your code current?");
     case 5008:  // Misc_P2P_Rendezvous
     case 5009:  // Misc_P2P_NAT_Firewall
-        return Put(out, capacity, "Steam could not connect the two PCs. Both must be online in Steam; try again, or use a LAN/VPN code [L].");
+        return Put(out, capacity, "Steam could not connect the two PCs. Both must be online in Steam; try again.");
     case 5005:  // Misc_SteamConnectivity
     case 3001:  // Local_OfflineMode
     case 3002:  // Local_ManyRelayConnectivity
@@ -166,7 +167,7 @@ bool FormatNoBody(const char* scene, char* out, std::size_t capacity) noexcept {
                                            : "unexpected pack list";
     const bool reloads = Is(s, "demo_stage") || Is(s, "hangar") || Is(s, "story");
     return PutF(out, capacity, "No partner body in this scene (%s). %s", what,
-                reloads ? "It returns when the scene reloads normally." : "Please send Collect-Logs.");
+                reloads ? "It returns when the scene reloads normally." : "Please send your logs (Tools > Collect logs).");
 }
 
 namespace {
@@ -229,7 +230,7 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         if (b != 1) return false;
         return Put(out, capacity,
                    "Your co-op save is at the story start, so Continue goes to a story mission that co-op cannot join. Quit and import "
-                   "your partner's save with Share-Save.bat (option I).");
+                   "your partner's save (Tools > Share save > Import).");
     case 2:  // HELI_WAIT{a=target}
         if (partner != 0 && partner != local) {
             if (!FormatMission(partner, first, sizeof(first))) return false;
@@ -386,14 +387,14 @@ bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, cons
     switch (code) {
     case 1:  // G1 receiving {a=kb}
         return PutF(out, capacity,
-                    "Getting the host's save (%u KB) so you both start in the same place. Your own co-op save is kept (Share-Save.bat [R] "
-                    "brings it back).",
+                    "Getting the host's save (%u KB) so you both start in the same place. Your own co-op save is kept (Tools > Share save "
+                    "> Restore previous brings it back).",
                     value);
     case 2:  // G2 countdown {a=seconds left}
         // Online 2026-10-22: no "press Continue twice" (a natural double press,
         // P2) and a hint for a Steam relaunch that does not come (P5).
         return PutF(out, capacity,
-                    "Host's save ready: MGSV restarts in %u s and Play-Coop starts it again (not back within a minute? Press Play in "
+                    "Host's save ready: MGSV restarts in %u s and the launcher starts it again (not back within a minute? Press Play in "
                     "Steam). Keep yours: F9 > Partner / Co-op > Shared save > Keep my own save.",
                     value);
     case 3:  // G3 stage only
@@ -418,9 +419,10 @@ bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, cons
         return Put(out, capacity, "You kept your own save for this session.");
     case 9:  // G9 quit manually
         return Put(out, capacity,
-                   "Host's save ready: quit MGSV (title menu > Exit) and Play-Coop starts it again on the host's save.");
+                   "Host's save ready: quit MGSV (title menu > Exit) and Diamond Dogs Together starts it again on the host's save.");
     case 10:  // G10 applied
-        return Put(out, capacity, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back.");
+        return Put(out, capacity,
+                   "You now play on the host's save. Tools > Share save > Restore previous brings your previous co-op save back.");
     case 11:  // G11 {a=the host's mission, b=the settle seconds} (online 2026-10-22 P3)
         if (!MissionOr(a, "Mother Base or free roam", mission, sizeof(mission))) return false;
         if (!b || b > 600)
@@ -433,8 +435,8 @@ bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, cons
                     mission, static_cast<unsigned>(b));
     case 12:  // G12 the host's save is ready, the guest is in game (P6)
         return Put(out, capacity,
-                   "The host's save is ready for you: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. "
-                   "MGSV then restarts once on it.");
+                   "The host's save is ready for you: go back to the title screen (or quit MGSV and join again in Diamond Dogs Together) "
+                   "to get it. MGSV then restarts once on it.");
     case 21:  // H1 sending
         return PutF(out, capacity, "Sending your save to %s so you both start in the same place.", who);
     case 22:  // H2 {a=the mission the guest arrives in}
@@ -451,7 +453,7 @@ bool FormatSaveHandoff(std::uint8_t code, std::uint32_t a, std::uint32_t b, cons
     case 25:  // H5 the partner kept their save
         return PutF(out, capacity, "%s kept their own save.", Who);
     case 26:  // H6 {a=Fail}
-        return PutF(out, capacity, "Sending your save failed (%s). Use Share-Save.bat instead.",
+        return PutF(out, capacity, "Sending your save failed (%s). Use Tools > Share save instead.",
                     SaveHandoffFailText(static_cast<std::uint8_t>(a > 255 ? 0 : a)));
     case 27:  // H7 {a=the unsupported mission}
         if (!MissionOr(a, "a mission", mission, sizeof(mission))) return false;
@@ -482,7 +484,8 @@ bool FormatSaveHandoffStatus(std::uint8_t role, std::uint8_t token, std::uint8_t
     case 3:  // wait_host {why=save_handoff_state::WaitWhy}
         if (why == 1)  // title (P6)
             return Put(out, capacity,
-                       "The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it.");
+                       "The host's save is ready: go back to the title screen (or quit MGSV and join again in Diamond Dogs Together) to get "
+                       "it.");
         if (why == 2)  // settling (P3)
             return Put(out, capacity, "The host's save is checked in their mission, then copied to you at the title screen.");
         return Put(out, capacity, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you.");
@@ -500,13 +503,15 @@ bool FormatSaveHandoffStatus(std::uint8_t role, std::uint8_t token, std::uint8_t
         return PutF(out, capacity, "Host's save received and checked (%u KB).", kb);
     case 10:  // countdown
         if (!seconds_left)
-            return Put(out, capacity, "Host's save ready: MGSV restarts now. Your current co-op save is kept aside (Share-Save.bat [R]).");
+            return Put(out, capacity, "Host's save ready: MGSV restarts now. Your current co-op save is kept aside (Tools > Share save > Restore previous).");
         return PutF(out, capacity,
-                    "Host's save ready: MGSV restarts in %u s. Your current co-op save is kept aside (Share-Save.bat [R]).",
+                    "Host's save ready: MGSV restarts in %u s. Your current co-op save is kept aside (Tools > Share save > Restore "
+                    "previous).",
                     static_cast<unsigned>(seconds_left));
     case 11:  // exiting (P5: Steam may not act on the relaunch)
         return Put(out, capacity,
-                   "MGSV is closing to load the host's save; Play-Coop starts it again (not back within a minute? Press Play in Steam).");
+                   "MGSV is closing to load the host's save; Diamond Dogs Together starts it again (not back within a minute? Press Play "
+                   "in Steam).");
     case 12:  // kept
         return Put(out, capacity, host ? "Your partner kept their own save." : "You kept your own save for this session.");
     case 13:  // refused
@@ -521,9 +526,10 @@ bool FormatSaveHandoffStatus(std::uint8_t role, std::uint8_t token, std::uint8_t
         if (host) return PutF(out, capacity, "Sending your save failed: %s.", SaveHandoffFailText(why));
         return PutF(out, capacity, "Getting the host's save failed: %s. Nothing was changed.", SaveHandoffFailText(why));
     case 15:  // applied
-        return Put(out, capacity, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back.");
+        return Put(out, capacity,
+                   "You now play on the host's save. Tools > Share save > Restore previous brings your previous co-op save back.");
     default:  // off (0) or an unknown token
-        return Put(out, capacity, "Automatic save sharing is off (Play-Coop -SaveHandoff off).");
+        return Put(out, capacity, "Automatic save sharing is off for this session.");
     }
 }
 

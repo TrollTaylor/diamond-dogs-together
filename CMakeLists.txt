@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mgs_coop VERSION 0.13.6 LANGUAGES CXX)
+project(mgs_coop VERSION 0.14.0 LANGUAGES CXX)
 option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)
 option(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER "Private copied-save worker: observe native actor reactivation completion" OFF)
 if(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER AND (NOT MGS_BACKGROUND_WORKER OR NOT MGS_LOCAL_OFFLINE_EQUIPMENT_TEST OR NOT MGS_LOCAL_STOCK46_PRELOAD_TEST OR NOT MGS_LOCAL_STOCK46_WRITER_TEST))
@@ -1111,25 +1111,9 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   endif()
   target_link_libraries(mgs_coop_probe PRIVATE mgs_sleep_unique_bind version bcrypt user32 ws2_32 mgs_coop_core mgs_coop_lab mgs_script_bridge mgs_bootstrap_patch mgs_allocation_bridge mgs_player_ghost_patch mgs_partner_player mgs_soldier_warp mgs_debug_overlay mgs_debug_menu)
   add_library(mgs_import_fixture SHARED tests/import_fixture.cpp)
-  add_executable(registration_fixture tests/registration_fixture.cpp)
-  add_executable(player_vector_fixture tests/player_vector_fixture.cpp)
-  target_compile_options(player_vector_fixture PRIVATE /W4 /WX)
-  if(MSVC)
-    enable_language(ASM_MASM)
-    add_library(steam_init_fixture_api SHARED tests/steam_init_fixture_api.cpp tests/steam_init_fixture_api.asm tests/steam_init_fixture_api.def)
-    target_compile_definitions(steam_init_fixture_api PRIVATE STEAM_INIT_FIXTURE_API_BUILD=1)
-    target_compile_options(steam_init_fixture_api PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4> $<$<COMPILE_LANGUAGE:CXX>:/WX>)
-    add_executable(steam_init_fixture tests/steam_init_fixture.cpp tests/steam_init_fixture_call.asm tests/steam_init_fixture.def)
-    target_compile_options(steam_init_fixture PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4> $<$<COMPILE_LANGUAGE:CXX>:/WX>)
-    target_link_options(steam_init_fixture PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/tests/steam_init_fixture.def")
-    set_property(TARGET steam_init_fixture APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/steam_init_fixture.def")
-    target_link_libraries(steam_init_fixture PRIVATE steam_init_fixture_api)
-  endif()
   add_executable(world_probe native/world_probe.cpp)
   target_link_libraries(world_probe PRIVATE bcrypt)
   target_compile_options(world_probe PRIVATE /W4 /WX)
-  add_executable(stop_debugger tools/stop_debugger.cpp)
-  target_compile_options(stop_debugger PRIVATE /W4 /WX)
   add_executable(win_import_patch_tests tests/win_import_patch_tests.cpp native/win_import_patch.cpp)
   target_link_libraries(win_import_patch_tests PRIVATE mgs_coop_core mgs_import_fixture)
   add_test(NAME win_import_patch_tests COMMAND win_import_patch_tests)
@@ -1176,9 +1160,11 @@ if(WIN32)
     add_test(NAME local_coop_windows_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_windows_tests.ps1")
     add_test(NAME local_coop_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_session_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check>)
     add_test(NAME lab_scripts_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/lab_scripts_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
-    # Friend-test package (tools/friend, tools/package.ps1 -Friend). The test
-    # itself needs PowerShell 7; it runs the friend scripts under Windows
-    # PowerShell 5.1 (what the package's .bat files use) when available.
+    # The Diamond Dogs Together package (tools/package.ps1 -Friend, the drop-in
+    # zip) and the developer tools that remain (tools/CoopPlay.psm1, tools/dev:
+    # FriendCommon.psm1 and the local two-window test). The test needs
+    # PowerShell 7; it runs the developer scripts under Windows PowerShell 5.1
+    # (what Play-Offline-Coop.bat uses) when available.
     add_test(NAME friend_package_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
   else()
     # Keep the gap visible: CTest lists the suite as skipped instead of omitting it.
@@ -1202,6 +1188,9 @@ if(WIN32)
   endif()
 endif()
 include(cmake/lua_checks.cmake)
+include(cmake/ddt_launcher_archive.cmake) # Diamond Dogs Together launcher: archive utilities and runtime .dat builder
+include(cmake/ddt_launcher_core.cmake) # Diamond Dogs Together launcher: the real model (launcher core)
+include(cmake/launcher_gui.cmake)
 
 if(WIN32)
   foreach(_mgs_standing_mode IN ITEMS off on)

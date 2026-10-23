@@ -141,7 +141,7 @@ bool ParseCharacter(Slice s, PlayerCharacter& out) noexcept {
         {"default", PlayerCharacter::game_default}, {"snake", PlayerCharacter::snake},
         {"dd_male", PlayerCharacter::dd_male}, {"dd_female", PlayerCharacter::dd_female},
         {"avatar", PlayerCharacter::avatar}, {"ocelot", PlayerCharacter::ocelot},
-        {"quiet", PlayerCharacter::quiet}};
+        {"quiet", PlayerCharacter::quiet}, {"story", PlayerCharacter::story}};
     for (const auto& entry : entries) if (Equals(s, entry.name)) { out = entry.value; return true; }
     return false;
 }
@@ -1938,6 +1938,7 @@ const char* PlayerCharacterName(PlayerCharacter value) noexcept {
     case PlayerCharacter::avatar: return "avatar";
     case PlayerCharacter::ocelot: return "ocelot";
     case PlayerCharacter::quiet: return "quiet";
+    case PlayerCharacter::story: return "story";
     default: return "";
     }
 }
@@ -1950,6 +1951,7 @@ int PlayerCharacterType(PlayerCharacter value) noexcept {
     case PlayerCharacter::avatar: return 3;
     case PlayerCharacter::ocelot: return 5;
     case PlayerCharacter::quiet: return 6;
+    case PlayerCharacter::story: return -1;  // Quiet (6) or Ocelot (5), chosen by the Lua chunk
     default: return -1;
     }
 }

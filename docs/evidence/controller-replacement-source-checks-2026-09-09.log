@@ -1,2 +1,0 @@
-14 exact-source checks; 400 concurrent selections; no game calls
-98 Lua checks: controller replacement, unchanged demo/hangar lists, other missions, ambiguous ownership, missing archive, reloads, errors and bounded receipts; no engine allocation

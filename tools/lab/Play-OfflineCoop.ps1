@@ -4,7 +4,7 @@ One-click offline co-op test on this PC: two MGSV copies side by side, each
 showing the other player as a second character.
 
 .DESCRIPTION
-Runs the offline lab path (docs/testing-2026-10-04.md) with the appearance
+Runs the offline lab path (archive/research-2026-10-23:docs/testing-2026-10-04.md) with the appearance
 sync of docs/partner-anim-appearance.md:
   1. Prepare-LabInstance.ps1 -Offline with the partner synced over our own link
      from the start: stage 3, source net, look net (each copy shows the other

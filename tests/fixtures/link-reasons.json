@@ -1,5 +1,5 @@
 {
-  "comment": "Shared vectors: tools/CoopPlay.psm1 Get-CoopLinkReasonText / Get-CoopSteamEndText and native/coop_reason_text.cpp must produce these exact sentences (tests/friend_package_tests.ps1, tests/steam_transport_tests.cpp).",
+  "comment": "Shared vectors: tools/CoopPlay.psm1 Get-CoopLinkReasonText / Get-CoopSteamEndText, native/coop_reason_text.cpp and the Diamond Dogs Together launcher core (native/launcher/core/core_text.cpp) must produce these exact sentences (tests/friend_package_tests.ps1, tests/steam_transport_tests.cpp, tests/ddt_core_tests.cpp). Steam online play, the launcher's wording: no PowerShell tool and no LAN/VPN code.",
   "link_reasons": [
     {
       "reason": "",
@@ -13,28 +13,28 @@
       "remote": "0.11.0+1234567",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Your friend runs mgs-coop 0.11.0+1234567; you run 0.12.0+f64a8e9. Both must install the same package."
+      "text": "Your partner runs Diamond Dogs Together 0.11.0+1234567; you run 0.12.0+f64a8e9. Both must use the same version."
     },
     {
       "reason": "build_mismatch",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Your friend runs mgs-coop another version; you run 0.12.0+f64a8e9. Both must install the same package."
+      "text": "Your partner runs Diamond Dogs Together another version; you run 0.12.0+f64a8e9. Both must use the same version."
     },
     {
       "reason": "proto_mismatch",
       "remote": "0.10.2",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Your friend's mgs-coop (0.10.2) speaks another link version. Both must install the same package."
+      "text": "Your partner's Diamond Dogs Together (0.10.2) speaks another link version. Both must use the same version."
     },
     {
       "reason": "mode_mismatch",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "One side is in the single-PC lab mode. Both players must start the game with Play-Coop.bat."
+      "text": "One side is in the single-PC lab mode. Both players must start the game with Diamond Dogs Together."
     },
     {
       "reason": "role_mismatch",
@@ -55,21 +55,21 @@
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 0,
-      "text": "The host did not accept the connection. Possibly a wrong code: copy it again (or the host restarted Play-Coop: ask for the new code)."
+      "text": "The host did not accept the connection. Possibly a wrong code: copy it again (or the host started a new game: ask for the new code)."
     },
     {
       "reason": "secret_missing",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "The link secret file is missing or damaged. Quit MGSV and start Play-Coop again."
+      "text": "The link secret file is missing or damaged. Quit MGSV and host or join again in Diamond Dogs Together."
     },
     {
       "reason": "secret_bad_char",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "The link secret file is missing or damaged. Quit MGSV and start Play-Coop again."
+      "text": "The link secret file is missing or damaged. Quit MGSV and host or join again in Diamond Dogs Together."
     },
     {
       "reason": "crypto",
@@ -83,28 +83,28 @@
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "The host address is missing. Quit MGSV and run Join again."
+      "text": "The host address is missing. Quit MGSV and join again."
     },
     {
       "reason": "no_peer_steam",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "The host's Steam account is missing. Quit MGSV and run Join online again (paste the code or wait for an invite)."
+      "text": "The host's Steam account is missing. Quit MGSV and join again (paste the code or wait for an invite)."
     },
     {
       "reason": "steam_offline",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Steam is offline or not logged in. Quit MGSV, start Steam and log in (online), then start Play-Coop again."
+      "text": "Steam is offline or not logged in. Quit MGSV, start Steam and log in (online), then host or join again."
     },
     {
       "reason": "steam_self_mismatch",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Steam is logged in to another account than when Play-Coop started. Quit MGSV and start Play-Coop again."
+      "text": "Steam is logged in to another account than when you pressed Host or Join. Quit MGSV and try again."
     },
     {
       "reason": "steam_peer_is_self",
@@ -118,49 +118,49 @@
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "steam_api64.dll is not the expected file. Verify the game files in Steam, then run Install-Coop.bat again."
+      "text": "steam_api64.dll is not the expected file. Verify the game files in Steam, then start Diamond Dogs Together again."
     },
     {
       "reason": "steam_not_initialized",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Steam did not start for MGSV. Quit the game and start Play-Coop again (it starts MGSV through Steam)."
+      "text": "Steam did not start for MGSV. Quit the game and host or join again (Diamond Dogs Together starts MGSV through Steam)."
     },
     {
       "reason": "steam_client_module",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for the developer."
+      "text": "Steam networking changed (probably a Steam update). Use Tools > Collect logs and send the file to the developer."
     },
     {
       "reason": "steam_iface_shape",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for the developer."
+      "text": "Steam networking changed (probably a Steam update). Use Tools > Collect logs and send the file to the developer."
     },
     {
       "reason": "steam_iface_rtti",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for the developer."
+      "text": "Steam networking changed (probably a Steam update). Use Tools > Collect logs and send the file to the developer."
     },
     {
       "reason": "steam_owner_unavailable",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "The co-op loader could not attach to Steam. Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat."
+      "text": "The co-op loader could not attach to Steam. Use Tools > Collect logs and send the file to the developer."
     },
     {
       "reason": "steam_fault",
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "Steam networking failed inside Steam: restart the game. If it happens again, use a LAN/VPN code ([L]) and run Collect-Logs.bat."
+      "text": "Steam networking failed inside Steam: restart the game. If it happens again, use Tools > Collect logs."
     },
     {
       "reason": "steam_acquire_timeout",
@@ -174,7 +174,7 @@
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "The Steam link could not start (steam_transport). Restart the game; if it repeats, use a LAN/VPN code ([L]) and run Collect-Logs.bat."
+      "text": "The Steam link could not start (steam_transport). Restart the game; if it repeats, use Tools > Collect logs."
     },
     {
       "reason": "transport_bind",
@@ -188,7 +188,7 @@
       "remote": "",
       "own": "0.12.0+f64a8e9",
       "verified": 1,
-      "text": "The network link could not start (transport_winsock). Restart the PC and try again; if it repeats, run Collect-Logs.bat."
+      "text": "The network link could not start (transport_winsock). Restart the PC and try again; if it repeats, use Tools > Collect logs."
     },
     {
       "reason": "replay",
@@ -212,19 +212,19 @@
     },
     {
       "end": 5003,
-      "text": "The host's game did not answer. Is it running from Play-Coop (Host online), with Accept joins on, and is your code current?"
+      "text": "The host's game did not answer. Is the host's game running (Host in Diamond Dogs Together), with Accept joins on, and is your code current?"
     },
     {
       "end": 4001,
-      "text": "The host's game did not answer. Is it running from Play-Coop (Host online), with Accept joins on, and is your code current?"
+      "text": "The host's game did not answer. Is the host's game running (Host in Diamond Dogs Together), with Accept joins on, and is your code current?"
     },
     {
       "end": 5008,
-      "text": "Steam could not connect the two PCs. Both must be online in Steam; try again, or use a LAN/VPN code [L]."
+      "text": "Steam could not connect the two PCs. Both must be online in Steam; try again."
     },
     {
       "end": 5009,
-      "text": "Steam could not connect the two PCs. Both must be online in Steam; try again, or use a LAN/VPN code [L]."
+      "text": "Steam could not connect the two PCs. Both must be online in Steam; try again."
     },
     {
       "end": 5005,

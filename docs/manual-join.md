@@ -12,4 +12,4 @@ Idle polls keep the literal receipt unchanged, avoiding per-frame replacement lo
 
 Source timing reference: DYNAMITE `c90f252f8200765f66c005d6bf4357fda0c0d98e`, `moddata/standalone/TppMain.lua` and `hook/src/DynamiteLua.cpp`; GPLv3 with Commons Clause 1.0, retained in `third_party/dynamite/LICENSE`. Input handling is project-authored. The native connection adaptation retains the pinned tpp-mod attribution documented in [client joining](client-join.md).
 
-Compilation only: `tools/build.ps1 -Configuration Release -BuildOnly`. No tests, Lua execution, installation or game launch. [Build record](evidence/manual-join-prepared-2026-09-10.json). Installed 0.10.5 remains unchanged. Real guest control and shared combat remain unverified.
+Compilation only: `tools/build.ps1 -Configuration Release -BuildOnly`. No tests, Lua execution, installation or game launch. [Build record](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/manual-join-prepared-2026-09-10.json). Installed 0.10.5 remains unchanged. Real guest control and shared combat remain unverified.

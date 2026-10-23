@@ -1,2 +1,0 @@
-14 exact-source checks; 400 concurrent selections; no game calls
-73 Lua checks: original order/identity, other missions, missing archive, duplicates, reloads, errors and bounded receipts; no engine allocation

@@ -4,8 +4,8 @@
   "paths": {
     "hostDir": "D:/Games/steamapps/common/MGS_TPP",
     "guestDir": "D:/Games/steamapps/common/MGS_TPP_guest",
-    "fuseSource": "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/work/fuse",
-    "fuseExe": "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/work/fuse/fuse.exe",
+    "fuseSource": "work/fuse",
+    "fuseExe": "work/fuse/fuse.exe",
     "runDir": "build/lab",
     "loader": "build/native/dinput8.dll",
     "runtimeArchive": "D:/Games/steamapps/common/MGS_TPP/mgs-coop/mgs-coop-player-runtime.dat"

@@ -310,7 +310,7 @@ try {
     # ------------------------------------------------------------ identity
     Assert-Equal (ConvertTo-SteamId64 -AccountId 1) '76561197960265729' 'account 1'
     Assert-Equal (ConvertTo-SteamId64 -AccountId 4294967280) '76561202255233008' 'lab guest account 0xFFFFFFF0'
-    Assert-Equal (ConvertTo-SteamId64 -AccountId 97930372) '76561198058196100' 'ActiveUser arithmetic'
+    Assert-Equal (ConvertTo-SteamId64 -AccountId 11223344) '76561197971489072' 'ActiveUser arithmetic'
     Assert-Throws { ConvertTo-SteamId64 -AccountId 0 } 'Invalid Steam account id' 'account 0'
     Assert-Throws { ConvertTo-SteamId64 -AccountId 4294967296 } 'Invalid Steam account id' 'account > 32 bits'
     Assert-True (Test-IndividualSteamId64 '76561202255233008') 'guest id is individual'
@@ -325,7 +325,7 @@ try {
     Assert-Throws { Resolve-SteamAccount -ActiveUser 0 -Candidates @() } 'No Steam account' 'no account'
     Assert-Throws { Resolve-SteamAccount -ActiveUser 0 -Candidates @([pscustomobject]@{ Account = 7; LastWriteUtc = $now }, [pscustomobject]@{ Account = 8; LastWriteUtc = $now.AddDays(-1) }) } 'Ambiguous' 'two accounts refused'
     # REG_DWORD ActiveUser arrives as Int32; accounts from 2^31 up are negative there.
-    Assert-Equal (ConvertFrom-RegistryDword ([int]97930372)) ([UInt32]97930372) 'registry dword: positive'
+    Assert-Equal (ConvertFrom-RegistryDword ([int]11223344)) ([UInt32]11223344) 'registry dword: positive'
     Assert-Equal (ConvertFrom-RegistryDword ([int]-5)) ([UInt32]4294967291) 'registry dword: negative Int32 is an account >= 2^31'
     Assert-Equal (ConvertFrom-RegistryDword ([int]::MinValue)) ([UInt32]2147483648) 'registry dword: Int32 minimum'
     Assert-Equal (ConvertFrom-RegistryDword ([Int64]4294967295)) ([UInt32]4294967295) 'registry dword: Int64 in range'
@@ -1302,10 +1302,10 @@ try {
 
     # Redaction: run folders are shareable.
     $sample = "time=1 msg=CMD_AUTH_STEAMTICKET steamID=$realHost`nloopback=listening; port=47810; peer_port=47811; self=$realHost`n" +
-        "identity=fake; steamid=$labId`nsource_root=C:\Steam\userdata\97930372\287700 and C:/Steam/userdata/97930372`n" +
+        "identity=fake; steamid=$labId`nsource_root=C:\Steam\userdata\11223344\287700 and C:/Steam/userdata/11223344`n" +
         "msg=CMD_CREATE_PLAYER player_name=`"Big Boss`"`nmsg=x player_name=Solo`nother=12345678901234567 clan=103582791429521408`n"
     $redacted = Hide-SteamIds -Text $sample -Keep @($labId)
-    Assert-True (!$redacted.Contains($realHost) -and !$redacted.Contains('97930372') -and !$redacted.Contains('Big Boss') -and !$redacted.Contains('Solo')) 'real ids, account folders and player names removed'
+    Assert-True (!$redacted.Contains($realHost) -and !$redacted.Contains('11223344') -and !$redacted.Contains('Big Boss') -and !$redacted.Contains('Solo')) 'real ids, account folders and player names removed'
     Assert-True ($redacted.Contains("steamid=$labId") -and $redacted.Contains('steamID=<steamid>') -and $redacted.Contains('userdata\<account>') -and $redacted.Contains('userdata/<account>')) 'lab id kept, placeholders written'
     Assert-True ($redacted.Contains('12345678901234567') -and $redacted.Contains('103582791429521408')) 'numbers that are not individual SteamIDs kept'
     Assert-True ((Hide-SteamIds -Text $sample).Contains('steamid=<steamid>')) 'without Keep the lab id is redacted too'

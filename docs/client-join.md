@@ -15,13 +15,13 @@ Current-build source: tpp-mod `301bf797b7f8032941b21ed56a3570338de6ead4`, GPLv3.
 The checks below predate the manual-join changes and do not validate 0.10.21; this build was compiled only.
 
 - All 17 Release native test suites pass; client fixtures check exact borrowed arguments, identity validation, unchanged reserved fields and restoration on synchronous refusal (44 checks).
-- The executable-specific analyzer verifies 33 instructions, three interface slots, six code hashes and the embedded state-dispatch table. The update exception range contains instructions followed by table data; both parts are checked separately. The existing 38-body allocation gate also covers the native client entry. [Static evidence](evidence/client-join-contract-2026-09-09.json).
+- The executable-specific analyzer verifies 33 instructions, three interface slots, six code hashes and the embedded state-dispatch table. The update exception range contains instructions followed by table data; both parts are checked separately. The existing 38-body allocation gate also covers the native client entry. [Static evidence](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/client-join-contract-2026-09-09.json).
 - The actual original TppMain module passes 77 startup checks including guest preparation without host creation; exact-source selection passes 16 checks and 400 concurrent selections.
 - The guest wrapper passes 58 lifecycle checks. Existing host admission passes 42 checks.
 
 These local tests do not demonstrate a Steam connection, independent guest control, world synchronization or safe guest teardown. No live native client request was made. Mother Base supplied the borrowed connection storage in the 0.10.4 loading check. The request and resulting session/actor ownership still need a real host. Only one PC is available, so a real two-peer test remains pending. Shared combat, progression, save isolation and campaign coverage still require implementation and validation.
 
-[Build and native suites](evidence/client-start-build-2026-09-09.log), [Lua and argument checks](evidence/client-join-lua-checks-2026-09-09.log), [prepared and installed hashes](evidence/client-start-prepared-2026-09-09.json).
+[Build and native suites](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/client-start-build-2026-09-09.log), [Lua and argument checks](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/client-join-lua-checks-2026-09-09.log), [prepared and installed hashes](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/client-start-prepared-2026-09-09.json).
 
 ## Configuring a later two-peer development test
 

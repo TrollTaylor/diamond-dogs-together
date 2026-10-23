@@ -2,7 +2,7 @@
 
 This page covers the work on branch `wp/partner-anim`, which builds on the offline
 partner of [offline-partner-spike-plan.md](offline-partner-spike-plan.md) and
-[testing-2026-10-04.md](testing-2026-10-04.md). It has three goals:
+[testing-2026-10-04.md](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/testing-2026-10-04.md). It has three goals:
 
 1. The partner animates like the real remote player (stance, locomotion,
    facing) and moves smoothly.
@@ -220,7 +220,8 @@ that it logs `partner_look=timeout`. `mirror=on` is refused while look is not
   to 26, 115, 0, 0, 0.
 - AVATAR becomes SNAKE with face 0 and face_equip 0 (`avatar_as_snake=1`): its
   avatar record is neither sent nor settable, and its face id is not a Snake
-  face.
+  face. The record layout, its writers and a fix proposal are in
+  [characters.md, "Avatar on the partner's screen"](characters.md#avatar-on-the-partners-screen).
 - face_equip is otherwise passed through: **[V]** the package builder only
   compares it (==1/2 at 0xAE962D, ==3/4/5 at 0x9B1035, !=0 at
   0xAE9360/0xAE9220). A DD (1/2) face goes to the staff face database lookup
@@ -768,7 +769,7 @@ precise plan is the one returned alongside this change.
 ## Round 4: reconciliation, stance taps, prone, the host-input leak
 
 Round 4 (branch `wp/partner-anim4`) acts on live round 3
-([anim-appearance-findings-2026-10-04.md](anim-appearance-findings-2026-10-04.md),
+([anim-appearance-findings-2026-10-04.md](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/anim-appearance-findings-2026-10-04.md),
 "Live round 3"). Built and unit tested; not yet run live. Every new address is
 in the code gate (`tools/generate_partner_contract.py`: now 208 code sites, 65
 vtable slots, all re-verified against 1.0.15.4). Nothing touches S_IS_ONLINE
@@ -1041,7 +1042,7 @@ the keys it names.
   round 2 experiments.
 
 Since the live two-copy pass of 2026-10-05 (run 20261005-080408,
-[anim-appearance-findings-2026-10-04.md](anim-appearance-findings-2026-10-04.md))
+[anim-appearance-findings-2026-10-04.md](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/anim-appearance-findings-2026-10-04.md))
 the default is `dm=map`; `-ProvenWarp` and [W] give the proven Warp movement
 (every non-map line carries `dm=off`), `-InputDrive` starts the input drive.
 The default, `-Animated` and [D] start `dm=map` (`stage=3 source=net apply=xform reset=n anim=off

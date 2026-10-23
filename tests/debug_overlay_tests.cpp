@@ -257,18 +257,18 @@ int main() {
             hs::Publish(view);
         };
         const struct { std::uint8_t role; T token; bool keep; const char* line; } views[] = {
-            {2, T::off, false, "Automatic save sharing is off (Play-Coop -SaveHandoff off)."},
+            {2, T::off, false, "Automatic save sharing is off for this session."},
             {2, T::idle, false, "Comparing your save with the host's; nothing to share yet."},
             {2, T::same, false, "Your save matches the host's place; nothing to share."},
             {2, T::wait_host, true, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you."},
             {2, T::receiving, true, "Receiving the host's save: 42% of 594 KB."},
             {2, T::staged, true, "Host's save received and checked (594 KB)."},
-            {2, T::countdown, true, "Host's save ready: MGSV restarts in 10 s. Your current co-op save is kept aside (Share-Save.bat [R])."},
-            {2, T::exiting, false, "MGSV is closing to load the host's save; Play-Coop starts it again (not back within a minute? Press Play in Steam)."},
+            {2, T::countdown, true, "Host's save ready: MGSV restarts in 10 s. Your current co-op save is kept aside (Tools > Share save > Restore previous)."},
+            {2, T::exiting, false, "MGSV is closing to load the host's save; Diamond Dogs Together starts it again (not back within a minute? Press Play in Steam)."},
             {2, T::kept, false, "You kept your own save for this session."},
             {2, T::refused, false, "The host's save cannot be shared: it continues into a mission co-op cannot join."},
             {2, T::failed, false, "Getting the host's save failed: the connection dropped. Nothing was changed."},
-            {2, T::applied, false, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
+            {2, T::applied, false, "You now play on the host's save. Tools > Share save > Restore previous brings your previous co-op save back."},
             {1, T::idle, false, "Comparing your save with your partner's; nothing to share yet."},
             {1, T::offered, false, "Offering your save to your partner."},
             {1, T::sending, false, "Sending your save: 42%"},
@@ -292,7 +292,7 @@ int main() {
         publish(2, T::countdown, true);
         mgscoop::coop_hud::PostSaveHandoff(2, 7, 0);
         Check(present(1) && mui::SharedSaveStatusForTest(shared, sizeof(shared)) &&
-            std::strcmp(shared, "Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Share-Save.bat [R]).") == 0,
+            std::strcmp(shared, "Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Tools > Share save > Restore previous).") == 0,
             "the countdown line follows the G2 toast");
         ImGuiIO& mio = ImGui::GetIO();
         const auto click = [&](const float (&r)[4]) {

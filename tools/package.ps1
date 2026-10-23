@@ -1,31 +1,48 @@
-# Builds the loader and stages a local development package under dist/.
-# The package contains NO game-derived files: the two-player runtime archive
-# (mgs-coop-player-runtime.dat) is generated or copied on each user's machine
-# and passed to install.ps1 -RuntimeArchive (an installed copy with the
-# expected hash is reused). Only the archive's SHA-256 is recorded here.
+# Builds the loader and stages a package under dist/.
+# No package contains game-derived files: the two-player runtime archive
+# (mgs-coop-player-runtime.dat) is built on each player's own PC from their
+# own game files (DiamondDogsTogether.exe does that) and is never bundled.
+# Only its SHA-256 is recorded here.
 #
-# -Friend stages the two-PC play package instead (flavor friend-play,
-# dist/mgs-coop-friend-<version>-<stamp>/ + .zip, docs/two-pc-play.md): the
-# same payload, package.json and owned installer, plus double-click
-# Install-Coop / Play-Coop / Uninstall-Coop / Collect-Logs scripts (scripts/,
-# Windows PowerShell 5.1, with FriendCommon.psm1 and CoopPlay.psm1),
-# FRIEND-GUIDE.txt and RUNTIME-ARCHIVE.txt. It never contains the lab module
-# (LabCommon.psm1), the session-role command, the runtime archive or a
-# link-secret.txt.
+# -Friend stages the player package, the Diamond Dogs Together drop-in zip
+# (0.14.0+): dist/DiamondDogsTogether-<version>-<UTC stamp>-<8 hex>/ holds
+#   DiamondDogsTogether-<version>.zip   the file players get
+#   package\                            exactly the zip's contents
+# The zip's ROOT is what goes into the MGSV game folder (next to mgsvtpp.exe):
+#   DiamondDogsTogether.exe             the launcher (setup, host/join, tools)
+#   dinput8.dll                         the loader
+#   mgs-coop\README.txt                 install, play, troubleshooting, uninstall
+#   mgs-coop\package.json               what the launcher checks (below)
+#   mgs-coop\THIRD_PARTY_NOTICES.md, DYNAMITE-LICENSE, MinHook-LICENSE.txt,
+#            ImGui-LICENSE.txt, tpp-mod-LICENSE
+#   mgs-coop\source.zip                 the complete corresponding source (GPL)
+# There are no .bat/.ps1/.psm1 files for players. Both the exe and the dll come
+# from one passing Invoke-WorkerChecks -Profile Release receipt (the stock46 gun
+# pieces, background worker OFF; the receipt hashes and keeps both).
+# package.json: product mgs-coop-local-package, version = the exe's X.Y.Z, the
+# pinned game hashes, one files[] row per file of the zip (exactly one with
+# target dinput8.dll; native/launcher/core/core_install.hpp ReadPackage) and the
+# runtime archive's target and hash.
+#
+# Without -Friend: the local development package of the owned installer
+# (install.bat, configure-role.bat, set-session-mode.ps1, payload\ and source\;
+# docs/local-package.md).
 param(
     # Optional: verify that this local archive has the expected hash. It is never copied.
     [string]$RuntimeArchive,
-    # Stage the two-PC play package (friend package).
+    # Stage the player package (the Diamond Dogs Together drop-in zip).
     [switch]$Friend,
     # Package this loader instead of building one (tests). Default: the
     # local package builds tools/build.ps1 -BuildOnly -DisableLocalExperiments
     # into build/package-loader (never build/native, the lab's research loader);
     # -Friend packages the loader of a passing Invoke-WorkerChecks -Profile
-    # Release receipt (the stock46 gun pieces, worker OFF; docs/two-pc-play.md
-    # "Release build"). A supplied loader is packaged as-is; its experiment
+    # Release receipt. A supplied loader is packaged as-is; its experiment
     # settings are not inferred. With -Friend, -CheckReceipt is required and
     # the supplied loader must have exactly the receipt loader's hash.
     [string]$LoaderPath,
+    # -Friend: the same for DiamondDogsTogether.exe (tests); it must have exactly
+    # the receipt launcher's hash.
+    [string]$LauncherPath,
     # -Friend: an existing passing Release receipt (build\worker-runs\<run>\receipt.json);
     # default: run the Release checks now.
     [string]$CheckReceipt,
@@ -34,9 +51,14 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$version='0.13.6'
+$version='0.14.0'
 $archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
+$archiveBytes=16333824
+$executableSha256='085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45'
+$steamDllSha256='08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A'
+$launcherName='DiamondDogsTogether.exe'
 $dll=Join-Path $projectRoot 'build/package-loader/dinput8.dll'
+$exe=$null
 # Provenance (package.json "build"): how the loader was made.
 $buildInfo=[ordered]@{source='package_build';profile='Normal';flags=$null;receipt=$null;receipt_sha256=$null;audited_tests=$null}
 $releaseFlags=[ordered]@{}
@@ -57,8 +79,9 @@ if($RuntimeArchive) {
 $packageSourceSnapshot=$null
 if($Friend) {
     Import-Module (Join-Path $PSScriptRoot 'worker\WorkerSource.psm1') -Force -DisableNameChecking
-    # An override is not an escape from the friend loader's audited receipt.
+    # An override is not an escape from the release artifacts' audited receipt.
     if($LoaderPath -and !$CheckReceipt) { throw 'Friend LoaderPath requires a passing Release check receipt.' }
+    if($LauncherPath -and !$CheckReceipt) { throw 'Friend LauncherPath requires a passing Release check receipt.' }
     if(!$CheckReceipt) {
         $checkOutput=@(& (Join-Path $PSScriptRoot 'worker\Invoke-WorkerChecks.ps1') -Profile Release 2>&1 | ForEach-Object { [string]$_ })
         $CheckReceipt=@($checkOutput | Select-String -Pattern 'Worker check receipt: (.+receipt\.json)' | ForEach-Object { $_.Matches[0].Groups[1].Value })[-1]
@@ -79,10 +102,25 @@ if($Friend) {
             throw 'Friend LoaderPath does not match the Release receipt loader.'
         }
     }
+    # The launcher is built and checked by the same Release run (Invoke-WorkerChecks
+    # keeps DiamondDogsTogether.exe and its hash next to the loader).
+    if(!$receipt.artifacts.Contains('launcher_sha256') -or [string]$receipt.artifacts.launcher_sha256 -cnotmatch '^[A-Fa-f0-9]{64}$') {
+        throw "The Release receipt has no launcher ($launcherName); rerun the Release checks."
+    }
+    $exe=Join-Path (Split-Path -Parent $receiptPath) $launcherName
+    if(!(Test-Path -LiteralPath $exe -PathType Leaf) -or (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ine [string]$receipt.artifacts.launcher_sha256) {
+        throw 'The receipt launcher changed since its checks.'
+    }
+    if($LauncherPath) {
+        $override=(Resolve-Path -LiteralPath $LauncherPath).Path
+        if((Get-FileHash -LiteralPath $override -Algorithm SHA256).Hash -ine [string]$receipt.artifacts.launcher_sha256) {
+            throw 'Friend LauncherPath does not match the Release receipt launcher.'
+        }
+    }
     $packageSourceSnapshot=Get-WorkerSourceHashes $projectRoot
     Assert-WorkerReceiptSource $receipt $packageSourceSnapshot
     $loaderSource='release_receipt'
-    Write-Output "Packaging the Release loader of $receiptPath."
+    Write-Output "Packaging the Release loader and launcher of $receiptPath."
 } elseif($LoaderPath) {
     $dll=(Resolve-Path -LiteralPath $LoaderPath).Path
     Write-Output "Packaging the existing loader $dll (no build)."
@@ -91,7 +129,7 @@ if($Friend) {
     & (Join-Path $PSScriptRoot 'build.ps1') -Configuration Release -BuildOnly -DisableLocalExperiments -BuildDirectory 'build\package-loader'
     $loaderSource='package_build'
 }
-# Provenance (package.json "build"): how the loader was made.
+# Provenance (package.json "build"): how the loader (and launcher) were made.
 $buildInfo.source=$loaderSource
 if($loaderSource -ceq 'supplied') { $buildInfo.profile='unknown' }
 if($loaderSource -ceq 'release_receipt') {
@@ -99,34 +137,9 @@ if($loaderSource -ceq 'release_receipt') {
     $buildInfo.receipt=[IO.Path]::GetRelativePath($projectRoot,$receiptPath);$buildInfo.receipt_sha256=(Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash
     $buildInfo.audited_tests=@($receipt.plan.tests).Count
 }
-$stamp=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
-$distRoot=if($OutputRoot) { [IO.Path]::GetFullPath($OutputRoot) } else { Join-Path $projectRoot 'dist' }
-if(!(Test-Path -LiteralPath $distRoot)) { $null=New-Item -ItemType Directory -Path $distRoot }
-$packageName=if($Friend) { "mgs-coop-friend-$version-$stamp" } else { "mgs-coop-$version-$stamp" }
-$packageRoot=Join-Path $distRoot $packageName
-$null=New-Item -ItemType Directory -Path $packageRoot
-$null=New-Item -ItemType Directory -Path (Join-Path $packageRoot 'payload')
-$inputs=@(
-    @{path=(Join-Path $projectRoot 'third_party/dynamite/LICENSE');name='DYNAMITE-LICENSE';target='mgs-coop/DYNAMITE-LICENSE'},
-    @{path=(Join-Path $projectRoot 'third_party/minhook/LICENSE.txt');name='MinHook-LICENSE.txt';target='mgs-coop/MinHook-LICENSE.txt'},
-    @{path=(Join-Path $projectRoot 'third_party/imgui/LICENSE.txt');name='ImGui-LICENSE.txt';target='mgs-coop/ImGui-LICENSE.txt'},
-    @{path=(Join-Path $projectRoot 'third_party/tpp-mod/LICENSE');name='tpp-mod-LICENSE';target='mgs-coop/tpp-mod-LICENSE'},
-    @{path=(Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md');name='THIRD_PARTY_NOTICES.md';target='mgs-coop/THIRD_PARTY_NOTICES.md'},
-    @{path=$dll;name='dinput8.dll';target='dinput8.dll'}
-)
-$files=@()
-foreach($inputFile in $inputs) {
-    $relative='payload/'+$inputFile.name
-    [IO.File]::Copy($inputFile.path,(Join-Path $packageRoot $relative),$false)
-    $files+=@([ordered]@{source=$relative;target=$inputFile.target;sha256=(Get-FileHash -LiteralPath (Join-Path $packageRoot $relative)).Hash})
-}
-$scope=if($Friend) {
-    'Two-PC play package (docs/two-pc-play.md). Contains no game-derived files; the runtime archive is generated or copied locally. Development build: partner bodies support Mother Base and free roam; world synchronization is experimental.'
-} else {
-    'Local development package. Contains no game-derived files; the runtime archive is generated or copied locally. Two-player gameplay remains unverified.'
-}
-# Provenance: the source commit and whether the working tree differed from it.
 $buildInfo.loader_sha256=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+if($exe) { $buildInfo.launcher_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash }
+# Provenance: the source commit and whether the working tree differed from it.
 $buildInfo.source_commit=$null;$buildInfo.source_dirty=$null
 try {
     $commit=@(& git -C $projectRoot rev-parse HEAD 2>$null)
@@ -135,128 +148,210 @@ try {
         $buildInfo.source_dirty=@(& git -C $projectRoot status --porcelain --untracked-files=no 2>$null).Count -gt 0
     }
 } catch { $buildInfo.source_commit=$null }
-$manifest=[ordered]@{
-    product='mgs-coop-local-package';version=$version;prepared_utc=[DateTime]::UtcNow.ToString('o')
-    executable_sha256='085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45'
-    steam_dll_sha256='08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A'
-    files=$files
-    runtime_archive=[ordered]@{target='mgs-coop/mgs-coop-player-runtime.dat';sha256=$archiveSha256}
-    scope=$scope
-    build=$buildInfo
-}
-if($Friend) { $manifest['flavor']='friend-play' }
-[IO.File]::WriteAllText((Join-Path $packageRoot 'package.json'),($manifest | ConvertTo-Json -Depth 5)+"`n",[Text.UTF8Encoding]::new($false))
+
+$preparedUtc=[DateTime]::UtcNow
+$stamp=$preparedUtc.ToString('yyyyMMddTHHmmssZ')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
+$distRoot=if($OutputRoot) { [IO.Path]::GetFullPath($OutputRoot) } else { Join-Path $projectRoot 'dist' }
+if(!(Test-Path -LiteralPath $distRoot)) { $null=New-Item -ItemType Directory -Path $distRoot }
+$licenses=@(
+    @{path=(Join-Path $projectRoot 'third_party/dynamite/LICENSE');name='DYNAMITE-LICENSE'},
+    @{path=(Join-Path $projectRoot 'third_party/minhook/LICENSE.txt');name='MinHook-LICENSE.txt'},
+    @{path=(Join-Path $projectRoot 'third_party/imgui/LICENSE.txt');name='ImGui-LICENSE.txt'},
+    @{path=(Join-Path $projectRoot 'third_party/tpp-mod/LICENSE');name='tpp-mod-LICENSE'},
+    @{path=(Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md');name='THIRD_PARTY_NOTICES.md'}
+)
 function Write-CrlfAscii([string]$Path,[string]$Text) {
-    # Windows PowerShell 5.1 reads BOM-less scripts as ANSI: keep them ASCII.
+    # Notepad and Windows PowerShell 5.1 read BOM-less text as ANSI: keep it ASCII.
     if($Text -match '[^\x00-\x7F]') { throw "Non-ASCII text for $Path" }
     [IO.File]::WriteAllText($Path,$Text.Replace("`r`n","`n").Replace("`n","`r`n"),[Text.Encoding]::ASCII)
 }
-if($Friend) {
-    # Friend layout: six double-click entry points at the top, the scripts in scripts\.
-    $scripts=Join-Path $packageRoot 'scripts'
-    $null=New-Item -ItemType Directory -Path $scripts
-    $pieces=[ordered]@{
-        'Install-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Install-Coop.ps1')
-        'Play-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Play-Coop.ps1')
-        'Play-LocalCoop.ps1'=(Join-Path $PSScriptRoot 'friend/Play-LocalCoop.ps1')
-        'LocalCoopSession.psm1'=(Join-Path $PSScriptRoot 'friend/LocalCoopSession.psm1')
-        'LocalCoopWindows.psm1'=(Join-Path $PSScriptRoot 'friend/LocalCoopWindows.psm1')
-        'Uninstall-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Uninstall-Coop.ps1')
-        'Collect-Logs.ps1'=(Join-Path $PSScriptRoot 'friend/Collect-Logs.ps1')
-        'Share-Save.ps1'=(Join-Path $PSScriptRoot 'friend/Share-Save.ps1')
-        'FriendCommon.psm1'=(Join-Path $PSScriptRoot 'friend/FriendCommon.psm1')
-        'CoopPlay.psm1'=(Join-Path $PSScriptRoot 'CoopPlay.psm1')
-        'install.ps1'=(Join-Path $PSScriptRoot 'package-install.ps1')
+function Get-Sha256Hex([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }
+# The source files to publish: the current working source, not a git archive
+# that omits local edits. Binaries, local extracted game assets, build output and
+# repository state are excluded; the launcher's embedded assets (the two
+# Dynamite-derived controller FPKDs, its icon, logo and manifest) are included.
+function Get-PackageSourceFiles {
+    $extensions=@('.cpp','.hpp','.h','.c','.in','.lua','.ps1','.psm1','.py','.cmake','.txt','.md','.json','.def','.rc','.bat','.vdf','.bin','.ico','.png','.manifest')
+    Push-Location $projectRoot
+    try {
+        $files=@(& rg --files --hidden native lua tools tests third_party cmake -g '!.git' -g '!__pycache__' -g '!*.exe' -g '!*.dll' -g '!*.obj')
+        if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source files.' }
+        $files+=@(& rg --files docs -g '*.md')
+        if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source documentation.' }
+    } finally { Pop-Location }
+    $files+=@('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md')
+    if($Friend) {
+        # rg skips the worktree's known MinHook junction. These paths were already
+        # fingerprinted through the resolved dependency by the Release receipt;
+        # include that checked source rather than leaving an unbuildable bundle.
+        $files+=@($packageSourceSnapshot.hashes.Keys | Where-Object {
+            $_.StartsWith('third_party\minhook\', [StringComparison]::Ordinal)
+        })
     }
-    foreach($name in $pieces.Keys) { Write-CrlfAscii (Join-Path $scripts $name) ([IO.File]::ReadAllText($pieces[$name])) }
-    foreach($entry in @('Install-Coop','Play-Coop','Uninstall-Coop','Collect-Logs','Share-Save')) {
-        # PSModulePath is cleared so that Windows PowerShell uses its own module
-        # path even when started from a PowerShell 7 window.
-        $batch="@echo off`r`nsetlocal`r`nrem MGS Co-op two-PC play: runs scripts\$entry.ps1 with Windows PowerShell.`r`nset `"PSModulePath=`"`r`n"+
-            "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\$entry.ps1`" %*`r`n"+
-            "set `"result=%errorlevel%`"`r`necho.`r`n"+
-            "if not `"%result%`"==`"0`" echo Finished with code %result%. Please read the messages above.`r`n"+
-            "pause`r`nexit /b %result%`r`n"
-        [IO.File]::WriteAllText((Join-Path $packageRoot ($entry+'.bat')),$batch,[Text.Encoding]::ASCII)
+    $rows=@()
+    foreach($relative in @($files | ForEach-Object { $_.Replace('/','\') } | Sort-Object -Unique)) {
+        $source=Join-Path $projectRoot $relative
+        $leaf=[IO.Path]::GetFileName($source)
+        if([IO.Path]::GetExtension($source) -notin $extensions -and $leaf -notmatch '^LICENSE') { continue }
+        # Never a link key or a runtime archive, whatever lies in the working tree.
+        if($leaf -like 'link-secret*' -or $leaf -like 'mgs-coop-player-runtime*') { continue }
+        $rows+=@([pscustomobject]@{relative=$relative;path=$source})
     }
-    # Compatibility entry point: the unified launcher owns the local-test flow.
-    $batch="@echo off`r`nsetlocal`r`nrem MGS Co-op local two-window test through the Play-Coop menu.`r`nset `"PSModulePath=`"`r`n"+
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\Play-Coop.ps1`" -LocalTest %*`r`n"+
-        "set `"result=%errorlevel%`"`r`necho.`r`n"+
-        "if not `"%result%`"==`"0`" echo Finished with code %result%. Please read the messages above.`r`n"+
-        "pause`r`nexit /b %result%`r`n"
-    [IO.File]::WriteAllText((Join-Path $packageRoot 'Play-Offline-Coop.bat'),$batch,[Text.Encoding]::ASCII)
-    foreach($doc in @('FRIEND-GUIDE.txt','RUNTIME-ARCHIVE.txt')) {
-        $text=[IO.File]::ReadAllText((Join-Path $PSScriptRoot "friend/$doc")).Replace('@VERSION@',$version).Replace('@ARCHIVE_SHA256@',$archiveSha256)
-        Write-CrlfAscii (Join-Path $packageRoot $doc) $text
-    }
-} else {
-    [IO.File]::Copy((Join-Path $PSScriptRoot 'package-install.ps1'),(Join-Path $packageRoot 'install.ps1'),$false)
-    [IO.File]::Copy((Join-Path $PSScriptRoot 'package-configure-role.ps1'),(Join-Path $packageRoot 'configure-role.ps1'),$false)
-    [IO.File]::Copy((Join-Path $PSScriptRoot 'set-session-mode.ps1'),(Join-Path $packageRoot 'set-session-mode.ps1'),$false)
-    foreach($entry in @('install','configure-role')) {
-        $batch="@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0$entry.ps1`" %*`r`nset `"result=%errorlevel%`"`r`npause`r`nexit /b %result%`r`n"
-        [IO.File]::WriteAllText((Join-Path $packageRoot ($entry+'.bat')),$batch,[Text.Encoding]::ASCII)
-    }
+    return $rows
 }
-# Include the current working source, not a git archive that omits local edits.
-# Exclude binaries, local extracted game assets, build output and repository state.
+function Write-PackageZip([string]$ZipPath,$Entries,[DateTime]$Time) {
+    # Entries: name (forward slashes, relative) and path, in this order. Every
+    # entry gets the same time, so a zip depends only on its contents and $Time.
+    Add-Type -AssemblyName System.IO.Compression
+    $stream=[IO.File]::Open($ZipPath,[IO.FileMode]::CreateNew)
+    try {
+        $zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach($e in $Entries) {
+                if($e.name -match '\\' -or $e.name.StartsWith('/') -or $e.name -match '(^|/)\.\.(/|$)') { throw "Bad zip entry name: $($e.name)" }
+                $entry=$zip.CreateEntry($e.name,[IO.Compression.CompressionLevel]::Optimal)
+                $entry.LastWriteTime=[DateTimeOffset]::new($Time.ToLocalTime())
+                $in=[IO.File]::OpenRead($e.path)
+                try { $out=$entry.Open(); try { $in.CopyTo($out) } finally { $out.Dispose() } } finally { $in.Dispose() }
+            }
+        } finally { $zip.Dispose() }
+    } finally { $stream.Dispose() }
+}
+function Assert-PackageZip([string]$ZipPath,$Entries) {
+    # Read back: exactly these entries, each with the bytes of its file.
+    Add-Type -AssemblyName System.IO.Compression
+    $zip=[IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $names=@($zip.Entries | ForEach-Object { $_.FullName })
+        if(($names -join "`n") -cne (@($Entries | ForEach-Object { $_.name }) -join "`n")) { throw "The written zip does not hold exactly the staged files: $ZipPath" }
+        foreach($e in $Entries) {
+            $entry=$zip.GetEntry($e.name)
+            $sha=[Security.Cryptography.SHA256]::Create(); $s=$entry.Open()
+            try { $hash=[Convert]::ToHexString($sha.ComputeHash($s)) } finally { $s.Dispose(); $sha.Dispose() }
+            if($hash -cne (Get-Sha256Hex $e.path)) { throw "The written zip entry differs from its file: $($e.name)" }
+        }
+    } finally { $zip.Dispose() }
+}
+
+if($Friend) {
+    # ---------------------------------------------------------------- the drop-in player package
+    $runRoot=Join-Path $distRoot "DiamondDogsTogether-$version-$stamp"
+    $contents=Join-Path $runRoot 'package'
+    $modDir=Join-Path $contents 'mgs-coop'
+    $null=New-Item -ItemType Directory -Path $modDir -Force
+    $files=@()
+    [IO.File]::Copy($exe,(Join-Path $contents $launcherName),$false)
+    [IO.File]::Copy($dll,(Join-Path $contents 'dinput8.dll'),$false)
+    foreach($license in $licenses) { [IO.File]::Copy($license.path,(Join-Path $modDir $license.name),$false) }
+    $readme=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'package-readme-player.txt')).Replace('@VERSION@',$version)
+    if($readme.Contains('@')) { throw 'package-readme-player.txt has an unknown placeholder.' }
+    Write-CrlfAscii (Join-Path $modDir 'README.txt') $readme
+    # The GPL source: one zip instead of a source folder, with its own hash list.
+    $sourceRows=@(Get-PackageSourceFiles)
+    $sourceEntries=@()
+    $sourceHashes=@()
+    foreach($row in $sourceRows) {
+        $name=$row.relative.Replace('\','/')
+        $sourceEntries+=@([pscustomobject]@{name=$name;path=$row.path})
+        $sourceHashes+=@([ordered]@{path=$name;sha256=(Get-Sha256Hex $row.path)})
+    }
+    $sourceList=Join-Path $runRoot 'source-files.json'
+    [IO.File]::WriteAllText($sourceList,($sourceHashes | ConvertTo-Json -Depth 3)+"`n",[Text.UTF8Encoding]::new($false))
+    $sourceEntries+=@([pscustomobject]@{name='source-files.json';path=$sourceList})
+    $sourceZip=Join-Path $modDir 'source.zip'
+    Write-PackageZip $sourceZip $sourceEntries $preparedUtc
+    Assert-PackageZip $sourceZip $sourceEntries
+    # package.json: one row per file of the zip (exactly one dinput8.dll row).
+    foreach($target in @($launcherName,'dinput8.dll') + @($licenses | ForEach-Object { 'mgs-coop/' + $_.name }) + @('mgs-coop/README.txt','mgs-coop/source.zip')) {
+        $files+=@([ordered]@{source=$target;target=$target;sha256=(Get-Sha256Hex (Join-Path $contents $target))})
+    }
+    $manifest=[ordered]@{
+        product='mgs-coop-local-package';version=$version;prepared_utc=$preparedUtc.ToString('o')
+        layout='drop-in';flavor='friend-play'
+        executable_sha256=$executableSha256;steam_dll_sha256=$steamDllSha256
+        files=$files
+        runtime_archive=[ordered]@{target='mgs-coop/mgs-coop-player-runtime.dat';sha256=$archiveSha256;bytes=$archiveBytes;built_by=$launcherName}
+        scope='Diamond Dogs Together drop-in package: extract into the MGSV game folder and run DiamondDogsTogether.exe. Contains no game-derived files; the runtime archive is built on the player''s PC from their own game files. Steam online play only.'
+        build=$buildInfo
+    }
+    [IO.File]::WriteAllText((Join-Path $modDir 'package.json'),($manifest | ConvertTo-Json -Depth 6)+"`n",[Text.UTF8Encoding]::new($false))
+    # Refuse changes while staging as well as a stale receipt at admission.
+    Assert-WorkerSourceUnchanged $packageSourceSnapshot (Get-WorkerSourceHashes $projectRoot)
+    if((Get-Sha256Hex (Join-Path $contents 'dinput8.dll')) -ine [string]$receipt.artifacts.loader_sha256) { throw 'The staged loader does not match the Release receipt.' }
+    if((Get-Sha256Hex (Join-Path $contents $launcherName)) -ine [string]$receipt.artifacts.launcher_sha256) { throw 'The staged launcher does not match the Release receipt.' }
+    # Nothing for players to run but the exe: no scripts, no runtime archive, no link key.
+    $staged=@(Get-ChildItem -LiteralPath $contents -File -Recurse -Force)
+    $refused=@($staged | Where-Object { $_.Extension -in @('.bat','.cmd','.ps1','.psm1','.dat') -or $_.Name -like 'link-secret*' -or $_.Name -like 'mgs-coop-player-runtime*' })
+    if($refused.Count) { throw "The package would contain $($refused[0].Name)." }
+    $entries=@()
+    foreach($target in @($launcherName,'dinput8.dll','mgs-coop/package.json','mgs-coop/README.txt') + @($licenses | ForEach-Object { 'mgs-coop/' + $_.name }) + @('mgs-coop/source.zip')) {
+        $entries+=@([pscustomobject]@{name=$target;path=(Join-Path $contents $target)})
+    }
+    if($entries.Count -ne $staged.Count) { throw 'The staged package holds files that are not listed.' }
+    $zipPath=Join-Path $runRoot "DiamondDogsTogether-$version.zip"
+    Write-PackageZip $zipPath $entries $preparedUtc
+    Assert-PackageZip $zipPath $entries
+    Write-Output "Prepared: $zipPath"
+    Write-Output ("SHA-256: " + (Get-Sha256Hex $zipPath) + "; loader " + $buildInfo.loader_sha256 + "; launcher " + $buildInfo.launcher_sha256)
+    Write-Output 'No game installation, game launch or tests were performed.'
+    return
+}
+
+# -------------------------------------------------------------------- the local development package
+$packageRoot=Join-Path $distRoot "mgs-coop-$version-$stamp"
+$null=New-Item -ItemType Directory -Path $packageRoot
+$null=New-Item -ItemType Directory -Path (Join-Path $packageRoot 'payload')
+$files=@()
+foreach($inputFile in @($licenses + @(@{path=$dll;name='dinput8.dll'}))) {
+    $relative='payload/'+$inputFile.name
+    $target=if($inputFile.name -ceq 'dinput8.dll') { 'dinput8.dll' } else { 'mgs-coop/' + $inputFile.name }
+    [IO.File]::Copy($inputFile.path,(Join-Path $packageRoot $relative),$false)
+    $files+=@([ordered]@{source=$relative;target=$target;sha256=(Get-Sha256Hex (Join-Path $packageRoot $relative))})
+}
+$manifest=[ordered]@{
+    product='mgs-coop-local-package';version=$version;prepared_utc=$preparedUtc.ToString('o')
+    executable_sha256=$executableSha256;steam_dll_sha256=$steamDllSha256
+    files=$files
+    runtime_archive=[ordered]@{target='mgs-coop/mgs-coop-player-runtime.dat';sha256=$archiveSha256}
+    scope='Local development package. Contains no game-derived files; the runtime archive is generated or copied locally. Two-player gameplay remains unverified.'
+    build=$buildInfo
+}
+[IO.File]::WriteAllText((Join-Path $packageRoot 'package.json'),($manifest | ConvertTo-Json -Depth 5)+"`n",[Text.UTF8Encoding]::new($false))
+[IO.File]::Copy((Join-Path $PSScriptRoot 'package-install.ps1'),(Join-Path $packageRoot 'install.ps1'),$false)
+[IO.File]::Copy((Join-Path $PSScriptRoot 'package-configure-role.ps1'),(Join-Path $packageRoot 'configure-role.ps1'),$false)
+[IO.File]::Copy((Join-Path $PSScriptRoot 'set-session-mode.ps1'),(Join-Path $packageRoot 'set-session-mode.ps1'),$false)
+foreach($entry in @('install','configure-role')) {
+    $batch="@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0$entry.ps1`" %*`r`nset `"result=%errorlevel%`"`r`npause`r`nexit /b %result%`r`n"
+    [IO.File]::WriteAllText((Join-Path $packageRoot ($entry+'.bat')),$batch,[Text.Encoding]::ASCII)
+}
 $sourceRoot=Join-Path $packageRoot 'source'
-$extensions=@('.cpp','.hpp','.h','.c','.in','.lua','.ps1','.psm1','.py','.cmake','.txt','.md','.json','.def','.rc','.bat','.vdf')
-Push-Location $projectRoot
-try {
-    $sourceFiles=@(& rg --files --hidden native lua tools tests third_party data cmake -g '!.git' -g '!__pycache__' -g '!*.exe' -g '!*.dll' -g '!*.obj')
-    if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source files.' }
-    $sourceFiles+=@(& rg --files docs -g '*.md')
-    if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source documentation.' }
-} finally { Pop-Location }
-$sourceFiles+=@('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md')
-if($Friend) {
-    # rg skips the worktree's known MinHook junction. These paths were already
-    # fingerprinted through the resolved dependency by the Release receipt;
-    # include that checked source rather than leaving an unbuildable bundle.
-    $sourceFiles+=@($packageSourceSnapshot.hashes.Keys | Where-Object {
-        $_.StartsWith('third_party\minhook\', [StringComparison]::Ordinal)
-    })
-}
-$sourceFiles=@($sourceFiles | Sort-Object -Unique)
 $sourceHashes=@()
-foreach($relative in $sourceFiles) {
-    $source=Join-Path $projectRoot $relative
-    if([IO.Path]::GetExtension($source) -notin $extensions -and [IO.Path]::GetFileName($source) -notmatch '^LICENSE') { continue }
-    # Never a link key or a runtime archive, whatever lies in the working tree.
-    if([IO.Path]::GetFileName($source) -like 'link-secret*' -or [IO.Path]::GetFileName($source) -like 'mgs-coop-player-runtime*') { continue }
-    $destination=Join-Path $sourceRoot $relative
+foreach($row in @(Get-PackageSourceFiles)) {
+    $destination=Join-Path $sourceRoot $row.relative
     $parent=Split-Path -Parent $destination
     if(!(Test-Path -LiteralPath $parent)) { $null=New-Item -ItemType Directory -Path $parent -Force }
-    [IO.File]::Copy($source,$destination,$false)
-    $sourceHashes+=@([ordered]@{path=$relative;sha256=(Get-FileHash -LiteralPath $destination).Hash})
+    [IO.File]::Copy($row.path,$destination,$false)
+    $sourceHashes+=@([ordered]@{path=$row.relative;sha256=(Get-Sha256Hex $destination)})
 }
 [IO.File]::WriteAllText((Join-Path $packageRoot 'source-files.json'),($sourceHashes | ConvertTo-Json -Depth 3)+"`n",[Text.UTF8Encoding]::new($false))
-if(!$Friend) {
-    [IO.File]::Copy((Join-Path $PSScriptRoot 'package-readme.txt'),(Join-Path $packageRoot 'README.txt'),$false)
-    $archiveNote=@"
+[IO.File]::Copy((Join-Path $PSScriptRoot 'package-readme.txt'),(Join-Path $packageRoot 'README.txt'),$false)
+$archiveNote=@"
 MGS Co-op $version - runtime archive
 
 This package does not contain game files or game-derived data. The loader
 needs the two-player runtime archive mgs-coop-player-runtime.dat
 (SHA-256 $archiveSha256), which is generated or copied on your own PC from
-your own game installation. Double-clicking install.bat asks for the game
-folder and then for the path of this file. From a command line:
+your own game installation (DiamondDogsTogether.exe builds it, or
+ddt_datbuild.exe build <game folder> <out.dat>). Double-clicking install.bat
+asks for the game folder and then for the path of this file. From a command
+line:
 
   powershell -NoProfile -File .\install.ps1 -GameDirectory "<MGSV folder>" -RuntimeArchive "<path>\mgs-coop-player-runtime.dat"
 
 An installed archive with the expected hash is reused when -RuntimeArchive is
 omitted (upgrades). The installer refuses an archive with any other hash.
 "@
-    [IO.File]::WriteAllText((Join-Path $packageRoot 'RUNTIME-ARCHIVE.txt'),$archiveNote.Replace("`r`n","`n").Replace("`n","`r`n"),[Text.Encoding]::ASCII)
-}
-if($Friend) {
-    # Refuse changes while staging as well as a stale receipt at admission.
-    Assert-WorkerSourceUnchanged $packageSourceSnapshot (Get-WorkerSourceHashes $projectRoot)
-    if((Get-FileHash -LiteralPath (Join-Path $packageRoot 'payload\dinput8.dll') -Algorithm SHA256).Hash -ine
-        [string]$receipt.artifacts.loader_sha256) { throw 'The staged loader does not match the Release receipt.' }
-}
+[IO.File]::WriteAllText((Join-Path $packageRoot 'RUNTIME-ARCHIVE.txt'),$archiveNote.Replace("`r`n","`n").Replace("`n","`r`n"),[Text.Encoding]::ASCII)
 Compress-Archive -LiteralPath $packageRoot -DestinationPath ($packageRoot+'.zip') -CompressionLevel Optimal
 Write-Output "Prepared: $packageRoot.zip"
 Write-Output 'No game installation, role change, game launch or tests were performed.'
