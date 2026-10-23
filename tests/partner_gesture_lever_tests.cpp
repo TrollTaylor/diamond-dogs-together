@@ -92,8 +92,19 @@ void TestPreconditions() {
         Check(Same(gl::Precondition(r, {0x79, 0, 0, 1, 0}), "act") && Same(gl::Precondition(r, {0x7A, 0, 0, 1, 0}), "act"),
               "sign: acts 0x79 / 0x7A refused");
         Check(Same(gl::Precondition(r, {1, 0, 0, 4, 0}), "stance"), "sign: stance 4 refused");
+        // GetStance 0x1002350: crawl (3) with PS rec+0xC bit 20 reads as 4; bit 20 alone or crawl alone does not.
+        Check(Same(gl::Precondition(r, {5, 0, 0, 3, 0}, 0x00100000), "stance"), "sign: crawl with rec+0xC bit 20 refused (GetStance 4)");
+        Check(gl::Precondition(r, {1, 0, 0, 1, 0}, 0x00100000) == nullptr && gl::Precondition(r, {3, 0, 0, 2, 0}, 0x00100000) == nullptr &&
+                  gl::Precondition(r, {5, 0, 0, 3, 0}, 0xEFEFFFFF) == nullptr,
+              "sign: bit 20 while standing / squatting, or a crawl without bits 20 / 28, admitted");
+        // FUN_11E3A20: PS rec+0xC bit 28 refuses kinds 2 / 3.
+        Check(Same(gl::Precondition(r, {1, 0, 0, 1, 0}, 0x10000000), "rec_c28"), "sign: rec+0xC bit 28 refused");
         Check(Same(gl::Precondition(r, {1, 0x18, 0, 1, 0}), "upper"), "sign: a running sign refused (no rising edge)");
     }
+    // The knock's stock gates read neither bit.
+    Check(gl::Precondition(gl::Request::knock, {1, 0, 0, 3, 0}, 0x10100000) == nullptr, "knock: rec+0xC bits 20 / 28 do not matter");
+    Check(gl::StanceOf(3, 0x00100000) == 4 && gl::StanceOf(3, 0) == 3 && gl::StanceOf(2, 0x00100000) == 2 && gl::StanceOf(1, 0xFFFFFFFF) == 1,
+          "StanceOf mirrors GetStance");
     Check(Same(gl::Precondition(gl::Request::none, stand), "args"), "none: args");
 }
 

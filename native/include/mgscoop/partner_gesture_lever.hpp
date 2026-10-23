@@ -17,7 +17,9 @@
 //   frame <= row+0x18 + row+0x20 (knock: always; signs: speed Q+0x38 <= 1, act
 //   not 0x79/0x7A, PS rec+0xC bit 28 clear) and starts state 1 StateKnock
 //   0x11E7210 (Q+0x20 = 0x17), 2 StateHandSignGo 0x11E6A40 (0x18) or 3
-//   StateHandSignStop 0x11E6C30 (0x19; signs not at stance 4).
+//   StateHandSignStop 0x11E6C30 (0x19; signs not while GetStance 0x1002350
+//   is 4: the raw Q+0x30 is 1..3, GetStance returns 4 for 3 (crawl) with PS
+//   rec+0xC bit 20 set).
 // - Stock callers (the [blk+0xF8] loads that feed these slots in a .text scan;
 //   the request functions have no direct caller): the call menu
 //   (hold CALL = Q, PP vt+0x90(9, 12) == 3) command set 0 "knock" 0x110CCE0
@@ -73,14 +75,20 @@ const char* Admit(const Gate& gate) noexcept;
 // This copy's own arrays at its id (Q+0x18 act, +0x20 upper, +0x28, +0x30
 // stance, +0x38 speed). The stock call menu's knock entry is enabled only
 // while act 1..20 or 31..37, upper 0, Q+0x28 0 and speed not 2..3; the sign
-// request needs speed <= 1, act not 0x79/0x7A and a stance other than 4. The
-// lever also needs upper 0 for the signs (the sender reports a rising edge).
-// nullptr when met, else act | upper | q28 | speed | stance.
+// request needs speed <= 1, act not 0x79/0x7A, PS rec+0xC (`recc`) bit 28
+// clear and GetStance != 4 (StanceOf below). The lever also needs upper 0
+// for the signs (the sender reports a rising edge).
+// nullptr when met, else act | upper | q28 | speed | rec_c28 | stance.
 struct Local {
     std::uint16_t act;
     std::uint8_t upper, q28, stance, speed;
 };
-const char* Precondition(Request request, const Local& local) noexcept;
+inline constexpr std::uint32_t kRecCCrawlBit = 0x00100000;  // PS rec+0xC bit 20 (GetStance)
+inline constexpr std::uint32_t kRecCSignBit = 0x10000000;   // PS rec+0xC bit 28 (FUN_11E3A20)
+// GetStance 0x1002350: the raw Q+0x30 byte, but 4 when it is 3 (crawl) and
+// PS rec+0xC bit 20 is set.
+std::uint8_t StanceOf(std::uint8_t stance, std::uint32_t recc) noexcept;
+const char* Precondition(Request request, const Local& local, std::uint32_t recc = 0) noexcept;
 
 // --- The lever's outcome (Fire, mgs_partner_player) and its formatting (pure) --
 struct Outcome {
@@ -90,14 +98,15 @@ struct Outcome {
     Local local;              // before the call
     std::uint8_t row_kind, row_d0, row_life;  // the row after the call (+0x24, +0xD0, +0x20)
     std::uint32_t row_frame;  // row+0x18 after the call (the request frame)
-    std::uint32_t rec4, rec8, recc;  // PS rec +4 / +8 / +0xC of this id (the sign gate reads +0xC bit 28)
+    std::uint32_t rec4, rec8, recc;  // PS rec +4 / +8 / +0xC of this id (the sign gates read +0xC bits 20 / 28)
     bool called;              // the stock request function ran (requested, other_changed)
     bool other_same;          // instance 1's request fields and upper byte unchanged
 };
 // Native (mgs_partner_player). Game (runtime) thread. `image` is the module base; P is re-read from the
 // player slot. Refusals: latched | player | online | count | q | ids | pool |
 // blocks | block | ps | plugin | slot | row | arrays | act | upper | q28 |
-// speed | stance | fault | other_changed (the last two latch the lever off).
+// speed | rec_c28 | stance | fault | other_changed (the last two latch the
+// lever off).
 Outcome Fire(std::uintptr_t image, Request request) noexcept;
 bool Latched() noexcept;
 // The debug command's result (at most 160 characters):

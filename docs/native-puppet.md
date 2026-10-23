@@ -726,7 +726,7 @@ crack-climb spots.
 `partner_gesture` (`native/partner_gesture.*`, pure part
 `native/partner_gesture_policy.*`, driven by `SendGesture` / `ReceiveGesture` /
 `TickGesture` in `partner_driver.cpp`) plays the remote's pickup, hand sign Go
-/ Stop and wall knock on body 1's upper graph. Key
+/ Stop and knock on body 1's upper graph. Key
 `partner_native_gesture=0|1`: **default on with the native gun profile in lab
 and play** (the pickup on body 1 in FRAMES: hidden runs `0e343f72` lab and
 `75a7e7dc` play with bad WAN, see "Status" below), off without it, a named 0
@@ -903,7 +903,8 @@ hand-sign nodes; the receiver itself is unchanged (`partner_native_gesture`).
 1.0.15.4).** Neither is an action-icon press, so no key of the padop key-type
 table `0x22E86A8` (key type 0..9 -> pad bit 5, 6, 15, 3, 1, 11, 10, 2, 18, 7:
 ACTION, RELOAD, CQC, HOLD, STANCE, UP, SUBJECT, DASH, EVADE, STOCK; the
-names are the `PlayerPad` Lua constants the binder `0x1409D3A90` registers,
+names are the `PlayerPad` Lua constants the PlayerPad binder `0x1409D3630`
+registers (its STANCE registration is the pinned site `0x1409D3A90`),
 bit 11 = 0x800 = `UP`)
 starts them. `KnockActionPluginImpl`'s only icon query is its
 `ExecActionButtonFunction` `0x1411E44B0` (key type 0 = ACTION, result type
@@ -924,7 +925,10 @@ The plugin's polling (vt+0x58 `0x1411E5160`) takes a request through
 kind 1 (knock) always; kinds 2 / 3 (signs) only while the speed `Q+0x38 <= 1`,
 the act is not 0x79 / 0x7A and PS rec+0xC bit 28 is clear. It then starts
 state 1 `StateKnock` `0x1411E7210` (`Q+0x20 = 0x17`), 2 `StateHandSignGo`
-(0x18) or 3 `StateHandSignStop` (0x19), the signs only when `GetStance != 4`.
+(0x18) or 3 `StateHandSignStop` (0x19), the signs only when `GetStance`
+`0x141002350` is not 4. `GetStance` returns the raw `Q+0x30` byte (1 stand,
+2 squat, 3 crawl; never 4), but 4 when it is 3 and PS rec+0xC bit 20
+(0x00100000) is set.
 No wall or cover is involved: the knock plays wherever it is requested.
 
 The stock callers (a scan of `.text` for an `[reg+0xF8]` load feeding a
@@ -974,7 +978,8 @@ instances, this copy at id 0, both blocks, both plugins with their back
 pointers and distinct work rows, this copy's PS), the slot and the polling slot
 (`slot`), this copy's arrays and the stock precondition: knock = the call
 menu's enable test (`act`, `upper`, `q28`, `speed`), signs = speed <= 1, act
-not 0x79/0x7A, stance not 4 and upper 0 (`speed`, `act`, `stance`, `upper`).
+not 0x79/0x7A, PS rec+0xC bit 28 clear, `GetStance` not 4 (not a crawl with
+rec+0xC bit 20 set) and upper 0 (`speed`, `act`, `rec_c28`, `stance`, `upper`).
 The call runs under SEH (`fault` latches the lever for the process). Instance
 1's request fields (row +0x18 / +0x20 / +0x24 / +0xD0 bit 0) and its upper
 byte are compared before and after: any change latches (`other_changed`).
@@ -987,15 +992,18 @@ or `gesture_lever=refused;reason=..;kind=..;...`. Log (one per command, uncapped
 `partner_gesture=lever; result=requested|refused; reason=..; kind=..; id=0;
 act=..; upper=0x..; q28=..; stance=..; speed=..; called=0|1; row_kind=..;
 row_d0=0x..; row_life=..; frame=..; rec4=0x..; rec8=0x..; recc=0x..;
-other_same=0|1`. `recc` is PS rec+0xC: bit 28 (0x10000000) set means the
-polling will refuse a sign.
+other_same=0|1`. `recc` is PS rec+0xC: bit 28 (0x10000000) set refuses a sign
+(`rec_c28`), and bit 20 (0x00100000) with `stance=3` refuses it as `stance`;
+the lever checks both before the call, as the polling would.
 
 Contract (`tools/generate_partner_contract.py`, `GESTURE_LEVER_SITES` and the
-slots; 761 code sites / 197 vtable slots): the three request bodies, the
-request test `0x1411E3A20` (frame window, kind dispatch), the polling's call
-and its kind -> state writes, the three upper writes (0x17 / 0x18 / 0x19), the
-five stock call sites and the knock command binding, the CALL hold classifier
-call; slots +0x28 / +0x30 / +0x38 / +0x58 of `0x23C5A20`; assertions: the
+slots; 766 code sites / 197 vtable slots): the three request bodies, the
+request test `0x1411E3A20` (frame window, kind dispatch and the two sign
+branches: speed, act, rec+0xC bit 28), `GetStance` `0x141002350` (complete),
+the polling's call and its kind -> state writes, the three upper writes (0x17 /
+0x18 / 0x19), the five stock call sites, the knock entry's enable test
+(`UpdateCommandSetKnock`, two sites) and its command binding, the CALL hold
+classifier call; slots +0x28 / +0x30 / +0x38 / +0x58 of `0x23C5A20`; assertions: the
 vtable's only store is the constructor, the request functions have no direct
 caller and only data references, and the key-type table's ten values.
 

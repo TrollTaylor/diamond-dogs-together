@@ -54,7 +54,11 @@ const char* Admit(const Gate& g) noexcept {
     return nullptr;
 }
 
-const char* Precondition(Request request, const Local& l) noexcept {
+std::uint8_t StanceOf(std::uint8_t stance, std::uint32_t recc) noexcept {
+    return stance == 3 && (recc & kRecCCrawlBit) ? std::uint8_t{4} : stance;
+}
+
+const char* Precondition(Request request, const Local& l, std::uint32_t recc) noexcept {
     switch (request) {
     case Request::knock:
         // UpdateCommandSetKnock 0x110F8D0: the call menu's knock entry.
@@ -65,10 +69,11 @@ const char* Precondition(Request request, const Local& l) noexcept {
         return nullptr;
     case Request::sign_go:
     case Request::sign_stop:
-        // FUN_11E3A20 kinds 2 / 3 and the polling's stance test (0x11E5160).
+        // FUN_11E3A20 kinds 2 / 3 and the polling's GetStance test (0x11E5160).
         if (l.speed > 1) return "speed";
         if (l.act == 0x79 || l.act == 0x7A) return "act";
-        if (l.stance == 4) return "stance";
+        if (recc & kRecCSignBit) return "rec_c28";
+        if (StanceOf(l.stance, recc) == 4) return "stance";
         if (l.upper != 0) return "upper";
         return nullptr;
     default:

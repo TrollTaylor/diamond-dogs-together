@@ -1198,12 +1198,23 @@ GESTURE_LEVER_SITES = [
      'RequestHandSignStop (Knock vt+0x38, complete body): the same row write with row+0x24 = 3'),
     (0x11E3A2F, '488b41388bda8bfa2b5824488bf14869dbe0000000480359680fb683d0000000a8010f843f01000024fe8883d0000000e8ecb5a1ff488b'
      '48408b4320448b593848034318493bc30f821a010000',
-     'FUN_11E3A20 (the request test of the polling, 1/2): row+0xD0 bit 0 taken and cleared, refused once the frame passes '
+     'FUN_11E3A20 (the request test of the polling, 1/4): row+0xD0 bit 0 taken and cleared, refused once the frame passes '
      'row+0x18 + row+0x20'),
     (0x11E3A7C, '4c8b56080fb64b24498b8238010000488b5060488b4238440fb60c38ffc90f843e010000ffc90f8400010000ffc90f84b0000000ffc90f'
      '85de000000',
-     'FUN_11E3A20 (2/2): the row+0x24 kind dispatch 1 (knock: taken) / 2 / 3 (signs: speed Q+0x38 <= 1, act, PS rec+0xC '
-     'bit 28) / 4'),
+     'FUN_11E3A20 (2/4): r9d = the speed Q+0x38[id], then the row+0x24 kind dispatch 1 (knock: taken) / 2 (0x11E3BA8) / '
+     '3 (0x11E3B60) / 4; the sign tests are the next two sites'),
+    (0x11E3B60, '4183f9017730488b42180fb70c7883c18783f9017620498b42782b7808488b80800200008bcf48c1e1058b54010cc1ea1cf6c201744832c0'
+     '488b5c2430488b7424384883c4205fc3',
+     'FUN_11E3A20 (3/4): kind 3 (Stop) is taken only while the speed <= 1, the act Q+0x18[id] is not 0x79 / 0x7A and PS '
+     'rec+0xC bit 28 (shr 0x1C) is clear; otherwise it returns 0 (the lever\'s sign speed / act / rec_c28 refusals)'),
+    (0x11E3BA8, '4183f90177e8488b42180fb70c7883c18783f90176d8498b42782b7808488b80800200008bcf48c1e1058b54010cc1ea1cf6c20175b8488b'
+     '5c2430488b742438b0014883c4205fc3',
+     'FUN_11E3A20 (4/4): kind 2 (Go) the same three tests; the taken return 1 (shared by kind 1)'),
+    (0x1002350, '4c8b41088bca498b8038010000488b4060488b4030440fb60c08498b40782b5008488b80800200008bca48c1e1058b54010cc1ea14f6c201'
+     '740bb8040000004183f9037403418bc1f3c3',
+     'GetStance 0x1002350 (complete body; the polling\'s sign test): the raw Q+0x30[id] (1 stand, 2 squat, 3 crawl), '
+     'but 4 when it is 3 and PS rec+0xC bit 20 (shr 0x14) is set (the lever\'s sign stance refusal)'),
     (0x11E5484, 'e897e5ffff', 'the polling 0x11E5160 calls the request test 0x11E3A20'),
     (0x11E5499, '0fb64f24ffc90f84d9000000ffc90f84b2000000ffc90f848b000000ffc90f85dd010000',
      'the polling: a taken request dispatches on row+0x24'),
@@ -1218,6 +1229,14 @@ GESTURE_LEVER_SITES = [
     # child-soldier orders); each passes the u16 id ids[k] of the menu owner, the local id.
     (0x110CD09, '488b89f8000000488b42704c8b01420fb7144841ff5028',
      'call-menu knock 0x110CCE0: [blk+0xF8] vt+0x28(ids[k]) (RequestKnock)'),
+    (0x110F959, '488b4718420fb72c48488b4720460fb63408488b4260488b48388d45ff460fb6040183f813762a8d45e183f8067622',
+     'UpdateCommandSetKnock 0x110F8D0, the knock enable test (1/2): act Q+0x18[id], upper Q+0x20[id], the speed Q+0x38 '
+     '(at the menu index); act 1..20 or 31..37 skips the next test (the lever\'s knock act refusal)'),
+    (0x110F988, '498b4778442b4808488b8080020000418bc948c1e1058b540108c1ea11f6c201741f4585f6751a488b4728443834067510418d40fe83f8'
+     '01760741804a1001eb0541806210fe',
+     'UpdateCommandSetKnock (2/2): otherwise PS rec+8 bit 17 (shr 0x11) must be set; then upper == 0, Q+0x28[id] == 0 and '
+     'the speed not 2..3 set the entry\'s enable bit (record +0x10 bit 0), else clear it (the lever\'s upper / q28 / speed '
+     'refusals; it leaves out the rec+8 bit 17 alternative)'),
     (0x110F9D3, '488d0506d3ffff488d151f792a0149894208',
      'UpdateCommandSetKnock 0x110F8D0: command set 0 slot 0 runs 0x110CCE0'),
     (0x110CFD0, '83ef047409ffcf744d83ff0e750d498b8af8000000488b01ff5030',

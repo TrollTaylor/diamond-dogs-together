@@ -27,16 +27,19 @@ had a hidden-worker run yet.
   Lua) calls this copy's own request slot with id 0, the same call the menu makes. Admission: key, `mode=lab`, lab
   active, copied saves, offline branch, partner code gate, gameplay, not latched. Identity, slot and polling slot
   re-checked per command; the stock precondition (knock: the menu's enable test; signs: speed <= 1, act not
-  0x79/0x7A, stance not 4, upper 0); SEH (`fault` latches); instance 1's request fields and upper byte compared
+  0x79/0x7A, PS rec+0xC bit 28 clear (`rec_c28`), `GetStance` `0x1002350` not 4 (a crawl with rec+0xC bit 20 set;
+  the raw stance byte is only 1..3), upper 0); SEH (`fault` latches); instance 1's request fields and upper byte compared
   before / after (`other_changed` latches). Result `gesture_lever=requested;kind=..;id=0;...` or
   `gesture_lever=refused;reason=..;...`; log `partner_gesture=lever; result=..; reason=..; kind=..; ...; recc=0x..;
   other_same=..` (one line per command).
 - New code: `native/include/mgscoop/partner_gesture_lever.hpp`, `native/partner_gesture_lever_policy.cpp` (pure:
   grammar, slots, admission, preconditions, formats), `native/partner_gesture_lever.cpp` (identity, the call, the
   guards), the handler `HandleGestureLever` in `native/game_script_observer.cpp`.
-- Contract: 743 -> 761 code sites, 193 -> 197 vtable slots (`GESTURE_LEVER_SITES`: the three request bodies, the
-  request test, the polling's dispatch and kind -> state writes, the 0x17 / 0x18 / 0x19 upper writes, the five stock
-  call sites, the knock command binding, the CALL hold classifier call; slots +0x28 / +0x30 / +0x38 / +0x58), plus
+- Contract: 743 -> 766 code sites, 193 -> 197 vtable slots (`GESTURE_LEVER_SITES`: the three request bodies, the
+  request test with its two sign branches, `GetStance` `0x1002350`, the polling's dispatch and kind -> state writes,
+  the 0x17 / 0x18 / 0x19 upper writes, the five stock call sites, the knock entry's enable test
+  (`UpdateCommandSetKnock`) and its command binding, the CALL hold classifier call; slots +0x28 / +0x30 / +0x38 /
+  +0x58), plus
   `gesture_lever_assertions` (the vtable's only store is the constructor `0x11E37DC`, no direct caller of the request
   functions, the key-type table).
 - Tests: `partner_gesture_lever_tests` (pure) and `partner_gesture_lever_fire_tests` (fake image: one call with this

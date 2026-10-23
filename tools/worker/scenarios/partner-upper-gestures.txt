@@ -11,7 +11,10 @@
 # 0.13.6 (wp/sign-knock): the knock and hand-sign part now uses the HOST-only lab lever partner_gesture_lever (the native
 # debug command "gesture_lever knock|sign_go|sign_stop": the host's own KnockActionPluginImpl request slot, the call the
 # stock call menu makes; docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs"). Not run yet.
-# Static proof first: python tools/generate_partner_contract.py --check (761 code sites, 197 vtable slots).
+# The lever is lab-only (play forces partner_gesture_lever off and it refuses key_off): a play rehearsal made like
+# 75a7e7dc must ALSO drop the "labsetting host partner_gesture_lever=1" line and the whole "Knock and hand signs" block
+# below (its host run / expect / waitlog steps and the guest key_off check), or every lever expectation fails.
+# Static proof first: python tools/generate_partner_contract.py --check (766 code sites, 197 vtable slots).
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-upper-gestures.txt -PartnerProfile native -NativeStage loco -SaveSeed lab
 #   (or -NativeStage gun -BuildProfile research, the user's profile; the key is named below for both copies).
@@ -31,7 +34,8 @@
 #           recc=..; other_same=1   (the run result: gesture_lever=requested;kind=..;id=0;...)
 #         partner_gesture=local; kind=knock; upper=0x17 | kind=sign_go; upper=0x18 | kind=sign_stop; upper=0x19; ...; sent=1
 #           (requested but no local line: the polling refused the request, or the state never wrote the byte at
-#           tick rate; for a sign, recc= shows PS rec+0xC: bit 28 (0x10000000) set refuses a sign in FUN_11E3A20)
+#           tick rate; recc= shows PS rec+0xC: for a sign the lever already refuses bit 28 (rec_c28) and a crawl with
+#           bit 20 (stance), as FUN_11E3A20 and GetStance would)
 #  guest (receiver, body 1):
 #         partner_gesture=rx; kind=pickup; seq=N; stance=..; speed=..; moving=..; epoch=..
 #         partner_gesture=submit; graph=2; node=0x1e904603eb7d (stand idle) | 0x82e84b26e4ce (stand moving) |

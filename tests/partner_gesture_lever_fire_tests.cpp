@@ -190,6 +190,9 @@ void TestPreconditions() {
         {gl::Request::sign_go, "speed", [] { Put<std::uint8_t>(W(SPEED), 2); }},
         {gl::Request::sign_go, "act", [] { Put<std::uint16_t>(W(ACT), 0x79); }},
         {gl::Request::sign_stop, "stance", [] { Put<std::uint8_t>(W(STANCE), 4); }},
+        // The world's PS rec+0xC has bit 20 set: a crawl reads as GetStance 4.
+        {gl::Request::sign_go, "stance", [] { Put<std::uint8_t>(W(STANCE), 3); }},
+        {gl::Request::sign_stop, "rec_c28", [] { Put<std::uint32_t>(W(RECS) + 0xc, 0x10000000); }},
         {gl::Request::sign_stop, "upper", [] { Put<std::uint8_t>(W(UPPER), 0x19); }},
     };
     for (const Case& c : cases) {
@@ -198,6 +201,14 @@ void TestPreconditions() {
         const gl::Outcome o = gl::Fire(image, c.request);
         Check(Same(o.refusal, c.reason) && calls == 0, c.reason);
     }
+    // A crawl without rec+0xC bit 20 is GetStance 3: the sign is requested; the knock ignores both bits.
+    Reset();
+    Put<std::uint8_t>(W(STANCE), 3);
+    Put<std::uint32_t>(W(RECS) + 0xc, 0);
+    Check(gl::Fire(image, gl::Request::sign_go).refusal == nullptr && calls == 1, "a crawl without bit 20: sign requested");
+    Reset();
+    Put<std::uint8_t>(W(STANCE), 3);
+    Check(gl::Fire(image, gl::Request::knock).refusal == nullptr && calls == 1, "a crawl with bit 20: knock requested");
     // Body 1's own state never gates this copy's request.
     Reset();
     Put<std::uint16_t>(W(ACT) + 2, 0x4D);

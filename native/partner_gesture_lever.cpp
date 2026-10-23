@@ -134,7 +134,7 @@ Outcome Fire(std::uintptr_t image, Request request) noexcept {
     std::uint32_t ps_base = 0;
     if (!Rd(id.ps + 8, ps_base) || ps_base != 0 || !Rd(id.ps + 0x280, recs) || !recs || !Rd(recs + 4, o.rec4) || !Rd(recs + 8, o.rec8) ||
         !Rd(recs + 0xc, o.recc)) return Refuse(o, "ps");
-    if (const char* why = Precondition(request, o.local)) return Refuse(o, why);
+    if (const char* why = Precondition(request, o.local, o.recc)) return Refuse(o, why);
     Row mine{}, other{};
     if (!ReadRow(id.row[0], mine) || !ReadRow(id.row[1], other)) return Refuse(o, "row");
     detail::RequestFn call = g_call.load(std::memory_order_acquire);
