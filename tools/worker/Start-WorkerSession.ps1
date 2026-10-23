@@ -38,9 +38,11 @@ param(
     # Per-role seeds (docs/join-fix-phase2-spec.md P2-19): '' takes -SaveSeed.
     # -GuestSaveSeedRun <runId> seeds the guest from that earlier, closed run's
     # guest-saves\{287700,remote} (read only; the second session of the save
-    # handoff restart proof). It excludes -GuestSaveSeed.
+    # handoff restart proof). It excludes -GuestSaveSeed. -GuestSaveSeed
+    # real-remote: the real seed without 287700\local's progress files (an old
+    # Steam save with remote files only; online 2026-10-22 P1), guest only.
     [ValidateSet('','real','lab')][string]$HostSaveSeed='',
-    [ValidateSet('','real','lab')][string]$GuestSaveSeed='',
+    [ValidateSet('','real','lab','real-remote')][string]$GuestSaveSeed='',
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$GuestSaveSeedRun='',
     # Optional quality preset, applied only to this run's fresh role save copies.
     [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
@@ -85,13 +87,33 @@ function Get-WorkerSeedRunSaves([string]$Repo,[string]$SeedRunId,[string]$Curren
     return $saves
 }
 # The seed of each role: -HostSaveSeed / -GuestSaveSeed ('' = -SaveSeed), or 'run' for -GuestSaveSeedRun.
+# real-remote is a guest seed only.
 function Get-WorkerRoleSeeds([string]$SaveSeed,[string]$HostSaveSeed,[string]$GuestSaveSeed,[string]$GuestSaveSeedRun) {
     if($GuestSaveSeedRun -and $GuestSaveSeed){throw '-GuestSaveSeedRun excludes -GuestSaveSeed.'}
     if($GuestSaveSeedRun -and !(Test-WorkerRunId $GuestSaveSeedRun)){throw '-GuestSaveSeedRun must be one exact lower-case worker run id.'}
     $hostSeed=if($HostSaveSeed){$HostSaveSeed}else{$SaveSeed}
     $guestSeed=if($GuestSaveSeedRun){'run'}elseif($GuestSaveSeed){$GuestSaveSeed}else{$SaveSeed}
-    foreach($value in @($hostSeed,$guestSeed)){if($value -cnotin @('real','lab','run')){throw "Unknown save seed: $value"}}
+    if($hostSeed -cnotin @('real','lab')){throw "Unknown host save seed: $hostSeed"}
+    if($guestSeed -cnotin @('real','lab','run','real-remote')){throw "Unknown guest save seed: $guestSeed"}
     return @{host=$hostSeed;guest=$guestSeed}
+}
+# -GuestSaveSeed real-remote (lab worker only): removes the progress files
+# (TPP_GAME_DATA / PERSONAL_DATA with an optional digit) from 287700\local of
+# this run's own fresh save copy, so the guest starts like a co-op copy seeded
+# from an old Steam save with remote files only. Refuses any path outside the
+# run directory or a link. Returns the removed names.
+function Remove-WorkerLocalProgress([string]$SaveRoot,[string]$RunDirectory) {
+    if(!(Test-WorkerDescendant $SaveRoot $RunDirectory)){throw 'real-remote: the save copy is not this run''s own.'}
+    $local=Assert-WorkerPlainPath (Join-Path $SaveRoot '287700\local') -MustExist
+    $removed=New-Object Collections.Generic.List[string]
+    foreach($f in @(Get-ChildItem -LiteralPath $local -File -Force)){
+        if($f.Name -cnotmatch '^(TPP_GAME_DATA|PERSONAL_DATA)[0-9]?$'){continue}
+        if($f.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'real-remote: a linked progress file.'}
+        Remove-Item -LiteralPath $f.FullName -Force
+        $removed.Add($f.Name)
+    }
+    if(!@(Get-ChildItem -LiteralPath (Join-Path $SaveRoot 'remote') -File -Force|Where-Object{$_.Name -ceq 'TPP_GAME_DATA'}).Count){throw 'real-remote: the seed has no remote TPP_GAME_DATA.'}
+    return @($removed)
 }
 $roleSeeds=Get-WorkerRoleSeeds $SaveSeed $HostSaveSeed $GuestSaveSeed $GuestSaveSeedRun
 # Refuse a wrong seed run before any probe, staging or install work.
@@ -368,6 +390,8 @@ try {
             $seed=[pscustomobject]@{Seeded=$true;Files=@(Get-ChildItem -LiteralPath $saveRoot -Recurse -File).Count}
         } else {
             $seed=Copy-SaveSeed -BackupDirectory $freshBackup -SaveDir $saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'
+            # The guest only (Get-WorkerRoleSeeds): the same copy without its local progress files.
+            if($roleSeed -ceq 'real-remote'){$row.save_seed_removed=@(Remove-WorkerLocalProgress $saveRoot $runDirectory)}
         }
         if(!$seed.Seeded -or !$seed.Files){throw 'Fresh worker save copy was not seeded from the verified backup.'}
         $row.save_seed_kind=$roleSeed

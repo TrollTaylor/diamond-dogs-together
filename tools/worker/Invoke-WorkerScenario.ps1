@@ -130,7 +130,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
 
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
 or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the
-save handoff restart proof, scenarios/handoff-after-restart.txt).
+save handoff restart proof, scenarios/handoff-after-restart.txt). -GuestSaveSeed real-remote: the
+real seed with 287700\local's TPP_GAME_DATA*/PERSONAL_DATA* removed from the run's own copy (a
+co-op copy seeded from an old Steam save with remote files only; online 2026-10-22 P1).
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -161,7 +163,7 @@ param(
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # Per-role seeds ('' = -SaveSeed) and the guest seed from an earlier closed run (P2-19).
     [ValidateSet('','real','lab')][string]$HostSaveSeed='',
-    [ValidateSet('','real','lab')][string]$GuestSaveSeed='',
+    [ValidateSet('','real','lab','real-remote')][string]$GuestSaveSeed='',
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$GuestSaveSeedRun='',
     # Optional quality preset, applied only to this run's fresh role save copies.
     [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',

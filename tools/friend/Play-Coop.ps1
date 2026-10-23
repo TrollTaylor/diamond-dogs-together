@@ -158,6 +158,7 @@ if ($Watch) {
     $lastStart = ''
     $exitSeen = $null
     $restartUntil = [DateTime]::MinValue
+    $retryAt = [DateTime]::MinValue
     $restartWait = 180
     $waitOverride = 0
     if ($env:MGS_COOP_TEST_RESTART_WAIT_SEC -and [int]::TryParse($env:MGS_COOP_TEST_RESTART_WAIT_SEC, [ref]$waitOverride) -and $waitOverride -gt 0) { $restartWait = $waitOverride }
@@ -177,16 +178,21 @@ if ($Watch) {
             $exitSeen = $null
             $restartUntil = [DateTime]::MinValue
         } elseif ($seen) {
-            if ($null -eq $exitSeen) { $exitSeen = [DateTime]::UtcNow }
+            if ($null -eq $exitSeen) {
+                $exitSeen = [DateTime]::UtcNow
+                Write-CoopPlayLog -GameRoot $gameRoot -Text ('watch=game_exited; game_pid={0}; launcher_alive={1}' -f $lastPid, $(if ($launcherAlive) { 1 } else { 0 }))
+            }
             $h = $null
             try { $h = Invoke-CoopHandoffAfterExit -GameRoot $gameRoot -ExitedPid $lastPid -ExitedStartUtc $lastStart -Owner watchdog -LauncherAlive:$launcherAlive -ExitSeenUtc $exitSeen }
             catch { $h = [pscustomobject]@{ Action = 'failed'; Messages = @($_.Exception.Message) } }
             if ($h.Action -eq 'deferred') { Start-Sleep -Seconds 2; continue watch }
+            if ($h.Action -ne 'none') { Write-CoopPlayLog -GameRoot $gameRoot -Text ('handoff_after_exit; owner=watchdog; action=' + $h.Action) }
             if ($h.Action -eq 'relaunched' -or $h.Action -eq 'claimed_by_other' -or (Test-CoopHandoffPending -Session (Read-CoopPlaySession -GameRoot $gameRoot))) {
                 # A game started again for the host's save: wait for it (the cleanup guard holds meanwhile).
                 $seen = $false
                 $exitSeen = $null
                 $restartUntil = [DateTime]::UtcNow.AddSeconds($restartWait)
+                $retryAt = [DateTime]::UtcNow.AddSeconds(20)
                 Start-Sleep -Seconds 2
                 continue watch
             }
@@ -198,8 +204,21 @@ if ($Watch) {
             $claimed = ConvertTo-CoopUtcTime (Get-CoopSessionHandoff $pendingSession).claimed_utc
             $consoleWaits = $launcherAlive -and $null -ne $claimed -and ([DateTime]::UtcNow - $claimed).TotalSeconds -lt 330
             if ([DateTime]::UtcNow -ge $restartUntil -and !$consoleWaits) {
+                Write-CoopPlayLog -GameRoot $gameRoot -Text 'watch=restart_limit'
                 $null = Invoke-CoopPlayCleanup -GameRoot $gameRoot -Force
                 exit 0
+            }
+            # With the window gone, the helper asks Steam again every 20 s while
+            # Steam no longer marks MGSV as running (online 2026-10-22 P5); the
+            # window does that itself while it runs.
+            if (!$launcherAlive -and [DateTime]::UtcNow -ge $retryAt -and [DateTime]::UtcNow.AddSeconds(30) -lt $restartUntil -and
+                (Get-CoopSessionHandoff $pendingSession).state -ceq 'relaunching') {
+                $retryAt = [DateTime]::UtcNow.AddSeconds(20)
+                $steamState = Get-CoopSteamAppRunning
+                if (!($steamState.Known -and $steamState.Running)) {
+                    Write-CoopPlayLog -GameRoot $gameRoot -Text 'watch=relaunch_retry'
+                    try { $null = Start-CoopRelaunch -GameRoot $gameRoot } catch { }
+                }
             }
         } elseif (!$launcherAlive) {
             # The window was closed before the game started. A game that is just
@@ -690,6 +709,7 @@ try {
         $gamePid = 0
         if ($run -eq 0) {
             Section 'Starting MGSV through Steam'
+            Write-CoopPlayLog -GameRoot $gameRoot -Text ('play=launch; role={0}; steam={1}' -f $labRole, (Get-CoopSteamAppRunning).Text)
             # (tests/friend_package_tests.ps1 starts a stand-in game itself.)
             if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1') { Start-Process 'steam://rungameid/287700' }
             Write-Host 'Waiting for MGSV (answer any Steam dialog). [Q] stops and switches co-op off.'
@@ -708,11 +728,15 @@ try {
             # The wait stops at once when co-op was switched off or the restart
             # failed (the helper's own attempt; the finally block then switches
             # co-op off), and ends with the claim's 300 s too, so this window never
-            # outlives the helper's wait. It asks for a manual start only after its
-            # own relaunch check passed, with time left: never without the co-op files.
+            # outlives the helper's wait. While no game runs it asks Steam again
+            # every 20 s when Steam no longer marks MGSV as running (online
+            # 2026-10-22 P5: Steam ignored the first request for 3 minutes), and
+            # asks for a manual start at 45 s - only after its own relaunch check
+            # passed, with time left: never without the co-op files.
             $waitStart = [DateTime]::UtcNow
             $limit = $waitStart.AddSeconds(300)
-            $retried = $false
+            $nextTry = $waitStart.AddSeconds(20)
+            $tries = 0
             $relaunchOk = $false
             $told = $false
             while (!$gamePid) {
@@ -720,15 +744,20 @@ try {
                 if ($games.Count) { $gamePid = [int]$games[0].Id; break }
                 $pending = $null
                 try { $pending = Get-CoopRelaunchWait -GameRoot $gameRoot -SessionId ([string]$session.session_id) } catch { $pending = $null }
-                if ($pending -and $pending.Stop) { Write-Lines -Lines @($pending.Lines) -Color Yellow; break runs }
+                if ($pending -and $pending.Stop) { Write-CoopPlayLog -GameRoot $gameRoot -Text 'relaunch_wait=stopped'; Write-Lines -Lines @($pending.Lines) -Color Yellow; break runs }
                 if ($pending -and $null -ne $pending.ClaimedUtc -and $pending.ClaimedUtc.AddSeconds(300) -lt $limit) { $limit = $pending.ClaimedUtc.AddSeconds(300) }
                 $now = [DateTime]::UtcNow
                 $elapsed = ($now - $waitStart).TotalSeconds
                 $left = ($limit - $now).TotalSeconds
-                if ($elapsed -ge 60 -and !$retried) {
-                    $retried = $true
-                    # (Too late for Steam to start it before the limit: no new attempt.)
-                    if ($left -ge 90) {
+                # (Too late for Steam to start it before the limit: no new attempt.)
+                if ($now -ge $nextTry -and $left -ge 30) {
+                    $nextTry = $now.AddSeconds(20)
+                    $steamState = Get-CoopSteamAppRunning
+                    if ($steamState.Known -and $steamState.Running) {
+                        Write-CoopPlayLog -GameRoot $gameRoot -Text ('relaunch_retry=skipped; reason=steam_running; steam=' + $steamState.Text)
+                    } else {
+                        $tries++
+                        Write-CoopPlayLog -GameRoot $gameRoot -Text ('relaunch_retry; n={0}; elapsed_s={1}' -f $tries, [int]$elapsed)
                         $relaunch = $null
                         try { $relaunch = Start-CoopRelaunch -GameRoot $gameRoot } catch { $relaunch = [pscustomobject]@{ Ok = $false; Problem = $_.Exception.Message } }
                         if (!$relaunch.Ok) {
@@ -738,11 +767,13 @@ try {
                         $relaunchOk = $true
                     }
                 }
-                if ($elapsed -ge 120 -and !$told -and $relaunchOk -and $left -ge 90) {
+                if ($elapsed -ge 45 -and !$told -and $relaunchOk -and $left -ge 60) {
                     $told = $true
-                    Write-Host ('Steam did not start MGSV again within 60 s: start MGS V from Steam yourself; co-op stays on for {0} more seconds.' -f [int]$left) -ForegroundColor Yellow
+                    Write-CoopPlayLog -GameRoot $gameRoot -Text ('relaunch_hint; left_s={0}' -f [int]$left)
+                    Write-Host ('MGSV is not back yet: start MGS V from Steam yourself (press Play); co-op stays on for {0} more seconds.' -f [int]$left) -ForegroundColor Yellow
                 }
                 if ($now -ge $limit) {
+                    Write-CoopPlayLog -GameRoot $gameRoot -Text 'relaunch_wait=limit'
                     Write-Host 'MGSV did not start again in time; co-op is switched off.' -ForegroundColor Yellow
                     Write-CleanupResult (Invoke-CoopPlayCleanup -GameRoot $gameRoot -Force)
                     break runs
@@ -758,6 +789,7 @@ try {
             }
             Write-Host "MGSV restarted (process $gamePid)."
         }
+        Write-CoopPlayLog -GameRoot $gameRoot -Text ('game=seen; run={0}; game_pid={1}' -f $run, $gamePid)
         $gameStart = Get-CoopProcessStartUtc -Id $gamePid
         try { $null = Set-CoopPlayGame -GameRoot $gameRoot -GamePid $gamePid -GameStartUtc $gameStart -SessionId $session.session_id } catch { }
         $texts = @{}
@@ -822,9 +854,11 @@ try {
         # The game exited: an automatic save handoff is applied now and MGSV
         # starts once more; otherwise co-op is switched off (finally below).
         foreach ($n in $logNames) { $offsets[$n] = Get-FileLengthOrZero (Join-Path $paths.Mod $n) }
+        Write-CoopPlayLog -GameRoot $gameRoot -Text ('game=exited; run={0}; game_pid={1}; steam={2}' -f $run, $gamePid, (Get-CoopSteamAppRunning).Text)
         $after = $null
         try { $after = Invoke-CoopHandoffAfterExit -GameRoot $gameRoot -ExitedPid $gamePid -ExitedStartUtc $gameStart -Owner console }
         catch { $after = [pscustomobject]@{ Action = 'failed'; Messages = @("Could not apply the host's save: $($_.Exception.Message)."); Aside = ''; Files = 0; Bytes = 0 } }
+        Write-CoopPlayLog -GameRoot $gameRoot -Text ('handoff_after_exit; owner=console; action=' + $after.Action)
         if ($run -eq 0 -and ($after.Action -eq 'relaunched' -or $after.Action -eq 'claimed_by_other')) {
             Write-Host ''
             Write-Host "MGSV closed to load the host's save." -ForegroundColor Cyan

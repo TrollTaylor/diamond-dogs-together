@@ -235,7 +235,7 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 | RX | `return 'MGS_COOP_WORLD_RX_V1' -- <mask>` (1 control; 3 control, world, U slots) | `return queue,op,v...` or empty `return 0,0,flags,qctrl,qworld,epoch` (flags 1 link, 2 paired, 4 resync_needed, 8 level0) | runtime |
 | LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; at most 200 lines per 10 s, then `world=log_cap`) | runtime or termination |
 | WARP | `return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>` (guest spawn sync) | `return {r=,h=,leaf=}` or `return {refused="<reason>"}`: one native placement of the grant the core recorded when the guest's RX popped ENEMY_DEBUG `seq` (kind warp/correct, same epoch, at most 15 s old); the target never comes from Lua ([debug-menu.md](debug-menu.md) "Spawn sync") | runtime |
-| NOTE | `return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>` (code 1..15; a, b 0..4294967295, no sign) | `return true` (handled, or skipped by the rate gate) or `return false` (a code with no meaning yet: 13..15). Codes: 1 PROGRESS{a title-mode ACC mission, b 1 story start, 0 not}, 2 HELI_WAIT{a target, 0}, 3 HELI_ALONE{a target, b reason 1 no_partner, 2 partner_elsewhere, 3 repeat, 4 timeout}, 4 HELI_REFUSED{a unsupported target or nextMissionId, 0}; join-fix phase 2: 5 TRAVEL_LOCKED{a host mission, b target}, 6 HOST_PARTNER_CANNOT_JOIN{a target, b partner mission}, 7 TITLE_CONTINUE_LOCKED{a host mission, b 1 location_differs, 2 story_start, 3 waiting_for_host_save}, 8 TRAVEL_ALONE{a target, b 1 repeat, 2 f9_unlock, 3 timeout}, 9 CONTINUE_DURING_HANDOFF{a pct 0..100, 0}, 10 HANDOFF_KEPT_OWN{0, 0}, 11 GUEST_LANDING_ELSEWHERE{a target, b host mission}, 12 SORTIE_HELD{a target, b host mission}; native alone posts 16 MISMATCH{a local, b partner mission} (section 3). Rate gate per code: the same (a, b) posts at most once per 1 s and logs `world=note; code=; a=; b=; partner=; t_ms=` at most once per 10 s (`world=note; code=; result=unknown; t_ms=` for 13..15). Code 1 records the title progress (b 1 story_start, else ok) and posts only for b 1, and not while a save handoff runs for this guest (`save_handoff::GuestHandoffActive`: guest, `save_handoff=scene` or `always`, a host STATE seen; the handoff toasts replace it, the log line stays); 2..12 post a toast with the partner's and the local mission (sentences in `coop_text::FormatWorldNote`). Lua ignores the result | runtime or termination |
+| NOTE | `return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>` (code 1..15; a, b 0..4294967295, no sign) | `return true` (handled, or skipped by the rate gate) or `return false` (a code with no meaning yet: 13..15). Codes: 1 PROGRESS{a title-mode ACC mission, b 1 story start, 0 not}, 2 HELI_WAIT{a target, 0}, 3 HELI_ALONE{a target, b reason 1 no_partner, 2 partner_elsewhere, 3 repeat, 4 timeout, 5 join_partner: the target is the partner's own mission (online 2026-10-22 P7)}, 4 HELI_REFUSED{a unsupported target or nextMissionId, 0}; join-fix phase 2: 5 TRAVEL_LOCKED{a host mission, b target}, 6 HOST_PARTNER_CANNOT_JOIN{a target, b partner mission}, 7 TITLE_CONTINUE_LOCKED{a host mission, b 1 location_differs, 2 story_start, 3 waiting_for_host_save, 4 host_save_checked (waiting, the host in game in 30010/30020/30050; online 2026-10-22 P3)}, 8 TRAVEL_ALONE{a target, b 1 repeat, 2 f9_unlock, 3 timeout}, 9 CONTINUE_DURING_HANDOFF{a pct 0..100, 0}, 10 HANDOFF_KEPT_OWN{0, 0}, 11 GUEST_LANDING_ELSEWHERE{a target, b host mission}, 12 SORTIE_HELD{a target, b host mission}; native alone posts 16 MISMATCH{a local, b partner mission} (section 3). Rate gate per code: the same (a, b) posts at most once per 1 s and logs `world=note; code=; a=; b=; partner=; t_ms=` at most once per 10 s (`world=note; code=; result=unknown; t_ms=` for 13..15). Code 1 records the title progress (b 1 story_start, else ok) and posts only for b 1, and not while a save handoff runs for this guest (`save_handoff::GuestHandoffActive`: guest, `save_handoff=scene` or `always`, a host STATE seen; the handoff toasts replace it, the log line stays); 2..12 post a toast with the partner's and the local mission (sentences in `coop_text::FormatWorldNote`). Lua ignores the result | runtime or termination |
 | SAVE | `return 'MGS_COOP_WORLD_SAVE_V1' -- <op> <a> <b> <c> <d> <e>` (exactly 6 integers, no sign; join-fix phase 2, [save-handoff.md](save-handoff.md)): op 1 REPORT{a mission 0..99999, b title 0/1, c story 0 unknown, 1 opening, 2 open, d saving 0/1, e ingame 0/1}, sent on any change, otherwise every 1000 ms while active; op 2 CONTINUE{a target 1..99999 (vars.missionCode at ReservePlayerLoadingPosition k==4), b title, c story, 0, 0}; op 3 DECLINE{a 1 second_continue or 2 f9, 0, 0, 0, 0} | `return true` (accepted), `return false` (the module is off, or rate-gated: more than 4 per second; a DECLINE is never rate-gated), the literal when malformed. `save_handoff::HandleLua` only parses and stores (the report in a seqlock, CONTINUE and DECLINE in a small mailbox) for the link thread. Lua ignores the result | runtime |
 
 Exact classification (name == source, NUL-free, at most 240 bytes). Integers
@@ -878,7 +878,9 @@ partner in the source mission or loading). It never waits with no link, a
 partner that is not linked or below level 3, or a partner known to be in
 another mission that is not following; then it flies at once
 (`event=follow;step=deploy_alone;reason=no_partner|partner_elsewhere`,
-NOTE 3). A hold logs `step=deploy_wait;reason=ready;target=;partner=` and
+NOTE 3; `reason=join_partner`, NOTE 3 b=5, when the target is the
+partner's own mission: they load it and pair there, online 2026-10-22 P7).
+A hold logs `step=deploy_wait;reason=ready;target=;partner=` and
 shows NOTE 2 on screen, re-posted every 3 s. It ends when the copies pair
 (the held deployment runs paired), when the deployment is chosen again
 (after a 1 s debounce; `reason=repeat`, NOTE 3 b=3), or after 120 s
@@ -912,14 +914,17 @@ mission, any helicopter (4xxxx), restart, reload and return to title are
 always allowed, and it is inert while a transition is replayed or queued.
 A title Continue is refused softly (NOTE 7) when the guest's title location
 differs from the host's, when its save is at the story start, or while a
-handoff is pending (NOTE 9 while busy); pressing again within 10 s goes
+handoff is pending (NOTE 9 while busy); pressing again 3 to 10 s later goes
 alone (NOTE 8 b=1; while a handoff is pending this also sends SAVE op 3 and
-NOTE 10). A sortie is held with its arguments (NOTE 12, re-posted every 3 s)
+NOTE 10). Online 2026-10-22 P2: at the title presses under 3 s apart never
+escape, and a pending handoff has no Continue escape for its first 60 s
+(`decision=held`; F9 Keep my own save is the way out); see save-handoff.md
+"Title Continue". A sortie is held with its arguments (NOTE 12, re-posted every 3 s)
 and released by choosing it again, by the F9 Travel lock checkbox (r[13]
 drops to 0; NOTE 8 b=2), after 120 s (NOTE 8 b=3) or when it turns into a
 follow. An iDroid ReserveMissionClear is refused (NOTE 5) and a repeat within
 1-30 s goes alone. The host is warned (NOTE 6) when it loads into a mission
-the partner cannot join; the guest is warned (NOTE 11) when its Continue
+the partner cannot join, unless the partner is in that very mission (P7); the guest is warned (NOTE 11) when its Continue
 lands elsewhere. The replay hold: while a handoff is pending at the title
 (r[12] 1..4) the guest's follow replay waits (the 120 s queue timeout still
 refuses the TRANSITION with FOLLOW_ACK 0). Lua log lines:

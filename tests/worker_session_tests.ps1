@@ -405,7 +405,7 @@ $seedDefinitions=@($startAst.FindAll({param($node)$node -is [Management.Automati
 Assert-True ($seedDefinitions.Count -eq 3) 'three seed forms'
 Assert-True ($seedDefinitions -ccontains "`$seed=Copy-SaveSeed -BackupDirectory `$freshBackup -SaveDir `$saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'") 'default role seed reads only this run verified backup'
 Assert-True ($start.Contains("[ValidateSet('real','lab')][string]`$SaveSeed='real'") -and $start.Contains("`$labSaves=Assert-WorkerPlainPath `$p.SaveDir -MustExist")) 'lab seed is an explicit opt-in from the folder lab save copy'
-Assert-True ($start.Contains("[ValidateSet('','real','lab')][string]`$HostSaveSeed=''") -and $start.Contains("[ValidateSet('','real','lab')][string]`$GuestSaveSeed=''") -and
+Assert-True ($start.Contains("[ValidateSet('','real','lab')][string]`$HostSaveSeed=''") -and $start.Contains("[ValidateSet('','real','lab','real-remote')][string]`$GuestSaveSeed=''") -and
     $start.Contains("[ValidatePattern('^`$|^[0-9a-f]{32}`$')][string]`$GuestSaveSeedRun=''")) 'per-role seed parameters (P2-19)'
 Assert-True ($start.Contains('$seedRunSaves=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun $runId') -and $start.Contains('$roleSeed=$roleSeeds[$role]') -and
     $start.Contains('$row.save_seed_kind=$roleSeed')) 'the role loop picks each role''s seed and records it'
@@ -418,7 +418,8 @@ foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     Assert-True ((& $bind @fixtureArgs) -ceq '||') ('seed defaults are empty in '+$name)
     Assert-True ((& $bind @fixtureArgs -HostSaveSeed lab -GuestSaveSeed real) -ceq 'lab|real|') ('seeds bind in '+$name)
     Assert-True ((& $bind @fixtureArgs -GuestSaveSeedRun $id) -ceq ('||'+$id)) ('seed run binds in '+$name)
-    foreach($bad in @(@{HostSaveSeed='run'},@{GuestSaveSeed='both'},@{GuestSaveSeedRun='0123'},@{GuestSaveSeedRun=($id+'0')})){
+    Assert-True ((& $bind @fixtureArgs -GuestSaveSeed real-remote) -ceq '|real-remote|') ('the guest real-remote seed binds in '+$name)
+    foreach($bad in @(@{HostSaveSeed='run'},@{HostSaveSeed='real-remote'},@{GuestSaveSeed='both'},@{GuestSaveSeedRun='0123'},@{GuestSaveSeedRun=($id+'0')})){
         Assert-Throws {& $bind @fixtureArgs @bad} ('seed parameter refuses '+(($bad.Keys|ForEach-Object{$_+'='+$bad[$_]}) -join ',')+' in '+$name)
     }
 }
@@ -431,6 +432,9 @@ foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     $s=Get-WorkerRoleSeeds 'lab' '' 'real' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real') 'guest seed overrides only the guest'
     $s=Get-WorkerRoleSeeds 'real' 'lab' '' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real') 'host seed overrides only the host'
     $s=Get-WorkerRoleSeeds 'lab' '' '' $id;Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'run') 'a seed run seeds the guest only'
+    $s=Get-WorkerRoleSeeds 'lab' '' 'real-remote' '';Assert-True ($s.host -ceq 'lab' -and $s.guest -ceq 'real-remote') 'real-remote seeds the guest only'
+    Assert-Throws {Get-WorkerRoleSeeds 'lab' 'real-remote' '' ''} 'real-remote is no host seed'
+    Assert-Throws {Get-WorkerRoleSeeds 'real-remote' '' '' ''} 'real-remote is no -SaveSeed'
     Assert-Throws {Get-WorkerRoleSeeds 'lab' '' 'real' $id} 'a seed run excludes -GuestSaveSeed'
     Assert-Throws {Get-WorkerRoleSeeds 'lab' '' '' $id.ToUpperInvariant()} 'a seed run id is exact lower case'
 }
@@ -1224,6 +1228,26 @@ try {
     }
     [IO.File]::WriteAllText((Join-Path $runDirectory 'host-saves\287700\local\TPP_GAME_DATA'),"host copy may progress independently`n")
     Assert-True ((Get-WorkerHash (Join-Path $runDirectory 'guest-saves\287700\local\TPP_GAME_DATA')) -ceq (Get-WorkerHash (Join-Path $source '287700\local\TPP_GAME_DATA'))) 'fresh role copies have independent files'
+    # -GuestSaveSeed real-remote (online 2026-10-22 P1): the actual Start helper on a copy of
+    # the fresh guest seed removes only 287700\local's progress files of this run's copy.
+    & {
+        $definition=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Remove-WorkerLocalProgress'},$true))
+        Assert-True ($definition.Count -eq 1) 'one actual real-remote helper'
+        . ([scriptblock]::Create($definition[0].Extent.Text))
+        $remoteOnly=Join-Path $runDirectory 'remote-only-saves'
+        Copy-Item -LiteralPath (Join-Path $runDirectory 'guest-saves') -Destination $remoteOnly -Recurse
+        foreach($n in @('TPP_GAME_DATA0','PERSONAL_DATA1')){[IO.File]::WriteAllText((Join-Path $remoteOnly "287700\local\$n"),"local slot $n`n")}
+        [IO.File]::WriteAllText((Join-Path $remoteOnly '287700\local\TPP_CONFIG_DATA0'),"settings stay`n")
+        $removed=@(Remove-WorkerLocalProgress $remoteOnly $runDirectory)
+        Assert-True ((($removed|Sort-Object) -join ',') -ceq 'PERSONAL_DATA1,TPP_GAME_DATA,TPP_GAME_DATA0') ('real-remote removes the local progress files: '+($removed -join ','))
+        $left=@(Get-ChildItem -LiteralPath (Join-Path $remoteOnly '287700\local') -File|ForEach-Object{$_.Name}|Sort-Object)
+        Assert-True (($left -join ',') -ceq 'TPP_CONFIG_DATA0,TPP_GRAPHICS_CONFIG' -and (Test-Path -LiteralPath (Join-Path $remoteOnly 'remote\TPP_GAME_DATA') -PathType Leaf)) 'settings, graphics and the remote progress stay'
+        Assert-True ((Get-WorkerHash (Join-Path $runDirectory 'guest-saves\287700\local\TPP_GAME_DATA')) -ceq (Get-WorkerHash (Join-Path $source '287700\local\TPP_GAME_DATA'))) 'the other copies are untouched'
+        Assert-Throws {Remove-WorkerLocalProgress (Join-Path $source '..\fake-userdata') $runDirectory} 'real-remote refuses a folder outside the run directory'
+        Remove-Item -LiteralPath (Join-Path $remoteOnly 'remote\TPP_GAME_DATA')
+        Assert-Throws {Remove-WorkerLocalProgress $remoteOnly $runDirectory} 'real-remote refuses a seed without remote progress'
+        Remove-Item -LiteralPath $remoteOnly -Recurse -Force
+    }
     $realSaves=[ordered]@{root=$source;before=$before}
     Assert-True ((Get-WorkerRealSaveComparison $realSaves).Same) 'actual Stop comparison accepts unchanged three-file source manifest'
     [IO.File]::WriteAllText((Join-Path $source '287700\local\TPP_GAME_DATA'),"changed fake source must be detected`n")

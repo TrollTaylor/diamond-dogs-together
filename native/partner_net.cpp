@@ -1564,6 +1564,8 @@ BOOL CALLBACK StartOnce(PINIT_ONCE, PVOID parameter, PVOID*) noexcept {
     g_config = *static_cast<const Config*>(parameter);
     // The in-game status line exists with a link v2 session only.
     coop_hud::Configure(g_config.hud, g_config.link_v2);
+    // World notes and save handoff toasts reach this log (online 2026-10-22 P8).
+    if (g_config.link_v2) coop_hud::SetEventLog(g_config.log, &NowMs);
     if (g_config.rate_hz < 1) g_config.rate_hz = 1;
     if (g_config.rate_hz > 60) g_config.rate_hz = 60;
     if (g_config.directory &&

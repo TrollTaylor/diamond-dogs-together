@@ -55,7 +55,8 @@ Files MakeFiles(unsigned seed, std::uint32_t base, unsigned mask = 0x3F) {
     }
     return f;
 }
-core::SetInfo Info(const Files& f) {
+// remote_primary: the guest glue's rule since online 2026-10-22 P1 (slot 4 is an identity too).
+core::SetInfo Info(const Files& f, bool remote_primary = false) {
     core::SetInfo info{};
     info.stable = true;
     info.unexpected = f.unexpected;
@@ -67,7 +68,7 @@ core::SetInfo Info(const Files& f) {
         mgscoop::link::Sha256Digest(f.slot[s].data(), f.slot[s].size(), e.sha256);
         info.total += e.size;
     }
-    info.ok = info.n > 0 && (!f.slot[0].empty() || !f.slot[1].empty());
+    info.ok = info.n > 0 && (!f.slot[0].empty() || !f.slot[1].empty() || (remote_primary && !f.slot[4].empty()));
     if (f.total_override) info.total = f.total_override;
     wire::SetSha256(info.files, info.n, info.set);
     return info;
@@ -106,6 +107,7 @@ struct Side {
     std::vector<std::pair<wire::Kind, std::uint8_t>> sent;  // kind, data[8]
     bool corrupt_in = false;
     unsigned drop_in = 0;  // message kinds (bit = kind) lost on the way to this side
+    bool remote_primary = false;  // the glue hashes slot 4 as an identity (the guest, P1)
 };
 
 core::Core g_host_core, g_guest_core;
@@ -237,7 +239,7 @@ void Drain(Side& s) {
 void Respond(Side& s) {
     if (s.hash_req) {
         s.hash_req = false;
-        s.core->OnSetHashed(Info(s.files), g_now);
+        s.core->OnSetHashed(Info(s.files, s.remote_primary), g_now);
         Drain(s);
     }
     if (s.snap_req) {
@@ -668,30 +670,42 @@ void TestSettle() {
     CHECK(g_host.provenance_writes == 1);
     Run(60000);
     CHECK(CountLog(g_host, "save_handoff=provenance;") == 1);  // no churn while nothing changes
+    // Online 2026-10-22 P3: the window is 10 s (30 s until 0.13.5).
+    CHECK(core::kSettleBindMs == 10000);
     // A set change inside the window restarts it.
     Setup(wire::Mode::scene, wire::Mode::scene);
     g_host.rep = InGame(30020);
     const std::uint64_t changed = SettleBindTime(90000, [](std::uint64_t e) {
-        if (e == 15000) g_host.files.slot[2][5] ^= 1;
+        if (e == 6000) g_host.files.slot[2][5] ^= 1;
     });
-    CHECK(changed >= 15000 + core::kSettleBindMs && changed <= 15000 + core::kSettleBindMs + 4200);
+    CHECK(changed >= 6000 + core::kSettleBindMs && changed <= 6000 + core::kSettleBindMs + 4200);
     CHECK(HasLog(g_host, "; mission=30020; source=settle"));
     // saving=1 inside the window restarts it.
     Setup(wire::Mode::scene, wire::Mode::scene);
     g_host.rep = InGame(30050);
     const std::uint64_t saved = SettleBindTime(90000, [](std::uint64_t e) {
-        if (e == 10000) g_host.rep.saving = true;
-        if (e == 11000) g_host.rep.saving = false;
+        if (e == 5000) g_host.rep.saving = true;
+        if (e == 6000) g_host.rep.saving = false;
     });
-    CHECK(saved >= 11000 + core::kSettleBindMs && saved <= 11000 + core::kSettleBindMs + 4200);
+    CHECK(saved >= 6000 + core::kSettleBindMs && saved <= 6000 + core::kSettleBindMs + 4200);
     // A report gap restarts it too.
     Setup(wire::Mode::scene, wire::Mode::scene);
     g_host.rep = InGame(30010);
     const std::uint64_t gap = SettleBindTime(90000, [](std::uint64_t e) {
-        if (e == 8000) g_host.report_on = false;
-        if (e == 12000) g_host.report_on = true;
+        if (e == 3000) g_host.report_on = false;
+        if (e == 7000) g_host.report_on = true;
     });
-    CHECK(gap >= 12000 + core::kSettleBindMs);
+    CHECK(gap >= 7000 + core::kSettleBindMs);
+    // A load (Lua reports loading at once, world_handoff X.leaving) ends the
+    // window: a set written just before it is never bound to the old mission.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_host.rep = InGame(30050);
+    const std::uint64_t left = SettleBindTime(40000, [](std::uint64_t e) {
+        if (e == 8000) g_host.files.slot[0][7] ^= 1;  // SaveGameData(next) right before leaving
+        if (e == 8500) g_host.rep = core::Report{};    // loading (not in game, not the title)
+    });
+    CHECK(left == 0);
+    CHECK(!HasLog(g_host, "save_handoff=provenance;"));
     // Never at a title (40050) or in an unsupported mission (10020).
     for (const core::Report& r : {Title(40050), InGame(40050), InGame(10020)}) {
         Setup(wire::Mode::scene, wire::Mode::scene);
@@ -1659,6 +1673,183 @@ void TestOffCore() {
 
 }  // namespace
 
+// ---- Online 2026-10-22 (the first two-PC Steam session; docs/save-handoff.md).
+std::uint8_t WhyOf(hs::WaitWhy why) { return static_cast<std::uint8_t>(why); }
+
+// P1: a guest co-op save with only remote\TPP_GAME_DATA and PERSONAL_DATA (an
+// old Steam save the game has not written on this PC yet). The 0.13.5 glue
+// gave no valid set, so need was never decided (STATE need=0 set=00000000) and
+// the travel lock fell back to the story-start escape. The guest glue now
+// hashes slot 4 as an identity (save_handoff_io_tests RemoteOnly): need=1
+// why=story and the OFFER at the title.
+void TestRemoteOnlyGuest() {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_guest.files = MakeFiles(2, 2000, 0x30);  // slots 4 and 5 only
+    g_guest.rep = Title(40010, wire::Story::opening);
+    BindHost(30010);
+    Run(20000);
+    CHECK(!HasLog(g_guest, "save_handoff=need;") && !HasLog(g_host, "save_handoff=offer;"));
+    CHECK(HasLog(g_host, "save_handoff=state_rx; role=guest; phase=2; story=1; mission=40010; bound=0; need=0; elig=0; set=00000000"));
+    CHECK(TokenOf(g_guest) == Token::idle && g_guest.view.lua_code == 0);
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_guest.files = MakeFiles(2, 2000, 0x30);
+    g_guest.remote_primary = true;
+    g_guest.rep = Title(40010, wire::Story::opening);
+    BindHost(30010);
+    CHECK(Run(20000, GuestCountdown));
+    CHECK(HasLog(g_guest, "save_handoff=need; need=1; why=story"));
+    CHECK(HasLog(g_host, "save_handoff=state_rx; role=guest; phase=2; story=1; mission=40010; bound=0; need=1; elig=0; set="));
+    CHECK(HasLog(g_host, "save_handoff=offer; xfer=") && StagedEqualsHost());
+}
+
+// P3: the host is in game in Mother Base with a set not bound yet (a deploy is
+// no Continue). The guest at its title waits for the settle bind: G11 "checked
+// there (about 10 s)", not G4 "once the host is in Mother Base"; the host gets
+// H8, not H3 "go to Mother Base". The OFFER comes kSettleBindMs after the set
+// was first seen. Leaving for the helicopter before the bind gives G4/H3.
+void TestSettleWait() {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_guest.rep = Title(40010);  // Loc 10 vs the host's 30050: need=1 why=location
+    g_host.rep = InGame(30050);
+    const std::uint64_t start = g_now;
+    Run(3000);
+    CHECK(TokenOf(g_guest) == Token::wait_host && g_guest.view.why == WhyOf(hs::WaitWhy::settling) && g_guest.view.lua_code == 1);
+    CHECK(TokenOf(g_host) == Token::refused && g_host.view.why == static_cast<std::uint8_t>(wire::Elig::continue_unknown));
+    CHECK(CountToast(g_guest, Toast::g11_host_settling) == 1 && CountToast(g_guest, Toast::g4_wait_host) == 0);
+    CHECK(FirstToast(g_guest, Toast::g11_host_settling)->a == 30050 && FirstToast(g_guest, Toast::g11_host_settling)->b == 10);
+    CHECK(CountToast(g_host, Toast::h8_settling) == 1 && CountToast(g_host, Toast::h3_partner_elsewhere) == 0);
+    CHECK(FirstToast(g_host, Toast::h8_settling)->a == 10);
+    CHECK(Run(core::kSettleBindMs + 5000, [] { return HasLog(g_host, "save_handoff=offer;"); }));
+    const std::uint64_t offer_at = g_now - start;
+    CHECK(offer_at >= core::kSettleBindMs && offer_at <= core::kSettleBindMs + 3000);
+    CHECK(HasLog(g_host, "; mission=30050; source=settle"));
+    CHECK(Run(20000, GuestCountdown) && StagedEqualsHost());
+    CHECK(CountToast(g_guest, Toast::g11_host_settling) == 1 && CountToast(g_host, Toast::h8_settling) == 1);
+    // The host leaves for its helicopter before the bind: the original texts.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_guest.rep = Title(40010);
+    g_host.rep = InGame(30050);
+    Run(3000);
+    g_host.rep = InGame(40050);
+    Run(5000);
+    CHECK(!HasLog(g_host, "save_handoff=provenance;"));
+    CHECK(TokenOf(g_guest) == Token::wait_host && g_guest.view.why == WhyOf(hs::WaitWhy::host_elsewhere));
+    CHECK(CountToast(g_guest, Toast::g11_host_settling) == 1 && CountToast(g_guest, Toast::g4_wait_host) == 1);
+    CHECK(CountToast(g_host, Toast::h8_settling) == 1 && CountToast(g_host, Toast::h3_partner_elsewhere) == 1);
+    Run(30000);
+    CHECK(CountToast(g_guest, Toast::g4_wait_host) == 1 && CountToast(g_host, Toast::h3_partner_elsewhere) == 1);  // once per state
+}
+
+// P6: the host's save is ready while the guest plays its own save: the
+// handoff needs the guest's title. G12 once per link session and the F9 why;
+// at the title the OFFER follows.
+void TestGuestInGame() {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    g_guest.rep = InGame(30020);
+    Run(20000);
+    CHECK(HasLog(g_guest, "save_handoff=need; need=1; why=location") && !HasLog(g_host, "save_handoff=offer;"));
+    CHECK(TokenOf(g_guest) == Token::wait_host && g_guest.view.why == WhyOf(hs::WaitWhy::title));
+    CHECK(CountToast(g_guest, Toast::g12_go_to_title) == 1 && FirstToast(g_guest, Toast::g12_go_to_title)->a == 30010);
+    Run(30000);
+    CHECK(CountToast(g_guest, Toast::g12_go_to_title) == 1);
+    g_guest.rep = Title(40020);
+    CHECK(Run(20000, GuestCountdown));
+    CHECK(CountToast(g_guest, Toast::g12_go_to_title) == 1 && CountToast(g_guest, Toast::g4_wait_host) == 0);
+    // A new link session may tell it once more.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    g_guest.rep = InGame(30020);
+    Run(5000);
+    NewSession();
+    Run(5000);
+    CHECK(CountToast(g_guest, Toast::g12_go_to_title) == 2);
+}
+
+// P4 (guest): the WM_CLOSE waits until RESULT exiting left channel 4 (here:
+// pumped to the host), at most kExitFlushMs; at once when it was refused unsent.
+void TestExitFlush() {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(20000, GuestCountdown));
+    CHECK(Run(11000, GuestExited));
+    CHECK(HasLog(g_guest, "save_handoff=exit_flush; ms=") && HasLog(g_guest, "; acked=1"));
+    CHECK(g_guest.exit_at - g_guest.request_at < core::kCountdownMs + 100);
+    CHECK(OpIndex(g_guest, "exit") > OpIndex(g_guest, "result:exiting"));
+    // Nothing leaves the guest (a stuck link): kExitFlushMs.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(20000, GuestCountdown));
+    g_guest.pump_rate = 0;
+    CHECK(Run(11000, [] { return TokenOf(g_guest) == Token::exiting; }));
+    const std::uint64_t exiting_at = g_now;
+    CHECK(g_guest.exits == 0);
+    CHECK(!Run(core::kExitFlushMs - 100, GuestExited));
+    CHECK(Run(200, GuestExited));
+    CHECK(g_guest.exit_at - exiting_at >= core::kExitFlushMs - 40);
+    CHECK(HasLog(g_guest, "; acked=0") && HasLog(g_guest, "save_handoff=exit; how=wm_close"));
+    // Not connected: RESULT exiting is refused, the WM_CLOSE goes at once.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(20000, GuestCountdown));
+    g_guest.link_up = false;
+    CHECK(Run(11000, GuestExited));
+    CHECK(g_guest.exit_at - g_guest.request_at < core::kCountdownMs + 100 && HasLog(g_guest, "; acked=0"));
+    // A veto while the flush waits: no WM_CLOSE at all.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(20000, GuestCountdown));
+    g_guest.pump_rate = 0;
+    CHECK(Run(11000, [] { return TokenOf(g_guest) == Token::exiting; }));
+    g_guest.core->OnDecline(core::DeclineSource::f9, g_now);
+    Drain(g_guest);
+    Run(3000);
+    CHECK(g_guest.exits == 0 && TokenOf(g_guest) == Token::kept && !g_guest.request_present);
+}
+
+// P4 (host): RESULT exiting lost (the guest's Steam link parked at its
+// WM_CLOSE). A scene/always guest with a verified stage that leaves is
+// restarting on the host's save: partner_restarting and H2. A stage-mode
+// guest never exits, so its leaving stays partner_staged.
+void TestHostInfersRestart() {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(20000, GuestCountdown));
+    Run(200);
+    CHECK(TokenOf(g_host) == Token::partner_staged);
+    g_host.drop_in = 1u << static_cast<unsigned>(wire::Kind::result);
+    CHECK(Run(11000, GuestExited));
+    Run(500);
+    CHECK(TokenOf(g_host) == Token::partner_staged && !HasLog(g_host, "status=exiting"));  // the 0.13.5 state
+    g_host.core->OnPeerClose(g_now);
+    Drain(g_host);
+    CHECK(TokenOf(g_host) == Token::partner_restarting && HasLog(g_host, "save_handoff=partner_restarting; how=link_closed"));
+    CHECK(CountToast(g_host, Toast::h2_partner_restarting) == 1 && FirstToast(g_host, Toast::h2_partner_restarting)->a == 30010);
+    Run(5000);
+    CHECK(TokenOf(g_host) == Token::partner_restarting);  // sticky until the next session
+    NewSession();
+    Run(1000);
+    CHECK(TokenOf(g_host) != Token::partner_restarting);
+    // RESULT exiting arrived: no second H2 at the close.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30010);
+    CHECK(Run(31000, GuestExited));
+    Run(500);
+    CHECK(TokenOf(g_host) == Token::partner_restarting && CountToast(g_host, Toast::h2_partner_restarting) == 1);
+    g_host.core->OnPeerClose(g_now);
+    Drain(g_host);
+    CHECK(CountToast(g_host, Toast::h2_partner_restarting) == 1 && !HasLog(g_host, "how=link_closed"));
+    // A stage-mode guest leaving is no restart.
+    Setup(wire::Mode::scene, wire::Mode::stage);
+    BindHost(30010);
+    CHECK(Run(20000, GuestStaged));
+    Run(500);
+    CHECK(TokenOf(g_host) == Token::partner_staged);
+    g_host.core->OnPeerClose(g_now);
+    Drain(g_host);
+    CHECK(TokenOf(g_host) == Token::partner_staged && CountToast(g_host, Toast::h2_partner_restarting) == 0);
+}
+
 int main(int argc, char** argv) {
     g_verbose = argc > 1 && std::strcmp(argv[1], "--verbose") == 0;
     TestDecisions();
@@ -1690,6 +1881,11 @@ int main(int argc, char** argv) {
     TestEdges();
     TestExitVeto();
     TestHostStall();
+    TestRemoteOnlyGuest();
+    TestSettleWait();
+    TestGuestInGame();
+    TestExitFlush();
+    TestHostInfersRestart();
     std::printf("save_handoff_core_tests: %u checks passed\n", checks);
     return 0;
 }

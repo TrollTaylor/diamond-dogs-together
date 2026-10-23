@@ -34,8 +34,18 @@ inline constexpr std::uint64_t kTitleLostMs = 2000;       // guest: title lost t
 inline constexpr std::uint64_t kExitSlowMs = 20000;       // guest: still alive this long after PostExit -> exit_slow (+ G9):
                                                           // the core for no_window, the glue's timer after a WM_CLOSE
 inline constexpr std::uint64_t kExitFreshMs = 1500;       // Lua report freshness for PostExit
+// guest: after RESULT exiting, PostExit waits until channel 4 is empty (every
+// message acknowledged) or this long (online 2026-10-22 P4: a Steam link parks
+// at the WM_CLOSE, and the unsent RESULT never told the host about the restart)
+inline constexpr std::uint64_t kExitFlushMs = 1000;
 inline constexpr std::uint64_t kPhaseFreshMs = 3000;      // Lua report freshness for phase/story (older: unknown)
-inline constexpr std::uint64_t kSettleBindMs = 30000;     // in-game settle bind window (30010/30020/30050)
+// In-game settle bind window (30010/30020/30050). 30 s until 0.13.5; 10 s
+// since online 2026-10-22 P3 (a guest waited at its title for the host's 30 s
+// in Mother Base). The window was never the guard against a set saved for the
+// next mission: any mission load reports loading at once (world_handoff
+// X.leaving), which ends the window before the vanilla load, and the set must
+// stay unchanged with saving=0 and fresh reports for the whole window.
+inline constexpr std::uint64_t kSettleBindMs = 10000;
 inline constexpr std::uint64_t kBadMsgLogMs = 10000;      // "save_handoff=bad_msg" at most this often
 inline constexpr std::uint64_t kRehashMs = 2000;          // re-hash the on-disk set this often (the glue skips unchanged files)
 inline constexpr std::uint64_t kHashTimeoutMs = 10000;    // a hash_set / snapshot without its report may be asked again
@@ -199,7 +209,8 @@ bool ParseApplied(const char* text, std::size_t size, Applied& out) noexcept;
 // The on-disk set as the glue hashed it (HashSet; one file per tick, only
 // while the Lua report is fresh with saving=0).
 struct SetInfo {
-    bool ok;                   // read without error, slot 0 or 1 present
+    bool ok;                   // read without error, slot 0 or 1 present (the guest: or slot 4, an old
+                               // Steam save with remote files only; online 2026-10-22 P1)
     bool stable;               // sizes and mtimes equal before and after the read
     bool unexpected;           // another IsProgressName file sits in 287700\local or remote
     std::uint64_t total;       // sum of the present sizes (may exceed kMaxTotal)
@@ -231,7 +242,8 @@ enum class ActionKind : std::uint8_t {
     write_provenance,  // provenance.json = provenance().Format (WriteFileAtomic; no report)
     delete_stage,      // guest: request.json first, then the known names and empty folders of <xfer>.partial and
                        // <xfer> (whichever exists); report OnStageDone
-    post_exit,         // guest: EnumWindows + PostMessageW(WM_CLOSE); report OnExitPosted
+    post_exit,         // guest: EnumWindows + PostMessageW(WM_CLOSE); report OnExitPosted (queued once RESULT
+                       // exiting left channel 4, at most kExitFlushMs after it)
     toast,             // coop_hud::Post(EventKind::save_handoff, code, "<a> <b>") (no report)
     log,               // log text + "; t_ms=N" (no report)
     publish,           // save_handoff_state::Publish(view) + partner_net::PublishHandoffState (no report)
@@ -386,7 +398,8 @@ private:
         std::uint8_t offers_set[wire::kShaSize] = {};
         unsigned offers = 0;              // per set per link session (host: sent, guest: received)
         bool sticky = false;              // the token stays until the next transfer starts
-        std::uint8_t toasted = 0xFF;      // the refusal / wait reason already toasted this session
+        std::uint8_t toasted = 0xFF;      // the refusal / wait reason already toasted this session (kSettleToast:
+                                          // continue_unknown while the host settles, G11 / H8)
         // Host.
         HostPhase host = HostPhase::idle;
         wire::Elig elig = wire::Elig::unknown;
@@ -423,6 +436,10 @@ private:
         unsigned g2_left = 0;
         bool exit_posted = false, exit_window = false, exit_slow = false;
         std::uint64_t exit_at = 0;
+        // P4: RESULT exiting queued, post_exit not yet (kExitFlushMs).
+        bool exit_pending = false, exit_unsent = false;
+        std::uint64_t exit_req_at = 0;
+        bool g12_toasted = false;         // G12 once per link session
         bool applied = false;
     };
 
@@ -446,7 +463,7 @@ private:
     // Host.
     void HostTick(std::uint64_t now_ms, unsigned queued) noexcept;
     bool GuestWants() const noexcept;
-    void HostRest() noexcept;
+    void HostRest(std::uint64_t now_ms) noexcept;
     void StartOffer(std::uint64_t now_ms) noexcept;
     void ReleaseSnapshot() noexcept;
     void HostFail(wire::Fail fail, wire::AbortReason abort, std::uint64_t now_ms) noexcept;
@@ -454,9 +471,9 @@ private:
     void HostMessage(const wire::Message& message, std::uint64_t now_ms) noexcept;
     void RewindTo(std::uint8_t slot, std::uint32_t offset) noexcept;
     // Guest.
-    void GuestTick(std::uint64_t now_ms) noexcept;
+    void GuestTick(std::uint64_t now_ms, unsigned queued) noexcept;
     void GuestNeedUpdate(std::uint64_t now_ms) noexcept;
-    void GuestRest() noexcept;
+    void GuestRest(std::uint64_t now_ms) noexcept;
     void GuestMessage(const wire::Message& message, std::uint64_t now_ms) noexcept;
     void GuestOffer(const wire::Message& message, std::uint64_t now_ms) noexcept;
     void GuestChunk(const wire::Message& message, std::uint64_t now_ms) noexcept;

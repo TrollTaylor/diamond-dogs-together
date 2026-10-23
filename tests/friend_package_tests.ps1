@@ -193,6 +193,12 @@ $null = New-Item -ItemType Directory -Path $fixture
 [IO.File]::WriteAllText($ownerMarker, $nonce)
 $fakeGame = $null
 $watchdogs = New-Object Collections.Generic.List[int]
+# Steam's running flag for MGSV (Get-CoopSteamAppRunning, online 2026-10-22 P5)
+# comes from this fixture file in this process and every script it starts, never
+# from the registry.
+$steamRunningFile = Join-Path $fixture 'steam-running.txt'
+[IO.File]::WriteAllText($steamRunningFile, "0`n")
+$env:MGS_COOP_TEST_STEAM_RUNNING_FILE = $steamRunningFile
 try {
     # ------------------------------------------------------------ native link keys (merge gate)
     $linkKeys = $false
@@ -1572,6 +1578,36 @@ try {
     $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '0'
     $sleeper = $null
     try {
+        # 0. Online 2026-10-22 P5: Steam's running flag (read only; the fixture file here) and
+        #    the wait for it, and play-coop.log.
+        foreach ($row in @(@("1`n", $true, $true), @("0`n", $true, $false), @("unknown`n", $false, $false), @('', $false, $false))) {
+            [IO.File]::WriteAllText($steamRunningFile, $row[0])
+            $sr = Get-CoopSteamAppRunning
+            Assert-True ($sr.Known -eq $row[1] -and $sr.Running -eq $row[2]) "Get-CoopSteamAppRunning reads '$($row[0].Trim())'"
+        }
+        $srSource = (Get-Command Get-CoopSteamAppRunning).Definition + (Get-Command Wait-CoopSteamAppStopped).Definition
+        Assert-True ($srSource.Contains("HKCU:\Software\Valve\Steam\Apps\{0}") -and $srSource.Contains("'RunningAppID'") -and
+            $srSource -notmatch 'Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|New-Item |Remove-Item|reg(\.exe)? ') 'Steam''s running flag is only read (Apps\287700 Running, RunningAppID)'
+        [IO.File]::WriteAllText($steamRunningFile, "1`n")
+        $ws = Wait-CoopSteamAppStopped -TimeoutSec 1 -PollMs 200
+        Assert-True (!$ws.Stopped -and $ws.Known -and $ws.WaitedMs -ge 900 -and $ws.Last -ceq '1') 'Steam still marks MGSV running: the wait gives up after its timeout'
+        [IO.File]::WriteAllText($steamRunningFile, "unknown`n")
+        $ws = Wait-CoopSteamAppStopped -TimeoutSec 5
+        Assert-True ($ws.Stopped -and !$ws.Known -and $ws.WaitedMs -lt 1000) 'an unreadable flag: nothing to wait for'
+        [IO.File]::WriteAllText($steamRunningFile, "0`n")
+        $logGame = New-GameFixture 'play-coop-log'
+        $logPaths = Get-InstancePaths -GameDirectory $logGame
+        $null = New-Item -ItemType Directory -Path $logPaths.Mod -Force
+        Write-CoopPlayLog -GameRoot $logGame -Text "first; a=1`r`nsecond"
+        $logText = [IO.File]::ReadAllText($logPaths.PlayCoopLog)
+        Assert-True ($logText -cmatch "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z pid=$PID first; a=1  second`r`n$") "play-coop.log: one stamped line per call ($logText)"
+        [IO.File]::WriteAllText($logPaths.PlayCoopLog, ('x' * 1048600))
+        Write-CoopPlayLog -GameRoot $logGame -Text 'after rotation'
+        Assert-True ((Get-Item -LiteralPath (Join-Path $logPaths.Mod 'play-coop.old.log')).Length -eq 1048600 -and ([IO.File]::ReadAllText($logPaths.PlayCoopLog)).EndsWith("after rotation`r`n") -and
+            (Get-Item -LiteralPath $logPaths.PlayCoopLog).Length -lt 200) 'play-coop.log over 1 MB moves to play-coop.old.log'
+        Write-CoopPlayLog -GameRoot (Join-Path $fixture 'no-such-game') -Text 'nowhere'
+        Assert-True (!(Test-Path -LiteralPath (Join-Path $fixture 'no-such-game'))) 'no mgs-coop folder: nothing is written, nothing created'
+
         # 1. A valid request is applied: lab.ini again with save_handoff=off (its new hash recorded),
         #    the session stays active with handoff.count=1 and every co-op file in place.
         $hA = New-HandoffSession 'handoff-apply'
@@ -1595,6 +1631,10 @@ try {
         $appliedA = Get-Content -LiteralPath (Join-Path $hA.CoopSavesHandoff 'applied.json') -Raw | ConvertFrom-Json
         Assert-Equal "$($appliedA.format)|$($appliedA.v)|$($appliedA.set_sha256)|$($appliedA.aside)" "mgs-coop-save-handoff-applied|1|$($stA.Set)|$($res.Aside)" 'applied.json'
         Assert-True (!(Test-Path -LiteralPath (Join-Path $hA.CoopSavesHandoff 'request.json')) -and !(Test-Path -LiteralPath $stA.Stage)) 'the request and the stage are gone'
+        $logA = [IO.File]::ReadAllText($hA.PlayCoopLog)
+        Assert-True ($logA -cmatch "(?m) pid=$PID handoff=claimed; owner=console; exited_pid=4242; xfer=0A1B2C3D\r$" -and $logA.Contains("handoff=applied; files=3; bytes=41; aside=$($res.Aside)") -and
+            $logA -cmatch '(?m) steam_wait; stopped=1; known=1; ms=[0-9]+; last=0\r$' -and $logA.Contains('relaunch=requested; started=0; steam=0') -and
+            $logA.IndexOf('handoff=claimed') -lt $logA.IndexOf('steam_wait') -and $logA.IndexOf('steam_wait') -lt $logA.IndexOf('relaunch=requested')) "play-coop.log: the claim, the apply, Steam's flag, the request (in order): $logA"
         # 2. The cleanup guard: a live claim keeps every file.
         $guard = Invoke-CoopPlayCleanup -GameRoot $hA.Game
         Assert-True (!$guard.Ran -and (@($guard.Messages) -join '|') -ceq 'a save handoff restart is in progress' -and (Get-PlayFilesPresent $hA) -eq 4 -and (Get-SessionJson $hA).state -eq 'active') 'cleanup during the restart does nothing'
@@ -1624,6 +1664,22 @@ try {
         [IO.File]::WriteAllBytes($hG.LabIni, $labG)
         $prevClean = Invoke-CoopPlayCleanup -GameRoot $hG.Game -Force
         Assert-True ($prevClean.Ran -and (@($prevClean.Removed) -contains 'lab.ini') -and (Get-PlayFilesPresent $hG) -eq 0) 'the cleanup accepts the old lab.ini hash (prev_sha256)'
+        # Online 2026-10-22 P5: Steam still marks MGSV as running after the exit (it ignored the
+        # request for 3 minutes in the session): the relaunch waits for the flag to clear.
+        $hS = New-HandoffSession 'handoff-steam-wait'
+        $stS = New-HandoffStage $hS.CoopSavesHandoff '3C4D5E6F' @{ '287700/local/TPP_GAME_DATA0' = 'host progress s' }
+        $null = New-HandoffRequest $hS.CoopSavesHandoff $stS 4646 '2026-10-15T11:59:00Z'
+        [IO.File]::WriteAllText($steamRunningFile, "1`n")
+        $flip = Start-Job -ScriptBlock { param($f) Start-Sleep -Milliseconds 2500; [IO.File]::WriteAllText($f, "0`n") } -ArgumentList $steamRunningFile
+        try {
+            $waitStart = [DateTime]::UtcNow
+            Assert-Equal (Invoke-CoopHandoffAfterExit -GameRoot $hS.Game -ExitedPid 4646 -ExitedStartUtc $exitedStart -Owner console).Action 'relaunched' 'applied once Steam cleared its running flag'
+            $waitedMs = ([DateTime]::UtcNow - $waitStart).TotalMilliseconds
+        } finally { $null = Wait-Job $flip -Timeout 30; Remove-Job $flip -Force; [IO.File]::WriteAllText($steamRunningFile, "0`n") }
+        $logS = [IO.File]::ReadAllText($hS.PlayCoopLog)
+        $waitLine = [regex]::Match($logS, 'steam_wait; stopped=1; known=1; ms=([0-9]+); last=0')
+        Assert-True ($waitedMs -ge 2400 -and $waitLine.Success -and [int]$waitLine.Groups[1].Value -ge 2400 -and $logS.IndexOf('steam_wait') -lt $logS.IndexOf('relaunch=requested')) "the relaunch waited for Steam's flag ($([int]$waitedMs) ms): $logS"
+        $null = Invoke-CoopPlayCleanup -GameRoot $hS.Game -Force
 
         # 3. A waiting Steam joiner with link-rejoin.txt: net_peer_steam and link-secret.txt, both hashes recorded.
         $hB = New-HandoffSession 'handoff-rejoin' -SteamWait
@@ -1635,6 +1691,8 @@ try {
         Assert-Equal $res.Action 'relaunched' "a waiting Steam joiner: applied ($(@($res.Messages) -join ' '))"
         Assert-Equal ([IO.File]::ReadAllText($hB.LabIni)) (New-CoopPlayLabIniText -Role guest -SaveDir $hB.CoopSaves -Transport steam -SteamSelf $guestSteamId -SteamPeer $hostSteamId -SaveHandoff off) 'the rejoin lab.ini names the host (net_peer_steam), no net_steam_wait'
         Assert-Equal ([IO.File]::ReadAllText($hB.LinkSecret)) "$rejoinSecret`r`n" 'link-secret.txt from link-rejoin.txt'
+        $logB = [IO.File]::ReadAllText($hB.PlayCoopLog)
+        Assert-True ($logB.Contains('handoff=applied;') -and !$logB.Contains($rejoinSecret) -and !$logB.Contains($hostSteamId) -and $logB -notmatch 'MGS[12]-') 'play-coop.log holds no code, secret or SteamID'
         $sB = Get-SessionJson $hB
         Assert-Equal "$((@($sB.files | Where-Object { $_.name -eq 'lab.ini' })[0]).sha256)|$((@($sB.files | Where-Object { $_.name -eq 'link-secret.txt' })[0]).sha256)" "$(Get-Sha256 $hB.LabIni)|$(Get-Sha256 $hB.LinkSecret)" 'both new hashes are recorded'
         Assert-True (!(Test-Path -LiteralPath $hB.LinkRejoin) -and ![IO.File]::ReadAllText($hB.PlaySession).Contains($rejoinSecret)) 'link-rejoin.txt is deleted; no secret in play-session.json'
@@ -1787,6 +1845,22 @@ try {
         $null = Invoke-CoopPlayCleanup -GameRoot $hW.Game -Force
         $w = Get-CoopRelaunchWait -GameRoot $hW.Game -SessionId $wId
         Assert-True ($w.Stop -and $w.Off -and (@($w.Lines) -join ' ') -ceq 'Co-op was switched off while MGSV was restarting (the helper could not start it again); do not start MGS V from Steam now. Start Play-Coop.bat again.') 'off: stop, never a manual start'
+        # Online 2026-10-22 (the P5 restart wait): a read that races a write of play-session.json
+        # (the helper's File.Replace) is no switch-off. The file is held exclusively for about 0.6 s.
+        $hX = New-HandoffSession 'handoff-relaunch-race'
+        $xId = [string](Get-SessionJson $hX).session_id
+        $tX = ConvertTo-CoopSessionTable -Session (Get-SessionJson $hX)
+        $tX['handoff'] = [ordered]@{ state = 'relaunching'; claimed_by_pid = 0; claimed_start_utc = ''; claimed_utc = [DateTime]::UtcNow.ToString('o')
+            xfer = '7D8EBFC1'; set_sha256 = ('B' * 64); count = 1; aside = ''; message = '' }
+        Save-CoopPlaySession -GameRoot $hX.Game -Session $tX
+        $raceFlag = Join-Path $fixture 'race-locked.flag'
+        $lockJob = Start-Job -ScriptBlock { param($p, $flag) $f = [IO.File]::Open($p, 'Open', 'Read', 'None'); [IO.File]::WriteAllText($flag, '1'); Start-Sleep -Milliseconds 600; $f.Dispose() } -ArgumentList $hX.PlaySession, $raceFlag
+        try {
+            Assert-True (Wait-Until { Test-Path -LiteralPath $raceFlag } 30) 'the session file is held by the stand-in writer'
+            $w = Get-CoopRelaunchWait -GameRoot $hX.Game -SessionId $xId
+            Assert-True (!$w.Stop -and !$w.Off) 'a session read that races a write keeps waiting (no false switch-off)'
+        } finally { $null = Wait-Job $lockJob -Timeout 30; Remove-Job $lockJob -Force }
+        $null = Invoke-CoopPlayCleanup -GameRoot $hX.Game -Force
     } finally {
         Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
         Remove-Item Env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC -ErrorAction SilentlyContinue
@@ -2513,6 +2587,13 @@ try {
             Assert-True ($hoLauncher.WaitForExit(60000)) '[handoff] the launcher ends when the restarted game exits'
             $hoText = & $hoRead
             Assert-True ($hoText.Contains('MGSV exited.') -and (Get-PlayFilesPresent $hop) -eq 0 -and (Get-SessionJson $hop).state -eq 'off') "[handoff] 'MGSV exited.' and the cleanup after the second game: $hoText"
+            # Online 2026-10-22 P5: every step of the restart is in play-coop.log (Collect-Logs takes it).
+            $hoLog = [IO.File]::ReadAllText($hop.PlayCoopLog)
+            $hoSteps = @('play=launch; role=guest', "game=seen; run=0; game_pid=$($standIn1.Id)", "game=exited; run=0; game_pid=$($standIn1.Id)", 'handoff=claimed; owner=console',
+                'handoff=applied; files=2', 'steam_wait; stopped=1; known=1', 'relaunch=requested; started=0', 'handoff_after_exit; owner=console; action=relaunched',
+                "game=seen; run=1; game_pid=$($standIn2.Id)", "game=exited; run=1; game_pid=$($standIn2.Id)")
+            $hoAt = -1
+            foreach ($step in $hoSteps) { $i = $hoLog.IndexOf($step); Assert-True ($i -gt $hoAt) "[handoff] play-coop.log has '$step' in order: $hoLog"; $hoAt = $i }
         } finally {
             Stop-StandIn $standIn1; Stop-StandIn $standIn2
             if (!$hoLauncher.HasExited) { Stop-Process -Id $hoLauncher.Id -Force -ErrorAction SilentlyContinue }
@@ -2642,7 +2723,8 @@ try {
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'probe.log'), ((1..40000 | ForEach-Object { "probe line $_ steam=76561197960265735" }) -join "`r`n") + "`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'early.log'), "early=start; version=0.12.0; lab=1; role=host`r`nsaves=redirected; dir=$hostSaveDir`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'link-status.json'), '{"v":1,"pid":1,"state":"connected","peer":"203.0.113.7:51234","mission":30050}')
-    # The automatic save handoff's records are collected; link-rejoin.txt (a join code) never is.
+    # Play-Coop's own steps (online 2026-10-22 P5) are collected too.
+    [IO.File]::WriteAllText($hp.PlayCoopLog, "2026-10-22T17:54:42.000Z pid=54332 relaunch=requested; started=1; steam=running=0;running_app=0`r`n")
     $rejoinOnDisk = 'QQQQQRRRRRSSSSSTTTTT'
     [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198058195100') + "`r`n")
     $null = New-Item -ItemType Directory -Path $hp.CoopSavesHandoff -Force
@@ -2663,9 +2745,10 @@ try {
     $extract = Join-Path $fixture 'collected'
     Expand-Archive -LiteralPath $zips[0].FullName -DestinationPath $extract
     $collected = @(Get-ChildItem -LiteralPath $extract -Directory)[0].FullName
-    foreach ($n in 'summary.txt', 'script-observer.log', 'probe.log', 'early.log', 'link-status.json', 'play-session.json', 'probe-install.json', 'friend-install.json', 'coop-saves.txt') {
+    foreach ($n in 'summary.txt', 'script-observer.log', 'probe.log', 'early.log', 'link-status.json', 'play-session.json', 'probe-install.json', 'friend-install.json', 'coop-saves.txt', 'play-coop.log') {
         Assert-True (Test-Path -LiteralPath (Join-Path $collected $n) -PathType Leaf) "collected $n"
     }
+    Assert-True ([IO.File]::ReadAllText((Join-Path $collected 'play-coop.log')).Contains('relaunch=requested; started=1')) 'play-coop.log content is collected'
     Assert-True (!(Test-Path -LiteralPath (Join-Path $collected 'link-secret.txt'))) 'link-secret.txt is never collected'
     foreach ($n in 'handoff-provenance.json', 'handoff-applied.json', 'handoff-request.json') { Assert-True (Test-Path -LiteralPath (Join-Path $collected $n) -PathType Leaf) "collected $n" }
     Assert-True (!@(Get-ChildItem -LiteralPath $collected -File | Where-Object { $_.Name -like '*rejoin*' -or $_.Name -like 'TPP_GAME_DATA*' }).Count) 'link-rejoin.txt and staged save files are never collected'
@@ -2933,5 +3016,6 @@ try {
         if ($wp -and $wp.ProcessName -eq 'powershell') { Stop-Process -Id $w -Force -ErrorAction SilentlyContinue }
     }
     Start-Sleep -Milliseconds 300
+    Remove-Item Env:MGS_COOP_TEST_STEAM_RUNNING_FILE -ErrorAction SilentlyContinue
     Remove-OwnedFixture
 }

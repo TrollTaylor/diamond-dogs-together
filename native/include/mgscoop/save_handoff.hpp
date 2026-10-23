@@ -134,18 +134,24 @@ struct HashCache {
 // save_redirect::read_remote_snapshot). A file over wire::kMaxFileBytes is not
 // read and makes the total exceed wire::kMaxTotal (too_large); an empty or
 // unreadable slot file gives ok=false; stable compares the stamps before and
-// after the pass.
+// after the pass. A set needs a primary slot: 0 or 1, and with remote_primary
+// (the guest's own set, online 2026-10-22 P1) also 4, remote\TPP_GAME_DATA,
+// which is all an old Steam save copy has until the game writes a local slot.
 struct HashJob {
     bool active;
     std::uint8_t next;
     bool failed, oversize;
+    bool no_primary;  // after the pass: no primary slot present
     Stamps before;
 };
 void HashBegin(HashJob& job) noexcept;
 // True when the pass finished (out filled; the job is inactive again).
-bool HashStep(const Dirs& dirs, HashJob& job, HashCache& cache, core::SetInfo& out) noexcept;
+bool HashStep(const Dirs& dirs, HashJob& job, HashCache& cache, core::SetInfo& out, bool remote_primary = false) noexcept;
 // A whole pass at once (tests).
-bool HashSetNow(const Dirs& dirs, HashCache& cache, core::SetInfo& out) noexcept;
+bool HashSetNow(const Dirs& dirs, HashCache& cache, core::SetInfo& out, bool remote_primary = false) noexcept;
+// Why a finished pass gave no valid set: "read" (an empty or unreadable slot
+// file), "no_primary" (no primary slot), "hash"; nullptr when out.ok.
+const char* SetProblem(const HashJob& job, const core::SetInfo& out) noexcept;
 
 // Host snapshot: the present slots read into one VirtualAlloc block (at most
 // wire::kMaxTotal), hashed (info), then verified by a second read.
