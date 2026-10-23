@@ -144,6 +144,11 @@ void LauncherUi::Frame(double time) {
         }
         last_phase_ = phase;
     }
+    if (ui::SessionActive(phase)) {
+        // A window opened while the game already runs learns the session here.
+        session_role_ = model_.session_role();
+        if (session_role_ == Role::host && hosted_code_.empty()) hosted_code_ = model_.join_code();
+    }
     if (!ui::PageEnabled(phase, page_)) page_ = ui::DefaultPage(phase);
     link_ = ui::SessionActive(phase) ? model_.link() : LinkView{};
     if (phase == Phase::setting_up || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)

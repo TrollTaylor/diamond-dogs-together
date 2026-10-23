@@ -11,7 +11,8 @@
 // every frame (at least once a second, about 4 Hz while a game runs); long work
 // (setup) runs on the model's own worker thread and is observed by polling.
 //
-// C0 additions to the spec interface (all documented below, marked "C0"):
+// C0 additions to the spec interface (all documented below, marked "C0"; the
+// B additions session_role() / join_code() follow them):
 //  - default member initializers on the plain structs (no layout change);
 //  - discovered_game_dir(): the not_in_game_folder screen shows where Steam
 //    keeps MGSV and offers "Open my game folder" (Explorer is opened by the GUI);
@@ -85,6 +86,15 @@ public:
     // error / not_in_game_folder: run the start-up checks again (the phase
     // changes on success).
     virtual void recheck() = 0;
+
+    // ---- B additions (wp/launcher-core) ---------------------------------------
+    // While a session runs (launching, in_game, after_game): whether this PC
+    // hosts or joins. A window opened while the game already runs (the first
+    // window was closed) learns it here.
+    virtual Role session_role() const = 0;
+    // The host's join code while hosting ("" otherwise), also after the window
+    // was reopened. Never logged.
+    virtual std::string join_code() const = 0;
 };
 
 std::unique_ptr<LauncherModel> MakeMockModel();

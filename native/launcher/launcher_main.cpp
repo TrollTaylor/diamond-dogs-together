@@ -1,8 +1,9 @@
 // Diamond Dogs Together: DiamondDogsTogether.exe, the Win32 + DX11 window shell
 // around the ImGui pages (launcher_app.cpp). A WIN32-subsystem program: it
 // never opens a console. Command-line modes (launcher_ui_logic.hpp):
-//   (none) / --mock            the window, on the mock model for now
-//   --watch <session>          no window (the background helper; stub until B)
+//   (none)                     the window, on the real model (launcher core)
+//   --mock                     the window on the simulated model (developer check)
+//   --watch <session>          no window (the background helper, launcher core)
 //   --selftest                 built-in checks, exit code 0 = passed
 //   --screenshot-all <dir>     renders every page once, hidden, and saves PNGs
 // Rendering is event driven: a frame is drawn on input, and otherwise only on a
@@ -562,14 +563,23 @@ HANDLE ClaimSingleInstance(std::uint64_t hash) {
 
 int RunWindow(const Options& o) {
     std::wstring error;
-    std::unique_ptr<ddt::MockModel> mock = MakeMock(o, error);
-    if (!mock) {
-        MessageBoxW(nullptr, error.c_str(), kWindowTitle, MB_OK | MB_ICONWARNING);
-        return 2;
+    // The real model (wp/launcher-core) by default; --mock keeps the simulated one.
+    std::unique_ptr<ddt::LauncherModel> model;
+    ddt::MockModel* mock_ptr = nullptr;
+    if (o.mock) {
+        std::unique_ptr<ddt::MockModel> mock = MakeMock(o, error);
+        if (!mock) {
+            MessageBoxW(nullptr, error.c_str(), kWindowTitle, MB_OK | MB_ICONWARNING);
+            return 2;
+        }
+        mock_ptr = mock.get();
+        model = std::move(mock);
     }
     const std::uint64_t hash = FolderHash();
     HANDLE instance = ClaimSingleInstance(hash);
     if (!instance) return 0;
+    // After the single-instance claim: the real model reads (and tidies) the folder.
+    if (!model) model = ddt::MakeRealModel(ExeDir());
     App app;
     g_app = &app;
     if (!InitWindow(app, o, true)) {
@@ -580,8 +590,8 @@ int RunWindow(const Options& o) {
         return 3;
     }
     SetPropW(app.hwnd, kFolderProp, reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(hash)));
-    app.mock = mock.get();
-    app.model = std::move(mock);
+    app.mock = mock_ptr;
+    app.model = std::move(model);
     app.ui = std::make_unique<ddt::LauncherUi>(*app.model, MakeServices(true), LoadLogo(app.gfx));
     app.ready = true;
     app.model->tick();

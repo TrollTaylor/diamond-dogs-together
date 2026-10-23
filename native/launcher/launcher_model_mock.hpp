@@ -61,6 +61,8 @@ public:
     std::string discovered_game_dir() const override;
     bool cancel_launch(std::string& error_out) override;
     void recheck() override;
+    Role session_role() const override;
+    std::string join_code() const override;
 
     // ---- Hooks for tests and the screenshot driver -------------------------
     // The player's own (synthetic) SteamID64 and a valid partner code.
@@ -83,6 +85,7 @@ private:
         Role role = Role::host;
         bool invite = false;
         double start = 0.0;   // when Host/Join was pressed
+        std::string code;     // the host's code (host() only)
     };
     double GameSeconds() const;   // since the game started (negative while launching)
     void SetPhase(Phase phase);

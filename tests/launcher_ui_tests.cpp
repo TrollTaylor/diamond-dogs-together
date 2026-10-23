@@ -191,7 +191,7 @@ void TestStatusHelpers() {
 
 void TestCommandLine() {
     ui::Options o = ui::ParseCommandLine({});
-    Check(o.mode == ui::Options::Mode::gui && o.mock && o.error.empty(), "no arguments");
+    Check(o.mode == ui::Options::Mode::gui && !o.mock && o.error.empty(), "no arguments: the real model");
     o = ui::ParseCommandLine({L"--mock"});
     Check(o.mode == ui::Options::Mode::gui && o.mock, "--mock");
     o = ui::ParseCommandLine({L"--watch", L"0123456789abcdef0123456789ABCDEF"});
@@ -206,6 +206,7 @@ void TestCommandLine() {
     Check(!ui::ParseCommandLine({L"--scale", L"9"}).error.empty(), "--scale range");
     Check(!ui::ParseCommandLine({L"--mock-speed", L"x"}).error.empty(), "--mock-speed number");
     Check(ui::ParseCommandLine({L"--mock-speed", L"4"}).mock_speed == 4.0, "--mock-speed");
+    Check(ui::ParseCommandLine({L"--mock-scenario", L"ready"}).mock, "--mock-scenario implies --mock");
     Check(!ui::ParseCommandLine({L"--selftest", L"--watch", L"abc"}).error.empty(), "one mode only");
     Check(!ui::ParseCommandLine({L"--frobnicate"}).error.empty(), "unknown option");
     Check(ui::ParseCommandLine({L"/?"}).mode == ui::Options::Mode::help, "help");

@@ -1,17 +1,42 @@
-// Diamond Dogs Together: --watch (stub) and --selftest (see launcher_entry.hpp).
+// Diamond Dogs Together: --watch and --selftest (see launcher_entry.hpp).
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include "launcher_entry.hpp"
 
+#include "core/core_model.hpp"
+#include "core/core_util.hpp"
 #include "launcher_join_code.hpp"
 #include "launcher_model_mock.hpp"
 #include "launcher_ui_logic.hpp"
 
 namespace ddt {
 
+namespace {
+std::wstring ExeFolder() {
+    std::wstring path(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD n = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+        if (n == 0) return {};
+        if (n < path.size()) {
+            path.resize(n);
+            break;
+        }
+        path.resize(path.size() * 2);
+    }
+    const std::size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+}
+}  // namespace
+
 int RunWatch(const std::wstring& session) {
-    // C0 stub: the real watchdog (B) polls the session, cleans up after the
-    // game exits and runs the save handoff. Nothing to do without the core.
-    (void)session;
-    return 0;
+    // The hidden helper (wp/launcher-core): follows the game started from the
+    // exe's own folder, applies a save handoff once the window is gone and
+    // switches co-op off after the game exits.
+    return core::RunWatch(ExeFolder(), core::Utf8(session));
 }
 
 int RunSelfTest(std::string& report) {
@@ -63,7 +88,9 @@ int RunSelfTest(std::string& report) {
     check(m.uninstall(uninstall, error) && m.phase() == Phase::needs_setup, "uninstall");
 
     report += "selftest: " + std::to_string(checks - failures) + "/" + std::to_string(checks) + " checks passed\n";
-    return failures == 0 ? 0 : 1;
+    // The real model's checks (wp/launcher-core): read-only for the game folder.
+    const int core_result = core::RunSelfTest(ExeFolder(), report);
+    return failures == 0 && core_result == 0 ? 0 : 1;
 }
 
 }  // namespace ddt

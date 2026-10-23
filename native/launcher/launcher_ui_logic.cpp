@@ -267,11 +267,13 @@ Options ParseCommandLine(const std::vector<std::wstring>& args) {
         } else if (Is(a, L"--mock-scenario")) {
             if (!has_value || args[i + 1].empty()) { o.error = L"--mock-scenario needs a name."; return o; }
             o.scenario = args[++i];
+            o.mock = true;
         } else if (Is(a, L"--mock-speed")) {
             if (!has_value || !ParseNumber(args[i + 1], 0.1, 100.0, o.mock_speed)) {
                 o.error = L"--mock-speed needs a number from 0.1 to 100.";
                 return o;
             }
+            o.mock = true;
             ++i;
         } else if (Is(a, L"--scale")) {
             double v = 0.0;
@@ -293,7 +295,7 @@ Options ParseCommandLine(const std::vector<std::wstring>& args) {
 const wchar_t* UsageText() {
     return L"DiamondDogsTogether.exe [options]\n"
            L"  (no options)              open the launcher window\n"
-           L"  --mock                    use the simulated model (the default for now)\n"
+           L"  --mock                    use the simulated model (developer check, no game)\n"
            L"  --mock-scenario <name>    first-run | ready | wrong-folder | setup-fails | error |\n"
            L"                            steam-offline | partner-drops\n"
            L"  --mock-speed <factor>     run the simulation faster or slower\n"

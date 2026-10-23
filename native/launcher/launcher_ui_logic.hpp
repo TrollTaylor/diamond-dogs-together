@@ -93,7 +93,7 @@ int IdleWaitMs(Phase phase, bool animating);
 // ---- Command line ----------------------------------------------------------
 struct Options {
     enum class Mode { gui, watch, selftest, screenshots, help } mode = Mode::gui;
-    bool mock = true;               // --mock (the default until the real model lands)
+    bool mock = false;              // --mock (developer flag; the real model is the default)
     std::wstring watch_session;     // --watch <session>
     std::wstring screenshot_dir;    // --screenshot-all <dir>
     std::wstring scenario;          // --mock-scenario <name>

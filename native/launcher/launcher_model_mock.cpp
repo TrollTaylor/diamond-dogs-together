@@ -201,7 +201,7 @@ bool MockModel::host(std::string& code_out, std::string& error_out) {
     static const char kAlphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     for (int i = 0; i < 20; ++i) secret.push_back(kAlphabet[rd() & 31u]);
     code_out = FormatJoinCode(secret, kOwnSteamId);
-    session_ = Session{Role::host, false, now()};
+    session_ = Session{Role::host, false, now(), code_out};
     last_error_.clear();
     SetPhase(Phase::launching);
     return true;
@@ -481,6 +481,12 @@ void MockModel::jump_to_session(Role role, bool invite, Phase phase, double seco
     last_error_.clear();
     SetPhase(Phase::launching);
     tick();
+}
+
+Role MockModel::session_role() const { return session_.role; }
+
+std::string MockModel::join_code() const {
+    return ui::SessionActive(phase_) && session_.role == Role::host ? session_.code : std::string();
 }
 
 std::unique_ptr<LauncherModel> MakeMockModel(const MockOptions& options) {

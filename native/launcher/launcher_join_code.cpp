@@ -58,6 +58,19 @@ CodeCheck CheckJoinCode(const std::string& text, std::uint64_t own_steam_id) {
     return {true, "The code looks right."};
 }
 
+bool ParseJoinCode(const std::string& text, std::string& secret_out, std::uint64_t& host_out) {
+    secret_out.clear();
+    host_out = 0;
+    const std::string compact = Compact(text);
+    if (compact.empty() || compact.size() > 200) return false;
+    mgscoop::steam_code::Code code{};
+    if (mgscoop::steam_code::Parse(compact.data(), compact.size(), code) != mgscoop::steam_code::Status::ok) return false;
+    secret_out.assign(code.secret, mgscoop::link::kSecretChars);
+    host_out = code.host;
+    mgscoop::link::SecureZero(&code, sizeof(code));
+    return true;
+}
+
 std::string FormatJoinCode(const std::string& secret20, std::uint64_t host_steam_id) {
     if (secret20.size() != mgscoop::link::kSecretChars) return {};
     char secret[mgscoop::link::kSecretChars];

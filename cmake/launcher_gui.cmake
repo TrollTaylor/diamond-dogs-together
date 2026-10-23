@@ -5,13 +5,14 @@ if(WIN32 AND MSVC AND TARGET mgs_imgui)
   set(_ddt_generated "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher")
   configure_file(native/launcher/ddt_launcher_version.h.in "${_ddt_generated}/ddt_launcher_version.h" @ONLY)
   # The pure part (no ImGui, no window): UI logic, join-code check, mock model, self-test.
+  # launcher_join_code.cpp lives in ddt_core (cmake/ddt_launcher_core.cmake), which
+  # the logic library links: the real model and the --watch / --selftest entries.
   add_library(ddt_launcher_logic STATIC
     native/launcher/launcher_ui_logic.cpp
-    native/launcher/launcher_join_code.cpp
     native/launcher/launcher_model_mock.cpp
     native/launcher/launcher_entry.cpp)
   target_include_directories(ddt_launcher_logic PUBLIC native/launcher "${_ddt_generated}")
-  target_link_libraries(ddt_launcher_logic PUBLIC mgs_coop_core)
+  target_link_libraries(ddt_launcher_logic PUBLIC ddt_core mgs_coop_core)
   target_compile_options(ddt_launcher_logic PRIVATE /W4 /WX /utf-8)
 
   add_executable(ddt_launcher WIN32

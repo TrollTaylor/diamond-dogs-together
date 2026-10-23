@@ -20,4 +20,9 @@ CodeCheck CheckJoinCode(const std::string& text, std::uint64_t own_steam_id);
 // The canonical code for a secret and host, "" when either is invalid.
 std::string FormatJoinCode(const std::string& secret20, std::uint64_t host_steam_id);
 
+// The same tolerant parse as CheckJoinCode (wp/launcher-core uses it to
+// switch a session on): true with the canonical 20-character secret and the
+// host's SteamID64 for a valid MGS2 code. Never logs anything.
+bool ParseJoinCode(const std::string& text, std::string& secret_out, std::uint64_t& host_out);
+
 }  // namespace ddt
