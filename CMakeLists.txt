@@ -1202,6 +1202,7 @@ if(WIN32)
   endif()
 endif()
 include(cmake/lua_checks.cmake)
+include(cmake/launcher_gui.cmake)
 
 if(WIN32)
   foreach(_mgs_standing_mode IN ITEMS off on)
