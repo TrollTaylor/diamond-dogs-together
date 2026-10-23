@@ -301,7 +301,7 @@ with the plan's section 2.7 spellings (`tests/fixtures/partner-lab`).
 ## Earlier options (background)
 
 The alternatives were analysed in
-[analysis-2026-10-03/synthesis.md](analysis-2026-10-03/synthesis.md) §3:
+[analysis-2026-10-03/synthesis.md](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/analysis-2026-10-03/synthesis.md) §3:
 
 - Goldberg/gbe_fork in both folders, kept as a differential cross-check.
 - Sandboxie with a second licensed Steam account.

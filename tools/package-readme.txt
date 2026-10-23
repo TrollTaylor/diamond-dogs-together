@@ -1,7 +1,8 @@
 MGS Co-op 0.12.4 - native-session diagnostic development package
 
 This package retains the older native-session diagnostic workflow below. Use
-the friend package and Play-Coop.bat for the current two-player play workflow.
+Diamond Dogs Together (DiamondDogsTogether.exe, tools/package.ps1 -Friend) for the
+current two-player play workflow.
 It contains the current loader, corresponding source and license notices. The
 runtime archive must already be installed with the expected hash or supplied
 locally from your own licensed game. See RUNTIME-ARCHIVE.txt. The archive,

@@ -242,7 +242,7 @@ if readback.get(0x9D3119) != ('cmp', 'esi, dword ptr [r14 + 0x208]') or \
 # --- Lab readback guard (native PLAYERS receipt). GetPlayerType loads
 # P = *(root + 8), then [P+0x208], Q = [P+0x60] and [Q+0x40] with no null
 # check, so a call while P is null (before Mission.Start, at OnInitialize entry,
-# docs/host-readiness-timing.md) faults. The guard samples the same chain
+# archive/research-2026-10-23:docs/host-readiness-timing.md) faults. The guard samples the same chain
 # through ReadProcessMemory first and gates on these exact bytes.
 getter_rva, getter_bytes = 0xAEC8D0, pe.rva_read(0xAEC8D0, 8)
 decoded_getter = [(x.mnemonic, x.op_str) for x in a.disassembler.disasm(getter_bytes, IB + getter_rva)]
@@ -269,7 +269,7 @@ if any(m in ('test', 'je', 'jne') and r < 0x9D3127 and 'r14' in o for r, (m, o) 
     raise SystemExit('GetPlayerType gained a null check; re-evaluate the guard')
 get_player_type_bytes = pe.rva_read(0x9D30B0, 0x9D318B - 0x9D30B0)
 # Player object type: the vtable host_session_trial.cpp PlayerReadiness and
-# tools/inspect_player_system.py require live (slots 2 and 11 observed live).
+# archive/research-2026-10-23:tools/inspect_player_system.py (archived) require live (slots 2 and 11 observed live).
 player_table_rva = 0x2295490
 table_section = next(s for s in pe.sections if 0 <= player_table_rva - s['rva'] < s['virtual_size'])
 if table_section['characteristics'] & 0x80000000 or \

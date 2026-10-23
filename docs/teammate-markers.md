@@ -16,6 +16,6 @@ Provenance: `GetUiMarkerTypeFromSystemType2Hook` and `TppMarkerType.h`, DYNAMITE
 
 Compilation succeeded with `tools/build.ps1 -Configuration Release -BuildOnly`. No tests, Lua/source-transform execution, game/VM launches or installation changes occurred. Installed 0.10.5 remains unchanged. Neither a rendered teammate icon nor a connected guest, independent control or shared combat is verified. The existing session scope is lifecycle metadata, not an atomic engine-object lifetime guarantee.
 
-[Static mapping](evidence/teammate-marker-contract-2026-09-10.json), [prepared build](evidence/teammate-marker-prepared-2026-09-10.json).
+[Static mapping](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/teammate-marker-contract-2026-09-10.json), [prepared build](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/teammate-marker-prepared-2026-09-10.json).
 
 The continuing upstream audit also identified a climbing-state override and a path-result fallback. Their current-build identities and calling paths remain unresolved; no candidate-only hooks were installed for them. Pointer-capture hooks for equipment/emblems and supplementary marker networking remain separate work. Boss-specific and campaign synchronization continue to be deferred.

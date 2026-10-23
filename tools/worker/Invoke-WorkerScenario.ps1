@@ -1191,8 +1191,8 @@ function Invoke-ScenarioHandoffApply($Pending){
         if(!(Test-ScenarioSameMap $Pending.before.progress $current.progress) -or !(Test-ScenarioSameMap $Pending.before.settings $current.settings)){
             throw 'The guest save copy changed after applyhandoff checked it.'
         }
-        Import-Module (Join-Path $repo 'tools\friend\FriendCommon.psm1') -Force -DisableNameChecking
-        if(!(Get-Command Import-CoopProgressFiles -ErrorAction SilentlyContinue)){throw 'Import-CoopProgressFiles is not available in tools/friend/FriendCommon.psm1.'}
+        Import-Module (Join-Path $repo 'tools\dev\FriendCommon.psm1') -Force -DisableNameChecking
+        if(!(Get-Command Import-CoopProgressFiles -ErrorAction SilentlyContinue)){throw 'Import-CoopProgressFiles is not available in tools/dev/FriendCommon.psm1.'}
         $marker=@{Source='handoff';ExportedUtc=[string]$Pending.created_utc;Files=@($Pending.files)}
         $returned=@(Import-CoopProgressFiles -StageRoot $Pending.stage -SaveDir $Pending.save_dir -ReplacedRoot $Pending.replaced_root -Suffix '-before-handoff' -Marker $marker -Manifest @($Pending.files))
         $Pending.applied=$true

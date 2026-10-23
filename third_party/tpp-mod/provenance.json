@@ -2,11 +2,9 @@
   "repository": "https://github.com/alicealys/tpp-mod",
   "commit": "301bf797b7f8032941b21ed56a3570338de6ead4",
   "license": "GPLv3",
-  "incorporation": "Unmodified source references, excluded from native build",
+  "incorporation": "Unmodified source references, excluded from native build. The reference/ copies were removed on 2026-10-23 (tag archive/research-2026-10-23); LICENSE stays.",
   "installed_sha1_matches_upstream_readme": "4F643576C6F6ECF6C67A9AEF4D4F02285ADA43E3",
   "files_sha256": {
-    "LICENSE": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809",
-    "reference/symbols.hpp": "64d14299f397901aae93acc04b8489e6f99c31b8b1ac184bff8cf0dde54598cc",
-    "reference/session.cpp": "398cace7f5aa60db21f39d36b42c141d841a092f5bff27d94d84c5db42431c67"
+    "LICENSE": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809"
   }
 }

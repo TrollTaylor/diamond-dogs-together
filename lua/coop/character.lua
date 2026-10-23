@@ -1,16 +1,13 @@
 -- MGS co-op character selection (original). Spliced into the fingerprinted
--- TppMain.OnAllocate after the mission's MissionPrepare; the anchor proves `n`
--- is OnAllocate's mission-script table here. Uses the vanilla temporary player
--- type: MissionStartPlayerTypeSetting saves the own type in gvars and applies
--- it, and the next mission without an override restores it. A checkpoint
--- continue (title Continue, retry) runs TppVarInit.InitializeForContinue
--- instead, which reloads vars and applies a temporary type only when
--- sequence.ALWAYS_APPLY_TEMPORATY_PLAYER_PARTS_SETTING is set; this chunk sets
--- that flag for one allocation and restores it at the end of OnAllocate.
--- Receipts: MGS_COOP_CHARACTER_V1 (coop.ini character, fallback, readback),
--- _BYPASS_ON/_OFF_V1 (native Ocelot/Quiet reset bypass), _REPORT/_READBACK_V1
--- (log only), _PLAYERS_V1 (native guard before Player.GetPlayerType). Every
--- step is protected; failures leave the vanilla type.
+-- TppMain.OnAllocate after the mission's MissionPrepare (`n` is OnAllocate's
+-- mission-script table). Uses the vanilla temporary player type, which the
+-- next mission without an override restores. A checkpoint continue runs
+-- TppVarInit.InitializeForContinue, which applies it only with
+-- sequence.ALWAYS_APPLY_TEMPORATY_PLAYER_PARTS_SETTING: set here for one
+-- allocation (docs/characters.md). Receipts: MGS_COOP_CHARACTER_V1 (character,
+-- fallback, readback), _BYPASS_ON/_OFF_V1 (Ocelot/Quiet reset bypass),
+-- _REPORT/_READBACK_V1 (log only), _PLAYERS_V1 (guard before
+-- Player.GetPlayerType). Failures leave the vanilla type.
 do
     local coop = Tpp and type(Tpp.MgsCoop) == "table" and Tpp.MgsCoop
     local scripts = n
@@ -45,14 +42,26 @@ do
             loadstring("return 'MGS_COOP_CHARACTER_" .. kind .. "_V1' -- " .. string.sub(text, 1, 192))
         end
 
+        -- character=story: Quiet while she is a deployable buddy on Diamond Dogs'
+        -- team (the game's UnlockBuddyQuiet test, CanArrivalQuietInMB(true) and
+        -- CanSortieBuddyType), else Ocelot. q = Gather's x.quiet. -> name, reason.
+        function C.Story(q)
+            if type(q) ~= "table" then return "ocelot", "unreadable" end
+            if q.lost then return "ocelot", "departed" end
+            if q.dead then return "ocelot", "dead" end
+            if not q.obtained then return "ocelot", "not_recruited" end
+            if not q.sortie then return "ocelot", "not_deployable" end
+            return "quiet", "on_team"
+        end
+
         -- Pure decision. x = {character, fallback, mission, titleMode, storySnake,
-        -- existingTemp, subsistence, buddyQuiet}. result: skip | keep | apply.
+        -- existingTemp, subsistence, buddyQuiet, quiet}. result: skip | keep | apply.
         function C.Decide(x)
             local name = x.character
             if name == nil or name == "" or name == "default" then return {result = "skip", reason = "default"} end
             if name == "MGS_COOP_CHARACTER_V1" then return {result = "skip", reason = "native_unavailable"} end
             local d = {requested = tostring(name)}
-            if not NAMES[name] then d.result, d.reason = "skip", "unknown_character"; return d end
+            if not NAMES[name] and name ~= "story" then d.result, d.reason = "skip", "unknown_character"; return d end
             if x.titleMode then d.result, d.reason = "skip", "title_mode"; return d end
             local class = math.floor((tonumber(x.mission) or 0) / 10000)
             if class ~= 1 and class ~= 3 then d.result, d.reason = "skip", "mission_class"; return d end
@@ -67,6 +76,10 @@ do
             end
             d.result, d.reason, d.applied = "apply", "override", name
             d.fallback = C.FALLBACKS[x.fallback] and x.fallback or "dd_male"
+            if name == "story" then
+                d.resolved, d.story = C.Story(x.quiet)
+                name, d.applied = d.resolved, d.resolved
+            end
             if name == "quiet" and (C.QUIET_CONFLICT[x.mission] or x.buddyQuiet) then
                 d.applied = d.fallback
                 d.reason = C.QUIET_CONFLICT[x.mission] and "quiet_conflict" or "buddy_quiet"
@@ -109,6 +122,14 @@ do
             x.subsistence = read(function() return TppMission.IsSubsistenceMission() end) == true
             x.buddyQuiet = read(function()
                 return type(BuddyType.QUIET) == "number" and vars.buddyType == BuddyType.QUIET end) == true
+            -- story only: CanArrivalQuietInMB's parts; sortie also counts the
+            -- mtbs_q99011 unlock TppMission.SetSortieBuddy applies later in OnAllocate.
+            x.quiet = character == "story" and read(function()
+                local S, Q, L = TppBuddyService, BuddyType.QUIET, BuddyCommonFlag.BUDDY_QUIET_LOST
+                if Q == nil or L == nil then return nil end
+                return {obtained = S.DidObtainBuddyType(Q), lost = S.CheckBuddyCommonFlag(L), dead = S.IsDeadBuddyType(Q),
+                    sortie = S.CanSortieBuddyType(Q) or TppQuest.IsCleard("mtbs_q99011")}
+            end)
             x.usingTemp = read(function() return gvars.ply_isUsingTempPlayerType end) == true
             x.realType = read(function()
                 if x.usingTemp then return gvars.ply_lastPlayerTypeUsingTemp end
@@ -140,11 +161,10 @@ do
             if type(mark) == "table" and type(mark.sequence) == "table" then mark.sequence[C.ALWAYS] = mark.previous end
         end
 
-        -- Runs from the hooked ForceChangePlayerFromOcelot at the end of the
-        -- same OnAllocate. Restores the continue flag; if no type setting ran
-        -- (unexpected path), applies the registered type the vanilla way now;
-        -- sets the DD face; reports vars; returns true to skip the Ocelot/Quiet
-        -- revert for this allocation only.
+        -- From the hooked ForceChangePlayerFromOcelot at the end of the same
+        -- OnAllocate: restores the flag, applies a registered type no type
+        -- setting applied (late=1), sets the DD face, reports; true skips the
+        -- Ocelot/Quiet revert for this allocation only.
         function C.Post(post)
             C.RestoreAlways()
             local late = "0"
@@ -197,6 +217,11 @@ do
             local x = C.Gather(character, fallback)
             local d = C.Decide(x)
             coop.characterStatus = d
+            if d.resolved then
+                local q, f = x.quiet, "na"
+                if q then f = (q.obtained and "o" or "-") .. (q.sortie and "s" or "-") .. (q.lost and "l" or "-") .. (q.dead and "d" or "-") end
+                C.Log("REPORT", "story;resolved=" .. d.resolved .. ";reason=" .. d.story .. ";mission=" .. tostring(x.mission) .. ";flags=" .. f)
+            end
             if d.reason == "default" or d.reason == "native_unavailable" then return d end
             poll.enabled = readback == true and (d.result == "apply" or d.result == "keep")
             if d.bypass and receipt("return 'MGS_COOP_CHARACTER_BYPASS_ON_V1'") ~= true then
@@ -219,9 +244,8 @@ do
                     -- then runs the vanilla restore as well.
                     if x.usingTemp then d.always = C.SetAlways(sequence) end
                 end
-                -- Armed for every apply decision so each writes its allocated
-                -- line. A kept sortie never bypasses (Plan always returns a
-                -- Quiet/Ocelot temp), so Post returns false: vanilla revert.
+                -- Armed for every apply (each writes its allocated line); a kept
+                -- sortie never bypasses, so Post returns false: vanilla revert.
                 post.skip, post.mission, post.start = d.bypass == true, x.mission, x.start
                 post.armed = true
                 C.InstallPostHook()

@@ -1,4 +1,4 @@
-# Character selection (docs/characters.md, docs/characters-integration.md).
+# Character selection (docs/characters.md; the original integration notes: archive/research-2026-10-23:docs/characters-integration.md).
 # Included right after enable_testing() in the top-level CMakeLists.txt. The
 # target part is deferred (cmake_language(DEFER)) to the end of that file, so
 # it runs after every target exists: mgs_coop_core, the WIN32 probe block
@@ -51,7 +51,7 @@ function(mgs_characters_deferred)
 
   if(TARGET mgs_bootstrap_patch)
     # generated/character_source.hpp for the TppMain splice. Nothing includes it
-    # until the bootstrap_patch.cpp integration (docs/characters-integration.md).
+    # until the bootstrap_patch.cpp integration (archive/research-2026-10-23:docs/characters-integration.md).
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS lua/coop/character.lua lua/coop/character_readback.lua)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/character.lua" MGS_CHARACTER_SOURCE)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/character_readback.lua" MGS_CHARACTER_READBACK_SOURCE)
@@ -80,6 +80,8 @@ function(mgs_characters_deferred)
     set(_mgs_character_player "")
     set(_mgs_character_main "")
     set(_mgs_character_varinit "")
+    set(_mgs_character_story "")
+    set(_mgs_character_mission "")
     set(_mgs_character_roots "${CMAKE_CURRENT_SOURCE_DIR}/build")
     if(MGS_GAME_LUA_DIR)
       list(PREPEND _mgs_character_roots "${MGS_GAME_LUA_DIR}")
@@ -90,11 +92,17 @@ function(mgs_characters_deferred)
     set(_mgs_character_player_hash "7407bd41dd82913edfe9ef7fbb344f443adc7399d42f86c7798ba6b02c94e5b9")
     set(_mgs_character_main_hash "6542d997c3f29742ff7ea0587f7f307794586a9b7a8ee3114b58e79e7f0b6103")
     set(_mgs_character_varinit_hash "cebb1fc45e992e479dcbf1c6b7f0fe391142fa07a4a696bd429ecab92dd9eecf")
+    # character=story: TppStory.lua (Quiet's buddy functions) and TppMission.lua (SetSortieBuddy).
+    set(_mgs_character_story_hash "ac86be1ad896474229c9f7efcf4ffc6b597b760a503fc1882a6fc56b5e8b5728")
+    set(_mgs_character_mission_hash "e99e6addd4c5135fb2d77ab58632d5e349a626eb7f10ea38301372d127f7404a")
     foreach(_mgs_character_dir IN LISTS _mgs_character_roots)
       foreach(_mgs_character_pick IN ITEMS
           "player|startup-script-inspection-20260909/package-01.lua" "player|character-game-lua-20261003/package-01.lua"
           "main|player-allocation-lifecycle-20260909/package-00.lua" "main|character-game-lua-20261003/package-02.lua"
-          "varinit|character-game-lua-20261003/package-00.lua")
+          "varinit|character-game-lua-20261003/package-00.lua"
+          "story|character-story-lua-20261023/package-00.lua"
+          "mission|startup-script-inspection-20260909/package-02.lua" "mission|respawn-scripts-20260910/package-00.lua"
+          "mission|character-game-lua-20261003/package-03.lua")
         string(REPLACE "|" ";" _mgs_character_pair "${_mgs_character_pick}")
         list(GET _mgs_character_pair 0 _mgs_character_kind)
         list(GET _mgs_character_pair 1 _mgs_character_rel)
@@ -107,6 +115,14 @@ function(mgs_characters_deferred)
         endif()
       endforeach()
     endforeach()
+    if(_mgs_character_story AND _mgs_character_mission)
+      # The game's own Quiet functions drive the story resolution (docs/characters.md).
+      add_test(NAME character_story_lua_check COMMAND ${_mgs_character_lua} ${_mgs_character_args}
+        "--story=${_mgs_character_story}" "--mission=${_mgs_character_mission}")
+      set_tests_properties(character_story_lua_check PROPERTIES PASS_REGULAR_EXPRESSION "real TppStory/TppMission Quiet life cycle")
+    else()
+      message(STATUS "Character checks: extracted TppStory.lua/TppMission.lua not found; character_story_lua_check skipped")
+    endif()
     if(_mgs_character_player AND _mgs_character_main)
       set(_mgs_character_game_args "${_mgs_character_player}" "${_mgs_character_main}")
       if(_mgs_character_varinit)

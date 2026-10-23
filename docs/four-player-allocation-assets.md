@@ -6,7 +6,7 @@ The subsequent [runtime asset bundle](player-runtime-bundle.md) combines these a
 
 ## What the installed game contains
 
-The read-only [archive inspector](../tools/archive_probe/README.md) found the exact `two_players_game_obj.fpk` and `.fpkd` paths in `master/chunk0.dat`. The FPK contains only a reference to `resident00.fpk`; its companion FPKD contains one FOX2 with a `GameObject` of type `TppPlayer2`. Both `totalCount` and `realizedCount` are **2**. [Extracted-package inventory](evidence/four-player-assets-2026-09-09/source-inventory.json).
+The read-only [archive inspector](../tools/archive_probe/README.md) found the exact `two_players_game_obj.fpk` and `.fpkd` paths in `master/chunk0.dat`. The FPK contains only a reference to `resident00.fpk`; its companion FPKD contains one FOX2 with a `GameObject` of type `TppPlayer2`. Both `totalCount` and `realizedCount` are **2**. [Extracted-package inventory](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/four-player-assets-2026-09-09/source-inventory.json).
 
 This resolves a concrete missing layer in the earlier plan: increasing Dynamite's controller parts arrays alone would still select a game-object package configured for two instances. Other archives/mounted overrides and actual runtime package selection remain unverified.
 
@@ -26,7 +26,7 @@ Derived controller source is attributed to Dynamite commit `c90f252f8200765f66c0
 
 ## Verification and reproduction
 
-The pinned local datfpk converter compiled both FOX2 files. Re-reading them preserved every parsed XML node, attribute and value: 65 nodes for the game object and 58 for the controller. Each compiled FOX2 was packed into FPKD, extracted, and matched byte-for-byte. The paired FPK reference lists matched the intended definitions. [Verification and hashes](evidence/four-player-assets-2026-09-09/verification.json), [change manifest](evidence/four-player-assets-2026-09-09/stage.json).
+The pinned local datfpk converter compiled both FOX2 files. Re-reading them preserved every parsed XML node, attribute and value: 65 nodes for the game object and 58 for the controller. Each compiled FOX2 was packed into FPKD, extracted, and matched byte-for-byte. The paired FPK reference lists matched the intended definitions. [Verification and hashes](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/four-player-assets-2026-09-09/verification.json), [change manifest](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/four-player-assets-2026-09-09/stage.json).
 
 ```powershell
 # Use a fresh output directory for each experiment.

@@ -4,7 +4,7 @@ Build **0.10.29** extends the 0.10.28 handoff fix to cleanup ownership and the o
 
 ## Evidence and defects
 
-The user's recorded September 11 launch allocated title mission 1, then logged `OnTerminate:40050` before allocating 40050. That scene later logged `OnTerminate:30050` before allocating 30050. Thus the traced live mission variable already identified the destination while the previous scene's termination callback ran. [Existing-log excerpt](evidence/user-launch-thread-excerpt-2026-09-12.log).
+The user's recorded September 11 launch allocated title mission 1, then logged `OnTerminate:40050` before allocating 40050. That scene later logged `OnTerminate:30050` before allocating 30050. Thus the traced live mission variable already identified the destination while the previous scene's termination callback ran. [Existing-log excerpt](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/user-launch-thread-excerpt-2026-09-12.log).
 
 The old Lua cleanup predicate, native owned-close gate and full-close activation gate all required the live mission ID to equal 30050. On a transition away from Mother Base, that could skip the owned session close. The excerpt does not contain a Mother Base-to-title close with an active host, so that failure is a source-derived risk, not a recorded shutdown result.
 
@@ -24,4 +24,4 @@ The inspected executable remains MGSV 1.0.15.4 AMD64, SHA-256 `085C2F82D1C963C40
 
 `tools/build.ps1 -Configuration Release -BuildOnly` compiled and linked the new loader. No tests, Lua/source-transform execution, installation, role change or game launch was performed. A refused handoff, changed native context or failed restoration still needs investigation; asynchronous close completion and guest gameplay are not established by a returned call. The next gameplay check remains Mother Base host startup, admission, return to title and normal shutdown, followed separately by a real guest connection/control check.
 
-[Prepared build record](evidence/outgoing-scene-prepared-2026-09-12.json).
+[Prepared build record](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/outgoing-scene-prepared-2026-09-12.json).

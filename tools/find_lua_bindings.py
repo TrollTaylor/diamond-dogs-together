@@ -294,7 +294,7 @@ def scan(data: bytes) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game-exe", type=Path, default=DEFAULT_GAME_DIR / "mgsvtpp.exe")
-    parser.add_argument("--output", type=Path, default=Path("docs/native-binding-candidates.json"))
+    parser.add_argument("--output", type=Path, default=Path("build/analysis/native-binding-candidates.json"))
     args = parser.parse_args()
     game_exe, output = args.game_exe.resolve(), args.output.resolve()
     if game_exe == output:

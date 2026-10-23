@@ -1,2 +1,0 @@
-15 exact-source checks; 400 concurrent selections; no game calls
-41 actual-module checks: original pre-start order, exact mission/gates, true-only online transition, failed/unhandled request; no game calls

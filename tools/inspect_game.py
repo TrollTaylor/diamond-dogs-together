@@ -316,7 +316,7 @@ def inspect(path: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game-dir", type=Path, default=DEFAULT_GAME_DIR)
-    parser.add_argument("--output", type=Path, default=Path("docs/installed-build.json"))
+    parser.add_argument("--output", type=Path, default=Path("build/analysis/installed-build.json"))
     args = parser.parse_args()
     game_dir = args.game_dir.resolve()
     output = args.output.resolve()

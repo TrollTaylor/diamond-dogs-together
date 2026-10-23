@@ -15,7 +15,7 @@ PC. That DLL's checkpoint copying and injected shared death also have live
 receipts. Native host menu Continue reloads both copies and eventually
 restores W1 once the host area becomes readable. The same run verifies
 host-only Africa travel, alignment and independently moving field bodies.
-See [recorded live results](testing-2026-10-05-world-sync.md). Automated
+See [recorded live results](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/testing-2026-10-05-world-sync.md). Automated
 fixtures do not establish additional live acceptance. Script citations refer
 to the extracted 1.0.15.4 scripts (`lib/...`, `mission/...`).
 
@@ -670,7 +670,7 @@ The current build adds mandatory seed 28,
 and fresh-helicopter-entry cases. The previously killed soldier's
 post-Continue readback remains unverified. These are separate build-specific
 results on two copies on one PC; two-PC and full campaign play are untested.
-[Results](testing-2026-10-05-world-sync.md).
+[Results](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/testing-2026-10-05-world-sync.md).
 
 Logs: `<host|guest dir>\mgs-coop\script-observer.log`; Lua lines appear as
 `world_lua=event=...` with `;` expanded to `; ` (below written as in Lua).

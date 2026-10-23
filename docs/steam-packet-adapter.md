@@ -6,7 +6,7 @@ Source: [public contracts](../native/include/mgscoop/steam_packets.hpp), [implem
 
 ## Independently checked boundary
 
-The inspected `steam_api64.dll` is 211,368 bytes, AMD64, SHA-256 `08bd0152356e5619ee56a6714ac951b6800dbb21821693a4efaf85278442c60a`. The original [static checker](../tools/inspect_steam_packet_abi.py) verifies the whole fingerprint, export identities, and complete small wrapper bytes without loading the DLL. [Recorded result](evidence/steam-packet-abi-2026-09-09.json).
+The inspected `steam_api64.dll` is 211,368 bytes, AMD64, SHA-256 `08bd0152356e5619ee56a6714ac951b6800dbb21821693a4efaf85278442c60a`. The original [static checker](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/tools/inspect_steam_packet_abi.py) verifies the whole fingerprint, export identities, and complete small wrapper bytes without loading the DLL. [Recorded result](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/steam-packet-abi-2026-09-09.json).
 
 | Export suffix after `SteamAPI_ISteamNetworking_` | RVA | Independently decoded wrapper |
 | --- | --- | --- |
@@ -44,8 +44,8 @@ Successful reads return `ReceivedUnadmitted`: raw bytes and the SDK-reported sen
 
 ## Verification and remaining work
 
-All **12 CTest suites passed** after fixing the test fixture's exception warning; the new target builds with warnings treated as errors. [Build result](evidence/native-tests-with-steam-packets-2026-09-09.log), [individual results](evidence/native-test-details-with-steam-packets-2026-09-09.log).
+All **12 CTest suites passed** after fixing the test fixture's exception warning; the new target builds with warnings treated as errors. [Build result](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/native-tests-with-steam-packets-2026-09-09.log), [individual results](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/native-test-details-with-steam-packets-2026-09-09.log).
 
-The 124 packet checks cover gated zero-call behavior, missing exports, stale recipient handles, 64-bit identities, delivery modes, maximum-size bytes, empty/failed/inconsistent reads, oversized heads, unrelated-channel preservation and a bounded three-guest input path into the actual portable coordinator. That path uses fake exports and explicit fixture admission, not real accounts or network connections. The static checker also [refused an unrelated fixture DLL](evidence/steam-packet-abi-rejection-2026-09-09.json).
+The 124 packet checks cover gated zero-call behavior, missing exports, stale recipient handles, 64-bit identities, delivery modes, maximum-size bytes, empty/failed/inconsistent reads, oversized heads, unrelated-channel preservation and a bounded three-guest input path into the actual portable coordinator. That path uses fake exports and explicit fixture admission, not real accounts or network connections. The static checker also [refused an unrelated fixture DLL](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/steam-packet-abi-rejection-2026-09-09.json).
 
 Next live requirements are unchanged: observe successful natural Steam startup and its lifecycle ownership, obtain the compatible interface under a verified lifetime, prove non-conflicting channel and callback ownership, establish authenticated admission/replay protection, and exchange data between two legitimate installations. Creating and synchronizing additional campaign actors remains separate required engine work. None of these checks establishes playable co-op or campaign support.

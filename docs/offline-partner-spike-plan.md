@@ -6,7 +6,7 @@ Evidence labels used below:
 - **[L]**: seen in an earlier live log.
 - **[S]**: speculation, to be settled live.
 
-Nothing was edited or launched. My scratch scripts are in `C:/Users/taylo/AppData/Local/Temp/claude/D--Games-steamapps-common-MGS-TPP/e7a6e70e-f530-4f59-b4a3-60e868204a66/scratchpad/p2/`.
+Nothing was edited or launched. My scratch scripts were in that session's scratchpad (`p2/`), which is not kept.
 
 ## 0. Decision summary
 
@@ -220,7 +220,7 @@ Every receipt has name == buffer, checked bytewise as in `character_receipt.cpp`
 5. New `native/partner_player_contract.hpp` (hand-written, or `tools/generate_partner_contract.py` following the player_type pattern):
    - RVAs: player slot 0x2A82C30; P vtable 0x2295490 with slot +0x1B0 == 0x9CEAE0; Q vtable 0x23AD970; policy vtable 0x23CA158.
    - Offsets: flags 0x204, count 0x208, realized count 0x20C, local 0x214, Q 0x60, ids 0x70, pool 0x78, parts 0x90, realizer 0xA0, sync 0xA8, realized bitset 0x380; Q: 0x170, 0x180, 0x194, 0x198, S at 0x1E8; S: exists 0, local 8, pos 0x20.
-   - Record bank: bank at 0x2BD3FD0, records at 0x2BD3FF0, stride 0xE0, position at +0x10, status at +0xC0 (`docs/player-update-investigation.md:24-35`).
+   - Record bank: bank at 0x2BD3FD0, records at 0x2BD3FF0, stride 0xE0, position at +0x10, status at +0xC0 (`archive/research-2026-10-23:docs/player-update-investigation.md`, lines 24-35).
    - Globals: 0x2C1B0F0 and 0x2C1B0F8.
    - 16-byte fingerprints [V]:
 
@@ -572,7 +572,7 @@ All lines go to `mgs-coop/script-observer.log`.
   - the game shows a connection-failure or offline notice, then reaches the title (Enter presses as in `autoTitleScanCodes`);
   - there is no long hang or retry loop;
   - the Mother Base free-roam load (30050) works.
-- **Precedent [L]:** the 2026-10-03 run with a version-mismatched fuse also ended up offline and reached Mother Base (`docs/testing-2026-10-03.md`).
+- **Precedent [L]:** the 2026-10-03 run with a version-mismatched fuse also ended up offline and reached Mother Base (`archive/research-2026-10-23:docs/testing-2026-10-03.md`).
 - **If the dead port hangs:** that fuse configuration is a known-good fallback, but using it is the user's call.
 
 ## 5. Risks and unknowns, and which experiment settles each

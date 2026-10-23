@@ -1,9 +1,0 @@
-{
-  "stage": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\riding\\camera-selected-filter-v6",
-  "manifest_sha256": "ce8daa7cf00a4dab1c5652e545d5668714bb5497c876e562bb42bbdc9c570833",
-  "integrated_narrow_diff": true,
-  "check_receipt": "build/worker-runs/20261012-040307-9abe2a9807de4cf0ba26a00b9772e807/receipt.json",
-  "audited_checks": 169,
-  "root_correction": null,
-  "activation": "Private worker explicit opt-in only; excluded from installed normal0.12.4 package."
-}

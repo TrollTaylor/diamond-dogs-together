@@ -5,8 +5,8 @@ param([string]$IniCheck)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-Import-Module (Join-Path $repo 'tools\friend\FriendCommon.psm1') -Force -DisableNameChecking
-Import-Module (Join-Path $repo 'tools\friend\LocalCoopSession.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $repo 'tools\dev\FriendCommon.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $repo 'tools\dev\LocalCoopSession.psm1') -Force -DisableNameChecking
 $module = Get-Module LocalCoopSession
 $fixture = Join-Path (Join-Path $repo 'build') ('local-coop-session-tests-' + [Guid]::NewGuid().ToString('N'))
 $token = [Guid]::NewGuid().ToString('N')

@@ -94,6 +94,11 @@ void Queries() {
     Check(Query(Coop("character=quiet\ncharacter_fallback=quiet\n"), false) == "return 'quiet','dd_male',false",
           "invalid fallback keeps the default");
     Check(Query(Coop("character=wolf\n"), false) == "return '','dd_male',false", "unknown character ignored");
+    Check(Query(Coop("character=story\n"), false) == "return 'story','dd_male',false", "story with default fallback");
+    Check(Query(Coop("character=story\ncharacter_fallback=dd_female\n"), true) == "return 'story','dd_female',true",
+          "story with female fallback and lab readback");
+    Check(Query(Coop("character=dd_male\ncharacter_fallback=story\n"), false) == "return 'dd_male','dd_male',false",
+          "story is never a fallback");
 
     const auto config = Coop("character=quiet\ncharacter_fallback=dd_female\n");
     const std::string expected = "return 'quiet','dd_female',true";
@@ -108,6 +113,7 @@ void Queries() {
 void Bypass() {
     Check(NeedsResetBypass(Coop("character=quiet\n")), "quiet needs bypass");
     Check(NeedsResetBypass(Coop("character=ocelot\n")), "ocelot needs bypass");
+    Check(NeedsResetBypass(Coop("character=story\n")), "story (Quiet or Ocelot) may need the bypass");
     for (const char* text : {"", "character=default\n", "character=snake\n", "character=dd_male\n",
                              "character=dd_female\n", "character=avatar\n", "character=liquid\n"})
         Check(!NeedsResetBypass(Coop(text)), "other characters never need bypass");

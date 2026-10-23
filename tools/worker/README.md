@@ -301,7 +301,7 @@ Steps:
   It also records the copy's hashes. The supervisor holds `run\guest-saves` and
   its `287700\local` and `remote` folders without delete sharing until it exits,
   so the import runs after Stop has closed the session. It calls
-  `Import-CoopProgressFiles` (`tools/friend/FriendCommon.psm1`) with
+  `Import-CoopProgressFiles` (`tools/dev/FriendCommon.psm1`) with
   `-SaveDir run\guest-saves`, `-ReplacedRoot run\guest-saves-replaced`,
   `-Suffix -before-handoff` and the `handoff` marker. `scenario.json`
   `HandoffApply` then holds the before and after hashes, the aside folder and
