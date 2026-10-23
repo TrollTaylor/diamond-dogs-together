@@ -44,6 +44,13 @@ struct QualityIn {
     std::uint32_t age_ms;
 };
 void Reset(Quality& quality) noexcept;
+// A new arrival window after the receiver did not observe the link for a while
+// on purpose (a seat episode or a ride hide owned body 1): the next newest
+// frame only anchors (no gap sample), the window and its percentiles restart;
+// the good state with its start (good_since_ms) and the mission totals (gaps_*,
+// max_gap_ms, samples) stay, so a link that was good before the ride needs no
+// fresh quality_ms hold after it (Observe still turns it bad on a late frame).
+void Rebase(Quality& quality) noexcept;
 void Observe(Quality& quality, const QualityIn& in, const QualityParams& params = QualityParams{}) noexcept;
 // How long the quality has been continuously good (0 while bad).
 std::uint32_t GoodMs(const Quality& quality, std::uint64_t now_ms) noexcept;

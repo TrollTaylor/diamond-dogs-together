@@ -82,6 +82,11 @@ SITES = [
     (0x121B614, '488b7060', 'policy: Q = P+0x60'),
     (0x121B8FF, '41385d10', 'policy: relax byte this+0x10 (area rectangle)'),
     (0x121B933, '41385d10', 'policy: relax byte this+0x10 (area callback)'),
+    # 0.13.6 online ride: the realize test reads the SLOT (*(S+0x20))[i] (x at +0, z at +8), never the
+    # body or the record, so the seated rider keeps body 1's slot with its body (kSeatSlotFollowMm).
+    (0x121B8B7, '48c1e7040f57c949037920f30f104708f30f105704f30f101f',
+     'policy: rdi = *(S+0x20) + i*16 (the slot); z = [rdi+8], y = [rdi+4], x = [rdi]'),
+    (0x121B920, '488b01410f95c144894c2420ff5020', 'policy: area vt+0x20((int)slot x, (int)slot z) (the loaded-area test)'),
     (0x121B5B5, '884830', 'policy factory zeroes the relax byte (object+0x30)'),
     (0x121B5C2, '488d0defeb1a0148894820', 'policy factory stores final interface vtable 0x23CA1B8 at object+0x20'),
     (0x121B4B0, '488d05a1ec1a0148894120', 'policy destructor writes the base vtable 0x23CA158 back (base = mid-destruction: refused)'),
@@ -223,6 +228,10 @@ SITES = [
     (0x1197D0E, '488d0593812201488901', 'DM primary vtable'), (0x1197D23, '488d05d6812201488941', 'DM iface vtable'),
     (0x9BCC3C, '498984c9b8030000', 'blk+0x3B8[idx] interfaces'), (0x9D2650, '488d05c9982402c3', 'g = 0x2C1BF20'),
     (0x9BA9BA, 'e8917c010048894668', 'P+0x48 = g'), (0x9DAC99, '800d0816240204', 'Play: g+0x388 |= 4'),
+    # 0.13.6 online ride: Stop and GoNext are global request bits that only DM End (0x11992FB) clears;
+    # a stop sent to an unrealized body 1 is never consumed (partner_player::ClearDmBits).
+    (0x9DB4C0, '800de10d24020833c0c3', 'RequestToStopDirectMotion: g+0x388 |= 8; return 0'),
+    (0x9D8F20, '800d813324021033c0c3', 'RequestToGoNextDirectMotion: g+0x388 |= 0x10; return 0'),
     # Snake-load fix (round 3 part L).
     (0x9B4368, '488dbbf0000000', 'rdi = desc+0xF0'), (0x9B442D, '4b89bce500110000', 'M+0x1100[slot] = desc+0xF0'),
     (0x9B42C1, '3883f0000000', 'descriptor look compare starts at desc+0xF0 (type)'),

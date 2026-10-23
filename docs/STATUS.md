@@ -69,6 +69,64 @@ run yet (the runtime checks below are for the hidden-run phase).
 - **Workaround for 0.13.5 until this ships:** after any guest relaunch, both players quit; the host starts, then the
   friend joins (restarting only the host is not enough).
 
+### online-ride-robust
+
+Branch `wp/online-ride-robust` from `dev/oct7-continue` `cc973a8`. Shared vehicle rides (diag-other #1, #2, #9; details
+in docs/anim-round1-seat.md "0.13.6: long rides, a missing vehicle, temporary refusals"). Bug fixes, on by default, no
+new key; unit-tested only (no game launch in this phase).
+- **The partner no longer vanishes ~340 m into a shared ride.** Read-only RE: the realize policy `0x121B5E0` tests
+  body 1's slot `(*(S+0x20))[1]` (`0x14121B8B7` `shl rdi,4` / `0x14121B8BE` `add rdi,[r9+0x20]`, `0x14121B8C2` /
+  `0x14121B8CC` the z / x loads, `0x14121B92C` the area test), not the body or the record; the seated DM moved only the
+  body. While seated the slot now follows the body (at most 1 Hz, past 25 m of drift: `partner_ride_seat=slot_follow`,
+  the exit line's `follows=N`).
+- **Recovery if it happens anyway:** no stop is sent to an unrealized body (`exit; ...; reason=unrealized; via=gone`),
+  so `g+0x388` bit 8 (`RequestToStopDirectMotion` `0x9DB4C0`, cleared only by DM End) no longer sticks for minutes;
+  after an `exit_timeout` or a gone body our own stale request bits are cleared (`partner_player::ClearDmBits`: request
+  byte 0 == 1, Stop / GoNext only without the viewer's own DM; `partner_ride_seat=stale_cleared`).
+- **Temporary refusals (`pending`, `dm_read`, `release`, `host_dm`) are retried instead of latching a hide** for the
+  rest of the ride: the refused episode settles and the body re-seats through the re-show flow. A request of ours still
+  pending while nothing plays on either body is cleared by the arm (after 1 s; `stale_cleared; ...; when=arm`). The
+  same (vehicle, seat) refused 3 times in a row without a confirmed seat (`kSeatTransientTries`) latches as in 0.13.5
+  (`partner_ride_seat=retries; ...; tries=3; latch=1`), so a refusal that lasts the whole ride (a `dm_read` failure)
+  hides once instead of blinking body 1 every 3-4 s.
+- **A vehicle the viewer's copy lacks (Fultoned there) or has unrealized no longer hides its driver** (Mother Base, seat
+  by id `local_read` / `unrealized`, at the start or at the id write): the new `SeatPhase::fallback` keeps body 1
+  realized and Warps it to the remote's streamed pose every tick (`partner_ride_seat=fallback; ...; show=warp`), re-checks
+  every 2 s and, once the vehicle exists here, ends at once and seats it (`fallback_end; next=release`). Only for a
+  missing vehicle: a vehicle this copy has (a `pending` / `host_dm` arm, perhaps the jeep the viewer drives) is never
+  Warped into, and the Warp never runs while the viewer occupies that vehicle id here.
+- **Known limit (tracked):** in that fallback the per-tick Warp holds body 1's last standing pose, so the partner is
+  drawn standing, floating at the seat height, until the vehicle exists again or the ride ends. A seated or crouch idle
+  needs a DM clip, which a per-tick Warp ends; a slot-placed variant with a clip is unproven and left for later. The
+  vehicle itself is still not synced (the `VEHICLE_GONE` world op is a separate branch).
+- **Known limit (tracked): free roam is not covered by the fallback.** In 30010 / 30020 the seat plays on the vehicle's
+  authored locator name (the proven named path), and the by-id gate's `local_read` / `unrealized` there is only logged
+  (`byid; ...; offer=0; reason=local_read`): a vehicle Fultoned on the viewer's copy only (Lua's `vehicleName` still
+  resolves its locator) most likely ends in `far` / `unconfirmed` / `lua_refused` and hides the driver as in 0.13.5.
+  Not switched to the fallback because `local_read` also covers any by-id read-chain refusal, which would replace a
+  working named seat by a standing Warp; no free-roam log of the case exists yet. Left to the `VEHICLE_GONE` branch.
+- **Shorter clip fallback after every ride:** a seat settle or the end of a ride hide restarts the native link-quality
+  window (`partner_native_net::Rebase`): the ride is no longer one arrival gap, and the good state is kept, so a link
+  that was good before the ride needs no fresh 2 s quality hold. Native comes back after the 2 s settle alone (the
+  driver test: 2.1 s after the settle, against 6.1 s in 0.13.5 and 4.1 s with a rebase that restarted the good state;
+  the logs showed 6 s: `net_quality` ~2 s, then `good_ms=4004`). A late first frame after the ride still restarts it.
+  A leave the link itself caused is not rebased (a seat exit for `lease` / `ride_stale`, a ride hide whose reason was
+  `ride_stale`): that gap is real and the 2 s quality hold applies after it, as in 0.13.5.
+- Review fixes (second round): the fallback is limited to the vehicle-absent reasons (it also ran after a `pending` /
+  `host_dm` arm refusal and Warped body 1 into a vehicle that exists here every tick); `Rebase` keeps `good` /
+  `good_since_ms`, and a link-caused leave is not rebased; the transient retry cap; `coop-vehicle-longride.txt` clears
+  enemies with radius 100 (200 is refused as `radius_args`) and checks "still seated at the end" on the exit line
+  (`confirmed=1; ...; follows=[1-9][0-9]`; the seated status waitlog matched from the boarding); the free-roam limit is
+  stated; the realize-policy citation names `0x14121B8BE` for the `add`.
+- Contract: 4 new read-only pins (747 code sites / 193 vtable slots; `--check` passes). Tests: `partner_driver_tests`
+  `TestRideRobust` (vanish and re-seat; exit_timeout clear; pending / host_dm retried without a fallback or a Warp, the
+  third refusal latching, ours cleared by the arm; dm_read for a whole ride; the Fultoned jeep's fallback and re-seat;
+  the viewer-in Warp guard; a Mother Base target refusal not latched; slot follow; the rebase; a lease exit and its
+  `ride_stale` hide keep the gap while a heli hide's end rebases; native back within the settle against a control),
+  `partner_player_tests` ClearDmBits, `partner_native_tests` Rebase (good state kept, a late
+  first frame). Each new block fails on 0.13.5, on the first round of this branch, or without the line it covers.
+  Hidden repro for the next phase: `tools/worker/scenarios/coop-vehicle-longride.txt` (lab and `-Mode play -WanSim bad`).
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

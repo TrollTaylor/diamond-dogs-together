@@ -1104,6 +1104,35 @@ void TestOnline() {
             pnn::Observe(j, pnn::QualityIn{now, true, true, static_cast<std::uint32_t>(i + 1), 0});
         }
         Check(!j.good && j.p95_ms >= 120, "p95 >= 120 ms is bad");
+        // 0.13.6 (the 2026-10-22 rides): an 85 s seat episode the observer did not see. Without a
+        // rebase the first frame after it is one 85 s gap (bad for the 2 s window: ~4 s of clips).
+        const auto ride = [](bool rebase, std::uint32_t first_age = 3) {
+            pnn::Quality r{};
+            std::uint64_t t = 1000;
+            std::uint32_t n = 1;
+            for (int i = 0; i < 200; ++i, t += 16) pnn::Observe(r, pnn::QualityIn{t, true, true, n++, 3});
+            const std::uint32_t samples = r.samples;
+            t += 85650;
+            n += 5000;
+            if (rebase) pnn::Rebase(r);
+            pnn::Observe(r, pnn::QualityIn{t, true, true, n++, first_age});
+            const bool first_good = r.good;
+            const std::uint32_t first_good_ms = pnn::GoodMs(r, t);
+            for (int i = 0; i < 10; ++i) { t += 16; pnn::Observe(r, pnn::QualityIn{t, true, true, n++, 3}); }
+            struct Out { bool first_good, good; std::uint32_t first_good_ms, good_ms, gaps_1000, max_gap, p50, samples_before, samples; } o{
+                first_good, r.good, first_good_ms, pnn::GoodMs(r, t), r.gaps_1000, r.max_gap_ms, r.p50_ms, samples, r.samples};
+            return o;
+        };
+        const auto plain = ride(false), rebased = ride(true), late = ride(true, 400);
+        Check(!plain.first_good && plain.gaps_1000 == 1 && plain.max_gap >= 85000, "control: the unseen ride counts as one gap");
+        Check(rebased.first_good && rebased.good && rebased.gaps_1000 == 0 && rebased.max_gap < 100 && rebased.p50 <= 17,
+              "Rebase: the first frame after the ride only anchors; the window stays good");
+        Check(rebased.samples == rebased.samples_before + 10, "Rebase keeps the mission totals (no gap sample for the anchor)");
+        // A link good before the ride stays good through it: no fresh quality_ms (2 s) hold after every ride
+        // (the arbiter's net_quality gate passes at once; only its 2 s settle remains).
+        Check(rebased.first_good_ms >= 2000 && rebased.good_ms >= 2000, "Rebase keeps the good state and its start");
+        Check(!late.first_good && late.first_good_ms == 0 && !late.good && late.good_ms == 0,
+              "a late first frame after the ride still turns it bad (the quality_ms hold applies again)");
     }
     // Reason codes and the native.net JSON.
     {

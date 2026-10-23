@@ -480,6 +480,20 @@ std::size_t FormatDmProbe(const DmState& dm, bool patched, char* out, std::size_
 // is cleared with one locked byte AND (restoration: allowed while
 // terminating). nullptr on success or when nothing of ours is pending.
 const char* ClearDmPending(const Addresses& addresses, bool terminating, bool& cleared) noexcept;
+// The DM request bits a seat episode may leave behind (0.13.6, the 2026-10-22
+// online ride): g+0x388 bit 4 (Play, 0x9DAC99), bit 8 (Stop, 0x9DB4C0
+// RequestToStopDirectMotion) and bit 0x10 (GoNext, 0x9D8F20). Only DM End
+// (0x11992FB, `and [g+0x388], 0xC3`) clears them, and it runs only for a body
+// whose DM ends: a stop sent to an unrealized body 1 stays set and refuses
+// every later seat (`pending`). Clears the bits of `mask` (4 | 8 | 0x10 only)
+// that are set, only when request byte 0 == 1 (the last Play named instance
+// 1: ours), and the global Stop / GoNext bits (8, 0x10) only while the
+// viewer's own DM is not running (q18[0] != 0x8B; it may be the viewer's own
+// request). One locked byte AND (restoration: allowed while terminating).
+// `cleared` holds the bits removed; nullptr on success or when nothing of
+// ours is pending. ClearDmPending is this with mask 4.
+inline constexpr std::uint8_t kDmBitPlay = 0x04, kDmBitStop = 0x08, kDmBitNext = 0x10;
+const char* ClearDmBits(const Addresses& addresses, bool terminating, std::uint8_t mask, std::uint8_t& cleared) noexcept;
 
 // Seat by id (WS3 B1, docs/vehicle-ws3.md; partner_ride_seat::PlanSeatTarget):
 // while the seat DM plays on body 1 (q18[1] == 0x8B, rec248 bit 4, a seated

@@ -1319,19 +1319,36 @@ bool AndByte(std::uintptr_t address, char mask) noexcept {
 }
 } // namespace
 
-const char* ClearDmPending(const Addresses& a, bool terminating, bool& cleared) noexcept {
+const char* ClearDmBits(const Addresses& a, bool terminating, std::uint8_t mask, std::uint8_t& cleared) noexcept {
     const Preserve preserve;
-    cleared = false;
+    cleared = 0;
+    mask = static_cast<std::uint8_t>(mask & (kDmBitPlay | kDmBitStop | kDmBitNext));
     State s{};
     if (const char* reason = Prepare(a, 1, terminating, WriteKind::restore, s)) return reason;
     std::uintptr_t g = 0;
     std::uint8_t flags = 0, req0 = 0;
     if (!ReadValue(s.P + c::p_g, g) || !g || g != a.script_object) return "g";
     if (!ReadValue(g + c::g_flags, flags) || !ReadValue(g + c::g_req, req0)) return "fault";
-    if (!(flags & 4) || req0 != 1) return nullptr;  // nothing of ours pending
-    if (!AndByte(g + c::g_flags, static_cast<char>(~4))) return "fault";
-    cleared = true;
+    std::uint8_t clear = static_cast<std::uint8_t>(flags & mask);
+    if (!clear || req0 != 1) return nullptr;  // nothing of ours pending
+    if (clear & (kDmBitStop | kDmBitNext)) {
+        // Stop and GoNext name no instance: never while the viewer's own DM runs.
+        std::uintptr_t q18 = 0;
+        std::uint16_t act0 = 0;
+        if (!ReadValue(s.Q + c::q_act, q18) || !q18 || !ReadValue(q18, act0)) return "fault";
+        if (act0 == c::q18_dm_act) clear = static_cast<std::uint8_t>(clear & ~(kDmBitStop | kDmBitNext));
+    }
+    if (!clear) return nullptr;
+    if (!AndByte(g + c::g_flags, static_cast<char>(~clear))) return "fault";
+    cleared = clear;
     return nullptr;
+}
+
+const char* ClearDmPending(const Addresses& a, bool terminating, bool& cleared) noexcept {
+    std::uint8_t bits = 0;
+    const char* reason = ClearDmBits(a, terminating, kDmBitPlay, bits);
+    cleared = bits != 0;
+    return reason;
 }
 
 namespace {
