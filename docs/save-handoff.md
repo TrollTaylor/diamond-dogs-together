@@ -166,16 +166,27 @@ Up to 8 entries (LRU) in `<save_dir>-handoff\provenance.json`
 
 | Situation | Guest | Host |
 |---|---|---|
-| Host's set not bound, host in game in 30010/30020/30050 (the settle bind runs) | G11 "The host is in <M>: their save is checked there (about 10 s), then copied to you at the title screen and MGSV restarts once."; F9 `wait_host` why 2 | H8 "Checking your save here (about 10 s; stay in this mission), then it is copied to <partner>."; F9 refused why 4: "Your save is shared once it is known to continue into Mother Base or free roam: Continue there, or stay there a few seconds." |
+| Host's set not bound, host in game in 30010/30020/30050 (the settle bind runs) | G11 "The host is in <M>: their save is checked there (about 10 s), then copied to you at the title screen and MGSV restarts once." (the seconds only for a host build at least 0.13.6, `kSettle10Min*`: a 0.13.5 host still takes 30 s, so an older host gets the sentence without them); F9 `wait_host` why 2 "The host's save is checked in their mission, then copied to you at the title screen." | H8 "Checking your save here (about 10 s; stay in this mission), then it is copied to <partner>."; F9 refused why 4: "Your save is shared once it is known to continue into Mother Base or free roam: Continue there, or stay there a few seconds." |
 | Host's set not bound, host elsewhere | G4 (now "...copied to you at the title screen...") | H3 |
-| Host eligible, guest in game (the OFFER needs its title) | G12 once per link session "The host's save is ready for you: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. MGSV then restarts once on it."; F9 `wait_host` why 1 | (idle) |
+| Host eligible, guest in game in a mission (the OFFER needs its title) | G12 once per link session "The host's save is ready for you: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. MGSV then restarts once on it."; F9 `wait_host` why 1 | (idle) |
 | Nothing decided yet (`idle`) | F9 "Comparing your save with the host's; nothing to share yet." (it shared the `same` sentence) | the same for the host |
 
 `View.why` for `wait_host` is `save_handoff_state::WaitWhy` (0 host_elsewhere,
 1 title, 2 settling). G11 / H8 replace G4 / H3 per state: a host that leaves
 Mother Base for its helicopter before the bind still gets H3 (and the guest
 G4), each once per state and link session. The Lua title refusal says the
-same: NOTE 7 b=4 when the host is in game in a co-op scene (b=3 otherwise).
+same: NOTE 7 b=4 "The host is in <M>; their save is checked there and then
+copied to you." when the host is in game in a co-op scene (b=3 otherwise;
+no duration, since the window is the host build's).
+
+The guest's start-up mission 1 (the Lua report says ingame=1, title=0 there)
+is no location and no "in game" (review of the online 2026-10-22 fixes): the
+location rule (`Loc(1)` = 0 against the host's) decides nothing there, the
+last decision stands (none at a boot: `idle`) until a real mission, normally
+the title; the story and set rules still decide at once. G12 / why 1 need a
+mission of 10000 or more. Before, a guest whose title is at the host's place
+got need=1 why=location while booting, G11 / H8 for that boot, and with the
+host eligible the once-per-session G12 ("go back to the title screen").
 
 ## Staging (P2-9)
 
@@ -240,6 +251,14 @@ Since then (`lua/coop/world_handoff.lua` `again()` and `X.decline`):
   > Keep my own save is the explicit way out at any time; after the 60 s a
   repeat 3-10 s apart still declines (SAVE op 3, NOTE 10) and plays the own
   save.
+- Code 1 (wait_host) at the title is a travel-lock rule: with the lock on it
+  is refused (NOTE 7 b=3/b=4) before the peer rules, so also while the host
+  loads (CFG peer mission 0, as at 17:46:14 in the session), is in a story
+  mission, is not linked or a host transition is queued (the replay hold keeps
+  it). Before the review fix those returned allow ahead of the title rule, and
+  the first press loaded the guest's own save. With the lock off (F9 Travel
+  lock unchecked) code 1 is allowed at once; only codes 2..4 (NOTE 9) are
+  refused without the lock.
 - Away from the title (in-mission Continue, travel) nothing changed.
 
 ## Exit (P2-10)
@@ -371,7 +390,16 @@ after `world_pair_wait`. The HUD LinkView carries `handoff` and `handoff_pct`.
   manual line ("MGSV is not back yet: start MGS V from Steam yourself (press
   Play); co-op stays on for N more seconds.") at 45 s instead of 120 s; the
   helper retries the same way once the
-  window is gone. Every step goes to `mgs-coop\play-coop.log` (`Write-CoopPlayLog`:
+  window is gone. The manual line needs the window's own relaunch check: a
+  retry that passed or, when Steam still marked MGSV as running so no retry
+  went out, `Start-CoopRelaunch -CheckOnly` at 45 s (the same checks, no
+  request; `relaunch=checked`); with Steam's flag still set it reads "MGSV is
+  not back yet, and Steam still shows MGS V as running: once Steam shows Play
+  again, press it; co-op stays on for N more seconds." (review fix: before, a
+  stuck flag gave no line at all until the 300 s limit). The window prints
+  the applied save and "Waiting for Steam to let MGSV start again (up to
+  30 s)..." before that Steam wait (`Invoke-CoopHandoffAfterExit -OnApplied`),
+  not after it. Every step goes to `mgs-coop\play-coop.log` (`Write-CoopPlayLog`:
   launch, game seen/exited, claim, apply, Steam's flag, each request or retry,
   the manual hint; states, times and pids only, never a code or a SteamID;
   over 1 MB it moves to `play-coop.old.log`), and Collect-Logs collects it.

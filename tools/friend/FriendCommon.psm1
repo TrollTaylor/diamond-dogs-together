@@ -1473,8 +1473,9 @@ function Start-CoopRelaunch {
     # place with its recorded hash (the marker exactly offline-v1) and no game
     # runs from the folder, all checked under the play mutex: a relaunch never
     # starts plain MGSV on the real saves. MGS_COOP_TEST_NO_LAUNCH=1 (tests)
-    # checks everything and starts nothing. Returns @{ Ok; Problem; Started }.
-    param([Parameter(Mandatory)][string]$GameRoot)
+    # and -CheckOnly (Play-Coop's manual-start hint while Steam still marks MGSV
+    # as running) check everything and start nothing. Returns @{ Ok; Problem; Started }.
+    param([Parameter(Mandatory)][string]$GameRoot, [switch]$CheckOnly)
     $out = [pscustomobject]@{ Ok = $false; Problem = ''; Started = $false }
     $paths = Get-InstancePaths -GameDirectory $GameRoot
     Use-CoopPlayMutex -GameRoot $GameRoot -Script {
@@ -1495,14 +1496,15 @@ function Start-CoopRelaunch {
             if ((Get-CoopTextSha256 -Bytes $bytes) -cne $records[$name]) { $out.Problem = "mgs-coop\$name changed"; return }
             if ($name -ceq 'script-observe.enabled' -and [Text.Encoding]::ASCII.GetString($bytes) -cne "offline-v1`n") { $out.Problem = 'the co-op marker changed'; return }
         }
-        if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1') {
+        if ($env:MGS_COOP_TEST_NO_LAUNCH -ne '1' -and !$CheckOnly) {
             Start-Process 'steam://rungameid/287700'
             $out.Started = $true
         }
         $out.Ok = $true
     }
     $steam = Get-CoopSteamAppRunning
-    if ($out.Ok -and !$out.Started -and $env:MGS_COOP_TEST_NO_LAUNCH -ne '1') { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=skipped; reason=game_running; steam=' + $steam.Text) }
+    if ($CheckOnly) { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=checked; ok={0}; problem={1}; steam={2}' -f $(if ($out.Ok) { 1 } else { 0 }), $out.Problem, $steam.Text) }
+    elseif ($out.Ok -and !$out.Started -and $env:MGS_COOP_TEST_NO_LAUNCH -ne '1') { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=skipped; reason=game_running; steam=' + $steam.Text) }
     elseif ($out.Ok) { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=requested; started={0}; steam={1}' -f $(if ($out.Started) { 1 } else { 0 }), $steam.Text) }
     else { Write-CoopPlayLog -GameRoot $GameRoot -Text ('relaunch=refused; problem=' + $out.Problem) }
     return $out
@@ -1589,7 +1591,10 @@ function Invoke-CoopHandoffAfterExit {
     param([Parameter(Mandatory)][string]$GameRoot, [int]$ExitedPid = 0, [AllowNull()]$ExitedStartUtc = '',
         [Parameter(Mandatory)][ValidateSet('console', 'watchdog')][string]$Owner, [switch]$LauncherAlive,
         # When the caller first saw the game gone (the watchdog's defer window); default now.
-        [AllowNull()]$ExitSeenUtc = $null)
+        [AllowNull()]$ExitSeenUtc = $null,
+        # Called with the result (Files, Bytes, Aside) once the save is applied, before
+        # the Steam wait (up to about 32 s): the console says what happens meanwhile.
+        [scriptblock]$OnApplied = $null)
     $result = [pscustomobject]@{ Action = 'none'; Messages = @(); Aside = ''; Files = 0; Bytes = [Int64]0 }
     $paths = Get-InstancePaths -GameDirectory $GameRoot
     if (!(Test-Path -LiteralPath $paths.PlaySession -PathType Leaf)) { return $result }
@@ -1751,6 +1756,7 @@ function Invoke-CoopHandoffAfterExit {
         if ($result.Action -cin @('stale', 'limit')) { Write-CoopPlayLog -GameRoot $GameRoot -Text ('handoff=' + $result.Action) }
         return $result
     }
+    if ($OnApplied) { try { & $OnApplied $result } catch { } }
     # Steam ignores a launch request while it still marks MGSV as running (or
     # closing): wait for its flag (online 2026-10-22 P5), then a moment more.
     $steamWait = Wait-CoopSteamAppStopped -AppId 287700 -TimeoutSec 30

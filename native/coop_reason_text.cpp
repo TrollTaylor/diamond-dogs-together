@@ -290,7 +290,8 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 4:
             if (!FormatMission(a, first, sizeof(first))) return false;
             return PutF(out, capacity,
-                        "The host is in %s; their save is checked there (a few seconds) and then copied to you. Stay here; F9 > Partner / "
+                        // (No duration: the host's settle window depends on its build.)
+                        "The host is in %s; their save is checked there and then copied to you. Stay here; F9 > Partner / "
                         "Co-op > Shared save > Keep my own save plays yours.",
                         first);
         default: return false;
@@ -483,7 +484,7 @@ bool FormatSaveHandoffStatus(std::uint8_t role, std::uint8_t token, std::uint8_t
             return Put(out, capacity,
                        "The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it.");
         if (why == 2)  // settling (P3)
-            return Put(out, capacity, "The host's save is checked in their mission (a few seconds), then copied to you at the title screen.");
+            return Put(out, capacity, "The host's save is checked in their mission, then copied to you at the title screen.");
         return Put(out, capacity, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you.");
     case 4:  // offered
         return Put(out, capacity, "Offering your save to your partner.");

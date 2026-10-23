@@ -323,10 +323,13 @@ SAME PROGRESS AUTOMATICALLY (save handoff):
    the title screen and MGSV restarts once on it (about a minute; Play-Coop
    does it, keep its window open). This also works when your co-op save is
    an old Steam save that the game has not written on this PC yet.
- - Stay on the title screen while it happens. Pressing Continue there only
+ - Stay on the title screen while it happens. With the travel lock on (the
+   default; F9 > Partner / Co-op > Travel lock), pressing Continue there only
    shows a message; it does not start your own save during the first minute
-   of the wait. If you are already in the game, go back to the title screen
-   (or quit MGSV and start Play-Coop again) to get the host's save.
+   of the wait, also while the host is still loading. With the travel lock
+   off, Continue plays your own save at once until the copy has started.
+   If you are already in the game, go back to the title screen (or quit
+   MGSV and start Play-Coop again) to get the host's save.
  - The host's save is only shared once it continues into Mother Base or
    free roam, never from the story opening: the host Continues there, or
    stays there a few seconds. If the host's save is still in the story
@@ -337,8 +340,8 @@ SAME PROGRESS AUTOMATICALLY (save handoff):
    does not come within a minute, Continue pressed twice (3 to 10 seconds
    apart) also plays your own save.
  - MGSV closes and Play-Coop starts it again through Steam. If MGSV is not
-   back within a minute, press Play for MGS V in Steam yourself while the
-   Play-Coop window still says co-op stays on.
+   back within a minute, press Play for MGS V in Steam yourself (once Steam
+   shows Play again) while the Play-Coop window still says co-op stays on.
  - Your own co-op copy is kept: Share-Save.bat [R] brings it back. Play-Coop
    -SaveHandoff off turns this off; start it from Command Prompt in the
    extracted package folder with

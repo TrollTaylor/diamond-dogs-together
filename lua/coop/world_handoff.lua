@@ -1,8 +1,6 @@
--- Join-fix phase 2 (docs/join-fix-phase2-spec.md C1-C6): the SAVE report for the
--- native save handoff, the guest travel lock (inner wrappers below world_follow's
--- armed-guest suppression), travel warnings and the title replay hold. A title
--- Continue is gated at the title menu itself (title_sequence Seq_Game_TitleMenu):
--- the game's title Continue never calls TppMission's Continue functions.
+-- Join-fix phase 2 (docs/join-fix-phase2-spec.md C1-C6): SAVE report, guest travel lock
+-- (below world_follow's armed-guest suppression), travel warnings, title replay hold.
+-- A title Continue is gated at the title menu (title_sequence Seq_Game_TitleMenu).
 do
 local W = e.MgsCoopWorld
 local F = W.follow
@@ -92,11 +90,15 @@ if title and h >= 2 and h <= 4 then
 end
 if lock ~= 1 then return "allow" end
 local p = peer()
+-- Code 1 at the title: refused (held, P2) also while the host loads or a follow is queued.
+if title and h == 1 then
+    local m = p and num(p.mission) or 0
+    return "refuse", 7, m, SUPPORTED[m] and floor(m / 10000) == 3 and 4 or 3, m
+end
 if not p or not p.linked or (num(p.level) or 0) < 3 then return "allow" end
 local m = p.mission
 if m == 0 or m == 1 or not SUPPORTED[m] or F.current or #F.queue > 0 then return "allow" end
 if title then
-    if h == 1 then return "refuse", 7, m, floor(m / 10000) == 3 and 4 or 3, m end
     if heli then return "allow" end
     if X.story() == 1 then return "refuse", 7, m, 2, m end
     if SUPPORTED[W.mission] ~= SUPPORTED[m] then return "refuse", 7, m, 1, m end
@@ -201,9 +203,9 @@ line(DEPLOY, 6, hd.target, hd.host, why)
 X.call(hd.fn, unpack(hd, 1, hd.n))
 end
 -- The held sortie: dropped on a mission change, a follow, or once the prep screen
--- no longer names it (cancelled or changed: the vanilla deploy re-reads gvars);
--- released when world sync stopped (world_sync calls this while inactive), by the
--- F9 unlock, after 120 s, or once the lock no longer applies; the note every 3 s.
+-- no longer names it (the vanilla deploy re-reads gvars); released when world sync
+-- stopped (world_sync calls this while inactive), by the F9 unlock, after 120 s,
+-- or once the lock no longer applies; the note every 3 s.
 function X.hold(now)
 local hd = X.held
 if not hd then return end

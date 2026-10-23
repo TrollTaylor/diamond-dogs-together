@@ -348,6 +348,20 @@ do
     local w = fixture(2, {r12 = 1})
     w.menu.Continue(); w.time = w.time + 4000; w.menu.Continue()
     check(called(w, 'select_continue') == 0 and #saved(w, 3) == 0 and logged(w, 'decision=held') == 1, 'waiting (r12 1): held too')
+    -- Review (online 2026-10-22 L1): r12 1 is also held while the host loads (CFG peer mission 0, as at
+    -- 17:46:14), is in a story mission, is not linked, or a host transition is queued (the replay hold
+    -- keeps it); before, these returned allow ahead of the title rule and the first press loaded the own save.
+    for _, case in ipairs({{'host loading', {mission = 0, level = 3, wait = 8, linked = true, session = 55}, 0, 3},
+        {'host in 10020', {mission = 10020, level = 3, wait = 9, linked = true, session = 55}, 10020, 3},
+        {'host unlinked', {mission = 0, level = 0, wait = 3, linked = false}, 0, 3},
+        {'queued follow', nil, 30010, 4}}) do
+        local g = fixture(2, {mission = 40010, r12 = 1, seq = 200, peer = case[2]})
+        if not case[2] then g.F.queue[1] = {9, 1, 40050, 30010, since = g.time} end
+        at(g, g.time)
+        g.menu.Continue(); g.time = g.time + 3000; g.menu.Continue()
+        check(called(g, 'select_continue') == 0 and #saved(g, 3) == 0 and noted(g, 7, case[3], case[4]) == 2 and noted(g, 8) == 0 and
+            logged(g, 'decision=held') == 1 and logged(g, 'decision=repeat') == 0, case[1] .. ', r12 1: refused, then held (no own save)')
+    end
     -- The hold starts when the title first sees the pending code (X.tick), not at the first press.
     local t = fixture(2, {r12 = 1})
     at(t, 1000)

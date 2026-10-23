@@ -1751,6 +1751,11 @@ void Core::GuestNeedUpdate(std::uint64_t now_ms) noexcept {
     host.bound_mission = m_.peer.bound_mission;
     NeedWhy why = NeedWhy::off;
     const std::uint8_t need = GuestNeed(config_.mode, own, host, why);
+    // Review (online 2026-10-22): the start-up mission 1 (or 0) is no location;
+    // Loc 0 against the host's would give need=1 why=location to a guest whose
+    // title is at the host's place (G11 / H8 at its boot). That rule waits for
+    // a real mission (the title); the other rules decide at once.
+    if (why == NeedWhy::location && own.mission < 10000) return;
     if (!m_.need_logged || need != m_.need || why != m_.need_why) {
         Log("save_handoff=need; need=%u; why=%s", unsigned{need}, NeedWhyName(why));
         m_.need_logged = true;
@@ -1782,7 +1787,8 @@ void Core::GuestRest(std::uint64_t now_ms) noexcept {
     const bool settling = elig == wire::Elig::continue_unknown && m_.peer.phase == wire::Phase::ingame &&
                           SettleMission(m_.peer.mission);
     // P6: the OFFER comes only at this guest's title (GuestWants); in game it is told so (G12).
-    const bool away = Fresh(now_ms, kPhaseFreshMs) && m_.report.ingame && !m_.report.title;
+    // Not in the start-up mission 1 (ingame=1 there): that guest reaches its title anyway.
+    const bool away = Fresh(now_ms, kPhaseFreshMs) && m_.report.ingame && !m_.report.title && m_.report.mission >= 10000;
     const std::uint8_t key = settling ? kSettleToast : U8(elig);
     const bool first = m_.toasted != key;
     switch (elig) {
@@ -1796,7 +1802,12 @@ void Core::GuestRest(std::uint64_t now_ms) noexcept {
     case wire::Elig::continue_unknown:
         SetToken(Token::wait_host, U8(settling ? WaitWhy::settling : WaitWhy::host_elsewhere));
         if (first) {
-            if (settling) PostToast(Toast::g11_host_settling, m_.peer.mission, SettleSeconds());
+            // The seconds are the host's window: only a host with this build's 10 s.
+            if (settling)
+                PostToast(Toast::g11_host_settling, m_.peer.mission,
+                          wire::RemoteBuildAtLeast(m_.remote_build, kSettle10MinMajor, kSettle10MinMinor, kSettle10MinPatch)
+                              ? SettleSeconds()
+                              : 0);
             else PostToast(Toast::g4_wait_host, 0, 0);
         }
         break;

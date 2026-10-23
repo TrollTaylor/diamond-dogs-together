@@ -17,8 +17,12 @@
 #  - Closed, BaselineRestored and RealSavesUnchanged true.
 # Variant (manual): wait 60 s at the title after the first refusal, then two presses 3 to 10 s apart
 # play the guest's own save (decision=repeat, note 10); F9 > Shared save > Keep my own save works at once.
+# The 60 s run from the guest's first title tick that sees r[12] 1..4 (X.pendingAt), not from its
+# first press: the host reaches its title first, and the guest's boot screens get their Enter only
+# then, so the guest's title (and its hold) starts right before the presses below.
 labsetting coop_hud=full
-titlemenu both 240
+titlemenu host 240
+titlemenu guest 240
 # The title opens on its press-any-button screen: the first Enter only opens the menu (travel-lock.txt).
 guest press enter
 wait 3000
@@ -28,7 +32,9 @@ wait 2000
 guest press enter
 wait 3000
 expectstate guest mission ^40050$
+# This press is 3 to 10 s after the refusal (a repeat before 0.13.6): held now.
 guest press enter
+waitlog guest 'step=lock; fn=TitleContinue; kind=4; .*decision=held' 10
 wait 3500
 guest press enter
 wait 3000

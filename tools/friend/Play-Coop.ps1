@@ -732,13 +732,18 @@ try {
             # every 20 s when Steam no longer marks MGSV as running (online
             # 2026-10-22 P5: Steam ignored the first request for 3 minutes), and
             # asks for a manual start at 45 s - only after its own relaunch check
-            # passed, with time left: never without the co-op files.
+            # passed (a retry, or a check-only pass when Steam still marked MGSV
+            # as running so no retry went out), with time left: never without the
+            # co-op files. MGS_COOP_TEST_RELAUNCH_HINT_SEC (tests) moves the 45 s.
             $waitStart = [DateTime]::UtcNow
             $limit = $waitStart.AddSeconds(300)
             $nextTry = $waitStart.AddSeconds(20)
             $tries = 0
             $relaunchOk = $false
             $told = $false
+            $hintSec = 45
+            $hintOverride = 0
+            if ($env:MGS_COOP_TEST_RELAUNCH_HINT_SEC -and [int]::TryParse($env:MGS_COOP_TEST_RELAUNCH_HINT_SEC, [ref]$hintOverride) -and $hintOverride -ge 0) { $hintSec = $hintOverride }
             while (!$gamePid) {
                 $games = @(Get-GameProcessInDirectory -Directory $gameRoot | Where-Object { !$_.Unknown })
                 if ($games.Count) { $gamePid = [int]$games[0].Id; break }
@@ -767,10 +772,21 @@ try {
                         $relaunchOk = $true
                     }
                 }
-                if ($elapsed -ge 45 -and !$told -and $relaunchOk -and $left -ge 60) {
+                if ($elapsed -ge $hintSec -and !$told -and $left -ge 60) {
                     $told = $true
-                    Write-CoopPlayLog -GameRoot $gameRoot -Text ('relaunch_hint; left_s={0}' -f [int]$left)
-                    Write-Host ('MGSV is not back yet: start MGS V from Steam yourself (press Play); co-op stays on for {0} more seconds.' -f [int]$left) -ForegroundColor Yellow
+                    if (!$relaunchOk) {
+                        $check = $null
+                        try { $check = Start-CoopRelaunch -GameRoot $gameRoot -CheckOnly } catch { $check = [pscustomobject]@{ Ok = $false; Problem = $_.Exception.Message } }
+                        $relaunchOk = [bool]$check.Ok
+                    }
+                    $steamState = Get-CoopSteamAppRunning
+                    $steamBusy = $steamState.Known -and $steamState.Running
+                    Write-CoopPlayLog -GameRoot $gameRoot -Text ('relaunch_hint; shown={0}; left_s={1}; steam={2}' -f $(if ($relaunchOk) { 1 } else { 0 }), [int]$left, $steamState.Text)
+                    if ($relaunchOk -and $steamBusy) {
+                        Write-Host ('MGSV is not back yet, and Steam still shows MGS V as running: once Steam shows Play again, press it; co-op stays on for {0} more seconds.' -f [int]$left) -ForegroundColor Yellow
+                    } elseif ($relaunchOk) {
+                        Write-Host ('MGSV is not back yet: start MGS V from Steam yourself (press Play); co-op stays on for {0} more seconds.' -f [int]$left) -ForegroundColor Yellow
+                    }
                 }
                 if ($now -ge $limit) {
                     Write-CoopPlayLog -GameRoot $gameRoot -Text 'relaunch_wait=limit'
@@ -856,15 +872,32 @@ try {
         foreach ($n in $logNames) { $offsets[$n] = Get-FileLengthOrZero (Join-Path $paths.Mod $n) }
         Write-CoopPlayLog -GameRoot $gameRoot -Text ('game=exited; run={0}; game_pid={1}; steam={2}' -f $run, $gamePid, (Get-CoopSteamAppRunning).Text)
         $after = $null
-        try { $after = Invoke-CoopHandoffAfterExit -GameRoot $gameRoot -ExitedPid $gamePid -ExitedStartUtc $gameStart -Owner console }
+        # The applied save is reported before the Steam wait (up to about 32 s,
+        # online 2026-10-22 P5), not after it: the window is never silent then.
+        $appliedShown = @{ Done = $false }
+        $onApplied = {
+            param($r)
+            $appliedShown.Done = $true
+            Write-Host ''
+            Write-Host "MGSV closed to load the host's save." -ForegroundColor Cyan
+            Write-Host ("Applying the host's save ({0} files, {1} KB)..." -f $r.Files, [int][Math]::Ceiling([double]$r.Bytes / 1024))
+            Write-Host "Your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($r.Aside) (Share-Save.bat [R] brings it back)."
+            Write-Host 'Waiting for Steam to let MGSV start again (up to 30 s)...'
+        }.GetNewClosure()
+        if ($run -ne 0) { $onApplied = $null }
+        try { $after = Invoke-CoopHandoffAfterExit -GameRoot $gameRoot -ExitedPid $gamePid -ExitedStartUtc $gameStart -Owner console -OnApplied $onApplied }
         catch { $after = [pscustomobject]@{ Action = 'failed'; Messages = @("Could not apply the host's save: $($_.Exception.Message)."); Aside = ''; Files = 0; Bytes = 0 } }
         Write-CoopPlayLog -GameRoot $gameRoot -Text ('handoff_after_exit; owner=console; action=' + $after.Action)
         if ($run -eq 0 -and ($after.Action -eq 'relaunched' -or $after.Action -eq 'claimed_by_other')) {
-            Write-Host ''
-            Write-Host "MGSV closed to load the host's save." -ForegroundColor Cyan
+            if (!$appliedShown.Done) {
+                Write-Host ''
+                Write-Host "MGSV closed to load the host's save." -ForegroundColor Cyan
+            }
             if ($after.Action -eq 'relaunched') {
-                Write-Host ("Applying the host's save ({0} files, {1} KB)..." -f $after.Files, [int][Math]::Ceiling([double]$after.Bytes / 1024))
-                Write-Host "Your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($after.Aside) (Share-Save.bat [R] brings it back)."
+                if (!$appliedShown.Done) {
+                    Write-Host ("Applying the host's save ({0} files, {1} KB)..." -f $after.Files, [int][Math]::Ceiling([double]$after.Bytes / 1024))
+                    Write-Host "Your previous co-op save is kept at mgs-coop\coop-saves-replaced\$($after.Aside) (Share-Save.bat [R] brings it back)."
+                }
                 Write-Host 'Starting MGSV again with the same join code...'
             } else { Write-Lines -Lines @($after.Messages) }
             continue runs

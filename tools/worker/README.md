@@ -316,7 +316,8 @@ into 30010. `scenarios/handoff-stage.txt` is the transfer alone (R2, R3).
 `scenarios/travel-lock.txt` is the guest lock and its escape (R6).
 `scenarios/handoff-double-press.txt` is the title double press while the host's
 save is pending (online 2026-10-22 P2: presses 3 s apart within the first 60 s
-never escape, then the guest stages). Each header
+never escape and log `decision=held`, then the guest stages; the host reaches
+its title first, because the 60 s start at the guest's own title). Each header
 gives the run command and the evidence. The worker has no "relaunch guest"
 control, so a restart always takes two sessions.
 

@@ -162,7 +162,7 @@ the helicopter as well. One status line:
 | `off` | Automatic save sharing is off (Play-Coop -SaveHandoff off). |
 | `idle` | Comparing your save with the host's; nothing to share yet. (host: Comparing your save with your partner's; nothing to share yet.) |
 | `same` | Your save matches the host's place; nothing to share. (host: Your save matches your partner's place; nothing to share.) |
-| `wait_host` | Waiting for the host to reach Mother Base or free roam; their save is then copied to you. (why 1, the joiner in game: The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. why 2, the host settling in its mission: The host's save is checked in their mission (a few seconds), then copied to you at the title screen.) |
+| `wait_host` | Waiting for the host to reach Mother Base or free roam; their save is then copied to you. (why 1, the joiner in game: The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. why 2, the host settling in its mission: The host's save is checked in their mission, then copied to you at the title screen.) |
 | `receiving` | Receiving the host's save: 42% of 594 KB. |
 | `staged` | Host's save received and checked (594 KB). |
 | `countdown` | Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Share-Save.bat [R]). |

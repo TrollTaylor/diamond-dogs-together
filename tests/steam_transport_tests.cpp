@@ -3005,7 +3005,7 @@ void TestSaveHandoffHud() {
          "The host's save is copied to you once they are in Mother Base or free roam. Stay here; F9 > Partner / Co-op > Shared save > "
          "Keep my own save plays yours."},
         {7, 30050, 4, hud::Tone::warn,
-         "The host is in Mother Base; their save is checked there (a few seconds) and then copied to you. Stay here; F9 > Partner / "
+         "The host is in Mother Base; their save is checked there and then copied to you. Stay here; F9 > Partner / "
          "Co-op > Shared save > Keep my own save plays yours."},
         {8, 30020, 1, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
         {8, 30020, 2, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
@@ -3108,7 +3108,7 @@ void TestSaveHandoffHud() {
         {2, T::same, 0, 0, 0, "Your save matches the host's place; nothing to share."},
         {2, T::wait_host, 0, 0, 0, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you."},
         {2, T::wait_host, 0, 1, 0, "The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it."},
-        {2, T::wait_host, 0, 2, 0, "The host's save is checked in their mission (a few seconds), then copied to you at the title screen."},
+        {2, T::wait_host, 0, 2, 0, "The host's save is checked in their mission, then copied to you at the title screen."},
         {2, T::receiving, 42, 0, 0, "Receiving the host's save: 42% of 594 KB."},
         {2, T::receiving, 230, 0, 0, "Receiving the host's save: 100% of 594 KB."},
         {2, T::staged, 100, 0, 0, "Host's save received and checked (594 KB)."},

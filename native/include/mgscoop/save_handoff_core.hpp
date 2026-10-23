@@ -46,6 +46,9 @@ inline constexpr std::uint64_t kPhaseFreshMs = 3000;      // Lua report freshnes
 // X.leaving), which ends the window before the vanilla load, and the set must
 // stay unchanged with saving=0 and fresh reports for the whole window.
 inline constexpr std::uint64_t kSettleBindMs = 10000;
+// The first build with that 10 s window: the guest's G11 names the seconds only
+// for a host at least this new (a 0.13.5 host still takes 30 s; older: no number).
+inline constexpr unsigned kSettle10MinMajor = 0, kSettle10MinMinor = 13, kSettle10MinPatch = 6;
 inline constexpr std::uint64_t kBadMsgLogMs = 10000;      // "save_handoff=bad_msg" at most this often
 inline constexpr std::uint64_t kRehashMs = 2000;          // re-hash the on-disk set this often (the glue skips unchanged files)
 inline constexpr std::uint64_t kHashTimeoutMs = 10000;    // a hash_set / snapshot without its report may be asked again

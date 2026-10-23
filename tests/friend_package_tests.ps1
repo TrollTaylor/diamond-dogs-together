@@ -2538,7 +2538,8 @@ try {
         $hoRealExe = [IO.File]::ReadAllBytes($hop.Exe)
         $hoIn = Join-Path $fixture 'handoff-launch-in.txt'; $hoOut = Join-Path $fixture 'handoff-launch-out.txt'; $hoErr = Join-Path $fixture 'handoff-launch-err.txt'
         [IO.File]::WriteAllText($hoIn, "$joinCode`r`n`r`n`r`n")
-        $env:MGS_COOP_TEST_INTERACTIVE = '1'; $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_NO_WATCHDOG = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'
+        # The manual-start hint 6 s into the restart wait (45 s in play).
+        $env:MGS_COOP_TEST_INTERACTIVE = '1'; $env:MGS_COOP_TEST_NO_LAUNCH = '1'; $env:MGS_COOP_TEST_NO_WATCHDOG = '1'; $env:MGS_COOP_TEST_RELAUNCH_DELAY_SEC = '1'; $env:MGS_COOP_TEST_RELAUNCH_HINT_SEC = '6'
         $savedModulePath = $env:PSModulePath
         $env:PSModulePath = ''
         try {
@@ -2546,7 +2547,7 @@ try {
                 -RedirectStandardInput $hoIn -RedirectStandardOutput $hoOut -RedirectStandardError $hoErr -NoNewWindow -PassThru
         } finally {
             $env:PSModulePath = $savedModulePath
-            foreach ($v in 'MGS_COOP_TEST_INTERACTIVE', 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_NO_WATCHDOG', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+            foreach ($v in 'MGS_COOP_TEST_INTERACTIVE', 'MGS_COOP_TEST_NO_LAUNCH', 'MGS_COOP_TEST_NO_WATCHDOG', 'MGS_COOP_TEST_RELAUNCH_DELAY_SEC', 'MGS_COOP_TEST_RELAUNCH_HINT_SEC') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
         }
         $hoRead = { if (Test-Path -LiteralPath $hoOut) { Read-SharedText -Path $hoOut } else { '' } }
         $standIn1 = $null; $standIn2 = $null
@@ -2564,10 +2565,17 @@ try {
             $null = New-HandoffRequest $hop.CoopSavesHandoff $hoStage $standIn1.Id (Get-StandInStartUtc $standIn1)
             Stop-StandIn $standIn1
             Assert-True (Wait-Until { (& $hoRead).Contains('Starting MGSV again with the same join code...') } 60) "[handoff] the launcher applies and restarts: $(& $hoRead)"
+            # Review (online 2026-10-22): Steam still marks MGSV as running, so no retry goes out; the
+            # manual-start hint still comes (its own check-only pass) and says so.
+            [IO.File]::WriteAllText($steamRunningFile, "1`n")
             $hoText = & $hoRead
             Assert-True ($hoText.Contains("MGSV closed to load the host's save.") -and $hoText.Contains("Applying the host's save (2 files, 1 KB)...") -and
                 [regex]::IsMatch($hoText, 'Your previous co-op save is kept at mgs-coop\\coop-saves-replaced\\[0-9]{8}-[0-9]{6}(-[0-9]+)?-before-handoff \(Share-Save\.bat \[R\] brings it back\)\.') -and
                 !$hoText.Contains('MGSV exited.')) "[handoff] the restart lines and no exit line: $hoText"
+            # Review: the applied save is reported before the Steam wait (the window is not silent during it).
+            $hoWaitAt = $hoText.IndexOf('Waiting for Steam to let MGSV start again (up to 30 s)...')
+            Assert-True ($hoWaitAt -gt $hoText.IndexOf("Applying the host's save (2 files, 1 KB)...") -and $hoWaitAt -lt $hoText.IndexOf('Starting MGSV again with the same join code...') -and
+                ([regex]::Matches($hoText, [regex]::Escape("MGSV closed to load the host's save."))).Count -eq 1) "[handoff] the Steam wait line between the applied save and the restart: $hoText"
             Assert-True ((Get-PlayFilesPresent $hop) -eq 4) '[handoff] no cleanup in between: all four co-op files stay'
             $hoSession = Get-SessionJson $hop
             Assert-Equal "$($hoSession.state)|$(Get-HandoffField $hop 'state')|$(Get-HandoffField $hop 'count')|$(Get-HandoffField $hop 'claimed_by_pid')" "active|relaunching|1|$($hoLauncher.Id)" '[handoff] the launcher claimed and restarted'
@@ -2575,6 +2583,9 @@ try {
             foreach ($row in $hoStage.Rows) { Assert-Equal (Get-Sha256 (Join-Path $hop.CoopSaves $row.entry.Replace('/', '\'))) $row.sha256 "[handoff] the host's $($row.entry) is in the co-op copy" }
             $hoAside = @(Get-CoopProgressBackups -ReplacedRoot $hop.CoopSavesReplaced | Where-Object { $_.Kind -eq 'handoff' })
             Assert-True ($hoAside.Count -eq 1 -and (Get-RelativeTreeHashes $hoAside[0].Path) -eq $hoOwnBefore) '[handoff] the own copy is kept aside'
+            Assert-True (Wait-Until { (& $hoRead).Contains('MGSV is not back yet, and Steam still shows MGS V as running: once Steam shows Play again, press it; co-op stays on for ') } 30) "[handoff] the manual-start hint while Steam still marks MGSV as running (no retry): $(& $hoRead)"
+            Assert-True (!(& $hoRead).Contains('start MGS V from Steam yourself')) '[handoff] the Steam-running variant only'
+            [IO.File]::WriteAllText($steamRunningFile, "0`n")
             # Steam would start MGSV now: the second stand-in.
             $standIn2 = Start-StandIn $hoGame
             Assert-True (Wait-Until { (& $hoRead).Contains("MGSV restarted (process $($standIn2.Id)).") } 30) "[handoff] the launcher attaches to the restarted game: $(& $hoRead)"
@@ -2591,10 +2602,11 @@ try {
             $hoLog = [IO.File]::ReadAllText($hop.PlayCoopLog)
             $hoSteps = @('play=launch; role=guest', "game=seen; run=0; game_pid=$($standIn1.Id)", "game=exited; run=0; game_pid=$($standIn1.Id)", 'handoff=claimed; owner=console',
                 'handoff=applied; files=2', 'steam_wait; stopped=1; known=1', 'relaunch=requested; started=0', 'handoff_after_exit; owner=console; action=relaunched',
-                "game=seen; run=1; game_pid=$($standIn2.Id)", "game=exited; run=1; game_pid=$($standIn2.Id)")
+                'relaunch=checked; ok=1; problem=; steam=1', 'relaunch_hint; shown=1; left_s=', "game=seen; run=1; game_pid=$($standIn2.Id)", "game=exited; run=1; game_pid=$($standIn2.Id)")
             $hoAt = -1
             foreach ($step in $hoSteps) { $i = $hoLog.IndexOf($step); Assert-True ($i -gt $hoAt) "[handoff] play-coop.log has '$step' in order: $hoLog"; $hoAt = $i }
         } finally {
+            [IO.File]::WriteAllText($steamRunningFile, "0`n")
             Stop-StandIn $standIn1; Stop-StandIn $standIn2
             if (!$hoLauncher.HasExited) { Stop-Process -Id $hoLauncher.Id -Force -ErrorAction SilentlyContinue }
             [IO.File]::WriteAllBytes($hop.Exe, $hoRealExe)
@@ -2625,6 +2637,9 @@ try {
                 $standIn1 = Start-StandIn $hoGame
                 Assert-True (Wait-Until { (& $coRead).Contains('MGSV started') } 30) "[claimed $outcome] the launcher sees the game"
                 Add-StandInEvidence $hop
+                # Only once the window recorded the game (Set-CoopPlayGame turns a relaunching claim
+                # written before that into relaunched, and the exit then finds no live claim: a flake).
+                Assert-True (Wait-Until { [int](Get-FriendProperty (Get-SessionJson $hop) 'game_pid' 0) -eq $standIn1.Id } 30) "[claimed $outcome] the window recorded the game"
                 # The helper (a live stand-in process) claimed the restart while this window was busy.
                 $coHelper = Start-Process -FilePath $winPs -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 300' -WindowStyle Hidden -PassThru
                 $coHelperStart = Get-CoopProcessStartUtc -Id $coHelper.Id

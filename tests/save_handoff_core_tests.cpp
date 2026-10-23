@@ -1709,6 +1709,9 @@ void TestRemoteOnlyGuest() {
 // was first seen. Leaving for the helicopter before the bind gives G4/H3.
 void TestSettleWait() {
     Setup(wire::Mode::scene, wire::Mode::scene);
+    // G11 names the seconds for a host with the 10 s window (kSettle10Min*); below, an older one: no number.
+    g_guest_core.OnBuildOk(true, "0.13.6+test");
+    Drain(g_guest);
     g_guest.rep = Title(40010);  // Loc 10 vs the host's 30050: need=1 why=location
     g_host.rep = InGame(30050);
     const std::uint64_t start = g_now;
@@ -1735,7 +1738,9 @@ void TestSettleWait() {
     CHECK(!HasLog(g_host, "save_handoff=provenance;"));
     CHECK(TokenOf(g_guest) == Token::wait_host && g_guest.view.why == WhyOf(hs::WaitWhy::host_elsewhere));
     CHECK(CountToast(g_guest, Toast::g11_host_settling) == 1 && CountToast(g_guest, Toast::g4_wait_host) == 1);
+    CHECK(FirstToast(g_guest, Toast::g11_host_settling)->b == 0);  // a 0.13.0 host: its window is not this build's 10 s
     CHECK(CountToast(g_host, Toast::h8_settling) == 1 && CountToast(g_host, Toast::h3_partner_elsewhere) == 1);
+    CHECK(FirstToast(g_host, Toast::h8_settling)->a == 10);  // the host's own window
     Run(30000);
     CHECK(CountToast(g_guest, Toast::g4_wait_host) == 1 && CountToast(g_host, Toast::h3_partner_elsewhere) == 1);  // once per state
 }
@@ -1764,6 +1769,48 @@ void TestGuestInGame() {
     NewSession();
     Run(5000);
     CHECK(CountToast(g_guest, Toast::g12_go_to_title) == 2);
+}
+
+// Review (online 2026-10-22): the guest's start-up mission 1 (the Lua report
+// says ingame=1, title=0 there) is no location and no "go back to the title".
+// With the host bound and eligible, a guest whose set differs decides no
+// need=1 why=location and gets no G12 while booting; at its title at the
+// host's place need=0. Before: need=1 why=location at mission 1 (Loc 0) and
+// G12, once per link session, used up at the boot. A host settling in Mother
+// Base got H8 (and the guest G11) for that boot as well. A story-opening guest
+// still decides need=1 why=story at mission 1, but G12 waits for a mission.
+void TestGuestStartup() {
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30050);
+    g_guest.rep = InGame(1);
+    Run(20000);
+    CHECK(!HasLog(g_guest, "save_handoff=need;") && !HasLog(g_host, "save_handoff=offer;"));
+    CHECK(TokenOf(g_guest) == Token::idle && g_guest.view.lua_code == 0 && CountToast(g_guest, Toast::g12_go_to_title) == 0);
+    g_guest.rep = Title(40050);
+    Run(5000);
+    CHECK(HasLog(g_guest, "save_handoff=need; need=0; why=same_scene") && !HasLog(g_guest, "save_handoff=need; need=1"));
+    CHECK(TokenOf(g_guest) == Token::same && CountToast(g_guest, Toast::g12_go_to_title) == 0 && !HasLog(g_host, "save_handoff=offer;"));
+    // The host settles in Mother Base (in game, not bound yet): no G11 / H8 / H3 for the guest's boot.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    g_host.rep = InGame(30050);
+    g_guest.rep = InGame(1);
+    Run(5000);
+    CHECK(!HasLog(g_guest, "save_handoff=need;") && CountToast(g_guest, Toast::g11_host_settling) == 0 &&
+          CountToast(g_guest, Toast::g4_wait_host) == 0);
+    CHECK(CountToast(g_host, Toast::h8_settling) == 0 && CountToast(g_host, Toast::h3_partner_elsewhere) == 0);
+    // A story-opening guest: need=1 why=story at mission 1, no G12 there; the OFFER at its title.
+    Setup(wire::Mode::scene, wire::Mode::scene);
+    BindHost(30050);
+    core::Report boot = InGame(1);
+    boot.story = wire::Story::opening;
+    g_guest.rep = boot;
+    Run(10000);
+    CHECK(HasLog(g_guest, "save_handoff=need; need=1; why=story") && !HasLog(g_host, "save_handoff=offer;"));
+    CHECK(TokenOf(g_guest) == Token::wait_host && g_guest.view.why == WhyOf(hs::WaitWhy::host_elsewhere) &&
+          CountToast(g_guest, Toast::g12_go_to_title) == 0);
+    g_guest.rep = Title(40010, wire::Story::opening);
+    CHECK(Run(20000, GuestCountdown) && StagedEqualsHost());
+    CHECK(CountToast(g_guest, Toast::g12_go_to_title) == 0);
 }
 
 // P4 (guest): the WM_CLOSE waits until RESULT exiting left channel 4 (here:
@@ -1884,6 +1931,7 @@ int main(int argc, char** argv) {
     TestRemoteOnlyGuest();
     TestSettleWait();
     TestGuestInGame();
+    TestGuestStartup();
     TestExitFlush();
     TestHostInfersRestart();
     std::printf("save_handoff_core_tests: %u checks passed\n", checks);

@@ -92,7 +92,8 @@ screen, and MGSV restarts once on it:
    recorded co-op file (marker exactly `offline-v1`) is in place with its
    hash: a restart never starts plain MGSV on the real saves. Play-Coop
    waits for the new game (again every 20 s while Steam does not mark it
-   running, a manual-start line at 45 s, co-op off after 300 s; online
+   running, a manual-start line at 45 s also while it still does, after a
+   check-only `Start-CoopRelaunch -CheckOnly`, co-op off after 300 s; online
    2026-10-22 P5), marks `relaunched` and continues with the start evidence
    and the status line. Each step is logged to `mgs-coop\play-coop.log`
    (collected by Collect-Logs).
