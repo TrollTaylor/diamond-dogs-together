@@ -434,8 +434,8 @@ phase). Contract unchanged (743 code sites / 193 vtable slots; no new game addre
 ### online-body-safety
 
 Branch `wp/online-body-safety` from `dev/oct7-continue` `cc973a8` (diag-other #4, #5, #6, #7 and the #11 log caps).
-Bug fixes for real play, on by default (no key); docs/native-puppet.md "Body safety". Not yet run in the game: the
-hidden-worker phase runs the five new scenarios.
+Bug fixes for real play, on by default (no key); docs/native-puppet.md "Body safety". Hidden-worker results at the
+end of this subsection (sea death proven both ways, put-down and seated aim passed, the ledge divergence not reproduced).
 
 - Sea death (#5): `downed_damage::Evaluate` turns a lethal hit on the local player into "downed" only for a natural
   collision part (0..11). The sea / out-of-bounds kill (part 12, flags 0x2419, damage 10000) is the stock death again,
@@ -488,6 +488,42 @@ hidden-worker phase runs the five new scenarios.
   - Coverage: the stuck re-show on Mother Base (30050, the ride guard's range gate; no bug found) and the rotating
     recon log caps in the driver (`capped` then `resumed; dropped=` after the 2 min window), both in
     `partner_driver_tests`. The world LOG bucket keeps its pure `log_budget_tests` (world_link runs on real time).
+
+- **Hidden runs (2026-10-23, `wp/integ10` `32ac240`, research build, gun stage; every run Closed,
+  BaselineRestored, RealSavesUnchanged, no visible fallback; scenario fixes and result notes in `a4c3a0f`):**
+  - Sea death, guest (`b8ab039e`, `-Mode play -WanSim bad`, real seed): both copies on the walkway, the guest
+    teleported over the sea: `downed_damage=sample;id=0;exact=1;scoped=1;...;part=12;life=6000;damage=10000` ->
+    `downed_damage=stock_death;reason=environment` -> host `shared_game_over; type=2; cause=2`, guest
+    `game_over_applied` 0.13 s later; no `lethal_capture`, `intercept;cause=lethal` or `downed; step=entered` on
+    either copy. Frames: the guest falling past the deck into the sea, then MISSION FAILED on both copies.
+  - Sea death, host (`e9e5301b`, same flags): the first deck spot `(205.0, 0.9, 403.0)` was open water and put the
+    HOST in the sea: `exact=1;scoped=1;...;part=12;life=7200` -> `stock_death` -> `shared_game_over; type=2;
+    cause=1`, guest `game_over_applied`; no `controls_timeout` (the session waited 12 s for it). Frames: MISSION FAILED
+    on both copies.
+  - The first scenario version (`de7b3e09`) teleported the guest alone 500 m from the host: its body 1 was unrealized
+    (range rearm), so the downed shield was not live (`exact=0`), the stock death ran (game over 1.3 s later) and the
+    fix was never exercised. The sea, ledge and put-down files now stage both copies on the walkway (x 206..212 there,
+    the friend's own on-deck poses of the session; yaw 0 faces +z).
+  - Ledge (`e768a6b7`, `d1c74cde`, stall copy `1bb6ad1d`; `-Mode play -WanSim awful`): the divergence did **not**
+    reproduce (body 1 stopped within 0.2 m of the remote every time; the 400 ms worker input stall did not carry it
+    further). The drop guard ran in every Mother Base run at the arrival: body 1 stepped 0.7 m off the arrival ramp
+    while the remote stood on it, `partner_body_safety=drop; verdict=place; act=25; ms=500..515; remote_act=1;
+    dy_mm=696..721` -> `partner_recon=place; reason=vertical` -> `placed; ok=1`; body 1 then fell the 0.7 m again
+    94 ms later (26 -> 25 opens no new episode, by design) and walked on 0.7 m below the remote until the remote
+    stepped down. The stuck guard and its re-show never ran.
+  - Put-down (`4078bbe7`, `-Mode play -WanSim bad`): passed. `partner_body_safety=putdown; step=start; body_act=44;
+    remote_act=44; dy_mm=2090; err_xz_mm=1187; carry_hold=1` -> `step=end; reason=held; ms=534; places=1; pins=31`,
+    but body 1 never left the deck at this spot (the railing kept the stock put-down on it, `partner_body` y 0.80
+    throughout): the episode was opened by the remote's own still-raised carried pose (its act 44 began 250 ms after
+    body 1's) and the place / pins did not move body 1. Frames: the guest's body lying on the deck at the railing.
+    The session's push off the deck did not reproduce, so the rescue itself is unproven.
+  - Seated aim (`637b47ea`, lab): passed. `aim_dir=refused; reason=ride; checks=0; misses=0` on both copies while
+    seated / driving, `aim_dir=valid; reason=none` on foot after the get-off (host then `checks=90; misses=5`, not
+    latched), no `reason=convention` anywhere.
+- **Unproven / open:** the ledge divergence, the stuck guard's re-show and the put-down rescue (no reproduction in
+  the hidden worker); `body-safety-sea-death-downed.txt` (not run); seated aim in play; a lethal land fall's part.
+  Finding (not changed): the put-down guard opens on an ordinary put-down whenever the remote's carried pose is still
+  more than 2 m above body 1; harmless in `4078bbe7` (no pop), but the warp target is the raised pose.
 
 ### partner_native_ui_filter
 - **G1, the viewer's HUD shows the partner's ladder hint** (`wp/ladder-hint`, from `dev/oct7-continue` `cc973a8`;
@@ -578,6 +614,19 @@ hidden-worker phase runs the five new scenarios.
   `gate=pass`, frame `truck-door`, the E press boards), the guest's copy of the host's truck is where RIDE_FAST put it
   (`fast=1`, `rider0=65535`), and the guest's E press logs `board_block; reason=type; type=3|4` with
   `vehicle_not_riding`. Only then may a default change.
+
+- **Hidden run `84e3db0e` (2026-10-23, `wp/integ10` `32ac240`, lab, research build, gun stage,
+  `coop-vehicle-passenger.txt`; Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):** every step
+  passed, both passenger halves and the truck half. The host's `goto_vehicle truck` reached `veh_trc_0000` (id 25602,
+  type 4, `rider0=65535`) at its driver door, `vehicle_door` `gate=pass; d3=1.16; dot=0.87`, frame `truck-door` shows
+  the stock E + truck ride icon there, and the E press boarded (`riders=0,65535; localSeat=1`). The guest's
+  `goto_partner_vehicle` answered `pseat=0; door=1; fast=1; rider0=65535`; its E press logged
+  `partner_ride=board_block; vehicle=25602; site=prequery; mode=passenger; reason=type; type=4; seats=2` and
+  `vehicle_not_riding`; frames `pass-truck-beside` / `pass-truck-blocked`: the guest at the passenger door with only
+  the Fulton prompt, no ride icon, the host seated in the cab. A truck-only scratch copy first (`a42ddafe`, about 1 min
+  after gameplay) found every truck AI-driven (`vehicle_driver_taken;id=25602;rider0=1194`, the truck 490 m away and
+  driving); in the full file the truck stands near the jeep spot without a driver by the time the truck half runs.
+  **Default unchanged (0):** a lab test lever (play forces it off, the receipt refuses outside the lab).
 
 ### partner_native_unrealize_all
 
@@ -687,6 +736,21 @@ hidden-worker phase runs the five new scenarios.
   knock / sign nodes on body 1 in FRAMES, the PS rec+0xC bit 28 sign gate in the lab, and the call menu's keyboard
   route (select keys and the decide key unresolved; the census only tries `1` + `E`). The default stays 0 until
   those frames exist.
+- **Hidden run `260da3e5` (2026-10-23, `wp/integ10` `32ac240`, lab seed, gun stage, research build,
+  `partner-upper-gestures.txt`; Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):** every
+  expectation passed. The host's lever answered `gesture_lever=requested` for knock, sign_go, sign_stop and the
+  crouched knock (`other=same`), then `partner_gesture=local` with upper 0x17 / 0x18 / 0x19; the guest logged `rx`,
+  `submit; graph=2; ...; method=reserve` (knock `0x7b2d4f836a92`, sign_go `0xe74e11baba4b`, sign_stop
+  `0xb98c80a7ddae`, crouched knock `0xd08c8b213cab`), `applied; ...; ok=1` (current = node) and `ended;
+  via=timeout; cause=deadline; ms=2000` (the pickups end `via=end; cause=clip`); the guest's own lever refused
+  `key_off`; no `uncertain`, `fault` or `other_changed`. **FRAMES: no knock and no hand sign is drawn on body 1**
+  (`gest-knock-NN`, `gest-sign-NN`, `gest-sign-stop-NN`: the arms never move; the pickup bursts of the same run show
+  body 1 bending down): the knock / sign nodes become current on body 1 but are not drawn (the L8 case of the
+  scenario header; the rate-record writes of re-traverse-gesture.md 5.3 "Optional" were not tried). Census: holding
+  CALL (Q) opens the stock menu (1 Knock (lure enemy), 2 Wait, 3 Get it, 4 DD (call), 5 Sonar); pressing 1 while Q
+  is held runs the knock (frame `callmenu-select1`: the host's Snake knocks; a host `partner_gesture=local;
+  kind=knock` without a lever line); E did nothing. **Default unchanged (0)** (a lab lever); the knock / sign kinds
+  of `partner_native_gesture` stay unproven visually.
 
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
