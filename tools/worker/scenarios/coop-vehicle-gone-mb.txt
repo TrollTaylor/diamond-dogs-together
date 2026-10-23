@@ -1,0 +1,59 @@
+# 0.13.6 online-vehicle-gone, Mother Base companion of coop-vehicle-gone.txt (docs/world-sync-protocol.md
+# section 16): the session's own vehicle. In the 2026-10-22 two-PC session the guest Fultoned the unnamed sortie
+# jeep 25603 (sortie_3, no authored locator) in Mother Base; the host then drove his copy of it, invisible on the
+# guest's screen. Here the guest loses the sortie jeep (the lab lever vehicle_remove nearest sync, the same loss path
+# as a FultonInfo by the local player) and the HOST's copy must lose it too: an unnamed vehicle is removed with the
+# class Despawn by POOL INDEX (ParseLuaSpawnIndex 0x140B304E0), the path coop-vehicle-gone.txt (authored jeeps,
+# Despawn by locator) never takes. Needs the real seed: Mother Base with 25603 live on both copies (hidden runs
+# bf0388c3, abb0b7cf); the lab seed has no live unnamed vehicle (goto_vehicle sortie answers vehicle_none).
+# Coordinator only, hidden worker (never visible), copied saves, MGS_GAME_LUA_DIR unset, no build running, under the
+# shared verify lock, one worker session.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-gone-mb.txt
+#        -PartnerProfile native -NativeStage gun -SaveSeed real
+# Expected:
+#   both   event=vehicle_gone; step=on; mission=30050; role=host|guest
+#   guest  vehicle_remove;id=2560x;via=index;sync=1;alive=0, step=req; rid=R; id=2560x; cause=3; sent=1,
+#          step=req_done; rid=R; id=2560x; result=gone
+#   host   step=rx_req; rid=R; id=2560x; cause=3, step=applied; id=2560x; via=index; src=req; ok=1 (ok=0: Despawn by
+#          index left the instance alive: keep the key off and report), step=tx; id=2560x; cause=3; actor=1; rid=R
+#   both   goto_vehicle sortie afterwards: vehicle_none;alive_unnamed=none (the jeep is gone on both copies);
+#          frames mb-after: no jeep on either screen
+# NEVER: a removal of index 0 (25600, the relief vehicle: refused as index0), step=error, a host step=applied with
+#   ok=0 counted as a pass.
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+# Mother Base (real seed) can play an arrival demo on a copy: let it finish before the first command.
+wait 45000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_gone; step=on; mission=30050; role=host' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30050; role=guest' 30
+stance host stand
+stance guest stand
+host run goto_vehicle sortie
+host expect warp_position_readback
+guest run goto_vehicle sortie
+guest expect warp_position_readback
+wait 4000
+both capture mb-before
+guest run vehicle_remove nearest sync
+guest expect vehicle_remove;id=2560[1-7];via=index;sync=1;alive=0
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=2560[1-7]; cause=3; sent=1' 10
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=2560[1-7]; cause=3' 10
+waitlog host 'event=vehicle_gone; step=applied; id=2560[1-7]; via=index; src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=2560[1-7]; result=gone' 10
+wait 2000
+both capture mb-after
+host run vehicle_gone_status
+host expect vgone;on=1;role=host;gone=2560[1-7];
+host run goto_vehicle sortie
+host expect vehicle_none
+guest run goto_vehicle sortie
+guest expect vehicle_none
+state

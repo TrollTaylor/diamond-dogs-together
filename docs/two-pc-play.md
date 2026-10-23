@@ -399,6 +399,15 @@ and separate live acceptance requirements. Recorded live verification uses
 two game instances on one PC; actual two-PC play and full campaign progression
 have not been validated.
 
+Vehicles (0.13.6, **off by default**): with `world_vehicle_gone=1` in BOTH
+players' `lab.ini` (and world level 3), a vehicle the host Fultons or destroys
+disappears from the guest's copy too, and one the guest Fultons or destroys
+itself disappears from the host's copy (the host decides). A vehicle somebody
+sits in is never removed under them: it goes once they get out. Without the
+key (the 0.13.5 behaviour) a Fultoned vehicle stays on the other copy, and a
+player driving it can vanish on the partner's screen. Protocol:
+[world-sync-protocol.md](world-sync-protocol.md) section 16.
+
 ## Online (Steam)
 
 The recommended way since the Steam transport ([steam-online.md](steam-online.md)).

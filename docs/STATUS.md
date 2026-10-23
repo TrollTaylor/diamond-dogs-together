@@ -1,3 +1,52 @@
+## 0.13.6 (in progress)
+
+Bug fixes from the first real two-PC Steam session (2026-10-22, 0.13.5). Version not bumped yet.
+
+### online-vehicle-gone
+
+Branch `wp/online-vehicle-gone` from `dev/oct7-continue` `cc973a8`. Vehicles were not world-synced: the guest
+Fultoned the Mother Base sortie jeep 25603 (`obs; m=FultonInfo; ent=0; id=25603; att=local`), the host drove HIS copy
+of it, the guest's seat-by-id read failed (`partner_ride_seat=byid; ...; reason=local_read`), the host was hidden for
+~25 s and drove into the sea (diag-other #2; the visible-fallback half is online-ride-robust's). Unit-tested and
+CTest green; no game launch and no hidden run yet.
+
+- **New world ops** (docs/world-sync-protocol.md section 16): `VEHICLE_GONE` 0x2E (H->G, world queue, reliable,
+  level 3, lab and play: seq, TppVehicle2 id 25600..26111, cause 1 fulton / 2 destroyed / 3 lab, actor, rid, type,
+  xyz mm) and the guest's request `REQ_VEHICLE_GONE` 0x2F (answered natively with RECEIVED; REJECT 5 / 10 as every
+  request). A new mechanism that removes vehicles from a copy, so it is **gated**: lab.ini `world_vehicle_gone=0|1`
+  (lab and play, no play refusal, **default 0** until hidden-run frames), CFG r[15] for Lua. Both copies need it.
+- **Lua** `lua/coop/world_vehicle.lua` (new chunk, spliced last): `W.observe` now hands ids no soldier map names to
+  it (`pcall`, it can never fail world sync). The host announces a vehicle its copy lost (Fulton / FultonInfo / Dead /
+  VehicleBroken, then `IsAlive` read back false within 30 s; FultonFailed cancels); the guest requests only its own
+  losses (its FultonInfo or Dead, or VehicleBroken within 10 s of its own Damage); the host removes its copy and
+  announces it with the rid. The receiver removes a live vehicle within 40 m of the reported pose (or the one vehicle
+  of that type within 5 m of it: pool indices differ between copies) **only while nobody rides it**: never the local
+  player's vehicle, an occupied rider[] seat (back-seat passenger, soldier) or a vehicle the partner drives (live
+  RIDE_FAST track); held up to 120 s otherwise (the host then answers REJECT 9). The viewer's own player is never
+  moved or dismounted.
+- **Removal (RE, read only):** the TppVehicle2 class `Despawn` (`0x140B30AF0`) by the authored locator (the retail
+  `TppEnemy.DespawnVehicle` form) or, for an unnamed sortie / supply vehicle, by `index` (`ParseLuaSpawnIndex`
+  `0x140B304E0`; index 0, the relief vehicle, is an engine error: refused as `index0`); it tears the instance down
+  through `GameObjectImpl::Kill` `0x140B2F850` (no balloon, no resource on the receiver). Readback `IsAlive`
+  (instance dispatcher `0x140B2B710`). The stock `Seize` (options Fulton / FadeOut / Instant) would account a
+  resource: not used. No new native game address (contract unchanged, 743 / 193).
+- **Lab lever:** `debug vehicle_remove nearest [sync]` (nearest free vehicle within 60 m; without `sync` this copy
+  only, the session's divergence; with `sync` a cause-3 loss through the world op), refused natively outside the
+  one-PC lab (`vehicle_remove=refused;reason=lab_only`) and in Lua outside mode=lab; read-only
+  `debug vehicle_gone_status`. Worker allow-lists, LabCommon and `lab_ini_check` know `world_vehicle_gone`.
+- **Tests (fail before, pass after):** `world_wire_tests` VehicleGone (neither code existed: 53 ops), `world_receipt_tests`
+  (CFG r[15], 15 values), `lab_config_tests` (default off, lab and play), new `world_vehicle_lua_check` (76 checks;
+  fails without the module and against the 0.13.5 `world_sync.lua`: no observer hook, no r[15]),
+  `debug_vehicle_lua_check` (the levers route, strict arguments), `worker_session_tests`, `lab_scripts_tests`
+  (LabCommon writes it, the native parser reads it).
+- **Scenarios** (hidden-run phase): `tools/worker/scenarios/coop-vehicle-gone.txt` (`-SaveSeed lab`, Wakh Sind:
+  A the guest's synced loss of jeep J1 reaches the host, B the divergence: only the guest loses J2 and the host
+  drives his copy, C the guest seated in J3 while the host loses it: held until the get-off) and
+  `coop-vehicle-gone-mb.txt` (`-SaveSeed real`, the Mother Base sortie jeep: Despawn by index).
+- **Limits:** a destroyed vehicle disappears on the other copy (no wreck); the relief vehicle (index 0) is never
+  removed; no catch-up after a reconnect beyond the host's re-send of this mission's announcements at the next
+  PAIRED; a real Fulton of a vehicle (not the lever) is still a manual check.
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

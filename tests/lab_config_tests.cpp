@@ -1223,6 +1223,20 @@ int main() {
                   vehiclePlayOff.mode == mgscoop::LabMode::play && !vehiclePlayOff.partner_ride_tilt &&
                   !vehiclePlayOff.partner_ride_seat_id && vehiclePlayOff.invalid_values == 0 && vehiclePlayOff.play_refused == 0,
               "play: seat id and tilt on by default, an explicit 0 keeps each off");
+        // 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): world_vehicle_gone is off by default in
+        // every profile, parses in lab and play (no play refusal), and an invalid value keeps it off.
+        {
+            const auto vgPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_gone=1\n");
+            const auto vgLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_vehicle_gone=1\n");
+            const auto vgBad = Lab("enabled=1\nrole=host\nworld_vehicle_gone=2\n");
+            Check(!def.world_vehicle_gone && !vehicleGun.world_vehicle_gone && !vehiclePlayDefault.world_vehicle_gone,
+                  "world_vehicle_gone defaults off (lab, gun profile, play)");
+            Check(vgLab.world_vehicle_gone && vgLab.invalid_values == 0 && vgLab.unknown_keys == 0, "world_vehicle_gone=1 parses in lab");
+            Check(vgPlay.mode == mgscoop::LabMode::play && vgPlay.world_vehicle_gone && vgPlay.play_refused == 0 && vgPlay.invalid_values == 0,
+                  "world_vehicle_gone=1 parses in play with no refusal bit");
+            Check(!vgBad.world_vehicle_gone && vgBad.invalid_values == 1 && vgBad.unknown_keys == 0, "an invalid world_vehicle_gone keeps it off");
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {

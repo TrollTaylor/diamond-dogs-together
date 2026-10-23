@@ -8,14 +8,15 @@
 // NUL-free, at most max_receipt bytes):
 //   return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>     phase 0 query, 1 start
 //        -> return <level>,<role>,<proto>,<link>,<epoch>,<probe>,<mode>,<session>,
-//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>
-//        (14 values; r[9..11] are the partner's mission and world level, 0
+//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>,<vehicle_gone>
+//        (15 values; r[9..11] are the partner's mission and world level, 0
 //        unknown, and the raw pair-wait code world::pair_wait 0..10; r[12] is
 //        the save handoff code save_handoff_state::LuaCode 0..6 and r[13] the
 //        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
 //        phase 2 P2-1; r[14] the WS4 attacker census 0|1 (lab key
-//        partner_placed_census, lab only), also from HandleCfg; Lua treats a
-//        missing value as 0)
+//        partner_placed_census, lab only), also from HandleCfg; r[15] the
+//        0.13.6 VEHICLE_GONE module 0|1 (lab key world_vehicle_gone, lab and
+//        play), also from HandleCfg; Lua treats a missing value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U

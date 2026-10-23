@@ -1,0 +1,140 @@
+# 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): the host-authoritative VEHICLE_GONE world op,
+# lab key world_vehicle_gone=1 on both copies (default off until this run's frames). The 2026-10-22 two-PC session
+# (docs/STATUS.md 0.13.6, diag-other #2): the guest Fultoned jeep 25603, the host drove HIS copy of it, the guest's
+# seat-by-id read failed (local_read) and hid the host for ~25 s; he drove into the sea. Three parts, all in Wakh Sind
+# (30010, lab seed: authored jeeps veh_lv_*, removed with the retail Despawn by locator). The Mother Base sortie jeep
+# (no locator, Despawn by pool index, the session's own vehicle) is coop-vehicle-gone-mb.txt (real seed).
+# The guest's "Fulton" is the lab lever debug vehicle_remove nearest sync (cause 3, lab): it removes this copy's
+# nearest free vehicle and loses it through the same path a real FultonInfo by the local player takes (the hidden
+# worker cannot Fulton a vehicle; a real Fulton is a separate manual check).
+# Coordinator only, hidden worker (never visible), copied lab saves, MGS_GAME_LUA_DIR unset, no build running, under
+# the shared verify lock, one worker session.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-gone.txt
+#        -PartnerProfile native -NativeStage gun -SaveSeed lab
+# Expected (world_lua lines read "event=vehicle_gone; step=...", ';' expanded to '; '):
+#   both   event=vehicle_gone; step=on; mission=30010; role=host|guest (the key reached Lua as CFG r[15])
+#   A (guest loses jeep J1 -> the host's copy loses it too):
+#     guest  vehicle_remove;id=J1;via=locator;sync=1;alive=0, step=lever; ...; sync=1, step=lost; id=J1; cause=3,
+#            step=req; rid=R; id=J1; cause=3; sent=1, then step=req_done; rid=R; id=J1; result=gone
+#     host   step=rx_req; rid=R; id=J1; cause=3, step=applied; id=J1; via=locator; src=req; ok=1,
+#            step=tx; id=J1; cause=3; actor=1; rid=R; sent=1; host vehicle_gone_status gone=J1
+#     frames gone-a-after: J1 gone on BOTH screens (gone-a-before: on both)
+#   B (the divergence: the guest alone loses jeep J2; the host drives his copy of it):
+#     guest  vehicle_remove;id=J2;via=locator;sync=0;alive=0 and vehicle_gone_status gone=...J2L (L: this copy only);
+#            the host's status does NOT name J2; nothing on the wire (no step=req for J2, no host step=rx_req for J2)
+#     host   partner_status=local; st=0x400; names=on_vehicle; vehicle=J2 (he drives J2 on his copy)
+#     guest  frames diverge-drive-NN / diverge-stopped: the HOST must stay visible (with the online-ride-robust fallback
+#            merged: its visible fallback line instead of partner_ride=hide; reason=ride). Without it this half
+#            reproduces the session's hide: record which.
+#     host   after his get-off, host vehicle_remove nearest (this copy only) removes J2 so both copies agree again
+#   C (never yank the local player out: the guest sits in jeep J3 while the host loses it):
+#     guest  step=rx; id=J3; ...; actor=2, step=hold; id=J3; src=rx; reason=local_rider (or occupied), J3 still under
+#            the guest in hold-guest-seated; after the guest's get-off step=applied; id=J3; via=locator; src=rx; ok=1
+#     host   vehicle_remove;id=J3;via=locator;sync=1;alive=0, step=tx; id=J3; cause=3; actor=2
+# NEVER (any fails the run): a guest step=applied for J3 before its own get-off (partner_status=local; st=0x400 must
+#   end first); a removal of a vehicle the remover rides; step=error; world=... or partner_... faults; the viewer's own
+#   player moved by a partner write (viewer_changed); a removal on the copy that did not ask for it in part B.
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_gone; step=on; mission=30010; role=host' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30010; role=guest' 30
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+# A: both beside the nearest authored jeep J1; the guest loses it (synced).
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host run vehicle_gone_status
+host expect vgone;on=1;role=host;gone=none
+both capture gone-a-before
+guest run vehicle_remove nearest sync
+guest expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=1;alive=0
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=256[0-9][0-9]; cause=3; sent=1' 10
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=256[0-9][0-9]; cause=3' 10
+waitlog host 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=(locator|index); src=req; ok=1' 10
+waitlog host 'event=vehicle_gone; step=tx; id=256[0-9][0-9]; cause=3; actor=1; rid=[0-9]+; seq=[0-9]+; sent=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=256[0-9][0-9]; result=gone' 10
+wait 1500
+both capture gone-a-after
+host run vehicle_gone_status
+host expect vgone;on=1;role=host;gone=256[0-9][0-9];
+guest run vehicle_gone_status
+guest expect vgone;on=1;role=guest;gone=256[0-9][0-9];
+# B: the next jeep J2; only the guest's copy loses it, then the host drives his copy.
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_remove nearest
+guest expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=0;alive=0
+guest run vehicle_gone_status
+guest expect gone=.*256[0-9][0-9]L
+host run vehicle_gone_status
+host expect vgone;on=1;role=host;gone=256[0-9][0-9];held
+both capture diverge-before
+host press e 150
+wait 3000
+host run vehicle_seats
+host expect vehicle;id=256[0-9][0-9]
+waitlog host 'partner_status=local; st=0x400; names=on_vehicle; vehicle=256[0-9][0-9]' 10
+host hold w 1500 nowait
+guest burst diverge-drive 8 200
+host release
+host hold w+a 1500 nowait
+guest burst diverge-turn 6 200
+host release
+wait 2000
+both capture diverge-stopped
+host press e 150
+wait 3000
+both capture diverge-exited
+# The host's copy still has J2 (he stands beside it): remove it there too (this copy only), so part C's
+# goto_vehicle jeep picks the same J3 on both copies.
+host run vehicle_remove nearest
+host expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=0;alive=0
+state
+both debug heal
+both debug godmode 1
+wait 1500
+# C: the next jeep J3; the guest boards it, then the host loses it (synced): the guest holds it until it gets off.
+guest debug goto_vehicle jeep
+host debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+guest press e 150
+wait 3000
+guest run vehicle_seats
+guest expect vehicle;id=256[0-9][0-9]
+host run vehicle_remove nearest sync
+host expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=1;alive=0
+waitlog host 'event=vehicle_gone; step=tx; id=256[0-9][0-9]; cause=3; actor=2; rid=0; seq=[0-9]+; sent=1' 10
+waitlog guest 'event=vehicle_gone; step=rx; id=256[0-9][0-9]; seq=[0-9]+; cause=3; actor=2; rid=0' 10
+waitlog guest 'event=vehicle_gone; step=hold; id=256[0-9][0-9]; src=rx; reason=(local_rider|occupied)' 10
+wait 3000
+both capture hold-guest-seated
+guest run vehicle_seats
+guest expect vehicle;id=256[0-9][0-9]
+guest press e 150
+wait 3500
+waitlog guest 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=(locator|index); src=rx; ok=1' 15
+wait 1500
+both capture hold-applied
+guest run vehicle_gone_status
+guest expect vgone;on=1;role=guest;gone=.*held=none
+state

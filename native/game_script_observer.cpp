@@ -1413,6 +1413,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.build = mgscoop::world_link::ParseBuild(lab::ProbeVersion());
     world.log = Log;
     world.placed_census = labc.partner_placed_census && labc.mode == mgscoop::LabMode::lab;
+    world.vehicle_gone = labc.world_vehicle_gone;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -3085,6 +3086,13 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             // (mode=lab, offline, redirected saves); in the lab it goes on to Lua below.
             debug::Result(pending.id, 0, "give_item=refused;reason=lab_only");
             LogFormat("debug_menu=give_item; id=%u; ok=0; reason=lab_only\r\n", pending.id);
+        } else if (pending.id && std::strncmp(pending.text, "vehicle_remove", 14) == 0 && (pending.text[14] == 0 || pending.text[14] == ' ') &&
+                   !(mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab && offline_enabled && lab::SavesRedirected())) {
+            // 0.13.6 online-vehicle-gone lab lever (debug_vehicle.lua "vehicle_remove nearest [sync]"): it
+            // despawns a vehicle of the running copy, so it is refused outside the one-PC lab like
+            // give_item (Lua refuses it outside mode=lab too); in the lab it goes on to Lua below.
+            debug::Result(pending.id, 0, "vehicle_remove=refused;reason=lab_only");
+            LogFormat("debug_menu=vehicle_remove; id=%u; ok=0; reason=lab_only\r\n", pending.id);
         } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {
             // Read-only: the in-game status line as the overlay last drew it.
             char status[161]{};
