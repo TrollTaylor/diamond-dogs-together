@@ -1,3 +1,42 @@
+## 0.13.6 (in progress)
+
+Fixes from the first real two-PC Steam session (2026-10-22, diag-guns / diag-join / diag-other). One branch per
+topic, merged later; the version stays 0.13.5 until the integration step.
+
+### online-body-safety
+
+Branch `wp/online-body-safety` from `dev/oct7-continue` `cc973a8` (diag-other #4, #5, #6, #7 and the #11 log caps).
+Bug fixes for real play, on by default (no key); docs/native-puppet.md "Body safety". Not yet run in the game: the
+hidden-worker phase runs the five new scenarios.
+
+- Sea death (#5): `downed_damage::Evaluate` turns a lethal hit on the local player into "downed" only for a natural
+  collision part (0..11). The sea / out-of-bounds kill (part 12, flags 0x2419, damage 10000) is the stock death again,
+  so PLAYER_FALL_DEAD drives the shared game over at once (`downed_damage=stock_death; reason=environment`); the
+  session downed both players in the sea (H:11467, F:12698). Read-only proof that no weapon uses part 12: the only
+  player collision-hit builder `DefenseCallback::TargetCallbackExec` (the only caller of `GetPartsIdFromName`
+  0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1 for shields; ~1000 logged samples show
+  part 12 only as the environment kill. The replica stays protected from every lethal hit; a downed player keeps its
+  shield. Tests: `downed_damage_tests` (fails on 0.13.5: part 12 on the local player returned cause 1).
+- Ledge falls (#4): `partner_body_safety` drop guard (a cliff drop / fall of body 1 with no matching remote vertical act
+  within 500 ms and an unchanged remote height: a vertical placement at once) and stuck guard (placed ok=0 while body 1
+  falls or hangs at a ledge and the remote is on foot: the re-show flow at the target; bits cleared, held hidden with
+  `clear_all_active` like the mount hide until unrealized, then the range placement). Tests: `partner_body_safety_tests`,
+  `partner_driver_tests` `TestBodySafety` (drop, matched fall, free-roam re-show); none of these lines exist in 0.13.5.
+- Carry put-down drop (#6): the put-down guard (remote carried/asleep, body 1 released 44/131/132/25/26, more than 2 m
+  below the target: Warp at the target, xform pin every tick until it holds 500 ms) owns body 1 for the episode,
+  overriding the stock carry hold for that tick only; in `partner_driver`/`partner_body_safety`, not in coop_carry.
+  Tests: `partner_body_safety_tests`, `partner_driver_tests` (put-down Warp, pin, held end).
+- Seated aim latch (#7): `partner_aim::RideGate`; no convention check and no v6 direction while the local player rides
+  (ON_VEHICLE / ON_HELICOPTER / ON_HORSE, the native passenger report, the driven vehicle), `aim_dir=refused;
+  reason=ride`; every ride edge restarts the miss streak. Tests: `partner_native_tests`, `partner_driver_tests` (the
+  v6 sender while driving: no direction, no checks, the direction back on foot).
+- Log caps (#11): the partner_recon event families rotate (64 per 2 min window, 1024 per family and mission,
+  `resumed; dropped=` summaries) instead of 64 per mission; the world LOG receipts use a token bucket (600 burst,
+  20/s) instead of 200 per fixed 10 s. Tests: `log_budget_tests`.
+- Scenarios: `body-safety-sea-death.txt`, `body-safety-sea-death-host.txt` (MB, `-SaveSeed real -Mode play`),
+  `body-safety-ledge.txt` (`-WanSim awful`), `body-safety-putdown-edge.txt`, `coop-vehicle-seated-aim.txt`.
+- No new game address: contract 743 code sites / 193 vtable slots (`--check` unchanged).
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

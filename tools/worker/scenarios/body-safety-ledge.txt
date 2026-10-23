@@ -1,0 +1,54 @@
+# 0.13.6 online-body-safety (docs/native-puppet.md "Body safety", the 2026-10-22 session diag-other #4): the
+# input-driven partner body walks off a Mother Base deck edge the remote never crossed and hangs at the ledge.
+# The session (host's copy of the friend's body): body 2 -> 28 (cliff_drop) -> 25 -> 26 -> 25 -> 54 (ledge hang) while
+# the remote ran on the deck (H:11285-11309), three rounds of partner_recon=place; reason=far then placed; ok=0
+# (H:11366-11724, the Warp does not take on a hanging body; retry_ms=5000), 18 s at 22 m until the game over.
+# The fix: the drop guard places a lone edge drop back at once (partner_body_safety=drop; verdict=place) and the stuck
+# guard re-shows a hanging body after a failed placement (partner_body_safety=stuck; verdict=reshow, then
+# reshow; step=hide / step=place; next=realize; partner_range=placed; next=realize; partner_bits=set).
+# Run (hidden worker, coordinator only, one session at a time, no builds running; the session's settings):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/body-safety-ledge.txt
+#     -PartnerProfile native -NativeStage gun -SaveSeed real -Mode play -WanSim awful
+# The awful WAN preset gives the latency/speed mismatch that let the body overrun the edge (the session's 400 ms RTT
+# window). The spot: the deck edge of the session at (211.2, 0.9, 405.3), the guest running along it (yaw 90, +x);
+# the sea lies past the edge. Check both `debug position` lines; if the copies differ, pick a deck edge both share.
+#
+# Expect (host, the viewer of the guest's body):
+#   partner_act; ...; edge=body; remote=2(stand_move); body=28(cliff_drop) (the divergence; it may take several runs)
+#   then within ~0.6 s partner_body_safety=drop; verdict=place; act=28; ...; next=place,reason=vertical and
+#   partner_recon=place; reason=vertical (or verdict=matched / level when the remote really dropped)
+#   if the body still hangs (body=54): partner_recon=placed; ok=0 -> partner_body_safety=stuck; verdict=reshow; body_act=54
+#   -> partner_body_safety=reshow; step=hide; reason=recon_stuck -> step=place; ...; next=realize -> partner_range=placed
+#   NO 5 s retry rounds (two partner_recon=placed; ok=0 more than 3 s apart with the body still at 54)
+#   frames ledge-run-NN / ledge-after-NN: the guest's body on the deck next to the guest, never hanging off the edge
+# Expect (guest): its own player unchanged (debug position, no partner line about instance 0).
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+host debug teleport 205.0 0.9 403.0 90
+guest debug teleport 211.2 0.9 405.3 90
+wait 4000
+both capture ledge-start
+guest hold w+shift 1500 nowait
+host burst ledge-run 6 250
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest release
+waitlog host 'partner_act; .*edge=body; remote=[0-9]+\([a-z_]+\); body=28\(cliff_drop\)' 20
+host burst ledge-after 6 300
+waitlog host 'partner_body_safety=(drop|stuck); verdict=' 20
+wait 6000
+host capture ledge-settled
+guest debug position
+host debug position
+state

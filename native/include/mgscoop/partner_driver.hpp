@@ -28,6 +28,9 @@
 // stop_timeout, unconsumed, adopted, abandoned and bad_gani 64 each
 // ("partner_dmmap=capped; limit=64; kind=<family>"); the summary every
 // kDmMapSummaryMs, kDmMapSummaryCap lines ("...; limit=720; kind=summary").
+// 0.13.6: the partner_recon event families and partner_body_safety rotate
+// (log_budget: kReconCapLimits / kBodySafetyCapLimits, a window cap with a
+// resumed summary and a per-mission ceiling) instead of 64 per mission.
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
@@ -57,6 +60,8 @@
 #include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
+#include "mgscoop/partner_body_safety.hpp"
+#include "mgscoop/log_budget.hpp"
 #include "mgscoop/partner_traverse.hpp"
 #include "mgscoop/partner_icon.hpp"
 #include "mgscoop/partner_gesture.hpp"
@@ -72,6 +77,14 @@ inline constexpr unsigned kProbeLineCap = 400;
 inline constexpr unsigned kLuaLogCap = 64;
 inline constexpr unsigned kCappedLogs = 8;
 inline constexpr unsigned kTransitionLogCap = 64;
+// 0.13.6: the partner_recon event families rotate (64 lines per 2 min window,
+// 1024 per family and mission; "partner_recon=capped; limit=64; kind=..",
+// "partner_recon=resumed; kind=..; dropped=..", "...; limit=1024; kind=..; scope=mission"),
+// and the partner_body_safety lines the same with 512 per mission.
+inline constexpr log_budget::Limits kReconCapLimits{64, 120000, 1024};
+inline constexpr log_budget::Limits kBodySafetyCapLimits{64, 120000, 512};
+// The body-safety re-show waits at most this long for the engine to unrealize body 1.
+inline constexpr std::uint64_t kReshowUnrealizeMs = 2500;
 inline constexpr std::uint64_t kTriggerPollTicks = 30;
 inline constexpr unsigned kForceExistsAfterTicks = 10;
 inline constexpr std::uint64_t kPartsTimeoutMs = 15000;
@@ -844,10 +857,28 @@ struct Mission {
     bool recon_remote_ok;            // the aligned sample's anim fields (StepRecon)
     std::uint16_t recon_remote_act;
     bool recon_target_ok;
+    bool recon_target_live;          // the aligned sample is live (StepRecon)
     std::uint64_t recon_line_ms;
     unsigned recon_lines;
     bool recon_lines_capped;
-    LogCap recon_cap[13];          // event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused, stance_fix, input_pin, lag)
+    // Event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused,
+    // stance_fix, input_pin, lag): kReconCapLimits each (rotating; 0.13.6, was 64 per mission).
+    log_budget::Rotating recon_cap[13];
+    std::uint64_t log_now_ms;        // this tick's clock for the rotating caps
+    // 0.13.6 body safety (partner_body_safety, docs/native-puppet.md "Body safety").
+    partner_body_safety::StuckState body_stuck;
+    partner_body_safety::DropState body_drop;
+    partner_body_safety::PutDownState body_putdown;
+    bool reshow_capable;             // the re-show flow runs this tick (free-roam net or the ride guard)
+    const char* body_reshow;         // a re-show requested by TickInput (executed in the range block next tick)
+    std::uint64_t body_reshow_ms;    // when it was requested (dropped after 1 s)
+    // The re-show hold: body 1 kept hidden (deferred replies; clear_all_active while
+    // Lua's all-active mode is on, as the mount hide does) until the engine reports
+    // it unrealized or kReshowUnrealizeMs passed; then the slot is placed at the target.
+    bool reshow_wait;
+    std::uint64_t reshow_since_ms;
+    const char* reshow_reason;
+    log_budget::Rotating body_safety_cap;
     const char* recon_refused;     // last refusal logged (change-only)
     std::uint32_t recon_snaps_total;
     std::uint32_t recon_fixes;     // corrective stance inputs this mission (StanceFix)
@@ -1042,6 +1073,7 @@ struct Mission {
     partner_aim::DirCheck dir_check;
     partner_aim::DirReason dir_reason;
     bool dir_reason_logged;
+    bool dir_riding;                 // partner_aim::RideGate: the local player rode at the last aim sample
     std::int32_t place_yaw_err_mdeg;
     // --- Online play (docs/native-puppet.md "Online").
     // The receiver's link quality (re-entry gate) and the online log lines.

@@ -226,6 +226,13 @@ float Calculate(void* object,std::uint32_t id,void* packet,void* record,std::uin
             GetCurrentThreadId(),static_cast<unsigned long long>(GetTickCount64()));
         logger(line);
     }
+    // The sea/out-of-bounds kill stays the stock death (shared game over).
+    if(!downed && logger && EnvironmentKill(scoped,id,hit.local,hit.bodyPart,hit.life,amount)) {
+        char line[224]{};
+        std::snprintf(line,sizeof(line),"downed_damage=stock_death;reason=environment;id=%u;life=%.1f;damage=%.1f;flags=0x%x;part=%u\r\n",
+            id,double(hit.life),double(amount),unsigned(hit.flags),unsigned(hit.bodyPart));
+        logger(line);
+    }
     // Even when revival is temporarily unavailable, an exact offline direct
     // dart must not enter the verified null-synchronizer notification path.
     if(!downed && !unsafe_notification) return amount;

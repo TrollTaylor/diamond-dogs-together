@@ -9,6 +9,7 @@
 #include <strsafe.h>
 #include "mgscoop/coop_hud.hpp"
 #include "mgscoop/lab_status.hpp"
+#include "mgscoop/log_budget.hpp"
 #include "mgscoop/save_handoff.hpp"
 #include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/world_receipt.hpp"
@@ -28,9 +29,13 @@ bool g_lab_triggers = false;
 bool g_placed_census = false;  // WS4 step 0: CFG r[14] (lab key partner_placed_census, lab only)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
-// LOG receipts: at most 200 lines per 10 s (world=log_cap counts the rest).
-std::uint64_t g_log_window_ms = 0;
-unsigned g_log_lines = 0, g_log_dropped = 0;
+// LOG receipts (0.13.6): a token bucket of kLogBurst lines refilled at kLogPerS
+// lines/s, the old steady 200 per 10 s with room for a mission arrival's burst
+// (the session of 2026-10-22 dropped 52 at the 30010 arrival: 108 resync applies
+// and 77 phase lines in one 10 s window). world=log_cap counts the rest; it is
+// logged before the next admitted line.
+constexpr std::uint32_t kLogBurst = 600, kLogPerS = 20;
+log_budget::Bucket g_log_bucket{};
 thread_local char g_reply[world::reply_capacity]{};
 std::uint8_t g_pump_buffer[world::kMaxReliableBundle];  // the single pumper only
 // Under g_world_lock: the published pair-wait code (different missions settle
@@ -314,23 +319,16 @@ const char* HandleLog(const char* source, std::size_t size) noexcept {
     if (!Configured()) return nullptr;
     static constexpr char yes[] = "return true";
     const std::uint64_t now = partner_net::NowMs();
-    if (!g_log_window_ms || now - g_log_window_ms >= 10000) {
-        if (g_log_dropped) {
-            char cap[96]{};
-            if (SUCCEEDED(StringCchPrintfA(cap, ARRAYSIZE(cap), "world=log_cap; dropped=%u; t_ms=%llu\r\n", g_log_dropped,
-                                           static_cast<unsigned long long>(now))))
-                Write(cap);
-        }
-        g_log_window_ms = now;
-        g_log_lines = g_log_dropped = 0;
-    }
-    if (g_log_lines >= 200) {
-        ++g_log_dropped;
-        return yes;
-    }
     char line[world::log_line_capacity]{};
     if (!world::FormatLogLine(source, size, now, line, sizeof(line))) return nullptr;
-    ++g_log_lines;
+    const log_budget::Take take = log_budget::TakeToken(g_log_bucket, kLogBurst, kLogPerS, now);
+    if (!take.emit) return yes;
+    if (take.report_dropped) {
+        char cap[96]{};
+        if (SUCCEEDED(StringCchPrintfA(cap, ARRAYSIZE(cap), "world=log_cap; dropped=%u; t_ms=%llu\r\n", take.report_dropped,
+                                       static_cast<unsigned long long>(now))))
+            Write(cap);
+    }
     Write(line);
     return yes;
 }

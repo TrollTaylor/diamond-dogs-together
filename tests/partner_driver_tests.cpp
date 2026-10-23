@@ -1635,6 +1635,108 @@ void PlaceAndArm(Session& s) {
           s.fake.Count("partner_input=armed;") == 1 && !(s.reply.op & op::warp), "verified, then armed without a Warp");
 }
 
+// 0.13.6 body safety (docs/native-puppet.md "Body safety"; the 2026-10-22 two-PC session): the
+// driver's wiring of the partner_body_safety guards (their policies: partner_body_safety_tests).
+// 0.13.5 had none of these lines and did nothing in each case.
+void TestBodySafety() {
+    // Drop: body 1 cliff-drops (28 -> 25) while the remote walks on the deck: 500 ms later a
+    // vertical placement (a Warp at the target) instead of waiting for the 10 m far rule.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 2;
+        for (int i = 0; i < 5; ++i) s.Tick(1, 33);
+        s.fake.anim.act[1] = 28;
+        s.Tick(1, 33);
+        s.fake.anim.act[1] = 25; s.fake.body_pos[1] = 1.2f;
+        bool warped = false;
+        for (int i = 0; i < 20 && !warped; ++i) {
+            s.Tick(1, 33);
+            warped = (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=vertical;") == 1;
+        }
+        Check(s.fake.Count("partner_body_safety=drop; verdict=place; act=28;") == 1 && warped && s.reply.y_mm == 2000 &&
+                  s.reply.x_mm == 1000 && s.reply.z_mm == 3000,
+              "drop: a lone edge drop is placed back at the remote's pose");
+    }
+    // The remote fell too (its act sample shows the drop): no placement.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 2;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 2;
+        for (int i = 0; i < 5; ++i) s.Tick(1, 33);
+        s.fake.sample.act = 28; s.fake.anim.act[1] = 28;
+        s.Tick(1, 33);
+        s.fake.sample.act = 25; s.fake.anim.act[1] = 25; s.fake.body_pos[1] = 1.2f;
+        for (int i = 0; i < 20; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_body_safety=drop; verdict=matched;") == 1 && s.fake.Count("partner_recon=place; reason=vertical;") == 0,
+              "drop: the remote's own fall matches: no placement");
+    }
+    // Put-down: the remote is asleep (132) and body 1, released (44), falls below the deck: a Warp at
+    // the target at once, then an xform pin there every tick, until it holds 500 ms at the target.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 44;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 132;
+        for (int i = 0; i < 3; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_body_safety=putdown;") == 0, "put-down at the target: nothing");
+        s.fake.body_pos[1] = -1.0f;
+        Check(s.Tick(1, 33) && (s.reply.op & op::warp) && s.reply.y_mm == 2000 &&
+                  s.fake.Count("partner_body_safety=putdown; step=start; body_act=44; remote_act=132;") == 1,
+              "put-down: body 3 m below the target: a Warp at the target");
+        const auto xforms = s.fake.Calls("xform:");
+        s.fake.body_pos[1] = -6.0f;
+        Check(s.Tick(1, 33) && s.fake.Calls("xform:") == xforms + 1 && s.fake.xform_pos[1] == 2.0f && !(s.reply.op & op::warp),
+              "put-down: then pinned at the target (xform)");
+        s.fake.body_pos[1] = 2.0f; s.fake.anim.act[1] = 132;
+        for (int i = 0; i < 20; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_body_safety=putdown; step=end; reason=held;") == 1, "put-down: held at the target: end");
+    }
+    // Stuck: three failed placements while body 1 hangs at a ledge (54) and the remote stands on
+    // the deck 25 m away: the free-roam re-show. Bits cleared, body 1 held hidden (clear_all_active
+    // while Lua's all-active mode is on) until the engine unrealizes it, then the range placement at
+    // the target and the realize on the next fresh tick.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net, 30010);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        auto& sm = s.fake.sample;
+        sm.valid = true; sm.x = 1.0f; sm.y = 2.0f; sm.z = 3.0f; sm.status = mgscoop::pose::Status::live;
+        sm.anim_valid = true; sm.act = 2;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+        s.fake.body_ok = true; s.fake.body_pos[0] = 1.0f; s.fake.body_pos[1] = 2.0f; s.fake.body_pos[2] = 3.0f;
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 1;
+        for (int i = 0; i < 3; ++i) s.Tick(1);
+        Loaded(s);
+        for (int i = 0; i < 40; ++i) s.Tick(1);  // past the 700 ms settle
+        Check(s.driver.mission.bits_set && s.driver.mission.recon.mode == mgscoop::partner_recon::Mode::track,
+              "stuck: free-roam input body tracked");
+        s.fake.anim.act[1] = 54;
+        sm.x = 26.0f;
+        bool fail = false;
+        for (int i = 0; i < 40 && !fail; ++i) { s.Tick(1); fail = s.fake.Count("partner_recon=placed; ok=0;") == 1; }
+        Check(fail && s.fake.Count("partner_body_safety=stuck; verdict=reshow; body_act=54; remote_act=2;") == 1 &&
+                  s.driver.mission.body_reshow != nullptr,
+              "stuck: placed ok=0 on a hanging body asks for the re-show");
+        const auto slots = s.fake.Writes("slot");
+        Check(s.Tick(1) && s.fake.Has("partner_bits=cleared; reason=recon_stuck\r\n") &&
+                  s.fake.Count("partner_body_safety=reshow; step=hide; reason=recon_stuck;") == 1 && (s.reply.op & op::clear_all_active) &&
+                  !(s.reply.op & op::warp) && s.driver.mission.reshow_wait,
+              "stuck: bits cleared, body 1 held hidden with clear_all_active");
+        Check(s.Tick(1) && (s.reply.op & op::clear_all_active) && s.fake.Writes("slot") == slots, "stuck: held until unrealized");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Tick(1) && s.fake.Count("partner_body_safety=reshow; step=place; reason=recon_stuck; unrealized=1;") == 1 &&
+                  s.fake.Writes("slot") == slots + 1 && s.fake.state.slot[1][0] == 26.0f && !s.driver.mission.reshow_wait,
+              "stuck: unrealized: the slot is placed at the target");
+        const auto ors = s.fake.Writes("or");
+        Check(s.Tick(1) && s.fake.Writes("or") == ors + 1 && s.driver.mission.bits_set, "stuck: realized again at the target");
+    }
+}
+
 void TestAnimationApply() {
     // anim=mirror aset=qs: the local slot 0 drives instance 1 (no network).
     Session s(3);
@@ -4194,6 +4296,23 @@ void TestNativeGunDirectionWire() {
     r.stance[0]=2;
     r.gun_flags[0]=0x2000; s.N();
     Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir), "v6 sender refuses camera-relative mapping and clears old direction");
+    // 0.13.6: riding (here driving: the tick's ride=2 veh=) runs no convention check and sends no
+    // direction (the 2026-10-22 session latched 20/20 seated misses for the mission); on foot it returns.
+    r.gun_flags[0]=0; s.N();
+    Check((s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) != 0, "v6 sender: a direction on foot");
+    const auto checks_before = s.driver.mission.dir_check.checks;
+    s.ride_suffix = " ride=2 veh=25600 seat=0";
+    for (unsigned n=0;n<30;++n) s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) &&
+              s.driver.mission.dir_reason == mgscoop::partner_aim::DirReason::ride &&
+              s.driver.mission.dir_check.checks == checks_before && !s.driver.mission.dir_check.latched &&
+              s.fake.Containing("aim_dir=refused; reason=ride;") == 1,
+          "v6 sender: riding sends no direction and runs no convention check (one change-only line)");
+    s.ride_suffix.clear();
+    for (unsigned n=0;n<3;++n) s.N();
+    Check((s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) != 0 && !s.driver.mission.dir_check.latched &&
+              s.driver.mission.dir_reason == mgscoop::partner_aim::DirReason::none,
+          "v6 sender: the direction returns after the ride");
     // Receiver point direction chooses the received group, stale input cannot retain it.
     s.driver.settings.naimpt=mgscoop::PartnerNativeAimPt::point;
     s.hooks.publish_aim=HookPublishAim; s.hooks.aim_stats=HookAimStats;
@@ -7397,6 +7516,7 @@ int main() {
     TestCensusAndProbes();
     TestLookFix();
     TestInputArming();
+    TestBodySafety();
     TestDm();
     TestReviewFixes();
     TestRound4Review();

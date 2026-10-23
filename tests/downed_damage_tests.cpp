@@ -43,6 +43,32 @@ int main() {
         check(!Evaluate(true,target,local,other,2,2,100,100,inf,2,false).bypass);
         check(Evaluate(true,target,local,other,0,2,100,1,0,0,true).bypass==(target==local));
     }
+    // Lethal-to-downed only for natural body parts on the local player. The
+    // sea/out-of-bounds kill (part 12, flags 0x2419, damage 10000, attacker =
+    // self) stays the stock death; the replica stays protected for every part.
+    for(unsigned part=0;part<256;++part) for(unsigned local=0;local<2;++local) for(unsigned target=0;target<2;++target) {
+        const auto body=static_cast<std::uint8_t>(part);
+        const auto d=Evaluate(true,target,local,static_cast<std::uint16_t>(target),0x2419,body,7200,10000,0,0,false);
+        if(target==local) {
+            check(d.bypass==(part<=11) && d.cause==(part<=11?1:0));
+            check(EnvironmentKill(true,target,local,body,7200,10000)==(part>11));
+        } else {
+            check(d.bypass && d.cause==0);
+            check(!EnvironmentKill(true,target,local,body,7200,10000));
+        }
+        // The protected (already downed) local player keeps its full shield.
+        check(Evaluate(true,target,local,static_cast<std::uint16_t>(target),0x2419,body,7200,10000,0,0,true).bypass);
+    }
+    // The real session samples: host (life 7200) and guest (life 6000).
+    check(!Evaluate(true,0,0,0,0x2419,12,7200,10000,0,0,false).bypass);
+    check(!Evaluate(true,0,0,0,0x2419,12,6000,10000,0,0,false).bypass);
+    check(Evaluate(true,1,0,0,0x2419,12,6000,10000,0,0,false).bypass);
+    check(Evaluate(true,0,0,1,0x401,4,7800,7800,0,0,false).cause==1);   // explosion part 4 still downs
+    check(!EnvironmentKill(false,0,0,12,7200,10000));
+    check(!EnvironmentKill(true,0,0,12,7200,100));
+    check(!EnvironmentKill(true,0,0,12,0,10000));
+    check(!EnvironmentKill(true,2,2,12,7200,10000));
+    check(!EnvironmentKill(true,0,0,12,nan,10000));
     // Active accepted ordinary packets qualify irrespective of the optional bit1.
     check(FriendlyReplicaHit(true,1,0,0,0x4401,2,942,0,0));
     check(FriendlyReplicaHit(true,1,0,0,0x4481,1,942,0,0));

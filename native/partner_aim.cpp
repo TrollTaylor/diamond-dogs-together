@@ -41,6 +41,7 @@ const char* DirReasonName(DirReason reason) noexcept {
     case DirReason::body: return "body";
     case DirReason::convention: return "convention";
     case DirReason::prone_frame: return "prone_frame";
+    case DirReason::ride: return "ride";
     default: return "none";
     }
 }
@@ -132,6 +133,15 @@ CheckResult CheckStep(DirCheck& check, const GunDirOut& dir, const GunDirIn& in,
         return CheckResult::latched;
     }
     return CheckResult::miss;
+}
+
+bool RideGate(DirCheck& check, bool riding, bool& was_riding) noexcept {
+    if (riding != was_riding) {
+        check.streak = 0;
+        check.have_prev = false;
+        was_riding = riding;
+    }
+    return riding;
 }
 
 const char* SourceName(Source source) noexcept {

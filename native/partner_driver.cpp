@@ -503,7 +503,17 @@ pin::V6Source SenderV6(Driver& d, const Hooks& h, const pp::State& st, const pin
     v.v5 = v5;
     Mission& m = d.mission;
     pam::DirReason why = pam::DirReason::idle;
-    if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming)) {
+    // 0.13.6: no convention check and no v6 direction while the local player rides
+    // (drives: Lua's ON_VEHICLE or the tick's vehicle; a back seat: the native
+    // passenger report; the helicopter; D-Horse). Each ride edge restarts the streak.
+    namespace sb = partner::status_bit;
+    const bool riding = pam::RideGate(m.dir_check,
+        (m.status_have && (m.status_bits & (sb::on_vehicle | sb::on_helicopter | sb::on_horse)) != 0) || d.local_passenger.valid ||
+            d.local_vehicle != partner_ride_wire::kVehicleUnknown,
+        m.dir_riding);
+    if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming) && riding) {
+        why = pam::DirReason::ride;
+    } else if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming)) {
         pp::AimRead r{};
         pam::GunDirIn gi{};
         if (h.read_aim && h.read_aim(h.context, st, r)) gi = GunDirectionInput(r, 0);
@@ -1135,10 +1145,35 @@ struct InputTick {
     bool suppress_fallback;
 };
 
-// Reconciliation event families (one 64-line cap each).
+// One line of a rotating family (log_budget::Admit): the window's capped line once,
+// a resumed line with the dropped count before the first line of a later window,
+// the mission's final capped line once.
+void EmitRotatingV(log_budget::Rotating& cap, const log_budget::Limits& limits, std::uint64_t now, const Hooks& h, const char* head,
+                   const char* kind, const char* format, va_list arguments) noexcept {
+    const log_budget::Decision d = log_budget::Admit(cap, limits, now);
+    switch (d.verdict) {
+    case log_budget::Verdict::drop_capped:
+        EmitFormat(h, "%s=capped; limit=%u; kind=%s; window_ms=%u\r\n", head, limits.per_window, kind, limits.window_ms);
+        return;
+    case log_budget::Verdict::drop_closed:
+        EmitFormat(h, "%s=capped; limit=%u; kind=%s; scope=mission\r\n", head, limits.per_mission, kind);
+        return;
+    case log_budget::Verdict::drop:
+        return;
+    case log_budget::Verdict::emit_resumed:
+        EmitFormat(h, "%s=resumed; kind=%s; dropped=%u\r\n", head, kind, d.dropped);
+        break;
+    default:
+        break;
+    }
+    char line[512]{};
+    if (SUCCEEDED(StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments))) Emit(h, line);
+}
+
+// Reconciliation event families (one rotating cap each, kReconCapLimits).
 enum ReconFamily : unsigned { kRcPlace, kRcPlaced, kRcSnap, kRcRunaway, kRcFrozen, kRcStance, kRcYaw, kRcStop, kRcDiverge, kRcRefused,
                              kRcFix, kRcInputPin, kRcLag, kRcFamilies };
-static_assert(kRcFamilies == sizeof(Mission::recon_cap) / sizeof(LogCap), "one cap per recon family");
+static_assert(kRcFamilies == sizeof(Mission::recon_cap) / sizeof(log_budget::Rotating), "one cap per recon family");
 const char* ReconFamilyName(unsigned family) noexcept {
     static const char* const names[] = {"place", "placed", "snap", "runaway", "frozen", "stance", "yaw", "stop_check", "diverging", "refused",
                                         "stance_fix", "input_pin", "lag"};
@@ -1147,7 +1182,15 @@ const char* ReconFamilyName(unsigned family) noexcept {
 void EmitRecon(Mission& m, const Hooks& h, unsigned family, const char* format, ...) noexcept {
     va_list arguments;
     va_start(arguments, format);
-    EmitCappedV(m.recon_cap[family < kRcFamilies ? family : kRcRefused], h, "partner_recon", ReconFamilyName(family), format, arguments);
+    EmitRotatingV(m.recon_cap[family < kRcFamilies ? family : kRcRefused], kReconCapLimits, m.log_now_ms, h, "partner_recon",
+                  ReconFamilyName(family), format, arguments);
+    va_end(arguments);
+}
+// partner_body_safety=<kind>; ... (one rotating cap, kBodySafetyCapLimits).
+void EmitBodySafety(Mission& m, const Hooks& h, const char* kind, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitRotatingV(m.body_safety_cap, kBodySafetyCapLimits, m.log_now_ms, h, "partner_body_safety", kind, format, arguments);
     va_end(arguments);
 }
 std::int32_t Mm(double value) noexcept {
@@ -1289,6 +1332,7 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
         in.remote_stance = remote_anim.stance;
     }
     m.recon_target_ok = in.target_ok;
+    m.recon_target_live = in.target_ok && in.target_live;
     for (unsigned i = 0; i < 3; ++i) m.recon_target[i] = in.target[i];
     m.recon_target_yaw = in.target_yaw;
     in.body_anim_ok = anim_ok;
@@ -1466,6 +1510,114 @@ bool ExecuteRecon(Driver& d, const Hooks& h, const pr::Out& o, bool terminating)
     // end of a turn, a snap and a placement yaw fix bump it.
     if (!nudge && (!face || o.face_epoch)) ++m.body_epoch;
     return true;
+}
+
+// 0.13.6 body safety (partner_body_safety; docs/native-puppet.md "Body safety"), after
+// this tick's reconciliation step. Only instance 1 is ever written, through the
+// reconciliation's own Warp op / xform pin and the range block's re-show:
+//  - put-down: a carried or sleeping remote's released body 1 falling off an edge.
+//    While the guard is active it owns body 1 (Warp at the target, then an xform pin
+//    every tick); the caller skips the reconciliation's execution and the carry hold.
+//  - drop: body 1 dropped off an edge the remote never crossed: a vertical placement
+//    request for the next reconciliation step.
+//  - stuck: a failed placement on a falling or ledge-hanging body: the range block's
+//    re-show next tick (only where that flow runs).
+// Returns whether the put-down guard owns body 1 this tick.
+bool TickBodySafety(Driver& d, const Hooks& h, const pr::Out& ro, bool anim_ok, const pp::Anim& anim, bool stock_hold, bool terminating,
+                    std::uint64_t now, std::uint32_t& ops, InputTick& out) noexcept {
+    namespace sb = partner_body_safety;
+    Mission& m = d.mission;
+    if (terminating) return false;  // no new writes while the game tears down
+    const std::uint16_t body_act = anim_ok ? anim.act[1] : 0;
+    double body[3]{};
+    for (unsigned i = 0; i < 3; ++i) body[i] = static_cast<double>(m.body_pos[i]) * 1000.0;
+    const bool target = m.recon_target_live;
+    // Put-down guard.
+    sb::PutDownIn pi{};
+    pi.now_ms = now;
+    pi.body_ok = m.body_ok;
+    for (unsigned i = 0; i < 3; ++i) { pi.body[i] = body[i]; pi.target[i] = m.recon_target[i]; }
+    pi.body_anim_ok = anim_ok;
+    pi.body_act = body_act;
+    pi.remote_valid = m.recon_remote_ok;
+    pi.remote_act = m.recon_remote_act;
+    pi.target_ok = target;
+    const sb::PutDownOut po = sb::PutDownStep(m.body_putdown, pi);
+    const auto& ps = m.body_putdown;
+    if (po.started)
+        EmitBodySafety(m, h, "putdown",
+                       "partner_body_safety=putdown; step=start; body_act=%u; remote_act=%u; dy_mm=%d; err_xz_mm=%d; carry_hold=%u; "
+                       "episode=%u; next=place\r\n",
+                       unsigned(body_act), unsigned(m.recon_remote_act), Mm(po.dy), Mm(po.err_xz), stock_hold ? 1u : 0u, ps.episodes);
+    else if (po.action == sb::PutDownAction::place)
+        EmitBodySafety(m, h, "putdown", "partner_body_safety=putdown; step=place; places=%u; dy_mm=%d; err_xz_mm=%d; ms=%u\r\n", ps.places,
+                       Mm(po.dy), Mm(po.err_xz), po.ms);
+    if (po.ended)
+        EmitBodySafety(m, h, "putdown", "partner_body_safety=putdown; step=end; reason=%s; ms=%u; places=%u; pins=%u; dy_mm=%d; err_xz_mm=%d\r\n",
+                       po.end_reason ? po.end_reason : "none", po.ms, ps.places, ps.pins, Mm(po.dy), Mm(po.err_xz));
+    bool owns = false;
+    if (po.action == sb::PutDownAction::place) {
+        ops |= partner::op::warp;
+        out.pose_override = true;
+        out.pose = partner::PoseFromMetres(static_cast<float>(m.recon_target[0] / 1000.0), static_cast<float>(m.recon_target[1] / 1000.0),
+                                           static_cast<float>(m.recon_target[2] / 1000.0), static_cast<float>(m.recon_target_yaw));
+        out.suppress_fallback = true;
+        ++m.body_epoch;
+        owns = true;
+    } else if (po.action == sb::PutDownAction::pin) {
+        pr::Out pin{};
+        pin.action = pr::Action::pin;
+        for (unsigned i = 0; i < 3; ++i) pin.pos[i] = m.recon_target[i];
+        pin.yaw = m.recon_target_yaw;
+        ExecuteRecon(d, h, pin, terminating);
+        out.suppress_fallback = true;
+        owns = true;
+    }
+    // Drop guard (prevention): only while the reconciliation tracks body 1 and would place it.
+    sb::DropIn di{};
+    di.now_ms = now;
+    di.enabled = !owns && !stock_hold && ro.arm && !m.traverse_hold && !m.cbox_hold &&
+                 (ro.mode == pr::Mode::track || ro.mode == pr::Mode::frozen || ro.mode == pr::Mode::pin);
+    di.body_anim_ok = anim_ok;
+    di.body_act = body_act;
+    di.body_ok = m.body_ok;
+    di.body_y = body[1];
+    di.remote_valid = m.recon_remote_ok;
+    di.remote_act = m.recon_remote_act;
+    di.target_ok = target;
+    di.target_y = m.recon_target[1];
+    const sb::DropOut dout = sb::DropStep(m.body_drop, di);
+    if (dout.verdict != sb::DropVerdict::none && dout.verdict != sb::DropVerdict::opened) {
+        const bool place = dout.verdict == sb::DropVerdict::place;
+        if (place) d.recon_place_request = pr::PlaceReason::vertical;
+        EmitBodySafety(m, h, "drop",
+                       "partner_body_safety=drop; verdict=%s; act=%u; ms=%u; remote_act=%u; remote_dy_mm=%d; body_act=%u; dy_mm=%d; places=%u%s\r\n",
+                       sb::DropVerdictName(dout.verdict), unsigned(dout.act), dout.ms, unsigned(m.recon_remote_act), Mm(dout.remote_dy),
+                       unsigned(body_act), m.body_ok && target ? Mm(m.recon_target[1] - body[1]) : 0, m.body_drop.places,
+                       place ? "; next=place,reason=vertical" : "");
+    }
+    // Stuck (recovery after a failed placement).
+    if (ro.events & pr::Event::placed_fail) {
+        sb::StuckIn si{};
+        si.now_ms = now;
+        si.placed_fail = true;
+        si.capable = m.reshow_capable;
+        si.body_anim_ok = anim_ok;
+        si.body_act = body_act;
+        si.remote_valid = m.recon_remote_ok;
+        si.remote_act = m.recon_remote_act;
+        const sb::StuckVerdict v = sb::StuckStep(m.body_stuck, si);
+        if (v != sb::StuckVerdict::none) {
+            if (v == sb::StuckVerdict::reshow) {
+                m.body_reshow = "recon_stuck";
+                m.body_reshow_ms = now;
+            }
+            EmitBodySafety(m, h, "stuck", "partner_body_safety=stuck; verdict=%s; body_act=%u; remote_act=%u; err_mm=%d; count=%u%s\r\n",
+                           sb::StuckVerdictName(v), unsigned(body_act), unsigned(m.recon_remote_act), Mm(ro.report.place_err_mm),
+                           m.body_stuck.count, v == sb::StuckVerdict::reshow ? "; next=reshow" : "");
+        }
+    }
+    return owns;
 }
 
 // The 1 Hz partner_recon line (apply=input). recon= is the effective setting
@@ -2010,8 +2162,8 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     // A teammate carried by the local player (stock player carry, coop_carry):
     // the native attachment owns instance 1's transform and stance. No
     // placement, correction, stance fix or fallback Warp until it is put down.
-    const bool carry_hold = recon_used && mgscoop::coop_carry::PartnerCarryHold();
-    if (carry_hold) {
+    const bool stock_carry_hold = recon_used && mgscoop::coop_carry::PartnerCarryHold();
+    if (stock_carry_hold) {
         out.suppress_fallback = true;
         if (!m.carry_hold) EmitRecon(m, h, kRcFrozen, "partner_recon=carry_hold; on=1\r\n");
         m.carry_hold = true;
@@ -2019,6 +2171,10 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         m.carry_hold = false;
         EmitRecon(m, h, kRcFrozen, "partner_recon=carry_hold; on=0\r\n");
     }
+    // 0.13.6 body safety: the put-down guard may own body 1 this tick (its Warp or pin
+    // already issued); the drop and stuck guards only request a placement or a re-show.
+    const bool guard_owns = recon_used && TickBodySafety(d, h, ro, anim_ok, anim, stock_carry_hold, terminating, now, ops, out);
+    const bool carry_hold = stock_carry_hold || guard_owns;
     if (recon_used && !carry_hold) {
         if (ro.action == pr::Action::place) {
             ops |= partner::op::warp;
@@ -5850,6 +6006,7 @@ void PollTrigger(Driver& d, const Hooks& h, bool terminating) noexcept {
 bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, std::size_t size, const Clock& clock,
           bool terminating, partner::Reply& reply) noexcept {
     Mission& m = d.mission;
+    m.log_now_ms = clock.now_ms;  // the rotating log caps (partner_recon, partner_body_safety)
     // A skipped/read-refused tick cannot reuse the previous gun view,
     // including two receipts within the same millisecond.
     m.tele.gun_tick_ms = 0;
@@ -6055,6 +6212,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     const bool free_roam_net = !vehicle_job&&set.source == PartnerSource::net &&
                                (m.mission_code == 30010 || m.mission_code == 30020);
     const bool ride_guard = !vehicle_job&&set.source == PartnerSource::net && set.nride != PartnerNativeRide::off;
+    m.reshow_capable = free_roam_net || ride_guard;  // the range block below runs the body-safety re-show
+    if (!m.reshow_capable) { m.body_reshow = nullptr; m.reshow_wait = false; }
     // partner_native_ride=seat (docs/anim-round1-seat.md): free roam (Mother Base by id only), every hook present,
     // no private pose lease. A seat-mode vehicle ride it cannot seat logs why (SeatUnavailable).
     const bool seat_capable = ride_guard && set.nride == PartnerNativeRide::seat && SeatCapableMission(m.mission_code, set.seat_id) &&
@@ -6250,6 +6409,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             return true;
         };
         if (m.range_hidden || (ride_guard && (m.visibility.hidden || ((m.bits_set || m.dm_patched) && m.visibility_logged)))) {
+            // A range or ride hide re-places body 1 itself when it ends.
+            m.body_reshow = nullptr;
+            m.reshow_wait = false;
             const bool replied = deferred_reply();
             // partner_native_mount=hide: the cleared bits leave instance 1 realized while Lua's
             // all-active mode is on, so a mount episode also asks Lua to clear it (body 1 off screen).
@@ -6263,6 +6425,57 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 }
             }
             return replied;
+        }
+        // 0.13.6 body safety (partner_body_safety Stuck, requested by TickInput): body 1
+        // stuck at a ledge after failed placements is re-shown at the target. Input
+        // disarmed, DM reverted, bits cleared, then held hidden (deferred replies; while
+        // Lua's all-active mode is on, clear_all_active as the mount hide does: cleared
+        // bits alone leave instance 1 realized) until the engine reports it unrealized or
+        // kReshowUnrealizeMs passed; then the proven range placement (slot at the target,
+        // realize) of the seat exit and the range hide.
+        // A request older than 1 s is stale (a seat episode or a hide owned body 1 meanwhile).
+        if (m.body_reshow && (now < m.body_reshow_ms || now - m.body_reshow_ms > 1000)) m.body_reshow = nullptr;
+        if (m.body_reshow) {
+            m.reshow_reason = m.body_reshow;
+            m.body_reshow = nullptr;
+            DisarmInput(d, h, m.reshow_reason);
+            PublishDisarmed(d, h);
+            if (m.dm_patched) RevertDm(d, h, m.reshow_reason);
+            if (m.bits_set) ClearBits(d, h, m.reshow_reason, terminating);
+            partner_upper_probe::Clear(m.reshow_reason);
+            m.reshow_wait = true;
+            m.reshow_since_ms = now;
+            EmitBodySafety(m, h, "reshow", "partner_body_safety=reshow; step=hide; reason=%s; bits=%u; allactive=%u\r\n", m.reshow_reason,
+                           m.bits_set ? 1u : 0u, (tick.luaflags & partner::luaflag::all_active) ? 1u : 0u);
+        }
+        if (m.reshow_wait) {
+            const char* why = m.reshow_reason ? m.reshow_reason : "reshow";
+            if (m.bits_set) ClearBits(d, h, why, terminating);  // retry a refused clear
+            const bool unrealized = !pp::Realized(st, partner::partner_index);
+            const std::uint64_t waited = now >= m.reshow_since_ms ? now - m.reshow_since_ms : 0;
+            if (!unrealized && waited < kReshowUnrealizeMs) {
+                const bool replied = deferred_reply();
+                if (tick.luaflags & partner::luaflag::all_active) reply.op |= partner::op::clear_all_active;
+                return replied;
+            }
+            m.reshow_wait = false;
+            if (m.bits_set) {
+                // The bits could not be cleared: keep today's flow (no hidden placement).
+                EmitBodySafety(m, h, "reshow", "partner_body_safety=reshow; step=abandoned; reason=%s; refused=clear_bits; ms=%u\r\n", why,
+                               Clamp32(waited));
+            } else {
+                m.range_needs_place = true;
+                m.pose_applied = m.have_cmd = m.hybrid_placed = false;
+                m.visibility_place_try_ms = 0;
+                partner_dmmap::SpeedReset(m.dmmap_speed);
+                partner_dmmap::CancelFiniteEvents(m.dmmap);
+                m.dmmap_turn = {};
+                m.dmmap_source_turns = {};
+                d.dmmap_rearm = true;
+                ++m.body_epoch;
+                EmitBodySafety(m, h, "reshow", "partner_body_safety=reshow; step=place; reason=%s; unrealized=%u; ms=%u; next=realize\r\n", why,
+                               unrealized ? 1u : 0u, Clamp32(waited));
+            }
         }
         if (m.range_needs_place) {
             if (fresh && set.stage >= 1 && !m.bits_set &&
