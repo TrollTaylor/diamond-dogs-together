@@ -1,6 +1,67 @@
-## 0.13.6 (in progress)
+## October 23, 2026: 0.13.6 (fixes from the first two-PC Steam session: guns and the box after a relaunch, long shared rides, a Fultoned vehicle, joining with different saves, sea / ledge / carry falls; lab levers for the HUD hint, truck, ride-hide and gesture proofs)
 
-Bug fixes from the first real two-PC Steam session (2026-10-22, 0.13.5). Version not bumped yet.
+Branch `wp/integ10` from `dev/oct7-continue` `0a2821d` (0.13.5 released at `cc973a8`, plus the README rewrite): merge
+commits of the five online fixes from the first real two-PC Steam session (2026-10-22, 0.13.5; `diag-*.md` of that
+session), in this order, `wp/online-net-epoch` `55b5aea`, `wp/online-ride-robust` `636d706`, `wp/online-vehicle-gone`
+`ab64ccb`, `wp/online-handoff-join` `6437c6a`, `wp/online-body-safety` `de62dd2`, then the reviewed 0.13.6 feature
+branches `wp/ladder-hint` `9906fee` (G1), `wp/truck-helper` `589b4a4` (G4), `wp/ride-unrealize` `1f2b90d` (G5) and
+`wp/sign-knock` `c11bb79` (G6). Conflicts resolved by union (the three `-LabSetting` regex copies stay identical, key
+lists, CMake test lists and `Get-WorkerTests` keep every member), the contract header regenerated inside each merge,
+then the version commit. No rebase. Deferred, not included: `wp/seat-aim`, `wp/crack-discovery`.
+**Not run in the game and not packaged:** no game launch and no hidden-worker run in this integration, so every runtime
+check in the subsections below is still open. The build id changes and the equip manifest / caps now carry the
+receiver's link epoch (a 0.13.5 receiver still drops a 0.13.6 sender's manifest when the counters differ), so both
+players need 0.13.6. Full CTest 296/296 (`-Configure`, after the reboot with a working DX11 device, so
+`debug_overlay_tests` counts too; 0.13.5 had 289, plus `world_vehicle_lua_check`, `partner_body_safety_tests`,
+`log_budget_tests`, `partner_ui_filter_tests`, `vehicle_door_tests`, `partner_gesture_lever_tests` and
+`partner_gesture_lever_fire_tests`; the five online merges alone: 292/292). Contract 800 code sites / 204 vtable slots
+(0.13.5: 743 / 193; online-ride-robust +4 sites, G1 +23 / +7, G4 +7 sites, G6 +23 / +4; the other branches add no game
+address); equip writer pins 118 SHA-256 gates (unchanged).
+
+**Defaults.** The online fixes are bug fixes, **on by default with no key** (net-epoch's link-session binding and the
+equip resend at every MissionStart, ride-robust's slot follow / visible fallback / temporary-refusal retry / net-quality
+rebase after rides, handoff-join's title hold, messages and restart notice, body-safety's sea / ledge / put-down /
+seated-aim guards and log caps). Every new key is **default 0 / off in lab and play** until hidden-worker frames prove
+it (the runtime phase flips defaults):
+- `world_vehicle_gone=0|1` (online-vehicle-gone: the host-authoritative VEHICLE_GONE world op; a named 1 runs in lab and
+  play; docs/world-sync-protocol.md section 16; a `world_*` key like the other world-sync keys: no `_given` flag and not
+  in the native-puppet.md table);
+- `link_session_skew=0..999` (online-net-epoch: the lab / worker reproduction knob of a relaunched peer, a link
+  impairment key; play refuses it);
+- `partner_native_ui_filter=0|1` (G1), `debug_vehicle_door=0|1` (G4), `partner_native_unrealize_all=0|1` (G5) and
+  `partner_gesture_lever=0|1` (G6): lab only with `_given`, play forces a named 1 off.
+
+**Integration decisions.**
+- **One net-quality reset path after rides.** online-ride-robust (rebase after a seat episode or a ride hide, default
+  on) and G5 (a per-tick `QualityIn::excluded` feed, behind its key) fixed the same symptom; the merge keeps only the
+  ride-robust rebase and G5's unrealize, and with the G5 key the rebase logs `partner_ride=net_rebased` (details under
+  "partner_native_unrealize_all" below).
+- **Lab vehicle levers keep distinct names** in `lua/coop/debug_vehicle.lua`: `vehicle_remove nearest [sync|fulton]` /
+  `vehicle_gone_status` (online-vehicle-gone, refused outside `mode=lab`) and `goto_vehicle truck`,
+  `goto_partner_vehicle`, `vehicle_door` (G4, the native receipt refuses outside the lab).
+- Version 0.13.6 (CMakeLists, package.ps1, probe.ps1, the Play-Coop / Play-LocalCoop / package-install /
+  set-session-mode allow-lists, which keep 0.13.5, FRIEND-GUIDE).
+
+**Known limits (0.13.6):** every fix and lever is unit-tested only. Until a 0.13.6 pair is installed, the 0.13.5
+workaround stands (after any guest relaunch both quit, the host starts, then the friend joins). Open user decisions from
+the branch reports: the Fulton fallback look (the partner drawn standing at seat height while the viewer lacks the
+vehicle) and the slot-follow parameters (1 Hz, 25 m); `world_vehicle_gone`'s Despawn (no balloon, the vehicle stays only
+in the Fultoning save) versus a Seize with the Fulton option, the 5 m position match, a destroyed vehicle removed outright
+on the other copy; the 10 s settle bind and the 60 s title hold of a pending handoff (F9 is the escape); the sea-death
+rule for body parts 0..11 only and the narrower 2 m put-down guard. Pre-existing and unchanged: the Ctrl+W walk run
+gait, the teardown AV `rva=0x21e72` at WM_CLOSE.
+
+| Change | Branch | Key (default) | Scenarios to run (hidden-run phase) |
+| --- | --- | --- | --- |
+| Guns, box and caps survive a guest relaunch (link epoch) | `wp/online-net-epoch` | none (fix); `link_session_skew` reproduction knob (0) | `partner-equip-relaunch.txt` |
+| Long shared rides, stuck DM flag, Fulton fallback, slot follow, rebase after rides | `wp/online-ride-robust` | none (fix) | `coop-vehicle-longride.txt` (lab and `-Mode play -WanSim bad`) |
+| Host-authoritative VEHICLE_GONE | `wp/online-vehicle-gone` | `world_vehicle_gone` (0) | `coop-vehicle-gone.txt`, `coop-vehicle-gone-mb.txt` |
+| Joining with different saves | `wp/online-handoff-join` | none (fix) | `handoff-double-press.txt`; rerun `handoff-stage.txt`, `handoff-restart.txt`, `handoff-after-restart.txt`, `travel-lock.txt` |
+| Sea death, ledge / carry falls, seated aim latch, log caps | `wp/online-body-safety` | none (fix) | `body-safety-sea-death.txt`, `body-safety-sea-death-host.txt`, `body-safety-sea-death-downed.txt`, `body-safety-ledge.txt`, `body-safety-putdown-edge.txt`, `coop-vehicle-seated-aim.txt` |
+| G1 body 1's HUD hints never reach the viewer's HUD | `wp/ladder-hint` | `partner_native_ui_filter` (0) | `partner-ui-filter-ladder-mb.txt` |
+| G4 truck test levers for the passenger-mode truck fallback | `wp/truck-helper` | `debug_vehicle_door` (0) | `coop-vehicle-passenger.txt` (truck part) |
+| G5 the other ride hides unrealize body 1 | `wp/ride-unrealize` | `partner_native_unrealize_all` (0) | `partner-ride-unrealize.txt`, `partner-ride-unrealize-seat.txt`, `partner-ride-unrealize-heli.txt` |
+| G6 lab lever for the host's own knock and hand signs | `wp/sign-knock` | `partner_gesture_lever` (0) | `partner-upper-gestures.txt` |
 
 ### online-net-epoch
 
