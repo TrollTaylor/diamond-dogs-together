@@ -15,7 +15,7 @@ local function slurp(path)
     return s
 end
 local SRC = slurp(assert(arg[1]))
-check(#SRC:gsub('\r\n', '\n') <= 32000 and not SRC:find('\r', 1, true), 'the chunk is LF and within the 32000-byte world chunk limit')
+check(#SRC:gsub('\r\n', '\n') <= 32000, 'the chunk (LF, as CMake splices it) is within the 32000-byte world chunk limit')
 
 -- A fake TppVehicle2 pool: id -> {alive, x, y, z (m), type, riders}.
 local function Fixture(role, on, mode)
