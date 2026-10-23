@@ -71,6 +71,17 @@
 # the guest logs submit + applied ok=1, that is L8 (graph-2
 # nodes invisible on body 1, MotionVars): say so and try the rate-record writes of re-traverse-gesture.md 5.3
 # "Optional" in the lab.
+# Run 260da3e5 (0.13.6 runtime phase, wp/integ10 32ac240, lab seed, gun stage, research build): every expectation
+# passed. The host's lever: gesture_lever=requested for knock, sign_go, sign_stop and the crouched knock (other=same),
+# then partner_gesture=local; kind=knock; upper=0x17 / sign_go 0x18 / sign_stop 0x19; the guest: rx, submit graph=2
+# method=reserve (knock 0x7b2d4f836a92, sign_go 0xe74e11baba4b, sign_stop 0xb98c80a7ddae, crouched 0xd08c8b213cab),
+# applied ok=1 (current = node), ended via=timeout; cause=deadline; ms=2000 (the pickups end via=end; cause=clip);
+# the guest's own lever refused key_off; no uncertain / fault / other_changed. FRAMES: gest-knock-NN, gest-sign-NN and
+# gest-sign-stop-NN show NO arm movement on body 1 (the pickup bursts in the same run show body 1 bending down): the
+# knock / sign nodes are current on body 1 but not drawn, the L8 case above. Census: holding CALL (Q) opens the stock
+# menu "1:Knock (lure enemy), 2:Wait, 3:Get it, 4:DD (call), 5:Sonar"; pressing 1 while Q is held runs the knock (frame
+# callmenu-select1: the host's Snake knocks; a host partner_gesture=local; kind=knock; seq=7 without a lever line);
+# E did nothing.
 labsetting partner_native_gesture=1
 labsetting host partner_gesture_lever=1
 labsetting partner_act_log=1

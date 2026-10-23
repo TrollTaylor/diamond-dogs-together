@@ -25,6 +25,13 @@
 #   host's copy the guest's replica falls into the sea and stays protected (downed_damage=intercept;cause=replica).
 # Fails today (0.13.5): the guest logs lethal_capture + intercept;cause=lethal + downed; step=entered and the host
 #   never reaches shared_game_over until the host leaves.
+# Result (0.13.6 runtime phase, wp/integ10 32ac240, play -WanSim bad, real seed): run de7b3e09 (the first version,
+# the guest teleported alone 500 m from the host) sampled the sea kill with exact=0 (body 1 unrealized, the shield not
+# live) and logged no stock_death line, although the stock death drove the shared game over 1.3 s later. Run b8ab039e
+# (both on the deck first, as below) passed: downed_damage=sample;id=0;exact=1;scoped=1;...;part=12;life=6000;
+# damage=10000 -> downed_damage=stock_death;reason=environment;id=0;...;part=12, no lethal_capture / intercept /
+# downed; step=entered on either copy, host shared_game_over; type=2; cause=2 and guest game_over_applied 0.13 s apart;
+# frames sea-fall-01..06 the guest falling past the deck into the sea, sea-gameover MISSION FAILED on both copies.
 title 200
 waitgameplay host 150
 waitgameplay guest 240
@@ -35,8 +42,19 @@ host debug time 43200
 host debug weather sunny
 host debug position
 guest debug position
-placebehind host guest 6
-wait 3000
+# Both copies first stand on the deck next to the sea spot: the downed shield (and with it the fix) is live only while
+# body 1 is realized on the falling copy (downed_player Live: both instances realized). Run de7b3e09 (0.13.6+32ac240)
+# teleported the guest alone 500 m from the host: its body 1 was unrealized by the range rearm, the hit sampled
+# exact=0, the stock death ran without the shield (shared game over 1.3 s later) and the fix was never exercised.
+# The deck spots are the friend's own on-deck poses of the session (H:11280-11290 target_mm 208488,800,400272 and
+# 210134,800,402872; this platform's walkway is only x 206..212 here). (205.0, 0.9, 403.0) is open water: run
+# e9e5301b put the host there, and the host's own sea death proved the host half (exact=1; scoped=1 -> stock_death).
+host debug teleport 208.5 0.9 400.3 0
+guest debug teleport 210.1 0.9 402.9 0
+wait 8000
+host debug position
+guest debug position
+guest run downed_status
 both capture sea-before
 guest debug teleport 222.0 10.0 407.0 0
 guest burst sea-fall 6 300

@@ -19,6 +19,7 @@
 # Expect (host): world_lua=event=recovery; step=shared_game_over; ... within ~5 s of the guest's death.
 # Fails on the first 0.13.6 branch head: no stock_death line, the guest stays downed in the water (downed_status
 # down=1 after 20 s) and the host never reaches shared_game_over.
+# Result (0.13.6 runtime phase): not run (staging corrected to the deck spots of body-safety-sea-death.txt).
 title 200
 waitgameplay host 150
 waitgameplay guest 240
@@ -29,6 +30,12 @@ host debug time 43200
 host debug weather sunny
 host debug position
 guest debug position
+# Down the guest on the deck next to the sea spot, not at the arrival point 500 m away: the shield and the fix are
+# live only while body 1 is realized on the falling copy, and a 500 m teleport unrealizes it (range rearm; runs
+# de7b3e09 / b8ab039e of body-safety-sea-death.txt, whose deck spots these are; (205.0, 0.9, 403.0) is open water).
+host debug teleport 210.1 0.9 396.9 0
+guest debug teleport 210.1 0.9 402.9 0
+wait 6000
 stance host stand
 stance guest stand
 placebehind host guest 6 -0.7

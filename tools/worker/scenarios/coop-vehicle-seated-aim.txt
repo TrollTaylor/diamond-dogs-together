@@ -17,6 +17,10 @@
 # Fails today (0.13.5): reason=convention latched after ~20 seated aim samples, no aim_dir=valid after the ride.
 # waitlog scans from the session start: nobody aims before boarding, so the only aim_dir=valid lines are the
 # on-foot ones after the get-off (check the order in the log: valid after local_passenger; ...; state=off).
+# Result (0.13.6 runtime phase, wp/integ10 32ac240, lab): run 637b47ea passed: guest local_passenger seat=2 state=on,
+# aim_dir=refused; reason=ride; checks=0; misses=0 on both copies while seated / driving, after the get-off
+# aim_dir=valid; reason=none (host then checks=90; misses=5, not latched), no reason=convention anywhere. Frames
+# aim-seated / aim-on-foot.
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=passenger
 title 200

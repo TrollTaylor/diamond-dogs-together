@@ -24,7 +24,11 @@
 # If the hint is still there with q260 growing, the hint does not come from the vt+0x260 queue: report the key lines.
 # The two swallowed waitlogs need q260 > 0 (waitlog reads from the session start, so a plain match could be another
 # queue's earlier line); on the host only the guest's reversed climb can post into q260 (its body stood still before).
-# Result: not run yet (0.13.6 runtime phase).
+# Run 6c755769 (0.13.6 runtime phase, wp/integ10 32ac240, lab, real seed): passed. Both copies installed=1 / live=1;
+# the viewer swallowed q260 only while body 1 was in act 21 (key lines queue=0x260; id=3; prio=8; caller=0x11edb17 /
+# 0x11ebff4; plugin=ladder), foreign=0, faults=0, latched=0, refused=0; the climber's own copy passed its own hints
+# (passed=400). Frames: the guest's lad-climb / lad-up / lad-top and the host's rev-climb / rev-up / rev-top bursts show
+# body 1 on the ladder and NO "C + ladder" hint beside the viewer's player (0.13.5 8f27806d showed it in the same shot).
 labsetting partner_native_ui_filter=1
 labsetting partner_act_log=1
 title 200

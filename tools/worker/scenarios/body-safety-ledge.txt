@@ -25,6 +25,15 @@
 #   NO 5 s retry rounds (two partner_recon=placed; ok=0 more than 3 s apart with the body still at 54)
 #   frames ledge-run-NN / ledge-after-NN: the guest's body on the deck next to the guest, never hanging off the edge
 # Expect (guest): its own player unchanged (debug position, no partner line about instance 0).
+# Result (0.13.6 runtime phase, wp/integ10 32ac240, play -WanSim awful, real seed): the divergence did NOT reproduce in
+# three runs. e768a6b7 (400 ms sprints at the east railing), d1c74cde (this file: the session's path, about 10 m north)
+# and 1bb6ad1d (a scratch copy adding a 400 ms worker input stall of the guest during each sprint): body 1 stopped
+# within 0.2 m of the remote every time, no cliff_drop, no ledge hang. In all of them (and in 4078bbe7) the drop guard
+# did run once at the Mother Base arrival: body 1 stepped 0.7 m down off the arrival ramp while the remote stood on it,
+# partner_body_safety=drop; verdict=place; act=25; ms=500..515; remote_act=1; dy_mm=696..721 -> partner_recon=place;
+# reason=vertical -> placed; ok=1; body 1 then fell the 0.7 m again 94 ms later (26 -> 25, no new episode by design)
+# and walked on 0.7 m below the remote until the remote stepped down. The stuck guard and its re-show never ran.
+# The two waitlogs below read from the session start, so the drop line they report is that arrival episode.
 title 200
 waitgameplay host 150
 waitgameplay guest 240
@@ -35,18 +44,49 @@ host debug time 43200
 host debug weather sunny
 host debug position
 guest debug position
-host debug teleport 205.0 0.9 403.0 90
-guest debug teleport 211.2 0.9 405.3 90
+# Spots (0.13.6 runtime phase): yaw 0 faces +z and 90 faces +x (the session's heading_mrad, H:11280-11300). This
+# platform's walkway runs along z at x 206..212 here; in the session the friend sprinted north on it from
+# (209.3, 0.8, 392.2) to (211.2, 0.8, 404.8) (about 9 degrees east of north) while body 1 vaulted the east railing at
+# (211.9, 1.5, 406.6) and fell. The first version of this file stood the host at (205.0, 0.9, 403.0), which is open
+# water (run e9e5301b: the host fell into the sea there), and sprinted the guest 9 s east from (211.2, 0.9, 405.3),
+# off the edge itself. Run e768a6b7 (400 ms sprints at the railing from 3.5 m) moved the guest only 1.2 m and body 1
+# stopped short of the remote (no overshoot); its only drop episode was body 1 stepping 0.7 m off the arrival ramp
+# (verdict=place, placed ok=1). Now each attempt replays the session's path: the guest sprints north from the
+# session's start for about 1.8 / 2.0 / 2.2 s (a 1500 ms hold renewed during the burst) and stops on the deck near
+# the session's stop, where body 1 overran it.
+# The host films from the walkway's west side, out of the path (the deck spot of run e9e5301b), facing the railing.
+# Both waitlogs read from the session start: judge a drop line by its time (e768a6b7 matched the arrival ramp).
+host debug teleport 207.0 0.9 401.0 60
+guest debug teleport 209.3 0.9 392.2 9
 wait 4000
 both capture ledge-start
+guest debug teleport 209.3 0.9 392.2 9
+wait 3000
 guest hold w+shift 1500 nowait
-host burst ledge-run 6 250
-guest hold w+shift 1500
-guest hold w+shift 1500
-guest hold w+shift 1500
-guest hold w+shift 1500
-guest hold w+shift 1500
+host burst ledge-run 4 300
+guest hold w+shift 300 nowait
+host burst ledge-runb 5 300
 guest release
+wait 2500
+guest debug position
+guest debug teleport 209.3 0.9 392.2 9
+wait 3000
+guest hold w+shift 1500 nowait
+host burst ledge-run2 4 300
+guest hold w+shift 500 nowait
+host burst ledge-run2b 5 300
+guest release
+wait 2500
+guest debug position
+guest debug teleport 209.3 0.9 392.2 9
+wait 3000
+guest hold w+shift 1500 nowait
+host burst ledge-run3 4 300
+guest hold w+shift 700 nowait
+host burst ledge-run3b 5 300
+guest release
+wait 2500
+guest debug position
 waitlog host 'partner_act; .*edge=body; remote=[0-9]+\([a-z_]+\); body=28\(cliff_drop\)' 20
 host burst ledge-after 6 300
 waitlog host 'partner_body_safety=(drop|stuck); verdict=' 20

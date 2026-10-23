@@ -71,6 +71,16 @@
 # drivers' cameras stock, the on-foot camera after the get-off). The truck half still never boarded the host.
 # G4 (wp/truck-helper, 0.13.6 in progress): the truck half uses the door levers (labsetting debug_vehicle_door=1,
 # docs/native-puppet.md "Truck test levers"); not run yet.
+# Run 84e3db0e (0.13.6 runtime phase, wp/integ10 32ac240, lab, this file): every step passed, both passenger halves
+# and the truck half. Truck: the host's goto_vehicle truck reached veh_trc_0000 (id 25602, type 4, rider0=65535) at its
+# driver door, vehicle_door gate=pass; d3=1.16; dot=0.87, frame truck-door shows the stock E + truck ride icon there,
+# the E press boarded (vehicle_seats riders=0,65535; localSeat=1); the guest's goto_partner_vehicle answered
+# pseat=0; door=1; fast=1; rider0=65535, its E press logged partner_ride=board_block; vehicle=25602; site=prequery;
+# mode=passenger; reason=type; type=4; seats=2 and vehicle_seats vehicle_not_riding; frames pass-truck-beside /
+# pass-truck-blocked: the guest at the passenger door with only the Fulton prompt (no ride icon), the host seated in the
+# cab. A truck-only scratch copy run first (a42ddafe, about 1 min after gameplay) found every truck AI-driven:
+# goto_vehicle truck answered vehicle_driver_taken;id=25602;rider0=1194 (the truck was 490 m away, still driving);
+# the full file reaches the truck after its two jeep halves, when it stands near the jeep spot without a driver.
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=passenger
 labsetting nametag=1
