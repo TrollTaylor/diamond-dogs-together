@@ -351,7 +351,9 @@ E finding no horse) is gone.
   (both players riding at once, each seeing the other's mount) still needs section 7.
 - **The other ride hides still only clear the bits.** Without the key, a horse rider's kind-3 hide leaves the partner
   drawn as a standing body at the spot where it got on (section 9, `251abcef`); the heli and vehicle-fallback ride
-  hides use the same bit clear and presumably look the same (not filmed).
+  hides use the same bit clear and presumably look the same (not filmed). 0.13.6 (G5) adds
+  `partner_native_unrealize_all` (lab only, default 0; docs/native-puppet.md "Ride hides"): the same unrealize for
+  those hides, and the hidden ride no longer counts as a net-quality gap; unit-tested, not yet filmed.
 - **The walker hide depends on the remote act stream.** An act sample that never arrives (`anim_valid` false) keeps
   today's on-foot drawing until the first valid mount act.
 - **The overlay probes are append-only catalogue entries 22..24.** A branch that also appends entries must keep the

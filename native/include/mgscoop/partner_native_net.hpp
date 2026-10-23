@@ -35,6 +35,10 @@ struct Quality {
     std::uint32_t gaps_100, gaps_250, gaps_1000, max_gap_ms;
     std::uint32_t p50_ms, p95_ms;
     std::uint32_t samples;
+    // Excluded ticks (QualityIn::excluded): the next new frame after them
+    // re-bases instead of measuring a gap; the ticks and frames they covered.
+    bool rebase;
+    std::uint32_t excluded_ticks, excluded_frames;
 };
 struct QualityIn {
     std::uint64_t now_ms;
@@ -42,6 +46,14 @@ struct QualityIn {
     bool valid;            // a newest frame exists
     std::uint32_t seq;
     std::uint32_t age_ms;
+    // A tick that is no network sample (G5, partner_native_unrealize_all: the
+    // viewer hides body 1 as a ride, and the native tick that feeds the
+    // tracker does not run then). A new frame only moves the baseline (no
+    // inter-arrival gap, no counter, no window sample) and the first new frame
+    // after the excluded ticks starts no gap either; the frame age and the
+    // window do not judge, the good state holds, and only a link that is down
+    // makes it bad.
+    bool excluded;
 };
 void Reset(Quality& quality) noexcept;
 void Observe(Quality& quality, const QualityIn& in, const QualityParams& params = QualityParams{}) noexcept;

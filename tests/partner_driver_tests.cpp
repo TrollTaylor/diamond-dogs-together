@@ -5558,6 +5558,210 @@ struct SeatSession : Session {
     void Ended() { fake.dm.q18[1] = 1; fake.dm.rec248 = 0; fake.dm.g388 = 0; }
 };
 
+// G5 (partner_native_unrealize_all, docs/native-puppet.md "Ride hides"): the other ride hides (a vehicle drawn
+// hidden, the heli acts, the horse rider by kind 3 without the mount key) cleared only the realize bits, which left a
+// frozen standing body at the get-on spot (251abcef, the horse kind-3 hide). With the key they unrealize like the
+// mount hide (CLEAR_ALLACTIVE while Lua reports all-active, one line per episode; the show's SET_ALLACTIVE realizes
+// the body again), and every tick a ride owns body 1 is excluded from the net-quality gap measure.
+void TestRideUnrealize() {
+    namespace rw = mgscoop::partner_ride_wire;
+    const auto stable_show = [](SeatSession& s) {
+        // 500 ms of calm foot samples show the body, then the free-roam placement; Lua reports all-active off.
+        bool set_all_active = false;
+        for (unsigned i = 0; i < 16; ++i) {
+            s.fake.sample.sender_ms += 100;
+            Check(s.Tick(0, 100), "foot samples");
+            set_all_active = set_all_active || (s.reply.op & op::set_all_active) != 0;
+            Check(!(s.reply.op & op::clear_all_active), "no CLEAR after the episode");
+        }
+        return set_all_active;
+    };
+    for (const bool key : {false, true}) {
+        // A vehicle drawn hidden (partner_native_ride=hide): today's bits-only hide without the key.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
+        s.driver.settings.unrealize_all = key;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.driver.mission.visibility.hidden && !s.driver.mission.bits_set &&
+                  s.fake.Containing("partner_ride=hide; reason=ride; act=111") == 1,
+              "the vehicle ride hides body 1 and clears the bits (both)");
+        if (!key) {
+            Check(s.reply.op == 0 && s.fake.Containing("partner_ride=unrealize") == 0 && s.driver.mission.net_quality.excluded_ticks == 0,
+                  "key off: no CLEAR, no unrealize line, no exclusion (0.13.5)");
+            continue;
+        }
+        Check(s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=111; kind=2; seat=ride_hide; vehicle=25600; ride_live=1; episode=1") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize; ride=vehicle; act=111; kind=2; episode=1; op=clear_allactive") == 1,
+              "key: the hidden reply asks Lua to unrealize body 1, one begin and one unrealize line");
+        Check(s.driver.mission.net_quality.excluded_ticks == 1 && s.driver.mission.net_excluding, "the hidden tick is excluded from the net quality");
+        Check(s.Step() && s.reply.op == op::clear_all_active && s.fake.Containing("partner_ride=unrealize; ride=") == 1,
+              "CLEAR repeats while Lua reports all-active; the line does not");
+        s.fake.sample.sender_ms += 33;
+        Check(s.Tick(0) && s.driver.mission.visibility.hidden && s.reply.op == 0, "Lua reports all-active off: nothing more to clear");
+        s.fake.sample.anim_valid = false;
+        Check(s.Step() && s.driver.mission.ride_ep.active && s.reply.op == op::clear_all_active,
+              "a missing act sample neither ends the episode nor shows the body");
+        s.fake.sample.anim_valid = true;
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && s.driver.mission.visibility.hidden && !s.driver.mission.ride_ep.active && s.reply.op == 0 &&
+                  s.fake.Containing("partner_ride=unrealize_end; ride=vehicle; act=1; ms=") == 1 &&
+                  s.fake.Containing("kind=0; cleared=1; shown=0; episode=1") == 1,
+              "foot ends the episode (no CLEAR after it); the body waits for the stable-foot proof");
+        const auto excluded = s.driver.mission.net_quality.excluded_ticks;
+        Check(excluded >= 5 && s.fake.Containing("partner_ride=net_excluded") == 0, "every hidden tick so far was excluded");
+        Check(stable_show(s), "the show path asks Lua for all-active mode again (SET_ALLACTIVE)");
+        Check(!s.driver.mission.visibility.hidden && !s.driver.mission.net_excluding &&
+                  s.fake.Containing("partner_ride=net_excluded; ms=") == 1 && s.fake.Containing("partner_ride=unrealize_begin") == 1,
+              "shown again: one net_excluded line once the native tick feeds the tracker again");
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize; ride=vehicle; act=111; kind=2; episode=2; op=clear_allactive") == 1,
+              "a second ride opens a second episode");
+    }
+    {
+        // Seat mode with a seat it cannot use (the seat fallback hide): the seat's reason names it.
+        SeatSession s;
+        s.driver.settings.unrealize_all = true;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, rw::kSeatUnknown, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride_seat=unavailable; vehicle=25600; seat=255; reason=seat_unknown") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=111; kind=2; seat=seat_unknown; vehicle=25600;") == 1,
+              "seat unavailable: hidden and unrealized, seat=seat_unknown");
+    }
+    {
+        // The GetOff latch (the (vehicle, seat) a refusal or a get-off ended): hidden as blocked, unrealized.
+        constexpr std::uint64_t kBackLeftLoop = 0xc40b38a1a985ull;
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff);
+        s.driver.settings.unrealize_all = true;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 2, 25609);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && !(s.reply.op & op::clear_all_active) && s.driver.mission.net_quality.excluded_ticks == 1,
+              "seated: no CLEAR (the seat draws it), but the seat flow's tick is excluded from the net quality");
+        s.Playing(kBackLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed, "rear-left confirmed");
+        s.fake.sample.act = 112;
+        Check(s.Step() && s.reply.seat_action == partner::seat_action::next, "remote act 112 advances to GetOff");
+        Check(s.Step(), "the GetOff plays out");
+        s.Ended();
+        Check(s.Step() && s.driver.mission.seat.blocked, "GetOff end latches the (vehicle, seat)");
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=112; kind=2; seat=blocked; vehicle=25609;") == 1,
+              "the latched seat hides as blocked and is unrealized");
+    }
+    {
+        // The heli acts (no ride packet: the legacy act rule).
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
+        s.driver.settings.unrealize_all = true;
+        s.Show();
+        s.fake.sample.act = 97;
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active &&
+                  s.fake.Containing("partner_ride=unrealize_begin; ride=heli; act=97; kind=0; seat=-; vehicle=65535; ride_live=0; episode=1") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize; ride=heli; act=97;") == 1,
+              "heli boarding act 97: hidden and unrealized");
+        s.fake.sample.act = 102;
+        s.Ride(rw::Kind::heli);
+        Check(s.Step() && s.driver.mission.ride_ep.active && s.driver.mission.ride_ep.episodes == 1, "the flight is the same episode");
+        s.Ride(rw::Kind::foot);
+        Check(s.Step() && s.driver.mission.ride_ep.active, "a heli act with a foot ride state is still the ride (getting off)");
+        s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.ride_ep.active && s.fake.Containing("partner_ride=unrealize_end; ride=heli; act=1;") == 1,
+              "a foot act ends it");
+    }
+    for (const bool mount : {false, true}) {
+        // The horse rider by kind 3: the ride episode without the mount key, the mount episode with it.
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
+        s.driver.settings.unrealize_all = true;
+        s.driver.settings.nmount = mount ? mgscoop::PartnerNativeMount::hide : mgscoop::PartnerNativeMount::off;
+        s.Show();
+        s.Ride(rw::Kind::horse);
+        s.fake.sample.act = 121;
+        Check(s.Step() && s.driver.mission.visibility.hidden && s.reply.op == op::clear_all_active, "the horse rider is hidden and unrealized");
+        if (!mount)
+            Check(s.fake.Containing("partner_ride=unrealize_begin; ride=horse; act=121; kind=3; seat=-;") == 1 &&
+                      s.fake.Containing("partner_ride=unrealize; ride=horse;") == 1 && s.fake.Containing("partner_mount=") == 0,
+                  "mount off: the horse kind-3 hide opens a ride episode");
+        else
+            Check(s.fake.Containing("partner_mount=unrealize; mount=horse; act=121; episode=1") == 1 &&
+                      s.fake.Containing("partner_ride=unrealize") == 0 && !s.driver.mission.ride_ep.active,
+                  "mount hide: the mount episode owns body 1, no ride episode");
+    }
+    std::uint64_t back_after_ride[2]{};
+    for (const bool key : {false, true}) {
+        // The online native drive after a 10 s hidden heli ride (play runs fbde3dcc / 5a044a4d after each hidden
+        // mount): without the key the unfed ride is one 10 s inter-arrival gap, so re-entry waits for net_quality;
+        // with it the ride is excluded and the drive comes back without that hold.
+        namespace pn = mgscoop::partner_native;
+        NativeSession s;
+        s.driver.settings.nnet = mgscoop::PartnerNativeNet::online;
+        s.driver.settings.nride = mgscoop::PartnerNativeRide::hide;
+        s.driver.settings.unrealize_all = key;
+        auto& sample = s.fake.sample;
+        sample.time_valid = sample.anim_valid = true;
+        sample.act = 1;
+        sample.sender_ms = 1000;
+        const auto tick = [&]() {
+            sample.sender_ms += 33;
+            ++s.fake.latest.seq;  // the remote's input frames keep arriving
+            return s.N();
+        };
+        bool active = false;
+        for (int i = 0; i < 600 && !active; ++i) {
+            tick();
+            active = s.driver.mission.native_out.mode == pn::Mode::active;
+        }
+        Check(active, "online native drive active before the ride");
+        sample.act = 102;
+        for (int i = 0; i < 300; ++i) tick();
+        Check(s.driver.mission.visibility.hidden && s.driver.mission.native_out.mode != pn::Mode::active &&
+                  s.driver.mission.native.left_reason && std::strcmp(s.driver.mission.native.left_reason, "ride") == 0,
+              "the heli ride hides body 1 and leaves the native drive (reason ride)");
+        Check((s.driver.mission.net_quality.excluded_ticks >= 290) == key, "the ride's ticks are excluded only with the key");
+        sample.act = 1;
+        bool quality_hold = false;
+        std::uint64_t back_ms = 0;
+        const std::uint64_t foot_ms = s.now;
+        for (int i = 0; i < 400 && !back_ms; ++i) {
+            tick();
+            if (!s.driver.mission.visibility.hidden) {
+                s.fake.Realize(true);
+                s.fake.state.parts[1] = 3;
+            }
+            const char* reason = s.driver.mission.native_out.reason;
+            quality_hold = quality_hold || (reason && std::strcmp(reason, "net_quality") == 0);
+            if (s.driver.mission.native_out.mode == pn::Mode::active) back_ms = s.now - foot_ms;
+        }
+        Check(back_ms > 0, "the native drive comes back after the ride");
+        back_after_ride[key ? 1 : 0] = back_ms;
+        if (!key)
+            Check(quality_hold && s.driver.mission.net_quality.max_gap_ms >= 9000,
+                  "key off: the ride is a 10 s gap (max_gap) and re-entry waited for net_quality (0.13.5)");
+        else
+            Check(!quality_hold && s.driver.mission.net_quality.max_gap_ms < 250 && s.fake.Containing("partner_ride=net_excluded; ms=") == 1,
+                  "key: no net_quality hold, no ride-long gap, one net_excluded line");
+    }
+    Check(back_after_ride[1] + 1500 < back_after_ride[0], "the excluded ride brings the native drive back at least 1.5 s sooner");
+    {
+        // The once-per-mission configured line: only with the key on.
+        Session s(3, mgscoop::PartnerApply::warp, mgscoop::PartnerSource::net, 30050);
+        s.lab.partner_native_ride = mgscoop::PartnerNativeRide::hide;
+        pd::Configure(s.driver, s.lab);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(s.fake.Containing("partner_ride=unrealize_configured") == 0 && !s.driver.settings.unrealize_all, "key off: no configured line");
+        s.lab.partner_native_unrealize_all = true;
+        pd::Configure(s.driver, s.lab);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(s.driver.settings.unrealize_all &&
+                  s.fake.Containing("partner_ride=unrealize_configured; ride=hide; mount=off; heli_acts=97..108; net_exclude=1") == 1,
+              "key on: one configured line per mission start");
+    }
+}
+
 // WS3 B1 (docs/vehicle-ws3.md): the remote driver seated in an unnamed vehicle
 // by id. The offer needs the key (default on), the peer's live ride addendum naming the
 // category of exactly this ride, and this copy's realized same-category
@@ -7377,6 +7581,7 @@ int main() {
     TestFreeRoamRange();
     TestRideVisibility();
     TestMountVisibility();
+    TestRideUnrealize();
     TestRideSeat();
     TestRideSeatById();
     TestRideExtAndCensus();

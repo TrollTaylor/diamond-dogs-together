@@ -53,11 +53,28 @@ void Reset(Quality& q) noexcept { q = Quality{}; }
 
 void Observe(Quality& q, const QualityIn& in, const QualityParams& p) noexcept {
     const std::uint64_t now = in.now_ms;
+    if (in.excluded) {
+        // No network sample (a hidden ride): the newest frame only moves the
+        // baseline, and the first new frame after these ticks re-bases too
+        // (the gap it would measure spans the excluded ticks).
+        ++q.excluded_ticks;
+        q.rebase = true;
+        if (in.valid) {
+            const std::uint64_t rx = now >= in.age_ms ? now - in.age_ms : 0;
+            if (q.have && in.seq != q.last_seq) ++q.excluded_frames;
+            q.have = true;
+            q.last_seq = in.seq;
+            q.last_rx_ms = rx;
+        }
+        if (!in.link_live) q.good = false;
+        return;
+    }
     bool bad = !in.link_live || !in.valid || in.age_ms > p.gap_bad_ms;
     if (in.valid) {
         const std::uint64_t rx = now >= in.age_ms ? now - in.age_ms : 0;
-        if (!q.have) {
+        if (!q.have || (q.rebase && in.seq != q.last_seq)) {
             q.have = true;
+            q.rebase = false;
             q.last_seq = in.seq;
             q.last_rx_ms = rx;
         } else if (in.seq != q.last_seq) {

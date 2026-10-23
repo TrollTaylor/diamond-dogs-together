@@ -357,6 +357,10 @@ $script:LabPartnerKeys = @(
     # Horse / D-Walker riders (docs/mounts.md): hide the partner body while the remote's act is a mount act
     # (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_mount'; Json = 'native_mount'; Kind = 'enum'; Values = @('off', 'hide') },
+    # G5 (docs/native-puppet.md "Ride hides"): the other ride hides (heli, a vehicle drawn hidden, a horse rider by kind 3
+    # without the mount key) unrealize the partner body and a hidden ride leaves the net-quality gap measure (lab only: the
+    # loader defaults it off in lab and forces it off in play; written only when set).
+    @{ Key = 'partner_native_unrealize_all'; Json = 'native_unrealize_all'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

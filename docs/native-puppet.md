@@ -927,7 +927,8 @@ sets the mode off (`partner_lua=event=allactive_cleared`), instance 1 is unreali
 - the existing `partner_ride=hide; reason=ride; act=..` and `partner_ride=foot_stable; next=place`.
 
 The horse kind-3 hide without the key still only clears the bits and leaves that standing body (filmed in
-`251abcef`); the heli and vehicle-fallback ride hides use the same bit clear (not filmed).
+`251abcef`); the heli and vehicle-fallback ride hides use the same bit clear (not filmed). `partner_native_unrealize_all=1`
+(0.13.6, lab only, default 0) extends the unrealize to them; see "Ride hides".
 
 Hidden runs (`tools/worker/scenarios/partner-mount.txt`, research build, gun stage, lab seed): `bfd6fcc4` (lab):
 no partner body on the guest's screen while the host rode the D-Walker (two vantages) or the D-Horse, the body back
@@ -943,6 +944,75 @@ reason=not_mirror` line per mount id). `5a044a4d` (play rehearsal, `-WanSim bad`
 either copy): both copies log `partner_mount=configured; mode=hide`; no partner body while the host rides the D-Walker
 (two vantages) or the D-Horse, nor on the host's screen while the guest rides its D-Walker (Part 4); the body back
 after each dismount; Part 3 as in the lab. **Play now defaults hide too.**
+
+## Ride hides
+
+G5 (0.13.6, `wp/ride-unrealize`; key `partner_native_unrealize_all=0|1`, **default 0 in lab and play**, a named 1 runs
+in lab only, play forces it off, a named value records `partner_native_unrealize_all_given`; it acts only where
+`partner_native_ride` hides). Status: **implemented and unit-tested only; no hidden-worker FRAME yet**.
+
+The mount hide (see "Mounts") showed that clearing the native realize bits does not take body 1 off the screen while
+Lua's all-instance-active mode is on: the body stays drawn as a frozen standing body at the get-on spot. The other ride
+hides still clear only the bits:
+
+- the heli: the remote's act 97..108 (boarding, flight, getting off) or a heli ride (kind 1);
+- a vehicle drawn hidden: `partner_native_ride=hide`, or seat mode that cannot seat this (vehicle, seat): the seat
+  fallback hide after a refusal (`partner_ride_seat=refused`, then `unavailable; reason=blocked`) or an unavailable
+  seat (`partner_ride_seat=unavailable; reason=seat_unknown|mission|hooks|native_pose`);
+- a horse rider by its ride kind 3 when `partner_native_mount` is off (filmed as the frozen body in `251abcef`).
+
+With the key each of them opens a ride episode (`partner_mount_policy::RideEpisode`, pure: `RideOf`, `RideRule`,
+`OffRide`, `RideHolds`, `StepRide`): it starts when the visibility hides body 1 as a ride (`Visibility` reason `ride`,
+never `air`, `dead` or a stale ride lease) and no mount episode owns body 1 (with `partner_native_mount=hide` the mount
+episode keeps its own lines); it ends when a tick proves the remote off the ride (a valid act that is no heli act and a
+foot ride state, or none) or body 1 is shown (a seated driver, the stable-foot show). While the episode is open, body 1
+is hidden and Lua reports all-active, the hidden reply carries `CLEAR_ALLACTIVE` exactly as the mount episode does
+(`partner_mount_policy::Unrealize`): Lua sets the mode off (`partner_lua=event=allactive_cleared`), instance 1 is
+unrealized; instance 0 is untouched (the stock single-player state). The partner is shown again by the unchanged path:
+500 ms of calm on-foot samples, the placement, then the stage policy's `SET_ALLACTIVE` (`allactive_set`,
+`partner_realized=1`). No game address is new: the op and its binding (`Player.SetAllInstanceActiveMode` 0x9DCD20,
+`P+0x204` bit 0x2000) are the mount hide's and already pinned in the contract.
+
+**The hidden ride is no network sample.** The native tick (the only feed of the link-quality tracker,
+`partner_native_net::Observe`) does not run while body 1 is hidden or the seat flow owns it, so the whole ride became one
+inter-arrival gap: after every hidden mount episode in play (`fbde3dcc`, `5a044a4d`) the native drive fell back to clips
+with `partner_native_net; reason=net_quality; max_gap=<about the ride length>` for about 4 s, and after a 13 s seated
+ride in `fad26e25` (`max_gap=13143`). With the key every tick a ride owns body 1 (hidden as a ride, the mount hide
+included, or the seat flow) feeds the tracker as excluded (`QualityIn::excluded`): a new frame only moves the baseline
+(no gap, no counter, no window sample), the first new frame after the excluded ticks re-bases too, the frame age and the
+window do not judge, the good state holds, and only a link that is down makes it bad. Re-entry after the ride then waits
+only for the usual cooldown (since the ride began) and settling. A ride still counts as a network leave
+(`net_leaves`, the flap guard), as before.
+
+Lines (driver tick; the `partner_ride=unrealize*` and `net_excluded` lines share one cap of 64, whose capped line is
+`partner_ride=capped; limit=64; kind=unrealize`):
+
+- `partner_ride=unrealize_configured; ride=<partner_native_ride>; mount=<partner_native_mount>; heli_acts=97..108;
+  net_exclude=1` once per mission with the key;
+- `partner_ride=unrealize_begin; ride=heli|vehicle|horse|other; act=..; kind=<ride wire kind>; seat=<why seat mode
+  draws a vehicle hidden: seat_unknown|mission|hooks|native_pose|blocked, ride_hide under partner_native_ride=hide, -
+  otherwise>; vehicle=..; ride_live=..; episode=..`;
+- `partner_ride=unrealize; ride=..; act=..; kind=..; episode=..; op=clear_allactive` once per episode, at its first
+  `CLEAR_ALLACTIVE` (none when Lua never had all-active on, e.g. a partner hidden from the mission start);
+- `partner_ride=unrealize_end; ride=..; act=<the tick that ended it>; ms=..; kind=..; cleared=0|1; shown=0|1; episode=..`;
+- `partner_ride=net_excluded; ms=..; ticks=..; frames=..; good=..; good_ms=..; max_gap=..; gaps=..` at the first native
+  tick after excluded ticks (`good_ms` counts from before the ride when the quality held through it).
+
+Unit tests: `partner_mount_tests` (ride kinds, rule, off-ride proof, episode edges, the net-exclusion decision, the
+policy against `partner_ride_wire::Observe`), `partner_native_tests` (the excluded tracker: no gap with frames arriving
+or with the sender paused, a link drop during the ride still bad, the pending re-base) and `partner_driver_tests`
+`TestRideUnrealize` (key off unchanged; the vehicle hide under `partner_native_ride=hide`, an unavailable seat, the GetOff
+latch, the heli acts and the horse kind 3 with and without the mount key; the seat flow's exclusion; the online native
+drive after a 10 s hidden heli ride: `net_quality` without the key, none and back at least 1.5 s sooner with it).
+
+Scenarios (header lists the expected lines and frames): `tools/worker/scenarios/partner-ride-unrealize.txt` (lab seed:
+the horse kind-3 hide and a vehicle drawn hidden, guest key on with `partner_native_net=online`),
+`partner-ride-unrealize-seat.txt` (real seed, Mother Base: the refused-seat fallback; the reverse half is the key-off
+baseline) and `partner-ride-unrealize-heli.txt` (lab seed: the heli arrival after the lab goto). Known gap: no scenario
+can board the support heli in the field (the lab goto in free roam leaves at once through
+`ReserveMissionClearOnRideOnHelicopter`, and the arrival hides the partner from the mission start, before Lua ever has
+all-active on), so the in-field heli boarding (act 97 after the body was shown) needs a manual run with the iDroid's
+heli call.
 
 ## Rates
 
@@ -1958,6 +2028,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |
+| `partner_native_unrealize_all` | 0, 1 (G5: the other ride hides (the heli acts 97..108 or a heli ride, a vehicle drawn hidden by `partner_native_ride=hide` or a refused / unavailable seat, a horse rider by its ride kind 3 when `partner_native_mount` is off) unrealize body 1 through Lua's all-active mode like the mount hide, and every tick a ride owns body 1 (hidden as a ride, or the seat flow) is excluded from the net-quality gap measure, see "Ride hides"; acts only where `partner_native_ride` hides; default 0 in lab and play until a hidden-worker FRAME proves it, a named 1 runs in lab only (play forces it off); a named value records `partner_native_unrealize_all_given`) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and

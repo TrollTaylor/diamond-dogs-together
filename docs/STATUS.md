@@ -1,3 +1,44 @@
+## 0.13.6 (in progress)
+
+Feature branches on top of 0.13.5 (`dev/oct7-continue` `cc973a8`); the version stays 0.13.5 until the integration step.
+
+### partner_native_unrealize_all
+
+- **G5: fully hide the partner on the other ride hides** (`wp/ride-unrealize`; [native-puppet.md "Ride hides"](native-puppet.md)).
+  New key `partner_native_unrealize_all=0|1` (`_given`; **default 0 in lab and play**, a named 1 runs in lab only, play
+  forces it off; added to lab_config, the three `-LabSetting` regexes and the help, LabCommon, worker_session_tests,
+  lab_config_tests, lab_ini_check, friend_package_tests, lab_scripts_tests and the native-puppet.md config table).
+- The heli hide (acts 97..108 or a heli ride), a vehicle drawn hidden (`partner_native_ride=hide`, or seat mode that
+  refused / cannot use the seat: the seat fallback hide) and the horse kind-3 hide without `partner_native_mount` cleared
+  only the realize bits, which left a frozen standing body at the get-on spot (filmed for the horse in `251abcef`).
+  With the key each opens a ride episode (`partner_mount_policy::RideEpisode`, pure) and unrealizes body 1 exactly like
+  the 0.13.5 mount hide: `CLEAR_ALLACTIVE` while Lua reports all-active (`partner_mount_policy::Unrealize`), the show's
+  `SET_ALLACTIVE`, `partner_realized=1`. A mount episode keeps precedence (its own lines). Lines
+  `partner_ride=unrealize_configured|unrealize_begin|unrealize|unrealize_end` (one cap of 64 with `net_excluded`; its
+  capped line reads `partner_ride=capped; limit=64; kind=unrealize`).
+- **Net quality:** every tick a ride owns body 1 (hidden as a ride, the mount hide included, or the seat flow) feeds the
+  link-quality tracker as excluded (`partner_native_net::QualityIn::excluded`): the ride is no longer one inter-arrival
+  gap as long as the ride, so the online native drive no longer falls back with `reason=net_quality; max_gap=<ride
+  length>` after a hidden ride (play `fbde3dcc` / `5a044a4d` after each mount, and `fad26e25` after a 13 s seated
+  ride). One `partner_ride=net_excluded; ms=..; ticks=..; frames=..; good=..; good_ms=..; max_gap=..` line per
+  exclusion. A link that is down during the ride still counts as bad; a ride still counts as a network leave.
+- No new game address: the op and its binding (`Player.SetAllInstanceActiveMode` 0x9DCD20, `P+0x204` bit 0x2000) are
+  the mount hide's and already pinned; `generate_partner_contract.py --check` unchanged at 743 code sites / 193 vtable
+  slots. No wire change.
+- Tests: `partner_mount_tests` (ride kinds, rule, off-ride proof, episodes, the exclusion decision, against
+  `partner_ride_wire::Observe`), `partner_native_tests` (the excluded tracker), `partner_driver_tests`
+  `TestRideUnrealize` (key off unchanged; vehicle hide, unavailable seat, GetOff latch, heli acts, horse kind 3 with and
+  without the mount key, the seat flow's exclusion, and the online native drive after a 10 s hidden heli ride:
+  `net_quality` without the key, none with it), `lab_config_tests`, `friend_package_tests`, `worker_session_tests`.
+- Scenarios (not run yet): `partner-ride-unrealize.txt` (lab seed: horse kind 3, a vehicle drawn hidden, guest
+  `partner_native_net=online`), `partner-ride-unrealize-seat.txt` (real seed, Mother Base: the refused-seat fallback;
+  the reverse half is the key-off baseline), `partner-ride-unrealize-heli.txt` (lab seed: the heli arrival after the
+  lab goto).
+- **Unproven / open:** no hidden-worker FRAME yet (the runtime phase flips the default). The in-field heli boarding
+  (act 97 after the body was shown) cannot be scripted (no debug heli call; the lab goto leaves free roam at once, and
+  at the arrival the partner is hidden from the mission start, before Lua ever had all-active on), so it needs a
+  manual run.
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

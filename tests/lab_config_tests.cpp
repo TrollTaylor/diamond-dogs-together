@@ -283,6 +283,41 @@ int main() {
                   std::strcmp(PartnerNativeMountName(PartnerNativeMount::off), "off") == 0,
               "mount names");
     }
+    // G5 (partner_native_unrealize_all, docs/native-puppet.md "Ride hides"): default 0 in lab and play, also with the
+    // native gun profile (no hidden-worker FRAME of the heli / vehicle-fallback / horse kind-3 unrealize yet); a named 1
+    // runs in lab only, play forces it off; a named value records _given.
+    {
+        Check(!LabConfig{}.partner_native_unrealize_all && !LabConfig{}.partner_native_unrealize_all_given &&
+                  !Lab("").partner_native_unrealize_all,
+              "unrealize_all defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_native_unrealize_all && !profile.partner_native_unrealize_all_given && profile.invalid_values == 0,
+                  "the gun profile leaves unrealize_all off in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_unrealize_all=1\n");
+            Check(named.partner_native_unrealize_all == !play && named.partner_native_unrealize_all_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named unrealize_all=1 runs in lab; play forces it off");
+            Check(named.partner_native_mount == PartnerNativeMount::hide, "unrealize_all leaves the mount hide default alone");
+            const auto off = Lab(gun + mode + "partner_native_unrealize_all=0\n");
+            Check(!off.partner_native_unrealize_all && off.partner_native_unrealize_all_given, "a named unrealize_all=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_unrealize_all=1\n");
+        Check(alone.partner_native_unrealize_all && alone.partner_native_unrealize_all_given && alone.invalid_values == 0 &&
+                  alone.unknown_keys == 0,
+              "partner_native_unrealize_all=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_unrealize_all=1\npartner_native_unrealize_all=0\n");
+        Check(!later.partner_native_unrealize_all, "a later 0 turns unrealize_all off");
+        for (const char* value : {"2", "-1", "", "maybe", "hide"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_unrealize_all=") + value + "\n");
+            Check(!invalid.partner_native_unrealize_all && !invalid.partner_native_unrealize_all_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid unrealize_all value refuses");
+        }
+    }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
     // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).

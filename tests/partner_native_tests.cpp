@@ -1105,6 +1105,78 @@ void TestOnline() {
         }
         Check(!j.good && j.p95_ms >= 120, "p95 >= 120 ms is bad");
     }
+    // G5 (partner_native_unrealize_all): a hidden ride is no network sample. Before, the native tick (the only
+    // feed) did not run while body 1 was hidden, and the ride became one inter-arrival gap as long as the ride
+    // (play runs fbde3dcc / 5a044a4d: net_quality and max_gap about the ride length after every hidden mount).
+    {
+        const auto run = [](bool excluded, bool frames_meanwhile, pnn::Quality& q, std::uint64_t& now, std::uint32_t& seq) {
+            for (int i = 0; i < 200; ++i, now += 33) pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+            // A 12 s ride: excluded ticks (frames keep arriving, or the sender paused) or no feed at all (today).
+            for (int i = 0; i < 360; ++i, now += 33) {
+                if (frames_meanwhile) ++seq;
+                if (excluded) {
+                    pnn::QualityIn in{now, true, true, seq - 1, frames_meanwhile ? 3u : static_cast<std::uint32_t>(33 * i + 3)};
+                    in.excluded = true;
+                    pnn::Observe(q, in);
+                }
+            }
+            pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        };
+        {
+            pnn::Quality q{};
+            std::uint64_t now = 1000;
+            std::uint32_t seq = 1;
+            run(false, true, q, now, seq);
+            Check(!q.good && q.max_gap_ms >= 11000 && q.gaps_1000 == 1 && pnn::GoodMs(q, now) == 0,
+                  "today: the unfed ride is one 12 s gap and the quality is bad right after it");
+        }
+        for (const bool frames : {true, false}) {
+            pnn::Quality q{};
+            std::uint64_t now = 1000;
+            std::uint32_t seq = 1;
+            const std::uint64_t ride_start = now + 200 * 33;
+            run(true, frames, q, now, seq);
+            Check(q.good && q.max_gap_ms < 100 && q.gaps_100 == 0 && q.gaps_1000 == 0 && pnn::GoodMs(q, now) > now - ride_start,
+                  frames ? "excluded ride with frames arriving: no gap, the quality held through the ride"
+                         : "excluded ride while the sender paused: the first frame after it re-bases, no gap");
+            Check(q.excluded_ticks == 360 && q.excluded_frames == (frames ? 360u : 0u) && !q.rebase,
+                  "the excluded ticks and frames are counted; the first frame after them re-based");
+            Check(q.samples == 199, "the ride's frames add no inter-arrival sample");
+        }
+        {
+            // The link drops during the ride: still bad (only the gap measure is excluded).
+            pnn::Quality q{};
+            std::uint64_t now = 1000;
+            std::uint32_t seq = 1;
+            for (int i = 0; i < 200; ++i, now += 33) pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+            pnn::QualityIn in{now, false, true, seq++, 3};
+            in.excluded = true;
+            pnn::Observe(q, in);
+            Check(!q.good && pnn::GoodMs(q, now) == 0, "a link that is down during an excluded tick is bad");
+            now += 33;
+            pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+            Check(q.good && pnn::GoodMs(q, now) == 0 && q.gaps_100 == 0, "good again from the next live tick, no gap from the exclusion");
+        }
+        {
+            // A frame with the baseline's sequence after the exclusion keeps the re-base pending until a new frame.
+            pnn::Quality q{};
+            std::uint64_t now = 1000;
+            pnn::Observe(q, pnn::QualityIn{now, true, true, 5, 3});
+            now += 33;
+            pnn::QualityIn in{now, true, true, 6, 3};
+            in.excluded = true;
+            pnn::Observe(q, in);
+            now += 2000;
+            pnn::Observe(q, pnn::QualityIn{now, true, true, 6, 3});
+            Check(q.rebase && q.samples == 0, "same frame: the re-base waits");
+            now += 33;
+            pnn::Observe(q, pnn::QualityIn{now, true, true, 7, 3});
+            Check(!q.rebase && q.samples == 0 && q.max_gap_ms == 0, "the next new frame re-bases without a gap sample");
+            now += 33;
+            pnn::Observe(q, pnn::QualityIn{now, true, true, 8, 3});
+            Check(q.samples == 1 && q.max_gap_ms == 33, "then the measure goes on as before");
+        }
+    }
     // Reason codes and the native.net JSON.
     {
         Check(pnn::ReasonCode("ok") == 1 && pnn::ReasonCode(nullptr) == pnn::kReasonNone && pnn::ReasonCode("") == pnn::kReasonNone &&

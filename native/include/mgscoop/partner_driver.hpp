@@ -563,6 +563,9 @@ struct Settings {
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
     bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
+    // G5: the other ride hides unrealize body 1 and a hidden ride leaves the
+    // net-quality gap measure (partner_native_unrealize_all, "Ride hides").
+    bool unrealize_all;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -585,6 +588,14 @@ struct Mission {
     // partner_native_mount=hide: the act-rule episode (partner_mount=hide|end lines, capped).
     partner_mount_policy::Episode mount;
     LogCap mount_cap;
+    // partner_native_unrealize_all (G5): the other ride hides' episode (heli, vehicle, horse kind 3;
+    // partner_ride=unrealize|unrealize_end lines) and the hidden ride's net-quality exclusion
+    // (partner_ride=net_excluded once the exclusion ends), on their own cap.
+    partner_mount_policy::RideEpisode ride_ep;
+    LogCap unrealize_cap;
+    bool net_excluding;
+    std::uint64_t net_excluded_ms;
+    std::uint32_t net_excluded_ticks0, net_excluded_frames0;
     // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md).
     struct Seat {
         SeatPhase phase;
