@@ -1,17 +1,24 @@
-# 0.13.6 online ride (docs/STATUS.md "0.13.6 (in progress)" / online-ride-robust; diag-other #1): a LONG shared
-# jeep ride. In the first two-PC session (2026-10-22) both copies lost the partner in the jeep about 340 m into a
-# ride (body 1's slot stayed at the boarding spot; the realize policy 0x121B5E0 reads the slot, so the engine
-# unrealized it), the seat exit then sent three stops to the unrealized body (g+0x388 bit 8 stuck ~3 min) and the
-# re-seat refused `pending` and latched a hide. The hidden runs had only driven ~2 s (coop-vehicle-passenger.txt).
-# This is that scenario's first half (the guest boards the host's Wakh Sind jeep as the back-seat passenger) with a
-# ~37 s drive (25 x `host hold w 1500`) so the jeep ends well past 340 m from the boarding spot. Both copies run the
-# seat flow: the host's copy seats the guest's body in back seat 2|3, the guest's copy seats the host's body in the
-# driver's seat 0.
+# 0.13.6 online ride (docs/STATUS.md 0.13.6 / online-ride-robust; diag-other #1): a shared jeep ride with the slot
+# follow. In the first two-PC session (2026-10-22) both copies lost the partner in the jeep about 340 m into a ride
+# (body 1's slot stayed at the boarding spot; the realize policy 0x121B5E0 reads the slot, so the engine unrealized
+# it), the seat exit then sent three stops to the unrealized body (g+0x388 bit 8 stuck ~3 min) and the re-seat
+# refused `pending` and latched a hide. The guest boards the host's Wialo Village jeep veh_lv_0000 as the back-seat
+# passenger (coop-vehicle-passenger.txt's first half); both copies run the seat flow: the host's copy seats the
+# guest's body in back seat 2|3, the guest's copy seats the host's body in the driver's seat 0.
+#
+# Route (2026-10-23, hidden runs a198590d .. 30775595 on wp/integ10): the jeep stands in an alley; straight ahead
+# (the first version: 25 x `host hold w 1500`) it hits the plaza's north wall after ~20 m, before the 25 m slot
+# follow threshold. NO open-loop route of 400 m was found from this jeep: east of the plaza a convoy truck reaches
+# the checkpoint together with the jeep in 5 of 6 runs and blocks the road (the farthest run, around it, 134 m);
+# north and south are walls, the far side of the plaza ends at buildings; the Mother Base sortie jeep of the real
+# seed faces the sea. This route (short right turn, west along the street, ~50-80 m toward the arcade) passes the
+# slot follow threshold on both copies; the 340 m unrealize itself stays unit-tested (partner_driver_tests
+# TestRideRobust) until a long route or a two-PC drive is available. Passed: lab 197fc3c6, -Mode play -WanSim bad
+# 80a324d7 (docs/STATUS.md 0.13.6, online-ride-robust).
 #
 # Lab:  pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-longride.txt
-#         -PartnerProfile native -NativeStage gun
-# Play (the F1 play rehearsal settings, the real session's): add -Mode play -WanSim bad (optionally -SaveSeed real
-#         to drive on the user's Mother Base layout instead; then replace the goto_vehicle lines by a jeep spot).
+#         -PartnerProfile native -NativeStage gun -BuildProfile research
+# Play (the F1 play rehearsal settings, the real session's): add -Mode play -WanSim bad
 #
 # Expected (both copies, from the boarding to the end of the drive):
 #   guest  partner_ride_seat=confirmed; vehicle=256xx; seat=0; ...   (the host's body in the driver's seat)
@@ -19,22 +26,18 @@
 #   both   partner_ride_seat=slot_follow; vehicle=256xx; seat=..; drift_mm=..   once the jeep is 25 m on (the fix:
 #          body 1's slot follows the seated body at most once a second)
 #   both   partner_ride_seat=status; phase=seated; ...; confirmed=1 lines all along the drive (err_mm stays small)
-#   host   `host debug position` at the end >= 400 m from the first one (else the drive was blocked: re-aim the jeep)
 #   frames long-01..long-05 (bursts along the way) and long-end: the partner SEATED and VISIBLE in the jeep on both
 #          screens (the guest's view: the host at the wheel; the host's view: the guest in the back seat)
 #   the exit line after the get-off: partner_ride_seat=exit; ...; reason=foot|getoff_act; via=stop|getoff;
-#          confirmed=1; ...; follows=N with N >= 10 (one write per ~25 m). This is the automatic "still seated at
-#          the end of the drive" check (waitlog reads from the session start, so a seated status line would
-#          already match from the boarding; only the exit line of the episode that lasted the whole drive has
-#          confirmed=1 with two-digit follows).
+#          confirmed=1; ...; follows=N with N >= 1 (only the episode that lasted the whole drive has confirmed=1
+#          and a slot follow)
+#   after the get-off: partner_native_net; ...; drive=clips; reason=seat, then drive=native; reason=ok within ~2 s
+#          (the rebase after a seat episode keeps the good state: no reason=net_quality with the ride as max_gap)
 # Must NOT appear on either copy during the drive (check the logs after the run; 0.13.5 printed all of them):
 #   partner_bits=cleared; reason=range_rearm   partner_realized=0; R=1; via=seat   partner_ride_seat=exit; ...;
-#   reason=unrealized   reason=pending   partner_ride_seat=unavailable; ...; reason=blocked   partner_ride=hide
-#   partner_ride_seat=dm; ...; g388=0x08 (a stuck stop); partner_native_net; ...; reason=net_quality with p50 equal
-#   to the ride after the get-off (diag-other #9: the link-quality window now restarts after a seat episode)
-# If the unrealize still happens (the slot follow did not keep body 1 in the area), the recovery must hold:
-#   partner_ride_seat=exit; ...; reason=unrealized; via=gone (no exit_request; via=stop to the unrealized body), then
-#   partner_ride_seat=start and confirmed again within ~2 s, never reason=pending.
+#   reason=unrealized   partner_ride_seat=refused; ...; reason=pending   partner_ride_seat=unavailable; ...;
+#   reason=blocked   partner_ride=hide; reason=ride;   partner_ride_seat=dm; ...; g388=0x08 (a stuck stop)
+#   (the goto_vehicle warp itself, before the boarding, logs one range_rearm on each copy: that is the 530 m warp)
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=passenger
 labsetting nametag=1
@@ -70,46 +73,29 @@ waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
 wait 1000
 host debug position
 both capture long-start
-host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
+# Right turn out of the alley, then west along the street toward the arcade.
+host hold w 800
+host hold w+d 1500
+host hold w+d 200
+host debug position
 host hold w 1500 nowait
 guest burst long-01 3 300
 host release
-host debug clear_enemies 100
 host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
+host debug position
 host hold w 1500 nowait
 host burst long-02 3 300
 host release
 waitlog host 'partner_ride_seat=slot_follow; vehicle=256[0-9][0-9]; seat=[23];' 5
 waitlog guest 'partner_ride_seat=slot_follow; vehicle=256[0-9][0-9]; seat=0;' 5
-host debug position
-host debug clear_enemies 100
-host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
 host hold w 1500 nowait
 guest burst long-03 3 300
 host release
-host debug clear_enemies 100
 host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
+host debug position
 host hold w 1500 nowait
 host burst long-04 3 300
 host release
-host debug position
-host debug clear_enemies 100
-host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
 host hold w 1500 nowait
 guest burst long-05 3 300
 host release
@@ -121,11 +107,11 @@ guest press e 150
 guest burst long-exit 6 300
 wait 2500
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=off' 5
-waitlog host 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=[23]; reason=[a-z_]+; via=[a-z]+; confirmed=1; .*; follows=[1-9][0-9]' 10
+waitlog host 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=[23]; reason=[a-z_]+; via=[a-z]+; confirmed=1; .*; follows=[1-9][0-9]*' 10
 both capture long-exited
 host press e 150
 wait 2500
-waitlog guest 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=0; reason=[a-z_]+; via=[a-z]+; confirmed=1; .*; follows=[1-9][0-9]' 10
+waitlog guest 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=0; reason=[a-z_]+; via=[a-z]+; confirmed=1; .*; follows=[1-9][0-9]*' 10
 wait 4000
 both capture long-after
 state

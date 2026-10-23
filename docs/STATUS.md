@@ -187,6 +187,26 @@ new key; unit-tested only (no game launch in this phase).
   `partner_player_tests` ClearDmBits, `partner_native_tests` Rebase (good state kept, a late
   first frame). Each new block fails on 0.13.5, on the first round of this branch, or without the line it covers.
   Hidden repro for the next phase: `tools/worker/scenarios/coop-vehicle-longride.txt` (lab and `-Mode play -WanSim bad`).
+- **Hidden runs (2026-10-23, `wp/integ10` `1691253`, research build, gun stage, lab seed; every run Closed,
+  BaselineRestored, RealSavesUnchanged, no visible fallback):** the first `coop-vehicle-longride.txt` (`a198590d`)
+  drove ~20 m into the plaza's north wall, below the 25 m slot-follow threshold. Route discovery (scratch probes,
+  `939c0daf` .. `30775595`) found **no open-loop 400 m route from `veh_lv_0000`**: east of the plaza a convoy truck
+  reaches the checkpoint with the jeep and blocks the road in 5 of 6 runs (the farthest drive around it, 134 m),
+  boulders and walls close the other sides, and the real seed's Mother Base sortie jeep faces the sea (the drive
+  fell in, `74d91896`). The scenario now turns right out of the alley and drives west along the street
+  (~50-80 m, to the arcade). **Proven live on that route**, lab `197fc3c6` and play `-Mode play -WanSim bad`
+  `80a324d7` (guest `rtt_ms=176`, `policy=online`), all expectations met: `partner_ride_seat=confirmed` on both
+  copies (host seat 2, guest seat 0), `slot_follow` on both (`drift_mm` 28-34 m), status `phase=seated;
+  confirmed=1` all along, the exit lines `confirmed=1; ...; follows=2|3`, and none of `range_rearm` (except the one
+  at the 530 m `goto_vehicle` warp before the boarding), `reason=unrealized`, `pending` refusal, `unavailable`,
+  `partner_ride=hide; reason=ride`, `g388=0x08`, `partner_realized=0`, `fallback`, `viewer_changed`. After the
+  get-off `drive=clips; reason=seat` turns into `drive=native; reason=ok` 2.0 s later with `good_ms` carried over and
+  no `reason=net_quality` in either run (diag #9 fixed; the HUD reads `native; gun matched` again on both copies in
+  play). Frames (`long-01`..`long-05`, `long-end`, checked by eye): the host at the wheel on the guest's screen and
+  the guest in back seat 2 on the host's screen, seated and visible along the drive and at the end.
+  **Still unproven live:** the ~340 m unrealize prevention itself (no route reaches it; unit-tested only), the
+  unrealized-body recovery, the Fulton fallback (`fallback; ...; show=warp`, needs Mother Base by id) and the
+  temporary-refusal retry.
 
 ### online-vehicle-gone
 
@@ -247,6 +267,20 @@ launch and no hidden run yet.
   (the engine's own Fulton is lost by the readback, not `watch_drop;reason=still_alive`) and a player's real vehicle
   Fulton in a manual check (`step=watch` -> `settle`/`lost` -> `req` on the guest). Until then it is a lab /
   hidden-run key: two-PC play keeps the 0.13.5 behaviour (docs/two-pc-play.md).
+- **Hidden run `075c1ea4` (2026-10-23, `wp/integ10` `1691253`, research build, gun stage, lab seed; Closed,
+  BaselineRestored, RealSavesUnchanged, no visible fallback; no `step=error`, fault, `viewer_changed` or AV):**
+  A proven: the guest's synced loss of J1 25608 (`req` -> host `rx_req` -> `applied; via=locator; src=req; ok=1` ->
+  `tx` -> guest `req_done; result=gone`); frames `gone-a-before` / `gone-a-after`: the jeep on both screens, then
+  gone on both. D proven: the engine's own Fulton of J4 25617 on the guest's copy (`watch; m=Seize; att=lever`, the
+  stock `obs; m=Fulton` and `m=FultonInfo; att=local`, `lost` 3.3 s later without a `settle`, never `watch_drop`) ->
+  host `applied; src=req` -> `req_done`; frames `fulton-before` / balloon / `fulton-after`: gone on both screens. B
+  reproduced the divergence as designed (J2 25615 only on the host's copy; the guest's `byid ... reason=local_read`,
+  then `refused; reason=unconfirmed`, `unavailable; block=unconfirmed`, `partner_ride=hide; reason=ride`: the host is
+  hidden on the guest's screen while he drives, the free-roam limit of online-ride-robust above). C did not run:
+  the guest's `goto_vehicle jeep` left it on a slope away from J3 (`vehicle_not_riding`), so the receiver applied the
+  removal at once; the never-yank-the-local-rider hold is unproven live. Scenario nits: the B waitlog
+  `partner_status=local; st=0x400; names=on_vehicle; vehicle=` misses the `ride=2; ` field (the host did drive J2).
+  **Default unchanged (0):** C and the manual real-Fulton check of the gate above are still open.
 - **Limits:** a destroyed vehicle disappears on the other copy (no wreck); the relief vehicle (index 0) is never
   removed; outside Mother Base an unnamed vehicle (a supply drop) or one outside the `veh_lv` / `veh_trc` / `veh_wav`
   families is not removed (`no_locator`); two vehicles of a type within 5 m of the spot are left alone (`ambiguous`);
@@ -547,7 +581,20 @@ hidden-worker phase runs the five new scenarios.
   `partner_native_net=online`), `partner-ride-unrealize-seat.txt` (real seed, Mother Base: the refused-seat fallback;
   the reverse half is the key-off baseline), `partner-ride-unrealize-heli.txt` (lab seed: the heli arrival after the
   lab goto).
-- **Unproven / open:** no hidden-worker FRAME yet (the runtime phase flips the default). The in-field heli boarding
+- **Hidden run `4df9cf88` (2026-10-23, `wp/integ10` `1691253`, `partner-ride-unrealize.txt`, research build, gun
+  stage, lab seed; Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):** all expectations met. Guest:
+  horse `unrealize_begin; ride=horse; kind=3; episode=1` -> `op=clear_allactive` -> `allactive_cleared` ->
+  `unrealize_end; ... ms=9727; cleared=1` -> `foot_stable` -> `net_rebased; skipped_ms=11479; good=1; max_gap=876`
+  -> `allactive_set` -> `partner_realized=1`; the vehicle hide the same (`seat=ride_hide; vehicle=25608;
+  episode=2`, `ms=12480`, `net_rebased; skipped_ms=13047; good=1`); `policy=online` back to `drive=native; reason=ok`
+  about 2 s after each ride, no `reason=net_quality` at all; the guest's own status stayed `st=0x0`; no
+  `viewer_changed`, `uncertain=1`, fault or AV. Frames: `horse-before` the host standing by the rock, `horse-mounting`
+  / `horse-riding` / `horse-ride` no body at the get-on spot (0.13.5 left a frozen standing body there), `jeep-before`
+  the host beside the jeep, `jeep-entering` / `jeep-drive` / `jeep-getin-spot` no body and no driver drawn,
+  `jeep-exited` the body back beside the jeep. **Default unchanged (0):** the heli and the refused-seat (Mother Base)
+  kinds have no frame yet, and play forces the key off by design, so the play gate cannot be met without a policy
+  change.
+- **Unproven / open:** the heli and refused-seat hides have no hidden-worker FRAME yet. The in-field heli boarding
   (act 97 after the body was shown) cannot be scripted (no debug heli call; the lab goto leaves free roam at once, and
   at the arrival the partner is hidden from the mission start, before Lua ever had all-active on), so it needs a
   manual run.
