@@ -1200,6 +1200,8 @@ UI_FILTER_SITES = [
     (0xFE8480, '0fb681530300004c8bd1413bc07e5f81', 'UiControllerImpl vt+0x260 hint-queue leaf (record 0x320: the ladder "C" slide hint) prologue'),
     (0xFE6FDA, '488d05ef863c01488903488d0515873c0148894320',
      'UI factory: [obj] = primary vtable 0x23AF6D0, [obj+0x20] = UiControllerImpl vtable 0x23AF700 (P+0xD8 = obj+0x20)'),
+    (0xFE7956, '488b02488bd9ba0100000048894148',
+     'UI init (primary vt+0x8 = 0xFE7950): primary+0x48 = [arg] = P, so ui+0x28 == P (partner_ui_filter kUiOwner, Begin owner check)'),
     (0x11EA8B0, '83fa06776a4c8d0d4457e1fe8bc2418b948124a91e014903d1ffe2',
      'ladder plugin interface vt+0x18: the per-phase update (phase 0..6 jump table)'),
     (0x11EA8D7, '4883c1e0418bd0e93df9ffff', 'ladder phase 1 -> 0x11EA220(F, idx)'),
@@ -1466,6 +1468,7 @@ SLOTS += [(vt, 0x8, ex, f'{what} ActionPlugin vt[1] = ExecActionButtonFunction')
 # per-phase update (its phase 1 runs the state callback with the local event 4 for body 1 too).
 SLOTS += [(0x23AF700, slot, leaf, f'UiControllerImpl vt+{slot:#x} = hint-queue leaf (record {rec:#x})') for slot, leaf, rec in UI_FILTER_QUEUES]
 SLOTS += [(0x23C6080, 0x18, 0x11EA8B0, 'ladder plugin interface vt+0x18 = the per-phase update (phase 1 -> 0x11EA220)')]
+SLOTS += [(0x23AF6D0, 0x8, 0xFE7950, 'UiControllerImpl primary vt+0x8 = the UI init (stores the owner P at primary+0x48 = ui+0x28)')]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):

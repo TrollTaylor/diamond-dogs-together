@@ -47,6 +47,16 @@
   The leaf ABI (rcx ui, dx id, r8d priority, r9b flag, three stack bytes at +0x28 / +0x30 / +0x38) matches the
   detours, and the call at `0x1411EC606` loads `[[[rsi+0x40]+0x138]+0xD8]` with id 3 / priority 8.
   `generate_partner_contract.py --check` 765 / 199; full CTest 290/290 green (`-Configure`).
+- Review fixes (same branch): the contract now pins the UI init's owner store `0xFE7956` (primary+0x48 = ui+0x28 =
+  P, Begin's owner check) and its slot (primary vtable `0x23AF6D0` vt+0x8 = `0xFE7950`): 766 code sites, 200 vtable
+  slots. The driver reads the hook stats before the vehicle-job early return and runs the ui-filter log there too, so
+  the ride hints (vt+0x240 / +0x258) are logged during the ride (`vehicle_driver_wiring_tests`). `partner_defer_tests`
+  drives the scope through the real drain window: body 1's vt+0x260 request from block 1's job is swallowed; block 0's
+  job, a refused block-1 job (no armed Arm, the legacy call), the thread after the window and after a job that unwound
+  through GuardedCall all reach the original. native-puppet.md: priority 255 was read only on the vt+0x280 record
+  (0x370); record 0x320's idle value is assumed from the shared leaf body. The scenario's two `swallowed` waitlogs
+  now need `q260` > 0, so a line from another queue cannot pass them. `--check` 766 / 200; full CTest 290/290 green
+  (`-Configure`). No game launch and no hidden-worker run.
 
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 

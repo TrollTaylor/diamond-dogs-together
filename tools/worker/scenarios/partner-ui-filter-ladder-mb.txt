@@ -22,6 +22,8 @@
 # Frames: the viewer's <lad|lad2|rev>-climb / -up / -top bursts show body 1 on the ladder and NO "C + ladder" hint
 # beside the viewer's player; lad-self-mid / rev-self-mid (the climber's own view) match 0.13.5 (no hint mid-ladder).
 # If the hint is still there with q260 growing, the hint does not come from the vt+0x260 queue: report the key lines.
+# The two swallowed waitlogs need q260 > 0 (waitlog reads from the session start, so a plain match could be another
+# queue's earlier line); on the host only the guest's reversed climb can post into q260 (its body stood still before).
 # Result: not run yet (0.13.6 runtime phase).
 labsetting partner_native_ui_filter=1
 labsetting partner_act_log=1
@@ -62,7 +64,7 @@ host release
 host debug position
 both capture lad-end
 waitlog guest 'partner_traverse=icon; plugin=ladder; res=ok' 3
-waitlog guest 'partner_ui_filter=swallowed' 3
+waitlog guest 'partner_ui_filter=swallowed; q240=[0-9]+; q248=[0-9]+; q250=[0-9]+; q258=[0-9]+; q260=[1-9]' 3
 wait 1000
 host debug teleport 22.61 1.80 -15.55 0
 wait 2000
@@ -100,6 +102,6 @@ guest release
 guest debug position
 both capture rev-end
 waitlog host 'partner_traverse=icon; plugin=ladder; res=ok' 3
-waitlog host 'partner_ui_filter=swallowed' 3
+waitlog host 'partner_ui_filter=swallowed; q240=[0-9]+; q248=[0-9]+; q250=[0-9]+; q258=[0-9]+; q260=[1-9]' 3
 wait 1000
 state

@@ -736,15 +736,19 @@ and `2596f6ae`, see "Traversal icon").
 **The call path (read-only Ghidra and the `.text` dump).**
 - `P+0xD8` is one UI controller for every body: `UiControllerImpl`'s secondary
   interface (vtable `0x1423AF700`; its primary `0x1423AF6D0` sits at ui-0x20;
-  ui+0x28 == P). Only the UI factory (`0x140FE6FDA`) stores the two vtables, and
-  nametag's HUD probe validates the same identity live (its
+  ui+0x28 == P: the UI init, primary vt+0x8 `0x140FE7950`, stores its owner at
+  primary+0x48 in `0x140FE7956`). Only the UI factory (`0x140FE6FDA`) stores the
+  two vtables, and nametag's HUD probe validates the same identity live (its
   `partner_hud_job_census` lines in `8f27806d`).
 - Its hint queues are ten identical 0x70-byte leaves at vt+0x240..+0x288, one
   request record each at ui+0x1E0+k*0x50 (id +0, flags +4, active +0x30,
   priority +0x33). A request only replaces a record whose priority is
   numerically higher; the HUD shows it beside the local player (what the
-  frames show), and between requests the record reads idle (priority 255 in
-  nametag's `partner_hint_job_census` lines). No leaf looks at the body.
+  frames show). Between requests a record reads idle: priority 255 was seen
+  only on the vt+0x280 record (0x370, the Quiet hint) in nametag's
+  `partner_hint_job_census` lines; no log reads record 0x320 (vt+0x260), and
+  it is assumed idle the same way because all ten leaves are one body. No leaf
+  looks at the body.
 - The ladder plugin's per-phase update (interface vt+0x18 `0x1411EA8B0`) runs
   phase 1 in `0x1411EA220`: with `P+0x204` bit 8 (S_IS_ONLINE) clear, which is
   always the case in this mod, it calls the state callback with event 4 (the
@@ -814,14 +818,17 @@ concurrently. The leaf hooks leave the object untouched.
 
 **Contract.** `tools/generate_partner_contract.py` (`UI_FILTER_*`): the five
 slots, the leaf prologues and complete bodies, the factory's vtable stores, the
-ladder interface's per-phase update and phase-1 event choice, IsNeedToSync, and
+UI init's owner store (`0xFE7956`, primary+0x48 = ui+0x28 = P, with its slot
+primary vt+0x8 = `0xFE7950`: Begin's owner check), the ladder interface's
+per-phase update and phase-1 event choice, IsNeedToSync, and
 the eleven traversal call sites; its assertions check that the ten leaves share
 one body modulo their record, that each filtered leaf is reached only through
 `0x23AF700` / `0x23AF358` (no direct call), that only the factory stores the
 UiControllerImpl vtables, and that every census return address is a call
-through the named slot. 743 -> 765 code sites, 193 -> 199 vtable slots.
+through the named slot. 743 -> 766 code sites, 193 -> 200 vtable slots.
 
-**Logs** (the hooks only count; the driver tick logs):
+**Logs** (the hooks only count; the driver's input tick logs, also while a
+vehicle job is current, so the ride hints show during the ride):
 - `partner_ui_filter=installed; vtable=0x23af700; queues=0x240,..,0x260;
   leaves=..; pins=5; scope=drain_job_body1` or `install_refused; reason=image|
   slots|pins|minhook|module|hook|enable; hooks=none` (once per process);

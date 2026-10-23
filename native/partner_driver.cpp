@@ -1903,10 +1903,15 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
     (void)parts_loaded;
+    // Hook statistics, read once per tick (a snapshot of process totals).
+    InputStats s{};
+    if (h.drain_input_stats) h.drain_input_stats(h.context, s);
     // A real current lease (including phase6 cleanup after wire expiry), or
     // fresh authenticated mount intent, keeps the exact already-admitted Arm.
     // Hook composition still expires stale input; no drive sample is refreshed.
     if(VehicleJobCurrent(d,h,st,terminating)){
+        // G1: the ride plugins' hints (vt+0x240/+0x258) are logged during the ride.
+        TickUiFilter(d, h, set, now, s);
         SendLocalInput(d,h,st,set,tick,clock,false);
         out.suppress_fallback=VehicleAttached(h,st);
         return;
@@ -1947,10 +1952,8 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         if (set.holdlog && !lab.partner_input_holdlog) Emit(h, "partner_input=holdlog_refused; reason=not_allowed\r\n");
         else EmitFormat(h, "partner_input=holdlog; on=%u\r\n", set.holdlog ? 1u : 0u);
     }
-    // Hook statistics, drained once per tick. A recorded window fault disables
-    // native calls, the window and the DM patch for the rest of the mission.
-    InputStats s{};
-    if (h.drain_input_stats) h.drain_input_stats(h.context, s);
+    // A recorded window fault disables native calls, the window and the DM
+    // patch for the rest of the mission.
     if (s.window.us_max > m.us_max_acc) m.us_max_acc = s.window.us_max;
     if (s.window.fault_phase && !m.input_faulted) {
         m.input_faulted = true;
