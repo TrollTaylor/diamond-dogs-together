@@ -1203,6 +1203,7 @@ if(WIN32)
 endif()
 include(cmake/lua_checks.cmake)
 include(cmake/ddt_launcher_archive.cmake) # Diamond Dogs Together launcher: archive utilities and runtime .dat builder
+include(cmake/launcher_gui.cmake)
 
 if(WIN32)
   foreach(_mgs_standing_mode IN ITEMS off on)

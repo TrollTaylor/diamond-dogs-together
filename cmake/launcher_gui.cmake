@@ -1,0 +1,40 @@
+# Diamond Dogs Together launcher, GUI shell (C0, launcher spec 2026-10-23):
+# DiamondDogsTogether.exe (Win32 + DX11 + Dear ImGui, WIN32 subsystem) on the
+# LauncherModel interface with the mock model, plus its headless tests.
+if(WIN32 AND MSVC AND TARGET mgs_imgui)
+  set(_ddt_generated "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher")
+  configure_file(native/launcher/ddt_launcher_version.h.in "${_ddt_generated}/ddt_launcher_version.h" @ONLY)
+  # The pure part (no ImGui, no window): UI logic, join-code check, mock model, self-test.
+  add_library(ddt_launcher_logic STATIC
+    native/launcher/launcher_ui_logic.cpp
+    native/launcher/launcher_join_code.cpp
+    native/launcher/launcher_model_mock.cpp
+    native/launcher/launcher_entry.cpp)
+  target_include_directories(ddt_launcher_logic PUBLIC native/launcher "${_ddt_generated}")
+  target_link_libraries(ddt_launcher_logic PUBLIC mgs_coop_core)
+  target_compile_options(ddt_launcher_logic PRIVATE /W4 /WX /utf-8)
+
+  add_executable(ddt_launcher WIN32
+    native/launcher/launcher_main.cpp
+    native/launcher/launcher_app.cpp
+    native/launcher/launcher_theme.cpp
+    native/launcher/resources/ddt_launcher.rc
+    native/launcher/resources/ddt_launcher.manifest)
+  set_target_properties(ddt_launcher PROPERTIES OUTPUT_NAME DiamondDogsTogether)
+  target_include_directories(ddt_launcher PRIVATE native/launcher/resources third_party/imgui)
+  target_compile_options(ddt_launcher PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /WX /utf-8>)
+  target_compile_definitions(ddt_launcher PRIVATE UNICODE _UNICODE)
+  target_link_libraries(ddt_launcher PRIVATE ddt_launcher_logic mgs_imgui d3d11 dxgi d3dcompiler dwmapi
+                        windowscodecs ole32 shell32 comdlg32 user32 gdi32)
+
+  add_executable(launcher_ui_tests tests/launcher_ui_tests.cpp)
+  target_link_libraries(launcher_ui_tests PRIVATE ddt_launcher_logic)
+  target_compile_options(launcher_ui_tests PRIVATE /W4 /WX /utf-8)
+  add_test(NAME launcher_ui_tests COMMAND launcher_ui_tests)
+  # The exe itself: the built-in self-test, and every page rendered once
+  # (hidden window, WARP fallback without a GPU) into the build folder.
+  add_test(NAME ddt_launcher_selftest COMMAND ddt_launcher --selftest)
+  add_test(NAME ddt_launcher_screens COMMAND ddt_launcher --screenshot-all "${CMAKE_CURRENT_BINARY_DIR}/launcher-shots" --scale 1)
+  # ImGui reports recoverable layout errors on stdout in this mode: any of them fails the test.
+  set_tests_properties(ddt_launcher_screens PROPERTIES FAIL_REGULAR_EXPRESSION "imgui-error|FAIL:")
+endif()
