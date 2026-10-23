@@ -253,13 +253,13 @@ bool ParseSaveHandoffKey(Slice key, Slice value, LabConfig& result, bool& ok) no
     }
     return true;
 }
-// 0.13.6 online-net-epoch: link_session_skew=0..1000, the epoch reproduction knob
+// 0.13.6 online-net-epoch: link_session_skew=0..999, the epoch reproduction knob
 // (a link impairment: the play refusal below forces it to 0 outside the
 // worker's play rehearsal).
 bool ParseLinkSkewKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (!Equals(key, "link_session_skew")) return false;
     std::uint32_t skew = 0;
-    ok = ParseU32(value, 1000, skew);
+    ok = ParseU32(value, 999, skew);  // the worker allow-lists: [0-9]{1,3}
     if (ok) result.link_session_skew = skew;
     return true;
 }

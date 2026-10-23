@@ -1925,7 +1925,11 @@ keeps it (no re-log per gen) and a manifest known later (a late sender, or a
 new link session's resend) renews it in the same body gen
 (`equip_writer=manifest_late; reason=manifest; slot=..`, then the usual plan;
 the slot order is recomputed when nothing else was decided). Before 0.13.6
-the refusal held for the rest of the allocation.
+the refusal held for the rest of the allocation. Only the pure helpers
+(`ManifestWaitReason`, `RenewManifestWait`) are unit-tested; the renewal in
+`ObserveGeneral` and the re-sync keep read live game memory and have no unit
+test or scenario lever yet (partner-equip-relaunch.txt delivers the manifest
+before body 1 appears), so a `manifest_late` line is their first evidence.
 
 ### Proof (hidden worker; coordinator only)
 

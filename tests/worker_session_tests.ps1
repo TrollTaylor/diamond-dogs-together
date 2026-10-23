@@ -448,7 +448,8 @@ $roleSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:save_handoff=stag
 Assert-True ($roleSettings['save_handoff'] -ceq 'scene' -and $roleSettings['travel_lock'] -ceq '1') 'role-scoped save_handoff reaches only its role'
 # 0.13.6 online-net-epoch: the link-session skew is a LabCommon key too (lab runs), host-scoped in the scenario.
 Assert-True ((ConvertTo-LabPartnerValue -Key link_session_skew -Value 2) -ceq '2' -and (ConvertTo-LabPartnerValue -Key link_session_skew -Value 0) -ceq '0') 'link_session_skew is a LabCommon key'
-Assert-Throws {ConvertTo-LabPartnerValue -Key link_session_skew -Value 1001} 'link_session_skew range'
+Assert-True ((ConvertTo-LabPartnerValue -Key link_session_skew -Value 999) -ceq '999') 'link_session_skew 999 (the allow-list maximum)'
+Assert-Throws {ConvertTo-LabPartnerValue -Key link_session_skew -Value 1000} 'link_session_skew range (0..999, as the allow-lists)'
 $skewSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role guest
 Assert-True (!$skewSettings.Contains('link_session_skew')) 'a host-scoped link_session_skew never reaches the guest'
 $skewSettings=ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role host

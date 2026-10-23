@@ -111,6 +111,8 @@ int main(int argc, char** argv) {
                     "net_dup_permille=%u\nnet_reorder_permille=%u\nnet_reorder_ms=%u\nnet_seed=%u\n",
                     c.net_latency_ms, c.net_jitter_ms, c.net_loss_permille, mgscoop::NetLossModelName(c.net_loss_model), c.net_burst,
                     c.net_dup_permille, c.net_reorder_permille, c.net_reorder_ms, c.net_seed);
+        // 0.13.6 online-net-epoch: the link-session skew (an impairment too: play forces 0).
+        std::printf("link_session_skew=%u\n", c.link_session_skew);
         std::printf("partner=%d\npartner_interp=%s\npartner_interp_ms=%u\npartner_interp_min_ms=%u\npartner_interp_max_ms=%u\n"
                     "partner_lost=%s\nlink_keys=1\n",
                     c.partner ? 1 : 0, mgscoop::PartnerInterpName(c.partner_interp), c.partner_interp_ms, c.partner_interp_min_ms,

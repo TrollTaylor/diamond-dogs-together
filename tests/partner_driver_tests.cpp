@@ -150,6 +150,7 @@ struct Fake {
     bool aim_read_ok = false;
     std::vector<std::vector<std::uint8_t>> channel2;
     unsigned channel2_drains = 0;
+    std::uint32_t origin_session = 0;  // HookDrainReliableOrigin's origin.session (0: link_session)
     // Native weapons fakes (docs/native-puppet.md "Weapons").
     const char* fire_install_result = nullptr;
     unsigned fire_installs = 0;
@@ -554,6 +555,16 @@ bool HookDrainReliable(void* context, std::uint8_t channel, std::uint8_t* out, s
     size = f.channel2.front().size();
     std::memcpy(out, f.channel2.front().data(), size);
     f.channel2.erase(f.channel2.begin());
+    return true;
+}
+// The game's channel-2 drain (PartnerDrainReliableOrigin -> partner_net::DrainReliableAuthenticated): the origin
+// names the receiver's own link session the message was received in (origin_session; 0: the current link_session).
+bool HookDrainReliableOrigin(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size,
+                             mgscoop::partner_net::ReliableOrigin& origin) noexcept {
+    if (!HookDrainReliable(context, channel, out, capacity, size)) return false;
+    const Fake& f = F(context);
+    origin = {};
+    origin.session = f.origin_session ? f.origin_session : f.link_session;
     return true;
 }
 const char* HookInstallFire(void* context, std::uint16_t owner) noexcept {
@@ -5083,6 +5094,25 @@ void TestEquipCrossProcessSession() {
         Check(fake.Containing("partner_equip=refused; reason=no_link; rev=1; sender_epoch=1; link_epoch=0; size=64; magic=0x45\r\n") == 1 &&
                   d.equip_rx_stale == 2 && d.mission.equip.link_epoch == 4,
               "Fix 2: a refusal logs reason, revision, sender epoch and link epoch once per change; counted");
+        // The capability message: one partner_caps=refused line per (link session, reason) as well.
+        const auto caps = [](std::uint16_t revision) {
+            return CapsBytes(revision, 1, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok");
+        };
+        fake.channel2.push_back(caps(1));
+        fake.channel2.push_back(caps(1));
+        pd::TickEquipLink(d, hooks, 1450);
+        Check(fake.Containing("partner_caps=refused; reason=no_link; rev=1; sender_epoch=1; link_epoch=0; size=16\r\n") == 1 &&
+                  fake.Containing("partner_caps=refused;") == 1 && d.caps_rx.stale == 2 && pcw::Live(d.caps_rx, 4),
+              "Fix 2: a refused caps message logs reason, revision, sender epoch and link epoch once; the live caps stay");
+        fake.link_session = 4;
+        fake.channel2.push_back(caps(3));
+        fake.channel2.push_back(caps(2));
+        fake.channel2.push_back(caps(2));
+        pd::TickEquipLink(d, hooks, 1500);
+        Check(d.caps_rx.caps.revision == 3 &&
+                  fake.Containing("partner_caps=refused; reason=older; rev=2; sender_epoch=1; link_epoch=4; size=16\r\n") == 1 &&
+                  fake.Containing("partner_caps=refused;") == 2,
+              "Fix 2: a late older caps revision in the same link session: one reason=older line, the newer revision stays");
         // 6. Fix 4: the sender resends once per mission start (the receiver's dedupe absorbs it).
         fake.link_session = 4;
         fake.loadout_ok = true;
@@ -5098,6 +5128,51 @@ void TestEquipCrossProcessSession() {
         Check(fake.reliable_sent.size() == 2 &&
                   ew::Decode(fake.reliable_sent[1].data(), fake.reliable_sent[1].size(), 4, out) == ew::Result::ok && out.revision == 1,
               "Fix 4: a mission start resends the manifest once under the same revision");
+    }
+    {
+        // The game drains channel 2 through the authenticated origin hook (PartnerDrainReliableOrigin ->
+        // partner_net::DrainReliableAuthenticated): the stored link epoch is the origin's session (this copy's own
+        // counter, stamped at the session commit), never the sender's epoch in the message.
+        Fake fake;
+        pd::Hooks hooks = HooksFor(fake);
+        AddWeaponHooks(hooks);
+        hooks.link_session = HookLinkSession;
+        hooks.drain_reliable = nullptr;
+        hooks.drain_reliable_origin = HookDrainReliableOrigin;
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.partner = true;
+        lab.partner_input_send = true;
+        pd::Configure(d, lab);
+        pd::MissionStart(d, hooks, 40010);
+        fake.lines.clear();
+        fake.link_session = 3;
+        ew::Manifest g{};
+        g.revision = 1; g.epoch = 1; g.inv_slot = 0xFF;
+        g.slots[0].base_id = 27; g.slots[0].alias = 27; g.slots[0].type = 1;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "origin: guest manifest encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        fake.channel2.push_back(CapsBytes(1, 1, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok"));
+        pd::TickEquipLink(d, hooks, 1000);
+        ew::Manifest out{};
+        Check(fake.channel2.empty() && d.mission.equip.have && d.mission.equip.link_epoch == 3 && d.equip_cache_have &&
+                  d.equip_cache_epoch == 3 && pd::RemoteManifest(d, 3, out) && out.slots[0].base_id == 27 &&
+                  pcw::Live(d.caps_rx, 3) && d.caps_rx.caps.epoch == 1 &&
+                  fake.Containing("partner_equip=manifest; rev=1;") == 1 && fake.Containing("sender_epoch=1; link_epoch=3\r\n") == 1 &&
+                  fake.Containing("partner_equip=refused") == 0 && fake.Containing("partner_caps=refused") == 0,
+              "origin: sender epoch 1 drained in origin session 3: cache live, RemoteManifest(3), caps Live(3)");
+        // The origin's session is the one stored, even where it differs from the link_session hook's value.
+        fake.origin_session = 5;
+        g.revision = 2; g.slots[1].base_id = 46; g.slots[1].alias = 873; g.slots[1].type = 4;
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "origin: revision 2 encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        fake.channel2.push_back(CapsBytes(2, 1, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::native, "ok"));
+        pd::TickEquipLink(d, hooks, 1100);
+        Check(d.mission.equip.link_epoch == 5 && d.equip_cache_epoch == 5 && pd::RemoteManifest(d, 5, out) && out.slots[1].base_id == 46 &&
+                  !pd::RemoteManifest(d, 3, out) && pcw::Live(d.caps_rx, 5) && !pcw::Live(d.caps_rx, 3) && d.caps_rx.link_epoch == 5 &&
+                  fake.Containing("partner_equip=manifest; rev=2;") == 1 && fake.Containing("sender_epoch=1; link_epoch=5\r\n") == 1,
+              "origin: the origin's session (5) is stored, not the link_session hook's (3) nor the sender's (1)");
     }
     {
         // The cardboard box rides on the manifest (P3): the host's box toggle reaches body 1's edge detector on a

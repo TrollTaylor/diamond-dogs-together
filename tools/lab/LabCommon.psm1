@@ -392,7 +392,7 @@ $script:LabPartnerKeys = @(
     @{ Key = 'net_seed'; Json = 'net_seed'; Kind = 'u32'; Min = 1 },
     # 0.13.6 online-net-epoch: the link-session counter starts at this value (the lab and
     # the hidden worker's play rehearsal only; play refuses it). Written only when set.
-    @{ Key = 'link_session_skew'; Json = 'link_session_skew'; Kind = 'int'; Min = 0; Max = 1000 },
+    @{ Key = 'link_session_skew'; Json = 'link_session_skew'; Kind = 'int'; Min = 0; Max = 999 },
     # Join-fix phase 2 (docs/join-fix-phase2-spec.md P2-11): the save handoff
     # (absent = off; stage only in hidden worker runs) and the guest travel lock
     # (absent = 1 in play, 0 in the lab). Written only when set.

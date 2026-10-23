@@ -25,7 +25,8 @@
 #   partner_caps=rx; drive=native; ...; epoch=<sender's>; rev=..; link_epoch=<own>, then partner_native_net; ...;
 #     remote=native/ok (the caps message is live in both copies)
 #   equip_preload=authorized; ...; manifest=1 at the 30010 allocation (never equip_preload=refused; reason=no_manifest)
-#   equip_writer=handle_bound (per slot, or handle_queued then observation_stopped), partner_weapon=match
+#   equip_writer=handle_bound (per slot, or handle_queued then observation_stopped; reason=model_wait_limit: the two
+#     writer waitlogs take either), partner_weapon=match
 #   NEVER: partner_equip=refused or partner_caps=refused (nothing on channel 2 is refused in this run; a refusal line
 #     names reason, rev, sender_epoch and link_epoch: report it), equip_writer=refused; reason=no_manifest
 #   state.json (captures.jsonl): native.equip.rx_link_epoch 3 (host) / 1 (guest), rx_sender_epoch 1 / 3, rx_received
@@ -52,8 +53,8 @@ waitlog host 'partner_equip=manifest; rev=1; .*sender_epoch=1; link_epoch=3' 60
 waitlog guest 'partner_equip=manifest; rev=1; .*sender_epoch=3; link_epoch=1' 60
 waitlog host 'partner_native_net; .*remote=native/ok' 90
 waitlog guest 'partner_native_net; .*remote=native/ok' 90
-waitlog host 'equip_writer=handle_bound' 120
-waitlog guest 'equip_writer=handle_bound' 120
+waitlog host 'equip_writer=(handle_bound|observation_stopped; reason=model_wait_limit);' 120
+waitlog guest 'equip_writer=(handle_bound|observation_stopped; reason=model_wait_limit);' 120
 both debug godmode 1
 host debug time 43200
 host debug weather sunny

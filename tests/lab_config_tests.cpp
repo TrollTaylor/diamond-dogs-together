@@ -776,11 +776,13 @@ int main() {
               "refused keys forced off");
     }
     {
-        // The lab keeps the skew (0..1000); a value out of range is invalid and stays 0.
+        // The lab keeps the skew (0..999, as the worker allow-lists); a value out of range is invalid and stays 0.
         const auto lab = Lab("enabled=1\nlink_session_skew=2\n");
         Check(lab.link_session_skew == 2 && lab.invalid_values == 0 && lab.play_refused == 0, "lab: link_session_skew=2");
-        const auto big = Lab("enabled=1\nlink_session_skew=1001\n");
-        Check(big.link_session_skew == 0 && big.invalid_values == 1, "lab: link_session_skew above 1000 refused");
+        const auto top = Lab("enabled=1\nlink_session_skew=999\n");
+        Check(top.link_session_skew == 999 && top.invalid_values == 0, "lab: link_session_skew=999 (the allow-list maximum)");
+        const auto big = Lab("enabled=1\nlink_session_skew=1000\n");
+        Check(big.link_session_skew == 0 && big.invalid_values == 1, "lab: link_session_skew above 999 refused");
         const auto none = Lab("enabled=1\n");
         Check(none.link_session_skew == 0, "link_session_skew defaults to 0");
     }

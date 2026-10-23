@@ -620,7 +620,7 @@ struct LabConfig {
     std::uint32_t net_bind_address = 0x7F000001;    // host byte order; 0 = any
     std::uint32_t net_peer_address = 0x7F000001;    // host byte order (net_peer_addr, dotted IPv4)
     std::uint32_t net_jitter_ms = 0, net_dup_permille = 0, net_reorder_permille = 0, net_reorder_ms = 40;
-    // link_session_skew=<0..1000> (0.13.6 online-net-epoch; a lab / hidden-worker
+    // link_session_skew=<0..999> (0.13.6 online-net-epoch; a lab / hidden-worker
     // reproduction knob): this copy's link-session counter starts at the value,
     // so its first committed session is skew+1 while a fresh peer's is 1 (the
     // counters of the 0.13.5 online session after a guest relaunch). An
