@@ -1,5 +1,7 @@
 ## October 23, 2026: 0.14.0 (Diamond Dogs Together launcher: one exe, drag-and-drop install, Steam only; repo cleanup; story character)
 
+**Package (2026-10-23, not installed, not released):** `dist/DiamondDogsTogether-0.14.0-20261023T215953Z-dc28f400/DiamondDogsTogether-0.14.0.zip` (9,980,622 bytes), SHA-256 `F58E248804274173766CA49BD07233067C4A5ACB1813ADF5468446637F45C717`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `54f0b9d` with Release receipt `20261023-215536-f4f26658dfb34d72bf39e1876b9b5df5` (passed, 294 audited tests). `DiamondDogsTogether.exe` SHA-256 `5E1073BC...8F23` and `dinput8.dll` `CDE30622...5520`, both build id `0.14.0+54f0b9d`. Unzipped into a scratch folder and checked: the 10 root entries, `package.json` (drop-in, 9 `files[]` rows, every hash), both programs equal to the receipt, licences intact, `source.zip` (1,283 entries), and the packaged exe's `--selftest` (13/13). Not installed in a game folder and no game launched.
+
 Branch `wp/launcher-integ` from `dev/oct7-continue` `cd25f22` (0.13.6): merge commits of `wp/repo-cleanup` `e4ad16a`
 (about 855 research / stale files deleted in place; tag `archive/research-2026-10-23` holds them), `wp/character-story`
 `a3f828b` and `wp/launcher-core` `cc97405` (which contains `wp/launcher-dat` `37eff7c` and `wp/launcher-gui` `705ef1d`),
