@@ -164,6 +164,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_traverse=1','partner_native_traverse=0','guest:partner_native_traverse=1','host:partner_native_traverse=0',
     # F1 vehicles: the board block / back-seat passenger hook (passenger with the gun profile in lab and play)
     'partner_ride_board=off','partner_ride_board=block','partner_ride_board=passenger','guest:partner_ride_board=passenger','host:partner_ride_board=block',
+    # G4 truck test levers: the native door spot (lab only, default 0)
+    'debug_vehicle_door=1','debug_vehicle_door=0','guest:debug_vehicle_door=1','host:debug_vehicle_door=0',
     # F2: the native cardboard box on body 1 (lab only, default 0)
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
     # Gestures (on with the gun profile, lab and play)
@@ -189,6 +191,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_place_mirror=2','partner_native_place_mirror=','partner_native_place_mirror=on','both:partner_native_place_mirror=1',
     'partner_native_traverse=2','partner_native_traverse=','partner_native_traverse=on','both:partner_native_traverse=1','partner_native_traversal=1',
     'partner_ride_board=1','partner_ride_board=','partner_ride_board=on','partner_ride_board=Block','partner_ride_board=passengers','both:partner_ride_board=block',
+    'debug_vehicle_door=2','debug_vehicle_door=','debug_vehicle_door=on','both:debug_vehicle_door=1','debug_vehicle_doors=1',
     'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
     'partner_native_ui_filter=2','partner_native_ui_filter=','partner_native_ui_filter=on','both:partner_native_ui_filter=1','partner_native_ui_filters=1',
@@ -208,6 +211,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_place_mirror=1','labsetting guest partner_native_place_mirror=0',
         'labsetting partner_native_traverse=1','labsetting host partner_native_traverse=0',
         'labsetting partner_ride_board=passenger','labsetting guest partner_ride_board=block','labsetting host partner_ride_board=off',
+        'labsetting debug_vehicle_door=1','labsetting guest debug_vehicle_door=1','labsetting host debug_vehicle_door=0',
         'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
         'labsetting partner_native_ui_filter=1','labsetting host partner_native_ui_filter=0',
@@ -225,7 +229,8 @@ foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','lab
 }
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
 foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1',
-        'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block')){
+        'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block',
+        'labsetting debug_vehicle_door=2','labsetting debug_vehicle_door=on','labsetting both debug_vehicle_door=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 # 0.13.6 online-vehicle-gone: world_vehicle_gone=0|1 (the VEHICLE_GONE world op, lab and play) in both

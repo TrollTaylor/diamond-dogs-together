@@ -105,6 +105,7 @@ local function fixture(options)
     c.life, c.positions, c.ids = life, positions, ids
     env.GameObject = {NULL_ID = 65535, GetGameObjectId = function(kind, name)
         if name == nil then record('cp_lookup', kind); return c.cpIds and c.cpIds[kind] or 65535 end
+        if kind == 'TppVehicle2' then return c.vehicleIds and c.vehicleIds[name] or 65535 end
         check(kind == 'TppSoldier2', 'soldier typed locator lookup'); return ids[name] or 65535
     end, SendCommand = function(id, a)
         record(a.id, id, a)
@@ -966,5 +967,33 @@ check(v:send('seat_dm stateVehicleFrontLeftLoop 0 veh_lv_0000')[3] == 'seat_dm_r
 check(v:send('vehicle_names extra')[3] == 'on_foot', 'vehicle names exception requires the exact command')
 check(v:send('seat_dm a b c d')[3] == 'on_foot', 'seat_dm exception is bounded to its arguments')
 check(v:send('seat_dm')[3] == 'on_foot', 'seat_dm without arguments is not admitted while mounted')
+-- G4 truck test levers (docs/native-puppet.md "Truck test levers"): goto_vehicle truck delegates to the vehicle
+-- module's gotoTruck (lab.ini debug_vehicle_door=1); its nil answer keeps the old 1.9 m spot; a door argument without
+-- the module refuses; the new levers are the vehicle module's and stay on-foot commands.
+local g = fixture()
+g.D.vehicle = {handles = {goto_partner_vehicle = true, vehicle_door = true}, run = function(a) return true, a[1] .. '_routed' end,
+    gotoTruck = function(a, id) g.truckArgs = {a[2], a[3], a[4], id}; return true, 'door_stub' end}
+check(g:send('goto_vehicle truck passenger 30')[3] == 'door_stub' and g.truckArgs[1] == 'truck' and g.truckArgs[2] == 'passenger' and
+    g.truckArgs[3] == '30' and g.truckArgs[4] == g.id - 1 and g:count('warp') == 0, 'goto_vehicle truck delegates to gotoTruck with its id')
+check(g:send('goto_vehicle truck')[3] == 'door_stub', 'a bare truck delegates too')
+check(g:send('goto_vehicle truck a b c')[3] == 'command_args' and g:send('goto_vehicle jeep 60')[3] == 'command_args',
+    'only truck takes up to two door arguments')
+g.D.vehicle.gotoTruck = function() return false, 'door_lab_only' end
+check(g:send('goto_vehicle truck')[3] == 'door_lab_only', 'a door refusal is the result')
+check(g:send('goto_partner_vehicle')[3] == 'goto_partner_vehicle_routed' and g:send('vehicle_door partner')[3] == 'vehicle_door_routed',
+    'the partner and report levers are routed to the vehicle module')
+g.mounted = 'vehicle'
+check(g:send('goto_partner_vehicle')[3] == 'on_foot' and g:send('vehicle_door')[3] == 'on_foot', 'the door levers need the viewer on foot')
+g = fixture()
+check(g:send('goto_vehicle truck 60')[3] == 'door_unavailable' and g:count('warp') == 0, 'a door argument without the vehicle module refuses')
+-- Key off (gotoTruck answers nil): goto_vehicle truck keeps the old 1.9 m spot beside the record; a door argument refuses.
+g = fixture(); g.D.vehicle = {handles = {}, run = function() return false, 'unused' end, gotoTruck = function() return nil end}
+check(g:send('goto_vehicle truck 60')[3] == 'door_unavailable' and g:count('warp') == 0, 'a nil gotoTruck with a door argument refuses')
+check(g:send('goto_vehicle truck')[3] == 'vehicle_none' and g:count('warp') == 0, 'a nil gotoTruck falls through to the old truck search')
+g.vehicleIds = {veh_trc_0001 = 25603}; g.positions[25603] = {40, 2, 50}
+local tr = g:send('goto_vehicle truck')
+local tw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
+check(tr[3]:find('vehicle=veh_trc_0001;id=25603', 1, true) and g:count('warp') == 1 and math.abs(tw.pos[1] - 41.9) < 1e-6 and
+    tw.pos[3] == 50, 'a nil gotoTruck keeps the old 1.9 m truck spot ' .. tostring(tr[3]))
 
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

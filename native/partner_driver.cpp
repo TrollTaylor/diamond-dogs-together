@@ -5603,6 +5603,17 @@ bool RideTiltPeer(const Driver& d, std::uint32_t epoch, std::uint64_t now_ms) no
     return d.settings.ride_tilt && partner_ride_wire::ExtLive(d.ride_ext, epoch, now_ms) &&
            (d.ride_ext.ext.features & partner_ride_wire::ExtFeature::Tilt) != 0;
 }
+bool RidePeerVehicle(const Driver& d, std::uint32_t epoch, std::uint64_t now_ms, std::uint16_t& vehicle, std::uint8_t& seat) noexcept {
+    namespace rw = partner_ride_wire;
+    vehicle = rw::kVehicleUnknown;
+    seat = rw::kSeatUnknown;
+    if (!epoch || !d.ride_rx.have || d.ride_rx.epoch != epoch || !rw::Live(d.ride_rx, epoch, now_ms)) return false;
+    const rw::Packet& p = d.ride_rx.packet;
+    if (p.kind != rw::Kind::vehicle || p.vehicle == rw::kVehicleUnknown || (p.vehicle >> 9) != rw::kVehicleType) return false;
+    vehicle = p.vehicle;
+    seat = p.seat;
+    return true;
+}
 
 bool NativeSleepPresentationReady(const Driver& d) noexcept {
     const auto& m = d.mission;

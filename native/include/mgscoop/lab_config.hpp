@@ -567,6 +567,12 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
+    // G4 truck test levers (vehicle_door, docs/native-puppet.md "Truck test levers"): the native
+    // door-spot receipt behind debug goto_vehicle truck / goto_partner_vehicle / vehicle_door
+    // (three read-only game calls under SEH). Default 0 in lab and play with a _given flag; play
+    // forces it off; the receipt also refuses outside mode=lab with offline and redirected saves.
+    bool debug_vehicle_door = false;
+    bool debug_vehicle_door_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;

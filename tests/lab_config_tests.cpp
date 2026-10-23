@@ -183,6 +183,38 @@ int main() {
                   std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::passenger), "passenger") == 0,
               "board names");
     }
+    // G4 truck test levers (debug_vehicle_door, docs/native-puppet.md "Truck test levers"): off in lab and play unless
+    // named (with or without the gun profile); a named 1 runs in the lab only (play forces it off without a refusal
+    // bit); a named value records _given.
+    {
+        Check(!LabConfig{}.debug_vehicle_door && !LabConfig{}.debug_vehicle_door_given && !Lab("").debug_vehicle_door,
+              "the door key defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool lab = std::strcmp(mode, "mode=lab\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.debug_vehicle_door && !profile.debug_vehicle_door_given && profile.invalid_values == 0,
+                  "the gun profile leaves the door key off in lab and play");
+            const auto named = Lab(gun + mode + "debug_vehicle_door=1\n");
+            Check(named.debug_vehicle_door == lab && named.debug_vehicle_door_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named door key runs in the lab; play forces it off");
+            const auto off = Lab(gun + mode + "debug_vehicle_door=0\n");
+            Check(!off.debug_vehicle_door && off.debug_vehicle_door_given, "a named 0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\ndebug_vehicle_door=1\n");
+        Check(alone.debug_vehicle_door && alone.debug_vehicle_door_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "debug_vehicle_door=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\ndebug_vehicle_door=1\ndebug_vehicle_door=0\n");
+        Check(!later.debug_vehicle_door, "a later 0 turns the door key off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\ndebug_vehicle_door=") + value + "\n");
+            Check(!invalid.debug_vehicle_door && !invalid.debug_vehicle_door_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid door value refuses");
+        }
+    }
     // F2 cardboard box on body 1 (partner_native_cbox, docs/native-puppet.md "Cardboard box"): on with the native gun
     // profile in lab and play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link
     // v2 connected), off without it; a named 1 runs in either mode, a named 0 opts out; a named value records _given.

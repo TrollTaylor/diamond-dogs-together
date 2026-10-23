@@ -525,6 +525,14 @@ try {
             $file = Join-Path $fixture 'play-mount-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_mount=off`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_mount'])|$($m['partner_native_mount_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'off|1|0x0|0/0' 'native: a named mount off opts out in play'
+            # G4 truck test levers (docs/native-puppet.md "Truck test levers"): a lab tool, off in play; Play-Coop never
+            # names the key, and a named 1 is forced off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('debug_vehicle_door') -and !$guestIni.Contains('debug_vehicle_door') -and
+                !$clipsIni.Contains('debug_vehicle_door')) 'Play-Coop lab.ini never names debug_vehicle_door'
+            Assert-Equal "$($n['debug_vehicle_door'])|$($n['debug_vehicle_door_given'])" '0|0' 'native: play leaves the door levers off'
+            $file = Join-Path $fixture 'play-door-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "debug_vehicle_door=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['debug_vehicle_door'])|$($m['debug_vehicle_door_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named door key off'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'

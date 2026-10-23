@@ -3,8 +3,8 @@
 do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,integer,fmt=A.get,A.call,A.integer,string.format
- local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true,vehicle_remove=true,vehicle_gone_status=true}};D.vehicle=V
- function V.stop()end -- No native state, borrowed objects or cached IDs.
+ local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true,vehicle_remove=true,vehicle_gone_status=true,goto_partner_vehicle=true,vehicle_door=true}};D.vehicle=V
+ function V.stop()V.last=nil end -- No native state or borrowed objects; only the last door target.
  local function name(v)return type(v)=="string" and #v>0 and #v<=64 and v:match("^[%w_]+$")~=nil end
  local function context()
   local W=get(e,"MgsCoopWorld");local m=get(vars,"missionCode")
@@ -156,9 +156,113 @@ do
   if a[1]=="vehicle_remove" and a[2]=="nearest" and (#a==2 or #a==3 and (a[3]=="sync" or a[3]=="fulton")) then return G.lever(a[3]~=nil,a[3]=="fulton") end
   return false,"vehicle_args"
  end
+ -- G4 truck test levers (docs/native-puppet.md "Truck test levers"; lab.ini debug_vehicle_door=1, lab only: the
+ -- native receipt refuses otherwise). door(): this copy's stock door spot of one vehicle (mm, mrad). goto_vehicle
+ -- truck (debug_player.lua) warps to a door of the nearest truck whose driver seat is free, goto_partner_vehicle to
+ -- this copy of the vehicle the partner's live ride packet names; vehicle_door reports the stock truck gate (within
+ -- 1.4 m of the door point and on its outer side) at the local position. Door 0 is the driver's, 1 the passenger's.
+ local DOOR={driver=0,passenger=1}
+ local function door(target,seat,cm)
+  local r=A.receipt(fmt("return 'MGS_COOP_VEHICLE_DOOR_V1' -- %s %d %d",target,seat,cm))
+  if type(r)~="table" then return nil,"door_receipt" end
+  if r.ok~=true then return nil,"door_"..(name(r.reason) and #r.reason<=24 and r.reason or "refused") end
+  for _,k in ipairs({"id","pseat","type","seats","rider0","x","y","z","face","dx","dy","dz","ax","az"})do
+   if not integer(r[k],-1000000000,1000000000) then return nil,"door_answer" end
+  end
+  return r
+ end
+ -- a[i..]: [driver|passenger] [cm 0..150] (default 60 cm outside the door point).
+ local function doorArgs(a,i,seat)
+  local cm=60
+  if DOOR[a[i]] then seat=DOOR[a[i]];i=i+1 end
+  if a[i] then
+   if not a[i]:match("^%d%d?%d?$") or tonumber(a[i])>150 then return nil end
+   cm=tonumber(a[i]);i=i+1
+  end
+  if a[i]~=nil then return nil end
+  return seat,cm
+ end
+ local function goDoor(r,id,text)
+  local ok,msg=A.warp({r.x/1000,r.y/1000,r.z/1000,math.deg(r.face/1000)},id)
+  local W=get(e,"MgsCoopWorld")
+  if type(W)=="table" and type(W.log)=="function" then pcall(W.log,text) end
+  return ok,msg..";"..text
+ end
+ -- nil: the key is off and no door argument was given (debug_player.lua keeps the old 1.9 m spot).
+ function V.gotoTruck(a,id)
+  local seat,cm=doorArgs(a,3,0)
+  if not seat then return false,"goto_vehicle_args" end
+  local me,free,any=A.pose(),nil,nil
+  for k=0,5 do
+   local nm=fmt("veh_trc_%04d",k)
+   local okI,vid=pcall(GameObject.GetGameObjectId,"TppVehicle2",nm)
+   if okI and integer(vid,0,65534) then
+    local okR,riders=pcall(GameObject.SendCommand,vid,{id="GetRiderId"})
+    local okP,pos=pcall(GameObject.SendCommand,vid,{id="GetPosition"})
+    local okX,x,z=false,nil,nil
+    if okP and pos~=nil then okX,x,z=pcall(function()return pos:GetX(),pos:GetZ()end) end
+    if okX and A.finite(x) and A.finite(z) then
+     local c={vid,(x-me[1])^2+(z-me[3])^2,nm}
+     if not any or c[2]<any[2] then any=c end
+     -- a driver seat taken (an AI driver) never offers the stock ride icon
+     if not (okR and type(riders)=="table" and integer(riders[1],0,65534)) and (not free or c[2]<free[2]) then free=c end
+    end
+   end
+  end
+  local pick=free or any
+  if not pick then
+   if #a==2 then return nil end
+   return false,"vehicle_none"
+  end
+  local best,bestD,bestName=pick[1],pick[2],pick[3]
+  local r,why=door(best,seat,cm)
+  if not r then
+   if why=="door_off" and #a==2 then return nil end
+   return false,why
+  end
+  if not free then return false,fmt("vehicle_driver_taken;id=%d;rider0=%d",best,r.rider0) end
+  V.last={tostring(best),seat}
+  return goDoor(r,id,fmt("goto_vehicle;name=%s;id=%d;dist=%.0f;door=%d;type=%d;rider0=%d;out=%d",bestName,best,math.sqrt(bestD),seat,r.type,r.rider0,cm))
+ end
+ local function gotoPartner(a,id)
+  local seat,cm=doorArgs(a,2,1)
+  if not seat then return false,"goto_partner_vehicle_args" end
+  local r,why=door("partner",seat,cm)
+  if not r then return false,why end
+  V.last={"partner",seat}
+  local f=get(get(get(e,"MgsCoopWorld"),"ridePose"),"fast")
+  local t=type(f)=="table" and type(f.tracks)=="table" and f.tracks[r.id]~=nil
+  return goDoor(r,id,fmt("goto_partner_vehicle;id=%d;pseat=%d;door=%d;type=%d;rider0=%d;fast=%d;out=%d",r.id,r.pseat,seat,r.type,r.rider0,t and 1 or 0,cm))
+ end
+ -- vehicle_door [partner|veh_<name> [driver|passenger]] (no argument: the last goto's vehicle and door;
+ -- no door: passenger for partner, as goto_partner_vehicle, else driver).
+ local function doorReport(a)
+  local target,seat
+  if #a==1 then
+   if not V.last then return false,"vehicle_door_args" end
+   target,seat=V.last[1],V.last[2]
+  else
+   if #a>3 or (a[3] and DOOR[a[3]]==nil) then return false,"vehicle_door_args" end
+   seat=DOOR[a[3] or (a[2]=="partner" and "passenger" or "driver")]
+   if a[2]=="partner" then target="partner"
+   elseif name(a[2]) and a[2]:match("^veh_") then
+    local vid=call(GameObject,"GetGameObjectId","TppVehicle2",a[2])
+    if not integer(vid,0,65534) then return false,"vehicle_door_locator" end
+    target=tostring(vid)
+   else return false,"vehicle_door_args" end
+  end
+  local r,why=door(target,seat,0)
+  if not r then return false,why end
+  local p=A.pose()
+  local dx,dy,dz=p[1]-r.dx/1000,p[2]-r.dy/1000,p[3]-r.dz/1000
+  local d3,dot=math.sqrt(dx*dx+dy*dy+dz*dz),(dx*r.ax+dz*r.az)/1000
+  return true,fmt("vehicle_door;id=%d;type=%d;seat=%d;rider0=%d;gate=%s;d3=%.2f;dot=%.2f;dy=%.2f",r.id,r.type,seat,r.rider0,
+   d3>=1.4 and "far" or dot<0 and "inside" or "pass",d3,dot,dy)
+ end
  function V.run(a,id)
-  local f=a[1]=="vehicle_names" and names or a[1]=="seat_dm" and seatDm or (a[1]=="vehicle_remove" or a[1]=="vehicle_gone_status") and gone or read
-  local ok,yes,why=pcall(f,a)
+  local f=a[1]=="vehicle_names" and names or a[1]=="seat_dm" and seatDm or a[1]=="goto_partner_vehicle" and gotoPartner or
+   a[1]=="vehicle_door" and doorReport or (a[1]=="vehicle_remove" or a[1]=="vehicle_gone_status") and gone or read
+  local ok,yes,why=pcall(f,a,id)
   if not ok then return false,"vehicle_binding" end
   return yes,why
  end

@@ -289,8 +289,8 @@ value records `partner_ride_board_given`:
   camera fixes it. The truck half did not run in any of the passenger runs:
   the host could not board `veh_trc_0000` from the `goto_vehicle truck` spot
   and the guest's nearest truck was another one 817 m away (the copies' trucks
-  differ), so the truck fallback (`reason=type`) is still only unit-tested. The
-  light vehicle reads `type=2; seats=4`.
+  differ), so the truck fallback (`reason=type`) is still only unit-tested (the
+  lab levers for it: "Truck test levers"). The light vehicle reads `type=2; seats=4`.
 - **block** (named): hidden run `0348c4d8` (lab, `coop-vehicle-shared.txt`,
   both directions): the viewer pressed E beside the jeep the partner drove, got
   no ride icon (`board_block; site=prequery`), stayed on foot
@@ -516,6 +516,82 @@ modules take over; the handle stays set, so their collision skips the jeep
 too), a passenger in a truck (trucks block), and the attach jitter against the
 20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
 ride in both lab runs (also in `59cfc415`, godmode on, source not found).
+
+### Truck test levers
+
+G4 (0.13.6 in progress, `wp/truck-helper`): lab tooling for the one F1 proof
+still missing, the passenger-mode truck fallback (`board_block; reason=type`
+at a truck the partner drives). Key `debug_vehicle_door=0|1` (default 0 in lab
+and play, a named value records `debug_vehicle_door_given`, play forces it
+off); lab only twice over: the native receipt also refuses outside
+`mode=lab` with offline and redirected saves (the `give_item` rule). No hidden
+run has used it yet.
+
+- **Why the truck half never ran.** RideVehicle CanExec (`0x1246650`) switches
+  on GetVehicleType (table `0x1246EC8`): light vehicles (1/2) skip a door test,
+  trucks (3/4, `0x1246B13..0x1246CA0`) do not. With the seat world matrices
+  `0xB7AF90(unit, out, 1)` and `(unit, out, 0)` and the pre-query's front seat
+  s (0 the driver's, 1 the passenger's), the door point is
+  `seat_s + 0.4 * unit(seat_s - seat_other)` (`0x21124C0`), and the ride icon
+  needs the player (`CS vt+0x388(body)+0x20`) within 1.4 m of it in 3D
+  (`0x218D51C`) and on its outer side (xz dot with the seat axis >= 0). The old
+  `goto_vehicle truck` spot is 1.9 m beside the record's centre, which for a
+  truck is the cargo bed: hidden run `59cfc415` frame `pass-truck-blocked`
+  shows the host against the bed's side wall with the fulton prompt only. The
+  guest's nearest truck (817 m) was a different one because each copy places
+  its trucks itself.
+- **Native receipt** (`native/vehicle_door.{hpp,cpp}`, glue
+  `SelectVehicleDoorReceipt` in `game_script_observer.cpp`):
+  `return 'MGS_COOP_VEHICLE_DOOR_V1' -- <id|partner> <seat 0|1> <out_cm>`.
+  It reads this copy's record of the vehicle (`partner_vehicle::ReadLive`,
+  rider[0] at `+0x30`) and calls three read-only game functions under SEH:
+  GetVehicleType `0x55E7F0`, the seat count `0xA27CC0` and the seat matrix
+  `0xB7AF90` for seats 0 and 1 (16-byte aligned outputs). It answers the stock
+  door point, its outward xz axis and a stand spot `out_cm` beyond it at the
+  record's height + 0.5 m, facing the seat. `partner` takes the id from the
+  partner's live ride packet (`partner_driver::RidePeerVehicle`: this link
+  epoch, inside the lease, kind vehicle): this copy's record of the vehicle the
+  partner rides, the one RIDE_FAST moves. The record's identity bytes (riders,
+  type, realized slot, index) and the viewer's own act and ridden unit are
+  digested before and after the calls; a fault or a change latches the mission
+  (`partner_vehicle_door=uncertain; reason=fault|changed; latch=mission`, then
+  `reason=uncertain`). Nothing is written to game memory and nothing is
+  patched; the warp is the lab's ordinary `TppPlayer.Warp` of the local player.
+  Pins (`tools/generate_partner_contract.py` `DOOR_SITES`, `DOOR_DATA`,
+  `door_assertions`; `vehicle_door::VerifyImage` re-checks the 13 blocks and 4
+  data words once per process before the first call, logging
+  `partner_vehicle_door=pins; result=ok|refused; reason=..`): the type switch and its
+  table, both seat-matrix calls, the 0.4 / 1.4 constants, the y-zeroed outer-side
+  test, the seat matrix body and its seat-1 remap, the record world matrix and
+  the two getters. One line per answer while the key is named:
+  `partner_vehicle_door=answer; target=id|partner; id=..; seat=..; out_cm=..;
+  type=..; seats=..; rider0=..; pseat=..; rec_mm=..; yaw_mrad=..; seat0_mm=..;
+  seat1_mm=..; door_mm=..; stand_mm=..; face_mrad=..` or
+  `partner_vehicle_door=refused; ...; reason=off|lab_only|runtime|pins|uncertain|partner_ride|<read>|seat_axis`.
+- **Lua levers** (`lua/coop/debug_vehicle.lua`; `debug_player.lua` delegates
+  `goto_vehicle truck`):
+  - `goto_vehicle truck [driver|passenger] [cm]` (default driver, 60 cm): the
+    nearest `veh_trc_` whose driver seat is free (GetRiderId; a truck with an AI
+    driver never offers the stock icon), warped to that door's stand spot. With
+    the key off and no argument it keeps the old 1.9 m spot; with an argument it
+    refuses `door_off`. Every driver seat taken: `vehicle_driver_taken`.
+  - `goto_partner_vehicle [driver|passenger] [cm]` (default passenger, 60 cm,
+    away from the partner body in the driver's seat): this copy of the
+    partner's ridden vehicle; the result names `pseat`, `rider0` (this copy's
+    rider[0]: an AI driver there stops CanExec before the board hook) and
+    `fast=1` when a RIDE_FAST track of that vehicle is live.
+  - `vehicle_door [partner|veh_<name> [driver|passenger]]` (no argument: the
+    last goto's vehicle and door; no door named: passenger for `partner`, as
+    `goto_partner_vehicle`, driver for a locator): the stock truck gate at `vars.playerPos`
+    (`gate=pass|far|inside; d3=..; dot=..; dy=..`), an approximation of the
+    stock position `CS vt+0x388(body)+0x20`.
+- **Scenario** `coop-vehicle-passenger.txt`, truck half: the host
+  `goto_vehicle truck`, `vehicle_door` (expect `gate=pass`), boards, drives
+  1.5 s; the guest `goto_partner_vehicle`, presses E, and must log
+  `board_block; site=prequery; ...; mode=passenger; reason=type; type=3|4`
+  with `vehicle_not_riding`. The stand height (record + 0.5 m) and the default
+  60 cm are the lab's guesses: the answer line logs the seat and door points,
+  so a run can pick another `cm` without a build.
 
 ## Traversal icon
 
@@ -2148,6 +2224,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
+| `debug_vehicle_door` | 0, 1 (the G4 truck test levers' native door-spot receipt behind `debug goto_vehicle truck`, `goto_partner_vehicle` and `vehicle_door`, see "Truck test levers"; default 0 in lab and play, lab only: play forces it off and the receipt refuses outside mode=lab with offline and redirected saves; a named value records `debug_vehicle_door_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_ui_filter` | 0, 1 (G1, 0.13.6: body 1's HUD hint requests, e.g. the ladder "C" slide hint, swallowed inside its drain job by MinHooks on the UiControllerImpl hint-queue leaves vt+0x240..+0x260, see "Partner HUD hints"; default 0 in lab and play, also with the gun profile; a named 1 is lab only, play forces it off; no hidden-worker FRAME yet) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |

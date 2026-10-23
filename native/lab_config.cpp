@@ -241,6 +241,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
         if (ok) result.partner_ride_board_given = true;
     }
+    else if (Equals(key, "debug_vehicle_door")) {
+        // G4 truck test levers (lab only, default 0); a named value records _given.
+        ok = ParseBool(value, result.debug_vehicle_door);
+        if (ok) result.debug_vehicle_door_given = true;
+    }
     else return false;
     return true;
 }
@@ -1478,6 +1483,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;
+    // G4 truck test levers: off unless named (no hidden-run FRAME of the truck door spot yet);
+    // play forces it off below.
+    if (!c.debug_vehicle_door_given) c.debug_vehicle_door = false;
     if (!c.partner_native_reload_rate_given)
         c.partner_native_reload_rate = gun ? PartnerNativeReloadRate::adapt : PartnerNativeReloadRate::off;
     if (!c.partner_native_dry_stop_given) c.partner_native_dry_stop = gun;
@@ -1514,6 +1522,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // named) hid the D-Walker and the D-Horse rider as the lab runs did.
         // G1 partner HUD hints stay lab-only (no hidden-worker FRAME yet).
         c.partner_native_ui_filter = false;
+        // G4 truck test levers are a lab tool (the receipt also refuses outside the lab).
+        c.debug_vehicle_door = false;
     }
 }
 

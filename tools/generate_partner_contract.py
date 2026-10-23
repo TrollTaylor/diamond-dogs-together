@@ -913,6 +913,33 @@ PASS_CAMERA_SITES = [
      'collision owner (copied to CAM+0xC20, query flags 0x700 | 0x800000)'),
 ]
 SITES += PASS_CAMERA_SITES
+# --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
+# vehicle for the lab's goto levers. RideVehicle CanExec 0x1246650 switches on GetVehicleType 0x55E7F0 (table
+# 0x1246EC8: types 3/4, the trucks, -> 0x1246B13; 1/2 -> 0x1246CBB, no gate): the seat world matrices 0xB7AF90(unit,
+# out, 1) and (unit, out, 0); for the pre-query's seat s ([rsp+0x40], 0 the driver's) and the other o, door = seat_s +
+# 0.4 (0x21124C0) * unit(seat_s - seat_o); the player (CS vt+0x388(body)+0x20, xmm9) must be within 1.4 (0x218D51C, 3D)
+# of it and on its outer side ((player - door) with y zeroed . (seat_s - seat_o) >= 0, xmm8 = 0), else no ride icon.
+# vehicle_door calls 0xB7AF90 (pinned above with 0xB79A3F), GetVehicleType 0x55E7F0 and the seat count 0xA27CC0 (board
+# sites) on this copy's record and reads its rider[0] (+0x30); it patches nothing.
+DOOR_SITES = [
+    (0x1246AEE, 'e8fd7c31ffffc883f8070f87bd010000488d15fb94dbfe48988b8c82c86e24014803caffe1',
+     'RideVehicle CanExec: switch on GetVehicleType 0x55E7F0 - 1 (< 8) through the table 0x1246EC8'),
+    (0x1246B13, '488b4c2450488d54247041b001e86b4493ff488b4c2450488d55b04533c0e85a4493ff0f2835e3a1e70044386c24407552',
+     'CanExec trucks: 0xB7AF90(unit, out, 1) and (unit, out, 0); the pre-query seat [rsp+0x40] == 0 (r13b) -> the driver door'),
+    (0x1246B89, '0f593530b9ec000f5875e0eb50', 'CanExec trucks: driver door = seat0 + 0.4 (0x21124C0) * unit(seat0 - seat1)'),
+    (0x1246BDB, '0f5935deb8ec000f5875a0', 'CanExec trucks: passenger door = seat1 + 0.4 (0x21124C0) * unit(seat1 - seat0)'),
+    (0x1246C1E, '0f58ca0f51c90f2f0df168f4000f8342020000', 'CanExec trucks: |player - door| (3D) < 1.4 (0x218D51C), else no ride'),
+    (0x1246C31, '4489adb0010000c785b4010000ffffffff4c89adb80100000f2885b00100000f57f6488d8db00100000f54f0410f55c10f56f00f29b5b0010000'
+     'e8b0b221ff84c07407',
+     'CanExec trucks: player - door with y zeroed (mask {r13d = 0, ~0, 0, 0}), the IsNan 0x461F20 fallback'),
+    (0x1246C96, '410f2fc00f82d301000041be45000000', 'CanExec trucks: (player - door).xz . (seat - other) >= 0 (xmm8 = 0), else no ride'),
+]
+SITES += DOOR_SITES
+# The door offset 0.4f (x4) and the radius 1.4f (read-only .edata; door_assertions and vehicle_door::VerifyImage).
+DOOR_DATA = [(0x21124C0, 0x3ECCCCCD), (0x21124C4, 0x3ECCCCCD), (0x21124C8, 0x3ECCCCCD), (0x218D51C, 0x3FB33333)]
+# The blocks vehicle_door re-checks before its first native call (DOOR_SITES plus the seat matrix, its seat-1 remap,
+# the record world matrix and the two getters it calls).
+DOOR_BLOCKS = [rva for rva, _, _ in DOOR_SITES] + [0xB7AF90, 0xB79A3F, 0x55DBC8, 0x55E7F0, 0xA27CC0, 0xA27D07]
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -2675,6 +2702,40 @@ failures += ws4_v2_assertions()
 failures += support_native_assertions()
 failures += vehicle_assertions()
 failures += board_assertions()
+
+
+def door_assertions():
+    """G4 truck test levers (vehicle_door): the stock truck door gate and the calls the door spot mirrors."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+
+    def call_target(site):
+        return site + 5 + struct.unpack('<i', rd(site + 1, 4))[0]
+    table = [struct.unpack('<I', rd(0x1246EC8 + 4 * i, 4))[0] for i in range(8)]
+    need(table[2] == 0x1246B13 and table[3] == 0x1246B13, f'CanExec: types 3/4 take the truck gate 0x1246B13: {[hex(x) for x in table]}')
+    need(table[0] == 0x1246CBB and table[1] == 0x1246CBB, 'CanExec: types 1/2 (light vehicles) skip the door gate')
+    need(rip_target(0x1246AFE, 7) == 0, 'CanExec: the switch table is image-relative (lea rdx, [image])')
+    need(call_target(0x1246AEE) == 0x55E7F0, 'CanExec: the switch reads GetVehicleType 0x55E7F0')
+    need(call_target(0x1246B20) == 0xB7AF90 and call_target(0x1246B31) == 0xB7AF90, 'CanExec trucks: both seat matrices through 0xB7AF90')
+    need(rd(0x1246B1D, 3) == bytes.fromhex('41b001') and rd(0x1246B2E, 3) == bytes.fromhex('4533c0'),
+         'CanExec trucks: seat 1 first (r8b = 1), then seat 0 (r8d = 0)')
+    need(rip_target(0x1246B89, 7) == 0x21124C0 and rip_target(0x1246BDB, 7) == 0x21124C0, 'CanExec trucks: the door offset at 0x21124C0')
+    need(rip_target(0x1246C24, 7) == 0x218D51C, 'CanExec trucks: the door radius at 0x218D51C')
+    need(call_target(0x1246C6B) == 0x461F20, 'CanExec trucks: the IsNan fallback 0x461F20')
+    need(abs(struct.unpack('<f', rd(0x21124C0, 4))[0] - 0.4) < 1e-7 and abs(struct.unpack('<f', rd(0x218D51C, 4))[0] - 1.4) < 1e-6,
+         'the door offset is 0.4f and the radius 1.4f')
+    for rva, value in DOOR_DATA:
+        need(struct.unpack('<I', rd(rva, 4))[0] == value and section_of(rva) == '.edata', f'door data {rva:#x} = {value:#x} in .edata')
+    sites = {rva for rva, _, _ in SITES}
+    need(all(rva in sites for rva in DOOR_BLOCKS), 'every door block is a code site')
+    need(call_target(0xB7AFC9) == 0x55DB80 and call_target(0xB7AFDA) == 0xB799C0, 'the seat matrix 0xB7AF90: 0x55DB80, then 0xB799C0')
+    return out
+
+
+failures += door_assertions()
 failures += pass_camera_assertions()
 failures += handle_call_assertions()
 
@@ -3187,6 +3248,15 @@ w('inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam
 w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
+w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')
+w('// The stock truck door gate (RideVehicle CanExec types 3/4, 0x1246b13): door = seat_s + door_offset * unit(seat_s -')
+w('// seat_o) for the front seat s (0 driver, 1 passenger) and the other o, the seat world matrix 0xb7af90(unit, out, seat)')
+w('// (translation at out+0x30); the player within door_radius (3D) of the door and on its outer side (xz dot >= 0).')
+w('inline constexpr std::uintptr_t door_seat_matrix_rva=0xb7af90, door_gate_rva=0x1246b13;')
+w('inline constexpr float door_offset_m=0.4f, door_radius_m=1.4f;')
+w('// The contract blocks vehicle_door re-checks before its first native call (code_sites rvas) and the two constants.')
+w('inline constexpr std::uintptr_t door_blocks[]={' + ','.join(f'0x{rva:x}' for rva in DOOR_BLOCKS) + '};')
+w('inline constexpr DataWord door_data[]={' + ','.join(f'{{0x{rva:x},0x{value:08x}}}' for rva, value in DOOR_DATA) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
 w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')

@@ -8364,6 +8364,36 @@ void TestGestures() {
     st.dropped = 0;
 }
 
+// G4 truck test levers (vehicle_door; docs/native-puppet.md "Truck test levers"): the peer's live vehicle ride
+// (its link epoch, inside the lease) names the vehicle goto_partner_vehicle reads on this copy; nothing else does.
+void TestRidePeerVehicle() {
+    namespace rw = mgscoop::partner_ride_wire;
+    Session s(0);
+    BoardSetup(s, mgscoop::PartnerRideBoard::off);
+    s.ride_suffix = " ride=0";
+    std::uint16_t vehicle = 1;
+    std::uint8_t seat = 1;
+    Check(s.Tick(0) && !pd::RidePeerVehicle(s.driver, 7, s.now, vehicle, seat) && vehicle == rw::kVehicleUnknown && seat == rw::kSeatUnknown,
+          "no ride packet: no vehicle");
+    std::uint16_t rev = 0;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25602);
+    Check(s.Tick(0), "the ride packet arrives");
+    const std::uint64_t at = s.driver.ride_rx.received_ms;
+    Check(pd::RidePeerVehicle(s.driver, 7, at, vehicle, seat) && vehicle == 25602 && seat == 0, "the peer drives 25602");
+    Check(pd::RidePeerVehicle(s.driver, 7, at + rw::kLeaseMs, vehicle, seat) && vehicle == 25602, "live to the end of the lease");
+    Check(!pd::RidePeerVehicle(s.driver, 7, at + rw::kLeaseMs + 1, vehicle, seat) && vehicle == rw::kVehicleUnknown, "past the lease");
+    Check(!pd::RidePeerVehicle(s.driver, 8, at, vehicle, seat) && !pd::RidePeerVehicle(s.driver, 0, at, vehicle, seat),
+          "another or no link epoch");
+    BoardRide(s, rev, rw::Kind::vehicle, 2, 25602);
+    Check(s.Tick(0) && pd::RidePeerVehicle(s.driver, 7, s.driver.ride_rx.received_ms, vehicle, seat) && vehicle == 25602 && seat == 2,
+          "a back-seat ride names the vehicle and seat 2");
+    BoardRide(s, rev, rw::Kind::horse, rw::kSeatUnknown, rw::kVehicleUnknown);
+    Check(s.Tick(0) && !pd::RidePeerVehicle(s.driver, 7, s.driver.ride_rx.received_ms, vehicle, seat) && seat == rw::kSeatUnknown,
+          "a horse ride is no vehicle");
+    BoardRide(s, rev, rw::Kind::foot, rw::kSeatUnknown, rw::kVehicleUnknown);
+    Check(s.Tick(0) && !pd::RidePeerVehicle(s.driver, 7, s.driver.ride_rx.received_ms, vehicle, seat), "on foot: no vehicle");
+}
+
 int main() {
     TestRound1Actions();
     TestCfgAndMissionBoundaries();
@@ -8383,6 +8413,7 @@ int main() {
     TestRideRobust();
     TestRideExtAndCensus();
     TestBoardDriver();
+    TestRidePeerVehicle();
     TestPassCameraDriver();
     TestBoardSeatGates();
     TestHiddenLocalSender();

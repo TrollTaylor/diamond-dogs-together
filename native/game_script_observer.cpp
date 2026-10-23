@@ -104,6 +104,7 @@
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_vehicle.hpp"
 #include "mgscoop/partner_board.hpp"
+#include "mgscoop/vehicle_door.hpp"
 #include "mgscoop/partner_pass_camera.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
@@ -4193,6 +4194,75 @@ bool SelectRideTiltReceipt(const char* buffer, std::size_t size, mgscoop::script
                   v::Mrad(first.unit.a44), v::Mrad(first.unit.a48), ride_tilt_log.writes);
     return finish("return true");
 }
+// G4 truck test levers (docs/native-puppet.md "Truck test levers"; lab.ini debug_vehicle_door=1, lab only):
+//   return 'MGS_COOP_VEHICLE_DOOR_V1' -- <id|partner> <seat 0|1> <out_cm>
+// answers this copy's stock door spot of one vehicle (mgscoop/vehicle_door.hpp) for the lua/coop/debug_vehicle.lua
+// goto levers. Off unless named; refused outside mode=lab with offline and redirected saves (the give_item rule),
+// off the runtime thread and while the mission terminates. "partner" takes the id from the partner's live ride
+// packet. A fault or a digest change in the read-only native calls latches the mission (reason=uncertain).
+struct VehicleDoorState { std::uint32_t mission; const char* uncertain; int pins; } vehicle_door_state{0, nullptr, -1};
+bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace vd = mgscoop::vehicle_door;
+    constexpr std::size_t prefix = sizeof(vd::kPrefix) - 1;
+    if (!buffer || size <= prefix || size > 96 || std::memcmp(buffer, vd::kPrefix, prefix) != 0) return false;
+    world_quiet = true;
+    static char reply[400]{};
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    vd::Request request{};
+    if (!vd::ParseRequest(buffer + prefix, size - prefix, request)) return finish("return {ok=false,reason='request'}");
+    if (vehicle_door_state.mission != partner_mission) {
+        vehicle_door_state.mission = partner_mission;
+        vehicle_door_state.uncertain = nullptr;
+    }
+    const auto& config = mgscoop::GetLabConfig();
+    unsigned short mission = 0;
+    vd::GateIn gate{};
+    gate.enabled = config.debug_vehicle_door;
+    gate.lab = config.mode == mgscoop::LabMode::lab && offline_enabled && lab::SavesRedirected();
+    gate.runtime = OnRuntimeThread() && !mission_terminating && ReadMission(mission) && mission == partner_mission;
+    // The door blocks are checked once per process, only for an admitted lab request.
+    if (gate.enabled && gate.lab && gate.runtime && vehicle_door_state.pins < 0) {
+        const char* why = !game_base || !partner_gate_ok ? "gate" : vd::VerifyImage(game_base, game_span);
+        vehicle_door_state.pins = why ? 0 : 1;
+        LogFormat("partner_vehicle_door=pins; result=%s; reason=%s\r\n", why ? "refused" : "ok", why ? why : "none");
+    }
+    gate.pins = vehicle_door_state.pins == 1 && game_base && partner_gate_ok;
+    gate.uncertain = vehicle_door_state.uncertain != nullptr;
+    vd::Answer answer{};
+    vd::Facts facts{};
+    vd::Spot spot{};
+    answer.refusal = vd::GateRefusal(gate);
+    std::uint16_t id = request.id;
+    if (!answer.refusal && request.target == vd::Target::partner) {
+        std::uint16_t vehicle = vd::kNone;
+        std::uint8_t seat = vd::kSeatNone;
+        const bool live = pd::RidePeerVehicle(partner_driver, PartnerLinkSession(nullptr), mgscoop::partner_net::NowMs(), vehicle, seat);
+        answer.refusal = vd::PartnerTarget(live, vehicle, id);
+        answer.peer = true;
+        answer.peer_seat = seat;
+        request.id = id;
+    }
+    if (!answer.refusal) {
+        pp::State player{};
+        const bool state = pp::ReadState(partner_addresses, player) == pp::Refusal::none;
+        answer.refusal = vd::ReadFacts(game_base, id, state ? player.P : 0, state ? player.Q : 0, state ? player.local : 0, facts);
+        if (answer.refusal && (std::strcmp(answer.refusal, "fault") == 0 || std::strcmp(answer.refusal, "changed") == 0)) {
+            vehicle_door_state.uncertain = answer.refusal;
+            LogFormat("partner_vehicle_door=uncertain; id=%u; reason=%s; latch=mission\r\n", unsigned(id), answer.refusal);
+        }
+    }
+    if (!answer.refusal) {
+        spot = vd::DoorSpot(facts, request.seat, request.out_cm);
+        answer.refusal = spot.refusal;
+        answer.facts = &facts;
+        answer.spot = &spot;
+    }
+    // One line per answer while the key is named (a key-off refusal stays quiet).
+    char line[512]{};
+    if (gate.enabled && vd::FormatLog(request, answer, line, sizeof(line))) Log(line);
+    if (!vd::FormatAnswer(answer, reply, sizeof(reply))) return finish("return {ok=false,reason='format'}");
+    return finish(reply);
+}
 bool SelectBuddyCapacityReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
     constexpr char prefix[]="return 'MGS_COOP_BUDDY_CAPACITY_V1' -- ";
@@ -4804,6 +4874,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
+    if (SelectVehicleDoorReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;

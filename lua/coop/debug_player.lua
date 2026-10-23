@@ -157,7 +157,8 @@ do
       local x, z = t[1] + 2 * dx / len, t[3] + 2 * dz / len
       local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok2, fmt("%s;via=get_position;walker=%.2f,%.2f,%.2f", msg, t[1], t[2], t[3])
-    elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie" or a[2] == "truck"))) then
+    elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie" or a[2] == "truck")) or
+        (a[2] == "truck" and #a <= 4)) then
       -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition);
       -- "jeep" / "truck": only the veh_lv_ / veh_trc_ locators (F1 vehicles: the
       -- truck half of coop-vehicle-passenger.txt);
@@ -165,6 +166,14 @@ do
       -- that no authored veh_lv_/veh_trc_ locator names (no locator: the WS3
       -- seat-by-id case, docs/vehicle-ws3.md). In 30010 the authored trucks take
       -- 25602..25607 (hidden run e54e0294), so only the unnamed slots qualify.
+      -- "truck [driver|passenger] [cm]" with lab.ini debug_vehicle_door=1: the stock door
+      -- spot instead (debug_vehicle.lua gotoTruck; docs/native-puppet.md "Truck test levers").
+      local V = D.vehicle
+      if a[2] == "truck" and type(V) == "table" and type(V.gotoTruck) == "function" then
+        local ok3, msg3 = V.gotoTruck(a, id)
+        if ok3 ~= nil then return ok3, msg3 end
+      end
+      if #a > 2 then return false, "door_unavailable" end
       local me, best, bestD, bestName = A.pose(), nil, nil, nil
       local names = {}
       if a[2] == "sortie" then
