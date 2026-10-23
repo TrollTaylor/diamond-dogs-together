@@ -397,6 +397,39 @@ phase). Contract unchanged (743 code sites / 193 vtable slots; no new game addre
   handoff-stage with `-GuestSaveSeed real-remote`, R4 handoff-restart with `-Mode play -WanSim bad` three times
   (`result_rx; status=exiting` or `partner_restarting; how=link_closed`, `exit_flush`), R5, R6 travel-lock (now presses
   3 s apart), and the manual Steam relaunch check on one PC (diag-join.md P5).
+- **Hidden runs (2026-10-23, `wp/integ10`, research build, gun stage, `-SaveSeed lab`, `save_handoff=stage`; every run
+  Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):**
+  - **P1 proven live** (`handoff-stage.txt` steps, `-Mode play -GuestSaveSeed real-remote`): `247ae49a` (`de949e9`)
+    and `c186abfb` (`188f55a`). The guest's copy holds no `287700\local` progress (`save_seed_removed`
+    TPP_GAME_DATA0/1, PERSONAL_DATA0/1); it logs `save_handoff=set; ok=1; set=8DA6039D; files=2; local=0` at its
+    boot and `need=1` (the host's `state_rx` shows the guest `need=1; set=8DA6039D`, not `set=00000000`), the host
+    binds 30010 by `continue` and offers (6 files, 609,012 B), the guest stages at its 40050 title (3.2 s). The 0.13.5
+    field failure (`need=0 set=00000000`, no offer) did not occur.
+  - **Fixed from these runs (`188f55a`, on by default):** the boot reports the story sequence's default (the opening)
+    until the save loads (`story=1`, then `2`, inside mission 1). In `247ae49a` / `1eff8016` a booting guest decided
+    `need=1; why=story`, and the two copies booting together showed H4 on the host and G5 on the guest ("story
+    opening", `hud=toast; ...; code=24` / `code=5; ...; on=1`) for saves that reach Mother Base. The core now counts
+    the host's own story as unknown in its start-up mission (transient, no toast) and the guest's story rule waits for
+    a real mission like the location rule (`save_handoff_core_tests` TestGuestStartup, fails before). After it
+    (`c186abfb`, `e5f15c7e`, `640abf2f`, `5e44cb65`): host `elig=3` at its boot, no `need` line before the guest's
+    title, then `need=1; why=location` there, and no H4 / G5 at all.
+  - **P2 proven live** (`handoff-double-press.txt`): `e5f15c7e` (lab, `real-remote`), `640abf2f` (lab, `real`) and
+    `5e44cb65` (`-Mode play -WanSim bad`, `real-remote`, guest `rtt_ms` 175-192, loss up to 13 %). Each: note 7 b=3
+    and its toast, a press 2.4 s later `decision=refuse` (silent), the next ones 3-6 s apart `decision=held` (twice),
+    zero `decision=repeat`, zero `save_handoff=declined`, zero note 10; the guest stays at 40050 and stages once the
+    host continues into 30010 (`staged` in 3.2 s; 10.4 s over the bad WAN). Frames: the title menu after every
+    press, the note 7 b=3 toast ("...Stay here; F9 > Partner / Co-op > Shared save > Keep my own save plays yours.")
+    and "host save ready - MGSV restarts". The first run `1eff8016` failed its two expectations only on timing: the
+    scenario pressed at +1 s and +4 s of the title, which still plays its logos (PRESS ENTER KEY was up at +25 s), so
+    the presses never reached Continue; the guest still stayed at 40050 and staged. The scenario now waits 25 s
+    after `titlemenu guest` (`188f55a`).
+  - **P8 live:** `hud=toast; kind=save_handoff|world_note; code=..; a=..; b=..[; partner=..; local=..]; on=1` lines on
+    both copies: guest G4 (4) at its title, G1 (1, a=595 KB), G3 (3); host H3 (23), H1 (21); world_note 7 (b=3) and
+    16.
+  - **Still open:** R4 handoff-restart (`-Mode play -WanSim bad`, three times: RESULT exiting / `partner_restarting`,
+    `exit_flush`), R5 handoff-after-restart, R6 travel-lock and the one-PC Steam relaunch check (P5); the P2 escape
+    after the 60 s hold and F9 Keep my own save; P3 (`kSettleBindMs` 10 s, G11 / H8) and P6 (G12) have no worker
+    scenario; Steam transport cannot run in the worker.
 
 ### online-body-safety
 
