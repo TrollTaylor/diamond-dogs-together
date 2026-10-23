@@ -629,6 +629,16 @@ struct LabConfig {
     // a hidden-worker FRAME shows the viewer's HUD clean while body 1 climbs.
     bool partner_native_ui_filter = false;
     bool partner_native_ui_filter_given = false;
+    // The gesture lab lever (partner_gesture_lever, docs/native-puppet.md
+    // "Gestures", "Lab lever: knock and hand signs"): the native debug command
+    // "gesture_lever knock|sign_go|sign_stop" makes this copy's OWN player knock
+    // or sign through the stock KnockActionPluginImpl request slots the call
+    // menu uses (vt+0x28 / +0x30 / +0x38), so a hidden run can film the peer's
+    // body 1 replaying the edge. Lab only: default 0, play forces it off; a
+    // named value records partner_gesture_lever_given. Never on by default
+    // until a hidden-run FRAME proves the replay.
+    bool partner_gesture_lever = false;
+    bool partner_gesture_lever_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute

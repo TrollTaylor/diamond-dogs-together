@@ -361,6 +361,10 @@ $script:LabPartnerKeys = @(
     # G1 partner HUD hints (docs/native-puppet.md "Partner HUD hints"): the partner body's HUD hint requests swallowed
     # inside its drain job (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_ui_filter'; Json = 'native_ui_filter'; Kind = 'bool' },
+    # The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs"): the native debug
+    # command gesture_lever knock|sign_go|sign_stop (this copy's own knock / hand sign through the stock request slots;
+    # lab only: off unless set, forced off in play; written only when set).
+    @{ Key = 'partner_gesture_lever'; Json = 'gesture_lever'; Kind = 'bool' },
     # Horse / D-Walker riders (docs/mounts.md): hide the partner body while the remote's act is a mount act
     # (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_mount'; Json = 'native_mount'; Kind = 'enum'; Values = @('off', 'hide') },

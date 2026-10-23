@@ -311,6 +311,37 @@ int main() {
                   "an invalid ui filter value refuses");
         }
     }
+    // The gesture lab lever (partner_gesture_lever, docs/native-puppet.md "Gestures", "Lab lever: knock and hand
+    // signs"): default 0 in lab and play with or without the gun profile; a named 1 runs only in lab, play forces it
+    // off (no refusal bit, like the WS4 v2 mirror); a named value records _given; independent of the gesture key.
+    {
+        Check(!LabConfig{}.partner_gesture_lever && !LabConfig{}.partner_gesture_lever_given && !Lab("").partner_gesture_lever,
+              "the lever defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_gesture_lever && !profile.partner_gesture_lever_given && profile.partner_native_gesture,
+                  "the gun profile leaves the lever off in lab and play");
+            const auto named = Lab(gun + mode + "partner_gesture_lever=1\n");
+            Check(named.partner_gesture_lever == !play && named.partner_gesture_lever_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0 && named.partner_native_gesture && !named.partner_native_gesture_given,
+                  "a named lever=1 runs in lab only (play forces it off) and leaves the gesture default");
+            const auto off = Lab(gun + mode + "partner_gesture_lever=0\n");
+            Check(!off.partner_gesture_lever && off.partner_gesture_lever_given && off.partner_native_gesture, "a named lever=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_gesture_lever=1\n");
+        Check(alone.partner_gesture_lever && alone.partner_gesture_lever_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_gesture_lever=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_gesture_lever=1\npartner_gesture_lever=0\n");
+        Check(!later.partner_gesture_lever, "a later 0 turns the lever off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_gesture_lever=") + value + "\n");
+            Check(!invalid.partner_gesture_lever && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid lever value refuses");
+        }
+    }
     // Horse / D-Walker riders (partner_native_mount=off|hide, docs/mounts.md): hide with the native gun profile in lab
     // and play (hidden runs bfd6fcc4 / 2ab88411 lab, play rehearsal 5a044a4d: no partner body while the partner rode), off
     // without it; a named off opts out in either mode; a named value records _given.

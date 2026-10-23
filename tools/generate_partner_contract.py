@@ -1279,6 +1279,75 @@ UI_FILTER_BODIES = [
     (0xFE87E0, 0x70, '5a2609f019ec3ab3f317dcec53fa96e496ea1760449e59e26009aded98939fda', 'hint queue vt+0x258'),
     (0xFE8480, 0x70, '33dfab551b203f8b32fd3c5900e8648a7b36d2c9c855cc98f6c8aa6ab4ae06c8', 'hint queue vt+0x260'),
 ]
+# --- The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs"; partner_gesture_lever,
+# lab key partner_gesture_lever, default 0, play forces it off): the debug command gesture_lever knock|sign_go|sign_stop
+# calls this copy's own KnockActionPluginImpl request slot (vt+0x28 / +0x30 / +0x38 of 0x23C5A20, the block's *(blk+0xF8))
+# with id 0, exactly as the stock call-menu / buddy-command callbacks below do. Nothing is patched.
+GESTURE_LEVER_SITES = [
+    (0x11E5100, '40534883ec20488b41382b50248bda4869dbe000000048035968e8319fa1ff488b48408b4138808bd000000001c643240148894318'
+     'c74320020000004883c4205bc3',
+     'RequestKnock (Knock vt+0x28, complete body): row = [plugin+0x68] + (id - [[plugin+0x38]+0x24])*0xE0; row+0xD0 |= 1, '
+     'row+0x24 = 1, row+0x18 = the frame [QST+0x40]+0x38, row+0x20 = 2'),
+    (0x11E5060, '40534883ec20488b41382b50248bda4869dbe000000048035968e8d19fa1ff488b48408b4138808bd000000001c643240248894318'
+     'c74320020000004883c4205bc3',
+     'RequestHandSignGo (Knock vt+0x30, complete body): the same row write with row+0x24 = 2'),
+    (0x11E50B0, '40534883ec20488b41382b50248bda4869dbe000000048035968e8819fa1ff488b48408b4138808bd000000001c643240348894318'
+     'c74320020000004883c4205bc3',
+     'RequestHandSignStop (Knock vt+0x38, complete body): the same row write with row+0x24 = 3'),
+    (0x11E3A2F, '488b41388bda8bfa2b5824488bf14869dbe0000000480359680fb683d0000000a8010f843f01000024fe8883d0000000e8ecb5a1ff488b'
+     '48408b4320448b593848034318493bc30f821a010000',
+     'FUN_11E3A20 (the request test of the polling, 1/4): row+0xD0 bit 0 taken and cleared, refused once the frame passes '
+     'row+0x18 + row+0x20'),
+    (0x11E3A7C, '4c8b56080fb64b24498b8238010000488b5060488b4238440fb60c38ffc90f843e010000ffc90f8400010000ffc90f84b0000000ffc90f'
+     '85de000000',
+     'FUN_11E3A20 (2/4): r9d = the speed Q+0x38[id], then the row+0x24 kind dispatch 1 (knock: taken) / 2 (0x11E3BA8) / '
+     '3 (0x11E3B60) / 4; the sign tests are the next two sites'),
+    (0x11E3B60, '4183f9017730488b42180fb70c7883c18783f9017620498b42782b7808488b80800200008bcf48c1e1058b54010cc1ea1cf6c201744832c0'
+     '488b5c2430488b7424384883c4205fc3',
+     'FUN_11E3A20 (3/4): kind 3 (Stop) is taken only while the speed <= 1, the act Q+0x18[id] is not 0x79 / 0x7A and PS '
+     'rec+0xC bit 28 (shr 0x1C) is clear; otherwise it returns 0 (the lever\'s sign speed / act / rec_c28 refusals)'),
+    (0x11E3BA8, '4183f90177e8488b42180fb70c7883c18783f90176d8498b42782b7808488b80800200008bcf48c1e1058b54010cc1ea1cf6c20175b8488b'
+     '5c2430488b742438b0014883c4205fc3',
+     'FUN_11E3A20 (4/4): kind 2 (Go) the same three tests; the taken return 1 (shared by kind 1)'),
+    (0x1002350, '4c8b41088bca498b8038010000488b4060488b4030440fb60c08498b40782b5008488b80800200008bca48c1e1058b54010cc1ea14f6c201'
+     '740bb8040000004183f9037403418bc1f3c3',
+     'GetStance 0x1002350 (complete body; the polling\'s sign test): the raw Q+0x30[id] (1 stand, 2 squat, 3 crawl), '
+     'but 4 when it is 3 and PS rec+0xC bit 20 (shr 0x14) is set (the lever\'s sign stance refusal)'),
+    (0x11E5484, 'e897e5ffff', 'the polling 0x11E5160 calls the request test 0x11E3A20'),
+    (0x11E5499, '0fb64f24ffc90f84d9000000ffc90f84b2000000ffc90f848b000000ffc90f85dd010000',
+     'the polling: a taken request dispatches on row+0x24'),
+    (0x11E5540, '418bd6488bcee805cee1ff83f8040f8446010000c6471103b001e93d010000418bd6488bcee8e6cde1ff83f8040f8427010000c6471102b001'
+     'e91e010000c6471101b001',
+     'the polling: kind 3 -> state 3 (StateHandSignStop) and kind 2 -> state 2 (StateHandSignGo) unless GetStance is 4; '
+     'kind 1 -> state 1 (StateKnock)'),
+    (0x11E75AA, 'c6040317', 'StateKnock (event 2): Q+0x20[id] = 0x17 (the sender\'s knock edge)'),
+    (0x11E6AED, 'c6040318', 'StateHandSignGo (event 2): Q+0x20[id] = 0x18'),
+    (0x11E6CDD, 'c6040319', 'StateHandSignStop (event 2): Q+0x20[id] = 0x19'),
+    # The stock callers: the [blk+0xF8] loads a .text scan finds feeding these slots (the call menu, the buddy commands, the
+    # child-soldier orders); each passes the u16 id ids[k] of the menu owner, the local id.
+    (0x110CD09, '488b89f8000000488b42704c8b01420fb7144841ff5028',
+     'call-menu knock 0x110CCE0: [blk+0xF8] vt+0x28(ids[k]) (RequestKnock)'),
+    (0x110F959, '488b4718420fb72c48488b4720460fb63408488b4260488b48388d45ff460fb6040183f813762a8d45e183f8067622',
+     'UpdateCommandSetKnock 0x110F8D0, the knock enable test (1/2): act Q+0x18[id], upper Q+0x20[id], the speed Q+0x38 '
+     '(at the menu index); act 1..20 or 31..37 skips the next test (the lever\'s knock act refusal)'),
+    (0x110F988, '498b4778442b4808488b8080020000418bc948c1e1058b540108c1ea11f6c201741f4585f6751a488b4728443834067510418d40fe83f8'
+     '01760741804a1001eb0541806210fe',
+     'UpdateCommandSetKnock (2/2): otherwise PS rec+8 bit 17 (shr 0x11) must be set; then upper == 0, Q+0x28[id] == 0 and '
+     'the speed not 2..3 set the entry\'s enable bit (record +0x10 bit 0), else clear it (the lever\'s upper / q28 / speed '
+     'refusals; it leaves out the rec+8 bit 17 alternative)'),
+    (0x110F9D3, '488d0506d3ffff488d151f792a0149894208',
+     'UpdateCommandSetKnock 0x110F8D0: command set 0 slot 0 runs 0x110CCE0'),
+    (0x110CFD0, '83ef047409ffcf744d83ff0e750d498b8af8000000488b01ff5030',
+     'ExecCommandSendCommandToBuddy 0x110CF10: buddy command 4 (Quiet cover me) or 0x13 (D-Horse do it) -> [blk+0xF8] '
+     'vt+0x30 (hand sign Go); 5 jumps to the Stop call'),
+    (0x110D026, '498b8af8000000488b01ff5038', 'ExecCommandSendCommandToBuddy: buddy command 5 (Quiet cease cover) -> vt+0x38 (Stop)'),
+    (0x110CDFB, '488b89f8000000488b42704c8b01420fb7144841ff5030', 'child-soldier order 0x110CD30: [blk+0xF8] vt+0x30 (Go)'),
+    (0x110CEEB, '488b89f8000000488b42704c8b01420fb7144841ff5038', 'child-soldier order 0x110CE20: [blk+0xF8] vt+0x38 (Stop)'),
+    (0x110FF0B, '488bb8b0000000ba09000000488bd9488b07448d4203488bcfff909000000083f8027505',
+     'CallMenuManagerImpl::UpdatePadState 0x110FEF0: PP vt+0x90(button 9 = CALL 0x200, 12 frames): 2 tap, 3 hold (the '
+     'hold shows the call menu)'),
+]
+SITES += GESTURE_LEVER_SITES
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -1509,6 +1578,13 @@ SLOTS += [(vt, 0x8, ex, f'{what} ActionPlugin vt[1] = ExecActionButtonFunction')
 SLOTS += [(0x23AF700, slot, leaf, f'UiControllerImpl vt+{slot:#x} = hint-queue leaf (record {rec:#x})') for slot, leaf, rec in UI_FILTER_QUEUES]
 SLOTS += [(0x23C6080, 0x18, 0x11EA8B0, 'ladder plugin interface vt+0x18 = the per-phase update (phase 1 -> 0x11EA220)')]
 SLOTS += [(0x23AF6D0, 0x8, 0xFE7950, 'UiControllerImpl primary vt+0x8 = the UI init (stores the owner P at primary+0x48 = ui+0x28)')]
+# The gesture lab lever: KnockActionPluginImpl's primary vtable (the block's *(blk+0xF8)), its request slots and polling.
+SLOTS += [
+    (0x23C5A20, 0x28, 0x11E5100, 'KnockActionPluginImpl vt+0x28 = RequestKnock (the lever\'s knock)'),
+    (0x23C5A20, 0x30, 0x11E5060, 'KnockActionPluginImpl vt+0x30 = RequestHandSignGo (the lever\'s sign_go)'),
+    (0x23C5A20, 0x38, 0x11E50B0, 'KnockActionPluginImpl vt+0x38 = RequestHandSignStop (the lever\'s sign_stop)'),
+    (0x23C5A20, 0x58, 0x11E5160, 'KnockActionPluginImpl vt+0x58 = the polling that takes the request'),
+]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -2768,6 +2844,27 @@ def traverse_icon_assertions():
     return out
 
 
+def gesture_lever_assertions():
+    """The gesture lab lever: the vtable's only store, the request functions' only references, the key-type table."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    # Only the constructor 0x11E3750 stores the primary vtable: an object with it is a KnockActionPluginImpl.
+    need(lea_rip_refs(0x23C5A20) == [0x11E37DC], f'Knock vtable stores: {[hex(x) for x in lea_rip_refs(0x23C5A20)]}')
+    # The three request functions are reached only through their slots (no direct call, no code reference).
+    for fn, slot in ((0x11E5100, 0x28), (0x11E5060, 0x30), (0x11E50B0, 0x38)):
+        hits = qword_hits(fn)
+        need(rel_refs(fn) == [], f'{fn:#x} has no direct caller')
+        need(0x23C5A20 + slot in hits and all(section_of(x) != '.xtext' for x in hits),
+             f'{fn:#x} is slot +{slot:#x} of 0x23C5A20 and has only data references: {[hex(x) for x in hits]}')
+    # The padop key-type table: key type 0..9 -> pad bit 5, 6, 15, 3, 1, 11, 10, 2, 18, 7 (the pickup's key type 1 is
+    # RELOAD; the Knock plugin's only icon query, key type 0 / result 0x70, is the high-grass crawl, not the knock).
+    need(struct.unpack('<10i', rd(0x22E86A8, 40)) == (5, 6, 15, 3, 1, 11, 10, 2, 18, 7), 'the key-type table 0x22E86A8')
+    return out
+
+
 failures += traverse_icon_assertions()
 
 
@@ -2818,6 +2915,7 @@ def ui_filter_assertions():
 
 failures += ui_filter_assertions()
 failures += gesture_assertions()
+failures += gesture_lever_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)

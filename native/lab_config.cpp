@@ -223,6 +223,11 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         ok = ParseBool(value, result.partner_native_ui_filter);
         if (ok) result.partner_native_ui_filter_given = true;
     }
+    else if (Equals(key, "partner_gesture_lever")) {
+        // The gesture lab lever (lab only, default 0, play forces it off); a named value records _given.
+        ok = ParseBool(value, result.partner_gesture_lever);
+        if (ok) result.partner_gesture_lever_given = true;
+    }
     else return false;
     return true;
 }
@@ -1529,6 +1534,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // F2: the native box on body 1 runs in play too (the observer admits play only with
         // link v2 connected).
         // Gestures run in play too (the sender needs a live link session).
+        // The gesture lab lever (the host's own knock / hand sign through the stock
+        // request slots, for the hidden-run proof) never runs in play.
+        c.partner_gesture_lever = false;
         // Mount riders run in play too: the play rehearsal 5a044a4d (-WanSim bad, key not
         // named) hid the D-Walker and the D-Horse rider as the lab runs did.
         // G1 partner HUD hints stay lab-only (no hidden-worker FRAME yet).
