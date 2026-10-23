@@ -1,3 +1,759 @@
+## October 23, 2026: 0.13.6 (fixes from the first two-PC Steam session: guns and the box after a relaunch, long shared rides, a Fultoned vehicle, joining with different saves, sea / ledge / carry falls; lab levers for the HUD hint, truck, ride-hide and gesture proofs)
+
+**Package and install (2026-10-23):** `mgs-coop-friend-0.13.6-20261023T181349Z-8a864a81.zip` (9,643,361 bytes), SHA-256 `ffd7f05ff1f62641ace423b3f3d797ec3ae0918e77674f78d21733e9e0452e71`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at f9c22b0 with Release receipt `20261023-181036-183f3c8c3e8c463c986568161a5b77ed` (passed). Installed in both local copies (host Install-Coop -Role Host -Character snake; guest install.ps1 -NoInitialMode); both dinput8.dll SHA-256 00E2FA1E...99DA, probe-install.json version 0.13.6, 17 protected files unchanged, no script-observe.enabled left in the guest copy. Hidden-run proofs for this release: guns after a simulated relaunch b5dd1111 (play), long ride 197fc3c6 / 80a324d7 (play), join 247ae49a, c186abfb, e5f15c7e, 640abf2f, 5e44cb65 (play), sea death e9e5301b / b8ab039e (play), put-down 4078bbe7 (play). The 0.13.5 regression set was not re-run on this build.
+
+Branch `wp/integ10` from `dev/oct7-continue` `0a2821d` (0.13.5 released at `cc973a8`, plus the README rewrite): merge
+commits of the five online fixes from the first real two-PC Steam session (2026-10-22, 0.13.5; `diag-*.md` of that
+session), in this order, `wp/online-net-epoch` `55b5aea`, `wp/online-ride-robust` `636d706`, `wp/online-vehicle-gone`
+`ab64ccb`, `wp/online-handoff-join` `6437c6a`, `wp/online-body-safety` `de62dd2`, then the reviewed 0.13.6 feature
+branches `wp/ladder-hint` `9906fee` (G1), `wp/truck-helper` `589b4a4` (G4), `wp/ride-unrealize` `1f2b90d` (G5) and
+`wp/sign-knock` `c11bb79` (G6). Conflicts resolved by union (the three `-LabSetting` regex copies stay identical, key
+lists, CMake test lists and `Get-WorkerTests` keep every member), the contract header regenerated inside each merge,
+then the version commit. No rebase. Deferred, not included: `wp/seat-aim`, `wp/crack-discovery`.
+**Not run in the game and not packaged:** no game launch and no hidden-worker run in this integration, so every runtime
+check in the subsections below is still open. The build id changes and the equip manifest / caps now carry the
+receiver's link epoch (a 0.13.5 receiver still drops a 0.13.6 sender's manifest when the counters differ), so both
+players need 0.13.6. Full CTest 296/296 (`-Configure`, after the reboot with a working DX11 device, so
+`debug_overlay_tests` counts too; 0.13.5 had 289, plus `world_vehicle_lua_check`, `partner_body_safety_tests`,
+`log_budget_tests`, `partner_ui_filter_tests`, `vehicle_door_tests`, `partner_gesture_lever_tests` and
+`partner_gesture_lever_fire_tests`; the five online merges alone: 292/292). Contract 800 code sites / 204 vtable slots
+(0.13.5: 743 / 193; online-ride-robust +4 sites, G1 +23 / +7, G4 +7 sites, G6 +23 / +4; the other branches add no game
+address); equip writer pins 118 SHA-256 gates (unchanged).
+
+**Defaults.** The online fixes are bug fixes, **on by default with no key** (net-epoch's link-session binding and the
+equip resend at every MissionStart, ride-robust's slot follow / visible fallback / temporary-refusal retry / net-quality
+rebase after rides, handoff-join's title hold, messages and restart notice, body-safety's sea / ledge / put-down /
+seated-aim guards and log caps). Every new key is **default 0 / off in lab and play** until hidden-worker frames prove
+it (the runtime phase flips defaults):
+- `world_vehicle_gone=0|1` (online-vehicle-gone: the host-authoritative VEHICLE_GONE world op; a named 1 runs in lab and
+  play; docs/world-sync-protocol.md section 16; a `world_*` key like the other world-sync keys: no `_given` flag and not
+  in the native-puppet.md table);
+- `link_session_skew=0..999` (online-net-epoch: the lab / worker reproduction knob of a relaunched peer, a link
+  impairment key; play refuses it);
+- `partner_native_ui_filter=0|1` (G1), `debug_vehicle_door=0|1` (G4), `partner_native_unrealize_all=0|1` (G5) and
+  `partner_gesture_lever=0|1` (G6): lab only with `_given`, play forces a named 1 off.
+
+**Integration decisions.**
+- **One net-quality reset path after rides.** online-ride-robust (rebase after a seat episode or a ride hide, default
+  on) and G5 (a per-tick `QualityIn::excluded` feed, behind its key) fixed the same symptom; the merge keeps only the
+  ride-robust rebase and G5's unrealize, and with the G5 key the rebase logs `partner_ride=net_rebased` (details under
+  "partner_native_unrealize_all" below).
+- **Lab vehicle levers keep distinct names** in `lua/coop/debug_vehicle.lua`: `vehicle_remove nearest [sync|fulton]` /
+  `vehicle_gone_status` (online-vehicle-gone, refused outside `mode=lab`) and `goto_vehicle truck`,
+  `goto_partner_vehicle`, `vehicle_door` (G4, the native receipt refuses outside the lab).
+- Version 0.13.6 (CMakeLists, package.ps1, probe.ps1, the Play-Coop / Play-LocalCoop / package-install /
+  set-session-mode allow-lists, which keep 0.13.5, FRIEND-GUIDE).
+
+**Known limits (0.13.6):** every fix and lever is unit-tested only. Until a 0.13.6 pair is installed, the 0.13.5
+workaround stands (after any guest relaunch both quit, the host starts, then the friend joins). Open user decisions from
+the branch reports: the Fulton fallback look (the partner drawn standing at seat height while the viewer lacks the
+vehicle) and the slot-follow parameters (1 Hz, 25 m); `world_vehicle_gone`'s Despawn (no balloon, the vehicle stays only
+in the Fultoning save) versus a Seize with the Fulton option, the 5 m position match, a destroyed vehicle removed outright
+on the other copy; the 10 s settle bind and the 60 s title hold of a pending handoff (F9 is the escape); the sea-death
+rule for body parts 0..11 only and the narrower 2 m put-down guard. Pre-existing and unchanged: the Ctrl+W walk run
+gait, the teardown AV `rva=0x21e72` at WM_CLOSE.
+
+| Change | Branch | Key (default) | Scenarios to run (hidden-run phase) |
+| --- | --- | --- | --- |
+| Guns, box and caps survive a guest relaunch (link epoch) | `wp/online-net-epoch` | none (fix); `link_session_skew` reproduction knob (0) | `partner-equip-relaunch.txt` |
+| Long shared rides, stuck DM flag, Fulton fallback, slot follow, rebase after rides | `wp/online-ride-robust` | none (fix) | `coop-vehicle-longride.txt` (lab and `-Mode play -WanSim bad`) |
+| Host-authoritative VEHICLE_GONE | `wp/online-vehicle-gone` | `world_vehicle_gone` (0) | `coop-vehicle-gone.txt`, `coop-vehicle-gone-mb.txt` |
+| Joining with different saves | `wp/online-handoff-join` | none (fix) | `handoff-double-press.txt`; rerun `handoff-stage.txt`, `handoff-restart.txt`, `handoff-after-restart.txt`, `travel-lock.txt` |
+| Sea death, ledge / carry falls, seated aim latch, log caps | `wp/online-body-safety` | none (fix) | `body-safety-sea-death.txt`, `body-safety-sea-death-host.txt`, `body-safety-sea-death-downed.txt`, `body-safety-ledge.txt`, `body-safety-putdown-edge.txt`, `coop-vehicle-seated-aim.txt` |
+| G1 body 1's HUD hints never reach the viewer's HUD | `wp/ladder-hint` | `partner_native_ui_filter` (0) | `partner-ui-filter-ladder-mb.txt` |
+| G4 truck test levers for the passenger-mode truck fallback | `wp/truck-helper` | `debug_vehicle_door` (0) | `coop-vehicle-passenger.txt` (truck part) |
+| G5 the other ride hides unrealize body 1 | `wp/ride-unrealize` | `partner_native_unrealize_all` (0) | `partner-ride-unrealize.txt`, `partner-ride-unrealize-seat.txt`, `partner-ride-unrealize-heli.txt` |
+| G6 lab lever for the host's own knock and hand signs | `wp/sign-knock` | `partner_gesture_lever` (0) | `partner-upper-gestures.txt` |
+
+### online-net-epoch
+
+Branch `wp/online-net-epoch` from `dev/oct7-continue` `cc973a8`. Partner guns, the partner's cardboard box and the
+capability exchange stopped working for the rest of the evening once the guest relaunched (quit, then the save
+handoff's automatic relaunch) while the host kept running. Unit-tested and CTest green; no game launch and no hidden
+run yet (the runtime checks below are for the hidden-run phase).
+
+- **Root cause (P1/P2/P3):** the equipment manifest and the capability message carried the SENDER's process-local
+  link-session counter, and the receiver dropped them unless it equalled its OWN counter (`stale_epoch`, counted
+  silently). After a guest relaunch the counters differ for good (that evening: host session 3, guest 1), so every
+  manifest and caps message was dropped in both directions: `equip_preload=refused; reason=no_manifest`,
+  `equip_writer=refused; reason=no_manifest`, `remote_base=0,0,0`, FIRE/RELOAD stripped, `remote=unknown/none`, and
+  no `partner_cbox=remote` (the box rides on the manifest). The lab never saw it (both copies start at session 1).
+- **Fix 1 (default, no key):** the receiver binds what it stores to its own link session, the one the message was
+  drained in (`partner_equip_wire::Store::link_epoch`, `partner_caps_wire::Store::link_epoch` / `Live`), and never
+  compares the sender's number with its own. The duplicate and box-only checks are keyed on `link_epoch` (a guest
+  relaunched on the same save sends the identical revision 1 again: accepted in the new session, not a duplicate);
+  MissionStart seeds `link_epoch` from the session cache; the planning manifest (`partner_driver::RemoteManifest`, the
+  observer's `EquipManifest` for the preload and the writer) is the current link session's only. Freshness stays
+  with the transport (reliable windows reset per link session; the drain yields only the current session's
+  messages).
+- **Fix 2:** refused channel-2 messages log once per change of (link session, reason), at most 32 per process:
+  `partner_equip=refused; reason=..; rev=..; sender_epoch=..; link_epoch=..; size=..; magic=..` and
+  `partner_caps=refused; ...`. `partner_equip=manifest` and `partner_caps=rx` lines add `sender_epoch` /
+  `link_epoch`. state.json `native.equip` adds `rx_sender_epoch`, `rx_link_epoch`, `rx_received`, `rx_invalid`,
+  `rx_stale`, `rx_duplicates`, `rx_refused`; `native.net.caps` adds `stale`, `link_epoch`.
+- **Fix 3:** `no_manifest` is no longer a permanent writer refusal: the slot still waits 300 observations and logs
+  the refusal once, a body re-sync keeps it, and a manifest known later renews the slot in the same body gen
+  (`equip_writer=manifest_late; reason=manifest`). The preload's `no_manifest` never consumed the attempt; with
+  Fix 1 it is evaluated against the right session. Tested through its pure helpers only (`ManifestWaitReason`,
+  `RenewManifestWait`): the `ObserveGeneral` renewal (plan-wait reset, order recompute, the `manifest_late` line)
+  and `ResyncBody` keeping `no_manifest` read live game memory and are not run by a unit test, and the relaunch
+  scenario delivers the manifest before body 1 appears, so it never reaches the late path. A `manifest_late` line
+  in a hidden run or in play is its first runtime evidence.
+- **Fix 4:** the sender resends its manifest once per MissionStart (the receiver's dedupe absorbs the repeat); a link
+  (re)connect is a new session on both copies and resends as before.
+- **Reproduction knob (lab / worker only):** lab.ini `link_session_skew=0..999` raises this copy's link-session
+  counter at link start (first session = skew+1; `link=session_skew; skew=..; first_session=..` logged). A link
+  impairment: the lab and the hidden worker's play rehearsal only; a friend's play refuses it
+  (`kPlayRefusedImpairment`, forced 0). Allow-listed as `-LabSetting` / scenario `labsetting` key
+  (`link_session_skew=[0-9]{1,3}`) and a LabCommon key; one range everywhere (the native parser and LabCommon
+  refuse 1000 like the allow-lists). `lab_ini_check` prints it next to the `net_*` impairments.
+- **Scenario:** `tools/worker/scenarios/partner-equip-relaunch.txt` (play mode, `labsetting host
+  link_session_skew=2`: host session 3, guest 1): manifests on both sides with `sender_epoch`/`link_epoch`,
+  `remote=native/ok`, `equip_writer=handle_bound` (or `handle_queued` then `observation_stopped;
+  reason=model_wait_limit`, the same alternative partner-native-weapons.txt accepts), guest captures of the host's
+  partner body with its gun, then a host box toggle with `partner_cbox=remote; ...; active=1; apply=native` on the
+  guest.
+- **Tests (R0; they fail on 0.13.5):** `partner_equip_wire_tests` (sender epoch 1 under link session 3 accepted and
+  stamped; the same bytes a duplicate in session 3 but accepted again in session 4; the host's box toggle across the
+  mismatch), `partner_native_tests` (caps epoch 1 live in session 3 only, a new session restarts the sequence),
+  `partner_driver_tests` `TestEquipCrossProcessSession` (store, cache and MissionStart seeding with the receiver's
+  session, the relaunch on the same save, caps, the refusal line once, the MissionStart resend, the box edge and
+  `remote=native` on a guest at session 1 receiving epoch 3), `equipment_stock_writer_tests` (`no_manifest` not
+  permanent, `RenewManifestWait`), `link_session_tests` (`SessionSkew`: host session 3, guest 1),
+  `lab_config_tests` (lab keeps the skew, play refuses it, the rehearsal keeps it), `worker_debug_tests` (the new
+  JSON fields), `worker_session_tests` (the allow-lists and LabCommon key).
+- **Review fixes:** `TestEquipCrossProcessSession` also drains through the game's authenticated origin hook
+  (`drain_reliable_origin`, as `PartnerDrainReliableOrigin`): `link_epoch` is the origin's session (3, then 5 while
+  the `link_session` hook still says 3), never the sender's epoch 1, for the cache, `RemoteManifest` and caps
+  `Live`; and pins `partner_caps=refused; reason=no_link|older; rev=..; sender_epoch=..; link_epoch=..; size=16` once
+  per (link session, reason). `lab_scripts_tests` checks that a LabCommon-written `link_session_skew=2` parses
+  natively as 2; `friend_package_tests` checks that Play-Coop never writes it and that play refuses a named one
+  (`play_refused=0x4000`, forced 0).
+- **Workaround for 0.13.5 until this ships:** after any guest relaunch, both players quit; the host starts, then the
+  friend joins (restarting only the host is not enough).
+
+### online-ride-robust
+
+Branch `wp/online-ride-robust` from `dev/oct7-continue` `cc973a8`. Shared vehicle rides (diag-other #1, #2, #9; details
+in docs/anim-round1-seat.md "0.13.6: long rides, a missing vehicle, temporary refusals"). Bug fixes, on by default, no
+new key; unit-tested only (no game launch in this phase).
+- **The partner no longer vanishes ~340 m into a shared ride.** Read-only RE: the realize policy `0x121B5E0` tests
+  body 1's slot `(*(S+0x20))[1]` (`0x14121B8B7` `shl rdi,4` / `0x14121B8BE` `add rdi,[r9+0x20]`, `0x14121B8C2` /
+  `0x14121B8CC` the z / x loads, `0x14121B92C` the area test), not the body or the record; the seated DM moved only the
+  body. While seated the slot now follows the body (at most 1 Hz, past 25 m of drift: `partner_ride_seat=slot_follow`,
+  the exit line's `follows=N`).
+- **Recovery if it happens anyway:** no stop is sent to an unrealized body (`exit; ...; reason=unrealized; via=gone`),
+  so `g+0x388` bit 8 (`RequestToStopDirectMotion` `0x9DB4C0`, cleared only by DM End) no longer sticks for minutes;
+  after an `exit_timeout` or a gone body our own stale request bits are cleared (`partner_player::ClearDmBits`: request
+  byte 0 == 1, Stop / GoNext only without the viewer's own DM; `partner_ride_seat=stale_cleared`).
+- **Temporary refusals (`pending`, `dm_read`, `release`, `host_dm`) are retried instead of latching a hide** for the
+  rest of the ride: the refused episode settles and the body re-seats through the re-show flow. A request of ours still
+  pending while nothing plays on either body is cleared by the arm (after 1 s; `stale_cleared; ...; when=arm`). The
+  same (vehicle, seat) refused 3 times in a row without a confirmed seat (`kSeatTransientTries`) latches as in 0.13.5
+  (`partner_ride_seat=retries; ...; tries=3; latch=1`), so a refusal that lasts the whole ride (a `dm_read` failure)
+  hides once instead of blinking body 1 every 3-4 s.
+- **A vehicle the viewer's copy lacks (Fultoned there) or has unrealized no longer hides its driver** (Mother Base, seat
+  by id `local_read` / `unrealized`, at the start or at the id write): the new `SeatPhase::fallback` keeps body 1
+  realized and Warps it to the remote's streamed pose every tick (`partner_ride_seat=fallback; ...; show=warp`), re-checks
+  every 2 s and, once the vehicle exists here, ends at once and seats it (`fallback_end; next=release`). Only for a
+  missing vehicle: a vehicle this copy has (a `pending` / `host_dm` arm, perhaps the jeep the viewer drives) is never
+  Warped into, and the Warp never runs while the viewer occupies that vehicle id here.
+- **Known limit (tracked):** in that fallback the per-tick Warp holds body 1's last standing pose, so the partner is
+  drawn standing, floating at the seat height, until the vehicle exists again or the ride ends. A seated or crouch idle
+  needs a DM clip, which a per-tick Warp ends; a slot-placed variant with a clip is unproven and left for later. The
+  vehicle itself is still not synced (the `VEHICLE_GONE` world op is a separate branch).
+- **Known limit (tracked): free roam is not covered by the fallback.** In 30010 / 30020 the seat plays on the vehicle's
+  authored locator name (the proven named path), and the by-id gate's `local_read` / `unrealized` there is only logged
+  (`byid; ...; offer=0; reason=local_read`): a vehicle Fultoned on the viewer's copy only (Lua's `vehicleName` still
+  resolves its locator) most likely ends in `far` / `unconfirmed` / `lua_refused` and hides the driver as in 0.13.5.
+  Not switched to the fallback because `local_read` also covers any by-id read-chain refusal, which would replace a
+  working named seat by a standing Warp; no free-roam log of the case exists yet. Left to the `VEHICLE_GONE` branch.
+- **Shorter clip fallback after every ride:** a seat settle or the end of a ride hide restarts the native link-quality
+  window (`partner_native_net::Rebase`): the ride is no longer one arrival gap, and the good state is kept, so a link
+  that was good before the ride needs no fresh 2 s quality hold. Native comes back after the 2 s settle alone (the
+  driver test: 2.1 s after the settle, against 6.1 s in 0.13.5 and 4.1 s with a rebase that restarted the good state;
+  the logs showed 6 s: `net_quality` ~2 s, then `good_ms=4004`). A late first frame after the ride still restarts it.
+  A leave the link itself caused is not rebased (a seat exit for `lease` / `ride_stale`, a ride hide whose reason was
+  `ride_stale`): that gap is real and the 2 s quality hold applies after it, as in 0.13.5.
+- Review fixes (second round): the fallback is limited to the vehicle-absent reasons (it also ran after a `pending` /
+  `host_dm` arm refusal and Warped body 1 into a vehicle that exists here every tick); `Rebase` keeps `good` /
+  `good_since_ms`, and a link-caused leave is not rebased; the transient retry cap; `coop-vehicle-longride.txt` clears
+  enemies with radius 100 (200 is refused as `radius_args`) and checks "still seated at the end" on the exit line
+  (`confirmed=1; ...; follows=[1-9][0-9]`; the seated status waitlog matched from the boarding); the free-roam limit is
+  stated; the realize-policy citation names `0x14121B8BE` for the `add`.
+- Contract: 4 new read-only pins (747 code sites / 193 vtable slots; `--check` passes). Tests: `partner_driver_tests`
+  `TestRideRobust` (vanish and re-seat; exit_timeout clear; pending / host_dm retried without a fallback or a Warp, the
+  third refusal latching, ours cleared by the arm; dm_read for a whole ride; the Fultoned jeep's fallback and re-seat;
+  the viewer-in Warp guard; a Mother Base target refusal not latched; slot follow; the rebase; a lease exit and its
+  `ride_stale` hide keep the gap while a heli hide's end rebases; native back within the settle against a control),
+  `partner_player_tests` ClearDmBits, `partner_native_tests` Rebase (good state kept, a late
+  first frame). Each new block fails on 0.13.5, on the first round of this branch, or without the line it covers.
+  Hidden repro for the next phase: `tools/worker/scenarios/coop-vehicle-longride.txt` (lab and `-Mode play -WanSim bad`).
+- **Hidden runs (2026-10-23, `wp/integ10` `1691253`, research build, gun stage, lab seed; every run Closed,
+  BaselineRestored, RealSavesUnchanged, no visible fallback):** the first `coop-vehicle-longride.txt` (`a198590d`)
+  drove ~20 m into the plaza's north wall, below the 25 m slot-follow threshold. Route discovery (scratch probes,
+  `939c0daf` .. `30775595`) found **no open-loop 400 m route from `veh_lv_0000`**: east of the plaza a convoy truck
+  reaches the checkpoint with the jeep and blocks the road in 5 of 6 runs (the farthest drive around it, 134 m),
+  boulders and walls close the other sides, and the real seed's Mother Base sortie jeep faces the sea (the drive
+  fell in, `74d91896`). The scenario now turns right out of the alley and drives west along the street
+  (~50-80 m, to the arcade). **Proven live on that route**, lab `197fc3c6` and play `-Mode play -WanSim bad`
+  `80a324d7` (guest `rtt_ms=176`, `policy=online`), all expectations met: `partner_ride_seat=confirmed` on both
+  copies (host seat 2, guest seat 0), `slot_follow` on both (`drift_mm` 28-34 m), status `phase=seated;
+  confirmed=1` all along, the exit lines `confirmed=1; ...; follows=2|3`, and none of `range_rearm` (except the one
+  at the 530 m `goto_vehicle` warp before the boarding), `reason=unrealized`, `pending` refusal, `unavailable`,
+  `partner_ride=hide; reason=ride`, `g388=0x08`, `partner_realized=0`, `fallback`, `viewer_changed`. After the
+  get-off `drive=clips; reason=seat` turns into `drive=native; reason=ok` 2.0 s later with `good_ms` carried over and
+  no `reason=net_quality` in either run (diag #9 fixed; the HUD reads `native; gun matched` again on both copies in
+  play). Frames (`long-01`..`long-05`, `long-end`, checked by eye): the host at the wheel on the guest's screen and
+  the guest in back seat 2 on the host's screen, seated and visible along the drive and at the end.
+  **Still unproven live:** the ~340 m unrealize prevention itself (no route reaches it; unit-tested only), the
+  unrealized-body recovery, the Fulton fallback (`fallback; ...; show=warp`, needs Mother Base by id) and the
+  temporary-refusal retry.
+
+### online-vehicle-gone
+
+Branch `wp/online-vehicle-gone` from `dev/oct7-continue` `cc973a8`. Vehicles were not world-synced: the guest
+Fultoned the Mother Base sortie jeep 25603 (`obs; m=FultonInfo; ent=0; id=25603; att=local`), the host drove HIS copy
+of it, the guest's seat-by-id read failed (`partner_ride_seat=byid; ...; reason=local_read`), the host was hidden for
+~25 s and drove into the sea (diag-other #2; the visible-fallback half is online-ride-robust's). Unit-tested;
+full CTest 289/290 (`-Configure`): the only failure is `debug_overlay_tests` (no hardware DX11 device on this machine,
+unrelated; it fails the same way in other worktrees); `generate_partner_contract.py --check` 743 / 193. No game
+launch and no hidden run yet.
+
+- **New world ops** (docs/world-sync-protocol.md section 16): `VEHICLE_GONE` 0x2E (H->G, world queue, reliable,
+  level 3, lab and play: seq, TppVehicle2 id 25600..26111, cause 1 fulton / 2 destroyed / 3 lab, actor, rid, type,
+  xyz mm) and the guest's request `REQ_VEHICLE_GONE` 0x2F (answered natively with RECEIVED; REJECT 5 / 10 as every
+  request). A new mechanism that removes vehicles from a copy, so it is **gated**: lab.ini `world_vehicle_gone=0|1`
+  (lab and play, no play refusal, **default 0** until hidden-run frames), CFG r[15] for Lua. Both copies need it.
+- **Lua** `lua/coop/world_vehicle.lua` (new chunk, spliced last): `W.observe` now hands ids no soldier map names to
+  it (`pcall`, it can never fail world sync). The host announces a vehicle its copy lost (Fulton / FultonInfo / Dead /
+  VehicleBroken, then read back gone within 30 s: the pool slot released, or `IsAlive` false: at once for a wreck,
+  after 10 s for a Fulton; FultonFailed cancels); the guest requests only its own losses (its FultonInfo or Dead, or
+  VehicleBroken within 10 s of its own Damage); the host removes its copy and announces it with the rid and the
+  guest's id. The receiver removes a live vehicle within 40 m of the reported pose that is the nearest of its type
+  there (or the one vehicle of that type within 5 m of it: pool indices differ between copies; a wreck or an id it
+  lost itself is already gone) **only while linked and while nobody rides it**: never the local player's vehicle, an
+  occupied rider[] seat (back-seat passenger, soldier) or a vehicle the partner drives (RIDE_FAST, latched 10 s past
+  the last datagram until its exit RIDE_BODY); held up to 120 s otherwise (the host then answers REJECT 9). The
+  viewer's own player is never moved or dismounted.
+- **Removal (RE, read only):** the TppVehicle2 class `Despawn` (`0xB30AF0`) by the authored locator (the retail
+  `TppEnemy.DespawnVehicle` form) or, at Mother Base only, for an unnamed sortie / supply vehicle by `index`
+  (`ParseLuaSpawnIndex` `0xB304E0`; index 0, the relief vehicle, is an engine error: refused as `index0`). Despawn
+  releases the pool instance itself (manager `+0x1C8` vtable+8, `VehicleCommunicationInfo::Clear`); for a named
+  record it also calls `GameObjectImpl::Kill` `0xB2F850` on the old name, and only the locator form writes the name
+  back, so the index form would erase a named vehicle's binding (elsewhere refused: `no_locator`). No balloon, no
+  resource on the receiver. Readback `IsAlive` (class dispatcher `TppVehicle2_LuaCommands` `0xB305B0`: false when
+  the pool bit is clear, nothing past the pool; instance dispatcher `0xB2B710`: `record+0x70 & 0x800004` clear; a
+  wreck still answers `GetPosition`). The stock `Seize` (options Fulton / FadeOut / Instant) would account a
+  resource: not used for removal (the lab lever's `fulton` form uses it on purpose). No new native game address
+  (contract unchanged, 743 / 193).
+- **Lab lever:** `debug vehicle_remove nearest [sync|fulton]` (nearest free vehicle within 60 m; without `sync` this
+  copy only, the session's divergence; with `sync` a cause-3 loss through the world op, which skips the detection;
+  with `fulton` the engine's own vehicle Fulton, `Seize {options={"Fulton"}}`, watched like the local player's
+  FultonInfo so the real readback decides), refused natively outside the
+  one-PC lab (`vehicle_remove=refused;reason=lab_only`) and in Lua outside mode=lab; read-only
+  `debug vehicle_gone_status`. Worker allow-lists, LabCommon and `lab_ini_check` know `world_vehicle_gone`.
+- **Tests (fail before, pass after):** `world_wire_tests` VehicleGone (neither code existed: 53 ops), `world_receipt_tests`
+  (CFG r[15], 15 values), `lab_config_tests` (default off, lab and play), new `world_vehicle_lua_check` (111 checks;
+  fails without the module and against the 0.13.5 `world_sync.lua`: no observer hook, no r[15]; also in the worker
+  gate `Get-WorkerTests`),
+  `debug_vehicle_lua_check` (the levers route, strict arguments), `worker_session_tests`, `lab_scripts_tests`
+  (LabCommon writes it, the native parser reads it).
+- **Scenarios** (hidden-run phase): `tools/worker/scenarios/coop-vehicle-gone.txt` (`-SaveSeed lab`, Wakh Sind:
+  A the guest's synced loss of jeep J1 reaches the host, B the divergence: only the guest loses J2 and the host
+  drives his copy (the guest's `reason=local_read` and hide lines are waited for), C the guest seated in J3 while the
+  host loses it: held until the get-off, D the engine's own Fulton of J4 on the guest's copy through the detection
+  path: `step=watch` -> `step=lost` -> `step=req`, never `watch_drop;reason=still_alive`) and
+  `coop-vehicle-gone-mb.txt` (`-SaveSeed real`, the Mother Base sortie jeep: Despawn by index).
+- **Gate before `world_vehicle_gone` may default on (or get a Play-Coop option):** the hidden runs' frames, part D
+  (the engine's own Fulton is lost by the readback, not `watch_drop;reason=still_alive`) and a player's real vehicle
+  Fulton in a manual check (`step=watch` -> `settle`/`lost` -> `req` on the guest). Until then it is a lab /
+  hidden-run key: two-PC play keeps the 0.13.5 behaviour (docs/two-pc-play.md).
+- **Hidden run `075c1ea4` (2026-10-23, `wp/integ10` `1691253`, research build, gun stage, lab seed; Closed,
+  BaselineRestored, RealSavesUnchanged, no visible fallback; no `step=error`, fault, `viewer_changed` or AV):**
+  A proven: the guest's synced loss of J1 25608 (`req` -> host `rx_req` -> `applied; via=locator; src=req; ok=1` ->
+  `tx` -> guest `req_done; result=gone`); frames `gone-a-before` / `gone-a-after`: the jeep on both screens, then
+  gone on both. D proven: the engine's own Fulton of J4 25617 on the guest's copy (`watch; m=Seize; att=lever`, the
+  stock `obs; m=Fulton` and `m=FultonInfo; att=local`, `lost` 3.3 s later without a `settle`, never `watch_drop`) ->
+  host `applied; src=req` -> `req_done`; frames `fulton-before` / balloon / `fulton-after`: gone on both screens. B
+  reproduced the divergence as designed (J2 25615 only on the host's copy; the guest's `byid ... reason=local_read`,
+  then `refused; reason=unconfirmed`, `unavailable; block=unconfirmed`, `partner_ride=hide; reason=ride`: the host is
+  hidden on the guest's screen while he drives, the free-roam limit of online-ride-robust above). C did not run:
+  the guest's `goto_vehicle jeep` left it on a slope away from J3 (`vehicle_not_riding`), so the receiver applied the
+  removal at once; the never-yank-the-local-rider hold is unproven live. Scenario nits: the B waitlog
+  `partner_status=local; st=0x400; names=on_vehicle; vehicle=` misses the `ride=2; ` field (the host did drive J2).
+  **Default unchanged (0):** C and the manual real-Fulton check of the gate above are still open.
+- **Limits:** a destroyed vehicle disappears on the other copy (no wreck); the relief vehicle (index 0) is never
+  removed; outside Mother Base an unnamed vehicle (a supply drop) or one outside the `veh_lv` / `veh_trc` / `veh_wav`
+  families is not removed (`no_locator`); two vehicles of a type within 5 m of the spot are left alone (`ambiguous`);
+  no catch-up after a reconnect beyond the host's re-send of this mission's announcements at the next PAIRED.
+- **Review fixes** (two reviewers on `e27dab2`; each Lua block fails against `e27dab2` and passes now):
+  - The receiver's matching could remove an innocent vehicle: a wreck at the reported id (`IsAlive` false but still
+    in the pool) fell back to the 5 m position match and removed a live neighbour (on the host path both copies lost
+    it). Now only an id with no instance is matched; a wreck or an id this copy lost itself is `absent` (`reason=wreck`
+    / `lost_here`); beyond 1 m the id must be the nearest of its type (`not_nearest`, then the 5 m match); `V.near`
+    skips ids this copy is watching or lost; a request for a vehicle this copy is Fultoning itself waits for its own
+    watch (`own_watch`).
+  - A request the host matched to another pool index was announced with the host's id, and the guest removed its
+    own vehicle at that index (another jeep). The answer now carries the guest's id (the host keeps its own in its
+    gone list and answers a re-request again); the guest closes a request only when the rid's request names that id
+    (a re-sent announcement with an old rid no longer closes another request).
+  - A vehicle held for the partner's ride was removed at the first poll after an unpair or a 1.5 s datagram gap
+    (world_ride_pose wipes its tracks). Nothing is removed while unlinked (`hold;reason=unpaired`), and the ride is
+    latched 10 s past the last RIDE_FAST datagram (the clock stands while unlinked) until its exit RIDE_BODY.
+  - A Fulton counted as lost as soon as `IsAlive` read false; a balloon that failed after that left a one-sided
+    removal. Now, while the instance stays in the pool, a Fulton is lost after 10 s not alive (`step=settle`), so a
+    FultonFailed or `IsAlive` true again cancels it first.
+  - The index Despawn of a named vehicle erases its name binding (Ghidra `0xB30AF0`): the index form is now used only
+    at Mother Base; `veh_wav_*` joins the scanned locator families.
+  - The VEHICLE_GONE / REQ handlers, the RECEIVED / REJECT additions and the start / paired / unpaired hooks run in
+    `pcall` (an error there failed all world sync for the mission); the error turns only this module off.
+  - `world_vehicle_lua_check` added to `Get-WorkerTests`; scenario help names `world_vehicle_gone`; scenario comment
+    corrected (the `sync` lever skips the detection) and part B / D log expectations added; two-pc-play no longer
+    says to edit the play `lab.ini` (Play-Coop has no option for the key); the CFG receipt row lists 15 values;
+    the IsAlive sentence and the Despawn / Kill description corrected; addresses as RVAs.
+  - Rejected: none.
+
+### online-handoff-join
+
+Branch `wp/online-handoff-join` from `dev/oct7-continue` `cc973a8`. Joining without the same save was finicky: the
+friend's first launch went alone into story mission 10020, the second waited at the title with wrong messages, MGSV
+took 3 minutes to come back after the handoff and the host only saw "partner left". Bug fixes, on by default, no new
+lab.ini key (details in docs/save-handoff.md "Messages while the guest waits", "Title Continue", "Exit" and the tooling
+contract). Unit-tested; no game launch and no hidden run in this phase (the runtime checks are for the hidden-run
+phase). Contract unchanged (743 code sites / 193 vtable slots; no new game address).
+- **P1, a co-op copy with remote files only.** The friend's copy was seeded from a 2015 Steam save with only
+  `remote\TPP_GAME_DATA` / `PERSONAL_DATA`; the set hash needed slot 0 or 1, so the guest never had a set, never
+  decided its need (STATE `need=0 set=00000000`) and the title lock fell back to "story start: press again". The
+  guest's own set may now be identified by slot 4 (`io::HashStep(..., remote_primary)` for the guest only; the host's
+  snapshot, the OFFER decode and the manifest still need slot 0/1). New line `save_handoff=set; ok=1; set=..; files=N;
+  local=0|1` / `ok=0; why=read|no_primary|hash` once per change (an invalid set was silent). F9 `idle` has its own
+  sentence ("Comparing your save with the host's; nothing to share yet.") instead of the `same` one.
+- **P2, the natural double press.** At the title, presses under 3 s apart are no escape and no decline; a pending
+  handoff (CFG r[12] 1..4: NOTE 7 b=3/4, NOTE 9) has no Continue escape for its first 60 s at this title
+  (`decision=held`); F9 > Shared save > Keep my own save stays the way out, and after 60 s a repeat 3-10 s apart still
+  plays the own save. NOTE 7 b=1/2/3, NOTE 9, G2, the Play-Coop countdown line, docs/debug-menu.md and the FRIEND-GUIDE
+  no longer say "press Continue twice".
+- **P3, the settle wait.** `kSettleBindMs` 30 s -> 10 s: the window never guarded against a set saved for the next
+  mission (every load reports loading at once and ends it; the set must stay unchanged with saving=0 and fresh
+  reports); a deploy into Mother Base made the friend wait 16 s at the title. New toasts G11 (guest: "The host is in
+  <M>: their save is checked there (about 10 s), then copied to you at the title screen...") and H8 (host: "Checking
+  your save here (about 10 s; stay in this mission)...") replace G4/H3 while the host settles in 30010/30020/30050;
+  NOTE 7 b=4 at the title; the host's F9 continue_unknown line is no longer "cannot be shared".
+- **P4, the restart the host never heard of.** The guest posts its WM_CLOSE only once RESULT exiting left channel 4
+  (`ReliableQueued(4)` 0), it was refused unsent, or 1 s passed (`save_handoff=exit_flush; ms=..; acked=0|1`); the
+  host infers the restart when a scene/always guest with a verified stage leaves (`partner_restarting`, H2,
+  `save_handoff=partner_restarting; how=link_closed`); a stage-mode guest leaving stays `partner_staged`.
+- **P5, the 3-minute Steam relaunch.** The relaunch waits (read only, at most 30 s) until Steam no longer marks MGSV as
+  running (`HKCU:\Software\Valve\Steam\Apps\287700` `Running`, `HKCU:\Software\Valve\Steam` `RunningAppID`; both read
+  on this PC on 2026-10-22: 0 while MGSV is not running), then 2 s; the Play-Coop window retries every 20 s while no
+  game runs and Steam does not mark it running, and asks for a manual start at 45 s (was once at 60 s and at 120 s);
+  the helper retries the same way when the window is gone. Every step goes to `mgs-coop\play-coop.log`
+  (`Write-CoopPlayLog`, no codes or SteamIDs, rotated at 1 MB), which Collect-Logs now collects. G2, the F9 exiting
+  line and the FRIEND-GUIDE: "not back within a minute? Press Play in Steam". The window's restart wait
+  (`Get-CoopRelaunchWait`) reads `play-session.json` again for up to 1 s before it concludes "co-op was switched off": a
+  read that raced the helper's File.Replace stopped the wait and switched co-op off (found as a friend_package_tests
+  flake in this branch's second full CTest).
+- **P6, in game with need=1.** G12 once per link session ("The host's save is ready for you: go back to the title
+  screen (or quit MGSV and start Play-Coop again) to get it...") and F9 `wait_host` why 1.
+- **P7, contradictory host notes.** A sortie into the partner's own mission is a join: `deploy_alone;reason=join_partner`
+  and NOTE 3 b=5 ("Joining your partner in <M>; co-op travel does not follow in story missions." / "Flying to your
+  partner in <M>."), and no NOTE 6 when the partner is in that very mission.
+- **P8, invisible toasts.** `hud=toast; kind=world_note|save_handoff; code=N; a=..; b=..[; partner=..; local=..];
+  on=0|1[; skipped=N]` in script-observer.log, one (kind, code) per 10 s (`coop_hud::SetEventLog`).
+- **Lab tooling.** `-GuestSaveSeed real-remote` (worker only, guest only): the real seed with 287700\local's progress
+  files removed from the run's own copy (`Remove-WorkerLocalProgress`); scenario
+  `tools/worker/scenarios/handoff-double-press.txt`.
+- **Tests (each fails before the fix, passes after).** `save_handoff_core_tests` TestSettleWait, TestGuestInGame,
+  TestExitFlush, TestHostInfersRestart (+ TestRemoteOnlyGuest, TestSettle for 10 s and a load ending the window);
+  `save_handoff_io_tests` (a remote-only tree: the guest's set, `no_primary` for the host, the module's one
+  `save_handoff=set` line); `steam_transport_tests` (every new or changed sentence, the toast log and its rate limit);
+  `debug_overlay_tests` (F9 lines); `world_handoff_lua_check` (3 s gap, 60 s hold from the first tick, NOTE 7 b=4, no
+  NOTE 6 into the partner's mission); `world_follow_lua_check` (NOTE 3 b=5); `friend_package_tests` (Steam's flag, the
+  wait, play-coop.log in the apply, the launcher and Collect-Logs); `worker_session_tests` (`real-remote`).
+- **Review fixes (two reviewers; on by default, no new key).**
+  - The title hold for code 1 (wait_host) now also applies while the host loads: `X.decide` refused it only after the
+    peer rules, which returned allow for peer mission 0 (the logged 17:46:14 host Continue), a story mission, no link
+    or a queued follow, so the first press loaded the guest's own save with no note. It is now checked right after
+    the lock bit (`world_handoff_lua_check`: host loading / in 10020 / unlinked / queued follow, refused then held;
+    fails before). With the travel lock off code 1 stays allowed (a lock rule): the FRIEND-GUIDE and
+    save-handoff.md "Title Continue" say "with the travel lock on (the default)".
+  - The guest's start-up mission 1 (ingame=1, title=0) is no location and no "in game": the location rule waits for
+    a real mission and G12 / F9 why 1 need a mission >= 10000 (`TestGuestStartup`: no need=1 why=location, G12, G11
+    or H8 at the boot, need=0 at a title at the host's place; a story-opening guest decides need=1 why=story at
+    mission 1 but gets no G12; fails before).
+  - G11 names the seconds only for a host build >= 0.13.6 (`kSettle10Min*`; a 0.13.5 host takes 30 s); NOTE 7 b=4
+    and F9 `wait_host` why 2 no longer say "(a few seconds)" (`TestSettleWait`, `steam_transport_tests`).
+  - The manual-start hint no longer depends on a retry: when Steam still marks MGSV as running (no retry goes out) the
+    window runs `Start-CoopRelaunch -CheckOnly` at 45 s and says "...Steam still shows MGS V as running: once Steam
+    shows Play again, press it..." (before: no line until the 300 s limit). The applied save and "Waiting for Steam to
+    let MGSV start again (up to 30 s)..." print before that wait (`-OnApplied`), not after it. Test knob
+    `MGS_COOP_TEST_RELAUNCH_HINT_SEC`; friend_package_tests [handoff] covers both.
+  - friend_package_tests SS-4 ([claimed failed/off]) flake: the claim is written only once the window recorded the
+    game (`game_pid`); a claim written before Set-CoopPlayGame became `relaunched` and the exit found none.
+  - handoff-double-press.txt: the host reaches its title first (the 60 s start at the guest's own title) and the held
+    press is asserted (`waitlog ... decision=held`).
+  - Rejected: NOTE 7 b=4 for a host whose save is `continue_unsupported` in 30010/30020/30050 (the set changes on the
+    arrival save, so that state is transient there; the eligible and settling states fit b=4).
+- **Runtime checks for the hidden-run phase:** handoff-double-press (real and real-remote guest seeds), R2
+  handoff-stage with `-GuestSaveSeed real-remote`, R4 handoff-restart with `-Mode play -WanSim bad` three times
+  (`result_rx; status=exiting` or `partner_restarting; how=link_closed`, `exit_flush`), R5, R6 travel-lock (now presses
+  3 s apart), and the manual Steam relaunch check on one PC (diag-join.md P5).
+- **Hidden runs (2026-10-23, `wp/integ10`, research build, gun stage, `-SaveSeed lab`, `save_handoff=stage`; every run
+  Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):**
+  - **P1 proven live** (`handoff-stage.txt` steps, `-Mode play -GuestSaveSeed real-remote`): `247ae49a` (`de949e9`)
+    and `c186abfb` (`188f55a`). The guest's copy holds no `287700\local` progress (`save_seed_removed`
+    TPP_GAME_DATA0/1, PERSONAL_DATA0/1); it logs `save_handoff=set; ok=1; set=8DA6039D; files=2; local=0` at its
+    boot and `need=1` (the host's `state_rx` shows the guest `need=1; set=8DA6039D`, not `set=00000000`), the host
+    binds 30010 by `continue` and offers (6 files, 609,012 B), the guest stages at its 40050 title (3.2 s). The 0.13.5
+    field failure (`need=0 set=00000000`, no offer) did not occur.
+  - **Fixed from these runs (`188f55a`, on by default):** the boot reports the story sequence's default (the opening)
+    until the save loads (`story=1`, then `2`, inside mission 1). In `247ae49a` / `1eff8016` a booting guest decided
+    `need=1; why=story`, and the two copies booting together showed H4 on the host and G5 on the guest ("story
+    opening", `hud=toast; ...; code=24` / `code=5; ...; on=1`) for saves that reach Mother Base. The core now counts
+    the host's own story as unknown in its start-up mission (transient, no toast) and the guest's story rule waits for
+    a real mission like the location rule (`save_handoff_core_tests` TestGuestStartup, fails before). After it
+    (`c186abfb`, `e5f15c7e`, `640abf2f`, `5e44cb65`): host `elig=3` at its boot, no `need` line before the guest's
+    title, then `need=1; why=location` there, and no H4 / G5 at all.
+  - **P2 proven live** (`handoff-double-press.txt`): `e5f15c7e` (lab, `real-remote`), `640abf2f` (lab, `real`) and
+    `5e44cb65` (`-Mode play -WanSim bad`, `real-remote`, guest `rtt_ms` 175-192, loss up to 13 %). Each: note 7 b=3
+    and its toast, a press 2.4 s later `decision=refuse` (silent), the next ones 3-6 s apart `decision=held` (twice),
+    zero `decision=repeat`, zero `save_handoff=declined`, zero note 10; the guest stays at 40050 and stages once the
+    host continues into 30010 (`staged` in 3.2 s; 10.4 s over the bad WAN). Frames: the title menu after every
+    press, the note 7 b=3 toast ("...Stay here; F9 > Partner / Co-op > Shared save > Keep my own save plays yours.")
+    and "host save ready - MGSV restarts". The first run `1eff8016` failed its two expectations only on timing: the
+    scenario pressed at +1 s and +4 s of the title, which still plays its logos (PRESS ENTER KEY was up at +25 s), so
+    the presses never reached Continue; the guest still stayed at 40050 and staged. The scenario now waits 25 s
+    after `titlemenu guest` (`188f55a`).
+  - **P8 live:** `hud=toast; kind=save_handoff|world_note; code=..; a=..; b=..[; partner=..; local=..]; on=1` lines on
+    both copies: guest G4 (4) at its title, G1 (1, a=595 KB), G3 (3); host H3 (23), H1 (21); world_note 7 (b=3) and
+    16.
+  - **Still open:** R4 handoff-restart (`-Mode play -WanSim bad`, three times: RESULT exiting / `partner_restarting`,
+    `exit_flush`), R5 handoff-after-restart, R6 travel-lock and the one-PC Steam relaunch check (P5); the P2 escape
+    after the 60 s hold and F9 Keep my own save; P3 (`kSettleBindMs` 10 s, G11 / H8) and P6 (G12) have no worker
+    scenario; Steam transport cannot run in the worker.
+
+### online-body-safety
+
+Branch `wp/online-body-safety` from `dev/oct7-continue` `cc973a8` (diag-other #4, #5, #6, #7 and the #11 log caps).
+Bug fixes for real play, on by default (no key); docs/native-puppet.md "Body safety". Hidden-worker results at the
+end of this subsection (sea death proven both ways, put-down and seated aim passed, the ledge divergence not reproduced).
+
+- Sea death (#5): `downed_damage::Evaluate` turns a lethal hit on the local player into "downed" only for a natural
+  collision part (0..11). The sea / out-of-bounds kill (part 12, flags 0x2419, damage 10000) is the stock death again,
+  so PLAYER_FALL_DEAD drives the shared game over at once (`downed_damage=stock_death; reason=environment`); the
+  session downed both players in the sea (H:11467, F:12698). Read-only proof that no weapon uses part 12: the only
+  player collision-hit builder `DefenseCallback::TargetCallbackExec` (the only caller of `GetPartsIdFromName`
+  0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1 for shields; ~1400 logged samples show
+  lethal part 12 only as the environment kill (9, all sea deaths; the other 4 part-12 samples are damage-0 0x401
+  packets while carrying, never lethal). A lethal land fall's part is unproven (no sample): if it is 12, it is the
+  stock death too. The replica stays protected from every lethal hit; a downed player keeps its shield except for a
+  kill lethal at full health (review fix below). Tests: `downed_damage_tests` (fails on 0.13.5: part 12 on the local player returned cause 1).
+- Ledge falls (#4): `partner_body_safety` drop guard (a cliff drop / fall of body 1 with no matching remote vertical act
+  within 500 ms and an unchanged remote height: a vertical placement at once) and stuck guard (placed ok=0 while body 1
+  falls or hangs at a ledge and the remote is on foot: the re-show flow at the target; bits cleared, held hidden with
+  `clear_all_active` like the mount hide until unrealized, then the range placement). Tests: `partner_body_safety_tests`,
+  `partner_driver_tests` `TestBodySafety` (drop, matched fall, free-roam re-show); none of these lines exist in 0.13.5.
+- Carry put-down drop (#6): the put-down guard (remote carried/asleep, body 1 released 44/131/132/25/26, more than 2 m
+  below the target: Warp at the target, xform pin every tick until it holds 500 ms) owns body 1 for the episode,
+  overriding the stock carry hold for that tick only; in `partner_driver`/`partner_body_safety`, not in coop_carry.
+  Tests: `partner_body_safety_tests`, `partner_driver_tests` (put-down Warp, pin, held end).
+- Seated aim latch (#7): `partner_aim::RideGate`; no convention check and no v6 direction while the local player rides
+  (ON_VEHICLE / ON_HELICOPTER / ON_HORSE, the native passenger report, the driven vehicle), `aim_dir=refused;
+  reason=ride`; every ride edge restarts the miss streak. Tests: `partner_native_tests`, `partner_driver_tests` (the
+  v6 sender while driving: no direction, no checks, the direction back on foot).
+- Log caps (#11): the partner_recon event families rotate (64 per 2 min window, 1024 per family and mission,
+  `resumed; dropped=` summaries) instead of 64 per mission; the world LOG receipts use a token bucket (600 burst,
+  20/s) instead of 200 per fixed 10 s. Tests: `log_budget_tests`.
+- Scenarios: `body-safety-sea-death.txt`, `body-safety-sea-death-host.txt`, `body-safety-sea-death-downed.txt` (MB,
+  `-SaveSeed real -Mode play`),
+  `body-safety-ledge.txt` (`-WanSim awful`), `body-safety-putdown-edge.txt`, `coop-vehicle-seated-aim.txt`.
+- No new game address: contract 743 code sites / 193 vtable slots (`--check` unchanged).
+- Review fixes (two reviewers; each new case fails on the previous branch head unless marked coverage):
+  - Drop guard on the logged cliff drop (H:11285..11309): in play (native drive, `partner_native_traverse=1`) body 1's
+    own 28 enters the native traversal hold on its edge tick, and the guard closed every cliff-drop episode a tick
+    later (`!traverse_hold` in its enable); the hold now only blocks new episodes. And at +500 ms the body sat in 26
+    (land) on the lip outside the railing at the deck's height, judged "landed", then fell again (26 -> 25 -> 54, no
+    edge): a landing at the remote's level now keeps the episode open (at most 2.5 s) until body 1 is on its feet
+    (landed) or falls again (place, here at +813 ms, before the hang). Tests: `partner_body_safety_tests` (the logged
+    acts, times and heights), `partner_driver_tests` `TestBodySafetyNativeDrop` (native drive, traverse on).
+  - A seat episode that takes body 1 drops a pending body-safety re-show (request or hold), as the range and ride
+    hides do; the seat exit re-shows body 1 itself (reachable when the remote boards right after the stuck request,
+    or during a hold whose bit clear was refused). Test: `TestBodySafetyRideGuard` (seat re-show).
+  - The put-down guard never acts while the horse cargo holds body 1 (`PartnerCarryHold` without a stock carried
+    body 1; Lua warps it onto the horse every tick; lab only): no episode, an active one ends `reason=cargo`. Test:
+    `partner_body_safety_tests`.
+  - A downed (protected) player who crawls into the sea: a non-natural-part hit on a protected player is calculated
+    first; one lethal even at full health (damage >= maximum life: the sea kill, 10000 against 7200) is the stock
+    death (`downed_damage=stock_death; reason=environment; protected=1; ...`); every natural part and a part-12 packet
+    lethal only at the downed health keep the shield. Test: `downed_damage_tests` (`ProtectedEnvironmentKill`).
+  - Coverage: the stuck re-show on Mother Base (30050, the ride guard's range gate; no bug found) and the rotating
+    recon log caps in the driver (`capped` then `resumed; dropped=` after the 2 min window), both in
+    `partner_driver_tests`. The world LOG bucket keeps its pure `log_budget_tests` (world_link runs on real time).
+
+- **Hidden runs (2026-10-23, `wp/integ10` `32ac240`, research build, gun stage; every run Closed,
+  BaselineRestored, RealSavesUnchanged, no visible fallback; scenario fixes and result notes in `a4c3a0f`):**
+  - Sea death, guest (`b8ab039e`, `-Mode play -WanSim bad`, real seed): both copies on the walkway, the guest
+    teleported over the sea: `downed_damage=sample;id=0;exact=1;scoped=1;...;part=12;life=6000;damage=10000` ->
+    `downed_damage=stock_death;reason=environment` -> host `shared_game_over; type=2; cause=2`, guest
+    `game_over_applied` 0.13 s later; no `lethal_capture`, `intercept;cause=lethal` or `downed; step=entered` on
+    either copy. Frames: the guest falling past the deck into the sea, then MISSION FAILED on both copies.
+  - Sea death, host (`e9e5301b`, same flags): the first deck spot `(205.0, 0.9, 403.0)` was open water and put the
+    HOST in the sea: `exact=1;scoped=1;...;part=12;life=7200` -> `stock_death` -> `shared_game_over; type=2;
+    cause=1`, guest `game_over_applied`; no `controls_timeout` (the session waited 12 s for it). Frames: MISSION FAILED
+    on both copies.
+  - The first scenario version (`de7b3e09`) teleported the guest alone 500 m from the host: its body 1 was unrealized
+    (range rearm), so the downed shield was not live (`exact=0`), the stock death ran (game over 1.3 s later) and the
+    fix was never exercised. The sea, ledge and put-down files now stage both copies on the walkway (x 206..212 there,
+    the friend's own on-deck poses of the session; yaw 0 faces +z).
+  - Ledge (`e768a6b7`, `d1c74cde`, stall copy `1bb6ad1d`; `-Mode play -WanSim awful`): the divergence did **not**
+    reproduce (body 1 stopped within 0.2 m of the remote every time; the 400 ms worker input stall did not carry it
+    further). The drop guard ran in every Mother Base run at the arrival: body 1 stepped 0.7 m off the arrival ramp
+    while the remote stood on it, `partner_body_safety=drop; verdict=place; act=25; ms=500..515; remote_act=1;
+    dy_mm=696..721` -> `partner_recon=place; reason=vertical` -> `placed; ok=1`; body 1 then fell the 0.7 m again
+    94 ms later (26 -> 25 opens no new episode, by design) and walked on 0.7 m below the remote until the remote
+    stepped down. The stuck guard and its re-show never ran.
+  - Put-down (`4078bbe7`, `-Mode play -WanSim bad`): passed. `partner_body_safety=putdown; step=start; body_act=44;
+    remote_act=44; dy_mm=2090; err_xz_mm=1187; carry_hold=1` -> `step=end; reason=held; ms=534; places=1; pins=31`,
+    but body 1 never left the deck at this spot (the railing kept the stock put-down on it, `partner_body` y 0.80
+    throughout): the episode was opened by the remote's own still-raised carried pose (its act 44 began 250 ms after
+    body 1's) and the place / pins did not move body 1. Frames: the guest's body lying on the deck at the railing.
+    The session's push off the deck did not reproduce, so the rescue itself is unproven.
+  - Seated aim (`637b47ea`, lab): passed. `aim_dir=refused; reason=ride; checks=0; misses=0` on both copies while
+    seated / driving, `aim_dir=valid; reason=none` on foot after the get-off (host then `checks=90; misses=5`, not
+    latched), no `reason=convention` anywhere.
+- **Unproven / open:** the ledge divergence, the stuck guard's re-show and the put-down rescue (no reproduction in
+  the hidden worker); `body-safety-sea-death-downed.txt` (not run); seated aim in play; a lethal land fall's part.
+  Finding (not changed): the put-down guard opens on an ordinary put-down whenever the remote's carried pose is still
+  more than 2 m above body 1; harmless in `4078bbe7` (no pop), but the warp target is the raised pose.
+
+### partner_native_ui_filter
+- **G1, the viewer's HUD shows the partner's ladder hint** (`wp/ladder-hint`, from `dev/oct7-continue` `cc973a8`;
+  docs/native-puppet.md "Partner HUD hints"). New lab key `partner_native_ui_filter=0|1` with `_given`: **default 0
+  in lab and play** (also with the native gun profile); a named 1 runs in the lab only, play forces it off (not a
+  play refusal). Version unchanged (0.13.5).
+- Cause (read-only Ghidra and the `.text` dump): `P+0xD8` is one `UiControllerImpl` (vtable `0x1423AF700`) for both
+  bodies; its hint queues vt+0x240..+0x288 are ten identical leaves over request records at ui+0x1E0+k*0x50 with no
+  body check. Phase 1 of the ladder plugin (`0x1411EA220`) runs the state callback with the local event 4 for every
+  idx while S_IS_ONLINE is clear (always in this mod); the ladder states' event 4 (`0x1411EC3A0` case 4 and three
+  more) post hint 3 / priority 8 through vt+0x260 = `0x140FE8480` (record 0x320) with no local-index check, from
+  inside instance 1's drain job. The 0.13.5 note's vtable `0x1423AF358` / `0x140FE6D10` was another UI class's
+  table (stored at `0x140FE648A` / `0x140FE679B`; it holds the same leaves 0x38 bytes further in, so it is not
+  `P+0xD8`'s interface); `0x140FE6D10` is UiControllerImpl's vt+0x228.
+- Census: climb (0x61), pipe (0x60) and the ledge hang (2) post into the same queue (their IsNeedToSync guard is
+  S_IS_ONLINE-gated, false offline); step-on, the pickup plugin and the box use no hint queue; interactive, trash
+  box, the ride plugins and attack use vt+0x240 / +0x250 / +0x258. vt+0x268 / +0x270 / +0x278 / +0x288 / +0x280
+  already have a body-1 filter (teammate_targeting, the pose window). Body 1's other UI calls found are guarded by
+  `P+0x218` or read-only.
+- Fix: `native/partner_ui_filter` MinHooks the five unfiltered leaves (`0xFE84F0`, `0xFE8970`, `0xFE8560`,
+  `0xFE87E0`, `0xFE8480`), lazily with the defer install once the five slots and the SHA-256 body pins match. A
+  request is swallowed only inside the scope `partner_ui_filter::Begin(P)` / `End` opens around block 1's drain job
+  (the hook thread, P+0xD8's validated UI: vtable, primary, owner); everything else, the viewer's own update
+  included, goes to the original leaf. No vtable copy: swapping the UI object's vptr for the window would break the
+  identity checks that teammate_targeting, the pose window, nametag's HUD probe and the sleep / vehicle readers make
+  during body 1's job. Counts from the hooks, lines from the driver tick (`partner_ui_filter=installed|configured|
+  swallowed|key|patch_lost`).
+- Contract 743 -> 765 code sites, 193 -> 199 vtable slots (`UI_FILTER_*`, with assertions: one leaf body modulo the
+  record, slot-only reachability, the factory's vtable stores, the census return addresses).
+- Tests: `partner_ui_filter_tests` (route / identity / key / log decisions, the contract pins, the detours on fake
+  objects: scope, thread, receiver, ABI forwarding, refusals, fault latch, records digest, keys, Shutdown, Install
+  refusals on a fake image), `partner_driver_tests` TestUiFilterLog, the key in `lab_config_tests`,
+  `lab_ini_check`, `friend_package_tests`, `worker_session_tests` and the three `-LabSetting` regexes.
+- Scenario `tools/worker/scenarios/partner-ui-filter-ladder-mb.txt` (not run): the Mother Base ladder with the key on
+  both copies.
+- Open: no hidden-worker run yet (none in this step); the default stays 0 until a FRAME shows the viewer's HUD
+  without the hint while body 1 climbs. Why the climber's own HUD shows no hint mid-ladder in stock is not
+  explained; if the viewer's hint survives with `q260` growing, it is not the vt+0x260 queue. A block-1 job that
+  runs without a window (the legacy fallback after a refused drain) opens no scope, so its hints still pass.
+- Second pass (same branch, no code change): re-checked against the image and Ghidra (read-only) that `0x1411EC3A0`
+  case 4 posts vt+0x260(3, 8) unconditionally (the IsCompletedActionIcon call at `0x1411EC54A` belongs to case 1),
+  that `0x1411EA220` picks event 4 for every idx while `P+0x204` bit 8 is clear, that only the window runs block 1's
+  job (`block == a.pool1`), that no other contract pins or hooks the five leaves (the camera agent's native_ui /
+  pose window cover `0xFE8690` / `0xFE8700` / `0xFE8770` / `0xFE89E0` / `0xFE8C70` only), and that the pose
+  window's sleep-hint detour requires `[ui] == 0x23AF700` during body 1's job (a vptr swap would make it fail).
+  The leaf ABI (rcx ui, dx id, r8d priority, r9b flag, three stack bytes at +0x28 / +0x30 / +0x38) matches the
+  detours, and the call at `0x1411EC606` loads `[[[rsi+0x40]+0x138]+0xD8]` with id 3 / priority 8.
+  `generate_partner_contract.py --check` 765 / 199; full CTest 290/290 green (`-Configure`).
+- Review fixes (same branch): the contract now pins the UI init's owner store `0xFE7956` (primary+0x48 = ui+0x28 =
+  P, Begin's owner check) and its slot (primary vtable `0x23AF6D0` vt+0x8 = `0xFE7950`): 766 code sites, 200 vtable
+  slots. The driver reads the hook stats before the vehicle-job early return and runs the ui-filter log there too, so
+  the ride hints (vt+0x240 / +0x258) are logged during the ride (`vehicle_driver_wiring_tests`). `partner_defer_tests`
+  drives the scope through the real drain window: body 1's vt+0x260 request from block 1's job is swallowed; block 0's
+  job, a refused block-1 job (no armed Arm, the legacy call), the thread after the window and after a job that unwound
+  through GuardedCall all reach the original. native-puppet.md: priority 255 was read only on the vt+0x280 record
+  (0x370); record 0x320's idle value is assumed from the shared leaf body. The scenario's two `swallowed` waitlogs
+  now need `q260` > 0, so a line from another queue cannot pass them. `--check` 766 / 200; full CTest 290/290 green
+  (`-Configure`). No game launch and no hidden-worker run.
+
+### debug_vehicle_door
+
+- G4 truck test setup for the passenger fallback proof (`wp/truck-helper`, docs/native-puppet.md "Truck test levers").
+  Not run in the game yet; the version stays 0.13.5.
+- Cause of the missing truck proof (runs `59cfc415`, `495e7c3a`, `de949f80`): RideVehicle CanExec gates trucks (types
+  3/4) on the door (within 1.4 m of `seat + 0.4 m` outward, on its outer side; `0x1246B13..0x1246CA0`), and the old
+  `goto_vehicle truck` spot was 1.9 m beside the record's centre, at the cargo bed. The two copies place their trucks
+  independently, so the guest's nearest truck was another one.
+- New lab key `debug_vehicle_door=0|1` (default 0 in lab and play, `_given` flag, play forces it off; the receipt also
+  refuses outside mode=lab with offline and redirected saves). Added to lab_config, the three `-LabSetting` regex copies
+  and help, LabCommon, worker_session_tests, lab_config_tests, lab_ini_check, friend_package_tests and the
+  native-puppet.md configuration table.
+- Native `MGS_COOP_VEHICLE_DOOR_V1` receipt (`native/vehicle_door.{hpp,cpp}`): this copy's record of a vehicle (or of
+  the vehicle in the partner's live ride packet), GetVehicleType / the seat count / the seat matrix `0xB7AF90` for
+  seats 0 and 1 under SEH with the record identity and the viewer's own act and ridden unit digested around them (a
+  surprise latches the mission); answers the stock door point and a stand spot. Read only, no patch.
+- Lua levers: `goto_vehicle truck [driver|passenger] [cm]` (the nearest truck with a free driver seat, its door's
+  stand spot; key off without arguments: the old spot), `goto_partner_vehicle [driver|passenger] [cm]` (the guest to
+  the host's current vehicle, passenger door by default) and the read-only `vehicle_door` report of the stock gate
+  (`vehicle_door partner` without a door also reads the passenger door, matching `goto_partner_vehicle`).
+- Review fixes: the `vehicle_door partner` default above; `debug_menu_lua_check` now asserts the key-off path (a nil
+  `gotoTruck` answer keeps the old 1.9 m truck spot, a door argument still refuses `door_unavailable`).
+- `coop-vehicle-passenger.txt` truck half rewritten: host boards a truck at its driver door and drives 1.5 s, the guest
+  warps beside this copy of it and presses E; expected `board_block; ...; mode=passenger; reason=type; type=3|4`.
+- Contract: `DOOR_SITES` (7 blocks), `DOOR_DATA` (0.4f x3, 1.4f), `door_assertions`; 750 code sites / 193 vtable slots
+  (was 743/193). Tests: `vehicle_door_tests` (new, in Get-WorkerTests), `partner_driver_tests`
+  (`RidePeerVehicle`), `lab_config_tests`, `debug_vehicle_lua_check`, `debug_menu_lua_check`.
+- Runtime still to prove (hidden runs): the host gets the truck's ride prompt at the stand spot (`vehicle_door`
+  `gate=pass`, frame `truck-door`, the E press boards), the guest's copy of the host's truck is where RIDE_FAST put it
+  (`fast=1`, `rider0=65535`), and the guest's E press logs `board_block; reason=type; type=3|4` with
+  `vehicle_not_riding`. Only then may a default change.
+
+- **Hidden run `84e3db0e` (2026-10-23, `wp/integ10` `32ac240`, lab, research build, gun stage,
+  `coop-vehicle-passenger.txt`; Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):** every step
+  passed, both passenger halves and the truck half. The host's `goto_vehicle truck` reached `veh_trc_0000` (id 25602,
+  type 4, `rider0=65535`) at its driver door, `vehicle_door` `gate=pass; d3=1.16; dot=0.87`, frame `truck-door` shows
+  the stock E + truck ride icon there, and the E press boarded (`riders=0,65535; localSeat=1`). The guest's
+  `goto_partner_vehicle` answered `pseat=0; door=1; fast=1; rider0=65535`; its E press logged
+  `partner_ride=board_block; vehicle=25602; site=prequery; mode=passenger; reason=type; type=4; seats=2` and
+  `vehicle_not_riding`; frames `pass-truck-beside` / `pass-truck-blocked`: the guest at the passenger door with only
+  the Fulton prompt, no ride icon, the host seated in the cab. A truck-only scratch copy first (`a42ddafe`, about 1 min
+  after gameplay) found every truck AI-driven (`vehicle_driver_taken;id=25602;rider0=1194`, the truck 490 m away and
+  driving); in the full file the truck stands near the jeep spot without a driver by the time the truck half runs.
+  **Default unchanged (0):** a lab test lever (play forces it off, the receipt refuses outside the lab).
+
+### partner_native_unrealize_all
+
+- **G5: fully hide the partner on the other ride hides** (`wp/ride-unrealize`; [native-puppet.md "Ride hides"](native-puppet.md)).
+  New key `partner_native_unrealize_all=0|1` (`_given`; **default 0 in lab and play**, a named 1 runs in lab only, play
+  forces it off; added to lab_config, the three `-LabSetting` regexes and the help, LabCommon, worker_session_tests,
+  lab_config_tests, lab_ini_check, friend_package_tests, lab_scripts_tests and the native-puppet.md config table).
+- The heli hide (acts 97..108 or a heli ride), a vehicle drawn hidden (`partner_native_ride=hide`, or seat mode that
+  refused / cannot use the seat: the seat fallback hide) and the horse kind-3 hide without `partner_native_mount` cleared
+  only the realize bits, which left a frozen standing body at the get-on spot (filmed for the horse in `251abcef`).
+  With the key each opens a ride episode (`partner_mount_policy::RideEpisode`, pure) and unrealizes body 1 exactly like
+  the 0.13.5 mount hide: `CLEAR_ALLACTIVE` while Lua reports all-active (`partner_mount_policy::Unrealize`), the show's
+  `SET_ALLACTIVE`, `partner_realized=1`. A mount episode keeps precedence (its own lines). Lines
+  `partner_ride=unrealize_configured|unrealize_begin|unrealize|unrealize_end` (one cap of 64 with `net_rebased`; its
+  capped line reads `partner_ride=capped; limit=64; kind=unrealize`).
+- **Net quality (integration change):** the branch fed every tick a ride owns body 1 to the link-quality tracker as
+  excluded (`QualityIn::excluded`). online-ride-robust fixes the same symptom (the ride as one inter-arrival gap:
+  `reason=net_quality; max_gap=<ride length>` after a hidden ride, play `fbde3dcc` / `5a044a4d` after each mount,
+  `fad26e25` after a 13 s seated ride) for every build with its rebase after a seat episode or a ride hide (default on,
+  no key). The integration keeps that ONE reset path and drops G5's exclusion (`QualityIn::excluded`,
+  `ExcludeFromNetQuality`, the per-tick feed); with the key the rebase logs one
+  `partner_ride=net_rebased; skipped_ms=..; good=..; good_ms=..; max_gap=..; gaps=..` line (the configured line now
+  ends `net_rebased_line=1`). The scenarios wait for `net_rebased` instead of `net_excluded`.
+- No new game address: the op and its binding (`Player.SetAllInstanceActiveMode` 0x9DCD20, `P+0x204` bit 0x2000) are
+  the mount hide's and already pinned (the branch alone: 743 code sites / 193 vtable slots, unchanged). No wire change.
+- Tests: `partner_mount_tests` (ride kinds, rule, off-ride proof, episodes, against `partner_ride_wire::Observe`),
+  `partner_native_tests` (G5's cases on the rebase: an unobserved ride with frames arriving or the sender paused),
+  `partner_driver_tests` `TestRideUnrealize` (key off unchanged; vehicle hide, unavailable seat, GetOff latch, heli acts,
+  horse kind 3 with and without the mount key, the show's `SET_ALLACTIVE`, `partner_realized=1` and one `net_rebased`
+  line after the vehicle and horse episodes, and the online native drive after a 10 s hidden heli ride: no
+  `net_quality` hold with or without the key, the same time back), `lab_config_tests`, `friend_package_tests`,
+  `worker_session_tests`.
+- Scenarios (not run yet): `partner-ride-unrealize.txt` (lab seed: horse kind 3, a vehicle drawn hidden, guest
+  `partner_native_net=online`), `partner-ride-unrealize-seat.txt` (real seed, Mother Base: the refused-seat fallback;
+  the reverse half is the key-off baseline), `partner-ride-unrealize-heli.txt` (lab seed: the heli arrival after the
+  lab goto).
+- **Hidden run `4df9cf88` (2026-10-23, `wp/integ10` `1691253`, `partner-ride-unrealize.txt`, research build, gun
+  stage, lab seed; Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):** all expectations met. Guest:
+  horse `unrealize_begin; ride=horse; kind=3; episode=1` -> `op=clear_allactive` -> `allactive_cleared` ->
+  `unrealize_end; ... ms=9727; cleared=1` -> `foot_stable` -> `net_rebased; skipped_ms=11479; good=1; max_gap=876`
+  -> `allactive_set` -> `partner_realized=1`; the vehicle hide the same (`seat=ride_hide; vehicle=25608;
+  episode=2`, `ms=12480`, `net_rebased; skipped_ms=13047; good=1`); `policy=online` back to `drive=native; reason=ok`
+  about 2 s after each ride, no `reason=net_quality` at all; the guest's own status stayed `st=0x0`; no
+  `viewer_changed`, `uncertain=1`, fault or AV. Frames: `horse-before` the host standing by the rock, `horse-mounting`
+  / `horse-riding` / `horse-ride` no body at the get-on spot (0.13.5 left a frozen standing body there), `jeep-before`
+  the host beside the jeep, `jeep-entering` / `jeep-drive` / `jeep-getin-spot` no body and no driver drawn,
+  `jeep-exited` the body back beside the jeep. **Default unchanged (0):** the heli and the refused-seat (Mother Base)
+  kinds have no frame yet, and play forces the key off by design, so the play gate cannot be met without a policy
+  change.
+- **Unproven / open:** the heli and refused-seat hides have no hidden-worker FRAME yet. The in-field heli boarding
+  (act 97 after the body was shown) cannot be scripted (no debug heli call; the lab goto leaves free roam at once, and
+  at the arrival the partner is hidden from the mission start, before Lua ever had all-active on), so it needs a
+  manual run.
+
+### partner_gesture_lever
+
+- **G6: a lab lever that triggers the host's own knock and hand signs** (`wp/sign-knock`, docs/native-puppet.md
+  "Gestures", "Lab lever: knock and hand signs"), so the unproven knock (0x17) and hand sign Go / Stop (0x18 / 0x19)
+  kinds of `partner_native_gesture` can be filmed on the guest's body 1. Lab key `partner_gesture_lever` (a `_given`
+  flag), **default 0 in lab and play; play forces a named 1 off**; the receiver (`partner_native_gesture`) is unchanged.
+- **Research (read-only):** neither gesture is an action-icon press (padop key-type table `0x22E86A8`: key type 0..9
+  -> pad bit 5, 6, 15, 3, 1, 11, 10, 2, 18, 7 = ACTION, RELOAD, CQC, HOLD, STANCE, UP, SUBJECT, DASH, EVADE, STOCK by
+  the `PlayerPad` constants; `KnockActionPluginImpl`'s only icon query, key type 0 / result 0x70,
+  is the high-grass crawl). Both are requests in the plugin's work row, made through vt+0x28 `RequestKnock`
+  `0x11E5100`, vt+0x30 `RequestHandSignGo` `0x11E5060`, vt+0x38 `RequestHandSignStop` `0x11E50B0` of its vtable
+  `0x23C5A20` (the block's `*(blk+0xF8)`), and taken by the polling `0x11E5160` / `0x11E3A20` within two frames.
+  Stock callers: the **call menu** (hold CALL = Q for 12 frames; command set 0 = knock, enabled while (act 1..20 or
+  31..37, or PS rec+8 bit 17), upper 0, `Q+0x28` 0, not running; no wall needed) for the knock; **Quiet's "Cover me" /
+  "Cease cover", D-Horse's "Do it" and the child-soldier orders** for the signs. No D-Dog command signs, and a CALL
+  tap is the whistle: the 0.13.5 "Q then E" was a whistle and a D-Dog pet. The menu's selection is UI-side and only
+  partly mapped: `CallMenuImpl::UpdateSelectKeyboard` `0x179CE60` picks the enabled record numbered 1..8 through eight
+  hashed key inputs, the mouse wheel or the mouse direction; the manager executes it (`HideCallMenu(1)`) only on a
+  decide input (PP vt+0x40 bit 24 or the hashed input `0x7F4D42602D29`) while CALL is held. The hashes and bit 24 were
+  not resolved to keyboard keys, hence the lever.
+- **Lever:** the native debug command `gesture_lever knock|sign_go|sign_stop` (F9 console or a worker `run`; never
+  Lua) calls this copy's own request slot with id 0, the same call the menu makes. Admission: key, `mode=lab`, lab
+  active, copied saves, offline branch, partner code gate, gameplay, not latched. Identity, slot and polling slot
+  re-checked per command; the stock precondition (knock: the menu's enable test; signs: speed <= 1, act not
+  0x79/0x7A, PS rec+0xC bit 28 clear (`rec_c28`), `GetStance` `0x1002350` not 4 (a crawl with rec+0xC bit 20 set;
+  the raw stance byte is only 1..3), upper 0); SEH (`fault` latches); instance 1's request fields and upper byte compared
+  before / after (`other_changed` latches). Result `gesture_lever=requested;kind=..;id=0;...` or
+  `gesture_lever=refused;reason=..;...`; log `partner_gesture=lever; result=..; reason=..; kind=..; ...; recc=0x..;
+  other_same=..` (one line per command).
+- New code: `native/include/mgscoop/partner_gesture_lever.hpp`, `native/partner_gesture_lever_policy.cpp` (pure:
+  grammar, slots, admission, preconditions, formats), `native/partner_gesture_lever.cpp` (identity, the call, the
+  guards), the handler `HandleGestureLever` in `native/game_script_observer.cpp`.
+- Contract: 743 -> 766 code sites, 193 -> 197 vtable slots (`GESTURE_LEVER_SITES`: the three request bodies, the
+  request test with its two sign branches, `GetStance` `0x1002350`, the polling's dispatch and kind -> state writes,
+  the 0x17 / 0x18 / 0x19 upper writes, the five stock call sites, the knock entry's enable test
+  (`UpdateCommandSetKnock`) and its command binding, the CALL hold classifier call; slots +0x28 / +0x30 / +0x38 /
+  +0x58), plus
+  `gesture_lever_assertions` (the vtable's only store is the constructor `0x11E37DC`, no direct caller of the request
+  functions, the key-type table).
+- Tests: `partner_gesture_lever_tests` (pure) and `partner_gesture_lever_fire_tests` (fake image: one call with this
+  copy's plugin and id 0, every identity / slot / precondition refusal without a call, the `other_changed` and `fault`
+  latches) in CMake and `Get-WorkerTests`; the key in `lab_config_tests`, `lab_ini_check`, `friend_package_tests`,
+  `worker_session_tests`, the three `-LabSetting` regexes and the help, LabCommon, the native-puppet.md config table.
+  Full CTest 291/291 (`-Configure`; 0.13.5 had 289, plus the two lever tests).
+- Scenario `tools/worker/scenarios/partner-upper-gestures.txt` (key named on the host only): the old E / Q+E presses
+  are replaced by `host run gesture_lever knock`, `sign_go`, `sign_stop` and a crouched `knock`, guest bursts
+  `gest-knock`, `gest-sign`, `gest-sign-stop`, `gest-knock-squat`, waitlogs for the host's `lever; result=requested`
+  and `local; kind=knock|sign_go|sign_stop`, and the guest's `rx`, `submit; ...; method=reserve`, `applied` and
+  `ended`; the guest's own `gesture_lever knock` must refuse (`key_off`); a census of the stock route (no gate): the
+  host holds CALL, the open menu is filmed (`callmenu-open`), then `1` (`callmenu-select1`) and `E`
+  (`callmenu-decide-e`) are pressed while CALL is still down.
+- **Unproven (needs the hidden-run phase):** the lever in the game, the 0x17 / 0x18 / 0x19 edges at tick rate, the
+  knock / sign nodes on body 1 in FRAMES, the PS rec+0xC bit 28 sign gate in the lab, and the call menu's keyboard
+  route (select keys and the decide key unresolved; the census only tries `1` + `E`). The default stays 0 until
+  those frames exist.
+- **Hidden run `260da3e5` (2026-10-23, `wp/integ10` `32ac240`, lab seed, gun stage, research build,
+  `partner-upper-gestures.txt`; Closed, BaselineRestored, RealSavesUnchanged, no visible fallback):** every
+  expectation passed. The host's lever answered `gesture_lever=requested` for knock, sign_go, sign_stop and the
+  crouched knock (`other=same`), then `partner_gesture=local` with upper 0x17 / 0x18 / 0x19; the guest logged `rx`,
+  `submit; graph=2; ...; method=reserve` (knock `0x7b2d4f836a92`, sign_go `0xe74e11baba4b`, sign_stop
+  `0xb98c80a7ddae`, crouched knock `0xd08c8b213cab`), `applied; ...; ok=1` (current = node) and `ended;
+  via=timeout; cause=deadline; ms=2000` (the pickups end `via=end; cause=clip`); the guest's own lever refused
+  `key_off`; no `uncertain`, `fault` or `other_changed`. **FRAMES: no knock and no hand sign is drawn on body 1**
+  (`gest-knock-NN`, `gest-sign-NN`, `gest-sign-stop-NN`: the arms never move; the pickup bursts of the same run show
+  body 1 bending down): the knock / sign nodes become current on body 1 but are not drawn (the L8 case of the
+  scenario header; the rate-record writes of re-traverse-gesture.md 5.3 "Optional" were not tried). Census: holding
+  CALL (Q) opens the stock menu (1 Knock (lure enemy), 2 Wait, 3 Get it, 4 DD (call), 5 Sonar); pressing 1 while Q
+  is held runs the knock (frame `callmenu-select1`: the host's Snake knocks; a host `partner_gesture=local;
+  kind=knock` without a lever line); E did nothing. **Default unchanged (0)** (a lab lever); the knock / sign kinds
+  of `partner_native_gesture` stay unproven visually.
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

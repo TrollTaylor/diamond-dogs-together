@@ -1,0 +1,69 @@
+# 0.13.6 online-body-safety review fix (docs/native-puppet.md "Body safety", Environment kill): an already downed
+# (protected) player who ends up in the sea is the stock death and drives the shared game over. The downed state has
+# no bleed-out, so before the fix the protected shield neutralized the sea kill (part 12, flags 0x2419, damage 10000)
+# and the player lay downed in the water for good unless both were down (the same symptom as the session's F:12698).
+# The fix: a non-natural part on a protected player is calculated first; a hit lethal even at full health
+# (damage >= the life record's maximum) is the stock death; every natural part keeps the shield.
+# Run (hidden worker, coordinator only, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/body-safety-sea-death-downed.txt
+#     -PartnerProfile native -NativeStage gun -SaveSeed real -Mode play -WanSim bad
+# Mother Base needs the real seed; its arrival demo blocks guest debug commands for a while (wait 60 s first). The
+# host downs the guest with its rifle as coop-carry-wounded.txt does (cause 1); if the rifle does not down the guest on
+# Mother Base, run the downing half in free roam (coop-carry-wounded.txt's spot) and record that here. The sea spot
+# is body-safety-sea-death.txt's (222.0, 10.0, 407.0): check both `debug position` lines as that scenario says.
+#
+# Expect (guest script-observer.log):
+#   downed_status down=1 cause=1 before the teleport (the guest is downed and protected)
+#   downed_damage=stock_death;reason=environment;protected=1;id=0;life=..;max=..;damage=10000.0;flags=0x2419;part=12
+#   world_lua=event=recovery; step=game_over_applied (shared game over within a few seconds)
+# Expect (host): world_lua=event=recovery; step=shared_game_over; ... within ~5 s of the guest's death.
+# Fails on the first 0.13.6 branch head: no stock_death line, the guest stays downed in the water (downed_status
+# down=1 after 20 s) and the host never reaches shared_game_over.
+# Result (0.13.6 runtime phase): not run (staging corrected to the deck spots of body-safety-sea-death.txt).
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+# Down the guest on the deck next to the sea spot, not at the arrival point 500 m away: the shield and the fix are
+# live only while body 1 is realized on the falling copy, and a 500 m teleport unrealizes it (range rearm; runs
+# de7b3e09 / b8ab039e of body-safety-sea-death.txt, whose deck spots these are; (205.0, 0.9, 403.0) is open water).
+host debug teleport 210.1 0.9 396.9 0
+guest debug teleport 210.1 0.9 402.9 0
+wait 6000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+both capture downed-sea-before
+host press 1 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 600
+guest run downed_status
+host hold rmb+lmb 1500
+host release
+wait 600
+guest run downed_status
+host hold rmb+lmb 1500
+host release
+wait 1200
+guest run downed_status
+guest require down=1.*cause=1
+both capture downed-sea-down
+guest debug teleport 222.0 10.0 407.0 0
+guest burst downed-sea-fall 6 300
+waitlog guest 'downed_damage=stock_death;reason=environment;protected=1;id=0;.*part=12' 30
+waitlog host 'world_lua=event=recovery; step=shared_game_over;' 30
+waitlog guest 'world_lua=event=recovery; step=game_over_applied;' 30
+wait 3000
+both capture downed-sea-gameover
+guest run downed_status
+host run downed_status
+state

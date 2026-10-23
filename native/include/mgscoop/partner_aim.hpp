@@ -127,7 +127,8 @@ std::int32_t RelYawCdeg(float r60) noexcept;
 //   body        no finite body yaw
 //   convention  the runtime self-check latched (CheckStep)
 //   prone_frame the separate prone orientation is not qualified
-enum class DirReason : std::uint8_t { none, idle, unread, camera, sight, gun_class, stance, range, body, convention, prone_frame };
+//   ride        the local player rides (RideGate): no check, no direction
+enum class DirReason : std::uint8_t { none, idle, unread, camera, sight, gun_class, stance, range, body, convention, prone_frame, ride };
 const char* DirReasonName(DirReason reason) noexcept;
 struct GunDirIn {
     bool gun_ok;                 // the gun record (class, stance, flags) was read
@@ -177,6 +178,13 @@ enum class CheckResult : std::uint8_t { skipped, hit, miss, latched };
 // `body` = the body position (T+0x20), `aimpt` = gunRec+0x150, both metres.
 // A latched check returns latched without counting.
 CheckResult CheckStep(DirCheck& check, const GunDirOut& dir, const GunDirIn& in, const float (&body)[3], const float (&aimpt)[3]) noexcept;
+// The local player rides (drives or sits in a vehicle, the helicopter, D-Horse):
+// the seated aim pivot never matches the on-foot reference (session 2026-10-22:
+// 20 of 20 misses in a jeep and in the helicopter latched the check for the rest
+// of the mission). The sender then skips CheckStep and sends no v6 direction
+// (DirReason::ride). Every ride edge (on or off) restarts the miss streak and the
+// settle reference; it never clears a latch earned on foot. Returns `riding`.
+bool RideGate(DirCheck& check, bool riding, bool& was_riding) noexcept;
 
 // The debug command "aimpt off|look|point|lab|status" (a natively handled
 // worker/F9 command; "lab" clears the override back to lab.ini).

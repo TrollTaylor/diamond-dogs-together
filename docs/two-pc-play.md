@@ -56,12 +56,18 @@ another region) gets the host's save over link channel 4 at the title
 screen, and MGSV restarts once on it:
 
 1. The host's save is offered only once it is bound to Mother Base or free
-   roam (a Continue into 30010/30020/30050 or their helicopters, or 30 s in
-   free roam/Mother Base) and its story is open; never from the story
-   opening. The guest stages it in `mgs-coop\coop-saves-handoff\<xfer>`
+   roam (a Continue into 30010/30020/30050 or their helicopters, or 10 s in
+   free roam/Mother Base; 30 s until 0.13.5) and its story is open; never
+   from the story opening. A joiner whose co-op copy is an old Steam save
+   with remote files only takes part as well (online 2026-10-22 P1). The
+   transfer needs the joiner's title screen (in game it is told to go there,
+   G12). The guest stages it in `mgs-coop\coop-saves-handoff\<xfer>`
    (verified against `handoff.json`), writes `request.json` last, counts
-   down 10 s at the title (Continue twice or F9 > Partner / Co-op > Shared
-   save > Keep my own save declines) and closes its own window (WM_CLOSE).
+   down 10 s at the title (F9 > Partner / Co-op > Shared save > Keep my own
+   save declines; a Continue at the title does not during the first 60 s of
+   the wait, and presses under 3 s apart never count, save-handoff.md "Title
+   Continue") and closes its own window (WM_CLOSE) once RESULT exiting left
+   the link (at most 1 s).
    A waiting Steam guest also writes `link-rejoin.txt` (the join code it was
    armed with; never collected, removed at once).
 2. After the game process exited, `Invoke-CoopHandoffAfterExit`
@@ -80,12 +86,17 @@ screen, and MGSV restarts once on it:
    `link-secret.txt`), recording every new hash before its write, deletes
    the request, the stage and `link-rejoin.txt`, and sets `relaunching`
    with `count` 1.
-3. `Start-CoopRelaunch` starts `steam://rungameid/287700` 5 s later, only
-   while the session is active and every recorded co-op file (marker
-   exactly `offline-v1`) is in place with its hash: a restart never starts
-   plain MGSV on the real saves. Play-Coop waits for the new game (once more
-   at 60 s, a manual-start line at 120 s, co-op off after 300 s), marks
-   `relaunched` and continues with the start evidence and the status line.
+3. `Start-CoopRelaunch` starts `steam://rungameid/287700` once Steam no
+   longer marks MGSV as running (`Wait-CoopSteamAppStopped`, read only, at
+   most 30 s) and 2 s more, only while the session is active and every
+   recorded co-op file (marker exactly `offline-v1`) is in place with its
+   hash: a restart never starts plain MGSV on the real saves. Play-Coop
+   waits for the new game (again every 20 s while Steam does not mark it
+   running, a manual-start line at 45 s also while it still does, after a
+   check-only `Start-CoopRelaunch -CheckOnly`, co-op off after 300 s; online
+   2026-10-22 P5), marks `relaunched` and continues with the start evidence
+   and the status line. Each step is logged to `mgs-coop\play-coop.log`
+   (collected by Collect-Logs).
 4. Cleanup guard (P2-17): while `handoff.state` is `applying` or
    `relaunching`, the claim is under 300 s old and its claimant runs,
    `Invoke-CoopPlayCleanup` does nothing ("a save handoff restart is in
@@ -399,6 +410,19 @@ and separate live acceptance requirements. Recorded live verification uses
 two game instances on one PC; actual two-PC play and full campaign progression
 have not been validated.
 
+Vehicles (0.13.6, **off, and not yet available in two-PC play**): the lab key
+`world_vehicle_gone=1` (both copies, world level 3) makes a vehicle the host
+Fultons or destroys disappear from the guest's copy too, and one the guest
+Fultons or destroys itself disappear from the host's copy (the host decides);
+a vehicle somebody sits in is never removed under them (it goes once they get
+out). It is a lab / hidden-run key until the hidden runs' frames and a real
+Fulton check prove it: Play-Coop has no option for it yet and writes the play
+`lab.ini` itself (an edited play `lab.ini` is kept at game exit, and the next
+Play-Coop refuses to start until it is moved), so two-PC play keeps the
+0.13.5 behaviour: a Fultoned vehicle
+stays on the other copy, and a player driving it can vanish on the partner's
+screen. Protocol: [world-sync-protocol.md](world-sync-protocol.md) section 16.
+
 ## Online (Steam)
 
 The recommended way since the Steam transport ([steam-online.md](steam-online.md)).
@@ -606,6 +630,16 @@ xform clip partner as the automatic fallback.
   (`partner_weapon=fire_reload_off; reason=shot_leak|ammo_leak`,
   state.json `native.weapon.leak_strip` 80); the generalized writer digests
   the viewer's ammo/weapon vars around each dispatch and stops on a change.
+- **After a relaunch of one copy** (0.13.6): the loadout manifest, the
+  capability message and the cardboard box survive a guest relaunch (a quit,
+  or the save handoff's automatic relaunch) while the host keeps running. In
+  0.13.5 the two copies' link-session counters then differed for good and
+  every manifest was dropped (no partner guns, `remote=unknown/none`, no
+  partner box for the rest of the evening; workaround there: both players
+  quit, the host starts, then the friend joins). The receiver now binds what
+  it receives to its own link session ([native-puppet.md](native-puppet.md)
+  "The link epoch"); a refused message logs `partner_equip=refused; reason=..`
+  / `partner_caps=refused; reason=..` once.
 
 ## Release build
 

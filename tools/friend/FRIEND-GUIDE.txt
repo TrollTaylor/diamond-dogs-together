@@ -69,10 +69,11 @@ What is NOT fully shared yet:
   approximation. Grenade and rocket launchers are
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
-  build. The user reported partial successful two-PC play on 0.12.0. The
-  0.13.5 changes passed hidden two-game checks on one PC, also with a
-  simulated bad internet connection, and still need a fresh two-PC
-  session; complete campaign progression remains unsupported.
+  build. The user reported partial successful two-PC play on 0.12.0 and a
+  first real two-PC session on 0.13.5. The 0.13.6 fixes from that session
+  were checked with two games on one PC and still need a fresh two-PC
+  session; complete
+  campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
 version on both PCs). Konami's servers are never contacted: the game plays
@@ -89,6 +90,22 @@ Two ways to connect:
 WHAT'S NEW IN @VERSION@
 -----------------------
 Both players need this same version; it does not connect to older ones.
+Fixes from the first real two-PC session:
+- GUNS ONLINE. Your partner now holds their real gun even after either game
+  restarted (including the automatic save-handoff restart). Before, a
+  restart of one game made both sides ignore the other's loadout, so the
+  partner showed no gun and the cardboard box did not show either.
+- JOINING WITH A DIFFERENT SAVE. The host's save is now offered even when
+  your co-op save is an old one, and pressing Continue twice quickly no
+  longer sends you alone into a story mission. The messages say clearly
+  what is happening and what to do.
+- LONG VEHICLE RIDES. Your partner no longer disappears after a few hundred
+  metres in a shared jeep, and moves normally right after getting off.
+- FALLING INTO THE SEA now counts as a real death (shared game over)
+  instead of leaving you downed in the water. A partner put down at a
+  platform edge no longer falls off it on your screen.
+
+New in 0.13.5 (still included):
 These need the native partner, which is the default.
 - RIDE IN THE BACK SEAT. When your partner drives a jeep or another light
   vehicle, stand by it and press ACTION (E by default) to sit in a free back
@@ -321,13 +338,27 @@ SAME PROGRESS AUTOMATICALLY (save handoff):
  - When you JOIN and your co-op save would start somewhere other than the
    host's (or is in the story opening), the host's save is copied to you at
    the title screen and MGSV restarts once on it (about a minute; Play-Coop
-   does it, keep its window open).
+   does it, keep its window open). This also works when your co-op save is
+   an old Steam save that the game has not written on this PC yet.
+ - Stay on the title screen while it happens. With the travel lock on (the
+   default; F9 > Partner / Co-op > Travel lock), pressing Continue there only
+   shows a message; it does not start your own save during the first minute
+   of the wait, also while the host is still loading. With the travel lock
+   off, Continue plays your own save at once until the copy has started.
+   If you are already in the game, go back to the title screen (or quit
+   MGSV and start Play-Coop again) to get the host's save.
  - The host's save is only shared once it continues into Mother Base or
-   free roam, never from the story opening. If the host's save is still in
-   the story opening, the player whose save reaches Mother Base should host.
+   free roam, never from the story opening: the host Continues there, or
+   stays there a few seconds. If the host's save is still in the story
+   opening, the player whose save reaches Mother Base should host.
  - The game counts down 10 seconds at the title screen before it restarts.
-   Press Continue twice, or F9 > Partner / Co-op > Shared save >
-   Keep my own save, to keep yours.
+   To keep your own save instead, use F9 > Partner / Co-op > Shared save >
+   Keep my own save (before or during the countdown). If the host's save
+   does not come within a minute, Continue pressed twice (3 to 10 seconds
+   apart) also plays your own save.
+ - MGSV closes and Play-Coop starts it again through Steam. If MGSV is not
+   back within a minute, press Play for MGS V in Steam yourself (once Steam
+   shows Play again) while the Play-Coop window still says co-op stays on.
  - Your own co-op copy is kept: Share-Save.bat [R] brings it back. Play-Coop
    -SaveHandoff off turns this off; start it from Command Prompt in the
    extracted package folder with
@@ -529,8 +560,8 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
   The crawl uses
   the normal prone animation at reduced speed, not the exact hospital clip.
 
-  Partial two-PC Steam play was reported on 0.12.0. This 0.13.5 build needs
-  a fresh two-PC test. Known limits of the 0.13.5 additions:
+  Partial two-PC Steam play was reported on 0.12.0 and 0.13.5. This 0.13.6
+  build needs a fresh two-PC test. Known limits of the 0.13.5 additions:
   - Back seat: you cannot aim or shoot from it, and the first-person view
     there was not tested. Only light vehicles (jeeps and the like) have a
     passenger seat; trucks and armored vehicles do not.

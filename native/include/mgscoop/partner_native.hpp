@@ -619,6 +619,13 @@ struct Telemetry {
     // received, and the received manifest's version (0 none).
     std::uint8_t equip_tx_type[3], equip_rx_type[3];
     std::uint32_t equip_rx_version;
+    // The received manifest's binding and the receiver's counters (0.13.6
+    // online-net-epoch; process-lifetime): the sender's session number (identity
+    // only), this copy's link session it arrived in, accepted / invalid /
+    // no-link (stale) / duplicate messages and the last refusal reason.
+    std::uint32_t equip_rx_sender_epoch, equip_rx_link_epoch;
+    std::uint32_t equip_rx_received, equip_rx_invalid, equip_rx_stale, equip_rx_duplicates;
+    char equip_rx_refused[12];
     char equip_apply[12];
     // The generalized writer and preload (W2/W3/W6; docs/native-puppet.md
     // "Generalized writer"): the setting (stock46|manifest|substitute), per

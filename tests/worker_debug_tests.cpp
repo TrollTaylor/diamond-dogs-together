@@ -171,6 +171,9 @@ int main() {
                   doc.find("\"equip\":{\"tx_rev\":0,\"tx_base\":[0,0,0]")!=std::string::npos &&
                   doc.find("\"warp\",\"mag\",\"body_yaw_cdeg\",\"face_err_cdeg\",\"r60_1\",\"pred1\",\"gmode\",\"rmode\",\"hslot\"],\"ring\":[")!=std::string::npos &&
                   doc.find("false,0,0,0,0,0,0,0,0]")!=std::string::npos))return 1;
+        // 0.13.6 online-net-epoch: the received manifest's binding and the receiver's counters (Fix 2).
+        if(!check(doc.find(",\"rx_sender_epoch\":0,\"rx_link_epoch\":0,\"rx_received\":0,\"rx_invalid\":0,\"rx_stale\":0,"
+                           "\"rx_duplicates\":0,\"rx_refused\":\"\",\"setting\":")!=std::string::npos))return 1;
         // Aim parity member (docs/native-puppet.md "Facing", the aim-target mirror): present in every shape.
         if(!check(doc.find("\"aim\":{\"setting\":\"\",\"override\":false,\"state\":\"\",\"reason\":\"\",\"src\":\"\",\"writes\":0,")!=std::string::npos &&
                   doc.find("\"target_mm\":[0,0,0],\"written_mm\":[0,0,0],\"slot\":\"\",\"q10_1_mm\":[0,0,0],\"q10_0_mm\":[0,0,0],\"aimpt1_mm\":[0,0,0],\"aimpt0_mm\":[0,0,0],")!=std::string::npos &&
@@ -342,7 +345,8 @@ int main() {
         std::size_t n=0;
         const auto doc=NativeDocument(t,&n);
         if(!check(n>0 && ValidJson(doc) && doc.find(",\"net\":{\"policy\":\"\",\"stall\":\"\",\"stall_ms\":0,")!=std::string::npos &&
-                  doc.find("\"caps\":{\"rx\":false,\"sent\":0,")!=std::string::npos && doc.find("\"net\":null")==std::string::npos))return 1;
+                  doc.find("\"caps\":{\"rx\":false,\"sent\":0,")!=std::string::npos && doc.find("\"net\":null")==std::string::npos &&
+                  doc.find("\"invalid\":0,\"stale\":0,\"link_epoch\":0,\"remote_drive\":")!=std::string::npos))return 1;
         auto& net=t.net;
         const auto fill=[](char* text,std::size_t capacity,char c){for(std::size_t i=0;i+1<capacity;++i)text[i]=c;text[capacity-1]=0;};
         fill(net.policy,sizeof(net.policy),'p');fill(net.stall,sizeof(net.stall),'s');fill(net.hold,sizeof(net.hold),'h');
@@ -352,6 +356,7 @@ int main() {
         net.stall_ms=net.edge_repeats=net.quality_good_ms=net.gaps_100=net.gaps_250=net.gaps_1000=net.max_gap_ms=0xFFFFFFFFu;
         net.ia_p50_ms=net.ia_p95_ms=net.net_leaves=net.hard_leaves=net.net_reentries=net.quiet_episodes=net.gap_snaps=0xFFFFFFFFu;
         net.caps_sent=net.caps_received=net.caps_invalid=0xFFFFFFFFu;net.quality_good=net.remote_quiet=net.flap=net.caps_rx=true;
+        net.caps_stale=net.caps_link_epoch=0xFFFFFFFFu;
         net.remote_v4=net.remote_caps_refused=true;net.local_drive=mgscoop::partner_native_net::Drive::native;
         net.remote_drive=mgscoop::partner_native_net::Drive::clips;
         const auto full=NativeDocument(t,&n);

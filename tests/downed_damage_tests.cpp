@@ -43,6 +43,47 @@ int main() {
         check(!Evaluate(true,target,local,other,2,2,100,100,inf,2,false).bypass);
         check(Evaluate(true,target,local,other,0,2,100,1,0,0,true).bypass==(target==local));
     }
+    // Lethal-to-downed only for natural body parts on the local player. The
+    // sea/out-of-bounds kill (part 12, flags 0x2419, damage 10000, attacker =
+    // self) stays the stock death; the replica stays protected for every part.
+    for(unsigned part=0;part<256;++part) for(unsigned local=0;local<2;++local) for(unsigned target=0;target<2;++target) {
+        const auto body=static_cast<std::uint8_t>(part);
+        const auto d=Evaluate(true,target,local,static_cast<std::uint16_t>(target),0x2419,body,7200,10000,0,0,false);
+        if(target==local) {
+            check(d.bypass==(part<=11) && d.cause==(part<=11?1:0));
+            check(EnvironmentKill(true,target,local,body,7200,10000)==(part>11));
+        } else {
+            check(d.bypass && d.cause==0);
+            check(!EnvironmentKill(true,target,local,body,7200,10000));
+        }
+        // Evaluate keeps the protected (already downed) player's shield; Calculate asks
+        // ProtectedEnvironmentKill first for a non-natural part (below).
+        check(Evaluate(true,target,local,static_cast<std::uint16_t>(target),0x2419,body,7200,10000,0,0,true).bypass);
+        // A downed player (protected health 5%: 360 of 7200) who crawls into the sea: the kill
+        // (10000 >= the 7200 maximum) is the stock death, for the local player and part > 11 only.
+        check(ProtectedEnvironmentKill(true,target,local,body,360,7200,10000)==(target==local && part>11));
+    }
+    // A part-12 packet lethal only at the downed health keeps the shield; an unknown maximum too.
+    check(ProtectedEnvironmentKill(true,0,0,12,360,6000,10000));
+    check(ProtectedEnvironmentKill(true,0,0,12,360,7200,7200));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,7200,7199));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,7200,359));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,0,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,nan,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,inf,10000));
+    check(!ProtectedEnvironmentKill(false,0,0,12,360,7200,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,4,360,7200,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,7200,nan));
+    // The real session samples: host (life 7200) and guest (life 6000).
+    check(!Evaluate(true,0,0,0,0x2419,12,7200,10000,0,0,false).bypass);
+    check(!Evaluate(true,0,0,0,0x2419,12,6000,10000,0,0,false).bypass);
+    check(Evaluate(true,1,0,0,0x2419,12,6000,10000,0,0,false).bypass);
+    check(Evaluate(true,0,0,1,0x401,4,7800,7800,0,0,false).cause==1);   // explosion part 4 still downs
+    check(!EnvironmentKill(false,0,0,12,7200,10000));
+    check(!EnvironmentKill(true,0,0,12,7200,100));
+    check(!EnvironmentKill(true,0,0,12,0,10000));
+    check(!EnvironmentKill(true,2,2,12,7200,10000));
+    check(!EnvironmentKill(true,0,0,12,nan,10000));
     // Active accepted ordinary packets qualify irrespective of the optional bit1.
     check(FriendlyReplicaHit(true,1,0,0,0x4401,2,942,0,0));
     check(FriendlyReplicaHit(true,1,0,0,0x4481,1,942,0,0));

@@ -1104,6 +1104,54 @@ void TestOnline() {
             pnn::Observe(j, pnn::QualityIn{now, true, true, static_cast<std::uint32_t>(i + 1), 0});
         }
         Check(!j.good && j.p95_ms >= 120, "p95 >= 120 ms is bad");
+        // 0.13.6 (the 2026-10-22 rides): an 85 s seat episode the observer did not see. Without a
+        // rebase the first frame after it is one 85 s gap (bad for the 2 s window: ~4 s of clips).
+        const auto ride = [](bool rebase, std::uint32_t first_age = 3) {
+            pnn::Quality r{};
+            std::uint64_t t = 1000;
+            std::uint32_t n = 1;
+            for (int i = 0; i < 200; ++i, t += 16) pnn::Observe(r, pnn::QualityIn{t, true, true, n++, 3});
+            const std::uint32_t samples = r.samples;
+            t += 85650;
+            n += 5000;
+            if (rebase) pnn::Rebase(r);
+            pnn::Observe(r, pnn::QualityIn{t, true, true, n++, first_age});
+            const bool first_good = r.good;
+            const std::uint32_t first_good_ms = pnn::GoodMs(r, t);
+            for (int i = 0; i < 10; ++i) { t += 16; pnn::Observe(r, pnn::QualityIn{t, true, true, n++, 3}); }
+            struct Out { bool first_good, good; std::uint32_t first_good_ms, good_ms, gaps_1000, max_gap, p50, samples_before, samples; } o{
+                first_good, r.good, first_good_ms, pnn::GoodMs(r, t), r.gaps_1000, r.max_gap_ms, r.p50_ms, samples, r.samples};
+            return o;
+        };
+        const auto plain = ride(false), rebased = ride(true), late = ride(true, 400);
+        Check(!plain.first_good && plain.gaps_1000 == 1 && plain.max_gap >= 85000, "control: the unseen ride counts as one gap");
+        Check(rebased.first_good && rebased.good && rebased.gaps_1000 == 0 && rebased.max_gap < 100 && rebased.p50 <= 17,
+              "Rebase: the first frame after the ride only anchors; the window stays good");
+        Check(rebased.samples == rebased.samples_before + 10, "Rebase keeps the mission totals (no gap sample for the anchor)");
+        // A link good before the ride stays good through it: no fresh quality_ms (2 s) hold after every ride
+        // (the arbiter's net_quality gate passes at once; only its 2 s settle remains).
+        Check(rebased.first_good_ms >= 2000 && rebased.good_ms >= 2000, "Rebase keeps the good state and its start");
+        Check(!late.first_good && late.first_good_ms == 0 && !late.good && late.good_ms == 0,
+              "a late first frame after the ride still turns it bad (the quality_ms hold applies again)");
+    }
+    // G5's hidden-ride cases on the single rebase path (0.13.6 integration: G5's per-tick exclusion is folded into
+    // online-ride-robust's Rebase, which runs after every seat episode or ride hide with or without the G5 key): a
+    // 12 s ride the observer never saw, with frames arriving meanwhile or the sender paused, then the rebase and the
+    // first new frame: no gap, no sample for the anchor, and the good state held through the ride.
+    for (const bool frames : {true, false}) {
+        pnn::Quality q{};
+        std::uint64_t now = 1000;
+        std::uint32_t seq = 1;
+        for (int i = 0; i < 200; ++i, now += 33) pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        const std::uint64_t ride_start = now;
+        now += 360 * 33;
+        if (frames) seq += 360;
+        pnn::Rebase(q);
+        pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        Check(q.good && q.max_gap_ms < 100 && q.gaps_100 == 0 && q.gaps_1000 == 0 && pnn::GoodMs(q, now) > now - ride_start &&
+                  q.samples == 199,
+              frames ? "rebase: frames arriving during the unobserved ride, no gap, the quality held through it"
+                     : "rebase: the sender paused during the unobserved ride, no gap, the quality held through it");
     }
     // Reason codes and the native.net JSON.
     {
@@ -1155,7 +1203,28 @@ void TestOnline() {
         Check(pcw::Accept(st, b, sizeof(b), 7) && st.have && st.caps.revision == 5, "store");
         c.revision = 4;
         pcw::Encode(c, b);
-        Check(!pcw::Accept(st, b, sizeof(b), 7) && st.caps.revision == 5 && st.stale == 1, "an older revision is stale");
+        Check(!pcw::Accept(st, b, sizeof(b), 7) && st.caps.revision == 5 && st.stale == 1 && st.last == pcw::Result::older,
+              "an older revision is stale");
+        // R0 (0.13.6 online-net-epoch; failed on 0.13.5): the sender's session number (caps.epoch) is never compared
+        // with the receiver's own link session. A relaunched guest (epoch 1) under the host's link session 3 is live.
+        {
+            pcw::Store host{};
+            pcw::Caps g = c;
+            g.revision = 1;
+            g.epoch = 1;
+            std::uint8_t gb[pcw::kSize]{};
+            Check(pcw::Encode(g, gb) == pcw::kSize, "the relaunched guest's caps encode");
+            Check(pcw::Accept(host, gb, sizeof(gb), 3) && host.link_epoch == 3 && host.caps.epoch == 1 && host.stale == 0 &&
+                      pcw::Live(host, 3) && !pcw::Live(host, 4) && !pcw::Live(host, 0),
+                  "R0: caps epoch 1 under link session 3: stored and live in session 3 only");
+            // The guest relaunches again (revision 1, epoch 1 once more) in link session 4: a new sequence, accepted.
+            Check(pcw::Accept(host, gb, sizeof(gb), 4) && host.link_epoch == 4 && pcw::Live(host, 4) && host.received == 2,
+                  "R0: the same revision in a new link session is accepted");
+            Check(!pcw::Accept(host, gb, sizeof(gb), 0) && host.last == pcw::Result::no_link && host.stale == 1 && pcw::Live(host, 4),
+                  "no link session: refused, the stored caps stay");
+            Check(std::strcmp(pcw::ResultName(pcw::Result::no_link), "no_link") == 0 && std::strcmp(pcw::ResultName(pcw::Result::older), "older") == 0,
+                  "caps result names");
+        }
         // Sender pacing: at once per session, on change >= 1 s, heartbeat 5 s.
         pcw::Sender sd{};
         pcw::Caps next{};
@@ -1305,6 +1374,27 @@ void TestAim() {
     gd.yaw = 1.0;
     for (unsigned n = 0; n < pa::kCheckLatch; ++n) pa::CheckStep(dc, gd, gi, body, aim);
     Check(dc.latched && dc.streak == pa::kCheckLatch && dc.misses == pa::kCheckLatch, "gun direction: sustained wrong convention latches per mission");
+    // 0.13.6 RideGate (session 2026-10-22: 20/20 seated misses in a jeep and the helicopter latched the
+    // check for the mission). The sender skips CheckStep while riding; every ride edge restarts the streak.
+    {
+        pa::DirCheck rc{}; bool was = false; gd.yaw = 1.0;
+        pa::CheckStep(rc, gd, gi, body, aim);
+        for (unsigned n = 0; n < pa::kCheckLatch - 1; ++n) pa::CheckStep(rc, gd, gi, body, aim);
+        Check(!rc.latched && rc.streak == pa::kCheckLatch - 1, "ride gate: 19 on-foot misses, one short of the latch");
+        Check(pa::RideGate(rc, true, was) && was && rc.streak == 0 && !rc.have_prev, "ride gate: boarding restarts the streak");
+        Check(pa::RideGate(rc, true, was) && rc.streak == 0, "ride gate: still riding");
+        // (riding: the sender calls no CheckStep, so no miss can accumulate)
+        rc.streak = 7;
+        Check(!pa::RideGate(rc, false, was) && !was && rc.streak == 0 && !rc.have_prev, "ride gate: the get-off restarts the streak");
+        pa::CheckStep(rc, gd, gi, body, aim);
+        for (unsigned n = 0; n < pa::kCheckLatch - 1; ++n) pa::CheckStep(rc, gd, gi, body, aim);
+        Check(!rc.latched, "ride gate: a streak across the ride never latches");
+        pa::CheckStep(rc, gd, gi, body, aim);
+        Check(rc.latched, "ride gate: 20 consecutive on-foot misses still latch");
+        Check(!pa::RideGate(rc, false, was) && rc.latched, "ride gate: no edge, the on-foot latch stays");
+        Check(pa::RideGate(rc, true, was) && rc.latched, "ride gate: a ride never clears an on-foot latch");
+        Check(std::strcmp(pa::DirReasonName(pa::DirReason::ride), "ride") == 0, "ride gate: reason name");
+    }
     // The debug command.
     pa::ParsedCommand cmd{};
     Check(pa::ParseCommand("aimpt look", cmd) && cmd.kind == pa::Command::set && cmd.value == PartnerNativeAimPt::look, "aim: aimpt look");

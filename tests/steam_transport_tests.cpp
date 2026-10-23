@@ -2794,12 +2794,12 @@ void TestSaveHandoffHud() {
          "Getting the host's save (594 KB) so you both start in the same place. Your own co-op save is kept (Share-Save.bat [R] brings it "
          "back)."},
         {2, 7, "Snake_Fan", hud::Tone::info,
-         "Host's save ready. MGSV restarts in 7 s and Play-Coop starts it again on the host's save. Press Continue twice to keep your own "
-         "save."},
+         "Host's save ready: MGSV restarts in 7 s and Play-Coop starts it again (not back within a minute? Press Play in Steam). Keep "
+         "yours: F9 > Partner / Co-op > Shared save > Keep my own save."},
         {3, 0, "Snake_Fan", hud::Tone::info, "Host's save stored for a test; it is not applied."},
         {4, 0, "Snake_Fan", hud::Tone::info,
-         "Your save starts somewhere other than the host's. Once the host is in Mother Base or free roam, their save is copied to you and "
-         "MGSV restarts once."},
+         "Your save starts somewhere other than the host's. Once the host is in Mother Base or free roam, their save is copied to you at "
+         "the title screen and MGSV restarts once."},
         {5, 0, "Snake_Fan", hud::Tone::warn,
          "The host's save is still in the story opening, so it is not shared. The player whose save reaches Mother Base should host."},
         {6, 10020, "Snake_Fan", hud::Tone::warn,
@@ -2814,6 +2814,15 @@ void TestSaveHandoffHud() {
         {9, 0, "Snake_Fan", hud::Tone::warn,
          "Host's save ready: quit MGSV (title menu > Exit) and Play-Coop starts it again on the host's save."},
         {10, 0, "Snake_Fan", hud::Tone::info, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
+        // Online 2026-10-22 P3 / P6 (a = the host's mission; G11's b, the settle seconds, is 0 here).
+        {11, 30050, "Snake_Fan", hud::Tone::info,
+         "The host is in Mother Base: their save is checked there, then copied to you at the title screen and MGSV restarts once."},
+        {11, 0, "Snake_Fan", hud::Tone::info,
+         "The host is in Mother Base or free roam: their save is checked there, then copied to you at the title screen and MGSV restarts "
+         "once."},
+        {12, 30010, "Snake_Fan", hud::Tone::info,
+         "The host's save is ready for you: go back to the title screen (or quit MGSV and start Play-Coop again) to get it. MGSV then "
+         "restarts once on it."},
         {21, 0, "Snake_Fan", hud::Tone::info, "Sending your save to Snake_Fan so you both start in the same place."},
         {21, 0, "", hud::Tone::info, "Sending your save to your partner so you both start in the same place."},
         {22, 30010, "Snake_Fan", hud::Tone::info,
@@ -2834,6 +2843,9 @@ void TestSaveHandoffHud() {
         {26, 3, "Snake_Fan", hud::Tone::warn, "Sending your save failed (not enough disk space). Use Share-Save.bat instead."},
         {27, 10020, "Snake_Fan", hud::Tone::warn,
          "Your save continues into story mission 10020, which co-op cannot join. Go to Mother Base or free roam first."},
+        {28, 10, "Snake_Fan", hud::Tone::info, "Checking your save here (about 10 s; stay in this mission), then it is copied to Snake_Fan."},
+        {28, 10, "", hud::Tone::info, "Checking your save here (about 10 s; stay in this mission), then it is copied to your partner."},
+        {28, 0, "Snake_Fan", hud::Tone::info, "Checking your save here (stay in this mission), then it is copied to Snake_Fan."},
     };
     char toast[hud::kToastChars]{};
     hud::Tone tone = hud::Tone::bad;
@@ -2848,7 +2860,7 @@ void TestSaveHandoffHud() {
     }
     // Every code, any values, any partner: at most 199 printable ASCII
     // characters, no leftover '%', and the mission is named when given.
-    const std::uint8_t codes[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 21, 22, 23, 24, 25, 26, 27};
+    const std::uint8_t codes[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28};
     const std::uint32_t values[] = {0, 1, 5, 12, 594, 8192, 10020, 30010, 40010, 40050, 4294967295u};
     const char* const partners[] = {"", "Snake_Fan", "A_partner_name_that_is_much_longer_than_any_line", "Name\xC3\xA9\x01%s"};
     for (const auto code : codes)
@@ -2876,7 +2888,7 @@ void TestSaveHandoffHud() {
         Check(!text::FormatSaveHandoff(1, 594, 0, "", tiny, sizeof(tiny)) && tiny[0] == 0 && !text::FormatSaveHandoff(8, 0, 0, "", nullptr, 0),
               "FormatSaveHandoff: a short buffer stays empty");
     }
-    for (const int code : {0, 11, 20, 28, 255}) {
+    for (const int code : {0, 13, 20, 29, 255}) {
         hud::Event e{};
         e.kind = hud::EventKind::save_handoff;
         e.arg = code;
@@ -2920,14 +2932,58 @@ void TestSaveHandoffHud() {
         const hud::Toast* active[hud::kMaxToasts]{};
         Check(model.Active(11000, active, hud::kMaxToasts) == 2, "the countdown re-post updates its toast (G1 + one G2)");
         CheckText(true, active[0]->text,
-                  "Host's save ready. MGSV restarts in 9 s and Play-Coop starts it again on the host's save. Press Continue twice to keep your "
-                  "own save.",
+                  "Host's save ready: MGSV restarts in 9 s and Play-Coop starts it again (not back within a minute? Press Play in Steam). Keep "
+                  "yours: F9 > Partner / Co-op > Shared save > Keep my own save.",
                   "the newest countdown text replaces the older one");
         Check(active[0]->until_ms == 11000 + hud::kToastMs && std::strncmp(active[1]->text, "Getting the host's save (594 KB)", 32) == 0,
               "the updated countdown toast lasts 4 s from its re-post");
         model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 11500);
         model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 11600);
         Check(model.Active(11600, active, hud::kMaxToasts) == 3, "an identical toast is still extended, other sentences stack");
+    }
+
+    // ---- The toast log (online 2026-10-22 P8): world notes and save handoff
+    // toasts reach the observer log; one (kind, code) per kToastLogGapMs.
+    {
+        char log_line[192]{};
+        CheckText(hud::FormatToastLog(hud::EventKind::save_handoff, 4, "0 0", true, 0, 1234, log_line, sizeof(log_line)), log_line,
+                  "hud=toast; kind=save_handoff; code=4; a=0; b=0; on=1; t_ms=1234\r\n", "toast log line (save_handoff)");
+        CheckText(hud::FormatToastLog(hud::EventKind::world_note, 7, "40050 3 40050 40010", false, 2, 99, log_line, sizeof(log_line)),
+                  log_line, "hud=toast; kind=world_note; code=7; a=40050; b=3; partner=40050; local=40010; on=0; skipped=2; t_ms=99\r\n",
+                  "toast log line (world_note)");
+        Check(!hud::FormatToastLog(hud::EventKind::connected, 1, "1 2", true, 0, 1, log_line, sizeof(log_line)) && log_line[0] == 0 &&
+                  !hud::FormatToastLog(hud::EventKind::save_handoff, 4, "x", true, 0, 1, log_line, sizeof(log_line)) &&
+                  !hud::FormatToastLog(hud::EventKind::world_note, 7, "1 2", true, 0, 1, log_line, sizeof(log_line)) &&
+                  !hud::FormatToastLog(hud::EventKind::save_handoff, 256, "0 0", true, 0, 1, log_line, sizeof(log_line)),
+              "toast log: other kinds, malformed texts and codes above 255 give no line");
+        static std::vector<std::string> logged;
+        static std::uint64_t clock_ms = 0;
+        logged.clear();
+        clock_ms = 50000;
+        hud::SetEventLog([](const char* text) noexcept { logged.emplace_back(text); }, []() noexcept { return clock_ms; });
+        hud::PostSaveHandoff(2, 10, 0);
+        clock_ms += 1000;
+        hud::PostSaveHandoff(2, 9, 0);
+        clock_ms += 1000;
+        hud::PostSaveHandoff(2, 8, 0);
+        hud::PostWorldNote(7, 40050, 3, 40050, 40010);
+        hud::PostSaveHandoff(4, 0, 0);
+        clock_ms += hud::kToastLogGapMs;
+        hud::PostSaveHandoff(2, 1, 0);
+        hud::Post(hud::EventKind::connected, 1, "x");
+        hud::SetEventLog(nullptr, nullptr);
+        hud::PostSaveHandoff(5, 0, 0);
+        Check(logged.size() == 4 && logged[0].rfind("hud=toast; kind=save_handoff; code=2; a=10; b=0; on=", 0) == 0 &&
+                  logged[0].find("; t_ms=50000\r\n") != std::string::npos &&
+                  logged[1].rfind("hud=toast; kind=world_note; code=7; a=40050; b=3; partner=40050; local=40010; on=", 0) == 0 &&
+                  logged[2].rfind("hud=toast; kind=save_handoff; code=4; a=0; b=0;", 0) == 0 &&
+                  logged[3].rfind("hud=toast; kind=save_handoff; code=2; a=1; b=0; on=", 0) == 0 &&
+                  logged[3].find("; skipped=2; t_ms=62000") != std::string::npos,
+              "Post logs world notes and handoff toasts, one (kind, code) per 10 s, nothing without a log");
+        hud::Event drained[16]{};
+        std::uint32_t log_cursor = 0;
+        while (hud::Take(drained, 16, log_cursor) == 16) {
+        }
     }
 
     // ---- World notes 5..12 (travel lock and save handoff, P2-3).
@@ -2942,17 +2998,21 @@ void TestSaveHandoffHud() {
         {6, 10020, 30050, hud::Tone::warn,
          "Your partner cannot join story mission 10020 (no co-op there). Meet in Mother Base, free roam or the helicopter."},
         {7, 30010, 1, hud::Tone::warn,
-         "The host is in Afghanistan free roam, but your save continues elsewhere. Press Continue again within 10 s to play alone."},
+         "The host is in Afghanistan free roam, but your save continues elsewhere. Press Continue again 3 to 10 s later to play alone."},
         {7, 30010, 2, hud::Tone::warn,
-         "Your save is at the story start; the host cannot join it. Press Continue again within 10 s to play it anyway."},
+         "Your save is at the story start; the host cannot join it. Press Continue again 3 to 10 s later to play it anyway."},
         {7, 30010, 3, hud::Tone::warn,
-         "The host's save is copied to you once they are in Mother Base or free roam. Press Continue again within 10 s to play your own "
-         "save."},
+         "The host's save is copied to you once they are in Mother Base or free roam. Stay here; F9 > Partner / Co-op > Shared save > "
+         "Keep my own save plays yours."},
+        {7, 30050, 4, hud::Tone::warn,
+         "The host is in Mother Base; their save is checked there and then copied to you. Stay here; F9 > Partner / "
+         "Co-op > Shared save > Keep my own save plays yours."},
         {8, 30020, 1, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
         {8, 30020, 2, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
         {8, 30020, 3, hud::Tone::info, "Travelling alone. The host leads co-op travel again once you are in the same place."},
         {9, 42, 0, hud::Tone::warn,
-         "Getting the host's save (42%); MGSV restarts on it. Press Continue again within 10 s to keep your own save."},
+         "Getting the host's save (42%); MGSV restarts on it. Stay here; F9 > Partner / Co-op > Shared save > Keep my own save plays "
+         "yours."},
         {10, 0, 0, hud::Tone::info, "Keeping your own save for this session."},
         {11, 10020, 30010, hud::Tone::warn,
          "You are loading story mission 10020; the host is in Afghanistan free roam. Meet in a helicopter, Mother Base or free roam."},
@@ -2977,9 +3037,17 @@ void TestSaveHandoffHud() {
         CheckText(hud::FormatToast(e, v, "Snake_Fan", toast, sizeof(toast), tone), toast, note.sentence, "world_note 5..12 toasts");
         Check(tone == note.tone, "world_note 5..12 tones: travelling alone and keeping the own save are info");
     }
-    for (const std::uint32_t b : {0u, 4u, 255u})
+    for (const std::uint32_t b : {0u, 5u, 255u})
         Check(!text::FormatWorldNote(7, 30010, b, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0,
-              "TITLE_CONTINUE_LOCKED needs b = 1..3");
+              "TITLE_CONTINUE_LOCKED needs b = 1..4");
+    Check(text::FormatWorldNote(7, 4294967295u, 4, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
+              text::FormatWorldNote(7, 30010, 4, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars,
+          "note 7 b=4 fits a toast");
+    // Note 3 b=5 (P7): a sortie into the partner's own mission.
+    CheckText(text::FormatWorldNote(3, 10020, 5, 10020, 40050, sentence, sizeof(sentence)), sentence,
+              "Joining your partner in story mission 10020; co-op travel does not follow in story missions.", "note 3 b=5 into a story mission");
+    CheckText(text::FormatWorldNote(3, 30050, 5, 30050, 40050, sentence, sizeof(sentence)), sentence, "Flying to your partner in Mother Base.",
+              "note 3 b=5 into a co-op scene");
     Check(!text::FormatWorldNote(9, 101, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0 &&
               text::FormatWorldNote(9, 100, 0, 0, 0, sentence, sizeof(sentence)) && std::strstr(sentence, "(100%)"),
           "CONTINUE_DURING_HANDOFF needs a percent 0..100");
@@ -3036,27 +3104,33 @@ void TestSaveHandoffHud() {
         const char* line;
     } lines[] = {
         {2, T::off, 0, 0, 0, "Automatic save sharing is off (Play-Coop -SaveHandoff off)."},
-        {2, T::idle, 0, 0, 0, "Your save matches the host's place; nothing to share."},
+        {2, T::idle, 0, 0, 0, "Comparing your save with the host's; nothing to share yet."},
         {2, T::same, 0, 0, 0, "Your save matches the host's place; nothing to share."},
         {2, T::wait_host, 0, 0, 0, "Waiting for the host to reach Mother Base or free roam; their save is then copied to you."},
+        {2, T::wait_host, 0, 1, 0, "The host's save is ready: go back to the title screen (or quit MGSV and start Play-Coop again) to get it."},
+        {2, T::wait_host, 0, 2, 0, "The host's save is checked in their mission, then copied to you at the title screen."},
         {2, T::receiving, 42, 0, 0, "Receiving the host's save: 42% of 594 KB."},
         {2, T::receiving, 230, 0, 0, "Receiving the host's save: 100% of 594 KB."},
         {2, T::staged, 100, 0, 0, "Host's save received and checked (594 KB)."},
         {2, T::countdown, 100, 0, 7,
          "Host's save ready: MGSV restarts in 7 s. Your current co-op save is kept aside (Share-Save.bat [R])."},
         {2, T::countdown, 100, 0, 0, "Host's save ready: MGSV restarts now. Your current co-op save is kept aside (Share-Save.bat [R])."},
-        {2, T::exiting, 100, 0, 0, "MGSV is closing to load the host's save; Play-Coop starts it again."},
+        {2, T::exiting, 100, 0, 0,
+         "MGSV is closing to load the host's save; Play-Coop starts it again (not back within a minute? Press Play in Steam)."},
         {2, T::kept, 0, 5, 0, "You kept your own save for this session."},
         {2, T::refused, 0, 2, 0, "The host's save cannot be shared: it is still in the story opening."},
         {2, T::failed, 0, 5, 0, "Getting the host's save failed: the connection dropped. Nothing was changed."},
         {2, T::applied, 0, 0, 0, "You now play on the host's save. Share-Save.bat [R] brings your previous co-op save back."},
-        {1, T::idle, 0, 0, 0, "Your save matches your partner's place; nothing to share."},
+        {1, T::idle, 0, 0, 0, "Comparing your save with your partner's; nothing to share yet."},
+        {1, T::same, 0, 0, 0, "Your save matches your partner's place; nothing to share."},
         {1, T::offered, 0, 0, 0, "Offering your save to your partner."},
         {1, T::sending, 7, 0, 0, "Sending your save: 7%"},
         {1, T::partner_staged, 100, 0, 0, "Your partner received your save."},
         {1, T::partner_restarting, 100, 0, 0, "Your partner is restarting on your save."},
         {1, T::kept, 0, 5, 0, "Your partner kept their own save."},
         {1, T::refused, 0, 5, 0, "Your save cannot be shared: it continues into a mission co-op cannot join."},
+        {1, T::refused, 0, 4, 0,
+         "Your save is shared once it is known to continue into Mother Base or free roam: Continue there, or stay there a few seconds."},
         {1, T::failed, 0, 9, 0, "Sending your save failed: no answer in time."},
     };
     char status[hud::kToastChars]{};

@@ -335,6 +335,10 @@ $script:LabPartnerKeys = @(
     # F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board block / back-seat passenger hook (the loader
     # resolves it to passenger with the native gun profile in lab and play, else off; written only when set).
     @{ Key = 'partner_ride_board'; Json = 'ride_board'; Kind = 'enum'; Values = @('off', 'block', 'passenger') },
+    # G4 truck test levers (docs/native-puppet.md "Truck test levers"): the native door-spot receipt behind
+    # debug goto_vehicle truck / goto_partner_vehicle / vehicle_door (lab only: the loader defaults it off in lab and
+    # forces it off in play; written only when set).
+    @{ Key = 'debug_vehicle_door'; Json = 'debug_vehicle_door'; Kind = 'bool' },
     # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
     @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
     # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;
@@ -354,9 +358,20 @@ $script:LabPartnerKeys = @(
     # Gestures (docs/native-puppet.md "Gestures"): the remote's pickup, hand signs and knock on the partner body's upper
     # graph, and this copy's own upper-act edges as their sender (lab only: off unless set, forced off in play).
     @{ Key = 'partner_native_gesture'; Json = 'native_gesture'; Kind = 'bool' },
+    # G1 partner HUD hints (docs/native-puppet.md "Partner HUD hints"): the partner body's HUD hint requests swallowed
+    # inside its drain job (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
+    @{ Key = 'partner_native_ui_filter'; Json = 'native_ui_filter'; Kind = 'bool' },
+    # The gesture lab lever (docs/native-puppet.md "Gestures", "Lab lever: knock and hand signs"): the native debug
+    # command gesture_lever knock|sign_go|sign_stop (this copy's own knock / hand sign through the stock request slots;
+    # lab only: off unless set, forced off in play; written only when set).
+    @{ Key = 'partner_gesture_lever'; Json = 'gesture_lever'; Kind = 'bool' },
     # Horse / D-Walker riders (docs/mounts.md): hide the partner body while the remote's act is a mount act
     # (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_mount'; Json = 'native_mount'; Kind = 'enum'; Values = @('off', 'hide') },
+    # G5 (docs/native-puppet.md "Ride hides"): the other ride hides (heli, a vehicle drawn hidden, a horse rider by kind 3
+    # without the mount key) unrealize the partner body and the net-quality rebase after a ride is logged (lab only: the
+    # loader defaults it off in lab and forces it off in play; written only when set).
+    @{ Key = 'partner_native_unrealize_all'; Json = 'native_unrealize_all'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },
@@ -390,6 +405,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'net_reorder_permille'; Json = 'net_reorder_permille'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_reorder_ms'; Json = 'net_reorder_ms'; Kind = 'int'; Min = 1; Max = 500 },
     @{ Key = 'net_seed'; Json = 'net_seed'; Kind = 'u32'; Min = 1 },
+    # 0.13.6 online-net-epoch: the link-session counter starts at this value (the lab and
+    # the hidden worker's play rehearsal only; play refuses it). Written only when set.
+    @{ Key = 'link_session_skew'; Json = 'link_session_skew'; Kind = 'int'; Min = 0; Max = 999 },
     # Join-fix phase 2 (docs/join-fix-phase2-spec.md P2-11): the save handoff
     # (absent = off; stage only in hidden worker runs) and the guest travel lock
     # (absent = 1 in play, 0 in the lab). Written only when set.
@@ -402,6 +420,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'world_probe'; Json = 'world_probe'; Kind = 'enum'; Values = @('none', 'p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill',
             'remote_area_kill', 'kill_near', 'sleep_near', 'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast',
             'shared_death', 'host_continue', 'shared_checkpoint') },
+    # 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): the host-authoritative
+    # VEHICLE_GONE world op (lab and play, default 0; written only when set).
+    @{ Key = 'world_vehicle_gone'; Json = 'world_vehicle_gone'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

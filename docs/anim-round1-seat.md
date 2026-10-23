@@ -176,6 +176,84 @@ dead still hide.
 The `hide`-mode branch keeps `range_needs_place` only through bits cleared (the existing placement
 needs `!bits_set`); critic 5.4 step 5's "range_needs_place" therefore includes the clear.
 
+### 0.13.6: long rides, a missing vehicle, temporary refusals (online-ride-robust)
+
+The first two-PC session (2026-10-22, diag-other #1, #2, #9) broke the flow above three ways; all
+three are fixed by default (unit tests `TestRideRobust`, `partner_player_tests` ClearDmBits,
+`partner_native_tests` Rebase; the hidden repro is `tools/worker/scenarios/coop-vehicle-longride.txt`).
+
+- **The partner vanished ~340 m into a ride (both copies).** The engine's realize policy
+  `0x121B5E0` tests body 1's **slot** `(*(S+0x20))[1]` against the loaded area, never the body or
+  the record (`0x14121B8B7 shl rdi,4` then `0x14121B8BE add rdi,[r9+0x20]` with R9 = S,
+  `0x14121B8C2` / `0x14121B8CC` the z / x loads, `0x14121B92C call [rax+0x20]` the area test; the
+  25-byte pin from `0x121B8B7` covers the add and the loads). The seated DM moves only
+  the body, so the slot stayed at the boarding spot and the engine unrealized body 1
+  (`partner_bits=cleared; reason=range_rearm`). **Prevention:** while seated, at most once a second
+  (`kSeatSlotFollowMs`), the slot is rewritten with the seated body's position and yaw when it has
+  drifted more than 25 m (`kSeatSlotFollowMm`), so it stays well within 100 m of the vehicle. A slot
+  write does not move the body (findings 2026-10-04, `apply=slot`); `apply=input` already publishes
+  the body there on foot. `partner_ride_seat=slot_follow; vehicle=..; seat=..; drift_mm=..; body_mm=..`
+  is logged once per episode; the exit line counts them (`; follows=N`).
+- **Recovery when body 1 is unrealized anyway.** The exit no longer sends `DM_STOP` to a body that
+  is gone (its DM ended with it; `q18[1]` only still reads 0x8B): `partner_ride_seat=dm;
+  when=exit_gone`, then settle at once (`exit; ...; reason=unrealized; via=gone`). In 0.13.5 the
+  three stops were never consumed: `RequestToStopDirectMotion` (`0x9DB4C0`) sets the global
+  `g+0x388 |= 8`, which only DM End (`0x11992FB`) clears, so `g388=0x08` stayed ~3 min and every
+  re-seat refused `pending`. After an `exit_timeout` or a gone body, settle clears the request bits
+  this episode sent (Play 4 plus the Stop 8 / GoNext 0x10 it issued) through
+  `partner_player::ClearDmBits`: only when request byte 0 == 1 (the last Play named body 1) and
+  Stop / GoNext only while the viewer's own DM is not running
+  (`partner_ride_seat=stale_cleared; ...; bits=0x08; when=settle; reason=exit_timeout`).
+- **Temporary refusals are retried, not latched.** `pending`, `dm_read`, `release` and `host_dm`
+  describe a moment, not the vehicle: the refused episode settles without a block (the re-show flow
+  places and re-realizes body 1) and the next episode may seat it. While the arm waits on a pending
+  request with no DM on either body, a request of ours (request byte 0 == 1) is cleared after
+  `kSeatStopMs` (`stale_cleared; ...; when=arm; reason=pending`); a foreign one or the viewer's own
+  DM is waited out (`kSeatExitMs`). The vehicle exists on this copy there (it may be the jeep the
+  viewer drives, F1), so nothing is Warped. The same (vehicle, seat) refused `kSeatTransientTries`
+  (3) times in a row without a confirmed seat latches as in 0.13.5
+  (`partner_ride_seat=retries; vehicle=..; seat=..; reason=..; tries=3; latch=1`, then
+  `unavailable; ...; block=..` and the hide): a refusal for the whole ride (`dm_read` when the DM
+  read fails, a stuck release) hides once instead of blinking body 1 every 3-4 s. A confirmed seat
+  or a new ride restarts the count.
+- **Fallback (`SeatPhase::fallback`): visible without a seat, only for a missing vehicle.** Where
+  only the id can seat (Mother Base) and the by-id gate says this copy has no such vehicle
+  (`local_read`: it was Fultoned here, the friend's jeep 25603 at 18:04:17) or it is not realized
+  here (`unrealized`), at the episode start or at the id write (that target refusal is not latched
+  there, so the next episode reaches the fallback): body 1 stays realized and owned by the seat flow
+  (native blocked as for a seat), and the reply Warps it to the remote's streamed (seated) pose every
+  tick (the proven per-tick Warp of the input fallback; Warp also writes the slot). No DM is played,
+  no dword armed; no Warp while a DM plays on body 1 nor while the viewer occupies that vehicle id on
+  this copy (it drives it or rides it as a passenger; defensive). Every `kSeatFallbackRetryMs` (2 s)
+  it re-checks the by-id gate (another refusal reason: latched as at the start); once the vehicle
+  exists here the fallback ends at once (`fallback_end; ...; next=release`) and the normal release,
+  arm and play run in the same tick (a DM or a pending request is theirs, never Warped through).
+  Leaving (foot, ride change, range...) settles without a stop (`exit; ...; via=fallback`). The
+  smallest fix for the 0.13.5 symptom "the host vanished for 25 s while driving a jeep the friend
+  had Fultoned"; the vehicle itself is still not world-synced (the proper `VEHICLE_GONE` world op is
+  a separate branch). **Known limit:** the per-tick Warp holds body 1's last standing pose, so the
+  partner floats at the seat height there, standing, until the vehicle exists again or the ride
+  ends (a seated or crouch idle needs a DM clip, which a per-tick Warp ends; a slot-placed variant
+  with a clip is unproven). **Known limit: Mother Base only.** In 30010 / 30020 the seat plays on
+  the authored locator name and the by-id gate's `local_read` / `unrealized` is only logged
+  (`byid; ...; offer=0`); a vehicle Fultoned on the viewer's copy only (Lua's `vehicleName` still
+  resolves the locator) most likely ends in `far` / `unconfirmed` / `lua_refused` and hides the
+  driver as in 0.13.5. The fallback is not used there because `local_read` also stands for any
+  refusal of the by-id read chain, which would trade a working named seat for a standing Warp, and
+  no free-roam log of the case exists; the `VEHICLE_GONE` branch covers it.
+- **Clips after every ride (diag #9).** Settle (and a ride hide ending) sets
+  `Mission::net_quality_rebase`; the next `TickNative` calls `partner_native_net::Rebase` before
+  observing, so the first input frame after the ride only anchors the link-quality window instead
+  of being one 10..85 s arrival gap. `Rebase` keeps the good state and its start (0.13.5 kept them
+  up to that first frame too), so a link that was good before the ride passes the online
+  `net_quality` gate at once and native returns after the 2 s settle alone (driver test: 2.1 s after
+  the settle; 6.1 s without the rebase, as the logs' `net_quality` ~2 s then `good_ms=4004`; 4.1 s
+  if the rebase also restarted the good state). A late first frame (age > 250 ms) or a gap after it
+  still turns the quality bad and the 2 s hold applies again. A leave the link caused is never
+  rebased (`Seat::exit_link`: a seat exit for `lease` / `ride_stale`, kept through an
+  `exit_timeout`; a ride hide whose logged reason was `ride_stale`): the outage stays one gap and
+  the quality hold follows it, as in 0.13.5.
+
 ## Ride visibility fixes (both modes)
 
 - `partner_ride=rx` only on a new state or revision; hide/foot_stable/seat_show/seat_far lines on
@@ -207,6 +285,14 @@ partner_bits=cleared; reason=seat_exit
 partner_ride_seat=refused; vehicle=25600; seat=0; name=-; state=-; reason=lua_refused; manual=0   (+ partner_lua=event=ride_seat_refused; ...; reason=no_name)
 partner_ride=seat_far; vehicle=..; seat=..; err_mm=..; ms=..
 partner_status=local; st=0x400; names=on_vehicle; ride=2; vehicle=25608; seat=0
+partner_ride_seat=slot_follow; vehicle=25608; seat=0; drift_mm=40000; body_mm=..   (0.13.6, once per episode)
+partner_ride_seat=dm; when=exit_gone; ...                                         (0.13.6: no stop to a gone body)
+partner_ride_seat=exit; vehicle=..; seat=..; reason=unrealized; via=gone; ...; follows=N
+partner_ride_seat=stale_cleared; vehicle=..; seat=..; bits=0x08; when=settle|arm; reason=..
+partner_ride_seat=retries; vehicle=..; seat=..; reason=pending|dm_read|release|host_dm; tries=3; latch=1
+partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read|unrealized; show=warp; byid=0
+partner_ride_seat=fallback_end; vehicle=..; seat=..; reason=..; next=release; ms=..; warps=..; byid=1
+partner_ride_seat=exit; vehicle=..; seat=..; reason=foot; via=fallback; ...
 ```
 
 ## Debug levers (`lua/coop/debug_vehicle.lua`, F9 menu / worker `run`)
@@ -270,7 +356,10 @@ span. Constants: `ride_seat_rva`, `ride_cam_play_rva`, `ride_cam_plain_rva`, `ri
 `*_old`/`*_new`, `ride_seat_blocks[]`. Runtime: `partner_ride_seat::VerifyImage` before each
 write. Not called natively: nothing (the module only writes code bytes; Lua calls the retail
 bindings `RequestToPlayDirectMotion`, `RequestToStopDirectMotion`, `RequestToGoNextDirectMotion`,
-`GetGameObjectId`, `SendCommand{GetRiderId}`).
+`GetGameObjectId`, `SendCommand{GetRiderId}`). 0.13.6 adds (read-only pins, nothing patched or
+called): `0x121B8B7` (25, the realize policy's slot loads), `0x121B920` (15, its area call),
+`0x9DB4C0` (10, `RequestToStopDirectMotion`: `g+0x388 |= 8`) and `0x9D8F20` (10,
+`RequestToGoNextDirectMotion`: `g+0x388 |= 0x10`); 747 code sites.
 
 ## Camera agent coordination
 
@@ -285,9 +374,10 @@ no DM in free roam; the dm=map `cam_connect` refusal is unchanged).
   the WS3 seat-by-id path (`partner_ride_seat_id`, default on in lab and play since hidden run
   `abb0b7cf`, docs/vehicle-ws3.md "B1"), which also makes Mother Base (no authored locators)
   seat-capable by id only. They still hide (5.6 option a) when the offer refuses (an older peer
-  without the ride addendum's seat-id feature, another category, an unrealized copy) or with
-  `partner_ride_seat_id=0`. Every seat-mode hide of a live vehicle ride logs
-  `partner_ride_seat=unavailable; ...; reason=..`.
+  without the ride addendum's seat-id feature, another category) or with
+  `partner_ride_seat_id=0`; since 0.13.6 a Mother Base copy that lacks the vehicle (`local_read`)
+  or has it unrealized is shown without a seat instead (the fallback above). Every seat-mode hide
+  of a live vehicle ride logs `partner_ride_seat=unavailable; ...; reason=..`.
 - Horse, D-Walker, heli, APC and tank still hide.
 - The vehicle copy itself is still a SetPosition teleport (no wheels or steering); WS3 "A1"
   (`partner_ride_tilt`, default on in lab and play, docs/vehicle-ws3.md) adds the driver's
@@ -302,7 +392,15 @@ refusal, jump targets, foreign dwords, read-only pages; the retail `.xtext` copy
 `partner_driver_tests` `TestRideSeat` (enter/confirm/hold/exit/re-show, get-off advance and its
 stop fallback, get-in, unconfirmed retries, Lua refusal, dm=map release and the viewer's DM,
 sanity distance, patch refusal, Mother Base, nride=hide, seat change, the manual lever, the v2
-sender and status census), `partner_receipt_tests` (suffix grammar, status names, seat receipt,
+sender and status census) and `TestRideRobust` (0.13.6: no stop to a gone body and the re-seat,
+the stale stop cleared after exit_timeout and a foreign one kept, pending / host_dm retried
+without a latch, a fallback or a Warp (the viewer's own jeep included) and latched on the third
+refusal in a row, ours cleared by the arm, dm_read for a whole ride, the Fultoned jeep's
+local_read / unrealized fallback and its re-seat by id, no Warp while the viewer occupies that
+vehicle, a Mother Base target refusal not latched, the slot follow cadence and threshold, the
+link-quality rebase after a ride, a lease exit and its ride_stale hide kept as one gap while a heli
+hide's end rebases, native back within the settle against a control),
+`partner_player_tests` (ClearDmBits on synthetic memory), `partner_receipt_tests` (suffix grammar, status names, seat receipt,
 refusal note, RIDE_SEAT replies), `partner_equip_wire_tests` (v2 codec and store, seated
 visibility, air hold, act 97), `lab_config_tests`, `partner_native_tests`,
 `partner_sync_lua_check` (RIDE_SEAT handler, name map cache, refusals, GoNext; sender suffix and

@@ -111,12 +111,16 @@ int main(int argc, char** argv) {
                     "net_dup_permille=%u\nnet_reorder_permille=%u\nnet_reorder_ms=%u\nnet_seed=%u\n",
                     c.net_latency_ms, c.net_jitter_ms, c.net_loss_permille, mgscoop::NetLossModelName(c.net_loss_model), c.net_burst,
                     c.net_dup_permille, c.net_reorder_permille, c.net_reorder_ms, c.net_seed);
+        // 0.13.6 online-net-epoch: the link-session skew (an impairment too: play forces 0).
+        std::printf("link_session_skew=%u\n", c.link_session_skew);
         std::printf("partner=%d\npartner_interp=%s\npartner_interp_ms=%u\npartner_interp_min_ms=%u\npartner_interp_max_ms=%u\n"
                     "partner_lost=%s\nlink_keys=1\n",
                     c.partner ? 1 : 0, mgscoop::PartnerInterpName(c.partner_interp), c.partner_interp_ms, c.partner_interp_min_ms,
                     c.partner_interp_max_ms, mgscoop::PartnerLostName(c.partner_lost));
         // World sync keys (docs/world-sync-protocol.md), after link_keys=1.
         std::printf("world=%u\nworld_probe=%s\n", c.world, mgscoop::WorldProbeName(c.world_probe));
+        // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op key (lab and play, default 0).
+        std::printf("world_vehicle_gone=%d\n", c.world_vehicle_gone ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),
@@ -166,9 +170,20 @@ int main(int argc, char** argv) {
         // Gestures (on with the gun profile, lab and play) and whether the key was named.
         std::printf("partner_native_gesture=%d\npartner_native_gesture_given=%d\n", c.partner_native_gesture ? 1 : 0,
                     c.partner_native_gesture_given ? 1 : 0);
+        // G1 partner HUD hints (lab only, default 0) and whether the key was named.
+        std::printf("partner_native_ui_filter=%d\npartner_native_ui_filter_given=%d\n", c.partner_native_ui_filter ? 1 : 0,
+                    c.partner_native_ui_filter_given ? 1 : 0);
+        // The gesture lab lever (lab only, default 0; play forces it off) and whether it was named.
+        std::printf("partner_gesture_lever=%d\npartner_gesture_lever_given=%d\n", c.partner_gesture_lever ? 1 : 0,
+                    c.partner_gesture_lever_given ? 1 : 0);
         // Horse / D-Walker riders (hide with the gun profile in lab; play forces off) and whether it was named.
         std::printf("partner_native_mount=%s\npartner_native_mount_given=%d\n", mgscoop::PartnerNativeMountName(c.partner_native_mount),
                     c.partner_native_mount_given ? 1 : 0);
+        // G4 truck test levers (lab only, default 0; play forces it off) and whether the key was named.
+        std::printf("debug_vehicle_door=%d\ndebug_vehicle_door_given=%d\n", c.debug_vehicle_door ? 1 : 0, c.debug_vehicle_door_given ? 1 : 0);
+        // G5: the other ride hides unrealize body 1 (lab only, default 0; play forces off) and whether it was named.
+        std::printf("partner_native_unrealize_all=%d\npartner_native_unrealize_all_given=%d\n", c.partner_native_unrealize_all ? 1 : 0,
+                    c.partner_native_unrealize_all_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

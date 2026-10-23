@@ -1,0 +1,83 @@
+# 0.13.6 online-body-safety (docs/native-puppet.md "Body safety", the 2026-10-22 session diag-other #6): the carry
+# put-down at a Mother Base platform edge dropped the carried partner body 79 m on the carrier's copy.
+# The session (host carries the sleeping friend): at the put-down (body act 44) the body moved 4 m sideways and fell
+# (H:8992-9068 body y 1189 -> -2196 -> -11269 -> -79200) while the friend's own pose stayed on the deck (y 350); the
+# stock carry hold (body 42..44) kept every correction off (the logged far_prone snaps were never executed: the
+# partner_recon=carry_hold lines were lost to the frozen-family log cap H:7337), back only ~3 s later at act 132.
+# The fix: the put-down guard (remote carried/asleep, body released 44/131/132/25/26, body > 2 m below the target)
+# Warps body 1 to the target, pins it there every tick and ends when it holds.
+# Run (hidden worker, coordinator only, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/body-safety-putdown-edge.txt
+#     -PartnerProfile native -NativeStage gun -SaveSeed real -Mode play -WanSim bad
+# Flow: coop-carry-sleep.txt (friendly dart, carry, put-down, wake) at the session's edge: the host carries the
+# sleeping guest to (207.1, 1.2, 374.5) facing -x (yaw -90, the sea side) and puts it down there.
+#
+# Expect (host, the carrier):
+#   partner_recon=carry_hold; on=1 (the rotating cap keeps it now) ... the put-down: partner_act; ...; body=44(carried_putdown)
+#   if the body leaves the deck: partner_body_safety=putdown; step=start; body_act=44; remote_act=43|44|132; dy_mm=>2000;
+#   ...; next=place -> optional step=place lines (at most 4) -> step=end; reason=held (body within 0.5 m of the target)
+#   partner_body lines: body y never below about -2.5 m and back on the deck within ~1 s (the session: -79 m for 3 s)
+#   no downed_damage=intercept;cause=replica storm (the session's replica fall damage H:9043-9047)
+#   frames putdown-NN: the guest's body lying on the deck next to the host, never below it
+# Expect (guest): its own sleep/carry flow unchanged (coop_carry_bodies b0=1,a2b while carried; downed_status asleep).
+# Result (0.13.6 runtime phase, wp/integ10 32ac240, play -WanSim bad, real seed): run 4078bbe7 passed every step. At the
+# put-down the host logged partner_body_safety=putdown; step=start; body_act=44; remote_act=44; dy_mm=2090;
+# err_xz_mm=1187; carry_hold=1 -> step=end; reason=held; ms=534; places=1; pins=31. Body 1 never left the deck here
+# (partner_body y 0.80 throughout; the railing kept the stock put-down on the deck): the episode was opened by the
+# remote's own still-raised carried pose (its act 44 began 250 ms after body 1's), and the place / pins did not move
+# body 1 (no pop in the frames). Frames putdown-01..10 / putdown-after: the guest's body lying on the deck at the
+# railing next to the host. The session's push off the deck (79 m) did not reproduce, so the guard's rescue is unproven.
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+# The walkway here runs along z at about x 206..210 (the friend's on-deck poses of the session); a guest facing -x
+# would put the host 6 m behind it at x 213.6, off the walkway ((205.0, 0.9, 403.0) of the first ledge / sea files was
+# open water, run e9e5301b). So the guest faces +z (yaw 0 = +z) and the host darts it from 6 m south on the walkway; the
+# carry then walks to the session's put-down spot facing the sea side (-x) as before.
+host debug teleport 208.0 1.2 368.5 0
+guest debug teleport 208.0 1.2 374.5 0
+wait 3000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+both capture putdown-before
+host press 2 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 400
+guest run downed_status
+guest require down=1.*cause=2.*lock=1.*state=asleep
+wait 6500
+host debug goto_carry
+wait 1500
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require b1=1,a2b
+host debug teleport 208.4 1.2 374.5 -90
+wait 2500
+host run position
+both capture putdown-carried
+host hold r 900
+host burst putdown 10 200
+host release
+wait 3000
+host run coop_carry_bodies
+guest run coop_carry_bodies
+waitlog host 'partner_act; .*edge=body; remote=[0-9]+\([a-z_]+\); body=44\(carried_putdown\)' 10
+wait 3000
+both capture putdown-after
+host run position
+guest run position
+guest run downed_status
+state

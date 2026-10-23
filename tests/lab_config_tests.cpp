@@ -183,6 +183,38 @@ int main() {
                   std::strcmp(mgscoop::PartnerRideBoardName(PartnerRideBoard::passenger), "passenger") == 0,
               "board names");
     }
+    // G4 truck test levers (debug_vehicle_door, docs/native-puppet.md "Truck test levers"): off in lab and play unless
+    // named (with or without the gun profile); a named 1 runs in the lab only (play forces it off without a refusal
+    // bit); a named value records _given.
+    {
+        Check(!LabConfig{}.debug_vehicle_door && !LabConfig{}.debug_vehicle_door_given && !Lab("").debug_vehicle_door,
+              "the door key defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool lab = std::strcmp(mode, "mode=lab\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.debug_vehicle_door && !profile.debug_vehicle_door_given && profile.invalid_values == 0,
+                  "the gun profile leaves the door key off in lab and play");
+            const auto named = Lab(gun + mode + "debug_vehicle_door=1\n");
+            Check(named.debug_vehicle_door == lab && named.debug_vehicle_door_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named door key runs in the lab; play forces it off");
+            const auto off = Lab(gun + mode + "debug_vehicle_door=0\n");
+            Check(!off.debug_vehicle_door && off.debug_vehicle_door_given, "a named 0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\ndebug_vehicle_door=1\n");
+        Check(alone.debug_vehicle_door && alone.debug_vehicle_door_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "debug_vehicle_door=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\ndebug_vehicle_door=1\ndebug_vehicle_door=0\n");
+        Check(!later.debug_vehicle_door, "a later 0 turns the door key off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\ndebug_vehicle_door=") + value + "\n");
+            Check(!invalid.debug_vehicle_door && !invalid.debug_vehicle_door_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid door value refuses");
+        }
+    }
     // F2 cardboard box on body 1 (partner_native_cbox, docs/native-puppet.md "Cardboard box"): on with the native gun
     // profile in lab and play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link
     // v2 connected), off without it; a named 1 runs in either mode, a named 0 opts out; a named value records _given.
@@ -246,6 +278,70 @@ int main() {
                   "an invalid gesture value refuses");
         }
     }
+    // G1 partner HUD hints (partner_native_ui_filter, docs/native-puppet.md "Partner HUD hints"): default 0 in lab and
+    // play, also with the native gun profile (no hidden-worker FRAME yet); a named 1 runs in lab only (play forces it
+    // off, not a play refusal); a named value records _given; independent of the traversal and gesture keys.
+    {
+        Check(!LabConfig{}.partner_native_ui_filter && !LabConfig{}.partner_native_ui_filter_given && !Lab("").partner_native_ui_filter,
+              "ui filter key defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_native_ui_filter && !profile.partner_native_ui_filter_given && profile.invalid_values == 0 &&
+                      profile.partner_native_traverse,
+                  "the gun profile leaves the ui filter off in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_ui_filter=1\n");
+            Check(named.partner_native_ui_filter == !play && named.partner_native_ui_filter_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0 && named.partner_native_traverse == profile.partner_native_traverse &&
+                      named.partner_native_gesture == profile.partner_native_gesture,
+                  "a named ui_filter=1 runs in lab, play forces it off (no refusal)");
+            const auto off = Lab(gun + mode + "partner_native_ui_filter=0\n");
+            Check(!off.partner_native_ui_filter && off.partner_native_ui_filter_given, "a named ui_filter=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_ui_filter=1\n");
+        Check(alone.partner_native_ui_filter && alone.partner_native_ui_filter_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_native_ui_filter=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_ui_filter=1\npartner_native_ui_filter=0\n");
+        Check(!later.partner_native_ui_filter, "a later 0 turns the ui filter off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_ui_filter=") + value + "\n");
+            Check(!invalid.partner_native_ui_filter && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid ui filter value refuses");
+        }
+    }
+    // The gesture lab lever (partner_gesture_lever, docs/native-puppet.md "Gestures", "Lab lever: knock and hand
+    // signs"): default 0 in lab and play with or without the gun profile; a named 1 runs only in lab, play forces it
+    // off (no refusal bit, like the WS4 v2 mirror); a named value records _given; independent of the gesture key.
+    {
+        Check(!LabConfig{}.partner_gesture_lever && !LabConfig{}.partner_gesture_lever_given && !Lab("").partner_gesture_lever,
+              "the lever defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_gesture_lever && !profile.partner_gesture_lever_given && profile.partner_native_gesture,
+                  "the gun profile leaves the lever off in lab and play");
+            const auto named = Lab(gun + mode + "partner_gesture_lever=1\n");
+            Check(named.partner_gesture_lever == !play && named.partner_gesture_lever_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0 && named.partner_native_gesture && !named.partner_native_gesture_given,
+                  "a named lever=1 runs in lab only (play forces it off) and leaves the gesture default");
+            const auto off = Lab(gun + mode + "partner_gesture_lever=0\n");
+            Check(!off.partner_gesture_lever && off.partner_gesture_lever_given && off.partner_native_gesture, "a named lever=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_gesture_lever=1\n");
+        Check(alone.partner_gesture_lever && alone.partner_gesture_lever_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_gesture_lever=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_gesture_lever=1\npartner_gesture_lever=0\n");
+        Check(!later.partner_gesture_lever, "a later 0 turns the lever off");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_gesture_lever=") + value + "\n");
+            Check(!invalid.partner_gesture_lever && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid lever value refuses");
+        }
+    }
     // Horse / D-Walker riders (partner_native_mount=off|hide, docs/mounts.md): hide with the native gun profile in lab
     // and play (hidden runs bfd6fcc4 / 2ab88411 lab, play rehearsal 5a044a4d: no partner body while the partner rode), off
     // without it; a named off opts out in either mode; a named value records _given.
@@ -282,6 +378,41 @@ int main() {
         Check(std::strcmp(PartnerNativeMountName(PartnerNativeMount::hide), "hide") == 0 &&
                   std::strcmp(PartnerNativeMountName(PartnerNativeMount::off), "off") == 0,
               "mount names");
+    }
+    // G5 (partner_native_unrealize_all, docs/native-puppet.md "Ride hides"): default 0 in lab and play, also with the
+    // native gun profile (no hidden-worker FRAME of the heli / vehicle-fallback / horse kind-3 unrealize yet); a named 1
+    // runs in lab only, play forces it off; a named value records _given.
+    {
+        Check(!LabConfig{}.partner_native_unrealize_all && !LabConfig{}.partner_native_unrealize_all_given &&
+                  !Lab("").partner_native_unrealize_all,
+              "unrealize_all defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_native_unrealize_all && !profile.partner_native_unrealize_all_given && profile.invalid_values == 0,
+                  "the gun profile leaves unrealize_all off in lab and play");
+            const auto named = Lab(gun + mode + "partner_native_unrealize_all=1\n");
+            Check(named.partner_native_unrealize_all == !play && named.partner_native_unrealize_all_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named unrealize_all=1 runs in lab; play forces it off");
+            Check(named.partner_native_mount == PartnerNativeMount::hide, "unrealize_all leaves the mount hide default alone");
+            const auto off = Lab(gun + mode + "partner_native_unrealize_all=0\n");
+            Check(!off.partner_native_unrealize_all && off.partner_native_unrealize_all_given, "a named unrealize_all=0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_native_unrealize_all=1\n");
+        Check(alone.partner_native_unrealize_all && alone.partner_native_unrealize_all_given && alone.invalid_values == 0 &&
+                  alone.unknown_keys == 0,
+              "partner_native_unrealize_all=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_native_unrealize_all=1\npartner_native_unrealize_all=0\n");
+        Check(!later.partner_native_unrealize_all, "a later 0 turns unrealize_all off");
+        for (const char* value : {"2", "-1", "", "maybe", "hide"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_native_unrealize_all=") + value + "\n");
+            Check(!invalid.partner_native_unrealize_all && !invalid.partner_native_unrealize_all_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid unrealize_all value refuses");
+        }
     }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
@@ -760,6 +891,8 @@ int main() {
         {"net_jitter_ms=5\n", kPlayRefusedImpairment},
         {"net_dup_permille=5\n", kPlayRefusedImpairment},
         {"net_reorder_permille=5\n", kPlayRefusedImpairment},
+        // 0.13.6 online-net-epoch: the link-session skew (reproduction knob) is never a friend's play key.
+        {"link_session_skew=2\n", kPlayRefusedImpairment},
         {"debug_soldier_warp=1\n", kPlayRefusedDebugSoldierWarp},
     };
     for (const auto& r : refusals) {
@@ -770,8 +903,19 @@ int main() {
               c.xinput == kXInputPassthrough && !c.join_trigger && c.auto_join_delay_s == 0 && !c.net_bind_loopback &&
               c.net_link == NetLink::v2 && c.net_latency_ms == 0 && c.net_loss_permille == 0 && c.net_jitter_ms == 0 &&
               c.net_dup_permille == 0 && c.net_reorder_permille == 0 && c.net_peer_address == 0x7F000001u && c.net &&
-              !c.debug_soldier_warp,
+              !c.debug_soldier_warp && c.link_session_skew == 0,
               "refused keys forced off");
+    }
+    {
+        // The lab keeps the skew (0..999, as the worker allow-lists); a value out of range is invalid and stays 0.
+        const auto lab = Lab("enabled=1\nlink_session_skew=2\n");
+        Check(lab.link_session_skew == 2 && lab.invalid_values == 0 && lab.play_refused == 0, "lab: link_session_skew=2");
+        const auto top = Lab("enabled=1\nlink_session_skew=999\n");
+        Check(top.link_session_skew == 999 && top.invalid_values == 0, "lab: link_session_skew=999 (the allow-list maximum)");
+        const auto big = Lab("enabled=1\nlink_session_skew=1000\n");
+        Check(big.link_session_skew == 0 && big.invalid_values == 1, "lab: link_session_skew above 999 refused");
+        const auto none = Lab("enabled=1\n");
+        Check(none.link_session_skew == 0, "link_session_skew defaults to 0");
     }
     const auto noSaves = Lab("enabled=1\nmode=play\nrole=host\nnet=1\n");
     Check(noSaves.play_refused == kPlayRefusedNoSaveDir && noSaves.invalid_values == 1 && noSaves.present, "play without save_dir");
@@ -1223,6 +1367,20 @@ int main() {
                   vehiclePlayOff.mode == mgscoop::LabMode::play && !vehiclePlayOff.partner_ride_tilt &&
                   !vehiclePlayOff.partner_ride_seat_id && vehiclePlayOff.invalid_values == 0 && vehiclePlayOff.play_refused == 0,
               "play: seat id and tilt on by default, an explicit 0 keeps each off");
+        // 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): world_vehicle_gone is off by default in
+        // every profile, parses in lab and play (no play refusal), and an invalid value keeps it off.
+        {
+            const auto vgPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_gone=1\n");
+            const auto vgLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_vehicle_gone=1\n");
+            const auto vgBad = Lab("enabled=1\nrole=host\nworld_vehicle_gone=2\n");
+            Check(!def.world_vehicle_gone && !vehicleGun.world_vehicle_gone && !vehiclePlayDefault.world_vehicle_gone,
+                  "world_vehicle_gone defaults off (lab, gun profile, play)");
+            Check(vgLab.world_vehicle_gone && vgLab.invalid_values == 0 && vgLab.unknown_keys == 0, "world_vehicle_gone=1 parses in lab");
+            Check(vgPlay.mode == mgscoop::LabMode::play && vgPlay.world_vehicle_gone && vgPlay.play_refused == 0 && vgPlay.invalid_values == 0,
+                  "world_vehicle_gone=1 parses in play with no refusal bit");
+            Check(!vgBad.world_vehicle_gone && vgBad.invalid_values == 1 && vgBad.unknown_keys == 0, "an invalid world_vehicle_gone keeps it off");
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {
@@ -1440,6 +1598,17 @@ int main() {
               workerView.net_peer_port == 47830 && std::strcmp(workerView.mutex_suffix, "worker_guest_0123abcd") == 0 &&
               workerView.xinput == kXInputNone && workerView.net_latency_ms == 40 && workerView.partner_drive == PartnerDrive::native,
               "the worker build relaxes exactly loopback, mutex, xinput=none and impairment");
+        {
+            // 0.13.6: the link-session skew is a rehearsal impairment (worker build only).
+            const std::string skewed = rehearsal + "link_session_skew=2\n";
+            LabConfig skewWorker{}, skewFriend{};
+            Check(ParseLabConfig(skewed.data(), skewed.size(), skewWorker, options) && skewWorker.play_refused == 0 &&
+                      skewWorker.invalid_values == 0 && skewWorker.link_session_skew == 2,
+                  "the worker's play rehearsal keeps link_session_skew");
+            Check(ParseLabConfig(skewed.data(), skewed.size(), skewFriend) && skewFriend.link_session_skew == 0 &&
+                      (skewFriend.play_refused & kPlayRefusedImpairment),
+                  "a friend's play refuses link_session_skew");
+        }
         const std::string identity =
             rehearsal + "loopback=1\nlisten_port=47810\npeer_port=47811\nself_steamid=76561202255233008\nxinput=0\njoin_trigger=1\n";
         LabConfig stillRefused{};

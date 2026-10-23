@@ -551,6 +551,16 @@ struct LabConfig {
     // partner_native_ride hides.
     PartnerNativeMount partner_native_mount = PartnerNativeMount::off;
     bool partner_native_mount_given = false;
+    // G5 (docs/native-puppet.md "Ride hides"): the other ride hides (the heli acts
+    // 97..108 or a heli ride, a vehicle ride drawn hidden: partner_native_ride=hide
+    // or a refused / unavailable seat, a horse rider by its ride kind 3 when
+    // partner_native_mount is off) unrealize body 1 through Lua's all-active mode
+    // like the mount hide, and logs the link-quality rebase after a ride
+    // (partner_ride=net_rebased; the rebase itself is always on). Default 0 in lab
+    // and play until a hidden-worker FRAME proves it; a named value records _given
+    // and is lab only (play forces it off). Acts only where partner_native_ride hides.
+    bool partner_native_unrealize_all = false;
+    bool partner_native_unrealize_all_given = false;
     // WS3 vehicles (docs/vehicle-ws3.md). partner_ride_census: the read-only
     // vehicle unit/body census lines, lab only (play forces it off), default
     // off. partner_ride_seat_id: the remote driver seated in an unnamed vehicle
@@ -567,6 +577,12 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
+    // G4 truck test levers (vehicle_door, docs/native-puppet.md "Truck test levers"): the native
+    // door-spot receipt behind debug goto_vehicle truck / goto_partner_vehicle / vehicle_door
+    // (three read-only game calls under SEH). Default 0 in lab and play with a _given flag; play
+    // forces it off; the receipt also refuses outside mode=lab with offline and redirected saves.
+    bool debug_vehicle_door = false;
+    bool debug_vehicle_door_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
@@ -604,6 +620,25 @@ struct LabConfig {
     // player unchanged); a named 0 opts out.
     bool partner_native_gesture = false;
     bool partner_native_gesture_given = false;
+    // G1 partner HUD hints (partner_ui_filter, docs/native-puppet.md "Partner HUD
+    // hints"): body 1's HUD hint requests (the UiControllerImpl hint queues
+    // vt+0x240..+0x260 its ladder / climb / pipe / hang states post every frame,
+    // e.g. the "C + ladder" slide hint) are swallowed inside its own drain job, so
+    // they never show beside the viewer's player; the viewer's own hints pass.
+    // Default 0 in lab and play: a named 1 is lab only (play forces it off) until
+    // a hidden-worker FRAME shows the viewer's HUD clean while body 1 climbs.
+    bool partner_native_ui_filter = false;
+    bool partner_native_ui_filter_given = false;
+    // The gesture lab lever (partner_gesture_lever, docs/native-puppet.md
+    // "Gestures", "Lab lever: knock and hand signs"): the native debug command
+    // "gesture_lever knock|sign_go|sign_stop" makes this copy's OWN player knock
+    // or sign through the stock KnockActionPluginImpl request slots the call
+    // menu uses (vt+0x28 / +0x30 / +0x38), so a hidden run can film the peer's
+    // body 1 replaying the edge. Lab only: default 0, play forces it off; a
+    // named value records partner_gesture_lever_given. Never on by default
+    // until a hidden-run FRAME proves the replay.
+    bool partner_gesture_lever = false;
+    bool partner_gesture_lever_given = false;
     bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute
@@ -620,6 +655,13 @@ struct LabConfig {
     std::uint32_t net_bind_address = 0x7F000001;    // host byte order; 0 = any
     std::uint32_t net_peer_address = 0x7F000001;    // host byte order (net_peer_addr, dotted IPv4)
     std::uint32_t net_jitter_ms = 0, net_dup_permille = 0, net_reorder_permille = 0, net_reorder_ms = 40;
+    // link_session_skew=<0..999> (0.13.6 online-net-epoch; a lab / hidden-worker
+    // reproduction knob): this copy's link-session counter starts at the value,
+    // so its first committed session is skew+1 while a fresh peer's is 1 (the
+    // counters of the 0.13.5 online session after a guest relaunch). An
+    // impairment key: the lab and the worker's play rehearsal only; play
+    // forces 0 (kPlayRefusedImpairment).
+    std::uint32_t link_session_skew = 0;
     NetLossModel net_loss_model = NetLossModel::even;
     std::uint32_t net_burst = 2, net_seed = 1;
     PartnerInterp partner_interp = PartnerInterp::fixed;
@@ -630,6 +672,11 @@ struct LabConfig {
     // only (play forces none and sets kPlayRefusedWorldProbe).
     std::uint32_t world = 0;
     WorldProbe world_probe = WorldProbe::none;
+    // world_vehicle_gone=0|1 (0.13.6 online-vehicle-gone, docs/world-sync-protocol.md
+    // section 16): the host-authoritative VEHICLE_GONE world op for Fultoned and
+    // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
+    // default off until hidden-run frames prove the receiver's Despawn.
+    bool world_vehicle_gone = false;
     // Automatic save handoff and the guest travel lock (P2-11): save_handoff
     // absent = off; travel_lock 0|1, kTravelLockAbsent when not named (the
     // effective value is then 1 in play and 0 in lab).

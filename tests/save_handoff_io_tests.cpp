@@ -202,6 +202,45 @@ void Hashing(const io::Dirs& dirs, const Fixture& fixture) {
           "slot 0 alone is enough");
     fs::rename(s1.wstring() + L".away", s1);
     Check(io::HashSetNow(dirs, cache, info) && info.ok && SameSha(info.set, fixture.set), "the full set again");
+
+    // Online 2026-10-22 P1: a co-op copy seeded from an old Steam save has only
+    // remote\TPP_GAME_DATA and PERSONAL_DATA. For the guest (remote_primary)
+    // that is its own set; the host still needs slot 0 or 1.
+    for (unsigned s = 0; s < 4; ++s) {
+        const fs::path slot = fs::path(dirs.save) / kSlotFiles[s];
+        fs::rename(slot, slot.wstring() + L".away");
+    }
+    io::HashJob job_host{};
+    io::HashBegin(job_host);
+    while (!io::HashStep(dirs, job_host, cache, info)) {
+    }
+    Check(!info.ok && info.n == 2 && std::strcmp(io::SetProblem(job_host, info), "no_primary") == 0,
+          "remote files only: no set for the host (no_primary)");
+    io::HashJob job_guest{};
+    io::HashBegin(job_guest);
+    while (!io::HashStep(dirs, job_guest, cache, info, true)) {
+    }
+    Check(info.ok && info.stable && info.n == 2 && info.files[0].slot == 4 && info.files[1].slot == 5 && !io::SetProblem(job_guest, info),
+          "remote files only: the guest's own set (slots 4 and 5)");
+    std::uint8_t remote_set[32]{};
+    wire::FileEntry remote_files[2] = {info.files[0], info.files[1]};
+    Check(wire::SetSha256(remote_files, 2, remote_set) && SameSha(info.set, remote_set), "the remote-only set hash is the P2-6 set of slots 4 and 5");
+    const fs::path s4 = fs::path(dirs.save) / kSlotFiles[4];
+    fs::rename(s4, s4.wstring() + L".away");
+    Check(io::HashSetNow(dirs, cache, info, true) && !info.ok && info.n == 1, "PERSONAL_DATA alone is no set, not even for the guest");
+    fs::rename(s4.wstring() + L".away", s4);
+    WriteFileBytes(fs::path(dirs.save) / kSlotFiles[4], {});
+    io::HashJob job_empty{};
+    io::HashBegin(job_empty);
+    while (!io::HashStep(dirs, job_empty, cache, info, true)) {
+    }
+    Check(!info.ok && std::strcmp(io::SetProblem(job_empty, info), "read") == 0, "an empty remote slot: read");
+    WriteFileBytes(fs::path(dirs.save) / kSlotFiles[4], fixture.files[4]);
+    for (unsigned s = 0; s < 4; ++s) {
+        const fs::path slot = fs::path(dirs.save) / kSlotFiles[s];
+        fs::rename(slot.wstring() + L".away", slot);
+    }
+    Check(io::HashSetNow(dirs, cache, info, true) && info.ok && SameSha(info.set, fixture.set), "the full set again (guest rule)");
 }
 
 // ---------------------------------------------------------------- snapshot
@@ -728,6 +767,47 @@ void FixtureSet() {
     wire::FormatShaHex(info.set, hex);
     Check(expected == hex, "the glue's set hash equals tests/fixtures/handoff-set.json set_sha256");
 }
+
+// Online 2026-10-22 P1/P8 through the module: a guest whose co-op copy has
+// remote files only hashes them as its set and logs "save_handoff=set; ok=1;
+// ...; local=0" once; the host logs "ok=0; why=no_primary" once.
+void RemoteOnlyGlue() {
+    const fs::path saves = g_root / "remote-only-saves";
+    WriteFileBytes(saves / kSlotFiles[4], Pattern(5000, 11));
+    WriteFileBytes(saves / kSlotFiles[5], Pattern(3000, 12));
+    fs::create_directories(saves / "287700" / "local");
+    WriteFileBytes(saves / "287700\\local\\TPP_GRAPHICS_CONFIG", Pattern(256, 13));
+    mgscoop::lab::save::reset_for_test();
+    mgscoop::lab::save::configure(saves.string().c_str());
+    const std::string save_dir = saves.string();
+    for (const std::uint8_t role : {std::uint8_t{2}, std::uint8_t{1}}) {
+        module::ResetForTest();
+        g_line_count = 0;
+        module::Config c{};
+        c.role = role;
+        c.mode = mgscoop::SaveHandoff::scene;
+        c.play = c.net = c.link_v2 = c.saves_redirected = c.world_on = c.travel_lock = true;
+        c.save_dir = save_dir.c_str();
+        c.log = &Capture;
+        Check(module::Configure(c), "remote-only: configured");
+        // A fresh title report (story opening), then hook ticks: one file per tick.
+        for (int tick = 0; tick < 12; ++tick) {
+            if (tick % 4 == 0) Lua("1 40010 1 1 0 0");
+            module::Hooks()->on_idle(mgscoop::partner_net::NowMs());
+        }
+        bool remote_line = false;
+        for (unsigned i = 0; i < g_line_count; ++i)
+            remote_line = remote_line || (std::strncmp(g_lines[i], "save_handoff=set; ok=1; set=", 28) == 0 &&
+                                          std::strstr(g_lines[i], "; files=2; local=0; t_ms=") != nullptr);
+        if (role == 2)
+            Check(remote_line && CountLines("save_handoff=set;") == 1, "remote-only guest: its own set, logged once");
+        else
+            Check(CountLines("save_handoff=set; ok=0; why=no_primary; files=2") == 1 && CountLines("save_handoff=set;") == 1,
+                  "remote-only host: no set (no_primary), logged once");
+    }
+    module::ResetForTest();
+    mgscoop::lab::save::reset_for_test();
+}
 }  // namespace
 
 int main() {
@@ -753,6 +833,7 @@ int main() {
     ModuleGates(dirs);
     ExitSlow(dirs);
     FixtureSet();
+    RemoteOnlyGlue();
     mgscoop::lab::save::reset_for_test();
     // Only this test's own temporary tree.
     std::error_code ignored;

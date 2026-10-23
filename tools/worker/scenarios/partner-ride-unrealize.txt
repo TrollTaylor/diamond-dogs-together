@@ -1,0 +1,124 @@
+# G5 ride hides (docs/native-puppet.md "Ride hides"; key partner_native_unrealize_all, lab only, default 0): the horse
+# rider by its ride kind 3 (partner_native_mount off) and a vehicle drawn hidden (partner_native_ride=hide) unrealize the
+# partner body through Lua's all-active mode, as the mount hide does, and log the link-quality rebase after the ride
+# (partner_ride=net_rebased; the rebase itself is online-ride-robust's, always on). Before G5 both cleared only the
+# realize bits: the body stood frozen at the get-on spot while Lua's all-active mode kept instance 1 realized (filmed
+# for the horse kind-3 hide in 251abcef, partner-mount.txt).
+# Run (hidden worker, coordinator only, one session at a time, no builds running anywhere):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-ride-unrealize.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+# Only the guest (the viewer) names the key; the host stays at its defaults. The guest also runs
+# partner_native_net=online so the lab run exercises the online re-entry gate (net_quality) the exclusion is about.
+#
+# Expected (guest script-observer.log):
+#   partner_ride=unrealize_configured; ride=hide; mount=off; heli_acts=97..108; net_rebased_line=1 (once per mission)
+# Part 1, the host rides its D-Horse, the guest watches:
+#   partner_ride=rx; kind=3 ...  partner_ride=hide; reason=ride; act=..
+#   partner_ride=unrealize_begin; ride=horse; act=..; kind=3; seat=-; vehicle=65535; ride_live=1; episode=1
+#   partner_ride=unrealize; ride=horse; act=..; kind=3; episode=1; op=clear_allactive, partner_lua=event=allactive_cleared
+#   (the probe reads pool=00,ff and rbits=0x1 while hidden); no partner_mount= line (the mount key is off)
+#   after the dismount: partner_ride=unrealize_end; ride=horse; act=..; ms=..; kind=0; cleared=1; shown=0; episode=1,
+#   partner_ride=foot_stable; next=place, partner_lua=event=allactive_set, partner_realized=1, then
+#   partner_ride=net_rebased; skipped_ms=<about the ride>; good=1; good_ms=<more than skipped_ms>; max_gap=<well under the ride>
+#   and NO partner_native_net; ...; reason=net_quality after the ride (0.13.5 play runs fbde3dcc / 5a044a4d logged it
+#   with max_gap about the ride length after every hidden mount).
+#   Frames: horse-before (the host standing), horse-mounting / horse-riding / horse-ride (NO partner body anywhere, in
+#   particular none standing at the get-on spot), horse-off (the body back at the dismount spot).
+# Part 2, the host drives a Wakh Sind jeep, the guest watches (the guest's partner_native_ride=hide draws every vehicle
+# ride hidden: the same hide state as the seat fallback):
+#   partner_ride=hide; reason=ride; act=..; partner_ride=unrealize_begin; ride=vehicle; act=..; kind=2; seat=ride_hide;
+#   vehicle=256xx; ride_live=1; episode=2, partner_ride=unrealize; ride=vehicle; ...; episode=2; op=clear_allactive,
+#   allactive_cleared; after the host gets out: unrealize_end; ride=vehicle; ...; cleared=1, foot_stable, allactive_set,
+#   partner_realized=1, net_rebased.
+#   Frames: jeep-before (the host beside the jeep), jeep-entering / jeep-drive (no partner body at the get-on spot or in
+#   the driver seat), jeep-getin-spot (the empty get-on spot after the jeep left), jeep-exited (the body back).
+# Viewer safety (both parts): the guest's own act stays 1 in every capture and its partner_status=local stays st=0x0;
+# no viewer_changed, uncertain=1, fault or crash_probe=av line.
+# Never: a guest partner_status=local line with ON_HORSE / ON_VEHICLE (the guest never rides here).
+labsetting guest partner_native_unrealize_all=1
+labsetting guest partner_native_mount=off
+labsetting guest partner_native_ride=hide
+labsetting guest partner_native_net=online
+labsetting partner_act_log=1
+labsetting nametag=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+# The open field of coop-ride-horse.txt / partner-mount.txt: the host joins the guest there.
+placebehind host guest 6 -0.7
+wait 4000
+host debug clear_enemies 100
+waitlog guest 'partner_ride=unrealize_configured; ' 10
+# --- Part 1: the horse rider by kind 3 (the guest's mount key is off) ---------------------------------------------
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656
+host run goto_horse
+wait 2000
+host debug clear_enemies 100
+placebehind guest host 4 8
+wait 2500
+guest mouse -250 0
+wait 800
+guest capture horse-before
+host capture horse-host-before
+host press e 150
+guest burst horse-mounting 6 250
+wait 2000
+# The dismount E below only runs on a mounted host, so it can never mount the horse.
+host run horse_status
+host require localMounted=1
+guest capture horse-riding
+host hold w 1500 nowait
+guest burst horse-ride 8 200
+host release
+wait 1500
+guest capture horse-stopped
+host press e 150
+guest burst horse-dismount 6 300
+wait 3000
+host run horse_status
+host require localMounted=0
+guest capture horse-off
+waitlog guest 'partner_ride=unrealize_end; ride=horse; ' 20
+waitlog guest 'partner_ride=net_rebased; ' 20
+# --- Part 2: a vehicle drawn hidden (the guest's partner_native_ride=hide) -----------------------------------------
+host debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+stance host stand
+# Stand 6 m down the open road (+z) looking back at the jeep and driver (coop-vehicle-seat.txt's vantage).
+guest debug teleport 579.000 322.500 1163.000 -160.000
+wait 2500
+guest capture jeep-before
+host capture jeep-host-before
+host press e 150
+guest burst jeep-entering 8 300
+wait 1500
+host run vehicle_seats
+host require vehicle;id=
+host hold w 1500 nowait
+guest burst jeep-drive 8 150
+host release
+wait 1500
+guest capture jeep-getin-spot
+host debug clear_enemies 100
+wait 2000
+host press e 150
+guest burst jeep-exiting 6 300
+wait 3000
+guest debug goto_partner
+guest debug forward -6
+wait 2500
+guest capture jeep-exited
+waitlog guest 'partner_ride=unrealize_end; ride=vehicle; ' 20
+waitlog guest 'partner_ride=net_rebased; ' 20
+state

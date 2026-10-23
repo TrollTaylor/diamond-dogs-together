@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 51, "51 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt and local ops)");
+    Check(count == 53, "53 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +140,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x2E) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x30) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::ride_fast) && world::FindOp(op::ride_fast)->body == 23 &&
               world::FindOp(op::ride_fast)->wire == world::Wire::datagram, "RIDE_FAST is a 23-byte datagram");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
@@ -1568,6 +1568,114 @@ void RideTilt() {
     const auto* playGot = Find(playRx, op::ride_tilt);
     Check(playGot && playGot->v[1] == 25600 && playGot->v[2] == 7 && playGot->v[3] == -8, "play delivers RIDE_TILT to Lua");
 }
+// 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): VEHICLE_GONE is a
+// host-authoritative world op (H->G, reliable, level 3, lab and play) and REQ_VEHICLE_GONE
+// the guest's request (G->H, answered natively with RECEIVED, or REJECT 5 for another
+// epoch and 10 below level 3). Both carry a TppVehicle2 id (class 50: 25600..26111).
+// Before this branch neither code existed (FindOp(0x2E) was the "unknown code" check).
+void VehicleGone() {
+    const auto* gone = world::FindOp(op::vehicle_gone);
+    const auto* req = world::FindOp(op::req_vehicle_gone);
+    Check(op::vehicle_gone == 0x2E && op::req_vehicle_gone == 0x2F && gone && req, "VEHICLE_GONE 0x2E and REQ_VEHICLE_GONE 0x2F exist");
+    Check(gone->queue == 1 && gone->wire == world::Wire::reliable && gone->level == 3 && !gone->lab_only && !gone->request &&
+              gone->dir == world::Dir::host_to_guest && gone->lua == 9 && gone->native == 0 && gone->rx == 0 && gone->body == 21,
+          "VEHICLE_GONE: world queue, reliable, level 3, play too, host to guest, 9 fields, 21 bytes");
+    Check(req->queue == 1 && req->wire == world::Wire::reliable && req->level == 3 && !req->lab_only && req->request &&
+              req->dir == world::Dir::guest_to_host && req->lua == 7 && req->native == 0 && req->rx == 0 && req->body == 18,
+          "REQ_VEHICLE_GONE: a world-queue request, guest to host, 7 fields, 18 bytes");
+    Setup(3, 3, true);
+    Pair(30050, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    // seq, id, cause, actor, rid, vehicle type, x, y, z
+    Check(Tx(g_host, op::vehicle_gone, {1, 25603, 1, 0, 0, 255, -203395, 800, 52899}, 101) == world::TxStatus::ok,
+          "the host announces a Fultoned sortie jeep (play)");
+    Check(Tx(g_guest, op::vehicle_gone, {1, 25603, 1, 0, 0, 255, 0, 0, 0}, 101) == world::TxStatus::wrong_role,
+          "only the host announces a vehicle gone");
+    Check(Tx(g_host, op::req_vehicle_gone, {1, 25603, 1, 255, 0, 0, 0}, 101) == world::TxStatus::wrong_role, "only the guest requests");
+    Check(Tx(g_host, op::vehicle_gone, {2, 25599, 1, 0, 0, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_gone, {2, 26112, 1, 0, 0, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args,
+          "an id outside the TppVehicle2 class (25600..26111) is refused");
+    Check(Tx(g_host, op::vehicle_gone, {2, 25603, 0, 0, 0, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_gone, {2, 25603, 4, 0, 0, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_gone, {2, 25603, 1, 3, 0, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_gone, {0, 25603, 1, 0, 0, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_gone, {2, 25603, 1, 0, 0, 256, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_gone, {2, 25603, 1, 0, 0, 255, 1000000001, 0, 0}, 101) == world::TxStatus::bad_args,
+          "cause 1..3, actor 0..2, seq 1.., type u8 and the position bound");
+    Check(Tx(g_host, op::vehicle_gone, {2, 25600, 3, 2, 0, 0, 0, 0, 0}, 101) == world::TxStatus::ok &&
+              Tx(g_host, op::vehicle_gone, {3, 26111, 2, 1, 65535, 7, 1000000000, -1000000000, 0}, 101) == world::TxStatus::ok,
+          "the class bounds, the lab cause and a guest rid encode");
+    Exchange(102);
+    Check(!Find(Drain(g_guest, 1, 103), op::vehicle_gone), "VEHICLE_GONE never rides the control queue");
+    auto rx = Drain(g_guest, 3, 104);
+    Check(rx.size() == 3 && rx[0].op == op::vehicle_gone && rx[0].count == 9 && rx[0].v[0] == 1 && rx[0].v[1] == 25603 &&
+              rx[0].v[2] == 1 && rx[0].v[3] == 0 && rx[0].v[4] == 0 && rx[0].v[5] == 255 && rx[0].v[6] == -203395 && rx[0].v[7] == 800 &&
+              rx[0].v[8] == 52899 && rx[1].v[1] == 25600 && rx[2].v[1] == 26111 && rx[2].v[4] == 65535 && rx[2].v[6] == 1000000000,
+          "the guest's world queue delivers each VEHICLE_GONE in order with its exact fields");
+    // The guest's request: RECEIVED comes back natively, the host's Lua gets the fields.
+    Check(Tx(g_guest, op::req_vehicle_gone, {0, 25603, 1, 255, 0, 0, 0}, 105) == world::TxStatus::bad_args, "rid 0 refused");
+    Check(Tx(g_guest, op::req_vehicle_gone, {7, 25603, 1, 3, 210903, 693, 290108}, 105) == world::TxStatus::ok, "the guest requests");
+    Exchange(106);
+    const auto hostRx = Drain(g_host, 3, 107);
+    const auto* got = Find(hostRx, op::req_vehicle_gone);
+    Check(got && got->count == 7 && got->v[0] == 7 && got->v[1] == 25603 && got->v[2] == 1 && got->v[3] == 3 && got->v[4] == 210903 &&
+              got->v[5] == 693 && got->v[6] == 290108,
+          "the host's world queue delivers REQ_VEHICLE_GONE with its exact fields");
+    Exchange(108);
+    const auto ack = Drain(g_guest, 1, 109);
+    const auto* received = Find(ack, op::received);
+    Check(received && received->v[0] == 7 && received->v[1] == op::req_vehicle_gone, "the host answers the request with RECEIVED");
+    // A request of another host epoch gets REJECT 5 naming the vehicle.
+    world::Op stale{};
+    stale.code = op::req_vehicle_gone;
+    stale.epoch = static_cast<std::uint16_t>(g_host.epoch() + 1);
+    stale.count = 7;
+    const std::int64_t staleValues[7] = {8, 25604, 1, 255, 0, 0, 0};
+    for (unsigned i = 0; i < 7; ++i) stale.v[i] = staleValues[i];
+    std::uint8_t packet[64]{};
+    world::WriteBundleHeader(packet, 1);
+    const auto size = world::EncodeOp(stale, packet + world::kBundleHeaderSize, sizeof(packet) - world::kBundleHeaderSize);
+    Check(size == world::kOpHeaderSize + 18, "a stale request encodes");
+    g_host.OnReliable(packet, size + world::kBundleHeaderSize, 110);
+    Check(!Find(Drain(g_host, 3, 111), op::req_vehicle_gone), "a request of another epoch never reaches the host's Lua");
+    Exchange(112);
+    const auto rejects = Drain(g_guest, 1, 113);
+    const auto* rej = Find(rejects, op::reject);
+    Check(rej && rej->v[0] == 8 && rej->v[1] == op::req_vehicle_gone && rej->v[2] == world::reject::epoch && rej->v[3] == 25604,
+          "a stale request gets REJECT 5 with the vehicle id");
+    // A VEHICLE_GONE of another host epoch is purged on the guest.
+    world::Op old{};
+    old.code = op::vehicle_gone;
+    old.epoch = static_cast<std::uint16_t>(g_guest.epoch() + 1);
+    old.count = 9;
+    const std::int64_t oldValues[9] = {9, 25605, 1, 0, 0, 255, 0, 0, 0};
+    for (unsigned i = 0; i < 9; ++i) old.v[i] = oldValues[i];
+    world::WriteBundleHeader(packet, 1);
+    const auto oldSize = world::EncodeOp(old, packet + world::kBundleHeaderSize, sizeof(packet) - world::kBundleHeaderSize);
+    Check(oldSize == world::kOpHeaderSize + 21, "a stale announcement encodes");
+    g_guest.OnReliable(packet, oldSize + world::kBundleHeaderSize, 114);
+    Check(!Find(Drain(g_guest, 3, 115), op::vehicle_gone), "a VEHICLE_GONE of another host epoch is purged");
+    // Unpaired: nothing goes out.
+    g_host.LocalMissionEnd(116);
+    Check(Tx(g_host, op::vehicle_gone, {4, 25603, 1, 0, 0, 255, 0, 0, 0}, 117) == world::TxStatus::not_paired, "unpaired: not sent");
+    // Level 2 carries neither; a level-2 host answers a request with REJECT 10.
+    Setup(2, 2, true);
+    Pair(30050, 200);
+    Check(Tx(g_host, op::vehicle_gone, {1, 25603, 1, 0, 0, 255, 0, 0, 0}, 201) == world::TxStatus::disabled &&
+              Tx(g_guest, op::req_vehicle_gone, {1, 25603, 1, 255, 0, 0, 0}, 201) == world::TxStatus::disabled,
+          "both ops need world level 3");
+    stale.epoch = g_host.epoch();
+    stale.v[0] = 9;
+    world::WriteBundleHeader(packet, 1);
+    const auto lowSize = world::EncodeOp(stale, packet + world::kBundleHeaderSize, sizeof(packet) - world::kBundleHeaderSize);
+    g_host.OnReliable(packet, lowSize + world::kBundleHeaderSize, 202);
+    Exchange(203);
+    const auto low = Drain(g_guest, 1, 204);
+    const auto* levelReject = Find(low, op::reject);
+    Check(levelReject && levelReject->v[0] == 9 && levelReject->v[2] == world::reject::level && levelReject->v[3] == 25604,
+          "a level-2 host rejects a vehicle request with REJECT 10");
+}
 } // namespace
 
 int main() {
@@ -1589,6 +1697,7 @@ int main() {
     RescueAndBuddies();
     RideFast();
     RideTilt();
+    VehicleGone();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

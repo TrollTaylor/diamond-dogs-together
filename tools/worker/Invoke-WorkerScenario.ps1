@@ -109,6 +109,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    second driver of the partner's vehicle (block) or boards its free back seat
                                    (passenger, with the passenger camera; trucks and the rest block);
                                    default passenger with the gun profile in lab and play;
+                                   debug_vehicle_door=0|1, G4 truck test levers: the native door spot behind debug
+                                   goto_vehicle truck / goto_partner_vehicle / vehicle_door (lab only, default 0);
                                    partner_placed_census=0|1, the read-only WS4 C4 / bionic-arm census (lab only);
                                    partner_native_placed=0|1 / partner_native_arm=0|1, WS4 v1 native C4 placing
                                    (391..395) and arm holds (HOLD only) for the partner body (default on with the gun profile);
@@ -120,17 +122,33 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    ChangeEquip / SetCurrentItemIndex for instance 1 (default on with the gun profile, lab and play);
                                    partner_native_gesture=0|1, the remote's pickup / hand sign / knock on the partner
                                    body's upper graph (SetCurrentNode / ReserveToResetNode; default on with the gun profile, lab and play);
+                                   partner_native_ui_filter=0|1, the partner body's HUD hint requests (e.g. the ladder "C" slide
+                                   hint) swallowed inside its drain job so the viewer's HUD never shows them (lab only, default 0);
+                                   partner_gesture_lever=0|1, the lab lever behind the native debug command
+                                   "gesture_lever knock|sign_go|sign_stop": this copy's own knock / hand sign through the stock
+                                   request slots, for the gesture proof (lab only, default 0, play forces it off);
                                    partner_native_mount=off|hide, hide the partner body while the remote's act is a
                                    D-Horse / D-Walker act 121..126 (docs/mounts.md; default hide with the gun profile, lab and play);
+                                   partner_native_unrealize_all=0|1, G5: the other ride hides (heli acts or ride, a vehicle
+                                   drawn hidden, a horse rider by kind 3 without the mount key) unrealize the partner body
+                                   and the net-quality rebase after a ride logs net_rebased (docs/native-puppet.md "Ride hides";
+                                   lab only, default 0);
                                    partner_fire_census=0|1, the owner census for support and other requests;
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
                                    partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the
                                    native stance window (0: the previous 2 s rule); docs/anim-round1-actions.md);
-                                   join-fix phase 2: save_handoff=off|stage|scene|always, travel_lock=0|1
+                                   join-fix phase 2: save_handoff=off|stage|scene|always, travel_lock=0|1;
+                                   0.13.6 online-net-epoch: link_session_skew=0..999, the copy's link-session
+                                   counter starts there (lab and the play rehearsal only; play refuses it), so
+                                   one hidden session reproduces the counters of a relaunched peer;
+                                   0.13.6 online-vehicle-gone: world_vehicle_gone=0|1, the host-authoritative VEHICLE_GONE world op (lab and play,
+                                   default 0; docs/world-sync-protocol.md section 16)
 
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
 or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the
-save handoff restart proof, scenarios/handoff-after-restart.txt).
+save handoff restart proof, scenarios/handoff-after-restart.txt). -GuestSaveSeed real-remote: the
+real seed with 287700\local's TPP_GAME_DATA*/PERSONAL_DATA* removed from the run's own copy (a
+co-op copy seeded from an old Steam save with remote files only; online 2026-10-22 P1).
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -161,12 +179,12 @@ param(
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # Per-role seeds ('' = -SaveSeed) and the guest seed from an earlier closed run (P2-19).
     [ValidateSet('','real','lab')][string]$HostSaveSeed='',
-    [ValidateSet('','real','lab')][string]$GuestSaveSeed='',
+    [ValidateSet('','real','lab','real-remote')][string]$GuestSaveSeed='',
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$GuestSaveSeedRun='',
     # Optional quality preset, applied only to this run's fresh role save copies.
     [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_mount=(off|hide)|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01])$')][string[]]$LabSetting=@(),
     # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
     # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
     [ValidateSet('lab','play')][string]$Mode='lab',
@@ -216,7 +234,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_mount=(?:off|hide)|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01])$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(?:off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01])$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))

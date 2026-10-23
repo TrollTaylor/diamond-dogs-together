@@ -1,0 +1,121 @@
+# G5 refused-seat fallback (docs/native-puppet.md "Ride hides"; key partner_native_unrealize_all, lab only, default
+# 0): the partner drives a vehicle the viewer's seat mode refuses, so the viewer falls back to the ride hide. With the
+# key the hidden partner is unrealized through Lua's all-active mode (no frozen body at the get-on spot); without it
+# (the reverse half, the key-off baseline) only the realize bits are cleared.
+# Mother Base (real seed: copies of the real saves, restored and hash-checked after the run) seats a vehicle ONLY by id
+# (no authored locator, coop-vehicle-seat-sortie.txt). The host names partner_ride_seat_id=0, so its ride addendum
+# carries no seat-id feature: the guest's offer fails with remote_category and Mother Base refuses the seat (latched,
+# it hides until the ride changes). The guest keeps partner_ride_seat_id at its default (1). In the reverse half the
+# host itself has seat id off, so its seat mode is unavailable in 30050 (reason=mission) and it hides the guest's ride
+# without the key: the 0.13.5 baseline.
+# Run (hidden worker, coordinator only, one session at a time, no builds running anywhere):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-ride-unrealize-seat.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real
+# Needs the live unnamed jeep 25603 (sortie_3) on both copies, as in hidden runs bf0388c3 / abb0b7cf; goto_vehicle
+# sortie answers vehicle_none otherwise and the run proves nothing.
+#
+# Expected, first half (guest script-observer.log; the host drives, the guest watches):
+#   partner_ride=unrealize_configured; ride=seat; mount=hide; heli_acts=97..108; net_rebased_line=1 (once per mission)
+#   partner_ride=ext_rx; ...; vehicle=25603; seat=0; cat=..; features=0x02 (tilt only: the host's seat id is off)
+#   partner_ride_seat=byid; vehicle=25603; seat=0; offer=0; reason=remote_category; remote_cat=255; local_cat=255
+#   partner_ride_seat=start; ... then partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-;
+#   reason=remote_category; manual=0, the seat exit, then partner_ride_seat=unavailable; vehicle=25603; seat=0;
+#   reason=blocked; mission=30050; byid=1; block=..
+#   partner_ride=hide; reason=ride; act=..; partner_ride=unrealize_begin; ride=vehicle; act=..; kind=2; seat=blocked;
+#   vehicle=25603; ride_live=1; episode=1; partner_ride=unrealize; ride=vehicle; ...; op=clear_allactive;
+#   partner_lua=event=allactive_cleared (probe pool=00,ff, rbits=0x1 while hidden)
+#   after the host gets out: partner_ride=unrealize_end; ride=vehicle; ...; cleared=1; partner_ride=foot_stable;
+#   next=place; partner_lua=event=allactive_set; partner_realized=1; partner_ride=net_rebased; ...
+#   (the seat episode's settle rebases the same way) and no partner_native_net; ...; reason=net_quality after it.
+#   Frames: seat-before (the host beside the jeep), seat-entering / seat-drive (NO partner body at the get-on spot, no
+#   driver drawn), seat-getin-spot (the empty get-on spot), seat-exited (the body back beside the jeep).
+# Expected, reverse half (host script-observer.log; the guest drives, the host watches, key off on the host):
+#   partner_ride_seat=unavailable; vehicle=25603; seat=0; reason=mission; mission=30050; byid=0; block=-,
+#   partner_ride=hide; reason=ride; NO partner_ride=unrealize* line and NO allactive_cleared (0.13.5 behaviour).
+#   Frames rev-entering / rev-drive / rev-getin-spot: the baseline the key fixes (a frozen standing body at the get-on
+#   spot is expected while the guest drives off); rev-exited: the body back.
+# Viewer safety: each viewer's own act stays 1 and its partner_status=local stays st=0x0 while it watches; no
+# viewer_changed, uncertain=1, board_uncertain, fault or crash_probe=av line.
+labsetting guest partner_native_unrealize_all=1
+labsetting host partner_ride_seat_id=0
+labsetting partner_native_ride=seat
+labsetting partner_act_log=1
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+# Mother Base (real seed) can play an arrival demo on a copy: let it finish before the first command.
+wait 45000
+host run vehicle_seats
+guest run vehicle_seats
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+waitlog guest 'partner_ride=unrealize_configured; ' 10
+# --- First half: the host drives, the guest (key on) watches ------------------------------------------------------
+host run goto_vehicle sortie
+host expect warp_position_readback
+wait 4000
+# The watcher ahead of the vehicle and off its line (coop-vehicle-seat-sortie.txt's framing).
+placebehind guest host 3 9
+wait 2500
+guest capture seat-before
+host capture seat-host-before
+host press e 150
+guest burst seat-entering 8 300
+wait 1500
+host run vehicle_seats
+host require vehicle;id=2560[0-7]
+waitlog guest 'partner_ride_seat=refused; vehicle=2560[0-7]; seat=0; ' 10
+host hold w 1500 nowait
+guest burst seat-drive 8 150
+host hold w 1500
+host release
+wait 2000
+guest capture seat-getin-spot
+wait 1500
+host press e 150
+guest burst seat-exiting 6 300
+wait 3000
+guest debug goto_partner
+guest debug forward -7
+wait 2500
+guest capture seat-exited
+waitlog guest 'partner_ride=unrealize_end; ride=vehicle; ' 20
+waitlog guest 'partner_ride=net_rebased; ' 20
+state
+# --- Reverse half: the guest drives, the host (key off, seat mode unavailable in 30050) watches ---------------------
+both debug heal
+both debug godmode 1
+wait 2000
+stance guest stand
+guest run goto_vehicle sortie
+guest expect warp_position_readback
+wait 4000
+placebehind host guest 3 9
+wait 2500
+host capture rev-before
+guest press e 150
+host burst rev-entering 8 300
+wait 1500
+guest run vehicle_seats
+guest require vehicle;id=2560[0-7]
+guest hold w 1500 nowait
+host burst rev-drive 8 150
+guest hold w 1500
+guest release
+wait 2000
+host capture rev-getin-spot
+wait 1500
+guest press e 150
+host burst rev-exiting 6 300
+wait 3000
+host debug goto_partner
+host debug forward -7
+wait 2500
+host capture rev-exited
+state

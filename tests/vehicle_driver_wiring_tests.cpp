@@ -29,8 +29,12 @@ void TestVehicleJobRetention(){
  s.driver.settings.nride=mgscoop::PartnerNativeRide::hide;
  s.driver.ride_rx.have=true;s.driver.ride_rx.epoch=s.fake.link_session;
  s.driver.ride_rx.packet.kind=mgscoop::partner_ride_wire::Kind::vehicle;s.driver.ride_rx.received_ms=s.now;
+ // G1: partner_ui_filter's lines are still logged while the vehicle job is current (the ride hints vt+0x240/+0x258).
+ s.driver.settings.ui_filter=true;auto& uf=s.fake.stats.native.ui_filter;uf.installed=true;uf.live=true;
  currentJob=true;currentAttachment=false;
  Check(s.N(),"fresh genuine intent retains job before actual attachment");
+ Check(s.fake.Count("partner_ui_filter=configured; key=1; installed=1; live=1;")==1,"ui filter: configured while the vehicle job is current");
+ uf.swallowed[0]+=2;uf.swallowed[3]+=1;
  Check(s.driver.mission.native_defer_armed&&s.driver.mission.input_armed&&s.driver.mission.last_arm.gen==gen&&
   s.fake.arms.size()==arms&&s.fake.Writes("clear")==clears,"legacy ride-kind cannot disarm/withdraw/clear pending native job");
  const auto slots=s.fake.Writes("slot"),xforms=s.fake.Calls("xform:");
@@ -40,6 +44,8 @@ void TestVehicleJobRetention(){
   s.fake.arms.size()==arms,"current cleanup retains exact Arm without freshening/republication");
  Check(s.fake.Writes("slot")==slots&&s.fake.Calls("xform:")==xforms&&!(s.reply.op&op::warp),"actual matching attachment suppresses all foot placement paths");
  Check(s.fake.inputs.size()>inputSends,"local input transmission continues while peer drives or exits");
+ Check(s.fake.Count("partner_ui_filter=swallowed; q240=2; q248=0; q250=0; q258=1; q260=0;")==1,
+  "ui filter: the ride's swallowed hints are logged during the ride, not after it");
  currentJob=false;currentAttachment=false;s.fake.link_live=true;s.fake.latest.age_ms=5;s.fake.sample.valid=true;
  s.driver.ride_rx.packet.kind=mgscoop::partner_ride_wire::Kind::foot;s.driver.ride_rx.received_ms=s.now;
  s.driver.settings.nride=mgscoop::PartnerNativeRide::off;

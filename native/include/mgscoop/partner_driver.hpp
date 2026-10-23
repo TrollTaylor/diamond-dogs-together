@@ -28,6 +28,9 @@
 // stop_timeout, unconsumed, adopted, abandoned and bad_gani 64 each
 // ("partner_dmmap=capped; limit=64; kind=<family>"); the summary every
 // kDmMapSummaryMs, kDmMapSummaryCap lines ("...; limit=720; kind=summary").
+// 0.13.6: the partner_recon event families and partner_body_safety rotate
+// (log_budget: kReconCapLimits / kBodySafetyCapLimits, a window cap with a
+// resumed summary and a per-mission ceiling) instead of 64 per mission.
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
@@ -57,8 +60,11 @@
 #include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
+#include "mgscoop/partner_body_safety.hpp"
+#include "mgscoop/log_budget.hpp"
 #include "mgscoop/partner_traverse.hpp"
 #include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_gesture.hpp"
 #include "mgscoop/partner_gesture_policy.hpp"
 #include "mgscoop/partner_receipt.hpp"
@@ -72,6 +78,14 @@ inline constexpr unsigned kProbeLineCap = 400;
 inline constexpr unsigned kLuaLogCap = 64;
 inline constexpr unsigned kCappedLogs = 8;
 inline constexpr unsigned kTransitionLogCap = 64;
+// 0.13.6: the partner_recon event families rotate (64 lines per 2 min window,
+// 1024 per family and mission; "partner_recon=capped; limit=64; kind=..",
+// "partner_recon=resumed; kind=..; dropped=..", "...; limit=1024; kind=..; scope=mission"),
+// and the partner_body_safety lines the same with 512 per mission.
+inline constexpr log_budget::Limits kReconCapLimits{64, 120000, 1024};
+inline constexpr log_budget::Limits kBodySafetyCapLimits{64, 120000, 512};
+// The body-safety re-show waits at most this long for the engine to unrealize body 1.
+inline constexpr std::uint64_t kReshowUnrealizeMs = 2500;
 inline constexpr std::uint64_t kTriggerPollTicks = 30;
 inline constexpr unsigned kForceExistsAfterTicks = 10;
 inline constexpr std::uint64_t kPartsTimeoutMs = 15000;
@@ -410,6 +424,11 @@ struct Hooks {
                                        partner_pass_camera::Camera& out) noexcept = nullptr;
     void (*pass_camera_stats)(void* context, partner_pass_camera::Stats& out) noexcept = nullptr;
     bool (*pass_camera_read)(void* context, const partner_player::State& state, partner_pass_camera::Camera& out) noexcept = nullptr;
+    // 0.13.6 online ride: clears the stale DM request bits of `mask` a seat
+    // episode left (partner_player::ClearDmBits: bits 4/8/0x10, request byte 0
+    // == 1, Stop/GoNext only without the viewer's own DM); returns the bits
+    // cleared. May be null (nothing is cleared).
+    std::uint8_t (*dm_clear_stale)(void* context, std::uint8_t mask) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -428,6 +447,25 @@ inline constexpr std::uint64_t kSeatConfirmMs = 2000, kSeatStopMs = 1000, kSeatE
 inline constexpr std::uint64_t kSeatFarMs = 1000, kSeatGetInMs = 2500, kSeatStatusMs = 1000, kSeatReleaseMs = 1500;
 inline constexpr std::uint32_t kSeatFarMm = 3000;
 inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
+// 0.13.6 online ride (the 2026-10-22 session): the engine's realize policy
+// 0x121B5E0 tests body 1's SLOT (*(S+0x20))[1] x/z against the loaded area
+// (0x14121B8B7 `shl rdi,4` / 0x14121B8BE `add rdi,[r9+0x20]`, 0x14121B8C2 /
+// 0x14121B8CC the z/x loads, 0x14121B92C the area call; R9 = S), never the
+// body; the seated DM moves only the
+// body, so the slot stayed at the boarding spot and body 1 unrealized about
+// 340 m into a ride. While seated the slot follows the body, checked at most
+// every kSeatSlotFollowMs and written when it drifted more than
+// kSeatSlotFollowMm (so it stays well within 100 m of the vehicle).
+inline constexpr std::uint64_t kSeatSlotFollowMs = 1000;
+inline constexpr std::uint32_t kSeatSlotFollowMm = 25000;
+// The visible fallback (SeatPhase::fallback): the by-id gate is re-checked this
+// often; once the vehicle exists here the normal release / arm / play take over.
+inline constexpr std::uint64_t kSeatFallbackRetryMs = 2000;
+// A temporary refusal (pending, dm_read, release, host_dm) is not latched: the
+// same (vehicle, seat) is retried until it was refused this many times in a row
+// without a confirmed seat, then it hides as in 0.13.5 until the remote's ride
+// changes (a refusal that lasts the whole ride must not blink body 1 every 3-4 s).
+inline constexpr unsigned kSeatTransientTries = 3;
 // WS3 ride census cadence and cap (partner_ride_census=1).
 inline constexpr std::uint64_t kRideCensusMs = 1000;
 inline constexpr unsigned kRideCensusCap = 400;
@@ -437,8 +475,13 @@ inline constexpr unsigned kRideCensusCap = 400;
 // other board line (Board::cap), so the counters never crowd out a latch line.
 inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
-// The seat flow's phases (Mission::seat.phase).
-enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle };
+// The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
+// rides a seat this copy cannot play because the vehicle is missing or
+// unrealized here (Mother Base by id: local_read, unrealized): body 1 stays
+// realized and visible, Warped to the remote's streamed seated pose every tick,
+// instead of hidden. Never for a vehicle that exists here (a pending request or
+// the viewer's DM is retried, not Warped), never into the viewer's vehicle.
+enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle, fallback };
 const char* SeatPhaseName(SeatPhase phase) noexcept;
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -563,6 +606,10 @@ struct Settings {
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
     bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
+    bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
+    // G5: the other ride hides unrealize body 1, and the net-quality rebase after
+    // a ride logs partner_ride=net_rebased (partner_native_unrealize_all, "Ride hides").
+    bool unrealize_all;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -585,6 +632,11 @@ struct Mission {
     // partner_native_mount=hide: the act-rule episode (partner_mount=hide|end lines, capped).
     partner_mount_policy::Episode mount;
     LogCap mount_cap;
+    // partner_native_unrealize_all (G5): the other ride hides' episode (heli, vehicle, horse kind 3;
+    // partner_ride=unrealize|unrealize_end lines) and the partner_ride=net_rebased line of the
+    // link-quality rebase after a ride (net_quality_rebase, below), on their own cap.
+    partner_mount_policy::RideEpisode ride_ep;
+    LogCap unrealize_cap;
     // The seated vehicle rider (partner_native_ride=seat; docs/anim-round1-seat.md).
     struct Seat {
         SeatPhase phase;
@@ -620,6 +672,31 @@ struct Mission {
         bool byid, target_done, target_wrote;
         const char* byid_reason;
         std::uint8_t remote_category, local_category;
+        // 0.13.6 online ride. fallback_want: the start's by-id reason that shows
+        // body 1 without a seat (local_read, unrealized) once the release ran;
+        // fallback_reason: why the fallback phase holds; exit_quiet: the exit
+        // left the fallback (nothing of ours plays on body 1: no stop);
+        // body_gone: the exit found body 1 unrealized (no stop either);
+        // exit_link: the exit was caused by the link (lease, ride_stale: the
+        // settle keeps that gap in the link-quality window, no rebase);
+        // req_bits: the global DM request bits this episode sent (Stop 8,
+        // GoNext 0x10), cleared at settle when the DM could not consume them.
+        const char* fallback_want;
+        const char* fallback_reason;
+        std::uint64_t fallback_ms, fallback_check_ms;
+        unsigned fallback_warps;
+        bool exit_quiet, body_gone, exit_link;
+        std::uint8_t req_bits;
+        // The slot follow while seated (kSeatSlotFollowMs / kSeatSlotFollowMm).
+        std::uint64_t slot_check_ms;
+        unsigned slot_follows;
+        // The arm's own-stale-request check (at most every kSeatStopMs).
+        std::uint64_t stale_check_ms;
+        // Temporary refusals of (transient_vehicle, transient_seat) in a row
+        // without a confirmed seat (kSeatTransientTries; kept across a settle).
+        unsigned transient_refusals;
+        std::uint16_t transient_vehicle;
+        std::uint8_t transient_seat;
     } seat;
     bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
@@ -826,6 +903,16 @@ struct Mission {
     std::uint16_t icon_act_last;
     bool icon_census_done;
     LogCap icon_cap;
+    // G1 partner HUD hints (partner_ui_filter): seeded from the process totals
+    // on the mission's first tick with the hooks installed; the totals at the
+    // last swallowed line and its time, the census keys already logged, the
+    // patch-lost latch and the log family.
+    bool ui_filter_seeded;
+    partner_ui_filter::Stats ui_filter_base;
+    std::uint64_t ui_filter_ms;
+    std::uint32_t ui_filter_keys_logged;
+    bool ui_filter_lost_logged;
+    LogCap ui_filter_cap;
     bool recon_active;             // apply=input with input != off this mission (recon state in use)
     bool recon_last_ok;            // the previous recon action was executed
     partner_recon::Out recon_out;  // the last step (logs, status)
@@ -844,10 +931,28 @@ struct Mission {
     bool recon_remote_ok;            // the aligned sample's anim fields (StepRecon)
     std::uint16_t recon_remote_act;
     bool recon_target_ok;
+    bool recon_target_live;          // the aligned sample is live (StepRecon)
     std::uint64_t recon_line_ms;
     unsigned recon_lines;
     bool recon_lines_capped;
-    LogCap recon_cap[13];          // event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused, stance_fix, input_pin, lag)
+    // Event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused,
+    // stance_fix, input_pin, lag): kReconCapLimits each (rotating; 0.13.6, was 64 per mission).
+    log_budget::Rotating recon_cap[13];
+    std::uint64_t log_now_ms;        // this tick's clock for the rotating caps
+    // 0.13.6 body safety (partner_body_safety, docs/native-puppet.md "Body safety").
+    partner_body_safety::StuckState body_stuck;
+    partner_body_safety::DropState body_drop;
+    partner_body_safety::PutDownState body_putdown;
+    bool reshow_capable;             // the re-show flow runs this tick (free-roam net or the ride guard)
+    const char* body_reshow;         // a re-show requested by TickInput (executed in the range block next tick)
+    std::uint64_t body_reshow_ms;    // when it was requested (dropped after 1 s)
+    // The re-show hold: body 1 kept hidden (deferred replies; clear_all_active while
+    // Lua's all-active mode is on, as the mount hide does) until the engine reports
+    // it unrealized or kReshowUnrealizeMs passed; then the slot is placed at the target.
+    bool reshow_wait;
+    std::uint64_t reshow_since_ms;
+    const char* reshow_reason;
+    log_budget::Rotating body_safety_cap;
     const char* recon_refused;     // last refusal logged (change-only)
     std::uint32_t recon_snaps_total;
     std::uint32_t recon_fixes;     // corrective stance inputs this mission (StanceFix)
@@ -1042,10 +1147,16 @@ struct Mission {
     partner_aim::DirCheck dir_check;
     partner_aim::DirReason dir_reason;
     bool dir_reason_logged;
+    bool dir_riding;                 // partner_aim::RideGate: the local player rode at the last aim sample
     std::int32_t place_yaw_err_mdeg;
     // --- Online play (docs/native-puppet.md "Online").
     // The receiver's link quality (re-entry gate) and the online log lines.
     partner_native_net::Quality net_quality;
+    // 0.13.6: a seat episode settled or a ride hide ended (the native arbiter
+    // did not observe the link meanwhile): the next TickNative restarts the
+    // quality window (partner_native_net::Rebase) instead of counting the
+    // whole ride as one arrival gap.
+    bool net_quality_rebase;
     std::uint64_t net_line_ms;
     unsigned net_lines;
     std::uint64_t net_line_key;
@@ -1255,12 +1366,25 @@ struct Driver {
     std::uint16_t caps_logged_rev;
     std::uint32_t caps_logged_epoch;
     std::uint8_t caps_logged_drive, caps_logged_reason;
+    // The receiver link session of the last logged partner_caps=rx line (a new
+    // link session logs the remote's view again).
+    std::uint32_t caps_logged_link;
     std::uint32_t leak_strip;
+    // Refused channel-2 messages (0.13.6 online-net-epoch): one partner_equip=refused
+    // / partner_caps=refused line per change of (receiver link session, reason),
+    // under a process-lifetime budget; the manifest counters are process-lifetime
+    // too (the mission store's own counters restart every MissionStart).
+    bool equip_refused_logged, caps_refused_logged;
+    std::uint32_t equip_refused_link, caps_refused_link;
+    std::uint8_t equip_refused_result, caps_refused_result;
+    LogCap equip_rx_cap, caps_rx_cap;
+    std::uint32_t equip_rx_received, equip_rx_invalid, equip_rx_stale, equip_rx_duplicates;
     // The generalized preload and writer (docs/native-puppet.md "Generalized
     // writer"), process-lifetime: the last accepted manifest of any mission
-    // and its link session (the preload at the next allocation, before that
-    // mission's own manifest arrives), and what the observer (the natural
-    // allocation and mission owner) last reported; telemetry copies it.
+    // and its link session (the RECEIVER's own: the preload at the next
+    // allocation, before that mission's own manifest arrives), and what the
+    // observer (the natural allocation and mission owner) last reported;
+    // telemetry copies it.
     partner_equip_wire::Manifest equip_cache;
     bool equip_cache_have;
     std::uint32_t equip_cache_epoch;
@@ -1343,6 +1467,11 @@ inline bool NativeActive(const Driver& d) noexcept {
 // the peer's live ride addendum advertises RIDE_TILT (docs/vehicle-ws3.md).
 std::uint16_t LocalVehicle(const Driver& driver) noexcept;
 bool RideTiltPeer(const Driver& driver, std::uint32_t epoch, std::uint64_t now_ms) noexcept;
+// G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the
+// peer's live ride packet (this link epoch, inside the lease) of kind vehicle with a vehicle-type
+// id gives that id and the peer's seat (true); otherwise false with 0xFFFF / 0xFF. Read only.
+bool RidePeerVehicle(const Driver& driver, std::uint32_t epoch, std::uint64_t now_ms, std::uint16_t& vehicle,
+                     std::uint8_t& seat) noexcept;
 
 // Read-only admission from the same effective settings as Tick. The caller
 // must serialize with driver ticks; no caller-supplied active flag is accepted.
@@ -1390,6 +1519,12 @@ void TickEquipLink(Driver& driver, const Hooks& hooks, std::uint64_t now_ms) noe
 // Only the drain (the preload query at the natural allocation owner: the
 // first mission after connecting plans from a manifest received just before).
 void DrainEquipLink(Driver& driver, const Hooks& hooks) noexcept;
+// The manifest the generalized preload and writer plan from (pure): the
+// mission store's when it was received in (or seeded for) the receiver's
+// current link session `link_session` (any, when 0: no session yet), else the
+// session cache of that same link session. Never another link session's, and
+// never compared with the sender's own session number (manifest.epoch).
+bool RemoteManifest(const Driver& driver, std::uint32_t link_session, partner_equip_wire::Manifest& out) noexcept;
 // The per-frame tick (2.3 item 9 outline). False leaves the receipt literal
 // (Lua then does nothing); true fills `reply`.
 bool Tick(Driver& driver, const Hooks& hooks, const LabConfig& lab, const char* source, std::size_t size,

@@ -24,6 +24,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_icon.hpp"
+#include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_placed_census.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "partner_player_contract.hpp"
@@ -294,6 +295,18 @@ bool RunBatchCatching(std::uint32_t mode) {
     __try {
         reinterpret_cast<pd::detail::BatchFn>(pd::detail::WrapBatchEntry())(g_world.group, mode);
     } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        caught = true;
+    }
+    return caught;
+}
+// G1 (TestJobWindow): a drain window whose job raises a non-game exception (not a fatal code, so the input hook
+// records no fault); it unwinds through GuardedCall and RunJobWindowOutcome to this handler (POD only: SEH).
+inline constexpr DWORD kUiJobRaise = 0xE0471001u;
+bool RunJobWindowCatching(void* go, const void* param, std::uint32_t block, hk::JobCallFn job) {
+    bool caught = false;
+    __try {
+        hk::RunJobWindow(go, param, block, job, pi::Consumer::drain0);
+    } __except (GetExceptionCode() == kUiJobRaise ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
         caught = true;
     }
     return caught;
@@ -2666,6 +2679,81 @@ void TestJobWindow() {
         ic::detail::ResetForTest();
         Put<std::uintptr_t>(P + ic::kPPadop, saved_padop);
         Put<std::uint32_t>(P + c::p_flags, saved_flags);
+        hk::PublishArm(a);
+    }
+    // G1 (docs/native-puppet.md "Partner HUD hints"): the hint-queue scope in the real drain window. Begin(a.P) right
+    // before block 1's job opens it for P+0xD8's UiControllerImpl, so body 1's vt+0x260 request from that job is
+    // swallowed. A refused job (block 0, or block 1 without an armed Arm: the legacy GuardedJobCall path), the same
+    // thread after the window, and the thread after a job that unwound through GuardedCall all reach the original leaf
+    // (the UI object is shared with the viewer's own update).
+    {
+        namespace uf = mgscoop::partner_ui_filter;
+        struct UiWorld {
+            alignas(16) unsigned char obj[0x400];  // the primary at obj, the UiControllerImpl (P+0xD8) at obj+0x20
+        };
+        static UiWorld* uw = new UiWorld();
+        std::memset(uw, 0, sizeof(*uw));
+        static std::uintptr_t s_ui = 0;
+        static unsigned s_orig = 0, s_jobs = 0;
+        struct UiJob {
+            static void Original(void*, std::uint16_t, std::uint32_t, std::uint8_t, std::uint8_t, std::uint8_t, std::uint8_t) { ++s_orig; }
+            // Body 1's ladder state: [P+0xD8] vt+0x260(ui, 3, 8, 0, 1, 0, 0) through the hooked leaf.
+            static void Post(void*, const void*) noexcept {
+                ++s_jobs;
+                uf::detail::Detour(4)(reinterpret_cast<void*>(s_ui), 3, 8, 0, 1, 0, 0);
+            }
+            static void Raise(void* go, const void* param) noexcept {
+                Post(go, param);
+                RaiseException(kUiJobRaise, 0, 0, nullptr);
+            }
+        };
+        const std::uintptr_t ui = Addr(uw->obj) + uf::kUiPrimary;
+        s_ui = ui;
+        Put<std::uintptr_t>(Addr(uw->obj), base + uf::kUiPrimaryVtableRva);
+        Put<std::uintptr_t>(ui, base + uf::kUiVtableRva);
+        Put<std::uintptr_t>(ui + uf::kUiOwner, P);
+        const std::uintptr_t saved_ui = Get<std::uintptr_t>(P + uf::kPUi);
+        Put<std::uintptr_t>(P + uf::kPUi, ui);
+        const uf::detail::LeafFn originals[uf::kQueues] = {&UiJob::Original, &UiJob::Original, &UiJob::Original, &UiJob::Original,
+                                                           &UiJob::Original};
+        uf::detail::BindForTest(reinterpret_cast<void*>(base), originals);
+        const auto post = [&] { uf::detail::Detour(4)(reinterpret_cast<void*>(ui), 3, 8, 0, 1, 0, 0); };
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        hk::PublishArm(a);
+        g_hook_sample.packet.held = kRemoteHeld;
+        dispatch(w->root1, 8);
+        hk::DrainStats(hs);
+        const uf::Stats u0 = hs.native.ui_filter;
+        Check(hk::RunJobWindow(w->go, &param, 1, &UiJob::Post, pi::Consumer::drain0) && s_jobs == 1 && s_orig == 0,
+              "ui filter: body 1's hint request inside block 1's drain job is swallowed");
+        hk::DrainStats(hs);
+        Check(hs.native.ui_filter.windows == u0.windows + 1 && hs.native.ui_filter.swallowed[4] == u0.swallowed[4] + 1 &&
+                  hs.native.ui_filter.refused == u0.refused && hs.native.ui_filter.foreign == u0.foreign,
+              "ui filter: one scope for the window, one vt+0x260 request swallowed");
+        post();
+        Check(s_orig == 1, "ui filter: after the window the same thread's request reaches the original");
+        pd::JobParam param0{0, 0, 0, 8, g_world.bits};
+        Check(!hk::RunJobWindow(w->go, &param0, 0, &UiJob::Post, pi::Consumer::drain0) && s_jobs == 2 && s_orig == 2,
+              "ui filter: block 0's job (refused, run without a window) reaches the original");
+        pi::Arm disarmed = a;
+        disarmed.enabled = false;
+        hk::PublishArm(disarmed);
+        Check(!hk::RunJobWindow(w->go, &param, 1, &UiJob::Post, pi::Consumer::drain0) && s_jobs == 3 && s_orig == 3,
+              "ui filter: a refused block-1 job (no armed Arm, the legacy call) reaches the original");
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);
+        Check(RunJobWindowCatching(w->go, &param, 1, &UiJob::Raise) && s_jobs == 4 && s_orig == 3,
+              "ui filter: a job that unwinds: its request was swallowed, the exception reaches the outer handler");
+        post();
+        Check(s_orig == 4, "ui filter: after a job unwound through GuardedCall the scope is closed");
+        Check(hk::RunJobWindow(w->go, &param, 1, &UiJob::Post, pi::Consumer::drain0) && s_jobs == 5 && s_orig == 4,
+              "ui filter: the next window swallows again");
+        hk::DrainStats(hs);
+        Check(hs.native.ui_filter.windows == u0.windows + 3 && hs.native.ui_filter.swallowed[4] == u0.swallowed[4] + 3 &&
+                  hs.native.ui_filter.faults == u0.faults && !hs.native.ui_filter.latched,
+              "ui filter: three scopes, three swallowed, no fault");
+        uf::detail::ResetForTest();
+        Put<std::uintptr_t>(P + uf::kPUi, saved_ui);
         hk::PublishArm(a);
     }
     // The game window closes (debug_overlay WM_CLOSE -> PartnerShutdown on

@@ -41,8 +41,24 @@
 #   camera after the get-off while the guest drives on. The guest backs the jeep away (s, 1.5 s) and the host warps
 #   beside it again before its E press: in run 4ae70de7 the first half left the jeep against a wall, and the host's
 #   E there got an item prompt instead of the back door.
-# Truck: the E press next to the host-driven truck: partner_ride=board_block; vehicle=..; site=prequery;
-#   ...; mode=passenger; reason=type; type=3|4 (no back seat on a truck), vehicle_not_riding.
+# Truck (G4 truck test levers, docs/native-puppet.md "Truck test levers"; labsetting debug_vehicle_door=1): the stock
+#   CanExec gates trucks (types 3/4) on the door: within 1.4 m of seat + 0.4 m outward and on its outer side. The host's
+#   goto_vehicle truck warps to the driver door of the nearest truck with a free driver seat (the door point 60 cm out,
+#   facing the seat), boards and drives a few metres; the guest's goto_partner_vehicle warps beside this copy of that
+#   truck (the vehicle of the host's live ride packet, the copy RIDE_FAST moves; the passenger door, away from the
+#   seated partner body) and presses E.
+#   host   world_lua=goto_vehicle; name=veh_trc_000N; id=256xx; dist=..; door=0; type=3|4; rider0=65535; out=60 and
+#          partner_vehicle_door=answer; target=id; id=256xx; seat=0; out_cm=60; type=3|4; seats=..; rider0=65535; ...
+#          (rec_mm, seat0_mm, seat1_mm, door_mm, stand_mm, face_mrad); run vehicle_door -> gate=pass (d3 < 1.40,
+#          dot >= 0 at vars.playerPos, an approximation of the stock CS position); frame truck-door: the host at the cab
+#          door with the ride prompt; the E press boards: vehicle_seats vehicle;id=256xx;...;localSeat=1.
+#   guest  partner_vehicle_door=answer; target=partner; id=256xx (the host's truck); seat=1; ...; pseat=0 and
+#          world_lua=goto_partner_vehicle; id=256xx; pseat=0; door=1; type=3|4; rider0=65535; fast=1; out=60;
+#          then the E press: partner_ride=board_block; vehicle=256xx; site=prequery; n=..; mode=passenger; reason=type;
+#          type=3|4; seats=..; vehicle_seats vehicle_not_riding; no board_passenger, no partner_status=local; st=0x400.
+#          Frames pass-truck-beside / pass-truck-blocked: the guest on foot beside the host-driven truck with no ride
+#          prompt, the host seated in it. rider0 other than 65535 on the guest's copy (an AI driver there) means CanExec
+#          stops before the board hook (no board_block line): record it, it is not the hook's verdict.
 # Run 59cfc415 (docs/STATUS.md 0.13.5 F1): both passenger halves passed (the passenger's own camera looks at the
 # jeep's interior: why passenger stays named-only); the truck half did NOT run: the host's goto_vehicle truck spot
 # beside veh_trc_0000 offers no ride icon, and the guest's nearest truck was veh_trc_0003 817 m away (each copy
@@ -53,9 +69,22 @@
 # bad, this scenario without the partner_ride_board line, so the new default passenger ran): both directions pass
 # (connect reason=handle mode=5, release reason=stock ok=1; the passenger's own view outside the moving jeep, the
 # drivers' cameras stock, the on-foot camera after the get-off). The truck half still never boarded the host.
+# G4 (wp/truck-helper, 0.13.6 in progress): the truck half uses the door levers (labsetting debug_vehicle_door=1,
+# docs/native-puppet.md "Truck test levers"); not run yet.
+# Run 84e3db0e (0.13.6 runtime phase, wp/integ10 32ac240, lab, this file): every step passed, both passenger halves
+# and the truck half. Truck: the host's goto_vehicle truck reached veh_trc_0000 (id 25602, type 4, rider0=65535) at its
+# driver door, vehicle_door gate=pass; d3=1.16; dot=0.87, frame truck-door shows the stock E + truck ride icon there,
+# the E press boarded (vehicle_seats riders=0,65535; localSeat=1); the guest's goto_partner_vehicle answered
+# pseat=0; door=1; fast=1; rider0=65535, its E press logged partner_ride=board_block; vehicle=25602; site=prequery;
+# mode=passenger; reason=type; type=4; seats=2 and vehicle_seats vehicle_not_riding; frames pass-truck-beside /
+# pass-truck-blocked: the guest at the passenger door with only the Fulton prompt (no ride icon), the host seated in the
+# cab. A truck-only scratch copy run first (a42ddafe, about 1 min after gameplay) found every truck AI-driven:
+# goto_vehicle truck answered vehicle_driver_taken;id=25602;rider0=1194 (the truck was 490 m away, still driving);
+# the full file reaches the truck after its two jeep halves, when it stands near the jeep spot without a driver.
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=passenger
 labsetting nametag=1
+labsetting debug_vehicle_door=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
@@ -161,21 +190,36 @@ wait 2500
 state
 both debug heal
 wait 1000
-host debug goto_vehicle truck
-guest debug goto_vehicle truck
-wait 4000
+host debug clear_enemies 100
+host run goto_vehicle truck
+host require warp_(position_readback|readback_timeout)
+waitlog host 'partner_vehicle_door=answer; target=id; id=256[0-9][0-9]; seat=0; out_cm=60; type=[34];' 5
+wait 3000
 host debug clear_enemies 100
 wait 1500
+host run vehicle_door
+host expect gate=pass
+host capture truck-door
 host press e 150
-wait 2500
+wait 3000
 host run vehicle_seats
-host expect vehicle;id=
+host require vehicle;id=
+host hold w 1500
+host release
+wait 2500
+guest run goto_partner_vehicle
+guest require warp_(position_readback|readback_timeout)
+waitlog guest 'partner_vehicle_door=answer; target=partner; id=256[0-9][0-9]; seat=1; out_cm=60; type=[34];' 5
+wait 3000
+guest run vehicle_door
+guest expect gate=
+both capture pass-truck-beside
 guest press e 150
 wait 2500
 both capture pass-truck-blocked
 guest run vehicle_seats
 guest expect vehicle_not_riding
-waitlog guest 'partner_ride=board_block; vehicle=[0-9]+; site=prequery; n=[0-9]+; mode=passenger; reason=type' 5
+waitlog guest 'partner_ride=board_block; vehicle=256[0-9][0-9]; site=prequery; n=[0-9]+; mode=passenger; reason=type; type=[34];' 5
 host press e 150
 wait 2000
 state

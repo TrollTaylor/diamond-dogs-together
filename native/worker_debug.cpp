@@ -280,6 +280,11 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
         unsigned(n.equip_tx_type[1]),unsigned(n.equip_tx_type[2]),unsigned(n.equip_rx_type[0]),unsigned(n.equip_rx_type[1]),
         unsigned(n.equip_rx_type[2]),n.equip_rx_version);
     j.String(n.equip_apply,sizeof(n.equip_apply));
+    // 0.13.6: the received manifest's binding (the sender's session number, this copy's link session) and the counters.
+    j.Add(",\"rx_sender_epoch\":%u,\"rx_link_epoch\":%u,\"rx_received\":%u,\"rx_invalid\":%u,\"rx_stale\":%u,\"rx_duplicates\":%u,"
+          "\"rx_refused\":",n.equip_rx_sender_epoch,n.equip_rx_link_epoch,n.equip_rx_received,n.equip_rx_invalid,n.equip_rx_stale,
+          n.equip_rx_duplicates);
+    j.String(n.equip_rx_refused,sizeof(n.equip_rx_refused));
     // The generalized writer's setting, the stock cache census and the preload (W2).
     j.Add(",\"setting\":");j.String(n.equip_setting,sizeof(n.equip_setting));
     // The used stock cache entries, compact: [index, id, type, receiver, flags, refs, viewer].

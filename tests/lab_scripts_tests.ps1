@@ -547,6 +547,9 @@ try {
         Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_name -Value $badName } '1..24 of' "name tag name refused: $badName"
     }
     Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_crosshair -Value sometimes } 'aim|always|off' 'crosshair values'
+    # 0.13.6 online-vehicle-gone: world_vehicle_gone is a LabCommon bool (-PartnerSetting / the worker's labsetting).
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 0)" '1/0' 'world_vehicle_gone values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 2 } '' 'world_vehicle_gone=2 refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_max_m -Value 1001 } 'allowed: 50..1000' 'range limit'
     $ovTag = ConvertFrom-LabPartnerSettingArgs -Items @('nametag_crosshair=always', 'host:nametag_name=HostTag', 'guest:nametag_name=GuestTag') -Role guest
     Assert-Equal "$($ovTag['nametag_crosshair'])/$($ovTag['nametag_name'])" 'always/GuestTag' 'role-scoped name tag settings'
@@ -711,6 +714,12 @@ try {
     Assert-Equal $mountOverride['partner_native_mount'] 'hide' 'mount hide role override'
     Assert-Equal (ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_mount = 'hide' }))['partner_native_mount'] 'hide' 'mount hide short JSON name'
     Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_mount')) 'native gun JSON never auto-emits the mount hide'
+    # G5 (docs/native-puppet.md "Ride hides"): partner_native_unrealize_all=0|1, written only when named.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_unrealize_all -Value 1)/$(ConvertTo-LabPartnerValue -Key partner_native_unrealize_all -Value 0)" '1/0' 'unrealize_all values'
+    $unrealizeOverride = ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_unrealize_all=0', 'guest:partner_native_unrealize_all=1') -Role guest
+    Assert-Equal $unrealizeOverride['partner_native_unrealize_all'] '1' 'unrealize_all role override'
+    Assert-Equal (ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_unrealize_all = $true }))['partner_native_unrealize_all'] '1' 'unrealize_all short JSON name'
+    Assert-True (!(ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ native_profile = 'gun' })).Contains('partner_native_unrealize_all')) 'native gun JSON never auto-emits partner_native_unrealize_all'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
@@ -1014,12 +1023,28 @@ try {
             $n = Invoke-IniCheck lab $file
             Assert-Equal "$($n['present'])|$($n['mode'])|$($n['role'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" "1|lab|$($case[2])|0x0|0/0" "native: $($case[0]) lab.ini clean"
         }
+        # 0.13.6 online-vehicle-gone: off in a default lab.ini; a LabCommon-written world_vehicle_gone=1 parses natively.
+        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_vehicle_gone'])" '0' 'native: world_vehicle_gone defaults off'
+        $vgOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_vehicle_gone=1') -Role guest
+        $vgIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vgOverrides)
+        Assert-Equal ((ConvertFrom-IniText $vgIni)['world_vehicle_gone']) '1' 'LabCommon writes world_vehicle_gone=1'
+        $file = Join-Path $fixture 'vehicle-gone-guest-lab.ini'; [IO.File]::WriteAllText($file, $vgIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_vehicle_gone'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_gone=1 parses'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')
         Assert-Equal "$($n['net_latency_ms'])|$($n['net_jitter_ms'])|$($n['net_loss_permille'])|$($n['net_loss_model'])|$($n['net_burst'])|$($n['net_dup_permille'])|$($n['net_reorder_permille'])|$($n['net_seed'])|$($n['partner_interp'])" '150|60|60|burst|3|10|30|1|auto' 'native: -WanSim awful keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini')
         Assert-Equal "$($n['net_bind'])|$($n['net_link'])|$($n['partner_interp'])|$($n['net_peer_addr'])" 'loopback|v2|fixed|127.0.0.1' 'native: the default offline lab.ini keeps the loopback defaults'
+        Assert-Equal "$($n['link_session_skew'])" '0' 'native: the default offline lab.ini has no link-session skew'
+        # 0.13.6 online-net-epoch: a LabCommon-written link_session_skew (-PartnerSetting / the worker's labsetting) parses natively.
+        $skewOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role host
+        $skewIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides $skewOverrides)
+        Assert-Equal ((ConvertFrom-IniText $skewIni)['link_session_skew']) '2' 'LabCommon writes link_session_skew=2'
+        $file = Join-Path $fixture 'skew-host-lab.ini'; [IO.File]::WriteAllText($file, $skewIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['link_session_skew'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '2|lab|0x0|0/0' 'native: a LabCommon-written link_session_skew=2 parses as 2'
     } else { Write-Output 'link_keys missing: native link cross-checks skipped' }
 
     Test-LabInputSpecs

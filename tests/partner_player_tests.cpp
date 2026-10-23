@@ -1252,6 +1252,44 @@ int main() {
         w.Reset();
     }
 
+    // --- 0.13.6 online ride: the stale DM request bits (ClearDmBits; ClearDmPending is its bit-4 case).
+    // 2026-10-22: three stops sent to an unrealized body 1 left g+0x388 bit 8 set ~3 min.
+    {
+        w.Reset();
+        unsigned char* dmg = w.region + 0xC000;  // the DM script object g (P+0x48)
+        Put<std::uintptr_t>(w.P, c::p_g, Addr(dmg));
+        w.addresses.script_object = Addr(dmg);
+        const auto bits = [&](std::uint8_t g388, std::uint8_t req0, std::uint16_t act0) {
+            dmg[c::g_flags] = g388;
+            dmg[c::g_req] = req0;
+            Put<std::uint16_t>(w.a18, 0, act0);
+        };
+        std::uint8_t cleared = 0xEE;
+        bits(0x08, 1, 0x0001);
+        Check(pp::ClearDmBits(w.addresses, false, pp::kDmBitPlay | pp::kDmBitStop, cleared) == nullptr && cleared == 0x08 &&
+                  dmg[c::g_flags] == 0x00, "a stale stop of ours (request byte 0 == 1, no viewer DM) is cleared");
+        bits(0x9C, 1, 0x0001);
+        Check(pp::ClearDmBits(w.addresses, false, 0xFF, cleared) == nullptr && cleared == 0x1C && dmg[c::g_flags] == 0x80,
+              "only the Play / Stop / GoNext bits, never another bit of g+0x388");
+        bits(0x0C, 0, 0x0001);
+        Check(pp::ClearDmBits(w.addresses, false, 0x1C, cleared) == nullptr && cleared == 0 && dmg[c::g_flags] == 0x0C,
+              "request byte 0 != 1 (the last Play named another instance): nothing is ours");
+        bits(0x1C, 1, c::q18_dm_act);
+        Check(pp::ClearDmBits(w.addresses, false, 0x1C, cleared) == nullptr && cleared == 0x04 && dmg[c::g_flags] == 0x18,
+              "the viewer's own DM runs: its Stop / GoNext may be its own (kept); our Play bit is cleared");
+        bits(0x0C, 1, 0x0001);
+        bool pending = false;
+        Check(pp::ClearDmPending(w.addresses, false, pending) == nullptr && pending && dmg[c::g_flags] == 0x08,
+              "ClearDmPending is unchanged: bit 4 only");
+        Check(pp::ClearDmBits(w.addresses, true, pp::kDmBitStop, cleared) == nullptr && cleared == 0x08 && dmg[c::g_flags] == 0,
+              "a restoration: allowed while terminating");
+        bits(0x08, 1, 0x0001);
+        w.addresses.script_object = Addr(dmg) + 8;
+        Check(std::strcmp(pp::ClearDmBits(w.addresses, false, 0x08, cleared), "g") == 0 && cleared == 0 && dmg[c::g_flags] == 0x08,
+              "another script object: refused, nothing written");
+        w.Reset();
+    }
+
     // --- Crash probe filter and format (no handler is installed here).
     {
         namespace cp = mgscoop::crash_probe;
