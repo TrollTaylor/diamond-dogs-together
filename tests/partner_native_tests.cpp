@@ -1355,6 +1355,27 @@ void TestAim() {
     gd.yaw = 1.0;
     for (unsigned n = 0; n < pa::kCheckLatch; ++n) pa::CheckStep(dc, gd, gi, body, aim);
     Check(dc.latched && dc.streak == pa::kCheckLatch && dc.misses == pa::kCheckLatch, "gun direction: sustained wrong convention latches per mission");
+    // 0.13.6 RideGate (session 2026-10-22: 20/20 seated misses in a jeep and the helicopter latched the
+    // check for the mission). The sender skips CheckStep while riding; every ride edge restarts the streak.
+    {
+        pa::DirCheck rc{}; bool was = false; gd.yaw = 1.0;
+        pa::CheckStep(rc, gd, gi, body, aim);
+        for (unsigned n = 0; n < pa::kCheckLatch - 1; ++n) pa::CheckStep(rc, gd, gi, body, aim);
+        Check(!rc.latched && rc.streak == pa::kCheckLatch - 1, "ride gate: 19 on-foot misses, one short of the latch");
+        Check(pa::RideGate(rc, true, was) && was && rc.streak == 0 && !rc.have_prev, "ride gate: boarding restarts the streak");
+        Check(pa::RideGate(rc, true, was) && rc.streak == 0, "ride gate: still riding");
+        // (riding: the sender calls no CheckStep, so no miss can accumulate)
+        rc.streak = 7;
+        Check(!pa::RideGate(rc, false, was) && !was && rc.streak == 0 && !rc.have_prev, "ride gate: the get-off restarts the streak");
+        pa::CheckStep(rc, gd, gi, body, aim);
+        for (unsigned n = 0; n < pa::kCheckLatch - 1; ++n) pa::CheckStep(rc, gd, gi, body, aim);
+        Check(!rc.latched, "ride gate: a streak across the ride never latches");
+        pa::CheckStep(rc, gd, gi, body, aim);
+        Check(rc.latched, "ride gate: 20 consecutive on-foot misses still latch");
+        Check(!pa::RideGate(rc, false, was) && rc.latched, "ride gate: no edge, the on-foot latch stays");
+        Check(pa::RideGate(rc, true, was) && rc.latched, "ride gate: a ride never clears an on-foot latch");
+        Check(std::strcmp(pa::DirReasonName(pa::DirReason::ride), "ride") == 0, "ride gate: reason name");
+    }
     // The debug command.
     pa::ParsedCommand cmd{};
     Check(pa::ParseCommand("aimpt look", cmd) && cmd.kind == pa::Command::set && cmd.value == PartnerNativeAimPt::look, "aim: aimpt look");

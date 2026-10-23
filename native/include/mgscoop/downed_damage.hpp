@@ -11,6 +11,16 @@ bool UnsafeOfflineSleep(bool exactOfflinePair, std::uint32_t target,
     float stun) noexcept;
 // Original Calc mode 2 is the exact serialized sleep flag, not general stun.
 bool NaturalBodyPart(std::uint8_t body_part) noexcept;
+// A lethal non-natural-part hit on the local player (the sea/out-of-bounds kill,
+// part 12). Evaluate leaves it to the stock death; this names it for the log.
+bool EnvironmentKill(bool scoped, std::uint32_t target, std::uint32_t local,
+    std::uint8_t body_part, float life, float damage) noexcept;
+// An already downed (protected) local player keeps its shield, except for an
+// environment kill that would be lethal even at full health (damage >= maximum
+// life: the sea / out-of-bounds kill, 10000 against a 7200 maximum). That stays
+// the stock death (shared game over) instead of a downed player in the water.
+bool ProtectedEnvironmentKill(bool scoped, std::uint32_t target, std::uint32_t local,
+    std::uint8_t body_part, float life, float max_life, float damage) noexcept;
 bool SleepDamage(std::uint8_t mode, float stun) noexcept;
 bool FriendlyReplicaHit(bool scoped, std::uint32_t target, std::uint32_t local,
     std::uint16_t attacker, std::uint16_t flags, std::uint8_t body_part,

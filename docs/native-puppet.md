@@ -2297,6 +2297,105 @@ No new executable address: the online policy, the capability message and the
 stall hold are pure; the gun strip reads the already pinned gun record
 (`ReadGun1`). `tools/generate_partner_contract.py --check` is unchanged.
 
+## Body safety
+
+0.13.6 (`wp/online-body-safety`), from the first two-PC Steam session of 2026-10-22 (diag-other #4..#7, #11).
+Bug fixes for real play: on by default in lab and play, no key. Pure decisions in
+`native/include/mgscoop/partner_body_safety.hpp` (`partner_body_safety_tests`); `partner_driver`
+(`TickBodySafety`, after the reconciliation step) feeds them and executes the result only through flows it
+already owns: the reconciliation's Warp placement, its xform pin and the range block's re-show. Only instance
+1 is ever an input or an output; no new game address (`--check` unchanged).
+
+- **Drop (prevention).** Body 1 enters a cliff drop or fall (act 28 / 25) from an on-foot act (1..20) while
+  the remote showed no vertical act (traversal 21..24, fall/land/evade/cliff 25..28, ledge 54..56) within
+  500 ms of the edge, and from 500 ms after the edge the remote is still on foot at its height (within 0.5 m)
+  while body 1 is still off its footing or more than 0.5 m below it: the input-driven body walked off an
+  edge the remote never crossed (latency, speed mismatch: the session's H:11285 `remote=2(stand_move);
+  body=28(cliff_drop)`). A landing (26) at the remote's level keeps the episode open (at most 2.5 s after
+  the edge) until body 1 is on its feet (`landed`) or falls again: the session's body vaulted the railing
+  (28, 25, 26, 25), landed on the lip outside it at the deck's height (26 at +407 ms, still at +500 ms),
+  fell again at +813 ms (25) and grabbed the ledge (54) 16 ms later; the guard places at that second fall.
+  The guard asks the reconciliation for a placement (`reason=vertical`) at the
+  time-aligned target at once, instead of waiting for the 10 m far rule. At most one per 2 s. Only while the
+  reconciliation tracks body 1 (armed; no box, carry or put-down hold). A traversal hold
+  (`partner_traverse`) blocks only new episodes: body 1's own cliff drop (28) or ledge grab (54..56) enters
+  the native traversal phase on its edge tick, and an open episode continues through it (with the native
+  drive and `partner_native_traverse=1`, the play default, every cliff drop does). Logs
+  `partner_body_safety=drop; verdict=place|matched|level|landed|remote_off_foot|lost|rate; act=..; ms=..;
+  remote_act=..; remote_dy_mm=..; body_act=..; dy_mm=..; places=..[; next=place,reason=vertical]`.
+- **Stuck (recovery).** A failed placement (`partner_recon=placed; ok=0`) while body 1 falls, cliff-drops or
+  hangs at a ledge (25, 28, 54..56) and the remote is on foot: the Warp does not take on a hanging body (the
+  session: three rounds of ok=0 at 22 m, H:11366..11724, each retried only after 5 s). The driver re-shows it
+  at the target instead, where the range block runs (free-roam net or the ride guard; play default):
+  input disarmed, DM reverted, realize bits cleared, then body 1 is held hidden (deferred replies; while
+  Lua's all-active mode is on also `clear_all_active`, exactly as the mount hide does, because cleared bits
+  alone leave instance 1 realized) until the engine reports it unrealized or 2.5 s passed; then the proven
+  range placement of the seat exit and the range hide (slot at the target, realize on the next fresh tick,
+  the reconciliation's rearm placement). At most one per 3 s and 20 per mission. Logs
+  `partner_body_safety=stuck; verdict=reshow|not_capable|rate|cap; body_act=..; remote_act=..; err_mm=..;
+  count=..`, `partner_body_safety=reshow; step=hide; reason=recon_stuck; bits=..; allactive=..`, then
+  `step=place; ...; unrealized=0|1; ms=..; next=realize` (or `step=abandoned; refused=clear_bits`), then the
+  usual `partner_range=placed; next=realize` and `partner_bits=set`. A range or ride hide or a seat episode
+  that starts meanwhile takes over and drops the pending re-show (each re-places body 1 itself). On Mother
+  Base (30050) free_roam_net is off and the ride guard runs it, with its 1 s range-placement gate.
+- **Put-down (carry).** While the remote is carried or asleep (42..44, 131, 132) and body 1 is released
+  (put-down 44, asleep 131/132, fall/land 25/26 after it), body 1 more than 2 m below the target is falling
+  off a platform edge (the session: 79 m in 3 s, H:8992..9071; the stock carry hold, `PartnerCarryHold`,
+  kept every correction off during act 44). The guard owns body 1 for that episode: a Warp at the target at
+  once (at most 4, one per second while it is still more than 2 m below), an xform pin at the target on
+  every tick without a Warp, until it holds within 0.5 m vertically and 1 m horizontally for 500 ms (`reason=held`), the
+  scope ends (`scope`: the remote woke) or 8 s passed (`timeout`). While it owns body 1 the reconciliation's
+  own execution and the carry hold are skipped for that tick (the carry attachment has already released
+  it: acts 42/43, the attached carry, are never in scope). A normal put-down (the body on the deck) never
+  starts it. Never while the horse cargo holds body 1 (`PartnerCarryHold` without a stock carried body 1:
+  `world_horse_cargo.lua` warps it onto the horse every tick; a test feature, off in play): no episode, an
+  active one ends (`cargo`). Logs `partner_body_safety=putdown; step=start; body_act=..; remote_act=..; dy_mm=..;
+  err_xz_mm=..; carry_hold=..; episode=..; next=place`, `step=place; places=..`, `step=end; reason=..; ms=..;
+  places=..; pins=..`.
+- **Seated aim** (`partner_aim::RideGate`). While the local player rides (Lua's ON_VEHICLE / ON_HELICOPTER /
+  ON_HORSE, the native back-seat passenger report, or the tick's driven vehicle) the v6 sender runs no
+  convention self-check and sends no direction (`aim_dir=refused; reason=ride`). The seated pivot never
+  matches the on-foot reference: the session missed 20 of 20 in a jeep and in the helicopter and latched
+  `reason=convention` for the rest of the mission (F:6431, H:7725, F:13727). Every ride edge restarts the
+  miss streak and the settle reference; a latch earned on foot stays.
+- **Environment kill** (`downed_damage::Evaluate`). Lethal-to-downed applies to the local player only for a
+  natural collision part (0..11); the sea / out-of-bounds kill (part 12, flags 0x2419, damage 10000,
+  attacker = self) is the stock death again, so PLAYER_FALL_DEAD reserves the shared game over at once
+  (`downed_damage=stock_death; reason=environment; ...`). The session downed both players in the sea
+  instead (H:11467: 12 s to the controls-timeout game over; F:12698: 18 s with nothing until the host left).
+  Read-only proof that no weapon uses part 12: the only player collision-hit builder,
+  `DefenseCallback::TargetCallbackExec` (the only caller of `GetPartsIdFromName` 0xFF3480), writes
+  packet+0x26 from that classifier (0..11, default 1) or 1 for a shield; explosions arrive through it too
+  (the session's blast: parts 4 and 10). About 1400 `downed_damage=sample` / `lethal_capture` lines (the
+  game folder's lab log and the session's two logs) show part 12 only as the lethal flags 0x2419, damage 10000,
+  attacker 0 (9 samples, all sea deaths) and as 4 harmless flags 0x401 packets with damage 0 (attacker 0 on
+  the local player while it carried the partner, body act 42); a damage-0 packet is never lethal, so the
+  change does not touch it. Fall damage (`StepDownActionImpl::GetFallDamage`,
+  `RideHorseActionPluginImpl::GetFallDamage`) is requested through the action core's damage requester, not
+  the collision builder; no log on hand has a lethal land fall, so its part is unproven: if it is 12, a
+  lethal land fall is the stock death too (the hidden-run phase checks it). The replica
+  (body 1) stays protected from every lethal hit, part 12 included (it must never die on the viewer's copy).
+  An already downed (protected) player keeps its shield for every natural part, decided before the stock
+  calculation as before; for a non-natural part the stock calculation runs first, and a hit lethal even at
+  full health (`ProtectedEnvironmentKill`: damage >= the life record's maximum, record+4; the sea kill is
+  10000 against 7200) is the stock death (`downed_damage=stock_death; reason=environment; protected=1;
+  ...`): the downed state has no bleed-out, so a downed player who crawled (input 0.25) or was blown into
+  the sea would otherwise lie there for good unless both were down. A part-12 packet lethal only at the
+  downed health (5 % of the maximum) keeps the shield.
+- **Log caps.** The partner_recon event families (place, placed, snap, runaway, frozen, stance, yaw,
+  stop_check, diverging, refused, stance_fix, input_pin, lag) rotate (`log_budget::Admit`): 64 lines per
+  2 min window, then `partner_recon=capped; limit=64; kind=..; window_ms=120000`; the first line of a later
+  window is preceded by `partner_recon=resumed; kind=..; dropped=..`; at most 1024 lines per family and
+  mission (`...; limit=1024; kind=..; scope=mission`). 0.13.5 stopped each family for the whole mission after
+  64 lines (the session's `kind=frozen` after ~4 min, which hid the carry hold of the put-down fall). The
+  partner_body_safety lines rotate the same way (512 per mission). The world LOG receipts use a token
+  bucket (600-line burst, 20 lines/s steady, the old 200 per 10 s on average) instead of a fixed 10 s
+  window: the 30010 arrival burst (108 resync applies, 77 phase lines) dropped 52 lines in 0.13.5.
+
+Scenarios (hidden worker, the runtime phase): `body-safety-sea-death.txt`, `body-safety-sea-death-host.txt` and
+`body-safety-sea-death-downed.txt` (Mother Base, `-SaveSeed real -Mode play`), `body-safety-ledge.txt` (`-WanSim awful`),
+`body-safety-putdown-edge.txt` and `coop-vehicle-seated-aim.txt`; their headers list the expected lines.
+
 ## Wire
 
 - Input frame v6 (120 bytes, payload 92): v5 plus signed pitch/yaw centidegrees
@@ -2306,6 +2405,7 @@ stall hold are pure; the gun strip reads the already pinned gun record
   unqualified plugin rotation, so it uses the camera-look fallback. The sender negotiates v6 per link session
   and sends a probe every two seconds; older input versions remain supported.
   No valid aim direction means zero appended fields and the existing look fallback.
+  0.13.6: no direction (and no convention self-check) while the local player rides ("Body safety").
 - Input frame v5 (legacy 116 bytes, payload 88): v4 plus `[84]` gun flags
   (`GunFlag` valid 1, in hand 2, aiming 4, reloading 8, changing 0x10; without
   valid the next three bytes are 0), `[85]` the sender's gun mode `rec+0x2C0`,
