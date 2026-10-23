@@ -581,7 +581,8 @@ run has used it yet.
     rider[0]: an AI driver there stops CanExec before the board hook) and
     `fast=1` when a RIDE_FAST track of that vehicle is live.
   - `vehicle_door [partner|veh_<name> [driver|passenger]]` (no argument: the
-    last goto's vehicle and door): the stock truck gate at `vars.playerPos`
+    last goto's vehicle and door; no door named: passenger for `partner`, as
+    `goto_partner_vehicle`, driver for a locator): the stock truck gate at `vars.playerPos`
     (`gate=pass|far|inside; d3=..; dot=..; dy=..`), an approximation of the
     stock position `CS vt+0x388(body)+0x20`.
 - **Scenario** `coop-vehicle-passenger.txt`, truck half: the host

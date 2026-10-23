@@ -105,6 +105,7 @@ local function fixture(options)
     c.life, c.positions, c.ids = life, positions, ids
     env.GameObject = {NULL_ID = 65535, GetGameObjectId = function(kind, name)
         if name == nil then record('cp_lookup', kind); return c.cpIds and c.cpIds[kind] or 65535 end
+        if kind == 'TppVehicle2' then return c.vehicleIds and c.vehicleIds[name] or 65535 end
         check(kind == 'TppSoldier2', 'soldier typed locator lookup'); return ids[name] or 65535
     end, SendCommand = function(id, a)
         record(a.id, id, a)
@@ -985,5 +986,14 @@ g.mounted = 'vehicle'
 check(g:send('goto_partner_vehicle')[3] == 'on_foot' and g:send('vehicle_door')[3] == 'on_foot', 'the door levers need the viewer on foot')
 g = fixture()
 check(g:send('goto_vehicle truck 60')[3] == 'door_unavailable' and g:count('warp') == 0, 'a door argument without the vehicle module refuses')
+-- Key off (gotoTruck answers nil): goto_vehicle truck keeps the old 1.9 m spot beside the record; a door argument refuses.
+g = fixture(); g.D.vehicle = {handles = {}, run = function() return false, 'unused' end, gotoTruck = function() return nil end}
+check(g:send('goto_vehicle truck 60')[3] == 'door_unavailable' and g:count('warp') == 0, 'a nil gotoTruck with a door argument refuses')
+check(g:send('goto_vehicle truck')[3] == 'vehicle_none' and g:count('warp') == 0, 'a nil gotoTruck falls through to the old truck search')
+g.vehicleIds = {veh_trc_0001 = 25603}; g.positions[25603] = {40, 2, 50}
+local tr = g:send('goto_vehicle truck')
+local tw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
+check(tr[3]:find('vehicle=veh_trc_0001;id=25603', 1, true) and g:count('warp') == 1 and math.abs(tw.pos[1] - 41.9) < 1e-6 and
+    tw.pos[3] == 50, 'a nil gotoTruck keeps the old 1.9 m truck spot ' .. tostring(tr[3]))
 
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

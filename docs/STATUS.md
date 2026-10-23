@@ -18,7 +18,10 @@
   surprise latches the mission); answers the stock door point and a stand spot. Read only, no patch.
 - Lua levers: `goto_vehicle truck [driver|passenger] [cm]` (the nearest truck with a free driver seat, its door's
   stand spot; key off without arguments: the old spot), `goto_partner_vehicle [driver|passenger] [cm]` (the guest to
-  the host's current vehicle, passenger door by default) and the read-only `vehicle_door` report of the stock gate.
+  the host's current vehicle, passenger door by default) and the read-only `vehicle_door` report of the stock gate
+  (`vehicle_door partner` without a door also reads the passenger door, matching `goto_partner_vehicle`).
+- Review fixes: the `vehicle_door partner` default above; `debug_menu_lua_check` now asserts the key-off path (a nil
+  `gotoTruck` answer keeps the old 1.9 m truck spot, a door argument still refuses `door_unavailable`).
 - `coop-vehicle-passenger.txt` truck half rewritten: host boards a truck at its driver door and drives 1.5 s, the guest
   warps beside this copy of it and presses E; expected `board_block; ...; mode=passenger; reason=type; type=3|4`.
 - Contract: `DOOR_SITES` (7 blocks), `DOOR_DATA` (0.4f x3, 1.4f), `door_assertions`; 750 code sites / 193 vtable slots

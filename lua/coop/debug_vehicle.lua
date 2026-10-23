@@ -224,7 +224,8 @@ do
   local t=type(f)=="table" and type(f.tracks)=="table" and f.tracks[r.id]~=nil
   return goDoor(r,id,fmt("goto_partner_vehicle;id=%d;pseat=%d;door=%d;type=%d;rider0=%d;fast=%d;out=%d",r.id,r.pseat,seat,r.type,r.rider0,t and 1 or 0,cm))
  end
- -- vehicle_door [partner|veh_<name> [driver|passenger]] (no argument: the last goto's vehicle and door).
+ -- vehicle_door [partner|veh_<name> [driver|passenger]] (no argument: the last goto's vehicle and door;
+ -- no door: passenger for partner, as goto_partner_vehicle, else driver).
  local function doorReport(a)
   local target,seat
   if #a==1 then
@@ -232,7 +233,7 @@ do
    target,seat=V.last[1],V.last[2]
   else
    if #a>3 or (a[3] and DOOR[a[3]]==nil) then return false,"vehicle_door_args" end
-   seat=DOOR[a[3] or "driver"]
+   seat=DOOR[a[3] or (a[2]=="partner" and "passenger" or "driver")]
    if a[2]=="partner" then target="partner"
    elseif name(a[2]) and a[2]:match("^veh_") then
     local vid=call(GameObject,"GetGameObjectId","TppVehicle2",a[2])

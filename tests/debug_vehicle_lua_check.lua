@@ -225,6 +225,8 @@ c.me={98.8,1.5,2};ok,msg=c.V.run({"vehicle_door"},7);check(ok and msg:find(";gat
 c.me={101,0,2};ok,msg=c.V.run({"vehicle_door"},7);check(ok and msg:find(";gate=far;",1,true),"beyond 1.4 m: far")
 c.V.stop();ok,msg=c.V.run({"vehicle_door"},7);check(not ok and msg=="vehicle_door_args","stop forgets the last door")
 c=H();ok,msg=c.V.run({"vehicle_door","partner","passenger"},7);check(ok and c.doors[1]:sub(-11)=="partner 1 0","partner, passenger door")
+c=H();ok,msg=c.V.run({"vehicle_door","partner"},7);check(ok and c.doors[1]:sub(-11)=="partner 1 0","partner defaults to the passenger door (goto_partner_vehicle's)")
+c=H();ok,msg=c.V.run({"vehicle_door","partner","driver"},7);check(ok and c.doors[1]:sub(-11)=="partner 0 0","partner, driver door named")
 c=H();ok,msg=c.V.run({"vehicle_door","veh_trc_0000"},7);check(ok and c.doors[1]:sub(-9)=="25602 0 0","a locator, the driver door")
 c=H();ok,msg=c.V.run({"vehicle_door","veh_trc_0009"},7);check(not ok and msg=="vehicle_door_locator" and #c.doors==0,"an unresolved locator")
 for _,bad in ipairs({{"bogus"},{"partner","left"},{"partner","driver","x"},{"12345"}})do
