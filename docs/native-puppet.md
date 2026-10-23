@@ -2183,7 +2183,11 @@ adds:
   then `net_quiet`. Re-entry after a network leave: 2 s cooldown, then the
   link quality must hold 2 s (`partner_native_net::Quality`: a frame younger
   than 250 ms, no inter-arrival gap over 250 ms and a p95 under 120 ms in the
-  last 2 s; `net_quality`), then the 2 s settle. More than 6 network leaves in
+  last 2 s; `net_quality`), then the 2 s settle. The tracker only observes
+  ticks the arbiter runs: since 0.13.6 a seat episode's settle or the end of a
+  ride hide restarts its window (`partner_native_net::Rebase`, the mission
+  totals stay), so the first frame after a ride is not one 10..85 s gap (the
+  2026-10-22 session showed ~4 s of clips after every ride). More than 6 network leaves in
   5 min: `net_flap` until 30 s of good quality. A remote whose capabilities
   say it sends no input frames: `remote_caps`. The lab policy (default in the
   lab) is unchanged.

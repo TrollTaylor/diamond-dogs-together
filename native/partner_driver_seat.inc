@@ -10,8 +10,33 @@
 // record; re-issued unconfirmed; sanity distance) -> exit (stop or GetOff
 // advance) -> settle (dwords reverted after DM End, then the proven re-show
 // flow: bits cleared, range_needs_place).
+//
+// 0.13.6 online ride (the first two-PC session, 2026-10-22, diag-other #1/#2/#9):
+// - seated: body 1's slot follows the seated body (kSeatSlotFollowMs/Mm), so
+//   the realize policy (which reads the slot) never unrealizes it mid-ride;
+// - exit: an unrealized body 1 gets no stop (its DM ended with it; a stop to
+//   it is never consumed and left g+0x388 bit 8 set for minutes), and settle
+//   clears our stale request bits after such an exit or an exit_timeout;
+// - temporary refusals (pending, dm_read, release, host_dm) never latch;
+// - fallback: a vehicle this copy lacks or has unrealized (by id: local_read,
+//   unrealized; a Fultoned jeep) or a pending request keeps body 1 visible,
+//   Warped to the remote's streamed seated pose, instead of hiding it, and
+//   re-checks the seat every kSeatFallbackRetryMs.
 
 namespace prs = mgscoop::partner_ride_seat;
+
+// Refusals that describe a moment, not the vehicle: never latched (the next
+// attempt may seat it).
+bool SeatTransient(const char* reason) noexcept {
+    return reason && (std::strcmp(reason, "pending") == 0 || std::strcmp(reason, "dm_read") == 0 ||
+                      std::strcmp(reason, "release") == 0 || std::strcmp(reason, "host_dm") == 0);
+}
+// The by-id gate reasons that mean "this copy has no usable vehicle with that
+// id right now" (it was Fultoned or destroyed here, or is not realized): body 1
+// is shown without a seat (SeatPhase::fallback) instead of hidden.
+bool SeatFallbackReason(const char* reason) noexcept {
+    return reason && (std::strcmp(reason, "local_read") == 0 || std::strcmp(reason, "unrealized") == 0);
+}
 
 void EmitSeat(Mission& m, const Hooks& h, const char* format, ...) noexcept {
     va_list arguments;
@@ -162,6 +187,8 @@ void SeatGo(Mission::Seat& s, SeatPhase phase, std::uint64_t now) noexcept {
 void SeatExit(Mission& m, const Hooks& h, const char* reason, bool latch, std::uint64_t now) noexcept {
     auto& s = m.seat;
     if (s.phase == SeatPhase::exit || s.phase == SeatPhase::settle || s.phase == SeatPhase::idle) return;
+    // The fallback never played or armed anything on body 1: nothing to stop.
+    s.exit_quiet = s.phase == SeatPhase::fallback;
     s.exit_reason = reason;
     s.latch_exit = latch;
     s.issue_ms = 0;
@@ -175,7 +202,19 @@ void SeatRefuse(Mission& m, const Hooks& h, const char* reason, std::uint64_t no
     auto& s = m.seat;
     EmitSeat(m, h, "partner_ride_seat=refused; vehicle=%u; seat=%u; name=-; state=-; reason=%s; manual=%u\r\n", unsigned(s.vehicle),
              unsigned(s.seat), reason, s.manual ? 1u : 0u);
-    SeatExit(m, h, reason, !s.manual, now);
+    SeatExit(m, h, reason, !s.manual && !SeatTransient(reason), now);
+}
+
+// Body 1 stays shown without a seat (SeatPhase::fallback): nothing is armed or
+// playing on it; TickSeat Warps it to the remote's streamed pose every tick.
+void SeatEnterFallback(Mission& m, const Hooks& h, const char* reason, std::uint64_t now) noexcept {
+    auto& s = m.seat;
+    s.fallback_want = nullptr;
+    s.fallback_reason = reason;
+    s.fallback_ms = s.fallback_check_ms = now;
+    SeatGo(s, SeatPhase::fallback, now);
+    EmitSeat(m, h, "partner_ride_seat=fallback; vehicle=%u; seat=%u; reason=%s; show=warp; byid=%u\r\n", unsigned(s.vehicle),
+             unsigned(s.seat), reason ? reason : "unknown", s.byid ? 1u : 0u);
 }
 
 // The truthful realize state while the seat owns body 1 (the deferred reply
@@ -215,9 +254,25 @@ void SeatSettle(Driver& d, const Hooks& h, std::uint64_t now, bool terminating) 
     const char* reason = s.exit_reason ? s.exit_reason : "unknown";
     if (s.armed && h.ride_seat_revert) h.ride_seat_revert(h.context, reason);
     s.armed = false;
-    EmitSeat(m, h, "partner_ride_seat=exit; vehicle=%u; seat=%u; reason=%s; via=%s; confirmed=%u; plays=%u; stops=%u; ms=%u; manual=%u\r\n",
-             unsigned(s.vehicle), unsigned(s.seat), reason, s.next_sent ? "getoff" : "stop", s.confirmed ? 1u : 0u, s.plays, s.stops,
-             Clamp32(now - s.phase_ms), s.manual ? 1u : 0u);
+    EmitSeat(m, h,
+             "partner_ride_seat=exit; vehicle=%u; seat=%u; reason=%s; via=%s; confirmed=%u; plays=%u; stops=%u; ms=%u; manual=%u; "
+             "follows=%u\r\n",
+             unsigned(s.vehicle), unsigned(s.seat), reason,
+             s.body_gone ? "gone" : s.exit_quiet ? "fallback" : s.next_sent ? "getoff" : "stop", s.confirmed ? 1u : 0u, s.plays, s.stops,
+             Clamp32(now - s.phase_ms), s.manual ? 1u : 0u, s.slot_follows);
+    // The exit gave up, or body 1 vanished under the DM: no DM End will clear
+    // what this episode requested (2026-10-22: bit 8 of three stops sent to an
+    // unrealized body stayed set ~3 min and refused every later seat as
+    // pending). Ours only (partner_player::ClearDmBits checks request byte 0
+    // and the viewer's own DM).
+    if ((s.body_gone || std::strcmp(reason, "exit_timeout") == 0) && h.dm_clear_stale) {
+        const std::uint8_t cleared = h.dm_clear_stale(h.context, static_cast<std::uint8_t>(pp::kDmBitPlay | s.req_bits));
+        if (cleared)
+            EmitSeat(m, h, "partner_ride_seat=stale_cleared; vehicle=%u; seat=%u; bits=0x%02x; when=settle; reason=%s\r\n",
+                     unsigned(s.vehicle), unsigned(s.seat), unsigned(cleared), reason);
+    }
+    // The native arbiter did not observe the link while the seat owned body 1.
+    m.net_quality_rebase = true;
     if (s.latch_exit) {
         s.blocked = true;
         s.block_vehicle = s.vehicle;
@@ -371,6 +426,13 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         s.confirmed = s.loop_confirmed = s.getoff_confirmed = s.next_sent = s.latch_exit = s.lua_refused = false;
         s.exit_reason = nullptr;
         s.far_since_ms = s.status_ms = s.issue_ms = s.confirm_ms = 0;
+        s.fallback_want = s.fallback_reason = nullptr;
+        s.fallback_ms = s.fallback_check_ms = 0;
+        s.fallback_warps = 0;
+        s.exit_quiet = s.body_gone = false;
+        s.req_bits = 0;
+        s.slot_check_ms = 0;
+        s.slot_follows = 0;
         SeatGo(s, SeatPhase::release, now);
         m.visibility_logged = nullptr;  // the ride hide's restore path never runs over the seat
         EmitCapped(m.ride_vis_cap, h, "partner_ride", "partner_ride=seat_show; vehicle=%u; seat=%u\r\n", unsigned(s.vehicle),
@@ -381,7 +443,13 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         // Mother Base has no authored locator: without the id offer Lua could
         // only refuse it (no_name), so it is refused here, before the release
         // or the arm touches anything (latched: it hides until the ride changes).
-        if (!SeatMission(m.mission_code) && !s.byid) SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
+        // 0.13.6: a vehicle this copy lacks (local_read: Fultoned here, the
+        // 2026-10-22 session) or has unrealized keeps body 1 visible without a
+        // seat once the release ran (SeatPhase::fallback), not hidden.
+        if (!SeatMission(m.mission_code) && !s.byid) {
+            if (SeatFallbackReason(s.byid_reason)) s.fallback_want = s.byid_reason;
+            else SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
+        }
         // F1 vehicles: the remote in the viewer's own back seat (a named vehicle never reaches
         // SeatByIdGate): refused before anything is armed (latched, it hides).
         else if (partner_board::SharedWithLocal(d.local_passenger, s.vehicle, s.seat)) SeatRefuse(m, h, "shared_seat", now);
@@ -423,6 +491,58 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         if (why) SeatExit(m, h, why, latch, now);
     }
     switch (s.phase) {
+    case SeatPhase::fallback: {
+        // Shown without a seat: Warped to the remote's streamed (seated) pose
+        // every tick (the proven per-tick Warp of the input fallback; Warp also
+        // keeps the slot, which the realize policy reads, with the body). Never
+        // while a DM plays on body 1 (a Warp ends it; its End would write the
+        // viewer's camera connect, the seat dwords are not armed here).
+        if (in.pose_valid && in.realized && in.parts_loaded && !body_dm) {
+            out.ops |= partner::op::warp;
+            ++s.fallback_warps;
+        }
+        if (now - s.fallback_check_ms < kSeatFallbackRetryMs) break;
+        s.fallback_check_ms = now;
+        const bool byid_wait = SeatFallbackReason(s.fallback_reason);
+        if (byid_wait) {
+            // The vehicle may exist / realize here now (the viewer came near it).
+            const char* gate_why = SeatByIdGate(d, h, now);
+            if (gate_why) {
+                if (!SeatFallbackReason(gate_why)) SeatRefuse(m, h, gate_why, now);  // as at the start: latched (it hides)
+                else s.fallback_reason = gate_why;
+                break;
+            }
+        }
+        if (!dm_ok || host_dm || body_dm) break;
+        if (dm.g388 & 0x3C) {
+            // Nothing plays on either body, so no DM End will ever clear a request still
+            // pending (a Stop or GoNext would only hit the next DM that starts, the
+            // viewer's own included); when it is ours (request byte 0 == 1: the last
+            // Play named body 1), it is cleared.
+            const std::uint8_t cleared =
+                h.dm_clear_stale
+                    ? h.dm_clear_stale(h.context, static_cast<std::uint8_t>(pp::kDmBitPlay | pp::kDmBitStop | pp::kDmBitNext))
+                    : 0;
+            if (cleared)
+                EmitSeat(m, h, "partner_ride_seat=stale_cleared; vehicle=%u; seat=%u; bits=0x%02x; when=fallback; reason=%s\r\n",
+                         unsigned(s.vehicle), unsigned(s.seat), unsigned(cleared), s.fallback_reason ? s.fallback_reason : "unknown");
+            break;  // re-checked with a fresh read
+        }
+        if (byid_wait) {
+            s.byid = true;
+            s.byid_reason = nullptr;
+            s.entry |= partner::seat_entry::by_id;
+        }
+        EmitSeat(m, h, "partner_ride_seat=fallback_end; vehicle=%u; seat=%u; reason=%s; next=release; ms=%u; warps=%u; byid=%u\r\n",
+                 unsigned(s.vehicle), unsigned(s.seat), s.fallback_reason ? s.fallback_reason : "unknown", Clamp32(now - s.fallback_ms),
+                 s.fallback_warps, s.byid ? 1u : 0u);
+        s.fallback_reason = nullptr;
+        out.ops = 0;  // the release / arm / play of this tick sends its own ops
+        s.stops = 0;
+        s.issue_ms = 0;
+        SeatGo(s, SeatPhase::release, now);
+        [[fallthrough]];
+    }
     case SeatPhase::release: {
         if (!dm_ok) {
             if (now - s.phase_ms >= kSeatReleaseMs * 2) SeatRefuse(m, h, "dm_read", now);
@@ -443,6 +563,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             if (!s.issue_ms || now - s.issue_ms >= kSeatStopMs) {
                 if (++s.stops > 3) { SeatRefuse(m, h, "release", now); break; }
                 out.ops |= partner::op::dm_stop;
+                s.req_bits |= pp::kDmBitStop;
                 s.issue_ms = now;
                 EmitSeat(m, h, "partner_ride_seat=release; vehicle=%u; seat=%u; rec18=0x%llx; attempt=%u\r\n", unsigned(s.vehicle),
                          unsigned(s.seat), static_cast<unsigned long long>(dm.rec18), s.stops);
@@ -453,6 +574,11 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         m.dm_play_pending = false;
         s.stops = 0;
         s.issue_ms = 0;
+        // No usable vehicle here (by id): shown without a seat, nothing armed.
+        if (s.fallback_want) {
+            SeatEnterFallback(m, h, s.fallback_want, now);
+            break;
+        }
         SeatGo(s, SeatPhase::arm, now);
         [[fallthrough]];
     }
@@ -464,8 +590,14 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         // No DM on either body and nothing pending (the dwords are global
         // while armed; DirectMotion Stop/GoNext are global too).
         if (host_dm || body_dm || (dm.g388 & 0x3C)) {
-            if (now - s.phase_ms >= kSeatExitMs)
-                SeatRefuse(m, h, host_dm ? "host_dm" : body_dm ? "body_dm" : "pending", now);
+            if (now - s.phase_ms >= kSeatExitMs) {
+                const char* busy = host_dm ? "host_dm" : body_dm ? "body_dm" : "pending";
+                SeatRefuse(m, h, busy, now);
+                // 0.13.6: a request pending or the viewer's own DM is a moment, not the
+                // vehicle: with nothing armed and no DM on body 1, body 1 stays shown
+                // (fallback, re-checked) instead of the old latched hide.
+                if (!body_dm && !s.armed && s.phase == SeatPhase::exit) SeatEnterFallback(m, h, busy, now);
+            }
             break;
         }
         if (!m.dm_patched) {
@@ -512,6 +644,10 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         if (s.byid && !s.manual && !s.target_done && body_dm && dm.rec_ok && prs::IsSeatState(dm.rec18, s.seat)) {
             if (const char* target_why = SeatTarget(d, h, now)) {
                 SeatRefuse(m, h, target_why, now);
+                // 0.13.6: where only the id can seat (Mother Base), a copy that vanished or
+                // unrealized since the offer is not latched: the next episode shows body 1
+                // without a seat (fallback) instead of hiding it.
+                if (!SeatMission(m.mission_code) && SeatFallbackReason(target_why)) s.latch_exit = false;
                 break;
             }
         }
@@ -574,11 +710,44 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
                 s.far_since_ms = 0;
             }
         }
+        // Prevention (0.13.6): the realize policy 0x121B5E0 reads body 1's slot
+        // (*(S+0x20))[1] x/z (0x14121B8B7..0x14121B8CC) for its loaded-area test
+        // (0x14121B92C), and the seated DM moves only the body: the slot follows
+        // the seated body at most once a second (a slot write does not move the
+        // body: anim-appearance-findings-2026-10-04 apply=slot).
+        if (!s.manual && h.write_slot && h.read_body && st.slots_ok &&
+            (!s.slot_check_ms || now - s.slot_check_ms >= kSeatSlotFollowMs)) {
+            s.slot_check_ms = now ? now : 1;
+            float pos[4]{}, quat[4]{};
+            if (h.read_body(h.context, st, pos, quat) && std::isfinite(pos[0]) && std::isfinite(pos[1]) && std::isfinite(pos[2])) {
+                const std::uint32_t drift = partner::DistanceMm(MetresToMm(st.slot[1][0]), MetresToMm(st.slot[1][1]), MetresToMm(st.slot[1][2]),
+                                                                MetresToMm(pos[0]), MetresToMm(pos[1]), MetresToMm(pos[2]));
+                if (drift > kSeatSlotFollowMm) {
+                    const float xyzw[4] = {pos[0], pos[1], pos[2], partner::QuatToYaw(quat)};
+                    if (const char* refused = h.write_slot(h.context, in.terminating, xyzw)) {
+                        LogWriteRefusal(m, h, "seat_slot", refused);
+                    } else if (++s.slot_follows == 1) {
+                        EmitSeat(m, h, "partner_ride_seat=slot_follow; vehicle=%u; seat=%u; drift_mm=%u; body_mm=%d,%d,%d\r\n",
+                                 unsigned(s.vehicle), unsigned(s.seat), drift, MetresToMm(pos[0]), MetresToMm(pos[1]), MetresToMm(pos[2]));
+                    }
+                }
+            }
+        }
         SeatStatus(m, h, st, in, dm_ok, dm, err_mm);
         break;
     }
     default:
         break;
+    }
+    if (s.phase == SeatPhase::exit && (!in.realized || s.exit_quiet)) {
+        // 0.13.6: body 1 is gone (the engine unrealized it; its DM ended with it,
+        // q18[1] only still reads 0x8B) or the fallback played nothing on it: no
+        // stop. Three stops sent to an unrealized body were never consumed and
+        // left g+0x388 bit 8 set for ~3 min (2026-10-22), refusing every later
+        // seat as pending. Settle reverts at once and re-shows the body.
+        SeatDmProbe(m, h, dm_ok, dm, s.exit_quiet ? "exit_quiet" : "exit_gone");
+        s.body_gone = !in.realized;
+        SeatGo(s, SeatPhase::settle, now);
     }
     if (s.phase == SeatPhase::exit) {
         if (!s.issue_ms) SeatDmProbe(m, h, dm_ok, dm, "exit");
@@ -603,9 +772,11 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
                 out.action = partner::seat_action::next;
                 out.entry = s.entry;
                 s.next_sent = true;
+                s.req_bits |= pp::kDmBitNext;
             } else {
                 out.ops |= partner::op::dm_stop;
                 ++s.stops;
+                s.req_bits |= pp::kDmBitStop;
             }
             s.issue_ms = now;
             EmitSeat(m, h, "partner_ride_seat=exit_request; vehicle=%u; seat=%u; reason=%s; via=%s\r\n", unsigned(s.vehicle),
@@ -614,6 +785,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             // The GetOff advance or a stop did not end it: stop (again).
             out.ops |= partner::op::dm_stop;
             ++s.stops;
+            s.req_bits |= pp::kDmBitStop;
             s.next_sent = false;
             s.issue_ms = now;
         }

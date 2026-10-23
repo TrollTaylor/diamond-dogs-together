@@ -98,6 +98,9 @@ struct Fake {
     const char* dm_patch_reason = nullptr;
     bool dm_cleared = false;
     unsigned dm_clear_calls = 0;
+    // 0.13.6 dm_clear_stale: the calls, the last mask (the fake applies ClearDmBits' owner rules).
+    unsigned dm_stale_calls = 0;
+    std::uint8_t dm_stale_mask = 0;
     // dm=map: the game reacts to the reply's DM ops (dm_auto): a play starts
     // the clip (q18[1] = 0x8b) or, unconsumed, stays pending (g388 bit 4); a
     // stop ends it and clears g388 0x3C. A failing patch logs like the
@@ -391,6 +394,18 @@ bool HookDmClearPending(void* context) noexcept {
     ++f.dm_clear_calls;
     if (f.dm_cleared) f.dm.g388 = static_cast<std::uint8_t>(f.dm.g388 & ~4u);
     return f.dm_cleared;
+}
+// partner_player::ClearDmBits' rules (tested on synthetic memory in partner_player_tests):
+// Play/Stop/GoNext only, request byte 0 == 1, Stop/GoNext never while the viewer's DM runs.
+std::uint8_t HookDmClearStale(void* context, std::uint8_t mask) noexcept {
+    Fake& f = F(context);
+    ++f.dm_stale_calls;
+    f.dm_stale_mask = mask;
+    if (f.dm.req0 != 1) return 0;
+    std::uint8_t clear = static_cast<std::uint8_t>(f.dm.g388 & mask & 0x1C);
+    if (f.dm.q18[0] == c::q18_dm_act) clear = static_cast<std::uint8_t>(clear & ~0x18);
+    f.dm.g388 = static_cast<std::uint8_t>(f.dm.g388 & ~clear);
+    return clear;
 }
 void HookResetFault(void* context) noexcept {
     ++F(context).fault_resets;
@@ -5515,6 +5530,7 @@ struct SeatSession : Session {
         hooks.send_reliable_append = HookSendReliable;
         hooks.ride_seat_arm = HookRideSeatArm;
         hooks.ride_seat_revert = HookRideSeatRevert;
+        hooks.dm_clear_stale = HookDmClearStale;
         lab.partner_native_ride = ride;
         driver.settings.nride = ride;
         driver.settings.seat_exit = exit;
@@ -6672,6 +6688,230 @@ void TestRideSeat() {
     }
 }
 
+// 0.13.6 online ride (the first two-PC session, 2026-10-22; diag-other #1, #2, #9). Every block
+// fails on 0.13.5: there the unrealized body got three stops (and g388 bit 8 stayed), pending
+// latched a hide, a Fultoned jeep hid the driver, the slot stayed at the boarding spot and the
+// ride counted as one link-quality gap.
+void TestRideRobust() {
+    namespace rw = mgscoop::partner_ride_wire;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full;
+    const auto seated = [&](SeatSession& s, std::uint16_t vehicle) {
+        s.Ride(rw::Kind::vehicle, 0, vehicle);
+        s.fake.sample.act = 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat), "the seat plays");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed && s.driver.mission.seat.phase == pd::SeatPhase::seated, "seated, confirmed");
+    };
+    const auto reshow = [](SeatSession& s) {
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) s.Step(50);
+        Check(s.driver.mission.bits_set, "re-placed and re-realized");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+    };
+    {
+        // Vanish (friend F:6432-6579, host H:7867-8003): the engine unrealizes body 1 mid-ride; its
+        // DM ended with it, q18[1] still reads 0x8B. No stop goes to it, the dwords revert at once,
+        // nothing is latched, and the body re-seats without a pending refusal.
+        SeatSession s;
+        s.Show();
+        seated(s, 25608);
+        const auto hides = s.fake.Containing("partner_ride=hide");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        s.fake.dm.rec_ok = false; s.fake.dm.rec18 = 0; s.fake.dm.rec248 = 0;
+        Check(s.Step() && !(s.reply.op & op::dm_stop) && s.fake.seat_armed == -1 && s.driver.mission.seat.phase == pd::SeatPhase::idle &&
+                  s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=unrealized; via=gone;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=exit_request;") == 0 && s.fake.Containing("partner_ride_seat=dm; when=exit_gone;") == 1,
+              "vanish: no stop to an unrealized body; reverted at once");
+        Check(!s.driver.mission.seat.blocked && s.driver.mission.range_needs_place && s.fake.dm.g388 == 0,
+              "vanish: not latched, no stale stop bit; the re-show flow re-places it");
+        s.fake.dm.q18[1] = 1;
+        reshow(s);
+        bool replayed = false;
+        for (unsigned i = 0; i < 10 && !replayed; ++i) replayed = s.Step() && (s.reply.op & op::ride_seat);
+        Check(replayed && s.fake.Containing("reason=pending") == 0 && s.fake.Containing("partner_ride=hide") == hides &&
+                  s.fake.Containing("partner_ride_seat=unavailable;") == 0,
+              "vanish: re-seated at once, never refused pending, never hidden");
+    }
+    {
+        // An exit that gives up (exit_timeout): the stops were never consumed and bit 8 is ours
+        // (request byte 0 == 1, no viewer DM): cleared at settle, so the next seat is not pending.
+        SeatSession s;
+        s.Show();
+        seated(s, 25608);
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && s.reply.op == op::dm_stop, "exit: stop");
+        s.fake.dm.g388 = 0x08; s.fake.dm.req0 = 1;
+        for (unsigned i = 0; i < 9 && s.driver.mission.seat.phase != pd::SeatPhase::idle; ++i) s.Step(1000);
+        Check(s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=exit_timeout; via=stop;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=stale_cleared; vehicle=25608; seat=0; bits=0x08; when=settle; reason=exit_timeout") == 1 &&
+                  s.fake.dm.g388 == 0 && (s.fake.dm_stale_mask & 0x0C) == 0x0C,
+              "exit_timeout: our unconsumed stop bit is cleared at settle");
+        // A foreign stop (the last Play named instance 0) is never touched.
+        SeatSession f;
+        f.Show();
+        seated(f, 25608);
+        f.Ride(rw::Kind::foot); f.fake.sample.act = 1;
+        Check(f.Step() && f.reply.op == op::dm_stop, "exit: stop");
+        f.fake.dm.g388 = 0x08; f.fake.dm.req0 = 0;
+        for (unsigned i = 0; i < 9 && f.driver.mission.seat.phase != pd::SeatPhase::idle; ++i) f.Step(1000);
+        Check(f.fake.dm.g388 == 0x08 && f.fake.Containing("stale_cleared") == 0, "exit_timeout: a request that is not ours stays");
+    }
+    {
+        // A pending request at the arm (foreign: request byte 0 is 0) is a moment, not the vehicle:
+        // refused unlatched, body 1 stays shown (fallback: Warped to the remote's pose), and the seat
+        // plays once nothing is pending.
+        SeatSession s;
+        s.Show();
+        const auto hides = s.fake.Containing("partner_ride=hide");
+        s.fake.dm.g388 = 0x08; s.fake.dm.req0 = 0;
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(s.Step() && s.driver.mission.seat.phase == pd::SeatPhase::arm && s.reply.op == 0, "pending: the arm waits");
+        Check(s.Step(3100) && s.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=0; name=-; state=-; reason=pending;") == 1 &&
+                  s.driver.mission.seat.phase == pd::SeatPhase::fallback && !s.driver.mission.seat.blocked &&
+                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25608; seat=0; reason=pending; show=warp; byid=0") == 1,
+              "pending: refused, not latched, shown without a seat");
+        Check(s.Step() && s.reply.op == op::warp && s.reply.x_mm == 1000 && s.reply.z_mm == 4000 && !s.driver.mission.visibility.hidden &&
+                  s.driver.mission.bits_set && s.fake.seat_arms == 0 && s.fake.Containing("partner_ride=hide") == hides,
+              "fallback: Warped to the remote's seated pose, realized, nothing armed, never hidden");
+        Check(s.Step(2100) && s.driver.mission.seat.phase == pd::SeatPhase::fallback && s.fake.dm.g388 == 0x08 && s.reply.op == op::warp,
+              "fallback: a foreign pending request is kept; still shown");
+        s.fake.dm.g388 = 0;
+        Check(s.Step(2100) && (s.reply.op & op::ride_seat) && !(s.reply.op & op::warp) && s.fake.seat_arms == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25608; seat=0; reason=pending; next=release;") == 1,
+              "fallback: seated once nothing is pending (one reply, the seat's op only)");
+        // Ours (request byte 0 == 1) with no DM on either body: cleared by the fallback's check.
+        SeatSession o;
+        o.Show();
+        o.fake.dm.g388 = 0x08; o.fake.dm.req0 = 1;
+        o.Ride(rw::Kind::vehicle, 0, 25608);
+        o.fake.sample.act = 111;
+        Check(o.Step() && o.Step(3100) && o.driver.mission.seat.phase == pd::SeatPhase::fallback, "ours: fallback");
+        Check(o.Step(2100) && o.fake.dm.g388 == 0 &&
+                  o.fake.Containing("partner_ride_seat=stale_cleared; vehicle=25608; seat=0; bits=0x08; when=fallback; reason=pending") == 1,
+              "fallback: our stale request is cleared");
+        Check(o.Step(2100) && (o.reply.op & op::ride_seat), "then seated");
+        // dm_read / release / host_dm never latch either (the old refusals hid until the ride changed).
+        SeatSession r;
+        r.Show();
+        r.fake.dm_ok = false;
+        r.Ride(rw::Kind::vehicle, 0, 25608);
+        r.fake.sample.act = 111;
+        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 1, "dm_read refused");
+        r.fake.dm_ok = true;
+        for (unsigned i = 0; i < 4; ++i) r.Step();
+        Check(!r.driver.mission.seat.blocked && !r.driver.mission.visibility.hidden, "dm_read: not latched");
+    }
+    {
+        // A Fultoned jeep (friend F:9631 Fulton, F:10059-10071): this copy has no vehicle 25603 while the
+        // host drives it in Mother Base (seat by id only). 0.13.5 refused local_read and hid the host for
+        // 25 s; now body 1 stays shown at the host's streamed pose, and seats once the jeep exists here.
+        const auto mb = [](SeatSession& s) {
+            s.driver.settings.seat_id = true;
+            s.hooks.vehicle_read = HookVehicleRead;
+            s.hooks.seat_target = HookSeatTarget;
+            s.Show();
+            s.Ride(rw::Kind::vehicle, 0, 25603);
+            s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
+            s.fake.sample.act = 111;
+        };
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s);
+        const auto hides = s.fake.Containing("partner_ride=hide");
+        Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 && !s.fake.dm_patched &&
+                  s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=0; offer=0; reason=local_read;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read; show=warp; byid=0") == 1 &&
+                  s.fake.Containing("partner_ride_seat=refused;") == 0,
+              "Fultoned jeep: local_read shows body 1 without a seat (nothing armed or played)");
+        Check(s.Step() && s.reply.op == op::warp && !s.driver.mission.visibility.hidden && !s.driver.mission.seat.blocked &&
+                  s.fake.Containing("partner_ride=hide") == hides && s.fake.Containing("partner_ride_seat=unavailable;") == 0,
+              "Fultoned jeep: visible, Warped every tick, never hidden");
+        // The vehicle appears on this copy (realized, same category): seated by id at the next check.
+        s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
+        Check(s.Step(2100) && (s.reply.op & op::ride_seat) && s.reply.seat_entry == partner::seat_entry::by_id && s.driver.mission.seat.byid &&
+                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25603; seat=0; reason=local_read; next=release;") == 1,
+              "the vehicle exists here again: seated by id");
+        // The remote gets off while shown in the fallback: nothing to stop, not latched.
+        SeatSession g(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(g);
+        Check(g.Step() && g.driver.mission.seat.phase == pd::SeatPhase::fallback, "fallback");
+        const auto reverts = g.fake.seat_reverts;
+        g.Ride(rw::Kind::foot); g.fake.sample.act = 1;
+        Check(g.Step() && !(g.reply.op & op::dm_stop) && g.driver.mission.seat.phase == pd::SeatPhase::idle && !g.driver.mission.seat.blocked &&
+                  g.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=0; reason=foot; via=fallback;") == 1 &&
+                  g.fake.seat_reverts == reverts,
+              "fallback exit: no stop, no revert, not latched");
+        // An unrealized copy (far on this copy) is shown the same way.
+        SeatSession u(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        u.fake.vehicles.push_back(VehicleRead(25603, 0x10, 0xFF));
+        mb(u);
+        Check(u.Step() && u.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  u.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=unrealized;") == 1,
+              "an unrealized copy: shown without a seat");
+        // Other by-id refusals still hide (latched) as before.
+        SeatSession c(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        c.fake.vehicles.push_back(VehicleRead(25603, 0x20));
+        mb(c);
+        Check(c.Step() && c.fake.Containing("partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-; reason=category;") == 1 &&
+                  c.driver.mission.seat.blocked, "a category mismatch still refuses (latched)");
+    }
+    {
+        // Prevention: the realize policy reads body 1's slot (0x14121B8B7..0x14121B8CC); the seated body
+        // moves with the jeep, so the slot follows it (at most 1 Hz, past 25 m of drift).
+        SeatSession s;
+        s.Show();
+        seated(s, 25608);
+        const auto slots = s.fake.Writes("slot");
+        s.fake.body_pos[0] = s.fake.sample.x = 41.0f;
+        Check(s.Step(1000) && s.fake.Writes("slot") == slots + 1 && s.fake.state.slot[1][0] == 41.0f && s.fake.state.slot[1][2] == 4.0f &&
+                  s.fake.Containing("partner_ride_seat=slot_follow; vehicle=25608; seat=0; drift_mm=40000; body_mm=41000,2000,4000") == 1,
+              "the slot follows the seated body");
+        s.fake.body_pos[0] = s.fake.sample.x = 71.0f;
+        Check(s.Step(100) && s.fake.Writes("slot") == slots + 1, "at most once a second");
+        s.fake.body_pos[0] = s.fake.sample.x = 61.0f;
+        Check(s.Step(1000) && s.fake.Writes("slot") == slots + 1, "20 m of drift: kept");
+        s.fake.body_pos[0] = s.fake.sample.x = 71.0f;
+        Check(s.Step(1000) && s.fake.Writes("slot") == slots + 2 && s.fake.Containing("partner_ride_seat=slot_follow;") == 1 &&
+                  s.driver.mission.seat.phase == pd::SeatPhase::seated && s.fake.Containing("seat_far") == 0,
+              "30 m of drift: written again (logged once), still seated");
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && s.reply.op == op::dm_stop, "exit");
+        s.Ended();
+        Check(s.Step() && s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=foot; via=stop;") == 1 &&
+                  s.fake.Containing("; follows=2\r\n") == 1, "the exit line counts the follows");
+    }
+    {
+        // ~4 s of clips after every ride (F:6174 p50=85650): the arbiter's link-quality window restarts
+        // after a seat episode instead of counting the ride as one arrival gap.
+        SeatSession s;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+        std::uint32_t seq = 1;
+        const auto frame = [&](std::uint64_t ms) { s.fake.latest.seq = seq++; return s.Step(ms); };
+        s.Show();
+        for (unsigned i = 0; i < 20; ++i) frame(33);
+        Check(s.driver.mission.net_quality.have && s.driver.mission.net_quality.gaps_1000 == 0, "observed on foot");
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(frame(33) && (s.reply.op & op::ride_seat), "play");
+        s.Playing(kFrontLeftLoop);
+        for (unsigned i = 0; i < 60; ++i) frame(1000);
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        frame(33);
+        s.Ended();
+        frame(33);
+        Check(s.driver.mission.seat.phase == pd::SeatPhase::idle && s.driver.mission.net_quality_rebase, "settled: rebase pending");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) frame(50);
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        for (unsigned i = 0; i < 10; ++i) frame(33);
+        Check(!s.driver.mission.net_quality_rebase && s.driver.mission.net_quality.gaps_1000 == 0 &&
+                  s.driver.mission.net_quality.max_gap_ms < 1000,
+              "the 60 s ride is not one arrival gap");
+    }
+}
+
 // Anim round 1 weapons (docs/anim-round1-weapons.md): the unsupported gate and
 // its lines, the aim intent's Arm fields, the auto-fire stop, the reload rate
 // factor in the Arm, partner_weapon_ctx and partner_native_gun past the old cap.
@@ -7379,6 +7619,7 @@ int main() {
     TestMountVisibility();
     TestRideSeat();
     TestRideSeatById();
+    TestRideRobust();
     TestRideExtAndCensus();
     TestBoardDriver();
     TestPassCameraDriver();

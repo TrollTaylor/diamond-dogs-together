@@ -1,0 +1,130 @@
+# 0.13.6 online ride (docs/STATUS.md "0.13.6 (in progress)" / online-ride-robust; diag-other #1): a LONG shared
+# jeep ride. In the first two-PC session (2026-10-22) both copies lost the partner in the jeep about 340 m into a
+# ride (body 1's slot stayed at the boarding spot; the realize policy 0x121B5E0 reads the slot, so the engine
+# unrealized it), the seat exit then sent three stops to the unrealized body (g+0x388 bit 8 stuck ~3 min) and the
+# re-seat refused `pending` and latched a hide. The hidden runs had only driven ~2 s (coop-vehicle-passenger.txt).
+# This is that scenario's first half (the guest boards the host's Wakh Sind jeep as the back-seat passenger) with a
+# ~37 s drive (25 x `host hold w 1500`) so the jeep ends well past 340 m from the boarding spot. Both copies run the
+# seat flow: the host's copy seats the guest's body in back seat 2|3, the guest's copy seats the host's body in the
+# driver's seat 0.
+#
+# Lab:  pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-longride.txt
+#         -PartnerProfile native -NativeStage gun
+# Play (the F1 play rehearsal settings, the real session's): add -Mode play -WanSim bad (optionally -SaveSeed real
+#         to drive on the user's Mother Base layout instead; then replace the goto_vehicle lines by a jeep spot).
+#
+# Expected (both copies, from the boarding to the end of the drive):
+#   guest  partner_ride_seat=confirmed; vehicle=256xx; seat=0; ...   (the host's body in the driver's seat)
+#   host   partner_ride_seat=confirmed; vehicle=256xx; seat=2|3; ... (the guest's body in the back seat)
+#   both   partner_ride_seat=slot_follow; vehicle=256xx; seat=..; drift_mm=..   once the jeep is 25 m on (the fix:
+#          body 1's slot follows the seated body at most once a second)
+#   both   partner_ride_seat=status; phase=seated; ...; confirmed=1 lines all along the drive (err_mm stays small)
+#   host   `host debug position` at the end >= 400 m from the first one (else the drive was blocked: re-aim the jeep)
+#   frames long-01..long-05 (bursts along the way) and long-end: the partner SEATED and VISIBLE in the jeep on both
+#          screens (the guest's view: the host at the wheel; the host's view: the guest in the back seat)
+#   the exit line after the get-off: partner_ride_seat=exit; ...; reason=foot|getoff_act; via=stop|getoff; ...;
+#          follows=N with N >= 10 (one write per ~25 m)
+# Must NOT appear on either copy during the drive (check the logs after the run; 0.13.5 printed all of them):
+#   partner_bits=cleared; reason=range_rearm   partner_realized=0; R=1; via=seat   partner_ride_seat=exit; ...;
+#   reason=unrealized   reason=pending   partner_ride_seat=unavailable; ...; reason=blocked   partner_ride=hide
+#   partner_ride_seat=dm; ...; g388=0x08 (a stuck stop); partner_native_net; ...; reason=net_quality with p50 equal
+#   to the ride after the get-off (diag-other #9: the link-quality window now restarts after a seat episode)
+# If the unrealize still happens (the slot follow did not keep body 1 in the area), the recovery must hold:
+#   partner_ride_seat=exit; ...; reason=unrealized; via=gone (no exit_request; via=stop to the unrealized body), then
+#   partner_ride_seat=start and confirmed again within ~2 s, never reason=pending.
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host press e 150
+wait 2500
+host run vehicle_seats
+host require vehicle;id=
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=[23]; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+wait 1000
+host debug position
+both capture long-start
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500 nowait
+guest burst long-01 3 300
+host release
+host debug clear_enemies 200
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500 nowait
+host burst long-02 3 300
+host release
+waitlog host 'partner_ride_seat=slot_follow; vehicle=256[0-9][0-9]; seat=[23];' 5
+waitlog guest 'partner_ride_seat=slot_follow; vehicle=256[0-9][0-9]; seat=0;' 5
+host debug position
+host debug clear_enemies 200
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500 nowait
+guest burst long-03 3 300
+host release
+host debug clear_enemies 200
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500 nowait
+host burst long-04 3 300
+host release
+host debug position
+host debug clear_enemies 200
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500
+host hold w 1500 nowait
+guest burst long-05 3 300
+host release
+wait 2000
+host debug position
+waitlog host 'partner_ride_seat=status; phase=seated; vehicle=256[0-9][0-9]; seat=[23]; confirmed=1;' 5
+waitlog guest 'partner_ride_seat=status; phase=seated; vehicle=256[0-9][0-9]; seat=0; confirmed=1;' 5
+both capture long-end
+host run vehicle_seats
+guest press e 150
+guest burst long-exit 6 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=off' 5
+waitlog host 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=[23]; reason=' 10
+both capture long-exited
+host press e 150
+wait 2500
+waitlog guest 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=0; reason=' 10
+wait 4000
+both capture long-after
+state

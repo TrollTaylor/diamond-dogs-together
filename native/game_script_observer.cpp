@@ -918,6 +918,11 @@ bool PartnerDmClearPending(void*) noexcept {
     mgscoop::partner_player::ClearDmPending(partner_addresses, mission_terminating, cleared);
     return cleared;
 }
+std::uint8_t PartnerDmClearStale(void*, std::uint8_t mask) noexcept {
+    std::uint8_t cleared = 0;
+    mgscoop::partner_player::ClearDmBits(partner_addresses, mission_terminating, mask, cleared);
+    return cleared;
+}
 unsigned PartnerDmMotionCount(void*) noexcept { return MountedPlayerMotionCount(); }
 // partner.trigger (lab only): reads at most `capacity` bytes, then deletes it.
 pd::TriggerRead PartnerTakeTrigger(void*, char* text, std::size_t capacity, std::size_t& length) noexcept {
@@ -1091,7 +1096,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
-    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead};
+    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

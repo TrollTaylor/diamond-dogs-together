@@ -410,6 +410,11 @@ struct Hooks {
                                        partner_pass_camera::Camera& out) noexcept = nullptr;
     void (*pass_camera_stats)(void* context, partner_pass_camera::Stats& out) noexcept = nullptr;
     bool (*pass_camera_read)(void* context, const partner_player::State& state, partner_pass_camera::Camera& out) noexcept = nullptr;
+    // 0.13.6 online ride: clears the stale DM request bits of `mask` a seat
+    // episode left (partner_player::ClearDmBits: bits 4/8/0x10, request byte 0
+    // == 1, Stop/GoNext only without the viewer's own DM); returns the bits
+    // cleared. May be null (nothing is cleared).
+    std::uint8_t (*dm_clear_stale)(void* context, std::uint8_t mask) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -428,6 +433,19 @@ inline constexpr std::uint64_t kSeatConfirmMs = 2000, kSeatStopMs = 1000, kSeatE
 inline constexpr std::uint64_t kSeatFarMs = 1000, kSeatGetInMs = 2500, kSeatStatusMs = 1000, kSeatReleaseMs = 1500;
 inline constexpr std::uint32_t kSeatFarMm = 3000;
 inline constexpr unsigned kSeatPlays = 3, kSeatStatusCap = 600;
+// 0.13.6 online ride (the 2026-10-22 session): the engine's realize policy
+// 0x121B5E0 tests body 1's SLOT (*(S+0x20))[1] x/z against the loaded area
+// (0x14121B8B7 `add rdi,[r9+0x20]`, 0x14121B8C2/0x14121B8CC the z/x loads,
+// 0x14121B92C the area call), never the body; the seated DM moves only the
+// body, so the slot stayed at the boarding spot and body 1 unrealized about
+// 340 m into a ride. While seated the slot follows the body, checked at most
+// every kSeatSlotFollowMs and written when it drifted more than
+// kSeatSlotFollowMm (so it stays well within 100 m of the vehicle).
+inline constexpr std::uint64_t kSeatSlotFollowMs = 1000;
+inline constexpr std::uint32_t kSeatSlotFollowMm = 25000;
+// The visible fallback (SeatPhase::fallback): the seat's preconditions are
+// re-checked this often (the by-id gate, no DM on either body, nothing pending).
+inline constexpr std::uint64_t kSeatFallbackRetryMs = 2000;
 // WS3 ride census cadence and cap (partner_ride_census=1).
 inline constexpr std::uint64_t kRideCensusMs = 1000;
 inline constexpr unsigned kRideCensusCap = 400;
@@ -437,8 +455,11 @@ inline constexpr unsigned kRideCensusCap = 400;
 // other board line (Board::cap), so the counters never crowd out a latch line.
 inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
-// The seat flow's phases (Mission::seat.phase).
-enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle };
+// The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
+// rides a seat this copy cannot play (its vehicle is missing or unrealized here,
+// or a DM request is pending): body 1 stays realized and visible, Warped to
+// the remote's streamed seated pose every tick, instead of hidden.
+enum class SeatPhase : std::uint8_t { idle, release, arm, play, seated, exit, settle, fallback };
 const char* SeatPhaseName(SeatPhase phase) noexcept;
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -620,6 +641,22 @@ struct Mission {
         bool byid, target_done, target_wrote;
         const char* byid_reason;
         std::uint8_t remote_category, local_category;
+        // 0.13.6 online ride. fallback_want: the start's by-id reason that shows
+        // body 1 without a seat (local_read, unrealized) once the release ran;
+        // fallback_reason: why the fallback phase holds; exit_quiet: the exit
+        // left the fallback (nothing of ours plays on body 1: no stop);
+        // body_gone: the exit found body 1 unrealized (no stop either);
+        // req_bits: the global DM request bits this episode sent (Stop 8,
+        // GoNext 0x10), cleared at settle when the DM could not consume them.
+        const char* fallback_want;
+        const char* fallback_reason;
+        std::uint64_t fallback_ms, fallback_check_ms;
+        unsigned fallback_warps;
+        bool exit_quiet, body_gone;
+        std::uint8_t req_bits;
+        // The slot follow while seated (kSeatSlotFollowMs / kSeatSlotFollowMm).
+        std::uint64_t slot_check_ms;
+        unsigned slot_follows;
     } seat;
     bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
@@ -1046,6 +1083,11 @@ struct Mission {
     // --- Online play (docs/native-puppet.md "Online").
     // The receiver's link quality (re-entry gate) and the online log lines.
     partner_native_net::Quality net_quality;
+    // 0.13.6: a seat episode settled or a ride hide ended (the native arbiter
+    // did not observe the link meanwhile): the next TickNative restarts the
+    // quality window (partner_native_net::Rebase) instead of counting the
+    // whole ride as one arrival gap.
+    bool net_quality_rebase;
     std::uint64_t net_line_ms;
     unsigned net_lines;
     std::uint64_t net_line_key;

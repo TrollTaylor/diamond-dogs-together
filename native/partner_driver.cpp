@@ -4195,6 +4195,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // but its input and poses are stale: paused or loading) and the remote's
     // capabilities of this link session (no input frames: remote_caps).
     const pnat::Params params = set.nnet == PartnerNativeNet::online ? pnat::OnlineParams() : pnat::Params{};
+    // A seat episode or a ride hide owned body 1 and skipped this observer: the
+    // first frame after it is not one huge arrival gap (0.13.6: ~4 s of clips
+    // after every ride, net_quality with p50 = the ride's length).
+    if (m.net_quality_rebase) {
+        m.net_quality_rebase = false;
+        partner_native_net::Rebase(m.net_quality);
+    }
     partner_native_net::Observe(m.net_quality, partner_native_net::QualityIn{now, in.link_live, latest_ok, latest_ok ? latest.seq : 0u,
                                                                              latest_ok ? latest.age_ms : 0u});
     in.quality_good_ms = partner_native_net::GoodMs(m.net_quality, now);
@@ -5239,6 +5246,7 @@ const char* SeatPhaseName(SeatPhase phase) noexcept {
     case SeatPhase::seated: return "seated";
     case SeatPhase::exit: return "exit";
     case SeatPhase::settle: return "settle";
+    case SeatPhase::fallback: return "fallback";
     default: return "idle";
     }
 }
@@ -6214,11 +6222,13 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             d.settings.fire_live = false;
             if (!m.visibility.hidden && !m.bits_set && !m.dm_patched) {
                 m.visibility_logged = nullptr;
+                m.net_quality_rebase = true;  // the hide ended: a new link-quality window
                 EmitCapped(m.ride_vis_cap, h, "partner_ride", m.visibility.seated ? "partner_ride=seat_show; next=place\r\n"
                                                                                   : "partner_ride=foot_stable; next=place\r\n");
             }
         } else if (ride_guard && m.visibility_logged) {
             m.visibility_logged = nullptr;
+            m.net_quality_rebase = true;
             EmitCapped(m.ride_vis_cap, h, "partner_ride", m.visibility.seated ? "partner_ride=seat_show; next=place\r\n"
                                                                               : "partner_ride=foot_stable; next=place\r\n");
         }

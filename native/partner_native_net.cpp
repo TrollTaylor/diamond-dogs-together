@@ -51,6 +51,16 @@ const char* Bool(bool value) noexcept { return value ? "true" : "false"; }
 
 void Reset(Quality& q) noexcept { q = Quality{}; }
 
+void Rebase(Quality& q) noexcept {
+    q.have = false;
+    q.last_seq = 0;
+    q.last_rx_ms = 0;
+    q.head = q.count = 0;
+    q.good = false;
+    q.good_since_ms = 0;
+    q.p50_ms = q.p95_ms = 0;
+}
+
 void Observe(Quality& q, const QualityIn& in, const QualityParams& p) noexcept {
     const std::uint64_t now = in.now_ms;
     bool bad = !in.link_live || !in.valid || in.age_ms > p.gap_bad_ms;

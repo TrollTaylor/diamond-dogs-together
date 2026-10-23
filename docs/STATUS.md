@@ -1,3 +1,33 @@
+## 0.13.6 (in progress)
+
+Fixes from the first real two-PC Steam session (2026-10-22, `diag-*.md` of that session). Not packaged; the version is
+still 0.13.5.
+
+### online-ride-robust
+
+Branch `wp/online-ride-robust` from `dev/oct7-continue` `cc973a8`. Shared vehicle rides (diag-other #1, #2, #9; details
+in docs/anim-round1-seat.md "0.13.6: long rides, a missing vehicle, temporary refusals"). Bug fixes, on by default, no
+new key; unit-tested only (no game launch in this phase).
+- **The partner no longer vanishes ~340 m into a shared ride.** Read-only RE: the realize policy `0x121B5E0` tests
+  body 1's slot `(*(S+0x20))[1]` (`0x14121B8B7..0x14121B8CC` the loads, `0x14121B92C` the area test), not the body or
+  the record; the seated DM moved only the body. While seated the slot now follows the body (at most 1 Hz, past 25 m of
+  drift: `partner_ride_seat=slot_follow`, the exit line's `follows=N`).
+- **Recovery if it happens anyway:** no stop is sent to an unrealized body (`exit; ...; reason=unrealized; via=gone`),
+  so `g+0x388` bit 8 (`RequestToStopDirectMotion` `0x9DB4C0`, cleared only by DM End) no longer sticks for minutes;
+  after an `exit_timeout` or a gone body our own stale request bits are cleared (`partner_player::ClearDmBits`: request
+  byte 0 == 1, Stop / GoNext only without the viewer's own DM; `partner_ride_seat=stale_cleared`).
+- **Temporary refusals (`pending`, `dm_read`, `release`, `host_dm`) no longer latch a hide** for the rest of the ride.
+- **A vehicle the viewer's copy lacks (Fultoned there) or has unrealized no longer hides its driver** (Mother Base, seat
+  by id `local_read` / `unrealized`, and a `pending` / `host_dm` arm): the new `SeatPhase::fallback` keeps body 1
+  realized and Warps it to the remote's streamed pose every tick (`partner_ride_seat=fallback; ...; show=warp`), re-checks
+  every 2 s and seats it once the vehicle exists (`fallback_end; next=release`). The vehicle itself is still not synced
+  (the `VEHICLE_GONE` world op is a separate branch): the partner is drawn standing at the seat position there.
+- **No more ~4 s of clip fallback after every ride:** a seat settle or the end of a ride hide restarts the native
+  link-quality window (`partner_native_net::Rebase`) instead of counting the ride as one arrival gap.
+- Contract: 4 new read-only pins (747 code sites / 193 vtable slots; `--check` passes). Tests: `partner_driver_tests`
+  `TestRideRobust`, `partner_player_tests` ClearDmBits, `partner_native_tests` Rebase (each block fails on 0.13.5).
+  Hidden repro for the next phase: `tools/worker/scenarios/coop-vehicle-longride.txt` (lab and `-Mode play -WanSim bad`).
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
