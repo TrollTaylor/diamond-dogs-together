@@ -1735,6 +1735,39 @@ void TestBodySafety() {
         const auto ors = s.fake.Writes("or");
         Check(s.Tick(1) && s.fake.Writes("or") == ors + 1 && s.driver.mission.bits_set, "stuck: realized again at the target");
     }
+    // Log budgets in the driver (log_budget::Admit fed m.log_now_ms): a recon family rotates. 64 frozen-family
+    // lines (frozen/unfrozen on each body act change), one capped line per window, then a resumed line with the
+    // dropped count before the first line of the next 2 min window. 0.13.5 closed the family for the mission.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.anim_ok = true;
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 2;
+        const auto frozen_lines = [&]() { return s.fake.Count("partner_recon=frozen;") + s.fake.Count("partner_recon=unfrozen"); };
+        for (int i = 0; i < 100; ++i) {
+            s.fake.anim.act[1] = (i & 1) ? 11 : 2;  // aim stand idle (frozen=act) / stand move
+            s.Tick(1, 33);
+        }
+        const auto capped = frozen_lines();
+        Check(capped == 64 && s.fake.Count("partner_recon=capped; limit=64; kind=frozen; window_ms=120000\r\n") == 1 &&
+                  s.fake.Count("partner_recon=resumed;") == 0,
+              "log budget: the frozen family stops at 64 lines in the window, one capped line");
+        s.fake.anim.act[1] = 2;
+        for (int i = 0; i < 3700; ++i) s.Tick(1, 33);  // past the 2 min window
+        Check(frozen_lines() == capped, "log budget: nothing while quiet");
+        s.fake.anim.act[1] = 11;
+        s.Tick(1, 33);
+        const auto find = [&](const char* prefix) {
+            for (std::size_t i = 0; i < s.fake.lines.size(); ++i)
+                if (s.fake.lines[i].compare(0, std::strlen(prefix), prefix) == 0) return static_cast<long>(i);
+            return -1L;
+        };
+        const long resumed = find("partner_recon=resumed; kind=frozen; dropped=");
+        Check(resumed >= 0 && frozen_lines() == capped + 1 && resumed + 1 < static_cast<long>(s.fake.lines.size()) &&
+                  s.fake.lines[static_cast<std::size_t>(resumed) + 1].compare(0, 32, "partner_recon=frozen; reason=act") == 0,
+              "log budget: the next window resumes with the dropped count right before the line");
+    }
 }
 
 void TestAnimationApply() {
@@ -3753,6 +3786,52 @@ void TestNativeTraverseIcon() {
     }
 }
 
+// 0.13.6 body safety (docs/native-puppet.md "Body safety") with the native drive and
+// partner_native_traverse on, as in play: the session's cliff drop (H:11285..11309) on the driver.
+// Body 1's own 28 enters the native traversal hold on its edge tick; the drop guard keeps its
+// episode through that hold, waits on the landing at the deck's height (+500 ms) and places body 1
+// back at the remote's pose (reason=vertical) when it falls again, before the ledge hang. The first
+// 0.13.6 guard closed the episode on the hold a tick after the edge: no placement.
+void TestBodySafetyNativeDrop() {
+    namespace pn = mgscoop::partner_native;
+    NativeSession s;
+    s.driver.settings.traverse = true;
+    s.fake.anim_ok = true;
+    s.fake.anim.act[1] = 2;
+    s.fake.sample.anim_valid = true;
+    s.fake.sample.act = 2;
+    Check(s.Until(pn::Mode::entering, 3000) && s.Until(pn::Mode::active, 6000), "native drop: native active with traverse on");
+    for (int i = 0; i < 80; ++i) s.N(16);  // past the settle
+    Check(s.driver.mission.recon.mode == mgscoop::partner_recon::Mode::track && s.driver.mission.input_armed && !s.driver.mission.traverse_hold,
+          "native drop: the input-driven body tracks the remote on the deck");
+    const auto body_act = [&](std::uint16_t act, float y, int ticks) {
+        s.fake.anim.act[1] = act;
+        s.fake.body_pos[1] = y;
+        for (int i = 0; i < ticks; ++i) s.N(16);
+    };
+    body_act(28, 2.0f, 1);  // over the railing
+    body_act(28, 2.5f, 3);
+    Check(s.fake.Containing("partner_traverse=entered; reason=native;") == 1 && s.driver.mission.traverse_hold &&
+              s.driver.mission.body_drop.drop_ms != 0,
+          "native drop: body 1's cliff drop enters the traversal hold; the drop episode stays open");
+    body_act(25, 2.7f, 1);
+    body_act(26, 2.7f, 1);
+    body_act(25, 2.6f, 19);
+    body_act(26, 2.0f, 25);  // on the lip outside the railing at the deck's height, past +500 ms
+    Check(s.fake.Count("partner_body_safety=drop;") == 0 && s.driver.mission.body_drop.drop_ms != 0 &&
+              s.fake.Count("partner_recon=place; reason=vertical;") == 0,
+          "native drop: a landing at the remote's level waits");
+    body_act(25, 1.98f, 1);  // falls again
+    Check(s.fake.Count("partner_body_safety=drop; verdict=place; act=28;") == 1, "native drop: the fall after the landing: place");
+    bool warped = false;
+    for (int i = 0; i < 3 && !warped; ++i) {
+        s.N(16);
+        warped = (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=vertical;") == 1;
+    }
+    Check(warped && s.reply.x_mm == 1000 && s.reply.y_mm == 2000 && s.reply.z_mm == 3000,
+          "native drop: a Warp at the remote's pose before the ledge hang");
+}
+
 void TestNativeOnline() {
     namespace pn = mgscoop::partner_native;
     namespace pnn = mgscoop::partner_native_net;
@@ -5628,8 +5707,9 @@ struct SeatSession : Session {
     std::uint16_t ride_vehicle = 0xFFFF;
     explicit SeatSession(mgscoop::PartnerRideSeatExit exit = mgscoop::PartnerRideSeatExit::stop,
                          mgscoop::PartnerRideSeatEnter enter = mgscoop::PartnerRideSeatEnter::direct,
-                         mgscoop::PartnerNativeRide ride = mgscoop::PartnerNativeRide::seat, std::uint32_t mission = 30010)
-        : Session(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net, mission) {
+                         mgscoop::PartnerNativeRide ride = mgscoop::PartnerNativeRide::seat, std::uint32_t mission = 30010,
+                         mgscoop::PartnerApply apply = mgscoop::PartnerApply::xform)
+        : Session(3, apply, mgscoop::PartnerSource::net, mission) {
         AddNativeHooks(hooks);
         hooks.send_reliable_append = HookSendReliable;
         hooks.ride_seat_arm = HookRideSeatArm;
@@ -6487,6 +6567,90 @@ void TestBoardSeatGates() {
         Check(k.Step() && k.driver.mission.seat.confirmed, "confirmed");
         k.fake.body_pos[0] = 9.0f;
         Check(k.Step() && k.Step(600) && k.Step(600) && k.fake.Containing("partner_ride=seat_far; vehicle=25608; seat=0;") == 1, "block mode keeps the far latch");
+    }
+}
+
+// 0.13.6 body safety under the ride guard (partner_native_ride=seat, the play default).
+void TestBodySafetyRideGuard() {
+    namespace rw = mgscoop::partner_ride_wire;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full;
+    // Stuck on Mother Base (30050, the session's ledge hang H:11366..11724): free_roam_net is off there and
+    // only the ride guard runs the re-show (no seat episode: Mother Base seats by id only), through its own
+    // range-placement gate (visibility_place_try_ms, partner_ride_wire::Placed).
+    {
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050,
+                      mgscoop::PartnerApply::input);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        auto& sm = s.fake.sample;
+        sm.act = 2;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;  // the remote's live input frames
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 1;
+        s.Ride(rw::Kind::foot);
+        s.Show();
+        for (int i = 0; i < 40; ++i) s.Step();
+        auto& m = s.driver.mission;
+        Check(m.bits_set && m.recon.mode == mgscoop::partner_recon::Mode::track && m.reshow_capable && !m.visibility.hidden,
+              "stuck 30050: the ride-guarded input body tracked, re-show capable");
+        s.fake.anim.act[1] = 54;
+        sm.x = 26.0f;
+        bool fail = false;
+        for (int i = 0; i < 40 && !fail; ++i) { s.Step(); fail = s.fake.Count("partner_recon=placed; ok=0;") == 1; }
+        Check(fail && s.fake.Count("partner_body_safety=stuck; verdict=reshow; body_act=54; remote_act=2;") == 1 && m.body_reshow != nullptr,
+              "stuck 30050: placed ok=0 on a hanging body asks for the re-show");
+        const auto slots = s.fake.Writes("slot");
+        const auto placed = s.fake.Count("partner_range=placed; next=realize");
+        Check(s.Step() && s.fake.Has("partner_bits=cleared; reason=recon_stuck\r\n") &&
+                  s.fake.Count("partner_body_safety=reshow; step=hide; reason=recon_stuck;") == 1 && (s.reply.op & op::clear_all_active) &&
+                  !(s.reply.op & op::warp) && m.reshow_wait,
+              "stuck 30050: bits cleared, body 1 held hidden with clear_all_active");
+        Check(s.Step() && (s.reply.op & op::clear_all_active) && s.fake.Writes("slot") == slots, "stuck 30050: held until unrealized");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Step() && s.fake.Count("partner_body_safety=reshow; step=place; reason=recon_stuck; unrealized=1;") == 1 &&
+                  s.fake.Writes("slot") == slots + 1 && s.fake.state.slot[1][0] == 26.0f && !m.reshow_wait &&
+                  s.fake.Count("partner_range=placed; next=realize") == placed + 1 && m.visibility_place_try_ms != 0,
+              "stuck 30050: unrealized: the ride guard's range placement at the target");
+        const auto ors = s.fake.Writes("or");
+        bool shown = false;
+        for (int i = 0; i < 40 && !shown; ++i) { s.Step(); shown = m.bits_set; }
+        Check(shown && s.fake.Writes("or") == ors + 1 && s.fake.Count("partner_body_safety=reshow;") == 2,
+              "stuck 30050: realized again at the target");
+    }
+    // A seat episode that takes body 1 drops a pending re-show, as a range or ride hide does (the seat exit
+    // re-shows body 1 itself). The stuck guard's request of the last tick and a re-show hold kept by a
+    // refused bit clear (bits still set, so the seat may start) must not hide and re-place body 1 a second
+    // time right after the ride. The first 0.13.6 driver ran them after the seat exit.
+    {
+        SeatSession s;
+        s.Show();
+        auto& m = s.driver.mission;
+        m.body_reshow = "recon_stuck";
+        m.body_reshow_ms = s.now;
+        m.reshow_wait = true;
+        m.reshow_since_ms = s.now;
+        m.reshow_reason = "recon_stuck";
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat) && m.seat.phase == pd::SeatPhase::seated && m.body_reshow == nullptr && !m.reshow_wait,
+              "seat re-show: the seat takes body 1 and drops the pending re-show");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && m.seat.confirmed, "seat re-show: seated");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && s.reply.op == op::dm_stop && m.seat.phase == pd::SeatPhase::exit, "seat re-show: the remote leaves");
+        s.Ended();
+        const auto slots = s.fake.Writes("slot");
+        const auto placed = s.fake.Count("partner_range=placed; next=realize");
+        Check(s.Step() && !m.bits_set && m.range_needs_place && m.seat.phase == pd::SeatPhase::idle && s.fake.Writes("clear") == 1,
+              "seat re-show: the seat exit's own re-show");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Step() && s.fake.Writes("slot") == slots + 1 && s.fake.Count("partner_range=placed; next=realize") == placed + 1,
+              "seat re-show: re-placed on foot");
+        Check(s.Step() && m.bits_set, "seat re-show: re-realized");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        for (int i = 0; i < 10; ++i) s.Step();
+        Check(s.fake.Count("partner_body_safety=reshow;") == 0 && s.fake.Writes("clear") == 1 &&
+                  s.fake.Count("partner_range=placed; next=realize") == placed + 1 && m.bits_set,
+              "seat re-show: no second hide or placement after the ride");
     }
 }
 
@@ -7517,6 +7681,7 @@ int main() {
     TestLookFix();
     TestInputArming();
     TestBodySafety();
+    TestBodySafetyRideGuard();
     TestDm();
     TestReviewFixes();
     TestRound4Review();
@@ -7535,6 +7700,7 @@ int main() {
     TestNativeSleepPresentationAdmission();
     TestNativeEnterAndLeave();
     TestNativeTraverseIcon();
+    TestBodySafetyNativeDrop();
     TestGestures();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();

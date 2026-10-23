@@ -56,9 +56,24 @@ int main() {
             check(d.bypass && d.cause==0);
             check(!EnvironmentKill(true,target,local,body,7200,10000));
         }
-        // The protected (already downed) local player keeps its full shield.
+        // Evaluate keeps the protected (already downed) player's shield; Calculate asks
+        // ProtectedEnvironmentKill first for a non-natural part (below).
         check(Evaluate(true,target,local,static_cast<std::uint16_t>(target),0x2419,body,7200,10000,0,0,true).bypass);
+        // A downed player (protected health 5%: 360 of 7200) who crawls into the sea: the kill
+        // (10000 >= the 7200 maximum) is the stock death, for the local player and part > 11 only.
+        check(ProtectedEnvironmentKill(true,target,local,body,360,7200,10000)==(target==local && part>11));
     }
+    // A part-12 packet lethal only at the downed health keeps the shield; an unknown maximum too.
+    check(ProtectedEnvironmentKill(true,0,0,12,360,6000,10000));
+    check(ProtectedEnvironmentKill(true,0,0,12,360,7200,7200));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,7200,7199));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,7200,359));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,0,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,nan,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,inf,10000));
+    check(!ProtectedEnvironmentKill(false,0,0,12,360,7200,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,4,360,7200,10000));
+    check(!ProtectedEnvironmentKill(true,0,0,12,360,7200,nan));
     // The real session samples: host (life 7200) and guest (life 6000).
     check(!Evaluate(true,0,0,0,0x2419,12,7200,10000,0,0,false).bypass);
     check(!Evaluate(true,0,0,0,0x2419,12,6000,10000,0,0,false).bypass);

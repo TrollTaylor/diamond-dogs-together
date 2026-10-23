@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 
@@ -106,19 +107,67 @@ sb::DropIn Drop(std::uint64_t now, std::uint16_t body, std::uint16_t remote, dou
 }
 
 void DropCases() {
-    // H:11285..11309: body 2 -> 28 (cliff_drop) -> 25 -> 26 -> 25 -> 54 while the remote stays at 2 on the
-    // deck (y 800); body at y 1507 then below the deck. 0.13.5: no placement until the 10 m far rule.
+    // H:11285..11309, the logged acts and times (host log, partner_act / partner_body / partner_recon): body
+    // 2 -> 28 (cliff_drop, over the railing: y 800 -> 1546) -> 25 -> 26 -> 25 -> 26 (landed on the lip outside
+    // the railing at the deck's height, y 800, at +407 ms and still there at +500 ms) -> 25 (+813 ms) -> 54
+    // (ledge hang, y 979) while the remote walks on the deck (2, y 800). Body 1's own 28 enters the native
+    // traversal hold from the next tick on (partner_traverse=entered; reason=native; act=28). 0.13.5: no
+    // guard; the first 0.13.6 guard closed the episode on that hold and would have judged the landing at
+    // +500 ms "landed" anyway: no placement before the hang either way.
     {
         sb::DropState st{};
-        std::uint64_t t = 456314890;
-        Check(sb::DropStep(st, Drop(t, 2, 2, 1507, 800)).verdict == sb::DropVerdict::none, "walking");
-        Check(sb::DropStep(st, Drop(t + 31, 28, 2, 1507, 800)).verdict == sb::DropVerdict::opened, "cliff drop edge opens");
-        Check(sb::DropStep(st, Drop(t + 94, 25, 2, 1500, 810)).verdict == sb::DropVerdict::none, "waiting");
-        Check(sb::DropStep(st, Drop(t + 110, 26, 2, 1450, 800)).verdict == sb::DropVerdict::none, "land: still waiting");
-        const auto o = sb::DropStep(st, Drop(t + 31 + sb::kDropMatchMs, 25, 2, 1200, 800));
-        Check(o.verdict == sb::DropVerdict::place && o.act == 28 && o.ms == sb::kDropMatchMs, "lone drop at the remote's level: place");
+        const auto at = [](std::uint64_t t, std::uint16_t body, double body_y, bool hold) {
+            sb::DropIn in = Drop(t, body, 2, body_y, 800);
+            in.traverse_hold = hold;
+            return in;
+        };
+        Check(sb::DropStep(st, at(456314890, 2, 800, false)).verdict == sb::DropVerdict::none, "walking");
+        Check(sb::DropStep(st, at(456314921, 28, 800, false)).verdict == sb::DropVerdict::opened, "cliff drop edge opens");
+        Check(sb::DropStep(st, at(456314937, 28, 1100, true)).verdict == sb::DropVerdict::none && st.drop_ms != 0,
+              "the traversal hold body 1's own drop entered keeps the episode open");
+        Check(sb::DropStep(st, at(456314984, 25, 1546, true)).verdict == sb::DropVerdict::none, "fall");
+        Check(sb::DropStep(st, at(456315000, 26, 1530, true)).verdict == sb::DropVerdict::none, "land");
+        Check(sb::DropStep(st, at(456315015, 25, 1507, true)).verdict == sb::DropVerdict::none, "fall");
+        Check(sb::DropStep(st, at(456315328, 26, 800, true)).verdict == sb::DropVerdict::none, "landed on the lip at the deck's height");
+        Check(sb::DropStep(st, at(456314921 + sb::kDropMatchMs, 26, 800, true)).verdict == sb::DropVerdict::none && st.drop_ms != 0,
+              "+500 ms: a landing at the remote's level waits");
+        const auto o = sb::DropStep(st, at(456315734, 25, 780, true));
+        Check(o.verdict == sb::DropVerdict::place && o.act == 28 && o.ms == 813, "falls again: place, before the ledge hang");
         Check(st.places == 1 && st.drop_ms == 0, "episode closed, counted");
-        Check(sb::DropStep(st, Drop(t + 700, 54, 2, 953, 800)).verdict == sb::DropVerdict::none, "no second episode from 25 -> 54");
+        Check(sb::DropStep(st, at(456315750, 54, 979, true)).verdict == sb::DropVerdict::none, "no second episode from 25 -> 54");
+    }
+    // A traversal already held before the edge (a replay, a native traversal's grace): no episode opens.
+    {
+        sb::DropState st{};
+        auto in = Drop(1000, 2, 2, 800, 800);
+        in.traverse_hold = true;
+        sb::DropStep(st, in);
+        in = Drop(1016, 28, 2, 800, 800);
+        in.traverse_hold = true;
+        Check(sb::DropStep(st, in).verdict == sb::DropVerdict::none && st.drop_ms == 0, "held traversal: no episode");
+    }
+    // A landing at the level, then on its feet there: landed, judged on its feet.
+    {
+        sb::DropState st{};
+        sb::DropStep(st, Drop(1000, 2, 2, 800, 800));
+        sb::DropStep(st, Drop(1016, 28, 2, 800, 800));
+        Check(sb::DropStep(st, Drop(1516, 26, 2, 800, 800)).verdict == sb::DropVerdict::none, "landing at the level: wait");
+        Check(sb::DropStep(st, Drop(1700, 2, 2, 800, 800)).verdict == sb::DropVerdict::landed && st.places == 0, "on its feet: landed");
+    }
+    // The wait for a landing is bounded.
+    {
+        sb::DropState st{};
+        sb::DropStep(st, Drop(1000, 2, 2, 800, 800));
+        sb::DropStep(st, Drop(1016, 28, 2, 800, 800));
+        Check(sb::DropStep(st, Drop(1016 + sb::kDropLandWaitMs - 1, 26, 2, 800, 800)).verdict == sb::DropVerdict::none, "still landing");
+        Check(sb::DropStep(st, Drop(1016 + sb::kDropLandWaitMs, 26, 2, 800, 800)).verdict == sb::DropVerdict::landed, "bounded: landed");
+    }
+    // A landing 1 m under the remote: place at once (no wait).
+    {
+        sb::DropState st{};
+        sb::DropStep(st, Drop(1000, 2, 2, 800, 800));
+        sb::DropStep(st, Drop(1016, 28, 2, 800, 800));
+        Check(sb::DropStep(st, Drop(1516, 26, 2, -200, 800)).verdict == sb::DropVerdict::place, "landing a level lower: place");
     }
     // The remote dropped first (its act within kDropMatchMs before the body's edge): a real fall.
     {
@@ -190,7 +239,7 @@ void DropCases() {
         sb::DropStep(st, Drop(1032, 54, 2, 800, 800));
         Check(sb::DropStep(st, Drop(1048, 25, 2, 800, 800)).verdict == sb::DropVerdict::none, "54 -> 25: no edge");
     }
-    // Disabled (traversal, box, carry or the put-down guard): any open episode closes silently.
+    // Disabled (box, carry or the put-down guard): any open episode closes silently.
     {
         sb::DropState st{};
         sb::DropStep(st, Drop(1000, 2, 2, 800, 800));
@@ -258,6 +307,19 @@ void PutDownCases() {
         o = sb::PutDownStep(st, Put(t + 1700 + sb::kPutDownHoldMs, 132, 132, 207042, 340, 375100, 207042, 350, 375126));
         Check(o.ended && o.end_reason && o.end_reason[0] == 'h' && !st.active && o.action == sb::PutDownAction::none, "held: end");
         Check(st.episodes == 1, "one episode");
+    }
+    // The horse cargo (coop_carry's cargo hold; Lua warps body 1 onto the horse every tick): never an
+    // episode, and an active one ends (reason=cargo). The first 0.13.6 guard fought that warp.
+    {
+        sb::PutDownState st{};
+        auto in = Put(1000, 132, 132, 0, -5000, 0, 0, 800, 0);
+        in.cargo = true;
+        Check(sb::PutDownStep(st, in).action == sb::PutDownAction::none && !st.active && st.episodes == 0, "cargo: nothing");
+        Check(sb::PutDownStep(st, Put(1016, 132, 132, 0, -5000, 0, 0, 800, 0)).started, "no cargo: an episode");
+        in.now_ms = 1032;
+        const auto o = sb::PutDownStep(st, in);
+        Check(o.ended && !st.active && o.end_reason && std::strcmp(o.end_reason, "cargo") == 0 && o.action == sb::PutDownAction::none,
+              "the cargo takes over: end, reason=cargo");
     }
     // Attached carry (body 43): never in scope, even with a large vertical error.
     {

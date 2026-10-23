@@ -15,7 +15,10 @@
 #
 # Expect (host, the viewer of the guest's body):
 #   partner_act; ...; edge=body; remote=2(stand_move); body=28(cliff_drop) (the divergence; it may take several runs)
-#   then within ~0.6 s partner_body_safety=drop; verdict=place; act=28; ...; next=place,reason=vertical and
+#   (with the native drive and traverse on: partner_traverse=entered; reason=native; act=28 on the same tick; the drop
+#   episode continues through that hold)
+#   then within ~0.6 s, or at the next fall after a landing at the deck's height (the session's lip outside the railing:
+#   26 at +407 ms, 25 at +813 ms), partner_body_safety=drop; verdict=place; act=28; ...; next=place,reason=vertical and
 #   partner_recon=place; reason=vertical (or verdict=matched / level when the remote really dropped)
 #   if the body still hangs (body=54): partner_recon=placed; ok=0 -> partner_body_safety=stuck; verdict=reshow; body_act=54
 #   -> partner_body_safety=reshow; step=hide; reason=recon_stuck -> step=place; ...; next=realize -> partner_range=placed

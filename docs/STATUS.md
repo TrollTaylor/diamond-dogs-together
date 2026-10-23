@@ -17,7 +17,8 @@ hidden-worker phase runs the five new scenarios.
   0xFF3480) writes packet+0x26 from that classifier (0..11, default 1) or 1 for shields; ~1400 logged samples show
   lethal part 12 only as the environment kill (9, all sea deaths; the other 4 part-12 samples are damage-0 0x401
   packets while carrying, never lethal). A lethal land fall's part is unproven (no sample): if it is 12, it is the
-  stock death too. The replica stays protected from every lethal hit; a downed player keeps its shield. Tests: `downed_damage_tests` (fails on 0.13.5: part 12 on the local player returned cause 1).
+  stock death too. The replica stays protected from every lethal hit; a downed player keeps its shield except for a
+  kill lethal at full health (review fix below). Tests: `downed_damage_tests` (fails on 0.13.5: part 12 on the local player returned cause 1).
 - Ledge falls (#4): `partner_body_safety` drop guard (a cliff drop / fall of body 1 with no matching remote vertical act
   within 500 ms and an unchanged remote height: a vertical placement at once) and stuck guard (placed ok=0 while body 1
   falls or hangs at a ledge and the remote is on foot: the re-show flow at the target; bits cleared, held hidden with
@@ -34,9 +35,31 @@ hidden-worker phase runs the five new scenarios.
 - Log caps (#11): the partner_recon event families rotate (64 per 2 min window, 1024 per family and mission,
   `resumed; dropped=` summaries) instead of 64 per mission; the world LOG receipts use a token bucket (600 burst,
   20/s) instead of 200 per fixed 10 s. Tests: `log_budget_tests`.
-- Scenarios: `body-safety-sea-death.txt`, `body-safety-sea-death-host.txt` (MB, `-SaveSeed real -Mode play`),
+- Scenarios: `body-safety-sea-death.txt`, `body-safety-sea-death-host.txt`, `body-safety-sea-death-downed.txt` (MB,
+  `-SaveSeed real -Mode play`),
   `body-safety-ledge.txt` (`-WanSim awful`), `body-safety-putdown-edge.txt`, `coop-vehicle-seated-aim.txt`.
 - No new game address: contract 743 code sites / 193 vtable slots (`--check` unchanged).
+- Review fixes (two reviewers; each new case fails on the previous branch head unless marked coverage):
+  - Drop guard on the logged cliff drop (H:11285..11309): in play (native drive, `partner_native_traverse=1`) body 1's
+    own 28 enters the native traversal hold on its edge tick, and the guard closed every cliff-drop episode a tick
+    later (`!traverse_hold` in its enable); the hold now only blocks new episodes. And at +500 ms the body sat in 26
+    (land) on the lip outside the railing at the deck's height, judged "landed", then fell again (26 -> 25 -> 54, no
+    edge): a landing at the remote's level now keeps the episode open (at most 2.5 s) until body 1 is on its feet
+    (landed) or falls again (place, here at +813 ms, before the hang). Tests: `partner_body_safety_tests` (the logged
+    acts, times and heights), `partner_driver_tests` `TestBodySafetyNativeDrop` (native drive, traverse on).
+  - A seat episode that takes body 1 drops a pending body-safety re-show (request or hold), as the range and ride
+    hides do; the seat exit re-shows body 1 itself (reachable when the remote boards right after the stuck request,
+    or during a hold whose bit clear was refused). Test: `TestBodySafetyRideGuard` (seat re-show).
+  - The put-down guard never acts while the horse cargo holds body 1 (`PartnerCarryHold` without a stock carried
+    body 1; Lua warps it onto the horse every tick; lab only): no episode, an active one ends `reason=cargo`. Test:
+    `partner_body_safety_tests`.
+  - A downed (protected) player who crawls into the sea: a non-natural-part hit on a protected player is calculated
+    first; one lethal even at full health (damage >= maximum life: the sea kill, 10000 against 7200) is the stock
+    death (`downed_damage=stock_death; reason=environment; protected=1; ...`); every natural part and a part-12 packet
+    lethal only at the downed health keep the shield. Test: `downed_damage_tests` (`ProtectedEnvironmentKill`).
+  - Coverage: the stuck re-show on Mother Base (30050, the ride guard's range gate; no bug found) and the rotating
+    recon log caps in the driver (`capped` then `resumed; dropped=` after the 2 min window), both in
+    `partner_driver_tests`. The world LOG bucket keeps its pure `log_budget_tests` (world_link runs on real time).
 
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 

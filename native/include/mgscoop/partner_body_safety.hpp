@@ -18,13 +18,18 @@
 //    kDropMatchMs and kept its height (within kDropLevelMm) for kDropMatchMs: the
 //    input-driven body walked off an edge the remote never crossed (latency,
 //    speed mismatch). Place it back at the target (reason=vertical) at once
-//    instead of waiting for the 10 m far rule.
+//    instead of waiting for the 10 m far rule. A landing (26) at the remote's
+//    level keeps the episode open: the session's body (H:11285..11309) vaulted
+//    the railing, landed on the lip outside it at the deck's height, then fell
+//    again into the ledge hang. Body 1's own cliff drop and ledge grab enter the
+//    traversal hold (partner_traverse native phase), which only blocks new episodes.
 //  - Put-down (carry): while the remote is carried or asleep (42..44, 131, 132)
 //    and body 1 is released (put-down 44, asleep 131/132, fall/land 25/26 after
 //    it), a body more than kPutDownDropMm below the target is falling off a
 //    platform edge (session H:8992..9071: 79 m in 3 s; the carry hold kept every
 //    correction off during act 44). Place it at the target (Warp), pin it there
-//    (xform) every tick until it holds, then hand it back.
+//    (xform) every tick until it holds, then hand it back. Never while the horse
+//    cargo owns body 1 (Lua places it on the horse every tick).
 #include <cstdint>
 
 namespace mgscoop::partner_body_safety {
@@ -69,6 +74,7 @@ StuckVerdict StuckStep(StuckState& state, const StuckIn& in) noexcept;
 inline constexpr std::uint32_t kDropMatchMs = 500;       // a remote vertical act this close matches the drop
 inline constexpr std::uint32_t kDropLevelMm = 500;       // the remote's height stayed within this
 inline constexpr std::uint32_t kDropPlaceGapMs = 2000;   // at most one prevention placement per this
+inline constexpr std::uint32_t kDropLandWaitMs = 2500;   // a landing (26) at the level keeps the episode open this long
 struct DropState {
     bool have_prev;
     std::uint16_t prev_body_act;
@@ -81,9 +87,13 @@ struct DropState {
 };
 struct DropIn {
     std::uint64_t now_ms;
-    // The reconciliation tracks body 1 and could place it (armed; no traversal,
-    // cardboard box, carry or put-down hold).
+    // The reconciliation tracks body 1 and could place it (armed; no cardboard
+    // box, carry or put-down hold).
     bool enabled;
+    // A traversal holds the reconciliation's own placements (partner_traverse):
+    // no new episode opens. An open one continues: body 1's own cliff drop (28)
+    // or ledge grab (54..56) enters that hold on the tick after its edge.
+    bool traverse_hold;
     bool body_anim_ok;
     std::uint16_t body_act;
     bool body_ok;
@@ -126,12 +136,15 @@ struct PutDownIn {
     std::uint16_t remote_act;
     bool target_ok;      // live
     double target[3];    // mm
+    // The horse cargo holds body 1 (coop_carry's cargo hold, not a stock carry):
+    // Lua places it on the horse every tick. No episode; an active one ends.
+    bool cargo;
 };
 enum class PutDownAction : std::uint8_t { none, place, pin };
 struct PutDownOut {
     PutDownAction action;
     bool started, ended;
-    const char* end_reason;   // static: held, scope, timeout
+    const char* end_reason;   // static: held, scope, cargo, timeout
     double dy;                // target y - body y (mm; positive: body below)
     double err_xz;            // horizontal error (mm)
     std::uint32_t ms;         // since the episode start

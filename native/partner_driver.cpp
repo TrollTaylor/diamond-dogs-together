@@ -1542,6 +1542,8 @@ bool TickBodySafety(Driver& d, const Hooks& h, const pr::Out& ro, bool anim_ok, 
     pi.remote_valid = m.recon_remote_ok;
     pi.remote_act = m.recon_remote_act;
     pi.target_ok = target;
+    // The horse cargo (PartnerCarryHold without a stock carried body 1): Lua owns body 1.
+    pi.cargo = stock_hold && !coop_carry::BodyCarried(1);
     const sb::PutDownOut po = sb::PutDownStep(m.body_putdown, pi);
     const auto& ps = m.body_putdown;
     if (po.started)
@@ -1574,10 +1576,14 @@ bool TickBodySafety(Driver& d, const Hooks& h, const pr::Out& ro, bool anim_ok, 
         owns = true;
     }
     // Drop guard (prevention): only while the reconciliation tracks body 1 and would place it.
+    // A traversal hold blocks new episodes only: body 1's own cliff drop (28) enters the
+    // native traversal phase on the edge tick (TickTraverse runs after this), which used to
+    // close every cliff-drop episode a tick after it opened.
     sb::DropIn di{};
     di.now_ms = now;
-    di.enabled = !owns && !stock_hold && ro.arm && !m.traverse_hold && !m.cbox_hold &&
+    di.enabled = !owns && !stock_hold && ro.arm && !m.cbox_hold &&
                  (ro.mode == pr::Mode::track || ro.mode == pr::Mode::frozen || ro.mode == pr::Mode::pin);
+    di.traverse_hold = m.traverse_hold;
     di.body_anim_ok = anim_ok;
     di.body_act = body_act;
     di.body_ok = m.body_ok;
@@ -6310,6 +6316,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             sin.terminating = terminating;
             const SeatTickOut seat_out = TickSeat(d, h, st, sin);
             if (seat_out.own) {
+                // The seat exit re-shows body 1 itself (as a range or ride hide does): a
+                // body-safety re-show pending from before the seat must not run after it.
+                m.body_reshow = nullptr;
+                m.reshow_wait = false;
                 // The deferred reply (the local sender continues), the seat's
                 // ops only, and the body's real readiness (nametag).
                 const bool realized_now = sin.realized, parts_now = sin.parts_loaded;

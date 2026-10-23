@@ -79,7 +79,7 @@ struct Hit {
     std::uint32_t local{};
     std::uint16_t attacker{}, flags{};
     std::uint8_t bodyPart{};
-    float life{};
+    float life{}, max{};  // max: record+4 (downed_player ReadLife), read outside `exact`
     bool scoped{};
 };
 bool Inspect(void* object,std::uint32_t id,void* packet,void* record,Hit& hit) noexcept {
@@ -93,6 +93,7 @@ bool Inspect(void* object,std::uint32_t id,void* packet,void* record,Hit& hit) n
         records && records+id*0x4c==rec && Read(rec,hit.life) &&
         Read(pkt+0x20,hit.attacker) && Read(pkt+0x22,hit.flags) &&
         Read(pkt+0x26,hit.bodyPart);
+    if(exact && !Read(rec+4,hit.max)) hit.max=0;
     std::uint32_t currentLocal{};
     hit.scoped=exact && downed_player::Scope(hit.player,currentLocal) && currentLocal==hit.local;
     return exact;
@@ -178,7 +179,11 @@ float Calculate(void* object,std::uint32_t id,void* packet,void* record,std::uin
     if(offline) exactCalls.fetch_add(1,std::memory_order_relaxed);
     if(scoped) scopedCalls.fetch_add(1,std::memory_order_relaxed);
     const bool protected_local=offline && downed_player::IsProtected(hit.player,id);
-    if(protected_local && Neutralize(packet,mode,stun,rawLife,rawStun,special)) return 0;
+    // A downed (protected) player keeps its shield for every natural part (0..11) at
+    // once; a non-natural part (the sea / out-of-bounds kill, part 12) is calculated
+    // first so that a kill lethal even at full health stays the stock death.
+    const bool protected_environment=protected_local && !NaturalBodyPart(hit.bodyPart);
+    if(protected_local && !protected_environment && Neutralize(packet,mode,stun,rawLife,rawStun,special)) return 0;
     error.Restore();
     const float amount=original(object,id,packet,record,mode,stun,rawLife,rawStun,special);
     error.Capture();
@@ -196,6 +201,22 @@ float Calculate(void* object,std::uint32_t id,void* packet,void* record,std::uin
             double(life),double(amount),stun_read?double(stun_amount):-1.,unsigned(output_mode),mode_read?1u:0u,
             static_cast<unsigned long long>(vt>=base && vt-base<0x5000000 ? vt-base:0),p?1u:0u);
         logger(line);
+    }
+    if(protected_environment) {
+        // Downed and then crawled into the sea (or blown out of bounds): the stock
+        // death, so PLAYER_FALL_DEAD drives the shared game over (the downed state has
+        // no bleed-out; the session's sea victims lay downed in the water). Anything
+        // weaker (a part-12 packet that is lethal only at the downed health) keeps the shield.
+        if(ProtectedEnvironmentKill(scoped,id,hit.local,hit.bodyPart,hit.life,hit.max,amount)) {
+            if(logger) {
+                char line[256]{};
+                std::snprintf(line,sizeof(line),"downed_damage=stock_death;reason=environment;protected=1;id=%u;life=%.1f;max=%.1f;damage=%.1f;flags=0x%x;part=%u\r\n",
+                    id,double(hit.life),double(hit.max),double(amount),unsigned(hit.flags),unsigned(hit.bodyPart));
+                logger(line);
+            }
+            return amount;
+        }
+        if(Neutralize(packet,mode,stun,rawLife,rawStun,special)) return 0;
     }
     if(!offline || !stun_read) return amount;
     const bool sleep=mode_read && SleepDamage(output_mode,stun_amount);

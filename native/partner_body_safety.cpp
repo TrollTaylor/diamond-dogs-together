@@ -69,7 +69,7 @@ DropOut DropStep(DropState& st, const DropIn& in) noexcept {
         return o;
     }
     const bool edge = in.body_anim_ok && DropAct(in.body_act) && st.have_prev && OnFootAct(st.prev_body_act);
-    if (edge && !st.drop_ms) {
+    if (edge && !st.drop_ms && !in.traverse_hold) {
         remember();
         o.act = in.body_act;
         // The remote dropped first (its act arrives with the aligned pose): a real fall.
@@ -101,20 +101,27 @@ DropOut DropStep(DropState& st, const DropIn& in) noexcept {
         return o;
     }
     if (o.ms < kDropMatchMs) return o;  // still waiting for the remote
-    st.drop_ms = 0;
     if (!target) o.verdict = DropVerdict::lost;
     else if (!in.remote_valid || !OnFootAct(in.remote_act)) o.verdict = DropVerdict::remote_off_foot;
     else if (std::fabs(o.remote_dy) > kDropLevelMm) o.verdict = DropVerdict::level;
     // Back on its feet at the remote's level (a hop, a short step): nothing to undo.
     else if (!(in.body_anim_ok && StuckAct(in.body_act)) &&
-             !(in.body_ok && Finite(in.body_y) && in.target_y - in.body_y > kDropLevelMm)) o.verdict = DropVerdict::landed;
+             !(in.body_ok && Finite(in.body_y) && in.target_y - in.body_y > kDropLevelMm)) {
+        // A landing (26) at the level may be a lip between two falls (H:11285..11309: 28,
+        // 25, 26 at the deck's height outside the railing, 25, then the ledge hang 54):
+        // judge it once body 1 is on its feet, falls again or kDropLandWaitMs passed.
+        if (in.body_anim_ok && in.body_act == 26 && o.ms < kDropLandWaitMs) return o;
+        o.verdict = DropVerdict::landed;
+    }
     else if (st.last_place_ms && now - st.last_place_ms < kDropPlaceGapMs) o.verdict = DropVerdict::rate;
     else {
+        st.drop_ms = 0;
         st.last_place_ms = now;
         ++st.places;
         o.verdict = DropVerdict::place;
         return o;
     }
+    st.drop_ms = 0;
     ++st.refused;
     return o;
 }
@@ -138,7 +145,7 @@ PutDownOut PutDownStep(PutDownState& st, const PutDownIn& in) noexcept {
         return o;
     };
     if (!st.active) {
-        if (!scope || !data || o.dy <= kPutDownDropMm) return o;
+        if (in.cargo || !scope || !data || o.dy <= kPutDownDropMm) return o;
         st.active = true;
         st.start_ms = now;
         st.hold_since = 0;
@@ -150,6 +157,7 @@ PutDownOut PutDownStep(PutDownState& st, const PutDownIn& in) noexcept {
         return o;
     }
     o.ms = Ms(st.start_ms, now);
+    if (in.cargo) return end("cargo");  // Lua places body 1 on the horse
     if (!scope) return end("scope");
     if (o.ms >= kPutDownMaxMs) return end("timeout");
     if (!data) return o;  // keep the episode; nothing to write without both poses

@@ -7,6 +7,11 @@ bool EnvironmentKill(bool scoped, std::uint32_t target, std::uint32_t local,
     return scoped && target <= 1 && target == local && !NaturalBodyPart(body_part) &&
         std::isfinite(life) && life > 0 && life <= 1e8f && std::isfinite(damage) && damage >= life;
 }
+bool ProtectedEnvironmentKill(bool scoped, std::uint32_t target, std::uint32_t local,
+    std::uint8_t body_part, float life, float max_life, float damage) noexcept {
+    return EnvironmentKill(scoped, target, local, body_part, life, damage) &&
+        std::isfinite(max_life) && max_life >= 1.f && max_life <= 1e8f && damage >= max_life;
+}
 bool SleepDamage(std::uint8_t mode, float stun) noexcept {
     return mode == 2 && std::isfinite(stun) && stun > 0;
 }
