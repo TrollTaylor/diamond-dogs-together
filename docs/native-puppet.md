@@ -757,7 +757,8 @@ and `2596f6ae`, see "Traversal icon").
   and no local-index check (the same handler's case 2 does check `P+0x218`).
   The 0.13.5 note named vtable `0x1423AF358` and `0x140FE6D10`: that is
   another UI controller table, stored only at `0x140FE648A` / `0x140FE679B`
-  (likely the base class; it holds the same leaves at +0x278..+0x298), and
+  (another UI class's table: it holds the same leaves at +0x278..+0x298, 0x38
+  bytes further in than UiControllerImpl's, so it is not `P+0xD8`'s interface), and
   `0x140FE6D10` is UiControllerImpl's vt+0x228.
 
 **Census of body 1's other UI calls (static).**

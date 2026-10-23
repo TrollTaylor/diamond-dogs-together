@@ -10,7 +10,9 @@
   body check. Phase 1 of the ladder plugin (`0x1411EA220`) runs the state callback with the local event 4 for every
   idx while S_IS_ONLINE is clear (always in this mod); the ladder states' event 4 (`0x1411EC3A0` case 4 and three
   more) post hint 3 / priority 8 through vt+0x260 = `0x140FE8480` (record 0x320) with no local-index check, from
-  inside instance 1's drain job. The 0.13.5 note's vtable `0x1423AF358` / `0x140FE6D10` was another UI controller table (likely the base class).
+  inside instance 1's drain job. The 0.13.5 note's vtable `0x1423AF358` / `0x140FE6D10` was another UI class's
+  table (stored at `0x140FE648A` / `0x140FE679B`; it holds the same leaves 0x38 bytes further in, so it is not
+  `P+0xD8`'s interface); `0x140FE6D10` is UiControllerImpl's vt+0x228.
 - Census: climb (0x61), pipe (0x60) and the ledge hang (2) post into the same queue (their IsNeedToSync guard is
   S_IS_ONLINE-gated, false offline); step-on, the pickup plugin and the box use no hint queue; interactive, trash
   box, the ride plugins and attack use vt+0x240 / +0x250 / +0x258. vt+0x268 / +0x270 / +0x278 / +0x288 / +0x280
@@ -34,7 +36,17 @@
   both copies.
 - Open: no hidden-worker run yet (none in this step); the default stays 0 until a FRAME shows the viewer's HUD
   without the hint while body 1 climbs. Why the climber's own HUD shows no hint mid-ladder in stock is not
-  explained; if the viewer's hint survives with `q260` growing, it is not the vt+0x260 queue.
+  explained; if the viewer's hint survives with `q260` growing, it is not the vt+0x260 queue. A block-1 job that
+  runs without a window (the legacy fallback after a refused drain) opens no scope, so its hints still pass.
+- Second pass (same branch, no code change): re-checked against the image and Ghidra (read-only) that `0x1411EC3A0`
+  case 4 posts vt+0x260(3, 8) unconditionally (the IsCompletedActionIcon call at `0x1411EC54A` belongs to case 1),
+  that `0x1411EA220` picks event 4 for every idx while `P+0x204` bit 8 is clear, that only the window runs block 1's
+  job (`block == a.pool1`), that no other contract pins or hooks the five leaves (the camera agent's native_ui /
+  pose window cover `0xFE8690` / `0xFE8700` / `0xFE8770` / `0xFE89E0` / `0xFE8C70` only), and that the pose
+  window's sleep-hint detour requires `[ui] == 0x23AF700` during body 1's job (a vptr swap would make it fail).
+  The leaf ABI (rcx ui, dx id, r8d priority, r9b flag, three stack bytes at +0x28 / +0x30 / +0x38) matches the
+  detours, and the call at `0x1411EC606` loads `[[[rsi+0x40]+0x138]+0xD8]` with id 3 / priority 8.
+  `generate_partner_contract.py --check` 765 / 199; full CTest 290/290 green (`-Configure`).
 
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
