@@ -1255,12 +1255,25 @@ struct Driver {
     std::uint16_t caps_logged_rev;
     std::uint32_t caps_logged_epoch;
     std::uint8_t caps_logged_drive, caps_logged_reason;
+    // The receiver link session of the last logged partner_caps=rx line (a new
+    // link session logs the remote's view again).
+    std::uint32_t caps_logged_link;
     std::uint32_t leak_strip;
+    // Refused channel-2 messages (0.13.6 online-net-epoch): one partner_equip=refused
+    // / partner_caps=refused line per change of (receiver link session, reason),
+    // under a process-lifetime budget; the manifest counters are process-lifetime
+    // too (the mission store's own counters restart every MissionStart).
+    bool equip_refused_logged, caps_refused_logged;
+    std::uint32_t equip_refused_link, caps_refused_link;
+    std::uint8_t equip_refused_result, caps_refused_result;
+    LogCap equip_rx_cap, caps_rx_cap;
+    std::uint32_t equip_rx_received, equip_rx_invalid, equip_rx_stale, equip_rx_duplicates;
     // The generalized preload and writer (docs/native-puppet.md "Generalized
     // writer"), process-lifetime: the last accepted manifest of any mission
-    // and its link session (the preload at the next allocation, before that
-    // mission's own manifest arrives), and what the observer (the natural
-    // allocation and mission owner) last reported; telemetry copies it.
+    // and its link session (the RECEIVER's own: the preload at the next
+    // allocation, before that mission's own manifest arrives), and what the
+    // observer (the natural allocation and mission owner) last reported;
+    // telemetry copies it.
     partner_equip_wire::Manifest equip_cache;
     bool equip_cache_have;
     std::uint32_t equip_cache_epoch;
@@ -1390,6 +1403,12 @@ void TickEquipLink(Driver& driver, const Hooks& hooks, std::uint64_t now_ms) noe
 // Only the drain (the preload query at the natural allocation owner: the
 // first mission after connecting plans from a manifest received just before).
 void DrainEquipLink(Driver& driver, const Hooks& hooks) noexcept;
+// The manifest the generalized preload and writer plan from (pure): the
+// mission store's when it was received in (or seeded for) the receiver's
+// current link session `link_session` (any, when 0: no session yet), else the
+// session cache of that same link session. Never another link session's, and
+// never compared with the sender's own session number (manifest.epoch).
+bool RemoteManifest(const Driver& driver, std::uint32_t link_session, partner_equip_wire::Manifest& out) noexcept;
 // The per-frame tick (2.3 item 9 outline). False leaves the receipt literal
 // (Lua then does nothing); true fills `reply`.
 bool Tick(Driver& driver, const Hooks& hooks, const LabConfig& lab, const char* source, std::size_t size,

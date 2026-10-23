@@ -7,7 +7,14 @@
 // writer and the slot plan.
 //
 //   [0] 0x45 'E'  [1] version (2; 1 still decodes)  [2..3] revision u16 (never 0)
-//   [4..7] epoch u32 (the partner_net link session; stale epochs dropped)
+//   [4..7] epoch u32 (the SENDER's partner_net link-session number: identity
+//          only. Each process counts its own sessions, so after a relaunch of
+//          one copy the two counters differ for good (0.13.5 online session
+//          2026-10-22: host 3, guest 1). The receiver never compares it with its
+//          own counter; it binds what it stores to its OWN link session, the
+//          one the message was drained in (Store::link_epoch). The transport
+//          guarantees freshness: every new link session resets the reliable
+//          windows and the drain yields only the current session's messages.)
 //   [8] inv_slot (0..15, 0xFF unknown)  [9] slot_count = 3
 //   [10..11] active_item_id u16 (version 2; 0 none). Version 1 keeps these 0.
 //   then 3 slots x 16 bytes (hip, back, secondary):
@@ -77,23 +84,37 @@ inline bool SameBox(const Manifest& a, const Manifest& b) noexcept {
 // outside 0..15/0xFF or a type outside 0..8.
 std::size_t Encode(const Manifest& manifest, std::uint8_t (&out)[kSize]) noexcept;
 
-enum class Result : std::uint8_t { ok, size, magic, version, revision, epoch, stale_epoch, inv_slot, slot_count, reserved, type };
+// no_link: the receiver had no link session to bind the message to (Accept).
+enum class Result : std::uint8_t { ok, size, magic, version, revision, epoch, stale_epoch, inv_slot, slot_count, reserved, type, no_link };
 const char* ResultName(Result result) noexcept;
 // Strict decode of version 1 (60 bytes) or 2 (64 bytes); current_epoch != 0
-// drops other epochs (stale_epoch).
+// drops other epochs (stale_epoch). A strict helper only: Accept passes 0
+// (the sender's epoch is never compared with the receiver's own counter).
 Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch, Manifest& out) noexcept;
+// The revision and sender epoch fields of any message of at least 8 bytes
+// (for the refusal log; 0 when shorter). No validation.
+void PeekHeader(const std::uint8_t* data, std::size_t size, std::uint16_t& revision, std::uint32_t& epoch) noexcept;
 
 // Receiver store (driver-owned; one per mission). Counters for telemetry.
+// manifest.epoch is the sender's session number (identity only); link_epoch
+// is the RECEIVER's own link session the stored manifest was drained in.
+// last: the result of the last refused message (ok for a duplicate).
 struct Store {
     bool have;
     Manifest manifest;
+    std::uint32_t link_epoch;
     std::uint32_t received, invalid, stale, duplicates;
+    Result last;
 };
-// Applies one drained message: ok + a new revision or new content stores it
-// (true), anything else only counts. A duplicate repeats the stored revision,
-// epoch, version, inv_slot and slots; the same revision with other content
-// (a 0.12.0 sender restarts at revision 1 every mission) replaces it.
-bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch) noexcept;
+// Applies one message drained in the receiver's own link session `link_epoch`:
+// ok + a new revision or new content stores it, stamped with link_epoch
+// (true); anything else only counts (link_epoch 0: no_link). A duplicate
+// repeats the stored revision, sender epoch, version, inv_slot, slots and box
+// fields IN THE SAME link session: a new link session is never a duplicate
+// (a guest relaunched on the same save sends the identical revision 1 again).
+// The same revision with other content (a 0.12.0 sender restarts at revision
+// 1 every mission) replaces it.
+bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t link_epoch) noexcept;
 
 // --- The sender's base ids (docs/native-puppet.md "Loadout mirroring"), pure.
 // The equip type table holds one packed u16 per table index (type packed &

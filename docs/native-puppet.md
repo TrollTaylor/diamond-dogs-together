@@ -1622,8 +1622,11 @@ runtime before acting (`full_body_gate`).
   with the received manifest's base ids (this mission's store or the last one
   of the same link session; the query drains channel 2 once first). The
   sender sends from the title and the ACC too (early manifest, weapons3), so
-  the first mission after connecting preloads; `no_manifest` (nothing spent)
-  now means the peer sent none. Per id: a stock gun of its slot's type with
+  the first mission after connecting preloads; `no_manifest` (nothing spent,
+  the attempt not consumed: a later query of the same allocation evaluates
+  again) now means the peer sent none in THIS copy's current link session
+  (0.13.6: never because the two copies' session counters differ, see "The
+  link epoch"). Per id: a stock gun of its slot's type with
   a package row, of the manifest's own type of the slot (version 2:
   `dropped=<id>:type_mismatch` otherwise); base 0 is skipped; then the joint
   preflight (`equipment_preload_contract.hpp`)
@@ -1797,11 +1800,50 @@ runtime before acting (`full_body_gate`).
   version 1 only) refuses the 64-byte version 2 (`size`, counted, nothing
   misread): both PCs must run the same package. A 0.12.0 sender's version 1
   still decodes; it restarts at revision 1 every mission, so the store
-  counts only an exact repeat (revision, epoch and content) as a duplicate
-  and the same revision with another loadout replaces the seeded manifest
-  (review).
+  counts only an exact repeat (revision, epoch and content, in the same
+  receiver link session) as a duplicate and the same revision with another
+  loadout replaces the seeded manifest (review). Since 0.13.6 the sender
+  also resends once per MissionStart (64 bytes on the reliable channel; the
+  receiver's dedupe absorbs the exact repeat), which heals any receiver-side
+  loss; a link (re)connect is a new session on both copies and resends as
+  before.
+- **The link epoch** (0.13.6 online-net-epoch; the 0.13.5 online session of
+  2026-10-22): the manifest's `epoch` field is the SENDER's link-session
+  number, a process-local counter (`link::Session::session_number_`, +1 per
+  committed session). Two copies agree on it only while neither was
+  restarted: after a guest relaunch (a quit, or the save handoff's automatic
+  relaunch) the host stays at N+1 while the guest restarts at 1, for the rest
+  of the host's process (that evening: host 3, guest 1). 0.13.5 dropped every
+  manifest whose epoch differed from the receiver's own counter
+  (`stale_epoch`, counted silently): no partner guns (`body_equip=0`,
+  `remote_base=0,0,0`, FIRE/RELOAD stripped), `remote=unknown/none` (the
+  capability message had the same check) and no partner box. The receiver
+  now never compares the sender's number with its own: it binds what it
+  stores to ITS OWN link session, the one the message was drained in (the
+  authenticated origin's session, else the current one): `Store::link_epoch`
+  in the mission store, `equip_cache_epoch` in the driver's session cache,
+  MissionStart seeds `link_epoch` with the cache, and the planning manifest
+  (`partner_driver::RemoteManifest`, the observer's `EquipManifest` for the
+  preload and the writer) is the store's or the cache's of the CURRENT link
+  session only. Freshness comes from the transport: every new link session
+  resets the reliable windows and the drain yields only the current session's
+  messages. A new link session is never a duplicate (a guest relaunched on
+  the same save sends the identical revision 1 again) and never a box-only
+  change. The capability message does the same (`partner_caps_wire::Store::
+  link_epoch`, `Live`). `epoch` stays on the wire as the sender's identity
+  (`sender_epoch` in the logs; the writer's manifest key keeps it).
+- **Refusals** (0.13.6): a refused channel-2 message logs one line per change
+  of (this copy's link session, reason), at most 32 per process:
+  `partner_equip=refused; reason=size|magic|version|revision|epoch|inv_slot|
+  slot_count|reserved|type|no_link; rev=..; sender_epoch=..; link_epoch=..;
+  size=..; magic=0x..` and `partner_caps=refused; reason=..|no_link|older;
+  rev=..; sender_epoch=..; link_epoch=..; size=..` (`no_link`: no link
+  session of this copy to bind it to). state.json `native.equip` exports
+  `rx_sender_epoch`, `rx_link_epoch`, `rx_received`, `rx_invalid`,
+  `rx_stale`, `rx_duplicates` and `rx_refused` (process-lifetime);
+  `native.net.caps` exports `stale` and `link_epoch`.
 - **Receiver**: stores it (`partner_equip=manifest; ...; type=..; v=..;
-  mission=..`) and logs the apply
+  mission=..; sender_epoch=..; link_epoch=..`) and logs the apply
   verdict for the back slot against instance 1's loaded equip
   (`partner_equip=apply; ...; result=already|unsupported|no_weapon|unknown;
   writer=stock46`). What body 1 can load is the generalized writer's business
@@ -1875,7 +1917,19 @@ readback=..`, `equip_resident; mission=..; used=..; entries=<index>:<id>/t<type>
 reason=..; mission=..; slot=..; want=..; equip=..; tier=..; family=..; type=..; cache=..;
 expected_handle=..; result=..; mismatch_rva=..; dispatches=..; replace_filled=0; evict=0`,
 `equip_writer_package=read_only; ...` and `equip_writer_optional=read_only; present=..; ...`
-(once per slot's readiness).
+(once per slot's readiness). The manifest wait (0.13.6 online-net-epoch): a
+slot without a manifest stays `plan_wait` (reason `no_manifest`) for 300
+observations (~30 s), then `equip_writer=refused; reason=no_manifest` (logged
+once, nothing spent); `no_manifest` is no longer permanent: a body re-sync
+keeps it (no re-log per gen) and a manifest known later (a late sender, or a
+new link session's resend) renews it in the same body gen
+(`equip_writer=manifest_late; reason=manifest; slot=..`, then the usual plan;
+the slot order is recomputed when nothing else was decided). Before 0.13.6
+the refusal held for the rest of the allocation. Only the pure helpers
+(`ManifestWaitReason`, `RenewManifestWait`) are unit-tested; the renewal in
+`ObserveGeneral` and the re-sync keep read live game memory and have no unit
+test or scenario lever yet (partner-equip-relaunch.txt delivers the manifest
+before body 1 appears), so a `manifest_late` line is their first evidence.
 
 ### Proof (hidden worker; coordinator only)
 
@@ -2204,7 +2258,12 @@ adds:
   online, hold net, stall hold), profile, drive (off|clips|native), reason
   code (`partner_native_net::ReasonCode`, an append-only table), arbiter mode,
   policy; sent at every link session, on change at most 1/s and as a 5 s
-  heartbeat. Logged `partner_caps=rx; drive=..; reason=..` on change.
+  heartbeat. Logged `partner_caps=rx; drive=..; reason=..; ...; epoch=..;
+  rev=..; link_epoch=..` on change and once per new link session. Since
+  0.13.6 the receiver binds it to its own link session (`link_epoch`; "live"
+  means received in the current one) and never compares the sender's
+  session number with its own (0.13.5 showed `remote=unknown/none` for the
+  whole evening after a guest relaunch: see "The link epoch").
 - **Gun profile without a gun**: until body 1 shows a gun class this mission,
   HOLD, RELOAD and FIRE are stripped (`partner_weapon=absent; body_gun=absent`,
   `native.weapon.absent`, `native.weapon.strip`).

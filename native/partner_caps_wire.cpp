@@ -54,6 +54,8 @@ const char* ResultName(Result r) noexcept {
     case Result::epoch: return "epoch";
     case Result::stale_epoch: return "stale_epoch";
     case Result::field: return "field";
+    case Result::no_link: return "no_link";
+    case Result::older: return "older";
     default: return "reserved";
     }
 }
@@ -80,18 +82,25 @@ Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_
     return Result::ok;
 }
 
-bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch) noexcept {
+bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t link_epoch) noexcept {
     Caps c{};
-    const Result r = Decode(data, size, current_epoch, c);
-    if (r == Result::stale_epoch) { ++store.stale; return false; }
-    if (r != Result::ok) { ++store.invalid; return false; }
-    // An older revision of the same session arriving late never replaces a newer one.
-    if (store.have && store.caps.epoch == c.epoch && static_cast<std::uint16_t>(c.revision - store.caps.revision) >= 0x8000u) {
+    // Never the sender's session number against ours (0.13.5: remote=unknown/none after
+    // any relaunch of either copy): the decode is unconditional.
+    const Result r = Decode(data, size, 0, c);
+    if (r != Result::ok) { ++store.invalid; store.last = r; return false; }
+    if (!link_epoch) { ++store.stale; store.last = Result::no_link; return false; }
+    // An older revision of the same sender session arriving late in the same link session
+    // never replaces a newer one (a new link session starts its own sequence).
+    if (store.have && store.link_epoch == link_epoch && store.caps.epoch == c.epoch &&
+        static_cast<std::uint16_t>(c.revision - store.caps.revision) >= 0x8000u) {
         ++store.stale;
+        store.last = Result::older;
         return false;
     }
     store.have = true;
     store.caps = c;
+    store.link_epoch = link_epoch;
+    store.last = Result::ok;
     ++store.received;
     return true;
 }

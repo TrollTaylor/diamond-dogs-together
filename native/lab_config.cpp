@@ -253,6 +253,16 @@ bool ParseSaveHandoffKey(Slice key, Slice value, LabConfig& result, bool& ok) no
     }
     return true;
 }
+// 0.13.6 online-net-epoch: link_session_skew=0..999, the epoch reproduction knob
+// (a link impairment: the play refusal below forces it to 0 outside the
+// worker's play rehearsal).
+bool ParseLinkSkewKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (!Equals(key, "link_session_skew")) return false;
+    std::uint32_t skew = 0;
+    ok = ParseU32(value, 999, skew);  // the worker allow-lists: [0-9]{1,3}
+    if (ok) result.link_session_skew = skew;
+    return true;
+}
 } // namespace
 
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
@@ -314,7 +324,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
             ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
             ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok) ||
-            ParseMountKey(key, value, result, ok)) {
+            ParseMountKey(key, value, result, ok) || ParseLinkSkewKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -644,8 +654,10 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (refuse(result.net_link == NetLink::legacy, kPlayRefusedLegacyLink)) result.net_link = NetLink::v2;
         refuse(result.save_dir[0] == 0, kPlayRefusedNoSaveDir);
         if (refuse(!steam && result.role == LabRole::guest && !peer_addr_valid, kPlayRefusedGuestNoPeer)) result.net = false;
+        // link_session_skew (the 0.13.6 epoch reproduction) is a link impairment too: the
+        // worker's play rehearsal only, never a friend's play.
         std::uint32_t* const impairments[] = {&result.net_latency_ms, &result.net_loss_permille, &result.net_jitter_ms,
-                                              &result.net_dup_permille, &result.net_reorder_permille};
+                                              &result.net_dup_permille, &result.net_reorder_permille, &result.link_session_skew};
         for (std::uint32_t* value : impairments)
             if (refuse(*value != 0 && !rehearsal, kPlayRefusedImpairment)) *value = 0;
         // World-sync probes are lab experiments; world itself is allowed in play.

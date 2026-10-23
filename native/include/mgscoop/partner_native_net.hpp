@@ -81,6 +81,9 @@ struct NetTelemetry {
     char local_reason[24];
     bool caps_rx;
     std::uint32_t caps_sent, caps_received, caps_invalid;
+    // Refused for want of a link session or as an older revision, and the
+    // receiver link session the stored capabilities arrived in (0 none).
+    std::uint32_t caps_stale, caps_link_epoch;
     Drive remote_drive;
     char remote_reason[24];
     char remote_profile[8];

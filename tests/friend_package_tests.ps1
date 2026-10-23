@@ -351,7 +351,8 @@ try {
     foreach ($ini in $hostIni, $guestIni) {
         $k = ConvertFrom-IniText $ini
         foreach ($forbidden in 'loopback', 'self_steamid', 'peer_steamid', 'self_name', 'mutex_suffix', 'xinput', 'join_trigger', 'auto_join_delay_s',
-            'net_latency_ms', 'net_loss_permille', 'net_jitter_ms', 'net_dup_permille', 'net_reorder_permille', 'net_link', 'listen_port', 'peer_port') {
+            'net_latency_ms', 'net_loss_permille', 'net_jitter_ms', 'net_dup_permille', 'net_reorder_permille', 'net_link', 'listen_port', 'peer_port',
+            'link_session_skew') {
             Assert-True (!$k.Contains($forbidden)) "play lab.ini never writes $forbidden"
         }
         Assert-True (!$ini.Contains("`r") -and (Test-CoopPlayGeneratedText $ini)) 'play lab.ini: LF and the play header'
@@ -460,6 +461,12 @@ try {
             $file = Join-Path $fixture 'play-ws4v2-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_place_mirror=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_place_mirror'])|$($m['partner_native_placed'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: play forces a named WS4 v2 mirror off'
+            # 0.13.6 online-net-epoch: link_session_skew is a lab / worker reproduction knob (a link impairment); a
+            # friend's play refuses it (kPlayRefusedImpairment 0x4000, counted as one invalid value) and forces 0.
+            Assert-Equal "$($n['link_session_skew'])" '0' 'native: play has no link-session skew'
+            $file = Join-Path $fixture 'play-skew-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "link_session_skew=2`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['link_session_skew'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x4000|0/1' 'native: play refuses a named link_session_skew (impairment, forced 0)'
             # Traversal replay (docs/native-puppet.md "Traversal icon") follows the native gun profile in play (user decision
             # 2026-10-22; step-on proven in hidden run 104e9a47); Play-Coop never names it, and a named 0 opts out.
             Assert-True (!$hostIni.Contains('partner_native_traverse') -and !$guestIni.Contains('partner_native_traverse') -and

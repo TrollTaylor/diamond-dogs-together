@@ -80,6 +80,8 @@ void Session::Start(const SessionConfig& config, const SessionIo& io, std::uint6
     config_ = config;
     io_ = io;
     DeriveHandshakeKey(config_.psk, hs_);
+    // The lab's skewed counter (the 0.13.6 epoch reproduction): raised, never lowered.
+    if (session_number_ < config_.session_skew) session_number_ = config_.session_skew;
     current_ = Live{};
     next_ = Live{};
     stats_ = SessionStats{};

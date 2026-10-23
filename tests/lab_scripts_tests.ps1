@@ -1020,6 +1020,14 @@ try {
         Assert-Equal "$($n['net_latency_ms'])|$($n['net_jitter_ms'])|$($n['net_loss_permille'])|$($n['net_loss_model'])|$($n['net_burst'])|$($n['net_dup_permille'])|$($n['net_reorder_permille'])|$($n['net_seed'])|$($n['partner_interp'])" '150|60|60|burst|3|10|30|1|auto' 'native: -WanSim awful keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini')
         Assert-Equal "$($n['net_bind'])|$($n['net_link'])|$($n['partner_interp'])|$($n['net_peer_addr'])" 'loopback|v2|fixed|127.0.0.1' 'native: the default offline lab.ini keeps the loopback defaults'
+        Assert-Equal "$($n['link_session_skew'])" '0' 'native: the default offline lab.ini has no link-session skew'
+        # 0.13.6 online-net-epoch: a LabCommon-written link_session_skew (-PartnerSetting / the worker's labsetting) parses natively.
+        $skewOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('host:link_session_skew=2') -Role host
+        $skewIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides $skewOverrides)
+        Assert-Equal ((ConvertFrom-IniText $skewIni)['link_session_skew']) '2' 'LabCommon writes link_session_skew=2'
+        $file = Join-Path $fixture 'skew-host-lab.ini'; [IO.File]::WriteAllText($file, $skewIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['link_session_skew'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '2|lab|0x0|0/0' 'native: a LabCommon-written link_session_skew=2 parses as 2'
     } else { Write-Output 'link_keys missing: native link cross-checks skipped' }
 
     Test-LabInputSpecs

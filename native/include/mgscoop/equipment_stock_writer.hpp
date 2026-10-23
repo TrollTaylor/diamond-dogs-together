@@ -219,12 +219,14 @@ inline constexpr unsigned kDispatchesPerGen=1,kDispatchesPerAllocation=2;
 // incompatible candidates, a foreign or local change. Missing cache entries
 // or resident candidates can change as assets load: no_cache_entry and
 // no_resident use the same bounded timer retries as other readiness waits.
+// no_manifest is not permanent (0.13.6 online-net-epoch): a manifest that
+// arrives after the plan wait gave up renews the slot (RenewManifestWait).
 inline bool PermanentReason(const char* reason) noexcept {
     if(!reason) return false;
     static constexpr const char* kPermanent[]={
         "equip_range","type_table","type","row","recipe","package_row","parts_class","dependency_tables",
         "dependency_hash","dependency_count","optional_descriptor","stock_parts_class",
-        "no_base","no_manifest","type_slot","type_mismatch","cache_type","cache_unprotected","cache_shared",
+        "no_base","type_slot","type_mismatch","cache_type","cache_unprotected","cache_shared",
         "candidate_shape","candidate_limit","want","dispatched","viewer_weapon","viewer_shared",
         "shared_refs_bound","stock_optional_shape","stock_optional_dict","stock_optional_m","stock_optional_word",
         "stock_optional_header","stock_optional_render_size","stock_optional_measure_size","full_body_gate",
@@ -341,6 +343,27 @@ inline bool RenewCacheReadiness(SlotStatus& slot,SlotSchedule& schedule,
                                std::uint32_t dispatched,std::uint32_t live) noexcept {
     if((slot.state!=SlotState::backoff && slot.state!=SlotState::refused) || !CacheReadinessReason(slot.reason) ||
        schedule.uncertain || schedule.dispatches || schedule.gen_dispatches || slot.handle || dispatched || !EmptyHandle(live)) return false;
+    schedule.retries=0;schedule.retry_at=0;schedule.visited=false;
+    slot.retries=0;slot.state=SlotState::idle;slot.tier=Tier::none;slot.equip=0;
+    return true;
+}
+// The plan wait for a manifest (no_manifest): the slot waited kPlanWaitLimit
+// observations and was refused for want of one, nothing spent. Kept through
+// a body re-sync (a new gen must not re-log it) and renewed by a manifest.
+inline bool ManifestWaitReason(const char* reason) noexcept {
+    if(!reason) return false;
+    const char* a="no_manifest";const char* b=reason;
+    while(*a && *a==*b) {++a;++b;}
+    return !*a && !*b;
+}
+// 0.13.6 online-net-epoch (0.13.5 online: a manifest that arrived late, or only
+// after a link-session mix-up, never reached body 1 for the rest of the body
+// gen): once a manifest is known, a slot refused no_manifest plans again in the
+// same gen. Never an uncertain slot, one dispatched this gen or one holding a
+// handle (no_manifest is refused before any dispatch, so none of these apply).
+inline bool RenewManifestWait(SlotStatus& slot,SlotSchedule& schedule) noexcept {
+    if(slot.state!=SlotState::refused || !ManifestWaitReason(slot.reason) || schedule.uncertain || schedule.gen_dispatches ||
+       slot.handle) return false;
     schedule.retries=0;schedule.retry_at=0;schedule.visited=false;
     slot.retries=0;slot.state=SlotState::idle;slot.tier=Tier::none;slot.equip=0;
     return true;

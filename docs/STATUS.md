@@ -1,3 +1,74 @@
+## 0.13.6 (in progress)
+
+Bug fixes from the first real two-PC Steam session (2026-10-22, 0.13.5). Version not bumped yet.
+
+### online-net-epoch
+
+Branch `wp/online-net-epoch` from `dev/oct7-continue` `cc973a8`. Partner guns, the partner's cardboard box and the
+capability exchange stopped working for the rest of the evening once the guest relaunched (quit, then the save
+handoff's automatic relaunch) while the host kept running. Unit-tested and CTest green; no game launch and no hidden
+run yet (the runtime checks below are for the hidden-run phase).
+
+- **Root cause (P1/P2/P3):** the equipment manifest and the capability message carried the SENDER's process-local
+  link-session counter, and the receiver dropped them unless it equalled its OWN counter (`stale_epoch`, counted
+  silently). After a guest relaunch the counters differ for good (that evening: host session 3, guest 1), so every
+  manifest and caps message was dropped in both directions: `equip_preload=refused; reason=no_manifest`,
+  `equip_writer=refused; reason=no_manifest`, `remote_base=0,0,0`, FIRE/RELOAD stripped, `remote=unknown/none`, and
+  no `partner_cbox=remote` (the box rides on the manifest). The lab never saw it (both copies start at session 1).
+- **Fix 1 (default, no key):** the receiver binds what it stores to its own link session, the one the message was
+  drained in (`partner_equip_wire::Store::link_epoch`, `partner_caps_wire::Store::link_epoch` / `Live`), and never
+  compares the sender's number with its own. The duplicate and box-only checks are keyed on `link_epoch` (a guest
+  relaunched on the same save sends the identical revision 1 again: accepted in the new session, not a duplicate);
+  MissionStart seeds `link_epoch` from the session cache; the planning manifest (`partner_driver::RemoteManifest`, the
+  observer's `EquipManifest` for the preload and the writer) is the current link session's only. Freshness stays
+  with the transport (reliable windows reset per link session; the drain yields only the current session's
+  messages).
+- **Fix 2:** refused channel-2 messages log once per change of (link session, reason), at most 32 per process:
+  `partner_equip=refused; reason=..; rev=..; sender_epoch=..; link_epoch=..; size=..; magic=..` and
+  `partner_caps=refused; ...`. `partner_equip=manifest` and `partner_caps=rx` lines add `sender_epoch` /
+  `link_epoch`. state.json `native.equip` adds `rx_sender_epoch`, `rx_link_epoch`, `rx_received`, `rx_invalid`,
+  `rx_stale`, `rx_duplicates`, `rx_refused`; `native.net.caps` adds `stale`, `link_epoch`.
+- **Fix 3:** `no_manifest` is no longer a permanent writer refusal: the slot still waits 300 observations and logs
+  the refusal once, a body re-sync keeps it, and a manifest known later renews the slot in the same body gen
+  (`equip_writer=manifest_late; reason=manifest`). The preload's `no_manifest` never consumed the attempt; with
+  Fix 1 it is evaluated against the right session. Tested through its pure helpers only (`ManifestWaitReason`,
+  `RenewManifestWait`): the `ObserveGeneral` renewal (plan-wait reset, order recompute, the `manifest_late` line)
+  and `ResyncBody` keeping `no_manifest` read live game memory and are not run by a unit test, and the relaunch
+  scenario delivers the manifest before body 1 appears, so it never reaches the late path. A `manifest_late` line
+  in a hidden run or in play is its first runtime evidence.
+- **Fix 4:** the sender resends its manifest once per MissionStart (the receiver's dedupe absorbs the repeat); a link
+  (re)connect is a new session on both copies and resends as before.
+- **Reproduction knob (lab / worker only):** lab.ini `link_session_skew=0..999` raises this copy's link-session
+  counter at link start (first session = skew+1; `link=session_skew; skew=..; first_session=..` logged). A link
+  impairment: the lab and the hidden worker's play rehearsal only; a friend's play refuses it
+  (`kPlayRefusedImpairment`, forced 0). Allow-listed as `-LabSetting` / scenario `labsetting` key
+  (`link_session_skew=[0-9]{1,3}`) and a LabCommon key; one range everywhere (the native parser and LabCommon
+  refuse 1000 like the allow-lists). `lab_ini_check` prints it next to the `net_*` impairments.
+- **Scenario:** `tools/worker/scenarios/partner-equip-relaunch.txt` (play mode, `labsetting host
+  link_session_skew=2`: host session 3, guest 1): manifests on both sides with `sender_epoch`/`link_epoch`,
+  `remote=native/ok`, `equip_writer=handle_bound` (or `handle_queued` then `observation_stopped;
+  reason=model_wait_limit`, the same alternative partner-native-weapons.txt accepts), guest captures of the host's
+  partner body with its gun, then a host box toggle with `partner_cbox=remote; ...; active=1; apply=native` on the
+  guest.
+- **Tests (R0; they fail on 0.13.5):** `partner_equip_wire_tests` (sender epoch 1 under link session 3 accepted and
+  stamped; the same bytes a duplicate in session 3 but accepted again in session 4; the host's box toggle across the
+  mismatch), `partner_native_tests` (caps epoch 1 live in session 3 only, a new session restarts the sequence),
+  `partner_driver_tests` `TestEquipCrossProcessSession` (store, cache and MissionStart seeding with the receiver's
+  session, the relaunch on the same save, caps, the refusal line once, the MissionStart resend, the box edge and
+  `remote=native` on a guest at session 1 receiving epoch 3), `equipment_stock_writer_tests` (`no_manifest` not
+  permanent, `RenewManifestWait`), `link_session_tests` (`SessionSkew`: host session 3, guest 1),
+  `lab_config_tests` (lab keeps the skew, play refuses it, the rehearsal keeps it), `worker_debug_tests` (the new
+  JSON fields), `worker_session_tests` (the allow-lists and LabCommon key).
+- **Review fixes:** `TestEquipCrossProcessSession` also drains through the game's authenticated origin hook
+  (`drain_reliable_origin`, as `PartnerDrainReliableOrigin`): `link_epoch` is the origin's session (3, then 5 while
+  the `link_session` hook still says 3), never the sender's epoch 1, for the cache, `RemoteManifest` and caps
+  `Live`; and pins `partner_caps=refused; reason=no_link|older; rev=..; sender_epoch=..; link_epoch=..; size=16` once
+  per (link session, reason). `lab_scripts_tests` checks that a LabCommon-written `link_session_skew=2` parses
+  natively as 2; `friend_package_tests` checks that Play-Coop never writes it and that play refuses a named one
+  (`play_refused=0x4000`, forced 0).
+- **Workaround for 0.13.5 until this ships:** after any guest relaunch, both players quit; the host starts, then the
+  friend joins (restarting only the host is not enough).
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`

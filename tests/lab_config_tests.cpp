@@ -760,6 +760,8 @@ int main() {
         {"net_jitter_ms=5\n", kPlayRefusedImpairment},
         {"net_dup_permille=5\n", kPlayRefusedImpairment},
         {"net_reorder_permille=5\n", kPlayRefusedImpairment},
+        // 0.13.6 online-net-epoch: the link-session skew (reproduction knob) is never a friend's play key.
+        {"link_session_skew=2\n", kPlayRefusedImpairment},
         {"debug_soldier_warp=1\n", kPlayRefusedDebugSoldierWarp},
     };
     for (const auto& r : refusals) {
@@ -770,8 +772,19 @@ int main() {
               c.xinput == kXInputPassthrough && !c.join_trigger && c.auto_join_delay_s == 0 && !c.net_bind_loopback &&
               c.net_link == NetLink::v2 && c.net_latency_ms == 0 && c.net_loss_permille == 0 && c.net_jitter_ms == 0 &&
               c.net_dup_permille == 0 && c.net_reorder_permille == 0 && c.net_peer_address == 0x7F000001u && c.net &&
-              !c.debug_soldier_warp,
+              !c.debug_soldier_warp && c.link_session_skew == 0,
               "refused keys forced off");
+    }
+    {
+        // The lab keeps the skew (0..999, as the worker allow-lists); a value out of range is invalid and stays 0.
+        const auto lab = Lab("enabled=1\nlink_session_skew=2\n");
+        Check(lab.link_session_skew == 2 && lab.invalid_values == 0 && lab.play_refused == 0, "lab: link_session_skew=2");
+        const auto top = Lab("enabled=1\nlink_session_skew=999\n");
+        Check(top.link_session_skew == 999 && top.invalid_values == 0, "lab: link_session_skew=999 (the allow-list maximum)");
+        const auto big = Lab("enabled=1\nlink_session_skew=1000\n");
+        Check(big.link_session_skew == 0 && big.invalid_values == 1, "lab: link_session_skew above 999 refused");
+        const auto none = Lab("enabled=1\n");
+        Check(none.link_session_skew == 0, "link_session_skew defaults to 0");
     }
     const auto noSaves = Lab("enabled=1\nmode=play\nrole=host\nnet=1\n");
     Check(noSaves.play_refused == kPlayRefusedNoSaveDir && noSaves.invalid_values == 1 && noSaves.present, "play without save_dir");
@@ -1440,6 +1453,17 @@ int main() {
               workerView.net_peer_port == 47830 && std::strcmp(workerView.mutex_suffix, "worker_guest_0123abcd") == 0 &&
               workerView.xinput == kXInputNone && workerView.net_latency_ms == 40 && workerView.partner_drive == PartnerDrive::native,
               "the worker build relaxes exactly loopback, mutex, xinput=none and impairment");
+        {
+            // 0.13.6: the link-session skew is a rehearsal impairment (worker build only).
+            const std::string skewed = rehearsal + "link_session_skew=2\n";
+            LabConfig skewWorker{}, skewFriend{};
+            Check(ParseLabConfig(skewed.data(), skewed.size(), skewWorker, options) && skewWorker.play_refused == 0 &&
+                      skewWorker.invalid_values == 0 && skewWorker.link_session_skew == 2,
+                  "the worker's play rehearsal keeps link_session_skew");
+            Check(ParseLabConfig(skewed.data(), skewed.size(), skewFriend) && skewFriend.link_session_skew == 0 &&
+                      (skewFriend.play_refused & kPlayRefusedImpairment),
+                  "a friend's play refuses link_session_skew");
+        }
         const std::string identity =
             rehearsal + "loopback=1\nlisten_port=47810\npeer_port=47811\nself_steamid=76561202255233008\nxinput=0\njoin_trigger=1\n";
         LabConfig stillRefused{};

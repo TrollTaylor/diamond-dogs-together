@@ -1205,10 +1205,17 @@ void StartLink() noexcept {
     session.play = g_config.play;
     session.exact_filter = g_config.bind_loopback;
     session.peer = lab::Endpoint{g_config.peer_address, g_config.peer_port};
+    session.session_skew = g_config.session_skew;
     for (std::size_t i = 0; i < link::kBuildSize && g_config.build && g_config.build[i]; ++i) g_build[i] = g_config.build[i];
     for (std::size_t i = 0; i < link::kBuildSize; ++i) session.build[i] = g_build[i];
     link::DerivePsk(secret, session.psk);
     link::SecureZero(secret, sizeof(secret));
+    if (g_config.session_skew) {
+        char skew[96]{};
+        if (SUCCEEDED(StringCchPrintfA(skew, ARRAYSIZE(skew), "link=session_skew; skew=%u; first_session=%u; reason=lab\r\n",
+                                       g_config.session_skew, g_config.session_skew + 1)))
+            Log(skew);
+    }
 
     lab::TransportConfig transport{};
     transport.listen_port = g_config.listen_port;

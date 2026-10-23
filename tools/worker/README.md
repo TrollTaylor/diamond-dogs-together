@@ -266,7 +266,8 @@ read only: links, more than 4096 entries or oversized files refuse, and its
 `-GuestSaveSeed`. `session.json` records `save_seeds` and each role row's
 `save_seed_kind` / `save_seed_run`. `-LabSetting` (and the scenario
 `labsetting` line, all three allow-lists identical) also takes
-`save_handoff=off|stage|scene|always` and `travel_lock=0|1`.
+`save_handoff=off|stage|scene|always` and `travel_lock=0|1`, and (0.13.6)
+`link_session_skew=0..999` (see the relaunch note below).
 
 Steps:
 
@@ -312,6 +313,15 @@ into 30010. `scenarios/handoff-stage.txt` is the transfer alone (R2, R3).
 `scenarios/travel-lock.txt` is the guest lock and its escape (R6). Each header
 gives the run command and the evidence. The worker has no "relaunch guest"
 control, so a restart always takes two sessions.
+
+What a relaunch does to the link (0.13.6 online-net-epoch) is reproduced in one
+session instead: the lab.ini key `link_session_skew=<n>` (`-LabSetting
+host:link_session_skew=2` or a scenario `labsetting host link_session_skew=2`;
+the lab and the play rehearsal only, a friend's play refuses it) starts that
+copy's link-session counter at n, so its first session is n+1 while the fresh
+peer's is 1, exactly the counters of a host that saw two guest relaunches.
+`scenarios/partner-equip-relaunch.txt` runs the manifest, caps and box checks
+on it.
 
 ## Primary API contracts and acceptance limits
 
