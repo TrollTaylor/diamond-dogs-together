@@ -368,7 +368,7 @@ grenade throw, after the magazine throw and after the viewer-arc phase. Guest lo
 `throw_release`, every `stock_check; ...; changed=0` (three episodes), thrown filter
 `dropped=317; preview_dropped=314; passed=80` (the 80 forwarded requests are the guest's own arc previews
 while it aimed its own grenade), guard `hits=2040` across `windows=6920`. Idle refusals logged 6 lines
-instead of the earlier ~70. Frames (contact sheet `C:/Users/taylo/AppData/Local/Temp/mgs-caps/support2/sheet.png`):
+instead of the earlier ~70. Frames (contact sheet `%TEMP%/mgs-caps/support2/sheet.png`):
 the host body's grenade and magazine throws (wind-up, release, follow-through) and the guest holding its
 own HAND GRENADE (12) with its arc while the partner throws beside it.
 

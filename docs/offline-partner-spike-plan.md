@@ -6,7 +6,7 @@ Evidence labels used below:
 - **[L]**: seen in an earlier live log.
 - **[S]**: speculation, to be settled live.
 
-Nothing was edited or launched. My scratch scripts are in `C:/Users/taylo/AppData/Local/Temp/claude/D--Games-steamapps-common-MGS-TPP/e7a6e70e-f530-4f59-b4a3-60e868204a66/scratchpad/p2/`.
+Nothing was edited or launched. My scratch scripts were in that session's scratchpad (`p2/`), which is not kept.
 
 ## 0. Decision summary
 

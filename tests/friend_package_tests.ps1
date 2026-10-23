@@ -572,8 +572,8 @@ try {
 
     # ------------------------------------------------------------ Steam online: MGS2 codes and lab.ini (docs/steam-online.md 9)
     # Shared vectors (computed independently; tests/steam_transport_tests.cpp checks the same).
-    $steamVectors = @(@('ABCDE12345FGHJK67890', '76561198058195100', '6Z'), @('C00PC00PC00PC00PC00P', '76561197960265729', 'D1'),
-        @('ZZZZZYYYYYXXXXXWWWWW', '76561202255233023', '5D'), @('0123456789ABCDEFGHJK', '76561198057664236', '2R'))
+    $steamVectors = @(@('ABCDE12345FGHJK67890', '76561198011111111', '1A'), @('C00PC00PC00PC00PC00P', '76561197960265729', 'D1'),
+        @('ZZZZZYYYYYXXXXXWWWWW', '76561202255233023', '5D'), @('0123456789ABCDEFGHJK', '76561198022222222', 'VF'))
     foreach ($v in $steamVectors) {
         $c = New-CoopSteamJoinCode -Secret $v[0] -SteamId $v[1]
         Assert-Equal $c ('MGS2-' + $v[0].Substring(0, 5) + '-' + $v[0].Substring(5, 5) + '-' + $v[0].Substring(10, 5) + '-' + $v[0].Substring(15, 5) + '-' + $v[2] + '@' + $v[1]) "MGS2 vector $($v[1])"
@@ -585,14 +585,14 @@ try {
             Assert-True (!(($n.Values -join ' ').Contains($v[0]))) 'native: the MGS2 check never prints the secret'
         }
     }
-    Assert-Equal (ConvertFrom-CoopSteamJoinCode ' mgs2 abcde i2345 fghjk 67890 6z @ 76561198058195100').Status 'ok' 'MGS2: blanks, case and I -> 1'
+    Assert-Equal (ConvertFrom-CoopSteamJoinCode ' mgs2 abcde i2345 fghjk 67890 1a @ 76561198011111111').Status 'ok' 'MGS2: blanks, case and I -> 1'
     # The native IsBlank set: space, tab, CR, LF, VT and FF (a pasted code may carry a line break).
-    Assert-Equal (ConvertFrom-CoopSteamJoinCode ("`tMGS2-ABCDE-12345-`r`nFGHJK-67890-6Z@76561198058195100`v`f`n")).Status 'ok' 'MGS2: tab, CR, LF, VT and FF are blanks'
-    $steamBad = @(@('', 'empty'), @('MGS1-ABCDE-12345-FGHJK-67890-6Z@203.0.113.7', 'bad_prefix'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z', 'bad_steamid'),
-        @('MGS2-ABCDU-12345-FGHJK-67890-6Z@76561198058195100', 'bad_char'), @('MGS2-ABCDE-12345-FGHJK-6789-6Z@76561198058195100', 'bad_length'),
-        @('MGS2-ABCDE-12345-FGHJK-67890-6Y@76561198058195100', 'bad_check'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z@76561198058195101', 'bad_check'),
-        @('MGS2-ABCDE-12345-FGHJK-67890-6Z@076561198058195100', 'bad_steamid'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z@103582791429521408', 'bad_steamid'),
-        @('MGS2-ABCDE-12345-FGHJK-67890-6Z@76561197960265728', 'bad_steamid'))
+    Assert-Equal (ConvertFrom-CoopSteamJoinCode ("`tMGS2-ABCDE-12345-`r`nFGHJK-67890-1A@76561198011111111`v`f`n")).Status 'ok' 'MGS2: tab, CR, LF, VT and FF are blanks'
+    $steamBad = @(@('', 'empty'), @('MGS1-ABCDE-12345-FGHJK-67890-1A@203.0.113.7', 'bad_prefix'), @('MGS2-ABCDE-12345-FGHJK-67890-1A', 'bad_steamid'),
+        @('MGS2-ABCDU-12345-FGHJK-67890-1A@76561198011111111', 'bad_char'), @('MGS2-ABCDE-12345-FGHJK-6789-1A@76561198011111111', 'bad_length'),
+        @('MGS2-ABCDE-12345-FGHJK-67890-1B@76561198011111111', 'bad_check'), @('MGS2-ABCDE-12345-FGHJK-67890-1A@76561198011111112', 'bad_check'),
+        @('MGS2-ABCDE-12345-FGHJK-67890-1A@076561198011111111', 'bad_steamid'), @('MGS2-ABCDE-12345-FGHJK-67890-1A@103582791429521408', 'bad_steamid'),
+        @('MGS2-ABCDE-12345-FGHJK-67890-1A@76561197960265728', 'bad_steamid'))
     foreach ($b in $steamBad) {
         Assert-Equal (ConvertFrom-CoopSteamJoinCode $b[0]).Status $b[1] "MGS2 '$($b[0])' -> $($b[1])"
         if ($steamKeys -and $b[0]) { Assert-Equal (Invoke-IniCheck steamcode $b[0])['steamcode_status'] $b[1] "native: MGS2 '$($b[0])' -> $($b[1])" }
@@ -602,22 +602,22 @@ try {
     Assert-Equal (Get-CoopSteamId64 -ActiveUser 1) '76561197960265729' 'SteamID64 of account 1'
     Assert-Equal (Get-CoopSteamId64 -ActiveUser 4294967295) '76561202255233023' 'SteamID64 of the last account'
     Assert-True (!(Test-CoopSteamId64 '76561197960265728') -and (Test-CoopSteamId64 '76561197960265729') -and !(Test-CoopSteamId64 '7656119796026572')) 'individual SteamID64 rule'
-    $steamHostIni = New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100'
-    Assert-Equal $steamHostIni ("$header`nenabled=1`nmode=play`nrole=host`nsave_dir=$saveDir`nnet=1`nnet_transport=steam`nnet_steam_self=76561198058195100`npartner_interp=auto`n$defaultsText`nworld=3`n") 'online host lab.ini: no UDP key'
-    $steamGuestIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198057664236' -SteamPeer '76561198058195100'
-    Assert-True ($steamGuestIni.Contains("net_transport=steam`nnet_steam_self=76561198057664236`nnet_peer_steam=76561198058195100`n") -and !$steamGuestIni.Contains('net_bind') -and !$steamGuestIni.Contains('net_peer_addr')) 'online guest lab.ini'
-    $steamWaitIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198057664236' -SteamWait
+    $steamHostIni = New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198011111111'
+    Assert-Equal $steamHostIni ("$header`nenabled=1`nmode=play`nrole=host`nsave_dir=$saveDir`nnet=1`nnet_transport=steam`nnet_steam_self=76561198011111111`npartner_interp=auto`n$defaultsText`nworld=3`n") 'online host lab.ini: no UDP key'
+    $steamGuestIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198022222222' -SteamPeer '76561198011111111'
+    Assert-True ($steamGuestIni.Contains("net_transport=steam`nnet_steam_self=76561198022222222`nnet_peer_steam=76561198011111111`n") -and !$steamGuestIni.Contains('net_bind') -and !$steamGuestIni.Contains('net_peer_addr')) 'online guest lab.ini'
+    $steamWaitIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198022222222' -SteamWait
     Assert-True ($steamWaitIni.Contains("net_steam_wait=1`n") -and !$steamWaitIni.Contains('net_peer_steam')) 'waiting guest lab.ini'
-    Assert-Throws { New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198057664236' -SteamPeer '76561198057664236' } 'own code' 'own code refused'
-    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100' -SteamPeer '76561198057664236' } 'no Steam peer' 'a host has no Steam peer'
-    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -SteamSelf '76561198058195100' } 'Transport steam' 'Steam keys need -Transport steam'
+    Assert-Throws { New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198022222222' -SteamPeer '76561198022222222' } 'own code' 'own code refused'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198011111111' -SteamPeer '76561198022222222' } 'no Steam peer' 'a host has no Steam peer'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -SteamSelf '76561198011111111' } 'Transport steam' 'Steam keys need -Transport steam'
     Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '1' } 'SteamID64' 'own SteamID64 validated'
     # The two-PC A/B variant of the code-join sources (docs/steam-online.md 20.5): only with -SteamDispatch, lower case.
-    $dispatchIni = New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100' -SteamDispatch FnPtr
-    Assert-True ($dispatchIni.Contains("net_steam_self=76561198058195100`nnet_steam_dispatch=fnptr`npartner_interp=auto`n")) 'online A/B variant key'
+    $dispatchIni = New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198011111111' -SteamDispatch FnPtr
+    Assert-True ($dispatchIni.Contains("net_steam_self=76561198011111111`nnet_steam_dispatch=fnptr`npartner_interp=auto`n")) 'online A/B variant key'
     Assert-True (!$steamHostIni.Contains('net_steam_dispatch')) 'no variant key by default'
     Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -SteamDispatch poll } 'Transport steam' 'the variant needs -Transport steam'
-    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100' -SteamDispatch fast } 'SteamDispatch' 'unknown variant refused'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198011111111' -SteamDispatch fast } 'SteamDispatch' 'unknown variant refused'
     if ($steamKeys) {
         $file = Join-Path $fixture 'steam-dispatch-lab.ini'; [IO.File]::WriteAllText($file, $dispatchIni, $utf8)
         $n = Invoke-IniCheck lab $file
@@ -638,7 +638,7 @@ try {
         Assert-Equal (Get-CoopSteamEndText -End ([int]$v.end)) ([string]$v.text) "shared vector: steam_end $($v.end)"
     }
     if ($steamKeys) {
-        foreach ($case in @(@('host', $steamHostIni, 'steam|0|0|0'), @('guest', $steamGuestIni, 'steam|0|76561198058195100|0'), @('guest', $steamWaitIni, 'steam|1|0|0'))) {
+        foreach ($case in @(@('host', $steamHostIni, 'steam|0|0|0'), @('guest', $steamGuestIni, 'steam|0|76561198011111111|0'), @('guest', $steamWaitIni, 'steam|1|0|0'))) {
             $file = Join-Path $fixture "steam-$($case[0])-lab.ini"; [IO.File]::WriteAllText($file, $case[1], $utf8)
             $n = Invoke-IniCheck lab $file
             Assert-Equal "$($n['present'])|$($n['mode'])|$($n['role'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])|$($n['net'])" "1|play|$($case[0])|0x0|0/0|1" "native: online $($case[0]) lab.ini clean"
@@ -694,10 +694,10 @@ try {
     Assert-Equal ([regex]::Matches($clean, 'MGS1-<redacted>').Count) 3 'each join code replaced'
     Assert-True ($clean.Contains('peer=203.0.x.x:51234') -and $clean.Contains('net_peer_addr=198.51.x.x') -and $clean.Contains('"peer":"203.0.x.x:47830"') -and $clean.Contains('host=8.8.x.x')) 'public addresses masked in address contexts'
     Assert-True ($clean.Contains('1.0.15.4') -and $clean.Contains('10.0.19045.1') -and $clean.Contains('at 203.0.113.50') -and $clean.Contains('peer=192.168.1.20:47830')) 'versions, other text and private addresses kept'
-    $steamCodeText = New-CoopSteamJoinCode -Secret $s7 -SteamId '76561198058195100'
+    $steamCodeText = New-CoopSteamJoinCode -Secret $s7 -SteamId '76561198011111111'
     $steamLeaky = "code $steamCodeText`nlower " + $steamCodeText.ToLowerInvariant() + "`nconnect +mgscoop_join $steamCodeText`nsteam=join; via=invite; host=steam:...5100`n"
     $steamClean = Hide-CoopNetworkText $steamLeaky
-    Assert-True (!$steamClean.ToUpperInvariant().Contains('7K3QZ') -and !$steamClean.Contains('76561198058195100')) 'MGS2 codes and invite strings redacted'
+    Assert-True (!$steamClean.ToUpperInvariant().Contains('7K3QZ') -and !$steamClean.Contains('76561198011111111')) 'MGS2 codes and invite strings redacted'
     Assert-Equal ([regex]::Matches($steamClean, 'MGS2-<redacted>').Count) 2 'each MGS2 code replaced'
     Assert-True ($steamClean.Contains('+mgscoop_join <redacted>') -and $steamClean.Contains('host=steam:...5100')) 'the invite string replaced; masked SteamIDs kept'
 
@@ -2780,7 +2780,7 @@ try {
     # Play-Coop's own steps (online 2026-10-22 P5) are collected too.
     [IO.File]::WriteAllText($hp.PlayCoopLog, "2026-10-22T17:54:42.000Z pid=54332 relaunch=requested; started=1; steam=running=0;running_app=0`r`n")
     $rejoinOnDisk = 'QQQQQRRRRRSSSSSTTTTT'
-    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198058195100') + "`r`n")
+    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198011111111') + "`r`n")
     $null = New-Item -ItemType Directory -Path $hp.CoopSavesHandoff -Force
     [IO.File]::WriteAllText((Join-Path $hp.CoopSavesHandoff 'provenance.json'), '{"format":"mgs-coop-save-provenance","v":1,"entries":[{"set":"' + ('A' * 64) + '","mission":30010,"source":"continue","utc":"2026-10-15T12:00:00Z"}]}')
     [IO.File]::WriteAllText((Join-Path $hp.CoopSavesHandoff 'applied.json'), '{"format":"mgs-coop-save-handoff-applied","v":1,"set_sha256":"' + ('B' * 64) + '","applied_utc":"2026-10-15T12:01:00Z","aside":"20000101-000000-before-handoff"}')
@@ -2890,7 +2890,7 @@ try {
     Assert-True ((Has $r 'A host save from an earlier session was not applied and was removed.') -and !(Test-Path -LiteralPath $hp.LinkRejoin) -and
         !(Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'request.json')) -and !(Test-Path -LiteralPath $collectStage.Stage) -and
         (Test-Path -LiteralPath (Join-Path $hp.CoopSavesHandoff 'provenance.json')) -and (Test-Path -LiteralPath $handoffAside)) "Play-Coop removes an unapplied save handoff first: $($r.Text)"
-    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198058195100') + "`r`n")
+    [IO.File]::WriteAllText($hp.LinkRejoin, (New-CoopSteamJoinCode -Secret $rejoinOnDisk -SteamId '76561198011111111') + "`r`n")
     $uninstallStage = New-HandoffStage $hp.CoopSavesHandoff '7B8C9DAE.partial' @{ '287700/local/TPP_GAME_DATA0' = 'half a host save' }
     $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
     Assert-Equal $r.Exit 0 "host uninstall succeeds: $($r.Raw)"

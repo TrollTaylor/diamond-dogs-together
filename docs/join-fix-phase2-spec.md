@@ -746,8 +746,8 @@ docs/two-pc-play.md gets the same flow and the new HUD and status lines.
 ## hidden_runtime_checks
 - R0 Preconditions:
 - Work only in D:/mgs-coop-wt/join-fix, with Phase 1 merged.
-- Leave MGS_GAME_LUA_DIR unset (default <worktree>/build) and never point it at C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop.
-- Take the verify lock: check C:\Users\taylo\AppData\Local\Temp\mgs-coop-verify.lock\owner.txt first, then mkdir and write owner.txt.
+- Leave MGS_GAME_LUA_DIR unset (default <worktree>/build) and never point it at the main checkout.
+- Take the verify lock: check %TEMP%\mgs-coop-verify.lock\owner.txt first, then mkdir and write owner.txt.
 - Run one worker session at a time (Local\MGSCoopBackgroundSession); the anim worktree runs sessions often, so coordinate.
 - Never use the visible desktop.
 - Use -GraphicsQuality low for multi-load runs (docs/STATUS.md:320, error 1455).
