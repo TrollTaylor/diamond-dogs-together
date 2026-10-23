@@ -44,7 +44,10 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
 std::size_t FormatQuery(const CoopConfig& coop, bool readback, char* out, std::size_t capacity) noexcept;
 
 // True only when the configured character itself is OCELOT or QUIET, the two
-// types the native UpdatePartsStatus reset reverts to SNAKE outside FOB.
+// types the native UpdatePartsStatus reset reverts to SNAKE outside FOB, or
+// STORY, which the Lua chunk always resolves to one of them. The chunk asks
+// for the bypass only when the applied character is Quiet/Ocelot (a fallback
+// such as dd_male sends BYPASS_OFF instead).
 bool NeedsResetBypass(const CoopConfig& coop) noexcept;
 
 // Observer modes that answer these receipts: every mode whose composed TppMain

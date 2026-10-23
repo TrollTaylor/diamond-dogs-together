@@ -221,7 +221,8 @@ try {
     }
     Assert-Equal (Get-FriendDefaultCharacter -Role Host) 'default' 'host default character'
     Assert-Equal (Get-FriendDefaultCharacter -Role Join) 'quiet' 'joiner default character'
-    foreach ($ch in 'default', 'quiet', 'dd_male', 'dd_female', 'snake', 'avatar', 'ocelot') { Assert-True (Test-FriendCharacter $ch) "character $ch" }
+    foreach ($ch in 'default', 'quiet', 'dd_male', 'dd_female', 'snake', 'avatar', 'ocelot', 'story') { Assert-True (Test-FriendCharacter $ch) "character $ch" }
+    Assert-True (-not (Test-FriendCharacter 'Story')) 'story is lower case like every character'
     Assert-True (-not (Test-FriendCharacter 'dog')) 'unknown character'
     Assert-True (-not (Test-FriendCharacter 'Quiet')) 'character names are lower case'
     Assert-Equal ((Get-FriendCharacters) -join ',') ((Get-CoopCharacters) -join ',') 'FriendCommon and CoopPlay know the same characters'

@@ -10,10 +10,16 @@
 -- mirror), TppMain.lua (anchor, composed-source compile, OnAllocate and
 -- readback lifecycle runs) and TppVarInit.lua (its InitializeForContinue
 -- replaces the mirror in the real OnAllocate runs).
+-- character=story runs against a simulated buddy service (one shared Quiet
+-- state); --story/--mission add the real extracted TppStory.lua and
+-- TppMission.lua, whose own Quiet functions (CanArrivalQuietInMB,
+-- RequestLoseQuiet, RequestReunionQuiet, SetSortieBuddy) then drive and judge
+-- the resolution.
 -- No MGSV, Steam or native code is involved.
 -- Usage: lua51 character_lua_check.lua character.lua character_readback.lua [TppPlayer.lua [TppMain.lua
---        [composed.lua]]] [--varinit=TppVarInit.lua] where composed.lua is the complete DLL TppMain
---        composition written by host_trial_patch_check (after the bootstrap_patch integration).
+--        [composed.lua]]] [--varinit=TppVarInit.lua] [--story=TppStory.lua] [--mission=TppMission.lua]
+--        where composed.lua is the complete DLL TppMain composition written by host_trial_patch_check
+--        (after the bootstrap_patch integration).
 local checks = 0
 local function check(value, why)
     checks = checks + 1
@@ -26,9 +32,12 @@ local function readfile(path)
     -- git core.autocrlf checks sources out with CRLF; the DLL composition is LF.
     return (text:gsub('\r\n', '\n'))
 end
-local positional, VARINIT = {}, nil
+local positional, VARINIT, STORY, MISSION = {}, nil, nil, nil
 for i = 1, #arg do
-    if arg[i]:sub(1, 10) == '--varinit=' then VARINIT = arg[i]:sub(11) else positional[#positional + 1] = arg[i] end
+    if arg[i]:sub(1, 10) == '--varinit=' then VARINIT = arg[i]:sub(11)
+    elseif arg[i]:sub(1, 8) == '--story=' then STORY = arg[i]:sub(9)
+    elseif arg[i]:sub(1, 10) == '--mission=' then MISSION = arg[i]:sub(11)
+    else positional[#positional + 1] = arg[i] end
 end
 local CHARACTER, READBACK, REAL_PLAYER, REAL_MAIN, FULL_COMPOSITION = positional[1], positional[2], positional[3],
     positional[4], positional[5]
@@ -147,6 +156,39 @@ end
 local stub = setmetatable({}, {__call = function() return nil end})
 getmetatable(stub).__index = function() return stub end
 
+-- Simulated buddy service for character=story. TppBuddyService and
+-- TppBuddy2BlockController answer from one shared state (the same save data),
+-- as the game's own scripts use them interchangeably for Quiet. State keys:
+-- obtained, sortie, dead, lost (BUDDY_QUIET_LOST), dying, hospitalize, and
+-- quest (mtbs_q99011, the cell visit, cleared). Setters serve the real
+-- TppStory/TppMission functions.
+local FLAG = {BUDDY_QUIET_LOST = 41, BUDDY_QUIET_DYING = 42, BUDDY_QUIET_HOSPITALIZE = 43, BOSS_QUIET_KILL = 44}
+local function installBuddies(env, s)
+    local key = {[FLAG.BUDDY_QUIET_LOST] = 'lost', [FLAG.BUDDY_QUIET_DYING] = 'dying',
+        [FLAG.BUDDY_QUIET_HOSPITALIZE] = 'hospitalize', [FLAG.BOSS_QUIET_KILL] = 'killed'}
+    local function quiet(t) return t == BUDDY.QUIET end
+    local function set(field, value) return function(t) if quiet(t) then s[field] = value end end end
+    local S = {}
+    function S.DidObtainBuddyType(t) return quiet(t) and s.obtained == true end
+    function S.CanSortieBuddyType(t) return quiet(t) and s.sortie == true end
+    function S.IsDeadBuddyType(t) return quiet(t) and s.dead == true end
+    function S.CheckBuddyCommonFlag(f) return key[f] ~= nil and s[key[f]] == true end
+    function S.SetBuddyCommonFlag(f) if key[f] then s[key[f]] = true end end
+    function S.UnsetBuddyCommonFlag(f) if key[f] then s[key[f]] = false end end
+    S.SetObtainedBuddyType, S.UnsetObtainedBuddyType = set('obtained', true), set('obtained', false)
+    S.SetSortieBuddyType, S.UnsetSortieBuddyType = set('sortie', true), set('sortie', false)
+    S.UnsetDeadBuddyType = set('dead', false)
+    function S.SetFriendlyPoint() end
+    function S.SetDisableBuddyType() end
+    env.buddy = s
+    env.BuddyCommonFlag = {}
+    for name, value in pairs(FLAG) do env.BuddyCommonFlag[name] = value end
+    env.BuddyFriendlyType = {QUIET = 1}
+    env.TppBuddyService = S
+    env.TppBuddy2BlockController = {DidObtainBuddyType = S.DidObtainBuddyType, SetObtainedBuddyType = S.SetObtainedBuddyType}
+    env.TppQuest = {IsCleard = function(name) return name == 'mtbs_q99011' and s.quest == true end}
+end
+
 local realPlayerChunk = REAL_PLAYER and assert(loadfile(REAL_PLAYER)) or nil
 -- Report/readback payloads that reach C.Log's 192-byte cut (would be truncated).
 local longPayloads = 0
@@ -179,6 +221,7 @@ local function fixture(o)
     env.TppMission = {IsSubsistenceMission = function()
         return env.vars.missionCode == 11043 or env.vars.missionCode == 11044 end}
     if not o.noMissionStart then env.TppMission.IsMissionStart = function() return not env.continuing end end
+    if o.quiet then installBuddies(env, o.quiet) end
     -- Simulated player implementation. Like the binding at 0x9d30b0, which
     -- dereferences [P+0x208] with no null check, GetPlayerType "crashes" (is
     -- counted and raises) whenever it runs while the implementation is absent.
@@ -630,6 +673,148 @@ local function scenarios(real)
     env = F({character = 'quiet', noCoop = true})
     setfenv(characterChunk, env); characterChunk()
     check(#env.receipts == 0 and #env.registered == 0 and env.n.sequence[ALWAYS] == nil, tag .. 'missing Tpp.MgsCoop does nothing')
+
+    -- character=story: Quiet while she is a deployable buddy on Diamond Dogs'
+    -- team in this save, otherwise Ocelot; every gate and fallback unchanged.
+    local function onTeam() return {obtained = true, sortie = true} end
+    env = F({character = 'story', mission = 30050, quiet = onTeam()})
+    status = allocate(env, {endCall = false})
+    check(status.requested == 'story' and status.resolved == 'quiet' and status.story == 'on_team' and
+        status.applied == 'quiet' and status.type == PT.QUIET and status.bypass and env.bypass and has(env.receipts, ON),
+        tag .. 'story: Quiet on the team is applied with the bypass')
+    check(env.vars.playerType == PT.QUIET and env.vars.playerPartsType == PARTS.QUIET and env.vars.playerCamoType == CAMO.QUIET,
+        tag .. 'story: Quiet type, parts and camo')
+    check(env.reports[1] == 'story;resolved=quiet;reason=on_team;mission=30050;flags=os--' and
+        hasText(env.reports, 'apply;mission=30050;requested=story;applied=quiet;type=6;reason=override;bypass=1;real=0;'),
+        tag .. 'story: resolution and decision reported')
+    env.TppPlayer.ForceChangePlayerFromOcelot()
+    check(env.vars.playerType == PT.QUIET and env.ocelotRevertCalls == 0 and
+        lastReport(env) == 'ocelot_reset_skipped;mission=30050', tag .. 'story: the Lua revert is skipped once for Quiet')
+
+    -- Before she joins: not recruited (before or killed in Cloaked in Silence).
+    env = F({character = 'story', mission = 10036, quiet = {}})
+    status = allocate(env)
+    check(status.resolved == 'ocelot' and status.story == 'not_recruited' and status.applied == 'ocelot' and
+        status.reason == 'override' and env.bypass and env.vars.playerType == PT.OCELOT and
+        env.vars.playerPartsType == PARTS.OCELOT and env.vars.playerCamoType == CAMO.OCELOT, tag .. 'story: Ocelot before Quiet joins')
+    check(env.reports[1] == 'story;resolved=ocelot;reason=not_recruited;mission=10036;flags=----' and env.ocelotRevertCalls == 0,
+        tag .. 'story: not_recruited reported, Ocelot kept through the revert')
+    env = F({character = 'story', mission = 10050, quiet = {killed = true}})
+    status = allocate(env)
+    check(status.resolved == 'ocelot' and status.story == 'not_recruited' and status.applied == 'ocelot' and
+        status.reason == 'override', tag .. 'story: first Cloaked in Silence is Ocelot (no Quiet conflict)')
+    -- Recruited, still in her cell (the mtbs_q99011 visit not cleared).
+    env = F({character = 'story', mission = 30050, quiet = {obtained = true}})
+    status = allocate(env)
+    check(status.resolved == 'ocelot' and status.story == 'not_deployable' and env.vars.playerType == PT.OCELOT and
+        env.reports[1] == 'story;resolved=ocelot;reason=not_deployable;mission=30050;flags=o---', tag .. 'story: Quiet in her cell')
+    -- Cell visit cleared: TppMission.SetSortieBuddy makes her deployable later in this OnAllocate.
+    env = F({character = 'story', mission = 30050, quiet = {obtained = true, quest = true}})
+    status = allocate(env)
+    check(status.resolved == 'quiet' and env.vars.playerType == PT.QUIET, tag .. 'story: the cell-visit unlock counts already')
+    -- After she leaves: LOST is set when A Quiet Exit opens (still obtained),
+    -- RequestLoseQuiet then unsets obtained/sortie at its end.
+    for i, q in ipairs({{obtained = true, sortie = true, lost = true}, {lost = true, quest = true}}) do
+        env = F({character = 'story', mission = 30050, quiet = q})
+        status = allocate(env)
+        check(status.resolved == 'ocelot' and status.story == 'departed' and env.vars.playerType == PT.OCELOT,
+            tag .. 'story: Ocelot after Quiet leaves ' .. i)
+    end
+    env = F({character = 'story', mission = 30010, quiet = {obtained = true, sortie = true, dead = true}})
+    check(allocate(env).story == 'dead' and env.vars.playerType == PT.OCELOT, tag .. 'story: dead buddy Quiet gives Ocelot')
+    -- Hospitalized (BUDDY_QUIET_HOSPITALIZE) is temporary: she stays on the team.
+    env = F({character = 'story', mission = 30010, quiet = {obtained = true, sortie = true, hospitalize = true}})
+    check(allocate(env).resolved == 'quiet', tag .. 'story: a hospitalized Quiet stays Quiet')
+    -- Unreadable buddy state: Ocelot (no TppBuddyService, missing enum, or a throwing call).
+    env = F({character = 'story', mission = 30050})
+    status = allocate(env)
+    check(status.resolved == 'ocelot' and status.story == 'unreadable' and env.vars.playerType == PT.OCELOT and
+        env.reports[1] == 'story;resolved=ocelot;reason=unreadable;mission=30050;flags=na', tag .. 'story: no buddy service')
+    env = F({character = 'story', mission = 30050, quiet = onTeam()})
+    env.BuddyCommonFlag = {}
+    check(allocate(env).story == 'unreadable', tag .. 'story: missing BUDDY_QUIET_LOST enum')
+    env = F({character = 'story', mission = 30050, quiet = onTeam()})
+    env.TppBuddyService.IsDeadBuddyType = function() error('binding failure') end
+    check(allocate(env).story == 'unreadable' and env.Tpp.MgsCoop.characterError == nil, tag .. 'story: throwing read contained')
+
+    -- Quiet-blocked missions and a deployed buddy Quiet: the fallback rules.
+    for _, mission in ipairs({10050, 11050, 10260}) do
+        env = F({character = 'story', mission = mission, quiet = onTeam()})
+        status = allocate(env)
+        check(status.resolved == 'quiet' and status.applied == 'dd_male' and status.reason == 'quiet_conflict' and
+            not status.bypass and has(env.receipts, OFF) and not has(env.receipts, ON) and
+            env.vars.playerType == PT.DD_MALE and env.vars.playerFaceId == 0, tag .. 'story: Quiet conflict fallback ' .. mission)
+    end
+    env = F({character = 'story', mission = 10260, quiet = {obtained = true, sortie = true, lost = true}})
+    status = allocate(env)
+    check(status.resolved == 'ocelot' and status.applied == 'ocelot' and status.reason == 'override' and status.bypass,
+        tag .. 'story: A Quiet Exit after she left is Ocelot')
+    env = F({character = 'story', mission = 30010, quiet = onTeam(), buddyType = BUDDY.QUIET, fallback = 'dd_female'})
+    status = allocate(env)
+    check(status.resolved == 'quiet' and status.applied == 'dd_female' and status.reason == 'buddy_quiet' and
+        env.vars.playerType == PT.DD_FEMALE and env.vars.playerFaceId == 350, tag .. 'story: buddy Quiet deployed')
+    env = F({character = 'story', mission = 30010, quiet = {}, buddyType = BUDDY.QUIET})
+    check(allocate(env).applied == 'ocelot', tag .. 'story: Ocelot has no buddy conflict')
+    env = F({character = 'story', mission = 10036, quiet = {}, bypassRefused = true})
+    status = allocate(env)
+    check(status.resolved == 'ocelot' and status.applied == 'dd_male' and status.reason == 'bypass_unavailable' and
+        env.vars.playerType == PT.DD_MALE, tag .. 'story: refused bypass falls back')
+
+    -- Story gates are unchanged and resolve nothing.
+    for mission, reason in pairs({[10010] = 'story_hospital', [10280] = 'story_hospital', [10030] = 'story_temp_snake',
+            [10240] = 'story_temp_snake', [10151] = 'story_snake_for_dd', [11043] = 'story_subsistence',
+            [11044] = 'story_subsistence'}) do
+        env = F({character = 'story', mission = mission, quiet = onTeam()})
+        status = allocate(env)
+        check(status.result == 'keep' and status.reason == reason and status.resolved == nil and #env.registered == 0 and
+            has(env.receipts, OFF) and not has(env.receipts, ON) and not hasText(env.reports, 'story;resolved='),
+            tag .. 'story: forced ' .. mission)
+    end
+    env = F({character = 'story', mission = 10020, storySequence = 5, quiet = onTeam(), playerType = PT.DD_MALE,
+        sortieType = PT.DD_MALE})
+    status = allocate(env)
+    check(status.reason == 'story_sequence_snake' and env.vars.playerType == PT.SNAKE and #env.registered == 0,
+        tag .. 'story: hospital-sequence Snake')
+    env = F({character = 'story', mission = 10085, quiet = onTeam()})
+    check(allocate(env, {storyTemp = {playerType = PT.SNAKE}}).reason == 'story_temp_type' and env.vars.playerType == PT.SNAKE,
+        tag .. 'story: a MissionPrepare temporary type wins')
+    env = F({character = 'story', mission = 30050, titleMode = true, quiet = onTeam()})
+    check(allocate(env).reason == 'title_mode' and env.vars.playerType == PT.SNAKE, tag .. 'story: title mode')
+    for _, mission in ipairs({40010, 50050}) do
+        env = F({character = 'story', mission = mission, quiet = onTeam()})
+        status = allocate(env)
+        check(status.reason == 'mission_class' and has(env.receipts, OFF) and #env.registered == 0, tag .. 'story: class ' .. mission)
+    end
+
+    -- Checkpoint continue resolves the same way and sets the continue flag.
+    env = F({character = 'story', mission = 30050, quiet = onTeam()})
+    status = allocate(env, {continue = true, checkpoint = {vars = {playerType = PT.SNAKE, playerPartsType = PARTS.SNEAKING_SUIT,
+        playerCamoType = CAMO.SPLITTER}, gvars = {ply_isUsingTempPlayerType = false}}})
+    check(status.applied == 'quiet' and status.always == true and env.typeSettingCalls == 1 and env.vars.playerType == PT.QUIET and
+        hasText(env.reports, 'requested=story;applied=quiet;type=6;reason=override;bypass=1;real=0;start=continue;always=1'),
+        tag .. 'story: continue applies Quiet')
+    -- Each allocation reads the save again: Quiet, she leaves, Ocelot, the ACC restores.
+    env = F({character = 'story', mission = 30050, quiet = onTeam()})
+    allocate(env)
+    check(env.vars.playerType == PT.QUIET, tag .. 'story: Quiet while on the team')
+    env.buddy.lost, env.buddy.obtained, env.buddy.sortie = true, false, false
+    status = allocate(env, {mission = 30010})
+    check(status.resolved == 'ocelot' and status.story == 'departed' and env.vars.playerType == PT.OCELOT and
+        env.gvars.ply_lastPlayerTypeUsingTemp == PT.SNAKE, tag .. 'story: next allocation after she left is Ocelot')
+    allocate(env, {mission = 40010})
+    check(env.vars.playerType == PT.SNAKE and env.gvars.ply_isUsingTempPlayerType == false and not env.bypass,
+        tag .. 'story: the ACC restores the own type')
+    -- Other characters never read the buddy state.
+    for _, name in ipairs({'quiet', 'ocelot', 'dd_male', ''}) do
+        env = F({character = name, mission = 30050, quiet = onTeam()})
+        local reads = 0
+        for _, fn in ipairs({'DidObtainBuddyType', 'CheckBuddyCommonFlag', 'IsDeadBuddyType', 'CanSortieBuddyType'}) do
+            env.TppBuddyService[fn] = function() reads = reads + 1 end
+        end
+        status = allocate(env)
+        check(reads == 0 and status.resolved == nil and not hasText(env.reports, 'story;resolved='),
+            tag .. 'no buddy reads for character ' .. (name == '' and 'default' or name))
+    end
 end
 
 scenarios(false)
@@ -697,6 +882,126 @@ do
     C.RestoreAlways()
     check(sequence[ALWAYS] == nil, 'restore is idempotent')
     check(C.SetAlways(nil) == false and C.SetAlways('x') == false, 'set ignores a missing sequence')
+
+    -- character=story resolution (pure): reason precedence departed > dead >
+    -- not_recruited > not_deployable; Quiet only when every test passes.
+    local function story(q) local name, reason = C.Story(q); return name .. ':' .. reason end
+    check(story({obtained = true, sortie = true}) == 'quiet:on_team', 'story: on the team')
+    check(story({obtained = true, sortie = true, lost = true}) == 'ocelot:departed', 'story: lost wins')
+    check(story({lost = true, dead = true}) == 'ocelot:departed', 'story: departed before dead')
+    check(story({obtained = true, sortie = true, dead = true}) == 'ocelot:dead', 'story: dead')
+    check(story({sortie = true}) == 'ocelot:not_recruited', 'story: never obtained')
+    check(story({obtained = true}) == 'ocelot:not_deployable', 'story: in the cell')
+    check(story(nil) == 'ocelot:unreadable' and story('x') == 'ocelot:unreadable', 'story: unreadable')
+    check(story({obtained = 1, sortie = 1}) == 'quiet:on_team', 'story: truthy values as the game tests them')
+    d = C.Decide({character = 'story', fallback = 'avatar', mission = 30050, quiet = {obtained = true, sortie = true}})
+    check(d.result == 'apply' and d.requested == 'story' and d.resolved == 'quiet' and d.applied == 'quiet' and d.bypass and
+        d.fallback == 'avatar', 'decide story quiet')
+    d = C.Decide({character = 'story', fallback = 'avatar', mission = 11050, quiet = {obtained = true, sortie = true}})
+    check(d.resolved == 'quiet' and d.applied == 'avatar' and d.reason == 'quiet_conflict' and not d.bypass, 'decide story conflict')
+    d = C.Decide({character = 'story', mission = 30050, quiet = {obtained = true, sortie = true}, buddyQuiet = true})
+    check(d.applied == 'dd_male' and d.reason == 'buddy_quiet', 'decide story buddy Quiet')
+    d = C.Decide({character = 'story', mission = 30050})
+    check(d.resolved == 'ocelot' and d.story == 'unreadable' and d.applied == 'ocelot' and d.bypass, 'decide story unreadable')
+    d = C.Decide({character = 'story', mission = 10010, quiet = {obtained = true, sortie = true}})
+    check(d.result == 'keep' and d.resolved == nil, 'decide story keeps forced missions unresolved')
+    d = C.Decide({character = 'story', mission = 40010})
+    check(d.result == 'skip' and d.reason == 'mission_class' and d.resolved == nil, 'decide story skips other classes')
+    check(C.Decide({character = 'Story', mission = 30050}).reason == 'unknown_character', 'story is case-sensitive')
+    -- Gather reads the buddy state through the game's own functions.
+    env.BuddyType = BUDDY
+    installBuddies(env, {obtained = true, quest = true})
+    local q = C.Gather('story', 'dd_male').quiet
+    check(q and q.obtained == true and q.sortie == true and q.lost == false and q.dead == false, 'gather: quiet state and quest unlock')
+    env.buddy.quest = false
+    check(C.Gather('story', 'dd_male').quiet.sortie == false, 'gather: no unlock before the cell visit')
+    env.BuddyType = {}
+    check(C.Gather('story', 'dd_male').quiet == nil, 'gather: missing BuddyType.QUIET is unreadable')
+end
+
+-- Real TppStory.lua and TppMission.lua (optional, extracted read-only; see
+-- docs/characters.md). The game's own functions move the simulated save
+-- through Quiet's story, TppMission.SetSortieBuddy runs after the chunk as in
+-- OnAllocate, and the game's own unlock test (the UnlockBuddyQuiet radio:
+-- TppStory.CanArrivalQuietInMB(true) and CanSortieBuddyType(QUIET)) must agree
+-- with every resolution.
+local storyChecked = false
+if STORY and MISSION then
+    local permissive
+    permissive = setmetatable({}, {__call = function() return nil end,
+        __index = function(_, key) if type(key) == 'number' then return nil end return permissive end})
+    local function lenient(t) return setmetatable(t, {__index = function() return permissive end}) end
+    local env = fixture({character = 'story', mission = 30050, quiet = {}})
+    env.TppBuddyService.GetFriendlyPoint = function() return 100 end
+    env.gvars.str_didLostQuiet, env.gvars.str_quietReunionMissionCount = false, 0
+    env.gvars.str_missionClearedFlag = {}
+    env.TppDefine = lenient({STORY_SEQUENCE = {CLEARD_ESCAPE_THE_HOSPITAL = 5}, MISSION_ENUM = {['10260'] = 77}})
+    env.TppDemo = lenient({IsPlayedMBEventDemo = function(name) return name == 'DecisionHuey' end})
+    local function realModule(path)
+        local chunk = assert(loadfile(path))
+        setfenv(chunk, setmetatable({}, {__index = function(_, key)
+            local value = env[key]
+            if value ~= nil then return value end
+            return permissive
+        end, __newindex = function(_, key, value) env[key] = value end}))
+        return chunk()
+    end
+    local game, mission = realModule(STORY), realModule(MISSION)
+    check(type(game.CanArrivalQuietInMB) == 'function' and type(game.RequestLoseQuiet) == 'function' and
+        type(game.RequestReunionQuiet) == 'function' and type(mission.SetSortieBuddy) == 'function', 'real TppStory/TppMission loaded')
+    -- The real functions call TppStory.* only for elapsed-event bookkeeping.
+    env.TppStory = lenient({GetCurrentStorySequence = function() return 20 end, StartElapsedMissionEvent = function() end})
+    local function unlocked()
+        return game.CanArrivalQuietInMB(true) == true and env.TppBuddyService.CanSortieBuddyType(BUDDY.QUIET) == true
+    end
+    -- One OnAllocate: the chunk, then the real SetSortieBuddy, then the game's verdict.
+    local function allocation(label, name, reason)
+        local status = allocate(env, {mission = 30050})
+        mission.SetSortieBuddy()
+        check(status.resolved == name and status.story == reason and (status.resolved == 'quiet') == unlocked() and
+            env.vars.playerType == (name == 'quiet' and PT.QUIET or PT.OCELOT), 'real TppStory: ' .. label)
+    end
+    allocation('new save: Ocelot', 'ocelot', 'not_recruited')
+    -- Cloaked in Silence spared (s10050 sequence): obtained, held in the cell.
+    env.TppBuddy2BlockController.SetObtainedBuddyType(BUDDY.QUIET)
+    allocation('Quiet in her cell: Ocelot', 'ocelot', 'not_deployable')
+    allocation('still in her cell: Ocelot', 'ocelot', 'not_deployable')
+    env.buddy.quest = true  -- mtbs_q99011 cleared at the Medical platform
+    allocation('cell visit cleared: Quiet (SetSortieBuddy unlocks her in the same OnAllocate)', 'quiet', 'on_team')
+    check(env.buddy.sortie == true, 'real TppMission.SetSortieBuddy made her deployable')
+    allocation('deployable buddy: Quiet', 'quiet', 'on_team')
+    env.TppBuddyService.SetBuddyCommonFlag(FLAG.BUDDY_QUIET_HOSPITALIZE)
+    allocation('hospitalized: still Quiet', 'quiet', 'on_team')
+    env.TppBuddyService.UnsetBuddyCommonFlag(FLAG.BUDDY_QUIET_HOSPITALIZE)
+    -- A Quiet Exit opens (TppStory._UpdateS10260OpenFlag): she leaves Mother Base.
+    game._UpdateS10260OpenFlag()
+    check(env.buddy.lost == true and env.buddy.obtained == true, 'real _UpdateS10260OpenFlag set BUDDY_QUIET_LOST')
+    allocation('A Quiet Exit open: Ocelot', 'ocelot', 'departed')
+    -- A Quiet Exit cleared (s10260 calls TppStory.RequestLoseQuiet).
+    game.RequestLoseQuiet()
+    env.gvars.str_missionClearedFlag[77] = true
+    check(env.buddy.obtained == false and env.buddy.sortie == false and env.gvars.str_didLostQuiet == true,
+        'real RequestLoseQuiet unset obtained and sortie')
+    allocation('after A Quiet Exit: Ocelot', 'ocelot', 'departed')
+    game._UpdateS10260OpenFlag()
+    allocation('after A Quiet Exit, later mission: Ocelot', 'ocelot', 'departed')
+    -- Reunion (TppStory.RequestReunionQuiet): back on the team.
+    game.RequestReunionQuiet()
+    allocation('reunion: Quiet', 'quiet', 'on_team')
+    -- Every buddy state: the resolution equals the game's unlock test after SetSortieBuddy.
+    local agree, total = 0, 0
+    for bits = 0, 63 do
+        local s = env.buddy
+        for k in pairs(s) do s[k] = nil end
+        s.obtained, s.sortie, s.lost = bits % 2 == 1, math.floor(bits / 2) % 2 == 1, math.floor(bits / 4) % 2 == 1
+        s.dead, s.hospitalize, s.quest = math.floor(bits / 8) % 2 == 1, math.floor(bits / 16) % 2 == 1, math.floor(bits / 32) % 2 == 1
+        local status = allocate(env, {mission = 30050})
+        mission.SetSortieBuddy()
+        total = total + 1
+        if (status.resolved == 'quiet') == unlocked() then agree = agree + 1 end
+    end
+    check(total == 64 and agree == 64, 'real TppStory: all 64 buddy states agree with UnlockBuddyQuiet (' .. agree .. '/64)')
+    storyChecked = true
 end
 
 -- Readback and polling (character_readback.lua module). Player.GetPlayerType
@@ -1032,6 +1337,11 @@ if REAL_MAIN then
             env.PlayerHandType = lenient({NONE = 0, NORMAL = 1})
             env.TppEquip = lenient({EQP_HAND_NORMAL = HAND_NORMAL, EQP_SUIT = 99})
             env.BuddyType = lenient({QUIET = BUDDY.QUIET, DOG = BUDDY.DOG})
+            if o.quiet then
+                installBuddies(env, o.quiet)
+                -- OnAllocate also calls TppQuest.OnAllocate and friends.
+                for _, name in ipairs({'TppQuest', 'TppBuddyService', 'TppBuddy2BlockController'}) do lenient(env[name]) end
+            end
             env.TppDefine = lenient({STORY_SEQUENCE = lenient({CLEARD_ESCAPE_THE_HOSPITAL = 5}),
                 DEFAULT_EQUIP_MISSION_BLOCK_GROUP_SIZE = 1777721, PICKABLE_MAX = 10, PLACED_MAX = 10})
             env.TppStory = lenient({GetCurrentStorySequence = function() return o.storySequence or 20 end})
@@ -1126,6 +1436,22 @@ if REAL_MAIN then
         check(env.vars.playerType == PT.SNAKE and env.vars.playerPartsType == PARTS.NORMAL_SCARF and
             env.vars.playerCamoType == CAMO.TIGERSTRIPE and env.Tpp.MgsCoop.characterStatus.reason == 'story_sequence_snake',
             'real OnAllocate keeps the story-sequence Snake')
+        -- character=story through the real OnAllocate.
+        env = runAllocate(spliced, {mission = 30050, character = 'story', quiet = {obtained = true, sortie = true}})
+        check(env.vars.playerType == PT.QUIET and env.vars.playerPartsType == PARTS.QUIET and has(env.receipts, ON) and
+            reported(env, 'story;resolved=quiet;reason=on_team;mission=30050;flags=os--') and
+            env.receipts[#env.receipts]:find('ocelot_reset_skipped;mission=30050', 1, true), 'real OnAllocate: story Quiet on the team')
+        env = runAllocate(spliced, {mission = 30050, character = 'story', quiet = {lost = true}})
+        check(env.vars.playerType == PT.OCELOT and env.vars.playerPartsType == PARTS.OCELOT and
+            reported(env, 'story;resolved=ocelot;reason=departed;mission=30050;flags=--l-'), 'real OnAllocate: story Ocelot after she left')
+        env = runAllocate(spliced, {mission = 11050, character = 'story', quiet = {obtained = true, sortie = true}})
+        check(env.vars.playerType == PT.DD_MALE and has(env.receipts, OFF) and not has(env.receipts, ON),
+            'real OnAllocate: story in a Quiet mission takes the fallback')
+        env = runAllocate(spliced, {mission = 30050, character = 'story', continue = true,
+            checkpoint = {playerType = PT.SNAKE, playerPartsType = PARTS.SNEAKING_SUIT, playerCamoType = CAMO.SPLITTER}})
+        check(env.vars.playerType == PT.OCELOT and env.continueCalls == 1 and
+            reported(env, 'story;resolved=ocelot;reason=not_recruited;mission=30050;flags=----'),
+            'real OnAllocate continue: story with the permissive buddy stubs reads as not recruited (Ocelot)')
 
         -- Checkpoint continue (title Continue into 30050, as on October 3).
         local checkpoint = {playerType = PT.SNAKE, playerPartsType = PARTS.SNEAKING_SUIT, playerCamoType = CAMO.SPLITTER}
@@ -1225,7 +1551,8 @@ check(longPayloads == 0, 'no report or readback payload reaches the 192-byte lim
 print(checks .. ' character Lua checks passed: default/unwired skips, Quiet/Ocelot override with bypass and one-shot revert skip, ' ..
     'checkpoint continue via the scoped ALWAYS_APPLY flag, late application net, Quiet conflicts and fallbacks, ' ..
     'story-forced missions and story sequence, title mode, mission classes, sortie-kept Snake/Avatar/DD, DD faces, ' ..
-    'failures, guarded readback/poll lifecycle with verdicts, appended wrapper' ..
+    'failures, guarded readback/poll lifecycle with verdicts, appended wrapper, character=story resolution' ..
+    (storyChecked and ' (real TppStory/TppMission Quiet life cycle, 64-state unlock agreement)' or '') ..
     (realPlayerChunk and ', real TppPlayer functions' or '') ..
     (REAL_MAIN and (', real TppMain anchor/composition' .. (realPlayerChunk and '/OnAllocate/lifecycle execution' or '')) or '') ..
     (realVarInitChunk and ', real TppVarInit.InitializeForContinue' or '') ..

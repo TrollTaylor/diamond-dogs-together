@@ -253,6 +253,7 @@ if (!$Character) {
         default = 'your normal choice from sortie preparation'; quiet = 'Quiet'
         dd_male = 'Diamond Dogs soldier (male)'; dd_female = 'Diamond Dogs soldier (female)'
         snake = 'Snake'; avatar = 'your Avatar'; ocelot = 'Ocelot (one revolver)'
+        story = 'Story: Quiet while she is on your team, otherwise Ocelot'
     }
     $list = @(Get-FriendCharacters)
     for ($i = 0; $i -lt $list.Count; $i++) { Write-Host ("  {0}: {1,-10} {2}" -f ($i + 1), $list[$i], $descriptions[$list[$i]]) }

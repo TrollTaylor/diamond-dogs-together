@@ -220,7 +220,8 @@ that it logs `partner_look=timeout`. `mirror=on` is refused while look is not
   to 26, 115, 0, 0, 0.
 - AVATAR becomes SNAKE with face 0 and face_equip 0 (`avatar_as_snake=1`): its
   avatar record is neither sent nor settable, and its face id is not a Snake
-  face.
+  face. The record layout, its writers and a fix proposal are in
+  [characters.md, "Avatar on the partner's screen"](characters.md#avatar-on-the-partners-screen).
 - face_equip is otherwise passed through: **[V]** the package builder only
   compares it (==1/2 at 0xAE962D, ==3/4/5 at 0x9B1035, !=0 at
   0xAE9360/0xAE9220). A DD (1/2) face goes to the staff face database lookup
