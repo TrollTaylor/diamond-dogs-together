@@ -872,7 +872,11 @@ inline bool PartnerApplyIsTransform(PartnerApply value) noexcept {
 
 enum class PlayerCharacter : std::uint8_t {
     game_default,  // leave the sortie/save selection untouched
-    snake, dd_male, dd_female, avatar, ocelot, quiet
+    snake, dd_male, dd_female, avatar, ocelot, quiet,
+    // Resolved by lua/coop/character.lua at each allocation from the player's
+    // own save: Quiet while she is a deployable buddy on Diamond Dogs' team,
+    // otherwise Ocelot (docs/characters.md). Never a fallback.
+    story
 };
 
 struct CoopConfig {
@@ -905,10 +909,10 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const LabParseOptions& options) noexcept;
 bool ParseCoopConfig(const char* text, std::size_t length, CoopConfig& out) noexcept;
 
-// Lua/log spelling of a character ("quiet", "dd_male", ...; "" for game_default).
+// Lua/log spelling of a character ("quiet", "dd_male", "story", ...; "" for game_default).
 const char* PlayerCharacterName(PlayerCharacter value) noexcept;
 // PlayerType enum value for the 1.0.15.4 binding (SNAKE 0, DD_MALE 1, DD_FEMALE 2,
-// AVATAR 3, OCELOT 5, QUIET 6); -1 for game_default.
+// AVATAR 3, OCELOT 5, QUIET 6); -1 for game_default and story (resolved in Lua).
 int PlayerCharacterType(PlayerCharacter value) noexcept;
 
 #ifdef _WIN32

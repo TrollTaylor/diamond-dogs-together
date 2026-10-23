@@ -21,9 +21,10 @@ fix itself still needs a live run. See [What has been verified](#what-has-been-v
 | Snake | `snake` | yes | yes | Uses your sortie Snake outfit. |
 | Diamond Dogs soldier, male | `dd_male` | yes | yes (fallback default) | A staff member you deploy in sortie preparation is kept as-is (face, stats). Otherwise a default face is used. |
 | Diamond Dogs soldier, female | `dd_female` | yes | yes | As above. |
-| Avatar | `avatar` | yes | yes | Your partner may see Snake instead (see limits). |
+| Avatar | `avatar` | yes | yes | Your partner sees Snake instead (see [Avatar on the partner's screen](#avatar-on-the-partners-screen)). |
 | Ocelot | `ocelot` | yes | yes | Needs the Ocelot/Quiet bypass (automatic). One revolver only. |
 | Quiet | `quiet` | yes | **yes, default for Player 2** | Needs the bypass. Replaced by the fallback where story Quiet is present. |
+| Story: Quiet or Ocelot | `story` | yes | yes | Quiet while she is a usable buddy on Diamond Dogs' team in **your own save**, Ocelot before she joins and after she leaves. Chosen again at every mission load. See [Story: Quiet or Ocelot](#story-quiet-or-ocelot). |
 | D-Dog | n/a | no | no | Not possible: D-Dog is an AI buddy, not a player type, and has no player animations. |
 
 The decision for Player 2 is: **Quiet by default, a Diamond Dogs soldier as
@@ -43,10 +44,10 @@ character_fallback=dd_male
 ```
 
 - `character=` one of `default`, `snake`, `dd_male`, `dd_female`, `avatar`,
-  `ocelot`, `quiet`. Anything else is ignored (treated as `default`).
+  `ocelot`, `quiet`, `story`. Anything else is ignored (treated as `default`).
 - `character_fallback=` used where the chosen character cannot be used. One of
-  `dd_male` (default), `dd_female`, `snake`, `avatar`. Ocelot and Quiet are not
-  accepted as a fallback.
+  `dd_male` (default), `dd_female`, `snake`, `avatar`. Ocelot, Quiet and Story
+  are not accepted as a fallback.
 - The file is read once when the game starts. Restart the game after editing.
 - The setting is only used in the co-op script modes (`host-v2` / `host-v3` /
   `client-v1`, and the offline lab mode `offline-v1`, in
@@ -75,7 +76,80 @@ character_fallback=dd_male
 | Quiet chosen in 10050 / 11050 (Cloaked in Silence) or 10260 (A Quiet Exit) | The fallback is used. |
 | Quiet chosen while buddy Quiet is deployed | The fallback is used. |
 | The Ocelot/Quiet bypass cannot be enabled (unexpected game version, mode) | The fallback is used. |
+| `story` | Resolved to Quiet or Ocelot only where a character is applied at all (the rows above that apply); every row above then applies to the result unchanged. See [Story: Quiet or Ocelot](#story-quiet-or-ocelot). |
 | Snake-only cutscenes | Expected: the game switches to Snake for the cutscene and back afterwards, as it does for DD soldiers. Not checked for Quiet/Ocelot. |
+
+## Story: Quiet or Ocelot
+
+`character=story` follows Quiet's story in **your own save**: you play Quiet
+while she is a usable buddy on Diamond Dogs' team, and Ocelot before she joins
+and after she leaves (the joiner's "Story: Quiet or Ocelot" choice in the
+planned Diamond Dogs Together launcher).
+
+**When it is decided.** At every mission load, in the same `TppMain.OnAllocate`
+step as every other character, from the save that is loaded at that moment.
+It is not stored anywhere: when Quiet leaves in your save, the next mission
+load gives Ocelot.
+
+**What is read.** The game's own buddy state, through the same functions the
+game's scripts use (all inside a protected call):
+
+| Read | Meaning |
+|---|---|
+| `TppBuddyService.DidObtainBuddyType(BuddyType.QUIET)` | Quiet was recruited (set when you spare her in Cloaked in Silence, `s10050_sequence`; unset by `TppStory.RequestLoseQuiet` at the end of A Quiet Exit). |
+| `TppBuddyService.CheckBuddyCommonFlag(BuddyCommonFlag.BUDDY_QUIET_LOST)` | Quiet has left. Set when A Quiet Exit opens (`TppStory._UpdateS10260OpenFlag`), unset by a reunion (`TppStory.RequestReunionQuiet`). |
+| `TppBuddyService.IsDeadBuddyType(BuddyType.QUIET)` | Quiet is dead. |
+| `TppBuddyService.CanSortieBuddyType(BuddyType.QUIET)`, or `TppQuest.IsCleard("mtbs_q99011")` | Quiet can be deployed. After you recruit her she waits in a cell on the Medical platform until the `mtbs_q99011` visit; `TppMission.SetSortieBuddy` then makes her deployable, but it runs later in the same `OnAllocate`, so the chunk counts the cleared visit too (otherwise the first mission after the visit would still be Ocelot). |
+
+The game's own test for "Quiet is available as a buddy" (the `UnlockBuddyQuiet`
+radio in `TppStory.lua`, also used for `QuietReceivesPersecution`) is
+`TppStory.CanArrivalQuietInMB(true) and TppBuddyService.CanSortieBuddyType(BuddyType.QUIET)`,
+where `CanArrivalQuietInMB(true)` is "obtained, not lost, not dead" (the `true`
+ignores a temporary hospital stay). The chunk applies exactly that test, read
+part by part so the log can say why:
+
+| Save state | Result | `reason=` |
+|---|---|---|
+| `BUDDY_QUIET_LOST` set (A Quiet Exit is open or done, before any reunion) | Ocelot | `departed` |
+| Quiet dead | Ocelot | `dead` |
+| Not recruited (before Cloaked in Silence, or she was killed there) | Ocelot | `not_recruited` |
+| Recruited, still in her cell (visit `mtbs_q99011` not cleared) | Ocelot | `not_deployable` |
+| Recruited and deployable (or the visit is cleared), not lost, not dead; also while hospitalized | **Quiet** | `on_team` |
+| The buddy functions or enums are missing, or a call fails | Ocelot | `unreadable` |
+
+**Gates and fallbacks.** `story` passes the same checks as every other
+character first: title mode, mission class (only 10xxx/11xxx/30xxx),
+story-forced missions, the hospital story sequence, Subsistence and any
+temporary type set by the mission keep the story's choice and resolve nothing.
+After the resolution, Quiet goes through the usual Quiet rules: in 10050 /
+11050 / 10260, or with buddy Quiet deployed, `character_fallback` is used
+(default `dd_male`); if the Ocelot/Quiet bypass cannot be enabled, the fallback
+is used as well. In practice: the first Cloaked in Silence (10050) is Ocelot
+(Quiet is not recruited yet), A Quiet Exit (10260) is Ocelot (she has already
+left when it opens), and an Extreme replay (11050) with Quiet on the team is
+the fallback.
+
+**Log.** One extra line before the usual decision line:
+
+```
+character=story; resolved=quiet; reason=on_team; mission=30050; flags=os--
+character=apply; mission=30050; requested=story; applied=quiet; type=6; reason=override; bypass=1; real=0; start=new; always=1
+```
+
+`flags` are the raw reads: `o` obtained, `s` deployable (including the cleared
+visit), `l` lost, `d` dead, `-` false; `na` when unreadable. In a Quiet
+mission the decision line shows the fallback
+(`resolved=quiet` and `applied=dd_male; reason=quiet_conflict`).
+
+**Native side.** `coop.ini` accepts `character=story` (never as a fallback);
+the query receipt passes `'story'` to the chunk; the native Ocelot/Quiet
+bypass is allowed for `story` (the chunk asks for it only when the result is
+Quiet or Ocelot, and sends BYPASS_OFF for a fallback).
+
+**Not verified live.** The reads and their timing are taken from the game's
+own scripts and checked against the real `TppStory.lua` and `TppMission.lua`
+(see [What has been verified](#what-has-been-verified)); no live run has used
+`story` yet.
 
 ## The October 3 failure
 
@@ -198,11 +272,14 @@ described above.
 
 ## Known limits
 
-- **Your partner's view is unverified.** Each game applies its own player's
-  character. Whether the other screen shows it depends on the game's own FOB
-  synchronizer (native code at 0x12A5810 copies type/parts/camo/face for a
-  remote player). This is untested. Avatar is reported to show as Snake to
-  others outside FOB (Dynamite issue #109).
+- **Your partner's view.** Each game applies its own player's character; the
+  partner's screen shows it through the mod's own look frames
+  (`partner_look=net`, the play default; see
+  [partner-anim-appearance.md](partner-anim-appearance.md)), not through the
+  game's FOB synchronizer. Quiet seen by the partner was observed in the
+  October 4 lab; the other types are not verified on the partner's screen.
+  An Avatar is shown as Snake on the partner's screen (see
+  [Avatar on the partner's screen](#avatar-on-the-partners-screen)).
 - Quiet's and Ocelot's abilities and animations were designed for FOB and
   have not been tested in story missions with this mod. Infinite Heaven users
   report problems such as missing sounds.
@@ -221,6 +298,102 @@ described above.
 - The in-game readback (`Player.GetPlayerType`) reports Ocelot and Quiet as
   Snake (0). The lab readback therefore also logs the raw per-instance bytes
   (`raw0`/`raw1`, 5 = Ocelot, 6 = Quiet, 255 = empty slot) and your own `vars`.
+- `story` reads the buddy state at mission load, the same moment the buddy
+  check above uses; that timing (in particular right after a title Continue)
+  has not been checked live.
+
+## Avatar on the partner's screen
+
+**Symptom.** A player who uses their Avatar (`character=avatar`, or the Avatar
+chosen in sortie preparation) sees their Avatar; the partner sees Snake with
+the default Snake face. The partner's log says so on every look apply:
+`partner_look=apply; ...; type=0; ...; face=0; fe=0; rev=..; avatar_as_snake=1`.
+
+**Why (static, 1.0.15.4).**
+
+1. The partner body (instance 1) gets its appearance from the mod's look
+   frame: type, parts, camo, hand, face and face equipment, 12 bytes
+   (`player_sync.hpp` `LookPacket`; sender `partner_net::SubmitLook` with the
+   local slot of the parts-info object Q). The Avatar's own description is not
+   in it.
+2. That description is a per-instance record of 0x4F bytes:
+   `[Q+0xE8] + index * 0x4F` (`Player.CopyPartsInfoFromLocalPlayer` 0x9D13F0
+   copies it with exactly that stride). Bytes 0x00..0x4C are a copy of the
+   Avatar's saved description: `GetAvatarInfoFromScriptVars` 0xAE8390
+   (community name) copies 17 bytes from +0x18E and a 60-byte block from
+   +0x19F of its source (the script vars, per the name) when source+0x1DB is
+   1; `UpdateAvatarInfo` 0x9B7E90 compares bytes 0, 1 and that 60-byte block
+   to decide whether a built Avatar is stale. +0x4D is set to 1 by
+   `SetAvatarInfo`, `CopyPartsInfoFromLocalPlayer` and the local refresh.
+3. For the local instance, `UpdatePartsStatus` refreshes that record from
+   your own Avatar description (call at 0x9CE35A). For any other instance,
+   a scan of every `imul ..., 0x4F` + `[..+0xE8]` access finds only these
+   writers: `SetAvatarInfo` 0x9C9E70 (called only by the mirror-mode copy at
+   0x9CE858), `CopyPartsInfoFromLocalPlayer` (Lua), and the FOB synchronizer
+   (0x12CC9C4 copies the record out of a FOB sync packet and sets
+   `Q+0x194 |= 1 << index`; 0x12CCCFF clears +0x4D). The other hits
+   (0x9B27D4, 0x9CD47A, 0x9CD717, 0x12A849B) read it.
+   `Player.SetPartsInfoAtInstanceIndex`, which the mod uses to apply a look,
+   has no Avatar field. So outside FOB nothing gives instance 1 the partner's
+   record. This is also what Dynamite issue #109 ("Avatar shows as Snake
+   outside FOB") runs into.
+4. Applying type AVATAR (3) without the record would build instance 1's
+   Avatar from whatever its slot holds (zeros, or your own Avatar after a
+   `look=copy`), and the Avatar package-name builders index their path tables
+   without upper bounds (for example 0xAE8FB0 only checks for 0xFF; which
+   record bytes reach which builder is not traced yet). The receiver
+   therefore normalizes AVATAR to SNAKE with face 0 and face equipment 0
+   (`partner::NormalizeLook`, `avatar_as_snake=1`), the safe choice.
+
+The engine side does keep Avatar state per instance: the parts request reads
+each instance's own record (0x9B27D4), `DoesNeedCreateAvatar` 0x9B1FE0 maps
+the local index to slot 0 and other indices to slots 1.., and
+`UpdateAvatarInfo` 0x9B7E90 rebuilds a slot when its record changes
+(+0x1180/+0x1190 flags). Whether that rebuild actually runs for instance 1
+outside FOB (memory budget, Avatar controller setup) is not known.
+
+**Fix proposal (not implemented).** Send the record and write it the way the
+FOB synchronizer does:
+
+1. Wire: a new link event frame "avatar look" (magic `A`, version 1): the
+   look revision it belongs to plus the 0x4D record bytes. Sent with the look
+   frame (same gate: the sender's own parts loaded) only while the local type
+   is AVATAR, and on change plus the look heartbeat. Both players run the same
+   build (the link checks it), so no negotiation is needed; a missing, late or
+   invalid record keeps today's Snake.
+2. Sender: read the 0x4D bytes at `[Q+0xE8] + local * 0x4F` in
+   `pp::ReadLooks` (the same Q and local index it reads today).
+3. Receiver: when the look is AVATAR and a record with the same revision has
+   arrived and passes validation, write it to `[Q+0xE8] + 1 * 0x4F` with
+   +0x4D = 1 (what 0x9C9E70 and 0x12CC9C4 do), then send SET_PARTS with type 3
+   and the look's face instead of Snake; log `avatar_as_snake=0`. Otherwise
+   keep today's Snake normalization. The record must be written before the
+   SET_PARTS reply that sets the dirty bit, inside the same tick, and cleared
+   back (or the slot restored to Snake) at partner teardown.
+4. Validation before writing: each of the 17 selection bytes within the
+   Avatar editor's ranges and the 60 face-shape bytes within their slider
+   range. These ranges are not pinned yet; they have to come from the
+   package-name builders (0xAE8FB0, 0xAE9820, 0xAE6AC0, 0xAE7DA0, 0xAE8260)
+   and the editor's limits before the receiver may trust a record.
+5. Tests: codec round-trip and strict decode, validation tables, the
+   writer on an in-memory Q, the NormalizeLook pass-through only with a
+   validated record, and a hidden-worker scenario with an Avatar sender.
+
+**Why it is not done here.** It is a new wire frame, a new native write into
+game memory with an unpinned validation table, and an unknown engine
+behaviour (point above); that is not small and not safe without a live run.
+
+**The first live step costs no code.** In the offline lab, make the guest an
+Avatar (`Prepare-LabInstance.ps1 -Offline -Character avatar`, in a save that
+has an Avatar) and give the **guest's** `lab.ini` `partner_look=copy` (lab.json
+partner `look`). `CopyPartsInfoFromLocalPlayer` then puts the guest's own
+record (+0x4D = 1) and type 3 into the guest's instance 1, so the guest's
+screen shows a partner that should look like the guest's own Avatar. If it
+does, the engine builds a remote Avatar outside FOB and the proposal above
+only needs the transport and the validation. If the partner shows as Snake,
+bald, or with a broken head, the Avatar build is gated outside FOB and the fix
+needs more native work first. Capture `partner_look=loaded` or
+`partner_look=timeout` from the guest log with the frame.
 
 ## Logs
 
@@ -232,6 +405,7 @@ described above.
 | `character_config=quiet; fallback=dd_male; coop_ini=1; reset_bypass_needed=1; applied_in=TppMain.OnAllocate` | Settings read at startup. |
 | `character=<result>; mission=...; requested=...; applied=...; type=...; reason=...; bypass=0/1; real=...; start=<new\|continue\|unknown>; always=<0\|1>` | Decision for this mission. `result` is `skip`, `keep` or `apply`. `start` is the `OnAllocate` path (`continue` = checkpoint/title Continue). `always=1`: the continue flag was set for this allocation. |
 | `character=allocated; mission=...; vars=6; parts=27; camo=116; temp=1; start=continue; late=0` | End of `OnAllocate` (every apply decision, including a kept sortie choice such as `reason=override_sortie_kept`, lab or not; never for `skip`/`keep`): what `vars` hold before the player is created. `temp` is `gvars.ply_isUsingTempPlayerType`. `late=1; before=<type>` means the safety net applied the type (see above). |
+| `character=story; resolved=<quiet\|ocelot>; reason=<on_team\|departed\|dead\|not_recruited\|not_deployable\|unreadable>; mission=...; flags=<o\|-><s\|-><l\|-><d\|-> or na` | `character=story` only, before the decision line, whenever a character is applied. See [Story: Quiet or Ocelot](#story-quiet-or-ocelot). |
 | `character=face; mission=...; face=...` | A Diamond Dogs face was set. |
 | `character=ocelot_reset_skipped; mission=...` | The Lua Ocelot/Quiet revert was skipped once. |
 | `player_type_patch=active; ...` / `player_type_patch=inactive; ...` | The native bypass changed state. |
@@ -277,6 +451,11 @@ character_readback=start; verdict=applied; expect=6; local=0; vars=6; parts=27; 
 | Readback guard: exact `GetPlayerType`/root-getter bytes, every pointer stage, null and unreadable pointers | Unit tests and static analysis |
 | Decision, bypass, Lua revert skip and 2-player readback in a live game | **Live, October 3** (guest log); the type itself was not applied then |
 | Character visible and playable in a mission after this fix, local or remote | **Not verified (needs a live game)** |
+| `character=story`: parse (never a fallback), query receipt, bypass allowed | Unit tests (`lab_config_tests`, `character_receipt_tests`) |
+| `story` resolution: on the team / not recruited / in the cell / cell visit cleared / departed (both phases) / dead / hospitalized / unreadable; Quiet conflicts, buddy Quiet and refused bypass take the fallback; story gates, title mode and mission classes resolve nothing; continue; a later allocation follows the save | Lua fixture tests (`character_lua_check`, also with the real `TppPlayer`/`TppMain` in `character_game_lua_check`) |
+| `story` against the game's own scripts: the real `TppStory` functions move the save through Quiet's story (recruit, cell, cell visit, A Quiet Exit opening, `RequestLoseQuiet`, `RequestReunionQuiet`) with the real `TppMission.SetSortieBuddy` after the chunk, and all 64 combinations of obtained / deployable / lost / dead / hospitalized / visit agree with the game's `UnlockBuddyQuiet` test | `character_story_lua_check` (needs the extracted `TppStory.lua` and `TppMission.lua`, below) |
+| `story` in a live game | **Not verified** |
+| Avatar shown as Snake to the partner: cause | Static (this section's addresses, read from the installed exe); not live |
 
 ### Live check for the next run
 
@@ -293,6 +472,27 @@ character_readback=start; verdict=applied; expect=6; local=0; vars=6; parts=27; 
 4. Leave to the ACC: `character=skip; ...; reason=mission_class`; the ACC shows
    the guest's own character (vanilla restore).
 5. Start a mission from the ACC (new mission path): `start=new`, same results.
+
+### Live check for `character=story`
+
+Use saves whose Quiet state you know (the lab seed, a copy of a real save; never
+the real save itself). For each, the guest's `script-observer.log` must show
+the `character=story` line before the decision line, and the screen must match:
+
+1. A save **with Quiet deployable** (the Buddy menu offers her): 30050 or a
+   free-roam mission gives `resolved=quiet; reason=on_team; flags=os--` and
+   Quiet on screen (and a Quiet partner on the host's screen); also through a
+   title Continue (`start=continue; always=1`).
+2. A save **before Cloaked in Silence** (or with Quiet killed there):
+   `resolved=ocelot; reason=not_recruited`, Ocelot on screen.
+3. A save **after A Quiet Exit**: `resolved=ocelot; reason=departed; flags=--l-`.
+4. If available, a save **between Cloaked in Silence and the cell visit**:
+   `reason=not_deployable; flags=o---`; after the visit, the next mission load
+   `reason=on_team`.
+5. **Buddy Quiet deployed** in sortie preparation with a Quiet save:
+   `resolved=quiet`, then `applied=dd_male; reason=buddy_quiet`.
+6. `flags=na` (`reason=unreadable`) anywhere means the buddy functions could not
+   be read at that moment; report the mission and how it was reached.
 
 ## Re-extracting the game scripts
 
@@ -318,6 +518,21 @@ repository root (Git Bash; `MSYS_NO_PATHCONV=1` keeps the archive paths intact):
 
 ```
 MSYS_NO_PATHCONV=1 build/archive_probe.exe -out build/character-game-lua-20261003 -paths "/Assets/tpp/script/lib/TppVarInit.lua,/Assets/tpp/script/lib/TppPlayer.lua,/Assets/tpp/script/lib/TppMain.lua,/Assets/tpp/script/lib/TppMission.lua,/Assets/tpp/script/lib/TppSave.lua,/Assets/tpp/script/lib/TppGVars.lua,/Assets/tpp/pack/mission2/common/title_sequence.fpkd,/Assets/tpp/script/lib/TppSequence.lua,/Assets/tpp/pack/mission2/free/f30050/f30050.fpkd"
+```
+
+`character_story_lua_check` uses `TppMission.lua` (above, or
+`startup-script-inspection-20260909/package-02.lua` /
+`respawn-scripts-20260910/package-00.lua`, same SHA-256) and `TppStory.lua`:
+
+| Script | SHA-256 | Saved as |
+|---|---|---|
+| `/Assets/tpp/script/lib/TppStory.lua` | `ac86be1ad896474229c9f7efcf4ffc6b597b760a503fc1882a6fc56b5e8b5728` | `character-story-lua-20261023/package-00.lua` |
+| `/Assets/tpp/script/lib/TppDefine.lua` | `e00df50f2e44abb2b4190fa9a68cae3daf61a45cd35a74f76f5c602469de70a5` | `.../package-01.lua` (reference only) |
+| `/Assets/tpp/script/lib/TppQuest.lua` | `6d3e08b1817b79d1022cc471616a85f9e653fc0286ad54ef5bf5f933e85c9e34` | `.../package-02.lua` (reference only) |
+| `/Assets/tpp/script/lib/TppDemo.lua` | `7ba80b0576776863c7c18c471aeafffdaf7deb6b20081a5cf9b0f50f315e3b7e` | `.../package-03.lua` (reference only) |
+
+```
+MSYS_NO_PATHCONV=1 build/archive_probe.exe -out build/character-story-lua-20261023 -paths "/Assets/tpp/script/lib/TppStory.lua,/Assets/tpp/script/lib/TppDefine.lua,/Assets/tpp/script/lib/TppQuest.lua,/Assets/tpp/script/lib/TppDemo.lua"
 ```
 
 `archive_probe.exe` is built from `tools/archive_probe` (see its README).

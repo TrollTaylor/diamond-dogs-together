@@ -801,12 +801,23 @@ int main() {
     Check(badCoop.character == PlayerCharacter::game_default && badCoop.character_fallback == PlayerCharacter::dd_male, "bad coop defaults");
     const std::string url69 = "http://" + std::string(69 - 7 - 12, 'a') + "/tppstm/gate";
     Check(url69.size() == 69 && std::strcmp(Coop("master_url=" + url69 + "\n").master_url, url69.c_str()) == 0, "69-char url accepted");
+    // character=story (resolved in Lua to Quiet or Ocelot); never a fallback.
+    const auto story = Coop("character=story\ncharacter_fallback=dd_female\n");
+    Check(story.character == PlayerCharacter::story && story.character_fallback == PlayerCharacter::dd_female &&
+          story.invalid_values == 0, "character story");
+    const auto storyFallback = Coop("character=story\ncharacter_fallback=story\n");
+    Check(storyFallback.character == PlayerCharacter::story && storyFallback.character_fallback == PlayerCharacter::dd_male &&
+          storyFallback.invalid_values == 1, "story is not a fallback");
+    Check(Coop("character=Story\n").character == PlayerCharacter::game_default && Coop("character=Story\n").invalid_values == 1,
+          "story is case-sensitive like every character");
 
     // Enum mapping used by the Lua bridge.
     Check(PlayerCharacterType(PlayerCharacter::quiet) == 6 && PlayerCharacterType(PlayerCharacter::ocelot) == 5, "types");
     Check(PlayerCharacterType(PlayerCharacter::dd_female) == 2 && PlayerCharacterType(PlayerCharacter::game_default) == -1, "types 2");
     Check(std::strcmp(PlayerCharacterName(PlayerCharacter::dd_male), "dd_male") == 0, "names");
     Check(PlayerCharacterName(PlayerCharacter::game_default)[0] == 0, "default name empty");
+    Check(std::strcmp(PlayerCharacterName(PlayerCharacter::story), "story") == 0 &&
+          PlayerCharacterType(PlayerCharacter::story) == -1, "story name, no fixed type");
 
     // --- Two-PC link keys (docs/link-protocol.md).
     // A lab.ini without any new key parses exactly as before; the new fields keep their defaults.

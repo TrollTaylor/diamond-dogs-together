@@ -57,7 +57,8 @@ std::size_t FormatQuery(const CoopConfig& coop, bool readback, char* out, std::s
 }
 
 bool NeedsResetBypass(const CoopConfig& coop) noexcept {
-    return coop.character == PlayerCharacter::ocelot || coop.character == PlayerCharacter::quiet;
+    return coop.character == PlayerCharacter::ocelot || coop.character == PlayerCharacter::quiet ||
+           coop.character == PlayerCharacter::story;
 }
 
 bool FormatLogLine(Receipt kind, const char* source, std::size_t size, char* out, std::size_t capacity) noexcept {
