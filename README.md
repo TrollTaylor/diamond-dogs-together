@@ -1,132 +1,243 @@
-# Diamond Dogs Together (MGS Co-op)
+<h1 align="center">
+  <img src="docs/readme/logo.png" alt="Diamond Dogs Together" width="300">
+</h1>
 
-An in-development campaign co-op mod for **Metal Gear Solid V: The Phantom Pain**. The immediate target is fully playable **two-player co-op**, using direct, attributed Dynamite adaptations. Four-player expansion is deferred. The full-campaign target includes the hospital, both chapters, endings, side ops, travel and Mother Base.
+<p align="center">
+  Two-player co-op for <b>Metal Gear Solid V: The Phantom Pain</b><br>
+  <b>0.13.5</b> &nbsp;·&nbsp; two players &nbsp;·&nbsp; Windows &nbsp;·&nbsp; Steam
+</p>
 
-**Installed release: 0.12.6 (prerelease; fresh two-PC acceptance pending).** This prototype uses our own offline link (UDP for LAN/VPN, or online through Steam's networking with no port forwarding: [Steam online](docs/steam-online.md), a successful two-PC session was reported on 0.12.0; this candidate still needs fresh two-PC acceptance; code joins also work between players who are not Steam friends, and an in-game status line explains the link) and separate co-op save copies. Normal Afghanistan, Africa and Mother Base packs support a second player body.
+<p align="center">
+  You and a friend each run your own copy of the game. You see each other move, take cover, drive, and hide in Mother Base, Afghanistan, and Africa free roam.
+</p>
 
-The debug-menu build was tested with both players on foot in Afghanistan after host-only title Continue. Live checks cover F9 input capture and restored movement, teleports and bookmark return, a visible equipped-weapon pickup, inventory refill feedback, daylight and rain. The earlier world-sync build also verified Africa, checkpoint copying, injected shared death, host-only Continue recovery and Africaâ€“ACCâ€“Afghanistan travel. Each build's receipts and limitations are recorded separately. [Build-specific live evidence](docs/testing-2026-10-05-world-sync.md), [current status](docs/STATUS.md).
+<p align="center"><i>A development build. The hospital, story missions, side ops, and the endings are still ahead.</i></p>
 
-The tested 0.12.6 package is installed in both configured game copies; [release evidence](docs/evidence/release-0.12.6-2026-10-14.json) records the 263 Release checks and the unchanged executables, Steam DLLs and saves.
+<br>
 
-What 0.12.6 changes: a vehicle driven by your teammate now moves smoothly on your screen (20 updates a second, interpolated every frame) instead of jumping several times a second. The wake/revive prompt is a small status under the teammate's name tag with the distance, and within 3 m an Action button (`E`, or `Y` after controller input) with a ring that fills while you hold it. Following MGO's down rules, a revive you briefly interrupt drains instead of restarting, and a revived player gets 3 seconds of protection. A carried player's camera follows the carrier from behind, a sleeping player sees the world in dark black and white with the HUD in colour, and a sleeping teammate no longer shows the stock Fulton offer or their own wake-up struggle prompt on your screen. A teammate driving a jeep or truck is now drawn in the driver's seat of your copy of that vehicle, following it as it drives, and climbs out when they get out (helicopter, horse, D-Walker, APC and tank riders are still hidden). Your teammate's body no longer raises its rifle while they hold a grenade, the bionic arm or an item, aims whenever they aim (also with toggle aim), stops firing on an empty magazine, reloads as fast as they do and shows crouch and prone without the old delay. In the local two-window test their grenade and magazine throws now animate on your screen too, without spawning a second grenade or touching your grenade count; C4 placing and bionic-arm abilities are not animated yet, two-PC play does not use native throws yet, and horse loading and shared riding remain unfinished. [Current status](docs/STATUS.md).
+<p align="center">
+  <img src="docs/readme/afghanistan-together.jpg" alt="Venom Snake watches his partner walk ahead through the grass of Afghanistan free roam. The partner's name floats above them." width="100%">
+  <br>
+  <i>Afghanistan free roam. The name above the other soldier is your partner.</i>
+</p>
 
-In the source after 0.12.6 (not packaged yet): two-PC play uses the native throws too. With the default native partner (`-Partner native`) your teammate's grenade and magazine throws animate on their body on your screen, again without a second grenade or any change to your own counts; `-Partner clips` turns the native partner, and with it the throws, off ([Native partner](docs/two-pc-play.md#native-partner)). When your teammate takes out C4 or aims Hand of Jehuty, their body now holds the C4 out (and puts it away) or holds the arm's aim pose instead of lowering its rifle, in the local test and in two-PC play; it does not yet kneel to place a charge or play the detonation, and mines, decoys and the other arms still lower the rifle.
+## In the field
 
-Every friend release includes a local two-window test in **Play-Coop.bat**: choose **T**. The source checkout's **Play-Coop.bat** opens the newest extracted friend package in dist; its **Play-Offline-Coop.bat** selects the same local option. **Play-Offline-Coop.bat** in the package is a shortcut to the same option. It detects the existing sibling `MGS_TPP_guest` game folder, or asks for the second game folder. Both copies use the package's owned loader and separate `local-test-saves` copied initially from the main co-op save. The launcher fits both windows to the current monitor, handles initial window resets and provides **R** to arrange again. Click through startup and Continue in both games yourself; choose travel normally on the host. Keyboard/mouse controls the clicked window; controller 0 controls the guest. Both folders' previous activation files are restored when both games close, including after closing the launcher. This local loopback rehearsal does not test Steam invites or relay connections.
+<p align="center">Frames from the 0.13.5 sessions on 22 October 2026.</p>
 
-Gun injuries leave the player wounded: slow prone crawling, no aiming or firing, and no automatic revival. Friendly sleep darts now cause a separate asleep state that preserves health, blocks movement and combat, and wakes after **30 seconds of fresh paired gameplay**. Sleep uses the game's native player sleep controller and its onset, lying rest and recovery animations. The MGO executable uses the same controller structure; sustained guard-style upright sleep remains under investigation. A healthy teammate can wake or revive either state: close F9, stand within **3 m**, and hold **ACTION (E by default) for 3 seconds**; a brief interruption drains the progress instead of restarting it.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme/jeep-driver.jpg" alt="A partner drives a jeep through an Afghan village. D-Dog runs beside the vehicle.">
+      <br><br>
+      <b>They drive</b><br>
+      A teammate in a jeep or truck sits in the driver's seat on your screen, and the vehicle moves smoothly.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme/back-seat.jpg" alt="Two players share one jeep in a village: one at the wheel, one in the back seat.">
+      <br><br>
+      <b>The back seat</b><br>
+      Press Action beside their jeep to ride along. Your camera stays outside the car. Press Action again to get out.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme/cardboard-box.jpg" alt="A partner hides inside a cardboard box in a grassy field while the other player lies prone in front.">
+      <br><br>
+      <b>The box</b><br>
+      When they hide in a cardboard box, you see the box move with them, and it comes off when they leave it.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme/mother-base-ladder.jpg" alt="On a Mother Base deck, one player stands on the concrete while their partner climbs a ladder on a red container.">
+      <br><br>
+      <b>Ladders</b><br>
+      On Mother Base their body climbs the ladders, including the ones on the containers.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/readme/ledge-climb.jpg" alt="A partner climbs a rocky ledge in Afghanistan while the other player watches from the grass below.">
+      <br><br>
+      <b>Ledges</b><br>
+      They pull up onto waist-high rocks and ledges with the game's own climb.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/readme/crouch-and-ddog.jpg" alt="Two soldiers move through Afghanistan grass, one crouched, with D-Dog nearby.">
+      <br><br>
+      <b>On foot</b><br>
+      Walk, run, crouch, go prone, aim, and reload. D-Dog can be out with you.
+    </td>
+  </tr>
+</table>
 
-F9 â†’ **Partner / Co-op** includes **Incapacitation status**, revive/input readouts, read-only native carry/sleep diagnostics, **Summon / recall D-Horse**, **Horse status**, **D-Dog follow status** and **Current vehicle seats**. Wait for the summoned local horse, close F9 and mount with normal controls. **Native teammate pickup, carrying and put-down are implemented and passed hidden two-copy tests for sleeping and wounded players. Automatic wake while carried also passed: both copies put the teammate down, complete native recovery and restore movement.** Close F9, approach a downed teammate, hold Carry (R by default), and use the same hold to put them down. The stock pickup icon remains; the co-op wake/revive prompt is a status under the teammate's name tag and an Action button with a hold ring beside your character. Horse loading and actual shared horse/vehicle passengers remain unfinished. Their offset-position debug prototype is explicitly off in normal play. Two horse bodies and Walker capacity remain private research work. The hospital crawl animation and exact remote slow-crawl parity remain unfinished.
+## Play with a friend
 
-The developer harness remains available separately. For the configured single-PC lab, launch both copies with world sync enabled:
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <p align="center"><b>1 · Install</b></p>
+      <p align="center">Both of you run <b>Install-Coop.bat</b> once. Your real save is backed up and left alone.</p>
+    </td>
+    <td width="33%" valign="top">
+      <p align="center"><b>2 · Host</b></p>
+      <p align="center"><b>Play-Coop.bat</b>, then <b>O</b>. Send the code, or invite a Steam friend from the game.</p>
+    </td>
+    <td width="33%" valign="top">
+      <p align="center"><b>3 · Join</b></p>
+      <p align="center">Your friend starts Play-Coop first, presses <b>J</b>, and pastes the code. Both Continue into the same place.</p>
+    </td>
+  </tr>
+</table>
 
-```powershell
-pwsh -File tools/lab/Play-OfflineCoop.ps1 -World 3
+Both of you need the same things:
+
+- **MGSV: The Phantom Pain** from Steam, version **1.0.15.4**, with no other mods. The installer stops if the game files are not the original ones.
+- This **same 0.13.5 package** on both PCs. An older package will not connect.
+- Steam running, each of you logged into your own account.
+- A save that can **Continue** into Mother Base or free roam. A save still in the hospital opening always Continues into a story mission, and co-op cannot join that.
+- A way to talk (Discord, Steam chat) so the host can send a join code. Steam friends can use an invite instead.
+- Windows 10 or 11.
+
+The game stays offline. **"Failed to log in"** on the title screen is expected. Konami's servers are never contacted.
+
+### Install once
+
+1. Quit MGSV.
+2. Extract the zip into a normal folder. Do not run anything from inside the zip.
+3. Double-click **Install-Coop.bat**.
+4. Confirm the game folder. If it asks, in Steam right-click the game, choose **Manage → Browse local files**, and paste that path.
+5. Say whether you usually host or join. That only picks a default character. You choose Host or Join again every time you play.
+6. Press Enter for the default character (the host keeps theirs, the joiner is Quiet), or pick one.
+7. If it asks for `mgs-coop-player-runtime.dat`, put that file next to `Install-Coop.bat` and run the installer again, or drag the file into the window. It is not inside the zip. The package's `RUNTIME-ARCHIVE.txt` says where it comes from.
+
+The installer puts its loader into the game folder, backs up your real saves, and makes a **copy** of your save for co-op. After that, starting MGSV from Steam is still your normal game, on your real saves. Co-op turns on only for a game started with **Play-Coop.bat**.
+
+### Every time you play
+
+Double-click **Play-Coop.bat** and pick one:
+
+| Key | What it does |
+| --- | --- |
+| **O** | Host online, through Steam. Recommended. |
+| **J** | Join an online game. |
+| **L** | LAN or VPN, over UDP. |
+| **T** | Two windows on this one PC. |
+| **Q** | Quit. |
+
+**Host.** Press **O**. A join code is copied to the clipboard, something like `MGS2-…@your Steam id`. Send it to your friend, and keep it private while the game is running. A new code is made every time you host. Or, once you are in the game, press **F9 → Partner / Co-op → Online → Invite a friend**.
+
+**Friend.** Start **Play-Coop.bat first**, press **J**, and paste the code. "Code OK" means it is fine. Or press Enter with no code and accept the host's Steam invite in the overlay (**Shift+Tab**) while this co-op game is running. Accepting an invite while the mod is not running starts ordinary MGSV on your real saves. Quit that and start Play-Coop first.
+
+**Both of you.** Click through the opening screens, choose **Continue**, and meet in Mother Base or in Afghanistan or Africa free roam. Stay near each other. A partner who is far away is hidden until you meet again.
+
+Leave the Play-Coop window open. About once a second it prints a line like:
+
+```text
+[HOST] link=connected via Steam (relay) rtt=61ms | partner=live shown | mission 30050
 ```
 
-Double-click [Play-World-Coop.bat](Play-World-Coop.bat) for the same world-level-3 launch.
+`link=connected` means the two PCs are talking. `partner=live shown` means your partner is on screen. The same news appears in the game as a **CO-OP** line at the top right.
 
-In an offline copied-save session, **F9** opens the Dear ImGui debug menu. Mouse and keyboard navigation operate the menu; F9 closes it and restores game control. Actions run on the game's natural Lua update, with feedback in the menu and `mgs-coop/script-observer.log`. They are refused outside supported on-foot gameplay, including demos, loading and game-over. The menu provides:
+Quit MGSV normally when you are done. Co-op switches itself off, and the next launch from Steam is your real save again.
 
-- Position/yaw readouts, eight teleport bookmarks, return-to-bookmark and coordinate/relative teleports.
-- Infinite ammo, refill the currently loaded hip/back/secondary gun, and local pickups of equipped weapons/items. Select guns with normal game controls; arbitrary unloaded guns are refused.
-- Nearest authored guard inspection, enable/disable, bounded nearby clearing, camp/route selectors and patrol placement using the existing living guard pool.
-- Host time/weather controls and partner movement/animation presets, manual locomotion clips, transform/heading errors and network telemetry.
+### Same point in the story
 
-The clip drive provides 13 locomotion/stance clips and eight resident turn clips without changing the runtime archive. Dated tests verified naturally finishing turn resources and actual aimed mouse pivots selecting crouched and standing turns. The native play drive also plays aiming, visual firing and reload animations through the game's gun systems. Hidden tests verified carried rifles, shots, reload completion and closely matched standing/crouched aim; prone direction and replacement-weapon timing remain approximate. Changing a debug clip preset does not implement native gun playback. Pickups and guard placement are local debug operations; they do not establish replication of newly allocated objects.
+Co-op pairs when both games are in the same Mother Base, free roam, or helicopter.
 
-For the Enemy controls, **Refresh camps**, select a **Camp**, then **Load patrol routes** and choose a **Patrol route**. **Teleport to camp** uses a readable living guard position, or a validated authored player checkpoint when guards are unloaded. On the host, **Spawn guard on selected patrol** reuses a normal living guard within 150 m and requests placement at patrol point 0; **Teleport near spawned guard** goes to its confirmed position. The limit is eight distinct reused guards per mission. Dead, recovered, unreadable or unloaded guards are refused. Placement does not allocate a new soldier or establish replicated AI; with a paired world link the guest's copy of the same guard is moved the same way (spawn sync, [debug menu](docs/debug-menu.md)). Missing checkpoint locators also refuse cleanly. A development run visibly placed an armed living guard that subsequently killed the local player; the dated receipt identifies that DLL and the placement limitations. [Animation, world and enemy development evidence](docs/testing-2026-10-07-animation-debug.md). **Spawn enemy here** can instead move the nearest living guard 5 m in front of the host, facing him, through the engine's own set-transform message; this native placement is lab only, default off (`lab.ini debug_soldier_warp=1`), falls back to the route snap and is not yet verified in the game ([debug menu](docs/debug-menu.md)).
+If the joiner's co-op save would start somewhere else, the host's save is copied across at the title screen and MGSV restarts once on it. Keep the Play-Coop window open. That takes about a minute. The host's save is shared only once it already continues into Mother Base or free roam. Your own co-op copy is kept aside. **Share-Save.bat**, then **R**, brings it back. Your real saves are never part of this.
 
-The repair candidate is checked with native graphics/input fixtures, actual retail Lua composition, guarded debug commands and installer rollback. Release checks and exact hidden-run evidence are recorded in [current status](docs/STATUS.md).
+To share by hand instead: the player who already has Mother Base quits the game, runs **Share-Save.bat**, presses **E**, and sends the zip from the Desktop. The other player quits, runs **Share-Save.bat**, presses **I**, and drops that zip in.
 
-Both copied-save games must first reach the same supported scene. Unknown enemy states stay held until their areas load; alignment does not establish identical AI or positions. The user reported successful partial two-PC Steam play on 0.12.0; fresh acceptance of this repair, full campaign/progression and both-down checkpoint recovery remain unverified; hidden local tests cover actual enemy lethal fire, friendly lethal fire and sleep-dart downing with teammate E revives. ACC has no partner body, and story missions and alternate packs such as `30011` are excluded. [World-sync design](docs/world-sync-design.md).
+### On one PC
 
-The play profile uses the **native puppet** drive for the partner's locomotion, actions and guns, with the animated partner as its automatic fallback. Hidden runs verified carried weapons, a muzzle flash and native reload exit; shared referenced-stock loading, fire/reload and checkpoint recovery have also passed hidden checks for 0.12.1. Standing/crouched gun direction is mirrored; prone uses a camera-direction fallback. [Native puppet design and status](docs/native-puppet.md).
+**Play-Coop.bat**, then **T**. **Play-Offline-Coop.bat** is the same choice.
 
-## What exists
+It uses your installed game and a second copy. It looks first for a folder next to yours named `<your game folder>_guest`. If that is missing, it asks you to paste the second game folder. It does not download or create a second install.
 
-- An original x64 DirectInput loader with exact-build script and actor guards. The local 13-entry runtime archive replaces each supported mission's single-player controller with one two-player controller. Afghanistan retains its scarf controller type; Africa and Mother Base use the normal type. Live field tests verified both player bodies and movement on two independently controlled game instances. Game-derived archive files stay local and are never committed or bundled.
-- Our own offline UDP link sends player pose, appearance and movement data between the two games. The single-PC lab uses separate save copies; the friend launcher also activates co-op only for a copied-save session. The older native Steam-session experiments below are historical groundwork, separate from this active transport.
-- Experimental shared enemy outcomes, alerts, clock and weather, with live W0â€“W2 evidence from fresh Afghanistan free roam. Earlier world builds verified host title Continue, Africaâ€“ACCâ€“Afghanistan and Mother Baseâ€“ACCâ€“Afghanistan travel, initial enemy alignment, checkpoint copying and injected shared death/Continue recovery. The debug build retains that logic, with separate Afghanistan menu evidence. Unreadable enemy states stay unknown until their areas load. Hospital, story sequences, side-op progression, rewards, vehicles and full campaign support remain unverified.
-- A checked import-table parser and pointer patch, plus a lifecycle-gated Steam context reader. The live callback trace demonstrates multiple callback threads; it does not establish a Lua owner thread. The context reader is tested but not yet called against the live game.
-- An original bounded debugger observation that captured the game's natural network registrar entry and matching return, skipped a nested return, and detached successfully. A read-only external sampler reads independently mapped mission/player fields; startup samples do not establish an active actor or playable mission.
-- A separate live startup capture recorded the game's own Steam initialization returning true and detached cleanly. This established one successful call; that experiment did not enable SDK access or multiplayer.
-- The sampler also reads bounded published player-status records and named posture/movement bits. A live Mother Base dive and posture recovery correlated with the readings; title-screen and cutscene measurements still prevent using these bits alone as readiness checks.
-- A compiled C++ session coordinator with a maximum of four members, build compatibility checks, reusable slots protected by connection generations, host-only objective commits, mission epoch checks, load barriers, and host-loss freeze.
-- Per-peer message ordering, bounded event reordering, duplicate/stale input rejection, held-input expiry, and bounded explicit packet framing.
-- Versioned player-input and complete player-pose-roster codecs, with trusted slot/source checks and 362 passing validation checks. These formats are not connected to a live transport or game actors.
-- A host input receiver with 783 passing checks: malformed or unauthorized messages cannot consume live input sequence history, and rejected inputs preserve queued events. It requires a trusted adapter and exclusive ownership of the portable coordinator/router.
-- A gated Steam packet adapter with 124 passing fixture checks, bounded reads, current-recipient checks and separate replaceable/reliable send modes. No live Steam connection is enabled.
-- An in-process four-member development lab and automated tests. These are policy tests, **not four running game clients**.
-- A campaign design and an explicit support register for episodes 0â€“50, story quest candidates, and incomplete sequence inventories. Complete campaign entries remain unsupported until their playable sequences have recorded verification.
+The host window opens on the left and the guest on the right. Click through each game yourself and Continue in both. Keyboard and mouse control the window you click. A controller in slot 0 controls the guest, so one pad cannot move both players. Press **R** in the launcher if the windows need lining up again.
 
-## Build and check on Windows
+This rehearses the gameplay over a local link. A real Steam connection still needs two PCs.
 
-Clone with submodules, then prepare pinned source dependencies (Lua 5.1.5 is used only by fixtures):
+## What works in 0.13.5
+
+In Mother Base (`30050`) and Afghanistan and Africa free roam (`30010`, `30020`):
+
+- Your partner's body, face, camouflage, and weapons. They walk, run, crouch, go prone, aim, reload, and switch guns. Aim works with toggle aim too.
+- Their name above them.
+- A grenade or an empty magazine actually leaves their hand. It is the animation only: no second grenade appears, and your own grenade count does not change.
+- The cardboard box, ladders, ledge climbs, and the standing pickup.
+- Driving. You see them in the driver's seat of a jeep or truck, and the vehicle updates smoothly. While they drive, you can no longer climb into that same driver's seat (that used to make a second driver and hide them).
+- The back seat of a light vehicle, with your own camera behind the car. Trucks and armored vehicles have no passenger seat: while they drive one of those, you stay out.
+- Wounds and sleep. A gun injury leaves you crawling, unable to aim or fire, until a teammate revives you. A friendly sleep dart puts you to sleep with your health kept, in the game's own sleep. Sleep ends when a teammate wakes you, or after 30 seconds.
+- Wake or revive from within **3 meters**: close F9 if it is open, and hold **Action** (**E**, or **Y** after you have used a controller) for **3 seconds**. A short interruption drains the bar instead of starting it over. A revived player has 3 seconds of protection.
+- Carry. Hold **Carry** (**R**) beside a wounded or sleeping teammate, walk, and hold it again to put them down. The carried player's camera follows from behind the carrier.
+- D-Dog. The guest's dog follows the host's dog. Attacks, spotting, and the dog's health stay on each PC.
+- The world, when you leave the default session alone. Alerts, the clock, the weather, the host's travel, checkpoints, and recovering together from **MISSION FAILED**. The joiner follows the host's travel. Doing the same trip again within a short window goes alone, and **F9 → Partner / Co-op → Travel lock** turns the lock off for that session.
+- Online play through Steam, with no port forwarding. Steam connects you directly or through its relays. A code works between any two players. An invite works between Steam friends. LAN and VPN play is the **L** option, on UDP port **47830**. Tailscale, ZeroTier, or the same home network is the easy version of that.
+
+Each of you shoots your own copy of the world. You see the other player's muzzle flash, sound, aim, and reload. The hits that count are the ones fired on the PC where that player is sitting.
+
+## Still unfinished
+
+- Story missions, the hospital opening, side ops, rewards, and the endings.
+- A third or fourth player.
+- Aiming, shooting, or a first-person view from the back seat.
+- D-Horse and D-Walker. While your partner rides either one, their body is hidden and comes back when they get off. You do not see a horse or a walker under them, and you cannot share one mount.
+- Getting out of the cardboard box. The box comes off, without the exit motion.
+- Hand signs, knocking, wall cracks, and pipes.
+- C4. In online play your partner does not yet kneel to place a charge or press the detonator. That animation exists only in the developer test mode.
+- A slow walk (**Ctrl+W**) can play the run animation in place. That is an older issue, still here.
+- A fresh two-PC session on this exact build. Two copies on one machine have been through these scenes, including a simulated bad connection. The last session a player reported from two separate houses was **0.12.0**.
+
+## If it does not connect
+
+The Play-Coop line and the in-game **CO-OP** line usually say why.
+
+- `link=connecting` for a long time: the joiner cannot reach the host. On Steam, both PCs need to be online, the host's game needs to be running from Play-Coop, and **Accept joins** needs to be on. On LAN or VPN, check that both PCs are on the VPN and that the code is the one labeled with that network.
+- `Your friend runs mgs-coop X; you run Y`: install the same package on both PCs.
+- Different missions: meet in the same Mother Base, free roam, or helicopter. If one game always Continues into a story mission, share a save first.
+- A red banner, **Co-op did NOT start and save protection is NOT active**, means this launch is ordinary play on your real saves. Quit if that is not what you wanted.
+
+The long list of messages is in the package's **FRIEND-GUIDE.txt**, and in [two-PC play](docs/two-pc-play.md).
+
+To send a report: quit the game, double-click **Collect-Logs.bat**, and send the zip it puts on the Desktop. Join codes, the link key, and your Windows user name are removed. Steam ids are cut down to the last four digits.
+
+## Your saves
+
+Co-op plays on a copy made at install. Your real save files are backed up and are not written during co-op games. Progress does not cross between the two: co-op progress stays in the copy, and the copy does not pick up later progress from a normal game.
+
+When you want the mod gone: quit MGSV, double-click **Uninstall-Coop.bat**, and press Enter. It puts back what was in the game folder before, and it checks that your real saves still match the backup from install. It does not overwrite saves. The backup, the co-op copy, and the logs stay in the game's `mgs-coop` folder until you delete that folder yourself.
+
+## Building it
+
+The friend package is the way to play. Building from this checkout is for working on the mod.
+
+Clone with submodules, then prepare the pinned source dependencies. Lua 5.1.5 is used only by the test fixtures. The script checks the Lua archive and the MinHook revision, and it does not launch or install the game.
 
 ```powershell
 git clone --recurse-submodules https://github.com/TrollTaylor/diamond-dogs-together.git
 cd diamond-dogs-together
 pwsh -File tools/Prepare-Dependencies.ps1
-```
-
-The setup script verifies the official Lua archive hash and the MinHook revision, preserves existing sources and never launches or installs the game. It accepts `-LuaArchivePath` for an already downloaded, hash-matching Lua source archive. Build-only and source fixture checks do not need retail assets. Exact-source game composition tests require locally extracted scripts from your own licensed installation; absent inputs are explicitly skipped. Set `MGS_GAME_LUA_DIR` to those local inputs. No personal checkout path is assumed. Full hidden qualification requires those licensed inputs and the admitted private worker; a fresh source build alone does not validate gameplay.
-
-Requires CMake, Visual Studio C++ build tools with an x64 Windows SDK, and PowerShell. The build includes pinned MinHook source for the script bridge and its fixture; see [third-party notices](THIRD_PARTY_NOTICES.md). Use `-BuildOnly` with the build script to compile the loader without running tests. Automated checks support the recorded live results; they do not establish full campaign support.
-
-```powershell
 ./tools/build.ps1 -Configuration Release
-./build/native/coop_lab.exe
 ```
 
-The script discovers the Visual Studio toolchain, builds with Ninja, and runs CTest. The static C++ runtime avoids requiring debug redistributables on game machines.
+You need CMake, the Visual Studio C++ build tools with an x64 Windows SDK, and PowerShell. `-BuildOnly` compiles without the test run. A source build does not by itself prove a gameplay change. Exact game-script checks need your own licensed Lua extract in `MGS_GAME_LUA_DIR`.
 
-For a local package, `tools/package.ps1 -RuntimeArchive <path>` compiles with `-BuildOnly`, checks the archive hash and bundles the loader, current source and licenses. The archive is generated or copied locally and passed to the owned installer; it is never included in the package. Owned upgrades keep hash-checked backups and a restore command. [Package workflow](docs/local-package.md).
+`tools/package.ps1 -Friend` writes `dist/mgs-coop-friend-<version>-<stamp>` and a zip with `Install-Coop.bat`, `Play-Coop.bat`, `Uninstall-Coop.bat`, `Collect-Logs.bat`, and `FRIEND-GUIDE.txt`. The runtime archive stays local and is never put in the zip.
 
-For a two-PC test with a friend, `tools/package.ps1 -Friend` stages `dist/mgs-coop-friend-<version>-<stamp>` and a ZIP. It includes `Install-Coop.bat`, `Play-Coop.bat`, `Uninstall-Coop.bat`, `Collect-Logs.bat` and `FRIEND-GUIDE.txt`, with scripts compatible with Windows PowerShell 5.1. Installation backs up the real saves and creates a co-op save copy. `Play-Coop.bat` selects Host or Join and uses a fresh private join code for our Steam networking link, or UDP for LAN/VPN; both games stay outside Konami sessions. Steam still launches each player's licensed game. The installer leaves normal launches inactive on the real saves. The game-derived runtime archive is supplied locally. The user reported a successful 0.12.0 session; the current repair candidate still needs a fresh two-PC session. [Two-PC workflow](docs/two-pc-play.md).
+Adapted third-party code, including Dynamite, is listed with versions and licenses in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## Loader probe
+Where to go next:
 
-```powershell
-./tools/probe.ps1 -Action Status
-./tools/probe.ps1 -Action Install
-# Launch MGSV normally, then inspect D:/Games/steamapps/common/MGS_TPP/mgs-coop/probe.log
-./tools/probe.ps1 -Action Remove
-```
+- [Current status and evidence](docs/STATUS.md) — what 0.13.5 changed, what was checked, and what is still open.
+- [Two-PC play](docs/two-pc-play.md) and [Steam online](docs/steam-online.md) — the connection, in detail.
+- [Debug menu](docs/debug-menu.md) — F9, once you are in a co-op session.
+- [Campaign design](docs/campaign-design.md) — the full game, as planned.
+- [Native partner](docs/native-puppet.md) — how the other player's body is driven.
 
-Close the game before installation or removal. The installer refuses to overwrite any existing `dinput8.dll`. Removal checks the recorded DLL hash before deleting only the owned loader. The actual game executable, Steam DLL, archives and saves are not replaced. Logs remain after removal. A diagnostic log establishes execution of the probe; normal input and scene loading still require gameplay verification.
+<details>
+<summary>Older notes</summary>
 
-## Design and evidence
+The `docs/` folder is also the lab notebook: world sync, animation rounds, the save handoff, and the Steam and engine investigations. Those notes describe how a piece was checked. They are not instructions for playing.
 
-- [Campaign design](docs/campaign-design.md): character roles, hospital staging, cutscenes, stealth, revives, shared progression, bosses, vehicles and failure recovery.
-- [Campaign support register](data/campaign-support.json): explicit segment work and acceptance records.
-- [Independent engine investigation](docs/engine-integration-research.md): current-build evidence and native integration gates.
-- [Independent network binding analysis](docs/network-binding-analysis.md): 23 game Lua bindings decoded from this executable; no runtime calls made to these candidates.
-- [Steam integration](docs/steam-integration-research.md): compatible interfaces, invitation/authentication boundaries and native transport investigation.
-- [Steam packet adapter](docs/steam-packet-adapter.md): independently checked flat-export boundary, bounded packet I/O and remaining live prerequisites.
-- [Steam lifecycle evidence](docs/steam-lifecycle-boundaries.md): passive initialization tracking and the limits of the current live observation point.
-- [Natural networking getter](docs/steam-networking-getter-observation.md): original pointer forwarding, bounded caller receipts and independently mapped channel-zero paths.
-- [Native packet-manager lifecycle](docs/packet-manager-lifecycle.md): verified lazy transport setup and conditional polling; upstream activation and virtual dispatch remain unresolved.
-- [Live session owner](docs/live-network-owner-observation.md): original bounded external reader, constructor-derived type check and five live baseline samples.
-- [Steam startup observation](docs/steam-init-caller-investigation.md): independently mapped natural initialization call and ten original debugger fixture cases.
-- [Earlier Steam entry](docs/steam-early-entry-investigation.md): the actual virtual-method dispatcher and unresolved early installation timing.
-- [Typed player messages](docs/typed-payload-format.md): byte formats, admission boundaries and coordinator handoff.
-- [Published player position candidate](docs/player-vector-producer-investigation.md): independently traced position-related use; producer actor and coordinate definition remain unresolved.
-- [Live player motion](docs/live-player-motion-observation.md): observed dive and posture recovery, failed short forward taps, and evidence that the two position sources are not a synchronized snapshot.
-- [Natural player-record writer](docs/live-player-record-writer.md): original hardware watch captured bank copying and a direct position updater; source ownership remains unresolved.
-- [Natural registration observation](docs/registration-hook-design.md): independent caller/unwind evidence and the next debugger experiment.
-- [Live registration captures](docs/live-registration-observation.md): observed entry and return, continued startup and the limits of raw mission/player fields.
-- [Progress and next gates](docs/STATUS.md): implemented work, validation and remaining requirements.
-
-## Architecture boundaries
-
-The active offline link and guarded partner driver are distinct from the earlier portable coordinator and Steam-adapter experiments described below. W3/W4 extend the offline world path; their tested subset and remaining live checks are recorded above.
-
-The future engine adapter must authenticate peers, bind session IDs, connect the host input receiver, and call the portable coordinator on the game thread. A claimed identity inside a packet is never trusted. The router's `ValidatedByEngine` flag is an internal adapter contract; it does not perform Steam authentication. Reordering storage does not implement retransmission, acknowledgement, timeout or encryption.
-
-Replaceable movement and held buttons expire after 250 ms without an update. One-shot actions such as shots, interactions, revive completion and extraction need separate reliable, host-validated events; they cannot be inferred reliably from the latest held-button sample. The framing layer intentionally has no raw pointers or game-memory writes.
-
-The coordinator's `Checkpoint` is a mission/epoch barrier record, **not an actual FOX world snapshot or save**. Late joining, rejoining during play, save transactions and host migration are not implemented. Starting a new load clears the temporary objective ledger; restoring persisted world/objective state is future adapter work.
-
-Four-player support must be demonstrated with four independent playable actors and three remote clients. A lobby limit, packet test or NPC stand-in is insufficient. Converting originally playable sequences into spectator-only segments does not satisfy the start-to-finish goal.
-
+</details>

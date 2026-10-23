@@ -186,8 +186,8 @@ new source Enemy controls select an authored camp and patrol route, teleport
 to a readable guard or validated player checkpoint, and let the host reuse
 up to eight nearby normal living guards per mission. Placement is local;
 new soldier allocation and replicated AI are not provided. Unloaded or
-unreadable guards refuse placement. Follow the [menu instructions](../README.md)
-for the controls and their pending live validation.
+unreadable guards refuse placement. The controls and their limits are in the
+[debug menu](debug-menu.md).
 
 ## Package
 
