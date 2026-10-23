@@ -37,7 +37,8 @@
 #     unboxed again: partner_cbox=remote; ...; active=0 and partner_cbox=off; ...; via=native; reason=ok
 #   NEVER a guest partner_status=local; st=0x4 (the viewer's own player never boxes because of the partner)
 # Captures: equip-skew (the guest films the host's partner body: a gun in its hands, the host's own weapon), host-self,
-# cbox-on (body 1 in the box), cbox-off, equip-after (the gun back in body 1's hands).
+# equip-skew-host (the host films the guest's partner body: the guest's gun), guest-self, cbox-on (body 1 in the box),
+# cbox-off, equip-after (the gun back in body 1's hands).
 labsetting host link_session_skew=2
 labsetting partner_act_log=1
 title 200
@@ -69,6 +70,14 @@ wait 2500
 both capture start
 guest capture equip-skew
 host capture host-self
+# The host films the guest's partner body (the guest's gun on the host's copy, session 3 receiving epoch 1), then the
+# guest goes back behind the host for the box part.
+placebehind host guest 4 3
+wait 2500
+host capture equip-skew-host
+guest capture guest-self
+placebehind guest host 4 3
+wait 2500
 # --- The host boxes (sub 1 = 468 on the lab save); body 1 on the guest boxes natively. -----------------------------
 host run items
 host expect ^items;ids=0,468,
