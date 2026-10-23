@@ -6221,14 +6221,16 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             CopyText(m.tele.net.local_reason, sizeof(m.tele.net.local_reason), why);
             d.settings.fire_live = false;
             if (!m.visibility.hidden && !m.bits_set && !m.dm_patched) {
+                // The hide ended: a new link-quality window, unless the link
+                // itself hid it (ride_stale: that gap is real, the hold applies).
+                m.net_quality_rebase = !LinkLeaveReason(m.visibility_logged);
                 m.visibility_logged = nullptr;
-                m.net_quality_rebase = true;  // the hide ended: a new link-quality window
                 EmitCapped(m.ride_vis_cap, h, "partner_ride", m.visibility.seated ? "partner_ride=seat_show; next=place\r\n"
                                                                                   : "partner_ride=foot_stable; next=place\r\n");
             }
         } else if (ride_guard && m.visibility_logged) {
+            m.net_quality_rebase = !LinkLeaveReason(m.visibility_logged);
             m.visibility_logged = nullptr;
-            m.net_quality_rebase = true;
             EmitCapped(m.ride_vis_cap, h, "partner_ride", m.visibility.seated ? "partner_ride=seat_show; next=place\r\n"
                                                                               : "partner_ride=foot_stable; next=place\r\n");
         }

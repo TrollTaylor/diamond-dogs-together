@@ -22,8 +22,11 @@
 #   host   `host debug position` at the end >= 400 m from the first one (else the drive was blocked: re-aim the jeep)
 #   frames long-01..long-05 (bursts along the way) and long-end: the partner SEATED and VISIBLE in the jeep on both
 #          screens (the guest's view: the host at the wheel; the host's view: the guest in the back seat)
-#   the exit line after the get-off: partner_ride_seat=exit; ...; reason=foot|getoff_act; via=stop|getoff; ...;
-#          follows=N with N >= 10 (one write per ~25 m)
+#   the exit line after the get-off: partner_ride_seat=exit; ...; reason=foot|getoff_act; via=stop|getoff;
+#          confirmed=1; ...; follows=N with N >= 10 (one write per ~25 m). This is the automatic "still seated at
+#          the end of the drive" check (waitlog reads from the session start, so a seated status line would
+#          already match from the boarding; only the exit line of the episode that lasted the whole drive has
+#          confirmed=1 with two-digit follows).
 # Must NOT appear on either copy during the drive (check the logs after the run; 0.13.5 printed all of them):
 #   partner_bits=cleared; reason=range_rearm   partner_realized=0; R=1; via=seat   partner_ride_seat=exit; ...;
 #   reason=unrealized   reason=pending   partner_ride_seat=unavailable; ...; reason=blocked   partner_ride=hide
@@ -74,7 +77,7 @@ host hold w 1500
 host hold w 1500 nowait
 guest burst long-01 3 300
 host release
-host debug clear_enemies 200
+host debug clear_enemies 100
 host hold w 1500
 host hold w 1500
 host hold w 1500
@@ -85,7 +88,7 @@ host release
 waitlog host 'partner_ride_seat=slot_follow; vehicle=256[0-9][0-9]; seat=[23];' 5
 waitlog guest 'partner_ride_seat=slot_follow; vehicle=256[0-9][0-9]; seat=0;' 5
 host debug position
-host debug clear_enemies 200
+host debug clear_enemies 100
 host hold w 1500
 host hold w 1500
 host hold w 1500
@@ -93,7 +96,7 @@ host hold w 1500
 host hold w 1500 nowait
 guest burst long-03 3 300
 host release
-host debug clear_enemies 200
+host debug clear_enemies 100
 host hold w 1500
 host hold w 1500
 host hold w 1500
@@ -102,7 +105,7 @@ host hold w 1500 nowait
 host burst long-04 3 300
 host release
 host debug position
-host debug clear_enemies 200
+host debug clear_enemies 100
 host hold w 1500
 host hold w 1500
 host hold w 1500
@@ -112,19 +115,17 @@ guest burst long-05 3 300
 host release
 wait 2000
 host debug position
-waitlog host 'partner_ride_seat=status; phase=seated; vehicle=256[0-9][0-9]; seat=[23]; confirmed=1;' 5
-waitlog guest 'partner_ride_seat=status; phase=seated; vehicle=256[0-9][0-9]; seat=0; confirmed=1;' 5
 both capture long-end
 host run vehicle_seats
 guest press e 150
 guest burst long-exit 6 300
 wait 2500
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=off' 5
-waitlog host 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=[23]; reason=' 10
+waitlog host 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=[23]; reason=[a-z_]+; via=[a-z]+; confirmed=1; .*; follows=[1-9][0-9]' 10
 both capture long-exited
 host press e 150
 wait 2500
-waitlog guest 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=0; reason=' 10
+waitlog guest 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=0; reason=[a-z_]+; via=[a-z]+; confirmed=1; .*; follows=[1-9][0-9]' 10
 wait 4000
 both capture long-after
 state

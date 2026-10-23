@@ -56,9 +56,10 @@ void Rebase(Quality& q) noexcept {
     q.last_seq = 0;
     q.last_rx_ms = 0;
     q.head = q.count = 0;
-    q.good = false;
-    q.good_since_ms = 0;
     q.p50_ms = q.p95_ms = 0;
+    // good / good_since_ms stay (as 0.13.5 kept them up to the first frame after
+    // the ride): a late or bad first frame, or a gap after it, still turns it
+    // bad through Observe; a good one re-enters native after the settle alone.
 }
 
 void Observe(Quality& q, const QualityIn& in, const QualityParams& p) noexcept {

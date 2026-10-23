@@ -6758,49 +6758,98 @@ void TestRideRobust() {
     }
     {
         // A pending request at the arm (foreign: request byte 0 is 0) is a moment, not the vehicle:
-        // refused unlatched, body 1 stays shown (fallback: Warped to the remote's pose), and the seat
-        // plays once nothing is pending.
+        // refused without a latch and retried through the re-show flow. This vehicle exists on this
+        // copy (it may be the jeep the viewer drives), so body 1 is never Warped into it (no fallback).
+        // Only the third refusal in a row latches (hidden as in 0.13.5 until the ride changes).
         SeatSession s;
         s.Show();
         const auto hides = s.fake.Containing("partner_ride=hide");
         s.fake.dm.g388 = 0x08; s.fake.dm.req0 = 0;
         s.Ride(rw::Kind::vehicle, 0, 25608);
         s.fake.sample.act = 111;
-        Check(s.Step() && s.driver.mission.seat.phase == pd::SeatPhase::arm && s.reply.op == 0, "pending: the arm waits");
-        Check(s.Step(3100) && s.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=0; name=-; state=-; reason=pending;") == 1 &&
-                  s.driver.mission.seat.phase == pd::SeatPhase::fallback && !s.driver.mission.seat.blocked &&
-                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25608; seat=0; reason=pending; show=warp; byid=0") == 1,
-              "pending: refused, not latched, shown without a seat");
-        Check(s.Step() && s.reply.op == op::warp && s.reply.x_mm == 1000 && s.reply.z_mm == 4000 && !s.driver.mission.visibility.hidden &&
-                  s.driver.mission.bits_set && s.fake.seat_arms == 0 && s.fake.Containing("partner_ride=hide") == hides,
-              "fallback: Warped to the remote's seated pose, realized, nothing armed, never hidden");
-        Check(s.Step(2100) && s.driver.mission.seat.phase == pd::SeatPhase::fallback && s.fake.dm.g388 == 0x08 && s.reply.op == op::warp,
-              "fallback: a foreign pending request is kept; still shown");
-        s.fake.dm.g388 = 0;
-        Check(s.Step(2100) && (s.reply.op & op::ride_seat) && !(s.reply.op & op::warp) && s.fake.seat_arms == 1 &&
-                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25608; seat=0; reason=pending; next=release;") == 1,
-              "fallback: seated once nothing is pending (one reply, the seat's op only)");
-        // Ours (request byte 0 == 1) with no DM on either body: cleared by the fallback's check.
+        unsigned warps = 0;
+        const auto wait = [&](std::uint64_t ms) {
+            const bool replied = s.Step(ms);
+            if (s.reply.op & op::warp) ++warps;
+            return replied;
+        };
+        const char* const refused = "partner_ride_seat=refused; vehicle=25608; seat=0; name=-; state=-; reason=pending;";
+        Check(wait(33) && s.driver.mission.seat.phase == pd::SeatPhase::arm && s.reply.op == 0, "pending: the arm waits");
+        Check(wait(3100) && s.fake.Containing(refused) == 1 && s.driver.mission.seat.phase == pd::SeatPhase::idle &&
+                  !s.driver.mission.seat.blocked && s.fake.seat_arms == 0 && s.fake.Containing("partner_ride_seat=fallback;") == 0 &&
+                  s.fake.Containing("partner_ride=hide") == hides && s.fake.dm.g388 == 0x08,
+              "pending: refused without a latch, no fallback; a foreign request is kept");
+        reshow(s);
+        Check(wait(33) && s.driver.mission.seat.phase == pd::SeatPhase::arm, "pending: retried (the arm waits again)");
+        Check(wait(3100) && s.fake.Containing(refused) == 2 && !s.driver.mission.seat.blocked, "pending: the second refusal is not latched");
+        reshow(s);
+        Check(wait(33) && wait(3100) && s.fake.Containing(refused) == 3 && s.driver.mission.seat.blocked &&
+                  s.fake.Containing("partner_ride_seat=retries; vehicle=25608; seat=0; reason=pending; tries=3; latch=1") == 1,
+              "pending: the third refusal in a row latches");
+        Check(wait(33) && s.driver.mission.visibility.hidden &&
+                  s.fake.Containing("partner_ride_seat=unavailable; vehicle=25608; seat=0; reason=blocked; mission=30010; byid=1; block=pending") == 1,
+              "pending: then hidden until the ride changes (no endless re-show cycle)");
+        Check(warps == 0 && s.fake.Containing("show=warp") == 0, "pending: body 1 is never Warped into a vehicle this copy has");
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.seat.blocked && s.driver.mission.seat.transient_refusals == 0, "a new ride starts a new count");
+        // A foreign request that ends between two attempts: seated; the confirmation resets the count.
+        SeatSession e;
+        e.Show();
+        e.fake.dm.g388 = 0x08; e.fake.dm.req0 = 0;
+        e.Ride(rw::Kind::vehicle, 0, 25608);
+        e.fake.sample.act = 111;
+        Check(e.Step() && e.Step(3100) && e.driver.mission.seat.transient_refusals == 1 && !e.driver.mission.seat.blocked, "refused once");
+        e.fake.dm.g388 = 0;
+        reshow(e);
+        Check(e.Step() && (e.reply.op & op::ride_seat), "the request ended: seated on the next attempt");
+        e.Playing(kFrontLeftLoop);
+        Check(e.Step() && e.driver.mission.seat.confirmed && e.driver.mission.seat.transient_refusals == 0, "confirmed: the count restarts");
+        // Ours (request byte 0 == 1) with no DM on either body: the arm clears it (after kSeatStopMs) and plays.
         SeatSession o;
         o.Show();
         o.fake.dm.g388 = 0x08; o.fake.dm.req0 = 1;
         o.Ride(rw::Kind::vehicle, 0, 25608);
         o.fake.sample.act = 111;
-        Check(o.Step() && o.Step(3100) && o.driver.mission.seat.phase == pd::SeatPhase::fallback, "ours: fallback");
-        Check(o.Step(2100) && o.fake.dm.g388 == 0 &&
-                  o.fake.Containing("partner_ride_seat=stale_cleared; vehicle=25608; seat=0; bits=0x08; when=fallback; reason=pending") == 1,
-              "fallback: our stale request is cleared");
-        Check(o.Step(2100) && (o.reply.op & op::ride_seat), "then seated");
-        // dm_read / release / host_dm never latch either (the old refusals hid until the ride changed).
+        Check(o.Step() && o.driver.mission.seat.phase == pd::SeatPhase::arm, "ours: the arm waits");
+        Check(o.Step(500) && o.fake.dm.g388 == 0x08 && o.fake.dm_stale_calls == 0, "ours: not before kSeatStopMs");
+        Check(o.Step(600) && o.fake.dm.g388 == 0 && (o.fake.dm_stale_mask & 0x1C) == 0x1C &&
+                  o.fake.Containing("partner_ride_seat=stale_cleared; vehicle=25608; seat=0; bits=0x08; when=arm; reason=pending") == 1,
+              "ours: our stale request is cleared by the arm");
+        Check(o.Step() && (o.reply.op & op::ride_seat) && !(o.reply.op & op::warp) && o.fake.Containing("partner_ride_seat=refused;") == 0,
+              "ours: then seated, never refused");
+        // F1 (friend F:6203-6217): the viewer drives the jeep, the remote rides its back seat 3 and the
+        // viewer's own DM holds the arm: refused (retried), never Warped into the viewer's own jeep.
+        SeatSession v;
+        v.Show();
+        v.ride_suffix = " ride=2 veh=25608 seat=0";
+        v.fake.dm.q18[0] = c::q18_dm_act;
+        v.Ride(rw::Kind::vehicle, 3, 25608);
+        v.fake.sample.act = 110;
+        Check(v.Step() && v.driver.mission.seat.phase == pd::SeatPhase::arm && v.driver.local_vehicle == 25608, "host_dm: the arm waits");
+        Check(v.Step(3100) && v.fake.Containing("partner_ride_seat=refused; vehicle=25608; seat=3; name=-; state=-; reason=host_dm;") == 1 &&
+                  !v.driver.mission.seat.blocked && !(v.reply.op & op::warp) && v.fake.Containing("partner_ride_seat=fallback;") == 0 &&
+                  v.fake.seat_arms == 0,
+              "host_dm in the viewer's own jeep: refused without a latch, no fallback, no Warp");
+        // dm_read for the whole ride (finding: it blinked body 1 every 3-4 s): retried twice, then latched.
         SeatSession r;
         r.Show();
         r.fake.dm_ok = false;
         r.Ride(rw::Kind::vehicle, 0, 25608);
         r.fake.sample.act = 111;
-        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 1, "dm_read refused");
-        r.fake.dm_ok = true;
-        for (unsigned i = 0; i < 4; ++i) r.Step();
-        Check(!r.driver.mission.seat.blocked && !r.driver.mission.visibility.hidden, "dm_read: not latched");
+        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 1 && !r.driver.mission.seat.blocked,
+              "dm_read refused, not latched");
+        reshow(r);
+        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 2 && !r.driver.mission.seat.blocked,
+              "dm_read: retried, refused again, still not latched");
+        reshow(r);
+        Check(r.Step() && r.Step(3100) && r.fake.Containing("reason=dm_read; manual=0") == 3 && r.driver.mission.seat.blocked &&
+                  r.fake.Containing("partner_ride_seat=retries; vehicle=25608; seat=0; reason=dm_read; tries=3; latch=1") == 1,
+              "dm_read: the third refusal in a row latches");
+        const auto clears = r.fake.Writes("clear");
+        for (unsigned i = 0; i < 12; ++i) r.Step(1000);
+        Check(r.driver.mission.visibility.hidden && r.fake.Containing("reason=dm_read; manual=0") == 3 && r.fake.Writes("clear") <= clears + 1 &&
+                  r.driver.mission.seat.phase == pd::SeatPhase::idle,
+              "dm_read: hidden for the rest of the ride, no further re-show cycles");
     }
     {
         // A Fultoned jeep (friend F:9631 Fulton, F:10059-10071): this copy has no vehicle 25603 while the
@@ -6850,6 +6899,34 @@ void TestRideRobust() {
         Check(u.Step() && u.driver.mission.seat.phase == pd::SeatPhase::fallback &&
                   u.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=unrealized;") == 1,
               "an unrealized copy: shown without a seat");
+        // Defensive: never a Warp into a vehicle the viewer occupies on this copy.
+        Check(u.Step() && u.reply.op == op::warp, "fallback Warp");
+        u.ride_suffix = " ride=2 veh=25603 seat=1";
+        Check(u.Step() && !(u.reply.op & op::warp) && u.driver.mission.seat.phase == pd::SeatPhase::fallback,
+              "the viewer in that vehicle: no Warp");
+        // The copy vanishes between the offer and the id write (a target refusal, local_read): not
+        // latched where only the id can seat; the next episode shows body 1 without a seat.
+        SeatSession t(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        t.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        mb(t);
+        const auto t_hides = t.fake.Containing("partner_ride=hide");
+        Check(t.Step() && (t.reply.op & op::ride_seat) && t.reply.seat_entry == partner::seat_entry::by_id, "offered by id and played");
+        t.fake.vehicles.clear();
+        t.Playing(kFrontLeftLoop);
+        Check(t.Step() && t.fake.Containing("partner_ride_seat=target; vehicle=25603; seat=0; wrote=0; reason=local_read;") == 1 &&
+                  t.fake.Containing("partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-; reason=local_read;") == 1 &&
+                  t.reply.op == op::dm_stop && t.fake.seat_targets.empty(),
+              "target refused (local_read): the seat DM is stopped");
+        t.Ended();
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && !t.driver.mission.seat.blocked &&
+                  t.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=0; reason=local_read; via=stop;") == 1,
+              "Mother Base target refusal for a missing copy: not latched");
+        reshow(t);
+        t.fake.channel2.push_back(ExtBytes(t.ride_rev, 25603, 0, 1, 900));
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  t.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read; show=warp; byid=0") == 1 &&
+                  t.fake.Containing("partner_ride=hide") == t_hides && t.fake.Containing("partner_ride_seat=unavailable;") == 0,
+              "the next episode shows body 1 without a seat instead of hiding it");
         // Other by-id refusals still hide (latched) as before.
         SeatSession c(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
         c.fake.vehicles.push_back(VehicleRead(25603, 0x20));
@@ -6909,6 +6986,136 @@ void TestRideRobust() {
         Check(!s.driver.mission.net_quality_rebase && s.driver.mission.net_quality.gaps_1000 == 0 &&
                   s.driver.mission.net_quality.max_gap_ms < 1000,
               "the 60 s ride is not one arrival gap");
+    }
+    {
+        // A leave the link itself caused (the lease, ride_stale) is a real gap: no rebase, so the
+        // quality hold applies after it as in 0.13.5. Only a seat episode or a ride hide that merely
+        // skipped the observer restarts the window (review: a rebase that keeps the good state must
+        // not forgive an outage).
+        SeatSession s;
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+        std::uint32_t seq = 1;
+        const auto frame = [&](std::uint64_t ms) { s.fake.latest.seq = seq++; return s.Step(ms); };
+        s.Show();
+        for (unsigned i = 0; i < 20; ++i) frame(33);
+        s.Ride(rw::Kind::vehicle, 0, 25608);
+        s.fake.sample.act = 111;
+        Check(frame(33) && (s.reply.op & op::ride_seat), "lease: play");
+        s.Playing(kFrontLeftLoop);
+        for (unsigned i = 0; i < 10; ++i) frame(1000);
+        Check(s.driver.mission.seat.confirmed, "lease: seated");
+        const auto stale_hides = s.fake.Containing("partner_ride=hide; reason=ride_stale;");
+        s.fake.link_live = false;
+        Check(frame(33) && s.reply.op == op::dm_stop, "lease lost: the seat exits (stop)");
+        s.Ended();
+        frame(33);
+        Check(s.driver.mission.seat.phase == pd::SeatPhase::idle && !s.driver.mission.net_quality_rebase &&
+                  s.fake.Containing("partner_ride_seat=exit; vehicle=25608; seat=0; reason=lease; via=stop;") == 1,
+              "lease: settled without a rebase");
+        for (unsigned i = 0; i < 6; ++i) frame(1000);
+        Check(s.driver.mission.visibility.hidden && s.fake.Containing("partner_ride=hide; reason=ride_stale;") == stale_hides + 1,
+              "lease: hidden");
+        s.fake.link_live = true;
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        for (unsigned i = 0; i < 40 && s.driver.mission.visibility.hidden; ++i) frame(50);
+        Check(!s.driver.mission.visibility.hidden && !s.driver.mission.net_quality_rebase, "lease: the ride_stale hide ends without a rebase");
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) frame(50);
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        for (unsigned i = 0; i < 10; ++i) frame(33);
+        Check(s.driver.mission.net_quality.gaps_1000 == 1 && s.driver.mission.net_quality.max_gap_ms >= 10000 && !s.driver.mission.net_quality.good,
+              "lease: the outage counts as one gap (the quality hold applies)");
+        // A ride hide (the remote in the helicopter) that ended normally: rebased, no gap.
+        SeatSession r;
+        r.fake.latest.valid = true; r.fake.latest.age_ms = 5;
+        std::uint32_t rseq = 1;
+        const auto rframe = [&](std::uint64_t ms) { r.fake.latest.seq = rseq++; return r.Step(ms); };
+        r.Show();
+        for (unsigned i = 0; i < 20; ++i) rframe(33);
+        r.Ride(rw::Kind::heli);
+        for (unsigned i = 0; i < 20; ++i) rframe(1000);
+        Check(r.driver.mission.visibility.hidden && r.fake.Containing("partner_ride=hide; reason=ride;") == 1, "heli: hidden");
+        r.Ride(rw::Kind::foot); r.fake.sample.act = 1;
+        bool rebased = false;
+        for (unsigned i = 0; i < 40 && !rebased; ++i) rebased = rframe(50) && r.driver.mission.net_quality_rebase;
+        Check(rebased, "heli: the ride hide ends with a rebase");
+        r.fake.Realize(false); r.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !r.driver.mission.bits_set; ++i) rframe(50);
+        r.fake.Realize(true); r.fake.state.parts[1] = 3;
+        for (unsigned i = 0; i < 10; ++i) rframe(33);
+        Check(r.driver.mission.net_quality.gaps_1000 == 0 && r.driver.mission.net_quality.max_gap_ms < 1000, "heli: the hide is not one gap");
+    }
+    {
+        // The time back to native after a ride (friend F:6713 net_quality, F:6856 native at good_ms=4004):
+        // the online native drive, a 30 s seat episode, then the get-off. The arbiter re-enters native
+        // about enter_hold_ms after the body is back (the link was good before the ride and is good
+        // after it). Control: without the rebase (0.13.5) the ride is one gap: ~6 s of clips; a Rebase
+        // that also restarts the good state still holds quality_ms first: ~4 s.
+        const auto back_ms = [&](bool rebase) -> std::uint64_t {
+            SeatSession s;
+            s.lab.partner_drive = mgscoop::PartnerDrive::native;
+            s.lab.partner_input_defer = mgscoop::PartnerDefer::on;
+            s.lab.partner_input_hook = true;
+            s.lab.partner_input_wrap = mgscoop::PartnerWrap::window;
+            s.lab.partner_input_send = true;
+            s.driver.settings.drive = mgscoop::PartnerDrive::native;
+            s.driver.settings.defer = mgscoop::PartnerDefer::on;
+            s.driver.settings.isend = true;
+            s.driver.settings.steer_deg = 15;
+            s.driver.settings.nnet = mgscoop::PartnerNativeNet::online;
+            mgscoop::partner_native::Reset(s.driver.mission.native, true);
+            s.driver.mission.mag_scale = 1.0;
+            NativeHealthy(s.fake);
+            s.fake.latest.valid = true; s.fake.latest.age_ms = 5; s.fake.latest.packet.version = 3;
+            s.fake.latest_ok = true;
+            s.fake.dm.q18[0] = 3; s.fake.dm.q18[1] = 3; s.fake.dm.g388 = 0; s.fake.dm.cam_ok = true;
+            std::uint32_t seq = 1;
+            std::uint64_t since_ride = 0;
+            const auto frame = [&](std::uint64_t ms = 33) {
+                NativeFrame(s.fake);
+                s.fake.latest.seq = seq++;
+                s.fake.sample.sender_ms += static_cast<std::int64_t>(ms);
+                since_ride += ms;
+                if (since_ride >= 1000 && s.ride_sent) {
+                    since_ride = 0;
+                    s.now += 1; s.Ride(s.ride_kind, s.ride_seat, s.ride_vehicle, false); s.now -= 1;
+                }
+                return s.Tick(3, ms);
+            };
+            for (unsigned i = 0; i < 60 && !s.driver.mission.bits_set; ++i) frame(50);
+            s.fake.Realize(true); s.fake.state.parts[1] = 3;
+            for (unsigned i = 0; i < 400 && s.driver.mission.native_out.mode != mgscoop::partner_native::Mode::active; ++i) frame();
+            Check(s.driver.mission.native_out.mode == mgscoop::partner_native::Mode::active, "online native: active on foot");
+            s.Ride(rw::Kind::vehicle, 0, 25608);
+            s.fake.sample.act = 111;
+            for (unsigned i = 0; i < 10 && !(s.reply.op & op::ride_seat); ++i) frame();
+            Check((s.reply.op & op::ride_seat) && s.driver.mission.native_out.mode != mgscoop::partner_native::Mode::active,
+                  "the seat owns body 1 (native left: seat)");
+            s.Playing(kFrontLeftLoop);
+            for (unsigned i = 0; i < 900; ++i) frame();  // a 30 s ride
+            Check(s.driver.mission.seat.confirmed, "seated for the ride");
+            s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+            frame();
+            s.Ended();
+            frame();
+            Check(s.driver.mission.seat.phase == pd::SeatPhase::idle && s.driver.mission.net_quality_rebase, "settled");
+            if (!rebase) s.driver.mission.net_quality_rebase = false;  // the control: 0.13.5 had no rebase
+            const std::uint64_t settled = s.now;
+            s.fake.Realize(false); s.fake.state.parts[1] = 0;
+            for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) frame(50);
+            s.fake.Realize(true); s.fake.state.parts[1] = 3;
+            for (unsigned i = 0; i < 400; ++i) {
+                frame();
+                const auto mode = s.driver.mission.native_out.mode;
+                if (mode == mgscoop::partner_native::Mode::entering || mode == mgscoop::partner_native::Mode::active) return s.now - settled;
+            }
+            return ~0ull;
+        };
+        const std::uint64_t fixed = back_ms(true), control = back_ms(false);
+        std::printf("ride robust: native back after %llu ms (rebase), %llu ms (control)\n", static_cast<unsigned long long>(fixed),
+                    static_cast<unsigned long long>(control));
+        Check(fixed <= 2000 + 1200, "native re-entry about enter_hold_ms after the ride (no fresh quality_ms hold)");
+        Check(control != ~0ull && control >= fixed + 3000, "control: without the rebase the ride costs ~4 s more of clips");
     }
 }
 
