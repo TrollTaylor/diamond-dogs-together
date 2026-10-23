@@ -71,7 +71,8 @@ What is NOT fully shared yet:
 - Story missions, items and full campaign progression. This is a development
   build. The user reported partial successful two-PC play on 0.12.0 and a
   first real two-PC session on 0.13.5. The 0.13.6 fixes from that session
-  are fixture-checked and still need a fresh two-PC session; complete
+  were checked with two games on one PC and still need a fresh two-PC
+  session; complete
   campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
@@ -89,6 +90,22 @@ Two ways to connect:
 WHAT'S NEW IN @VERSION@
 -----------------------
 Both players need this same version; it does not connect to older ones.
+Fixes from the first real two-PC session:
+- GUNS ONLINE. Your partner now holds their real gun even after either game
+  restarted (including the automatic save-handoff restart). Before, a
+  restart of one game made both sides ignore the other's loadout, so the
+  partner showed no gun and the cardboard box did not show either.
+- JOINING WITH A DIFFERENT SAVE. The host's save is now offered even when
+  your co-op save is an old one, and pressing Continue twice quickly no
+  longer sends you alone into a story mission. The messages say clearly
+  what is happening and what to do.
+- LONG VEHICLE RIDES. Your partner no longer disappears after a few hundred
+  metres in a shared jeep, and moves normally right after getting off.
+- FALLING INTO THE SEA now counts as a real death (shared game over)
+  instead of leaving you downed in the water. A partner put down at a
+  platform edge no longer falls off it on your screen.
+
+New in 0.13.5 (still included):
 These need the native partner, which is the default.
 - RIDE IN THE BACK SEAT. When your partner drives a jeep or another light
   vehicle, stand by it and press ACTION (E by default) to sit in a free back
