@@ -696,7 +696,7 @@ void TestJoinCodes() {
           "S3 bad code");
     char peer[24]{};
     code::FormatPeer(76561198011111111ull, peer);
-    Check(std::strcmp(peer, "steam:...5100") == 0, "masked peer");
+    Check(std::strcmp(peer, "steam:...1111") == 0, "masked peer");
     code::FormatPeer(0, peer);
     Check(std::strcmp(peer, "steam:none") == 0, "masked none");
 }

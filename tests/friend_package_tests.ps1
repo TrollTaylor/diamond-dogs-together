@@ -653,7 +653,7 @@ try {
         Assert-True ([bool]$sentence -and !$sentence.StartsWith('The connection was refused')) "Steam sentence for $reason"
     }
     Assert-True ((Get-CoopLinkReasonText -Reason steam_iface_shape).Contains('LAN/VPN')) 'a Steam networking change points to the LAN/VPN code'
-    $steamStatus = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"steam:...5100","local_port":0,"rtt_ms":61,"jitter_ms":3,"loss_permille":0,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","transport":"steam","route":"relay","accepting":1,"steam":"ok","time_utc":"2026-10-05T12:00:00Z"}'
+    $steamStatus = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"steam:...1111","local_port":0,"rtt_ms":61,"jitter_ms":3,"loss_permille":0,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","transport":"steam","route":"relay","accepting":1,"steam":"ok","time_utc":"2026-10-05T12:00:00Z"}'
     $sst = ConvertFrom-CoopStatusText -Text $steamStatus -ExpectedPid 4242
     $snow = [DateTime]::Parse('2026-10-05T12:00:03Z').ToUniversalTime()
     Assert-Equal (Format-CoopStatusLine -Status $sst -Role host -NowUtc $snow) '[HOST] link=connected via Steam (relay) rtt=61ms jitter=3ms loss=0.0% interp=80ms | partner=live shown look | mission 30050' 'online status line'
@@ -695,11 +695,11 @@ try {
     Assert-True ($clean.Contains('peer=203.0.x.x:51234') -and $clean.Contains('net_peer_addr=198.51.x.x') -and $clean.Contains('"peer":"203.0.x.x:47830"') -and $clean.Contains('host=8.8.x.x')) 'public addresses masked in address contexts'
     Assert-True ($clean.Contains('1.0.15.4') -and $clean.Contains('10.0.19045.1') -and $clean.Contains('at 203.0.113.50') -and $clean.Contains('peer=192.168.1.20:47830')) 'versions, other text and private addresses kept'
     $steamCodeText = New-CoopSteamJoinCode -Secret $s7 -SteamId '76561198011111111'
-    $steamLeaky = "code $steamCodeText`nlower " + $steamCodeText.ToLowerInvariant() + "`nconnect +mgscoop_join $steamCodeText`nsteam=join; via=invite; host=steam:...5100`n"
+    $steamLeaky = "code $steamCodeText`nlower " + $steamCodeText.ToLowerInvariant() + "`nconnect +mgscoop_join $steamCodeText`nsteam=join; via=invite; host=steam:...1111`n"
     $steamClean = Hide-CoopNetworkText $steamLeaky
     Assert-True (!$steamClean.ToUpperInvariant().Contains('7K3QZ') -and !$steamClean.Contains('76561198011111111')) 'MGS2 codes and invite strings redacted'
     Assert-Equal ([regex]::Matches($steamClean, 'MGS2-<redacted>').Count) 2 'each MGS2 code replaced'
-    Assert-True ($steamClean.Contains('+mgscoop_join <redacted>') -and $steamClean.Contains('host=steam:...5100')) 'the invite string replaced; masked SteamIDs kept'
+    Assert-True ($steamClean.Contains('+mgscoop_join <redacted>') -and $steamClean.Contains('host=steam:...1111')) 'the invite string replaced; masked SteamIDs kept'
 
     # ------------------------------------------------------------ status, log delta, launch evidence, status line
     $statusText = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"203.0.x.x:51234","local_port":47830,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","time_utc":"2026-10-05T12:00:00Z"}'
