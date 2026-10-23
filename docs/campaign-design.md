@@ -1,6 +1,6 @@
 # Four-player campaign design
 
-Status: proposed design, 2026-09-09. **No mission is implemented or verified for co-op.** The support register in `data/campaign-support.json` is a work and acceptance register, not a compatibility claim. Nothing in this document establishes that the engine can run four independent, fully interactive player actors in the campaign.
+Status: proposed design, 2026-09-09. **No mission is implemented or verified for co-op.** The support register (`data/campaign-support.json`, removed on 2026-10-23; `archive/research-2026-10-23:data/campaign-support.json`) was a work and acceptance register, not a compatibility claim. Nothing in this document establishes that the engine can run four independent, fully interactive player actors in the campaign.
 
 This is an original mod design. Existing mods are not its implementation base or dependencies. Public game-script and identifier references below inform investigation of the installed game; their code is not copied into the proposed implementation.
 

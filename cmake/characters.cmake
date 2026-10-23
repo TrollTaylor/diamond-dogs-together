@@ -1,4 +1,4 @@
-# Character selection (docs/characters.md, docs/characters-integration.md).
+# Character selection (docs/characters.md; the original integration notes: archive/research-2026-10-23:docs/characters-integration.md).
 # Included right after enable_testing() in the top-level CMakeLists.txt. The
 # target part is deferred (cmake_language(DEFER)) to the end of that file, so
 # it runs after every target exists: mgs_coop_core, the WIN32 probe block
@@ -51,7 +51,7 @@ function(mgs_characters_deferred)
 
   if(TARGET mgs_bootstrap_patch)
     # generated/character_source.hpp for the TppMain splice. Nothing includes it
-    # until the bootstrap_patch.cpp integration (docs/characters-integration.md).
+    # until the bootstrap_patch.cpp integration (archive/research-2026-10-23:docs/characters-integration.md).
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS lua/coop/character.lua lua/coop/character_readback.lua)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/character.lua" MGS_CHARACTER_SOURCE)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/character_readback.lua" MGS_CHARACTER_READBACK_SOURCE)

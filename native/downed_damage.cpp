@@ -1,5 +1,6 @@
 // Exact retail damage calculation virtual adapter. See the hash-bound evidence
-// in docs/evidence/downed-damage-2026-10-10.json. No arbitrary game calls.
+// in archive/research-2026-10-23:docs/evidence/downed-damage-2026-10-10.json (tools/generate_downed_damage_contract.py
+// writes a fresh copy to docs/evidence/). No arbitrary game calls.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>

@@ -5,16 +5,16 @@ validation limits. September 12 testing supersedes its fixed-runtime-thread
 assumption: 0.10.32 supports matching unowned termination on a worker, and
 0.10.33 separates loading-worker initialization from gameplay start. Current
 installation and test evidence are in [status](STATUS.md) and
-[test results](testing-2026-09-12.md). References below to an untested build or
+[test results](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/testing-2026-09-12.md). References below to an untested build or
 installed 0.10.27 describe the earlier investigation.
 
-Build **0.10.28**, prepared on 2026-09-12, fixes a host-startup refusal found while reviewing the user's changes. It is compiled, not installed or tested. [Build and fingerprint record](evidence/mission-thread-handoff-prepared-2026-09-12.json).
+Build **0.10.28**, prepared on 2026-09-12, fixes a host-startup refusal found while reviewing the user's changes. It is compiled, not installed or tested. [Build and fingerprint record](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/mission-thread-handoff-prepared-2026-09-12.json).
 
 The current **0.10.29** also transfers native rule cleanup ownership in both lifecycle directions and retains the outgoing mission ID for shutdown. Those gaps were not covered by 0.10.28. [Follow-up fix](outgoing-scene-cleanup.md).
 
 ## Observed failure
 
-The user's installed 0.10.27 launch (PID 63008, September 11) compiled TppMain on thread 63456. Title allocation used that thread, but helicopter allocation used 84508 and Mother Base allocation used 24012. Initialization and gameplay start returned to 63456. The final observed native session pointer was null, although the player system reported two storage slots. [Existing-log excerpt](evidence/user-launch-thread-excerpt-2026-09-12.log).
+The user's installed 0.10.27 launch (PID 63008, September 11) compiled TppMain on thread 63456. Title allocation used that thread, but helicopter allocation used 84508 and Mother Base allocation used 24012. Initialization and gameplay start returned to 63456. The final observed native session pointer was null, although the player system reported two storage slots. [Existing-log excerpt](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/user-launch-thread-excerpt-2026-09-12.log).
 
 The selector accepted host preparation, marker-loading and mission-boundary receipts only on the compilation thread. It therefore skipped them during Mother Base allocation. The missing replacements are inferred from the source and the observed execution threads: the old logger did not record every refused receipt. Two storage slots do not establish two player actors.
 

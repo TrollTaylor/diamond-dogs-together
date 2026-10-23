@@ -286,8 +286,8 @@ def generate(data: bytes, candidate_report: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game-exe", type=Path, default=DEFAULT_GAME_DIR / "mgsvtpp.exe")
-    parser.add_argument("--candidates", type=Path, default=PROJECT / "docs/native-binding-candidates.json")
-    parser.add_argument("--output", type=Path, default=PROJECT / "docs/network-binding-analysis.json")
+    parser.add_argument("--candidates", type=Path, default=PROJECT / "build/analysis/native-binding-candidates.json")
+    parser.add_argument("--output", type=Path, default=PROJECT / "build/analysis/network-binding-analysis.json")
     args = parser.parse_args()
     if args.output.resolve() in (args.game_exe.resolve(), args.candidates.resolve()):
         parser.error("output must not overwrite input files")

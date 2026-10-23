@@ -205,7 +205,7 @@ $sourceRoot=Join-Path $packageRoot 'source'
 $extensions=@('.cpp','.hpp','.h','.c','.in','.lua','.ps1','.psm1','.py','.cmake','.txt','.md','.json','.def','.rc','.bat','.vdf')
 Push-Location $projectRoot
 try {
-    $sourceFiles=@(& rg --files --hidden native lua tools tests third_party data cmake -g '!.git' -g '!__pycache__' -g '!*.exe' -g '!*.dll' -g '!*.obj')
+    $sourceFiles=@(& rg --files --hidden native lua tools tests third_party cmake -g '!.git' -g '!__pycache__' -g '!*.exe' -g '!*.dll' -g '!*.obj')
     if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source files.' }
     $sourceFiles+=@(& rg --files docs -g '*.md')
     if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source documentation.' }

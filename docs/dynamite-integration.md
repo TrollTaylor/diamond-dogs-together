@@ -2,7 +2,7 @@
 
 ## Current priority and live progress
 
-Current update, 2026-09-10: installed 0.10.5 includes the mapped second-player loading bypass and teammate-role hooks. Workspace 0.10.27 adds manual joining, session feedback, equipment/loading and combat/lifecycle adaptations, plus existing teammate-marker presentation and the independent mission teardown signal. These paths are compiled only and remain unverified. No connected guest or shared combat is verified. Full campaign scripting is deferred. See [current status](STATUS.md), [remaining gameplay gaps](dynamite-gameplay-gaps.md) and [teammate markers](teammate-markers.md); older preparation/installation statements below are historical.
+Current update, 2026-09-10: installed 0.10.5 includes the mapped second-player loading bypass and teammate-role hooks. Workspace 0.10.27 adds manual joining, session feedback, equipment/loading and combat/lifecycle adaptations, plus existing teammate-marker presentation and the independent mission teardown signal. These paths are compiled only and remain unverified. No connected guest or shared combat is verified. Full campaign scripting is deferred. See [current status](STATUS.md), [remaining gameplay gaps](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/dynamite-gameplay-gaps.md) and [teammate markers](teammate-markers.md); older preparation/installation statements below are historical.
 
 
 The user now prioritizes direct Dynamite reuse and fully playable **two-player** co-op. Four players are deferred. The 0.10.0 adapter has created a live native host and returned to title/quit normally; 0.10.1 adds mission admission through the existing Lua interface. [Current port and evidence](dynamite-host-port.md). The source review and older asset experiments below are historical records, not current installation claims.
@@ -19,11 +19,11 @@ Pinned Dynamite revision: `c90f252f8200765f66c005d6bf4357fda0c0d98e`. See [licen
 - 202 named addresses: 54 outside the image and 148 file-backed locations. File backing says nothing about matching function identity.
 - Commented-out patches and the separate master-server URL patch are excluded.
 
-Reproduce with `python tools/audit_dynamite_reference.py --output docs/evidence/dynamite-compatibility-2026-09-09.json`. The tool checks the pinned source hashes, reads the executable and emits an inventory. It never installs patches. [Recorded result](evidence/dynamite-compatibility-2026-09-09.json).
+It was reproduced with `python tools/audit_dynamite_reference.py --output docs/evidence/dynamite-compatibility-2026-09-09.json`; that tool and the reference copies it reads were removed on 2026-10-23 (`archive/research-2026-10-23:tools/audit_dynamite_reference.py`). The tool checks the pinned source hashes, reads the executable and emits an inventory. It never installs patches. [Recorded result](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/dynamite-compatibility-2026-09-09.json).
 
 The current [tpp-mod source](https://github.com/alicealys/tpp-mod/tree/301bf797b7f8032941b21ed56a3570338de6ead4) lists SHA-1 `4F643576C6F6ECF6C67A9AEF4D4F02285ADA43E3`, which was recomputed from the installed executable and matches exactly. Its English TPP addresses occupy the first map column. The pinned source supplies **16 candidates**: 15 Dynamite names or explicit aliases plus the existing game-owned FobTarget accessor. The remaining 187 Dynamite names lack an unambiguous nonzero match in this join. These are candidates, not 16 approved hooks.
 
-Reproduce with `python tools/map_dynamite_current_build.py --output docs/evidence/dynamite-current-build-candidates-2026-09-09.json`. This additionally requires the project's Capstone dependency and rejects a different executable. [Candidate bodies and call graphs](evidence/dynamite-current-build-candidates-2026-09-09.json).
+It was reproduced with `python tools/map_dynamite_current_build.py --output docs/evidence/dynamite-current-build-candidates-2026-09-09.json` (removed on 2026-10-23; `archive/research-2026-10-23:tools/map_dynamite_current_build.py`). This additionally requires the project's Capstone dependency and rejects a different executable. [Candidate bodies and call graphs](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/dynamite-current-build-candidates-2026-09-09.json).
 
 | Function | Current RVA | Evidence and remaining work |
 | --- | --- | --- |

@@ -12,12 +12,12 @@ There are no new background threads or raw native soldier-interface calls. The r
 
 ## Exact-build evidence and provenance
 
-The [static contract](evidence/targeting-contract-2026-09-10.json) records the inspected executable path and SHA-256, complete code bodies and interface slots. Member construction places its session interface at `member+0x18`; the index getter reads `interface+0x28`, hence **member+0x40**. Using an older guessed structure field at member+0x28 would select the wrong index. The original offense function's dataflow returns the native host-member index.
+The [static contract](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/targeting-contract-2026-09-10.json) records the inspected executable path and SHA-256, complete code bodies and interface slots. Member construction places its session interface at `member+0x18`; the index getter reads `interface+0x28`, hence **member+0x40**. Using an older guessed structure field at member+0x28 would select the wrong index. The original offense function's dataflow returns the native host-member index.
 
 Original `TppEnemy.lua` and `TppPlayer.lua` were extracted locally, read-only, into `build/targeting-scripts-20260910`. Their hashes are recorded in the contract. They provide the existing indexed-object, life/status, position and vector-component query conventions; no complete game script is shipped in the source. TppMain insertion retains the existing complete source fingerprint.
 
 Source: Dynamite `c90f252f8200765f66c005d6bf4357fda0c0d98e`, `GetNearestPlayer` and `GetFobOffensePlayerInstanceIndexHook`; interface cross-reference: tpp-mod `301bf797b7f8032941b21ed56a3570338de6ead4`. Changes include actual roster indices, game-thread queries, squared distance, dead-player exclusion and expiring selection. Complete licenses and modifications appear in [third-party notices](../THIRD_PARTY_NOTICES.md).
 
-Compilation used `tools/build.ps1 -Configuration Release -BuildOnly`. The first compilation stopped on a deprecated formatting API treated as an error; the bounded replacement compiled successfully. No test suites or game launches were run. [Build record](evidence/targeting-prepared-2026-09-10.json). Installed 0.10.5 remains unchanged.
+Compilation used `tools/build.ps1 -Configuration Release -BuildOnly`. The first compilation stopped on a deprecated formatting API treated as an error; the bounded replacement compiled successfully. No test suites or game launches were run. [Build record](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/targeting-prepared-2026-09-10.json). Installed 0.10.5 remains unchanged.
 
 Connected guest control, remote position publication, enemy/world authority, shared damage outcomes, death/respawn and disconnect handling still need gameplay evidence and further implementation. Full campaign adaptations and four players remain deferred.

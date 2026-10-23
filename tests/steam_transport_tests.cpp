@@ -619,10 +619,10 @@ void TestIdentity() {
 void TestJoinCodes() {
     struct Vector { const char* secret; std::uint64_t host; const char* cc; };
     // Independently computed (Python hashlib); tests/friend_package_tests.ps1 uses the same.
-    const Vector vectors[] = {{"ABCDE12345FGHJK67890", 76561198058195100ull, "6Z"},
+    const Vector vectors[] = {{"ABCDE12345FGHJK67890", 76561198011111111ull, "1A"},
                               {"C00PC00PC00PC00PC00P", 76561197960265729ull, "D1"},
                               {"ZZZZZYYYYYXXXXXWWWWW", 76561202255233023ull, "5D"},
-                              {"0123456789ABCDEFGHJK", 76561198057664236ull, "2R"}};
+                              {"0123456789ABCDEFGHJK", 76561198022222222ull, "VF"}};
     for (const auto& v : vectors) {
         char secret[link::kSecretChars];
         std::memcpy(secret, v.secret, link::kSecretChars);
@@ -637,34 +637,34 @@ void TestJoinCodes() {
               "MGS2 round trip");
     }
     code::Code c{};
-    const char* good = "MGS2-ABCDE-12345-FGHJK-67890-6Z@76561198058195100";
+    const char* good = "MGS2-ABCDE-12345-FGHJK-67890-1A@76561198011111111";
     Check(code::Parse(good, std::strlen(good), c) == code::Status::ok, "canonical code");
-    const char* loose = " mgs2 abcde 12345 fghjk 67890 6z @ 76561198058195100\r\n";
-    Check(code::Parse(loose, std::strlen(loose), c) == code::Status::ok && c.host == 76561198058195100ull, "blanks and case tolerated");
-    const char* confusable = "MGS2-ABCDE-I2345-FGHJK-67890-6Z@76561198058195100";  // I -> 1
+    const char* loose = " mgs2 abcde 12345 fghjk 67890 1a @ 76561198011111111\r\n";
+    Check(code::Parse(loose, std::strlen(loose), c) == code::Status::ok && c.host == 76561198011111111ull, "blanks and case tolerated");
+    const char* confusable = "MGS2-ABCDE-I2345-FGHJK-67890-1A@76561198011111111";  // I -> 1
     Check(code::Parse(confusable, std::strlen(confusable), c) == code::Status::ok, "I/L -> 1, O -> 0");
     struct Bad { const char* text; code::Status status; };
     const Bad bad[] = {{"", code::Status::empty},
                        {"   ", code::Status::empty},
-                       {"MGS1-ABCDE-12345-FGHJK-67890-6Z@203.0.113.7", code::Status::bad_prefix},
-                       {"MGS2-ABCDE-12345-FGHJK-67890-6Z", code::Status::bad_steamid},
-                       {"MGS2-ABCDU-12345-FGHJK-67890-6Z@76561198058195100", code::Status::bad_char},
-                       {"MGS2-ABCDE-12345-FGHJK-6789-6Z@76561198058195100", code::Status::bad_length},
-                       {"MGS2-ABCDE-12345-FGHJK-67890-6Y@76561198058195100", code::Status::bad_check},
-                       {"MGS2-ABCDE-12345-FGHJK-67890-6Z@76561198058195101", code::Status::bad_check},
-                       {"MGS2-ABCDE-12345-FGHJK-67890-6Z@076561198058195100", code::Status::bad_steamid},
-                       {"MGS2-ABCDE-12345-FGHJK-67890-6Z@103582791429521408", code::Status::bad_steamid},
-                       {"MGS2-ABCDE-12345-FGHJK-67890-6Z@76561197960265728", code::Status::bad_steamid}};
+                       {"MGS1-ABCDE-12345-FGHJK-67890-1A@203.0.113.7", code::Status::bad_prefix},
+                       {"MGS2-ABCDE-12345-FGHJK-67890-1A", code::Status::bad_steamid},
+                       {"MGS2-ABCDU-12345-FGHJK-67890-1A@76561198011111111", code::Status::bad_char},
+                       {"MGS2-ABCDE-12345-FGHJK-6789-1A@76561198011111111", code::Status::bad_length},
+                       {"MGS2-ABCDE-12345-FGHJK-67890-1B@76561198011111111", code::Status::bad_check},
+                       {"MGS2-ABCDE-12345-FGHJK-67890-1A@76561198011111112", code::Status::bad_check},
+                       {"MGS2-ABCDE-12345-FGHJK-67890-1A@076561198011111111", code::Status::bad_steamid},
+                       {"MGS2-ABCDE-12345-FGHJK-67890-1A@103582791429521408", code::Status::bad_steamid},
+                       {"MGS2-ABCDE-12345-FGHJK-67890-1A@76561197960265728", code::Status::bad_steamid}};
     for (const auto& b : bad) Check(code::Parse(b.text, std::strlen(b.text), c) == b.status && c.host == 0 && c.secret[0] == 0, b.text);
     // The invite / 337 connect string.
     char secret[link::kSecretChars];
     std::memcpy(secret, "ABCDE12345FGHJK67890", 20);
     char invite[code::kInviteBuffer]{};
-    Check(code::FormatInvite(secret, 76561198058195100ull, invite, sizeof(invite)) &&
-              std::strcmp(invite, "+mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-6Z@76561198058195100") == 0,
+    Check(code::FormatInvite(secret, 76561198011111111ull, invite, sizeof(invite)) &&
+              std::strcmp(invite, "+mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-1A@76561198011111111") == 0,
           "invite string");
     sn::JoinRequested req{};
-    req.friend_id = 76561198058195100ull;
+    req.friend_id = 76561198011111111ull;
     std::snprintf(req.connect, sizeof(req.connect), "%s", invite);
     Check(code::ParseJoinRequest(req.friend_id, req.connect, sizeof(req.connect), c).status == code::JoinStatus::ok && c.host == req.friend_id,
           "337 accepted");
@@ -673,7 +673,7 @@ void TestJoinCodes() {
     Check(code::ParseJoinRequest(req.friend_id, req.connect, sizeof(req.connect), c).status == code::JoinStatus::not_mgscoop, "337 other prefix");
     std::snprintf(req.connect, sizeof(req.connect), "%s extra", invite);
     Check(code::ParseJoinRequest(req.friend_id, req.connect, sizeof(req.connect), c).status == code::JoinStatus::extra_text, "337 trailing text");
-    std::snprintf(req.connect, sizeof(req.connect), "+mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-6Y@76561198058195100");
+    std::snprintf(req.connect, sizeof(req.connect), "+mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-1B@76561198011111111");
     const auto wrong = code::ParseJoinRequest(req.friend_id, req.connect, sizeof(req.connect), c);
     Check(wrong.status == code::JoinStatus::code && wrong.code == code::Status::bad_check &&
               std::strcmp(code::JoinReason(wrong), "bad_check") == 0,
@@ -686,17 +686,17 @@ void TestJoinCodes() {
     // S3 extractor (not wired until S3 is approved).
     code::Status cs{};
     Check(code::ExtractCommandLineJoin(L"mgsvtpp.exe -foo", c, cs) == code::CommandLineStatus::none, "S3 none");
-    Check(code::ExtractCommandLineJoin(L"\"D:\\g\\mgsvtpp.exe\" +mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-6Z@76561198058195100", c, cs) ==
-                  code::CommandLineStatus::ok && c.host == 76561198058195100ull,
+    Check(code::ExtractCommandLineJoin(L"\"D:\\g\\mgsvtpp.exe\" +mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-1A@76561198011111111", c, cs) ==
+                  code::CommandLineStatus::ok && c.host == 76561198011111111ull,
           "S3 ok");
     Check(code::ExtractCommandLineJoin(L"x +mgscoop_join A +mgscoop_join B", c, cs) == code::CommandLineStatus::multiple, "S3 multiple");
     Check(code::ExtractCommandLineJoin(L"x +mgscoop_join", c, cs) == code::CommandLineStatus::missing_code, "S3 missing code");
-    Check(code::ExtractCommandLineJoin(L"x +mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-6Y@76561198058195100", c, cs) ==
+    Check(code::ExtractCommandLineJoin(L"x +mgscoop_join MGS2-ABCDE-12345-FGHJK-67890-1B@76561198011111111", c, cs) ==
                   code::CommandLineStatus::bad_code && cs == code::Status::bad_check,
           "S3 bad code");
     char peer[24]{};
-    code::FormatPeer(76561198058195100ull, peer);
-    Check(std::strcmp(peer, "steam:...5100") == 0, "masked peer");
+    code::FormatPeer(76561198011111111ull, peer);
+    Check(std::strcmp(peer, "steam:...1111") == 0, "masked peer");
     code::FormatPeer(0, peer);
     Check(std::strcmp(peer, "steam:none") == 0, "masked none");
 }

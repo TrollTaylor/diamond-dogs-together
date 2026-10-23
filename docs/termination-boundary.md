@@ -12,4 +12,4 @@ No new engine addresses or native game calls were introduced. Original terminati
 
 Compilation succeeded using `tools/build.ps1 -Configuration Release -BuildOnly`. No tests, Lua/source-transform execution, game or VM launches occurred; installed 0.10.5 remains unchanged. Source inspection and compilation do not verify in-game event delivery, late teardown, disconnect or shutdown.
 
-[Prepared build and source hashes](evidence/termination-boundary-prepared-2026-09-10.json), [session cleanup implementation](session-lifecycle.md).
+[Prepared build and source hashes](https://github.com/TrollTaylor/diamond-dogs-together/blob/archive/research-2026-10-23/docs/evidence/termination-boundary-prepared-2026-09-10.json), [session cleanup implementation](session-lifecycle.md).

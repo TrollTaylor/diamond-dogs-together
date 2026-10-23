@@ -10,7 +10,7 @@ Status (2026-10-16): **on by default with the native gun profile in lab and play
 (2026-10-15): **implemented, default off.** Hidden run `aaa2a0e0` passed (the host body
 natively threw grenade 354 and magazine 349 on the guest screen; all 229 owner-1 thrown requests
 dropped, none passed; the guest's stock unchanged); the review findings in
-`docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md` are fixed below ("Fixes after
+`archive/research-2026-10-23:docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md` are fixed below ("Fixes after
 review-1ca3ce6"). No release package or installation. Earlier blocked attempts below are historical.
 
 ## v1 design and admission
@@ -309,7 +309,7 @@ scenario or build changed. Static results from before the stop (not yet pinned):
 ## REA/Ghidra audit (2026-10-15, user-suggested route): the scope that is safe to build
 
 At the user's suggestion the remaining static analysis was done with the REA CLI over Ghidra 12.1.3 (read-only,
-per-function decompilation; no custom scanners). Full notes: `docs/evidence/rea-throws-2026-10-15/{throw,place,equip}-audit.md`.
+per-function decompilation; no custom scanners). Full notes: `archive/research-2026-10-23:docs/evidence/rea-throws-2026-10-15/{throw,place,equip}-audit.md`.
 No safety classifier stopped these runs.
 
 - **Throw family (modes 28..42; table initializer `0x1420252F0`: 28/29 = `0x1089190` hold hub, 30/31 = `0x1087FC0`,
@@ -344,7 +344,7 @@ No safety classifier stopped these runs.
 
 ## Fixes after review-1ca3ce6 (Claude, 2026-10-15)
 
-Findings: `docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md` (two reviewer lenses, eight
+Findings: `archive/research-2026-10-23:docs/evidence/rea-throws-2026-10-15/review-1ca3ce6.md` (two reviewer lenses, eight
 gameplay findings and two native ones; the native lens confirmed the stub bytes, registers, flags,
 publication, the thrown filter, the equip preconditions and the pins).
 
@@ -368,7 +368,7 @@ grenade throw, after the magazine throw and after the viewer-arc phase. Guest lo
 `throw_release`, every `stock_check; ...; changed=0` (three episodes), thrown filter
 `dropped=317; preview_dropped=314; passed=80` (the 80 forwarded requests are the guest's own arc previews
 while it aimed its own grenade), guard `hits=2040` across `windows=6920`. Idle refusals logged 6 lines
-instead of the earlier ~70. Frames (contact sheet `C:/Users/taylo/AppData/Local/Temp/mgs-caps/support2/sheet.png`):
+instead of the earlier ~70. Frames (contact sheet `%TEMP%/mgs-caps/support2/sheet.png`):
 the host body's grenade and magazine throws (wind-up, release, follow-through) and the guest holding its
 own HAND GRENADE (12) with its arc while the partner throws beside it.
 

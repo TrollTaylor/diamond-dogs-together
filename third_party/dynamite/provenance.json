@@ -3,10 +3,8 @@
   "commit": "c90f252f8200765f66c005d6bf4357fda0c0d98e",
   "author": "unknown321",
   "license": "GPLv3 with Commons Clause v1.0",
-  "incorporation": "Unmodified reference files for offline compatibility audit; excluded from native build",
+  "incorporation": "Unmodified reference files for offline compatibility audit; excluded from native build. The reference/ copies were removed on 2026-10-23 (tag archive/research-2026-10-23); LICENSE stays.",
   "files_sha256": {
-    "LICENSE": "8b3355b4c0c73fdaf6acfb641946dc8ffc9fc5972d0d34af03e8d19c2431f5cc",
-    "reference/dynamitePatches.cpp": "7246f3383f5722a9a6fd271d77a9d07a1df157621ed0ec4d40ffb0e81c13d7b8",
-    "reference/mgsvtpp_addresses_1_0_15_3_en.h": "5d343b0c167f381ea8119ecedcca4fc50ae3444e066617edae163533a1655dca"
+    "LICENSE": "8b3355b4c0c73fdaf6acfb641946dc8ffc9fc5972d0d34af03e8d19c2431f5cc"
   }
 }

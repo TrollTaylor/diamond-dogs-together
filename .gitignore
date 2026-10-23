@@ -14,7 +14,8 @@ __pycache__/
 /.env.*
 
 # Local game installs, activation, saves and transient runtime logs.
-# These rules are root-only; intentional tests/fixtures and docs/evidence remain tracked.
+# These rules are root-only; intentional tests/fixtures remain tracked.
+# docs/evidence/.gitignore keeps regenerated contract reports local.
 /mgs-coop/
 /saves/
 /saves_host/

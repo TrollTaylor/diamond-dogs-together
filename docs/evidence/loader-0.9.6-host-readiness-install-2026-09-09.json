@@ -1,9 +1,0 @@
-{
-  "product": "mgs-coop-original-loader-probe",
-  "version": "0.9.6",
-  "game_directory": "D:\\Games\\steamapps\\common\\MGS_TPP",
-  "dll_sha256": "E7EDC9A04B544607510F547759D9F5008A2E494344DCCA6438AD44279A66507B",
-  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
-  "installed_utc": "2026-09-09T22:42:56.8554820Z",
-  "scope": "Diagnostics, gated Steam imports, exact-source Lua experiments and bounded mission tracing; native host creation disabled; no playable co-op"
-}

@@ -419,7 +419,7 @@ void RetryStance(StanceDebounce& state, std::uint64_t now_ms, std::uint32_t retr
 
 // The locomotion ids written to *(Q+0x18)[1] (aset=q): 1..6, the whole domain
 // observed live for the local slot (stand/crouch/prone x idle/moving,
-// docs/anim-appearance-findings-2026-10-04.md). Other action ids (CQC, climb,
+// archive/research-2026-10-23:docs/anim-appearance-findings-2026-10-04.md). Other action ids (CQC, climb,
 // 0x79 special-cased by the PlayerInfo builder 0x12CE870, ...) are never
 // copied onto the partner.
 inline constexpr std::uint16_t locomotion_act_min = 1;
