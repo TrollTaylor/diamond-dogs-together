@@ -62,7 +62,8 @@
 # legs stay in place), gest-pickup-end, gest-pickup-squat, gest-pickup-moving, burst gest-knock and gest-knock-end
 # (body 1's knock, its right arm raised to knock), burst gest-sign / gest-sign-end (hand sign Go: an arm forward), burst
 # gest-sign-stop / gest-sign-stop-end (hand sign Stop: a raised flat hand), burst gest-knock-squat (the crouched knock),
-# gest-end; host captures callmenu-open (the stock call menu, census only). If the frames show nothing on body 1 while
+# gest-end; host captures callmenu-open, callmenu-select1, callmenu-decide-e (the stock call menu and a keyboard
+# selection attempt, census only). If the frames show nothing on body 1 while
 # the guest logs submit + applied ok=1, that is L8 (graph-2
 # nodes invisible on body 1, MotionVars): say so and try the rate-record writes of re-traverse-gesture.md 5.3
 # "Optional" in the lab.
@@ -181,12 +182,31 @@ stance host stand
 # The lever is lab-only and keyed per copy: the guest's key is off, so its command refuses and nothing runs there.
 guest run gesture_lever knock
 guest expect ^gesture_lever=refused;reason=key_off;kind=knock;
-# Census only (not a gate): hold CALL on the host and capture the stock call menu it opens; the release closes it.
-# A partner_gesture=local; kind=knock line here WITHOUT a lever line before it would be the stock route itself.
-host hold q 1200 nowait
-wait 800
+# Census only (not a gate; docs/native-puppet.md "Gestures": the call menu is only partly mapped). Hold CALL on the
+# host (renewed: each key keeps its own release time, so Q stays down), film the menu it opens, press 1 (the UI's
+# record number 1: CallMenuImpl::UpdateSelectKeyboard selects the enabled record numbered 1..8 through eight hashed
+# key inputs that were not resolved to keys) and then E (a decide candidate; the decide input is PP vt+0x40 bit 24 or
+# the hashed input 0x7f4d42602d29, not resolved) while CALL is still down, then let go (a release without a decision
+# hides the menu with no command). A host partner_gesture=local; kind=knock line here WITHOUT a partner_gesture=lever
+# line before it would be the stock keyboard route: write down which press raised it. E may instead pet D-Dog (act 94)
+# and 1 may change the weapon: record them, neither is a failure.
+# Q is renewed before every capture and press (a capture can take longer than the 700 ms left of a hold; a renewed key
+# stays down without a new edge), and each press waits 200 ms after the renewal so a menu that closed opens again.
+host hold q 1500 nowait
+wait 700
+host hold q 1500 nowait
 host capture callmenu-open
-wait 2000
+host hold q 1500 nowait
+wait 200
+host press 1
+wait 300
+host capture callmenu-select1
+host hold q 1500 nowait
+wait 200
+host press e
+wait 300
+host capture callmenu-decide-e
+wait 2500
 resetpose host
 both capture gest-end
 state

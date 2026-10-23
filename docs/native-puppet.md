@@ -902,7 +902,9 @@ hand-sign nodes; the receiver itself is unchanged (`partner_native_gesture`).
 **How the local player triggers them (read-only research, mgsvtpp.exe
 1.0.15.4).** Neither is an action-icon press, so no key of the padop key-type
 table `0x22E86A8` (key type 0..9 -> pad bit 5, 6, 15, 3, 1, 11, 10, 2, 18, 7:
-ACTION, RELOAD, CQC, HOLD, STANCE, bit 11, SUBJECT, DASH, EVADE, STOCK)
+ACTION, RELOAD, CQC, HOLD, STANCE, UP, SUBJECT, DASH, EVADE, STOCK; the
+names are the `PlayerPad` Lua constants the binder `0x1409D3A90` registers,
+bit 11 = 0x800 = `UP`)
 starts them. `KnockActionPluginImpl`'s only icon query is its
 `ExecActionButtonFunction` `0x1411E44B0` (key type 0 = ACTION, result type
 0x70), and that is the high-grass crawl (state 8 `StateHighComoCrawl`: crawl,
@@ -933,12 +935,26 @@ and the request functions have no direct caller):
   (`CallMenuManagerImpl::UpdatePadState` `0x14110FEF0`: PP vt+0x90(9, 12) == 3;
   a tap, 2, is the buddy call / whistle `CallBuzzer`) shows the call menu.
   Command set 0 is the knock (`UpdateCommandSetKnock` `0x14110F8D0`, enabled
-  while act 1..20 or 31..37, `Q+0x20 == 0`, `Q+0x28 == 0` and the speed not
-  2..3), whose callback `0x14110CCE0` calls vt+0x28 with the menu owner's id.
+  while (act 1..20 or 31..37, or PS rec+8 bit 17) and `Q+0x20 == 0`,
+  `Q+0x28 == 0` and the speed not 2..3), whose callback `0x14110CCE0` calls
+  vt+0x28 with the menu owner's id. The lever's precondition leaves out the
+  rec+8 bit 17 alternative (stricter than stock; the log prints `rec8=`).
   The cursor and the decision live in the UI (`tpp::ui::hud::impl::CallMenuImpl`,
   `CallMenuManagerImpl::UpdateSelectState` `0x141110060`: select state 2 is set
-  0, 4..7 the buddy set's slots, 8..11 the interrogation set) and were not
-  mapped to keys.
+  0, 4..7 the buddy set's slots, 8..11 the interrogation set). Partly mapped
+  (read-only, unproven): `CallMenuImpl::UpdateSelectKeyboard` `0x14179CE60`
+  selects the enabled record numbered 1..8 (the UI numbers the enabled records
+  in order) through eight hashed key inputs (`0x91F6665C2DED`,
+  `0x250FB37769C5`, ...; not resolved to keyboard keys), steps with the mouse
+  wheel and picks by the mouse direction; `UpdateSelectCursor` `0x14179C430`
+  picks by a stick direction. `CallMenuManagerImpl::Update` (the caller of
+  `UpdateSelectState`) executes the selection through `HideCallMenu(1)` only
+  when the manager's pad state has bit 0x10 (PP vt+0x40 bit 24, or the hashed
+  input `0x7F4D42602D29`; `UpdatePadState`) while the UI reports state 1;
+  releasing CALL without it hides the menu with 0 (no command). Bit 24 is not
+  a `PlayerPad` constant (they end at 0x400000) and the decide key was not
+  resolved, so the scenario films the open menu and tries `1` then `E` as a
+  census only.
 - **Hand signs: buddy commands and the child-soldier orders.**
   `ExecCommandSendCommandToBuddy` `0x14110CF10`: buddy command 4 (Quiet "Cover
   me") or 0x13 (D-Horse "Do it") -> vt+0x30 Go, 5 (Quiet "Cease cover") ->
@@ -990,10 +1006,15 @@ knock`, `sign_go`, `sign_stop` and a crouched `knock`; the prone guest bursts
 the host's `lever; result=requested` and `local; kind=knock; upper=0x17` /
 `sign_go; upper=0x18` / `sign_stop; upper=0x19`, the guest's `rx`, `submit;
 ...; exist=1; kind=..; method=reserve`, `applied` and `ended`; the guest's own
-`gesture_lever knock` must refuse with `key_off`; a host CALL hold captures the
-stock call menu (`callmenu-open`, census only). Not run yet (no game launches
-in this phase): the lever, the knock / sign nodes on body 1 and their frames
-are all unproven.
+`gesture_lever knock` must refuse with `key_off`; then a census of the stock
+route (no gate): the host holds CALL (Q, renewed before every step so it
+stays down without a new edge),
+the menu is filmed (`callmenu-open`), `1` is pressed (`callmenu-select1`) and
+then `E` (`callmenu-decide-e`) while CALL is still held. A host
+`partner_gesture=local; kind=knock` there without a `partner_gesture=lever`
+line before it would be the stock keyboard route; `E` may instead pet D-Dog
+(act 94). Not run yet (no game launches in this phase): the lever, the knock /
+sign nodes on body 1 and their frames are all unproven.
 
 ## Mounts
 
