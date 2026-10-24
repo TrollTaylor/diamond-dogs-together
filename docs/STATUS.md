@@ -1,4 +1,6 @@
-## October 23, 2026: enemy synchronization (wake-up `RecoveryLife`, `Holdup`, `VANISHED`, guest `REQ_PHASE` discovery soldier, continuous authored-soldier patrol & combat position/yaw sync)
+## October 24, 2026: 0.14.1 (enemy synchronization: patrol & combat position/yaw sync, combat discovery, wake-up `RecoveryLife`, `Holdup`, `VANISHED`; fast developer test loop & test boot)
+
+**Package (2026-10-24):** `dist/DiamondDogsTogether-0.14.1-20261024T111637Z-d9c55bc7/DiamondDogsTogether-0.14.1.zip` (10,035,245 bytes), SHA-256 `D2D9B2BEB086861E6B5F9E69B471D4227D156E1143A0607E3CD2C507CFE63FC9`, built by `tools/package.ps1 -Friend` from the clean tree at `92597e2` with Release receipt `20261024-111304-add17cb82ad240ca9ee8cd4bae4f7b09` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `81A1192BF216CE7EB557A3646F0571C4D64D2618C82582B2B1A2F7AA0368366D` and `dinput8.dll` `6607917C716F471635217DBD6A512C9B1BC8E321165FA3D31DBF2708D6BD6AA8`, both build id `0.14.1+92597e2`.
 
 Branch `dev/oct7-continue`. Extends world sync (`lua/coop/world_enemy.lua`, `lua/coop/world_outcome.lua`, `lua/coop/world_phase.lua`, `lua/coop/world_place.lua`, `lua/coop/world_place_guest.lua`) so authored enemies stay synchronized in life/action state, AI discovery/combat state, and continuous patrol/combat position and facing (`yaw`).
 
