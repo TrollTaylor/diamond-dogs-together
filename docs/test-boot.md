@@ -48,7 +48,7 @@ Every step is the game's own code, found in its init and title scripts
 | --- | --- | --- |
 | Logos | `init_sequence.StartPreTitleSequence` runs with `TppSave.IsNewGame()` answering true for that one call: the game's own new-game branch deletes the Konami/KJP/Fox splash screens and starts the pre-title at once | `lab_boot=fast; step=logos` |
 | Copyright | the engine's `cesa` splash, which `Seq_Demo_WaitCopyRightLogo` waits on, is deleted | `step=copyright` |
-| Offline notice | popups the init (`Seq_Demo_LogInKonamiServer`, `Seq_Demo_ShowDlcErrorNetwork`) and title (`Seq_Game_PushStart`) sequences only wait on are erased (`TppUiCommand.ErasePopup`); a stuck DLC announce moves on as its own message would | `step=popup; seq=...` |
+| Offline / autosave notice | popups the init (`Seq_Demo_ConfirmAutoSave`, `Seq_Demo_LogInKonamiServer`, `Seq_Demo_ShowDlcErrorNetwork`) and title (`Seq_Game_PushStart`) sequences only wait on are erased (`TppUiCommand.ErasePopup`); a stuck DLC announce moves on as its own message would | `step=popup; seq=...` |
 | Press start | `title_sequence.StartPressStartMenu` (called by `OnEndShowSplashScreen`) is replaced: the menu stays hidden (`mvars.title_hideTitleMenuOnInitialize`) and the title goes to `Seq_Game_PushStart` as its PressStart message does | `step=press_start` |
 | Title menu | the menu's own `OnSelectContinue` (fast boot) or `OnSelectRestartHeli` (a boot target: the ACC without a load), every 3 s while the menu stays (world_handoff's wrappers still decide for the guest) | `step=continue` / `step=restart_heli` |
 | Loading tips | boot loads pass `waitOnLoadingTipsEnd=false` to `TppMission.Load` (no key at the end of a load) | `step=load` |
@@ -94,6 +94,16 @@ the gameplay line, every boot step with its game-clock ms, the position) and
 Scenarios: `scenarios/boot-baseline.txt` (plain title + waitgameplay) and
 `scenarios/boot-30020.txt` (the boot to a fixed spot, captures of both).
 
+### Timed hidden-worker proof
+
+| Run | Scenario | Seed | Target | Game clock (`ms=`) | Wall time from launch | Outcome |
+| --- | --- | --- | --- | --- | --- | --- |
+| `634e5f77` | `boot-baseline.txt` (`-GraphicsQuality preserve`) | `lab` | `30010` (Continue) | — | host `57.2 s`, guest `54.3 s` | Normal Enter-driven title + Continue into Afghanistan (`1448.61, 337.79, 1466.40`). |
+| `0e20af9c` | `boot-30020.txt` (`-GraphicsQuality low`) | `lab` | `30020 -510.73 5.09 1183.02 0 time=12:00 weather=sunny` | host `28.88 s`, guest `29.43 s` | host `45.4 s`, guest `45.3 s` | Zero input; skipped logos, autosave/offline popups and Press Start, took `RestartHeli` (`40010`), sortied to Africa (`30020`) via `world_follow` (`kind=6`) and landed at Masa Village (`err_m=0.00` on both copies, 12:00 sunny; `host-boot-spot.bmp` / `guest-boot-spot.bmp` show both players face-to-face with the `Taylor` nametag). |
+| `3e5e8243` | `boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny` | `quiet-recruited` | `30050` command deck ladder | host `31.30 s`, guest `31.58 s` | host `42.4 s`, guest `42.9 s` | Skipped the Mother Base arrival demo (`step=mb_demo`) and landed at the red container ladder (`22.61, 0.80, -15.55`, `err_m=0.00`) without the previous 60 s post-gameplay wait. |
+| `8d91d358` | `boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny` | `lab` | `30020` Masa Village jeep | host `28.91 s`, guest `29.51 s` | host `47.9 s`, guest `47.6 s` | Landed beside the authored jeep (`-656.01, 1.20, 877.73`, `err_m=0.00`). |
+| `c2ecccb9` | `boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny` | `lab` | `30010` step-on rock shelf | host `28.70 s`, guest `28.88 s` | host `44.8 s`, guest `42.0 s` | Landed at the Afghanistan rock shelf (`828.18, 337.20, 1630.51`, `err_m=0.00`). |
+
 ### Light test copies
 
 In lab mode `-GraphicsQuality` now defaults to `low` (six Low, SSAO Off,
@@ -128,15 +138,14 @@ manifest (before the probe and again at the copy) and records
 Seed names: 2..32 of `[a-z0-9-]` starting with a letter, never `real`, `lab`,
 `run`, `both` or `real-remote`.
 
-Seeds to create (each from a run that ends where the seed should start; the
-game saves at a checkpoint, so let the run reach one before it closes):
+Seeds created in `D:\mgs-coop-seeds` (each captured with `Save-WorkerSeed.ps1` from a closed worker run whose mission-start checkpoint save was written at the target spot):
 
-| Name | Content | How |
+| Name | Content | Source run |
 | --- | --- | --- |
-| `mb-ladder` | Mother Base, command deck by the red container ladder (x 22.6, z -15) | `-SaveSeed real` run of `partner-traverse-ladder-mb.txt`, or a boot `30050 22.61 1.80 -15.55 0` run |
-| `africa-jeep` | 30020 next to a jeep (the seat / passenger scenarios) | a `boot 30020 ...` run beside a vehicle, then `debug goto_vehicle` |
-| `afgh-ledge` | 30010 at the ledge of `body-safety-ledge.txt` | that scenario's spot, saved from the lab seed |
-| `quiet-recruited` | a save with Quiet on the team (the story character) | from a real save that has her, copied by a `-SaveSeed real` run |
+| `mb-ladder` | Mother Base `30050`, command deck by the red container ladder (`22.61, 0.80, -15.55 yaw 0`) | `3e5e82436ab34cf18e60a4b9a0ed20f0` (`boot 30050 22.61 1.80 -15.55 0` from `quiet-recruited`) |
+| `africa-jeep` | Africa `30020` next to the Masa Village jeep (`-656.01, 1.20, 877.73 yaw 62`) | `8d91d358a91f4fcf92a1032e2a27e418` (`boot 30020 -656.01 1.20 877.73 62`) |
+| `afgh-ledge` | Afghanistan `30010` at the rock shelf / step-on ledge (`828.18, 337.20, 1630.51 yaw 95`) | `c2ecccb9756644bebaa3fe843694fc95` (`boot 30010 828.18 338.20 1630.51 95`) |
+| `quiet-recruited` | Real save seed with Quiet on the team (`30050`, story character) | `6c755769e4894693b757abf210fed1ef` (`-SaveSeed real`) |
 
 ## Game inputs
 

@@ -76,8 +76,10 @@ c.seq = "Seq_Demo_WaitCopyRightLogo"; c.splash.cesa = 7
 c.frame()
 check(has(c.calls, "^delete:7$") and has(c.logs, "^fast;step=copyright") and has(c.logs, "^trace;step=seq;ms=%d+;mission=1;title=0;name=Seq_Demo_WaitCopyRightLogo$"),
  "the copyright splash is deleted and the sequence traced")
+c.seq = "Seq_Demo_ConfirmAutoSave"; c.popup = true; c.frame()
+check(count(c.calls, "^erase$") == 1 and count(c.logs, "^fast;step=popup;.*seq=Seq_Demo_ConfirmAutoSave") == 1, "the autosave notice is closed")
 c.seq = "Seq_Demo_LogInKonamiServer"; c.popup = true; c.frame(); c.popup = true; c.frame()
-check(count(c.calls, "^erase$") == 2 and count(c.logs, "^fast;step=popup;.*seq=Seq_Demo_LogInKonamiServer") == 1, "the offline login notice is closed (logged once)")
+check(count(c.calls, "^erase$") == 3 and count(c.logs, "^fast;step=popup;.*seq=Seq_Demo_LogInKonamiServer") == 1, "the offline login notice is closed (logged once per sequence)")
 c.sequence.StartPreTitleSequence()
 check(seen == true and c.env.TppSave.IsNewGame() == false and has(c.logs, "^fast;step=logos;.*skipped=1"), "the logos take the game's new-game branch")
 -- Title.

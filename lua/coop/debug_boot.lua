@@ -180,7 +180,7 @@ do
   pcall(B.wrapInit, B.initSeq or init_sequence)
   local ok, cesa = try(SplashScreen, "GetSplashScreenWithName", "cesa")
   if ok and cesa then try(SplashScreen, "Delete", cesa); log("fast", "copyright") end
-  if (seq == "Seq_Demo_LogInKonamiServer" or seq == "Seq_Demo_ShowDlcErrorNetwork") and yes(TppUiCommand, "IsShowPopup") then
+  if (seq == "Seq_Demo_ConfirmAutoSave" or seq == "Seq_Demo_LogInKonamiServer" or seq == "Seq_Demo_ShowDlcErrorNetwork") and yes(TppUiCommand, "IsShowPopup") then
    try(TppUiCommand, "ErasePopup")
    if not B.erased then B.erased = true; log("fast", "popup", "seq=" .. seq) end
   elseif seq == "Seq_Demo_ShowDlcAnnouncePopup" and now - B.seqAt >= 1000 and not B.erased then
@@ -259,7 +259,7 @@ do
   if not boot(c) then return end
   local m, seq, now = get(vars, "missionCode") or 0, seqName(), B.ms()
   if seq ~= B.seq or m ~= B.mission then
-   B.seq, B.mission, B.seqAt = seq, m, now
+   B.seq, B.mission, B.seqAt, B.erased = seq, m, now, nil
    log("trace", "seq", fmt("mission=%d;title=%d;name=%s", m, title() and 1 or 0, seq))
   end
   if m == 1 then return B.init(c, seq, now) end
