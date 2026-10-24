@@ -73,8 +73,9 @@ No arbitrary Lua evaluation or shell-execution endpoint belongs in the bridge.
 
 The existing `debug_overlay_tests` creates an unshown DX11 window and can be
 part of the audited fixture stage. This does not establish private-desktop
-MGSV compatibility. Current CTest registrations have no labels/resource locks;
-keep their fixture dependencies when selecting tests.
+MGSV compatibility. CTest registrations carry a `fast` or `slow` label and a
+few RESOURCE_LOCKs (`cmake/test_labels.cmake`); keep their fixture
+dependencies when selecting tests.
 
 Before enabling retail-game scenarios, qualify a bounded private-desktop DX11
 fixture, process/window ownership and unchanged visible input desktop. Then

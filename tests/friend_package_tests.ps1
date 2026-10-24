@@ -74,11 +74,26 @@ function Invoke-IniCheck([string]$Mode, [string]$Value) {
     foreach ($line in $output) { $i = $line.IndexOf('='); if ($i -gt 0) { $map[$line.Substring(0, $i)] = $line.Substring($i + 1) } }
     return $map
 }
+# tools/package-install.ps1 refuses at once while another installer holds Local\MgsCoopPackageInstall.
+# CTest runs this suite next to lab_scripts_tests (and the suites of other checkouts), so the
+# parts that install take turns through one machine-wide test mutex; an exited holder abandons it.
+function Enter-TestInstallTurn {
+    $mutex = [Threading.Mutex]::new($false, 'Local\mgs-coop-test-package-install')
+    $owned = $false
+    try { $owned = $mutex.WaitOne([TimeSpan]::FromMinutes(10)) } catch [Threading.AbandonedMutexException] { $owned = $true }
+    if (!$owned) { $mutex.Dispose(); throw 'Another test suite kept the package-install turn for 10 minutes.' }
+    return $mutex
+}
+function Exit-TestInstallTurn($Mutex) { if ($Mutex) { $Mutex.ReleaseMutex(); $Mutex.Dispose() } }
 function Invoke-Friend([string]$Script, [string[]]$Arguments, [string]$HostExe = $winPs) {
     # Child process, like the .bat files; output flattened for message checks.
+    # The child scripts install (package-install.ps1, Start-LocalCoop.ps1): one install turn each.
     foreach ($a in $Arguments) { if ($a -and [IO.Path]::IsPathRooted($a) -and $a -notmatch '^[0-9]') { Assert-InFixture $a } }
-    $raw = & $HostExe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File $Script @Arguments 2>&1 | Out-String
-    $code = $LASTEXITCODE
+    $turn = Enter-TestInstallTurn
+    try {
+        $raw = & $HostExe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File $Script @Arguments 2>&1 | Out-String
+        $code = $LASTEXITCODE
+    } finally { Exit-TestInstallTurn $turn }
     # Windows PowerShell 5.1 wraps error records at the console width, even
     # inside words: messages are compared with all whitespace removed.
     return [pscustomobject]@{ Exit = $code; Raw = $raw; Text = ($raw -replace '\s', '') }
@@ -1811,7 +1826,10 @@ try {
         Assert-Equal (Get-TreeHashes $localHostSaves) $savedLocalHost 'repeat local test retains the host local progress'
         Assert-Equal (Get-TreeHashes $localGuestSaves) $savedLocalGuest 'repeat local test retains the guest local progress'
         # The repository's Play-Offline-Coop.bat is the developer entry point (all arguments pass through).
-        $batOut = '' | & cmd.exe /c (Join-Path $projectRoot 'Play-Offline-Coop.bat') -GameDirectory $localHost -GuestDirectory $localGuest -PackageDirectory $devPkg -NonInteractive 2>&1 | Out-String
+        $turn = Enter-TestInstallTurn
+        try {
+            $batOut = '' | & cmd.exe /c (Join-Path $projectRoot 'Play-Offline-Coop.bat') -GameDirectory $localHost -GuestDirectory $localGuest -PackageDirectory $devPkg -NonInteractive 2>&1 | Out-String
+        } finally { Exit-TestInstallTurn $turn }
         Assert-True ($LASTEXITCODE -eq 0 -and $batOut.Contains('TEST: local two-window activation checked; no games launched.')) "Play-Offline-Coop.bat runs the developer local test: $batOut"
         $localJournals = @(Get-ChildItem -LiteralPath (Join-Path $lhp.Mod 'local-test-runs') -Directory)
         Assert-Equal $localJournals.Count 3 'each local test run journals its own session'

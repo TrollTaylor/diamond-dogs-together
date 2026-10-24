@@ -404,7 +404,15 @@ function Get-GameProcessInDirectory {
     # mgsvtpp/mgsvmgo processes started from $Directory (by executable path).
     param([Parameter(Mandatory)][string]$Directory)
     $rows = foreach ($p in @(Get-Process -Name mgsvtpp, mgsvmgo -ErrorAction SilentlyContinue)) {
-        [pscustomobject]@{ Id = $p.Id; Path = (Get-ProcessPathSafe $p) }
+        $path = Get-ProcessPathSafe $p
+        if (!$path) {
+            # A process that exited after the enumeration (another copy's game that just
+            # quit, a test stand-in) has no folder; any other unknown path still matches.
+            $exited = $false
+            try { $exited = $p.HasExited } catch { $exited = $false }
+            if ($exited) { continue }
+        }
+        [pscustomobject]@{ Id = $p.Id; Path = $path }
     }
     return Select-ProcessInDirectory -Processes @($rows) -Directory $Directory
 }

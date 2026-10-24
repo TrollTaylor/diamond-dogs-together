@@ -24,7 +24,9 @@ foreach($process in @(Get-Process -Name mgsvtpp,mgsvmgo -ErrorAction SilentlyCon
     $path=$null
     try { $path=$process.Path } catch { $path=$null }
     if(!$path) { try { $path=(Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)" -ErrorAction Stop).ExecutablePath } catch { $path=$null } }
-    # An unknown location is treated as this folder.
+    # A process that exited after the enumeration has no folder; any other unknown
+    # location is treated as this folder.
+    if(!$path) { $exited=$false; try { $exited=$process.HasExited } catch { $exited=$false }; if($exited) { continue } }
     if(!$path -or (Split-Path -Parent ([IO.Path]::GetFullPath($path))).TrimEnd('\','/').Equals($gameRoot,[StringComparison]::OrdinalIgnoreCase)) {
         throw 'Close MGSV running from this folder normally before changing the session mode.'
     }

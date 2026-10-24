@@ -20,6 +20,7 @@
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/udp_transport.hpp"
 #include "partner_player_contract.hpp"
+#include "test_port_lock.hpp"
 
 namespace {
 namespace pp = mgscoop::partner_player;
@@ -565,6 +566,8 @@ void NetTests() {
 } // namespace
 
 int main() {
+    // Ports 48190/48191 (tests/test_port_lock.hpp).
+    const mgscoop::test::MachinePortLock port_lock(L"Local\\mgs-coop-test-ports-partner_player_tests", 48190, 48191);
     World w;
     pp::State s{};
 

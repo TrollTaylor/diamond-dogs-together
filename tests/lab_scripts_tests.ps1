@@ -31,6 +31,21 @@ function Assert-Throws([scriptblock]$Operation, [string]$Expected, [string]$Mess
     if (!$failure) { throw "Assertion failed: expected failure: $Message" }
     if ($Expected -and !$failure.Exception.Message.Contains($Expected)) { throw "Assertion failed: $Message (unexpected error: $($failure.Exception.Message))" }
 }
+# tools/package-install.ps1 refuses at once while another installer holds Local\MgsCoopPackageInstall.
+# CTest runs this suite next to friend_package_tests (and the suites of other checkouts), so the
+# parts that install take turns through one machine-wide test mutex; an exited holder abandons it.
+function Enter-TestInstallTurn {
+    $mutex = [Threading.Mutex]::new($false, 'Local\mgs-coop-test-package-install')
+    $owned = $false
+    try { $owned = $mutex.WaitOne([TimeSpan]::FromMinutes(10)) } catch [Threading.AbandonedMutexException] { $owned = $true }
+    if (!$owned) { $mutex.Dispose(); throw 'Another test suite kept the package-install turn for 10 minutes.' }
+    return $mutex
+}
+function Exit-TestInstallTurn($Mutex) { if ($Mutex) { $Mutex.ReleaseMutex(); $Mutex.Dispose() } }
+function Use-TestInstallTurn([scriptblock]$Body) {
+    $turn = Enter-TestInstallTurn
+    try { & $Body } finally { Exit-TestInstallTurn $turn }
+}
 function Test-LabInputSpecs {
     # Pure input planning and native INPUT construction; never calls SendInput.
     $scanTable = Get-LabScanCodeTable
@@ -2026,6 +2041,7 @@ try {
     Assert-True ((Test-Path -LiteralPath $trigger) -and @(Get-ChildItem -LiteralPath $fixture -Filter 'join.trigger.*.tmp').Count -eq 0) 'trigger created atomically'
 
     # ------------------------------------------------------------ owned install into a host and a guest copy
+    $installTurn = Enter-TestInstallTurn
     $games = Join-Path $fixture 'install'
     $hostGame = Join-Path $games 'MGS_TPP'
     $null = New-Item -ItemType Directory -Path (Join-Path $hostGame 'mgs-coop') -Force
@@ -2107,6 +2123,7 @@ try {
     $null = & $installer -Action Restore -GameDirectory $hostGame
     Assert-Equal (Get-Sha256 (Join-Path $hostGame 'dinput8.dll')) (Get-Sha256 $loader1) 'host restore returns loader 1'
     Assert-Equal (Get-Sha256 (Join-Path $hostGame 'mgsvtpp.exe')) $exeHash 'executable fixture unchanged'
+    Exit-TestInstallTurn $installTurn
     # set-session-mode validates the host id before touching the folder; account 0 is refused.
     $sessionMode = Join-Path $projectRoot 'tools/set-session-mode.ps1'
     Assert-Throws { & $sessionMode -Role Join -HostSteamId '76561197960265728' -GameDirectory $hostGame } 'Supply the host player' 'set-session-mode: account 0 refused'
@@ -2289,6 +2306,7 @@ Start-Sleep -Milliseconds 500
     # -> Start refusals at the safety gate -> Disable against fixture folders.
     # lab_fake_process.exe is copied as the fixture's mgsvtpp.exe and fuse.exe; it
     # only runs inside a folder with mgs-coop\lab.ini and plays the native side.
+    # Prepare-LabInstance installs: each run takes an install turn (Use-TestInstallTurn).
     if ($FakeProcess) {
         $dry = Join-Path $fixture 'dry'
         $dryHost = Join-Path $dry 'MGS_TPP'
@@ -2358,7 +2376,7 @@ Start-Sleep -Milliseconds 500
         $env:MGS_COOP_FAKE_HOST_STEAMID = $dryHostId
         $env:MGS_COOP_FAKE_UNSAFE = ''
         try {
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1 }
             Assert-Equal $LASTEXITCODE 0 ('Prepare succeeds: ' + ($out -join ' | '))
             $hp = Get-InstancePaths -GameDirectory $dryHost
             $gp = Get-InstancePaths -GameDirectory $dryGuest
@@ -2377,7 +2395,7 @@ Start-Sleep -Milliseconds 500
             Assert-Equal (Get-Sha256 $realGraphics) $realGraphicsHash 'the (fixture) real graphics config is untouched'
             Assert-True (Test-Path -LiteralPath (Join-Path $gp.SaveDir 'remote/TPP_GAME_DATA')) 'guest remote save copy seeded'
             $backups = @(Get-ChildItem -LiteralPath (Join-Path $hp.Mod 'install-backups') -Directory).Count
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1 }
             Assert-Equal $LASTEXITCODE 0 'second Prepare succeeds'
             Assert-True (($out -join "`n").Contains('[host] loader already installed')) 'second Prepare is idempotent (loader)'
             Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $hp.Mod 'install-backups') -Directory).Count $backups 'no new install backup on a repeat'
@@ -2461,7 +2479,7 @@ Start-Sleep -Milliseconds 500
             # Offline lab mode (docs/offline-partner-spike-plan.md 2.5, 4): no fuse, closed master port,
             # offline-v1 on both folders; the safety gate is unchanged.
             $dryDead = "http://127.0.0.1:$($base + 5)/tppstm/gate"
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -PartnerSetting 'guest:net_latency_ms=100' 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -PartnerSetting 'guest:net_latency_ms=100' 2>&1 }
             Assert-Equal $LASTEXITCODE 0 ('Prepare -Offline succeeds: ' + ($out -join ' | '))
             Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))" "offline-v1`n|offline-v1`n" 'offline-v1 marker on both folders'
             $hl = ConvertFrom-IniText ([IO.File]::ReadAllText($hp.LabIni))
@@ -2507,7 +2525,7 @@ Start-Sleep -Milliseconds 500
             } finally { $listener.Stop() }
             # -Lan rehearsal (docs/two-pc-play.md): net_bind=any, the guest targets the LAN
             # address, both copies share a random link secret; Start-Lab needs -Lan for it.
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 -WanSim good 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 -WanSim good 2>&1 }
             Assert-Equal $LASTEXITCODE 0 ('Prepare -Offline -Lan -WanSim good succeeds: ' + ($out -join ' | '))
             $hostSecret = [IO.File]::ReadAllBytes($hp.LinkSecret)
             $guestSecret = [IO.File]::ReadAllBytes($gp.LinkSecret)
@@ -2528,15 +2546,15 @@ Start-Sleep -Milliseconds 500
             [IO.File]::WriteAllText($gp.LinkSecret, "SHORT`r`n")
             $out = (& $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Start-Lab.ps1') -ConfigPath $dryConfig -Offline -Lan 2>&1 | Out-String)
             Assert-True ($LASTEXITCODE -ne 0 -and $out.Contains('link-secret.txt is bad_length') -and (Test-DryProcessesGone)) 'Start-Lab -Lan refuses a damaged link secret'
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline 2>&1 }
             Assert-Equal $LASTEXITCODE 0 ('Prepare -Offline after -Lan: ' + ($out -join ' | '))
             Assert-True (!(Test-Path -LiteralPath $hp.LinkSecret) -and !(Test-Path -LiteralPath $gp.LinkSecret)) 'Prepare without -Lan deletes link-secret.txt in both copies'
             Assert-True (!(ConvertFrom-IniText ([IO.File]::ReadAllText($gp.LabIni))).Contains('net_bind')) 'Prepare without -Lan: the loopback lab.ini again'
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 2>&1 }
             Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $hp.LinkSecret) -and (Test-Path -LiteralPath $gp.LinkSecret)) ('Prepare -Lan again (for the -Disable check): exit ' + $LASTEXITCODE + ': ' + ($out -join ' | '))
 
             # -Disable after offline mode must remove the active marker, never enable legacy sessions.
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1 }
             Assert-Equal $LASTEXITCODE 0 ('Disable after the offline mode: ' + ($out -join ' | '))
             Assert-True (!(Test-Path -LiteralPath $hp.LinkSecret) -and !(Test-Path -LiteralPath $gp.LinkSecret)) '-Disable deletes the -Lan link secrets'
             Assert-True (!(Test-Path -LiteralPath $hp.Marker) -and !(Test-Path -LiteralPath $gp.Marker)) '-Disable removes both active offline markers for native pass-through'
@@ -2545,12 +2563,12 @@ Start-Sleep -Milliseconds 500
                 Assert-True ($archives.Count -eq 1 -and [IO.File]::ReadAllText($archives[0].FullName) -ceq "offline-v1`n") '-Disable archives exact offline marker bytes once'
             }
             Assert-True (($out -join ' ').Contains('normal launches use pass-through') -and !(Test-Path -LiteralPath $hp.LabIni) -and [IO.File]::ReadAllText($hp.CoopIni) -ceq $userCoop) '-Disable after offline: lab files renamed, user coop.ini restored, pass-through reported'
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1 }
             Assert-Equal $LASTEXITCODE 0 ('Prepare without -Offline switches back: ' + ($out -join ' | '))
             Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))|$((ConvertFrom-IniText ([IO.File]::ReadAllText($hp.CoopIni)))['master_url'])" "host-v3`n|client-v1`n|$dryUrl" 'back to host-v3 / client-v1 and the fuse URL'
             Assert-True (!(ConvertFrom-IniText ([IO.File]::ReadAllText($gp.LabIni))).Contains('partner')) 'the online lab.ini has no partner keys again'
 
-            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1
+            $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1 }
             Assert-Equal $LASTEXITCODE 0 'Disable succeeds'
             Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))" "host-v3`n|client-v1`n" '-Disable preserves separately selected explicit online markers'
             Assert-True ((-not (Test-Path -LiteralPath $hp.LabIni)) -and (-not (Test-Path -LiteralPath $gp.CoopIni)) -and
