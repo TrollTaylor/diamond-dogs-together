@@ -398,7 +398,7 @@ commit-limit error 1455 fail closed and do not qualify gameplay.
 
 `Invoke-WorkerScenario.ps1 -GraphicsQuality low` lowers only each freshly copied
 role's render settings (six Low, SSAO Off, filtering Medium) before the existing
-config hash pin. The default `preserve` keeps quality untouched. The pure helper
+config hash pin. Lab mode defaults to `low`; `-Mode play` defaults to `preserve` (and explicit `-GraphicsQuality preserve` keeps quality untouched in lab). The pure helper
 rejects invalid integrity tags, unsupported schema, missing/non-string quality
 keys and duplicate JSON keys; unknown fields and other settings remain intact.
 Real and existing lab graphics are read-only sources. This option addresses
