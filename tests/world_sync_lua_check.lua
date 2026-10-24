@@ -712,6 +712,67 @@ do
     check(#s.held == 2 and has(c.logs, 'event=req_timeout;rid=') and #F.tx(c, OP.RESYNC) == 1, 'timeout: held')
 end
 
+-- 6d. Wake-up (RecoveryLife), Holdup (state 1), VANISHED (state 7), and guest ALERT discovery soldierHash.
+do
+    local env, c = fixture({role = 2})
+    F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(env, c, 3)
+    F.clear(c)
+    -- Wake-up: soldier asleep on guest (SLEEP) receives OUTCOME state 0 -> RecoveryLife + readback 0.
+    F.push(c, 1, OP.OUTCOME, u32('sol_a1'), 1, 2, 1, 3, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 15)
+    check(c.life[c.ids.sol_a1] == LIFE.SLEEP and
+        has(c.logs, 'event=apply;ent=' .. hs('sol_a1') .. ';state=2;ver=1;src=outcome;result=ok;readback=2'),
+        'sol_a1 asleep on guest')
+    F.clear(c)
+    F.push(c, 1, OP.OUTCOME, u32('sol_a1'), 1, 0, 2, 9, 0, 0, 2, 0, 0, 0)
+    F.tick(env, c, 15)
+    check(F.callCount(c, 'RecoveryLife:sol_a1:') == 1 and c.life[c.ids.sol_a1] == 0 and
+        has(c.logs, 'event=apply;ent=' .. hs('sol_a1') .. ';state=0;ver=2;src=outcome;result=ok;readback=0'),
+        'wake-up sends RecoveryLife and reads back NORMAL 0')
+    -- Holdup message on guest attributes and requests state 1 (HOLDUP).
+    F.clear(c)
+    F.msg(env, 'GameObject', 'Holdup', c.ids.sol_a2)
+    F.tick(env, c, 1)
+    local hreq = F.tx(c, OP.REQ_OUTCOME)[1]
+    check(hreq and hreq.v[2] == u32('sol_a2') and hreq.v[4] == 1 and hreq.v[6] == 2 and
+        c.W.enemy.localState(c.W.ent[u32('sol_a2')]) == 1,
+        'Holdup message marks localState 1 and requests HOLDUP')
+    -- Applying HOLDUP (state 1) clears sneak/caution routes and marks holdup; Conscious clears it.
+    F.clear(c)
+    F.push(c, 1, OP.OUTCOME, u32('sol_a3'), 1, 1, 1, 2, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 2)
+    check(F.callCount(c, 'SetSneakRoute:sol_a3:') == 1 and F.callCount(c, 'SetCautionRoute:sol_a3:') == 1 and
+        c.W.enemy.localState(c.W.ent[u32('sol_a3')]) == 1 and
+        has(c.logs, 'event=apply;ent=' .. hs('sol_a3') .. ';state=1;ver=1;src=outcome;result=ok;readback=1'),
+        'HOLDUP apply clears sneak/caution routes and completes ok')
+    F.msg(env, 'GameObject', 'Conscious', c.ids.sol_a3)
+    check(c.W.enemy.localState(c.W.ent[u32('sol_a3')]) == 0, 'Conscious clears holdup state')
+    -- Applying VANISHED (state 7) disables the soldier and completes ok.
+    F.clear(c)
+    F.push(c, 1, OP.OUTCOME, u32('sol_a3'), 1, 7, 2, 1, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 2)
+    check(F.callCount(c, 'SetEnabled:sol_a3:') == 1 and
+        has(c.logs, 'event=apply;ent=' .. hs('sol_a3') .. ';state=7;ver=2;src=outcome;result=ok;readback=7'),
+        'VANISHED apply disables soldier and completes ok')
+    -- Guest ALERT REQ_PHASE carries lastByCp soldier hash (v[5]) and host applies SetDiscoveryPlayer.
+    F.clear(c)
+    F.msg(env, 'GameObject', 'Damage', c.ids.sol_a1, 1, 0)
+    F.msg(env, 'GameObject', 'ChangePhase', c.ids.cp_a, PHASE.ALERT)
+    F.tick(env, c, 1)
+    local rp = F.tx(c, OP.REQ_PHASE)[1]
+    check(rp and rp.v[2] == u32('cp_a') and rp.v[3] == 3 and rp.v[5] == u32('sol_a1'),
+        'guest REQ_PHASE carries lastByCp soldierHash in v[5]')
+    local envh, h = fixture({role = 1})
+    F.start(envh, h, function() h.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(envh, h, 3)
+    F.clear(h)
+    F.push(h, 1, OP.REQ_PHASE, 88, u32('cp_a'), 3, 0, u32('sol_a1'), 0, 0, 0)
+    F.tick(envh, h, 1)
+    check(F.callCount(h, 'SetPhase:cp_a:' .. PHASE.ALERT) == 1 and F.callCount(h, 'SetDiscoveryPlayer:sol_a1:') == 1,
+        'host REQ_PHASE ALERT triggers SetDiscoveryPlayer on the reported soldier')
+end
+
 -- 7. Host request validation, REJECT 11 after a continue, no world drain outside the game.
 do
     local env, c = fixture({role = 1})

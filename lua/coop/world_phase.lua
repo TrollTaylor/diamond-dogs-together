@@ -178,7 +178,8 @@ do
                 if (not lr or now - lr.at > 30000 or wire > lr.phase) and W.paired and W.eff >= 2 then
                     local rid = W.nextRid()
                     local x, y, z = W.get(vars, "playerPosX") or 0, W.get(vars, "playerPosY") or 0, W.get(vars, "playerPosZ") or 0
-                    if W.tx(OP.REQ_PHASE, rid, h, wire, 0, 0, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5)) then
+                    local sh = W.enemy and W.enemy.s and W.enemy.s.lastByCp and W.enemy.s.lastByCp[h] or 0
+                    if W.tx(OP.REQ_PHASE, rid, h, wire, 0, sh, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5)) then
                         P.lastReq[h] = {phase = wire, at = now}
                         W.log(fmt("event=req_phase;rid=%d;cp=%.0f;phase=%d", rid, h, wire))
                     end
@@ -258,7 +259,7 @@ do
             if W.host then
                 for i = 1, #P.reqs do
                     local v = P.reqs[i]
-                    local rid, h, req = v[1], v[2], v[3]
+                    local rid, h, req, sh = v[1], v[2], v[3], v[5]
                     local c = W.cp[h]
                     if not W.w1 or not c then
                         W.tx(OP.REJECT, rid, OP.REQ_PHASE, W.w1 and 1 or 11, h, 0, 0)
@@ -271,6 +272,9 @@ do
                             c.ver = c.ver % 65535 + 1
                             W.tx(OP.PHASE, h, cur, c.ver, 0, rid, 0)
                             W.log(fmt("event=phase;cp=%.0f;phase=%d;ver=%d;src=req;rid=%d", h, cur, c.ver, rid))
+                        end
+                        if req == 3 and sh and sh > 0 and W.ent[sh] then
+                            pcall(W.api.send, W.ent[sh].id, {id = "SetDiscoveryPlayer"})
                         end
                         c.guestOwn, c.guestAt = max(c.guestOwn, req), now
                     end

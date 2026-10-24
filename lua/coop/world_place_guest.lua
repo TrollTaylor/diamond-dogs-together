@@ -38,25 +38,38 @@ do
         end
         function P.sample(c)
             local en = W.ent[c.h]
-            if not en or P.come[c.h] or c.flags % 2 == 1 or type(en.id) ~= "number" then return end
+            if not en or P.come[c.h] or type(en.id) ~= "number" then return end
+            if not W.w1 and c.flags % 2 == 1 then return end
             -- Never while this guard's placement is pending; a queued correction takes the
             -- newest target (and its newer grant) in place.
             if P.cur and P.cur.h == c.h then return end
+            local div = P.div[c.h] or {n = 0, fixes = 0, at = -1e9, combatAt = -1e9}
+            if W.w1 and c.flags % 2 == 1 and c.at - (div.combatAt or -1e9) >= 4000 and P.state(en) == 0 then
+                div.combatAt = c.at
+                P.div[c.h] = div
+                pcall(send, en.id, {id = "SetDiscoveryPlayer"})
+                L("event=place_combat;seq=%d;ent=%.0f", c.seq, c.h)
+            end
             for _, q in ipairs(P.q) do
                 if q.h == c.h then
-                    if q.kind == 3 then q.seq, q.x, q.y, q.z, q.yaw, q.at = c.seq, c.x, c.y, c.z, c.yaw, c.at end
+                    if q.kind == 3 then q.seq, q.x, q.y, q.z, q.yaw, q.flags, q.at = c.seq, c.x, c.y, c.z, c.yaw, c.flags, c.at end
                     return
                 end
             end
             local x, _, z = pos(en.id)
             if not x then return end
             local d = flat(x, z, c.x, c.z)
-            local div = P.div[c.h] or {n = 0, fixes = 0, at = -1e9}
             P.div[c.h] = div
-            div.n = d > 6000 and div.n + 1 or 0
-            local cp = W.cp[en.cp]
-            local fix = div.n >= 2 and P.state(en) == 0 and not (cp and cp.localPhase >= 3) and div.fixes < 10 and
-                c.at - div.at >= 5000 and #P.q < 8
+            local fix
+            if W.w1 then
+                div.n = d > 3500 and div.n + 1 or 0
+                fix = (div.n >= 2 or d > 8000) and P.state(en) == 0 and c.at - div.at >= 2500 and #P.q < 8
+            else
+                div.n = d > 6000 and div.n + 1 or 0
+                local cp = W.cp[en.cp]
+                fix = div.n >= 2 and P.state(en) == 0 and not (cp and cp.localPhase >= 3) and div.fixes < 10 and
+                    c.at - div.at >= 5000 and #P.q < 8
+            end
             L("event=place_div;seq=%d;ent=%.0f;div_m=%.1f;n=%d;fix=%d", c.seq, c.h, d / 1000, div.n, fix and 1 or 0)
             if fix then
                 div.n, div.fixes, div.at = 0, div.fixes + 1, c.at
@@ -173,6 +186,8 @@ do
                     if c.flags % 2 == 1 then pcall(send, en.id, {id = "SetDiscoveryPlayer"}) end
                     if m and type(m.used) == "table" then m.used[en.name] = true end
                     if m and c.pos then m.last = {position = {c.pos[1] / 1000, c.pos[2] / 1000, c.pos[3] / 1000}, mission = W.mission} end
+                elseif c.kind == 3 and W.w1 and c.flags % 2 == 1 then
+                    pcall(send, en.id, {id = "SetDiscoveryPlayer"})
                 end
             end
             L("event=place;seq=%d;ent=%.0f;kind=%s;result=%s;why=%s;native=%s;err_m=%.2f;frames=%d", c.seq, c.h, KIND[c.kind],
