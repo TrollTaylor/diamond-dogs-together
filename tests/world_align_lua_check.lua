@@ -728,5 +728,36 @@ if arg[7] and arg[8] then
     trapped.A.areaEnemy = {cpList = {{cp_a = true}}}
     trapped.A.start()
     check(trapped.W.inferredArea == nil and trapped.W.inferredCp == nil, 'a real trap area is never overridden')
+    -- Continuous authored-soldier patrol & combat sync (W.w1 = true):
+    local ph, pg = placeFixture(true), placeFixture(false)
+    ph.W.w1, pg.W.w1 = true, true
+    ph.W.activeCp = {[100] = true}
+    ph.env.vars.playerPosX, ph.env.vars.playerPosZ = 0, 0
+    ph.positions[1] = {10.0, 1.8, 12.0}
+    ph.positions[2] = {80.0, 1.8, 80.0} -- beyond 55 m range: ignored
+    for i = 3, 5 do ph.positions[i] = {90.0, 0, 90.0} end
+    ph.now = ph.now + 600; ph.P.tick(ph.now)
+    ph.now = ph.now + 600; ph.P.tick(ph.now)
+    local ptx = placeTx(ph, 34)
+    check(#ptx == 1 and ptx[1].v[2] == ENT1 and ptx[1].v[3] == 3 and ptx[1].v[4] == 10000 and ptx[1].v[5] == 1000 and
+        ptx[1].v[6] == 12000 and ptx[1].v[8] == 0, 'patrol scan announces nearby active-CP soldier with y - 800 mm')
+    pg.positions[1] = {10.0, 1.8, 12.0}
+    deliver(ph, pg, 34)
+    check(#pg.P.q == 0, 'aligned guest soldier queues no correction')
+    -- Soldier moves >= 1.5 m and CP enters ALERT -> flags = 1, guest triggers SetDiscoveryPlayer and queues warp when > 8 m off.
+    ph.W.cp[100].localPhase = 3
+    ph.positions[1] = {20.0, 1.8, 12.0}
+    ph.now = ph.now + 600; ph.P.tick(ph.now); ph.P.tick(ph.now); ph.P.tick(ph.now)
+    ptx = placeTx(ph, 34)
+    check(#ptx == 1 and ptx[1].v[4] == 20000 and ptx[1].v[7] == 1571 and ptx[1].v[8] == 1,
+        'patrol movement >= 1.5 m in ALERT sends heading yaw and combat flag 1')
+    pg.warp = {{r = 0, h = 1, leaf = 'patrol'}}
+    deliver(ph, pg, 34)
+    check(#pg.P.q == 1 and pg.P.q[1].kind == 3 and sent(pg, 1, 'SetDiscoveryPlayer') == 1 and
+        logged(pg, 'event=place_combat;seq='), 'guest triggers SetDiscoveryPlayer and queues correction on > 8 m divergence')
+    pg.positions[1] = {20.0, 1.8, 12.0}
+    run(pg, 4)
+    check(pg.P.cur == nil and sent(pg, 1, 'SetDiscoveryPlayer') == 2,
+        'completed combat correction re-asserts SetDiscoveryPlayer after warp')
 end
 print(checks .. ' W4 alignment/recovery and spawn sync checks passed; real apply rules, no game')

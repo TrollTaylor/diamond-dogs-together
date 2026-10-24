@@ -280,7 +280,102 @@ bool ParseLinkSkewKey(Slice key, Slice value, LabConfig& result, bool& ok) noexc
     if (ok) result.link_session_skew = skew;
     return true;
 }
+// The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 and
+// lab_boot=<spec> (ParseLabBoot); the play refusal below forces both off.
+bool ParseLabBootKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
+    if (Equals(key, "lab_fast_boot")) ok = ParseBool(value, result.lab_fast_boot);
+    else if (Equals(key, "lab_boot")) ok = ParseLabBoot(value.data, value.size, result.lab_boot);
+    else return false;
+    return true;
+}
+// A decimal with an optional '-' and at most 3 decimals, scaled by 1000; |v| <= limit * 1000.
+bool ParseMilli(Slice s, std::int64_t limit, std::int32_t& out) noexcept {
+    bool negative = false;
+    if (s.size && s.data[0] == '-') { negative = true; ++s.data; --s.size; }
+    std::size_t dot = s.size;
+    for (std::size_t i = 0; i < s.size; ++i) if (s.data[i] == '.') { dot = i; break; }
+    if (!dot || dot > 6) return false;
+    std::int64_t whole = 0;
+    for (std::size_t i = 0; i < dot; ++i) {
+        if (s.data[i] < '0' || s.data[i] > '9') return false;
+        whole = whole * 10 + (s.data[i] - '0');
+    }
+    std::int64_t fraction = 0;
+    if (dot < s.size) {
+        const std::size_t digits = s.size - dot - 1;
+        if (!digits || digits > 3) return false;
+        for (std::size_t i = dot + 1; i < s.size; ++i) {
+            if (s.data[i] < '0' || s.data[i] > '9') return false;
+            fraction = fraction * 10 + (s.data[i] - '0');
+        }
+        for (std::size_t i = digits; i < 3; ++i) fraction *= 10;
+    }
+    const std::int64_t value = whole * 1000 + fraction;
+    if (value > limit * 1000) return false;
+    out = static_cast<std::int32_t>(negative ? -value : value);
+    return true;
+}
 } // namespace
+
+const char* LabBootWeatherName(std::uint8_t weather) noexcept {
+    static const char* const names[] = {"keep", "sunny", "cloudy", "rainy", "sandstorm", "foggy"};
+    return weather < 6 ? names[weather] : "keep";
+}
+
+bool ParseLabBoot(const char* text, std::size_t size, LabBoot& out) noexcept {
+    if (!text || !size || size > kLabBootMaxText) return false;
+    const Slice all = Trim(Slice{text, size});
+    if (Equals(all, "off")) { out = LabBoot{}; return true; }
+    Slice tokens[8]{};
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < all.size;) {
+        if (all.data[i] == ' ' || all.data[i] == '\t') { ++i; continue; }
+        std::size_t j = i;
+        while (j < all.size && all.data[j] != ' ' && all.data[j] != '\t') ++j;
+        if (count == 8) return false;
+        tokens[count++] = Slice{all.data + i, j - i};
+        i = j;
+    }
+    if (!count) return false;
+    LabBoot spec{};
+    std::uint32_t mission = 0;
+    if (!ParseU32(tokens[0], 99999, mission)) return false;
+    if (mission != 30010 && mission != 30020 && mission != 30050 && mission != 40010 && mission != 40020 && mission != 40050) return false;
+    spec.mission = mission;
+    std::size_t next = 1;
+    // Four numbers right after the mission: the position and yaw (free roam only).
+    if (count > 1 && !StartsWith(tokens[1], "time=") && !StartsWith(tokens[1], "weather=")) {
+        if (count < 5 || mission / 10000 != 3) return false;
+        if (!ParseMilli(tokens[1], 100000, spec.x_mm) || !ParseMilli(tokens[2], 100000, spec.y_mm) ||
+            !ParseMilli(tokens[3], 100000, spec.z_mm) || !ParseMilli(tokens[4], 360, spec.yaw_mdeg)) return false;
+        spec.has_pos = true;
+        next = 5;
+    }
+    bool time_given = false, weather_given = false;
+    for (; next < count; ++next) {
+        const Slice t = tokens[next];
+        if (StartsWith(t, "time=") && !time_given) {
+            const Slice v{t.data + 5, t.size - 5};
+            if (v.size != 5 || v.data[2] != ':') return false;
+            std::uint32_t hours = 0, minutes = 0;
+            if (!ParseU32(Slice{v.data, 2}, 23, hours) || !ParseU32(Slice{v.data + 3, 2}, 59, minutes)) return false;
+            spec.clock_s = static_cast<std::int32_t>(hours * 3600 + minutes * 60);
+            time_given = true;
+        } else if (StartsWith(t, "weather=") && !weather_given) {
+            const Slice v{t.data + 8, t.size - 8};
+            std::uint8_t w = 0;
+            for (std::uint8_t i = 1; i < 6; ++i) if (Equals(v, LabBootWeatherName(i))) w = i;
+            // The game has no fog in Africa (the debug menu refuses it there too).
+            if (!w || (w == 5 && mission == 30020)) return false;
+            spec.weather = w;
+            weather_given = true;
+        } else {
+            return false;
+        }
+    }
+    out = spec;
+    return true;
+}
 
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
     return ParseLabConfig(text, length, out, LabParseOptions{});
@@ -348,7 +443,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (ParseRound2SupportKey(key, value, result, ok) || ParseAnimWeaponsKey(key, value, result, ok) ||
             ParseRound1ActionsKey(key, value, result, ok) || ParseSaveHandoffKey(key, value, result, ok) ||
             ParseVehicleKey(key, value, result, ok) || ParseWs4CensusKey(key, value, result, ok) ||
-            ParseMountKey(key, value, result, ok) || ParseLinkSkewKey(key, value, result, ok)) {
+            ParseMountKey(key, value, result, ok) || ParseLinkSkewKey(key, value, result, ok) ||
+            ParseLabBootKey(key, value, result, ok)) {
             if (!ok) ++result.invalid_values;
             return;
         }
@@ -688,6 +784,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (refuse(result.world_probe != WorldProbe::none, kPlayRefusedWorldProbe)) result.world_probe = WorldProbe::none;
         // The native debug soldier placement stays a lab experiment until qualified.
         if (refuse(result.debug_soldier_warp, kPlayRefusedDebugSoldierWarp)) result.debug_soldier_warp = false;
+        // The developer test boot (docs/test-boot.md) is lab only, the play rehearsal included.
+        if (refuse(result.lab_fast_boot || result.lab_boot.mission != 0, kPlayRefusedLabBoot)) {
+            result.lab_fast_boot = false;
+            result.lab_boot = LabBoot{};
+        }
         // The native puppet: only through partner_native_profile (the qualified
         // stage). The raw drive and deferral keys and the lab-only native
         // experiments (lookcam, local=all, the P+0x218 window, noise=keep) stay refused.

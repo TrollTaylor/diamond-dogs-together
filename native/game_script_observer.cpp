@@ -78,6 +78,7 @@
 #include "mgscoop/equipment_preload_contract.hpp"
 #include "equipment_observation_source.hpp"
 #include "mgscoop/lab_config.hpp"
+#include "mgscoop/lab_boot.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/client_reset.hpp"
 #include "mgscoop/partner_receipt.hpp"
@@ -4893,12 +4894,56 @@ bool SelectDownedHudReceipt(const char* buffer,std::size_t size,mgscoop::script_
     constexpr char reply[]="return true";
     replacement={reply,sizeof(reply)-1};world_quiet=true;return true;
 }
+// The developer test boot (docs/test-boot.md): lua/coop/debug_boot.lua asks for
+// lab_fast_boot / lab_boot and logs its steps. Only the owned private worker of
+// a background-worker build in lab mode with copied saves gets the spec
+// (lab_boot::Admitted); everywhere else "return 0" keeps the Lua inert, so a
+// friend/Release loader never skips a screen or moves a player.
+bool SelectLabBootReceipt(const char* buffer,std::size_t size,const char* name,
+                          mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace lb=mgscoop::lab_boot;
+    const auto kind=lb::Classify(buffer,size,name);
+    if(kind==lb::Receipt::none) return false;
+    static char reply[lb::kReplyCapacity]{};
+    static constexpr char inert[]="return 0",yes[]="return true",no[]="return false";
+    const auto& config=mgscoop::GetLabConfig();
+    lb::Gate gate{};
+    gate.worker_compiled=mgscoop::worker_scenario::Compiled();
+    gate.worker_active=mgscoop::worker_scenario::Active();
+    gate.lab_mode=config.present && config.mode==mgscoop::LabMode::lab;
+    gate.lab_active=lab_active;
+    gate.offline=offline_enabled;
+    gate.copied_saves=lab::SavesRedirected();
+    const bool admitted=lb::Admitted(gate);
+    world_quiet=true;
+    if(kind==lb::Receipt::log) {
+        static unsigned lines=0;
+        char line[lb::kLogLineCapacity]{};
+        const bool ok=admitted && lines<512 && lb::FormatLogLine(buffer,size,line,sizeof(line))!=0;
+        if(ok) { ++lines; Log(line); }
+        replacement=ok ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1} : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
+        return true;
+    }
+    const bool named=config.lab_fast_boot || config.lab_boot.mission!=0;
+    const auto n=lb::FormatCfgReply(admitted,config.lab_fast_boot,config.lab_boot,config.role==mgscoop::LabRole::host,reply,sizeof(reply));
+    replacement=n ? mgscoop::script_bridge::Replacement{reply,n} : mgscoop::script_bridge::Replacement{inert,sizeof(inert)-1};
+    static bool logged=false;
+    if(named && !logged) {
+        logged=true;
+        LogFormat("lab_boot=cfg; admitted=%u; fast=%u; mission=%u; pos=%u; clock_s=%d; weather=%s; worker=%u; active=%u; lab=%u; offline=%u; saves=%u; t_ms=%llu\r\n",
+            admitted?1u:0u,config.lab_fast_boot?1u:0u,unsigned(config.lab_boot.mission),config.lab_boot.has_pos?1u:0u,int(config.lab_boot.clock_s),
+            mgscoop::LabBootWeatherName(config.lab_boot.weather),gate.worker_compiled?1u:0u,gate.worker_active?1u:0u,gate.lab_mode?1u:0u,
+            gate.offline?1u:0u,gate.copied_saves?1u:0u,static_cast<unsigned long long>(GetTickCount64()));
+    }
+    return true;
+}
 
 bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                   mgscoop::script_bridge::Replacement& replacement) noexcept {
     AcquireSRWLockExclusive(&receipt_lock);
     struct Unlock { ~Unlock(){ ReleaseSRWLockExclusive(&receipt_lock); } } unlock;
     const auto count = InterlockedIncrement64(&entries);
+    if(SelectLabBootReceipt(buffer,size,name,replacement)) return true;
     if(SelectOfflineEquipmentAllocationReceipt(buffer,size,name,replacement)) return true;
     if(SelectStock46PreloadReceipt(buffer,size,name,replacement)) return true;
     if(SelectEquipPreloadReceipt(buffer,size,name,replacement)) return true;

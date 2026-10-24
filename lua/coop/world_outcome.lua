@@ -15,7 +15,11 @@ do
         -- soldier reads ACTION_STATUS.FULTON_RECOVERD (live 2026-10-05).
         W.bindHooks[#W.bindHooks + 1] = function(a, fn)
             a.action = fn(TppEnemy, "TppEnemy", "GetActionStatus", true)
-            a.fultonRecovered = W.get(W.get(TppEnemy, "ACTION_STATUS"), "FULTON_RECOVERD")
+            local act = W.get(TppEnemy, "ACTION_STATUS")
+            a.fultonRecovered = W.get(act, "FULTON_RECOVERD")
+            a.holdupStand = W.get(act, "HOLD_UP_STAND")
+            a.holdupCrawl = W.get(act, "HOLD_UP_CROWL")
+            a.setDisable = fn(TppEnemy, "TppEnemy", "SetDisable", true)
         end
 
         -- Attribution of an attacker id. local: the local player, its horse or

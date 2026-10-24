@@ -311,6 +311,31 @@ inline constexpr std::uint32_t kPlayRefusedRehearsal = 0x400000;
 // partner_native_profile without the dm=map + xform fallback base (Play-Coop
 // always writes it; a hand-edited lab.ini): the profile is forced off.
 inline constexpr std::uint32_t kPlayRefusedNativeProfile = 0x800000;
+// lab_fast_boot / lab_boot (the developer test boot, docs/test-boot.md): lab
+// only, play forces both off.
+inline constexpr std::uint32_t kPlayRefusedLabBoot = 0x1000000;
+// The developer test boot (docs/test-boot.md): lab.ini
+//   lab_boot=<mission> [<x> <y> <z> <yaw>] [time=HH:MM] [weather=<name>]
+// (or lab_boot=off). mission is 30010, 30020, 30050 or an ACC 40010, 40020,
+// 40050; the position (metres, at most 3 decimals, |x|,|y|,|z| <= 100000;
+// yaw in degrees, |yaw| <= 360) only for a free-roam mission; time and weather
+// at most once each, in either order; weather sunny|cloudy|rainy|sandstorm|
+// foggy (no fog in 30020, which the game does not support). Blank-separated.
+// Pure; the effect is lua/coop/debug_boot.lua, behind the loader's boot
+// receipt (mgscoop/lab_boot.hpp), which answers only a background-worker
+// build's owned private worker in lab mode.
+struct LabBoot {
+    std::uint32_t mission = 0;                 // 0 = none
+    bool has_pos = false;
+    std::int32_t x_mm = 0, y_mm = 0, z_mm = 0;  // metres * 1000
+    std::int32_t yaw_mdeg = 0;                 // degrees * 1000
+    std::int32_t clock_s = -1;                 // seconds after midnight; -1 = keep
+    std::uint8_t weather = 0;                  // 0 keep, 1 sunny, 2 cloudy, 3 rainy, 4 sandstorm, 5 foggy
+};
+inline constexpr std::size_t kLabBootMaxText = 120;
+// Outputs are written only on success ("off" clears the spec).
+bool ParseLabBoot(const char* text, std::size_t size, LabBoot& out) noexcept;
+const char* LabBootWeatherName(std::uint8_t weather) noexcept;
 // Partner link transport: udp (our own UDP socket; the one-PC lab and the
 // LAN/VPN code) or steam (ISteamNetworkingMessages002 over Steam's relays;
 // play only, the lab refuses it and keeps udp).
@@ -677,6 +702,14 @@ struct LabConfig {
     // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
     // default off until hidden-run frames prove the receiver's Despawn.
     bool world_vehicle_gone = false;
+    // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
+    // startup logos and copyright screen and takes the title itself (no press
+    // start, no menu, the offline notice closed); lab_boot (LabBoot above) is
+    // where this copy lands after the title. Lab only: play forces both off
+    // (kPlayRefusedLabBoot); outside a background-worker build the boot receipt
+    // stays inert, so a friend/Release loader never acts on them.
+    bool lab_fast_boot = false;
+    LabBoot lab_boot{};
     // Automatic save handoff and the guest travel lock (P2-11): save_handoff
     // absent = off; travel_lock 0|1, kTravelLockAbsent when not named (the
     // effective value is then 1 in play and 0 in lab).

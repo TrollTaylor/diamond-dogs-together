@@ -8,9 +8,17 @@ param(
     # preload, writer; runtime-gated on the native gun profile), worker OFF.
     [switch]$ReleaseGun,
     # Relative paths are resolved against the checkout, never the caller's cwd.
-    [ValidateNotNullOrEmpty()][string]$BuildDirectory
+    [ValidateNotNullOrEmpty()][string]$BuildDirectory,
+    # Checks (docs/STATUS.md "Developer test loop"): -Fast runs only `ctest -L fast`;
+    # -Jobs is ctest -j (0 = half the logical processors). CTest waits while a
+    # hidden-worker session or worker checks hold the verify lock
+    # (tools/VerifyLock.psm1); -NoWorkerWait skips that wait (test fixtures).
+    [switch]$Fast,
+    [ValidateRange(0, 256)][int]$Jobs = 0,
+    [switch]$NoWorkerWait
 )
 $ErrorActionPreference = 'Stop'
+if ($Fast -and $BuildOnly) { throw '-Fast selects checks; -BuildOnly runs none.' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $nativeBuildDirectory = if ($BuildDirectory) {
     $requestedBuildDirectory = if ([IO.Path]::IsPathRooted($BuildDirectory)) { $BuildDirectory } else { Join-Path $projectRoot $BuildDirectory }
@@ -64,6 +72,17 @@ if ($BuildOnly) {
 }
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 if (!$BuildOnly) {
-    ctest --test-dir $nativeBuildDirectory --output-on-failure
-    if ($LASTEXITCODE -ne 0) { throw 'Checks failed' }
+    $ctestJobs = if ($Jobs) { $Jobs } else { [Math]::Max(1, [int][Math]::Floor([Environment]::ProcessorCount / 2)) }
+    $ctestArguments = @('--test-dir', $nativeBuildDirectory, '--output-on-failure', '-j', "$ctestJobs")
+    if ($Fast) { $ctestArguments += @('-L', 'fast') }
+    $reader = $null
+    if (!$NoWorkerWait) {
+        Import-Module (Join-Path $PSScriptRoot 'VerifyLock.psm1') -Force -DisableNameChecking
+        $reader = Enter-CtestReader -Label "tools/build.ps1 $nativeBuildDirectory"
+    }
+    try {
+        ctest @ctestArguments
+        $ctestExit = $LASTEXITCODE
+    } finally { if ($reader) { Exit-CtestReader $reader } }
+    if ($ctestExit -ne 0) { throw 'Checks failed' }
 }

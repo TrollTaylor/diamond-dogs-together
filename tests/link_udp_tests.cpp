@@ -20,6 +20,7 @@
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/udp_transport.hpp"
+#include "test_port_lock.hpp"
 
 // Background-worker builds (MGS_BACKGROUND_WORKER=1, also on partner_net) admit the
 // worker-only input stall; every other build, the friend/Release loader's included, refuses it.
@@ -832,6 +833,8 @@ void PartnerNetV2() {
 } // namespace
 
 int main() {
+    // Ports 48220-48261 (tests/test_port_lock.hpp).
+    const mgscoop::test::MachinePortLock port_lock(L"Local\\mgs-coop-test-ports-link_udp_tests", 48220, 48261);
     SessionOverSockets();
     WrongSecret();
     Impairments();

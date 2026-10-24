@@ -17,6 +17,7 @@
 #include "mgscoop/steam_identity.hpp"
 #include "mgscoop/steam_loopback.hpp"
 #include "mgscoop/udp_transport.hpp"
+#include "test_port_lock.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -950,6 +951,9 @@ void TestTransportLossAndLatency() {
     const double elapsed_ms = static_cast<double>(g_rx_time.QuadPart - sent.QuadPart) * 1000.0 /
                               static_cast<double>(freq.QuadPart);
     Check(elapsed_ms >= 145.0, "latency applied (>= configured delay)");
+    // The delay thread counts tx after WSASendTo returns, which can be after the
+    // receiver already has the datagram (seen under a loaded ctest -j).
+    for (int i = 0; i < 400 && c.stats().tx == 0; ++i) Sleep(10);
     Check(c.stats().tx == 1, "delayed datagram counted once sent");
     c.stop();
     d.stop();
@@ -1046,6 +1050,8 @@ void Run(const char* name, void (*test)()) {
 }
 
 int main() {
+    // Ports 48120-48161 (tests/test_port_lock.hpp).
+    const mgscoop::test::MachinePortLock port_lock(L"Local\\mgs-coop-test-ports-steam_loopback_tests", 48120, 48161);
     Run("TestRequestOnceAndInvisibleUntilAccept", &TestRequestOnceAndInvisibleUntilAccept);
     Run("TestTruncation", &TestTruncation);
     Run("TestSizeCaps", &TestSizeCaps);

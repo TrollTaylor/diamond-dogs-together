@@ -32,6 +32,21 @@ the probe is a separately admitted private-desktop runtime fixture, not an
 ordinary CTest test. Do not use existing visible `Start-Lab`, `Send-LabInput`
 or desktop screenshot helpers to drive the worker.
 
+## Verify lock and CTest
+
+Hidden-worker sessions, worker checks, packaging and installs keep taking the
+shared exclusive lock `%TEMP%\mgs-coop-verify.lock` (mkdir, then `owner.txt`
+naming the owner) so nothing else on the machine starves the game. CTest suites
+no longer take it (`tools/build.ps1`, the track `bt.ps1`; `tools/VerifyLock.psm1`
+`Enter-CtestReader`): they wait while the lock is held by any owner except a
+CTest one (`ctest ...`, or the older `join-fix <checkout> <time>`), or while a
+real `mgsvtpp.exe` or a `worker_supervisor.exe` runs, then register in
+`%TEMP%\mgs-coop-ctest-readers`. Suites of different checkouts run at the same
+time. A worker session must not start under a running suite: after taking the
+lock, `Import-Module tools\VerifyLock.psm1; Wait-CtestReaders` waits until the
+registered suites have finished (no new one starts while the lock is held).
+`Invoke-WorkerChecks.ps1` still runs its audited CTest set with `-j 1`.
+
 ## Coordinator protocol
 
 Supervisor CLI is exactly `worker_supervisor.exe --launch <manifest>`.
@@ -250,6 +265,27 @@ member. Before it: `python tools/generate_steam_shim_contract.py --check`
 and `--steamclient "<Steam folder>/steamclient64.dll"`, then the worker
 checks.
 
+### Test boot, timings, save seeds (docs/test-boot.md)
+
+Developer-only speed-ups for hidden runs; a friend/play loader never acts on them.
+
+- `boot <lab_boot spec>` / `boot fast` (one per scenario): both copies get
+  `lab_fast_boot=1` (no logos, copyright wait, offline notice, press start or
+  title menu) and `lab_boot=<spec>`; the step waits without input until each
+  copy logs `lab_boot=...; step=gameplay`. Spec: `<mission> [x y z yaw]
+  [time=HH:MM] [weather=..]` (30010, 30020, 30050, ACC 40010/40020/40050). The
+  host restarts in the ACC and sorties on foot to the spot; the guest replays it
+  through world follow and lands 4 m in front, facing the host.
+  `scenarios/boot-30020.txt`, baseline `scenarios/boot-baseline.txt`. The keys
+  also go through `labsetting` lines or `-LabSetting`; play refuses them.
+- `scenario.json` `Gameplay` (seconds from each role's launch to gameplay),
+  `Boot` (boot steps with game-clock ms, positions) and `Timings` (every step).
+- `-SaveSeed <name>` (and `-HostSaveSeed` / `-GuestSaveSeed <name>`, `-SeedRoot`):
+  a named seed from `D:\mgs-coop-seeds\<name>\<role>`, verified against its
+  manifest. `Save-WorkerSeed.ps1 -RunId <id> -Name <name>` captures one from a
+  closed run's copied saves (never Steam userdata).
+- Lab sessions default to `-GraphicsQuality low` (light test copies).
+
 ### Save handoff and travel lock (join-fix phase 2)
 
 `docs/join-fix-phase2-spec.md` P2-19 and track E. These steps never drive
@@ -362,7 +398,7 @@ commit-limit error 1455 fail closed and do not qualify gameplay.
 
 `Invoke-WorkerScenario.ps1 -GraphicsQuality low` lowers only each freshly copied
 role's render settings (six Low, SSAO Off, filtering Medium) before the existing
-config hash pin. The default `preserve` keeps quality untouched. The pure helper
+config hash pin. Lab mode defaults to `low`; `-Mode play` defaults to `preserve` (and explicit `-GraphicsQuality preserve` keeps quality untouched in lab). The pure helper
 rejects invalid integrity tags, unsupported schema, missing/non-string quality
 keys and duplicate JSON keys; unknown fields and other settings remain intact.
 Real and existing lab graphics are read-only sources. This option addresses

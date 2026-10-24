@@ -15,12 +15,12 @@ do
         local RANK = {[0] = 0, 1, 2, 2, 3, 4, 5, 5}
         local TERMINAL = {[5] = true, [6] = true, [7] = true}
         local ACTOR = {[0] = "host", "guest", "probe"}
-        local CAUSE = {Dead = 1, Neutralize = 2, Unconscious = 3, Dying = 4, FultonInfo = 5, FultonFailed = 5}
+        local CAUSE = {Dead = 1, Neutralize = 2, Holdup = 2, Unconscious = 3, Dying = 4, FultonInfo = 5, FultonFailed = 5, Conscious = 9}
         E.RANK, E.TERMINAL = RANK, TERMINAL
 
         function E.reset()
             E.s = {pending = {}, queue = {}, qHead = 1, rb = {}, ledger = {}, lkeys = {}, lidx = 1, req = {}, out = {}, held = {},
-                attrib = {}, last = {}, fpend = {}, fmsg = {}, sweep = 0, seq = 0, sum = 0, count = 0, seen = 0, hostReq = {}}
+                attrib = {}, last = {}, lastByCp = {}, holdup = {}, fpend = {}, fmsg = {}, sweep = 0, seq = 0, sum = 0, count = 0, seen = 0, hostReq = {}}
         end
         E.reset()
         W.startHooks[#W.startHooks + 1] = E.reset
@@ -28,10 +28,17 @@ do
         function E.localState(e)
             local a = W.api
             if a.recovered(e.name) == true then return 6 end
-            if a.action and a.fultonRecovered ~= nil and a.action(e.id) == a.fultonRecovered then return 6 end
+            local act = a.action and a.action(e.id)
+            if act ~= nil and a.fultonRecovered ~= nil and act == a.fultonRecovered then return 6 end
             local v = a.life(e.id)
             if type(v) ~= "number" then return nil end
-            if v == 0 then return 0 end
+            if v == 0 then
+                if (act ~= nil and ((a.holdupStand ~= nil and act == a.holdupStand) or (a.holdupCrawl ~= nil and act == a.holdupCrawl))) or
+                    (E.s and E.s.holdup and E.s.holdup[e.id] == true) then
+                    return 1
+                end
+                return 0
+            end
             return W.lifeWire[v]
         end
         -- A guard placed by spawn sync (W.pinned) is kept in area on this PC.
@@ -54,13 +61,22 @@ do
             if not W.w1 then return end
             local s, now = E.s, W.now()
             local mine = cls == "local" or cls == "buddy"
+            local e = W.ent[h]
+            if kind == "Holdup" and e then
+                s.holdup[e.id] = true
+                s.attrib[h] = now
+            elseif kind == "Conscious" and e then
+                s.holdup[e.id] = nil
+            end
             if kind == "Fulton" then s.fpend[h], s.fmsg[h] = now, now; return end
             if kind == "FultonInfo" or kind == "FultonFailed" then s.fpend[h] = nil end
             if mine and kind ~= "FultonFailed" then
                 if kind ~= "FultonInfo" then s.last[h] = now end
                 if kind ~= "Damage" then s.attrib[h] = now end
+                if e and e.cp then s.lastByCp[e.cp] = h end
             elseif cls == "none" and kind ~= "FultonInfo" and kind ~= "FultonFailed" and s.last[h] and now - s.last[h] <= 10000 then
                 s.attrib[h] = now
+                if e and e.cp then s.lastByCp[e.cp] = h end
             end
             local c, q = CAUSE[kind], s.pending[h]
             -- The Neutralize that follows FultonInfo must not cut a fulton read short.
@@ -149,13 +165,31 @@ do
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
             local result = "noop"
             if TERMINAL[cur] then result = "terminal_local"
-            elseif st == 0 then result = "skip_backward"
+            elseif st == 0 then
+                s.holdup[e.id] = nil
+                if cur == 2 or cur == 3 then
+                    W.api.send(e.id, {id = "RecoveryLife"})
+                    s.rb[h] = {st = 0, ver = ver, src = src, at = now}
+                    return "sent"
+                else
+                    result = "skip_backward"
+                end
+            elseif RANK[cur] < RANK[st] and st == 1 then
+                s.holdup[e.id] = true
+                pcall(W.api.send, e.id, {id = "SetSneakRoute", route = "", point = 0})
+                pcall(W.api.send, e.id, {id = "SetCautionRoute", route = "", point = 0})
+                result, cur = "ok", 1
+            elseif RANK[cur] < RANK[st] and st == 7 then
+                if W.api.setDisable then pcall(W.api.setDisable, e.id)
+                else pcall(W.api.send, e.id, {id = "SetEnabled", enabled = false}) end
+                result, cur = "ok", 7
             elseif RANK[cur] < RANK[st] and st == 6 then
                 if s.fpend[h] then return E.hold(h, st, ver, src, "fulton_pending") end
                 W.api.send(e.id, {id = "RequestForceFulton"})
                 s.rb[h] = {st = 6, ver = ver, src = src, at = now, next = now + 250}
                 return "sent"
             elseif RANK[cur] < RANK[st] and W.lifeConst[st] then
+                s.holdup[e.id] = nil
                 W.api.send(e.id, {id = "ChangeLifeState", state = W.lifeConst[st]})
                 s.rb[h] = {st = st, ver = ver, src = src, at = now}
                 return "sent"
@@ -179,7 +213,14 @@ do
                             a.send(e.id, {id = "RequestForceFulton"})
                         end
                     end
-                elseif age >= 200 then
+                elseif r.st == 0 and age >= 200 then
+                    cur = E.localState(e)
+                    final = age >= 2000
+                    if age >= 1000 and not r.retried and cur ~= 0 then
+                        r.retried = true
+                        a.send(e.id, {id = "RecoveryLife"})
+                    end
+                elseif r.st ~= 0 and age >= 200 then
                     cur = E.localState(e)
                     final = age >= 2000
                     if age >= 1000 and not r.retried and not (cur and RANK[cur] >= RANK[r.st]) then
@@ -187,7 +228,7 @@ do
                         a.send(e.id, {id = "ChangeLifeState", state = W.lifeConst[r.st]})
                     end
                 end
-                local ok = cur ~= nil and RANK[cur] >= RANK[r.st]
+                local ok = cur ~= nil and (r.st == 0 and cur == 0 or (r.st ~= 0 and RANK[cur] >= RANK[r.st]))
                 if ok or final then
                     s.rb[h] = nil
                     E.done(h, r.st, r.ver, r.src, ok and "ok" or "fail", cur or E.localState(e))

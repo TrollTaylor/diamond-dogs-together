@@ -44,11 +44,17 @@ do
         function P.reset()
             P.seq, P.out, P.live, P.q, P.cur, P.pin, P.come, P.div, P.last, P.lastAck, P.routes =
                 0, {}, {}, {}, nil, {}, {}, {}, nil, nil, nil
+            P.patrol = {rr = 0, s = {}, combat = {}}
             P.n = {sent = 0, acked = 0, corrected = 0, refused = 0, applied = 0, failed = 0}
             W.pinned, W.rosterMatch = P.pin, false
         end
         P.reset()
         W.startHooks[#W.startHooks + 1] = P.reset
+        if type(W.observers) == "table" then
+            W.observers[#W.observers + 1] = function(kind, h)
+                if kind == "Damage" and P.patrol then P.patrol.combat[h] = W.now() end
+            end
+        end
         -- Releases an entry's force-realize; the game call only while its mission is still in
         -- gameplay (as the debug menu's cancel), never during teardown.
         function P.release(c)
@@ -133,6 +139,49 @@ do
                             if P.announce(3, h, x, y - l.dy, z, yaw, l.flags, 0) then
                                 l.x, l.z, l.yaw, l.sent, l.force = x, z, yaw, now, nil
                             end
+                        end
+                    end
+                end
+            end
+            if W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true and P.patrol then
+                local list = W.entOrder
+                local n = type(list) == "table" and #list or 0
+                local hx, hz = (W.get(vars, "playerPosX") or 0) * 1000, (W.get(vars, "playerPosZ") or 0) * 1000
+                local pat, scans, reads = P.patrol, 0, 0
+                while scans < 8 and reads < 2 and scans < n do
+                    pat.rr, scans = pat.rr % n + 1, scans + 1
+                    local h = list[pat.rr]
+                    local en = W.ent[h]
+                    local ps = pat.s[h]
+                    if en and not P.live[h] and E.active(en.cp, h) and (not ps or now - ps.sampleAt >= 500) then
+                        reads = reads + 1
+                        if P.state(en) == 0 then
+                            local x, y, z = pos(en.id)
+                            if x then
+                                local d2 = (x - hx) ^ 2 + (z - hz) ^ 2
+                                if d2 <= 3025000000 then
+                                    local cp = W.cp and W.cp[en.cp]
+                                    local alert = (cp and cp.localPhase == 3) or (pat.combat[h] and now - pat.combat[h] <= 5000)
+                                    local flags = alert and 1 or 0
+                                    if not ps then
+                                        ps = {x = x, z = z, yaw = 0, sent = now, sampleAt = now, alert = alert}
+                                        pat.s[h] = ps
+                                        P.announce(3, h, x, y - 800, z, 0, flags, 0)
+                                    else
+                                        ps.sampleAt = now
+                                        local moved = flat(x, z, ps.x, ps.z)
+                                        local combatNew = alert and not ps.alert
+                                        if moved >= 1500 or now - ps.sent >= 3000 or combatNew then
+                                            local yaw = moved >= 300 and floor(math.atan2(x - ps.x, z - ps.z) * 1000 + 0.5) or ps.yaw
+                                            if P.announce(3, h, x, y - 800, z, yaw, flags, 0) then
+                                                ps.x, ps.z, ps.yaw, ps.sent, ps.alert = x, z, yaw, now, alert
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        else
+                            pat.s[h] = nil
                         end
                     end
                 end

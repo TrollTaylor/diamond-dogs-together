@@ -123,6 +123,8 @@ mgs_add_lua_check(world_buddy_ride_lua_check "${_mgs_coop}/world_buddy_ride.lua"
 mgs_add_lua_check(world_vehicle_lua_check "${_mgs_coop}/world_vehicle.lua" "${_mgs_coop}/world_sync.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
 mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
+# The developer test boot (docs/test-boot.md): fast boot and boot-to-place on stubbed bindings.
+mgs_add_lua_check(debug_boot_lua_check "${_mgs_coop}/debug_boot.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 # Join-fix phase 2 track C: the save report, travel lock, warnings and replay hold
 # (spliced right after world_follow.lua; loaded after the seed and follow chunks).
@@ -210,6 +212,17 @@ if(_mgs_world_tpp_player AND _mgs_tpp_mission AND _mgs_debug_clock AND _mgs_debu
     "${_mgs_world_tpp_player}" "${_mgs_debug_clock}" "${_mgs_debug_weather}" "${_mgs_debug_enemy}"
     "${_mgs_debug_quest}" "${_mgs_debug_weapon_sequence}" "${_mgs_debug_spawn_sequence}" "${_mgs_tpp_mission}" "${_mgs_debug_active_slot}" "${_mgs_coop}/debug_enemy.lua" "${_mgs_debug_tpp_debug}" "${_mgs_debug_checkpoint}"
     "${_mgs_coop}/debug_player.lua" "${_mgs_coop}/debug_spawn.lua")
+endif()
+# The developer test boot (docs/test-boot.md) against the game's own init and title
+# sequences (archive_probe + datfpk read-only extraction into build/boot-script-inspection-20261023).
+mgs_find_game_input(_mgs_boot_init "boot-script-inspection-20261023/package-00_fpkd/Assets/tpp/level/mission2/init/init_sequence.lua"
+  78e0781dc4e5cf9a935ca85e066bd5c97624faa67f389f226677fe1102c0cac4)
+mgs_find_game_input(_mgs_boot_title "boot-script-inspection-20261023/package-02_fpkd/Assets/tpp/level/mission2/common/title_sequence.lua"
+  1d9eb74704149be99b6a55fa9982be5c2785b4c7f64fad091857cfdc52571a0c)
+if(_mgs_boot_init AND _mgs_boot_title)
+  mgs_add_lua_check(debug_boot_game_lua_check "${_mgs_coop}/debug_boot.lua" "${_mgs_boot_init}" "${_mgs_boot_title}")
+else()
+  list(APPEND _mgs_skipped debug_boot_game_lua_check)
 endif()
 
 if(TARGET mgs_bootstrap_patch)
