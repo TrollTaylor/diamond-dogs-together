@@ -1,0 +1,13 @@
+# Baseline for the developer test boot timing (docs/test-boot.md "Timings"): the plain lab start, Enter every 3 s
+# through the boot screens and the title (Continue), then waitgameplay; scenario.json Gameplay holds each role's
+# seconds from its own launch to on-foot gameplay, Timings each step's start and end.
+# Run (hidden worker, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/boot-baseline.txt
+# Compare with boot-30020.txt (the same copies with lab_fast_boot=1 and lab_boot=30020 at a spot).
+title 200
+waitgameplay host 120
+waitgameplay guest 240
+both capture baseline-gameplay
+host run position
+guest run position
+state

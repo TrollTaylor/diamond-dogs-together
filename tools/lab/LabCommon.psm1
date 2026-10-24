@@ -378,6 +378,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_act_log'; Json = 'act_log'; Kind = 'bool' },
     @{ Key = 'partner_native_stance_fast'; Json = 'native_stance_fast'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
+    # The developer test boot (docs/test-boot.md; lab only: play forces both off, and only a background-worker build's
+    # owned private worker acts on them): skip the logos and the title, and land at a spot after the title.
+    @{ Key = 'lab_fast_boot'; Json = 'lab_fast_boot'; Kind = 'bool' },
+    @{ Key = 'lab_boot'; Json = 'lab_boot'; Kind = 'labboot' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.
     @{ Key = 'debug_soldier_warp'; Json = 'debug_soldier_warp'; Kind = 'bool' },
@@ -434,6 +438,26 @@ $script:LabPartnerDefaults = [ordered]@{
     partner_force_exists = '0'; partner_policy_relax = '0'; partner_anim_probe = '0'; crash_probe = '1'
 }
 
+function Test-LabBootSpec {
+    # Pure: a lab_boot value as the native ParseLabBoot accepts it (docs/test-boot.md): off, or a mission (30010,
+    # 30020, 30050 or an ACC 40010, 40020, 40050), for free roam optionally x y z (|v| <= 100000) and yaw (|v| <= 360),
+    # each with at most 3 decimals, then time=HH:MM and weather=sunny|cloudy|rainy|sandstorm|foggy (no fog in 30020).
+    param([AllowEmptyString()][string]$Text)
+    if ($Text -ceq 'off') { return $true }
+    $n = '-?[0-9]{1,6}(?:\.[0-9]{1,3})?'
+    $tail = '(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(sunny|cloudy|rainy|sandstorm|foggy))?'
+    $pos = '^(30010|30020|30050) (' + $n + ') (' + $n + ') (' + $n + ') (' + $n + ')' + $tail + '$'
+    $plain = '^(30010|30020|30050|40010|40020|40050)' + $tail + '$'
+    $m = [regex]::Match($Text, $pos)
+    if ($m.Success) {
+        foreach ($i in 2, 3, 4) { if ([Math]::Abs([double]::Parse($m.Groups[$i].Value, [Globalization.CultureInfo]::InvariantCulture)) -gt 100000) { return $false } }
+        if ([Math]::Abs([double]::Parse($m.Groups[5].Value, [Globalization.CultureInfo]::InvariantCulture)) -gt 360) { return $false }
+        return !($m.Groups[1].Value -ceq '30020' -and $m.Groups[6].Value -ceq 'foggy')
+    }
+    $m = [regex]::Match($Text, $plain)
+    return $m.Success -and !($m.Groups[1].Value -ceq '30020' -and $m.Groups[2].Value -ceq 'foggy')
+}
+
 function Get-LabPartnerKeySpec {
     param([Parameter(Mandatory)][string]$Key)
     foreach ($spec in $script:LabPartnerKeys) { if ($spec.Key -ceq $Key) { return $spec } }
@@ -482,6 +506,11 @@ function ConvertTo-LabPartnerValue {
         # As the native lab.ini parser: 1..24 of [A-Za-z0-9 _.-], no blank at either end.
         if ($text -cmatch '^[A-Za-z0-9_.-]([A-Za-z0-9 _.-]{0,22}[A-Za-z0-9_.-])?$') { return $text }
         $allowed = '1..24 of [A-Za-z0-9 _.-]'
+    } elseif ($spec.Kind -eq 'labboot') {
+        # As the native ParseLabBoot (docs/test-boot.md); single blanks between the tokens.
+        $canonical = (@($text -split '\s+' | Where-Object { $_ })) -join ' '
+        if (Test-LabBootSpec $canonical) { return $canonical }
+        $allowed = 'off, <30010|30020|30050> <x> <y> <z> <yaw> [time=HH:MM] [weather=<name>], or <30010|30020|30050|40010|40020|40050> [time=HH:MM] [weather=<name>]'
     } elseif ($spec.Kind -eq 'words') {
         if ($text -cmatch '^[0prhn]{3}$') { return $text }
         $allowed = '3 of 0prhn'

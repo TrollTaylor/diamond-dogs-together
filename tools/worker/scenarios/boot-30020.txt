@@ -1,0 +1,17 @@
+# The developer test boot (docs/test-boot.md): "boot" writes lab_fast_boot=1 and lab_boot=<spec> into both copies'
+# lab.ini and then waits, with no input at all, for each copy's "lab_boot=...; step=gameplay" line. Both copies skip
+# the logo splash screens and the title; the host restarts in the ACC (no load) and sorties on foot to 30020 (route
+# 0, TppPlayer.SetInitialPosition at its own ReservePlayerLoadingPosition), the guest enters its ACC and replays that
+# sortie through world follow (kind 6). The host lands on the spot, the guest 4 m in front of it facing back (yaw 0:
+# the host looks at +z, so each capture shows the partner); the host sets 12:00 and sunny (world sync carries them).
+# The spot is the game's own 30020 fail-safe start (TppPlayer.FailSafeInitialPositionForFreePlay).
+# Run (hidden worker, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/boot-30020.txt
+# Evidence: scenario.json Boot (each role's gameplay line, its boot steps with game-clock ms and its position) and
+# Gameplay (seconds from launch); captures boot-spot (each copy sees its partner); script-observer.log lab_boot= lines.
+boot 30020 -510.73 5.09 1183.02 0 time=12:00 weather=sunny
+wait 2000
+both capture boot-spot
+host run position
+guest run position
+state

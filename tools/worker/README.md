@@ -265,6 +265,27 @@ member. Before it: `python tools/generate_steam_shim_contract.py --check`
 and `--steamclient "<Steam folder>/steamclient64.dll"`, then the worker
 checks.
 
+### Test boot, timings, save seeds (docs/test-boot.md)
+
+Developer-only speed-ups for hidden runs; a friend/play loader never acts on them.
+
+- `boot <lab_boot spec>` / `boot fast` (one per scenario): both copies get
+  `lab_fast_boot=1` (no logos, copyright wait, offline notice, press start or
+  title menu) and `lab_boot=<spec>`; the step waits without input until each
+  copy logs `lab_boot=...; step=gameplay`. Spec: `<mission> [x y z yaw]
+  [time=HH:MM] [weather=..]` (30010, 30020, 30050, ACC 40010/40020/40050). The
+  host restarts in the ACC and sorties on foot to the spot; the guest replays it
+  through world follow and lands 4 m in front, facing the host.
+  `scenarios/boot-30020.txt`, baseline `scenarios/boot-baseline.txt`. The keys
+  also go through `labsetting` lines or `-LabSetting`; play refuses them.
+- `scenario.json` `Gameplay` (seconds from each role's launch to gameplay),
+  `Boot` (boot steps with game-clock ms, positions) and `Timings` (every step).
+- `-SaveSeed <name>` (and `-HostSaveSeed` / `-GuestSaveSeed <name>`, `-SeedRoot`):
+  a named seed from `D:\mgs-coop-seeds\<name>\<role>`, verified against its
+  manifest. `Save-WorkerSeed.ps1 -RunId <id> -Name <name>` captures one from a
+  closed run's copied saves (never Steam userdata).
+- Lab sessions default to `-GraphicsQuality low` (light test copies).
+
 ### Save handoff and travel lock (join-fix phase 2)
 
 `docs/join-fix-phase2-spec.md` P2-19 and track E. These steps never drive

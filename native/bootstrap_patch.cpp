@@ -30,6 +30,7 @@
 #include "debug_spawn_source.hpp"
 #include "debug_buddy_source.hpp"
 #include "debug_vehicle_source.hpp"
+#include "debug_boot_source.hpp"
 #include "respawn_source.hpp"
 #include "character_source.hpp"
 
@@ -165,7 +166,7 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
 #endif
     constexpr std::size_t world_size=sizeof(world_sync_source)-1+sizeof(world_enemy_source)-1+sizeof(world_outcome_source)-1+
         sizeof(world_phase_source)-1+sizeof(world_env_source)-1+sizeof(world_probe_source)-1+sizeof(world_goto_source)-1+sizeof(world_follow_seed_source)-1+sizeof(world_follow_source)-1+sizeof(world_handoff_source)-1+sizeof(world_align_source)-1+sizeof(world_recovery_source)-1+sizeof(world_downed_source)-1+sizeof(world_sleep_clock_source)-1+sizeof(world_partner_sleep_source)-1+sizeof(world_friendly_source)-1+sizeof(world_revive_input_source)-1+sizeof(world_buddy_source)-1+sizeof(world_ride_pose_source)-1+sizeof(world_horse_cargo_source)-1+buddy_ride_size+sizeof(world_place_source)-1+sizeof(world_place_guest_source)-1+sizeof(world_vehicle_source)-1;
-    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(partner_actions_source)-1+sizeof(partner_ride_source)-1+sizeof(partner_sync_source)-1+world_size+sizeof(debug_menu_source)-1+sizeof(debug_equipment_source)-1+sizeof(debug_enemy_source)-1+sizeof(debug_player_source)-1+sizeof(debug_spawn_source)-1+sizeof(debug_buddy_source)-1+sizeof(debug_vehicle_source)-1+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
+    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(partner_actions_source)-1+sizeof(partner_ride_source)-1+sizeof(partner_sync_source)-1+world_size+sizeof(debug_menu_source)-1+sizeof(debug_equipment_source)-1+sizeof(debug_enemy_source)-1+sizeof(debug_player_source)-1+sizeof(debug_spawn_source)-1+sizeof(debug_buddy_source)-1+sizeof(debug_vehicle_source)-1+sizeof(debug_boot_source)-1+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
     static_assert(result_size<=script_bridge::max_replacement_bytes);
     static char result[result_size]{};
     static bool initialized=false;
@@ -272,7 +273,11 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
         std::memcpy(result+buddy_debug,debug_buddy_source,sizeof(debug_buddy_source)-1);
         constexpr auto vehicle_debug=buddy_debug+sizeof(debug_buddy_source)-1;
         std::memcpy(result+vehicle_debug,debug_vehicle_source,sizeof(debug_vehicle_source)-1);
-        constexpr auto marker_lifecycle=vehicle_debug+sizeof(debug_vehicle_source)-1;
+        // The developer test boot (lua/coop/debug_boot.lua, docs/test-boot.md): inert unless
+        // MGS_COOP_BOOT_CFG_V1 answers (the owned private worker of a worker build, lab mode).
+        constexpr auto boot_debug=vehicle_debug+sizeof(debug_vehicle_source)-1;
+        std::memcpy(result+boot_debug,debug_boot_source,sizeof(debug_boot_source)-1);
+        constexpr auto marker_lifecycle=boot_debug+sizeof(debug_boot_source)-1;
         std::memcpy(result+marker_lifecycle,marker_loading_source,sizeof(marker_loading_source)-1);
         constexpr auto readback=marker_lifecycle+sizeof(marker_loading_source)-1;
         std::memcpy(result+readback,character_readback_source,sizeof(character_readback_source)-1);

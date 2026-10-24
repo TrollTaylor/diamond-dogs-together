@@ -184,6 +184,10 @@ int main(int argc, char** argv) {
         // G5: the other ride hides unrealize body 1 (lab only, default 0; play forces off) and whether it was named.
         std::printf("partner_native_unrealize_all=%d\npartner_native_unrealize_all_given=%d\n", c.partner_native_unrealize_all ? 1 : 0,
                     c.partner_native_unrealize_all_given ? 1 : 0);
+        // The developer test boot (docs/test-boot.md; lab only, play forces both off).
+        std::printf("lab_fast_boot=%d\nlab_boot_mission=%u\nlab_boot_pos=%d\nlab_boot_clock_s=%d\nlab_boot_weather=%s\n", c.lab_fast_boot ? 1 : 0,
+                    static_cast<unsigned>(c.lab_boot.mission), c.lab_boot.has_pos ? 1 : 0, static_cast<int>(c.lab_boot.clock_s),
+                    mgscoop::LabBootWeatherName(c.lab_boot.weather));
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {
