@@ -1212,3 +1212,6 @@ if(MSVC)
   target_compile_options(native_pose_activation_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME native_pose_activation_tests COMMAND native_pose_activation_tests)
+
+# Last: labels every test fast or slow and adds the RESOURCE_LOCKs that keep ctest -j safe.
+include(cmake/test_labels.cmake)

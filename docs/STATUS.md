@@ -1,3 +1,29 @@
+## October 23, 2026: developer test loop (parallel CTest, fast/slow labels, no global CTest lock)
+
+Branch `wp/fast-tests` from `dev/oct7-continue` `ba7bb62`. Tests and tooling only; no product code changed, no game launched.
+
+- **Parallel CTest.** `tools/build.ps1` and the track helper `bt.ps1` run `ctest -j N` (default: half the logical
+  processors; `-Jobs N` overrides). ReleaseGun build, 302 tests, this 32-thread PC: serial 265 s; `-j 16` 89-92 s
+  (5 runs) and `-j 32` 89 s, all 302/302. The wall time is now `lab_scripts_tests` alone (about 90 s).
+- **Labels.** Every test is `fast` or `slow` (`cmake/test_labels.cmake`). Slow: the PowerShell suites, `link_udp_tests`
+  (34 s of socket timers), `ddt_core_tests` (20 s), `ddt_runtime_dat_integration` (reads the game folder) and
+  `ddt_launcher_screens` (DX11). `tools/build.ps1 -Fast` / `bt.ps1 -Fast` run only `ctest -L fast` (287 tests, 5.7 s at
+  `-j 16`); without `-Fast` (or `bt.ps1 -CtestRegex .`) everything runs. A new slow test goes into `MGS_SLOW_TESTS`.
+- **What -j serializes.** `RESOURCE_LOCK dx11_window` for the three tests that create a DX11 device and hidden window
+  (`ddt_launcher_screens`, `debug_overlay_tests`, `worker_input_fixture_tests`); `clone_fixture_bin` for
+  `standing_selection_off/on_tests` (both write `clone-fixture.bin` into the build folder). The fixtures on fixed
+  127.0.0.1 UDP ports (`link_udp_tests` 48220-48261, `steam_loopback_tests` 48120-48161, `partner_player_tests`
+  48190/48191) also hold a per-machine named mutex (`tests/test_port_lock.hpp`), because RESOURCE_LOCK cannot order the
+  suites of two checkouts. Everything else already used PID/GUID-named folders, random free ports or fake transports.
+- **Verify lock.** CTest no longer takes `%TEMP%\mgs-coop-verify.lock`. It waits while the lock is held by anything but
+  a CTest (owner `ctest ...`, or the older `join-fix <checkout> <time>`) or while a real `mgsvtpp.exe` (over 32 MB; the
+  fixtures run small stand-ins under that name) or a `worker_supervisor.exe` runs, then registers in
+  `%TEMP%\mgs-coop-ctest-readers` (`tools/VerifyLock.psm1`; `bt.ps1` inlines the same rule). Suites of different
+  worktrees run at the same time. Hidden-worker runs, worker checks, packaging and installs keep taking the lock; after
+  taking it, `Wait-CtestReaders` waits for suites that were already running (`tools/worker/README.md`).
+  `tools/build.ps1 -NoWorkerWait` skips the wait (the `build_profile_tests` fixture). `Invoke-WorkerChecks.ps1` is
+  unchanged (`-j 1`).
+
 ## October 23, 2026: 0.14.0 (Diamond Dogs Together launcher: one exe, drag-and-drop install, Steam only; repo cleanup; story character)
 
 **Package (2026-10-23, not installed, not released):** `dist/DiamondDogsTogether-0.14.0-20261023T215953Z-dc28f400/DiamondDogsTogether-0.14.0.zip` (9,980,622 bytes), SHA-256 `F58E248804274173766CA49BD07233067C4A5ACB1813ADF5468446637F45C717`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `54f0b9d` with Release receipt `20261023-215536-f4f26658dfb34d72bf39e1876b9b5df5` (passed, 294 audited tests). `DiamondDogsTogether.exe` SHA-256 `5E1073BC...8F23` and `dinput8.dll` `CDE30622...5520`, both build id `0.14.0+54f0b9d`. Unzipped into a scratch folder and checked: the 10 root entries, `package.json` (drop-in, 9 `files[]` rows, every hash), both programs equal to the receipt, licences intact, `source.zip` (1,283 entries), and the packaged exe's `--selftest` (13/13). Not installed in a game folder and no game launched.

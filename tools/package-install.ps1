@@ -41,7 +41,14 @@ function RunningFromGame {
         $path=$null
         try { $path=$process.Path } catch { $path=$null }
         if(!$path) { try { $path=(Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)" -ErrorAction Stop).ExecutablePath } catch { $path=$null } }
-        if(!$path) { return $true }  # Unknown location: assume this folder.
+        if(!$path) {
+            # A process that exited after the enumeration (another copy's game that just quit,
+            # a test stand-in) has no folder to protect; any other unknown location still blocks.
+            $exited=$false
+            try { $exited=$process.HasExited } catch { $exited=$false }
+            if($exited) { continue }
+            return $true  # Unknown location: assume this folder.
+        }
         $folder=(Split-Path -Parent ([IO.Path]::GetFullPath($path))).TrimEnd('\','/')
         if($folder.Equals($gameRoot,[StringComparison]::OrdinalIgnoreCase)) { return $true }
     }

@@ -32,6 +32,21 @@ the probe is a separately admitted private-desktop runtime fixture, not an
 ordinary CTest test. Do not use existing visible `Start-Lab`, `Send-LabInput`
 or desktop screenshot helpers to drive the worker.
 
+## Verify lock and CTest
+
+Hidden-worker sessions, worker checks, packaging and installs keep taking the
+shared exclusive lock `%TEMP%\mgs-coop-verify.lock` (mkdir, then `owner.txt`
+naming the owner) so nothing else on the machine starves the game. CTest suites
+no longer take it (`tools/build.ps1`, the track `bt.ps1`; `tools/VerifyLock.psm1`
+`Enter-CtestReader`): they wait while the lock is held by any owner except a
+CTest one (`ctest ...`, or the older `join-fix <checkout> <time>`), or while a
+real `mgsvtpp.exe` or a `worker_supervisor.exe` runs, then register in
+`%TEMP%\mgs-coop-ctest-readers`. Suites of different checkouts run at the same
+time. A worker session must not start under a running suite: after taking the
+lock, `Import-Module tools\VerifyLock.psm1; Wait-CtestReaders` waits until the
+registered suites have finished (no new one starts while the lock is held).
+`Invoke-WorkerChecks.ps1` still runs its audited CTest set with `-j 1`.
+
 ## Coordinator protocol
 
 Supervisor CLI is exactly `worker_supervisor.exe --launch <manifest>`.

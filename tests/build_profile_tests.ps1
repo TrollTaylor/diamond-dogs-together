@@ -27,7 +27,7 @@ function Assert-Cache([string]$Expected, [string]$Directory = (Join-Path $fixtur
         Assert-True ($cache -match "(?m)^${name}:BOOL=$Expected`r?$") "$name is $Expected in the real fixture cache"
     }
 }
-function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$FailConfigure, [string]$Directory, [switch]$Gun) {
+function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$FailConfigure, [string]$Directory, [switch]$Gun, [switch]$Fast, [int]$Jobs) {
     $calls = [Collections.Generic.List[object]]::new()
     function cmake {
         $nativeArguments = @($args)
@@ -44,8 +44,11 @@ function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$Fai
         $calls.Add([pscustomobject]@{ Tool = 'ctest'; Arguments = @($args) })
         $global:LASTEXITCODE = 0
     }
-    $parameters = @{ Configuration = 'Release'; BuildOnly = !$AllTargets; DisableLocalExperiments = $Disable.IsPresent }
+    # NoWorkerWait: the inert fixture never waits on the machine's verify lock or game processes.
+    $parameters = @{ Configuration = 'Release'; BuildOnly = !$AllTargets; DisableLocalExperiments = $Disable.IsPresent; NoWorkerWait = $true }
     if ($Gun) { $parameters.ReleaseGun = $true }
+    if ($Fast) { $parameters.Fast = $true }
+    if ($Jobs) { $parameters.Jobs = $Jobs }
     if ($Directory) { $parameters.BuildDirectory = $Directory }
     $failure = $null
     try { & (Join-Path $fixture 'tools\build.ps1') @parameters | Out-Null } catch { $failure = $_ }
@@ -136,6 +139,14 @@ try {
     Assert-True ($null -ne $both.Failure -and $both.Failure.Exception.Message -match 'either' -and $both.Calls.Count -eq 0) '-ReleaseGun and -DisableLocalExperiments are exclusive'
     $all = Invoke-FixtureBuild -Disable -AllTargets
     Assert-True ($null -eq $all.Failure -and $all.Calls.Count -eq 3 -and $all.Calls[2].Tool -eq 'ctest') 'the full build path still schedules its required checks'
+    $defaultJobs = [string][Math]::Max(1, [int][Math]::Floor([Environment]::ProcessorCount / 2))
+    Assert-True ((($all.Calls[2].Arguments -join ' ') -ceq "--test-dir $(Join-Path $fixture 'build\native') --output-on-failure -j $defaultJobs") -and
+        $all.Calls[2].Arguments -notcontains '-L') 'the full check runs every test in parallel (half the logical processors)'
+    $fast = Invoke-FixtureBuild -Disable -AllTargets -Fast -Jobs 3
+    Assert-True ($null -eq $fast.Failure -and $fast.Calls.Count -eq 3 -and
+        (($fast.Calls[2].Arguments | Select-Object -Last 4) -join ' ') -ceq '-j 3 -L fast') '-Fast runs only the fast label, -Jobs sets ctest -j'
+    $fastOnly = Invoke-FixtureBuild -Disable -Fast
+    Assert-True ($null -ne $fastOnly.Failure -and $fastOnly.Failure.Exception.Message -match 'BuildOnly' -and $fastOnly.Calls.Count -eq 0) '-Fast with -BuildOnly is refused before any build'
     $failed = Invoke-FixtureBuild -Disable -FailConfigure
     Assert-True ($null -ne $failed.Failure -and $failed.Failure.Exception.Message -eq 'CMake configuration failed' -and
         $failed.Calls.Count -eq 1) 'a failed configure cannot reach compilation or checks'
