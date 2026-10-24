@@ -599,4 +599,76 @@ function Get-WorkerResearchBuildDirectory([string]$RepoRoot,[string[]]$Experimen
     $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).Substring(0,12)
     return Join-Path $RepoRoot ('build\worker-checks\research-'+$hash+'-worker-on-release')
 }
+# Named save seeds (docs/test-boot.md "Save-seed library"): <SeedRoot>\<name>\{host,guest}\{287700,remote}
+# plus <SeedRoot>\<name>\manifest.json, captured by tools/worker/Save-WorkerSeed.ps1 from the copied saves of a
+# closed worker run (never from Steam userdata) and verified file by file before every use. The root is
+# -SeedRoot, else $env:MGS_COOP_SEED_ROOT, else D:\mgs-coop-seeds (outside every checkout).
+function Get-WorkerSeedRoot([string]$SeedRoot='') {
+    $root=if($SeedRoot){$SeedRoot}elseif($env:MGS_COOP_SEED_ROOT){$env:MGS_COOP_SEED_ROOT}else{'D:\mgs-coop-seeds'}
+    return Assert-WorkerPlainPath ([IO.Path]::GetFullPath($root))
+}
+# A seed name: 2..32 of [a-z0-9-], starting with a letter; never a built-in seed word.
+function Test-WorkerSeedName([string]$Name) {
+    return $Name -cmatch '\A[a-z][a-z0-9-]{1,31}\z' -and $Name -cnotin @('real','lab','run','both','real-remote')
+}
+# The role copy's files exactly as Get-WorkerCopyInventory lists them, as one SHA-256:
+# "<path>|<size>|<sha256>\n" per file in path order (upper-case hex).
+function Get-WorkerSeedSetSha256([object[]]$Rows) {
+    $text=(@($Rows|Sort-Object {[string]$_['path']}|ForEach-Object{[string]$_['path']+'|'+[string]$_['size']+'|'+([string]$_['sha256']).ToUpperInvariant()}) -join "`n")+"`n"
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text)))
+}
+# A seed role copy fit for a game: 287700\local and remote only, a TPP_GAME_DATA file, at most 64 files of
+# at most 16 MiB each (the copied saves are a few MB).
+function Assert-WorkerSeedRows([object[]]$Rows,[string]$What) {
+    if(!$Rows.Count -or $Rows.Count -gt 64){throw "$What must hold 1..64 files."}
+    foreach($row in $Rows){
+        if([string]$row['path'] -cnotmatch '\A(287700\\local|remote)\\[A-Za-z0-9_.-]{1,64}\z'){throw "$What holds an unexpected file: $($row['path'])"}
+        if([long]$row['size'] -gt 16777216){throw "$What holds an oversized file: $($row['path'])"}
+    }
+    if(!@($Rows|Where-Object{[string]$_['path'] -cmatch '\A287700\\local\\TPP_GAME_DATA[0-9]?\z'}).Count){throw "$What has no 287700\local\TPP_GAME_DATA."}
+}
+# Reads and verifies one role of a named seed: the manifest's format, name and role entry, then every
+# file's size and SHA-256 and the set hash; nothing more and nothing less on disk. Returns the folder and rows.
+function Read-WorkerNamedSeed([string]$SeedRoot,[string]$Name,[ValidateSet('host','guest')][string]$Role) {
+    if(!(Test-WorkerSeedName $Name)){throw "Invalid save seed name: $Name"}
+    $root=Get-WorkerSeedRoot $SeedRoot
+    $seed=Assert-WorkerPlainPath (Join-Path $root $Name)
+    if(!(Test-Path -LiteralPath $seed -PathType Container)){throw "No save seed '$Name' in $root (tools/worker/Save-WorkerSeed.ps1 creates it)."}
+    $manifestPath=Join-Path $seed 'manifest.json'
+    $manifest=Read-WorkerSessionJson $manifestPath 1048576
+    if([string]$manifest['format'] -cne 'mgs-coop-worker-seed' -or [string]$manifest['v'] -cne '1' -or [string]$manifest['name'] -cne $Name -or
+       $manifest['roles'] -isnot [Collections.IDictionary]){throw "Save seed '$Name' has no valid manifest."}
+    $entry=$manifest['roles'][$Role]
+    if($entry -isnot [Collections.IDictionary]){throw "Save seed '$Name' has no $Role copy."}
+    $folder=Assert-WorkerPlainPath (Join-Path $seed $Role) -MustExist
+    $rows=@(Get-WorkerCopyInventory $folder)
+    Assert-WorkerSeedRows $rows "Save seed '$Name' ($Role)"
+    $want=@($entry['files'])
+    if($want.Count -ne $rows.Count){throw "Save seed '$Name' ($Role) differs from its manifest (file count)."}
+    for($i=0;$i -lt $rows.Count;$i++){
+        $w=@($want|Where-Object{$_ -is [Collections.IDictionary] -and [string]$_['path'] -ceq [string]$rows[$i]['path']})
+        if($w.Count -ne 1 -or [long]$w[0]['size'] -ne [long]$rows[$i]['size'] -or [string]$w[0]['sha256'] -ine [string]$rows[$i]['sha256']){
+            throw "Save seed '$Name' ($Role) differs from its manifest: $($rows[$i]['path'])"
+        }
+    }
+    $set=Get-WorkerSeedSetSha256 $rows
+    if([string]$entry['set_sha256'] -cne $set){throw "Save seed '$Name' ($Role) set hash differs from its manifest."}
+    return [pscustomobject]@{Name=$Name;Role=$Role;Folder=$folder;Files=$rows;SetSha256=$set;ManifestSha256=(Get-WorkerHash $manifestPath)}
+}
+# Copies a verified named seed role (Read-WorkerNamedSeed) into a fresh owned run save folder, file by file,
+# each re-hashed; the 287700\local and remote folders always exist afterwards. Returns the copy's inventory.
+function Copy-WorkerNamedSeed($Seed,[string]$Destination,[string]$RunDirectory) {
+    $target=Assert-WorkerPlainPath $Destination
+    if(!(Test-WorkerDescendant $target $RunDirectory) -or (Test-Path -LiteralPath $target)){throw 'A named seed copy must be a fresh run descendant.'}
+    foreach($folder in @('287700\local','remote')){$null=New-Item -ItemType Directory -Path (Join-Path $target $folder) -Force}
+    foreach($row in @($Seed.Files)){
+        $to=[IO.Path]::GetFullPath((Join-Path $target ([string]$row['path'])))
+        if(!(Test-WorkerDescendant $to $target)){throw 'A named seed copy escaped its folder.'}
+        [IO.File]::Copy((Join-Path $Seed.Folder ([string]$row['path'])),$to,$false)
+        Assert-WorkerHash $to ([string]$row['sha256'])
+    }
+    $copies=@(Get-WorkerCopyInventory $target)
+    if((Get-WorkerSeedSetSha256 $copies) -cne $Seed.SetSha256){throw 'The named seed copy differs from the verified seed.'}
+    return $copies
+}
 Export-ModuleMember -Function *

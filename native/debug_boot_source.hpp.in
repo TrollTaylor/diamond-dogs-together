@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_boot_source[] = R"MGS_BOOT(
+@MGS_DEBUG_BOOT_SOURCE@
+)MGS_BOOT";

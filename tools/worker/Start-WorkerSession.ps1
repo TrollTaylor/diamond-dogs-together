@@ -33,16 +33,21 @@ param(
     # real: fresh copies of the real saves (a pending story demo can block the
     # partner's two-player pack in Mother Base). lab: copies of each folder's
     # existing Play-OfflineCoop lab saves (read only), the state earlier live
-    # runs used. The real saves are backed up and re-checked either way.
-    [ValidateSet('real','lab')][string]$SaveSeed='real',
+    # runs used. A name: the save-seed library (docs/test-boot.md "Save-seed
+    # library"; tools/worker/Save-WorkerSeed.ps1), <SeedRoot>\<name>\<role>,
+    # verified against its manifest. The real saves are backed up and
+    # re-checked either way.
+    [ValidatePattern('^(real|lab|(?!(run|both|real-remote)$)[a-z][a-z0-9-]{1,31})$')][string]$SaveSeed='real',
     # Per-role seeds (docs/join-fix-phase2-spec.md P2-19): '' takes -SaveSeed.
     # -GuestSaveSeedRun <runId> seeds the guest from that earlier, closed run's
     # guest-saves\{287700,remote} (read only; the second session of the save
     # handoff restart proof). It excludes -GuestSaveSeed. -GuestSaveSeed
     # real-remote: the real seed without 287700\local's progress files (an old
     # Steam save with remote files only; online 2026-10-22 P1), guest only.
-    [ValidateSet('','real','lab')][string]$HostSaveSeed='',
-    [ValidateSet('','real','lab','real-remote')][string]$GuestSaveSeed='',
+    [ValidatePattern('^(|real|lab|(?!(run|both|real-remote)$)[a-z][a-z0-9-]{1,31})$')][string]$HostSaveSeed='',
+    [ValidatePattern('^(|real|lab|real-remote|(?!(run|both)$)[a-z][a-z0-9-]{1,31})$')][string]$GuestSaveSeed='',
+    # The named seeds' root ('' = $env:MGS_COOP_SEED_ROOT, else D:\mgs-coop-seeds).
+    [string]$SeedRoot='',
     [ValidatePattern('^$|^[0-9a-f]{32}$')][string]$GuestSaveSeedRun='',
     # Optional quality preset, applied only to this run's fresh role save copies.
     [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
@@ -53,7 +58,7 @@ param(
     # link_session_skew reproduction knob (Invoke-WorkerScenario
     # "labsetting" lines); key=value for both copies, host:key=value /
     # guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|lab_fast_boot=[01]|lab_boot=(off|(30010|30020|30050)( -?[0-9]{1,6}(\.[0-9]{1,3})?){3} -?[0-9]{1,3}(\.[0-9]{1,3})?( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?|(30010|30020|30050|40010|40020|40050)( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?))$')][string[]]$LabSetting=@(),
     # lab: the one-PC lab (OfflineLab). play: the play rehearsal: both copies
     # run mode=play exactly as Play-Coop writes it, moved onto 127.0.0.1 with
     # the worker-only play_rehearsal=1, the real identity and a fresh link
@@ -94,8 +99,8 @@ function Get-WorkerRoleSeeds([string]$SaveSeed,[string]$HostSaveSeed,[string]$Gu
     if($GuestSaveSeedRun -and !(Test-WorkerRunId $GuestSaveSeedRun)){throw '-GuestSaveSeedRun must be one exact lower-case worker run id.'}
     $hostSeed=if($HostSaveSeed){$HostSaveSeed}else{$SaveSeed}
     $guestSeed=if($GuestSaveSeedRun){'run'}elseif($GuestSaveSeed){$GuestSaveSeed}else{$SaveSeed}
-    if($hostSeed -cnotin @('real','lab')){throw "Unknown host save seed: $hostSeed"}
-    if($guestSeed -cnotin @('real','lab','run','real-remote')){throw "Unknown guest save seed: $guestSeed"}
+    if($hostSeed -cnotin @('real','lab') -and !(Test-WorkerSeedName $hostSeed)){throw "Unknown host save seed: $hostSeed"}
+    if($guestSeed -cnotin @('real','lab','run','real-remote') -and !(Test-WorkerSeedName $guestSeed)){throw "Unknown guest save seed: $guestSeed"}
     return @{host=$hostSeed;guest=$guestSeed}
 }
 # -GuestSaveSeed real-remote (lab worker only): removes the progress files
@@ -117,8 +122,9 @@ function Remove-WorkerLocalProgress([string]$SaveRoot,[string]$RunDirectory) {
     return @($removed)
 }
 $roleSeeds=Get-WorkerRoleSeeds $SaveSeed $HostSaveSeed $GuestSaveSeed $GuestSaveSeedRun
-# Refuse a wrong seed run before any probe, staging or install work.
+# Refuse a wrong seed run or named seed before any probe, staging or install work.
 if($roleSeeds.guest -ceq 'run'){$null=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun ''}
+foreach($r in @('host','guest')){if(Test-WorkerSeedName $roleSeeds[$r]){$null=Read-WorkerNamedSeed $SeedRoot $roleSeeds[$r] $r}}
 $pins=Get-WorkerRuntimePins
 $build=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($BuildDirectory,$repo)) -MustExist
 if(!(Test-WorkerDescendant $build (Join-Path $repo 'build')) -or $build -ieq (Join-Path $repo 'build\native')){throw 'Use a separate worker build under build.'}
@@ -145,6 +151,8 @@ if($Mode -ceq 'play' -and @($LabSetting|Where-Object{$_ -cmatch '(^|:)partner_na
     throw 'Measured optional equipment acceptance is lab-only.'
 }
 $labKeys=@($LabSetting|ForEach-Object{$_ -creplace '^(host|guest):',''})
+# The developer test boot (docs/test-boot.md) is lab only: play forces both keys off (kPlayRefusedLabBoot).
+if($Mode -ceq 'play' -and @($labKeys|Where-Object{$_ -cmatch '^lab_(fast_)?boot='}).Count){throw 'lab_fast_boot / lab_boot are lab only.'}
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
 if($labKeys -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_aimpt=*'}).Count -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'}
@@ -383,6 +391,11 @@ try {
             $null=New-Item -ItemType Directory -Path $saveRoot
             foreach($sub in @('287700','remote')){Copy-Item -LiteralPath (Join-Path $labSaves $sub) -Destination $saveRoot -Recurse}
             $seed=[pscustomobject]@{Seeded=$true;Files=@(Get-ChildItem -LiteralPath $saveRoot -Recurse -File).Count}
+        } elseif(Test-WorkerSeedName $roleSeed){
+            # A named seed (docs/test-boot.md): this role's verified copy of the library seed, re-verified now.
+            $named=Read-WorkerNamedSeed $SeedRoot $roleSeed $role
+            $row.save_seed_name=$named.Name;$row.save_seed_set_sha256=$named.SetSha256;$row.save_seed_manifest_sha256=$named.ManifestSha256
+            $seed=[pscustomobject]@{Seeded=$true;Files=@(Copy-WorkerNamedSeed $named $saveRoot $runDirectory).Count}
         } elseif($roleSeed -ceq 'run'){
             # The guest only (Get-WorkerRoleSeeds): an earlier closed run's guest copy, read only.
             $seedRunSaves=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun $runId
@@ -395,7 +408,7 @@ try {
             if($roleSeed -ceq 'real-remote'){$row.save_seed_removed=@(Remove-WorkerLocalProgress $saveRoot $runDirectory)}
         }
         if(!$seed.Seeded -or !$seed.Files){throw 'Fresh worker save copy was not seeded from the verified backup.'}
-        $row.save_seed_kind=$roleSeed
+        $row.save_seed_kind=if(Test-WorkerSeedName $roleSeed){'named'}else{$roleSeed}
         $row.save_seed_run=if($roleSeed -ceq 'run'){$GuestSaveSeedRun}else{$null}
         $row.save_seed=@(Get-WorkerCopyInventory $saveRoot)
         $row.mutex_suffix='worker_'+$role+'_'+$runId.Substring(0,8)

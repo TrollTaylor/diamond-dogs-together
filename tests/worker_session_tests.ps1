@@ -434,14 +434,17 @@ foreach($name in @('freshBackup','manifestBackup','saveRoot','graphics')) {
 # the explicit -SaveSeed lab opt-in copies each folder's own lab save copy
 # (never the real saves) into the fresh run directory.
 $seedDefinitions=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -ceq 'seed'},$true)|ForEach-Object{$_.Extent.Text})
-# Three forms since join-fix phase 2 (P2-19): real (backup), lab and run (an earlier closed run's guest copy).
-Assert-True ($seedDefinitions.Count -eq 3) 'three seed forms'
+# Four forms: real (backup), lab, run (an earlier closed run's guest copy, P2-19) and a named seed of the
+# save-seed library (docs/test-boot.md), copied only after Read-WorkerNamedSeed verified it.
+Assert-True ($seedDefinitions.Count -eq 4) 'four seed forms'
+Assert-True ($seedDefinitions -ccontains "`$seed=[pscustomobject]@{Seeded=`$true;Files=@(Copy-WorkerNamedSeed `$named `$saveRoot `$runDirectory).Count}" -and
+    $start.Contains('$named=Read-WorkerNamedSeed $SeedRoot $roleSeed $role')) 'a named seed is verified, then copied into the fresh run folder'
 Assert-True ($seedDefinitions -ccontains "`$seed=Copy-SaveSeed -BackupDirectory `$freshBackup -SaveDir `$saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'") 'default role seed reads only this run verified backup'
-Assert-True ($start.Contains("[ValidateSet('real','lab')][string]`$SaveSeed='real'") -and $start.Contains("`$labSaves=Assert-WorkerPlainPath `$p.SaveDir -MustExist")) 'lab seed is an explicit opt-in from the folder lab save copy'
-Assert-True ($start.Contains("[ValidateSet('','real','lab')][string]`$HostSaveSeed=''") -and $start.Contains("[ValidateSet('','real','lab','real-remote')][string]`$GuestSaveSeed=''") -and
+Assert-True ($start.Contains("[ValidatePattern('^(real|lab|(?!(run|both|real-remote)`$)[a-z][a-z0-9-]{1,31})`$')][string]`$SaveSeed='real'") -and $start.Contains("`$labSaves=Assert-WorkerPlainPath `$p.SaveDir -MustExist")) 'lab seed is an explicit opt-in from the folder lab save copy'
+Assert-True ($start.Contains("[ValidatePattern('^(|real|lab|(?!(run|both|real-remote)`$)[a-z][a-z0-9-]{1,31})`$')][string]`$HostSaveSeed=''") -and $start.Contains("[ValidatePattern('^(|real|lab|real-remote|(?!(run|both)`$)[a-z][a-z0-9-]{1,31})`$')][string]`$GuestSaveSeed=''") -and
     $start.Contains("[ValidatePattern('^`$|^[0-9a-f]{32}`$')][string]`$GuestSaveSeedRun=''")) 'per-role seed parameters (P2-19)'
 Assert-True ($start.Contains('$seedRunSaves=Get-WorkerSeedRunSaves $repo $GuestSaveSeedRun $runId') -and $start.Contains('$roleSeed=$roleSeeds[$role]') -and
-    $start.Contains('$row.save_seed_kind=$roleSeed')) 'the role loop picks each role''s seed and records it'
+    $start.Contains("`$row.save_seed_kind=if(Test-WorkerSeedName `$roleSeed){'named'}else{`$roleSeed}")) 'the role loop picks each role''s seed and records it'
 foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     $seedAst=if($name -ceq 'Start-WorkerSession.ps1'){$startAst}else{[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'),[ref]$tokens,[ref]$errors)}
     $seedParams=@($seedAst.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -cin 'HostSaveSeed','GuestSaveSeed','GuestSaveSeedRun'})
@@ -1766,10 +1769,13 @@ try {
   $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceDirectory $name),[ref]$tokens,[ref]$errors)
   Assert-True ($errors.Count -eq 0) ('graphics: parses '+$name);$asts[$name]=$ast
   $p=@($ast.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -ceq 'GraphicsQuality'})
-  Assert-True ($p.Count -eq 1 -and $p[0].DefaultValue.Value -ceq 'preserve') ('graphics: default '+$name)
+  # Light test copies (docs/test-boot.md): the scenario runner's '' resolves to low in lab, preserve in play.
+  $wantDefault=if($name -ceq 'Start-WorkerSession.ps1'){'preserve'}else{''}
+  Assert-True ($p.Count -eq 1 -and $p[0].DefaultValue.Value -ceq $wantDefault) ('graphics: default '+$name)
   $body=[scriptblock]::Create($ast.ParamBlock.Extent.Text+'; return $GraphicsQuality');$fixtureArgs=@{}
   if($name -ceq 'Start-WorkerSession.ps1'){$fixtureArgs=@{BuildDirectory='C:\fixture';CheckReceipt='C:\fixture';BaselineLoaderSha256=('A'*64)}}
-  Assert-True ((& $body @fixtureArgs) -ceq 'preserve') ('graphics: bound default '+$name)
+  Assert-True ((& $body @fixtureArgs) -ceq $wantDefault) ('graphics: bound default '+$name)
+  Assert-True ((& $body @fixtureArgs -GraphicsQuality preserve) -ceq 'preserve') ('graphics: bound preserve '+$name)
   Assert-True ((& $body @fixtureArgs -GraphicsQuality low) -ceq 'low') ('graphics: bound low '+$name)
   Assert-Throws {& $body @fixtureArgs -GraphicsQuality medium} ('graphics: rejected bound preset '+$name)
  }
@@ -1797,11 +1803,11 @@ try {
   $worker='C:\fixture';$build='C:\fixture';$CheckReceipt='C:\fixture';$BaselineLoaderSha256='A'*64
   $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$BuddyCapacityArchive='';$MgoSleepRestArchive='';$MgoUniqueRestArchive='';$AmmoExperiment=$false;$MgoStandingCycleArchive='';$StandingLookupObserver=$false;$NativeActivationObserver=$false;$StandingFrameObserver=$false
   $SaveSeed='lab';$LabSetting=@();$Mode='lab';$WanSim='off'
-  $HostSaveSeed='';$GuestSaveSeed='';$GuestSaveSeedRun=''
+  $HostSaveSeed='';$GuestSaveSeed='';$GuestSaveSeedRun='';$SeedRoot=''
   function Join-Path([string]$Path,[string]$ChildPath){Assert-True ($ChildPath -ceq 'Start-WorkerSession.ps1') 'graphics: recorded Start only';return 'Graphics-RecordStart'}
   function Graphics-RecordStart {
    param($BuildDirectory,$CheckReceipt,$BaselineLoaderSha256,$TimeoutSec,$ReadyTimeoutSec,$PartnerProfile,$NativeStage,$BuildProfile,
-    [switch]$AmmoExperiment,$SaveSeed,$HostSaveSeed,$GuestSaveSeed,$GuestSaveSeedRun,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive,$MgoSleepRestArchive,$MgoUniqueRestArchive,$MgoStandingCycleArchive,[switch]$StandingLookupObserver,[switch]$StandingFrameObserver,[switch]$NativeActivationObserver)
+    [switch]$AmmoExperiment,$SaveSeed,$HostSaveSeed,$GuestSaveSeed,$GuestSaveSeedRun,$SeedRoot,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive,$MgoSleepRestArchive,$MgoUniqueRestArchive,$MgoStandingCycleArchive,[switch]$StandingLookupObserver,[switch]$StandingFrameObserver,[switch]$NativeActivationObserver)
    if($script:recordSeeds){return "$SaveSeed|$HostSaveSeed|$GuestSaveSeed|$GuestSaveSeedRun"}
    return $GraphicsQuality
   }
@@ -1817,6 +1823,113 @@ try {
   Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'lab|lab||0123456789abcdef0123456789abcdef') 'seeds: real invocation forwards the seed run'
   $script:recordSeeds=$false
  }
+}
+
+# The developer test boot (docs/test-boot.md): lab_fast_boot and lab_boot in both -LabSetting allow-lists and the
+# scenario labsetting line (the same alternatives; play refuses them), and the boot line that writes both.
+foreach($ok in @('lab_fast_boot=1','lab_fast_boot=0','host:lab_fast_boot=1','guest:lab_fast_boot=0','lab_boot=off','lab_boot=30020','lab_boot=40050',
+    'lab_boot=30050 weather=rainy','lab_boot=30010 time=06:30','lab_boot=30020 -510.73 5.09 1183.02 90 time=12:00 weather=sunny',
+    'guest:lab_boot=30010 1448.61 337.787 1466.4 -90','host:lab_boot=40010 time=23:59 weather=cloudy')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+    $role=if($ok -cmatch '^(host|guest):'){$Matches[1]+' '}else{''}
+    Assert-True (('labsetting '+$role+($ok -creplace '^(host|guest):','')) -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
+}
+foreach($bad in @('lab_fast_boot=2','lab_fast_boot=','lab_fast_boot=yes','both:lab_fast_boot=1','lab_boot=','lab_boot=10010','lab_boot=30020 1 2 3',
+    'lab_boot=40050 1 2 3 4','lab_boot=30020 1 2 3 4 5','lab_boot=30020  1 2 3 4','lab_boot=30020 time=24:00','lab_boot=30020 time=1:00',
+    'lab_boot=30020 weather=snow','lab_boot=30020 weather=sunny time=12:00','lab_boot=30020 1e3 2 3 4','lab_boot=30020 1.2345 2 3 4','lab_boots=30020')){
+    Assert-True ($bad -cnotmatch $scenarioPattern -and $bad -cnotmatch $sessionPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting both lab_boot=30020' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting has no both role'
+# Every shipped boot line is "boot fast" or a lab_boot spec the labsetting line admits (boot-30020.txt has one).
+$bootFiles=0
+foreach($file in @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'tools\worker\scenarios') -Filter '*.txt' -File)){
+    $boots=@([IO.File]::ReadAllLines($file.FullName)|ForEach-Object{$_.Trim()}|Where-Object{$_ -cmatch '^boot(\s|$)'})
+    if(!$boots.Count){continue}
+    ++$bootFiles
+    Assert-True ($boots.Count -eq 1) ('one boot line in '+$file.Name)
+    $spec=$boots[0] -creplace '^boot\s+',''
+    Assert-True ($spec -ceq 'fast' -or ('labsetting lab_boot='+$spec) -cmatch $lineMatch.Groups[1].Value) ('the boot spec of '+$file.Name+' is a lab_boot value')
+}
+Assert-True ($bootFiles -ge 1) 'a shipped scenario boots'
+Assert-True ($scenarioText.Contains("`$steps=@(@('labsetting lab_fast_boot=1')+@(`$(if(`$bootSpec -cne 'fast'){'labsetting lab_boot='+`$bootSpec}))+@(`$steps))") -and
+    $scenarioText.Contains("if(`$t[0] -ceq 'boot'){Invoke-ScenarioBoot 300;continue}") -and
+    $scenarioText.Contains("throw 'lab_fast_boot / lab_boot (and boot) are lab only.'") -and $sessionText.Contains("throw 'lab_fast_boot / lab_boot are lab only.'")) 'the boot line configures both copies, waits, and is lab only'
+Assert-True ($scenarioText.Contains("if(!`$GraphicsQuality){`$GraphicsQuality=if(`$Mode -ceq 'lab'){'low'}else{'preserve'}}")) 'light test copies: low graphics in lab by default'
+# LabCommon writes the two keys for Prepare-LabInstance -PartnerSetting (the native parser's grammar).
+Assert-True ((ConvertTo-LabPartnerValue -Key lab_fast_boot -Value 1) -ceq '1' -and
+    (ConvertTo-LabPartnerValue -Key lab_boot -Value '30020   -510.73 5.09 1183.02  90 time=12:00') -ceq '30020 -510.73 5.09 1183.02 90 time=12:00' -and
+    (ConvertTo-LabPartnerValue -Key lab_boot -Value off) -ceq 'off') 'LabCommon canonical lab boot values'
+foreach($bad in @('30020 weather=foggy','30020 100001 0 0 0','30020 0 0 0 361','40050 1 2 3 4','31000','30020 1 2 3')){
+    Assert-Throws {ConvertTo-LabPartnerValue -Key lab_boot -Value $bad} ('LabCommon refuses lab_boot='+$bad)
+}
+$parsed=ConvertFrom-LabPartnerSettingArgs -Items @('lab_fast_boot=1','guest:lab_boot=30020 -510.73 5.09 1183.02 90 weather=sunny') -Role guest
+Assert-True ($parsed['lab_fast_boot'] -ceq '1' -and $parsed['lab_boot'] -ceq '30020 -510.73 5.09 1183.02 90 weather=sunny') 'a -PartnerSetting lab_boot keeps its blanks'
+# The save-seed library (docs/test-boot.md "Save-seed library"): names, the manifest check, the verified copy and
+# Save-WorkerSeed.ps1 on a fixture run in %TEMP% (never a real run, save or the checkout).
+foreach($ok in @('mb-ladder','africa-jeep','afgh-ledge','quiet-recruited','a1')){Assert-True (Test-WorkerSeedName $ok) ('seed name '+$ok)}
+foreach($bad in @('real','lab','run','both','real-remote','a','1a','Mb-ladder','mb_ladder','mb ladder',('a'*33),'')){Assert-True (!(Test-WorkerSeedName $bad)) ('not a seed name: '+$bad)}
+& {
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('mgs-seed-fixture-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
+    $null=New-Item -ItemType Directory -Path $fixture
+    try {
+        $runId='0123456789abcdef0123456789abcdef'
+        $run=Join-Path $fixture $runId
+        foreach($role in 'host','guest'){
+            foreach($folder in '287700\local','remote'){$null=New-Item -ItemType Directory -Path (Join-Path $run "$role-saves\$folder") -Force}
+            foreach($file in 'TPP_GAME_DATA0','PERSONAL_DATA0','TPP_GRAPHICS_CONFIG'){[IO.File]::WriteAllText((Join-Path $run "$role-saves\287700\local\$file"),"$role $file")}
+            [IO.File]::WriteAllText((Join-Path $run "$role-saves\remote\TPP_GAME_DATA"),"$role remote")
+            [IO.File]::WriteAllText((Join-Path $run "$role-saves\imported-progress.json"),'{}')
+        }
+        Write-WorkerSessionJson (Join-Path $run 'session.json') ([ordered]@{run_id=$runId;status='ready';mode='lab';real_saves=[ordered]@{root='C:\fixture\userdata\1'}})
+        $seeds=Join-Path $fixture 'seeds'
+        $save=Join-Path $SourceDirectory 'Save-WorkerSeed.ps1'
+        Assert-Throws {& $save -RunDirectory $run -Name africa-jeep -SeedRoot $seeds} 'a seed needs a closed run'
+        Write-WorkerSessionJson (Join-Path $run 'session.json') ([ordered]@{run_id=$runId;status='closed';mode='lab';real_saves=[ordered]@{root='C:\fixture\userdata\1'};save_seeds=[ordered]@{host='lab';guest='lab'}})
+        Assert-Throws {& $save -RunDirectory $run -Name lab -SeedRoot $seeds} 'a seed name never shadows a built-in seed'
+        Assert-Throws {& $save -RunDirectory $run -Name africa-jeep -SeedRoot (Join-Path $RepoRoot 'build\seeds')} 'the seed root is outside the checkout'
+        $saved=@(& $save -RunDirectory $run -Name africa-jeep -SeedRoot $seeds *>&1|Where-Object{$_ -isnot [string] -and $_ -isnot [Management.Automation.InformationRecord]})[-1]
+        Assert-True ($saved.Name -ceq 'africa-jeep' -and (Test-Path -LiteralPath (Join-Path $seeds 'africa-jeep\manifest.json'))) 'Save-WorkerSeed writes the seed and its manifest'
+        $manifest=Read-WorkerSessionJson (Join-Path $seeds 'africa-jeep\manifest.json')
+        Assert-True ($manifest['format'] -ceq 'mgs-coop-worker-seed' -and $manifest['source']['run_id'] -ceq $runId -and $manifest['roles']['host']['count'] -eq 4 -and
+            @($manifest['roles']['host']['skipped']) -ccontains 'imported-progress.json') 'the manifest names the run, four files per role and the skipped extra'
+        $hostSeed=Read-WorkerNamedSeed $seeds 'africa-jeep' 'host'
+        Assert-True ($hostSeed.Files.Count -eq 4 -and $hostSeed.SetSha256 -cmatch '^[0-9A-F]{64}$') 'the host copy verifies'
+        $runDir=Join-Path $fixture 'run2'
+        $null=New-Item -ItemType Directory -Path $runDir
+        $copies=@(Copy-WorkerNamedSeed $hostSeed (Join-Path $runDir 'host-saves') $runDir)
+        Assert-True ($copies.Count -eq 4 -and (Get-WorkerSeedSetSha256 $copies) -ceq $hostSeed.SetSha256 -and (Test-Path -LiteralPath (Join-Path $runDir 'host-saves\remote'))) 'the verified copy lands in the run folder'
+        Assert-Throws {Copy-WorkerNamedSeed $hostSeed (Join-Path $runDir 'host-saves') $runDir} 'a seed copy never overwrites'
+        Assert-Throws {Copy-WorkerNamedSeed $hostSeed (Join-Path $fixture 'elsewhere') $runDir} 'a seed copy stays in its run folder'
+        Assert-Throws {& $save -RunDirectory $run -Name africa-jeep -SeedRoot $seeds} 'an existing seed needs -Force'
+        $null=@(& $save -RunDirectory $run -Name africa-jeep -SeedRoot $seeds -Roles host -Force *>&1)
+        Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $seeds '.replaced') -Directory).Count -eq 1) '-Force moves the old seed aside'
+        Assert-Throws {Read-WorkerNamedSeed $seeds 'africa-jeep' 'guest'} 'a host-only seed has no guest copy'
+        [IO.File]::WriteAllText((Join-Path $seeds 'africa-jeep\host\287700\local\TPP_GAME_DATA0'),'changed')
+        Assert-Throws {Read-WorkerNamedSeed $seeds 'africa-jeep' 'host'} 'a changed seed file refuses'
+        [IO.File]::WriteAllText((Join-Path $seeds 'africa-jeep\host\287700\local\TPP_GAME_DATA0'),'host TPP_GAME_DATA0')
+        $null=Read-WorkerNamedSeed $seeds 'africa-jeep' 'host'
+        [IO.File]::WriteAllText((Join-Path $seeds 'africa-jeep\host\remote\EXTRA'),'x')
+        Assert-Throws {Read-WorkerNamedSeed $seeds 'africa-jeep' 'host'} 'an extra seed file refuses'
+        Assert-Throws {Read-WorkerNamedSeed $seeds 'no-such-seed' 'host'} 'a missing seed refuses'
+        Assert-Throws {Read-WorkerNamedSeed $seeds 'real' 'host'} 'a built-in seed word is no named seed'
+    } finally {Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue}
+}
+# Named seeds pass the role seed choice (Start-WorkerSession's own Get-WorkerRoleSeeds, executed).
+& {
+    $definition=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-WorkerRoleSeeds'},$true))
+    . ([scriptblock]::Create($definition[0].Extent.Text))
+    $s=Get-WorkerRoleSeeds 'africa-jeep' '' '' '';Assert-True ($s.host -ceq 'africa-jeep' -and $s.guest -ceq 'africa-jeep') 'a named -SaveSeed seeds both roles'
+    $s=Get-WorkerRoleSeeds 'lab' 'mb-ladder' 'quiet-recruited' '';Assert-True ($s.host -ceq 'mb-ladder' -and $s.guest -ceq 'quiet-recruited') 'named role seeds'
+    Assert-Throws {Get-WorkerRoleSeeds 'lab' 'Bad Name' '' ''} 'an invalid role seed name refuses'
+}
+foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
+    $seedAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $(if($name -ceq 'Start-WorkerSession.ps1'){$SourceDirectory}else{Join-Path $RepoRoot 'tools\worker'}) $name),[ref]$tokens,[ref]$errors)
+    $fixtureArgs=if($name -ceq 'Start-WorkerSession.ps1'){@{BuildDirectory='C:\fixture';CheckReceipt='C:\fixture';BaselineLoaderSha256=('A'*64)}}else{@{}}
+    $bind=[scriptblock]::Create($seedAst.ParamBlock.Extent.Text+'; return "$SaveSeed|$HostSaveSeed|$GuestSaveSeed|$SeedRoot"')
+    Assert-True ((& $bind @fixtureArgs -SaveSeed africa-jeep -HostSaveSeed mb-ladder -SeedRoot 'E:\seeds') -ceq 'africa-jeep|mb-ladder||E:\seeds') ('named seeds bind in '+$name)
+    foreach($bad in @(@{SaveSeed='run'},@{SaveSeed='both'},@{SaveSeed='real-remote'},@{HostSaveSeed='run'},@{GuestSaveSeed='both'},@{SaveSeed='a'},@{SaveSeed='mb ladder'})){
+        Assert-Throws {& $bind @fixtureArgs @bad} ('named seed parameter refuses '+(($bad.Keys|ForEach-Object{$_+'='+$bad[$_]}) -join ',')+' in '+$name)
+    }
 }
 
 Write-Output ("worker_session_tests: $script:checks detached checks passed; no worker/game/process/window operations")
