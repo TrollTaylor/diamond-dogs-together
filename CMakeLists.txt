@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mgs_coop VERSION 0.14.1 LANGUAGES CXX)
+project(mgs_coop VERSION 0.14.2 LANGUAGES CXX)
 option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)
 option(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER "Private copied-save worker: observe native actor reactivation completion" OFF)
 if(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER AND (NOT MGS_BACKGROUND_WORKER OR NOT MGS_LOCAL_OFFLINE_EQUIPMENT_TEST OR NOT MGS_LOCAL_STOCK46_PRELOAD_TEST OR NOT MGS_LOCAL_STOCK46_WRITER_TEST))

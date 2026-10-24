@@ -16,10 +16,11 @@ add_library(ddt_core STATIC
   native/launcher/core/core_selftest.cpp
   native/launcher/core/core_session.cpp
   native/launcher/core/core_text.cpp
+  native/launcher/core/core_update.cpp
   native/launcher/core/core_util.cpp
   native/launcher/launcher_join_code.cpp)
 target_include_directories(ddt_core PUBLIC native native/launcher native/launcher/core)
-target_link_libraries(ddt_core PUBLIC ddt_archive mgs_coop_core shell32 ole32 user32 advapi32)
+target_link_libraries(ddt_core PUBLIC ddt_archive mgs_coop_core shell32 ole32 user32 advapi32 winhttp)
 # The program version (package.json must name the same X.Y.Z) and the build id.
 target_compile_definitions(ddt_core PRIVATE "DDT_CORE_VERSION=\"${PROJECT_VERSION}\"" "DDT_CORE_BUILD_ID=\"${MGS_COOP_BUILD_ID}\"")
 target_compile_options(ddt_core PRIVATE /W4 /WX /utf-8)

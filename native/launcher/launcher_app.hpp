@@ -19,6 +19,7 @@ struct ShellServices {
     std::function<void(const std::string& utf8_file)> reveal_file;
     // Shows an "Open" dialog for a .zip; false when cancelled.
     std::function<bool(std::string& utf8_path_out)> pick_save_zip;
+    std::function<void(const std::string& utf8_url)> open_url;
 };
 
 struct LogoTexture {

@@ -1,3 +1,26 @@
+## October 24, 2026: 0.14.2 (launcher: GitHub update checker, auto-download, background updates, in-app self-updater)
+
+**Package (2026-10-24):** `dist/DiamondDogsTogether-0.14.2-20261024T143841Z-fcd27151/DiamondDogsTogether-0.14.2.zip` (10,063,881 bytes), SHA-256 `891A1CD48EA5AAE25F1F94AEE65E2B45FDC575B0A15ACBD50CFA2D5004DDBDFA`, built by `tools/package.ps1 -Friend` from the clean tree at `1764136` with Release receipt `20261024-143542-13ca3e7088cd4760866eae6ea6c9eacb` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `8AAC2C38A9074168DDD118594203491FBE2ED1E2D1B85614DA24E323C1C1A723` and `dinput8.dll` `937B13ABA2C585D416F06B2339153FBFDB44519B78A9FA816C74FD5151CA2119`, both build id `0.14.2+1764136`.
+
+Branch `dev/oct7-continue`. Adds an integrated GitHub update checker and auto-downloader to `DiamondDogsTogether.exe` (`native/launcher/core/core_update.hpp`, `core_update.cpp`, `core_model.cpp`, `launcher_app.cpp`).
+
+- **Update check & releases query (`native/launcher/core/core_update.cpp`, `core_model.cpp`).**
+  - Connects to GitHub API (`/repos/TrollTaylor/diamond-dogs-together/releases?per_page=5`) via WinHttp over HTTPS with automatic redirect handling (AWS S3 `objects.githubusercontent.com`).
+  - SemVer parsing (`ParseSemVer`) and comparison (`IsVersionNewer`) ignores leading `v` prefixes and build metadata (e.g. `+c327c26`).
+  - Identifies latest non-draft release asset matching `DiamondDogsTogether-*.zip`.
+- **Background asynchronous download & progress.**
+  - `start_update()` launches a background worker thread reporting download progress (`bytes_received` / `total_bytes`) with cancellation support.
+  - Downloads release ZIP to a temporary staging file in the game directory.
+- **In-app self-updater & safe replacement (`ApplyUpdateZip`).**
+  - Safely extracts the package zip into the game directory. Renames running `DiamondDogsTogether.exe` to `DiamondDogsTogether.exe.old` (Windows NTFS file rename allowed while executing), replaces binaries and license files, relaunches the updated executable via `CreateProcessW`, and cleans up `.old` artifacts on the next startup (`CleanOldExecutable`).
+- **Launcher GUI integration (`native/launcher/launcher_app.cpp`, `launcher_theme.cpp`).**
+  - **Tools page**: "Diamond Dogs Together Updates" card with current version, release channel, manual "Check for updates" button, release title, notes, and progress bar with Cancel / Update & Restart buttons.
+  - **Sidebar footer**: Version badge with subtle "Update" badge when a new version is detected.
+  - **Play page**: Compact banner notification when an update is available with one-click direct update or release notes view.
+- **Verification.**
+  - Full launcher updater unit tests in `tests/ddt_core_tests.cpp` (`TestUpdater`: SemVer parsing, comparison, GitHub JSON parsing, mock download, in-place extract, and rename).
+  - All test suites passing (`pwsh -File tools/build.ps1 -Fast`: 289/289; `build/native/DiamondDogsTogether.exe --selftest`: pass; full suite: 304/304).
+
 ## October 24, 2026: 0.14.1 (enemy synchronization: patrol & combat position/yaw sync, combat discovery, wake-up `RecoveryLife`, `Holdup`, `VANISHED`; fast developer test loop & test boot)
 
 **Package (2026-10-24):** `dist/DiamondDogsTogether-0.14.1-20261024T111637Z-d9c55bc7/DiamondDogsTogether-0.14.1.zip` (10,035,245 bytes), SHA-256 `D2D9B2BEB086861E6B5F9E69B471D4227D156E1143A0607E3CD2C507CFE63FC9`, built by `tools/package.ps1 -Friend` from the clean tree at `92597e2` with Release receipt `20261024-111304-add17cb82ad240ca9ee8cd4bae4f7b09` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `81A1192BF216CE7EB557A3646F0571C4D64D2618C82582B2B1A2F7AA0368366D` and `dinput8.dll` `6607917C716F471635217DBD6A512C9B1BC8E321165FA3D31DBF2708D6BD6AA8`, both build id `0.14.1+92597e2`.

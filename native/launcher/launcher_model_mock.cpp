@@ -489,6 +489,27 @@ std::string MockModel::join_code() const {
     return ui::SessionActive(phase_) && session_.role == Role::host ? session_.code : std::string();
 }
 
+
+UpdateInfo MockModel::update_info() const {
+    return update_info_;
+}
+
+void MockModel::check_for_updates() {
+    update_info_.status = UpdateStatus::up_to_date;
+}
+
+void MockModel::start_update() {
+    update_info_.status = UpdateStatus::downloading;
+}
+
+void MockModel::cancel_update() {
+    update_info_.status = UpdateStatus::idle;
+}
+
+void MockModel::set_mock_update_info(const UpdateInfo& info) {
+    update_info_ = info;
+}
+
 std::unique_ptr<LauncherModel> MakeMockModel(const MockOptions& options) {
     return std::make_unique<MockModel>(options);
 }

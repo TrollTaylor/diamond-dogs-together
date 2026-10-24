@@ -153,6 +153,9 @@ void LauncherUi::Frame(double time) {
     link_ = ui::SessionActive(phase) ? model_.link() : LinkView{};
     if (phase == Phase::setting_up || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)
         animating_ = true;
+    const UpdateInfo frame_uinfo = model_.update_info();
+    if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading || frame_uinfo.status == UpdateStatus::applying)
+        animating_ = true;
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -247,7 +250,9 @@ void LauncherUi::Sidebar(Phase phase) {
     // Status and version at the bottom.
     ImU32 status_color = col::kTextDim;
     const char* status = PhaseStatus(phase, link_, status_color);
-    const float bottom = origin.y + h - Px(58.0f);
+    const UpdateInfo side_uinfo = model_.update_info();
+    const bool side_update_avail = (side_uinfo.status == UpdateStatus::available);
+    const float bottom = origin.y + h - Px(side_update_avail ? 86.0f : 58.0f);
     d->AddLine(ImVec2(origin.x + Px(16.0f), bottom - Px(12.0f)), ImVec2(origin.x + w - Px(16.0f), bottom - Px(12.0f)),
                col::kBorder);
     StatusDot(ImVec2(origin.x + Px(26.0f), bottom + Px(9.0f)), 4.0f, status_color);
@@ -259,6 +264,13 @@ void LauncherUi::Sidebar(Phase phase) {
         const Font f(GetFonts().regular, kLabel);
         const std::string version = "Version " + model_.version();
         d->AddText(ImVec2(origin.x + Px(40.0f), bottom + Px(20.0f)), col::kTextFaint, version.c_str());
+    }
+    if (side_update_avail) {
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + Px(16.0f), bottom + Px(38.0f)));
+        if (Button(("Update: " + side_uinfo.latest_version + "##side").c_str(), ButtonKind::primary,
+                   ImVec2(w - Px(32.0f), 26.0f), true, Icon::download, true)) {
+            Navigate(Page::tools);
+        }
     }
     ImGui::EndChild();
 }
@@ -460,6 +472,41 @@ void LauncherUi::PlayPage(Phase phase) {
     }
     PageHeader("Play together", "Host a game for your partner, or join theirs. You both need Steam running.");
     const bool session = ui::SessionActive(phase);
+    const UpdateInfo play_uinfo = model_.update_info();
+    if (play_uinfo.status == UpdateStatus::available) {
+        BeginCard("##play_update", 0.0f, col::kCard, col::kAccent);
+        IconBadge(Icon::download, col::kAccent, col::kAccentSoft, 28.0f);
+        ImGui::SameLine(0.0f, Px(10.0f));
+        ImGui::BeginGroup();
+        Text((play_uinfo.release_title + " is available!").c_str(), col::kText, kBody, GetFonts().semibold, -1.0f);
+        Text("Update to play with the latest features and bug fixes.", col::kTextDim, kSmall, nullptr, 0.0f);
+        ImGui::EndGroup();
+        const float play_bw = 120.0f;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - Px(play_bw) + ImGui::GetStyle().WindowPadding.x);
+        if (Button("Update now##banner", ButtonKind::primary, ImVec2(play_bw, 32.0f), !session, Icon::download, true)) {
+            model_.start_update();
+        }
+        EndCard();
+        Gap(4.0f);
+    } else if (play_uinfo.status == UpdateStatus::downloading) {
+        BeginCard("##play_downloading", 0.0f, col::kCard, col::kAccent);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Downloading update %s: %.1f / %.1f MB (%.0f%%)",
+                 play_uinfo.latest_version.c_str(),
+                 play_uinfo.bytes_downloaded / (1024.0 * 1024.0),
+                 play_uinfo.download_size / (1024.0 * 1024.0),
+                 play_uinfo.progress * 100.0f);
+        Text(buf, col::kText, kSmall, GetFonts().semibold, -1.0f);
+        Gap(2.0f);
+        ProgressBar(play_uinfo.progress, 0.0f, 6.0f, col::kAccent);
+        EndCard();
+        Gap(4.0f);
+    } else if (play_uinfo.status == UpdateStatus::applying) {
+        BeginCard("##play_applying", 0.0f, col::kCard, col::kGood);
+        Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, -1.0f);
+        EndCard();
+        Gap(4.0f);
+    }
     static const char* const kTabs[2] = {"Host", "Join"};
     int index = (session ? session_role_ : role_) == Role::host ? 0 : 1;
     if (Segmented("##role", kTabs, 2, &index, 230.0f, !session)) {
@@ -810,10 +857,87 @@ void LauncherUi::ToolsPage(Phase phase) {
     PageHeader("Tools", nullptr);
     const bool allowed = ui::ToolsAllowed(phase);
     if (ui::SessionActive(phase)) {
-        Message(Icon::warning, col::kWarn, "Close the game to share saves or uninstall.", kBody);
+        Message(Icon::warning, col::kWarn, "Close the game to share saves, update, or uninstall.", kBody);
         Gap(2.0f);
     }
     const float avail = ImGui::GetContentRegionAvail().x;
+    const UpdateInfo uinfo = model_.update_info();
+    BeginCard("##updates", 0.0f, col::kCard,
+              uinfo.status == UpdateStatus::available ? col::kAccent : col::kBorder);
+    IconBadge(Icon::download,
+              uinfo.status == UpdateStatus::available ? col::kAccent : col::kTextDim,
+              uinfo.status == UpdateStatus::available ? col::kAccentSoft : col::Rgb(0xA2, 0xA7, 0xAD, 0x22),
+              30.0f);
+    ImGui::SameLine(0.0f, Px(10.0f));
+    ImGui::BeginGroup();
+    Text("Diamond Dogs Together Updates", col::kText, kBody + 1.0f, GetFonts().semibold, -1.0f);
+
+    if (uinfo.status == UpdateStatus::idle || uinfo.status == UpdateStatus::up_to_date) {
+        const std::string text = "You have the latest version (" + model_.version() + ").";
+        Text(text.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
+        ImGui::EndGroup();
+        const float bw = 150.0f;
+        ImGui::SameLine(avail - Px(bw) + ImGui::GetStyle().WindowPadding.x);
+        if (Button("Check for updates##tools", ButtonKind::secondary, ImVec2(bw, 32.0f), !ui::SessionActive(phase))) {
+            model_.check_for_updates();
+        }
+    } else if (uinfo.status == UpdateStatus::checking) {
+        Text("Checking GitHub for updates...", col::kTextDim, kSmall, nullptr, 0.0f);
+        ImGui::EndGroup();
+        const float bw = 150.0f;
+        ImGui::SameLine(avail - Px(bw) + ImGui::GetStyle().WindowPadding.x);
+        const ImVec2 c = ImGui::GetCursorScreenPos();
+        Spinner(ImVec2(c.x + Px(bw * 0.5f), c.y + Px(16.0f)), 8.0f, col::kAccent, time_);
+    } else if (uinfo.status == UpdateStatus::available) {
+        Text((uinfo.release_title + " is available!").c_str(), col::kAccent, kBody, GetFonts().semibold, 0.0f);
+        if (!uinfo.release_notes.empty()) {
+            std::string snippet = uinfo.release_notes.substr(0, 100);
+            if (uinfo.release_notes.size() > 100) snippet += "...";
+            Text(snippet.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
+        }
+        ImGui::EndGroup();
+        Gap(4.0f);
+        if (Button("Update now##tools", ButtonKind::primary, ImVec2(140.0f, 34.0f), !ui::SessionActive(phase), Icon::download, true)) {
+            model_.start_update();
+        }
+        if (!uinfo.html_url.empty()) {
+            ImGui::SameLine(0.0f, Px(10.0f));
+            if (Button("View on GitHub##tools", ButtonKind::secondary, ImVec2(140.0f, 34.0f))) {
+                if (shell_.open_url) shell_.open_url(uinfo.html_url);
+            }
+        }
+    } else if (uinfo.status == UpdateStatus::downloading) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)",
+                 uinfo.latest_version.c_str(),
+                 uinfo.bytes_downloaded / (1024.0 * 1024.0),
+                 uinfo.download_size / (1024.0 * 1024.0),
+                 uinfo.progress * 100.0f);
+        Text(buf, col::kText, kSmall, nullptr, 0.0f);
+        ImGui::EndGroup();
+        Gap(3.0f);
+        ProgressBar(uinfo.progress, 0.0f, 6.0f, col::kAccent);
+        Gap(3.0f);
+        if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f))) {
+            model_.cancel_update();
+        }
+    } else if (uinfo.status == UpdateStatus::applying) {
+        Text("Installing update and restarting launcher...", col::kGood, kBody, GetFonts().semibold, 0.0f);
+        ImGui::EndGroup();
+        Gap(4.0f);
+        const ImVec2 c = ImGui::GetCursorScreenPos();
+        Spinner(ImVec2(c.x + Px(20.0f), c.y + Px(10.0f)), 8.0f, col::kGood, time_);
+    } else if (uinfo.status == UpdateStatus::error) {
+        Text(("Update check failed: " + uinfo.error).c_str(), col::kBad, kSmall, nullptr, 0.0f);
+        ImGui::EndGroup();
+        const float bw = 150.0f;
+        ImGui::SameLine(avail - Px(bw) + ImGui::GetStyle().WindowPadding.x);
+        if (Button("Try again##tools", ButtonKind::secondary, ImVec2(bw, 32.0f), !ui::SessionActive(phase))) {
+            model_.check_for_updates();
+        }
+    }
+    EndCard();
+    Gap(6.0f);
     const float gap = Px(12.0f);
     const float card_w = std::floor((avail - gap) * 0.5f);
 

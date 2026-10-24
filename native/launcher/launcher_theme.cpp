@@ -226,6 +226,13 @@ void DrawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 color) {
         d->AddLine(P(0.0f, -0.04f), P(0.0f, 0.24f), color, t);
         break;
     case Icon::dot: d->AddCircleFilled(c, s * 0.25f, color); break;
+    case Icon::download: {
+        d->AddLine(P(0.0f, -0.38f), P(0.0f, 0.16f), color, t);
+        d->AddTriangleFilled(P(0.0f, 0.24f), P(-0.22f, 0.04f), P(0.22f, 0.04f), color);
+        const ImVec2 tray[4] = {P(-0.36f, 0.16f), P(-0.36f, 0.38f), P(0.36f, 0.38f), P(0.36f, 0.16f)};
+        d->AddPolyline(tray, 4, color, 0, t);
+        break;
+    }
     }
 }
 

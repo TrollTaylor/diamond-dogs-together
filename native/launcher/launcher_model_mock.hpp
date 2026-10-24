@@ -64,6 +64,13 @@ public:
     Role session_role() const override;
     std::string join_code() const override;
 
+    // ---- Update checking & auto-download ------------------------------------
+    UpdateInfo update_info() const override;
+    void check_for_updates() override;
+    void start_update() override;
+    void cancel_update() override;
+    void set_mock_update_info(const UpdateInfo& info);
+
     // ---- Hooks for tests and the screenshot driver -------------------------
     // The player's own (synthetic) SteamID64 and a valid partner code.
     static constexpr std::uint64_t kOwnSteamId = 76561197960265728ull + 104729ull;
@@ -105,6 +112,7 @@ private:
     std::string hud_ = "compact";
     std::string last_error_;
     bool has_previous_save_ = true;
+    UpdateInfo update_info_;
 };
 
 std::unique_ptr<LauncherModel> MakeMockModel(const MockOptions& options);
