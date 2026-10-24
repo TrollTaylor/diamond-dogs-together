@@ -70,7 +70,7 @@ struct Font {
 
 // ---- Icons (drawn, no icon font) ---------------------------------------------
 enum class Icon { setup, play, signal, tools, sliders, check, cross, copy, paste, folder, warning, person, share,
-                  logs, trash, info, dot };
+                  logs, trash, info, dot, download };
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color);
 
 // ---- Widgets ---------------------------------------------------------------

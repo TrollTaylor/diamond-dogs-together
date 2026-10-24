@@ -33,6 +33,7 @@
 #include "core_saves.hpp"
 #include "core_session.hpp"
 #include "core_text.hpp"
+#include "core_update.hpp"
 #include "core_util.hpp"
 #include "launcher/zip.hpp"
 #include "launcher_join_code.hpp"
@@ -1750,6 +1751,141 @@ void TestSelfTest() {
     RemoveTree(dir);
 }
 
+
+void TestUpdater() {
+    // 1. SemVer parsing
+    int maj = 0, min = 0, pat = 0;
+    CHECK(ParseSemVer("0.14.1", maj, min, pat) && maj == 0 && min == 14 && pat == 1);
+    CHECK(ParseSemVer("v0.14.2", maj, min, pat) && maj == 0 && min == 14 && pat == 2);
+    CHECK(ParseSemVer("v1.2.3", maj, min, pat) && maj == 1 && min == 2 && pat == 3);
+    CHECK(ParseSemVer("0.14.2+c327c26", maj, min, pat) && maj == 0 && min == 14 && pat == 2);
+    CHECK(ParseSemVer(" 2.10.99 ", maj, min, pat) && maj == 2 && min == 10 && pat == 99);
+    CHECK(!ParseSemVer("", maj, min, pat));
+    CHECK(!ParseSemVer("invalid", maj, min, pat));
+    CHECK(!ParseSemVer("1.2", maj, min, pat));
+
+    // 2. Version comparison
+    CHECK(IsVersionNewer("0.14.2", "0.14.1"));
+    CHECK(IsVersionNewer("v0.14.2", "0.14.1"));
+    CHECK(IsVersionNewer("0.15.0", "0.14.1"));
+    CHECK(IsVersionNewer("1.0.0", "0.14.1"));
+    CHECK(!IsVersionNewer("0.14.1", "0.14.1"));
+    CHECK(!IsVersionNewer("v0.14.1", "0.14.1"));
+    CHECK(!IsVersionNewer("0.14.0", "0.14.1"));
+    CHECK(!IsVersionNewer("0.13.9", "0.14.1"));
+
+    // 3. Release feed parsing
+    const std::string feed_newer = R"([
+      {
+        "tag_name": "v0.14.2",
+        "name": "Diamond Dogs Together 0.14.2",
+        "draft": false,
+        "body": "Fixed syncing and added auto update",
+        "html_url": "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.2",
+        "assets": [
+          {
+            "name": "DiamondDogsTogether-0.14.2.zip",
+            "size": 10485760,
+            "browser_download_url": "https://github.com/TrollTaylor/diamond-dogs-together/releases/download/v0.14.2/DiamondDogsTogether-0.14.2.zip"
+          }
+        ]
+      }
+    ])";
+
+    UpdateInfo info;
+    std::string err;
+    CHECK(ParseReleasesFeed(feed_newer, "0.14.1", info, err));
+    CHECK(info.status == UpdateStatus::available);
+    CHECK_EQ(info.latest_version, "v0.14.2");
+    CHECK_EQ(info.release_title, "Diamond Dogs Together 0.14.2");
+    CHECK_EQ(info.asset_name, "DiamondDogsTogether-0.14.2.zip");
+    CHECK(info.download_size == 10485760);
+    CHECK(Has(info.download_url, "DiamondDogsTogether-0.14.2.zip"));
+
+    // Feed with same version: up to date
+    CHECK(ParseReleasesFeed(feed_newer, "0.14.2", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+
+    // Feed with draft release: skipped
+    const std::string feed_draft = R"([
+      {
+        "tag_name": "v0.15.0",
+        "name": "Draft release",
+        "draft": true,
+        "assets": [
+          {
+            "name": "DiamondDogsTogether-0.15.0.zip",
+            "size": 10485760,
+            "browser_download_url": "https://github.com/test/download.zip"
+          }
+        ]
+      }
+    ])";
+    CHECK(ParseReleasesFeed(feed_draft, "0.14.1", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+
+    // 4. UpdateHooks: mock HTTP GET and download
+    UpdateHooks saved_hooks = GetUpdateHooks();
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = feed_newer;
+        status = 200;
+        return true;
+    };
+
+    UpdateInfo check_info;
+    CHECK(CheckForUpdates("0.14.1", check_info, err));
+    CHECK(check_info.status == UpdateStatus::available);
+    CHECK_EQ(check_info.latest_version, "v0.14.2");
+
+    // 5. ApplyUpdateZip on a mock game directory
+    const std::wstring test_game = g_root + L"\\test-update-game";
+    RemoveTree(test_game);
+    CreateDirectories(test_game);
+    CreateDirectories(test_game + L"\\mgs-coop");
+
+    const std::wstring exe_path = test_game + L"\\DiamondDogsTogether.exe";
+    const std::wstring old_exe_path = test_game + L"\\DiamondDogsTogether.exe.old";
+    WriteText(exe_path, "original exe content");
+
+    // Build a mock update zip containing updated DiamondDogsTogether.exe and package.json
+    ZipWriter zw;
+    const std::string new_exe_content = "new updated exe content 0.14.2";
+    const std::string new_pkg_content = "{\"version\": \"0.14.2\"}";
+    CHECK(zw.AddFile("DiamondDogsTogether.exe", new_exe_content.data(), new_exe_content.size(), err));
+    CHECK(zw.AddFile("mgs-coop/package.json", new_pkg_content.data(), new_pkg_content.size(), err));
+    std::vector<std::uint8_t> zip_bytes;
+    CHECK(zw.Finish(zip_bytes, err));
+
+    const std::wstring zip_path = test_game + L"\\mgs-coop\\update.zip";
+    {
+        HANDLE hZip = CreateFileW(zip_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        DWORD written = 0;
+        WriteFile(hZip, zip_bytes.data(), static_cast<DWORD>(zip_bytes.size()), &written, nullptr);
+        CloseHandle(hZip);
+    }
+    CHECK(PathExists(zip_path));
+
+    InstancePaths paths = GetInstancePaths(test_game);
+    CHECK(ApplyUpdateZip(paths, zip_path, err));
+    // The zip should be deleted after applying
+    CHECK(!PathExists(zip_path));
+    // The old exe should have been created with original content
+    CHECK(PathExists(old_exe_path));
+    CHECK_EQ(ReadText(old_exe_path), "original exe content");
+    // The current exe should have new content
+    CHECK_EQ(ReadText(exe_path), new_exe_content);
+    // mgs-coop/package.json should have been written
+    CHECK_EQ(ReadText(test_game + L"\\mgs-coop\\package.json"), new_pkg_content);
+
+    // 6. CleanOldExecutable
+    CleanOldExecutable(test_game);
+    CHECK(!PathExists(old_exe_path));
+
+    // Restore hooks
+    GetUpdateHooks() = saved_hooks;
+    RemoveTree(test_game);
+}
+
 }  // namespace
 
 int main() {
@@ -1779,6 +1915,7 @@ int main() {
     TestHandoffThroughModel();
     TestWriteSession();
     TestSelfTest();
+    TestUpdater();
 
     RemoveTree(g_root);
     std::printf("ddt_core_tests: %u checks, %u failures\n", g_checks, g_failures);

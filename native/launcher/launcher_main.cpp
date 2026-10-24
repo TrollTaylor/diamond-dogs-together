@@ -405,6 +405,9 @@ void StyleTitleBar(HWND hwnd) {
 ddt::ShellServices MakeServices(bool interactive) {
     ddt::ShellServices s;
     if (!interactive) return s;   // the screenshot driver never opens Explorer or dialogs
+    s.open_url = [](const std::string& url) {
+        if (!url.empty()) ShellExecuteW(g_app ? g_app->hwnd : nullptr, L"open", Wide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    };
     s.open_folder = [](const std::string& folder) {
         const std::wstring w = Wide(folder);
         if (Exists(w, true)) ShellExecuteW(g_app->hwnd, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);

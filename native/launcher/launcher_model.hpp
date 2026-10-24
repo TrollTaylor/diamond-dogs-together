@@ -18,6 +18,7 @@
 //    keeps MGSV and offers "Open my game folder" (Explorer is opened by the GUI);
 //  - cancel_launch(): the "Cancel" button while the game is starting;
 //  - recheck(): the "Check again" button on the error / wrong-folder screens.
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -49,6 +50,32 @@ struct LinkView {
 struct CodeCheck {
     bool ok = false;
     std::string message;             // "" for an empty field; otherwise a sentence for the player
+};
+
+enum class UpdateStatus {
+    idle,
+    checking,
+    up_to_date,
+    available,
+    downloading,
+    applying,
+    ready_to_restart,
+    error
+};
+
+struct UpdateInfo {
+    UpdateStatus status = UpdateStatus::idle;
+    std::string current_version;
+    std::string latest_version;
+    std::string release_title;
+    std::string release_notes;
+    std::string download_url;
+    std::string html_url;
+    std::string asset_name;
+    std::uint64_t download_size = 0;
+    std::uint64_t bytes_downloaded = 0;
+    float progress = 0.0f;
+    std::string error;
 };
 
 class LauncherModel {
@@ -95,6 +122,12 @@ public:
     // The host's join code while hosting ("" otherwise), also after the window
     // was reopened. Never logged.
     virtual std::string join_code() const = 0;
+
+    // ---- Update checking & auto-download ------------------------------------
+    virtual UpdateInfo update_info() const = 0;
+    virtual void check_for_updates() = 0;
+    virtual void start_update() = 0;
+    virtual void cancel_update() = 0;
 };
 
 std::unique_ptr<LauncherModel> MakeMockModel();

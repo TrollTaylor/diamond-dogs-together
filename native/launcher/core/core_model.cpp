@@ -23,6 +23,7 @@
 #include "core_saves.hpp"
 #include "core_session.hpp"
 #include "core_text.hpp"
+#include "core_update.hpp"
 #include "launcher/runtime_dat.hpp"
 #include "launcher_join_code.hpp"
 
@@ -216,11 +217,19 @@ public:
         : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch) {
         paths_ = GetInstancePaths(game_dir_);
         LoadSettings(paths_, settings_);
+        CleanOldExecutable(paths_.game);
+        update_info_.current_version = CoreVersion();
+        update_info_.status = UpdateStatus::idle;
         Recheck();
         if (phase_ != Phase::not_in_game_folder) Log("window=open; phase=" + PhaseName(phase_) + "; version=" + CoreBuildId());
+        if (phase_ != Phase::not_in_game_folder && !no_launch_) {
+            check_for_updates();
+        }
     }
 
     ~RealModel() override {
+        update_cancel_ = true;
+        if (update_thread_.joinable()) update_thread_.join();
         shared_->cancel = true;
         if (after_thread_.joinable()) after_thread_.join();
         if (stage_ != Stage::none && !session_id_.empty()) {
@@ -511,6 +520,112 @@ public:
 
     Role session_role() const override { return role_; }
     std::string join_code() const override { return stage_ != Stage::none && role_ == Role::host ? code_ : std::string(); }
+
+UpdateInfo update_info() const override {
+        std::lock_guard<std::mutex> lock(update_mutex_);
+        return update_info_;
+    }
+
+    void check_for_updates() override {
+        {
+            std::lock_guard<std::mutex> lock(update_mutex_);
+            if (update_info_.status == UpdateStatus::checking ||
+                update_info_.status == UpdateStatus::downloading ||
+                update_info_.status == UpdateStatus::applying) {
+                return;
+            }
+            update_info_.status = UpdateStatus::checking;
+            update_info_.error.clear();
+        }
+        if (update_thread_.joinable()) update_thread_.join();
+        const std::string cur = CoreVersion();
+        update_thread_ = std::thread([this, cur]() {
+            UpdateInfo info;
+            std::string error;
+            if (CheckForUpdates(cur, info, error)) {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_ = info;
+            } else {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.status = UpdateStatus::error;
+                update_info_.error = error;
+            }
+        });
+    }
+
+    void start_update() override {
+        {
+            std::lock_guard<std::mutex> lock(update_mutex_);
+            if (update_info_.status != UpdateStatus::available &&
+                update_info_.status != UpdateStatus::error) {
+                return;
+            }
+            if (update_info_.download_url.empty()) return;
+            update_info_.status = UpdateStatus::downloading;
+            update_info_.bytes_downloaded = 0;
+            update_info_.progress = 0.0f;
+            update_info_.error.clear();
+            update_cancel_ = false;
+        }
+        if (update_thread_.joinable()) update_thread_.join();
+        const UpdateInfo target = [this]() {
+            std::lock_guard<std::mutex> lock(update_mutex_);
+            return update_info_;
+        }();
+        const InstancePaths paths = paths_;
+        update_thread_ = std::thread([this, target, paths]() {
+            const std::wstring dest_zip = JoinPath2(paths.mod, L"update.zip");
+            std::string error;
+            bool ok = DownloadUpdate(target, dest_zip, [this](const UpdateProgress& p) {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.bytes_downloaded = p.bytes_downloaded;
+                update_info_.download_size = p.total_bytes;
+                update_info_.progress = p.progress;
+            }, &update_cancel_, error);
+
+            if (!ok) {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.status = UpdateStatus::error;
+                update_info_.error = error;
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.status = UpdateStatus::applying;
+            }
+
+            if (!ApplyUpdateZip(paths, dest_zip, error)) {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.status = UpdateStatus::error;
+                update_info_.error = error;
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.status = UpdateStatus::ready_to_restart;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (!RelaunchSelf(paths, error)) {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.status = UpdateStatus::error;
+                update_info_.error = error;
+            }
+        });
+    }
+
+    void cancel_update() override {
+        update_cancel_ = true;
+        {
+            std::lock_guard<std::mutex> lock(update_mutex_);
+            if (update_info_.status == UpdateStatus::downloading) {
+                update_info_.status = UpdateStatus::available;
+            }
+        }
+    }
+
 
 private:
     static std::string PhaseName(Phase p) {
@@ -1139,6 +1254,11 @@ private:
     LinkView link_;
     std::int64_t wait_start_ = 0, limit_ = 0, next_try_ = 0;
     int tries_ = 0;
+
+    mutable std::mutex update_mutex_;
+    UpdateInfo update_info_;
+    std::thread update_thread_;
+    std::atomic<bool> update_cancel_{false};
     bool relaunch_ok_ = false, told_ = false;
 };
 
