@@ -1,5 +1,7 @@
 ## October 24, 2026: 0.14.2 (launcher: GitHub update checker, auto-download, background updates, in-app self-updater)
 
+**Package (2026-10-24):** `dist/DiamondDogsTogether-0.14.2-20261024T143841Z-fcd27151/DiamondDogsTogether-0.14.2.zip` (10,063,881 bytes), SHA-256 `891A1CD48EA5AAE25F1F94AEE65E2B45FDC575B0A15ACBD50CFA2D5004DDBDFA`, built by `tools/package.ps1 -Friend` from the clean tree at `1764136` with Release receipt `20261024-143542-13ca3e7088cd4760866eae6ea6c9eacb` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `8AAC2C38A9074168DDD118594203491FBE2ED1E2D1B85614DA24E323C1C1A723` and `dinput8.dll` `937B13ABA2C585D416F06B2339153FBFDB44519B78A9FA816C74FD5151CA2119`, both build id `0.14.2+1764136`.
+
 Branch `dev/oct7-continue`. Adds an integrated GitHub update checker and auto-downloader to `DiamondDogsTogether.exe` (`native/launcher/core/core_update.hpp`, `core_update.cpp`, `core_model.cpp`, `launcher_app.cpp`).
 
 - **Update check & releases query (`native/launcher/core/core_update.cpp`, `core_model.cpp`).**
