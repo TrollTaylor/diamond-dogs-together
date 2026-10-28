@@ -127,6 +127,28 @@ own copy. Other pinned immutable files remain open without write/delete sharing.
 Real save hashes, installation ownership and restoration remain coordinator
 responsibilities; environment declarations do not prove save redirection.
 
+Baseline loader ownership (`Get-WorkerOwnedBaseline`): each copy's normal
+`dinput8.dll` must be owned by that folder, either through its own
+`mgs-coop\probe-install.json` (product `mgs-coop-original-loader-probe`, this
+exact folder, `dll_sha256` = the loader) or, for a Diamond Dogs Together
+drag-and-drop install that never writes that record, through its drop-in
+`mgs-coop\package.json` (product `mgs-coop-local-package`, layout `drop-in`, an
+X.Y.Z version, the pinned exe/Steam DLL/runtime archive hashes and exactly one
+`files[]` row with target `dinput8.dll` equal to the loader). A foreign or
+unknown loader refuses. When either copy is drop-in owned, Start passes
+`-AcceptDropInLoader` to Prepare and `tools/package-install.ps1` for both
+copies; the installer re-checks each folder's own drop-in row and takes that
+branch wherever it matches (a record-owned copy whose package.json lists the
+same loader is backed up identically: loader and record as they are). The
+stale record (or its absence) is backed up as it is, and Stop restores the
+drop-in loader and that record byte for byte (or keeps it absent) before
+reporting `BaselineRestored`. Verified hidden run `a604896b` (2026-10-28,
+`2c9341c`): host drop-in 0.14.2 beside the stale 0.13.6 record, guest
+record-owned; both booted to 30050 and were restored exactly. `session.json` records
+`roles.<role>.baseline_owner` (`record`/`drop-in`) and
+`baseline_record_present`. `Invoke-WorkerScenario` takes the host's default
+`-BaselineLoaderSha256` from the same gate.
+
 Child environment replaces inherited `MGS_WORKER_*` entries with:
 
 - `MGS_WORKER_RUN_DIR`, `MGS_WORKER_RUN_ID`, `MGS_WORKER_ROLE`;

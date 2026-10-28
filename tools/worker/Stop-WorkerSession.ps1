@@ -79,7 +79,8 @@ function Invoke-WorkerRestoreOwnedSession($Session,[string]$Run,[string]$Repo,$P
     $restorePlan=[ordered]@{}
     foreach($role in $Session.roles.Keys) {
         $row=$Session.roles[$role];$p=Get-InstancePaths -GameDirectory $row.game
-        foreach($ownedFile in @($p.Loader,$p.Archive,$p.Record)){$null=Assert-WorkerPlainPath $ownedFile -MustExist}
+        # The ownership record is checked per pair below (a drop-in owned baseline may have none).
+        foreach($ownedFile in @($p.Loader,$p.Archive)){$null=Assert-WorkerPlainPath $ownedFile -MustExist}
         Assert-WorkerHash $p.Exe $Pins.Exe;Assert-WorkerHash $p.SteamApi $Pins.Steam
         $package=Assert-WorkerPlainPath $row.baseline_package -MustExist
         if(!(Test-WorkerDescendant $package $Run)){throw 'Baseline package escaped the run.'}
@@ -88,10 +89,11 @@ function Invoke-WorkerRestoreOwnedSession($Session,[string]$Run,[string]$Repo,$P
         Assert-WorkerHash (Join-Path $package 'payload\dinput8.dll') $roleBaseline
         $pair=Get-WorkerRestorePair $Session $Pins $roleBaseline (Get-WorkerHash $p.Loader) (Get-WorkerHash $p.Archive)
         if($pair -ceq 'worker'){
+            $null=Assert-WorkerPlainPath $p.Record -MustExist
             $record=Read-WorkerSessionJson $p.Record
             if($record.product -cne 'mgs-coop-original-loader-probe' -or $record.game_directory -ine $p.Game -or $record.dll_sha256 -ine $Session.candidate_sha256){throw 'Worker install ownership changed; restoration is blocked.'}
             if($runtime.Experimental -and (Get-Item -LiteralPath $p.Archive).Length -ne $runtime.Bytes){throw 'Installed candidate archive length changed.'}
-        } else {Assert-WorkerHash $p.Record $row.baseline_record_sha256}
+        } else {Assert-WorkerBaselineRecord $p.Record $row}
         $restorePlan[$role]=[ordered]@{Pair=$pair;Package=$package;Baseline=$roleBaseline}
     }
     foreach($role in $Session.roles.Keys) {
@@ -101,7 +103,7 @@ function Invoke-WorkerRestoreOwnedSession($Session,[string]$Run,[string]$Repo,$P
             # installed after_sha256 before restoring archive AND loader together.
             Invoke-WorkerPackageRestore $Repo $p.Game $plan.Package $role
         }
-        Assert-WorkerHash $p.Loader $plan.Baseline;Assert-WorkerHash $p.Record $row.baseline_record_sha256;Assert-WorkerHash $p.Archive $Pins.Archive
+        Assert-WorkerHash $p.Loader $plan.Baseline;Assert-WorkerBaselineRecord $p.Record $row;Assert-WorkerHash $p.Archive $Pins.Archive
         $Report.roles[$role]=[ordered]@{loader_restored=$true;configuration_restored=$false;baseline_sha256=$plan.Baseline}
     }
     foreach($role in $Session.roles.Keys) {

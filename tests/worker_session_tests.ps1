@@ -422,6 +422,17 @@ $prepareCommands=@($startAst.FindAll({param($node)$node -is [Management.Automati
 Assert-True ($prepareCommands.Count -eq 1) 'one exact Prepare boundary'
 $prepareParameters=@($prepareCommands[0].CommandElements|Where-Object {$_ -is [Management.Automation.Language.CommandParameterAst]}|ForEach-Object {$_.ParameterName})
 Assert-True ('SkipSaves' -cin $prepareParameters -and 'SkipGraphics' -cin $prepareParameters) 'Prepare cannot copy stale lab saves or edit existing lab graphics'
+# Drop-in installs (2026-10-24): each role's baseline comes from the ownership gate
+# (probe-install.json or the drop-in package.json), the record is backed up only
+# when present, and the owned installer is told to accept a drop-in owned loader.
+Assert-True ('AcceptDropInLoader' -cin $prepareParameters -and $start.Contains('$acceptDropIn=@($roleOwnership.Values|Where-Object{$_.Owner -ceq ''drop-in''}).Count -gt 0')) 'Prepare receives the drop-in ownership switch only for a drop-in owned role'
+Assert-True ($start.Contains('$ownership=Get-WorkerOwnedBaseline $p.Game $pins') -and !$start.Contains('$record=Read-WorkerSessionJson $p.Record') -and
+    $start.Contains('baseline_record_present=[bool]$ownership.RecordPresent;baseline_record_sha256=$recordHash;baseline_record=$recordCopy') -and
+    $start.Contains('if($ownership.RecordPresent){$recordCopy=Join-Path $backup ''probe-install.json''')) 'Start takes each baseline from the ownership gate and backs up the record only when present'
+$scenarioSource=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+Assert-True ($scenarioSource.Contains("Get-WorkerOwnedBaseline 'D:\Games\steamapps\common\MGS_TPP' (Get-WorkerRuntimePins)") -and !$scenarioSource.Contains("probe-install.json' -Raw")) 'Invoke-WorkerScenario takes the host baseline from the ownership gate'
+$stopSource=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Stop-WorkerSession.ps1'))
+Assert-True ($stopSource.Contains('} else {Assert-WorkerBaselineRecord $p.Record $row}') -and $stopSource.Contains('Assert-WorkerHash $p.Loader $plan.Baseline;Assert-WorkerBaselineRecord $p.Record $row;')) 'Stop checks the baseline record (or its absence) before and after restore'
 Assert-True (@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Copy-WorkerSaveTree'},$true)).Count -eq 0) 'Start never copies previous lab progress through the old tree helper'
 Assert-True ($start.Contains('Assert-WorkerRealSaveSource $identity.UserData') -and $start.Contains('backup_receipt_sha256=Get-WorkerHash $backupReceipt') -and $start.Contains("backup_manifest_sha256=Get-WorkerHash (Join-Path `$freshBackup 'manifest.json')")) 'fresh save source and backup receipts are qualified'
 $startAssignments=@{}
@@ -1132,7 +1143,7 @@ foreach($name in @('Send-AimTurnCommand','Read-AimTurnState','Wait-AimTurnReady'
 $nonce=[Guid]::NewGuid().ToString('N')
 $fixture=Join-Path $RepoRoot ('build\worker-session-tests-'+$nonce)
 $marker=Join-Path $fixture '.fixture-owner'
-$script:packageCalls=0;$script:processCalls=0;$script:fakeActiveGame='';$script:fixtureSession=$null
+$script:packageCalls=0;$script:processCalls=0;$script:fakeActiveGame='';$script:fixtureSession=$null;$script:fakeKeepsRecord=$false
 function Get-GameProcessInDirectory([string]$Directory) {
     ++$script:processCalls
     if($Directory -ieq $script:fakeActiveGame){[pscustomobject]@{pid=731;fixture_only=$true}}
@@ -1144,9 +1155,13 @@ function Invoke-WorkerPackageRestore([string]$Repo,[string]$Game,[string]$Packag
     Assert-True ($Game -ceq $row.game -and $Package -ceq $row.baseline_package) 'fake installer receives exact captured role paths'
     $p=Get-InstancePaths -GameDirectory $Game
     [IO.File]::Copy((Join-Path $Package 'payload\dinput8.dll'),$p.Loader,$true)
-    [IO.File]::Copy($row.baseline_record,$p.Record,$true)
+    # package-install's rollback: the record as it was, or (before_exists false) none.
+    if($row.Contains('baseline_record_present') -and !$row.baseline_record_present){if(!$script:fakeKeepsRecord){Remove-Item -LiteralPath $p.Record}}
+    else{[IO.File]::Copy($row.baseline_record,$p.Record,$true)}
 }
-function New-WorkerCleanupFixture([string]$Name) {
+# -RecordState role=record (default; a legacy session row), stale (a drop-in owned
+# baseline beside an old record naming another loader) or absent (drop-in, no record).
+function New-WorkerCleanupFixture([string]$Name,[hashtable]$RecordState=@{}) {
     $run=Join-Path $fixture $Name
     $null=New-Item -ItemType Directory -Path $run
     $baselineHash=$null;$candidateHash=$null;$pins=$null
@@ -1163,9 +1178,13 @@ function New-WorkerCleanupFixture([string]$Name) {
         $baselineHash=Get-WorkerHash $p.Loader
         [IO.File]::Copy($p.Loader,(Join-Path $backup 'package\payload\dinput8.dll'),$false)
         [IO.File]::WriteAllText((Join-Path $backup 'package\package.json'),('{"fixture":true}'+"`n"))
-        Write-WorkerSessionJson $p.Record ([ordered]@{product='mgs-coop-original-loader-probe';game_directory=$game;dll_sha256=$baselineHash;fixture=$true})
-        $recordCopy=Join-Path $backup 'probe-install.json'
-        [IO.File]::Copy($p.Record,$recordCopy,$false)
+        $roleRecord=if($RecordState.ContainsKey($role)){[string]$RecordState[$role]}else{'record'}
+        $recordCopy=$null
+        if($roleRecord -cne 'absent') {
+            Write-WorkerSessionJson $p.Record ([ordered]@{product='mgs-coop-original-loader-probe';game_directory=$game;dll_sha256=$(if($roleRecord -ceq 'stale'){'0'*64}else{$baselineHash});fixture=$true})
+            $recordCopy=Join-Path $backup 'probe-install.json'
+            [IO.File]::Copy($p.Record,$recordCopy,$false)
+        }
         $snapshots=@()
         # Guest generated baseline plus historical user backup: generic Disable
         # would select the unrelated historical bytes on partial preparation.
@@ -1187,7 +1206,8 @@ function New-WorkerCleanupFixture([string]$Name) {
         # Prepare without LAN removes old secrets. This exact absence may be
         # restored from this run's backup without generic Disable side effects.
         Remove-Item -LiteralPath $p.LinkSecret
-        $session.roles[$role]=[ordered]@{game=$game;baseline_package=Join-Path $backup 'package';baseline_package_sha256=Get-WorkerHash (Join-Path $backup 'package\package.json');baseline_record=$recordCopy;baseline_record_sha256=Get-WorkerHash $recordCopy;configs=$snapshots}
+        $session.roles[$role]=[ordered]@{game=$game;baseline_package=Join-Path $backup 'package';baseline_package_sha256=Get-WorkerHash (Join-Path $backup 'package\package.json');baseline_record=$recordCopy;baseline_record_sha256=$(if($recordCopy){Get-WorkerHash $recordCopy}else{$null});configs=$snapshots}
+        if($roleRecord -cne 'record'){$session.roles[$role].baseline_owner='drop-in';$session.roles[$role].baseline_record_present=($roleRecord -ceq 'stale')}
         if($role -ceq 'host') {
             [IO.File]::WriteAllText($p.Loader,"fixture worker loader`n")
             $candidateHash=Get-WorkerHash $p.Loader
@@ -1403,6 +1423,109 @@ try {
     $script:fixtureSession=$case.session;$script:packageCalls=0;$script:fakeActiveGame=$case.session.roles.host.game
     Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'fake live owned game blocks restoration'
     Assert-True ($script:packageCalls -eq 0 -and $case.report.roles.Count -eq 0) 'process-context refusal cannot restore package or configs'
+    $script:fakeActiveGame=''
+    # Drop-in owned baselines (a Diamond Dogs Together drag-and-drop install, 2026-10-24):
+    # the host's probe-install.json named an older loader, the guest had none. The
+    # actual Stop restores the drop-in loader, the stale record byte for byte and the
+    # absence of the other; a record appearing on a no-record baseline refuses.
+    $case=New-WorkerCleanupFixture 'dropin-restore' @{host='stale';guest='absent'}
+    $script:fixtureSession=$case.session;$script:packageCalls=0
+    $hostPair=Get-InstancePaths -GameDirectory $case.session.roles.host.game
+    $guestPair=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+    Assert-True (!(Test-Path -LiteralPath $guestPair.Record) -and (Get-WorkerHash $hostPair.Record) -cne $case.session.roles.host.baseline_record_sha256) 'drop-in fixture: guest without record, host holds the worker record'
+    Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report
+    Assert-True ($script:packageCalls -eq 1 -and (Get-WorkerHash $hostPair.Loader) -ceq $case.session.baseline_sha256 -and (Get-WorkerHash $guestPair.Loader) -ceq $case.session.baseline_sha256) 'drop-in: exact baseline loaders restored'
+    Assert-True ((Get-WorkerHash $hostPair.Record) -ceq $case.session.roles.host.baseline_record_sha256) 'drop-in: the stale host record restored byte for byte'
+    Assert-True (!(Test-Path -LiteralPath $guestPair.Record)) 'drop-in: the absent guest record stays absent'
+    Assert-True ($case.report.roles.host.loader_restored -and $case.report.roles.guest.configuration_restored) 'drop-in: restoration report complete'
+    $case=New-WorkerCleanupFixture 'dropin-absent-host' @{host='absent'}
+    $script:fixtureSession=$case.session;$script:packageCalls=0
+    $hostPair=Get-InstancePaths -GameDirectory $case.session.roles.host.game
+    Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report
+    Assert-True ($script:packageCalls -eq 1 -and (Get-WorkerHash $hostPair.Loader) -ceq $case.session.baseline_sha256 -and !(Test-Path -LiteralPath $hostPair.Record)) 'drop-in without a record: loader restored, the worker record removed'
+    $case=New-WorkerCleanupFixture 'dropin-record-left' @{host='absent'}
+    $script:fixtureSession=$case.session;$script:packageCalls=0;$script:fakeKeepsRecord=$true
+    try{Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'drop-in without a record: a record left behind is no restored baseline'}
+    finally{$script:fakeKeepsRecord=$false}
+    $case=New-WorkerCleanupFixture 'dropin-record-appeared' @{guest='absent'}
+    $script:fixtureSession=$case.session;$script:packageCalls=0
+    $guestPair=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+    Write-WorkerSessionJson $guestPair.Record ([ordered]@{product='mgs-coop-original-loader-probe';game_directory=$guestPair.Game;dll_sha256=$case.session.baseline_sha256;fixture='appeared'})
+    Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'drop-in: a record that appeared on a no-record baseline refuses'
+    Assert-True ($script:packageCalls -eq 0 -and $case.report.roles.Count -eq 0) 'drop-in: that refusal precedes every restoration'
+    # Assert-WorkerBaselineRecord: legacy rows always had a record; a drop-in row may record none.
+    $recordFile=Join-Path $fixture 'baseline-record.json';[IO.File]::WriteAllText($recordFile,"{`"fixture`":true}`n")
+    $recordHash=Get-WorkerHash $recordFile
+    Assert-WorkerBaselineRecord $recordFile ([ordered]@{baseline_record_sha256=$recordHash})
+    Assert-WorkerBaselineRecord $recordFile ([ordered]@{baseline_record_present=$true;baseline_record_sha256=$recordHash})
+    Assert-Throws {Assert-WorkerBaselineRecord $recordFile ([ordered]@{baseline_record_sha256=('0'*64)})} 'baseline record: changed bytes refuse'
+    Assert-Throws {Assert-WorkerBaselineRecord $recordFile ([ordered]@{baseline_record_present=$false;baseline_record_sha256=$null})} 'baseline record: a record where none was refuses'
+    Assert-Throws {Assert-WorkerBaselineRecord (Join-Path $fixture 'no-record.json') ([ordered]@{baseline_record_sha256=$recordHash})} 'baseline record: a missing record refuses on a legacy row'
+    Assert-WorkerBaselineRecord (Join-Path $fixture 'no-record.json') ([ordered]@{baseline_record_present=$false;baseline_record_sha256=$null})
+    # The ownership gate (Get-WorkerOwnedBaseline / Get-WorkerDropInLoaderSha256) on fixture folders.
+    & {
+        $root=Join-Path $fixture 'ownership'
+        function New-OwnershipGame([string]$Name){
+            $g=Join-Path $root $Name;$null=New-Item -ItemType Directory -Path (Join-Path $g 'mgs-coop') -Force
+            [IO.File]::WriteAllText((Join-Path $g 'dinput8.dll'),"fixture loader $Name`n");return $g
+        }
+        function Write-OwnershipPackage([string]$Game,[hashtable]$Change=@{},[string]$LoaderSha=''){
+            if(!$LoaderSha){$LoaderSha=(Get-WorkerHash (Join-Path $Game 'dinput8.dll')).ToLowerInvariant()}
+            $m=[ordered]@{product='mgs-coop-local-package';version='0.14.2';layout='drop-in';flavor='friend-play';executable_sha256=$pinned.Exe;steam_dll_sha256=$pinned.Steam
+                files=@([ordered]@{source='DiamondDogsTogether.exe';target='DiamondDogsTogether.exe';sha256=('A'*64)},[ordered]@{source='dinput8.dll';target='dinput8.dll';sha256=$LoaderSha})
+                runtime_archive=[ordered]@{target='mgs-coop/mgs-coop-player-runtime.dat';sha256=$pinned.Archive;bytes=16333824}}
+            foreach($k in @($Change.Keys)){if($null -eq $Change[$k]){$m.Remove($k)}else{$m[$k]=$Change[$k]}}
+            Write-WorkerSessionJson (Join-Path $Game 'mgs-coop\package.json') $m
+        }
+        function Write-OwnershipRecord([string]$Game,[string]$Dll,[string]$Folder=''){
+            if(!$Folder){$Folder=$Game}
+            Write-WorkerSessionJson (Join-Path $Game 'mgs-coop\probe-install.json') ([ordered]@{product='mgs-coop-original-loader-probe';version='0.13.6';game_directory=$Folder;dll_sha256=$Dll})
+        }
+        $g=New-OwnershipGame 'record';$h=Get-WorkerHash (Join-Path $g 'dinput8.dll')
+        Write-OwnershipRecord $g $h.ToLowerInvariant()
+        $o=Get-WorkerOwnedBaseline $g $pinned
+        Assert-True ($o.Owner -ceq 'record' -and $o.Sha256 -ceq $h.ToUpperInvariant() -and $o.RecordPresent -and !$o.PackageSha256) 'ownership: a matching probe-install.json owns the loader'
+        Write-OwnershipPackage $g
+        Assert-True ((Get-WorkerOwnedBaseline $g $pinned).Owner -ceq 'record') 'ownership: a matching record wins over a drop-in package'
+        $g=New-OwnershipGame 'stale';$h=Get-WorkerHash (Join-Path $g 'dinput8.dll')
+        Write-OwnershipRecord $g ('0'*64);Write-OwnershipPackage $g
+        $o=Get-WorkerOwnedBaseline $g $pinned
+        Assert-True ($o.Owner -ceq 'drop-in' -and $o.Sha256 -ceq $h -and $o.RecordPresent -and $o.PackageSha256 -ceq (Get-WorkerHash (Join-Path $g 'mgs-coop\package.json'))) 'ownership: the drop-in package owns the loader beside a stale record'
+        Assert-True ((Get-WorkerDropInLoaderSha256 $g $pinned) -ceq $h) 'ownership: the drop-in row hash, upper case'
+        $g=New-OwnershipGame 'norecord';Write-OwnershipPackage $g
+        $o=Get-WorkerOwnedBaseline $g $pinned
+        Assert-True ($o.Owner -ceq 'drop-in' -and !$o.RecordPresent) 'ownership: a drop-in install without a record'
+        $g=New-OwnershipGame 'copied';Write-OwnershipRecord $g (Get-WorkerHash (Join-Path $g 'dinput8.dll')) (Join-Path $root 'another-folder')
+        Assert-Throws {Get-WorkerOwnedBaseline $g $pinned} 'ownership: a record naming another folder is not ownership'
+        $g=New-OwnershipGame 'unknown'
+        Assert-Throws {Get-WorkerOwnedBaseline $g $pinned} 'ownership: an unknown loader (no record, no package) refuses'
+        $g=New-OwnershipGame 'foreign';Write-OwnershipRecord $g ('0'*64);Write-OwnershipPackage $g @{} ('1'*64)
+        Assert-Throws {Get-WorkerOwnedBaseline $g $pinned} 'ownership: a foreign loader beside a drop-in package refuses'
+        $g=New-OwnershipGame 'record-dir';$null=New-Item -ItemType Directory -Path (Join-Path $g 'mgs-coop\probe-install.json');Write-OwnershipPackage $g
+        Assert-Throws {Get-WorkerOwnedBaseline $g $pinned} 'ownership: a record path that is a directory refuses'
+        $g=New-OwnershipGame 'no-loader';Remove-Item -LiteralPath (Join-Path $g 'dinput8.dll');Write-OwnershipPackage $g @{} ('2'*64)
+        Assert-Throws {Get-WorkerOwnedBaseline $g $pinned} 'ownership: no loader refuses'
+        $twoRows=@([ordered]@{source='dinput8.dll';target='dinput8.dll';sha256=''},[ordered]@{source='x\dinput8.dll';target='dinput8.dll';sha256=''})
+        $refusals=[ordered]@{
+            'another product'=@{product='mgs-coop-friend-install'};'another layout'=@{layout='payload'};'no layout'=@{layout=$null}
+            'no X.Y.Z version'=@{version='0.14.2-dev'};'another executable'=@{executable_sha256=('B'*64)};'no executable'=@{executable_sha256=$null}
+            'another Steam DLL'=@{steam_dll_sha256=('B'*64)};'another runtime archive'=@{runtime_archive=[ordered]@{sha256=('B'*64)}};'no runtime archive'=@{runtime_archive=$null}
+            'no files'=@{files=$null};'no loader row'=@{files=@([ordered]@{source='a';target='DiamondDogsTogether.exe';sha256=('A'*64)})}
+            'two loader rows'='two';'short loader hash'='short'
+        }
+        foreach($name in $refusals.Keys){
+            $g=New-OwnershipGame ('refuse-'+($name -replace '[^a-z0-9]','-'));$h=Get-WorkerHash (Join-Path $g 'dinput8.dll')
+            Write-OwnershipRecord $g ('0'*64)
+            $change=$refusals[$name]
+            if($change -ceq 'two'){foreach($row in $twoRows){$row.sha256=$h};$change=@{files=$twoRows}}
+            if($change -ceq 'short'){Write-OwnershipPackage $g @{} $h.Substring(0,63)}else{Write-OwnershipPackage $g $change}
+            Assert-True ($null -eq (Get-WorkerDropInLoaderSha256 $g $pinned)) ('drop-in manifest refused: '+$name)
+            Assert-Throws {Get-WorkerOwnedBaseline $g $pinned} ('ownership refused: '+$name)
+        }
+        $g=New-OwnershipGame 'damaged-json';[IO.File]::WriteAllText((Join-Path $g 'mgs-coop\package.json'),'{ not json')
+        Assert-True ($null -eq (Get-WorkerDropInLoaderSha256 $g $pinned)) 'drop-in manifest refused: damaged JSON'
+        Assert-Throws {Get-WorkerOwnedBaseline $g $pinned} 'ownership refused: damaged JSON'
+    }
     # ---- Join-fix phase 2, track E (docs/join-fix-phase2-spec.md P2-19): the actual helper
     # bodies on owned fixture bytes below this test's build folder; recorded clock and leases.
     # Stop: a role recorded as exited by waitexit tolerates a reused PID; every other child refuses.
