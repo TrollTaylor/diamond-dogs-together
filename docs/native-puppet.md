@@ -2098,7 +2098,29 @@ runtime before acting (`full_body_gate`).
     all 64 banks, the render arena), the target slot's handle, metadata,
     binder record, effect record and attachments empty (a filled slot is
     never replaced), the other remote slots exactly what this allocation
-    dispatched, at most 50 observations;
+    dispatched, at most 50 observations. Three of these rules were relaxed
+    for states the game itself leaves behind (africa-guns, 2026-10-28; the
+    two-PC test of 2026-10-23 left the host's guns off the guest's body 1
+    for the whole of 30020):
+    - F1: a free resource target's D0 state byte (`bank+0xD0`, the selected
+      resource's main and optional lanes and every delayed free target) may
+      hold any bit the bank writes (`kReleasedTargetFlags=0x3B`: shown,
+      NULL-optional render, registered, bits 4 and 5). The release `ADE800`
+      never clears the byte and the load `ADDE80` zeroes it first, and the
+      LIFO free queue hands out the resource released last. Other bits
+      (0x04, 0x40, 0x80) still refuse. The index and render rules are
+      unchanged.
+    - F2: slot 3 may hold a support item (type 12 thrown or 13 placed) and
+      slot 6 the arm (type 14), which `partner_support_equip` dispatched and
+      stopped owning at its per-gen reset. Slots 4 and 5 stay empty.
+    - F3: the target slot's effect record may be in the native cleared
+      state (zeros with id `+0x48 = 0x7FF`, written by body vt+0x130
+      `9CC6F0` / vt+0x138 `9CC600` when body 1 unrealizes; `9C5980` treats
+      0x7FF as none). The stock46 experiment keeps its all-zero rule.
+
+    Each wait names its field: `selected_bank_aux_index|_flag|_instance`,
+    `remote_slot_handle|_metadata|_effect`,
+    `delayed_free_target_model|_index|_flag|_instance` (all transient);
   - dispatch: the pins, a second preflight compared lease for lease, then
     the same SEH-contained ChangeEquip request as stock46 (instance 1,
     flags 4, stock/ammo 0) with the target's id;
@@ -2342,7 +2364,11 @@ readback=..`, `equip_resident; mission=..; used=..; entries=<index>:<id>/t<type>
 reason=..; mission=..; slot=..; want=..; equip=..; tier=..; family=..; type=..; cache=..;
 expected_handle=..; result=..; mismatch_rva=..; dispatches=..; replace_filled=0; evict=0`,
 `equip_writer_package=read_only; ...` and `equip_writer_optional=read_only; present=..; ...`
-(once per slot's readiness). The manifest wait (0.13.6 online-net-epoch): a
+(once per slot's readiness), `equip_writer=aux; ...; group=..; resource=<the selected free
+resource>; read=..; main=i<index>/c<count>/f<D0 flag>/r<render left>; optional0=..; optional1=..;
+remote=<body 1's seven handles>` (once per readiness window that read the selected resource,
+at most 24 per allocation) and `equip_writer=remote_slot; ...; reason=remote_slot_metadata|remote_slot_effect;
+handle=..; metadata=<6 bytes>; effect_id=..; effect=<0x50 bytes>` (once per slot and body gen). The manifest wait (0.13.6 online-net-epoch): a
 slot without a manifest stays `plan_wait` (reason `no_manifest`) for 300
 observations (~30 s), then `equip_writer=refused; reason=no_manifest` (logged
 once, nothing spent); `no_manifest` is no longer permanent: a body re-sync

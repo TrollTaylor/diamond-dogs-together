@@ -15,6 +15,12 @@ bool IsReason(const char* actual,const char* expected) {
     std::fprintf(stderr,"stock writer expected refusal %s, got %s\n",expected,actual?actual:"success");
     return false;
 }
+// A success test names the unexpected refusal.
+bool Passes(const char* actual) {
+    if(!actual) return true;
+    std::fprintf(stderr,"stock writer expected success, got %s\n",actual);
+    return false;
+}
 constexpr std::uintptr_t base=0x140000000ull,P=0x10000000,iface=0x10001000,inv=0x10002000;
 constexpr std::uintptr_t handles=0x10003000,metadata=0x10004000,vars=0x10005000,engine=0x10006000;
 constexpr std::uintptr_t fixture_blocks=0x10007000,fixture_buffer=0x10008000,fixture_ids=0x10009000,fixture_pools=0x1000A000,fixture_parts=0x1000B000;
@@ -447,7 +453,22 @@ int main() {
     Refuse([](Memory& q){q.Set(0x12060820,std::uint64_t(1));},"selected_cache_null_entry_dirty");
     Refuse([](Memory& q){q.Set(0x12060880,std::uint16_t(1));},"selected_cache_null_entry_dirty");
     Refuse([](Memory& q){q.Set(0x12060898,std::uintptr_t(1));},"selected_cache_null_entry_dirty");
-    Refuse([](Memory& q){q.Set(0x12060910,std::uint8_t(2));},"selected_bank_aux_flag");
+    // africa-guns F1: a released target keeps its last occupant's D0 bits (the release ADE800 never touches
+    // them; the load ADDE80 zeroes the byte first, ADDEC1..ADDED1). Every bit the bank writes (0x3B) passes in
+    // each lane of the selected resource (main lane 0, optional lanes 0 and 1); any other bit refuses.
+    for(const std::uint8_t flag:{std::uint8_t(2),std::uint8_t(3),std::uint8_t(8),std::uint8_t(9),std::uint8_t(0x10),
+                                 std::uint8_t(0x20),std::uint8_t(0x3B)}) {
+        for(const std::uintptr_t at:{std::uintptr_t(0x12060910),std::uintptr_t(0x12066310),std::uintptr_t(0x12066312)}) {
+            m=Ready();m.Set(at,flag);
+            Check(Passes(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before)));
+        }
+        Check(before.aux_observed.read==3 && before.aux_observed.flag[2]==flag);
+    }
+    Check(c::ReleasedTargetFlag(0) && c::ReleasedTargetFlag(1) && c::ReleasedTargetFlag(0x3B) &&
+          !c::ReleasedTargetFlag(0x04) && !c::ReleasedTargetFlag(0x40) && !c::ReleasedTargetFlag(0x80));
+    for(const std::uint8_t flag:{std::uint8_t(4),std::uint8_t(5),std::uint8_t(0x40),std::uint8_t(0x80),std::uint8_t(0xFF)})
+        Refuse([flag](Memory& q){q.Set(0x12060910,flag);},"selected_bank_aux_flag");
+    Refuse([](Memory& q){q.Set(0x12066312,std::uint8_t(0x44));},"selected_bank_aux_flag");
     Refuse([](Memory& q){q.Set(0x12060900,std::uint8_t(13));},"selected_bank_aux_index");
     Refuse([](Memory& q){q.Set(0x12060920,std::uintptr_t(1));},"selected_bank_aux_instance");
     // africa-guns: the aux receipt's observation of the selected free resource (group 6, resource 12).
@@ -463,6 +484,13 @@ int main() {
     // The delayed free targets name their field too (group 7, resource 14: eligible, not selected).
     Refuse([](Memory& q){q.Set(0x12070900,std::uint8_t(13));},"delayed_free_target_index");
     Refuse([](Memory& q){q.Set(0x12070920,std::uintptr_t(1));},"delayed_free_target_instance");
+    // F1 for every delayed free target too (main lane 0 and optional lane 1 of group 7).
+    for(const std::uint8_t flag:{std::uint8_t(2),std::uint8_t(9),std::uint8_t(0x3B)})
+        for(const std::uintptr_t at:{std::uintptr_t(0x12070910),std::uintptr_t(0x12076312)}) {
+            m=Ready();m.Set(at,flag);Check(Passes(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before)));
+        }
+    Refuse([](Memory& q){q.Set(0x12070910,std::uint8_t(4));},"delayed_free_target_flag");
+    Refuse([](Memory& q){q.Set(0x12076312,std::uint8_t(0x80));},"delayed_free_target_flag");
     // OtherSlotsRefusal: the gun slots hold this allocation's dispatches, slots 4 and 5 nothing.
     {
         std::array<std::uint32_t,7> remote{};std::uint32_t dispatched[p::kSlots]{};
@@ -473,6 +501,19 @@ int main() {
         dispatched[0]=0x80024;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
         dispatched[0]=0;remote[4]=0x42c4c;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
         remote[4]=0;remote[5]=0x3408e;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        remote[5]=0;
+        // africa-guns F2: the support writer's lanes (partner_support_equip: slot 3 thrown type 12 or placed
+        // type 13, slot 6 the arm type 14) never block a gun slot; the field's grenade 354 and arm 516.
+        remote[3]=0x42c4c;remote[6]=0x3408e;Check(Passes(p::OtherSlotsRefusal(remote,1,dispatched)));
+        remote[3]=(5u<<16)|(391u<<5)|13u;Check(Passes(p::OtherSlotsRefusal(remote,1,dispatched)));
+        remote[3]=(5u<<16)|(46u<<5)|4u;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        remote[3]=0x42c4c;remote[6]=0x42c4c;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        remote[6]=0x3408e;remote[4]=0x3408e;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        remote[4]=0;remote[3]=0xFFFF0000u|12u;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        remote[3]=0x42c4c;remote[2]=0x80122;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        Check(p::SupportLaneHandle(3,0x42c4c) && p::SupportLaneHandle(3,0x430ED) && p::SupportLaneHandle(6,0x3408e) &&
+              !p::SupportLaneHandle(6,0x42c4c) && !p::SupportLaneHandle(4,0x42c4c) && !p::SupportLaneHandle(3,0) &&
+              !p::SupportLaneHandle(3,0x5c4) && !p::SupportLaneHandle(5,0x3408e));
     }
     Refuse([](Memory& q){q.Set(0x12060138,std::uint64_t(1024*1024+1));},"resource_bank_allocation");
     Refuse([](Memory& q){q.Set(0x12060140,std::uint64_t(0x4BC9));},"selected_cache_allocation");
@@ -709,6 +750,30 @@ int main() {
         Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_handle")==0);
         m=Ready();General(m);m.Set(metadata+8*6+2,std::uint8_t(1));
         Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_metadata")==0);
+        // africa-guns F3: the native cleared effect record (body vt+0x130 9CC6F0 / vt+0x138 9CC600: zeros, id
+        // +0x48 = 0x7FF, which 9C5980 treats as none) is as empty as a never-used one (all zero); after a full
+        // unrealize (the field's horse ride) all of body 1's records are in that state.
+        m=Ready();General(m);
+        for(unsigned record=0;record<3;++record) m.Set(0x11001A00+record*0x50+0x48,std::uint32_t(0x7FF));
+        Check(Passes(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)));
+        m.Set(0x11001A50+0x48,std::uint32_t(0x123));
+        Check(IsReason(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_effect"));
+        m.Set(0x11001A50+0x48,std::uint32_t(0x7FF));m.Set(0x11001A50+0x10,std::uint8_t(1));
+        Check(IsReason(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_effect"));
+        m.Set(0x11001A50+0x10,std::uint8_t(0));m.Set(0x11001A50+0x40,std::uint8_t(0x63));
+        Check(IsReason(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_effect"));
+        m.Set(0x11001A50+0x40,std::uint8_t(0));m.Set(0x11001A50+0x4C,std::uint8_t(1));
+        Check(IsReason(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_effect"));
+        {
+            std::array<std::uint8_t,0x50> record{};Check(c::EffectRecordEmpty(record));
+            record[0x48]=0xFF;record[0x49]=0x07;Check(c::EffectRecordEmpty(record));
+            record[0x48]=0x26;record[0x49]=0x04;Check(!c::EffectRecordEmpty(record));
+            record[0x48]=0;record[0x49]=0;record[0x3F]=1;Check(!c::EffectRecordEmpty(record));
+        }
+        // The stock46 experiment (require_remote_empty) keeps its all-zero rule.
+        m=Ready();m.Set(0x11001A50+0x48,std::uint32_t(0x7FF));
+        Check(IsReason(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before),"remote_not_empty"));
+        m=Ready();General(m);
         m=Ready();General(m);m.Set(0x11001000+0x404+12,std::uint32_t(7));
         Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_binder_not_empty")==0);
         m=Ready();General(m);m.Set(0x11001000+0x400,std::uint32_t(7)); // slot 0's binder record: not slot 1's business

@@ -299,15 +299,27 @@ inline const char* ResyncName(Resync r) noexcept {return r==Resync::kept ? "kept
 constexpr Resync ResyncSlot(std::uint32_t dispatched,std::uint32_t live) noexcept {
     return dispatched && live==dispatched ? Resync::kept : EmptyHandle(live) ? Resync::empty : Resync::foreign;
 }
+// The support writer's lanes (partner_support_equip LaneSlot, partner_support_policy
+// KindSlot): slot 3 holds a thrown (type 12) or placed (type 13) item, slot 6 the arm
+// (type 14). That writer drops its per-gen ownership at every realize gen
+// (partner_support_equip.cpp Observe), so its items stay in body 1 as nobody's.
+// A gun dispatch changes no other slot (Readback: other_remote_slot_changed).
+constexpr bool SupportLaneHandle(unsigned slot,std::uint32_t handle) noexcept {
+    return !EmptyHandle(handle) &&
+        ((slot==3 && ((handle&0x1Fu)==12 || (handle&0x1Fu)==13)) || (slot==6 && (handle&0x1Fu)==14));
+}
 // Body 1's other remote slots (the seven inventory handles 7..13) before a gun
 // slot's dispatch: the gun slots hold exactly what this allocation dispatched
-// (or nothing), slots 3..6 nothing.
+// (or nothing), slots 4 and 5 nothing, slots 3 and 6 nothing or a support
+// lane's item (africa-guns: the arm 516 in slot 6 blocked the guest's one
+// ready window in 30020).
 inline const char* OtherSlotsRefusal(const std::array<std::uint32_t,7>& remote,unsigned slot,
                                      const std::uint32_t (&dispatched)[kSlots]) noexcept {
     for(unsigned i=0;i<7;++i) {
         if(i==slot) continue;
-        const std::uint32_t want=i<kSlots ? dispatched[i] : 0u;
-        if(remote[i]!=want) return "other_slot_unexpected";
+        if(i<kSlots) {
+            if(remote[i]!=dispatched[i]) return "other_slot_unexpected";
+        } else if(remote[i] && !SupportLaneHandle(i,remote[i])) return "other_slot_unexpected";
     }
     return nullptr;
 }

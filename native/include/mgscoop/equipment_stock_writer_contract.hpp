@@ -67,6 +67,23 @@ constexpr std::uint32_t ExpectedHandle(std::uint32_t new_index,const Target& t) 
 constexpr bool BinderEmpty(std::uint32_t current,std::uint32_t pending,std::uint32_t flags) noexcept {
     return current==0xFFFFFFE0u && (pending==0 || pending==0xFFFFFFE0u) && flags==0;
 }
+// A free resource target's state byte D0[target] (bank+0xD0, one byte per
+// target, resource bank vtable 0x22E2970). The bank writes only these bits:
+// bit0 shown (ADDDB0 = vt+0x1A0, ADDDDF..ADDDE5, from the group loads at
+// 1307F5C / 13085D8), bit1 NULL-optional render (ADE36D), bit3 registered
+// (ADDE32 / ADE545; cleared at ADDE6A / ADE596), bit4 (ADE718; cleared at
+// ADE6EA) and bit5 (ADE698; cleared at ADE66A). The release ADE800 (vt+0x20,
+// reached from DB7590's release loop through the group release 130B2F0)
+// never touches the byte, and the load ADDE80 (vt+0x10) zeroes it before
+// anything else (ADDEC1..ADDED1) and then rebuilds it. A released target
+// keeps its last occupant's bits, and DB7590's free queue is LIFO, so the
+// next resource is the one released last (africa-guns 2026-10-28: in 30020
+// the guest's writer waited selected_bank_aux_not_empty until its budget was
+// spent; the flag is the one sub-check a natural release can fail, deduced
+// from the code above since that log did not name the field). Only the bits
+// the bank writes are accepted; any other bit still refuses.
+inline constexpr std::uint8_t kReleasedTargetFlags=0x3B;
+constexpr bool ReleasedTargetFlag(std::uint8_t flag) noexcept {return (unsigned(flag)&~unsigned(kReleasedTargetFlags))==0;}
 // Shared tiers: an entry with this many references or more is refused
 // (shared_refs_bound): 48 is the cache size, far above any soldier census.
 inline constexpr std::uint32_t kSharedRefsBound=48;
@@ -226,6 +243,20 @@ inline std::uint32_t Word32(const std::uint8_t* p) noexcept {std::uint32_t v=0;s
 inline std::uint16_t Word16(const std::uint8_t* p) noexcept {std::uint16_t v=0;std::memcpy(&v,p,2);return v;}
 template<class T> bool Zero(const T& bytes) noexcept {
     return std::all_of(bytes.begin(),bytes.end(),[](auto b){return b==0;});
+}
+// A body's per-slot effect record (*(body+0x628) + ((id-base)*4+slot)*0x50,
+// 9C5A39) holds no effect when it was never used (all zero: allocated in the
+// body constructor, 9C4D2F) or in the native cleared state: 9CC6F0 (body
+// vt+0x130, one record) and 9CC600 (vt+0x138, all four of the body) zero
+// +0x00..+0x47 and set the id at +0x48 to 0x7FF (9CC82C / 9CC6B2), which
+// 9C5980 (vt+0x128) itself treats as none (9C5A5D) and which an equip without
+// an effect leaves at 0. Nothing writes +0x4C..+0x4F. (africa-guns: after
+// the host's horse ride unrealized body 1, slots 1/2 had handle 0 and the
+// writer refused remote_slot_not_empty for the rest of the field session.)
+inline bool EffectRecordEmpty(const std::array<std::uint8_t,0x50>& r) noexcept {
+    for(std::size_t i=0;i<r.size();++i) if(r[i] && (i<0x48 || i>=0x4C)) return false;
+    const auto id=Word32(r.data()+0x48);
+    return id==0 || id==0x7FFu;
 }
 template<class Reader> struct View {
     Reader& reader;std::uintptr_t base;std::size_t span;
@@ -721,7 +752,7 @@ template<class Reader> const char* QualifyDelayedResources(View<Reader>& v,Snaps
                     // The reason names the field (africa-guns: delayed_free_target_*).
                     if(!v.At(b.targets,target*8,model) || model) return "delayed_free_target_model";
                     if(!v.At(b.aux[0],target,cache_index) || cache_index>b.count) return "delayed_free_target_index";
-                    if(!v.At(b.aux[1],target,flag) || flag>1) return "delayed_free_target_flag";
+                    if(!v.At(b.aux[1],target,flag) || !ReleasedTargetFlag(flag)) return "delayed_free_target_flag";
                     if(b.aux[2] && (!v.At(b.aux[2],target*8,render) || render)) return "delayed_free_target_instance";
                     if(!optional && (b.policies[target] || Word32(b.extra_records[target].data()+0x14)!=1 ||
                                      Word32(b.extra_records[target].data()+0x48)))
@@ -753,7 +784,8 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
         for(unsigned i=0;i<6;++i) metadata_zero=metadata_zero && s.remote_metadata[t.slot*6+i]==0;
         if(s.remote_handles[t.slot]) return "remote_slot_handle";
         if(!metadata_zero) return "remote_slot_metadata";
-        if(!Zero(s.remote_slot_effect)) return "remote_slot_effect";
+        // The native cleared record (id 0x7FF) is as empty as a never-used one (EffectRecordEmpty).
+        if(!EffectRecordEmpty(s.remote_slot_effect)) return "remote_slot_effect";
     }
     for(const auto& attachment:s.remote_slot_attachments) {
         std::uintptr_t resource=0;std::memcpy(&resource,attachment.data(),sizeof(resource));
@@ -923,7 +955,8 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
             // H4 normal loading/release leaves index=count sentinel/flag1.
             // ADDED1 clears this flag before reading it; ADE13E overwrites
             // the selected index. Empty model/render pointers and free map
-            // ownership authorize only these observed released states.
+            // ownership authorize only these released states; the flag may
+            // keep any bit the bank writes (ReleasedTargetFlag, africa-guns).
             // The reason names the field (africa-guns: selected_bank_aux_*).
             auto& seen=s.aux_observed;const unsigned k=optional+lane;
             if(!v.At(aux[0],target,target_entry)) return "selected_bank_aux_index";
@@ -933,7 +966,7 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
             if(aux[2] && !v.At(aux[2],target*8,old_instance)) return "selected_bank_aux_instance";
             seen.render[k]=old_instance ? 1 : 0;seen.read=static_cast<std::uint8_t>(k+1);
             if(target_entry>s.selected_cache_counts[optional]) return "selected_bank_aux_index";
-            if(target_flag>1) return "selected_bank_aux_flag";
+            if(!ReleasedTargetFlag(target_flag)) return "selected_bank_aux_flag";
             if(old_instance) return "selected_bank_aux_instance";
         }
     }

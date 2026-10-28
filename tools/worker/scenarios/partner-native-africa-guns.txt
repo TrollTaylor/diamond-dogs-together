@@ -1,0 +1,32 @@
+# africa-guns (docs/native-puppet.md "Generalized writer", F1..F3; docs/two-pc-test-2026-10-23.md bug 1): the
+# generalized gun writer in Africa (30020), both directions, from the africa-jeep seed (lab saves: 871/873/875,
+# bases 0,46,9, like the field).
+# Run (coordinator only, hidden worker, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-africa-guns.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Evidence, in both logs (mission=30020):
+#  - equip_writer=plan for slots 1 (want 46) and 2 (want 9), then equip_writer=aux; ...; main=i../c../f<flag>/r0
+#    (the selected free resource; a flag other than 00/01 that reaches handle_bound is F1 at work), then
+#    equip_writer=handle_bound for both slots. Slot 0 refuses by design (no_base / stock_optional_dict).
+#  - never selected_bank_aux_flag, other_slot_unexpected or remote_slot_effect as a final equip_writer=refused.
+#  - partner_weapon=match with remote_base=46 (the shooter's current slot 1) and strip=0x0.
+# Captures: host-aim (the guest's screen while the host aims: the rifle in body 1's hands) and guest-aim (the reverse).
+labsetting partner_native_support=1
+labsetting partner_native_arm=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+waitlog host 'partner_equip=manifest; rev=1;' 60
+waitlog guest 'partner_equip=manifest; rev=1;' 60
+waitlog host 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30020; slot=1;' 120
+waitlog guest 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30020; slot=1;' 120
+waitlog host 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30020; slot=2;' 60
+waitlog guest 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30020; slot=2;' 60
+stance host stand
+stance guest stand
+wait 2000
+both capture africa-idle
+heldcapture host guest rmb host-aim 3
+wait 1500
+heldcapture guest host rmb guest-aim 3
+wait 1500
+host run position
+guest run position
+state

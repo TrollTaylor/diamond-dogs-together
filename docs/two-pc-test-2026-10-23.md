@@ -32,6 +32,17 @@ User report: "my weapon animations not showing up in africa but they did in moth
 - Reproduce with a hidden-worker run in 30020 (`-SaveSeed lab` reaches 30010; Africa may need `-SaveSeed real` or a lab goto to 30020) and compare with 30050.
 - Also check the host-side log: the friend's guns showed fine on the host's screen.
 
+**Status (2026-10-28, branch `wp/africa-guns`; fixture-tested only).** The cause is three readiness rules in the generalized writer that treated natively empty states as occupied. None of them is specific to 30020. Africa hits them because the first bind comes late there.
+- The released target's D0 flag bits (`selected_bank_aux_not_empty`): the release never clears the byte, and the load zeroes it first.
+- The support writer's arm and grenades in slots 6 and 3 (`other_slot_unexpected`).
+- The native cleared effect record (id 0x7FF) after the horse-ride unrealize (`remote_slot_not_empty`).
+
+The host's own log of the same session shows the same aux wait in 30020. The friend's guns bound there only after one backoff.
+
+The writer now accepts all three states (`docs/native-puppet.md`, "Generalized writer", F1-F3), and each wait names its field. New receipts: `equip_writer=aux` and `equip_writer=remote_slot`.
+
+Hidden-worker proof in 30020 is still open: no hidden run has ever exercised the gun writer in 30020.
+
 ## Bug 2: the host's vehicle doesn't sync on the friend's screen in Africa (30020)
 User report: "vehicle not syncing in africa".
 
