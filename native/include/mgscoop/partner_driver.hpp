@@ -1360,7 +1360,8 @@ struct Driver {
     // Online play: the capability exchange outlives missions (it is link
     // session scoped): this copy's sender pacing, the remote's last message
     // and the revision last logged; a shot or ammo leak in play strips FIRE and
-    // RELOAD for the rest of the process (leak_strip: the pad bits, 0 before).
+    // RELOAD for the rest of the mission (leak_strip: the pad bits, 0 before;
+    // cleared at MissionStart, two-PC test 2026-10-23 item 3).
     partner_caps_wire::Sender caps_tx;
     partner_caps_wire::Store caps_rx;
     std::uint16_t caps_logged_rev;

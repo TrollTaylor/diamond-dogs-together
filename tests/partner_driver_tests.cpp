@@ -3994,7 +3994,8 @@ void TestNativeOnline() {
     }
     for (const bool play : {true, false}) {
         // Play: a shot or ammo leak into the viewer's vars strips FIRE and RELOAD
-        // for the rest of the process (every later mission too); the lab only counts.
+        // for the rest of THIS MISSION (two-PC test 2026-10-23 item 3: the old
+        // latch outlived the mission and the process); the lab only counts.
         NativeSession s;
         SetVisualFire(s);
         s.driver.settings.play_mode = play;
@@ -4002,19 +4003,28 @@ void TestNativeOnline() {
         for (int i = 0; i < 5; ++i) s.N();
         Check((s.fake.arms.back().strip & 0x50u) == 0, "no leak: FIRE and RELOAD pass");
         s.fake.stats.native.shot_leaks = 1;
+        s.fake.stats.native.shot_leaks_mission = 1;
         for (int i = 0; i < 5; ++i) s.N();
         if (play) {
             Check((s.fake.arms.back().strip & 0x50u) == 0x50u && (s.fake.arms.back().strip & 0x8u) == 0 && s.driver.leak_strip == 0x50u &&
                       s.fake.Containing("partner_weapon=fire_reload_off; reason=shot_leak; shot_leaks=1; ammo_leaks=0;") == 1 &&
-                      s.driver.mission.tele.leak_strip == 0x50u,
-                  "play: a shot leak strips FIRE and RELOAD (HOLD stays), logged once");
-            s.fake.stats.native.shot_leaks = 0;
+                      s.fake.Containing("scope=mission") == 1 && s.driver.mission.tele.leak_strip == 0x50u,
+                  "play: a shot leak strips FIRE and RELOAD (HOLD stays) for the mission, logged once");
+            // MissionStart resets the hook's mission counters (reset_input_fault); the process total stays.
+            s.fake.stats.native.shot_leaks_mission = 0;
             pd::MissionEnd(s.driver, s.hooks);
             pd::MissionStart(s.driver, s.hooks);
             Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "leak guard: next mission cfg");
             Loaded(s);
-            Check(s.Until(pn::Mode::active, 9000) && (s.fake.arms.back().strip & 0x50u) == 0x50u &&
-                      s.fake.Containing("fire_reload_off") == 1, "the play leak strip outlives the mission");
+            Check(s.Until(pn::Mode::active, 9000) && (s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 &&
+                      s.fake.Containing("fire_reload_off") == 1,
+                  "the play leak strip ends with its mission: the next mission's FIRE and RELOAD pass");
+            s.fake.stats.native.ammo_leaks = 1;
+            s.fake.stats.native.ammo_leaks_mission = 1;
+            for (int i = 0; i < 5; ++i) s.N();
+            Check((s.fake.arms.back().strip & 0x50u) == 0x50u && s.driver.leak_strip == 0x50u &&
+                      s.fake.Containing("partner_weapon=fire_reload_off; reason=ammo_leak; shot_leaks=1; ammo_leaks=1;") == 1,
+                  "a new leak in the new mission strips again (never slips through)");
         } else {
             Check((s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 && !s.fake.Containing("fire_reload_off"),
                   "lab: a leak is telemetry only");
@@ -4027,10 +4037,25 @@ void TestNativeOnline() {
         s.driver.settings.play_mode = true;
         Check(s.Until(pn::Mode::active, 9000), "active (gun, ammo leak)");
         s.fake.stats.native.ammo_leaks = 2;
+        s.fake.stats.native.ammo_leaks_mission = 2;
         for (int i = 0; i < 5; ++i) s.N();
         Check((s.fake.arms.back().strip & 0x50u) == 0x50u &&
                   s.fake.Containing("partner_weapon=fire_reload_off; reason=ammo_leak; shot_leaks=0; ammo_leaks=2;") == 1,
               "play: an ammo leak strips FIRE and RELOAD");
+    }
+    {
+        // Benign item changes (the viewer's box knocked off inside body 1's job)
+        // and leaks of an earlier mission never strip (play).
+        NativeSession s;
+        SetVisualFire(s);
+        s.driver.settings.play_mode = true;
+        Check(s.Until(pn::Mode::active, 9000), "active (gun, benign vars change)");
+        s.fake.stats.native.ammo_benign = 3;
+        s.fake.stats.native.ammo_leaks = 4;  // process total of earlier missions
+        s.fake.stats.native.shot_leaks = 2;
+        for (int i = 0; i < 5; ++i) s.N();
+        Check((s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 && !s.fake.Containing("fire_reload_off"),
+              "benign item changes and earlier missions' leaks leave FIRE and RELOAD on");
     }
     {
         // A copy that shows clips (drive=legacy) still sends its capabilities: off, legacy.

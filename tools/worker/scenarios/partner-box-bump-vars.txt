@@ -1,0 +1,81 @@
+# Two-PC test 2026-10-23 item 3 (docs/two-pc-test-2026-10-23.md, "Host fixes" in docs/STATUS.md): the boxed guest
+# bumped into the boxed host; downed_defense attack=85 fired both ways inside body 1's job, the host's weapon/ammo vars
+# digest changed in that window (the support lane saw the u16[46] stock table change), and the host logged
+# partner_input=ammo_leak; mag_mirror=disabled and partner_weapon=fire_reload_off; reason=ammo_leak; ...; scope=process:
+# no partner shots or reloads on the host for the rest of the process. wp/host-fixes names the changed fields
+# (partner_input=vars_change; verdict=..; fields=<member>[<element>]:<before>><after>), counts a change confined to the
+# viewer's own item fields (items, item stock ids/counts 14..21) as benign, and scopes the play strip to the mission.
+# This scenario is the census of that collision: it reproduces the box-on-box bump and records which fields move.
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
+# unset, no build running in any worktree, under the shared verify lock, one worker session.
+# Run (play rehearsal, the gun stage: the strip is play-only; the lab save carries box 468 at item sub 1):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/partner-box-bump-vars.txt
+# Expected (host and guest):
+#   both boxed: partner_status=local; st=0x4 and the peer's partner_cbox=entered; act=77|78
+#   after the bumps, any partner_input=vars_change line names its fields; verdict=benign only with item fields
+#     (ammoStockCounts[14..21], ammoStockIds[14..21], items[..]) and then NO partner_input=ammo_leak and NO
+#     partner_weapon=fire_reload_off; a verdict=leak line (any weapon/ammo field) is followed by
+#     partner_weapon=fire_reload_off; reason=ammo_leak; ...; scope=mission (report the fields: that is a real leak)
+#   NEVER scope=process
+#   the partner's shots still show after the bump (partner_native_gun ...; fire=live on the viewer while the peer fires)
+# No collision is guaranteed: a run without a downed_defense=sample;...;attack=85 line did not reproduce the bump
+# (report it; the fixture tests partner_ammo_leak_tests / partner_defer_tests are then the only proof).
+# Captures: boxes-before, bump-1, bump-2, after-fire.
+labsetting partner_act_log=1
+title 200
+waitgameplay host 120
+waitgameplay guest 240
+waitlog host 'partner_equip=manifest; rev=1;' 60
+waitlog guest 'partner_equip=manifest; rev=1;' 60
+waitlog host 'equip_writer=(handle_bound|observation_stopped; reason=model_wait_limit);' 120
+waitlog guest 'equip_writer=(handle_bound|observation_stopped; reason=model_wait_limit);' 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+stance host stand
+stance guest stand
+wait 2000
+resetpose host
+stance host stand
+host debug clear_enemies 100
+placebehind guest host 3
+wait 2500
+# --- Both box (sub 1 = 468 on the lab save). -----------------------------------------------------------------------
+host run slot item 1
+host expect ^submitted_slot;slot=item;native=4;sub=1;
+waitlog host 'partner_status=local; st=0x4' 10
+guest run slot item 1
+guest expect ^submitted_slot;slot=item;native=4;sub=1;
+waitlog guest 'partner_status=local; st=0x4' 10
+waitlog guest 'partner_cbox=entered; act=7[78];' 15
+waitlog host 'partner_cbox=entered; act=7[78];' 15
+wait 1000
+both capture boxes-before
+# --- The boxed guest walks into the boxed host (placed 3 m behind it, facing it), twice. --------------------------
+guest hold w 1500
+guest hold w 1500
+guest hold w 1500
+guest release
+wait 1500
+both capture bump-1
+placebehind guest host 3
+wait 2500
+guest hold w 1500
+guest hold w 1500
+guest hold w 1500
+guest release
+wait 1500
+both capture bump-2
+# --- Out of the boxes (sub 0), then the guest fires: the host's copy must still show the partner's shots. --------
+host run slot item 0
+guest run slot item 0
+wait 2500
+placebehind guest host 4 3
+wait 2500
+guest press 1 120
+wait 1500
+guest hold rmb+lmb 1500
+guest release
+wait 1500
+both capture after-fire
+state

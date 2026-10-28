@@ -208,9 +208,14 @@ struct NativeStats {
     // instance 1's reload request (rec+0x3C0 bit 20) was set.
     std::uint32_t shot_leaks, shot_count, reload_drains;
     // The same for the viewer's weapon/ammo vars block (vars+0x548..+0x670):
-    // drain windows whose job changed it, and its FNV-1a digest after the
-    // last drain (0 unread).
+    // drain windows whose job changed a weapon or ammo field (partner_ammo_leak
+    // verdict leak), and its FNV-1a digest after the last drain (0 unread).
     std::uint32_t ammo_leaks, ammo_digest;
+    // Two-PC test 2026-10-23 item 3: the shot and ammo leaks of THIS mission
+    // (reset at MissionStart with the mirror's own leak stop; the play strip
+    // reads these), and drain windows whose job changed only the viewer's item
+    // fields (verdict benign: its box knocked off in a collision; never a leak).
+    std::uint32_t shot_leaks_mission, ammo_leaks_mission, ammo_benign;
     // F2: store row writes and refusals (the last reason), and the last
     // drain's injected remote magazine (0xFFFF without a v4 magazine).
     std::uint32_t store_writes, store_refused;

@@ -1818,7 +1818,7 @@ void TestJobWindow() {
         Put<std::uint32_t>(Addr(vars) + c::vars_shoot_count, 7);
         static std::uintptr_t s_rec = 0, s_vars = 0;
         static std::uint16_t s_seen = 0;
-        static bool s_shoot = false, s_reload = false, s_ammo = false;
+        static bool s_shoot = false, s_reload = false, s_ammo = false, s_item = false;
         s_rec = Addr(gun_rec);
         s_vars = Addr(vars);
         struct GunJob {
@@ -1826,8 +1826,12 @@ void TestJobWindow() {
                 s_seen = Get<std::uint16_t>(s_rec + c::gun_mag);
                 if (s_shoot) Put<std::uint32_t>(s_vars + c::vars_shoot_count, Get<std::uint32_t>(s_vars + c::vars_shoot_count) + 1);
                 if (s_reload) Put<std::uint32_t>(s_rec + c::gun_flags, Get<std::uint32_t>(s_rec + c::gun_flags) | c::gun3c0_reload);
-                // A cross-instance inventory write (what the ammo digest must catch): the viewer's vars+0x5A4.
-                if (s_ammo) Put<std::uint16_t>(s_vars + 0x5A4, static_cast<std::uint16_t>(Get<std::uint16_t>(s_vars + 0x5A4) + 1));
+                // A cross-instance ammo write (what the ammo digest must catch): the viewer's
+                // vars.ammoInWeapons[0] at +0x554.
+                if (s_ammo) Put<std::uint16_t>(s_vars + 0x554, static_cast<std::uint16_t>(Get<std::uint16_t>(s_vars + 0x554) + 1));
+                // Item 3: the viewer's own item stock 0xE + 1 (ammoStockCounts[15] at +0x632; its box
+                // knocked off in a collision inside this job): benign, never a leak.
+                if (s_item) Put<std::uint16_t>(s_vars + 0x632, static_cast<std::uint16_t>(Get<std::uint16_t>(s_vars + 0x632) + 1));
             }
         };
         a.naim = mgscoop::PartnerNativeAim::off;
@@ -2181,10 +2185,21 @@ void TestJobWindow() {
         Check(run() && hs.native.shot_leaks == leaks && hs.native.shot_count == 7, "the viewer's shoot count is read, unchanged");
         Check(hs.native.ammo_leaks == ammo_leaks && hs.native.ammo_digest != 0, "the viewer's weapon/ammo vars block is read, unchanged");
         const std::uint32_t digest = hs.native.ammo_digest;
+        const std::uint32_t benign = hs.native.ammo_benign, mission_ammo = hs.native.ammo_leaks_mission;
+        s_item = true;
+        Check(run() && hs.native.ammo_leaks == ammo_leaks && hs.native.ammo_leaks_mission == mission_ammo &&
+                  hs.native.ammo_benign == benign + 1 && hs.native.ammo_digest != digest && !hs.native.mag_leak_off,
+              "item 3: a job that changes only the viewer's item stock is benign: no ammo leak, the mirror stays on");
+        s_item = false;
         s_ammo = true;
-        Check(run() && hs.native.ammo_leaks == ammo_leaks + 1 && hs.native.ammo_digest != digest && hs.native.shot_leaks == leaks,
-              "a job that changes the viewer's weapon/ammo vars block is an ammo leak");
+        Check(run() && hs.native.ammo_leaks == ammo_leaks + 1 && hs.native.ammo_leaks_mission == mission_ammo + 1 &&
+                  hs.native.ammo_digest != digest && hs.native.shot_leaks == leaks,
+              "a job that changes the viewer's magazine (ammoInWeapons) is an ammo leak, counted for the mission too");
         s_ammo = false;
+        s_item = s_ammo = true;
+        Check(run() && hs.native.ammo_leaks == ammo_leaks + 2 && hs.native.ammo_benign == benign + 1,
+              "an item change in the same job never masks an ammo leak");
+        s_item = s_ammo = false;
         s_shoot = true;
         s_reload = true;
         Check(run() && hs.native.shot_leaks == leaks + 1 && hs.native.shot_count == 8 && hs.native.reload_drains == reloads + 1,

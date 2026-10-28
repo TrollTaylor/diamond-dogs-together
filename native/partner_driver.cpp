@@ -11,6 +11,7 @@
 #include "mgscoop/partner_driver.hpp"
 #include "vehicle_mirror_state.hpp"
 #include "mgscoop/partner_aim.hpp"
+#include "mgscoop/partner_ammo_leak.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/coop_carry.hpp"
@@ -3366,14 +3367,20 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
                    m.weapon_absent ? "absent" : "present", m.weapon_absent ? "absent" : "present", m.weapon_strip);
     }
     // Play: any leak of instance 1's job into the viewer's save-backed vars (a
-    // shot leak: vars shoot count; an ammo leak: the weapon/ammo vars block,
-    // with or without the mirror, which also turns itself off: mag.leak_off;
-    // process totals) strips FIRE and RELOAD for the rest of the process, so
-    // neither runs again against a co-op save that persists.
-    if (set.play_mode && !d.leak_strip && (ns.shot_leaks || ns.ammo_leaks || ns.mag_leak_off)) {
+    // shot leak: vars shoot count; an ammo leak: a weapon or ammo field of the
+    // weapon/ammo vars block, partner_ammo_leak verdict leak, with or without
+    // the mirror, which also turns itself off: mag.leak_off) strips FIRE and
+    // RELOAD for the rest of THIS MISSION (this mission's counters; MissionStart
+    // clears the strip). Two-PC test 2026-10-23 item 3: the old process-wide
+    // latch also carried into every later mission until the game restarted.
+    // The line names the process totals (shot_leaks/ammo_leaks) as before.
+    if (!d.leak_strip &&
+        partner_ammo_leak::StripsFireReload(set.play_mode, {ns.shot_leaks_mission, ns.ammo_leaks_mission, ns.mag_leak_off})) {
         d.leak_strip = pnat::kPadFire | pnat::kPadReload;
-        EmitFormat(h, "partner_weapon=fire_reload_off; reason=%s; shot_leaks=%u; ammo_leaks=%u; strip=0x%x; scope=process\r\n",
-                   ns.shot_leaks ? "shot_leak" : "ammo_leak", ns.shot_leaks, ns.ammo_leaks, d.leak_strip);
+        EmitFormat(h, "partner_weapon=fire_reload_off; reason=%s; shot_leaks=%u; ammo_leaks=%u; strip=0x%x; scope=mission; "
+                      "mission_shot_leaks=%u; mission_ammo_leaks=%u; benign=%u\r\n",
+                   ns.shot_leaks_mission ? "shot_leak" : ns.ammo_leaks_mission ? "ammo_leak" : "mag_leak", ns.shot_leaks, ns.ammo_leaks,
+                   d.leak_strip, ns.shot_leaks_mission, ns.ammo_leaks_mission, ns.ammo_benign);
     }
     m.weapon_strip |= d.leak_strip;
     // Anim round 1: the auto-fire stop (partner_slots DryStep). Instance 1's
@@ -5842,6 +5849,9 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     WithdrawGesture(d, h);
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
+    // Two-PC test 2026-10-23 item 3: the play leak strip is mission-scoped (the
+    // hook's mission leak counters were just reset with its fault).
+    d.leak_strip = 0;
     // F1 vehicles: no board policy outlives a mission (the lease would end it anyway).
     BoardWithdraw(d, h);
     d.mission = Mission{};
