@@ -135,11 +135,16 @@ drag-and-drop install that never writes that record, through its drop-in
 `mgs-coop\package.json` (product `mgs-coop-local-package`, layout `drop-in`, an
 X.Y.Z version, the pinned exe/Steam DLL/runtime archive hashes and exactly one
 `files[]` row with target `dinput8.dll` equal to the loader). A foreign or
-unknown loader refuses. For a drop-in owned copy Start passes
-`-AcceptDropInLoader` to Prepare and `tools/package-install.ps1`, which re-check
-the same row; the stale record (or its absence) is backed up as it is, and Stop
-restores the drop-in loader and that record byte for byte (or keeps it absent)
-before reporting `BaselineRestored`. `session.json` records
+unknown loader refuses. When either copy is drop-in owned, Start passes
+`-AcceptDropInLoader` to Prepare and `tools/package-install.ps1` for both
+copies; the installer re-checks each folder's own drop-in row and takes that
+branch wherever it matches (a record-owned copy whose package.json lists the
+same loader is backed up identically: loader and record as they are). The
+stale record (or its absence) is backed up as it is, and Stop restores the
+drop-in loader and that record byte for byte (or keeps it absent) before
+reporting `BaselineRestored`. Verified hidden run `a604896b` (2026-10-28,
+`2c9341c`): host drop-in 0.14.2 beside the stale 0.13.6 record, guest
+record-owned; both booted to 30050 and were restored exactly. `session.json` records
 `roles.<role>.baseline_owner` (`record`/`drop-in`) and
 `baseline_record_present`. `Invoke-WorkerScenario` takes the host's default
 `-BaselineLoaderSha256` from the same gate.
