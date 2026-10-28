@@ -2118,6 +2118,14 @@ runtime before acting (`full_body_gate`).
       `9CC6F0` / vt+0x138 `9CC600` when body 1 unrealizes; `9C5980` treats
       0x7FF as none). The stock46 experiment keeps its all-zero rule.
 
+    Hidden-worker runs (2026-10-28): `partner-native-africa-guns.txt`
+    (30020, `96b5c909`, `8e97cb60`, `05f68a20`) and `partner-native-mb-guns.txt`
+    (30050, `04b2f3af`). Both roles bind slots 1 and 2 at the first
+    readiness observation, and both show the rifle (46) on body 1 with
+    `strip=0x0` while the other role aims. Every `equip_writer=aux` line
+    read `f00`, so the relaxed rules themselves are still proven only by
+    fixtures (docs/two-pc-test-2026-10-23.md, bug 1).
+
     Each wait names its field: `selected_bank_aux_index|_flag|_instance`,
     `remote_slot_handle|_metadata|_effect`,
     `delayed_free_target_model|_index|_flag|_instance` (all transient);
