@@ -447,9 +447,33 @@ int main() {
     Refuse([](Memory& q){q.Set(0x12060820,std::uint64_t(1));},"selected_cache_null_entry_dirty");
     Refuse([](Memory& q){q.Set(0x12060880,std::uint16_t(1));},"selected_cache_null_entry_dirty");
     Refuse([](Memory& q){q.Set(0x12060898,std::uintptr_t(1));},"selected_cache_null_entry_dirty");
-    Refuse([](Memory& q){q.Set(0x12060910,std::uint8_t(2));},"selected_bank_aux_not_empty");
-    Refuse([](Memory& q){q.Set(0x12060900,std::uint8_t(13));},"selected_bank_aux_not_empty");
-    Refuse([](Memory& q){q.Set(0x12060920,std::uintptr_t(1));},"selected_bank_aux_not_empty");
+    Refuse([](Memory& q){q.Set(0x12060910,std::uint8_t(2));},"selected_bank_aux_flag");
+    Refuse([](Memory& q){q.Set(0x12060900,std::uint8_t(13));},"selected_bank_aux_index");
+    Refuse([](Memory& q){q.Set(0x12060920,std::uintptr_t(1));},"selected_bank_aux_instance");
+    // africa-guns: the aux receipt's observation of the selected free resource (group 6, resource 12).
+    m=Ready();Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before)==nullptr);
+    Check(before.aux_observed.read==3 && before.selected_group_index==6 && before.next_resource==12 &&
+          before.aux_observed.count[0]==12 && before.aux_observed.count[2]==12 && before.aux_observed.index[0]==0 &&
+          before.aux_observed.flag[0]==0 && before.aux_observed.flag[2]==0 && before.aux_observed.render[0]==0);
+    m.Set(0x12060900,std::uint8_t(13));Check(IsReason(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before),"selected_bank_aux_index"));
+    Check(before.aux_observed.read==1 && before.aux_observed.index[0]==13);
+    m=Ready();m.Set(0x12060920,std::uintptr_t(0x123));
+    Check(IsReason(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before),"selected_bank_aux_instance"));
+    Check(before.aux_observed.read==1 && before.aux_observed.render[0]==1);
+    // The delayed free targets name their field too (group 7, resource 14: eligible, not selected).
+    Refuse([](Memory& q){q.Set(0x12070900,std::uint8_t(13));},"delayed_free_target_index");
+    Refuse([](Memory& q){q.Set(0x12070920,std::uintptr_t(1));},"delayed_free_target_instance");
+    // OtherSlotsRefusal: the gun slots hold this allocation's dispatches, slots 4 and 5 nothing.
+    {
+        std::array<std::uint32_t,7> remote{};std::uint32_t dispatched[p::kSlots]{};
+        Check(p::OtherSlotsRefusal(remote,1,dispatched)==nullptr);
+        remote[1]=0x605C4;Check(p::OtherSlotsRefusal(remote,1,dispatched)==nullptr); // the target slot: Preflight's business
+        remote[2]=0x70122;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        dispatched[2]=0x70122;Check(p::OtherSlotsRefusal(remote,1,dispatched)==nullptr);
+        dispatched[0]=0x80024;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        dispatched[0]=0;remote[4]=0x42c4c;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+        remote[4]=0;remote[5]=0x3408e;Check(IsReason(p::OtherSlotsRefusal(remote,1,dispatched),"other_slot_unexpected"));
+    }
     Refuse([](Memory& q){q.Set(0x12060138,std::uint64_t(1024*1024+1));},"resource_bank_allocation");
     Refuse([](Memory& q){q.Set(0x12060140,std::uint64_t(0x4BC9));},"selected_cache_allocation");
     Refuse([](Memory& q){q.Set(0x1206014A,std::uint16_t(0));},"selected_cache_allocation");
@@ -467,6 +491,8 @@ int main() {
     m.Set(0x12060820,entry);m.Set(0x12060898,std::uintptr_t(0x18FC58320ull));
     m.Set(0x12060910,std::uint8_t(1));m.Set(0x12066300,std::uint8_t(12));m.Set(0x12066310,std::uint8_t(1));
     Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before)==nullptr && before.main_cache_candidate==1);
+    Check(before.aux_observed.read==3 && before.aux_observed.flag[0]==1 && before.aux_observed.index[1]==12 &&
+          before.aux_observed.count[1]==12 && before.aux_observed.flag[1]==1 && before.aux_observed.flag[2]==0);
     c::View<Memory> cache_view{m,base,0xA01D000};Check(c::MainCachePreserved(cache_view,before)==nullptr);
     m.Set(0x12060718,std::uintptr_t(0x16000000));Check(c::MainCachePreserved(cache_view,before)==nullptr);
     m.Set(0x12060880,std::uint16_t(1));Check(std::strcmp(c::MainCachePreserved(cache_view,before),"other_main_cache_changed")==0);
@@ -507,7 +533,7 @@ int main() {
     Refuse([](Memory& q){q.Set(0x12070188,std::uintptr_t(1));},"delayed_bank_array_bounds");
     Refuse([](Memory& q){q.Set(0x12070820,std::uint64_t(1));},"delayed_cache_null_dirty");
     Refuse([](Memory& q){for(unsigned i=0;i<11;++i)q.Set(0x12070700+i*0x18,std::uintptr_t(1));},"delayed_cache_capacity");
-    Refuse([](Memory& q){q.Set(0x12070500,std::uintptr_t(1));},"delayed_free_target_not_empty");
+    Refuse([](Memory& q){q.Set(0x12070500,std::uintptr_t(1));},"delayed_free_target_model");
     m=Ready();m.Set(rows+20*0xE,std::uint16_t(46)); // dormant valid row, no request/mapping
     Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before)==nullptr);
     // Retained different asset/zero-ref entry in a DIFFERENT eventual bank.
@@ -680,9 +706,9 @@ int main() {
         Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)==nullptr);
         Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before),"remote_not_empty")==0);
         m.Set(handles+8*4,std::uint32_t(0x8005C4));
-        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_not_empty")==0);
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_handle")==0);
         m=Ready();General(m);m.Set(metadata+8*6+2,std::uint8_t(1));
-        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_not_empty")==0);
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_metadata")==0);
         m=Ready();General(m);m.Set(0x11001000+0x404+12,std::uint32_t(7));
         Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_binder_not_empty")==0);
         m=Ready();General(m);m.Set(0x11001000+0x400,std::uint32_t(7)); // slot 0's binder record: not slot 1's business
@@ -706,7 +732,7 @@ int main() {
         m.Set(0x13012000+2*0x20,std::uintptr_t(0x55));
         Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_attachment_not_empty")==0);
         m=Ready();Plain300(m);m.Set(0x11001000+0xA08,std::uint8_t(1));
-        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_not_empty")==0);
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_effect")==0);
         // A bound plain target's render object is 512 + align16(8g+88) = 640 at g 5.
         m=Ready();Plain300(m);Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)==nullptr);
         c::View<Memory> bv{m,base,0xA01D000};

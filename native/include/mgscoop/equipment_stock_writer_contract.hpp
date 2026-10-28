@@ -169,6 +169,15 @@ struct Snapshot {
     std::uint64_t eligible_resources=0;
     std::uint32_t free_cursor=0;
     PackageObservation package_observation{};
+    // The selected free resource's per-target bank bytes as Preflight read them
+    // (the writer's equip_writer=aux receipt; africa-guns 2026-10-28): targets
+    // [0] main lane 0, [1] optional lane 0, [2] optional lane 1. `read` is the
+    // number of targets read (3: the selected aux check ran to its end).
+    struct AuxObservation {
+        std::uint8_t read=0;
+        std::array<std::uint8_t,3> index{},flag{},render{};
+        std::array<std::uint32_t,3> count{};
+    } aux_observed{};
 };
 
 template<class Reader> struct View;
@@ -709,9 +718,11 @@ template<class Reader> const char* QualifyDelayedResources(View<Reader>& v,Snaps
                 for(unsigned lane=0;lane<=optional;++lane) {
                     const auto target=local+lane*size;std::uintptr_t model=0,render=0;
                     std::uint8_t cache_index=0,flag=0;
-                    if(!v.At(b.targets,target*8,model) || model || !v.At(b.aux[0],target,cache_index) || cache_index>b.count ||
-                       !v.At(b.aux[1],target,flag) || flag>1 || (b.aux[2] && (!v.At(b.aux[2],target*8,render) || render)))
-                        return "delayed_free_target_not_empty";
+                    // The reason names the field (africa-guns: delayed_free_target_*).
+                    if(!v.At(b.targets,target*8,model) || model) return "delayed_free_target_model";
+                    if(!v.At(b.aux[0],target,cache_index) || cache_index>b.count) return "delayed_free_target_index";
+                    if(!v.At(b.aux[1],target,flag) || flag>1) return "delayed_free_target_flag";
+                    if(b.aux[2] && (!v.At(b.aux[2],target*8,render) || render)) return "delayed_free_target_instance";
                     if(!optional && (b.policies[target] || Word32(b.extra_records[target].data()+0x14)!=1 ||
                                      Word32(b.extra_records[target].data()+0x48)))
                         return "delayed_free_render_not_empty";
@@ -737,9 +748,12 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
         // Never replace a filled slot: the target slot's handle, its six
         // metadata bytes and its effect record are untouched (other slots may
         // hold this allocation's earlier dispatches; the writer checks those).
+        // The reason names the part (africa-guns: field logs only said remote_slot_not_empty).
         bool metadata_zero=true;
         for(unsigned i=0;i<6;++i) metadata_zero=metadata_zero && s.remote_metadata[t.slot*6+i]==0;
-        if(s.remote_handles[t.slot] || !metadata_zero || !Zero(s.remote_slot_effect)) return "remote_slot_not_empty";
+        if(s.remote_handles[t.slot]) return "remote_slot_handle";
+        if(!metadata_zero) return "remote_slot_metadata";
+        if(!Zero(s.remote_slot_effect)) return "remote_slot_effect";
     }
     for(const auto& attachment:s.remote_slot_attachments) {
         std::uintptr_t resource=0;std::memcpy(&resource,attachment.data(),sizeof(resource));
@@ -910,9 +924,17 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
             // ADDED1 clears this flag before reading it; ADE13E overwrites
             // the selected index. Empty model/render pointers and free map
             // ownership authorize only these observed released states.
-            if(!v.At(aux[0],target,target_entry) || target_entry>s.selected_cache_counts[optional] ||
-               !v.At(aux[1],target,target_flag) || target_flag>1 ||
-               (aux[2] && (!v.At(aux[2],target*8,old_instance) || old_instance))) return "selected_bank_aux_not_empty";
+            // The reason names the field (africa-guns: selected_bank_aux_*).
+            auto& seen=s.aux_observed;const unsigned k=optional+lane;
+            if(!v.At(aux[0],target,target_entry)) return "selected_bank_aux_index";
+            seen.index[k]=target_entry;seen.count[k]=s.selected_cache_counts[optional];
+            if(!v.At(aux[1],target,target_flag)) return "selected_bank_aux_flag";
+            seen.flag[k]=target_flag;
+            if(aux[2] && !v.At(aux[2],target*8,old_instance)) return "selected_bank_aux_instance";
+            seen.render[k]=old_instance ? 1 : 0;seen.read=static_cast<std::uint8_t>(k+1);
+            if(target_entry>s.selected_cache_counts[optional]) return "selected_bank_aux_index";
+            if(target_flag>1) return "selected_bank_aux_flag";
+            if(old_instance) return "selected_bank_aux_instance";
         }
     }
     if(s.selected_bank_allocations[0]<s.selected_bank_allocations[1]+s.selected_bank_allocation_bytes[1] &&

@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -297,6 +298,18 @@ enum class Resync : std::uint8_t { kept, empty, foreign };
 inline const char* ResyncName(Resync r) noexcept {return r==Resync::kept ? "kept" : r==Resync::empty ? "empty" : "foreign";}
 constexpr Resync ResyncSlot(std::uint32_t dispatched,std::uint32_t live) noexcept {
     return dispatched && live==dispatched ? Resync::kept : EmptyHandle(live) ? Resync::empty : Resync::foreign;
+}
+// Body 1's other remote slots (the seven inventory handles 7..13) before a gun
+// slot's dispatch: the gun slots hold exactly what this allocation dispatched
+// (or nothing), slots 3..6 nothing.
+inline const char* OtherSlotsRefusal(const std::array<std::uint32_t,7>& remote,unsigned slot,
+                                     const std::uint32_t (&dispatched)[kSlots]) noexcept {
+    for(unsigned i=0;i<7;++i) {
+        if(i==slot) continue;
+        const std::uint32_t want=i<kSlots ? dispatched[i] : 0u;
+        if(remote[i]!=want) return "other_slot_unexpected";
+    }
+    return nullptr;
 }
 // A retained owned handle proves ownership, not that the new body's model
 // bound it. An interrupted observation ends queued; only qualified Readback
