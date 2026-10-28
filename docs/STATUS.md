@@ -1,3 +1,62 @@
+## October 28, 2026: Host fixes (two-PC test 2026-10-23 items 2, 3, 4, 6 of the host-log pass)
+
+Branch `wp/host-fixes` from `dev/oct7-continue` `916708f`. Code and fixtures only: **no game run**; the three new
+hidden-worker scenarios are written and validated by `worker_session_tests` but not run. One commit per item.
+
+- **Item 6, `08f73d6`: the local player's downed protection while body 1 is unrealized.** `Live()` required both
+  bodies realized and loaded, so while `partner_mount` / the ride hides had unrealized body 1 (the host's horse ride
+  on the guest, heli rides, re-realizes) every poll was `downed_control=refused; reason=player` and lethal damage
+  would have been a plain game over. `downed_player::detail::LiveBodies` judges ownership from body 0 (realized,
+  id 0, loaded); a realized body 1 must still be id 1, an unrealized one is absent.
+- **Item 4, `2f3332b`: friendly fire on a boxed host.** The prone request cannot take a boxed body
+  (`controls_pending_prone` x6, `controls_timeout_prone`), and the timeout latched `failed` for the rest of the
+  mission (every poll `controls_timeout`, darts ignored with `downed_unavailable`).
+  - The Lua owner sends the local `PlayerStatus.CBOX` as an optional fifth field of the `MGS_COOP_DOWNED_V1` poll and
+    lock receipts; `detail::DownedPosture` accepts the box as the downed posture (no prone request; masks and the
+    input cap still apply; `detail::PostureHeld` keeps the cap without stance 3).
+  - `detail::ControlsTimeout`: a timeout clears the cycle without latching; the abandoned generation retires
+    (`NewScene`) and the next poll with a good `Live()` re-arms. Lua releases a downed mask the healthy owner no
+    longer needs (`step=abandoned`) and `accept()` takes "up under a newer generation" as an abandoned cycle on both
+    copies (no grant; a same-generation stand-up still needs one).
+  - `downed_control=...` lines carry `posture=` and `generation=`; a `controls_timeout_*` and the first box lock of a
+    generation are logged without the 1/s limiter.
+  - Scenario `tools/worker/scenarios/downed-boxed-friendly-fire.txt` (the guest's rifle downs the boxed host; locked
+    after 8 s; revive; a second boxed down arms again).
+- **Item 3, `f492d77`: `fire_reload_off; reason=ammo_leak; scope=process` after a box-on-box bump.**
+  - `partner_ammo_leak` names the 14 registrations of the weapon/ammo vars block `vars+0x548..+0x670` (Fox StrCode32
+    of the exe's registration hashes: weapons, ammoInWeapons, ammoSubInWeapons, isInitialWeapon, supportWeapons,
+    items, handEquip, ammoStockIds, ammoStockCounts, five unnamed byte arrays). The hook keeps the block bytes around
+    body 1's job and logs `partner_input=vars_change; verdict=..; fields=<member>[<element>]:<before>><after>`
+    (32 per mission).
+  - A change confined to the viewer's own item fields (items, item stock ids/counts `0xE + sub`) is benign (counted
+    as `ammo_benign`); any weapon or ammo element is a leak, and an item change never masks one.
+  - The play strip reads this mission's counters (`shot_leaks_mission`, `ammo_leaks_mission`, reset at MissionStart
+    with the mirror's leak stop) and is cleared at MissionStart: `partner_weapon=fire_reload_off; ...; scope=mission`.
+  - The support lane's own `stock_leak_mission_latched` is unchanged (mission-scoped already; it also saw the bump).
+  - Scenario `tools/worker/scenarios/partner-box-bump-vars.txt` (a census of the bump: which fields move).
+- **Item 2, `09ebf71`: no partner guns for MB visit 1 after the save handoff.** The host continued before the
+  relaunched guest linked; the allocation preload had no manifest and is a mission-block load at the allocation only
+  (vanilla calls `RequestLoadToEquipMissionBlock` in `MissionPrepare`; a mid-mission load is an unverified lifecycle),
+  so the late manifest could not bind (`no_resident` x6, refused).
+  - `save_handoff::PeerOnHandedSave()` (host: the token `partner_restarting` was published once in this process) and
+    `equipment_stock_probe::ChoosePreloadSource`: without the peer's manifest, after a handoff, the host's own last
+    sent manifest (`partner_driver::OwnManifest`) predicts the peer's first loadout. `equip_preload=...; source=
+    remote|predicted|none`. The writer still binds only from the real manifest (its `manifest_late` renewal).
+  - A manifest after the allocation query logs `equip_preload=late_manifest; ...; covered=<n>/<m>;
+    guns=this_load|next_load` once.
+  - Scenario `tools/worker/scenarios/partner-equip-late-manifest.txt` stages the late manifest (the host continues
+    while the guest is still at its boot screens). **Cannot be staged:** the predicted preload itself needs a guest
+    that exits after a handoff and relinks to the same host process; the worker has no relaunch control and a second
+    session is a new host process.
+- **Tests (failing first):** `downed_player_tests` (LiveBodies, DownedPosture/PostureHeld, ControlsTimeout),
+  `world_downed_lua_check` (posture field, abandoned cycle before and after the lock on both roles),
+  `world_revive_input_lua_check` (the posture field), `partner_ammo_leak_tests` (new), `partner_driver_tests` (the strip
+  ends with its mission; `TestEquipLateManifest`), `partner_defer_tests` (item-only job benign, ammoInWeapons a leak),
+  `equipment_stock_probe_tests` (predicted source, cover), `save_handoff_io_tests` (`HandedSave`).
+- **Unproven until a game run:** that the box posture holds the downed body (and the revive) in the box; which field
+  the box-on-box bump really changes (the new `vars_change` line names it; if it is a weapon/ammo field the strip
+  still latches, now for the mission); the predicted preload in a real relaunch.
+
 ## October 24, 2026: 0.14.2 (launcher: GitHub update checker, auto-download, background updates, in-app self-updater)
 
 **Package (2026-10-24):** `dist/DiamondDogsTogether-0.14.2-20261024T143841Z-fcd27151/DiamondDogsTogether-0.14.2.zip` (10,063,881 bytes), SHA-256 `891A1CD48EA5AAE25F1F94AEE65E2B45FDC575B0A15ACBD50CFA2D5004DDBDFA`, built by `tools/package.ps1 -Friend` from the clean tree at `1764136` with Release receipt `20261024-143542-13ca3e7088cd4760866eae6ea6c9eacb` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `8AAC2C38A9074168DDD118594203491FBE2ED1E2D1B85614DA24E323C1C1A723` and `dinput8.dll` `937B13ABA2C585D416F06B2339153FBFDB44519B78A9FA816C74FD5151CA2119`, both build id `0.14.2+1764136`.
