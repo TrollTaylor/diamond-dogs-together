@@ -4813,24 +4813,38 @@ bool SelectDownedReceipt(const char* buffer, std::size_t size, mgscoop::script_b
     if(!world_on || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
     const char* cursor=buffer+sizeof(prefix)-1;
     const char* end=buffer+size;
-    std::uint32_t v[4]{};
-    for(unsigned i=0;i<4;++i) {
+    // mission epoch command generation [posture]: the optional fifth field
+    // (commands 0 and 1 only) is the Lua owner's PlayerStatus CBOX, 0 or 1.
+    std::uint32_t v[5]{};
+    unsigned fields=0;
+    for(unsigned i=0;i<5;++i) {
         auto parsed=std::from_chars(cursor,end,v[i]);
         if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
-        cursor=parsed.ptr;
-        if(i!=3) {if(cursor==end || *cursor!=' ') return false; ++cursor;}
+        cursor=parsed.ptr;fields=i+1;
+        if(cursor==end || i==4) break;
+        if(*cursor!=' ') return false;
+        ++cursor;
     }
-    if(cursor!=end || v[0]>99999 || !v[1] || v[1]>65535 || v[2]>5 ||
+    if(cursor!=end || fields<4 || v[0]>99999 || !v[1] || v[1]>65535 || v[2]>5 || v[4]>1 || (fields==5 && v[2]>1) ||
        !(OnRuntimeThread() || (v[2]==3 && OnTerminationThread()))) return false;
     const bool admitted=DownedAdmitted(v[0],static_cast<std::uint16_t>(v[1]));
+    const bool boxed=fields==5 && v[4]==1;
     mgscoop::downed_player::Reply r{};
     mgscoop::downed_player::Control(v[0],static_cast<std::uint16_t>(v[1]),admitted,
-        static_cast<std::uint8_t>(v[2]),v[3],r);
+        static_cast<std::uint8_t>(v[2]),v[3],r,boxed);
     if(!DownedReply(r,replacement)) return false;
     static std::uint64_t downed_log_at=0;
-    if((!r.ready || (v[2]==1 && !r.applied) || (r.reason && std::strncmp(r.reason,"alive_rebound_",14)==0)) && GetTickCount64()>=downed_log_at) {
-        downed_log_at=GetTickCount64()+1000;
-        LogFormat("downed_control=%s;command=%u;reason=%s\r\n",r.ready?"observed":"refused",unsigned(v[2]),r.reason?r.reason:"unknown");
+    static std::uint32_t box_logged_generation=0;
+    // Edges are never rate-limited: a controls timeout (the cycle ends) and the
+    // first applied lock of a generation in the box posture (item 4).
+    const bool timeout=r.reason && std::strncmp(r.reason,"controls_timeout_",17)==0;
+    const bool box_edge=boxed && v[2]==1 && r.applied && r.down && r.generation!=box_logged_generation;
+    if(box_edge) box_logged_generation=r.generation;
+    if(timeout || box_edge ||
+       ((!r.ready || (v[2]==1 && !r.applied) || (r.reason && std::strncmp(r.reason,"alive_rebound_",14)==0)) && GetTickCount64()>=downed_log_at)) {
+        if(!timeout && !box_edge) downed_log_at=GetTickCount64()+1000;
+        LogFormat("downed_control=%s;command=%u;reason=%s;posture=%s;generation=%lu\r\n",r.ready?"observed":"refused",unsigned(v[2]),
+            r.reason?r.reason:"unknown",boxed?"box":"none",static_cast<unsigned long>(r.generation));
     }
     world_quiet=true;
     return true;

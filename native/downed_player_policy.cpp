@@ -20,6 +20,13 @@ bool LiveBodies(const BodyView& local, const BodyView& partner, std::uint8_t loa
     // (an incoherent index pair refuses); an unrealized one is simply absent.
     return local.realized && local.id == 0 && local.parts == loaded && (!partner.realized || partner.id == 1);
 }
+Posture DownedPosture(bool nativeSleep, bool boxed) noexcept {
+    return nativeSleep ? Posture::sleep : boxed ? Posture::box : Posture::prone_request;
+}
+bool PostureHeld(std::uint8_t stance, bool box) noexcept {
+    return stance == 3 || box;
+}
+TimeoutPlan ControlsTimeout() noexcept { return {true, false, true}; }
 const char* ControlsPendingReason(bool prone, bool masked, bool crawl) noexcept {
     if (!prone) return "controls_pending_prone";
     if (!masked) return "controls_pending_mask";

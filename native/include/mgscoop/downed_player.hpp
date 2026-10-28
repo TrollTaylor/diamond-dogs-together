@@ -32,8 +32,11 @@ bool SetNativeSleepTest(bool enabled) noexcept;
 // revive, 3 disarm an owned old mission/epoch, 4 read the observed named revive
 // ACTION mask (generation argument must equal kReviveActionHash), 5 worker-only
 // authorized native sleep wake/preflight while named masks remain. No Lua pointers.
+// `boxed` (commands 0 and 1 only): the Lua owner's PlayerStatus CBOX for the
+// local player this poll; a down cycle then accepts the box as its posture
+// (detail::DownedPosture). It never arms, revives or writes anything itself.
 bool Control(std::uint32_t mission, std::uint16_t epoch, bool admitted,
-             std::uint8_t command, std::uint32_t generation, Reply& out) noexcept;
+             std::uint8_t command, std::uint32_t generation, Reply& out, bool boxed = false) noexcept;
 // Read-only admission used by the coordinator's exact damage hook for both the
 // local body and offline partner clone. No legacy Steam/FOB role is consulted.
 bool Scope(std::uintptr_t P, std::uint32_t& local) noexcept;
@@ -102,6 +105,27 @@ struct BodyView { bool realized; std::uint16_t id; std::uint8_t parts; };
 // 14 s of the host's horse ride).
 bool LiveBodies(const BodyView& local, const BodyView& partner, std::uint8_t loaded) noexcept;
 const char* ControlsPendingReason(bool prone, bool masked, bool crawl) noexcept;
+// Two-PC test 2026-10-23 item 4: friendly fire downed a host who was in a
+// cardboard box. The prone request cannot take a boxed body
+// (controls_pending_prone x6, then controls_timeout_prone), and the timeout
+// latched `failed` for the rest of the mission: no downed safety net, every
+// later poll controls_timeout, three darts ignored.
+// The posture a non-native down cycle accepts this poll: the stock sleep graph
+// owns its own posture; the local player's own cardboard box (the Lua owner
+// reports PlayerStatus CBOX) is accepted as it is: no prone request, the box
+// is already a low posture, and the named masks and the input cap still apply.
+// Otherwise the prone stance request runs and stance 3 is required.
+enum class Posture : std::uint8_t { prone_request, sleep, box };
+Posture DownedPosture(bool nativeSleep, bool boxed) noexcept;
+// AfterPadUpdate: body 0's current stance keeps the applied controls (prone,
+// or the box posture this cycle accepted).
+bool PostureHeld(std::uint8_t stance, bool box) noexcept;
+// A controls timeout ends the cycle (health and crawl restored) but never
+// latches the owner off: the abandoned cycle's generation is retired (a new
+// one starts, so Lua and the peer see an abandoned cycle, never a revive) and
+// the next poll with a good Live() re-arms.
+struct TimeoutPlan { bool clear, latch, newGeneration; };
+TimeoutPlan ControlsTimeout() noexcept;
 // Cap freshly computed movement magnitude only. Heading, look, source axes and
 // deadzone remain retail-owned. Next natural update restores current real input.
 inline constexpr float kDownedInputMagnitude = .25f;
