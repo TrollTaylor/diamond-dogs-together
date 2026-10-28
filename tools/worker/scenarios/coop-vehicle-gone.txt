@@ -28,11 +28,13 @@
 #     guest  vehicle_remove;id=J2;via=locator;sync=0;alive=0 and vehicle_gone_status gone=...J2L (L: this copy only);
 #            the host's status does NOT name J2; nothing on the wire (no step=req for J2, no host step=rx_req for J2)
 #     host   partner_status=local; st=0x400; names=on_vehicle; vehicle=J2 (he drives J2 on his copy)
-#     guest  frames diverge-drive-NN / diverge-stopped: the HOST must stay visible (with the online-ride-robust fallback
-#            merged: its visible fallback line instead of partner_ride=hide; reason=ride). Without it this half
-#            reproduces the session's hide: record which.
-#     guest  the divergence reproduced: partner_ride_seat=...; vehicle=J2; ...; reason=local_read (waitlog below;
-#            check after the run that its vehicle= is the J2 of the guest's vehicle_remove result)
+#     guest  frames diverge-drive-NN / diverge-stopped: the HOST must stay visible. Hidden run 075c1ea4 (before the
+#            Africa fix) hid him here (byid ...; reason=local_read, a named play refused unconfirmed, then
+#            partner_ride=hide; reason=ride). Since the Africa fix (docs/two-pc-test-2026-10-23.md bug 2) an id this
+#            copy lacks is absent and takes the visible fallback in free roam too: partner_ride_seat=byid; vehicle=J2;
+#            seat=0; offer=0; reason=absent, then partner_ride_seat=fallback; vehicle=J2; seat=0; reason=absent;
+#            show=warp; byid=0 (waitlogs below; check after the run that its vehicle= is the J2 of the guest's
+#            vehicle_remove result). partner_ride=hide; reason=ride must NOT appear for J2 (see NEVER).
 #     host   after his get-off, host vehicle_remove nearest (this copy only) removes J2 so both copies agree again
 #   C (never yank the local player out: the guest sits in jeep J3 while the host loses it):
 #     guest  step=rx; id=J3; ...; actor=2, step=hold; id=J3; src=rx; reason=local_rider (or occupied), J3 still under
@@ -48,7 +50,8 @@
 # NEVER (any fails the run): a guest step=applied for J3 before its own get-off (partner_status=local; st=0x400 must
 #   end first); a removal of a vehicle the remover rides; step=error; world=... or partner_... faults; the viewer's own
 #   player moved by a partner write (viewer_changed); a removal on the copy that did not ask for it in part B; a
-#   step=matched or a removal of any id other than J1 / J3 / J4 on the receiving copy.
+#   step=matched or a removal of any id other than J1 / J3 / J4 on the receiving copy; in part B a guest
+#   partner_ride=hide; reason=ride or partner_ride_seat=refused; ...; reason=(unconfirmed|lua_refused) for J2.
 labsetting world_vehicle_gone=1
 labsetting partner_native_ride=seat
 labsetting nametag=1
@@ -105,17 +108,17 @@ host press e 150
 wait 3000
 host run vehicle_seats
 host expect vehicle;id=256[0-9][0-9]
-waitlog host 'partner_status=local; st=0x400; names=on_vehicle; vehicle=256[0-9][0-9]' 10
-# The guest's copy lacks J2: its seat-by-id read fails (the session's local_read); then it hides the host (0.13.5,
-# partner_ride=hide; reason=ride) or, with online-ride-robust merged, shows its visible fallback: record which.
-waitlog guest 'partner_ride_seat=[a-z]+; vehicle=256[0-9][0-9]; .*reason=local_read' 15
+waitlog host 'partner_status=local; st=0x400; names=on_vehicle; ride=2; vehicle=256[0-9][0-9]' 10
+# The guest's copy lacks J2: its seat-by-id read refuses (absent: the pool bit is clear; local_read before the Africa
+# fix, or for another refusal of the read chain); an absent J2 shows the visible fallback, never the ride hide.
+waitlog guest 'partner_ride_seat=byid; vehicle=256[0-9][0-9]; seat=0; offer=0; reason=(absent|local_read);' 15
+waitlog guest 'partner_ride_seat=fallback; vehicle=256[0-9][0-9]; seat=0; reason=absent; show=warp; byid=0' 5
 host hold w 1500 nowait
 guest burst diverge-drive 8 200
 host release
 host hold w+a 1500 nowait
 guest burst diverge-turn 6 200
 host release
-waitlog guest 'partner_ride=hide; reason=ride' 5
 wait 2000
 both capture diverge-stopped
 host press e 150

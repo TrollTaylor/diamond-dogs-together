@@ -16,14 +16,14 @@ do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
 local R = {realized = {}, occupied = {}, poses = {}, seq = 0, nextSend = 0, nextRefresh = 0,
-    fast = {send = {next = 0}, tracks = {}, closed = {}, applied = 0}}
+    fast = {send = {next = 0}, tracks = {}, closed = {}, applied = 0, absent = 0}}
 W.ridePose = R
 local OP, FAST, TILT = 42, 44, 45
 W.OP.RIDE_BODY = OP
 W.OP.RIDE_FAST = FAST
 W.OP.RIDE_TILT = TILT
 local floor = math.floor
-local SEND_MS, DELAY_MS, EXTRAPOLATE_MS, STALE_MS, CLOSED_MS = 50, 100, 200, 1500, 500
+local SEND_MS, DELAY_MS, EXTRAPOLATE_MS, STALE_MS, CLOSED_MS, ALIVE_MS = 50, 100, 200, 1500, 500, 500
 local JUMP_MM, MAX_SAMPLES = 30000, 32
 local function integer(n, lo, hi)
     return type(n) == "number" and n == floor(n) and n >= lo and n <= hi
@@ -298,7 +298,9 @@ function R.fastSend(now)
         if a and W.tx(TILT, W.tick32(now), id, a, b) then R.fast.tiltSent = (R.fast.tiltSent or 0) + 1 end
     end
 end
--- One line every 2 s while a track or a stream is live (rate evidence).
+-- One line every 2 s while a track or a stream is live (rate evidence). applied counts SetPosition
+-- calls that returned non-false (a call into an id with no instance also does); absent counts the
+-- frames skipped because this copy has no live vehicle with that id (R.present).
 local function logFast(now)
     local f = R.fast
     if type(W.log) ~= "function" or now < (f.logAt or 0) then return end
@@ -307,8 +309,26 @@ local function logFast(now)
     for _, t in pairs(f.tracks) do tracks, state, samples = tracks + 1, t.state or state, #t.samples end
     if tracks == 0 and (f.sent or 0) == (f.loggedSent or 0) then return end
     f.loggedSent = f.sent or 0
-    W.log(string.format("event=ride_fast;tracks=%d;applied=%d;sent=%d;state=%s;samples=%d;tilt_sent=%d;tilt_written=%d", tracks, f.applied,
-        f.sent or 0, state, samples, f.tiltSent or 0, f.tiltWritten or 0))
+    W.log(string.format("event=ride_fast;tracks=%d;applied=%d;sent=%d;state=%s;samples=%d;tilt_sent=%d;tilt_written=%d;absent=%d", tracks,
+        f.applied, f.sent or 0, state, samples, f.tiltSent or 0, f.tiltWritten or 0, f.absent or 0))
+end
+-- Whether this copy has a live vehicle with this id (the Africa fix, the two-PC test of 2026-10-23 bug 2: the
+-- host's relief vehicle 25600 existed only on his copy, and every frame sent SetPosition and a refused
+-- tilt write into nothing). IsAlive (StrCode32 0xED0E1BD6) goes to the TppVehicle2 class dispatcher
+-- 0xB305B0, which answers false when the index's pool bit is clear and nothing past the pool
+-- (world_vehicle.lua V.alive; a wreck also answers false). Asked at most every ALIVE_MS per track;
+-- only an answered call that is not true marks it absent (no binding or an error keeps placing it).
+function R.present(track, id, now)
+    if track.aliveAt == nil or now - track.aliveAt >= ALIVE_MS or now < track.aliveAt then
+        track.aliveAt = now
+        local api, absent = W.api, false
+        if type(api) == "table" and type(api.send) == "function" then
+            local ok, alive = pcall(api.send, id, {id = "IsAlive"})
+            absent = ok and alive ~= true
+        end
+        track.absent = absent
+    end
+    return not track.absent
 end
 -- Passenger/observer side: place each live track every frame.
 function R.fastApply(now)
@@ -316,6 +336,11 @@ function R.fastApply(now)
         local x, y, z, yaw, state = R.trackPose(track, now)
         if not x then
             R.fast.tracks[id] = nil
+        elseif id ~= R.fast.localId and not R.present(track, id, now) then
+            -- No copy here: neither tilt nor SetPosition; once a check finds it, that frame places it.
+            track.applied = nil
+            track.state = "absent"
+            R.fast.absent = (R.fast.absent or 0) + 1
         elseif id ~= R.fast.localId then
             local a = track.applied
             local ta, tb = nil, nil

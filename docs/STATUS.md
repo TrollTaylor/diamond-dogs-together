@@ -1,3 +1,13 @@
+## October 28, 2026: Africa vehicle, the driver stays visible (branch `wp/africa-vehicle`, unreleased; fixture-tested only)
+
+Bug 2 of the two-PC test of 2026-10-23 (docs/two-pc-test-2026-10-23.md): in Africa (30020) the host drove his relief vehicle 25600 (TppVehicle2 index 0, from his sortie prep), which existed only on his copy. The guest's by-id read refused `live` (pool bit clear), free roam ran the named seat path (Lua `no_name` -> `lua_refused`, latched) and the guest saw no host for the whole 24.6 s ride.
+
+- **Native (`native/partner_driver_seat.inc`).** `SeatByIdGate` reads this copy's vehicle before the addendum checks and answers `absent` when the read refuses `live` or `index` (`VehicleAbsentRefusal`): no vehicle with that id here, and the engine's id lookup `0xA272A0` used by the DM seat anchor tests the same pool bit. `SeatFallbackHere(mission, reason)`: Mother Base keeps every fallback reason (`absent`, `local_read`, `unrealized`), free roam takes the 0.13.6 visible fallback for `absent` only, at the episode start and at the id write (not latched). Expected guest lines: `partner_ride_seat=byid; ...; offer=0; reason=absent`, `partner_ride_seat=fallback; ...; reason=absent; show=warp; byid=0`, after the get-off `exit; ...; via=fallback`; never `lua_refused`, `unavailable; ...; block=` or `partner_ride=hide; reason=ride` for that vehicle. Mother Base's Fultoned-jeep case now logs `absent` instead of `local_read` (same behaviour). Any other free-roam refusal keeps the named path.
+- **Lua (`lua/coop/world_ride_pose.lua`).** `R.present`: each RIDE_FAST track asks `IsAlive` at most every 500 ms; while the answer is not true, no tilt write and no SetPosition run and the frame counts on the `ride_fast` line as `absent=N` (`state=absent`). The session's `applied=1157` counted calls into a missing id.
+- **Tests.** `partner_driver_tests` `TestRideSeatAbsent` (new; failed on HEAD at its first check), the gate table's `local_read` case is a non-pool refusal (`object`), the Mother Base Fulton block expects `absent` and keeps the fallback for `local_read`; `world_ride_pose_lua_check` (new block; failed on HEAD).
+- **Hidden repro (not run):** `tools/worker/scenarios/coop-vehicle-absent-30020.txt` (`-SaveSeed africa-jeep`; the guest's copy loses the Masa Village jeep, the host drives it). `coop-vehicle-gone.txt` part B now waits for `reason=(absent|local_read)` and the fallback instead of the ride hide (and its host status waitlog names `ride=2`).
+- **Still open.** The vehicle itself is still absent on the guest's screen (the 0.13.6 fallback look: the host standing at seat height); relief-vehicle parity at the sortie is a separate branch. The horse rider hide (host-log item 5) is the act-based `partner_native_mount=hide` rule, not this gate, and stays as decided (docs/mounts.md "Risks").
+
 ## October 24, 2026: 0.14.2 (launcher: GitHub update checker, auto-download, background updates, in-app self-updater)
 
 **Package (2026-10-24):** `dist/DiamondDogsTogether-0.14.2-20261024T143841Z-fcd27151/DiamondDogsTogether-0.14.2.zip` (10,063,881 bytes), SHA-256 `891A1CD48EA5AAE25F1F94AEE65E2B45FDC575B0A15ACBD50CFA2D5004DDBDFA`, built by `tools/package.ps1 -Friend` from the clean tree at `1764136` with Release receipt `20261024-143542-13ca3e7088cd4760866eae6ea6c9eacb` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `8AAC2C38A9074168DDD118594203491FBE2ED1E2D1B85614DA24E323C1C1A723` and `dinput8.dll` `937B13ABA2C585D416F06B2339153FBFDB44519B78A9FA816C74FD5151CA2119`, both build id `0.14.2+1764136`.
@@ -297,7 +307,8 @@ new key; unit-tested only (no game launch in this phase).
   drawn standing, floating at the seat height, until the vehicle exists again or the ride ends. A seated or crouch idle
   needs a DM clip, which a per-tick Warp ends; a slot-placed variant with a clip is unproven and left for later. The
   vehicle itself is still not synced (the `VEHICLE_GONE` world op is a separate branch).
-- **Known limit (tracked): free roam is not covered by the fallback.** In 30010 / 30020 the seat plays on the vehicle's
+- **Known limit (tracked; lifted for a vehicle absent on the viewer's copy, `reason=absent`, by the Africa fix of
+  2026-10-28, see that section): free roam is not covered by the fallback.** In 30010 / 30020 the seat plays on the vehicle's
   authored locator name (the proven named path), and the by-id gate's `local_read` / `unrealized` there is only logged
   (`byid; ...; offer=0; reason=local_read`): a vehicle Fultoned on the viewer's copy only (Lua's `vehicleName` still
   resolves its locator) most likely ends in `far` / `unconfirmed` / `lua_refused` and hides the driver as in 0.13.5.

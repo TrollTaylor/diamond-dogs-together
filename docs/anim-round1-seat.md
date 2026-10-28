@@ -234,13 +234,22 @@ three are fixed by default (unit tests `TestRideRobust`, `partner_player_tests` 
   a separate branch). **Known limit:** the per-tick Warp holds body 1's last standing pose, so the
   partner floats at the seat height there, standing, until the vehicle exists again or the ride
   ends (a seated or crouch idle needs a DM clip, which a per-tick Warp ends; a slot-placed variant
-  with a clip is unproven). **Known limit: Mother Base only.** In 30010 / 30020 the seat plays on
-  the authored locator name and the by-id gate's `local_read` / `unrealized` is only logged
-  (`byid; ...; offer=0`); a vehicle Fultoned on the viewer's copy only (Lua's `vehicleName` still
-  resolves the locator) most likely ends in `far` / `unconfirmed` / `lua_refused` and hides the
-  driver as in 0.13.5. The fallback is not used there because `local_read` also stands for any
-  refusal of the by-id read chain, which would trade a working named seat for a standing Warp, and
-  no free-roam log of the case exists; the `VEHICLE_GONE` branch covers it.
+  with a clip is unproven). **Free roam: an absent vehicle only (the Africa fix, two-PC test of
+  2026-10-23 bug 2).** The by-id gate reads this copy's vehicle before the addendum checks and
+  answers `absent` when the read refuses `live` (the index's pool bit clear) or `index` (past the
+  pool): this copy has no vehicle with that id, and the engine's id lookup `0xA272A0`, which the DM
+  seat anchor uses, tests the same bit, so neither the named nor the id seat can anchor on it.
+  `SeatFallbackHere` takes the fallback for every fallback reason in Mother Base and for `absent`
+  only in 30010 / 30020, at the start and at the id write (a vanished copy's target refusal is not
+  latched there either). The session's case: the host's relief vehicle 25600 (TppVehicle2 index 0,
+  his sortie prep) existed only on his copy, and free roam's named path (Lua `no_name` ->
+  `lua_refused`) hid him for the whole 24.6 s ride; an authored jeep removed on one copy only
+  (hidden run `075c1ea4` part B: `unconfirmed` -> hide) is the same case. Every other by-id refusal
+  in free roam (`local_read`: another link of the read chain, `unrealized`, `category`...) is still
+  only logged and keeps the proven named path, so a broken read chain never trades a working named
+  seat for a standing Warp. The other player's vehicle itself is still not spawned on this copy
+  (relief-vehicle parity is a follow-up); RIDE_FAST skips it (`world_ride_pose.lua` `R.present`:
+  IsAlive every 500 ms per track, `ride_fast; ...; absent=N`).
 - **Clips after every ride (diag #9).** Settle (and a ride hide ending) sets
   `Mission::net_quality_rebase`; the next `TickNative` calls `partner_native_net::Rebase` before
   observing, so the first input frame after the ride only anchors the link-quality window instead
@@ -290,7 +299,7 @@ partner_ride_seat=dm; when=exit_gone; ...                                       
 partner_ride_seat=exit; vehicle=..; seat=..; reason=unrealized; via=gone; ...; follows=N
 partner_ride_seat=stale_cleared; vehicle=..; seat=..; bits=0x08; when=settle|arm; reason=..
 partner_ride_seat=retries; vehicle=..; seat=..; reason=pending|dm_read|release|host_dm; tries=3; latch=1
-partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read|unrealized; show=warp; byid=0
+partner_ride_seat=fallback; vehicle=25603; seat=0; reason=absent|local_read|unrealized; show=warp; byid=0   (free roam: absent only)
 partner_ride_seat=fallback_end; vehicle=..; seat=..; reason=..; next=release; ms=..; warps=..; byid=1
 partner_ride_seat=exit; vehicle=..; seat=..; reason=foot; via=fallback; ...
 ```
@@ -376,8 +385,9 @@ no DM in free roam; the dm=map `cam_connect` refusal is unchanged).
   seat-capable by id only. They still hide (5.6 option a) when the offer refuses (an older peer
   without the ride addendum's seat-id feature, another category) or with
   `partner_ride_seat_id=0`; since 0.13.6 a Mother Base copy that lacks the vehicle (`local_read`)
-  or has it unrealized is shown without a seat instead (the fallback above). Every seat-mode hide
-  of a live vehicle ride logs `partner_ride_seat=unavailable; ...; reason=..`.
+  or has it unrealized is shown without a seat instead (the fallback above), and since the Africa
+  fix a vehicle absent on this copy (`absent`) is shown that way in free roam too. Every seat-mode
+  hide of a live vehicle ride logs `partner_ride_seat=unavailable; ...; reason=..`.
 - Horse, D-Walker, heli, APC and tank still hide.
 - The vehicle copy itself is still a SetPosition teleport (no wheels or steering); WS3 "A1"
   (`partner_ride_tilt`, default on in lab and play, docs/vehicle-ws3.md) adds the driver's
@@ -396,10 +406,15 @@ sender and status census) and `TestRideRobust` (0.13.6: no stop to a gone body a
 the stale stop cleared after exit_timeout and a foreign one kept, pending / host_dm retried
 without a latch, a fallback or a Warp (the viewer's own jeep included) and latched on the third
 refusal in a row, ours cleared by the arm, dm_read for a whole ride, the Fultoned jeep's
-local_read / unrealized fallback and its re-seat by id, no Warp while the viewer occupies that
+absent / local_read / unrealized fallback and its re-seat by id, no Warp while the viewer occupies that
 vehicle, a Mother Base target refusal not latched, the slot follow cadence and threshold, the
 link-quality rebase after a ride, a lease exit and its ride_stale hide kept as one gap while a heli
-hide's end rebases, native back within the settle against a control),
+hide's end rebases, native back within the settle against a control), `TestRideSeatAbsent` (the
+Africa fix: free roam 30010 / 30020 shows a vehicle absent on this copy (live, index; with or without
+the addendum) without a seat, Warped every tick through the re-checks, never hidden, left without a
+stop; another read refusal (`local_read`) and a present vehicle without the addendum keep the named
+play; the vehicle appearing here ends the fallback and seats it by id; a copy that vanished before the
+id write is not latched, an unrealized one still is),
 `partner_player_tests` (ClearDmBits on synthetic memory), `partner_receipt_tests` (suffix grammar, status names, seat receipt,
 refusal note, RIDE_SEAT replies), `partner_equip_wire_tests` (v2 codec and store, seated
 visibility, air hold, act 97), `lab_config_tests`, `partner_native_tests`,

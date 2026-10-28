@@ -355,6 +355,17 @@ E finding no horse) is gone.
   `partner_native_unrealize_all` (lab only, default 0; docs/native-puppet.md "Ride hides"): the same unrealize for
   those hides (the hidden ride no longer counts as a net-quality gap with or without the key since the 0.13.6
   online-ride-robust rebase); unit-tested, not yet filmed.
+- **The horse rider is still hidden in free roam (two-PC test of 2026-10-23, host-log item 5).** The host rode an
+  F9-spawned horse (`scope=local`, on his copy only) and the guest's copy hid and unrealized him for 14 s
+  (`partner_mount=hide/unrealize`, acts 121/122). This is the act rule of this branch (`partner_native_mount=hide`,
+  the play default), not the vehicle seat gate, so the Africa vehicle fix (the visible fallback for a vehicle absent
+  on the viewer's copy, docs/anim-round1-seat.md "Fallback") does not cover it, and it was not extended to mounts:
+  the partner's mount never exists on the viewer's copy (section 2), so a visible rider would be drawn floating at
+  saddle height on every horse or D-Walker ride (`251abcef` filmed the standing body at the get-on spot), which
+  reverses the decision of section 7 ("until step 0 ships, the rider stays hidden"). A drawn rider needs section 7,
+  or a user decision to prefer the floating rider over the hide. Side effect to fix separately: while body 1 is
+  unrealized by the mount hide, the viewer's own downed protection refuses (`downed_control=refused; reason=player`,
+  host-log item 6).
 - **The walker hide depends on the remote act stream.** An act sample that never arrives (`anim_valid` false) keeps
   today's on-foot drawing until the first valid mount act.
 - **The overlay probes are append-only catalogue entries 22..24.** A branch that also appends entries must keep the
