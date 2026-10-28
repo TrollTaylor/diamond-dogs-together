@@ -92,7 +92,12 @@ param(
     # -Lan: this PC's LAN IPv4 (default: detected).
     [string]$LanAddress,
     # Offline only: lab.json wanSim preset (off, good, bad, awful).
-    [string]$WanSim = 'off'
+    [string]$WanSim = 'off',
+    # Also accept a loader owned by the folder's Diamond Dogs Together drop-in
+    # mgs-coop\package.json (a drag-and-drop install writes no probe-install.json;
+    # tools/package-install.ps1 -AcceptDropInLoader). The private worker
+    # (tools/worker/Start-WorkerSession.ps1) passes it; restore is exact.
+    [switch]$AcceptDropInLoader
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -252,12 +257,14 @@ if (!$SkipLoader) {
             (Test-FileHash -Path $p.Archive -Expected $expected.archive)
         if ($installed) { Write-Output "[$r] loader already installed ($($loaderHash.Substring(0, 12))...)."; continue }
         $arguments = @{ Action = 'Install'; GameDirectory = $p.Game; RuntimeArchive = $archivePath; NoPrompt = $true }
+        if ($AcceptDropInLoader) { $arguments.AcceptDropInLoader = $true }
         if ($record -and [string](Get-ConfigValue $record 'game_directory' '') -ne $p.Game) {
             $recorded = [string](Get-ConfigValue $record 'game_directory' '')
             if ($r -eq 'guest' -and $recorded.Equals($dirs.host, [StringComparison]::OrdinalIgnoreCase)) {
                 # The guest folder was created as a copy of the host installation.
                 $arguments.AcceptRecordCopiedFrom = $recorded
-            } else { throw "[$r] probe-install.json names another folder ($recorded); refusing." }
+            } elseif (!$AcceptDropInLoader) { throw "[$r] probe-install.json names another folder ($recorded); refusing." }
+            # -AcceptDropInLoader: the installer decides (a drop-in owned loader, or its own refusal).
         }
         if (!(Confirm-LabAction $p.Game "Install loader $($loaderHash.Substring(0, 12))... and runtime archive (owned install with rollback)")) { continue }
         if (!$stage) {

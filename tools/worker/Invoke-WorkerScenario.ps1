@@ -339,8 +339,9 @@ foreach($line in $steps){
 }
 
 if(!$BaselineLoaderSha256){
-    $record=Get-Content -LiteralPath 'D:\Games\steamapps\common\MGS_TPP\mgs-coop\probe-install.json' -Raw|ConvertFrom-Json
-    $BaselineLoaderSha256=[string]$record.dll_sha256
+    # The host copy's owned normal loader: its probe-install.json, or the drop-in
+    # package.json of a Diamond Dogs Together drag-and-drop install (Get-WorkerOwnedBaseline).
+    $BaselineLoaderSha256=[string](Get-WorkerOwnedBaseline 'D:\Games\steamapps\common\MGS_TPP' (Get-WorkerRuntimePins)).Sha256
 }
 if(!$CheckReceipt){
     $out=if($BuildProfile -cin @('research','buddy-capacity','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker 2>&1)}

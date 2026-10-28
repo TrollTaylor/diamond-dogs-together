@@ -1006,6 +1006,9 @@ try {
     Assert-True ($null -eq (Select-CoopLanAddress -Configurations @($configs[0], $configs[1]))) 'no LAN address: $null (Prepare then asks for -LanAddress)'
     $prepText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/lab/Prepare-LabInstance.ps1'))
     Assert-True ($prepText.Contains("'No LAN IPv4 address found; pass -LanAddress.'")) 'Prepare -Lan: the documented error without a LAN address'
+    # -AcceptDropInLoader reaches the owned installer only when asked (the private worker); the installer decides.
+    Assert-True ($prepText.Contains('[switch]$AcceptDropInLoader') -and $prepText.Contains('if ($AcceptDropInLoader) { $arguments.AcceptDropInLoader = $true }') -and
+        $prepText.Contains("} elseif (!`$AcceptDropInLoader) { throw `"[`$r] probe-install.json names another folder (`$recorded); refusing.`" }")) 'Prepare passes -AcceptDropInLoader to the owned installer only when asked'
     $udpProbe = $null
     for ($i = 0; $i -lt 20 -and !$udpProbe; $i++) {
         $candidate = Get-Random -Minimum 41000 -Maximum 49000
@@ -2123,6 +2126,92 @@ try {
     $null = & $installer -Action Restore -GameDirectory $hostGame
     Assert-Equal (Get-Sha256 (Join-Path $hostGame 'dinput8.dll')) (Get-Sha256 $loader1) 'host restore returns loader 1'
     Assert-Equal (Get-Sha256 (Join-Path $hostGame 'mgsvtpp.exe')) $exeHash 'executable fixture unchanged'
+    # A Diamond Dogs Together drag-and-drop install (layout drop-in): dinput8.dll is the one its
+    # mgs-coop\package.json lists, and an earlier probe-install.json is stale (or absent). Only
+    # -AcceptDropInLoader (the private worker, via Prepare-LabInstance) takes that loader as owned;
+    # Restore returns it, and the stale record or its absence, byte for byte. Any other loader or
+    # manifest is still refused with nothing replaced.
+    $dropGame = Join-Path $games 'dropin-game'
+    Assert-InFixture $dropGame
+    $null = New-Item -ItemType Directory -Path (Join-Path $dropGame 'mgs-coop') -Force
+    foreach ($name in 'mgsvtpp.exe', 'steam_api64.dll') { Copy-Item -LiteralPath (Join-Path $hostGame $name) -Destination $dropGame }
+    $dropLoader = Join-Path $dropGame 'dinput8.dll'
+    [IO.File]::WriteAllText($dropLoader, 'INERT drop-in package loader 0.14.2')
+    $dropHash = Get-Sha256 $dropLoader
+    Copy-Item -LiteralPath $archiveSource -Destination (Join-Path $dropGame 'mgs-coop/mgs-coop-player-runtime.dat')
+    $dropRows = @([ordered]@{ source = 'DiamondDogsTogether.exe'; target = 'DiamondDogsTogether.exe'; sha256 = ('A' * 64) },
+        [ordered]@{ source = 'dinput8.dll'; target = 'dinput8.dll'; sha256 = $dropHash })
+    foreach ($name in 'DYNAMITE-LICENSE', 'MinHook-LICENSE.txt', 'ImGui-LICENSE.txt', 'tpp-mod-LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.txt') {
+        $path = Join-Path $dropGame "mgs-coop/$name"
+        [IO.File]::WriteAllText($path, "INERT drop-in $name")
+        $dropRows += [ordered]@{ source = "mgs-coop/$name"; target = "mgs-coop/$name"; sha256 = (Get-Sha256 $path) }
+    }
+    $dropLicenses = @{}
+    foreach ($row in $dropRows) { if ($row.target -clike 'mgs-coop/*') { $dropLicenses[$row.target] = $row.sha256 } }
+    function Write-DropInManifest([object[]]$Rows, [string]$Layout = 'drop-in', [string]$Product = 'mgs-coop-local-package', [string]$Archive = '') {
+        if (!$Archive) { $Archive = $archiveHash }
+        $manifest = [ordered]@{ product = $Product; version = '0.14.2'; layout = $Layout; flavor = 'friend-play'; executable_sha256 = $exeHash; steam_dll_sha256 = $steamHash
+            files = @($Rows); runtime_archive = [ordered]@{ target = 'mgs-coop/mgs-coop-player-runtime.dat'; sha256 = $Archive; bytes = 29 } }
+        [IO.File]::WriteAllText((Join-Path $dropGame 'mgs-coop/package.json'), ($manifest | ConvertTo-Json -Depth 5))
+    }
+    Write-DropInManifest $dropRows
+    $dropPackageJson = Join-Path $dropGame 'mgs-coop/package.json'
+    $dropPackageHash = Get-Sha256 $dropPackageJson
+    $dropRecordPath = Join-Path $dropGame 'mgs-coop/probe-install.json'
+    [IO.File]::WriteAllText($dropRecordPath, ([ordered]@{ product = 'mgs-coop-original-loader-probe'; version = '0.13.6'; game_directory = $dropGame
+                dll_sha256 = ('0' * 64); rollback_id = ('0' * 32) } | ConvertTo-Json))
+    $staleRecordHash = Get-Sha256 $dropRecordPath
+    Assert-Throws { & $installer -Action Install -GameDirectory $dropGame -PackageDirectory $stage1 -NoPrompt } 'differs from its recorded hash' 'drop-in: a stale record still refuses without -AcceptDropInLoader'
+    Assert-Equal (Get-Sha256 $dropLoader) $dropHash 'drop-in: the refusal replaced nothing'
+    $dropOut = @(& $installer -Action Install -GameDirectory $dropGame -PackageDirectory $stage1 -AcceptDropInLoader -NoPrompt)
+    Assert-True (@($dropOut | Where-Object { "$_".Contains('Accepting the Diamond Dogs Together drop-in loader') }).Count -eq 1) 'drop-in: the accepted owner is reported'
+    Assert-Equal (Get-Sha256 $dropLoader) (Get-Sha256 $loader1) 'drop-in: the new loader replaces the drop-in loader'
+    $dropRecord = Get-Content -LiteralPath $dropRecordPath -Raw | ConvertFrom-Json
+    Assert-Equal "$($dropRecord.game_directory)|$($dropRecord.dll_sha256)" "$dropGame|$(Get-Sha256 $loader1)" 'drop-in: the installer writes its own ownership record'
+    $dropRollback = Get-Content -LiteralPath (Join-Path $dropGame "mgs-coop/install-backups/$($dropRecord.rollback_id)/rollback.json") -Raw | ConvertFrom-Json
+    Assert-Equal @($dropRollback.files).Count 8 'drop-in: rollback inventory complete'
+    Assert-Equal ([string]@($dropRollback.files | Where-Object { $_.target -ceq 'dinput8.dll' })[0].before_sha256) $dropHash 'drop-in: the rollback holds the drop-in loader'
+    Assert-Equal ([string]@($dropRollback.files | Where-Object { $_.target -ceq 'mgs-coop/probe-install.json' })[0].before_sha256) $staleRecordHash 'drop-in: the rollback holds the stale record as it was'
+    $null = & $installer -Action Restore -GameDirectory $dropGame
+    Assert-Equal (Get-Sha256 $dropLoader) $dropHash 'drop-in: Restore returns the drop-in loader exactly'
+    Assert-Equal (Get-Sha256 $dropRecordPath) $staleRecordHash 'drop-in: Restore returns the stale record byte for byte'
+    foreach ($target in $dropLicenses.Keys) { Assert-Equal (Get-Sha256 (Join-Path $dropGame $target)) $dropLicenses[$target] "drop-in: Restore returns $target" }
+    Assert-Equal (Get-Sha256 $dropPackageJson) $dropPackageHash 'drop-in: package.json is never written'
+    Assert-Equal (Get-Sha256 (Join-Path $dropGame 'mgs-coop/mgs-coop-player-runtime.dat')) $archiveHash 'drop-in: runtime archive unchanged'
+    # No ownership record at all (a drop-in folder that never had a developer install).
+    Remove-Item -LiteralPath $dropRecordPath
+    Assert-Throws { & $installer -Action Install -GameDirectory $dropGame -PackageDirectory $stage1 -NoPrompt } 'unrelated loader' 'drop-in without a record: refused without -AcceptDropInLoader'
+    $null = & $installer -Action Install -GameDirectory $dropGame -PackageDirectory $stage1 -AcceptDropInLoader -NoPrompt
+    Assert-Equal (Get-Sha256 $dropLoader) (Get-Sha256 $loader1) 'drop-in without a record: installed'
+    $dropRecord = Get-Content -LiteralPath $dropRecordPath -Raw | ConvertFrom-Json
+    $dropRollback = Get-Content -LiteralPath (Join-Path $dropGame "mgs-coop/install-backups/$($dropRecord.rollback_id)/rollback.json") -Raw | ConvertFrom-Json
+    Assert-True (!@($dropRollback.files | Where-Object { $_.target -ceq 'mgs-coop/probe-install.json' })[0].before_exists) 'drop-in without a record: the rollback records its absence'
+    $null = & $installer -Action Restore -GameDirectory $dropGame
+    Assert-Equal (Get-Sha256 $dropLoader) $dropHash 'drop-in without a record: Restore returns the drop-in loader'
+    Assert-True (!(Test-Path -LiteralPath $dropRecordPath)) 'drop-in without a record: Restore leaves no record behind'
+    # Foreign loaders and other manifests stay refused, with nothing replaced.
+    $dropRefusals = @(
+        @{ Name = 'another layout'; Rows = $dropRows; Layout = 'payload' },
+        @{ Name = 'no layout'; Rows = $dropRows; Layout = '' },
+        @{ Name = 'another product'; Rows = $dropRows; Product = 'mgs-coop-friend-install' },
+        @{ Name = 'two loader rows'; Rows = @($dropRows + @([ordered]@{ source = 'extra/dinput8.dll'; target = 'dinput8.dll'; sha256 = $dropHash })) },
+        @{ Name = 'no loader row'; Rows = @($dropRows | Where-Object { $_.target -cne 'dinput8.dll' }) },
+        @{ Name = 'another runtime archive'; Rows = $dropRows; Archive = ('B' * 64) })
+    foreach ($case in $dropRefusals) {
+        $manifestArgs = @{ Rows = $case.Rows }
+        foreach ($key in 'Layout', 'Product', 'Archive') { if ($case.ContainsKey($key)) { $manifestArgs[$key] = $case[$key] } }
+        Write-DropInManifest @manifestArgs
+        Assert-Throws { & $installer -Action Install -GameDirectory $dropGame -PackageDirectory $stage1 -AcceptDropInLoader -NoPrompt } 'unrelated loader' "drop-in refused: $($case.Name)"
+        Assert-Equal (Get-Sha256 $dropLoader) $dropHash "drop-in refused, loader kept: $($case.Name)"
+    }
+    [IO.File]::WriteAllText($dropPackageJson, '{ not json')
+    Assert-Throws { & $installer -Action Install -GameDirectory $dropGame -PackageDirectory $stage1 -AcceptDropInLoader -NoPrompt } 'unrelated loader' 'drop-in refused: a damaged package.json'
+    Write-DropInManifest $dropRows
+    [IO.File]::WriteAllText($dropLoader, 'INERT loader of another mod')
+    $foreignHash = Get-Sha256 $dropLoader
+    Assert-Throws { & $installer -Action Install -GameDirectory $dropGame -PackageDirectory $stage1 -AcceptDropInLoader -NoPrompt } 'unrelated loader' 'drop-in: a foreign loader is refused even with -AcceptDropInLoader'
+    Assert-Equal (Get-Sha256 $dropLoader) $foreignHash 'drop-in: the foreign loader is kept'
+    Assert-True (!(Test-Path -LiteralPath $dropRecordPath)) 'drop-in: no record is written on refusal'
     Exit-TestInstallTurn $installTurn
     # set-session-mode validates the host id before touching the folder; account 0 is refused.
     $sessionMode = Join-Path $projectRoot 'tools/set-session-mode.ps1'
