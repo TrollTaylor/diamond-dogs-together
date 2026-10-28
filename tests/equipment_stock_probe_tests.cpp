@@ -70,5 +70,27 @@ int main() {
     g.SealAllocation(); Check(std::strcmp(g.Try(gc),"not_allocation_owner")==0 && g.QueuedFor(30050));
     g.Begin(30050); Check(!g.QueuedFor(30050) && g.Try(gc)==nullptr && !g.Receipt(true,30050,true,false) && !g.QueuedFor(30050));
     g.End(); Check(!g.Attempted() && !g.Receipt(true,30050,true,true));
+    // Two-PC test 2026-10-23 item 2: after a handoff the peer's first loadout is
+    // this copy's own: its own manifest predicts the preload when none arrived.
+    Check(ChoosePreloadSource(true,false,false)==PreloadSource::remote && ChoosePreloadSource(true,true,true)==PreloadSource::remote);
+    Check(ChoosePreloadSource(false,true,true)==PreloadSource::predicted);
+    Check(ChoosePreloadSource(false,false,true)==PreloadSource::none && ChoosePreloadSource(false,true,false)==PreloadSource::none &&
+          ChoosePreloadSource(false,false,false)==PreloadSource::none);
+    Check(std::strcmp(PreloadSourceName(PreloadSource::predicted),"predicted")==0 &&
+          std::strcmp(PreloadSourceName(PreloadSource::remote),"remote")==0 && std::strcmp(PreloadSourceName(PreloadSource::none),"none")==0);
+    // A predicted source is a manifest for the one attempt of the allocation (no_manifest no longer refuses it).
+    g.Begin(30050); gc=general_ready(); gc.mission=30050;
+    gc.manifest=ChoosePreloadSource(false,true,true)!=PreloadSource::none;
+    Check(g.Try(gc)==nullptr && g.Attempted());
+    {
+        // The late manifest's cover of the allocation's ids (base 0 is no gun).
+        const std::uint16_t remote[3]={0,46,9}, ids[2]={46,9}, other[1]={32};
+        unsigned wanted=9;
+        Check(PreloadCover(remote,ids,2,wanted)==2 && wanted==2);
+        Check(PreloadCover(remote,other,1,wanted)==0 && wanted==2);
+        Check(PreloadCover(remote,nullptr,0,wanted)==0 && wanted==2);
+        const std::uint16_t none[3]={0,0,0};
+        Check(PreloadCover(none,ids,2,wanted)==0 && wanted==0);
+    }
     std::printf("equipment_stock_probe_tests: %u checks passed; native_calls=0\n",checks);
 }

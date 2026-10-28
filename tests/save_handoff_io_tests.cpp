@@ -808,6 +808,52 @@ void RemoteOnlyGlue() {
     module::ResetForTest();
     mgscoop::lab::save::reset_for_test();
 }
+
+// Two-PC test 2026-10-23 item 2: the host remembers, for the process, that a
+// guest restarted on its save (the published token partner_restarting); the
+// allocation preload predicts the peer's first loadout from that.
+void HandedSave(const io::Dirs& dirs) {
+    namespace hs = mgscoop::save_handoff_state;
+    const std::string save_dir = fs::path(dirs.save).string();
+    const std::wstring game = (g_root / "game").wstring();
+    module::Config scene{};
+    scene.role = 1;
+    scene.mode = mgscoop::SaveHandoff::scene;
+    scene.play = scene.net = scene.link_v2 = scene.saves_redirected = scene.world_on = scene.travel_lock = true;
+    scene.save_dir = save_dir.c_str();
+    scene.directory = game.c_str();
+    scene.log = &Capture;
+    const auto publish = [](hs::Token token) {
+        core::Action a{};
+        a.kind = core::ActionKind::publish;
+        a.view.token = static_cast<std::uint8_t>(token);
+        module::ExecuteForTest(a);
+    };
+    module::ResetForTest();
+    hs::ResetForTest();
+    Check(!module::PeerOnHandedSave(), "not configured: no handed save");
+    Check(module::Configure(scene), "host scene configured");
+    Check(!module::PeerOnHandedSave(), "a fresh host: the peer is not on its save");
+    publish(hs::Token::sending);
+    publish(hs::Token::partner_staged);
+    Check(!module::PeerOnHandedSave(), "staged is not yet a restart on this save");
+    publish(hs::Token::partner_restarting);
+    Check(module::PeerOnHandedSave(), "partner_restarting: the guest restarts on this copy's save");
+    // The token resets with the next link session; the fact stays for the process.
+    publish(hs::Token::idle);
+    Check(module::PeerOnHandedSave(), "a reconnect keeps the handed save for the process");
+    // A guest never predicts from this (its own save came from the host).
+    module::ResetForTest();
+    hs::ResetForTest();
+    module::Config guest = scene;
+    guest.role = 2;
+    Check(module::Configure(guest), "guest scene configured");
+    publish(hs::Token::partner_restarting);
+    Check(!module::PeerOnHandedSave(), "the guest role never claims a handed save");
+    module::ResetForTest();
+    hs::ResetForTest();
+    Check(!module::PeerOnHandedSave(), "ResetForTest forgets it");
+}
 }  // namespace
 
 int main() {
@@ -832,6 +878,7 @@ int main() {
     ExitWindow();
     ModuleGates(dirs);
     ExitSlow(dirs);
+    HandedSave(dirs);
     FixtureSet();
     RemoteOnlyGlue();
     mgscoop::lab::save::reset_for_test();

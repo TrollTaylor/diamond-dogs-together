@@ -12,6 +12,7 @@
 #include "vehicle_mirror_state.hpp"
 #include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_ammo_leak.hpp"
+#include "mgscoop/equipment_stock_probe.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/coop_carry.hpp"
@@ -2680,6 +2681,25 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                        unsigned(e.slots[1].base_id), unsigned(e.slots[1].alias), unsigned(e.slots[2].base_id), unsigned(e.slots[2].alias),
                        unsigned(e.slots[0].type), unsigned(e.slots[1].type), unsigned(e.slots[2].type), unsigned(e.version),
                        m.mission_code, e.epoch, m.equip.link_epoch);
+        }
+        if (accepted && !box_only && d.preload_late_watch) {
+            // Item 2: the manifest came after the allocation's preload query
+            // (a peer still relaunching from a save handoff). The preload is a
+            // mission-block load at the allocation only: the bases it did not
+            // cover show after the next load.
+            namespace sp = equipment_stock_probe;
+            d.preload_late_watch = false;
+            const auto& e = m.equip.manifest;
+            const std::uint16_t remote[3] = {e.slots[0].base_id, e.slots[1].base_id, e.slots[2].base_id};
+            unsigned wanted = 0;
+            const unsigned count = d.preload_count <= 3 ? d.preload_count : 3u;
+            const unsigned covered = sp::PreloadCover(remote, d.preload_ids, count, wanted);
+            const auto source = static_cast<sp::PreloadSource>(d.preload_source);
+            EmitFormat(h, "equip_preload=late_manifest; mission=%u; preload=%s; source=%s; preloaded=%u; remote_base=%u,%u,%u; "
+                          "covered=%u/%u; guns=%s; link_epoch=%u\r\n",
+                       d.preload_mission, d.preload_verdict[0] ? d.preload_verdict : "none", sp::PreloadSourceName(source), count,
+                       unsigned(remote[0]), unsigned(remote[1]), unsigned(remote[2]), covered, wanted,
+                       wanted && covered == wanted ? "this_load" : "next_load", m.equip.link_epoch);
         }
     }
 }
@@ -5696,6 +5716,12 @@ void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
 }
 
 void DrainEquipLink(Driver& d, const Hooks& h) noexcept { DrainEquip(d, h, 0); }
+
+bool OwnManifest(const Driver& d, partner_equip_wire::Manifest& out) noexcept {
+    if (!d.equip_tx_have) return false;
+    out = d.equip_tx;
+    return true;
+}
 
 bool RemoteManifest(const Driver& d, std::uint32_t link_session, partner_equip_wire::Manifest& out) noexcept {
     const partner_equip_wire::Store& st = d.mission.equip;

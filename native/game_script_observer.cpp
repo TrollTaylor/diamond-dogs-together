@@ -3427,7 +3427,17 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         context.owner_gates=owner;
         context.groups_authorized=stock46_groups_authorized; context.groups_returned=stock46_groups_returned;
         mgscoop::partner_equip_wire::Manifest manifest{};
-        context.manifest=enabled && EquipManifest(manifest);
+        // Two-PC test 2026-10-23 item 2: without the peer's manifest, a peer that
+        // restarted on this host's save (a save handoff in this process) loads
+        // this copy's own loadout first: its own manifest predicts the ids.
+        namespace sp=mgscoop::equipment_stock_probe;
+        const bool remote=enabled && EquipManifest(manifest);
+        const bool handed=enabled && mgscoop::save_handoff::PeerOnHandedSave();
+        mgscoop::partner_equip_wire::Manifest own{};
+        const bool own_ok=handed && !remote && pd::OwnManifest(partner_driver,own);
+        const sp::PreloadSource source=sp::ChoosePreloadSource(remote,handed,own_ok);
+        if(source==sp::PreloadSource::predicted) manifest=own;
+        context.manifest=source!=sp::PreloadSource::none;
         // Candidates: each slot's base id that is a stock gun of that slot's type.
         std::uint16_t ids[pc::kIds]{};unsigned count=0;
         char dropped[96]{};
@@ -3493,6 +3503,8 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         }
         StringCchCopyA(partner_driver.preload_verdict,sizeof(partner_driver.preload_verdict),reason ? "refused" : "authorized");
         StringCchCopyA(partner_driver.preload_reason,sizeof(partner_driver.preload_reason),reason ? reason : "ok");
+        partner_driver.preload_source=static_cast<std::uint8_t>(source);
+        partner_driver.preload_late_watch=enabled && source!=sp::PreloadSource::remote;
         char actions[96]{};
         for(unsigned i=0;i<candidate.item_count && !reason;++i) {
             char one[32]{};
@@ -3500,9 +3512,9 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
                 pc::ActionName(candidate.items[i].action),unsigned(candidate.items[i].entry));
             StringCchCatA(actions,sizeof(actions),one);
         }
-        LogFormat("equip_preload=%s; reason=%s; admission=%s; preflight=%s; mission=%u; owner=%u; manifest=%u; want=%u,%u,%u; ids=%s; dropped=%s; actions=%s; new_hashes=%u; queue=%u/%u; attempt_consumed=%u; public_calls=lua_only; evict=0\r\n",
+        LogFormat("equip_preload=%s; reason=%s; admission=%s; preflight=%s; mission=%u; owner=%u; manifest=%u; source=%s; want=%u,%u,%u; ids=%s; dropped=%s; actions=%s; new_hashes=%u; queue=%u/%u; attempt_consumed=%u; public_calls=lua_only; evict=0\r\n",
             reason ? "refused" : "authorized",reason ? reason : "ok",admission ? admission : "ok",sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(owner),
-            unsigned(context.manifest),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),unsigned(manifest.slots[2].base_id),
+            unsigned(context.manifest),sp::PreloadSourceName(source),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),unsigned(manifest.slots[2].base_id),
             list[0] ? list : "none",dropped[0] ? dropped : "none",actions[0] ? actions : "none",candidate.new_hashes,
             candidate.queue_count,candidate.queue_capacity,unsigned(equip_preload_authorization.Attempted()));
     } else {

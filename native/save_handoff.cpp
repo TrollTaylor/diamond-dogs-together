@@ -751,6 +751,9 @@ volatile LONG g_travel_lock = 0;  // the effective lab.ini travel_lock
 volatile LONG g_mode = 0;         // wire::Mode when configured
 volatile LONG g_lua_code = 0;     // the published LuaCode (CFG r[12])
 volatile LONG g_host_state_seen = 0;
+// Host: a guest restarted on this copy's save in this process (the token
+// partner_restarting was published once); PeerOnHandedSave, item 2.
+volatile LONG g_handed_off = 0;
 volatile LONG g_shutdown = 0;
 // NoteMission (runtime / termination thread).
 volatile LONG g_mission = 0, g_mission_terminating = 0, g_mission_seq = 0;
@@ -945,6 +948,7 @@ void PublishView(hstate::View view) noexcept {
     view.role = static_cast<std::uint8_t>(g_role);
     hstate::Publish(view);
     InterlockedExchange(&g_lua_code, static_cast<LONG>(view.lua_code));
+    if (g_role == 1 && view.token == static_cast<std::uint8_t>(hstate::Token::partner_restarting)) InterlockedExchange(&g_handed_off, 1);
     partner_net::PublishHandoffState(view.token, view.pct);
 }
 
@@ -1415,6 +1419,8 @@ std::uint8_t LockAllowed() noexcept {
     return g_role == 2 && g_travel_lock && !hstate::TravelUnlocked() ? 1 : 0;
 }
 
+bool PeerOnHandedSave() noexcept { return g_configured && g_role == 1 && g_handed_off != 0; }
+
 bool GuestHandoffActive() noexcept {
     const auto mode = static_cast<wire::Mode>(static_cast<std::uint8_t>(g_mode));
     return g_configured && g_role == 2 && (mode == wire::Mode::scene || mode == wire::Mode::always) && g_host_state_seen;
@@ -1447,6 +1453,7 @@ void ResetForTest() noexcept {
     InterlockedExchange(&g_mode, 0);
     InterlockedExchange(&g_lua_code, 0);
     InterlockedExchange(&g_host_state_seen, 0);
+    InterlockedExchange(&g_handed_off, 0);
     InterlockedExchange(&g_shutdown, 0);
     InterlockedExchange(&g_mission, 0);
     InterlockedExchange(&g_mission_terminating, 0);
