@@ -10,8 +10,10 @@
 #  - never selected_bank_aux_flag, other_slot_unexpected or remote_slot_effect as a final equip_writer=refused.
 #  - partner_weapon=match with remote_base=46 (the shooter's current slot 1) and strip=0x0.
 # Captures: host-aim (the guest's screen while the host aims: the rifle in body 1's hands) and guest-aim (the reverse).
-# Each aim capture first places the filming role 4 m behind and 2 m right of the aiming one, facing it (at the boot
-# spot the jeep stands between them and the host's camera barely shows its partner).
+# Each aim capture first clears the garrison within 100 m (the jeep spot draws an alert: smoke and fire in 8e97cb60),
+# places the filming role 6 m behind and 2 m right of the aiming one, facing it, and turns the filming camera left
+# (mouse -250, as partner-mount.txt) so its own body no longer hides the partner (96b5c909 / 8e97cb60 / 04b2f3af:
+# straight behind, the viewer's back covers the partner).
 labsetting partner_native_support=1
 labsetting partner_native_arm=1
 boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
@@ -25,14 +27,20 @@ stance host stand
 stance guest stand
 wait 2000
 both capture africa-idle
-placebehind guest host 4 2
+host debug clear_enemies 100
+placebehind guest host 6 2
 stance guest stand
 wait 2500
+guest mouse -250 0
+wait 800
 heldcapture host guest rmb host-aim 3
 wait 1500
-placebehind host guest 4 2
+host debug clear_enemies 100
+placebehind host guest 6 2
 stance host stand
 wait 2500
+host mouse -250 0
+wait 800
 heldcapture guest host rmb guest-aim 3
 wait 1500
 host run position
