@@ -15,6 +15,11 @@ bool ControlsExpired(std::uint64_t now, std::uint64_t downAt, std::uint64_t last
     const auto limit = previouslyApplied ? kControlsLostMs : kControlsAcquireMs;
     return now < at || now - at > limit;
 }
+bool LiveBodies(const BodyView& local, const BodyView& partner, std::uint8_t loaded) noexcept {
+    // Ownership is judged from body 0. A realized body 1 must still be id 1
+    // (an incoherent index pair refuses); an unrealized one is simply absent.
+    return local.realized && local.id == 0 && local.parts == loaded && (!partner.realized || partner.id == 1);
+}
 const char* ControlsPendingReason(bool prone, bool masked, bool crawl) noexcept {
     if (!prone) return "controls_pending_prone";
     if (!masked) return "controls_pending_mask";

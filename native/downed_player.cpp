@@ -74,9 +74,10 @@ bool ReadLife(const partner_player::State& s, std::uintptr_t& record, float& cur
     return std::isfinite(current) && std::isfinite(max) && current > 0 && max >= 1 && max <= 65535.f && current <= max;
 }
 bool Live(partner_player::State& s, std::uintptr_t& record, float& current, float& max) noexcept {
-    return verified && !stopped && partner_player::ReadState(addresses, s) == partner_player::Refusal::none &&
-        partner_player::Realized(s, 0) && partner_player::Realized(s, 1) && s.ids[0] == 0 && s.ids[1] == 1 &&
-        s.parts[0] == c::parts_loaded_state && s.parts[1] == c::parts_loaded_state && ReadLife(s, record, current, max);
+    if (!verified || stopped || partner_player::ReadState(addresses, s) != partner_player::Refusal::none) return false;
+    const detail::BodyView local{partner_player::Realized(s, 0), s.ids[0], s.parts[0]};
+    const detail::BodyView partner{partner_player::Realized(s, 1), s.ids[1], s.parts[1]};
+    return detail::LiveBodies(local, partner, c::parts_loaded_state) && ReadLife(s, record, current, max);
 }
 bool Owned(partner_player::State& s, std::uintptr_t& record, float& current, float& max) noexcept {
     std::uintptr_t bank = 0;

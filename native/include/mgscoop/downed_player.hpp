@@ -90,6 +90,17 @@ inline constexpr std::uint64_t kControlsAcquireMs = 6000;
 inline constexpr std::uint64_t kControlsLostMs = 1500;
 bool ControlsExpired(std::uint64_t now, std::uint64_t downAt, std::uint64_t lastControls,
     bool previouslyApplied, bool currentlyApplied) noexcept;
+// The live local owner's bodies, as read by partner_player::ReadState
+// (realized = id and pool set; parts = the parts-load state byte).
+struct BodyView { bool realized; std::uint16_t id; std::uint8_t parts; };
+// Live(): the local body 0 is realized, id 0 and loaded. Body 1 (the partner)
+// is either realized as id 1 or deliberately absent: partner_mount and the
+// ride hides clear the all-instance mode while the partner rides a horse, a
+// D-Walker or a helicopter (instance 1 unrealized, the stock single-player
+// state). Body 1's parts state never decides the local player's protection
+// (two-PC test 2026-10-23 item 6: the guest had no downed protection for the
+// 14 s of the host's horse ride).
+bool LiveBodies(const BodyView& local, const BodyView& partner, std::uint8_t loaded) noexcept;
 const char* ControlsPendingReason(bool prone, bool masked, bool crawl) noexcept;
 // Cap freshly computed movement magnitude only. Heading, look, source axes and
 // deadzone remain retail-owned. Next natural update restores current real input.

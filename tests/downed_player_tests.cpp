@@ -59,6 +59,28 @@ int main() {
           "rate ownership refusal remains separate from a prone readback delay");
     Check(std::strcmp(d::detail::ControlsPendingReason(true, true, true), "downed") == 0,
           "fully confirmed controls have no pending phase");
+    {
+        // Two-PC test 2026-10-23 item 6: the live owner is judged from body 0.
+        // Body 1 deliberately unrealized (partner_mount / ride hides clear the
+        // all-instance mode: ids 0xFFFF, pool 0xFF) keeps the local protection.
+        constexpr std::uint8_t loaded = 3;
+        const d::detail::BodyView local{true, 0, loaded}, partner{true, 1, loaded};
+        const d::detail::BodyView unrealized{false, 0xFFFF, 0};
+        Check(d::detail::LiveBodies(local, partner, loaded), "both bodies realized and loaded: live");
+        Check(d::detail::LiveBodies(local, unrealized, loaded),
+              "body 1 unrealized by partner_mount keeps the local player's downed protection");
+        Check(d::detail::LiveBodies(local, {false, 0xFFFF, loaded}, loaded) &&
+              d::detail::LiveBodies(local, {false, 1, loaded}, loaded),
+              "an unrealized body 1 is absent whatever its stale id or parts bytes");
+        Check(d::detail::LiveBodies(local, {true, 1, 1}, loaded),
+              "body 1 re-realizing (parts still loading) never decides the local owner");
+        Check(!d::detail::LiveBodies(local, {true, 0, loaded}, loaded) && !d::detail::LiveBodies(local, {true, 2, loaded}, loaded),
+              "a realized body 1 with another id is incoherent: refused");
+        Check(!d::detail::LiveBodies({false, 0, loaded}, partner, loaded) && !d::detail::LiveBodies({false, 0xFFFF, 0}, unrealized, loaded),
+              "body 0 unrealized: no live local owner");
+        Check(!d::detail::LiveBodies({true, 1, loaded}, partner, loaded) && !d::detail::LiveBodies({true, 0, 1}, partner, loaded),
+              "body 0 must be id 0 with its parts loaded");
+    }
     d::detail::CrawlLease slow{};
     auto cp = d::detail::PlanCrawl(slow, 1.2f, 1.f, 1.2f, false);
     Check(cp.valid && cp.write && cp.base == .5f && cp.product == .5f && cp.next.original == 1.2f,
