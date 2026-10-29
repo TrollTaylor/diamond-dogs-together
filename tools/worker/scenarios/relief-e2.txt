@@ -1,0 +1,68 @@
+# M3 experiments E2 / E17 / E18 (docs/vehicles-companions-design.md sections 3.5 and 8): the sortie (relief)
+# vehicle. Lab levers and census in lua/coop/world_relief.lua (debug relief_*; lab mode only except the census).
+# E2: the relief choice is vars.reliefVehicleCarryType (+ reliefVehicleCarryAttitude), written by the sortie prep's
+#     SetRelief and read by Vehicle.LoadCarry at the next mission start. The lever relief_arm writes those vars at the
+#     next free-roam LoadCarry on BOTH copies (route A emulated: the guest's copy gets the host's choice as a seed
+#     would give it), so each copy's own engine must load the same relief pack and place its own index 0 (25600).
+# E18: the guest's mission-end relief seize is skipped (relief_seize skip) while the host's runs stock; the credit
+#     path (TppTerminal OnFultonVehicle / AddTempResource) and the Mother Base vehicle resources are logged.
+# E17: on the guest's copy (the receiver) index 0 is removed with the stock Seize {"Instant"} (no DirectAccount /
+#     CheckFultonType); alive, credit lines and resources before / after.
+# Coordinator only, hidden worker (never visible), copied lab saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/relief-e2.txt -SaveSeed lab
+# Evidence (world_lua lines read "event=relief; step=...", ';' expanded to '; '):
+#   both  step=installed; hook=loadcarry (or initnew); then in 30020 step=arm_applied; where=loadcarry; m=30020; ok=1
+#         and step=loadcarry; m=30020; ...; t=1
+#   both  census arrival1: census_v0 alive=1, the same vt and x/z within 1 m on both copies (frames relief-arrival1)
+#   host  step=seize; fn=SeizeReliefVehicleOnClear; alive=1 at the 30020 mission end (and credit lines if it credits)
+#   guest step=seize_skipped; fn=SeizeReliefVehicleOnClear; alive=1, no credit line
+#   both  census arrival2 in 30010: census_res compared with arrival1 (host +1 at most, guest unchanged)
+#   guest step=remove; how=instant; alive_after=..., then census removed: alive=0 or not; credit lines or none
+labsetting nametag=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+wait 2000
+host run relief_census boot
+guest run relief_census boot
+# Arrival 1 (Africa, savannahEast_N LZ): relief type 1 (veh_rl_west_lv) armed on both copies near the Masa jeep.
+host run relief_arm 1 -650 2.0 870 0
+host expect ^relief_arm;type=1;hook=
+guest run relief_arm 1 -650 2.0 870 0
+guest expect ^relief_arm;type=1;hook=
+host run relief_seize stock
+guest run relief_seize skip
+host worldtrigger goto=30020 goto_lz=0
+waitmission host 30020 300
+waitmission guest 30020 180
+waitgameplay host 150
+waitgameplay guest 150
+wait 6000
+host run relief_census arrival1
+guest run relief_census arrival1
+host run relief_goto 0
+guest run relief_goto 4
+wait 4000
+both capture relief-arrival1
+# Arrival 2 (Afghanistan, enemyBase_S LZ): relief type 2 (veh_rl_east_lv); the 30020 mission end is E18.
+host run relief_arm 2 805 343 1636.5 0
+guest run relief_arm 2 805 343 1636.5 0
+host worldtrigger goto=30010 goto_lz=1
+waitmission host 30010 300
+waitmission guest 30010 180
+waitgameplay host 150
+waitgameplay guest 150
+wait 6000
+host run relief_census arrival2
+guest run relief_census arrival2
+host run relief_goto 0
+guest run relief_goto 4
+wait 4000
+both capture relief-arrival2
+# E17: the guest's copy removes its index 0 (Instant, no account).
+guest run relief_remove instant
+wait 4000
+guest run relief_census removed
+host run relief_census removed
+both capture relief-e17
+state

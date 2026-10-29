@@ -76,3 +76,7 @@ constexpr char world_place_guest_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_SOURCE@
 )MGS_WORLD";
+// M3 experiments E2/E17/E18: the sortie (relief) vehicle lab levers and census (spliced last).
+constexpr char world_relief_source[] = R"MGS_WORLD(
+@MGS_WORLD_RELIEF_SOURCE@
+)MGS_WORLD";
