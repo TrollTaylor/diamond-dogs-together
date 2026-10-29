@@ -471,6 +471,8 @@ bool UpdateInProgress(const UpdateInfo& info) {
            info.status == UpdateStatus::ready_to_restart;
 }
 
+bool HoldFolderWhileClosing(const UpdateInfo& info, const LocalTestView& local) { return UpdateInProgress(info) || local.starting; }
+
 PlayBanner PlayBannerFor(const UpdateInfo& info) {
     switch (info.status) {
     case UpdateStatus::available: return PlayBanner::available;

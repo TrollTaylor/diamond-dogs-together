@@ -455,6 +455,19 @@ void TestCommandLine() {
         info.status = s;
         Check(!ui::UpdateInProgress(info), "checking, found or failed is not an update in progress");
     }
+    // A closing window keeps the folder (its single-instance claim) until the model has ended its threads only when
+    // that matters: an update in progress, or a local test still starting (its thread is still switching both
+    // folders over; a window opened meanwhile would find a half-made test and put its files back).
+    LocalTestView local;
+    info.status = UpdateStatus::available;
+    Check(!ui::HoldFolderWhileClosing(info, local), "a normal close frees the folder at once");
+    info.status = UpdateStatus::downloading;
+    Check(ui::HoldFolderWhileClosing(info, local), "an update in progress holds it");
+    info.status = UpdateStatus::idle;
+    local.active = local.starting = true;
+    Check(ui::HoldFolderWhileClosing(info, local), "a local test still starting holds it");
+    local.starting = false;
+    Check(!ui::HoldFolderWhileClosing(info, local), "a running local test does not (its helper takes over)");
 
     // The update card on Play.
     UpdateInfo u;
