@@ -24,6 +24,7 @@ constexpr double kHandoffEnd = 26.0;
 constexpr double kDropAt = 34.0;
 constexpr double kGameLength = 90.0;
 constexpr double kAfterGame = 5.0;
+constexpr double kLocalPrepare = 2.0;   // "Starting the local test..." (both folders made ready, games started)
 constexpr double kLocalStartup = 8.0;
 constexpr double kLocalLength = 120.0;
 
@@ -245,6 +246,7 @@ LinkView MockModel::link() const {
     if (local_active_) {
         const double g = now() - local_start_;
         v.headline = g < kLocalStartup ? "Local test: Starting co-op in the game..." : "Local test: Connected to your partner";
+        if (g < kLocalPrepare) v.headline = "Starting the local test...";
         v.connected = g >= kLocalStartup;
         v.partner_name = g >= kLocalStartup ? "Guest" : "";
         v.partner_mission = g >= kLocalStartup ? "Mother Base" : "";
@@ -561,6 +563,7 @@ LocalTestCheck MockModel::check_local_test() const {
     if (phase_ == Phase::needs_setup || phase_ == Phase::setting_up) return {false, "Co-op is still getting ready."};
     if (phase_ != Phase::ready) return {false, last_error_.empty() ? std::string("Co-op can't start in this folder right now.") : last_error_};
     if (local_folder_.empty()) return {false, "Choose the second MGSV game folder in Settings > Debug."};
+    if (mock_checking_) return {false, "Checking the second folder...", true};
     if (Lower(local_folder_) == Lower(game_dir()) || Lower(local_folder_).rfind(Lower(game_dir()) + "\\", 0) == 0)
         return {false, "Choose a second, separate MGSV folder: not this game folder, and neither folder inside the other."};
     if (Lower(local_folder_).find("mgs_tpp") == std::string::npos)
@@ -590,7 +593,11 @@ LocalTestView MockModel::local_test() const {
     const double g = now() - local_start_;
     LocalTestView v;
     v.active = true;
-    if (g < kLocalStartup) {
+    if (g < kLocalPrepare) {
+        v.starting = true;
+        v.headline = "Starting the local test...";
+        v.detail = "Getting both game folders ready, then starting both games. This can take a minute.";
+    } else if (g < kLocalStartup) {
         v.headline = "Starting both games...";
         v.detail = "Host: waiting for the game. Guest: waiting for the game.";
     } else {
@@ -601,6 +608,8 @@ LocalTestView MockModel::local_test() const {
 }
 
 void MockModel::arrange_local_test() {}
+
+void MockModel::set_mock_checking(bool on) { mock_checking_ = on; }
 
 void MockModel::jump_to_local_test(double seconds) {
     jump_to_phase(Phase::ready);

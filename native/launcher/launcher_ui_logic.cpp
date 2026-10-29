@@ -99,6 +99,13 @@ bool LocalCheckVisible(Page page, PlayTab shown_tab, bool debug) {
     return debug && ((page == Page::play && shown_tab == PlayTab::local_test) || page == Page::settings);
 }
 
+CheckTone LocalCheckTone(const LocalTestCheck& check) {
+    if (check.ok) return CheckTone::ready;
+    return check.checking ? CheckTone::checking : CheckTone::needed;
+}
+
+bool CanArrangeLocal(const LocalTestView& local) { return local.active && !local.starting && !local.failed; }
+
 CharacterChoice ChoiceOf(Character character) {
     switch (character) {
     case Character::story: return CharacterChoice::story;
@@ -244,7 +251,7 @@ const char* const kSceneNames[static_cast<int>(Scene::count)] = {
     "17-tools-result",         "18-tools-uninstall-confirm", "19-tools-about",   "20-settings",
     "21-tools-in-game",        "22-uninstall-report",    "23-settings-debug-no-folder", "24-settings-debug-folder",
     "25-play-local-no-folder", "26-play-local-ready",    "27-play-local-running",  "28-ingame-local-test",
-    "29-play-update-preparing",
+    "29-play-update-preparing", "30-ingame-local-starting", "31-play-local-checking",
 };
 }  // namespace
 

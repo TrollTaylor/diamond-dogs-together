@@ -64,6 +64,7 @@ private:
     void HostTab(Phase phase);
     void JoinTab(Phase phase);
     void LocalTab(Phase phase, const LocalTestView& local);
+    void LocalCheckMessage(const LocalTestCheck& check);
     void CodeCard(bool compact);
     void InGamePage(Phase phase);
     void ToolsPage(Phase phase);

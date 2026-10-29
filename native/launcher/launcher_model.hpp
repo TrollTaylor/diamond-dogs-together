@@ -67,10 +67,12 @@ enum class UpdateStatus {
 struct LocalTestCheck {
     bool ok = false;        // Start local test can be pressed
     std::string message;    // what starting does, or what is needed first
+    bool checking = false;  // the second folder is being checked (on its own thread)
 };
 struct LocalTestView {
     bool active = false;    // a local test owns both games (until they exit and the folders are restored)
     bool failed = false;    // stopped by a safety check
+    bool starting = false;  // Start local test is preparing both folders and starting both games (its own thread)
     std::string headline;   // "" when there was no local test in this window
     std::string detail;     // the status of both games; after a test, how it ended
 };
@@ -154,12 +156,17 @@ public:
     // The last check of the second folder (kept: it reads that copy's 166 MB game
     // exe); refresh_local_test() checks again (the Local test tab or Settings >
     // Debug coming into view, Check again on the tab). recheck() refreshes it too.
+    // The check runs on its own thread: `checking` until tick() has its result.
     virtual LocalTestCheck check_local_test() const = 0;
     virtual void refresh_local_test() = 0;
-    // Prepares both folders and starts both games; the phase becomes in_game
-    // (session_role() host) until both games have exited and the test files in
-    // both folders are put back. A failed start that leaves a game running also
-    // returns false but keeps the stopped run (local_test().active and failed).
+    // Starts the test on its own thread (it hashes and copies files, takes the
+    // play locks and waits for both games): true once it is under way, false
+    // with `error_out` when the check refuses it. The phase is in_game
+    // (session_role() host) from then until both games have exited and the test
+    // files in both folders are put back. While it starts, local_test() is
+    // active and starting. A refusal found then ends it: local_test() is not
+    // active, failed, and its detail says why. A failed start that leaves a game
+    // running keeps the stopped run (local_test() active and failed).
     virtual bool start_local_test(std::string& error_out) = 0;
     virtual LocalTestView local_test() const = 0;
     virtual void arrange_local_test() = 0;   // places both game windows again

@@ -162,6 +162,8 @@ void LauncherUi::Frame(double time) {
     const UpdateInfo frame_uinfo = model_.update_info();
     if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading || frame_uinfo.status == UpdateStatus::applying)
         animating_ = true;
+    // The local test's start and the second folder's check run on their own threads: keep drawing until they end.
+    if (model_.local_test().starting || (model_.debug() && model_.check_local_test().checking)) animating_ = true;
     // The second folder's check is kept by the model (it reads that copy's game exe): check again whenever the
     // Local test tab or Settings > Debug comes into view, so a game quit there or a fixed folder shows up.
     {
@@ -484,6 +486,21 @@ void LauncherUi::PlayPage(Phase phase) {
     }
 }
 
+// The second folder's check: ready, still checking (on its own thread), or what is needed first.
+void LauncherUi::LocalCheckMessage(const LocalTestCheck& check) {
+    switch (ui::LocalCheckTone(check)) {
+    case ui::CheckTone::ready: Message(Icon::check, col::kGood, check.message); break;
+    case ui::CheckTone::checking: {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        Spinner(ImVec2(p.x + Px(8.0f), p.y + Px(10.0f)), 5.5f, col::kAccent, time_);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + Px(22.0f), p.y));
+        Text(check.message.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
+        break;
+    }
+    case ui::CheckTone::needed: Message(Icon::warning, col::kWarn, check.message); break;
+    }
+}
+
 // Developer only (Settings > Debug mode): two MGSV copies on this PC.
 void LauncherUi::LocalTab(Phase phase, const LocalTestView& local) {
     BeginCard("##localinfo");
@@ -511,7 +528,7 @@ void LauncherUi::LocalTab(Phase phase, const LocalTestView& local) {
         Text(local.detail.c_str(), local.failed ? col::kBad : col::kTextDim, kSmall, nullptr, 0.0f);
         ImGui::EndGroup();
         Gap(4.0f);
-        if (Button("Arrange windows##local", ButtonKind::secondary, ImVec2(0, 38.0f), !local.failed, Icon::sliders, true))
+        if (Button("Arrange windows##local", ButtonKind::secondary, ImVec2(0, 38.0f), ui::CanArrangeLocal(local), Icon::sliders, true))
             model_.arrange_local_test();
         Gap(2.0f);
         Text("Quit BOTH games normally to end the test. You can close this window: a hidden helper puts the test settings in "
@@ -523,7 +540,7 @@ void LauncherUi::LocalTab(Phase phase, const LocalTestView& local) {
     const std::string folder = model_.local_test_folder();
     SectionLabel("SECOND GAME FOLDER");
     Text(folder.empty() ? "Not chosen yet" : folder.c_str(), folder.empty() ? col::kTextFaint : col::kTextDim, kSmall, GetFonts().mono, 0.0f);
-    Message(check.ok ? Icon::check : Icon::warning, check.ok ? col::kGood : col::kWarn, check.message);
+    LocalCheckMessage(check);
     Gap(6.0f);
     if (Button("Start local test", ButtonKind::primary, ImVec2(210.0f, 46.0f), ui::CanStartLocalTest(phase, check), Icon::play, true)) {
         std::string error;
@@ -536,7 +553,7 @@ void LauncherUi::LocalTab(Phase phase, const LocalTestView& local) {
         play_error_.clear();
         model_.refresh_local_test();
     }
-    if (!check.ok) {
+    if (ui::LocalCheckTone(check) == ui::CheckTone::needed) {
         ImGui::SameLine(0.0f, Px(10.0f));
         if (Button("Open Settings##local", ButtonKind::secondary, ImVec2(0, 46.0f), true, Icon::sliders, true)) Navigate(Page::settings);
     }
@@ -778,7 +795,7 @@ void LauncherUi::InGamePage(Phase phase) {
     const LinkView& l = link_;
 
     // Status.
-    const bool busy = phase == Phase::launching || (phase == Phase::after_game && l.detail.find("...") != std::string::npos);
+    const bool busy = phase == Phase::launching || local.starting || (phase == Phase::after_game && l.detail.find("...") != std::string::npos);
     ImU32 tone = l.connected ? col::kGood : col::kWarn;
     if (phase == Phase::after_game) tone = col::kTextDim;
     BeginCard("##status", 0.0f, col::kCard,
@@ -876,12 +893,12 @@ void LauncherUi::InGamePage(Phase phase) {
     Message(Icon::warning, col::kBad, play_error_);
     Gap(4.0f);
     if (local.active) {
-        if (Button("Arrange windows##ingame", ButtonKind::secondary, ImVec2(0, 36.0f), !local.failed, Icon::sliders, true))
+        if (Button("Arrange windows##ingame", ButtonKind::secondary, ImVec2(0, 36.0f), ui::CanArrangeLocal(local), Icon::sliders, true))
             model_.arrange_local_test();
         Gap(2.0f);
         Message(Icon::info, col::kTextFaint,
-                "Quit BOTH games normally to end the local test. You can close this window: a hidden helper puts both folders "
-                "back after both games have exited.");
+                "Quit BOTH games normally to end the local test. You can close this window: a hidden helper puts the test "
+                "settings in both folders back after both games have exited.");
         return;
     }
     Message(Icon::info, col::kTextFaint,
@@ -936,7 +953,8 @@ void LauncherUi::ToolsPage(Phase phase) {
         ImGui::EndGroup();
         Gap(4.0f);
         // Not while co-op gets ready by itself: the restart would cut the setup off.
-        if (Button("Update now##tools", ButtonKind::primary, ImVec2(140.0f, 34.0f), ui::CanStartUpdate(phase, setup_view_), Icon::download, true)) {
+        const bool can_update = ui::CanStartUpdate(phase, setup_view_);
+        if (Button("Update now##tools", ButtonKind::primary, ImVec2(140.0f, 34.0f), can_update, Icon::download, true)) {
             model_.start_update();
         }
         if (!uinfo.html_url.empty()) {
@@ -945,6 +963,7 @@ void LauncherUi::ToolsPage(Phase phase) {
                 if (shell_.open_url) shell_.open_url(uinfo.html_url);
             }
         }
+        if (!can_update && setup_view_ == ui::SetupView::preparing) Text("You can update once co-op is ready.", col::kTextDim, kSmall, nullptr, 0.0f);
     } else if (uinfo.status == UpdateStatus::downloading) {
         char buf[128];
         snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)",
@@ -1124,7 +1143,7 @@ void LauncherUi::SettingsPage(Phase phase) {
             if (Button("Clear##guest", ButtonKind::quiet, ImVec2(82.0f, 34.0f), !ui::SessionActive(phase))) model_.set_local_test_folder("");
             const LocalTestCheck check = model_.check_local_test();
             Gap(2.0f);
-            Message(check.ok ? Icon::check : Icon::warning, check.ok ? col::kGood : col::kWarn, check.message);
+            LocalCheckMessage(check);
         }
         EndCard();
     }
@@ -1294,6 +1313,7 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
     mock.set_hud("compact");
     mock.set_debug(false);
     mock.set_local_test_folder("");
+    mock.set_mock_checking(false);
     if (mock.update_info().status == UpdateStatus::available) mock.check_for_updates();   // back to "the latest version"
     const std::string own_code = FormatJoinCode(kFixedSecret, MockModel::kOwnSteamId);
     auto copy_into = [&](const std::string& s) {
@@ -1440,6 +1460,17 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         mock.set_mock_update_info(update);
         break;
     }
+    case ui::Scene::ingame_local_starting:
+        mock.jump_to_local_test(0.5);
+        page = Page::in_game;
+        break;
+    case ui::Scene::play_local_checking:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        mock.set_local_test_folder(MockModel::kGuestDir);
+        mock.set_mock_checking(true);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
     case ui::Scene::count: break;
     }
     first_frame_ = false;

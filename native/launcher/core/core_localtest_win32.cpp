@@ -10,6 +10,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <objbase.h>
 #include <shellapi.h>
 
 #include <algorithm>
@@ -98,11 +99,27 @@ BOOL CALLBACK CloseWindowOf(HWND hwnd, LPARAM data) {
     return TRUE;
 }
 
+// ShellExecuteEx may hand a launch to shell extensions, which need COM on the calling thread (the local test starts
+// on its own thread). Balanced: an already initialised thread (S_FALSE) is undone too; another mode is left alone.
+class ComScope {
+public:
+    ComScope() : hr_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)) {}
+    ~ComScope() {
+        if (SUCCEEDED(hr_)) CoUninitialize();
+    }
+    ComScope(const ComScope&) = delete;
+    ComScope& operator=(const ComScope&) = delete;
+
+private:
+    HRESULT hr_;
+};
+
 class Win32LocalHost final : public LocalHost {
 public:
     bool StartGame(const std::wstring& exe, const std::wstring& dir, std::uint32_t& pid, std::int64_t& start_ms, std::string& error) override {
         pid = 0;
         start_ms = 0;
+        const ComScope com;
         // The shell's normal GUI launch (the PowerShell test's UseShellExecute), nothing inherited.
         SHELLEXECUTEINFOW info{};
         info.cbSize = sizeof(info);

@@ -1498,6 +1498,26 @@ bool PumpUntil(LauncherModel& m, FakeEnv& env, const std::function<bool()>& done
     return false;
 }
 
+// The second folder's check and Start local test run on their own threads; tick() picks their results up. These
+// wait in real time without moving the fake clock (the start's own waits use it).
+LocalTestCheck SettledLocalCheck(LauncherModel& m) {
+    for (int i = 0; i < 3000; ++i) {
+        m.tick();
+        const LocalTestCheck c = m.check_local_test();
+        if (!c.checking) return c;
+        Sleep(2);
+    }
+    return m.check_local_test();
+}
+bool WaitLocalStart(LauncherModel& m) {
+    for (int i = 0; i < 3000; ++i) {
+        m.tick();
+        if (!m.local_test().starting) return true;
+        Sleep(2);
+    }
+    return false;
+}
+
 void TestModel() {
     Fixture f(L"model");
     {
@@ -1590,6 +1610,23 @@ void TestModel() {
         // Uninstall from the model.
         std::string report, error;
         CHECK(m->uninstall(report, error) && m->phase() == Phase::error && !IsFile(f.paths.loader));
+    }
+    {
+        // Reopened after that Uninstall (2026-10-29 review): dinput8.dll is gone, so co-op is NOT set up again by
+        // itself; Play asks to extract the zip again. Once the zip's files are back, it gets ready by itself.
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::error && Has(m->last_error(), "dinput8.dll is missing") && Has(m->last_error(), "Extract"));
+        for (int i = 0; i < 10; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::error && !PathExists(f.paths.friend_install) && !IsFile(f.paths.loader));
+        WriteText(f.paths.loader, "FAKE-LOADER");   // the player extracts the zip again
+        m->recheck();
+        CHECK(m->phase() == Phase::needs_setup);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
     }
     CHECK(f.RealSavesUntouched());
     // Not in a game folder: Steam's folder is offered.
@@ -2417,8 +2454,10 @@ public:
     bool second_image_wrong = false;   // the second game started reports another image (its start cannot be verified)
     bool close_ignored = false;        // a game asked to close keeps running
     LocalRect area{0, 0, 2560, 1400};
+    std::function<void()> on_start_game;   // runs first in StartGame (on the thread that starts the test)
 
     bool StartGame(const std::wstring& exe, const std::wstring& dir, std::uint32_t& pid, std::int64_t& start_ms, std::string&) override {
+        if (on_start_game) on_start_game();
         pid = next++;
         start_ms = env_->NowMs();
         env_->AddGame(pid, exe, start_ms);
@@ -2744,10 +2783,10 @@ void TestLocalThroughModel() {
         c = m->check_local_test();
         CHECK(!c.ok && Has(c.message, "Settings"));
         m->set_local_test_folder(Utf8(f.game));
-        c = m->check_local_test();
+        c = SettledLocalCheck(*m);
         CHECK(!c.ok && Has(c.message, "separate"));
         m->set_local_test_folder(Utf8(guest));
-        c = m->check_local_test();
+        c = SettledLocalCheck(*m);
         CHECK(c.ok);
         if (!c.ok) std::fprintf(stderr, "local check: %s\n", c.message.c_str());
     }
@@ -2755,18 +2794,20 @@ void TestLocalThroughModel() {
     CHECK(LoadSettings(f.paths, settings) && settings.debug && IEquals(Wide(settings.local_guest), guest));
     {
         auto m = MakeRealModelWithEnv(f.game, f.env, lh);   // reopened: the settings are back
-        CHECK(m->debug() && IEquals(Wide(m->local_test_folder()), guest) && m->check_local_test().ok);
+        CHECK(m->debug() && IEquals(Wide(m->local_test_folder()), guest) && SettledLocalCheck(*m).ok);
         // The check is kept (it reads the second copy's game exe) and checked again when the Local test tab or
         // Settings > Debug comes into view (refresh_local_test) and on Check again (recheck).
         f.env->AddGame(8300, guest + L"\\mgsvtpp.exe", f.env->NowMs());
         CHECK(m->check_local_test().ok);
         m->refresh_local_test();
-        CHECK(!m->check_local_test().ok && Has(m->check_local_test().message, "running"));
+        LocalTestCheck c = SettledLocalCheck(*m);
+        CHECK(!c.ok && Has(c.message, "running"));
         f.env->Kill(8300);
         m->recheck();
-        CHECK(m->phase() == Phase::ready && m->check_local_test().ok);
+        CHECK(m->phase() == Phase::ready && SettledLocalCheck(*m).ok);
         CHECK(m->start_local_test(error));
         if (!error.empty()) std::fprintf(stderr, "start_local_test: %s\n", error.c_str());
+        CHECK(WaitLocalStart(*m));
         CHECK(m->phase() == Phase::in_game && m->local_test().active && m->session_role() == Role::host && m->join_code().empty());
         CHECK(!m->check_local_test().ok && !m->link().headline.empty());
         std::string code;
@@ -2778,10 +2819,11 @@ void TestLocalThroughModel() {
         CHECK(!m->local_test().active && Has(m->local_test().detail, "were put back") && !PathExists(f.paths.marker));
         // A start that fails while a game it started keeps running: the window keeps the stopped run and puts both
         // folders back itself once both games have exited (the helper only waits for the window to close).
-        CHECK(m->check_local_test().ok);
+        CHECK(SettledLocalCheck(*m).ok);
         lh->second_image_wrong = true;
         lh->close_ignored = true;
-        CHECK(!m->start_local_test(error) && Has(error, "did not match"));
+        CHECK(m->start_local_test(error) && WaitLocalStart(*m));
+        CHECK(Has(m->local_test().detail, "did not match") && Has(ReadText(f.paths.launcher_log), "local_test=start_failed"));
         CHECK(m->phase() == Phase::in_game && m->local_test().active && m->local_test().failed && IsFile(f.paths.marker));
         lh->second_image_wrong = false;
         lh->close_ignored = false;
@@ -2830,11 +2872,72 @@ void TestLocalThroughModel() {
         m->set_local_test_folder(Utf8(guest));
         release = true;
         CHECK(PumpUntil(*m, *g.env, [&]() { return m->phase() != Phase::setting_up; }));
+        SettledLocalCheck(*m);   // its check thread reads Hooks() too
         Hooks() = saved;
         Settings kept;
         CHECK(m->phase() == Phase::ready && m->debug() && !m->local_test_folder().empty());
         CHECK(LoadSettings(g.paths, kept) && kept.debug && IEquals(Wide(kept.local_guest), guest) && kept.hud == "compact");
     }
+}
+
+// Start local test and the second folder's check run on their own threads (2026-10-29 review): the start hashes and
+// copies files, takes both folders' play locks (each may wait up to 30 s) and waits for both games, and the check
+// reads the second copy's 166 MB game exe, so the window keeps drawing meanwhile ("Starting the local test...").
+void TestLocalStartOffThread() {
+    Fixture f(L"local-async");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    std::atomic<bool> release{false}, waited_out{false};
+    std::atomic<int> starts{0};
+    std::thread::id worker;
+    lh->on_start_game = [&]() {
+        if (starts++ == 0) worker = std::this_thread::get_id();
+        const ULONGLONG until = GetTickCount64() + 3000;
+        while (!release && GetTickCount64() < until) Sleep(2);
+        if (!release) waited_out = true;
+    };
+    auto m = MakeRealModelWithEnv(f.game, f.env, lh);
+    m->set_debug(true);
+    m->set_local_test_folder(Utf8(guest));
+    LocalTestCheck c = m->check_local_test();
+    CHECK(!c.ok && c.checking && Has(c.message, "Checking"));
+    c = SettledLocalCheck(*m);
+    CHECK(c.ok && !c.checking);
+    if (!c.ok) std::fprintf(stderr, "async check: %s\n", c.message.c_str());
+    std::string error;
+    CHECK(m->start_local_test(error) && error.empty());
+    CHECK(!waited_out);   // it returned while the start still waited for the first game
+    LocalTestView v = m->local_test();
+    CHECK(v.active && v.starting && !v.failed && Has(v.headline, "Starting"));
+    CHECK(m->phase() == Phase::in_game && m->session_role() == Role::host && !m->check_local_test().ok);
+    CHECK(Has(m->link().headline, "Starting"));
+    std::string report;
+    CHECK(!m->uninstall(report, error) && report.empty());
+    m->recheck();
+    m->arrange_local_test();   // nothing to place yet
+    CHECK(m->phase() == Phase::in_game && lh->placed.empty());
+    release = true;
+    CHECK(WaitLocalStart(*m));
+    CHECK(starts == 2 && !waited_out && worker != std::this_thread::get_id());
+    v = m->local_test();
+    CHECK(v.active && !v.starting && !v.failed && m->phase() == Phase::in_game && IsFile(f.paths.marker));
+    lh->KillAll();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() == Phase::ready; }));
+    CHECK(!PathExists(f.paths.marker));
+    // A refusal the start finds on its own thread (a busy link port): nothing stays on, and Play's Local test tab says why.
+    lh->on_start_game = nullptr;
+    lh->busy_ports = {47810};
+    c = SettledLocalCheck(*m);
+    CHECK(c.ok);
+    CHECK(m->start_local_test(error));
+    CHECK(WaitLocalStart(*m));
+    v = m->local_test();
+    CHECK(!v.active && !v.starting && v.failed && Has(v.detail, "47810"));
+    CHECK(m->phase() == Phase::ready && !PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")));
+    CHECK(Has(ReadText(f.paths.launcher_log), "local_test=refused"));
+    lh->busy_ports.clear();
+    CHECK(f.RealSavesUntouched());
 }
 
 // ---- The native local test against tools/dev/Play-LocalCoop.ps1 (Windows PowerShell, fixture mode) ----
@@ -3008,6 +3111,24 @@ void TestLocalPowerShellInterop() {
 }  // namespace
 
 int main() {
+    // DDT_LOCALTEST_REAL_CHECK=<game folder>|<second folder>: only prints what Play > Local test says about two real
+    // folders (CheckLocalTestFolder with the real hooks; it reads files and lists processes, and changes nothing),
+    // then exits without running the tests.
+    {
+        wchar_t spec[2048]{};
+        if (GetEnvironmentVariableW(L"DDT_LOCALTEST_REAL_CHECK", spec, 2048) && spec[0]) {
+            const std::wstring both = spec;
+            const std::size_t bar = both.find(L'|');
+            if (bar == std::wstring::npos) {
+                std::printf("DDT_LOCALTEST_REAL_CHECK needs <game folder>|<second folder>\n");
+                return 2;
+            }
+            auto env = MakeWin32Env();
+            const LocalFolderCheck c = CheckLocalTestFolder(*env, both.substr(0, bar), both.substr(bar + 1));
+            std::printf("local test check: ok=%d\n%s\n", c.ok ? 1 : 0, c.message.c_str());
+            return 0;
+        }
+    }
     wchar_t temp[MAX_PATH + 1]{};
     GetTempPathW(MAX_PATH, temp);
     g_root = FullPath(std::wstring(temp) + L"ddt-core-tests-" + std::to_wstring(GetCurrentProcessId()));
@@ -3044,6 +3165,7 @@ int main() {
     TestLocalRun();
     TestLocalWatch();
     TestLocalThroughModel();
+    TestLocalStartOffThread();
     TestLocalPowerShellInterop();
     TestHandoffThroughModel();
     TestWriteSession();

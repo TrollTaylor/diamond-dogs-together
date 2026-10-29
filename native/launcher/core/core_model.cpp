@@ -199,6 +199,22 @@ struct Shared {
 
 enum class Stage { none, launching, in_game, after_game, relaunch_wait, local_test };
 
+// Start local test on its own thread (2026-10-29 review: the start hashes and copies files, takes both folders' play
+// locks and waits for both games; the window keeps drawing meanwhile). tick() adopts the run once `finished`.
+struct LocalStartJob {
+    std::mutex m;
+    bool finished = false, ok = false;
+    std::string error;
+    std::unique_ptr<LocalTestRun> run;   // used only by the start thread until `finished`
+};
+// The second folder's check on its own thread (it reads that copy's 166 MB game exe the first time).
+struct LocalCheckJob {
+    std::mutex m;
+    bool finished = false;
+    std::string folder;        // the folder it checks (settings_.local_guest when it started)
+    LocalFolderCheck result;
+};
+
 std::string Join(const std::vector<std::string>& lines) {
     std::string out;
     for (const std::string& l : lines) {
@@ -232,6 +248,10 @@ public:
     }
 
     ~RealModel() override {
+        // A local test still starting finishes its start first (it starts the helper that puts both folders back once
+        // both games have exited); the folder check is short.
+        if (local_start_thread_.joinable()) local_start_thread_.join();
+        if (check_thread_.joinable()) check_thread_.join();
         update_cancel_ = true;
         if (update_thread_.joinable()) update_thread_.join();
         shared_->cancel = true;
@@ -465,6 +485,8 @@ public:
     }
 
     void tick() override {
+        CollectLocalCheck();
+        if (local_start_ && !CollectLocalStart()) return;   // the local test is still starting on its own thread
         const std::int64_t now = env_->NowMs();
         // The setup runs by itself (2026-10-29: no Setup page, no button) whenever
         // it is needed: the first start, after an update, a missing runtime file.
@@ -682,6 +704,7 @@ UpdateInfo update_info() const override {
         if (phase_ == Phase::needs_setup || phase_ == Phase::setting_up) return {false, "Co-op is still getting ready."};
         if (phase_ != Phase::ready) return {false, last_error_.empty() ? std::string("Co-op can't start in this folder right now.") : last_error_};
         if (settings_.local_guest.empty()) return {false, "Choose the second MGSV game folder in Settings > Debug."};
+        if (check_job_) return {false, "Checking the second folder...", true};
         return {local_check_.ok, local_check_.message};
     }
     bool start_local_test(std::string& error_out) override {
@@ -691,31 +714,45 @@ UpdateInfo update_info() const override {
             error_out = check.message;
             return false;
         }
-        auto run = std::make_unique<LocalTestRun>(env_, local_host_);
+        auto job = std::make_shared<LocalStartJob>();
+        job->run = std::make_unique<LocalTestRun>(env_, local_host_);
         LocalTestRequest request;
         request.host_root = paths_.game;
         request.guest_root = Wide(settings_.local_guest);
         request.hud = hud_;
-        if (!run->Start(request, error_out)) {
-            if (run->Status().active) {
-                // A game it started is still running: this window keeps the stopped run and puts both folders
-                // back once both games have exited (the helper only takes over when the window closes).
-                AdoptLocalRun(std::move(run));
-                Log("local_test=start_failed; run=" + local_->run_id());
-                return false;
-            }
-            Log("local_test=refused");
-            RefreshLocalCheck();
-            return false;
-        }
-        AdoptLocalRun(std::move(run));
-        Log("local_test=started; run=" + local_->run_id());
+        // From here the window is "in game" (no Host, Join, Update or Uninstall) until the run has ended.
+        ResetSession();
+        local_view_ = LocalTestView{};
+        stage_ = Stage::local_test;
+        phase_ = Phase::in_game;
+        role_ = Role::host;
+        last_error_.clear();
+        next_poll_ = 0;
+        local_start_ = job;
+        Log("local_test=starting");
+        local_start_thread_ = std::thread([job, request]() {
+            std::string error;
+            const bool ok = job->run->Start(request, error);
+            std::lock_guard<std::mutex> lock(job->m);
+            job->ok = ok;
+            job->error = error;
+            job->finished = true;
+        });
+        UpdateLink(env_->NowMs());
         return true;
     }
     void refresh_local_test() override {
         if (stage_ == Stage::none) RefreshLocalCheck();
     }
     LocalTestView local_test() const override {
+        if (local_start_) {
+            LocalTestView v;
+            v.active = true;
+            v.starting = true;
+            v.headline = "Starting the local test...";
+            v.detail = "Getting both game folders ready, then starting both games. This can take a minute.";
+            return v;
+        }
         if (!local_) return local_view_;
         const LocalStatus st = local_->Status();
         LocalTestView v;
@@ -771,12 +808,70 @@ private:
         next_poll_ = 0;
         UpdateLink(env_->NowMs());
     }
+    // The start's thread has finished: adopt the run, or say why it did not start. false while it still runs.
+    bool CollectLocalStart() {
+        {
+            std::lock_guard<std::mutex> lock(local_start_->m);
+            if (!local_start_->finished) return false;
+        }
+        if (local_start_thread_.joinable()) local_start_thread_.join();
+        const std::shared_ptr<LocalStartJob> job = std::move(local_start_);
+        local_start_.reset();
+        if (job->ok || job->run->Status().active) {
+            // Started; or a game it started is still running after a failed start: this window keeps the stopped
+            // run and puts both folders back once both games have exited (the helper only takes over when the
+            // window closes).
+            AdoptLocalRun(std::move(job->run));
+            Log(std::string(job->ok ? "local_test=started" : "local_test=start_failed") + "; run=" + local_->run_id());
+            return true;
+        }
+        Log("local_test=refused");
+        ResetSession();
+        local_view_ = LocalTestView{};
+        local_view_.failed = true;
+        local_view_.headline = "Local test didn't start";
+        local_view_.detail = job->error.empty() ? std::string("The local test could not start. Nothing was changed.") : job->error;
+        Recheck();
+        RefreshLocalCheck();
+        return true;
+    }
     // The second folder's check is kept until refresh_local_test(), Check again, a settings change or the end of a
-    // run (it hashes that copy's mgsvtpp.exe, which CheckLocalTestFolder caches by size, time and file).
+    // run. It runs on its own thread (it hashes that copy's mgsvtpp.exe the first time; CheckLocalTestFolder keeps
+    // the hash by size, time and file); one at a time, and checked again when the folder changed meanwhile.
     void RefreshLocalCheck() {
         local_check_ = LocalFolderCheck{};
         if (!settings_.debug || settings_.local_guest.empty() || phase_ == Phase::not_in_game_folder) return;
-        local_check_ = CheckLocalTestFolder(*env_, paths_.game, Wide(settings_.local_guest));
+        if (check_job_) {
+            check_again_ = true;
+            return;
+        }
+        auto job = std::make_shared<LocalCheckJob>();
+        job->folder = settings_.local_guest;
+        check_job_ = job;
+        check_again_ = false;
+        auto env = env_;
+        const std::wstring game = paths_.game;
+        check_thread_ = std::thread([job, env, game]() {
+            const LocalFolderCheck result = CheckLocalTestFolder(*env, game, Wide(job->folder));
+            std::lock_guard<std::mutex> lock(job->m);
+            job->result = result;
+            job->finished = true;
+        });
+    }
+    void CollectLocalCheck() {
+        if (!check_job_) return;
+        {
+            std::lock_guard<std::mutex> lock(check_job_->m);
+            if (!check_job_->finished) return;
+        }
+        if (check_thread_.joinable()) check_thread_.join();
+        const std::shared_ptr<LocalCheckJob> job = std::move(check_job_);
+        check_job_.reset();
+        if (check_again_ || job->folder != settings_.local_guest) {
+            RefreshLocalCheck();
+            return;
+        }
+        if (settings_.debug && phase_ != Phase::not_in_game_folder) local_check_ = job->result;
     }
     void PollLocal() {
         if (local_ && local_->Poll()) return;
@@ -1348,6 +1443,11 @@ private:
             v.detail = "Steam is starting the game. Answer any Steam dialog; this can take a minute.";
             break;
         case Stage::local_test: {
+            if (local_start_) {
+                v.headline = "Starting the local test...";
+                v.detail = "Getting both game folders ready, then starting both games. This can take a minute.";
+                break;
+            }
             const LocalStatus st = local_ ? local_->Status() : LocalStatus{};
             v = LinkViewFromStatus(ParseStatusText(st.host_link, 0), true, now, CoreBuildId());
             if (st.failed) {
@@ -1453,6 +1553,11 @@ private:
     std::unique_ptr<LocalTestRun> local_;   // the running local two-window test
     LocalTestView local_view_;              // how the last one ended
     LocalFolderCheck local_check_;
+    std::shared_ptr<LocalStartJob> local_start_;   // Start local test still running on its own thread
+    std::thread local_start_thread_;
+    std::shared_ptr<LocalCheckJob> check_job_;     // the second folder's check still running on its own thread
+    std::thread check_thread_;
+    bool check_again_ = false;                     // asked again meanwhile: checked once more when it ends
 };
 
 }  // namespace

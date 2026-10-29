@@ -87,6 +87,8 @@ public:
     static constexpr const char kGuestDir[] = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\MGS_TPP_guest";
     // A local test `seconds` after Start local test.
     void jump_to_local_test(double seconds);
+    // The second folder's check still running (the real model checks on its own thread).
+    void set_mock_checking(bool on);
 
     // ---- Hooks for tests and the screenshot driver -------------------------
     // The player's own (synthetic) SteamID64 and a valid partner code.
@@ -131,6 +133,7 @@ private:
     bool has_previous_save_ = true;
     UpdateInfo update_info_;
     bool debug_ = false;
+    bool mock_checking_ = false;
     std::string local_folder_;
     bool local_active_ = false;
     double local_start_ = 0.0;

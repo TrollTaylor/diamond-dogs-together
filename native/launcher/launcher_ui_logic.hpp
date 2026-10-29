@@ -47,6 +47,13 @@ bool CanStartLocalTest(Phase phase, const LocalTestCheck& check);
 // The second folder's check is on screen (the Local test tab, or Settings with
 // Debug mode on); the GUI refreshes it when it comes into view.
 bool LocalCheckVisible(Page page, PlayTab shown_tab, bool debug);
+// How that check shows: ready (a check mark), still checking on its own thread
+// (dim, no "Open Settings"), or what is needed first (a warning).
+enum class CheckTone { ready, checking, needed };
+CheckTone LocalCheckTone(const LocalTestCheck& check);
+// "Arrange windows" can be pressed: both games run (not while the test starts,
+// not after a safety stop).
+bool CanArrangeLocal(const LocalTestView& local);
 
 // ---- Character picker ------------------------------------------------------
 enum class CharacterChoice { story, ocelot, dd_soldier, avatar };
@@ -150,6 +157,8 @@ enum class Scene {
     play_local_running,
     ingame_local_test,
     play_update_preparing,   // an update is out while co-op gets ready: Update now waits
+    ingame_local_starting,   // Start local test pressed: both folders are made ready (its own thread)
+    play_local_checking,     // the second folder is being checked (its own thread)
     count
 };
 int SceneCount();

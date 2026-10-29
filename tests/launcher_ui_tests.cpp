@@ -159,10 +159,13 @@ void TestDebugGating() {
     Check(m.check_local_test().ok, "a separate MGSV folder");
     Check(m.start_local_test(error) && m.phase() == Phase::in_game && m.local_test().active && m.session_role() == Role::host,
           "the local test runs");
-    Check(!m.check_local_test().ok, "not twice");
+    Check(m.local_test().starting && m.local_test().headline.find("Starting the local test") != std::string::npos &&
+              m.link().headline.find("Starting the local test") != std::string::npos,
+          "mock: the start first gets both folders ready (on its own thread in the real model)");
+    Check(!m.check_local_test().ok && !m.check_local_test().checking, "not twice");
     m.advance(5.0);
     m.tick();
-    Check(m.local_test().active && !m.link().headline.empty(), "both games running");
+    Check(m.local_test().active && !m.local_test().starting && !m.link().headline.empty(), "both games running");
     m.advance(200.0);
     m.tick();
     Check(m.phase() == Phase::ready && !m.local_test().active && m.local_test().detail.find("were put back") != std::string::npos &&
@@ -170,6 +173,21 @@ void TestDebugGating() {
           "both games closed: the test settings are put back (the copied co-op files stay)");
     m.set_debug(false);
     Check(!m.check_local_test().ok, "Debug off again");
+
+    // The check runs on its own thread: "Checking the second folder..." (no warning, no Open Settings) until it ends.
+    Check(ui::LocalCheckTone(LocalTestCheck{true, "Ready."}) == ui::CheckTone::ready &&
+              ui::LocalCheckTone(LocalTestCheck{false, "Checking the second folder...", true}) == ui::CheckTone::checking &&
+              ui::LocalCheckTone(LocalTestCheck{false, "Choose the second MGSV game folder in Settings > Debug."}) == ui::CheckTone::needed,
+          "the check shows ready, checking or what is needed");
+    // Arrange windows only once both games run (not while the test starts, not after a safety stop).
+    LocalTestView view;
+    view.active = true;
+    view.starting = true;
+    Check(!ui::CanArrangeLocal(view), "no Arrange windows while the test starts");
+    view.starting = false;
+    Check(ui::CanArrangeLocal(view), "Arrange windows while both games run");
+    view.failed = true;
+    Check(!ui::CanArrangeLocal(view) && !ui::CanArrangeLocal(LocalTestView{}), "no Arrange windows after a stop or without a test");
 
     // The second folder's check is refreshed when the Local test tab or Settings > Debug comes into view.
     Check(ui::LocalCheckVisible(Page::play, ui::PlayTab::local_test, true) && ui::LocalCheckVisible(Page::settings, ui::PlayTab::host, true),
@@ -226,6 +244,23 @@ void TestScenes() {
         if (name.find("settings-debug") != std::string::npos || name.find("play-local") != std::string::npos) ++debug_scenes;
     }
     Check(debug_scenes >= 4, "Settings with Debug on and Play's Local test are rendered");
+    bool starting = false, checking = false;
+    for (int i = 0; i < ui::SceneCount(); ++i) {
+        const std::string name = ui::SceneName(static_cast<ui::Scene>(i));
+        if (name.find("ingame-local-starting") != std::string::npos) starting = true;
+        if (name.find("play-local-checking") != std::string::npos) checking = true;
+    }
+    Check(starting && checking, "the local test starting and the second folder being checked are rendered");
+    // The mock can show the check still running (the screenshot of it).
+    MockOptions o;
+    o.scenario = MockScenario::ready;
+    MockModel m(o);
+    m.set_debug(true);
+    m.set_local_test_folder(MockModel::kGuestDir);
+    m.set_mock_checking(true);
+    Check(!m.check_local_test().ok && m.check_local_test().checking, "mock: the check still runs");
+    m.set_mock_checking(false);
+    Check(m.check_local_test().ok && !m.check_local_test().checking, "mock: the check ended");
     Check(std::string(ui::SceneName(static_cast<ui::Scene>(ui::SceneCount()))).empty(), "out of range scene");
 }
 
