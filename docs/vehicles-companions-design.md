@@ -342,7 +342,8 @@ Conflict rules:
 
 All new traffic rides the existing world bundle (`W` magic, ops with `u8 op | u8 len | u16 epoch | body`; an unknown op
 is skipped by its length; `docs/world-sync-protocol.md` section 3) [O]. Used codes today: 1-28, 32-47 and the local
-112-120; 29-31 are reserved [O, `lua/coop/world_sync.lua:4-10`, `native/world_wire.cpp`]. New codes start at 48. Every
+112-120; 29-31 are reserved [O, `lua/coop/world_sync.lua:4-10`, `native/world_wire.cpp`] (at design time; built
+since and integrated on `dev/oct7-continue`: 48, 49, 51, 52, 56 and 57; 50 and 53-55 stay reserved). New codes start at 48. Every
 new op gets a schema row in `native/world_wire.cpp` and a Lua handler in a new module (a world Lua chunk may be at
 most 32000 bytes, `docs/STATUS.md:2017`) [O]. Both PCs must run the same version (`README.md` Troubleshooting) [O], so
 a field change is a new op, never a resized old one.
