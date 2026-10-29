@@ -450,24 +450,72 @@ struct StagedFile {
     bool committed = false;     // the new file is at `target`
 };
 
+// An antivirus or the search indexer may hold a freshly written file for a
+// moment: such a move or delete is retried for about two seconds.
+bool Transient(DWORD code) { return code == ERROR_SHARING_VIOLATION || code == ERROR_ACCESS_DENIED || code == ERROR_LOCK_VIOLATION; }
+constexpr int kBusyRetries = 20;
+constexpr DWORD kBusyRetryMs = 100;
+
+bool MoveRetrying(const std::wstring& from, const std::wstring& to, DWORD* code_out = nullptr) {
+    for (int attempt = 0;; ++attempt) {
+        if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
+        const DWORD code = GetLastError();
+        if (code_out) *code_out = code;
+        if (!Transient(code) || attempt >= kBusyRetries) return false;
+        Sleep(kBusyRetryMs);
+    }
+}
+
+bool DeleteRetrying(const std::wstring& path) {
+    for (int attempt = 0;; ++attempt) {
+        if (DeleteFileChecked(path) || !PathExists(path)) return true;
+        if (attempt >= kBusyRetries) return false;
+        Sleep(kBusyRetryMs);
+    }
+}
+
 }  // namespace
 
-bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, std::string& error, ApplyReport* report) {
-    if (report) *report = ApplyReport{};
+std::size_t CleanUpdateLeftovers(const InstancePaths& paths) {
+    std::size_t handled = 0;
+    for (const std::wstring& dir : {paths.game, paths.mod}) {
+        if (!IsDir(dir) || LinkBelow(dir, paths.game)) continue;
+        for (const DirEntry& e : ListDirectory(dir)) {
+            if (e.directory) continue;
+            const std::wstring path = JoinPath2(dir, e.name);
+            const std::string lower = LowerAscii(Utf8(e.name));
+            const bool is_new = EndsWith(lower, ".ddt-new"), is_old = EndsWith(lower, ".ddt-old");
+            if (!is_new && !is_old) continue;
+            const std::wstring target = path.substr(0, path.size() - 8);
+            if (is_new || PathExists(target)) {
+                if (DeleteFileChecked(path)) ++handled;
+            } else if (MoveFileExW(path.c_str(), target.c_str(), 0)) {
+                ++handled;   // the old file was moved aside and its new one never came: back it goes
+            }
+        }
+    }
+    return handled;
+}
+
+bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, std::string& error, ApplyReport* report,
+                    const std::function<bool(std::string& error)>& start_new) {
+    ApplyReport local;
+    ApplyReport& out = report ? *report : local;
+    out = ApplyReport{};
+    auto failed = [&](ApplyFailure why, const std::string& detail) {
+        out.failure = why;
+        error = detail;
+        return false;
+    };
     ZipReader reader;
     ZipLimits limits;
     limits.max_total_size = 512ull << 20;
     limits.max_entry_size = 256ull << 20;
     std::string zip_error;
-    if (!reader.OpenFile(zip_path, limits, zip_error)) {
-        error = "The downloaded file is damaged (" + zip_error + ")";
-        return false;
-    }
+    if (!reader.OpenFile(zip_path, limits, zip_error)) return failed(ApplyFailure::damaged, "The downloaded file is damaged (" + zip_error + ")");
     for (const auto& entry : reader.entries()) {
-        if (!IsSafeZipPath(entry.name)) {
-            error = "The downloaded file holds an unsafe path (" + entry.name + ")";
-            return false;
-        }
+        if (!IsSafeZipPath(entry.name))
+            return failed(ApplyFailure::damaged, "The downloaded file holds an unsafe path (" + entry.name + ")");
     }
     // Only a Diamond Dogs Together player package is installed: never the
     // source archive or any other zip.
@@ -478,10 +526,7 @@ bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, st
         ours = reader.Extract(*pkg, bytes, zip_error) &&
                json::Parse(std::string(bytes.begin(), bytes.end()), v) && v.is_object() && v.Str("product") == kOurProduct;
     }
-    if (!ours) {
-        error = "The downloaded file is not a Diamond Dogs Together package";
-        return false;
-    }
+    if (!ours) return failed(ApplyFailure::not_ours, "The downloaded file is not a Diamond Dogs Together package");
     // What the previous package shipped (its files[]), read before it is replaced.
     std::vector<std::pair<std::string, std::string>> previous;
     PackageRows(paths.package_json, previous);
@@ -496,8 +541,7 @@ bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, st
         const std::wstring target = TargetFor(paths.game, entry.name);
         if (LinkBelow(target, paths.game)) {
             discard_staged();
-            error = entry.name + " in the game folder is a link; that is not supported";
-            return false;
+            return failed(ApplyFailure::install_failed, entry.name + " in the game folder is a link; that is not supported");
         }
         if (entry.is_directory) {
             CreateDirectories(target);
@@ -507,8 +551,7 @@ bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, st
         std::vector<std::uint8_t> data;
         if (!reader.Extract(entry, data, zip_error)) {
             discard_staged();
-            error = "The downloaded file is damaged (" + zip_error + ")";
-            return false;
+            return failed(ApplyFailure::damaged, "The downloaded file is damaged (" + zip_error + ")");
         }
         StagedFile f;
         f.name = entry.name;
@@ -517,67 +560,95 @@ bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, st
         std::string write_error;
         if (!WriteWholeFile(f.staged, data, write_error)) {
             discard_staged();
-            error = "Could not write " + entry.name + " (" + write_error + ")";
-            return false;
+            return failed(ApplyFailure::install_failed, "Could not write " + entry.name + " (" + write_error + ")");
         }
         files.push_back(f);
+    }
+
+    // Files the previous package shipped under mgs-coop/ that this one does
+    // not, removed only while they are exactly as shipped.
+    std::vector<StagedFile> stale;
+    {
+        std::vector<std::string> now;
+        for (const auto& entry : reader.entries()) now.push_back(LowerAscii(entry.name));
+        for (const auto& row : previous) {
+            const std::string lower = LowerAscii(row.first);
+            if (!StartsWith(lower, "mgs-coop/") || !IsSafeZipPath(row.first) || lower == "mgs-coop/package.json") continue;
+            if (std::find(now.begin(), now.end(), lower) != now.end()) continue;
+            const std::wstring path = TargetFor(paths.game, row.first);
+            std::string hex;
+            if (!IsHexText(row.second, 64) || !IsFile(path) || LinkBelow(path, paths.game) || !Sha256FileHex(path, hex) || hex != row.second)
+                continue;
+            StagedFile s;
+            s.name = row.first;
+            s.target = path;
+            s.backup = path + L".ddt-old";
+            stale.push_back(s);
+        }
     }
 
     // 2. Commit: move each old file aside and the new one in; undo all on any failure.
     const std::wstring current_exe = JoinPath2(paths.game, kLauncherExe);
     const std::wstring old_exe = current_exe + L".old";
+    // Moves every old file back (the running exe from .old too); false when one stays out.
     auto roll_back = [&]() {
+        bool all = true;
+        for (auto it = stale.rbegin(); it != stale.rend(); ++it) {
+            if (it->moved_aside && !MoveRetrying(it->backup, it->target)) all = false;
+            it->moved_aside = false;
+        }
         for (auto it = files.rbegin(); it != files.rend(); ++it) {
-            if (it->committed) DeleteFileW(it->target.c_str());
-            if (it->moved_aside) MoveFileExW(it->backup.c_str(), it->target.c_str(), MOVEFILE_REPLACE_EXISTING);
+            if (it->moved_aside) {
+                if (!MoveRetrying(it->backup, it->target)) all = false;   // replaces the new file
+            } else if (it->committed && !DeleteRetrying(it->target)) {
+                all = false;
+            }
             it->committed = it->moved_aside = false;
         }
         discard_staged();
+        return all;
     };
-    if (PathExists(old_exe) && !DeleteFileChecked(old_exe)) {
+    if (PathExists(old_exe) && !DeleteRetrying(old_exe)) {
         discard_staged();
-        error = "DiamondDogsTogether.exe.old from an earlier update is still in use. Close every Diamond Dogs Together window, then update again";
-        return false;
+        return failed(ApplyFailure::old_exe_in_use, "DiamondDogsTogether.exe.old from an earlier update is still in use");
     }
     for (StagedFile& f : files) {
         f.backup = IEquals(f.target, current_exe) ? old_exe : f.target + L".ddt-old";
+        DWORD code = 0;
         if (PathExists(f.target)) {
             if (!IEquals(f.backup, old_exe) && PathExists(f.backup)) DeleteFileChecked(f.backup);
-            if (!MoveFileExW(f.target.c_str(), f.backup.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-                const DWORD code = GetLastError();
-                roll_back();
-                error = "Could not replace " + f.name + " (" + WinError(code) + ")";
-                return false;
+            if (!MoveRetrying(f.target, f.backup, &code)) {
+                out.restored = roll_back();
+                return failed(ApplyFailure::install_failed, "Could not replace " + f.name + " (" + WinError(code) + ")");
             }
             f.moved_aside = true;
         }
-        if (!MoveFileExW(f.staged.c_str(), f.target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-            const DWORD code = GetLastError();
-            roll_back();
-            error = "Could not put " + f.name + " in place (" + WinError(code) + ")";
-            return false;
+        if (!MoveRetrying(f.staged, f.target, &code)) {
+            out.restored = roll_back();
+            return failed(ApplyFailure::install_failed, "Could not put " + f.name + " in place (" + WinError(code) + ")");
         }
         f.committed = true;
     }
-    // The old files are no longer needed; the running exe's .old goes when the new exe starts.
+    for (StagedFile& s : stale) {
+        if (PathExists(s.backup)) DeleteFileChecked(s.backup);
+        s.moved_aside = MoveRetrying(s.target, s.backup);   // one that stays is only left over, never a failure
+    }
+    out.files = files.size();
+
+    // 3. The restart into the new launcher, while the old files can still come back.
+    if (start_new) {
+        std::string start_error;
+        if (!start_new(start_error)) {
+            out.restored = roll_back();
+            return failed(ApplyFailure::restart_failed, start_error);
+        }
+    }
+
+    // 4. The old files are no longer needed; the running exe's .old goes when the new exe starts.
     for (const StagedFile& f : files)
         if (f.moved_aside && !IEquals(f.backup, old_exe)) DeleteFileChecked(f.backup);
-
-    // 3. Files the previous package shipped under mgs-coop/ that this one does
-    // not, deleted only while they are exactly as shipped.
-    std::vector<std::string> now;
-    for (const auto& entry : reader.entries()) now.push_back(LowerAscii(entry.name));
-    for (const auto& row : previous) {
-        const std::string lower = LowerAscii(row.first);
-        if (!StartsWith(lower, "mgs-coop/") || !IsSafeZipPath(row.first) || lower == "mgs-coop/package.json") continue;
-        if (std::find(now.begin(), now.end(), lower) != now.end()) continue;
-        const std::wstring path = TargetFor(paths.game, row.first);
-        std::string hex;
-        if (!IsHexText(row.second, 64) || !IsFile(path) || LinkBelow(path, paths.game) || !Sha256FileHex(path, hex) || hex != row.second)
-            continue;
-        if (DeleteFileChecked(path) && report) report->removed.push_back(row.first);
-    }
-    if (report) report->files = files.size();
+    for (const StagedFile& s : stale)
+        if (s.moved_aside && DeleteFileChecked(s.backup)) out.removed.push_back(s.name);
     DeleteFileChecked(zip_path);
     return true;
 }

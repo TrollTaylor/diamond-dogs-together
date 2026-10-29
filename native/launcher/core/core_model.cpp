@@ -227,6 +227,8 @@ public:
             old_exe_gone = CleanOldExecutable(paths_.game);
         }
         if (start_.after_update) updated_to_ = CoreVersion();
+        // An update whose process was ended half way (*.ddt-new / *.ddt-old).
+        const std::size_t half_done = IsFile(paths_.exe) ? CleanUpdateLeftovers(paths_) : 0;
         // 0.14.3 and older shipped mgs-coop\source.zip; the source is a release asset now.
         const LeftoverSource leftover = RemoveLeftoverSourceZip(paths_);
         update_info_.current_version = CoreVersion();
@@ -237,6 +239,7 @@ public:
             if (start_.after_update)
                 Log("update=finished; from_pid=" + std::to_string(start_.after_update) + "; version=" + CoreBuildId() +
                     "; old_exe=" + (old_exe_gone ? "removed" : "kept"));
+            if (half_done) Log("update=leftovers_cleaned; count=" + std::to_string(half_done));
             if (leftover == LeftoverSource::removed) Log("update=source_zip_removed");
         }
         if (phase_ != Phase::not_in_game_folder && !no_launch_) {
@@ -662,28 +665,29 @@ UpdateInfo update_info() const override {
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_.status = UpdateStatus::applying;
             }
+            // The restart is the last step of the install: if the new exe does
+            // not start, ApplyUpdateZip puts the running version back.
             ApplyReport report;
-            if (!ApplyUpdateZip(paths, dest_zip, error, &report)) {
-                log("update=apply_failed; error=" + error);
+            const bool installed = ApplyUpdateZip(paths, dest_zip, error, &report, [&](std::string& start_error) {
+                log("update=applied; version=" + target.latest_version + "; files=" + std::to_string(report.files));
+                return RelaunchSelf(paths, relaunch_args, start_error);
+            });
+            if (!installed) {
                 DeleteFileChecked(dest_zip);
-                fail("The update could not be installed (" + error + "). Your current version was kept.");
+                while (!error.empty() && (error.back() == '.' || error.back() == ' ')) error.pop_back();
+                const std::string restored = report.restored ? "yes" : "no";
+                if (report.failure == ApplyFailure::restart_failed)
+                    log("update=restart_failed; error=" + error + "; restored=" + restored);
+                else
+                    log("update=apply_failed; reason=" + ApplyFailureName(report.failure) + "; error=" + error + "; restored=" + restored);
+                // The reason stays in the log (Collect logs); the player gets one plain sentence.
+                fail(ApplyFailureSentence(report));
                 return;
             }
             std::string removed;
             for (const std::string& r : report.removed) removed += (removed.empty() ? "" : ",") + r;
-            log("update=applied; version=" + target.latest_version + "; files=" + std::to_string(report.files) +
-                (removed.empty() ? std::string() : "; removed=" + removed));
-            if (!RelaunchSelf(paths, relaunch_args, error)) {
-                while (!error.empty() && (error.back() == '.' || error.back() == ' ')) error.pop_back();
-                log("update=restart_failed; error=" + error);
-                // The reason stays in the log (Collect logs); the player gets what to do.
-                fail("The update is installed, but the new version did not start. Close this window, then start Diamond Dogs "
-                     "Together again. If it still does not start, extract the latest zip from the release page into the game "
-                     "folder again.");
-                return;
-            }
             // The new exe runs and waits for this window: the shell closes it now.
-            log("update=handed_over");
+            log("update=handed_over" + (removed.empty() ? std::string() : "; removed=" + removed));
             std::lock_guard<std::mutex> lock(update_mutex_);
             update_info_.status = UpdateStatus::ready_to_restart;
         });
@@ -725,6 +729,38 @@ private:
         return "unknown";
     }
     void Log(const std::string& text) { LauncherLog(*env_, paths_, text); }
+
+    static std::string ApplyFailureName(ApplyFailure f) {
+        switch (f) {
+        case ApplyFailure::none: return "none";
+        case ApplyFailure::damaged: return "damaged";
+        case ApplyFailure::not_ours: return "not_ours";
+        case ApplyFailure::old_exe_in_use: return "old_exe_in_use";
+        case ApplyFailure::install_failed: return "install_failed";
+        case ApplyFailure::restart_failed: return "restart_failed";
+        }
+        return "unknown";
+    }
+    // What the player reads when an update did not go through (the detail is in launcher.log).
+    static std::string ApplyFailureSentence(const ApplyReport& r) {
+        switch (r.failure) {
+        case ApplyFailure::damaged: return "The download was damaged. Try the update again.";
+        case ApplyFailure::not_ours: return "The download is not a Diamond Dogs Together update. Try again later.";
+        case ApplyFailure::old_exe_in_use:
+            return "A file from the last update is still in use. Close every Diamond Dogs Together window, then update again.";
+        case ApplyFailure::restart_failed:
+            if (r.restored)
+                return "The new version would not start, so your current version was kept. Try again later, or get the latest zip "
+                       "from the release page.";
+            return "The update is installed, but the new version did not start. Close this window, then start Diamond Dogs Together "
+                   "again. If it still does not start, extract the latest zip from the release page into the game folder again.";
+        case ApplyFailure::none:
+        case ApplyFailure::install_failed: break;
+        }
+        if (r.restored) return "The update could not be installed, so your current version was kept. Try again in a minute.";
+        return "The update could not be installed completely. Extract the latest zip from the release page into the game folder, "
+               "then start Diamond Dogs Together again.";
+    }
 
     // Why the update cannot install now ("" = it can): never while a game or a
     // co-op session runs from this folder, or while the setup runs.

@@ -64,18 +64,42 @@ bool DownloadUpdate(const UpdateInfo& info, const std::wstring& dest_zip,
 //    product mgs-coop-local-package) with safe paths only;
 //  - every file is first written next to its target (<target>.ddt-new); then
 //    each target is moved aside (the running exe to DiamondDogsTogether.exe.old,
-//    others to <target>.ddt-old) and the new file moved in. Any failure moves
-//    everything back, so the folder keeps the old version complete;
+//    others to <target>.ddt-old) and the new file moved in. A move that another
+//    program (an antivirus, the indexer) blocks for a moment is retried for
+//    about two seconds. Any failure moves everything back, so the folder keeps
+//    the old version complete;
 //  - files the previous package.json listed under mgs-coop/ that the new
 //    package no longer has (for example mgs-coop/source.zip, shipped up to
-//    0.14.3) are deleted, but only while their SHA-256 still matches that
-//    listing: nothing that is not ours, and nothing the player changed.
-// The zip is deleted afterwards. `report` (optional) lists what was removed.
+//    0.14.3) are removed, but only while their SHA-256 still matches that
+//    listing: nothing that is not ours, and nothing the player changed;
+//  - start_new (optional) runs once every new file is in place and before the
+//    old ones are deleted: the restart into the new launcher. When it returns
+//    false the update is undone as well (the running exe moves back from .old),
+//    so the folder keeps the version that runs.
+// The zip is deleted after a success. `report` (optional) says what was
+// removed, or why it failed and whether every old file is back in place.
+enum class ApplyFailure {
+    none,
+    damaged,          // not a readable zip, or an unsafe path in it
+    not_ours,         // not a Diamond Dogs Together player package
+    old_exe_in_use,   // DiamondDogsTogether.exe.old of an earlier update cannot be deleted
+    install_failed,   // a file could not be written or replaced
+    restart_failed,   // start_new returned false
+};
 struct ApplyReport {
     std::size_t files = 0;
     std::vector<std::string> removed;   // stale package files deleted (zip-style names)
+    ApplyFailure failure = ApplyFailure::none;
+    bool restored = true;               // after a failure: every old file is back in place
 };
-bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, std::string& error, ApplyReport* report = nullptr);
+bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, std::string& error, ApplyReport* report = nullptr,
+                    const std::function<bool(std::string& error)>& start_new = {});
+
+// What an update left behind when its process was ended half way, in the game
+// folder and in mgs-coop\ (where the package's files are): <file>.ddt-new is
+// deleted; <file>.ddt-old is deleted when <file> exists, else moved back to
+// <file>. Returns how many leftovers were handled.
+std::size_t CleanUpdateLeftovers(const InstancePaths& paths);
 
 // ---- Restart after an update ---------------------------------------------------------
 // The launcher that installed an update (A) hands its window over to the new

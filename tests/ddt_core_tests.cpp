@@ -2062,6 +2062,189 @@ void TestApplyUpdate() {
     RemoveTree(game);
 }
 
+// The restart is part of the install: when the new exe does not start, the
+// running version comes back complete; a move another program blocks for a
+// moment is retried; a rollback that cannot finish says so.
+void TestApplyRollback() {
+    const std::wstring game = g_root + L"\\apply-rollback";
+    RemoveTree(game);
+    const InstancePaths paths = GetInstancePaths(game);
+    const std::wstring exe = game + L"\\DiamondDogsTogether.exe", old_exe = exe + L".old", zip = paths.mod + L"\\update.zip";
+    const std::wstring readme = paths.mod + L"\\README.txt", source = paths.mod + L"\\source.zip";
+    auto old_install = [&]() {
+        RemoveTree(game);
+        WriteText(exe, "old exe");
+        WriteText(paths.loader, "old loader");
+        WriteText(readme, "old readme");
+        WriteText(source, "old source bundle");
+        WriteOldPackage(paths, {{"DiamondDogsTogether.exe", "old exe"}, {"dinput8.dll", "old loader"}, {"mgs-coop/README.txt", "old readme"},
+                                {"mgs-coop/source.zip", "old source bundle"}});
+        WriteBytes(zip, PackageZip({{"DiamondDogsTogether.exe", "new exe"}, {"dinput8.dll", "new loader"}, {"mgs-coop/README.txt", "new readme"}}));
+    };
+    std::string err;
+
+    // 1. The new exe does not start: every file is the old one again, the
+    // running exe included (moved back from .old), and the stale source.zip too.
+    old_install();
+    const std::string package_before = ReadText(paths.package_json);
+    bool saw_new = false;
+    ApplyReport report;
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report, [&](std::string& e) {
+        saw_new = ReadText(exe) == "new exe" && ReadText(old_exe) == "old exe" && ReadText(paths.loader) == "new loader" && !PathExists(source);
+        e = "it closed right after it started (exit code 7)";
+        return false;
+    }));
+    CHECK(saw_new);   // the restart ran with the new files in place
+    CHECK(report.failure == ApplyFailure::restart_failed && report.restored && Has(err, "exit code 7"));
+    CHECK_EQ(ReadText(exe), std::string("old exe"));
+    CHECK(!PathExists(old_exe));
+    CHECK_EQ(ReadText(paths.loader), std::string("old loader"));
+    CHECK_EQ(ReadText(readme), std::string("old readme"));
+    CHECK_EQ(ReadText(source), std::string("old source bundle"));
+    CHECK_EQ(ReadText(paths.package_json), package_before);
+    CHECK(report.removed.empty());
+    CHECK(NamesWith(game, L".ddt-").empty() && NamesWith(paths.mod, L".ddt-").empty());
+
+    // 2. The restart works: only then are the old files and the stale source.zip deleted.
+    old_install();
+    bool backups_kept = false;
+    report = ApplyReport{};
+    CHECK(ApplyUpdateZip(paths, zip, err, &report, [&](std::string&) {
+        backups_kept = IsFile(old_exe) && !NamesWith(paths.mod, L".ddt-old").empty();
+        return true;
+    }));
+    CHECK(backups_kept && report.failure == ApplyFailure::none);
+    CHECK(report.removed.size() == 1 && report.removed[0] == "mgs-coop/source.zip" && !PathExists(source));
+    CHECK_EQ(ReadText(exe), std::string("new exe"));
+    CHECK(NamesWith(game, L".ddt-").empty() && NamesWith(paths.mod, L".ddt-").empty() && !PathExists(zip));
+
+    // 3. Another program holds README.txt for a moment while the update installs: retried, installed.
+    old_install();
+    HANDLE held = CreateFileW(readme.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    CHECK(held != INVALID_HANDLE_VALUE);
+    std::thread release_later([&]() {
+        Sleep(400);
+        CloseHandle(held);
+    });
+    report = ApplyReport{};
+    const bool installed = ApplyUpdateZip(paths, zip, err, &report);
+    release_later.join();
+    CHECK(installed && report.failure == ApplyFailure::none);
+    if (!installed) std::fprintf(stderr, "apply with a briefly held file: %s\n", err.c_str());
+    CHECK_EQ(ReadText(readme), std::string("new readme"));
+
+    // 4. The rollback cannot finish (the new README.txt stays held): reported, never "kept".
+    old_install();
+    HANDLE locked = INVALID_HANDLE_VALUE;
+    report = ApplyReport{};
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report, [&](std::string& e) {
+        locked = CreateFileW(readme.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        e = "it closed right after it started (exit code 7)";
+        return false;
+    }));
+    CHECK(locked != INVALID_HANDLE_VALUE);
+    if (locked != INVALID_HANDLE_VALUE) CloseHandle(locked);
+    CHECK(report.failure == ApplyFailure::restart_failed && !report.restored);
+    CHECK_EQ(ReadText(exe), std::string("old exe"));   // the other files did come back
+    CHECK_EQ(ReadText(paths.loader), std::string("old loader"));
+
+    // 5. Why it failed, for a plain sentence: a damaged download, another zip.
+    old_install();
+    WriteText(zip, "not a zip at all");
+    report = ApplyReport{};
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report) && report.failure == ApplyFailure::damaged && report.restored);
+    ZipWriter other;
+    const std::string body = "x";
+    other.AddFile("DiamondDogsTogether.exe", body.data(), body.size(), err);
+    std::vector<std::uint8_t> other_bytes;
+    other.Finish(other_bytes, err);
+    WriteBytes(zip, other_bytes);
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report) && report.failure == ApplyFailure::not_ours);
+    CHECK_EQ(ReadText(exe), std::string("old exe"));
+    RemoveTree(game);
+}
+
+// An update whose process was ended half way: tidied when the window opens.
+void TestUpdateLeftovers() {
+    Fixture f(L"update-leftovers");
+    const std::wstring readme = f.paths.mod + L"\\README.txt";
+    auto leave = [&]() {
+        WriteText(f.paths.loader + L".ddt-new", "new loader, never moved in");
+        WriteText(f.paths.loader + L".ddt-old", "old loader, never deleted");
+        WriteText(readme + L".ddt-old", "old readme, moved aside");   // README.txt itself is missing
+        WriteText(f.paths.mod + L"\\notes.txt", "the player's own file");
+    };
+    leave();
+    CHECK(CleanUpdateLeftovers(f.paths) == 3);
+    CHECK_EQ(ReadText(f.paths.loader), std::string("FAKE-LOADER"));
+    CHECK_EQ(ReadText(readme), std::string("old readme, moved aside"));
+    CHECK(NamesWith(f.game, L".ddt-").empty() && NamesWith(f.paths.mod, L".ddt-").empty());
+    CHECK(IsFile(f.paths.mod + L"\\notes.txt"));
+    CHECK(CleanUpdateLeftovers(f.paths) == 0);
+    // The window does it when it opens.
+    DeleteFileChecked(readme);
+    leave();
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(NamesWith(f.game, L".ddt-").empty() && NamesWith(f.paths.mod, L".ddt-").empty());
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=leftovers_cleaned; count=3"));
+    }
+}
+
+// The player reads one plain sentence; the detail goes to launcher.log.
+void TestUpdatePlainErrors() {
+    Fixture f(L"model-update-errors");
+    UpdateHooks saved = GetUpdateHooks();
+    std::string payload = "not a zip at all";
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>*, std::string&) {
+        WriteText(dest, payload);
+        return true;
+    };
+    GetUpdateHooks().relaunch = [](const std::wstring&, const std::vector<std::wstring>&, std::string&) { return true; };
+    WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+    auto status_is = [](LauncherModel& m, UpdateStatus s) { return m.update_info().status == s; };
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error); }));
+        const std::string error = m->update_info().error;
+        CHECK_EQ(error, std::string("The download was damaged. Try the update again."));
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=apply_failed; reason=damaged; error="));
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+    }
+    // A file that stays locked: one sentence, no file names, no Windows error text.
+    {
+        WriteBytes(f.paths.mod + L"\\README.txt", std::vector<std::uint8_t>{'o', 'l', 'd'});
+        ZipWriter zw;
+        std::string err;
+        const std::string pkg = "{\"product\":\"mgs-coop-local-package\",\"version\":\"9.9.9\"}", exe = "NEW", readme = "new readme";
+        zw.AddFile("DiamondDogsTogether.exe", exe.data(), exe.size(), err);
+        zw.AddFile("mgs-coop/README.txt", readme.data(), readme.size(), err);
+        zw.AddFile("mgs-coop/package.json", pkg.data(), pkg.size(), err);
+        std::vector<std::uint8_t> bytes;
+        zw.Finish(bytes, err);
+        payload.assign(bytes.begin(), bytes.end());
+        HANDLE held = CreateFileW((f.paths.mod + L"\\README.txt").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error); }));
+        if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+        const std::string error = m->update_info().error;
+        CHECK_EQ(error, std::string("The update could not be installed, so your current version was kept. Try again in a minute."));
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=apply_failed; reason=install_failed; error=Could not replace mgs-coop/README.txt"));
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+    }
+    GetUpdateHooks() = saved;
+}
+
 // A source bundle as tools/package.ps1 writes it: the files plus source-files.json.
 std::vector<std::uint8_t> SourceBundle(bool tamper) {
     const std::vector<std::pair<std::string, std::string>> files = {
@@ -2329,19 +2512,25 @@ void TestUpdateThroughModel() {
         const std::string log = ReadText(f.paths.launcher_log);
         CHECK(Has(log, "update=applied; version=v9.9.9") && Has(log, "update=handed_over"));
     }
-    // The new exe does not start: the old window stays, and says what to do.
+    // The new exe does not start: the old window stays, the folder goes back to
+    // the version that runs (exe included), and the player is told so plainly.
     {
         WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
         DeleteFileChecked(f.game + L"\\DiamondDogsTogether.exe.old");
+        const std::string package_before = ReadText(f.paths.package_json);
         relaunch_ok = false;
         auto m = MakeRealModelWithEnv(f.game, f.env);
         CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
         m->start_update();
         CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error); }));
         const std::string error = m->update_info().error;
-        CHECK(Has(error, "installed") && Has(error, "did not start") && Has(error, "start Diamond Dogs Together again") &&
-              Has(error, "release page") && !Has(error, "error 5"));   // plain words for the player
-        CHECK(Has(ReadText(f.paths.launcher_log), "update=restart_failed; error=Windows refused to start it (error 5)"));   // the reason, for Collect logs
+        CHECK(Has(error, "would not start") && Has(error, "current version was kept") && Has(error, "release page") &&
+              !Has(error, "error 5"));   // plain words for the player
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+        CHECK(!PathExists(f.game + L"\\DiamondDogsTogether.exe.old"));
+        CHECK_EQ(ReadText(f.paths.package_json), package_before);
+        // The reason, for Collect logs.
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=restart_failed; error=Windows refused to start it (error 5); restored=yes"));
         relaunch_ok = true;
     }
     // The developer test feed: a found update installs at once, and the new exe keeps the feed.
@@ -2591,6 +2780,9 @@ int main() {
     TestUpdater();
     TestFeedSkipsSource();
     TestApplyUpdate();
+    TestApplyRollback();
+    TestUpdateLeftovers();
+    TestUpdatePlainErrors();
     TestLeftoverSourceZip();
     TestTakeOverOrder();
     TestRestartProcesses();
