@@ -1,9 +1,7 @@
 -- Original host-led D-Dog mirror; ride yield clears its typed held target.
--- M2 (docs/vehicles-companions-design.md 6.2, 6.12; lab key companion_host_owned, W.companion.on()): the host
--- streams its dog in COMPANION_POSE (57, a datagram: 10 Hz while the dog moves, 2 Hz idle) instead of BUDDY_STATE;
--- the guest holds its copy of the host's dog there (LuaAiStayAndSnarl every 100 ms, SetWarpPosition beyond 15 m)
--- and answers COMPANION_ACK (49, 1 Hz). That dog is never released to the guest's AI: without a fresh pose it is
--- held at the last one (or where it stands); a host without a dog is world_companion.lua's reconcile (DeleteBuddy).
+-- M2 (design 6.2, 6.12; lab key companion_host_owned): the host streams its dog in COMPANION_POSE (57, 10 Hz moving,
+-- 2 Hz idle); the guest holds its copy there every 100 ms and answers COMPANION_ACK (49, 1 Hz). That dog is never
+-- released to the guest's AI; a host without a dog is world_companion.lua's reconcile (DeleteBuddy).
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
@@ -396,8 +394,8 @@ s.leg, s.track, s.idleTrackAt = label, nil, nil
 W.log("event=companion_mark;role=" .. (W.host and "host" or "guest") .. ";leg=" .. label)
 return true
 end
--- E3 / E19 watch (guest, lab): the nearest soldier to the held dog (8 of the roster per hold, the ones within
--- 30 m re-read every second), seconds with one within 3 m / 5 m, and the guest's own buddy vars on change.
+-- E3 / E19 watch (guest, lab): the nearest soldier to the held dog (8 of the roster per hold, those within 30 m
+-- re-read every second), seconds with one within 3 m / 5 m, the buddy vars on change.
 local function soldier(id)
 local ok, p = pcall(W.api.send, id, {id = "GetPosition"})
 if ok then return vector(p) end
@@ -498,14 +496,10 @@ if not s.protectOn or s.protected == s.id or not s.id then return s.protected ~=
 s.protected = s.id
 return send(true)
 end
--- Hold modes. The dog command LuaAiStayAndSnarl (dispatcher 0xC7D220 -> vt+0x98 -> 0xC7DA10) sets the persistent
--- mode: 1/2 (look given, useMarker false: the retail s10040 "stop AI"; the dog never moved toward the target in run
--- 8c0b425f, the Dog AI 0xC7E650 skips its update for them), 3/4 (useMarker true or no look), +1 with dash; warp=1
--- places the dog at the position facing the look point. warp (default since run ffb2d7ab: 0.9 m walking, 2.4 m at
--- 7.9 m/s; the stop-AI dog cannot act, so it is also the engagement hold of design 6.12): modes 1/2 placed by warp=1
--- whenever the target moved 5 cm, the dog is 30 cm off it, or 1 s passed; marker: modes 3/4 (the dog walks there itself;
--- it lagged 7-15 m while the host moved), re-sent on a 0.75 m target change or every 1 s; stop: modes 1/2, no placement.
--- Lab lever companion_lab hold <warp|marker|stop>.
+-- Hold modes (design 3.2, 8.2; lab lever companion_lab hold <warp|marker|stop>). LuaAiStayAndSnarl sets mode 1/2 (look,
+-- useMarker false: the s10040 stop AI, skipped by the Dog AI) or 3/4 (useMarker), +1 with dash; warp=1 places the dog.
+-- warp (default): 1/2 placed whenever the target moved 5 cm, the dog is 30 cm off it, or 1 s passed; marker: 3/4, the
+-- dog walks itself (lagged 7-15 m), re-sent on a 0.75 m change or every 1 s; stop: 1/2, no placement.
 B.HOLD, B.holdMode = {marker = true, stop = true, warp = true}, "warp"
 function B.setHold(mode)
 if not B.HOLD[mode] then return false end
@@ -552,8 +546,7 @@ if fresh and (distance > 15 or (stuck and now - s.farSince >= 2000)) then
  a.send(id, {id = "SetWarpPosition", pos = a.buddyVector(t.x, t.y, t.z)})
  s.warps, s.farSince = (s.warps or 0) + 1, nil
 end
--- Warp mode: a placed dog that drifts over 1 m off an unchanged target for 200 ms (runs 4cd88ea2, d937191f: 4-6 m
--- after the run leg; the same command is not re-applied) gets the stock warp, at most every 500 ms.
+-- Warp mode: a dog over 1 m off an unchanged target for 200 ms (4-6 m after a run leg) gets the stock warp (500 ms).
 local p0 = s.sentHold
 local drift = mode == "warp" and p0 and distance > 1 and (t.x - p0.x) ^ 2 + (t.y - p0.y) ^ 2 + (t.z - p0.z) ^ 2 < 0.0025
 if drift then s.driftSince = s.driftSince or now else s.driftSince = nil end
