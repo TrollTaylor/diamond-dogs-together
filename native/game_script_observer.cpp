@@ -1454,6 +1454,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.log = Log;
     world.placed_census = labc.partner_placed_census && labc.mode == mgscoop::LabMode::lab;
     world.vehicle_gone = labc.world_vehicle_gone;
+    world.companion = labc.companion_host_owned;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -4013,9 +4014,12 @@ bool SelectBuddyPoseReceipt(const char* buffer,std::size_t size,mgscoop::script_
     b::Scope scope{};scope.P=player_read?player.P:0;scope.mission=v[0];scope.epoch=static_cast<std::uint16_t>(v[1]);
     scope.thread=GetCurrentThreadId();scope.generation=worker_loading_generation;scope.refreshed_ms=GetTickCount64();
     scope.paired=status.configured && status.paired && status.link_up && status.effective>=3 && status.epoch==scope.epoch;
-    scope.field_ready=player_read && OnRuntimeThread() && !mission_terminating && ReadMission(mission) && mission==v[0] &&
-        partner_mission==v[0] && pp::Realized(player,0) && pp::Realized(player,1) && player.ids[0]==0 && player.ids[1]==1 &&
-        player.parts[0]==3 && player.parts[1]==3;
+    // M2 (docs/vehicles-companions-design.md 6.2): this copy's own body and the mission, never body 1 (the dog
+    // read touches no partner state), so a partner hidden in the heli or on a mount still lets both roles read.
+    b::Field field{};field.player_read=player_read;field.runtime_thread=OnRuntimeThread();field.terminating=mission_terminating;
+    field.mission_read=ReadMission(mission);field.mission=mission;field.requested=v[0];field.partner_mission=partner_mission;
+    if(player_read){field.realized0=pp::Realized(player,0);field.id0=player.ids[0];field.parts0=player.parts[0];}
+    scope.field_ready=b::FieldReady(field);
     // B.guard calls the registered DemoDaemon predicate on this same owner
     // before emitting a receipt. The existing native HUD bit adds a veto.
     scope.demo_playing=(mgscoop::debug_menu::LuaHud()&1u)!=0;

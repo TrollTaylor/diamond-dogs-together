@@ -22,19 +22,59 @@ do
             a.setDisable = fn(TppEnemy, "TppEnemy", "SetDisable", true)
         end
 
-        -- Attribution of an attacker id. local: the local player, its horse or
-        -- walker gear; buddy: D-Dog/Quiet.
+        -- Attribution of an attacker id (id-aware since M1, docs/vehicles-companions-design.md
+        -- 6.12). local: the local player and the horse or walker it rides or pilots
+        -- (vars.playerVehicleGameObjectId), and without the companion module (both copies'
+        -- companion_host_owned, C.live) this copy's own horse or walker, as before M1 (review
+        -- 2026-10-29: world_vehicle.lua counts only local; a walker pilot setting that var is
+        -- unverified); mirror: a companion instance that stands for the partner's (the
+        -- capacity-two index 1 horse or walker; with the module every companion on the guest's
+        -- copy, the host's); buddy: this copy's own companion; other. A mirror's outcome is
+        -- logged (W.mirrorEngaged) and never forwarded.
+        local function index0(name, fallback)
+            local f = W.api.buddyId
+            local ok, id = false, nil
+            if type(f) == "function" then ok, id = pcall(f, name, 0) end
+            return ok and type(id) == "number" and id or fallback
+        end
+        local function companionKind(att)
+            local a = W.api
+            if a.isHorse and a.isHorse(att) == true then return "horse", att ~= index0("TppHorse2", 6656) end
+            if a.isWalker and a.isWalker(att) == true then return "walker", att ~= index0("TppWalkerGear2", 22528) end
+            if a.typeIndex and (a.dog or a.quiet) then
+                local t = a.typeIndex(att)
+                if t ~= nil and t == a.dog then return "dog", false end
+                if t ~= nil and t == a.quiet then return "quiet", false end
+            end
+        end
+        W.companionKind = companionKind
+        local function companionLive()
+            local C = W.companion
+            if type(C) == "table" and type(C.live) == "function" then return C.live() == true end
+            return W.companionOn == true
+        end
         function W.attClass(att)
             local a = W.api
             if type(att) ~= "number" or att == a.null or not a.isLocal then return "none" end
-            if a.isLocal(att) == true or (a.isHorse and a.isHorse(att) == true) or (a.isWalker and a.isWalker(att) == true) then
-                return "local"
-            end
-            if a.typeIndex and (a.dog or a.quiet) then
-                local t = a.typeIndex(att)
-                if t ~= nil and (t == a.dog or t == a.quiet) then return "buddy" end
-            end
-            return "other"
+            if a.isLocal(att) == true then return "local" end
+            local kind, partnerIndex = companionKind(att)
+            if not kind then return "other" end
+            local mount = kind == "horse" or kind == "walker"
+            if mount and W.get(vars, "playerVehicleGameObjectId") == att then return "local" end
+            if partnerIndex then return "mirror" end
+            local live = companionLive()
+            if mount and not live then return "local" end
+            if live and not W.host then return "mirror" end
+            return "buddy"
+        end
+        -- event=mirror_engaged (counted, never forwarded): kind, message, entity handle.
+        W.mirrorCount = 0
+        W.startHooks[#W.startHooks + 1] = function() W.mirrorCount = 0 end
+        function W.mirrorEngaged(kind, h, att)
+            W.mirrorCount = W.mirrorCount + 1
+            if W.mirrorCount > 200 then return end
+            local k = companionKind(att) or "unknown"
+            W.log(fmt("event=mirror_engaged;kind=%s;msg=%s;ent=%.0f;n=%d", k, tostring(kind), h or 0, W.mirrorCount))
         end
         function E.keep(q)
             local held = E.s.held

@@ -1,0 +1,75 @@
+# M1 proof, run B (the Quiet lock; docs/vehicles-companions-design.md section 9 M1, F1.5, R5) together with E20 (the
+# Mother Base cell Quiet). The host's save deploys Quiet (afgh-quiet); the guest plays Quiet (lab.json
+# offline.characters), so the host's buddy Quiet is locked before its sortie seeds; both land on the Mother Base
+# command deck and then go to the Quiet cell on the Medical platform; companion_host_owned=1. The late-join case
+# (Quiet already out when the guest joins: delete_buddy) is the play rehearsal companion-host-owned-quiet-play.txt.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned-quiet.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-ledge
+labsetting companion_host_owned=1
+labsetting nametag=1
+# The toasts (NOTE 13) need the HUD (lab default off).
+labsetting coop_hud=compact
+boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny
+# The lock's toast (NOTE 13/3) shows once per mission, at the host's first world tick in it.
+host capture m1-quiet-toast-early
+waitlog host 'world_lua=event=companion; role=host; step=character; guest_code=6; guest_char=quiet;' 60
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=disable_type; guest_char=quiet;' 60
+# The boot's helicopter has the host's Quiet out, so she is sent away there first (delete_buddy, run b993af09); a
+# Quiet only in the save is rewritten at the sortie (sortie_rewrite, fixture); the sortie copy either way (start_rewrite).
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=(sortie_rewrite|delete_buddy); guest_char=quiet;' 60
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=none;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=none; source=seed;' 90
+# Mother Base loads no buddy block without a dog or Quiet (buddy_block_inactive, kunknown): vars_type=0 on both.
+host run buddy_status
+host expect vars_type=0_own=3
+guest run buddy_status
+guest expect vars_type=0
+host run companion_status
+guest run companion_status
+host capture m1-quiet-toast
+wait 1000
+placebehind guest host 7 2
+wait 3000
+both capture m1-quiet-field
+host mouse 700 0
+wait 800
+host capture m1-quiet-field-2
+# The guest's own character request is Quiet and never falls back for buddy_quiet (K25). (In the research worker build
+# the Quiet reset bypass refuses with body_hash in every run since before M1, so applied= is the DD fallback with
+# reason=bypass_unavailable there.)
+waitlog guest 'character=apply; mission=30050; requested=quiet; applied=[a-z_]+; type=[0-9]+; reason=(override|bypass_unavailable);' 30
+# E20: to the Medical platform (its centre first, then inside the cell beside Quiet's radio); the quest
+# mtbs_wait_quiet (the cell Quiet) is refused on both copies (TppStory.CanArrivalQuietInMB answers false).
+host run companion_cell goto
+guest run companion_cell goto
+wait 8000
+waitlog host 'world_lua=event=companion; role=host; step=mbquiet_hidden;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=mbquiet_hidden;' 60
+host run companion_cell
+host expect cell;src=radio;
+guest run companion_cell
+host run companion_cell goto
+wait 3000
+guest run companion_cell goto
+wait 5000
+host run position
+guest run position
+both capture m1-mb-quiet-cell
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture m1-mb-quiet-cell-2
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture m1-mb-quiet-cell-3
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture m1-mb-quiet-cell-4
+# The checkpoint here is the mb-quiet-cell seed (Save-WorkerSeed from this run).
+host worldtrigger world_probe=shared_checkpoint
+wait 6000
+host run companion_status
+guest run companion_status
+state

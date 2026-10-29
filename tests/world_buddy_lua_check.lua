@@ -1,7 +1,8 @@
 -- Host/guest recording fixture for world_buddy.lua. No game, network, or saves.
 local file = assert(arg[1], "world_buddy.lua required")
 local limit=assert(io.open(file,"rb"));local bytes=limit:read("*a");limit:close()
-assert(#bytes:gsub("\r\n","\n")<=16000 and #bytes:gsub("\r?\n","\r\n")<=16000,"world buddy literal fits LF/CRLF ceiling")
+-- M2: above 16000 bytes the build emits the chunk as two literals (CMakeLists.txt); the world chunk limit is 32000.
+assert(#bytes:gsub("\r\n","\n")<=32000,"world buddy chunk fits the 32000-byte world chunk limit")
 local checks = 0
 local function check(v, why) checks = checks + 1; if not v then error(checks .. ": " .. why, 2) end end
 local function vec(x,y,z) return {GetX=function()return x end,GetY=function()return y end,GetZ=function()return z end} end

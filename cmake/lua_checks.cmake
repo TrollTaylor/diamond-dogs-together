@@ -121,6 +121,12 @@ mgs_add_lua_check(world_horse_cargo_lua_check "${_mgs_coop}/world_horse_cargo.lu
 mgs_add_lua_check(world_buddy_ride_lua_check "${_mgs_coop}/world_buddy_ride.lua")
 # 0.13.6 online-vehicle-gone: the VEHICLE_GONE module alone, then with world_sync.lua (the observer hook).
 mgs_add_lua_check(world_vehicle_lua_check "${_mgs_coop}/world_vehicle.lua" "${_mgs_coop}/world_sync.lua")
+# M1 host-owned companion (docs/vehicles-companions-design.md 6.1, 6.12): id-aware attribution and the module.
+mgs_add_lua_check(world_outcome_attclass_lua_check "${_mgs_coop}/world_outcome.lua")
+mgs_add_lua_check(world_companion_lua_check "${_mgs_coop}/world_companion.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua"
+  "${_mgs_coop}/world_companion_dog.lua")
+# M2 D-Dog synced (docs/vehicles-companions-design.md 6.2): world_buddy.lua with the host-owned companion on.
+mgs_add_lua_check(world_buddy_companion_lua_check "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_companion_dog.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
 mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
 # The developer test boot (docs/test-boot.md): fast boot and boot-to-place on stubbed bindings.
@@ -287,7 +293,7 @@ endif()
 mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
   ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua"
   "${_mgs_coop}/world_downed.lua" "${_mgs_coop}/world_sleep_clock.lua" "${_mgs_coop}/world_partner_sleep.lua" "${_mgs_coop}/world_revive_input.lua" "${_mgs_coop}/world_friendly.lua" "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_ride_pose.lua" "${_mgs_coop}/world_horse_cargo.lua"
-  ${_mgs_buddy_ride_composed} "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua" "${_mgs_coop}/world_vehicle.lua")
+  ${_mgs_buddy_ride_composed} "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua" "${_mgs_coop}/world_vehicle.lua" "${_mgs_coop}/world_companion.lua" "${_mgs_coop}/world_companion_dog.lua")
 mgs_add_patch_check(mission_trace_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")
 # The documented two-argument form runs the fragment; the optional third
 # argument also executes the composed TppMain-trace.lua when it is built.

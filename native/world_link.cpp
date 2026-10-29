@@ -28,6 +28,7 @@ LogFn g_log = nullptr;
 bool g_lab_triggers = false;
 bool g_placed_census = false;  // WS4 step 0: CFG r[14] (lab key partner_placed_census, lab only)
 bool g_vehicle_gone = false;   // 0.13.6 online-vehicle-gone: CFG r[15] (lab key world_vehicle_gone, lab and play)
+bool g_companion = false;      // M1 host-owned companion: CFG r[16] (lab key companion_host_owned, lab and play)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
 // LOG receipts (0.13.6): a token bucket of kLogBurst lines refilled at kLogPerS
@@ -213,6 +214,7 @@ void Configure(const Config& config) noexcept {
     g_lab_triggers = config.lab_triggers && !config.play;
     g_placed_census = config.placed_census && !config.play;
     g_vehicle_gone = config.vehicle_gone;
+    g_companion = config.companion;
     if (g_lab_triggers && config.directory &&
         FAILED(StringCchPrintfW(g_trigger_path, ARRAYSIZE(g_trigger_path) - 4, L"%s\\mgs-coop\\world.trigger", config.directory)))
         g_trigger_path[0] = 0;
@@ -278,6 +280,8 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     reply.census = g_placed_census ? 1 : 0;
     // 0.13.6 online-vehicle-gone: r[15] the VEHICLE_GONE module (lab and play).
     reply.vehicle_gone = g_vehicle_gone ? 1 : 0;
+    // M1: r[16] the host-owned companion module (lab and play).
+    reply.companion = g_companion ? 1 : 0;
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }
@@ -350,8 +354,9 @@ const char* HandleNote(const char* source, std::size_t size) noexcept {
     // 1 PROGRESS, 2 HELI_WAIT, 3 HELI_ALONE, 4 HELI_REFUSED; join-fix phase 2
     // (P2-3): 5 TRAVEL_LOCKED, 6 HOST_PARTNER_CANNOT_JOIN, 7 TITLE_CONTINUE_LOCKED,
     // 8 TRAVEL_ALONE, 9 CONTINUE_DURING_HANDOFF, 10 HANDOFF_KEPT_OWN,
-    // 11 GUEST_LANDING_ELSEWHERE, 12 SORTIE_HELD; 13..15 have no meaning yet.
-    const bool known = code >= 1 && code <= 12;
+    // 11 GUEST_LANDING_ELSEWHERE, 12 SORTIE_HELD; M1: 13 COMPANION (a = 1 orders, 2 call
+    // refused, 3 Quiet locked); 14..15 have no meaning yet.
+    const bool known = code >= 1 && code <= 13;
     const std::uint64_t now = partner_net::NowMs();
     std::uint32_t partner = 0, local = 0;
     bool post = false, log = false;

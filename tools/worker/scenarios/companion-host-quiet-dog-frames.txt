@@ -1,0 +1,128 @@
+# Review fixes 2026-10-29, the frames for companion-host-quiet-dog.txt (run 74d5ba7e met every expectation, but the
+# host's body hid the companion on both cameras at the boot spot, and its resetpose after the Continue stopped the
+# worker: a benchmark pose cannot cross a mission generation). Same seeds and key: the host's save deploys Quiet
+# (afgh-quiet), the guest plays Quiet and deploys D-Horse (afgh-horse); companion_host_owned=1.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-quiet-dog-frames.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+# Framing: the host on the open grass 32 m west of the boot spot facing east (companion-dog.txt), the companion called
+# 5 m in front of it, the guest 8 m behind and 3 m to the side facing the host; each camera turned a little so the host's
+# body does not cover the companion. After the Continue the host is placed with the debug teleport (not resetpose).
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=none;' 90
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=none; source=seed;' 90
+wait 6000
+host run buddy_status
+host expect vars_type=0_own=3
+guest run buddy_status
+guest expect vars_type=0_own=1
+host run godmode 1
+guest run godmode 1
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+placebehind guest host 8 3
+wait 2000
+# No companion on either screen while the lock holds (the host's Quiet parked, the guest's copy none).
+both capture qf-none
+host run companion_lab call_here dog
+waitlog host 'world_lua=event=companion; role=host; step=park_dropped; var=buddyType; live=dog;' 30
+wait 4000
+host run companion_lab call_here dog
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=(call|load); kind=dog; have=none;' 90
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 60
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 1500
+host run teleport 796.0 341.5 1633.5 95
+wait 2000
+placebehind guest host 8 3
+wait 1500
+host run companion_lab call_here dog
+wait 3000
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+both capture qf-dog
+host mouse 250 0
+guest mouse -250 0
+wait 800
+both capture qf-dog-2
+# D-Horse: the host's horse on the host's screen, none on the guest's (its mirror dog sent away after 15 s).
+host run companion_lab call_here horse
+host expect call_here;kind=horse;
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=delete; kind=none; have=dog;' 60
+wait 2000
+host run buddy_status
+host expect khorse
+guest run buddy_status
+both capture qf-horse
+host mouse -250 0
+guest mouse 250 0
+wait 800
+both capture qf-horse-2
+# Back to the dog, a checkpoint, a shared death and the host's Continue (kind 4): the dog on both copies again.
+host run companion_lab call_here dog
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=(call|load); kind=dog; have=none;' 90
+wait 4000
+host worldtrigger world_probe=shared_checkpoint
+wait 6000
+guest worldtrigger world_probe=shared_death
+wait 5000
+host worldtrigger world_probe=host_continue
+waitmission host 30010 150
+waitmission guest 30010 150
+waitgameplay host 150
+waitgameplay guest 150
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog; live=dog; mission=30010;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed; mission=30010;' 120
+wait 4000
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+placebehind guest host 8 3
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2000
+host run teleport 796.0 341.5 1633.5 95
+wait 2000
+placebehind guest host 8 3
+wait 1500
+host run companion_lab call_here
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 60
+wait 3000
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+host run companion_status
+both capture qf-continue-dog
+host mouse 250 0
+guest mouse -250 0
+wait 800
+both capture qf-continue-dog-2
+# Host-led travel to Africa: what the new mission loads on the host (never Quiet).
+host worldtrigger goto=30020
+waitmission host 30020 180
+waitmission guest 30020 180
+waitgameplay host 180
+waitgameplay guest 180
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=[a-z]+; source=seed; mission=30020;' 120
+wait 5000
+host run buddy_status
+guest run buddy_status
+host run companion_status
+guest run companion_status
+both capture qf-30020
+state

@@ -419,7 +419,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # World sync (docs/world-sync-protocol.md): each chunk at most 32000 bytes
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
   # split at a line break, so each literal stays under the MSVC literal limit.
-  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE COMPANION COMPANION_DOG)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")

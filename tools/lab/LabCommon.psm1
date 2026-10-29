@@ -427,6 +427,9 @@ $script:LabPartnerKeys = @(
     # 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): the host-authoritative
     # VEHICLE_GONE world op (lab and play, default 0; written only when set).
     @{ Key = 'world_vehicle_gone'; Json = 'world_vehicle_gone'; Kind = 'bool' },
+    # M1 host-owned companion (docs/vehicles-companions-design.md 6.1): the host's buddy is the
+    # session's one companion (lab and play, default 0 until proven; written only when set).
+    @{ Key = 'companion_host_owned'; Json = 'companion_host_owned'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

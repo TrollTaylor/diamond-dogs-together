@@ -35,6 +35,9 @@ struct Config {
     // 0.13.6 online-vehicle-gone: lab.ini world_vehicle_gone (lab and play): CFG
     // r[15] = 1 turns on the Lua VEHICLE_GONE module (lua/coop/world_vehicle.lua).
     bool vehicle_gone = false;
+    // M1 host-owned companion: lab.ini companion_host_owned (lab and play): CFG r[16] = 1
+    // turns on the Lua companion module (lua/coop/world_companion.lua).
+    bool companion = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

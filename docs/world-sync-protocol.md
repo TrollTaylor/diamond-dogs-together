@@ -997,8 +997,8 @@ pressure, session replacement and mixed levels, not physical game input.
 ## 14. Remaining extension points
 
 W5 full campaign/progression and W6 AI transforms remain design work.
-World op codes 0x1D-0x1F and 0x30 onward are available (0x2A-0x2D are the
-ride ops, 0x2E/0x2F VEHICLE_GONE, section 16); control codes
+World op codes 0x1D-0x1F and 0x32-0x37, 0x3A onward are available (0x2A-0x2D are the
+ride ops, 0x2E/0x2F VEHICLE_GONE, section 16; 0x30/0x31/0x38/0x39 the companion ops, section 15); control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
 rendering and input drive are independent of these world modules.
@@ -1008,10 +1008,48 @@ rendering and input drive are independent of these world modules.
 
 `world_buddy.lua` adds an optional level-3 companion channel. The host keeps
 its normal native buddy AI. For D-Dog, it publishes the actual instance-0
-position at most four times per second; the guest directs its own native
-D-Dog toward that position through `RequestMoveToPosition`. This synchronizes
-a host-led dog position target, not dog combat, spotting, animations, health
-or a globally shared native actor. Live two-copy acceptance is still required.
+position at most four times per second; the guest holds its own native D-Dog
+at that position with the dog command `LuaAiStayAndSnarl` (`position`, `look`,
+`dash`; the retail `s10040` "stop AI" form), re-sent every 250 ms. (Earlier
+revisions of this section named `RequestMoveToPosition` and a 0.75 m stop;
+the code never used either: the controller's `RequestMoveToPosition` is listed
+below as evidence only.) This synchronizes a host-led dog position target, not
+dog combat, spotting, animations, health or a globally shared native actor.
+
+**M2 (`docs/vehicles-companions-design.md` 6.2; lab key `companion_host_owned`,
+with M1's host-owned companion).** With the key the host no longer sends
+BUDDY_STATE: the dog pose rides COMPANION_POSE (0x39, a datagram with its own
+latest-value slot: sender tick, kind, slot, present, x/y/z mm, yaw mrad, state,
+plus the native receive latency), read every 100 ms and sent at 10 Hz while the
+dog moves (5 cm or more since the last send) and at 2 Hz idle; the reliable
+COMPANION (0x30, M1) carries the same pose on a kind change and every 5 s. The
+guest answers COMPANION_ACK (0x31, reliable, 1 Hz: sequence, kind, result 0
+holding at the host's pose / 1 loading or unreadable / 2 refused or another kind
+/ 3 stale, held at the last pose / 5 held where it stands, error cm). The guest
+holds its copy of the host's dog every 100 ms at the host dog's pose led by the
+sample's age (at most 300 ms, and only from consecutive 10 Hz samples of a live
+stream) with the stop-AI form of `LuaAiStayAndSnarl` (`look` given,
+`useMarker=false`: modes 1/2, whose Dog AI update is skipped) placed by the
+command's own `warp=1` (design 3.2 and 8.2; `SetWarpPosition` stays for errors
+over 15 m in the other hold modes), and **never releases it to its own AI**: no release on a stale stream, `present=0`, a kind change, an
+unpair or a stop (a host without a dog is the companion module's reconcile,
+`DeleteBuddy`). The dog pose receipt `MGS_COOP_BUDDY_POSE_V1` no longer needs
+body 1 realized (`buddy_pose::FieldReady`), so a partner hidden in the heli or
+on a mount no longer stops either role's own-dog read. Without the key this
+section's BUDDY_STATE path below is unchanged. Live acceptance: section 8 and 9
+of the design.
+
+**Review fixes (2026-10-29, design 8.3).** The M2 code lives in
+`world_companion_dog.lua` (spliced after `world_companion.lua`). The key is local
+to each copy, so each copy shows it in its own traffic: the guest's CHARACTER
+(0x38) and the host's COMPANION (0x30) are sent whenever the local key is on, and
+the companion path (COMPANION_POSE, the hold, the seeds' buddy keys, the guest's
+refusals) runs only once the peer's has been seen; until then, and after the
+session ends (10 s after a link-session or level-0 unpair, else 120 s alone in
+game), BUDDY_STATE runs as without the key. The guest's copy loads only a host
+companion it can hold (the dog): the seeds' `buddyType` and
+`buddyTypeMissionStart` read none on the guest for any other kind, and the
+reconcile sends a mirror away instead of calling one. No wire change.
 
 | World op | Name | Direction | Fields | Queue | Body bytes |
 |---:|---|---|---|---|---:|
@@ -1027,8 +1065,8 @@ is +/-1,000,000 metres, represented in millimetres; heading is -3142..3142
 milliradians. Heading currently follows the host player's heading as a
 navigation hint, not an observed dog facing angle.
 
-The guest expires a dog target after one second. It issues native move
-requests no faster than every 250 ms, stops correcting within 0.75 metres,
+The guest expires a dog target after one second. It re-sends the held target
+(`LuaAiStayAndSnarl`) every 250 ms with no dead band (`dash=1` beyond 2 m),
 and uses the stock dog `SetWarpPosition` only for errors over 15 metres.
 Acknowledgements carry a measured pre-command error; they do not assert that
 the dog has reached its target. `buddy_status` reports actual local readback,

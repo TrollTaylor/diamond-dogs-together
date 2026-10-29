@@ -1391,6 +1391,21 @@ int main() {
             Check(vgPlay.mode == mgscoop::LabMode::play && vgPlay.world_vehicle_gone && vgPlay.play_refused == 0 && vgPlay.invalid_values == 0,
                   "world_vehicle_gone=1 parses in play with no refusal bit");
             Check(!vgBad.world_vehicle_gone && vgBad.invalid_values == 1 && vgBad.unknown_keys == 0, "an invalid world_vehicle_gone keeps it off");
+            // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off by default in lab, gun profile and
+            // play until its FRAME proof and play rehearsal; a named 1 parses in lab and play with no refusal bit.
+            const auto coPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\ncompanion_host_owned=1\n");
+            const auto coLab = Lab("enabled=1\nrole=guest\nworld=3\ncompanion_host_owned=1\n");
+            const auto coOff = Lab("enabled=1\nrole=guest\nworld=3\ncompanion_host_owned=0\n");
+            const auto coBad = Lab("enabled=1\nrole=host\ncompanion_host_owned=2\n");
+            Check(!def.companion_host_owned && !vehicleGun.companion_host_owned && !vehiclePlayDefault.companion_host_owned,
+                  "companion_host_owned defaults off (lab, gun profile, play)");
+            Check(coLab.companion_host_owned && coLab.companion_host_owned_given && coLab.invalid_values == 0 && coLab.unknown_keys == 0,
+                  "companion_host_owned=1 parses in lab");
+            Check(!coOff.companion_host_owned && coOff.companion_host_owned_given && coOff.invalid_values == 0, "a named 0 keeps it off");
+            Check(coPlay.mode == mgscoop::LabMode::play && coPlay.companion_host_owned && coPlay.play_refused == 0 && coPlay.invalid_values == 0,
+                  "companion_host_owned=1 parses in play with no refusal bit");
+            Check(!coBad.companion_host_owned && coBad.invalid_values == 1 && coBad.unknown_keys == 0, "an invalid companion_host_owned keeps it off");
         }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
