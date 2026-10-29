@@ -52,6 +52,11 @@ local function Fixture(role, o)
         if cmd.id == 'GetPosition' then return vector(c.v0), c.v0.rot end
         if cmd.id == 'GetVehicleType' then return c.v0.type end
         if cmd.id == 'GetRiderId' then return c.v0.riders end
+        if cmd.id == 'SetPosition' then
+            c.v0.x, c.v0.y, c.v0.z, c.v0.rot = cmd.position.x, cmd.position.y, cmd.position.z, cmd.rotY
+            c.placed = (c.placed or 0) + 1
+            return true
+        end
         if cmd.id == 'Seize' then
             if o.slowSeize then c.v0.goneAt = c.time + 1000 else c.v0.alive = false end
             return nil
@@ -65,6 +70,7 @@ local function Fixture(role, o)
         rec('LoadCarry', env.vars.reliefVehicleCarryType, att[0], att[1], att[2], att[3], paint[0], paint[1])
         if o.loadSpawns and env.vars.reliefVehicleCarryType % 256 > 0 then c.v0.alive = true end
     end}
+    env.Vector3 = function(x, y, z) return {x = x, y = y, z = z} end
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
     env.TppMission = {Load = function(m) rec('load', m, env.vars.reliefVehicleCarryType) end,
         UpdateCheckPoint = function() rec('checkpoint'); return true end}
@@ -242,11 +248,11 @@ c.run(4000)
 check(#c.txOf(52) == 1, 'nothing more within 5 s while unchanged')
 c.run(1500)
 check(#c.txOf(52) == 2, 'refreshed after 5 s')
--- The vehicle moved away from its carry pose: the live pose, 2 m up (it settles on the ground).
+-- The vehicle moved away from its carry pose: the live pose, 0.5 m up (it settles on the ground).
 c.v0.x, c.v0.z, c.v0.rot = 1300, -100, 0.5
 c.run(5250)
 v = c.txOf(52)[#c.txOf(52)].v
-check(v[7] == 1 and v[8] == 1300000 and v[9] == 21430 and v[10] == -100000 and v[11] == 500, 'live pose + 2 m when moved')
+check(v[7] == 1 and v[8] == 1300000 and v[9] == 19930 and v[10] == -100000 and v[11] == 500, 'live pose + 0.5 m when moved')
 -- Lost: sent at once with alive 0.
 local before = #c.txOf(52)
 c.v0.alive = false
@@ -282,6 +288,15 @@ check(c.find('event=relief;role=guest;step=load;why=host_has;type=2;ct=514;paint
 check(c.RS.own and c.RS.own.reliefVehicleCarryType == 0, 'own carry kept before the write')
 c.tick()
 check(c.find('step=arrived;type=2;') and c.find('source=load;'), 'the loaded arrival is logged')
+check(not c.placed and not c.find('step=placed;'), 'a load at the carry pose (flag 2) is not moved')
+-- A host vehicle away from its carry pose (flag 2 clear): the load draws it at the drop point (run 8a81f776), so
+-- the arrival sets it to the host's pose.
+c = Fixture(2, {ct = 0, loadSpawns = true})
+for _ = 1, 3 do c.W.handlers[52]({9, 30020, RID, 1, 514, 1, 1, 1201730, 17410, -128630, -1637}, c.time); c.run(5000) end
+c.tick()
+check(c.placed == 1 and math.abs(c.v0.x - 1201.73) < 0.001 and math.abs(c.v0.z + 128.63) < 0.001 and math.abs(c.v0.rot + 1.637) < 0.001,
+    'the loaded vehicle is placed at the host pose')
+check(c.find('step=placed;why=load;ok=1;x=1201.73;y=17.41;z=-128.63;yaw=-1.637;'), 'placed line')
 hostState(c)
 c.run(30000)
 check(c.called('LoadCarry') == 1, 'loaded once')
@@ -329,12 +344,13 @@ check(c.find('step=remove;via=seize_instant;why=type;'), 'a type mismatch remove
 for _ = 1, 6 do hostState(c); c.run(5000) end
 check(c.last('LoadCarry') and c.last('LoadCarry')[2] == 514, 'then the host type is loaded')
 check(not c.find('reason=lost_here'), 'a removal for the type is not a loss here')
--- The same type parked more than 20 m from the host's (a guest continue of its own save): removed, reloaded.
+-- The same type parked more than 20 m from the host's (a guest continue of its own save): placed at the host's pose.
 c = Fixture(2, {ct = 514, alive = true, loadSpawns = true, slowSeize = true})
 c.v0.x = 1260
 c.tick()
-for _ = 1, 9 do hostState(c); c.run(5000) end
-check(c.find('step=remove;via=seize_instant;why=far;') and c.last('LoadCarry') and c.last('LoadCarry')[2] == 514, 'far: removed, then loaded')
+for _ = 1, 4 do hostState(c); c.run(5000) end
+check(c.find('step=placed;why=far;ok=1;x=1227.17;') and c.placed == 1 and not c.find('step=remove;') and c.called('LoadCarry') == 0,
+    'far: placed at the host pose, not removed')
 -- Within 20 m (or driven: VEHICLE_GONE's busy latch), nothing is done.
 c = Fixture(2, {ct = 514, alive = true})
 c.v0.x = 1240

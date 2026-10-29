@@ -41,7 +41,28 @@ host mouse 500 0
 guest mouse 500 0
 wait 800
 both capture m3p-relief-4
-wait 15000
+# The guest's real vehicle request (run 1914e76c): iDroid, key 3 (MISSIONS), Enter (SUPPLY DROP), S S S (VEHICLES,
+# inactive), Enter -> step=refused; path=idroid_drop_vehicle and the toast.
+guest press tab
+wait 2500
+guest press 3
+wait 2000
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture m3p-idroid-vehicles
+guest press enter
+wait 500
+guest capture m3p-request-refused
+waitlog guest 'world_lua=event=relief; role=guest; step=refused; path=idroid_drop_vehicle; via=menu_inactive;' 5
+guest press tab
+wait 2500
+wait 10000
 host run relief_census play2
 guest run relief_census play2
 state

@@ -9,8 +9,10 @@
 --            writes them (D8 b); a solo load gives them back.
 --   state    the host sends VEHICLE_SPAWN (op 52) in free roam on change and every 5 s. A guest copy
 --            whose mission never had index 0 while the host's has it (a host continue, a late join)
---            writes the host's carry and calls Vehicle.LoadCarry mid mission (section 8.3); one the
---            host lacks for 15 s, or of another type, is removed (no credit).
+--            writes the host's carry and calls Vehicle.LoadCarry mid mission (section 8.3); the load
+--            draws it at the mission's drop point (run 8a81f776), so one the host moved is then set to
+--            the host's pose (SetPosition), as is one parked more than 20 m off; one the host lacks
+--            for 15 s, or of another type, is removed (no credit).
 --   removal  VEHICLE_GONE (world_vehicle.lua) removes index 0 on the receiver with Seize {"Instant"}
 --            and a one-time skip of that copy's TppTerminal.OnFulton for 25600 (E17), never Despawn.
 --   end      the guest skips TppMission.SeizeReliefVehicleOn* (E18): one Mother Base credit.
@@ -24,7 +26,7 @@ local RS = {seq = 0}
 W.reliefSync = RS
 local OP, H, fmt, floor, sqrt, pi = W.OP, W.handlers, string.format, math.floor, math.sqrt, math.pi
 OP.VEHICLE_SPAWN = 52
-local RID, LIFT = 25600, 2
+local RID, LIFT = 25600, 0.5
 local FREE = {[30010] = true, [30020] = true, [30050] = true}
 -- Relief type t -> its userPresetVehiclePaintType index (the loadout vehicle id - 0x0D, static 0x14095D230).
 local PAINT = {1, 0, 3, 2, 5, 7, 4, 6, 9, 8}
@@ -34,6 +36,7 @@ RS.RID, RS.PAINT, RS.MENUS = RID, PAINT, MENUS
 local function L(text) W.log("event=relief;role=" .. (W.host and "host" or "guest") .. ";" .. text) end
 local function note(a) if type(W.note) == "function" then pcall(W.note, 13, a, 0) end end
 local function n(v) return type(v) == "number" and v == v and v > -1e12 and v < 1e12 end
+local function mm(v) return floor(v * 1000 + 0.5) end
 function RS.on() return RS.key == true and (W.level or 0) >= 3 end
 function RS.applies() return RS.on() and not W.host end
 local function readKey(cfg) RS.key = type(cfg) == "table" and cfg[17] == 1 end
@@ -148,6 +151,25 @@ function RS.removeQuiet(why)
  L(fmt("step=remove;via=seize_instant;why=%s;ok=%d;", why, ok and 1 or 0))
  return ok == true, "seize_instant"
 end
+-- Guest: this copy's index 0 to the host's pose (the RIDE_FAST placement, world_ride_pose.lua R.place:
+-- SetPosition {position, rotY}); the live pose arrives 0.5 m up, so it settles on the ground.
+function RS.placeAt(h, why)
+ local rp, ok = W.ridePose, false
+ if type(rp) == "table" and type(rp.place) == "function" then
+  local good, r = pcall(rp.place, RID, mm(h.x), mm(h.y), mm(h.z), mm(h.yaw))
+  ok = good and r == true
+ end
+ if not ok then
+  local f = W.get(GameObject, "SendCommand")
+  local made, v = pcall(Vector3, h.x, h.y, h.z)
+  if type(f) == "function" and made and v then
+   local good, r = pcall(f, RID, {id = "SetPosition", position = v, rotY = h.yaw})
+   ok = good and r ~= false
+  end
+ end
+ L(fmt("step=placed;why=%s;ok=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%.3f;", why, ok and 1 or 0, h.x, h.y, h.z, h.yaw))
+ return ok
+end
 -- Guest: the host's carry and pose (VEHICLE_SPAWN), then the stock Vehicle.LoadCarry mid mission.
 function RS.loadHost(h, why)
  local f = W.get(Vehicle, "LoadCarry")
@@ -164,7 +186,7 @@ function RS.loadHost(h, why)
  if type(G) == "table" and type(G.gone) == "table" and G.gone[RID] == "relief" then G.gone[RID] = nil end
  RS.reload = nil
  local okC = okW and pcall(f)
- RS.coop, RS.arrive = W.mission, {ct = h.ct, deadline = W.now() + 30000, source = "load"}
+ RS.coop, RS.arrive = W.mission, {ct = h.ct, deadline = W.now() + 30000, source = "load", place = not h.carryPose and h or nil}
  L(fmt("step=load;why=%s;type=%d;ct=%d;paint=%d;write=%d;call=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%.3f;", why, t, h.ct, h.paint,
   okW and 1 or 0, okC and 1 or 0, h.x, h.y, h.z, h.yaw))
  return okC
@@ -189,6 +211,7 @@ local function arrival(now)
   local ct = RS.carry()
   L(fmt("step=arrived;type=%d;vt=%s;paint=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%.3f;mission=%d;source=%s;", ct % 256,
    tostring(send({id = "GetVehicleType"})), RS.paint(ct % 256), x or 0, y or 0, z or 0, yaw or 0, W.mission, a.source))
+  if a.place then RS.placeAt(a.place, "load") end
  elseif now > a.deadline then
   a.done = true
   L(fmt("step=arrive_none;type=%d;mission=%d;source=%s;", a.ct % 256, W.mission, a.source))
@@ -197,7 +220,6 @@ end
 -- Host: VEHICLE_SPAWN on change and every 5 s (paired, free roam, in game). The pose is the carry
 -- attitude while the vehicle stands within 1.5 m of it (flag 2: the guest's LoadCarry then gives the
 -- host's exact pose, run 612afff7), else its live pose 2 m up.
-local function mm(v) return floor(v * 1000 + 0.5) end
 local function hostTick(now)
  if not (W.paired and FREE[W.mission] and W.inGame()) then RS.txAlive = nil; return end
  local alive = RS.alive()
@@ -222,8 +244,8 @@ local function hostTick(now)
 end
 H[OP.VEHICLE_SPAWN] = function(v, now)
  if W.host or #v ~= 11 or v[3] ~= RID or v[4] ~= 1 then return end
- local h = {mission = v[2], ct = v[5], paint = v[6], alive = v[7] % 2 == 1, x = v[8] / 1000, y = v[9] / 1000, z = v[10] / 1000,
-  yaw = v[11] / 1000, at = now}
+ local h = {mission = v[2], ct = v[5], paint = v[6], alive = v[7] % 2 == 1, carryPose = v[7] >= 2, x = v[8] / 1000, y = v[9] / 1000,
+  z = v[10] / 1000, yaw = v[11] / 1000, at = now}
  local was = RS.hostState
  RS.hostState = h
  if not was or was.alive ~= h.alive or was.ct ~= h.ct or was.mission ~= h.mission then
@@ -231,7 +253,7 @@ H[OP.VEHICLE_SPAWN] = function(v, now)
  end
 end
 -- Guest: index 0 here against the host's (8.3 continue / late join; a host loss VEHICLE_GONE missed;
--- this copy's own of another type, or one parked more than 20 m from the host's: removed, then loaded).
+-- this copy's own of another type: removed, then loaded; one parked more than 20 m from the host's: placed).
 local function reconcile(now)
  local h = RS.hostState
  if not h or now - h.at > 15000 or h.mission ~= W.mission or not FREE[W.mission] or not W.inGame() or
@@ -269,6 +291,7 @@ local function reconcile(now)
   return
  end
  RS.fixAt, RS.fixes = now + 20000, (RS.fixes or 0) + 1
+ if other == "far" then RS.placeAt(h, "far"); return end
  RS.removeQuiet(other or "host_none")
  if other then RS.reload = W.mission end
 end

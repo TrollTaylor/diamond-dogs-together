@@ -4,8 +4,9 @@
 # draw it there. The host drives it about 30 m away from the drop point and leaves it (the guest's copy follows by
 # RIDE_FAST). Then the lab lever relief_lab forget makes the guest's copy lose its index 0 the way a guest that joins
 # late never had one (Seize Instant, no credit, no VEHICLE_GONE request: the host's must stay): the guest's reconcile
-# loads the host's from VEHICLE_SPAWN mid mission (step=load; why=host_has; the live pose 2 m up, carry_pose=0, since
-# the vehicle stands away from its carry attitude) and both copies show it at the host's x/z (frames m3-relief-lateload).
+# loads the host's from VEHICLE_SPAWN mid mission (step=load; why=host_has). The load draws it at the mission's drop
+# point (run 8a81f776: 25 m from the host's), so the arrival sets it to the host's live pose (step=placed; why=load;
+# the pose 0.5 m up, carry_pose=0) and both copies show it at the host's x/z (frames m3-relief-lateload).
 # Coordinator only, hidden worker (never visible), copied seed saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-late.txt
@@ -56,8 +57,9 @@ guest run relief_census moved
 guest run relief_lab forget
 guest expect relief_lab;forget
 waitlog guest 'world_lua=event=relief; role=guest; step=remove; via=seize_instant; why=lab_forget; ok=1;' 10
-waitlog guest 'world_lua=event=relief; role=guest; step=load; why=host_has; type=2;' 40
-waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2; .*source=load;' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=load; why=host_has; type=2; ct=514; paint=0; write=1; call=1; x=12' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2; vt=2; paint=0; x=12.*source=load;' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=placed; why=load; ok=1; x=12' 10
 wait 6000
 host run relief_census lateload
 guest run relief_census lateload
