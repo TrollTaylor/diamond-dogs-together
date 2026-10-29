@@ -1,3 +1,65 @@
+## 2026-10-29: D7 review fixes (`wp/dog-guard`, unreleased, not two-PC tested)
+
+An independent review of `wp/dog-guard` at `8a294ce` (verdict: fix first) found one major and four minor problems
+and refuted four claims. All five findings were verified against the code and fixed on `wp/dog-guard` (new commits
+only), each with a test that failed first. Design: `docs/vehicles-companions-design.md` 8.10 (fixes, runs, results),
+section 9 M2, D7 in section 10, the review log in section 11; protocol section 15 note.
+
+**Fixed.**
+- [O] **The guard is installed only under the key** (`e38f2f4`). Before, both PCs patched the dog's two vtable slots in
+  every session whose partner gate passed, play included, whatever `companion_host_owned` said. Now with the key off
+  (the lab and play default) neither slot is touched: a default play rehearsal (`19e438fe`, `-Mode play -WanSim bad`)
+  logged `dog_guard=off;reason=key_off;slots=0` and `dog_state ... installed=0` on both copies, with the host's D-Dog
+  fighting beside Snake on the stock code. The unarmed hook's pass-through is proven on the guest's PC (the copy died
+  of guard fire with the guard off: `7fe2845e`, `cc2e15d2`, `9fa48400`); on the host's PC it is the same role-free
+  branch (a host never arms) [I]: the host's dog took no real hit in any run.
+- [O] **The guard holds through a link loss** (`e38f2f4`, `d413778`). An unpair, a link drop, a lower level or a new
+  epoch no longer disarms it: an armed guard is held drop-only (no host state followed, no lab op) until the session or
+  the mission ends, and a hold never starts a guard. A copy that dies while the host's state is unknown now waits until
+  it is known (`host=unknown`, then `host_known`) instead of being treated as the host's dog being down. At runtime
+  through a new guest lab lever, `companion_lab link_sim on|off` (`c256368`), which makes the guard module alone see the
+  link as lost (`9fa48400`): the hold kept dropping guard hits for about 25 s with the copy standing over the prone
+  guest (FRAME on the guest's screen), and a death by guard fire in that state waited 5.1 s, then restored once the
+  state was known (`back; ms=6172`). [I] that a real link loss takes the same path: no worker lever cuts the world link.
+- [O] **The restore no longer fights the game** (`d413778`). It clears only the dead DOG bit of `deadBuddyType`, once
+  after the death (and once before a reload if set again); `buddyCommonFlag` is left to the game. One vars line per
+  death in five restores and a mirrored death, every reload worked with the flag at 0; FRAME on both copies (`cc2e15d2`).
+- [O] **Diagnostics** (`e38f2f4`, `5ef2470`, `19280d3`): the receipt reports the dog's record only when under a second
+  old; the native log caps reset each mission; `companion_lab dog_state` on a disarmed guest reads the live record and
+  names `installed=` and `fresh=`. The age gate missed the first second after a send-away (`9fa48400`: `life=0;
+  state=2` 0.9 s after it), so an arm during a restore is now marked `restoring=1`.
+- Fixture `world_companion_guard_lua_check` 65 -> 115 checks (the risky branches above, play refusals of `dog_stun`,
+  `recall`, `kill_mirror`, `guard`, `link_sim`); `dog_guard_tests` adds the install gate, 30 admission cases,
+  freshness and caps.
+- Corrected claims (`3d0046c`): "Defaults: unchanged" (the guard was installed in play); the E19 host frames (no
+  host dog in them); the restore's vars repair (it ran again after every send-away); `606048af`'s legs (two windows
+  read `within=0`).
+
+**Found.** [O] Each death of the guest's copy on the guest's PC shows the stock "D-Dog Near Death [Heroism -30]" there
+(`9fa4-guest-hd-unk-dead`; not on the host's screen): every death the guard cannot see costs the guest's PC 30
+heroism. Whether it reaches the guest's own save [U]; whether to give it back is an open question for the user (D7).
+
+**Runs** (hidden worker; archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`; frames as JPEG in the
+session scratch folder `complete/frames/dog/`; every run closed with the baseline and the real-save hashes verified).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `7fe2845e` | `companion-dog-guard-review.txt` (lab, key on) | One expectation failed: a waitlog for a dog `Damage` message (the dog posts none that the Lua observer sees; none in the pre-D7 runs either). E19 through the new admission: 13 hits dropped, no death. **Guard off** in the line of fire: the copy died of guard fire 70.7 s later (`att=other`): the unarmed hook passes hits through. Restores with the one-shot repair: back in 2485 ms twice |
+| `19e438fe` | `companion-dog-guard-play-off.txt`, `-Mode play -WanSim bad`, default keys | No expectation failed. Nothing installed on either PC (`dog_guard=off;reason=key_off;slots=0`, `installed=0`); the host's dog in the alert beside Snake on the host's screen |
+| `cc2e15d2` | `companion-dog-guard-review-frames.txt` (lab, key on) | No expectation failed. FRAME on both copies: the kill restore (copy carried off, back beside the host; the host's dog beside Snake), the host's dog down ("D-Dog Near Death" on both) and re-called (beside Snake on both); the guard-off death (the copy lying dead beside the prone guest), restored in 2669 ms |
+| `9fa48400` | `companion-dog-guard-hold.txt` (lab, key on) | No expectation failed. `link_sim on` in the E19 shield: `step=held; reason=hold`, 15 more hits dropped in about 25 s, `life=10000; state=0`, no death (FRAME of the copy over the prone guest, the guard aiming); guard off under `link_sim`: a real death 71.5 s later, `host=unknown`, nothing for 5.1 s, `link_sim off` -> `host_known; host=alive` -> send-away, reload, back in 6172 ms; `kdog` on both |
+
+**Defaults: unchanged, and now true for the guard too.** `companion_host_owned` stays **off in lab and play**, and with
+it off the guard installs nothing. Still missing before the play default can flip: the guard's drop, the follow, the
+restore and the re-call have no play rehearsal (play refuses their levers, and guards in play have not fired at the
+dog); a real link loss with the dog held was never run; the host's dog never took a real hit with the hooks
+installed; the heroism question above; M1's own gaps (earlier sections); no two-PC session.
+
+**Checks.** Fast CTest 298/298 after each step; full CTest 313/313 (`pwsh -File tools/build.ps1`, at `04a3a41`); the
+contract checks `generate_partner_contract.py`, `generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`,
+`generate_nametag_contract.py` and `generate_downed_damage_contract.py` `--check` pass. Nothing pushed, merged or
+released.
+
 ## 2026-10-29: D7, the guest's copy of D-Dog cannot be hurt (`wp/dog-guard`, unreleased, not two-PC tested)
 
 The user's decision D7 (2026-10-29): the guest's copy of the host's D-Dog must not be killable by anything on the
