@@ -322,4 +322,30 @@ c.W.mode = 2
 check(not c.C.lever({'companion_lab', 'call_here'}, 4, A, 30010), 'call_here is lab only')
 c = Fixture(2, {active = DOG})
 check(not c.C.lever({'companion_lab', 'call_here'}, 1, A, 30010), 'call_here is host only')
+-- M2 (docs/vehicles-companions-design.md 6.2): the host's reliable COMPANION carries the dog's last streamed pose
+-- (world_buddy.lua's COMPANION_POSE sample), so a late join or a reconcile calls the dog where the host's is.
+c = Fixture(1, {buddyType = DOG, active = DOG})
+c.W.buddy = {s = {sent = {k = 1, present = 1, x = 828.5, y = 338.25, z = -1630.75, yaw = 1.5}}}
+c.tick()
+local pose
+for _, t in ipairs(c.tx) do if t.op == 48 then pose = t.v end end
+check(pose and pose[3] == 1 and pose[5] == 1 and pose[6] == 828500 and pose[7] == 338250 and pose[8] == -1630750 and pose[9] == 1500,
+    'COMPANION: kind dog, present, the streamed pose in mm and the yaw in mrad')
+c = Fixture(1, {buddyType = HORSE, active = HORSE})
+c.W.buddy = {s = {sent = {k = 1, present = 1, x = 1, y = 2, z = 3, yaw = 0}}}
+c.tick()
+for _, t in ipairs(c.tx) do if t.op == 48 then pose = t.v end end
+check(pose and pose[3] == 2 and pose[5] == 0 and pose[6] == 0, 'another kind than the streamed one: no pose (present 0)')
+-- The E19 protection lever on the guest (lab): world_buddy.lua's B.protect.
+c = Fixture(2, {active = DOG})
+local protected
+c.W.buddy = {protect = function(on) protected = on; return true end}
+ok, msg = c.C.lever({'companion_lab', 'protect'}, 1, A, 30010)
+check(ok and protected == true and msg == 'protect;on=1;result=true', 'companion_lab protect turns the guest copy protection on')
+ok, msg = c.C.lever({'companion_lab', 'protect', 'off'}, 2, A, 30010)
+check(ok and protected == false and msg == 'protect;on=0;result=true', 'and off')
+c.W.mode = 2
+check(not c.C.lever({'companion_lab', 'protect'}, 3, A, 30010), 'protect is lab only')
+c = Fixture(1, {active = DOG})
+check(not c.C.lever({'companion_lab', 'protect'}, 1, A, 30010), 'protect is guest only')
 print('world_companion_lua_check: ' .. checks .. ' checks passed')

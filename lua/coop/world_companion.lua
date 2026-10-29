@@ -233,7 +233,13 @@ local function hostTick(now)
  local k = toWire(active())
  if now < (C.txAt or 0) and k == C.txKind then return end
  C.seq = C.seq % 65535 + 1
- if W.tx(OP.COMPANION, C.seq, W.tick32(now), k, 0, k ~= 0 and 1 or 0, 0, 0, 0, 0, 0, 0, 0) then
+ -- M2: the dog's last streamed pose (world_buddy.lua COMPANION_POSE), so a reconcile calls it there.
+ local b, p = W.get(W.get(W.buddy, "s"), "sent"), {0, 0, 0, 0, 0}
+ if type(b) == "table" and b.k == k and b.present == 1 then
+  local function mm(n) return math.floor(n * 1000 + 0.5) end
+  p = {1, mm(b.x), mm(b.y), mm(b.z), mm(b.yaw)}
+ end
+ if W.tx(OP.COMPANION, C.seq, W.tick32(now), k, 0, p[1], p[2], p[3], p[4], p[5], 0, 0, 0) then
   C.txAt, C.txKind = now + 5000, k
  end
 end
@@ -558,6 +564,14 @@ function C.lever(a, id, A, mission)
   else ok = pcall(TBC("ReserveCallBuddy"), Q, W.get(BuddyInitStatus, "NORMAL") or 0, v, 0) and pcall(TBC("Load")) end
   C.token = nil
   return ok, fmt("quiet_out;call=%s;guest_quiet=%s", tostring(r), tostring(C.guestQuiet))
+ end
+ -- E19 (guest, lab): the protection candidate on the held dog (world_buddy.lua B.protect: SetDisableDamage).
+ if a[1] == "companion_lab" and a[2] == "protect" and (#a == 2 or (#a == 3 and a[3] == "off")) then
+  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
+  local B = W.buddy
+  if type(W.get(B, "protect")) ~= "function" then return false, "protect_unavailable" end
+  local ok, r = pcall(B.protect, #a == 2)
+  return ok, fmt("protect;on=%d;result=%s", #a == 2 and 1 or 0, tostring(r))
  end
  return false, "companion_args"
 end

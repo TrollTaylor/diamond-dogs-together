@@ -48,4 +48,12 @@ int main(){auto m=Good();b::Pose out{};Check(!Get(m,out),"actual Dog lookup succ
  for(auto address:{P+0x204,P+0x208,P+0x20c,outer+0x70,secondary+8,kind+0x40,kind+0x44,controller+0x175}){bad=Good();bad.changeAt=address;bad.changeOn=2;bad.changedValue=0;Refuse(bad,"dog_changed");}
  m=Good();auto cleanup=scope;cleanup.paired=false;cleanup.cleanup_only=true;Check(!Get(m,out,cleanup),"explicit read-only cleanup may read after pairing is withdrawn");Check(!cleanup.paired,"cleanup never fabricates paired state");cleanup.demo_playing=true;Refuse(Good(),"scope",cleanup);cleanup.demo_playing=false;cleanup.field_ready=false;Refuse(Good(),"scope",cleanup);cleanup.field_ready=true;Refuse(Good(),"scope",cleanup,72);Refuse(Good(),"scope",cleanup,71,1251);
  m=Good();auto owner=scope;owner.mission=30020;m.Put(base+0x2c01372,std::uint16_t(30020));Check(!Get(m,out,owner),"actual selected Dog path valid in Africa");owner.mission=30050;m.Put(base+0x2c01372,std::uint16_t(30050));Check(!Get(m,out,owner),"actual selected Dog path valid in Mother Base");
+ // M2 (docs/vehicles-companions-design.md 6.2): the dog read needs this copy's own body (instance 0) and the
+ // mission, never body 1: a hidden partner (heli, mount or ride hide; ids[1]=0xFFFF, parts[1]!=3) still reads.
+ const b::Field field{true,true,false,true,30010,30010,30010,true,0,3};
+ Check(b::FieldReady(field),"own body realized, mission and partner mission match: ready (body 1 is no input)");
+ for(unsigned i=0;i<9;++i){auto f=field;switch(i){case 0:f.player_read=false;break;case 1:f.runtime_thread=false;break;case 2:f.terminating=true;break;
+  case 3:f.mission_read=false;break;case 4:f.mission=30020;break;case 5:f.partner_mission=30050;break;case 6:f.realized0=false;break;
+  case 7:f.id0=1;break;default:f.parts0=0;break;}
+  Check(!b::FieldReady(f),"each own-body or mission term still refuses");}
  std::printf("buddy pose bounded reader %u checks PASS\n",checks);return 0;}

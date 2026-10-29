@@ -1,11 +1,23 @@
 -- Original host-led D-Dog mirror; ride yield clears its typed held target.
+-- M2 (docs/vehicles-companions-design.md 6.2, 6.12; lab key companion_host_owned, W.companion.on()): the host
+-- streams its dog in COMPANION_POSE (57, a datagram: 10 Hz while the dog moves, 2 Hz idle) instead of BUDDY_STATE;
+-- the guest holds its copy of the host's dog there (LuaAiStayAndSnarl every 100 ms, SetWarpPosition beyond 15 m)
+-- and answers COMPANION_ACK (49, 1 Hz). That dog is never released to the guest's AI: without a fresh pose it is
+-- held at the last one (or where it stands); a host without a dog is world_companion.lua's reconcile (DeleteBuddy).
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
-local B, floor, sqrt, min = {}, math.floor, math.sqrt, math.min
+local B, floor, sqrt, min, fmt = {}, math.floor, math.sqrt, math.min, string.format
 W.buddy = B
 W.OP.BUDDY_STATE, W.OP.BUDDY_ACK = 39, 40
 local STATE, ACK = 39, 40
+local CPOSE, CACK = 57, 49
+W.OP.COMPANION_POSE, W.OP.COMPANION_ACK = CPOSE, CACK
+local function companion()
+ local C = W.companion
+ return type(C) == "table" and type(C.on) == "function" and C.on() == true
+end
+B.companion = companion
 local function finite(n, bound)
 return type(n) == "number" and n == n and n >= -bound and n <= bound
 end
@@ -120,6 +132,8 @@ s.owned, s.original, s.id, s.pending, s.nextRelease, s.ownedMission, s.ownedEpoc
 end
 function B.yieldForRide()
 local s,a=B.s,W.api;if not s then return false end
+-- M2: the guest copy's dog is the host's; its hold is never cleared for a ride lever.
+if companion() and not W.host then return false end
 if s.owned and s.aiHeld then
  if s.ownedMission~=W.mission or s.ownedEpoch~=W.epoch or not B.guard(true) then return false end
  local id=B.dog(true)
@@ -147,6 +161,8 @@ end
 function B.release(cleanup)
 local s, a, now = B.s, W.api, W.now()
 if not s or not s.owned then return true end
+-- M2: the host's dog on the guest's copy is never released to the guest's AI (its native hold stays).
+if companion() and not W.host then B.clearOwnership(s); return true end
 if not B.guard(not cleanup) then return false end
 if s.nextRelease and now < s.nextRelease then return false end
 local t = a.buddyType()
@@ -295,6 +311,179 @@ if now >= s.nextApply then
 end
 B.ack(r,0,errorCm,now); B.log("target_submitted",errorCm)
 end
+-- M2 host: the dog read every 100 ms (the receipt no longer needs body 1); sent when it moved 5 cm, its kind or
+-- presence changed, or 500 ms passed. present=0 only when the dog itself is unreadable.
+function B.hostCompanion(now)
+local s, a = B.s, W.api
+if now < (s.nextRead or 0) then return end
+s.nextRead = now + 100
+local k, present, x, y, z = kind(a.buddyType()), 0, 0, 0, 0
+if k == 1 then
+ local id; id, x, y, z = B.dog()
+ if id then present = 1; s.hostPos = s.localPos else x, y, z = 0, 0, 0 end
+end
+local last = s.sent
+local moved = last and present == 1 and (x - last.x) ^ 2 + (y - last.y) ^ 2 + (z - last.z) ^ 2 >= 0.0025
+if last and last.k == k and last.present == present and not moved and now < (s.nextIdle or 0) then return end
+if W.tx(CPOSE, W.tick32(now), k, 0, present, mm(x), mm(y), mm(z), mm(yaw()), 0) then
+ s.sent, s.nextIdle, s.poseTx = {k = k, present = present, x = x, y = y, z = z, yaw = yaw()}, now + 500, (s.poseTx or 0) + 1
+end
+end
+W.handlers[CPOSE] = function(v, now)
+if W.host or not W.paired or W.eff < 3 or #v ~= 10 then return end
+if not integer(v[1], 0, 4294967295) or not integer(v[2], 0, 4) or not integer(v[3], 0, 1) or not integer(v[4], 0, 1)
+ or not integer(v[5], -1000000000, 1000000000) or not integer(v[6], -1000000000, 1000000000)
+ or not integer(v[7], -1000000000, 1000000000) or not integer(v[8], -3142, 3142) or not integer(v[9], 0, 255)
+ or not integer(v[10], 0, 65535) then return end
+local s, p = B.s, B.s.cpose
+if p then
+ local d = (v[1] - p.tick) % 4294967296
+ if d == 0 or d >= 2147483648 then return end
+end
+local r = {tick = v[1], kind = v[2], present = v[4] == 1, x = v[5] / 1000, y = v[6] / 1000, z = v[7] / 1000, yaw = v[8] / 1000,
+ at = now - v[10], vx = 0, vz = 0, speed = 0}
+if r.present and p and p.present and p.kind == r.kind then
+ local dt = ((r.tick - p.tick) % 4294967296) / 1000
+ if dt > 0 and dt <= 2 then
+  r.vx, r.vz = (r.x - p.x) / dt, (r.z - p.z) / dt
+  r.speed = sqrt(r.vx * r.vx + r.vz * r.vz)
+ end
+end
+s.cpose, s.cposeN = r, (s.cposeN or 0) + 1
+if r.kind == 1 and r.present then s.hostPos = r end
+end
+W.handlers[CACK] = function(v, now)
+if not W.host or not W.paired or W.eff < 3 or #v ~= 4 then return end
+if not (integer(v[1], 1, 65535) and integer(v[2], 0, 4) and integer(v[3], 0, 7) and integer(v[4], 0, 65535)) then return end
+local s = B.s
+if s.remoteResult ~= v[3] or now == nil or now >= (s.remoteLogAt or 0) then
+ s.remoteLogAt = (now or 0) + 10000
+ W.log(fmt("event=companion_ack;role=host;result=%d;error_cm=%d", v[3], v[4]))
+end
+s.remoteResult, s.remoteError = v[3], v[4]
+end
+-- Guest COMPANION_ACK results: 0 holding at the host's pose, 1 loading or unreadable, 2 refused or another kind,
+-- 3 stale (held at the last pose), 5 held where it stands (no host pose yet).
+function B.cack(result, errorCm, now)
+local s = B.s
+if now < (s.nextCack or 0) and s.cackResult == result then return end
+s.cackSeq = (s.cackSeq or 0) % 65535 + 1
+if W.tx(CACK, s.cackSeq, 1, result, min(errorCm or 65535, 65535)) then s.nextCack, s.cackResult = now + 1000, result end
+end
+-- The proof's tracking: 2 s windows of the host dog's speed (walk below 3.5 m/s: 3 m; run and dash: 5 m) and the error.
+function B.track(now, errorCm, speed)
+local s = B.s
+local t = s.track or {from = now, n = 0, max = 0, sum = 0, speed = 0, errs = {}}
+s.track = t
+t.n, t.max, t.sum, t.speed = t.n + 1, math.max(t.max, errorCm), t.sum + errorCm, t.speed + speed
+t.errs[#t.errs + 1] = errorCm
+if now - t.from < 2000 then return end
+s.track = nil
+table.sort(t.errs)
+local v = t.speed / t.n
+local band = v < 0.5 and "idle" or v < 3.5 and "walk" or "run"
+if band == "idle" and now < (s.idleTrackAt or 0) then return end
+if band == "idle" then s.idleTrackAt = now + 10000 end
+W.log(fmt("event=companion_track;band=%s;n=%d;speed_cms=%d;err_max_cm=%d;err_p90_cm=%d;err_mean_cm=%d;within=%d", band, t.n,
+ floor(v * 100 + 0.5), t.max, t.errs[math.max(1, math.ceil(#t.errs * 0.9))], floor(t.sum / t.n + 0.5),
+ t.max <= (band == "run" and 500 or 300) and 1 or 0))
+end
+-- E3 / E19 watch (guest, lab): the nearest soldier to the held dog (8 of the roster per hold, the ones within
+-- 30 m re-read every second), seconds with one within 3 m / 5 m, and the guest's own buddy vars on change.
+local function soldier(id)
+local ok, p = pcall(W.api.send, id, {id = "GetPosition"})
+if ok then return vector(p) end
+end
+function B.watch(now, x, y, z)
+local s = B.s
+local w = s.watch or {i = 0, near = {}, s3 = 0, s5 = 0, min = 65535}
+s.watch = w
+local order, ent = W.entOrder or {}, W.ent or {}
+local key = fmt("dead=%s;flag=%s;active=%s", tostring(W.get(vars, "deadBuddyType")), tostring(W.get(vars, "buddyCommonFlag")),
+ tostring(W.api.buddyType()))
+if key ~= w.vars then w.vars = key; W.log("event=mirror_vars;" .. key) end
+for _ = 1, min(8, #order) do
+ w.i = w.i % #order + 1
+ local h = order[w.i]
+ local e = ent[h]
+ if e and type(e.id) == "number" then
+  local sx, sy, sz = soldier(e.id)
+  if sx then w.near[h] = (sx - x) ^ 2 + (sy - y) ^ 2 + (sz - z) ^ 2 <= 900 or nil end
+ end
+end
+if now < (w.nextNear or 0) then return end
+local dt = w.lastNear and (now - w.lastNear) / 1000 or 0
+w.nextNear, w.lastNear = now + 1000, now
+local best, bestH = 65535, nil
+for h in pairs(w.near) do
+ local e = ent[h]
+ local sx, sy, sz
+ if e and type(e.id) == "number" then sx, sy, sz = soldier(e.id) end
+ if sx then
+  local d = floor(sqrt((sx - x) ^ 2 + (sy - y) ^ 2 + (sz - z) ^ 2) * 100 + 0.5)
+  if d < best then best, bestH = d, h end
+ end
+end
+if best <= 300 then w.s3 = w.s3 + dt end
+if best <= 500 then w.s5 = w.s5 + dt end
+w.min = min(w.min, best)
+if bestH and best <= 1000 and now >= (w.logAt or 0) then
+ w.logAt = now + 5000
+ W.log(fmt("event=mirror_near;ent=%.0f;d_cm=%d;s3=%d;s5=%d;engaged=%d;hurt=%d", bestH, best, floor(w.s3), floor(w.s5),
+  W.mirrorCount or 0, s.hurt or 0))
+end
+end
+-- E19: a damage message whose victim is this copy's dog (world_sync.lua W.observe, unmapped ids); both roles.
+function W.companionHurt(msg, id, cls)
+if id ~= 9728 or not companion() then return end
+local s = B.s
+s.hurt = (s.hurt or 0) + 1
+if s.hurt <= 60 then W.log(fmt("event=companion_hurt;role=%s;msg=%s;att=%s;n=%d", W.host and "host" or "guest", tostring(msg), tostring(cls), s.hurt)) end
+end
+-- E19 protection candidate (guest lab lever companion_lab protect): SetDisableDamage on the held dog, once per dog.
+function B.protect(on)
+local s = B.s
+if on ~= nil then s.protectOn, s.protected = on == true, nil end
+if not s.protectOn or s.protected == s.id or not s.id then return s.protected ~= nil end
+local ok, r = pcall(W.api.send, s.id, {id = "SetDisableDamage", life = true, faint = true, sleep = true})
+s.protected = s.id
+W.log(fmt("event=companion_protect;role=guest;id=%d;ok=%d;result=%s", s.id, ok and 1 or 0, tostring(r)))
+return ok
+end
+-- M2 guest: the hold. Target: the host dog's latest pose led by its age (at most 300 ms) while fresh (1 s);
+-- else the last target (hold_last); with no host pose yet, where the dog stands (hold_here). Never its own AI.
+function B.guestCompanion(now)
+local s, a, r = B.s, W.api, B.s.cpose
+if a.buddyType() ~= a.buddyDog then return end
+if now < s.nextApply then return end
+s.nextApply = now + 100
+local id, x, y, z = B.dog()
+if not id then B.cack(1, 65535, now); B.log("dog_unreadable"); return end
+s.owned, s.id, s.ownedMission, s.ownedEpoch = true, id, W.mission, W.epoch
+local fresh = r and r.kind == 1 and r.present and now >= r.at and now - r.at <= 1000
+local why, result
+if fresh then
+ local age = min((now - r.at) / 1000, 0.3)
+ s.hold = {x = r.x + r.vx * age, y = r.y, z = r.z + r.vz * age, yaw = r.yaw}
+ why, result = "target_submitted", 0
+elseif s.hold then why, result = "hold_last", 3
+else s.hold, why, result = {x = x, y = y, z = z, yaw = yaw()}, "hold_here", 5 end
+local t = s.hold
+local dx, dy, dz = t.x - x, t.y - y, t.z - z
+local distance = sqrt(dx * dx + dy * dy + dz * dz)
+local errorCm = min(floor(distance * 100 + 0.5), 65535)
+if fresh and distance > 15 then a.send(id, {id = "SetWarpPosition", pos = a.buddyVector(t.x, t.y, t.z)}) end
+s.aiHeld = true
+if a.send(id, {id = "LuaAiStayAndSnarl", position = a.buddyVector(t.x, t.y, t.z),
+ look = a.buddyVector(t.x + math.sin(t.yaw) * 2, t.y, t.z + math.cos(t.yaw) * 2), useMarker = false,
+ dash = (distance > 2 or (fresh and r.speed > 3)) and 1 or 0, warp = 0, ignoreMarker = true}) == false then
+ B.cack(2, errorCm, now); B.log("target_refused", errorCm); return
+end
+if fresh then B.track(now, errorCm, r.speed) end
+B.protect()
+if W.mode == 1 then pcall(B.watch, now, x, y, z) end
+B.cack(result, errorCm, now); B.log(why, errorCm)
+end
 function B.status()
 local s, now, nativeKind = B.s, W.now(), "unknown"
 local ok, live, contextReason = pcall(B.context)
@@ -322,7 +511,10 @@ return string.format("buddy:%s a%d p%d k%s v%d r%s e%d H=%s@%s L=%s@%s d%d",
  W.host and "H" or "G", live and 1 or 0, W.paired and 1 or 0, nativeKind,
  W.host and s.seq or s.rxSeq or 0, string.sub((not live and (ok and contextReason or "context_error"))
   or (s.probe and s.probe.reason ~= "ok" and s.probe.code) or s.reason or "idle", 1, 22), errorCm,
- hp, ha, lp, la, B.disabled and 1 or 0) .. (W.companion and W.companion.tail() or "")
+ hp, ha, lp, la, B.disabled and 1 or 0) .. (W.companion and W.companion.tail() or "") .. (companion() and
+ fmt(" m2 tx%d rx%d ack%s/%s near%s s3=%d hurt%d eng%d", s.poseTx or 0, s.cposeN or 0, tostring(s.cackResult or s.remoteResult),
+  tostring(s.remoteError or "-"), tostring(s.watch and s.watch.min or "-"), s.watch and floor(s.watch.s3) or 0, s.hurt or 0,
+  W.mirrorCount or 0) or "")
 end
 function B.tick(now)
 if B.disabled then pcall(B.cleanupPending); return end
@@ -336,6 +528,10 @@ end
 end
 function B.update(now)
 if not B.context() then return end
+if companion() then
+ if W.paired and W.eff >= 3 then if W.host then B.hostCompanion(now) else B.guestCompanion(now) end end
+ return
+end
 if B.s.releaseOnly then
  if not B.release() then return end
  B.s.releaseOnly = nil

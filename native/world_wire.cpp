@@ -145,6 +145,17 @@ constexpr OpSpec kOps[] = {
     {op::companion, "COMPANION", 1, Dir::both, Wire::reliable, 3, false, false, 12, 0, 0, 29,
      {U16(1), U32(), U8(0, 4), U8(0, 1), U8(0, 1), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-3142, 3142), U8(), U8(), U16()}},
+    // COMPANION_ACK (M2): seq of the guest's hold, kind, result (0 holding at the host's pose, 1 loading or
+    // unreadable, 2 refused or another kind, 3 stale (held at the last pose), 4 no host dog, 5 held where it
+    // stands), error cm. 1 Hz, world queue.
+    {op::companion_ack, "COMPANION_ACK", 1, Dir::guest_to_host, Wire::reliable, 3, false, false, 4, 0, 0, 6,
+     {U16(1), U8(0, 4), U8(0, 7), U16()}},
+    // COMPANION_POSE (M2, docs/vehicles-companions-design.md 5, 6.2): sender tick, kind (0 none, 1 dog, 2 horse,
+    // 3 walker, 4 Quiet), slot, present, xyz mm, yaw mrad (the host player's heading), state; the receiver
+    // appends its latency. A datagram with its own latest-value slot: 10 Hz while the companion moves, 2 Hz idle.
+    {op::companion_pose, "COMPANION_POSE", 1, Dir::host_to_guest, Wire::datagram, 3, false, false, 9, 0, 1, 24,
+     {U32(), U8(0, 4), U8(0, 1), U8(0, 1), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-3142, 3142), U8()}},
     // CHARACTER (M1): seq, the guest's character (0 game default, 1 snake, 2 dd_male, 3 dd_female,
     // 4 avatar, 5 ocelot, 6 quiet, 7 story unresolved), Quiet flag (1: the guest plays Quiet, so the
     // host locks its buddy Quiet before its sortie seeds). Control queue: it must reach the host in
@@ -384,7 +395,7 @@ void Core::Configure(const Config& config, std::uint64_t now_ms) noexcept {
     goto_ = Goto{};
     ctrl_head_ = ctrl_size_ = 0;
     world_head_ = world_size_ = 0;
-    digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = ride_tilt_.valid = false;
+    digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = ride_tilt_.valid = companion_pose_.valid = false;
     ClearGrants();
     out_head_ = out_size_ = peeked_ = 0;
     generation_ = 0;
@@ -652,7 +663,8 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
     }
     if (spec->wire == Wire::datagram) {
         Slot& slot = op.code == op::digest ? digest_ : op.code == op::guest_digest ? guest_digest_ :
-                     op.code == op::ride_fast ? ride_fast_ : op.code == op::ride_tilt ? ride_tilt_ : phase_vec_;
+                     op.code == op::ride_fast ? ride_fast_ : op.code == op::ride_tilt ? ride_tilt_ :
+                     op.code == op::companion_pose ? companion_pose_ : phase_vec_;
         const bool ticked = op.code != op::phase_vec;
         if (ticked && slot.valid && slot.entry.epoch == op.epoch && !Newer32(U(op.v[0]), U(slot.entry.v[0]))) {
             ++stats_.stale_u;
@@ -787,7 +799,7 @@ void Core::PurgeOtherEpochs(std::uint16_t keep) noexcept {
         else ++stats_.purged;
     }
     world_size_ = kept;
-    for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_, &ride_fast_, &ride_tilt_})
+    for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_, &ride_fast_, &ride_tilt_, &companion_pose_})
         if (slot->valid && slot->entry.epoch != keep) {
             slot->valid = false;
             ++stats_.purged;
@@ -796,7 +808,7 @@ void Core::PurgeOtherEpochs(std::uint16_t keep) noexcept {
 
 void Core::ClearWire() noexcept {
     world_head_ = world_size_ = 0;
-    digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = ride_tilt_.valid = false;
+    digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = ride_tilt_.valid = companion_pose_.valid = false;
     ClearGrants();
     out_head_ = out_size_ = peeked_ = 0;
     ++generation_;
@@ -861,7 +873,7 @@ CfgReply Core::Cfg(std::uint32_t mission, bool start, std::uint32_t read_mission
         }
         ctrl_size_ = kept;
         world_head_ = world_size_ = 0;
-        digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = ride_tilt_.valid = false;
+        digest_.valid = guest_digest_.valid = phase_vec_.valid = ride_fast_.valid = ride_tilt_.valid = companion_pose_.valid = false;
         local_ = Ready{};
         have_last_ready_ = false;
         sent_epoch_ = 0;
@@ -1055,7 +1067,7 @@ void Core::Rx(std::uint8_t mask, std::uint32_t rtt_ms, std::uint64_t now_ms, RxR
             if (e.op == op::enemy_debug) RecordGrant(e, now_ms);
             return;
         }
-        for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_, &ride_fast_, &ride_tilt_}) {
+        for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_, &ride_fast_, &ride_tilt_, &companion_pose_}) {
             if (!slot->valid || slot->delivered || slot->entry.epoch != epoch_) continue;
             slot->delivered = true;
             fill(slot->entry, 1);

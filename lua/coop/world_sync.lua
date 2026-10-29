@@ -355,6 +355,8 @@ do
     if not h then
       -- 0.13.6: an unmapped id may be a vehicle (world_vehicle.lua; its own errors stay its own).
       if W.vehicleGone then pcall(W.vehicleGone.observe, kind, a0, class2, a1) end
+      -- M2 (E19): or this copy's dog (world_buddy.lua W.companionHurt; companion_host_owned only).
+      if W.companionHurt then pcall(W.companionHurt, kind, a0, class2) end
       return
     end
     if kind == "ChangePhase" then

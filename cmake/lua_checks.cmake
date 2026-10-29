@@ -124,6 +124,8 @@ mgs_add_lua_check(world_vehicle_lua_check "${_mgs_coop}/world_vehicle.lua" "${_m
 # M1 host-owned companion (docs/vehicles-companions-design.md 6.1, 6.12): id-aware attribution and the module.
 mgs_add_lua_check(world_outcome_attclass_lua_check "${_mgs_coop}/world_outcome.lua")
 mgs_add_lua_check(world_companion_lua_check "${_mgs_coop}/world_companion.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua")
+# M2 D-Dog synced (docs/vehicles-companions-design.md 6.2): world_buddy.lua with the host-owned companion on.
+mgs_add_lua_check(world_buddy_companion_lua_check "${_mgs_coop}/world_buddy.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
 mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
 # The developer test boot (docs/test-boot.md): fast boot and boot-to-place on stubbed bindings.

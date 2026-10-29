@@ -70,9 +70,11 @@ inline constexpr std::uint8_t ride_tilt = 0x2D;
 // lab.ini key world_vehicle_gone=1 (CFG r[15]).
 inline constexpr std::uint8_t vehicle_gone = 0x2E, req_vehicle_gone = 0x2F;
 // M1 host-owned companion (docs/vehicles-companions-design.md section 5): COMPANION
-// (48, the host's companion kind and pose; M2 adds the pose stream) and CHARACTER (56,
-// the guest's resolved character, before the host's sortie seeds).
-inline constexpr std::uint8_t companion = 0x30, character = 0x38;
+// (48, the host's companion kind and pose) and CHARACTER (56, the guest's resolved
+// character, before the host's sortie seeds). M2: COMPANION_ACK (49, the guest's hold
+// result and error, 1 Hz) and COMPANION_POSE (57, the host's companion pose stream: a
+// datagram, 10 Hz while it moves, 2 Hz idle; the latest by sender tick wins).
+inline constexpr std::uint8_t companion = 0x30, character = 0x38, companion_ack = 0x31, companion_pose = 0x39;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -446,7 +448,7 @@ private:
     unsigned ctrl_head_ = 0, ctrl_size_ = 0;
     Entry world_[kWorldQueue]{};
     unsigned world_head_ = 0, world_size_ = 0;
-    Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{}, ride_tilt_{};
+    Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{}, ride_tilt_{}, companion_pose_{};
     Grant grants_[kGrants]{};
     std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
     OutEntry out_[kOutboundQueue]{};

@@ -32,6 +32,16 @@ struct Scope {
  std::uintptr_t P{};std::uint32_t mission{},generation{},thread{};std::uint16_t epoch{};
  std::uint64_t refreshed_ms{};bool paired{},field_ready{},demo_playing{},terminating{},exact_executable{},exact_code_pins{},cleanup_only{};
 };
+// The field facts of the native receipt owner (game_script_observer.cpp). M2 (docs/vehicles-companions-
+// design.md 6.2): the read needs this copy's own body (instance 0 realized, id 0, parts loaded), the runtime
+// thread, the mission and the partner's mission; never body 1, so a partner hidden in the heli, on a mount or
+// by a ride hide (instance 1 unrealized) no longer stops either role's own-dog read.
+struct Field {bool player_read{},runtime_thread{},terminating{},mission_read{};std::uint32_t mission{},requested{},partner_mission{};
+ bool realized0{};std::uint16_t id0{0xffff};std::uint8_t parts0{};};
+constexpr bool FieldReady(const Field& f) noexcept {
+ return f.player_read&&f.runtime_thread&&!f.terminating&&f.mission_read&&f.mission==f.requested&&f.partner_mission==f.requested&&
+  f.realized0&&f.id0==0&&f.parts0==3;
+}
 struct Pose {std::uint16_t id{0xffff};std::uintptr_t outer{},primary{},kind{},positions{},controller{};std::array<float,4> position{};};
 // nullptr succeeds. Every error leaves output unchanged. Actual thread is
 // supplied by native receipt owner, never by Lua arguments. No retained pointer.

@@ -113,8 +113,8 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 55, "55 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
-                       "and character, and local ops)");
+    Check(count == 57, "57 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+                       "and character, M2 companion ack and pose, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -141,7 +141,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x31) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x32) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::ride_fast) && world::FindOp(op::ride_fast)->body == 23 &&
               world::FindOp(op::ride_fast)->wire == world::Wire::datagram, "RIDE_FAST is a 23-byte datagram");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
@@ -1718,6 +1718,58 @@ void CompanionOps() {
               Tx(g_guest, op::character, {1, 6, 1}, 201) == world::TxStatus::disabled,
           "both ops need world level 3");
 }
+// M2 D-Dog (docs/vehicles-companions-design.md 5, 6.2): COMPANION_POSE 0x39 is the host's companion pose
+// stream (a datagram, its own latest-value slot, newest sender tick wins, the receive latency appended for
+// Lua) and COMPANION_ACK 0x31 the guest's hold result (world queue, reliable, guest to host). Both level 3,
+// lab and play.
+void CompanionM2Ops() {
+    const auto* pose = world::FindOp(op::companion_pose);
+    const auto* ack = world::FindOp(op::companion_ack);
+    Check(op::companion_pose == 0x39 && op::companion_ack == 0x31 && pose && ack, "COMPANION_POSE 0x39 and COMPANION_ACK 0x31 exist");
+    Check(pose->queue == 1 && pose->wire == world::Wire::datagram && pose->level == 3 && !pose->lab_only && !pose->request &&
+              pose->dir == world::Dir::host_to_guest && pose->lua == 9 && pose->native == 0 && pose->rx == 1 && pose->body == 24,
+          "COMPANION_POSE: world queue, datagram, level 3, host to guest, 9 fields plus the receive latency, 24 bytes");
+    Check(ack->queue == 1 && ack->wire == world::Wire::reliable && ack->level == 3 && !ack->lab_only && !ack->request &&
+              ack->dir == world::Dir::guest_to_host && ack->lua == 4 && ack->rx == 0 && ack->body == 6,
+          "COMPANION_ACK: world queue, reliable, level 3, guest to host, 4 fields, 6 bytes");
+    Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+    world::Datagram datagram{}, older{};
+    Check(Tx(g_host, op::companion_pose, {5000, 1, 0, 1, 829100, 338200, 1631500, 1571, 0}, 101, &datagram) == world::TxStatus::ok &&
+              datagram.size == world::kBundleHeaderSize + world::kOpHeaderSize + 24, "the host's dog pose becomes one datagram");
+    Check(Tx(g_host, op::companion_pose, {4900, 1, 0, 1, 1, 2, 3, 0, 0}, 101, &older) == world::TxStatus::ok, "an older pose encodes");
+    g_guest.OnDatagram(datagram.bytes, datagram.size, 102);
+    g_guest.OnDatagram(older.bytes, older.size, 102);
+    auto rx = Drain(g_guest, 3, 103);
+    const auto* got = Find(rx, op::companion_pose);
+    Check(got && Count(rx, op::companion_pose) == 1 && got->count == 10 && got->v[0] == 5000 && got->v[1] == 1 && got->v[3] == 1 &&
+              got->v[4] == 829100 && got->v[7] == 1571 && got->v[9] >= 0,
+          "the newest pose is delivered once with the latency appended; a late older pose is dropped");
+    Check(!Find(Drain(g_guest, 3, 104), op::companion_pose), "a delivered pose is not repeated");
+    world::Datagram fast{}, pose2{};
+    Check(Tx(g_host, op::ride_fast, {5001, 3, 25600, 1, 2, 3, 0}, 105, &fast) == world::TxStatus::ok &&
+              Tx(g_host, op::companion_pose, {5001, 1, 0, 1, 7, 8, 9, 0, 0}, 105, &pose2) == world::TxStatus::ok, "one tick: a ride and a dog");
+    g_guest.OnDatagram(fast.bytes, fast.size, 105);
+    g_guest.OnDatagram(pose2.bytes, pose2.size, 105);
+    rx = Drain(g_guest, 3, 106);
+    Check(Find(rx, op::ride_fast) && Find(rx, op::companion_pose) && Find(rx, op::companion_pose)->v[4] == 7,
+          "RIDE_FAST and COMPANION_POSE of one sender tick both reach Lua (separate slots)");
+    Check(Tx(g_guest, op::companion_pose, {1, 1, 0, 1, 0, 0, 0, 0, 0}, 107) == world::TxStatus::wrong_role, "only the host sends the pose");
+    Check(Tx(g_host, op::companion_pose, {5002, 5, 0, 1, 0, 0, 0, 0, 0}, 107) == world::TxStatus::bad_args, "kind 5 is refused");
+    Check(Tx(g_host, op::companion_pose, {5002, 1, 0, 1, 0, 0, 0, 3143, 0}, 107) == world::TxStatus::bad_args, "a yaw beyond pi is refused");
+    world::Datagram reliableOnly{};
+    Check(Tx(g_guest, op::companion_ack, {9, 1, 0, 250}, 108, &reliableOnly) == world::TxStatus::ok && reliableOnly.size == 0,
+          "COMPANION_ACK stays on the reliable queue");
+    Check(Tx(g_host, op::companion_ack, {9, 1, 0, 250}, 108) == world::TxStatus::wrong_role, "only the guest acknowledges");
+    Check(Tx(g_guest, op::companion_ack, {10, 1, 8, 250}, 108) == world::TxStatus::bad_args, "an unknown hold result is refused");
+    Exchange(109);
+    const auto atHost = Drain(g_host, 3, 110);
+    const auto* answer = Find(atHost, op::companion_ack);
+    Check(answer && answer->v[0] == 9 && answer->v[1] == 1 && answer->v[2] == 0 && answer->v[3] == 250, "the host receives the guest's hold");
+    Setup(2, 2, true); Pair(30010, 200);
+    Check(Tx(g_host, op::companion_pose, {1, 1, 0, 1, 0, 0, 0, 0, 0}, 201) == world::TxStatus::disabled &&
+              Tx(g_guest, op::companion_ack, {1, 1, 0, 0}, 201) == world::TxStatus::disabled,
+          "both ops need world level 3");
+}
 } // namespace
 
 int main() {
@@ -1741,6 +1793,7 @@ int main() {
     RideTilt();
     VehicleGone();
     CompanionOps();
+    CompanionM2Ops();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }
