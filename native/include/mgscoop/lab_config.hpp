@@ -727,8 +727,9 @@ struct LabConfig {
     // world_vehicle_break=0|1 (D12, bit 8): a vehicle that breaks on the guest's copy without
     // attribution is requested as a destruction (REQ_VEHICLE_GONE cause 4); the host applies it (its
     // copy wrecked) only when plausible (the guest within 300 m, or its copy heavily damaged; never
-    // under its own player, held while another seat is filled; 4 per 20 s, more wait). A host
-    // without the key answers cause 4 with REJECT 11.
+    // under its own player, held while another seat is filled; 4 per 20 s, more wait), as a Despawn
+    // instead of the wreck while a player stands within 15 m of its copy (the blast rule, run
+    // 7762536a). A host without the key answers cause 4 with REJECT 11.
     bool world_vehicle_break = false;
     bool world_vehicle_break_given = false;
     // world_vehicle_credit=0|1 (D14, bit 16): the receiver of a Fultoned world vehicle removes its

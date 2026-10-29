@@ -1624,7 +1624,15 @@ guest's own: the host's value does not matter.
   becomes the same wreck: the instance command `SetBodyLife{life=0}` (the engine's
   own destruction and blast, E5), id marked gone first, read back like the wreck
   parity (a wreck still alive after 2 s is despawned, `step=fallback;from=wreck`),
-  whatever `world_vehicle_wreck` says (that key is the guest's receiver wreck). The
+  whatever `world_vehicle_wreck` says (that key is the guest's receiver wreck).
+  **The blast rule** (`0e79337`, after run `7762536a` measured the wreck's later
+  explosion, about 8 s after `SetBodyLife 0`, at 3500 of 7800 life on the host
+  beside it): while the host's own player (`vars.playerPosX/Z`) or the partner (its
+  fresh DOWNED_STATUS position) stands within **15 m** of the host's copy, or the
+  copy's or the player's position cannot be read, the host removes its copy with the
+  Despawn instead (`step=break_safe;id=;near=host|partner|unknown;d_mm=;form=despawn`,
+  then VEHICLE_GONE's `applied;via=locator`): no explosion on the host's PC, the
+  guest's copy keeps its wreck. No wire change. The
   announcement back (cause 2, actor 1, the rid) ends the guest's request. A refused
   guest copy keeps its wreck: no Lua command undoes one (`SetBodyLife` writes the
   life word, `IsAlive` reads rec+0x70 bits that no instance command is known to

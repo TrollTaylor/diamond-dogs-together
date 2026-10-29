@@ -54,7 +54,9 @@ wait 500
 guest capture d11r-guest-loadout-refused
 waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
 waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
-wait 3500
+# The HUD logs one toast line per NOTE code per 10 s (coop_hud kToastLogGapMs): run f729d7f4 drew the VEHICLES toast
+# 5.6 s after the LOADOUT one (frame d11r-guest-vehicles-refused) but its log line was skipped, so wait past the gap.
+wait 8500
 guest press s
 wait 800
 guest capture d11r-guest-vehicles
