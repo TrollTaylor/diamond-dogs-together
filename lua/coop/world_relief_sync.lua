@@ -26,8 +26,8 @@
 --   refusal  the guest's iDroid vehicle drop (MSN_DROP_VEHICLE) is inactive in a co-op free-roam
 --            mission (paired, or unpaired inside the mission it shares); selecting it logs the
 --            refusal and shows a toast (NOTE 13 a 4; D1 a). The LOADOUT drop, whose delivery can carry
---            a vehicle, is blocked the same way (NOTE 13 a 5) only with the lab lever
---            relief_lab loadout on, until the user decides D11.
+--            a vehicle, is the user's decision D11 (2026-10-29: blocked in co-op): world_vehicle_rules.lua,
+--            key world_loadout_block, whatever world_relief says; this module never touches that item.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" and type(W.followSeeds) == "table" then
@@ -41,7 +41,7 @@ local FREE = {[30010] = true, [30020] = true, [30050] = true}
 -- Relief type t -> its userPresetVehiclePaintType index (the loadout vehicle id - 0x0D, static 0x14095D230).
 local PAINT = {1, 0, 3, 2, 5, 7, 4, 6, 9, 8}
 local SEIZE = {"SeizeReliefVehicleOnAbort", "SeizeReliefVehicleOnClear", "SeizeReliefVehicleOnForceGoToMb"}
-local MENUS = {{"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}, {"MSN_DROP_LOADOUT", 5, "idroid_drop_loadout"}}
+local MENUS = {{"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}}
 RS.RID, RS.PAINT, RS.MENUS = RID, PAINT, MENUS
 local function L(text) W.log("event=relief;role=" .. (W.host and "host" or "guest") .. ";" .. text) end
 local function note(a) if type(W.note) == "function" then pcall(W.note, 13, a, 0) end end
@@ -395,17 +395,14 @@ end
 -- Guest: the iDroid drop items inactive in a co-op free-roam mission (re-applied every 2 s while the
 -- iDroid is closed: TppTerminal.SetUp at a mission start sets every item active again; the first pass
 -- of a mission applies even while it is open). Unguard sets them active: TppTerminal.SetUp's state.
-local function menuActive(on, all)
+local function menuActive(on)
  local f = W.get(TppUiCommand, "SetMbTopMenuItemActive")
- if type(f) ~= "function" then return false end
- local ok = true
- for i = 1, (all or RS.loadout) and 2 or 1 do ok = pcall(f, MENUS[i][1], on) and ok end
- return ok
+ return type(f) == "function" and pcall(f, MENUS[1][1], on) == true
 end
 function RS.unguard()
  if not RS.greyed then return end
  RS.greyed = nil
- menuActive(true, true)
+ menuActive(true)
  L("step=unguard;path=idroid_drop;")
 end
 local function guard(now)
@@ -421,7 +418,7 @@ local function guard(now)
   RS.greyed = true
   if RS.greyLogged ~= W.mission then
    RS.greyLogged = W.mission
-   L(fmt("step=guard;path=idroid_drop;via=menu_inactive;items=%d;", RS.loadout and 2 or 1))
+   L("step=guard;path=idroid_drop;via=menu_inactive;items=1;")
   end
  end
 end
@@ -429,16 +426,12 @@ end
 function RS.nonActive(menu)
  local ids = RS.ids
  if not ids then return false end
- for i = 1, RS.loadout and 2 or 1 do
-  local m = MENUS[i]
-  if ids.menu[i] == menu then
-   L(fmt("step=refused;path=%s;via=menu_inactive;", m[3]))
-   local now = W.now()
-   if now >= (RS.toastAt or 0) then RS.toastAt = now + 3000; note(m[2]) end
-   return true
-  end
- end
- return false
+ local m = MENUS[1]
+ if ids.menu[1] ~= menu then return false end
+ L(fmt("step=refused;path=%s;via=menu_inactive;", m[3]))
+ local now = W.now()
+ if now >= (RS.toastAt or 0) then RS.toastAt = now + 3000; note(m[2]) end
+ return true
 end
 local observe = W.observe
 if type(observe) == "function" then
@@ -601,9 +594,9 @@ end
 -- a vehicle the host's seeds gave is still skipped); D8 (b) live vars come back at the next solo Load.
 W.stopHooks[#W.stopHooks + 1] = function(final) if final then RS.stopped = true; pcall(RS.unguard) end end
 
--- debug relief_status (read only, any mode), relief_lab nonactive vehicle|loadout (lab: the refusal path
--- of a selected inactive drop item), relief_lab loadout on|off (lab: D11 option a, the LOADOUT drop
--- blocked too) and relief_lab forget (lab, guest; below).
+-- debug relief_status (read only, any mode), relief_lab nonactive vehicle (lab: the refusal path of the
+-- selected inactive vehicle drop item) and relief_lab forget (lab, guest; below). The LOADOUT block of
+-- the lab lever relief_lab loadout on|off became D11's key world_loadout_block (world_vehicle_rules.lua).
 function RS.status()
  local ct = RS.carry()
  local h, q = RS.hostState, RS.lostReq
@@ -616,19 +609,9 @@ function RS.lever(a)
  if a[1] == "relief_status" and #a == 1 then return true, RS.status() end
  if a[1] ~= "relief_lab" then return false, "relief_args" end
  if W.mode ~= 1 then return false, "relief_lab_only" end
- if #a == 3 and a[2] == "nonactive" and (a[3] == "vehicle" or a[3] == "loadout") then
+ if #a == 3 and a[2] == "nonactive" and a[3] == "vehicle" then
   if not RS.ids then return false, "relief_ids" end
-  local ok = RS.nonActive(RS.ids.menu[a[3] == "vehicle" and 1 or 2])
-  return ok, "relief_lab;nonactive=" .. a[3]
- end
- if #a == 3 and a[2] == "loadout" and (a[3] == "on" or a[3] == "off") then
-  RS.loadout = a[3] == "on" or nil
-  if RS.greyed then
-   local f = W.get(TppUiCommand, "SetMbTopMenuItemActive")
-   if type(f) == "function" then pcall(f, MENUS[2][1], not RS.loadout) end
-  end
-  L(fmt("step=loadout_block;on=%d;", RS.loadout and 1 or 0))
-  return true, "relief_lab;loadout=" .. a[3]
+  return RS.nonActive(RS.ids.menu[1]), "relief_lab;nonactive=vehicle"
  end
  -- relief_lab forget (guest): this copy's index 0 removed (no credit, no request to the host) and the
  -- reconcile allowed to load the host's again from VEHICLE_SPAWN: the late-join path on demand.

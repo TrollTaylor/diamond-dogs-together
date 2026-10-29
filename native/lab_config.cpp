@@ -249,6 +249,23 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
     }
     // M4 review: VEHICLE_GONE's wreck parity (lab and play; off in both unless named).
     else if (Equals(key, "world_vehicle_wreck")) ok = ParseBool(value, result.world_vehicle_wreck);
+    // The user's vehicle decisions of 2026-10-29 (lab and play, off unless named; see the defaults
+    // below). An invalid value refuses: it counts as named, off.
+    else if (Equals(key, "world_vehicle_break")) {
+        ok = ParseBool(value, result.world_vehicle_break);
+        result.world_vehicle_break_given = true;
+        if (!ok) result.world_vehicle_break = false;
+    }
+    else if (Equals(key, "world_vehicle_credit")) {
+        ok = ParseBool(value, result.world_vehicle_credit);
+        result.world_vehicle_credit_given = true;
+        if (!ok) result.world_vehicle_credit = false;
+    }
+    else if (Equals(key, "world_loadout_block")) {
+        ok = ParseBool(value, result.world_loadout_block);
+        result.world_loadout_block_given = true;
+        if (!ok) result.world_loadout_block = false;
+    }
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
@@ -922,6 +939,9 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (!result.world_vehicle_gone_given) result.world_vehicle_gone = true;
         if (!result.world_vehicle_state_given) result.world_vehicle_state = true;
     }
+    // 7. The vehicle decisions of 2026-10-29 (D11 world_loadout_block, D12 world_vehicle_break,
+    // D14 world_vehicle_credit): off unless named, in lab and play, until each has its FRAME
+    // proof on both copies and a passing -Mode play -WanSim bad rehearsal.
     out = result;
     return true;
 }

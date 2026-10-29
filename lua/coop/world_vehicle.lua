@@ -280,11 +280,11 @@ local function readback(id, t)
   local alive = V.alive(id)
   if alive and t - q.at < READ_MS then return end
   L("event=vehicle_gone;step=applied;id=%d;via=%s;src=%s;ok=%d;ms=%d", id, q.via, q.src, alive and 0 or 1, floor(t - q.at))
-  if alive and q.via == "wreck" then
-    -- A wreck that did not take: the Despawn, read back again (the entry stays); with no Despawn
-    -- form this copy has not lost it (a re-sent announcement retries it).
+  if alive and (q.via == "wreck" or q.via == "seize") then
+    -- A wreck (or D14's Seize Instant, world_vehicle_rules.lua) that did not take: the Despawn, read back again
+    -- (the entry stays); with no Despawn form this copy has not lost it (a re-sent announcement retries it).
     local ok, via = V.despawn(id)
-    L("event=vehicle_gone;step=fallback;id=%d;from=wreck;via=%s;ok=%d", id, via, ok and 1 or 0)
+    L("event=vehicle_gone;step=fallback;id=%d;from=%s;via=%s;ok=%d", id, q.via, via, ok and 1 or 0)
     if ok then q.via, q.at = via, t; return end
     V.gone[id] = nil
   end
@@ -350,7 +350,8 @@ function V.observe(kind, id, att)
   if not W.host then
     local hit = V.hit[id]
     local mine = (kind == "FultonInfo" or kind == "Dead") and att == "local" or kind == "VehicleBroken" and hit ~= nil and t - hit <= HIT_MS
-    if not mine then return end
+    -- D12 (world_vehicle_rules.lua, key world_vehicle_break): a break with no attribution is requested too; the host judges it.
+    if not mine and not (kind == "VehicleBroken" and V.unattributed and V.unattributed(id, t)) then return end
   end
   if not isVehicle(id) then return end
   local x, y, z = V.pose(id)

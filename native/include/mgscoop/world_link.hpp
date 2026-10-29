@@ -47,6 +47,12 @@ struct Config {
     // M4 review: lab.ini world_vehicle_wreck (lab and play): CFG r[15] bit 4, VEHICLE_GONE's
     // wreck parity for a destroyed vehicle (else a Despawn).
     bool vehicle_wreck = false;
+    // The user's vehicle decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua), lab and play:
+    // CFG r[15] bit 8 world_vehicle_break (D12), bit 16 world_vehicle_credit (D14), bit 32
+    // world_loadout_block (D11).
+    bool vehicle_break = false;
+    bool vehicle_credit = false;
+    bool loadout_block = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

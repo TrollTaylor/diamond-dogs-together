@@ -574,6 +574,11 @@ try {
     # M4 review: world_vehicle_wreck (VEHICLE_GONE's wreck parity) likewise.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 0)" '1/0' 'world_vehicle_wreck values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 2 } '' 'world_vehicle_wreck=2 refused'
+    # The vehicle decisions of 2026-10-29: D11 world_loadout_block, D12 world_vehicle_break, D14 world_vehicle_credit likewise.
+    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit')) {
+        Assert-Equal "$(ConvertTo-LabPartnerValue -Key $vk -Value 1)/$(ConvertTo-LabPartnerValue -Key $vk -Value 0)" '1/0' "$vk values"
+        Assert-Throws { ConvertTo-LabPartnerValue -Key $vk -Value 2 } '' "$vk=2 refused"
+    }
     Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_max_m -Value 1001 } 'allowed: 50..1000' 'range limit'
     $ovTag = ConvertFrom-LabPartnerSettingArgs -Items @('nametag_crosshair=always', 'host:nametag_name=HostTag', 'guest:nametag_name=GuestTag') -Role guest
     Assert-Equal "$($ovTag['nametag_crosshair'])/$($ovTag['nametag_name'])" 'always/GuestTag' 'role-scoped name tag settings'
@@ -1083,6 +1088,16 @@ try {
         $file = Join-Path $fixture 'vehicle-wreck-guest-lab.ini'; [IO.File]::WriteAllText($file, $vwIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_vehicle_wreck'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_wreck=1 parses'
+        # The vehicle decisions of 2026-10-29 (D11, D12, D14): off by default; LabCommon writes each; native parses it.
+        $vdDefault = Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini')
+        Assert-Equal "$($vdDefault['world_loadout_block'])$($vdDefault['world_vehicle_break'])$($vdDefault['world_vehicle_credit'])" '000' 'native: the D11 / D12 / D14 keys default off'
+        $vdOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_loadout_block=1', 'world_vehicle_break=1', 'world_vehicle_credit=1') -Role guest
+        $vdIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vdOverrides)
+        $vdText = ConvertFrom-IniText $vdIni
+        Assert-Equal "$($vdText['world_loadout_block'])$($vdText['world_vehicle_break'])$($vdText['world_vehicle_credit'])" '111' 'LabCommon writes the D11 / D12 / D14 keys'
+        $file = Join-Path $fixture 'vehicle-decisions-guest-lab.ini'; [IO.File]::WriteAllText($file, $vdIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_loadout_block'])$($n['world_vehicle_break'])$($n['world_vehicle_credit'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '111|lab|0x0|0/0' 'native: the D11 / D12 / D14 keys parse'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')

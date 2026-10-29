@@ -420,20 +420,22 @@ c = Fixture(2, {ct = 514, alive = true, gone = true, on = false})
 gone(c)
 check(c.v0.alive and c.find('reason=index0'), 'key off: VEHICLE_GONE still refuses index 0')
 
--- Refusal (D1 a): the guest's iDroid vehicle drop is inactive in a co-op free-roam mission. The LOADOUT drop is left
--- to the user's decision D11 (review of 2026-10-29): active unless the lab lever relief_lab loadout on blocks it.
+-- Refusal (D1 a): the guest's iDroid vehicle drop is inactive in a co-op free-roam mission. The LOADOUT drop is the
+-- user's decision D11 (2026-10-29, blocked in co-op), built in world_vehicle_rules.lua (key world_loadout_block): this
+-- module never touches that item, and its lab lever relief_lab loadout on|off is gone.
 c = Fixture(2)
 c.tick()
 local function menu(x, name)
     for i = #x.menus, 1, -1 do if x.menus[i][1] == name then return x.menus[i][2] end end
 end
-check(menu(c, 'MSN_DROP_VEHICLE') == false and menu(c, 'MSN_DROP_LOADOUT') == nil, 'only the vehicle drop is inactive (D11 pending)')
+check(menu(c, 'MSN_DROP_VEHICLE') == false and menu(c, 'MSN_DROP_LOADOUT') == nil, 'only the vehicle drop is inactive (LOADOUT is the D11 module)')
 check(c.find('event=relief;role=guest;step=guard;path=idroid_drop;via=menu_inactive;items=1;'), 'guard line')
 c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_LOADOUT'))
-check(#c.notes == 0 and not c.find('path=idroid_drop_loadout'), 'an inactive LOADOUT item is not ours without the lever')
+check(#c.notes == 0 and not c.find('path=idroid_drop_loadout'), 'an inactive LOADOUT item is never this module (D11)')
 local ok, text = c.RS.lever({'relief_lab', 'loadout', 'on'})
-check(ok and text == 'relief_lab;loadout=on' and menu(c, 'MSN_DROP_LOADOUT') == false and c.find('step=loadout_block;on=1;'),
-    'lab lever: the LOADOUT drop blocked too')
+check(not ok and text == 'relief_args' and menu(c, 'MSN_DROP_LOADOUT') == nil, 'the old lab lever relief_lab loadout on is gone (D11 key)')
+ok, text = c.RS.lever({'relief_lab', 'nonactive', 'loadout'})
+check(not ok and text == 'relief_args' and #c.notes == 0, 'and so is its refusal lever')
 c.run(5000)
 check(c.count('step=guard;path=idroid_drop') == 1, 'logged once per mission')
 local nm = #c.menus
@@ -446,15 +448,10 @@ c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_
 check(c.find('event=relief;role=guest;step=refused;path=idroid_drop_vehicle;via=menu_inactive;'), 'vehicle refusal line')
 check(#c.notes == 1 and c.notes[1][1] == 13 and c.notes[1][2] == 4, 'vehicle toast NOTE 13 a 4')
 check(c.observed == 2, 'the message still reaches the stock observer')
-c.time = c.time + 4000
-c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_LOADOUT'))
-check(c.find('step=refused;path=idroid_drop_loadout;') and c.notes[2][2] == 5, 'loadout refusal and toast NOTE 13 a 5')
 c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_BUDDY_DOG'))
-check(#c.notes == 2, 'another inactive item: no relief toast')
+check(#c.notes == 1, 'another inactive item: no relief toast')
 c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_VEHICLE'))
-check(#c.notes == 2 and c.count('path=idroid_drop_vehicle') == 2, 'toasts at most every 3 s (the refusal is still logged)')
-ok, text = c.RS.lever({'relief_lab', 'loadout', 'off'})
-check(ok and menu(c, 'MSN_DROP_LOADOUT') == true and c.find('step=loadout_block;on=0;'), 'lab lever off: LOADOUT active again')
+check(#c.notes == 1 and c.count('path=idroid_drop_vehicle') == 2, 'toasts at most every 3 s (the refusal is still logged)')
 -- Unpaired inside the co-op mission (a link drop): the vehicle drop stays inactive (review of 2026-10-29); the
 -- session's final stop activates it (TppTerminal.SetUp leaves every drop item active: the stock state).
 c = Fixture(2)
@@ -467,6 +464,7 @@ check(menu(c, 'MSN_DROP_VEHICLE') == false and not c.find('step=unguard;'), 'unp
 for _, f in ipairs(c.W.stopHooks) do f(true) end
 c.run(3000)
 check(menu(c, 'MSN_DROP_VEHICLE') == true and c.find('event=relief;role=guest;step=unguard;path=idroid_drop;'), 'final stop: active again')
+check(menu(c, 'MSN_DROP_LOADOUT') == nil, 'the unguard never sets the LOADOUT item (the D11 module owns it)')
 -- A solo load ends the co-op mission: active again too.
 c = Fixture(2)
 for _, f in ipairs(c.W.pairedHooks) do f(false) end
@@ -497,8 +495,6 @@ c = Fixture(2, {mode = 2})
 c.tick()
 ok, text = c.RS.lever({'relief_lab', 'nonactive', 'vehicle'})
 check(not ok and text == 'relief_lab_only', 'the lab lever refuses in play')
-ok, text = c.RS.lever({'relief_lab', 'loadout', 'on'})
-check(not ok and text == 'relief_lab_only' and c.RS.loadout == nil, 'the loadout lever refuses in play')
 ok, text = c.RS.lever({'relief_status'})
 check(ok, 'status in play')
 

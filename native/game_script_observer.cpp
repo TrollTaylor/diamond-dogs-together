@@ -1458,6 +1458,9 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.relief = labc.world_relief;
     world.vehicle_state = labc.world_vehicle_state;
     world.vehicle_wreck = labc.world_vehicle_wreck;
+    world.vehicle_break = labc.world_vehicle_break;
+    world.vehicle_credit = labc.world_vehicle_credit;
+    world.loadout_block = labc.world_loadout_block;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;

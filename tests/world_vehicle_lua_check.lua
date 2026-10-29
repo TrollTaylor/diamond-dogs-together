@@ -730,7 +730,25 @@ if arg[2] then
     local on7 = false
     for _, l in ipairs(logs7) do if l:find('event=vehicle_gone;step=on;mission=30050;role=host;wreck=1', 1, true) then on7 = true end end
     check(on7, 'step=on names the wreck key (wreck=1)')
+    -- The user's vehicle decisions of 2026-10-29 (world_vehicle_rules.lua): bit 8 D12 world_vehicle_break, bit 16 D14
+    -- world_vehicle_credit, bit 32 D11 world_loadout_block; the older bits keep their meaning.
     W = Composed(8, 1)
-    check(not W.vehicleWreckOn and not W.vehicleGoneOn and not W.vehicleStateOn, 'an out-of-range r[15] (8) is off')
+    check(W.vehicleBreakOn and not W.vehicleCreditOn and not W.vehicleLoadoutOn and not W.vehicleWreckOn and not W.vehicleGoneOn and
+        not W.vehicleStateOn, 'CFG r[15] = 8: the break key alone')
+    W = Composed(16, 1)
+    check(W.vehicleCreditOn and not W.vehicleBreakOn and not W.vehicleLoadoutOn and not W.vehicleGoneOn, 'CFG r[15] = 16: the credit key alone')
+    W = Composed(32, 1)
+    check(W.vehicleLoadoutOn and not W.vehicleBreakOn and not W.vehicleCreditOn and not W.vehicleGoneOn, 'CFG r[15] = 32: the loadout key alone')
+    W = Composed(27, 1)
+    check(W.vehicleGoneOn and W.vehicleStateOn and not W.vehicleWreckOn and W.vehicleBreakOn and W.vehicleCreditOn and not W.vehicleLoadoutOn,
+        'CFG r[15] = 27: VEHICLE_GONE, VEHICLE_STATE, break and credit')
+    W = Composed(63, 1)
+    check(W.vehicleGoneOn and W.vehicleStateOn and W.vehicleWreckOn and W.vehicleBreakOn and W.vehicleCreditOn and W.vehicleLoadoutOn,
+        'CFG r[15] = 63: every vehicle key')
+    W = Composed(64, 1)
+    check(not W.vehicleWreckOn and not W.vehicleGoneOn and not W.vehicleStateOn and not W.vehicleBreakOn and not W.vehicleCreditOn and
+        not W.vehicleLoadoutOn, 'an out-of-range r[15] (64) is off')
+    W = Composed(nil, 1)
+    check(W.vehicleBreakOn == false and W.vehicleCreditOn == false and W.vehicleLoadoutOn == false, 'a missing r[15]: the new keys off too')
 end
 print('world_vehicle_lua_check: ' .. checks .. ' checks PASS')

@@ -108,6 +108,17 @@ void Cfg() {
     r.vehicle_gone = world::VehicleModules(true, true, true);
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,0,0") == 0,
           "both vehicle modules and the wreck key are r[15] = 7");
+    // The user's vehicle decisions of 2026-10-29: bit 8 D12 world_vehicle_break, bit 16 D14 world_vehicle_credit, bit 32
+    // D11 world_loadout_block (lab and play); the three older bits keep their meaning.
+    Check(world::VehicleModules(false, false, false, true, false, false) == 8 &&
+              world::VehicleModules(false, false, false, false, true, false) == 16 &&
+              world::VehicleModules(false, false, false, false, false, true) == 32 &&
+              world::VehicleModules(true, true, false, true, true, true) == 59 && world::VehicleModules(true, true, true, true, true, true) == 63,
+          "r[15] bits: 8 the guest's break request, 16 the receiver's Fulton credit, 32 the guest's LOADOUT block");
+    r.vehicle_gone = world::VehicleModules(true, true, true, true, true, true);
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,63,0,0") == 0,
+          "every vehicle key is r[15] = 63");
+    r.vehicle_gone = world::VehicleModules(true, true, true);
     // M1 host-owned companion (lab key companion_host_owned, lab and play): r[16] the companion module.
     r.companion = 1;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,0") == 0,

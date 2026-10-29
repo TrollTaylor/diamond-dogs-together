@@ -233,7 +233,9 @@ struct CfgReply {
     // (0.13.6 online-vehicle-gone) turns on lua/coop/world_vehicle.lua (lab key
     // world_vehicle_gone), bit 2 (M4) lua/coop/world_vehicle_state.lua (lab key
     // world_vehicle_state), bit 4 (M4 review) VEHICLE_GONE's wreck parity (lab key
-    // world_vehicle_wreck); all lab and play; 0 none (world::VehicleModules).
+    // world_vehicle_wreck), bits 8 / 16 / 32 the vehicle decisions of 2026-10-29 (lab keys
+    // world_vehicle_break, world_vehicle_credit, world_loadout_block: lua/coop/world_vehicle_rules.lua);
+    // all lab and play; 0 none (world::VehicleModules).
     std::uint8_t vehicle_gone;
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): r[16] 1 turns on
     // lua/coop/world_companion.lua (lab key companion_host_owned), else 0; filled only by
