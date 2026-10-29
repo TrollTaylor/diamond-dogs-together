@@ -568,6 +568,9 @@ try {
     # M4: world_vehicle_state likewise.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_state -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_state -Value 0)" '1/0' 'world_vehicle_state values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_state -Value 2 } '' 'world_vehicle_state=2 refused'
+    # M4 review: world_vehicle_wreck (VEHICLE_GONE's wreck parity) likewise.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 0)" '1/0' 'world_vehicle_wreck values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 2 } '' 'world_vehicle_wreck=2 refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_max_m -Value 1001 } 'allowed: 50..1000' 'range limit'
     $ovTag = ConvertFrom-LabPartnerSettingArgs -Items @('nametag_crosshair=always', 'host:nametag_name=HostTag', 'guest:nametag_name=GuestTag') -Role guest
     Assert-Equal "$($ovTag['nametag_crosshair'])/$($ovTag['nametag_name'])" 'always/GuestTag' 'role-scoped name tag settings'
@@ -1060,6 +1063,14 @@ try {
         $file = Join-Path $fixture 'vehicle-state-host-lab.ini'; [IO.File]::WriteAllText($file, $vsIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_vehicle_state'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_state=1 parses'
+        # M4 review: world_vehicle_wreck likewise (off by default; LabCommon writes it; native parses it).
+        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_vehicle_wreck'])" '0' 'native: world_vehicle_wreck defaults off'
+        $vwOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_vehicle_wreck=1') -Role guest
+        $vwIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vwOverrides)
+        Assert-Equal ((ConvertFrom-IniText $vwIni)['world_vehicle_wreck']) '1' 'LabCommon writes world_vehicle_wreck=1'
+        $file = Join-Path $fixture 'vehicle-wreck-guest-lab.ini'; [IO.File]::WriteAllText($file, $vwIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_vehicle_wreck'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_wreck=1 parses'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')

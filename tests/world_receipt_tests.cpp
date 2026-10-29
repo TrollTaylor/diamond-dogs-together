@@ -99,6 +99,15 @@ void Cfg() {
     r.vehicle_gone = 3;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,3") == 0,
           "both vehicle modules are r[15] = 3");
+    // M4 review: bit 4 the wreck parity key (world_vehicle_wreck); world_link::HandleCfg composes r[15] with
+    // world::VehicleModules (gone, state, wreck).
+    Check(world::VehicleModules(false, false, false) == 0 && world::VehicleModules(true, false, false) == 1 &&
+              world::VehicleModules(false, true, false) == 2 && world::VehicleModules(true, true, false) == 3 &&
+              world::VehicleModules(false, false, true) == 4 && world::VehicleModules(true, true, true) == 7,
+          "r[15] bits: 1 VEHICLE_GONE, 2 VEHICLE_STATE, 4 the wreck parity");
+    r.vehicle_gone = world::VehicleModules(true, true, true);
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7") == 0,
+          "both vehicle modules and the wreck key are r[15] = 7");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255") == 0 &&
               std::strlen(out) < world::reply_capacity,

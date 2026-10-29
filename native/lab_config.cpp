@@ -247,6 +247,8 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.world_vehicle_state);
         if (ok) result.world_vehicle_state_given = true;
     }
+    // M4 review: VEHICLE_GONE's wreck parity (lab and play; off in both unless named).
+    else if (Equals(key, "world_vehicle_wreck")) ok = ParseBool(value, result.world_vehicle_wreck);
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
@@ -902,6 +904,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     // VEHICLE_STATE run in play unless named (lab FRAMEs on both copies; play rehearsals
     // e44516d7 and d9b48fcb with -WanSim bad); the lab keeps them off unless named, so a
     // lab scenario opts in (labsetting world_vehicle_gone=1 / world_vehicle_state=1).
+    // world_vehicle_wreck has no play default (off unless named, M4 review); the Lua
+    // modules run at Mother Base only in the lab (no hidden run covered 30050).
     if (result.mode == LabMode::play) {
         if (!result.world_vehicle_gone_given) result.world_vehicle_gone = true;
         if (!result.world_vehicle_state_given) result.world_vehicle_state = true;

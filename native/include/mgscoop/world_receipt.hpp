@@ -15,10 +15,11 @@
 //        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
 //        phase 2 P2-1; r[14] the WS4 attacker census 0|1 (lab key
 //        partner_placed_census, lab only), also from HandleCfg; r[15] the
-//        vehicle modules bitmask 0..3 (lab and play), also from HandleCfg:
+//        vehicle modules bitmask 0..7 (lab and play), also from HandleCfg:
 //        bit 1 the 0.13.6 VEHICLE_GONE module (lab key world_vehicle_gone),
-//        bit 2 the M4 VEHICLE_STATE module (lab key world_vehicle_state);
-//        Lua treats a missing value as 0)
+//        bit 2 the M4 VEHICLE_STATE module (lab key world_vehicle_state),
+//        bit 4 VEHICLE_GONE's wreck parity (lab key world_vehicle_wreck, M4
+//        review); Lua treats a missing or out-of-range value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
@@ -81,6 +82,11 @@ bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::ui
 // (see the grammar above). Outputs only on success.
 bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint32_t& a, std::uint32_t& b, std::uint32_t& c,
                std::uint32_t& d, std::uint32_t& e) noexcept;
+
+// r[15] (CfgReply::vehicle_gone): bit 1 VEHICLE_GONE, bit 2 VEHICLE_STATE, bit 4 the wreck parity.
+constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck) noexcept {
+    return static_cast<std::uint8_t>((gone ? 1 : 0) | (state ? 2 : 0) | (wreck ? 4 : 0));
+}
 
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;

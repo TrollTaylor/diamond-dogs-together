@@ -1,7 +1,8 @@
 -- M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4; op 51 = 0x33, host to guest, reliable,
 -- world queue, level 3; docs/world-sync-protocol.md section 17). Vehicles nobody drives were per copy:
 -- a jeep pushed, left or shot on the host's copy stayed untouched on the guest's (STATUS 7561ab63).
--- With lab.ini world_vehicle_state=1 (CFG r[15] bit 2; off in the lab, on in play unless named) on both copies:
+-- With lab.ini world_vehicle_state=1 (CFG r[15] bit 2; off in the lab, on in play unless named) on both copies
+-- (30010, 30020; Mother Base 30050 in the lab only until a hidden run covers it, M4 review):
 --   host:  scans its TppVehicle2 pool, SLICE ids every TICK_MS (a 24-vehicle pool in 1.5 s), plus at
 --          once any id a Damage message names: IsAlive, GetPosition (pos, rotY), GetVehicleType and the
 --          native read MGS_COOP_VEHICLE_LIFE_V1 (body life, zero-parts mask, the engine's ene_veh_state
@@ -15,11 +16,14 @@
 --   guest: applies it only while linked, to the vehicle its locator hash names here (veh_lv_/trc_/wav_
 --          and the Mother Base veh_clNN_clNN_0000), or for an unnamed one (never index 0, the relief
 --          vehicle: M3) the same id when it is alive, of that type and the nearest of its type to the
---          reported position within 40 m; never an LRRP truck, one this copy lost or is watching
---          (VEHICLE_GONE), and only while nobody rides it here (V.busy) and the local player stands
---          more than 3.5 m from where it would go: otherwise held (re-checked every tick) for HOLD_MS.
---          SetPosition{position, rotY} when it is > 0.5 m / 5 deg off (read back: err_mm), SetBodyLife
---          {life} when the host's body life is below this copy's (this copy keeps its own extra damage).
+--          reported position within 40 m (a named one too must lie within 40 m: far); never an LRRP
+--          truck, one this copy lost or is watching (VEHICLE_GONE), and only while nobody rides it here
+--          (V.busy) and, for a move, the local player stands more than 3.5 m from where it would go and
+--          from where it stands: otherwise held (re-checked every tick) for HOLD_MS.
+--          SetPosition{position, rotY} when it is > 0.5 m / 5 deg off (read back: err_mm; a failed
+--          placement is refused place_failed), SetBodyLife{life} whenever this copy's body life differs
+--          (host-authoritative both ways, so guest-only hits never add up to a guest-only destruction;
+--          a host life of 0 is written as 1: destruction is VEHICLE_GONE's).
 -- Lab levers (lab mode only; native refuses them outside the one-PC lab): debug vehicle_push <id|nearest>
 -- <dx> <dz> (this copy's vehicle moved, a stand-in for a shove), debug vehicle_life <id|nearest> <life>
 -- (this copy's body life; 0 is the E5 wreck attempt); debug vehicle_state_status [id] is read-only.
@@ -54,7 +58,9 @@ function S.reset()
   S.stats = {tx = 0, sweep = 0, refresh = 0, rx = 0, applied = 0, moved = 0, life = 0, same = 0, held = 0, refused = 0, skip = 0}
 end
 S.reset()
-function S.on() return W.vehicleStateOn == true and W.active == true and MISSIONS[W.mission] == true and not S.failed end
+-- Mother Base only in the lab (mode 1): no hidden run has covered 30050 (M4 review).
+local function mission() return MISSIONS[W.mission] == true and (W.mission ~= 30050 or W.mode == 1) end
+function S.on() return W.vehicleStateOn == true and W.active == true and mission() and not S.failed end
 local function fail(err)
   S.failed = true
   L("event=vehicle_state;step=error;msg=%s", string.sub(tostring(err), 1, 100))
@@ -215,12 +221,16 @@ function S.hostTick(t)
 end
 
 -- Guest.
--- This copy's id for the host's q (nil and why when none may take it).
+-- This copy's id for the host's q (nil and why when none may take it). A named one must lie within
+-- 40 m of the host's pose too (a locator resolving elsewhere here is never teleported: far).
 function S.match(q)
   if q.hash ~= 0 then
     local id = S.idOfHash[q.hash]
     if not id then return nil, "no_locator" end
     if not S.alive(id) then return nil, "absent" end
+    local x, _, z = S.pose(id)
+    if not x then return nil, "no_match" end
+    if hdist(x, z, q.x, q.z) > FAR_MM then return nil, "far" end
     return id
   end
   if q.id % 512 == 0 then return nil, "index0" end
@@ -255,16 +265,20 @@ function S.consider(q, t)
   why = S.busy(id)
   local x, y, z, yaw = S.pose(id)
   if not why and not x then why = "pose_unreadable" end
-  if not why then
+  local d, dyaw = x and hdist(x, z, q.x, q.z) or 0, x and yawDiff(yaw, q.yaw) or 0
+  local move = x ~= nil and (d > MOVE_MM or abs(y - q.y) > MOVE_MM or dyaw > YAW_MRAD)
+  if not why and move then
+    -- Never onto the local player, and never away from them (walking up to it, a GetOn before ON_VEHICLE).
     local px, pz
     pcall(function() px, pz = vars.playerPosX, vars.playerPosZ end)
-    if type(px) == "number" and type(pz) == "number" and hdist(floor(px * 1000), floor(pz * 1000), q.x, q.z) < NEAR_PLAYER_MM and
-      hdist(x, z, q.x, q.z) > MOVE_MM then why = "player_near" end
+    if type(px) == "number" and type(pz) == "number" then
+      px, pz = floor(px * 1000), floor(pz * 1000)
+      if hdist(px, pz, q.x, q.z) < NEAR_PLAYER_MM or hdist(px, pz, x, z) < NEAR_PLAYER_MM then why = "player_near" end
+    end
   end
   if why then return "hold", why, id end
-  local d, dyaw = hdist(x, z, q.x, q.z), yawDiff(yaw, q.yaw)
   local moved, err = false, -1
-  if d > MOVE_MM or abs(y - q.y) > MOVE_MM or dyaw > YAW_MRAD then
+  if move then
     local rp = W.ridePose
     if type(rp) == "table" and type(rp.place) == "function" then moved = rp.place(id, q.x, q.y, q.z, q.yaw) == true end
     local x2, _, z2 = S.pose(id)
@@ -272,10 +286,18 @@ function S.consider(q, t)
   end
   local here = row(S.readLife(id, 1), id)
   local was, lifeSet = here and here[1] or UNKNOWN, false
-  if here and q.life ~= UNKNOWN and q.life < here[1] then
-    send(id, {id = "SetBodyLife", life = q.life})
+  local life = q.life ~= UNKNOWN and math.max(q.life, 1) or nil
+  if here and life and life ~= here[1] then
+    send(id, {id = "SetBodyLife", life = life})
     local after = row(S.readLife(id, 1), id)
-    lifeSet = after ~= nil and after[1] == q.life
+    lifeSet = after ~= nil and after[1] == life
+  end
+  if lifeSet then S.stats.life = S.stats.life + 1 end
+  if move and not moved then
+    S.stats.refused = S.stats.refused + 1
+    outcome(id, "refused:place_failed", fmt("event=vehicle_state;step=refused;id=%d;reason=place_failed;here=%d;d_mm=%d;err_mm=%d;dyaw=%d;life=%d;was=%d;f=%d",
+      q.id, id, d, err, dyaw, q.life, was, q.flags))
+    return "refused", "place_failed"
   end
   if not moved and not lifeSet then
     S.stats.same = S.stats.same + 1
@@ -285,7 +307,6 @@ function S.consider(q, t)
   end
   S.stats.applied = S.stats.applied + 1
   if moved then S.stats.moved = S.stats.moved + 1 end
-  if lifeSet then S.stats.life = S.stats.life + 1 end
   outcome(id, "applied", fmt("event=vehicle_state;step=applied;id=%d;from=%d;moved=%d;d_mm=%d;err_mm=%d;dyaw=%d;life=%d;was=%d;sv=%d;here_sv=%d;zero=%d;here_zero=%d;f=%d",
     id, q.id, moved and 1 or 0, d, err, dyaw, q.life, was, q.sv, here and here[4] or -1, q.zero, here and here[2] or -1, q.flags))
   return "applied"
@@ -293,6 +314,8 @@ end
 function S.guestConsider(q, t)
   local verdict, why, id = S.consider(q, t)
   if verdict ~= "hold" then S.pending[q.id] = nil; return end
+  -- A hold changes the outcome: the line after it is logged again (a scenario waits for that one).
+  if id then S.outcome[id] = nil end
   q.since = q.since or t
   if t - q.since >= HOLD_MS then
     S.pending[q.id] = nil
@@ -333,6 +356,9 @@ do
 end
 W.startHooks[#W.startHooks + 1] = guarded(function()
   S.reset()
+  if W.vehicleStateOn == true and W.active == true and MISSIONS[W.mission] and not mission() then
+    L("event=vehicle_state;step=off;mission=%d;reason=mb_lab_only", W.mission)
+  end
   if not S.on() then return end
   S.buildNames()
   L("event=vehicle_state;step=on;mission=%d;role=%s;named=%d;lrrp=%d", W.mission, W.host and "host" or "guest", S.named or 0,

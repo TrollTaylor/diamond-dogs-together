@@ -29,6 +29,7 @@ bool g_lab_triggers = false;
 bool g_placed_census = false;  // WS4 step 0: CFG r[14] (lab key partner_placed_census, lab only)
 bool g_vehicle_gone = false;   // 0.13.6 online-vehicle-gone: CFG r[15] bit 1 (lab key world_vehicle_gone, lab and play)
 bool g_vehicle_state = false;  // M4 VEHICLE_STATE: CFG r[15] bit 2 (lab key world_vehicle_state, lab and play)
+bool g_vehicle_wreck = false;  // M4 review: CFG r[15] bit 4, VEHICLE_GONE's wreck parity (lab key world_vehicle_wreck)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
 // LOG receipts (0.13.6): a token bucket of kLogBurst lines refilled at kLogPerS
@@ -215,6 +216,7 @@ void Configure(const Config& config) noexcept {
     g_placed_census = config.placed_census && !config.play;
     g_vehicle_gone = config.vehicle_gone;
     g_vehicle_state = config.vehicle_state;
+    g_vehicle_wreck = config.vehicle_wreck;
     if (g_lab_triggers && config.directory &&
         FAILED(StringCchPrintfW(g_trigger_path, ARRAYSIZE(g_trigger_path) - 4, L"%s\\mgs-coop\\world.trigger", config.directory)))
         g_trigger_path[0] = 0;
@@ -279,8 +281,8 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     // WS4 step 0: r[14] the attacker census (lab only, read-only logging).
     reply.census = g_placed_census ? 1 : 0;
     // r[15] the vehicle modules (lab and play): bit 1 VEHICLE_GONE (0.13.6
-    // online-vehicle-gone), bit 2 VEHICLE_STATE (M4).
-    reply.vehicle_gone = static_cast<std::uint8_t>((g_vehicle_gone ? 1 : 0) | (g_vehicle_state ? 2 : 0));
+    // online-vehicle-gone), bit 2 VEHICLE_STATE (M4), bit 4 the wreck parity (M4 review).
+    reply.vehicle_gone = world::VehicleModules(g_vehicle_gone, g_vehicle_state, g_vehicle_wreck);
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }

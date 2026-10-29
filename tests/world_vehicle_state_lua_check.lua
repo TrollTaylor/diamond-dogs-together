@@ -247,20 +247,29 @@ check(g:has('event=vehicle_state;step=applied;id=25605;from=25608;moved=1;d_mm=3
 H({2, 25608, str32('veh_lv_0000'), 1, 5, -649800, 1000, 877700, 0, 3000, 1, 0})
 H({3, 25608, str32('veh_lv_0000'), 1, 5, -649900, 1000, 877700, 0, 3000, 1, 0})
 check(#g.placed == 1 and g:count('step=same;id=25605;from=25608;') == 1, 'within 0.5 m nothing moves; one step=same line')
--- Body life: the host's lower life is written and read back; a higher one never heals this copy.
+-- Body life is host-authoritative both ways (M4 review finding 4): the host's lower life is written and read back,
+-- and a guest-only hit (this copy below the host) is put back up to the host's life, so guest-only damage cannot add
+-- up between states and destroy this copy's vehicle first (a split nothing repairs).
 H({4, 25609, str32('veh_lv_0001'), 1, 1, -600000, 1000, 900000, 0, 2400, 0x11, 0})
 check(#g.lifeSet == 1 and g.lifeSet[1].id == 25606 and g.lifeSet[1].life == 2400 and g.pool[25606].life == 2400 and
     g:has('step=applied;id=25606;from=25609;moved=0;d_mm=0;err_mm=-1;dyaw=0;life=2400;was=3000;sv=17;here_sv=1;'), 'SetBodyLife takes the host\'s lower life')
 g.pool[25606].life = 1000
 H({5, 25609, str32('veh_lv_0001'), 1, 1, -600000, 1000, 900000, 0, 2400, 0x11, 0})
-check(#g.lifeSet == 1 and g.pool[25606].life == 1000, 'this copy keeps its own extra damage')
+check(#g.lifeSet == 2 and g.lifeSet[2].life == 2400 and g.pool[25606].life == 2400 and
+    g:has('step=applied;id=25606;from=25609;moved=0;d_mm=0;err_mm=-1;dyaw=0;life=2400;was=1000;'), 'a guest-only hit is put back to the host\'s life')
 g.lifeIgnored = true
 local applied = g:count('step=applied;id=25606;')
 H({6, 25609, str32('veh_lv_0001'), 1, 1, -600000, 1000, 900000, 0, 500, 0x11, 0})
-check(#g.lifeSet == 2 and g.pool[25606].life == 1000 and g:count('step=applied;id=25606;') == applied, 'a life write that does not read back is not applied')
+check(#g.lifeSet == 3 and g.pool[25606].life == 2400 and g:count('step=applied;id=25606;') == applied, 'a life write that does not read back is not applied')
 g.lifeIgnored = nil
 H({7, 25609, str32('veh_lv_0001'), 1, 1, -600000, 1000, 900000, 0, 65535, 1, 0})
-check(#g.lifeSet == 2, 'an unknown host life (65535) is never written')
+check(#g.lifeSet == 3, 'an unknown host life (65535) is never written')
+H({7, 25609, str32('veh_lv_0001'), 1, 1, -600000, 1000, 900000, 0, 0, 0x11, 0})
+check(#g.lifeSet == 4 and g.lifeSet[4].life == 1 and g.pool[25606].life == 1 and g.pool[25606].alive,
+    'a host life of 0 is written as 1: VEHICLE_STATE never destroys (a destruction is VEHICLE_GONE\'s, behind its own key)')
+H({7, 25609, str32('veh_lv_0001'), 1, 1, -545000, 1000, 900000, 0, 2400, 0x11, 0})
+check(g:has('step=refused;id=25609;reason=far') and g.pool[25606].x == -600 and #g.lifeSet == 4,
+    'a named vehicle 55 m from the host\'s pose here: refused far, nothing moved (review finding 3, the hash match had no distance check)')
 -- Refusals: an LRRP truck, an unknown locator, a wreck here, an unnamed index 0.
 H({8, 25602, str32('veh_trc_0000'), 4, 1, -690000, 1000, 850000, 0, 3000, 1, 0})
 check(g:has('step=refused;id=25602;reason=lrrp') and #g.placed == 1, 'an LRRP truck is refused')
@@ -315,6 +324,35 @@ g.env.vars.playerPosX, g.env.vars.playerPosZ = -601.0, 877.7
 H({18, 25608, str32('veh_lv_0000'), 1, 1, -601000, 1000, 877700, 0, 3000, 1, 0})
 g:polls(41)
 check(g:has('step=hold_timeout;id=25608;reason=player_near') and g.pool[25605].x == -611, 'a hold ends after 10 s (the next refresh retries)')
+-- The player beside the vehicle where it stands now (walking up to it, a GetOn before ON_VEHICLE): never pulled away
+-- from them (review finding 8: only the target pose was checked).
+local near = g:count('reason=player_near')
+g.env.vars.playerPosX, g.env.vars.playerPosZ = -612.5, 877.7
+H({18, 25608, str32('veh_lv_0000'), 1, 1, -590000, 1000, 877700, 0, 3000, 1, 0})
+check(g:count('step=hold;id=25608;here=25605;reason=player_near') == near and g:count('reason=player_near') == near + 1 and g.pool[25605].x == -611,
+    'the local player 1.5 m from the vehicle\'s current spot (22 m from the target): held')
+g.env.vars.playerPosX = 5000
+g:poll()
+check(g.pool[25605].x == -590, 'applied once the player walked away')
+-- A needed move whose placement fails is refused place_failed (once per change), never logged as same (finding 7).
+g.placeFail = true
+H({19, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
+H({19, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
+check(g:count('step=refused;id=25608;reason=place_failed;here=25605;d_mm=10000;') == 1 and not g:has('step=same;id=25605;from=25608;d_mm=10000') and
+    g.pool[25605].x == -590, 'a failed placement is refused place_failed, logged once')
+g.placeFail = nil
+H({19, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
+check(g.pool[25605].x == -580 and g:has('step=applied;id=25605;from=25608;moved=1;d_mm=10000;'), 'the next state places it')
+-- After a hold the outcome is logged again, so a scenario can wait for the line that follows the event (review
+-- finding 6: the post-drive same line was deduplicated against the sweep's).
+H({19, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
+local sames = g:count('step=same;id=25605;from=25608;')
+check(sames >= 1, 'same while the copies agree')
+g.pool[25605].riders = {4321}
+H({20, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
+g.pool[25605].riders = nil
+g:poll()
+check(g:count('step=same;id=25605;from=25608;') == sames + 1, 'the same outcome after a hold (occupied) is logged again')
 g.env.vars.playerPosX = 5000
 -- VEHICLE_GONE's loss here wins.
 g.W.vehicleGone.gone[25606] = true
@@ -365,6 +403,21 @@ c.W.mission = 30050
 c:add(25601, 10.0, 20.0, 1, 'veh_cl01_cl00_0000')
 c:start()
 check(c:has('step=on;mission=30050;role=host;named=1;lrrp=0'), 'Mother Base jeeps are named by their cluster locators')
+-- Mother Base runs only in the lab since the M4 review (no hidden run covered 30050, finding 3): play is off there.
+c = Fixture('host', {mission = 30050, mode = 2})
+c:add(25601, 10.0, 20.0, 1, 'veh_cl01_cl00_0000')
+c:start(); c:pair(); c:polls(12)
+check(not c.S.on() and #c.tx == 0 and c:has('event=vehicle_state;step=off;mission=30050;reason=mb_lab_only') and not c:has('step=on;'),
+    'play at Mother Base: off (one step=off line), nothing sent')
+g = Fixture('guest', {mission = 30050, mode = 2})
+g:add(25601, 10.0, 20.0, 1, 'veh_cl01_cl00_0000')
+g:start()
+g.H[51]({1, 25601, str32('veh_cl01_cl00_0000'), 1, 1, 13000, 1000, 20000, 0, 3000, 1, 0})
+check(#g.placed == 0 and g:has('step=ignored;reason=off'), 'play at Mother Base: the guest ignores a state')
+c = Fixture('host', {mode = 2})
+c:add(25608, -653.0, 877.7, 1, 'veh_lv_0000')
+c:start()
+check(c.S.on() and c:has('step=on;mission=30020;role=host;'), 'play in Africa: on')
 
 -- With world_sync.lua: CFG r[15] is the vehicle modules bitmask; the Damage observer reaches the host scan.
 if arg[3] then
@@ -412,6 +465,10 @@ if arg[3] then
     W = Composed(nil, 1)
     check(not W.vehicleStateOn and not W.vehicleGoneOn, 'a missing r[15] (an older loader) is off')
     W = Composed(7, 1)
-    check(not W.vehicleStateOn and not W.vehicleGoneOn, 'an out-of-range r[15] is off')
+    check(W.vehicleStateOn and W.vehicleGoneOn and W.vehicleWreckOn, 'CFG r[15] = 7: both modules and the wreck key (bit 4, M4 review)')
+    W = Composed(6, 1)
+    check(W.vehicleStateOn and not W.vehicleGoneOn and W.vehicleWreckOn, 'CFG r[15] = 6: VEHICLE_STATE and the wreck key')
+    W = Composed(8, 1)
+    check(not W.vehicleStateOn and not W.vehicleGoneOn and not W.vehicleWreckOn, 'an out-of-range r[15] (8) is off')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')

@@ -222,7 +222,8 @@ struct CfgReply {
     // r[15] the vehicle modules bitmask, filled only by world_link::HandleCfg: bit 1
     // (0.13.6 online-vehicle-gone) turns on lua/coop/world_vehicle.lua (lab key
     // world_vehicle_gone), bit 2 (M4) lua/coop/world_vehicle_state.lua (lab key
-    // world_vehicle_state); both lab and play; 0 none.
+    // world_vehicle_state), bit 4 (M4 review) VEHICLE_GONE's wreck parity (lab key
+    // world_vehicle_wreck); all lab and play; 0 none (world::VehicleModules).
     std::uint8_t vehicle_gone;
 };
 

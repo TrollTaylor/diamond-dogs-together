@@ -1421,6 +1421,25 @@ int main() {
                   "world_vehicle_state=1 parses in play with no refusal bit");
             Check(!vsBad.world_vehicle_state && vsBad.invalid_values == 1 && vsBad.unknown_keys == 0, "an invalid world_vehicle_state keeps it off");
         }
+        // M4 review (finding 2): VEHICLE_GONE's wreck parity has its own key, world_vehicle_wreck (CFG r[15] bit 4), off
+        // in the lab and in play unless named: its only play rehearsal (e235bda6) never destroyed the jeep, and the
+        // receiver's blast was never measured with live guards. Before the review it rode on world_vehicle_state.
+        {
+            const auto vwPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_wreck=1\n");
+            const auto vwLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_vehicle_gone=1\nworld_vehicle_wreck=1\n");
+            const auto vwBad = Lab("enabled=1\nrole=host\nworld_vehicle_wreck=2\n");
+            Check(!def.world_vehicle_wreck && !vehicleGun.world_vehicle_wreck, "world_vehicle_wreck defaults off in the lab (plain, gun profile)");
+            Check(vehiclePlayDefault.mode == mgscoop::LabMode::play && !vehiclePlayDefault.world_vehicle_wreck &&
+                      vehiclePlayDefault.world_vehicle_gone && vehiclePlayDefault.world_vehicle_state,
+                  "world_vehicle_wreck defaults off in play (the vehicle modules stay on)");
+            Check(vwLab.world_vehicle_wreck && vwLab.world_vehicle_gone && !vwLab.world_vehicle_state && vwLab.invalid_values == 0 &&
+                      vwLab.unknown_keys == 0,
+                  "world_vehicle_wreck=1 parses in lab (independent of world_vehicle_state)");
+            Check(vwPlay.mode == mgscoop::LabMode::play && vwPlay.world_vehicle_wreck && vwPlay.play_refused == 0 && vwPlay.invalid_values == 0,
+                  "world_vehicle_wreck=1 parses in play with no refusal bit (a future play rehearsal names it)");
+            Check(!vwBad.world_vehicle_wreck && vwBad.invalid_values == 1 && vwBad.unknown_keys == 0, "an invalid world_vehicle_wreck keeps it off");
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {

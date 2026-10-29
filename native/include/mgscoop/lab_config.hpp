@@ -712,6 +712,13 @@ struct LabConfig {
     // d407f115 / 0edadbe2; play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
     bool world_vehicle_state = false;
     bool world_vehicle_state_given = false;
+    // world_vehicle_wreck=0|1 (M4 review): VEHICLE_GONE's wreck parity, CFG r[15] bit 4
+    // for Lua: a destroyed vehicle (cause 2) becomes a wreck on the receiver through
+    // SetBodyLife{life=0} (the engine's own destruction, blast included) instead of a
+    // Despawn. Lab and play (not a play refusal), off in both unless named: its only
+    // play rehearsal (e235bda6) never destroyed the jeep, and the receiver's blast was
+    // never measured with live guards. Lab FRAME 0edadbe2.
+    bool world_vehicle_wreck = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is
