@@ -2442,6 +2442,111 @@ void TestUpdateBlocksSessions() {
     GetUpdateHooks() = saved;
 }
 
+// The update and the setup never overlap: the setup (and Uninstall) cannot start
+// while an update downloads or installs, an update cannot start while the setup
+// runs, and just before installing the update checks the folder again.
+void TestUpdateBlocksSetup() {
+    Fixture f(L"model-update-setup");
+    UpdateHooks saved = GetUpdateHooks();
+    std::atomic<bool> release{false}, in_download{false};
+    std::atomic<int> relaunches{0};
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>* cancel, std::string& error) {
+        in_download = true;
+        while (!release && !(cancel && *cancel)) Sleep(5);
+        in_download = false;
+        if (cancel && *cancel) {
+            error = "Download cancelled";
+            return false;
+        }
+        WriteBytes(dest, PackageZip({{"DiamondDogsTogether.exe", "NEW-LAUNCHER"}}));
+        return true;
+    };
+    GetUpdateHooks().relaunch = [&](const std::wstring&, const std::vector<std::wstring>&, std::string&) {
+        ++relaunches;
+        return true;
+    };
+    const std::wstring exe = f.game + L"\\DiamondDogsTogether.exe";
+    auto status_is = [](LauncherModel& m, UpdateStatus s) { return m.update_info().status == s; };
+    WriteText(exe, "OLD-LAUNCHER");
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::needs_setup);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+        // Set up co-op (or Uninstall) while the update downloads: refused, nothing started.
+        m->start_setup();
+        CHECK(m->phase() == Phase::needs_setup && Has(m->last_error(), "updating"));
+        std::string report, error;
+        CHECK(!m->uninstall(report, error) && Has(error, "updating"));
+        CHECK(IsFile(f.paths.loader) && !PathExists(f.paths.friend_install));
+        release = true;
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::ready_to_restart) || status_is(*m, UpdateStatus::error); }));
+        CHECK(status_is(*m, UpdateStatus::ready_to_restart) && relaunches == 1 && m->phase() == Phase::needs_setup);
+        // Handed over: the window closes now; the setup stays refused until then.
+        m->start_setup();
+        CHECK(m->phase() == Phase::needs_setup);
+    }
+    // MGSV, or co-op, was started while the update downloaded: refused just
+    // before the install, nothing replaced.
+    for (int i = 0; i < 2; ++i) {
+        release = false;
+        WriteText(exe, "OLD-LAUNCHER");
+        DeleteFileChecked(exe + L".old");
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+        if (i == 0) {
+            f.env->AddGame(7300, f.GameExe(), f.env->NowMs());
+        } else {
+            f.env->AddProcess(7400, f.env->NowMs() - 1000);
+            WriteText(f.paths.play_session, "{\"v\":2,\"state\":\"active\",\"watchdog_pid\":7400}");
+        }
+        release = true;
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error) || status_is(*m, UpdateStatus::ready_to_restart); }));
+        CHECK(status_is(*m, UpdateStatus::error) && Has(m->update_info().error, "Quit MGSV"));
+        CHECK_EQ(ReadText(exe), std::string("OLD-LAUNCHER"));
+        CHECK(relaunches == 1 && !PathExists(f.paths.mod + L"\\update.zip"));
+        f.env->Kill(i == 0 ? 7300 : 7400);
+        DeleteFileChecked(f.paths.play_session);
+    }
+    // While the setup runs, Update now waits for it, in plain words (the setup is not a page to visit).
+    {
+        std::atomic<bool> in_build{false}, finish_build{false};
+        InstallHooks& hooks = Hooks();
+        const auto saved_build = hooks.build_runtime;
+        hooks.build_runtime = [&](const std::wstring& a, const std::wstring& out, const std::function<void(float, const std::string&)>& progress,
+                                  std::string& error) {
+            in_build = true;
+            while (!finish_build) Sleep(5);
+            return saved_build(a, out, progress, error);
+        };
+        release = true;
+        WriteText(exe, "OLD-LAUNCHER");
+        f.WritePackage(DDT_CORE_VERSION);   // the first part installed the 9.9.9 package
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        CHECK(m->phase() == Phase::needs_setup);
+        m->start_setup();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return in_build.load(); }) && m->phase() == Phase::setting_up);
+        m->start_update();
+        const std::string refused = m->update_info().error;
+        CHECK(status_is(*m, UpdateStatus::error) && Has(refused, "getting ready") && !Has(refused, "setup"));
+        finish_build = true;
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        CHECK(relaunches == 1);
+        hooks.build_runtime = saved_build;
+    }
+    GetUpdateHooks() = saved;
+}
+
 }  // namespace
 
 int main() {
@@ -2491,6 +2596,7 @@ int main() {
     TestRestartProcesses();
     TestUpdateThroughModel();
     TestUpdateBlocksSessions();
+    TestUpdateBlocksSetup();
 
     RemoveTree(g_root);
     std::printf("ddt_core_tests: %u checks, %u failures\n", g_checks, g_failures);

@@ -289,6 +289,9 @@ public:
 
     void start_setup() override {
         if (phase_ != Phase::needs_setup) return;
+        // Never while an update downloads or installs: it replaces the files the setup uses.
+        std::string busy;
+        if (UpdateBusy(busy)) return;
         if (setup_thread_.joinable()) setup_thread_.join();
         {
             std::lock_guard<std::mutex> lock(shared_->m);
@@ -455,6 +458,7 @@ public:
 
     bool uninstall(std::string& report_out, std::string& error_out) override {
         report_out.clear();
+        if (UpdateBusy(error_out)) return false;
         if (stage_ != Stage::none || phase_ == Phase::setting_up) {
             error_out = "Close the game first (co-op is still on), then try again.";
             return false;
@@ -644,11 +648,14 @@ UpdateInfo update_info() const override {
                 fail("The update could not be downloaded. Check your internet connection, then try again.");
                 return;
             }
-            // The game may have been started while the update downloaded.
-            if (AnyGameRunningIn(*env_, paths.game)) {
-                log("update=refused; reason=game_running");
+            // The folder may have changed while the update downloaded (the setup
+            // cannot start meanwhile, but MGSV or co-op can, from outside).
+            if (const std::string reason = ApplyBlocker(paths); !reason.empty()) {
+                log("update=refused; reason=" + reason);
                 DeleteFileChecked(dest_zip);
-                fail("MGSV was started while the update downloaded. Quit MGSV, then update again.");
+                fail(reason == "game_running"    ? "MGSV was started while the update downloaded. Quit MGSV, then update again."
+                     : reason == "session_live" ? "Co-op was switched on while the update downloaded. Quit MGSV, then update again."
+                                                : "Co-op is still getting ready. Update once that has finished.");
                 return;
             }
             {
@@ -722,12 +729,24 @@ private:
     // Why the update cannot install now ("" = it can): never while a game or a
     // co-op session runs from this folder, or while the setup runs.
     std::string UpdateBlocker() {
-        if (phase_ == Phase::setting_up) return "Wait until the setup has finished, then update.";
+        if (phase_ == Phase::setting_up) return "Co-op is still getting ready. Update once that has finished.";
         if (stage_ != Stage::none || phase_ == Phase::launching || phase_ == Phase::in_game || phase_ == Phase::after_game)
             return "Quit MGSV first. Diamond Dogs Together updates once the game is closed.";
         if (AnyGameRunningIn(*env_, paths_.game)) return "MGSV is running from this folder. Quit MGSV first, then update.";
         if (PlaySessionLive(*env_, paths_))
             return "Co-op is still on for this folder (another window or its helper). Quit MGSV first, then update.";
+        return {};
+    }
+
+    // The same, from the update thread just before it installs: only what that
+    // thread may read ("" = install; otherwise a token for launcher.log).
+    std::string ApplyBlocker(const InstancePaths& paths) {
+        {
+            std::lock_guard<std::mutex> lock(shared_->m);
+            if (shared_->setup_running) return "setup_running";
+        }
+        if (AnyGameRunningIn(*env_, paths.game)) return "game_running";
+        if (PlaySessionLive(*env_, paths)) return "session_live";
         return {};
     }
 
