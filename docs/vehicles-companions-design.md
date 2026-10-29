@@ -1539,8 +1539,10 @@ failed its first check on an empty chunk):
     host's re-call brings it back through the reconcile (`step=recalled`).
 - Lab levers (lab mode only, refused in play): `companion_lab dog_life|dog_stun <0..100>` (host: its own dog's record;
   life 0 is the native kill flag), `recall` (host: `UnsetDeadBuddyType(DOG)`, then `call_here dog`), `kill_mirror`
-  (guest: the kill flag on its copy), `guard off|on` (guest); `companion_lab dog_state` (both roles, also in play: the
-  receipt; the guest reads by re-arming, because a guest's arm 0 is a disarm).
+  (guest: the kill flag on its copy), `guard off|on` (guest), `link_sim on|off` (guest, added in the review resume,
+  8.10: the guard module alone sees the link as lost, so it holds an armed guard and reads the host's state as
+  unknown; cleared at mission start); `companion_lab dog_state` (both roles, also in play: the receipt; an armed guest
+  reads by re-arming, because a guest's arm 0 is a disarm; a disarmed guest and the host read the live record).
 
 **Runs** (hidden worker, loopback, research build, native gun stage, copied saves, low graphics,
 `companion_host_owned=1`; host seed `afgh-ledge` with D-Dog, guest `afgh-horse`, the guest plays Quiet and is drawn as a
