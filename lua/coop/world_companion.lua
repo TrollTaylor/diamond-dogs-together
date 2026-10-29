@@ -116,10 +116,29 @@ local function nextType(kind)
  if kind == 4 then return W.get(vars, "buddyType") end
  return W.get(vars, "buddyTypeMissionStart")
 end
+-- What the guest's copy shows of the host's companion (design section 4 rule 6, "unknown means
+-- hidden"; review 2026-10-29): a kind with a hold (M2: the dog), else none until its milestone
+-- (M5 Quiet, M9 walker, M10 horse); never a second Quiet beside a guest who plays her.
+C.HOLD = {DOG = true}
+local function why(t) return t == BT("QUIET") and C.selfQuiet and "self_quiet" or "no_hold" end
+function C.shown(t)
+ if t == nil or t == BT("NONE") then return t end
+ for n in pairs(C.HOLD) do if BT(n) == t and not (n == "QUIET" and C.selfQuiet) then return t end end
+ return BT("NONE")
+end
+local PARK = {"buddyType", "buddyTypeMissionStart"}
 function C.seeded(mission, kind)
+ local raw = nextType(kind)
+ for _, k in ipairs(PARK) do
+  local v = W.get(vars, k)
+  if type(v) == "number" and C.shown(v) ~= v then
+   vars[k] = BT("NONE")
+   L(fmt("step=seed_filter;var=%s;kind=%s;reason=%s;", k, typeName(v), why(v)))
+  end
+ end
  local t = nextType(kind)
- if C.expect and C.expect.mission == mission and C.expect.type == t then return end
- C.expect = {mission = mission, type = t}
+ if C.expect and C.expect.mission == mission and C.expect.type == t and C.expect.raw == raw then return end
+ C.expect = {mission = mission, type = t, raw = raw}
  L(fmt("step=seed_apply;kind=%s;own=%s;mission=%d;", typeName(t), typeName(C.own and C.own.buddyType), mission))
 end
 local function lockLog(via)
@@ -131,7 +150,6 @@ end
 -- slot restore of TppMain.OnAllocate (VarRestoreOnMissionStart / OnContinueFromCheckPoint) runs
 -- before the block Load, so StageBlockCurrentPosition(true) (after it, before SetSortieBuddy)
 -- parks her again on a locked load. A live non-Quiet choice (sortie prep, a call) drops the park.
-local PARK = {"buddyType", "buddyTypeMissionStart"}
 local function parkVar(k, via)
  local Q = BT("QUIET")
  if not Q or W.get(vars, k) ~= Q then return false end
@@ -219,11 +237,13 @@ H[OP.COMPANION] = function(v, now)
   L(fmt("step=host_kind;kind=%s;", typeName(fromWire(v[3]))))
  end
 end
--- What the guest may call: the host's kind (COMPANION), else the seeded vars.
-function C.allowed()
+-- The host's companion: its kind (COMPANION), else the seeded vars before the filter. What the
+-- guest's copy may load of it: C.allowed().
+function C.hostType()
  if C.hostKind then return fromWire(C.hostKind) end
- if C.expect then return C.expect.type end
+ if C.expect then return C.expect.raw end
 end
+function C.allowed() return C.shown(C.hostType()) end
 
 -- Host: the Quiet lock while the guest plays Quiet; COMPANION on change and every 5 s.
 local function hostTick(now)
@@ -319,26 +339,27 @@ local function reconcile(now)
   C.mismatchAt = nil; return
  end
  if C.expect and C.expect.mission == W.mission and not C.expect.done then return end
- local want, have = fromWire(h.kind), active()
- if want == nil or have == nil or want == have then C.mismatchAt = nil; return end
- -- Never a second Quiet beside a guest who plays her (the host's lock keeps her away anyway).
- if want == BT("QUIET") and C.selfQuiet then
-  if C.skipLogged ~= W.mission then C.skipLogged = W.mission; L("step=reconcile_skip;reason=self_quiet;") end
-  return
+ -- The host's kind as this copy shows it (C.shown: none for a kind without a hold here).
+ local raw, have, N = fromWire(h.kind), active(), BT("NONE")
+ local want = C.shown(raw)
+ if want ~= raw and C.skipLogged ~= W.mission * 8 + h.kind then
+  C.skipLogged = W.mission * 8 + h.kind
+  L(fmt("step=reconcile_skip;reason=%s;kind=%s;", why(raw), typeName(raw)))
  end
+ if want == nil or have == nil or want == have then C.mismatchAt = nil; return end
  C.mismatchAt = C.mismatchAt or now
  -- 8 s (15 s to send one away): a host warp, death or cluster change drops its kind for a few
  -- seconds (run 9e8f22a7: none for 3.5 s after a warp across Mother Base).
- if now - C.mismatchAt < (want == BT("NONE") and 15000 or 8000) or now < (C.fixAt or 0) then return end
+ if now - C.mismatchAt < (want == N and 15000 or 8000) or now < (C.fixAt or 0) then return end
+ -- Called at the host's pose (COMPANION carries the dog's, M2); without one it waits, never
+ -- where this player stands (M1 called it 4 m in front of the guest).
+ local x, y, z, yaw = h.x, h.y, h.z, h.yaw
+ if want ~= N and (not h.present or (x == 0 and y == 0 and z == 0)) then
+  if C.waitLogged ~= W.mission then C.waitLogged = W.mission; L(fmt("step=reconcile_wait;kind=%s;reason=no_pose;", typeName(want))) end
+  return
+ end
  C.fixAt = now + 5000
  C.keep("reconcile")
- local x, y, z, yaw = h.x, h.y, h.z, h.yaw
- if not h.present or (x == 0 and y == 0 and z == 0) then
-  -- M1 sends the kind only: 4 m in front of this player, where its camera sees the companion arrive.
-  local p = C.front(4)
-  if not p then return end
-  x, y, z, yaw = p[1], p[2], p[3], p[4]
- end
  local via, ok = "call", false
  C.token = true
  if want == BT("NONE") then
@@ -401,8 +422,8 @@ local function guestTick(now)
  if now >= (C.maskAt or 0) then
   C.maskAt = now + 250
   -- Only while the host has a companion out: the call menu also holds knock and sonar (run dd4c61ff).
-  local allowed = C.allowed()
-  C.mask(W.paired and W.inGame() and allowed ~= nil and allowed ~= BT("NONE") and not cqcHold())
+  local out = C.hostType()
+  C.mask(W.paired and W.inGame() and out ~= nil and out ~= BT("NONE") and not cqcHold())
  end
  if W.paired then guardTypes(now); reconcile(now) end
 end
@@ -435,7 +456,7 @@ local function census(fn, t)
  L(fmt("step=hook;fn=%s;type=%s;", fn, typeName(t)))
 end
 function C.refuse(path, t)
- L(fmt("step=refused;path=%s;type=%s;host=%s;", path, typeName(t), typeName(C.allowed())))
+ L(fmt("step=refused;path=%s;type=%s;host=%s;", path, typeName(t), typeName(C.hostType())))
  note(2)
  return false
 end

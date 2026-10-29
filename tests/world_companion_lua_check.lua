@@ -227,43 +227,91 @@ local disabled = {}
 for _, v in ipairs(c.calls) do if v[1] == 'SetDisableBuddyType' then disabled[v[2]] = true end end
 check(disabled[HORSE] and disabled[QUIET] and disabled[WALKER] and not disabled[DOG], 'guest disables horse, Quiet, walker')
 check(c.find('step=guard;path=idroid_swap;via=disable_type;allowed=dog;'), 'the byte guard is logged')
--- Reconcile: the host changes to D-Horse; after 3 s the guest calls a horse (original, no refusal).
+-- Reconcile (review 2026-10-29, design section 4 rule 6 "unknown means hidden"): the host changes to D-Horse. The guest's
+-- copy has no hold for a horse yet (M10), so it shows none: after 15 s it sends the host's old dog away, never calls a
+-- horse (M1 called one 4 m in front of the guest, where the guest could mount it).
 c.W.handlers[48]({2, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
 c.tick(500)
 c.time = c.time + 3500
 c.W.handlers[48]({3, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
 c.tick(200)
-check(not c.find('step=reconcile;'), 'no reconcile before 8 s of mismatch (a host warp drops its kind for seconds)')
+check(not c.find('step=reconcile;'), 'no reconcile before the debounce (a host warp drops its kind for seconds)')
+check(c.find('step=reconcile_skip;reason=no_hold;kind=horse;'), 'the host horse is not shown on the guest copy (no hold)')
 c.time = c.time + 5000
 c.W.handlers[48]({3, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
 c.tick(200)
-check(c.active == HORSE and c.find('step=reconcile;via=call;kind=horse;have=dog;ok=1;'), 'reconcile by CallBuddy to the host kind')
+check(not c.find('step=reconcile;') and c.active == DOG, 'none to send away before 15 s')
+c.time = c.time + 7000
+c.W.handlers[48]({4, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
+c.tick(200)
+check(c.active == NONE and c.find('step=reconcile;via=delete;kind=none;have=dog;ok=1;'), 'the old dog is sent away (DeleteBuddy)')
+local horseCalls = 0
+for _, v in ipairs(c.calls) do if (v[1] == 'CallBuddy' or v[1] == 'ReserveCallBuddy') and v[2] == HORSE then horseCalls = horseCalls + 1 end end
+check(horseCalls == 0, 'no horse is called on the guest copy')
+c.tick(1200)
+local disabledHorse = {}
+for _, v in ipairs(c.calls) do if v[1] == 'SetDisableBuddyType' then disabledHorse[v[2]] = true end end
+check(disabledHorse[DOG] and c.C.mine[HORSE] and c.C.mine[DOG], 'with a host horse the guest disables every type (the host horse too)')
+check(c.masks[#c.masks][1] == 'set', 'the CALL mask stays on: the host has a companion out')
+check(c.env.TppBuddy2BlockController.CallBuddy(HORSE, nil, 0) == false and c.find('step=refused;path=lua_CallBuddy;type=horse;host=horse;'),
+    'a guest horse call is refused while the host has a horse (D1 a)')
+-- Back to the dog: called at the host dog's pose (COMPANION carries it, M2).
+c.W.handlers[48]({5, 0, 1, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
+c.tick(1200)
+c.time = c.time + 8500
+c.W.handlers[48]({6, 0, 1, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
+c.tick(200)
+check(c.active == DOG and c.find('step=reconcile;via=call;kind=dog;have=none;ok=1;'), 'reconcile by CallBuddy to the host dog')
+local dogAt
+for _, v in ipairs(c.calls) do if v[1] == 'CallBuddy' and v[2] == DOG then dogAt = v[3] end end
+check(dogAt and dogAt.x == 10 and dogAt.z == 20, 'at the host dog pose')
 local unset = false
-for _, v in ipairs(c.calls) do if v[1] == 'UnsetDisableBuddyType' and v[2] == HORSE then unset = true end end
-check(unset and not c.C.mine[HORSE], 'the new host kind is enabled again before the reconcile')
+for _, v in ipairs(c.calls) do if v[1] == 'UnsetDisableBuddyType' and v[2] == DOG then unset = true end end
+check(unset and not c.C.mine[DOG], 'the host dog is enabled again before the reconcile')
 for _, f in ipairs(c.W.stopHooks) do f(true) end
 check(c.C.mine == nil, 'mission end clears the guest bits')
--- The host's Quiet never comes to a guest who plays her.
-c.W.handlers[48]({4, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
+-- The host's Quiet never comes to a guest who plays her (the host's lock keeps her away anyway).
+c.W.handlers[48]({7, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
 c.time = c.time + 20000
-c.W.handlers[48]({5, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
+c.W.handlers[48]({8, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
 c.tick(200)
-check(c.active == HORSE and c.find('step=reconcile_skip;reason=self_quiet;'), 'no buddy Quiet beside the guest Quiet')
--- Without the host's pose (M1 sends kind only) the guest calls the host's kind 4 m in front of its player
--- (playerPos 1,2,3, rotY 0: z + 4), where its camera sees it arrive.
+check(c.find('step=reconcile_skip;reason=self_quiet;'), 'no buddy Quiet beside the guest Quiet')
+check(c.active ~= QUIET, 'and none is called')
+-- A dog without the host's pose (the host dog unreadable: present 0) waits for one: never called where the guest stands.
 do
     local g = Fixture(2)
     follow(g, values)
-    g.active = DOG
+    for _, f in ipairs(g.W.startHooks) do f() end
+    g.time = g.time + 31000
     g.tick()
-    g.W.handlers[48]({1, 0, 2, 0, 1, 0, 0, 0, 0, 0, 0, 0}, g.time)
+    check(g.find('step=load_mismatch;want=dog;have=none;'), 'the seeded dog did not load here (a late join stands in)')
+    g.W.handlers[48]({1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, g.time)
     g.tick(200)
     g.time = g.time + 8500
-    g.W.handlers[48]({2, 0, 2, 0, 1, 0, 0, 0, 0, 0, 0, 0}, g.time)
+    g.W.handlers[48]({2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, g.time)
     g.tick(200)
-    local p
-    for _, v in ipairs(g.calls) do if v[1] == 'CallBuddy' and v[2] == HORSE then p = v[3] end end
-    check(p and p.x == 1 and p.y == 2 and p.z == 7, 'the reconcile without a host pose calls 4 m in front of the guest')
+    check(g.called('CallBuddy') == 0 and g.called('ReserveCallBuddy') == 0, 'no reconcile without the host dog pose')
+    check(g.find('step=reconcile_wait;kind=dog;reason=no_pose;'), 'the wait is logged')
+end
+-- Seeds of a host companion without a guest-side hold (review 2026-10-29): the guest's copy loads none. Never a seeded
+-- Quiet beside a guest who plays her (even if the host's CHARACTER came late, finding 3); horse and walker wait for
+-- M10/M9; the guest keeps its own buddy vars for its saves.
+for _, case in ipairs({{HORSE, 'horse', 'no_hold'}, {WALKER, 'walker', 'no_hold'}, {QUIET, 'quiet', 'self_quiet'}}) do
+    local g = Fixture(2)
+    follow(g, hostSeeds(case[1]))
+    check(g.calls[#g.calls][1] == 'load' and g.calls[#g.calls][3] == NONE and g.env.vars.buddyTypeMissionStart == NONE,
+        'a seeded ' .. case[2] .. ': the retail Load sees none')
+    check(g.find('step=seed_filter;var=buddyTypeMissionStart;kind=' .. case[2] .. ';reason=' .. case[3] .. ';'), 'seed filter logged: ' .. case[2])
+    check(g.C.own and g.C.own.buddyType == HORSE, 'the guest still keeps its own buddy')
+    check(g.find('step=seed_apply;kind=none;'), 'the expected load is none')
+end
+do
+    local g = Fixture(2, {character = 'snake'})
+    follow(g, hostSeeds(QUIET))
+    check(g.env.vars.buddyTypeMissionStart == NONE and g.find('reason=no_hold;'), 'a host Quiet: none on a non-Quiet guest too (M5)')
+    -- The host's live kind, as seeded: the CALL mask is on (the host has a companion out).
+    g.tick()
+    check(g.masks[#g.masks] and g.masks[#g.masks][1] == 'set', 'the mask is on for a seeded host companion the guest does not show')
 end
 -- A solo Load gives the guest its own buddy back.
 c.F.current = nil
