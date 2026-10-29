@@ -886,7 +886,17 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
 
 ## 10. Decisions for the user
 
-Product choices and scope questions; everything else above follows the user's request of 2026-10-28.
+**Answered by the user on 2026-10-28:** D5 (a) one companion per session, the host's; D2 (a) both players get a
+D-Walker when the host deploys D-Walker; D1 (a) the host alone gives companion orders, and the guest's attempts are
+refused with a toast; D10 yes, the launcher's co-op save (never the real save) may be copied read-only into the seed
+library when a proof needs a sortie vehicle or Quiet. **Defaults taken until the user says otherwise:** D3 a riding
+partner stays hidden until M10; D4 (a) the 2026-10-22 rule is lifted for the shared horse only (it follows from the
+user's 'ridden by both players at once'); D6 the support heli (M12), vehicle weapons (M13) and the host's in-mission
+vehicle drop come later, enemy helicopters and walker gears stay in the enemy section; D7 is decided with the user once
+E3/E15/E19 have run; D8 (b) the guest's own buddy vars are restored; D9 (b) M1 starts now, alongside the user's
+two-PC check of 0.14.3.
+
+The original questions:
 
 - **D1. What may the guest do with the host's companion?** (a) Ride the horse and walk with the others, but give no
   orders: the host alone commands D-Dog, Quiet and the horse (recommended for v1; only promised if E4 finds a way to
@@ -896,7 +906,7 @@ Product choices and scope questions; everything else above follows the user's re
   one buddy type per copy). (b) The guest always gets a walker, whatever the host's buddy (needs a second buddy block:
   new native work, high risk).
 - **D3. Until the shared horse is drawn (M10):** keep a riding partner hidden (today), or show the rider floating at
-  saddle height with no horse under him, like the vehicle `absent` fallback.
+  saddle height with no horse under them, like the vehicle `absent` fallback.
 - **D4. May a copy's own horse be moved by the partner's riding?** Your rule of 2026-10-22 says the partner's stream
   never moves your own horse (it fixed horses being pulled away so the first E found none). A shared D-Horse that either
   player can ride needs that rule lifted for the shared horse, in both directions, with the handoff in 6.10: placement

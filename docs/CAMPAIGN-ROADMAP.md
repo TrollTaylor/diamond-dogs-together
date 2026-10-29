@@ -8,7 +8,7 @@ As of 0.14.3 (2026-10-28: version bump `a0653b5`, package built at `a4c18fa`). T
 
 ## 1. Shared world
 - [~] **Sync enemies.** Kills, sleep, wake-ups, Fultons and vanishing are shared. Patrol and combat position correction exists but works in lab only (play refuses the soldier warp), so each PC still moves its own guards; AI state and animations are not shared.
-- [~] **Sync alerts and CP state.** Escalations are shared, and an alert the guest causes also alerts, on the host's PC, the guard he fought. Not yet shared: caution and search behaviour, reinforcement calls, CP radio.
+- [~] **Sync alerts and CP state.** Escalations are shared, and an alert the guest causes also alerts, on the host's PC, the guard they fought. Not yet shared: caution and search behaviour, reinforcement calls, CP radio.
 - [ ] **Sync enemy perception.** Either player can be spotted, and the enemy reacts to the right player on both PCs.
 - [~] **Sync hold-ups, interrogation and CQC** on enemies. The hold-up state is shared (no hands-up pose); interrogation and CQC are not.
 - [ ] **Sync prisoners and hostages:** position, carry, extraction.
@@ -38,9 +38,9 @@ As of 0.14.3 (2026-10-28: version bump `a0653b5`, package built at `a4c18fa`). T
 ## 3. Vehicles and companions
 
 Design, scope table, experiments and milestones M1-M13: [vehicles-companions-design.md](vehicles-companions-design.md)
-(revision 2). Nothing in this section is built yet; the design asks the user ten questions (D1-D10) first, among them
-whether the guest may also bring a companion (D5), whether the shared horse may be moved by the partner's riding (D4),
-and which vehicle items are in scope now (D6).
+(revision 2). Nothing in this section is built yet. Decided 2026-10-28: one companion per session, the host's; the host
+alone gives it orders; both players get a D-Walker when the host brings one. The support helicopter and vehicle
+weapons come later.
 
 Vehicles:
 - [x] **Driving** world vehicles: the partner is seated by name or by id, with smooth movement and tilt.
@@ -55,13 +55,13 @@ Vehicles:
 - [~] **Helicopter.** Host-led travel works. Riding together visibly (M12, research first) and the door gun (M13) are missing.
 
 Companions:
-- [ ] **One companion per session, the host's** (M1, decision D5): the guest's PC loads the host's buddy with its look; the guest cannot pick, call, order or dismiss one; the guest's own save keeps its own buddy.
+- [ ] **One companion per session, the host's** (M1): the guest's PC loads the host's buddy with its look; the guest cannot pick, call, order or dismiss one; the guest's own save keeps its own buddy.
 - [ ] **Quiet only when the guest is not playing her** (M1): not offered to the host in sortie prep, removed if out when the guest joins, and the Mother Base cell Quiet hidden.
 - [~] **D-Dog** on both screens, following the host only (M2). Today the guest's own dog follows the host's, and it goes missing when the guest has no buddy or another one, and in Mother Base. The dog's attack at the right guard and its enemy marks on the guest's screen wait for enemy sync in play and shared marking.
 - [ ] **Quiet** as in the normal game, synced (M5). Her shots' results are shared; the mirror on the guest's PC must never fire on its own.
 - [ ] **Companions safe on the guest's PC:** the guest's copy of a companion never attacks on its own and is not hurt by the guest's (unsynced) guards (M1-M10).
-- [ ] **D-Walker,** one each when the host brings D-Walker (M9, decision D2). Today the partner's walker is missing and its rider hidden.
-- [ ] **D-Horse:** the host's horse on both screens, ridden by either player (M10, decision D4). Today a riding partner is hidden.
+- [ ] **D-Walker,** one each when the host brings D-Walker (M9). Today the partner's walker is missing and its rider hidden.
+- [ ] **D-Horse:** the host's horse on both screens, ridden by either player (M10). Today a riding partner is hidden.
 - [ ] **D-Horse for two:** one steers, the other rides behind and shoots, in either order (M11). Blocked on finding a way to place a horse every frame.
 - [ ] **Buddy story events:** Quiet's arc, D-Dog growing up, bond levels.
 
@@ -117,7 +117,7 @@ Companions:
 - [x] **Developer testing:** the hidden background worker, fast test boot, save seeds and parallel tests.
 
 ## Suggested order
-1. **Two-PC check of 0.14.3:** ship it to both PCs and run the next two-PC test (the 2026-10-23 bugs are fixed but not tested on two PCs). This is a suggestion: the user may start step 2 in parallel (decision D9 in the design).
+1. **Two-PC check of 0.14.3:** ship it to both PCs and run the next two-PC test (the 2026-10-23 bugs are fixed but not tested on two PCs). Step 2 runs in parallel with it.
 2. **Vehicles and companions, cheapest first** (the user's first priority, 2026-10-28): the host owns the buddy and the Quiet lock (M1), D-Dog stage 1 (M2), the sortie vehicle (M3), vehicle losses, damage and parked vehicles (M4). Then Quiet, seats and passenger shooting (M5-M7); the walker and the shared horse (M9-M11) after their experiments. The dog's and Quiet's full combat sync (stage 2) and enemy-driven vehicles (M8) come after step 4.
 3. **One story mission end to end:** pick an open-world Chapter 1 mission (for example episode 3 or 4). Sync mission load, objectives, enemies, extraction and results.
 4. **Enemy AI sync** (positions in play, and perception). Every mission depends on it, and so do enemy-driven vehicles (M8).
