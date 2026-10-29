@@ -152,7 +152,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    unless named and on in play unless named (Mother Base 30050 in the lab only);
                                    M4 review: world_vehicle_wreck=0|1, VEHICLE_GONE's wreck parity for a destroyed vehicle
                                    (SetBodyLife 0 on the receiver instead of a Despawn; lab and play, off unless named);
-                                   the decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua; lab and play, off unless named):
+                                   the decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua; off in the lab unless named,
+                                   on in play unless named):
                                    world_vehicle_break=0|1 (D12), world_vehicle_credit=0|1 (D14), world_loadout_block=0|1 (D11);
                                    M1: companion_host_owned=0|1, the host's buddy is the session's companion (lab and
                                    play, default 0; docs/vehicles-companions-design.md 6.1);

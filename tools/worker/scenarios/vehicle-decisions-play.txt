@@ -14,6 +14,8 @@
 #      d12p-after (the wreck on both screens).
 #   4. D11: the guest's real iDroid path to LOADOUT (Tab, 3, Enter, S S, Enter): inactive, refused, the toast; the
 #      host's LOADOUT active and its selection opens.
+# Since the D12 review fixes (2026-10-29) the guest's unattributed break is requested as cause 4 (it was cause 2 in the
+# runs named below).
 # Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-play.txt
@@ -142,7 +144,7 @@ guest press e
 guest release
 both burst d12p-blast 4 500
 waitlog guest 'event=vehicle_rules; step=break_seen; id=256[0-9][0-9]' 15
-waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=256[0-9][0-9]; cause=2; sent=1' 15
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=256[0-9][0-9]; cause=4; sent=1' 15
 waitlog host 'event=vehicle_rules; step=break_judge; id=256[0-9][0-9]; rid=[0-9]+; ok=1; why=near;' 15
 waitlog host 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=wreck; src=req; ok=1' 10
 waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=256[0-9][0-9]; result=gone' 15

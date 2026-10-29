@@ -28,6 +28,8 @@
 --            refusal and shows a toast (NOTE 13 a 4; D1 a). The LOADOUT drop, whose delivery can carry
 --            a vehicle, is the user's decision D11 (2026-10-29: blocked in co-op): world_vehicle_rules.lua,
 --            key world_loadout_block, whatever world_relief says; this module never touches that item.
+--            With that key on, the VEHICLES item is the rules module's too (the user's pick of the D11
+--            review: only the host picks vehicles, in every co-op mission): this module then leaves it.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" and type(W.followSeeds) == "table" then
@@ -399,6 +401,11 @@ local function menuActive(on)
  local f = W.get(TppUiCommand, "SetMbTopMenuItemActive")
  return type(f) == "function" and pcall(f, MENUS[1][1], on) == true
 end
+-- world_vehicle_rules.lua owns the item while world_loadout_block runs (one owner: one refusal line, one toast).
+local function owned()
+ local VR = W.vehicleRules
+ return type(VR) == "table" and type(VR.ownsVehicleDrop) == "function" and VR.ownsVehicleDrop() == true
+end
 function RS.unguard()
  if not RS.greyed then return end
  RS.greyed = nil
@@ -406,6 +413,7 @@ function RS.unguard()
  L("step=unguard;path=idroid_drop;")
 end
 local function guard(now)
+ if owned() then return end
  if not (W.inGame() and FREE[W.mission] and (W.paired or RS.coop == W.mission and not RS.stopped)) then RS.unguard(); return end
  if now < (RS.greyAt or 0) then return end
  RS.greyAt = now + 2000
@@ -425,7 +433,7 @@ end
 -- Terminal MbDvcActSelectNonActiveMenu (arg: StrCode32 of the menu name, TppRadio.PlaySelectBuddy).
 function RS.nonActive(menu)
  local ids = RS.ids
- if not ids then return false end
+ if not ids or owned() then return false end
  local m = MENUS[1]
  if ids.menu[1] ~= menu then return false end
  L(fmt("step=refused;path=%s;via=menu_inactive;", m[3]))

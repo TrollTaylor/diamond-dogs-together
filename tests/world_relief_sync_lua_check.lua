@@ -483,6 +483,22 @@ for _, x in ipairs({Fixture(1), Fixture(2, {on = false})}) do
     x.run(3000)
     check(#x.menus == 0, 'no menu change on the host or with the key off')
 end
+-- The user's pick of 2026-10-29 (D11, only the host picks vehicles): with world_loadout_block on, world_vehicle_rules.lua
+-- owns the guest's VEHICLES item in every co-op mission, whatever world_relief says; this module then never sets it,
+-- never refuses it and never toasts (one owner, one refusal line, one toast).
+c = Fixture(2)
+c.W.vehicleRules = {ownsVehicleDrop = function() return true end}
+c.tick()
+c.run(5000)
+check(menu(c, 'MSN_DROP_VEHICLE') == nil and not c.find('step=guard;path=idroid_drop'), 'owned by the rules module: never set here')
+c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_VEHICLE'))
+check(#c.notes == 0 and not c.find('step=refused;path=idroid_drop_vehicle'), 'and never refused or toasted here')
+for _, f in ipairs(c.W.stopHooks) do f(true) end
+check(menu(c, 'MSN_DROP_VEHICLE') == nil, 'nor set active at the final stop')
+c = Fixture(2)
+c.W.vehicleRules = {ownsVehicleDrop = function() return false end}
+c.tick()
+check(menu(c, 'MSN_DROP_VEHICLE') == false, 'not owned (world_loadout_block off): this module keeps it')
 
 -- Levers: relief_status (any mode, read only); relief_lab nonactive (lab only) runs the refusal path.
 c = Fixture(2, {ct = 514, alive = true})

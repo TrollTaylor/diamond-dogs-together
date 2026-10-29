@@ -3,7 +3,10 @@
 -- read), against a fake world, a fake TppVehicle2 pool, a fake iDroid and a fake TppTerminal. No game process.
 -- Usage: lua51 world_vehicle_rules_lua_check.lua <world_vehicle_rules.lua> <world_vehicle.lua> <world_vehicle_state.lua>
 -- Written before the module: without it (and without world_vehicle.lua's V.unattributed hook and seize readback)
--- every check after the surface check failed.
+-- every check after the surface check failed. The review fixes (2026-10-29, the user took the reviewer's picks) were
+-- written first too: 300 m, cause 4 for an unattributed break (REJECT 11 from a host without the key), a hold instead of a
+-- refusal for an occupied seat, an unknown guest position and the rate, the guest's position at the request's arrival,
+-- the guest's queue, the VEHICLES drop item, the status tail and V.remove without an id.
 local checks = 0
 local function check(value, why)
     checks = checks + 1
@@ -142,8 +145,9 @@ end
 -- Module surface and the start line.
 local c = Fixture('guest')
 check(type(c.R) == 'table' and type(c.V.unattributed) == 'function', 'W.vehicleRules and the V.unattributed hook')
-check(c.R.BREAK_MM == 60000 and c.R.FRESH_MS == 3000 and c.R.RATE_N == 4 and c.R.RATE_MS == 20000 and c.R.CREDIT_MS == 10000,
-    'rules: 60 m, a guest position at most 3 s old, 4 applied per 20 s, a credit seen within 10 s')
+check(c.R.BREAK_MM == 300000 and c.R.FRESH_MS == 3000 and c.R.RATE_N == 4 and c.R.RATE_MS == 20000 and c.R.CREDIT_MS == 10000 and
+    c.R.ASK_N == 6 and c.R.QUEUE_N == 32 and c.R.UNATTRIBUTED == 4,
+    'rules: 300 m, a guest position at most 3 s old, 4 applied per 20 s (more wait), 6 asked per 60 s (more queue), cause 4')
 check(not c:has('event=vehicle_rules;step=on'), 'every key off: no start line')
 c = Fixture('host', {brk = true, credit = true, loadout = true})
 check(c:has('event=vehicle_rules;step=on;mission=30020;role=host;break=1;credit=1;loadout=1;gone=1') and c:has('step=credit_hook;ok=1'),
@@ -176,8 +180,9 @@ check(g.V.watch[25608] and g.V.watch[25608].cause == 2 and g:has('event=vehicle_
 g.pool[25608].alive = false
 g:poll()
 local reqs = g:sent(47)
-check(#reqs == 1 and reqs[1][3] == 25608 and reqs[1][4] == 2 and reqs[1][6] == -653000 and reqs[1][8] == 877700 and g.V.gone[25608],
-    'REQ_VEHICLE_GONE {rid, id, cause 2, type, the guest copy\'s xyz}; lost here')
+check(#reqs == 1 and reqs[1][3] == 25608 and reqs[1][4] == 4 and reqs[1][6] == -653000 and reqs[1][8] == 877700 and g.V.gone[25608] and
+    g:has('event=vehicle_gone;step=req;rid=1;id=25608;cause=4;sent=1'),
+    'REQ_VEHICLE_GONE {rid, id, cause 4 (unattributed), type, the guest copy\'s xyz}; lost here')
 g:add(25600, 5, 5, 1)
 g.V.observe('VehicleBroken', RID, 'none')
 check(g.V.watch[RID] == nil and not g:has('break_seen;id=25600'), 'never index 0 (the sortie vehicle is M3\'s)')
@@ -188,13 +193,32 @@ g.H[46]({1, 25609, 2, 0, 0, 1, 200000, 1000, 200000})
 g.V.gone[25609] = nil
 g.V.observe('VehicleBroken', 25609, 'none')
 check(g.V.watch[25609] == nil and #g:sent(47) == 0, 'the receiver\'s own wreck is never requested back')
--- At most 6 per 60 s.
+-- At most 6 asked per 60 s; more wait in a queue (never dropped) and are asked as the window frees.
 g = Fixture('guest', {brk = true})
 for i = 1, 7 do g:add(25610 + i, 10 * i, 10, 1); g.V.observe('VehicleBroken', 25610 + i, 'none') end
-check(g:count('step=break_seen') == 6 and g:has('step=break_skip;id=25617;reason=rate') and g.V.watch[25617] == nil, 'guest: 6 per 60 s')
-g.clock = g.clock + 60000
-g.V.observe('VehicleBroken', 25617, 'none')
-check(g.V.watch[25617] ~= nil, 'and again after the window')
+check(g:count('step=break_seen') == 7 and g.V.watch[25617] ~= nil and not g:has('break_skip'), 'guest: every break is watched')
+for i = 1, 7 do g.pool[25610 + i].alive = false end
+g:poll()
+check(#g:sent(47) == 6 and g:count('event=vehicle_rules;step=break_queued;id=') == 1 and g:has(';n=1') and #g.R.queue == 1 and
+    g.V.gone[25617] and g.V.gone[25611], 'guest: 6 asked, the 7th queued (all lost here)')
+for _, r in ipairs(g:sent(47)) do g.H[3]({r[2], 47}) end
+g:polls(10, 1000)
+check(#g:sent(47) == 6, 'the queue waits for the window')
+g.clock = g.clock + 50000
+g:poll()
+local q7 = g:sent(47)
+local ids7 = {}
+for _, t in ipairs(q7) do ids7[t[3]] = true end
+local all7 = true
+for i = 1, 7 do all7 = all7 and ids7[25610 + i] == true end
+check(#q7 == 7 and q7[7][4] == 4 and all7 and g:count('event=vehicle_rules;step=break_ask;id=') == 1 and #g.R.queue == 0,
+    'and asked once the window frees (each of the 7 asked once)')
+-- A full queue (32) skips further breaks (logged).
+g = Fixture('guest', {brk = true})
+for i = 1, 40 do g:add(25620 + i, 10 * i, 10, 1); g.V.observe('VehicleBroken', 25620 + i, 'none'); g.pool[25620 + i].alive = false end
+g:poll()
+check(g:count('step=break_seen') == 40 and #g:sent(47) == 6 and #g.R.queue == 32 and g:count('step=break_skip;id=') == 2 and
+    g:has(';reason=queue_full'), 'guest: 6 asked, 32 queued, the rest skipped (logged)')
 -- The host's REJECT for its destruction request: logged as a divergence (the guest's copy keeps its wreck).
 g = Fixture('guest', {brk = true})
 g:add(25608, -653, 877.7, 1, 'veh_lv_0000')
@@ -210,9 +234,17 @@ check(g:count('break_refused') == 1, 'a REJECT for another rid is not ours')
 
 -- D12, host: the judge.
 local function hostReq(x, id, rid2, cause, xm, zm)
-    x.H[47]({rid2 or 9, id or 25608, cause or 2, 1, (xm or -653) * 1000, 1000, (zm or 877.7) * 1000})
+    x.H[47]({rid2 or 9, id or 25608, cause or 4, 1, (xm or -653) * 1000, 1000, (zm or 877.7) * 1000})
 end
--- Near: the guest within 60 m of the reported pose -> the host's copy becomes the same wreck, answered gone.
+-- The host's own key off: an unattributed break (cause 4) is never applied (REJECT 11, key parity decided by the host).
+h = Fixture('host')
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h:guestAt(-650, 877.7)
+hostReq(h)
+local r11 = h:sent(4)
+check(#r11 == 1 and r11[1][2] == 9 and r11[1][4] == 11 and h.pool[25608].alive and #h.lifeSet == 0 and #h.despawns == 0 and
+    not h:has('break_judge') and h:has('step=refused;id=25608;src=req;reason=break_off'), 'host key off: cause 4 refused with REJECT 11')
+-- Near: the guest within 300 m of the reported pose -> the host's copy becomes the same wreck, answered gone.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
 h:guestAt(-640, 860)
@@ -220,7 +252,7 @@ hostReq(h)
 check(h:has('event=vehicle_rules;step=break_judge;id=25608;rid=9;ok=1;why=near;d_mm=21') and #h.lifeSet == 1 and h.lifeSet[1].life == 0 and
     h.lifeSet[1].markedGone and #h.despawns == 0 and not h.pool[25608].alive and not h.pool[25608].released,
     'near: judged ok, the host\'s copy wrecked (SetBodyLife 0; marked gone first)')
-check(h:has('event=vehicle_gone;step=applied;id=25608;via=wreck;src=req;ok=1'), 'read back as a wreck')
+check(h:has('event=vehicle_gone;step=applied;id=25608;via=wreck;src=req;ok=1') and h:count('break_judge') == 1, 'read back as a wreck; one judge line')
 local ans = h:sent(46)
 check(#ans == 1 and ans[1][3] == 25608 and ans[1][4] == 2 and ans[1][5] == 1 and ans[1][6] == 9 and #h:sent(4) == 0,
     'answered with VEHICLE_GONE {cause 2, actor 1, the rid}; no REJECT')
@@ -228,56 +260,103 @@ h.V.observe('VehicleBroken', 25608, 'none')
 check(h.V.watch[25608] == nil, 'its own wreck is never watched as a host loss')
 hostReq(h, 25608, 10)
 check(#h.lifeSet == 1 and #h:sent(46) == 2 and h:count('break_judge') == 1, 'a repeated request is answered again, never wrecked twice')
+-- An attributed destruction (cause 2) is judged the same way with the key on.
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h:guestAt(-640, 860)
+hostReq(h, 25608, 9, 2)
+check(h:has('step=break_judge;id=25608;rid=9;ok=1;why=near') and not h.pool[25608].alive, 'cause 2 with the key: judged and wrecked')
+-- 300 m covers a ranged kill (a launcher from 150 m).
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h:guestAt(-503, 877.7)
+hostReq(h)
+check(h:has('ok=1;why=near;d_mm=150000') and not h.pool[25608].alive, 'the guest 150 m away: near')
 -- Far: refused with REJECT 8; the host's copy untouched.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
-h:guestAt(-500, 877.7)
+h:guestAt(-300, 877.7)
 hostReq(h)
 local rj = h:sent(4)
-check(h:has('step=break_judge;id=25608;rid=9;ok=0;why=guest_far;d_mm=153000') and h.pool[25608].alive and #h.lifeSet == 0 and
+check(h:has('step=break_judge;id=25608;rid=9;ok=0;why=guest_far;d_mm=353000') and h.pool[25608].alive and #h.lifeSet == 0 and
     #h.despawns == 0 and #rj == 1 and rj[1][2] == 9 and rj[1][3] == 47 and rj[1][4] == 8 and #h:sent(46) == 0 and
-    h:has('event=vehicle_gone;step=refused;id=25608;src=req;reason=guest_far'), 'far: REJECT 8, nothing removed')
--- No fresh guest position: refused.
+    h:has('event=vehicle_gone;step=refused;id=25608;src=req;reason=guest_far') and h:count('break_judge') == 1,
+    'far (more than 300 m): REJECT 8, nothing removed, one judge line')
+-- No fresh guest position: held (re-checked every 250 ms), judged once one comes; REJECT 9 after 120 s without one.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
 h:guestAt(-650, 877.7, 3500)
 hostReq(h)
-check(h:has('ok=0;why=guest_unknown;d_mm=-1') and h.pool[25608].alive and #h:sent(4) == 1, 'a guest position older than 3 s: refused')
+check(h.V.held[25608] and #h:sent(4) == 0 and h:has('event=vehicle_rules;step=break_hold;id=25608;rid=9;why=guest_unknown') and
+    h.pool[25608].alive and not h:has('break_judge'), 'a guest position older than 3 s: held, not refused')
+h:polls(4)
+check(h:count('step=break_hold;id=25608') == 1, 'logged once')
+h:guestAt(-650, 877.7)
+h:poll()
+check(h:has('step=break_judge;id=25608;rid=9;ok=1;why=near;d_mm=3000') and not h.pool[25608].alive and h.V.held[25608] == nil,
+    'a fresh position: judged near and applied')
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+hostReq(h)
+for _ = 1, 401 do h:poll(300) end
+local r9 = h:sent(4)
+check(#r9 == 1 and r9[1][4] == 9 and h.pool[25608].alive and h:has('step=hold_timeout;id=25608;src=req;reason=guest_unknown'),
+    'never a position: REJECT 9 after 120 s')
 -- Heavy damage on the host's copy: applied although the guest is far (VEHICLE_STATE's reads give the peak).
 h = Fixture('host', {brk = true, state = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
 h.W.vehicleState.readLife(25608, 1)
 h.pool[25608].life = 500
-h:guestAt(-500, 877.7)
+h:guestAt(-300, 877.7)
 hostReq(h)
-check(h:has('ok=1;why=heavy;d_mm=153000;life=500;peak=2300') and not h.pool[25608].alive, 'heavy: a quarter of the peak or less')
+check(h:has('ok=1;why=heavy;d_mm=353000;life=500;peak=2300') and not h.pool[25608].alive, 'heavy: a quarter of the peak or less')
 h = Fixture('host', {brk = true, state = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
 h.W.vehicleState.readLife(25608, 1)
 h.pool[25608].life = 600
-h:guestAt(-500, 877.7)
+h:guestAt(-300, 877.7)
 hostReq(h)
-check(h:has('ok=0;why=guest_far;d_mm=153000;life=600;peak=2300') and h.pool[25608].alive, 'more than a quarter: not heavy')
--- Ridden on the host's copy: refused at once (never held, never removed later).
-for _, how in ipairs({'occupied', 'local_rider'}) do
-    h = Fixture('host', {brk = true})
-    h:add(25608, -653, 877.7, 1, 'veh_lv_0000', how == 'occupied' and {riders = {4321}} or nil)
-    if how == 'local_rider' then h.riding, h.env.vars.playerVehicleGameObjectId = true, 25608 end
-    h:guestAt(-650, 877.7)
-    hostReq(h)
-    h:polls(3)
-    check(h:has('step=break_judge;id=25608;rid=9;ok=0;why=ridden;by=' .. how) and h.pool[25608].alive and #h:sent(4) == 1 and
-        h.V.held[25608] == nil and #h.lifeSet == 0, 'ridden (' .. how .. '): REJECT 8 at once, never held')
-end
--- ... unless the host's copy broke too: answered as gone.
+check(h:has('ok=0;why=guest_far;d_mm=353000;life=600;peak=2300') and h.pool[25608].alive, 'more than a quarter: not heavy')
+-- The host seated in its copy: refused at once (never held, never removed later).
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h.riding, h.env.vars.playerVehicleGameObjectId = true, 25608
+h:guestAt(-650, 877.7)
+hostReq(h)
+h:polls(3)
+check(h:has('step=break_judge;id=25608;rid=9;ok=0;why=ridden;by=local_rider') and h.pool[25608].alive and #h:sent(4) == 1 and
+    h:sent(4)[1][4] == 8 and h.V.held[25608] == nil and #h.lifeSet == 0, 'the host seated in it: REJECT 8 at once, never held')
+-- Another filled seat (D-Dog, a soldier): held like any occupied vehicle, judged and applied once the seat is free.
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {riders = {65535, 9728}})
+h:guestAt(-650, 877.7)
+hostReq(h)
+check(h.V.held[25608] and h:has('step=hold;id=25608;src=req;reason=occupied') and not h:has('break_judge') and #h:sent(4) == 0 and
+    h.pool[25608].alive, 'D-Dog seated (an occupied seat): held, not refused')
+h.clock = h.clock + 3500
+h:guestAt(-250, 877.7)
+h.pool[25608].riders = nil
+h:poll()
+check(h:has('step=break_judge;id=25608;rid=9;ok=1;why=near;d_mm=3000') and not h.pool[25608].alive and #h:sent(46) == 1 and #h:sent(4) == 0,
+    'the seat free: judged against the guest\'s position at the request (3 m, it walked 400 m away since), applied')
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {riders = {4321}})
+h:guestAt(-650, 877.7)
+hostReq(h)
+for _ = 1, 401 do h:poll(300) end
+local r9b = h:sent(4)
+check(#r9b == 1 and r9b[1][4] == 9 and h.pool[25608].alive and h:has('step=hold_timeout;id=25608;src=req;reason=occupied'),
+    'a soldier who stays seated: REJECT 9 after 120 s (VEHICLE_GONE\'s hold cap)')
+-- ... and a copy that broke on the host too is answered as gone.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {riders = {4321}})
 h.pool[25608].alive = false
 h:guestAt(-650, 877.7)
 hostReq(h)
 check(h:has('event=vehicle_gone;step=absent;id=25608;src=req;reason=wreck') and #h:sent(46) == 1 and #h:sent(4) == 0 and #h.lifeSet == 0,
-    'ridden but broken on the host too: answered gone, no REJECT')
--- The partner's ride on the host's copy is held as before (the guest's own jeep broke under it), then judged.
+    'occupied but broken on the host too: answered gone, no REJECT')
+-- The partner's ride on the host's copy is held as before (the guest's own jeep broke under it), then judged against the
+-- closer of the guest's position at the request and now.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
 h.W.ridePose.fast.tracks[25608] = {}
@@ -286,20 +365,23 @@ hostReq(h)
 check(h.V.held[25608] and h:has('step=hold;id=25608;src=req;reason=partner_ride') and not h:has('break_judge'), 'partner ride: held')
 h.W.ridePose.fast.tracks[25608] = nil
 h.clock = h.clock + 10000
-h:guestAt(-650, 877.7)
+h:guestAt(-250, 877.7)
 h:poll(200)
-check(h:has('ok=1;why=near') and not h.pool[25608].alive, 'free again: judged and applied')
--- At most 4 applied per 20 s.
+check(h:has('ok=1;why=near;d_mm=3000') and not h.pool[25608].alive, 'free again: the guest sprinted 400 m away meanwhile, still near')
+-- At most 4 applied per 20 s: the fifth waits (held) and is applied once the window frees (never refused).
 h = Fixture('host', {brk = true})
 for i = 0, 4 do h:add(25608 + i, 10 * i, 0, 1, string.format('veh_lv_%04d', i)) end
 h:guestAt(20, 0)
-for i = 0, 4 do hostReq(h, 25608 + i, 20 + i, 2, 10 * i, 0) end
-check(h:count('ok=1;why=near') == 5 and h:has('step=break_judge;id=25612;rid=24;ok=0;why=rate;n=4') and h.pool[25612].alive and
-    #h:sent(4) == 1, '4 per 20 s: the fifth refused')
+for i = 0, 4 do hostReq(h, 25608 + i, 20 + i, 4, 10 * i, 0) end
+check(h:count('ok=1;why=near') == 4 and h:has('event=vehicle_rules;step=break_hold;id=25612;rid=24;why=rate;n=4') and h.pool[25612].alive and
+    h.V.held[25612] and #h:sent(4) == 0 and h:count('step=break_judge;id=25612') == 0, '4 per 20 s: the fifth held, no judge line yet')
+h:polls(10)
+check(h.pool[25612].alive and h:count('step=break_hold;id=25612') == 1, 'held while the window is full (logged once)')
 h.clock = h.clock + 20000
 h:guestAt(20, 0)
-hostReq(h, 25612, 30, 2, 40, 0)
-check(not h.pool[25612].alive, 'and applied after the window')
+h:poll()
+check(not h.pool[25612].alive and h:count('step=break_judge;id=25612;rid=24;ok=1;why=near') == 1 and #h:sent(4) == 0 and #h:sent(46) == 5,
+    'applied once the window frees: one judge line, no REJECT')
 -- A wreck that does not take on the host falls back to the Despawn (world_vehicle.lua readback).
 h = Fixture('host', {brk = true})
 h.wreckFails = true
@@ -319,6 +401,9 @@ h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
 hostReq(h, 25608, 9, 1)
 check(not h:has('break_judge') and #h.despawns == 1, 'a guest Fulton is not a break: no judge')
+-- V.remove without an id never raises (an error there would turn the vehicle module off).
+local okNil, gotNil = pcall(h.V.remove, nil, 2)
+check(okNil and gotNil == false, 'V.remove(nil): refused without an error')
 
 -- D14: the receiver credits the Fultoned vehicle through its own engine path (Seize Instant), once.
 g = Fixture('guest', {credit = true})
@@ -377,14 +462,18 @@ g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
 check(#g.seized == 0 and #g.despawns == 0 and not g.R.creditOn(), 'VEHICLE_GONE off: nothing removed, nothing credited')
 
--- D11: the guest's LOADOUT drop item inactive in co-op, the refusal and its toast.
+-- D11: the guest's LOADOUT and VEHICLES drop items inactive in co-op (the user's pick, 2026-10-29: only the host picks
+-- vehicles, whatever world_relief says), the refusal and its toast.
 g = Fixture('guest', {loadout = true})
 g:poll()
-check(g:menu('MSN_DROP_LOADOUT') == false and g:menu('MSN_DROP_VEHICLE') == nil and #g.menus == 1,
-    'only the LOADOUT item is set inactive (nothing else in the iDroid changes)')
-check(g:has('event=vehicle_rules;step=guard;path=idroid_drop_loadout;via=menu_inactive;mission=30020'), 'guard line')
+check(g:menu('MSN_DROP_LOADOUT') == false and g:menu('MSN_DROP_VEHICLE') == false and #g.menus == 2,
+    'the LOADOUT and VEHICLES items are set inactive (nothing else in the iDroid changes)')
+check(g:has('event=vehicle_rules;step=guard;path=idroid_drop_loadout;via=menu_inactive;mission=30020') and
+    g:has('event=vehicle_rules;step=guard;path=idroid_drop_vehicle;via=menu_inactive;mission=30020') and g.R.ownsVehicleDrop() == true,
+    'guard lines; this module owns the VEHICLES item (world_relief_sync.lua leaves it alone)')
 g:polls(20)
-check(g:count('step=guard;path=idroid_drop_loadout') == 1 and #g.menus > 1, 'repeated every 2 s, logged once per mission')
+check(g:count('step=guard;path=idroid_drop_loadout') == 1 and g:count('step=guard;path=idroid_drop_vehicle') == 1 and #g.menus > 2,
+    'repeated every 2 s, logged once per mission')
 local nm = #g.menus
 g.idroid = true
 g:polls(20)
@@ -396,28 +485,33 @@ check(g:has('event=vehicle_rules;step=refused;path=idroid_drop_loadout;via=menu_
 g.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_LOADOUT'))
 check(#g.notes == 1 and g:count('step=refused;path=idroid_drop_loadout;') == 2, 'a toast at most every 3 s (each refusal logged)')
 g.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_VEHICLE'))
+check(g:has('event=vehicle_rules;step=refused;path=idroid_drop_vehicle;via=menu_inactive;mission=30020') and #g.notes == 2 and
+    g.notes[2][1] == 13 and g.notes[2][2] == 4, 'VEHICLES selected: refused, NOTE 13 a 4 (its own toast)')
 g.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_BUDDY_DOG'))
-check(#g.notes == 1 and g:count('step=refused') == 2, 'other inactive items are not this module\'s')
+check(#g.notes == 2 and g:count('step=refused') == 3, 'other inactive items are not this module\'s')
 -- Any co-op mission (not only free roam): a story mission with world sync on.
 g = Fixture('guest', {loadout = true, mission = 10036, gone = false})
 g:poll()
-check(g:menu('MSN_DROP_LOADOUT') == false and g:has('step=guard;path=idroid_drop_loadout;via=menu_inactive;mission=10036'), 'any co-op mission')
+check(g:menu('MSN_DROP_LOADOUT') == false and g:menu('MSN_DROP_VEHICLE') == false and
+    g:has('step=guard;path=idroid_drop_loadout;via=menu_inactive;mission=10036'), 'any co-op mission')
 -- The first pass applies even while the iDroid is open.
 g = Fixture('guest', {loadout = true})
 g.idroid = true
 g:poll()
-check(g:menu('MSN_DROP_LOADOUT') == false, 'the first pass applies with the iDroid open')
--- A link drop inside the co-op mission keeps it inactive; the final stop activates it again (TppTerminal.SetUp's state).
+check(g:menu('MSN_DROP_LOADOUT') == false and g:menu('MSN_DROP_VEHICLE') == false, 'the first pass applies with the iDroid open')
+-- A link drop inside the co-op mission keeps them inactive; the final stop activates them again (TppTerminal.SetUp's state).
 g = Fixture('guest', {loadout = true})
 for _, f in ipairs(g.W.pairedHooks) do f(false) end
 g:poll()
 g.W.paired = false
 g:polls(10)
-check(g:menu('MSN_DROP_LOADOUT') == false and not g:has('step=unguard'), 'unpaired inside the co-op mission: still inactive')
+check(g:menu('MSN_DROP_LOADOUT') == false and g:menu('MSN_DROP_VEHICLE') == false and not g:has('step=unguard'),
+    'unpaired inside the co-op mission: still inactive')
 for _, f in ipairs(g.W.stopHooks) do f(true) end
-check(g:menu('MSN_DROP_LOADOUT') == true and g:has('event=vehicle_rules;step=unguard;path=idroid_drop_loadout;mission=30020'), 'final stop: active again')
+check(g:menu('MSN_DROP_LOADOUT') == true and g:menu('MSN_DROP_VEHICLE') == true and
+    g:has('event=vehicle_rules;step=unguard;path=idroid_drop_loadout;mission=30020'), 'final stop: active again')
 g:polls(10)
-check(g:menu('MSN_DROP_LOADOUT') == true, 'and stays active until the next pairing')
+check(g:menu('MSN_DROP_LOADOUT') == true and g:menu('MSN_DROP_VEHICLE') == true, 'and stays active until the next pairing')
 -- Never paired: a solo mission is never touched; a paused game (not in game) waits.
 g = Fixture('guest', {loadout = true, paired = false})
 g:polls(10)
@@ -430,7 +524,9 @@ check(#g.menus == 0, 'not in game: untouched')
 h = Fixture('host', {loadout = true})
 h:polls(20)
 h.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_LOADOUT'))
-check(#h.menus == 0 and #h.notes == 0 and not h:has('idroid_drop_loadout'), 'the host: no menu change, no refusal')
+check(#h.menus == 0 and #h.notes == 0 and not h:has('idroid_drop_loadout') and h.R.ownsVehicleDrop() == false,
+    'the host: no menu change, no refusal, never the VEHICLES item\'s owner')
+check(Fixture('guest').R.ownsVehicleDrop() == false, 'the key off: world_relief_sync.lua keeps the VEHICLES item')
 
 -- Status (debug vehicle_gone_status, read only): the module's counters after VEHICLE_GONE's.
 h = Fixture('host', {brk = true, credit = true})
@@ -439,4 +535,10 @@ h:guestAt(-650, 877.7)
 hostReq(h)
 local st = h.V.status()
 check(st:find('^vgone;on=1;role=host;') and st:find(';vr=1100;j=1;a=1;r=0;q=0;s=0;c=0', 1, true) and #st <= 160, 'status: ' .. st)
+-- A long gone list: the base part is cut, never the module's counters.
+h = Fixture('host', {brk = true})
+for i = 1, 40 do h.V.gone[25700 + i] = true end
+st = h.V.status()
+local tail = ';vr=1000;j=0;a=0;r=0;q=0;s=0;c=0'
+check(#st <= 160 and st:sub(-#tail) == tail, 'status with a long gone list keeps the counters: ' .. st)
 print('world_vehicle_rules_lua_check: ' .. checks .. ' checks PASS')

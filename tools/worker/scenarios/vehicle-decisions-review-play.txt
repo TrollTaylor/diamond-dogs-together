@@ -1,0 +1,148 @@
+# The play rehearsal of the D11 / D12 review fixes (docs/vehicles-companions-design.md sections 8.10 and 10; the user
+# took the reviewer's picks on 2026-10-29) in mode=play over -WanSim bad, no lab lever (play refuses them) and no vehicle
+# key named: VEHICLE_GONE, VEHICLE_STATE, world_vehicle_break, world_vehicle_credit and world_loadout_block at their play
+# defaults (all on in 30020). Africa, africa-jeep seed (Masa Village, veh_lv_0000 = 25608 beside the boot spots).
+#   1. D11: the guest's real iDroid path (Tab, 3 MISSIONS, Enter SUPPLY DROP, S S LOADOUT, Enter; S VEHICLES, Enter): both
+#      items inactive, each refused with its own toast (NOTE 13 a 5 and a 4); the host's VEHICLES item active and its
+#      selection opens the vehicle list. world_relief stays off (its default): the VEHICLES block no longer depends on it.
+#   2. D12: the guest's real C4 on 25608 (three charges from its boot spot, then it backs off), an unattributed break on
+#      its copy -> REQ cause 4 -> the host's judge (ok=1; why=near) -> the host's copy wrecked (via=wreck) -> req_done.
+#      The host stands about 8 m from the jeep on the other side with its godmode OFF (the host-side blast measured:
+#      status life before and after; friendly-hit lines), its camera turned 20 degrees off the jeep so its own body does
+#      not hide it. Frames d12r-placed / d12r-blast-NN / d12r-after on both screens.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-review-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# NEVER: step=error, viewer_changed, faults; event=relief refusal lines (world_relief is off); via=wreck on the guest.
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug clear_enemies 100
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_gone; step=on; mission=30020; role=host; wreck=0' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30020; role=guest; wreck=0' 30
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=1; loadout=1; gone=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=1; loadout=1; gone=1' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_vehicle; via=menu_inactive; mission=30020' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+# 1. D11: the guest's LOADOUT and VEHICLES items, then the host's VEHICLES.
+logmark both
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11r-guest-loadout
+guest press enter
+wait 500
+guest capture d11r-guest-loadout-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+wait 3500
+guest press s
+wait 800
+guest capture d11r-guest-vehicles
+guest press enter
+wait 500
+guest capture d11r-guest-vehicles-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_vehicle; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=4;' 5
+wait 1500
+guest press tab
+wait 2500
+host press tab
+wait 2500
+host press 3
+wait 2500
+host press enter
+wait 2000
+host press s
+wait 800
+host press s
+wait 800
+host press s
+wait 800
+host capture d11r-host-vehicles
+host press enter
+wait 2500
+host capture d11r-host-vehicles-open
+host press escape
+wait 1500
+host press tab
+wait 2500
+both capture d11r-closed
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# 2. D12: the guest's C4 on 25608 from its boot spot; the host about 8 m from the jeep on the other side, godmode off.
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -661.66 1.20 874.97 82
+wait 5000
+host debug clear_enemies 100
+wait 1500
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+guest debug slot support 2
+wait 2000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+wait 1000
+host debug godmode 0
+wait 1000
+host run status
+host expect god=0;
+guest run status
+both capture d12r-placed
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press e
+guest release
+both burst d12r-blast 4 500
+waitlog guest 'event=vehicle_rules; step=break_seen; id=25608' 15
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=4; sent=1' 15
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25608; cause=4' 15
+waitlog host 'event=vehicle_rules; step=break_judge; id=25608; rid=[0-9]+; ok=1; why=near;' 15
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=wreck; src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 15
+wait 2000
+both capture d12r-after
+host run status
+guest run status
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+wait 3000
+both capture d12r-later
+state

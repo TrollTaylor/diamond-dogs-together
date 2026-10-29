@@ -5,6 +5,8 @@
 # the guest logs break_refused; here=wreck. Frames show what each copy then has: the guest's wreck, the host's intact
 # jeep with the host in it, and both again after the host gets out and 25 s later (the guest's wreck leaving its pool;
 # VEHICLE_STATE refuses the host's states for it there: absent, the named jeep is not alive on the guest's copy).
+# Since the D12 review fixes (2026-10-29) only the host's own player in the seat is refused at once (another filled
+# seat, D-Dog or a soldier, is held: vehicle-decisions-review-lab.txt), and the request is cause 4.
 # Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-refuse.txt
@@ -45,8 +47,8 @@ guest run vehicle_life 25608 0
 guest expect vehicle_life;id=25608;life=0;
 both burst refuse-wreck 3 700
 waitlog guest 'event=vehicle_rules; step=break_seen; id=25608' 10
-waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=2; sent=1' 10
-waitlog host 'event=vehicle_rules; step=break_judge; id=25608; rid=[0-9]+; ok=0; why=ridden; by=(local_rider|occupied)' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=4; sent=1' 10
+waitlog host 'event=vehicle_rules; step=break_judge; id=25608; rid=[0-9]+; ok=0; why=ridden; by=local_rider' 10
 waitlog host 'event=vehicle_gone; step=refused; id=25608; src=req; reason=ridden' 5
 waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=reject; reason=8' 10
 waitlog guest 'event=vehicle_rules; step=break_refused; id=25608; rid=[0-9]+; reason=8; here=wreck' 5

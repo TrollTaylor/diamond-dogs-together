@@ -725,16 +725,19 @@ struct LabConfig {
     // rehearsal 70146170 with -WanSim bad); a named value (an invalid one too, which counts as
     // off) records _given.
     // world_vehicle_break=0|1 (D12, bit 8): a vehicle that breaks on the guest's copy without
-    // attribution is requested as a destruction; the host applies it (its copy wrecked) only when
-    // plausible (the guest within 60 m, or its copy heavily damaged; never under a rider; 4 per 20 s).
+    // attribution is requested as a destruction (REQ_VEHICLE_GONE cause 4); the host applies it (its
+    // copy wrecked) only when plausible (the guest within 300 m, or its copy heavily damaged; never
+    // under its own player, held while another seat is filled; 4 per 20 s, more wait). A host
+    // without the key answers cause 4 with REJECT 11.
     bool world_vehicle_break = false;
     bool world_vehicle_break_given = false;
     // world_vehicle_credit=0|1 (D14, bit 16): the receiver of a Fultoned world vehicle removes its
     // copy with the stock Seize Instant, so its own engine credits the vehicle once (never index 0).
     bool world_vehicle_credit = false;
     bool world_vehicle_credit_given = false;
-    // world_loadout_block=0|1 (D11, bit 32): the guest's iDroid LOADOUT supply drop is inactive in
-    // co-op (a toast on selecting it); the host's is untouched.
+    // world_loadout_block=0|1 (D11, bit 32): the guest's iDroid LOADOUT and VEHICLES supply drops
+    // are inactive in co-op (a toast on selecting one), whatever world_relief says; the host's are
+    // untouched.
     bool world_loadout_block = false;
     bool world_loadout_block_given = false;
     // companion_host_owned=0|1 (docs/vehicles-companions-design.md 6.1, M1): the host's

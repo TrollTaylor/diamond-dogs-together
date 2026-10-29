@@ -12,6 +12,8 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-play-default.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed coop-relief-30020
 #        -GuestSaveSeed africa-jeep -Mode play -WanSim bad
+# Since the D11 review (2026-10-29) world_loadout_block (on in play) owns the guest's VEHICLES item, whatever world_relief
+# says: its guard and refusal lines are event=vehicle_rules then (world_vehicle_rules.lua); either module's lines match.
 labsetting world_relief=1
 labsetting nametag=1
 labsetting coop_hud=compact
@@ -21,7 +23,7 @@ waitgameplay guest 240
 waitlog host 'world_lua=event=relief; role=host; step=arrived; type=2;' 120
 waitlog host 'world_lua=event=relief; role=host; step=state_tx; alive=1; type=2;' 120
 waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2;' 150
-waitlog guest 'world_lua=event=relief; role=guest; step=guard; path=idroid_drop; via=menu_inactive;' 60
+waitlog guest 'world_lua=event=(relief; role=guest|vehicle_rules); step=guard; path=idroid_drop(_vehicle)?; via=menu_inactive;' 60
 wait 3000
 host run relief_census play
 guest run relief_census play
@@ -62,7 +64,7 @@ guest capture m3d-idroid-vehicles
 guest press enter
 wait 500
 guest capture m3d-request-refused
-waitlog guest 'world_lua=event=relief; role=guest; step=refused; path=idroid_drop_vehicle; via=menu_inactive;' 5
+waitlog guest 'world_lua=event=(relief; role=guest|vehicle_rules); step=refused; path=idroid_drop_vehicle; via=menu_inactive;' 5
 guest press tab
 wait 2500
 wait 10000

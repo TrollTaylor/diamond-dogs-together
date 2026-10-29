@@ -80,10 +80,11 @@ constexpr char world_vehicle_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_state_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_STATE_SOURCE@
 )MGS_WORLD";
-// M1 host-owned companion (lab key companion_host_owned, CFG r[16]).
+// The user's vehicle decisions of 2026-10-29 (D11, D12, D14; CFG r[15] bits 8 / 16 / 32).
 constexpr char world_vehicle_rules_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_RULES_SOURCE@
 )MGS_WORLD";
+// M1 host-owned companion (lab key companion_host_owned, CFG r[16]).
 constexpr char world_companion_source[] = R"MGS_WORLD(
 @MGS_WORLD_COMPANION_SOURCE@
 )MGS_WORLD";

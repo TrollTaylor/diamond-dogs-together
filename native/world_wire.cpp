@@ -134,9 +134,11 @@ constexpr OpSpec kOps[] = {
     {op::vehicle_gone, "VEHICLE_GONE", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 9, 0, 0, 21,
      {U16(1), U16(25600, 26111), U8(1, 3), U8(0, 2), U16(), U8(), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-1000000000, 1000000000)}},
-    // REQ_VEHICLE_GONE: rid, vehicle id, cause, vehicle type, xyz mm (the guest's copy).
+    // REQ_VEHICLE_GONE: rid, vehicle id, cause, vehicle type, xyz mm (the guest's copy). Cause 1..3 as above, and
+    // since the D12 review (2026-10-29, world-sync-protocol.md section 19) 4: a destruction the guest's copy could not
+    // attribute, which the host judges only with its own world_vehicle_break key (else REJECT 11).
     {op::req_vehicle_gone, "REQ_VEHICLE_GONE", 1, Dir::guest_to_host, Wire::reliable, 3, true, false, 7, 0, 0, 18,
-     {Rid(), U16(25600, 26111), U8(1, 3), U8(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+     {Rid(), U16(25600, 26111), U8(1, 4), U8(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000)}},
     // COMPANION (M1, docs/vehicles-companions-design.md section 5): seq, sender tick, kind (0 none,
     // 1 dog, 2 horse, 3 walker, 4 Quiet), slot (0 the host's, 1 the guest's walker), present, xyz mm,
