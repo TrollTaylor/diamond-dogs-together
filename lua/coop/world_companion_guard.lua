@@ -49,9 +49,11 @@ end
 -- down), whether it is present (readable on the host) and whether the host's state is known at all. Without a fresh
 -- source (a link loss: the pose is dropped while unpaired and the unpair forgets C.host) it is unknown, which is
 -- neither alive nor down (review 2026-10-29); a fresh source naming another kind is a host with no dog out (down).
+-- The lab lever link_sim makes it unknown while the link is up (the link-loss paths in a hidden run).
 function G.hostState(now)
  local p, h = B.s and B.s.cpose, C.host
  local k, byte, have
+ if G.s.linkSim then return 0, true, false, false end
  if p and now - p.at <= 3000 and (p.kind == 1 or not (h and h.kind == 1 and now - h.at <= 15000)) then k, byte, have = p.kind, p.st, p.present == true
  elseif h and now - h.at <= 15000 then k, byte, have = h.kind, h.state, h.present == true
  else return 0, true, false, false end
@@ -175,7 +177,7 @@ function G.tick(now)
  if have == W.api.buddyDog and W.inGame() then
   -- Paired: the full arm with the host's byte. Unpaired or a lower level (a link loss) while armed: the hold, drop only,
   -- until the session ends (C.applies, above) or the mission does (native Disarm); never a new arm (review 2026-10-29).
-  if W.paired and (W.eff or 0) >= 3 then G.arm(now, byte, 1)
+  if W.paired and (W.eff or 0) >= 3 and not s.linkSim then G.arm(now, byte, 1)
   elseif s.armed then G.arm(now, 0, 2)
   else G.disarm("no_link") end
  else G.disarm("no_dog") end
@@ -199,10 +201,11 @@ W.startHooks[#W.startHooks + 1] = function() local l = G.s.labOff; G.s = {labOff
 W.unpairedHooks[#W.unpairedHooks + 1] = function() G.s.armedAt = nil end
 -- Lab levers: companion_lab dog_life|dog_stun <0..100> (the host's own dog; 0 life = its death), recall (host: the
 -- dead DOG bit cleared, the dog called 5 m in front), kill_mirror (guest: the forced death the restore answers),
--- guard on|off (guest), dog_state (both: the receipt).
+-- guard on|off (guest), link_sim on|off (guest: this module sees the link as lost, the hold and an unknown host state,
+-- while the world link stays up; cleared at mission start), dog_state (both: the receipt).
 local lever = C.lever
 function C.lever(a, id, A, mission)
- if a[1] ~= "companion_lab" or not ({dog_life = 1, dog_stun = 1, recall = 1, kill_mirror = 1, guard = 1, dog_state = 1})[a[2]] then
+ if a[1] ~= "companion_lab" or not ({dog_life = 1, dog_stun = 1, recall = 1, kill_mirror = 1, guard = 1, link_sim = 1, dog_state = 1})[a[2]] then
   return lever(a, id, A, mission)
  end
  local s, n = G.s, tonumber(a[3])
@@ -242,6 +245,12 @@ function C.lever(a, id, A, mission)
   s.labOff = a[3] == "off" or nil
   L("step=lab;guard=" .. a[3] .. ";")
   return true, "guard;on=" .. (a[3] == "on" and 1 or 0)
+ end
+ if a[2] == "link_sim" and #a == 3 and (a[3] == "on" or a[3] == "off") then
+  if W.host then return false, "guest_lab_only" end
+  s.linkSim, s.armedAt = a[3] == "on" or nil, nil
+  L("step=lab;link_sim=" .. a[3] .. ";")
+  return true, "link_sim;on=" .. (a[3] == "on" and 1 or 0)
  end
  return false, "companion_args"
 end

@@ -265,4 +265,27 @@ ok, r = g.C.lever({"companion_lab", "guard", "off"}); g:tick(1700); check(ok and
 g.life = 4000; ok, r = g.C.lever({"companion_lab", "dog_state"})
 check(ok and r:find(";armed=0;life=4000;", 1, true) and g:lastGuard()[4] == 0, "a disarmed guest's dog_state reads the live record (arm 0)")
 ok, r = g.C.lever({"companion_lab", "guard", "on"}); g:tick(2300); check(ok and g:lastGuard()[4] == 1, "guard on arms again")
+-- Lab lever link_sim on|off (guest; resume of the review fixes): the guard module sees the link as lost (the hold, an
+-- unknown host state) while the world link stays up, so a hidden run can put the native hold under guard fire and walk
+-- the unknown-state restore. Red run: scratchpad decisions/dog/fix-red-lua3.log.
+g = F(false); g:pose(900, 0x80 + 31); g:tick()
+ok, r = g.C.lever({"companion_lab", "link_sim", "on"}); check(ok and r == "link_sim;on=1", "guest link_sim on")
+check(g:logged("event=dog_guard;role=guest;step=lab;link_sim=on;"), "link_sim is logged")
+g:pose(1050, 0x80 + 31); g:tick(1100); q = g:lastGuard()
+check(q[4] == 2 and q[5] == 0 and g:logged("step=held;reason=hold;byte=0;"), "link_sim: the armed guest holds (arm 2, no host byte) while paired")
+n = #g.guard; g:pose(1550, 0x80 + 31); g:tick(1600); check(#g.guard == n + 1 and g:lastGuard()[4] == 2, "the hold is renewed")
+g.W.companionHurt("Dead", 9728, "other")
+check(g:logged("step=dead;host=unknown;byte=0;"), "a death under link_sim: the host's state is unknown although a pose is fresh")
+for t = 1700, 4000, 100 do g:pose(t - 50, 0x80 + 31); g:tick(t) end
+check(g:count("DeleteBuddy") == 0 and not g:logged("step=reload") and not g:logged("step=host_down"), "nothing while unknown")
+ok, r = g.C.lever({"companion_lab", "link_sim", "off"}); check(ok and r == "link_sim;on=0", "link_sim off")
+g:pose(4050, 0x80 + 31); g:tick(4100)
+check(g:logged("step=host_known;host=alive;ms=") and g:count("DeleteBuddy") == 1, "off: known again (alive), the restore sends the copy away")
+q = g:lastGuard(); check(q[4] == 1 and q[5] == 0x80 + 31, "and the full arm with the host's byte at once")
+g = F(false); g.C.lever({"companion_lab", "link_sim", "on"}); g:pose(900, 0x80 + 31); g:tick(); g:tick(1600)
+check(#g.guard == 0, "link_sim before any arm: nothing is armed (a hold never starts the guard)")
+for _, f in ipairs(g.W.startHooks) do f() end; check(g.W.dogGuard.s.linkSim == nil, "a new mission clears link_sim")
+ok, r = F(true).C.lever({"companion_lab", "link_sim", "on"}); check(not ok and r == "guest_lab_only", "link_sim is the guest's")
+ok, r = F(false, {play = true}).C.lever({"companion_lab", "link_sim", "on"}); check(not ok and r == "lab_only", "link_sim refused in play")
+ok, r = F(false).C.lever({"companion_lab", "link_sim", "maybe"}); check(not ok and r == "companion_args", "link_sim takes on or off")
 print("world_companion_guard_lua_check: " .. checks .. " checks PASS")
