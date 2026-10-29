@@ -6,11 +6,11 @@
 #     at the same x/z; frames m3-relief-arrival on both; relief_census on both.
 #  B  The host drives it: the guest's copy seats the host in its own 25600 (partner_ride_seat=confirmed, never
 #     reason=absent); frames m3-relief-drive-NN (guest) and m3-relief-drive-stopped (both).
-#  C  The guest's vehicle request: the iDroid drop items are inactive on the guest (step=guard); frames of the
-#     guest's iDroid (MAP, then key 3, MISSIONS); the refusal path and its toast (lab lever relief_lab nonactive,
-#     standing in for a selected inactive item while the worker cannot walk the menu yet).
+#  C  The guest's vehicle request: the iDroid drop items are inactive on the guest (step=guard); the guest's real
+#     iDroid path (MAP, key 3 MISSIONS, SUPPLY DROP, VEHICLES) selects the inactive item: step=refused and the toast.
 #  D  Mission end with index 0 alive on both copies: the host's stock seize credits it once (4wdEast +1 at the next
-#     census), the guest's is skipped (step=seize_skipped; alive=1; its 4wdEast unchanged).
+#     census), the guest's is skipped (step=seize_skipped; its 4wdEast unchanged; alive=0 when VEHICLE_GONE removed
+#     the guest's copy after the host's seize first, run 25b9c0ae).
 #  E  30010 enemyBase_S LZ, type 1 (west LV: another body Afghanistan never loads) on both; the host Fultons it
 #     (lab lever vehicle_remove nearest fulton: the engine's own vehicle Fulton): VEHICLE_GONE removes the guest's
 #     copy with Seize Instant and no credit (step=remove; via=seize_instant; why=vehicle_gone); frames m3-relief-gone.
@@ -75,19 +75,31 @@ both capture m3-relief-drive-stopped
 host press e 150
 wait 3500
 waitlog guest 'partner_ride_seat=exit; vehicle=25600;' 10
-# C: the guest's iDroid (MAP, then key 3: MISSIONS), closed again; the refusal path and its toast.
+# C: the guest's real iDroid vehicle request (run 1914e76c): Tab (MAP), key 3 (MISSIONS), Enter (SUPPLY DROP),
+# S S S (VEHICLES, inactive), Enter -> MbDvcActSelectNonActiveMenu -> step=refused and the toast; Tab closes it.
 guest press tab
 wait 2500
 guest capture m3-idroid-map
 guest press 3
 wait 2500
 guest capture m3-idroid-missions
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture m3-idroid-vehicles
+guest press enter
+wait 500
+guest capture m3-request-refused
+waitlog guest 'world_lua=event=relief; role=guest; step=refused; path=idroid_drop_vehicle; via=menu_inactive;' 5
+wait 1200
 guest press tab
 wait 2500
-guest run relief_lab nonactive vehicle
-guest expect relief_lab;nonactive=vehicle
-wait 400
-guest capture m3-request-refused
+guest capture m3-idroid-closed
 host run relief_census preend
 guest run relief_census preend
 # D + E: the host arms type 1 for the next sortie; the 30020 mission end runs with index 0 alive on both copies.
