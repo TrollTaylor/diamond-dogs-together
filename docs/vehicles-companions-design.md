@@ -623,7 +623,7 @@ mirror in play.
 
 | Mirror | Engagement hold (candidates; E3, E15) | Protection (E19) | Attribution |
 |---|---|---|---|
-| D-Dog (guest's copy) | **Built (M2): the stop-AI form of `LuaAiStayAndSnarl` (mode 1/2, whose AI update the Dog AI skips) placed by the command's own warp at 10 Hz** [O, 8.2]. 176 s within 1.4 m of a guard in an alert: zero `mirror_engaged` (run `4cd88ea2`). Fallbacks if needed: `SetEnabled=false` while a guard is within 5 m (the `TppDemo` command) [U] | Not hurt in 176 s beside a guard in combat, buddy vars unchanged [O]; whether any guard shot at it is [U]. `SetDisableDamage{life, faint, sleep}` on the dog answers nil [O]; its effect is [U]. Death and hospital still come only from the host (COMPANION) | `mirror` |
+| D-Dog (guest's copy) | **Built (M2): the stop-AI form of `LuaAiStayAndSnarl` (mode 1/2, whose AI update the Dog AI skips) placed by the command's own warp at 10 Hz** [O, 8.2]. 176 s within 1.4 m of a guard in an alert: zero `mirror_engaged` (run `4cd88ea2`). Fallbacks if needed: `SetEnabled=false` while a guard is within 5 m (the `TppDemo` command) [U] | **Fails (E19, 8.2)** [O]: a guard firing at the prone guest through the held dog kills it on the guest's copy (`d937191f`, `dc761c98`: `Dead`, `deadBuddyType` 0 -> 4, `buddyCommonFlag` 32 -> 0; then the guest's block unloads and the reconcile cannot reload it). `SetDisableDamage` has no dog handler (dispatcher, 8.2) and did not help. Beside a guard in combat without fire through it: not hurt in 84-176 s. The guest's saves keep its own flags (D8 b, `84e4f1d`). Candidates: the repair lever (8.2), a native damage guard for id 9728 on the guest's copy [U], or D7 | `mirror` |
 | Quiet (guest's copy) | A cease-fire order or engagement flag through her controller requests [U, E15] | [U] | `mirror` |
 | D-Horse (non-riding copy) | A horse does not attack; its collisions with guards are possible [I] | `SetMaxLife` (dispatcher `0x140E4D250`) [O name, U effect] | `local` only while the local player rides it; else `mirror` |
 | Partner's D-Walker (index 1) | No pilot on that copy, so no gunfire; collisions possible [I] | Walker life command [U] (16-command dispatcher) | `local` only for the walker this copy pilots; else `mirror` |
@@ -800,6 +800,59 @@ cell spot; host own Quiet, guest own dog; not booted yet), `mb-walker` (host, fr
 `obtained=true; sortie=true`, so D-Walker is developed in the lab save; Mother Base location, `buddyTypeMissionStart`
 WALKER_GEAR, so `boot 30010 ...` sorties the walker; not booted yet). It stands in for the planned `afgh-walker`.
 
+### 8.2 Results of the M2 experiments (2026-10-29, branch `wp/companion-host`)
+
+Hidden-worker runs on loopback as in 8.1 (research build, native gun stage, copied saves, low graphics,
+`companion_host_owned=1`, the guest plays Quiet and is drawn as a DD soldier). Seeds `afgh-ledge` (host, D-Dog) and
+`afgh-horse` (guest, D-Horse). Frames as JPEG in the session scratch folder `complete/frames/companion-dog/` as
+`<run4>-<role>-<label>.jpg`; log slices and BMPs in `%USERPROFILE%\mgs-coop-run-archive\companions\<run>`. Every run
+closed with the baseline restored and the real saves unchanged (runs `d937191f` and later closed with `Forced=True`
+after `owned_shutdown_requested`; the baseline and real-save hashes were verified). `event=companion_track` is a 2 s
+window of the guest's hold: the host dog's mean speed (band `walk` below 3.5 m/s with R4's 3 m, `run` from 3.5 m/s
+with 5 m), the distance between the guest copy's dog and its target (the host dog's pose led by the sample's age)
+before each placement, `within`, the scenario's `leg` (lab lever `companion_lab mark`), the hold `mode` and the count
+of extra warps.
+
+| Run | Scenario | What it is for |
+|---|---|---|
+| `8c0b425f` | `companion-dog.txt`, first form | the hold as M1 sent it (`LuaAiStayAndSnarl` with `look`, `useMarker=false`): the guest copy's dog never moved (14 m from the host dog at rest for 4 min); the legs ran into the rock at the boot spot |
+| `ffb2d7ab` | second form | `marker` (`useMarker=true`) against `warp` (`warp=1`), legs on the open grass 32 m west of the boot spot |
+| `4cd88ea2` | third form, `warp` the default | the R4 legs, the guest 40 m away, E3 beside a guard (warp, marker, protection lever) |
+| `52010d22` | `companion-dog-mb.txt`, host `africa-jeep` | void: the host's seed sits in the 40020 helicopter, the guest's in 40010; the guest's boot stopped at `follow_host` |
+| `994d252f` | `companion-dog-mb.txt` | Mother Base legs, then host-led travel to 30010 with the host left in its helicopter |
+| `ba6d6ff8` | `companion-dog-play.txt`, `-Mode play -WanSim bad` | the play rehearsal: the dog stayed unrealized on both copies for 136 s, so the legs ran with no dog; 3 expectations failed (below) |
+| `d937191f` | `companion-dog.txt`, current form (`4b4fc84`, `0f839d9`) | the legs with the lead fix (`4cd7ee6`), away, E3 beside a guard in an alert, the host's dog ordered to take that guard down, E19 (the guest's dog in the line of fire) |
+| `dc761c98` | `companion-dog-e19.txt` (`84e4f1d`) | E19 again with the protection lever held, the D8 (b) save after the dog's death, a second takedown try |
+| RUN9ROW
+| RUN10ROW
+
+**Static reads (capstone on `085c2f82...bb45`, read-only)** [O]: the dog dispatcher `0x140C7D220` compares the command
+hash with four values (`0x24824B9A` `LuaAiStayAndSnarl`, `0x2E6160B7`, `0x5DB1CEDE`, `0xE60574FA`) and returns -1 for
+any other command (`0x140C7D299`): `SetDisableDamage` has no handler on the dog [O; that no other path takes it is I,
+and `dc761c98` agrees]. The `LuaAiStayAndSnarl` branch (`0x140C7D4D6..0x140C7D7FB`) reads `position` (absent: the
+"omission cleanup", mode 0), `useMarker`, `look`, `dash`, `warp` and `ignoreMarker` (bit 0x400 of the record) and calls
+vt+0x98 (`0x140C7DA10`) with the fifth argument set to 1 when `useMarker` is true or `look` is absent. That function sets
+the record mode +0x50 to 1 (no dash, fifth 0), 3 (no dash, fifth 1), 2 or 4 (with dash), copies the target to +0x30 and
+`look` to +0x40, and with `warp` writes the position and the heading (`atan2` of look minus position) into the dog's
+position array and its transform (vt+0x68, +0x70). The Dog AI update `0x140C7E650` jumps to its end for modes 1 and 2
+(after `0x140C7EAA6`, mode not 0 and not 3/4 -> `0x140C7EDE2`): the stop-AI form of the retail `s10040` "SetDogStopAI"
+[I: no movement, no target selection].
+
+| # | Result | Evidence |
+|---|---|---|
+| Dog realized | **At the `afgh-ledge` spot (yaw 95, facing the rock) the dog stays unrealized on a copy (receipt `dog_unrealized`, probe `n_real`) until that copy's camera turns or its player is moved** [O]: realized 2-5 s after the host's teleport (`4cd88ea2`, `ffb2d7ab`, 74 s after the load), after `resetpose` (`8c0b425f`, 34 s), and in the play run on each copy separately after its own mouse turn (host between 4 and 5 s after its turn, guest 1 s after its turn, 136 s after the load; `ba6d6ff8`). Mother Base and the heli landing realized it within 10-40 s with no turn. That the stock buddy spawns the dog out of the camera's view is [I]. The scenarios now move the host and turn both cameras before the dog is awaited (`4b4fc84`); `d937191f` then met `target_submitted` at once | probe lines and capture ticks of the runs named |
+| Hold | **Mode 1/2 placed by `warp=1` (the `warp` hold, default).** Mode 1/2 without warp never moved the dog (`8c0b425f`). Mode 3/4 (`marker`) walks it itself: 2-3 cm at rest but 7-15 m behind whenever the host moved, 13 stuck warps (`ffb2d7ab`). `warp`: `4cd88ea2` walk 0.87-1.46 m max per window, run 1.1-4.4 m, dash 1.0-2.8 m; `d937191f` walk 1.37-3.11 m (p90 1.11-2.73; one window of 6 over R4's 3 m, by 11 cm), run 1.09-3.91 m, dash 1.18-2.04 m [O]. Right after the run leg one idle window read 5.56 m (`4cd88ea2`) and 4.41 m (`d937191f`, after the lead fix `4cd7ee6`): the target no longer changed and the same warp command was not applied again while the stop-AI dog slid on [I]; since `1de1b27` a dog more than 1 m off an unchanged target for 200 ms gets the stock `SetWarpPosition` (fixture; RUN10DRIFT) | track lines; frames: `ffb2-{host,guest}-m2-dog-warp-walk` (the dog beside the host on both screens), `d937-host-m2-dog-idle`, `d937-host-m2-dog-walk` (host's screen), `d937-guest-m2-dog-run` (guest's screen: the dog beside the host); `d937-guest-m2-dog-walk` shows only its marker (the guest's body hides it) |
+| Away | With the guest 40 m behind the host the guest copy's dog stayed with the host dog (idle windows 2-23 cm, `leg=away`) [O]. The frames show the host 40 m away with the dog's marker beside it; the dog's body is not resolved at that distance | `4cd88ea2`, `d937191f`; `4cd8-guest-m2-dog-guest-away`, `d937-*-m2-dog-guest-away` |
+| Never released | No `result=released` line in any M2 run; `hold_here` / `hold_last` while the host's dog was not yet readable [O] | all runs |
+| E3 (engagement) | **Pass for the `warp` hold** [O]. A guard warped beside the host (spawn sync on the guest's copy, `div_m` 0.0-0.5); the guest's dog held 1.37-1.53 m from it (lab lever `companion_lab near_guard on`): 176 s within 3 m in `4cd88ea2` (`s3=176`), 155 s in `d937191f`, 84 s in `dc761c98`. Each time the camp went to phase 3 about 5 s after the spawn (`event=phase; ...; phase=3; src=rx`) and the guard stood in combat (`place_combat`). Zero `mirror_engaged`, zero `event=divergence`, no kill or sleep message with the dog as attacker on the guest's copy in any run; 30 s of the `marker` form beside the guard in `4cd88ea2` engaged nothing either. Not covered: E3's other half, "the host's dog ordered to attack a different guard" (no takedown was reached, Kill row) | slices; frame `d937-guest-m2-kill-2` (the guest's dog beside the guard, the alert indicator) |
+| E19 (dog) | **Fail: guards on the guest's copy kill the guest's copy of the dog, and the protection lever does not stop it** [O]. Lab lever `companion_lab near_guard shield` holds the dog 1 m from the prone guest toward the guard, so the guard's fire at the guest crosses it. `d937191f`: `event=obs; m=Dead; ent=0; id=9728; att=other` after 76 s of fire (41 s with `SetDisableDamage` sent, 35 s after it was turned off); `dc761c98`: protection sent before and held for the whole window, Dead after 13 s. Both: `deadBuddyType` 0 -> 4 (the DOG bit, [I]: `vars_type=2` is DOG, 4 = 1 << 2) and `buddyCommonFlag` 32 -> 0 (bit 5, meaning [U]) within 0.8 s; the host's dog unhurt. In `dc761c98` the dog stayed readable for about 8 s (the hold placed it beside the host again), then the guest's buddy block unloaded (`buddy_block_inactive`, `active=none`); M1's reconcile asked for the dog twice (`reconcile; via=load; kind=dog; have=none; ok=1`) and no dog came back for the rest of the run: the guest saw no companion while the host's dog lived (K21). No `Damage` message for the dog was ever observed, only `Dead`, so the hurt before a death is not visible to the Lua hook [O] | slices; frames `d937-guest-m2-shield-4` (the dog down beside the prone guest), `d937-guest-m2-shield-5` (gone), `dc76-guest-e19-shield-dead` (the dog down, blood) |
+| D8 (b) and the death | Before `84e4f1d` the guest's own snapshot held only the follow-seed buddy keys, so a save after the mirror died would have written `deadBuddyType=4` into the guest's own save [I from the key list]. Since `84e4f1d` it also keeps `deadBuddyType` and `buddyCommonFlag` (own-only, never seeded): `dc761c98`'s checkpoint after the death logged `save_own; slot=0; own=horse; live=dog; n=30; own_dead=0; live_dead=4; own_flag=32; live_flag=0` [O] | `dc761c98` |
+| Repair candidate | RUN9RESULT | RUN9EVIDENCE |
+| Host hidden | **Pass.** After host-led travel from Mother Base to 30010 the guest left its helicopter while the host stayed aboard: on the guest's copy body 1 was unrealized (`partner_probe=state; ids=0000,ffff; parts=3,0`) until `allactive_set` about 42 s later, and through those 42 s the guest's own-dog read answered (`target_submitted`, track windows of 5-137 cm with the host in the helicopter); the probe never refused `n_scope` on either copy (only `n_real`, the dog itself unrealized for the first 40 s after the arrival) [O]. Before M2 the receipt's `field_ready` needed body 1 (2026-10-23 host log: refused `scope` for about 50 s in 30020). Right after the guest's dog was realized at the landing zone, two `run` windows (`leg=-`) read 6.3 and 7.0 m while the host's dog ran off the landing zone; their cause is [U] | `994d252f`; frames `994d-guest-m2-dog-host-in-heli` (the dog in the grass, dusk), `994d-*-m2-dog-after-heli` |
+| Mother Base | The walk leg on the command deck within 0.82 m; the dog beside the host on both screens. In `994d252f` the run leg hit a container wall at the `mb-ladder` spot and never ran. RUN10MB | `994d252f`; frames `994d-{host,guest}-m2-mb-dog-walk`, `994d-*-m2-mb-dog`; RUN10EV |
+| Kill commit/apply | **Not reached** [O]. `d937191f`: the host marked the guard (`enemy mark nearest`), aimed at it, held CALL (Q) and pressed 3: the call menu showed "3:Get it" selected, but the host's dog stood 30 m away and nothing was taken down. `dc761c98`: the dog was first called onto the guard (`companion_lab call_here`, `warp=1`), then CALL + 3 once after an aim and once while aiming: no takedown. No host `event=obs` with `att=buddy` in any run, so no `commit ... actor=host` / guest `apply ... src=outcome` for a dog takedown. How the call menu's attack picks its target is [U]. The outcome path a dog takedown would use (a host commit, the guest's apply) is the existing one and M2 does not touch it [I] | frames `d937-host-m2-getit-menu`, `d937-host-m2-getit-pick`, `dc76-host-e19-getit-*` |
+| Play | `ba6d6ff8` (`-Mode play -WanSim bad`): pairing, the seeds and the dog's load in play worked (`loaded; kind=dog; source=seed`, `kdog` on both, the hold mode `warp`), but the dog was never realized during the legs (Dog realized row), so 3 expectations failed and no frame shows a dog. Not re-run: the play default cannot flip while E19 fails | `ba6d6ff8` |
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -890,6 +943,25 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     `event=divergence` for it.
   - Repeat in 30050 (`mb-ladder`, `both capture m2-mb-dog`) and the `-Mode play -WanSim bad` rehearsal.
   - Exit: a two-PC session.
+- **Status (2026-10-29): built on `wp/companion-host` behind `companion_host_owned` (M1's key); play default off;
+  E19 fails, so D7 is open for the user.** Results and run ids in 8.2.
+  - Built: COMPANION_POSE (op 57, datagram, 10 Hz moving / 2 Hz idle) and COMPANION_ACK (op 49, 1 Hz); the guest holds
+    its copy of the host's dog with the stop-AI form of `LuaAiStayAndSnarl` placed by its own `warp=1` every 100 ms,
+    led by the sample's age, plus the stock `SetWarpPosition` beyond 15 m and for a dog drifting over 1 m off an
+    unchanged target; the dog is never released to the guest's AI; the own-dog read no longer needs body 1 (both
+    roles); the M1 COMPANION op carries the dog's pose for the late-join reconcile; D8 (b) also keeps the guest's own
+    `deadBuddyType` and `buddyCommonFlag`. Doc drift fixed (`world-sync-protocol.md` section 15).
+  - Proven in the hidden worker (lab), logs on both copies: walk windows within 3 m but one at 3.11 m, run and
+    dash within 5 m in every window, the guest 40 m away (2-23 cm), the host hidden in the helicopter (42 s of reads
+    with body 1 unrealized), Mother Base walk (0.82 m), never released, E3 (the held dog beside a guard in combat for
+    84-176 s: zero `mirror_engaged`). FRAME: the dog beside the host on both screens (`ffb2d7ab` warp-walk pair;
+    `d937191f` host idle/walk, guest run), at Mother Base on both (`994d252f`), beside a guard on the guest's screen
+    (`d937191f`). RUN10STATUS
+  - Not met: **E19** (guards on the guest's copy kill its dog: `deadBuddyType` 0 -> 4, then the guest's block unloads
+    and the dog does not come back; `SetDisableDamage` does nothing); the dog's takedown for the commit/apply check
+    (the call menu's "Get it" took nobody down in two runs); the play rehearsal (`ba6d6ff8` ran with the dog
+    unrealized; not re-run because the default cannot flip while E19 fails); a two-PC session. RUN9STATUS
+  - **Why the play default stays off:** E19 fails (above); D7 is the user's call (section 10).
 
 ### M3. The sortie vehicle on both copies
 
@@ -1016,7 +1088,7 @@ library when a proof needs a sortie vehicle or Quiet. **Defaults taken until the
 partner stays hidden until M10; D4 (a) the 2026-10-22 rule is lifted for the shared horse only (it follows from the
 user's 'ridden by both players at once'); D6 the support heli (M12), vehicle weapons (M13) and the host's in-mission
 vehicle drop come later, enemy helicopters and walker gears stay in the enemy section; D7 is decided with the user once
-E3/E15/E19 have run; D8 (b) the guest's own buddy vars are restored; D9 (b) M1 starts now, alongside the user's
+E3/E15/E19 have run (E3 and E19 have run for the dog, 8.2: E3 passes, E19 fails, so D7 is now open for M2); D8 (b) the guest's own buddy vars are restored; D9 (b) M1 starts now, alongside the user's
 two-PC check of 0.14.3.
 
 The original questions:
@@ -1049,6 +1121,12 @@ The original questions:
 - **D7. If a mirror cannot be held inert (E3, E15, E19 fail):** (a) hide the mirror on the guest's screen (the host's
   companion is then visible only to the host) until enemy sync in play; (b) show it and accept that the guest sometimes
   sees it act on its own (results not synced); (c) delay the milestone until enemy sync in play.
+  **For the dog (M2, 8.2):** the hold keeps it inert (E3 passes) but guards on the guest's copy can kill it (E19
+  fails); the guest then sees no dog for the rest of the mission while the host's lives, and the guest's save is
+  protected (D8 b). The options for the dog: (a) hide it on the guest's screen until enemy sync in play; (b) show it
+  and accept that a guest-side death removes it until the next mission (or, if the repair lever of 8.2 works, that
+  it drops and comes back beside the host); (c) keep M2 in the lab until enemy sync in play; (d) new native work: a
+  damage guard that drops hits on id 9728 on the guest's copy (the downed-player damage hooks show the shape) [U].
 - **D8. The guest's co-op save and the host's buddy:** (a) accept it (the guest's co-op save takes the host's buddy,
   look and relief choices); (b) the guest's own buddy vars are restored around each save write and at the end of the
   session (recommended); (c) restore them only at the end of the session.
