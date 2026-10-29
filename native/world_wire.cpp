@@ -38,8 +38,9 @@ constexpr OpSpec kOps[] = {
      {U8(1, kWorldProbeMax), U8(1, 4), U32(), U32(), U32()}},
     {op::transition, "MISSION_TRANSITION", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 11, 0, 0, 27,
      {U32(1), U8(1, 6), Mission(), Mission(), U8(), U32(), U32(), U8(), U8(), U8(0, 1), U16(1)}},
+    // Key index 1..127 (M1 added the buddy keys; the field stays one byte).
     {op::seed, "MISSION_SEED", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 5, 0, 0, 15,
-     {U32(1), Mission(), U8(1, 63), U16(0, 1023), U32()}},
+     {U32(1), Mission(), U8(1, 127), U16(0, 1023), U32()}},
     {op::seeds_end, "MISSION_SEEDS_END", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 4, 0, 0, 14,
      {U32(1), Mission(), U16(0, 1024), U32()}},
     {op::req_mission, "REQ_MISSION", 0, Dir::guest_to_host, Wire::reliable, 3, true, false, 4, 0, 0, 11,
@@ -137,6 +138,19 @@ constexpr OpSpec kOps[] = {
     {op::req_vehicle_gone, "REQ_VEHICLE_GONE", 1, Dir::guest_to_host, Wire::reliable, 3, true, false, 7, 0, 0, 18,
      {Rid(), U16(25600, 26111), U8(1, 3), U8(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000)}},
+    // COMPANION (M1, docs/vehicles-companions-design.md section 5): seq, sender tick, kind (0 none,
+    // 1 dog, 2 horse, 3 walker, 4 Quiet), slot (0 the host's, 1 the guest's walker), present, xyz mm,
+    // yaw mrad, state, rider bits, target id. M1 sends it on change and every 5 s (kind only;
+    // the pose fields are M2's); the guest reconciles its own buddy block to the host's kind.
+    {op::companion, "COMPANION", 1, Dir::both, Wire::reliable, 3, false, false, 12, 0, 0, 29,
+     {U16(1), U32(), U8(0, 4), U8(0, 1), U8(0, 1), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-3142, 3142), U8(), U8(), U16()}},
+    // CHARACTER (M1): seq, the guest's character (0 game default, 1 snake, 2 dd_male, 3 dd_female,
+    // 4 avatar, 5 ocelot, 6 quiet, 7 story unresolved), Quiet flag (1: the guest plays Quiet, so the
+    // host locks its buddy Quiet before its sortie seeds). Control queue: it must reach the host in
+    // the helicopter, before the deploy it holds for the pairing.
+    {op::character, "CHARACTER", 0, Dir::guest_to_host, Wire::reliable, 3, false, false, 3, 0, 0, 4,
+     {U16(1), U8(0, 7), U8(0, 1)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

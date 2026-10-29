@@ -13,6 +13,18 @@ do
         {"initialPlayerRotY", nil, 1000, true}, {"mis_checkPoint"},
         {"ini_isTitleMode", nil, "bool", nil, true}, {"ini_isReturnToTitle", nil, "bool", nil, true},
         {"isContinueFromTitle", nil, "bool", nil, true}, {"ply_isUsedPlayerInitialAction", nil, "bool", "svars"}}}
+    -- M1 host-owned companion (docs/vehicles-companions-design.md 6.1): the host's buddy vars (types
+    -- and counts from the declarations at 0x14099EA60). Always sent; key[6] "buddy": the guest applies
+    -- them only with companion_host_owned (lua/coop/world_companion.lua keeps its own for its saves).
+    for _, k in ipairs({{"buddyType"}, {"initialBuddyStatus"}, {"initialBuddyPos", 3, 1000}, {"initialBuddyRotY", nil, 1000},
+        {"buddyQuietEquipType"}, {"buddyQuietCostumeType"}, {"buddyDogFlag"}, {"buddyDogMode"}, {"buddyDogEquipType"},
+        {"buddyDogEyeType"}, {"buddyDogColorType"}, {"buddyGearAmmoCount", 2}, {"buddyGearStockAmmoCount", 2},
+        {"buddyGearBodyGrade"}, {"buddyGearEquipGrade"}, {"buddyGearReloadGrade"}, {"buddyGearHeadType"}, {"buddyGearHeadGrade"},
+        {"buddyGearArmType"}, {"buddyGearArmGrade"}, {"buddyGearMainWPType"}, {"buddyGearMainWPGrade"}, {"buddyGearSubWPType"},
+        {"buddyGearSubWPGrade"}, {"buddyGearColoring0"}, {"buddyGearColoring1"}, {"buddyHorseType"}, {"buddyHorseColorType"},
+        {"buddyHorseHeadDesignType"}, {"buddyHorseFootDesignType"}}) do
+        S.keys[#S.keys + 1] = {k[1], k[2], k[3], true, nil, "buddy"}
+    end
     W.followSeeds = S
     local floor = math.floor
     function S.data(key) return key[4] == "svars" and svars or key[4] and vars or gvars end
@@ -50,6 +62,11 @@ do
             if not n then return nil, key[1] end
             for i = 0, n - 1 do
                 local value = S.encode(key, key[2] and W.get(data, i) or data)
+                -- A buddy key never blocks travel: an unreadable one goes as 0 (logged).
+                if value == nil and key[6] == "buddy" then
+                    value = 0
+                    W.log("event=follow;step=seed_substitute;key=" .. key[1] .. ":" .. i)
+                end
                 if value == nil then return nil, key[1] .. ":" .. i end
                 values[#values + 1] = {k, i, value}
                 digest = S.checksum(digest, k, i, value)

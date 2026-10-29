@@ -1,0 +1,459 @@
+-- Host-owned companion (original; docs/vehicles-companions-design.md 6.1, M1). With the lab
+-- key companion_host_owned (CFG r[16], W.companionOn) the host's buddy is the session's one
+-- companion (decisions D5 a, D1 a, D8 b). Guest: loads the host's buddy from the follow seeds
+-- and keeps its own buddy vars for its saves (TppSave.SaveVarsToSlot writes them); reconciles
+-- to the host's COMPANION kind (late join, a host change); refuses its own buddy calls (Lua
+-- entry points; the F9 summon in debug_buddy.lua) and masks CALL (call menu, whistle; not in
+-- a CQC hold, where CALL interrogates), with a toast (NOTE 13). Host: sends COMPANION; a guest
+-- playing Quiet (CHARACTER) locks buddy Quiet (SetDisableBuddyType, the sortie rewrite to NONE,
+-- DeleteBuddy mid-mission); the Mother Base cell Quiet is hidden on both copies then.
+do
+local W = e.MgsCoopWorld
+if type(W) == "table" and type(W.follow) == "table" and type(W.followSeeds) == "table" then
+local C = {orig = {}, hookLines = 0, seq = 0}
+W.companion = C
+local OP, H, fmt = W.OP, W.handlers, string.format
+OP.COMPANION, OP.CHARACTER = 48, 56
+local NAMES = {NONE = "none", HORSE = "horse", DOG = "dog", QUIET = "quiet", WALKER_GEAR = "walker", BATTLE_GEAR = "battle_gear"}
+local WIRE = {DOG = 1, HORSE = 2, WALKER_GEAR = 3, QUIET = 4}
+local CHARS = {default = 0, snake = 1, dd_male = 2, dd_female = 3, avatar = 4, ocelot = 5, quiet = 6, story = 7}
+local MASK = "MgsCoopCompanion"
+local function BT(name) local v = W.get(BuddyType, name); return type(v) == "number" and v or nil end
+local function typeName(t)
+ if t == nil then return "unknown" end
+ for n, s in pairs(NAMES) do if BT(n) == t then return s end end
+ return tostring(t)
+end
+C.typeName = typeName
+local function toWire(t) for n, k in pairs(WIRE) do if BT(n) == t then return k end end return 0 end
+local function fromWire(k) for n, w in pairs(WIRE) do if w == k then return BT(n) end end return BT("NONE") end
+local function L(text) W.log("event=companion;role=" .. (W.host and "host" or "guest") .. ";" .. text) end
+local function note(a) if type(W.note) == "function" then pcall(W.note, 13, a, 0) end end
+function C.on() return W.companionOn == true and (W.level or 0) >= 3 end
+function C.applies() return C.on() and not W.host end
+local function TBC(name) return C.orig[name] or W.get(TppBuddy2BlockController, name) end
+local function active()
+ local f = W.get(TppBuddy2BlockController, "GetActiveBuddyType")
+ if type(f) ~= "function" then return nil end
+ local ok, t = pcall(f)
+ return ok and type(t) == "number" and t or nil
+end
+local function blockActive()
+ local f = W.get(TppBuddy2BlockController, "IsBlockActive")
+ local ok, yes = pcall(f)
+ return ok and yes == true
+end
+C.active = active
+
+-- The buddy keys of the follow seeds (key[6] "buddy"), read and written on vars.
+local function keys()
+ if C.keyList then return C.keyList end
+ local list = {}
+ for _, key in ipairs(W.followSeeds.keys) do if key[6] == "buddy" then list[#list + 1] = key end end
+ C.keyList = list
+ return list
+end
+local function read(key)
+ local v = W.get(vars, key[1])
+ if not key[2] then return type(v) == "number" and v or nil end
+ if v == nil then return nil end
+ local t = {}
+ for i = 0, key[2] - 1 do
+  local x = W.get(v, i)
+  if type(x) ~= "number" then return nil end
+  t[i] = x
+ end
+ return t
+end
+local function write(key, value)
+ if key[2] then
+  local array = W.get(vars, key[1])
+  if array == nil then return end
+  for i = 0, key[2] - 1 do array[i] = value[i] end
+ else vars[key[1]] = value end
+end
+function C.snapshot()
+ local s = {}
+ for _, key in ipairs(keys()) do
+  local v = read(key)
+  if v == nil then return nil, key[1] end
+  s[key[1]] = v
+ end
+ return s
+end
+function C.restore(s)
+ for _, key in ipairs(keys()) do
+  local v = s[key[1]]
+  if v ~= nil then pcall(write, key, v) end
+ end
+end
+-- D8 (b): this copy's own buddy vars, kept while others are in vars (the host's seeds on the
+-- guest; the Quiet rewrite on the host). Every save writes them (the SaveVarsToSlot wrapper).
+function C.keep(why)
+ if C.own then return true end
+ local s, bad = C.snapshot()
+ if not s then L("step=own_refused;key=" .. tostring(bad) .. ";"); return false end
+ C.own, C.ownWhy = s, why
+ L(fmt("step=own_kept;why=%s;own=%s;", why, typeName(s.buddyType)))
+ return true
+end
+function C.release(why)
+ if not C.own then return end
+ C.restore(C.own)
+ L(fmt("step=own_restored;why=%s;own=%s;", why, typeName(C.own.buddyType)))
+ C.own, C.ownWhy = nil, nil
+end
+-- Guest: the seeds were applied for this mission; the tick confirms the load.
+function C.seeded(mission)
+ local t = W.get(vars, "buddyType")
+ if C.expect and C.expect.mission == mission and C.expect.type == t then return end
+ C.expect = {mission = mission, type = t}
+ L(fmt("step=seed_apply;kind=%s;own=%s;mission=%d;", typeName(t), typeName(C.own and C.own.buddyType), mission))
+end
+local function lockLog(via)
+ L(fmt("step=quiet_lock;via=%s;guest_char=quiet;", via))
+ if C.notedLock ~= W.mission then C.notedLock = W.mission; note(3) end
+end
+-- TppMission.Load (world_follow.lua, before the seeds): coop is a co-op travel (host: on;
+-- guest: following the host).
+function C.load(nextMission, coop)
+ if W.host then
+  local Q, lock = BT("QUIET"), coop and C.on() and W.paired and C.guestQuiet == true
+  if lock and Q and W.get(vars, "buddyType") == Q then
+   if C.keep("quiet_lock") then vars.buddyType = BT("NONE"); lockLog("sortie_rewrite") end
+  elseif C.own and not lock then C.release("host_unlocked") end
+  if coop and C.on() then L(fmt("step=seed;kind=%s;mission=%d;", typeName(W.get(vars, "buddyType")), nextMission or 0)) end
+ elseif C.own and not coop then C.release("solo") end
+end
+
+-- The guest's character (coop.ini, story resolved on this copy's own save) -> code, Quiet.
+function C.character()
+ local ok, name = pcall(W.receipt, "return 'MGS_COOP_CHARACTER_V1'")
+ if not ok or type(name) ~= "string" or CHARS[name] == nil then return 0, false end
+ if name == "story" then
+  local K = W.get(W.get(Tpp, "MgsCoop"), "Character")
+  if type(W.get(K, "Gather")) == "function" and type(W.get(K, "Story")) == "function" then
+   local good, x = pcall(K.Gather, "story", "dd_male")
+   if good and type(x) == "table" then
+    local fine, r = pcall(K.Story, x.quiet)
+    if fine then return 7, r == "quiet" end
+   end
+  end
+  return 7, false
+ end
+ return CHARS[name], name == "quiet"
+end
+local function sendCharacter(now, force)
+ if W.host or not C.on() or not W.paired then return end
+ if not force and now < (C.charAt or 0) then return end
+ local code, quiet = C.character()
+ C.selfQuiet = quiet
+ C.seq = C.seq % 65535 + 1
+ if W.tx(OP.CHARACTER, C.seq, code, quiet and 1 or 0) then
+  C.charAt = now + 15000
+  if C.charSent ~= code * 2 + (quiet and 1 or 0) then
+   C.charSent = code * 2 + (quiet and 1 or 0)
+   L(fmt("step=character_tx;code=%d;quiet=%d;", code, quiet and 1 or 0))
+  end
+ end
+end
+H[OP.CHARACTER] = function(v)
+ if not W.host or #v ~= 3 then return end
+ local quiet = v[3] == 1
+ if C.guestQuiet ~= quiet or C.guestChar ~= v[2] then
+  C.guestQuiet, C.guestChar = quiet, v[2]
+  L(fmt("step=character;guest_code=%d;guest_char=%s;", v[2], quiet and "quiet" or "other"))
+ end
+end
+H[OP.COMPANION] = function(v, now)
+ if W.host or #v ~= 12 then return end
+ C.host = {kind = v[3], present = v[5] == 1, x = v[6] / 1000, y = v[7] / 1000, z = v[8] / 1000, yaw = v[9] / 1000, at = now}
+ if C.hostKind ~= v[3] then
+  C.hostKind = v[3]
+  L(fmt("step=host_kind;kind=%s;", typeName(fromWire(v[3]))))
+ end
+end
+-- What the guest may call: the host's kind (COMPANION), else the seeded vars.
+function C.allowed()
+ if C.hostKind then return fromWire(C.hostKind) end
+ if C.expect then return C.expect.type end
+end
+
+-- Host: the Quiet lock while the guest plays Quiet; COMPANION on change and every 5 s.
+local function hostTick(now)
+ local Q, S = BT("QUIET"), TppBuddyService
+ if C.guestQuiet and W.paired and Q then
+  if C.quietDisabled ~= W.mission then
+   local is, set = W.get(S, "IsDisableBuddyType"), W.get(S, "SetDisableBuddyType")
+   local okIs, already = false, false
+   if type(is) == "function" then okIs, already = pcall(is, Q) end
+   local mine = not (okIs and already == true)
+   if mine and type(set) == "function" then pcall(set, Q) end
+   C.quietDisabled, C.quietMine = W.mission, mine or C.quietMine
+   lockLog("disable_type")
+  end
+  if active() == Q and now >= (C.deleteAt or 0) and W.inGame() then
+   C.deleteAt = now + 5000
+   local del = TBC("DeleteBuddy")
+   if type(del) == "function" and C.keep("quiet_lock") then
+    C.token = true
+    local ok = pcall(del)
+    C.token = nil
+    vars.buddyType = BT("NONE")
+    if ok then lockLog("delete_buddy") end
+   end
+  end
+ elseif C.quietDisabled then
+  if C.quietMine then pcall(W.get(S, "UnsetDisableBuddyType"), Q) end
+  C.quietDisabled, C.quietMine = nil, nil
+  L("step=quiet_unlock;")
+ end
+ local k = toWire(active())
+ if now < (C.txAt or 0) and k == C.txKind then return end
+ C.seq = C.seq % 65535 + 1
+ if W.tx(OP.COMPANION, C.seq, W.tick32(now), k, 0, k ~= 0 and 1 or 0, 0, 0, 0, 0, 0, 0, 0) then
+  C.txAt, C.txKind = now + 5000, k
+ end
+end
+
+-- Guest: the CALL mask (call menu, horse whistle), released while in a CQC hold (interrogate).
+local function cqcHold()
+ local s, f = W.get(PlayerStatus, "CQC_CONTINUOUS"), W.get(PlayerInfo, "OrCheckStatus")
+ if type(s) ~= "number" or type(f) ~= "function" then return false end
+ local ok, yes = pcall(f, {s})
+ return ok and yes == true
+end
+function C.mask(want)
+ if want == (C.masked == true) then return end
+ local call = W.get(PlayerPad, "CALL")
+ local f = W.get(Player, want and "SetPadMask" or "ResetPadMask")
+ if type(f) ~= "function" or type(call) ~= "number" then return end
+ local ok = pcall(f, want and {settingName = MASK, except = false, buttons = call, sticks = 0, triggers = 0} or {settingName = MASK})
+ if not ok then return end
+ C.masked = want
+ if want and C.maskNoted ~= W.mission then
+  C.maskNoted = W.mission
+  L("step=guard;path=call_menu;via=pad_mask;")
+  note(1)
+ end
+end
+local function vector(x, y, z)
+ local ok, v = pcall(Vector3, x, y, z)
+ return ok and v or nil
+end
+local function reconcile(now)
+ local h = C.host
+ if not h or now - h.at > 15000 or not W.inGame() or W.get(DemoDaemon, "IsDemoPlaying") and DemoDaemon.IsDemoPlaying() then
+  C.mismatchAt = nil; return
+ end
+ if C.expect and C.expect.mission == W.mission and not C.expect.done then return end
+ local want, have = fromWire(h.kind), active()
+ if want == nil or have == nil or want == have then C.mismatchAt = nil; return end
+ C.mismatchAt = C.mismatchAt or now
+ if now - C.mismatchAt < 3000 or now < (C.fixAt or 0) then return end
+ C.fixAt = now + 5000
+ C.keep("reconcile")
+ local x, y, z, yaw = h.x, h.y, h.z, h.yaw
+ if not h.present or (x == 0 and y == 0 and z == 0) then
+  local px, py, pz, r = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ"), W.get(vars, "playerRotY")
+  if type(px) ~= "number" or type(py) ~= "number" or type(pz) ~= "number" then return end
+  yaw = ((type(r) == "number" and r or 0) + 180) % 360 - 180
+  yaw = yaw * math.pi / 180
+  x, y, z = px + 4 * math.cos(yaw), py, pz - 4 * math.sin(yaw)
+ end
+ local via, ok = "call", false
+ C.token = true
+ if want == BT("NONE") then
+  via = "delete"; ok = pcall(TBC("DeleteBuddy"))
+ elseif blockActive() then
+  local v = vector(x, y, z)
+  local good, r = pcall(TBC("CallBuddy"), want, v, yaw)
+  ok = good and r ~= false
+ else
+  via = "load"
+  local v, n = vector(x, y, z), W.get(BuddyInitStatus, "NORMAL") or 0
+  ok = pcall(TBC("ReserveCallBuddy"), want, n, v, yaw) and pcall(TBC("Load"))
+ end
+ C.token = nil
+ L(fmt("step=reconcile;via=%s;kind=%s;have=%s;ok=%d;", via, typeName(want), typeName(have), ok and 1 or 0))
+end
+local function guestTick(now)
+ local E = C.expect
+ if E and E.mission == W.mission and not E.done and W.inGame() then
+  local have = active()
+  if have ~= nil and have == E.type then
+   E.done = true
+   L(fmt("step=loaded;kind=%s;source=seed;", typeName(have)))
+  elseif E.deadline and now > E.deadline then
+   E.done = true
+   L(fmt("step=load_mismatch;want=%s;have=%s;", typeName(E.type), typeName(have)))
+  end
+ end
+ sendCharacter(now)
+ if now >= (C.maskAt or 0) then
+  C.maskAt = now + 250
+  C.mask(W.paired and W.inGame() and not cqcHold())
+ end
+ if W.paired then reconcile(now) end
+end
+function C.tick(now)
+ if not C.on() then if C.masked then C.mask(false) end return end
+ if now < (C.nextTick or 0) then return end
+ C.nextTick = now + 100
+ local ok, err = pcall(W.host and hostTick or guestTick, now)
+ if not ok and now >= (C.errAt or 0) then C.errAt = now + 10000; L("step=error;msg=" .. string.sub(tostring(err), 1, 80)) end
+end
+W.startHooks[#W.startHooks + 1] = function()
+ C.nextTick, C.txAt, C.txKind, C.deleteAt, C.fixAt, C.mismatchAt, C.host, C.hostKind = nil, nil, nil, nil, nil, nil, nil, nil
+ C.masked, C.cellLogged, C.hookLines = nil, nil, 0
+ if C.expect and C.expect.mission == W.mission then C.expect.deadline = W.now() + 30000 else C.expect = nil end
+ if C.on() and not W.host then C.charAt = nil end
+end
+W.pairedHooks[#W.pairedHooks + 1] = function() C.charAt, C.txAt = nil, nil end
+W.unpairedHooks[#W.unpairedHooks + 1] = function()
+ C.host, C.hostKind, C.guestQuiet = nil, nil, nil
+ pcall(C.mask, false)
+end
+W.stopHooks[#W.stopHooks + 1] = function() pcall(C.mask, false) end
+
+-- E4 census and guest refusal of the Lua buddy entry points (the co-op module's own calls
+-- pass: C.token, and W.api.buddyCall is the original, bound below).
+local function census(fn, t)
+ if C.hookLines >= 40 then return end
+ C.hookLines = C.hookLines + 1
+ L(fmt("step=hook;fn=%s;type=%s;", fn, typeName(t)))
+end
+function C.refuse(path, t)
+ L(fmt("step=refused;path=%s;type=%s;host=%s;", path, typeName(t), typeName(C.allowed())))
+ note(2)
+ return false
+end
+local function guard(fn, t)
+ if W.host or not C.on() then return false end
+ local allowed = C.allowed()
+ if allowed == nil then return false end
+ if fn == "DeleteBuddy" then return allowed ~= BT("NONE") end
+ return t ~= allowed
+end
+function C.install()
+ if C.installed then return end
+ C.installed = true
+ for _, fn in ipairs({"CallBuddy", "CallBuddyWithHalo", "ReserveCallBuddy", "DeleteBuddy"}) do
+  local f = W.get(TppBuddy2BlockController, fn)
+  if type(f) == "function" then
+   C.orig[fn] = f
+   TppBuddy2BlockController[fn] = function(...)
+    if C.token then return f(...) end
+    local t = (...)
+    pcall(census, fn, t)
+    local ok, refuse = pcall(guard, fn, t)
+    if ok and refuse then return C.refuse("lua_" .. fn, t) end
+    return f(...)
+   end
+  end
+ end
+ local summon = W.get(TppBuddyService, "SummonBuddy")
+ if type(summon) == "function" then
+  TppBuddyService.SummonBuddy = function(...)
+   pcall(census, "SummonBuddy", (...))
+   return summon(...)
+  end
+ end
+ -- D8 (b): every save writes this copy's own buddy vars; vars are as they were afterwards.
+ local save = W.get(TppSave, "SaveVarsToSlot")
+ if type(save) == "function" then
+  TppSave.SaveVarsToSlot = function(...)
+   local own = C.own
+   if not own then return save(...) end
+   local live = C.snapshot()
+   if not live then return save(...) end
+   C.restore(own)
+   local r = {pcall(save, ...)}
+   C.restore(live)
+   C.saves = (C.saves or 0) + 1
+   if C.saves <= 3 or C.saves % 50 == 0 then
+    L(fmt("step=save_own;slot=%s;own=%s;live=%s;n=%d;", tostring((...)), typeName(own.buddyType), typeName(live.buddyType), C.saves))
+   end
+   if not r[1] then error(r[2], 0) end
+   return unpack(r, 2)
+  end
+ end
+ -- E20: no Mother Base cell Quiet (quest mtbs_wait_quiet) while the guest plays Quiet.
+ local arrival = W.get(TppStory, "CanArrivalQuietInMB")
+ if type(arrival) == "function" then
+  TppStory.CanArrivalQuietInMB = function(n, ...)
+   if n ~= true and W.companionOn == true and W.get(vars, "missionCode") == 30050 and
+    ((W.host and C.guestQuiet) or (not W.host and C.selfQuiet)) then
+    if not C.cellLogged then C.cellLogged = true; L("step=mbquiet_hidden;") end
+    return false
+   end
+   return arrival(n, ...)
+  end
+ end
+end
+W.follow.installHooks[#W.follow.installHooks + 1] = function(cfg)
+ if type(cfg) == "table" and cfg[16] == 1 then
+  local ok, err = pcall(C.install)
+  if not ok then W.log("event=companion;step=error;at=install;msg=" .. string.sub(tostring(err), 1, 80)) end
+  if not W.host and C.selfQuiet == nil then local _, _, q = pcall(C.character); C.selfQuiet = q == true end
+ end
+end
+W.bindHooks[#W.bindHooks + 1] = function(a)
+ if C.orig.CallBuddy then a.buddyCall = C.orig.CallBuddy end
+end
+
+-- buddy_status tail (world_buddy.lua): vars.buddyType and this copy's own kept type (- none).
+function C.tail()
+ local vt, own = W.get(vars, "buddyType"), C.own and C.own.buddyType
+ return fmt(" vars_type=%s own=%s", type(vt) == "number" and tostring(vt) or "?", type(own) == "number" and tostring(own) or "-")
+end
+-- Read-only report (debug companion_status) and the lab seed lever (debug seed_buddy <kind>).
+function C.status()
+ return fmt("companion;on=%d;role=%s;active=%s;vars_type=%s;own=%s;allowed=%s;guest_quiet=%s;self_quiet=%s;masked=%d;lock=%s;saves=%d",
+  C.on() and 1 or 0, W.host and "host" or "guest", typeName(active()), tostring(W.get(vars, "buddyType")),
+  C.own and typeName(C.own.buddyType) or "-", typeName(C.allowed()), tostring(C.guestQuiet), tostring(C.selfQuiet),
+  C.masked and 1 or 0, tostring(C.quietDisabled ~= nil), C.saves or 0)
+end
+-- E20: the Quiet cell (its radio locator, else the Medical main plant's centre).
+function C.cellPos()
+ local ok, p = pcall(Tpp.GetLocator, "quiet_AssetIdentifier", "radio_pos")
+ if ok and type(p) == "table" and type(p[1]) == "number" and type(p[2]) == "number" and type(p[3]) == "number" then
+  return {p[1], p[2], p[3]}, "radio"
+ end
+ local good, x, y, z = pcall(function()
+  local c = mtbs_cluster.GetDemoCenter("Medical", "plnt0")
+  if type(c) == "table" then return c[1], c[2], c[3] end
+  return c:GetX(), c:GetY(), c:GetZ()
+ end)
+ if good and type(x) == "number" and type(y) == "number" and type(z) == "number" then return {x, y, z}, "plnt0" end
+end
+-- debug_buddy.lua routes companion_status, seed_buddy <kind> and companion_cell [goto] here.
+function C.lever(a, id, A, mission)
+ if a[1] == "companion_status" and #a == 1 then return true, C.status() end
+ if a[1] == "seed_buddy" and #a == 2 then return C.seedLever(a[2]) end
+ if a[1] == "companion_cell" and (#a == 1 or (#a == 2 and a[2] == "goto")) then
+  if mission ~= 30050 then return false, "cell_mission" end
+  local p, src = C.cellPos()
+  if not p then return false, "cell_unavailable" end
+  if #a == 1 then return true, fmt("cell;src=%s;pos=%.2f,%.2f,%.2f", src, p[1], p[2], p[3]) end
+  -- Beside the radio, 2.5 m east facing west (the cell's open side is not known statically).
+  return A.warp({p[1] + (src == "radio" and 2.5 or 0), p[2] + (src == "radio" and 0 or 1), p[3], src == "radio" and -90 or 0}, id)
+ end
+ return false, "companion_args"
+end
+local SEED = {none = "NONE", horse = "HORSE", dog = "DOG", quiet = "QUIET", walker = "WALKER_GEAR"}
+function C.seedLever(kind)
+ if W.mode ~= 1 then return false, "lab_only" end
+ local t = SEED[kind] and BT(SEED[kind])
+ if not t then return false, "seed_args" end
+ local S = TppBuddyService
+ local okO, obtained = pcall(W.get(S, "DidObtainBuddyType") or W.get(TppBuddy2BlockController, "DidObtainBuddyType"), t)
+ local okS, sortie = pcall(W.get(S, "CanSortieBuddyType"), t)
+ vars.buddyType = t
+ if C.own then C.own.buddyType = t end
+ local ok = W.follow.run(TppMission.UpdateCheckPoint, {atCurrentPosition = true, ignoreAlert = true, permitHelicopter = true})
+ return ok, fmt("seed_buddy;kind=%s;vars_type=%d;checkpoint=%d;obtained=%s;sortie=%s", kind, t, ok and 1 or 0,
+  okO and tostring(obtained) or "?", okS and tostring(sortie) or "?")
+end
+end
+end

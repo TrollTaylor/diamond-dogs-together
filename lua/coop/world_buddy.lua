@@ -322,7 +322,7 @@ return string.format("buddy:%s a%d p%d k%s v%d r%s e%d H=%s@%s L=%s@%s d%d",
  W.host and "H" or "G", live and 1 or 0, W.paired and 1 or 0, nativeKind,
  W.host and s.seq or s.rxSeq or 0, string.sub((not live and (ok and contextReason or "context_error"))
   or (s.probe and s.probe.reason ~= "ok" and s.probe.code) or s.reason or "idle", 1, 22), errorCm,
- hp, ha, lp, la, B.disabled and 1 or 0)
+ hp, ha, lp, la, B.disabled and 1 or 0) .. (W.companion and W.companion.tail() or "")
 end
 function B.tick(now)
 if B.disabled then pcall(B.cleanupPending); return end

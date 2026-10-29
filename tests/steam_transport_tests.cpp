@@ -2563,13 +2563,23 @@ void TestHud() {
             Check(text::FormatWorldNote(note.code, note.a, note.b, note.partner, note.local, sentence, sizeof(sentence)) &&
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
-        // Codes 5..12 have sentences since join-fix phase 2 (below); 13..15 stay reserved.
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{13}, std::uint8_t{14}, std::uint8_t{15}, std::uint8_t{17},
-                                        std::uint8_t{255}})
+        // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion); 14..15 stay reserved.
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{14}, std::uint8_t{15}, std::uint8_t{17}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
         Check(!text::FormatWorldNote(1, 40010, 0, 0, 40010, sentence, sizeof(sentence)) && sentence[0] == 0,
               "FormatWorldNote: PROGRESS without the story start has no toast");
+        // M1 host-owned companion: code 13 COMPANION{a = 1 orders, 2 call refused, 3 Quiet locked}.
+        Check(text::FormatWorldNote(13, 1, 0, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Only the host gives companion orders in co-op: your call menu is off.") == 0 &&
+                  text::FormatWorldNote(13, 2, 0, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Only the host can call, change or send away the companion in co-op.") == 0 &&
+                  text::FormatWorldNote(13, 3, 0, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner plays Quiet, so buddy Quiet stays at Mother Base this session.") == 0,
+              "FormatWorldNote: the M1 companion sentences");
+        Check(!text::FormatWorldNote(13, 0, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0 &&
+                  !text::FormatWorldNote(13, 4, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "FormatWorldNote: an unknown companion reason has no toast");
         Check(text::FormatWorldNote(16, 40010, 40050, 40050, 40010, sentence, sizeof(sentence)) &&
                   std::strcmp(sentence,
                               "Your partner is in the Mother Base helicopter; you are in the Afghanistan helicopter. Co-op only pairs when "
@@ -2593,7 +2603,7 @@ void TestHud() {
         hud::PostWorldNote(3, 30020, 4, 30050, 40050);
         hud::PostWorldNote(3, 30020, 3, 40050, 40050);
         hud::PostWorldNote(1, 40010, 0, 0, 40010);
-        hud::PostWorldNote(13, 1, 1, 0, 0);  // reserved (7 has a sentence since join-fix phase 2)
+        hud::PostWorldNote(14, 1, 1, 0, 0);  // reserved (7 since join-fix phase 2 and 13 since M1 have sentences)
         hud::Event notes[8]{};
         const unsigned taken = hud::Take(notes, 8, model.cursor());
         Check(taken == 7 && notes[0].kind == hud::EventKind::world_note && notes[0].arg == 2 &&

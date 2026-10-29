@@ -5,7 +5,8 @@
 do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,fmt=A.get,A.call,string.format
- local S={handles={horse_spawn=true,horse_status=true,walker_spawn=true,walker_status=true,cargo_status=true,cargo_test=true,sleep_clock=true},nextCall=0};D.buddy=S
+ local S={handles={horse_spawn=true,horse_status=true,walker_spawn=true,walker_status=true,cargo_status=true,cargo_test=true,sleep_clock=true,
+  seed_buddy=true,companion_status=true,companion_cell=true},nextCall=0};D.buddy=S
  function S.stop()S.nextCall=0 end
  local function context()
   local W=get(e,"MgsCoopWorld");local B=get(W,"buddy")
@@ -162,8 +163,22 @@ do
   D.pending=q
   return true,"submitted_walker;scope=local;stock_loader;arrival=unverified;mount=normal_action"
  end
+ -- M1 (lua/coop/world_companion.lua): companion_status, seed_buddy <kind> (lab), companion_cell [goto]
+ -- (the Mother Base Quiet cell, E20); only the host summons (F9): the guest's is refused with a toast.
+ local function companion() local W=get(e,"MgsCoopWorld");return W,get(W,"companion") end
  function S.run(a,id)
   local cmd=a[1]
+  if cmd=="companion_status" or cmd=="seed_buddy" or cmd=="companion_cell" then
+   local _,C=companion()
+   if type(get(C,"lever"))~="function" then return false,"companion_unavailable" end
+   return C.lever(a,id,A,D.mission)
+  end
+  if cmd=="horse_spawn" or cmd=="walker_spawn" then
+   local W,C=companion()
+   if get(W,"companionOn")==true and get(W,"host")~=true and type(get(C,"refuse"))=="function" then
+    pcall(C.refuse,"f9_"..cmd,nil);return false,"host_only;companion=host_owned"
+   end
+  end
   if cmd=="cargo_test" and #a==2 and (a[2]=="0" or a[2]=="1") then
    local C=get(get(e,"MgsCoopWorld"),"horseCargo")
    if type(get(C,"setTesting"))~="function" then return false,"cargo_unavailable" end

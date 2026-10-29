@@ -76,3 +76,6 @@ constexpr char world_place_guest_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_SOURCE@
 )MGS_WORLD";
+constexpr char world_companion_source[] = R"MGS_WORLD(
+@MGS_WORLD_COMPANION_SOURCE@
+)MGS_WORLD";

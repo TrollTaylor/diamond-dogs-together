@@ -702,6 +702,14 @@ struct LabConfig {
     // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
     // default off until hidden-run frames prove the receiver's Despawn.
     bool world_vehicle_gone = false;
+    // companion_host_owned=0|1 (docs/vehicles-companions-design.md 6.1, M1): the host's
+    // buddy is the session's one companion. The follow seeds carry the host's buddy vars
+    // and the guest loads them (its own are kept for its saves); guest buddy calls, the
+    // call menu and the F9 summon are refused; a guest playing Quiet locks the host's
+    // buddy Quiet. CFG r[16] for Lua. Default off in lab and play until a hidden-run
+    // FRAME and a play rehearsal prove it (project rule); a named value wins.
+    bool companion_host_owned = false;
+    bool companion_host_owned_given = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is
