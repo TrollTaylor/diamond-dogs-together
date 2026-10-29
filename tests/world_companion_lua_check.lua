@@ -57,15 +57,23 @@ local function Fixture(role, o)
     env.TppBuddyService = {IsDisableBuddyType = function() return false end,
         SetDisableBuddyType = function(t) rec('SetDisableBuddyType', t) end,
         UnsetDisableBuddyType = function(t) rec('UnsetDisableBuddyType', t) end}
+    -- The save slots (the last write) and their restores (TppSave.VarRestoreOnMissionStart / OnContinueFromCheckPoint
+    -- load the buddy vars back from the slots at TppMain.OnAllocate, before the block Load).
+    local function restore(name)
+        rec(name)
+        if c.slot then env.vars.buddyType, env.vars.buddyTypeMissionStart = c.slot.buddyType, c.slot.start end
+    end
     env.TppSave = {SaveVarsToSlot = function(slot) c.saves[#c.saves + 1] = {slot = slot, buddyType = env.vars.buddyType,
         eye = env.vars.buddyDogEyeType, start = env.vars.buddyTypeMissionStart, dead = env.vars.deadBuddyType,
-        flag = env.vars.buddyCommonFlag} end}
+        flag = env.vars.buddyCommonFlag}; c.slot = c.saves[#c.saves] end,
+        VarRestoreOnMissionStart = function() restore('restore_start') end,
+        VarRestoreOnContinueFromCheckPoint = function() restore('restore_continue') end}
     env.TppStory = {CanArrivalQuietInMB = function() return true end}
     env.GameObject = {GetGameObjectIdByIndex = function(name, i) return name == 'TppBuddyDog2' and i == 0 and 9728 or 65535 end,
         SendCommand = function(id, cmd) rec('SendCommand', id, cmd.id, cmd.pos); return true end}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
     env.TppMission = {Load = function(m) rec('load', m, env.vars.buddyType) end, UpdateCheckPoint = function() rec('checkpoint'); return true end}
-    env.e = {}
+    env.e = {StageBlockCurrentPosition = function(a) rec('stage', a) end}
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {}, bindHooks = {},
         level = 3, role = role, host = role == 1, active = true, mission = 30010, epoch = 7, paired = true, eff = 3, mode = 1,
         companionOn = o.on ~= false}
@@ -95,6 +103,17 @@ local function Fixture(role, o)
     function c.find(s) for i = #c.logs, 1, -1 do if c.logs[i]:find(s, 1, true) then return c.logs[i] end end end
     function c.called(name) local n = 0; for _, v in ipairs(c.calls) do if v[1] == name then n = n + 1 end end; return n end
     function c.tick(ms) c.time = c.time + (ms or 200); W.companion.tick(c.time) end
+    -- TppMain.OnAllocate's buddy order (extracted TppMain.lua, TppVarInit.lua): the slot restore (a new mission:
+    -- VarRestoreOnMissionStart, then ResetVarsMissionStart copies buddyTypeMissionStart into buddyType; a checkpoint
+    -- continue: VarRestoreOnContinueFromCheckPoint), StageBlockCurrentPosition(true), SetSortieBuddy, the block Load
+    -- (which reads vars.buddyType once); then OnMissionGameStart (W.begin, the start hooks).
+    function c.allocate(continue)
+        if continue then env.TppSave.VarRestoreOnContinueFromCheckPoint()
+        else env.TppSave.VarRestoreOnMissionStart(); env.vars.buddyType = env.vars.buddyTypeMissionStart end
+        env.e.StageBlockCurrentPosition(true)
+        c.active = env.vars.buddyType
+        for _, f in ipairs(W.startHooks) do f() end
+    end
     return c
 end
 -- Seeds as the host would send them: the buddy keys from a host copy with D-Dog and eye type 3.
@@ -301,6 +320,78 @@ c.tick(1000)
 check(c.env.vars.buddyTypeMissionStart == QUIET, 'the start rewrite waits 5 s between tries')
 c.tick(5000)
 check(c.env.vars.buddyTypeMissionStart == NONE, 'and rewrites a sortie copy written again')
+-- Review 2026-10-29 (run de43726a): the slot restore at TppMain.OnAllocate runs before the block Load, so a lock that
+-- only rewrites vars at TppMission.Load is undone, and a session-long snapshot written into every host save froze the
+-- host's companion at Quiet. Now: a Quiet the lock removes is parked (the live var NONE, every save writes QUIET for
+-- it), StageBlockCurrentPosition(true) parks her again after the restore, and a live non-Quiet choice drops the park.
+do
+    -- (a) The host's save deploys Quiet and she is out in the helicopter (late join: delete_buddy, start_rewrite);
+    -- the host then picks D-Dog at sortie prep: the sortie save, the restore and the block Load give the dog.
+    local h = Fixture(1, {buddyType = QUIET, active = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.tick(6000)
+    check(h.called('DeleteBuddy') == 1 and h.env.vars.buddyType == NONE and h.env.vars.buddyTypeMissionStart == NONE,
+        'the lock sends the helicopter Quiet away and rewrites the sortie copy')
+    h.env.vars.buddyType, h.env.vars.buddyTypeMissionStart = DOG, DOG
+    h.env.TppSave.SaveVarsToSlot(1)
+    check(h.slot.buddyType == DOG and h.slot.start == DOG, 'the sortie save writes the host dog chosen at sortie prep')
+    h.F.outgoing = nil
+    h.env.TppMission.Load(30010)
+    check(h.find('step=seed;kind=dog;live=dog;mission=30010;'), 'the seeds carry the host dog')
+    h.allocate()
+    check(h.active == DOG, 'the host loads its dog after the slot restore (not Quiet)')
+    h.tick(6000)
+    check(h.called('DeleteBuddy') == 1, 'nothing to send away: no second delete')
+    check(h.find('step=park_dropped;var=buddyType;live=dog;'), 'the live dog ends the park')
+    -- (b) The same lock, the host calls D-Dog mid-mission, a checkpoint, a continue: the dog again.
+    h = Fixture(1, {buddyType = QUIET, active = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.tick(6000)
+    h.env.vars.buddyType, h.active = DOG, DOG
+    h.tick(200)
+    h.env.TppSave.SaveVarsToSlot(0)
+    check(h.slot.buddyType == DOG, 'the checkpoint after the host called its dog writes the dog')
+    h.env.TppMission.Load(30010)
+    h.allocate(true)
+    check(h.active == DOG, 'a checkpoint continue loads the dog')
+    -- (c) The host keeps Quiet in its save: the sortie save writes Quiet, the Load rewrite, the restore brings her back
+    -- and StageBlockCurrentPosition(true) parks her again, so the block loads none; later saves still write Quiet.
+    h = Fixture(1, {buddyType = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.tick()
+    h.env.TppSave.SaveVarsToSlot(1)
+    h.F.outgoing = nil
+    h.env.TppMission.Load(30010)
+    check(h.find('step=seed;kind=none;'), 'the seeds carry none')
+    h.allocate()
+    check(h.slot.start == QUIET and h.active == NONE, 'the restore brought Quiet back and the stage hook parked her: none loads')
+    check(h.find('step=quiet_lock;via=stage_rewrite;guest_char=quiet;'), 'the stage rewrite is logged')
+    h.env.TppSave.SaveVarsToSlot(0)
+    check(h.slot.buddyType == QUIET and h.slot.start == QUIET and h.env.vars.buddyType == NONE, 'saves keep Quiet, vars stay none')
+    check(h.find('step=save_quiet;slot=0;'), 'the parked save is logged')
+    -- (d) The guest leaves: an unlocked Load puts Quiet back (the next mission loads her).
+    h.W.paired = false
+    h.C.guestQuiet = nil
+    h.env.TppMission.Load(30020)
+    check(h.env.vars.buddyType == QUIET and h.env.vars.buddyTypeMissionStart == QUIET and h.find('step=quiet_back;why=host_unlocked;'),
+        'unlocked: Quiet back in vars before the seeds')
+    h.allocate()
+    check(h.active == QUIET, 'and the host loads her again')
+    -- (e) No lock at the Load: the stage hook leaves vars alone.
+    h = Fixture(1, {buddyType = QUIET})
+    h.env.e.StageBlockCurrentPosition(true)
+    check(h.env.vars.buddyType == QUIET, 'no lock, no stage rewrite')
+    -- (f) Parked, then the host calls a dog and dismisses it: the save writes none (the host's last choice), not Quiet.
+    h = Fixture(1, {buddyType = QUIET, active = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.tick(6000)
+    h.env.vars.buddyType, h.active = DOG, DOG
+    h.tick(200)
+    h.env.vars.buddyType, h.active = NONE, NONE
+    h.env.TppSave.SaveVarsToSlot(0)
+    check(h.slot.buddyType == NONE and h.slot.start == QUIET, 'a dismissed dog saves none; the parked sortie copy still Quiet')
+    check(h.C.own == nil, 'the host keeps no buddy snapshot')
+end
 -- Host with a guest who is not Quiet: no lock.
 c = Fixture(1, {buddyType = QUIET})
 c.W.handlers[56]({1, 2, 0})

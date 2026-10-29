@@ -93,8 +93,8 @@ function C.restore(s)
   end
  end
 end
--- D8 (b): this copy's own buddy vars, kept while others are in vars (the host's seeds on the
--- guest; the Quiet rewrite on the host). Every save writes them (the SaveVarsToSlot wrapper).
+-- D8 (b), guest only: its own buddy vars, kept while the host's seeds are in vars. Every save
+-- writes them (the SaveVarsToSlot wrapper).
 function C.keep(why)
  if C.own then return true end
  local s, bad = C.snapshot()
@@ -126,17 +126,45 @@ local function lockLog(via)
  L(fmt("step=quiet_lock;via=%s;guest_char=quiet;", via))
  if C.notedLock ~= W.mission then C.notedLock = W.mission; note(3) end
 end
+-- Host: the Quiet the lock removes is parked (design 6.1.5.2; review 2026-10-29, run de43726a):
+-- the live var reads NONE and every save writes QUIET for it, so the host's save keeps her. The
+-- slot restore of TppMain.OnAllocate (VarRestoreOnMissionStart / OnContinueFromCheckPoint) runs
+-- before the block Load, so StageBlockCurrentPosition(true) (after it, before SetSortieBuddy)
+-- parks her again on a locked load. A live non-Quiet choice (sortie prep, a call) drops the park.
+local PARK = {"buddyType", "buddyTypeMissionStart"}
+local function parkVar(k, via)
+ local Q = BT("QUIET")
+ if not Q or W.get(vars, k) ~= Q then return false end
+ vars[k] = BT("NONE")
+ C.parked = C.parked or {}
+ C.parked[k] = true
+ lockLog(via)
+ return true
+end
+local function park(via) local a, b = parkVar(PARK[1], via), parkVar(PARK[2], via); return a or b end
+function C.parkCheck()
+ if not C.parked then return end
+ local Q, N = BT("QUIET"), BT("NONE")
+ for k in pairs(C.parked) do
+  local v = W.get(vars, k)
+  if type(v) == "number" and v ~= N and v ~= Q then C.parked[k] = nil; L(fmt("step=park_dropped;var=%s;live=%s;", k, typeName(v))) end
+ end
+ if next(C.parked) == nil then C.parked = nil end
+end
+function C.unpark(why)
+ if not C.parked then return end
+ for k in pairs(C.parked) do if W.get(vars, k) == BT("NONE") then vars[k] = BT("QUIET") end end
+ C.parked = nil
+ L("step=quiet_back;why=" .. why .. ";")
+end
 -- TppMission.Load (world_follow.lua, before the seeds): coop is a co-op travel (host: on;
 -- guest: following the host).
 function C.load(nextMission, coop)
  if W.host then
-  local Q, lock = BT("QUIET"), coop and C.on() and W.paired and C.guestQuiet == true
-  if lock and Q and (W.get(vars, "buddyType") == Q or W.get(vars, "buddyTypeMissionStart") == Q) then
-   if C.keep("quiet_lock") then
-    for _, k in ipairs({"buddyType", "buddyTypeMissionStart"}) do if W.get(vars, k) == Q then vars[k] = BT("NONE") end end
-    lockLog("sortie_rewrite")
-   end
-  elseif C.own and not lock then C.release("host_unlocked") end
+  local lock = coop and C.on() and W.paired and C.guestQuiet == true
+  -- Latched for this load's StageBlockCurrentPosition(true) (cleared at the next mission start).
+  C.stageLock = lock or nil
+  if lock then park("sortie_rewrite") else C.unpark("host_unlocked") end
   local t = W.follow.outgoing
   if coop and C.on() then
    L(fmt("step=seed;kind=%s;live=%s;mission=%d;", typeName(nextType(t and t[2])), typeName(W.get(vars, "buddyType")), nextMission or 0))
@@ -216,26 +244,29 @@ local function hostTick(now)
   if W.paired and active() == Q and now >= (C.deleteAt or 0) and W.inGame() then
    C.deleteAt = now + 5000
    local del = TBC("DeleteBuddy")
-   if type(del) == "function" and C.keep("quiet_lock") then
+   if type(del) == "function" then
     C.token = true
     local ok = pcall(del)
     C.token = nil
+    -- Her out is the host's choice whatever DeleteBuddy wrote: parked.
     vars.buddyType = BT("NONE")
+    C.parked = C.parked or {}
+    C.parked.buddyType = true
     if ok then lockLog("delete_buddy") end
    end
   end
   -- The sortie copy too (run b993af09 read 3 at Mother Base after the heli delete; a restart's
   -- ResetVarsMissionStart would copy it back into buddyType); at most every 5 s.
-  if W.paired and W.get(vars, "buddyTypeMissionStart") == Q and now >= (C.startAt or 0) and C.keep("quiet_lock") then
+  if W.paired and W.get(vars, "buddyTypeMissionStart") == Q and now >= (C.startAt or 0) then
    C.startAt = now + 5000
-   vars.buddyTypeMissionStart = BT("NONE")
-   lockLog("start_rewrite")
+   parkVar("buddyTypeMissionStart", "start_rewrite")
   end
  elseif C.quietDisabled then
   if C.quietMine then pcall(W.get(S, "UnsetDisableBuddyType"), Q) end
   C.quietDisabled, C.quietMine = nil, nil
   L("step=quiet_unlock;")
  end
+ C.parkCheck()
  local k = toWire(active())
  if now < (C.txAt or 0) and k == C.txKind then return end
  C.seq = C.seq % 65535 + 1
@@ -384,7 +415,7 @@ function C.tick(now)
 end
 W.startHooks[#W.startHooks + 1] = function()
  C.nextTick, C.txAt, C.txKind, C.deleteAt, C.fixAt, C.mismatchAt, C.host, C.hostKind = nil, nil, nil, nil, nil, nil, nil, nil
- C.masked, C.cellLogged, C.hookLines, C.startAt = nil, nil, 0, nil
+ C.masked, C.cellLogged, C.hookLines, C.startAt, C.stageLock = nil, nil, 0, nil, nil
  if C.expect and C.expect.mission == W.mission then C.expect.deadline = W.now() + 30000 else C.expect = nil end
  if C.on() and not W.host then C.charAt = nil end
 end
@@ -439,10 +470,29 @@ function C.install()
    return summon(...)
   end
  end
- -- D8 (b): every save writes this copy's own buddy vars; vars are as they were afterwards.
+ -- Every save: the guest writes its own buddy vars (D8 b), the host QUIET for each parked var
+ -- that reads NONE; vars are as they were afterwards. The first three lines, then one per save
+ -- burst (5 s), so a checkpoint's write shows.
  local save = W.get(TppSave, "SaveVarsToSlot")
  if type(save) == "function" then
+  local function logged()
+   C.saves = (C.saves or 0) + 1
+   local now = W.now()
+   if C.saves <= 3 or now - (C.saveLogAt or -1e9) >= 5000 then C.saveLogAt = now; return true end
+  end
   TppSave.SaveVarsToSlot = function(...)
+   local slot = tostring((...))
+   if W.host then
+    C.parkCheck()
+    if not C.parked then return save(...) end
+    local N, put = BT("NONE"), {}
+    for k in pairs(C.parked) do if W.get(vars, k) == N then put[#put + 1] = k; vars[k] = BT("QUIET") end end
+    local r = {pcall(save, ...)}
+    for _, k in ipairs(put) do vars[k] = N end
+    if logged() then L(fmt("step=save_quiet;slot=%s;vars=%d;n=%d;", slot, #put, C.saves)) end
+    if not r[1] then error(r[2], 0) end
+    return unpack(r, 2)
+   end
    local own = C.own
    if not own then return save(...) end
    local live = C.snapshot()
@@ -450,17 +500,22 @@ function C.install()
    C.restore(own)
    local r = {pcall(save, ...)}
    C.restore(live)
-   C.saves = (C.saves or 0) + 1
-   -- The first three, then one line per save burst (5 s), so a checkpoint's write shows.
-   local now = W.now()
-   if C.saves <= 3 or now - (C.saveLogAt or -1e9) >= 5000 then
-    C.saveLogAt = now
-    L(fmt("step=save_own;slot=%s;own=%s;live=%s;n=%d;own_dead=%s;live_dead=%s;own_flag=%s;live_flag=%s;", tostring((...)),
+   if logged() then
+    L(fmt("step=save_own;slot=%s;own=%s;live=%s;n=%d;own_dead=%s;live_dead=%s;own_flag=%s;live_flag=%s;", slot,
      typeName(own.buddyType), typeName(live.buddyType), C.saves, tostring(own.deadBuddyType), tostring(live.deadBuddyType),
      tostring(own.buddyCommonFlag), tostring(live.buddyCommonFlag)))
    end
    if not r[1] then error(r[2], 0) end
    return unpack(r, 2)
+  end
+ end
+ -- Host: after OnAllocate's slot restore, before SetSortieBuddy and the block Load (TppMain), a
+ -- locked load parks Quiet again (C.load latched the lock).
+ local stage = W.get(e, "StageBlockCurrentPosition")
+ if type(stage) == "function" then
+  e.StageBlockCurrentPosition = function(first, ...)
+   if first == true and W.host and C.stageLock then pcall(park, "stage_rewrite") end
+   return stage(first, ...)
   end
  end
  -- E20: no Mother Base cell Quiet (quest mtbs_wait_quiet) while the guest plays Quiet.
@@ -494,16 +549,17 @@ end
 
 -- For the lab levers (world_companion_dog.lua).
 C.lib = {BT = BT, TBC = TBC, active = active, blockActive = blockActive, vector = vector}
--- buddy_status tail (world_buddy.lua): vars.buddyType and this copy's own kept type (- none).
+-- buddy_status tail (world_buddy.lua): vars.buddyType and this copy's own kept type (- none;
+-- the host: its parked Quiet).
 function C.tail()
- local vt, own = W.get(vars, "buddyType"), C.own and C.own.buddyType
+ local vt, own = W.get(vars, "buddyType"), C.own and C.own.buddyType or C.parked and BT("QUIET")
  return fmt(" vars_type=%s own=%s", type(vt) == "number" and tostring(vt) or "?", type(own) == "number" and tostring(own) or "-")
 end
 -- Read-only report (debug companion_status) and the lab seed lever (debug seed_buddy <kind>).
 function C.status()
  return fmt("companion;on=%d;role=%s;active=%s;vars_type=%s;start=%s;own=%s;allowed=%s;guest_quiet=%s;self_quiet=%s;masked=%d;lock=%s;saves=%d",
   C.on() and 1 or 0, W.host and "host" or "guest", typeName(active()), tostring(W.get(vars, "buddyType")), tostring(W.get(vars, "buddyTypeMissionStart")),
-  C.own and typeName(C.own.buddyType) or "-", typeName(C.allowed()), tostring(C.guestQuiet), tostring(C.selfQuiet),
+  C.own and typeName(C.own.buddyType) or C.parked and "quiet_parked" or "-", typeName(C.allowed()), tostring(C.guestQuiet), tostring(C.selfQuiet),
   C.masked and 1 or 0, tostring(C.quietDisabled ~= nil), C.saves or 0)
 end
 end
