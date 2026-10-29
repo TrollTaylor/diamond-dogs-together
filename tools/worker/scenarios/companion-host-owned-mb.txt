@@ -22,7 +22,7 @@ guest expect own=1
 # stands 8 m behind the host.
 host press w 500
 wait 1500
-placebehind guest host 8 1
+placebehind guest host 6 2
 wait 2000
 host run companion_lab call_here
 host expect call_here;kind=dog;result=true;warp=1
@@ -32,6 +32,13 @@ guest run buddy_status
 both capture m1-mb-dog
 wait 2000
 both capture m1-mb-dog-2
+# In run A (489b3c6f) the guest's own body hid the held dog (its marker showed); sweep the guest's camera left.
+guest mouse -250 0
+wait 800
+guest capture m1-mb-dog-3
+guest mouse -250 0
+wait 800
+guest capture m1-mb-dog-4
 # E20: the cell Quiet (quest mtbs_wait_quiet) is refused on both copies near the Medical platform (run 9e8f22a7 logged
 # mbquiet_hidden only there); the cell frames are in companion-host-owned-quiet.txt (run B).
 host run companion_cell goto
