@@ -22,8 +22,9 @@ host expect vars_type=2_own=-
 guest run buddy_status
 guest expect kdog
 guest expect vars_type=2_own=1
-# The dog's AI joins its player; then each camera sweeps around to find it.
-wait 12000
+# LAB: the host recalls its dog beside it (stock CallBuddy of the loaded type), then each camera sweeps around.
+host run companion_lab call_here
+wait 10000
 placebehind guest host 7 2
 wait 3000
 guest mouse 300 0

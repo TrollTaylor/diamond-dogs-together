@@ -52,8 +52,8 @@ if not t.announced then
     log(fmt("step=tx;id=%.0f;src=%d;next=%d;kind=%d", t[1], t[3], t[4], t[2]))
 end
 if not t.values then return end
--- 64 per frame (M1 added 34 buddy values): a seed stream still ends within two frames.
-for _ = 1, 64 do
+-- 128 per frame (M1 added 40 buddy values): a seed stream still ends within two frames.
+for _ = 1, 128 do
     local v = t.values[t.i]
     if not v then
         if not W.tx(OP.SEEDS_END, t[1], t[4], #t.values, t.digest) then return end
@@ -155,7 +155,7 @@ end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
-if buddy then C.seeded(t[4]) end
+if buddy then C.seeded(t[4], t[2]) end
 return true
 end
 -- F.hostDeploy is not cleared here: F.tick owns the held sortie.

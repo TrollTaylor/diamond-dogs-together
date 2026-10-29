@@ -41,6 +41,7 @@ guest press tab
 wait 2000
 guest capture e4-guest-idroid-closed
 # Seeds: the host deploys Quiet next time (afgh-quiet), the guest a horse (afgh-horse); each lever checkpoints.
+# The lever writes vars.buddyType and buddyTypeMissionStart (a title Continue's ResetVarsMissionStart copies the latter).
 host run seed_buddy quiet
 host expect seed_buddy;kind=quiet;vars_type=3;checkpoint=1;
 guest run seed_buddy horse

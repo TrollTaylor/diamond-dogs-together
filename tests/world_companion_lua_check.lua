@@ -29,7 +29,10 @@ local function Fixture(role, o)
         "buddyDogColorType", "buddyGearBodyGrade", "buddyGearEquipGrade", "buddyGearReloadGrade", "buddyGearHeadType",
         "buddyGearHeadGrade", "buddyGearArmType", "buddyGearArmGrade", "buddyGearMainWPType", "buddyGearMainWPGrade",
         "buddyGearSubWPType", "buddyGearSubWPGrade", "buddyGearColoring0", "buddyGearColoring1", "buddyHorseType",
-        "buddyHorseColorType", "buddyHorseHeadDesignType", "buddyHorseFootDesignType"}) do env.vars[n] = 0 end
+        "buddyHorseColorType", "buddyHorseHeadDesignType", "buddyHorseFootDesignType", "initialBuddyStatusMissionStart",
+        "initialBuddyRotYMissionStart"}) do env.vars[n] = 0 end
+    env.vars.buddyTypeMissionStart = o.buddyType or HORSE
+    env.vars.initialBuddyPosMissionStart = {[0] = 0, [1] = 0, [2] = 0}
     env.mvars, env.gvars, env.svars = {}, {}, {}
     env.BuddyType = {NONE = NONE, HORSE = HORSE, DOG = DOG, QUIET = QUIET, WALKER_GEAR = WALKER, BATTLE_GEAR = 5}
     env.BuddyInitStatus = {NORMAL = 0}
@@ -52,7 +55,8 @@ local function Fixture(role, o)
     env.TppBuddyService = {IsDisableBuddyType = function() return false end,
         SetDisableBuddyType = function(t) rec('SetDisableBuddyType', t) end,
         UnsetDisableBuddyType = function(t) rec('UnsetDisableBuddyType', t) end}
-    env.TppSave = {SaveVarsToSlot = function(slot) c.saves[#c.saves + 1] = {slot = slot, buddyType = env.vars.buddyType, eye = env.vars.buddyDogEyeType} end}
+    env.TppSave = {SaveVarsToSlot = function(slot) c.saves[#c.saves + 1] = {slot = slot, buddyType = env.vars.buddyType,
+        eye = env.vars.buddyDogEyeType, start = env.vars.buddyTypeMissionStart} end}
     env.TppStory = {CanArrivalQuietInMB = function() return true end}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
     env.TppMission = {Load = function(m) rec('load', m, env.vars.buddyType) end, UpdateCheckPoint = function() rec('checkpoint'); return true end}
@@ -111,9 +115,9 @@ end
 local c = Fixture(2)
 local n = 0
 for _, key in ipairs(c.S.keys) do if key[6] == 'buddy' then n = n + 1; check(key[4] == true, 'buddy keys are vars') end end
-check(n == 30 and #c.S.keys <= 127, 'thirty buddy keys; the key count fits the 1..127 seed index')
+check(n == 34 and #c.S.keys <= 127, 'thirty-four buddy keys (with the MissionStart copies); within the 1..127 seed index')
 local values = hostSeeds(DOG)
-check(#values == 34, 'the buddy values (three positions and two pairs of gear ammo)')
+check(#values == 40, 'the buddy values (two positions of three and two pairs of gear ammo)')
 
 -- Guest, companion off: the buddy keys are not applied; the guest keeps its horse.
 c = Fixture(2, {on = false})
@@ -124,13 +128,14 @@ check(c.env.vars.buddyType == HORSE and not c.C.own, 'off: the guest loads its o
 c = Fixture(2)
 follow(c, values)
 check(c.calls[#c.calls][1] == 'load' and c.calls[#c.calls][3] == DOG, 'the retail Load sees the host dog')
+check(c.env.vars.buddyTypeMissionStart == DOG, 'the sortie copy (ResetVarsMissionStart source) is the host dog')
 check(c.env.vars.buddyDogEyeType == 3, 'the host dog look is seeded')
 check(c.C.own and c.C.own.buddyType == HORSE and c.C.own.buddyDogEyeType == 1, 'the guest keeps its own buddy vars')
 check(c.find('event=companion;role=guest;step=own_kept;why=seed;own=horse;'), 'own kept is logged')
 check(c.find('step=seed_apply;kind=dog;own=horse;mission=30010;'), 'seed apply is logged')
 -- D8 (b): a save writes the guest's own vars; vars stay the host's afterwards.
 c.env.TppSave.SaveVarsToSlot(3)
-check(c.saves[1].buddyType == HORSE and c.saves[1].eye == 1, 'the save slot gets the guest own buddy')
+check(c.saves[1].buddyType == HORSE and c.saves[1].eye == 1 and c.saves[1].start == HORSE, 'the save slot gets the guest own buddy')
 check(c.env.vars.buddyType == DOG and c.env.vars.buddyDogEyeType == 3, 'vars are the host values again after the save')
 check(c.find('step=save_own;slot=3;own=horse;live=dog;n=1;'), 'the save policy is logged')
 -- The load is confirmed once the block has the host's dog.
@@ -203,7 +208,8 @@ check(c.notes[1] and c.notes[1][1] == 13 and c.notes[1][2] == 3, 'the host gets 
 c.F.outgoing = nil
 c.env.TppMission.Load(30010)
 check(c.calls[#c.calls][1] == 'load' and c.calls[#c.calls][3] == NONE, 'the sortie loads no buddy')
-check(c.find('step=quiet_lock;via=sortie_rewrite;guest_char=quiet;') and c.find('step=seed;kind=none;mission=30010;'),
+check(c.env.vars.buddyTypeMissionStart == NONE, 'the sortie copy is rewritten too')
+check(c.find('step=quiet_lock;via=sortie_rewrite;guest_char=quiet;') and c.find('step=seed;kind=none;live=none;mission=30010;'),
     'sortie rewrite and the host seed line')
 c.env.TppSave.SaveVarsToSlot(1)
 check(c.saves[1].buddyType == QUIET, 'the host save keeps its Quiet choice')
@@ -244,7 +250,8 @@ check(c.env.TppStory.CanArrivalQuietInMB() == true, 'off: the retail answer')
 c = Fixture(2)
 follow(c, values)
 local ok, msg = c.C.seedLever('walker')
-check(ok and msg:find('seed_buddy;kind=walker;vars_type=4;checkpoint=1;', 1, true) and c.C.own.buddyType == WALKER, 'seed lever')
+check(ok and msg:find('seed_buddy;kind=walker;vars_type=4;checkpoint=1;', 1, true) and c.C.own.buddyType == WALKER and
+    c.C.own.buddyTypeMissionStart == WALKER and c.env.vars.buddyTypeMissionStart == WALKER, 'seed lever (live and sortie copy)')
 c.W.mode = 2
 check(not c.C.seedLever('horse'), 'the seed lever is lab only')
 print('world_companion_lua_check: ' .. checks .. ' checks passed')

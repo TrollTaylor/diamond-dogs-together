@@ -104,8 +104,14 @@ function C.release(why)
  C.own, C.ownWhy = nil, nil
 end
 -- Guest: the seeds were applied for this mission; the tick confirms the load.
-function C.seeded(mission)
- local t = W.get(vars, "buddyType")
+-- A new mission loads buddyTypeMissionStart (ResetVarsMissionStart before the block Load); a
+-- checkpoint continue (kind 4) the live buddyType.
+local function nextType(kind)
+ if kind == 4 then return W.get(vars, "buddyType") end
+ return W.get(vars, "buddyTypeMissionStart")
+end
+function C.seeded(mission, kind)
+ local t = nextType(kind)
  if C.expect and C.expect.mission == mission and C.expect.type == t then return end
  C.expect = {mission = mission, type = t}
  L(fmt("step=seed_apply;kind=%s;own=%s;mission=%d;", typeName(t), typeName(C.own and C.own.buddyType), mission))
@@ -119,10 +125,16 @@ end
 function C.load(nextMission, coop)
  if W.host then
   local Q, lock = BT("QUIET"), coop and C.on() and W.paired and C.guestQuiet == true
-  if lock and Q and W.get(vars, "buddyType") == Q then
-   if C.keep("quiet_lock") then vars.buddyType = BT("NONE"); lockLog("sortie_rewrite") end
+  if lock and Q and (W.get(vars, "buddyType") == Q or W.get(vars, "buddyTypeMissionStart") == Q) then
+   if C.keep("quiet_lock") then
+    for _, k in ipairs({"buddyType", "buddyTypeMissionStart"}) do if W.get(vars, k) == Q then vars[k] = BT("NONE") end end
+    lockLog("sortie_rewrite")
+   end
   elseif C.own and not lock then C.release("host_unlocked") end
-  if coop and C.on() then L(fmt("step=seed;kind=%s;mission=%d;", typeName(W.get(vars, "buddyType")), nextMission or 0)) end
+  local t = W.follow.outgoing
+  if coop and C.on() then
+   L(fmt("step=seed;kind=%s;live=%s;mission=%d;", typeName(nextType(t and t[2])), typeName(W.get(vars, "buddyType")), nextMission or 0))
+  end
  elseif C.own and not coop then C.release("solo") end
 end
 
@@ -445,8 +457,8 @@ function C.tail()
 end
 -- Read-only report (debug companion_status) and the lab seed lever (debug seed_buddy <kind>).
 function C.status()
- return fmt("companion;on=%d;role=%s;active=%s;vars_type=%s;own=%s;allowed=%s;guest_quiet=%s;self_quiet=%s;masked=%d;lock=%s;saves=%d",
-  C.on() and 1 or 0, W.host and "host" or "guest", typeName(active()), tostring(W.get(vars, "buddyType")),
+ return fmt("companion;on=%d;role=%s;active=%s;vars_type=%s;start=%s;own=%s;allowed=%s;guest_quiet=%s;self_quiet=%s;masked=%d;lock=%s;saves=%d",
+  C.on() and 1 or 0, W.host and "host" or "guest", typeName(active()), tostring(W.get(vars, "buddyType")), tostring(W.get(vars, "buddyTypeMissionStart")),
   C.own and typeName(C.own.buddyType) or "-", typeName(C.allowed()), tostring(C.guestQuiet), tostring(C.selfQuiet),
   C.masked and 1 or 0, tostring(C.quietDisabled ~= nil), C.saves or 0)
 end
@@ -475,6 +487,18 @@ function C.lever(a, id, A, mission)
   -- Beside the radio, 2.5 m east facing west (the cell's open side is not known statically).
   return A.warp({p[1] + (src == "radio" and 2.5 or 0), p[2] + (src == "radio" and 0 or 1), p[3], src == "radio" and -90 or 0}, id)
  end
+ -- Lab: the host recalls its own companion 4 m to its right (the stock CallBuddy of the loaded
+ -- type: a recall), so both cameras can frame it.
+ if a[1] == "companion_lab" and a[2] == "call_here" and #a == 2 then
+  if W.mode ~= 1 or not W.host then return false, "host_lab_only" end
+  local t, px, py, pz, r = active(), W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ"), W.get(vars, "playerRotY")
+  if not t or t == BT("NONE") or type(px) ~= "number" or type(py) ~= "number" or type(pz) ~= "number" then return false, "call_here_none" end
+  local yaw = (((type(r) == "number" and r or 0) + 180) % 360 - 180) * math.pi / 180
+  C.token = true
+  local ok, res = pcall(TBC("CallBuddy"), t, vector(px + 4 * math.cos(yaw), py, pz - 4 * math.sin(yaw)), yaw)
+  C.token = nil
+  return ok and res ~= false, fmt("call_here;kind=%s;result=%s", typeName(t), tostring(res))
+ end
  -- Lab: the late-join case on the host (Quiet already out when the lock applies): the lock is
  -- lifted, Quiet called beside the host, and 8 s later the tick sends her away (delete_buddy).
  if a[1] == "companion_lab" and a[2] == "quiet_out" and #a == 2 then
@@ -500,8 +524,8 @@ function C.seedLever(kind)
  local S = TppBuddyService
  local okO, obtained = pcall(W.get(S, "DidObtainBuddyType") or W.get(TppBuddy2BlockController, "DidObtainBuddyType"), t)
  local okS, sortie = pcall(W.get(S, "CanSortieBuddyType"), t)
- vars.buddyType = t
- if C.own then C.own.buddyType = t end
+ vars.buddyType, vars.buddyTypeMissionStart = t, t
+ if C.own then C.own.buddyType, C.own.buddyTypeMissionStart = t, t end
  local ok = W.follow.run(TppMission.UpdateCheckPoint, {atCurrentPosition = true, ignoreAlert = true, permitHelicopter = true})
  return ok, fmt("seed_buddy;kind=%s;vars_type=%d;checkpoint=%d;obtained=%s;sortie=%s", kind, t, ok and 1 or 0,
   okO and tostring(obtained) or "?", okS and tostring(sortie) or "?")

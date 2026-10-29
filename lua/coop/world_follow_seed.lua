@@ -22,7 +22,11 @@ do
         {"buddyGearBodyGrade"}, {"buddyGearEquipGrade"}, {"buddyGearReloadGrade"}, {"buddyGearHeadType"}, {"buddyGearHeadGrade"},
         {"buddyGearArmType"}, {"buddyGearArmGrade"}, {"buddyGearMainWPType"}, {"buddyGearMainWPGrade"}, {"buddyGearSubWPType"},
         {"buddyGearSubWPGrade"}, {"buddyGearColoring0"}, {"buddyGearColoring1"}, {"buddyHorseType"}, {"buddyHorseColorType"},
-        {"buddyHorseHeadDesignType"}, {"buddyHorseFootDesignType"}}) do
+        {"buddyHorseHeadDesignType"}, {"buddyHorseFootDesignType"},
+        -- The sortie's buddy: TppBuddyService.ResetVarsMissionStart (0xA536D0, InitializeForNewMission, before the
+        -- block Load) copies these into the live vars (run 6? of M1: without them the guest loaded its own buddy).
+        {"buddyTypeMissionStart"}, {"initialBuddyStatusMissionStart"}, {"initialBuddyPosMissionStart", 3, 1000},
+        {"initialBuddyRotYMissionStart", nil, 1000}}) do
         S.keys[#S.keys + 1] = {k[1], k[2], k[3], true, nil, "buddy"}
     end
     W.followSeeds = S
