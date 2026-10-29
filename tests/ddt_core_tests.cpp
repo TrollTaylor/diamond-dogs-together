@@ -2661,6 +2661,22 @@ void TestLocalPowerShellInterop() {
         CHECK(x.Str("written_sha256") == y.Str("written_sha256"));
     }
     for (const auto& kv : ps.Items()) CHECK(native.Find(kv.first) != nullptr);   // the same journal fields
+    // DDT_LOCALTEST_EVIDENCE=<folder>: keep both journals and the native run's files for a reviewer.
+    wchar_t evidence[MAX_PATH + 1]{};
+    if (GetEnvironmentVariableW(L"DDT_LOCALTEST_EVIDENCE", evidence, MAX_PATH) && evidence[0]) {
+        const std::wstring ev = evidence;
+        CreateDirectories(ev);
+        std::string copy_error;
+        CopyFileChecked(JoinPath2(JoinPath2(LocalRunsRoot(f.game), runs[0].name), L"session.json"), ev + L"\\powershell-session.json", true,
+                        copy_error);
+        CopyFileChecked(run.run_dir() + L"\\session.json", ev + L"\\native-session.json", true, copy_error);
+        for (const std::pair<const wchar_t*, std::wstring>& role : {std::make_pair(L"host", f.game), std::make_pair(L"guest", guest)}) {
+            for (const wchar_t* name : {L"lab.ini", L"coop.ini", L"script-observe.enabled"})
+                CopyFileChecked(role.second + L"\\mgs-coop\\" + name, ev + L"\\native-" + role.first + L"-" + name, true, copy_error);
+            CopyFileChecked(role.second + L"\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GRAPHICS_CONFIG",
+                            ev + L"\\native-" + role.first + L"-TPP_GRAPHICS_CONFIG", true, copy_error);
+        }
+    }
     CHECK(CompareManifest(ps_saves_host, HashManifest(f.paths.mod, {L"local-test-saves"})).same);
     CHECK(CompareManifest(ps_saves_guest, HashManifest(guest + L"\\mgs-coop", {L"local-test-saves"})).same);
 
