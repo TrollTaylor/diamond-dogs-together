@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "core_install.hpp"
 #include "core_json.hpp"
 #include "core_paths.hpp"
 #include "core_util.hpp"
@@ -399,7 +400,6 @@ bool DownloadUpdate(const UpdateInfo& info, const std::wstring& dest_zip,
 
 namespace {
 
-constexpr char kOurProduct[] = "mgs-coop-local-package";   // core_install.hpp kPackageProduct
 constexpr wchar_t kLauncherExe[] = L"DiamondDogsTogether.exe";
 
 std::wstring TargetFor(const std::wstring& game, const std::string& zip_name) {
@@ -434,7 +434,7 @@ bool PackageRows(const std::wstring& package_json, std::vector<std::pair<std::st
     std::string text;
     json::Value v;
     if (!IsFile(package_json) || !ReadTextShared(package_json, text, 1u << 20) || !json::Parse(text, v) || !v.is_object() ||
-        v.Str("product") != kOurProduct)
+        v.Str("product") != kPackageProduct)
         return false;
     const json::Value* files = v.Find("files");
     if (files && files->is_array())
@@ -444,6 +444,7 @@ bool PackageRows(const std::wstring& package_json, std::vector<std::pair<std::st
 }
 
 // A link (junction, symlink) between `top` (excluded) and `path` (included).
+// Unlike HasReparsePoint, the game folder itself may be a link (a moved Steam library).
 bool LinkBelow(const std::wstring& path, const std::wstring& top) {
     const std::wstring stop = FullPath(top);
     for (std::wstring cursor = FullPath(path); !cursor.empty() && !IEquals(cursor, stop) && PathInside(cursor, stop); cursor = ParentOf(cursor)) {
@@ -534,7 +535,7 @@ bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, st
         std::vector<std::uint8_t> bytes;
         json::Value v;
         ours = reader.Extract(*pkg, bytes, zip_error) &&
-               json::Parse(std::string(bytes.begin(), bytes.end()), v) && v.is_object() && v.Str("product") == kOurProduct;
+               json::Parse(std::string(bytes.begin(), bytes.end()), v) && v.is_object() && v.Str("product") == kPackageProduct;
     }
     if (!ours) return failed(ApplyFailure::not_ours, "The downloaded file is not a Diamond Dogs Together package");
     // What the previous package shipped (its files[]), read before it is replaced.
