@@ -18,7 +18,7 @@ Every icon size is the logo itself, scaled down. Nothing is drawn by hand:
 The 256 px image is PNG-compressed, the others are 32-bit bitmaps with a mask (the
 usual icon layout, which every part of Windows reads).
 
-Standard library only (zlib + struct), no downloads, no image packages, and
+Python 3.8 or later, standard library only (zlib + struct), no downloads, no image packages, and
 deterministic: the same logo gives the same pixels on every machine (the PNG bytes
 can differ between zlib builds, so --check compares pixels).
 tests/launcher_icon_tests.cpp checks the committed files independently: every size

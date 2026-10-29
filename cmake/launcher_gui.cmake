@@ -48,8 +48,9 @@ if(WIN32 AND MSVC AND TARGET mgs_imgui)
            "${CMAKE_CURRENT_SOURCE_DIR}/native/launcher/resources/ddt_logo.png"
            "${CMAKE_CURRENT_SOURCE_DIR}/docs/readme/logo.png" $<TARGET_FILE:ddt_launcher>)
   # The committed icon and emblem are exactly what the generator makes from the logo
-  # (pixels, not bytes: PNG bytes can differ between zlib builds). Needs Python 3.
-  find_package(Python3 COMPONENTS Interpreter QUIET)
+  # (pixels, not bytes: PNG bytes can differ between zlib builds). Needs Python 3.8
+  # or later (the generator uses itertools.accumulate(initial=)).
+  find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(NAME launcher_assets_current
              COMMAND Python3::Interpreter -I "${CMAKE_CURRENT_SOURCE_DIR}/tools/launcher/make_launcher_assets.py" --check)
