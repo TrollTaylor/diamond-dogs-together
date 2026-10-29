@@ -74,17 +74,20 @@ function G.arm(now, byte, mode)
  local armed = r.ready == true and r.armed == 1
  -- 'hold': the native keeps the lease drop-only (no follow) through a link loss, its own or the Lua's unpair.
  local held = armed and r.reason == "hold" or nil
+ -- restoring=1: a restore is in flight, so record 0 may still be the dead copy's until the reload replaces it (run
+ -- 9fa48400: life=0; state=2 read as fresh 0.9 s after the send-away).
+ local restoring = s.dead and not s.dead.back and 1 or 0
  if armed ~= s.armed or byte ~= s.loggedByte or held ~= s.held then
   s.loggedByte = byte
-  L(fmt("step=%s;reason=%s;byte=%d;life=%s;max=%s;stun=%s;state=%s;drops=%s;applied=%s;kills=%s",
+  L(fmt("step=%s;reason=%s;byte=%d;life=%s;max=%s;stun=%s;state=%s;drops=%s;applied=%s;kills=%s;restoring=%d",
    held and "held" or armed and "armed" or "refused", tostring(r.reason), byte, tostring(r.life), tostring(r.max), tostring(r.stun),
-   tostring(r.state), tostring(r.drops), tostring(r.applied), tostring(r.kills)))
+   tostring(r.state), tostring(r.drops), tostring(r.applied), tostring(r.kills), restoring))
  end
  s.armed, s.held = armed or nil, held
  if type(r.drops) == "number" and r.drops > (s.drops or 0) and now >= (s.dropLogAt or 0) then
   s.dropLogAt = now + 5000
-  L(fmt("step=drops;drops=%d;hits=%s;attacker=%s;attack=%s;life=%s;state=%s", r.drops, tostring(r.hits), tostring(r.attacker),
-   tostring(r.attack), tostring(r.life), tostring(r.state)))
+  L(fmt("step=drops;drops=%d;hits=%s;attacker=%s;attack=%s;life=%s;state=%s;restoring=%d", r.drops, tostring(r.hits), tostring(r.attacker),
+   tostring(r.attack), tostring(r.life), tostring(r.state), restoring))
  end
  if type(r.drops) == "number" then s.drops = r.drops end
 end

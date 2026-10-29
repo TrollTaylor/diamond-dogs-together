@@ -173,6 +173,10 @@ check(g.env.vars.deadBuddyType == 0 and g:logged("step=vars;why=reload;dead=4>0;
 check(g:nlogged("step=vars") == 2, "two vars lines in this restore, no more")
 g.buddy = 2; g:pose(2850, 0x80 + 31); g:tick(2900); check(g:logged("step=back;ms=1900"), "back when the dog reads again")
 check(g:lastGuard()[4] == 1, "and armed again")
+-- Resume (run 9fa48400): an arm 0.9 s after the send-away read the dead copy's record as fresh (life=0; state=2) while
+-- the reload was under way; an arm during a restore says so (restoring=1), an ordinary one restoring=0.
+check(g:logged("step=armed;reason=ok;byte=159;.*;restoring=1$"), "an arm while a restore is in flight is marked restoring=1")
+check(g:logged("step=armed;reason=ok;byte=159;.*;restoring=0$"), "an ordinary arm is restoring=0")
 -- Mirrored: the host's dog is down too: no send-away, no reload; the host's re-call brings it back (reconcile).
 g = F(false)
 g:pose(900, 0x80 + 31); g:tick()
