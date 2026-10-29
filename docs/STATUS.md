@@ -27,7 +27,7 @@ section is the summary that the reviews and fix passes leave standing.
   `generate_nametag_contract.py` and `generate_downed_damage_contract.py` `--check` all pass. **No hidden run of the
   integrated head**: no op number changed, so the integration task called for none; that the four modules compose in
   game is [I] (fixture- and composed-chunk-tested only). On the docs commit after it, full CTest 311/311 again; one
-  full run before that failed  check 259 ("the exiting token keeps the timer armed") under
+  full run before that failed `save_handoff_io_tests` check 259 ("the exiting token keeps the timer armed") under
   parallel load, then passed 5 of 5 alone and in the next full run (no file it covers changed in these merges).
 
 **Final defaults** (lab.ini keys; a named value always wins):
