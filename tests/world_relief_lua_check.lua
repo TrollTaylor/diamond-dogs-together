@@ -49,7 +49,11 @@ local function Fixture(mode, opts)
     env.TppMotherBaseManagement = {GetGmp = function() return 123456 end,
         GetResourceUsableCount = function(t) return t.resource == '4wdEast' and 7 or 0 end}
     local vehicle = {
-        LoadCarry = function() c.calls[#c.calls + 1] = {'LoadCarry', env.vars.reliefVehicleCarryType, att[0]} end,
+        LoadCarry = function()
+            c.calls[#c.calls + 1] = {'LoadCarry', env.vars.reliefVehicleCarryType, att[0], att[3]}
+            if opts.loadError then error('load failed') end
+            if opts.loadSpawns and env.vars.reliefVehicleCarryType % 256 > 0 then c.v0.alive = true end
+        end,
         SaveCarry = function() c.calls[#c.calls + 1] = {'SaveCarry'} end}
     if opts.readonlyVehicle then
         env.Vehicle = setmetatable({}, {__index = vehicle, __newindex = function() error('read only') end})
@@ -103,7 +107,8 @@ check(c.env.Vehicle.LoadCarry ~= nil and c.R.hook == nil, 'the census installs n
 
 -- Play mode: every lever refuses and nothing is wrapped.
 local originalLoad = c.env.Vehicle.LoadCarry
-for _, cmd in ipairs({'relief_arm 2 805 343 1636.5 0', 'relief_seize skip', 'relief_remove instant', 'relief_face'}) do
+for _, cmd in ipairs({'relief_arm 2 805 343 1636.5 0', 'relief_seize skip', 'relief_remove instant', 'relief_face',
+    'relief_load 2 805 343 1636.5 0'}) do
     local good, why = c:run(cmd)
     check(not good and why == 'relief_lab_only', 'play refuses ' .. cmd)
 end
@@ -112,7 +117,8 @@ check(c.env.Vehicle.LoadCarry == originalLoad and c.R.hook == nil and #c.warps =
 -- Lab: argument checks.
 c = Fixture(1)
 for _, cmd in ipairs({'relief_arm 11 0 0 0 0', 'relief_arm 2.5 0 0 0 0', 'relief_arm 2 x 0 0 0', 'relief_arm 2 0 0 0', 'relief_seize maybe',
-    'relief_remove despawn', 'relief_remove instant loud', 'relief_face 3', 'relief_goto', 'relief_census a b'}) do
+    'relief_remove despawn', 'relief_remove instant loud', 'relief_face 3', 'relief_goto', 'relief_census a b',
+    'relief_load 0 1 2 3 0', 'relief_load 11 1 2 3 0', 'relief_load 2 1 2 3', 'relief_load 2 1 2 3 9', 'relief_load 2 1 y 3 0'}) do
     local good, why = c:run(cmd)
     check(not good and why == 'relief_args', 'refused: ' .. cmd .. ' (' .. tostring(why) .. ')')
 end
@@ -220,5 +226,33 @@ check(not good and why:match('^relief_far;dist=') and #c.warps == 1, 'farther th
 c.v0.alive = false
 good, why = c:run('relief_face')
 check(not good and why == 'relief_absent', 'face refuses without index 0')
+
+-- M3 item 6 (a guest continue or late join): relief_load writes the carry vars and calls Vehicle.LoadCarry
+-- now, mid mission, as the destination's mission start would; free roam only, never over a live index 0.
+c = Fixture(1)
+local calls0 = #c.calls
+good, why = c:run('relief_load 2 805 343 1636.5 2.488')
+check(not good and why == 'relief_present' and #c.calls == calls0 and c.env.vars.reliefVehicleCarryType == 0,
+    'a live index 0 refuses: nothing written, LoadCarry not called')
+c = Fixture(1, {alive = false, loadSpawns = true})
+c.env.vars.missionCode = 40020
+good, why = c:run('relief_load 2 805 343 1636.5 2.488')
+check(not good and why == 'relief_not_free_roam' and #c.calls == 0, 'the ACC refuses (its LoadCarry clears the carry)')
+c.env.vars.missionCode = 30020
+c:run('relief_arm 3 1 2 3 0')
+good, why = c:run('relief_load 2 805 343 1636.5 2.488')
+check(not good and why == 'relief_armed_pending' and c.env.vars.reliefVehicleCarryType == 0, 'an armed sortie choice refuses')
+c = Fixture(1, {alive = false, loadSpawns = true})
+c.env.vars.missionCode = 30020
+ok, text = c:run('relief_load 2 805 343 1636.5 2.488')
+check(ok and text == 'relief_load;type=2;call=1;alive=1', 'load result: ' .. tostring(text))
+check(#c.calls == 1 and c.calls[1][1] == 'LoadCarry' and c.calls[1][2] == 2 and c.calls[1][3] == 805 and c.calls[1][4] == 2.488,
+    'LoadCarry called once, after the type and the attitude are written')
+check(c:has('event=relief;step=load;m=30020;write=1;call=1;before=0;ct=2;t=2;cp=805.00,343.00,1636.50,2.488;alive_after=1'), 'load line')
+check(c.R.hook == nil, 'load installs no hook')
+local e = Fixture(1, {alive = false, loadError = true})
+good, why = e:run('relief_load 9 805 343 1636.5 0')
+check(not good and why == 'relief_load;type=9;call=0;alive=0' and e:has('step=load;m=30010;write=1;call=0;before=0;ct=9;'),
+    'a LoadCarry error is reported, not raised')
 
 print('world_relief_lua_check: ' .. checks .. ' checks PASS')

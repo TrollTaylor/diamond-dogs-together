@@ -23,6 +23,10 @@
 --                              lab: the stock Seize instance command on index 0 with only that
 --                              method option, never DirectAccount / CheckFultonType (E17); quiet
 --                              skips this copy's TppTerminal.OnFulton for 25600 (no Mother Base credit).
+--   relief_load <type> <x> <y> <z> <rotY>
+--                              lab, free roam, index 0 absent: write the carry vars (rotY in radians, as
+--                              the census cp= shows) and call Vehicle.LoadCarry now, mid mission: what a
+--                              guest continue or late join would need (M3 item 6).
 --   relief_face                lab: turn in place to face index 0 (within 20 m; captures). Hidden run
 --                              fafd3fdd: a warp beside it at the vehicle's height fell through the
 --                              30010 enemyBase_S slope, so nothing moves the player any more.
@@ -228,6 +232,29 @@ function R.remove(how, quiet)
     L(fmt("step=remove;how=%s;quiet=%d;alive_after=%d;x=%s;z=%s;%s", how, quiet and 1 or 0, alive, num(x, "%.1f"), num(z, "%.1f"), R.resources()))
     return true, fmt("relief_remove;how=%s;quiet=%d;alive=%d", how, quiet and 1 or 0, alive)
 end
+-- Mid-mission request: the carry vars, then the stock Vehicle.LoadCarry (vehicle manager RequestRelief,
+-- 0x140A29320) outside a mission start. Free roam only (the ACC's LoadCarry clears the carry), never over a
+-- live index 0 or an armed sortie choice; no hook is installed.
+function R.load(t, x, y, z, rotY)
+    local m = W.get(vars, "missionCode")
+    if not FREE[m] then return false, "relief_not_free_roam" end
+    if R.alive() then return false, "relief_present" end
+    if R.armed then return false, "relief_armed_pending" end
+    local f = W.get(Vehicle, "LoadCarry")
+    if type(f) ~= "function" then return false, "relief_loadcarry_binding" end
+    local before = R.carry()
+    local okW = pcall(function()
+        vars.reliefVehicleCarryType = t
+        local a = vars.reliefVehicleCarryAttitude
+        a[0], a[1], a[2], a[3] = x, y, z, rotY
+    end)
+    local okC = okW and pcall(f) or false
+    local after, p = R.carry()
+    local alive = R.alive() and 1 or 0
+    L(fmt("step=load;m=%s;write=%d;call=%d;before=%s;%s;alive_after=%d", num(m), okW and 1 or 0, okC and 1 or 0, num(before),
+        carryText(after, p), alive))
+    return okW and okC, fmt("relief_load;type=%d;call=%d;alive=%d", t, okC and 1 or 0, alive)
+end
 -- Turn in place (TppPlayer.Warp to the player's own position; rotY in degrees, forward = (sin, cos)).
 function R.face()
     local x, y, z = R.pose()
@@ -266,6 +293,10 @@ function R.run(a)
         return true, fmt("relief_seize=%s;hooks=%d;hook=%s", a[2], R.seizeHooks or 0, hook)
     elseif cmd == "relief_remove" and (#a == 2 or #a == 3 and a[3] == "quiet") and REMOVE[a[2]] then
         return R.remove(a[2], a[3] == "quiet")
+    elseif cmd == "relief_load" and #a == 6 then
+        local t, x, y, z, r = real(a[2], 1, 10), real(a[3], -10000, 10000), real(a[4], -1000, 3000), real(a[5], -10000, 10000), real(a[6], -7, 7)
+        if not (t and t == floor(t) and x and y and z and r) then return false, "relief_args" end
+        return R.load(t, x, y, z, r)
     elseif cmd == "relief_face" and #a == 1 then
         return R.face()
     end

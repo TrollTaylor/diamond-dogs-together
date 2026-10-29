@@ -4,7 +4,7 @@ do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,integer,fmt=A.get,A.call,A.integer,string.format
  local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true,vehicle_remove=true,vehicle_gone_status=true,goto_partner_vehicle=true,vehicle_door=true,
- relief_census=true,relief_arm=true,relief_seize=true,relief_remove=true,relief_face=true}};D.vehicle=V
+ relief_census=true,relief_arm=true,relief_seize=true,relief_remove=true,relief_face=true,relief_load=true}};D.vehicle=V
  function V.stop()V.last=nil end -- No native state or borrowed objects; only the last door target.
  local function name(v)return type(v)=="string" and #v>0 and #v<=64 and v:match("^[%w_]+$")~=nil end
  local function context()
