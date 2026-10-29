@@ -1,0 +1,43 @@
+# M1 play rehearsal (-Mode play -WanSim bad; docs/vehicles-companions-design.md section 9 M1): both copies Continue
+# into 30010 from the title (no boot, no sortie: the late-join path). The host's save deploys D-Dog (afgh-ledge),
+# the guest's own save D-Horse (afgh-horse); the guest reconciles to the host's dog and keeps its own horse for its
+# saves; the CALL mask and the F9 refusal; the host swaps to D-Horse and the guest follows. The key is named
+# (its play default stays off: decision D7 waits for E3's engagement part, E15 and E19).
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+#        -Mode play -WanSim bad
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 240
+waitgameplay guest 240
+waitlog guest 'world_lua=event=companion; role=guest; step=own_kept; why=reconcile; own=horse;' 120
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=(call|load); kind=dog;' 120
+wait 8000
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+guest expect own=1
+both capture m1p-dog
+placebehind guest host 7 2
+wait 3000
+both capture m1p-dog-2
+waitlog guest 'world_lua=event=companion; role=guest; step=guard; path=call_menu; via=pad_mask;' 30
+guest hold q 1500 nowait
+wait 700
+guest capture m1p-guest-callmenu
+guest release
+wait 1000
+guest run horse_spawn
+guest expect host_only;companion=host_owned
+wait 400
+guest capture m1p-refused-toast
+host run horse_spawn
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=call; kind=horse;' 90
+wait 6000
+guest run buddy_status
+guest expect khorse
+both capture m1p-reconcile-horse
+state
