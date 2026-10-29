@@ -1,3 +1,54 @@
+## 2026-10-28: Africa fixes and host-log fixes (integrated on `dev/oct7-continue`, unreleased, not two-PC tested)
+
+Three fix branches for the two-PC test of 2026-10-23 are merged locally with `--no-ff`. Nothing is pushed or packaged, so the next two-PC test needs a 0.14.x package on both PCs. The friend is still on 0.13.6. `docs/two-pc-test-2026-10-23.md` has the per-item status table and the checklist for the next test.
+
+**Merges**
+
+| Merge | Branch at | Contents |
+|---|---|---|
+| `952fc64` | `wp/africa-guns` `c594e41` | Bug 1, Africa guns |
+| `30a6a0a` | `wp/africa-vehicle` `03dabda` | Bug 2, the Africa vehicle; the section below |
+| `d727516` | `wp/host-fixes` `6422519` | Host-log items 2, 3, 4 and 6; the two sections below |
+
+The only conflict was in this file: both branches add a 2026-10-28 section at the top, and both are kept.
+
+**Hidden-worker runs** (all loopback, copied lab saves, low graphics, research build, native gun stage). Each run closed with the baseline restored and the real saves unchanged.
+
+- **Bug 1, the host's guns missing on the friend's screen in Africa.** `beccaa7` fixes it, after the receipts added in `e4f2415`. Three readiness rules of the generalized writer treated natively empty states as occupied, which made the writer refuse for good in 30020:
+  - F1: the released target's D0 flag bits (`selected_bank_aux_not_empty`).
+  - F2: the support writer's arm and grenades in slots 6 and 3 (`other_slot_unexpected`).
+  - F3: the native cleared effect record 0x7FF after an unrealize (`remote_slot_not_empty`).
+
+  The writer now accepts all three (docs/native-puppet.md "Generalized writer"). The new receipts are `equip_writer=aux` and `equip_writer=remote_slot`.
+  - 30020, `partner-native-africa-guns.txt` with `-SaveSeed africa-jeep`, runs `96b5c909`, `8e97cb60` and `05f68a20`: both roles bind slot 2 (9) and slot 1 (46) with no backoff and log `partner_weapon=match; strip=0x0`. The frames of `05f68a20` show each partner aiming the rifle.
+  - 30050 regression, `partner-native-mb-guns.txt` with `-SaveSeed mb-ladder`, run `04b2f3af`: the same binds.
+  - Limit: no run reproduced the dirty head (every `aux` line read `f00`), so F1-F3 are proven by fixtures only.
+- **Bug 2, the host hidden while driving in Africa.** `a48a674` and `35d5519`, with run `31adc898` (also `436a440c`, `011a03f2`, `7561ab63`); the details are in the next section.
+  - When the vehicle is absent on the viewer's copy, the by-id gate answers `absent` and free roam keeps the driver visible.
+  - RIDE_FAST skips a missing instance but still places a wreck.
+  - Open: the host's sortie-prep (relief) vehicle itself still does not exist on the guest's copy.
+- **Host-log item 2, late manifest** (`09ebf71`). Run `c07b8136` proves the staged half. The predicted preload is unit-tested only.
+- **Host-log item 3, box-bump `vars_change`** (`f492d77`, `3fd064a`). Run `5ceb4985` found the support-lane latch, which `3fd064a` fixes. Runs `6041f5e5` and `0c8f1ab0` are clean.
+- **Host-log item 4, box as the downed posture** (`2f3332b`). Runs `ce66a0bf`, `44e5a233` and `a5f30e31`.
+- **Host-log item 6, the downed owner judged from body 0** (`08f73d6`). Run `20d41b16`.
+
+**Checks at `d727516`**
+- `pwsh -File tools/build.ps1`: Debug, configured afresh, `ctest -j 16`. Build id `0.14.2+d727516`. 305/305 passed, 101 s.
+- `python tools/generate_partner_contract.py --check`: 800 code sites and 204 vtable slots match exe `085c2f82...bb45`. `pefile` 2024.8.26 was already installed.
+- `generate_equip_writer_pins.py --check`: 118 gates and 10 fact groups match.
+- `generate_soldier_warp_contract.py --check`: 19 sites and 10 slots match.
+- `generate_nametag_contract.py --check`: 24 sites match.
+- `generate_downed_damage_contract.py --check` stops on a missing `docs/evidence/downed-damage-2026-10-10.json`. That file was removed in the repo cleanup `a06a24e`, so this is not related to these merges.
+
+**Still open for the next two-PC test**
+- Every fix above over a real Steam link with latency.
+- Bug 1's dirty states live.
+- The predicted preload after a real handoff relaunch.
+- A boxed-first friendly-fire down.
+- A bump that moves a weapon or ammo field.
+- Relief-vehicle parity.
+- Host-log item 7 (ask the friend about the ledge fall) and the minor item 8 (the first-appearance freeze and warps).
+
 ## October 28, 2026: Africa vehicle, the driver stays visible (branch `wp/africa-vehicle`, unreleased; hidden-run proven, not two-PC tested)
 
 Bug 2 of the two-PC test of 2026-10-23 (docs/two-pc-test-2026-10-23.md): in Africa (30020) the host drove his relief vehicle 25600 (TppVehicle2 index 0, from his sortie prep), which existed only on his copy. The guest's by-id read refused `live` (pool bit clear), free roam ran the named seat path (Lua `no_name` -> `lua_refused`, latched) and the guest saw no host for the whole 24.6 s ride.
