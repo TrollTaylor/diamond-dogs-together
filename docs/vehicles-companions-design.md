@@ -1537,7 +1537,8 @@ runs archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`, frames
   the reported pose (`guest_far`) or older than 3 s (`guest_unknown`) unless the host's copy is at a quarter of its peak
   life or less (`heavy`), at most 4 applied per 20 s (`rate`), never index 0; the guest asks at most 6 per 60 s and never
   for a break it caused itself (its own wreck or removal in the last 5 s). The far, unknown and rate refusals ran only in
-  the fixtures.
+  the fixtures. `occupied` is any filled rider[] seat on the host's copy, D-Dog or a soldier included: D-Dog stays in a
+  jeep for a few seconds after the host gets out (`b31a1b65`), and a break then is refused too [I from the rule].
 - **When the host refuses** [O, `09333f05`]: the host sat in the Masa Village jeep (25608, D-Dog beside it) while the
   guest's lever broke the guest's copy. Guest `break_seen` -> `req; cause=2` -> host `break_judge; ok=0; why=ridden;
   by=local_rider` and `refused; src=req; reason=ridden` (no `applied`, no wreck on the host) -> guest `req_done;
