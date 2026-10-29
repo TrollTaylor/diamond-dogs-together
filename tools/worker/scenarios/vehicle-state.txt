@@ -24,10 +24,11 @@
 #          moved=0; ...; life=<host>; was=<guest> (SetBodyLife read back); frames m4-damaged. Then the lever
 #          vehicle_life 25608 200 on the host: guest step=applied; ...; life=200; frames m4-lowlife-NN (smoke or fire
 #          on both screens is the burning evidence; the state words sv / here_sv name the bits)
-#   E5 wreck  guest vehicle_life 25608 0 (its copy only): does SetBodyLife 0 break the jeep (a wreck, VehicleBroken,
-#          IsAlive false: guest vstate alive=0) or only empty the life? Then the host's own vehicle_life 25608 0:
-#          a host VehicleBroken -> vehicle_gone step=watch/lost/tx -> guest step=absent; reason=wreck (both wrecks:
-#          wreck parity) or step=applied (Despawn: the guest's copy was not a wreck). Last, the host shoots it.
+#   E5 wreck  host vehicle_life 25608 0 (the engine's own destruction on the host's copy, a stand-in for a real one,
+#          run d407f115) -> host vehicle_gone step=watch; m=VehicleBroken; cause=2 -> tx -> guest step=applied; id=25608;
+#          via=wreck; src=rx; ok=1 (SetBodyLife 0 there: a wreck, not a Despawn); frames m4-wreck-NN (both wrecks).
+#          Then the guest's own destruction of the next jeep (two shots, then its lever within 10 s): guest step=watch;
+#          m=VehicleBroken; cause=2 -> req -> host step=applied; via=wreck; src=req; ok=1; frames m4-req-wreck-NN.
 # NEVER: step=error on either copy; a guest step=applied while the guest rides the jeep; a host step=tx for 25608
 #   between the drive's skip and resume lines; viewer_changed; world=... or partner_... faults.
 labsetting world_vehicle_state=1
@@ -131,35 +132,44 @@ waitlog guest 'event=vehicle_state; step=applied; id=25608; from=25608; moved=0;
 both burst m4-lowlife 4 1500
 host run vehicle_state_status 25608
 guest run vehicle_state_status 25608
-# E5 wreck: SetBodyLife 0 on the guest's copy alone, then on the host's (VEHICLE_GONE announces a host loss).
-guest run vehicle_life 25608 0
-guest expect vehicle_life;id=25608;life=0;
-wait 3000
-both burst m4-guest-life0 3 1500
-guest run vehicle_state_status 25608
+# E5 wreck parity (hidden run d407f115: SetBodyLife 0 runs the engine's own destruction, VehicleBroken, explosion,
+# IsAlive false). The host's copy breaks (the lever, a stand-in for a destruction); VEHICLE_GONE cause 2 with VEHICLE_STATE
+# on makes it a wreck on the guest's copy too (SetBodyLife 0 there, via=wreck) instead of a Despawn.
 host run vehicle_life 25608 0
 host expect vehicle_life;id=25608;life=0;
-waitlog host 'event=vehicle_gone; step=(watch|lost); id=25608;' 15
-waitlog guest 'event=vehicle_gone; step=(absent|applied); id=25608; .*src=rx' 20
-wait 2000
-both burst m4-host-life0 3 1500
+waitlog host 'event=vehicle_gone; step=watch; id=25608; m=VehicleBroken; cause=2' 10
+waitlog host 'event=vehicle_gone; step=tx; id=25608; cause=2; actor=0;' 10
+waitlog guest 'event=vehicle_gone; step=applied; id=25608; via=wreck; src=rx; ok=1' 15
+both burst m4-wreck 4 1000
 host run vehicle_state_status 25608
 guest run vehicle_state_status 25608
 host run vehicle_gone_status
 guest run vehicle_gone_status
-# Last: the host shoots the emptied jeep (a break from a real hit, when life 0 alone did not break it).
-host hold rmb 1500 nowait
-wait 700
-host press lmb 120
-wait 250
-host press lmb 120
-wait 250
-host press lmb 120
-host release
+# The guest destroys the next jeep by its own hand (a shot, then the lever within 10 s): its REQ_VEHICLE_GONE cause 2
+# makes the host's copy a wreck too. Both first wait for the Masa wreck to leave the pool (goto_vehicle takes any
+# vehicle that answers GetPosition).
+wait 30000
+guest debug goto_vehicle jeep
+host debug goto_vehicle jeep
 wait 3000
-both burst m4-shot-life0 3 1500
-host run vehicle_state_status 25608
-guest run vehicle_state_status 25608
+host debug clear_enemies 100
+placebehind host guest 9 -4
+wait 2500
+guest run vehicle_state_status
+both capture m4-req-before
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 250
+guest press lmb 120
+guest release
+guest run vehicle_life nearest 0
+guest expect vehicle_life;id=256[0-9][0-9];life=0;
+waitlog guest 'event=vehicle_gone; step=watch; id=256[0-9][0-9]; m=VehicleBroken; cause=2; att=' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=256[0-9][0-9]; cause=2; sent=1' 10
+waitlog host 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=wreck; src=req; ok=1' 15
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=256[0-9][0-9]; result=gone' 15
+both burst m4-req-wreck 4 1000
 host run vehicle_gone_status
 guest run vehicle_gone_status
 state

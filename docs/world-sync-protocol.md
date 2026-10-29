@@ -230,7 +230,7 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 
 | Receipt | Source | Reply | Threads |
 |---|---|---|---|
-| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait,handoff,lock,census,vehicle_gone` (15 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Join-fix phase 2: r[12] the save handoff code (0 none/off/host, 1 wait_host, 2 receiving, 3 staged or countdown, 4 exiting, 5 kept, 6 failed or refused; Lua `pending` = 1..4, `busy` = 2..4) and r[13] the travel lock (1 when it may apply: the effective `lab.ini` `travel_lock`, the F9 unlock not set, guest role; else 0), both filled by `world_link::HandleCfg` after the core from the save handoff's published state. r[14] the WS4 attacker census 0/1 (lab key `partner_placed_census`, lab only) and r[15] the 0.13.6 VEHICLE_GONE module 0/1 (lab key `world_vehicle_gone`, lab and play; section 16), also from `HandleCfg`. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader and a missing r[12]..r[15] as 0) | query any; start runtime, not terminating |
+| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait,handoff,lock,census,vehicle_gone` (15 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Join-fix phase 2: r[12] the save handoff code (0 none/off/host, 1 wait_host, 2 receiving, 3 staged or countdown, 4 exiting, 5 kept, 6 failed or refused; Lua `pending` = 1..4, `busy` = 2..4) and r[13] the travel lock (1 when it may apply: the effective `lab.ini` `travel_lock`, the F9 unlock not set, guest role; else 0), both filled by `world_link::HandleCfg` after the core from the save handoff's published state. r[14] the WS4 attacker census 0/1 (lab key `partner_placed_census`, lab only) and r[15] the vehicle modules bitmask 0..3 (bit 1 the 0.13.6 VEHICLE_GONE module, lab key `world_vehicle_gone`, section 16; bit 2 the M4 VEHICLE_STATE module, lab key `world_vehicle_state`, section 17; lab and play), also from `HandleCfg`. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader and a missing r[12]..r[15] as 0) | query any; start runtime, not terminating |
 | TX | `return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>` | `return 1` / `return 0,<reason>`: 1 syntax, 2 unknown_op, 3 bad_args, 4 wrong_role, 5 not_paired, 6 queue_full, 7 disabled, 8 lab_only | runtime; MISSION_END also termination |
 | RX | `return 'MGS_COOP_WORLD_RX_V1' -- <mask>` (1 control; 3 control, world, U slots) | `return queue,op,v...` or empty `return 0,0,flags,qctrl,qworld,epoch` (flags 1 link, 2 paired, 4 resync_needed, 8 level0) | runtime |
 | LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; 0.13.6: a token bucket of 600 lines refilled at 20 lines/s, the old 200 per 10 s on average with room for a mission arrival's burst; the dropped count is logged as `world=log_cap; dropped=` before the next admitted line) | runtime or termination |
@@ -608,7 +608,7 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 `req_phase`, `floor`, `phase_vec`, `area`, `digest_mismatch`, `resync`,
 `resync_needed`, `clock`, `clock_tx`, `clock_check`, `weather`,
 `weather_check`, `roster`, `stats`, `bad_value`, `probe`, `goto`,
-`raw_clock` (section 7, Clock), `vehicle_gone` (section 16).
+`raw_clock` (section 7, Clock), `vehicle_gone` (section 16), `vehicle_state` (section 17).
 
 ## 11. Deviations from the corrected spec
 
@@ -997,8 +997,10 @@ pressure, session replacement and mixed levels, not physical game input.
 ## 14. Remaining extension points
 
 W5 full campaign/progression and W6 AI transforms remain design work.
-World op codes 0x1D-0x1F and 0x30 onward are available (0x2A-0x2D are the
-ride ops, 0x2E/0x2F VEHICLE_GONE, section 16); control codes
+World op codes 0x1D-0x1F, 0x30-0x32 and 0x34 onward are available (0x2A-0x2D
+are the ride ops, 0x2E/0x2F VEHICLE_GONE, section 16, 0x33 VEHICLE_STATE,
+section 17; 0x30-0x32 and 0x34-0x38 are the companion / vehicle design's
+codes, docs/vehicles-companions-design.md section 5); control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
 rendering and input drive are independent of these world modules.
@@ -1298,4 +1300,84 @@ the worker gate (`Get-WorkerTests`). Hidden-worker scenarios:
 guest's loss reaches the host, the divergence, the hold under a seated guest,
 the engine's own Fulton through the detection path) and
 `coop-vehicle-gone-mb.txt` (real seed, the Mother Base sortie jeep: the
-index path). Not yet run.
+index path). Hidden runs: docs/STATUS.md 0.13.6 (`075c1ea4`) and M4.
+
+## 17. Vehicle state (M4, docs/vehicles-companions-design.md 6.4)
+
+Vehicles nobody drives were per copy: a jeep pushed, left or shot on the host's
+copy stayed as it was on the guest's (a wreck on one copy only in `7561ab63`).
+VEHICLE_STATE makes the pose, body life and state word of a vehicle nobody
+drives host-authoritative. Lab.ini `world_vehicle_state=0|1` (lab and play, not
+a play refusal; default **0** until hidden-run frames on both copies prove it),
+carried to Lua as CFG **r[15] bit 2** (r[15] is the vehicle modules bitmask
+since M4: bit 1 VEHICLE_GONE, bit 2 VEHICLE_STATE; `world_link::HandleCfg`; a
+missing or out-of-range value is 0). Both copies need it; a guest without it
+logs `event=vehicle_state;step=ignored;reason=off` once.
+
+| Code | Name | Dir | Wire | Lua fields | Queue | Body |
+|---|---|---|---|---|---|---|
+| 0x33 | VEHICLE_STATE | H->G | R | seq 1.., id 25600..26111 (the host's pool slot), locator hash (StrCode32 of `veh_lv_/trc_/wav_NNNN` or the Mother Base `veh_clNN_clNN_0000`; 0 unnamed), vehicle type (255 unknown), flags (1 alive, 2 sweep, 4 refresh), x, y, z mm, yaw mrad (+-31416), body life (the engine's u16), state word (0..0x3FF), zero-parts mask (0..0xFFE) | world | 32 |
+
+32 bytes is the largest body an outbound queue entry holds (`OutEntry`,
+`kOpHeaderSize + 32`): a field more is a new op.
+
+- **Native read** (read-only, `MGS_COOP_VEHICLE_LIFE_V1 -- <first id> <n 1..32>`,
+  `game_script_observer.cpp` `SelectVehicleLifeReceipt`, key on, partner gate,
+  runtime thread, 30010/30020/30050): `partner_vehicle::ReadVehicle` (the census
+  chain) plus `ReadLife`: the object's vt+0x98 must be `0xB2DD00` with its 24
+  pinned bytes; the life block is `*(object+0x150) + index*0x18`, 12 u16 (word 0
+  the body life that the instance command `SetBodyLife` writes, `0xB2BC69`;
+  `StoreToSVars` `0xB35BC0` copies all 12 into `ene_veh_life`). The state word is
+  StoreToSVars' own `ene_veh_state` encoding of rec+0x70 / rec+0x7C
+  (`partner_vehicle::SvState`). Reply `{c=<pool count>,[id]={life,zero,parts,state},...}`
+  or `{refused='<reason>'}` (one `vehicle_life=refused; reason=` line per change).
+  There is no Lua read of the life: the TppVehicle2 instance dispatcher
+  (`0xB2B710..0xB2C1A7`) has `SetBodyLife`, `SetBodyDamageRate`,
+  `SetWheelDamageRate`, `GetState` (two bits: `V+8[idx*32+0x1E] & 0x80`, rec+0x70
+  & 0x18000) and no getter.
+- **Host** (`lua/coop/world_vehicle_state.lua`, spliced after `world_vehicle.lua`,
+  whose pool helpers it uses): scans 4 ids every 250 ms (a 24-vehicle pool in
+  1.5 s) plus at once any id a `Damage` message names; sends a live vehicle when
+  it moved > 0.5 m or turned > 5 deg, or its life, state word or zero mask
+  changed (at most once per 500 ms per vehicle; `step=tx;why=moved|life|state|parts`),
+  every eligible vehicle after each PAIRED (`step=sweep`, flag 2, then
+  `step=sweep_done;sent=`) and each again 10 s after its last send (flag 4,
+  silent). Skipped (`step=skip;reason=`, once per change; `step=resume` after):
+  the local player's vehicle (`local_rider`), an occupied rider[] seat
+  (`occupied`: an NPC, the local passenger), a vehicle the partner drives here
+  (`partner_ride`: a RIDE_FAST track, latched 10 s, world_vehicle.lua `V.busy`),
+  the authored LRRP trucks (`lrrp`: `veh_trc_0000..0005` in 30010,
+  `..0006` in 30020, each copy's own AI drives them until M8), one VEHICLE_GONE
+  lost or watches (`gone_here`, `own_watch`). A wreck (IsAlive false) is never
+  sent; its removal is VEHICLE_GONE's. An unreadable life is sent as 65535.
+- **Guest:** applies only while linked, to the vehicle the locator hash names
+  here (any pool index), or for an unnamed one (never index 0, the relief
+  vehicle: M3, `index0`) the same id when it is alive, of that type and the
+  nearest of its type to the reported position within 40 m (`not_nearest`,
+  `no_match`). Refused (`step=refused;reason=`): `no_locator`, `absent`
+  (not alive here), `lrrp`, `gone_here`. Held (`step=hold;here=;reason=`,
+  re-checked every 250 ms, `step=hold_timeout` after 10 s; the next refresh
+  retries): `local_rider`, `occupied`, `partner_ride`, `own_watch`,
+  `player_near` (the local player within 3.5 m of where a move would put it),
+  `unpaired`. Applied: `SetPosition{position, rotY}` (world_ride_pose `R.place`)
+  when it is > 0.5 m or 5 deg off, read back (`err_mm`); `SetBodyLife{life}` only
+  when the host's life is below this copy's (this copy keeps its own extra
+  damage), read back through the native read. Lines: `step=applied;id=<here>;from=<host id>;moved=;d_mm=;err_mm=;dyaw=;life=;was=;sv=;here_sv=;zero=;here_zero=;f=`
+  (every apply) and `step=same` (once per change of outcome).
+- **Lab levers** (refused natively outside the one-PC lab and in Lua outside
+  mode=lab): `debug vehicle_push <id|nearest> <dx> <dz>` (this copy's vehicle
+  moved by up to 50 m, y + 0.3 m: a stand-in for a shove), `debug vehicle_life
+  <id|nearest> <life>` (this copy's body life through `SetBodyLife`, read back;
+  0 is the E5 wreck attempt). `debug vehicle_state_status [id]` is read-only
+  (play too).
+- **Not covered:** a guest's own damage or push never reaches the host (the
+  host's refresh undoes a guest push; a guest's extra damage stays on its copy
+  until VEHICLE_GONE); wheel lives are sent (zero mask) and logged but not
+  written (no write API); AI-driven and reinforcement vehicles are M8.
+
+Tests: `world_wire_tests` (VehicleState: table, bounds, world queue, stale
+purge, level 3), `world_receipt_tests` (r[15] bitmask), `lab_config_tests`,
+`partner_vehicle_tests` (TestLife: SvState, the life block, every refusal),
+`world_vehicle_state_lua_check` (in the worker gate), `debug_vehicle_lua_check`,
+`lab_scripts_tests`, `worker_session_tests`. Hidden-worker scenario
+`tools/worker/scenarios/vehicle-state.txt` (`-SaveSeed africa-jeep`).

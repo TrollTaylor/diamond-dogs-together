@@ -149,9 +149,17 @@ end
 -- unnamed sortie / supply vehicles): for a named record the index form erases its name
 -- binding (Kill 0xB2F850, then the empty hash re-inserted), so elsewhere a vehicle outside
 -- the scanned locator families is refused as no_locator.
-function V.remove(id)
+-- M4 wreck parity (E5, hidden run d407f115): with VEHICLE_STATE on too (CFG r[15] bit 2), a
+-- destroyed vehicle (cause 2) becomes a wreck here instead: the instance command SetBodyLife
+-- {life=0} runs the engine's own destruction (VehicleBroken, explosion, IsAlive false, the
+-- wreck in the pool), read back like a Despawn (via=wreck).
+function V.remove(id, cause)
   local a = W.api
   if type(a) ~= "table" or type(a.send) ~= "function" then return false, "binding" end
+  if cause == DESTROYED and W.vehicleStateOn == true then
+    if not pcall(a.send, id, {id = "SetBodyLife", life = 0}) then return false, "send_error" end
+    return true, "wreck"
+  end
   local name, cmd, via = V.locator(id), nil, nil
   if name then cmd, via = {id = "Despawn", locator = name}, "locator"
   elseif id % 512 == 0 then return false, "index0"
@@ -297,7 +305,7 @@ function V.consider(q, t)
     answer(q)
     return
   end
-  local ok, via = V.remove(q.id)
+  local ok, via = V.remove(q.id, q.cause)
   if not ok then
     L("event=vehicle_gone;step=refused;id=%d;src=%s;reason=%s;d_mm=%d", q.id, q.src, via, q.d or -1)
     reject(q, 8)

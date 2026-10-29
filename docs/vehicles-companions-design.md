@@ -247,6 +247,20 @@ AI follows the guest, which is why `world_buddy.lua` holds the guest's dog [O].
   [I]: `SetVehicleType`, `SetBodyLife`, `SetBodyDamageRate`, `SetWheelDamageRate`, `GetState`. Class commands: `Spawn`,
   `Respawn`, `Despawn`, `IsAlive`, `StoreToSVars`, `RestoreFromSVars`, `RegisterConvoy`. A read of body life or wheel
   damage is [U].
+- **M4 read of the dispatcher (capstone, 2026-10-28)** [O]: the instance dispatcher `0x140B2B710` compares exactly 21
+  command hashes (plus the `Seize` options); `SetBodyLife` (`0x3BA5A795`, handler `0xB2BC69`, key `life`) writes a u16 through the object's vt+0x98 =
+  `0xB2DD00` (`*(object+0x150) + index*0x18`, 12 u16), `SetBodyDamageRate` (`0x198238FA`, key `rate`) and
+  `SetWheelDamageRate` (`0xB8BD1B91`) write per-index float rates, `GetState` (`0x8770E528`) answers two bits
+  (`V+8[index*32+0x1E] & 0x80`, rec+0x70 & 0x18000), and none of the 21 reads a life [O]. `StoreToSVars` (class
+  `0xB99AB5A1` -> `0xB35BC0`) copies all 12 words into svars `ene_veh_life` and encodes `ene_veh_state` from rec+0x70
+  (bits 3, 9..14 and `0xC0000`) and rec+0x7C bit 14 [O]; Spawn/Respawn take `bodyLife` / `wheelLife` (`0xB2FFA6`,
+  `0xB325CE`) [O]. So word 0 is the body life [O] and words 1..11 the wheel / part lives [I]. M4 reads the block
+  natively (read-only receipt `MGS_COOP_VEHICLE_LIFE_V1`, docs/world-sync-protocol.md section 17); the seven other
+  hashes are unnamed (`0x558A8535` writes a byte at `[obj+0x160][idx]`, `0x29AC74C7` / `0xEA883EE6` set / clear bits at
+  `[obj+0x180][idx]`, `0x26A17EF3` / `0xF13DF67E` clear / set rec+0x7C bit 13, `0x84692F8D` `speed` -> V vt+0x78,
+  `0xE51E5C9B` V vt+0x80 = `0x16F8240`, which clears a per-index move slot) [O]; no wheel or burning write exists [I].
+  `VehicleBroken` (`0x82AAD646`) is posted only by one state-update function (immediates at `0x1416FA899`,
+  `0x1416FAA7C`, `0x1416FAD5D`), never by `SetBodyLife` itself [O].
 - Messages [O]: `VehicleBroken`, `VehicleAction` (GOT_IN, GOT_OUT, FELL_OFF), `PlacedIntoVehicle`, `VehicleDisappeared`.
 - Checkpoints store all vehicle state in svars `ene_veh_*` (`TppEnemy.lua:1185-1193, 1321-1351`) [O].
 - The exe has a "Vehicle Synchronizer" memory tag (presumably FOB/MGO) [O string `0x22889C8`]; project rules exclude
