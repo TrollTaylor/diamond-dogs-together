@@ -384,9 +384,16 @@ local v = t.speed / t.n
 local band = v < 0.5 and "idle" or v < 3.5 and "walk" or "run"
 if band == "idle" and now < (s.idleTrackAt or 0) then return end
 if band == "idle" then s.idleTrackAt = now + 10000 end
-W.log(fmt("event=companion_track;band=%s;n=%d;speed_cms=%d;err_max_cm=%d;err_p90_cm=%d;err_mean_cm=%d;within=%d", band, t.n,
+W.log(fmt("event=companion_track;band=%s;n=%d;speed_cms=%d;err_max_cm=%d;err_p90_cm=%d;err_mean_cm=%d;within=%d;leg=%s", band, t.n,
  floor(v * 100 + 0.5), t.max, t.errs[math.max(1, math.ceil(#t.errs * 0.9))], floor(t.sum / t.n + 0.5),
- t.max <= (band == "run" and 500 or 300) and 1 or 0))
+ t.max <= (band == "run" and 500 or 300) and 1 or 0, s.leg or "-") .. fmt(";mode=%s;warps=%d", B.holdMode, s.warps or 0))
+end
+-- Lab lever companion_lab mark <label>: names the following track windows (the proof's legs) and starts a new one.
+function B.mark(label)
+local s = B.s
+s.leg, s.track, s.idleTrackAt = label, nil, nil
+W.log("event=companion_mark;role=" .. (W.host and "host" or "guest") .. ";leg=" .. label)
+return true
 end
 -- E3 / E19 watch (guest, lab): the nearest soldier to the held dog (8 of the roster per hold, the ones within
 -- 30 m re-read every second), seconds with one within 3 m / 5 m, and the guest's own buddy vars on change.
@@ -450,6 +457,18 @@ s.protected = s.id
 W.log(fmt("event=companion_protect;role=guest;id=%d;ok=%d;result=%s", s.id, ok and 1 or 0, tostring(r)))
 return ok
 end
+-- Hold modes. The dog command LuaAiStayAndSnarl (dispatcher 0xC7D220 -> vt+0x98 -> 0xC7DA10) sets the persistent
+-- mode: 1/2 (look given, useMarker false: the retail s10040 "stop AI"; the dog never moved toward the target in run
+-- 8c0b425f, the Dog AI 0xC7E650 skips its update for them), 3/4 (useMarker true or no look), +1 with dash; warp=1
+-- places the dog at the position facing the look point. marker (default): modes 3/4, re-sent when the target moves
+-- 0.75 m or every 1 s; stop: modes 1/2; warp: modes 1/2 placed by warp=1 every 100 ms (lab lever companion_lab hold).
+B.HOLD, B.holdMode = {marker = true, stop = true, warp = true}, "marker"
+function B.setHold(mode)
+if not B.HOLD[mode] then return false end
+B.holdMode, B.s.sentHold, B.s.farSince = mode, nil, nil
+W.log("event=companion_hold;role=" .. (W.host and "host" or "guest") .. ";mode=" .. mode)
+return true
+end
 -- M2 guest: the hold. Target: the host dog's latest pose led by its age (at most 300 ms) while fresh (1 s);
 -- else the last target (hold_last); with no host pose yet, where the dog stands (hold_here). Never its own AI.
 function B.guestCompanion(now)
@@ -472,12 +491,25 @@ local t = s.hold
 local dx, dy, dz = t.x - x, t.y - y, t.z - z
 local distance = sqrt(dx * dx + dy * dy + dz * dz)
 local errorCm = min(floor(distance * 100 + 0.5), 65535)
-if fresh and distance > 15 then a.send(id, {id = "SetWarpPosition", pos = a.buddyVector(t.x, t.y, t.z)}) end
+local mode = B.holdMode
+-- SetWarpPosition beyond 15 m, or when the dog has not closed a 6 m gap for 2 s (not in warp mode: it places itself).
+local stuck = mode ~= "warp" and fresh and distance > 6
+if stuck then s.farSince = s.farSince or now else s.farSince = nil end
+if fresh and (distance > 15 or (stuck and now - s.farSince >= 2000)) then
+ a.send(id, {id = "SetWarpPosition", pos = a.buddyVector(t.x, t.y, t.z)})
+ s.warps, s.farSince = (s.warps or 0) + 1, nil
+end
 s.aiHeld = true
-if a.send(id, {id = "LuaAiStayAndSnarl", position = a.buddyVector(t.x, t.y, t.z),
- look = a.buddyVector(t.x + math.sin(t.yaw) * 2, t.y, t.z + math.cos(t.yaw) * 2), useMarker = false,
- dash = (distance > 2 or (fresh and r.speed > 3)) and 1 or 0, warp = 0, ignoreMarker = true}) == false then
- B.cack(2, errorCm, now); B.log("target_refused", errorCm); return
+local dash = (distance > 2 or (fresh and r.speed > 3)) and 1 or 0
+local last = s.sentHold
+if mode == "warp" or not last or now >= last.at + 1000 or last.dash ~= dash or
+ (t.x - last.x) ^ 2 + (t.y - last.y) ^ 2 + (t.z - last.z) ^ 2 >= 0.5625 then
+ s.sentHold = {x = t.x, y = t.y, z = t.z, at = now, dash = dash}
+ if a.send(id, {id = "LuaAiStayAndSnarl", position = a.buddyVector(t.x, t.y, t.z),
+  look = a.buddyVector(t.x + math.sin(t.yaw) * 2, t.y, t.z + math.cos(t.yaw) * 2), useMarker = mode == "marker",
+  dash = dash, warp = mode == "warp" and 1 or 0, ignoreMarker = true}) == false then
+  B.cack(2, errorCm, now); B.log("target_refused", errorCm); return
+ end
 end
 if fresh then B.track(now, errorCm, r.speed) end
 B.protect()
@@ -512,7 +544,7 @@ return string.format("buddy:%s a%d p%d k%s v%d r%s e%d H=%s@%s L=%s@%s d%d",
  W.host and s.seq or s.rxSeq or 0, string.sub((not live and (ok and contextReason or "context_error"))
   or (s.probe and s.probe.reason ~= "ok" and s.probe.code) or s.reason or "idle", 1, 22), errorCm,
  hp, ha, lp, la, B.disabled and 1 or 0) .. (W.companion and W.companion.tail() or "") .. (companion() and
- fmt(" m2 tx%d rx%d ack%s/%s near%s s3=%d hurt%d eng%d", s.poseTx or 0, s.cposeN or 0, tostring(s.cackResult or s.remoteResult),
+ fmt(" m2 %s w%d tx%d rx%d ack%s/%s near%s s3=%d hurt%d eng%d", B.holdMode, s.warps or 0, s.poseTx or 0, s.cposeN or 0, tostring(s.cackResult or s.remoteResult),
   tostring(s.remoteError or "-"), tostring(s.watch and s.watch.min or "-"), s.watch and floor(s.watch.s3) or 0, s.hurt or 0,
   W.mirrorCount or 0) or "")
 end

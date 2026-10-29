@@ -573,6 +573,21 @@ function C.lever(a, id, A, mission)
   local ok, r = pcall(B.protect, #a == 2)
   return ok, fmt("protect;on=%d;result=%s", #a == 2 and 1 or 0, tostring(r))
  end
+ -- Lab (guest): the dog hold mode of world_buddy.lua (marker, stop, warp).
+ if a[1] == "companion_lab" and a[2] == "hold" and #a == 3 then
+  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
+  local B = W.buddy
+  if type(W.get(B, "setHold")) ~= "function" then return false, "hold_unavailable" end
+  local ok, r = pcall(B.setHold, a[3])
+  return ok and r == true, "hold;mode=" .. tostring(a[3])
+ end
+ -- Lab: names the following track windows of world_buddy.lua (the proof's legs: walk, run, dash, away, ...).
+ if a[1] == "companion_lab" and a[2] == "mark" and #a == 3 and type(a[3]) == "string" and a[3]:match("^[a-z0-9_]+$") and #a[3] <= 16 then
+  if W.mode ~= 1 then return false, "lab_only" end
+  local B = W.buddy
+  if type(W.get(B, "mark")) ~= "function" then return false, "mark_unavailable" end
+  return pcall(B.mark, a[3]) and true or false, "mark;leg=" .. a[3]
+ end
  return false, "companion_args"
 end
 function C.seedLever(kind)

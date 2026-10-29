@@ -1,0 +1,185 @@
+# M2 proof (docs/vehicles-companions-design.md section 9 M2, experiments E3 engagement part and E19, dog row): one dog on
+# both screens, the host's, following the host; the guest copy's dog held at the host dog's pose and never left to the
+# guest's AI; guards next to it, first calm, then in an alert. companion_host_owned=1.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# The legs start on the open grass 32 m west of the afgh-ledge boot spot, facing east toward the cliff (run 8c0b425f
+# faced the ledge at the boot spot and ran into the rock). The guest's hold mode (companion_lab hold): marker (the
+# default: the dog moves itself, LuaAiStayAndSnarl modes 3/4) for walk (ctrl+w, R4's 3 m), run (w) and dash (shift+w)
+# (5 m); then warp (stop-AI placed by the command's warp) for walk and run. companion_lab mark names the guest's track
+# windows (event=companion_track carries band, error, leg, mode and warps).
+# away: the guest 40 m from the host (the dog stays with the host). engage: guards warped beside the host and its dog
+# every 20 s (spawn sync), 60 s calm, then the camp in alert: 60 s in marker mode, 30 s in stop mode, then the guest's
+# protection lever (SetDisableDamage on its dog) for 30 s.
+# Post-run checks (log slices): no event=mirror_engaged; event=mirror_near s3 (seconds with a soldier within 3 m of
+# the held dog); event=companion_hurt and event=mirror_vars (E19); no result=released; the host's event=obs ...;
+# att=buddy kills and their event=commit / the guest's event=apply.
+# Variants: companion-dog-mb.txt (Mother Base, then the heli arrival), companion-dog-play.txt (play rehearsal).
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting debug_soldier_warp=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 90
+host run godmode 1
+guest run godmode 1
+# The host's dog is readable about 35 s after the boot (run 8c0b425f: n_real until then).
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+resetpose host
+placebehind guest host 7 1
+wait 6000
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+guest expect _m2_marker_
+both capture m2-dog-idle
+# --- marker mode -------------------------------------------------------------------------------------------------
+guest run companion_lab mark walk
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 700
+both capture m2-dog-walk
+wait 750
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1500
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=walk; .*within=1; leg=walk;' 10
+resetpose host
+placebehind guest host 7 1
+wait 5000
+guest run companion_lab mark run
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 1450
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 700
+both capture m2-dog-run
+wait 750
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 1500
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=run; .*within=1; leg=run;' 10
+resetpose host
+placebehind guest host 7 1
+wait 5000
+guest run companion_lab mark dash
+host hold shift+w 1500 nowait
+guest hold shift+w 1500 nowait
+wait 1450
+host hold shift+w 1500 nowait
+guest hold shift+w 1500 nowait
+wait 700
+both capture m2-dog-dash
+wait 700
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=run; .*within=1; leg=dash;' 10
+guest run buddy_status
+# --- warp mode ---------------------------------------------------------------------------------------------------
+resetpose host
+placebehind guest host 7 1
+guest run companion_lab hold warp
+guest expect ^hold;mode=warp
+wait 5000
+guest run companion_lab mark warp_walk
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 700
+both capture m2-dog-warp-walk
+wait 750
+host release
+guest release
+resetpose host
+placebehind guest host 7 1
+wait 5000
+guest run companion_lab mark warp_run
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 1450
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 700
+both capture m2-dog-warp-run
+wait 750
+host release
+guest release
+guest run companion_lab hold marker
+guest expect ^hold;mode=marker
+# --- away --------------------------------------------------------------------------------------------------------
+resetpose host
+wait 3000
+guest run companion_lab mark away
+placebehind guest host 40 0
+wait 7000
+both capture m2-dog-guest-away
+guest run buddy_status
+guest expect kdog
+# --- E3 / E19 ----------------------------------------------------------------------------------------------------
+placebehind guest host 6 1
+wait 3000
+guest run companion_lab mark engage
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 4000
+guest run spawn_sync
+both capture m2-engage-guard
+wait 16000
+host run spawn_enemy here
+wait 20000
+host run spawn_enemy here
+wait 20000
+both capture m2-engage-calm
+host run cp_phase nearest alert
+host expect ^submitted_phase;
+host run spawn_enemy here
+wait 20000
+both capture m2-engage-alert-1
+host run spawn_enemy here
+wait 20000
+host run spawn_enemy here
+wait 20000
+both capture m2-engage-alert-2
+guest run companion_lab hold stop
+guest run companion_lab mark engage_stop
+host run spawn_enemy here
+wait 30000
+both capture m2-engage-alert-3
+guest run companion_lab hold marker
+guest run companion_lab protect
+guest expect ^protect;on=1;
+guest run companion_lab mark engage_protect
+host run spawn_enemy here
+wait 30000
+both capture m2-engage-alert-4
+host run buddy_status
+guest run buddy_status
+guest expect kdog
+host run companion_status
+guest run companion_status
+host run world_status
+guest run world_status
+state

@@ -1,0 +1,77 @@
+# M2 play rehearsal (-Mode play -WanSim bad; docs/vehicles-companions-design.md section 9 M2). The host's save deploys
+# D-Dog (afgh-ledge), the guest's own save D-Horse (afgh-horse). Play's title Continue lands both in the helicopter,
+# where they pair; the host's continue into 30010 seeds its dog and the guest loads it (as run b83c9f7a). Then the host
+# walks, runs and dashes away from the guest and comes back: the guest copy's dog stays with the host (COMPANION_POSE
+# over the bad link; event=companion_track windows within 3 m walking, 5 m running), never released to the guest's AI.
+# The clock is set to noon first (the M1 rehearsal's frames were at night). No lab levers, no placebehind.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+#        -Mode play -WanSim bad
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 240
+waitgameplay guest 240
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed; mission=30010;' 120
+host run time 43200
+host run weather sunny
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+guest expect _m2_
+wait 4000
+both capture m2p-dog-idle
+host hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+wait 700
+both capture m2p-dog-walk
+wait 750
+host hold ctrl+w 1500 nowait
+wait 1500
+host release
+waitlog guest 'world_lua=event=companion_track; band=walk; .*within=1;' 15
+host hold w 1500 nowait
+wait 1450
+host hold w 1500 nowait
+wait 700
+both capture m2p-dog-run
+wait 750
+host hold w 1500 nowait
+wait 1500
+host release
+waitlog guest 'world_lua=event=companion_track; band=run; .*within=1;' 15
+wait 2000
+both capture m2p-dog-run-stop
+# Turn around and dash back past the guest.
+host mouse 1500 0
+wait 300
+host mouse 1500 0
+wait 500
+host hold shift+w 1500 nowait
+wait 1450
+host hold shift+w 1500 nowait
+wait 700
+both capture m2p-dog-dash
+wait 750
+host hold shift+w 1500 nowait
+wait 1500
+host release
+wait 3000
+both capture m2p-dog-back
+guest mouse 1500 0
+wait 400
+guest mouse 1500 0
+wait 600
+guest capture m2p-dog-back-2
+host run buddy_status
+guest run buddy_status
+guest expect kdog
+host run companion_status
+guest run companion_status
+state

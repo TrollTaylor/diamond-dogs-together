@@ -1,0 +1,89 @@
+# M2 proof, Mother Base and the heli (docs/vehicles-companions-design.md section 9 M2): the dog follows the host on the
+# Mother Base deck on both copies (walk and run legs, as companion-dog.txt); then host-led travel to Afghanistan, where
+# the guest gets off its helicopter at the landing zone while the host stays aboard (body 1 hidden and unrealized on
+# the guest's copy, acts 100..108): the guest's own-dog read keeps working (no result=dog_unreadable and no
+# buddy_read probe n_scope for 30 s; before M2 the receipt refused scope while body 1 was unrealized) and its dog is
+# held, never left to the guest's AI; then the host gets off and the dog goes to the host's.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-mb.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed africa-jeep -GuestSaveSeed afgh-horse
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 120
+host run godmode 1
+guest run godmode 1
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+resetpose host
+placebehind guest host 7 1
+wait 5000
+both capture m2-mb-dog-idle
+guest run companion_lab mark mb_walk
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 700
+both capture m2-mb-dog-walk
+wait 750
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1500
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=walk; .*within=1; leg=mb_walk;' 10
+resetpose host
+placebehind guest host 7 1
+wait 5000
+guest run companion_lab mark mb_run
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 1450
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 700
+both capture m2-mb-dog
+wait 750
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 1500
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=run; .*within=1; leg=mb_run;' 10
+wait 3000
+both capture m2-mb-dog-2
+guest run buddy_status
+# Host-led travel to Afghanistan; the guest gets off first and watches its dog while the host stays in its heli.
+host worldtrigger goto=30010
+waitmission host 30010 180
+waitmission guest 30010 180
+waitgameplay guest 180
+guest run companion_lab mark heli
+wait 4000
+guest capture m2-dog-host-in-heli
+guest run buddy_status
+guest expect kdog
+wait 12000
+guest capture m2-dog-host-in-heli-2
+wait 14000
+guest capture m2-dog-host-in-heli-3
+guest run buddy_status
+host run buddy_status
+waitgameplay host 120
+guest run companion_lab mark heli_off
+wait 8000
+both capture m2-dog-after-heli
+waitlog guest 'world_lua=event=companion_track; band=idle; .*within=1; leg=heli_off;' 30
+host run buddy_status
+guest run buddy_status
+guest expect kdog
+state

@@ -348,4 +348,22 @@ c.W.mode = 2
 check(not c.C.lever({'companion_lab', 'protect'}, 3, A, 30010), 'protect is lab only')
 c = Fixture(1, {active = DOG})
 check(not c.C.lever({'companion_lab', 'protect'}, 1, A, 30010), 'protect is guest only')
+-- The proof's leg marker (lab, either role): world_buddy.lua B.mark.
+c = Fixture(2, {active = DOG})
+local marked
+c.W.buddy = {mark = function(l) marked = l; return true end}
+ok, msg = c.C.lever({'companion_lab', 'mark', 'walk'}, 1, A, 30010)
+check(ok and marked == 'walk' and msg == 'mark;leg=walk', 'companion_lab mark names the next track windows')
+check(not c.C.lever({'companion_lab', 'mark', 'Bad-Label'}, 2, A, 30010), 'mark refuses a label outside [a-z0-9_]')
+c.W.mode = 2
+check(not c.C.lever({'companion_lab', 'mark', 'run'}, 3, A, 30010), 'mark is lab only')
+-- The hold mode lever (lab, guest): world_buddy.lua B.setHold.
+c = Fixture(2, {active = DOG})
+local held
+c.W.buddy = {setHold = function(m) held = m; return m == 'warp' end}
+ok, msg = c.C.lever({'companion_lab', 'hold', 'warp'}, 1, A, 30010)
+check(ok and held == 'warp' and msg == 'hold;mode=warp', 'companion_lab hold sets the guest hold mode')
+check(not c.C.lever({'companion_lab', 'hold', 'bogus'}, 2, A, 30010), 'an unknown mode is refused')
+c = Fixture(1, {active = DOG})
+check(not c.C.lever({'companion_lab', 'hold', 'warp'}, 1, A, 30010), 'hold is guest only')
 print('world_companion_lua_check: ' .. checks .. ' checks passed')
