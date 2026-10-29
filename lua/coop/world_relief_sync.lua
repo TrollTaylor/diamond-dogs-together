@@ -10,9 +10,9 @@
 --   state    the host sends VEHICLE_SPAWN (op 52) in free roam on change and every 5 s. A guest copy
 --            whose mission never had index 0 while the host's has it (a host continue, a late join)
 --            writes the host's carry and calls Vehicle.LoadCarry mid mission (section 8.3); the load
---            draws it at the mission's drop point (run 8a81f776), so one the host moved is then set to
---            the host's pose (SetPosition), as is one parked more than 20 m off; one the host lacks
---            for 15 s, or of another type, is removed (no credit).
+--            can draw it at the mission's drop point instead (run 8a81f776), so one that appears more
+--            than 3 m from the host's pose is set there (SetPosition), as is one parked more than 20 m
+--            off; one the host lacks for 15 s, or of another type, is removed (no credit).
 --   removal  VEHICLE_GONE (world_vehicle.lua) removes index 0 on the receiver with Seize {"Instant"}
 --            and a one-time skip of that copy's TppTerminal.OnFulton for 25600 (E17), never Despawn.
 --   end      the guest skips TppMission.SeizeReliefVehicleOn* (E18): one Mother Base credit.
@@ -186,7 +186,7 @@ function RS.loadHost(h, why)
  if type(G) == "table" and type(G.gone) == "table" and G.gone[RID] == "relief" then G.gone[RID] = nil end
  RS.reload = nil
  local okC = okW and pcall(f)
- RS.coop, RS.arrive = W.mission, {ct = h.ct, deadline = W.now() + 30000, source = "load", place = not h.carryPose and h or nil}
+ RS.coop, RS.arrive = W.mission, {ct = h.ct, deadline = W.now() + 30000, source = "load", place = h}
  L(fmt("step=load;why=%s;type=%d;ct=%d;paint=%d;write=%d;call=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%.3f;", why, t, h.ct, h.paint,
   okW and 1 or 0, okC and 1 or 0, h.x, h.y, h.z, h.yaw))
  return okC
@@ -211,7 +211,10 @@ local function arrival(now)
   local ct = RS.carry()
   L(fmt("step=arrived;type=%d;vt=%s;paint=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%.3f;mission=%d;source=%s;", ct % 256,
    tostring(send({id = "GetVehicleType"})), RS.paint(ct % 256), x or 0, y or 0, z or 0, yaw or 0, W.mission, a.source))
-  if a.place then RS.placeAt(a.place, "load") end
+  -- A load draws the vehicle where the relief record already points when it holds the same type (the
+  -- mission's drop point, run 8a81f776): more than 3 m from the host's pose, it is set there.
+  local h = a.place
+  if h and x and sqrt((x - h.x) ^ 2 + (z - h.z) ^ 2) > 3 then RS.placeAt(h, "load") end
  elseif now > a.deadline then
   a.done = true
   L(fmt("step=arrive_none;type=%d;mission=%d;source=%s;", a.ct % 256, W.mission, a.source))

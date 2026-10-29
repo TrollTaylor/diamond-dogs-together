@@ -288,8 +288,8 @@ check(c.find('event=relief;role=guest;step=load;why=host_has;type=2;ct=514;paint
 check(c.RS.own and c.RS.own.reliefVehicleCarryType == 0, 'own carry kept before the write')
 c.tick()
 check(c.find('step=arrived;type=2;') and c.find('source=load;'), 'the loaded arrival is logged')
-check(not c.placed and not c.find('step=placed;'), 'a load at the carry pose (flag 2) is not moved')
--- A host vehicle away from its carry pose (flag 2 clear): the load draws it at the drop point (run 8a81f776), so
+check(not c.placed and not c.find('step=placed;'), 'a load that appears at the host pose (within 3 m) is not moved')
+-- The load draws it at the drop point while the host's vehicle stands elsewhere (run 8a81f776; flag 2 clear here), so
 -- the arrival sets it to the host's pose.
 c = Fixture(2, {ct = 0, loadSpawns = true})
 for _ = 1, 3 do c.W.handlers[52]({9, 30020, RID, 1, 514, 1, 1, 1201730, 17410, -128630, -1637}, c.time); c.run(5000) end
@@ -297,6 +297,11 @@ c.tick()
 check(c.placed == 1 and math.abs(c.v0.x - 1201.73) < 0.001 and math.abs(c.v0.z + 128.63) < 0.001 and math.abs(c.v0.rot + 1.637) < 0.001,
     'the loaded vehicle is placed at the host pose')
 check(c.find('step=placed;why=load;ok=1;x=1201.73;y=17.41;z=-128.63;yaw=-1.637;'), 'placed line')
+-- The same when the host stands on its carry pose (flag 2) but this copy draws it elsewhere (another drop point).
+c = Fixture(2, {ct = 0, loadSpawns = true})
+for _ = 1, 3 do c.W.handlers[52]({9, 30020, RID, 1, 514, 1, 3, 263570, 1560, -228880, -524}, c.time); c.run(5000) end
+c.tick()
+check(c.placed == 1 and math.abs(c.v0.x - 263.57) < 0.001 and c.find('step=placed;why=load;ok=1;x=263.57;'), 'a far draw is placed at the carry pose too')
 hostState(c)
 c.run(30000)
 check(c.called('LoadCarry') == 1, 'loaded once')

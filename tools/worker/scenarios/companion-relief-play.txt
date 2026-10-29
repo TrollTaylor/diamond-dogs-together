@@ -1,14 +1,16 @@
-# M3 play rehearsal (-Mode play -WanSim bad; docs/vehicles-companions-design.md section 9 M3). The host's save is the
-# launcher's co-op save copy (seed coop-relief-30020, decision D10: a real sortie-prep choice, type 2 east LV, saved
-# in Africa with the relief vehicle out); the guest's is the lab save (no relief vehicle). Play's title Continue
-# pairs both copies and the guest follows the host into the host's checkpoint: the guest's copy gets the host's
-# relief vehicle through the follow seeds (step=seed_apply, then arrived; source=seed) or, when its mission starts
-# without it, through VEHICLE_SPAWN and a mid-mission LoadCarry (step=load; why=host_has, then arrived; source=load).
+# M3 play rehearsal (-Mode play -WanSim bad; docs/vehicles-companions-design.md section 9 M3). Seed afgh-relief-lv
+# (run 612afff7) for both copies: the 30010 enemyBase_S LZ checkpoint; the host's save holds relief type 2 (east LV)
+# with the vehicle out, the guest's holds none. Play's title Continue lands both in the Afghanistan helicopter (40010),
+# where they pair, and the host's continue into 30010 is a co-op travel: the guest's copy gets the host's relief
+# vehicle through the follow seeds (step=seed_apply, then arrived; source=seed) or, when its mission starts without it,
+# through VEHICLE_SPAWN and a mid-mission LoadCarry (step=load; why=host_has, then arrived; source=load). Then the
+# guest's real iDroid vehicle request (refused, with the toast). Run b7d65be9 used the launcher's co-op save copy
+# (coop-relief-30020, Africa) for the host and the lab save (Afghanistan) for the guest: the two titles landed in
+# different helicopters, never paired, and each continued alone (a scenario error, not a finding).
 # The key is named; its play default stays off until this rehearsal and the lab FRAME proof (companion-relief.txt)
 # both pass. No lab levers (play refuses them), no worldtrigger, no placebehind.
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-play.txt
-#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed coop-relief-30020 -GuestSaveSeed lab
-#        -Mode play -WanSim bad
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-relief-lv -Mode play -WanSim bad
 labsetting world_relief=1
 labsetting world_vehicle_gone=1
 labsetting nametag=1
