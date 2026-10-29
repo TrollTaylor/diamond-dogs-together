@@ -1239,7 +1239,7 @@ play): no hidden run has covered 30050, its index Despawn included
 | Code | Name | Dir | Wire | Lua fields | Queue | Body |
 |---|---|---|---|---|---|---|
 | 0x2E | VEHICLE_GONE | H->G | R | seq 1.., id 25600..26111, cause 1 fulton / 2 destroyed / 3 lab, actor 0 host / 1 guest / 2 lab, rid (0 none), vehicle type (255 unknown), x, y, z mm | world | 21 |
-| 0x2F | REQ_VEHICLE_GONE | G->H | R | rid 1.., id 25600..26111, cause, vehicle type, x, y, z mm (the guest's copy) | world (request) | 18 |
+| 0x2F | REQ_VEHICLE_GONE | G->H | R | rid 1.., id 25600..26111, cause 1..3 as above or 4 an unattributed destruction (since the D12 review, section 19), vehicle type, x, y, z mm (the guest's copy) | world (request) | 18 |
 
 Both are level 3, lab and play, epoch-checked world ops (`native/world_wire.cpp`);
 the id is a TppVehicle2 GameObjectId (class 50: 25600 + pool index). The host
@@ -1257,8 +1257,8 @@ below level 3), then from Lua (`lua/coop/world_vehicle.lua`, spliced last):
   for the jeep whose life the guest's rounds lowered), so the last rule never
   fires for gunfire and a jeep the guest destroys stayed a wreck on its copy
   only (`5179b50b`); explosives are untested. Since D12 (section 19, key
-  `world_vehicle_break`) an unattributed break is requested too and the host
-  judges it. The pose (mm) and
+  `world_vehicle_break`) an unattributed break is requested too (cause 4 since
+  the D12 review) and the host judges it. The pose (mm) and
   `GetVehicleType` are read at that message.
   FultonFailed cancels; the loss counts when the instance stops answering
   `GetPosition` (its pool slot released), or when `IsAlive` reads back false:
@@ -1541,18 +1541,23 @@ Tests: `world_wire_tests` (VehicleSpawnOp), `world_receipt_tests` (r[17]),
 `world_relief_lua_check`, `world_relief_sync_lua_check`, `lab_config_tests`,
 `lab_ini_check`. Hidden runs: docs/STATUS.md M3 and M3 review fixes.
 
-## 19. The vehicle decisions of 2026-10-29 (D11, D12, D14; docs/vehicles-companions-design.md 8.9)
+## 19. The vehicle decisions of 2026-10-29 (D11, D12, D14; docs/vehicles-companions-design.md 8.9, 8.10)
 
-No wire change: no new op, no new field, no new value range. D12's request is the
-existing REQ_VEHICLE_GONE (cause 2) and its answer the existing VEHICLE_GONE
-(actor 1) or REJECT 8; D14 changes only how a receiver removes its copy; D11 is
+Wire: no new op and no new field. One value range grew in the D12 review
+(2026-10-29, `8b00f80`): REQ_VEHICLE_GONE's cause is **1..4** (was 1..3); 4 is a
+destruction the guest's copy could not attribute (D12). VEHICLE_GONE keeps 1..3:
+the host answers a cause 4 request as cause 2 (actor 1, the rid). A build before
+`8b00f80` drops a cause 4 request as `bad_op`; play pairing refuses mismatched
+builds, so only a lab pair of two builds could meet it (the guest's request then
+ends in `req_timeout`). D14 changes only how a receiver removes its copy; D11 is
 local to the guest. The module is `lua/coop/world_vehicle_rules.lua`, spliced
 after `world_vehicle_state.lua` (before `world_companion.lua`); it wraps
-`W.vehicleGone.decide`, `.remove` and `.status`, the REJECT handler,
-`W.vehicleState.readLife`, `W.observe` and `W.tick`, and `world_relief_sync.lua`,
-spliced later, still takes index 0 first. Three lab.ini keys, lab and play (no
-refusal bit), carried in the CFG **r[15]** vehicle bitmask, which is now 0..63
-(`world::VehicleModules`; Lua treats a missing or out-of-range value as 0):
+`W.vehicleGone.decide`, `.remove`, `.request` and `.status`, the REQ_VEHICLE_GONE
+and REJECT handlers, `W.vehicleState.readLife`, `W.observe` and `W.tick`, and
+`world_relief_sync.lua`, spliced later, still takes index 0 first. Three lab.ini
+keys, lab and play (no refusal bit), carried in the CFG **r[15]** vehicle bitmask,
+which is now 0..63 (`world::VehicleModules`; Lua treats a missing or out-of-range
+value as 0):
 
 | Bit | Key | Decision | Needs |
 |---|---|---|---|
@@ -1561,49 +1566,69 @@ refusal bit), carried in the CFG **r[15]** vehicle bitmask, which is now 0..63
 | 32 | `world_loadout_block` | D11 | world sync started (any mission) |
 
 Each is **on in play unless named** and off in the lab unless named, like the
-other vehicle modules (`f4ec5c1`; lab FRAME `c0203fdd`, play rehearsal
-`70146170` with `-WanSim bad`; docs/STATUS.md). A named invalid value counts as
-named and off.
-Both copies need the same keys: a guest with `world_vehicle_break` against a host
-without it gets its unattributed breaks applied without the judge (the 0.13.6 path,
-a Despawn); a receiver without `world_vehicle_credit` despawns without a credit.
+other vehicle modules (`f4ec5c1`; docs/STATUS.md for the runs behind each). A
+named invalid value counts as named and off.
+The keys are read per PC. Since the D12 review a mismatch no longer applies
+anything unjudged: a guest with `world_vehicle_break` against a host without it
+gets REJECT 11 for each unattributed break (host `step=refused;src=req;
+reason=break_off`, guest `step=break_refused;reason=11`): that vehicle stays split,
+as before D12. A guest without the key never asks. A receiver without
+`world_vehicle_credit` despawns without a credit. `world_loadout_block` is the
+guest's own: the host's value does not matter.
 
-- **D11, the guest's LOADOUT drop.** While the guest is paired (or unpaired inside
-  the mission of its last pairing, until that mission's final stop), in game, the
-  module sets the iDroid item `MSN_DROP_LOADOUT` inactive with
-  `TppUiCommand.SetMbTopMenuItemActive` every 2 s while the iDroid is closed (the
-  first pass of a mission also while it is open; `TppTerminal.SetUp` leaves every
-  item active). Selecting it posts the stock Terminal message
-  `MbDvcActSelectNonActiveMenu` (arg StrCode32 of the item): `step=refused;
-  path=idroid_drop_loadout` and NOTE 13 a 5 (the toast "Only the host can order a
-  loadout drop in co-op: it can carry a vehicle.", at most every 3 s). The final
-  stop sets it active again (`step=unguard`). The host is never touched, nor any
-  other item. `world_relief_sync.lua` keeps the VEHICLES item (`MSN_DROP_VEHICLE`,
-  with `world_relief` only) and no longer touches LOADOUT.
+- **D11, the guest's supply drops that can bring a vehicle.** While the guest is
+  paired (or unpaired inside the mission of its last pairing, until that mission's
+  final stop), in game, the module sets the iDroid items `MSN_DROP_LOADOUT` and,
+  since the user's pick of the D11 review (only the host picks vehicles),
+  `MSN_DROP_VEHICLE` inactive with `TppUiCommand.SetMbTopMenuItemActive` every 2 s
+  while the iDroid is closed (the first pass of a mission also while it is open;
+  `TppTerminal.SetUp` leaves every item active). Selecting one posts the stock
+  Terminal message `MbDvcActSelectNonActiveMenu` (arg StrCode32 of the item):
+  `step=refused;path=idroid_drop_loadout` with NOTE 13 a 5 ("Only the host can
+  order a loadout drop in co-op: it can carry a vehicle.") or
+  `step=refused;path=idroid_drop_vehicle` with NOTE 13 a 4 ("Only the host can
+  bring or request a vehicle in co-op."), each toast at most every 3 s. Guard
+  lines: `step=guard;path=idroid_drop_loadout|idroid_drop_vehicle;via=menu_inactive;
+  mission=` once per mission. The final stop sets them active again
+  (`step=unguard`). The host is never touched, nor any other item. With the key on
+  the module owns the VEHICLES item in every co-op mission, whatever `world_relief`
+  says (`VR.ownsVehicleDrop`); `world_relief_sync.lua` then never sets, refuses or
+  toasts it (its own `event=relief` guard and refusal lines appear only with this
+  key off).
 - **D12, a guest-side break.** The guest's VEHICLE_GONE observer asks
   `V.unattributed(id)` for a `VehicleBroken` with no local hit (the game posts no
   Damage message for a vehicle hit, `35ba7929`): with the key on, a vehicle other
   than index 0 that this copy did not itself remove or wreck in the last 5 s is
-  watched as cause 2 (`event=vehicle_rules;step=break_seen`; at most 6 per 60 s, else
-  `step=break_skip;reason=rate`), and its loss is the usual REQ_VEHICLE_GONE. The
-  host judges every guest destruction request (cause 2) after VEHICLE_GONE's own
-  match: a hold for `local_rider` or `occupied` is refused at once (`step=break_judge;
-  ok=0;why=ridden`; a copy that is broken there too was already answered as gone);
-  otherwise it applies only when the guest's player, from its DOWNED_STATUS position
-  (`world_downed.lua`, 10 Hz, at most 3 s old), stands within 60 m of the pose the
-  guest reported (`why=near`), or the host's copy is at a quarter or less of the
-  highest body life VEHICLE_STATE's native read gave for it this mission
-  (`why=heavy`); else `why=guest_far` or `guest_unknown`. At most 4 are applied per
-  20 s (`why=rate`). Refusals are VEHICLE_GONE's `step=refused;src=req;reason=<why>`
-  and REJECT 8; the guest logs `step=break_refused;id=;rid=;reason=8;here=wreck`.
-  Applied, the host's copy becomes the same wreck: the instance command
-  `SetBodyLife{life=0}` (the engine's own destruction, E5), id marked gone first,
-  read back like the wreck parity (a wreck still alive after 2 s is despawned,
-  `step=fallback;from=wreck`), whatever `world_vehicle_wreck` says (that key is the
-  guest's receiver wreck). The announcement back (actor 1, the rid) ends the
-  guest's request. A refused guest copy keeps its wreck: no Lua command undoes one
-  (`SetBodyLife` writes the life word, `IsAlive` reads rec+0x70 bits that no
-  instance command is known to clear [I], section 3.6 of the design), and VEHICLE_STATE refuses that id there
+  watched as a destruction (`event=vehicle_rules;step=break_seen`), and its loss is
+  requested as REQ_VEHICLE_GONE **cause 4**, at most 6 per 60 s; more wait in a
+  queue of 32 (`step=break_queued;id=;n=`, then `step=break_ask;id=;queued_ms=`),
+  beyond it a break is skipped (`step=break_skip;reason=queue_full`). The host:
+  without its own key a cause 4 request gets REJECT 11 (above). With it, it judges
+  every guest destruction request (cause 2 or 4) after VEHICLE_GONE's own match:
+  a hold for `local_rider` (the host's own player in that vehicle) is refused at
+  once (`step=break_judge;ok=0;why=ridden;by=local_rider`; a copy that is broken
+  there too was already answered as gone); any other hold (`occupied`: D-Dog or a
+  soldier in a seat; `partner_ride`; `pose_unreadable`) stays VEHICLE_GONE's hold,
+  re-checked every 250 ms, REJECT 9 after 120 s. Then it applies only when the
+  guest's player, from its DOWNED_STATUS position (`world_downed.lua`, 10 Hz, at
+  most 3 s old), stood within **300 m** of the pose the guest reported, judged on
+  the closer of its position when the request arrived and its current one
+  (`why=near`), or the host's copy is at a quarter or less of the highest body life
+  VEHICLE_STATE's native read gave for it this mission (`why=heavy`); else
+  `why=guest_far`. With no known position it waits (`step=break_hold;why=
+  guest_unknown`, REJECT 9 after 120 s). At most 4 are applied per 20 s; more wait
+  (`step=break_hold;why=rate;n=`). One `step=break_judge;id=;rid=;ok=;why=;d_mm=;
+  life=;peak=` line per request, at its outcome. Refusals are VEHICLE_GONE's
+  `step=refused;src=req;reason=<why>` and REJECT 8; the guest logs
+  `step=break_refused;id=;rid=;reason=<8|9|11>;here=wreck`. Applied, the host's copy
+  becomes the same wreck: the instance command `SetBodyLife{life=0}` (the engine's
+  own destruction and blast, E5), id marked gone first, read back like the wreck
+  parity (a wreck still alive after 2 s is despawned, `step=fallback;from=wreck`),
+  whatever `world_vehicle_wreck` says (that key is the guest's receiver wreck). The
+  announcement back (cause 2, actor 1, the rid) ends the guest's request. A refused
+  guest copy keeps its wreck: no Lua command undoes one (`SetBodyLife` writes the
+  life word, `IsAlive` reads rec+0x70 bits that no instance command is known to
+  clear [I], section 3.6 of the design), and VEHICLE_STATE refuses that id there
   (`absent` for a named vehicle, `no_match` for an unnamed one).
 - **D14, the receiver's credit.** A receiver (the guest for VEHICLE_GONE, the host
   for a request) removes a Fultoned vehicle (cause 1), never index 0, with the
@@ -1621,11 +1646,16 @@ a Despawn); a receiver without `world_vehicle_credit` despawns without a credit.
   announcements and repeated requests find the id gone and credit nothing more.
   The sortie vehicle (index 0) keeps M3's host-only credit (section 18).
 - `debug vehicle_gone_status` appends `vr=<break><credit><loadout><greyed>;j=;a=;r=;q=;s=;c=`
-  (judged, applied, refused, asked, Seize credits, credits seen).
+  (judged, applied, refused, asked, Seize credits, credits seen); the base part is
+  cut to fit 160 characters, never these counters.
 
 Tests: `world_vehicle_rules_lua_check` (in the worker gate), `world_vehicle_lua_check`
-(r[15] 0..63, the observer hook), `world_relief_sync_lua_check` (LOADOUT is not the
-relief module's), `world_receipt_tests` (`VehicleModules` bits 8/16/32),
-`lab_config_tests`, `lab_ini_check`, `lab_scripts_tests`, `worker_session_tests`.
-Scenarios `tools/worker/scenarios/vehicle-decisions-lab.txt` and
-`vehicle-decisions-play.txt`. Hidden runs: docs/STATUS.md "D11, D12, D14".
+(r[15] 0..63, the observer hook, cause 4 and REJECT 11), `world_relief_sync_lua_check`
+(LOADOUT is not the relief module's; VEHICLES is not while the rules module owns it),
+`world_wire_tests` (REQ_VEHICLE_GONE cause 1..4), `world_receipt_tests`
+(`VehicleModules` bits 8/16/32), `lab_config_tests`, `lab_ini_check`,
+`lab_scripts_tests`, `worker_session_tests`. Scenarios
+`tools/worker/scenarios/vehicle-decisions-lab.txt`, `vehicle-decisions-play.txt`,
+`vehicle-decisions-refuse.txt`, `vehicle-decisions-review-lab.txt` and
+`vehicle-decisions-review-play.txt`. Hidden runs: docs/STATUS.md "D11, D12, D14" and
+"D11 / D12 review fixes".

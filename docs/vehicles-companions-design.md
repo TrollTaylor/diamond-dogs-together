@@ -1523,16 +1523,23 @@ runs archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`, frames
   m=VehicleBroken; cause=2; att=none` -> `req; cause=2` -> host `break_judge; id=25609; ok=1; why=near; d_mm=1899;
   life=2300; peak=2300` -> `applied; id=25609; via=wreck; src=req; ok=1; ms=66` (SetBodyLife 0 on the host's copy) ->
   `tx; cause=2; actor=1` -> guest `req_done; result=gone`. Frames `c0203fdd-*-d12-wreck-01..04` / `-after`
-  (`g-c02-d12`): fire and smoke at the jeep on both screens (on the host's, the burning front of the jeep beside the
-  guest and the smoke column above it).
+  (`g-c02-d12`): on the guest's screen the burning jeep; on the host's, a fire and smoke cloud rising at the jeep from
+  behind the host's own body, with the jeep's visible rear half unchanged and its front never in view (corrected by the
+  review of 2026-10-29: no host frame of this run shows the wrecked jeep itself; the wreck on the host's copy rests on
+  `applied; via=wreck; ok=1` and the IsAlive readback) [O logs, I frame].
 - Play (`70146170`, `-WanSim bad`): the guest's own C4 (three charges, detonated about 14 m away) -> `break_seen` ->
   `req; cause=2` 235 ms later -> host `break_judge; ok=1; why=near; d_mm=13842` -> `applied; via=wreck; src=req; ok=1;
   ms=216` -> guest `req_done` 233 ms after its request. Frames `70146170-guest-d12p-placed` (the jeep with the charge's
   light), `-blast-02/04`, `-after` (the explosion and the burning jeep on the guest's screen) and `-host-d12p-after` (the
-  smoke column rising from that spot on the host's screen; the jeep itself hidden behind the guest's body) (`g-701-d12`).
+  smoke column rising from that spot on the host's screen) (`g-701-d12`). Corrected by the review: the jeep is never
+  visible on the host's screen in these play frames (`70146170`, `47b95ae7`), before or after; the figure at the centre
+  is the host's own third-person body (the partner's "Taylor" nametag below its torso), not the guest's. The host-side
+  wreck rests on the logs; section 8.10 frames it.
 - One host-side outcome: one `break_judge`, one `applied`, one `tx` per break; `vehicle_gone_status` `j=1; a=1; r=0`.
   A destruction has no credit or charge (GMP unchanged on both copies).
-- The rule [fixture; the ridden refusal also O, `09333f05`]: refused at once while someone rides the host's copy
+- The rule as first built (superseded by the review fixes, section 8.10: 300 m, cause 4, holds instead of refusals for
+  an occupied seat, an unknown position and the rate) [fixture; the ridden refusal also O, `09333f05`]: refused at once
+  while someone rides the host's copy
   (`why=ridden`; answered as gone instead when the host's copy is broken too), refused when the guest's DOWNED_STATUS position is more than 60 m from
   the reported pose (`guest_far`) or older than 3 s (`guest_unknown`) unless the host's copy is at a quarter of its peak
   life or less (`heavy`), at most 4 applied per 20 s (`rate`), never index 0; the guest asks at most 6 per 60 s and never
@@ -2052,7 +2059,11 @@ The original questions:
   **Decided 2026-10-29: (a), block it in co-op with a short toast; only the host picks vehicles.** Built in
   `lua/coop/world_vehicle_rules.lua` behind the key `world_loadout_block`, not tied to `world_relief` (section 8.9:
   with `world_relief` off nothing gives the host's copy a vehicle the guest's loadout brings). The lab lever
-  `relief_lab loadout on|off` is gone.
+  `relief_lab loadout on|off` is gone. **Follow-up decided 2026-10-29 (the user took the reviewer's pick): the guest's
+  VEHICLES drop is blocked too in co-op, whatever `world_relief` says** (it was blocked only with `world_relief` on, its
+  default off, so a guest could still order a vehicle that only its own copy had). Same key, same guard, NOTE 13 a 4;
+  `world_relief_sync.lua` leaves that item to the rules module (section 8.10). The guest's sortie-prep vehicle with
+  `world_relief` off is still the guest's own (M3, README "Sortie vehicles"): not part of this decision.
 
 - **D12 (new, M4). A vehicle the guest destroys.** The game posts no `Damage` message for a vehicle hit (`35ba7929`),
   so the guest's request never starts: a jeep the guest destroys stays a wreck on the guest's PC only and intact on
@@ -2061,7 +2072,11 @@ The original questions:
   you decide, it stays as in 0.13.6. **Decided 2026-10-29: (c) with a plausibility check on the host** ("the guest
   was close enough", so both copies agree): built behind the key `world_vehicle_break`; the rule (60 m, a heavily
   damaged host copy, never under a rider of the host's copy, 4 per 20 s) and what a refused guest copy shows are in
-  section 8.9.
+  section 8.9. **Follow-up decided 2026-10-29 (the user took the reviewer's pick): only the host's own player in the
+  vehicle refuses a break at once; D-Dog or a soldier in a seat holds it until the seat is free** (VEHICLE_GONE's hold,
+  REJECT 9 after 120 s). The review fixes (section 8.10) also widened "close enough" to 300 m (launcher and rifle
+  kills), judge the guest's position when the request arrived, hold instead of refuse for the rate and an unknown
+  position, and send the unattributed break as cause 4 so a host without the key refuses it (REJECT 11).
 - **D13 (new, M4). The M4 play defaults.** VEHICLE_GONE (Fulton, and a destruction shown as a disappearance) and
   VEHICLE_STATE (pose and body life) are on by default in play in Afghanistan and Africa (`482eb74`, narrowed by
   `c423b53`); the project rule is met for those paths (section 9 M4). The wreck parity and Mother Base stay lab only.

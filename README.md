@@ -65,10 +65,10 @@ Keep the launcher open while you play; its **In game** page shows the connection
 
 - Story missions, the hospital prologue, side ops and cutscenes are not co-op yet.
 - **Enemies:** each PC still moves its own enemies. Only what happens to them (killed, asleep, Fultoned, alerted) is shared.
-- **Vehicles:** trucks that enemies drive move separately on each PC. Wheel damage and fire are not shared. Damage the guest does to a vehicle is undone within about 10 seconds, and a vehicle the guest destroys from more than about 60 m away (or one someone is riding on the host's PC) stays destroyed only on the guest's screen. A vehicle destroyed on the host's PC leaves no wreck on the guest's screen. In Mother Base a parked vehicle's position, damage, Fulton and destruction are not shared yet.
+- **Vehicles:** trucks that enemies drive move separately on each PC. Wheel damage and fire are not shared. Damage the guest does to a vehicle is undone within about 10 seconds, and a vehicle the guest destroys from more than about 300 m away (or while the host sits in it on the host's PC) stays destroyed only on the guest's screen. A vehicle the guest destroys is destroyed on the host's PC with the game's own explosion there. A vehicle destroyed on the host's PC leaves no wreck on the guest's screen. In Mother Base a parked vehicle's position, damage, Fulton and destruction are not shared yet.
 - **Animals and prisoners** are not shared.
 - **Sortie vehicles:** a vehicle you bring from sortie prep (the helicopter's vehicle choice) doesn't appear on your partner's screen; they see you without it. Use world vehicles you find on the map to ride together.
-- **Supply drops:** only the host can order a LOADOUT drop in co-op (it can bring a vehicle); the guest's iDroid says so. A vehicle drop the guest orders would appear only on the guest's screen.
+- **Supply drops:** only the host can order a LOADOUT or VEHICLES supply drop in co-op (both can bring a vehicle); the guest's iDroid says so.
 - **Mounts:** you can't shoot from a back seat, and a partner riding D-Horse or D-Walker is hidden.
 - **Look:** your custom character may look like Snake on your partner's screen.
 - **Players:** two only.
