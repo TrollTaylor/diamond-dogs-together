@@ -25,7 +25,10 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    wait for a complete script-observer.log line of this session (from
                                    session.json roles.<role>.log_offsets) matching the case-sensitive
                                    regex; wrap it in single quotes when it holds spaces; nonfatal
-                                   (a timeout is listed in ExpectFailures)
+                                   (a timeout is listed in ExpectFailures); after a logmark of that
+                                   role, only lines from the mark on count
+  logmark <host|guest|both>        later waitlogs of the role read from its last complete log line now
+                                   (one phase's pattern can no longer match an earlier phase's line)
   expectstate <host|guest> <field> <regex>
                                    the role's fresh state.json field (mission, generation, gameplay_ready,
                                    terminating, world_level, world_paired, world_effective,
@@ -300,6 +303,7 @@ foreach($line in $steps){
         '^titlemenu$' {$t[0] -ceq 'titlemenu' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest','both' -and $t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
         '^waitlog$' {$t[0] -ceq 'waitlog' -and $t.Count -ge 4 -and $t[1] -cin 'host','guest' -and $t[-1] -cmatch '^[0-9]{1,3}$' -and [int]$t[-1] -ge 1 -and [int]$t[-1] -le 400 -and
             $null -ne (ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)]))}
+        '^logmark$' {$t[0] -ceq 'logmark' -and $t.Count -eq 2 -and $t[1] -cin 'host','guest','both'}
         '^expectstate$' {$t[0] -ceq 'expectstate' -and $t.Count -ge 4 -and $t[1] -cin 'host','guest' -and
             $t[2] -cin 'mission','generation','gameplay_ready','terminating','world_level','world_paired','world_effective','world_partner_mission','world_pair_wait','handoff','handoff_pct','travel_unlocked' -and
             $null -ne (ConvertFrom-ScenarioPatternTokens @($t[3..($t.Count-1)]))}
@@ -945,7 +949,7 @@ function Add-ScenarioExpectation([string]$Role,[string]$Verb,[string]$Pattern,[s
 # only waitlog (its log stays readable) and applyhandoff afterwards; state only reads.
 function Get-ScenarioStepRoles([string[]]$Tokens){
     $t=@($Tokens)
-    if($t[0] -cin 'wait','state','waitlog','applyhandoff'){return @()}
+    if($t[0] -cin 'wait','state','waitlog','logmark','applyhandoff'){return @()}
     if($t[0] -ceq 'title'){if($t.Count -ge 2 -and $t[1] -cin 'host','guest'){return @($t[1])};return @('host','guest')}
     if($t[0] -ceq 'boot'){return @('host','guest')}
     if($t[0] -ceq 'titlemenu'){if($t[1] -ceq 'both'){return @('host','guest')};return @($t[1])}
@@ -1024,7 +1028,32 @@ function New-ScenarioLogCursor([string]$Role){
     if($path -ine [IO.Path]::GetFullPath((Join-Path (Join-Path ([string]$row['game']) 'mgs-coop') 'script-observer.log'))){throw "[$Role] log path differs from its owned game folder."}
     $offset=[long]$source['offset']
     if($offset -lt 0){throw "[$Role] invalid script-observer.log offset."}
+    $marks=Get-Variable -Name scenarioLogMarks -Scope Script -ValueOnly -ErrorAction Ignore
+    if($marks -and $marks.ContainsKey($Role) -and [long]$marks[$Role] -gt $offset){$offset=[long]$marks[$Role]}
     return [pscustomobject]@{role=$Role;path=$path;position=$offset;carry=[byte[]]::new(0);read=[long]0}
+}
+# logmark: the role's later waitlogs start after its last complete script-observer.log line now
+# (never before the session offset or an earlier mark; a role without a log keeps its start).
+function Set-ScenarioLogMark([string]$Role){
+    $cursor=New-ScenarioLogCursor $Role
+    $mark=$cursor.position
+    if(Test-Path -LiteralPath $cursor.path -PathType Leaf){
+        $stream=[IO.File]::Open($cursor.path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try{
+            $length=$stream.Length
+            $from=[long][Math]::Max($mark,$length-65536)
+            if($length -gt $from){
+                $bytes=[byte[]]::new([int]($length-$from));$null=$stream.Seek($from,[IO.SeekOrigin]::Begin)
+                $got=0;while($got -lt $bytes.Length){$k=$stream.Read($bytes,$got,$bytes.Length-$got);if(!$k){break};$got+=$k}
+                $last=if($got -gt 0){[Array]::LastIndexOf($bytes,[byte]10,$got-1)}else{-1}
+                if($last -ge 0){$mark=$from+$last+1}
+            }
+        }finally{$stream.Dispose()}
+    }
+    $marks=Get-Variable -Name scenarioLogMarks -Scope Script -ValueOnly -ErrorAction Ignore
+    if($null -eq $marks){$marks=@{};Set-Variable -Name scenarioLogMarks -Scope Script -Value $marks}
+    $marks[$Role]=$mark
+    Write-Host "  logmark $Role at byte $mark"
 }
 function Read-ScenarioLogLines($Cursor){
     if(!(Test-Path -LiteralPath $Cursor.path -PathType Leaf)){return @()}
@@ -1328,6 +1357,7 @@ try {
             continue
         }
         if($t[0] -ceq 'titlemenu'){Invoke-ScenarioTitleMenu @(Get-ScenarioStepRoles $t) ([int]$t[2]);continue}
+        if($t[0] -ceq 'logmark'){foreach($r in @(if($t[1] -ceq 'both'){'host','guest'}else{$t[1]})){Set-ScenarioLogMark $r};continue}
         if($t[0] -ceq 'waitlog'){
             $pattern=ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)])
             $matched=Wait-ScenarioLog $t[1] $pattern ([int]$t[-1])
