@@ -1,3 +1,54 @@
+## 2026-10-29: D7, the guest's copy of D-Dog cannot be hurt (`wp/dog-guard`, unreleased, not two-PC tested)
+
+The user's decision D7 (2026-10-29): the guest's copy of the host's D-Dog must not be killable by anything on the
+guest's PC; its health and state follow the host's dog; where a guard cannot cover a case, the copy comes back from the
+host's live state (the restore fallback). Built on `wp/dog-guard` (from `dev/oct7-continue` `e2249e4`, worktree
+`D:/mgs-coop-wt/companion-host`), behind M1's key `companion_host_owned`. Design: `docs/vehicles-companions-design.md`
+8.9 (static reads, build, results), 6.12, section 9 M2, D7 in section 10; protocol section 15 (the state byte).
+
+**Built** (commits `cb848ed`, `a2f84ee`; fixtures written first).
+- [O static] The dog has no invincibility command (its three Lua dispatchers take no damage or life argument;
+  `SetDisableDamage` has no dog handler) and the damage parameters are shared by every target, so the guard is native:
+  `native/dog_guard.cpp` replaces two exact vtable slots of the D-Dog classes (bodies, call sites and slot values pinned
+  by SHA-256 in `native/include/mgscoop/dog_guard.hpp`): the dog damage handler's `ProcessDamages` (`0x231AD38`) is
+  skipped for instance 0 while the guest's lease is armed, and the dog life update (`0x231FD60`) drops pending damage,
+  undoes a forced death the module did not issue and applies the host's dog-state byte to record 0. The lease counts the
+  dog's own updates (a pause never expires it); disarmed at mission start, end and termination; the host can never arm.
+  Receipt `MGS_COOP_DOG_GUARD_V1`. Unit tests `dog_guard_tests`.
+- The host dog's **state byte** (valid, normal / asleep / down, life in 31ths) rides COMPANION_POSE and COMPANION
+  `state`, both sent 0 before: **no wire change** (same ops, sizes and ranges; an older host sends 0 = not valid).
+- New world chunk `lua/coop/world_companion_guard.lua` (after `world_companion_dog`): the host reads its byte; the guest
+  arms while its copy of the host's dog is loaded and paired; the **restore fallback** (shipped behaviour under the key):
+  a death while the host's dog lives -> the dead-buddy vars back, the copy sent away after 1.5 s, M1's reconcile primed
+  to load the host's dog now (three per mission, 60 s each, logged `event=dog_restore`); a copy gone without a Dead
+  message primes it too; a death mirrored from the host's waits for the host's re-call. Lab levers `companion_lab
+  dog_life|dog_stun|recall` (host), `kill_mirror|guard` (guest), `dog_state` (both, also in play). Fixture
+  `world_companion_guard_lua_check` (65 checks).
+
+**Runs** (hidden worker; archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`; frames as JPEG in the
+session scratch folder `complete/frames/dog/`; every run closed with the baseline and the real-save hashes verified).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `3922cc80` | `companion-dog-guard.txt` (lab) | No expectation failed. E19 passes: about 85 s of guard fire through the guest's copy, 50 hits dropped, `life=10000; state=0`, no Dead; FRAME of the copy standing over the prone guest (`3922-guest-grd-shield-1`, `-3`). Restore after `kill_mirror`: back in 2585 ms (logs) |
+| `3f69e3b7` | `companion-dog-follow.txt` (lab) | One expectation failed: the marked walk leg (the host's dog stayed where it was). Follow: hurt 30 % (guest life 3226), asleep (`STN` on both), awake, down (FRAME on both: "D-Dog Near Death" and the Fulton extraction), the host's re-call (`recalled; ms=36052`); the restore filmed from behind the host (the host's body hid the returned dog) |
+| `1713b0a1` | `companion-dog-guard-play.txt`, `-Mode play -WanSim bad` | No expectation failed. M1 seeds in play, the guard armed with the host's byte, one dog following the host on both screens (walk 0.37-2.93 m, run 1.46-2.77 m), the host's alert applied on the guest's copy, the dog beside Snake on both screens; no guard fired at the dog (0 drops) |
+| `606048af` | `companion-dog-follow-frames.txt` (lab) | No expectation failed. FRAME on both copies of the walk and run legs (0.35-1.09 m, 1.07-2.57 m), the restore (before, the copy carried off, the copy beside the host again; 2585 ms), hurt, down and the re-call (`recalled; ms=36069`) |
+
+**Defaults: unchanged.** `companion_host_owned` stays **off in lab and play**. The key covers M1 and M2 together, and
+not every path under it has a FRAME on both copies and a passing play rehearsal: the guard's drop, the follow, the
+restore and the re-call are proven in the lab only (play refuses the levers that drive them, and the play rehearsal's
+guards never fired at the dog); M1's review fixes have no play rehearsal (the Quiet park with the host's Quiet out, no
+horse / walker / Quiet shown on the guest's PC, the session end, the reconcile backoff); the guest's iDroid buddy
+request and dismiss are not refused, and the host's sortie-prep and iDroid buddy lists were not reached; no two-PC
+session. Not covered either: the dog's takedown result reaching the guest; what makes a held copy sit 2.2 m off an
+unchanged target with repeated drift warps when the host's dog stands still (`3f69e3b7`) [U]; a visible limp for a hurt
+dog [U].
+
+**Checks.** Fast CTest 298/298 after each step; full CTest 313/313 (`pwsh -File tools/build.ps1`, Debug) and the
+contract checks `generate_partner_contract.py`, `generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`,
+`generate_nametag_contract.py` and `generate_downed_damage_contract.py` `--check` pass. Nothing pushed, merged or released.
+
 ## 2026-10-29: vehicles and companions M1-M4 integrated (`dev/oct7-continue`, unreleased, not two-PC tested)
 
 Milestones M1-M4 of `docs/vehicles-companions-design.md` are merged into `dev/oct7-continue` with merge commits only:

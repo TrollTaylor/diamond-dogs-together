@@ -642,7 +642,7 @@ mirror in play.
 
 | Mirror | Engagement hold (candidates; E3, E15) | Protection (E19) | Attribution |
 |---|---|---|---|
-| D-Dog (guest's copy) | **Built (M2): the stop-AI form of `LuaAiStayAndSnarl` (mode 1/2, whose AI update the Dog AI skips) placed by the command's own warp at 10 Hz** [O, 8.2]. 176 s within 1.4 m of a guard in an alert: zero `mirror_engaged` (run `4cd88ea2`). Fallbacks if needed: `SetEnabled=false` while a guard is within 5 m (the `TppDemo` command) [U] | **Fails (E19, 8.2)** [O]: a guard firing at the prone guest through the held dog kills it on the guest's copy (`d937191f`, `dc761c98`: `Dead`, `deadBuddyType` 0 -> 4, `buddyCommonFlag` 32 -> 0; then the guest's block unloads and the reconcile cannot reload it). `SetDisableDamage` has no dog handler (dispatcher, 8.2) and did not help. Beside a guard in combat without fire through it: not hurt in 84-176 s. The guest's saves keep its own flags (D8 b, `84e4f1d`). Candidates: the repair lever (8.2), a native damage guard for id 9728 on the guest's copy [U], or D7 | `mirror` |
+| D-Dog (guest's copy) | **Built (M2): the stop-AI form of `LuaAiStayAndSnarl` (mode 1/2, whose AI update the Dog AI skips) placed by the command's own warp at 10 Hz** [O, 8.2]. 176 s within 1.4 m of a guard in an alert: zero `mirror_engaged` (run `4cd88ea2`). Fallbacks if needed: `SetEnabled=false` while a guard is within 5 m (the `TppDemo` command) [U] | **Passes with the D7 guard (8.9)** [O]: a native filter on the dog's damage handler drops every hit on the guest's copy while the guest's companion module holds it (about 85 s of guard fire through it, 50 hits dropped, no death: run `3922cc80`); the copy follows the host dog's life, sleep and death, and a death the guard cannot see is answered by the restore fallback (about 2.6 s). Before it, E19 failed (8.2: `d937191f`, `dc761c98`; `SetDisableDamage` has no dog handler) | `mirror` |
 | Quiet (guest's copy) | A cease-fire order or engagement flag through her controller requests [U, E15] | [U] | `mirror` |
 | D-Horse (non-riding copy) | A horse does not attack; its collisions with guards are possible [I] | `SetMaxLife` (dispatcher `0x140E4D250`) [O name, U effect] | `local` only while the local player rides it; else `mirror` |
 | Partner's D-Walker (index 1) | No pilot on that copy, so no gunfire; collisions possible [I] | Walker life command [U] (16-command dispatcher) | `local` only for the walker this copy pilots; else `mirror` |
@@ -685,7 +685,7 @@ mirror in play.
 | K18 | `SetDisableBuddyType` scope (when the byte resets) | Unknown / low | Read it at each mission start | E4 |
 | K19 | Relief index 0 cannot be removed on the receiver (Despawn rejects index 0; VEHICLE_GONE refuses `index0`), so its Fulton or destruction splits the copies under route A | Certain (route A) / medium | E17 candidates; else route B for LV/truck | E17 |
 | K20 | Mission-end relief seize and carry run on both copies: double Mother Base credit; the guest's replayed sortie may charge GMP | High (route A) / medium | Wrap `SeizeReliefVehicleOn*` on the guest; measure GMP | E18 |
-| K21 | Guards on the guest's copy hurt or kill a mirror; the guest copy enters a dead, hospital or retreat state the host does not have, and the block may drop the mirror | High / high | Invulnerability where an API exists; death and hospital only from the host's COMPANION state | E19 |
+| K21 | Guards on the guest's copy hurt or kill a mirror; the guest copy enters a dead, hospital or retreat state the host does not have, and the block may drop the mirror | High / high | Invulnerability where an API exists; death and hospital only from the host's COMPANION state. Dog: no API exists, so a native guard drops its hits on the guest's copy, its death comes only from the host's state byte, and a death the guard cannot see is restored (D7, 8.9) | E19 |
 | K22 | The guest's own call menu, buddy orders or horse whistle move its mirror (native paths, not Lua) | High / high | E4 finds the path; pad mask or disable byte; D1 (a) only after E4 | E4 |
 | K23 | Any horse and any player walker count as `local` today, so mirrors' hits are forwarded as the guest's | Certain / high | Id-aware attribution + fixture test (F12) | M9-M11 tests |
 | K24 | VEHICLE_STATE moves a vehicle that the guest drives (rider[] is empty on the host's copy) or that a guest-local NPC drives | High / high | Skip RIDE_FAST-latched ids and NPC-ridden ids on either copy; LRRP exclusion until M8 | M4 proof |
@@ -1540,7 +1540,31 @@ failed its first check on an empty chunk):
   (guest: the kill flag on its copy), `guard off|on` (guest); `companion_lab dog_state` (both roles, also in play: the
   receipt; the guest reads by re-arming, because a guest's arm 0 is a disarm).
 
-<!-- RESULTS-8.9 -->
+**Runs** (hidden worker, loopback, research build, native gun stage, copied saves, low graphics,
+`companion_host_owned=1`; host seed `afgh-ledge` with D-Dog, guest `afgh-horse`, the guest plays Quiet and is drawn as a
+DD soldier; every run closed with the baseline restored and the real saves unchanged). Log slices cut at the session's
+own process end (another agent's later run appends to the same game logs), archived with the run folders under
+`%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`; frames as JPEG in the session scratch folder `complete/frames/dog/`
+as `<run4>-<role>-<label>.jpg`.
+
+| Run | Scenario | What it is for |
+|---|---|---|
+| `3922cc80` | `companion-dog-guard.txt` (`6037827`) | E19 again with the guard; the restore fallback; no expectation failed |
+| `3f69e3b7` | `companion-dog-follow.txt` (`c622f58`) | the follow (hurt, asleep, awake, down, the host's re-call), the restore filmed, the legs; one expectation failed (below) |
+| `1713b0a1` | `companion-dog-guard-play.txt` (`aa405fd` tree), `-Mode play -WanSim bad` | the play rehearsal of M1 + M2 with the guard; no expectation failed |
+| `606048af` | `companion-dog-follow-frames.txt` (`aa405fd`) | the same follow and restore with the guest side-on (frames of the dog on both screens), the walk and run legs again; no expectation failed |
+
+| # | Result | Evidence |
+|---|---|---|
+| Guard installed | **Both copies** `dog_guard=installed;slots=2;scope=guest_instance0_lease;disk_writes=0` and `dog_guard_code_gate=ok` in every run: every pin and both slot values matched the installed exe [O]. The host never armed (its receipts are role 0, arm 0) | slices |
+| E19 (dog), the guard | **Pass** [O]. The guest's copy, armed with the host's byte (`step=armed; reason=ok; byte=159`), was held 1 m from the prone guest toward a guard in an alert (`near_guard shield`, as `d937191f`/`dc761c98`, which killed it after 76 s and 13 s) for about 85 s of fire: 50 hits dropped (`dog_guard=drop`, attacker 1116, attack id 333; `step=drops` every 5 s), `dog_state` read `life=10000; state=0` after about 60 s and 85 s, no `Dead` and no `companion_hurt` for 9728 on the guest's copy until the lab's own kill later; `buddy_status` `kdog`, `hurt0`. Frames: the copy standing over the prone guest after 8 s and 33 s of fire (`3922-guest-grd-shield-1`, `-3`), crouched beside it after 85 s (`-5`); the host's screen at the same moments shows the prone guest under fire and the host's own dog elsewhere, unhurt (`3922-host-grd-shield-3`; the shield lever moves only the guest's copy). Not separately measured: explosions, vehicles and the guest's own weapons go through the same `ProcessDamages` call [I, static: the only caller is the generic damage controller] | `3922cc80` |
+| Restore fallback | **Pass, about 2.6 s** [O]. `companion_lab kill_mirror` (the native kill flag on the guest's copy, as a death the guard cannot see) while the host's dog lives: `Dead` for 9728 -> `dog_restore; step=dead; host=alive` in the same ms -> `step=vars` (`deadBuddyType` 4 -> 0, `buddyCommonFlag` 0 -> 32) 84 ms later -> `step=delete` at 1.5 s -> `step=reload; n=1` and M1's `reconcile; via=load; kind=dog; have=none; ok=1` at 1.7-1.8 s -> `step=back; ms=2585` (both runs: 2585 ms), the guard armed again, `kdog`, held 22-24 cm from the host dog's pose. On the guest's screen the copy is carried off by the stock Fulton balloon at the death ("D-Dog" extraction, `3f69-guest-rst-dead`) while the host's dog stands beside Snake on the host's (`3f69-host-rst-dead`); in `3f69e3b7` the host's body hid the returned dog on the guest's screen, so `606048af` filmed it side-on: **FRAME on both copies** before (`6060-*-rst2-before`: the dog beside the host on both), at the death (`6060-guest-rst2-dead`: the copy carried off; `6060-host-rst2-dead`: the host's dog unaffected beside Snake) and after the restore (`6060-guest-rst2-back`: the copy standing beside the host again; `6060-host-rst2-back`). Same timing in all three runs (`back; ms=2585`) | `3922cc80`, `3f69e3b7`, `606048af` |
+| Follow: hurt | [O] host `companion_lab dog_life 30` -> `dog_guard=lab;op=1;pct=30;life=10000>3000` -> host `step=state; byte=138; state=0; life31=10` -> guest `dog_guard=follow;byte=0x8a;life=10000>3226` -> guest `dog_state` `life=3230`; the host's regeneration followed (`byte=0x8b` -> 3549, `0x8c` -> 3871). Frames: the guest's copy standing beside the host at 30 % (`3f69-guest-fol-hurt`, `6060-guest-f2-hurt`); on the host's screen the host's body hides its dog (marker only, `*-host-*-hurt`). That a hurt D-Dog looks or moves differently is [U] (no limp seen) | `3f69e3b7` |
+| Follow: asleep and awake | [O] host `dog_stun 0` -> host `state=1; byte=170` -> guest `follow;byte=0xaa;...;stun=10000>0` -> guest `dog_state` `stun=9; state=1`; host `dog_stun 100` -> host `state=0` -> guest `stun=8>10000` -> `state=0`. Frames: the `STN` (stunned) marker over the dog on both screens (`3f69-*-fol-asleep`; bodies hidden by grass and the host) | `3f69e3b7` |
+| Follow: down (the host's dog dies) | **Pass, FRAME on both copies** [O]. Host `dog_life 0` -> host `Dead` for 9728 (t=202395226) and `byte=192; state=2` -> guest `dog_guard=follow;byte=0xc0;...;kill=1` -> guest `Dead` 101 ms after the host's -> `dog_restore; step=dead; host=down` (no send-away, no reload; vars repaired). Both screens show the notice "D-Dog Near Death" and the dog carried off by the Fulton balloon from the same spot (`3f69-host-fol-down`, `3f69-guest-fol-down`; again `6060-*-f2-down`): the stock retreat, on each copy its own | `3f69e3b7`, `606048af` |
+| The host's re-call | [O] host `companion_lab recall` -> `recall;dead=4>0;call_here;kind=dog;result=load` (the host's own dead DOG bit cleared, the dog loaded 5 m in front) -> guest M1 `reconcile; via=load; kind=dog; have=none; ok=1` 8 s later (its debounce) -> `dog_restore; step=recalled; ms=36052` (from the death) -> `target_submitted`, `kdog` on both, armed with `byte=159`. **FRAME on both copies** in `606048af` (`6060-*-f2-recall`: the dog back beside Snake on both screens; `recalled; ms=36069`) | `3f69e3b7`, `606048af` |
+| Legs on the shipped hold | **Pass, FRAME on both copies** [O]. `606048af` (the host's dog called beside the host first, the guest watching side-on): marked walk windows 0.35 and 1.09 m, run windows 1.07 and 2.57 m (`within=1`; one walk window as the dog stopped after the run read 3.73 m); frames `6060-*-f2-walk` and `6060-*-f2-run` show the dog with the host on both screens. Unmarked windows of the other runs: walk 0.20-1.85 m (lab), 0.37-2.93 m (play), run 0.16-1.46 m (lab), 1.46-2.77 m (play); the first window after a teleport reads 17-37 m (the hold's warp beyond 15 m). `3f69e3b7`'s marked walk leg failed its waitlog because the host's dog stayed where it was (idle windows `speed_cms=0`, 2.17-2.32 m, 21 drift warps: the copy is warped back to an unchanged target 2.2 m off, cause [U]) | `606048af`, `3f69e3b7`, `3922cc80`, `1713b0a1` |
+| Play rehearsal (M1 + M2 with the guard) | **Pass** [O] (`1713b0a1`, `-Mode play -WanSim bad`, link RTT 175-187 ms, loss up to 12 %): play's title Continue, pairing in the helicopter, the host's seeds and the guest's `loaded; kind=dog; source=seed; mission=30010`, the guard armed with the host's byte (`byte=159`), walk and run windows within (above), `kdog` on both; the host's `cp_phase nearest alert` reached the guest's copy (`phase=3; src=rx; applied=1`) and both screens show "Spotted unidentified enemy combatant. Currently engaging!" with the dog beside Snake (`1713-*-gp-fight-1`, `-2`, `-3`); `dog_state` `armed=1; life=10000; state=0` twice, no `Dead`. **No guard fired at the dog in the 55 s window** (`drops=0`): the guard's drop is proven in the lab only. Play refuses the follow, restore and re-call levers, so those paths have no play rehearsal | `1713b0a1` |
 
 ## 9. Milestones
 
@@ -1648,8 +1672,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     `event=divergence` for it.
   - Repeat in 30050 (`mb-ladder`, `both capture m2-mb-dog`) and the `-Mode play -WanSim bad` rehearsal.
   - Exit: a two-PC session.
-- **Status (2026-10-29): built on `wp/companion-host` behind `companion_host_owned` (M1's key); play default off;
-  E19 fails, so D7 is open for the user.** Results and run ids in 8.2 and 8.3. Integrated on `dev/oct7-continue`
+- **Status (2026-10-29): built on `wp/companion-host` behind `companion_host_owned` (M1's key); play default off.
+  E19 failed in 8.2; the user's D7 (guard, follow, restore) is built on `wp/dog-guard` and E19 passes (8.9).** Results and
+  run ids in 8.2, 8.3 and 8.9. Integrated on `dev/oct7-continue`
   (merge `23c2cac`; unreleased).
   - Built: COMPANION_POSE (op 57, datagram, 10 Hz moving / 2 Hz idle) and COMPANION_ACK (op 49, 1 Hz); the guest holds
     its copy of the host's dog with the stop-AI form of `LuaAiStayAndSnarl` placed by its own `warp=1` every 100 ms,
@@ -1667,14 +1692,15 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     (`d937191f`). With the drift warp (`033193d3`): walk, run and dash met their waitlogs again, one walk window at 3.21 m.
     Review 2026-10-29: those frames come from code before the drift warp (`1de1b27`) and the own flags (`84e4f1d`); the
     only run on that code, `033193d3`, has no frame with the dog on either screen; for the shipped hold see 8.3.
-  - Not met: **E19** (guards on the guest's copy kill its dog: `deadBuddyType` 0 -> 4, then the guest's block unloads
+  - Not met (before D7; since then see 8.9): **E19** (guards on the guest's copy kill its dog: `deadBuddyType` 0 -> 4, then the guest's block unloads
     and the dog does not come back; `SetDisableDamage` does nothing); the dog's takedown for the commit/apply check
     (the call menu's "Get it" took nobody down in two runs); the play rehearsal (`ba6d6ff8` ran with the dog
     unrealized; not re-run because the default cannot flip while E19 fails); the Mother Base run leg (scenario fixed,
     not re-run); a two-PC session.
     The D7 candidate `companion_lab repair` (write back the dog's death flags) let M1's reconcile reload the dog after
     a guest-side death once (`033193d3`, gone about 19 s); logs only, no frame of the returned dog.
-  - **Why the play default stays off:** E19 fails (above); D7 is the user's call (section 10).
+  - **Why the play default stays off (before D7):** E19 failed (above); D7 was the user's call (section 10). Since
+    D7 (8.9), see the last bullet of this list.
   - **Review fixes (2026-10-29, 8.3):** the hold moved unchanged to `lua/coop/world_companion_dog.lua`; it runs only
     when both PCs run the key. On the shipped hold code (`9165baeb`): the guest's copy held the dog 26-30 cm from the
     host dog's pose; FRAME on the host's screen (`9165-host-qf-dog-2`), on the guest's only the dog's head above a rock
@@ -1683,6 +1709,26 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     both screens (`b651-host-gv-dog-2`; `b651-guest-gv-dog`, `-gv-dog-3`), held 2-214 cm (the 214 cm sample right after a
     drift warp; every window `within=1`). This answers the review's proof gap for the walk-free idle hold only; the
     legs (walk, run, dash) were not re-run on this code.
+  - **D7 built and proven (2026-10-29, 8.9; branch `wp/dog-guard`):** the guest's copy of the host's dog cannot be hurt
+    on the guest's PC (a native filter on the dog's damage handler, armed by the guest's companion module), follows
+    the host dog's life, sleep and death through a dog-state byte in COMPANION_POSE / COMPANION `state` (no wire
+    change), and comes back from the host's live state when it dies anyway (the restore fallback, about 2.6 s). E19
+    passes: about 85 s of guard fire through the copy, 50 hits dropped, no death (`3922cc80`, FRAME of the copy standing
+    in the line of fire). FRAME on both copies of the host's dog's death mirrored on the guest's ("D-Dog Near Death" and
+    the extraction on both screens, `3f69e3b7`); the restore and the host's re-call in logs with frames on the host's
+    screen and the guest's (FRAME on both copies with the guest side-on in `606048af`: the restore before, at the death and after; the re-call; the walk and run legs). Play rehearsal of M1 + M2 with the guard (`1713b0a1`, `-Mode play -WanSim bad`,
+    no expectation failed): the seeds, one dog following the host on both screens (walk 0.37-2.93 m, run 1.46-2.77 m),
+    the guard armed with the host's byte, the host's alert applied on the guest's copy with the dog beside the host on
+    both screens; no guard fired at the dog in that window (0 hits dropped), so the guard's drop itself is lab-only proof.
+  - **Why the play default stays off (2026-10-29):** the key covers M1 and M2 together, and not every path under it has
+    a FRAME on both copies and a passing play rehearsal: (1) the guard's drop, the follow (hurt, asleep, down), the
+    restore and the re-call are proven in the lab only: play refuses the levers that drive them (`near_guard shield`,
+    `dog_life`, `dog_stun`, `kill_mirror`, `recall`), and the play rehearsal's guards never fired at the dog; (2) M1's
+    review fixes have no play rehearsal (the Quiet park with the host's Quiet deployed, the guest shown no horse,
+    walker or Quiet, the session end, the reconcile backoff); (3) the iDroid buddy request and dismiss are not refused
+    on the guest's copy, and the host's sortie-prep and iDroid buddy lists were not reached (R5); (4) no two-PC
+    session. The dog's takedown result reaching the guest
+    (commit/apply) is still not reached.
 
 ### M3. The sortie vehicle on both copies
 
@@ -1938,7 +1984,7 @@ library when a proof needs a sortie vehicle or Quiet. **Defaults taken until the
 partner stays hidden until M10; D4 (a) the 2026-10-22 rule is lifted for the shared horse only (it follows from the
 user's 'ridden by both players at once'); D6 the support heli (M12), vehicle weapons (M13) and the host's in-mission
 vehicle drop come later, enemy helicopters and walker gears stay in the enemy section; D7 is decided with the user once
-E3/E15/E19 have run (E3 and E19 have run for the dog, 8.2: E3 passes, E19 fails, so D7 is now open for M2); D8 (b) the guest's own buddy vars are restored; D9 (b) M1 starts now, alongside the user's
+E3/E15/E19 have run (E3 and E19 have run for the dog, 8.2: E3 passes, E19 fails; the user answered D7 for the dog on 2026-10-29, below, and E19 passes with it, 8.9); D8 (b) the guest's own buddy vars are restored; D9 (b) M1 starts now, alongside the user's
 two-PC check of 0.14.3.
 
 The original questions:
@@ -1979,6 +2025,10 @@ The original questions:
   once in the lab: the dog drops, is gone for about 19 s and is loaded again beside the host); (c) keep M2 in the
   lab until enemy sync in play; (d) new native work: a damage guard that drops hits on id 9728 on the guest's copy (the
   downed-player damage hooks show the shape) [U].
+  **Answered by the user on 2026-10-29:** the guest's copy cannot be killed by anything on the guest's PC, its health and
+  state follow the host's dog, and where the guard cannot cover a case the copy is brought back from the host's live
+  state (the restore fallback). Built as (d) plus the follow and the fallback on `wp/dog-guard` (8.9); the key stays off
+  in play until every path under it has its FRAME and play rehearsal (section 9 M2).
 - **D8. The guest's co-op save and the host's buddy:** (a) accept it (the guest's co-op save takes the host's buddy,
   look and relief choices); (b) the guest's own buddy vars are restored around each save write and at the end of the
   session (recommended); (c) restore them only at the end of the session.
