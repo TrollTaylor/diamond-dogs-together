@@ -1,3 +1,84 @@
+## 2026-10-29: the user's vehicle and companion decisions (D7, D11-D15) integrated (`dev/oct7-continue`, unreleased, not two-PC tested)
+
+Both decision tracks are merged into `dev/oct7-continue` with merge commits only (local, nothing pushed, tagged or
+released): `4e3d0e5` merges `wp/dog-guard` (D7, with its review fixes) and `92c4f9f` merges `wp/vehicle-decisions`
+(D11, D12, D14, with their review fixes). Both reviews returned "fix first"; every finding was fixed on the track
+branches before the merge, and the claims they refuted are corrected in the sections below. Details:
+`docs/vehicles-companions-design.md` 8.9-8.12 (results), 8.13 (the combined smoke), section 9 M2 and M4, section 10
+(the decision table), section 11 (review and integration log).
+
+**Merge.** Conflicts were only in lists and docs: the world chunk order is now `... world_vehicle_state`,
+`world_vehicle_rules`, `world_companion`, `world_companion_dog`, `world_companion_guard`, `world_relief`,
+`world_relief_sync` (CMake, the bootstrap patch, its check and `world_sync_source.hpp.in` agree). No op code or CFG
+index collides: D7 adds no op (the dog's state byte rides COMPANION 0x30 and COMPANION_POSE 0x39) and no CFG index
+(it reads `companion_host_owned`, `r[16]`); the vehicle track adds REQ_VEHICLE_GONE cause 4 (U8 1..4) and REJECT 11
+(protocol section 19) and the `r[15]` bits 8, 16 and 32. The vehicle track's design sections 8.9 / 8.10 became 8.11 /
+8.12 (every reference renumbered). All four 2026-10-29 STATUS sections of the two tracks are kept below.
+
+**Per decision** (FRAME = frames on both copies; play = `-Mode play -WanSim bad` rehearsal):
+- **D7, the guest's copy of the host's D-Dog.** Built: the native guard (`native/dog_guard.cpp`: the dog's
+  `ProcessDamages` and life-update slots) and `lua/coop/world_companion_guard.lua`: hits on the guest's copy are
+  dropped while armed, the copy follows the host dog's state byte, and after a death the guard cannot see it is
+  brought back from the host's live state (about 2.6 s). Proven in the lab [O]: E19 passes (`3922cc80`, `7fe2845e`,
+  `cc2e15d2`), the restore (FRAME `606048af`, `cc2e15d2`), the follow (the down state on both screens, `3f69e3b7`, `606048af`) and the re-call (FRAME `606048af`, `cc2e15d2`),
+  the hold under a simulated link loss (`9fa48400`). **Play default: off** (it follows `companion_host_owned`, off in
+  lab and play; a default session installs nothing, `19e438fe`, and the combined smoke `a1d7aaa1`). Unproven: the guard's drops, the
+  follow, the restore and the re-call in play (play refuses their levers; no guard fired at the dog in `1713b0a1` or
+  `f7033e2e`); a real link loss [I]; the host-side pass-through [I]; the 30 heroism lost on the guest's PC at each
+  copy death (open question); M1's own gaps; two-PC.
+- **D11, the guest's LOADOUT drop.** Built: `world_loadout_block` (`r[15]` bit 32): the guest's iDroid LOADOUT and (the
+  reviewer's pick) VEHICLES items are inactive in co-op and refused with a toast; the host's are untouched. **Play
+  default: on.** Proven: FRAME `c0203fdd` (lab), play `70146170`, `47b95ae7`, and both items with both toasts at the
+  shipped defaults `f729d7f4`, `33a7fa6e`; again in the combined smoke `a1d7aaa1`. Unproven: two-PC.
+- **D12, a vehicle the guest destroys.** Built: `world_vehicle_break` (bit 8): the guest's unattributed break goes to
+  the host (cause 4), which judges it (300 m, or its copy already badly damaged), refuses it when the guest was too far or while the
+  host rides it,
+  holds it while D-Dog or a soldier is seated (REJECT 9 after 120 s), and wrecks its copy, or despawns it while a
+  player is within 15 m (the blast rule). **Play default: on** in Afghanistan and Africa. Proven: FRAME `c0203fdd`,
+  `09333f05`, `7762536a` (lab), play at the shipped defaults `f729d7f4`, `33a7fa6e` (the Despawn with the host 8 m
+  away, life unchanged; the wreck seen intact, burning and burnt on the host's screen); 120 m judged near
+  (`0f3f00f1`, logs only). Not in the combined smoke. Unproven: a soldier-crewed vehicle stays split after the hold
+  (open question for the user); a real launcher or rifle kill at range; the 15 m margin is not a measured radius
+  [I]; two-PC.
+- **D13, the M4 play defaults.** Nothing changed: VEHICLE_GONE and VEHICLE_STATE stay on in play in 30010 / 30020;
+  Mother Base and the wreck parity stay lab only. In the combined smoke `a1d7aaa1` a jeep the guest drove with the
+  host in a back seat stayed parked where the guest left it on both screens. Two-PC still to do.
+- **D14, Fulton rewards.** Built: `world_vehicle_credit` (bit 16): the receiver removes its copy with
+  `Seize {"Instant"}`, so both co-op saves are credited once each; the sortie vehicle keeps one credit (the host's).
+  **Play default: on.** Proven: FRAME `c0203fdd` (lab: `4wdW` 1 -> 3 on both copies after the mission end, the GMP
+  fee only on the player who Fultoned), play `70146170`, `47b95ae7`; the host's Fulton again in `a1d7aaa1`. Unproven: APCs, tanks and trucks; a
+  far or unrealized receiver; the commit in play rests on the lab mission end [I]; two-PC.
+- **D15, the guest's bail out of a rolling jeep.** Accepted as is; nothing built and not run. For the two-PC session.
+
+**Combined smoke of the merged head** (one hidden run, worktree `D:/mgs-coop-wt/relief` on `wp/integ-smoke` =
+`d9ce8d3`; `tools/worker/scenarios/integ-smoke-play.txt`, `-Mode play -WanSim bad`, seed `africa-jeep`, no labsetting
+and no lab lever, so the shipped play defaults). Run `a1d7aaa1`: **every expectation met**, Closed, baseline and
+real-save hashes verified, `Forced=False`; no error, `viewer_changed` or fault line on either copy; RTT 175-189 ms,
+loss up to 14.2 %. FRAME on both copies for the pairing, D11, the drive and the Fulton (session scratch
+`complete/frames/integrate/`):
+- [O] Both games reached gameplay and paired; every module at its default (`vehicle_rules ... break=1; credit=1;
+  loadout=1`, `dog_guard=off;reason=key_off;slots=0` and `installed=0` on both).
+- [O] `companion_host_owned` is off in play, so there is no host dog on the guest's screen to check: each PC kept its
+  own D-Dog (the host's beside Snake on the host's screen; the guest's own rode in the guest's jeep).
+- [O] D11: the guest's LOADOUT and VEHICLES refused with both toasts drawn; the host's VEHICLES list opens.
+- [O] A jeep the guest drove with the host in a back seat (the board hook's passenger seat and camera), then both got
+  off: the host's VEHICLE_STATE resumed and sent the pose (`why=moved; d_mm=28138`), the guest's copy was already there
+  (`step=same; d_mm=1`); the parked jeep at the same spot on both screens. [O, meaning U] its state word then read
+  `sv=1` on the host's copy and `sv=3` on the guest's (logged, not written by VEHICLE_STATE).
+- [O] D14: the host's hand Fulton of a jeep, credited on the host (`via=own`) and on the guest (`credit_seize`,
+  `via=receiver`, `applied; via=seize; ms=250`); the GMP fee on the host only; the jeep gone on both screens.
+- Not in the smoke: D12 (rehearsed in `f729d7f4` / `33a7fa6e`), the dog guard under its key, a mission end, D15. No
+  defect found.
+
+| Run | Scenario | Result |
+|---|---|---|
+| `a1d7aaa1` | `integ-smoke-play.txt` (`-Mode play -WanSim bad`, shipped defaults, merged head `d9ce8d3`) | Every expectation met; pair, D7 default off on both, D11 refusals, guest-driven jeep with the host as passenger parked on both, D14 Fulton credited on both |
+
+**Checks.** Full CTest 314/314 on the merged head `92c4f9f` (`pwsh -File tools/build.ps1`, Debug, in the worktree
+`D:/mgs-coop-wt/relief` on `wp/integ-smoke`); the contract checks `generate_partner_contract.py`,
+`generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`, `generate_nametag_contract.py` and
+`generate_downed_damage_contract.py` `--check` pass. Nothing pushed, tagged or released.
+
 ## 2026-10-29: D7 review fixes (`wp/dog-guard`, unreleased, not two-PC tested)
 
 An independent review of `wp/dog-guard` at `8a294ce` (verdict: fix first) found one major and four minor problems
