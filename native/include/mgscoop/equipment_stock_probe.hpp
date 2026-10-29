@@ -93,4 +93,36 @@ public:
         return queued_;
     }
 };
+// Two-PC test 2026-10-23 item 2: the host pressed Continue right after a save
+// handoff while the relaunched guest was still at its title, so the host's
+// allocation had no manifest (equip_preload=refused; reason=no_manifest), the
+// manifest came 20 s later, nothing loaded the guest's bases and its guns never
+// showed in that whole visit (backoff no_resident x6, refused). The preload is
+// a mission-block load at the allocation only (vanilla calls
+// RequestLoadToEquipMissionBlock in MissionPrepare), so a late manifest cannot
+// load anything until the next allocation.
+// The source of the allocation preload's ids: the peer's manifest of this link
+// session first. Without one, a peer that restarted on this copy's save (this
+// host handed its save over in this process: the token partner_restarting)
+// continues that save, so its first loadout is this copy's own: this copy's own
+// last sent manifest predicts its base ids (the writer still waits for the real
+// manifest before it binds anything). Nothing is guessed otherwise.
+enum class PreloadSource : unsigned char { none, remote, predicted };
+constexpr PreloadSource ChoosePreloadSource(bool remote, bool peer_on_handed_save, bool own) noexcept {
+    return remote ? PreloadSource::remote : peer_on_handed_save && own ? PreloadSource::predicted : PreloadSource::none;
+}
+constexpr const char* PreloadSourceName(PreloadSource s) noexcept {
+    return s==PreloadSource::remote ? "remote" : s==PreloadSource::predicted ? "predicted" : "none";
+}
+// The late-manifest receipt: how many of the remote's non-zero base ids the
+// allocation's preload covered (`wanted` = the non-zero ones).
+inline unsigned PreloadCover(const std::uint16_t (&remote)[3], const std::uint16_t* ids, unsigned count, unsigned& wanted) noexcept {
+    unsigned covered=0; wanted=0;
+    for(const std::uint16_t id : remote) {
+        if(!id) continue;
+        ++wanted;
+        for(unsigned i=0;ids && i<count;++i) if(ids[i]==id) { ++covered; break; }
+    }
+    return covered;
+}
 }

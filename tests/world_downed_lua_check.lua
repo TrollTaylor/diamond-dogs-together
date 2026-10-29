@@ -13,7 +13,9 @@ local function fixture(host)
         native = {ready = true, down = false, generation = 0, cause = 0, held = false, pos = {0, 0, 0}}}
     local env = setmetatable({e = {}, vars = {missionCode = 30010},
         Tpp = {MgsCoop = {playerPackageSelected = true}},
-        PlayerInfo = {GetLocalPlayerIndex = function() return 0 end}, Player = {}}, {__index = _G})
+        PlayerInfo = {GetLocalPlayerIndex = function() return 0 end,
+            OrCheckStatus = function(list) return c.boxed == true and type(list) == 'table' and list[1] == 1024 end},
+        PlayerStatus = {CBOX = 1024}, Player = {}}, {__index = _G})
     local W = {OP = OP, active = true, paired = true, eff = 3, role = host and 1 or 2,
         host = host, mission = 30010, epoch = 7, handlers = {}, startHooks = {}, stopHooks = {},
         pairedHooks = {}, unpairedHooks = {}, recovery = {dead = false}}
@@ -91,11 +93,18 @@ local function fixture(host)
             else n.life = n.life - dmg / 1000 end
             r = copy(n); r.applied = true; return r
         end
-        local mission, epoch, command, generation = text:match("^return 'MGS_COOP_DOWNED_V1' %-%- (%d+) (%d+) (%d+) (%d+)$")
+        local mission, epoch, command, generation, posture = text:match("^return 'MGS_COOP_DOWNED_V1' %-%- (%d+) (%d+) (%d+) (%d+)(.*)$")
         check(mission == tostring(c.receiptMission or 30010) and epoch == tostring(c.receiptEpoch or 7),
             'native receipt contains the fixture bound mission and epoch')
         command, generation = tonumber(command), tonumber(generation)
-        c.nativeCalls[#c.nativeCalls + 1] = {command, generation}
+        -- Item 4: polls and locks carry the posture field (the local CBOX status), nothing else does.
+        if command == 0 or command == 1 then
+            check(posture == ' 0' or posture == ' 1', 'polls and locks carry exactly one 0/1 posture field')
+            check((posture == ' 1') == (c.boxed == true), 'the posture field is the local PlayerStatus CBOX query')
+        else
+            check(posture == '', 'only polls and locks carry the posture field')
+        end
+        c.nativeCalls[#c.nativeCalls + 1] = {command, generation, posture}
         if c.refuseControl and command ~= 3 then return nil end
         if c.reply ~= nil then return c.reply end
         if c.throwNative then error('fixture native refusal') end
@@ -985,5 +994,64 @@ do
     guest.D.partnerSleepPublish(guest.now)
     check(guest.team[9]==host.native.generation and guest.D.peerWakeSerial==22,
         'replacement generation needs its own fresh exact host grant')
+end
+-- Two-PC test 2026-10-23 item 4: friendly fire on a boxed host. The posture
+-- field reports the local box; a native controls timeout ends the cycle under
+-- a newer generation (never a revive, never a latch) and Lua follows it.
+do
+    local c = fixture(true); c.boxed = true; down(c); c.D.tick(0)
+    local polls, locks = 0, 0
+    for _, call in ipairs(c.nativeCalls) do
+        if call[1] == 0 and call[3] == ' 1' then polls = polls + 1 end
+        if call[1] == 1 and call[3] == ' 1' then locks = locks + 1 end
+    end
+    check(polls >= 1 and locks == 1 and c.D.records[1].down, 'a boxed downed poll and its lock both report the box posture')
+    c.boxed = false; c.now = 100; c.D.tick(100)
+    check(c.nativeCalls[#c.nativeCalls][3] == ' 0', 'leaving the box clears the posture field on the next poll')
+end
+do
+    -- Timeout before any lock: the prone request never took (the boxed body of
+    -- the test). The mask Lua set for the pending lock is released, the newer
+    -- not-down generation is accepted, and the next down cycle arms again.
+    local a, b = pair(); a.failLock = true; down(a); step(a, b, 100)
+    check(a.mask and a.D.maskOwned and not a.D.records[1].down, 'a pending lock holds the mask but never advertises the body down')
+    a.failLock = false
+    a.native.down, a.native.cause, a.native.generation = false, 0, a.native.generation + 1
+    step(a, b, 100)
+    check(not a.mask and not a.D.maskOwned and a.maskResets == 1, 'the native timeout releases the pending downed mask')
+    check(a.D.active and a.D.records[1].ready and not a.D.records[1].down and a.D.records[1].generation == a.native.generation,
+        'the owner stays active and ready under the newer generation: no latch')
+    local logged = false
+    for _, line in ipairs(a.logs) do logged = logged or line:find('step=abandoned;role=1;', 1, true) ~= nil end
+    check(logged, 'the abandoned cycle is logged once by the owner')
+    down(a); step(a, b, 100); step(a, b, 100)
+    check(a.mask and a.D.records[1].down and b.D.records[1].down and b.D.records[1].generation == a.native.generation,
+        'the next down cycle arms again and reaches the peer')
+end
+do
+    -- Timeout after the lock (a lost lock): the peer saw the body down. The
+    -- newer not-down generation is an abandoned cycle on both copies, no grant.
+    for _, hostSide in ipairs({true, false}) do
+        local h, g = pair()
+        local owner, peer = hostSide and h or g, hostSide and g or h
+        local role = hostSide and 1 or 2
+        down(owner); step(h, g, 100); step(h, g, 100)
+        check(owner.D.records[role].down and peer.D.records[role].down, 'both copies see the locked down body')
+        local old = owner.native.generation
+        owner.native.down, owner.native.cause, owner.native.generation = false, 0, old + 1
+        step(h, g, 100); step(h, g, 100)
+        check(not owner.mask and not owner.D.maskOwned, 'a lost-lock timeout releases the owner mask')
+        check(not owner.D.records[role].down and owner.D.records[role].generation == old + 1,
+            'the owner accepts its abandoned cycle without a grant')
+        check(peer.D.records[role] and not peer.D.records[role].down and peer.D.records[role].generation == old + 1,
+            'the peer accepts the abandoned cycle: no stale downed record blocks later status')
+        check(not owner.revived and not peer.revived and (h.D.granted[role] ~= old), 'an abandoned cycle is never a revive or a grant')
+    end
+    -- A same-generation stand-up without a grant is still refused (unchanged rule).
+    local h, g = pair(); down(g); step(h, g, 100); step(h, g, 100)
+    local r = h.D.records[2]
+    check(r.down and not h.D.acceptStatus(status(r.sequence % 65535 + 1, r.generation, false, 0), 2, h.now),
+        'standing up under the same generation still needs the grant')
+    check(h.D.records[2].down, 'the refused stand-up leaves the downed record')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')

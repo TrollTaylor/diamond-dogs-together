@@ -23,12 +23,23 @@ local function on()
     not (W.recovery and W.recovery.dead)
 end
 D.hitEnabled=on
+-- The local player's own cardboard box (PlayerStatus CBOX). A boxed body cannot
+-- take the native prone request; native accepts the box as the downed posture
+-- (two-PC test 2026-10-23 item 4). A refused query reads as not boxed.
+local function boxed()
+  local query,status=W.get(PlayerInfo,"OrCheckStatus"),W.get(PlayerStatus,"CBOX")
+  if type(query) ~= "function" or not valid(status, 0, 2147483647) then return false end
+  local ok,v=pcall(query,{status})
+  return ok and v == true
+end
 local function native(command,generation)
   local mission=command==3 and D.boundMission or W.mission
   local epoch=command==3 and D.boundEpoch or W.epoch
   if not valid(mission, 0, 99999) or not valid(epoch, 1, 65535) then return nil end
-  local ok,r=pcall(W.receipt,fmt("return 'MGS_COOP_DOWNED_V1' -- %d %d %d %.0f",
-    mission, epoch, command, generation or 0))
+  -- Polls and locks carry the posture field (0 or 1); other commands never do.
+  local posture=(command == 0 or command == 1) and (boxed() and " 1" or " 0") or ""
+  local ok,r=pcall(W.receipt,fmt("return 'MGS_COOP_DOWNED_V1' -- %d %d %d %.0f%s",
+    mission, epoch, command, generation or 0, posture))
   if command == 3 then return ok and type(r) == "table" and r.applied == true and r or nil end
   if not ok or type(r) ~= "table" or r.ready ~= true or type(r.down) ~= "boolean" or
     type(r.held) ~= "boolean" or not valid(r.generation, 0, U32 - 1) or not valid(r.cause, 0, 2) or
@@ -143,8 +154,11 @@ local function accept(v,role,now)
     if v[2] ~= old.generation and not newer(v[2], old.generation, U32) then return false end
     if down and not old.down and v[2] == old.generation then return false end
     if down and old.down and v[2] == old.generation and v[4] ~= old.cause then return false end
-    if old.down and not down and D.granted[role] ~= old.generation then return false end
-    if old.down and not down and v[2] ~= old.generation then return false end
+    -- Up again under a newer generation: the owner's native ended that cycle
+    -- without a revive (its controls timeout retires the generation, item 4).
+    -- It is never a revive of the old generation, so it needs no grant.
+    local abandoned=old.down and not down and v[2] ~= old.generation
+    if old.down and not down and not abandoned and D.granted[role] ~= old.generation then return false end
   end
   D.records[role]={sequence=v[1],generation=v[2],down=down,cause=v[4],
     pos={v[5],v[6],v[7]},held=v[8]==1,targetGeneration=v[9],ready=v[10]==1,at=now,
@@ -216,6 +230,14 @@ local function poll(now)
   D.nativeSleepActive=r.nativeSleepActive==true or nil
   D.active,D.boundMission,D.boundEpoch=true,W.mission,W.epoch
   if D.unlockGeneration and D.unlockGeneration ~= r.generation then D.unlockGeneration, D.unlockAt = nil, nil end
+  if not r.down and D.maskOwned and not D.nativeSleepActive then
+    -- A healthy owner never keeps the downed mask: the native owner ended the
+    -- cycle without a revive (its controls timeout, item 4, before or after
+    -- the lock). accept() below takes the newer generation as abandoned.
+    if not mask(false) then resetHold(); return false end
+    local own=D.records[W.role]
+    log(fmt("step=abandoned;role=%d;generation=%.0f;next=%.0f", W.role, own and own.generation or 0, r.generation))
+  end
   if r.down and D.unlockGeneration ~= r.generation then
     if not mask(true, r.cause) then resetHold(); return false end
     local lock=native(1,r.generation)

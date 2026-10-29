@@ -70,6 +70,12 @@ std::uint8_t LockAllowed() noexcept;
 // Guest role, mode scene or always, and a host STATE seen: world_link's NOTE
 // code 1 posts no toast (the handoff toasts replace it).
 bool GuestHandoffActive() noexcept;
+// Host role: a guest restarted on THIS copy's save in this process (the core
+// published the token partner_restarting: its RESULT exiting, or a verified
+// scene/always stage whose link closed). Process-wide; any thread. The
+// allocation preload then predicts the peer's first loadout from this copy's
+// own manifest until the peer's arrives (two-PC test 2026-10-23 item 2).
+bool PeerOnHandedSave() noexcept;
 
 // PartnerShutdown (before partner_net::Shutdown): ABORT shutdown when
 // mid-transfer; frees the snapshot. Flags only here: the hook thread runs

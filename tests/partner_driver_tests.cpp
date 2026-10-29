@@ -11,6 +11,7 @@
 #include <vector>
 #include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_driver.hpp"
+#include "mgscoop/equipment_stock_probe.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "partner_player_contract.hpp"
@@ -3994,7 +3995,8 @@ void TestNativeOnline() {
     }
     for (const bool play : {true, false}) {
         // Play: a shot or ammo leak into the viewer's vars strips FIRE and RELOAD
-        // for the rest of the process (every later mission too); the lab only counts.
+        // for the rest of THIS MISSION (two-PC test 2026-10-23 item 3: the old
+        // latch outlived the mission and the process); the lab only counts.
         NativeSession s;
         SetVisualFire(s);
         s.driver.settings.play_mode = play;
@@ -4002,19 +4004,28 @@ void TestNativeOnline() {
         for (int i = 0; i < 5; ++i) s.N();
         Check((s.fake.arms.back().strip & 0x50u) == 0, "no leak: FIRE and RELOAD pass");
         s.fake.stats.native.shot_leaks = 1;
+        s.fake.stats.native.shot_leaks_mission = 1;
         for (int i = 0; i < 5; ++i) s.N();
         if (play) {
             Check((s.fake.arms.back().strip & 0x50u) == 0x50u && (s.fake.arms.back().strip & 0x8u) == 0 && s.driver.leak_strip == 0x50u &&
                       s.fake.Containing("partner_weapon=fire_reload_off; reason=shot_leak; shot_leaks=1; ammo_leaks=0;") == 1 &&
-                      s.driver.mission.tele.leak_strip == 0x50u,
-                  "play: a shot leak strips FIRE and RELOAD (HOLD stays), logged once");
-            s.fake.stats.native.shot_leaks = 0;
+                      s.fake.Containing("scope=mission") == 1 && s.driver.mission.tele.leak_strip == 0x50u,
+                  "play: a shot leak strips FIRE and RELOAD (HOLD stays) for the mission, logged once");
+            // MissionStart resets the hook's mission counters (reset_input_fault); the process total stays.
+            s.fake.stats.native.shot_leaks_mission = 0;
             pd::MissionEnd(s.driver, s.hooks);
             pd::MissionStart(s.driver, s.hooks);
             Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "leak guard: next mission cfg");
             Loaded(s);
-            Check(s.Until(pn::Mode::active, 9000) && (s.fake.arms.back().strip & 0x50u) == 0x50u &&
-                      s.fake.Containing("fire_reload_off") == 1, "the play leak strip outlives the mission");
+            Check(s.Until(pn::Mode::active, 9000) && (s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 &&
+                      s.fake.Containing("fire_reload_off") == 1,
+                  "the play leak strip ends with its mission: the next mission's FIRE and RELOAD pass");
+            s.fake.stats.native.ammo_leaks = 1;
+            s.fake.stats.native.ammo_leaks_mission = 1;
+            for (int i = 0; i < 5; ++i) s.N();
+            Check((s.fake.arms.back().strip & 0x50u) == 0x50u && s.driver.leak_strip == 0x50u &&
+                      s.fake.Containing("partner_weapon=fire_reload_off; reason=ammo_leak; shot_leaks=1; ammo_leaks=1;") == 1,
+                  "a new leak in the new mission strips again (never slips through)");
         } else {
             Check((s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 && !s.fake.Containing("fire_reload_off"),
                   "lab: a leak is telemetry only");
@@ -4027,10 +4038,25 @@ void TestNativeOnline() {
         s.driver.settings.play_mode = true;
         Check(s.Until(pn::Mode::active, 9000), "active (gun, ammo leak)");
         s.fake.stats.native.ammo_leaks = 2;
+        s.fake.stats.native.ammo_leaks_mission = 2;
         for (int i = 0; i < 5; ++i) s.N();
         Check((s.fake.arms.back().strip & 0x50u) == 0x50u &&
                   s.fake.Containing("partner_weapon=fire_reload_off; reason=ammo_leak; shot_leaks=0; ammo_leaks=2;") == 1,
               "play: an ammo leak strips FIRE and RELOAD");
+    }
+    {
+        // Benign item changes (the viewer's box knocked off inside body 1's job)
+        // and leaks of an earlier mission never strip (play).
+        NativeSession s;
+        SetVisualFire(s);
+        s.driver.settings.play_mode = true;
+        Check(s.Until(pn::Mode::active, 9000), "active (gun, benign vars change)");
+        s.fake.stats.native.ammo_benign = 3;
+        s.fake.stats.native.ammo_leaks = 4;  // process total of earlier missions
+        s.fake.stats.native.shot_leaks = 2;
+        for (int i = 0; i < 5; ++i) s.N();
+        Check((s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 && !s.fake.Containing("fire_reload_off"),
+              "benign item changes and earlier missions' leaks leave FIRE and RELOAD on");
     }
     {
         // A copy that shows clips (drive=legacy) still sends its capabilities: off, legacy.
@@ -5303,6 +5329,71 @@ void TestEquipEarlyManifest() {
 // manifest and capability message carried the SENDER's counter and the receiver dropped it as stale_epoch: no
 // partner guns, remote=unknown/none and no partner box for the rest of the evening. The receiver now binds them to
 // its OWN link session (the one they were drained in) and never compares the sender's counter with it.
+// Two-PC test 2026-10-23 item 2: the host continued right after a save handoff,
+// before the relaunched guest linked. The allocation preload predicted the
+// guest's first loadout from the host's own manifest (OwnManifest); the
+// guest's manifest arrives after the allocation: one late_manifest line says
+// which bases the preload covered (guns this load, or after the next one).
+void TestEquipLateManifest() {
+    namespace ew = mgscoop::partner_equip_wire;
+    namespace sp = mgscoop::equipment_stock_probe;
+    for (const bool predicted : {true, false}) {
+        Fake fake;
+        pd::Hooks hooks = HooksFor(fake);
+        AddWeaponHooks(hooks);
+        hooks.link_session = HookLinkSession;
+        hooks.drain_reliable = HookDrainReliable;
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.partner = true;
+        lab.partner_input_send = true;
+        pd::Configure(d, lab);
+        ew::Manifest own{};
+        Check(!pd::OwnManifest(d, own), "late manifest: no own manifest before the first loadout read");
+        d.equip_tx_have = true;
+        d.equip_tx.slots[1].base_id = 46;
+        d.equip_tx.slots[2].base_id = 9;
+        Check(pd::OwnManifest(d, own) && own.slots[1].base_id == 46 && own.slots[2].base_id == 9,
+              "late manifest: OwnManifest is this copy's last sent manifest (the prediction)");
+        pd::MissionStart(d, hooks, 30050);
+        fake.link_session = 2;
+        // What the observer's allocation query left (refused no_manifest, or the predicted ids).
+        d.preload_mission = 30050;
+        d.preload_count = predicted ? 2 : 0;
+        d.preload_ids[0] = predicted ? 46 : 0;
+        d.preload_ids[1] = predicted ? 9 : 0;
+        std::snprintf(d.preload_verdict, sizeof(d.preload_verdict), "%s", predicted ? "authorized" : "refused");
+        d.preload_source = static_cast<std::uint8_t>(predicted ? sp::PreloadSource::predicted : sp::PreloadSource::none);
+        d.preload_late_watch = true;
+        fake.lines.clear();
+        ew::Manifest g{};
+        g.revision = 1; g.epoch = 1; g.inv_slot = 0xFF;
+        g.slots[0].alias = 871; g.slots[0].type = 1;
+        g.slots[1].base_id = 46; g.slots[1].alias = 873; g.slots[1].type = 4;
+        g.slots[2].base_id = 9; g.slots[2].alias = 875; g.slots[2].type = 2;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "late manifest: the guest's manifest encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1000);
+        Check(d.mission.equip.have && !d.preload_late_watch, "late manifest: stored, the watch spent");
+        if (predicted) {
+            Check(fake.Containing("equip_preload=late_manifest; mission=30050; preload=authorized; source=predicted; preloaded=2; "
+                                  "remote_base=0,46,9; covered=2/2; guns=this_load; link_epoch=2\r\n") == 1,
+                  "late manifest: the predicted preload covered both guns (this load)");
+        } else {
+            Check(fake.Containing("equip_preload=late_manifest; mission=30050; preload=refused; source=none; preloaded=0; "
+                                  "remote_base=0,46,9; covered=0/2; guns=next_load; link_epoch=2\r\n") == 1,
+                  "late manifest: without a prediction the guns come with the next load");
+        }
+        // A new revision later in the mission logs nothing more.
+        g.revision = 2; g.slots[1].base_id = 29;
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "late manifest: revision 2 encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1100);
+        Check(fake.Containing("equip_preload=late_manifest") == 1, "late manifest: one line per allocation query");
+    }
+}
+
 void TestEquipCrossProcessSession() {
     namespace ew = mgscoop::partner_equip_wire;
     namespace pcw = mgscoop::partner_caps_wire;
@@ -8852,6 +8943,7 @@ int main() {
     TestNativeChannel2AndSender();
     TestEquipEarlyManifest();
     TestEquipCrossProcessSession();
+    TestEquipLateManifest();
     TestNativeRates();
     TestNativeAim();
     TestNativeGunDirectionWire();

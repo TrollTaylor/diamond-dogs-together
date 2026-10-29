@@ -28,6 +28,9 @@ namespace {
 SRWLOCK lock = SRWLOCK_INIT;
 partner_player::Addresses addresses{};
 bool verified = false, stopped = false, armed = false, controlsApplied = false, failed = false;
+// The current down cycle's controls were applied with the box posture
+// (detail::DownedPosture): AfterPadUpdate keeps the cap without stance 3.
+bool boxPosture = false;
 std::uint32_t mission = 0, ownerThread = 0, baselineButtons = 0, baselineTriggers = 0;
 std::uint16_t epoch = 0;
 std::uintptr_t ownedP = 0, ownedQ = 0, ownedLife = 0, ownedVars = 0;
@@ -74,9 +77,10 @@ bool ReadLife(const partner_player::State& s, std::uintptr_t& record, float& cur
     return std::isfinite(current) && std::isfinite(max) && current > 0 && max >= 1 && max <= 65535.f && current <= max;
 }
 bool Live(partner_player::State& s, std::uintptr_t& record, float& current, float& max) noexcept {
-    return verified && !stopped && partner_player::ReadState(addresses, s) == partner_player::Refusal::none &&
-        partner_player::Realized(s, 0) && partner_player::Realized(s, 1) && s.ids[0] == 0 && s.ids[1] == 1 &&
-        s.parts[0] == c::parts_loaded_state && s.parts[1] == c::parts_loaded_state && ReadLife(s, record, current, max);
+    if (!verified || stopped || partner_player::ReadState(addresses, s) != partner_player::Refusal::none) return false;
+    const detail::BodyView local{partner_player::Realized(s, 0), s.ids[0], s.parts[0]};
+    const detail::BodyView partner{partner_player::Realized(s, 1), s.ids[1], s.parts[1]};
+    return detail::LiveBodies(local, partner, c::parts_loaded_state) && ReadLife(s, record, current, max);
 }
 bool Owned(partner_player::State& s, std::uintptr_t& record, float& current, float& max) noexcept {
     std::uintptr_t bank = 0;
@@ -533,7 +537,7 @@ bool Clear(bool restore) noexcept {
             if (!Owned(s, record, cur, max) || originalHealth <= 0 || originalHealth > max || !StoreLife(record, originalHealth)) return false;
         } else if (Owned(s, record, cur, max) && originalHealth > 0 && originalHealth <= max) StoreLife(record, originalHealth);
     }
-    armed = false; controlsApplied = false; cycle.down = false; cycle.cause = 0; friendlyRecovery = {};
+    armed = false; controlsApplied = false; boxPosture = false; cycle.down = false; cycle.cause = 0; friendlyRecovery = {};
     stockRelease.LogicalExit(true);
     hitHead = hitCount = 0; incomingSerial = 0; observedLife = maximumHealth = 0;
     ownedP = ownedQ = ownedLife = ownedVars = 0; mission = ownerThread = 0; epoch = 0; lastPoll = downAt = lastControls = revivedAt = 0;
@@ -587,8 +591,10 @@ bool SetNativeSleepTest(bool enabled) noexcept {
     if (ok) { nativeEnabled=enabled; nativePad={}; nativeRestDiagnostics={}; lastReason=enabled?"sleep_native_test_enabled":"sleep_native_test_disabled"; }
     ReleaseSRWLockExclusive(&lock); return ok;
 }
-bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t command, std::uint32_t generation, Reply& out) noexcept {
+bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t command, std::uint32_t generation, Reply& out,
+             bool boxed) noexcept {
     out = {}; out.reason = "context";
+    boxed = boxed && (command == 0 || command == 1);
     AcquireSRWLockExclusive(&lock);
     const auto finish = [&](bool result, const char* reason) noexcept {
         // Even current-owner context/HP/input failures must not bypass the
@@ -725,7 +731,7 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         if (!SlowCrawl(true)) return finish(true, "crawl_restore_pending");
         partner_player::State again{}; std::uintptr_t againRec = 0; float againCur = 0, againMax = 0;
         if (!Owned(again, againRec, againCur, againMax) || !StoreLife(againRec, detail::RecoveredHealth(cycle.cause, originalHealth, againMax))) return finish(false, "health");
-        friendlyRecovery = {}; detail::Revive(cycle, generation); controlsApplied = false; downAt = lastControls = 0;
+        friendlyRecovery = {}; detail::Revive(cycle, generation); controlsApplied = false; boxPosture = false; downAt = lastControls = 0;
         revivedAt = GetTickCount64();
         stockRelease.LogicalExit(!cycle.down);
         ForgetNativeRetired();
@@ -779,20 +785,33 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
             out.applied=protectedHealth&&masked;
             return finish(true,"sleep_stock_owner_pending");
         }
-        if (nativeSleep) prone = true;
-        const bool protection = (nativeSleep || Prone(s, prone)) && StoreLife(record, detail::IncapacitatedHealth(cycle.cause, originalHealth, max));
+        // Item 4: a boxed body never takes the prone request; its own box is
+        // the posture (no native call). The masks and the cap still apply.
+        const auto posture = detail::DownedPosture(nativeSleep, boxed);
+        if (posture != detail::Posture::prone_request) prone = true;
+        const bool protection = (posture != detail::Posture::prone_request || Prone(s, prone)) &&
+            StoreLife(record, detail::IncapacitatedHealth(cycle.cause, originalHealth, max));
         const bool masked = Controls(raw);
         // The fallback sleep body is prone but fully immobile. Do not create a
         // crawl-rate lease for sleep; the fresh native input cap below is zero.
         const bool crawlReady = protection && prone && masked && SlowCrawl(cycle.cause == 2);
         const bool applied = protection && prone && masked && crawlReady;
         const auto pendingReason = detail::ControlsPendingReason(prone, masked, crawlReady);
+        boxPosture = applied && posture == detail::Posture::box;
         if (applied) { controlsApplied = true; lastControls = lastPoll; }
         else if (detail::ControlsExpired(lastPoll, downAt, lastControls, controlsApplied, applied)) {
             if (!SlowCrawl(true)) return finish(false, "crawl_restore_pending");
-            Clear(true); failed = true; out.ready = false; out.down = false; out.cause = 0;
-            return finish(false, !protection ? "controls_timeout_health" : !prone ? "controls_timeout_prone" :
-                !masked ? "controls_timeout_mask" : "controls_timeout_crawl");
+            const char* timeout = !protection ? "controls_timeout_health" : !prone ? "controls_timeout_prone" :
+                !masked ? "controls_timeout_mask" : "controls_timeout_crawl";
+            // End the cycle (health and crawl restored) but never latch the
+            // owner off: retire its generation, and the next healthy poll
+            // re-arms (Live() good). A refused clear retries next poll.
+            const auto plan = detail::ControlsTimeout();
+            if (plan.clear && !Clear(true)) return finish(false, "controls_timeout_pending");
+            if (plan.newGeneration) detail::NewScene(cycle);
+            if (plan.latch) failed = true;
+            out.ready = false; out.down = false; out.cause = 0; out.generation = cycle.generation;
+            return finish(false, timeout);
         }
         if (!protection) return finish(false, "prone_health");
         out.applied = applied;
@@ -826,7 +845,7 @@ PadObservation AfterPadUpdate(std::uintptr_t pad, bool outerUpdate, bool exactCa
     const bool nativeCycle=cycle.down && cycle.cause==2 && (nativeEnabled || SleepActive());
     if (nativeCycle) {
         if (!SameNativeState(first.state,second.state) || !NamedMasks(first) || !NamedMasks(second)) return finish("sleep_named_controls");
-    } else if (cycle.down && controlsApplied && (first.stance != 3 || !Controls(first.raw))) return finish("controls");
+    } else if (cycle.down && controlsApplied && (!detail::PostureHeld(first.stance, boxPosture) || !Controls(first.raw))) return finish("controls");
     const auto plan = detail::PlanPadMagnitude(first.raw.pp_derived[0], cycle.down, controlsApplied, cycle.cause);
     if (!plan.valid) return finish("magnitude");
     if (plan.write) {

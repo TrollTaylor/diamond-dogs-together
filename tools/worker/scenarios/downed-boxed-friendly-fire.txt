@@ -1,0 +1,197 @@
+# Two-PC test 2026-10-23 item 4 (docs/two-pc-test-2026-10-23.md, "Host fixes" in docs/STATUS.md): the guest's rifle
+# downed the host (friendly_hit=owner;seq=4;...;down=1, host h12188), and 0.5 s later the host was in a cardboard box
+# (partner_status=local; st=0x4; names=cbox, h12201) while its first lock was still controls_pending_prone. The native
+# prone request cannot take a boxed body: controls_pending_prone x6, controls_timeout_prone after the 6 s acquisition
+# deadline, and the timeout latched `failed` for the rest of the mission (every later poll controls_timeout,
+# world_lua=event=downed; step=refused, three darts downed_damage=ignored; reason=downed_unavailable). wp/host-fixes
+# accepts the local player's own box as the downed posture (Lua reports PlayerStatus CBOX in the poll/lock receipt; no
+# prone request) and a timeout no longer latches.
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
+# unset, no build running in any worktree, under the shared verify lock, one worker session.
+# Run (the gun profile of the 2026-10-23 session; the lab save carries box 468 at item sub 1):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/downed-boxed-friendly-fire.txt
+# Down 1 is the session's order: the standing host is downed, then boxes (the debug slot request, while its down
+# cycle is locked or still acquiring). Down 2 is the other order: the host is boxed first and the crouched guest
+# fires two magazines at the box (its first lock would already be boxed); it is judged by downed_status only (expect).
+# Down 3 repeats the session's order under a later generation: the owner re-arms after box cycles.
+# Before the fix (916708f; from the session's log, not re-run): after the box, downed_control=observed;command=1;
+#   reason=controls_pending_prone lines, then downed_control=refused;command=1;reason=controls_timeout_prone and
+#   downed_control=refused;command=0;reason=controls_timeout to the end; the 8 s downed_status shows down=0.
+# Expected (host):
+#   friendly_hit=owner;...;down=1, then (once boxed) downed_control=observed;command=1;reason=downed;posture=box;
+#     generation=<g> (the first box lock of each generation is logged without the 1/s limiter)
+#   downed_status down=1 cause=1 lock=1 at once and again 8 s later (past the 6 s acquisition deadline)
+#   NEVER downed_control=...;reason=controls_timeout (any suffix) and never world_lua=event=downed; step=refused
+#   the guest's revive hold completes: downed_status down=0 ... state=healthy; downs 2 and 3 arm again under new
+#     generations with posture=box (the owner was never latched off)
+# Expected (guest): the host's body shows WOUNDED; during the revive hold revive_status reads applied=1;held=1 (the host
+#   grants its own revive after 3 s of the held E: no grant line on either copy, only the host's down=0).
+# Captures: start, boxed-downed (both), boxed-held (both, 8 s later), boxed-revived, box-aim (the guest's aimed view),
+# boxed-first, boxed-again, boxed-third, boxed-third-held.
+# Results (wp/host-fixes, research build, gun stage, lab seed, hidden private desktop; every run Closed, baseline
+# restored, real saves unchanged):
+#   ce66a0bf (e7fb9ac, the first version: three E renewals): down 1 as the session: friendly_hit seq 9 down=1
+#     (generation 4), controls_pending_prone x2 for about 3.5 s, then st=0x4 cbox and downed_control=observed;command=1;
+#     reason=downed;posture=box;generation=4; downed_status down=1 cause=1 lock=1 at once and 8 s later (hp 390/7800).
+#     No controls_timeout line, no step=refused. The revive failed: three renewals hold E about 2.6 s, under the 3 s
+#     grant (world_downed HOLD); hence five renewals.
+#   44e5a233 (e7fb9ac): down 1 as ce66a0bf; revive_status applied=1;held=1, then down=0 state=healthy. The box-first
+#     down 2 (a prone guest 6 m away) landed 5 hits (hp 3090/7800): not downed.
+#   a5f30e31 (3fd064a, this file): down 1 (generation 4, posture=box, held past 8 s), revive, down 3 (generation 5:
+#     controls_pending_prone x2, box, posture=box;generation=5, down=1 lock=1 at once and 8 s later): the owner re-armed
+#     after box cycles. The box-first down 2 again not downed: two magazines from a crouched guest 4 m away with the
+#     reticle on the box (box-aim) registered about 3 hits (hp 5274/7800); the box stops most rifle rounds, so a
+#     boxed-from-the-start down was not staged (downed_player_tests DownedPosture covers it).
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+host debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+host debug clear_enemies 100
+stance host stand
+stance guest stand
+placebehind guest host 6 -0.7
+wait 6000
+host run items
+host expect ^items;ids=0,468,
+both capture start
+# --- Down 1 (the session's order): the guest's rifle downs the standing host, then the host boxes. -----------------
+guest press 1 120
+wait 2000
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+waitlog host 'friendly_hit=owner;.*down=1;' 20
+host run slot item 1
+host expect ^submitted_slot;slot=item;native=4;sub=1;
+waitlog host 'partner_status=local; st=0x4' 10
+waitlog host 'downed_control=observed;command=1;reason=downed;posture=box;' 10
+host run downed_status
+host require down=1.*cause=1.*lock=1
+both capture boxed-downed
+# Past the 6 s acquisition deadline the boxed body is still downed and locked.
+wait 8000
+host run downed_status
+host require down=1.*cause=1.*lock=1
+both capture boxed-held
+# --- The guest revives the host (the coop-carry-wounded revive hold: the host grants after 3 s of a held E, so the
+# --- hold is renewed five times, about 4.3 s; three renewals, about 2.6 s, never reached the grant in run ce66a0bf).
+guest debug goto_carry
+wait 1500
+guest run position
+host run position
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest run revive_status
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest release
+wait 4500
+host run downed_status
+host require down=0.*cause=0.*lock=0.*state=healthy
+both capture boxed-revived
+# --- Down 2 (box first): out of the box and into it again; the crouched guest fires two magazines at the boxed host.
+# --- Run 44e5a233: a prone guest 6 m away landed 5 hits (4710 of 7800 HP) from one magazine: not lethal. ---------
+host run slot item 0
+wait 2500
+host debug clear_enemies 100
+stance host stand
+host run slot item 1
+host expect ^submitted_slot;slot=item;native=4;sub=1;
+wait 2500
+host run items
+host expect ;current=1$
+placebehind guest host 4 -0.5
+wait 3000
+guest press r 120
+wait 3000
+stance guest crouch
+wait 1000
+heldcapture guest guest rmb box-aim 1
+both capture boxed-first
+guest hold rmb+lmb 1500
+guest release
+wait 400
+guest hold rmb+lmb 1500
+guest release
+wait 400
+guest hold rmb+lmb 1500
+guest release
+guest press r 120
+wait 3000
+guest hold rmb+lmb 1500
+guest release
+wait 400
+guest hold rmb+lmb 1500
+guest release
+wait 400
+guest hold rmb+lmb 1500
+guest release
+# waitlog reads from the session start (down 1's lines match), so downs 2 and 3 are judged by downed_status and the log.
+wait 1500
+host run downed_status
+host expect down=1.*cause=1.*lock=1
+both capture boxed-again
+wait 8000
+host run downed_status
+host expect down=1.*cause=1.*lock=1
+# The revive (a no-op when down 2 did not down the host).
+guest debug goto_carry
+wait 1500
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest release
+wait 4500
+host run downed_status
+host require down=0.*cause=0.*lock=0.*state=healthy
+# --- Down 3 (the session's order again, a later generation): out of the box, shot standing, then boxed. ---------
+host run slot item 0
+wait 2500
+stance host stand
+stance guest stand
+placebehind guest host 6 -0.7
+wait 3000
+guest press r 120
+wait 3000
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+host run slot item 1
+host expect ^submitted_slot;slot=item;native=4;sub=1;
+wait 2500
+host run downed_status
+host expect down=1.*cause=1.*lock=1
+both capture boxed-third
+wait 8000
+host run downed_status
+host expect down=1.*cause=1.*lock=1
+both capture boxed-third-held
+state
