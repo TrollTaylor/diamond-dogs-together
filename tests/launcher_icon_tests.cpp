@@ -10,7 +10,9 @@
 //     the same silhouette, the same light/dark layout, no colour the logo lacks;
 //   - the emblem matches the logo too;
 //   - the built DiamondDogsTogether.exe embeds exactly these images as its only icon
-//     group, and Windows loads every size from it.
+//     group, and Windows loads every size from it without scaling another one;
+//   - negative controls: a logo with light and dark swapped, and a copy of the exe
+//     with only the 256 px image, fail those checks.
 //
 // Usage: launcher_icon_tests <ddt_launcher.ico> <ddt_logo.png> <logo.png> <DiamondDogsTogether.exe>
 #define NOMINMAX
@@ -241,6 +243,25 @@ bool IsPng(const Bytes& b) { return b.size() > 8 && std::memcmp(b.data(), "\x89P
 
 const int kSizes[] = {16, 20, 24, 32, 40, 48, 64, 96, 128, 256};
 
+// The generator may move the logo up or down by under half a pixel (to put the
+// diamond's top edge on a pixel boundary): compare a square icon with the logo
+// scaled to its size at the best such offset. The best offset is always the one
+// reported, even when every offset scores badly, so the printed numbers and every
+// check describe a real comparison.
+bool BestLikeness(const Image& icon, const Image& logo, Likeness& like) {
+    like = Likeness{};
+    bool scaled = false;
+    const double logo_px = static_cast<double>(std::max(logo.w, logo.h)) / icon.w;  // logo pixels per icon pixel
+    for (int step = -4; step <= 4; ++step) {
+        Image reference;
+        if (!ScaleLogo(logo, icon.w, icon.h, true, reference, static_cast<int>(std::lround(step / 8.0 * logo_px)))) continue;
+        const Likeness at = Compare(icon, reference);
+        if (!scaled || at.shading > like.shading) like = at;
+        scaled = true;
+    }
+    return scaled;
+}
+
 void TestIcon(const std::vector<IcoEntry>& entries, const Image& logo) {
     std::vector<int> sizes;
     for (const IcoEntry& e : entries) sizes.push_back(e.size);
@@ -259,19 +280,8 @@ void TestIcon(const std::vector<IcoEntry>& entries, const Image& logo) {
         Image icon;
         const bool decoded = IsPng(e.data) ? DecodePng(e.data, icon) : DecodeDib(e.data, e.size, icon);
         if (!Check(decoded && icon.w == e.size && icon.h == e.size, name + " decodes at its size")) continue;
-        // The generator may move the logo up or down by under half a pixel (to put the
-        // diamond's top edge on a pixel boundary): compare at the best such offset.
         Likeness like;
-        bool scaled = false;
-        const double logo_px = static_cast<double>(std::max(logo.w, logo.h)) / e.size;  // logo pixels per icon pixel
-        for (int step = -4; step <= 4; ++step) {
-            Image reference;
-            if (!ScaleLogo(logo, e.size, e.size, true, reference, static_cast<int>(std::lround(step / 8.0 * logo_px)))) continue;
-            scaled = true;
-            const Likeness at = Compare(icon, reference);
-            if (at.shading > like.shading) like = at;
-        }
-        if (!Check(scaled, name + ": the logo scales")) continue;
+        if (!Check(BestLikeness(icon, logo, like), name + ": the logo scales")) continue;
         std::printf("%-12s silhouette %.3f  shading %.3f  difference %5.1f  chroma %d (logo %d)\n", name.c_str(), like.silhouette,
                     like.shading, like.difference, MaxChroma(icon), logo_chroma);
         // A stand-in symbol (the old shield with an orange diamond) scores about 0.8 / -0.15 / 55.
@@ -291,6 +301,39 @@ void TestEmblem(const Bytes& png, const Image& logo) {
     const Likeness like = Compare(emblem, reference);
     std::printf("emblem       silhouette %.3f  shading %.3f  difference %5.1f\n", like.silhouette, like.shading, like.difference);
     Check(like.silhouette >= 0.97 && like.shading >= 0.97 && like.difference <= 6.0, "the emblem matches the logo");
+}
+
+// Windows loads the `size` px icon of the exe's icon group without scaling: the image
+// it picks for that size (LookupIconIdFromDirectoryEx, the choice LoadImage makes) is
+// itself size x size, and Windows makes a size x size icon from it. LoadImage alone
+// is not enough: it scales the nearest image when a size is missing.
+bool LoadsExactSize(HMODULE module, int size) {
+    HRSRC group_res = FindResourceW(module, MAKEINTRESOURCEW(IDI_DDT_APP), RT_GROUP_ICON);
+    auto* group = static_cast<BYTE*>(group_res ? LockResource(LoadResource(module, group_res)) : nullptr);
+    const int id = group ? LookupIconIdFromDirectoryEx(group, TRUE, size, size, LR_DEFAULTCOLOR) : 0;
+    HRSRC icon_res = id ? FindResourceW(module, MAKEINTRESOURCEW(id), RT_ICON) : nullptr;
+    auto* bytes = static_cast<BYTE*>(icon_res ? LockResource(LoadResource(module, icon_res)) : nullptr);
+    if (!bytes) return false;
+    const Bytes data(bytes, bytes + SizeofResource(module, icon_res));
+    // The picked image's own size: a PNG's IHDR, or a bitmap's header (twice as tall: colour and mask).
+    std::uint32_t w = 0, h = 0;
+    if (IsPng(data) && data.size() >= 24) {
+        w = (static_cast<std::uint32_t>(data[16]) << 24) | (data[17] << 16) | (data[18] << 8) | data[19];
+        h = (static_cast<std::uint32_t>(data[20]) << 24) | (data[21] << 16) | (data[22] << 8) | data[23];
+    } else if (data.size() >= 40 && U32(data, 0) == 40) {
+        w = U32(data, 4);
+        h = U32(data, 8) / 2;
+    }
+    if (w != static_cast<std::uint32_t>(size) || h != static_cast<std::uint32_t>(size)) return false;
+    HICON icon = CreateIconFromResourceEx(bytes, static_cast<DWORD>(data.size()), TRUE, 0x00030000, size, size, LR_DEFAULTCOLOR);
+    ICONINFO info{};
+    BITMAP bm{};
+    const bool ok = icon && GetIconInfo(icon, &info) && info.hbmColor && GetObjectW(info.hbmColor, sizeof(bm), &bm) && bm.bmWidth == size &&
+                    bm.bmHeight == size;
+    if (info.hbmColor) DeleteObject(info.hbmColor);
+    if (info.hbmMask) DeleteObject(info.hbmMask);
+    if (icon) DestroyIcon(icon);
+    return ok;
 }
 
 // The exe's icon group must be exactly the .ico's images, and the only group (so
@@ -333,18 +376,76 @@ void TestExe(const wchar_t* exe, const std::vector<IcoEntry>& entries) {
     // Windows itself loads each size from the exe at that exact size.
     module = LoadLibraryExW(exe, nullptr, LOAD_LIBRARY_AS_DATAFILE);
     if (!module) return;
-    for (int size : kSizes) {
-        HICON icon = static_cast<HICON>(LoadImageW(module, MAKEINTRESOURCEW(IDI_DDT_APP), IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
-        ICONINFO info{};
-        BITMAP bm{};
-        const bool ok = icon && GetIconInfo(icon, &info) && info.hbmColor && GetObjectW(info.hbmColor, sizeof(bm), &bm) &&
-                        bm.bmWidth == size && bm.bmHeight == size;
-        Check(ok, "Windows loads the " + std::to_string(size) + " px icon from the exe");
-        if (info.hbmColor) DeleteObject(info.hbmColor);
-        if (info.hbmMask) DeleteObject(info.hbmMask);
-        if (icon) DestroyIcon(icon);
+    for (int size : kSizes) Check(LoadsExactSize(module, size), "Windows loads the " + std::to_string(size) + " px icon from the exe");
+    FreeLibrary(module);
+}
+
+// Negative controls: the checks above must fail on a wrong icon, with real numbers.
+//   - The logo with light and dark swapped fails the likeness checks.
+//   - A copy of the exe whose icon group lists only the 256 px image has no other
+//     size: Windows would scale the 256 px image for those.
+void TestControls(const Image& logo, const wchar_t* exe) {
+    Image swapped;
+    if (Check(ScaleLogo(logo, 32, 32, true, swapped), "control: the logo scales to 32 px")) {
+        for (std::size_t i = 0; i < swapped.rgba.size(); i += 4)
+            for (std::size_t c = 0; c < 3; ++c) swapped.rgba[i + c] = static_cast<std::uint8_t>(255 - swapped.rgba[i + c]);
+        Likeness like;
+        Check(BestLikeness(swapped, logo, like), "control: the logo scales for the swapped 32 px logo");
+        std::printf("control: swapped 32 px  silhouette %.3f  shading %.3f  difference %5.1f\n", like.silhouette, like.shading,
+                    like.difference);
+        Check(like.shading < 0.85 && like.difference > 20.0, "control: a logo with light and dark swapped fails the likeness checks");
+    }
+
+    // The 256-only copy, in the temp folder.
+    HMODULE module = LoadLibraryExW(exe, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!Check(module != nullptr, "control: the exe opens as a resource file")) return;
+    WORD language = 0;
+    EnumResourceLanguagesW(
+        module, RT_GROUP_ICON, MAKEINTRESOURCEW(IDI_DDT_APP),
+        [](HMODULE, LPCWSTR, LPCWSTR, WORD lang, LONG_PTR param) -> BOOL {
+            *reinterpret_cast<WORD*>(param) = lang;
+            return FALSE;
+        },
+        reinterpret_cast<LONG_PTR>(&language));
+    Bytes only256;
+    if (HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(IDI_DDT_APP), RT_GROUP_ICON)) {
+        const auto* dir = static_cast<const std::uint8_t*>(LockResource(LoadResource(module, res)));
+        const DWORD bytes = SizeofResource(module, res);
+        if (dir && bytes >= 6) {
+            only256.assign(dir, dir + 6);
+            for (std::size_t at = 6; at + 14 <= bytes; at += 14)
+                if (dir[at] == 0) only256.insert(only256.end(), dir + at, dir + at + 14);
+            only256[4] = static_cast<std::uint8_t>((only256.size() - 6) / 14);
+            only256[5] = 0;
+        }
     }
     FreeLibrary(module);
+    if (!Check(only256.size() == 6 + 14, "control: the exe's icon group has a 256 px image")) return;
+    wchar_t temp[MAX_PATH]{};
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring copy = std::wstring(temp) + L"ddt_icon_control_" + std::to_wstring(GetCurrentProcessId()) + L".exe";
+    bool written = CopyFileW(exe, copy.c_str(), FALSE) != FALSE;
+    if (written) {
+        HANDLE update = BeginUpdateResourceW(copy.c_str(), FALSE);
+        written = update && UpdateResourceW(update, RT_GROUP_ICON, MAKEINTRESOURCEW(IDI_DDT_APP), language, only256.data(),
+                                            static_cast<DWORD>(only256.size())) &&
+                  EndUpdateResourceW(update, FALSE);
+        if (update && !written) EndUpdateResourceW(update, TRUE);
+    }
+    if (Check(written, "control: a copy of the exe with only the 256 px icon is written")) {
+        module = LoadLibraryExW(copy.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE);
+        if (Check(module != nullptr, "control: the 256-only copy opens")) {
+            HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(IDI_DDT_APP), RT_GROUP_ICON);
+            Check(res && SizeofResource(module, res) == only256.size(), "control: the copy's icon group lists only the 256 px image");
+            for (int size : kSizes) {
+                const bool loads = LoadsExactSize(module, size);
+                Check(loads == (size == 256), "control: the 256-only copy " + std::string(size == 256 ? "has" : "lacks") + " the " +
+                                                  std::to_string(size) + " px icon");
+            }
+            FreeLibrary(module);
+        }
+    }
+    DeleteFileW(copy.c_str());
 }
 }  // namespace
 
@@ -365,6 +466,7 @@ int wmain(int argc, wchar_t** argv) {
         TestIcon(entries, logo);
         TestEmblem(ReadFile(argv[2]), logo);
         TestExe(argv[4], entries);
+        TestControls(logo, argv[4]);
     }
     Release(g_wic);
     CoUninitialize();
