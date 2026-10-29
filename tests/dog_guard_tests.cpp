@@ -3,6 +3,7 @@
 #include "mgscoop/dog_guard.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 namespace g=mgscoop::dog_guard;
 namespace {
 unsigned checks{};
@@ -68,6 +69,49 @@ int main(){
  // Lease.
  Check(!g::Armed(5,0),"never armed");
  Check(g::Armed(100,100)&&g::Armed(10,100)&&!g::Armed(101,100),"armed through the lease frame inclusive");
+ // Install gate (review 2026-10-29): the two slots are patched only on a PC running M1's key companion_host_owned.
+ Check(g::InstallRefusal(true,false)!=nullptr&&std::strcmp(g::InstallRefusal(true,false),"key_off")==0,"key off: nothing installed");
+ Check(g::InstallRefusal(false,false)!=nullptr&&std::strcmp(g::InstallRefusal(false,false),"key_off")==0,"key off wins over the gate");
+ Check(g::InstallRefusal(false,true)!=nullptr&&std::strcmp(g::InstallRefusal(false,true),"partner_gate")==0,"partner gate refused");
+ Check(g::InstallRefusal(true,true)==nullptr,"key on and the gate passed: installed");
+ // Receipt admission: a full arm needs the paired exact scope; through a link loss an armed guest's lease is held
+ // drop-only (no follow, no lab op) until the session or the mission ends; a hold never starts the guard.
+ g::Scope sc{};sc.installed=sc.labMode=sc.exact=sc.runtime=sc.mission=sc.configured=sc.paired=sc.linkUp=sc.epoch=true;sc.effective=3;
+ auto same=[](const char* a,const char* b){return a&&b&&std::strcmp(a,b)==0;};
+ auto a=g::Admit(true,true,1,0,sc);Check(!a.reason&&a.grant==g::Grant::full&&!a.lab,"linked guest: full arm");
+ a=g::Admit(true,true,1,1,sc);Check(!a.reason&&a.grant==g::Grant::full&&a.lab,"linked guest: full arm with its lab op");
+ a=g::Admit(true,true,0,0,sc);Check(!a.reason&&a.grant==g::Grant::none,"guest arm 0: a disarm, always answered");
+ a=g::Admit(false,false,0,0,sc);Check(!a.reason&&a.grant==g::Grant::none,"host read: answered");
+ a=g::Admit(false,false,1,0,sc);Check(same(a.reason,"role")&&a.grant==g::Grant::none,"the host never arms");
+ a=g::Admit(false,false,2,0,sc);Check(same(a.reason,"role")&&a.grant==g::Grant::none,"the host never holds");
+ a=g::Admit(true,false,1,0,sc);Check(same(a.reason,"role"),"a role that is not this copy's is refused");
+ a=g::Admit(false,false,0,1,sc);Check(!a.reason&&a.lab&&a.grant==g::Grant::none,"host lab op in the lab, linked");
+ auto off=sc;off.labMode=false;a=g::Admit(false,false,0,1,off);Check(same(a.reason,"lab_only")&&!a.lab,"lab op refused in play");
+ off=sc;off.installed=false;a=g::Admit(true,true,1,0,off);Check(same(a.reason,"admission")&&a.grant==g::Grant::none,"not installed");
+ off=sc;off.exact=false;off.armed=true;a=g::Admit(true,true,1,0,off);Check(same(a.reason,"admission")&&a.grant==g::Grant::none,"not exact: no hold");
+ for(int i=0;i<4;++i) {
+  auto lost=sc;lost.armed=false;
+  if(i==0) lost.paired=false; else if(i==1) lost.linkUp=false; else if(i==2) lost.effective=2; else lost.epoch=false;
+  a=g::Admit(true,true,1,0,lost);Check(same(a.reason,"scope")&&a.grant==g::Grant::none,"link lost, never armed: refused (no new arm)");
+  lost.armed=true;a=g::Admit(true,true,1,0,lost);Check(same(a.reason,"hold")&&a.grant==g::Grant::hold&&!a.lab,"link lost, armed: held drop-only");
+  a=g::Admit(true,true,1,1,lost);Check(a.grant==g::Grant::hold&&!a.lab,"a held lease takes no lab op");
+  a=g::Admit(true,true,2,0,lost);Check(same(a.reason,"hold")&&a.grant==g::Grant::hold,"an explicit hold while unpaired");
+  a=g::Admit(false,false,0,1,lost);Check(same(a.reason,"scope")&&!a.lab,"host lab op needs the link");
+ }
+ auto lost=sc;lost.paired=false;lost.armed=false;
+ a=g::Admit(true,true,2,0,lost);Check(same(a.reason,"not_armed")&&a.grant==g::Grant::none,"a hold never starts the guard");
+ lost.armed=true;
+ for(int i=0;i<4;++i) {
+  auto end=lost;
+  if(i==0) end.terminating=true; else if(i==1) end.mission=false; else if(i==2) end.runtime=false; else end.configured=false;
+  a=g::Admit(true,true,2,0,end);Check(same(a.reason,"scope")&&a.grant==g::Grant::none,"mission end, another mission or thread: no hold");
+ }
+ auto linkedHold=sc;linkedHold.armed=true;a=g::Admit(true,true,2,0,linkedHold);Check(a.grant==g::Grant::hold,"a hold sent as the link returns is still a hold");
+ // Reply freshness: the record is reported only from a snapshot under a second old.
+ Check(g::Fresh(true,0)&&g::Fresh(true,1000)&&!g::Fresh(true,1001)&&!g::Fresh(false,0),"record fields only when fresh");
+ // Log caps per mission: the first 16 drops then every 50th; 64 follow lines.
+ Check(g::DropLogged(1)&&g::DropLogged(16)&&!g::DropLogged(17)&&g::DropLogged(50)&&!g::DropLogged(51)&&g::DropLogged(100)&&!g::DropLogged(0),"drop log cap");
+ Check(g::FollowLogged(0)&&g::FollowLogged(63)&&!g::FollowLogged(64),"follow log cap");
  std::printf("dog guard policy %u checks PASS\n",checks);
  return 0;
 }

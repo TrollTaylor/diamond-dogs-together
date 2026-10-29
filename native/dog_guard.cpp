@@ -27,7 +27,8 @@ struct Shared {
 };
 Shared shared{};
 std::atomic<std::uint64_t> frames{},armedUntil{};
-std::atomic<unsigned> drops{},hits{},applied{},kills{},cleared{},dropLogs{},followLogs{};
+std::atomic<unsigned> drops{},hits{},applied{},kills{},cleared{};
+std::atomic<unsigned> dropLogs{},followLogs{}; // per-mission log counters (DropLogged, FollowLogged), reset by Disarm
 std::atomic<std::uint32_t> lastHit{0xffffffffu};
 struct LastErrorState {
  DWORD value{GetLastError()};
@@ -76,7 +77,7 @@ __declspec(noinline) void ProcessHook(void* self,std::uint32_t index,void* list,
   lastHit.store((std::uint32_t(attacker)<<16)|attack,std::memory_order_relaxed);
   const unsigned n=drops.fetch_add(1,std::memory_order_relaxed)+1;
   const unsigned total=hits.fetch_add(count,std::memory_order_relaxed)+count;
-  if(n<=16||n%50==0) {
+  if(DropLogged(dropLogs.fetch_add(1,std::memory_order_relaxed)+1)) {
    char line[192]{};
    std::snprintf(line,sizeof(line),"dog_guard=drop;n=%u;hits=%u;count=%u;attacker=%u;attack=%u;index=0;frame=%llu\r\n",n,total,count,
     unsigned(attacker),unsigned(attack),static_cast<unsigned long long>(frames.load(std::memory_order_relaxed)));
@@ -116,7 +117,7 @@ __declspec(noinline) void LifeHook(void* self) noexcept {
      AcquireSRWLockExclusive(&lock);
      if(shared.lastLogged!=follow) {shared.lastLogged=follow;log=true;}
      ReleaseSRWLockExclusive(&lock);
-     if(log&&followLogs.fetch_add(1,std::memory_order_relaxed)<64) {
+     if(log&&FollowLogged(followLogs.fetch_add(1,std::memory_order_relaxed))) {
       char line[224]{};
       std::snprintf(line,sizeof(line),"dog_guard=follow;byte=0x%02x;life=%u>%u;max=%u;stun=%u>%u;state=%u;kill=%u;cleared_kill=%u;pending=%u\r\n",
        unsigned(follow),unsigned(now.life),unsigned(p.next.life),unsigned(now.max),unsigned(now.stun),unsigned(p.next.stun),
@@ -237,6 +238,8 @@ Status Control(const Request& q) noexcept {
 Status Read() noexcept {return Snapshot();}
 void Disarm(const char* why) noexcept {
  const bool was=armedUntil.exchange(0,std::memory_order_relaxed)!=0;
+ // The log caps are per mission (review 2026-10-29: a long session's regeneration steps used up the 64 follow lines).
+ dropLogs.store(0,std::memory_order_relaxed);followLogs.store(0,std::memory_order_relaxed);
  AcquireSRWLockExclusive(&lock);
  shared.follow=0;shared.killIssued=false;shared.labOp=0;shared.snap=false;
  ReleaseSRWLockExclusive(&lock);

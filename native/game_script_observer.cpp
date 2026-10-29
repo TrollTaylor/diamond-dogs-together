@@ -4068,9 +4068,11 @@ bool SelectBuddyPoseReceipt(const char* buffer,std::size_t size,mgscoop::script_
 }
 
 // D7 dog guard receipt (docs/vehicles-companions-design.md 6.12, 8.9): mission, epoch, role (0 host, 1 guest; must be
-// this copy's native role), arm (guest only: the lease of dog_guard::kLeaseFrames dog updates), the host's dog-state
-// byte, a lab op (1 life %, 2 stun %; lab mode only) and its percent. Arming needs the paired exact scope; a guest's
-// disarm and the host's read of its own record are always answered. Reply: the record 0 snapshot and the counters.
+// this copy's native role), arm (guest only: 1 the lease of dog_guard::kLeaseFrames dog updates with the host's byte,
+// 2 a hold), the host's dog-state byte, a lab op (1 life %, 2 stun %; lab mode only) and its percent. dog_guard::Admit
+// decides: arming needs the paired exact scope; through a link loss an armed lease is held drop-only (reason 'hold',
+// follow 0, no lab op; review 2026-10-29); a guest's disarm and the host's read of its own record are always answered.
+// Reply: the counters and, only from a snapshot under a second old (dog_guard::Fresh), the record 0 fields.
 bool SelectDogGuardReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace g=mgscoop::dog_guard;
     constexpr char prefix[]="return 'MGS_COOP_DOG_GUARD_V1' -- ";
@@ -4082,33 +4084,39 @@ bool SelectDogGuardReceipt(const char* buffer,std::size_t size,mgscoop::script_b
         if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
         cursor=parsed.ptr;if(i!=6) {if(cursor==end || *cursor!=' ') return false;++cursor;}
     }
-    if(cursor!=end || (v[0]!=30010 && v[0]!=30020 && v[0]!=30050) || !v[1] || v[1]>65535 || v[2]>1 || v[3]>1 || v[4]>255 ||
+    if(cursor!=end || (v[0]!=30010 && v[0]!=30020 && v[0]!=30050) || !v[1] || v[1]>65535 || v[2]>1 || v[3]>2 || v[4]>255 ||
        v[5]>2 || v[6]>100 || (v[3] && !v[2])) return false;
     const auto& labc=mgscoop::GetLabConfig();
     const bool guest=labc.role==mgscoop::LabRole::guest;
-    const char* reason=nullptr;
-    if((v[2]==1)!=guest) reason="role";
-    else if(!dog_guard_ok || !g::Installed()) reason="admission";
-    else if(v[5] && labc.mode!=mgscoop::LabMode::lab) reason="lab_only";
-    else if(v[3] || v[5]) {
+    g::Scope sc{};
+    sc.installed=dog_guard_ok && g::Installed();
+    sc.labMode=labc.mode==mgscoop::LabMode::lab;
+    sc.exact=offline_enabled && partner_on && partner_gate_ok && lab::SavesRedirected();
+    if(sc.installed && sc.exact && (v[3] || v[5])) {
         const auto status=mgscoop::world_link::GetStatus();
         unsigned short mission{};
-        const bool exact=offline_enabled && partner_on && partner_gate_ok && lab::SavesRedirected();
-        if(!exact) reason="admission";
-        else if(!OnRuntimeThread() || mission_terminating || !ReadMission(mission) || mission!=v[0] || partner_mission!=v[0] ||
-            !status.configured || !status.paired || !status.link_up || status.effective<3 || status.epoch!=v[1]) reason="scope";
+        sc.runtime=OnRuntimeThread();sc.terminating=mission_terminating;
+        sc.mission=sc.runtime && !sc.terminating && ReadMission(mission) && mission==v[0] && partner_mission==v[0];
+        sc.configured=status.configured;sc.paired=status.paired;sc.linkUp=status.link_up;sc.effective=status.effective;
+        sc.epoch=status.epoch==v[1];sc.armed=g::Read().armed;
     }
-    g::Request q{};q.guest=guest;q.arm=!reason && v[3]==1;q.follow=static_cast<std::uint8_t>(v[4]);
-    if(!reason) {q.labOp=static_cast<std::uint8_t>(v[5]);q.labPct=static_cast<std::uint8_t>(v[6]);}
+    const auto a=g::Admit(guest,v[2]==1,static_cast<std::uint8_t>(v[3]),static_cast<std::uint8_t>(v[5]),sc);
+    g::Request q{};q.guest=guest;q.arm=a.grant!=g::Grant::none;
+    q.follow=a.grant==g::Grant::full?static_cast<std::uint8_t>(v[4]):std::uint8_t{0};
+    if(a.lab) {q.labOp=static_cast<std::uint8_t>(v[5]);q.labPct=static_cast<std::uint8_t>(v[6]);}
     const auto s=dog_guard_ok?g::Control(q):g::Status{};
-    const unsigned byte=s.snapshot && s.ageMs<=1000 ? g::Encode(s.rec) : 0u;
+    const bool fresh=g::Fresh(s.snapshot,s.ageMs);
+    const unsigned byte=fresh ? g::Encode(s.rec) : 0u;
+    char record[128]{};
+    if(fresh && FAILED(StringCchPrintfA(record,ARRAYSIZE(record),"life=%u,max=%u,stun=%u,smax=%u,state=%u,flags=%u,",unsigned(s.rec.life),
+        unsigned(s.rec.max),unsigned(s.rec.stun),unsigned(s.rec.stunMax),unsigned(s.rec.state),unsigned(s.rec.flags)))) return false;
+    const bool ready=!a.reason || a.grant==g::Grant::hold;
     static char reply[400]{};
     const HRESULT formatted=StringCchPrintfA(reply,ARRAYSIZE(reply),
-        "return {ready=%s,reason='%s',armed=%u,installed=%u,snap=%u,age=%lu,life=%u,max=%u,stun=%u,smax=%u,state=%u,flags=%u,byte=%u,"
+        "return {ready=%s,reason='%s',armed=%u,installed=%u,snap=%u,fresh=%u,age=%lu,%sbyte=%u,"
         "drops=%u,hits=%u,applied=%u,kills=%u,cleared=%u,attacker=%u,attack=%u}",
-        reason?"false":"true",reason?reason:"ok",s.armed?1u:0u,s.installed?1u:0u,s.snapshot?1u:0u,static_cast<unsigned long>(s.ageMs),
-        unsigned(s.rec.life),unsigned(s.rec.max),unsigned(s.rec.stun),unsigned(s.rec.stunMax),unsigned(s.rec.state),unsigned(s.rec.flags),byte,
-        s.drops,s.hits,s.applied,s.kills,s.cleared,unsigned(s.lastAttacker),unsigned(s.lastAttack));
+        ready?"true":"false",a.reason?a.reason:"ok",s.armed?1u:0u,s.installed?1u:0u,s.snapshot?1u:0u,fresh?1u:0u,
+        static_cast<unsigned long>(s.ageMs),record,byte,s.drops,s.hits,s.applied,s.kills,s.cleared,unsigned(s.lastAttacker),unsigned(s.lastAttack));
     if(FAILED(formatted)) return false;
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
 }
@@ -5698,9 +5706,13 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     LogFormat("carry_info_code_gate=%s;rva=0x%llx;scope=read_only_query\r\n",carryGate?"ok":"refused",static_cast<unsigned long long>(carryMismatch));
                     downed_hook_ok = downed_gate && mgscoop::downed_damage::Install(base, span, Log);
                     // D7 (docs/vehicles-companions-design.md 6.12, 8.9): the guest's copy of the host's D-Dog takes
-                    // no damage; inert until the guest's companion module arms its lease.
-                    dog_guard_ok = partner_gate_ok && mgscoop::dog_guard::Install(base, span, Log);
-                    Log(dog_guard_ok ? "dog_guard_code_gate=ok;scope=guest_mirror_dog_lease\r\n" : "dog_guard_code_gate=refused\r\n");
+                    // no damage; inert until the guest's companion module arms its lease. Installed only under M1's
+                    // key companion_host_owned (review 2026-10-29): with the key off (the lab and play default)
+                    // neither slot is touched, on the host's PC or the guest's.
+                    const char* dogGuardOff = mgscoop::dog_guard::InstallRefusal(partner_gate_ok, labc.companion_host_owned);
+                    dog_guard_ok = !dogGuardOff && mgscoop::dog_guard::Install(base, span, Log);
+                    if (dogGuardOff && std::strcmp(dogGuardOff, "key_off") == 0) Log("dog_guard=off;reason=key_off;slots=0\r\n");
+                    else Log(dog_guard_ok ? "dog_guard_code_gate=ok;scope=guest_mirror_dog_lease\r\n" : "dog_guard_code_gate=refused\r\n");
                     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
                     // Teammate rescue: stock player sleep and player-carries-player
                     // (docs/STATUS.md). The adapters stay inert until a teammate is down.

@@ -51,6 +51,27 @@ Plan Lab(const Record& local,std::uint8_t op,std::uint8_t pct) noexcept;
 // Lua tick does within kLeaseFrames updates.
 inline constexpr std::uint64_t kLeaseFrames=180;
 constexpr bool Armed(std::uint64_t frame,std::uint64_t until) noexcept {return until!=0&&frame<=until;}
+// Install gate (review 2026-10-29): the two slots are patched only on a PC that runs M1's key companion_host_owned
+// (lab or play) and passed the partner code gate; otherwise nothing is installed and the stock damage and life
+// paths run untouched. nullptr: install; else the reason ("key_off", "partner_gate").
+const char* InstallRefusal(bool partnerGate,bool companionHostOwned) noexcept;
+// The receipt's admission (game_script_observer.cpp). arm: 0 a read (host) or a disarm (guest), 1 arm with the
+// host's byte, 2 hold. A full arm and a lab op need the paired exact scope; through a link loss (not paired, link
+// down, a lower effective level or another epoch) an armed guest's lease is HELD drop-only (follow 0, no lab op)
+// until the session ends (the guest's Lua stops renewing) or the mission does (Disarm); a hold never starts the guard.
+enum class Grant:std::uint8_t {none,full,hold};
+struct Scope {bool installed{},labMode{},exact{},runtime{},terminating{},mission{},configured{},paired{},linkUp{},epoch{},armed{};
+ std::uint8_t effective{};};
+struct Admission {const char* reason{};Grant grant{Grant::none};bool lab{};};
+Admission Admit(bool guest,bool requestGuest,std::uint8_t arm,std::uint8_t labOp,const Scope& scope) noexcept;
+// The reply reports the record only from a snapshot under kFreshMs old (else the fields are left out: a deleted or
+// reloaded dog's last record is never read as the current one).
+inline constexpr std::uint32_t kFreshMs=1000;
+constexpr bool Fresh(bool snapshot,std::uint32_t ageMs) noexcept {return snapshot&&ageMs<=kFreshMs;}
+// Log caps, reset at every Disarm (mission start, end, termination): the first 16 drops then every 50th; 64 follow lines.
+inline constexpr unsigned kDropLogFirst=16,kDropLogEvery=50,kFollowLogCap=64;
+constexpr bool DropLogged(unsigned m) noexcept {return m!=0&&(m<=kDropLogFirst||m%kDropLogEvery==0);}
+constexpr bool FollowLogged(unsigned used) noexcept {return used<kFollowLogCap;}
 
 #ifdef _WIN32
 bool CodeGate(const void* image,std::size_t span) noexcept;

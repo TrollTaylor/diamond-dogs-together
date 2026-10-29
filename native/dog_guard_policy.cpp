@@ -34,6 +34,23 @@ Plan Guard(const Record& local,std::uint8_t follow,bool killIssued) noexcept {
  p.write=!Same(p.next,local);
  return p;
 }
+const char* InstallRefusal(bool partnerGate,bool companionHostOwned) noexcept {
+ return !companionHostOwned?"key_off":!partnerGate?"partner_gate":nullptr;
+}
+Admission Admit(bool guest,bool requestGuest,std::uint8_t arm,std::uint8_t labOp,const Scope& s) noexcept {
+ if(requestGuest!=guest||(arm&&!guest)||arm>2) return {"role"};
+ if(!s.installed) return {"admission"};
+ if(labOp&&!s.labMode) return {"lab_only"};
+ if(!arm&&!labOp) return {};
+ if(!s.exact) return {"admission"};
+ if(!s.runtime||s.terminating||!s.mission||!s.configured) return {"scope"};
+ const bool linked=s.paired&&s.linkUp&&s.effective>=3&&s.epoch;
+ if(arm==1&&linked) return {nullptr,Grant::full,labOp!=0};
+ if(!arm) return linked?Admission{nullptr,Grant::none,true}:Admission{"scope"};
+ // A full arm without the link, or a hold: an armed lease is held drop-only; nothing new is armed.
+ if(s.armed) return {"hold",Grant::hold,false};
+ return {arm==2?"not_armed":"scope"};
+}
 Plan Lab(const Record& local,std::uint8_t op,std::uint8_t pct) noexcept {
  Plan p{};p.next=local;
  if(local.state==kStateDown||pct>100) return p;
