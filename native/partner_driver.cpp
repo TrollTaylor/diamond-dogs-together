@@ -11,6 +11,8 @@
 #include "mgscoop/partner_driver.hpp"
 #include "vehicle_mirror_state.hpp"
 #include "mgscoop/partner_aim.hpp"
+#include "mgscoop/partner_ammo_leak.hpp"
+#include "mgscoop/equipment_stock_probe.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/coop_carry.hpp"
@@ -2680,6 +2682,25 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                        unsigned(e.slots[0].type), unsigned(e.slots[1].type), unsigned(e.slots[2].type), unsigned(e.version),
                        m.mission_code, e.epoch, m.equip.link_epoch);
         }
+        if (accepted && !box_only && d.preload_late_watch) {
+            // Item 2: the manifest came after the allocation's preload query
+            // (a peer still relaunching from a save handoff). The preload is a
+            // mission-block load at the allocation only: the bases it did not
+            // cover show after the next load.
+            namespace sp = equipment_stock_probe;
+            d.preload_late_watch = false;
+            const auto& e = m.equip.manifest;
+            const std::uint16_t remote[3] = {e.slots[0].base_id, e.slots[1].base_id, e.slots[2].base_id};
+            unsigned wanted = 0;
+            const unsigned count = d.preload_count <= 3 ? d.preload_count : 3u;
+            const unsigned covered = sp::PreloadCover(remote, d.preload_ids, count, wanted);
+            const auto source = static_cast<sp::PreloadSource>(d.preload_source);
+            EmitFormat(h, "equip_preload=late_manifest; mission=%u; preload=%s; source=%s; preloaded=%u; remote_base=%u,%u,%u; "
+                          "covered=%u/%u; guns=%s; link_epoch=%u\r\n",
+                       d.preload_mission, d.preload_verdict[0] ? d.preload_verdict : "none", sp::PreloadSourceName(source), count,
+                       unsigned(remote[0]), unsigned(remote[1]), unsigned(remote[2]), covered, wanted,
+                       wanted && covered == wanted ? "this_load" : "next_load", m.equip.link_epoch);
+        }
     }
 }
 
@@ -3366,14 +3387,20 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
                    m.weapon_absent ? "absent" : "present", m.weapon_absent ? "absent" : "present", m.weapon_strip);
     }
     // Play: any leak of instance 1's job into the viewer's save-backed vars (a
-    // shot leak: vars shoot count; an ammo leak: the weapon/ammo vars block,
-    // with or without the mirror, which also turns itself off: mag.leak_off;
-    // process totals) strips FIRE and RELOAD for the rest of the process, so
-    // neither runs again against a co-op save that persists.
-    if (set.play_mode && !d.leak_strip && (ns.shot_leaks || ns.ammo_leaks || ns.mag_leak_off)) {
+    // shot leak: vars shoot count; an ammo leak: a weapon or ammo field of the
+    // weapon/ammo vars block, partner_ammo_leak verdict leak, with or without
+    // the mirror, which also turns itself off: mag.leak_off) strips FIRE and
+    // RELOAD for the rest of THIS MISSION (this mission's counters; MissionStart
+    // clears the strip). Two-PC test 2026-10-23 item 3: the old process-wide
+    // latch also carried into every later mission until the game restarted.
+    // The line names the process totals (shot_leaks/ammo_leaks) as before.
+    if (!d.leak_strip &&
+        partner_ammo_leak::StripsFireReload(set.play_mode, {ns.shot_leaks_mission, ns.ammo_leaks_mission, ns.mag_leak_off})) {
         d.leak_strip = pnat::kPadFire | pnat::kPadReload;
-        EmitFormat(h, "partner_weapon=fire_reload_off; reason=%s; shot_leaks=%u; ammo_leaks=%u; strip=0x%x; scope=process\r\n",
-                   ns.shot_leaks ? "shot_leak" : "ammo_leak", ns.shot_leaks, ns.ammo_leaks, d.leak_strip);
+        EmitFormat(h, "partner_weapon=fire_reload_off; reason=%s; shot_leaks=%u; ammo_leaks=%u; strip=0x%x; scope=mission; "
+                      "mission_shot_leaks=%u; mission_ammo_leaks=%u; benign=%u\r\n",
+                   ns.shot_leaks_mission ? "shot_leak" : ns.ammo_leaks_mission ? "ammo_leak" : "mag_leak", ns.shot_leaks, ns.ammo_leaks,
+                   d.leak_strip, ns.shot_leaks_mission, ns.ammo_leaks_mission, ns.ammo_benign);
     }
     m.weapon_strip |= d.leak_strip;
     // Anim round 1: the auto-fire stop (partner_slots DryStep). Instance 1's
@@ -5690,6 +5717,12 @@ void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
 
 void DrainEquipLink(Driver& d, const Hooks& h) noexcept { DrainEquip(d, h, 0); }
 
+bool OwnManifest(const Driver& d, partner_equip_wire::Manifest& out) noexcept {
+    if (!d.equip_tx_have) return false;
+    out = d.equip_tx;
+    return true;
+}
+
 bool RemoteManifest(const Driver& d, std::uint32_t link_session, partner_equip_wire::Manifest& out) noexcept {
     const partner_equip_wire::Store& st = d.mission.equip;
     if (st.have && (!link_session || st.link_epoch == link_session)) {
@@ -5842,6 +5875,9 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     WithdrawGesture(d, h);
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
+    // Two-PC test 2026-10-23 item 3: the play leak strip is mission-scoped (the
+    // hook's mission leak counters were just reset with its fault).
+    d.leak_strip = 0;
     // F1 vehicles: no board policy outlives a mission (the lease would end it anyway).
     BoardWithdraw(d, h);
     d.mission = Mission{};

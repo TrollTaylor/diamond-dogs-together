@@ -1,0 +1,58 @@
+# Two-PC test 2026-10-23 item 2 (docs/two-pc-test-2026-10-23.md, "Host fixes" in docs/STATUS.md): right after a save
+# handoff the host pressed Continue while the relaunched guest was still at its title. The host's allocation had no
+# manifest (equip_preload=refused; reason=no_manifest), the guest's manifest came 20 s later, and nothing loaded its
+# bases: equip_writer=backoff; reason=no_resident x6, then refused; partner_weapon=absent for the whole visit (46 s).
+# The preload is a mission-block load at the allocation only (vanilla calls RequestLoadToEquipMissionBlock in
+# MissionPrepare), so a late manifest cannot load anything until the next allocation. wp/host-fixes:
+#  - after a handoff (the host's token partner_restarting, save_handoff::PeerOnHandedSave) the allocation preload
+#    predicts the peer's first loadout from the host's own manifest (equip_preload=authorized; ...; source=predicted);
+#  - a manifest that arrives after the allocation query logs equip_preload=late_manifest once: which bases the
+#    preload covered (guns=this_load) or not (guns=next_load).
+# What this scenario stages: the late manifest. The host continues while the guest is still at its boot screens (no
+# loadout yet: no manifest), so the host's allocation refuses no_manifest (source=none); the guest then reaches its
+# title, sends its manifest, and the host logs the late_manifest line (guns=next_load: nothing predicted, no handoff).
+# What it cannot stage: the predicted preload. It needs a guest that exits after a handoff AND relinks to the same
+# host process (Play-Coop's relaunch); the worker has no relaunch control (tools/worker/README.md: a restart always
+# takes two sessions, and a second session is a new host process). The fixtures prove it:
+# equipment_stock_probe_tests (ChoosePreloadSource, PreloadCover), save_handoff_io_tests (HandedSave), and
+# partner_driver_tests (TestEquipLateManifest, OwnManifest).
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
+# unset, no build running in any worktree, under the shared verify lock, one worker session.
+# Run (play rehearsal, the gun stage; the relaunch scenario's counters):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -GraphicsQuality low -ScenarioPath tools/worker/scenarios/partner-equip-late-manifest.txt
+# Expected (host):
+#   equip_preload=refused; reason=no_manifest; ...; manifest=0; source=none at its 30010 allocation
+#   then, once the guest is at its title: equip_preload=late_manifest; mission=30010; preload=refused; source=none;
+#     preloaded=0; remote_base=<the guest's bases>; covered=0/<n>; guns=next_load; link_epoch=3
+#   NEVER source=predicted here (no handoff in this process)
+# Expected (guest): its own allocation preloads the host's bases (equip_preload=authorized; ...; source=remote).
+# If the guest's boot screens already sent a manifest (link up and a loadout readable before its title), the host's
+# preload is authorized with source=remote and no late_manifest line follows: report it (the staging did not hold).
+# Captures: host-alone, guest-arrived.
+# Result c07b8136 (wp/host-fixes e7fb9ac, research build, play rehearsal, gun stage, lab seed; closed, baseline
+# restored, real saves unchanged; "title guest" added: titlemenu stops at the guest's title): the host's 30010
+# allocation logged equip_preload=refused; reason=no_manifest; ...; manifest=0; source=none; the guest's manifest came
+# from its title (partner_equip=manifest; ...; sender_epoch=1; link_epoch=3), then equip_preload=late_manifest;
+# mission=30010; preload=refused; source=none; preloaded=0; remote_base=0,46,9; covered=0/2; guns=next_load;
+# link_epoch=3. The guest's own allocation preloaded the host's bases (source=remote). The writer still bound the
+# guest's slot 1 (46) on the host, probably because the host's own loadout carries base 46 (resident without a preload);
+# slot 2 (9) refused stock_optional_dict. guns=next_load counts preloaded ids only.
+labsetting partner_act_log=1
+labsetting host link_session_skew=2
+titlemenu host 240
+title host 240
+waitgameplay host 120
+waitlog host 'equip_preload=(refused|authorized); .*source=' 60
+host capture host-alone
+titlemenu guest 240
+waitlog host 'equip_preload=late_manifest; .*guns=(next_load|this_load);' 240
+title guest 240
+waitgameplay guest 240
+waitlog guest 'equip_preload=(refused|authorized); .*source=' 60
+both debug godmode 1
+stance host stand
+stance guest stand
+placebehind guest host 4 3
+wait 2500
+guest capture guest-arrived
+state

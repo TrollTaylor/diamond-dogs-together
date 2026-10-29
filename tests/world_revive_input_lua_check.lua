@@ -22,9 +22,12 @@ local function fixture()
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op, {...}}; return true end
     W.receipt = function(text)
         if text:match("^return 'MGS_COOP_DOWNED_HUD_V[123]'") then return true end
-        local m, ep, cmd, gen = text:match("^return 'MGS_COOP_DOWNED_V1' %-%- (%d+) (%d+) (%d+) (%d+)$")
+        local m, ep, cmd, gen, posture = text:match("^return 'MGS_COOP_DOWNED_V1' %-%- (%d+) (%d+) (%d+) (%d+)(.*)$")
         check(m == '30010' and ep == '7', 'all control receipts retain exact mission and epoch')
         cmd, gen = tonumber(cmd), tonumber(gen)
+        -- Polls and locks carry the local box posture field (0 or 1); command 4 never does.
+        check((cmd == 0 or cmd == 1) and (posture == ' 0' or posture == ' 1') or cmd ~= 0 and cmd ~= 1 and posture == '',
+            'only polls and locks carry the posture field')
         if cmd ~= 3 and (not W.active or not W.paired or c.nativeUnavailable) then return nil end
         local r = copy(c.n)
         if cmd == 4 then

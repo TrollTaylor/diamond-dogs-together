@@ -11,6 +11,7 @@
 #include <vector>
 #include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_driver.hpp"
+#include "mgscoop/equipment_stock_probe.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "partner_player_contract.hpp"
@@ -3994,7 +3995,8 @@ void TestNativeOnline() {
     }
     for (const bool play : {true, false}) {
         // Play: a shot or ammo leak into the viewer's vars strips FIRE and RELOAD
-        // for the rest of the process (every later mission too); the lab only counts.
+        // for the rest of THIS MISSION (two-PC test 2026-10-23 item 3: the old
+        // latch outlived the mission and the process); the lab only counts.
         NativeSession s;
         SetVisualFire(s);
         s.driver.settings.play_mode = play;
@@ -4002,19 +4004,28 @@ void TestNativeOnline() {
         for (int i = 0; i < 5; ++i) s.N();
         Check((s.fake.arms.back().strip & 0x50u) == 0, "no leak: FIRE and RELOAD pass");
         s.fake.stats.native.shot_leaks = 1;
+        s.fake.stats.native.shot_leaks_mission = 1;
         for (int i = 0; i < 5; ++i) s.N();
         if (play) {
             Check((s.fake.arms.back().strip & 0x50u) == 0x50u && (s.fake.arms.back().strip & 0x8u) == 0 && s.driver.leak_strip == 0x50u &&
                       s.fake.Containing("partner_weapon=fire_reload_off; reason=shot_leak; shot_leaks=1; ammo_leaks=0;") == 1 &&
-                      s.driver.mission.tele.leak_strip == 0x50u,
-                  "play: a shot leak strips FIRE and RELOAD (HOLD stays), logged once");
-            s.fake.stats.native.shot_leaks = 0;
+                      s.fake.Containing("scope=mission") == 1 && s.driver.mission.tele.leak_strip == 0x50u,
+                  "play: a shot leak strips FIRE and RELOAD (HOLD stays) for the mission, logged once");
+            // MissionStart resets the hook's mission counters (reset_input_fault); the process total stays.
+            s.fake.stats.native.shot_leaks_mission = 0;
             pd::MissionEnd(s.driver, s.hooks);
             pd::MissionStart(s.driver, s.hooks);
             Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "leak guard: next mission cfg");
             Loaded(s);
-            Check(s.Until(pn::Mode::active, 9000) && (s.fake.arms.back().strip & 0x50u) == 0x50u &&
-                      s.fake.Containing("fire_reload_off") == 1, "the play leak strip outlives the mission");
+            Check(s.Until(pn::Mode::active, 9000) && (s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 &&
+                      s.fake.Containing("fire_reload_off") == 1,
+                  "the play leak strip ends with its mission: the next mission's FIRE and RELOAD pass");
+            s.fake.stats.native.ammo_leaks = 1;
+            s.fake.stats.native.ammo_leaks_mission = 1;
+            for (int i = 0; i < 5; ++i) s.N();
+            Check((s.fake.arms.back().strip & 0x50u) == 0x50u && s.driver.leak_strip == 0x50u &&
+                      s.fake.Containing("partner_weapon=fire_reload_off; reason=ammo_leak; shot_leaks=1; ammo_leaks=1;") == 1,
+                  "a new leak in the new mission strips again (never slips through)");
         } else {
             Check((s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 && !s.fake.Containing("fire_reload_off"),
                   "lab: a leak is telemetry only");
@@ -4027,10 +4038,25 @@ void TestNativeOnline() {
         s.driver.settings.play_mode = true;
         Check(s.Until(pn::Mode::active, 9000), "active (gun, ammo leak)");
         s.fake.stats.native.ammo_leaks = 2;
+        s.fake.stats.native.ammo_leaks_mission = 2;
         for (int i = 0; i < 5; ++i) s.N();
         Check((s.fake.arms.back().strip & 0x50u) == 0x50u &&
                   s.fake.Containing("partner_weapon=fire_reload_off; reason=ammo_leak; shot_leaks=0; ammo_leaks=2;") == 1,
               "play: an ammo leak strips FIRE and RELOAD");
+    }
+    {
+        // Benign item changes (the viewer's box knocked off inside body 1's job)
+        // and leaks of an earlier mission never strip (play).
+        NativeSession s;
+        SetVisualFire(s);
+        s.driver.settings.play_mode = true;
+        Check(s.Until(pn::Mode::active, 9000), "active (gun, benign vars change)");
+        s.fake.stats.native.ammo_benign = 3;
+        s.fake.stats.native.ammo_leaks = 4;  // process total of earlier missions
+        s.fake.stats.native.shot_leaks = 2;
+        for (int i = 0; i < 5; ++i) s.N();
+        Check((s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 && !s.fake.Containing("fire_reload_off"),
+              "benign item changes and earlier missions' leaks leave FIRE and RELOAD on");
     }
     {
         // A copy that shows clips (drive=legacy) still sends its capabilities: off, legacy.
@@ -5303,6 +5329,71 @@ void TestEquipEarlyManifest() {
 // manifest and capability message carried the SENDER's counter and the receiver dropped it as stale_epoch: no
 // partner guns, remote=unknown/none and no partner box for the rest of the evening. The receiver now binds them to
 // its OWN link session (the one they were drained in) and never compares the sender's counter with it.
+// Two-PC test 2026-10-23 item 2: the host continued right after a save handoff,
+// before the relaunched guest linked. The allocation preload predicted the
+// guest's first loadout from the host's own manifest (OwnManifest); the
+// guest's manifest arrives after the allocation: one late_manifest line says
+// which bases the preload covered (guns this load, or after the next one).
+void TestEquipLateManifest() {
+    namespace ew = mgscoop::partner_equip_wire;
+    namespace sp = mgscoop::equipment_stock_probe;
+    for (const bool predicted : {true, false}) {
+        Fake fake;
+        pd::Hooks hooks = HooksFor(fake);
+        AddWeaponHooks(hooks);
+        hooks.link_session = HookLinkSession;
+        hooks.drain_reliable = HookDrainReliable;
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.partner = true;
+        lab.partner_input_send = true;
+        pd::Configure(d, lab);
+        ew::Manifest own{};
+        Check(!pd::OwnManifest(d, own), "late manifest: no own manifest before the first loadout read");
+        d.equip_tx_have = true;
+        d.equip_tx.slots[1].base_id = 46;
+        d.equip_tx.slots[2].base_id = 9;
+        Check(pd::OwnManifest(d, own) && own.slots[1].base_id == 46 && own.slots[2].base_id == 9,
+              "late manifest: OwnManifest is this copy's last sent manifest (the prediction)");
+        pd::MissionStart(d, hooks, 30050);
+        fake.link_session = 2;
+        // What the observer's allocation query left (refused no_manifest, or the predicted ids).
+        d.preload_mission = 30050;
+        d.preload_count = predicted ? 2 : 0;
+        d.preload_ids[0] = predicted ? 46 : 0;
+        d.preload_ids[1] = predicted ? 9 : 0;
+        std::snprintf(d.preload_verdict, sizeof(d.preload_verdict), "%s", predicted ? "authorized" : "refused");
+        d.preload_source = static_cast<std::uint8_t>(predicted ? sp::PreloadSource::predicted : sp::PreloadSource::none);
+        d.preload_late_watch = true;
+        fake.lines.clear();
+        ew::Manifest g{};
+        g.revision = 1; g.epoch = 1; g.inv_slot = 0xFF;
+        g.slots[0].alias = 871; g.slots[0].type = 1;
+        g.slots[1].base_id = 46; g.slots[1].alias = 873; g.slots[1].type = 4;
+        g.slots[2].base_id = 9; g.slots[2].alias = 875; g.slots[2].type = 2;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "late manifest: the guest's manifest encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1000);
+        Check(d.mission.equip.have && !d.preload_late_watch, "late manifest: stored, the watch spent");
+        if (predicted) {
+            Check(fake.Containing("equip_preload=late_manifest; mission=30050; preload=authorized; source=predicted; preloaded=2; "
+                                  "remote_base=0,46,9; covered=2/2; guns=this_load; link_epoch=2\r\n") == 1,
+                  "late manifest: the predicted preload covered both guns (this load)");
+        } else {
+            Check(fake.Containing("equip_preload=late_manifest; mission=30050; preload=refused; source=none; preloaded=0; "
+                                  "remote_base=0,46,9; covered=0/2; guns=next_load; link_epoch=2\r\n") == 1,
+                  "late manifest: without a prediction the guns come with the next load");
+        }
+        // A new revision later in the mission logs nothing more.
+        g.revision = 2; g.slots[1].base_id = 29;
+        Check(ew::Encode(g, bytes) == sizeof(bytes), "late manifest: revision 2 encodes");
+        fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        pd::TickEquipLink(d, hooks, 1100);
+        Check(fake.Containing("equip_preload=late_manifest") == 1, "late manifest: one line per allocation query");
+    }
+}
+
 void TestEquipCrossProcessSession() {
     namespace ew = mgscoop::partner_equip_wire;
     namespace pcw = mgscoop::partner_caps_wire;
@@ -6318,6 +6409,9 @@ void TestRideSeatById() {
     }
     {
         // Gates: key off, no addendum, another revision, category mismatch, unrealized, viewer's own vehicle.
+        // A read refused for another link than the pool (object: a broken chain, not a missing vehicle) stays
+        // local_read and keeps the named path in free roam; an id this copy lacks (live / index: absent) is
+        // TestRideSeatAbsent's (the visible fallback).
         struct Case { const char* why; int setup; };
         const Case cases[] = {{"no_ext", 0}, {"remote_category", 1}, {"category", 2}, {"unrealized", 3}, {"local_read", 4},
                               {"remote_category", 5}, {"unavailable", 6}};
@@ -6329,7 +6423,12 @@ void TestRideSeatById() {
             if (k.setup == 1) s.fake.channel2.push_back(ExtBytes(static_cast<std::uint16_t>(s.ride_rev + 1), 25600, 0, 1, 900));
             if (k.setup == 2) s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 2, 900));
             if (k.setup == 3) { s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900)); s.fake.vehicles[0] = VehicleRead(25600, 0x14, 0xFF); }
-            if (k.setup == 4) { s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900)); s.fake.vehicles.clear(); }
+            if (k.setup == 4) {
+                s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900));
+                s.fake.vehicles[0] = mgscoop::partner_vehicle::Read{};
+                s.fake.vehicles[0].unit.id = 25600;
+                s.fake.vehicles[0].refusal = "object";
+            }
             if (k.setup == 5) s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900, 2));
             if (k.setup == 6) { s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900)); s.hooks.seat_target = nullptr; }
             s.fake.sample.act = 111;
@@ -7630,7 +7729,8 @@ void TestRideRobust() {
     {
         // A Fultoned jeep (friend F:9631 Fulton, F:10059-10071): this copy has no vehicle 25603 while the
         // host drives it in Mother Base (seat by id only). 0.13.5 refused local_read and hid the host for
-        // 25 s; now body 1 stays shown at the host's streamed pose, and seats once the jeep exists here.
+        // 25 s; now body 1 stays shown at the host's streamed pose, and seats once the jeep exists here. Since
+        // the Africa fix the by-id read's live refusal (pool bit clear) is logged as absent.
         const auto mb = [](SeatSession& s) {
             s.driver.settings.seat_id = true;
             s.hooks.vehicle_read = HookVehicleRead;
@@ -7645,10 +7745,10 @@ void TestRideRobust() {
         const auto hides = s.fake.Containing("partner_ride=hide");
         Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 && !s.fake.dm_patched &&
                   s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
-                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=0; offer=0; reason=local_read;") == 1 &&
-                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read; show=warp; byid=0") == 1 &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=0; offer=0; reason=absent;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=absent; show=warp; byid=0") == 1 &&
                   s.fake.Containing("partner_ride_seat=refused;") == 0,
-              "Fultoned jeep: local_read shows body 1 without a seat (nothing armed or played)");
+              "Fultoned jeep: absent shows body 1 without a seat (nothing armed or played)");
         Check(s.Step() && s.reply.op == op::warp && !s.driver.mission.visibility.hidden && !s.driver.mission.seat.blocked &&
                   s.fake.Containing("partner_ride=hide") == hides && s.fake.Containing("partner_ride_seat=unavailable;") == 0,
               "Fultoned jeep: visible, Warped every tick, never hidden");
@@ -7656,7 +7756,7 @@ void TestRideRobust() {
         s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
         s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
         Check(s.Step(2100) && (s.reply.op & op::ride_seat) && s.reply.seat_entry == partner::seat_entry::by_id && s.driver.mission.seat.byid &&
-                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25603; seat=0; reason=local_read; next=release;") == 1,
+                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25603; seat=0; reason=absent; next=release;") == 1,
               "the vehicle exists here again: seated by id");
         // The remote gets off while shown in the fallback: nothing to stop, not latched.
         SeatSession g(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
@@ -7680,7 +7780,7 @@ void TestRideRobust() {
         u.ride_suffix = " ride=2 veh=25603 seat=1";
         Check(u.Step() && !(u.reply.op & op::warp) && u.driver.mission.seat.phase == pd::SeatPhase::fallback,
               "the viewer in that vehicle: no Warp");
-        // The copy vanishes between the offer and the id write (a target refusal, local_read): not
+        // The copy vanishes between the offer and the id write (a target refusal, absent): not
         // latched where only the id can seat; the next episode shows body 1 without a seat.
         SeatSession t(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
         t.fake.vehicles.push_back(VehicleRead(25603, 0x10));
@@ -7689,20 +7789,30 @@ void TestRideRobust() {
         Check(t.Step() && (t.reply.op & op::ride_seat) && t.reply.seat_entry == partner::seat_entry::by_id, "offered by id and played");
         t.fake.vehicles.clear();
         t.Playing(kFrontLeftLoop);
-        Check(t.Step() && t.fake.Containing("partner_ride_seat=target; vehicle=25603; seat=0; wrote=0; reason=local_read;") == 1 &&
-                  t.fake.Containing("partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-; reason=local_read;") == 1 &&
+        Check(t.Step() && t.fake.Containing("partner_ride_seat=target; vehicle=25603; seat=0; wrote=0; reason=absent;") == 1 &&
+                  t.fake.Containing("partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-; reason=absent;") == 1 &&
                   t.reply.op == op::dm_stop && t.fake.seat_targets.empty(),
-              "target refused (local_read): the seat DM is stopped");
+              "target refused (absent): the seat DM is stopped");
         t.Ended();
         Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && !t.driver.mission.seat.blocked &&
-                  t.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=0; reason=local_read; via=stop;") == 1,
+                  t.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=0; reason=absent; via=stop;") == 1,
               "Mother Base target refusal for a missing copy: not latched");
         reshow(t);
         t.fake.channel2.push_back(ExtBytes(t.ride_rev, 25603, 0, 1, 900));
         Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::fallback &&
-                  t.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read; show=warp; byid=0") == 1 &&
+                  t.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=absent; show=warp; byid=0") == 1 &&
                   t.fake.Containing("partner_ride=hide") == t_hides && t.fake.Containing("partner_ride_seat=unavailable;") == 0,
               "the next episode shows body 1 without a seat instead of hiding it");
+        // Mother Base (only the id can seat) keeps the fallback for any read refusal (local_read).
+        SeatSession o(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        o.fake.vehicles.push_back(mgscoop::partner_vehicle::Read{});
+        o.fake.vehicles[0].unit.id = 25603;
+        o.fake.vehicles[0].refusal = "object";
+        mb(o);
+        Check(o.Step() && o.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  o.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=0; offer=0; reason=local_read;") == 1 &&
+                  o.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=local_read; show=warp; byid=0") == 1,
+              "Mother Base: another read refusal (local_read) keeps the fallback");
         // Other by-id refusals still hide (latched) as before.
         SeatSession c(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
         c.fake.vehicles.push_back(VehicleRead(25603, 0x20));
@@ -7892,6 +8002,157 @@ void TestRideRobust() {
                     static_cast<unsigned long long>(control));
         Check(fixed <= 2000 + 1200, "native re-entry about enter_hold_ms after the ride (no fresh quality_ms hold)");
         Check(control != ~0ull && control >= fixed + 3000, "control: without the rebase the ride costs ~4 s more of clips");
+    }
+}
+
+// Bug 2 of the two-PC test of 2026-10-23 (docs/two-pc-test-2026-10-23.md): in Africa (30020) the host drove his
+// relief vehicle 25600 (TppVehicle2 index 0, brought from his sortie prep), which existed only on his copy. The
+// guest's by-id read refused live (the pool bit clear, G:11718), free roam ran the named path (Lua no_name ->
+// lua_refused, G:11715-11731) and hid the host for the whole 24.6 s ride. An id this copy lacks (live: the pool bit
+// clear; index: past the pool) is now "absent", and free roam takes the 0.13.6 visible fallback for it too; any
+// other read refusal (local_read) keeps the named path there.
+void TestRideSeatAbsent() {
+    namespace rw = mgscoop::partner_ride_wire;
+    constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full;
+    using mgscoop::PartnerNativeRide;
+    using mgscoop::PartnerRideSeatEnter;
+    using mgscoop::PartnerRideSeatExit;
+    const auto refused_read = [](std::uint16_t id, const char* why) {
+        mgscoop::partner_vehicle::Read r{};
+        r.unit.id = id;
+        r.refusal = why;
+        return r;
+    };
+    // The remote boards `vehicle` (seat 0) with the seat by id on; ext: the ride addendum (category cat) arrived.
+    const auto board = [](SeatSession& s, std::uint16_t vehicle, std::uint8_t cat, bool ext) {
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, vehicle);
+        if (ext) s.fake.channel2.push_back(ExtBytes(s.ride_rev, vehicle, 0, cat, 900));
+        s.fake.sample.act = 111;
+    };
+    const auto reshow = [](SeatSession& s) {
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) s.Step(50);
+        Check(s.driver.mission.bits_set, "re-placed and re-realized");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+    };
+    {
+        // The session's case (G:11703-11731: remote_cat=0, local_cat=255) in both free-roam missions, and an
+        // index past the pool.
+        struct Case { std::uint32_t mission; const char* refusal; };
+        const Case cases[] = {{30020, "live"}, {30010, "live"}, {30020, "index"}};
+        for (const Case& k : cases) {
+            SeatSession s(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, k.mission);
+            if (std::strcmp(k.refusal, "live") != 0) s.fake.vehicles.push_back(refused_read(25600, k.refusal));
+            board(s, 25600, 0, true);
+            const auto hides = s.fake.Containing("partner_ride=hide");
+            Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 && !s.fake.dm_patched &&
+                      s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                      s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=0; reason=absent; remote_cat=0; local_cat=255") ==
+                          1 &&
+                      s.fake.Containing("partner_ride_seat=fallback; vehicle=25600; seat=0; reason=absent; show=warp; byid=0") == 1 &&
+                      s.fake.Containing("partner_ride_seat=refused;") == 0,
+                  "free roam, a vehicle this copy lacks: shown without a seat (nothing armed or played)");
+            unsigned warps = 0;
+            for (unsigned i = 0; i < 100; ++i)
+                if (s.Step() && s.reply.op == op::warp) ++warps;
+            Check(warps == 100 && s.driver.mission.seat.phase == pd::SeatPhase::fallback && !s.driver.mission.visibility.hidden &&
+                      !s.driver.mission.seat.blocked && s.fake.Containing("partner_ride=hide") == hides &&
+                      s.fake.Containing("partner_ride_seat=unavailable;") == 0 && s.fake.Containing("partner_ride_seat=play;") == 0 &&
+                      s.fake.seat_targets.empty() && s.fake.seat_arms == 0,
+                  "free roam: Warped every tick through the 2 s re-checks, never hidden, never a seat play");
+            const auto reverts = s.fake.seat_reverts;
+            s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+            Check(s.Step() && !(s.reply.op & op::dm_stop) && s.driver.mission.seat.phase == pd::SeatPhase::idle &&
+                      !s.driver.mission.seat.blocked && s.fake.seat_reverts == reverts &&
+                      s.fake.Containing("partner_ride_seat=exit; vehicle=25600; seat=0; reason=foot; via=fallback;") == 1,
+                  "free roam: the get-off leaves the fallback without a stop, not latched");
+        }
+    }
+    {
+        // The addendum not (yet) here: the id this copy lacks is absent all the same (no addendum can seat it
+        // by id, and no locator can anchor on it), so the fallback does not wait for the addendum.
+        SeatSession s(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
+        board(s, 25600, 0, false);
+        Check(s.Step() && !(s.reply.op & op::ride_seat) && s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=0; reason=absent;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25600; seat=0; reason=absent; show=warp; byid=0") == 1,
+              "free roam, no addendum yet: an absent vehicle is shown without a seat");
+        // A present vehicle without the addendum keeps the named path (no_ext, unchanged).
+        SeatSession p(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
+        p.fake.vehicles.push_back(VehicleRead(25608, 0x10));
+        board(p, 25608, 1, false);
+        Check(p.Step() && (p.reply.op & op::ride_seat) && p.reply.seat_entry == 0 && p.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  p.fake.Containing("partner_ride_seat=byid; vehicle=25608; seat=0; offer=0; reason=no_ext;") == 1 &&
+                  p.fake.Containing("partner_ride_seat=fallback;") == 0,
+              "free roam, a present vehicle without the addendum: the named seat plays (no fallback)");
+    }
+    {
+        // Any other read refusal (a broken read chain, not a missing vehicle) keeps the proven named path in free
+        // roam: local_read, the named play, and Lua's answer decides (here no_name: refused and hidden as before).
+        SeatSession s(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
+        s.fake.vehicles.push_back(refused_read(25600, "object"));
+        board(s, 25600, 0, true);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_entry == 0 && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=0; reason=local_read;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback;") == 0,
+              "free roam, another read refusal: local_read keeps the named play");
+        const std::string note = std::string(partner::log_prefix) + "event=ride_seat_refused;id=25600;seat=0;reason=no_name";
+        pd::LuaLog(s.driver, s.hooks, note.data(), note.size());
+        Check(s.Step() && s.fake.Containing("partner_ride_seat=refused; vehicle=25600; seat=0; name=-; state=-; reason=lua_refused;") == 1 &&
+                  s.driver.mission.seat.blocked,
+              "free roam, local_read: Lua's no_name still refuses and latches (unchanged)");
+    }
+    {
+        // The vehicle appears on this copy during the fallback (realized, same category): the 2 s re-check
+        // ends the fallback and seats it by id.
+        SeatSession s(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
+        board(s, 25600, 1, true);
+        Check(s.Step() && s.driver.mission.seat.phase == pd::SeatPhase::fallback, "absent: fallback");
+        s.fake.vehicles.push_back(VehicleRead(25600, 0x14));
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900));
+        Check(s.Step(2100) && (s.reply.op & op::ride_seat) && s.reply.seat_entry == partner::seat_entry::by_id && s.driver.mission.seat.byid &&
+                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25600; seat=0; reason=absent; next=release;") == 1,
+              "free roam: the vehicle exists here now, seated by id");
+        s.Playing(kFrontLeftLoop);
+        Check(s.Step() && s.fake.seat_targets.size() == 1 && s.driver.mission.seat.confirmed, "free roam: targeted by id and confirmed");
+    }
+    {
+        // The copy vanishes between the offer and the id write: the target refusal (absent) is not latched in free
+        // roam either, so the next episode shows body 1 without a seat instead of hiding it.
+        SeatSession t(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
+        t.fake.vehicles.push_back(VehicleRead(25600, 0x14));
+        board(t, 25600, 1, true);
+        const auto hides = t.fake.Containing("partner_ride=hide");
+        Check(t.Step() && (t.reply.op & op::ride_seat) && t.reply.seat_entry == partner::seat_entry::by_id, "free roam: offered by id, played");
+        t.fake.vehicles.clear();
+        t.Playing(kFrontLeftLoop);
+        Check(t.Step() && t.fake.Containing("partner_ride_seat=target; vehicle=25600; seat=0; wrote=0; reason=absent;") == 1 &&
+                  t.reply.op == op::dm_stop && t.fake.seat_targets.empty(),
+              "free roam: target refused (absent), the seat DM is stopped");
+        t.Ended();
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && !t.driver.mission.seat.blocked &&
+                  t.fake.Containing("partner_ride_seat=exit; vehicle=25600; seat=0; reason=absent; via=stop;") == 1,
+              "free roam: a target refusal for a vanished copy is not latched");
+        reshow(t);
+        t.fake.channel2.push_back(ExtBytes(t.ride_rev, 25600, 0, 1, 900));
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+                  t.fake.Containing("partner_ride_seat=fallback; vehicle=25600; seat=0; reason=absent; show=warp; byid=0") == 1 &&
+                  t.fake.Containing("partner_ride=hide") == hides && t.fake.Containing("partner_ride_seat=unavailable;") == 0,
+              "free roam: the next episode shows body 1 without a seat");
+        // Another target refusal in free roam (unrealized) is latched as before (the named path's rule).
+        SeatSession u(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
+        u.fake.vehicles.push_back(VehicleRead(25600, 0x14));
+        board(u, 25600, 1, true);
+        Check(u.Step() && (u.reply.op & op::ride_seat), "offered, played");
+        u.fake.vehicles[0] = VehicleRead(25600, 0x14, 0xFF);
+        u.Playing(kFrontLeftLoop);
+        Check(u.Step() && u.fake.Containing("partner_ride_seat=target; vehicle=25600; seat=0; wrote=0; reason=unrealized;") == 1, "unrealized");
+        u.Ended();
+        Check(u.Step() && u.driver.mission.seat.blocked, "free roam: an unrealized target refusal still latches");
     }
 }
 
@@ -8634,6 +8895,7 @@ int main() {
     TestRideSeat();
     TestRideSeatById();
     TestRideRobust();
+    TestRideSeatAbsent();
     TestRideExtAndCensus();
     TestBoardDriver();
     TestRidePeerVehicle();
@@ -8681,6 +8943,7 @@ int main() {
     TestNativeChannel2AndSender();
     TestEquipEarlyManifest();
     TestEquipCrossProcessSession();
+    TestEquipLateManifest();
     TestNativeRates();
     TestNativeAim();
     TestNativeGunDirectionWire();

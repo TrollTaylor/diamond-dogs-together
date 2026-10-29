@@ -477,7 +477,8 @@ inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
 // rides a seat this copy cannot play because the vehicle is missing or
-// unrealized here (Mother Base by id: local_read, unrealized): body 1 stays
+// unrealized here (Mother Base by id: absent, local_read, unrealized; free roam:
+// absent only, SeatFallbackHere): body 1 stays
 // realized and visible, Warped to the remote's streamed seated pose every tick,
 // instead of hidden. Never for a vehicle that exists here (a pending request or
 // the viewer's DM is retried, not Warped), never into the viewer's vehicle.
@@ -673,7 +674,7 @@ struct Mission {
         const char* byid_reason;
         std::uint8_t remote_category, local_category;
         // 0.13.6 online ride. fallback_want: the start's by-id reason that shows
-        // body 1 without a seat (local_read, unrealized) once the release ran;
+        // body 1 without a seat (absent, local_read, unrealized) once the release ran;
         // fallback_reason: why the fallback phase holds; exit_quiet: the exit
         // left the fallback (nothing of ours plays on body 1: no stop);
         // body_gone: the exit found body 1 unrealized (no stop either);
@@ -1360,7 +1361,8 @@ struct Driver {
     // Online play: the capability exchange outlives missions (it is link
     // session scoped): this copy's sender pacing, the remote's last message
     // and the revision last logged; a shot or ammo leak in play strips FIRE and
-    // RELOAD for the rest of the process (leak_strip: the pad bits, 0 before).
+    // RELOAD for the rest of the mission (leak_strip: the pad bits, 0 before;
+    // cleared at MissionStart, two-PC test 2026-10-23 item 3).
     partner_caps_wire::Sender caps_tx;
     partner_caps_wire::Store caps_rx;
     std::uint16_t caps_logged_rev;
@@ -1438,6 +1440,12 @@ struct Driver {
     std::uint8_t preload_count;
     char preload_verdict[24], preload_reason[32];
     std::uint32_t preload_mission, preload_new_hashes;
+    // Item 2: the preload query had no remote manifest (preload_source: an
+    // equipment_stock_probe::PreloadSource, none or predicted): the next new
+    // remote manifest logs equip_preload=late_manifest once (which bases the
+    // preload covered: guns this load, or after the next one).
+    bool preload_late_watch;
+    std::uint8_t preload_source;
     // Gestures (docs/native-puppet.md "Gestures"), process-lifetime: the
     // upper-act edge sender (link-session scoped) and its one pending message,
     // the receiver's store, the request serial (never reused), the hook's
@@ -1525,6 +1533,11 @@ void DrainEquipLink(Driver& driver, const Hooks& hooks) noexcept;
 // session cache of that same link session. Never another link session's, and
 // never compared with the sender's own session number (manifest.epoch).
 bool RemoteManifest(const Driver& driver, std::uint32_t link_session, partner_equip_wire::Manifest& out) noexcept;
+// This copy's own last sent manifest (pure; false before the first loadout
+// read): the allocation preload's prediction of a peer that restarted on this
+// copy's save (equipment_stock_probe::ChoosePreloadSource, two-PC test
+// 2026-10-23 item 2).
+bool OwnManifest(const Driver& driver, partner_equip_wire::Manifest& out) noexcept;
 // The per-frame tick (2.3 item 9 outline). False leaves the receipt literal
 // (Lua then does nothing); true fills `reply`.
 bool Tick(Driver& driver, const Hooks& hooks, const LabConfig& lab, const char* source, std::size_t size,

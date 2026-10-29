@@ -164,6 +164,71 @@ function Get-WorkerRestorePair($Session,$Pins,[string]$BaselineLoader,[string]$C
     if($CurrentLoader -ieq $Session.candidate_sha256 -and $CurrentArchive -ieq $catalog.Archive){return 'worker'}
     throw 'Installed loader/archive are not a coherent owned worker or baseline pair.'
 }
+# A Diamond Dogs Together drag-and-drop install (tools/package.ps1 -Friend; the
+# launcher core's ReadPackage/LoaderIsOurs in native/launcher/core/core_install.*)
+# keeps mgs-coop\package.json beside the loader it shipped and never writes
+# probe-install.json. Returns that package's dinput8.dll hash (upper case) when
+# the folder holds one exact drop-in manifest for the pinned game files: product
+# mgs-coop-local-package, layout drop-in, an X.Y.Z version, exactly one files[]
+# row with target dinput8.dll and a full SHA-256, and the pinned executable,
+# Steam DLL and runtime archive hashes. Anything else returns $null. Read only.
+function Get-WorkerDropInLoaderSha256([string]$GameDirectory,$Pins) {
+    $path=Join-Path ([IO.Path]::GetFullPath($GameDirectory).TrimEnd([char]92)) 'mgs-coop\package.json'
+    if(!(Test-Path -LiteralPath $path -PathType Leaf)){return $null}
+    $package=$null
+    try{$package=Read-WorkerSessionJson $path}catch{return $null}
+    if($package -isnot [Collections.IDictionary]){return $null}
+    if([string]$package['product'] -cne 'mgs-coop-local-package' -or [string]$package['layout'] -cne 'drop-in' -or
+        [string]$package['version'] -cnotmatch '\A[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}\z'){return $null}
+    if([string]$package['executable_sha256'] -ine $Pins.Exe -or [string]$package['steam_dll_sha256'] -ine $Pins.Steam){return $null}
+    $archive=$package['runtime_archive']
+    if($archive -isnot [Collections.IDictionary] -or [string]$archive['sha256'] -ine $Pins.Archive){return $null}
+    $rows=@(@($package['files'])|Where-Object{$_ -is [Collections.IDictionary] -and [string]$_['target'] -ceq 'dinput8.dll'})
+    if($rows.Count -ne 1 -or [string]$rows[0]['sha256'] -cnotmatch '\A[A-Fa-f0-9]{64}\z'){return $null}
+    return ([string]$rows[0]['sha256']).ToUpperInvariant()
+}
+# The normal baseline loader of one worker game folder and what owns it. An
+# owned package-install names it in the folder's own probe-install.json (product
+# mgs-coop-original-loader-probe, this exact folder, dll_sha256 = the installed
+# loader): Owner 'record'. A Diamond Dogs Together drag-and-drop install owns it
+# through its drop-in package.json (Get-WorkerDropInLoaderSha256) and leaves any
+# earlier probe-install.json stale or absent: Owner 'drop-in'; that record is
+# then only backed up and restored byte for byte (or kept absent). A foreign or
+# unknown loader refuses. Read only. Returns Sha256 (upper case), Owner,
+# RecordPresent and, for drop-in, the package.json hash.
+function Get-WorkerOwnedBaseline([string]$GameDirectory,$Pins) {
+    $game=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($GameDirectory)) -MustExist
+    $loader=Assert-WorkerPlainPath (Join-Path $game 'dinput8.dll') -MustExist
+    if(!(Test-Path -LiteralPath $loader -PathType Leaf)){throw 'Baseline loader is not a file.'}
+    $record=Assert-WorkerPlainPath (Join-Path $game 'mgs-coop\probe-install.json')
+    $recordPresent=Test-Path -LiteralPath $record -PathType Leaf
+    if(!$recordPresent -and (Test-Path -LiteralPath $record)){throw 'The ownership record is not a file.'}
+    $current=(Get-WorkerHash $loader).ToUpperInvariant()
+    if($recordPresent){
+        $owner=$null;try{$owner=Read-WorkerSessionJson $record}catch{$owner=$null}
+        if($owner -is [Collections.IDictionary] -and [string]$owner['product'] -ceq 'mgs-coop-original-loader-probe' -and [string]$owner['game_directory'] -ieq $game -and
+            [string]$owner['dll_sha256'] -cmatch '\A[A-Fa-f0-9]{64}\z' -and [string]$owner['dll_sha256'] -ieq $current){
+            return [pscustomobject]@{Sha256=$current;Owner='record';RecordPresent=$true;PackageSha256=$null}
+        }
+    }
+    $dropIn=Get-WorkerDropInLoaderSha256 $game $Pins
+    if($dropIn -and $dropIn -ceq $current){
+        return [pscustomobject]@{Sha256=$current;Owner='drop-in';RecordPresent=$recordPresent;PackageSha256=Get-WorkerHash (Join-Path $game 'mgs-coop\package.json')}
+    }
+    throw 'Baseline loader is not owned by this exact game folder.'
+}
+# Stop's check of a role's baseline ownership record: the exact bytes Start
+# backed up, or, for a drop-in owned copy that had none
+# (baseline_record_present false), its absence. Sessions written before the
+# drop-in gate always had one.
+function Assert-WorkerBaselineRecord([string]$Path,$Row) {
+    $null=Assert-WorkerPlainPath $Path
+    if($Row.Contains('baseline_record_present') -and $Row['baseline_record_present'] -eq $false){
+        if(Test-Path -LiteralPath $Path){throw 'The baseline had no ownership record, but one exists now.'}
+        return
+    }
+    Assert-WorkerHash $Path ([string]$Row['baseline_record_sha256'])
+}
 function Test-WorkerRunId([string]$Value) { return $Value -cmatch '\A[0-9a-f]{32}\z' }
 function Test-WorkerDescendant([string]$Path,[string]$Root) {
     if(!$Path -or !$Root){return $false}

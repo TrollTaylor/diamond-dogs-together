@@ -234,24 +234,27 @@ $lockOwned=$false;$session=$null;$process=$null;$runDirectory=$null
 try {
     try{$lockOwned=$mutex.WaitOne([TimeSpan]::FromSeconds(30))}catch [Threading.AbandonedMutexException]{$mutex.ReleaseMutex();throw 'Previous worker coordinator abandoned its lock; inspect its session before restarting.'}
     if(!$lockOwned){throw 'Another background session controller is active.'}
-    $instances=[ordered]@{};$roleBaselines=@{}
+    $instances=[ordered]@{};$roleBaselines=@{};$roleOwnership=@{}
     foreach($role in @('host','guest')) {
         $directory=if($role -ceq 'host'){$config.Paths.hostDir}else{$config.Paths.guestDir}
         $p=Get-InstancePaths -GameDirectory (Assert-WorkerPlainPath $directory -MustExist)
         if(@(Get-GameProcessInDirectory -Directory $p.Game).Count){throw "MGSV is already running in $($p.Game); refusing adoption."}
-        foreach($path in @($p.Exe,$p.SteamApi,$p.Loader,$p.Record,$p.Archive)){$null=Assert-WorkerPlainPath $path -MustExist}
+        foreach($path in @($p.Exe,$p.SteamApi,$p.Loader,$p.Archive)){$null=Assert-WorkerPlainPath $path -MustExist}
         Assert-WorkerHash $p.Exe $pins.Exe;Assert-WorkerHash $p.SteamApi $pins.Steam
-        # Each copy's normal baseline is the loader its own ownership record names
-        # (the host may hold the friend-package install, the guest the one-PC lab
-        # install); the host's must equal -BaselineLoaderSha256.
-        $record=Read-WorkerSessionJson $p.Record
-        $roleBaseline=[string]$record.dll_sha256
+        # Each copy's normal baseline is the loader its own ownership names (the
+        # host may hold the friend-package install, the guest the one-PC lab
+        # install): its probe-install.json, or, for a Diamond Dogs Together
+        # drag-and-drop install (which never writes that record), the drop-in
+        # mgs-coop\package.json files[] row for dinput8.dll. A foreign or unknown
+        # loader refuses. The host's must equal -BaselineLoaderSha256.
+        $ownership=Get-WorkerOwnedBaseline $p.Game $pins
+        $roleBaseline=[string]$ownership.Sha256
         if($roleBaseline -cnotmatch '^[A-Fa-f0-9]{64}$' -or ($role -ceq 'host' -and $roleBaseline -ine $BaselineLoaderSha256)){throw 'Baseline loader is not owned by this exact game folder.'}
         if($roleBaseline -ieq $loaderHash){throw 'Worker loader must differ from the saved normal baseline.'}
         Assert-WorkerHash $p.Loader $roleBaseline;Assert-WorkerHash $p.Archive $pins.Archive
         if((Get-Item -LiteralPath $p.Archive).Length -ne 16333824){throw 'Baseline21 archive size differs.'}
-        if($record.product -cne 'mgs-coop-original-loader-probe' -or $record.game_directory -ine $p.Game){throw 'Baseline loader is not owned by this exact game folder.'}
-        $roleBaselines[$role]=$roleBaseline.ToUpperInvariant()
+        if($ownership.Owner -ceq 'drop-in'){Write-Host "[$role] baseline loader $($roleBaseline.Substring(0,12))... is owned by the drop-in package.json (probe-install.json $(if($ownership.RecordPresent){'is stale; it is backed up and restored as is'}else{'is absent and stays absent'}))."}
+        $roleBaselines[$role]=$roleBaseline.ToUpperInvariant();$roleOwnership[$role]=$ownership
         if(Test-Path -LiteralPath $p.Marker){throw 'Disable the existing lab/session marker before starting a private worker.'}
         if((Test-Path -LiteralPath $p.LabIni) -and (ConvertFrom-IniText (Read-WorkerBoundedText $p.LabIni))['enabled'] -eq '1'){throw 'Disable the current lab before starting a private worker.'}
         $instances[$role]=$p
@@ -311,9 +314,13 @@ try {
         $null=New-LabPackage -RepoRoot $repo -Destination $package -LoaderPath $p.Loader -Version (Get-ProjectVersion $repo) -ExecutableSha256 $pins.Exe -SteamDllSha256 $pins.Steam -ArchiveSha256 $pins.Archive -LicenseOverrides $licenses
         $snapshots=@()
         foreach($key in @('LabIni','CoopIni','Marker','ClientHost','LinkSecret')){$snapshots+=@(Get-WorkerConfigSnapshot $p.$key $backup $key)}
-        $recordCopy=Join-Path $backup 'probe-install.json';[IO.File]::Copy($p.Record,$recordCopy,$false)
+        # The ownership record as it is (a drop-in owned copy's may be stale or absent).
+        $ownership=$roleOwnership[$role];$recordCopy=$null;$recordHash=$null
+        if($ownership.RecordPresent){$recordCopy=Join-Path $backup 'probe-install.json';[IO.File]::Copy($p.Record,$recordCopy,$false);$recordHash=Get-WorkerHash $p.Record;Assert-WorkerHash $recordCopy $recordHash}
+        elseif(Test-Path -LiteralPath $p.Record){throw 'Ownership record appeared during staging.'}
         $session.roles[$role]=[ordered]@{game=$p.Game;baseline_package=$package;baseline_package_sha256=Get-WorkerHash (Join-Path $package 'package.json');
-            baseline_sha256=$roleBaselines[$role];baseline_record_sha256=Get-WorkerHash $p.Record;baseline_record=$recordCopy;configs=$snapshots;
+            baseline_sha256=$roleBaselines[$role];baseline_owner=$ownership.Owner;baseline_dropin_package_sha256=$ownership.PackageSha256;
+            baseline_record_present=[bool]$ownership.RecordPresent;baseline_record_sha256=$recordHash;baseline_record=$recordCopy;configs=$snapshots;
             worker_save_dir=$null;mutex_suffix=$null;lab_sha256=$null;coop_sha256=$null;marker_sha256=$null;record_sha256=$null;log_offsets=@{};safety=$null}
     }
     Write-WorkerSessionJson $statePath $session
@@ -344,7 +351,9 @@ try {
     # for the lab (the clip base); the play lab.ini replaces its lab.ini below.
     if($Mode -ceq 'play'){$settings=@(Get-WorkerPartnerSettings 'animated')}
     $prepareWanSim=if($Mode -ceq 'lab'){$WanSim}else{'off'}
-    & (Join-Path $repo 'tools\lab\Prepare-LabInstance.ps1') -ConfigPath $copyConfig -Role both -Offline -Loader $loader -RuntimeArchive $archive -PartnerSetting $settings -WanSim $prepareWanSim -SkipSaves -SkipGraphics | ForEach-Object {Write-Host $_}
+    # A drop-in owned baseline: the owned installer re-checks that drop-in row itself, backs up the loader and the record as they are.
+    $acceptDropIn=@($roleOwnership.Values|Where-Object{$_.Owner -ceq 'drop-in'}).Count -gt 0
+    & (Join-Path $repo 'tools\lab\Prepare-LabInstance.ps1') -ConfigPath $copyConfig -Role both -Offline -Loader $loader -RuntimeArchive $archive -PartnerSetting $settings -WanSim $prepareWanSim -SkipSaves -SkipGraphics -AcceptDropInLoader:$acceptDropIn | ForEach-Object {Write-Host $_}
     if($Mode -ceq 'play') {
         # The play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
         # Play-Coop's own play lab.ini moved onto 127.0.0.1, a fresh random

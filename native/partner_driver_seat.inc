@@ -25,6 +25,11 @@
 //   streamed seated pose, instead of hiding it, and re-checks the seat every
 //   kSeatFallbackRetryMs. Only there: a vehicle that exists here is never
 //   Warped into, nor is the viewer's own vehicle.
+// Africa fix (the two-PC test of 2026-10-23, bug 2): an id this copy lacks
+// (absent: the by-id read refused live or index) takes the same fallback in
+// free roam too (SeatFallbackHere): the host's relief vehicle 25600 existed
+// only on his copy, and the named path (Lua no_name -> lua_refused) hid him
+// for the whole ride.
 
 namespace prs = mgscoop::partner_ride_seat;
 
@@ -42,10 +47,22 @@ bool LinkLeaveReason(const char* reason) noexcept {
     return reason && (std::strcmp(reason, "lease") == 0 || std::strcmp(reason, "ride_stale") == 0);
 }
 // The by-id gate reasons that mean "this copy has no usable vehicle with that
-// id right now" (it was Fultoned or destroyed here, or is not realized): body 1
-// is shown without a seat (SeatPhase::fallback) instead of hidden.
+// id right now" (absent: no such vehicle here, it was Fultoned or despawned
+// here or never spawned, like the other player's relief vehicle; local_read:
+// the read failed elsewhere; unrealized: not realized): body 1 is shown
+// without a seat (SeatPhase::fallback) instead of hidden.
 bool SeatFallbackReason(const char* reason) noexcept {
-    return reason && (std::strcmp(reason, "local_read") == 0 || std::strcmp(reason, "unrealized") == 0);
+    return reason && (std::strcmp(reason, "absent") == 0 || std::strcmp(reason, "local_read") == 0 ||
+                      std::strcmp(reason, "unrealized") == 0);
+}
+// partner_vehicle::ReadVehicle's refusals that mean "no vehicle with that id on
+// this copy": live (the index's pool bit *(object+0x28) is clear) and index (the
+// index is past the pool count). The engine's own id lookup 0xA272A0, which the
+// DM seat anchor uses (0x11987C9..0x11987F3), tests the same pool bit, so no
+// seat, named or by id, can anchor on such an id. Every other refusal names a
+// link of the read chain (service, vtables, records...), not the vehicle.
+bool VehicleAbsentRefusal(const char* refusal) noexcept {
+    return refusal && (std::strcmp(refusal, "live") == 0 || std::strcmp(refusal, "index") == 0);
 }
 
 void EmitSeat(Mission& m, const Hooks& h, const char* format, ...) noexcept {
@@ -72,6 +89,14 @@ bool SeatMission(std::uint32_t mission) noexcept { return mission == 30010 || mi
 bool SeatByIdOnlyMission(std::uint32_t mission) noexcept { return mission == 30050; }
 bool SeatCapableMission(std::uint32_t mission, bool seat_id) noexcept {
     return SeatMission(mission) || (seat_id && SeatByIdOnlyMission(mission));
+}
+// Where a by-id refusal shows body 1 without a seat (SeatPhase::fallback). Mother
+// Base (only the id can seat): every fallback reason. Free roam (30010/30020):
+// only an absent vehicle (no named seat can anchor there either: the Africa
+// relief vehicle 25600 of 2026-10-23, an authored jeep removed on one copy, hidden
+// run 075c1ea4 part B); any other refusal keeps the proven named path.
+bool SeatFallbackHere(std::uint32_t mission, const char* reason) noexcept {
+    return SeatFallbackReason(reason) && (!SeatMission(mission) || std::strcmp(reason, "absent") == 0);
 }
 
 // The (vehicle, seat) a refusal or a get-off ended stays unseated (it hides)
@@ -369,6 +394,9 @@ void SeatStatus(Mission& m, const Hooks& h, const pp::State& st, const SeatTickI
 // ride that id itself, and both hooks exist. Lua then plays an unnamed
 // vehicle's chain untargeted (locator ""); lv/trc only (GetVehicleType).
 // nullptr: offer; else the static reason (the 3 m sanity check still applies).
+// absent (the Africa fix): this copy has no vehicle with that id (VehicleAbsentRefusal);
+// read before the addendum checks, which cannot change that (the remote's
+// category is still logged when its addendum is live).
 const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     namespace rw = partner_ride_wire;
     auto& s = d.mission.seat;
@@ -377,8 +405,12 @@ const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept 
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
     if (d.ride_rx.packet.kind != rw::Kind::vehicle || d.ride_rx.packet.vehicle != s.vehicle || d.ride_rx.packet.seat != s.seat)
         return "vehicle_change";
-    if (!rw::ExtLive(d.ride_ext, epoch, now)) return "no_ext";
+    partner_vehicle::Read r{};
+    h.vehicle_read(h.context, s.vehicle, r);
+    const bool absent = VehicleAbsentRefusal(r.refusal);
+    if (!rw::ExtLive(d.ride_ext, epoch, now)) return absent ? "absent" : "no_ext";
     s.remote_category = rw::RemoteCategory(d.ride_ext, d.ride_rx.packet, epoch, now);
+    if (absent) return "absent";
     if (s.remote_category == rw::kCategoryUnknown) return "remote_category";
     // F1 vehicles (partner_ride_board=passenger): the peer in a back seat of the vehicle the
     // viewer drives is seated there (never rider[]); any other seat of it stays refused.
@@ -386,8 +418,6 @@ const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept 
         return "local_vehicle";
     // The viewer's own back seat (Lua's shared_seat guard needs ON_VEHICLE and cannot see a passenger).
     if (partner_board::SharedWithLocal(d.local_passenger, s.vehicle, s.seat)) return "shared_seat";
-    partner_vehicle::Read r{};
-    h.vehicle_read(h.context, s.vehicle, r);
     if (r.refusal || r.unit.id != s.vehicle) return "local_read";
     s.local_category = partner_vehicle::Category(r.unit.type);
     if (r.unit.realized == partner_vehicle::kNotRealized) return "unrealized";
@@ -482,10 +512,11 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         // 0.13.6: a vehicle this copy lacks (local_read: Fultoned here, the
         // 2026-10-22 session) or has unrealized keeps body 1 visible without a
         // seat once the release ran (SeatPhase::fallback), not hidden.
-        if (!SeatMission(m.mission_code) && !s.byid) {
-            if (SeatFallbackReason(s.byid_reason)) s.fallback_want = s.byid_reason;
-            else SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
-        }
+        // The Africa fix: in free roam too for an absent vehicle (SeatFallbackHere: the
+        // 2026-10-23 Africa relief vehicle); there any other refusal keeps the
+        // named path (Lua plays the locator name).
+        if (!s.byid && SeatFallbackHere(m.mission_code, s.byid_reason)) s.fallback_want = s.byid_reason;
+        else if (!SeatMission(m.mission_code) && !s.byid) SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
         // F1 vehicles: the remote in the viewer's own back seat (a named vehicle never reaches
         // SeatByIdGate): refused before anything is armed (latched, it hides).
         else if (partner_board::SharedWithLocal(d.local_passenger, s.vehicle, s.seat)) SeatRefuse(m, h, "shared_seat", now);
@@ -676,8 +707,9 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
                 SeatRefuse(m, h, target_why, now);
                 // 0.13.6: where only the id can seat (Mother Base), a copy that vanished or
                 // unrealized since the offer is not latched: the next episode shows body 1
-                // without a seat (fallback) instead of hiding it.
-                if (!SeatMission(m.mission_code) && SeatFallbackReason(target_why)) s.latch_exit = false;
+                // without a seat (fallback) instead of hiding it. The Africa fix: in free roam too
+                // for a copy that vanished (absent; SeatFallbackHere).
+                if (SeatFallbackHere(m.mission_code, target_why)) s.latch_exit = false;
                 break;
             }
         }

@@ -48,6 +48,7 @@
 #include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_ammo_leak.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_reload.hpp"
 #include "mgscoop/partner_slots.hpp"
@@ -279,6 +280,11 @@ volatile LONG g_shot_leaks = 0, g_shot_count = -1, g_reload_drains = 0;
 // An ammo leak under the magazine mirror turns the mirror off until
 // MissionStart (it is what lets instance 1 reload): g_m_leak.
 volatile LONG g_ammo_leaks = 0, g_ammo_digest = 0, g_m_leak = 0;
+// Two-PC test 2026-10-23 item 3: this mission's shot and ammo leaks (reset with
+// g_m_leak at MissionStart; the play strip reads them), drain windows whose job
+// changed only the viewer's item fields (partner_ammo_leak verdict benign), and
+// the partner_input=vars_change lines of this mission (capped).
+volatile LONG g_shot_leaks_m = 0, g_ammo_leaks_m = 0, g_ammo_benign = 0, g_vars_lines = 0;
 partner_native::MagazineHistory g_mag_history{};  // hook thread only: checked, accepted samples
 // F2: the store row (atomics for the driver) and the last drain's injected magazine.
 volatile LONG g_s_writes = 0, g_s_refused = 0, g_s_last = 0, g_m_inj = 0xFFFF, g_m_inj_cap = 0xFFFF;
@@ -1905,9 +1911,13 @@ std::uint32_t ReadShotCount() noexcept {
 // registrations weapons .. u16[46] at +0x614, contract-pinned): an FNV-1a
 // digest, 0 when unread (read-only leak evidence: instance 1's job, its
 // reload completion included, must never change the viewer's inventory).
-std::uint32_t ReadAmmoDigest() noexcept {
+static_assert(c::vars_ammo_begin == partner_ammo_leak::kBegin && c::vars_ammo_end == partner_ammo_leak::kEnd,
+              "the leak digest and partner_ammo_leak read the same block");
+using AmmoBlock = std::uint8_t[c::vars_ammo_end - c::vars_ammo_begin];
+// The block itself (item 3: the field diff needs the bytes, not only the digest)
+// and its digest; 0 when unread (the block is then unspecified).
+std::uint32_t ReadAmmoBlock(AmmoBlock& block) noexcept {
     static_assert(c::vars_ammo_end > c::vars_ammo_begin && c::vars_ammo_end - c::vars_ammo_begin <= 0x200, "bounded vars block");
-    unsigned char block[c::vars_ammo_end - c::vars_ammo_begin];
     bool ok = false;
     __try {
         const std::uintptr_t vars = Load<std::uintptr_t>(g_base + c::vars_slot_rva);
@@ -1920,6 +1930,10 @@ std::uint32_t ReadAmmoDigest() noexcept {
     std::uint32_t h = 2166136261u;
     for (const unsigned char b : block) h = (h ^ b) * 16777619u;
     return h ? h : 1u;
+}
+std::uint32_t ReadAmmoDigest() noexcept {
+    AmmoBlock block;
+    return ReadAmmoBlock(block);
 }
 // A separate exact table digest is read-only. All 46 support-stock words are
 // covered, including entries beyond the eight displayed loadout slots.
@@ -2214,7 +2228,8 @@ void SupportGapCheck(const pi::Injection& j,std::uint32_t slot_before,const std:
         unsigned(g.viewer_prev.mode),unsigned(g.viewer_prev.state),g.other_jobs)))g_log(line);
 }
 void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,std::uint32_t slot_before,
-                  const std::uint16_t (&slot_words_before)[8],std::uint32_t ammo_before) noexcept {
+                  const std::uint16_t (&slot_words_before)[8],std::uint32_t ammo_before,
+                  partner_ammo_leak::Verdict job) noexcept {
     SupportRec240Check(a,j);
     const auto after=ReadSupportDigest();const auto ammo_after=ReadAmmoDigest();
     std::uint16_t slot_words[8]{};const auto slot_after=ReadSupportSlotDigest(&slot_words);
@@ -2228,9 +2243,13 @@ void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,s
         std::memcpy(g_support_episode_words,slot_words_before,sizeof(g_support_episode_words));
         SupportLine("armed",j,"throw",handle);}
     partner_support_policy::StockLatch latch{g_support_leak!=0};
-    // Per job (no viewer job runs inside body 1's job): the full tables.
+    // Per job (no viewer job runs inside body 1's job): the full tables. Both
+    // digests cover bytes of AfterJob's weapon/ammo block in this same window:
+    // a job whose block change was the viewer's own item stock only (its box
+    // broken in a bump; hidden run 5ceb4985) is no support stock leak.
     bool changed=partner_support_policy::CheckStock(latch,before!=0,after!=0,before,after);
     changed=partner_support_policy::CheckStock(latch,ammo_before!=0,ammo_after!=0,ammo_before,ammo_after)||changed;
+    changed=partner_ammo_leak::SupportJobLeak(changed,job);
     // Across the episode (it spans viewer frames): only the slot-3 stock words.
     const bool episode_changed=partner_support_policy::CheckStock(latch,g_support_episode && g_support_episode_stock!=0,
         slot_after!=0,g_support_episode_stock,slot_after);
@@ -2482,16 +2501,54 @@ void PlaceMirrorPost(const pi::Arm& a) noexcept {
 }
 
 // After the job: the leak verdicts and whether instance 1's reload request is set.
-void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_before) noexcept {
+// Item 3: which fields of the viewer's weapon/ammo block body 1's job changed
+// (32 lines per mission; the first four changes of each window).
+void VarsChangeLine(const partner_ammo_leak::Diff& d, partner_ammo_leak::Verdict v) noexcept {
+    if (!g_log || InterlockedIncrement(&g_vars_lines) > 32) return;
+    char fields[160]{};
+    partner_ammo_leak::FormatChanges(d, fields, sizeof(fields));
+    char line[320]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+            "partner_input=vars_change; verdict=%s; elements=%u; members=0x%x; weapon=%u; ammo=%u; item=%u; fields=%s; "
+            "leaks=%ld; mission_leaks=%ld; benign=%ld\r\n",
+            partner_ammo_leak::VerdictName(v), d.elements, d.members, d.weapon ? 1u : 0u, d.ammo ? 1u : 0u, d.item ? 1u : 0u,
+            fields[0] ? fields : "unformatted", static_cast<long>(g_ammo_leaks), static_cast<long>(g_ammo_leaks_m),
+            static_cast<long>(g_ammo_benign))))
+        g_log(line);
+}
+// `job`: this window's weapon/ammo block verdict (none when unchanged or
+// unread), for the support lane's stock check of the same window.
+void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_before, const AmmoBlock& block_before,
+              partner_ammo_leak::Verdict& job) noexcept {
+    job = partner_ammo_leak::Verdict::none;
     const std::uint32_t shots = ReadShotCount();
-    if (shots_before != 0xFFFFFFFFu && shots != 0xFFFFFFFFu && shots != shots_before) InterlockedIncrement(&g_shot_leaks);
+    if (shots_before != 0xFFFFFFFFu && shots != 0xFFFFFFFFu && shots != shots_before) {
+        InterlockedIncrement(&g_shot_leaks);
+        InterlockedIncrement(&g_shot_leaks_m);
+    }
     InterlockedExchange(&g_shot_count, static_cast<LONG>(shots));
-    const std::uint32_t ammo = ReadAmmoDigest();
+    AmmoBlock block;
+    const std::uint32_t ammo = ReadAmmoBlock(block);
     if (ammo_before && ammo && ammo != ammo_before) {
-        InterlockedIncrement(&g_ammo_leaks);
-        // Instance 1's job changed the viewer's inventory: no more mirrored
-        // magazines (no reloads they enable) until MissionStart.
-        if (a.mag_mirror && InterlockedExchange(&g_m_leak, 1) == 0 && g_log) g_log("partner_input=ammo_leak; mag_mirror=disabled\r\n");
+        // Item 3: only a change confined to the viewer's own item fields (its
+        // box knocked off in a collision inside this job) is benign; any weapon
+        // or ammo field, or a digest change without a field (never: the digest
+        // covers exactly these bytes), is a leak.
+        const partner_ammo_leak::Diff diff = partner_ammo_leak::Compare(block_before, block);
+        const partner_ammo_leak::Verdict verdict =
+            partner_ammo_leak::Classify(diff) == partner_ammo_leak::Verdict::benign ? partner_ammo_leak::Verdict::benign
+                                                                                     : partner_ammo_leak::Verdict::leak;
+        job = verdict;
+        if (verdict == partner_ammo_leak::Verdict::benign) {
+            InterlockedIncrement(&g_ammo_benign);
+        } else {
+            InterlockedIncrement(&g_ammo_leaks);
+            InterlockedIncrement(&g_ammo_leaks_m);
+            // Instance 1's job changed the viewer's inventory: no more mirrored
+            // magazines (no reloads they enable) until MissionStart.
+            if (a.mag_mirror && InterlockedExchange(&g_m_leak, 1) == 0 && g_log) g_log("partner_input=ammo_leak; mag_mirror=disabled\r\n");
+        }
+        VarsChangeLine(diff, verdict);
     }
     InterlockedExchange(&g_ammo_digest, static_cast<LONG>(ammo));
     if (!a.gun_rec || !a.gun_prim) return;
@@ -3368,7 +3425,8 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     // aim target before its gun update builds the aim point from it.
     partner_aim_point::Step(a.P, NowMs());
     const std::uint32_t shots_before = ReadShotCount();
-    const std::uint32_t ammo_before = ReadAmmoDigest();
+    AmmoBlock ammo_block_before;
+    const std::uint32_t ammo_before = ReadAmmoBlock(ammo_block_before);
     const std::uint32_t support_before = a.native_support || g_support_episode ? ReadSupportDigest() : 0;
     std::uint16_t support_words_before[8]{};
     const std::uint32_t support_slot_before =
@@ -3422,8 +3480,10 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     PadCensusPost(a);  // read-only, lab key partner_placed_census
     PlaceMirrorPost(a);
     LookProbe(a, j);
-    AfterJob(a, shots_before, ammo_before);
-    if(a.native_support || g_support_episode)SupportCheck(a,j,support_before,support_slot_before,support_words_before,ammo_before);
+    partner_ammo_leak::Verdict job_verdict = partner_ammo_leak::Verdict::none;
+    AfterJob(a, shots_before, ammo_before, ammo_block_before, job_verdict);
+    if(a.native_support || g_support_episode)
+        SupportCheck(a,j,support_before,support_slot_before,support_words_before,ammo_before,job_verdict);
     if(a.native_placed)PlacedCheck(a,j,body_mode_before,placed_before);
     if(a.native_arm)ArmCheck(a,j,arm_before);
     timing=native_work_timing::Begin(native_work_timing::Kind::pose_post);
@@ -3544,6 +3604,10 @@ void ResetFault() noexcept {
     InterlockedExchange(&g_n_look_faulted, 0);
     InterlockedExchange(&g_m_faulted, 0);
     InterlockedExchange(&g_m_leak, 0);
+    // Item 3: the play strip reads this mission's leaks only.
+    InterlockedExchange(&g_shot_leaks_m, 0);
+    InterlockedExchange(&g_ammo_leaks_m, 0);
+    InterlockedExchange(&g_vars_lines, 0);
     InterlockedExchange(&g_sl_faulted, 0);
     InterlockedExchange(&g_rt_faulted, 0);
 }
@@ -3671,6 +3735,9 @@ void DrainStats(Stats& out) noexcept {
     n.reload_drains = static_cast<std::uint32_t>(g_reload_drains);
     n.ammo_leaks = static_cast<std::uint32_t>(g_ammo_leaks);
     n.ammo_digest = static_cast<std::uint32_t>(g_ammo_digest);
+    n.shot_leaks_mission = static_cast<std::uint32_t>(g_shot_leaks_m);
+    n.ammo_leaks_mission = static_cast<std::uint32_t>(g_ammo_leaks_m);
+    n.ammo_benign = static_cast<std::uint32_t>(g_ammo_benign);
     n.rates_applied = g_n_rates_applied != 0;
     n.rates_latched = g_n_rates_latched != 0;
     n.rates_reason = static_cast<std::uint32_t>(g_n_rates_reason);

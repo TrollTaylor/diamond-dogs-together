@@ -1,3 +1,195 @@
+## October 28, 2026: 0.14.3 (Africa guns, free-roam vehicle fallback, host-log fixes)
+
+**Package (2026-10-28):** `dist/DiamondDogsTogether-0.14.3-20261029T023814Z-d15f739d/DiamondDogsTogether-0.14.3.zip` (10,222,077 bytes), SHA-256 `E199D144DDDD444B3C313F322796CB89EE6C27BB8331D549853BC55AEFA7A965`, built by `tools/package.ps1 -Friend` from the clean tree at `a4c18fa` with Release receipt `20261029-023457-0c5320d4b721440382a548fdbf8679c6` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `3A2A81FB3E2645EE808EFE1E825A592B1F535E78819F95381BA4EC28A21921A9` and `dinput8.dll` `324AF4748F9DCCD4765BA801A5E3A071C9D71EB938793469D25FFFCA577E9F89`, both build id `0.14.3+a4c18fa`. Its `source.zip` holds 1,337 files, among them all 17 `native/*.inc` loader fragments.
+
+It supersedes the first 0.14.3 package (`dist/DiamondDogsTogether-0.14.3-20261029T020207Z-b6469c40`, SHA-256 `E7015643...0B5E`, built at `a0653b5`). That package's `source.zip` lacked the 17 `native/*.inc` files that `native/*.cpp` `#include` into `dinput8.dll` (for example `native/partner_driver_seat.inc`), so it was not complete corresponding source, and the Release receipt did not hash them; 0.14.2 had the same gap. `a4c18fa` ships `.inc`, the `tests/fixtures/partner-lab` logs and the Go archive probe (`tools/archive_probe`), binds `.inc` in the receipt's source snapshot, and replaces the user's profile path in the docs with `%USERPROFILE%`. Checks at `a4c18fa`: `pwsh -File tools/build.ps1 -Fast` 290/290, `pwsh -File tools/build.ps1` (Debug) 305/305, `tests/worker_checks_tests.ps1` 131 checks.
+
+Branch `dev/oct7-continue`. Releases the 2026-10-28 fixes for the two-PC test of 2026-10-23 (`docs/two-pc-test-2026-10-23.md`). Each is proven in the hidden worker or by fixtures, as the sections below record; none is two-PC tested yet.
+
+- **Africa guns (bug 1, `beccaa7`, merge `952fc64`).** The generalized gun writer accepts the three natively empty states F1-F3 that made it refuse for good in 30020, so the host's guns bind on the friend's screen in Africa. See [Africa fixes and host-log fixes](#2026-10-28-africa-fixes-and-host-log-fixes-integrated-on-devoct7-continue-unreleased-not-two-pc-tested).
+- **Free-roam vehicle fallback (bug 2, `a48a674`, `35d5519`, merge `30a6a0a`).** When the driver's vehicle does not exist on the viewer's copy, the by-id seat gate answers `absent` and free roam keeps the driver visible (the 0.13.6 fallback); Lua `R.present` stops placing a missing instance and still places a wreck. See [Africa vehicle, the driver stays visible](#october-28-2026-africa-vehicle-the-driver-stays-visible-branch-wpafrica-vehicle-unreleased-hidden-run-proven-not-two-pc-tested).
+- **Host-log items 2, 3, 4 and 6 (merge `d727516`).** Item 2: a predicted manifest preload after a save handoff and the `late_manifest` line (`09ebf71`). Item 3: the `partner_ammo_leak` `vars_change` classifier, the fire/reload strip scoped to the mission, and an item-only job never latching the support lane (`f492d77`, `3fd064a`). Item 4: the box as a downed posture, and a timeout never latches `failed` (`2f3332b`). Item 6: the downed owner judged from body 0 (`LiveBodies`, `08f73d6`). See [Host fixes](#october-28-2026-host-fixes-two-pc-test-2026-10-23-items-2-3-4-6-of-the-host-log-pass) and [Host fixes proven in the hidden worker](#october-28-2026-host-fixes-proven-in-the-hidden-worker-items-2-3-4-6-one-more-fix).
+- **Developer tooling, no player change.** The hidden worker accepts a Diamond Dogs Together drop-in install as an owned baseline (`2c9341c`, `916708f`); the downed-damage contract evidence is restored (`857a2b9`).
+- **README Known limits.** A vehicle brought from sortie prep (the helicopter's vehicle choice) does not appear on the partner's screen; the partner sees the rider without it. World vehicles found on the map are the ones to ride together.
+- **Version.** 0.14.3 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.3 and still 0.14.2.
+- **Checks before the bump commit** (build id `0.14.3+857a2b9`). `pwsh -File tools/build.ps1 -Fast`: 290/290 passed. `pwsh -File tools/build.ps1` (Debug): 305/305 passed, 103 s.
+
+## 2026-10-28: Africa fixes and host-log fixes (integrated on `dev/oct7-continue`, unreleased, not two-PC tested)
+
+Three fix branches for the two-PC test of 2026-10-23 are merged locally with `--no-ff`. Nothing is pushed or packaged, so the next two-PC test needs a 0.14.x package on both PCs. The friend is still on 0.13.6. `docs/two-pc-test-2026-10-23.md` has the per-item status table and the checklist for the next test.
+
+**Merges**
+
+| Merge | Branch at | Contents |
+|---|---|---|
+| `952fc64` | `wp/africa-guns` `c594e41` | Bug 1, Africa guns |
+| `30a6a0a` | `wp/africa-vehicle` `03dabda` | Bug 2, the Africa vehicle; the section below |
+| `d727516` | `wp/host-fixes` `6422519` | Host-log items 2, 3, 4 and 6; the two sections below |
+
+The only conflict was in this file: both branches add a 2026-10-28 section at the top, and both are kept.
+
+**Hidden-worker runs** (all loopback, copied lab saves, low graphics, research build, native gun stage). Each run closed with the baseline restored and the real saves unchanged.
+
+- **Bug 1, the host's guns missing on the friend's screen in Africa.** `beccaa7` fixes it, after the receipts added in `e4f2415`. Three readiness rules of the generalized writer treated natively empty states as occupied, which made the writer refuse for good in 30020:
+  - F1: the released target's D0 flag bits (`selected_bank_aux_not_empty`).
+  - F2: the support writer's arm and grenades in slots 6 and 3 (`other_slot_unexpected`).
+  - F3: the native cleared effect record 0x7FF after an unrealize (`remote_slot_not_empty`).
+
+  The writer now accepts all three (docs/native-puppet.md "Generalized writer"). The new receipts are `equip_writer=aux` and `equip_writer=remote_slot`.
+  - 30020, `partner-native-africa-guns.txt` with `-SaveSeed africa-jeep`, runs `96b5c909`, `8e97cb60` and `05f68a20`: both roles bind slot 2 (9) and slot 1 (46) with no backoff and log `partner_weapon=match; strip=0x0`. The frames of `05f68a20` show each partner aiming the rifle.
+  - 30050 regression, `partner-native-mb-guns.txt` with `-SaveSeed mb-ladder`, run `04b2f3af`: the same binds.
+  - Limit: no run reproduced the dirty head (every `aux` line read `f00`), so F1-F3 are proven by fixtures only.
+- **Bug 2, the host hidden while driving in Africa.** `a48a674` and `35d5519`, with run `31adc898` (also `436a440c`, `011a03f2`, `7561ab63`); the details are in the next section.
+  - When the vehicle is absent on the viewer's copy, the by-id gate answers `absent` and free roam keeps the driver visible.
+  - RIDE_FAST skips a missing instance but still places a wreck.
+  - Open: the host's sortie-prep (relief) vehicle itself still does not exist on the guest's copy.
+- **Host-log item 2, late manifest** (`09ebf71`). Run `c07b8136` proves the staged half. The predicted preload is unit-tested only.
+- **Host-log item 3, box-bump `vars_change`** (`f492d77`, `3fd064a`). Run `5ceb4985` found the support-lane latch, which `3fd064a` fixes. Runs `6041f5e5` and `0c8f1ab0` are clean.
+- **Host-log item 4, box as the downed posture** (`2f3332b`). Runs `ce66a0bf`, `44e5a233` and `a5f30e31`.
+- **Host-log item 6, the downed owner judged from body 0** (`08f73d6`). Run `20d41b16`.
+
+**Checks at `d727516`**
+- `pwsh -File tools/build.ps1`: Debug, configured afresh, `ctest -j 16`. Build id `0.14.2+d727516`. 305/305 passed, 101 s.
+- `python tools/generate_partner_contract.py --check`: 800 code sites and 204 vtable slots match exe `085c2f82...bb45`. `pefile` 2024.8.26 was already installed.
+- `generate_equip_writer_pins.py --check`: 118 gates and 10 fact groups match.
+- `generate_soldier_warp_contract.py --check`: 19 sites and 10 slots match.
+- `generate_nametag_contract.py --check`: 24 sites match.
+- `generate_downed_damage_contract.py --check`: 57 sites match. Its evidence file `docs/evidence/downed-damage-2026-10-10.json` had been removed in the repo cleanup `a06a24e` and is restored from history.
+
+**Still open for the next two-PC test**
+- Every fix above over a real Steam link with latency.
+- Bug 1's dirty states live.
+- The predicted preload after a real handoff relaunch.
+- A boxed-first friendly-fire down.
+- A bump that moves a weapon or ammo field.
+- Relief-vehicle parity.
+- Host-log item 7 (ask the friend about the ledge fall) and the minor item 8 (the first-appearance freeze and warps).
+
+## October 28, 2026: Africa vehicle, the driver stays visible (branch `wp/africa-vehicle`, unreleased; hidden-run proven, not two-PC tested)
+
+Bug 2 of the two-PC test of 2026-10-23 (docs/two-pc-test-2026-10-23.md): in Africa (30020) the host drove his relief vehicle 25600 (TppVehicle2 index 0, from his sortie prep), which existed only on his copy. The guest's by-id read refused `live` (pool bit clear), free roam ran the named seat path (Lua `no_name` -> `lua_refused`, latched) and the guest saw no host for the whole 24.6 s ride.
+
+- **Native (`native/partner_driver_seat.inc`).** `SeatByIdGate` reads this copy's vehicle before the addendum checks and answers `absent` when the read refuses `live` or `index` (`VehicleAbsentRefusal`): no vehicle with that id here, and the engine's id lookup `0xA272A0` used by the DM seat anchor tests the same pool bit. `SeatFallbackHere(mission, reason)`: Mother Base keeps every fallback reason (`absent`, `local_read`, `unrealized`), free roam takes the 0.13.6 visible fallback for `absent` only, at the episode start and at the id write (not latched). Expected guest lines: `partner_ride_seat=byid; ...; offer=0; reason=absent`, `partner_ride_seat=fallback; ...; reason=absent; show=warp; byid=0`, after the get-off `exit; ...; via=fallback`; never `lua_refused`, `unavailable; ...; block=` or `partner_ride=hide; reason=ride` for that vehicle. Mother Base's Fultoned-jeep case now logs `absent` instead of `local_read` (same behaviour). Any other free-roam refusal keeps the named path.
+- **Lua (`lua/coop/world_ride_pose.lua`).** `R.present`: each RIDE_FAST track asks `IsAlive` at most every 500 ms; while the answer is not true and `GetPosition` does not answer either (no instance here), no tilt write and no SetPosition run and the frame counts on the `ride_fast` line as `absent=N` (`state=absent`). A wreck (`IsAlive` false, still in the pool, `GetPosition` answers) is placed as before, like the native gate's `absent` (the pool bit only). The session's `applied=1157` counted calls into a missing id.
+- **Tests.** `partner_driver_tests` `TestRideSeatAbsent` (new; failed on HEAD at its first check), the gate table's `local_read` case is a non-pool refusal (`object`), the Mother Base Fulton block expects `absent` and keeps the fallback for `local_read`; `world_ride_pose_lua_check` (new block; failed on HEAD).
+- **Hidden runs (`tools/worker/scenarios/coop-vehicle-absent-30020.txt`, `-SaveSeed africa-jeep`, research build, low graphics; each Closed / BaselineRestored / RealSavesUnchanged, no visible fallback; run folders in `%USERPROFILE%\mgs-coop-run-archive\africa\`).**
+  - `31adc898` (HEAD `35d5519`, both parts, every expectation met). A, the control (both copies have jeep 25608): guest `byid; offer=1; reason=none`, the named seat `ride_seat; id=25608; seat=0; name=veh_lv_0000`, `confirmed`, `ride_fast; applied=9..282; state=interpolate; absent=0`, `exit; reason=foot; via=getoff; confirmed=1`; frame `control-drive-05`: the host seated in the moving jeep. B (the guest's copy alone loses 25608: `vehicle_remove;id=25608;via=locator;sync=0;alive=0`): `byid; offer=0; reason=absent; remote_cat=1; local_cat=255`, `fallback; reason=absent; show=warp; byid=0`, `ride_fast; state=absent; absent=102..702` with `applied` / `tilt_written` held at 283 (no SetPosition, no tilt write, no `partner_ride_tilt=refused`), `exit; reason=foot; via=fallback`; body 1 followed the drive on the guest's copy (probe `pos1_mm` -650.4,870.1 -> -659.0,843.8; the host ended at -659.7,844.4). Frames: `absent-before` (no jeep on the guest's screen), `absent-drive-06` / `absent-turn-01` (the host visible and moving with no jeep under him). Never in either part: `ride_seat_refused`, `refused`, `unavailable`, `seat_far`, `partner_ride=hide; reason=ride`, `viewer_changed`, a fault.
+  - `436a440c`, `011a03f2` (HEAD `a48a674`, B only): the same B log chain; the watcher stayed at the boot spot (or `goto_partner` went to the stale boarding pose: the partner pose does not update during a ride), so the host mostly left the guest's camera.
+  - `7561ab63` (HEAD `a48a674`, A only, a longer drive into the rock wall): the named seat confirmed in 30020, then the guest's copy of the jeep was wrecked there only (`Neutralize` for 25608 on the guest alone). `R.present` took the wreck's `IsAlive` false for absent, RIDE_FAST stopped placing it, the seated driver drifted (`err_mm` 3017), `seat_far`, `refused; reason=far`, `partner_ride=hide; reason=ride`. Fixed in `35d5519` (a wreck still answers `GetPosition` and is placed as before; unit-tested, not re-run live: B of `31adc898` shows `GetPosition` does not answer for a Despawned id, so `absent` still counts).
+  - `coop-vehicle-gone.txt` part B now waits for `reason=(absent|local_read)` and the fallback instead of the ride hide (and its host status waitlog names `ride=2`); not re-run.
+- **Still open.** The vehicle itself is still absent on the guest's screen (the 0.13.6 fallback look: the host standing at seat height); relief-vehicle parity at the sortie is a separate branch. The horse rider hide (host-log item 5) is the act-based `partner_native_mount=hide` rule, not this gate, and stays as decided (docs/mounts.md "Risks").
+
+## October 28, 2026: Host fixes proven in the hidden worker (items 2, 3, 4, 6), one more fix
+
+Hidden private-desktop worker only (no visible fallback), research build, native gun stage, copied lab saves, low
+graphics, `MGS_GAME_LUA_DIR` unset, under the verify lock. Every run below closed with the baseline restored and the
+real saves unchanged; run folders are in `%USERPROFILE%\mgs-coop-run-archive\africa\<id>`. Runs at `e7fb9ac` used
+receipt `20261029-002820-43e3a1fd...`, runs at `3fd064a` receipt `20261029-005424-54e9c13c...`. The four scenarios
+carry the run lines in their headers.
+
+- **Item 4 (box as the downed posture), `downed-boxed-friendly-fire.txt`: proven for the session's order.** The
+  guest's rifle downs the standing host, then the host boxes (the 2026-10-23 order: down=1 at h12188, cbox 0.5 s
+  later). `ce66a0bf`, `44e5a233` (`e7fb9ac`) and `a5f30e31` (`3fd064a`): `controls_pending_prone` for about 3.5 s,
+  then `partner_status=local; st=0x4` and `downed_control=observed;command=1;reason=downed;posture=box;generation=4`;
+  `downed_status` down=1 cause=1 lock=1 at once and 8 s later (past the 6 s deadline that latched the session); no
+  `controls_timeout*` line and no `step=refused` in any run. The guest revived the boxed host (`44e5a233`,
+  `a5f30e31`), and in `a5f30e31` a third down re-armed under generation 5 with `posture=box` and held past 8 s.
+  - The first version's revive held E for about 2.6 s, under the host's 3 s grant (`world_downed` HOLD); the scenario
+    now renews the hold five times (the `coop-carry-wounded.txt` timing).
+  - **Not staged: a host boxed before the shots.** The box stops most rifle rounds: a prone guest 6 m away landed 5
+    hits (`44e5a233`, 3090/7800 HP) and a crouched guest 4 m away, reticle on the box, about 3 hits from two
+    magazines (`a5f30e31`, 5274/7800). The boxed-from-the-first-lock case stays unit-test-only
+    (`downed_player_tests`, `DownedPosture`).
+- **Item 3 (vars_change, benign item changes, mission strip), `partner-box-bump-vars.txt` (play rehearsal): proven,
+  plus one defect fixed.** A box dash (w+shift; the session's body 1 ran at 3.5 m/s in its box) reproduced the
+  collision (`downed_defense ... attack=85` both ways). On the guest's copy its own box broke inside body 1's job:
+  `partner_input=vars_change; verdict=benign; ...; fields=ammoStockCounts[15]:8>7` (`5ceb4985`, `6041f5e5`,
+  `0c8f1ab0`), and no `ammo_leak` or `fire_reload_off` on either copy. In `0c8f1ab0` the guest's copy then showed
+  the host's shots (body 1's magazine 3, 2, 1, 0) and its reload (8).
+  - **Fixed, `3fd064a`:** in `5ceb4985` the support lane, which checks digests of the same block in the same window,
+    still logged `partner_support=stock_check; reason=stock_leak` and `partner_support=refused;
+    reason=stock_leak_mission_latched` (as the session did at h10254): no partner throws for the rest of the mission
+    after a box bump. `partner_ammo_leak::SupportJobLeak` and `AfterJob`'s verdict now keep an item-only job from
+    latching the lane; an ammo write still latches it (`partner_defer_tests`, failing first; `partner_ammo_leak_tests`).
+    `6041f5e5` and `0c8f1ab0`: the same benign bump, no support stock line.
+  - Not seen in the worker: a weapon or ammo field moved by a bump (no `verdict=leak`), so the mission-scoped strip
+    (`scope=mission`, cleared at MissionStart) is unit-test-only (`partner_driver_tests`).
+- **Item 2 (late manifest), `partner-equip-late-manifest.txt` (play rehearsal): the staged half proven, `c07b8136`.**
+  The host continued while the guest was at its boot screens: `equip_preload=refused; reason=no_manifest; ...;
+  source=none`; the guest's manifest came from its title, then `equip_preload=late_manifest; mission=30010;
+  preload=refused; source=none; preloaded=0; remote_base=0,46,9; covered=0/2; guns=next_load; link_epoch=3`. The
+  scenario gained `title guest 240` (titlemenu stops at the title). The writer still bound slot 1 (46) on the host,
+  probably because the host's own loadout carries base 46; `guns=next_load` counts preloaded ids only. **The
+  predicted preload (`source=predicted`) stays unit-test-only:** it needs a guest that exits after a handoff and
+  relinks to the same host process, which the worker cannot stage.
+- **Item 6 (downed owner from body 0), new `downed-partner-unrealized.txt`: proven, `20d41b16`.** The host rode
+  D-Horse; the guest's copy hid and unrealized body 1 (`partner_mount=unrealize; ...; op=clear_allactive`, probe
+  `ids=0000,ffff; parts=3,0`) for 12.9 s. Every guest `downed_status` during the ride read `ready=1;armed=1;down=0;
+  ...;reason=alive`, and the guest logged no `downed_control` line (the session logged `reason=player` 15x in the same
+  window). The old build was not re-run; the before side is the 2026-10-23 guest log.
+- **Still unproven in a game:** the box revive and posture over a network with latency (the runs are loopback); a
+  boxed-first down; a bump that moves a weapon or ammo field; the predicted preload after a real relaunch.
+- CTest at `3fd064a`: fast 290/290, full 305/305.
+
+## October 28, 2026: Host fixes (two-PC test 2026-10-23 items 2, 3, 4, 6 of the host-log pass)
+
+Branch `wp/host-fixes` from `dev/oct7-continue` `916708f`. Code and fixtures only at `e7fb9ac` (no game run then; the
+hidden-worker proof is the section above). One commit per item.
+
+- **Item 6, `08f73d6`: the local player's downed protection while body 1 is unrealized.** `Live()` required both
+  bodies realized and loaded, so while `partner_mount` / the ride hides had unrealized body 1 (the host's horse ride
+  on the guest, heli rides, re-realizes) every poll was `downed_control=refused; reason=player` and lethal damage
+  would have been a plain game over. `downed_player::detail::LiveBodies` judges ownership from body 0 (realized,
+  id 0, loaded); a realized body 1 must still be id 1, an unrealized one is absent.
+- **Item 4, `2f3332b`: friendly fire on a boxed host.** The prone request cannot take a boxed body
+  (`controls_pending_prone` x6, `controls_timeout_prone`), and the timeout latched `failed` for the rest of the
+  mission (every poll `controls_timeout`, darts ignored with `downed_unavailable`).
+  - The Lua owner sends the local `PlayerStatus.CBOX` as an optional fifth field of the `MGS_COOP_DOWNED_V1` poll and
+    lock receipts; `detail::DownedPosture` accepts the box as the downed posture (no prone request; masks and the
+    input cap still apply; `detail::PostureHeld` keeps the cap without stance 3).
+  - `detail::ControlsTimeout`: a timeout clears the cycle without latching; the abandoned generation retires
+    (`NewScene`) and the next poll with a good `Live()` re-arms. Lua releases a downed mask the healthy owner no
+    longer needs (`step=abandoned`) and `accept()` takes "up under a newer generation" as an abandoned cycle on both
+    copies (no grant; a same-generation stand-up still needs one).
+  - `downed_control=...` lines carry `posture=` and `generation=`; a `controls_timeout_*` and the first box lock of a
+    generation are logged without the 1/s limiter.
+  - Scenario `tools/worker/scenarios/downed-boxed-friendly-fire.txt` (the guest's rifle downs the boxed host; locked
+    after 8 s; revive; a second boxed down arms again).
+- **Item 3, `f492d77`: `fire_reload_off; reason=ammo_leak; scope=process` after a box-on-box bump.**
+  - `partner_ammo_leak` names the 14 registrations of the weapon/ammo vars block `vars+0x548..+0x670` (Fox StrCode32
+    of the exe's registration hashes: weapons, ammoInWeapons, ammoSubInWeapons, isInitialWeapon, supportWeapons,
+    items, handEquip, ammoStockIds, ammoStockCounts, five unnamed byte arrays). The hook keeps the block bytes around
+    body 1's job and logs `partner_input=vars_change; verdict=..; fields=<member>[<element>]:<before>><after>`
+    (32 per mission).
+  - A change confined to the viewer's own item fields (items, item stock ids/counts `0xE + sub`) is benign (counted
+    as `ammo_benign`); any weapon or ammo element is a leak, and an item change never masks one.
+  - The play strip reads this mission's counters (`shot_leaks_mission`, `ammo_leaks_mission`, reset at MissionStart
+    with the mirror's leak stop) and is cleared at MissionStart: `partner_weapon=fire_reload_off; ...; scope=mission`.
+  - The support lane's own `stock_leak_mission_latched` is unchanged (mission-scoped already; it also saw the bump).
+  - Scenario `tools/worker/scenarios/partner-box-bump-vars.txt` (a census of the bump: which fields move).
+- **Item 2, `09ebf71`: no partner guns for MB visit 1 after the save handoff.** The host continued before the
+  relaunched guest linked; the allocation preload had no manifest and is a mission-block load at the allocation only
+  (vanilla calls `RequestLoadToEquipMissionBlock` in `MissionPrepare`; a mid-mission load is an unverified lifecycle),
+  so the late manifest could not bind (`no_resident` x6, refused).
+  - `save_handoff::PeerOnHandedSave()` (host: the token `partner_restarting` was published once in this process) and
+    `equipment_stock_probe::ChoosePreloadSource`: without the peer's manifest, after a handoff, the host's own last
+    sent manifest (`partner_driver::OwnManifest`) predicts the peer's first loadout. `equip_preload=...; source=
+    remote|predicted|none`. The writer still binds only from the real manifest (its `manifest_late` renewal).
+  - A manifest after the allocation query logs `equip_preload=late_manifest; ...; covered=<n>/<m>;
+    guns=this_load|next_load` once.
+  - Scenario `tools/worker/scenarios/partner-equip-late-manifest.txt` stages the late manifest (the host continues
+    while the guest is still at its boot screens). **Cannot be staged:** the predicted preload itself needs a guest
+    that exits after a handoff and relinks to the same host process; the worker has no relaunch control and a second
+    session is a new host process.
+- **Tests (failing first):** `downed_player_tests` (LiveBodies, DownedPosture/PostureHeld, ControlsTimeout),
+  `world_downed_lua_check` (posture field, abandoned cycle before and after the lock on both roles),
+  `world_revive_input_lua_check` (the posture field), `partner_ammo_leak_tests` (new), `partner_driver_tests` (the strip
+  ends with its mission; `TestEquipLateManifest`), `partner_defer_tests` (item-only job benign, ammoInWeapons a leak),
+  `equipment_stock_probe_tests` (predicted source, cover), `save_handoff_io_tests` (`HandedSave`).
+- **Unproven until a game run:** that the box posture holds the downed body (and the revive) in the box; which field
+  the box-on-box bump really changes (the new `vars_change` line names it; if it is a weapon/ammo field the strip
+  still latches, now for the mission); the predicted preload in a real relaunch.
+
 ## October 24, 2026: 0.14.2 (launcher: GitHub update checker, auto-download, background updates, in-app self-updater)
 
 **Package (2026-10-24):** `dist/DiamondDogsTogether-0.14.2-20261024T143841Z-fcd27151/DiamondDogsTogether-0.14.2.zip` (10,063,881 bytes), SHA-256 `891A1CD48EA5AAE25F1F94AEE65E2B45FDC575B0A15ACBD50CFA2D5004DDBDFA`, built by `tools/package.ps1 -Friend` from the clean tree at `1764136` with Release receipt `20261024-143542-13ca3e7088cd4760866eae6ea6c9eacb` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `8AAC2C38A9074168DDD118594203491FBE2ED1E2D1B85614DA24E323C1C1A723` and `dinput8.dll` `937B13ABA2C585D416F06B2339153FBFDB44519B78A9FA816C74FD5151CA2119`, both build id `0.14.2+1764136`.
@@ -73,7 +265,7 @@ Branch `wp/test-boot` from `dev/oct7-continue` `ba7bb62` (`docs/test-boot.md`). 
 
 - **Fast boot and boot-to-spot (`lua/coop/debug_boot.lua`, `native/include/mgscoop/lab_boot.hpp`, `native/lab_ini.hpp`).** `lab_fast_boot=1` skips the Konami/KJP/Fox logos (`TppSave.IsNewGame()` true for `init_sequence.StartPreTitleSequence`), deletes the copyright splash, erases the autosave (`Seq_Demo_ConfirmAutoSave`), login (`Seq_Demo_LogInKonamiServer`) and offline DLC popups, bypasses Press Start, and selects `OnSelectContinue` (or `OnSelectRestartHeli` when a boot target is given). `lab_boot=<30010|30020|30050> [x y z yaw] [time=HH:MM] [weather=<name>]` (or `40010|40020|40050`) sorties from the ACC on foot (`SelectNextMissionHeliStartRoute(target, 0, false)` + `OnEndMissionPreparation(DEPLOY_TIME.CURRENT)` on the host while the guest follows via `world_follow` `kind=6`), clears any queued Mother Base arrival demo (`TppDemo.SetNextMBDemo()`), sets `TppPlayer.SetInitialPosition` during `MISSION_FINALIZE` (host at the spot, guest 4 m in front facing back) so the mission-start checkpoint save is written at that spot, and applies `TppClock.SetTime` and `TppWeather.ForceRequestWeather`.
 - **Light test copies and save-seed library (`tools/worker/WorkerSessionCommon.psm1`, `Save-WorkerSeed.ps1`, `Start-WorkerSession.ps1`, `Invoke-WorkerScenario.ps1`).** Lab worker sessions default to `-GraphicsQuality low` (rewrites the run's copied `TPP_GRAPHICS_CONFIG` and its integrity tag; `-Mode play` keeps `preserve`). `Save-WorkerSeed.ps1` snapshots a closed worker run's `<role>-saves\{287700\local,remote}` into `D:\mgs-coop-seeds\<name>` with `manifest.json` (SHA-256 per file and set hash per role); `Start-WorkerSession.ps1` / `Invoke-WorkerScenario.ps1` accept `-SaveSeed <name>` / `-HostSaveSeed` / `-GuestSaveSeed`. Created seeds in `D:\mgs-coop-seeds`: `quiet-recruited` (`6c755769`), `mb-ladder` (`3e5e8243`, `30050 22.61 1.80 -15.55 0`), `africa-jeep` (`8d91d358`, `30020 -656.01 1.20 877.73 62`), and `afgh-ledge` (`c2ecccb9`, `30010 828.18 338.20 1630.51 95`).
-- **Hidden-worker timing comparison (`C:\Users\taylo\mgs-coop-run-archive\test-boot\`).** Baseline `boot-baseline.txt` (`634e5f77`, `-GraphicsQuality preserve`, Continue into `30010`): host gameplay at **57.2 s**, guest at **54.3 s** from process creation. Fast boot `boot-30020.txt` (`0e20af9c`, `-GraphicsQuality low`, `boot 30020 -510.73 5.09 1183.02 0 time=12:00 weather=sunny` from `lab` seed through `40010` ACC + sortie into `30020` Masa Village): host gameplay in **28.88 s** of game clock (**45.4 s** since launch, `err_m=0.00`), guest in **29.43 s** of game clock (**45.3 s** since launch, `err_m=0.00`), zero input; `host-boot-spot.bmp` and `guest-boot-spot.bmp` show both players standing face-to-face at 12:00 sunny with the `Taylor` nametag. Mother Base `boot 30050 22.61 1.80 -15.55 0` (`3e5e8243`, from `quiet-recruited`) reached the red container ladder in **31.30 s** / **31.58 s** game clock (**42.4 s** / **42.9 s** since launch) with the arrival demo skipped (eliminating the previous 60 s post-gameplay wait).
+- **Hidden-worker timing comparison (`%USERPROFILE%\mgs-coop-run-archive\test-boot\`).** Baseline `boot-baseline.txt` (`634e5f77`, `-GraphicsQuality preserve`, Continue into `30010`): host gameplay at **57.2 s**, guest at **54.3 s** from process creation. Fast boot `boot-30020.txt` (`0e20af9c`, `-GraphicsQuality low`, `boot 30020 -510.73 5.09 1183.02 0 time=12:00 weather=sunny` from `lab` seed through `40010` ACC + sortie into `30020` Masa Village): host gameplay in **28.88 s** of game clock (**45.4 s** since launch, `err_m=0.00`), guest in **29.43 s** of game clock (**45.3 s** since launch, `err_m=0.00`), zero input; `host-boot-spot.bmp` and `guest-boot-spot.bmp` show both players standing face-to-face at 12:00 sunny with the Steam persona nametag. Mother Base `boot 30050 22.61 1.80 -15.55 0` (`3e5e8243`, from `quiet-recruited`) reached the red container ladder in **31.30 s** / **31.58 s** game clock (**42.4 s** / **42.9 s** since launch) with the arrival demo skipped (eliminating the previous 60 s post-gameplay wait).
 
 ## October 23, 2026: 0.14.0 (Diamond Dogs Together launcher: one exe, drag-and-drop install, Steam only; repo cleanup; story character)
 
@@ -297,7 +489,8 @@ new key; unit-tested only (no game launch in this phase).
   drawn standing, floating at the seat height, until the vehicle exists again or the ride ends. A seated or crouch idle
   needs a DM clip, which a per-tick Warp ends; a slot-placed variant with a clip is unproven and left for later. The
   vehicle itself is still not synced (the `VEHICLE_GONE` world op is a separate branch).
-- **Known limit (tracked): free roam is not covered by the fallback.** In 30010 / 30020 the seat plays on the vehicle's
+- **Known limit (tracked; lifted for a vehicle absent on the viewer's copy, `reason=absent`, by the Africa fix of
+  2026-10-28, see that section): free roam is not covered by the fallback.** In 30010 / 30020 the seat plays on the vehicle's
   authored locator name (the proven named path), and the by-id gate's `local_read` / `unrealized` there is only logged
   (`byid; ...; offer=0; reason=local_read`): a vehicle Fultoned on the viewer's copy only (Lua's `vehicleName` still
   resolves its locator) most likely ends in `far` / `unconfirmed` / `lua_refused` and hides the driver as in 0.13.5.

@@ -1082,6 +1082,11 @@ try {
     [IO.File]::WriteAllBytes($assetFile, [byte[]](1, 2, 3))
     Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'an embedded launcher asset is part of the checked source'
     Remove-Item -LiteralPath (Join-Path $sourceFx 'native\launcher') -Recurse
+    # So are the .inc fragments that native sources #include into the loader.
+    $incFile = Join-Path $sourceFx 'native\fixture_impl.inc'
+    [IO.File]::WriteAllText($incFile, '// #included loader fragment')
+    Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'an #included .inc loader fragment is part of the checked source'
+    Remove-Item -LiteralPath $incFile
     Remove-Item -LiteralPath $sourceFile
     Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'removed source refused'
     [IO.File]::WriteAllText($sourceFile, '// checked source')
@@ -1109,6 +1114,12 @@ try {
     }
     $releaseFlags['MGS_BACKGROUND_WORKER'] = 'OFF'
     $currentSource = Get-WorkerSourceHashes $projectRoot
+    # The .inc fragments native/*.cpp #include are loader source: the Release snapshot binds every one.
+    $nativeRoot = Join-Path $projectRoot 'native'
+    $incSources = @(Get-ChildItem -LiteralPath $nativeRoot -Recurse -File -Filter '*.inc' | Where-Object { $_.Extension -ceq '.inc' } |
+        ForEach-Object { 'native/' + [IO.Path]::GetRelativePath($nativeRoot, $_.FullName).Replace('\', '/') } | Sort-Object)
+    Assert-True ($incSources -ccontains 'native/partner_driver_seat.inc' -and $incSources -ccontains 'native/native_pose_window_impl.inc') 'the loader has #included .inc sources'
+    foreach ($relative in $incSources) { Assert-True ($currentSource.hashes.Contains($relative.Replace('/', '\'))) "the Release source snapshot binds $relative" }
     function New-FixtureReceipt([string]$Directory, [string]$Name, $Artifacts, $Source = $currentSource) {
         $receipt = [ordered]@{schema=1;status='passed';plan=[ordered]@{profile='Release';flags=$releaseFlags;tests=@('inert-fixture-only')};
             artifacts=$Artifacts;source_hashes=$Source.hashes;source_dependencies=$Source.dependencies}
@@ -1211,7 +1222,8 @@ try {
         foreach ($relative in @('CMakeLists.txt', 'README.md', 'THIRD_PARTY_NOTICES.md', 'native/probe.cpp', 'native/coop_reason_text.cpp', 'native/launcher/launcher_main.cpp',
                 'native/launcher/runtime_dat.cpp', 'native/launcher/core/core_model.cpp', 'native/launcher/assets/mgs_coop_four_player_controller.fpkd.bin',
                 'native/launcher/assets/mgs_coop_two_player_scarf_controller.fpkd.bin', 'native/launcher/resources/ddt_launcher.rc', 'native/launcher/resources/ddt_launcher.ico',
-                'lua/coop/character.lua', 'cmake/launcher_gui.cmake', 'third_party/imgui/imgui.cpp', 'third_party/dynamite/LICENSE', 'tools/package.ps1', 'tools/dev/Play-LocalCoop.ps1')) {
+                'lua/coop/character.lua', 'cmake/launcher_gui.cmake', 'third_party/imgui/imgui.cpp', 'third_party/dynamite/LICENSE', 'tools/package.ps1', 'tools/dev/Play-LocalCoop.ps1',
+                'tests/fixtures/partner-lab/e0-host.log', 'tools/archive_probe/main.go', 'tools/archive_probe/go.mod', 'tools/archive_probe/go.sum') + $incSources) {
             Assert-True ($sourceNames -ccontains $relative) "source.zip holds $relative"
             $row = @($sourceRows | Where-Object { $_.path -ceq $relative })
             Assert-True ($row.Count -eq 1 -and $row[0].sha256 -ceq (Get-Sha256 (Join-Path $projectRoot $relative))) "source-files.json lists $relative with its hash"
@@ -1223,6 +1235,8 @@ try {
         }
         Assert-Equal @($sourceNames | Where-Object { $_.Contains('\') -or $_ -like '*mgs-coop-player-runtime*' -or $_ -match '(^|/)link-secret' -or [IO.Path]::GetExtension($_) -in @('.exe', '.dll', '.obj') }).Count 0 'source.zip: forward slashes, no binaries, no runtime archive, no link secret'
         Assert-Equal @($sourceNames | Where-Object { $_ -like 'tools/friend/*' -or $_ -like 'build/*' }).Count 0 'source.zip: no retired player scripts, no build output'
+        Assert-Equal @($sourceNames | Where-Object { [IO.Path]::GetExtension($_) -in @('.log', '.go', '.mod', '.sum') -and
+            $_ -cnotmatch '^(tests/fixtures/partner-lab/[^/]+\.log|tools/archive_probe/(main\.go|go\.mod|go\.sum))$' }).Count 0 'source.zip: logs and Go files only at their exact places'
     } finally { $sourceZip.Dispose() }
     # Regression: an owned, ordinary dependency lives outside the staged source
     # root, reached only by the exact supported third_party/minhook junction.

@@ -17,7 +17,15 @@ param(
     [switch]$NoPrompt,
     # Do not select the loading diagnostic mode on a first install (the two-PC
     # play package's Install-Coop.ps1 leaves the game in pass-through).
-    [switch]$NoInitialMode
+    [switch]$NoInitialMode,
+    # Also accept, as the owned previous loader, a dinput8.dll that the folder's
+    # own Diamond Dogs Together drop-in mgs-coop\package.json lists (product
+    # mgs-coop-local-package, layout drop-in, exactly one files[] row with target
+    # dinput8.dll). Drag-and-drop installs write no probe-install.json, so an
+    # earlier record may be stale or absent; it is backed up as it is and Restore
+    # puts back that loader and that record (or its absence) exactly. Any other
+    # loader is still refused. The private worker passes this (Prepare-LabInstance).
+    [switch]$AcceptDropInLoader
 )
 $ErrorActionPreference='Stop'
 $packageRoot=if($PackageDirectory) { [IO.Path]::GetFullPath((Get-Item -LiteralPath $PackageDirectory).FullName).TrimEnd('\','/') } else { $PSScriptRoot }
@@ -110,6 +118,31 @@ function RestoreFiles($Rows,[string]$BackupRoot) {
         else { Remove-Item -LiteralPath $target }
     }
 }
+function JsonProperty($Object,[string]$Name) {
+    if($null -ne $Object -and @($Object.PSObject.Properties.Name) -ccontains $Name) { return $Object.$Name }
+    return $null
+}
+# The dinput8.dll hash the folder's own Diamond Dogs Together drop-in
+# mgs-coop\package.json lists (tools/package.ps1 -Friend; the launcher core's
+# ReadPackage): product mgs-coop-local-package, layout drop-in, exactly one
+# files[] row with target dinput8.dll and a full SHA-256, the same game hashes
+# as the package being installed and the same runtime archive hash when that
+# package names one. $null for anything else (also a missing or damaged file).
+function DropInLoaderHash($Installing,[string]$ArchiveHash) {
+    try {
+        $path=SafePath $gameRoot 'mgs-coop/package.json'
+        if(!(Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -gt 1MB) { return $null }
+        $dropIn=Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if([string](JsonProperty $dropIn 'product') -cne 'mgs-coop-local-package' -or [string](JsonProperty $dropIn 'layout') -cne 'drop-in' -or
+            [string](JsonProperty $dropIn 'executable_sha256') -cnotmatch '^[A-Fa-f0-9]{64}$' -or [string](JsonProperty $dropIn 'executable_sha256') -ne [string]$Installing.executable_sha256 -or
+            [string](JsonProperty $dropIn 'steam_dll_sha256') -cnotmatch '^[A-Fa-f0-9]{64}$' -or [string](JsonProperty $dropIn 'steam_dll_sha256') -ne [string]$Installing.steam_dll_sha256) { return $null }
+        if($ArchiveHash -and [string](JsonProperty (JsonProperty $dropIn 'runtime_archive') 'sha256') -ne $ArchiveHash) { return $null }
+        $rows=@(@(JsonProperty $dropIn 'files') | Where-Object { [string](JsonProperty $_ 'target') -ceq 'dinput8.dll' })
+        $sha=if($rows.Count -eq 1) { [string](JsonProperty $rows[0] 'sha256') } else { '' }
+        if($sha -cnotmatch '^[A-Fa-f0-9]{64}$') { return $null }
+        return $sha.ToUpperInvariant()
+    } catch { return $null }
+}
 RequireStopped
 $null=SafePath $gameRoot 'mgs-coop/probe-install.json'
 $null=SafePath $gameRoot 'mgs-coop/script-observe.enabled'
@@ -147,7 +180,7 @@ try {
     $bundlesArchive=@($package.files | ForEach-Object { $_.target }) -contains $archiveTarget
     $packageAllowed=if(@($package.files.target) -ccontains 'mgs-coop/ImGui-LICENSE.txt') { $allowed } else { $legacyAllowed }
     $packageFileCount=if($bundlesArchive) { $packageAllowed.Count-1 } else { $packageAllowed.Count-2 }
-    if($package.product -ne 'mgs-coop-local-package' -or $package.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5','0.13.6','0.14.0','0.14.1','0.14.2') -or
+    if($package.product -ne 'mgs-coop-local-package' -or $package.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3','0.12.4','0.12.5','0.12.6','0.13.0','0.13.1','0.13.2','0.13.3','0.13.4','0.13.5','0.13.6','0.14.0','0.14.1','0.14.2','0.14.3') -or
         @($package.files).Count -ne $packageFileCount -or @($package.files.target | Select-Object -Unique).Count -ne $packageFileCount -or
         @($package.files.target | Where-Object { $_ -cnotin $packageAllowed -or $_ -ceq 'mgs-coop/probe-install.json' }).Count) { throw 'Unexpected package manifest.' }
     $archiveHash=$null
@@ -192,7 +225,17 @@ try {
     }
     $dllPath=SafePath $gameRoot 'dinput8.dll'
     $previous=$null; $ownershipRecordHash=$null
-    if((Test-Path -LiteralPath $dllPath) -or (Test-Path -LiteralPath $manifestPath)) {
+    $dropInHash=if($AcceptDropInLoader -and (Test-Path -LiteralPath $dllPath -PathType Leaf)) { DropInLoaderHash $package $archiveHash } else { $null }
+    if($dropInHash -and (Hash $dllPath) -eq $dropInHash) {
+        # The folder's own drop-in package.json names this loader. A stale or absent
+        # probe-install.json is only backed up (and later restored) as it is.
+        $previous=[pscustomobject]@{dll_sha256=$dropInHash}
+        if(Test-Path -LiteralPath $manifestPath) {
+            if(!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'The ownership record is not a file; nothing was replaced.' }
+            $ownershipRecordHash=Hash $manifestPath
+        }
+        Write-Output "Accepting the Diamond Dogs Together drop-in loader ($($dropInHash.Substring(0,12))...) listed in mgs-coop\package.json; it is backed up and restored exactly."
+    } elseif((Test-Path -LiteralPath $dllPath) -or (Test-Path -LiteralPath $manifestPath)) {
         if(!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'An unrelated loader exists; nothing was replaced.' }
         $previous=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if($previous.product -ne 'mgs-coop-original-loader-probe') { throw 'Loader ownership does not match this mod and folder.' }

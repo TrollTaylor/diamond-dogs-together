@@ -18,7 +18,7 @@ is replaced only with -Force, and then moved aside to <SeedRoot>\.replaced\.
 .EXAMPLE
 pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunId 0123456789abcdef0123456789abcdef -Name africa-jeep
 .EXAMPLE
-pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunDirectory C:\Users\taylo\mgs-coop-run-archive\test-boot\<id> -Name mb-ladder -Note 'MB command deck, real seed'
+pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunDirectory $env:USERPROFILE\mgs-coop-run-archive\test-boot\<id> -Name mb-ladder -Note 'MB command deck, real seed'
 #>
 [CmdletBinding()]
 param(

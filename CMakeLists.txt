@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mgs_coop VERSION 0.14.2 LANGUAGES CXX)
+project(mgs_coop VERSION 0.14.3 LANGUAGES CXX)
 option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)
 option(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER "Private copied-save worker: observe native actor reactivation completion" OFF)
 if(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER AND (NOT MGS_BACKGROUND_WORKER OR NOT MGS_LOCAL_OFFLINE_EQUIPMENT_TEST OR NOT MGS_LOCAL_STOCK46_PRELOAD_TEST OR NOT MGS_LOCAL_STOCK46_WRITER_TEST))
@@ -207,6 +207,16 @@ foreach(_mgs_partner_test buddy_pose_tests partner_receipt_tests partner_input_t
   endif()
   add_test(NAME ${_mgs_partner_test} COMMAND ${_mgs_partner_test})
 endforeach()
+# Two-PC test 2026-10-23 item 3: the viewer's weapon/ammo vars block around body 1's job
+# (field diff, benign item changes, the mission-scoped play strip).
+target_sources(mgs_coop_core PRIVATE native/partner_ammo_leak.cpp)
+add_executable(partner_ammo_leak_tests tests/partner_ammo_leak_tests.cpp)
+target_include_directories(partner_ammo_leak_tests PRIVATE native)
+target_link_libraries(partner_ammo_leak_tests PRIVATE mgs_coop_core)
+if(MSVC)
+  target_compile_options(partner_ammo_leak_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME partner_ammo_leak_tests COMMAND partner_ammo_leak_tests)
 # Round-1 actions track (docs/anim-round1-actions.md): the act census telemetry
 # and the DirectMotion overlay lever, pure and portable like the partner core.
 target_sources(mgs_coop_core PRIVATE native/partner_act_log.cpp native/partner_dm_overlay.cpp native/partner_traverse.cpp)

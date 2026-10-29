@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Two-player online co-op for Metal Gear Solid V: The Phantom Pain</b><br>
-  Windows · Steam · version 0.14.2 (development build)
+  Windows · Steam · version 0.14.3 (development build)
 </p>
 
 <p align="center">
@@ -66,6 +66,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - Story missions, the hospital prologue, side ops and cutscenes are not co-op yet.
 - **Enemies:** each PC still moves its own enemies. Only what happens to them (killed, asleep, Fultoned, alerted) is shared.
 - **Vehicles, animals and prisoners** are not shared, apart from your partner's own ride.
+- **Sortie vehicles:** a vehicle you bring from sortie prep (the helicopter's vehicle choice) doesn't appear on your partner's screen; they see you without it. Use world vehicles you find on the map to ride together.
 - **Mounts:** you can't shoot from a back seat, and a partner riding D-Horse or D-Walker is hidden.
 - **Look:** your custom character may look like Snake on your partner's screen.
 - **Players:** two only.

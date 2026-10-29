@@ -251,8 +251,9 @@ try {
     Check ($read.status -ceq 'final' -and $read.arguments[0] -ceq 'space value' -and $read.arguments[1] -ceq "line1`nline2" -and !(Test-Path -LiteralPath ($receipt+'.tmp'))) 'atomic receipt replacement preserves literal arguments/newlines'
 
     $sourceRoot=Join-Path $fixture 'source-project'
-    $null=New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'third_party') -Force
+    $null=New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'third_party'),(Join-Path $sourceRoot 'native') -Force
     [IO.File]::WriteAllText((Join-Path $sourceRoot 'CMakeLists.txt'),'project(fixture LANGUAGES NONE)')
+    [IO.File]::WriteAllText((Join-Path $sourceRoot 'native\fixture_impl.inc'),'// #included loader fragment')
     $targetA=Join-Path $fixture 'dependency-a'; $targetB=Join-Path $fixture 'dependency-b'
     foreach($target in @($targetA,$targetB)) {
         $null=New-Item -ItemType Directory -Path (Join-Path $target 'src') -Force
@@ -267,6 +268,7 @@ try {
     Check ($before.dependencies['third_party\minhook'].linked -and $before.dependencies['third_party\minhook'].resolved_path -ieq $targetA) 'snapshot records the actual resolved MinHook junction target'
     Check ($before.hashes.Contains('third_party\minhook\src\hook.c') -and $before.hashes['third_party\minhook\src\hook.c'] -ceq (Get-FileHash -LiteralPath (Join-Path $targetA 'src\hook.c')).Hash) 'snapshot hashes actual linked dependency bytes under their logical source path'
     Check ($before.hashes.Contains('third_party\minhook\LICENSE.txt') -and (Get-Item -LiteralPath $knownLink).Attributes -band [IO.FileAttributes]::ReparsePoint) 'dependency attribution is hashed and the existing link remains intact'
+    Check ($before.hashes.Contains('native\fixture_impl.inc') -and $before.hashes['native\fixture_impl.inc'] -ceq (Get-FileHash -LiteralPath (Join-Path $sourceRoot 'native\fixture_impl.inc')).Hash) 'snapshot hashes the .inc fragments native sources #include'
     Assert-WorkerSourceUnchanged $before (Get-WorkerSourceHashes $sourceRoot)
     [IO.File]::WriteAllText((Join-Path $targetA 'src\hook.c'),'int fixture_hook=2;')
     Refuses { Assert-WorkerSourceUnchanged $before (Get-WorkerSourceHashes $sourceRoot) } 'Source changed'
