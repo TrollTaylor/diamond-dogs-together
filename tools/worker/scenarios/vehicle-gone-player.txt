@@ -26,11 +26,11 @@ waitlog host 'event=vehicle_gone; step=on; mission=30020; role=host' 30
 waitlog guest 'event=vehicle_gone; step=on; mission=30020; role=guest' 30
 host debug clear_enemies 100
 wait 1500
-# Fulton: the guest at veh_lv_0002's goto spot of run 0edadbe2, the host 9 m behind it.
+# Fulton: the guest at veh_lv_0002's goto spot of run 0edadbe2, the host 9 m behind it (both by teleport: run a50214f7
+# stopped on placebehind, whose landing check needs a valid partner pose right after the guest's 990 m warp).
 guest debug teleport -88.939 -3.75 70.958 82
-wait 3000
-placebehind host guest 9 -4
-wait 2500
+host debug teleport -98.408 -0.750 73.667 106
+wait 4000
 host debug clear_enemies 100
 wait 1500
 guest run vehicle_state_status 25610
@@ -52,7 +52,8 @@ host run vehicle_gone_status
 guest run vehicle_gone_status
 # Wreck by the guest's hand: back to the Masa Village jeep, two bursts of fire, then the lever within 10 s.
 guest debug teleport -656.01 1.20 877.73 62
-wait 3000
+host debug teleport -662.43 4.20 870.74 42
+wait 4000
 guest debug goto_vehicle jeep
 wait 3000
 placebehind host guest 9 -4
