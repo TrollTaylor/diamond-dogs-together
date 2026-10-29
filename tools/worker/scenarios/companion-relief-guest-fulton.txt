@@ -1,0 +1,74 @@
+# M3, lab (docs/vehicles-companions-design.md section 9 M3; review of 2026-10-29 F1): the GUEST Fultons its copy of the
+# host's relief vehicle with VEHICLE_GONE ON (world_vehicle_gone=1). companion-relief.txt shows the same with VEHICLE_GONE
+# off; here the two modules meet: VEHICLE_GONE never watches index 0 on the guest (no second request), the host answers
+# the relief request with its own credited Seize {"Fulton"}, its VEHICLE_GONE announces that loss, and the guest's copy,
+# already marked gone, removes nothing more. A travel then commits the host's temporary resources (4wdE +1 on the host,
+# none on the guest).
+#  A  30020 savannahEast_N LZ, type 2 (east LV) on both; frames m3v-relief-arrival.
+#  F  guest relief_remove fulton (the stock Seize {"Fulton"} on the guest's copy, which runs its stock OnFulton):
+#     credit_skipped why=guest_fulton and lost_tx on the guest; lost_rx, host_fulton, the stock credit (AddTempResource 13)
+#     and vehicle_gone step=lost on the host; vehicle_gone step=rx then lost_done on the guest; frames m3v-relief-gone.
+#  T  the host travels to 30010: the arrival census shows the credit on the host only.
+# Coordinator only, hidden worker (never visible), copied lab saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-guest-fulton.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+labsetting world_relief=1
+labsetting world_vehicle_gone=1
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30010 828.18 338.20 1630.51 95
+both debug godmode 1
+host run relief_census start
+guest run relief_census start
+host run relief_arm 2 1227.17 25.84 -127.05 -1.571
+host expect relief_arm;type=2
+logmark both
+host worldtrigger goto=30020 goto_lz=0
+waitmission host 30020 300
+waitmission guest 30020 180
+waitgameplay host 150
+waitgameplay guest 150
+both debug godmode 1
+host debug time 43200
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=2; .*; mission=30020; source=carry;' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2; .*; mission=30020; source=seed;' 40
+host run relief_census arrival
+guest run relief_census arrival
+host run relief_face
+guest run relief_face
+wait 3000
+both capture m3v-relief-arrival
+logmark both
+guest run relief_remove fulton
+guest expect relief_remove;how=fulton;quiet=0;
+waitlog guest 'world_lua=event=relief; role=guest; step=credit_skipped; fn=OnFulton; why=guest_fulton; mission=30020;' 10
+waitlog guest 'world_lua=event=relief; role=guest; step=lost_tx; rid=[1-9][0-9]*; cause=1; try=1; sent=1; mission=30020;' 10
+waitlog host 'world_lua=event=relief; role=host; step=lost_rx; rid=[1-9][0-9]*; cause=1; mission=30020;' 15
+waitlog host 'world_lua=event=relief; role=host; step=host_fulton; ok=1;' 15
+waitlog host 'world_lua=event=relief; role=host; step=credit; fn=OnFulton; mission=30020;' 15
+waitlog host 'world_lua=event=relief; step=credit; fn=AddTempResource; args=13,' 15
+waitlog host 'world_lua=event=vehicle_gone; step=lost; id=25600; cause=1; role=host' 40
+waitlog guest 'world_lua=event=vehicle_gone; step=rx; id=25600;' 20
+waitlog guest 'world_lua=event=relief; role=guest; step=lost_done;' 30
+wait 4000
+host run relief_census gone
+guest run relief_census gone
+host run vehicle_gone_status
+guest run vehicle_gone_status
+both capture m3v-relief-gone
+host run relief_arm 1 805 343 1636.5 0
+host expect relief_arm;type=1
+logmark both
+host worldtrigger goto=30010 goto_lz=1
+waitmission host 30010 300
+waitmission guest 30010 180
+waitgameplay host 150
+waitgameplay guest 150
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=1; .*; mission=30010; source=carry;' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=1; .*; mission=30010; source=seed;' 40
+host run relief_census after
+guest run relief_census after
+host run relief_status
+guest run relief_status
+state

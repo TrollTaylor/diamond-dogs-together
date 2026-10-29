@@ -113,8 +113,8 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 57, "57 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
-                       "and character, M2 companion ack and pose, and local ops)");
+    Check(count == 58, "58 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+                       "and character, M2 companion ack and pose, M3 vehicle spawn, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -1770,6 +1770,40 @@ void CompanionM2Ops() {
               Tx(g_guest, op::companion_ack, {1, 1, 0, 0}, 201) == world::TxStatus::disabled,
           "both ops need world level 3");
 }
+// M3 sortie vehicle (docs/vehicles-companions-design.md section 5 / 6.3, route A): VEHICLE_SPAWN 0x34,
+// host to guest, world queue, reliable, level 3, play too; 11 fields, 31 bytes (an outbound entry holds 32).
+void VehicleSpawnOp() {
+    const auto* spawn = world::FindOp(op::vehicle_spawn);
+    Check(op::vehicle_spawn == 0x34 && spawn && std::strcmp(spawn->name, "VEHICLE_SPAWN") == 0, "VEHICLE_SPAWN 0x34 exists");
+    Check(spawn->queue == 1 && spawn->wire == world::Wire::reliable && spawn->level == 3 && !spawn->lab_only && !spawn->request &&
+              spawn->dir == world::Dir::host_to_guest && spawn->lua == 11 && spawn->native == 0 && spawn->body == 31,
+          "VEHICLE_SPAWN: world queue, reliable, level 3, host to guest, 11 fields, 31 bytes");
+    Setup(3, 3, true);
+    Pair(30020, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    Check(Tx(g_host, op::vehicle_spawn, {1, 30020, 25600, 1, 514, 1, 3, 1227170, 25840, -127050, -1571}, 101) == world::TxStatus::ok,
+          "the host announces its relief vehicle (type 2, carry pose)");
+    Check(Tx(g_host, op::vehicle_spawn, {2, 30020, 25600, 1, 4294967295LL, 255, 0, 0, 0, 0, 0}, 101) == world::TxStatus::ok,
+          "a whole u32 carry type and no vehicle pass");
+    Check(Tx(g_host, op::vehicle_spawn, {3, 30020, 25599, 1, 514, 1, 3, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_spawn, {3, 30020, 25600, 0, 514, 1, 3, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_spawn, {3, 30020, 25600, 1, 514, 1, 4, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_spawn, {3, 30020, 25600, 1, 514, 1, 3, 0, 0, 0, 3143}, 101) == world::TxStatus::bad_args,
+          "a non-vehicle id, cause 0, unknown flags and a yaw beyond pi are refused");
+    Check(Tx(g_guest, op::vehicle_spawn, {1, 30020, 25600, 1, 514, 1, 3, 0, 0, 0, 0}, 101) == world::TxStatus::wrong_role,
+          "only the host sends VEHICLE_SPAWN");
+    Exchange(102);
+    const auto atGuest = Drain(g_guest, 3, 103);
+    const auto* got = Find(atGuest, op::vehicle_spawn);
+    Check(got && got->v[1] == 30020 && got->v[2] == 25600 && got->v[4] == 514 && got->v[6] == 3 && got->v[7] == 1227170 &&
+              got->v[9] == -127050 && got->v[10] == -1571,
+          "the guest receives the host's relief vehicle values");
+    Setup(2, 2, true);
+    Pair(30020, 200);
+    Check(Tx(g_host, op::vehicle_spawn, {1, 30020, 25600, 1, 514, 1, 3, 0, 0, 0, 0}, 201) == world::TxStatus::disabled,
+          "VEHICLE_SPAWN needs world level 3");
+}
 } // namespace
 
 int main() {
@@ -1794,6 +1828,7 @@ int main() {
     VehicleGone();
     CompanionOps();
     CompanionM2Ops();
+    VehicleSpawnOp();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

@@ -29,6 +29,14 @@ do
         {"initialBuddyRotYMissionStart", nil, 1000}}) do
         S.keys[#S.keys + 1] = {k[1], k[2], k[3], true, nil, "buddy"}
     end
+    -- M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, route A): the host's relief carry vars
+    -- (vars+0x2D34..+0x2D67: the type's whole u32, the attitude x, y, z, rotY, 12 life and 3 ammo slots,
+    -- the state) and its ten paint presets (vars+0x1BB1). Always sent; key[6] "relief": the guest applies
+    -- them only with world_relief (lua/coop/world_relief_sync.lua keeps its own for its saves).
+    for _, k in ipairs({{"reliefVehicleCarryType"}, {"reliefVehicleCarryAttitude", 4, 1000}, {"reliefVehicleCarryLife", 12},
+        {"reliefVehicleCarryAmmo", 3}, {"reliefVehicleCarryState"}, {"userPresetVehiclePaintType", 10}}) do
+        S.keys[#S.keys + 1] = {k[1], k[2], k[3], true, nil, "relief"}
+    end
     W.followSeeds = S
     local floor = math.floor
     function S.data(key) return key[4] == "svars" and svars or key[4] and vars or gvars end
@@ -66,8 +74,8 @@ do
             if not n then return nil, key[1] end
             for i = 0, n - 1 do
                 local value = S.encode(key, key[2] and W.get(data, i) or data)
-                -- A buddy key never blocks travel: an unreadable one goes as 0 (logged).
-                if value == nil and key[6] == "buddy" then
+                -- A buddy or relief key never blocks travel: an unreadable one goes as 0 (logged).
+                if value == nil and key[6] ~= nil then
                     value = 0
                     W.log("event=follow;step=seed_substitute;key=" .. key[1] .. ":" .. i)
                 end

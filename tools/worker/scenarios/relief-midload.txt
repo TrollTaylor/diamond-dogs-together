@@ -1,0 +1,70 @@
+# M3 follow-up experiments, round 2 (docs/vehicles-companions-design.md section 8.1).
+# (a) Sortie-prep reach: the host boots into its ACC (40010); frames show what the ACC offers the hidden worker and
+#     whether a Tab press (the iDroid key) opens the menu that a scripted sortie-prep selection would need. Tab is
+#     pressed twice so the copy is back where it started before the lab goto.
+# (b) M3 item 6, a guest continue or late join: relief_load writes the carry vars and calls Vehicle.LoadCarry mid
+#     mission on a copy whose mission started without a relief vehicle: first the host alone (the guest copy shows
+#     today's state), then the guest with the same values. Type 2 (east LV) in Africa 30020: a pack whose body the
+#     location's free roam does not load (route B could not draw it). The values are the carry attitude the
+#     engine itself used at this LZ in runs fafd3fdd and 9f01d603 (cp=1227.17,25.84,-127.05,-1.571).
+#     The 30020 mission end then runs with index 0 alive on both copies: the host's stock seize, the guest's skipped.
+# (c) Seed afgh-relief-lv: the host alone arms type 2 (east LV) at the ACC sortie to 30010 (goto_lz=1,
+#     enemyBase_S); its mission-start checkpoint save holds the choice, the guest's does not. After the run:
+#     pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunDirectory <run> -Name afgh-relief-lv
+# Coordinator only, hidden worker (never visible), copied lab saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/relief-midload.txt -SaveSeed lab
+labsetting nametag=1
+boot 40010
+wait 3000
+both capture relief-acc-0
+host press tab
+wait 2500
+host capture relief-acc-tab
+host press tab
+wait 2500
+host capture relief-acc-tab2
+host worldtrigger goto=30020 goto_lz=0
+waitmission host 30020 300
+waitmission guest 30020 180
+waitgameplay host 150
+waitgameplay guest 150
+both debug godmode 1
+host debug time 43200
+wait 5000
+host run relief_census start
+guest run relief_census start
+host run relief_load 2 1227.17 25.84 -127.05 -1.571
+wait 8000
+host run relief_census hostload8
+guest run relief_census hostload8
+wait 10000
+host run relief_census hostload18
+host run relief_face
+wait 3000
+both capture relief-midload-host
+guest run relief_load 2 1227.17 25.84 -127.05 -1.571
+wait 8000
+guest run relief_census guestload8
+wait 10000
+guest run relief_census guestload18
+host run relief_census guestload18
+guest run relief_face
+wait 3000
+both capture relief-midload-both
+host run relief_seize stock
+guest run relief_seize skip
+host run relief_arm 2 805 343 1636.5 0
+host worldtrigger goto=30010 goto_lz=1
+waitmission host 30010 300
+waitmission guest 30010 180
+waitgameplay host 150
+waitgameplay guest 150
+host debug time 43200
+wait 6000
+host run relief_census seed
+guest run relief_census seed
+host run relief_face
+wait 3000
+both capture relief-seed-arrival
+state

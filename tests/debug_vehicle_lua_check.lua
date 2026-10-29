@@ -246,4 +246,12 @@ c=H();ok,msg=c.V.run({"vehicle_door","veh_trc_0009"},7);check(not ok and msg=="v
 for _,bad in ipairs({{"bogus"},{"partner","left"},{"partner","driver","x"},{"12345"}})do
  c=H();ok,msg=c.V.run({"vehicle_door",unpack(bad)},7);check(not ok and msg=="vehicle_door_args" and #c.doors==0,"strict report arguments: "..table.concat(bad," "))
 end
+-- M3 experiments E2/E17/E18: relief_* route to lua/coop/world_relief.lua (W.relief), whole argument list, nothing read here.
+c=G();for _,k in ipairs({"relief_census","relief_arm","relief_seize","relief_remove","relief_face","relief_load","relief_status","relief_lab"})do check(c.V.handles[k],"handled here: "..k)end
+ok,msg=lever(c,"relief_census");check(not ok and msg=="relief_unavailable" and c.reads==0 and c.lookups==0,"no world module: refused, nothing read")
+local got={}
+c=G();c.W.relief={run=function(a)got[#got+1]=table.concat(a," ");return true,"relief;m=30010"end}
+ok,msg=lever(c,"relief_census arrival");check(ok and msg=="relief;m=30010" and got[1]=="relief_census arrival","census routes with its tag")
+ok,msg=lever(c,"relief_arm 2 805 343 1636.5 0");check(ok and got[2]=="relief_arm 2 805 343 1636.5 0" and c.reads==0,"arm routes its five arguments")
+ok,msg=lever(c,"relief_unknown");check(ok and got[3]=="relief_unknown","any relief_ word goes to the module, which checks it")
 print("debug_vehicle_lua_check: "..checks.." checks PASS")

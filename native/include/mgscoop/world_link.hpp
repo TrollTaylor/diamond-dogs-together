@@ -38,6 +38,9 @@ struct Config {
     // M1 host-owned companion: lab.ini companion_host_owned (lab and play): CFG r[16] = 1
     // turns on the Lua companion module (lua/coop/world_companion.lua).
     bool companion = false;
+    // M3 sortie vehicle: lab.ini world_relief (lab and play): CFG r[17] = 1 turns on the Lua
+    // relief module (lua/coop/world_relief_sync.lua).
+    bool relief = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

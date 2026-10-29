@@ -710,6 +710,16 @@ struct LabConfig {
     // FRAME and a play rehearsal prove it (project rule); a named value wins.
     bool companion_host_owned = false;
     bool companion_host_owned_given = false;
+    // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
+    // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
+    // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN
+    // gives a late or continuing guest the host's vehicle; the guest's mission-end seize is
+    // skipped; VEHICLE_GONE removes index 0 on the receiver without a credit; a guest-side loss of
+    // index 0 is a request the host answers with its own (credited) Fulton; the guest's iDroid
+    // vehicle drop is refused. CFG r[17] for Lua. Off in lab and play unless named (on from 5a6bac8
+    // until the review of 2026-10-29; ResolveWeaponDefaults); a named value wins.
+    bool world_relief = false;
+    bool world_relief_given = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is

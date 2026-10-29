@@ -1,3 +1,106 @@
+## October 29, 2026: M3 review fixes (branch `wp/relief`; `world_relief` off by default again)
+
+An independent review of M3 (`wp/relief` at `c282538`) found the code sound but the default flip unproven: the play
+rehearsals covered only the arrival and the refusal, a guest Fulton of the relief vehicle was credited twice with
+VEHICLE_GONE off (its default), the guest's LOADOUT block (D11) shipped on before the user decided, and the proof
+scenarios' waitlogs could be met by earlier phases' lines. Every point was checked first (the review log in
+`docs/vehicles-companions-design.md` section 11). Not merged, not pushed. Two-PC: not tested.
+
+**Changed.**
+- `4d18561`: `world_relief` is **off by default again** in lab and play (a named 1 still works). Play refuses
+  `worldtrigger` and the Fulton levers, so a hidden play rehearsal of a drive, a mission end and a removal is not
+  possible yet; the flip waits for one.
+- `c7c1ed3` (`lua/coop/world_relief_sync.lua`, tests first): a co-op guest's `OnFulton` never credits the host's sortie
+  vehicle; the guest's own Fulton (or a destruction by its player) asks the host (REQ_VEHICLE_GONE for 25600, whatever
+  `world_vehicle_gone` says); the host removes its own with its stock Fulton (credited once, on the host), refuses
+  while it rides it, and the guest's copy comes back after a refusal or 45 s without an answer. A copy removed because
+  the host had none is loaded again when the host's returns; placements have their own budget. The guest's iDroid
+  VEHICLES drop stays inactive while the link drops inside the co-op mission. The LOADOUT block is the lab lever
+  `relief_lab loadout on` (off by default, D11 open). Lines name their mission.
+- `c95998a`: worker step `logmark <host|guest|both>`; `companion-relief.txt` rewritten with a mark per phase and
+  VEHICLE_GONE at its default (off); new `companion-relief-guest-fulton.txt` (VEHICLE_GONE on).
+
+**Refuted claims corrected** (section M3 below, design 8.4, roadmap): "no expectation failed" in `d18e8fa0` and
+`1a5c1fa0` did not prove the mission-end seize skip or the host-Fulton removal (those expectations matched earlier
+lines; the behaviour was confirmed by reading the slices); "the host's Fulton removes it on both copies with one
+credit" held only with `world_vehicle_gone=1`.
+
+**Hidden-worker runs** (loopback, research build, native gun stage, copied lab saves, low graphics; each closed with the
+baseline restored and the real saves unchanged; archived under `%USERPROFILE%\mgs-coop-run-archive\companions`; frames
+`complete/frames/relief/<run8>-*`).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `5c35644d` | `companion-relief.txt` (the M3 FRAME proof, rewritten), lab, `world_relief=1`, VEHICLE_GONE off | **All 38 expectations met, each after its phase's mark.** The east jeep, the west jeep and (first time) the west truck at the same spot on both screens; the host driving on the guest's screen; the refusal with the toast and LOADOUT left active; the mission end with the jeep alive on both: host credited (`4wdE` 1 -> 2), guest skipped; **the guest's Fulton**: no credit on the guest (no `AddTempResource` in its whole log), the host's own Fulton credited (`4wdW` 1 -> 2), both copies empty; **the host's Fulton**: the guest's copy removed 15 s later through the reconcile (`why=host_none`, no credit) |
+| `cbc30b91` | `companion-relief-guest-fulton.txt`, lab, `world_relief=1`, `world_vehicle_gone=1` | **All 18 expectations met.** The guest's Fulton with VEHICLE_GONE on: one request, the host's credited Fulton, its VEHICLE_GONE announcement removed nothing more on the guest; host `4wdE` 1 -> 2, guest 1 |
+
+**Still not shown.** A player's own Fulton or destruction of the vehicle (the worker's lever runs the same stock
+Fulton); the guard across a real link drop, the host refusing while it rides it, and the guest's reload after a
+refusal, a timeout or the host's vehicle coming back (fixtures); a play rehearsal of a drive, a mission end and a
+removal (play refuses the levers that would drive them); types 4, 6..8 and 10; a two-PC session.
+
+**Integration.** `wp/relief` contains M1 (the merge `d911f0c` of `wp/companion-host` `e08dc20`): integrate
+`wp/companion-host` first, or accept M1 together with M3.
+
+**Checks.** `pwsh -File tools/build.ps1 -Fast` 294/294 after each change (new tests failed first on the old code:
+`lab_config_tests`, `world_relief_sync_lua_check`, `worker_session_tests`); `pwsh -File tools/build.ps1` (Debug, build id
+`0.14.3+c95998a`, with only these docs changed on top): 309/309 passed, 98 s.
+
+## October 29, 2026: M3, the sortie vehicle on both copies (branch `wp/relief`; on by default from `5a6bac8` until the review fixes above)
+
+Branch `wp/relief` (from `wp/companions` `068852c`, with M1 merged at `e08dc20`). Not merged into the main checkout, not
+pushed. Milestone M3 of `docs/vehicles-companions-design.md` (section 9; results, run ids and frames in section 8.4),
+route A (section 8.2): each copy's own engine draws the host's sortie (relief) vehicle from the host's carry values.
+Decisions D1 (a) and D8 (b) of 2026-10-28 apply. Lab key `world_relief=0|1` (CFG `r[17]`, lab and play); on by
+default from `5a6bac8` after the lab FRAME proof and the play rehearsal passed, **off again since `4d18561`** (the
+review fixes above: those runs did not prove what the flip cited).
+Two-PC: not tested.
+
+**What it does.**
+- The follow seeds carry the host's relief carry vars and paint presets (31 values); the guest applies them before its
+  `Load`, so its destination draws the same vehicle (index 0, 25600) at the same spot. The guest keeps its own values
+  and every `TppSave.SaveVarsToSlot` writes those (D8 b); a solo load gives them back.
+- The host sends VEHICLE_SPAWN (op 52) in free roam on change and every 5 s. A guest copy without the host's vehicle (a
+  host continue, a late join) loads it mid mission with `Vehicle.LoadCarry` and sets it at the host's pose when it
+  appears more than 3 m off; one parked 20 m off is placed; one the host lacks for 15 s, or of another type, is removed
+  without a Mother Base credit.
+- Only the host's choice spawns it: the guest never runs the sortie prep, and while paired in free roam its iDroid
+  VEHICLES and LOADOUT supply drops are inactive (LOADOUT only with a lab lever since `c7c1ed3`, D11); selecting one
+  shows "Only the host can bring or request a vehicle in co-op."
+- One credit: the guest skips the mission-end seize; a removal on the guest's copy (VEHICLE_GONE, when that key is on)
+  uses `Seize{"Instant"}` and skips that copy's `OnFulton` once. (Not so for the guest's own Fulton with VEHICLE_GONE
+  off: credited twice until `c7c1ed3`, see above.)
+- Lab levers: `relief_status`, `relief_lab nonactive vehicle|loadout`, `relief_lab forget`, `relief_arm ... [paint]`;
+  worker key `3` (the iDroid MISSIONS tab).
+
+**Hidden-worker runs** (loopback, research build, native gun stage, copied saves, low graphics; each closed with the
+baseline restored and the real saves unchanged; archived under `%USERPROFILE%\mgs-coop-run-archive\companions`).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `d18e8fa0` | `companion-relief.txt`, lab (`lab`) | **The FRAME proof; no expectation failed.** The east jeep (Africa) and the west jeep (Afghanistan) at the same spot on both screens; the host driving it on the guest's screen; the guest's real iDroid vehicle request refused with the toast; one mission-end credit (host `4wdE` 1 -> 2, guest unchanged); the host's Fulton removed it on both copies with one credit (with `world_vehicle_gone=1` named). The guest's seize-skip and the three Fulton-removal expectations matched earlier phases' lines; the real lines are in the slice. Superseded by `5c35644d` |
+| `40c09484` | `companion-relief-play.txt`, `-Mode play -WanSim bad` (`afgh-relief-lv`) | **The play rehearsal; no expectation failed.** Paired in the helicopter; the host's continue carried the jeep to the guest through the seeds; both at (-347.95, 763.58); the refusal and its toast |
+| `98e4af59` | `companion-relief-play-default.txt`, `-Mode play -WanSim bad` (host: the launcher's co-op save copy `coop-relief-30020`, guest `africa-jeep`) | **The default in play while it was on; no expectation failed.** Arrival and refusal only. No key named; the real sortie-prep jeep of the 2026-10-23 two-PC save at (263.56, -228.88) on both copies; the refusal and its toast. The host's frames show the grass (camera pitched down), the guest's the jeep |
+| `1a5c1fa0` | `companion-relief-heavy.txt`, lab (`lab`), keys at their defaults | No expectation failed. The west tank in Africa and the west wheeled APC in Afghanistan on both screens; the mission end with the tank alive on both and VEHICLE_GONE off: the host credited (`tnkW` 0 -> 1), the guest skipped (its `alive=1` line read in the slice; the harness matched its boot line) |
+| `1914e76c` | `companion-relief-continue.txt`, lab (`afgh-relief-lv`) | No expectation failed. The continue through the seeds; a non-zero paint (FOVA_1) on both copies |
+| `8a81f776`, `d3b23cca` | `companion-relief-late.txt`, lab (`afgh-relief-lv`) | A late load draws the vehicle at the drop point (`8a81f776`); after `c818a5a` it is placed at the host's pose, 0.25 m (`d3b23cca`) |
+| `25b9c0ae` | `companion-relief.txt`, lab | One wrong expectation (fixed); superseded by `d18e8fa0` |
+| `b7d65be9` | `companion-relief-play.txt`, play | Scenario error: the two saves were in different regions and never paired; superseded by `40c09484` |
+
+**Commits** on `wp/relief` after the experiments (`2a5a623`): `d911f0c` (merge of M1 `e08dc20`), `b622340` (M3 behind the
+key), `7f84a7a` (lab lever `relief_lab forget`, scenarios), `c818a5a` and `6358845` (a late-loaded vehicle placed at the
+host's pose), `1f3acd8` (the lab proof walks the guest's real iDroid path), `5a6bac8` (on by default; an invalid value
+refuses), `79d9b5f` (heavy-vehicle scenario), and the docs commit.
+
+**Not done.** A destruction of the relief vehicle (no worker lever destroys one); relief types 3, 4, 6..8 and 10 on both
+copies; the host's real sortie-prep selection and its GMP charge (the guest is never charged); the host's in-mission
+vehicle drop (route C, later, D6); `world_vehicle_gone` is still off by default, so the guest's copy of a vehicle the
+host lost mid mission goes after 15 s through the reconcile (fixture only); the guest's LOADOUT supply drop is blocked
+too, even with no vehicle in the loadout (decision D11); a two-PC session (M3 is not done before it).
+
+**Checks.** `pwsh -File tools/build.ps1 -Fast` 294/294 after each change; `pwsh -File tools/build.ps1` (Debug, build id `0.14.3+79d9b5f`, with only these docs changed on top): 309/309
+passed, 101 s.
+
 ## October 29, 2026: M1/M2 review fixes (branch `wp/companion-host`, lab key, play default off)
 
 Branch `wp/companion-host`, on top of M2 (`35c6f51`). Not merged, not pushed. An independent review of M1 and M2 found
@@ -141,6 +244,64 @@ and no Sonar while the host's companion is out.
 
 **Checks.** `pwsh -File tools/build.ps1 -Fast` 292/292 after each change; `pwsh -File tools/build.ps1` (Debug, build id `0.14.3+ae4c3e9`, with only these docs and the two play scenarios
 changed on top): 307/307 passed, 104 s.
+
+## 2026-10-29: M3 experiments round 2: mid-mission load, seed `afgh-relief-lv`, the ACC (`wp/relief`, lab levers only, not merged)
+
+Follow-up on `wp/relief` to the section below. Results in `docs/vehicles-companions-design.md` section 8.3; M3 there
+lists what the build needs. M3 itself is still not implemented.
+
+- **Built (lab only).** `relief_load <type> <x> <y> <z> <rotY>` in `lua/coop/world_relief.lua` (routed by
+  `lua/coop/debug_vehicle.lua`): it writes the carry vars and calls `Vehicle.LoadCarry()` mid mission, and refuses
+  outside lab mode, outside free roam, over a live index 0 or while a sortie choice is armed. Tests
+  `world_relief_lua_check` (75 checks; the new ones failed before the lever existed) and `debug_vehicle_lua_check`
+  (the routing; failed on the old module). Scenarios `relief-midload.txt` and `relief-continue.txt`.
+- **Seed `afgh-relief-lv`** in `D:\mgs-coop-seeds` (from run `612afff7`): 30010 enemyBase_S LZ; the host's save holds
+  relief type 2 (east jeep) at the LZ, the guest's holds none. Boot it with `boot fast`.
+- **Hidden runs** (both closed, baseline restored, real saves unchanged; archived in
+  `%USERPROFILE%\mgs-coop-run-archive\companions\<id>`):
+
+| Run | Scenario, seed | Result |
+|---|---|---|
+| `612afff7` | `relief-midload.txt`, lab | ACC: Tab opens the iDroid on its MAP tab; the MISSIONS tab needs key 3, which is not a worker key, so a scripted sortie-prep selection was not reached. Mid-mission load: the host's `relief_load 2` gave the jeep at (1227.24, 19.43, -127.05) in 8 s while the guest's copy had none; the guest's own load with the same values gave it at the identical pose; frames show the jeep on both screens (the east jeep in Africa, a body free roam there does not load). Mission end: the host credited it once (`AddTempResource 13`), the guest's seize was skipped. Seed `afgh-relief-lv` taken from this run. |
+| `fc6f1f01` | `relief-continue.txt`, `afgh-relief-lv` | The host's Continue restored the jeep at (-347.97, 315.85, 763.60). The west tank (type 9, `GetVehicleType` 7) drew at the Africa LZ on the host's copy (frame). The guest's copy stopped on the post-load "Space: Resume Game" page after `boot fast`, so all its commands were refused until the travel: its load from the seed values and its tank were not tested. |
+
+- **Route A stands**, now also for a continue or a late join (a mid-mission `Vehicle.LoadCarry()` with the host's
+  values). Not covered: the guest's tank, relief types 3..8 and 10, a non-zero paint preset, a scripted sortie-prep
+  selection (needs key 3 in the worker) and the host's real sortie-prep GMP charge.
+- **Defaults.** Nothing flips: lab levers only.
+- **Checks.** `pwsh -File tools/build.ps1 -Fast`: 291/291. `pwsh -File tools/build.ps1` (Debug): 306/306, 97 s.
+
+## 2026-10-29: M3 experiments E2, E17, E18, the sortie (relief) vehicle (`wp/relief`, lab levers only, not merged)
+
+Branch `wp/relief` from `wp/companions` `068852c`. Experiments only: M3 itself is not implemented (it waits for M1's
+seeds and refusals). Results and the route decision are in `docs/vehicles-companions-design.md` section 8.2 and M3.
+
+- **Built (lab only).** `lua/coop/world_relief.lua`, a new world chunk spliced last, reached through the debug
+  commands `relief_census` (read only: carry vars, index 0, GMP and the nine Mother Base vehicle resources, paint
+  presets, the sortie loadout slot), `relief_arm` (writes the carry vars at the ACC sortie, as the sortie prep's
+  SetRelief does), `relief_seize stock|skip`, `relief_remove instant|fadeout|fulton [quiet]` and `relief_face`. Every
+  lever but the census refuses outside lab mode; the hooks install with the first lever only. Tests:
+  `world_relief_lua_check` (new, failed before the module existed), `debug_vehicle_lua_check` (routing),
+  `host_trial_patch_check` and the composed world check list the chunk. Scenarios `relief-e2.txt`, `relief-e17.txt`,
+  `relief-coop.txt`.
+- **Seed (decision D10).** `coop-relief-30020` in `D:\mgs-coop-seeds`: a read-only copy of the host's launcher co-op
+  save (`<game>\mgs-coop\coop-saves`, the path `native/launcher/core/core_paths.cpp` gives), both roles, source set hash
+  `E0C1476C...8272`. It holds a real sortie-prep choice (relief type 2, east LV) saved in 30020. Never written back.
+- **Hidden runs** (all closed, baseline restored, real saves unchanged; archived in
+  `%USERPROFILE%\mgs-coop-run-archive\companions\<id>`):
+
+| Run | Scenario, seed | Result |
+|---|---|---|
+| `698e67cf` | `relief-e2.txt`, lab | The lever wrote at the destination's mission start: no relief vehicle on either copy (the game's `Vehicle` table refuses writes; the mission start runs on the loading thread). The seize wrappers worked on both copies. |
+| `5874afcd` | `relief-coop.txt`, `coop-relief-30020` | E2 real choice: the save continues with `reliefVehicleCarryType=514` (type 2) and 25600 alive, `GetVehicleType` 2. The lever at the ACC sortie gave the host type 2 at the 30010 LZ; the guest's commands were refused while it was still loading, so its copy had none. Unsuppressed seize: both copies credited `4wdEast`. |
+| `fafd3fdd` | `relief-e2.txt`, lab | E2 route A emulated: type 1 at (1226.94, -127.08) in 30020 and type 2 at (-347.95, 763.58) in 30010, identical on both copies (frames `relief-arrival1`). E18: the host's seize credited once (`AddTempResource 14`, `4wdWest` 1 -> 2), the guest's `seize_skipped`, GMP unchanged. E17 `Instant` on the guest still credited (`AddTempResource 13`). Then the `relief_goto` warp dropped both players through the slope: shared game over, session forced closed (`Forced=true`). |
+| `9f01d603` | `relief-e17.txt`, lab | Route A again at both LZs. E17: `FadeOut` (guest) and `Fulton` (host) remove index 0 on that copy only and credit (the guest's `4wdWest` 1 -> 2 at the next mission end); `Instant` with `quiet` (the receiver's `TppTerminal.OnFulton` for 25600 skipped) removed it with no credit (frames `relief-e17-quiet-before/after`). |
+
+- **Route decision: route A** (each copy's own engine spawns the host's relief choice as index 0). What M3 needs is
+  listed under M3 in the design. Not covered: relief types 3..10, a non-zero paint preset, a guest continue with its
+  own 25600, the host's real sortie-prep GMP charge, and the seed path itself.
+- **Defaults.** Nothing flips: the module is lab levers only, so no `-Mode play -WanSim bad` rehearsal was needed.
+- **Checks.** `pwsh -File tools/build.ps1 -Fast`: 291/291. `pwsh -File tools/build.ps1` (Debug): 306/306, 102 s.
 
 ## October 28, 2026: 0.14.3 (Africa guns, free-roam vehicle fallback, host-log fixes)
 
