@@ -272,7 +272,7 @@ if($Mode -ceq 'play' -and @($LabSetting|Where-Object{$_ -cmatch '(^|:)partner_na
 if(!$steps.Count){throw 'No scenario steps.'}
 # Validate every step before anything starts.
 $roleNames=@('host','guest','both')
-$keyNames=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','c','q','x','z','tab','lmb','rmb')
+$keyNames=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','c','q','x','z','tab','3','lmb','rmb')
 function Test-ScenarioKeys([string]$Keys){
     $parts=$Keys.Split('+')
     return $parts.Count -gt 0 -and @($parts|Where-Object{$keyNames -cnotcontains $_}).Count -eq 0 -and

@@ -454,22 +454,32 @@ local s = B.s
 s.hurt = (s.hurt or 0) + 1
 if s.hurt <= 60 then W.log(fmt("event=companion_hurt;role=%s;msg=%s;att=%s;n=%d", W.host and "host" or "guest", tostring(msg), tostring(cls), s.hurt)) end
 end
--- E3 lab lever companion_lab near_guard on|off (guest): hold the dog 1.5 m from the nearest soldier.
+-- E3 lab lever companion_lab near_guard on|off|shield (guest): hold the dog 1.5 m from the nearest soldier (on), or
+-- (E19, shield) 1 m from the guest toward it: in the line of fire of a guard shooting at a prone guest.
+local NEAR = {[true] = "guard", on = "guard", shield = "shield", [false] = false, off = false}
 function B.nearGuard(on)
-if W.mode ~= 1 then return false end
-B.s.nearGuard, B.s.sentHold = on == true or nil, nil
-W.log("event=companion_near_guard;role=guest;on=" .. (on and 1 or 0))
+if W.mode ~= 1 or NEAR[on] == nil then return false end
+B.s.nearGuard, B.s.sentHold = NEAR[on] or nil, nil
+W.log("event=companion_near_guard;role=guest;on=" .. (NEAR[on] == "shield" and "shield" or NEAR[on] and 1 or 0))
 return true
 end
--- E19 protection candidate (guest lab lever companion_lab protect): SetDisableDamage on the held dog, once per dog.
+-- E19 protection candidate (guest lab lever companion_lab protect [off]): SetDisableDamage on the held dog, once per
+-- dog; off sends every flag false once to a protected dog.
 function B.protect(on)
 local s = B.s
-if on ~= nil then s.protectOn, s.protected = on == true, nil end
+local function send(v)
+ local ok, r = pcall(W.api.send, s.id, {id = "SetDisableDamage", life = v, faint = v, sleep = v})
+ W.log(fmt("event=companion_protect;role=guest;id=%d;ok=%d;result=%s;on=%d", s.id, ok and 1 or 0, tostring(r), v and 1 or 0))
+ return ok
+end
+if on ~= nil then
+ local was = s.protected
+ s.protectOn, s.protected = on == true, nil
+ if on == false then return was ~= nil and s.id ~= nil and send(false) end
+end
 if not s.protectOn or s.protected == s.id or not s.id then return s.protected ~= nil end
-local ok, r = pcall(W.api.send, s.id, {id = "SetDisableDamage", life = true, faint = true, sleep = true})
 s.protected = s.id
-W.log(fmt("event=companion_protect;role=guest;id=%d;ok=%d;result=%s", s.id, ok and 1 or 0, tostring(r)))
-return ok
+return send(true)
 end
 -- Hold modes. The dog command LuaAiStayAndSnarl (dispatcher 0xC7D220 -> vt+0x98 -> 0xC7DA10) sets the persistent
 -- mode: 1/2 (look given, useMarker false: the retail s10040 "stop AI"; the dog never moved toward the target in run
@@ -508,7 +518,11 @@ elseif s.hold then why, result = "hold_last", 3
 else s.hold, why, result = {x = x, y = y, z = z, yaw = yaw()}, "hold_here", 5 end
 -- E3 lab lever: the nearest soldier (B.watch) + 1.5 m instead of the host's pose.
 local g = s.nearGuard and s.watch and s.watch.bestPos
-if g then s.hold, why = {x = g[1] + 1.5, y = g[2], z = g[3], yaw = s.hold.yaw}, "near_guard" end
+if g and s.nearGuard == "shield" then
+ local px, py, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
+ local d = finite(px, 1000000) and finite(py, 1000000) and finite(pz, 1000000) and sqrt((g[1] - px) ^ 2 + (g[3] - pz) ^ 2) or 0
+ if d > 0.5 then s.hold, why = {x = px + (g[1] - px) / d, y = py, z = pz + (g[3] - pz) / d, yaw = s.hold.yaw}, "shield" end
+elseif g then s.hold, why = {x = g[1] + 1.5, y = g[2], z = g[3], yaw = s.hold.yaw}, "near_guard" end
 local t = s.hold
 local dx, dy, dz = t.x - x, t.y - y, t.z - z
 local distance = sqrt(dx * dx + dy * dy + dz * dz)

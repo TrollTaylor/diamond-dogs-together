@@ -211,6 +211,27 @@ check(not g:logged("event=mirror_near"), "the soldier scan is lab-only")
 g = F(false); g:pose(900); g:tick(); g.protectResult = true
 check(g.B.protect(true) == true and g:count("SetDisableDamage") == 1, "the lab lever sends SetDisableDamage to the held dog")
 g:tick(1200); check(g:count("SetDisableDamage") == 1, "once per dog")
+g = F(false); g:pose(900); g:tick(); g.B.protect(true)
+check(g:logged("event=companion_protect;role=guest;id=9728;ok=1;result=nil;on=1"), "the protection line says on=1")
+g.B.protect(false); local off = g:last("SetDisableDamage")
+check(g:count("SetDisableDamage") == 2 and off.cmd.life == false and off.cmd.faint == false and off.cmd.sleep == false,
+  "protect off sends SetDisableDamage with every flag false to the held dog")
+check(g:logged("event=companion_protect;role=guest;id=9728;ok=1;result=nil;on=0"), "the release is logged on=0")
+g:tick(1300); check(g:count("SetDisableDamage") == 2, "and nothing is re-sent while off")
+g = F(false); g:pose(900); g:tick(); g.B.protect(false); check(g:count("SetDisableDamage") == 0, "off without a protected dog sends nothing")
+-- E19 lab lever companion_lab near_guard shield: the dog held 1 m from the guest toward the nearest soldier, in the line of
+-- fire of a guard shooting at a prone guest on the guest's copy.
+g = F(false, {soldiers = {{20, 2, 3}, {100, 2, 3}}}); g.env.vars.playerPosX, g.env.vars.playerPosY, g.env.vars.playerPosZ = 10, 2.5, 3
+g:pose(900); for i = 0, 12 do g:tick(1000 + i * 100) end
+check(g.B.nearGuard("shield") == true and g:logged("event=companion_near_guard;role=guest;on=shield"), "near_guard shield")
+g:tick(2400); g:tick(2500); hold = g:last("LuaAiStayAndSnarl").cmd
+check(math.abs(hold.position:GetX() - 11) < 0.001 and hold.position:GetY() == 2.5 and hold.position:GetZ() == 3,
+  "the dog is held 1 m from the guest toward the soldier, at the guest's height")
+check(g:logged("result=shield"), "the shield hold is logged")
+check(g.B.nearGuard("on") == true and g:logged("event=companion_near_guard;role=guest;on=1"), "near_guard on (string form)")
+g:tick(2600); g:tick(2700); check(math.abs(g:last("LuaAiStayAndSnarl").cmd.position:GetX() - 21.5) < 0.001, "on: back to the soldier + 1.5 m")
+check(g.B.nearGuard("bogus") == false, "an unknown near_guard form is refused")
+g.B.nearGuard(false); g:pose(2700); g:tick(2800); check(g:last("LuaAiStayAndSnarl").cmd.position:GetX() == 4, "off: the host dog's pose")
 -- Without the key the legacy path is unchanged: a stale guest sample still releases.
 g = F(false, {off = true}); g.W.handlers[STATE]({1, 1, 1, 4000, 2000, 3000, 100, 123, 0}, g.time); g:tick(); g:tick(2001)
 check(g:count("CallBuddy") == 1, "without the key the legacy release is unchanged")

@@ -44,7 +44,10 @@ wait 1500
 host release
 guest release
 waitlog guest 'world_lua=event=companion_track; band=walk; .*within=1; leg=mb_walk;' 10
-resetpose host
+# Run 994d252f ran into the container wall the mb-ladder spot faces (yaw 0); the run leg faces the other way (yaw 180,
+# the open deck the guest was placed on) and is two holds long.
+host run teleport 22.61 1.80 -15.55 180
+wait 3000
 placebehind guest host 7 1
 wait 5000
 guest run companion_lab mark mb_run
@@ -55,10 +58,7 @@ host hold w 1500 nowait
 guest hold w 1500 nowait
 wait 700
 both capture m2-mb-dog
-wait 750
-host hold w 1500 nowait
-guest hold w 1500 nowait
-wait 1500
+wait 700
 host release
 guest release
 waitlog guest 'world_lua=event=companion_track; band=run; .*within=1; leg=mb_run;' 10

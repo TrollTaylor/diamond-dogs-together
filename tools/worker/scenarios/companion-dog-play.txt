@@ -4,6 +4,10 @@
 # walks, runs and dashes away from the guest and comes back: the guest copy's dog stays with the host (COMPANION_POSE
 # over the bad link; event=companion_track windows within 3 m walking, 5 m running), never released to the guest's AI.
 # The clock is set to noon first (the M1 rehearsal's frames were at night). No lab levers, no placebehind.
+# Run ba6d6ff8 (2026-10-29): at the afgh-ledge spot (yaw 95, facing the rock) the dog stayed unrealized on each copy
+# (probe n_real) until that copy's camera turned (host realized 2-5 s after its turn, the guest 1 s after its own, 136 s
+# after the load); the legs then ran with no dog and three expectations failed. Both cameras now turn round and back
+# right after the load, as a player looks about, before the dog is awaited.
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
 #        -Mode play -WanSim bad
@@ -16,6 +20,13 @@ waitgameplay guest 240
 waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed; mission=30010;' 120
 host run time 43200
 host run weather sunny
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 3000
+both mouse 1500 0
+wait 400
+both mouse 1500 0
 waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
 host run buddy_status
 host expect kdog

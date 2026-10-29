@@ -1,20 +1,31 @@
 # M2 proof (docs/vehicles-companions-design.md section 9 M2, experiments E3 engagement part and E19, dog row): one dog on
 # both screens, the host's, following the host; the guest copy's dog held at the host dog's pose and never left to the
-# guest's AI; guards next to it, first calm, then in an alert. companion_host_owned=1.
+# guest's AI; the host's dog takes a guard down (kill commit/apply); guards next to the guest's copy of the dog, first
+# calm, then in an alert, then shooting at the guest through it. companion_host_owned=1.
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# The dog is realized on each copy only after that copy's camera turns or its player is moved (runs 8c0b425f, 4cd88ea2,
+# ffb2d7ab, ba6d6ff8: n_real until then, at the afgh-ledge spot facing the rock), so the host is moved and both cameras
+# turn before the dog is awaited.
 # The legs start on the open grass 32 m west of the afgh-ledge boot spot, facing east toward the cliff (run 8c0b425f
 # faced the ledge at the boot spot and ran into the rock). The guest's hold is the default warp (the stop-AI dog placed
 # by LuaAiStayAndSnarl's own warp; run ffb2d7ab compared it with marker, where the dog walks itself and lagged 7-15 m):
 # walk (ctrl+w, R4's 3 m), run (w) and dash (shift+w) (5 m). companion_lab mark names the guest's track windows
 # (event=companion_track carries band, error, leg, mode and warps).
-# away: the guest 40 m from the host (the dog stays with the host). engage (E3, E19): a guard warped beside the host,
-# the guest's dog held 1.5 m from the nearest soldier on its copy (lab lever companion_lab near_guard), 55 s calm and
-# 65 s in an alert in warp mode, 30 s in marker mode (the active-AI form, for decision D7), then 25 s with the
-# guest's protection lever (SetDisableDamage on its dog).
+# away: the guest 40 m from the host (the dog stays with the host).
+# Guards: the host turns west (open ground; facing east the warped guard landed on the rock, run 4cd88ea2), the guest
+# 7 m to its right. Guard G1 is warped 5 m in front of the host (spawn_enemy here: it does not notice the player);
+# the guest's dog is held 1.5 m from the nearest soldier on its copy (companion_lab near_guard on) for E3.
+# kill (M2's commit/apply): the host marks G1 (enemy mark nearest), aims at it, then CALL (q) + "3: Get it" in the
+# call menu: the host's dog takes G1 down on the host's copy -> host event=obs ...att=buddy, event=commit ...actor=host,
+# guest event=apply ...src=outcome for the same ent; the guest's dog stays held beside G1 on its copy.
+# alert (E3): guard G2 warped in front of the host, the camp in ALERT, 60 s with the dog beside the nearest soldier.
+# shield (E19): the guest prone, its dog held 1 m from it toward the nearest soldier (companion_lab near_guard shield):
+# a guard shooting at the prone guest on the guest's copy fires through the dog. 40 s with the SetDisableDamage lever
+# (companion_lab protect), 40 s after protect off.
 # Post-run checks (log slices): no event=mirror_engaged; event=mirror_near s3 (seconds with a soldier within 3 m of
-# the held dog); event=companion_hurt and event=mirror_vars (E19); no result=released; the host's event=obs ...;
-# att=buddy kills and their event=commit / the guest's event=apply.
+# the held dog); event=companion_hurt and event=mirror_vars (E19); the guest's dog readable to the end (kdog); no
+# result=released; the host's event=obs ...; att=buddy and its event=commit / the guest's event=apply.
 # Variants: companion-dog-mb.txt (Mother Base, then the heli arrival), companion-dog-play.txt (play rehearsal).
 labsetting companion_host_owned=1
 labsetting nametag=1
@@ -25,10 +36,18 @@ waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
 waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 90
 host run godmode 1
 guest run godmode 1
-# The host's dog is readable about 35 s after the boot (run 8c0b425f: n_real until then).
-waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
 host run teleport 796.0 341.5 1633.5 95
 wait 3000
+resetpose host
+placebehind guest host 7 1
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
 resetpose host
 placebehind guest host 7 1
 wait 6000
@@ -104,8 +123,10 @@ wait 7000
 both capture m2-dog-guest-away
 guest run buddy_status
 guest expect kdog
-# --- E3 / E19: a guard warped beside the host (spawn sync), the guest's dog held 1.5 m from the nearest soldier -----
-placebehind guest host 6 1
+# --- G1 calm (E3), then the host's dog takes it down (kill commit/apply) ------------------------------------------
+host run teleport 796.0 341.5 1633.5 275
+wait 3000
+placebehind guest host 0 7
 wait 3000
 host run spawn_enemy here
 host expect ^guard_here;ent=\d+;
@@ -116,27 +137,72 @@ guest expect ^near_guard;on=1
 guest run companion_lab mark engage
 wait 5000
 both capture m2-engage-guard
-wait 25000
+wait 20000
 both capture m2-engage-calm
-wait 25000
+host run enemy mark nearest
+host hold rmb 1500 nowait
+wait 1400
+host hold rmb 1500 nowait
+wait 1400
+host release
+wait 300
+host hold q 1500 nowait
+wait 700
+host hold q 1500 nowait
+wait 300
+host capture m2-getit-menu
+host press 3
+wait 300
+host capture m2-getit-pick
+wait 400
+host release
+guest run companion_lab mark kill
+wait 2000
+both capture m2-kill-1
+wait 3000
+both capture m2-kill-2
+waitlog host 'world_lua=event=obs; m=[A-Za-z]+; ent=[1-9][0-9]*; id=[0-9]+; att=buddy' 25
+waitlog host 'world_lua=event=commit; ent=[1-9][0-9]*; state=[1-9]; .*actor=host;' 10
+waitlog guest 'world_lua=event=apply; ent=[1-9][0-9]*; state=[1-9]; .*src=outcome;' 15
+wait 3000
+both capture m2-kill-3
+host run buddy_status
+guest run buddy_status
+guest expect kdog
+# --- G2 in an alert (E3) ----------------------------------------------------------------------------------------
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 3000
+guest run spawn_sync
+guest run companion_lab mark engage_alert
 host run cp_phase nearest alert
 host expect ^submitted_phase;
 wait 20000
 both capture m2-engage-alert-1
-wait 25000
+wait 20000
 both capture m2-engage-alert-2
 wait 20000
-# The active-AI form for decision D7: the dog walks to the guard itself (marker), 30 s in the alert.
-guest run companion_lab hold marker
-guest run companion_lab mark engage_marker
-wait 30000
-both capture m2-engage-marker
-guest run companion_lab hold warp
+# --- shield (E19): the dog in the line of fire of a guard shooting at the prone guest ------------------------------
+stance guest prone
 guest run companion_lab protect
 guest expect ^protect;on=1;
-guest run companion_lab mark engage_protect
-wait 25000
-both capture m2-engage-protect
+guest run companion_lab near_guard shield
+guest expect ^near_guard;on=shield
+guest run companion_lab mark shield_prot
+wait 8000
+both capture m2-shield-1
+wait 16000
+both capture m2-shield-2
+wait 16000
+guest run buddy_status
+guest run companion_lab protect off
+guest run companion_lab mark shield_open
+wait 8000
+both capture m2-shield-3
+wait 16000
+both capture m2-shield-4
+wait 16000
+guest capture m2-shield-5
 guest run companion_lab near_guard off
 host run buddy_status
 guest run buddy_status
