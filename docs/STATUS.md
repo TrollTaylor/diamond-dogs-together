@@ -33,10 +33,14 @@ session scratch folder `complete/frames/dog/`; every run closed with the baselin
 | `3922cc80` | `companion-dog-guard.txt` (lab) | No expectation failed. E19 passes: about 85 s of guard fire through the guest's copy, 50 hits dropped, `life=10000; state=0`, no Dead; FRAME of the copy standing over the prone guest (`3922-guest-grd-shield-1`, `-3`). Restore after `kill_mirror`: back in 2585 ms (logs) |
 | `3f69e3b7` | `companion-dog-follow.txt` (lab) | One expectation failed: the marked walk leg (the host's dog stayed where it was). Follow: hurt 30 % (guest life 3226), asleep (`STN` on both), awake, down (FRAME on both: "D-Dog Near Death" and the Fulton extraction), the host's re-call (`recalled; ms=36052`); the restore filmed from behind the host (the host's body hid the returned dog) |
 | `1713b0a1` | `companion-dog-guard-play.txt`, `-Mode play -WanSim bad` | No expectation failed. M1 seeds in play, the guard armed with the host's byte, one dog following the host on both screens (walk 0.37-2.93 m, run 1.46-2.77 m), the host's alert applied on the guest's copy, the dog beside Snake on both screens; no guard fired at the dog (0 drops) |
-| `606048af` | `companion-dog-follow-frames.txt` (lab) | No expectation failed. FRAME on both copies of the walk and run legs (0.35-1.09 m, 1.07-2.57 m), the restore (before, the copy carried off, the copy beside the host again; 2585 ms), hurt, down and the re-call (`recalled; ms=36069`) |
+| `606048af` | `companion-dog-follow-frames.txt` (lab) | No expectation failed. FRAME on both copies of the walk and run legs (0.35-1.09 m, 1.07-2.57 m; not every window within: a walk window of 3.73 m as the dog stopped after the run and an idle window of 3.65 m after the restore read `within=0`, review 2026-10-29), the restore (before, the copy carried off, the copy beside the host again; 2585 ms), hurt, down and the re-call (`recalled; ms=36069`) |
 | `f7033e2e` | `companion-dog-guard-play-fight.txt`, `-Mode play -WanSim bad` | One expectation failed: in about 190 s of alert with the guest prone beside the dog no guard fired at it (0 drops; the guest's copy logged the alert `applied=0`); the dog stood over the prone guest beside Snake on both screens, `life=10000; state=0`, no Dead |
 
-**Defaults: unchanged.** `companion_host_owned` stays **off in lab and play**. The key covers M1 and M2 together, and
+**Defaults:** `companion_host_owned` stays **off in lab and play**. (Correction, review 2026-10-29: "unchanged" did not
+hold for the guard itself. Its two vtable slots were installed on both PCs in every session whose partner gate passed,
+play included, whatever the key said (`1713b0a1`, `f7033e2e`: `mode=play` with `dog_guard=installed`), and the
+unarmed pass-through had no runtime proof; since `e38f2f4` they are installed only under the key; see the section
+above.) The key covers M1 and M2 together, and
 not every path under it has a FRAME on both copies and a passing play rehearsal: the guard's drop, the follow, the
 restore and the re-call are proven in the lab only (play refuses the levers that drive them, and the guards of both
 play rehearsals never fired at the dog); M1's review fixes have no play rehearsal (the Quiet park with the host's Quiet out, no
