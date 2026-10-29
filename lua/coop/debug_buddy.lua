@@ -6,7 +6,7 @@ do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,fmt=A.get,A.call,string.format
  local S={handles={horse_spawn=true,horse_status=true,walker_spawn=true,walker_status=true,cargo_status=true,cargo_test=true,sleep_clock=true,
-  seed_buddy=true,companion_status=true,companion_cell=true},nextCall=0};D.buddy=S
+  seed_buddy=true,companion_status=true,companion_cell=true,companion_lab=true},nextCall=0};D.buddy=S
  function S.stop()S.nextCall=0 end
  local function context()
   local W=get(e,"MgsCoopWorld");local B=get(W,"buddy")
@@ -168,7 +168,7 @@ do
  local function companion() local W=get(e,"MgsCoopWorld");return W,get(W,"companion") end
  function S.run(a,id)
   local cmd=a[1]
-  if cmd=="companion_status" or cmd=="seed_buddy" or cmd=="companion_cell" then
+  if cmd=="companion_status" or cmd=="seed_buddy" or cmd=="companion_cell" or cmd=="companion_lab" then
    local _,C=companion()
    if type(get(C,"lever"))~="function" then return false,"companion_unavailable" end
    return C.lever(a,id,A,D.mission)

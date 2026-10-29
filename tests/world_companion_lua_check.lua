@@ -140,7 +140,7 @@ c.tick()
 check(not c.find('step=loaded;'), 'not loaded while the block has none')
 c.active = DOG
 c.tick()
-check(c.find('event=companion;role=guest;step=loaded;kind=dog;source=seed;'), 'loaded kind=dog source=seed')
+check(c.find('event=companion;role=guest;step=loaded;kind=dog;source=seed;mission=30010;'), 'loaded kind=dog source=seed')
 -- The guest sends its character: Quiet (coop.ini quiet).
 local sent
 for _, t in ipairs(c.tx) do if t.op == 56 then sent = t end end

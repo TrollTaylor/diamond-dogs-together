@@ -283,7 +283,7 @@ local function guestTick(now)
   local have = active()
   if have ~= nil and have == E.type then
    E.done = true
-   L(fmt("step=loaded;kind=%s;source=seed;", typeName(have)))
+   L(fmt("step=loaded;kind=%s;source=seed;mission=%d;", typeName(have), W.mission))
   elseif E.deadline and now > E.deadline then
    E.done = true
    L(fmt("step=load_mismatch;want=%s;have=%s;", typeName(E.type), typeName(have)))
@@ -438,6 +438,21 @@ function C.lever(a, id, A, mission)
   if #a == 1 then return true, fmt("cell;src=%s;pos=%.2f,%.2f,%.2f", src, p[1], p[2], p[3]) end
   -- Beside the radio, 2.5 m east facing west (the cell's open side is not known statically).
   return A.warp({p[1] + (src == "radio" and 2.5 or 0), p[2] + (src == "radio" and 0 or 1), p[3], src == "radio" and -90 or 0}, id)
+ end
+ -- Lab: the late-join case on the host (Quiet already out when the lock applies): the lock is
+ -- lifted, Quiet called beside the host, and 8 s later the tick sends her away (delete_buddy).
+ if a[1] == "companion_lab" and a[2] == "quiet_out" and #a == 2 then
+  if W.mode ~= 1 or not W.host then return false, "host_lab_only" end
+  local Q, px, py, pz = BT("QUIET"), W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
+  if not Q or type(px) ~= "number" or type(py) ~= "number" or type(pz) ~= "number" then return false, "quiet_out_args" end
+  pcall(W.get(TppBuddyService, "UnsetDisableBuddyType"), Q)
+  C.quietDisabled, C.deleteAt = nil, W.now() + 8000
+  local v, ok, r = vector(px + 3, py, pz), false, nil
+  C.token = true
+  if blockActive() then ok, r = pcall(TBC("CallBuddy"), Q, v, 0)
+  else ok = pcall(TBC("ReserveCallBuddy"), Q, W.get(BuddyInitStatus, "NORMAL") or 0, v, 0) and pcall(TBC("Load")) end
+  C.token = nil
+  return ok, fmt("quiet_out;call=%s;guest_quiet=%s", tostring(r), tostring(C.guestQuiet))
  end
  return false, "companion_args"
 end
