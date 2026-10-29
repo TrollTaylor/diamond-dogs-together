@@ -45,7 +45,9 @@
 # Hidden runs: 436a440c and 011a03f2 (B only; B's logs passed, the host mostly left the guest's camera), 7561ab63
 # (A only, a longer drive into the rock wall: the guest's copy of the jeep was wrecked there only, R.present then
 # took the wreck for absent and the driver was refused far and hidden; R.present now keeps placing a wreck, and A
-# drives a short way and brakes).
+# drives a short way and brakes). 31adc898 (HEAD 35d5519, this file): every expectation of both parts met, none of
+# the lines above that must not appear, frames control-drive-05 (seated) and absent-drive-06 / absent-turn-01 (the
+# host visible with no jeep).
 labsetting partner_native_ride=seat
 labsetting nametag=1
 boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
