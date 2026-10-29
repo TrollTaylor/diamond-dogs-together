@@ -6,19 +6,28 @@
 --            (world_follow_seed.lua key[6] "relief"); the guest applies them before its
 --            TppMission.Load (world_follow.lua), so its destination LoadCarry requests the same pack
 --            at the same drop point (E2). Its own values are kept and every TppSave.SaveVarsToSlot
---            writes them (D8 b); a solo load gives them back.
---   state    the host sends VEHICLE_SPAWN (op 52) in free roam on change and every 5 s. A guest copy
---            whose mission never had index 0 while the host's has it (a host continue, a late join)
---            writes the host's carry and calls Vehicle.LoadCarry mid mission (section 8.3); the load
---            can draw it at the mission's drop point instead (run 8a81f776), so one that appears more
---            than 3 m from the host's pose is set there (SetPosition), as is one parked more than 20 m
---            off; one the host lacks for 15 s, or of another type, is removed (no credit).
---   removal  VEHICLE_GONE (world_vehicle.lua) removes index 0 on the receiver with Seize {"Instant"}
---            and a one-time skip of that copy's TppTerminal.OnFulton for 25600 (E17), never Despawn.
+--            writes them (D8 b); its live vars get them back at its next solo TppMission.Load.
+--   state    the host sends VEHICLE_SPAWN (op 52, reliable) in free roam on change and every 5 s. A
+--            guest copy whose mission never had index 0 while the host's has it (a host continue, a
+--            late join) writes the host's carry and calls Vehicle.LoadCarry mid mission (section 8.3);
+--            the load can draw it at the mission's drop point instead (run 8a81f776), so one that
+--            appears more than 3 m from the host's pose is set there (SetPosition), as is one parked
+--            more than 20 m off; one the host lacks for 15 s, or of another type, is removed (no
+--            credit) and loaded again if the host's comes back.
+--   removal  a host loss: VEHICLE_GONE (world_vehicle.lua, when on) removes index 0 on the receiver
+--            with Seize {"Instant"} and a one-time skip of that copy's TppTerminal.OnFulton for 25600
+--            (E17), never Despawn; with VEHICLE_GONE off the reconcile's host_none does. A guest-side
+--            loss (its player's Fulton or destruction) is a request whatever world_vehicle_gone says:
+--            a co-op guest's OnFulton never credits index 0, REQ_VEHICLE_GONE for 25600 goes to the
+--            host, which removes its own with the stock Seize {"Fulton"} (credited once, on the host)
+--            or, for a destruction, quietly; refused (the host rides it) or unanswered for 45 s, the
+--            guest's copy is loaded again from VEHICLE_SPAWN.
 --   end      the guest skips TppMission.SeizeReliefVehicleOn* (E18): one Mother Base credit.
---   refusal  the guest's iDroid vehicle and loadout drops (MSN_DROP_VEHICLE; MSN_DROP_LOADOUT, whose
---            delivery can carry a vehicle) are inactive while paired in free roam; selecting one
---            logs the refusal and shows a toast (NOTE 13 a 4 / 5; D1 a).
+--   refusal  the guest's iDroid vehicle drop (MSN_DROP_VEHICLE) is inactive in a co-op free-roam
+--            mission (paired, or unpaired inside the mission it shares); selecting it logs the
+--            refusal and shows a toast (NOTE 13 a 4; D1 a). The LOADOUT drop, whose delivery can carry
+--            a vehicle, is blocked the same way (NOTE 13 a 5) only with the lab lever
+--            relief_lab loadout on, until the user decides D11.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" and type(W.followSeeds) == "table" then
@@ -26,6 +35,7 @@ local RS = {seq = 0}
 W.reliefSync = RS
 local OP, H, fmt, floor, sqrt, pi = W.OP, W.handlers, string.format, math.floor, math.sqrt, math.pi
 OP.VEHICLE_SPAWN = 52
+local REQ, REJ, RCV = OP.REQ_VEHICLE_GONE or 47, OP.REJECT or 4, OP.RECEIVED or 3
 local RID, LIFT = 25600, 0.5
 local FREE = {[30010] = true, [30020] = true, [30050] = true}
 -- Relief type t -> its userPresetVehiclePaintType index (the loadout vehicle id - 0x0D, static 0x14095D230).
@@ -37,6 +47,7 @@ local function L(text) W.log("event=relief;role=" .. (W.host and "host" or "gues
 local function note(a) if type(W.note) == "function" then pcall(W.note, 13, a, 0) end end
 local function n(v) return type(v) == "number" and v == v and v > -1e12 and v < 1e12 end
 local function mm(v) return floor(v * 1000 + 0.5) end
+local function mission() local m = W.get(vars, "missionCode"); return n(m) and m or W.mission or 0 end
 function RS.on() return RS.key == true and (W.level or 0) >= 3 end
 function RS.applies() return RS.on() and not W.host end
 local function readKey(cfg) RS.key = type(cfg) == "table" and cfg[17] == 1 end
@@ -64,6 +75,9 @@ function RS.paint(t)
  local v = i and W.get(W.get(vars, "userPresetVehiclePaintType"), i)
  return n(v) and v >= 0 and v <= 255 and floor(v) or 0
 end
+-- A guest in a co-op mission: paired, or unpaired inside the mission the host's seeds or pairing gave it.
+function RS.coopGuest() return RS.key == true and not W.host and (W.paired == true or RS.coop ~= nil and RS.coop == W.get(vars, "missionCode")) end
+RS.skipSeize = RS.coopGuest
 
 -- D8 (b): the relief keys of the follow seeds, read and written on vars.
 local function keys()
@@ -140,19 +154,21 @@ end
 
 -- Quiet removal of this copy's index 0: Seize {"Instant"} (never DirectAccount / CheckFultonType) and
 -- this copy's TppTerminal.OnFulton for 25600 skipped once within 30 s (E17: no Mother Base credit).
--- VEHICLE_GONE's own bookkeeping marks it gone (its FultonInfo, att local, is not a guest loss).
+-- VEHICLE_GONE's own bookkeeping marks it gone; for 30 s nothing this copy sees of it is a guest loss.
 function RS.removeQuiet(why)
  RS.install()
- RS.quiet = W.now() + 30000
+ local now = W.now()
+ RS.quiet, RS.removedAt = now + 30000, now
  local G = W.vehicleGone
  if type(G) == "table" and type(G.gone) == "table" and not G.gone[RID] then G.gone[RID] = "relief" end
  local f = W.get(GameObject, "SendCommand")
  local ok = type(f) == "function" and pcall(f, RID, {id = "Seize", options = {"Instant"}})
- L(fmt("step=remove;via=seize_instant;why=%s;ok=%d;", why, ok and 1 or 0))
+ L(fmt("step=remove;via=seize_instant;why=%s;ok=%d;mission=%d;", why, ok and 1 or 0, mission()))
  return ok == true, "seize_instant"
 end
--- Guest: this copy's index 0 to the host's pose (the RIDE_FAST placement, world_ride_pose.lua R.place:
--- SetPosition {position, rotY}); the live pose arrives 0.5 m up, so it settles on the ground.
+local function ownRemoval() return RS.removedAt ~= nil and W.now() - RS.removedAt <= 30000 end
+-- Guest: the host's carry and pose (VEHICLE_SPAWN) here: SetPosition {position, rotY} (the RIDE_FAST
+-- placement, world_ride_pose.lua R.place); the live pose arrives 0.5 m up, so it settles on the ground.
 function RS.placeAt(h, why)
  local rp, ok = W.ridePose, false
  if type(rp) == "table" and type(rp.place) == "function" then
@@ -201,6 +217,69 @@ local function busy()
  if W.get(vars, "playerVehicleGameObjectId") == RID then return "local_rider" end
 end
 
+-- Guest: this copy lost index 0 by its own hand (cause 1 Fulton, 2 destroyed): REQ_VEHICLE_GONE for
+-- 25600 (rid, id, cause, type 255, this copy's last pose in mm); the host decides (RS.guestLost).
+local function sendLost(q, now)
+ q.tries, q.sentAt, q.firstAt = q.tries + 1, now, q.firstAt or now
+ q.rid = W.nextRid()
+ local ok = W.tx(REQ, q.rid, RID, q.cause, 255, mm(q.x), mm(q.y), mm(q.z)) == true
+ if not ok then q.rid = 0 end
+ L(fmt("step=lost_tx;rid=%d;cause=%d;try=%d;sent=%d;mission=%d;", q.rid, q.cause, q.tries, ok and 1 or 0, q.mission))
+end
+function RS.lost(cause)
+ if W.host or not RS.coopGuest() or ownRemoval() then return false end
+ local q = RS.lostReq
+ if q and q.mission == W.mission and not q.done then return false end
+ local G = W.vehicleGone
+ if type(G) == "table" and type(G.gone) == "table" then G.gone[RID] = "relief" end
+ local x, y, z = RS.pose()
+ local p = RS.last or {}
+ q = {cause = cause, mission = W.mission, at = W.now(), tries = 0, rid = 0, x = x or p.x or 0, y = y or p.y or 0, z = z or p.z or 0}
+ RS.lostReq = q
+ if W.paired then sendLost(q, q.at)
+ else L(fmt("step=lost_tx;rid=0;cause=%d;try=0;sent=0;mission=%d;", cause, q.mission)) end
+ return true
+end
+-- Guest: an open request is sent once paired, sent again after 20 s without the host's RECEIVED, and
+-- given up 45 s after the first send while the host still has it (this copy then loads it again).
+local function lostTick(now)
+ local q = RS.lostReq
+ if not q or q.done then return end
+ if q.mission ~= W.mission then RS.lostReq = nil; return end
+ if not W.paired then return end
+ if q.tries == 0 or q.tries < 2 and not q.received and now - q.sentAt >= 20000 then sendLost(q, now); return end
+ if now - q.firstAt >= 45000 then
+  q.done, RS.reload = true, W.mission
+  L(fmt("step=lost_timeout;rid=%d;tries=%d;", q.rid, q.tries))
+ end
+end
+-- Guest: the host's RECEIVED or REJECT (VEHICLE_GONE's form: rid, REQ_VEHICLE_GONE, reason, id) for it.
+function RS.answer(v, rejected)
+ local q = RS.lostReq
+ if W.host or not q or q.done or q.rid == 0 or v[1] ~= q.rid or v[2] ~= REQ then return end
+ if not rejected then q.received = true; return end
+ q.done, RS.reload = true, W.mission
+ L(fmt("step=lost_refused;rid=%d;reason=%s;", q.rid, tostring(v[3])))
+end
+-- Host: the guest lost its copy of index 0. A Fulton is the host's own stock Seize {"Fulton"} (its
+-- TppTerminal.OnFulton credits it, once); a destruction removes it quietly. Refused while ridden.
+function RS.guestLost(v)
+ local rid, cause = v[1], v[3]
+ L(fmt("step=lost_rx;rid=%d;cause=%d;mission=%d;", rid, cause, mission()))
+ local function refuse(why)
+  W.tx(REJ, rid, REQ, 8, RID, 0, 0)
+  L(fmt("step=lost_refused;rid=%d;reason=%s;", rid, why))
+ end
+ if not FREE[W.mission] then return refuse("mission") end
+ if not RS.alive() then L(fmt("step=lost_absent;rid=%d;", rid)); return end
+ local why = busy()
+ if why then return refuse(why) end
+ if cause == 2 then RS.removeQuiet("guest_destroyed"); return end
+ local f = W.get(GameObject, "SendCommand")
+ local ok = type(f) == "function" and pcall(f, RID, {id = "Seize", options = {"Fulton"}})
+ L(fmt("step=host_fulton;ok=%d;rid=%d;", ok and 1 or 0, rid))
+end
+
 -- Both roles: the arrival line once index 0 answers after the mission start or a load.
 local function arrival(now)
  local a = RS.arrive
@@ -222,7 +301,7 @@ local function arrival(now)
 end
 -- Host: VEHICLE_SPAWN on change and every 5 s (paired, free roam, in game). The pose is the carry
 -- attitude while the vehicle stands within 1.5 m of it (flag 2: the guest's LoadCarry then gives the
--- host's exact pose, run 612afff7), else its live pose 2 m up.
+-- host's exact pose, run 612afff7), else its live pose 0.5 m up.
 local function hostTick(now)
  if not (W.paired and FREE[W.mission] and W.inGame()) then RS.txAlive = nil; return end
  local alive = RS.alive()
@@ -252,11 +331,18 @@ H[OP.VEHICLE_SPAWN] = function(v, now)
  local was = RS.hostState
  RS.hostState = h
  if not was or was.alive ~= h.alive or was.ct ~= h.ct or was.mission ~= h.mission then
+  RS.fixes, RS.gaveUp = 0, nil
   L(fmt("step=host_state;alive=%d;type=%d;mission=%d;", h.alive and 1 or 0, h.ct % 256, h.mission))
+ end
+ local q = RS.lostReq
+ if q and not q.done and not h.alive and h.mission == q.mission then
+  q.done = true
+  L(fmt("step=lost_done;rid=%d;ms=%d;", q.rid, floor(W.now() - q.at)))
  end
 end
 -- Guest: index 0 here against the host's (8.3 continue / late join; a host loss VEHICLE_GONE missed;
 -- this copy's own of another type: removed, then loaded; one parked more than 20 m from the host's: placed).
+-- Loads and removals have a budget of 3 (reset when the host's state changes), placements their own of 6.
 local function reconcile(now)
  local h = RS.hostState
  if not h or now - h.at > 15000 or h.mission ~= W.mission or not FREE[W.mission] or not W.inGame() or
@@ -273,17 +359,19 @@ local function reconcile(now)
  local G = W.vehicleGone
  if want and not mine and (RS.seen == W.mission and RS.reload ~= W.mission or type(G) == "table" and type(G.gone) == "table" and
   (G.gone[RID] == true or type(G.watch) == "table" and G.watch[RID])) then
-  -- This copy had index 0 this mission and lost it: VEHICLE_GONE owns that, never a respawn here.
+  -- This copy had index 0 this mission and lost it: its request (or VEHICLE_GONE) owns that, no respawn here.
   if RS.skipLogged ~= W.mission then RS.skipLogged = W.mission; L("step=reconcile_skip;reason=lost_here;") end
   return
  end
  RS.diffAt = RS.diffAt or now
  if now - RS.diffAt < (want and 10000 or 15000) or now < (RS.fixAt or 0) then return end
- if (RS.fixes or 0) >= 3 then
+ local function spent(k, cap)
+  if (RS[k] or 0) < cap then return false end
   if not RS.gaveUp then RS.gaveUp = true; L("step=reconcile_giveup;") end
-  return
+  return true
  end
  if want and not mine then
+  if spent("fixes", 3) then return end
   RS.fixAt, RS.fixes = now + 20000, (RS.fixes or 0) + 1
   RS.loadHost(h, "host_has")
   return
@@ -293,45 +381,56 @@ local function reconcile(now)
   if RS.busyLogged ~= why then RS.busyLogged = why; L("step=remove_wait;reason=" .. why .. ";") end
   return
  end
+ if other == "far" then
+  if spent("places", 6) then return end
+  RS.fixAt, RS.places = now + 20000, (RS.places or 0) + 1
+  RS.placeAt(h, "far")
+  return
+ end
+ if spent("fixes", 3) then return end
  RS.fixAt, RS.fixes = now + 20000, (RS.fixes or 0) + 1
- if other == "far" then RS.placeAt(h, "far"); return end
  RS.removeQuiet(other or "host_none")
- if other then RS.reload = W.mission end
+ RS.reload = W.mission
 end
--- Guest: the iDroid drop items inactive while paired in free roam (re-applied every 2 s while the
--- iDroid is closed: TppTerminal.SetUp at a mission start sets every item active again).
-local function menuActive(on)
+-- Guest: the iDroid drop items inactive in a co-op free-roam mission (re-applied every 2 s while the
+-- iDroid is closed: TppTerminal.SetUp at a mission start sets every item active again; the first pass
+-- of a mission applies even while it is open). Unguard sets them active: TppTerminal.SetUp's state.
+local function menuActive(on, all)
  local f = W.get(TppUiCommand, "SetMbTopMenuItemActive")
  if type(f) ~= "function" then return false end
  local ok = true
- for _, m in ipairs(MENUS) do ok = pcall(f, m[1], on) and ok end
+ for i = 1, (all or RS.loadout) and 2 or 1 do ok = pcall(f, MENUS[i][1], on) and ok end
  return ok
 end
 function RS.unguard()
  if not RS.greyed then return end
  RS.greyed = nil
- menuActive(true)
+ menuActive(true, true)
  L("step=unguard;path=idroid_drop;")
 end
 local function guard(now)
- if not (W.paired and W.inGame() and FREE[W.mission]) then RS.unguard(); return end
+ if not (W.inGame() and FREE[W.mission] and (W.paired or RS.coop == W.mission and not RS.stopped)) then RS.unguard(); return end
  if now < (RS.greyAt or 0) then return end
  RS.greyAt = now + 2000
- local open = W.get(TppUiCommand, "IsMbDvcTerminalOpened")
+ local open = RS.greyed and W.get(TppUiCommand, "IsMbDvcTerminalOpened")
  if type(open) == "function" then
   local ok, yes = pcall(open)
   if ok and yes == true then return end
  end
  if menuActive(false) then
   RS.greyed = true
-  if RS.greyLogged ~= W.mission then RS.greyLogged = W.mission; L("step=guard;path=idroid_drop;via=menu_inactive;") end
+  if RS.greyLogged ~= W.mission then
+   RS.greyLogged = W.mission
+   L(fmt("step=guard;path=idroid_drop;via=menu_inactive;items=%d;", RS.loadout and 2 or 1))
+  end
  end
 end
 -- Terminal MbDvcActSelectNonActiveMenu (arg: StrCode32 of the menu name, TppRadio.PlaySelectBuddy).
 function RS.nonActive(menu)
  local ids = RS.ids
  if not ids then return false end
- for i, m in ipairs(MENUS) do
+ for i = 1, RS.loadout and 2 or 1 do
+  local m = MENUS[i]
   if ids.menu[i] == menu then
    L(fmt("step=refused;path=%s;via=menu_inactive;", m[3]))
    local now = W.now()
@@ -354,9 +453,15 @@ function RS.tick(now)
  if not RS.on() then RS.unguard(); return end
  if now < (RS.nextTick or 0) then return end
  RS.nextTick = now + 250
- if RS.alive() then RS.seen = W.mission end
+ if RS.alive() then
+  RS.seen = W.mission
+  if not W.host then
+   local x, y, z = RS.pose()
+   if x then RS.last = {x = x, y = y, z = z} end
+  end
+ end
  arrival(now)
- if W.host then hostTick(now) else guard(now); reconcile(now) end
+ if W.host then hostTick(now) else guard(now); lostTick(now); reconcile(now) end
 end
 local tick = W.tick
 function W.tick(...)
@@ -367,14 +472,13 @@ function W.tick(...)
  if not ok and now >= (RS.errAt or 0) then RS.errAt = now + 10000; L("step=error;msg=" .. string.sub(tostring(err), 1, 80)) end
 end
 
--- Game hooks (once, with the key): the guest's mission-end seize skip, the quiet OnFulton skip, D8 (b).
+-- Game hooks (once, with the key): the guest's mission-end seize skip, its OnFulton rule, D8 (b).
 local function wrap(t, name, make)
  local original = W.get(t, name)
  if type(original) ~= "function" then return false end
  local f = make(original)
  return pcall(function() t[name] = f end) and W.get(t, name) == f
 end
-function RS.skipSeize() return RS.key == true and not W.host and (W.paired == true or RS.coop ~= nil and RS.coop == W.get(vars, "missionCode")) end
 function RS.install()
  if RS.installed then return end
  RS.installed = true
@@ -382,8 +486,8 @@ function RS.install()
  for _, name in ipairs(SEIZE) do
   if wrap(TppMission, name, function(o) return function(...)
    local alive = RS.alive() and 1 or 0
-   if RS.skipSeize() then L(fmt("step=seize_skipped;fn=%s;alive=%d;", name, alive)); return end
-   if RS.key and alive == 1 then L(fmt("step=seize;fn=%s;alive=1;", name)) end
+   if RS.coopGuest() then L(fmt("step=seize_skipped;fn=%s;alive=%d;mission=%d;", name, alive, mission())); return end
+   if RS.key and alive == 1 then L(fmt("step=seize;fn=%s;alive=1;mission=%d;", name, mission())) end
    return o(...)
   end end) then hooks = hooks + 1 end
  end
@@ -391,9 +495,16 @@ function RS.install()
   if id == RID and RS.quiet then
    local live = W.now() <= RS.quiet
    RS.quiet = nil
-   if live then L("step=credit_skipped;fn=OnFulton;"); return end
+   if live then L(fmt("step=credit_skipped;fn=OnFulton;why=quiet;mission=%d;", mission())); return end
   end
-  if id == RID and RS.key then L("step=credit;fn=OnFulton;") end
+  -- A co-op guest never credits index 0 (the host's vehicle): its own removal, or a loss the host decides.
+  if id == RID and RS.coopGuest() then
+   local own = ownRemoval()
+   L(fmt("step=credit_skipped;fn=OnFulton;why=%s;mission=%d;", own and "own_removal" or "guest_fulton", mission()))
+   if not own then RS.lost(1) end
+   return
+  end
+  if id == RID and RS.key then L(fmt("step=credit;fn=OnFulton;mission=%d;", mission())) end
   return o(id, ...)
  end end) then hooks = hooks + 1 end
  if wrap(TppSave, "SaveVarsToSlot", function(o) return function(...)
@@ -416,14 +527,44 @@ function RS.install()
  end end) then hooks = hooks + 1 end
  L(fmt("step=installed;hooks=%d;", hooks))
 end
--- VEHICLE_GONE's receiver removal: index 0 by Seize Instant instead of today's index0 refusal (a
--- destroyed one stays M4's wreck when VEHICLE_STATE is on).
+-- VEHICLE_GONE (world_vehicle.lua): the receiver removes index 0 by Seize Instant instead of today's
+-- index0 refusal, for any cause (a wreck rule is M4's). On the guest, index 0's own Fulton and
+-- destruction are this module's (RS.lost), never VEHICLE_GONE's watch; Damage still reaches it.
 local G = W.vehicleGone
 if type(G) == "table" and type(G.remove) == "function" then
  local base = G.remove
- G.remove = function(id, cause, ...)
-  if id == RID and RS.on() and not (cause == 2 and W.vehicleStateOn == true) then return RS.removeQuiet("vehicle_gone") end
-  return base(id, cause, ...)
+ G.remove = function(id, ...)
+  if id == RID and RS.on() then return RS.removeQuiet("vehicle_gone") end
+  return base(id, ...)
+ end
+end
+if type(G) == "table" and type(G.observe) == "function" then
+ local base = G.observe
+ G.observe = function(kind, id, att, ...)
+  if id == RID and not W.host and RS.on() then
+   local hit = type(G.hit) == "table" and G.hit[RID]
+   if kind == "Dead" and att == "local" or kind == "VehicleBroken" and hit and W.now() - hit <= 10000 then RS.lost(2) end
+   if kind ~= "Damage" then return end
+  end
+  return base(kind, id, att, ...)
+ end
+end
+-- REQ_VEHICLE_GONE for 25600 is this module's while the key is on (the host's answer above); RECEIVED and
+-- REJECT for the guest's own request reach RS.answer after their other handlers.
+local baseReq = H[REQ]
+H[REQ] = function(v, ...)
+ if W.host and RS.on() and type(v) == "table" and v[2] == RID then
+  local ok, err = pcall(RS.guestLost, v)
+  if not ok then L("step=error;at=lost_rx;msg=" .. string.sub(tostring(err), 1, 80)) end
+  return
+ end
+ if baseReq then return baseReq(v, ...) end
+end
+for op, rejected in pairs({[REJ] = true, [RCV] = false}) do
+ local base = H[op]
+ H[op] = function(v, ...)
+  if base then base(v, ...) end
+  if type(v) == "table" then pcall(RS.answer, v, rejected) end
  end
 end
 
@@ -436,8 +577,9 @@ W.follow.installHooks[#W.follow.installHooks + 1] = function(cfg)
 end
 W.startHooks[#W.startHooks + 1] = function()
  readKey(W.cfg(W.mission, 0))
- RS.hostState, RS.diffAt, RS.fixAt, RS.fixes, RS.gaveUp, RS.txAt, RS.txAlive, RS.txLogged = nil, nil, nil, 0, nil, nil, nil, nil
+ RS.hostState, RS.diffAt, RS.fixAt, RS.fixes, RS.places, RS.gaveUp, RS.txAt, RS.txAlive, RS.txLogged = nil, nil, nil, 0, 0, nil, nil, nil, nil
  RS.nextTick, RS.greyAt, RS.greyed, RS.skipLogged, RS.busyLogged, RS.quiet, RS.seen, RS.arrive, RS.reload = nil, nil, nil, nil, nil, nil, nil, nil, nil
+ RS.lostReq, RS.removedAt, RS.last = nil, nil, nil
  local s = W.api and W.api.str32
  if type(s) == "function" then
   RS.ids = {terminal = s("Terminal"), nonActive = s("MbDvcActSelectNonActiveMenu"), menu = {}}
@@ -452,34 +594,45 @@ W.startHooks[#W.startHooks + 1] = function()
  end
 end
 W.pairedHooks[#W.pairedHooks + 1] = function()
- RS.txAt = nil
+ RS.txAt, RS.stopped = nil, nil
  if not W.host and RS.on() then RS.coop = W.mission end
 end
-W.unpairedHooks[#W.unpairedHooks + 1] = function() pcall(RS.unguard) end
-W.stopHooks[#W.stopHooks + 1] = function(final) if final then pcall(RS.unguard) end end
+-- The final stop ends the co-op mission for the refusal guard (RS.coop stays: the mission-end seize of
+-- a vehicle the host's seeds gave is still skipped); D8 (b) live vars come back at the next solo Load.
+W.stopHooks[#W.stopHooks + 1] = function(final) if final then RS.stopped = true; pcall(RS.unguard) end end
 
 -- debug relief_status (read only, any mode), relief_lab nonactive vehicle|loadout (lab: the refusal path
--- of a selected inactive drop item) and relief_lab forget (lab, guest; below).
+-- of a selected inactive drop item), relief_lab loadout on|off (lab: D11 option a, the LOADOUT drop
+-- blocked too) and relief_lab forget (lab, guest; below).
 function RS.status()
  local ct = RS.carry()
- local h = RS.hostState
- return fmt("relief_sync;on=%d;role=%s;type=%d;ct=%d;v0=%d;own=%s;greyed=%d;host_alive=%s;host_type=%s;fixes=%d;saves=%d;coop=%s",
+ local h, q = RS.hostState, RS.lostReq
+ return fmt("relief_sync;on=%d;role=%s;type=%d;ct=%d;v0=%d;own=%s;greyed=%d;host_alive=%s;host_type=%s;fixes=%d;saves=%d;coop=%s;lost=%s",
   RS.on() and 1 or 0, W.host and "host" or "guest", ct % 256, ct, RS.alive() and 1 or 0,
   RS.own and tostring(RS.own.reliefVehicleCarryType % 256) or "-", RS.greyed and 1 or 0, h and (h.alive and "1" or "0") or "-",
-  h and tostring(h.ct % 256) or "-", RS.fixes or 0, RS.saves or 0, tostring(RS.coop))
+  h and tostring(h.ct % 256) or "-", RS.fixes or 0, RS.saves or 0, tostring(RS.coop), q and (q.done and "done" or "open") or "-")
 end
 function RS.lever(a)
  if a[1] == "relief_status" and #a == 1 then return true, RS.status() end
- if a[1] == "relief_lab" and #a == 3 and a[2] == "nonactive" and (a[3] == "vehicle" or a[3] == "loadout") then
-  if W.mode ~= 1 then return false, "relief_lab_only" end
+ if a[1] ~= "relief_lab" then return false, "relief_args" end
+ if W.mode ~= 1 then return false, "relief_lab_only" end
+ if #a == 3 and a[2] == "nonactive" and (a[3] == "vehicle" or a[3] == "loadout") then
   if not RS.ids then return false, "relief_ids" end
   local ok = RS.nonActive(RS.ids.menu[a[3] == "vehicle" and 1 or 2])
   return ok, "relief_lab;nonactive=" .. a[3]
  end
- -- relief_lab forget (lab, guest): this copy's index 0 removed (no credit, no VEHICLE_GONE request) and
- -- the reconcile allowed to load the host's again from VEHICLE_SPAWN: the late-join path on demand.
- if a[1] == "relief_lab" and #a == 2 and a[2] == "forget" then
-  if W.mode ~= 1 then return false, "relief_lab_only" end
+ if #a == 3 and a[2] == "loadout" and (a[3] == "on" or a[3] == "off") then
+  RS.loadout = a[3] == "on" or nil
+  if RS.greyed then
+   local f = W.get(TppUiCommand, "SetMbTopMenuItemActive")
+   if type(f) == "function" then pcall(f, MENUS[2][1], not RS.loadout) end
+  end
+  L(fmt("step=loadout_block;on=%d;", RS.loadout and 1 or 0))
+  return true, "relief_lab;loadout=" .. a[3]
+ end
+ -- relief_lab forget (guest): this copy's index 0 removed (no credit, no request to the host) and the
+ -- reconcile allowed to load the host's again from VEHICLE_SPAWN: the late-join path on demand.
+ if #a == 2 and a[2] == "forget" then
   if W.host then return false, "relief_guest_only" end
   if not RS.alive() then return false, "relief_absent" end
   local ok = RS.removeQuiet("lab_forget")

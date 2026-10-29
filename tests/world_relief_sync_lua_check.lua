@@ -329,12 +329,17 @@ local seize
 for _, s in ipairs(c.sent) do if s.cmd.id == 'Seize' then seize = s end end
 check(seize and seize.id == RID and #seize.cmd.options == 1 and seize.cmd.options[1] == 'Instant', 'Seize {"Instant"} on 25600 only')
 check(c.find('event=relief;role=guest;step=remove;via=seize_instant;why=host_none;ok=1;'), 'remove line')
+check(c.find('event=relief;role=guest;step=remove;via=seize_instant;why=host_none;ok=1;mission=30020;'), 'the remove line names the mission')
 c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
-check(c.called('OnFulton') == 0 and c.find('event=relief;role=guest;step=credit_skipped;fn=OnFulton;'), 'its OnFulton credit skipped once')
+check(c.called('OnFulton') == 0 and c.find('event=relief;role=guest;step=credit_skipped;fn=OnFulton;why=quiet;mission=30020;'),
+    'its OnFulton credit skipped once')
+-- Review of 2026-10-29: a co-op guest never credits index 0 (the host's vehicle); within 30 s of its own removal a
+-- second OnFulton is still that removal (no request to the host).
 c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
-check(c.called('OnFulton') == 1, 'the skip is used up')
+check(c.called('OnFulton') == 0 and #c.txOf(47) == 0 and c.find('step=credit_skipped;fn=OnFulton;why=own_removal;'),
+    'a co-op guest never credits index 0; its own removal is never a loss')
 c.env.TppTerminal.OnFulton(1234)
-check(c.called('OnFulton') == 2, 'other ids always pass')
+check(c.called('OnFulton') == 1, 'other ids always pass')
 -- ...but never under a rider (the local player in it).
 c = Fixture(2, {ct = 514, alive = true})
 c.riding, c.env.vars.playerVehicleGameObjectId = true, RID
@@ -372,7 +377,7 @@ check(#c.txOf(52) == 0, 'no VEHICLE_SPAWN while the live pose is unreadable')
 c = Fixture(2, {ct = 514, alive = true})
 for _, name in ipairs({'SeizeReliefVehicleOnAbort', 'SeizeReliefVehicleOnClear', 'SeizeReliefVehicleOnForceGoToMb'}) do
     c.env.TppMission[name]()
-    check(c.called(name) == 0 and c.find('event=relief;role=guest;step=seize_skipped;fn=' .. name .. ';alive=1;'), 'guest skips ' .. name)
+    check(c.called(name) == 0 and c.find('event=relief;role=guest;step=seize_skipped;fn=' .. name .. ';alive=1;mission=30020;'), 'guest skips ' .. name)
 end
 -- After an unpair, a guest copy whose relief vehicle came from the host still skips it.
 c = Fixture(2, {ct = 0})
@@ -390,8 +395,8 @@ c.env.TppMission.SeizeReliefVehicleOnClear()
 check(c.called('SeizeReliefVehicleOnClear') == 1, 'key off: stock seize')
 c = Fixture(1, {ct = 514, alive = true})
 c.env.TppMission.SeizeReliefVehicleOnClear()
-check(c.called('SeizeReliefVehicleOnClear') == 1 and c.find('event=relief;role=host;step=seize;fn=SeizeReliefVehicleOnClear;alive=1;'),
-    'host: the stock seize runs (logged)')
+check(c.called('SeizeReliefVehicleOnClear') == 1 and c.find('event=relief;role=host;step=seize;fn=SeizeReliefVehicleOnClear;alive=1;mission=30020;'),
+    'host: the stock seize runs (logged, with the mission it ends)')
 
 -- VEHICLE_GONE (world_vehicle.lua) for index 0: the receiver removes it with Seize {"Instant"} and no credit
 -- (it refused index0 before); its own removal's FultonInfo is never taken for a guest loss.
@@ -415,14 +420,20 @@ c = Fixture(2, {ct = 514, alive = true, gone = true, on = false})
 gone(c)
 check(c.v0.alive and c.find('reason=index0'), 'key off: VEHICLE_GONE still refuses index 0')
 
--- Refusal (D1 a): the guest's iDroid vehicle and loadout drops are inactive while paired in free roam.
+-- Refusal (D1 a): the guest's iDroid vehicle drop is inactive in a co-op free-roam mission. The LOADOUT drop is left
+-- to the user's decision D11 (review of 2026-10-29): active unless the lab lever relief_lab loadout on blocks it.
 c = Fixture(2)
 c.tick()
 local function menu(x, name)
     for i = #x.menus, 1, -1 do if x.menus[i][1] == name then return x.menus[i][2] end end
 end
-check(menu(c, 'MSN_DROP_VEHICLE') == false and menu(c, 'MSN_DROP_LOADOUT') == false, 'both drop items inactive')
-check(c.find('event=relief;role=guest;step=guard;path=idroid_drop;via=menu_inactive;'), 'guard line')
+check(menu(c, 'MSN_DROP_VEHICLE') == false and menu(c, 'MSN_DROP_LOADOUT') == nil, 'only the vehicle drop is inactive (D11 pending)')
+check(c.find('event=relief;role=guest;step=guard;path=idroid_drop;via=menu_inactive;items=1;'), 'guard line')
+c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_LOADOUT'))
+check(#c.notes == 0 and not c.find('path=idroid_drop_loadout'), 'an inactive LOADOUT item is not ours without the lever')
+local ok, text = c.RS.lever({'relief_lab', 'loadout', 'on'})
+check(ok and text == 'relief_lab;loadout=on' and menu(c, 'MSN_DROP_LOADOUT') == false and c.find('step=loadout_block;on=1;'),
+    'lab lever: the LOADOUT drop blocked too')
 c.run(5000)
 check(c.count('step=guard;path=idroid_drop') == 1, 'logged once per mission')
 local nm = #c.menus
@@ -434,7 +445,7 @@ c.idroid = false
 c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_VEHICLE'))
 check(c.find('event=relief;role=guest;step=refused;path=idroid_drop_vehicle;via=menu_inactive;'), 'vehicle refusal line')
 check(#c.notes == 1 and c.notes[1][1] == 13 and c.notes[1][2] == 4, 'vehicle toast NOTE 13 a 4')
-check(c.observed == 1, 'the message still reaches the stock observer')
+check(c.observed == 2, 'the message still reaches the stock observer')
 c.time = c.time + 4000
 c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_LOADOUT'))
 check(c.find('step=refused;path=idroid_drop_loadout;') and c.notes[2][2] == 5, 'loadout refusal and toast NOTE 13 a 5')
@@ -442,11 +453,33 @@ c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_
 check(#c.notes == 2, 'another inactive item: no relief toast')
 c.W.observe(str32('Terminal'), str32('MbDvcActSelectNonActiveMenu'), str32('MSN_DROP_VEHICLE'))
 check(#c.notes == 2 and c.count('path=idroid_drop_vehicle') == 2, 'toasts at most every 3 s (the refusal is still logged)')
--- Unpaired: the items are active again.
+ok, text = c.RS.lever({'relief_lab', 'loadout', 'off'})
+check(ok and menu(c, 'MSN_DROP_LOADOUT') == true and c.find('step=loadout_block;on=0;'), 'lab lever off: LOADOUT active again')
+-- Unpaired inside the co-op mission (a link drop): the vehicle drop stays inactive (review of 2026-10-29); the
+-- session's final stop activates it (TppTerminal.SetUp leaves every drop item active: the stock state).
+c = Fixture(2)
+for _, f in ipairs(c.W.pairedHooks) do f(false) end
+c.tick()
 for _, f in ipairs(c.W.unpairedHooks) do f(1) end
 c.W.paired = false
-check(menu(c, 'MSN_DROP_VEHICLE') == true and menu(c, 'MSN_DROP_LOADOUT') == true, 'unpair: active again')
-check(c.find('event=relief;role=guest;step=unguard;path=idroid_drop;'), 'unguard line')
+c.run(5000)
+check(menu(c, 'MSN_DROP_VEHICLE') == false and not c.find('step=unguard;'), 'unpaired in the co-op mission: still inactive')
+for _, f in ipairs(c.W.stopHooks) do f(true) end
+c.run(3000)
+check(menu(c, 'MSN_DROP_VEHICLE') == true and c.find('event=relief;role=guest;step=unguard;path=idroid_drop;'), 'final stop: active again')
+-- A solo load ends the co-op mission: active again too.
+c = Fixture(2)
+for _, f in ipairs(c.W.pairedHooks) do f(false) end
+c.tick()
+c.W.paired = false
+c.env.TppMission.Load(30010)
+c.run(3000)
+check(menu(c, 'MSN_DROP_VEHICLE') == true, 'solo load: active again')
+-- The first pass of a mission applies even while the iDroid is open (it was skipped before); later passes wait.
+c = Fixture(2)
+c.idroid = true
+c.tick()
+check(menu(c, 'MSN_DROP_VEHICLE') == false, 'the first pass applies with the iDroid open')
 -- The host and a key-off guest never grey anything.
 for _, x in ipairs({Fixture(1), Fixture(2, {on = false})}) do
     x.run(3000)
@@ -456,7 +489,7 @@ end
 -- Levers: relief_status (any mode, read only); relief_lab nonactive (lab only) runs the refusal path.
 c = Fixture(2, {ct = 514, alive = true})
 c.tick()
-local ok, text = c.RS.lever({'relief_status'})
+ok, text = c.RS.lever({'relief_status'})
 check(ok and text:find('relief_sync;on=1;role=guest;type=2;ct=514;v0=1;', 1, true) and text:find('greyed=1', 1, true), 'status: ' .. tostring(text))
 ok, text = c.RS.lever({'relief_lab', 'nonactive', 'vehicle'})
 check(ok and c.find('step=refused;path=idroid_drop_vehicle;'), 'lab lever: the refusal path')
@@ -464,6 +497,8 @@ c = Fixture(2, {mode = 2})
 c.tick()
 ok, text = c.RS.lever({'relief_lab', 'nonactive', 'vehicle'})
 check(not ok and text == 'relief_lab_only', 'the lab lever refuses in play')
+ok, text = c.RS.lever({'relief_lab', 'loadout', 'on'})
+check(not ok and text == 'relief_lab_only' and c.RS.loadout == nil, 'the loadout lever refuses in play')
 ok, text = c.RS.lever({'relief_status'})
 check(ok, 'status in play')
 
@@ -488,5 +523,160 @@ check(not ok and text == 'relief_lab_only', 'forget is lab only')
 c = Fixture(2, {ct = 0})
 ok, text = c.RS.lever({'relief_lab', 'forget'})
 check(not ok and text == 'relief_absent', 'forget needs index 0')
+
+-- Review of 2026-10-29 (F1): a guest-side loss of index 0 is the host's to credit, whatever world_vehicle_gone says.
+-- The guest's own Fulton: its OnFulton for 25600 never credits on the guest; REQ_VEHICLE_GONE (op 47) asks the host.
+for _, vg in ipairs({false, true}) do
+    c = Fixture(2, {ct = 514, alive = true, gone = vg})
+    c.tick()
+    c.V.observe('FultonInfo', RID, 'local')
+    c.v0.alive = false
+    c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+    check(c.called('OnFulton') == 0, 'guest Fulton: no credit on the guest (vehicle_gone=' .. tostring(vg) .. ')')
+    check(c.find('event=relief;role=guest;step=credit_skipped;fn=OnFulton;why=guest_fulton;mission=30020;'), 'credit_skipped guest_fulton line')
+    local rq = c.txOf(47)
+    check(#rq == 1 and rq[1].v[1] == 1 and rq[1].v[2] == RID and rq[1].v[3] == 1, 'one REQ_VEHICLE_GONE for 25600, cause 1 (fulton)')
+    check(rq[1].v[5] == 1227240 and rq[1].v[6] == 19430 and rq[1].v[7] == -127050, 'the request carries this copy last pose (mm)')
+    check(c.find('event=relief;role=guest;step=lost_tx;rid=1;cause=1;try=1;sent=1;mission=30020;'), 'lost_tx line')
+    check(not c.find('event=vehicle_gone;step=watch;id=25600'), 'VEHICLE_GONE never watches index 0 on the guest while relief is on')
+    check(c.V.gone[RID] ~= nil, 'marked gone here: a VEHICLE_GONE for it is never matched to another vehicle')
+    c.W.handlers[46]({1, RID, 1, 0, 0, 2, 1227240, 19430, -127050}, c.time)
+    check(not c.find('step=matched;') and c.count('step=remove;') == 0, 'the host announcement of the same loss removes nothing more here')
+end
+-- The host answers with its own Seize {"Fulton"}: the stock credit runs once, on the host.
+c = Fixture(1, {ct = 514, alive = true, gone = true})
+c.W.handlers[47]({5, RID, 1, 2, 1227240, 19430, -127050}, c.time)
+seize = nil
+for _, s in ipairs(c.sent) do if s.cmd.id == 'Seize' then seize = s end end
+check(seize and seize.id == RID and #seize.cmd.options == 1 and seize.cmd.options[1] == 'Fulton', 'host: Seize {"Fulton"} on its own 25600')
+check(c.find('event=relief;role=host;step=lost_rx;rid=5;cause=1;mission=30020;') and c.find('event=relief;role=host;step=host_fulton;ok=1;rid=5;'),
+    'host lost_rx and host_fulton lines')
+check(not c.find('event=vehicle_gone;step=rx_req;rid=5;'), 'VEHICLE_GONE does not take index 0 while relief is on')
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+check(c.called('OnFulton') == 1 and c.find('event=relief;role=host;step=credit;fn=OnFulton;mission=30020;'), 'the host credits it once')
+c.tick()
+check(#c.txOf(52) >= 1 and c.txOf(52)[#c.txOf(52)].v[7] == 0, 'the host then reports alive 0')
+c.W.handlers[47]({6, 25601, 1, 2, 0, 0, 0}, c.time)
+check(c.find('event=vehicle_gone;step=rx_req;rid=6;id=25601;'), 'other ids still go to VEHICLE_GONE')
+-- Key off on the host: VEHICLE_GONE keeps index 0 (its own rules).
+c = Fixture(1, {ct = 514, alive = true, gone = true, on = false})
+c.W.handlers[47]({5, RID, 1, 2, 0, 0, 0}, c.time)
+check(c.find('event=vehicle_gone;step=rx_req;rid=5;id=25600;') and not c.find('step=lost_rx;'), 'key off: VEHICLE_GONE handles it')
+-- The host rides it: refused (REJECT 8) and kept.
+c = Fixture(1, {ct = 514, alive = true})
+c.riding, c.env.vars.playerVehicleGameObjectId = true, RID
+c.W.handlers[47]({5, RID, 1, 2, 0, 0, 0}, c.time)
+local rj = c.txOf(4)
+check(#rj == 1 and rj[1].v[1] == 5 and rj[1].v[2] == 47 and rj[1].v[3] == 8 and rj[1].v[4] == RID, 'the host rides it: REJECT 8')
+check(c.find('event=relief;role=host;step=lost_refused;rid=5;reason=local_rider;') and c.v0.alive, 'refused and kept')
+-- Absent on the host: nothing to remove (its VEHICLE_SPAWN already says alive 0).
+c = Fixture(1, {ct = 0})
+c.W.handlers[47]({5, RID, 1, 2, 0, 0, 0}, c.time)
+check(c.find('event=relief;role=host;step=lost_absent;rid=5;') and #c.txOf(4) == 0, 'absent: no removal, no refusal')
+-- A guest destruction (cause 2): the host removes its own quietly (a destruction credits nothing).
+c = Fixture(1, {ct = 514, alive = true})
+c.W.handlers[47]({5, RID, 2, 2, 0, 0, 0}, c.time)
+check(c.find('step=remove;via=seize_instant;why=guest_destroyed;ok=1;') and not c.v0.alive, 'cause 2: removed quietly on the host')
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+check(c.called('OnFulton') == 0, 'and not credited')
+
+-- Guest: the host refuses (it rides the vehicle): the reconcile loads the host's again here.
+c = Fixture(2, {ct = 514, alive = true, loadSpawns = true})
+c.tick()
+c.v0.alive = false
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+for _ = 1, 3 do hostState(c); c.run(4000) end
+check(c.called('LoadCarry') == 0 and c.find('reason=lost_here'), 'while the request is open: no reload')
+c.W.handlers[4]({1, 47, 8, RID, 0, 0}, c.time)
+check(c.find('event=relief;role=guest;step=lost_refused;rid=1;reason=8;'), 'the host refusal is logged')
+for _ = 1, 4 do hostState(c); c.run(5000) end
+check(c.last('LoadCarry') and c.find('step=load;why=host_has;type=2;'), 'refused: the host vehicle is loaded here again')
+-- Guest: the host's VEHICLE_SPAWN says alive 0: done, nothing more.
+c = Fixture(2, {ct = 514, alive = true})
+c.tick()
+c.v0.alive = false
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+hostState(c, false, 514)
+check(c.find('event=relief;role=guest;step=lost_done;rid=1;'), 'the host loss ends the request')
+c.run(60000)
+check(#c.txOf(47) == 1 and not c.find('step=remove;') and not c.find('step=lost_timeout;'), 'no resend, no removal, no timeout')
+-- Guest: no answer while the host keeps it: one resend after 20 s, then a timeout after 45 s and a reload here.
+c = Fixture(2, {ct = 514, alive = true, loadSpawns = true})
+c.tick()
+c.v0.alive = false
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+for _ = 1, 5 do hostState(c); c.run(5000) end
+check(#c.txOf(47) == 2 and c.find('step=lost_tx;rid=1;cause=1;try=2;sent=1;'), 'resent once after 20 s')
+for _ = 1, 8 do hostState(c); c.run(5000) end
+check(c.find('event=relief;role=guest;step=lost_timeout;rid=1;tries=2;') and c.last('LoadCarry'), 'unanswered: timeout, then reloaded here')
+check(#c.txOf(47) == 2, 'at most two tries')
+-- The host's RECEIVED stops the resend (the timeout still runs).
+c = Fixture(2, {ct = 514, alive = true})
+c.tick()
+c.v0.alive = false
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+c.W.handlers[3]({1, 47}, c.time)
+for _ = 1, 6 do hostState(c); c.run(5000) end
+check(#c.txOf(47) == 1, 'received: no resend')
+-- Unpaired inside the co-op mission: no credit; the request waits for the next pairing.
+c = Fixture(2, {ct = 514, alive = true})
+for _, f in ipairs(c.W.pairedHooks) do f(false) end
+c.tick()
+c.W.paired = false
+c.v0.alive = false
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+check(c.called('OnFulton') == 0 and #c.txOf(47) == 0 and c.find('step=lost_tx;rid=0;cause=1;try=0;sent=0;mission=30020;'),
+    'unpaired: no credit, the request waits')
+c.W.paired = true
+for _, f in ipairs(c.W.pairedHooks) do f(false) end
+c.tick()
+check(#c.txOf(47) == 1 and c.find('step=lost_tx;rid=1;cause=1;try=1;sent=1;'), 'sent once paired again')
+-- A destruction by the guest's own player (Dead, att local): a request with cause 2, once.
+c = Fixture(2, {ct = 514, alive = true})
+c.tick()
+c.v0.alive = false
+c.V.observe('Dead', RID, 'local')
+c.V.observe('Dead', RID, 'local')
+check(#c.txOf(47) == 1 and c.txOf(47)[1].v[3] == 2 and c.find('step=lost_tx;rid=1;cause=2;'), 'guest destroyed it: one request, cause 2')
+-- Destroyed by anything else on this copy (its unsynced guards): not the guest's to report.
+c = Fixture(2, {ct = 514, alive = true})
+c.tick()
+c.V.observe('Dead', RID, 'none')
+check(#c.txOf(47) == 0, 'a destruction by another attacker is no request')
+-- This copy's own quiet removal is never a guest loss (its Dead or OnFulton within 30 s).
+c = Fixture(2, {ct = 514, alive = true, slowSeize = true})
+c.tick()
+c.RS.removeQuiet('host_none')
+c.V.observe('Dead', RID, 'local')
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+check(#c.txOf(47) == 0 and c.called('OnFulton') == 0, 'its own removal: no request, no credit')
+-- A solo guest (never paired, nothing seeded) keeps the stock credit.
+c = Fixture(2, {ct = 514, alive = true, paired = false})
+c.env.TppTerminal.OnFulton(RID, 0, 0, 13)
+check(c.called('OnFulton') == 1 and #c.txOf(47) == 0, 'solo guest: the stock credit, no request')
+
+-- Review F5: a copy removed for host_none is loaded again when the host's comes back.
+c = Fixture(2, {ct = 514, alive = true, loadSpawns = true})
+c.tick()
+for _ = 1, 4 do hostState(c, false, 0); c.run(5000) end
+check(c.find('step=remove;via=seize_instant;why=host_none;'), 'removed for host_none')
+for _ = 1, 6 do hostState(c); c.run(5000) end
+check(c.last('LoadCarry') and c.find('step=load;why=host_has;') and not c.find('reason=lost_here'), 'the host vehicle back: loaded again')
+-- Placements have their own budget: four far placements, then a host loss is still mirrored.
+c = Fixture(2, {ct = 514, alive = true})
+c.tick()
+for _ = 1, 4 do
+    c.v0.x = 1260
+    for _ = 1, 5 do hostState(c); c.run(5000) end
+end
+check(c.count('step=placed;why=far;') == 4 and not c.find('step=reconcile_giveup;'), 'four placements, no give-up')
+for _ = 1, 5 do hostState(c, false, 0); c.run(5000) end
+check(c.find('step=remove;via=seize_instant;why=host_none;'), 'a host loss after placements is still mirrored')
+
+-- Review F6: the receiver removes index 0 quietly for any VEHICLE_GONE cause (no M4 wreck rule yet).
+c = Fixture(2, {ct = 514, alive = true, gone = true})
+c.W.vehicleStateOn = true
+check(c.V.remove(RID, 2) == true and c.find('step=remove;via=seize_instant;why=vehicle_gone;'), 'cause 2: removed quietly too')
 
 print('world_relief_sync_lua_check: ' .. checks .. ' checks PASS')

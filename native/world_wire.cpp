@@ -155,8 +155,8 @@ constexpr OpSpec kOps[] = {
     // mission, TppVehicle2 id (25600: the relief vehicle, index 0), cause (1 relief, 2 drop, 3
     // reinforce; M3 sends 1), the host's vars.reliefVehicleCarryType (whole u32: low byte the relief
     // type 1..10), the paint preset of that type, flags (1 alive, 2 the pose is the carry attitude),
-    // xyz mm and yaw mrad (the carry attitude, or the live pose 2 m up). On change and every 5 s in
-    // free roam; a guest copy without the host's index 0 loads it from these values mid mission.
+    // xyz mm and yaw mrad (the carry attitude, or the live pose 0.5 m up). On change and every 5 s in
+    // free roam (reliable, one 31-byte op); a guest copy without the host's index 0 loads it from these values mid mission.
     {op::vehicle_spawn, "VEHICLE_SPAWN", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 11, 0, 0, 31,
      {U16(1), Mission(), U16(25600, 26111), U8(1, 3), U32(), U8(), U8(0, 3), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-1000000000, 1000000000), I32(-3142, 3142)}},
