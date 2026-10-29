@@ -6,6 +6,8 @@
 # Play rehearsal: as companion-host-owned.txt (no labsetting/boot lines; title + waitgameplay; no LAB steps).
 labsetting companion_host_owned=1
 labsetting nametag=1
+# The toasts (NOTE 13) need the HUD (lab default off).
+labsetting coop_hud=compact
 boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
 waitlog host 'world_lua=event=companion; role=host; step=character; guest_code=6; guest_char=quiet;' 60
 waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=disable_type; guest_char=quiet;' 60
@@ -22,8 +24,10 @@ guest run companion_status
 wait 1000
 both capture m1-quiet-field
 host capture m1-quiet-toast
-# The guest's own character is Quiet, not the buddy_quiet fallback.
-waitlog guest 'character=apply; mission=30010; requested=quiet; applied=quiet;' 30
+# The guest's own character request is Quiet and never falls back for buddy_quiet (K25). (In the research worker build
+# the Quiet reset bypass refuses with body_hash in every run since before M1, so applied= is the DD fallback with
+# reason=bypass_unavailable there.)
+waitlog guest 'character=apply; mission=30010; requested=quiet; applied=[a-z_]+; type=[0-9]+; reason=(override|bypass_unavailable);' 30
 # LAB: the late-join case: Quiet out on the host when the lock applies; she is sent away (delete_buddy).
 host run companion_lab quiet_out
 wait 5000

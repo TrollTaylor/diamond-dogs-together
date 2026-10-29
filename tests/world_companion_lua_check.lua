@@ -154,6 +154,12 @@ c.cqc = true; c.tick(300)
 check(c.masks[#c.masks][1] == 'reset', 'a CQC hold releases the mask (CALL interrogates)')
 c.cqc = false; c.tick(300)
 check(c.masks[#c.masks][1] == 'set', 'the mask returns after the hold')
+c.W.handlers[48]({9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, c.time)
+c.tick(300)
+check(c.masks[#c.masks][1] == 'reset', 'no mask while the host has no companion (knock, sonar stay)')
+c.W.handlers[48]({10, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
+c.tick(300)
+check(c.masks[#c.masks][1] == 'set', 'the mask returns with the host dog')
 -- Lua entry points: another type is refused with a toast; the host kind passes.
 c.W.handlers[48]({1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
 local before = c.called('CallBuddy')
@@ -213,6 +219,14 @@ check(c.find('event=companion;role=host;step=mbquiet_hidden;'), 'mbquiet_hidden 
 local kind
 for _, t in ipairs(c.tx) do if t.op == 48 then kind = t.v[3] end end
 check(kind == 0, 'COMPANION carries kind none after the lock')
+-- A short unpair (a mission change) keeps the lock; 10 s unpaired lifts it.
+c.W.paired = false
+for _, f in ipairs(c.W.unpairedHooks) do f(1) end
+c.tick(200)
+check(c.called('UnsetDisableBuddyType') == 0 and c.C.guestQuiet == true, 'the lock outlives a short unpair')
+c.time = c.time + 11000
+c.tick(200)
+check(c.called('UnsetDisableBuddyType') == 1 and c.find('step=quiet_unlock;'), 'unlocked after 10 s unpaired')
 -- Host with a guest who is not Quiet: no lock.
 c = Fixture(1, {buddyType = QUIET})
 c.W.handlers[56]({1, 2, 0})

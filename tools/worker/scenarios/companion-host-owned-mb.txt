@@ -6,6 +6,8 @@
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed africa-jeep -GuestSaveSeedRun <run A>
 labsetting companion_host_owned=1
 labsetting nametag=1
+# The toasts (NOTE 13) need the HUD (lab default off).
+labsetting coop_hud=compact
 boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny
 waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
 # E3: the guest's own buddy, read from its save before the seeds, is still the horse.

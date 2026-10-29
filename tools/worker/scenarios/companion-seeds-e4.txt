@@ -8,6 +8,8 @@
 #   Save-WorkerSeed -Roles host -Name afgh-quiet ; Save-WorkerSeed -Roles guest -Name afgh-horse
 labsetting companion_host_owned=1
 labsetting nametag=1
+# The toasts (NOTE 13) need the HUD (lab default off).
+labsetting coop_hud=compact
 boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
 wait 3000
 host run buddy_status

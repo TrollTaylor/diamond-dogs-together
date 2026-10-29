@@ -182,7 +182,10 @@ end
 -- Host: the Quiet lock while the guest plays Quiet; COMPANION on change and every 5 s.
 local function hostTick(now)
  local Q, S = BT("QUIET"), TppBuddyService
- if C.guestQuiet and W.paired and Q then
+ -- The lock outlives a short unpair (a mission change unpairs for a few seconds, run dd4c61ff).
+ if W.paired then C.unpairedAt = nil end
+ local held = C.guestQuiet and (W.paired or now - (C.unpairedAt or now) < 10000)
+ if held and Q then
   if C.quietDisabled ~= W.mission then
    local is, set = W.get(S, "IsDisableBuddyType"), W.get(S, "SetDisableBuddyType")
    local okIs, already = false, false
@@ -192,7 +195,7 @@ local function hostTick(now)
    C.quietDisabled, C.quietMine = W.mission, mine or C.quietMine
    lockLog("disable_type")
   end
-  if active() == Q and now >= (C.deleteAt or 0) and W.inGame() then
+  if W.paired and active() == Q and now >= (C.deleteAt or 0) and W.inGame() then
    C.deleteAt = now + 5000
    local del = TBC("DeleteBuddy")
    if type(del) == "function" and C.keep("quiet_lock") then
@@ -322,7 +325,9 @@ local function guestTick(now)
  sendCharacter(now)
  if now >= (C.maskAt or 0) then
   C.maskAt = now + 250
-  C.mask(W.paired and W.inGame() and not cqcHold())
+  -- Only while the host has a companion out: the call menu also holds knock and sonar (run dd4c61ff).
+  local allowed = C.allowed()
+  C.mask(W.paired and W.inGame() and allowed ~= nil and allowed ~= BT("NONE") and not cqcHold())
  end
  if W.paired then guardTypes(now); reconcile(now) end
 end
@@ -341,7 +346,7 @@ W.startHooks[#W.startHooks + 1] = function()
 end
 W.pairedHooks[#W.pairedHooks + 1] = function() C.charAt, C.txAt = nil, nil end
 W.unpairedHooks[#W.unpairedHooks + 1] = function()
- C.host, C.hostKind, C.guestQuiet = nil, nil, nil
+ C.host, C.hostKind, C.unpairedAt = nil, nil, W.now()
  pcall(C.mask, false)
  pcall(C.unguard)
 end
