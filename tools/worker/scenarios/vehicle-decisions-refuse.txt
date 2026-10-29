@@ -25,7 +25,8 @@ host debug clear_enemies 100
 wait 1500
 guest run vehicle_state_status 25608
 guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
-# The host boards 25608 (its goto door spot, E); the guest stands 8 m behind it.
+# The host boards 25608 (its goto door spot, E); the guest stays at its lab boot spot beside the jeep, facing it (run
+# 243ae269 stopped at a placebehind behind the seated host: a seated partner is no landing pose).
 host debug goto_vehicle jeep
 wait 3000
 host press e 150
@@ -33,7 +34,7 @@ wait 4000
 host run vehicle_seats
 host expect vehicle;id=25608
 waitlog host 'event=vehicle_state; step=skip; reason=local_rider; id=25608' 15
-placebehind guest host 8 0
+guest debug teleport -652.93 1.20 879.33 -117
 wait 3000
 waitlog guest 'partner_ride_seat=(byid|confirmed); vehicle=25608;' 20
 both capture refuse-before
