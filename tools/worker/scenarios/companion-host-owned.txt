@@ -1,0 +1,59 @@
+# M1 proof, run A (dog; docs/vehicles-companions-design.md section 9 M1, experiments E1, E3 save part, E4).
+# The host deploys D-Dog (afgh-ledge), the guest's own save deploys D-Horse (afgh-horse); companion_host_owned=1.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# Variants: companion-host-owned-quiet.txt (run B, the Quiet lock), companion-host-owned-mb.txt (run C, Mother Base;
+# its guest seed is this run's guest save: -GuestSaveSeedRun <this run>, the E3 check that the guest's own horse
+# survived the checkpoint and the mission exit below).
+# Play rehearsal (-Mode play -WanSim bad): delete the labsetting lines and the "boot" line, put "title 200",
+# "waitgameplay host 240" and "waitgameplay guest 240" in their place, and drop the lab-only lever steps (marked LAB).
+labsetting companion_host_owned=1
+labsetting nametag=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+# E1: the host seeds its dog, the guest loads it (its own horse is kept for its saves).
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=own_kept; why=seed; own=horse;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 90
+host run buddy_status
+host expect kdog
+host expect vars_type=2_own=-
+guest run buddy_status
+guest expect kdog
+guest expect vars_type=2_own=1
+wait 4000
+both capture m1-dog
+# E4: the guest's call menu is masked (CALL), the F9 summon refused with a toast.
+waitlog guest 'world_lua=event=companion; role=guest; step=guard; path=call_menu; via=pad_mask;' 30
+guest hold q 1500 nowait
+wait 700
+guest capture m1-guest-callmenu
+guest release
+wait 1000
+guest run horse_spawn
+guest expect host_only;companion=host_owned
+wait 400
+guest capture m1-refused-toast
+waitlog guest 'world_lua=event=companion; role=guest; step=refused; path=f9_horse_spawn;' 20
+# E3 (save part): a host checkpoint; the guest's own save write keeps its horse while it shows the dog.
+host worldtrigger world_probe=shared_checkpoint
+waitlog guest 'world_lua=event=companion; role=guest; step=save_own; .*own=horse; live=dog;' 60
+# Reconcile (K16): the host swaps to D-Horse mid-mission; the guest follows with its own buddy block.
+host run horse_spawn
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=call; kind=horse;' 60
+wait 6000
+host run buddy_status
+guest run buddy_status
+guest expect khorse
+both capture m1-reconcile-horse
+# Mission exit (E3): host-led travel to Africa; the guest's mission-exit save keeps its own vars.
+host worldtrigger goto=30020
+waitmission host 30020 180
+waitmission guest 30020 180
+waitgameplay host 180
+waitgameplay guest 180
+# The host's seed names what its vars hold after the swap (dog unless the native CallBuddy wrote vars.buddyType).
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=[a-z]+; source=seed; mission=30020;' 120
+guest run buddy_status
+guest expect own=1
+both capture m1-africa
+state

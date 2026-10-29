@@ -164,6 +164,11 @@ check(c.env.TppBuddy2BlockController.CallBuddy(DOG, nil, 0) == true, 'the host k
 check(c.env.TppBuddy2BlockController.DeleteBuddy() == false, 'a guest DeleteBuddy is refused while the host has a dog')
 check(c.find('step=hook;fn=CallBuddy;type=horse;'), 'the E4 census logs the hook')
 check(c.W.api.buddyCall == c.C.orig.CallBuddy, 'world_buddy/debug_buddy keep the original (their own guards)')
+-- The guest's disable byte: every type but the host's and the loaded one (the iDroid swap path).
+local disabled = {}
+for _, v in ipairs(c.calls) do if v[1] == 'SetDisableBuddyType' then disabled[v[2]] = true end end
+check(disabled[HORSE] and disabled[QUIET] and disabled[WALKER] and not disabled[DOG], 'guest disables horse, Quiet, walker')
+check(c.find('step=guard;path=idroid_swap;via=disable_type;allowed=dog;'), 'the byte guard is logged')
 -- Reconcile: the host changes to D-Horse; after 3 s the guest calls a horse (original, no refusal).
 c.W.handlers[48]({2, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
 c.tick(500)
@@ -172,6 +177,11 @@ c.time = c.time + 3500
 c.W.handlers[48]({3, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
 c.tick(200)
 check(c.active == HORSE and c.find('step=reconcile;via=call;kind=horse;have=dog;ok=1;'), 'reconcile by CallBuddy to the host kind')
+local unset = false
+for _, v in ipairs(c.calls) do if v[1] == 'UnsetDisableBuddyType' and v[2] == HORSE then unset = true end end
+check(unset and not c.C.mine[HORSE], 'the new host kind is enabled again before the reconcile')
+for _, f in ipairs(c.W.stopHooks) do f(true) end
+check(c.C.mine == nil, 'mission end clears the guest bits')
 -- A solo Load gives the guest its own buddy back.
 c.F.current = nil
 c.env.TppMission.Load(30020)

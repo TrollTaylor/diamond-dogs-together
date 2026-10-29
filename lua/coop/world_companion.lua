@@ -277,6 +277,36 @@ local function reconcile(now)
  C.token = nil
  L(fmt("step=reconcile;via=%s;kind=%s;have=%s;ok=%d;", via, typeName(want), typeName(have), ok and 1 or 0))
 end
+-- Guest: the disable byte for every buddy type that is neither the host's nor loaded here, so a
+-- native swap request (the iDroid buddy change; the controller update reaches the CallBuddy
+-- core 0xA44740 that tests the byte, static read) refuses. Only bits this module set are
+-- cleared (at mission end, unpair); never the loaded or the host's type (K5).
+local GUARD = {"HORSE", "DOG", "QUIET", "WALKER_GEAR"}
+local function guardTypes(now)
+ if now < (C.typeAt or 0) then return end
+ C.typeAt = now + 1000
+ local S = TppBuddyService
+ local is, set, unset = W.get(S, "IsDisableBuddyType"), W.get(S, "SetDisableBuddyType"), W.get(S, "UnsetDisableBuddyType")
+ local allowed, have = C.allowed(), active()
+ if type(is) ~= "function" or type(set) ~= "function" or type(unset) ~= "function" or allowed == nil then return end
+ C.mine = C.mine or {}
+ local changed = false
+ for _, n in ipairs(GUARD) do
+  local t = BT(n)
+  if t and C.mine[t] and (t == allowed or t == have) then
+   pcall(unset, t); C.mine[t] = nil; changed = true
+  elseif t and t ~= allowed and t ~= have and not C.mine[t] then
+   local ok, already = pcall(is, t)
+   if ok and already ~= true and pcall(set, t) then C.mine[t] = true; changed = true end
+  end
+ end
+ if changed then L(fmt("step=guard;path=idroid_swap;via=disable_type;allowed=%s;", typeName(allowed))) end
+end
+function C.unguard()
+ local unset = W.get(TppBuddyService, "UnsetDisableBuddyType")
+ if C.mine and type(unset) == "function" then for t in pairs(C.mine) do pcall(unset, t) end end
+ C.mine = nil
+end
 local function guestTick(now)
  local E = C.expect
  if E and E.mission == W.mission and not E.done and W.inGame() then
@@ -294,10 +324,10 @@ local function guestTick(now)
   C.maskAt = now + 250
   C.mask(W.paired and W.inGame() and not cqcHold())
  end
- if W.paired then reconcile(now) end
+ if W.paired then guardTypes(now); reconcile(now) end
 end
 function C.tick(now)
- if not C.on() then if C.masked then C.mask(false) end return end
+ if not C.on() then if C.masked then C.mask(false) end if C.mine then C.unguard() end return end
  if now < (C.nextTick or 0) then return end
  C.nextTick = now + 100
  local ok, err = pcall(W.host and hostTick or guestTick, now)
@@ -313,8 +343,9 @@ W.pairedHooks[#W.pairedHooks + 1] = function() C.charAt, C.txAt = nil, nil end
 W.unpairedHooks[#W.unpairedHooks + 1] = function()
  C.host, C.hostKind, C.guestQuiet = nil, nil, nil
  pcall(C.mask, false)
+ pcall(C.unguard)
 end
-W.stopHooks[#W.stopHooks + 1] = function() pcall(C.mask, false) end
+W.stopHooks[#W.stopHooks + 1] = function() pcall(C.mask, false); pcall(C.unguard); C.typeAt = nil end
 
 -- E4 census and guest refusal of the Lua buddy entry points (the co-op module's own calls
 -- pass: C.token, and W.api.buddyCall is the original, bound below).
