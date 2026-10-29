@@ -72,6 +72,9 @@ local function write(key, value)
   for i = 0, key[2] - 1 do array[i] = value[i] end
  else vars[key[1]] = value end
 end
+-- Own-only (never seeded), optional: the dead-buddy and common buddy flags. E19 (run d937191f): guards killed the
+-- guest copy's held dog (deadBuddyType 0 -> 4, buddyCommonFlag 32 -> 0); the guest's saves keep its own (D8 b).
+local OWN = {{"deadBuddyType"}, {"buddyCommonFlag"}}
 function C.snapshot()
  local s = {}
  for _, key in ipairs(keys()) do
@@ -79,12 +82,15 @@ function C.snapshot()
   if v == nil then return nil, key[1] end
   s[key[1]] = v
  end
+ for _, key in ipairs(OWN) do s[key[1]] = read(key) end
  return s
 end
 function C.restore(s)
- for _, key in ipairs(keys()) do
-  local v = s[key[1]]
-  if v ~= nil then pcall(write, key, v) end
+ for _, list in ipairs({keys(), OWN}) do
+  for _, key in ipairs(list) do
+   local v = s[key[1]]
+   if v ~= nil then pcall(write, key, v) end
+  end
  end
 end
 -- D8 (b): this copy's own buddy vars, kept while others are in vars (the host's seeds on the
@@ -449,7 +455,9 @@ function C.install()
    local now = W.now()
    if C.saves <= 3 or now - (C.saveLogAt or -1e9) >= 5000 then
     C.saveLogAt = now
-    L(fmt("step=save_own;slot=%s;own=%s;live=%s;n=%d;", tostring((...)), typeName(own.buddyType), typeName(live.buddyType), C.saves))
+    L(fmt("step=save_own;slot=%s;own=%s;live=%s;n=%d;own_dead=%s;live_dead=%s;own_flag=%s;live_flag=%s;", tostring((...)),
+     typeName(own.buddyType), typeName(live.buddyType), C.saves, tostring(own.deadBuddyType), tostring(live.deadBuddyType),
+     tostring(own.buddyCommonFlag), tostring(live.buddyCommonFlag)))
    end
    if not r[1] then error(r[2], 0) end
    return unpack(r, 2)

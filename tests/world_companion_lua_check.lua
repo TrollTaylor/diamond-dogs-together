@@ -56,7 +56,8 @@ local function Fixture(role, o)
         SetDisableBuddyType = function(t) rec('SetDisableBuddyType', t) end,
         UnsetDisableBuddyType = function(t) rec('UnsetDisableBuddyType', t) end}
     env.TppSave = {SaveVarsToSlot = function(slot) c.saves[#c.saves + 1] = {slot = slot, buddyType = env.vars.buddyType,
-        eye = env.vars.buddyDogEyeType, start = env.vars.buddyTypeMissionStart} end}
+        eye = env.vars.buddyDogEyeType, start = env.vars.buddyTypeMissionStart, dead = env.vars.deadBuddyType,
+        flag = env.vars.buddyCommonFlag} end}
     env.TppStory = {CanArrivalQuietInMB = function() return true end}
     env.GameObject = {GetGameObjectIdByIndex = function(name, i) return name == 'TppBuddyDog2' and i == 0 and 9728 or 65535 end,
         SendCommand = function(id, cmd) rec('SendCommand', id, cmd.id, cmd.pos); return true end}
@@ -146,6 +147,23 @@ check(c.find('n=3;') and not c.find('n=4;'), 'a burst after the first three is n
 c.time = c.time + 5000
 c.env.TppSave.SaveVarsToSlot(0)
 check(c.find('step=save_own;slot=0;own=horse;live=dog;n=5;') and c.saves[5].buddyType == HORSE, 'the next burst after 5 s is logged')
+-- D8 (b) and E19 (run d937191f: guards killed the guest copy's held dog: deadBuddyType 0 -> 4, buddyCommonFlag 32 -> 0):
+-- the guest's saves keep its own dead-buddy and common flags too; vars stay live after the save; the end of the
+-- session restores them. They are never seeded (not follow keys).
+c = Fixture(2)
+c.env.vars.deadBuddyType, c.env.vars.buddyCommonFlag = 0, 32
+follow(c, values)
+check(c.C.own and c.C.own.deadBuddyType == 0 and c.C.own.buddyCommonFlag == 32, 'the own snapshot has the dead-buddy and common flags')
+c.env.vars.deadBuddyType, c.env.vars.buddyCommonFlag = 4, 0
+c.env.TppSave.SaveVarsToSlot(0)
+check(c.saves[#c.saves].dead == 0 and c.saves[#c.saves].flag == 32, 'a save after the mirror died writes the guest own flags')
+check(c.env.vars.deadBuddyType == 4 and c.env.vars.buddyCommonFlag == 0, 'the live flags are back after the save')
+check(c.find('step=save_own;slot=0;own=horse;live=dog;n=1;own_dead=0;live_dead=4;own_flag=32;live_flag=0;'), 'the save line shows both')
+c.C.release('test')
+check(c.env.vars.deadBuddyType == 0 and c.env.vars.buddyCommonFlag == 32, 'the end of the session restores them')
+for _, key in ipairs(c.S.keys) do check(key[1] ~= 'deadBuddyType' and key[1] ~= 'buddyCommonFlag', 'never a follow seed key') end
+c = Fixture(2); follow(c, values)
+check(c.C.own and c.C.own.buddyType == HORSE and c.C.own.deadBuddyType == nil, 'a copy without those vars still keeps its own buddy')
 -- The load is confirmed once the block has the host's dog.
 c.W.mission = 30010
 for _, f in ipairs(c.W.startHooks) do f() end
