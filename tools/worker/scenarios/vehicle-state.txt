@@ -38,6 +38,7 @@
 #          (The guest's own destruction is not requested: no vehicle Damage message, runs 5179b50b / 35ba7929.)
 # NEVER: step=error on either copy; a guest step=applied while the guest rides the jeep; a host step=tx for 25608
 #   between the drive's skip and resume lines; viewer_changed; world=... or partner_... faults.
+# Passed: 3585869d (lab, build 57fc2f7, every expectation met; frames on both screens of the push, the near hold and the wreck).
 labsetting world_vehicle_state=1
 labsetting world_vehicle_gone=1
 labsetting world_vehicle_wreck=1

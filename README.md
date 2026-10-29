@@ -55,7 +55,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 
 - **Your partner's body:** you see their body, gear and weapons as they walk, run, crouch, crawl, aim, reload and throw.
 - **Movement:** ladders, ledges, the cardboard box and item pickups.
-- **Vehicles:** your partner drives; you can ride in the back seat of a jeep. A world vehicle that nobody drives stays where it was left on both screens; either player's Fulton of it, and its damage and destruction on the host's PC, are shared.
+- **Vehicles:** your partner drives; you can ride in the back seat of a jeep. In Afghanistan and Africa free roam, a world vehicle that nobody drives stays where it was left on both screens and has the body damage the host's PC gives it; either player's Fulton of it removes it on both screens, and one destroyed on the host's PC disappears from the partner's screen.
 - **Helping each other:** revive a downed partner, wake a sleeping one, and carry them.
 - **Shared world:** enemy kills, sleeps and Fultons, alerts, time and weather.
 - **Shared progress:** the host's travel, checkpoints, and game over with continue for both players.
@@ -65,7 +65,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 
 - Story missions, the hospital prologue, side ops and cutscenes are not co-op yet.
 - **Enemies:** each PC still moves its own enemies. Only what happens to them (killed, asleep, Fultoned, alerted) is shared.
-- **Vehicles:** trucks that enemies drive move separately on each PC. Wheel damage and fire are not shared, and damage the guest does to a vehicle, even destroying it, shows only on the guest's screen.
+- **Vehicles:** trucks that enemies drive move separately on each PC. Wheel damage and fire are not shared. Damage the guest does to a vehicle is undone within about 10 seconds, and a vehicle the guest destroys stays destroyed only on the guest's screen. A vehicle destroyed on the host's PC leaves no wreck on the guest's screen. In Mother Base a parked vehicle's position, damage, Fulton and destruction are not shared yet.
 - **Animals and prisoners** are not shared.
 - **Sortie vehicles:** a vehicle you bring from sortie prep (the helicopter's vehicle choice) doesn't appear on your partner's screen; they see you without it. Use world vehicles you find on the map to ride together.
 - **Mounts:** you can't shoot from a back seat, and a partner riding D-Horse or D-Walker is hidden.

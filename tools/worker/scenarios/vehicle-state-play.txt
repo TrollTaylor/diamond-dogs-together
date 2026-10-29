@@ -27,6 +27,7 @@
 #          via=locator; src=rx; ok=1; frames play-c4-placed, play-det-NN, play-destroyed (a wreck on the host's screen,
 #          no jeep on the guest's)
 # NEVER: step=error, viewer_changed, faults, a guest step=applied while it rides J1, via=wreck in play.
+# Passed: 4bbbfde4 (play -WanSim bad, build c98ad98, every expectation met, no vehicle key named).
 labsetting partner_native_ride=seat
 labsetting nametag=1
 title 200

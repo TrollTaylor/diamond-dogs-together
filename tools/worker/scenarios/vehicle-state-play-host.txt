@@ -20,6 +20,8 @@
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -Mode play -WanSim bad
 # NEVER: step=error, viewer_changed, faults, a guest step=applied for J1 while the host rides it, via=wreck in play,
 #   a guest step=hold; reason=player_near that never ends.
+# Passed: b31a1b65 (play -WanSim bad, build 5b7522a, every expectation met: guest applied; moved=1; d_mm=7970 after the
+#   host's bail; the C4 destruction framed on both screens). The guest's 18 m spot faced a wall during the bail.
 labsetting partner_native_ride=seat
 labsetting nametag=1
 title 200

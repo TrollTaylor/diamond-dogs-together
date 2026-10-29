@@ -1183,12 +1183,19 @@ vehicle host-authoritative. It is a new mechanism that removes vehicles from
 a copy, so it is gated: lab.ini `world_vehicle_gone=0|1` (lab and play, not
 a play refusal). Default since M4: **0 in the lab** unless named (scenarios
 opt in) and **1 in play** unless named (`LabConfig::world_vehicle_gone_given`;
-lab FRAMEs `075c1ea4`, `92720b75`, `0edadbe2`; play rehearsal `e44516d7` with
-`-WanSim bad`: each player's own Fulton removed the jeep on both copies;
-docs/STATUS.md M4). Carried to Lua as CFG **r[15]** bit 1 (`world_link::HandleCfg`;
+lab FRAMEs `075c1ea4`, `92720b75`, `0edadbe2`; play rehearsals with
+`-WanSim bad`: `e44516d7`, each player's own Fulton removed the jeep on both
+copies, and `4bbbfde4` / `b31a1b65` with no vehicle key named, where the
+host's C4 destruction was a Despawn on the guest's copy (framed on both in
+`b31a1b65`); docs/STATUS.md M4 and M4 review fixes). Carried to Lua as CFG **r[15]** bit 1 (`world_link::HandleCfg`;
 r[14] is the WS4 census flag; a missing value is 0). Both copies need it; a host
 without it answers every request with REJECT 11, a guest without it logs
 `event=vehicle_gone;step=ignored;reason=off` once and keeps its vehicles.
+Since the M4 review the module runs at 30010 and 30020 in play and at Mother
+Base (30050) only in the lab (`step=off;mission=30050;reason=mb_lab_only` in
+play): no hidden run has covered 30050, its index Despawn included
+(`coop-vehicle-gone-mb.txt` has never run). `step=on` names the wreck key
+(`wreck=0|1`, below).
 
 | Code | Name | Dir | Wire | Lua fields | Queue | Body |
 |---|---|---|---|---|---|---|
@@ -1250,6 +1257,24 @@ below level 3), then from Lua (`lua/coop/world_vehicle.lua`, spliced last):
   (`step=hold;reason=local_rider|occupied|own_watch|partner_ride|unpaired|riders_unreadable|pose_unreadable`)
   for 120 s (`step=hold_timeout`; a held request then gets REJECT 9). The
   viewer's own player is never moved or dismounted.
+- **Index 0 first.** Index 0 (25600, the relief vehicle: M3 / E17) is refused
+  `index0` before any removal form, the wreck below included (2a3d97d wrecked a
+  destroyed 25600 on the receiver; M4 review).
+- **Wreck parity** (M4, behind its own key since the M4 review): lab.ini
+  `world_vehicle_wreck=0|1` (CFG r[15] bit 4, `world::VehicleModules`; lab and
+  play, **0 in both** unless named). With it on, a destroyed vehicle (cause 2) is
+  wrecked on the receiver by the instance command `SetBodyLife{life=0}` (the
+  engine's own destruction: VehicleBroken, explosion and fire, IsAlive false, the
+  wreck in the pool; E5, `d407f115`, `0edadbe2`) instead of a Despawn, read back
+  like one (`via=wreck`). A wreck still alive 2 s later falls back to the Despawn
+  (`step=fallback;id=;from=wreck;via=;ok=`); with no Despawn form the id is not
+  marked lost, so a re-sent announcement retries it. It stays off in play: the
+  only play destruction attempt (`e235bda6`) never destroyed the jeep, and the
+  blast it replays on the receiver (it knocked the guest down in `5179b50b`) was
+  never measured with live guards and godmode off, where it could kill guest-copy
+  guards (not synced in play: unattributed local kills) or wreck a second vehicle
+  on the guest's copy only. From 2a3d97d to the review it rode on VEHICLE_STATE's
+  key, which 482eb74 turned on in play.
 - **Removal:** the TppVehicle2 class command `Despawn` (`0xB30AF0`,
   StrCode32 `0xE22EC430`, dispatched by `TppVehicle2_LuaCommands` `0xB305B0`):
   an authored vehicle by its locator (`veh_lv_0000..0031`, `veh_trc_0000..0015`,
@@ -1292,9 +1317,10 @@ below level 3), then from Lua (`lua/coop/world_vehicle.lua`, spliced last):
   CheckFultonType / DirectAccount), watched as cause 1 like the local player's
   FultonInfo (`step=watch;m=Seize;att=lever`), so the real readback decides. `debug vehicle_gone_status` is
   read-only: `vgone;on=;role=;gone=;held=;watch=;req=`.
-- Lua lines (`world_lua=event=vehicle_gone;step=...`): `on`, `watch`,
+- Lua lines (`world_lua=event=vehicle_gone;step=...`): `on` (with `wreck=`),
+  `off` (Mother Base in play), `watch`,
   `settle`, `watch_drop`, `lost`, `tx`, `req`, `rx`, `rx_req`, `matched`, `hold`,
-  `hold_timeout`, `refused`, `absent`, `applied`, `req_done`, `req_timeout`,
+  `hold_timeout`, `refused`, `absent`, `applied`, `fallback`, `req_done`, `req_timeout`,
   `resend`, `lever`, `ignored`, `error` (one error turns only this module off
   for the mission).
 
@@ -1321,11 +1347,17 @@ VEHICLE_STATE makes the pose, body life and state word of a vehicle nobody
 drives host-authoritative. Lab.ini `world_vehicle_state=0|1` (lab and play, not
 a play refusal; since M4 **0 in the lab** unless named and **1 in play** unless
 named, after the lab FRAMEs `d407f115` / `0edadbe2` and the play rehearsals
-`e235bda6` / `d9b48fcb` with `-WanSim bad`),
+`e235bda6` / `d9b48fcb` with `-WanSim bad`; since the M4 review also `4bbbfde4`
+and `b31a1b65`, the shipped default with no vehicle key named; `b31a1b65` is the
+first pose applied in play, `moved=1` after the host's bail out of a rolling jeep),
 carried to Lua as CFG **r[15] bit 2** (r[15] is the vehicle modules bitmask
-since M4: bit 1 VEHICLE_GONE, bit 2 VEHICLE_STATE; `world_link::HandleCfg`; a
+since M4: bit 1 VEHICLE_GONE, bit 2 VEHICLE_STATE, bit 4 VEHICLE_GONE's wreck
+parity since the M4 review; `world::VehicleModules`, `world_link::HandleCfg`; a
 missing or out-of-range value is 0). Both copies need it; a guest without it
-logs `event=vehicle_state;step=ignored;reason=off` once.
+logs `event=vehicle_state;step=ignored;reason=off` once. Like VEHICLE_GONE it
+runs at Mother Base (30050) only in the lab since the M4 review
+(`step=off;mission=30050;reason=mb_lab_only` in play): no hidden run has covered
+30050, where the guest matches the cluster jeeps `veh_clNN_clNN_0000` by name.
 
 | Code | Name | Dir | Wire | Lua fields | Queue | Body |
 |---|---|---|---|---|---|---|
@@ -1365,19 +1397,31 @@ logs `event=vehicle_state;step=ignored;reason=off` once.
   lost or watches (`gone_here`, `own_watch`). A wreck (IsAlive false) is never
   sent; its removal is VEHICLE_GONE's. An unreadable life is sent as 65535.
 - **Guest:** applies only while linked, to the vehicle the locator hash names
-  here (any pool index), or for an unnamed one (never index 0, the relief
-  vehicle: M3, `index0`) the same id when it is alive, of that type and the
-  nearest of its type to the reported position within 40 m (`not_nearest`,
-  `no_match`). Refused (`step=refused;reason=`): `no_locator`, `absent`
-  (not alive here), `lrrp`, `gone_here`. Held (`step=hold;here=;reason=`,
+  here (any pool index) when it lies within 40 m of the host's pose (`far`
+  otherwise: a locator that resolves elsewhere here is never teleported; M4
+  review), or for an unnamed one (never index 0, the relief vehicle: M3,
+  `index0`) the same id when it is alive, of that type and the nearest of its
+  type to the reported position within 40 m (`not_nearest`, `no_match`).
+  Refused (`step=refused;reason=`): `no_locator`, `absent` (not alive here),
+  `far`, `lrrp`, `gone_here`, and `place_failed` (a needed move whose
+  `R.place` did not take: `step=refused;id=<host id>;reason=place_failed;here=;d_mm=;err_mm=;...`,
+  never logged as `same`; the next state retries). Held (`step=hold;here=;reason=`,
   re-checked every 250 ms, `step=hold_timeout` after 10 s; the next refresh
   retries): `local_rider`, `occupied`, `partner_ride`, `own_watch`,
-  `player_near` (the local player within 3.5 m of where a move would put it),
-  `unpaired`. Applied: `SetPosition{position, rotY}` (world_ride_pose `R.place`)
-  when it is > 0.5 m or 5 deg off, read back (`err_mm`); `SetBodyLife{life}` only
-  when the host's life is below this copy's (this copy keeps its own extra
-  damage), read back through the native read. Lines: `step=applied;id=<here>;from=<host id>;moved=;d_mm=;err_mm=;dyaw=;life=;was=;sv=;here_sv=;zero=;here_zero=;f=`
-  (every apply) and `step=same` (once per change of outcome).
+  `player_near` (for a move: the local player within 3.5 m of where it would go
+  or of where it stands now, so a vehicle is never pulled away from a player
+  walking up to it or in a GetOn before ON_VEHICLE; M4 review), `unpaired`.
+  Applied: `SetPosition{position, rotY}` (world_ride_pose `R.place`) when it is
+  > 0.5 m or 5 deg off, read back (`err_mm`); `SetBodyLife{life}` whenever this
+  copy's body life differs from the host's, in both directions (M4 review: with
+  the downward-only rule of the first build, guest-only hits added up between
+  states, so the guest's copy reached 0 first and the split was permanent: no
+  vehicle Damage message, so no request; e235bda6 shows the guest copy 102 below
+  the host between two states), read back through the native read; a host life
+  of 0 is written as 1 (a destruction is VEHICLE_GONE's, behind its own key).
+  Lines: `step=applied;id=<here>;from=<host id>;moved=;d_mm=;err_mm=;dyaw=;life=;was=;sv=;here_sv=;zero=;here_zero=;f=`
+  (every apply) and `step=same` (for every host change, `f=1`; for a sweep or a
+  refresh once per change of outcome, where a hold counts as a change).
 - **Lab levers** (refused natively outside the one-PC lab and in Lua outside
   mode=lab): `debug vehicle_push <id|nearest> <dx> <dz>` (this copy's vehicle
   moved by up to 50 m, y + 0.3 m: a stand-in for a shove), `debug vehicle_life
@@ -1385,16 +1429,23 @@ logs `event=vehicle_state;step=ignored;reason=off` once.
   0 is the E5 wreck attempt). `debug vehicle_state_status [id]` is read-only
   (play too).
 - **Not covered:** a guest's own damage or push never reaches the host (the
-  host's refresh undoes a guest push; a guest's extra damage stays on its copy,
-  and so does its destruction, section 16 "Detection"); wheel lives are sent (zero mask) and logged but not
-  written (no write API); AI-driven and reinforcement vehicles are M8.
+  host's next state, the 10 s refresh at the latest, undoes a guest push and puts
+  a guest-only hit back; a guest's destruction stays on its copy, section 16
+  "Detection"); wheel lives are sent (zero mask) and logged but not written (no
+  write API); a SetBodyLife raise on a copy that burns is [U] (fire is not a
+  function of the life word, `d407f115`); AI-driven and reinforcement vehicles
+  are M8.
 
 Tests: `world_wire_tests` (VehicleState: table, bounds, world queue, stale
 purge, level 3), `world_receipt_tests` (r[15] bitmask), `lab_config_tests`,
 `partner_vehicle_tests` (TestLife: SvState, the life block, every refusal),
 `world_vehicle_state_lua_check` (in the worker gate), `debug_vehicle_lua_check`,
-`lab_scripts_tests`, `worker_session_tests`. Hidden-worker scenarios
-`tools/worker/scenarios/vehicle-state.txt` (lab, `-SaveSeed africa-jeep`) and
-`vehicle-state-play.txt` (the play rehearsal, `-Mode play -WanSim bad`, lab
-seed). Hidden runs: docs/STATUS.md M4 (`d407f115`, `0edadbe2`, `e235bda6`,
-`d9b48fcb`).
+`lab_scripts_tests`, `worker_session_tests` (the `logmark` step). Hidden-worker
+scenarios `tools/worker/scenarios/vehicle-state.txt` (lab, `-SaveSeed
+africa-jeep`) and `vehicle-state-play.txt` (the play rehearsal, `-Mode play
+-WanSim bad`, lab seed, no vehicle key named: the shipped default); both mark
+the logs (`logmark`) before each event, so a post-event expectation cannot be
+met by an earlier line; `vehicle-state-play-host.txt` (play, no key named: the
+host's bail and a C4 destruction). Hidden runs: docs/STATUS.md M4 (`d407f115`,
+`0edadbe2`, `e235bda6`, `d9b48fcb`) and M4 review fixes (`3585869d`, `4bbbfde4`,
+`b31a1b65`).

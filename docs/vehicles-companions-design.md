@@ -823,10 +823,100 @@ scratch folder `complete/frames/vehicle-state/`):
 Decision (E5 pass rule, D7 not needed): **E5 passed for removals the host decides and for Fultons** [O]. The hold under
 a seated rider (`92720b75` C), the engine's Fulton (`075c1ea4`, `92720b75` D) and each player's own Fulton by hand
 (`e44516d7` in play over `-WanSim bad`; the guest's also in the lab, `5179b50b`) remove the vehicle on both copies. A
-destroyed vehicle is wrecked on the receiver with `SetBodyLife{life=0}` instead of Despawn when VEHICLE_STATE is on
-(`0edadbe2`); a Fulton stays a Despawn (there is no balloon on the receiver). A destruction on the guest's copy is not
-requested (`35ba7929`, above), which leaves today's split and adds no new risk. The play defaults of VEHICLE_GONE and
-VEHICLE_STATE flipped on (`482eb74`; section 9 M4).
+destroyed vehicle can be wrecked on the receiver with `SetBodyLife{life=0}` instead of Despawn (`0edadbe2`, lab, a
+lever-made destruction on the host); a Fulton stays a Despawn (there is no balloon on the receiver). A destruction on
+the guest's copy is not requested (`35ba7929`, above), which leaves today's split. The play defaults of VEHICLE_GONE
+and VEHICLE_STATE flipped on (`482eb74`; section 9 M4). **Amended after the M4 review (below):** the wreck rode on
+VEHICLE_STATE's key and so reached play with no play rehearsal of a destruction and an unmeasured blast on the
+receiver; it now has its own key `world_vehicle_wreck`, off in lab and play unless named, so in play a destroyed
+vehicle is a Despawn on the receiver; and both play defaults cover 30010 and 30020 only (Mother Base is lab only).
+
+**M4 review (2026-10-29, verdict fix_first) and fixes (`c423b53`, `4bf9613`, `0dfac60`, `c98ad98`, `57fc2f7`).** An
+independent review of `243e1a8` found four major and six minor problems; each was checked against the code and the
+sliced run logs before it was fixed, and all held [O]:
+- *Index 0 after the wreck:* `V.remove` returned `wreck` before the `id % 512 == 0` refusal, so a destroyed 25600 (the
+  relief vehicle) was wrecked on the receiver (rx and req; the reviewer's fixture probe). Index 0 is now refused first.
+- *Wreck parity in play without a rehearsal:* it rode on `W.vehicleStateOn`, which `482eb74` turned on in play, while
+  its only play attempt (`e235bda6`) never destroyed the jeep and its blast on the receiver (it knocked the guest down
+  in `5179b50b`) was never measured with live guards. It now has its own key `world_vehicle_wreck` (CFG r[15] bit 4),
+  off in lab and play unless named; in play a destroyed vehicle is a Despawn on the receiver. A wreck that does not
+  take falls back to the Despawn (`step=fallback`).
+- *The play flip:* Mother Base was in both modules' missions with no 30050 run (and the never-run index Despawn); both
+  modules are now lab only there (`step=off; reason=mb_lab_only` in play), and a named VEHICLE_STATE match must lie
+  within 40 m (`far`). The rehearsals had named the keys; `4bbbfde4` (below) names none.
+- *Body life downwards only:* guest-only hits added up between states (`e235bda6`: the guest's copy 102 below the
+  host's), so its copy would reach 0 first, a split nothing repairs. Life is now host-authoritative both ways, and a
+  host life of 0 is written as 1 (destruction is VEHICLE_GONE's).
+- Minor: a failed placement now logs `refused; place_failed` (it logged `same`); `player_near` also holds when the
+  local player is within 3.5 m of the vehicle's current spot; waitlog read from the session start, so several
+  post-event expectations were met by earlier lines: the worker's new `logmark` step, a line per host change (`f=1`)
+  and after each hold; the roadmap's `[x]` for pushed vehicles is `[~]` (a lab-lever push, then framed on the guest's
+  screen only; `3585869d` frames it on both, still with the lever); the README no longer promises a destruction parity that play had not shown.
+
+Claims corrected [O]: `d9b48fcb` showed VEHICLE_STATE's non-interference with a drive and leave (the guest's stats
+`applied=1; moved=0`, the one apply a life), not a pose it applied: the shared left pose is RIDE_FAST's last
+placement. "Every expectation met" in `d9b48fcb`, `e235bda6` and `0edadbe2` was log-reviewed, not expectation-proven,
+for the post-drive lines: the guest's `(same|applied)` matched the pre-drive sweep line (`t_ms=160308032`,
+`151330449`) and `0edadbe2`'s post-drive host `tx` matched the push tx (`seq=16`). A host-side destruction becoming a
+wreck on the guest's copy was shown only with the lab lever (`0edadbe2`).
+
+Hidden runs after the fixes (lab or play as stated; copied saves, research build, gun stage, low graphics; each
+Closed, BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line):
+- `72366eb5` (`vehicle-state.txt`, lab, `africa-jeep`, build `0dfac60`; 8 expectation failures, all after the drive).
+  `step=on; wreck=1` on both copies. The push (`tx; d_mm=3000` -> guest `applied; moved=1; err_mm=0` 16 ms later),
+  the guest push put back by the refresh (`f=5`) and **the near-player hold** passed [O]: with the guest at the jeep's
+  door the host's 2 m push gave guest `hold; id=25608; here=25608; reason=player_near` 32 ms after the host's `tx`, and
+  `applied; moved=1; d_mm=2000` once the guest was moved clear, 2.2 s later (frames `m4-near-held` on the guest's
+  screen: the guest at the door; the host's camera faced away). That push had left the jeep against the watchtower:
+  on the guest's drive its copy broke (`obs; m=VehicleBroken; att=none` on the guest's copy only; frame `m4-stopped`:
+  the guest on foot, no jeep) while the host's stayed intact, the expected split for a guest-side destruction (no
+  request). Every later part found no jeep on the guest's copy (refused `absent`, `vehicle_not_alive`, the host's
+  wreck answered `absent; no_instance`). The scenario now pushes back towards the boot spot (`57fc2f7`).
+- `4bbbfde4` (`vehicle-state-play.txt`, **play, `-WanSim bad`, no vehicle key named**, lab seed, build `c98ad98`;
+  **every expectation met**, 0 failures, each post-event one after a `logmark`; shutdown `Forced=True` as in
+  `e235bda6` and `e44516d7`). `vehicle_state` and `vehicle_gone` `step=on` on both copies with `wreck=0`, sweep
+  `sent=13`. Drive and leave: `skip; partner_ride` -> `resume` -> `tx; why=moved; d_mm=13969` -> guest `hold;
+  occupied` (D-Dog) -> `same; d_mm=0; f=1`, readbacks 9 mm apart, frame `play-left-both` (the jeep where the guest left
+  it on both screens). The host's shots: `tx; why=life; life=2270` -> guest `applied; life=2270; was=2300` 151 ms
+  later. **The guest's own shots** took its copy alone to 1602; the host's refresh put it back (`applied; moved=0;
+  life=2270; was=1602; f=5`; two more host changes before the C4 went off, life 2194 and 2116 from a cause not
+  identified, met the guest's copy below them and raised it again, `was=1979`, `was=2023`).
+  **A real destruction in play**: the host's C4 -> `watch; m=VehicleBroken; cause=2; att=none` -> `lost` -> `tx;
+  cause=2` -> guest `rx` -> `applied; id=25608; via=locator; src=rx; ok=1` 132 ms after the tx; readbacks: host
+  `alive=0; life=0` (the wreck), guest `alive=0; pos=0,0,0` (no instance); frames `play-c4-placed` (the jeep on both
+  screens), `play-destroyed` (smoke and the burning wreck on the host's screen; the guest's camera had turned away
+  from the spot).
+- `3585869d` (`vehicle-state.txt`, lab, `africa-jeep`, build `57fc2f7`, the Lua of `c98ad98`; **every expectation
+  met**, 36, each post-event one after a `logmark`; `Forced=False`). `step=on; wreck=1` on both copies, sweep
+  `sent=14`, the guest `same` for 25608 at the start. **The lever push framed on both screens** [O]: `tx; d_mm=3000`
+  -> guest `applied; moved=1; err_mm=0` 17 ms later, readbacks 2 mm apart; frames `m4-before-push` / `m4-pushed` (the
+  jeep moves 3 m on the host's screen and on the guest's). The guest's own push (`m4-guest-pushed`: moved on the
+  guest's screen only) put back by the refresh 7.8 s later (`applied; moved=1; d_mm=2997; f=5`, `m4-corrected`: the
+  same spot on both again). The near-player hold: with the guest at the jeep's door the host's 2 m push gave guest
+  `hold; reason=player_near` 32 ms after the tx (`m4-near-held`: moved on the host's screen, unmoved beside the
+  guest on the guest's) and `applied; moved=1; d_mm=2000` 2.0 s later once the guest stood clear (`m4-near-applied`,
+  the same spot on both), readbacks 2 mm apart. The guest's drive and leave: `skip; partner_ride` -> `resume` -> `tx;
+  why=moved; d_mm=25750` -> guest `hold; occupied` -> `same; d_mm=1; f=1` (readbacks 1 mm apart; frame `m4-left` on
+  the guest's screen, the host's camera faced the jeep's old spot). Body life: the host's shots `tx; why=life;
+  life=2270` -> guest `applied; life=2270; was=2300` 33 ms later; the guest-only lever drop to 1500 put back by the
+  refresh 8.5 s later (`life=2270; was=1500; f=5`); the host's lever 200 -> guest `life=200`. The wreck with the key
+  named: the host's lever `vehicle_life 25608 0` -> `watch; m=VehicleBroken; cause=2` -> `tx` -> guest `applied;
+  via=wreck; src=rx; ok=1` 149 ms after the tx; frames `m4-wreck-01` / `-03` (fire and smoke at the jeep on both
+  screens, godmode on); readbacks `alive=0; life=0` on both, 2 mm apart.
+- `e20f76bc` (`vehicle-state-play-host.txt`, play, build `7d82def`): stopped at its first `placebehind` (`viewer landing
+  starts without a valid partner pose`: only the host had made the 800 m warp to the jeep); both players now go to the
+  jeep first (`5b7522a`).
+- `b31a1b65` (`vehicle-state-play-host.txt`, **play, `-WanSim bad`, no vehicle key named**, lab seed, build `5b7522a`;
+  **every expectation met**, `Forced=False`). The host boards J1 and dives out with the throttle held: host `skip;
+  reason=local_rider` (the first in any host log) -> `skip; reason=occupied` (D-Dog stayed in) -> `resume` 3.9 s after
+  the host's get-off -> `tx; why=moved; d_mm=18590` -> guest `applied; id=25608; from=25608; moved=1; d_mm=7970;
+  err_mm=0; dyaw=258` 334 ms later [O]: the guest's copy had stopped where RIDE_FAST last put it and the host's rolled
+  8 m on, so this is a real divergence corrected in play, the first `moved=1` in any play run. Readbacks 46 mm apart
+  afterwards; frame `play-bail-both` (the jeep at the same spot by the same building on both screens; the guest's 18 m
+  spot faced a wall during the bail, so the divergence itself is logs only). The C4 part: `play-c4-placed` (the jeep
+  behind sandbags on the guest's screen) -> host `watch; m=VehicleBroken; cause=2` -> `tx` -> guest `applied;
+  via=locator; src=rx; ok=1` 151 ms after the tx -> `play-destroyed` / `play-destroyed-after` (the burning, overturned
+  wreck on the host's screen, nothing at that spot and no explosion on the guest's) [O].
 
 ## 9. Milestones
 
@@ -926,30 +1016,59 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
   - Under `-WanSim bad`: a kill during the pairing sweep -> the gap between host `event=commit` and guest `event=apply`
     for that `ent` is recorded (K27).
 - Rehearsal `-Mode play -WanSim bad` before VEHICLE_GONE's play default flips.
-- **Status (2026-10-29, branch `wp/vehicle-state`): built and proven in hidden runs, lab and play; VEHICLE_GONE and
-  VEHICLE_STATE on by default in play since `482eb74` (off in the lab unless named); not two-PC tested.** Details and
-  run ids in section 8.1 and `docs/STATUS.md` (M4).
+- **Status (2026-10-29, branch `wp/vehicle-state`, after the M4 review): built and proven in hidden runs, lab and
+  play; VEHICLE_GONE and VEHICLE_STATE on by default in play at 30010 and 30020 (`482eb74`, narrowed by `c423b53`);
+  Mother Base and the wreck parity lab only; not two-PC tested.** Details and run ids in section 8.1 and
+  `docs/STATUS.md` (M4, M4 review fixes).
+  - Play default [O]: the project rule (a FRAME on both copies and a passing `-Mode play -WanSim bad` rehearsal) is
+    now met for every path that acts in play at 30010 and 30020 with no vehicle key named: VEHICLE_GONE's Fultons
+    (`e44516d7`) and its destruction as a Despawn (`b31a1b65`, frames on both; `4bbbfde4`); VEHICLE_STATE's pose
+    (frames on both in the lab, `3585869d`; in play `b31a1b65`, `moved=1`, the after-frame on both) and body life both
+    ways (frames `3585869d`; play `4bbbfde4`, `e235bda6`, `d9b48fcb`). Its holds acted in play as `occupied`,
+    `local_rider` and `partner_ride`; `player_near` and VEHICLE_GONE's seated-rider hold are lab-proven only
+    (`3585869d`, `92720b75`). The wreck parity has its own key `world_vehicle_wreck` (off in lab and play unless
+    named) and Mother Base is lab only (no hidden run covered 30050), so neither is in the play default.
   - VEHICLE_GONE [O]: `coop-vehicle-gone.txt` A, C (the hold while the guest sits in the jeep) and D in `92720b75`
     (B in `075c1ea4`); each player's own Fulton by hand in play over `-WanSim bad` (`e44516d7`, frames on both
-    screens) and the guest's in the lab (`5179b50b`); the receiver's wreck (`0edadbe2`, frames `m4-wreck-*` on both).
-    Not working: a jeep the guest destroys is not requested, because the game posts no `Damage` message for a vehicle
-    hit (`5179b50b`, `35ba7929`) [O].
-  - VEHICLE_STATE [O]: the push lever and the host's correction of a guest push (`d407f115`, `0edadbe2`: the two copies'
-    readbacks agree within 5 mm; frames on the guest's screen, the host's camera did not show the jeep); drive and
-    leave with no state against RIDE_FAST (`skip; reason=partner_ride` -> `resume`) in lab and play (`d9b48fcb` frame
-    `play-left-both`: the jeep where the guest left it on both screens, 9 mm apart); body life (`applied; ...; life=`
-    115..301 ms after the host's change under `-WanSim bad`, `e235bda6`, `d9b48fcb`).
+    screens) and the guest's in the lab (`5179b50b`); **a real destruction in play** (`4bbbfde4`, `b31a1b65`: the
+    host's C4 -> `watch; m=VehicleBroken; cause=2` -> `tx` -> guest `applied; via=locator; src=rx; ok=1` 132 / 151 ms
+    later; readbacks `alive=0` on both copies, the guest's with no instance; `b31a1b65` frames `play-c4-placed` ->
+    `play-destroyed-after`: the burning wreck on the host's screen, nothing at that spot on the guest's); the
+    receiver's wreck with the key named (`0edadbe2`, `3585869d`, lever-made, frames `m4-wreck-*` on both). Index 0
+    is refused before any removal form (fixture tests; no relief vehicle in a hidden run). Not working: a jeep the
+    guest destroys is not requested, because the game posts no `Damage` message for a vehicle hit (`5179b50b`,
+    `35ba7929`); run `72366eb5` shows the resulting split in the lab (the guest's copy broke on a drive, the host's
+    stayed intact) [O].
+  - VEHICLE_STATE [O]: the push lever, framed on both screens (`3585869d`; earlier `d407f115`, `0edadbe2`,
+    `72366eb5` on the guest's screen), and the host's correction of a guest push; the near-player hold (`72366eb5`,
+    `3585869d`: the guest at the jeep's door, the host's push -> guest `hold; reason=player_near`, applied 2.0..2.2 s
+    later once the guest stood clear); drive and leave with no state against RIDE_FAST (`skip; reason=partner_ride`
+    -> `resume` -> `tx; why=moved` -> guest `hold; occupied` -> `same; f=1`) in play (`4bbbfde4`, after a logmark;
+    `d9b48fcb`, log-reviewed) and the lab (`3585869d`): VEHICLE_STATE keeps out of the way and then confirms the pose
+    that RIDE_FAST's last placement left (readbacks 1..9 mm apart; frame `play-left-both`); **the host's bail in
+    play** (`b31a1b65`): the host dives out of the rolling jeep, its copy rolls 8 m past where the guest's stopped
+    (RIDE_FAST's last placement), and the host's `skip; local_rider` -> `skip; occupied` (D-Dog) -> `resume` -> `tx;
+    why=moved` gives guest `applied; moved=1; d_mm=7970; err_mm=0` 334 ms later, the first pose VEHICLE_STATE applied
+    in play (frame `play-bail-both`: the same spot on both screens; readbacks 46 mm apart); body life both ways in
+    play (`4bbbfde4`: the host's shots `life=2270; was=2300` 151 ms after the host's change; the guest's own shots took
+    its copy to 1602, and the host's refresh put it back, `life=2270; was=1602; f=5`).
   - Damage parity is the body life only [O]. Wheel and part lives are read and sent (the zero mask) but not written:
     the 21-hash instance dispatcher has no wheel or burning write (3.6) [O]. Fire is not a function of the life word
-    (life 200 shows none, `d407f115`) [O], so burning is not synced [I].
-  - K27 [O]: kills inside the pairing sweep, `-WanSim bad`: 322..330 ms commit -> apply; outside it 299 ms
-    (`e44516d7`).
-  - Open: a two-PC session; damage the guest does stays on the guest's copy (no guest-to-host damage op), and so does
-    its destruction (no attribution, above) [O]; a destruction in play (the C4 of `e235bda6` did not destroy); Fulton
-    rewards: the Fultoning copy pays and gets the vehicle, the other copy only Despawns [I],
-    untested against save resources; why a teleport beside a jeep hides the Fulton prompt is [U] (scenarios use the
-    boot or `goto_vehicle` spots); AI-driven, LRRP and reinforcement vehicles are M8; the relief vehicle (index 0)
-    is M3 / E17.
+    (life 200 shows none, `d407f115`) [O], so burning is not synced [I]; what a life raise does on a copy that burns
+    is [U].
+  - K27 [O]: kills inside the pairing sweep, `-WanSim bad`: 322..330 ms commit -> apply via `src=resync`; outside it
+    299 ms via `src=outcome` (`e44516d7`): different delivery paths, so "no visible delay" stays [I].
+  - Open: a two-PC session; a destruction the guest causes stays on the guest's copy (no attribution, above) [O]; the
+    wreck parity in play needs a play rehearsal of a real destruction and a lab run with live guards and godmode off
+    that shows no extra guest-side kills or chain wrecks (its blast knocked the guest down in `5179b50b`) [U], and its
+    fallback on a far, unrealized receiver copy has not run [U]; Mother Base needs a 30050 hidden run (the cluster
+    jeeps by name, the index Despawn) [U]; a physical shove (player or vehicle collision) was never tested, only the
+    lever and the host's bail [U]; the guest's bail out of a rolling jeep would bring its jeep back to where the
+    host's copy stopped once the guest stands 3.5 m clear [I], not run; change -> apply latency against R7's 2 s is
+    measured only from tx (16..334 ms; the scan adds up to about 1.6 s, and a seated D-Dog holds the host's send: 4.2 s
+    from the host's get-off to the guest's apply in `b31a1b65`) [I]; Fulton rewards against save resources [U]; why a
+    teleport beside a jeep hides the Fulton prompt [U]; AI-driven, LRRP and reinforcement vehicles are M8; the relief
+    vehicle (index 0) is M3 / E17.
 
 ### M5. Quiet synced
 
