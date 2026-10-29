@@ -353,6 +353,14 @@ H({20, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
 g.pool[25605].riders = nil
 g:poll()
 check(g:count('step=same;id=25605;from=25608;') == sames + 1, 'the same outcome after a hold (occupied) is logged again')
+-- A change the host sent (flags 1: neither sweep nor refresh) is answered by a line each time, also when this copy
+-- already agrees (the drive-and-leave case: RIDE_FAST left it there); sweeps and refreshes stay deduplicated.
+sames = g:count('step=same;id=25605;from=25608;')
+H({21, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
+H({22, 25608, str32('veh_lv_0000'), 1, 1, -580000, 1000, 877700, 0, 3000, 1, 0})
+H({23, 25608, str32('veh_lv_0000'), 1, 5, -580000, 1000, 877700, 0, 3000, 1, 0})
+check(g:count('step=same;id=25605;from=25608;') == sames + 2 and not g.logs[#g.logs]:find('f=5', 1, true),
+    'two host changes: two same lines (f=1); the refresh after them: none')
 g.env.vars.playerPosX = 5000
 -- VEHICLE_GONE's loss here wins.
 g.W.vehicleGone.gone[25606] = true

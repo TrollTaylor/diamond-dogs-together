@@ -246,8 +246,9 @@ function S.match(q)
   end
   return q.id
 end
-local function outcome(id, step, line)
-  if S.outcome[id] == step and step ~= "applied" then return end
+-- Deduplicated per id, except an apply and the answer to a host change (flags 1: neither sweep nor refresh).
+local function outcome(id, step, line, change)
+  if S.outcome[id] == step and step ~= "applied" and not change then return end
   S.outcome[id] = step
   L("%s", line)
 end
@@ -302,7 +303,7 @@ function S.consider(q, t)
   if not moved and not lifeSet then
     S.stats.same = S.stats.same + 1
     outcome(id, "same", fmt("event=vehicle_state;step=same;id=%d;from=%d;d_mm=%d;dyaw=%d;life=%d;here=%d;sv=%d;here_sv=%d;f=%d", id, q.id, d, dyaw,
-      q.life, was, q.sv, here and here[4] or -1, q.flags))
+      q.life, was, q.sv, here and here[4] or -1, q.flags), q.flags == 1)
     return "same"
   end
   S.stats.applied = S.stats.applied + 1
