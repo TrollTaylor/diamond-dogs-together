@@ -407,8 +407,17 @@ local s = B.s
 local w = s.watch or {i = 0, near = {}, s3 = 0, s5 = 0, min = 65535}
 s.watch = w
 local order, ent = W.entOrder or {}, W.ent or {}
-local key = fmt("dead=%s;flag=%s;active=%s", tostring(W.get(vars, "deadBuddyType")), tostring(W.get(vars, "buddyCommonFlag")),
- tostring(W.api.buddyType()))
+local dead, flag, pre = W.get(vars, "deadBuddyType"), W.get(vars, "buddyCommonFlag"), s.preVars
+-- D7 candidate (repair): within 10 s of the dog's Dead message, write back the flags it had before.
+if s.repairOn and pre and now - (s.deadAt or -1e9) <= 10000 and (dead ~= pre[1] or flag ~= pre[2]) then
+ pcall(function() vars.deadBuddyType, vars.buddyCommonFlag = pre[1], pre[2] end)
+ s.repairs = (s.repairs or 0) + 1
+ W.log(fmt("event=companion_repair;role=guest;step=vars;dead=%s>%s;flag=%s>%s", tostring(dead), tostring(pre[1]), tostring(flag),
+  tostring(pre[2])))
+ dead, flag = W.get(vars, "deadBuddyType"), W.get(vars, "buddyCommonFlag")
+end
+if now - (s.deadAt or -1e9) > 10000 then s.lastVars = {dead, flag} end
+local key = fmt("dead=%s;flag=%s;active=%s", tostring(dead), tostring(flag), tostring(W.api.buddyType()))
 if key ~= w.vars then w.vars = key; W.log("event=mirror_vars;" .. key) end
 for _ = 1, min(8, #order) do
  w.i = w.i % #order + 1
@@ -451,6 +460,7 @@ end
 function W.companionHurt(msg, id, cls)
 if id ~= 9728 or not companion() then return end
 local s = B.s
+if msg == "Dead" then s.deadAt, s.preVars = W.now(), s.lastVars end
 s.hurt = (s.hurt or 0) + 1
 if s.hurt <= 60 then W.log(fmt("event=companion_hurt;role=%s;msg=%s;att=%s;n=%d", W.host and "host" or "guest", tostring(msg), tostring(cls), s.hurt)) end
 end
@@ -461,6 +471,13 @@ function B.nearGuard(on)
 if W.mode ~= 1 or NEAR[on] == nil then return false end
 B.s.nearGuard, B.s.sentHold = NEAR[on] or nil, nil
 W.log("event=companion_near_guard;role=guest;on=" .. (NEAR[on] == "shield" and "shield" or NEAR[on] and 1 or 0))
+return true
+end
+-- D7 candidate (guest lab lever companion_lab repair on|off; default off): undo the dog's death flags (B.watch).
+function B.repair(on)
+if W.mode ~= 1 then return false end
+B.s.repairOn = on == true or nil
+W.log("event=companion_repair;role=guest;on=" .. (on and 1 or 0))
 return true
 end
 -- E19 protection candidate (guest lab lever companion_lab protect [off]): SetDisableDamage on the held dog, once per

@@ -397,4 +397,14 @@ check(ok and near == 'shield' and msg == 'near_guard;on=shield', 'companion_lab 
 check(not c.C.lever({'companion_lab', 'near_guard', 'bogus'}, 4, A, 30010), 'an unknown near_guard form is refused')
 c = Fixture(1, {active = DOG})
 check(not c.C.lever({'companion_lab', 'near_guard', 'on'}, 1, A, 30010), 'near_guard is guest only')
+-- The D7 repair candidate (lab, guest): world_buddy.lua B.repair.
+c = Fixture(2, {active = DOG})
+local rep
+c.W.buddy = {repair = function(on) rep = on; return true end}
+ok, msg = c.C.lever({'companion_lab', 'repair', 'on'}, 1, A, 30010)
+check(ok and rep == true and msg == 'repair;on=1', 'companion_lab repair on')
+ok, msg = c.C.lever({'companion_lab', 'repair', 'off'}, 2, A, 30010)
+check(ok and rep == false and msg == 'repair;on=0', 'companion_lab repair off')
+c = Fixture(1, {active = DOG})
+check(not c.C.lever({'companion_lab', 'repair', 'on'}, 1, A, 30010), 'repair is guest only')
 print('world_companion_lua_check: ' .. checks .. ' checks passed')

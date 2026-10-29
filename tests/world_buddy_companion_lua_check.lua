@@ -232,6 +232,25 @@ check(g.B.nearGuard("on") == true and g:logged("event=companion_near_guard;role=
 g:tick(2600); g:tick(2700); check(math.abs(g:last("LuaAiStayAndSnarl").cmd.position:GetX() - 21.5) < 0.001, "on: back to the soldier + 1.5 m")
 check(g.B.nearGuard("bogus") == false, "an unknown near_guard form is refused")
 g.B.nearGuard(false); g:pose(2700); g:tick(2800); check(g:last("LuaAiStayAndSnarl").cmd.position:GetX() == 4, "off: the host dog's pose")
+-- D7 candidate (lab lever companion_lab repair): guards killed the guest copy's dog (runs d937191f, dc761c98: Dead,
+-- deadBuddyType 0 -> 4, buddyCommonFlag 32 -> 0, then the block unloaded and the reconcile could not reload it). With
+-- repair on, the flags the dog had before its Dead message are written back within 10 s, once per change, so the
+-- reconcile can load the host's dog again.
+g = F(false, {soldiers = {{1.5, 2, 3}}}); g.env.vars.buddyCommonFlag = 32; g:pose(900)
+for i = 0, 5 do g:tick(1000 + i * 100) end
+check(g.B.repair(true) == true and g:logged("event=companion_repair;role=guest;on=1"), "repair on")
+g.W.companionHurt("Dead", 9728, "other"); g.env.vars.deadBuddyType = 4; g:tick(1700)
+check(g.env.vars.deadBuddyType == 0 and g.env.vars.buddyCommonFlag == 32, "the dead bit is written back")
+check(g:logged("event=companion_repair;role=guest;step=vars;dead=4>0;flag=32>32"), "the repair is logged")
+g.env.vars.buddyCommonFlag = 0; g:tick(1800)
+check(g.env.vars.buddyCommonFlag == 32 and g:logged("step=vars;dead=0>0;flag=0>32"), "a later flag change is written back too")
+g:tick(1900); check(g.B.s.repairs == 2, "nothing more while unchanged")
+g.env.vars.deadBuddyType = 4; g:tick(11800); check(g.env.vars.deadBuddyType == 4, "not after 10 s")
+g = F(false, {soldiers = {{1.5, 2, 3}}}); g.env.vars.buddyCommonFlag = 32; g:pose(900)
+for i = 0, 5 do g:tick(1000 + i * 100) end
+g.W.companionHurt("Dead", 9728, "other"); g.env.vars.deadBuddyType = 4; g:tick(1700)
+check(g.env.vars.deadBuddyType == 4 and not g:logged("event=companion_repair"), "repair off (default): the vars stay as the game set them")
+g = F(false, {play = true}); check(g.B.repair(true) == false, "repair is lab only")
 -- Without the key the legacy path is unchanged: a stale guest sample still releases.
 g = F(false, {off = true}); g.W.handlers[STATE]({1, 1, 1, 4000, 2000, 3000, 100, 123, 0}, g.time); g:tick(); g:tick(2001)
 check(g:count("CallBuddy") == 1, "without the key the legacy release is unchanged")

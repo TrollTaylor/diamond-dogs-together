@@ -598,6 +598,14 @@ function C.lever(a, id, A, mission)
   local ok, r = pcall(B.nearGuard, a[3] == "shield" and "shield" or a[3] == "on")
   return ok and r == true, "near_guard;on=" .. (a[3] == "shield" and "shield" or a[3] == "on" and 1 or 0)
  end
+ -- Lab (guest, D7 candidate): write back the dog's dead-buddy flags at its Dead message (world_buddy.lua B.repair).
+ if a[1] == "companion_lab" and a[2] == "repair" and #a == 3 and (a[3] == "on" or a[3] == "off") then
+  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
+  local B = W.buddy
+  if type(W.get(B, "repair")) ~= "function" then return false, "repair_unavailable" end
+  local ok, r = pcall(B.repair, a[3] == "on")
+  return ok and r == true, "repair;on=" .. (a[3] == "on" and 1 or 0)
+ end
  -- Lab: names the following track windows of world_buddy.lua (the proof's legs: walk, run, dash, away, ...).
  if a[1] == "companion_lab" and a[2] == "mark" and #a == 3 and type(a[3]) == "string" and a[3]:match("^[a-z0-9_]+$") and #a[3] <= 16 then
   if W.mode ~= 1 then return false, "lab_only" end
