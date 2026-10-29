@@ -8,6 +8,7 @@
 #include "launcher_entry.hpp"
 
 #include "core/core_model.hpp"
+#include "core/core_update.hpp"
 #include "core/core_util.hpp"
 #include "launcher_join_code.hpp"
 #include "launcher_model_mock.hpp"
@@ -68,6 +69,14 @@ int RunWriteSession(const std::wstring& game_dir, bool host, const std::wstring&
 }
 
 int RunEndSession(const std::wstring& game_dir, std::string& report) { return core::RunEndSession(SessionFolder(game_dir), report); }
+
+bool TakeOverAfterUpdate(std::uint32_t pid, const std::function<bool(int)>& claim) {
+    core::PreviousLauncherOps ops = core::PreviousLauncherWin32(pid);
+    ops.claim = claim;
+    return core::TakeOverFromPreviousLauncher(ops, core::kPreviousLauncherWaitMs) != core::TakeOver::not_claimed;
+}
+
+bool OldLauncherFromRecentUpdate(const std::wstring& game_dir) { return core::OldExecutableFromRecentUpdate(game_dir); }
 
 int RunSelfTest(std::string& report) {
     int checks = 0, failures = 0;

@@ -19,6 +19,10 @@ You and a friend each run your own copy of MGSV and play in the same world. You 
 
 Get `DiamondDogsTogether-<version>.zip` from [Releases](https://github.com/TrollTaylor/diamond-dogs-together/releases). Both players need the **same version**.
 
+The launcher updates itself: when a new version is out, **Update now** downloads it, installs it and restarts Diamond Dogs Together.
+
+The complete source code of each version is `DDT-source-<version>.zip` on the same release page (and the tag `v<version>` of this repository). You do not need it to play.
+
 ## Requirements
 
 - MGSV: The Phantom Pain on Steam, version 1.0.15.4, with **no other mods**.
@@ -94,7 +98,7 @@ pwsh -File tools/Prepare-Dependencies.ps1
 ./tools/build.ps1 -Configuration Release
 ```
 
-`tools/package.ps1 -Friend` builds the release zip from a passing `tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` run.
+`tools/package.ps1 -Friend` builds the release from a passing `tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` run: the player zip `DiamondDogsTogether-<version>.zip` and the source zip `DDT-source-<version>.zip`. Every release uploads **both** to the GitHub release `v<version>` (see AGENTS.md, "Releasing").
 
 Testing on one PC: in the launcher, **Settings → Debug mode** adds **Play → Local test (two windows)**. It starts two MGSV copies on this PC (this game folder hosts as Snake, a second game folder joins as Quiet) on separate local-test saves, and puts the test settings in both folders back after both games exit. Choose the second folder under Settings → Debug. The test copies this version's loader, runtime file and `package.json` into the second folder (an older Diamond Dogs Together launcher there is updated too) and they stay there; the files it replaces are kept in that folder's `mgs-coop\install-backups\local-test-<time>`. Its `probe-install.json` is never changed, and a loader that only the developer tools own is not replaced (update it with `tools\package-install.ps1` first). `Play-Offline-Coop.bat` (`tools/dev/Play-LocalCoop.ps1`) does the same from PowerShell; both use the same cleanup journal.
 

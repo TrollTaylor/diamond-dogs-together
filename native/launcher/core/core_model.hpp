@@ -12,9 +12,11 @@
 namespace ddt::core {
 
 // MakeRealModel(exe_dir) with injectable seams (tests).
-std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env);
+std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env,
+                                                    const ModelStart& start = ModelStart{});
 // ... with the local test's window / process seams too.
-std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env, std::shared_ptr<LocalHost> local);
+std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env, std::shared_ptr<LocalHost> local,
+                                                    const ModelStart& start = ModelStart{});
 
 // DiamondDogsTogether.exe --watch <session_id>: the hidden helper for the game
 // folder `exe_dir` (the exe's own folder).

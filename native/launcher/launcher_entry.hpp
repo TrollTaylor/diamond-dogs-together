@@ -1,5 +1,8 @@
 #pragma once
-// Diamond Dogs Together: the windowless command-line modes.
+// Diamond Dogs Together: the windowless command-line modes, and the core
+// steps the window shell needs before its model exists.
+#include <cstdint>
+#include <functional>
 #include <string>
 
 namespace ddt {
@@ -26,5 +29,16 @@ int RunEndSession(const std::wstring& game_dir, std::string& report);
 // the join-code check. B adds the core's own checks. `report` gets one line
 // per failure (and a summary line).
 int RunSelfTest(std::string& report);
+
+// --after-update <pid> (the restart after a self-update, core_update.hpp):
+// tells the old launcher that this window runs, waits for it to close (ends it
+// when it hangs), then calls claim(wait_ms) for the folder's single instance.
+// True when claimed.
+bool TakeOverAfterUpdate(std::uint32_t pid, const std::function<bool(int wait_ms)>& claim);
+
+// An updater before 0.14.4 has just started this exe (DiamondDogsTogether.exe.old
+// next to it from an update a few minutes old, core_update.hpp
+// OldExecutableFromRecentUpdate): the window waits for that old launcher.
+bool OldLauncherFromRecentUpdate(const std::wstring& game_dir);
 
 }  // namespace ddt

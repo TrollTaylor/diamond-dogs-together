@@ -251,7 +251,9 @@ const char* const kSceneNames[static_cast<int>(Scene::count)] = {
     "17-tools-result",         "18-tools-uninstall-confirm", "19-tools-about",   "20-settings",
     "21-tools-in-game",        "22-uninstall-report",    "23-settings-debug-no-folder", "24-settings-debug-folder",
     "25-play-local-no-folder", "26-play-local-ready",    "27-play-local-running",  "28-ingame-local-test",
-    "29-play-update-preparing", "30-ingame-local-starting", "31-play-local-checking",
+    "29-play-update-preparing", "30-ingame-local-starting", "31-play-local-checking", "32-play-updated-preparing",
+    "33-tools-updated",        "34-tools-update-refused", "35-play-updated",      "36-play-update-failed",
+    "37-tools-update-cancelling",
 };
 }  // namespace
 
@@ -290,6 +292,38 @@ bool ValidRun(const std::wstring& s) {
     for (wchar_t c : s)
         if (!((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f'))) return false;
     return true;
+}
+
+// A process id: 1 to 4294967295, decimal digits only.
+bool ParsePid(const std::wstring& text, std::uint32_t& out) {
+    if (text.empty() || text.size() > 10) return false;
+    unsigned long long v = 0;
+    for (wchar_t c : text) {
+        if (c < L'0' || c > L'9') return false;
+        v = v * 10 + static_cast<unsigned long long>(c - L'0');
+    }
+    if (v == 0 || v > 0xFFFFFFFFull) return false;
+    out = static_cast<std::uint32_t>(v);
+    return true;
+}
+
+// http://127.0.0.1[:port]/... or http://localhost[:port]/... and nothing else
+// (no user info, no other host): the developer update test feed.
+bool IsLoopbackFeed(const std::wstring& url) {
+    const std::wstring scheme = L"http://";
+    if (url.compare(0, scheme.size(), scheme) != 0) return false;
+    const std::size_t slash = url.find(L'/', scheme.size());
+    if (slash == std::wstring::npos) return false;
+    std::wstring authority = url.substr(scheme.size(), slash - scheme.size());
+    const std::size_t colon = authority.find(L':');
+    if (colon != std::wstring::npos) {
+        const std::wstring port = authority.substr(colon + 1);
+        if (port.empty() || port.size() > 5) return false;
+        for (wchar_t c : port)
+            if (c < L'0' || c > L'9') return false;
+        authority.resize(colon);
+    }
+    return authority == L"127.0.0.1" || authority == L"localhost";
 }
 
 bool ValidSession(const std::wstring& s) {
@@ -366,6 +400,17 @@ Options ParseCommandLine(const std::vector<std::wstring>& args) {
         } else if (Is(a, L"--game-dir")) {
             if (!has_value || args[i + 1].empty()) { o.error = L"--game-dir needs a folder."; return o; }
             o.game_dir = args[++i];
+        } else if (Is(a, L"--after-update")) {
+            if (!has_value || !ParsePid(args[i + 1], o.after_update)) { o.error = L"--after-update needs a process id."; return o; }
+            ++i;
+        } else if (Is(a, L"--update-feed")) {
+            if (!has_value || !IsLoopbackFeed(args[i + 1])) {
+                o.error = L"--update-feed needs a test feed on this PC: http://127.0.0.1:<port>/... or http://localhost:<port>/...";
+                return o;
+            }
+            o.update_feed = args[++i];
+        } else if (Is(a, L"--update-now")) {
+            o.update_now = true;
         } else {
             o.error = L"Unknown option: " + a;
             return o;
@@ -380,6 +425,10 @@ Options ParseCommandLine(const std::vector<std::wstring>& args) {
     else if ((!o.write_code.empty() || !o.write_character.empty()) && !(o.mode == Options::Mode::write_session && !o.write_host))
         o.error = L"--code and --character go with --write-session join.";
     else if (session_flag && o.mock) o.error = L"--mock does not go with --write-session or --end-session.";
+    else if ((o.after_update || !o.update_feed.empty() || o.update_now) && (o.mode != Options::Mode::gui || o.mock))
+        o.error = L"--after-update, --update-feed and --update-now go with the window on the real model (no --mock).";
+    else if (o.update_now && o.update_feed.empty())
+        o.error = L"--update-now needs --update-feed: it installs from a test feed only.";
     return o;
 }
 
@@ -401,7 +450,67 @@ const wchar_t* UsageText() {
            L"    --code <code>           join: the host's code (none = wait for a Steam invite)\n"
            L"    --character <name>      join: story | ocelot | dd_male | dd_female | avatar\n"
            L"    --game-dir <dir>        the game folder (default: this program's folder)\n"
-           L"  --end-session [--game-dir <dir>]  switch co-op off again (not while MGSV runs)\n";
+           L"  --end-session [--game-dir <dir>]  switch co-op off again (not while MGSV runs)\n"
+           L"  --update-feed <url>       read releases from a test feed on this PC\n"
+           L"                            (http://127.0.0.1:<port>/... or http://localhost:<port>/...)\n"
+           L"  --update-now              install an update from that feed at once\n"
+           L"Used by the updater:\n"
+           L"  --after-update <pid>      the updated window waits for the old one to close\n";
+}
+
+int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_from_recent_update) {
+    if (old_exe_from_recent_update) return 10000;   // an updater before 0.14.4 exits right after starting us
+    if (after_update) return 5000;      // the old window releases the folder as it closes
+    return 0;
+}
+
+bool CloseForUpdate(const UpdateInfo& info) { return info.status == UpdateStatus::ready_to_restart; }
+
+bool UpdateInProgress(const UpdateInfo& info) {
+    return info.status == UpdateStatus::downloading || info.status == UpdateStatus::applying ||
+           info.status == UpdateStatus::ready_to_restart;
+}
+
+PlayBanner PlayBannerFor(const UpdateInfo& info) {
+    switch (info.status) {
+    case UpdateStatus::available: return PlayBanner::available;
+    case UpdateStatus::downloading: return PlayBanner::downloading;
+    case UpdateStatus::applying:
+    case UpdateStatus::ready_to_restart: return PlayBanner::installing;
+    // Update now was refused or did not go through (the download is still
+    // known); a check that failed (offline) has none and stays on Tools.
+    case UpdateStatus::error:
+        if (!info.download_url.empty()) return PlayBanner::failed;
+        break;
+    default: break;
+    }
+    return info.updated_to.empty() ? PlayBanner::none : PlayBanner::updated;
+}
+
+std::string UpdatedNote(const UpdateInfo& info, Phase phase) {
+    if (info.updated_to.empty()) return {};
+    std::string note = "Updated to version " + info.updated_to + ".";
+    if (phase == Phase::needs_setup || phase == Phase::setting_up) note += " Set up co-op once more for this version.";
+    return note;
+}
+
+std::string ReleasePageUrl(const std::string& version) {
+    const std::string releases = "https://github.com/TrollTaylor/diamond-dogs-together/releases";
+    const std::string plain = version.substr(0, version.find('+'));
+    int dots = 0;
+    bool digit_before = false;
+    for (char c : plain) {
+        if (c >= '0' && c <= '9') {
+            digit_before = true;
+        } else if (c == '.' && digit_before) {
+            ++dots;
+            digit_before = false;
+        } else {
+            return releases;
+        }
+    }
+    if (dots != 2 || !digit_before) return releases;
+    return releases + "/tag/v" + plain;
 }
 
 }  // namespace ddt::ui

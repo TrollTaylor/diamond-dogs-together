@@ -80,4 +80,7 @@ LICENCES AND SOURCE
 mgs-coop\THIRD_PARTY_NOTICES.md lists the third-party code: Dynamite
 (GPLv3 with the Commons Clause), tpp-mod (GPLv3), MinHook (BSD 2-clause)
 and Dear ImGui (MIT); the full licence texts are next to it. The complete
-source code of this version is mgs-coop\source.zip.
+source code of this version is DDT-source-@VERSION@.zip: download it from
+the same release page as this zip (release v@VERSION@ on
+https://github.com/TrollTaylor/diamond-dogs-together/releases). The tag
+v@VERSION@ of that repository holds the same source.

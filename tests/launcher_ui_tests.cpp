@@ -408,9 +408,106 @@ void TestCommandLine() {
     Check(std::wstring(ui::UsageText()).find(L"Developer only") != std::wstring::npos &&
               std::wstring(ui::UsageText()).find(L"--end-session") != std::wstring::npos,
           "the usage text marks the session flags developer-only");
+
+    // The restart after a self-update: the old launcher passes its process id.
+    o = ui::ParseCommandLine({L"--after-update", L"4242"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::gui && o.after_update == 4242u && !o.mock, "--after-update <pid>");
+    o = ui::ParseCommandLine({L"--after-update", L"4294967295"});
+    Check(o.error.empty() && o.after_update == 4294967295u, "--after-update takes any 32-bit process id");
+    for (const wchar_t* bad : {L"", L"0", L"-1", L"12x", L"4294967296", L"99999999999999999999", L" 12"})
+        Check(!ui::ParseCommandLine({L"--after-update", bad}).error.empty(), "--after-update refuses a bad pid");
+    Check(!ui::ParseCommandLine({L"--after-update"}).error.empty(), "--after-update needs a pid");
+    Check(!ui::ParseCommandLine({L"--after-update", L"12", L"--selftest"}).error.empty(), "--after-update only with the window");
+    Check(!ui::ParseCommandLine({L"--after-update", L"12", L"--mock"}).error.empty(), "--after-update only on the real model");
+    // Developer flags for the update test: a loopback feed only.
+    o = ui::ParseCommandLine({L"--update-feed", L"http://127.0.0.1:8123/releases.json", L"--update-now"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::gui && o.update_feed == L"http://127.0.0.1:8123/releases.json" && o.update_now,
+          "--update-feed with --update-now");
+    o = ui::ParseCommandLine({L"--update-feed", L"http://localhost:9/feed", L"--after-update", L"7"});
+    Check(o.error.empty() && o.update_feed == L"http://localhost:9/feed" && o.after_update == 7u && !o.update_now,
+          "the relaunched window keeps the test feed");
+    for (const wchar_t* bad : {L"https://api.github.com/repos/x/y/releases", L"http://127.0.0.1.evil.example/feed", L"http://10.0.0.1/feed",
+                               L"ftp://127.0.0.1/feed", L"127.0.0.1:80/feed", L"http://localhost@evil.example/feed", L""})
+        Check(!ui::ParseCommandLine({L"--update-feed", bad}).error.empty(), "--update-feed refuses anything but a loopback http feed");
+    Check(!ui::ParseCommandLine({L"--update-now"}).error.empty(), "--update-now needs --update-feed (never a silent GitHub install)");
+    Check(!ui::ParseCommandLine({L"--update-feed", L"http://127.0.0.1:1/f", L"--mock"}).error.empty(), "--update-feed only on the real model");
+    Check(!ui::ParseCommandLine({L"--update-feed", L"http://127.0.0.1:1/f", L"--end-session"}).error.empty(), "--update-feed only with the window");
+    Check(std::wstring(ui::UsageText()).find(L"--update-feed") != std::wstring::npos, "the usage text lists the update test flags");
+
+    // How long the window waits for the single instance.
+    Check(ui::InstanceClaimWaitMs(0, false) == 0, "a normal start never waits: a second window brings the first forward");
+    Check(ui::InstanceClaimWaitMs(4242, false) > 0 && ui::InstanceClaimWaitMs(4242, true) > 0, "after an update the window waits");
+    Check(ui::InstanceClaimWaitMs(0, true) >= 5000, "an exe started by an older updater waits for it to exit");
+    UpdateInfo info;
+    Check(!ui::CloseForUpdate(info), "the window stays open normally");
+    info.status = UpdateStatus::ready_to_restart;
+    Check(ui::CloseForUpdate(info), "the window closes once the updated launcher took over");
+    info.status = UpdateStatus::applying;
+    Check(!ui::CloseForUpdate(info), "not while the update is being installed");
+
+    // While an update is busy the setup waits, and a closing window keeps the
+    // folder until the update has stopped; an update check never holds it.
+    for (UpdateStatus s : {UpdateStatus::downloading, UpdateStatus::applying, UpdateStatus::ready_to_restart}) {
+        info.status = s;
+        Check(ui::UpdateInProgress(info), "an update downloading, installing or handing over is in progress");
+    }
+    for (UpdateStatus s : {UpdateStatus::idle, UpdateStatus::checking, UpdateStatus::up_to_date, UpdateStatus::available, UpdateStatus::error}) {
+        info.status = s;
+        Check(!ui::UpdateInProgress(info), "checking, found or failed is not an update in progress");
+    }
+
+    // The update card on Play.
+    UpdateInfo u;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::none, "nothing to say");
+    u.status = UpdateStatus::available;
+    u.download_url = "http://127.0.0.1:1/DiamondDogsTogether-0.14.4.zip";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::available, "an update to install");
+    u.status = UpdateStatus::error;
+    u.error = "MGSV is running from this folder. Quit MGSV first, then update.";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::failed, "Update now was refused or failed: Play says why");
+    u.download_url.clear();
+    u.error = "Could not check for updates. Check your internet connection, then try again.";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::none, "a failed check (offline) stays on Tools, not on Play");
+    u.status = UpdateStatus::downloading;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::downloading, "the download");
+    u.status = UpdateStatus::applying;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::installing, "the install");
+    u.status = UpdateStatus::ready_to_restart;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::installing, "the restart");
+    u.status = UpdateStatus::up_to_date;
+    u.updated_to = "0.14.4";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::updated, "right after a self-update");
+    u.status = UpdateStatus::available;
+    u.download_url = "http://127.0.0.1:1/DiamondDogsTogether-0.14.5.zip";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::available, "an even newer update comes first");
+
+    // "Updated to version X." where the new window opens: the setup after an update, then Play / Tools.
+    UpdateInfo plain;
+    Check(ui::UpdatedNote(plain, Phase::ready).empty(), "no note without an update");
+    u.status = UpdateStatus::up_to_date;
+    Check(ui::UpdatedNote(u, Phase::ready) == "Updated to version 0.14.4.", "after the update, ready");
+    const std::string before_setup = ui::UpdatedNote(u, Phase::needs_setup);
+    Check(before_setup.rfind("Updated to version 0.14.4.", 0) == 0 && before_setup.find("once more") != std::string::npos,
+          "after the update the setup is needed again, and the note says so");
+    Check(ui::UpdatedNote(u, Phase::setting_up) == before_setup, "also while it runs");
+
+    // About > Source code: the release page of this version (both zips are there).
+    Check(ui::ReleasePageUrl("0.14.4+48ce7da") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4",
+          "the source of a build is its release");
+    Check(ui::ReleasePageUrl("0.14.4") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4", "a plain version");
+    for (const char* odd : {"", "dev", "0.14", "0.14.4.1", "0..4", "v0.14.4", "0.14.4-rc1"})
+        Check(ui::ReleasePageUrl(odd) == "https://github.com/TrollTaylor/diamond-dogs-together/releases", "anything else: the release list");
 }
 
 void TestMock() {
+    {
+        // The screenshot scenes after an update show the new version, like the real model.
+        MockModel m(MockOptions{});
+        UpdateInfo i;
+        i.updated_to = "0.14.4";
+        m.set_mock_update_info(i);
+        Check(m.version() == "0.14.4", "the mock runs the version it was updated to");
+    }
     MockScenario scenario{};
     Check(ParseMockScenario("partner-drops", scenario) && scenario == MockScenario::partner_drops, "scenario name");
     Check(!ParseMockScenario("nope", scenario), "unknown scenario");

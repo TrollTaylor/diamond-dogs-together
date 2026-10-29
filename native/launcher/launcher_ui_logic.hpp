@@ -3,7 +3,8 @@
 // so it can be unit-tested headless (tests/launcher_ui_tests.cpp):
 // page navigation, the character picker mapping, the HUD setting, the Join
 // field's message/tone, join-code display, setup summary and view, redraw
-// pacing, the screenshot scenes and the command line.
+// pacing, the screenshot scenes, the update notes and the command line.
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -159,6 +160,12 @@ enum class Scene {
     play_update_preparing,   // an update is out while co-op gets ready: Update now waits
     ingame_local_starting,   // Start local test pressed: both folders are made ready (its own thread)
     play_local_checking,     // the second folder is being checked (its own thread)
+    play_updated_preparing,  // the new window right after a self-update: "Updated to", co-op gets ready once more
+    tools_updated,           // ... Tools once co-op is ready again
+    tools_update_refused,    // Update now while MGSV runs from the folder
+    play_updated,            // ... Play once co-op is ready again
+    play_update_failed,      // Update now on Play did not go through (the longest sentence)
+    tools_update_cancelling, // Cancel pressed: the download is stopping
     count
 };
 int SceneCount();
@@ -181,10 +188,46 @@ struct Options {
     std::wstring scenario;          // --mock-scenario <name>
     double mock_speed = 1.0;        // --mock-speed <factor>
     float scale = 0.0f;             // --scale <factor>; 0 = the monitor's DPI
+    // The restart after a self-update (the old launcher passes it, core_update.hpp):
+    std::uint32_t after_update = 0; // --after-update <pid>: wait for that launcher to close first
+    // Developer flags for the update test (the window only, real model):
+    std::wstring update_feed;       // --update-feed <url>: a loopback release feed instead of GitHub's
+    bool update_now = false;        // --update-now: install a found update at once (needs --update-feed)
     std::wstring error;             // non-empty: the command line was refused
 };
 // args excludes the program name.
 Options ParseCommandLine(const std::vector<std::wstring>& args);
 const wchar_t* UsageText();
+
+// ---- Single instance and the restart after an update -------------------------
+// How long a starting window waits for the folder's single-instance mutex to
+// be released before it gives up and brings the open window forward instead:
+// after --after-update (the old launcher closes right after the handoff), and
+// when an update just left DiamondDogsTogether.exe.old next to the exe (an
+// updater before 0.14.4 started this exe and exits by itself a moment later;
+// core_update.hpp OldExecutableFromRecentUpdate). 0 otherwise.
+int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_from_recent_update);
+// The window closes itself: the updated launcher has taken over.
+bool CloseForUpdate(const UpdateInfo& info);
+// An update is downloading, installing or handing over: the setup cannot start,
+// and a closing window releases the folder only after the update has stopped
+// (otherwise at once, so a slow update check never blocks the next start).
+bool UpdateInProgress(const UpdateInfo& info);
+
+// ---- Update notes on the pages ----------------------------------------------
+// The update card on Play: nothing, an update to install, one that did not go
+// through (its sentence, with Update now again), the download, the install,
+// or the note right after a self-update.
+enum class PlayBanner { none, available, failed, downloading, installing, updated };
+PlayBanner PlayBannerFor(const UpdateInfo& info);
+// "Updated to version X." right after a self-update ("" otherwise). An update
+// always needs the one-time setup again (the install record names the
+// version), so before the setup the note says that too.
+std::string UpdatedNote(const UpdateInfo& info, Phase phase);
+
+// The GitHub release page of a version ("0.14.4" or "0.14.4+abc1234"): the
+// player zip and its source zip (DDT-source-<version>.zip) are both there.
+// Anything else falls back to the list of releases.
+std::string ReleasePageUrl(const std::string& version);
 
 }  // namespace ddt::ui

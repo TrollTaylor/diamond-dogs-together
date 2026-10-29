@@ -160,7 +160,8 @@ void LauncherUi::Frame(double time) {
     if (setup_view_ == ui::SetupView::preparing || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)
         animating_ = true;
     const UpdateInfo frame_uinfo = model_.update_info();
-    if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading || frame_uinfo.status == UpdateStatus::applying)
+    if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading ||
+        frame_uinfo.status == UpdateStatus::applying || frame_uinfo.status == UpdateStatus::ready_to_restart)
         animating_ = true;
     // The local test's start and the second folder's check run on their own threads: keep drawing until they end.
     if (model_.local_test().starting || (model_.debug() && model_.check_local_test().checking)) animating_ = true;
@@ -360,6 +361,9 @@ void LauncherUi::WrongFolderPage() {
 // The automatic setup on Play (there is no Setup page): a small line while
 // co-op gets ready, or a short banner when the last attempt failed.
 void LauncherUi::SetupStatus() {
+    // While an update downloads or installs the setup waits (the update replaces its files); the new window
+    // after the restart gets co-op ready by itself.
+    const bool updating = ui::UpdateInProgress(model_.update_info());
     if (setup_view_ == ui::SetupView::preparing) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         Spinner(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 6.5f, col::kAccent, time_);
@@ -367,7 +371,8 @@ void LauncherUi::SetupStatus() {
         Text("Getting co-op ready...", col::kText, kBody, GetFonts().semibold, -1.0f);
         ImGui::SameLine(0.0f, Px(10.0f));
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + Px(2.0f));
-        Text("This takes about a minute the first time.", col::kTextFaint, kSmall, nullptr, -1.0f);
+        Text(updating ? "It continues once the update has finished." : "This takes about a minute the first time.", col::kTextFaint,
+             kSmall, nullptr, -1.0f);
         Gap(4.0f);
         return;
     }
@@ -384,7 +389,8 @@ void LauncherUi::SetupStatus() {
     Text("Co-op couldn't get ready", col::kText, kBody + 1.0f, GetFonts().semibold, -1.0f);
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(4.0f));
     Text(why.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
-    if (Button("Try again##setup", ButtonKind::primary, ImVec2(0, 32.0f))) {
+    if (updating) Text("Diamond Dogs Together is updating. Co-op gets ready again once it has restarted.", col::kTextDim, kSmall, nullptr, 0.0f);
+    if (Button("Try again##setup", ButtonKind::primary, ImVec2(0, 32.0f), !updating)) {
         logs_result_ = Result{};
         model_.start_setup();
     }
@@ -428,41 +434,56 @@ void LauncherUi::PlayPage(Phase phase) {
     SetupStatus();
     const bool session = ui::SessionActive(phase);
     const UpdateInfo play_uinfo = model_.update_info();
-    if (play_uinfo.status == UpdateStatus::available) {
+    const ui::PlayBanner banner = ui::PlayBannerFor(play_uinfo);
+    if (banner == ui::PlayBanner::available || banner == ui::PlayBanner::failed) {
+        // An update to install, or one that was refused or did not go through: the reason, and Update now again.
+        // Not while co-op gets ready by itself (installing and restarting would cut the setup off).
+        const bool failed = banner == ui::PlayBanner::failed;
         const bool can_update = ui::CanStartUpdate(phase, setup_view_);
-        BeginCard("##play_update", 0.0f, col::kCard, col::kAccent);
-        IconBadge(Icon::download, col::kAccent, col::kAccentSoft, 28.0f);
+        const float play_bw = 120.0f;
+        BeginCard("##play_update", 0.0f, col::kCard, failed ? col::kBad : col::kAccent);
+        if (failed)
+            IconBadge(Icon::warning, col::kBad, col::kBadSoft, 28.0f);
+        else
+            IconBadge(Icon::download, col::kAccent, col::kAccentSoft, 28.0f);
         ImGui::SameLine(0.0f, Px(10.0f));
+        const float text_w = std::max(Px(120.0f), ImGui::GetContentRegionAvail().x - Px(play_bw + 20.0f));
         ImGui::BeginGroup();
         Text((play_uinfo.release_title + " is available!").c_str(), col::kText, kBody, GetFonts().semibold, -1.0f);
-        Text(setup_view_ == ui::SetupView::preparing ? "You can update once co-op is ready."
-                                                     : "Update to play with the latest features and bug fixes.",
-             col::kTextDim, kSmall, nullptr, 0.0f);
+        if (setup_view_ == ui::SetupView::preparing)
+            Text("You can update once co-op is ready.", col::kTextDim, kSmall, nullptr, text_w);
+        else if (failed)
+            Text(play_uinfo.error.c_str(), col::kBad, kSmall, nullptr, text_w);
+        else
+            Text("Update to play with the latest features and bug fixes.", col::kTextDim, kSmall, nullptr, text_w);
         ImGui::EndGroup();
-        const float play_bw = 120.0f;
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - Px(play_bw) + ImGui::GetStyle().WindowPadding.x);
         if (Button("Update now##banner", ButtonKind::primary, ImVec2(play_bw, 32.0f), can_update, Icon::download, true)) {
             model_.start_update();
         }
         EndCard();
         Gap(4.0f);
-    } else if (play_uinfo.status == UpdateStatus::downloading) {
+    } else if (banner == ui::PlayBanner::downloading) {
         BeginCard("##play_downloading", 0.0f, col::kCard, col::kAccent);
         char buf[128];
-        snprintf(buf, sizeof(buf), "Downloading update %s: %.1f / %.1f MB (%.0f%%)",
-                 play_uinfo.latest_version.c_str(),
-                 play_uinfo.bytes_downloaded / (1024.0 * 1024.0),
-                 play_uinfo.download_size / (1024.0 * 1024.0),
-                 play_uinfo.progress * 100.0f);
+        if (play_uinfo.cancelling)
+            snprintf(buf, sizeof(buf), "Stopping the download...");
+        else
+            snprintf(buf, sizeof(buf), "Downloading update %s: %.1f / %.1f MB (%.0f%%)", play_uinfo.latest_version.c_str(),
+                     play_uinfo.bytes_downloaded / (1024.0 * 1024.0), play_uinfo.download_size / (1024.0 * 1024.0),
+                     play_uinfo.progress * 100.0f);
         Text(buf, col::kText, kSmall, GetFonts().semibold, -1.0f);
         Gap(2.0f);
         ProgressBar(play_uinfo.progress, 0.0f, 6.0f, col::kAccent);
         EndCard();
         Gap(4.0f);
-    } else if (play_uinfo.status == UpdateStatus::applying) {
+    } else if (banner == ui::PlayBanner::installing) {
         BeginCard("##play_applying", 0.0f, col::kCard, col::kGood);
         Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, -1.0f);
         EndCard();
+        Gap(4.0f);
+    } else if (banner == ui::PlayBanner::updated) {
+        Message(Icon::check, col::kGood, ui::UpdatedNote(play_uinfo, phase), kBody);
         Gap(4.0f);
     }
     // Host | Join, and Local test with Settings > Debug mode on (or while one runs).
@@ -928,7 +949,9 @@ void LauncherUi::ToolsPage(Phase phase) {
     Text("Diamond Dogs Together Updates", col::kText, kBody + 1.0f, GetFonts().semibold, -1.0f);
 
     if (uinfo.status == UpdateStatus::idle || uinfo.status == UpdateStatus::up_to_date) {
-        const std::string text = "You have the latest version (" + model_.version() + ").";
+        const std::string text = uinfo.updated_to.empty()
+                                     ? "You have the latest version (" + model_.version() + ")."
+                                     : "Updated to version " + uinfo.updated_to + ". You have the latest version.";
         Text(text.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
         ImGui::EndGroup();
         const float bw = 150.0f;
@@ -966,29 +989,30 @@ void LauncherUi::ToolsPage(Phase phase) {
         if (!can_update && setup_view_ == ui::SetupView::preparing) Text("You can update once co-op is ready.", col::kTextDim, kSmall, nullptr, 0.0f);
     } else if (uinfo.status == UpdateStatus::downloading) {
         char buf[128];
-        snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)",
-                 uinfo.latest_version.c_str(),
-                 uinfo.bytes_downloaded / (1024.0 * 1024.0),
-                 uinfo.download_size / (1024.0 * 1024.0),
-                 uinfo.progress * 100.0f);
+        if (uinfo.cancelling)
+            snprintf(buf, sizeof(buf), "Stopping the download...");
+        else
+            snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)", uinfo.latest_version.c_str(),
+                     uinfo.bytes_downloaded / (1024.0 * 1024.0), uinfo.download_size / (1024.0 * 1024.0), uinfo.progress * 100.0f);
         Text(buf, col::kText, kSmall, nullptr, 0.0f);
         ImGui::EndGroup();
         Gap(3.0f);
         ProgressBar(uinfo.progress, 0.0f, 6.0f, col::kAccent);
         Gap(3.0f);
-        if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f))) {
+        if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f), !uinfo.cancelling)) {
             model_.cancel_update();
         }
-    } else if (uinfo.status == UpdateStatus::applying) {
-        Text("Installing update and restarting launcher...", col::kGood, kBody, GetFonts().semibold, 0.0f);
+    } else if (uinfo.status == UpdateStatus::applying || uinfo.status == UpdateStatus::ready_to_restart) {
+        Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, 0.0f);
         ImGui::EndGroup();
         Gap(4.0f);
         const ImVec2 c = ImGui::GetCursorScreenPos();
         Spinner(ImVec2(c.x + Px(20.0f), c.y + Px(10.0f)), 8.0f, col::kGood, time_);
     } else if (uinfo.status == UpdateStatus::error) {
-        Text(("Update check failed: " + uinfo.error).c_str(), col::kBad, kSmall, nullptr, 0.0f);
-        ImGui::EndGroup();
         const float bw = 150.0f;
+        // Wrapped short of the button on its right.
+        Text(uinfo.error.c_str(), col::kBad, kSmall, nullptr, std::max(Px(120.0f), ImGui::GetContentRegionAvail().x - Px(bw + 20.0f)));
+        ImGui::EndGroup();
         ImGui::SameLine(avail - Px(bw) + ImGui::GetStyle().WindowPadding.x);
         if (Button("Try again##tools", ButtonKind::secondary, ImVec2(bw, 32.0f), !ui::SessionActive(phase))) {
             model_.check_for_updates();
@@ -1272,12 +1296,15 @@ void LauncherUi::Popups() {
             Text(credit[1], col::kTextDim, kSmall, nullptr, -1.0f);
         }
         Gap(4.0f);
-        Text("The full licence texts and the source code (source.zip) are in the mgs-coop folder next to this "
-             "program.",
+        Text("The full licence texts are in the mgs-coop folder next to this program. The source code of this version "
+             "is on its release page.",
              col::kTextDim, kSmall, nullptr, 0.0f);
         Gap(8.0f);
-        if (Button("Open the mgs-coop folder##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::folder, true))
+        if (Button("Licences##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::folder, true))
             if (shell_.open_folder) shell_.open_folder(model_.game_dir() + "\\mgs-coop");
+        ImGui::SameLine(0.0f, Px(10.0f));
+        if (Button("Source code##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::download, true))
+            if (shell_.open_url) shell_.open_url(ui::ReleasePageUrl(model_.version()));
         ImGui::SameLine();
         right_buttons(100.0f);
         if (Button("Close##about", ButtonKind::primary, ImVec2(100.0f, 38.0f))) ImGui::CloseCurrentPopup();
@@ -1308,13 +1335,13 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
     logs_result_ = tool_result_ = Result{};
     uninstall_report_.clear();
     popup_request_ = Popup::none;
+    mock.set_mock_update_info(UpdateInfo{});
     mock.use_manual_clock(1000.0);
     mock.set_character(Character::story);
     mock.set_hud("compact");
     mock.set_debug(false);
     mock.set_local_test_folder("");
     mock.set_mock_checking(false);
-    if (mock.update_info().status == UpdateStatus::available) mock.check_for_updates();   // back to "the latest version"
     const std::string own_code = FormatJoinCode(kFixedSecret, MockModel::kOwnSteamId);
     auto copy_into = [&](const std::string& s) {
         strncpy_s(code_buf_, sizeof(code_buf_), s.c_str(), _TRUNCATE);
@@ -1471,6 +1498,58 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         mock.set_mock_checking(true);
         play_tab_ = ui::PlayTab::local_test;
         break;
+    case ui::Scene::play_updated_preparing:   // the new window right after a self-update: co-op gets ready once more
+    case ui::Scene::tools_updated:            // ... Tools, once co-op is ready again
+    case ui::Scene::play_updated: {           // ... Play
+        const ui::Scene scene = static_cast<ui::Scene>(index);
+        if (scene == ui::Scene::play_updated_preparing)
+            mock.jump_to_setup(1, 0.4f, false);
+        else
+            mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::up_to_date;
+        info.current_version = "0.14.4";
+        info.updated_to = "0.14.4";
+        mock.set_mock_update_info(info);
+        if (scene == ui::Scene::tools_updated) page = Page::tools;
+        break;
+    }
+    case ui::Scene::tools_update_refused: {   // Update now while MGSV runs from the folder
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::error;
+        info.latest_version = "v0.14.4";
+        info.download_url = "https://example.invalid/DiamondDogsTogether-0.14.4.zip";
+        info.error = "MGSV is running from this folder. Quit MGSV first, then update.";
+        mock.set_mock_update_info(info);
+        page = Page::tools;
+        break;
+    }
+    case ui::Scene::play_update_failed: {     // Update now on Play, and the new version would not start (the longest sentence)
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::error;
+        info.latest_version = "v0.14.4";
+        info.release_title = "Diamond Dogs Together 0.14.4";
+        info.download_url = "https://example.invalid/DiamondDogsTogether-0.14.4.zip";
+        info.error = "The new version would not start, so your current version was kept. Try again later, or get the latest zip "
+                     "from the release page.";
+        mock.set_mock_update_info(info);
+        break;
+    }
+    case ui::Scene::tools_update_cancelling: {   // Cancel pressed: the download is stopping
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::downloading;
+        info.latest_version = "v0.14.4";
+        info.download_size = 2837248;
+        info.bytes_downloaded = 1134899;
+        info.progress = 0.4f;
+        info.cancelling = true;
+        mock.set_mock_update_info(info);
+        page = Page::tools;
+        break;
+    }
     case ui::Scene::count: break;
     }
     first_frame_ = false;
