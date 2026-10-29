@@ -52,7 +52,8 @@ if not t.announced then
     log(fmt("step=tx;id=%.0f;src=%d;next=%d;kind=%d", t[1], t[3], t[4], t[2]))
 end
 if not t.values then return end
-for _ = 1, 32 do
+-- 128 per frame (M1 added 40 buddy values): a seed stream still ends within two frames.
+for _ = 1, 128 do
     local v = t.values[t.i]
     if not v then
         if not W.tx(OP.SEEDS_END, t[1], t[4], #t.values, t.digest) then return end
@@ -137,9 +138,13 @@ end
 function F.applySeeds(t)
 local s = F.seeds[t[1]]
 if not s or not s.ready or s.mission ~= t[4] then return false end
+-- M1 (world_companion.lua): the host's buddy keys only with companion_host_owned; the guest's
+-- own buddy vars are kept first (its saves write them).
+local C = W.companion
+local buddy = C and C.applies and C.applies() and C.keep("seed")
 for _, v in ipairs(s.values) do
     local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
-    if not key[5] then
+    if not key[5] and (key[6] ~= "buddy" or buddy) then
     local data = S.data(key)
     if key[2] then
         local array = W.get(data, key[1])
@@ -150,6 +155,7 @@ end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
+if buddy then C.seeded(t[4], t[2]) end
 return true
 end
 -- F.hostDeploy is not cleared here: F.tick owns the held sortie.
@@ -482,6 +488,11 @@ end
 local load, loadCheck = W.get(TppMission, "Load"), W.get(TppMission, "LoadWithChunkCheck")
 if type(load) == "function" then
     TppMission.Load = function(nextMission, ...)
+        -- M1: the host's Quiet lock rewrite before its seeds; a guest's own buddy back on a solo load.
+        if W.companion then
+            local ok, err = pcall(W.companion.load, nextMission, on() and (W.host or F.current ~= nil))
+            if not ok then W.log("event=companion;step=error;at=load;msg=" .. string.sub(tostring(err), 1, 80)) end
+        end
         if on() and W.host then
             local ok, ready = pcall(F.sendSeeds, nextMission)
             if not ok then W.fail(ready); return end

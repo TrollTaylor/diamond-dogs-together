@@ -239,6 +239,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
     // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op (lab and play, default off).
     else if (Equals(key, "world_vehicle_gone")) ok = ParseBool(value, result.world_vehicle_gone);
+    // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
+    else if (Equals(key, "companion_host_owned")) {
+        ok = ParseBool(value, result.companion_host_owned);
+        if (ok) result.companion_host_owned_given = true;
+    }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
@@ -1593,6 +1598,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // body while the partner rode a D-Walker or D-Horse, the body back after the
     // dismount, its own player unchanged); a named off opts out.
     if (!c.partner_native_mount_given) c.partner_native_mount = gun ? PartnerNativeMount::hide : PartnerNativeMount::off;
+    // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off unless named, in
+    // lab and play, until a hidden-run FRAME on both copies and a play rehearsal pass.
+    if (!c.companion_host_owned_given) c.companion_host_owned = false;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

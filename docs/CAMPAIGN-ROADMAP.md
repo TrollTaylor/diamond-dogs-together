@@ -38,7 +38,8 @@ As of 0.14.3 (2026-10-28: version bump `a0653b5`, package built at `a4c18fa`). T
 ## 3. Vehicles and companions
 
 Design, scope table, experiments and milestones M1-M13: [vehicles-companions-design.md](vehicles-companions-design.md)
-(revision 2). Nothing in this section is built yet. Decided 2026-10-28: one companion per session, the host's; the host
+(revision 2). M1 is built behind a lab key (`companion_host_owned`, play default off; branch `wp/companion-host`,
+2026-10-29); the rest is not built yet. Decided 2026-10-28: one companion per session, the host's; the host
 alone gives it orders; both players get a D-Walker when the host brings one. The support helicopter and vehicle
 weapons come later.
 
@@ -55,9 +56,9 @@ Vehicles:
 - [~] **Helicopter.** Host-led travel works. Riding together visibly (M12, research first) and the door gun (M13) are missing.
 
 Companions:
-- [ ] **One companion per session, the host's** (M1): the guest's PC loads the host's buddy with its look; the guest cannot pick, call, order or dismiss one; the guest's own save keeps its own buddy.
-- [ ] **Quiet only when the guest is not playing her** (M1): not offered to the host in sortie prep, removed if out when the guest joins, and the Mother Base cell Quiet hidden.
-- [~] **D-Dog** on both screens, following the host only (M2). Today the guest's own dog follows the host's, and it goes missing when the guest has no buddy or another one, and in Mother Base. The dog's attack at the right guard and its enemy marks on the guest's screen wait for enemy sync in play and shared marking.
+- [~] **One companion per session, the host's** (M1): the guest's PC loads the host's buddy with its look; the guest cannot pick, call, order or dismiss one; the guest's own save keeps its own buddy. Built behind a lab key and proven in the hidden worker on both PCs' copies with frames (the dog in Mother Base, a horse after the host swaps, the guest's call menu off, the refusal toasts; runs `489b3c6f`, `fa397547`) and in a play rehearsal (`b83c9f7a`). Play default off until the companion is shown never to act or get hurt on its own on the guest's PC (with M2); the iDroid buddy request is not yet checked; with the key on the guest has no Knock or Sonar while the host's companion is out; no two-PC test yet.
+- [~] **Quiet only when the guest is not playing her** (M1): not offered to the host in sortie prep, removed if out when the guest joins, and the Mother Base cell Quiet hidden. Built behind the same key: the host's Quiet is sent away and her type disabled, the sortie loads none, and the cell Quiet is gone on both PCs (frames, runs `b993af09`, `de43726a` in play). Not yet checked: the host's sortie-prep and iDroid buddy lists; no two-PC test yet.
+- [~] **D-Dog** on both screens, following the host only (M2). Today the guest's own dog follows the host's, and it goes missing when the guest has no buddy or another one, and in Mother Base; with M1's lab key the guest's PC loads the host's dog whatever the guest deployed, Mother Base included, and holds it at the host dog's pose (`fa397547`; 4 cm in the play rehearsal `b83c9f7a`). The dog's attack at the right guard and its enemy marks on the guest's screen wait for enemy sync in play and shared marking.
 - [ ] **Quiet** as in the normal game, synced (M5). Her shots' results are shared; the mirror on the guest's PC must never fire on its own.
 - [ ] **Companions safe on the guest's PC:** the guest's copy of a companion never attacks on its own and is not hurt by the guest's (unsynced) guards (M1-M10).
 - [ ] **D-Walker,** one each when the host brings D-Walker (M9). Today the partner's walker is missing and its rider hidden.

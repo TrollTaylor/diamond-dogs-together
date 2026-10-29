@@ -199,6 +199,7 @@ do
     W.active, W.observing, W.isStarted, W.failed, W.paired, W.w1 = false, false, false, false, false, false
     W.eff, W.epoch, W.rid, W.flags, W.obsCount, W.badAt = 0, 0, 0, 0, 0, nil
     W.census, W.censusKills, W.censusDamage, W.vehicleGoneOn = false, 0, 0, false
+    W.companionOn = false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
   end
@@ -213,6 +214,8 @@ do
     W.census = r[14] == 1
     -- 0.13.6 online-vehicle-gone (lab key world_vehicle_gone): r[15] turns on world_vehicle.lua.
     W.vehicleGoneOn = r[15] == 1
+    -- M1 host-owned companion (lab key companion_host_owned): r[16] turns on world_companion.lua.
+    W.companionOn = r[16] == 1
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
     local missing, required = W.bind()
@@ -299,6 +302,7 @@ do
     if W.follow then W.follow.tick(now) end
     if W.align then W.align.tick(now) end
     if W.place then W.place.tick(now) end
+    if W.companion then W.companion.tick(now) end
   end
 
   -- WS4 step 0 attacker census (CFG r[14], lab only; log only): every raw
@@ -335,6 +339,8 @@ do
     if kind == "ChangePhase" then h = W.cpById[a0] end
     if kind == "Dead" or kind == "Neutralize" or kind == "FultonInfo" then att = a1 elseif kind == "Damage" then att = a2 end
     local class2 = W.attClass and W.attClass(att) or "none"
+    -- M1 (docs/vehicles-companions-design.md 6.12): a mirror companion's message is logged, never forwarded.
+    if class2 == "mirror" and W.mirrorEngaged then pcall(W.mirrorEngaged, kind, h, att) end
     if W.census then W.censusLine(kind, h, a0, a1, a2, a3) end
     if not h then W.stats.unmapped = W.stats.unmapped + 1 end
     if kind ~= "Damage" then

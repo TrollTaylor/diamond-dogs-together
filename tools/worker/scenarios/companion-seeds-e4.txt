@@ -1,0 +1,55 @@
+# M1 experiments, run 1 (docs/vehicles-companions-design.md section 8: E1 incidental, E4 census; section 9 seeds).
+# Both copies from quiet-recruited (Quiet obtained; both titles in the Mother Base helicopter, so they pair there),
+# companion_host_owned=1 on both, the guest plays Quiet (lab.json offline.characters).
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-seeds-e4.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed quiet-recruited
+# Evidence: both script-observer.log event=companion lines (character, quiet_lock, seed, seed_apply, own_kept, loaded,
+# guard, hook, refused, save_own), buddy_status vars_type/own, the frames below. Afterwards the seeds:
+#   Save-WorkerSeed -Roles host -Name afgh-quiet ; Save-WorkerSeed -Roles guest -Name afgh-horse
+labsetting companion_host_owned=1
+labsetting nametag=1
+# The toasts (NOTE 13) need the HUD (lab default off).
+labsetting coop_hud=compact
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+wait 3000
+host run buddy_status
+guest run buddy_status
+host run companion_status
+guest run companion_status
+both capture e1-afgh
+# E4 census on the guest: the call menu (Q held: CALL is masked), the iDroid (Tab), the F9 horse summon.
+guest hold q 1500 nowait
+wait 700
+guest capture e4-guest-callmenu
+guest release
+host hold q 1500 nowait
+wait 700
+host capture e4-host-callmenu
+host release
+wait 1500
+guest run horse_spawn
+guest expect host_only;companion=host_owned
+wait 500
+guest capture e4-guest-f9-toast
+guest press tab
+wait 2500
+guest capture e4-guest-idroid
+guest press e
+wait 1500
+guest capture e4-guest-idroid-e
+guest press tab
+wait 2000
+guest capture e4-guest-idroid-closed
+# Seeds: the host deploys Quiet next time (afgh-quiet), the guest a horse (afgh-horse); each lever checkpoints.
+# The lever writes vars.buddyType and buddyTypeMissionStart (a title Continue's ResetVarsMissionStart copies the latter).
+host run seed_buddy quiet
+host expect seed_buddy;kind=quiet;vars_type=3;checkpoint=1;
+guest run seed_buddy horse
+guest expect seed_buddy;kind=horse;vars_type=1;checkpoint=1;
+wait 5000
+host run buddy_status
+guest run buddy_status
+host run companion_status
+guest run companion_status
+both capture seeds-done
+state

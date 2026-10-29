@@ -113,7 +113,8 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 53, "53 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone and local ops)");
+    Check(count == 55, "55 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+                       "and character, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +141,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x30) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x31) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::ride_fast) && world::FindOp(op::ride_fast)->body == 23 &&
               world::FindOp(op::ride_fast)->wire == world::Wire::datagram, "RIDE_FAST is a 23-byte datagram");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
@@ -1676,6 +1677,47 @@ void VehicleGone() {
     Check(levelReject && levelReject->v[0] == 9 && levelReject->v[2] == world::reject::level && levelReject->v[3] == 25604,
           "a level-2 host rejects a vehicle request with REJECT 10");
 }
+// M1 host-owned companion (docs/vehicles-companions-design.md section 5): COMPANION 0x30 (both
+// directions, world queue, reliable, level 3, play too) and CHARACTER 0x38 (guest to host, control
+// queue, so it reaches the host in the helicopter). The seed key index takes 1..127 (the buddy keys).
+void CompanionOps() {
+    const auto* companion = world::FindOp(op::companion);
+    const auto* character = world::FindOp(op::character);
+    Check(op::companion == 0x30 && op::character == 0x38 && companion && character, "COMPANION 0x30 and CHARACTER 0x38 exist");
+    Check(companion->queue == 1 && companion->wire == world::Wire::reliable && companion->level == 3 && !companion->lab_only &&
+              !companion->request && companion->dir == world::Dir::both && companion->lua == 12 && companion->body == 29,
+          "COMPANION: world queue, reliable, level 3, both directions, 12 fields, 29 bytes");
+    Check(character->queue == 0 && character->wire == world::Wire::reliable && character->level == 3 && !character->lab_only &&
+              !character->request && character->dir == world::Dir::guest_to_host && character->lua == 3 && character->body == 4,
+          "CHARACTER: control queue, reliable, level 3, guest to host, 3 fields, 4 bytes");
+    const auto* seed = world::FindOp(op::seed);
+    Check(seed && world::FieldValid(seed->fields[2], 127) && !world::FieldValid(seed->fields[2], 128) &&
+              !world::FieldValid(seed->fields[2], 0),
+          "the seed key index takes 1..127");
+    Setup(3, 3, true);
+    Pair(30050, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    Check(Tx(g_host, op::companion, {1, 5000, 1, 0, 1, -203395, 800, 52899, 1571, 0, 0, 0}, 101) == world::TxStatus::ok,
+          "the host announces its D-Dog");
+    Check(Tx(g_host, op::companion, {2, 5000, 5, 0, 1, 0, 0, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args,
+          "kind 5 (battle gear) is refused");
+    Check(Tx(g_guest, op::character, {1, 6, 1}, 101) == world::TxStatus::ok, "the guest says it plays Quiet");
+    Check(Tx(g_host, op::character, {1, 6, 1}, 101) == world::TxStatus::wrong_role, "only the guest sends CHARACTER");
+    Check(Tx(g_guest, op::character, {2, 8, 0}, 101) == world::TxStatus::bad_args, "an unknown character code is refused");
+    Exchange(102);
+    const auto atGuest = Drain(g_guest, 3, 103);
+    const auto* dog = Find(atGuest, op::companion);
+    Check(dog && dog->v[2] == 1 && dog->v[4] == 1 && dog->v[5] == -203395, "the guest receives the host's companion");
+    const auto atHost = Drain(g_host, 3, 103);
+    const auto* quiet = Find(atHost, op::character);
+    Check(quiet && quiet->v[1] == 6 && quiet->v[2] == 1, "the host receives the guest's character");
+    Setup(2, 2, true);
+    Pair(30050, 200);
+    Check(Tx(g_host, op::companion, {1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0}, 201) == world::TxStatus::disabled &&
+              Tx(g_guest, op::character, {1, 6, 1}, 201) == world::TxStatus::disabled,
+          "both ops need world level 3");
+}
 } // namespace
 
 int main() {
@@ -1698,6 +1740,7 @@ int main() {
     RideFast();
     RideTilt();
     VehicleGone();
+    CompanionOps();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

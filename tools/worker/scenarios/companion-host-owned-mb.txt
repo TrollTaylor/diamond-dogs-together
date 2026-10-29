@@ -1,0 +1,55 @@
+# M1 proof, run C (Mother Base; docs/vehicles-companions-design.md section 9 M1, experiments E1 MB, E3 read-back, E20).
+# The host deploys D-Dog (africa-jeep: its helicopter is 40020, as is the guest's after run A); the guest's save is
+# run A's guest save, written while the host's dog was live there (its own buddy must still be the horse: E3); the
+# guest plays Quiet, so the Mother Base cell Quiet is refused on both copies (E20); companion_host_owned=1.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned-mb.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed africa-jeep -GuestSaveSeedRun <run A>
+labsetting companion_host_owned=1
+labsetting nametag=1
+# The toasts (NOTE 13) need the HUD (lab default off).
+labsetting coop_hud=compact
+boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+# E3: the guest's own buddy, read from its save before the seeds, is still the horse.
+waitlog guest 'world_lua=event=companion; role=guest; step=own_kept; why=seed; own=horse;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 120
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+guest expect own=1
+# LAB framing (as run A): the host turns to its camera, its dog is called and warped 5 m in front of it, the guest
+# stands 8 m behind the host.
+host press w 500
+wait 1500
+placebehind guest host 6 2
+wait 2000
+host run companion_lab call_here
+host expect call_here;kind=dog;result=true;warp=1
+wait 4000
+host run buddy_status
+guest run buddy_status
+both capture m1-mb-dog
+wait 2000
+both capture m1-mb-dog-2
+# In run A (489b3c6f) the guest's own body hid the held dog (its marker showed); sweep the guest's camera left.
+guest mouse -250 0
+wait 800
+guest capture m1-mb-dog-3
+guest mouse -250 0
+wait 800
+guest capture m1-mb-dog-4
+# E20: the cell Quiet (quest mtbs_wait_quiet) is refused on both copies near the Medical platform (run 9e8f22a7 logged
+# mbquiet_hidden only there); the cell frames are in companion-host-owned-quiet.txt (run B).
+host run companion_cell goto
+guest run companion_cell goto
+wait 8000
+waitlog host 'world_lua=event=companion; role=host; step=mbquiet_hidden;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=mbquiet_hidden;' 60
+host run companion_status
+guest run companion_status
+# Seeds (section 9): is D-Walker developed in the lab save? The lever reports obtained= and takes a checkpoint; when
+# true, this run's host save becomes the afgh-walker seed (Save-WorkerSeed -Roles host).
+host run seed_buddy walker
+host run companion_status
+state
