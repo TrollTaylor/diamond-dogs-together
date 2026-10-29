@@ -265,6 +265,13 @@ void TestCommandLine() {
     Check(ui::CloseForUpdate(info), "the window closes once the updated launcher took over");
     info.status = UpdateStatus::applying;
     Check(!ui::CloseForUpdate(info), "not while the update is being installed");
+
+    // About > Source code: the release page of this version (both zips are there).
+    Check(ui::ReleasePageUrl("0.14.4+48ce7da") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4",
+          "the source of a build is its release");
+    Check(ui::ReleasePageUrl("0.14.4") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4", "a plain version");
+    for (const char* odd : {"", "dev", "0.14", "0.14.4.1", "0..4", "v0.14.4", "0.14.4-rc1"})
+        Check(ui::ReleasePageUrl(odd) == "https://github.com/TrollTaylor/diamond-dogs-together/releases", "anything else: the release list");
 }
 
 void TestMock() {

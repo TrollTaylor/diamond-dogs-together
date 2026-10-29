@@ -1187,12 +1187,15 @@ void LauncherUi::Popups() {
             Text(credit[1], col::kTextDim, kSmall, nullptr, -1.0f);
         }
         Gap(4.0f);
-        Text("The full licence texts and the source code (source.zip) are in the mgs-coop folder next to this "
-             "program.",
+        Text("The full licence texts are in the mgs-coop folder next to this program. The source code of this version "
+             "is on its release page.",
              col::kTextDim, kSmall, nullptr, 0.0f);
         Gap(8.0f);
-        if (Button("Open the mgs-coop folder##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::folder, true))
+        if (Button("Licences##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::folder, true))
             if (shell_.open_folder) shell_.open_folder(model_.game_dir() + "\\mgs-coop");
+        ImGui::SameLine(0.0f, Px(10.0f));
+        if (Button("Source code##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::download, true))
+            if (shell_.open_url) shell_.open_url(ui::ReleasePageUrl(model_.version()));
         ImGui::SameLine();
         right_buttons(100.0f);
         if (Button("Close##about", ButtonKind::primary, ImVec2(100.0f, 38.0f))) ImGui::CloseCurrentPopup();

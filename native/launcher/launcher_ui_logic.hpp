@@ -128,4 +128,9 @@ int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_beside);
 // The window closes itself: the updated launcher has taken over.
 bool CloseForUpdate(const UpdateInfo& info);
 
+// The GitHub release page of a version ("0.14.4" or "0.14.4+abc1234"): the
+// player zip and its source zip (DDT-source-<version>.zip) are both there.
+// Anything else falls back to the list of releases.
+std::string ReleasePageUrl(const std::string& version);
+
 }  // namespace ddt::ui

@@ -400,4 +400,23 @@ int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_beside) {
 
 bool CloseForUpdate(const UpdateInfo& info) { return info.status == UpdateStatus::ready_to_restart; }
 
+std::string ReleasePageUrl(const std::string& version) {
+    const std::string releases = "https://github.com/TrollTaylor/diamond-dogs-together/releases";
+    const std::string plain = version.substr(0, version.find('+'));
+    int dots = 0;
+    bool digit_before = false;
+    for (char c : plain) {
+        if (c >= '0' && c <= '9') {
+            digit_before = true;
+        } else if (c == '.' && digit_before) {
+            ++dots;
+            digit_before = false;
+        } else {
+            return releases;
+        }
+    }
+    if (dots != 2 || !digit_before) return releases;
+    return releases + "/tag/v" + plain;
+}
+
 }  // namespace ddt::ui

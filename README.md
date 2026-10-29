@@ -19,6 +19,10 @@ You and a friend each run your own copy of MGSV and play in the same world. You 
 
 Get `DiamondDogsTogether-<version>.zip` from [Releases](https://github.com/TrollTaylor/diamond-dogs-together/releases). Both players need the **same version**.
 
+The launcher updates itself: when a new version is out, **Update now** downloads it, installs it and restarts Diamond Dogs Together.
+
+The complete source code of each version is `DDT-source-<version>.zip` on the same release page (and the tag `v<version>` of this repository). You do not need it to play.
+
 ## Requirements
 
 - MGSV: The Phantom Pain on Steam, version 1.0.15.4, with **no other mods**.
@@ -94,7 +98,7 @@ pwsh -File tools/Prepare-Dependencies.ps1
 ./tools/build.ps1 -Configuration Release
 ```
 
-`tools/package.ps1 -Friend` builds the release zip from a passing `tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` run. Developer docs:
+`tools/package.ps1 -Friend` builds the release from a passing `tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` run: the player zip `DiamondDogsTogether-<version>.zip` and the source zip `DDT-source-<version>.zip`. Every release uploads **both** to the GitHub release `v<version>` (see AGENTS.md, "Releasing"). Developer docs:
 - [Status and change log](docs/STATUS.md)
 - [Campaign roadmap](docs/CAMPAIGN-ROADMAP.md)
 - [Partner body](docs/native-puppet.md)
