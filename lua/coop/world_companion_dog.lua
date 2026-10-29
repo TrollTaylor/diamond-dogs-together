@@ -324,10 +324,17 @@ function C.lever(a, id, A, mission)
   if not t or t == BT("NONE") or not p then return false, "call_here_none" end
   local v = v3(p[1], p[2], p[3])
   C.token = true
-  local ok, res = pcall(TBC("CallBuddy"), t, v, p[4])
+  local ok, res
+  -- No buddy block (none loaded, e.g. the Quiet lock): the F9 pattern, ReserveCallBuddy there, then Load.
+  if blockActive() then ok, res = pcall(TBC("CallBuddy"), t, v, p[4])
+  else
+   ok = pcall(TBC("ReserveCallBuddy"), t, W.get(BuddyInitStatus, "NORMAL") or 0, v, p[4]) and pcall(TBC("Load")); res = "load"
+   -- As a sortie-prep choice would (CallBuddy writes it natively; the reserve path is U).
+   if ok then vars.buddyType = t end
+  end
   C.token = nil
   local warp = 0
-  if ok and res ~= false and t == BT("DOG") then
+  if ok and res == true and t == BT("DOG") then
    local okId, dog = pcall(W.get(GameObject, "GetGameObjectIdByIndex"), "TppBuddyDog2", 0)
    if okId and dog == 9728 and pcall(W.get(GameObject, "SendCommand"), dog, {id = "SetWarpPosition", pos = v}) then warp = 1 end
   end

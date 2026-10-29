@@ -441,6 +441,13 @@ do
     h.env.vars.buddyType, h.active = NONE, NONE
     h.env.TppSave.SaveVarsToSlot(0)
     check(h.slot.buddyType == NONE and h.slot.start == QUIET, 'a dismissed dog saves none; the parked sortie copy still Quiet')
+    -- (g) A companion loaded by a path that writes no var still ends the park.
+    h = Fixture(1, {buddyType = QUIET, active = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.tick(6000)
+    h.active = DOG
+    h.tick(200)
+    check(h.find('step=park_dropped;var=buddyType;live=dog;'), 'a loaded dog with vars none ends the park')
     check(h.C.own == nil, 'the host keeps no buddy snapshot')
 end
 -- Review 2026-10-29 (minor 7): both PCs must run companion_host_owned (CFG r[16] is local to each copy). Each copy shows
@@ -651,6 +658,16 @@ check(warp and warp[2] == 9728 and warp[4].x == 1 and warp[4].z == 8, 'call_here
 ok, msg = c.C.lever({'companion_lab', 'call_here', 'horse'}, 2, A, 30010)
 check(ok and msg == 'call_here;kind=horse;result=true;warp=0' and c.active == HORSE, 'call_here <kind> swaps the host companion')
 check(not c.C.lever({'companion_lab', 'call_here', 'bogus'}, 3, A, 30010), 'call_here refuses an unknown kind')
+-- With no buddy block (the host's Quiet locked away: none loaded), the F9 pattern: ReserveCallBuddy there, then Load.
+do
+    local h = Fixture(1, {active = NONE, block = false})
+    local ok2, msg2 = h.C.lever({'companion_lab', 'call_here', 'dog'}, 1, A, 30010)
+    local reserve
+    for _, v in ipairs(h.calls) do if v[1] == 'ReserveCallBuddy' then reserve = v end end
+    check(ok2 and msg2 == 'call_here;kind=dog;result=load;warp=0' and reserve and reserve[2] == DOG and reserve[4].z == 8 and h.called('Load') == 1,
+        'call_here with no block: ReserveCallBuddy 5 m in front, then Load')
+    check(h.env.vars.buddyType == DOG, 'and vars.buddyType as a sortie-prep choice would')
+end
 c.W.mode = 2
 check(not c.C.lever({'companion_lab', 'call_here'}, 4, A, 30010), 'call_here is lab only')
 c = Fixture(2, {active = DOG})

@@ -167,9 +167,11 @@ end
 local function park(via) local a, b = parkVar(PARK[1], via), parkVar(PARK[2], via); return a or b end
 function C.parkCheck()
  if not C.parked then return end
- local Q, N = BT("QUIET"), BT("NONE")
+ local Q, N, a = BT("QUIET"), BT("NONE"), active()
  for k in pairs(C.parked) do
   local v = W.get(vars, k)
+  -- A loaded non-Quiet companion is the host's choice too (a native path that writes no var).
+  if k == "buddyType" and type(a) == "number" and a ~= N and a ~= Q then v = a end
   if type(v) == "number" and v ~= N and v ~= Q then C.parked[k] = nil; L(fmt("step=park_dropped;var=%s;live=%s;", k, typeName(v))) end
  end
  if next(C.parked) == nil then C.parked = nil end
