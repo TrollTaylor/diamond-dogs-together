@@ -12,8 +12,9 @@
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/relief-e2.txt -SaveSeed lab
 # Evidence (world_lua lines read "event=relief; step=...", ';' expanded to '; '):
-#   both  step=installed; hook=loadcarry (or initnew); then in 30020 step=arm_applied; where=loadcarry; m=30020; ok=1
-#         and step=loadcarry; m=30020; ...; t=1
+#   both  step=installed; hook=initnew+sortie (the game's Vehicle table refuses writes), then at the ACC sortie
+#         step=arm_applied; where=sortie; m=40010; ok=1; ...; t=1 (hidden run 698e67cf: the mission-start-only lever
+#         spawned nothing; 5874afcd: the sortie write gave the host relief type 2 at the 30010 LZ)
 #   both  census arrival1: census_v0 alive=1, the same vt and x/z within 1 m on both copies (frames relief-arrival1)
 #   host  step=seize; fn=SeizeReliefVehicleOnClear; alive=1 at the 30020 mission end (and credit lines if it credits)
 #   guest step=seize_skipped; fn=SeizeReliefVehicleOnClear; alive=1, no credit line
@@ -37,11 +38,12 @@ waitmission host 30020 300
 waitmission guest 30020 180
 waitgameplay host 150
 waitgameplay guest 150
+host debug time 43200
 wait 6000
 host run relief_census arrival1
 guest run relief_census arrival1
-host run relief_goto 0
-guest run relief_goto 4
+host run relief_face
+guest run relief_face
 wait 4000
 both capture relief-arrival1
 # Arrival 2 (Afghanistan, enemyBase_S LZ): relief type 2 (veh_rl_east_lv); the 30020 mission end is E18.
@@ -52,11 +54,12 @@ waitmission host 30010 300
 waitmission guest 30010 180
 waitgameplay host 150
 waitgameplay guest 150
+host debug time 43200
 wait 6000
 host run relief_census arrival2
 guest run relief_census arrival2
-host run relief_goto 0
-guest run relief_goto 4
+host run relief_face
+guest run relief_face
 wait 4000
 both capture relief-arrival2
 # E17: the guest's copy removes its index 0 (Instant, no account).

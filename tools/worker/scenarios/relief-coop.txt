@@ -16,8 +16,8 @@ both debug godmode 1
 wait 3000
 host run relief_census continue
 guest run relief_census continue
-host run relief_goto 0
-guest run relief_goto 4
+host run relief_face
+guest run relief_face
 wait 4000
 both capture relief-coop-continue
 host run relief_seize stock
@@ -32,8 +32,8 @@ waitgameplay guest 150
 wait 6000
 host run relief_census arrival
 guest run relief_census arrival
-host run relief_goto 0
-guest run relief_goto 4
+host run relief_face
+guest run relief_face
 wait 4000
 both capture relief-coop-arrival
 guest run relief_remove fadeout

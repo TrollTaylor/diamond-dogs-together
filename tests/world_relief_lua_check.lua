@@ -31,7 +31,7 @@ local function Fixture(mode, opts)
         reliefVehicleCarryLife = {[0] = 100, [1] = 50}, reliefVehicleCarryAmmo = {[0] = 3}, reliefVehicleCarryState = 0,
         userPresetVehiclePaintType = paint, sortieLoadoutInfoU8buf = u8, currentSortieLoadoutSlot = 1,
         sortieLoadoutInfoSaveFormVersion = 3, currentSortieLoadoutSlotNonRental = 1, playerPosX = 800, playerPosZ = 1630,
-        playerVehicleGameObjectId = 65535}
+        playerPosY = 343, playerVehicleGameObjectId = 65535}
     env.gvars = {heli_missionStartRoute = 1234}
     c.v0 = {alive = opts.alive ~= false, x = 805, y = 343, z = 1636.5, type = 2}
     local function vector(v) return {GetX = function() return v.x end, GetY = function() return v.y end, GetZ = function() return v.z end} end
@@ -61,7 +61,8 @@ local function Fixture(mode, opts)
     for _, name in ipairs({'SeizeReliefVehicleOnAbort', 'SeizeReliefVehicleOnClear', 'SeizeReliefVehicleOnForceGoToMb'}) do
         env.TppMission[name] = function() c.calls[#c.calls + 1] = {name} end
     end
-    env.TppTerminal = {OnFultonVehicle = function(...) c.calls[#c.calls + 1] = {'OnFultonVehicle', ...} end,
+    env.TppTerminal = {OnFulton = function(...) c.calls[#c.calls + 1] = {'OnFulton', ...} end,
+        OnFultonVehicle = function(...) c.calls[#c.calls + 1] = {'OnFultonVehicle', ...} end,
         AddTempResource = function(...) c.calls[#c.calls + 1] = {'AddTempResource', ...} end}
     env.TppPlayer = {Warp = function(t) c.warps[#c.warps + 1] = t end}
     local W = {mode = mode, host = opts.guest ~= true, role = opts.guest and 2 or 1}
@@ -102,7 +103,7 @@ check(c.env.Vehicle.LoadCarry ~= nil and c.R.hook == nil, 'the census installs n
 
 -- Play mode: every lever refuses and nothing is wrapped.
 local originalLoad = c.env.Vehicle.LoadCarry
-for _, cmd in ipairs({'relief_arm 2 805 343 1636.5 0', 'relief_seize skip', 'relief_remove instant', 'relief_goto'}) do
+for _, cmd in ipairs({'relief_arm 2 805 343 1636.5 0', 'relief_seize skip', 'relief_remove instant', 'relief_face'}) do
     local good, why = c:run(cmd)
     check(not good and why == 'relief_lab_only', 'play refuses ' .. cmd)
 end
@@ -111,7 +112,7 @@ check(c.env.Vehicle.LoadCarry == originalLoad and c.R.hook == nil and #c.warps =
 -- Lab: argument checks.
 c = Fixture(1)
 for _, cmd in ipairs({'relief_arm 11 0 0 0 0', 'relief_arm 2.5 0 0 0 0', 'relief_arm 2 x 0 0 0', 'relief_arm 2 0 0 0', 'relief_seize maybe',
-    'relief_remove despawn', 'relief_goto 99', 'relief_census a b'}) do
+    'relief_remove despawn', 'relief_remove instant loud', 'relief_face 3', 'relief_goto', 'relief_census a b'}) do
     local good, why = c:run(cmd)
     check(not good and why == 'relief_args', 'refused: ' .. cmd .. ' (' .. tostring(why) .. ')')
 end
@@ -121,7 +122,7 @@ check(c.R.hook == nil, 'refused arguments install nothing')
 -- by the ACC's own mission start (its LoadCarry clears the carry vars).
 ok, text = c:run('relief_arm 2 805 343 1636.5 0')
 check(ok and text == 'relief_arm;type=2;hook=loadcarry+initnew+sortie', 'arm installs the three hooks: ' .. tostring(text))
-check(c:has('step=installed;hook=loadcarry+initnew+sortie;save=1;seize=3;credit=2'), 'all hooks installed once')
+check(c:has('step=installed;hook=loadcarry+initnew+sortie;save=1;seize=3;credit=3'), 'all hooks installed once')
 check(c:has('step=armed;type=2;x=805.00;y=343.00;z=1636.50;yaw=0.00;hook=loadcarry+initnew+sortie'), 'armed line')
 c.env.vars.missionCode = 40010
 c.env.TppVarInit.InitializeForNewMission()
@@ -180,11 +181,25 @@ c.env.vars.playerVehicleGameObjectId = 65535
 ok, text = c:run('relief_remove instant')
 local seize
 for _, s in ipairs(c.sent) do if s.cmd.id == 'Seize' then seize = s end end
-check(ok and text == 'relief_remove;how=instant;alive=0', 'remove result: ' .. tostring(text))
+check(ok and text == 'relief_remove;how=instant;quiet=0;alive=0', 'remove result: ' .. tostring(text))
 check(seize and seize.id == 25600 and #seize.cmd.options == 1 and seize.cmd.options[1] == 'Instant', 'Seize {"Instant"} on 25600 only')
-check(c:has('step=remove;how=instant;alive_after=0;x=805.0;z=1636.5;gmp=123456'), 'remove line with the resources')
+check(c:has('step=remove;how=instant;quiet=0;alive_after=0;x=805.0;z=1636.5;gmp=123456'), 'remove line with the resources')
+-- Without quiet the stock credit path runs (hidden run fafd3fdd: Instant still sent Fulton/FultonInfo and AddTempResource 13).
+c.env.TppTerminal.OnFulton(25600, 0, 0, 13)
+check(c.calls[#c.calls][1] == 'OnFulton' and c:has('step=credit;fn=OnFulton;args=25600,0,0,13'), 'not quiet: OnFulton passes')
 good, why = c:run('relief_remove fadeout')
 check(not good and why == 'relief_absent', 'an absent index 0 refuses')
+-- quiet: this copy's TppTerminal.OnFulton for 25600 is skipped once (no credit); other ids and later calls pass.
+local q = Fixture(1)
+ok, text = q:run('relief_remove fadeout quiet')
+check(ok and text == 'relief_remove;how=fadeout;quiet=1;alive=0', 'quiet remove: ' .. tostring(text))
+local before = #q.calls
+q.env.TppTerminal.OnFulton(1234, 0, 0, 5)
+check(#q.calls == before + 1 and q.calls[#q.calls][2] == 1234, 'quiet never skips another id')
+q.env.TppTerminal.OnFulton(25600, 0, 0, 13)
+check(#q.calls == before + 1 and q:has('step=credit_skipped;fn=OnFulton;args=25600,0,0,13'), 'quiet skips the 25600 credit once')
+q.env.TppTerminal.OnFulton(25600, 0, 0, 13)
+check(#q.calls == before + 2, 'the skip is used up')
 for how, opt in pairs({fadeout = 'FadeOut', fulton = 'Fulton'}) do
     local f = Fixture(1)
     f:run('relief_remove ' .. how)
@@ -193,13 +208,17 @@ for how, opt in pairs({fadeout = 'FadeOut', fulton = 'Fulton'}) do
     check(s and #s.cmd.options == 1 and s.cmd.options[1] == opt, how .. ' sends only ' .. opt)
 end
 
--- Captures: warp 8 m south of index 0, facing north.
+-- Captures: turn in place toward index 0 (never a move: hidden run fafd3fdd fell through the ground after a warp).
 c = Fixture(1)
-ok, text = c:run('relief_goto 3')
-check(ok and #c.warps == 1 and c.warps[1].pos[1] == 808 and c.warps[1].pos[2] == 343.5 and c.warps[1].pos[3] == 1628.5 and c.warps[1].rotY == 0,
-    'relief_goto warps beside index 0')
+ok, text = c:run('relief_face')
+local w = c.warps[1]
+check(ok and #c.warps == 1 and w.pos[1] == 800 and w.pos[2] == 343 and w.pos[3] == 1630 and math.abs(w.rotY - 37.57) < 0.01,
+    'relief_face keeps the position and faces the vehicle: ' .. tostring(text))
+c.env.vars.playerPosX = 700
+good, why = c:run('relief_face')
+check(not good and why:match('^relief_far;dist=') and #c.warps == 1, 'farther than 20 m: no warp')
 c.v0.alive = false
-good, why = c:run('relief_goto')
-check(not good and why == 'relief_absent', 'goto refuses without index 0')
+good, why = c:run('relief_face')
+check(not good and why == 'relief_absent', 'face refuses without index 0')
 
 print('world_relief_lua_check: ' .. checks .. ' checks PASS')

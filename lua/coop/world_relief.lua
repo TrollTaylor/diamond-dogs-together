@@ -19,10 +19,13 @@
 --                              lab: at the next ACC sortie (SelectNextMissionHeliStartRoute) write
 --                              the carry vars, as the sortie prep's SetRelief does (E2).
 --   relief_seize stock|skip    lab: TppMission.SeizeReliefVehicleOn* run (logged) or are skipped (E18).
---   relief_remove instant|fadeout|fulton
+--   relief_remove instant|fadeout|fulton [quiet]
 --                              lab: the stock Seize instance command on index 0 with only that
---                              method option, never DirectAccount / CheckFultonType (E17).
---   relief_goto [dx]           lab: warp 8 m south of index 0, facing it (captures).
+--                              method option, never DirectAccount / CheckFultonType (E17); quiet
+--                              skips this copy's TppTerminal.OnFulton for 25600 (no Mother Base credit).
+--   relief_face                lab: turn in place to face index 0 (within 20 m; captures). Hidden run
+--                              fafd3fdd: a warp beside it at the vehicle's height fell through the
+--                              30010 enemyBase_S slope, so nothing moves the player any more.
 -- The installed hooks also log Vehicle.SaveCarry and TppTerminal.OnFultonVehicle /
 -- AddTempResource calls (the Mother Base credit path of a vehicle Fulton).
 do
@@ -200,8 +203,13 @@ function R.install()
         end end) then R.seizeHooks = R.seizeHooks + 1 end
     end
     R.creditHooks = 0
-    for _, name in ipairs({"OnFultonVehicle", "AddTempResource"}) do
+    for _, name in ipairs({"OnFulton", "OnFultonVehicle", "AddTempResource"}) do
         if wrap(TppTerminal, name, function(o) return function(...)
+            if name == "OnFulton" and R.quiet and (...) == RID then
+                R.quiet = nil
+                L(fmt("step=credit_skipped;fn=%s;args=%s", name, args(...)))
+                return
+            end
             L(fmt("step=credit;fn=%s;args=%s", name, args(...)))
             return o(...)
         end end) then R.creditHooks = R.creditHooks + 1 end
@@ -209,24 +217,32 @@ function R.install()
     L(fmt("step=installed;hook=%s;save=%d;seize=%d;credit=%d", R.hook, R.saveHook and 1 or 0, R.seizeHooks, R.creditHooks))
     return R.hook
 end
-function R.remove(how)
+function R.remove(how, quiet)
     if not R.alive() then return false, "relief_absent" end
     if W.get(vars, "playerVehicleGameObjectId") == RID then return false, "relief_ridden" end
     R.install()
+    R.quiet = quiet or nil
     local x, y, z = R.pose()
     send(RID, {id = "Seize", options = {REMOVE[how]}})
     local alive = R.alive() and 1 or 0
-    L(fmt("step=remove;how=%s;alive_after=%d;x=%s;z=%s;%s", how, alive, num(x, "%.1f"), num(z, "%.1f"), R.resources()))
-    return true, fmt("relief_remove;how=%s;alive=%d", how, alive)
+    L(fmt("step=remove;how=%s;quiet=%d;alive_after=%d;x=%s;z=%s;%s", how, quiet and 1 or 0, alive, num(x, "%.1f"), num(z, "%.1f"), R.resources()))
+    return true, fmt("relief_remove;how=%s;quiet=%d;alive=%d", how, quiet and 1 or 0, alive)
 end
-function R.warpTo(dx)
+-- Turn in place (TppPlayer.Warp to the player's own position; rotY in degrees, forward = (sin, cos)).
+function R.face()
     local x, y, z = R.pose()
     if not x then return false, "relief_absent" end
+    local px, py, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
+    if not (n(px) and n(py) and n(pz)) then return false, "relief_player_pose" end
+    local dx, dz = x - px, z - pz
+    local d = math.sqrt(dx * dx + dz * dz)
+    if d > 20 then return false, fmt("relief_far;dist=%.1f", d) end
     local warp = W.get(TppPlayer, "Warp")
     if type(warp) ~= "function" then return false, "relief_warp_binding" end
-    local ok = pcall(warp, {pos = {x + dx, y + 0.5, z - 8}, rotY = 0})
-    L(fmt("step=goto;ok=%d;x=%.2f;y=%.2f;z=%.2f;dx=%.1f", ok and 1 or 0, x, y, z, dx))
-    return ok, ok and fmt("relief_goto;x=%.1f;z=%.1f;dx=%.1f", x, z, dx) or "relief_warp_error"
+    local yaw = math.deg(math.atan2(dx, dz))
+    local ok = pcall(warp, {pos = {px, py, pz}, rotY = yaw})
+    L(fmt("step=face;ok=%d;dist=%.1f;yaw=%.1f;x=%.2f;z=%.2f", ok and 1 or 0, d, yaw, x, z))
+    return ok, ok and fmt("relief_face;dist=%.1f;yaw=%.1f", d, yaw) or "relief_warp_error"
 end
 local function real(s, lo, hi)
     local v = type(s) == "string" and s:match("^%-?%d+%.?%d*$") and tonumber(s)
@@ -248,12 +264,10 @@ function R.run(a)
         local hook = R.install()
         L(fmt("step=seize_mode;mode=%s;hooks=%d", a[2], R.seizeHooks or 0))
         return true, fmt("relief_seize=%s;hooks=%d;hook=%s", a[2], R.seizeHooks or 0, hook)
-    elseif cmd == "relief_remove" and #a == 2 and REMOVE[a[2]] then
-        return R.remove(a[2])
-    elseif cmd == "relief_goto" and #a <= 2 then
-        local dx = a[2] == nil and 0 or real(a[2], -20, 20)
-        if not dx then return false, "relief_args" end
-        return R.warpTo(dx)
+    elseif cmd == "relief_remove" and (#a == 2 or #a == 3 and a[3] == "quiet") and REMOVE[a[2]] then
+        return R.remove(a[2], a[3] == "quiet")
+    elseif cmd == "relief_face" and #a == 1 then
+        return R.face()
     end
     return false, "relief_args"
 end
