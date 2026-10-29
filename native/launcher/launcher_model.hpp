@@ -75,7 +75,8 @@ struct UpdateInfo {
     std::uint64_t download_size = 0;
     std::uint64_t bytes_downloaded = 0;
     float progress = 0.0f;
-    std::string error;
+    std::string error;                // a sentence for the player
+    std::string updated_to;           // right after a self-update: the version now running ("" otherwise)
 };
 
 class LauncherModel {
@@ -130,7 +131,16 @@ public:
     virtual void cancel_update() = 0;
 };
 
+// How the window was started (launcher_main.cpp): the restart after a
+// self-update and the developer flags of the update test.
+struct ModelStart {
+    std::uint32_t after_update = 0;   // --after-update <pid>: this exe replaced that launcher
+    std::string update_feed;          // --update-feed <url> (developer): this release feed instead of GitHub's
+    bool update_now = false;          // --update-now (developer): install a found update at once
+};
+
 std::unique_ptr<LauncherModel> MakeMockModel();
 std::unique_ptr<LauncherModel> MakeRealModel(const std::wstring& exe_dir);   // B
+std::unique_ptr<LauncherModel> MakeRealModel(const std::wstring& exe_dir, const ModelStart& start);
 
 }  // namespace ddt

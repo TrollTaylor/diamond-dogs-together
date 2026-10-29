@@ -4,6 +4,7 @@
 // page navigation, the character picker mapping, the HUD setting, the Join
 // field's message/tone, join-code display, setup summary, redraw pacing and
 // the command line.
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -106,10 +107,25 @@ struct Options {
     std::wstring scenario;          // --mock-scenario <name>
     double mock_speed = 1.0;        // --mock-speed <factor>
     float scale = 0.0f;             // --scale <factor>; 0 = the monitor's DPI
+    // The restart after a self-update (the old launcher passes it, core_update.hpp):
+    std::uint32_t after_update = 0; // --after-update <pid>: wait for that launcher to close first
+    // Developer flags for the update test (the window only, real model):
+    std::wstring update_feed;       // --update-feed <url>: a loopback release feed instead of GitHub's
+    bool update_now = false;        // --update-now: install a found update at once (needs --update-feed)
     std::wstring error;             // non-empty: the command line was refused
 };
 // args excludes the program name.
 Options ParseCommandLine(const std::vector<std::wstring>& args);
 const wchar_t* UsageText();
+
+// ---- Single instance and the restart after an update -------------------------
+// How long a starting window waits for the folder's single-instance mutex to
+// be released before it gives up and brings the open window forward instead:
+// after --after-update (the old launcher closes right after the handoff), and
+// when DiamondDogsTogether.exe.old lies next to the exe (an updater before
+// 0.14.4 started this exe and exits by itself a moment later). 0 otherwise.
+int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_beside);
+// The window closes itself: the updated launcher has taken over.
+bool CloseForUpdate(const UpdateInfo& info);
 
 }  // namespace ddt::ui

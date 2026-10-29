@@ -154,7 +154,8 @@ void LauncherUi::Frame(double time) {
     if (phase == Phase::setting_up || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)
         animating_ = true;
     const UpdateInfo frame_uinfo = model_.update_info();
-    if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading || frame_uinfo.status == UpdateStatus::applying)
+    if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading ||
+        frame_uinfo.status == UpdateStatus::applying || frame_uinfo.status == UpdateStatus::ready_to_restart)
         animating_ = true;
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -501,10 +502,13 @@ void LauncherUi::PlayPage(Phase phase) {
         ProgressBar(play_uinfo.progress, 0.0f, 6.0f, col::kAccent);
         EndCard();
         Gap(4.0f);
-    } else if (play_uinfo.status == UpdateStatus::applying) {
+    } else if (play_uinfo.status == UpdateStatus::applying || play_uinfo.status == UpdateStatus::ready_to_restart) {
         BeginCard("##play_applying", 0.0f, col::kCard, col::kGood);
         Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, -1.0f);
         EndCard();
+        Gap(4.0f);
+    } else if (!play_uinfo.updated_to.empty()) {
+        Message(Icon::check, col::kGood, "Updated to version " + play_uinfo.updated_to + ".", kBody);
         Gap(4.0f);
     }
     static const char* const kTabs[2] = {"Host", "Join"};
@@ -873,7 +877,9 @@ void LauncherUi::ToolsPage(Phase phase) {
     Text("Diamond Dogs Together Updates", col::kText, kBody + 1.0f, GetFonts().semibold, -1.0f);
 
     if (uinfo.status == UpdateStatus::idle || uinfo.status == UpdateStatus::up_to_date) {
-        const std::string text = "You have the latest version (" + model_.version() + ").";
+        const std::string text = uinfo.updated_to.empty()
+                                     ? "You have the latest version (" + model_.version() + ")."
+                                     : "Updated to version " + uinfo.updated_to + ". You have the latest version.";
         Text(text.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
         ImGui::EndGroup();
         const float bw = 150.0f;
@@ -921,16 +927,17 @@ void LauncherUi::ToolsPage(Phase phase) {
         if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f))) {
             model_.cancel_update();
         }
-    } else if (uinfo.status == UpdateStatus::applying) {
-        Text("Installing update and restarting launcher...", col::kGood, kBody, GetFonts().semibold, 0.0f);
+    } else if (uinfo.status == UpdateStatus::applying || uinfo.status == UpdateStatus::ready_to_restart) {
+        Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, 0.0f);
         ImGui::EndGroup();
         Gap(4.0f);
         const ImVec2 c = ImGui::GetCursorScreenPos();
         Spinner(ImVec2(c.x + Px(20.0f), c.y + Px(10.0f)), 8.0f, col::kGood, time_);
     } else if (uinfo.status == UpdateStatus::error) {
-        Text(("Update check failed: " + uinfo.error).c_str(), col::kBad, kSmall, nullptr, 0.0f);
-        ImGui::EndGroup();
         const float bw = 150.0f;
+        // Wrapped short of the button on its right.
+        Text(uinfo.error.c_str(), col::kBad, kSmall, nullptr, std::max(Px(120.0f), ImGui::GetContentRegionAvail().x - Px(bw + 20.0f)));
+        ImGui::EndGroup();
         ImGui::SameLine(avail - Px(bw) + ImGui::GetStyle().WindowPadding.x);
         if (Button("Try again##tools", ButtonKind::secondary, ImVec2(bw, 32.0f), !ui::SessionActive(phase))) {
             model_.check_for_updates();
@@ -1202,6 +1209,7 @@ const char* const kScenes[] = {
     "13-ingame-launching",  "14-ingame-host-waiting", "15-ingame-connected",   "16-ingame-handoff",
     "17-ingame-after-game", "18-tools",               "19-tools-result",       "20-tools-uninstall-confirm",
     "21-tools-about",       "22-settings",            "23-tools-in-game",      "24-uninstall-report",
+    "25-play-updated",      "26-tools-updated",       "27-tools-update-refused",
 };
 constexpr int kSceneCount = static_cast<int>(sizeof(kScenes) / sizeof(kScenes[0]));
 constexpr char kFixedSecret[] = "K7RD3WQ9MP2XVB6TZHN4";
@@ -1224,6 +1232,7 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
     logs_result_ = tool_result_ = Result{};
     uninstall_report_.clear();
     popup_request_ = Popup::none;
+    mock.set_mock_update_info(UpdateInfo{});
     mock.use_manual_clock(1000.0);
     mock.set_character(Character::story);
     mock.set_hud("compact");
@@ -1330,6 +1339,27 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
             tool_result_ = Result{true, "Co-op is uninstalled.", std::string()};
         }
         popup_request_ = Popup::uninstall_report;
+        break;
+    }
+    case 24:
+    case 25: {   // the new window right after a self-update
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::up_to_date;
+        info.current_version = "0.14.4";
+        info.updated_to = "0.14.4";
+        mock.set_mock_update_info(info);
+        page = index == 24 ? Page::play : Page::tools;
+        break;
+    }
+    case 26: {   // Update now while MGSV runs from the folder
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::error;
+        info.latest_version = "v0.14.4";
+        info.error = "MGSV is running from this folder. Quit MGSV first, then update.";
+        mock.set_mock_update_info(info);
+        page = Page::tools;
         break;
     }
     default: break;

@@ -8,7 +8,9 @@
 
 #include "core_update.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -119,6 +121,8 @@ bool ParseReleasesFeed(const std::string& json_text, const std::string& current_
         const json::Value* matching_asset = nullptr;
         for (const auto& a : assets->Elements()) {
             std::string aname = a.Str("name");
+            // The GPL source archive (DDT-source-<ver>.zip) sits next to the player zip.
+            if (ToLowerStr(aname).find("source") != std::string::npos) continue;
             if (aname.size() >= 4 && aname.substr(aname.size() - 4) == ".zip") {
                 if (aname.find("DiamondDogsTogether-") == 0 || aname.find("mgs-coop-friend-") == 0) {
                     matching_asset = &a;
@@ -364,10 +368,10 @@ bool WinHttpDownload(const std::string& url, const std::wstring& dest_path,
     }, error);
 }
 
-bool CheckForUpdates(const std::string& current_version, UpdateInfo& out, std::string& error) {
+bool CheckForUpdates(const std::string& current_version, UpdateInfo& out, std::string& error, const std::string& feed_url) {
     std::string json_body;
     int status = 0;
-    if (!WinHttpGet(kDefaultReleasesUrl, json_body, status, error)) {
+    if (!WinHttpGet(feed_url.empty() ? std::string(kDefaultReleasesUrl) : feed_url, json_body, status, error)) {
         return false;
     }
     return ParseReleasesFeed(json_body, current_version, out, error);
@@ -383,106 +387,358 @@ bool DownloadUpdate(const UpdateInfo& info, const std::wstring& dest_zip,
     return WinHttpDownload(info.download_url, dest_zip, on_progress, cancel, error);
 }
 
-bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, std::string& error) {
+namespace {
+
+constexpr char kOurProduct[] = "mgs-coop-local-package";   // core_install.hpp kPackageProduct
+constexpr wchar_t kLauncherExe[] = L"DiamondDogsTogether.exe";
+
+std::wstring TargetFor(const std::wstring& game, const std::string& zip_name) {
+    std::wstring rel = Wide(zip_name);
+    for (auto& c : rel)
+        if (c == L'/') c = L'\\';
+    return JoinPath2(game, rel);
+}
+
+bool WriteWholeFile(const std::wstring& path, const std::vector<std::uint8_t>& data, std::string& error) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        error = WinError(GetLastError());
+        return false;
+    }
+    DWORD written = 0;
+    const BOOL ok = data.empty() || WriteFile(h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
+    const DWORD write_error = ok ? 0 : GetLastError();
+    const BOOL flushed = FlushFileBuffers(h);
+    CloseHandle(h);
+    if (!ok || (!data.empty() && written != data.size()) || !flushed) {
+        error = write_error ? WinError(write_error) : std::string("the disk did not take all of it");
+        DeleteFileW(path.c_str());
+        return false;
+    }
+    return true;
+}
+
+// package.json of the folder: its files[] (target, upper-case SHA-256) when it is ours.
+bool PackageRows(const std::wstring& package_json, std::vector<std::pair<std::string, std::string>>& rows) {
+    rows.clear();
+    std::string text;
+    json::Value v;
+    if (!IsFile(package_json) || !ReadTextShared(package_json, text, 1u << 20) || !json::Parse(text, v) || !v.is_object() ||
+        v.Str("product") != kOurProduct)
+        return false;
+    const json::Value* files = v.Find("files");
+    if (files && files->is_array())
+        for (const json::Value& row : files->Elements())
+            if (row.is_object()) rows.emplace_back(row.Str("target"), UpperAscii(row.Str("sha256")));
+    return true;
+}
+
+// A link (junction, symlink) between `top` (excluded) and `path` (included).
+bool LinkBelow(const std::wstring& path, const std::wstring& top) {
+    const std::wstring stop = FullPath(top);
+    for (std::wstring cursor = FullPath(path); !cursor.empty() && !IEquals(cursor, stop) && PathInside(cursor, stop); cursor = ParentOf(cursor)) {
+        if (IsReparsePoint(cursor)) return true;
+        if (ParentOf(cursor) == cursor) break;
+    }
+    return false;
+}
+
+struct StagedFile {
+    std::string name;   // the zip entry
+    std::wstring target, staged, backup;
+    bool moved_aside = false;   // the old target is at `backup`
+    bool committed = false;     // the new file is at `target`
+};
+
+}  // namespace
+
+bool ApplyUpdateZip(const InstancePaths& paths, const std::wstring& zip_path, std::string& error, ApplyReport* report) {
+    if (report) *report = ApplyReport{};
     ZipReader reader;
     ZipLimits limits;
     limits.max_total_size = 512ull << 20;
     limits.max_entry_size = 256ull << 20;
-    if (!reader.OpenFile(zip_path, limits, error)) {
+    std::string zip_error;
+    if (!reader.OpenFile(zip_path, limits, zip_error)) {
+        error = "The downloaded file is damaged (" + zip_error + ")";
         return false;
     }
-
-    const std::wstring current_exe = JoinPath2(paths.game, L"DiamondDogsTogether.exe");
-    const std::wstring old_exe = JoinPath2(paths.game, L"DiamondDogsTogether.exe.old");
-
-    // Pre-flight check: ensure every path in the archive is safe to unpack
     for (const auto& entry : reader.entries()) {
         if (!IsSafeZipPath(entry.name)) {
-            error = "Archive contains unsafe path: " + entry.name;
+            error = "The downloaded file holds an unsafe path (" + entry.name + ")";
             return false;
         }
     }
+    // Only a Diamond Dogs Together player package is installed: never the
+    // source archive or any other zip.
+    bool ours = false;
+    if (const ZipEntry* pkg = reader.Find("mgs-coop/package.json"); pkg && !pkg->is_directory) {
+        std::vector<std::uint8_t> bytes;
+        json::Value v;
+        ours = reader.Extract(*pkg, bytes, zip_error) &&
+               json::Parse(std::string(bytes.begin(), bytes.end()), v) && v.is_object() && v.Str("product") == kOurProduct;
+    }
+    if (!ours) {
+        error = "The downloaded file is not a Diamond Dogs Together package";
+        return false;
+    }
+    // What the previous package shipped (its files[]), read before it is replaced.
+    std::vector<std::pair<std::string, std::string>> previous;
+    PackageRows(paths.package_json, previous);
 
+    // 1. Stage: every new file next to its target. Nothing is replaced yet.
+    std::vector<StagedFile> files;
+    auto discard_staged = [&]() {
+        for (const StagedFile& f : files)
+            if (!f.committed) DeleteFileW(f.staged.c_str());
+    };
     for (const auto& entry : reader.entries()) {
-        std::wstring rel = Wide(entry.name);
-        for (auto& c : rel) {
-            if (c == L'/') c = L'\\';
+        const std::wstring target = TargetFor(paths.game, entry.name);
+        if (LinkBelow(target, paths.game)) {
+            discard_staged();
+            error = entry.name + " in the game folder is a link; that is not supported";
+            return false;
         }
-        const std::wstring target = JoinPath2(paths.game, rel);
-
         if (entry.is_directory) {
             CreateDirectories(target);
             continue;
         }
-
         CreateDirectories(ParentOf(target));
-
         std::vector<std::uint8_t> data;
-        if (!reader.Extract(entry, data, error)) {
+        if (!reader.Extract(entry, data, zip_error)) {
+            discard_staged();
+            error = "The downloaded file is damaged (" + zip_error + ")";
             return false;
         }
-
-        // Special handling for the running launcher executable:
-        // Rename current DiamondDogsTogether.exe to .old so Windows allows writing the new exe.
-        const std::string lower_name = ToLowerStr(entry.name);
-        if (lower_name == "diamonddogstogether.exe") {
-            if (PathExists(old_exe)) {
-                DeleteFileChecked(old_exe);
-            }
-            if (PathExists(current_exe)) {
-                if (!MoveFileExW(current_exe.c_str(), old_exe.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-                    error = "Could not move current executable to .old: " + std::to_string(GetLastError());
-                    return false;
-                }
-            }
-        }
-
-        HANDLE hFile = CreateFileW(target.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (hFile == INVALID_HANDLE_VALUE) {
-            error = "Could not create file: " + Utf8(target) + " (" + std::to_string(GetLastError()) + ")";
+        StagedFile f;
+        f.name = entry.name;
+        f.target = target;
+        f.staged = target + L".ddt-new";
+        std::string write_error;
+        if (!WriteWholeFile(f.staged, data, write_error)) {
+            discard_staged();
+            error = "Could not write " + entry.name + " (" + write_error + ")";
             return false;
         }
-
-        DWORD written = 0;
-        BOOL ok = WriteFile(hFile, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
-        CloseHandle(hFile);
-        if (!ok || written != data.size()) {
-            error = "Failed to write all data to: " + Utf8(target);
-            return false;
-        }
+        files.push_back(f);
     }
 
-    // Clean up temporary download archive
+    // 2. Commit: move each old file aside and the new one in; undo all on any failure.
+    const std::wstring current_exe = JoinPath2(paths.game, kLauncherExe);
+    const std::wstring old_exe = current_exe + L".old";
+    auto roll_back = [&]() {
+        for (auto it = files.rbegin(); it != files.rend(); ++it) {
+            if (it->committed) DeleteFileW(it->target.c_str());
+            if (it->moved_aside) MoveFileExW(it->backup.c_str(), it->target.c_str(), MOVEFILE_REPLACE_EXISTING);
+            it->committed = it->moved_aside = false;
+        }
+        discard_staged();
+    };
+    if (PathExists(old_exe) && !DeleteFileChecked(old_exe)) {
+        discard_staged();
+        error = "DiamondDogsTogether.exe.old from an earlier update is still in use. Close every Diamond Dogs Together window, then update again";
+        return false;
+    }
+    for (StagedFile& f : files) {
+        f.backup = IEquals(f.target, current_exe) ? old_exe : f.target + L".ddt-old";
+        if (PathExists(f.target)) {
+            if (!IEquals(f.backup, old_exe) && PathExists(f.backup)) DeleteFileChecked(f.backup);
+            if (!MoveFileExW(f.target.c_str(), f.backup.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+                const DWORD code = GetLastError();
+                roll_back();
+                error = "Could not replace " + f.name + " (" + WinError(code) + ")";
+                return false;
+            }
+            f.moved_aside = true;
+        }
+        if (!MoveFileExW(f.staged.c_str(), f.target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            const DWORD code = GetLastError();
+            roll_back();
+            error = "Could not put " + f.name + " in place (" + WinError(code) + ")";
+            return false;
+        }
+        f.committed = true;
+    }
+    // The old files are no longer needed; the running exe's .old goes when the new exe starts.
+    for (const StagedFile& f : files)
+        if (f.moved_aside && !IEquals(f.backup, old_exe)) DeleteFileChecked(f.backup);
+
+    // 3. Files the previous package shipped under mgs-coop/ that this one does
+    // not, deleted only while they are exactly as shipped.
+    std::vector<std::string> now;
+    for (const auto& entry : reader.entries()) now.push_back(LowerAscii(entry.name));
+    for (const auto& row : previous) {
+        const std::string lower = LowerAscii(row.first);
+        if (!StartsWith(lower, "mgs-coop/") || !IsSafeZipPath(row.first) || lower == "mgs-coop/package.json") continue;
+        if (std::find(now.begin(), now.end(), lower) != now.end()) continue;
+        const std::wstring path = TargetFor(paths.game, row.first);
+        std::string hex;
+        if (!IsHexText(row.second, 64) || !IsFile(path) || LinkBelow(path, paths.game) || !Sha256FileHex(path, hex) || hex != row.second)
+            continue;
+        if (DeleteFileChecked(path) && report) report->removed.push_back(row.first);
+    }
+    if (report) report->files = files.size();
     DeleteFileChecked(zip_path);
     return true;
 }
 
-bool RelaunchSelf(const InstancePaths& paths, std::string& error) {
-    if (GetUpdateHooks().relaunch) {
-        return GetUpdateHooks().relaunch(paths, error);
-    }
+// ---- Restart after an update -----------------------------------------------------------
+std::wstring UpdateHandoffEventName(std::uint32_t pid) {
+    return L"Local\\DiamondDogsTogether-update-" + std::to_wstring(pid);
+}
 
-    const std::wstring exe = JoinPath2(paths.game, L"DiamondDogsTogether.exe");
+std::wstring QuoteArgument(const std::wstring& arg) {
+    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) return arg;
+    std::wstring out = L"\"";
+    for (auto it = arg.begin();; ++it) {
+        std::size_t backslashes = 0;
+        while (it != arg.end() && *it == L'\\') {
+            ++it;
+            ++backslashes;
+        }
+        if (it == arg.end()) {
+            out.append(backslashes * 2, L'\\');
+            break;
+        }
+        if (*it == L'"') {
+            out.append(backslashes * 2 + 1, L'\\');
+        } else {
+            out.append(backslashes, L'\\');
+        }
+        out.push_back(*it);
+    }
+    out.push_back(L'"');
+    return out;
+}
+
+bool StartSuccessor(const std::wstring& exe, const std::vector<std::wstring>& args, const std::wstring& dir, int ready_wait_ms,
+                    SuccessorStart& out, std::string& error) {
+    out = SuccessorStart{};
+    // Kept for the life of this process: the new exe opens it by name. Auto-reset.
+    static const HANDLE ready = CreateEventW(nullptr, FALSE, FALSE, UpdateHandoffEventName(GetCurrentProcessId()).c_str());
+    if (!ready) {
+        error = "Windows could not prepare the restart: " + WinError(GetLastError());
+        return false;
+    }
+    ResetEvent(ready);
+    std::wstring command = QuoteArgument(exe);
+    for (const std::wstring& a : args) command += L" " + QuoteArgument(a);
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-
-    if (!CreateProcessW(exe.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, paths.game.c_str(), &si, &pi)) {
-        error = "Could not launch updated executable: " + std::to_string(GetLastError());
+    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.empty() ? nullptr : dir.c_str(), &si, &pi)) {
+        error = "Windows could not start it: " + WinError(GetLastError());
         return false;
     }
-
-    CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    ExitProcess(0);
-    return true;
+    out.pid = pi.dwProcessId;
+    const HANDLE waits[2] = {ready, pi.hProcess};
+    const DWORD r = WaitForMultipleObjects(2, waits, FALSE, static_cast<DWORD>(ready_wait_ms < 0 ? 0 : ready_wait_ms));
+    bool ok = true;
+    if (r == WAIT_OBJECT_0) {
+        out.signalled = true;
+    } else if (r == WAIT_OBJECT_0 + 1) {
+        DWORD code = 0;
+        GetExitCodeProcess(pi.hProcess, &code);
+        error = "it closed right after it started (exit code " + std::to_string(code) + ")";
+        ok = false;
+    }   // WAIT_TIMEOUT: it still runs and takes over once this process has exited.
+    CloseHandle(pi.hProcess);
+    return ok;
 }
 
-void CleanOldExecutable(const std::wstring& game_dir) {
-    const std::wstring old_exe = JoinPath2(game_dir, L"DiamondDogsTogether.exe.old");
-    if (PathExists(old_exe)) {
-        DeleteFileChecked(old_exe);
+bool RelaunchSelf(const InstancePaths& paths, const std::vector<std::wstring>& args, std::string& error) {
+    const std::wstring exe = JoinPath2(paths.game, kLauncherExe);
+    if (GetUpdateHooks().relaunch) return GetUpdateHooks().relaunch(exe, args, error);
+    SuccessorStart started;
+    return StartSuccessor(exe, args, paths.game, kSuccessorReadyWaitMs, started, error);
+}
+
+TakeOver TakeOverFromPreviousLauncher(const PreviousLauncherOps& ops, int wait_ms) {
+    bool stopped = false;
+    if (ops.signal && ops.signal() && ops.wait_exit && !ops.wait_exit(wait_ms)) {
+        // The old launcher handed over but does not close: end it, it has nothing left to do.
+        if (ops.stop) ops.stop();
+        stopped = true;
+        ops.wait_exit(kStopPreviousWaitMs);
     }
+    if (!ops.claim || !ops.claim(kClaimAfterHandoffMs)) return TakeOver::not_claimed;
+    return stopped ? TakeOver::claimed_after_stop : TakeOver::claimed;
+}
+
+PreviousLauncherOps PreviousLauncherWin32(std::uint32_t pid) {
+    struct Handles {
+        HANDLE event = nullptr, process = nullptr;
+        ~Handles() {
+            if (event) CloseHandle(event);
+            if (process) CloseHandle(process);
+        }
+    };
+    auto h = std::make_shared<Handles>();
+    PreviousLauncherOps ops;
+    ops.signal = [h, pid]() {
+        if (!pid || pid == GetCurrentProcessId()) return false;
+        // Only a launcher that is waiting for us created this event.
+        h->event = OpenEventW(EVENT_MODIFY_STATE, FALSE, UpdateHandoffEventName(pid).c_str());
+        if (!h->event) return false;
+        // Opened before the signal, so the id cannot be reused while we wait.
+        h->process = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
+        SetEvent(h->event);
+        return h->process != nullptr;
+    };
+    ops.wait_exit = [h](int ms) {
+        return !h->process || WaitForSingleObject(h->process, static_cast<DWORD>(ms < 0 ? 0 : ms)) == WAIT_OBJECT_0;
+    };
+    ops.stop = [h]() { return h->process && TerminateProcess(h->process, 1) != FALSE; };
+    return ops;
+}
+
+bool CleanOldExecutable(const std::wstring& game_dir) {
+    const std::wstring old_exe = JoinPath2(game_dir, L"DiamondDogsTogether.exe.old");
+    if (PathExists(old_exe)) DeleteFileChecked(old_exe);
+    return !PathExists(old_exe);
+}
+
+LeftoverSource RemoveLeftoverSourceZip(const InstancePaths& paths) {
+    const std::wstring zip = JoinPath2(paths.mod, L"source.zip");
+    if (!IsFile(zip)) return LeftoverSource::none;
+    if (LinkBelow(zip, paths.game)) return LeftoverSource::kept_unverified;
+    std::vector<std::pair<std::string, std::string>> rows;
+    if (!PackageRows(paths.package_json, rows)) return LeftoverSource::kept_unverified;   // cannot tell: keep
+    for (const auto& row : rows)
+        if (LowerAscii(row.first) == "mgs-coop/source.zip") return LeftoverSource::kept_listed;
+    // Our source bundle: source-files.json lists exactly its other entries, each with its SHA-256.
+    ZipReader reader;
+    ZipLimits limits;
+    limits.max_entries = 65536;
+    limits.max_archive_size = 512ull << 20;
+    std::string error;
+    if (!reader.OpenFile(zip, limits, error)) return LeftoverSource::kept_unverified;
+    const ZipEntry* list = reader.Find("source-files.json");
+    std::vector<std::uint8_t> bytes;
+    json::Value listed;
+    if (!list || !reader.Extract(*list, bytes, error) || !json::Parse(std::string(bytes.begin(), bytes.end()), listed) || !listed.is_array())
+        return LeftoverSource::kept_unverified;
+    std::vector<std::pair<std::string, std::string>> want;
+    for (const json::Value& row : listed.Elements()) {
+        if (!row.is_object()) return LeftoverSource::kept_unverified;
+        want.emplace_back(row.Str("path"), UpperAscii(row.Str("sha256")));
+    }
+    std::size_t files = 0;
+    bool cmake = false, notices = false, launcher = false;
+    for (const ZipEntry& entry : reader.entries()) {
+        if (entry.is_directory) return LeftoverSource::kept_unverified;
+        if (entry.name == "source-files.json") continue;
+        ++files;
+        auto it = std::find_if(want.begin(), want.end(), [&](const auto& w) { return w.first == entry.name; });
+        if (it == want.end() || !reader.Extract(entry, bytes, error) || Sha256Hex(bytes.data(), bytes.size()) != it->second)
+            return LeftoverSource::kept_unverified;
+        cmake = cmake || entry.name == "CMakeLists.txt";
+        notices = notices || entry.name == "THIRD_PARTY_NOTICES.md";
+        launcher = launcher || StartsWith(entry.name, "native/launcher/");
+    }
+    if (files != want.size() || !cmake || !notices || !launcher) return LeftoverSource::kept_unverified;
+    return DeleteFileChecked(zip) ? LeftoverSource::removed : LeftoverSource::kept_locked;
 }
 
 }  // namespace ddt::core

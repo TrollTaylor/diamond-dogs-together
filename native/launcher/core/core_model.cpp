@@ -213,15 +213,31 @@ class RealModel final : public LauncherModel {
 public:
     // no_launch: --write-session (developer): Host / Join write the session
     // files and stop there (no helper, no Steam, no clipboard).
-    RealModel(const std::wstring& exe_dir, std::shared_ptr<Env> env, bool exit_if_busy, bool no_launch = false)
-        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch) {
+    RealModel(const std::wstring& exe_dir, std::shared_ptr<Env> env, bool exit_if_busy, bool no_launch = false,
+              const ModelStart& start = ModelStart{})
+        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch), start_(start) {
         paths_ = GetInstancePaths(game_dir_);
         LoadSettings(paths_, settings_);
-        CleanOldExecutable(paths_.game);
+        // After an update the old launcher has closed (launcher_main waited for
+        // it), so its exe can go now; Windows may need a moment to let go of it.
+        bool old_exe_gone = CleanOldExecutable(paths_.game);
+        for (int i = 0; start_.after_update && !old_exe_gone && i < 20; ++i) {
+            env_->SleepMs(100);
+            old_exe_gone = CleanOldExecutable(paths_.game);
+        }
+        if (start_.after_update) updated_to_ = CoreVersion();
+        // 0.14.3 and older shipped mgs-coop\source.zip; the source is a release asset now.
+        const LeftoverSource leftover = RemoveLeftoverSourceZip(paths_);
         update_info_.current_version = CoreVersion();
         update_info_.status = UpdateStatus::idle;
         Recheck();
-        if (phase_ != Phase::not_in_game_folder) Log("window=open; phase=" + PhaseName(phase_) + "; version=" + CoreBuildId());
+        if (phase_ != Phase::not_in_game_folder) {
+            Log("window=open; phase=" + PhaseName(phase_) + "; version=" + CoreBuildId());
+            if (start_.after_update)
+                Log("update=finished; from_pid=" + std::to_string(start_.after_update) + "; version=" + CoreBuildId() +
+                    "; old_exe=" + (old_exe_gone ? "removed" : "kept"));
+            if (leftover == LeftoverSource::removed) Log("update=source_zip_removed");
+        }
         if (phase_ != Phase::not_in_game_folder && !no_launch_) {
             check_for_updates();
         }
@@ -326,6 +342,7 @@ public:
 
     bool host(std::string& code_out, std::string& error_out) override {
         code_out.clear();
+        if (UpdateBusy(error_out)) return false;
         if (!ReadyFor(error_out)) return false;
         if (!Preflight(error_out)) return false;
         const std::uint64_t self = OwnSteamId(*env_);
@@ -353,6 +370,7 @@ public:
     CodeCheck check_code(const std::string& code) const override { return CheckJoinCode(code, OwnSteamId(*env_)); }
 
     bool join(const std::string& code_or_empty, std::string& error_out) override {
+        if (UpdateBusy(error_out)) return false;
         if (!ReadyFor(error_out)) return false;
         const bool wait = Trim(code_or_empty).empty();
         std::string secret;
@@ -455,6 +473,12 @@ public:
 
     void tick() override {
         const std::int64_t now = env_->NowMs();
+        if (start_.update_now && !update_now_started_ && update_info().status == UpdateStatus::available) {
+            // Developer --update-now (with a loopback --update-feed): install at once.
+            update_now_started_ = true;
+            Log("update=auto; reason=update_now");
+            start_update();
+        }
         if (phase_ == Phase::setting_up) {
             bool finished = false, ok = false;
             std::string error;
@@ -523,15 +547,16 @@ public:
 
 UpdateInfo update_info() const override {
         std::lock_guard<std::mutex> lock(update_mutex_);
-        return update_info_;
+        UpdateInfo info = update_info_;
+        info.updated_to = updated_to_;
+        return info;
     }
 
     void check_for_updates() override {
         {
             std::lock_guard<std::mutex> lock(update_mutex_);
-            if (update_info_.status == UpdateStatus::checking ||
-                update_info_.status == UpdateStatus::downloading ||
-                update_info_.status == UpdateStatus::applying) {
+            if (update_info_.status == UpdateStatus::checking || update_info_.status == UpdateStatus::downloading ||
+                update_info_.status == UpdateStatus::applying || update_info_.status == UpdateStatus::ready_to_restart) {
                 return;
             }
             update_info_.status = UpdateStatus::checking;
@@ -539,21 +564,26 @@ UpdateInfo update_info() const override {
         }
         if (update_thread_.joinable()) update_thread_.join();
         const std::string cur = CoreVersion();
-        update_thread_ = std::thread([this, cur]() {
+        const std::string feed = start_.update_feed;
+        const InstancePaths paths = paths_;   // the thread never reads members the UI thread changes
+        update_thread_ = std::thread([this, cur, feed, paths]() {
             UpdateInfo info;
             std::string error;
-            if (CheckForUpdates(cur, info, error)) {
+            if (CheckForUpdates(cur, info, error, feed)) {
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_ = info;
             } else {
+                LauncherLog(*env_, paths, "update=check_failed; error=" + error);
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_.status = UpdateStatus::error;
-                update_info_.error = error;
+                update_info_.download_url.clear();
+                update_info_.error = "Could not check for updates. Check your internet connection, then try again.";
             }
         });
     }
 
     void start_update() override {
+        const std::string blocked = UpdateBlocker();
         {
             std::lock_guard<std::mutex> lock(update_mutex_);
             if (update_info_.status != UpdateStatus::available &&
@@ -561,6 +591,11 @@ UpdateInfo update_info() const override {
                 return;
             }
             if (update_info_.download_url.empty()) return;
+            if (!blocked.empty()) {
+                update_info_.status = UpdateStatus::error;
+                update_info_.error = blocked;
+                return;
+            }
             update_info_.status = UpdateStatus::downloading;
             update_info_.bytes_downloaded = 0;
             update_info_.progress = 0.0f;
@@ -573,46 +608,74 @@ UpdateInfo update_info() const override {
             return update_info_;
         }();
         const InstancePaths paths = paths_;
-        update_thread_ = std::thread([this, target, paths]() {
+        // The new exe waits for this window to close, and keeps a developer test feed.
+        std::vector<std::wstring> relaunch_args = {L"--after-update", std::to_wstring(env_->CurrentPid())};
+        if (!start_.update_feed.empty()) {
+            relaunch_args.push_back(L"--update-feed");
+            relaunch_args.push_back(Wide(start_.update_feed));
+        }
+        Log("update=start; version=" + target.latest_version + "; asset=" + target.asset_name);
+        update_thread_ = std::thread([this, target, paths, relaunch_args]() {
+            auto log = [this, &paths](const std::string& text) { LauncherLog(*env_, paths, text); };
+            auto fail = [this](const std::string& sentence) {
+                std::lock_guard<std::mutex> lock(update_mutex_);
+                update_info_.status = UpdateStatus::error;
+                update_info_.error = sentence;
+            };
             const std::wstring dest_zip = JoinPath2(paths.mod, L"update.zip");
             std::string error;
-            bool ok = DownloadUpdate(target, dest_zip, [this](const UpdateProgress& p) {
+            const bool ok = DownloadUpdate(target, dest_zip, [this](const UpdateProgress& p) {
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_.bytes_downloaded = p.bytes_downloaded;
                 update_info_.download_size = p.total_bytes;
                 update_info_.progress = p.progress;
             }, &update_cancel_, error);
-
-            if (!ok) {
+            if (update_cancel_) {   // Cancel: back to "available", nothing changed
+                DeleteFileChecked(dest_zip);
                 std::lock_guard<std::mutex> lock(update_mutex_);
-                update_info_.status = UpdateStatus::error;
-                update_info_.error = error;
+                update_info_.status = UpdateStatus::available;
+                update_info_.error.clear();
                 return;
             }
-
+            if (!ok) {
+                log("update=download_failed; error=" + error);
+                DeleteFileChecked(dest_zip);
+                fail("The update could not be downloaded. Check your internet connection, then try again.");
+                return;
+            }
+            // The game may have been started while the update downloaded.
+            if (AnyGameRunningIn(*env_, paths.game)) {
+                log("update=refused; reason=game_running");
+                DeleteFileChecked(dest_zip);
+                fail("MGSV was started while the update downloaded. Quit MGSV, then update again.");
+                return;
+            }
             {
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_.status = UpdateStatus::applying;
             }
-
-            if (!ApplyUpdateZip(paths, dest_zip, error)) {
-                std::lock_guard<std::mutex> lock(update_mutex_);
-                update_info_.status = UpdateStatus::error;
-                update_info_.error = error;
+            ApplyReport report;
+            if (!ApplyUpdateZip(paths, dest_zip, error, &report)) {
+                log("update=apply_failed; error=" + error);
+                DeleteFileChecked(dest_zip);
+                fail("The update could not be installed (" + error + "). Your current version was kept.");
                 return;
             }
-
-            {
-                std::lock_guard<std::mutex> lock(update_mutex_);
-                update_info_.status = UpdateStatus::ready_to_restart;
+            std::string removed;
+            for (const std::string& r : report.removed) removed += (removed.empty() ? "" : ",") + r;
+            log("update=applied; version=" + target.latest_version + "; files=" + std::to_string(report.files) +
+                (removed.empty() ? std::string() : "; removed=" + removed));
+            if (!RelaunchSelf(paths, relaunch_args, error)) {
+                while (!error.empty() && (error.back() == '.' || error.back() == ' ')) error.pop_back();
+                log("update=restart_failed; error=" + error);
+                fail("The update is installed, but the new version did not start: " + error +
+                     ". Close this window, then start Diamond Dogs Together again.");
+                return;
             }
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            if (!RelaunchSelf(paths, error)) {
-                std::lock_guard<std::mutex> lock(update_mutex_);
-                update_info_.status = UpdateStatus::error;
-                update_info_.error = error;
-            }
+            // The new exe runs and waits for this window: the shell closes it now.
+            log("update=handed_over");
+            std::lock_guard<std::mutex> lock(update_mutex_);
+            update_info_.status = UpdateStatus::ready_to_restart;
         });
     }
 
@@ -652,6 +715,27 @@ private:
         return "unknown";
     }
     void Log(const std::string& text) { LauncherLog(*env_, paths_, text); }
+
+    // Why the update cannot install now ("" = it can): never while a game or a
+    // co-op session runs from this folder, or while the setup runs.
+    std::string UpdateBlocker() {
+        if (phase_ == Phase::setting_up) return "Wait until the setup has finished, then update.";
+        if (stage_ != Stage::none || phase_ == Phase::launching || phase_ == Phase::in_game || phase_ == Phase::after_game)
+            return "Quit MGSV first. Diamond Dogs Together updates once the game is closed.";
+        if (AnyGameRunningIn(*env_, paths_.game)) return "MGSV is running from this folder. Quit MGSV first, then update.";
+        if (PlaySessionLive(*env_, paths_))
+            return "Co-op is still on for this folder (another window or its helper). Quit MGSV first, then update.";
+        return {};
+    }
+
+    bool UpdateBusy(std::string& error) {
+        std::lock_guard<std::mutex> lock(update_mutex_);
+        if (update_info_.status != UpdateStatus::downloading && update_info_.status != UpdateStatus::applying &&
+            update_info_.status != UpdateStatus::ready_to_restart)
+            return false;
+        error = last_error_ = "Diamond Dogs Together is updating. Wait until it has restarted, then try again.";
+        return true;
+    }
 
     bool ReadyFor(std::string& error) {
         if (phase_ == Phase::ready) return true;
@@ -1255,6 +1339,9 @@ private:
     std::int64_t wait_start_ = 0, limit_ = 0, next_try_ = 0;
     int tries_ = 0;
 
+    ModelStart start_;
+    std::string updated_to_;           // after --after-update: this version
+    bool update_now_started_ = false;
     mutable std::mutex update_mutex_;
     UpdateInfo update_info_;
     std::thread update_thread_;
@@ -1264,8 +1351,8 @@ private:
 
 }  // namespace
 
-std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env) {
-    return std::make_unique<RealModel>(exe_dir, std::move(env), false);
+std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env, const ModelStart& start) {
+    return std::make_unique<RealModel>(exe_dir, std::move(env), false, false, start);
 }
 
 int RunWatch(const std::wstring& exe_dir, const std::string& session_id) {
@@ -1364,5 +1451,8 @@ int RunEndSession(const std::wstring& game_dir, std::string& out) { return RunEn
 namespace ddt {
 std::unique_ptr<LauncherModel> MakeRealModel(const std::wstring& exe_dir) {
     return std::make_unique<core::RealModel>(exe_dir, core::MakeWin32Env(), true);
+}
+std::unique_ptr<LauncherModel> MakeRealModel(const std::wstring& exe_dir, const ModelStart& start) {
+    return std::make_unique<core::RealModel>(exe_dir, core::MakeWin32Env(), true, false, start);
 }
 }  // namespace ddt
