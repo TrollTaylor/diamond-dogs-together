@@ -53,6 +53,7 @@
 #include "mgscoop/downed_damage.hpp"
 #include "mgscoop/buddy_pose.hpp"
 #include "mgscoop/buddy_dog_command_pins.hpp"
+#include "mgscoop/dog_guard.hpp"
 #include "mgscoop/buddy_capacity_census.hpp"
 #include "mgscoop/buddy_capacity_walker.hpp"
 #include "mgscoop/buddy_capacity_pins.hpp"
@@ -152,6 +153,7 @@ bool client_check_enabled = false;
 bool offline_enabled = false;
 bool downed_hook_ok = false;
 bool buddy_pose_pins_ok = false;
+bool dog_guard_ok = false;
 bool buddy_capacity_pins_ok = false;
 bool ride_player_pins_ok = false;
 bool buddy_ride_pins_ok = false;
@@ -1349,7 +1351,7 @@ void NotePackReceipt(const char* buffer, std::size_t size) noexcept {
 
 void PartnerMissionStart(std::uint32_t mission) noexcept {
     PartnerSleepResetBridge();
-    buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
+    buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("mission_start");
     mgscoop::coop_hud::PublishDowned(mgscoop::coop_hud::DownedView{});
     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
     mgscoop::teammate_targeting::SetEnabled(partner_on && partner_gate_ok);
@@ -1377,7 +1379,7 @@ void PartnerMissionStart(std::uint32_t mission) noexcept {
 }
 void PartnerMissionEnd() noexcept {
     PartnerSleepResetBridge();
-    buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
+    buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("mission_end");
     mgscoop::coop_hud::PublishDowned(mgscoop::coop_hud::DownedView{});
     mgscoop::downed_player::Shutdown();
     mgscoop::teammate_targeting::SetEnabled(false);
@@ -4065,6 +4067,52 @@ bool SelectBuddyPoseReceipt(const char* buffer,std::size_t size,mgscoop::script_
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
 }
 
+// D7 dog guard receipt (docs/vehicles-companions-design.md 6.12, 8.9): mission, epoch, role (0 host, 1 guest; must be
+// this copy's native role), arm (guest only: the lease of dog_guard::kLeaseFrames dog updates), the host's dog-state
+// byte, a lab op (1 life %, 2 stun %; lab mode only) and its percent. Arming needs the paired exact scope; a guest's
+// disarm and the host's read of its own record are always answered. Reply: the record 0 snapshot and the counters.
+bool SelectDogGuardReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace g=mgscoop::dog_guard;
+    constexpr char prefix[]="return 'MGS_COOP_DOG_GUARD_V1' -- ";
+    if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    const char* cursor=buffer+sizeof(prefix)-1;const char* end=buffer+size;
+    std::uint32_t v[7]{};
+    for(unsigned i=0;i<7;++i) {
+        const auto parsed=std::from_chars(cursor,end,v[i]);
+        if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
+        cursor=parsed.ptr;if(i!=6) {if(cursor==end || *cursor!=' ') return false;++cursor;}
+    }
+    if(cursor!=end || (v[0]!=30010 && v[0]!=30020 && v[0]!=30050) || !v[1] || v[1]>65535 || v[2]>1 || v[3]>1 || v[4]>255 ||
+       v[5]>2 || v[6]>100 || (v[3] && !v[2])) return false;
+    const auto& labc=mgscoop::GetLabConfig();
+    const bool guest=labc.role==mgscoop::LabRole::guest;
+    const char* reason=nullptr;
+    if((v[2]==1)!=guest) reason="role";
+    else if(!dog_guard_ok || !g::Installed()) reason="admission";
+    else if(v[5] && labc.mode!=mgscoop::LabMode::lab) reason="lab_only";
+    else if(v[3] || v[5]) {
+        const auto status=mgscoop::world_link::GetStatus();
+        unsigned short mission{};
+        const bool exact=offline_enabled && partner_on && partner_gate_ok && lab::SavesRedirected();
+        if(!exact) reason="admission";
+        else if(!OnRuntimeThread() || mission_terminating || !ReadMission(mission) || mission!=v[0] || partner_mission!=v[0] ||
+            !status.configured || !status.paired || !status.link_up || status.effective<3 || status.epoch!=v[1]) reason="scope";
+    }
+    g::Request q{};q.guest=guest;q.arm=!reason && v[3]==1;q.follow=static_cast<std::uint8_t>(v[4]);
+    if(!reason) {q.labOp=static_cast<std::uint8_t>(v[5]);q.labPct=static_cast<std::uint8_t>(v[6]);}
+    const auto s=dog_guard_ok?g::Control(q):g::Status{};
+    const unsigned byte=s.snapshot && s.ageMs<=1000 ? g::Encode(s.rec) : 0u;
+    static char reply[400]{};
+    const HRESULT formatted=StringCchPrintfA(reply,ARRAYSIZE(reply),
+        "return {ready=%s,reason='%s',armed=%u,installed=%u,snap=%u,age=%lu,life=%u,max=%u,stun=%u,smax=%u,state=%u,flags=%u,byte=%u,"
+        "drops=%u,hits=%u,applied=%u,kills=%u,cleared=%u,attacker=%u,attack=%u}",
+        reason?"false":"true",reason?reason:"ok",s.armed?1u:0u,s.installed?1u:0u,s.snapshot?1u:0u,static_cast<unsigned long>(s.ageMs),
+        unsigned(s.rec.life),unsigned(s.rec.max),unsigned(s.rec.stun),unsigned(s.rec.stunMax),unsigned(s.rec.state),unsigned(s.rec.flags),byte,
+        s.drops,s.hits,s.applied,s.kills,s.cleared,unsigned(s.lastAttacker),unsigned(s.lastAttack));
+    if(FAILED(formatted)) return false;
+    replacement={reply,std::strlen(reply)};world_quiet=true;return true;
+}
+
 // Private capacity receipt: all authority comes from this native owner, never
 // a worker's requested pointer or Lua-supplied generation/count.
 struct BuddyCapacityIdentity {
@@ -5073,6 +5121,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectVehicleLifeReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
+    if (SelectDogGuardReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;
     if (SelectDownedHudReceipt(buffer, size, replacement)) return true;
     if (SelectPartnerSleepReceipt(buffer, size, replacement)) return true;
@@ -5228,7 +5277,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             equip_preload_authorization.End(); equip_preload_before={};
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
-            mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
+            mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("terminating");
             restored=RestoreGameplayRules();
             // The partner tick stops while terminating, so the input window and
             // DM patch must be torn down here (before the Lua STOP receipt),
@@ -5648,6 +5697,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     LogFormat("sleep_info_code_gate=%s;rva=0x%llx;scope=read_only_controller\r\n",sleepGate?"ok":"refused",static_cast<unsigned long long>(sleepMismatch));
                     LogFormat("carry_info_code_gate=%s;rva=0x%llx;scope=read_only_query\r\n",carryGate?"ok":"refused",static_cast<unsigned long long>(carryMismatch));
                     downed_hook_ok = downed_gate && mgscoop::downed_damage::Install(base, span, Log);
+                    // D7 (docs/vehicles-companions-design.md 6.12, 8.9): the guest's copy of the host's D-Dog takes
+                    // no damage; inert until the guest's companion module arms its lease.
+                    dog_guard_ok = partner_gate_ok && mgscoop::dog_guard::Install(base, span, Log);
+                    Log(dog_guard_ok ? "dog_guard_code_gate=ok;scope=guest_mirror_dog_lease\r\n" : "dog_guard_code_gate=refused\r\n");
                     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
                     // Teammate rescue: stock player sleep and player-carries-player
                     // (docs/STATUS.md). The adapters stay inert until a teammate is down.
