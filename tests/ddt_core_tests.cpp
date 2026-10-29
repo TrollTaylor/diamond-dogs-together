@@ -1796,6 +1796,11 @@ void TestUpdater() {
             "name": "DiamondDogsTogether-0.14.3.zip",
             "size": 10485760,
             "browser_download_url": "https://github.com/TrollTaylor/diamond-dogs-together/releases/download/v0.14.3/DiamondDogsTogether-0.14.3.zip"
+          },
+          {
+            "name": "DDT-source-0.14.3.zip",
+            "size": 7547138,
+            "browser_download_url": "https://github.com/TrollTaylor/diamond-dogs-together/releases/download/v0.14.3/DDT-source-0.14.3.zip"
           }
         ]
       }
@@ -1913,11 +1918,32 @@ void TestFeedSkipsSource() {
     CHECK(info.status == UpdateStatus::available);
     CHECK_EQ(info.asset_name, std::string("DiamondDogsTogether-0.14.4.zip"));
     // Even a source archive named like the player zip, listed first.
-    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4-source.zip", "DiamondDogsTogether-0.14.4.zip"}) + "]", "0.14.3",
-                            info, err));
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4-source.zip", "DiamondDogsTogether-0.14.4.zip",
+                                                          "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
     CHECK_EQ(info.asset_name, std::string("DiamondDogsTogether-0.14.4.zip"));
-    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-Source-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-Source-0.14.4.zip", "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
     CHECK(info.status == UpdateStatus::up_to_date);
+    // The player zip is the prefix and exactly this release's version: no other
+    // zip (a future "-resources" asset contains "source" but is not the source).
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-resources.zip", "DiamondDogsTogether-0.14.4-resources.zip",
+                                                          "DiamondDogsTogether-0.14.4.zip", "DDT-source-0.14.4.zip"}) + "]",
+                            "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::available);
+    CHECK_EQ(info.asset_name, std::string("DiamondDogsTogether-0.14.4.zip"));
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4-resources.zip", "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    // A zip of another version under this tag would install that version and offer the update again: skipped.
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.5", {"DiamondDogsTogether-0.14.4.zip", "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    // GPL: a release is an update only when its source zip is published with it.
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4.zip", "DDT-source-0.14.3.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.5", {"DiamondDogsTogether-0.14.5.zip"}) + "," +
+                                FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4.zip", "ddt-SOURCE-0.14.4.zip"}) + "]",
+                            "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::available && info.latest_version == "v0.14.4");
     // A newer release that holds only the source archive is not an update; the
     // older one with a player zip still is.
     CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.5", {"DDT-source-0.14.5.zip"}) + "," +
@@ -2574,11 +2600,26 @@ void TestUpdateThroughModel() {
                 held = INVALID_HANDLE_VALUE;
             }
         };
-        auto m = MakeRealModelWithEnv(f.game, f.env);
+        ModelStart start;
+        start.old_exe_recent = true;
+        auto m = MakeRealModelWithEnv(f.game, f.env, start);
         f.env->on_sleep = nullptr;
         if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
         CHECK(!PathExists(old_exe) && sleeps >= 3);
         CHECK(m->update_info().updated_to.empty());
+    }
+    // A .old that stays from long ago (held by another program) never slows a normal start.
+    {
+        const std::wstring old_exe = f.game + L"\\DiamondDogsTogether.exe.old";
+        WriteText(old_exe, "OLD-LAUNCHER");
+        HANDLE held = CreateFileW(old_exe.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        int sleeps = 0;
+        f.env->on_sleep = [&]() { ++sleeps; };
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        f.env->on_sleep = nullptr;
+        if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+        CHECK(sleeps == 0 && IsFile(old_exe));
+        DeleteFileChecked(old_exe);
     }
     GetUpdateHooks() = saved;
 }
@@ -2589,7 +2630,7 @@ void TestUpdateBlocksSessions() {
     UpdateHooks saved = GetUpdateHooks();
     std::atomic<bool> release{false}, in_download{false};
     GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
-        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip"}) + "]";
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
         status = 200;
         return true;
     };
@@ -2736,6 +2777,112 @@ void TestUpdateBlocksSetup() {
     GetUpdateHooks() = saved;
 }
 
+// Cancel, then Update now straight away: the cancelled download must stop and
+// never come back to life (it used to be un-cancelled and then installed).
+void TestUpdateCancelRace() {
+    Fixture f(L"model-update-cancel");
+    UpdateHooks saved = GetUpdateHooks();
+    std::atomic<bool> in_download{false}, notice_cancel{false};
+    std::atomic<int> downloads{0}, relaunches{0};
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>* cancel, std::string& error) {
+        ++downloads;
+        in_download = true;
+        // Like WinHttp: the cancel is seen between two reads only (here: once
+        // notice_cancel is set); a download nobody cancels ends after 3 s.
+        for (int waited = 0; waited < 3000 && !(notice_cancel && cancel && *cancel); waited += 5) Sleep(5);
+        in_download = false;
+        if (cancel && *cancel) {
+            error = "Download cancelled";
+            return false;
+        }
+        WriteBytes(dest, PackageZip({{"DiamondDogsTogether.exe", "NEW-LAUNCHER"}}));
+        return true;
+    };
+    GetUpdateHooks().relaunch = [&](const std::wstring&, const std::vector<std::wstring>&, std::string&) {
+        ++relaunches;
+        return true;
+    };
+    WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+    auto m = MakeRealModelWithEnv(f.game, f.env);
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->update_info().status == UpdateStatus::available; }));
+    m->start_update();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+    m->cancel_update();
+    // The download has not stopped yet: still downloading, now "cancelling", and Update now waits.
+    const UpdateInfo stopping = m->update_info();
+    CHECK(stopping.status == UpdateStatus::downloading && stopping.cancelling);
+    m->start_update();
+    notice_cancel = true;
+    CHECK(PumpUntil(*m, *f.env, [&]() {
+        const UpdateStatus s = m->update_info().status;
+        return s == UpdateStatus::available || s == UpdateStatus::ready_to_restart || s == UpdateStatus::error;
+    }, 1500));
+    const UpdateInfo after = m->update_info();
+    CHECK(after.status == UpdateStatus::available && !after.cancelling && after.error.empty());
+    CHECK(downloads == 1 && relaunches == 0);
+    CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+    // Update now after the cancel has finished: a fresh download.
+    notice_cancel = false;
+    m->start_update();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->update_info().status == UpdateStatus::ready_to_restart; }));
+    CHECK(downloads == 2 && relaunches == 1);
+    m.reset();
+    GetUpdateHooks() = saved;
+}
+
+// The window waits for an exiting old launcher only right after an update.
+void TestRecentOldExe() {
+    const std::int64_t now = T(2026, 10, 29, 12, 0, 0);
+    CHECK(RecentUpdateTimes(now, now - 2000, 0));                       // the exe was just written (any updater)
+    CHECK(RecentUpdateTimes(now, now - 3600000, now - 1000));           // the .old was just renamed
+    CHECK(!RecentUpdateTimes(now, now - 3600000, now - 3600000));       // both from long ago
+    CHECK(!RecentUpdateTimes(now, 0, 0));                               // unknown
+    CHECK(!RecentUpdateTimes(now, now - kRecentUpdateMs - 1000, 0));
+    CHECK(RecentUpdateTimes(now, now + 30000, 0));                      // a clock a little off still counts
+    CHECK(!RecentUpdateTimes(now, now + 3600000, 0));
+
+    const std::wstring dir = g_root + L"\\recent-old-exe";
+    RemoveTree(dir);
+    const std::wstring exe = dir + L"\\DiamondDogsTogether.exe", old_exe = exe + L".old";
+    WriteText(exe, "NEW");
+    CHECK(!OldExecutableFromRecentUpdate(dir));   // no .old at all
+    WriteText(old_exe, "OLD");
+    CHECK(OldExecutableFromRecentUpdate(dir));    // just written
+    // Both files from an hour ago (written and renamed then).
+    auto age = [](const std::wstring& path) {
+        HANDLE h = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        LARGE_INTEGER t;
+        t.LowPart = ft.dwLowDateTime;
+        t.HighPart = static_cast<LONG>(ft.dwHighDateTime);
+        t.QuadPart -= 3600LL * 10000000LL;
+        FILE_BASIC_INFO info{};
+        info.LastWriteTime = t;
+        info.ChangeTime = t;
+        const bool ok = SetFileInformationByHandle(h, FileBasicInfo, &info, sizeof(info)) != FALSE;
+        CloseHandle(h);
+        return ok;
+    };
+    CHECK(age(exe) && age(old_exe));
+    CHECK(!OldExecutableFromRecentUpdate(dir));
+    // The 0.14.3 updater renames the running exe to .old (the rename is recent).
+    DeleteFileChecked(old_exe);
+    CHECK(MoveFileExW(exe.c_str(), old_exe.c_str(), 0) != FALSE);
+    WriteText(exe, "NEW");
+    CHECK(age(exe));
+    CHECK(OldExecutableFromRecentUpdate(dir));
+    RemoveTree(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -2789,6 +2936,8 @@ int main() {
     TestUpdateThroughModel();
     TestUpdateBlocksSessions();
     TestUpdateBlocksSetup();
+    TestUpdateCancelRace();
+    TestRecentOldExe();
 
     RemoveTree(g_root);
     std::printf("ddt_core_tests: %u checks, %u failures\n", g_checks, g_failures);

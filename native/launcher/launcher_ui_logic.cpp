@@ -392,8 +392,8 @@ const wchar_t* UsageText() {
            L"  --after-update <pid>      the updated window waits for the old one to close\n";
 }
 
-int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_beside) {
-    if (old_exe_beside) return 10000;   // an updater before 0.14.4 exits right after starting us
+int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_from_recent_update) {
+    if (old_exe_from_recent_update) return 10000;   // an updater before 0.14.4 exits right after starting us
     if (after_update) return 5000;      // the old window releases the folder as it closes
     return 0;
 }

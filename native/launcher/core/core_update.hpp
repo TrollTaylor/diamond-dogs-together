@@ -153,6 +153,16 @@ PreviousLauncherOps PreviousLauncherWin32(std::uint32_t pid);
 // when none is left.
 bool CleanOldExecutable(const std::wstring& game_dir);
 
+// DiamondDogsTogether.exe.old lies next to the exe and an update made it just
+// now: the exe was written, or the .old renamed, within kRecentUpdateMs. Then
+// an updater before 0.14.4 has started this exe and exits by itself in a
+// moment, so the window waits for it. A .old that stayed from long ago (an
+// antivirus held it, it is read-only) changes nothing at a normal start.
+inline constexpr std::int64_t kRecentUpdateMs = 5 * 60 * 1000;
+bool OldExecutableFromRecentUpdate(const std::wstring& game_dir);
+// The decision on its own (ms since 1970, UTC; 0 = unknown).
+bool RecentUpdateTimes(std::int64_t now_ms, std::int64_t exe_written_ms, std::int64_t old_changed_ms);
+
 // mgs-coop\source.zip left by a package up to 0.14.3 (the source is now a
 // separate release asset). It is deleted only when the current package.json
 // does not list it and it verifies as our source bundle (its own

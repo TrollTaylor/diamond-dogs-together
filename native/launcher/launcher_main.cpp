@@ -594,8 +594,10 @@ int RunWindow(const Options& o) {
     const std::uint64_t hash = FolderHash();
     // After a self-update this window waits for the old one to close first
     // (core_update.hpp "Restart after an update"); an updater before 0.14.4
-    // left DiamondDogsTogether.exe.old and exits by itself a moment later.
-    const int claim_wait = ddt::ui::InstanceClaimWaitMs(o.after_update, Exists(ExeDir() + L"\\DiamondDogsTogether.exe.old", false));
+    // left DiamondDogsTogether.exe.old just now and exits by itself a moment
+    // later. A .old that stayed from long ago changes nothing.
+    const bool old_exe_recent = !o.mock && ddt::OldLauncherFromRecentUpdate(ExeDir());
+    const int claim_wait = ddt::ui::InstanceClaimWaitMs(o.after_update, old_exe_recent);
     HANDLE instance = nullptr;
     if (o.after_update && !o.mock) {
         ddt::TakeOverAfterUpdate(o.after_update, [&](int ms) {
@@ -612,6 +614,7 @@ int RunWindow(const Options& o) {
         start.after_update = o.after_update;
         start.update_feed = Utf8(o.update_feed);
         start.update_now = o.update_now;
+        start.old_exe_recent = old_exe_recent;
         model = ddt::MakeRealModel(ExeDir(), start);
     }
     App app;

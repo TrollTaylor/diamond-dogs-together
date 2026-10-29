@@ -32,4 +32,9 @@ int RunSelfTest(std::string& report);
 // True when claimed.
 bool TakeOverAfterUpdate(std::uint32_t pid, const std::function<bool(int wait_ms)>& claim);
 
+// An updater before 0.14.4 has just started this exe (DiamondDogsTogether.exe.old
+// next to it from an update a few minutes old, core_update.hpp
+// OldExecutableFromRecentUpdate): the window waits for that old launcher.
+bool OldLauncherFromRecentUpdate(const std::wstring& game_dir);
+
 }  // namespace ddt

@@ -30,6 +30,17 @@ std::string ToLowerStr(std::string s) {
     return s;
 }
 
+// The player zip of a release: DiamondDogsTogether-<version>.zip (or
+// mgs-coop-friend-<version>.zip before 0.14.0), <version> being exactly the tag's.
+bool IsPlayerZipFor(const std::string& asset, const std::string& version) {
+    for (const char* prefix : {"DiamondDogsTogether-", "mgs-coop-friend-"}) {
+        const std::string p = prefix;
+        if (asset.size() > p.size() + 4 && asset.compare(0, p.size(), p) == 0 && ToLowerStr(asset.substr(asset.size() - 4)) == ".zip")
+            return asset.substr(p.size(), asset.size() - p.size() - 4) == version;
+    }
+    return false;
+}
+
 }  // namespace
 
 UpdateHooks& GetUpdateHooks() {
@@ -114,23 +125,22 @@ bool ParseReleasesFeed(const std::string& json_text, const std::string& current_
         int maj = 0, min = 0, pat = 0;
         if (!ParseSemVer(tag, maj, min, pat)) continue;
 
-        // Find matching zip asset
+        // The player zip of exactly this version, and its GPL source zip
+        // (DDT-source-<version>.zip) published in the same release: a release
+        // without its source is never offered (GPLv3 section 6(d)).
         const json::Value* assets = rel->Find("assets");
         if (!assets || !assets->is_array()) continue;
+        const std::string version = std::to_string(maj) + "." + std::to_string(min) + "." + std::to_string(pat);
+        const std::string source_name = ToLowerStr("DDT-source-" + version + ".zip");
 
         const json::Value* matching_asset = nullptr;
+        bool has_source = false;
         for (const auto& a : assets->Elements()) {
-            std::string aname = a.Str("name");
-            // The GPL source archive (DDT-source-<ver>.zip) sits next to the player zip.
-            if (ToLowerStr(aname).find("source") != std::string::npos) continue;
-            if (aname.size() >= 4 && aname.substr(aname.size() - 4) == ".zip") {
-                if (aname.find("DiamondDogsTogether-") == 0 || aname.find("mgs-coop-friend-") == 0) {
-                    matching_asset = &a;
-                    break;
-                }
-            }
+            const std::string aname = a.Str("name");
+            if (ToLowerStr(aname) == source_name) has_source = true;
+            else if (!matching_asset && IsPlayerZipFor(aname, version)) matching_asset = &a;
         }
-        if (!matching_asset) continue;
+        if (!matching_asset || !has_source) continue;
 
         bool is_better = false;
         if (!best_release) {
@@ -768,6 +778,48 @@ bool CleanOldExecutable(const std::wstring& game_dir) {
     const std::wstring old_exe = JoinPath2(game_dir, L"DiamondDogsTogether.exe.old");
     if (PathExists(old_exe)) DeleteFileChecked(old_exe);
     return !PathExists(old_exe);
+}
+
+bool RecentUpdateTimes(std::int64_t now_ms, std::int64_t exe_written_ms, std::int64_t old_changed_ms) {
+    // A clock that is a minute off (or a file time from another PC's zip) still counts.
+    auto recent = [now_ms](std::int64_t t) { return t > 0 && now_ms - t < kRecentUpdateMs && t - now_ms < 60000; };
+    return recent(exe_written_ms) || recent(old_changed_ms);
+}
+
+namespace {
+// ms since 1970 (UTC) of a FILETIME-style 100 ns count since 1601; 0 for none.
+std::int64_t UnixMsOf(std::int64_t filetime) { return filetime > 0 ? filetime / 10000 - 11644473600000ll : 0; }
+
+// LastWriteTime and ChangeTime (NTFS sets it on a rename) of a file, 0 when unknown.
+bool FileTimes(const std::wstring& path, std::int64_t& written_ms, std::int64_t& changed_ms) {
+    written_ms = changed_ms = 0;
+    HANDLE h = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FILE_BASIC_INFO info{};
+    const bool ok = GetFileInformationByHandleEx(h, FileBasicInfo, &info, sizeof(info)) != FALSE;
+    CloseHandle(h);
+    if (!ok) return false;
+    written_ms = UnixMsOf(info.LastWriteTime.QuadPart);
+    changed_ms = UnixMsOf(info.ChangeTime.QuadPart);
+    return true;
+}
+}  // namespace
+
+bool OldExecutableFromRecentUpdate(const std::wstring& game_dir) {
+    const std::wstring exe = JoinPath2(game_dir, kLauncherExe);
+    const std::wstring old_exe = exe + L".old";
+    if (!IsFile(old_exe)) return false;
+    std::int64_t exe_written = 0, exe_changed = 0, old_written = 0, old_changed = 0;
+    FileTimes(exe, exe_written, exe_changed);
+    FileTimes(old_exe, old_written, old_changed);
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER now{};
+    now.LowPart = ft.dwLowDateTime;
+    now.HighPart = ft.dwHighDateTime;
+    // Every updater writes the new exe (LastWriteTime) and renames the running one to .old (ChangeTime).
+    return RecentUpdateTimes(UnixMsOf(static_cast<std::int64_t>(now.QuadPart)), exe_written, old_changed);
 }
 
 LeftoverSource RemoveLeftoverSourceZip(const InstancePaths& paths) {

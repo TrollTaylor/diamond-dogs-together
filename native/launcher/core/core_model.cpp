@@ -220,9 +220,11 @@ public:
         LoadSettings(paths_, settings_);
         // After an update the old launcher has closed (launcher_main waited for
         // it, or for the mutex of an updater before 0.14.4), so its exe can go
-        // now; Windows may need a moment to let go of the exiting process's image.
+        // now; Windows may need a moment to let go of the exiting process's
+        // image. Only then: a .old another program holds never slows a normal start.
         bool old_exe_gone = CleanOldExecutable(paths_.game);
-        for (int i = 0; !old_exe_gone && i < 30; ++i) {
+        const bool just_updated = start_.after_update != 0 || start_.old_exe_recent;
+        for (int i = 0; just_updated && !old_exe_gone && i < 30; ++i) {
             env_->SleepMs(100);
             old_exe_gone = CleanOldExecutable(paths_.game);
         }
@@ -604,13 +606,20 @@ UpdateInfo update_info() const override {
                 update_info_.error = blocked;
                 return;
             }
+        }
+        // available / error are set by the previous check or download as its
+        // very last step (a cancelled download stays "downloading" until it has
+        // stopped), so this join is immediate and the cancel flag is free again.
+        if (update_thread_.joinable()) update_thread_.join();
+        {
+            std::lock_guard<std::mutex> lock(update_mutex_);
             update_info_.status = UpdateStatus::downloading;
             update_info_.bytes_downloaded = 0;
             update_info_.progress = 0.0f;
             update_info_.error.clear();
+            update_info_.cancelling = false;
             update_cancel_ = false;
         }
-        if (update_thread_.joinable()) update_thread_.join();
         const UpdateInfo target = [this]() {
             std::lock_guard<std::mutex> lock(update_mutex_);
             return update_info_;
@@ -629,6 +638,7 @@ UpdateInfo update_info() const override {
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_.status = UpdateStatus::error;
                 update_info_.error = sentence;
+                update_info_.cancelling = false;
             };
             const std::wstring dest_zip = JoinPath2(paths.mod, L"update.zip");
             std::string error;
@@ -638,10 +648,11 @@ UpdateInfo update_info() const override {
                 update_info_.download_size = p.total_bytes;
                 update_info_.progress = p.progress;
             }, &update_cancel_, error);
-            if (update_cancel_) {   // Cancel: back to "available", nothing changed
+            if (update_cancel_) {   // Cancel: back to "available" once stopped, nothing changed
                 DeleteFileChecked(dest_zip);
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_.status = UpdateStatus::available;
+                update_info_.cancelling = false;
                 update_info_.error.clear();
                 return;
             }
@@ -664,6 +675,7 @@ UpdateInfo update_info() const override {
             {
                 std::lock_guard<std::mutex> lock(update_mutex_);
                 update_info_.status = UpdateStatus::applying;
+                update_info_.cancelling = false;   // too late to cancel: it installs
             }
             // The restart is the last step of the install: if the new exe does
             // not start, ApplyUpdateZip puts the running version back.
@@ -693,14 +705,13 @@ UpdateInfo update_info() const override {
         });
     }
 
+    // The download stops at its next read; the update thread then sets
+    // "available" itself, so Update now cannot start before it has stopped.
     void cancel_update() override {
+        std::lock_guard<std::mutex> lock(update_mutex_);
+        if (update_info_.status != UpdateStatus::downloading) return;
         update_cancel_ = true;
-        {
-            std::lock_guard<std::mutex> lock(update_mutex_);
-            if (update_info_.status == UpdateStatus::downloading) {
-                update_info_.status = UpdateStatus::available;
-            }
-        }
+        update_info_.cancelling = true;
     }
 
 

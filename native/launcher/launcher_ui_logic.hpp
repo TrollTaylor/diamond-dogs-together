@@ -122,9 +122,10 @@ const wchar_t* UsageText();
 // How long a starting window waits for the folder's single-instance mutex to
 // be released before it gives up and brings the open window forward instead:
 // after --after-update (the old launcher closes right after the handoff), and
-// when DiamondDogsTogether.exe.old lies next to the exe (an updater before
-// 0.14.4 started this exe and exits by itself a moment later). 0 otherwise.
-int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_beside);
+// when an update just left DiamondDogsTogether.exe.old next to the exe (an
+// updater before 0.14.4 started this exe and exits by itself a moment later;
+// core_update.hpp OldExecutableFromRecentUpdate). 0 otherwise.
+int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_from_recent_update);
 // The window closes itself: the updated launcher has taken over.
 bool CloseForUpdate(const UpdateInfo& info);
 

@@ -74,6 +74,8 @@ bool TakeOverAfterUpdate(std::uint32_t pid, const std::function<bool(int)>& clai
     return core::TakeOverFromPreviousLauncher(ops, core::kPreviousLauncherWaitMs) != core::TakeOver::not_claimed;
 }
 
+bool OldLauncherFromRecentUpdate(const std::wstring& game_dir) { return core::OldExecutableFromRecentUpdate(game_dir); }
+
 int RunSelfTest(std::string& report) {
     int checks = 0, failures = 0;
     auto check = [&](bool ok, const char* what) {
