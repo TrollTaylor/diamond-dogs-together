@@ -15,6 +15,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <winsock2.h>
 #include <windows.h>
 
 #include <algorithm>
@@ -2940,6 +2941,123 @@ void TestLocalStartOffThread() {
     CHECK(f.RealSavesUntouched());
 }
 
+// ddt_core_tests --local-watch-process <DiamondDogsTogether.exe> (CTest ddt_local_watch_process): the local test's
+// Win32 seams with real processes, all hidden (2026-10-29 review: they were only compiled). The real helper process
+// "DiamondDogsTogether.exe --local-watch <run>", started hidden the way StartHelper starts it, puts a run's files back
+// once its launcher and games are gone; a helper still waiting for a live launcher is ended by CloseGame (no window:
+// the end after the wait); ProcessImage, PortFree and WorkArea answer for real. No game and no window is started.
+std::int64_t ThisProcessStartMs() {
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return 0;
+    ULARGE_INTEGER u{};
+    u.LowPart = created.dwLowDateTime;
+    u.HighPart = created.dwHighDateTime;
+    return static_cast<std::int64_t>(u.QuadPart / 10000ULL) - 11644473600000LL;
+}
+
+bool StartHiddenHelper(const std::wstring& exe, const std::wstring& dir, const std::string& run_id, PROCESS_INFORMATION& pi) {
+    std::wstring cmd = L"\"" + exe + L"\" --local-watch " + Wide(run_id);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    pi = PROCESS_INFORMATION{};
+    return CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW, nullptr, dir.c_str(),
+                          &si, &pi) != 0;
+}
+
+void TestLocalWatchProcess(const std::wstring& launcher) {
+    Fixture f(L"local-watch-process");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    // The helper takes its own folder as the game folder: a copy of the launcher sits in the fake one.
+    const std::wstring helper = f.game + L"\\DiamondDogsTogether.exe";
+    CHECK(IsFile(launcher) && CopyFileW(launcher.c_str(), helper.c_str(), FALSE) != 0);
+    const std::shared_ptr<LocalHost> win = MakeWin32LocalHost();
+
+    // ProcessImage, PortFree and WorkArea, for real.
+    wchar_t self_path[MAX_PATH + 1]{};
+    GetModuleFileNameW(nullptr, self_path, MAX_PATH);
+    CHECK(IEquals(win->ProcessImage(GetCurrentProcessId()), FullPath(self_path)));
+    CHECK(win->ProcessImage(0).empty());
+    WSADATA wsa{};
+    CHECK(WSAStartup(MAKEWORD(2, 2), &wsa) == 0);
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int len = sizeof(addr);
+    CHECK(s != INVALID_SOCKET && bind(s, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == 0 &&
+          getsockname(s, reinterpret_cast<sockaddr*>(&addr), &len) == 0);
+    const int port = ntohs(addr.sin_port);
+    CHECK(port > 0 && !win->PortFree(port, false));
+    closesocket(s);
+    CHECK(win->PortFree(port, false));
+    WSACleanup();
+    LocalRect area;
+    int dpi = 0;
+    CHECK(win->WorkArea(area, dpi) && area.width > 0 && area.height > 0 && dpi >= 96);
+
+    // 1) The launcher (the fake env's pid 4242, started in 2026) and both games are gone: the real helper process
+    //    puts the run's files back and ends.
+    LocalTestRun run(f.env, lh);
+    LocalTestRequest req;
+    req.host_root = f.game;
+    req.guest_root = guest;
+    req.fixture = true;   // activation only
+    std::string error;
+    CHECK(run.Start(req, error));
+    CHECK(IsFile(f.paths.marker) && IsFile(LocalPath(guest, "lab.ini")));
+    PROCESS_INFORMATION pi{};
+    CHECK(StartHiddenHelper(helper, f.game, run.run_id(), pi));
+    DWORD code = 99;
+    if (pi.hProcess) {
+        CHECK(IEquals(win->ProcessImage(pi.dwProcessId), helper));
+        CHECK(win->Windows(pi.dwProcessId).empty());   // the helper has no window
+        const bool ended = WaitForSingleObject(pi.hProcess, 60000) == WAIT_OBJECT_0;
+        CHECK(ended);
+        if (!ended) TerminateProcess(pi.hProcess, 3);   // never leave it behind
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    CHECK(code == 0);
+    CHECK(!PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")) && !PathExists(LocalPath(f.game, "local-test-session.json")));
+    json::Value back;
+    CHECK(ReadLocalSession(run.run_dir(), back, error) && back.Str("state") == "off");
+    CHECK(Has(ReadText(f.paths.launcher_log), "local_watch=restored"));
+
+    // 2) Its launcher (this process) still runs: the helper waits. CloseGame asks its windows to close (it has none)
+    //    and ends it after the wait; the run is then put back here.
+    f.env->self = GetCurrentProcessId();
+    f.env->self_start = ThisProcessStartMs();
+    LocalTestRun run2(f.env, lh);
+    CHECK(run2.Start(req, error));
+    if (!error.empty()) std::fprintf(stderr, "second fixture run: %s\n", error.c_str());
+    CHECK(StartHiddenHelper(helper, f.game, run2.run_id(), pi));
+    if (pi.hProcess) {
+        CHECK(WaitForSingleObject(pi.hProcess, 4000) == WAIT_TIMEOUT);   // still waiting for this launcher
+        CHECK(IsFile(f.paths.marker));
+        win->CloseGame(pi.dwProcessId, 500);
+        const bool ended = WaitForSingleObject(pi.hProcess, 5000) == WAIT_OBJECT_0;
+        CHECK(ended);
+        if (!ended) TerminateProcess(pi.hProcess, 3);
+        code = 99;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CHECK(code == 1);   // ended by CloseGame after its wait
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    json::Value s2;
+    LocalRestoreResult r;
+    CHECK(ReadLocalSession(run2.run_dir(), s2, error) && RestoreLocalSession(*f.env, s2, r, error) && r.state == "off");
+    CHECK(!PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")));
+    f.env->self = 4242;
+    CHECK(f.RealSavesUntouched());
+    DeleteFileW(helper.c_str());
+}
+
 // ---- The native local test against tools/dev/Play-LocalCoop.ps1 (Windows PowerShell, fixture mode) ----
 bool RunPowerShell(const std::wstring& args, const std::wstring& log) {
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
@@ -3110,7 +3228,7 @@ void TestLocalPowerShellInterop() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     // DDT_LOCALTEST_REAL_CHECK=<game folder>|<second folder>: only prints what Play > Local test says about two real
     // folders (CheckLocalTestFolder with the real hooks; it reads files and lists processes, and changes nothing),
     // then exits without running the tests.
@@ -3135,6 +3253,13 @@ int main() {
     RemoveTree(g_root);
     CreateDirectories(g_root);
     InstallTestHooks();
+
+    if (argc == 3 && std::string(argv[1]) == "--local-watch-process") {
+        TestLocalWatchProcess(FullPath(Wide(argv[2])));
+        RemoveTree(g_root);
+        std::printf("ddt_core_tests --local-watch-process: %u checks, %u failures\n", g_checks, g_failures);
+        return g_failures == 0 ? 0 : 1;
+    }
 
     TestJsonAndTime();
     TestCodes();

@@ -38,4 +38,8 @@ if(WIN32 AND MSVC AND TARGET mgs_imgui)
   add_test(NAME ddt_launcher_screens COMMAND ddt_launcher --screenshot-all "${CMAKE_CURRENT_BINARY_DIR}/launcher-shots" --scale 1)
   # ImGui reports recoverable layout errors on stdout in this mode: any of them fails the test.
   set_tests_properties(ddt_launcher_screens PROPERTIES FAIL_REGULAR_EXPRESSION "imgui-error|FAIL:")
+  # The local two-window test's Win32 seams with real processes, all hidden: the exe's own
+  # --local-watch helper puts a fixture run's files back; CloseGame ends a waiting helper.
+  add_test(NAME ddt_local_watch_process COMMAND ddt_core_tests --local-watch-process $<TARGET_FILE:ddt_launcher>)
+  set_tests_properties(ddt_local_watch_process PROPERTIES TIMEOUT 180)
 endif()

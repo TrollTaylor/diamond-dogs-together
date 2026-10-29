@@ -19,8 +19,8 @@ set(MGS_SLOW_TESTS
   lab_scripts_tests friend_package_tests worker_session_tests local_coop_session_tests local_coop_windows_tests
   build_profile_tests worker_loading_tests probe_install_recovery mgo_unique_rest_session_tests
   mgo_standing_cycle_session_tests mgo_standing_frame_policy_tests
-  # over ~10 s (real sockets with timers; the launcher core end to end)
-  link_udp_tests ddt_core_tests
+  # over ~10 s (real sockets with timers; the launcher core end to end; real helper processes)
+  link_udp_tests ddt_core_tests ddt_local_watch_process
   # the game folder and the GPU
   ddt_runtime_dat_integration ddt_launcher_screens)
 
