@@ -128,6 +128,21 @@ const wchar_t* UsageText();
 int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_from_recent_update);
 // The window closes itself: the updated launcher has taken over.
 bool CloseForUpdate(const UpdateInfo& info);
+// An update is downloading, installing or handing over: the setup cannot start,
+// and a closing window releases the folder only after the update has stopped
+// (otherwise at once, so a slow update check never blocks the next start).
+bool UpdateInProgress(const UpdateInfo& info);
+
+// ---- Update notes on the pages ----------------------------------------------
+// The update card on Play: nothing, an update to install, one that did not go
+// through (its sentence, with Update now again), the download, the install,
+// or the note right after a self-update.
+enum class PlayBanner { none, available, failed, downloading, installing, updated };
+PlayBanner PlayBannerFor(const UpdateInfo& info);
+// "Updated to version X." right after a self-update ("" otherwise). An update
+// always needs the one-time setup again (the install record names the
+// version), so before the setup the note says that too.
+std::string UpdatedNote(const UpdateInfo& info, Phase phase);
 
 // The GitHub release page of a version ("0.14.4" or "0.14.4+abc1234"): the
 // player zip and its source zip (DDT-source-<version>.zip) are both there.

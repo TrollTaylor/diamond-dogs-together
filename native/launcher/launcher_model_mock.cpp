@@ -132,7 +132,8 @@ void MockModel::SetPhase(Phase phase) { phase_ = phase; }
 
 Phase MockModel::phase() const { return phase_; }
 
-std::string MockModel::version() const { return DDT_VERSION_STRING; }
+// Right after a self-update the running version is the one updated to (as in the real model).
+std::string MockModel::version() const { return update_info_.updated_to.empty() ? std::string(DDT_VERSION_STRING) : update_info_.updated_to; }
 
 std::string MockModel::game_dir() const {
     return phase_ == Phase::not_in_game_folder ? kDownloadsDir : kSteamDir;

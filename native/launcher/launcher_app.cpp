@@ -350,6 +350,13 @@ void LauncherUi::SetupPage(Phase phase) {
         PageHeader("All set", "Co-op is ready. You only had to do this once.");
     else
         PageHeader("Set up co-op", "A one-time setup. It takes about a minute and never changes your own saves.");
+    // The new window after a self-update opens here: the setup runs once more for the new version.
+    const UpdateInfo setup_uinfo = model_.update_info();
+    const bool updating = ui::UpdateInProgress(setup_uinfo);
+    if (const std::string note = ui::UpdatedNote(setup_uinfo, phase); !note.empty()) {
+        Message(Icon::check, col::kGood, note, kBody);
+        Gap(4.0f);
+    }
 
     BeginCard("##steps");
     for (std::size_t i = 0; i < steps.size(); ++i) {
@@ -430,7 +437,7 @@ void LauncherUi::SetupPage(Phase phase) {
         if (Button("Continue to Play", ButtonKind::primary, ImVec2(0, 42.0f), true, Icon::play, true))
             Navigate(Page::play);
     } else if (sum.failed) {
-        if (Button("Try again", ButtonKind::primary, ImVec2(0, 42.0f))) {
+        if (Button("Try again", ButtonKind::primary, ImVec2(0, 42.0f), !updating)) {
             logs_result_ = Result{};
             model_.start_setup();
         }
@@ -443,8 +450,12 @@ void LauncherUi::SetupPage(Phase phase) {
         Gap(2.0f);
         ResultLine(logs_result_);
     } else {
-        if (Button("Set up co-op", ButtonKind::primary, ImVec2(0, 42.0f), phase == Phase::needs_setup))
+        if (Button("Set up co-op", ButtonKind::primary, ImVec2(0, 42.0f), phase == Phase::needs_setup && !updating))
             model_.start_setup();
+        if (updating) {
+            Gap(2.0f);
+            Text("Diamond Dogs Together is updating. The setup can start once it has restarted.", col::kTextDim, kSmall, nullptr, 0.0f);
+        }
     }
 }
 
@@ -474,41 +485,52 @@ void LauncherUi::PlayPage(Phase phase) {
     PageHeader("Play together", "Host a game for your partner, or join theirs. You both need Steam running.");
     const bool session = ui::SessionActive(phase);
     const UpdateInfo play_uinfo = model_.update_info();
-    if (play_uinfo.status == UpdateStatus::available) {
-        BeginCard("##play_update", 0.0f, col::kCard, col::kAccent);
-        IconBadge(Icon::download, col::kAccent, col::kAccentSoft, 28.0f);
+    const ui::PlayBanner banner = ui::PlayBannerFor(play_uinfo);
+    if (banner == ui::PlayBanner::available || banner == ui::PlayBanner::failed) {
+        // An update to install, or one that was refused or did not go through: the reason, and Update now again.
+        const bool failed = banner == ui::PlayBanner::failed;
+        const float play_bw = 120.0f;
+        BeginCard("##play_update", 0.0f, col::kCard, failed ? col::kBad : col::kAccent);
+        if (failed)
+            IconBadge(Icon::warning, col::kBad, col::kBadSoft, 28.0f);
+        else
+            IconBadge(Icon::download, col::kAccent, col::kAccentSoft, 28.0f);
         ImGui::SameLine(0.0f, Px(10.0f));
+        const float text_w = std::max(Px(120.0f), ImGui::GetContentRegionAvail().x - Px(play_bw + 20.0f));
         ImGui::BeginGroup();
         Text((play_uinfo.release_title + " is available!").c_str(), col::kText, kBody, GetFonts().semibold, -1.0f);
-        Text("Update to play with the latest features and bug fixes.", col::kTextDim, kSmall, nullptr, 0.0f);
+        if (failed)
+            Text(play_uinfo.error.c_str(), col::kBad, kSmall, nullptr, text_w);
+        else
+            Text("Update to play with the latest features and bug fixes.", col::kTextDim, kSmall, nullptr, text_w);
         ImGui::EndGroup();
-        const float play_bw = 120.0f;
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - Px(play_bw) + ImGui::GetStyle().WindowPadding.x);
         if (Button("Update now##banner", ButtonKind::primary, ImVec2(play_bw, 32.0f), !session, Icon::download, true)) {
             model_.start_update();
         }
         EndCard();
         Gap(4.0f);
-    } else if (play_uinfo.status == UpdateStatus::downloading) {
+    } else if (banner == ui::PlayBanner::downloading) {
         BeginCard("##play_downloading", 0.0f, col::kCard, col::kAccent);
         char buf[128];
-        snprintf(buf, sizeof(buf), "Downloading update %s: %.1f / %.1f MB (%.0f%%)",
-                 play_uinfo.latest_version.c_str(),
-                 play_uinfo.bytes_downloaded / (1024.0 * 1024.0),
-                 play_uinfo.download_size / (1024.0 * 1024.0),
-                 play_uinfo.progress * 100.0f);
+        if (play_uinfo.cancelling)
+            snprintf(buf, sizeof(buf), "Stopping the download...");
+        else
+            snprintf(buf, sizeof(buf), "Downloading update %s: %.1f / %.1f MB (%.0f%%)", play_uinfo.latest_version.c_str(),
+                     play_uinfo.bytes_downloaded / (1024.0 * 1024.0), play_uinfo.download_size / (1024.0 * 1024.0),
+                     play_uinfo.progress * 100.0f);
         Text(buf, col::kText, kSmall, GetFonts().semibold, -1.0f);
         Gap(2.0f);
         ProgressBar(play_uinfo.progress, 0.0f, 6.0f, col::kAccent);
         EndCard();
         Gap(4.0f);
-    } else if (play_uinfo.status == UpdateStatus::applying || play_uinfo.status == UpdateStatus::ready_to_restart) {
+    } else if (banner == ui::PlayBanner::installing) {
         BeginCard("##play_applying", 0.0f, col::kCard, col::kGood);
         Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, -1.0f);
         EndCard();
         Gap(4.0f);
-    } else if (!play_uinfo.updated_to.empty()) {
-        Message(Icon::check, col::kGood, "Updated to version " + play_uinfo.updated_to + ".", kBody);
+    } else if (banner == ui::PlayBanner::updated) {
+        Message(Icon::check, col::kGood, ui::UpdatedNote(play_uinfo, phase), kBody);
         Gap(4.0f);
     }
     static const char* const kTabs[2] = {"Host", "Join"};
@@ -914,17 +936,17 @@ void LauncherUi::ToolsPage(Phase phase) {
         }
     } else if (uinfo.status == UpdateStatus::downloading) {
         char buf[128];
-        snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)",
-                 uinfo.latest_version.c_str(),
-                 uinfo.bytes_downloaded / (1024.0 * 1024.0),
-                 uinfo.download_size / (1024.0 * 1024.0),
-                 uinfo.progress * 100.0f);
+        if (uinfo.cancelling)
+            snprintf(buf, sizeof(buf), "Stopping the download...");
+        else
+            snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)", uinfo.latest_version.c_str(),
+                     uinfo.bytes_downloaded / (1024.0 * 1024.0), uinfo.download_size / (1024.0 * 1024.0), uinfo.progress * 100.0f);
         Text(buf, col::kText, kSmall, nullptr, 0.0f);
         ImGui::EndGroup();
         Gap(3.0f);
         ProgressBar(uinfo.progress, 0.0f, 6.0f, col::kAccent);
         Gap(3.0f);
-        if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f))) {
+        if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f), !uinfo.cancelling)) {
             model_.cancel_update();
         }
     } else if (uinfo.status == UpdateStatus::applying || uinfo.status == UpdateStatus::ready_to_restart) {
@@ -1212,7 +1234,8 @@ const char* const kScenes[] = {
     "13-ingame-launching",  "14-ingame-host-waiting", "15-ingame-connected",   "16-ingame-handoff",
     "17-ingame-after-game", "18-tools",               "19-tools-result",       "20-tools-uninstall-confirm",
     "21-tools-about",       "22-settings",            "23-tools-in-game",      "24-uninstall-report",
-    "25-play-updated",      "26-tools-updated",       "27-tools-update-refused",
+    "25-setup-updated",     "26-tools-updated",       "27-tools-update-refused", "28-play-updated",
+    "29-play-update-failed", "30-tools-update-cancelling",
 };
 constexpr int kSceneCount = static_cast<int>(sizeof(kScenes) / sizeof(kScenes[0]));
 constexpr char kFixedSecret[] = "K7RD3WQ9MP2XVB6TZHN4";
@@ -1344,15 +1367,16 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         popup_request_ = Popup::uninstall_report;
         break;
     }
-    case 24:
-    case 25: {   // the new window right after a self-update
-        mock.jump_to_phase(Phase::ready);
+    case 24:     // the new window right after a self-update: the setup runs once more for the new version
+    case 25:     // ... Tools, once co-op is ready again
+    case 27: {   // ... Play
+        mock.jump_to_phase(index == 24 ? Phase::needs_setup : Phase::ready);
         UpdateInfo info;
         info.status = UpdateStatus::up_to_date;
         info.current_version = "0.14.4";
         info.updated_to = "0.14.4";
         mock.set_mock_update_info(info);
-        page = index == 24 ? Page::play : Page::tools;
+        page = index == 24 ? Page::setup : index == 25 ? Page::tools : Page::play;
         break;
     }
     case 26: {   // Update now while MGSV runs from the folder
@@ -1360,7 +1384,33 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         UpdateInfo info;
         info.status = UpdateStatus::error;
         info.latest_version = "v0.14.4";
+        info.download_url = "https://example.invalid/DiamondDogsTogether-0.14.4.zip";
         info.error = "MGSV is running from this folder. Quit MGSV first, then update.";
+        mock.set_mock_update_info(info);
+        page = Page::tools;
+        break;
+    }
+    case 28: {   // Update now on Play, and the new version would not start (the longest sentence)
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::error;
+        info.latest_version = "v0.14.4";
+        info.release_title = "Diamond Dogs Together 0.14.4";
+        info.download_url = "https://example.invalid/DiamondDogsTogether-0.14.4.zip";
+        info.error = "The new version would not start, so your current version was kept. Try again later, or get the latest zip "
+                     "from the release page.";
+        mock.set_mock_update_info(info);
+        break;
+    }
+    case 29: {   // Cancel pressed: the download is stopping
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::downloading;
+        info.latest_version = "v0.14.4";
+        info.download_size = 2837248;
+        info.bytes_downloaded = 1134899;
+        info.progress = 0.4f;
+        info.cancelling = true;
         mock.set_mock_update_info(info);
         page = Page::tools;
         break;

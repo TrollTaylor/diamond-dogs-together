@@ -661,12 +661,18 @@ int RunWindow(const Options& o) {
         }
         RenderFrame(app, true);
     }
+    // While an update downloads, installs or hands over, its thread finishes
+    // before the folder is released (a new window must not tidy files it is
+    // replacing). Otherwise the folder is free as soon as the window is gone,
+    // and the model ends its threads afterwards: an update check that waits
+    // for the network must never make the next start close silently.
+    const bool update_busy = ddt::ui::UpdateInProgress(app.model->update_info());
     Shutdown(app);
-    app.model.reset();   // its threads end before the folder is handed over
+    if (update_busy) app.model.reset();
     g_app = nullptr;
     ReleaseMutex(instance);
     CloseHandle(instance);
-    return 0;
+    return 0;   // the App and (otherwise) the model end here
 }
 
 int RunScreenshots(const Options& o) {

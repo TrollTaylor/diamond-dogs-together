@@ -400,6 +400,34 @@ int InstanceClaimWaitMs(std::uint32_t after_update, bool old_exe_from_recent_upd
 
 bool CloseForUpdate(const UpdateInfo& info) { return info.status == UpdateStatus::ready_to_restart; }
 
+bool UpdateInProgress(const UpdateInfo& info) {
+    return info.status == UpdateStatus::downloading || info.status == UpdateStatus::applying ||
+           info.status == UpdateStatus::ready_to_restart;
+}
+
+PlayBanner PlayBannerFor(const UpdateInfo& info) {
+    switch (info.status) {
+    case UpdateStatus::available: return PlayBanner::available;
+    case UpdateStatus::downloading: return PlayBanner::downloading;
+    case UpdateStatus::applying:
+    case UpdateStatus::ready_to_restart: return PlayBanner::installing;
+    // Update now was refused or did not go through (the download is still
+    // known); a check that failed (offline) has none and stays on Tools.
+    case UpdateStatus::error:
+        if (!info.download_url.empty()) return PlayBanner::failed;
+        break;
+    default: break;
+    }
+    return info.updated_to.empty() ? PlayBanner::none : PlayBanner::updated;
+}
+
+std::string UpdatedNote(const UpdateInfo& info, Phase phase) {
+    if (info.updated_to.empty()) return {};
+    std::string note = "Updated to version " + info.updated_to + ".";
+    if (phase == Phase::needs_setup || phase == Phase::setting_up) note += " Set up co-op once more for this version.";
+    return note;
+}
+
 std::string ReleasePageUrl(const std::string& version) {
     const std::string releases = "https://github.com/TrollTaylor/diamond-dogs-together/releases";
     const std::string plain = version.substr(0, version.find('+'));

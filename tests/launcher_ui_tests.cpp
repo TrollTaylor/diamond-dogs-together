@@ -266,6 +266,52 @@ void TestCommandLine() {
     info.status = UpdateStatus::applying;
     Check(!ui::CloseForUpdate(info), "not while the update is being installed");
 
+    // While an update is busy the setup waits, and a closing window keeps the
+    // folder until the update has stopped; an update check never holds it.
+    for (UpdateStatus s : {UpdateStatus::downloading, UpdateStatus::applying, UpdateStatus::ready_to_restart}) {
+        info.status = s;
+        Check(ui::UpdateInProgress(info), "an update downloading, installing or handing over is in progress");
+    }
+    for (UpdateStatus s : {UpdateStatus::idle, UpdateStatus::checking, UpdateStatus::up_to_date, UpdateStatus::available, UpdateStatus::error}) {
+        info.status = s;
+        Check(!ui::UpdateInProgress(info), "checking, found or failed is not an update in progress");
+    }
+
+    // The update card on Play.
+    UpdateInfo u;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::none, "nothing to say");
+    u.status = UpdateStatus::available;
+    u.download_url = "http://127.0.0.1:1/DiamondDogsTogether-0.14.4.zip";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::available, "an update to install");
+    u.status = UpdateStatus::error;
+    u.error = "MGSV is running from this folder. Quit MGSV first, then update.";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::failed, "Update now was refused or failed: Play says why");
+    u.download_url.clear();
+    u.error = "Could not check for updates. Check your internet connection, then try again.";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::none, "a failed check (offline) stays on Tools, not on Play");
+    u.status = UpdateStatus::downloading;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::downloading, "the download");
+    u.status = UpdateStatus::applying;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::installing, "the install");
+    u.status = UpdateStatus::ready_to_restart;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::installing, "the restart");
+    u.status = UpdateStatus::up_to_date;
+    u.updated_to = "0.14.4";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::updated, "right after a self-update");
+    u.status = UpdateStatus::available;
+    u.download_url = "http://127.0.0.1:1/DiamondDogsTogether-0.14.5.zip";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::available, "an even newer update comes first");
+
+    // "Updated to version X." where the new window opens: the setup after an update, then Play / Tools.
+    UpdateInfo plain;
+    Check(ui::UpdatedNote(plain, Phase::ready).empty(), "no note without an update");
+    u.status = UpdateStatus::up_to_date;
+    Check(ui::UpdatedNote(u, Phase::ready) == "Updated to version 0.14.4.", "after the update, ready");
+    const std::string before_setup = ui::UpdatedNote(u, Phase::needs_setup);
+    Check(before_setup.rfind("Updated to version 0.14.4.", 0) == 0 && before_setup.find("once more") != std::string::npos,
+          "after the update the setup is needed again, and the note says so");
+    Check(ui::UpdatedNote(u, Phase::setting_up) == before_setup, "also while it runs");
+
     // About > Source code: the release page of this version (both zips are there).
     Check(ui::ReleasePageUrl("0.14.4+48ce7da") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4",
           "the source of a build is its release");
@@ -275,6 +321,14 @@ void TestCommandLine() {
 }
 
 void TestMock() {
+    {
+        // The screenshot scenes after an update show the new version, like the real model.
+        MockModel m(MockOptions{});
+        UpdateInfo i;
+        i.updated_to = "0.14.4";
+        m.set_mock_update_info(i);
+        Check(m.version() == "0.14.4", "the mock runs the version it was updated to");
+    }
     MockScenario scenario{};
     Check(ParseMockScenario("partner-drops", scenario) && scenario == MockScenario::partner_drops, "scenario name");
     Check(!ParseMockScenario("nope", scenario), "unknown scenario");
