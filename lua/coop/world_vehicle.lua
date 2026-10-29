@@ -2,7 +2,7 @@
 -- REQ_VEHICLE_GONE op 47, docs/world-sync-protocol.md section 16). Vehicles are not
 -- world-synced: in the 2026-10-22 two-PC session the guest Fultoned jeep 25603, the
 -- host drove his copy of it, the guest's seat-by-id read failed (local_read) and hid
--- him. With lab.ini world_vehicle_gone=1 (CFG r[15]; default off) on both copies:
+-- him. With lab.ini world_vehicle_gone=1 (CFG r[15] bit 1; off in the lab, on in play unless named, M4) on both copies:
 --   host:     a vehicle its copy loses (Fulton/FultonInfo, Dead, VehicleBroken, then
 --             IsAlive read back false within 30 s) is announced as VEHICLE_GONE.
 --   guest:    one it loses by its own hand (FultonInfo or Dead by the local player,

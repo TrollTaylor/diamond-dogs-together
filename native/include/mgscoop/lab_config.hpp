@@ -699,14 +699,19 @@ struct LabConfig {
     WorldProbe world_probe = WorldProbe::none;
     // world_vehicle_gone=0|1 (0.13.6 online-vehicle-gone, docs/world-sync-protocol.md
     // section 16): the host-authoritative VEHICLE_GONE world op for Fultoned and
-    // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
-    // default off until hidden-run frames prove the receiver's Despawn.
+    // destroyed vehicles, CFG r[15] bit 1 for Lua. Lab and play (not a play refusal).
+    // M4: off in the lab unless named (scenarios name it), on in play unless named
+    // (lab FRAMEs 92720b75 / 0edadbe2; play rehearsal e44516d7, -WanSim bad: each
+    // player's own Fulton removed the jeep on both copies); a named value records _given.
     bool world_vehicle_gone = false;
+    bool world_vehicle_gone_given = false;
     // world_vehicle_state=0|1 (M4, docs/vehicles-companions-design.md 6.4): the
     // host-authoritative VEHICLE_STATE world op for parked / pushed / left vehicles
     // and their body life, CFG r[15] bit 2 for Lua. Lab and play (not a play
-    // refusal); default off until hidden-run frames on both copies prove it.
+    // refusal); off in the lab unless named, on in play unless named (lab FRAMEs
+    // d407f115 / 0edadbe2; play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
     bool world_vehicle_state = false;
+    bool world_vehicle_state_given = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is

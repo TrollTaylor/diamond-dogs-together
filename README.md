@@ -55,7 +55,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 
 - **Your partner's body:** you see their body, gear and weapons as they walk, run, crouch, crawl, aim, reload and throw.
 - **Movement:** ladders, ledges, the cardboard box and item pickups.
-- **Vehicles:** your partner drives; you can ride in the back seat of a jeep.
+- **Vehicles:** your partner drives; you can ride in the back seat of a jeep. A world vehicle that nobody drives stays where it was left on both screens; its Fulton, its destruction and the damage it takes on the host's PC are shared.
 - **Helping each other:** revive a downed partner, wake a sleeping one, and carry them.
 - **Shared world:** enemy kills, sleeps and Fultons, alerts, time and weather.
 - **Shared progress:** the host's travel, checkpoints, and game over with continue for both players.
@@ -65,7 +65,8 @@ Keep the launcher open while you play; its **In game** page shows the connection
 
 - Story missions, the hospital prologue, side ops and cutscenes are not co-op yet.
 - **Enemies:** each PC still moves its own enemies. Only what happens to them (killed, asleep, Fultoned, alerted) is shared.
-- **Vehicles, animals and prisoners** are not shared, apart from your partner's own ride.
+- **Vehicles:** trucks that enemies drive move separately on each PC. Wheel damage and fire are not shared, and damage the guest does to a vehicle shows only on the guest's screen until the vehicle is destroyed.
+- **Animals and prisoners** are not shared.
 - **Sortie vehicles:** a vehicle you bring from sortie prep (the helicopter's vehicle choice) doesn't appear on your partner's screen; they see you without it. Use world vehicles you find on the map to ride together.
 - **Mounts:** you can't shoot from a back seat, and a partner riding D-Horse or D-Walker is hidden.
 - **Look:** your custom character may look like Snake on your partner's screen.

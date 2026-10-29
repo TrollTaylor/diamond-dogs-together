@@ -1,7 +1,7 @@
 -- M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4; op 51 = 0x33, host to guest, reliable,
 -- world queue, level 3; docs/world-sync-protocol.md section 17). Vehicles nobody drives were per copy:
 -- a jeep pushed, left or shot on the host's copy stayed untouched on the guest's (STATUS 7561ab63).
--- With lab.ini world_vehicle_state=1 (CFG r[15] bit 2; default off) on both copies:
+-- With lab.ini world_vehicle_state=1 (CFG r[15] bit 2; off in the lab, on in play unless named) on both copies:
 --   host:  scans its TppVehicle2 pool, SLICE ids every TICK_MS (a 24-vehicle pool in 1.5 s), plus at
 --          once any id a Damage message names: IsAlive, GetPosition (pos, rotY), GetVehicleType and the
 --          native read MGS_COOP_VEHICLE_LIFE_V1 (body life, zero-parts mask, the engine's ene_veh_state

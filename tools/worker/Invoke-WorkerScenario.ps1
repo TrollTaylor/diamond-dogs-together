@@ -141,10 +141,11 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    0.13.6 online-net-epoch: link_session_skew=0..999, the copy's link-session
                                    counter starts there (lab and the play rehearsal only; play refuses it), so
                                    one hidden session reproduces the counters of a relaunched peer;
-                                   0.13.6 online-vehicle-gone: world_vehicle_gone=0|1, the host-authoritative VEHICLE_GONE world op (lab and play,
-                                   default 0; docs/world-sync-protocol.md section 16);
+                                   0.13.6 online-vehicle-gone: world_vehicle_gone=0|1, the host-authoritative VEHICLE_GONE world op (lab and play;
+                                   docs/world-sync-protocol.md section 16);
                                    M4: world_vehicle_state=0|1, the host-authoritative VEHICLE_STATE world op (parked /
-                                   pushed / left vehicles and body life; lab and play, default 0; section 17)
+                                   pushed / left vehicles and body life; lab and play, section 17); since M4 both are off in the lab
+                                   unless named and on in play unless named
 
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
 or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the

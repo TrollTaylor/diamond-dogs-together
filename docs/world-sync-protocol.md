@@ -1181,9 +1181,12 @@ failed (`partner_ride_seat=byid; ...; reason=local_read`), the host was
 hidden for ~25 s and drove into the sea. VEHICLE_GONE makes the loss of a
 vehicle host-authoritative. It is a new mechanism that removes vehicles from
 a copy, so it is gated: lab.ini `world_vehicle_gone=0|1` (lab and play, not
-a play refusal; default **0** until hidden-run frames prove the receiver's
-Despawn), carried to Lua as CFG **r[15]** (`world_link::HandleCfg`; r[14] is
-the WS4 census flag; a missing value is 0). Both copies need it; a host
+a play refusal). Default since M4: **0 in the lab** unless named (scenarios
+opt in) and **1 in play** unless named (`LabConfig::world_vehicle_gone_given`;
+lab FRAMEs `075c1ea4`, `92720b75`, `0edadbe2`; play rehearsal `e44516d7` with
+`-WanSim bad`: each player's own Fulton removed the jeep on both copies;
+docs/STATUS.md M4). Carried to Lua as CFG **r[15]** bit 1 (`world_link::HandleCfg`;
+r[14] is the WS4 census flag; a missing value is 0). Both copies need it; a host
 without it answers every request with REJECT 11, a guest without it logs
 `event=vehicle_gone;step=ignored;reason=off` once and keeps its vehicles.
 
@@ -1300,7 +1303,10 @@ the worker gate (`Get-WorkerTests`). Hidden-worker scenarios:
 guest's loss reaches the host, the divergence, the hold under a seated guest,
 the engine's own Fulton through the detection path) and
 `coop-vehicle-gone-mb.txt` (real seed, the Mother Base sortie jeep: the
-index path). Hidden runs: docs/STATUS.md 0.13.6 (`075c1ea4`) and M4.
+index path), `vehicle-gone-player.txt` (lab, Africa: each player's own Fulton
+by hand) and `vehicle-gone-play.txt` (the play rehearsal of the same, `-Mode
+play -WanSim bad`). Hidden runs: docs/STATUS.md 0.13.6 (`075c1ea4`) and M4
+(`92720b75`, `0edadbe2`, `46b8fc12`, `e44516d7`).
 
 ## 17. Vehicle state (M4, docs/vehicles-companions-design.md 6.4)
 
@@ -1308,7 +1314,9 @@ Vehicles nobody drives were per copy: a jeep pushed, left or shot on the host's
 copy stayed as it was on the guest's (a wreck on one copy only in `7561ab63`).
 VEHICLE_STATE makes the pose, body life and state word of a vehicle nobody
 drives host-authoritative. Lab.ini `world_vehicle_state=0|1` (lab and play, not
-a play refusal; default **0** until hidden-run frames on both copies prove it),
+a play refusal; since M4 **0 in the lab** unless named and **1 in play** unless
+named, after the lab FRAMEs `d407f115` / `0edadbe2` and the play rehearsals
+`e235bda6` / `d9b48fcb` with `-WanSim bad`),
 carried to Lua as CFG **r[15] bit 2** (r[15] is the vehicle modules bitmask
 since M4: bit 1 VEHICLE_GONE, bit 2 VEHICLE_STATE; `world_link::HandleCfg`; a
 missing or out-of-range value is 0). Both copies need it; a guest without it
@@ -1379,5 +1387,8 @@ Tests: `world_wire_tests` (VehicleState: table, bounds, world queue, stale
 purge, level 3), `world_receipt_tests` (r[15] bitmask), `lab_config_tests`,
 `partner_vehicle_tests` (TestLife: SvState, the life block, every refusal),
 `world_vehicle_state_lua_check` (in the worker gate), `debug_vehicle_lua_check`,
-`lab_scripts_tests`, `worker_session_tests`. Hidden-worker scenario
-`tools/worker/scenarios/vehicle-state.txt` (`-SaveSeed africa-jeep`).
+`lab_scripts_tests`, `worker_session_tests`. Hidden-worker scenarios
+`tools/worker/scenarios/vehicle-state.txt` (lab, `-SaveSeed africa-jeep`) and
+`vehicle-state-play.txt` (the play rehearsal, `-Mode play -WanSim bad`, lab
+seed). Hidden runs: docs/STATUS.md M4 (`d407f115`, `0edadbe2`, `e235bda6`,
+`d9b48fcb`).
