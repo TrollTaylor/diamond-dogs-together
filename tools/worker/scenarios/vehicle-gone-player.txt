@@ -1,0 +1,89 @@
+# M4 / E5 follow-up (docs/vehicles-companions-design.md 8.1): the guest's own player Fulton of a jeep and the guest's
+# own destruction of a jeep, both through REQ_VEHICLE_GONE, with VEHICLE_STATE on (lab keys world_vehicle_gone=1 and
+# world_vehicle_state=1 on both copies). Africa (30020, africa-jeep seed). Hidden run 92720b75 part E held E beside a
+# Wakh Sind jeep under a roof (no Fulton prompt there); hidden run 0edadbe2 showed the stock prompt "hold E: Fulton
+# 100%, x24" beside veh_lv_0002 (25610) at the guest's goto spot below, and its guest shots at 25610 missed (life
+# stayed 2300), so its guest request never started.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run (lab):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-gone-player.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Expected (world_lua lines, ';' expanded to '; '):
+#   Fulton  guest event=obs; m=FultonInfo; ent=0; id=25610; att=local, vehicle_gone step=watch; id=25610; m=FultonInfo;
+#           cause=1; att=local -> (settle) -> lost -> req; cause=1 -> host rx_req -> applied; id=25610; via=locator;
+#           src=req; ok=1 -> guest req_done; result=gone; frames pf-before, pf-lift-NN, pf-after (gone on both)
+#   Wreck   the guest shoots the Masa Village jeep 25608 (vstate life below 2300), then its lever vehicle_life 25608 0
+#           within 10 s: guest step=watch; m=VehicleBroken; cause=2 -> req; cause=2 -> host applied; id=25608;
+#           via=wreck; src=req; ok=1 (the host's copy a wreck too) -> guest req_done; frames gw-NN (wreck on both)
+# NEVER: step=error, viewer_changed, faults; a host removal before the guest's request.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_gone; step=on; mission=30020; role=host' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30020; role=guest' 30
+host debug clear_enemies 100
+wait 1500
+# Fulton: the guest at veh_lv_0002's goto spot of run 0edadbe2, the host 9 m behind it.
+guest debug teleport -88.939 -3.75 70.958 82
+wait 3000
+placebehind host guest 9 -4
+wait 2500
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25610
+guest expect vstate;id=25610;alive=1;.*name=veh_lv_0002
+host run vehicle_state_status 25610
+both capture pf-before
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst pf-lift 6 500
+waitlog guest 'event=vehicle_gone; step=watch; id=25610; m=(FultonInfo|Fulton); cause=1; att=local' 15
+waitlog guest 'event=vehicle_gone; step=lost; id=25610; cause=1; role=guest' 40
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25610; cause=1; sent=1' 5
+waitlog host 'event=vehicle_gone; step=applied; id=25610; via=(locator|index); src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25610; result=gone' 10
+wait 1500
+both capture pf-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# Wreck by the guest's hand: back to the Masa Village jeep, two bursts of fire, then the lever within 10 s.
+guest debug teleport -656.01 1.20 877.73 62
+wait 3000
+guest debug goto_vehicle jeep
+wait 3000
+placebehind host guest 9 -4
+wait 2500
+host debug clear_enemies 100
+wait 1000
+guest run vehicle_state_status 25608
+both capture gw-before
+guest hold rmb 1500 nowait
+wait 800
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+guest release
+wait 500
+guest run vehicle_state_status 25608
+guest run vehicle_life 25608 0
+guest expect vehicle_life;id=25608;life=0;
+waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=VehicleBroken; cause=2; att=' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=2; sent=1' 10
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=wreck; src=req; ok=1' 15
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 15
+both burst gw 4 1000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host run vehicle_gone_status
+guest run vehicle_gone_status
+state

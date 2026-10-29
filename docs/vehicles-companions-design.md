@@ -717,6 +717,40 @@ Static steps use capstone on the exe file (header).
 | E21 | Body 1 can natively mount the shared horse (`mounts.md` section 7 step 4) | Research only: the ACTION start for instance 1 (the F3 icon path) and the ride component for idx 1 | Records feasibility for F10's fallback |
 | E22 | Both players can ride the support heli visibly | Research: the heli's seats and player states (`stateHeliIdle`, `stateHeliRideOn`), today's acts 97..108 hide, whether body 1 can be DM-seated in the heli | Records a design for M12 |
 
+### 8.1 Results
+
+**E5 (2026-10-28, branch `wp/vehicle-state`): passed for the hold and the engine's Fulton; the player's own Fulton
+was not reproduced; a wreck replaces Despawn for destroyed vehicles.** Hidden runs (lab, research build, gun stage;
+each Closed, BaselineRestored, RealSavesUnchanged, no `step=error`, fault or `viewer_changed`; frames in the session
+scratch folder `complete/frames/vehicle-state/`):
+- `92720b75` (`coop-vehicle-gone.txt` reordered: C first on J1, then A, B, D, and a new E; Wakh Sind, lab seed).
+  **C passed** [O]: the guest sat in J1 = 25608 (`vehicle;id=25608;seats=4;riders=0,9728,...;localSeat=1`: the guest
+  drives, D-Dog 9728 rides along) while the host lost it (`vehicle_remove nearest sync` -> host `step=tx; id=25608;
+  cause=3; actor=2`); the guest logged `step=rx`, `step=hold; reason=local_rider`, after its get-off `step=hold;
+  reason=occupied` (D-Dog still in the seat for 2.5 s) and then `step=applied; id=25608; via=locator; src=rx; ok=1`.
+  Frames `hold-guest-seated` (guest: seated in the jeep the host's copy no longer has; host: the jeep gone, the guest
+  standing at seat height, the 0.14.3 fallback) and `hold-applied` (gone on both). A (25615) and D (the engine's
+  own Fulton of 25617: `watch; m=Seize` -> `obs; m=Fulton` -> `lost` 3.2 s later -> host `applied; src=req` ->
+  `req_done`) passed again. B did not reproduce: the host did not board J3 from its goto spot (`vehicle_not_riding`),
+  so its divergence lines never came (B was proven in `075c1ea4`). **E (the player's own Fulton) not reproduced** [O]:
+  the guest held E 4.5 s beside J5 at its goto spot; it neither boarded nor Fultoned (frames `pfulton-*`, no
+  `FultonInfo`); whether the lab seed has the cargo Fulton, and which input starts it, is [U]. The real-Fulton
+  evidence stays the 2026-10-22 two-PC friend log (`obs; m=FultonInfo; ent=0; id=25603; att=local`) [O] plus the
+  stock `Seize` readback proven twice (`075c1ea4`, `92720b75`) [O].
+- `d407f115` (`vehicle-state.txt`, Africa, `africa-jeep` seed): **`SetBodyLife{life=0}` is the engine's own
+  destruction** [O]. On the guest's copy alone: `vehicle_life 25608 0` -> `obs; m=VehicleBroken; id=25608` at once,
+  IsAlive false, the life word reads 65535 and the state word 0x3F7 (every StoreToSVars bit), frames
+  `m4-guest-life0-*`: the jeep explodes and burns on the guest's screen only. The guest did not request it (no local
+  Damage within 10 s, as designed). Then the host's `vehicle_life 25608 0` broke the host's copy (`VehicleBroken` ->
+  `vehicle_gone step=watch; cause=2` -> `lost` -> `tx`), and the guest answered `step=absent; reason=wreck`: both
+  copies held a wreck. Both wrecks then left the pool on both copies (GetPosition no longer answers) about 20 s later.
+  Body life 200 (of 2300) shows no smoke or fire on either copy and leaves the state word at 1 [O], so the burning
+  state is not a pure function of the life word [I].
+
+Decision (E5 pass rule, D7 not needed): VEHICLE_GONE's play default may flip once the play rehearsal passes; a
+destroyed vehicle is wrecked on the receiver with `SetBodyLife{life=0}` instead of Despawn when VEHICLE_STATE is on
+(M4 below). A Fulton stays a Despawn (there is no balloon on the receiver).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
