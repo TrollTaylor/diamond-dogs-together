@@ -1466,6 +1466,82 @@ Closed, BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` 
   via=locator; src=rx; ok=1` 151 ms after the tx -> `play-destroyed` / `play-destroyed-after` (the burning, overturned
   wreck on the host's screen, nothing at that spot and no explosion on the guest's) [O].
 
+### 8.9 D7: the guest's copy of D-Dog cannot be hurt, follows the host's dog, and comes back (2026-10-29, branch `wp/dog-guard`)
+
+The user's decision D7 (2026-10-29): the guest's copy of the host's dog must not be killable by anything on the guest's
+PC; its health and state follow the host's dog; where a guard cannot cover a case, the copy is brought back from the
+host's live state when it dies (the restore fallback). Built on `wp/dog-guard` (from `dev/oct7-continue` `e2249e4`)
+behind M1's key `companion_host_owned`.
+
+**Static reads (capstone on `085c2f82...bb45`, read-only; no Ghidra/REA session was used)** [O]:
+- **No invincibility command.** The dog answers three Lua dispatchers: `0x140C7D220` (`LuaAiStayAndSnarl`, `GetPlant`,
+  `SetWarpPosition`, `GetPlacedItem`; 8.2), `0x140C56770` (`SetMode`, which writes `vars.buddyDogMode` +0x2E48,
+  `SetMotherBaseCenterAndRadius` and `SetEnabled`, which sets bits 59/60 of a per-instance status qword) and
+  `0x140CB9CC0` (`WarpCommand`, `SetActionCommand` and two unnamed action commands, `0xBBDE553F` an enabled bit and
+  `0xD673E829` a frame/time value). None takes a damage or life argument. `SetDisableDamage` (`0x15A7E67B`) appears only
+  in two soldier/hostage dispatchers (`0x140E85E10`, `0x141356170`).
+- **The dog's life record.** A life controller (factory `0x140CA4900`, 0x70 bytes, vtables `0x14231FD30` / `+0x20`
+  `0x14231FD60`, interface hash `0xC95E9AF7A1DD` queried by the dog's setup `0x140C55BF0`) keeps one 0x20-byte record per
+  dog instance, initialised to life 10000 = maximum (`0x140CA49E0`): +0 life, +2 maximum, +4 pending life damage, +6
+  stun, +8 stun maximum, +0xA pending stun, +0x14 a regeneration delay (15.0 after a hit), +0x1B state (0 normal, 1
+  stunned/asleep, 2 down), +0x1C a stun level, +0x1D flags. Its per-frame update (`0x140CA4B90`, secondary slot
+  `0x14231FD60`) runs `0x140CA4C40` per record: flag 8 refills life, flag 4 **forces life to 0** (a death flag, not
+  invulnerability), pending damage is subtracted, stun 0 makes state 1, life 0 state 2, and the change to 2 posts
+  GameObject message `Dead` (`0xCFC364D6`) for id `0x2600 | index` (the E19 Dead message).
+- **The dog's damage handler.** Factory `0x140C89110` (0xB0 bytes, vtables `0x14231AD00` / `+0x20` `0x14231AD30`);
+  `ProcessDamages` `0x140C89510` (secondary slot 1, `0x14231AD38`; this, instance, hits of 0x30 bytes, count) turns every
+  hit into pending life damage (+4) and stun (+0xA) on the instance's record. The generic
+  `DamageControllerImpl::Update` (`0x140DA55F0`, the body `combat_role_patch` pins) calls it only for an instance with
+  hits (`0x140DA5C77`, `0x140DA616C`: `test r13d,r13d` before the call), so skipping the call equals "no hit this frame".
+  Hit +0x22 is the attacker id, +0x28 the attack id. The handler returns at once when bit 24 of a per-instance status
+  dword is set; no writer of that bit was found in the dog's code [U].
+- **Damage parameters** are per attack, shared by every target (soldiers, players, the dog): changing them cannot single
+  out the mirror dog. Rejected.
+- **So the guard is a native filter on two exact vtable slots** (`native/dog_guard.cpp`; the bodies above, the
+  `DamageControllerImpl` call sites and both slot values pinned by SHA-256 in `dog_guard.hpp`; installed at startup with
+  the other partner hooks, inert until armed): `ProcessDamages` for instance 0 is skipped while the guest's lease is
+  armed (every hit: guards' bullets and melee, explosions, vehicles, the guest's own weapons); the life update drops any
+  pending damage on record 0, undoes a forced death the module did not issue, and applies the host's dog state.
+
+**Built** (`cb848ed`, `a2f84ee`; fixtures written first: `dog_guard_tests` failed to link, `world_companion_guard_lua_check`
+failed its first check on an empty chunk):
+- `native/dog_guard.cpp`, `native/dog_guard_policy.cpp`, `native/include/mgscoop/dog_guard.hpp`: the two slot hooks and
+  the pure policy (`Encode`, `Decode`, `Guard`, `Lab`, the lease). The guard is armed only by a **lease** that the guest's
+  companion module renews: `kLeaseFrames` = 180 of the dog's own life updates, so a pause never expires it and a stopped
+  Lua tick does; disarmed at mission start, end and termination. Receipt `MGS_COOP_DOG_GUARD_V1` (mission, epoch, role,
+  arm, the host's byte, lab op, percent; arming and lab ops need the paired exact scope, lab ops lab mode, and the role
+  must be this copy's native role, so the host can never arm). It answers the record 0 snapshot (life, maximum, stun,
+  state, flags, the encoded byte) and the counters (drops, hits, writes, kills, undone deaths, the last attacker and
+  attack id). Log lines `dog_guard=installed`, `dog_guard_code_gate=ok`, `dog_guard=drop;n=..;attacker=..;attack=..`
+  (the first 16, then every 50th), `dog_guard=follow;byte=..;life=a>b;...;kill=..` (a new byte, a kill, an undone
+  death), `dog_guard=lab;...`, `dog_guard=disarmed;why=..`.
+- **The host dog's state byte** on the wire: bit 7 valid, bits 5-6 state (0 normal, 1 stunned or asleep, 2 down), bits
+  0-4 life in 31ths. It rides COMPANION_POSE `state` (op 0x39) and COMPANION `state` (op 0x30), both sent 0 before:
+  **no wire change** (same ops, sizes and ranges; an older host sends 0 = "not valid", and the guard then drops hits but
+  follows nothing; an older guest ignores the field). `docs/world-sync-protocol.md` section 15 has the note. A byte
+  change is sent at once in COMPANION_POSE.
+- `lua/coop/world_companion_guard.lua`, a new world chunk spliced after `world_companion_dog.lua` (bootstrap, source
+  header, `host_trial_patch_check`, `lua_checks`): the host reads its own dog's byte with every COMPANION_POSE read
+  (`event=dog_guard;role=host;step=state;byte=..;state=..;life31=..`); the guest arms whenever its active buddy is the
+  dog and it is paired (re-armed every 500 ms, at once on a new byte; `step=armed`, `step=drops` every 5 s while hits
+  are dropped, `step=disarmed;why=..` once), and runs the **restore fallback** (shipped behaviour under the key):
+  - a Dead message for 9728 on the guest while the host's dog lives (its byte not down) -> `event=dog_restore;step=dead;
+    host=alive`; the dead-buddy vars come back at once to the values before the death (`step=vars`; the DOG bit stopped
+    every reload in `dc761c98`); after 1.5 s the copy is sent away (`step=delete`, the module's own `DeleteBuddy`); once
+    the block reads none, M1's reconcile is primed to load the host's dog now at the host's pose instead of after 8 s
+    (`step=reload;n=..`, then the reconcile's own `step=reconcile;via=load`); `step=back;ms=..` when the dog reads again;
+    at most three restores per mission (`step=limit`), 60 s per restore (`step=gave_up`);
+  - a copy gone without a Dead message for 2 s while the host's dog is out and present primes the reconcile once
+    (`step=vanished`);
+  - a death while the host's dog is down is the mirrored one (`step=dead;host=down`): no send-away, no reload; the
+    host's re-call brings it back through the reconcile (`step=recalled`).
+- Lab levers (lab mode only, refused in play): `companion_lab dog_life|dog_stun <0..100>` (host: its own dog's record;
+  life 0 is the native kill flag), `recall` (host: `UnsetDeadBuddyType(DOG)`, then `call_here dog`), `kill_mirror`
+  (guest: the kill flag on its copy), `guard off|on` (guest); `companion_lab dog_state` (both roles, also in play: the
+  receipt; the guest reads by re-arming, because a guest's arm 0 is a disarm).
+
+<!-- RESULTS-8.9 -->
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

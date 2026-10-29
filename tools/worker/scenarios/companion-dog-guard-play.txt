@@ -22,7 +22,7 @@ host debug time 43200
 host debug weather sunny
 host debug teleport 796.0 341.5 1633.5 95
 wait 3000
-placebehind guest host 7 1
+placebehind guest host 8 -4
 both mouse 1500 0
 wait 400
 both mouse 1500 0
