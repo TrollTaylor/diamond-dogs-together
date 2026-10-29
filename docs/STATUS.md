@@ -1,3 +1,49 @@
+## 2026-10-29: D11 / D12 review fixes and the D12 blast rule (branch `wp/vehicle-decisions`, unreleased, not two-PC tested)
+
+The independent review of the vehicle decisions (`7d8c95e`) returned `fix_first`; the user took the reviewer's picks
+for its two open questions. Fixed on `wp/vehicle-decisions` (normal commits on top of the decisions, not merged, not
+pushed): `8b00f80` (the review fixes), `157d73d` (docs), `0e79337` (the blast rule), `3aac7be` and `f466d30`
+(scenarios), `f60d6ce`, `290d987` and this section (docs). Details and every line quoted below: `docs/vehicles-companions-design.md` sections 8.10 (results),
+10 (D11, D12) and 11 (the review log); `docs/world-sync-protocol.md` section 19.
+
+- **D12 (a vehicle the guest destroys):** only the host's own player sitting in its copy refuses a guest's destruction
+  at once; D-Dog or a soldier in a seat, the partner's ride, an unknown guest position and the rate limit now wait
+  (re-checked every 250 ms, refused after 120 s) instead of refusing for good [O D-Dog hold, `7762536a`; fixture for the
+  rest]. "Close enough" is 300 m (was 60 m), judged on the closer of where the guest stood when the request arrived and
+  now [fixture; live: near at 1.6 to 21.5 m and at 120 m (`0f3f00f1`, the wreck), far refused at 1197 m (`7762536a`)]. An unattributed break goes out as REQ_VEHICLE_GONE
+  cause 4 (a new value of an existing field, protocol section 19): a host without `world_vehicle_break` refuses it
+  (REJECT 11), so a key mismatch never applies anything unjudged [fixture].
+- **The blast rule (new, `0e79337`):** the host's wreck of its copy (`SetBodyLife 0`) explodes about 8 s later with the
+  engine's own blast, 3500 of 7800 life on a player beside it (`7762536a`). The host now removes its copy with a Despawn
+  instead (no explosion on the host's PC, the guest keeps its wreck) while the host's player or the partner stands
+  within 15 m of it [O, `f729d7f4` in play: the host 8 m away with godmode off kept 7801 of 7801 life and saw the jeep
+  vanish]; with nobody that close the wreck is as before [O, `f729d7f4`: the host 27 m away saw the jeep burn, then the
+  burnt wreck, life unchanged].
+- **D11:** the guest's VEHICLES supply drop is refused in co-op too, whatever `world_relief` says, with the toast "Only
+  the host can bring or request a vehicle in co-op." [O, `f729d7f4`, frames on both screens; the host's VEHICLES list
+  opens].
+- **Play defaults:** `world_loadout_block`, `world_vehicle_break` and `world_vehicle_credit` stay on in play (off in the
+  lab unless named): the shipped behaviour of each has its FRAME on both copies and a passing `-Mode play -WanSim bad`
+  rehearsal with no key named (`f729d7f4` frames, `33a7fa6e` every expectation met, `Forced=False`; D14 unchanged since
+  `47b95ae7`).
+- **Review findings:** all eight accepted and fixed (two of them by the user's picks), the two refuted frame claims
+  corrected in design 8.9 and in the section below (the jeep is never in view on the host's screen in `70146170` /
+  `47b95ae7`; the occluder is the host's own body). Table: design section 11.
+- **Runs:** `7762536a` (lab, review scenario), `f729d7f4` (play `-WanSim bad`, shipped defaults; every expectation but one toast log line, rate limited by the HUD), `33a7fa6e` (the same, every expectation met), `0f3f00f1` (lab: a soldier-crewed jeep, a break 120 m away). Each
+  closed with the baseline restored and real saves unchanged; archived under
+  `%USERPROFILE%\mgs-coop-run-archive\decisions\<id>`.
+- **Seen in passing (D7 track):** in `f729d7f4` the guest's own C4 near the jeep put the guest's copy of D-Dog into
+  near death ("D-Dog Near Death (Heroism -60)" on the guest's screen, `obs; m=Dead; id=9728; att=local`).
+- **Not done / open:** a soldier-crewed vehicle the guest blows up stays on the host's PC: its crew dies unattributed
+  on the guest's copy, so the host holds the request while the crew sits and refuses it after 120 s (`0f3f00f1`, held
+  95 s until the run ended; a question for the user, design section 10 D12); a real launcher or rifle kill at range
+  (the 120 m case used the lab lever; the frames of it show only a slope); a multi-hit kill spread over more than about
+  10 s [I]; D-Dog or a buddy near the host's copy when it is wrecked (the blast rule checks the two players); a two-PC
+  session.
+- **Checks:** tests written first for each rule (the rules check failed at check 3 before the blast rule; the rules,
+  vehicle, relief-sync and wire checks before `8b00f80`); fast CTest 297/297 after each step, full CTest 312/312 on
+  `290d987`.
+
 ## 2026-10-29: the vehicle decisions D11, D12, D14 built and proven (branch `wp/vehicle-decisions`, unreleased, not two-PC tested)
 
 Parts of this section were changed by the review fixes in the section above (300 m instead of 60 m, waits instead of
