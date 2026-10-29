@@ -23,6 +23,7 @@ host run relief_census start
 guest run relief_census start
 host run relief_arm 9 1227.17 25.84 -127.05 -1.571
 host expect relief_arm;type=9
+logmark both
 host worldtrigger goto=30020 goto_lz=0
 waitmission host 30020 300
 waitmission guest 30020 180
@@ -46,15 +47,17 @@ wait 800
 both capture m3-relief-tank-2
 host run relief_arm 5 805 343 1636.5 0
 host expect relief_arm;type=5
+logmark both
 host worldtrigger goto=30010 goto_lz=1
 waitmission host 30010 300
 waitmission guest 30010 180
 waitgameplay host 150
 waitgameplay guest 150
 host debug time 43200
-# The 30020 mission end with the tank alive on both copies and VEHICLE_GONE off.
-waitlog host 'world_lua=event=relief; role=host; step=seize; fn=SeizeReliefVehicleOnClear; alive=1;' 5
-waitlog guest 'world_lua=event=relief; role=guest; step=seize_skipped; fn=SeizeReliefVehicleOnClear; alive=[01];' 5
+# The 30020 mission end with the tank alive on both copies and VEHICLE_GONE off (each travel starts with a logmark: run
+# 1a5c1fa0 matched the guest's boot-travel seize line instead, review of 2026-10-29).
+waitlog host 'world_lua=event=relief; role=host; step=seize; fn=SeizeReliefVehicleOnClear; alive=1; mission=30020;' 5
+waitlog guest 'world_lua=event=relief; role=guest; step=seize_skipped; fn=SeizeReliefVehicleOnClear; alive=1; mission=30020;' 5
 waitlog host 'world_lua=event=relief; role=host; step=arrived; type=5;' 40
 waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=5; .*source=seed;' 40
 wait 4000

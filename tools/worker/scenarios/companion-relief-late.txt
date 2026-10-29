@@ -23,6 +23,7 @@ waitgameplay guest 120
 waitgameplay host 60
 host run relief_arm 2 1227.17 25.84 -127.05 -1.571
 host expect relief_arm;type=2
+logmark both
 host worldtrigger goto=30020 goto_lz=0
 waitmission host 30020 300
 waitmission guest 30020 180

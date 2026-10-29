@@ -63,6 +63,7 @@ wait 2500
 guest capture m3-idroid-closed
 host run relief_arm 2 1227.17 25.84 -127.05 -1.571 fova1
 host expect relief_arm;type=2
+logmark both
 host worldtrigger goto=30020 goto_lz=0
 waitmission host 30020 300
 waitmission guest 30020 180
