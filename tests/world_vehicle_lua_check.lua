@@ -433,6 +433,20 @@ check(#c.despawns == 2 and ann[#ann][3] == 25603 and ann[#ann][6] == 12, 'a requ
 c.H[47]({13, 25640, 1, 1, 0, 0, 0})
 ann = c:sent(46)
 check(ann[#ann][3] == 25640 and ann[#ann][6] == 13 and c:has('step=absent;id=25640;src=req'), 'the host copy lacks it too: announced (consistent)')
+-- Cause 4 (D12, world_vehicle_rules.lua): a destruction the guest's copy could not attribute. Without the host's own
+-- break key (V.breakOn, world_vehicle_rules.lua) it is never applied: REJECT 11 (key parity is decided by the host).
+c:add(25611, 50, 50, 1)
+c.H[47]({14, 25611, 4, 1, 50000, 1000, 50000})
+rejects = c:sent(4)
+check(c.pool[25611].alive and rejects[#rejects][2] == 14 and rejects[#rejects][3] == 47 and rejects[#rejects][4] == 11 and
+    c:has('step=rx_req;rid=14;id=25611;cause=4') and c:has('step=refused;id=25611;src=req;reason=break_off'),
+    'cause 4 without the host\'s break key: REJECT 11, nothing removed')
+c.V.breakOn = function() return true end
+c.H[47]({15, 25611, 4, 1, 50000, 1000, 50000})
+ann = c:sent(46)
+check(not c.pool[25611].alive and ann[#ann][3] == 25611 and ann[#ann][4] == 2 and ann[#ann][6] == 15,
+    'cause 4 with the key: handled as a destruction, announced as cause 2 (VEHICLE_GONE keeps 1..3)')
+c.V.breakOn = nil
 
 -- Lab lever.
 c = Fixture('host', true, 2)
@@ -730,7 +744,25 @@ if arg[2] then
     local on7 = false
     for _, l in ipairs(logs7) do if l:find('event=vehicle_gone;step=on;mission=30050;role=host;wreck=1', 1, true) then on7 = true end end
     check(on7, 'step=on names the wreck key (wreck=1)')
+    -- The user's vehicle decisions of 2026-10-29 (world_vehicle_rules.lua): bit 8 D12 world_vehicle_break, bit 16 D14
+    -- world_vehicle_credit, bit 32 D11 world_loadout_block; the older bits keep their meaning.
     W = Composed(8, 1)
-    check(not W.vehicleWreckOn and not W.vehicleGoneOn and not W.vehicleStateOn, 'an out-of-range r[15] (8) is off')
+    check(W.vehicleBreakOn and not W.vehicleCreditOn and not W.vehicleLoadoutOn and not W.vehicleWreckOn and not W.vehicleGoneOn and
+        not W.vehicleStateOn, 'CFG r[15] = 8: the break key alone')
+    W = Composed(16, 1)
+    check(W.vehicleCreditOn and not W.vehicleBreakOn and not W.vehicleLoadoutOn and not W.vehicleGoneOn, 'CFG r[15] = 16: the credit key alone')
+    W = Composed(32, 1)
+    check(W.vehicleLoadoutOn and not W.vehicleBreakOn and not W.vehicleCreditOn and not W.vehicleGoneOn, 'CFG r[15] = 32: the loadout key alone')
+    W = Composed(27, 1)
+    check(W.vehicleGoneOn and W.vehicleStateOn and not W.vehicleWreckOn and W.vehicleBreakOn and W.vehicleCreditOn and not W.vehicleLoadoutOn,
+        'CFG r[15] = 27: VEHICLE_GONE, VEHICLE_STATE, break and credit')
+    W = Composed(63, 1)
+    check(W.vehicleGoneOn and W.vehicleStateOn and W.vehicleWreckOn and W.vehicleBreakOn and W.vehicleCreditOn and W.vehicleLoadoutOn,
+        'CFG r[15] = 63: every vehicle key')
+    W = Composed(64, 1)
+    check(not W.vehicleWreckOn and not W.vehicleGoneOn and not W.vehicleStateOn and not W.vehicleBreakOn and not W.vehicleCreditOn and
+        not W.vehicleLoadoutOn, 'an out-of-range r[15] (64) is off')
+    W = Composed(nil, 1)
+    check(W.vehicleBreakOn == false and W.vehicleCreditOn == false and W.vehicleLoadoutOn == false, 'a missing r[15]: the new keys off too')
 end
 print('world_vehicle_lua_check: ' .. checks .. ' checks PASS')

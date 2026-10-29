@@ -437,6 +437,12 @@ $script:LabPartnerKeys = @(
     @{ Key = 'world_vehicle_state'; Json = 'world_vehicle_state'; Kind = 'bool' },
     # M4 review: VEHICLE_GONE's wreck parity (lab and play, off in both unless named).
     @{ Key = 'world_vehicle_wreck'; Json = 'world_vehicle_wreck'; Kind = 'bool' },
+    # The user's vehicle decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua; lab and play: off in the lab unless named,
+    # on in play unless named): D12 the guest's unattributed break judged by the host, D14 the receiver's Fulton credit, D11
+    # the guest's LOADOUT and VEHICLES drop block.
+    @{ Key = 'world_vehicle_break'; Json = 'world_vehicle_break'; Kind = 'bool' },
+    @{ Key = 'world_vehicle_credit'; Json = 'world_vehicle_credit'; Kind = 'bool' },
+    @{ Key = 'world_loadout_block'; Json = 'world_loadout_block'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

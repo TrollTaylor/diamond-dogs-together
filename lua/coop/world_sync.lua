@@ -199,6 +199,7 @@ do
     W.active, W.observing, W.isStarted, W.failed, W.paired, W.w1 = false, false, false, false, false, false
     W.eff, W.epoch, W.rid, W.flags, W.obsCount, W.badAt = 0, 0, 0, 0, 0, nil
     W.census, W.censusKills, W.censusDamage, W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = false, 0, 0, false, false, false
+    W.vehicleBreakOn, W.vehicleCreditOn, W.vehicleLoadoutOn = false, false, false
     W.companionOn = false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
@@ -214,9 +215,12 @@ do
     W.census = r[14] == 1
     -- r[15] the vehicle modules bitmask: bit 1 (lab key world_vehicle_gone, 0.13.6) world_vehicle.lua,
     -- bit 2 (lab key world_vehicle_state, M4) world_vehicle_state.lua, bit 4 (lab key world_vehicle_wreck,
-    -- M4 review) VEHICLE_GONE's wreck parity for a destroyed vehicle.
-    local vm = type(r[15]) == "number" and r[15] >= 0 and r[15] <= 7 and floor(r[15]) == r[15] and r[15] or 0
-    W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = vm % 2 == 1, vm % 4 >= 2, vm >= 4
+    -- M4 review) VEHICLE_GONE's wreck parity for a destroyed vehicle; the user's decisions of 2026-10-29
+    -- (world_vehicle_rules.lua): bit 8 D12 world_vehicle_break, bit 16 D14 world_vehicle_credit, bit 32 D11
+    -- world_loadout_block.
+    local vm = type(r[15]) == "number" and r[15] >= 0 and r[15] <= 63 and floor(r[15]) == r[15] and r[15] or 0
+    W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = vm % 2 == 1, vm % 4 >= 2, vm % 8 >= 4
+    W.vehicleBreakOn, W.vehicleCreditOn, W.vehicleLoadoutOn = vm % 16 >= 8, vm % 32 >= 16, vm >= 32
     -- M1 host-owned companion (lab key companion_host_owned): r[16] turns on world_companion.lua.
     W.companionOn = r[16] == 1
     W.host = W.role == 1

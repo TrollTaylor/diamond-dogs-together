@@ -11,7 +11,8 @@
 --             REQ_VEHICLE_GONE; the host removes its copy and announces it (actor 1,
 --             the rid and the guest's id), or answers REJECT (1 not a vehicle, 8 far,
 --             type, not nearest, ambiguous, index 0, no locator; 9 still held after
---             120 s, 11 off).
+--             120 s, 11 off). D12 (world_vehicle_rules.lua): an unattributed break is
+--             requested as cause 4, which a host without its own break key refuses (11).
 --   receiver: removes its copy (TppVehicle2 Despawn by the authored locator, else by
 --             the pool index at Mother Base only) only for a live vehicle within 40 m
 --             of the reported position that is the nearest of its type there (or the
@@ -36,7 +37,7 @@ local NULL, FAR_MM, MATCH_MM, TRUST_MM, NEAR_M, SCAN = 65535, 40000, 5000, 1000,
 local WATCH_MS, POLL_MS, HOLD_MS, HIT_MS, ACK_MS, REQ_MS, READ_MS = 30000, 250, 120000, 10000, 5000, 150000, 2000
 local RIDE_MS, SETTLE_MS = 10000, 10000
 V.FAR_MM, V.MATCH_MM, V.HOLD_MS, V.WATCH_MS, V.ACK_MS, V.RIDE_MS, V.SETTLE_MS = FAR_MM, MATCH_MM, HOLD_MS, WATCH_MS, ACK_MS, RIDE_MS, SETTLE_MS
-local FULTON, DESTROYED, LAB = 1, 2, 3
+local FULTON, DESTROYED, LAB, UNATTRIBUTED = 1, 2, 3, 4
 local MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
 local function integer(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
 local function L(...)
@@ -280,11 +281,11 @@ local function readback(id, t)
   local alive = V.alive(id)
   if alive and t - q.at < READ_MS then return end
   L("event=vehicle_gone;step=applied;id=%d;via=%s;src=%s;ok=%d;ms=%d", id, q.via, q.src, alive and 0 or 1, floor(t - q.at))
-  if alive and q.via == "wreck" then
-    -- A wreck that did not take: the Despawn, read back again (the entry stays); with no Despawn
-    -- form this copy has not lost it (a re-sent announcement retries it).
+  if alive and (q.via == "wreck" or q.via == "seize") then
+    -- A wreck (or D14's Seize Instant, world_vehicle_rules.lua) that did not take: the Despawn, read back again
+    -- (the entry stays); with no Despawn form this copy has not lost it (a re-sent announcement retries it).
     local ok, via = V.despawn(id)
-    L("event=vehicle_gone;step=fallback;id=%d;from=wreck;via=%s;ok=%d", id, via, ok and 1 or 0)
+    L("event=vehicle_gone;step=fallback;id=%d;from=%s;via=%s;ok=%d", id, q.via, via, ok and 1 or 0)
     if ok then q.via, q.at = via, t; return end
     V.gone[id] = nil
   end
@@ -350,7 +351,8 @@ function V.observe(kind, id, att)
   if not W.host then
     local hit = V.hit[id]
     local mine = (kind == "FultonInfo" or kind == "Dead") and att == "local" or kind == "VehicleBroken" and hit ~= nil and t - hit <= HIT_MS
-    if not mine then return end
+    -- D12 (world_vehicle_rules.lua, key world_vehicle_break): a break with no attribution is requested too; the host judges it.
+    if not mine and not (kind == "VehicleBroken" and V.unattributed and V.unattributed(id, t)) then return end
   end
   if not isVehicle(id) then return end
   local x, y, z = V.pose(id)
@@ -413,16 +415,25 @@ H[GONE] = guarded(function(v)
   if V.gone[id] or V.held[id] then return end
   V.consider({id = id, cause = v[3], actor = v[4], rid = rid, vtype = v[6], x = v[7], y = v[8], z = v[9], src = "rx"}, t)
 end)
+-- Cause 4 (D12 review, world_vehicle_rules.lua): a destruction the guest's copy could not attribute. It is handled as a
+-- destruction (cause 2, so the announcement back stays in VEHICLE_GONE's 1..3) only while this copy's own break key
+-- runs (V.breakOn, world_vehicle_rules.lua); without it REJECT 11, so a host without the key never applies one unjudged.
 H[REQ] = guarded(function(v)
   if not W.host or type(v) ~= "table" or #v < 7 then return end
   local t, rid, id = now(), v[1], v[2]
-  local q = {id = id, cause = v[3], actor = 1, rid = rid, vtype = v[4], x = v[5], y = v[6], z = v[7], src = "req"}
+  local unatt = v[3] == UNATTRIBUTED
+  local q = {id = id, cause = unatt and DESTROYED or v[3], unatt = unatt or nil, actor = 1, rid = rid, vtype = v[4], x = v[5], y = v[6],
+    z = v[7], src = "req"}
   L("event=vehicle_gone;step=rx_req;rid=%d;id=%d;cause=%d", rid, id, v[3])
   if not V.on() then
     L("event=vehicle_gone;step=refused;id=%d;src=req;reason=off;d_mm=-1", id)
     return reject(q, 11)
   end
   if V.gone[id] or V.reqGone[id] then return V.broadcast(id, q, 1, rid) end
+  if unatt and not (type(V.breakOn) == "function" and V.breakOn() == true) then
+    L("event=vehicle_gone;step=refused;id=%d;src=req;reason=break_off;d_mm=-1", id)
+    return reject(q, 11)
+  end
   if V.held[id] then V.held[id].rid = rid; return end
   V.consider(q, t)
 end)

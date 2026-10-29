@@ -1478,6 +1478,40 @@ int main() {
                   "world_vehicle_wreck=1 parses in play with no refusal bit (a future play rehearsal names it)");
             Check(!vwBad.world_vehicle_wreck && vwBad.invalid_values == 1 && vwBad.unknown_keys == 0, "an invalid world_vehicle_wreck keeps it off");
         }
+        // The user's vehicle decisions of 2026-10-29 (docs/vehicles-companions-design.md section 10): D11 the guest's iDroid
+        // LOADOUT drop refused in co-op (world_loadout_block), D12 a guest-side vehicle break without attribution requested
+        // and judged by the host (world_vehicle_break), D14 a Fultoned world vehicle credited on the receiver through its
+        // own engine path (world_vehicle_credit). Each is lab and play (no refusal bit), carried in the r[15] bitmask, off
+        // in the lab unless named; a named value records _given.
+        {
+            struct Key { const char* name; bool mgscoop::LabConfig::*on; bool mgscoop::LabConfig::*given; };
+            const Key keys[] = {{"world_loadout_block", &mgscoop::LabConfig::world_loadout_block, &mgscoop::LabConfig::world_loadout_block_given},
+                                {"world_vehicle_break", &mgscoop::LabConfig::world_vehicle_break, &mgscoop::LabConfig::world_vehicle_break_given},
+                                {"world_vehicle_credit", &mgscoop::LabConfig::world_vehicle_credit, &mgscoop::LabConfig::world_vehicle_credit_given}};
+            const std::string play = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
+            for (const auto& k : keys) {
+                const std::string n = k.name;
+                const auto vdOn = Lab("enabled=1\nrole=guest\nworld=3\n" + n + "=1\n");
+                const auto vdOff = Lab("enabled=1\nrole=guest\nworld=3\n" + n + "=0\n");
+                const auto vdBad = Lab("enabled=1\nrole=host\n" + n + "=2\n");
+                const auto playOn = Lab(play + n + "=1\n");
+                const auto playOff = Lab(play + n + "=0\n");
+                Check(!(def.*k.on) && !(def.*k.given) && !(vehicleGun.*k.on), (n + " defaults off in the lab (plain, gun profile)").c_str());
+                Check(vdOn.*k.on && vdOn.*k.given && vdOn.invalid_values == 0 && vdOn.unknown_keys == 0, (n + "=1 parses in the lab").c_str());
+                Check(!(vdOff.*k.on) && vdOff.*k.given && vdOff.invalid_values == 0, (n + "=0 is named and off").c_str());
+                Check(!(vdBad.*k.on) && vdBad.invalid_values == 1 && vdBad.unknown_keys == 0, ("an invalid " + n + " keeps it off").c_str());
+                Check(playOn.mode == mgscoop::LabMode::play && playOn.*k.on && playOn.play_refused == 0 && playOn.invalid_values == 0,
+                      (n + "=1 parses in play with no refusal bit").c_str());
+                Check(playOff.mode == mgscoop::LabMode::play && !(playOff.*k.on) && playOff.world_vehicle_gone && playOff.world_vehicle_state,
+                      ("a named " + n + "=0 keeps it off in play (VEHICLE_GONE and VEHICLE_STATE stay on)").c_str());
+            }
+            // Play defaults: each key is on in play unless named, after its FRAME proof on both copies (lab run c0203fdd)
+            // and a passing -Mode play -WanSim bad rehearsal (70146170) (project rule); a named 0 keeps it off (above).
+            Check(vehiclePlayDefault.world_loadout_block && vehiclePlayDefault.world_vehicle_break && vehiclePlayDefault.world_vehicle_credit &&
+                      !vehiclePlayDefault.world_loadout_block_given && vehiclePlayDefault.play_refused == 0,
+                  "D11 / D12 / D14 keys default on in play");
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {

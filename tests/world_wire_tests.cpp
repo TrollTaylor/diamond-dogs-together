@@ -1617,9 +1617,21 @@ void VehicleGone() {
     // The guest's request: RECEIVED comes back natively, the host's Lua gets the fields.
     Check(Tx(g_guest, op::req_vehicle_gone, {0, 25603, 1, 255, 0, 0, 0}, 105) == world::TxStatus::bad_args, "rid 0 refused");
     Check(Tx(g_guest, op::req_vehicle_gone, {7, 25603, 1, 3, 210903, 693, 290108}, 105) == world::TxStatus::ok, "the guest requests");
+    // Cause 4 (the D12 review, 2026-10-29): a destruction the guest's copy could not attribute, judged by the host only
+    // with its own world_vehicle_break key (else REJECT 11); VEHICLE_GONE keeps 1..3 (the host answers it as cause 2).
+    Check(Tx(g_guest, op::req_vehicle_gone, {9, 25604, 0, 255, 0, 0, 0}, 105) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::req_vehicle_gone, {9, 25604, 5, 255, 0, 0, 0}, 105) == world::TxStatus::bad_args,
+          "REQ_VEHICLE_GONE cause 1..4");
+    Check(Tx(g_guest, op::req_vehicle_gone, {9, 25604, 4, 1, -653000, 1000, 877700}, 105) == world::TxStatus::ok,
+          "the guest requests an unattributed destruction (cause 4)");
     Exchange(106);
     const auto hostRx = Drain(g_host, 3, 107);
     const auto* got = Find(hostRx, op::req_vehicle_gone);
+    bool cause4 = false;
+    for (const auto& o : hostRx) {
+        if (o.op == op::req_vehicle_gone && o.v[0] == 9 && o.v[1] == 25604 && o.v[2] == 4 && o.v[4] == -653000) cause4 = true;
+    }
+    Check(cause4, "the host's world queue delivers the cause 4 request with its exact fields");
     Check(got && got->count == 7 && got->v[0] == 7 && got->v[1] == 25603 && got->v[2] == 1 && got->v[3] == 3 && got->v[4] == 210903 &&
               got->v[5] == 693 && got->v[6] == 290108,
           "the host's world queue delivers REQ_VEHICLE_GONE with its exact fields");
