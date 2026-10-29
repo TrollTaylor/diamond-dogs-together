@@ -62,8 +62,14 @@ host expect vstate;id=25608;alive=1;.*name=veh_lv_0000
 guest run vehicle_state_status 25608
 guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
 both capture m4-start
-# Push: the guest stands clear first (a move within 3.5 m of the local player is held).
-placebehind guest host 9 3
+# Push: both cameras toward the jeep (the host behind the guest at its door, then the guest behind the host), the
+# guest clear of it (a move within 3.5 m of the local player is held). Run 72366eb5 framed the push from the boot
+# spots, where the host's camera faces away from the jeep.
+guest debug goto_vehicle jeep
+wait 2500
+placebehind host guest 8 0
+wait 2000
+placebehind guest host 6 2
 wait 2500
 both capture m4-before-push
 logmark both
@@ -87,18 +93,20 @@ both capture m4-corrected
 host run vehicle_state_status 25608
 guest run vehicle_state_status 25608
 # Near (M4 review finding 8): the guest at the jeep's door spot; a host push is held until the guest stands clear.
+# The push goes back towards the boot spot: run 72366eb5 pushed it 2 m on against the watchtower, and the guest's
+# copy broke on the drive that followed (VehicleBroken on the guest's copy only).
 guest debug goto_vehicle jeep
 wait 2500
 guest run vehicle_state_status 25608
 logmark both
-host run vehicle_push 25608 2 0
+host run vehicle_push 25608 -2 0
 host expect vehicle_push;id=25608;.*ok=1
 waitlog host 'event=vehicle_state; step=tx; id=25608; why=moved;' 5
 waitlog guest 'event=vehicle_state; step=hold; id=25608; here=25608; reason=player_near' 5
 wait 1000
 both capture m4-near-held
 guest run vehicle_state_status 25608
-placebehind guest host 9 3
+placebehind guest host 6 2
 waitlog guest 'event=vehicle_state; step=applied; id=25608; from=25608; moved=1;' 10
 wait 1500
 both capture m4-near-applied
