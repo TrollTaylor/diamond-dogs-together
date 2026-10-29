@@ -1501,7 +1501,7 @@ void TestModel() {
         CHECK(m->phase() == Phase::needs_setup && m->game_dir() == Utf8(f.game) && m->hud() == "compact");
         CHECK(m->setup_steps().size() == 4 && m->setup_steps()[0].label == "Check the game");
         std::string code, error;
-        CHECK(!m->host(code, error) && Has(error, "setup"));
+        CHECK(!m->host(code, error) && Has(error, "getting ready"));
         m->set_character(Character::avatar);
         m->start_setup();
         CHECK(m->phase() == Phase::setting_up);
@@ -1599,6 +1599,81 @@ void TestModel() {
         // A game folder without the release files is an error with a sentence.
         auto m3 = MakeRealModelWithEnv(g.game, g.env);
         CHECK(m3->phase() == Phase::error && !m3->last_error().empty());
+    }
+}
+
+// The setup runs by itself (2026-10-29: there is no Setup page and no button):
+// the model starts it on its own tick, again whenever it is needed (an update,
+// a missing runtime file), and stops after a failed attempt until Try again.
+void TestAutoSetup() {
+    {
+        Fixture f(L"auto-setup");
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::needs_setup);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready);
+        if (m->phase() != Phase::ready) std::fprintf(stderr, "auto setup error: %s\n", m->last_error().c_str());
+        json::Value state;
+        CHECK(ReadInstallState(f.paths, state) && InstallIsCurrent(state) && ReadText(f.paths.archive) == "FAKE-RUNTIME");
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=auto"));
+        // Needed again after an update (the record names an older version): it runs by itself again.
+        state["version"] = "0.0.1";
+        std::string werr;
+        CHECK(WriteAtomic(f.paths.friend_install, json::Dump(state) + "\n", true, werr));
+        m->recheck();
+        CHECK(m->phase() == Phase::needs_setup);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready && ReadInstallState(f.paths, state) && state.Str("version") == CoreVersion());
+        // The runtime file vanished before Host: Host says co-op is getting ready, and it does so by itself.
+        DeleteFileChecked(f.paths.archive);
+        std::string code, error;
+        CHECK(!m->host(code, error) && Has(error, "getting ready") && code.empty() && !PathExists(f.paths.marker));
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready && ReadText(f.paths.archive) == "FAKE-RUNTIME");
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // A failing setup is tried once, then waits for Try again (start_setup): no retry loop.
+        Fixture f(L"auto-setup-fail");
+        const InstallHooks saved = Hooks();
+        int builds = 0;
+        Hooks().build_runtime = [&builds](const std::wstring&, const std::wstring&, const std::function<void(float, const std::string&)>&,
+                                          std::string& error) {
+            ++builds;
+            error = "The game's archives could not be read.";
+            return false;
+        };
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::needs_setup && builds == 1 && Has(m->last_error(), "archives"));
+        const std::vector<SetupStep> steps = m->setup_steps();
+        CHECK(steps.size() == 4 && steps[3].state == SetupStep::State::failed && Has(steps[3].detail, "archives"));
+        for (int i = 0; i < 20; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::needs_setup && builds == 1);
+        Hooks() = saved;
+        m->start_setup();   // Try again
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready && builds == 1);
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // The release gate's --write-session keeps its own explicit setup line (no automatic start).
+        Fixture f(L"auto-setup-write");
+        std::string out;
+        WriteSessionRequest host;
+        CHECK(RunWriteSessionWithEnv(f.game, f.env, host, out) == 0 && Has(out, "setup=start\n") && Has(out, "setup=done\n"));
     }
 }
 
@@ -1914,6 +1989,7 @@ int main() {
     TestUninstallAndLogs();
     TestWatchdog();
     TestModel();
+    TestAutoSetup();
     TestHandoffThroughModel();
     TestWriteSession();
     TestSelfTest();

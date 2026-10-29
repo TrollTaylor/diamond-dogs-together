@@ -6,7 +6,8 @@
 // closing, the Tools results and errors. It never touches the disk, Steam,
 // the registry or the game.
 //
-// Timeline at speed 1 (seconds): setup 1.2 + 1.8 + 1.0 + 6.0; the game starts
+// Timeline at speed 1 (seconds): setup 1.2 + 1.8 + 1.0 + 6.0 (it starts by
+// itself on the first tick while needed, like the real model); the game starts
 // 4 s after Host/Join; the partner connects 5 s into the game; a save handoff
 // runs from 14 s to 26 s; the game closes by itself after 90 s; tidying up
 // takes 5 s, then the launcher is ready again.
@@ -19,10 +20,10 @@
 namespace ddt {
 
 enum class MockScenario {
-    first_run,       // needs_setup (the default)
+    first_run,       // needs_setup (the default); the first tick starts the setup
     ready,           // already set up
     wrong_folder,    // not_in_game_folder; "Check again" moves on to needs_setup
-    setup_fails,     // the last setup step fails once; the second try works
+    setup_fails,     // the last setup step fails once (it waits for Try again); the second try works
     error,           // error phase; "Check again" fixes it
     steam_offline,   // Host and Join fail with the Steam sentence
     partner_drops,   // the partner leaves 34 s into the game

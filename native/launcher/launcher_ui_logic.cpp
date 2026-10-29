@@ -7,7 +7,6 @@ namespace ddt::ui {
 
 const char* PageLabel(Page page) {
     switch (page) {
-    case Page::setup: return "Setup";
     case Page::play: return "Play";
     case Page::in_game: return "In game";
     case Page::tools: return "Tools";
@@ -24,31 +23,22 @@ bool ToolsAllowed(Phase phase) {
     return phase == Phase::ready || phase == Phase::needs_setup || phase == Phase::error;
 }
 
-namespace {
-bool SetupPhase(Phase phase) {
-    return phase == Phase::not_in_game_folder || phase == Phase::needs_setup || phase == Phase::setting_up;
-}
-}  // namespace
+bool CanStartSession(Phase phase) { return phase == Phase::ready; }
 
-bool PageVisible(Phase phase, Page page, Page current) {
-    if (page == Page::setup) return SetupPhase(phase) || current == Page::setup;
-    return true;
-}
+bool PageVisible(Phase phase, Page) { return phase != Phase::not_in_game_folder; }
 
 bool PageEnabled(Phase phase, Page page) {
+    if (phase == Phase::not_in_game_folder) return false;
     switch (page) {
-    case Page::setup: return SetupPhase(phase) || phase == Phase::ready;
-    case Page::play:
-        return phase == Phase::ready || phase == Phase::error || SessionActive(phase);
+    case Page::play: return true;   // the automatic setup and errors show there too
     case Page::in_game: return SessionActive(phase);
-    case Page::tools: return phase != Phase::not_in_game_folder && phase != Phase::setting_up;
-    case Page::settings: return phase != Phase::not_in_game_folder;
+    case Page::tools:
+    case Page::settings: return true;
     }
     return false;
 }
 
 Page DefaultPage(Phase phase) {
-    if (SetupPhase(phase)) return Page::setup;
     if (SessionActive(phase)) return Page::in_game;
     return Page::play;
 }
@@ -58,23 +48,23 @@ Page PageAfterPhaseChange(Phase from, Phase to, Page current, Role role) {
     const bool side_page = current == Page::tools || current == Page::settings;
     if (from != to) {
         switch (to) {
-        case Phase::not_in_game_folder:
-        case Phase::setting_up: next = Page::setup; break;
+        case Phase::not_in_game_folder: next = Page::play; break;
         case Phase::needs_setup:
-            // After an uninstall the player stays on Tools to read the report.
-            if (!side_page) next = Page::setup;
+        case Phase::setting_up:
+            // The setup runs by itself; Play shows it. Tools / Settings stay (an uninstall report, say).
+            if (!side_page) next = Page::play;
             break;
         case Phase::launching:
             if (!side_page) next = role == Role::host ? Page::play : Page::in_game;
             break;
         case Phase::in_game:
-            if (current == Page::play || current == Page::setup) next = Page::in_game;
+            if (current == Page::play) next = Page::in_game;
             break;
         case Phase::after_game:
             if (current == Page::play) next = Page::in_game;
             break;
         case Phase::ready:
-            // setting_up -> ready keeps the "All set" screen; a finished session returns to Play.
+            // A finished session returns to Play.
             if (current == Page::in_game) next = Page::play;
             break;
         case Phase::error:
@@ -209,6 +199,30 @@ SetupSummary SummarizeSetup(const std::vector<SetupStep>& steps) {
     }
     s.overall = sum / static_cast<float>(s.total);
     return s;
+}
+
+SetupView GetSetupView(Phase phase, const SetupSummary& summary) {
+    if (phase == Phase::setting_up) return SetupView::preparing;
+    if (phase == Phase::needs_setup) return summary.failed ? SetupView::failed : SetupView::preparing;
+    return SetupView::none;
+}
+
+namespace {
+const char* const kSceneNames[static_cast<int>(Scene::count)] = {
+    "01-play-preparing",       "02-play-setup-failed",   "03-wrong-folder",      "04-play-host",
+    "05-play-host-code",       "06-play-join",           "07-play-join-invalid", "08-play-join-valid",
+    "09-play-join-invite",     "10-play-error",          "11-ingame-launching",  "12-ingame-host-waiting",
+    "13-ingame-connected",     "14-ingame-handoff",      "15-ingame-after-game", "16-tools",
+    "17-tools-result",         "18-tools-uninstall-confirm", "19-tools-about",   "20-settings",
+    "21-tools-in-game",        "22-uninstall-report",
+};
+}  // namespace
+
+int SceneCount() { return static_cast<int>(Scene::count); }
+
+const char* SceneName(Scene scene) {
+    const int i = static_cast<int>(scene);
+    return i >= 0 && i < SceneCount() ? kSceneNames[i] : "";
 }
 
 int IdleWaitMs(Phase phase, bool animating) {

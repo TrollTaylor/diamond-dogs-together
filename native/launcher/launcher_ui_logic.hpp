@@ -2,8 +2,8 @@
 // Diamond Dogs Together: the pure part of the GUI shell (no ImGui, no Win32),
 // so it can be unit-tested headless (tests/launcher_ui_tests.cpp):
 // page navigation, the character picker mapping, the HUD setting, the Join
-// field's message/tone, join-code display, setup summary, redraw pacing and
-// the command line.
+// field's message/tone, join-code display, setup summary and view, redraw
+// pacing, the screenshot scenes and the command line.
 #include <string>
 #include <vector>
 
@@ -12,8 +12,10 @@
 namespace ddt::ui {
 
 // ---- Pages and navigation --------------------------------------------------
-enum class Page { setup, play, in_game, tools, settings };
-inline constexpr int kPageCount = 5;
+// There is no Setup page (2026-10-29): the setup runs by itself and Play shows
+// its progress; "not in the game folder" is a full-window message instead of a page.
+enum class Page { play, in_game, tools, settings };
+inline constexpr int kPageCount = 4;
 const char* PageLabel(Page page);
 
 // A game session exists (the game is starting, running or just closed).
@@ -21,16 +23,17 @@ bool SessionActive(Phase phase);
 // Share save, Collect logs and Uninstall are allowed (no session, no setup running,
 // in the game folder).
 bool ToolsAllowed(Phase phase);
-// The nav shows the item. Setup only appears while setup is needed or running,
-// or while the player is still looking at its "All set" screen.
-bool PageVisible(Phase phase, Page page, Page current);
+// Host and Join can be pressed (co-op is ready and no game runs).
+bool CanStartSession(Phase phase);
+// The nav shows the item: every page, except on the wrong-folder screen (no navigation).
+bool PageVisible(Phase phase, Page page);
 // The nav item can be clicked.
 bool PageEnabled(Phase phase, Page page);
 // The page for a phase when nothing else applies.
 Page DefaultPage(Phase phase);
 // Automatic navigation when the model's phase changes. It follows the flow
-// (setup -> play -> in game -> play) but leaves the player on Tools or
-// Settings unless that page becomes unusable.
+// (play -> in game -> play) but leaves the player on Tools or Settings unless
+// that page becomes unusable.
 Page PageAfterPhaseChange(Phase from, Phase to, Page current, Role role);
 
 // ---- Character picker ------------------------------------------------------
@@ -84,11 +87,48 @@ struct SetupSummary {
 };
 SetupSummary SummarizeSetup(const std::vector<SetupStep>& steps);
 
+// What Play shows about the automatic setup: nothing, a small "Getting co-op
+// ready..." line (running, or needed and about to start by itself), or the
+// failure banner with "Try again" (the model waits after a failed attempt).
+enum class SetupView { none, preparing, failed };
+SetupView GetSetupView(Phase phase, const SetupSummary& summary);
+
 // ---- Redraw pacing ---------------------------------------------------------
 // How long the message loop may wait for input before the next frame. Input
 // always wakes it; this only paces the model's tick() and progress updates.
 // `animating`: something on screen moves (recent input, hover, a spinner).
 int IdleWaitMs(Phase phase, bool animating);
+
+// ---- Screenshot scenes (--screenshot-all) ------------------------------------
+// Every scene the hidden screenshot run renders, in order; the PNG is named
+// SceneName(scene) + ".png" ("01-play-preparing.png").
+enum class Scene {
+    play_preparing,
+    play_setup_failed,
+    wrong_folder,
+    play_host,
+    play_host_code,
+    play_join,
+    play_join_invalid,
+    play_join_valid,
+    play_join_invite,
+    play_error,
+    ingame_launching,
+    ingame_host_waiting,
+    ingame_connected,
+    ingame_handoff,
+    ingame_after_game,
+    tools,
+    tools_result,
+    tools_uninstall_confirm,
+    tools_about,
+    settings,
+    tools_in_game,
+    uninstall_report,
+    count
+};
+int SceneCount();
+const char* SceneName(Scene scene);   // "" when out of range
 
 // ---- Command line ----------------------------------------------------------
 struct Options {

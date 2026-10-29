@@ -32,7 +32,6 @@ ImU32 ToneColor(ui::Tone tone) {
 
 Icon PageIcon(Page page) {
     switch (page) {
-    case Page::setup: return Icon::setup;
     case Page::play: return Icon::play;
     case Page::in_game: return Icon::signal;
     case Page::tools: return Icon::tools;
@@ -76,11 +75,17 @@ void Message(Icon icon, ImU32 color, const std::string& text, float size = kSmal
     ImGui::PopStyleColor();
 }
 
-const char* PhaseStatus(Phase phase, const LinkView& link, ImU32& color) {
+const char* PhaseStatus(Phase phase, const LinkView& link, ui::SetupView setup, ImU32& color) {
     switch (phase) {
     case Phase::not_in_game_folder: color = col::kBad; return "Wrong folder";
-    case Phase::needs_setup: color = col::kWarn; return "Setup needed";
-    case Phase::setting_up: color = col::kAccent; return "Setting up";
+    case Phase::needs_setup:
+    case Phase::setting_up:
+        if (setup == ui::SetupView::failed) {
+            color = col::kBad;
+            return "Not ready";
+        }
+        color = col::kAccent;
+        return "Getting ready";
     case Phase::ready: color = col::kGood; return "Ready to play";
     case Phase::launching: color = col::kAccent; return "Starting the game";
     case Phase::in_game:
@@ -151,7 +156,8 @@ void LauncherUi::Frame(double time) {
     }
     if (!ui::PageEnabled(phase, page_)) page_ = ui::DefaultPage(phase);
     link_ = ui::SessionActive(phase) ? model_.link() : LinkView{};
-    if (phase == Phase::setting_up || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)
+    setup_view_ = ui::GetSetupView(phase, ui::SummarizeSetup(model_.setup_steps()));
+    if (setup_view_ == ui::SetupView::preparing || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)
         animating_ = true;
     const UpdateInfo frame_uinfo = model_.update_info();
     if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading || frame_uinfo.status == UpdateStatus::applying)
@@ -172,12 +178,15 @@ void LauncherUi::Frame(double time) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, Px(28.0f, 22.0f));
     ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar(2);
-    switch (page_) {
-    case Page::setup: SetupPage(phase); break;
-    case Page::play: PlayPage(phase); break;
-    case Page::in_game: InGamePage(phase); break;
-    case Page::tools: ToolsPage(phase); break;
-    case Page::settings: SettingsPage(phase); break;
+    if (phase == Phase::not_in_game_folder) {
+        WrongFolderPage();   // a full-window message, not a page
+    } else {
+        switch (page_) {
+        case Page::play: PlayPage(phase); break;
+        case Page::in_game: InGamePage(phase); break;
+        case Page::tools: ToolsPage(phase); break;
+        case Page::settings: SettingsPage(phase); break;
+        }
     }
     ImGui::EndChild();
     Popups();
@@ -210,9 +219,9 @@ void LauncherUi::Sidebar(Phase phase) {
     ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + Px(22.0f) + logo_h + Px(20.0f)));
 
     // Navigation.
-    static const Page kPages[ui::kPageCount] = {Page::setup, Page::play, Page::in_game, Page::tools, Page::settings};
+    static const Page kPages[ui::kPageCount] = {Page::play, Page::in_game, Page::tools, Page::settings};
     for (Page page : kPages) {
-        if (!ui::PageVisible(phase, page, page_)) continue;
+        if (!ui::PageVisible(phase, page)) continue;
         const bool enabled = ui::PageEnabled(phase, page);
         const bool active = page == page_;
         const ImVec2 p(origin.x + Px(12.0f), ImGui::GetCursorScreenPos().y);
@@ -249,7 +258,7 @@ void LauncherUi::Sidebar(Phase phase) {
 
     // Status and version at the bottom.
     ImU32 status_color = col::kTextDim;
-    const char* status = PhaseStatus(phase, link_, status_color);
+    const char* status = PhaseStatus(phase, link_, setup_view_, status_color);
     const UpdateInfo side_uinfo = model_.update_info();
     const bool side_update_avail = (side_uinfo.status == UpdateStatus::available);
     const float bottom = origin.y + h - Px(side_update_avail ? 86.0f : 58.0f);
@@ -302,7 +311,7 @@ void LauncherUi::ResultLine(Result& result) {
     Message(result.ok ? Icon::check : Icon::warning, result.ok ? col::kGood : col::kBad, result.text);
 }
 
-// ---- Setup -----------------------------------------------------------------
+// ---- Wrong folder and the automatic setup ----------------------------------
 void LauncherUi::WrongFolderPage() {
     PageHeader("Move me to your game folder",
                "Diamond Dogs Together has to be in the same folder as MGSV (the folder with mgsvtpp.exe).");
@@ -337,114 +346,47 @@ void LauncherUi::WrongFolderPage() {
         model_.recheck();
 }
 
-void LauncherUi::SetupPage(Phase phase) {
-    if (phase == Phase::not_in_game_folder) {
-        WrongFolderPage();
+// The automatic setup on Play (there is no Setup page): a small line while
+// co-op gets ready, or a short banner when the last attempt failed.
+void LauncherUi::SetupStatus() {
+    if (setup_view_ == ui::SetupView::preparing) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        Spinner(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 6.5f, col::kAccent, time_);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + Px(26.0f), p.y));
+        Text("Getting co-op ready...", col::kText, kBody, GetFonts().semibold, -1.0f);
+        ImGui::SameLine(0.0f, Px(10.0f));
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + Px(2.0f));
+        Text("This takes about a minute the first time.", col::kTextFaint, kSmall, nullptr, -1.0f);
+        Gap(4.0f);
         return;
     }
-    const std::vector<SetupStep> steps = model_.setup_steps();
-    const ui::SetupSummary sum = ui::SummarizeSetup(steps);
-    const bool done = phase == Phase::ready;
-    if (done)
-        PageHeader("All set", "Co-op is ready. You only had to do this once.");
-    else
-        PageHeader("Set up co-op", "A one-time setup. It takes about a minute and never changes your own saves.");
-
-    BeginCard("##steps");
-    for (std::size_t i = 0; i < steps.size(); ++i) {
-        const SetupStep& step = steps[i];
-        ImGui::PushID(static_cast<int>(i));
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        const float badge = Px(26.0f);
-        ImDrawList* d = ImGui::GetWindowDrawList();
-        const ImVec2 c(p.x + badge * 0.5f, p.y + badge * 0.5f);
-        switch (step.state) {
-        case SetupStep::State::pending: {
-            d->AddCircle(c, badge * 0.5f - Px(1.0f), col::kBorderStrong, 0, std::fmax(1.0f, Px(1.5f)));
-            const Font f(GetFonts().semibold, kSmall);
-            const std::string n = std::to_string(i + 1);
-            const ImVec2 ts = ImGui::CalcTextSize(n.c_str());
-            d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), col::kTextFaint, n.c_str());
-            break;
-        }
-        case SetupStep::State::running: Spinner(c, 9.0f, col::kAccent, time_); break;
-        case SetupStep::State::done:
-            d->AddCircleFilled(c, badge * 0.5f, col::kGoodSoft);
-            DrawIcon(d, Icon::check, c, badge * 0.62f, col::kGood);
-            break;
-        case SetupStep::State::failed:
-            d->AddCircleFilled(c, badge * 0.5f, col::kBadSoft);
-            DrawIcon(d, Icon::cross, c, badge * 0.62f, col::kBad);
-            break;
-        }
-        ImGui::SetCursorScreenPos(ImVec2(p.x + badge + Px(14.0f), p.y + Px(2.0f)));
-        ImGui::BeginGroup();
-        const bool pending = step.state == SetupStep::State::pending;
-        const float text_w = ImGui::GetContentRegionAvail().x;
-        {
-            const Font f(GetFonts().semibold, kBody);
-            ImGui::PushStyleColor(ImGuiCol_Text, pending ? col::kTextDim : col::kText);
-            ImGui::TextUnformatted(step.label.c_str());
-            ImGui::PopStyleColor();
-            if (step.state == SetupStep::State::running) {
-                const std::string pct = std::to_string(ui::PercentOf(step.progress)) + "%";
-                const float pw = ImGui::CalcTextSize(pct.c_str()).x;
-                ImGui::SameLine(text_w - pw);
-                ImGui::PushStyleColor(ImGuiCol_Text, col::kAccent);
-                ImGui::TextUnformatted(pct.c_str());
-                ImGui::PopStyleColor();
-            }
-        }
-        if (!step.detail.empty()) {
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(6.0f));
-            Text(step.detail.c_str(), step.state == SetupStep::State::failed ? col::kBad : col::kTextDim, kSmall,
-                 nullptr, text_w);
-        }
-        if (step.state == SetupStep::State::running) {
-            Gap(0.0f);
-            ProgressBar(step.progress, text_w / Scale(), 4.0f, col::kAccent);
-        }
-        ImGui::EndGroup();
-        ImGui::PopID();
-        if (i + 1 < steps.size()) {
-            Gap(2.0f);
-            const ImVec2 lp = ImGui::GetCursorScreenPos();
-            d->AddLine(ImVec2(lp.x + badge + Px(14.0f), lp.y), ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y),
-                       col::kBorder);
-            Gap(8.0f);
-        }
+    if (setup_view_ != ui::SetupView::failed) return;
+    std::string why;
+    for (const SetupStep& step : model_.setup_steps())
+        if (step.state == SetupStep::State::failed && !step.detail.empty()) why = step.detail;
+    if (why.empty()) why = model_.last_error();
+    if (why.empty()) why = "Something went wrong while getting co-op ready.";
+    BeginCard("##setup_failed", 0.0f, col::kCard, col::Rgb(0xEB, 0x5D, 0x55, 0x90));
+    IconBadge(Icon::warning, col::kBad, col::kBadSoft, 30.0f);
+    ImGui::SameLine(0.0f, Px(12.0f));
+    ImGui::BeginGroup();
+    Text("Co-op couldn't get ready", col::kText, kBody + 1.0f, GetFonts().semibold, -1.0f);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(4.0f));
+    Text(why.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
+    if (Button("Try again##setup", ButtonKind::primary, ImVec2(0, 32.0f))) {
+        logs_result_ = Result{};
+        model_.start_setup();
     }
+    ImGui::SameLine();
+    if (Button("Collect logs##setup", ButtonKind::secondary, ImVec2(0, 32.0f), true, Icon::logs, true)) {
+        std::string path, error;
+        const bool ok = model_.collect_logs(path, error);
+        logs_result_ = Result{ok, ok ? "Saved to your Desktop: " + FileName(path) + ". Send it with your bug report." : error, path};
+    }
+    ImGui::EndGroup();
+    ResultLine(logs_result_);
     EndCard();
-    Gap(6.0f);
-
-    if (phase == Phase::setting_up) {
-        // Steps differ a lot in length, so the page names the step instead of an overall percentage.
-        const std::string text = "Setting up: step " + std::to_string(sum.current >= 0 ? sum.current + 1 : sum.done) +
-                                 " of " + std::to_string(sum.total);
-        Message(Icon::info, col::kTextDim, text, kBody);
-        Gap(0.0f);
-        Text("Keep this window open until it's done. Your own saves are only read, never changed.", col::kTextFaint,
-             kSmall, nullptr, 0.0f);
-    } else if (done) {
-        if (Button("Continue to Play", ButtonKind::primary, ImVec2(0, 42.0f), true, Icon::play, true))
-            Navigate(Page::play);
-    } else if (sum.failed) {
-        if (Button("Try again", ButtonKind::primary, ImVec2(0, 42.0f))) {
-            logs_result_ = Result{};
-            model_.start_setup();
-        }
-        ImGui::SameLine();
-        if (Button("Collect logs", ButtonKind::secondary, ImVec2(0, 42.0f), true, Icon::logs, true)) {
-            std::string path, error;
-            const bool ok = model_.collect_logs(path, error);
-            logs_result_ = Result{ok, ok ? "Saved to your Desktop: " + FileName(path) : error, path};
-        }
-        Gap(2.0f);
-        ResultLine(logs_result_);
-    } else {
-        if (Button("Set up co-op", ButtonKind::primary, ImVec2(0, 42.0f), phase == Phase::needs_setup))
-            model_.start_setup();
-    }
+    Gap(4.0f);
 }
 
 // ---- Play ------------------------------------------------------------------
@@ -471,6 +413,7 @@ void LauncherUi::PlayPage(Phase phase) {
         return;
     }
     PageHeader("Play together", "Host a game for your partner, or join theirs. You both need Steam running.");
+    SetupStatus();
     const bool session = ui::SessionActive(phase);
     const UpdateInfo play_uinfo = model_.update_info();
     if (play_uinfo.status == UpdateStatus::available) {
@@ -596,7 +539,7 @@ void LauncherUi::HostTab(Phase phase) {
         Message(Icon::warning, col::kWarn, "You joined a game. Close it before you host one.", kBody);
         return;
     }
-    if (Button("Host game", ButtonKind::primary, ImVec2(190.0f, 46.0f), phase == Phase::ready, Icon::play, true)) {
+    if (Button("Host game", ButtonKind::primary, ImVec2(190.0f, 46.0f), ui::CanStartSession(phase), Icon::play, true)) {
         std::string code, error;
         if (model_.host(code, error)) {
             hosted_code_ = code;
@@ -693,7 +636,7 @@ void LauncherUi::JoinTab(Phase phase) {
         }
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
-        if (enter && view.can_join && !wait_invite_) {
+        if (enter && view.can_join && !wait_invite_ && ui::CanStartSession(phase)) {
             std::string error;
             session_role_ = Role::join;
             if (!model_.join(text, error)) play_error_ = error; else play_error_.clear();
@@ -723,7 +666,8 @@ void LauncherUi::JoinTab(Phase phase) {
         if (Button("See the connection", ButtonKind::quiet, ImVec2(0, 34.0f), true, Icon::signal, true))
             Navigate(Page::in_game);
     } else {
-        if (Button("Join game", ButtonKind::primary, ImVec2(col_w / Scale(), 46.0f), view.can_join, Icon::play, true)) {
+        if (Button("Join game", ButtonKind::primary, ImVec2(col_w / Scale(), 46.0f), view.can_join && ui::CanStartSession(phase),
+                   Icon::play, true)) {
             std::string error;
             session_role_ = Role::join;
             if (!model_.join(wait_invite_ ? std::string() : text, error)) play_error_ = error;
@@ -1195,20 +1139,11 @@ void LauncherUi::Popups() {
 
 // ---- Screenshot scenes -----------------------------------------------------
 namespace {
-const char* const kScenes[] = {
-    "01-setup-start",       "02-setup-progress",      "03-setup-failed",       "04-setup-done",
-    "05-wrong-folder",      "06-play-host",           "07-play-host-code",     "08-play-join",
-    "09-play-join-invalid", "10-play-join-valid",     "11-play-join-invite",   "12-play-error",
-    "13-ingame-launching",  "14-ingame-host-waiting", "15-ingame-connected",   "16-ingame-handoff",
-    "17-ingame-after-game", "18-tools",               "19-tools-result",       "20-tools-uninstall-confirm",
-    "21-tools-about",       "22-settings",            "23-tools-in-game",      "24-uninstall-report",
-};
-constexpr int kSceneCount = static_cast<int>(sizeof(kScenes) / sizeof(kScenes[0]));
 constexpr char kFixedSecret[] = "K7RD3WQ9MP2XVB6TZHN4";
 }  // namespace
 
-int LauncherUi::SceneCount() { return kSceneCount; }
-const char* LauncherUi::SceneName(int index) { return index >= 0 && index < kSceneCount ? kScenes[index] : ""; }
+int LauncherUi::SceneCount() { return ui::SceneCount(); }
+const char* LauncherUi::SceneName(int index) { return ui::SceneName(static_cast<ui::Scene>(index)); }
 
 void LauncherUi::PrepareScene(int index, MockModel& mock) {
     if (ImGui::GetCurrentContext() && ImGui::GetCurrentContext()->OpenPopupStack.Size > 0) ImGui::ClosePopupToLevel(0, false);
@@ -1232,23 +1167,21 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         strncpy_s(code_buf_, sizeof(code_buf_), s.c_str(), _TRUNCATE);
     };
     Page page = Page::play;
-    switch (index) {
-    case 0: mock.jump_to_phase(Phase::needs_setup); page = Page::setup; break;
-    case 1: mock.jump_to_setup(3, 0.45f, false); page = Page::setup; break;
-    case 2: mock.jump_to_setup(3, 0.62f, true); page = Page::setup; break;
-    case 3: mock.jump_to_phase(Phase::ready); page = Page::setup; break;
-    case 4: mock.jump_to_phase(Phase::not_in_game_folder); page = Page::setup; break;
-    case 5: mock.jump_to_phase(Phase::ready); break;
-    case 6:
+    switch (static_cast<ui::Scene>(index)) {
+    case ui::Scene::play_preparing: mock.jump_to_setup(1, 0.4f, false); break;
+    case ui::Scene::play_setup_failed: mock.jump_to_setup(3, 0.62f, true); break;
+    case ui::Scene::wrong_folder: mock.jump_to_phase(Phase::not_in_game_folder); break;
+    case ui::Scene::play_host: mock.jump_to_phase(Phase::ready); break;
+    case ui::Scene::play_host_code:
         mock.jump_to_session(Role::host, false, Phase::launching, 1.0);
         hosted_code_ = own_code;
         copied_until_ = 1e9;
         break;
-    case 7:
+    case ui::Scene::play_join:
         mock.jump_to_phase(Phase::ready);
         role_ = Role::join;
         break;
-    case 8: {
+    case ui::Scene::play_join_invalid: {
         mock.jump_to_phase(Phase::ready);
         role_ = Role::join;
         mock.set_character(Character::ocelot);
@@ -1257,46 +1190,46 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         copy_into(bad);
         break;
     }
-    case 9:
+    case ui::Scene::play_join_valid:
         mock.jump_to_phase(Phase::ready);
         role_ = Role::join;
         mock.set_character(Character::dd_female);
         copy_into(MockModel::PartnerCode());
         break;
-    case 10:
+    case ui::Scene::play_join_invite:
         mock.jump_to_phase(Phase::ready);
         role_ = Role::join;
         mock.set_character(Character::avatar);
         wait_invite_ = true;
         break;
-    case 11: mock.jump_to_phase(Phase::error); break;
-    case 12:
+    case ui::Scene::play_error: mock.jump_to_phase(Phase::error); break;
+    case ui::Scene::ingame_launching:
         mock.jump_to_session(Role::join, false, Phase::launching, 1.5);
         session_role_ = Role::join;
         page = Page::in_game;
         break;
-    case 13:
+    case ui::Scene::ingame_host_waiting:
         mock.jump_to_session(Role::host, false, Phase::in_game, 2.0);
         hosted_code_ = own_code;
         page = Page::in_game;
         break;
-    case 14:
+    case ui::Scene::ingame_connected:
         mock.jump_to_session(Role::join, false, Phase::in_game, 9.0);
         session_role_ = Role::join;
         page = Page::in_game;
         break;
-    case 15:
+    case ui::Scene::ingame_handoff:
         mock.jump_to_session(Role::host, false, Phase::in_game, 21.0);
         hosted_code_ = own_code;
         page = Page::in_game;
         break;
-    case 16:
+    case ui::Scene::ingame_after_game:
         mock.jump_to_session(Role::join, false, Phase::after_game, 1.0);
         session_role_ = Role::join;
         page = Page::in_game;
         break;
-    case 17: mock.jump_to_phase(Phase::ready); page = Page::tools; break;
-    case 18: {
+    case ui::Scene::tools: mock.jump_to_phase(Phase::ready); page = Page::tools; break;
+    case ui::Scene::tools_result: {
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         std::string path, error;
@@ -1305,23 +1238,23 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
                               path};
         break;
     }
-    case 19:
+    case ui::Scene::tools_uninstall_confirm:
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         popup_request_ = Popup::uninstall_confirm;
         break;
-    case 20:
+    case ui::Scene::tools_about:
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         popup_request_ = Popup::about;
         break;
-    case 21: mock.jump_to_phase(Phase::ready); page = Page::settings; break;
-    case 22:
+    case ui::Scene::settings: mock.jump_to_phase(Phase::ready); page = Page::settings; break;
+    case ui::Scene::tools_in_game:
         mock.jump_to_session(Role::host, false, Phase::in_game, 9.0);
         hosted_code_ = own_code;
         page = Page::tools;
         break;
-    case 23: {
+    case ui::Scene::uninstall_report: {
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         std::string report, error;
@@ -1332,7 +1265,7 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         popup_request_ = Popup::uninstall_report;
         break;
     }
-    default: break;
+    case ui::Scene::count: break;
     }
     first_frame_ = false;
     last_phase_ = mock.phase();

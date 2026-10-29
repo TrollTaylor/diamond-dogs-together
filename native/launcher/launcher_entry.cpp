@@ -82,8 +82,8 @@ int RunSelfTest(std::string& report) {
     MockModel m(MockOptions{});
     m.use_manual_clock(0.0);
     check(m.phase() == Phase::needs_setup, "mock starts in needs_setup");
-    m.start_setup();
-    check(m.phase() == Phase::setting_up, "setup starts");
+    m.tick();
+    check(m.phase() == Phase::setting_up, "setup starts by itself");
     m.advance(5.0);
     m.tick();
     const ui::SetupSummary mid = ui::SummarizeSetup(m.setup_steps());
@@ -113,7 +113,9 @@ int RunSelfTest(std::string& report) {
     check(m.collect_logs(path, error) && !path.empty(), "collect logs");
     check(m.restore_save(error), "restore");
     std::string uninstall;
-    check(m.uninstall(uninstall, error) && m.phase() == Phase::needs_setup, "uninstall");
+    check(m.uninstall(uninstall, error) && m.phase() == Phase::error, "uninstall");
+    m.tick();
+    check(m.phase() == Phase::error, "no automatic setup after an uninstall");
 
     report += "selftest: " + std::to_string(checks - failures) + "/" + std::to_string(checks) + " checks passed\n";
     // The real model's checks (wp/launcher-core): read-only for the game folder.

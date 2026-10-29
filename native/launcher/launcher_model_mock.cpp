@@ -51,6 +51,9 @@ const char kGameUpdated[] =
     "MGSV was updated by Steam, so co-op can't start safely. Diamond Dogs Together needs an update for the new "
     "game version.";
 const char kSessionBusy[] = "Close the game first.";
+const char kNotReady[] = "Co-op is still getting ready. Try again in a moment.";
+const char kLoaderGone[] =
+    "dinput8.dll is missing from the game folder. Extract the whole Diamond Dogs Together zip into the game folder again.";
 const char kSteamDir[] = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\MGS_TPP";
 const char kDownloadsDir[] = "C:\\Users\\Player\\Downloads\\DiamondDogsTogether";
 
@@ -189,7 +192,7 @@ void MockModel::set_hud(const std::string& hud) { hud_ = ui::HudValue(ui::HudInd
 bool MockModel::host(std::string& code_out, std::string& error_out) {
     code_out.clear();
     if (phase_ != Phase::ready) {
-        error_out = ui::SessionActive(phase_) ? "A game is already running." : "Finish the setup first.";
+        error_out = ui::SessionActive(phase_) ? "A game is already running." : kNotReady;
         return false;
     }
     if (options_.scenario == MockScenario::steam_offline) {
@@ -211,7 +214,7 @@ CodeCheck MockModel::check_code(const std::string& code) const { return CheckJoi
 
 bool MockModel::join(const std::string& code_or_empty_for_invite, std::string& error_out) {
     if (phase_ != Phase::ready) {
-        error_out = ui::SessionActive(phase_) ? "A game is already running." : "Finish the setup first.";
+        error_out = ui::SessionActive(phase_) ? "A game is already running." : kNotReady;
         return false;
     }
     const bool invite = code_or_empty_for_invite.empty();
@@ -321,7 +324,7 @@ bool MockModel::export_save(std::string& path_out, std::string& error_out) {
         return false;
     }
     if (phase_ != Phase::ready && phase_ != Phase::error) {
-        error_out = "Set up co-op first. There is no co-op save yet.";
+        error_out = "There is no co-op save yet. Wait until co-op is ready, then try again.";
         return false;
     }
     path_out = DesktopFile("mgs-coop-save-" + Stamp(manual_clock_) + ".zip");
@@ -380,14 +383,21 @@ bool MockModel::uninstall(std::string& report_out, std::string& error_out) {
         "Your own saves match the backup made during setup.\n"
         "Kept: your co-op save and the backups in the mgs-coop folder.\n"
         "To remove everything, delete DiamondDogsTogether.exe and the mgs-coop folder.";
+    // Like the real model: the loader is gone, so co-op can't start (and is not set up again by itself).
     setup_failed_ = false;
     last_setup_.clear();
-    SetPhase(Phase::needs_setup);
+    last_error_ = kLoaderGone;
+    SetPhase(Phase::error);
     return true;
 }
 
 void MockModel::tick() {
     const double t = now();
+    // The setup runs by itself (2026-10-29); after a failed attempt it waits for Try again.
+    if (phase_ == Phase::needs_setup && !setup_failed_) {
+        start_setup();
+        return;
+    }
     if (phase_ == Phase::setting_up) {
         const double elapsed = t - setup_start_;
         if (options_.scenario == MockScenario::setup_fails && setup_attempts_ == 1) {

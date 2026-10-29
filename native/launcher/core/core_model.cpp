@@ -214,7 +214,7 @@ public:
     // no_launch: --write-session (developer): Host / Join write the session
     // files and stop there (no helper, no Steam, no clipboard).
     RealModel(const std::wstring& exe_dir, std::shared_ptr<Env> env, bool exit_if_busy, bool no_launch = false)
-        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch) {
+        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch), auto_setup_(!no_launch) {
         paths_ = GetInstancePaths(game_dir_);
         LoadSettings(paths_, settings_);
         CleanOldExecutable(paths_.game);
@@ -455,6 +455,13 @@ public:
 
     void tick() override {
         const std::int64_t now = env_->NowMs();
+        // The setup runs by itself (2026-10-29: no Setup page, no button) whenever
+        // it is needed: the first start, after an update, a missing runtime file.
+        // After a failed attempt it waits for start_setup() ("Try again").
+        if (phase_ == Phase::needs_setup && auto_setup_ && !SetupFailedOnce()) {
+            Log("setup=auto");
+            start_setup();
+        }
         if (phase_ == Phase::setting_up) {
             bool finished = false, ok = false;
             std::string error;
@@ -652,11 +659,15 @@ private:
         return "unknown";
     }
     void Log(const std::string& text) { LauncherLog(*env_, paths_, text); }
+    bool SetupFailedOnce() const {
+        std::lock_guard<std::mutex> lock(shared_->m);
+        return shared_->setup_failed_once;
+    }
 
     bool ReadyFor(std::string& error) {
         if (phase_ == Phase::ready) return true;
         if (stage_ != Stage::none) error = "A game is already running. Close it first.";
-        else if (phase_ == Phase::needs_setup || phase_ == Phase::setting_up) error = "Finish the setup first.";
+        else if (phase_ == Phase::needs_setup || phase_ == Phase::setting_up) error = "Co-op is still getting ready. Try again in a moment.";
         else if (phase_ == Phase::not_in_game_folder) error = "Start Diamond Dogs Together from your game folder first.";
         else error = last_error_.empty() ? std::string("Co-op is not ready in this folder.") : last_error_;
         return false;
@@ -668,7 +679,7 @@ private:
             return false;
         }
         if (phase_ != Phase::ready && phase_ != Phase::error) {
-            error = "Set up co-op first. There is no co-op save yet.";
+            error = "There is no co-op save yet. Wait until co-op is ready, then try again.";
             return false;
         }
         if (AnyGameRunningIn(*env_, paths_.game)) {
@@ -680,7 +691,7 @@ private:
             return false;
         }
         if (!IsDir(JoinPath2(paths_.coop_saves, L"287700\\local"))) {
-            error = "Set up co-op first. There is no co-op save yet.";
+            error = "There is no co-op save yet. Wait until co-op is ready, then try again.";
             return false;
         }
         return true;
@@ -781,7 +792,7 @@ private:
         json::Value state;
         if (!ReadInstallState(paths_, state) || !InstallIsCurrent(state) || !CoopCopySeeded(paths_.coop_saves) || !RuntimeArchiveOk()) {
             phase_ = Phase::needs_setup;
-            return refuse("The co-op setup is incomplete (the co-op save copy or the runtime file is missing). Run the setup again.");
+            return refuse("Co-op is getting ready again (the co-op save copy or the runtime file was missing). Try again in a minute.");
         }
         for (const std::pair<const std::wstring*, const char*> f : {std::make_pair(&paths_.lab_ini, "lab.ini"), std::make_pair(&paths_.coop_ini, "coop.ini")}) {
             if (!PathExists(*f.first)) continue;
@@ -833,7 +844,7 @@ private:
             }
             std::string dat_error;
             if (!RuntimeArchiveValid(paths_, nullptr, dat_error)) {
-                e = "The co-op runtime file changed; run the setup again.";
+                e = "The co-op runtime file changed; co-op gets ready again by itself, then try again.";
                 return false;
             }
             return true;
@@ -1227,6 +1238,7 @@ private:
     std::shared_ptr<Env> env_;
     bool exit_if_busy_ = false;
     bool no_launch_ = false;
+    bool auto_setup_ = true;   // --write-session runs the setup itself (its setup=start line)
     InstancePaths paths_;
     std::shared_ptr<Shared> shared_ = std::make_shared<Shared>();
     std::thread setup_thread_;

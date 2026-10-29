@@ -31,7 +31,7 @@ Get `DiamondDogsTogether-<version>.zip` from [Releases](https://github.com/Troll
 2. Extract **everything** from the zip into that folder: `DiamondDogsTogether.exe`, `dinput8.dll` and the `mgs-coop` folder.
 3. Run **DiamondDogsTogether.exe**.
 
-The first start sets everything up:
+The first start gets co-op ready by itself, in about a minute (the Play page shows *Getting co-op ready...*; there is nothing to click):
 - It checks your game files.
 - It backs up your real saves.
 - It makes a co-op copy of your save.

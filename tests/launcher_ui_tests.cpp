@@ -23,38 +23,55 @@ using namespace ddt;
 using ui::Page;
 
 void TestNavigation() {
-    Check(ui::DefaultPage(Phase::not_in_game_folder) == Page::setup, "wrong folder -> setup");
-    Check(ui::DefaultPage(Phase::needs_setup) == Page::setup, "needs setup -> setup");
+    // There is no Setup page any more (2026-10-29): the setup runs by itself and
+    // Play shows its progress. The pages are Play, In game, Tools and Settings.
+    Check(ui::kPageCount == 4, "four pages");
+    const Page all[] = {Page::play, Page::in_game, Page::tools, Page::settings};
+    for (Page p : all)
+        Check(std::string(ui::PageLabel(p)) != "" && std::string(ui::PageLabel(p)) != "Setup", "no Setup page in the navigation");
+
+    Check(ui::DefaultPage(Phase::not_in_game_folder) == Page::play, "wrong folder -> play (the wrong-folder screen covers it)");
+    Check(ui::DefaultPage(Phase::needs_setup) == Page::play, "needs setup -> play");
+    Check(ui::DefaultPage(Phase::setting_up) == Page::play, "setting up -> play");
     Check(ui::DefaultPage(Phase::ready) == Page::play, "ready -> play");
     Check(ui::DefaultPage(Phase::error) == Page::play, "error -> play");
     Check(ui::DefaultPage(Phase::in_game) == Page::in_game, "in game -> in game");
 
-    Check(!ui::PageEnabled(Phase::needs_setup, Page::play), "no Play before setup");
+    Check(ui::PageEnabled(Phase::needs_setup, Page::play) && ui::PageEnabled(Phase::setting_up, Page::play),
+          "Play shows the automatic setup");
     Check(!ui::PageEnabled(Phase::ready, Page::in_game), "In game only during a session");
     Check(ui::PageEnabled(Phase::launching, Page::in_game), "In game while launching");
-    Check(!ui::PageEnabled(Phase::not_in_game_folder, Page::tools), "no Tools in the wrong folder");
-    Check(!ui::PageEnabled(Phase::setting_up, Page::tools), "no Tools while setting up");
+    for (Page p : all) Check(!ui::PageEnabled(Phase::not_in_game_folder, p), "nothing to open in the wrong folder");
+    Check(ui::PageEnabled(Phase::setting_up, Page::tools) && ui::PageEnabled(Phase::setting_up, Page::settings),
+          "Tools and Settings stay open while co-op gets ready");
     Check(ui::PageEnabled(Phase::in_game, Page::tools), "Tools page visible in game (actions disabled)");
-    Check(!ui::PageEnabled(Phase::not_in_game_folder, Page::settings), "no Settings in the wrong folder");
 
-    Check(ui::PageVisible(Phase::needs_setup, Page::setup, Page::setup), "setup visible when needed");
-    Check(ui::PageVisible(Phase::ready, Page::setup, Page::setup), "setup stays while 'All set' is shown");
-    Check(!ui::PageVisible(Phase::ready, Page::setup, Page::play), "setup hidden afterwards");
-    Check(ui::PageVisible(Phase::ready, Page::in_game, Page::play), "In game always listed");
+    for (Page p : all) {
+        Check(!ui::PageVisible(Phase::not_in_game_folder, p), "the wrong-folder screen has no navigation");
+        Check(ui::PageVisible(Phase::ready, p) && ui::PageVisible(Phase::setting_up, p), "every page is listed otherwise");
+    }
 
     Check(ui::ToolsAllowed(Phase::ready) && ui::ToolsAllowed(Phase::error) && ui::ToolsAllowed(Phase::needs_setup),
           "tools allowed outside a session");
     Check(!ui::ToolsAllowed(Phase::in_game) && !ui::ToolsAllowed(Phase::launching) &&
               !ui::ToolsAllowed(Phase::after_game) && !ui::ToolsAllowed(Phase::setting_up),
           "tools refused during a session or setup");
+    Check(ui::CanStartSession(Phase::ready), "Host and Join once ready");
+    Check(!ui::CanStartSession(Phase::needs_setup) && !ui::CanStartSession(Phase::setting_up) &&
+              !ui::CanStartSession(Phase::error) && !ui::CanStartSession(Phase::in_game),
+          "Host and Join wait until co-op is ready");
 
-    // Setup flow.
-    Check(ui::PageAfterPhaseChange(Phase::needs_setup, Phase::setting_up, Page::setup, Role::host) == Page::setup,
-          "setting up stays on setup");
-    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::ready, Page::setup, Role::host) == Page::setup,
-          "'All set' stays on setup");
-    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::needs_setup, Page::setup, Role::host) == Page::setup,
-          "a failed setup stays on setup");
+    // Setup flow: it all happens on Play.
+    Check(ui::PageAfterPhaseChange(Phase::needs_setup, Phase::setting_up, Page::play, Role::host) == Page::play,
+          "setting up stays on Play");
+    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::ready, Page::play, Role::host) == Page::play,
+          "ready stays on Play");
+    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::needs_setup, Page::play, Role::host) == Page::play,
+          "a failed setup stays on Play");
+    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::ready, Page::settings, Role::host) == Page::settings,
+          "the setup finishing does not pull the player off Settings");
+    Check(ui::PageAfterPhaseChange(Phase::not_in_game_folder, Phase::needs_setup, Page::play, Role::host) == Page::play,
+          "Check again from the wrong folder -> Play");
     // Host flow.
     Check(ui::PageAfterPhaseChange(Phase::ready, Phase::launching, Page::play, Role::host) == Page::play,
           "host keeps the code on Play while launching");
@@ -76,18 +93,55 @@ void TestNavigation() {
           "Tools stays when the game starts");
     Check(ui::PageAfterPhaseChange(Phase::after_game, Phase::ready, Page::settings, Role::host) == Page::settings,
           "Settings stays when the session ends");
-    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::tools, Role::host) == Page::tools,
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::error, Page::tools, Role::host) == Page::tools,
           "uninstall report stays on Tools");
-    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::play, Role::host) == Page::setup,
-          "needs setup from Play -> setup");
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::tools, Role::host) == Page::tools,
+          "a new setup does not pull the player off Tools");
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::play, Role::host) == Page::play,
+          "needs setup from Play stays on Play");
     Check(ui::PageAfterPhaseChange(Phase::in_game, Phase::error, Page::in_game, Role::host) == Page::play,
           "error -> Play");
-    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::not_in_game_folder, Page::tools, Role::host) == Page::setup,
-          "wrong folder forces setup");
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::not_in_game_folder, Page::tools, Role::host) == Page::play,
+          "wrong folder leaves the side pages");
     Check(ui::PageAfterPhaseChange(Phase::in_game, Phase::ready, Page::in_game, Role::host) == Page::play,
           "never left on a disabled page");
     Check(ui::PageAfterPhaseChange(Phase::ready, Phase::ready, Page::in_game, Role::host) == Page::play,
           "a disabled page falls back to the default");
+}
+
+void TestSetupView() {
+    // What Play shows about the automatic setup.
+    std::vector<SetupStep> steps(4);
+    ui::SetupSummary running_sum;
+    running_sum.running = true;
+    Check(ui::GetSetupView(Phase::setting_up, running_sum) == ui::SetupView::preparing, "setting up -> Getting co-op ready");
+    Check(ui::GetSetupView(Phase::needs_setup, ui::SummarizeSetup(steps)) == ui::SetupView::preparing,
+          "needed, about to start by itself -> Getting co-op ready");
+    steps[3].state = SetupStep::State::failed;
+    Check(ui::GetSetupView(Phase::needs_setup, ui::SummarizeSetup(steps)) == ui::SetupView::failed,
+          "a failed attempt -> the Try again banner");
+    Check(ui::GetSetupView(Phase::ready, ui::SummarizeSetup(steps)) == ui::SetupView::none, "ready -> nothing");
+    Check(ui::GetSetupView(Phase::error, ui::SummarizeSetup(steps)) == ui::SetupView::none, "error has its own card");
+    Check(ui::GetSetupView(Phase::in_game, ui::SummarizeSetup({})) == ui::SetupView::none, "in game -> nothing");
+    Check(ui::GetSetupView(Phase::not_in_game_folder, ui::SummarizeSetup({})) == ui::SetupView::none, "wrong folder -> nothing");
+}
+
+void TestScenes() {
+    // --screenshot-all renders every scene; the Setup page scenes are gone.
+    Check(ui::SceneCount() >= 20, "scene list");
+    bool preparing = false, failed = false, wrong = false;
+    for (int i = 0; i < ui::SceneCount(); ++i) {
+        const std::string name = ui::SceneName(static_cast<ui::Scene>(i));
+        Check(name.size() > 3 && name.compare(3, 6, "setup-") != 0, "no Setup page scene");
+        Check(name.size() > 3 && name[0] >= '0' && name[0] <= '9' && name[1] >= '0' && name[1] <= '9' && name[2] == '-' &&
+                  std::stoi(name.substr(0, 2)) == i + 1,
+              "scenes are numbered in order");
+        if (name.find("play-preparing") != std::string::npos) preparing = true;
+        if (name.find("play-setup-failed") != std::string::npos) failed = true;
+        if (name.find("wrong-folder") != std::string::npos) wrong = true;
+    }
+    Check(preparing && failed && wrong, "Play while preparing, the failure banner and the wrong folder are rendered");
+    Check(std::string(ui::SceneName(static_cast<ui::Scene>(ui::SceneCount()))).empty(), "out of range scene");
 }
 
 void TestCharactersAndHud() {
@@ -242,7 +296,8 @@ void TestMock() {
         Check(m.phase() == Phase::needs_setup, "first run");
         std::string code, error;
         Check(!m.host(code, error) && !error.empty(), "no host before setup");
-        m.start_setup();
+        m.tick();   // nobody presses a button: the setup starts by itself
+        Check(m.phase() == Phase::setting_up, "the first tick starts the setup");
         m.advance(2.0);
         m.tick();
         std::vector<SetupStep> steps = m.setup_steps();
@@ -305,7 +360,13 @@ void TestMock() {
         m.set_character(Character::dd_female);
         Check(m.character() == Character::dd_female, "character stored");
         std::string report;
-        Check(m.uninstall(report, error) && !report.empty() && m.phase() == Phase::needs_setup, "uninstall");
+        // Like the real model: the loader is gone afterwards, so co-op can't start (and is not set up again behind the player's back).
+        Check(m.uninstall(report, error) && !report.empty() && m.phase() == Phase::error &&
+                  m.last_error().find("dinput8.dll") != std::string::npos,
+              "uninstall");
+        m.advance(5.0);
+        m.tick();
+        Check(m.phase() == Phase::error, "no automatic setup after an uninstall");
     }
     {   // Scenarios.
         MockOptions o;
@@ -316,6 +377,8 @@ void TestMock() {
               "wrong folder");
         m.recheck();
         Check(m.phase() == Phase::needs_setup, "recheck moves on");
+        m.tick();
+        Check(m.phase() == Phase::setting_up, "and then sets up by itself");
 
         o.scenario = MockScenario::error;
         MockModel e(o);
@@ -326,13 +389,21 @@ void TestMock() {
         o.scenario = MockScenario::setup_fails;
         MockModel f(o);
         f.use_manual_clock(0.0);
-        f.start_setup();
+        f.tick();
+        Check(f.phase() == Phase::setting_up, "the setup starts by itself");
         f.advance(30.0);
         f.tick();
         const ui::SetupSummary s = ui::SummarizeSetup(f.setup_steps());
         Check(f.phase() == Phase::needs_setup && s.failed && s.current == 3 && !f.last_error().empty(),
               "setup fails once");
-        f.start_setup();
+        Check(ui::GetSetupView(f.phase(), s) == ui::SetupView::failed, "the failure banner");
+        for (int i = 0; i < 5; ++i) {
+            f.advance(10.0);
+            f.tick();
+        }
+        Check(f.phase() == Phase::needs_setup && ui::SummarizeSetup(f.setup_steps()).failed,
+              "a failed setup waits for Try again (no retry loop)");
+        f.start_setup();   // Try again
         f.advance(30.0);
         f.tick();
         Check(f.phase() == Phase::ready, "second try works");
@@ -370,6 +441,8 @@ void TestMock() {
 
 int main() {
     TestNavigation();
+    TestSetupView();
+    TestScenes();
     TestCharactersAndHud();
     TestJoinCode();
     TestJoinField();
