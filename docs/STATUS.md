@@ -1,3 +1,34 @@
+## October 29, 2026: launcher polish, the three launcher tracks combined (branch `wp/launcher-polish`, unreleased)
+
+The user's five launcher requests of 2026-10-29, combined on `wp/launcher-polish`: `wp/launcher-setup` (`7286911`) plus the merges `0a9f556` (`wp/launcher-icon` `146b377`) and `c976484` (`wp/launcher-update` `c0fcb89`), then `700dba7`, `9641d16` and `d70caff`. Not merged into `dev/oct7-continue`, not pushed, not released.
+
+**What changed for players.**
+- The exe icon is the project logo (`docs/readme/logo.png`) at every size from 16 to 256 px. At 48 px and below it shows the banner without the words, because the lettering turns to grey noise at those sizes.
+- Update now downloads the update, installs it and starts the new version. The old window closes only once the new one runs. If the new one does not start, the old version is put back.
+- There is no Setup page. Co-op gets ready by itself on the first start and after an update. Play shows "Getting co-op ready...", or a card with Try again and Collect logs if it fails. Update now waits until co-op is ready ("You can update once co-op is ready.").
+- Settings > Debug mode (off by default) adds Play > Local test (two windows).
+- The player zip no longer contains `mgs-coop/source.zip`. `DDT-source-<version>.zip` goes on the same release page, and the updater removes the old `source.zip`.
+
+**Merge decisions.** `start_update` checks the setup track's rules first, without a message: co-op getting ready, a game or a local test. Then it checks the update track's rules, which give a sentence: MGSV running, or a co-op session on. `--update-now` waits for the automatic setup; before this, it was refused once and never tried again. That fix failed first in `TestUpdateNowAfterSetup`. After an update the new window opens on Play with "Updated to version X." and the line "This takes about a minute after an update." This replaces the update section's "opens on Setup ... Set up co-op once more" below. While the setup runs, Update now is switched off and nothing fails. It no longer shows an error, as the update section below still says. A window closed while the local test is still starting keeps the folder until that start ends (`ui::HoldFolderWhileClosing`). The update track's model tests now let the automatic setup finish first; before that, 36 `ddt_core_tests` checks failed. The setup track's test feed now lists the source zip.
+
+**Proven, with no game and no visible window.**
+- Fast CTest 292/292 after each step. Full CTest 308/308 at `d70caff`. `ddt_core_tests` 1256/0 and `launcher_ui_tests` 369/0.
+- Release worker checks passed at `d70caff` (receipt `20261029-182631-7e97f89baa3f43a589580d7cbc067db5`, 296 tests).
+- `tools/package.ps1 -Friend` was built locally and nothing was uploaded. `DiamondDogsTogether-0.14.3.zip` is 3,018,096 bytes, SHA-256 `329983E56F5B3DE3610B403F52213F206DA0D7898CCA50F61A66145463FC3D07`. It holds the exe, the dll, package.json, README.txt, the licences and the notices, and no source. `DDT-source-0.14.3.zip` is 7,891,990 bytes, SHA-256 `03253FF30D7417A5593B1CC39670D388E828CB23338C806ACA9E29DD9EFC2508`, with 1342 files that match the tree, including `docs/readme/logo.png`.
+- The output audit passed 34/34. package.json and the receipt match the zip, and `tools/check-release.ps1` accepts a simulated draft release that carries both files.
+- All 37 hidden screenshots of the Release exe were looked at: no Setup page; Play preparing, failed and ready; Settings with Debug off and on; Play's Local test; the update scenes.
+- Windows drew the Release exe's icon at all 10 sizes. The embedded `.ico` is byte-identical to `native/launcher/resources/ddt_launcher.ico`.
+
+**Not proven, and a warning.**
+- Windows Defender quarantined one Debug build of the merged launcher as `Trojan:Win32/Bearfoos.A!ml`, a machine-learning false positive. It happened at 13:12, when `ddt_local_watch_process` started a copy of the exe hidden from `%TEMP%`. The next builds were not flagged; they have different hashes. Neither were the two Release builds. A player's Defender could flag a release the same way. Nothing was excluded or restored.
+- No real two-window test, real GitHub update or two-PC run was done. The taskbar, title bar and Alt-Tab icon were not seen.
+- `git merge-tree` onto `dev/oct7-continue` (`e2249e4`) conflicts only in this file: both sides add a section at the top, and keeping both resolves it.
+
+**What to try.**
+1. A real update from 0.14.3. Bump the version to 0.14.4 in `CMakeLists.txt`, `tools/package.ps1` and the `tools/package-install.ps1` allow-list. Publish a release with both zips, after `tools/check-release.ps1`. Then press Update now in 0.14.3: Diamond Dogs Together should come back as 0.14.4 by itself, with "Updated to version 0.14.4." and "Getting co-op ready...", and `mgs-coop\source.zip` should be gone.
+2. The real two-window test. Turn on Settings > Debug mode, choose `MGS_TPP_guest`, then Play > Local test > Start local test. This copies this version's loader, launcher and package.json into that folder; the old files go to `mgs-coop\install-backups`.
+3. The taskbar icon. Start the new exe and look at the taskbar, the title bar and Alt-Tab. Explorer may show the old icon until its icon cache refreshes.
+
 ## October 29, 2026: the update restarts the launcher; the source is its own release asset (branch `wp/launcher-update`, unreleased)
 
 Two of the user's 2026-10-29 launcher requests: "when we update we should restart the exe automatically instead of just closing it" and "I don't like the idea of including the source.zip with every install". Commits on `wp/launcher-update` (from `48ce7da`): `4a929ad`, `b7d6a18`, `c607d7a`, then the review fixes `9db44e5`, `58f38c1`, `8cd6568`, `8b35dae`, `8b232b1`, `912415d`, `3756e80`.
