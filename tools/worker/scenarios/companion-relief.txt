@@ -22,6 +22,7 @@ labsetting world_relief=1
 labsetting world_vehicle_gone=1
 labsetting partner_native_ride=seat
 labsetting nametag=1
+labsetting coop_hud=compact
 boot 30010 828.18 338.20 1630.51 95
 both debug godmode 1
 host run relief_census start
@@ -97,7 +98,9 @@ waitmission guest 30010 180
 waitgameplay host 150
 waitgameplay guest 150
 host debug time 43200
-waitlog guest 'world_lua=event=relief; role=guest; step=seize_skipped; fn=SeizeReliefVehicleOnClear; alive=1;' 5
+# The host's stock seize is a real Fulton of its index 0: VEHICLE_GONE removes the guest's copy (no credit) before
+# the guest's own mission end, whose seize is then skipped with alive=0 (run 25b9c0ae); alive=1 without VEHICLE_GONE.
+waitlog guest 'world_lua=event=relief; role=guest; step=seize_skipped; fn=SeizeReliefVehicleOnClear; alive=[01];' 5
 waitlog host 'world_lua=event=relief; role=host; step=seize; fn=SeizeReliefVehicleOnClear; alive=1;' 5
 waitlog host 'world_lua=event=relief; role=host; step=arrived; type=1;' 40
 waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=1; .*source=seed;' 40

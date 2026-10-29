@@ -446,4 +446,26 @@ check(not ok and text == 'relief_lab_only', 'the lab lever refuses in play')
 ok, text = c.RS.lever({'relief_status'})
 check(ok, 'status in play')
 
+-- Lab lever relief_lab forget (guest): this copy's index 0 removed without a credit and without a VEHICLE_GONE
+-- request, then reloaded from the host's VEHICLE_SPAWN (the late-join path, step=load) although it had one.
+c = Fixture(2, {ct = 514, alive = true, loadSpawns = true, gone = true, slowSeize = true})
+c.tick()
+ok, text = c.RS.lever({'relief_lab', 'forget'})
+check(ok and text == 'relief_lab;forget' and c.find('step=remove;via=seize_instant;why=lab_forget;ok=1;'), 'forget removes: ' .. tostring(text))
+c.V.observe('FultonInfo', RID, 'local')
+check(not c.find('event=vehicle_gone;step=watch;id=25600'), 'its own removal is not a guest loss (no request to the host)')
+for _ = 1, 4 do hostState(c); c.run(5000) end
+check(c.find('step=load;why=host_has;type=2;') and c.last('LoadCarry') and not c.find('reason=lost_here'), 'forget: reloaded from the host values')
+c.tick()
+check(c.find('source=load;'), 'the reloaded arrival')
+c = Fixture(1, {ct = 514, alive = true})
+ok, text = c.RS.lever({'relief_lab', 'forget'})
+check(not ok and text == 'relief_guest_only', 'forget is guest only')
+c = Fixture(2, {ct = 514, alive = true, mode = 2})
+ok, text = c.RS.lever({'relief_lab', 'forget'})
+check(not ok and text == 'relief_lab_only', 'forget is lab only')
+c = Fixture(2, {ct = 0})
+ok, text = c.RS.lever({'relief_lab', 'forget'})
+check(not ok and text == 'relief_absent', 'forget needs index 0')
+
 print('world_relief_sync_lua_check: ' .. checks .. ' checks PASS')

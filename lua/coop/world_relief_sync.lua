@@ -432,8 +432,8 @@ end
 W.unpairedHooks[#W.unpairedHooks + 1] = function() pcall(RS.unguard) end
 W.stopHooks[#W.stopHooks + 1] = function(final) if final then pcall(RS.unguard) end end
 
--- debug relief_status (read only, any mode) and relief_lab nonactive vehicle|loadout (lab: the
--- refusal path of a selected inactive drop item, for a run that cannot reach the iDroid item).
+-- debug relief_status (read only, any mode), relief_lab nonactive vehicle|loadout (lab: the refusal path
+-- of a selected inactive drop item) and relief_lab forget (lab, guest; below).
 function RS.status()
  local ct = RS.carry()
  local h = RS.hostState
@@ -449,6 +449,16 @@ function RS.lever(a)
   if not RS.ids then return false, "relief_ids" end
   local ok = RS.nonActive(RS.ids.menu[a[3] == "vehicle" and 1 or 2])
   return ok, "relief_lab;nonactive=" .. a[3]
+ end
+ -- relief_lab forget (lab, guest): this copy's index 0 removed (no credit, no VEHICLE_GONE request) and
+ -- the reconcile allowed to load the host's again from VEHICLE_SPAWN: the late-join path on demand.
+ if a[1] == "relief_lab" and #a == 2 and a[2] == "forget" then
+  if W.mode ~= 1 then return false, "relief_lab_only" end
+  if W.host then return false, "relief_guest_only" end
+  if not RS.alive() then return false, "relief_absent" end
+  local ok = RS.removeQuiet("lab_forget")
+  RS.reload, RS.diffAt, RS.fixAt, RS.fixes, RS.gaveUp = W.mission, nil, nil, 0, nil
+  return ok, "relief_lab;forget"
  end
  return false, "relief_args"
 end

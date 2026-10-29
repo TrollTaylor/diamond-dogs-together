@@ -1,0 +1,70 @@
+# M3 proof, lab, the late-join load from VEHICLE_SPAWN (docs/vehicles-companions-design.md section 9 M3 item 6) after
+# the host has moved its relief vehicle. Seed afgh-relief-lv, boot fast (the guest's copy gets the host's carry through
+# the continue seeds, run 1914e76c); the host arms type 2 and travels to the Africa LZ (30020 savannahEast_N); both copies
+# draw it there. The host drives it about 30 m away from the drop point and leaves it (the guest's copy follows by
+# RIDE_FAST). Then the lab lever relief_lab forget makes the guest's copy lose its index 0 the way a guest that joins
+# late never had one (Seize Instant, no credit, no VEHICLE_GONE request: the host's must stay): the guest's reconcile
+# loads the host's from VEHICLE_SPAWN mid mission (step=load; why=host_has; the live pose 2 m up, carry_pose=0, since
+# the vehicle stands away from its carry attitude) and both copies show it at the host's x/z (frames m3-relief-lateload).
+# Coordinator only, hidden worker (never visible), copied seed saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-late.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-relief-lv
+labsetting world_relief=1
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot fast
+wait 10000
+waitmission guest 30010 150
+waitgameplay guest 120
+waitgameplay host 60
+host run relief_arm 2 1227.17 25.84 -127.05 -1.571
+host expect relief_arm;type=2
+host worldtrigger goto=30020 goto_lz=0
+waitmission host 30020 300
+waitmission guest 30020 180
+waitgameplay host 150
+waitgameplay guest 150
+both debug godmode 1
+host debug time 43200
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=2;' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2; .*source=seed;' 40
+host run goto_vehicle sortie
+host expect warp_position_readback
+wait 3000
+placebehind guest host 3 9
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle;id=25600
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25600;' 15
+host hold w 1500
+host hold w 1500
+host release
+host hold s 1500
+host release
+wait 2000
+host press e 150
+wait 3500
+waitlog guest 'partner_ride_seat=exit; vehicle=25600;' 10
+wait 12000
+host run relief_census moved
+guest run relief_census moved
+guest run relief_lab forget
+guest expect relief_lab;forget
+waitlog guest 'world_lua=event=relief; role=guest; step=remove; via=seize_instant; why=lab_forget; ok=1;' 10
+waitlog guest 'world_lua=event=relief; role=guest; step=load; why=host_has; type=2;' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2; .*source=load;' 40
+wait 6000
+host run relief_census lateload
+guest run relief_census lateload
+host run relief_status
+guest run relief_status
+host run relief_face
+guest run relief_face
+wait 3000
+both capture m3-relief-lateload
+state
