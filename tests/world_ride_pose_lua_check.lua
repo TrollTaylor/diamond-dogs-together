@@ -276,13 +276,20 @@ end
 -- Bug 2 of the two-PC test of 2026-10-23 (docs/two-pc-test-2026-10-23.md): the host's relief vehicle 25600 existed
 -- only on his copy. The guest's RIDE_FAST track still sent SetPosition (and a refused tilt write) every frame into the
 -- missing id, and ride_fast claimed applied=1157. Each track now asks IsAlive at most every 500 ms; while it is not
--- true the frame is skipped (no tilt write, no SetPosition) and counted as absent=N on the ride_fast line.
+-- true and GetPosition does not answer either (no instance here) the frame is skipped (no tilt write, no SetPosition)
+-- and counted as absent=N on the ride_fast line. A wreck (IsAlive false, still in the pool) is placed as before.
 do
-    local api, logs, alive, asked, writes = W.api, {}, {[25600] = false, [4000] = true}, {}, 0
+    local api, logs, alive, asked, writes = W.api, {}, {[25600] = false, [4000] = true, [4001] = false}, {}, 0
+    local pooled, askedPos = {[25600] = false, [4000] = true, [4001] = true}, {}
     local placedAbsent = 0
     W.api = {
         send = function(id, cmd)
             if cmd.id == 'IsAlive' then asked[id] = (asked[id] or 0) + 1; return alive[id] end
+            if cmd.id == 'GetPosition' then
+                askedPos[id] = (askedPos[id] or 0) + 1
+                if pooled[id] then return {x = 1, y = 2, z = 3} end
+                return nil
+            end
             if cmd.id == 'SetPosition' then
                 placed[#placed + 1] = {id = id, x = cmd.position.x, rotY = cmd.rotY}
                 if id == 25600 and not alive[id] then placedAbsent = placedAbsent + 1 end
@@ -296,7 +303,7 @@ do
         return nil
     end
     W.log = function(text) logs[#logs + 1] = text end
-    env.Tpp = {IsVehicle = function(id) return id == 4000 or id == 25600 end}
+    env.Tpp = {IsVehicle = function(id) return id == 4000 or id == 4001 or id == 25600 end}
     env.PlayerInfo = {OrCheckStatus = function() return false end}
     W.paired = true
     R.fast.tracks, R.fast.closed, R.fast.send.id, R.fast.localId = {}, {}, nil, nil
@@ -317,6 +324,7 @@ do
         'an id this copy lacks: no SetPosition and no tilt write while IsAlive is false')
     check(R.fast.applied == 0 and R.fast.absent == 40, 'absent frames are counted, not applied')
     check(asked[25600] >= 4 and asked[25600] <= 5, 'IsAlive is asked at most every 500 ms per track (2 s: ' .. tostring(asked[25600]) .. ')')
+    check(askedPos[25600] == asked[25600], 'GetPosition is asked only after an IsAlive that is not true')
     local line
     for _, l in ipairs(logs) do if l:find('event=ride_fast;', 1, true) then line = l end end
     check(line ~= nil and line:find(';applied=0;', 1, true) and line:find(';absent=[1-9][0-9]*$') ~= nil,
@@ -343,6 +351,28 @@ do
     local b4 = #placed
     W.tick()
     check(#placed == b4 + 1 and placed[#placed].id == 4000, 'a vehicle this copy has is placed as before')
+    check(askedPos[4000] == nil, 'a live vehicle is never asked GetPosition')
+    -- A wreck here (IsAlive false, still in the pool: GetPosition answers) is placed as before, like the native seat
+    -- gate's absent (the pool bit only). Hidden run 7561ab63: the guest's copy of the jeep was wrecked in a crash there
+    -- only; skipping it left the seated driver behind (refused far, then partner_ride=hide; reason=ride).
+    R.fast.tracks = {}
+    local absentBefore, t2 = R.fast.absent, 500000
+    W.handlers[44]({t2, 3, 4001, 0, 0, 0, 0})
+    for i = 1, 4 do
+        clock = clock + 50
+        W.handlers[44]({t2 + i * 50, 3, 4001, i * 1000, 0, 0, 0})
+    end
+    local b5 = #placed
+    for i = 5, 8 do
+        clock = clock + 50
+        W.handlers[44]({t2 + i * 50, 3, 4001, i * 1000, 0, 0, 0})
+        W.tick()
+    end
+    local onlyWreck = #placed > b5
+    for k = b5 + 1, #placed do if placed[k].id ~= 4001 then onlyWreck = false end end
+    check(onlyWreck and R.fast.absent == absentBefore and asked[4001] == 1 and askedPos[4001] == 1,
+        'a wreck here (IsAlive false, GetPosition answers) is placed as before, not absent (placed ' ..
+        tostring(#placed - b5) .. ', absent ' .. tostring(R.fast.absent - absentBefore) .. ')')
     W.api, W.receipt, W.log = api, nil, nil
 end
 -- User decision 2026-10-22 (docs/mounts.md "RIDE_BODY and the viewer's own buddy"): the partner's RIDE_BODY stream

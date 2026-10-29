@@ -249,7 +249,8 @@ three are fixed by default (unit tests `TestRideRobust`, `partner_player_tests` 
   only logged and keeps the proven named path, so a broken read chain never trades a working named
   seat for a standing Warp. The other player's vehicle itself is still not spawned on this copy
   (relief-vehicle parity is a follow-up); RIDE_FAST skips it (`world_ride_pose.lua` `R.present`:
-  IsAlive every 500 ms per track, `ride_fast; ...; absent=N`).
+  IsAlive every 500 ms per track, then GetPosition, so a wreck still in the pool is placed;
+  `ride_fast; ...; absent=N`).
 - **Clips after every ride (diag #9).** Settle (and a ride hide ending) sets
   `Mission::net_quality_rebase`; the next `TickNative` calls `partner_native_net::Rebase` before
   observing, so the first input frame after the ride only anchors the link-quality window instead

@@ -159,8 +159,11 @@ seat-mode hide of a live vehicle ride, once per reason).
   runtime thread, peer, type 50, not the viewer's own vehicle, realized, body chain ok,
   `identity` body == record, finite, |angle| <= 1570 mrad) and writes the two floats.
   Since the Africa fix (`R.present`) each track first asks the vehicle's `IsAlive` (at most every
-  500 ms): while this copy has no live vehicle with that id (the answer is not true: the pool bit is
-  clear, or a wreck) the frame writes no tilt and sends no SetPosition, and counts as `absent`.
+  500 ms): while this copy has no vehicle with that id (the answer is not true and `GetPosition`
+  does not answer either: the pool bit is clear) the frame writes no tilt and sends no SetPosition,
+  and counts as `absent`. A wreck (`IsAlive` false, still in the pool, `GetPosition` answers) is
+  placed as before (hidden run `7561ab63`: skipping a wreck on one copy left the seated driver
+  behind, refused `far`, then hidden).
 - Log lines: `partner_ride_tilt=read|write|refused; ...`, the world log's
   `event=ride_fast; ...; tilt_sent=..; tilt_written=..; absent=..` (`applied` counts SetPosition
   calls that did not answer false; `state=absent` while the newest track is absent).
