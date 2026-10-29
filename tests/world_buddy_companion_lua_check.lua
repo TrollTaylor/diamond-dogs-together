@@ -28,6 +28,8 @@ local function F(host, o)
     MISSIONS = {[30010] = {}, [30020] = {}, [30050] = {}}, OP = {}, api = {}, bindHooks = {}, startHooks = {}, stopHooks = {},
     pairedHooks = {}, unpairedHooks = {}, handlers = {}, companionOn = o.off ~= true, mirrorCount = 0}
   W.companion = {on = function() return W.companionOn == true end, tail = function() return "" end}
+  -- o.peer == false: the partner's key not seen yet (world_companion.lua C.live, review 2026-10-29).
+  if o.peer ~= nil then W.companion.live = function() return W.companionOn == true and o.peer == true end end
   env.e.MgsCoopWorld = W
   W.ent, W.entOrder = {}, {}
   for i, s in ipairs(o.soldiers or {}) do
@@ -83,6 +85,15 @@ local function F(host, o)
   return c
 end
 
+-- Both PCs must run the key (review 2026-10-29): until the partner's is seen (C.live), the old BUDDY_STATE path runs.
+do
+  local w = F(true, {peer = false})
+  w:tick()
+  check(#w:sent(POSE) == 0 and #w:sent(STATE) == 1, "host key on, guest key not seen: BUDDY_STATE as before, no COMPANION_POSE")
+  w = F(true, {peer = true})
+  w:tick()
+  check(#w:sent(POSE) == 1 and #w:sent(STATE) == 0, "both keys: COMPANION_POSE")
+end
 -- Host: the dog pose rides COMPANION_POSE (a datagram) at 10 Hz while the dog moves and 2 Hz idle; no BUDDY_STATE.
 local h = F(true)
 h:tick()

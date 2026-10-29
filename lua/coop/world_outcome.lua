@@ -24,10 +24,13 @@ do
 
         -- Attribution of an attacker id (id-aware since M1, docs/vehicles-companions-design.md
         -- 6.12). local: the local player and the horse or walker it rides or pilots
-        -- (vars.playerVehicleGameObjectId); mirror: a companion instance that stands for the
-        -- partner's (the capacity-two index 1 horse or walker; with companion_host_owned every
-        -- companion on the guest's copy, the host's); buddy: this copy's own companion;
-        -- other. A mirror's outcome is logged (W.mirrorEngaged) and never forwarded.
+        -- (vars.playerVehicleGameObjectId), and without the companion module (both copies'
+        -- companion_host_owned, C.live) this copy's own horse or walker, as before M1 (review
+        -- 2026-10-29: world_vehicle.lua counts only local; a walker pilot setting that var is
+        -- unverified); mirror: a companion instance that stands for the partner's (the
+        -- capacity-two index 1 horse or walker; with the module every companion on the guest's
+        -- copy, the host's); buddy: this copy's own companion; other. A mirror's outcome is
+        -- logged (W.mirrorEngaged) and never forwarded.
         local function index0(name, fallback)
             local f = W.api.buddyId
             local ok, id = false, nil
@@ -45,14 +48,23 @@ do
             end
         end
         W.companionKind = companionKind
+        local function companionLive()
+            local C = W.companion
+            if type(C) == "table" and type(C.live) == "function" then return C.live() == true end
+            return W.companionOn == true
+        end
         function W.attClass(att)
             local a = W.api
             if type(att) ~= "number" or att == a.null or not a.isLocal then return "none" end
             if a.isLocal(att) == true then return "local" end
             local kind, partnerIndex = companionKind(att)
             if not kind then return "other" end
-            if (kind == "horse" or kind == "walker") and W.get(vars, "playerVehicleGameObjectId") == att then return "local" end
-            if partnerIndex or (W.companionOn == true and not W.host) then return "mirror" end
+            local mount = kind == "horse" or kind == "walker"
+            if mount and W.get(vars, "playerVehicleGameObjectId") == att then return "local" end
+            if partnerIndex then return "mirror" end
+            local live = companionLive()
+            if mount and not live then return "local" end
+            if live and not W.host then return "mirror" end
             return "buddy"
         end
         -- event=mirror_engaged (counted, never forwarded): kind, message, entity handle.

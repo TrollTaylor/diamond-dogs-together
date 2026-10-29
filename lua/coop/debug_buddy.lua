@@ -175,7 +175,7 @@ do
   end
   if cmd=="horse_spawn" or cmd=="walker_spawn" then
    local W,C=companion()
-   if get(W,"companionOn")==true and get(W,"host")~=true and type(get(C,"refuse"))=="function" then
+   if type(get(C,"live"))=="function" and C.live()==true and get(W,"host")~=true and type(get(C,"refuse"))=="function" then
     pcall(C.refuse,"f9_"..cmd,nil);return false,"host_only;companion=host_owned"
    end
   end

@@ -17,6 +17,8 @@ local function Fixture(o)
     env.vars = {playerVehicleGameObjectId = o.riding or 65535}
     local W = {OP = {RECEIVED = 3, REJECT = 4, OUTCOME = 16, REQ_OUTCOME = 17}, handlers = {}, bindHooks = {}, startHooks = {}, stopHooks = {}, pairedHooks = {}, unpairedHooks = {},
         observers = {}, host = o.host == true, companionOn = o.companion == true, logs = {}}
+    -- o.live: world_companion.lua's C.live (both copies run the key); absent, W.companionOn decides.
+    if o.live ~= nil then W.companion = {live = function() return o.live == true end} end
     W.get = function(t, k) if t == nil then return nil end return t[k] end
     W.log = function(s) W.logs[#W.logs + 1] = s end
     W.enemy = {RANK = {}, TERMINAL = {}, s = {}}
@@ -38,12 +40,17 @@ local function Fixture(o)
 end
 
 -- Companion mode off (today's play): the copy owns its buddy; only the second capacity-two
--- mount (index 1, the partner's) is a mirror.
+-- mount (index 1, the partner's) is a mirror. Its own horse and walker count as the player's, ridden or not, as
+-- before M1 (review 2026-10-29: world_vehicle.lua counts only local, and that a walker pilot sets
+-- vars.playerVehicleGameObjectId is unverified).
 local W = Fixture({host = false})
 check(W.attClass(0) == "local", "the local player is local")
 check(W.attClass(SOLDIER) == "other" and W.attClass(65535) == "none" and W.attClass(nil) == "none", "others and no attacker")
-check(W.attClass(HORSE0) == "buddy", "an unridden own horse is this copy's companion (buddy), not local")
-check(W.attClass(WALKER0) == "buddy", "an unpiloted own walker is buddy")
+check(W.attClass(HORSE0) == "local", "off: an unridden own horse is local (as before M1)")
+check(W.attClass(WALKER0) == "local", "off: an unpiloted own walker is local (as before M1)")
+W = Fixture({host = false, companion = true, live = false})
+check(W.attClass(HORSE0) == "local" and W.attClass(WALKER0) == "local" and W.attClass(DOG) == "buddy",
+    "the key on here but not on the partner's copy: as off")
 check(W.attClass(DOG) == "buddy" and W.attClass(QUIET) == "buddy", "the own D-Dog and Quiet are buddy")
 check(W.attClass(WALKER1) == "mirror", "the partner's walker (index 1) is a mirror")
 check(W.attClass(HORSE1) == "mirror", "the partner's horse (index 1) is a mirror")

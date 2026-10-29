@@ -154,6 +154,18 @@ c=F();c.expectType=4;c.walkerMounted=0;ok,msg=c:run("walker_spawn")
 check(not ok and msg=="walker_posture" and c.calls==0,"a malformed posture result refuses")
 c=F();c.expectType=4;c.env.PlayerStatus.HORSE_GALLOP=nil;ok,msg=c:run("walker_status")
 check(not ok and msg=="walker_posture_binding" and c.calls==0,"a missing gait status binding refuses")
+-- M1 F9 refusal (world_companion.lua): a guest summon is refused only while both copies run companion_host_owned
+-- (C.live; review 2026-10-29: the key is local to each copy), never on the host.
+do
+ local g=F();local refused;g.W.companion={live=function()return g.live==true end,refuse=function(p)refused=p end}
+ g.live=true;local ok2,msg2=g:run("horse_spawn")
+ check(not ok2 and msg2=="host_only;companion=host_owned" and refused=="f9_horse_spawn" and g.calls==0,"guest F9 refused with both keys")
+ g=F();refused=nil;g.W.companion={live=function()return false end,refuse=function(p)refused=p end}
+ ok2,msg2=g:run("horse_spawn")
+ check(refused==nil and msg2~="host_only;companion=host_owned","the partner's key not seen: no refusal (its own horse)")
+ g=F();refused=nil;g.W.host=true;g.W.companion={live=function()return true end,refuse=function(p)refused=p end}
+ ok2,msg2=g:run("horse_spawn");check(refused==nil,"the host summons")
+end
 local raw=slurp(menu)
 check(raw:find('{"player", "spawn", "buddy", "vehicle"}',1,true)and raw:find('a[1] == "horse_status"',1,true),"normal debug route and read-only mounted exception composed")
 check(raw:find('{"enemy", "player", "spawn", "buddy", "vehicle"}',1,true),"stop clears new helper metadata")

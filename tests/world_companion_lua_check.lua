@@ -72,7 +72,8 @@ local function Fixture(role, o)
     env.GameObject = {GetGameObjectIdByIndex = function(name, i) return name == 'TppBuddyDog2' and i == 0 and 9728 or 65535 end,
         SendCommand = function(id, cmd) rec('SendCommand', id, cmd.id, cmd.pos); return true end}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
-    env.TppMission = {Load = function(m) rec('load', m, env.vars.buddyType) end, UpdateCheckPoint = function() rec('checkpoint'); return true end}
+    env.TppMission = {Load = function(m) rec('load', m, env.vars.buddyType) end, UpdateCheckPoint = function() rec('checkpoint'); return true end,
+        OnEndMissionPreparation = function(...) rec('deploy', ...) end}
     env.e = {StageBlockCurrentPosition = function(a) rec('stage', a) end}
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {}, bindHooks = {},
         level = 3, role = role, host = role == 1, active = true, mission = 30010, epoch = 7, paired = true, eff = 3, mode = 1,
@@ -96,6 +97,8 @@ local function Fixture(role, o)
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.follow.install({3, role, 1, 1, 7, 0, 1, 55, 0, 0, 0, 0, 0, 0, 0, o.on ~= false and 1 or 0})
+    -- The peer's key, as its CHARACTER (to the host) or COMPANION (to the guest) shows it (o.peer = false: not yet).
+    if o.peer ~= false then W.companion.peer = true end
     W.api = {}
     for _, f in ipairs(W.bindHooks) do f(W.api) end
     for _, f in ipairs(W.startHooks) do f() end
@@ -439,6 +442,58 @@ do
     h.env.TppSave.SaveVarsToSlot(0)
     check(h.slot.buddyType == NONE and h.slot.start == QUIET, 'a dismissed dog saves none; the parked sortie copy still Quiet')
     check(h.C.own == nil, 'the host keeps no buddy snapshot')
+end
+-- Review 2026-10-29 (minor 7): both PCs must run companion_host_owned (CFG r[16] is local to each copy). Each copy shows
+-- its key in its own traffic (the guest's CHARACTER, the host's COMPANION); until the peer's arrives the module keeps
+-- out of the way (no buddy seeds applied, no mask, no refusal; world_buddy keeps its old path).
+do
+    local g = Fixture(2, {peer = false})
+    follow(g, values)
+    check(g.env.vars.buddyType == HORSE and not g.C.own, 'guest key on, host key not seen: the host buddy seeds are not applied')
+    g.tick()
+    local char
+    for _, t in ipairs(g.tx) do if t.op == 56 then char = t end end
+    check(char ~= nil, 'the guest still sends CHARACTER (its key signal)')
+    check(#g.masks == 0, 'no CALL mask without the host key')
+    check(g.env.TppBuddy2BlockController.CallBuddy(DOG, nil, 0) == true and not g.find('step=refused;'), 'no Lua refusal without the host key')
+    g.W.handlers[48]({1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0}, g.time)
+    check(g.C.peer == true and g.C.live() and g.find('step=peer;on=1;'), 'the host COMPANION shows its key: the module runs')
+    g.tick(300)
+    check(g.masks[#g.masks] and g.masks[#g.masks][1] == 'set', 'and masks CALL for the host dog')
+    local h = Fixture(1, {buddyType = DOG, active = DOG, peer = false})
+    check(not h.C.live(), 'host: the guest key not seen')
+    h.tick()
+    local comp
+    for _, t in ipairs(h.tx) do if t.op == 48 then comp = t end end
+    check(comp ~= nil, 'the host still sends COMPANION (its key signal)')
+    h.W.handlers[56]({1, 2, 0})
+    check(h.C.live() and h.find('step=peer;on=1;'), 'the guest CHARACTER shows its key')
+end
+-- Review 2026-10-29 (minor 3): the host's deploy waits for the guest's CHARACTER (at most 10 s after pairing), so the
+-- sortie seeds know the Quiet lock.
+do
+    local h = Fixture(1, {buddyType = QUIET, peer = false})
+    for _, f in ipairs(h.W.pairedHooks) do f(false) end
+    h.env.gvars.mis_nextMissionCodeForMissionClear = 30010
+    h.env.TppMission.OnEndMissionPreparation(1, 2)
+    check(h.called('deploy') == 0 and h.find('event=follow;step=deploy_wait;reason=character;'), 'paired, no CHARACTER yet: the deploy is held')
+    h.time = h.time + 600; h.F.hold(h.time)
+    check(h.called('deploy') == 0, 'still held')
+    h.W.handlers[56]({1, 6, 1})
+    h.time = h.time + 100; h.F.hold(h.time)
+    check(h.called('deploy') == 1 and h.C.guestQuiet == true, 'CHARACTER arrived: the deploy runs, the lock knows the guest plays Quiet')
+    h = Fixture(1, {peer = false})
+    for _, f in ipairs(h.W.pairedHooks) do f(false) end
+    h.env.gvars.mis_nextMissionCodeForMissionClear = 30010
+    h.env.TppMission.OnEndMissionPreparation(1, 2)
+    h.time = h.time + 5000; h.F.hold(h.time)
+    check(h.called('deploy') == 0, 'held 5 s after pairing')
+    h.time = h.time + 5100; h.F.hold(h.time)
+    check(h.called('deploy') == 1, 'released 10 s after pairing without CHARACTER (a guest without the key)')
+    h = Fixture(1)
+    h.env.gvars.mis_nextMissionCodeForMissionClear = 30010
+    h.env.TppMission.OnEndMissionPreparation(1, 2)
+    check(h.called('deploy') == 1 and not h.find('step=deploy_wait;'), 'agreement known: no wait')
 end
 -- Host with a guest who is not Quiet: no lock.
 c = Fixture(1, {buddyType = QUIET})

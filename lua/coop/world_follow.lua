@@ -233,8 +233,11 @@ local ok, ready = pcall(F.applySeeds, F.current)
 if not ok then W.fail(ready) end
 return ok and ready
 end
--- The held host sortie: released when paired, when nobody can come, after 120 s,
--- or when world sync stops (LEVEL 0, W.fail: world_sync calls this while inactive).
+-- The companion module's wait for the partner's character (world_companion.lua F.waitPeer).
+local function waiting(now) return type(F.waitPeer) == "function" and F.waitPeer(now) == true end
+-- The held host sortie: released when paired (and the partner's companion character is in, at
+-- most 10 s), when nobody can come, after 120 s, or when world sync stops (LEVEL 0, W.fail:
+-- world_sync calls this while inactive).
 function F.hold(now)
 local hd = F.hostDeploy
 if not hd then return end
@@ -242,7 +245,7 @@ now = now or W.now()
 if hd.mission ~= W.mission or not W.host then
     F.hostDeploy = nil
     log(fmt("step=deploy_held;reason=stale;mission=%s", tostring(hd.mission)))
-elseif W.paired or not F.enabled or not W.active then
+elseif (W.paired and not waiting(now)) or not F.enabled or not W.active then
     F.hostDeploy = nil
     local live = W.active and F.enabled
     F.deploying = live and W.paired and W.eff >= 3 or false
@@ -437,9 +440,11 @@ if type(vanillaDeploy) == "function" then
                 why, p = F.alone()
                 if why then solo(why, target); return F.originalDeploy(...) end
             end
-            if not W.paired or W.eff < 3 then
+            local character = W.paired and W.eff >= 3 and waiting(now)
+            if not W.paired or W.eff < 3 or character then
                 F.hostDeploy = {n = select("#", ...), mission = W.mission, target = target or 0, at = now, checkAt = now, notedAt = now, ...}
-                log(fmt("step=deploy_wait;reason=ready;target=%s;partner=%s", tostring(target or 0), p and tostring(p.mission) or "nil"))
+                log(fmt("step=deploy_wait;reason=%s;target=%s;partner=%s", character and "character" or "ready", tostring(target or 0),
+                    p and tostring(p.mission) or "nil"))
                 if not W.paired then note(2, target or 0, 0) end
                 return
             end

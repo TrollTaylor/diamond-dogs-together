@@ -30,7 +30,12 @@ local function fromWire(k) for n, w in pairs(WIRE) do if w == k then return BT(n
 local function L(text) W.log("event=companion;role=" .. (W.host and "host" or "guest") .. ";" .. text) end
 local function note(a) if type(W.note) == "function" then pcall(W.note, 13, a, 0) end end
 function C.on() return W.companionOn == true and (W.level or 0) >= 3 end
-function C.applies() return C.on() and not W.host end
+-- Both PCs must run the key (review 2026-10-29: CFG r[16] is local). Each copy shows its own in
+-- its traffic (the guest's CHARACTER, the host's COMPANION): C.on() sends those signals, C.live()
+-- (the peer's seen too) runs the module. The agreement lasts until the session ends.
+function C.live() return C.on() and C.peer == true end
+function C.applies() return C.live() and not W.host end
+local function peerSeen() if not C.peer then C.peer = true; L("step=peer;on=1;") end end
 local function TBC(name) return C.orig[name] or W.get(TppBuddy2BlockController, name) end
 local function active()
  local f = W.get(TppBuddy2BlockController, "GetActiveBuddyType")
@@ -223,6 +228,7 @@ local function sendCharacter(now, force)
 end
 H[OP.CHARACTER] = function(v)
  if not W.host or #v ~= 3 then return end
+ peerSeen()
  local quiet = v[3] == 1
  if C.guestQuiet ~= quiet or C.guestChar ~= v[2] then
   C.guestQuiet, C.guestChar = quiet, v[2]
@@ -231,6 +237,7 @@ H[OP.CHARACTER] = function(v)
 end
 H[OP.COMPANION] = function(v, now)
  if W.host or #v ~= 12 then return end
+ peerSeen()
  C.host = {kind = v[3], present = v[5] == 1, x = v[6] / 1000, y = v[7] / 1000, z = v[8] / 1000, yaw = v[9] / 1000, at = now}
  if C.hostKind ~= v[3] then
   C.hostKind = v[3]
@@ -419,6 +426,7 @@ local function guestTick(now)
   end
  end
  sendCharacter(now)
+ if not C.live() then if C.masked then C.mask(false) end if C.mine then C.unguard() end return end
  if now >= (C.maskAt or 0) then
   C.maskAt = now + 250
   -- Only while the host has a companion out: the call menu also holds knock and sonar (run dd4c61ff).
@@ -440,7 +448,10 @@ W.startHooks[#W.startHooks + 1] = function()
  if C.expect and C.expect.mission == W.mission then C.expect.deadline = W.now() + 30000 else C.expect = nil end
  if C.on() and not W.host then C.charAt = nil end
 end
-W.pairedHooks[#W.pairedHooks + 1] = function() C.charAt, C.txAt = nil, nil end
+W.pairedHooks[#W.pairedHooks + 1] = function() C.charAt, C.txAt, C.pairedAt = nil, nil, W.now() end
+-- The host's deploy waits for the guest's CHARACTER (world_follow.lua F.hold; at most 10 s after
+-- pairing), so its sortie seeds know the Quiet lock (review 2026-10-29).
+W.follow.waitPeer = function(now) return W.host and C.on() and W.paired and not C.peer and now - (C.pairedAt or now) < 10000 end
 W.unpairedHooks[#W.unpairedHooks + 1] = function()
  C.host, C.hostKind, C.unpairedAt = nil, nil, W.now()
  pcall(C.mask, false)
@@ -461,7 +472,7 @@ function C.refuse(path, t)
  return false
 end
 local function guard(fn, t)
- if W.host or not C.on() then return false end
+ if W.host or not C.live() then return false end
  local allowed = C.allowed()
  if allowed == nil then return false end
  if fn == "DeleteBuddy" then return allowed ~= BT("NONE") end

@@ -12,9 +12,11 @@ W.OP.BUDDY_STATE, W.OP.BUDDY_ACK = 39, 40
 local STATE, ACK = 39, 40
 local CPOSE, CACK = 57, 49
 W.OP.COMPANION_POSE, W.OP.COMPANION_ACK = CPOSE, CACK
+-- The host-owned companion runs only when both copies run its key (C.live; review 2026-10-29).
 local function companion()
  local C = W.companion
- return type(C) == "table" and type(C.on) == "function" and C.on() == true
+ local f = type(C) == "table" and (C.live or C.on)
+ return type(f) == "function" and f() == true
 end
 B.companion = companion
 local function finite(n, bound)
