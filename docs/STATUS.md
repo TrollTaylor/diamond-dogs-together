@@ -1,3 +1,41 @@
+## October 29, 2026: M1/M2 review fixes (branch `wp/companion-host`, lab key, play default off)
+
+Branch `wp/companion-host`, on top of M2 (`35c6f51`). Not merged, not pushed. An independent review of M1 and M2 found
+two major and nine minor defects, all with the lab key `companion_host_owned` on, and refuted several claims; the
+fixes, their fixture tests (each fails on the code before it) and the corrected claims are in
+`docs/vehicles-companions-design.md` section 8.3 (the corrections in place in 8.1, 8.2, 9 and 10). No play default
+changed. Two-PC: not tested.
+
+**What changed (with the key on).**
+- The host's Quiet lock no longer keeps a session-long copy of its buddy vars. A Quiet it removes is parked: the live
+  var reads none and every save writes Quiet back for it, `StageBlockCurrentPosition(true)` parks her again after the
+  mission-start slot restore, and a host who calls or picks another buddy keeps that buddy (saved and loaded).
+- The guest's PC shows only a host companion it can hold still: the dog. A host horse, walker or Quiet is not shown
+  there until its milestone (the seeds and the reconcile give none); a dog is called only at the host dog's pose.
+- Both PCs must run the key: each shows it in its own traffic, and the module (the seeds, the mask, the refusals, the
+  M2 hold, the mirror attribution) runs only when both have it. The host's deploy waits up to 10 s after pairing for
+  the guest's character.
+- The session ends 10 s after the link drops (120 s alone after a mission change): the host's lock lifts, the guest's
+  copy of the host's companion is deleted and the guest's own buddy vars come back. The reconcile backs off and stops
+  after six tries. `companion_cell goto` is lab only. Without the key an own horse or walker counts as the player's
+  again (as before M1).
+- `lua/coop/world_companion_dog.lua`: a new world chunk with the M2 hold and the companion lab levers (both old chunks
+  were near the 32000-byte limit).
+
+**Hidden-worker runs** (loopback, research build, native gun stage, copied lab saves, low graphics; each closed with
+the baseline restored and the real saves unchanged; archived under `%USERPROFILE%\mgs-coop-run-archive\companions`).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `74d5ba7e` | `companion-host-quiet-dog.txt` (host `afgh-quiet`, guest `afgh-horse`, the guest plays Quiet) | No expectation failed; stopped by the worker at a `resetpose` after the Continue (a benchmark pose cannot cross a mission generation). Both keys seen at pairing; the helicopter Quiet sent away and parked, the sortie saves wrote her back, 30010 loaded none on the host and nothing was deleted there (de43726a's code loaded her and deleted her on the first frame); the host's dog call ended the park and the guest's copy loaded the dog at its pose; a host horse: the guest sent its dog away and never showed a horse; checkpoint and Continue: the dog on both copies. Frames: the host's body hid the companion |
+| `9165baeb` | `companion-host-quiet-dog-frames.txt` (same seeds) | No expectation failed. The same lock and Continue lines, then host-led travel to 30020 through the helicopter: the host's dog on both copies, never a Quiet. Frames: the host's D-Dog beside Snake before and after the Continue; the host's D-Horse on the host's screen and none on the guest's; on the guest's screen the dog's head only (a rock rise in the way) |
+| `b651b42c` | `companion-host-dog-guestview.txt` (same seeds, the guest 4 m to the other side) | No expectation failed. FRAME on both copies with the shipped M2 hold: the host's D-Dog beside Snake on the host's screen and the same dog beside Snake under its marker on the guest's (held 2-214 cm); then the host's D-Horse on the host's screen and no horse on the guest's |
+
+**Not done / open:** the stage hook's own effect in game (no restore brought a Quiet back in these runs); the session
+end in game (the worker's `world=0` unpairs only its own copy); the deploy wait for CHARACTER in game (the deploys came
+long after pairing); the iDroid dismiss refusal; the host's sortie-prep and iDroid buddy lists; a play rehearsal of
+the fixes; a two-PC session. E19 (the dog killed on the guest's PC) and D7 are unchanged.
+
 ## October 29, 2026: M2, D-Dog synced and following the host, stage 1 (branch `wp/companion-host`, lab key, play default off)
 
 Branch `wp/companion-host`, on top of M1 (`e08dc20`). Not merged, not pushed. Milestone M2 of

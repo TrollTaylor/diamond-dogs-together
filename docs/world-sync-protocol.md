@@ -1039,6 +1039,18 @@ on a mount no longer stops either role's own-dog read. Without the key this
 section's BUDDY_STATE path below is unchanged. Live acceptance: section 8 and 9
 of the design.
 
+**Review fixes (2026-10-29, design 8.3).** The M2 code lives in
+`world_companion_dog.lua` (spliced after `world_companion.lua`). The key is local
+to each copy, so each copy shows it in its own traffic: the guest's CHARACTER
+(0x38) and the host's COMPANION (0x30) are sent whenever the local key is on, and
+the companion path (COMPANION_POSE, the hold, the seeds' buddy keys, the guest's
+refusals) runs only once the peer's has been seen; until then, and after the
+session ends (10 s after a link-session or level-0 unpair, else 120 s alone in
+game), BUDDY_STATE runs as without the key. The guest's copy loads only a host
+companion it can hold (the dog): the seeds' `buddyType` and
+`buddyTypeMissionStart` read none on the guest for any other kind, and the
+reconcile sends a mirror away instead of calling one. No wire change.
+
 | World op | Name | Direction | Fields | Queue | Body bytes |
 |---:|---|---|---|---|---:|
 | 0x27 | BUDDY_STATE | H->G | sequence, kind, present, x/y/z mm, heading mrad, sender tick (+ native age ms) | world | 24 |
