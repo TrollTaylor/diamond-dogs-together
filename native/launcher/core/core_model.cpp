@@ -219,9 +219,10 @@ public:
         paths_ = GetInstancePaths(game_dir_);
         LoadSettings(paths_, settings_);
         // After an update the old launcher has closed (launcher_main waited for
-        // it), so its exe can go now; Windows may need a moment to let go of it.
+        // it, or for the mutex of an updater before 0.14.4), so its exe can go
+        // now; Windows may need a moment to let go of the exiting process's image.
         bool old_exe_gone = CleanOldExecutable(paths_.game);
-        for (int i = 0; start_.after_update && !old_exe_gone && i < 20; ++i) {
+        for (int i = 0; !old_exe_gone && i < 30; ++i) {
             env_->SleepMs(100);
             old_exe_gone = CleanOldExecutable(paths_.game);
         }
@@ -668,8 +669,10 @@ UpdateInfo update_info() const override {
             if (!RelaunchSelf(paths, relaunch_args, error)) {
                 while (!error.empty() && (error.back() == '.' || error.back() == ' ')) error.pop_back();
                 log("update=restart_failed; error=" + error);
-                fail("The update is installed, but the new version did not start: " + error +
-                     ". Close this window, then start Diamond Dogs Together again.");
+                // The reason stays in the log (Collect logs); the player gets what to do.
+                fail("The update is installed, but the new version did not start. Close this window, then start Diamond Dogs "
+                     "Together again. If it still does not start, extract the latest zip from the release page into the game "
+                     "folder again.");
                 return;
             }
             // The new exe runs and waits for this window: the shell closes it now.

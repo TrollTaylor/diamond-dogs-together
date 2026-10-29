@@ -2339,7 +2339,9 @@ void TestUpdateThroughModel() {
         m->start_update();
         CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error); }));
         const std::string error = m->update_info().error;
-        CHECK(Has(error, "installed") && Has(error, "did not start") && Has(error, "error 5") && Has(error, "start Diamond Dogs Together again"));
+        CHECK(Has(error, "installed") && Has(error, "did not start") && Has(error, "start Diamond Dogs Together again") &&
+              Has(error, "release page") && !Has(error, "error 5"));   // plain words for the player
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=restart_failed; error=Windows refused to start it (error 5)"));   // the reason, for Collect logs
         relaunch_ok = true;
     }
     // The developer test feed: a found update installs at once, and the new exe keeps the feed.
@@ -2368,6 +2370,26 @@ void TestUpdateThroughModel() {
         CHECK(Has(ReadText(f.paths.launcher_log), "update=finished; from_pid=4343"));
         auto plain = MakeRealModelWithEnv(f.game, f.env);
         CHECK(plain->update_info().updated_to.empty());
+    }
+    // An updater before 0.14.4 started this exe without --after-update; its
+    // .old exe is still held for a moment by the exiting old launcher.
+    {
+        const std::wstring old_exe = f.game + L"\\DiamondDogsTogether.exe.old";
+        WriteText(old_exe, "OLD-LAUNCHER");
+        HANDLE held = CreateFileW(old_exe.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(held != INVALID_HANDLE_VALUE);
+        int sleeps = 0;
+        f.env->on_sleep = [&]() {
+            if (++sleeps == 3 && held != INVALID_HANDLE_VALUE) {
+                CloseHandle(held);
+                held = INVALID_HANDLE_VALUE;
+            }
+        };
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        f.env->on_sleep = nullptr;
+        if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+        CHECK(!PathExists(old_exe) && sleeps >= 3);
+        CHECK(m->update_info().updated_to.empty());
     }
     GetUpdateHooks() = saved;
 }
