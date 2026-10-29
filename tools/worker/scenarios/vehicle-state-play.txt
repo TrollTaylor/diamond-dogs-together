@@ -1,9 +1,11 @@
-# M4 play rehearsal (docs/vehicles-companions-design.md section 9 M4; docs/world-sync-protocol.md sections 16-17):
-# VEHICLE_STATE and VEHICLE_GONE in mode=play over the -WanSim bad link, with no lab lever (play refuses them): the
-# sweep at PAIRED, a guest drive-and-leave (the host never sends against RIDE_FAST), the host's shots at a parked jeep
-# (body life on the guest's copy) and the host destroying it with C4 (a real VehicleBroken -> VEHICLE_GONE
-# -> a wreck on the guest's copy). Clear-enemies kills give the commit -> apply latency with the vehicle traffic on (K27).
+# M4 play rehearsal of VEHICLE_STATE (docs/vehicles-companions-design.md section 9 M4; docs/world-sync-protocol.md
+# sections 16-17) in mode=play over the -WanSim bad link, with no lab lever (play refuses them): the sweep at PAIRED,
+# a guest drive-and-leave (the host never sends against RIDE_FAST, then keeps the pose the guest left), and the host's
+# shots at the parked jeep (body life on the guest's copy). VEHICLE_GONE is on too (both modules as they would ship).
 # Wakh Sind (30010, lab seed), the authored jeeps coop-vehicle-gone.txt uses (C boards J1 from this goto spot).
+# History: e235bda6 (this scenario with a C4 loss part at the end) passed every VEHICLE_STATE line but its C4 never
+# destroyed the jeep (life 2300 -> 592, no VehicleBroken); the loss part is gone (the play loss is proven by
+# vehicle-gone-play.txt, e44516d7) and a both-screens frame of the left jeep is added (play-left-both).
 # Coordinator only, hidden worker (never visible), copied lab saves, MGS_GAME_LUA_DIR unset, under the verify lock.
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-state-play.txt
@@ -12,11 +14,10 @@
 #   both   event=vehicle_state; step=on; mission=30010; ...; lrrp=6 and event=vehicle_gone; step=on; mission=30010
 #   host   step=sweep_done; guest step=same lines (the copies agree at the start)
 #   drive  host step=skip; reason=partner_ride; id=J1 while the guest drives, step=resume after, then step=tx; why=moved;
-#          guest step=same|applied for J1; frames play-left: the jeep where the guest left it on both screens
-#   damage host step=tx; why=life|state|parts -> guest step=applied; ...; moved=0; ...; life=; frames play-damaged
-#   loss   the host's C4 on the jeep: host event=vehicle_gone; step=watch; m=(VehicleBroken|Dead) -> lost -> tx (cause 2);
-#          guest step=rx -> applied; via=wreck (M4 wreck parity) or absent; reason=wreck (its own copy broke too: the
-#          same C4 is not on it, so only when the life sync emptied it); frames play-det-NN, play-destroyed
+#          guest step=same|applied for J1; frames play-left (guest) and play-left-both (the host behind the guest:
+#          the jeep where the guest left it on both screens)
+#   damage host step=tx; why=life|state|parts -> guest step=applied; ...; moved=0; ...; life=; frames play-damaged;
+#          vehicle_state_status of J1 on both copies: the same pos and life
 # NEVER: step=error, viewer_changed, faults, a guest step=applied while it rides J1.
 labsetting world_vehicle_state=1
 labsetting world_vehicle_gone=1
@@ -64,6 +65,11 @@ waitlog host 'event=vehicle_state; step=tx; id=256[0-9][0-9]; why=moved;' 10
 waitlog guest 'event=vehicle_state; step=(same|applied); id=256[0-9][0-9]; from=256[0-9][0-9];' 10
 wait 1500
 both capture play-left
+placebehind host guest 7 -4
+wait 2500
+both capture play-left-both
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
 # Damage: the host shoots the parked jeep from its goto spot; the guest stands clear.
 host debug goto_vehicle jeep
 wait 2500
@@ -83,33 +89,10 @@ waitlog host 'event=vehicle_state; step=tx; id=256[0-9][0-9]; why=(life|state|pa
 waitlog guest 'event=vehicle_state; step=applied; id=256[0-9][0-9]; from=256[0-9][0-9]; moved=0; .*life=' 10
 wait 1000
 both capture play-damaged
-# Loss: the host places C4 on the jeep from the goto spot (the C4 support slot, as partner-c4-v2.txt), backs off and
-# detonates it: a real destruction (VehicleBroken -> VEHICLE_GONE cause 2 -> a wreck on the guest's copy, M4).
-host debug slot support 2
-wait 2000
-host hold rmb 1500 nowait
-wait 300
-host hold lmb 300 nowait
-wait 1500
-host release
-host hold s 1500
-host hold s 1500
-host hold s 1500
-wait 1000
-both capture play-c4-placed
-host hold rmb 1500 nowait
-wait 700
-host press e
-guest burst play-det 6 300
-host release
-wait 1500
-waitlog host 'event=vehicle_gone; step=watch; id=256[0-9][0-9]; m=(VehicleBroken|Dead);' 20
-waitlog host 'event=vehicle_gone; step=tx; id=256[0-9][0-9]; cause=2;' 20
-waitlog guest 'event=vehicle_gone; step=(applied|absent); id=256[0-9][0-9]; .*src=rx' 20
-wait 2000
-both capture play-destroyed
-host run vehicle_gone_status
-guest run vehicle_gone_status
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
 host run vehicle_state_status
 guest run vehicle_state_status
+host run vehicle_gone_status
+guest run vehicle_gone_status
 state
