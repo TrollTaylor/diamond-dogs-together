@@ -1,0 +1,121 @@
+# D7 frames (docs/vehicles-companions-design.md 8.9): run 3f69e3b7 (companion-dog-follow.txt) proved the follow and the
+# restore in logs, but the guest stood behind the host, whose body hid the dog on the guest's screen, and the host's
+# dog stayed idle through the marked walk leg. Here the guest stands 6 m behind and 6 m to the left of the host, facing
+# it, and stays put while the host walks and runs away (the guest's camera sees the host and its dog side on); the
+# host's dog is called 5 m in front of the host (companion_lab call_here dog) before each part.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-follow-frames.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# Expected: walk2 / run2 track windows within=1 with the dog on both screens (f2-walk, f2-run); the restore with the dog
+# in view on the guest's screen before and after (rst2-before, rst2-dead, rst2-back); hurt (f2-hurt), down (f2-down:
+# 'D-Dog Near Death' and the extraction on both) and the re-call (f2-recall) on both screens.
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 90
+host run godmode 1
+guest run godmode 1
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+placebehind guest host 6 -6
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
+waitlog guest 'world_lua=event=dog_guard; role=guest; step=armed; reason=ok; byte=(129|1[3-5][0-9]);' 30
+# --- the legs: the host walks and runs away from the guest, who stays and watches ------------------------------------
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+host expect ^call_here;kind=dog;
+wait 5000
+both capture f2-dog
+guest run companion_lab mark walk2
+host hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+wait 700
+both capture f2-walk
+wait 750
+host hold ctrl+w 1500 nowait
+wait 1450
+host release
+waitlog guest 'world_lua=event=companion_track; band=walk; .*within=1; leg=walk2; mode=warp;' 10
+wait 2000
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+wait 5000
+guest run companion_lab mark run2
+host hold w 1500 nowait
+wait 1450
+host hold w 1500 nowait
+wait 700
+both capture f2-run
+wait 750
+host hold w 1500 nowait
+wait 1450
+host release
+waitlog guest 'world_lua=event=companion_track; band=run; .*within=1; leg=run2; mode=warp;' 10
+wait 3000
+both capture f2-run-stop
+# --- the restore fallback with the dog in view ------------------------------------------------------------------------
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+wait 5000
+guest run companion_lab mark restore
+both capture rst2-before
+logmark both
+guest run companion_lab kill_mirror
+guest expect ^kill_mirror;queued=1
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=dead; host=alive;' 20
+wait 400
+both capture rst2-dead
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=back; ms=[0-9]+;' 60
+wait 2500
+both capture rst2-back
+wait 2000
+guest capture rst2-back-2
+guest run buddy_status
+guest expect kdog
+# --- hurt, then down, then the host's re-call -------------------------------------------------------------------------
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+wait 5000
+guest run companion_lab mark state2
+logmark both
+host run companion_lab dog_life 30
+waitlog guest 'dog_guard=follow;byte=0x8a;life=[0-9]+>3226;' 15
+wait 2000
+both capture f2-hurt
+logmark both
+host run companion_lab dog_life 0
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=dead; host=down;' 15
+wait 1000
+both capture f2-down
+wait 3000
+both capture f2-down-2
+wait 22000
+logmark both
+host run companion_lab recall
+host expect ^recall;
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=recalled;' 60
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+wait 4000
+both capture f2-recall
+guest run buddy_status
+guest expect kdog
+host run buddy_status
+host expect kdog
+state
