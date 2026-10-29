@@ -1027,8 +1027,11 @@ guest answers COMPANION_ACK (0x31, reliable, 1 Hz: sequence, kind, result 0
 holding at the host's pose / 1 loading or unreadable / 2 refused or another kind
 / 3 stale, held at the last pose / 5 held where it stands, error cm). The guest
 holds its copy of the host's dog every 100 ms at the host dog's pose led by the
-sample's age (at most 300 ms), warps it beyond 15 m, and **never releases it to
-its own AI**: no release on a stale stream, `present=0`, a kind change, an
+sample's age (at most 300 ms, and only from consecutive 10 Hz samples of a live
+stream) with the stop-AI form of `LuaAiStayAndSnarl` (`look` given,
+`useMarker=false`: modes 1/2, whose Dog AI update is skipped) placed by the
+command's own `warp=1` (design 3.2 and 8.2; `SetWarpPosition` stays for errors
+over 15 m in the other hold modes), and **never releases it to its own AI**: no release on a stale stream, `present=0`, a kind change, an
 unpair or a stop (a host without a dog is the companion module's reconcile,
 `DeleteBuddy`). The dog pose receipt `MGS_COOP_BUDDY_POSE_V1` no longer needs
 body 1 realized (`buddy_pose::FieldReady`), so a partner hidden in the heli or

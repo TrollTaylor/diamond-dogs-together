@@ -14,7 +14,7 @@
 # (event=companion_track carries band, error, leg, mode and warps).
 # away: the guest 40 m from the host (the dog stays with the host).
 # Guards: the host turns west (open ground; facing east the warped guard landed on the rock, run 4cd88ea2), the guest
-# 7 m to its right. Guard G1 is warped 5 m in front of the host (spawn_enemy here: it does not notice the player);
+# 1 m behind it and 7 m to its right. Guard G1 is warped 5 m in front of the host (spawn_enemy here: it does not notice the player);
 # the guest's dog is held 1.5 m from the nearest soldier on its copy (companion_lab near_guard on) for E3.
 # kill (M2's commit/apply): the host marks G1 (enemy mark nearest), aims at it, then CALL (q) + "3: Get it" in the
 # call menu: the host's dog takes G1 down on the host's copy -> host event=obs ...att=buddy, event=commit ...actor=host,
@@ -126,7 +126,7 @@ guest expect kdog
 # --- G1 calm (E3), then the host's dog takes it down (kill commit/apply) ------------------------------------------
 host run teleport 796.0 341.5 1633.5 275
 wait 3000
-placebehind guest host 0 7
+placebehind guest host 1 7
 wait 3000
 host run spawn_enemy here
 host expect ^guard_here;ent=\d+;
