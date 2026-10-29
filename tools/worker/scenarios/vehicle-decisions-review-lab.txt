@@ -18,6 +18,11 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-review-lab.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
 # NEVER: step=error, viewer_changed, faults; a host wreck of 25609; a refusal (ridden) for the occupied seat.
+# Run 7762536a (@157d73d, before the blast rule) met every expectation but A's d_mm regex: 25609 is about 1.2 km from the
+# guest's boot spot (d_mm=1196593), not 320 m, so A matches 6 or 7 digits now. In C the 'ignore' guard still shot the
+# host down (downed_damage attacker=1120); the wreck's own later explosion (attacker=65535, 3500) came in B, about 8 s
+# after SetBodyLife 0, with the host beside the jeep. Since the blast rule (0e79337) the host beside its copy in B and C
+# gets break_safe (near=host) and a Despawn (via=locator) instead of the wreck; the expectations below follow it.
 labsetting world_vehicle_state=1
 labsetting world_vehicle_gone=1
 labsetting world_vehicle_break=1
@@ -56,7 +61,8 @@ both burst occ-wreck 5 700
 waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=4; sent=1' 10
 waitlog host 'event=vehicle_gone; step=hold; id=25608; src=req; reason=occupied' 10
 waitlog host 'event=vehicle_rules; step=break_judge; id=25608; rid=[0-9]+; ok=1; why=near;' 20
-waitlog host 'event=vehicle_gone; step=applied; id=25608; via=wreck; src=req; ok=1' 10
+waitlog host 'event=vehicle_rules; step=break_safe; id=25608; near=host; d_mm=[0-9]+; form=despawn' 10
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=locator; src=req; ok=1' 10
 waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 15
 wait 2000
 both capture occ-after
@@ -77,7 +83,7 @@ guest expect vehicle_life;id=25609;life=0;
 waitlog guest 'event=vehicle_rules; step=break_seen; id=25609' 10
 waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25609; cause=4; sent=1' 10
 waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25609; cause=4' 10
-waitlog host 'event=vehicle_rules; step=break_judge; id=25609; rid=[0-9]+; ok=0; why=guest_far; d_mm=3[0-9]{5};' 10
+waitlog host 'event=vehicle_rules; step=break_judge; id=25609; rid=[0-9]+; ok=0; why=guest_far; d_mm=[0-9]{6,7};' 10
 waitlog host 'event=vehicle_gone; step=refused; id=25609; src=req; reason=guest_far' 5
 waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25609; result=reject; reason=8' 10
 waitlog guest 'event=vehicle_rules; step=break_refused; id=25609; rid=[0-9]+; reason=8; here=wreck' 5
@@ -118,7 +124,8 @@ guest expect vehicle_life;id=25610;life=0;
 both burst blast-wreck 4 600
 waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25610; cause=4; sent=1' 10
 waitlog host 'event=vehicle_rules; step=break_judge; id=25610; rid=[0-9]+; ok=1; why=near;' 10
-waitlog host 'event=vehicle_gone; step=applied; id=25610; via=wreck; src=req; ok=1' 10
+waitlog host 'event=vehicle_rules; step=break_safe; id=25610; near=host; d_mm=[0-9]+; form=despawn' 10
+waitlog host 'event=vehicle_gone; step=applied; id=25610; via=locator; src=req; ok=1' 10
 waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25610; result=gone' 15
 wait 2500
 both capture blast-after
