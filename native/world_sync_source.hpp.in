@@ -79,3 +79,7 @@ constexpr char world_vehicle_source[] = R"MGS_WORLD(
 constexpr char world_companion_source[] = R"MGS_WORLD(
 @MGS_WORLD_COMPANION_SOURCE@
 )MGS_WORLD";
+// M2 D-Dog hold and the companion lab levers (split from world_buddy.lua and world_companion.lua).
+constexpr char world_companion_dog_source[] = R"MGS_WORLD(
+@MGS_WORLD_COMPANION_DOG_SOURCE@
+)MGS_WORLD";

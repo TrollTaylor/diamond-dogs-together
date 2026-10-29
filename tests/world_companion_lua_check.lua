@@ -1,6 +1,7 @@
 -- M1 host-owned companion (docs/vehicles-companions-design.md 6.1): lua/coop/world_companion.lua
 -- with world_follow_seed.lua and world_follow.lua on recording game APIs. No game process.
 -- Usage: lua51 world_companion_lua_check.lua <world_companion.lua> <world_follow_seed.lua> <world_follow.lua>
+--        <world_companion_dog.lua> (the lab levers, split 2026-10-29)
 -- Written before the module: every check failed (no buddy seed keys, no W.companion).
 local checks = 0
 local function check(value, why)
@@ -14,6 +15,7 @@ local function slurp(path)
     return s
 end
 check(#slurp(assert(arg[1])):gsub('\r\n', '\n') <= 32000, 'the chunk is within the 32000-byte world chunk limit')
+check(#slurp(assert(arg[4])):gsub('\r\n', '\n') <= 32000, 'the lever chunk is within the limit too')
 local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13, REJECT = 4}
 local NONE, HORSE, DOG, QUIET, WALKER = 0, 1, 2, 3, 4
 local function Fixture(role, o)
@@ -82,7 +84,7 @@ local function Fixture(role, o)
     W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end
     W.peer = function() return nil end
     W.n = function(v) return v end
-    for _, path in ipairs({arg[2], arg[3], arg[1]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[1], arg[4]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.follow.install({3, role, 1, 1, 7, 0, 1, 55, 0, 0, 0, 0, 0, 0, 0, o.on ~= false and 1 or 0})

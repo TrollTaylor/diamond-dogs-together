@@ -1,12 +1,15 @@
 -- M2 D-Dog synced and following the host (docs/vehicles-companions-design.md 6.2, 6.12): lua/coop/world_buddy.lua
 -- with the host-owned companion on (W.companion.on()), on recording game APIs. No game process.
--- Usage: lua51 world_buddy_companion_lua_check.lua <world_buddy.lua>
+-- Usage: lua51 world_buddy_companion_lua_check.lua <world_buddy.lua> <world_companion_dog.lua> (the M2 hold, split 2026-10-29)
 -- Written before the M2 code: every check after the first failed (no COMPANION_POSE stream, release to the guest AI).
 local file = assert(arg[1], "world_buddy.lua required")
 local limit = assert(io.open(file, "rb")); local bytes = limit:read("*a"); limit:close()
 local checks = 0
 local function check(v, why) checks = checks + 1; if not v then error(checks .. ": " .. why, 2) end end
 check(#bytes:gsub("\r\n", "\n") <= 32000, "the chunk fits the 32000-byte world chunk limit")
+local dogFile = assert(arg[2], "world_companion_dog.lua required")
+local dogIn = assert(io.open(dogFile, "rb")); local dogBytes = dogIn:read("*a"); dogIn:close()
+check(#dogBytes:gsub("\r\n", "\n") <= 32000, "the M2 hold chunk fits the limit too")
 local POSE, ACK, STATE = 57, 49, 39
 local function vec(x, y, z) return {GetX = function() return x end, GetY = function() return y end, GetZ = function() return z end} end
 local function F(host, o)
@@ -63,6 +66,7 @@ local function F(host, o)
       pos = {math.floor(x * 1000 + 0.5), math.floor(y * 1000 + 0.5), math.floor(z * 1000 + 0.5)}}
   end
   setfenv(assert(loadfile(file)), env)()
+  setfenv(assert(loadfile(dogFile)), env)()
   for _, f in ipairs(W.bindHooks) do f(W.api, function(t, n, k) return t and t[k] end, function(t, n, k) return t and t[k] end) end
   c.W, c.B, c.env = W, W.buddy, env
   function c:tick(at) if at then self.time = at end; self.B.tick(self.time) end

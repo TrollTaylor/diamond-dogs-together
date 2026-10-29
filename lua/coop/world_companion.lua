@@ -492,6 +492,8 @@ W.bindHooks[#W.bindHooks + 1] = function(a)
  if C.orig.CallBuddy then a.buddyCall = C.orig.CallBuddy end
 end
 
+-- For the lab levers (world_companion_dog.lua).
+C.lib = {BT = BT, TBC = TBC, active = active, blockActive = blockActive, vector = vector}
 -- buddy_status tail (world_buddy.lua): vars.buddyType and this copy's own kept type (- none).
 function C.tail()
  local vt, own = W.get(vars, "buddyType"), C.own and C.own.buddyType
@@ -503,130 +505,6 @@ function C.status()
   C.on() and 1 or 0, W.host and "host" or "guest", typeName(active()), tostring(W.get(vars, "buddyType")), tostring(W.get(vars, "buddyTypeMissionStart")),
   C.own and typeName(C.own.buddyType) or "-", typeName(C.allowed()), tostring(C.guestQuiet), tostring(C.selfQuiet),
   C.masked and 1 or 0, tostring(C.quietDisabled ~= nil), C.saves or 0)
-end
--- E20: the Quiet cell (its radio locator, else the Medical main plant's centre).
-function C.cellPos()
- local ok, p = pcall(Tpp.GetLocator, "quiet_AssetIdentifier", "radio_pos")
- if ok and type(p) == "table" and type(p[1]) == "number" and type(p[2]) == "number" and type(p[3]) == "number" then
-  return {p[1], p[2], p[3]}, "radio"
- end
- local good, x, y, z = pcall(function()
-  local c = mtbs_cluster.GetDemoCenter("Medical", "plnt0")
-  if type(c) == "table" then return c[1], c[2], c[3] end
-  return c:GetX(), c:GetY(), c:GetZ()
- end)
- if good and type(x) == "number" and type(y) == "number" and type(z) == "number" then return {x, y, z}, "plnt0" end
-end
-local SEED = {none = "NONE", horse = "HORSE", dog = "DOG", quiet = "QUIET", walker = "WALKER_GEAR"}
--- debug_buddy.lua routes companion_status, seed_buddy <kind> and companion_cell [goto] here.
-function C.lever(a, id, A, mission)
- if a[1] == "companion_status" and #a == 1 then return true, C.status() end
- if a[1] == "seed_buddy" and #a == 2 then return C.seedLever(a[2]) end
- if a[1] == "companion_cell" and (#a == 1 or (#a == 2 and a[2] == "goto")) then
-  if mission ~= 30050 then return false, "cell_mission" end
-  local p, src = C.cellPos()
-  if not p then return false, "cell_unavailable" end
-  if #a == 1 then return true, fmt("cell;src=%s;pos=%.2f,%.2f,%.2f", src, p[1], p[2], p[3]) end
-  -- Inside the cell: 0.8 m from the radio toward the Medical plant's centre, on the radio's floor
-  -- (2.5 m east of it was the sea: run 9e8f22a7 ended MISSION FAILED). Before the radio locator
-  -- loads: 1 m above the plant's centre.
-  if src == "radio" then
-   local c = C.cellCentre
-   local dx, dz = c and c[1] - p[1] or 0, c and c[3] - p[3] or 1
-   local d = math.sqrt(dx * dx + dz * dz)
-   if d < 0.01 then dx, dz, d = 0, 1, 1 end
-   return A.warp({p[1] + 0.8 * dx / d, p[2] + 0.05, p[3] + 0.8 * dz / d, math.deg(math.atan2(-dx, -dz))}, id)
-  end
-  C.cellCentre = p
-  return A.warp({p[1], p[2] + 1, p[3], 0}, id)
- end
- -- Lab: the host calls its companion (the loaded type, or <kind>: a swap) 5 m in front of it, a
- -- dog also warped there (4 m to the side was off both cameras: runs 6306df68, 9e8f22a7).
- if a[1] == "companion_lab" and a[2] == "call_here" and (#a == 2 or #a == 3) then
-  if W.mode ~= 1 or not W.host then return false, "host_lab_only" end
-  local t, p = active(), C.front(5)
-  if #a == 3 then t = SEED[a[3]] and BT(SEED[a[3]]) end
-  if not t or t == BT("NONE") or not p then return false, "call_here_none" end
-  local v = vector(p[1], p[2], p[3])
-  C.token = true
-  local ok, res = pcall(TBC("CallBuddy"), t, v, p[4])
-  C.token = nil
-  local warp = 0
-  if ok and res ~= false and t == BT("DOG") then
-   local okId, dog = pcall(W.get(GameObject, "GetGameObjectIdByIndex"), "TppBuddyDog2", 0)
-   if okId and dog == 9728 and pcall(W.get(GameObject, "SendCommand"), dog, {id = "SetWarpPosition", pos = v}) then warp = 1 end
-  end
-  return ok and res ~= false, fmt("call_here;kind=%s;result=%s;warp=%d", typeName(t), tostring(res), warp)
- end
- -- Lab: the late-join case on the host (Quiet already out when the lock applies): the lock is
- -- lifted, Quiet called beside the host, and 8 s later the tick sends her away (delete_buddy).
- if a[1] == "companion_lab" and a[2] == "quiet_out" and #a == 2 then
-  if W.mode ~= 1 or not W.host then return false, "host_lab_only" end
-  local Q, px, py, pz = BT("QUIET"), W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
-  if not Q or type(px) ~= "number" or type(py) ~= "number" or type(pz) ~= "number" then return false, "quiet_out_args" end
-  pcall(W.get(TppBuddyService, "UnsetDisableBuddyType"), Q)
-  C.quietDisabled, C.deleteAt = nil, W.now() + 8000
-  local v, ok, r = vector(px + 3, py, pz), false, nil
-  C.token = true
-  if blockActive() then ok, r = pcall(TBC("CallBuddy"), Q, v, 0)
-  else ok = pcall(TBC("ReserveCallBuddy"), Q, W.get(BuddyInitStatus, "NORMAL") or 0, v, 0) and pcall(TBC("Load")) end
-  C.token = nil
-  return ok, fmt("quiet_out;call=%s;guest_quiet=%s", tostring(r), tostring(C.guestQuiet))
- end
- -- E19 (guest, lab): the protection candidate on the held dog (world_buddy.lua B.protect: SetDisableDamage).
- if a[1] == "companion_lab" and a[2] == "protect" and (#a == 2 or (#a == 3 and a[3] == "off")) then
-  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
-  local B = W.buddy
-  if type(W.get(B, "protect")) ~= "function" then return false, "protect_unavailable" end
-  local ok, r = pcall(B.protect, #a == 2)
-  return ok, fmt("protect;on=%d;result=%s", #a == 2 and 1 or 0, tostring(r))
- end
- -- Lab (guest): the dog hold mode of world_buddy.lua (marker, stop, warp).
- if a[1] == "companion_lab" and a[2] == "hold" and #a == 3 then
-  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
-  local B = W.buddy
-  if type(W.get(B, "setHold")) ~= "function" then return false, "hold_unavailable" end
-  local ok, r = pcall(B.setHold, a[3])
-  return ok and r == true, "hold;mode=" .. tostring(a[3])
- end
- -- Lab (guest, E3): hold the dog beside the nearest soldier instead of the host dog's pose; shield (E19): 1 m from
- -- the guest toward that soldier.
- if a[1] == "companion_lab" and a[2] == "near_guard" and #a == 3 and (a[3] == "on" or a[3] == "off" or a[3] == "shield") then
-  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
-  local B = W.buddy
-  if type(W.get(B, "nearGuard")) ~= "function" then return false, "near_guard_unavailable" end
-  local ok, r = pcall(B.nearGuard, a[3] == "shield" and "shield" or a[3] == "on")
-  return ok and r == true, "near_guard;on=" .. (a[3] == "shield" and "shield" or a[3] == "on" and 1 or 0)
- end
- -- Lab (guest, D7 candidate): write back the dog's dead-buddy flags at its Dead message (world_buddy.lua B.repair).
- if a[1] == "companion_lab" and a[2] == "repair" and #a == 3 and (a[3] == "on" or a[3] == "off") then
-  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
-  local B = W.buddy
-  if type(W.get(B, "repair")) ~= "function" then return false, "repair_unavailable" end
-  local ok, r = pcall(B.repair, a[3] == "on")
-  return ok and r == true, "repair;on=" .. (a[3] == "on" and 1 or 0)
- end
- -- Lab: names the following track windows of world_buddy.lua (the proof's legs: walk, run, dash, away, ...).
- if a[1] == "companion_lab" and a[2] == "mark" and #a == 3 and type(a[3]) == "string" and a[3]:match("^[a-z0-9_]+$") and #a[3] <= 16 then
-  if W.mode ~= 1 then return false, "lab_only" end
-  local B = W.buddy
-  if type(W.get(B, "mark")) ~= "function" then return false, "mark_unavailable" end
-  return pcall(B.mark, a[3]) and true or false, "mark;leg=" .. a[3]
- end
- return false, "companion_args"
-end
-function C.seedLever(kind)
- if W.mode ~= 1 then return false, "lab_only" end
- local t = SEED[kind] and BT(SEED[kind])
- if not t then return false, "seed_args" end
- local S = TppBuddyService
- local okO, obtained = pcall(W.get(S, "DidObtainBuddyType") or W.get(TppBuddy2BlockController, "DidObtainBuddyType"), t)
- local okS, sortie = pcall(W.get(S, "CanSortieBuddyType"), t)
- vars.buddyType, vars.buddyTypeMissionStart = t, t
- if C.own then C.own.buddyType, C.own.buddyTypeMissionStart = t, t end
- local ok = W.follow.run(TppMission.UpdateCheckPoint, {atCurrentPosition = true, ignoreAlert = true, permitHelicopter = true})
- return ok, fmt("seed_buddy;kind=%s;vars_type=%d;checkpoint=%d;obtained=%s;sortie=%s", kind, t, ok and 1 or 0,
-  okO and tostring(obtained) or "?", okS and tostring(sortie) or "?")
 end
 end
 end
