@@ -1,5 +1,8 @@
 ## 2026-10-29: the vehicle decisions D11, D12, D14 built and proven (branch `wp/vehicle-decisions`, unreleased, not two-PC tested)
 
+Parts of this section were changed by the review fixes in the section above (300 m instead of 60 m, waits instead of
+refusals for a filled seat, cause 4, the VEHICLES block, the D12 blast rule).
+
 The user's decisions of 2026-10-29 on vehicles (`docs/vehicles-companions-design.md` section 10; results in 8.9;
 `docs/world-sync-protocol.md` section 19), on `wp/vehicle-decisions` from `dev/oct7-continue` `e2249e4` (not merged,
 not pushed). New world chunk `lua/coop/world_vehicle_rules.lua` (after `world_vehicle_state.lua`), three new lab.ini
@@ -36,7 +39,8 @@ keys in the CFG r[15] bitmask (now 0..63), **on by default in play, off in the l
 Frames (looked at, JPEG in the session scratch `complete/frames/vehicles/`): `c0203fdd-*-d14-*` and `70146170-*-d14p-*`
 (the jeep on both screens, the balloon on the Fultoning copy, gone on both), `c0203fdd-*-d12-*` (fire and smoke at the
 jeep on both screens), `70146170-*-d12p-*` (the guest's blast and burning wreck; the smoke column at that spot on the
-host's, the jeep hidden behind the guest), `70146170-guest-d11p-guest-refused` (LOADOUT inactive, the toast),
+host's, the jeep itself never in view on the host's screen: the figure in front is the host's own body, corrected by
+the review, see the section above), `70146170-guest-d11p-guest-refused` (LOADOUT inactive, the toast),
 `*-host-d11*-host-loadout-open` (the host's LOADOUTS list).
 
 Tests: `world_vehicle_rules_lua_check` (67 checks, worker gate), `world_vehicle_lua_check` (r[15] 0..63),

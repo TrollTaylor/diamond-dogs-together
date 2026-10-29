@@ -1588,7 +1588,8 @@ named) and again at the shipped defaults with no key named (`47b95ae7`). D12 and
 **Open.** D12's far, unknown and rate refusals live (only `ridden` ran, `09333f05`); the host's wreck blast with live guards and godmode off; a guest's
 unattributed break far from the host's realized area; D14 for an APC, a tank or a truck (only the light vehicle, resource
 14, ran); a receiver whose copy is unrealized; the guest's VEHICLES drop with `world_relief` off (still active: M3's block
-rides on `world_relief`; D11 as decided covers LOADOUT); a two-PC session.
+rides on `world_relief`; D11 as decided covers LOADOUT); a two-PC session. (After the review: the far refusal, the blast
+measurement and the VEHICLES block are in section 8.10.)
 
 ## 9. Milestones
 
@@ -1741,7 +1742,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   expectation met), with `companion-relief-guest-fulton.txt` run `cbc30b91` for VEHICLE_GONE on. The play default stays off:
   play refuses `worldtrigger` and the Fulton levers, so no hidden play rehearsal can drive a mission end or a removal
   yet, and the earlier rehearsals (`40c09484`, `98e4af59`) covered only the arrival and the refusal. The flip needs
-  such a rehearsal (or the user's two-PC session) and the user's D11.
+  such a rehearsal (or the user's two-PC session) and the user's D11. D11 is decided and built outside M3
+  (`world_loadout_block`, section 8.9); since its review the guest's VEHICLES drop is blocked there too, whatever
+  `world_relief` says (section 8.10, `f729d7f4`).
   - **Integration:** `wp/relief` contains M1 (the merge `d911f0c` of `wp/companion-host` `e08dc20`). Done in that
     order on `dev/oct7-continue` (2026-10-29): `wp/companion-host` (`23c2cac`), then `wp/relief` (`c5d0de0`), then
     `wp/vehicle-state` (`bf24931`); unreleased, no hidden run of the integrated head. Since M4, VEHICLE_GONE is on by
@@ -1867,7 +1870,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     `72366eb5` shows the resulting split in the lab (the guest's copy broke on a drive, the host's stayed intact) [O].
     **Since D12 (2026-10-29, section 8.9) it is requested and judged by the host** (key `world_vehicle_break`, on in
     play): the guest's lever break (`c0203fdd`) and its real C4 in play (`70146170`) were wrecked on the host's copy
-    too [O]; a refusal leaves that split [fixture, I].
+    too [O]; a refusal leaves that split [fixture, I]. Since the review (section 8.10) the host waits for a seat D-Dog
+    or a soldier fills (`7762536a`), judges against 300 m, and removes its copy with a Despawn instead of the wreck
+    while a player stands within 15 m of it (the blast rule; `f729d7f4` in play, host frames of both forms) [O].
   - VEHICLE_STATE [O]: the push lever, framed on both screens (`3585869d`; earlier `d407f115`, `0edadbe2`,
     `72366eb5` on the guest's screen), and the host's correction of a guest push; the near-player hold (`72366eb5`,
     `3585869d`: the guest at the jeep's door, the host's push -> guest `hold; reason=player_near`, applied 2.0..2.2 s
@@ -1901,8 +1906,10 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   - **Decisions D12-D15 (2026-10-29, branch `wp/vehicle-decisions`, section 8.9; unreleased, not two-PC tested).**
     D12 and D14 are built in `lua/coop/world_vehicle_rules.lua` behind `world_vehicle_break` and
     `world_vehicle_credit`, on by default in play where VEHICLE_GONE runs (30010 / 30020), off in the lab unless
-    named. D12: the guest's unattributed break -> REQ_VEHICLE_GONE cause 2 -> the host's plausibility judge -> the
-    host's copy wrecked (`c0203fdd` lab FRAME on both screens; `70146170` play rehearsal with the guest's C4). D14:
+    named. D12: the guest's unattributed break -> REQ_VEHICLE_GONE cause 2 (cause 4 since the review) -> the host's
+    plausibility judge -> the host's copy wrecked, or despawned while a player is within 15 m of it (`c0203fdd` lab
+    FRAME on both screens; `70146170` play rehearsal with the guest's C4; review fixes and the blast rule in section
+    8.10: `7762536a`, `f729d7f4`). D14:
     the receiver's `Seize {"Instant"}` credits the Fultoned vehicle to its own save too; "Fulton rewards against save
     resources" is now [O]: `4wdW` 1 -> 3 on both copies after the mission end for one Fulton by each player
     (`c0203fdd`), GMP charged only to the Fultoning player. D13: the M4 play defaults stay as they are. D15: the
@@ -2076,7 +2083,14 @@ The original questions:
   vehicle refuses a break at once; D-Dog or a soldier in a seat holds it until the seat is free** (VEHICLE_GONE's hold,
   REJECT 9 after 120 s). The review fixes (section 8.10) also widened "close enough" to 300 m (launcher and rifle
   kills), judge the guest's position when the request arrived, hold instead of refuse for the rate and an unknown
-  position, and send the unattributed break as cause 4 so a host without the key refuses it (REJECT 11).
+  position, and send the unattributed break as cause 4 so a host without the key refuses it (REJECT 11). **Safety rule
+  added after the review (not a new decision; section 8.10):** the host's wreck explodes about 8 s later with the
+  engine's blast (3500 of 7800 life on a player beside it, `7762536a`), so while the host's player or the partner
+  stands within 15 m of the host's copy the host removes it with a Despawn instead (the jeep just disappears on the
+  host's PC; the guest keeps its wreck). **Open question for you:** a soldier-crewed vehicle the guest blows up: the
+  crew's deaths on the guest's copy are unattributed, so the host's crew may stay seated and the hold then ends in a
+  refusal after 120 s (the jeep stays only on the host's PC). Keep that, or wreck a crewed host copy at once (the
+  engine's blast then kills or ejects the crew there too)? See section 8.10 for what the hidden run showed.
 - **D13 (new, M4). The M4 play defaults.** VEHICLE_GONE (Fulton, and a destruction shown as a disappearance) and
   VEHICLE_STATE (pose and body life) are on by default in play in Afghanistan and Africa (`482eb74`, narrowed by
   `c423b53`); the project rule is met for those paths (section 9 M4). The wreck parity and Mother Base stay lab only.
