@@ -366,4 +366,14 @@ check(ok and held == 'warp' and msg == 'hold;mode=warp', 'companion_lab hold set
 check(not c.C.lever({'companion_lab', 'hold', 'bogus'}, 2, A, 30010), 'an unknown mode is refused')
 c = Fixture(1, {active = DOG})
 check(not c.C.lever({'companion_lab', 'hold', 'warp'}, 1, A, 30010), 'hold is guest only')
+-- The near-guard lever (lab, guest): world_buddy.lua B.nearGuard.
+c = Fixture(2, {active = DOG})
+local near
+c.W.buddy = {nearGuard = function(on) near = on; return true end}
+ok, msg = c.C.lever({'companion_lab', 'near_guard', 'on'}, 1, A, 30010)
+check(ok and near == true and msg == 'near_guard;on=1', 'companion_lab near_guard on')
+ok, msg = c.C.lever({'companion_lab', 'near_guard', 'off'}, 2, A, 30010)
+check(ok and near == false and msg == 'near_guard;on=0', 'companion_lab near_guard off')
+c = Fixture(1, {active = DOG})
+check(not c.C.lever({'companion_lab', 'near_guard', 'on'}, 1, A, 30010), 'near_guard is guest only')
 print('world_companion_lua_check: ' .. checks .. ' checks passed')

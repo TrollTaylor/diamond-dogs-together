@@ -581,6 +581,14 @@ function C.lever(a, id, A, mission)
   local ok, r = pcall(B.setHold, a[3])
   return ok and r == true, "hold;mode=" .. tostring(a[3])
  end
+ -- Lab (guest, E3): hold the dog beside the nearest soldier instead of the host dog's pose.
+ if a[1] == "companion_lab" and a[2] == "near_guard" and #a == 3 and (a[3] == "on" or a[3] == "off") then
+  if W.mode ~= 1 or W.host then return false, "guest_lab_only" end
+  local B = W.buddy
+  if type(W.get(B, "nearGuard")) ~= "function" then return false, "near_guard_unavailable" end
+  local ok, r = pcall(B.nearGuard, a[3] == "on")
+  return ok and r == true, "near_guard;on=" .. (a[3] == "on" and 1 or 0)
+ end
  -- Lab: names the following track windows of world_buddy.lua (the proof's legs: walk, run, dash, away, ...).
  if a[1] == "companion_lab" and a[2] == "mark" and #a == 3 and type(a[3]) == "string" and a[3]:match("^[a-z0-9_]+$") and #a[3] <= 16 then
   if W.mode ~= 1 then return false, "lab_only" end

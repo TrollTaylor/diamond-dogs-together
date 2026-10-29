@@ -431,6 +431,12 @@ for h in pairs(w.near) do
   if d < best then best, bestH = d, h end
  end
 end
+w.bestPos = nil
+if bestH and best < 3000 then
+ local e = ent[bestH]
+ local sx, sy, sz = soldier(e.id)
+ if sx then w.bestPos = {sx, sy, sz} end
+end
 if best <= 300 then w.s3 = w.s3 + dt end
 if best <= 500 then w.s5 = w.s5 + dt end
 w.min = min(w.min, best)
@@ -447,6 +453,13 @@ local s = B.s
 s.hurt = (s.hurt or 0) + 1
 if s.hurt <= 60 then W.log(fmt("event=companion_hurt;role=%s;msg=%s;att=%s;n=%d", W.host and "host" or "guest", tostring(msg), tostring(cls), s.hurt)) end
 end
+-- E3 lab lever companion_lab near_guard on|off (guest): hold the dog 1.5 m from the nearest soldier.
+function B.nearGuard(on)
+if W.mode ~= 1 then return false end
+B.s.nearGuard, B.s.sentHold = on == true or nil, nil
+W.log("event=companion_near_guard;role=guest;on=" .. (on and 1 or 0))
+return true
+end
 -- E19 protection candidate (guest lab lever companion_lab protect): SetDisableDamage on the held dog, once per dog.
 function B.protect(on)
 local s = B.s
@@ -460,9 +473,12 @@ end
 -- Hold modes. The dog command LuaAiStayAndSnarl (dispatcher 0xC7D220 -> vt+0x98 -> 0xC7DA10) sets the persistent
 -- mode: 1/2 (look given, useMarker false: the retail s10040 "stop AI"; the dog never moved toward the target in run
 -- 8c0b425f, the Dog AI 0xC7E650 skips its update for them), 3/4 (useMarker true or no look), +1 with dash; warp=1
--- places the dog at the position facing the look point. marker (default): modes 3/4, re-sent when the target moves
--- 0.75 m or every 1 s; stop: modes 1/2; warp: modes 1/2 placed by warp=1 every 100 ms (lab lever companion_lab hold).
-B.HOLD, B.holdMode = {marker = true, stop = true, warp = true}, "marker"
+-- places the dog at the position facing the look point. warp (default since run ffb2d7ab: 0.9 m walking, 2.4 m at
+-- 7.9 m/s; the stop-AI dog cannot act, so it is also the engagement hold of design 6.12): modes 1/2 placed by warp=1
+-- whenever the target moved 5 cm, the dog is 30 cm off it, or 1 s passed; marker: modes 3/4 (the dog walks there itself;
+-- it lagged 7-15 m while the host moved), re-sent on a 0.75 m target change or every 1 s; stop: modes 1/2, no placement.
+-- Lab lever companion_lab hold <warp|marker|stop>.
+B.HOLD, B.holdMode = {marker = true, stop = true, warp = true}, "warp"
 function B.setHold(mode)
 if not B.HOLD[mode] then return false end
 B.holdMode, B.s.sentHold, B.s.farSince = mode, nil, nil
@@ -487,6 +503,9 @@ if fresh then
  why, result = "target_submitted", 0
 elseif s.hold then why, result = "hold_last", 3
 else s.hold, why, result = {x = x, y = y, z = z, yaw = yaw()}, "hold_here", 5 end
+-- E3 lab lever: the nearest soldier (B.watch) + 1.5 m instead of the host's pose.
+local g = s.nearGuard and s.watch and s.watch.bestPos
+if g then s.hold, why = {x = g[1] + 1.5, y = g[2], z = g[3], yaw = s.hold.yaw}, "near_guard" end
 local t = s.hold
 local dx, dy, dz = t.x - x, t.y - y, t.z - z
 local distance = sqrt(dx * dx + dy * dy + dz * dz)
@@ -500,14 +519,15 @@ if fresh and (distance > 15 or (stuck and now - s.farSince >= 2000)) then
  s.warps, s.farSince = (s.warps or 0) + 1, nil
 end
 s.aiHeld = true
-local dash = (distance > 2 or (fresh and r.speed > 3)) and 1 or 0
+local warp = mode == "warp"
+local dash = not warp and (distance > 2 or (fresh and r.speed > 3)) and 1 or 0
 local last = s.sentHold
-if mode == "warp" or not last or now >= last.at + 1000 or last.dash ~= dash or
- (t.x - last.x) ^ 2 + (t.y - last.y) ^ 2 + (t.z - last.z) ^ 2 >= 0.5625 then
+if not last or now >= last.at + 1000 or last.dash ~= dash or (warp and distance > 0.3) or
+ (t.x - last.x) ^ 2 + (t.y - last.y) ^ 2 + (t.z - last.z) ^ 2 >= (warp and 0.0025 or 0.5625) then
  s.sentHold = {x = t.x, y = t.y, z = t.z, at = now, dash = dash}
  if a.send(id, {id = "LuaAiStayAndSnarl", position = a.buddyVector(t.x, t.y, t.z),
   look = a.buddyVector(t.x + math.sin(t.yaw) * 2, t.y, t.z + math.cos(t.yaw) * 2), useMarker = mode == "marker",
-  dash = dash, warp = mode == "warp" and 1 or 0, ignoreMarker = true}) == false then
+  dash = dash, warp = warp and 1 or 0, ignoreMarker = true}) == false then
   B.cack(2, errorCm, now); B.log("target_refused", errorCm); return
  end
 end

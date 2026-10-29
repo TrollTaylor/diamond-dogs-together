@@ -16,12 +16,12 @@ waitgameplay guest 240
 waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed; mission=30010;' 120
 host run time 43200
 host run weather sunny
-waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
 host run buddy_status
 host expect kdog
 guest run buddy_status
 guest expect kdog
-guest expect _m2_
+guest expect _m2_warp_
 wait 4000
 both capture m2p-dog-idle
 host hold ctrl+w 1500 nowait

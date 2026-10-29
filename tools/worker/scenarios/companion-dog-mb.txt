@@ -14,7 +14,7 @@ waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
 waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 120
 host run godmode 1
 guest run godmode 1
-waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
 host run buddy_status
 host expect kdog
 guest run buddy_status

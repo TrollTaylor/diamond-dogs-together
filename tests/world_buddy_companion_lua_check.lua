@@ -107,16 +107,26 @@ check(hold.position:GetX() == 4 and hold.position:GetY() == 2 and hold.position:
 local a = g:sent(ACK)
 check(#a == 1 and a[1][3] == 1 and a[1][4] == 0 and a[1][5] == 300, "COMPANION_ACK: kind dog, result holding, error 300 cm")
 check(g:logged("event=buddy;role=guest;result=target_submitted;error_cm=300"), "the proof's target_submitted line")
-check(hold.useMarker == true and hold.warp == 0, "marker mode (default): useMarker selects the dog's move modes 3/4 (run 8c0b425f: 1/2 never moved)")
+check(g.B.holdMode == "warp" and hold.useMarker == false and hold.warp == 1,
+  "warp mode (default, run ffb2d7ab): the stop-AI form placed by the command's own warp")
 g:tick(1050); check(g:count("LuaAiStayAndSnarl") == 1, "no hold before 100 ms")
-g:tick(1100); check(g:count("LuaAiStayAndSnarl") == 1, "an unchanged target is not re-sent at once (the dog's path is not restarted)")
+g.pos = vec(4, 2, 3)
+g:tick(1100); check(g:count("LuaAiStayAndSnarl") == 1, "a dog already on an unchanged target is not re-sent at once")
 g:tick(1200); check(#g:sent(ACK) == 1, "the ack stays at 1 Hz while the result is unchanged")
 g:tick(2000); check(g:count("LuaAiStayAndSnarl") == 2, "the hold is renewed every second")
-g:pose(1950, 5000, 2000, 3000); g:tick(2100); check(g:count("LuaAiStayAndSnarl") == 3, "a target moved by 1 m is sent at once")
-g:pose(2150, 30000, 2000, 3000); g:tick(2300); check(g:count("SetWarpPosition") == 1, "beyond 15 m the dog is warped")
-g:pose(2100, 9000, 2000, 3000); check(g.B.s.cpose.x == 30, "an older sender tick is dropped")
--- A dog that does not close a 6 m gap within 2 s is warped (stuck), counted in the track line.
-g = F(false); g:pose(900, 9000, 2000, 3000); g:tick()
+g:pose(1950, 4100, 2000, 3000); g:tick(2100); check(g:count("LuaAiStayAndSnarl") == 3, "warp mode: a target moved by 10 cm is placed at once")
+g.pos = vec(4.1, 2, 3); g:tick(2200); check(g:count("LuaAiStayAndSnarl") == 3, "and not again while the dog is on it")
+g.pos = vec(3.5, 2, 3); g:tick(2300); check(g:count("LuaAiStayAndSnarl") == 4, "a dog pushed 60 cm off its target is placed again")
+g:pose(2450, 30000, 2000, 3000); g:tick(2500); check(g:count("SetWarpPosition") == 1, "beyond 15 m the dog is warped")
+g:pose(2400, 9000, 2000, 3000); check(g.B.s.cpose.x == 30, "an older sender tick is dropped")
+-- Marker mode (the dog moves itself, modes 3/4): re-sent on a 0.75 m target change or every second; a dog that does
+-- not close a 6 m gap within 2 s is warped (stuck), counted in the track line.
+g = F(false); check(g.B.setHold("marker"), "hold mode marker"); g:pose(900); g:tick()
+hold = g:last("LuaAiStayAndSnarl").cmd; check(hold.useMarker == true and hold.warp == 0, "marker: useMarker true (modes 3/4)")
+g:tick(1100); check(g:count("LuaAiStayAndSnarl") == 1, "marker: an unchanged target is not re-sent at once (the dog's path is not restarted)")
+g:tick(2000); check(g:count("LuaAiStayAndSnarl") == 2, "marker: renewed every second")
+g:pose(1950, 5000, 2000, 3000); g:tick(2100); check(g:count("LuaAiStayAndSnarl") == 3, "marker: a target moved by 1 m is sent at once")
+g = F(false); g.B.setHold("marker"); g:pose(900, 9000, 2000, 3000); g:tick()
 for t = 1100, 2900, 100 do g.time = t; g:pose(t, 9000, 2000, 3000); g:tick() end
 check(g:count("SetWarpPosition") == 0, "a 8 m gap is not warped before 2 s")
 g.time = 3100; g:pose(3100, 9000, 2000, 3000); g:tick(); check(g:count("SetWarpPosition") == 1 and g.B.s.warps == 1, "after 2 s the stuck dog is warped")
@@ -132,7 +142,7 @@ check(not g.B.setHold("bogus") and g.B.holdMode == "warp", "an unknown mode is r
 g = F(false)
 g:pose(1000, 4000, 2000, 3000); g.time = 1100; g:pose(1100, 5000, 2000, 3000, 1, 1, 50); g:tick(1150)
 hold = g:last("LuaAiStayAndSnarl").cmd
-check(math.abs(hold.position:GetX() - 6) < 0.001 and hold.dash == 1, "a moving dog's target leads by its age and the dog dashes")
+check(math.abs(hold.position:GetX() - 6) < 0.001 and hold.warp == 1 and hold.dash == 0, "a moving dog's target leads by its age; warp mode places it there")
 -- Never released to the guest's AI.
 g = F(false); g:pose(900); g:tick()
 g:tick(3000)
@@ -168,6 +178,17 @@ check(track and track:find("err_max_cm=1[0-9][0-9];") and track:find("within=1")
 g = F(false); g.B.mark("dash"); check(g:logged("event=companion_mark;role=guest;leg=dash"), "the marker is logged")
 for i = 0, 25 do g.time = 1000 + i * 100; g:pose(1000 + i * 100, 4000 + i * 900, 2000, 3000); g.pos = vec(4 + i * 0.9 - 2, 2, 3); g:tick() end
 check(g:logged("event=companion_track;band=run;.*within=1;leg=dash"), "the windows after the marker carry its label")
+-- E3 lab lever companion_lab near_guard: the held target becomes the nearest soldier (+1.5 m), the host's pose ignored.
+g = F(false, {soldiers = {{20, 2, 3}, {100, 2, 3}}}); g:pose(900)
+for i = 0, 12 do g:tick(1000 + i * 100) end
+check(g.B.nearGuard(true) == true and g:logged("event=companion_near_guard;role=guest;on=1"), "near_guard on")
+g:tick(2400); g:tick(2500)
+hold = g:last("LuaAiStayAndSnarl").cmd
+check(math.abs(hold.position:GetX() - 21.5) < 0.001 and hold.position:GetZ() == 3, "the dog is held 1.5 m from the nearest soldier")
+check(g:logged("result=near_guard"), "the near-guard hold is logged")
+g.B.nearGuard(false); g:pose(2500); g:tick(2600)
+check(g:last("LuaAiStayAndSnarl").cmd.position:GetX() == 4, "near_guard off: back to the host dog's pose")
+g = F(false, {play = true, soldiers = {{20, 2, 3}}}); check(g.B.nearGuard(true) == false, "near_guard is lab only")
 -- E3 / E19 watch (lab): the nearest soldier to the held dog, the guest's buddy vars, the dog's own damage.
 g = F(false, {soldiers = {{1.5, 2, 3}, {100, 2, 3}}}); g:pose(900)
 for i = 0, 40 do g:tick(1000 + i * 100) end
