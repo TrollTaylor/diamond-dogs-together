@@ -197,7 +197,7 @@ struct Shared {
     HandoffOutcome applied_info;
 };
 
-enum class Stage { none, launching, in_game, after_game, relaunch_wait };
+enum class Stage { none, launching, in_game, after_game, relaunch_wait, local_test };
 
 std::string Join(const std::vector<std::string>& lines) {
     std::string out;
@@ -213,14 +213,18 @@ class RealModel final : public LauncherModel {
 public:
     // no_launch: --write-session (developer): Host / Join write the session
     // files and stop there (no helper, no Steam, no clipboard).
-    RealModel(const std::wstring& exe_dir, std::shared_ptr<Env> env, bool exit_if_busy, bool no_launch = false)
-        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch), auto_setup_(!no_launch) {
+    // local: the local two-window test's window / process seams (Win32 by default).
+    RealModel(const std::wstring& exe_dir, std::shared_ptr<Env> env, bool exit_if_busy, bool no_launch = false,
+              std::shared_ptr<LocalHost> local = nullptr)
+        : game_dir_(exe_dir), env_(std::move(env)), exit_if_busy_(exit_if_busy), no_launch_(no_launch), auto_setup_(!no_launch),
+          local_host_(local ? std::move(local) : MakeWin32LocalHost()) {
         paths_ = GetInstancePaths(game_dir_);
         LoadSettings(paths_, settings_);
         CleanOldExecutable(paths_.game);
         update_info_.current_version = CoreVersion();
         update_info_.status = UpdateStatus::idle;
         Recheck();
+        RefreshLocalCheck();
         if (phase_ != Phase::not_in_game_folder) Log("window=open; phase=" + PhaseName(phase_) + "; version=" + CoreBuildId());
         if (phase_ != Phase::not_in_game_folder && !no_launch_) {
             check_for_updates();
@@ -474,7 +478,16 @@ public:
             }
             if (finished) {
                 if (setup_thread_.joinable()) setup_thread_.join();
+                // The setup saved the settings it read at its start: keep Debug mode
+                // and the local test's folder if they were changed meanwhile.
+                const bool debug = settings_.debug;
+                const std::string guest = settings_.local_guest;
                 LoadSettings(paths_, settings_);
+                if (settings_.debug != debug || settings_.local_guest != guest) {
+                    settings_.debug = debug;
+                    settings_.local_guest = guest;
+                    PersistSettings();
+                }
                 if (ok) {
                     PersistCharacter();
                     Recheck();
@@ -492,6 +505,7 @@ public:
         case Stage::in_game: PollInGame(now); break;
         case Stage::after_game: PollAfterGame(now); break;
         case Stage::relaunch_wait: PollRelaunch(now); break;
+        case Stage::local_test: PollLocal(); break;
         }
         UpdateLink(now);
         next_poll_ = now + 250;
@@ -633,6 +647,71 @@ UpdateInfo update_info() const override {
         }
     }
 
+    // ---- Debug mode and the local two-window test --------------------------------------------
+    bool debug() const override { return settings_.debug; }
+    void set_debug(bool on) override {
+        settings_.debug = on;
+        PersistSettings();
+        Log(std::string("debug=") + (on ? "on" : "off"));
+        RefreshLocalCheck();
+    }
+    std::string local_test_folder() const override { return settings_.local_guest; }
+    void set_local_test_folder(const std::string& folder) override {
+        settings_.local_guest = Trim(folder).empty() ? std::string() : Utf8(FullPath(Wide(Trim(folder))));
+        PersistSettings();
+        RefreshLocalCheck();
+    }
+    LocalTestCheck check_local_test() const override {
+        if (!settings_.debug) return {false, "Turn on Debug mode in Settings first."};
+        if (stage_ == Stage::local_test) return {false, "A local test is running."};
+        if (stage_ != Stage::none) return {false, "Close the game first."};
+        if (phase_ == Phase::needs_setup || phase_ == Phase::setting_up) return {false, "Co-op is still getting ready."};
+        if (phase_ != Phase::ready) return {false, last_error_.empty() ? std::string("Co-op can't start in this folder right now.") : last_error_};
+        if (settings_.local_guest.empty()) return {false, "Choose the second MGSV game folder in Settings > Debug."};
+        return {local_check_.ok, local_check_.message};
+    }
+    bool start_local_test(std::string& error_out) override {
+        error_out.clear();
+        const LocalTestCheck check = check_local_test();
+        if (!check.ok) {
+            error_out = check.message;
+            return false;
+        }
+        auto run = std::make_unique<LocalTestRun>(env_, local_host_);
+        LocalTestRequest request;
+        request.host_root = paths_.game;
+        request.guest_root = Wide(settings_.local_guest);
+        request.hud = hud_;
+        if (!run->Start(request, error_out)) {
+            Log("local_test=refused");
+            RefreshLocalCheck();
+            return false;
+        }
+        ResetSession();
+        local_ = std::move(run);
+        local_view_ = LocalTestView{};
+        stage_ = Stage::local_test;
+        phase_ = Phase::in_game;
+        role_ = Role::host;
+        last_error_.clear();
+        next_poll_ = 0;
+        Log("local_test=started; run=" + local_->run_id());
+        UpdateLink(env_->NowMs());
+        return true;
+    }
+    LocalTestView local_test() const override {
+        if (!local_) return local_view_;
+        const LocalStatus st = local_->Status();
+        LocalTestView v;
+        v.active = true;
+        v.failed = st.failed;
+        v.headline = st.headline;
+        v.detail = st.detail;
+        return v;
+    }
+    void arrange_local_test() override {
+        if (local_) local_->Arrange();
+    }
 
 private:
     static std::string PhaseName(Phase p) {
@@ -655,10 +734,37 @@ private:
         case Stage::in_game: return "in_game";
         case Stage::after_game: return "after_game";
         case Stage::relaunch_wait: return "relaunch_wait";
+        case Stage::local_test: return "local_test";
         }
         return "unknown";
     }
     void Log(const std::string& text) { LauncherLog(*env_, paths_, text); }
+    std::wstring LocalPointer() const { return JoinPath2(paths_.mod, L"local-test-session.json"); }
+    void PersistSettings() {
+        std::string error;
+        if (IsDir(paths_.mod) && phase_ != Phase::not_in_game_folder) SaveSettings(paths_, settings_, error);
+    }
+    // The second folder's check is cached: it hashes that copy's mgsvtpp.exe.
+    void RefreshLocalCheck() {
+        local_check_ = LocalFolderCheck{};
+        if (!settings_.debug || settings_.local_guest.empty() || phase_ == Phase::not_in_game_folder) return;
+        local_check_ = CheckLocalTestFolder(*env_, paths_.game, Wide(settings_.local_guest));
+    }
+    void PollLocal() {
+        if (local_ && local_->Poll()) return;
+        if (local_) {
+            const LocalStatus st = local_->Status();
+            local_view_ = LocalTestView{};
+            local_view_.failed = st.failed;
+            local_view_.headline = st.headline;
+            local_view_.detail = st.detail;
+        }
+        local_.reset();
+        Log("local_test=finished");
+        stage_ = Stage::none;
+        Recheck();
+        RefreshLocalCheck();
+    }
     bool SetupFailedOnce() const {
         std::lock_guard<std::mutex> lock(shared_->m);
         return shared_->setup_failed_once;
@@ -749,7 +855,17 @@ private:
             const CleanupResult r = CleanupSession(*env_, paths_, false);
             if (r.ran) Log("leftover=cleaned; removed=" + std::to_string(r.removed.size()));
         } else if (game) {
+            if (IsFile(LocalPointer()))
+                return Fail("A local two-window test is running from this game folder (Play > Local test). Quit both games normally; both "
+                            "folders are restored afterwards. Then press Check again.");
             return Fail("MGSV is running from this folder. Quit it normally, then press Check again.");
+        }
+        if (IsFile(LocalPointer())) {
+            // A local two-window test whose launcher and helper are gone: restore its files from the journal.
+            std::vector<std::string> recovered;
+            std::string why;
+            if (RecoverLocalSessions(*env_, paths_.game, recovered, why)) Log("local_test=recovered; runs=" + std::to_string(recovered.size()));
+            else Log("local_test=recovery_refused");
         }
         RemoveStaleHandoff(*env_, paths_);
         const PackageInfo package = ReadPackage(paths_);
@@ -1185,6 +1301,18 @@ private:
             v.headline = "Starting MGSV...";
             v.detail = "Steam is starting the game. Answer any Steam dialog; this can take a minute.";
             break;
+        case Stage::local_test: {
+            const LocalStatus st = local_ ? local_->Status() : LocalStatus{};
+            v = LinkViewFromStatus(ParseStatusText(st.host_link, 0), true, now, CoreBuildId());
+            if (st.failed) {
+                v.connected = false;
+                v.headline = st.headline;
+            } else {
+                v.headline = "Local test: " + v.headline;
+            }
+            v.detail = st.detail;
+            break;
+        }
         case Stage::relaunch_wait:
             v.headline = "MGSV is restarting with the host's save";
             v.detail = "Steam is starting MGSV again, now on the host's save. Your previous co-op save is kept (Tools > Share save > Restore "
@@ -1272,6 +1400,11 @@ private:
     std::thread update_thread_;
     std::atomic<bool> update_cancel_{false};
     bool relaunch_ok_ = false, told_ = false;
+
+    std::shared_ptr<LocalHost> local_host_;
+    std::unique_ptr<LocalTestRun> local_;   // the running local two-window test
+    LocalTestView local_view_;              // how the last one ended
+    LocalFolderCheck local_check_;
 };
 
 }  // namespace
@@ -1280,10 +1413,19 @@ std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir,
     return std::make_unique<RealModel>(exe_dir, std::move(env), false);
 }
 
+std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env, std::shared_ptr<LocalHost> local) {
+    return std::make_unique<RealModel>(exe_dir, std::move(env), false, false, std::move(local));
+}
+
 int RunWatch(const std::wstring& exe_dir, const std::string& session_id) {
     if (!IsHexText(session_id, 32)) return 2;
     auto env = MakeWin32Env();
     return RunWatchdog(*env, exe_dir, LowerAscii(session_id));
+}
+
+int RunLocalWatchHelper(const std::wstring& exe_dir, const std::string& run_id) {
+    auto env = MakeWin32Env();
+    return RunLocalWatch(*env, exe_dir, run_id);
 }
 
 // ---- Developer flags: --write-session / --end-session ---------------------------------

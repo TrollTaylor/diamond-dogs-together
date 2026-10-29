@@ -72,6 +72,21 @@ public:
     void cancel_update() override;
     void set_mock_update_info(const UpdateInfo& info);
 
+    // ---- Debug mode and the local two-window test ----------------------------
+    // The second folder is accepted when it is kGuestDir (or another folder
+    // named like an MGSV copy); a run lasts 120 s of the simulated clock.
+    bool debug() const override;
+    void set_debug(bool on) override;
+    std::string local_test_folder() const override;
+    void set_local_test_folder(const std::string& folder) override;
+    LocalTestCheck check_local_test() const override;
+    bool start_local_test(std::string& error_out) override;
+    LocalTestView local_test() const override;
+    void arrange_local_test() override;
+    static constexpr const char kGuestDir[] = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\MGS_TPP_guest";
+    // A local test `seconds` after Start local test.
+    void jump_to_local_test(double seconds);
+
     // ---- Hooks for tests and the screenshot driver -------------------------
     // The player's own (synthetic) SteamID64 and a valid partner code.
     static constexpr std::uint64_t kOwnSteamId = 76561197960265728ull + 104729ull;
@@ -114,6 +129,11 @@ private:
     std::string last_error_;
     bool has_previous_save_ = true;
     UpdateInfo update_info_;
+    bool debug_ = false;
+    std::string local_folder_;
+    bool local_active_ = false;
+    double local_start_ = 0.0;
+    LocalTestView local_last_;
 };
 
 std::unique_ptr<LauncherModel> MakeMockModel(const MockOptions& options);

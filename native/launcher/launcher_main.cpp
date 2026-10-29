@@ -423,6 +423,29 @@ ddt::ShellServices MakeServices(bool interactive) {
         if (slash != std::wstring::npos && Exists(w.substr(0, slash), true))
             ShellExecuteW(g_app->hwnd, L"open", w.substr(0, slash).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     };
+    s.pick_folder = [](const std::string& title, std::string& out) {
+        IFileOpenDialog* dialog = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))) || !dialog) return false;
+        DWORD options = 0;
+        dialog->GetOptions(&options);
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        dialog->SetTitle(Wide(title).c_str());
+        bool ok = false;
+        if (SUCCEEDED(dialog->Show(g_app->hwnd))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dialog->GetResult(&item)) && item) {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                    out = Utf8(path);
+                    ok = true;
+                }
+                CoTaskMemFree(path);
+                item->Release();
+            }
+        }
+        dialog->Release();
+        return ok;
+    };
     s.pick_save_zip = [](std::string& out) {
         wchar_t file[MAX_PATH * 4] = {};
         std::wstring desktop;
@@ -696,6 +719,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     switch (o.mode) {
     case Options::Mode::help: Print(ddt::ui::UsageText()); return 0;
     case Options::Mode::watch: return ddt::RunWatch(o.watch_session);
+    case Options::Mode::local_watch: return ddt::RunLocalWatch(o.local_run);
     case Options::Mode::write_session: {
         std::string report;
         const int code = ddt::RunWriteSession(o.game_dir, o.write_host, o.write_code, o.write_character, report);

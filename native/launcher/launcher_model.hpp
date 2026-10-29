@@ -63,6 +63,18 @@ enum class UpdateStatus {
     error
 };
 
+// The developer's local two-window test (Settings > Debug mode, Play > Local test).
+struct LocalTestCheck {
+    bool ok = false;        // Start local test can be pressed
+    std::string message;    // what starting does, or what is needed first
+};
+struct LocalTestView {
+    bool active = false;    // a local test owns both games (until they exit and the folders are restored)
+    bool failed = false;    // stopped by a safety check
+    std::string headline;   // "" when there was no local test in this window
+    std::string detail;     // the status of both games; after a test, how it ended
+};
+
 struct UpdateInfo {
     UpdateStatus status = UpdateStatus::idle;
     std::string current_version;
@@ -128,6 +140,23 @@ public:
     virtual void check_for_updates() = 0;
     virtual void start_update() = 0;
     virtual void cancel_update() = 0;
+
+    // ---- Debug mode and the local two-window test (2026-10-29) ---------------
+    // Settings > Debug mode shows developer tests (off by default, persisted
+    // with the launcher settings). With it on, Play offers the local test: two
+    // MGSV copies on this PC (this folder hosts as Snake, the second folder
+    // joins as Quiet), the PowerShell tools/dev/Play-LocalCoop.ps1 test natively.
+    virtual bool debug() const = 0;
+    virtual void set_debug(bool on) = 0;
+    // The second game folder ("" = none chosen), persisted.
+    virtual std::string local_test_folder() const = 0;
+    virtual void set_local_test_folder(const std::string& folder) = 0;
+    virtual LocalTestCheck check_local_test() const = 0;
+    // Prepares both folders and starts both games; the phase becomes in_game
+    // (session_role() host) until both games have exited and both folders are restored.
+    virtual bool start_local_test(std::string& error_out) = 0;
+    virtual LocalTestView local_test() const = 0;
+    virtual void arrange_local_test() = 0;   // places both game windows again
 };
 
 std::unique_ptr<LauncherModel> MakeMockModel();

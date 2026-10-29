@@ -148,6 +148,8 @@ bool LoadSettings(const InstancePaths& paths, Settings& out) {
     out.character = IsJoinerCharacter(c) ? c : std::string();
     const std::string h = v.Str("hud");
     out.hud = (h == "compact" || h == "full" || h == "off") ? h : std::string();
+    out.debug = v.Bool("debug", false);
+    out.local_guest = v.Str("local_test_guest");
     return true;
 }
 
@@ -161,6 +163,8 @@ bool SaveSettings(const InstancePaths& paths, Settings& s, std::string& error) {
     s.raw["v"] = 1;
     s.raw["character"] = s.character;
     s.raw["hud"] = s.hud;
+    s.raw["debug"] = s.debug;
+    s.raw["local_test_guest"] = s.local_guest;
     return WriteAtomic(paths.settings, json::Dump(s.raw) + "\n", true, error);
 }
 

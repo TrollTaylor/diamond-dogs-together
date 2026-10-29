@@ -19,6 +19,8 @@ struct ShellServices {
     std::function<void(const std::string& utf8_file)> reveal_file;
     // Shows an "Open" dialog for a .zip; false when cancelled.
     std::function<bool(std::string& utf8_path_out)> pick_save_zip;
+    // Shows a folder picker (Settings > Debug: the local test's second game folder); false when cancelled.
+    std::function<bool(const std::string& utf8_title, std::string& utf8_folder_out)> pick_folder;
     std::function<void(const std::string& utf8_url)> open_url;
 };
 
@@ -61,6 +63,7 @@ private:
     void PlayPage(Phase phase);
     void HostTab(Phase phase);
     void JoinTab(Phase phase);
+    void LocalTab(Phase phase, const LocalTestView& local);
     void CodeCard(bool compact);
     void InGamePage(Phase phase);
     void ToolsPage(Phase phase);
@@ -80,7 +83,7 @@ private:
     Phase last_phase_ = Phase::needs_setup;
     ui::Page page_ = ui::Page::play;
     ui::SetupView setup_view_ = ui::SetupView::none;   // this frame's automatic setup view
-    Role role_ = Role::host;
+    ui::PlayTab play_tab_ = ui::PlayTab::host;   // the chosen Play tab
     Role session_role_ = Role::host;
 
     // Play
@@ -99,6 +102,7 @@ private:
     Result logs_result_;   // Collect logs from the setup failure banner / error card
     std::string uninstall_report_;
     Popup popup_request_ = Popup::none;
+    bool scroll_settings_down_ = false;   // the screenshot driver shows the Debug section
 };
 
 }  // namespace ddt

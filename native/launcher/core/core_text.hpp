@@ -88,6 +88,8 @@ std::string FormatStatusLine(const json::Value& status, bool host, std::int64_t 
 // ---- Launch evidence (Get-CoopLaunchEvidence, Steam transport) -------------------
 struct Evidence {
     std::string state;      // ok | pending | unsafe | old_loader | incomplete
+    std::string saves;      // ok | missing | unchanged | wrong_dir (the saves= line)
+    std::string master;     // ok | missing | bad (the master_server= line)
     std::vector<std::string> missing, problems;
     std::string link_reason;
 };

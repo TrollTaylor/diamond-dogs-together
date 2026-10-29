@@ -9,6 +9,10 @@ namespace ddt {
 // returns 0 at once; B (wp/launcher-core) implements it on the real model.
 int RunWatch(const std::wstring& session);
 
+// --local-watch <run>: the hidden helper of the developer's local two-window test
+// (Settings > Debug): restores both game folders after both games have exited.
+int RunLocalWatch(const std::wstring& run);
+
 // Developer only (the release gate's hidden-worker runs): --write-session
 // host|join writes the session files exactly as Host / Join (after the setup
 // when it is needed) without the helper, Steam or the clipboard; --end-session

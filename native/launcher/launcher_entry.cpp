@@ -39,6 +39,8 @@ int RunWatch(const std::wstring& session) {
     return core::RunWatch(ExeFolder(), core::Utf8(session));
 }
 
+int RunLocalWatch(const std::wstring& run) { return core::RunLocalWatchHelper(ExeFolder(), core::Utf8(run)); }
+
 namespace {
 std::wstring SessionFolder(const std::wstring& game_dir) {
     if (game_dir.empty()) return ExeFolder();

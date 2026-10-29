@@ -450,17 +450,80 @@ void LauncherUi::PlayPage(Phase phase) {
         EndCard();
         Gap(4.0f);
     }
-    static const char* const kTabs[2] = {"Host", "Join"};
-    int index = (session ? session_role_ : role_) == Role::host ? 0 : 1;
-    if (Segmented("##role", kTabs, 2, &index, 230.0f, !session)) {
-        role_ = index == 0 ? Role::host : Role::join;
+    // Host | Join, and Local test with Settings > Debug mode on (or while one runs).
+    const LocalTestView local = model_.local_test();
+    const bool debug = model_.debug();
+    ui::PlayTab tab = ui::ShownPlayTab(play_tab_, debug, local.active);
+    if (session && !local.active) tab = session_role_ == Role::host ? ui::PlayTab::host : ui::PlayTab::join;
+    static const char* const kTabs[3] = {ui::PlayTabLabel(ui::PlayTab::host), ui::PlayTabLabel(ui::PlayTab::join),
+                                         ui::PlayTabLabel(ui::PlayTab::local_test)};
+    const int tabs = ui::PlayTabCount(debug || local.active);
+    int index = static_cast<int>(tab);
+    if (Segmented("##role", kTabs, tabs, &index, tabs == 3 ? 360.0f : 230.0f, !session)) {
+        play_tab_ = static_cast<ui::PlayTab>(index);
         play_error_.clear();
     }
     Gap(4.0f);
-    if (index == 0)
-        HostTab(phase);
-    else
-        JoinTab(phase);
+    switch (tab) {
+    case ui::PlayTab::host: HostTab(phase); break;
+    case ui::PlayTab::join: JoinTab(phase); break;
+    case ui::PlayTab::local_test: LocalTab(phase, local); break;
+    }
+}
+
+// Developer only (Settings > Debug mode): two MGSV copies on this PC.
+void LauncherUi::LocalTab(Phase phase, const LocalTestView& local) {
+    BeginCard("##localinfo");
+    IconBadge(Icon::tools, col::kAccent, col::kAccentSoft, 36.0f);
+    ImGui::SameLine(0.0f, Px(12.0f));
+    ImGui::BeginGroup();
+    Text("Local test (two windows)", col::kText, kBody, GetFonts().semibold, -1.0f);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(8.0f));
+    Text("Two MGSV copies on this PC: this folder hosts as Snake, the second folder joins as Quiet. Keyboard and mouse control "
+         "the game you click; controller 0 controls the guest. Only separate local-test saves are used.",
+         col::kTextDim, kSmall, nullptr, 0.0f);
+    ImGui::EndGroup();
+    EndCard();
+    Gap(2.0f);
+    if (local.active) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        if (local.failed)
+            StatusDot(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 5.0f, col::kBad);
+        else
+            Spinner(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 6.5f, col::kAccent, time_);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + Px(26.0f), p.y));
+        ImGui::BeginGroup();
+        Text(local.headline.c_str(), col::kText, kBody, GetFonts().semibold, -1.0f);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(6.0f));
+        Text(local.detail.c_str(), local.failed ? col::kBad : col::kTextDim, kSmall, nullptr, 0.0f);
+        ImGui::EndGroup();
+        Gap(4.0f);
+        if (Button("Arrange windows##local", ButtonKind::secondary, ImVec2(0, 38.0f), !local.failed, Icon::sliders, true))
+            model_.arrange_local_test();
+        Gap(2.0f);
+        Text("Quit BOTH games normally to end the test. You can close this window: a hidden helper puts both folders back "
+             "after both games have exited.",
+             col::kTextFaint, kSmall, nullptr, 0.0f);
+        return;
+    }
+    const LocalTestCheck check = model_.check_local_test();
+    const std::string folder = model_.local_test_folder();
+    SectionLabel("SECOND GAME FOLDER");
+    Text(folder.empty() ? "Not chosen yet" : folder.c_str(), folder.empty() ? col::kTextFaint : col::kTextDim, kSmall, GetFonts().mono, 0.0f);
+    Message(check.ok ? Icon::check : Icon::warning, check.ok ? col::kGood : col::kWarn, check.message);
+    Gap(6.0f);
+    if (Button("Start local test", ButtonKind::primary, ImVec2(210.0f, 46.0f), ui::CanStartLocalTest(phase, check), Icon::play, true)) {
+        std::string error;
+        if (model_.start_local_test(error)) play_error_.clear();
+        else play_error_ = error;
+    }
+    if (!check.ok) {
+        ImGui::SameLine(0.0f, Px(10.0f));
+        if (Button("Open Settings##local", ButtonKind::secondary, ImVec2(0, 46.0f), true, Icon::sliders, true)) Navigate(Page::settings);
+    }
+    Gap(2.0f);
+    if (!local.detail.empty()) Message(local.failed ? Icon::warning : Icon::check, local.failed ? col::kWarn : col::kGood, local.detail);
+    Message(Icon::warning, col::kBad, play_error_);
 }
 
 void LauncherUi::CodeCard(bool compact) {
@@ -689,7 +752,10 @@ void LauncherUi::InGamePage(Phase phase) {
         return;
     }
     const bool host = session_role_ == Role::host;
-    PageHeader("In game", host ? "You're hosting. Your partner joins you." : "You're joining your partner's game.");
+    const LocalTestView local = model_.local_test();
+    PageHeader("In game", local.active ? "The local two-window test on this PC (Debug mode)."
+                          : host       ? "You're hosting. Your partner joins you."
+                                       : "You're joining your partner's game.");
     const LinkView& l = link_;
 
     // Status.
@@ -790,6 +856,15 @@ void LauncherUi::InGamePage(Phase phase) {
     }
     Message(Icon::warning, col::kBad, play_error_);
     Gap(4.0f);
+    if (local.active) {
+        if (Button("Arrange windows##ingame", ButtonKind::secondary, ImVec2(0, 36.0f), !local.failed, Icon::sliders, true))
+            model_.arrange_local_test();
+        Gap(2.0f);
+        Message(Icon::info, col::kTextFaint,
+                "Quit BOTH games normally to end the local test. You can close this window: a hidden helper puts both folders "
+                "back after both games have exited.");
+        return;
+    }
     Message(Icon::info, col::kTextFaint,
             phase == Phase::after_game
                 ? "You can close this window. The tidy-up finishes on its own."
@@ -1000,6 +1075,40 @@ void LauncherUi::SettingsPage(Phase phase) {
                Icon::folder, true))
         if (shell_.open_folder) shell_.open_folder(dir);
     EndCard();
+
+    // Developer tests (off by default; players never need them).
+    Gap(10.0f);
+    SectionLabel("DEBUG");
+    bool debug = model_.debug();
+    if (Checkbox("Debug mode: shows developer tests##debug", &debug, phase != Phase::not_in_game_folder)) model_.set_debug(debug);
+    Text("For developers. Adds the local two-window test to Play.", col::kTextFaint, kSmall, nullptr, 0.0f);
+    if (debug) {
+        Gap(4.0f);
+        SectionLabel("LOCAL TEST: SECOND GAME FOLDER");
+        BeginCard("##guestfolder");
+        const std::string guest = model_.local_test_folder();
+        if (guest.empty())
+            Text("No folder chosen yet. Choose a second, separate MGSV install (a full copy of the game folder); the test copies "
+                 "this version's co-op files into it.",
+                 col::kTextFaint, kSmall, nullptr, 0.0f);
+        else
+            Text(guest.c_str(), col::kTextDim, kSmall, GetFonts().mono, 0.0f);
+        Gap(2.0f);
+        if (Button("Choose...##guest", ButtonKind::secondary, ImVec2(112.0f, 34.0f), !ui::SessionActive(phase), Icon::folder, true)) {
+            std::string picked;
+            if (shell_.pick_folder && shell_.pick_folder("Choose the second MGSV game folder (the local test's guest copy)", picked))
+                model_.set_local_test_folder(picked);
+        }
+        if (!guest.empty()) {
+            ImGui::SameLine(0.0f, Px(10.0f));
+            if (Button("Clear##guest", ButtonKind::quiet, ImVec2(82.0f, 34.0f), !ui::SessionActive(phase))) model_.set_local_test_folder("");
+            const LocalTestCheck check = model_.check_local_test();
+            Gap(2.0f);
+            Message(check.ok ? Icon::check : Icon::warning, check.ok ? col::kGood : col::kWarn, check.message);
+        }
+        EndCard();
+    }
+    if (scroll_settings_down_) ImGui::SetScrollHereY(1.0f);
 }
 
 // ---- Popups ----------------------------------------------------------------
@@ -1148,8 +1257,9 @@ const char* LauncherUi::SceneName(int index) { return ui::SceneName(static_cast<
 void LauncherUi::PrepareScene(int index, MockModel& mock) {
     if (ImGui::GetCurrentContext() && ImGui::GetCurrentContext()->OpenPopupStack.Size > 0) ImGui::ClosePopupToLevel(0, false);
     // Reset the pages.
-    role_ = Role::host;
+    play_tab_ = ui::PlayTab::host;
     session_role_ = Role::host;
+    scroll_settings_down_ = false;
     code_buf_[0] = '\0';
     checked_text_.assign("\x01");
     wait_invite_ = false;
@@ -1162,6 +1272,8 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
     mock.use_manual_clock(1000.0);
     mock.set_character(Character::story);
     mock.set_hud("compact");
+    mock.set_debug(false);
+    mock.set_local_test_folder("");
     const std::string own_code = FormatJoinCode(kFixedSecret, MockModel::kOwnSteamId);
     auto copy_into = [&](const std::string& s) {
         strncpy_s(code_buf_, sizeof(code_buf_), s.c_str(), _TRUNCATE);
@@ -1179,11 +1291,11 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         break;
     case ui::Scene::play_join:
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         break;
     case ui::Scene::play_join_invalid: {
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         mock.set_character(Character::ocelot);
         std::string bad = MockModel::PartnerCode();
         bad[bad.find('@') - 1] = bad[bad.find('@') - 1] == 'A' ? 'B' : 'A';
@@ -1192,13 +1304,13 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
     }
     case ui::Scene::play_join_valid:
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         mock.set_character(Character::dd_female);
         copy_into(MockModel::PartnerCode());
         break;
     case ui::Scene::play_join_invite:
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         mock.set_character(Character::avatar);
         wait_invite_ = true;
         break;
@@ -1265,6 +1377,31 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         popup_request_ = Popup::uninstall_report;
         break;
     }
+    case ui::Scene::settings_debug_no_folder:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        page = Page::settings;
+        scroll_settings_down_ = true;
+        break;
+    case ui::Scene::settings_debug_folder:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        mock.set_local_test_folder(MockModel::kGuestDir);
+        page = Page::settings;
+        scroll_settings_down_ = true;
+        break;
+    case ui::Scene::play_local_no_folder:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
+    case ui::Scene::play_local_ready:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        mock.set_local_test_folder(MockModel::kGuestDir);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
+    case ui::Scene::play_local_running: mock.jump_to_local_test(30.0); break;
     case ui::Scene::count: break;
     }
     first_frame_ = false;

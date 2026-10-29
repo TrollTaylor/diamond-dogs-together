@@ -126,6 +126,51 @@ void TestSetupView() {
     Check(ui::GetSetupView(Phase::not_in_game_folder, ui::SummarizeSetup({})) == ui::SetupView::none, "wrong folder -> nothing");
 }
 
+void TestDebugGating() {
+    // Settings > Debug mode adds "Local test (two windows)" to Play; nothing of it shows otherwise.
+    Check(ui::PlayTabCount(false) == 2 && ui::PlayTabCount(true) == 3, "the Local test tab only in Debug mode");
+    Check(std::string(ui::PlayTabLabel(ui::PlayTab::host)) == "Host" && std::string(ui::PlayTabLabel(ui::PlayTab::join)) == "Join" &&
+              std::string(ui::PlayTabLabel(ui::PlayTab::local_test)) == "Local test",
+          "tab labels");
+    Check(ui::ShownPlayTab(ui::PlayTab::local_test, false, false) == ui::PlayTab::host, "Debug off: never the Local test tab");
+    Check(ui::ShownPlayTab(ui::PlayTab::join, true, false) == ui::PlayTab::join, "Debug on: the chosen tab");
+    Check(ui::ShownPlayTab(ui::PlayTab::host, true, true) == ui::PlayTab::local_test &&
+              ui::ShownPlayTab(ui::PlayTab::join, false, true) == ui::PlayTab::local_test,
+          "a running local test is always shown");
+    const LocalTestCheck ok{true, "Ready."}, missing{false, "Choose the second game folder in Settings > Debug."};
+    Check(ui::CanStartLocalTest(Phase::ready, ok), "start when ready and the folder is fine");
+    Check(!ui::CanStartLocalTest(Phase::ready, missing) && !ui::CanStartLocalTest(Phase::setting_up, ok) &&
+              !ui::CanStartLocalTest(Phase::in_game, ok),
+          "no start without a folder, while getting ready or during a game");
+
+    // The mock model: Debug mode off by default; the folder is checked; a run ends by itself.
+    MockOptions o;
+    o.scenario = MockScenario::ready;
+    MockModel m(o);
+    m.use_manual_clock(0.0);
+    Check(!m.debug() && m.local_test_folder().empty() && !m.check_local_test().ok, "Debug mode is off by default");
+    std::string error;
+    Check(!m.start_local_test(error) && !error.empty(), "no local test with Debug mode off");
+    m.set_debug(true);
+    Check(m.debug() && m.check_local_test().message.find("Settings") != std::string::npos, "Debug on: choose the second folder");
+    m.set_local_test_folder(m.game_dir());
+    Check(!m.check_local_test().ok && m.check_local_test().message.find("separate") != std::string::npos, "not the same folder");
+    m.set_local_test_folder(MockModel::kGuestDir);
+    Check(m.check_local_test().ok, "a separate MGSV folder");
+    Check(m.start_local_test(error) && m.phase() == Phase::in_game && m.local_test().active && m.session_role() == Role::host,
+          "the local test runs");
+    Check(!m.check_local_test().ok, "not twice");
+    m.advance(5.0);
+    m.tick();
+    Check(m.local_test().active && !m.link().headline.empty(), "both games running");
+    m.advance(200.0);
+    m.tick();
+    Check(m.phase() == Phase::ready && !m.local_test().active && m.local_test().detail.find("previous setup") != std::string::npos,
+          "both games closed: both folders restored");
+    m.set_debug(false);
+    Check(!m.check_local_test().ok, "Debug off again");
+}
+
 void TestScenes() {
     // --screenshot-all renders every scene; the Setup page scenes are gone.
     Check(ui::SceneCount() >= 20, "scene list");
@@ -141,6 +186,12 @@ void TestScenes() {
         if (name.find("wrong-folder") != std::string::npos) wrong = true;
     }
     Check(preparing && failed && wrong, "Play while preparing, the failure banner and the wrong folder are rendered");
+    int debug_scenes = 0;
+    for (int i = 0; i < ui::SceneCount(); ++i) {
+        const std::string name = ui::SceneName(static_cast<ui::Scene>(i));
+        if (name.find("settings-debug") != std::string::npos || name.find("play-local") != std::string::npos) ++debug_scenes;
+    }
+    Check(debug_scenes >= 4, "Settings with Debug on and Play's Local test are rendered");
     Check(std::string(ui::SceneName(static_cast<ui::Scene>(ui::SceneCount()))).empty(), "out of range scene");
 }
 
@@ -279,6 +330,11 @@ void TestCommandLine() {
     o = ui::ParseCommandLine({L"--end-session", L"--game-dir", L"D:\\G"});
     Check(o.error.empty() && o.mode == ui::Options::Mode::end_session && o.game_dir == L"D:\\G", "--end-session");
     Check(!ui::ParseCommandLine({L"--end-session", L"--write-session", L"host"}).error.empty(), "one session flag at a time");
+    o = ui::ParseCommandLine({L"--local-watch", L"0123456789abcdef0123456789abcdef"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::local_watch && o.local_run == L"0123456789abcdef0123456789abcdef",
+          "--local-watch (the local test's helper)");
+    Check(!ui::ParseCommandLine({L"--local-watch", L"../x"}).error.empty() && !ui::ParseCommandLine({L"--local-watch"}).error.empty(),
+          "--local-watch needs a run id");
     Check(!ui::ParseCommandLine({L"--write-session", L"host", L"--mock"}).error.empty(), "no simulated model for the session flags");
     Check(std::wstring(ui::UsageText()).find(L"Developer only") != std::wstring::npos &&
               std::wstring(ui::UsageText()).find(L"--end-session") != std::wstring::npos,
@@ -443,6 +499,7 @@ int main() {
     TestNavigation();
     TestSetupView();
     TestScenes();
+    TestDebugGating();
     TestCharactersAndHud();
     TestJoinCode();
     TestJoinField();

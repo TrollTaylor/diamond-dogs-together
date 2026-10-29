@@ -24,6 +24,8 @@ constexpr double kHandoffEnd = 26.0;
 constexpr double kDropAt = 34.0;
 constexpr double kGameLength = 90.0;
 constexpr double kAfterGame = 5.0;
+constexpr double kLocalStartup = 8.0;
+constexpr double kLocalLength = 120.0;
 
 const char* const kStepLabel[kSetupSteps] = {
     "Check the game",
@@ -240,6 +242,16 @@ double MockModel::GameSeconds() const { return now() - session_.start - kLaunch;
 LinkView MockModel::link() const {
     LinkView v;
     if (!ui::SessionActive(phase_)) return v;
+    if (local_active_) {
+        const double g = now() - local_start_;
+        v.headline = g < kLocalStartup ? "Local test: Starting co-op in the game..." : "Local test: Connected to your partner";
+        v.connected = g >= kLocalStartup;
+        v.partner_name = g >= kLocalStartup ? "Guest" : "";
+        v.partner_mission = g >= kLocalStartup ? "Mother Base" : "";
+        v.ping_ms = g >= kLocalStartup ? 3 : 0;
+        v.detail = local_test().detail;
+        return v;
+    }
     const bool host = session_.role == Role::host;
     const std::string partner = host ? "Kaz" : "Venom";
     if (phase_ == Phase::launching) {
@@ -398,6 +410,16 @@ void MockModel::tick() {
         start_setup();
         return;
     }
+    if (local_active_) {
+        if (t - local_start_ >= kLocalLength) {
+            local_active_ = false;
+            local_last_ = LocalTestView{};
+            local_last_.headline = "Local test ended";
+            local_last_.detail = "Local test ended. Both game folders returned to their previous setup.";
+            SetPhase(Phase::ready);
+        }
+        return;
+    }
     if (phase_ == Phase::setting_up) {
         const double elapsed = t - setup_start_;
         if (options_.scenario == MockScenario::setup_fails && setup_attempts_ == 1) {
@@ -453,6 +475,7 @@ void MockModel::recheck() {
 }
 
 void MockModel::jump_to_setup(int step, float progress, bool failed) {
+    local_active_ = false;
     if (step < 0) step = 0;
     if (step >= kSetupSteps) step = kSetupSteps - 1;
     double elapsed = progress * kSetupDuration[step];
@@ -476,6 +499,8 @@ void MockModel::jump_to_setup(int step, float progress, bool failed) {
 }
 
 void MockModel::jump_to_phase(Phase phase) {
+    local_active_ = false;
+    local_last_ = LocalTestView{};
     setup_failed_ = false;
     last_setup_.clear();
     last_error_ = phase == Phase::error ? kGameUpdated : "";
@@ -483,6 +508,7 @@ void MockModel::jump_to_phase(Phase phase) {
 }
 
 void MockModel::jump_to_session(Role role, bool invite, Phase phase, double seconds) {
+    local_active_ = false;
     double offset = seconds;
     if (phase == Phase::in_game) offset += kLaunch;
     if (phase == Phase::after_game) offset += kLaunch + kGameLength;
@@ -518,6 +544,66 @@ void MockModel::cancel_update() {
 
 void MockModel::set_mock_update_info(const UpdateInfo& info) {
     update_info_ = info;
+}
+
+bool MockModel::debug() const { return debug_; }
+void MockModel::set_debug(bool on) { debug_ = on; }
+std::string MockModel::local_test_folder() const { return local_folder_; }
+void MockModel::set_local_test_folder(const std::string& folder) { local_folder_ = folder; }
+
+LocalTestCheck MockModel::check_local_test() const {
+    if (!debug_) return {false, "Turn on Debug mode in Settings first."};
+    if (local_active_) return {false, "A local test is running."};
+    if (ui::SessionActive(phase_)) return {false, "Close the game first."};
+    if (phase_ == Phase::needs_setup || phase_ == Phase::setting_up) return {false, "Co-op is still getting ready."};
+    if (phase_ != Phase::ready) return {false, last_error_.empty() ? std::string("Co-op can't start in this folder right now.") : last_error_};
+    if (local_folder_.empty()) return {false, "Choose the second MGSV game folder in Settings > Debug."};
+    if (Lower(local_folder_) == Lower(game_dir()) || Lower(local_folder_).rfind(Lower(game_dir()) + "\\", 0) == 0)
+        return {false, "Choose a second, separate MGSV folder: not this game folder, and neither folder inside the other."};
+    if (Lower(local_folder_).find("mgs_tpp") == std::string::npos)
+        return {false, "There is no mgsvtpp.exe in that folder. Choose a separate MGSV game folder (a full copy of the game)."};
+    return {true, "Ready. This version's co-op loader and runtime file are copied into it when the test starts."};
+}
+
+bool MockModel::start_local_test(std::string& error_out) {
+    const LocalTestCheck check = check_local_test();
+    if (!check.ok) {
+        error_out = check.message;
+        return false;
+    }
+    local_active_ = true;
+    local_start_ = now();
+    local_last_ = LocalTestView{};
+    session_ = Session{Role::host, false, now(), std::string()};
+    last_error_.clear();
+    SetPhase(Phase::in_game);
+    return true;
+}
+
+LocalTestView MockModel::local_test() const {
+    if (!local_active_) return local_last_;
+    const double g = now() - local_start_;
+    LocalTestView v;
+    v.active = true;
+    if (g < kLocalStartup) {
+        v.headline = "Starting both games...";
+        v.detail = "Host: waiting for the game. Guest: waiting for the game.";
+    } else {
+        v.headline = "Local test running";
+        v.detail = "Host: connected | ping 3 ms | partner Guest | Mother Base. Guest: connected | ping 3 ms | partner Venom | Mother Base.";
+    }
+    return v;
+}
+
+void MockModel::arrange_local_test() {}
+
+void MockModel::jump_to_local_test(double seconds) {
+    jump_to_phase(Phase::ready);
+    debug_ = true;
+    if (local_folder_.empty()) local_folder_ = kGuestDir;
+    std::string error;
+    start_local_test(error);
+    local_start_ = now() - seconds;
 }
 
 std::unique_ptr<LauncherModel> MakeMockModel(const MockOptions& options) {

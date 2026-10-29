@@ -646,6 +646,8 @@ Evidence GetLaunchEvidence(const std::string& early_log, const std::string& stea
             break;
         }
     }
+    ev.saves = saves;
+    ev.master = master;
     if (master == "missing") ev.missing.push_back("steam-observer.log master_server=redirected (closed local port)");
     bool refused_play = false, active = false, link_config = false;
     std::string link_reason;

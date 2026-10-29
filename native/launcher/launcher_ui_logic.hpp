@@ -36,6 +36,15 @@ Page DefaultPage(Phase phase);
 // that page becomes unusable.
 Page PageAfterPhaseChange(Phase from, Phase to, Page current, Role role);
 
+// ---- Play tabs (Settings > Debug mode adds the local test) --------------------
+enum class PlayTab { host, join, local_test };
+int PlayTabCount(bool debug);           // 2, or 3 with Debug mode on
+const char* PlayTabLabel(PlayTab tab);  // "Host" | "Join" | "Local test"
+// The tab Play shows: a running local test always; never the local test with Debug mode off.
+PlayTab ShownPlayTab(PlayTab chosen, bool debug, bool local_test_active);
+// "Start local test" can be pressed.
+bool CanStartLocalTest(Phase phase, const LocalTestCheck& check);
+
 // ---- Character picker ------------------------------------------------------
 enum class CharacterChoice { story, ocelot, dd_soldier, avatar };
 inline constexpr int kCharacterChoiceCount = 4;
@@ -125,6 +134,11 @@ enum class Scene {
     settings,
     tools_in_game,
     uninstall_report,
+    settings_debug_no_folder,
+    settings_debug_folder,
+    play_local_no_folder,
+    play_local_ready,
+    play_local_running,
     count
 };
 int SceneCount();
@@ -132,9 +146,10 @@ const char* SceneName(Scene scene);   // "" when out of range
 
 // ---- Command line ----------------------------------------------------------
 struct Options {
-    enum class Mode { gui, watch, selftest, screenshots, help, write_session, end_session } mode = Mode::gui;
+    enum class Mode { gui, watch, selftest, screenshots, help, write_session, end_session, local_watch } mode = Mode::gui;
     bool mock = false;              // --mock (developer flag; the real model is the default)
     std::wstring watch_session;     // --watch <session>
+    std::wstring local_run;         // --local-watch <run>: the local two-window test's helper
     // Developer flags for the release gate's hidden-worker runs (no window, no Steam):
     // --write-session host|join [--code <code>] [--character <c>] [--game-dir <dir>]
     // and --end-session [--game-dir <dir>].

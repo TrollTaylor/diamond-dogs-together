@@ -76,6 +76,25 @@ Page PageAfterPhaseChange(Phase from, Phase to, Page current, Role role) {
     return next;
 }
 
+int PlayTabCount(bool debug) { return debug ? 3 : 2; }
+
+const char* PlayTabLabel(PlayTab tab) {
+    switch (tab) {
+    case PlayTab::host: return "Host";
+    case PlayTab::join: return "Join";
+    case PlayTab::local_test: return "Local test";
+    }
+    return "";
+}
+
+PlayTab ShownPlayTab(PlayTab chosen, bool debug, bool local_test_active) {
+    if (local_test_active) return PlayTab::local_test;
+    if (!debug && chosen == PlayTab::local_test) return PlayTab::host;
+    return chosen;
+}
+
+bool CanStartLocalTest(Phase phase, const LocalTestCheck& check) { return CanStartSession(phase) && check.ok; }
+
 CharacterChoice ChoiceOf(Character character) {
     switch (character) {
     case Character::story: return CharacterChoice::story;
@@ -214,7 +233,8 @@ const char* const kSceneNames[static_cast<int>(Scene::count)] = {
     "09-play-join-invite",     "10-play-error",          "11-ingame-launching",  "12-ingame-host-waiting",
     "13-ingame-connected",     "14-ingame-handoff",      "15-ingame-after-game", "16-tools",
     "17-tools-result",         "18-tools-uninstall-confirm", "19-tools-about",   "20-settings",
-    "21-tools-in-game",        "22-uninstall-report",
+    "21-tools-in-game",        "22-uninstall-report",    "23-settings-debug-no-folder", "24-settings-debug-folder",
+    "25-play-local-no-folder", "26-play-local-ready",    "27-play-local-running",
 };
 }  // namespace
 
@@ -248,6 +268,13 @@ bool ParseNumber(const std::wstring& text, double lo, double hi, double& out) {
     return true;
 }
 
+bool ValidRun(const std::wstring& s) {
+    if (s.size() != 32) return false;
+    for (wchar_t c : s)
+        if (!((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f'))) return false;
+    return true;
+}
+
 bool ValidSession(const std::wstring& s) {
     if (s.empty() || s.size() > 64) return false;
     for (wchar_t c : s)
@@ -269,6 +296,11 @@ Options ParseCommandLine(const std::vector<std::wstring>& args) {
             if (!has_value || !ValidSession(args[i + 1])) { o.error = L"--watch needs a session id."; return o; }
             o.mode = Options::Mode::watch;
             o.watch_session = args[++i];
+            ++modes;
+        } else if (Is(a, L"--local-watch")) {
+            if (!has_value || !ValidRun(args[i + 1])) { o.error = L"--local-watch needs a local test run id."; return o; }
+            o.mode = Options::Mode::local_watch;
+            o.local_run = args[++i];
             ++modes;
         } else if (Is(a, L"--selftest")) {
             o.mode = Options::Mode::selftest;
@@ -323,7 +355,7 @@ Options ParseCommandLine(const std::vector<std::wstring>& args) {
         }
     }
     if (modes > 1) {
-        o.error = L"Use only one of --watch, --selftest, --screenshot-all, --write-session, --end-session and --help.";
+        o.error = L"Use only one of --watch, --local-watch, --selftest, --screenshot-all, --write-session, --end-session and --help.";
         return o;
     }
     const bool session_flag = o.mode == Options::Mode::write_session || o.mode == Options::Mode::end_session;
@@ -345,6 +377,7 @@ const wchar_t* UsageText() {
            L"  --screenshot-all <dir>    render every page once (hidden) and save PNGs\n"
            L"  --selftest                run the built-in checks; exit code 0 = passed\n"
            L"  --watch <session>         background helper while the game runs (no window)\n"
+           L"  --local-watch <run>       background helper of the local two-window test (no window)\n"
            L"Developer only (release-gate checks; no window, no Steam, no clipboard):\n"
            L"  --write-session host|join run the setup if needed and write the session files\n"
            L"                            exactly as Host / Join do, without starting Steam\n"

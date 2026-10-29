@@ -94,7 +94,11 @@ pwsh -File tools/Prepare-Dependencies.ps1
 ./tools/build.ps1 -Configuration Release
 ```
 
-`tools/package.ps1 -Friend` builds the release zip from a passing `tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` run. Developer docs:
+`tools/package.ps1 -Friend` builds the release zip from a passing `tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` run.
+
+Testing on one PC: in the launcher, **Settings → Debug mode** adds **Play → Local test (two windows)**. It starts two MGSV copies on this PC (this game folder hosts as Snake, a second game folder joins as Quiet) on separate local-test saves, and puts both folders back after both games exit. Choose the second folder under Settings → Debug. `Play-Offline-Coop.bat` (`tools/dev/Play-LocalCoop.ps1`) does the same from PowerShell; both use the same cleanup journal.
+
+Developer docs:
 - [Status and change log](docs/STATUS.md)
 - [Campaign roadmap](docs/CAMPAIGN-ROADMAP.md)
 - [Partner body](docs/native-puppet.md)
