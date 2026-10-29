@@ -1,5 +1,7 @@
 ## October 28, 2026: 0.14.3 (Africa guns, free-roam vehicle fallback, host-log fixes)
 
+**Package (2026-10-28):** `dist/DiamondDogsTogether-0.14.3-20261029T020207Z-b6469c40/DiamondDogsTogether-0.14.3.zip` (10,138,607 bytes), SHA-256 `E7015643E500B6054F110322A942F7BE1B13106A39CD0C00A2D8C0C113850B5E`, built by `tools/package.ps1 -Friend` from the clean tree at `a0653b5` with Release receipt `20261029-015830-131f317ba5ff48e781921e51802c0275` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `45070101845AEF7D5606D37CA0B2311B222E114491422BBDBFEB9FC29612673F` and `dinput8.dll` `63EB987EE56A9B4CA9C2C867253DD896B35D16E3F9E4B3049A123D81E6069309`, both build id `0.14.3+a0653b5`.
+
 Branch `dev/oct7-continue`. Releases the 2026-10-28 fixes for the two-PC test of 2026-10-23 (`docs/two-pc-test-2026-10-23.md`). Each is proven in the hidden worker or by fixtures, as the sections below record; none is two-PC tested yet.
 
 - **Africa guns (bug 1, `beccaa7`, merge `952fc64`).** The generalized gun writer accepts the three natively empty states F1-F3 that made it refuse for good in 30020, so the host's guns bind on the friend's screen in Africa. See [Africa fixes and host-log fixes](#2026-10-28-africa-fixes-and-host-log-fixes-integrated-on-devoct7-continue-unreleased-not-two-pc-tested).
