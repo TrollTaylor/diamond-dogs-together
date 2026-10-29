@@ -53,13 +53,17 @@ off). Two-PC: not tested.
   before its `Load`, so its copy loads the host's buddy. The guest keeps its own buddy vars and every
   `TppSave.SaveVarsToSlot` writes those (D8 b); a solo load gives them back.
 - The host sends COMPANION (op 48, kind only for now) on change and every 5 s; a guest whose loaded buddy differs
-  calls the host's kind with its own block after 8 s (15 s to send one away), 4 m in front of its player.
-- The guest cannot call, change or dismiss a companion: the Lua entry points refuse another type, the F9 summon is
+  calls the host's kind with its own block after 8 s (15 s to send one away), 4 m in front of its player. (Review
+  2026-10-29: a horse there was in the wrong place and mountable; now the guest's copy loads only the dog, at the host
+  dog's pose: see the review-fix section above.)
+- The guest cannot call or change a companion (a dismiss through the iDroid is not covered: `DeleteBuddy` requests
+  NONE, which the disable byte list never holds; review 2026-10-29): the Lua entry points refuse another type, the F9 summon is
   host-only, `PlayerPad.CALL` is masked while the host has a companion out (the call menu and whistle; also Knock and
   Sonar; released in a CQC hold), and the disable byte covers every type that is neither the host's nor loaded. Each
   refusal shows a toast (NOTE 13).
 - A guest who plays Quiet sends CHARACTER (op 56) before the sortie; the host disables buddy Quiet, sends a Quiet already
-  out away, rewrites a Quiet sortie and its `buddyTypeMissionStart` to none (its own save keeps her), and both copies
+  out away, rewrites a Quiet sortie and its `buddyTypeMissionStart` to none (its own save keeps her; review 2026-10-29:
+  the OnAllocate slot restore undid that rewrite and the first-tick delete was what protected, fixed above), and both copies
   refuse the Mother Base cell Quiet (`TppStory.CanArrivalQuietInMB`).
 - Attribution is id-aware: a companion that stands for the partner's counts as `mirror`, is logged
   (`event=mirror_engaged`) and never forwarded.
