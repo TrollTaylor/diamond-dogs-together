@@ -266,6 +266,21 @@ check(c.called('UnsetDisableBuddyType') == 0 and c.C.guestQuiet == true, 'the lo
 c.time = c.time + 11000
 c.tick(200)
 check(c.called('UnsetDisableBuddyType') == 1 and c.find('step=quiet_unlock;'), 'unlocked after 10 s unpaired')
+-- Late join: Quiet out on the host and in its sortie copy (run b993af09 read buddyTypeMissionStart 3 at Mother Base
+-- after the heli delete): she is sent away and the sortie copy rewritten too, so a restart cannot bring her back;
+-- the host's saves keep its Quiet.
+c = Fixture(1, {buddyType = QUIET, active = QUIET})
+c.W.handlers[56]({1, 6, 1})
+c.tick(6000)
+check(c.called('DeleteBuddy') == 1 and c.env.vars.buddyType == NONE and c.env.vars.buddyTypeMissionStart == NONE and
+    c.find('step=quiet_lock;via=start_rewrite;guest_char=quiet;'), 'delete_buddy and the sortie copy rewritten')
+c.env.TppSave.SaveVarsToSlot(0)
+check(c.saves[1].buddyType == QUIET and c.saves[1].start == QUIET, 'the host save keeps Quiet in both')
+c.env.vars.buddyTypeMissionStart = QUIET
+c.tick(1000)
+check(c.env.vars.buddyTypeMissionStart == QUIET, 'the start rewrite waits 5 s between tries')
+c.tick(5000)
+check(c.env.vars.buddyTypeMissionStart == NONE, 'and rewrites a sortie copy written again')
 -- Host with a guest who is not Quiet: no lock.
 c = Fixture(1, {buddyType = QUIET})
 c.W.handlers[56]({1, 2, 0})

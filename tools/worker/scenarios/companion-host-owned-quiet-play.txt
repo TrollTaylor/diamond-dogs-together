@@ -13,6 +13,7 @@ waitgameplay guest 240
 waitlog host 'world_lua=event=companion; role=host; step=character; guest_code=6; guest_char=quiet;' 120
 waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=disable_type; guest_char=quiet;' 60
 waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=delete_buddy; guest_char=quiet;' 90
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=start_rewrite; guest_char=quiet;' 30
 # The guest Continued with its own dog (a title load is not a co-op travel): it keeps it for its saves and sends it
 # away 15 s after the host's kind went none (the reconcile's debounce for none).
 waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=delete; kind=none;' 90

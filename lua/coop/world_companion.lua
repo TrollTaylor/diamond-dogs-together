@@ -218,6 +218,13 @@ local function hostTick(now)
     if ok then lockLog("delete_buddy") end
    end
   end
+  -- The sortie copy too (run b993af09 read 3 at Mother Base after the heli delete; a restart's
+  -- ResetVarsMissionStart would copy it back into buddyType); at most every 5 s.
+  if W.paired and W.get(vars, "buddyTypeMissionStart") == Q and now >= (C.startAt or 0) and C.keep("quiet_lock") then
+   C.startAt = now + 5000
+   vars.buddyTypeMissionStart = BT("NONE")
+   lockLog("start_rewrite")
+  end
  elseif C.quietDisabled then
   if C.quietMine then pcall(W.get(S, "UnsetDisableBuddyType"), Q) end
   C.quietDisabled, C.quietMine = nil, nil
@@ -365,7 +372,7 @@ function C.tick(now)
 end
 W.startHooks[#W.startHooks + 1] = function()
  C.nextTick, C.txAt, C.txKind, C.deleteAt, C.fixAt, C.mismatchAt, C.host, C.hostKind = nil, nil, nil, nil, nil, nil, nil, nil
- C.masked, C.cellLogged, C.hookLines = nil, nil, 0
+ C.masked, C.cellLogged, C.hookLines, C.startAt = nil, nil, 0, nil
  if C.expect and C.expect.mission == W.mission then C.expect.deadline = W.now() + 30000 else C.expect = nil end
  if C.on() and not W.host then C.charAt = nil end
 end

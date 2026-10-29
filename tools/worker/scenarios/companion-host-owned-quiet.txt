@@ -14,14 +14,16 @@ boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny
 host capture m1-quiet-toast-early
 waitlog host 'world_lua=event=companion; role=host; step=character; guest_code=6; guest_char=quiet;' 60
 waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=disable_type; guest_char=quiet;' 60
-waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=sortie_rewrite; guest_char=quiet;' 60
+# The boot's helicopter has the host's Quiet out, so she is sent away there first (delete_buddy, run b993af09); a
+# Quiet only in the save is rewritten at the sortie (sortie_rewrite, fixture); the sortie copy either way (start_rewrite).
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=(sortie_rewrite|delete_buddy); guest_char=quiet;' 60
 waitlog host 'world_lua=event=companion; role=host; step=seed; kind=none;' 60
 waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=none; source=seed;' 90
+# Mother Base loads no buddy block without a dog or Quiet (buddy_block_inactive, kunknown): vars_type=0 on both.
 host run buddy_status
-host expect knone
-host expect own=3
+host expect vars_type=0_own=3
 guest run buddy_status
-guest expect knone
+guest expect vars_type=0
 host run companion_status
 guest run companion_status
 host capture m1-quiet-toast
