@@ -1,7 +1,8 @@
 # Vehicles and companions: design
 
-Status: revision 2 of the design (2026-10-28, after review; see section 11). M1 is built on `wp/companion-host` behind
-the lab key `companion_host_owned` (play default off; results in 8.1, status in section 9); the rest is design. Branch
+Status: revision 2 of the design (2026-10-28, after review; see section 11). M1 and M2 (D-Dog stage 1) are built on
+`wp/companion-host` behind the lab key `companion_host_owned` (play default off; results in 8.1 and 8.2, status in
+section 9); the rest is design. Branch
 `wp/companions` from `dev/oct7-continue` `48ce7da` (0.14.3; package built at `a4c18fa`). Target exe: `mgsvtpp.exe`
 1.0.15.4, SHA-256 `085c2f82...bb45`.
 
@@ -144,7 +145,7 @@ marked *in*; the others need the user's word (decision D6) because they depend o
 
 | Companion | GameObject type, id on each copy | Lua commands | Placement |
 |---|---|---|---|
-| D-Dog `TppBuddyDog2` | 19, `9728` | Dispatcher `0x140C7D220` [O]: `LuaAiStayAndSnarl` (`0x24824B9A`), `GetPlant`, `SetWarpPosition` (`pos`), `GetPlacedItem`; scripts also send `SetMotherBaseCenterAndRadius` | Held by `LuaAiStayAndSnarl` target + `SetWarpPosition` [O, run `7169753d`]. Whether the held dog still attacks a guard near it is [U] (E3) |
+| D-Dog `TppBuddyDog2` | 19, `9728` | Dispatcher `0x140C7D220` [O]: `LuaAiStayAndSnarl` (`0x24824B9A`), `GetPlant`, `SetWarpPosition` (`pos`), `GetPlacedItem`; scripts also send `SetMotherBaseCenterAndRadius` and `SetEnabled` (`TppDemo`) | `LuaAiStayAndSnarl` fields [O, 8.2]: `position`, `useMarker`, `look`, `dash`, `warp`, `ignoreMarker` -> vt+0x98 -> `0x140C7DA10`, which sets the persistent mode 1/2 (look given and `useMarker` false: the retail `s10040` "stop AI"; the Dog AI `0x140C7E650` skips its update for them) or 3/4 (`useMarker` true or no look), +1 with `dash`; `warp` places the dog at `position` facing `look`. **Held by mode 1/2 + `warp=1` at 10 Hz** (M2, runs `ffb2d7ab`, `4cd88ea2`); mode 1/2 without warp never moves the dog (run `8c0b425f`), mode 3/4 walks it there itself but lagged 7-15 m behind a moving host |
 | D-Horse `TppHorse2` | 13, `6656` (`6657` in capacity two) | Dispatcher `0x140E4D250` [O]: `GetRidePlayer`, `SetCallHorse{startPosition, goalPosition}`, `HorseForceStop`, `SetCombatGrade`, `SetMaxLife`, four unnamed hashes `0x9BBA9494`, `0x442D1EEC`, `0xC41E0C02`, `0xD1233CDA` | **No verified per-frame placement** [O]. `SetCallHorse` at RIDE_BODY rates made idle horses leap and hang in the air (`docs/mounts.md:52-62`, filmed) |
 | D-Walker `TppWalkerGear2` | 44, `22528` (`22529`) | Dispatcher `0x141706190` [O], 16 commands incl. `SetPosition{pos, rotY}`, `NoRideOn`, `IsPlayerRiding`, `ForceStop` | `SetPosition` [O]; it does not arm a body for ACTION (`6e789152`) |
 | Quiet `TppBuddyQuiet2` | 18 [I, type array `0x2A7C690`] | Dispatcher not found [U]; type handle `0x142C36A38` [O]. Controller requests exist: `RequestMoveToPosition`, `RequestWalkToPosition`, `RequestMoveToSnipePoint`, `RequestEspionageToPosition` [O, table `0x140A45BE0`]; argument shapes [U] | [U] |
@@ -331,8 +332,9 @@ a field change is a new op, never a resized old one.
 | Code | Name | Dir | Wire | Rate | Fields | Replaces / reuses |
 |---|---|---|---|---|---|---|
 | 9-11 | TRANSITION / SEED / SEEDS_END | H->G | R | per travel | **New seed keys** (vars): `buddyType`, the look vars of 3.1, `initialBuddyStatus`; after E2 the relief selection var(s) and `reliefVehicleCarryType/Attitude/Life/Ammo/State`. Sent only after the Quiet lock (F1.4) | `world_follow_seed.lua` key list (`{name, dims, scale, true}` = vars) [O] |
-| 48 | COMPANION | H->G (both for walker slot 1) | U, and R once per kind or state change | 10 Hz while moving, 2 Hz idle, plus every change | seq, sender tick, kind 1 dog / 2 horse / 3 walker / 4 Quiet, slot (0 host's, 1 guest's walker), present, xyz mm, yaw mrad, state byte (dog: follow/stay/attack; Quiet: standby/snipe/cloak/down; horse: gait 0..3; walker: idle/drive; all: hurt/hospital/dead), rider bits (seat 0 role, seat 1 role), target id (attack target, 0 if none; used after enemy sync, F2b) | Supersedes BUDDY_STATE 39 / ACK 40 (same idea, more fields) |
-| 49 | COMPANION_ACK | G->H | R | 1 Hz | seq, kind, result, error cm | Same as BUDDY_ACK |
+| 48 | COMPANION | H->G (both for walker slot 1) | R (M1/M2: on a kind change and every 5 s, with the last streamed pose; the 10 Hz stream is op 57) | on change and every 5 s | seq, sender tick, kind 1 dog / 2 horse / 3 walker / 4 Quiet, slot (0 host's, 1 guest's walker), present, xyz mm, yaw mrad, state byte (dog: follow/stay/attack; Quiet: standby/snipe/cloak/down; horse: gait 0..3; walker: idle/drive; all: hurt/hospital/dead), rider bits (seat 0 role, seat 1 role), target id (attack target, 0 if none; used after enemy sync, F2b) | Supersedes BUDDY_STATE 39 / ACK 40 (same idea, more fields) |
+| 49 | COMPANION_ACK | G->H | R | 1 Hz | seq, kind, result (0 holding at the host's pose, 1 loading or unreadable, 2 refused or another kind, 3 stale (held at the last pose), 5 held where it stands), error cm | Same as BUDDY_ACK (built in M2) |
+| 57 | COMPANION_POSE | H->G | U (its own latest-value slot, newest sender tick wins) | 10 Hz while the companion moves (5 cm since the last send), 2 Hz idle | sender tick, kind, slot, present, xyz mm, yaw mrad (the host player's heading), state; the receiver appends its latency | The U half of COMPANION (one op has one wire type); built in M2 |
 | 50 | MOUNT_FAST | both | U | 20 Hz while ridden | sender tick, kind 1 horse / 2 walker, slot, xyz mm, heading mrad, gait | RIDE_FAST's track machinery (100 ms render delay, extrapolation, stale rules) keyed by (kind, slot) instead of a per-copy id |
 | 44 | RIDE_FAST | both | U | 20 Hz | unchanged | **Also sent by the host** for AI-driven vehicles near the guest (F8), 10 Hz |
 | 51 | VEHICLE_STATE | H->G | R | on change (>0.5 m, >5 deg, damage or state change), at most 2 Hz per vehicle; on pairing a rate-limited sweep (4 vehicles per 250 ms) | vehicle id, locator hash (0 if unnamed), type, flags (alive, broken, npc-ridden, player-ridden, relief, burning), xyz mm, yaw mrad, body life per mille, wheel damage bits (read API [U]) | New |
@@ -621,7 +623,7 @@ mirror in play.
 
 | Mirror | Engagement hold (candidates; E3, E15) | Protection (E19) | Attribution |
 |---|---|---|---|
-| D-Dog (guest's copy) | `LuaAiStayAndSnarl` at the host dog's pose (today) [O]; whether it still bites a guard within reach is [U]. Candidates if it does: a stay order through a Lua command [U], or an unrealize while a guard is within 5 m (the mirror vanishes briefly rather than acting) | [U]: no dog life command known; else carry death/hospital from COMPANION only and ignore the guest copy's own dog damage | `mirror` |
+| D-Dog (guest's copy) | **Built (M2): the stop-AI form of `LuaAiStayAndSnarl` (mode 1/2, whose AI update the Dog AI skips) placed by the command's own warp at 10 Hz** [O, 8.2]. 176 s within 1.4 m of a guard in an alert: zero `mirror_engaged` (run `4cd88ea2`). Fallbacks if needed: `SetEnabled=false` while a guard is within 5 m (the `TppDemo` command) [U] | Not hurt in 176 s beside a guard in combat, buddy vars unchanged [O]; whether any guard shot at it is [U]. `SetDisableDamage{life, faint, sleep}` on the dog answers nil [O]; its effect is [U]. Death and hospital still come only from the host (COMPANION) | `mirror` |
 | Quiet (guest's copy) | A cease-fire order or engagement flag through her controller requests [U, E15] | [U] | `mirror` |
 | D-Horse (non-riding copy) | A horse does not attack; its collisions with guards are possible [I] | `SetMaxLife` (dispatcher `0x140E4D250`) [O name, U effect] | `local` only while the local player rides it; else `mirror` |
 | Partner's D-Walker (index 1) | No pilot on that copy, so no gunfire; collisions possible [I] | Walker life command [U] (16-command dispatcher) | `local` only for the walker this copy pilots; else `mirror` |
