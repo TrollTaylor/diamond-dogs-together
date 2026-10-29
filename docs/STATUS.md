@@ -1,3 +1,35 @@
+## 2026-10-29: M3 experiments E2, E17, E18, the sortie (relief) vehicle (`wp/relief`, lab levers only, not merged)
+
+Branch `wp/relief` from `wp/companions` `068852c`. Experiments only: M3 itself is not implemented (it waits for M1's
+seeds and refusals). Results and the route decision are in `docs/vehicles-companions-design.md` section 8.1 and M3.
+
+- **Built (lab only).** `lua/coop/world_relief.lua`, a new world chunk spliced last, reached through the debug
+  commands `relief_census` (read only: carry vars, index 0, GMP and the nine Mother Base vehicle resources, paint
+  presets, the sortie loadout slot), `relief_arm` (writes the carry vars at the ACC sortie, as the sortie prep's
+  SetRelief does), `relief_seize stock|skip`, `relief_remove instant|fadeout|fulton [quiet]` and `relief_face`. Every
+  lever but the census refuses outside lab mode; the hooks install with the first lever only. Tests:
+  `world_relief_lua_check` (new, failed before the module existed), `debug_vehicle_lua_check` (routing),
+  `host_trial_patch_check` and the composed world check list the chunk. Scenarios `relief-e2.txt`, `relief-e17.txt`,
+  `relief-coop.txt`.
+- **Seed (decision D10).** `coop-relief-30020` in `D:\mgs-coop-seeds`: a read-only copy of the host's launcher co-op
+  save (`<game>\mgs-coop\coop-saves`, the path `native/launcher/core/core_paths.cpp` gives), both roles, source set hash
+  `E0C1476C...8272`. It holds a real sortie-prep choice (relief type 2, east LV) saved in 30020. Never written back.
+- **Hidden runs** (all closed, baseline restored, real saves unchanged; archived in
+  `%USERPROFILE%\mgs-coop-run-archive\companions\<id>`):
+
+| Run | Scenario, seed | Result |
+|---|---|---|
+| `698e67cf` | `relief-e2.txt`, lab | The lever wrote at the destination's mission start: no relief vehicle on either copy (the game's `Vehicle` table refuses writes; the mission start runs on the loading thread). The seize wrappers worked on both copies. |
+| `5874afcd` | `relief-coop.txt`, `coop-relief-30020` | E2 real choice: the save continues with `reliefVehicleCarryType=514` (type 2) and 25600 alive, `GetVehicleType` 2. The lever at the ACC sortie gave the host type 2 at the 30010 LZ; the guest's commands were refused while it was still loading, so its copy had none. Unsuppressed seize: both copies credited `4wdEast`. |
+| `fafd3fdd` | `relief-e2.txt`, lab | E2 route A emulated: type 1 at (1226.94, -127.08) in 30020 and type 2 at (-347.95, 763.58) in 30010, identical on both copies (frames `relief-arrival1`). E18: the host's seize credited once (`AddTempResource 14`, `4wdWest` 1 -> 2), the guest's `seize_skipped`, GMP unchanged. E17 `Instant` on the guest still credited (`AddTempResource 13`). Then the `relief_goto` warp dropped both players through the slope: shared game over, session forced closed (`Forced=true`). |
+| `9f01d603` | `relief-e17.txt`, lab | Route A again at both LZs. E17: `FadeOut` (guest) and `Fulton` (host) remove index 0 on that copy only and credit (the guest's `4wdWest` 1 -> 2 at the next mission end); `Instant` with `quiet` (the receiver's `TppTerminal.OnFulton` for 25600 skipped) removed it with no credit (frames `relief-e17-quiet-before/after`). |
+
+- **Route decision: route A** (each copy's own engine spawns the host's relief choice as index 0). What M3 needs is
+  listed under M3 in the design. Not covered: relief types 3..10, a non-zero paint preset, a guest continue with its
+  own 25600, the host's real sortie-prep GMP charge, and the seed path itself.
+- **Defaults.** Nothing flips: the module is lab levers only, so no `-Mode play -WanSim bad` rehearsal was needed.
+- **Checks.** `pwsh -File tools/build.ps1 -Fast`: 291/291. `pwsh -File tools/build.ps1` (Debug): 306/306, 102 s.
+
 ## October 28, 2026: 0.14.3 (Africa guns, free-roam vehicle fallback, host-log fixes)
 
 **Package (2026-10-28):** `dist/DiamondDogsTogether-0.14.3-20261029T023814Z-d15f739d/DiamondDogsTogether-0.14.3.zip` (10,222,077 bytes), SHA-256 `E199D144DDDD444B3C313F322796CB89EE6C27BB8331D549853BC55AEFA7A965`, built by `tools/package.ps1 -Friend` from the clean tree at `a4c18fa` with Release receipt `20261029-023457-0c5320d4b721440382a548fdbf8679c6` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `3A2A81FB3E2645EE808EFE1E825A592B1F535E78819F95381BA4EC28A21921A9` and `dinput8.dll` `324AF4748F9DCCD4765BA801A5E3A071C9D71EB938793469D25FFFCA577E9F89`, both build id `0.14.3+a4c18fa`. Its `source.zip` holds 1,337 files, among them all 17 `native/*.inc` loader fragments.

@@ -210,8 +210,10 @@ AI follows the guest, which is why `world_buddy.lua` holds the guest's dog [O].
   `SeizeReliefVehicleOnForceGoToMb` (`Seize{..., DirectAccount}`) all act on index 0. If both copies hold index 0,
   both would credit it to Mother Base resources [I]: a double reward unless the guest's seize is suppressed (E18).
   Whether the sortie's GMP cost is also charged on the guest's replay is [U] (E18).
-- **The var that holds the chosen relief type is not identified** [U, `unk_59943e57`]. Candidates: the
-  `sortieLoadoutInfoU8buf/U16buf/U32buf` buffers, `userPresetVehiclePaintType`, `reliefVehicleCarry*`.
+- **The chosen relief type is `vars.reliefVehicleCarryType`** (low byte 1..10; 0 none) with
+  `vars.reliefVehicleCarryAttitude[0..3]` (x, y, z, rotY) [O, E2, section 8.1; resolves `unk_59943e57`]: the vehicle
+  manager's SetRelief writes them at the sortie and `Vehicle.LoadCarry` reads them at the next mission start; the
+  sortie loadout buffers do not hold the choice.
 - **Index 0 cannot be spawned, respawned or despawned from Lua** [O]: `ParseLuaSpawnIndex` `0x140B304E0` rejects 0 and
   indices at or above the pool count (callers in Spawn `0xB31E70`, Respawn `0xB31710`, Despawn `0xB30AF0`), and
   `world_vehicle.lua` refuses `index0` (`:148-157`). So a Fulton or destruction of index 0 on one copy cannot be
@@ -703,6 +705,80 @@ Static steps use capstone on the exe file (header).
 | E21 | Body 1 can natively mount the shared horse (`mounts.md` section 7 step 4) | Research only: the ACTION start for instance 1 (the F3 icon path) and the ride component for idx 1 | Records feasibility for F10's fallback |
 | E22 | Both players can ride the support heli visibly | Research: the heli's seats and player states (`stateHeliIdle`, `stateHeliRideOn`), today's acts 97..108 hide, whether body 1 can be DM-seated in the heli | Records a design for M12 |
 
+### 8.1 Results: E2, E17, E18 (sortie vehicle, 2026-10-29, `wp/relief`)
+
+Lab levers and a census in `lua/coop/world_relief.lua` (debug `relief_census`, `relief_arm`, `relief_seize`,
+`relief_remove`, `relief_face`; every lever but the census refuses outside lab mode, and its game hooks install only
+with the first lever). Scenarios `tools/worker/scenarios/relief-e2.txt`, `relief-e17.txt`, `relief-coop.txt`. Four
+hidden runs (all closed with the baseline restored and the real saves unchanged); frames as JPEG in the session
+scratch folder `complete/frames/relief/`. The shared Ghidra server refused again (WinError 10061) [O]; static reads
+are capstone on the exe (notes in the session scratch `companions/relief/notes-static.md`).
+
+**E2: passes [O].**
+- Static [O]: `vars` base `[0x142C16920]`; `reliefVehicleCarryType` vars+0x2D34 (u32 slot: low byte the relief type,
+  byte 1 written at realize by `0x140B34E69`), `reliefVehicleCarryAttitude` vars+0x2D38 (4 floats), Life +0x2D48, Ammo
+  +0x2D60, State +0x2D66; `userPresetVehiclePaintType` vars+0x1BB1 (10). The vehicle manager (singleton
+  `[0x142C20730]`, getter `0x140A27A50`, vtable `0x1422AC8E0`) embeds the relief record at +0x30 (flags +0x58, type
+  +0x5B = the ReliefBlock's record byte +0x2B, paint +0x5C; vtable +0x100 hands the block `mgr+0x30`). vtable +0x78
+  `0x140A28980` (SetRelief) writes the record and the carry vars; vtable +0x58 `0x140A29320` (RequestRelief) is what
+  `Vehicle.LoadCarry` (`0x140A27FB0`) calls with the carry type and pose, after clearing the low byte in 40010 /
+  40020 / 40050. The paint is `userPresetVehiclePaintType` of that type, re-read at every request (`0x140A27270` ->
+  `0x140A28AF0`). Type t loads pack t of the vector `0x142C36A00` built by `0x140B3A1E0`: 1 west_lv, 2 east_lv, 3
+  west_trc, 4 east_trc, 5 west_wav_machinegun, 6 west_wav_cannon, 7 east_wav, 8 east_wav_rocket, 9 west_tnk, 10
+  east_tnk. The UI calls SetRelief (`0x1416BC4B0`, from a loadout-delivery path) with loadout vehicle id 0x0D..0x16
+  mapped by `0x14095D230` (0x0D->2, 0x0E->1, 0x0F->4, 0x10->3, 0x11->7, 0x12->5, 0x13->8, 0x14->6, 0x15->10, 0x16->9).
+- Real choice [O, run `5874afcd`, seed `coop-relief-30020` (decision D10: the launcher's co-op save copy,
+  `<game>\mgs-coop\coop-saves` per `native/launcher/core/core_paths.cpp`, copied read-only)]: the host's 2026-10-23
+  save continues in 30020 with `reliefVehicleCarryType=514` (type 2, east LV), carry pose (263.57, 1.56, -228.88), and
+  25600 alive with `GetVehicleType` 2 at (263.56, -5.52, -228.88) (frame `host-relief-coop-continue`: the jeep). The
+  current sortie loadout slot bytes are identical to the lab save's, so the choice is not in `sortieLoadoutInfoU8buf`.
+  `GetVehicleType` answers 1 for the west LV and 2 for the east LV [O], the enum order of the exe strings [I].
+- Lever [O]: `relief_arm` writing the carry vars at the ACC sortie (`TppMission.SelectNextMissionHeliStartRoute`, where
+  the sortie prep's SetRelief writes) reproduces the choice. A write at the destination's mission start did nothing
+  (run `698e67cf`: the game's `Vehicle` table refuses writes; `InitializeForNewMission` runs on the loading thread,
+  whose world logs are dropped).
+- Route A emulated on both copies [O, runs `fafd3fdd`, `9f01d603`]: with the lever on both copies (as a seed would
+  give the guest the host's choice), each copy's own engine loaded the same pack and placed its own 25600 at the same
+  spot: type 1 at (1226.94, 19.43, -127.08) at the 30020 savannahEast_N LZ and type 2 at (-347.95, 315.86, 763.58) at
+  the 30010 enemyBase_S LZ, identical to 0.01 m on both copies in both runs; frames `fafd3fdd-*-relief-arrival1` and
+  `9f01d603-*-relief-e17-quiet-before` show the jeep on both screens. The LZ drop point overrides the armed pose
+  (`AdjustFromDropPoint`; the carry attitude reads the LZ point after arrival). Without the lever on the guest (run
+  `5874afcd`) the guest's copy had no index 0 (today's state).
+
+**E18: passes [O].**
+- At the 30020 mission end with 25600 alive on both copies (run `fafd3fdd`): the host's stock
+  `SeizeReliefVehicleOnClear` ran (`step=seize; alive=1`), then `OnFultonVehicle(25600, ..., 14)` and
+  `AddTempResource(14)`, and the host's `4wdWest` went 1 -> 2 at the next mission; the guest's wrapper skipped it
+  (`step=seize_skipped; alive=1`), no credit line, its `4wdWest` stayed 1. GMP 313850 on both copies throughout.
+- Unsuppressed, both copies credit [O host, I guest baseline]: in run `5874afcd` the guest (no wrapper) ran its own
+  stock seize and showed `4wdEast=1` at the next mission, as the host did (both started 0 from the same save).
+- Charge: no lever spawn changed GMP on either copy, and the guest never runs the sortie prep (world follow replays
+  the host's sortie) [O]; the host's real sortie-prep charge is not observable in the worker [U].
+- `SeizeReliefVehicleOnClear` also runs at the ACC's mission clear (twice per lab goto), with `alive=0` [O].
+
+**E17: passes with `Seize{"Instant"}` plus a skip of the receiver's `TppTerminal.OnFulton` for 25600 [O].**
+- `Instant` (run `fafd3fdd`), `FadeOut` (run `9f01d603`, the guest's copy) and `Fulton` (run `9f01d603`, the host's
+  copy), each without DirectAccount / CheckFultonType (the `Seize` parser `0x140B2B8FD`: method Fulton / FadeOut
+  `0xEDCE2762` / Instant `0x85D95BDF`; flags CheckFultonType 1, CheckFarFromPlayer 2, DirectAccount 4), all remove index
+  0 from that copy only (gone within 8 s; frame `9f01d603-guest-relief-e17-fadeout-after` has no jeep while
+  `9f01d603-host-relief-e17-fadeout-after` still has the host's), and all run the stock credit path: `Fulton` (att
+  none), `FultonInfo` and `Neutralize` (att local), `TppTerminal.OnFulton` -> `OnFultonVehicle` -> `AddTempResource`.
+  That temporary credit is real: after the guest's FadeOut its `4wdWest` went 1 -> 2 at the next mission end.
+- `relief_remove instant quiet` (run `9f01d603`): the guest's copy skipped its `TppTerminal.OnFulton` for 25600
+  (`step=credit_skipped`), no `OnFultonVehicle` / `AddTempResource`, resources unchanged, 25600 gone after 8 s and 20 s
+  (frame `9f01d603-guest-relief-e17-quiet-after`). That no commit follows at the mission end is [I] (no temp
+  resource was added).
+- The receiver's own removal still logs `Neutralize` of 25600 with `att=local` [O]: VEHICLE_GONE's guest observer
+  must not take it for a guest loss.
+- A warp next to the vehicle at its height (`relief_goto`, run `fafd3fdd`) put both players under the enemyBase_S
+  slope: both fell, were downed and the session ended in a shared game over. `relief_face` (a turn in place) replaced it.
+
+**Route decision: route A** (the same relief vehicle spawned by each copy's own engine from the host's choice). It
+covers all ten relief types, including the APC, the tank and the other faction's jeep that route B cannot draw, keeps
+the id 25600 on both copies, and its two costs are solved: the guest's mission-end seize is skipped (E18) and a
+removal on the receiver is `Seize{"Instant"}` with its `OnFulton` skipped (E17). Not run: relief types 3..10 [I from
+the pack vector], a non-zero paint preset, a guest continue with its own 25600, and the seed path itself (M3).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -770,12 +846,31 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
 
 ### M3. The sortie vehicle on both copies
 
-- Scope: F3 route A (with E17 and E18) or route B; guest vehicle requests refused.
-- Depends on: E2, E17, E18, M1 (seeds), E4.
-- Proof `companion-relief.txt`: host seed `afgh-relief-lv`; `boot 40010`, then `host worldtrigger goto=30010
-  goto_lz=1` (a real LZ, so the relief vehicle is placed at a drop point; `boot` with coordinates uses route 0, which
-  may place none [U]); a census of 25600 on both (`both run vehicle_seats`) -> alive on both within 1 m; `both capture
-  m3-relief-arrival`. Host drives it 100 m -> `waitlog guest 'partner_ride_seat=confirmed; vehicle=25600;'`, never
+- Status (2026-10-29): E2, E17 and E18 passed; **route A** chosen (section 8.1). Not implemented: it waits for M1's
+  seed and refusal infrastructure. Lab levers, the census and the scenarios are on `wp/relief`.
+- Scope: F3 route A; guest vehicle requests refused.
+- What M3 needs (route A): (1) seed keys `reliefVehicleCarryType` (the whole u32), `reliefVehicleCarryAttitude[0..3]`
+  and `userPresetVehiclePaintType[0..9]` (the paint is re-read at the request); applied in the guest's
+  `TppMission.Load` wrapper, which runs after its ACC LoadCarry cleared them and before the destination's LoadCarry
+  [I; the lever proved the write at the replayed `SelectNextMissionHeliStartRoute`]; the host's values are snapshotted
+  after its sortie prep's SetRelief. (2) The guest wraps `TppMission.SeizeReliefVehicleOnAbort/OnClear/OnForceGoToMb`
+  to skip and log `event=relief; step=seize_skipped` (E18 lever). (3) D8 (b) restores the guest's own carry and paint
+  vars around each save write and at unpair; `Vehicle.SaveCarry` cannot be wrapped (the `Vehicle` table refuses
+  writes), so the restore is the guard. (4) Index 0 removal on the receiver for VEHICLE_GONE: `Seize{"Instant"}` with
+  that copy's `TppTerminal.OnFulton` for 25600 skipped once, never Despawn; the guest's VEHICLE_GONE observer ignores
+  its own applied removal (`Neutralize` of 25600 arrives with `att=local`). (5) Refusals (E4): the guest's iDroid
+  `MSN_DROP_VEHICLE` and `MSN_DROP_LOADOUT` (a loadout delivery can carry a vehicle through SetRelief); candidates
+  `TppUiCommand.SetMbTopMenuItemActive(menu, false)` [I] or a Lua wrapper; the guest never runs the sortie prep [O].
+  (6) The host's in-mission drop (route C, D6 later): a candidate is the guest writing the carry vars and calling
+  `Vehicle.LoadCarry()` mid-mission [U].
+- Depends on: E2, E17, E18 (done), M1 (seeds), E4.
+- Proof `companion-relief.txt`: the hidden worker cannot drive the sortie-prep menu, so the host's choice comes from the
+  lab lever `host run relief_arm <type> ...` on the host only (seeds carry it to the guest), or from seed
+  `coop-relief-30020` (decision D10; a real choice, type 2, saved in 30020, ACC 40020; the ACC clears the carry, so a
+  sortie from it needs the lever again); `boot 30010 828.18 338.20 1630.51 95`, then `host worldtrigger goto=30020
+  goto_lz=0` (a real LZ: the drop point places the vehicle) and `host`/`guest run relief_census` -> `census_v0;
+  alive=1; vt=1` at the same x/z on both (runs `fafd3fdd`, `9f01d603` give (1226.94, -127.08)); `host`/`guest run
+  relief_face`, `both capture m3-relief-arrival`. Host drives it 100 m -> `waitlog guest 'partner_ride_seat=confirmed; vehicle=25600;'`, never
   `reason=absent`; `both capture m3-relief-drive`. The guest's iDroid vehicle request -> `step=refused; path=` *(new)*,
   `guest capture m3-request-refused`. Removal: host Fultons it -> `waitlog guest 'world_lua=event=vehicle_gone;
   step=applied; id=25600;'` (or the E17 method's line), `both capture m3-relief-gone`. Mission end: `waitlog guest
