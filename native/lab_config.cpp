@@ -941,9 +941,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     }
     // 7. The vehicle decisions of 2026-10-29 (D11 world_loadout_block, D12 world_vehicle_break,
     // D14 world_vehicle_credit): on in play unless named (each has its FRAME proof on both copies,
-    // lab run c0203fdd, and a passing -Mode play -WanSim bad rehearsal, 70146170); the lab keeps
-    // them off unless named, like the other vehicle modules. D12 and D14 act only where
-    // VEHICLE_GONE runs (30010 / 30020 in play).
+    // lab run c0203fdd, and a passing -Mode play -WanSim bad rehearsal, 70146170; after the review
+    // of 2026-10-29, D11 with VEHICLES and D12 with its fixes and the blast rule again: FRAME
+    // f729d7f4 and 33a7fa6e, rehearsal 33a7fa6e at the shipped defaults); the lab keeps them off
+    // unless named, like the other vehicle modules. D12 and D14 act only where VEHICLE_GONE runs
+    // (30010 / 30020 in play).
     if (result.mode == LabMode::play) {
         if (!result.world_loadout_block_given) result.world_loadout_block = true;
         if (!result.world_vehicle_break_given) result.world_vehicle_break = true;
