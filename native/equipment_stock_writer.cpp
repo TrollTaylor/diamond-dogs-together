@@ -216,6 +216,10 @@ struct General {
     unsigned cursor=0,plan_waits=0,observations=0,tracking_slot=kSlots;
     Readiness readiness[kSlots];
     bool readiness_logged[kSlots]{},binder_logged[kSlots]{};
+    // africa-guns: the readiness window's selected free resource receipt (equip_writer=aux)
+    // and the target slot's bytes behind a remote_slot_metadata/_effect wait (equip_writer=remote_slot).
+    bool aux_logged[kSlots]{},remote_slot_logged[kSlots]{};
+    unsigned aux_lines=0;
     contract::Target targets[kSlots]{};
     SlotSchedule sched[kSlots]{};
     BodyLease lease{};
@@ -237,6 +241,12 @@ constexpr unsigned kWaitLines=8;
 // equip_writer=body (re-sync) and equip_writer=backoff lines per allocation.
 constexpr unsigned kBodyLines=8;
 constexpr unsigned kRetryLines=24;
+// equip_writer=aux lines per allocation (one per readiness window that read the selected resource).
+constexpr unsigned kAuxLines=24;
+// A slot's readiness window starts again (its receipts with it).
+void ResetReadiness(unsigned slot) noexcept {
+    general.readiness[slot].Reset();general.readiness_logged[slot]=false;general.aux_logged[slot]=false;
+}
 void SetReason(SlotStatus& slot,const char* reason) noexcept {StringCchCopyA(slot.reason,sizeof(slot.reason),reason ? reason : "ok");}
 void GeneralReceipt(void (*log)(const char*) noexcept,const char* phase,unsigned slot,const char* reason,
                     std::int32_t result=INT32_MIN,std::uintptr_t mismatch=0) noexcept {
@@ -285,14 +295,9 @@ template<class View> bool LiveHandles(View& v,std::uintptr_t inventory,std::uint
     for(unsigned s=0;s<kSlots;++s) if(!v.At(handles,(7+s)*4,live[s])) return false;
     return true;
 }
-// The other remote slots hold exactly what this allocation dispatched (or nothing).
+// The other remote slots hold what this allocation dispatched (OtherSlotsRefusal).
 const char* OtherSlots(const contract::Snapshot& s,unsigned slot) noexcept {
-    for(unsigned i=0;i<7;++i) {
-        if(i==slot) continue;
-        const std::uint32_t want=i<kSlots ? general.dispatched_handles[i] : 0u;
-        if(s.remote_handles[i]!=want) return "other_slot_unexpected";
-    }
-    return nullptr;
+    return OtherSlotsRefusal(s.remote_handles,slot,general.dispatched_handles);
 }
 // A slot's decision: its state, reason and receipt.
 void Finish(void (*log)(const char*) noexcept,unsigned slot,SlotState state,const char* phase,const char* reason,
@@ -304,7 +309,7 @@ void Finish(void (*log)(const char*) noexcept,unsigned slot,SlotState state,cons
     if(state==SlotState::refused || state==SlotState::unverified) ++status.refused;
     if(state==SlotState::bound) ++status.bound;
     GeneralReceipt(log,phase,slot,reason,result,mismatch);
-    general.readiness[slot].Reset();general.readiness_logged[slot]=false;
+    ResetReadiness(slot);
     if(general.tracking && general.tracking_slot==slot) {general.tracking=false;general.tracking_slot=kSlots;general.observations=0;}
 }
 // A refusal before the slot's dispatch: transient ones back off and plan
@@ -315,7 +320,7 @@ void Refuse(void (*log)(const char*) noexcept,unsigned slot,const char* reason,b
     auto& sc=general.sched[slot];
     if(RetryAfter(sc,permanent,now)) {
         s.retries=sc.retries;s.state=SlotState::backoff;SetReason(s,reason);
-        general.readiness[slot].Reset();general.readiness_logged[slot]=false;
+        ResetReadiness(slot);
         if(general.retry_lines<kRetryLines) {++general.retry_lines;GeneralReceipt(log,"backoff",slot,reason,INT32_MIN,mismatch);}
         return;
     }
@@ -502,7 +507,7 @@ template<class View> void Plan(const GeneralContext& c,View& v,unsigned slot,voi
     s.tier=tier;s.equip=t.equip;s.optional=t.optional;s.type=t.type;s.cache_index=static_cast<std::uint8_t>(t.cache_index);
     s.refs_before=general.census[t.cache_index].refs;s.refs_after=0;s.bank=Bank::none;
     s.state=SlotState::readiness;SetReason(s,"planned");
-    general.readiness[slot].Reset();general.readiness_logged[slot]=false;
+    ResetReadiness(slot);
     GeneralReceipt(log,"plan",slot,"planned");
 }
 // The body lease changed (realize_gen or Capture's identity): every slot
@@ -520,7 +525,7 @@ void ResyncBody(void (*log)(const char*) noexcept,const BodyLease& lease,const s
         auto& s=status.slots[slot];
         auto& sc=g.sched[slot];
         sc.retries=0;sc.gen_dispatches=0;sc.visited=false;s.retries=0;
-        g.readiness[slot].Reset();g.readiness_logged[slot]=false;
+        ResetReadiness(slot);g.remote_slot_logged[slot]=false;
         // A failed dispatch remains latched even when a new body is empty or
         // its handle happens to match. A handle alone cannot verify model binding.
         if(sc.uncertain) {s.state=SlotState::unverified;continue;}
@@ -559,6 +564,43 @@ void ResyncBody(void (*log)(const char*) noexcept,const BodyLease& lease,const s
         log(line);
     }
     g.lease=lease;status.gen=lease.gen;
+}
+// africa-guns: the selected free resource as this readiness window first read
+// it (once per window, capped): each target's cache index/count, the D0 flag
+// byte and whether a render instance is left, and body 1's seven handles.
+// A field log then names the occupant of a selected_bank_aux_* or
+// other_slot_unexpected wait.
+void AuxReceipt(void (*log)(const char*) noexcept,unsigned slot,const contract::Snapshot& s,const char* reason) noexcept {
+    auto& g=general;
+    if(!log || slot>=kSlots || g.aux_logged[slot] || !s.aux_observed.read || g.aux_lines>=kAuxLines) return;
+    g.aux_logged[slot]=true;++g.aux_lines;
+    const auto& a=s.aux_observed;const auto& h=s.remote_handles;
+    char line[512]{};
+    StringCchPrintfA(line,sizeof(line),
+        "equip_writer=aux; mission=%u; slot=%u; want=%u; gen=%u; reason=%s; group=%u; resource=%u; read=%u; "
+        "main=i%u/c%u/f%02x/r%u; optional0=i%u/c%u/f%02x/r%u; optional1=i%u/c%u/f%02x/r%u; remote=%x,%x,%x,%x,%x,%x,%x; native_calls=0\r\n",
+        g.mission,slot,unsigned(status.slots[slot].want),g.lease.gen,reason ? reason : "ok",s.selected_group_index,s.next_resource,
+        unsigned(a.read),unsigned(a.index[0]),a.count[0],unsigned(a.flag[0]),unsigned(a.render[0]),
+        unsigned(a.index[1]),a.count[1],unsigned(a.flag[1]),unsigned(a.render[1]),
+        unsigned(a.index[2]),a.count[2],unsigned(a.flag[2]),unsigned(a.render[2]),h[0],h[1],h[2],h[3],h[4],h[5],h[6]);
+    log(line);
+}
+// africa-guns: the target slot's six metadata bytes and its 0x50-byte effect
+// record behind a remote_slot_metadata/_effect wait (once per slot and gen).
+void RemoteSlotReceipt(void (*log)(const char*) noexcept,unsigned slot,const contract::Snapshot& s,const char* reason) noexcept {
+    auto& g=general;
+    if(!log || slot>=kSlots || g.remote_slot_logged[slot] || !reason ||
+       (std::strcmp(reason,"remote_slot_metadata")!=0 && std::strcmp(reason,"remote_slot_effect")!=0)) return;
+    g.remote_slot_logged[slot]=true;
+    char effect[0x50*2+1]{};
+    for(unsigned i=0;i<0x50;++i) StringCchPrintfA(effect+i*2,sizeof(effect)-i*2,"%02x",unsigned(s.remote_slot_effect[i]));
+    const auto* m=s.remote_metadata.data()+slot*6;
+    char line[448]{};
+    StringCchPrintfA(line,sizeof(line),
+        "equip_writer=remote_slot; mission=%u; slot=%u; gen=%u; reason=%s; handle=%x; metadata=%02x%02x%02x%02x%02x%02x; effect_id=%x; effect=%s; native_calls=0\r\n",
+        g.mission,slot,g.lease.gen,reason,s.remote_handles[slot],unsigned(m[0]),unsigned(m[1]),unsigned(m[2]),unsigned(m[3]),
+        unsigned(m[4]),unsigned(m[5]),contract::Word32(s.remote_slot_effect.data()+0x48),effect);
+    log(line);
 }
 // The binder record words of the slot (once per slot and allocation):
 // equip_writer=binder; slot=..; words=current,pending,flags.
@@ -719,7 +761,7 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
         for(unsigned slot=0;slot<kSlots;++slot) {
             if(!RenewManifestWait(status.slots[slot],g.sched[slot])) continue;
             ++renewed;
-            g.readiness[slot].Reset();g.readiness_logged[slot]=false;
+            ResetReadiness(slot);
             SetReason(status.slots[slot],"manifest_late");
             if(g.retry_lines<kRetryLines) {++g.retry_lines;GeneralReceipt(log,"manifest_late",slot,"manifest");}
         }
@@ -753,7 +795,7 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
             if(!LiveHandles(v,g.lease.inventory,live)) {Waiting(log,pending,"body_handles");return;}
             for(unsigned slot=0;slot<kSlots;++slot) {
                 if(!RenewCacheReadiness(status.slots[slot],g.sched[slot],g.dispatched_handles[slot],live[slot])) continue;
-                g.readiness[slot].Reset();g.readiness_logged[slot]=false;
+                ResetReadiness(slot);
                 SetReason(status.slots[slot],"cache_renewed");
                 if(g.retry_lines<kRetryLines) {++g.retry_lines;GeneralReceipt(log,"cache_renewed",slot,"manifest");}
             }
@@ -783,6 +825,8 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
     const char* reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,general_before,target);
     BinderReceipt(log,slot,general_before);
     if(!reason) reason=OtherSlots(general_before,slot);
+    AuxReceipt(log,slot,general_before,reason);
+    RemoteSlotReceipt(log,slot,general_before,reason);
     const char* waiting=g.readiness[slot].Observe(reason==nullptr);
     if(!g.readiness_logged[slot]) {
         g.readiness_logged[slot]=true;

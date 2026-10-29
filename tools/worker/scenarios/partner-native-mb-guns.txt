@@ -1,0 +1,35 @@
+# mb-guns (regression for africa-guns F1..F3, docs/native-puppet.md "Generalized writer"): the generalized gun writer
+# in Mother Base (30050), both directions, from the mb-ladder seed (lab saves: 871/873/875, bases 0,46,9).
+# Run (coordinator only, hidden worker, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-mb-guns.txt -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder
+# Evidence, in both logs (mission=30050):
+#  - equip_writer=plan for slots 1 (want 46) and 2 (want 9), then equip_writer=handle_bound for both slots.
+#    Slot 0 refuses by design (no_base / stock_optional_header).
+#  - partner_weapon=match with remote_base=46 and strip=0x0.
+# Captures: host-aim (the guest's screen while the host aims: the rifle in body 1's hands) and guest-aim (the reverse).
+labsetting partner_native_support=1
+labsetting partner_native_arm=1
+boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny
+waitlog host 'partner_equip=manifest; rev=1;' 60
+waitlog guest 'partner_equip=manifest; rev=1;' 60
+waitlog host 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30050; slot=1;' 120
+waitlog guest 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30050; slot=1;' 120
+waitlog host 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30050; slot=2;' 60
+waitlog guest 'equip_writer=(handle_bound|refused); reason=[a-z_]+; mission=30050; slot=2;' 60
+stance host stand
+stance guest stand
+wait 2000
+both capture mb-idle
+placebehind guest host 4 2
+stance guest stand
+wait 2500
+heldcapture host guest rmb host-aim 3
+wait 1500
+placebehind host guest 4 2
+stance host stand
+wait 2500
+heldcapture guest host rmb guest-aim 3
+wait 1500
+host run position
+guest run position
+state

@@ -32,6 +32,21 @@ User report: "my weapon animations not showing up in africa but they did in moth
 - Reproduce with a hidden-worker run in 30020 (`-SaveSeed lab` reaches 30010; Africa may need `-SaveSeed real` or a lab goto to 30020) and compare with 30050.
 - Also check the host-side log: the friend's guns showed fine on the host's screen.
 
+**Status (2026-10-28, branch `wp/africa-guns`; fixture-tested, then hidden-worker runs in 30020 and 30050, see below).** The cause is three readiness rules in the generalized writer that treated natively empty states as occupied. None of them is specific to 30020. Africa hits them because the first bind comes late there.
+- The released target's D0 flag bits (`selected_bank_aux_not_empty`): the release never clears the byte, and the load zeroes it first.
+- The support writer's arm and grenades in slots 6 and 3 (`other_slot_unexpected`).
+- The native cleared effect record (id 0x7FF) after the horse-ride unrealize (`remote_slot_not_empty`).
+
+The host's own log of the same session shows the same aux wait in 30020. The friend's guns bound there only after one backoff.
+
+The writer now accepts all three states (`docs/native-puppet.md`, "Generalized writer", F1-F3), and each wait names its field. New receipts: `equip_writer=aux` and `equip_writer=remote_slot`.
+
+**Hidden-worker runs (2026-10-28, `wp/africa-guns` from `2344443` to `fa127d3`; only the scenarios changed in between; `-PartnerProfile native -NativeStage gun -BuildProfile research`).** These are the first hidden runs that exercise the gun writer in 30020.
+- 30020, `partner-native-africa-guns.txt` with `-SaveSeed africa-jeep`: runs `96b5c909`, `8e97cb60` and `05f68a20`. In all three, both roles log `equip_writer=handle_bound` for slot 2 (9) and then slot 1 (46) at gen 2, epoch 0, with no backoff. Each slot first logs an `equip_writer=aux` line. Both roles log `partner_weapon=match` with `strip=0x0`, and there are no `selected_bank_aux_*`, `other_slot_unexpected`, `remote_slot_*` or `delayed_free_target_*` lines. In every capture on both roles, body 1 holds 46 (`mismatch=false`, `strip=0`). While the other role aims, the capture shows `bit18=1`, an active node and `aim_match=true`. Frames from `05f68a20`: on the guest's screen, the host's partner aims the rifle beside the jeep. On the host's screen, the guest's partner aims away from the camera, with the barrel visible.
+- 30050, `partner-native-mb-guns.txt` with `-SaveSeed mb-ladder`: run `04b2f3af`, a regression check. Both roles bind slots 2 and 1, log `partner_weapon=match` with `strip=0x0`, and show the same capture state. Slot 0 refuses `stock_optional_header`, as before.
+- Every run reported Closed, BaselineRestored and RealSavesUnchanged. `04b2f3af` and `05f68a20` also reported `Forced=true`: the supervisor terminated the job after WM_CLOSE. `8e97cb60` logged the known teardown `crash_probe=av` after `partner_shutdown=hooks_off`.
+- Limit: the field's dirty head was not reproduced. Every `aux` line read `f00`, because the guns bind before any actor releases a resource. So F1, F2 (no support item was equipped before the bind) and F3 (no full unrealize) are still proven only by fixtures. The live runs show that the fix keeps the normal bind working in 30020 and 30050.
+
 ## Bug 2: the host's vehicle doesn't sync on the friend's screen in Africa (30020)
 User report: "vehicle not syncing in africa".
 
