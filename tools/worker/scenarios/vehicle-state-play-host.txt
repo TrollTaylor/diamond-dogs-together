@@ -45,9 +45,12 @@ host run vehicle_state_status
 host expect vstate;on=1;role=host;
 guest run vehicle_state_status
 guest expect vstate;on=1;role=guest;
-# Bail: the host at J1's door, the guest 18 m behind it facing J1.
+# Bail: the host at J1's door, the guest 18 m behind it facing J1. J1 is about 800 m from the start spot: both go to
+# it first (run e20f76bc stopped here when only the host had warped: the guest's partner was not realized yet).
+guest debug goto_vehicle jeep
+wait 3000
 host debug goto_vehicle jeep
-wait 2500
+wait 5000
 placebehind guest host 18 0
 wait 2500
 host debug clear_enemies 100
