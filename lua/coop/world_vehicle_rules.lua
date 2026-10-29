@@ -19,8 +19,11 @@
 --       guest reported (a launcher or rifle range), or the host's own copy is down to a quarter of the highest body life
 --       it read; held while no position is known; at most 4 applied per 20 s, more wait. Applied: the host's copy
 --       becomes the same wreck (SetBodyLife 0, the engine's own destruction; read back, the Despawn if it does not
---       take). Refused: REJECT 8; the guest's copy keeps its wreck (no engine command undoes one: SetBodyLife writes the
---       life word only, IsAlive reads rec+0x70 bits nothing clears), logged break_refused.
+--       take), unless the host's own player or the partner (its DOWNED_STATUS position) stands within 15 m of the
+--       host's copy, or a position cannot be read: then a Despawn, logged break_safe (run 7762536a: the wreck's later
+--       explosion, about 8 s after SetBodyLife 0, hit the host beside it for 3500 of 7800 life). Refused: REJECT 8; the
+--       guest's copy keeps its wreck (no engine command undoes one: SetBodyLife writes the life word only, IsAlive
+--       reads rec+0x70 bits nothing clears), logged break_refused.
 --   D14 world_vehicle_credit (bit 16; with VEHICLE_GONE): the receiver of a Fulton loss (cause 1) removes its copy with
 --       the stock Seize {"Instant"} instead of a Despawn, so its own engine runs TppTerminal.OnFulton ->
 --       OnFultonVehicle -> AddTempResource (E17: no GMP charged, the temporary resource commits at the mission end) and
@@ -33,9 +36,9 @@ local VR = {}
 W.vehicleRules = VR
 local fmt, floor, sqrt, H = string.format, math.floor, math.sqrt, W.handlers
 local BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, ASK_MS, QUEUE_N = 300000, 3000, 4, 20000, 6, 60000, 32
-local OWN_MS, CREDIT_MS, GREY_MS, TOAST_MS, ARRIVAL_MS, UNATTRIBUTED = 5000, 10000, 2000, 3000, 130000, 4
+local OWN_MS, CREDIT_MS, GREY_MS, TOAST_MS, ARRIVAL_MS, UNATTRIBUTED, BLAST_MM = 5000, 10000, 2000, 3000, 130000, 4, 15000
 VR.BREAK_MM, VR.FRESH_MS, VR.RATE_N, VR.RATE_MS, VR.ASK_N, VR.QUEUE_N, VR.CREDIT_MS = BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, QUEUE_N, CREDIT_MS
-VR.UNATTRIBUTED = UNATTRIBUTED
+VR.UNATTRIBUTED, VR.BLAST_MM = UNATTRIBUTED, BLAST_MM
 -- The guest's iDroid drop items this module sets inactive: name, NOTE 13 a (the toast), log path.
 local ITEMS = {{"MSN_DROP_LOADOUT", 5, "idroid_drop_loadout"}, {"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}}
 local function L(...)
@@ -187,6 +190,23 @@ G.decide = function(q, ...)
   return "apply"
 end
 
+-- D12, host: who stands within BLAST_MM of this copy of id now: "host" (its own player), "partner" (the guest's fresh
+-- DOWNED_STATUS position: the host's blast can reach body 1 too), "unknown" (the copy's or the host's position cannot be
+-- read), or nil (nobody: the wreck is safe to run).
+function VR.nearBlast(id, t)
+  local x, _, z = G.pose(id)
+  if type(x) ~= "number" or type(z) ~= "number" then return "unknown", -1 end
+  local q = {x = x, z = z}
+  local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
+  if type(px) ~= "number" or type(pz) ~= "number" then return "unknown", -1 end
+  local d = dist(px * 1000, pz * 1000, q)
+  if d <= BLAST_MM then return "host", d end
+  local gx, gz = VR.guestPos(t)
+  if gx then
+    d = dist(gx, gz, q)
+    if d <= BLAST_MM then return "partner", d end
+  end
+end
 -- Removal forms (both keys need VEHICLE_GONE on). The id is marked gone before the command: the engine's own
 -- messages for it (VehicleBroken; Fulton, FultonInfo, Neutralize with att=local) are never taken for a loss here.
 local baseRemove = G.remove
@@ -204,8 +224,16 @@ G.remove = function(id, cause, ...)
   local t = now()
   VR.own[id] = t
   if id % 512 == 0 then return baseRemove(id, cause, ...) end
-  -- D12: the host applies a guest's destruction as the same wreck on its own copy.
-  if cause == 2 and W.host and VR.breakOn() then return form(id, {id = "SetBodyLife", life = 0}, "wreck", cause, ...) end
+  -- D12: the host applies a guest's destruction as the same wreck on its own copy, or as a Despawn while a player
+  -- stands within the blast (break_safe).
+  if cause == 2 and W.host and VR.breakOn() then
+    local who, d = VR.nearBlast(id, t)
+    if who then
+      L("step=break_safe;id=%d;near=%s;d_mm=%d;form=despawn", id, who, d or -1)
+      return G.despawn(id)
+    end
+    return form(id, {id = "SetBodyLife", life = 0}, "wreck", cause, ...)
+  end
   -- D14: the receiver's own engine Fulton credit (Seize Instant: no balloon, removed at once, credited once).
   if cause == 1 and VR.creditOn() then
     -- Expected before the command: the engine may run its credit inside it.

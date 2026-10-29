@@ -6,7 +6,9 @@
 -- every check after the surface check failed. The review fixes (2026-10-29, the user took the reviewer's picks) were
 -- written first too: 300 m, cause 4 for an unattributed break (REJECT 11 from a host without the key), a hold instead of a
 -- refusal for an occupied seat, an unknown guest position and the rate, the guest's position at the request's arrival,
--- the guest's queue, the VEHICLES drop item, the status tail and V.remove without an id.
+-- the guest's queue, the VEHICLES drop item, the status tail and V.remove without an id. The blast rule (run 7762536a: the
+-- host-side wreck's later explosion hit the host beside it for 3500 of 7800 life) was written first as well: a Despawn
+-- instead of the wreck while the host's player or the partner stands within 15 m of the host's copy.
 local checks = 0
 local function check(value, why)
     checks = checks + 1
@@ -103,7 +105,10 @@ local function Fixture(role, opts)
                 if cmd.life == 0 and not c.wreckFails then v.alive = false end
                 return nil
             end
-            if cmd.id == 'GetPosition' then return vector(v), 0 end
+            if cmd.id == 'GetPosition' then
+                if v.nopose then return nil end
+                return vector(v), 0
+            end
             if cmd.id == 'GetVehicleType' then return v.type, 0 end
             if cmd.id == 'GetRiderId' then
                 local r = {}
@@ -146,8 +151,9 @@ end
 local c = Fixture('guest')
 check(type(c.R) == 'table' and type(c.V.unattributed) == 'function', 'W.vehicleRules and the V.unattributed hook')
 check(c.R.BREAK_MM == 300000 and c.R.FRESH_MS == 3000 and c.R.RATE_N == 4 and c.R.RATE_MS == 20000 and c.R.CREDIT_MS == 10000 and
-    c.R.ASK_N == 6 and c.R.QUEUE_N == 32 and c.R.UNATTRIBUTED == 4,
-    'rules: 300 m, a guest position at most 3 s old, 4 applied per 20 s (more wait), 6 asked per 60 s (more queue), cause 4')
+    c.R.ASK_N == 6 and c.R.QUEUE_N == 32 and c.R.UNATTRIBUTED == 4 and c.R.BLAST_MM == 15000,
+    'rules: 300 m, a guest position at most 3 s old, 4 applied per 20 s (more wait), 6 asked per 60 s (more queue), cause 4, ' ..
+    'no wreck within 15 m of a player')
 check(not c:has('event=vehicle_rules;step=on'), 'every key off: no start line')
 c = Fixture('host', {brk = true, credit = true, loadout = true})
 check(c:has('event=vehicle_rules;step=on;mission=30020;role=host;break=1;credit=1;loadout=1;gone=1') and c:has('step=credit_hook;ok=1'),
@@ -260,6 +266,59 @@ h.V.observe('VehicleBroken', 25608, 'none')
 check(h.V.watch[25608] == nil, 'its own wreck is never watched as a host loss')
 hostReq(h, 25608, 10)
 check(#h.lifeSet == 1 and #h:sent(46) == 2 and h:count('break_judge') == 1, 'a repeated request is answered again, never wrecked twice')
+check(not h:has('break_safe'), 'nobody within 15 m (the host at 0,0; the guest 22 m away): the wreck')
+-- The blast rule (run 7762536a): the host's own player within 15 m of its copy -> a Despawn (no explosion), answered gone.
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -661, 877.7
+h:guestAt(-640, 860)
+hostReq(h)
+check(h:has('step=break_judge;id=25608;rid=9;ok=1;why=near') and h:has('event=vehicle_rules;step=break_safe;id=25608;near=host;d_mm=8000;form=despawn') and
+    #h.lifeSet == 0 and #h.despawns == 1 and h.despawns[1].locator == 'veh_lv_0000' and h.pool[25608].released,
+    'the host 8 m from its copy: a Despawn, never SetBodyLife 0')
+check(h:has('event=vehicle_gone;step=applied;id=25608;via=locator;src=req;ok=1') and #h:sent(46) == 1 and h:sent(46)[1][4] == 2 and
+    #h:sent(4) == 0, 'read back and answered gone (cause 2, no REJECT)')
+-- The partner (the guest's DOWNED_STATUS position) within 15 m, the host far: a Despawn too.
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h:guestAt(-650, 877.7)
+hostReq(h)
+check(h:has('step=break_safe;id=25608;near=partner;d_mm=3000;form=despawn') and #h.lifeSet == 0 and #h.despawns == 1,
+    "the partner 3 m from the host's copy: a Despawn")
+-- Exactly 15 m is near; 15.1 m is not.
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -668, 877.7
+h:guestAt(-653, 860)
+hostReq(h)
+check(h:has('step=break_safe;id=25608;near=host;d_mm=15000') and #h.lifeSet == 0, '15 m: near')
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -668.1, 877.7
+h:guestAt(-653, 860)
+hostReq(h)
+check(not h:has('break_safe') and #h.lifeSet == 1 and #h.despawns == 0, '15.1 m (and the guest 17.7 m): the wreck')
+-- A position that cannot be read (the host's copy or the host's player): the Despawn (never a blast nobody checked).
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h:guestAt(-640, 860)
+h.V.decide = function() return 'apply' end
+h.pool[25608].nopose = true
+hostReq(h)
+check(h:has('step=break_safe;id=25608;near=unknown;d_mm=-1;form=despawn') and #h.lifeSet == 0 and #h.despawns == 1,
+    "the host's copy without a readable position: the Despawn")
+h = Fixture('host', {brk = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h:guestAt(-640, 860)
+h.env.vars.playerPosX = nil
+hostReq(h)
+check(h:has('step=break_safe;id=25608;near=unknown;d_mm=-1;form=despawn') and #h.lifeSet == 0 and #h.despawns == 1,
+    "the host's own position unreadable: the Despawn")
+-- The receiver side never runs the blast rule (the guest's wreck key is VEHICLE_GONE's own, lab only).
+g = Fixture('guest', {brk = true, wreck = true})
+g:add(25609, 200, 200, 1, 'veh_lv_0001')
+g.H[46]({1, 25609, 2, 0, 0, 1, 200000, 1000, 200000})
+check(not g:has('break_safe') and #g.lifeSet == 1, 'guest receiver: the wreck key as before, no blast rule')
 -- An attributed destruction (cause 2) is judged the same way with the key on.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
@@ -386,7 +445,7 @@ check(not h.pool[25612].alive and h:count('step=break_judge;id=25612;rid=24;ok=1
 h = Fixture('host', {brk = true})
 h.wreckFails = true
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
-h:guestAt(-650, 877.7)
+h:guestAt(-640, 860)
 hostReq(h)
 h:poll(1000); h:poll(1100)
 check(h:has('step=fallback;id=25608;from=wreck;via=locator;ok=1') and h.pool[25608].released, 'a wreck that does not take: the Despawn')
