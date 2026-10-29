@@ -1206,7 +1206,12 @@ below level 3), then from Lua (`lua/coop/world_vehicle.lua`, spliced last):
   vehicle after Fulton, FultonInfo, Dead or VehicleBroken (registered as an
   observed message kind only while the key is on); the guest only after its
   own FultonInfo or Dead (attacker `local`) or a VehicleBroken within 10 s of a
-  local Damage. The pose (mm) and `GetVehicleType` are read at that message.
+  local Damage. M4 found that the game posts no GameObject Damage message for
+  a vehicle hit by gunfire (hidden run `35ba7929`, the attacker census: none
+  for the jeep whose life the guest's rounds lowered), so the last rule never
+  fires for gunfire and a jeep the guest destroys stays a wreck on its copy
+  only (`5179b50b`); explosives are untested. The pose (mm) and
+  `GetVehicleType` are read at that message.
   FultonFailed cancels; the loss counts when the instance stops answering
   `GetPosition` (its pool slot released), or when `IsAlive` reads back false:
   at once for a destroyed vehicle (its wreck stays in the pool), but for a
@@ -1345,7 +1350,8 @@ logs `event=vehicle_state;step=ignored;reason=off` once.
   & 0x18000) and no getter.
 - **Host** (`lua/coop/world_vehicle_state.lua`, spliced after `world_vehicle.lua`,
   whose pool helpers it uses): scans 4 ids every 250 ms (a 24-vehicle pool in
-  1.5 s) plus at once any id a `Damage` message names; sends a live vehicle when
+  1.5 s) plus at once any id a `Damage` message names (the game posts none for a
+  vehicle hit by gunfire, `35ba7929`, so in practice the scan); sends a live vehicle when
   it moved > 0.5 m or turned > 5 deg, or its life, state word or zero mask
   changed (at most once per 500 ms per vehicle; `step=tx;why=moved|life|state|parts`),
   every eligible vehicle after each PAIRED (`step=sweep`, flag 2, then
@@ -1379,8 +1385,8 @@ logs `event=vehicle_state;step=ignored;reason=off` once.
   0 is the E5 wreck attempt). `debug vehicle_state_status [id]` is read-only
   (play too).
 - **Not covered:** a guest's own damage or push never reaches the host (the
-  host's refresh undoes a guest push; a guest's extra damage stays on its copy
-  until VEHICLE_GONE); wheel lives are sent (zero mask) and logged but not
+  host's refresh undoes a guest push; a guest's extra damage stays on its copy,
+  and so does its destruction, section 16 "Detection"); wheel lives are sent (zero mask) and logged but not
   written (no write API); AI-driven and reinforcement vehicles are M8.
 
 Tests: `world_wire_tests` (VehicleState: table, bounds, world queue, stale

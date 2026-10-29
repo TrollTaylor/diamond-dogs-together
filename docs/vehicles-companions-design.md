@@ -746,10 +746,87 @@ scratch folder `complete/frames/vehicle-state/`):
   copies held a wreck. Both wrecks then left the pool on both copies (GetPosition no longer answers) about 20 s later.
   Body life 200 (of 2300) shows no smoke or fire on either copy and leaves the state word at 1 [O], so the burning
   state is not a pure function of the life word [I].
+- `0edadbe2` (`vehicle-state.txt`, build `2a3d97d`, wreck parity on): **the receiver's wreck passed** [O]. The host's
+  `vehicle_life 25608 0` -> host `watch; m=VehicleBroken; cause=2; att=none` -> `lost` -> `tx; cause=2; actor=0` ->
+  guest `rx` -> `applied; id=25608; via=wreck; src=rx; ok=1; ms=116`; frames `m4-wreck-01..04`: the explosion and the
+  fire at the same jeep on both screens, and both copies then read `alive=0; life=0; busy=gone_here`. The guest's own
+  `vehicle_life nearest 0` (25610) wrecked only the guest's copy: its two shots had missed (life stayed 2300), so no
+  local Damage preceded the break and no request went out (as designed), and the host's next refresh of 25610 was
+  refused `absent` there. That split stays until a real loss (`docs/world-sync-protocol.md` section 17, "Not
+  covered").
+- `a50214f7` (`vehicle-gone-player.txt`): stopped at `placebehind` right after the guest's 990 m warp (`viewer landing
+  starts without a valid partner pose`) before any vehicle step; the scenario now teleports both copies (`2464f4e`).
+- `46b8fc12` (`vehicle-gone-player.txt`, build `2464f4e`): **the player's Fulton again not reproduced; diagnosed**
+  [O]. Frame `pf-before` at the spot beside veh_lv_0002 (25610) shows only `E: get in` and no Fulton prompt, so the
+  3 s E hold boarded the jeep (`partner_status=local; names=on_vehicle; vehicle=25610; seat=0`; frames `pf-lift-*`:
+  the guest in the driver's seat). No `FultonInfo`, so no `watch` line. The host logged `vehicle_state step=skip;
+  reason=partner_ride; id=25610` at once (VEHICLE_STATE stayed off the guest's ride). The seated guest's next
+  `teleport` and `goto_vehicle` answered `warp_readback_timeout`, and the host's `placebehind` then stopped the run
+  (`viewer landing lost its scene or valid partner pose`; Closed, BaselineRestored, RealSavesUnchanged). This is a
+  scenario input failure, not a mod defect. The same coordinates showed the Fulton prompt in `0edadbe2` (frame
+  `m4-req-before`, reached by `goto_vehicle jeep`); what hides it is [U]. The guest's lab boot spot beside
+  veh_lv_0000 showed it in both `d407f115` and `0edadbe2` (frame `m4-start`, "hold E: Fulton 100%, x24").
+- `e235bda6` (`vehicle-state-play.txt`, **play, `-WanSim bad`**, lab seed, 30010, build `d6f54f1`): VEHICLE_STATE's
+  lines all passed [O]: `step=on; lrrp=6` on both, `sweep` -> `sweep_done; sent=13; pool=23`, the guest `same` for all
+  26 received states; the guest drove J1 = 25608 (`vehicle;id=25608;...;localSeat=1`) -> host `skip;
+  reason=partner_ride` -> after the get-off `resume` -> `tx; why=moved; d_mm=14235` -> guest `hold; reason=occupied`
+  (D-Dog still seated) and then every later state within 2 mm of the guest's own pose; the host's shots and the
+  guards' fire -> 10 `tx; why=life` (2300 -> 592) -> each `applied; moved=0; ... life=` on the guest 115..301 ms
+  later (median 127 ms). The host's C4 did not destroy the jeep (no `VehicleBroken`; life stayed 592), so the play
+  wreck lines never came. Shutdown reported `Forced=True` (as `59cfc415` and `de949f80` did). Frames
+  `play-left` show the guest beside the jeep on the guest's screen only (the host stood at the 30010 ledge, out of
+  sight); `play-damaged` shows the parked jeep on the host's screen.
+- `e44516d7` (`vehicle-gone-play.txt`, **play, `-WanSim bad`**, `africa-jeep` seed, build `2464f4e` plus the
+  scenario): **each player's own Fulton by hand passed, both directions; every expectation met** [O]. Guest:
+  teleported to its lab boot spot beside veh_lv_0000 (25608), frame `gp-guest-before` shows the stock prompt "hold E:
+  Fulton 100%, x24"; the E hold -> `obs; m=FultonInfo; id=25608; att=local` -> `watch; m=FultonInfo; cause=1;
+  att=local` -> `lost` 3.0 s later -> `req; cause=1` -> host `rx_req` -> `applied; id=25608; via=locator; src=req;
+  ok=1` (132 ms after the request) -> guest `req_done; result=gone; ms=250`. Frames: `gp-guest-hold` (the guest
+  kneels at the jeep), `gp-guest-lift-01` (the balloon lifts it; "Fulton Recovery Expenses: [GMP -10000]" on the
+  guest's copy), `gp-guest-after` on both screens (no jeep; the host's `gp-guest-before` / `gp-guest-after` show it
+  there and then gone). Host: `goto_vehicle jeep` to the door spot of veh_lv_0002 (25610), frame `gp-host-before`
+  shows the same prompt; the E hold -> `obs; m=Fulton; att=none` and `m=FultonInfo; att=local` -> `watch; m=Fulton;
+  cause=1` -> VEHICLE_STATE `skip; reason=own_watch` -> `lost` 3.0 s later -> `tx; cause=1; actor=0` -> guest `rx` ->
+  `applied; id=25610; via=locator; src=rx; ok=1` 116 ms later; frames `gp-host-lift-02` (the jeep in the air on the
+  host's screen) and `gp-host-after` on both (gone). Both copies end with `gone=25608,25610`. VEHICLE_STATE ran
+  alongside (`sweep_done; sent=14`, 54 refreshes, 69 `same` on the guest, no `applied`). **K27** [O]: the host's
+  first `clear_enemies` ran inside the pairing sweep (PAIRED 158995745 -> `sweep_done` 159000617); its four kills
+  committed at 158998978..159011 (`cause=8`, align `discovered`) and applied on the guest at 158999300..341
+  (`src=resync`, `result=ok`): 322..330 ms. Eight kills outside the sweep: commit -> `apply; src=outcome` 299 ms.
+  Lab without WanSim (`46b8fc12`): 215..230 ms. The sweep (14 reliable ops in about 5 s) adds no visible delay [I].
+  Shutdown `Forced=True` again. Which spots offer the vehicle Fulton prompt: the guest's lab boot spot (three runs)
+  and the `goto_vehicle` door spot of 25610 (two runs) did; a teleport to those door-spot coordinates did not
+  (`46b8fc12`) [O]; why is [U].
+- `d9b48fcb` (`vehicle-state-play.txt` without its C4 part, **play, `-WanSim bad`**, lab seed, build `7a33ffa`): every
+  expectation met, `Forced=False` [O]. Sweep `sent=13; pool=23` and 26 `same`; the guest drove J1 = 25608 ->
+  host `skip; reason=partner_ride` -> `resume` -> `tx; why=moved; d_mm=13969` -> guest `hold; reason=occupied` (D-Dog);
+  frame `play-left-both`: the jeep where the guest left it in Wialo Village on both screens (the host 7 m behind the
+  guest), `vehicle_state_status 25608` 577238,318956,1171541 (host) and 577229,318958,1171543 (guest): 9 mm apart, yaw
+  equal. The host's shots -> `tx; why=life; life=2270` -> guest `applied; moved=0; d_mm=9; life=2270; was=2300` 125 ms
+  later; both copies then read life 2270 (frames `play-damaged`). The guest's state word stays 3 against the host's 1
+  after its drive (bit 2; not written, no write exists) [O].
+- `5179b50b` (`vehicle-gone-player.txt` revised, lab, build `57d9195`). **The guest's Fulton by hand of 25610 from its
+  `goto_vehicle` door spot passed** [O]: `watch; m=FultonInfo; att=local` -> `lost` 3.2 s later -> `req` -> host
+  `applied; id=25610; via=locator; src=req; ok=1` -> `req_done; ms=66`; frames `pf-hold`, `pf-lift-*`, `pf-after` on
+  both screens. **The guest's own destruction was not requested** [O]: its five rounds from the boot spot hit
+  veh_lv_0000 (life 2260 -> 2230), its lever break 2 s later posted `obs; m=VehicleBroken; att=none`, and no `watch`
+  started (no local hit recorded), so the guest's copy holds a wreck (frames `gw-*`) and the host's jeep stays intact.
+- `35ba7929` (`vehicle-damage-census.txt`, lab, build `02d1e95`, the WS4 attacker census on): **the game posts no
+  GameObject `Damage` message for a vehicle hit by gunfire** [O]. The census logged the four soldiers' `Damage`
+  (a1=79, a2=65535, a3=4) on both copies but nothing for 25608, although the guest's rounds took its life from 2260 to
+  2230. VehicleBroken carries only `(id, Start|End)` (`TppHero.lua:248`, `TppEnemy.lua:2072`, extracted) [O]. So the
+  0.13.6 rule "VehicleBroken within 10 s of a local Damage" never attributes a guest's destruction by gunfire [O];
+  explosives are untested [U]. An attribution that does not rely on that message (a native hook on the vehicle damage
+  path, or the local player's own fire near the vehicle) is the next step; until then the guest's destruction stays a
+  split, as in 0.13.6 (`7561ab63`) [O].
 
-Decision (E5 pass rule, D7 not needed): VEHICLE_GONE's play default may flip once the play rehearsal passes; a
+Decision (E5 pass rule, D7 not needed): **E5 passed for removals the host decides and for Fultons** [O]. The hold under
+a seated rider (`92720b75` C), the engine's Fulton (`075c1ea4`, `92720b75` D) and each player's own Fulton by hand
+(`e44516d7` in play over `-WanSim bad`; the guest's also in the lab, `5179b50b`) remove the vehicle on both copies. A
 destroyed vehicle is wrecked on the receiver with `SetBodyLife{life=0}` instead of Despawn when VEHICLE_STATE is on
-(M4 below). A Fulton stays a Despawn (there is no balloon on the receiver).
+(`0edadbe2`); a Fulton stays a Despawn (there is no balloon on the receiver). A destruction on the guest's copy is not
+requested (`35ba7929`, above), which leaves today's split and adds no new risk. The play defaults of VEHICLE_GONE and
+VEHICLE_STATE flipped on (`482eb74`; section 9 M4).
 
 ## 9. Milestones
 
@@ -849,6 +926,30 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
   - Under `-WanSim bad`: a kill during the pairing sweep -> the gap between host `event=commit` and guest `event=apply`
     for that `ent` is recorded (K27).
 - Rehearsal `-Mode play -WanSim bad` before VEHICLE_GONE's play default flips.
+- **Status (2026-10-29, branch `wp/vehicle-state`): built and proven in hidden runs, lab and play; VEHICLE_GONE and
+  VEHICLE_STATE on by default in play since `482eb74` (off in the lab unless named); not two-PC tested.** Details and
+  run ids in section 8.1 and `docs/STATUS.md` (M4).
+  - VEHICLE_GONE [O]: `coop-vehicle-gone.txt` A, C (the hold while the guest sits in the jeep) and D in `92720b75`
+    (B in `075c1ea4`); each player's own Fulton by hand in play over `-WanSim bad` (`e44516d7`, frames on both
+    screens) and the guest's in the lab (`5179b50b`); the receiver's wreck (`0edadbe2`, frames `m4-wreck-*` on both).
+    Not working: a jeep the guest destroys is not requested, because the game posts no `Damage` message for a vehicle
+    hit (`5179b50b`, `35ba7929`) [O].
+  - VEHICLE_STATE [O]: the push lever and the host's correction of a guest push (`d407f115`, `0edadbe2`: the two copies'
+    readbacks agree within 5 mm; frames on the guest's screen, the host's camera did not show the jeep); drive and
+    leave with no state against RIDE_FAST (`skip; reason=partner_ride` -> `resume`) in lab and play (`d9b48fcb` frame
+    `play-left-both`: the jeep where the guest left it on both screens, 9 mm apart); body life (`applied; ...; life=`
+    115..301 ms after the host's change under `-WanSim bad`, `e235bda6`, `d9b48fcb`).
+  - Damage parity is the body life only [O]. Wheel and part lives are read and sent (the zero mask) but not written:
+    the 21-hash instance dispatcher has no wheel or burning write (3.6) [O]. Fire is not a function of the life word
+    (life 200 shows none, `d407f115`) [O], so burning is not synced [I].
+  - K27 [O]: kills inside the pairing sweep, `-WanSim bad`: 322..330 ms commit -> apply; outside it 299 ms
+    (`e44516d7`).
+  - Open: a two-PC session; damage the guest does stays on the guest's copy (no guest-to-host damage op), and so does
+    its destruction (no attribution, above) [O]; a destruction in play (the C4 of `e235bda6` did not destroy); Fulton
+    rewards: the Fultoning copy pays and gets the vehicle, the other copy only Despawns [I],
+    untested against save resources; why a teleport beside a jeep hides the Fulton prompt is [U] (scenarios use the
+    boot or `goto_vehicle` spots); AI-driven, LRRP and reinforcement vehicles are M8; the relief vehicle (index 0)
+    is M3 / E17.
 
 ### M5. Quiet synced
 
