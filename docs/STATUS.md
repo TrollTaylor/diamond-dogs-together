@@ -34,11 +34,12 @@ session scratch folder `complete/frames/dog/`; every run closed with the baselin
 | `3f69e3b7` | `companion-dog-follow.txt` (lab) | One expectation failed: the marked walk leg (the host's dog stayed where it was). Follow: hurt 30 % (guest life 3226), asleep (`STN` on both), awake, down (FRAME on both: "D-Dog Near Death" and the Fulton extraction), the host's re-call (`recalled; ms=36052`); the restore filmed from behind the host (the host's body hid the returned dog) |
 | `1713b0a1` | `companion-dog-guard-play.txt`, `-Mode play -WanSim bad` | No expectation failed. M1 seeds in play, the guard armed with the host's byte, one dog following the host on both screens (walk 0.37-2.93 m, run 1.46-2.77 m), the host's alert applied on the guest's copy, the dog beside Snake on both screens; no guard fired at the dog (0 drops) |
 | `606048af` | `companion-dog-follow-frames.txt` (lab) | No expectation failed. FRAME on both copies of the walk and run legs (0.35-1.09 m, 1.07-2.57 m), the restore (before, the copy carried off, the copy beside the host again; 2585 ms), hurt, down and the re-call (`recalled; ms=36069`) |
+| `f7033e2e` | `companion-dog-guard-play-fight.txt`, `-Mode play -WanSim bad` | One expectation failed: in about 190 s of alert with the guest prone beside the dog no guard fired at it (0 drops; the guest's copy logged the alert `applied=0`); the dog stood over the prone guest beside Snake on both screens, `life=10000; state=0`, no Dead |
 
 **Defaults: unchanged.** `companion_host_owned` stays **off in lab and play**. The key covers M1 and M2 together, and
 not every path under it has a FRAME on both copies and a passing play rehearsal: the guard's drop, the follow, the
-restore and the re-call are proven in the lab only (play refuses the levers that drive them, and the play rehearsal's
-guards never fired at the dog); M1's review fixes have no play rehearsal (the Quiet park with the host's Quiet out, no
+restore and the re-call are proven in the lab only (play refuses the levers that drive them, and the guards of both
+play rehearsals never fired at the dog); M1's review fixes have no play rehearsal (the Quiet park with the host's Quiet out, no
 horse / walker / Quiet shown on the guest's PC, the session end, the reconcile backoff); the guest's iDroid buddy
 request and dismiss are not refused, and the host's sortie-prep and iDroid buddy lists were not reached; no two-PC
 session. Not covered either: the dog's takedown result reaching the guest; what makes a held copy sit 2.2 m off an
