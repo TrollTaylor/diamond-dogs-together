@@ -715,8 +715,9 @@ struct LabConfig {
     // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN
     // gives a late or continuing guest the host's vehicle; the guest's mission-end seize is
     // skipped; VEHICLE_GONE removes index 0 on the receiver without a credit; the guest's iDroid
-    // vehicle and loadout drops are refused. CFG r[17] for Lua. Default off in lab and play until
-    // a hidden-run FRAME and a play rehearsal prove it (project rule); a named value wins.
+    // vehicle and loadout drops are refused. CFG r[17] for Lua. ResolveWeaponDefaults turns it on in
+    // lab and play since the hidden-run FRAME d18e8fa0 and the play rehearsal 40c09484 (project rule);
+    // a named value wins.
     bool world_relief = false;
     bool world_relief_given = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the

@@ -244,10 +244,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.companion_host_owned);
         if (ok) result.companion_host_owned_given = true;
     }
-    // M3 sortie vehicle on both copies (lab and play, default off until proven; see the defaults below).
+    // M3 sortie vehicle on both copies (lab and play, on by default since its proof; see the defaults
+    // below). An invalid value refuses: it counts as named, off.
     else if (Equals(key, "world_relief")) {
         ok = ParseBool(value, result.world_relief);
-        if (ok) result.world_relief_given = true;
+        result.world_relief_given = true;
+        if (!ok) result.world_relief = false;
     }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
@@ -1606,9 +1608,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off unless named, in
     // lab and play, until a hidden-run FRAME on both copies and a play rehearsal pass.
     if (!c.companion_host_owned_given) c.companion_host_owned = false;
-    // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): off unless named, in lab and play,
-    // until a hidden-run FRAME on both copies and a play rehearsal pass.
-    if (!c.world_relief_given) c.world_relief = false;
+    // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): on in lab and play
+    // after the hidden-run FRAME proof d18e8fa0 (the host's choice drawn by both copies, the host
+    // seated in it on the guest's screen, the guest's iDroid request refused, one mission-end credit,
+    // the host's Fulton removing it on both) and the play rehearsal 40c09484 (-WanSim bad: both
+    // copies draw it at the same spot through the seeds, the refusal and its toast); a named 0 opts out.
+    if (!c.world_relief_given) c.world_relief = true;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

@@ -1052,8 +1052,9 @@ try {
         $file = Join-Path $fixture 'vehicle-gone-guest-lab.ini'; [IO.File]::WriteAllText($file, $vgIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_vehicle_gone'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_gone=1 parses'
-        # M3 sortie vehicle: off in a default lab.ini; a LabCommon-written world_relief=1 parses natively.
-        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_relief'])" '0' 'native: world_relief defaults off'
+        # M3 sortie vehicle: on in a default lab.ini (since runs d18e8fa0 and 40c09484); a LabCommon-written world_relief=1
+        # parses natively.
+        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_relief'])" '1' 'native: world_relief defaults on'
         $reOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_relief=1') -Role guest
         $reIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $reOverrides)
         Assert-Equal ((ConvertFrom-IniText $reIni)['world_relief']) '1' 'LabCommon writes world_relief=1'
