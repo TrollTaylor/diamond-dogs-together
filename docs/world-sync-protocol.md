@@ -1062,7 +1062,11 @@ the ops, body sizes and field ranges (`U8()`) are unchanged, so no version bump;
 guest reads as "not valid" (its guard still drops hits but follows nothing), and an older guest ignores the field. The
 guest's native guard (`native/dog_guard.cpp`, receipt `MGS_COOP_DOG_GUARD_V1`, armed by `world_companion_guard.lua`
 while its copy of the host's dog is loaded and paired) drops every hit on that copy and applies the byte: life, asleep,
-and once the host's dog is down, the copy's own stock death.
+and once the host's dog is down, the copy's own stock death. Review 2026-10-29 (`docs/vehicles-companions-design.md`
+8.10; local receipt only, still no wire change): the guard's slots are installed only on a PC running
+`companion_host_owned`; the receipt's arm field takes 2 (a hold): through a link loss (UNPAIRED, link down, a lower
+level or another epoch) an armed lease is held drop-only, with no byte followed and no lab op, until the session or the
+mission ends, and a hold never starts the guard; the reply carries the record only when under a second old.
 
 | World op | Name | Direction | Fields | Queue | Body bytes |
 |---:|---|---|---|---|---:|
