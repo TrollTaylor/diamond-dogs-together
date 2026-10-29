@@ -3,10 +3,12 @@
 # the guest gets off its helicopter at the landing zone while the host stays aboard (body 1 hidden and unrealized on
 # the guest's copy, acts 100..108): the guest's own-dog read keeps working (no result=dog_unreadable and no
 # buddy_read probe n_scope for 30 s; before M2 the receipt refused scope while body 1 was unrealized) and its dog is
+# (Both seeds sit in the Afghanistan helicopter 40010: with africa-jeep (40020) for the host the guest's boot
+# stopped at follow_host in 40010, run 52010d22.)
 # held, never left to the guest's AI; then the host gets off and the dog goes to the host's. Legs in the default warp
 # hold (the stop-AI dog placed by LuaAiStayAndSnarl's own warp, run 4cd88ea2).
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-mb.txt
-#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed africa-jeep -GuestSaveSeed afgh-horse
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
 labsetting companion_host_owned=1
 labsetting nametag=1
 labsetting coop_hud=compact
