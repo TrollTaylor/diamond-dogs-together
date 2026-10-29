@@ -107,9 +107,12 @@ guest run vehicle_gone_status
 # D. Census before the commit (temporary resources only).
 host run relief_census d14b
 guest run relief_census d14b
-# E. D12: the guest breaks the next jeep on its copy only (no attribution); the host judges and wrecks its copy.
+# E. D12: the guest breaks the next jeep on its copy only (no attribution); the host judges and wrecks its copy. Both go to
+#    the jeep first: run cf0aeeba stopped at placebehind after the guest's long warp alone (no valid partner pose yet).
 guest debug goto_vehicle jeep
 wait 3000
+host debug goto_vehicle jeep
+wait 5000
 host debug clear_enemies 100
 wait 1500
 placebehind host guest 12 0

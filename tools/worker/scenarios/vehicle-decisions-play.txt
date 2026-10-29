@@ -99,9 +99,12 @@ host run vehicle_gone_status
 guest run vehicle_gone_status
 host run relief_census d14p_b
 guest run relief_census d14p_b
-# 3. D12: the guest's C4 on the next jeep (three charges from its goto spot), the host 22 m behind it.
+# 3. D12: the guest's C4 on the next jeep (three charges from its goto spot), the host 22 m behind it. Both go to the
+#    jeep first (lab run cf0aeeba stopped at placebehind after the guest's long warp alone).
 guest debug goto_vehicle jeep
 wait 3000
+host debug goto_vehicle jeep
+wait 5000
 host debug clear_enemies 100
 wait 1500
 placebehind host guest 22 0
