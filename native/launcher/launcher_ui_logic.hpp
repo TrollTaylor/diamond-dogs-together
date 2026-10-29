@@ -139,6 +139,7 @@ enum class Scene {
     play_local_no_folder,
     play_local_ready,
     play_local_running,
+    ingame_local_test,
     count
 };
 int SceneCount();

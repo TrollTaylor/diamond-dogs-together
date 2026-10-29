@@ -1401,7 +1401,14 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         mock.set_local_test_folder(MockModel::kGuestDir);
         play_tab_ = ui::PlayTab::local_test;
         break;
-    case ui::Scene::play_local_running: mock.jump_to_local_test(30.0); break;
+    case ui::Scene::play_local_running:
+        mock.jump_to_local_test(30.0);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
+    case ui::Scene::ingame_local_test:
+        mock.jump_to_local_test(30.0);
+        page = Page::in_game;
+        break;
     case ui::Scene::count: break;
     }
     first_frame_ = false;

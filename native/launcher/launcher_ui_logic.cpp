@@ -234,7 +234,7 @@ const char* const kSceneNames[static_cast<int>(Scene::count)] = {
     "13-ingame-connected",     "14-ingame-handoff",      "15-ingame-after-game", "16-tools",
     "17-tools-result",         "18-tools-uninstall-confirm", "19-tools-about",   "20-settings",
     "21-tools-in-game",        "22-uninstall-report",    "23-settings-debug-no-folder", "24-settings-debug-folder",
-    "25-play-local-no-folder", "26-play-local-ready",    "27-play-local-running",
+    "25-play-local-no-folder", "26-play-local-ready",    "27-play-local-running",  "28-ingame-local-test",
 };
 }  // namespace
 
