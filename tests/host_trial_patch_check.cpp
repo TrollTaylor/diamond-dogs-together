@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
 #if defined(MGS_LOCAL_BUDDY_CAPACITY_TEST) && MGS_LOCAL_BUDDY_CAPACITY_TEST
                                           world_buddy_ride_source,
 #endif
-                                          world_place_source,world_place_guest_source,world_vehicle_source,world_companion_source,world_relief_source};
+                                          world_place_source,world_place_guest_source,world_vehicle_source,world_companion_source,world_relief_source,world_relief_sync_source};
         auto world_at=partner_at+partner_size;
         for(const auto& chunk : world_chunks) {
             check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);

@@ -244,6 +244,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.companion_host_owned);
         if (ok) result.companion_host_owned_given = true;
     }
+    // M3 sortie vehicle on both copies (lab and play, default off until proven; see the defaults below).
+    else if (Equals(key, "world_relief")) {
+        ok = ParseBool(value, result.world_relief);
+        if (ok) result.world_relief_given = true;
+    }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
@@ -1601,6 +1606,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off unless named, in
     // lab and play, until a hidden-run FRAME on both copies and a play rehearsal pass.
     if (!c.companion_host_owned_given) c.companion_host_owned = false;
+    // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): off unless named, in lab and play,
+    // until a hidden-run FRAME on both copies and a play rehearsal pass.
+    if (!c.world_relief_given) c.world_relief = false;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

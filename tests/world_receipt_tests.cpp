@@ -73,34 +73,39 @@ void Cfg() {
           "strict CFG");
     world::CfgReply r{3, 2, 1, 1, 65535, 15, 1, 4294967295u};
     char out[world::reply_capacity];
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0,0,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0,0,0,0,0,0,0") == 0,
           "CFG first seven fields preserved, unsigned session appended, then remote mission, remote level, wait, handoff, lock and census");
     r.link = 0; r.session = 0;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0,0,0,0,0,0") == 0, "disconnected CFG session zero");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0,0,0,0,0,0,0") == 0, "disconnected CFG session zero");
     r.link = 1; r.session = 7; r.remote_mission = 30010; r.remote_level = 3; r.wait = 9;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,0,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,0,0,0,0,0,0") == 0,
           "the partner's mission, its world level and the raw pair-wait code are r[9..11]");
     // Save handoff (join-fix phase 2 P2-1): r[12] the handoff code, r[13] the travel lock.
     r.handoff = 3; r.lock = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,0,0,0,0") == 0,
           "the handoff code and the travel lock are r[12..13]");
     // WS4 step 0 (lab key partner_placed_census): r[14] the attacker census flag.
     r.census = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,0,0,0") == 0,
           "the WS4 attacker census flag is r[14]");
     // 0.13.6 online-vehicle-gone (lab key world_vehicle_gone, lab and play): r[15] the VEHICLE_GONE module.
     r.vehicle_gone = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,0,0") == 0,
           "the VEHICLE_GONE module flag is r[15]");
     // M1 host-owned companion (lab key companion_host_owned, lab and play): r[16] the companion module.
     r.companion = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,1") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,1,0") == 0,
           "the host-owned companion module flag is r[16]");
+    // M3 sortie vehicle (lab key world_relief, lab and play): r[17] the relief module.
+    r.relief = 1;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,1,1") == 0,
+          "the sortie vehicle module flag is r[17]");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255") == 0 &&
+    r.relief = 255;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255") == 0 &&
               std::strlen(out) < world::reply_capacity,
           "the widest CFG reply fits");
-    r.handoff = 0; r.lock = 0; r.census = 0; r.vehicle_gone = 0; r.companion = 0;
+    r.handoff = 0; r.lock = 0; r.census = 0; r.vehicle_gone = 0; r.companion = 0; r.relief = 0;
     char tiny[16];
     Check(!world::FormatCfgReply(r, tiny, sizeof(tiny)) && tiny[0] == 0, "CFG insufficient buffer produces no partial reply");
 }

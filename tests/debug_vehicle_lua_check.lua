@@ -247,7 +247,7 @@ for _,bad in ipairs({{"bogus"},{"partner","left"},{"partner","driver","x"},{"123
  c=H();ok,msg=c.V.run({"vehicle_door",unpack(bad)},7);check(not ok and msg=="vehicle_door_args" and #c.doors==0,"strict report arguments: "..table.concat(bad," "))
 end
 -- M3 experiments E2/E17/E18: relief_* route to lua/coop/world_relief.lua (W.relief), whole argument list, nothing read here.
-c=G();for _,k in ipairs({"relief_census","relief_arm","relief_seize","relief_remove","relief_face","relief_load"})do check(c.V.handles[k],"handled here: "..k)end
+c=G();for _,k in ipairs({"relief_census","relief_arm","relief_seize","relief_remove","relief_face","relief_load","relief_status","relief_lab"})do check(c.V.handles[k],"handled here: "..k)end
 ok,msg=lever(c,"relief_census");check(not ok and msg=="relief_unavailable" and c.reads==0 and c.lookups==0,"no world module: refused, nothing read")
 local got={}
 c=G();c.W.relief={run=function(a)got[#got+1]=table.concat(a," ");return true,"relief;m=30010"end}

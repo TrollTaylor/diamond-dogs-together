@@ -565,6 +565,9 @@ try {
     # 0.13.6 online-vehicle-gone: world_vehicle_gone is a LabCommon bool (-PartnerSetting / the worker's labsetting).
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 0)" '1/0' 'world_vehicle_gone values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 2 } '' 'world_vehicle_gone=2 refused'
+    # M3 sortie vehicle: world_relief is a LabCommon bool too.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_relief -Value 1)/$(ConvertTo-LabPartnerValue -Key world_relief -Value 0)" '1/0' 'world_relief values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world_relief -Value 2 } '' 'world_relief=2 refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_max_m -Value 1001 } 'allowed: 50..1000' 'range limit'
     $ovTag = ConvertFrom-LabPartnerSettingArgs -Items @('nametag_crosshair=always', 'host:nametag_name=HostTag', 'guest:nametag_name=GuestTag') -Role guest
     Assert-Equal "$($ovTag['nametag_crosshair'])/$($ovTag['nametag_name'])" 'always/GuestTag' 'role-scoped name tag settings'
@@ -1049,6 +1052,14 @@ try {
         $file = Join-Path $fixture 'vehicle-gone-guest-lab.ini'; [IO.File]::WriteAllText($file, $vgIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_vehicle_gone'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_gone=1 parses'
+        # M3 sortie vehicle: off in a default lab.ini; a LabCommon-written world_relief=1 parses natively.
+        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_relief'])" '0' 'native: world_relief defaults off'
+        $reOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_relief=1') -Role guest
+        $reIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $reOverrides)
+        Assert-Equal ((ConvertFrom-IniText $reIni)['world_relief']) '1' 'LabCommon writes world_relief=1'
+        $file = Join-Path $fixture 'relief-guest-lab.ini'; [IO.File]::WriteAllText($file, $reIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_relief'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_relief=1 parses'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')

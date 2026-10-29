@@ -255,4 +255,28 @@ good, why = e:run('relief_load 9 805 343 1636.5 0')
 check(not good and why == 'relief_load;type=9;call=0;alive=0' and e:has('step=load;m=30010;write=1;call=0;before=0;ct=9;'),
     'a LoadCarry error is reported, not raised')
 
+-- M3: relief_arm takes an optional paint (0..15 or fova0..fova2) for that type's preset (type 2: index 0).
+c = Fixture(1)
+c.env.Vehicle.paintType = {FOVA_0 = 0, FOVA_1 = 1, FOVA_2 = 2, NONE = 3}
+for _, cmd in ipairs({'relief_arm 2 1 2 3 0 16', 'relief_arm 2 1 2 3 0 fova3', 'relief_arm 2 1 2 3 0 x', 'relief_arm 2 1 2 3 0 1 2'}) do
+    local good, why = c:run(cmd)
+    check(not good and why == 'relief_args', 'refused paint: ' .. cmd)
+end
+ok, text = c:run('relief_arm 2 1 2 3 0 fova1')
+check(ok and c:has('step=armed;type=2;x=1.00;y=2.00;z=3.00;yaw=0.00;hook=loadcarry+initnew+sortie;paint=1'), 'armed with paint fova1 = 1')
+c.env.vars.missionCode = 40020
+c.env.TppMission.SelectNextMissionHeliStartRoute(30020, 1)
+check(c.env.vars.userPresetVehiclePaintType[0] == 1 and c.env.vars.userPresetVehiclePaintType[1] == 1, 'the type 2 preset (index 0) is written')
+c:run('relief_census paint')
+check(c:has('step=census_paint;tag=paint;p=1,1,2,3,4,5,6,7,8,9;fova=0,1,2;none=3'), 'census_paint lists the paint enum')
+-- relief_status and relief_lab go to the M3 module (W.reliefSync), in any mode.
+c = Fixture(2)
+good, why = c:run('relief_status')
+check(not good and why == 'relief_sync_unavailable', 'no M3 module: refused')
+c.W.reliefSync = {lever = function(a) return true, 'sync;' .. table.concat(a, ' ') end}
+ok, text = c:run('relief_status')
+check(ok and text == 'sync;relief_status', 'relief_status routed in play')
+ok, text = c:run('relief_lab nonactive vehicle')
+check(ok and text == 'sync;relief_lab nonactive vehicle', 'relief_lab routed (the module checks the mode)')
+
 print('world_relief_lua_check: ' .. checks .. ' checks PASS')

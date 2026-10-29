@@ -1455,6 +1455,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.placed_census = labc.partner_placed_census && labc.mode == mgscoop::LabMode::lab;
     world.vehicle_gone = labc.world_vehicle_gone;
     world.companion = labc.companion_host_owned;
+    world.relief = labc.world_relief;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;

@@ -83,3 +83,7 @@ constexpr char world_companion_source[] = R"MGS_WORLD(
 constexpr char world_relief_source[] = R"MGS_WORLD(
 @MGS_WORLD_RELIEF_SOURCE@
 )MGS_WORLD";
+// M3 sortie vehicle on both copies (route A; lab key world_relief, CFG r[17]).
+constexpr char world_relief_sync_source[] = R"MGS_WORLD(
+@MGS_WORLD_RELIEF_SYNC_SOURCE@
+)MGS_WORLD";

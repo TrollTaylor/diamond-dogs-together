@@ -316,12 +316,15 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         return PutF(out, capacity,
                     "The host is in %s. Choose that destination, or choose this one again to fly alone (it leaves alone after 2 min).",
                     first);
-    case 13:  // COMPANION{a=1 orders | 2 call refused | 3 Quiet locked} (M1, docs/vehicles-companions-design.md 6.1)
+    case 13:  // COMPANION{a=1 orders | 2 call refused | 3 Quiet locked} (M1, docs/vehicles-companions-design.md 6.1);
+              // M3 (6.3): a=4 vehicle drop refused | 5 loadout drop refused (it can carry a vehicle)
         switch (a) {
         case 1: return Put(out, capacity, "Only the host gives companion orders in co-op: your call menu is off.");
         case 2: return Put(out, capacity, "Only the host can call, change or send away the companion in co-op.");
         case 3:
             return Put(out, capacity, "Your partner plays Quiet, so buddy Quiet stays at Mother Base this session.");
+        case 4: return Put(out, capacity, "Only the host can bring or request a vehicle in co-op.");
+        case 5: return Put(out, capacity, "Only the host can order a loadout drop in co-op: it can carry a vehicle.");
         default: return false;
         }
     default:  // 14..15 reserved or unknown: no toast

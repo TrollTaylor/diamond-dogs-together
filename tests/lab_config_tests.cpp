@@ -1406,6 +1406,21 @@ int main() {
             Check(coPlay.mode == mgscoop::LabMode::play && coPlay.companion_host_owned && coPlay.play_refused == 0 && coPlay.invalid_values == 0,
                   "companion_host_owned=1 parses in play with no refusal bit");
             Check(!coBad.companion_host_owned && coBad.invalid_values == 1 && coBad.unknown_keys == 0, "an invalid companion_host_owned keeps it off");
+            // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): off by default in lab, gun profile and play until
+            // its FRAME proof and play rehearsal; a named 1 parses in lab and play with no refusal bit.
+            const auto rePlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_relief=1\n");
+            const auto reLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=1\n");
+            const auto reOff = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=0\n");
+            const auto reBad = Lab("enabled=1\nrole=host\nworld_relief=2\n");
+            Check(!def.world_relief && !vehicleGun.world_relief && !vehiclePlayDefault.world_relief,
+                  "world_relief defaults off (lab, gun profile, play)");
+            Check(reLab.world_relief && reLab.world_relief_given && reLab.invalid_values == 0 && reLab.unknown_keys == 0,
+                  "world_relief=1 parses in lab");
+            Check(!reOff.world_relief && reOff.world_relief_given && reOff.invalid_values == 0, "a named 0 keeps it off");
+            Check(rePlay.mode == mgscoop::LabMode::play && rePlay.world_relief && rePlay.play_refused == 0 && rePlay.invalid_values == 0,
+                  "world_relief=1 parses in play with no refusal bit");
+            Check(!reBad.world_relief && reBad.invalid_values == 1 && reBad.unknown_keys == 0, "an invalid world_relief keeps it off");
         }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.

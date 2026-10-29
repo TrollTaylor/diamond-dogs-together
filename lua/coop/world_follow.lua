@@ -142,9 +142,13 @@ if not s or not s.ready or s.mission ~= t[4] then return false end
 -- own buddy vars are kept first (its saves write them).
 local C = W.companion
 local buddy = C and C.applies and C.applies() and C.keep("seed")
+-- M3 (world_relief_sync.lua): the host's relief carry and paint keys only with world_relief; the
+-- guest's own are kept first (its saves write them).
+local R = W.reliefSync
+local relief = R and R.applies and R.applies() and R.keep("seed")
 for _, v in ipairs(s.values) do
     local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
-    if not key[5] and (key[6] ~= "buddy" or buddy) then
+    if not key[5] and (key[6] == nil or key[6] == "buddy" and buddy or key[6] == "relief" and relief) then
     local data = S.data(key)
     if key[2] then
         local array = W.get(data, key[1])
@@ -156,6 +160,7 @@ vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
 if buddy then C.seeded(t[4], t[2]) end
+if relief then R.seeded(t[4], t[2]) end
 return true
 end
 -- F.hostDeploy is not cleared here: F.tick owns the held sortie.
@@ -492,6 +497,11 @@ if type(load) == "function" then
         if W.companion then
             local ok, err = pcall(W.companion.load, nextMission, on() and (W.host or F.current ~= nil))
             if not ok then W.log("event=companion;step=error;at=load;msg=" .. string.sub(tostring(err), 1, 80)) end
+        end
+        -- M3: the host's relief seed line; a guest's own relief vars back on a solo load.
+        if W.reliefSync then
+            local ok, err = pcall(W.reliefSync.load, nextMission, on() and (W.host or F.current ~= nil))
+            if not ok then W.log("event=relief;step=error;at=load;msg=" .. string.sub(tostring(err), 1, 80)) end
         end
         if on() and W.host then
             local ok, ready = pcall(F.sendSeeds, nextMission)

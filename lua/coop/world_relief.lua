@@ -15,9 +15,10 @@
 -- Levers (debug commands, results in script-observer.log as world_lua=event=relief; ...):
 --   relief_census [tag]        read only: carry vars, index 0 (25600), MB vehicle resources and
 --                              GMP, paint presets, the current sortie loadout slot bytes.
---   relief_arm <type> <x> <y> <z> <yaw>
+--   relief_arm <type> <x> <y> <z> <yaw> [paint]
 --                              lab: at the next ACC sortie (SelectNextMissionHeliStartRoute) write
---                              the carry vars, as the sortie prep's SetRelief does (E2).
+--                              the carry vars, as the sortie prep's SetRelief does (E2); paint (0..15,
+--                              or fova0..fova2: Vehicle.paintType.FOVA_n) sets that type's preset too.
 --   relief_seize stock|skip    lab: TppMission.SeizeReliefVehicleOn* run (logged) or are skipped (E18).
 --   relief_remove instant|fadeout|fulton [quiet]
 --                              lab: the stock Seize instance command on index 0 with only that
@@ -27,6 +28,7 @@
 --                              lab, free roam, index 0 absent: write the carry vars (rotY in radians, as
 --                              the census cp= shows) and call Vehicle.LoadCarry now, mid mission: what a
 --                              guest continue or late join would need (M3 item 6).
+--   relief_status, relief_lab ...  M3 (lua/coop/world_relief_sync.lua W.reliefSync.lever).
 --   relief_face                lab: turn in place to face index 0 (within 20 m; captures). Hidden run
 --                              fafd3fdd: a warp beside it at the vehicle's height fell through the
 --                              30010 enemyBase_S slope, so nothing moves the player any more.
@@ -46,6 +48,8 @@ R.RES = {{"4wdE", "4wdEast"}, {"4wdW", "4wdWest"}, {"trcE", "TruckEast"}, {"trcW
     {"apcE", "ArmoredVehicleEast"}, {"apcW", "ArmoredVehicleWest"}, {"wavW", "WheeledArmoredVehicleWest"},
     {"tnkE", "TankEast"}, {"tnkW", "TankWest"}}
 local REMOVE = {instant = "Instant", fadeout = "FadeOut", fulton = "Fulton"}
+-- Relief type t -> its userPresetVehiclePaintType index (the loadout vehicle id - 0x0D, static 0x14095D230).
+R.PAINT = {1, 0, 3, 2, 5, 7, 4, 6, 9, 8}
 local SEIZE = {"SeizeReliefVehicleOnAbort", "SeizeReliefVehicleOnClear", "SeizeReliefVehicleOnForceGoToMb"}
 local function L(text) W.log("event=relief;" .. text) end
 local function n(v) return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge end
@@ -131,7 +135,9 @@ function R.census(tag)
     L(fmt("step=census_v0;tag=%s;alive=%d;vt=%s;x=%s;y=%s;z=%s;rider0=%s;dist=%s", tag, alive and 1 or 0, num(vt), num(x, "%.2f"),
         num(y, "%.2f"), num(z, "%.2f"), num(r0), num(d, "%.1f")))
     L(fmt("step=census_res;tag=%s;%s", tag, R.resources()))
-    L(fmt("step=census_paint;tag=%s;p=%s", tag, list(W.get(vars, "userPresetVehiclePaintType"), 9)))
+    local pt = W.get(Vehicle, "paintType")
+    L(fmt("step=census_paint;tag=%s;p=%s;fova=%s,%s,%s;none=%s", tag, list(W.get(vars, "userPresetVehiclePaintType"), 9),
+        num(W.get(pt, "FOVA_0")), num(W.get(pt, "FOVA_1")), num(W.get(pt, "FOVA_2")), num(W.get(pt, "NONE"))))
     pcall(loadout, tag)
     return true, fmt("relief;m=%s;t=%s;v0=%d;vt=%s;x=%s;z=%s", num(m), ct >= 0 and tostring(ct % 256) or "nil", alive and 1 or 0,
         num(vt), num(x, "%.1f"), num(z, "%.1f"))
@@ -155,6 +161,7 @@ function R.apply(where)
         vars.reliefVehicleCarryType = a.type
         local t = vars.reliefVehicleCarryAttitude
         t[0], t[1], t[2], t[3] = a.x, a.y, a.z, a.yaw
+        if a.paint and R.PAINT[a.type] then vars.userPresetVehiclePaintType[R.PAINT[a.type]] = a.paint end
     end)
     local after, p = R.carry()
     L(fmt("step=arm_applied;where=%s;m=%s;ok=%d;before=%s;%s", where, num(m), ok and 1 or 0, num(before), carryText(after, p)))
@@ -278,13 +285,21 @@ end
 function R.run(a)
     local cmd = a[1]
     if cmd == "relief_census" and (#a == 1 or #a == 2 and a[2]:match("^[%w_]+$") and #a[2] <= 16) then return R.census(a[2]) end
+    if cmd == "relief_status" or cmd == "relief_lab" then
+        local S = W.reliefSync
+        if type(S) ~= "table" or type(S.lever) ~= "function" then return false, "relief_sync_unavailable" end
+        return S.lever(a)
+    end
     if cmd ~= "relief_census" and not lab() then return false, "relief_lab_only" end
-    if cmd == "relief_arm" and #a == 6 then
+    if cmd == "relief_arm" and (#a == 6 or #a == 7) then
         local t, x, y, z, yaw = real(a[2], 0, 10), real(a[3], -10000, 10000), real(a[4], -1000, 3000), real(a[5], -10000, 10000), real(a[6], -360, 360)
-        if not (t and t == floor(t) and x and y and z and yaw) then return false, "relief_args" end
-        R.armed = {type = t, x = x, y = y, z = z, yaw = yaw}
+        local paint = a[7] and (a[7]:match("^fova[012]$") and W.get(W.get(Vehicle, "paintType"), "FOVA_" .. a[7]:sub(5)) or real(a[7], 0, 15))
+        if not (t and t == floor(t) and x and y and z and yaw) or a[7] and not (n(paint) and paint == floor(paint) and paint >= 0 and paint <= 255) then
+            return false, "relief_args"
+        end
+        R.armed = {type = t, x = x, y = y, z = z, yaw = yaw, paint = paint}
         local hook = R.install()
-        L(fmt("step=armed;type=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%.2f;hook=%s", t, x, y, z, yaw, hook))
+        L(fmt("step=armed;type=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%.2f;hook=%s;paint=%s", t, x, y, z, yaw, hook, num(paint)))
         return true, fmt("relief_arm;type=%d;hook=%s", t, hook)
     elseif cmd == "relief_seize" and #a == 2 and (a[2] == "stock" or a[2] == "skip") then
         R.seize = a[2]

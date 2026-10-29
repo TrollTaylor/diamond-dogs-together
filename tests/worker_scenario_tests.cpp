@@ -139,5 +139,8 @@ int main(){
     Check(keys[0x11]==0x80&&keys[0x39]==0,"loadingrevocationdoesnotclearunrelatedordinaryinput");
     simultaneous.SetLoading({w::LoadingPhase::initialized,30020,10},1003);
     Check(!simultaneous.Accept(resume,1003),"oldresumecannotreviveafterallocationchange");
+    // M3: "3" (scan 0x04) is the iDroid MISSIONS tab key.
+    {w::Scenario three;auto c3=Parse("hold 3 100 0");Check(three.Accept(c3,1000),"acceptkey3");std::uint8_t k3[256]{};three.Keyboard(k3);
+     Check(k3[0x04]==0x80&&k3[0x05]==0&&k3[0x0f]==0,"key3isscan04");}
     std::printf("worker_scenario checks=%u failures=%u compiled=%u\n",checks,failures,w::Compiled()?1u:0u);return failures?1:0;
 }
