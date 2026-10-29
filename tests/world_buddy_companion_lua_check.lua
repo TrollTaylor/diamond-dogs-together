@@ -143,6 +143,14 @@ g = F(false)
 g:pose(1000, 4000, 2000, 3000); g.time = 1100; g:pose(1100, 5000, 2000, 3000, 1, 1, 50); g:tick(1150)
 hold = g:last("LuaAiStayAndSnarl").cmd
 check(math.abs(hold.position:GetX() - 6) < 0.001 and hold.warp == 1 and hold.dash == 0, "a moving dog's target leads by its age; warp mode places it there")
+-- The lead uses only consecutive 10 Hz samples and a fresh stream (run 4cd88ea2: an idle window after a run read 5.6 m,
+-- the last moving velocity extrapolated after the host's dog stopped).
+g = F(false)
+g:pose(1000, 4000, 2000, 3000); g.time = 1100; g:pose(1100, 5000, 2000, 3000); g.time = 1600; g:pose(1600, 5050, 2000, 3000)
+g.pos = vec(5.05, 2, 3); g:tick(1650)
+check(math.abs(g:last("LuaAiStayAndSnarl").cmd.position:GetX() - 5.05) < 0.001, "a sample 500 ms after the last carries no velocity")
+g = F(false); g:pose(1000, 4000, 2000, 3000); g.time = 1100; g:pose(1100, 5000, 2000, 3000); g.pos = vec(5, 2, 3); g:tick(1500)
+check(math.abs(g:last("LuaAiStayAndSnarl").cmd.position:GetX() - 5) < 0.001, "a stream quiet for 400 ms is not extrapolated")
 -- Never released to the guest's AI.
 g = F(false); g:pose(900); g:tick()
 g:tick(3000)

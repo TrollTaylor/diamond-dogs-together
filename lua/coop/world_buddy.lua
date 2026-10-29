@@ -344,7 +344,8 @@ local r = {tick = v[1], kind = v[2], present = v[4] == 1, x = v[5] / 1000, y = v
  at = now - v[10], vx = 0, vz = 0, speed = 0}
 if r.present and p and p.present and p.kind == r.kind then
  local dt = ((r.tick - p.tick) % 4294967296) / 1000
- if dt > 0 and dt <= 2 then
+ -- Only consecutive 10 Hz samples (a moving dog); a sample after a pause carries no velocity.
+ if dt > 0 and dt <= 0.3 then
   r.vx, r.vz = (r.x - p.x) / dt, (r.z - p.z) / dt
   r.speed = sqrt(r.vx * r.vx + r.vz * r.vz)
  end
@@ -498,7 +499,9 @@ s.owned, s.id, s.ownedMission, s.ownedEpoch = true, id, W.mission, W.epoch
 local fresh = r and r.kind == 1 and r.present and now >= r.at and now - r.at <= 1000
 local why, result
 if fresh then
- local age = min((now - r.at) / 1000, 0.3)
+ -- Lead by the sample age while the stream is live (a quiet stream: the dog stopped, no extrapolation).
+ local age = (now - r.at) / 1000
+ if age > 0.35 then age = 0 end
  s.hold = {x = r.x + r.vx * age, y = r.y, z = r.z + r.vz * age, yaw = r.yaw}
  why, result = "target_submitted", 0
 elseif s.hold then why, result = "hold_last", 3
