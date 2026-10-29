@@ -214,6 +214,8 @@ AI follows the guest, which is why `world_buddy.lua` holds the guest's dog [O].
   `vars.reliefVehicleCarryAttitude[0..3]` (x, y, z, rotY) [O, E2, section 8.1; resolves `unk_59943e57`]: the vehicle
   manager's SetRelief writes them at the sortie and `Vehicle.LoadCarry` reads them at the next mission start; the
   sortie loadout buffers do not hold the choice.
+- **A mid-mission `Vehicle.LoadCarry()` spawns it** [O, section 8.2]: with the carry vars written, the call gives
+  index 0 within 8 s, at the same pose on each copy, in a free-roam mission that started without it.
 - **Index 0 cannot be spawned, respawned or despawned from Lua** [O]: `ParseLuaSpawnIndex` `0x140B304E0` rejects 0 and
   indices at or above the pool count (callers in Spawn `0xB31E70`, Respawn `0xB31710`, Despawn `0xB30AF0`), and
   `world_vehicle.lua` refuses `index0` (`:148-157`). So a Fulton or destruction of index 0 on one copy cannot be
@@ -778,6 +780,58 @@ covers all ten relief types, including the APC, the tank and the other faction's
 the id 25600 on both copies, and its two costs are solved: the guest's mission-end seize is skipped (E18) and a
 removal on the receiver is `Seize{"Instant"}` with its `OnFulton` skipped (E17). Not run: relief types 3..10 [I from
 the pack vector], a non-zero paint preset, a guest continue with its own 25600, and the seed path itself (M3).
+Round 2 (section 8.2) adds the continue and late-join case, a mid-mission `Vehicle.LoadCarry()` with the host's carry
+values (proven on both copies), and shows that the pack draws bodies the location does not load (the east jeep in
+Africa on both copies, a tank on the host's copy). Route A stands.
+
+### 8.2 Results, round 2: the ACC, a mid-mission load, the seed and a tank (2026-10-29, `wp/relief`)
+
+New lab lever `relief_load <type> <x> <y> <z> <rotY>` in `world_relief.lua` (lab, free roam, index 0 absent, nothing
+armed; refused otherwise): it writes `reliefVehicleCarryType` and `reliefVehicleCarryAttitude` and calls
+`Vehicle.LoadCarry()` at once. Scenarios `relief-midload.txt` (run `612afff7`, seed `lab`) and `relief-continue.txt`
+(run `fc6f1f01`, seed `afgh-relief-lv`). Both runs closed with the baseline restored and the real saves unchanged;
+frames `612afff7-*-relief-r2-*` and `fc6f1f01-*-relief-r2-*` in the session scratch folder `complete/frames/relief/`.
+These two runs use up the task's budget of six hidden runs.
+
+- **Sortie-prep reach: partly [O, `612afff7`].** `boot 40010` leaves both copies in the ACC
+  (`lab_boot=place; step=gameplay; mission=40010; via=acc`; frame `host-relief-r2-acc-0`: Snake seated in the heli,
+  no menu). `press tab` opens the iDroid on its MAP tab (frame `acc-tab`: MOTHER BASE / MAP / MISSIONS, tabs switched
+  with keys 1 and 3, GMP 313850); a second Tab closes it (`acc-tab2`). The MISSIONS tab, where a sortie prep starts,
+  needs key 3, and the worker's virtual keys do not include it (`Invoke-WorkerScenario.ps1:273`,
+  `Send-WorkerCommand.ps1:49`, `native/worker_scenario.cpp:17`: w a s d enter space escape e r shift ctrl 1 2 f c q x z
+  tab lmb rmb). A scripted sortie-prep selection therefore needs key 3 added to those three lists plus a menu path of
+  about ten steps [U]; it was not tried further. Nothing in M3 depends on it: `relief_arm` writes what SetRelief
+  writes, and seed `coop-relief-30020` holds a real choice. The host's real sortie-prep GMP charge stays [U].
+- **A mid-mission load spawns index 0 [O, `612afff7`].** In 30020 at the savannahEast_N LZ, with no relief vehicle on
+  either copy (`ct=512; t=0; alive=0`), the host's `relief_load 2 1227.17 25.84 -127.05 -1.571` (the carry attitude
+  the engine itself used at this LZ in `fafd3fdd` and `9f01d603`) gave 25600 alive, `GetVehicleType` 2, at
+  (1227.24, 19.43, -127.05) within 8 s, `ct=514` (byte 1 set at realize), while the guest's copy still had none
+  (frame `host-relief-r2-midload-host`: the jeep). The guest's own `relief_load` with the same values, 23 s later,
+  gave the same vehicle at the identical pose (to 0.01 m) within 8 s; frames `host-relief-r2-midload-both` and
+  `guest-relief-r2-midload-both` show the jeep on both screens. No error, no crash, GMP unchanged on both copies. This
+  is the path for a guest continue or a late join (M3 item 6): a copy whose mission started without the relief
+  vehicle gets it mid mission from the host's carry values.
+- **The pack brings bodies the location lacks [O].** The east jeep (type 2) drew in Africa, whose free roam loads only
+  the west light vehicle and truck (`612afff7`, both copies). The west tank (type 9) drew at the same Africa LZ on the
+  host's copy (`fc6f1f01`: 25600 alive, `GetVehicleType` 7, at (1227.19, 19.40, -127.03), carry life 4500 in nine
+  slots, ammo 100 / 500; frame `fc6f1f01-host-relief-r2-tank`). No free roam loads a tank body, so route B could draw
+  neither. The guest's tank was not tested: its lever was refused (last bullet). `GetVehicleType` numbers are not
+  relief types (type 9 answers 7).
+- **E18 with a mid-loaded vehicle [O, `612afff7`].** At the 30020 mission end the host's stock seize credited it
+  (`OnFultonVehicle(25600, ..., 13)`, `AddTempResource 13`; the host's `4wdEast` 1 -> 2 at the next census); the
+  guest's was skipped (`seize_skipped; alive=1`; its `4wdEast` stayed 1). GMP 313850 on both throughout.
+- **Seed `afgh-relief-lv` [O].** From run `612afff7`: the host alone armed type 2 at the ACC sortie to 30010
+  (`goto_lz=1`, enemyBase_S). The host's mission-start checkpoint holds `ct=514; cp=-347.97,321.89,763.57,2.488` with
+  25600 at (-347.95, 315.86, 763.58) (frame `612afff7-host-relief-r2-seed-arrival`); the guest's holds none
+  (`ct=512; alive=0`). Run `fc6f1f01` booted it with `boot fast`: the host's Continue restored the jeep at
+  (-347.97, 315.85, 763.60) (frame `fc6f1f01-host-relief-r2-continue-load`, at night because the time command was
+  refused).
+- **Harness limit [O, `fc6f1f01`; also `5874afcd`].** After `boot fast` the guest's copy reloads (the continue
+  alignment; frame `fc6f1f01-guest-relief-r2-continue`: the loading tips) and then waits on the "Space: Resume Game"
+  page (frame `guest-relief-r2-continue-load`). Until the next travel every guest debug command is refused with
+  `SEND_REFUSED: Debug actions require a fresh owned gameplay mission generation`, so the guest's load from the seed
+  values and the guest's tank lever never ran in `fc6f1f01`. A scenario that continues needs `guest press space`
+  after `boot fast` [U], or a host-led travel first. The host's commands were refused for the first ~20 s too.
 
 ## 9. Milestones
 
@@ -794,8 +848,10 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
 `debug_buddy.lua:70, 208-212`):
 - `afgh-horse`, `afgh-walker`: from `afgh-ledge` (the walker seed needs D-Walker developed in the lab save [U]);
 - `afgh-quiet`: from `quiet-recruited`, after host-led travel to 30010;
-- `afgh-relief-lv`: per E2 (a lever once the selection var is known; before that a scripted sortie-prep selection, or a
-  co-op save the user shares, D10);
+- `afgh-relief-lv`: **built** (run `612afff7`, section 8.2): 30010 enemyBase_S LZ, the host's save with relief type 2
+  (east jeep) at the LZ, the guest's without (the continue / late-join case). Boot it with `boot fast` (a
+  `boot <mission>` passes the ACC, whose LoadCarry clears the carry) and press Space on the guest (section 8.2). The
+  real D10 choice is seed `coop-relief-30020` (30020, both roles from the same save);
 - `mb-quiet-cell`: a spot beside the Quiet cell, captured in E20.
 
 ### M1. The host owns the companion (seeds, refusals, Quiet lock)
@@ -846,8 +902,9 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
 
 ### M3. The sortie vehicle on both copies
 
-- Status (2026-10-29): E2, E17 and E18 passed; **route A** chosen (section 8.1). Not implemented: it waits for M1's
-  seed and refusal infrastructure. Lab levers, the census and the scenarios are on `wp/relief`.
+- Status (2026-10-29): E2, E17 and E18 passed; **route A** chosen (section 8.1). Round 2 (section 8.2) proved the
+  mid-mission load for a continue or late join on both copies and built seed `afgh-relief-lv`. Not implemented: it
+  waits for M1's seed and refusal infrastructure. Lab levers, the census and the scenarios are on `wp/relief`.
 - Scope: F3 route A; guest vehicle requests refused.
 - What M3 needs (route A): (1) seed keys `reliefVehicleCarryType` (the whole u32), `reliefVehicleCarryAttitude[0..3]`
   and `userPresetVehiclePaintType[0..9]` (the paint is re-read at the request); applied in the guest's
@@ -861,10 +918,16 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
   its own applied removal (`Neutralize` of 25600 arrives with `att=local`). (5) Refusals (E4): the guest's iDroid
   `MSN_DROP_VEHICLE` and `MSN_DROP_LOADOUT` (a loadout delivery can carry a vehicle through SetRelief); candidates
   `TppUiCommand.SetMbTopMenuItemActive(menu, false)` [I] or a Lua wrapper; the guest never runs the sortie prep [O].
-  (6) The host's in-mission drop (route C, D6 later): a candidate is the guest writing the carry vars and calling
-  `Vehicle.LoadCarry()` mid-mission [U].
+  (6) Continue and late join (section 8.2): when the guest's copy is in free roam without index 0 while the host's
+  has it (a host continue, a guest join or rejoin mid mission), the host sends its `reliefVehicleCarryType` and
+  `reliefVehicleCarryAttitude` (a reliable op or the pairing seeds) and the guest's copy writes them and calls
+  `Vehicle.LoadCarry()` [O, `relief_load`, run `612afff7`: the same pose to 0.01 m], after snapshotting its own carry
+  vars for D8 (b). If the host's vehicle has moved since its carry was written, the guest's copy appears at the carry
+  pose and the general rules (RIDE_FAST, VEHICLE_STATE) move it [I]. Never call it over a live index 0 or in the ACC.
+  (7) The host's in-mission drop (route C, D6 later) may use the same call [I]; the drop's parachute path is untested.
 - Depends on: E2, E17, E18 (done), M1 (seeds), E4.
-- Proof `companion-relief.txt`: the hidden worker cannot drive the sortie-prep menu, so the host's choice comes from the
+- Proof `companion-relief.txt`: the hidden worker opens the iDroid in the ACC but cannot reach its MISSIONS tab (key 3
+  is not a worker key; section 8.2), so the host's choice comes from the
   lab lever `host run relief_arm <type> ...` on the host only (seeds carry it to the guest), or from seed
   `coop-relief-30020` (decision D10; a real choice, type 2, saved in 30020, ACC 40020; the ACC clears the carry, so a
   sortie from it needs the lever again); `boot 30010 828.18 338.20 1630.51 95`, then `host worldtrigger goto=30020
@@ -875,7 +938,10 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
   `guest capture m3-request-refused`. Removal: host Fultons it -> `waitlog guest 'world_lua=event=vehicle_gone;
   step=applied; id=25600;'` (or the E17 method's line), `both capture m3-relief-gone`. Mission end: `waitlog guest
   'world_lua=event=relief; step=seize_skipped;'` *(new)*, resources diffed. If route B is used, repeat with a host seed
-  that chose the other faction's jeep (`afgh-relief-west`) and record the expected `absent` on the guest.
+  that chose the other faction's jeep (`afgh-relief-west`) and record the expected `absent` on the guest. Continue
+  case: `-SaveSeed afgh-relief-lv`, `boot fast`, `guest press space`, then the guest's copy loads the host's choice
+  -> `waitlog guest 'world_lua=event=relief; step=load;'` (the M3 form of the lever's line) and `census_v0; alive=1`
+  at the host's x/z (-347.97, 763.60) on both, `both capture m3-relief-continue`.
 - Rehearsal `-Mode play -WanSim bad`; exit: a two-PC session.
 
 ### M4. Vehicle losses, damage and parked vehicles

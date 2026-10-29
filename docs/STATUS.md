@@ -1,3 +1,29 @@
+## 2026-10-29: M3 experiments round 2: mid-mission load, seed `afgh-relief-lv`, the ACC (`wp/relief`, lab levers only, not merged)
+
+Follow-up on `wp/relief` to the section below. Results in `docs/vehicles-companions-design.md` section 8.2; M3 there
+lists what the build needs. M3 itself is still not implemented.
+
+- **Built (lab only).** `relief_load <type> <x> <y> <z> <rotY>` in `lua/coop/world_relief.lua` (routed by
+  `lua/coop/debug_vehicle.lua`): it writes the carry vars and calls `Vehicle.LoadCarry()` mid mission, and refuses
+  outside lab mode, outside free roam, over a live index 0 or while a sortie choice is armed. Tests
+  `world_relief_lua_check` (75 checks; the new ones failed before the lever existed) and `debug_vehicle_lua_check`
+  (the routing; failed on the old module). Scenarios `relief-midload.txt` and `relief-continue.txt`.
+- **Seed `afgh-relief-lv`** in `D:\mgs-coop-seeds` (from run `612afff7`): 30010 enemyBase_S LZ; the host's save holds
+  relief type 2 (east jeep) at the LZ, the guest's holds none. Boot it with `boot fast`.
+- **Hidden runs** (both closed, baseline restored, real saves unchanged; archived in
+  `%USERPROFILE%\mgs-coop-run-archive\companions\<id>`):
+
+| Run | Scenario, seed | Result |
+|---|---|---|
+| `612afff7` | `relief-midload.txt`, lab | ACC: Tab opens the iDroid on its MAP tab; the MISSIONS tab needs key 3, which is not a worker key, so a scripted sortie-prep selection was not reached. Mid-mission load: the host's `relief_load 2` gave the jeep at (1227.24, 19.43, -127.05) in 8 s while the guest's copy had none; the guest's own load with the same values gave it at the identical pose; frames show the jeep on both screens (the east jeep in Africa, a body free roam there does not load). Mission end: the host credited it once (`AddTempResource 13`), the guest's seize was skipped. Seed `afgh-relief-lv` taken from this run. |
+| `fc6f1f01` | `relief-continue.txt`, `afgh-relief-lv` | The host's Continue restored the jeep at (-347.97, 315.85, 763.60). The west tank (type 9, `GetVehicleType` 7) drew at the Africa LZ on the host's copy (frame). The guest's copy stopped on the post-load "Space: Resume Game" page after `boot fast`, so all its commands were refused until the travel: its load from the seed values and its tank were not tested. |
+
+- **Route A stands**, now also for a continue or a late join (a mid-mission `Vehicle.LoadCarry()` with the host's
+  values). Not covered: the guest's tank, relief types 3..8 and 10, a non-zero paint preset, a scripted sortie-prep
+  selection (needs key 3 in the worker) and the host's real sortie-prep GMP charge.
+- **Defaults.** Nothing flips: lab levers only.
+- **Checks.** `pwsh -File tools/build.ps1 -Fast`: 291/291. `pwsh -File tools/build.ps1` (Debug): 306/306, 97 s.
+
 ## 2026-10-29: M3 experiments E2, E17, E18, the sortie (relief) vehicle (`wp/relief`, lab levers only, not merged)
 
 Branch `wp/relief` from `wp/companions` `068852c`. Experiments only: M3 itself is not implemented (it waits for M1's
