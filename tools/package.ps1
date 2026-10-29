@@ -183,7 +183,9 @@ function Get-PackageSourceFiles {
         $files+=@(& rg --files docs -g '*.md')
         if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source documentation.' }
     } finally { Pop-Location }
-    $files+=@('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md')
+    # docs/readme/logo.png: the launcher icon is generated from it
+    # (tools/launcher/make_launcher_assets.py), and its CTests read it.
+    $files+=@('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','docs/readme/logo.png')
     if($Friend) {
         # rg skips the worktree's known MinHook junction. These paths were already
         # fingerprinted through the resolved dependency by the Release receipt;
