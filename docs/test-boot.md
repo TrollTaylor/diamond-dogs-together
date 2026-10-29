@@ -99,7 +99,7 @@ Scenarios: `scenarios/boot-baseline.txt` (plain title + waitgameplay) and
 | Run | Scenario | Seed | Target | Game clock (`ms=`) | Wall time from launch | Outcome |
 | --- | --- | --- | --- | --- | --- | --- |
 | `634e5f77` | `boot-baseline.txt` (`-GraphicsQuality preserve`) | `lab` | `30010` (Continue) | — | host `57.2 s`, guest `54.3 s` | Normal Enter-driven title + Continue into Afghanistan (`1448.61, 337.79, 1466.40`). |
-| `0e20af9c` | `boot-30020.txt` (`-GraphicsQuality low`) | `lab` | `30020 -510.73 5.09 1183.02 0 time=12:00 weather=sunny` | host `28.88 s`, guest `29.43 s` | host `45.4 s`, guest `45.3 s` | Zero input; skipped logos, autosave/offline popups and Press Start, took `RestartHeli` (`40010`), sortied to Africa (`30020`) via `world_follow` (`kind=6`) and landed at Masa Village (`err_m=0.00` on both copies, 12:00 sunny; `host-boot-spot.bmp` / `guest-boot-spot.bmp` show both players face-to-face with the `Taylor` nametag). |
+| `0e20af9c` | `boot-30020.txt` (`-GraphicsQuality low`) | `lab` | `30020 -510.73 5.09 1183.02 0 time=12:00 weather=sunny` | host `28.88 s`, guest `29.43 s` | host `45.4 s`, guest `45.3 s` | Zero input; skipped logos, autosave/offline popups and Press Start, took `RestartHeli` (`40010`), sortied to Africa (`30020`) via `world_follow` (`kind=6`) and landed at Masa Village (`err_m=0.00` on both copies, 12:00 sunny; `host-boot-spot.bmp` / `guest-boot-spot.bmp` show both players face-to-face with the Steam persona nametag). |
 | `3e5e8243` | `boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny` | `quiet-recruited` | `30050` command deck ladder | host `31.30 s`, guest `31.58 s` | host `42.4 s`, guest `42.9 s` | Skipped the Mother Base arrival demo (`step=mb_demo`) and landed at the red container ladder (`22.61, 0.80, -15.55`, `err_m=0.00`) without the previous 60 s post-gameplay wait. |
 | `8d91d358` | `boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny` | `lab` | `30020` Masa Village jeep | host `28.91 s`, guest `29.51 s` | host `47.9 s`, guest `47.6 s` | Landed beside the authored jeep (`-656.01, 1.20, 877.73`, `err_m=0.00`). |
 | `c2ecccb9` | `boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny` | `lab` | `30010` step-on rock shelf | host `28.70 s`, guest `28.88 s` | host `44.8 s`, guest `42.0 s` | Landed at the Afghanistan rock shelf (`828.18, 337.20, 1630.51`, `err_m=0.00`). |
@@ -123,7 +123,7 @@ else `D:\mgs-coop-seeds`.
 
 ```
 pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunId <run id> -Name africa-jeep
-pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunDirectory C:\Users\taylo\mgs-coop-run-archive\test-boot\<id> -Name mb-ladder -Note '...'
+pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunDirectory $env:USERPROFILE\mgs-coop-run-archive\test-boot\<id> -Name mb-ladder -Note '...'
 pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath ... -SaveSeed africa-jeep
 pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath ... -HostSaveSeed mb-ladder -GuestSaveSeed lab
 ```

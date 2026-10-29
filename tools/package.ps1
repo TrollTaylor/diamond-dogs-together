@@ -169,9 +169,13 @@ function Get-Sha256Hex([string]$Path) { (Get-FileHash -LiteralPath $Path -Algori
 # The source files to publish: the current working source, not a git archive
 # that omits local edits. Binaries, local extracted game assets, build output and
 # repository state are excluded; the launcher's embedded assets (the two
-# Dynamite-derived controller FPKDs, its icon, logo and manifest) are included.
+# Dynamite-derived controller FPKDs, its icon, logo and manifest) are included,
+# and so are the .inc fragments that native/*.cpp #include into the loader.
 function Get-PackageSourceFiles {
-    $extensions=@('.cpp','.hpp','.h','.c','.in','.lua','.ps1','.psm1','.py','.cmake','.txt','.md','.json','.def','.rc','.bat','.vdf','.bin','.ico','.png','.manifest')
+    $extensions=@('.cpp','.hpp','.h','.c','.inc','.in','.lua','.ps1','.psm1','.py','.cmake','.txt','.md','.json','.def','.rc','.bat','.vdf','.bin','.ico','.png','.manifest')
+    # Other file types only at these exact places: the partner-lab fixture logs
+    # that tests/lab_scripts_tests.ps1 reads, and the Go archive probe.
+    $exactPaths='^(tests\\fixtures\\partner-lab\\[^\\]+\.log|tools\\archive_probe\\(main\.go|go\.mod|go\.sum))$'
     Push-Location $projectRoot
     try {
         $files=@(& rg --files --hidden native lua tools tests third_party cmake -g '!.git' -g '!__pycache__' -g '!*.exe' -g '!*.dll' -g '!*.obj')
@@ -192,7 +196,7 @@ function Get-PackageSourceFiles {
     foreach($relative in @($files | ForEach-Object { $_.Replace('/','\') } | Sort-Object -Unique)) {
         $source=Join-Path $projectRoot $relative
         $leaf=[IO.Path]::GetFileName($source)
-        if([IO.Path]::GetExtension($source) -notin $extensions -and $leaf -notmatch '^LICENSE') { continue }
+        if([IO.Path]::GetExtension($source) -notin $extensions -and $leaf -notmatch '^LICENSE' -and $relative -notmatch $exactPaths) { continue }
         # Never a link key or a runtime archive, whatever lies in the working tree.
         if($leaf -like 'link-secret*' -or $leaf -like 'mgs-coop-player-runtime*') { continue }
         $rows+=@([pscustomobject]@{relative=$relative;path=$source})
