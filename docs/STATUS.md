@@ -1,3 +1,56 @@
+## October 29, 2026: M3, the sortie vehicle on both copies (branch `wp/relief`, on by default in lab and play)
+
+Branch `wp/relief` (from `wp/companions` `068852c`, with M1 merged at `e08dc20`). Not merged into the main checkout, not
+pushed. Milestone M3 of `docs/vehicles-companions-design.md` (section 9; results, run ids and frames in section 8.4),
+route A (section 8.2): each copy's own engine draws the host's sortie (relief) vehicle from the host's carry values.
+Decisions D1 (a) and D8 (b) of 2026-10-28 apply. Lab key `world_relief=0|1` (CFG `r[17]`, lab and play); **on by
+default since `5a6bac8`**, after the lab FRAME proof and the play rehearsal passed (project rule); a named 0 opts out.
+Two-PC: not tested.
+
+**What it does.**
+- The follow seeds carry the host's relief carry vars and paint presets (31 values); the guest applies them before its
+  `Load`, so its destination draws the same vehicle (index 0, 25600) at the same spot. The guest keeps its own values
+  and every `TppSave.SaveVarsToSlot` writes those (D8 b); a solo load gives them back.
+- The host sends VEHICLE_SPAWN (op 52) in free roam on change and every 5 s. A guest copy without the host's vehicle (a
+  host continue, a late join) loads it mid mission with `Vehicle.LoadCarry` and sets it at the host's pose when it
+  appears more than 3 m off; one parked 20 m off is placed; one the host lacks for 15 s, or of another type, is removed
+  without a Mother Base credit.
+- Only the host's choice spawns it: the guest never runs the sortie prep, and while paired in free roam its iDroid
+  VEHICLES and LOADOUT supply drops are inactive; selecting one shows "Only the host can bring or request a vehicle in
+  co-op."
+- One credit: the guest skips the mission-end seize; a removal on the guest's copy (VEHICLE_GONE, when that key is on)
+  uses `Seize{"Instant"}` and skips that copy's `OnFulton` once.
+- Lab levers: `relief_status`, `relief_lab nonactive vehicle|loadout`, `relief_lab forget`, `relief_arm ... [paint]`;
+  worker key `3` (the iDroid MISSIONS tab).
+
+**Hidden-worker runs** (loopback, research build, native gun stage, copied saves, low graphics; each closed with the
+baseline restored and the real saves unchanged; archived under `%USERPROFILE%\mgs-coop-run-archive\companions`).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `d18e8fa0` | `companion-relief.txt`, lab (`lab`) | **The FRAME proof; no expectation failed.** The east jeep (Africa) and the west jeep (Afghanistan) at the same spot on both screens; the host driving it on the guest's screen; the guest's real iDroid vehicle request refused with the toast; one mission-end credit (host `4wdE` 1 -> 2, guest unchanged); the host's Fulton removed it on both copies with one credit |
+| `40c09484` | `companion-relief-play.txt`, `-Mode play -WanSim bad` (`afgh-relief-lv`) | **The play rehearsal; no expectation failed.** Paired in the helicopter; the host's continue carried the jeep to the guest through the seeds; both at (-347.95, 763.58); the refusal and its toast |
+| `98e4af59` | `companion-relief-play-default.txt`, `-Mode play -WanSim bad` (host: the launcher's co-op save copy `coop-relief-30020`, guest `africa-jeep`) | **The default in play; no expectation failed.** No key named; the real sortie-prep jeep of the 2026-10-23 two-PC save at (263.56, -228.88) on both copies; the refusal and its toast. The host's frames show the grass (camera pitched down), the guest's the jeep |
+| `1a5c1fa0` | `companion-relief-heavy.txt`, lab (`lab`), keys at their defaults | No expectation failed. The west tank in Africa and the west wheeled APC in Afghanistan on both screens; the mission end with the tank alive on both and VEHICLE_GONE off: the host credited (`tnkW` 0 -> 1), the guest skipped |
+| `1914e76c` | `companion-relief-continue.txt`, lab (`afgh-relief-lv`) | No expectation failed. The continue through the seeds; a non-zero paint (FOVA_1) on both copies |
+| `8a81f776`, `d3b23cca` | `companion-relief-late.txt`, lab (`afgh-relief-lv`) | A late load draws the vehicle at the drop point (`8a81f776`); after `c818a5a` it is placed at the host's pose, 0.25 m (`d3b23cca`) |
+| `25b9c0ae` | `companion-relief.txt`, lab | One wrong expectation (fixed); superseded by `d18e8fa0` |
+| `b7d65be9` | `companion-relief-play.txt`, play | Scenario error: the two saves were in different regions and never paired; superseded by `40c09484` |
+
+**Commits** on `wp/relief` after the experiments (`2a5a623`): `d911f0c` (merge of M1 `e08dc20`), `b622340` (M3 behind the
+key), `7f84a7a` (lab lever `relief_lab forget`, scenarios), `c818a5a` and `6358845` (a late-loaded vehicle placed at the
+host's pose), `1f3acd8` (the lab proof walks the guest's real iDroid path), `5a6bac8` (on by default; an invalid value
+refuses), `79d9b5f` (heavy-vehicle scenario), and the docs commit.
+
+**Not done.** A destruction of the relief vehicle (no worker lever destroys one); relief types 3, 4, 6..8 and 10 on both
+copies; the host's real sortie-prep selection and its GMP charge (the guest is never charged); the host's in-mission
+vehicle drop (route C, later, D6); `world_vehicle_gone` is still off by default, so the guest's copy of a vehicle the
+host lost mid mission goes after 15 s through the reconcile (fixture only); the guest's LOADOUT supply drop is blocked
+too, even with no vehicle in the loadout (decision D11); a two-PC session (M3 is not done before it).
+
+**Checks.** `pwsh -File tools/build.ps1 -Fast` 294/294 after each change; `pwsh -File tools/build.ps1` (Debug, build id `0.14.3+79d9b5f`, with only these docs changed on top): 309/309
+passed, 101 s.
+
 ## October 29, 2026: M1, the host owns the companion (branch `wp/companion-host`, lab key, play default off)
 
 Branch `wp/companion-host` from `wp/companions` `068852c` (the vehicles and companions design). Not merged, not pushed.

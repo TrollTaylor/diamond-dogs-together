@@ -39,14 +39,14 @@ As of 0.14.3 (2026-10-28: version bump `a0653b5`, package built at `a4c18fa`). T
 
 Design, scope table, experiments and milestones M1-M13: [vehicles-companions-design.md](vehicles-companions-design.md)
 (revision 2). M1 is built behind a lab key (`companion_host_owned`, play default off; branch `wp/companion-host`,
-2026-10-29); the rest is not built yet. Decided 2026-10-28: one companion per session, the host's; the host
+2026-10-29); M3, the sortie vehicle, is built and on by default (branch `wp/relief`, 2026-10-29); the rest is not built yet. Decided 2026-10-28: one companion per session, the host's; the host
 alone gives it orders; both players get a D-Walker when the host brings one. The support helicopter and vehicle
 weapons come later.
 
 Vehicles:
 - [x] **Driving** world vehicles: the partner is seated by name or by id, with smooth movement and tilt.
 - [x] **Jeep back seats** for a passenger, with the passenger camera.
-- [ ] **Sortie vehicle on both screens, chosen by the host only** (M3). Today it exists only on the chooser's PC; since 0.14.3 the partner at least sees the driver (standing at seat height) without it. Its Fulton or destruction and the mission-end reward must also happen once. Experiments done (2026-10-29, branch `wp/relief`, not merged): the choice is `vars.reliefVehicleCarryType`; with it on both PCs each game spawns the same vehicle at the same landing-zone spot (hidden runs `fafd3fdd`, `9f01d603`); the guest's mission-end reward can be skipped and its copy removed without a reward. Route A (each PC spawns the host's choice) is chosen; building it waits for M1. Round 2 (run `612afff7`): a PC whose mission started without the vehicle can load it mid mission from the host's values, which covers a continue or a late join, and the vehicle's own pack draws bodies the area does not load (the Soviet jeep in Africa; a tank on the host's PC).
+- [~] **Sortie vehicle on both screens, chosen by the host only** (M3). Built on branch `wp/relief` (2026-10-29, not merged) and on by default: each PC's own game draws the host's sortie vehicle from the host's choice, at the same spot and with the same paint; a continue or a late join gets it mid mission. Proven in the hidden worker with frames on both PCs' copies: the Soviet jeep and the western tank in Africa, the western jeep and APC in Afghanistan, the host driving it on the guest's screen, the guest's vehicle request refused with a toast, the mission-end reward once (the host's), the host's Fulton removing it on both (runs `d18e8fa0`, `1a5c1fa0` in the lab; `40c09484` and `98e4af59` in play with a bad network, the second with the user's own co-op save). The guest's LOADOUT supply drop is blocked too, since a loadout can bring a vehicle (decision D11). Not yet: its destruction, the host's in-mission vehicle drop (later), a two-PC test.
 - [~] **Vehicle losses shared:** Fulton and destruction (M4). Built (VEHICLE_GONE) and proven in the hidden worker for losses on the guest's PC, a removal and the engine's own Fulton, which the host then applies (`075c1ea4`, parts A and D); off by default; the hold while someone sits in it and a manual Fulton are untested.
 - [ ] **Vehicle damage shared** short of destruction: body damage, wheels, burning (M4).
 - [ ] **Parked and pushed vehicles** kept in place by the host (M4).
