@@ -240,7 +240,7 @@ end
 H[OP.COMPANION] = function(v, now)
  if W.host or #v ~= 12 then return end
  peerSeen()
- C.host = {kind = v[3], present = v[5] == 1, x = v[6] / 1000, y = v[7] / 1000, z = v[8] / 1000, yaw = v[9] / 1000, at = now}
+ C.host = {kind = v[3], present = v[5] == 1, x = v[6] / 1000, y = v[7] / 1000, z = v[8] / 1000, yaw = v[9] / 1000, at = now, state = v[10]}
  if C.hostKind ~= v[3] then
   C.hostKind = v[3]
   L(fmt("step=host_kind;kind=%s;", typeName(fromWire(v[3]))))
@@ -298,12 +298,13 @@ local function hostTick(now)
  if now < (C.txAt or 0) and k == C.txKind then return end
  C.seq = C.seq % 65535 + 1
  -- M2: the dog's last streamed pose (world_buddy.lua COMPANION_POSE), so a reconcile calls it there.
- local b, p = W.get(W.get(W.buddy, "s"), "sent"), {0, 0, 0, 0, 0}
+ local b, p = W.get(W.get(W.buddy, "s"), "sent"), {0, 0, 0, 0, 0, 0}
  if type(b) == "table" and b.k == k and b.present == 1 then
   local function mm(n) return math.floor(n * 1000 + 0.5) end
-  p = {1, mm(b.x), mm(b.y), mm(b.z), mm(b.yaw)}
+  p = {1, mm(b.x), mm(b.y), mm(b.z), mm(b.yaw), b.st or 0}
  end
- if W.tx(OP.COMPANION, C.seq, W.tick32(now), k, 0, p[1], p[2], p[3], p[4], p[5], 0, 0, 0) then
+ -- D7: `state` carries the dog-state byte (world_companion_guard.lua).
+ if W.tx(OP.COMPANION, C.seq, W.tick32(now), k, 0, p[1], p[2], p[3], p[4], p[5], p[6], 0, 0) then
   C.txAt, C.txKind = now + 5000, k
  end
 end

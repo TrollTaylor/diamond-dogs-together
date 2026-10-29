@@ -88,6 +88,10 @@ constexpr char world_companion_source[] = R"MGS_WORLD(
 constexpr char world_companion_dog_source[] = R"MGS_WORLD(
 @MGS_WORLD_COMPANION_DOG_SOURCE@
 )MGS_WORLD";
+// D7 dog guard: the guest's copy of the host's D-Dog cannot be hurt, follows the host dog's state, restore fallback.
+constexpr char world_companion_guard_source[] = R"MGS_WORLD(
+@MGS_WORLD_COMPANION_GUARD_SOURCE@
+)MGS_WORLD";
 // M3 experiments E2/E17/E18: the sortie (relief) vehicle lab levers and census (spliced last).
 constexpr char world_relief_source[] = R"MGS_WORLD(
 @MGS_WORLD_RELIEF_SOURCE@

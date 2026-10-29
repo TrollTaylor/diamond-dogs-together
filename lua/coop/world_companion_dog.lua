@@ -21,11 +21,14 @@ if k == 1 then
  local id; id, x, y, z = B.dog()
  if id then present = 1; s.hostPos = s.localPos else x, y, z = 0, 0, 0 end
 end
+-- D7: the dog-state byte (world_companion_guard.lua) in `state`; a change is sent at once.
+local G = W.dogGuard
+local st = G and G.hostByte(now, k) or 0
 local last = s.sent
 local moved = last and present == 1 and (x - last.x) ^ 2 + (y - last.y) ^ 2 + (z - last.z) ^ 2 >= 0.0025
-if last and last.k == k and last.present == present and not moved and now < (s.nextIdle or 0) then return end
-if W.tx(CPOSE, W.tick32(now), k, 0, present, mm(x), mm(y), mm(z), mm(yaw()), 0) then
- s.sent, s.nextIdle, s.poseTx = {k = k, present = present, x = x, y = y, z = z, yaw = yaw()}, now + 500, (s.poseTx or 0) + 1
+if last and last.k == k and last.present == present and last.st == st and not moved and now < (s.nextIdle or 0) then return end
+if W.tx(CPOSE, W.tick32(now), k, 0, present, mm(x), mm(y), mm(z), mm(yaw()), st) then
+ s.sent, s.nextIdle, s.poseTx = {k = k, present = present, x = x, y = y, z = z, yaw = yaw(), st = st}, now + 500, (s.poseTx or 0) + 1
 end
 end
 W.handlers[CPOSE] = function(v, now)
@@ -40,7 +43,7 @@ if p then
  if d == 0 or d >= 2147483648 then return end
 end
 local r = {tick = v[1], kind = v[2], present = v[4] == 1, x = v[5] / 1000, y = v[6] / 1000, z = v[7] / 1000, yaw = v[8] / 1000,
- at = now - v[10], vx = 0, vz = 0, speed = 0}
+ at = now - v[10], vx = 0, vz = 0, speed = 0, st = v[9]}
 if r.present and p and p.present and p.kind == r.kind then
  local dt = ((r.tick - p.tick) % 4294967296) / 1000
  -- Only consecutive 10 Hz samples (a moving dog); a sample after a pause carries no velocity.
