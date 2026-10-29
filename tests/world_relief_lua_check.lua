@@ -57,7 +57,7 @@ local function Fixture(mode, opts)
         env.Vehicle = vehicle
     end
     env.TppVarInit = {InitializeForNewMission = function() c.calls[#c.calls + 1] = {'Init', env.vars.reliefVehicleCarryType} end}
-    env.TppMission = {}
+    env.TppMission = {SelectNextMissionHeliStartRoute = function(m, r) c.calls[#c.calls + 1] = {'Route', env.vars.reliefVehicleCarryType, m, r} end}
     for _, name in ipairs({'SeizeReliefVehicleOnAbort', 'SeizeReliefVehicleOnClear', 'SeizeReliefVehicleOnForceGoToMb'}) do
         env.TppMission[name] = function() c.calls[#c.calls + 1] = {name} end
     end
@@ -117,41 +117,51 @@ for _, cmd in ipairs({'relief_arm 11 0 0 0 0', 'relief_arm 2.5 0 0 0 0', 'relief
 end
 check(c.R.hook == nil, 'refused arguments install nothing')
 
--- E2 lever: armed in free roam, applied at the next free-roam LoadCarry before the original reads it.
+-- E2 lever: armed in free roam, written at the ACC sortie (where the sortie prep's SetRelief writes), never
+-- by the ACC's own mission start (its LoadCarry clears the carry vars).
 ok, text = c:run('relief_arm 2 805 343 1636.5 0')
-check(ok and text == 'relief_arm;type=2;hook=loadcarry', 'arm installs the LoadCarry hook: ' .. tostring(text))
-check(c:has('step=installed;hook=loadcarry;save=1;seize=3;credit=2'), 'all hooks installed once')
-check(c:has('step=armed;type=2;x=805.00;y=343.00;z=1636.50;yaw=0.00;hook=loadcarry'), 'armed line')
+check(ok and text == 'relief_arm;type=2;hook=loadcarry+initnew+sortie', 'arm installs the three hooks: ' .. tostring(text))
+check(c:has('step=installed;hook=loadcarry+initnew+sortie;save=1;seize=3;credit=2'), 'all hooks installed once')
+check(c:has('step=armed;type=2;x=805.00;y=343.00;z=1636.50;yaw=0.00;hook=loadcarry+initnew+sortie'), 'armed line')
 c.env.vars.missionCode = 40010
+c.env.TppVarInit.InitializeForNewMission()
 c.env.Vehicle.LoadCarry()
 check(c.calls[#c.calls][1] == 'LoadCarry' and c.calls[#c.calls][2] == 0, 'in the ACC the original runs and sees no armed type')
-check(c:has('step=arm_wait;where=loadcarry;m=40010') and c.R.armed ~= nil, 'heli space waits (LoadCarry clears there)')
-check(c:has('step=loadcarry;m=40010;before=0;ct=0;t=0'), 'the ACC LoadCarry is logged')
+check(c:has('step=arm_wait;where=initnew;m=40010') and c:has('step=arm_wait;where=loadcarry;m=40010') and c.R.armed ~= nil,
+    'the ACC mission start waits (LoadCarry clears there)')
+check(c:has('step=initnew;m=40010;before=0;ct=0;t=0') and c:has('step=loadcarry;m=40010;before=0;ct=0;t=0'), 'the ACC mission start is logged')
+c.env.TppMission.SelectNextMissionHeliStartRoute(30010, 77)
+check(c.calls[#c.calls][1] == 'Route' and c.calls[#c.calls][2] == 2 and c.calls[#c.calls][3] == 30010 and c.calls[#c.calls][4] == 77,
+    'the sortie writes type 2 before the original route call, which keeps its arguments')
+check(c:has('step=arm_applied;where=sortie;m=40010;ok=1;before=0;ct=2;t=2;cp=805.00,343.00,1636.50,0.000') and c.R.armed == nil,
+    'applied once at the sortie and logged')
 c.env.vars.missionCode = 30010
 c.env.Vehicle.LoadCarry()
-check(c.calls[#c.calls][2] == 2 and c.calls[#c.calls][3] == 805, 'free roam: the original LoadCarry reads type 2 at the armed position')
-check(c:has('step=arm_applied;where=loadcarry;m=30010;ok=1;before=0;ct=2;t=2;cp=805.00,343.00,1636.50,0.000') and c.R.armed == nil,
-    'applied once and logged')
-local n = #c.calls
-c.env.Vehicle.LoadCarry()
-check(#c.calls == n + 1 and c:count('step=arm_applied') == 1, 'the arm is consumed')
+check(c.calls[#c.calls][2] == 2 and c.calls[#c.calls][3] == 805, 'free roam: LoadCarry reads type 2 at the armed position')
+check(c:count('step=arm_applied') == 1, 'the arm is consumed')
+-- Without the sortie (a copy that never runs the ACC route call), the free-roam mission start applies it.
+local s2 = Fixture(1)
+s2:run('relief_arm 4 1 2 3 0')
+s2.env.TppVarInit.InitializeForNewMission()
+check(s2.calls[#s2.calls][1] == 'Init' and s2.calls[#s2.calls][2] == 4 and s2:has('step=arm_applied;where=initnew;m=30010'),
+    'free roam: the mission-start fallback writes before the original runs')
 c.env.Vehicle.SaveCarry()
 check(c.calls[#c.calls][1] == 'SaveCarry' and c:has('step=savecarry;m=30010;before=2;ct=2'), 'SaveCarry passes through, logged')
 -- A second lever never wraps twice.
 c:run('relief_seize stock')
 check(c:count('step=installed') == 1, 'install runs once')
 
--- Fallback when Vehicle refuses writes: the mission-start wrapper sets the vars before it.
+-- A Vehicle table that refuses writes (as the game's does, hidden run 698e67cf): the other hooks stand.
 local r = Fixture(1, {readonlyVehicle = true})
 ok, text = r:run('relief_arm 3 1 2 3 0')
-check(ok and text == 'relief_arm;type=3;hook=initnew', 'read-only Vehicle falls back to InitializeForNewMission: ' .. tostring(text))
+check(ok and text == 'relief_arm;type=3;hook=initnew+sortie' and r:has('save=0;'), 'read-only Vehicle: initnew+sortie: ' .. tostring(text))
 r.env.TppVarInit.InitializeForNewMission()
 check(r.calls[#r.calls][1] == 'Init' and r.calls[#r.calls][2] == 3, 'the fallback writes before the original runs')
 
 -- E18 lever: the guest's mission-end seize skipped; stock passes through.
 c = Fixture(1, {guest = true})
 ok, text = c:run('relief_seize skip')
-check(ok and text == 'relief_seize=skip;hooks=3;hook=loadcarry', 'seize skip: ' .. tostring(text))
+check(ok and text == 'relief_seize=skip;hooks=3;hook=loadcarry+initnew+sortie', 'seize skip: ' .. tostring(text))
 c.env.TppMission.SeizeReliefVehicleOnClear()
 check(#c.calls == 0 and c:has('step=seize_skipped;fn=SeizeReliefVehicleOnClear;alive=1'), 'skip: the original never runs, logged with alive')
 c:run('relief_seize stock')

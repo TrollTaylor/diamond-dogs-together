@@ -16,8 +16,8 @@
 --   relief_census [tag]        read only: carry vars, index 0 (25600), MB vehicle resources and
 --                              GMP, paint presets, the current sortie loadout slot bytes.
 --   relief_arm <type> <x> <y> <z> <yaw>
---                              lab: at the next LoadCarry in free roam (30010/30020/30050) write
---                              the carry vars first, as the sortie prep's SetRelief does (E2).
+--                              lab: at the next ACC sortie (SelectNextMissionHeliStartRoute) write
+--                              the carry vars, as the sortie prep's SetRelief does (E2).
 --   relief_seize stock|skip    lab: TppMission.SeizeReliefVehicleOn* run (logged) or are skipped (E18).
 --   relief_remove instant|fadeout|fulton
 --                              lab: the stock Seize instance command on index 0 with only that
@@ -34,6 +34,7 @@ local fmt, floor, concat = string.format, math.floor, table.concat
 local RID = 25600
 R.RID = RID
 local FREE = {[30010] = true, [30020] = true, [30050] = true}
+local HELI = {[40010] = true, [40020] = true, [40050] = true}
 R.RES = {{"4wdE", "4wdEast"}, {"4wdW", "4wdWest"}, {"trcE", "TruckEast"}, {"trcW", "TruckWest"},
     {"apcE", "ArmoredVehicleEast"}, {"apcW", "ArmoredVehicleWest"}, {"wavW", "WheeledArmoredVehicleWest"},
     {"tnkE", "TankEast"}, {"tnkW", "TankWest"}}
@@ -128,12 +129,16 @@ function R.census(tag)
     return true, fmt("relief;m=%s;t=%s;v0=%d;vt=%s;x=%s;z=%s", num(m), ct >= 0 and tostring(ct % 256) or "nil", alive and 1 or 0,
         num(vt), num(x, "%.1f"), num(z, "%.1f"))
 end
--- Apply an armed choice at a free-roam LoadCarry: the carry vars the sortie prep's SetRelief writes.
+-- Apply an armed choice: the carry vars the sortie prep's SetRelief writes. "sortie" is the ACC sortie
+-- (TppMission.SelectNextMissionHeliStartRoute, before OnEndMissionPreparation: where the sortie prep calls
+-- SetRelief; the ACC's own LoadCarry has already cleared them); "loadcarry" / "initnew" are a free-roam
+-- mission start, before the original reads them (fallbacks; hidden run 698e67cf showed the Vehicle table
+-- refuses writes and logged no InitializeForNewMission call).
 function R.apply(where)
     local a = R.armed
     if not a then return end
     local m = W.get(vars, "missionCode")
-    if not FREE[m] then
+    if not (where == "sortie" and HELI[m] or where ~= "sortie" and FREE[m]) then
         L(fmt("step=arm_wait;where=%s;m=%s", where, num(m)))
         return
     end
@@ -166,21 +171,21 @@ end
 function R.install()
     if R.hook then return R.hook end
     R.hook = "none"
-    local function carryCall(label, original, ...)
-        if label == "loadcarry" then pcall(R.apply, "loadcarry") end
-        local ct0 = R.carry()
-        original(...)
+    local function after(label, ct0, ...)
         local ct1, p = R.carry()
         L(fmt("step=%s;m=%s;before=%s;%s", label, num(W.get(vars, "missionCode")), num(ct0), carryText(ct1, p)))
+        return ...
     end
-    if wrap(Vehicle, "LoadCarry", function(o) return function(...) carryCall("loadcarry", o, ...) end end) then
-        R.hook = "loadcarry"
-    elseif wrap(TppVarInit, "InitializeForNewMission", function(o) return function(...)
-        pcall(R.apply, "initnew")
-        return o(...)
-    end end) then
-        R.hook = "initnew"
+    local function carryCall(label, original, ...)
+        if label ~= "savecarry" then pcall(R.apply, label) end
+        return after(label, R.carry(), original(...))
     end
+    local hooks = {}
+    for _, h in ipairs({{Vehicle, "LoadCarry", "loadcarry"}, {TppVarInit, "InitializeForNewMission", "initnew"},
+        {TppMission, "SelectNextMissionHeliStartRoute", "sortie"}}) do
+        if wrap(h[1], h[2], function(o) return function(...) return carryCall(h[3], o, ...) end end) then hooks[#hooks + 1] = h[3] end
+    end
+    R.hook = #hooks > 0 and concat(hooks, "+") or "none"
     R.saveHook = wrap(Vehicle, "SaveCarry", function(o) return function(...) carryCall("savecarry", o, ...) end end)
     R.seizeHooks = 0
     for _, name in ipairs(SEIZE) do
