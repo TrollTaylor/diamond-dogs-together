@@ -1,3 +1,44 @@
+## October 29, 2026: M2, D-Dog synced and following the host, stage 1 (branch `wp/companion-host`, lab key, play default off)
+
+Branch `wp/companion-host`, on top of M1 (`e08dc20`). Not merged, not pushed. Milestone M2 of
+`docs/vehicles-companions-design.md` (section 9) with E3's engagement part and E19's dog row (section 8.2 has every
+result, the static reads and the frame names). It rides M1's lab key `companion_host_owned=0|1` (default off). Two-PC:
+not tested. **E19 fails for the dog, so the play default stays off and decision D7 is the user's (design section 10).**
+
+**What it does (with the key on).**
+- The host streams its dog's pose in COMPANION_POSE (op 57, a datagram: read every 100 ms, sent at 10 Hz while the
+  dog moves and 2 Hz idle); the guest answers COMPANION_ACK (op 49, 1 Hz). M1's COMPANION (op 48) now carries the dog's
+  pose too, so a late join's reconcile calls the dog there.
+- The guest holds its copy of the host's dog every 100 ms with the stop-AI form of `LuaAiStayAndSnarl` (`look`,
+  `useMarker=false`: modes 1/2, whose Dog AI update is skipped) placed by the command's own `warp=1`, led by the sample's
+  age (consecutive 10 Hz samples only), plus the stock `SetWarpPosition` beyond 15 m and for a dog that drifts over 1 m
+  off an unchanged target. It is never released to the guest's AI (no release on a stale stream, a kind change, an
+  unpair or a stop).
+- The dog pose receipt no longer needs body 1, so both roles read their dog while the partner is hidden (heli, mount).
+- D8 (b) also keeps the guest's own `deadBuddyType` and `buddyCommonFlag` in its saves.
+- Lab levers (guest): `companion_lab hold <warp|marker|stop>`, `mark <leg>`, `near_guard <on|off|shield>`,
+  `protect [off]`, `repair <on|off>` (the D7 candidate, default off). Worker key `3` (the call menu's "Get it").
+
+**Hidden-worker runs** (loopback, research build, native gun stage, copied lab saves, low graphics; each closed with the
+baseline restored and the real saves unchanged; archived under `%USERPROFILE%\mgs-coop-run-archive\companions`).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `4cd88ea2` | `companion-dog.txt` (earlier form) | The warp hold within R4 in every leg window (walk to 1.46 m, run to 4.4 m, dash to 2.8 m); the guest 40 m away: 2-23 cm; E3: 176 s within 1.4 m of a guard in combat, zero `mirror_engaged` |
+| `994d252f` | `companion-dog-mb.txt` | Mother Base walk within 0.82 m, the dog on both screens; the run leg hit a container (scenario); host-led travel to 30010 with the host left in its helicopter: the guest read and held its dog for 42 s with body 1 unrealized |
+| `ba6d6ff8` | `companion-dog-play.txt`, `-Mode play -WanSim bad` | 3 expectations failed: the dog stayed unrealized on both copies until each camera turned (136 s), so the legs ran with no dog. Scenario fixed (cameras turn first) |
+| `d937191f` | `companion-dog.txt` | The legs (walk one window at 3.11 m, the rest within R4), away, E3 155 s, the dog on both screens in frames; the call menu's "Get it" took nobody down (3 expectations failed); **E19: a guard firing at the prone guest killed the guest's copy of the dog** (`Dead`, `deadBuddyType` 0 -> 4) |
+| `dc761c98` | `companion-dog-e19.txt` | **E19 again with `SetDisableDamage` held: killed after 13 s**; the guest's buddy block unloaded and the dog did not come back; the guest's checkpoint save kept its own flags (`own_dead=0; live_dead=4`); "Get it" again took nobody down |
+| `86421fa6` | `companion-dog-repair.txt` (first form) | Void for the repair: the shield never engaged (scenario; fixed) |
+| `033193d3` | `companion-dog-repair.txt` | No expectation failed. The legs again (walk one window at 3.21 m); then the dog killed on the guest's copy with the D7 candidate `companion_lab repair` on: the death flags written back at once, the block unloaded, M1's reconcile loaded the dog again 18 s after the death and it was held beside the host's dog to the end (logs; no frame of the returned dog) |
+
+Earlier runs of the same milestone, superseded: `8c0b425f` (the M1 hold never moved the dog), `ffb2d7ab` (marker
+against warp), `52010d22` (void: seeds in different helicopters).
+
+**Not done / open:** E19 (the dog can be killed on the guest's copy; D7 with the user); the dog's takedown for the
+kill commit/apply check (not reached through the call menu in the worker); the play rehearsal (not re-run while the
+default cannot flip); the Mother Base run leg; a two-PC session.
+
 ## October 29, 2026: M1, the host owns the companion (branch `wp/companion-host`, lab key, play default off)
 
 Branch `wp/companion-host` from `wp/companions` `068852c` (the vehicles and companions design). Not merged, not pushed.
