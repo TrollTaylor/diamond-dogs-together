@@ -1506,10 +1506,11 @@ int main() {
                 Check(playOff.mode == mgscoop::LabMode::play && !(playOff.*k.on) && playOff.world_vehicle_gone && playOff.world_vehicle_state,
                       ("a named " + n + "=0 keeps it off in play (VEHICLE_GONE and VEHICLE_STATE stay on)").c_str());
             }
-            // Play defaults: each key flips on in play only after its FRAME proof on both copies and a passing
-            // -Mode play -WanSim bad rehearsal (project rule); until then it is off unless named.
-            Check(!vehiclePlayDefault.world_loadout_block && !vehiclePlayDefault.world_vehicle_break && !vehiclePlayDefault.world_vehicle_credit,
-                  "D11 / D12 / D14 keys default off in play until proven");
+            // Play defaults: each key is on in play unless named, after its FRAME proof on both copies (lab run c0203fdd)
+            // and a passing -Mode play -WanSim bad rehearsal (70146170) (project rule); a named 0 keeps it off (above).
+            Check(vehiclePlayDefault.world_loadout_block && vehiclePlayDefault.world_vehicle_break && vehiclePlayDefault.world_vehicle_credit &&
+                      !vehiclePlayDefault.world_loadout_block_given && vehiclePlayDefault.play_refused == 0,
+                  "D11 / D12 / D14 keys default on in play");
         }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.

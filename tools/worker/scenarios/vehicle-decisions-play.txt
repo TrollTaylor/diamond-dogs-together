@@ -1,7 +1,8 @@
 # The play rehearsal of the user's vehicle decisions of 2026-10-29 (docs/vehicles-companions-design.md section 10 D11,
-# D12, D14; section 8.9) in mode=play over -WanSim bad, with no lab lever (play refuses them): VEHICLE_GONE and
-# VEHICLE_STATE at their play defaults (on in 30020, not named); the three new keys named (off unless named until
-# this rehearsal and the lab FRAME proof pass). Africa, africa-jeep seed (Masa Village, veh_lv_0000 = 25608).
+# D12, D14; section 8.9) in mode=play over -WanSim bad, with no lab lever (play refuses them) and no vehicle key named:
+# VEHICLE_GONE, VEHICLE_STATE and the three new keys at their play defaults (all on in 30020). Run 70146170 named the
+# three new keys (off by default then) and met every expectation; the defaults flipped after it. Africa, africa-jeep
+# seed (Masa Village, veh_lv_0000 = 25608).
 #   1. D14: the guest Fultons 25608 by hand (hold E at the lab boot spot, e44516d7): its own engine credits it
 #      (credit; via=own); the host's receiver Seize Instant credits it on the host's copy (credit; via=receiver).
 #   2. D14: the host Fultons veh_lv_0002 (25610) by hand from its goto_vehicle door spot: the guest's receiver credit.
@@ -18,9 +19,6 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
 # NEVER: step=error, viewer_changed, faults; a second credit for one vehicle on one copy; via=wreck on the guest.
-labsetting world_vehicle_break=1
-labsetting world_vehicle_credit=1
-labsetting world_loadout_block=1
 labsetting partner_native_ride=seat
 labsetting nametag=1
 title 200

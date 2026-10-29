@@ -721,9 +721,9 @@ struct LabConfig {
     bool world_vehicle_wreck = false;
     // The user's vehicle decisions of 2026-10-29 (docs/vehicles-companions-design.md section 10;
     // lua/coop/world_vehicle_rules.lua), lab and play (no refusal bit), CFG r[15] bits 8 / 16 / 32
-    // for Lua; off in the lab unless named and off in play until each has a FRAME proof on both
-    // copies and a -Mode play -WanSim bad rehearsal (project rule); a named value (an invalid one
-    // too, which counts as off) records _given.
+    // for Lua; off in the lab unless named, on in play unless named (lab FRAME c0203fdd, play
+    // rehearsal 70146170 with -WanSim bad); a named value (an invalid one too, which counts as
+    // off) records _given.
     // world_vehicle_break=0|1 (D12, bit 8): a vehicle that breaks on the guest's copy without
     // attribution is requested as a destruction; the host applies it (its copy wrecked) only when
     // plausible (the guest within 60 m, or its copy heavily damaged; never under a rider; 4 per 20 s).
