@@ -1604,7 +1604,7 @@ a Despawn); a receiver without `world_vehicle_credit` despawns without a credit.
   guest's request. A refused guest copy keeps its wreck: no Lua command undoes one
   (`SetBodyLife` writes the life word, `IsAlive` reads rec+0x70 bits that no
   instance command is known to clear [I], section 3.6 of the design), and VEHICLE_STATE refuses that id there
-  (`gone_here`).
+  (`absent` for a named vehicle, `no_match` for an unnamed one).
 - **D14, the receiver's credit.** A receiver (the guest for VEHICLE_GONE, the host
   for a request) removes a Fultoned vehicle (cause 1), never index 0, with the
   stock instance command `Seize {"Instant"}` (no DirectAccount, no CheckFultonType)

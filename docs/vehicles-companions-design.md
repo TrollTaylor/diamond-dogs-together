@@ -1537,7 +1537,7 @@ runs archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`, frames
   for a break it caused itself (its own wreck or removal in the last 5 s). No hidden run produced a refusal.
 - **When the host refuses** [I from the fixtures and the M4 splits]: the guest's copy keeps its wreck (the guest logs
   `step=break_refused; ...; here=wreck`), the host's jeep stays intact, and VEHICLE_STATE refuses that id on the guest
-  (`gone_here`). No Lua command undoes a wreck: `SetBodyLife` writes the life word only and `IsAlive` reads rec+0x70
+  (`absent` for a named vehicle that is not alive there, `no_match` for an unnamed one). No Lua command undoes a wreck: `SetBodyLife` writes the life word only and `IsAlive` reads rec+0x70
   bits that none of the 21 instance commands is known to clear (section 3.6) [I], so there is no resync; the wrecks of
   `d407f115` left the pool on both copies about 20 s later, so the guest's copy then shows nothing at that spot while
   the host's shows the jeep (the split of `72366eb5`, now only for implausible breaks) [I].
