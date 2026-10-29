@@ -8,6 +8,9 @@
 # Post-run checks: event=companion_repair step=vars after the Dead message; the guest's buddy_status after it (kdog or
 # buddy_block_inactive); step=reconcile via=load and whether a dog came back (kdog, target_submitted); frames of the
 # guest's screen; the checkpoint's save_own line (own_dead=0).
+# Run 86421fa6: the shield never engaged (no result=shield): the held dog stood with the host's dog 30 m away, outside
+# the 30 m soldier scan, so no guard was found. The dog is now brought to the guard first (near_guard on, as in
+# dc761c98), then shielded. The walk, run and dash legs first check the drift warp (1de1b27) in the game.
 labsetting companion_host_owned=1
 labsetting nametag=1
 labsetting coop_hud=compact
@@ -28,6 +31,68 @@ both mouse 1500 0
 wait 400
 both mouse 1500 0
 waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
+# --- legs (warp hold with the drift warp), as companion-dog.txt -----------------------------------------------------
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+resetpose host
+placebehind guest host 7 1
+wait 5000
+guest run companion_lab mark walk
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 1450
+host hold ctrl+w 1500 nowait
+guest hold ctrl+w 1500 nowait
+wait 700
+both capture rep-dog-walk
+wait 750
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=walk; .*within=1; leg=walk; mode=warp;' 10
+resetpose host
+placebehind guest host 7 1
+wait 5000
+guest run companion_lab mark run
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 1450
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 1450
+host hold w 1500 nowait
+guest hold w 1500 nowait
+wait 700
+both capture rep-dog-run
+wait 750
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=run; .*within=1; leg=run; mode=warp;' 10
+wait 4000
+guest run companion_lab mark run_stop
+wait 6000
+resetpose host
+placebehind guest host 7 1
+wait 5000
+guest run companion_lab mark dash
+host hold shift+w 1500 nowait
+guest hold shift+w 1500 nowait
+wait 1450
+host hold shift+w 1500 nowait
+guest hold shift+w 1500 nowait
+wait 700
+both capture rep-dog-dash
+wait 700
+host release
+guest release
+waitlog guest 'world_lua=event=companion_track; band=run; .*within=1; leg=dash; mode=warp;' 10
+guest run buddy_status
+# --- the guard, the dog brought to it, then the shield --------------------------------------------------------------
 host run teleport 796.0 341.5 1633.5 275
 wait 3000
 placebehind guest host 1 7
@@ -36,6 +101,9 @@ host run spawn_enemy here
 host expect ^guard_here;ent=\d+;
 wait 3000
 guest run spawn_sync
+guest run companion_lab near_guard on
+guest expect ^near_guard;on=1
+wait 10000
 host run cp_phase nearest alert
 host expect ^submitted_phase;
 wait 8000
