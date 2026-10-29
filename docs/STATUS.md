@@ -1,3 +1,51 @@
+## 2026-10-29: the vehicle decisions D11, D12, D14 built and proven (branch `wp/vehicle-decisions`, unreleased, not two-PC tested)
+
+The user's decisions of 2026-10-29 on vehicles (`docs/vehicles-companions-design.md` section 10; results in 8.9;
+`docs/world-sync-protocol.md` section 19), on `wp/vehicle-decisions` from `dev/oct7-continue` `e2249e4` (not merged,
+not pushed). New world chunk `lua/coop/world_vehicle_rules.lua` (after `world_vehicle_state.lua`), three new lab.ini
+keys in the CFG r[15] bitmask (now 0..63), **on by default in play, off in the lab unless named**. No wire change.
+
+- **D11 `world_loadout_block` (bit 32):** the guest's iDroid LOADOUT supply drop is inactive while it is paired in co-op
+  (any mission world sync runs; across a link drop inside that mission until its final stop); selecting it shows the
+  toast "Only the host can order a loadout drop in co-op: it can carry a vehicle." The host's iDroid and every other
+  item are untouched [O, frames in lab and play]. Not tied to `world_relief`: a loadout delivery can bring a vehicle
+  that only the guest's copy would have [O static SetRelief call, I effect]. `world_relief_sync.lua` keeps only the VEHICLES item; the lab lever `relief_lab loadout on|off` is gone.
+- **D12 `world_vehicle_break` (bit 8, with VEHICLE_GONE):** a vehicle that breaks on the guest's copy without
+  attribution (no Damage message exists for vehicle hits) is requested as a destruction; the host applies it only when
+  the guest's player stood within 60 m of it (its DOWNED_STATUS position, at most 3 s old) or the host's copy is down to
+  a quarter of its peak life, never while someone rides the host's copy (unless broken there too), at most 4 per 20 s;
+  applied, the host's copy becomes the same wreck (SetBodyLife 0) [O, lab lever break and real C4 in play]. Refused:
+  REJECT 8, the guest keeps a wreck the host lacks (logged `break_refused`; no command is known to undo a wreck)
+  [fixture; I].
+- **D14 `world_vehicle_credit` (bit 16, with VEHICLE_GONE):** the receiver of a Fultoned world vehicle removes its copy
+  with the stock `Seize {"Instant"}`, so its own engine credits the vehicle (OnFulton -> OnFultonVehicle ->
+  AddTempResource): each co-op save gets it once; no GMP on the receiver [O, resource readback after the mission end];
+  never the sortie vehicle (M3's rule stays) [fixture].
+- **D13** (keep the M4 play defaults) and **D15** (accept the guest's bail snap-back; check it in the two-PC session):
+  recorded, nothing changed.
+
+| Run | Scenario, mode | Result |
+|---|---|---|
+| `cf0aeeba` | `vehicle-decisions-lab.txt`, lab, `africa-jeep` | Both D14 Fultons met every expectation; stopped at D12's `placebehind` after the guest's 900 m warp alone (fixed `bbdc687`) |
+| **`c0203fdd`** | the same at `bbdc687` | **Every expectation met.** D14: each copy credited each jeep once (`AddTempResource 14` twice per copy), `4wdW` 1 -> 1 before the commit -> **3 on both** after the mission end, GMP -10000 on each copy for its own hand Fulton only. D12: the guest's lever break -> host `break_judge; ok=1; why=near; d_mm=1899` -> host wreck (`via=wreck; src=req; ms=66`), fire on both screens. D11: the guest's LOADOUT refused (NOTE 13 a 5), the host's list opened |
+| **`70146170`** | `vehicle-decisions-play.txt`, **play, `-WanSim bad`**, the new keys named | **Every expectation met** (link 175-185 ms). D14 both directions (receiver Seize 133 / 116 ms); D12 with the guest's real C4 (judge `near; d_mm=13842`, host wreck 216 ms, the guest's request done in 233 ms); D11 with the toast drawn (frame) |
+| **`47b95ae7`** | the same at `f4ec5c1`, **play, `-WanSim bad`, no vehicle key named** (the shipped defaults) | **Every expectation met, `Forced=False`**: the three keys on from the defaults on both copies; the same D14, D12 and D11 lines and frames as `70146170` |
+
+Frames (looked at, JPEG in the session scratch `complete/frames/vehicles/`): `c0203fdd-*-d14-*` and `70146170-*-d14p-*`
+(the jeep on both screens, the balloon on the Fultoning copy, gone on both), `c0203fdd-*-d12-*` (fire and smoke at the
+jeep on both screens), `70146170-*-d12p-*` (the guest's blast and burning wreck; the smoke column at that spot on the
+host's, the jeep hidden behind the guest), `70146170-guest-d11p-guest-refused` (LOADOUT inactive, the toast),
+`*-host-d11*-host-loadout-open` (the host's LOADOUTS list).
+
+Tests: `world_vehicle_rules_lua_check` (67 checks, worker gate), `world_vehicle_lua_check` (r[15] 0..63),
+`world_relief_sync_lua_check`, `lab_config_tests` (failed first at the new fields, then at the play default),
+`world_receipt_tests`, `lab_ini_check`, `lab_scripts_tests`, `worker_session_tests`. Fast CTest 297/297, full CTest
+312/312 (`tools/build.ps1`, Debug) on the final code.
+
+Open: a live D12 refusal (fixtures only), the host's wreck blast with live guards and godmode off, D14 for heavier
+vehicles and an unrealized receiver copy, the guest's VEHICLES drop is still active with `world_relief` off (its block
+is M3's; the user's D11 named LOADOUT), a two-PC session.
+
 ## 2026-10-29: vehicles and companions M1-M4 integrated (`dev/oct7-continue`, unreleased, not two-PC tested)
 
 Milestones M1-M4 of `docs/vehicles-companions-design.md` are merged into `dev/oct7-continue` with merge commits only:

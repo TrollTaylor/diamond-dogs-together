@@ -19,6 +19,8 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
 # NEVER: step=error, viewer_changed, faults; a second credit for one vehicle on one copy; via=wreck on the guest.
+# Passed: 70146170 (keys named, every expectation met) and 47b95ae7 (f4ec5c1, no key named, every expectation met,
+#   Forced=False): D14 both directions, the guest's C4 judged near and wrecked on the host's copy, the toast drawn.
 labsetting partner_native_ride=seat
 labsetting nametag=1
 title 200

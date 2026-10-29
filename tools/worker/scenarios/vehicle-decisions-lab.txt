@@ -23,6 +23,9 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-lab.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
 # NEVER: step=error, viewer_changed, faults; a second credit for one vehicle on one copy; a credit for index 0.
+# Passed: c0203fdd (build bbdc687, every expectation met; 4wdW 1 -> 3 on both copies after the mission end; the D12
+#   wreck framed on both screens; the guest's LOADOUT refused, the host's list opened). cf0aeeba met B and C, then
+#   stopped at the D12 placebehind (fixed in bbdc687).
 labsetting world_vehicle_state=1
 labsetting world_vehicle_gone=1
 labsetting world_vehicle_break=1

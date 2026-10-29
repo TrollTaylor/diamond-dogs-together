@@ -1466,6 +1466,113 @@ Closed, BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` 
   via=locator; src=rx; ok=1` 151 ms after the tx -> `play-destroyed` / `play-destroyed-after` (the burning, overturned
   wreck on the host's screen, nothing at that spot and no explosion on the guest's) [O].
 
+### 8.9 Results: the vehicle decisions D11, D12, D14 (2026-10-29, branch `wp/vehicle-decisions`)
+
+The user's decisions of 2026-10-29 (section 10) are built in a new world chunk, `lua/coop/world_vehicle_rules.lua`
+(spliced after `world_vehicle_state.lua`; `docs/world-sync-protocol.md` section 19), each behind its own lab and play
+key in the CFG r[15] vehicle bitmask (bit 8 `world_vehicle_break`, bit 16 `world_vehicle_credit`, bit 32
+`world_loadout_block`). No wire change: D12 reuses REQ_VEHICLE_GONE / VEHICLE_GONE / REJECT, D14 only changes how a
+receiver removes its copy, D11 is local to the guest. Tests first (`world_vehicle_rules_lua_check`, 67 checks; the
+r[15], LOADOUT and lab-config checks), then hidden runs (research build, native gun stage, copied saves, low graphics;
+each Closed, BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; `Forced=True` at
+shutdown as in the earlier play runs and the lab runs here). Slices in the session scratch `decisions/vehicles/slice-<run8>`,
+runs archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`, frames as JPEG in `complete/frames/vehicles/`
+(`<run8>-<role>-<label>.jpg`; contact sheets `g-c02-*`, `g-701-*`, `g-cf0-*`).
+
+| Run | Scenario, mode | Result |
+|---|---|---|
+| `cf0aeeba` | `vehicle-decisions-lab.txt`, lab, `africa-jeep`, every vehicle key named | Both D14 Fultons met every expectation (frames `g-cf0-guestfulton`, `g-cf0-hostfulton`); stopped at D12's `placebehind` (the guest's 900 m `goto_vehicle` warp alone: no valid partner pose yet, as `e20f76bc`); fixed in `bbdc687` (both go to the jeep first) |
+| **`c0203fdd`** | **the same, lab, at `bbdc687`** | **The FRAME proof. Every expectation met.** D14 both directions with the commit readback, D12 (a lever break) wrecked on both screens, D11 in 30010 |
+| **`70146170`** | **`vehicle-decisions-play.txt`, `-Mode play -WanSim bad`, the three new keys named (off by default then), VEHICLE_GONE / VEHICLE_STATE at their play defaults** | **The play rehearsal. Every expectation met** (link 175-185 ms). D14 both directions, D12 with the guest's real C4, D11 with the toast drawn |
+| **`47b95ae7`** | **`vehicle-decisions-play.txt` at `f4ec5c1`, play, `-WanSim bad`, no vehicle key named (the shipped defaults)** | **Every expectation met, `Forced=False`.** Both copies `vehicle_rules; step=on; ...; break=1; credit=1; loadout=1; gone=1` from the play defaults; the same D14 (receiver Seize 150 / 133 ms), D12 (judge `near; d_mm=13842`, host wreck 200 ms) and D11 lines (toast drawn) as `70146170`; frames `g-47b-default` |
+
+**D14: a world vehicle Fultoned by either player is credited to both co-op saves, once each [O, `c0203fdd`,
+`70146170`, `cf0aeeba`].**
+- The guest Fultons veh_lv_0000 (25608) by hand at Masa Village ("hold E: Fulton"): its own engine credits it
+  (`event=relief; step=credit; fn=OnFulton; args=25608,0,0,14`, `OnFultonVehicle`, `AddTempResource; args=14`, and
+  `event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25608; res=14; via=own; role=guest`), VEHICLE_GONE's
+  `watch; m=FultonInfo; att=local` -> `lost` 3.2 s later -> `req; cause=1`; the host's receiver (`rx_req`) runs
+  `credit_seize; id=25608; role=host` (the stock `Seize {"Instant"}`), its engine posts the Fulton and credits it on the
+  host's copy (`OnFulton(25608, 0, 0, 14)`, `OnFultonVehicle`, `AddTempResource 14`, `credit; via=receiver; role=host`),
+  `applied; id=25608; via=seize; src=req; ok=1` 266 ms after the request (`c0203fdd`; 241 ms in `cf0aeeba`, 133 ms in
+  play), and the guest's request ends (`req_done; result=gone`).
+- The host Fultons veh_lv_0002 (25610) by hand from its `goto_vehicle` door spot: the host's own credit (`via=own`),
+  `tx; cause=1; actor=0`; the guest's receiver `credit_seize; id=25610; role=guest`, its engine's `OnFulton(25610, ...,
+  14)` -> `AddTempResource 14` (`via=receiver`), `applied; via=seize; src=rx; ok=1` 275 ms after the `rx` (116 ms in
+  play).
+- The commit readback (`relief_census`, `GetResourceUsableCount`): before anything `4wdW=1; gmp=313850` on both copies;
+  after both Fultons, before the commit, `4wdW=1; gmp=303850` on both (the temporary resources; each copy paid the stock
+  -10000 "Fulton Recovery Expenses" for its own hand Fulton only, the receiver's Seize charged nothing); after the lab
+  goto to 30010 (the mission end commits them) `4wdW=3` on **both** copies, GMP unchanged: each save +2, its own
+  Fulton and the other player's, once each [O, `c0203fdd`]. In play (`70146170`) the same lines and the same
+  pre-commit census (`4wdW=1`, GMP 313850 -> 303850 on both); play has no mission end in the worker, so the commit
+  there is [I] from the lab.
+- Frames: `c0203fdd-*-d14-guest-before` / `-after` and `-d14-host-before` / `-after` (the jeep on both screens, then gone
+  on both), `-lift-NN` (the balloon on the Fultoning copy's screen only); the same in play (`g-701-d14`).
+- Each copy logged exactly one `OnFultonVehicle` per jeep (two per copy in all), no `credit_missing`, no `fallback`.
+  The sortie vehicle (index 0) is never seized for a credit (fixture: VEHICLE_GONE refuses it, M3 keeps its host-only
+  credit) [fixture]. A receiver's Seize that does not take within 2 s falls back to the Despawn and logs
+  `credit_missing` [fixture]; a receiver whose copy of the vehicle is far and unrealized was not run [U].
+
+**D12: a vehicle the guest destroys is judged by the host and wrecked on both copies [O, `c0203fdd`, `70146170`].**
+- Lab (`c0203fdd`): both players at the next jeep (veh_lv_0001 = 25609, behind the cargo loading zone), the host 12 m
+  behind the guest. The guest's lever `vehicle_life nearest 0` (the engine's own destruction on its copy only, as an
+  explosive would do, with no attribution) -> `event=vehicle_rules; step=break_seen; id=25609` -> `vehicle_gone; step=watch;
+  m=VehicleBroken; cause=2; att=none` -> `req; cause=2` -> host `break_judge; id=25609; ok=1; why=near; d_mm=1899;
+  life=2300; peak=2300` -> `applied; id=25609; via=wreck; src=req; ok=1; ms=66` (SetBodyLife 0 on the host's copy) ->
+  `tx; cause=2; actor=1` -> guest `req_done; result=gone`. Frames `c0203fdd-*-d12-wreck-01..04` / `-after`
+  (`g-c02-d12`): fire and smoke at the jeep on both screens (on the host's, the burning front of the jeep beside the
+  guest and the smoke column above it).
+- Play (`70146170`, `-WanSim bad`): the guest's own C4 (three charges, detonated about 14 m away) -> `break_seen` ->
+  `req; cause=2` 235 ms later -> host `break_judge; ok=1; why=near; d_mm=13842` -> `applied; via=wreck; src=req; ok=1;
+  ms=216` -> guest `req_done` 233 ms after its request. Frames `70146170-guest-d12p-placed` (the jeep with the charge's
+  light), `-blast-02/04`, `-after` (the explosion and the burning jeep on the guest's screen) and `-host-d12p-after` (the
+  smoke column rising from that spot on the host's screen; the jeep itself hidden behind the guest's body) (`g-701-d12`).
+- One host-side outcome: one `break_judge`, one `applied`, one `tx` per break; `vehicle_gone_status` `j=1; a=1; r=0`.
+  A destruction has no credit or charge (GMP unchanged on both copies).
+- The rule, fixture-proven only [fixture]: refused at once while someone rides the host's copy (`why=ridden`; answered as
+  gone instead when the host's copy is broken too), refused when the guest's DOWNED_STATUS position is more than 60 m from
+  the reported pose (`guest_far`) or older than 3 s (`guest_unknown`) unless the host's copy is at a quarter of its peak
+  life or less (`heavy`), at most 4 applied per 20 s (`rate`), never index 0; the guest asks at most 6 per 60 s and never
+  for a break it caused itself (its own wreck or removal in the last 5 s). No hidden run produced a refusal.
+- **When the host refuses** [I from the fixtures and the M4 splits]: the guest's copy keeps its wreck (the guest logs
+  `step=break_refused; ...; here=wreck`), the host's jeep stays intact, and VEHICLE_STATE refuses that id on the guest
+  (`gone_here`). No Lua command undoes a wreck: `SetBodyLife` writes the life word only and `IsAlive` reads rec+0x70
+  bits that none of the 21 instance commands is known to clear (section 3.6) [I], so there is no resync; the wrecks of
+  `d407f115` left the pool on both copies about 20 s later, so the guest's copy then shows nothing at that spot while
+  the host's shows the jeep (the split of `72366eb5`, now only for implausible breaks) [I].
+- The host's wreck is the engine's destruction, blast included, on the authoritative copy: guards it kills there are
+  host kills (synced as usual) and a second vehicle it breaks is a host loss (announced). Measured only with godmode on
+  and the area cleared (`clear_enemies 100`) [U with live guards]; it is not the receiver wreck of `world_vehicle_wreck`
+  (the guest's copy), which stays lab only.
+
+**D11: the guest's LOADOUT drop is refused in co-op, the host's works [O, `c0203fdd`, `70146170`].**
+- Guest: `event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive` once per mission while paired
+  (30020; after the lab goto again in 30010); the real iDroid path (Tab, key 3 MISSIONS, Enter SUPPLY DROP, S S LOADOUT,
+  Enter) -> `step=refused; path=idroid_drop_loadout; via=menu_inactive` and `hud=toast; kind=world_note; code=13; a=5`.
+  In play the toast is drawn (`on=1`; the lab's HUD is off unless named, `on=0`): frame `70146170-guest-d11p-guest-refused`
+  shows LOADOUT marked inactive and selected, and at the top right "Only the host can order a loadout drop in co-op: it
+  can carry a vehicle." Nothing else in the guest's iDroid changed: VEHICLES is not marked (`world_relief` off, its
+  default), the other items as before (frames `*-d11*-guest-loadout`).
+- Host: no guard or refusal line on the host (its item is never touched); its real iDroid path to LOADOUT shows the item
+  active and Enter opens the LOADOUTS list (LOADOUT 1-3 with their GMP costs; frames `*-host-d11*-host-loadout-open`, lab
+  and play). The drop itself was not ordered.
+- Not tied to `world_relief` [O static, section 8.4; I effect]: a loadout delivery calls the vehicle manager's SetRelief
+  (`0x1416BC4B0`, loadout vehicle ids 0x0D..0x16), and with `world_relief` off each copy's index 0 is its own (`5874afcd`:
+  the guest's copy had none when only the host armed one), so a vehicle a guest loadout brings would exist on the guest's
+  copy only. A guest loadout holding a vehicle was not run (the block makes the question moot).
+- The guard also ran in mission 1 (the title, paired early by the fast boot) and the ACC (40020), unguarded at their stop
+  [O, `cf0aeeba`]: harmless (no supply drop there; `TppTerminal.SetUp` resets the items).
+
+**Play defaults.** All three keys are on in play unless named (`f4ec5c1`) and off in the lab unless named: each acting
+path has its FRAME on both copies (`c0203fdd`) and a passing `-Mode play -WanSim bad` rehearsal (`70146170`, keys
+named) and again at the shipped defaults with no key named (`47b95ae7`). D12 and D14 act only where VEHICLE_GONE runs (30010 and 30020 in play; Mother Base lab only).
+
+**Open.** A live refusal of D12 (ridden, far, rate); the host's wreck blast with live guards and godmode off; a guest's
+unattributed break far from the host's realized area; D14 for an APC, a tank or a truck (only the light vehicle, resource
+14, ran); a receiver whose copy is unrealized; the guest's VEHICLES drop with `world_relief` off (still active: M3's block
+rides on `world_relief`; D11 as decided covers LOADOUT); a two-PC session.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -1644,7 +1751,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     and the one-time `OnFulton` skip (the receiver's own removal is marked gone, so it is never taken for a guest
     loss); (5) the guest's iDroid `MSN_DROP_VEHICLE` inactive in a co-op free-roam mission, also while the link drops
     inside it (`SetMbTopMenuItemActive`), the stock `MbDvcActSelectNonActiveMenu` message giving the refusal and NOTE 13
-    a 4; `MSN_DROP_LOADOUT` the same (a 5) only with the lab lever `relief_lab loadout on` (D11 open);
+    a 4; `MSN_DROP_LOADOUT` the same (a 5) only with the lab lever `relief_lab loadout on` (D11 open; since D11 was
+    decided, 2026-10-29, the LOADOUT block is `world_vehicle_rules.lua`'s, key `world_loadout_block`, on in play,
+    whatever `world_relief` says, and the lever is gone: section 8.9);
     (6) VEHICLE_SPAWN (op 52) and the guest's reconcile: load a missing index 0 (not one this copy lost: VEHICLE_GONE
     owns that), place one that appears 3 m off or stands 20 m off (own budget), remove one the host lacks for 15 s or
     of another type and load it again if the host's comes back; (7) not built: route C. Lab levers: `relief_status`,
@@ -1736,10 +1845,12 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     later; readbacks `alive=0` on both copies, the guest's with no instance; `b31a1b65` frames `play-c4-placed` ->
     `play-destroyed-after`: the burning wreck on the host's screen, nothing at that spot on the guest's); the
     receiver's wreck with the key named (`0edadbe2`, `3585869d`, lever-made, frames `m4-wreck-*` on both). Index 0
-    is refused before any removal form (fixture tests; no relief vehicle in a hidden run). Not working: a jeep the
-    guest destroys is not requested, because the game posts no `Damage` message for a vehicle hit (`5179b50b`,
-    `35ba7929`); run `72366eb5` shows the resulting split in the lab (the guest's copy broke on a drive, the host's
-    stayed intact) [O].
+    is refused before any removal form (fixture tests; no relief vehicle in a hidden run). A jeep the guest destroys
+    was not requested, because the game posts no `Damage` message for a vehicle hit (`5179b50b`, `35ba7929`); run
+    `72366eb5` shows the resulting split in the lab (the guest's copy broke on a drive, the host's stayed intact) [O].
+    **Since D12 (2026-10-29, section 8.9) it is requested and judged by the host** (key `world_vehicle_break`, on in
+    play): the guest's lever break (`c0203fdd`) and its real C4 in play (`70146170`) were wrecked on the host's copy
+    too [O]; a refusal leaves that split [fixture, I].
   - VEHICLE_STATE [O]: the push lever, framed on both screens (`3585869d`; earlier `d407f115`, `0edadbe2`,
     `72366eb5` on the guest's screen), and the host's correction of a guest push; the near-player hold (`72366eb5`,
     `3585869d`: the guest at the jeep's door, the host's push -> guest `hold; reason=player_near`, applied 2.0..2.2 s
@@ -1767,9 +1878,18 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     lever and the host's bail [U]; the guest's bail out of a rolling jeep would bring its jeep back to where the
     host's copy stopped once the guest stands 3.5 m clear [I], not run; change -> apply latency against R7's 2 s is
     measured only from tx (16..334 ms; the scan adds up to about 1.6 s, and a seated D-Dog holds the host's send: 4.2 s
-    from the host's get-off to the guest's apply in `b31a1b65`) [I]; Fulton rewards against save resources [U]; why a
+    from the host's get-off to the guest's apply in `b31a1b65`) [I]; why a
     teleport beside a jeep hides the Fulton prompt [U]; AI-driven, LRRP and reinforcement vehicles are M8; the relief
     vehicle (index 0) is M3 / E17.
+  - **Decisions D12-D15 (2026-10-29, branch `wp/vehicle-decisions`, section 8.9; unreleased, not two-PC tested).**
+    D12 and D14 are built in `lua/coop/world_vehicle_rules.lua` behind `world_vehicle_break` and
+    `world_vehicle_credit`, on by default in play where VEHICLE_GONE runs (30010 / 30020), off in the lab unless
+    named. D12: the guest's unattributed break -> REQ_VEHICLE_GONE cause 2 -> the host's plausibility judge -> the
+    host's copy wrecked (`c0203fdd` lab FRAME on both screens; `70146170` play rehearsal with the guest's C4). D14:
+    the receiver's `Seize {"Instant"}` credits the Fultoned vehicle to its own save too; "Fulton rewards against save
+    resources" is now [O]: `4wdW` 1 -> 3 on both copies after the mission end for one Fulton by each player
+    (`c0203fdd`), GMP charged only to the Fultoning player. D13: the M4 play defaults stay as they are. D15: the
+    guest's bail stays as described above (not run; for the two-PC session).
 
 ### M5. Quiet synced
 
@@ -1919,22 +2039,32 @@ The original questions:
   Until you decide, the guest's LOADOUT drop stays active: a loadout that brings a vehicle charges the guest and asks
   the guest's own engine for a relief vehicle (index 0) [I]; what it does while the host's is live there is [U]; a
   copy of another type is removed by the reconcile after 10 s without a credit and the host's loaded again [fixture].
+  **Decided 2026-10-29: (a), block it in co-op with a short toast; only the host picks vehicles.** Built in
+  `lua/coop/world_vehicle_rules.lua` behind the key `world_loadout_block`, not tied to `world_relief` (section 8.9:
+  with `world_relief` off nothing gives the host's copy a vehicle the guest's loadout brings). The lab lever
+  `relief_lab loadout on|off` is gone.
 
 - **D12 (new, M4). A vehicle the guest destroys.** The game posts no `Damage` message for a vehicle hit (`35ba7929`),
   so the guest's request never starts: a jeep the guest destroys stays a wreck on the guest's PC only and intact on
   the host's (`72366eb5`). (a) A native hook on the vehicle damage path (static research first); (b) a heuristic: the
   local player fired near the vehicle within N s; (c) forward every unattributed guest-side break to the host. Until
-  you decide, it stays as in 0.13.6.
+  you decide, it stays as in 0.13.6. **Decided 2026-10-29: (c) with a plausibility check on the host** ("the guest
+  was close enough", so both copies agree): built behind the key `world_vehicle_break`; the rule (60 m, a heavily
+  damaged host copy, never under a rider of the host's copy, 4 per 20 s) and what a refused guest copy shows are in
+  section 8.9.
 - **D13 (new, M4). The M4 play defaults.** VEHICLE_GONE (Fulton, and a destruction shown as a disappearance) and
   VEHICLE_STATE (pose and body life) are on by default in play in Afghanistan and Africa (`482eb74`, narrowed by
   `c423b53`); the project rule is met for those paths (section 9 M4). The wreck parity and Mother Base stay lab only.
-  Confirm, or turn them off in play until a two-PC session.
+  Confirm, or turn them off in play until a two-PC session. **Decided 2026-10-29: keep VEHICLE_GONE and VEHICLE_STATE
+  on in play in Afghanistan and Africa; Mother Base and the wreck parity stay lab only.** Nothing changed.
 - **D14 (new, M4). Fulton rewards for world vehicles.** Today only the Fultoning player's save is paid and gets the
   vehicle; the other copy only removes it. Keep, or credit both co-op saves (like the soldier Fulton decision D1 of
-  world sync)?
+  world sync)? **Decided 2026-10-29: credit both co-op saves, once each, like Fulton recruits; the sortie vehicle keeps
+  M3's rule (one credit, the host's).** Built behind the key `world_vehicle_credit` (section 8.9).
 - **D15 (new, M4). The guest bailing out of a rolling jeep** [I, not run]: the guest's copy would be moved back to
   where the host's copy stopped once the guest stands 3.5 m clear. Accept, or hold VEHICLE_STATE longer after a
-  guest's get-off?
+  guest's get-off? **Decided 2026-10-29: accepted for now; check it in the two-PC session.** Nothing changed (the
+  guest's bail was not run in the hidden worker).
 
 Open after the integration (2026-10-29; behaviour to confirm, not new decisions): with `companion_host_owned` on, the
 guest's PC shows no host D-Horse, D-Walker or Quiet until M10, M9 and M5 add their holds (M1 had drawn a horse, in the
