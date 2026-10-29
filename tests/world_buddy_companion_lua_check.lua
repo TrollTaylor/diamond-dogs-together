@@ -251,6 +251,20 @@ for i = 0, 5 do g:tick(1000 + i * 100) end
 g.W.companionHurt("Dead", 9728, "other"); g.env.vars.deadBuddyType = 4; g:tick(1700)
 check(g.env.vars.deadBuddyType == 4 and not g:logged("event=companion_repair"), "repair off (default): the vars stay as the game set them")
 g = F(false, {play = true}); check(g.B.repair(true) == false, "repair is lab only")
+-- Drift (runs 4cd88ea2, d937191f: idle windows of 5.6 m and 4.4 m right after the run leg, the target unchanged): a
+-- placed dog more than 1 m off an unchanged target for 200 ms gets the stock SetWarpPosition (at most every 500 ms).
+g = F(false); g:pose(900, 4000, 2000, 3000); g.pos = vec(4, 2, 3); g:tick(1000)
+g.pos = vec(8.4, 2, 3); g:tick(1100); g:tick(1200)
+check(g:count("SetWarpPosition") == 0, "no drift warp before 200 ms")
+g:tick(1300); local dw = g:last("SetWarpPosition")
+check(g:count("SetWarpPosition") == 1 and dw.cmd.pos:GetX() == 4 and g.B.s.warps == 1, "a dog drifted 4.4 m off its unchanged target is warped back")
+g:tick(1400); g:tick(1500); g:tick(1600); check(g:count("SetWarpPosition") == 1, "at most one drift warp per 500 ms")
+g:tick(1800); check(g:count("SetWarpPosition") == 2, "then again while it stays off")
+g = F(false)
+for i = 0, 6 do g.time = 1000 + i * 100; g:pose(g.time, 4000 + i * 600, 2000, 3000); g.pos = vec(4 + i * 0.6 - 2, 2, 3); g:tick() end
+check(g:count("SetWarpPosition") == 0, "a moving target (re-placed every tick by the hold) is no drift")
+g = F(false); g.B.setHold("marker"); g:pose(900, 4000, 2000, 3000); g.pos = vec(6, 2, 3); g:tick(1000); g:tick(1300); g:tick(1600)
+check(g:count("SetWarpPosition") == 0, "marker mode walks the dog itself (no drift warp)")
 -- Without the key the legacy path is unchanged: a stale guest sample still releases.
 g = F(false, {off = true}); g.W.handlers[STATE]({1, 1, 1, 4000, 2000, 3000, 100, 123, 0}, g.time); g:tick(); g:tick(2001)
 check(g:count("CallBuddy") == 1, "without the key the legacy release is unchanged")

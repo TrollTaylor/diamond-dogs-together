@@ -552,6 +552,15 @@ if fresh and (distance > 15 or (stuck and now - s.farSince >= 2000)) then
  a.send(id, {id = "SetWarpPosition", pos = a.buddyVector(t.x, t.y, t.z)})
  s.warps, s.farSince = (s.warps or 0) + 1, nil
 end
+-- Warp mode: a placed dog that drifts over 1 m off an unchanged target for 200 ms (runs 4cd88ea2, d937191f: 4-6 m
+-- after the run leg; the same command is not re-applied) gets the stock warp, at most every 500 ms.
+local p0 = s.sentHold
+local drift = mode == "warp" and p0 and distance > 1 and (t.x - p0.x) ^ 2 + (t.y - p0.y) ^ 2 + (t.z - p0.z) ^ 2 < 0.0025
+if drift then s.driftSince = s.driftSince or now else s.driftSince = nil end
+if drift and now - s.driftSince >= 200 and now >= (s.driftAt or 0) then
+ a.send(id, {id = "SetWarpPosition", pos = a.buddyVector(t.x, t.y, t.z)})
+ s.warps, s.driftSince, s.driftAt = (s.warps or 0) + 1, nil, now + 500
+end
 s.aiHeld = true
 local warp = mode == "warp"
 local dash = not warp and (distance > 2 or (fresh and r.speed > 3)) and 1 or 0
