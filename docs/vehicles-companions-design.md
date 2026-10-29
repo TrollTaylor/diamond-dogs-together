@@ -642,7 +642,7 @@ mirror in play.
 
 | Mirror | Engagement hold (candidates; E3, E15) | Protection (E19) | Attribution |
 |---|---|---|---|
-| D-Dog (guest's copy) | **Built (M2): the stop-AI form of `LuaAiStayAndSnarl` (mode 1/2, whose AI update the Dog AI skips) placed by the command's own warp at 10 Hz** [O, 8.2]. 176 s within 1.4 m of a guard in an alert: zero `mirror_engaged` (run `4cd88ea2`). Fallbacks if needed: `SetEnabled=false` while a guard is within 5 m (the `TppDemo` command) [U] | **Passes with the D7 guard (8.9)** [O]: a native filter on the dog's damage handler drops every hit on the guest's copy while the guest's companion module holds it (about 85 s of guard fire through it, 50 hits dropped, no death: run `3922cc80`); the copy follows the host dog's life, sleep and death, and a death the guard cannot see is answered by the restore fallback (about 2.6 s). Before it, E19 failed (8.2: `d937191f`, `dc761c98`; `SetDisableDamage` has no dog handler) | `mirror` |
+| D-Dog (guest's copy) | **Built (M2): the stop-AI form of `LuaAiStayAndSnarl` (mode 1/2, whose AI update the Dog AI skips) placed by the command's own warp at 10 Hz** [O, 8.2]. 176 s within 1.4 m of a guard in an alert: zero `mirror_engaged` (run `4cd88ea2`). Fallbacks if needed: `SetEnabled=false` while a guard is within 5 m (the `TppDemo` command) [U] | **Passes with the D7 guard (8.9)** [O]: a native filter on the dog's damage handler drops every hit on the guest's copy while the guest's companion module holds it (about 85 s of guard fire through it, 50 hits dropped, no death: run `3922cc80`); the copy follows the host dog's life, sleep and death, and a death the guard cannot see is answered by the restore fallback (about 2.6 s). Before it, E19 failed (8.2: `d937191f`, `dc761c98`; `SetDisableDamage` has no dog handler). Review fixes (8.10): the guard's slots are installed only on a PC running the key; through a link loss an armed guard is held drop-only until the session or mission ends; a death while the host's state is unknown waits for it | `mirror` |
 | Quiet (guest's copy) | A cease-fire order or engagement flag through her controller requests [U, E15] | [U] | `mirror` |
 | D-Horse (non-riding copy) | A horse does not attack; its collisions with guards are possible [I] | `SetMaxLife` (dispatcher `0x140E4D250`) [O name, U effect] | `local` only while the local player rides it; else `mirror` |
 | Partner's D-Walker (index 1) | No pilot on that copy, so no gunfire; collisions possible [I] | Walker life command [U] (16-command dispatcher) | `local` only for the walker this copy pilots; else `mirror` |
@@ -1569,6 +1569,57 @@ as `<run4>-<role>-<label>.jpg`.
 | Legs on the shipped hold | **Pass, FRAME on both copies** [O]. `606048af` (the host's dog called beside the host first, the guest watching side-on): marked walk windows 0.35 and 1.09 m, run windows 1.07 and 2.57 m (`within=1`); **not all within the limits** (correction, review 8.10): in the run2 leg one walk window as the dog stopped after the run read 3.73 m (`within=0`, t=203602482) and in the restore leg an idle window about 9.5 s after `step=back` read 3.65 m (`within=0`, t=203618383, cause [U]); frames `6060-*-f2-walk` and `6060-*-f2-run` show the dog with the host on both screens. Unmarked windows of the other runs: walk 0.20-1.85 m (lab), 0.37-2.93 m (play), run 0.16-1.46 m (lab), 1.46-2.77 m (play); the first window after a teleport reads 17-37 m (the hold's warp beyond 15 m). `3f69e3b7`'s marked walk leg failed its waitlog because the host's dog stayed where it was (idle windows `speed_cms=0`, 2.17-2.32 m, 21 drift warps: the copy is warped back to an unchanged target 2.2 m off, cause [U]) | `606048af`, `3f69e3b7`, `3922cc80`, `1713b0a1` |
 | Play rehearsal (M1 + M2 with the guard) | **Pass** [O] (`1713b0a1`, `-Mode play -WanSim bad`, link RTT 175-187 ms, loss up to 12 %): play's title Continue, pairing in the helicopter, the host's seeds and the guest's `loaded; kind=dog; source=seed; mission=30010`, the guard armed with the host's byte (`byte=159`), walk and run windows within (above), `kdog` on both; the host's `cp_phase nearest alert` reached the guest's copy (`phase=3; src=rx; applied=1`) and both screens show "Spotted unidentified enemy combatant. Currently engaging!" with the dog beside Snake (`1713-*-gp-fight-1`, `-2`, `-3`); `dog_state` `armed=1; life=10000; state=0` twice, no `Dead`. **No guard fired at the dog in the 55 s window** (`drops=0`). `f7033e2e` tried again with the guest prone beside the dog and about 190 s of alert: its only failed expectation was that waitlog (`drops=0`; the guest's copy logged the host's alert as `phase=3; src=rx; applied=0` this time, and no guard reached the players); both screens show the dog standing over the prone guest beside Snake throughout (`f703-*-pf-fight-1..3`), `dog_state` `armed=1; life=10000; state=0`, no Dead. The guard's drop is proven in the lab only. Play refuses the follow, restore and re-call levers, so those paths have no play rehearsal | `1713b0a1`, `f7033e2e` |
 
+### 8.10 D7 review fixes (2026-10-29, branch `wp/dog-guard`)
+
+An independent review of `wp/dog-guard` at `8a294ce` (verdict: fix first) raised one major and four minor findings
+and refuted four claims. Each finding was checked against the code before any change; all five held. Fixes, each with
+a test that failed first (red logs kept in the session scratch folder `decisions/dog/`: `fix-red-native.log`,
+`fix-red-lua.log`, `fix-red-lua2.log`):
+
+| # | Finding (review) | Verified | Fix | Commit |
+|---|---|---|---|---|
+| 1 (major) | The two vtable slots were installed on every PC whose partner gate passed, play included, whatever `companion_host_owned` said; the unarmed `ProcessDamages` pass-through never handled a real hit | **Yes** [O]: `dog_guard_ok = partner_gate_ok && Install(...)` had no key gate; `1713b0a1` / `f7033e2e` logged `mode=play` with `dog_guard=installed` on both PCs | `dog_guard::InstallRefusal`: installed only under the key (both roles); with the key off the observer logs `dog_guard=off;reason=key_off;slots=0` and neither slot is touched. The pass-through was run (below) | `e38f2f4` |
+| 2 | Any link or scope loss dropped the guard at once (E19's failure back during a WAN drop), and a death while the host's state was unknown was filed as "host down" (mirrored: no send-away, no reload) | **Yes** [O]: Lua armed only while `W.paired and eff>=3`; the native refused `scope` and disarmed when `paired`, `link_up`, `effective` or the epoch failed; `hostState` returned alive=false with no fresh source | Native `dog_guard::Admit`: a full arm still needs the paired exact scope, but through a link loss an **armed** guest's lease is **held** drop-only (reply `reason='hold'`, follow 0, no lab op) until the session ends (the guest's Lua stops renewing at `C.endSession`) or the mission does (native `Disarm`); receipt arm 2 = hold, which never starts the guard. Lua: an unpair no longer disarms; an armed guest sends the hold every 500 ms while unpaired (`step=held`). `hostState` now says whether the host's state is **known**: a death with no fresh source is `step=dead;host=unknown` and waits (no send-away, no reload, no mirror) until it is known (`step=host_known;host=alive|down`), 60 s at most; a stale tick no longer flips a pending restore to mirrored | `e38f2f4`, `d413778` |
+| 3 | `repairVars` rewrote both whole words every 100 ms for 10 s after a death, fighting the stock game's `buddyCommonFlag` clears (after `DeleteBuddy`, at the retreat) | **Yes** [O]: the second `step=vars; dead=0_0; flag=0_32` 0.1 s after `step=delete` in all three restore runs, and at +9.3 s in both mirrored deaths | Only the DOG bit of `deadBuddyType` (the bit that stops every reload: `dc761c98`, `033193d3`) is cleared: once after the death (`step=vars;why=death;dead=a>b;ok=1`) and once more before a primed reload if it is set again (`why=reload`); `buddyCommonFlag` is the game's | `d413778` |
+| 4 | The reply's record fields were not age-gated (a deleted dog's record was reported after a reload: `life=0; state=2` at 3922 201073761); the native follow log cap never reset; `dropLogs` was unused | **Yes** [O] | The reply leaves out the record fields unless the snapshot is under 1 s old (`dog_guard::Fresh`; the Lua then logs `life=nil`) and reports `fresh=`; `companion_lab dog_state` on a disarmed guest reads the live record (arm 0) instead of the last arm's reply and names `installed=` and `fresh=`; the drop and follow log caps are per mission (reset by `Disarm`), `dropLogs` is that drop counter | `e38f2f4`, `5ef2470` |
+| 5 | The fixture lacked the risky branches (stale host state, link loss, play refusals of `recall`, `kill_mirror`, `guard`, a stock writer after the repair) | **Yes** [O] | `world_companion_guard_lua_check` 65 -> 99 checks: hold and its 500 ms renewal, re-pair, no arm while never armed, a refused hold, the session end, the native's own hold, a stale record, the unknown / known-alive / known-down deaths, a stale tick on a pending restore, a host known to have no dog out, the one-shot DOG bit (a stock flag writer over 8 ticks: one vars line; another type's dead bit kept; the bit set again before the reload), play refusals of `dog_stun`, `recall`, `kill_mirror` and `guard`; `dog_guard_tests` adds the install gate, 30 admission cases, `Fresh` and the log caps. The play refusals already held in the code (regression checks, not red) | `e38f2f4`, `d413778`, `5ef2470` |
+
+Refuted claims corrected in 8.9 and in STATUS (`3d0046c`): "Defaults: unchanged" / "inert" (finding 1); the E19 host
+frames (they show the prone guest, not the host's dog: "unhurt" rests on the host's logs); the vars repair "84 ms
+later" (it also ran after every send-away); `606048af`'s legs "all within" (a 3.73 m walk window and a 3.65 m idle
+window after the restore read `within=0`).
+
+**Runs** (hidden worker, loopback unless named, research build, native gun stage, copied saves, `afgh-ledge` host /
+`afgh-horse` guest; every run closed with the baseline restored and the real saves unchanged; archived under
+`%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`; frames as JPEG in the session scratch folder
+`complete/frames/dog/<run4>-<role>-<label>.jpg`):
+
+| Run | Scenario | What it is for |
+|---|---|---|
+| `7fe2845e` | `companion-dog-guard-review.txt` (`5ef2470`), lab, `companion_host_owned=1` | E19 through the new admission; the guard turned off in the line of fire (the pass-through, a real death, the restore with the one-shot repair); the kill restore again. One expectation failed: a waitlog for a dog `Damage` message (below) |
+| `19e438fe` | `companion-dog-guard-play-off.txt` (`8afc2f5`), `-Mode play -WanSim bad` (RTT 176-187 ms), **default keys** | the play default after finding 1: nothing installed on either PC; no expectation failed |
+| `cc2e15d2` | `companion-dog-guard-review-frames.txt` (`8afc2f5`), lab, `companion_host_owned=1` | the same paths with the host's dog called beside the host: the kill restore, the host's dog down and re-called, E19 with the guard off; no expectation failed |
+
+| # | Result | Evidence |
+|---|---|---|
+| Install gate | **Pass, both copies** [O]. Default play session: `dog_guard=off;reason=key_off;slots=0` on host and guest, no `dog_guard=installed` line, and `companion_lab dog_state` answers `ready=false;reason=admission;...;installed=0` on both (the host twice, before and during an alert); the host's own D-Dog fights beside Snake on the host's screen with the stock code ("Currently engaging", `19e4-host-po-fight-1`), the guest's screen shows the host ahead (`19e4-guest-po-fight-1`). With the key on (`7fe2845e`, `cc2e15d2`) both copies log `dog_guard=installed;slots=2` and `dog_guard_code_gate=ok` as before | `19e438fe`, `7fe2845e`, `cc2e15d2` |
+| E19 through the new admission | **Pass** [O]. Armed `reason=ok; byte=159`; with the shield 13 hits dropped in about 22 s (`7fe2845e`) and 4 in 6 s (`cc2e15d2`), attacker 1116, attack 333, `dog_state` `life=10000; state=0`, no Dead while armed; FRAME of the copy standing over the prone guest (`cc2e-guest-pv-shield`, `7fe2-guest-grd-shield-2`) | `7fe2845e`, `cc2e15d2` |
+| The unarmed hook passes hits through (the guest's PC) | **Pass** [O]. With `companion_lab guard off` (the lease disarmed, both hooks still installed) and the copy still held in the line of fire, it died a real death: `obs; m=Dead; id=9728; att=other` 70.7 s (`7fe2845e`) and 78.3 s (`cc2e15d2`) after the guard went off, as without the guard before D7 (`d937191f` 76 s, `dc761c98` 13 s), against no death in the guarded windows. FRAME: the copy lying dead in the grass beside the prone guest (`cc2e-guest-pv-dead`). The dog posts no `Damage` message the Lua observer sees (the failed waitlog of `7fe2845e`; none in the pre-D7 E19 runs `d937191f`, `dc761c98` either), so the life falling is not logged step by step [O absent]. The host's PC runs the same unarmed branch; the host's dog took **no** real hit in any run (its byte 159 throughout `7fe2845e` and `cc2e15d2`; in `cc2e15d2` it stood 30 m off, `cc2e-host-pv-dead`), so the host-side pass-through is [I] from the shared code path | `7fe2845e`, `cc2e15d2` |
+| Restore with the one-shot repair | **Pass, four restores** [O]: the guard-off death and the kill in each run: exactly **one** `step=vars; why=death; dead=4_0; ok=1` per death, 85-105 ms after it, no other vars write; `step=delete` at 1.5 s, `step=reload`, `reconcile; via=load`, `step=back; ms=` 2485, 2485, 2552, 2669. `mirror_vars` shows the game clearing `buddyCommonFlag` 32 -> 0 about 0.9 s after the first death and leaving it 0, and **every later reload worked with the flag at 0** (so bit 5 does not gate the reload [O]; its meaning stays [U]). FRAME on both copies (`cc2e15d2`): the copy carried off by the Fulton balloon on the guest's screen (`cc2e-guest-rv-dead`), back beside the host (`cc2e-guest-rv-back`), the host's dog beside Snake on the host's (`cc2e-host-rv-back`) | `7fe2845e`, `cc2e15d2` |
+| Mirrored down and re-call, one-shot repair | **Pass, FRAME on both copies** [O] (`cc2e15d2`): host `dog_life 0` -> host Dead (208761080) -> guest `dog_guard=follow;byte=0xc0;...;kill=1` -> guest Dead 197 ms later, `step=dead; host=down`, one vars line; "D-Dog Near Death" and the extraction on both screens (`cc2e-*-rv-down`); the host's `recall` -> guest `reconcile; via=load` -> `step=recalled; ms=36703` (with `buddyCommonFlag` 0) -> the dog beside Snake on both screens (`cc2e-*-rv-recall`) | `cc2e15d2` |
+| Fresh record only | [O] the host's first state line in each run and the line right after its re-call read `byte=0; ...; life=nil; max=nil` (the new dog's record not yet updated), then `byte=159; life=10000`; the guest's arm after each reload reads the reloaded copy's fresh record (`life=10000; state=0`) | `7fe2845e`, `cc2e15d2` |
+| Hold through a link loss | **Not run** [I]: no worker lever cuts the world link, and neither play rehearsal unpaired mid-mission. Covered by `dog_guard_tests` (admission) and the fixture (Lua) only | - |
+| Unknown host state at a death | **Not run** [I]: needs a link loss (above). Fixture only | - |
+| Log caps per mission | [I] code read (`Disarm` resets them); no run reached a second mission | - |
+
+**Still open after the fixes:** the hold and the unknown-state restore have no runtime proof (no link-loss lever);
+the host's dog never took a real hit with the hooks installed; the guard's drop, the follow, the restore and the
+re-call still have no play rehearsal under the key (play refuses their levers, and natural guard fire at the dog has
+not happened in play); which native code sets the kill flag in a stock death, and whether undoing one the module did
+not issue could leave a stuck live copy, stay [U]; deaths the guard cannot see other than the lab kill and the
+guard-off fire (fall, drowning, out of bounds) were not run; no Mother Base run with the guard; no two-PC session.
+`companion_host_owned` stays **off in lab and play**; no play default changed.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -1676,8 +1727,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   - Repeat in 30050 (`mb-ladder`, `both capture m2-mb-dog`) and the `-Mode play -WanSim bad` rehearsal.
   - Exit: a two-PC session.
 - **Status (2026-10-29): built on `wp/companion-host` behind `companion_host_owned` (M1's key); play default off.
-  E19 failed in 8.2; the user's D7 (guard, follow, restore) is built on `wp/dog-guard` and E19 passes (8.9).** Results and
-  run ids in 8.2, 8.3 and 8.9. Integrated on `dev/oct7-continue`
+  E19 failed in 8.2; the user's D7 (guard, follow, restore) is built on `wp/dog-guard` and E19 passes (8.9; review
+  fixes 8.10).** Results and run ids in 8.2, 8.3, 8.9 and 8.10. Integrated on `dev/oct7-continue`
   (merge `23c2cac`; unreleased).
   - Built: COMPANION_POSE (op 57, datagram, 10 Hz moving / 2 Hz idle) and COMPANION_ACK (op 49, 1 Hz); the guest holds
     its copy of the host's dog with the stop-AI form of `LuaAiStayAndSnarl` placed by its own `warp=1` every 100 ms,
@@ -1732,7 +1783,16 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     walker or Quiet, the session end, the reconcile backoff); (3) the iDroid buddy request and dismiss are not refused
     on the guest's copy, and the host's sortie-prep and iDroid buddy lists were not reached (R5); (4) no two-PC
     session. The dog's takedown result reaching the guest
-    (commit/apply) is still not reached.
+    (commit/apply) is still not reached. Since the review (8.10): (5) the guard's hold through a link loss and the
+    restore's unknown-host-state wait are proven by unit and fixture tests only (no worker lever cuts the link); (6) the
+    host's dog never took a real hit with the hooks installed (the host-side pass-through is [I]).
+  - **Review fixes (2026-10-29, 8.10; `e38f2f4`, `d413778`, `5ef2470`):** the guard's two slots are installed only on a
+    PC running the key (a default play session installs nothing: `19e438fe`, `-Mode play -WanSim bad`, both copies
+    `dog_guard=off;reason=key_off;slots=0`); an armed guard is held drop-only through a link loss until the session or
+    mission ends; a death while the host's state is unknown waits for it; the restore clears only the dead DOG bit,
+    once (four restores and a mirrored down and re-call on that code, FRAME on both copies in `cc2e15d2`); the receipt
+    reports the record only when fresh. The unarmed hook's pass-through is proven on the guest's PC (the copy died of
+    guard fire with the guard off, `7fe2845e`, `cc2e15d2`).
 
 ### M3. The sortie vehicle on both copies
 
@@ -2032,7 +2092,10 @@ The original questions:
   **Answered by the user on 2026-10-29:** the guest's copy cannot be killed by anything on the guest's PC, its health and
   state follow the host's dog, and where the guard cannot cover a case the copy is brought back from the host's live
   state (the restore fallback). Built as (d) plus the follow and the fallback on `wp/dog-guard` (8.9); the key stays off
-  in play until every path under it has its FRAME and play rehearsal (section 9 M2).
+  in play until every path under it has its FRAME and play rehearsal (section 9 M2). After the review of 2026-10-29
+  (8.10) the guard is installed only under the key, holds through a link loss, and the restore no longer rewrites
+  `buddyCommonFlag`; no new decision is needed for D7 itself. Open for the user: whether lab-only proof of the guard's
+  drop, the follow and the restore is acceptable for the play default (play cannot drive those paths), section 9 M2.
 - **D8. The guest's co-op save and the host's buddy:** (a) accept it (the guest's co-op save takes the host's buddy,
   look and relief choices); (b) the guest's own buddy vars are restored around each save write and at the end of the
   session (recommended); (c) restore them only at the end of the session.
@@ -2115,6 +2178,21 @@ scripts and the exe before editing.
 | Seat-aim tree is an uncommitted 0.13.5 tree | Accepted | `git status` there shows the changed files on `cc973a8` [O]. E8 is a port onto `wp/companions` with the contract regenerated |
 | Roadmap: dropped and misstated lines | Accepted | See the roadmap: weapons and mounted guns, vehicle damage re-added; sortie vehicle `[ ]`; vehicle losses `[~]`; avatar qualified; tank overlap removed |
 | Process note: two-PC check placed first without asking | Accepted | D9 |
+
+### Review of D7 (2026-10-29, branch `wp/dog-guard` at `8a294ce`)
+
+Verdict: fix first. All five findings were verified against the code and fixed with tests that failed first; the
+details, commits and the three hidden runs that re-proved the changed behaviour (`7fe2845e`, `19e438fe` play,
+`cc2e15d2`) are in 8.10.
+
+| Review point | Verdict | Check and change |
+|---|---|---|
+| Major: the guard's slots were installed in play whatever `companion_host_owned` said; the unarmed pass-through had no runtime proof; STATUS said "Defaults: unchanged" | Accepted | `game_script_observer.cpp` had no key gate [O]. `dog_guard::InstallRefusal` (`e38f2f4`); proven off in a default play session (`19e438fe`); the pass-through proven on the guest's PC (`7fe2845e`, `cc2e15d2`); STATUS and 8.9 corrected (`3d0046c`) |
+| A link or scope loss dropped the guard at once; an unknown host state was filed as "down" | Accepted | Lua line 153 and the native scope check [O]. `dog_guard::Admit` hold, the Lua hold (arm 2) and the unknown state (`e38f2f4`, `d413778`); unit and fixture tests only (no link-loss lever) |
+| The vars repair rewrote both words every 100 ms for 10 s | Accepted | The second `flag=0_32` in every restore run [O]. DOG bit only, once (`d413778`); one vars line per death in four restores and a mirrored death |
+| Stale record fields, a never-reset follow cap, unused `dropLogs` | Accepted | `Fresh`, per-mission caps reset by `Disarm`, `dropLogs` as the drop log counter (`e38f2f4`); `dog_state` reads the live record when disarmed (`5ef2470`) |
+| The fixture lacked the risky branches | Accepted | 65 -> 99 checks (`d413778`, `5ef2470`) |
+| Refuted: legs "all within", E19 host frame "the host's dog unhurt", "vars repaired after 84 ms", "Defaults: unchanged" | Accepted | Corrected in 8.9 and STATUS (`3d0046c`) |
 
 ### Integration of M1-M4 (2026-10-29, `dev/oct7-continue`)
 
