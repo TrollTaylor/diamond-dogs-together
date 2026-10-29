@@ -10,6 +10,8 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-refuse.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
 # NEVER: step=error, viewer_changed, faults; a host step=applied for 25608; a host wreck of 25608.
+# Passed: 09333f05 (build 73313b0, every expectation met; the guest's wreck left its pool 25 s later, the host's jeep
+#   stayed intact). 243ae269 stopped at a placebehind behind the seated host (fixed in 73313b0).
 labsetting world_vehicle_state=1
 labsetting world_vehicle_gone=1
 labsetting world_vehicle_break=1

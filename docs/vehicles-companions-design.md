@@ -1484,6 +1484,8 @@ runs archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`, frames
 | `cf0aeeba` | `vehicle-decisions-lab.txt`, lab, `africa-jeep`, every vehicle key named | Both D14 Fultons met every expectation (frames `g-cf0-guestfulton`, `g-cf0-hostfulton`); stopped at D12's `placebehind` (the guest's 900 m `goto_vehicle` warp alone: no valid partner pose yet, as `e20f76bc`); fixed in `bbdc687` (both go to the jeep first) |
 | **`c0203fdd`** | **the same, lab, at `bbdc687`** | **The FRAME proof. Every expectation met.** D14 both directions with the commit readback, D12 (a lever break) wrecked on both screens, D11 in 30010 |
 | **`70146170`** | **`vehicle-decisions-play.txt`, `-Mode play -WanSim bad`, the three new keys named (off by default then), VEHICLE_GONE / VEHICLE_STATE at their play defaults** | **The play rehearsal. Every expectation met** (link 175-185 ms). D14 both directions, D12 with the guest's real C4, D11 with the toast drawn |
+| `243ae269` | `vehicle-decisions-refuse.txt`, lab, `africa-jeep`, `world_vehicle_break=1` | Stopped at a `placebehind` behind the seated host (a seated partner is no landing pose); fixed in `73313b0` |
+| **`09333f05`** | **the same at `73313b0`** | **D12's refusal, live. Every expectation met.** The host seated in 25608, the guest's lever break of its copy -> host `break_judge; ok=0; why=ridden; by=local_rider` -> REJECT 8 -> guest `break_refused; here=wreck`; frames `g-093-refuse` |
 | **`47b95ae7`** | **`vehicle-decisions-play.txt` at `f4ec5c1`, play, `-WanSim bad`, no vehicle key named (the shipped defaults)** | **Every expectation met, `Forced=False`.** Both copies `vehicle_rules; step=on; ...; break=1; credit=1; loadout=1; gone=1` from the play defaults; the same D14 (receiver Seize 150 / 133 ms), D12 (judge `near; d_mm=13842`, host wreck 200 ms) and D11 lines (toast drawn) as `70146170`; frames `g-47b-default` |
 
 **D14: a world vehicle Fultoned by either player is credited to both co-op saves, once each [O, `c0203fdd`,
@@ -1530,17 +1532,24 @@ runs archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`, frames
   smoke column rising from that spot on the host's screen; the jeep itself hidden behind the guest's body) (`g-701-d12`).
 - One host-side outcome: one `break_judge`, one `applied`, one `tx` per break; `vehicle_gone_status` `j=1; a=1; r=0`.
   A destruction has no credit or charge (GMP unchanged on both copies).
-- The rule, fixture-proven only [fixture]: refused at once while someone rides the host's copy (`why=ridden`; answered as
-  gone instead when the host's copy is broken too), refused when the guest's DOWNED_STATUS position is more than 60 m from
+- The rule [fixture; the ridden refusal also O, `09333f05`]: refused at once while someone rides the host's copy
+  (`why=ridden`; answered as gone instead when the host's copy is broken too), refused when the guest's DOWNED_STATUS position is more than 60 m from
   the reported pose (`guest_far`) or older than 3 s (`guest_unknown`) unless the host's copy is at a quarter of its peak
   life or less (`heavy`), at most 4 applied per 20 s (`rate`), never index 0; the guest asks at most 6 per 60 s and never
-  for a break it caused itself (its own wreck or removal in the last 5 s). No hidden run produced a refusal.
-- **When the host refuses** [I from the fixtures and the M4 splits]: the guest's copy keeps its wreck (the guest logs
-  `step=break_refused; ...; here=wreck`), the host's jeep stays intact, and VEHICLE_STATE refuses that id on the guest
-  (`absent` for a named vehicle that is not alive there, `no_match` for an unnamed one). No Lua command undoes a wreck: `SetBodyLife` writes the life word only and `IsAlive` reads rec+0x70
-  bits that none of the 21 instance commands is known to clear (section 3.6) [I], so there is no resync; the wrecks of
-  `d407f115` left the pool on both copies about 20 s later, so the guest's copy then shows nothing at that spot while
-  the host's shows the jeep (the split of `72366eb5`, now only for implausible breaks) [I].
+  for a break it caused itself (its own wreck or removal in the last 5 s). The far, unknown and rate refusals ran only in
+  the fixtures.
+- **When the host refuses** [O, `09333f05`]: the host sat in the Masa Village jeep (25608, D-Dog beside it) while the
+  guest's lever broke the guest's copy. Guest `break_seen` -> `req; cause=2` -> host `break_judge; ok=0; why=ridden;
+  by=local_rider` and `refused; src=req; reason=ridden` (no `applied`, no wreck on the host) -> guest `req_done;
+  result=reject; reason=8` and `break_refused; id=25608; ...; here=wreck`. What each copy then shows (frames
+  `09333f05-*-refuse-*`, sheet `g-093-refuse`): the guest's screen the jeep burning beside the seated host's body and
+  the blast knocking the guest down (godmode on), the host's screen the intact jeep with the host in it; after the host
+  got out, VEHICLE_STATE's next state for 25608 was refused on the guest (`refused; reason=absent`: the named jeep is
+  not alive there); 25 s later the guest's wreck had left its pool (`vehicle_state_status 25608`: `pos=0,0,0`) while
+  the host's jeep stood intact (`alive=1; life=2300`). So a refused break leaves the jeep on the host's PC only, for the
+  rest of the mission. No Lua command undoes a wreck: `SetBodyLife` writes the life word only and `IsAlive` reads
+  rec+0x70 bits that none of the 21 instance commands is known to clear (section 3.6) [I], so there is no resync; the
+  divergence is logged (`break_refused`) and stays.
 - The host's wreck is the engine's destruction, blast included, on the authoritative copy: guards it kills there are
   host kills (synced as usual) and a second vehicle it breaks is a host loss (announced). Measured only with godmode on
   and the area cleared (`clear_enemies 100`) [U with live guards]; it is not the receiver wreck of `world_vehicle_wreck`
@@ -1568,7 +1577,7 @@ runs archived under `%USERPROFILE%\mgs-coop-run-archive\decisions\<run>`, frames
 path has its FRAME on both copies (`c0203fdd`) and a passing `-Mode play -WanSim bad` rehearsal (`70146170`, keys
 named) and again at the shipped defaults with no key named (`47b95ae7`). D12 and D14 act only where VEHICLE_GONE runs (30010 and 30020 in play; Mother Base lab only).
 
-**Open.** A live refusal of D12 (ridden, far, rate); the host's wreck blast with live guards and godmode off; a guest's
+**Open.** D12's far, unknown and rate refusals live (only `ridden` ran, `09333f05`); the host's wreck blast with live guards and godmode off; a guest's
 unattributed break far from the host's realized area; D14 for an APC, a tank or a truck (only the light vehicle, resource
 14, ran); a receiver whose copy is unrealized; the guest's VEHICLES drop with `world_relief` off (still active: M3's block
 rides on `world_relief`; D11 as decided covers LOADOUT); a two-PC session.

@@ -16,7 +16,7 @@ keys in the CFG r[15] bitmask (now 0..63), **on by default in play, off in the l
   a quarter of its peak life, never while someone rides the host's copy (unless broken there too), at most 4 per 20 s;
   applied, the host's copy becomes the same wreck (SetBodyLife 0) [O, lab lever break and real C4 in play]. Refused:
   REJECT 8, the guest keeps a wreck the host lacks (logged `break_refused`; no command is known to undo a wreck)
-  [fixture; I].
+  [O for `ridden`, `09333f05`; the other refusals fixture only].
 - **D14 `world_vehicle_credit` (bit 16, with VEHICLE_GONE):** the receiver of a Fultoned world vehicle removes its copy
   with the stock `Seize {"Instant"}`, so its own engine credits the vehicle (OnFulton -> OnFultonVehicle ->
   AddTempResource): each co-op save gets it once; no GMP on the receiver [O, resource readback after the mission end];
@@ -29,6 +29,8 @@ keys in the CFG r[15] bitmask (now 0..63), **on by default in play, off in the l
 | `cf0aeeba` | `vehicle-decisions-lab.txt`, lab, `africa-jeep` | Both D14 Fultons met every expectation; stopped at D12's `placebehind` after the guest's 900 m warp alone (fixed `bbdc687`) |
 | **`c0203fdd`** | the same at `bbdc687` | **Every expectation met.** D14: each copy credited each jeep once (`AddTempResource 14` twice per copy), `4wdW` 1 -> 1 before the commit -> **3 on both** after the mission end, GMP -10000 on each copy for its own hand Fulton only. D12: the guest's lever break -> host `break_judge; ok=1; why=near; d_mm=1899` -> host wreck (`via=wreck; src=req; ms=66`), fire on both screens. D11: the guest's LOADOUT refused (NOTE 13 a 5), the host's list opened |
 | **`70146170`** | `vehicle-decisions-play.txt`, **play, `-WanSim bad`**, the new keys named | **Every expectation met** (link 175-185 ms). D14 both directions (receiver Seize 133 / 116 ms); D12 with the guest's real C4 (judge `near; d_mm=13842`, host wreck 216 ms, the guest's request done in 233 ms); D11 with the toast drawn (frame) |
+| `243ae269` | `vehicle-decisions-refuse.txt`, lab | Stopped at a `placebehind` behind the seated host (fixed `73313b0`) |
+| **`09333f05`** | the same at `73313b0`, lab | **D12's refusal live, every expectation met**: the host seated in the jeep the guest broke -> `break_judge; ok=0; why=ridden` -> REJECT 8 -> guest `break_refused; here=wreck`; the guest's wreck left its pool 25 s later while the host's jeep stayed intact (frames `09333f05-*-refuse-*`) |
 | **`47b95ae7`** | the same at `f4ec5c1`, **play, `-WanSim bad`, no vehicle key named** (the shipped defaults) | **Every expectation met, `Forced=False`**: the three keys on from the defaults on both copies; the same D14, D12 and D11 lines and frames as `70146170` |
 
 Frames (looked at, JPEG in the session scratch `complete/frames/vehicles/`): `c0203fdd-*-d14-*` and `70146170-*-d14p-*`
@@ -42,7 +44,7 @@ Tests: `world_vehicle_rules_lua_check` (67 checks, worker gate), `world_vehicle_
 `world_receipt_tests`, `lab_ini_check`, `lab_scripts_tests`, `worker_session_tests`. Fast CTest 297/297, full CTest
 312/312 (`tools/build.ps1`, Debug) on the final code.
 
-Open: a live D12 refusal (fixtures only), the host's wreck blast with live guards and godmode off, D14 for heavier
+Open: D12's far, unknown and rate refusals live (fixtures; `ridden` ran), the host's wreck blast with live guards and godmode off, D14 for heavier
 vehicles and an unrealized receiver copy, the guest's VEHICLES drop is still active with `world_relief` off (its block
 is M3's; the user's D11 named LOADOUT), a two-PC session.
 
