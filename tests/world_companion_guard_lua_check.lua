@@ -2,6 +2,8 @@
 -- (world_buddy.lua, world_companion_dog.lua) with a recording companion module and native receipts. No game process.
 -- Usage: lua51 world_companion_guard_lua_check.lua <world_buddy.lua> <world_companion_dog.lua> <world_companion_guard.lua>
 -- Written before world_companion_guard.lua: the first check after the chunk-size checks failed (no W.dogGuard).
+-- Review 2026-10-29 (hold through a link loss, the unknown host state, the one-shot DOG-bit repair, play refusals):
+-- written before the chunk changed; the red run is scratchpad decisions/dog/fix-red-lua.log.
 local buddyFile, dogFile, guardFile = assert(arg[1]), assert(arg[2]), assert(arg[3])
 local checks = 0
 local function check(v, why) checks = checks + 1; if not v then error(checks .. ": " .. why, 2) end end
@@ -52,9 +54,16 @@ local function F(host, o)
       for i = 1, 7 do g[i] = tonumber(g[i]) end
       c.guard[#c.guard + 1] = g
       if c.noGuard then return "MGS_COOP_DOG_GUARD_V1" end
-      local arm = g[4] == 1 and c.armedReply or 0
-      return {ready = true, reason = "ok", armed = arm, installed = 1, snap = 1, life = c.life, max = c.max, stun = 10000, smax = 10000,
-        state = 0, byte = host and c.hostByte or 0, drops = c.drops, hits = c.drops, applied = 0, kills = 0, attacker = 2051, attack = 7}
+      -- The native admission (dog_guard::Admit): arm 1 is held ('hold') while the link is down, arm 2 holds an armed
+      -- lease and never starts one ('not_armed'); a stale snapshot leaves the record fields out (Fresh).
+      local arm, reason = 0, "ok"
+      if g[4] == 1 then arm = c.armedReply; if c.linkDown and arm == 1 then reason = "hold" end
+      elseif g[4] == 2 then if c.holdReply ~= false then arm, reason = 1, "hold" else reason = "not_armed" end end
+      local rec = not c.stale
+      return {ready = reason ~= "not_armed", reason = reason, armed = arm, installed = 1, snap = 1, fresh = rec and 1 or 0,
+        life = rec and c.life or nil, max = rec and c.max or nil, stun = rec and 10000 or nil, smax = rec and 10000 or nil,
+        state = rec and 0 or nil, byte = host and c.hostByte or 0, drops = c.drops, hits = c.drops, applied = 0, kills = 0,
+        attacker = 2051, attack = 7}
     end
     c.calls[#c.calls + 1] = {name = "NativePose", source = source}
     if c.pos == nil then return {ready = false, reason = "dog_unrealized"} end
@@ -76,6 +85,7 @@ local function F(host, o)
   function c:count(name) local n = 0; for _, v in ipairs(self.calls) do if v.name == name then n = n + 1 end end; return n end
   function c:sent(op) local r = {}; for _, t in ipairs(self.tx) do if t[1] == op then r[#r + 1] = t end end; return r end
   function c:logged(p) for _, l in ipairs(self.logs) do if l:find(p) then return l end end end
+  function c:nlogged(p) local k = 0; for _, l in ipairs(self.logs) do if l:find(p) then k = k + 1 end end; return k end
   function c:lastGuard() return self.guard[#self.guard] end
   return c
 end
@@ -113,8 +123,26 @@ g.drops = 5; g:tick(2400); check(g:logged("event=dog_guard;role=guest;step=drops
 g.buddy = 0; g:tick(2500); q = g:lastGuard()
 check(q[4] == 0 and g:logged("step=disarmed;why=no_dog"), "no dog: disarmed")
 n = #g.guard; g:tick(2600); check(#g.guard == n, "disarmed once")
-g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.paired = false; for _, f in ipairs(g.W.unpairedHooks) do f(1) end
-check(g:lastGuard()[4] == 0 and g:logged("why=unpaired"), "an unpair disarms")
+-- Review 2026-10-29: a link loss holds the lease drop-only (arm 2, no host byte) until the session or mission ends.
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.paired, g.W.eff = false, 0; for _, f in ipairs(g.W.unpairedHooks) do f(1) end
+check(not g:logged("step=disarmed"), "an unpair does not disarm")
+g:tick(1100); q = g:lastGuard()
+check(q[4] == 2 and q[5] == 0 and g:logged("step=held;reason=hold;byte=0;"), "unpaired: the armed guest holds (arm 2) with no host byte")
+n = #g.guard; g:tick(1300); check(#g.guard == n, "a hold is not re-sent every tick")
+g:tick(1600); check(#g.guard == n + 1 and g:lastGuard()[4] == 2, "it is renewed every 500 ms")
+g.W.paired, g.W.eff = true, 3; g:pose(1650, 0x80 + 31); g:tick(1700); q = g:lastGuard()
+check(q[4] == 1 and q[5] == 0x80 + 31 and g:nlogged("step=armed;reason=ok;byte=159;") == 2, "re-paired: the full arm with the host's byte at once")
+g = F(false); g.W.paired, g.W.eff = false, 0; g:tick(); g:tick(1600); check(#g.guard == 0, "unpaired before any arm: nothing is armed")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.paired = false; g.holdReply = false
+g:tick(1100); check(g:lastGuard()[4] == 2 and g:logged("step=refused;reason=not_armed"), "a refused hold (the lease lapsed) is logged")
+g:tick(1200); check(g:lastGuard()[4] == 0 and g:logged("step=disarmed;why=no_link"), "then disarmed once")
+n = #g.guard; g:tick(1700); check(#g.guard == n, "and nothing more while unpaired")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.paired = false; g:tick(1100); g.C.applies = function() return false end
+g:tick(1200); check(g:lastGuard()[4] == 0 and g:logged("step=disarmed;why=off"), "the session end disarms a held lease")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.linkDown = true; g:pose(1050, 0x80 + 16); g:tick(1100)
+check(g:logged("step=held;reason=hold;byte=144;"), "the native's own hold of a full arm (its link down first) is logged")
+g = F(false); g.stale = true; g:pose(900, 0x80 + 31); g:tick()
+check(g:logged("step=armed;reason=ok;byte=159;life=nil;"), "a stale native record is logged as unknown, not as a dead dog")
 g = F(false, {peer = false}); g:pose(900, 0x80 + 31); g:tick(); g:tick(1600); check(#g.guard == 0, "the peer's key not seen: never armed")
 g = F(false, {off = true}); g:tick(); check(#g.guard == 0, "key off: never armed")
 g = F(false); g:tick(); check(g:lastGuard()[5] == 0, "no host stream yet: armed with byte 0 (guard only, no follow)")
@@ -131,13 +159,18 @@ g.env.vars.deadBuddyType, g.env.vars.buddyCommonFlag = 4, 0
 g.W.companionHurt("Dead", 9728, "other")
 check(g:logged("event=dog_restore;role=guest;step=dead;host=alive;byte=159;armed=1"), "the death is logged with the host's state")
 g:pose(1050, 0x80 + 31); g:tick(1100)
-check(g.env.vars.deadBuddyType == 0 and g.env.vars.buddyCommonFlag == 32 and g:logged("step=vars;dead=4>0;flag=0>32"), "the vars come back")
+check(g.env.vars.deadBuddyType == 0 and g:logged("step=vars;why=death;dead=4>0;ok=1"), "the dead DOG bit is cleared once (review 2026-10-29)")
+check(g.env.vars.buddyCommonFlag == 0, "buddyCommonFlag is left to the game")
+for t = 1200, 1900, 100 do g.env.vars.buddyCommonFlag = 0; g:tick(t) end
+check(g:nlogged("step=vars") == 1 and g.env.vars.buddyCommonFlag == 0, "a stock writer of the flag is not fought (one vars line)")
 g:tick(2000); check(g:count("DeleteBuddy") == 0, "not sent away before 1.5 s")
 g:pose(2550, 0x80 + 31); g:tick(2600)
 check(g:count("DeleteBuddy") == 1 and g.calls[#g.calls].token == true and g:logged("step=delete;ok=1"), "sent away with the module's token")
 g:pose(2650, 0x80 + 31); g:tick(2700); check(g:count("DeleteBuddy") == 1, "once")
-g.buddy = 0; g:pose(2750, 0x80 + 31); g:tick(2800)
+g.buddy = 0; g.env.vars.deadBuddyType = 4; g:pose(2750, 0x80 + 31); g:tick(2800)
 check(g.C.mismatchAt and g.C.mismatchAt <= 2800 - 60000 and g.C.fixN == nil and g:logged("step=reload;n=1"), "the reconcile is primed")
+check(g.env.vars.deadBuddyType == 0 and g:logged("step=vars;why=reload;dead=4>0;ok=1"), "a DOG bit set again is cleared once before the reload")
+check(g:nlogged("step=vars") == 2, "two vars lines in this restore, no more")
 g.buddy = 2; g:pose(2850, 0x80 + 31); g:tick(2900); check(g:logged("step=back;ms=1900"), "back when the dog reads again")
 check(g:lastGuard()[4] == 1, "and armed again")
 -- Mirrored: the host's dog is down too: no send-away, no reload; the host's re-call brings it back (reconcile).
@@ -151,6 +184,31 @@ local before = g.C.mismatchAt
 g:pose(2550, 0x80 + 64); g:tick(2600); g.buddy = 0; g:tick(2700); g:tick(5000)
 check(g:count("DeleteBuddy") == 0 and g.C.mismatchAt == before, "no send-away and no primed reload while the host's is down")
 g.buddy = 2; g:pose(9000, 0x80 + 31); g:tick(9100); check(g:logged("step=recalled;ms="), "the host's re-call is logged when the copy is back")
+-- Only the DOG bit: another buddy type's dead bit stays.
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.env.vars.deadBuddyType = 4 + 8; g.W.companionHurt("Dead", 9728, "other")
+g:pose(1050, 0x80 + 31); g:tick(1100); check(g.env.vars.deadBuddyType == 8 and g:logged("step=vars;why=death;dead=12>8;"), "only the DOG bit")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.companionHurt("Dead", 9728, "other"); g:pose(1050, 0x80 + 31); g:tick(1100)
+check(not g:logged("step=vars"), "no write when the DOG bit is clear")
+-- Review 2026-10-29: a death while the host's state is unknown (no COMPANION_POSE for 3 s, no COMPANION for 15 s, as
+-- through a link loss) is neither alive nor down: no send-away, no reload, no mirror until it is known again.
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:tick(5000)
+g.W.companionHurt("Dead", 9728, "other")
+check(g:logged("step=dead;host=unknown;byte=0;"), "an unknown host state is logged as unknown")
+for t = 5100, 9000, 100 do g:tick(t) end
+check(g:count("DeleteBuddy") == 0 and not g:logged("step=host_down") and not g:logged("step=reload"), "nothing while unknown")
+check(g.W.dogGuard.s.dead and not g.W.dogGuard.s.dead.mirrored, "not mirrored while unknown")
+g:pose(9050, 0x80 + 31); g:tick(9100)
+check(g:logged("step=host_known;host=alive;ms=4100;"), "known again: alive")
+check(g:count("DeleteBuddy") == 1, "then the restore runs (sent away at once, 1.5 s having passed)")
+g.buddy = 0; g:pose(9150, 0x80 + 31); g:tick(9200); check(g:logged("step=reload;n=1"), "and reloads")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:tick(5000); g.W.companionHurt("Dead", 9728, "other")
+g:pose(6050, 0x80 + 64); g:tick(6100)
+check(g:logged("step=host_known;host=down;") and g.W.dogGuard.s.dead.mirrored, "known again: down, the mirrored wait")
+g:tick(8000); check(g:count("DeleteBuddy") == 0, "no send-away")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.companionHurt("Dead", 9728, "other"); g:tick(4500)
+check(not g:logged("step=host_down") and not g.W.dogGuard.s.dead.mirrored, "a stale tick does not mirror a pending restore")
+g = F(false); g.C.host = {kind = 0, present = false, state = 0, at = 990}; g:tick(); g.W.companionHurt("Dead", 9728, "other")
+check(g:logged("step=dead;host=down;"), "a host known to have no dog out is not unknown (no reload)")
 -- Gone without a Dead message while the host's dog lives (present): primed once after 2 s.
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.buddy = 0
 for t = 1000, 3000, 100 do g:pose(t - 50, 0x80 + 31); g:tick(t) end
@@ -190,7 +248,13 @@ ok, r = h.C.lever({"companion_lab", "kill_mirror"}); check(not ok and r == "gues
 ok, r = h.C.lever({"companion_lab", "dog_state"}); check(ok and r:find("^dog_state;role=host;ready=true;reason=ok;armed=0;life=10000;max=10000"), "dog_state reads the host's record")
 ok, r = h.C.lever({"companion_lab", "near_guard", "on"}); check(ok and r == "orig=companion_lab,near_guard,on", "other levers pass to the M2 levers")
 h = F(true, {play = true}); ok, r = h.C.lever({"companion_lab", "dog_life", "30"}); check(not ok and r == "lab_only", "lab only")
+ok, r = h.C.lever({"companion_lab", "dog_stun", "0"}); check(not ok and r == "lab_only", "dog_stun refused in play")
+ok, r = h.C.lever({"companion_lab", "recall"}); check(not ok and r == "lab_only" and h:count("UnsetDeadBuddyType") == 0, "recall refused in play")
 ok, r = h.C.lever({"companion_lab", "dog_state"}); check(ok, "dog_state also in play (read only)")
+g = F(false, {play = true}); g:pose(900, 0x80 + 31); g:tick()
+ok, r = g.C.lever({"companion_lab", "kill_mirror"}); check(not ok and r == "lab_only", "kill_mirror refused in play")
+ok, r = g.C.lever({"companion_lab", "guard", "off"}); check(not ok and r == "lab_only", "guard off refused in play")
+g:tick(1600); check(g:lastGuard()[4] == 1 and g:lastGuard()[6] == 0, "play: still armed, no lab op")
 g = F(false); ok, r = g.C.lever({"companion_lab", "dog_life", "30"}); check(not ok and r == "host_lab_only", "dog_life is the host's")
 g:pose(900, 0x80 + 31); g:tick(); ok, r = g.C.lever({"companion_lab", "kill_mirror"}); check(ok and r == "kill_mirror;queued=1", "guest kill_mirror")
 g:tick(1100); q = g:lastGuard(); check(q[4] == 1 and q[6] == 1 and q[7] == 0, "the next arm carries the lab kill (op 1, 0%) at once")
