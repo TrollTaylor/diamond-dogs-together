@@ -1,0 +1,196 @@
+# The play rehearsal of the user's vehicle decisions of 2026-10-29 (docs/vehicles-companions-design.md section 10 D11,
+# D12, D14; section 8.9) in mode=play over -WanSim bad, with no lab lever (play refuses them): VEHICLE_GONE and
+# VEHICLE_STATE at their play defaults (on in 30020, not named); the three new keys named (off unless named until
+# this rehearsal and the lab FRAME proof pass). Africa, africa-jeep seed (Masa Village, veh_lv_0000 = 25608).
+#   1. D14: the guest Fultons 25608 by hand (hold E at the lab boot spot, e44516d7): its own engine credits it
+#      (credit; via=own); the host's receiver Seize Instant credits it on the host's copy (credit; via=receiver).
+#   2. D14: the host Fultons veh_lv_0002 (25610) by hand from its goto_vehicle door spot: the guest's receiver credit.
+#      Census before and after (no mission end in play: the temporary resources commit at the mission end, proven
+#      in the lab, vehicle-decisions-lab.txt).
+#   3. D12: the guest destroys the next jeep with C4 on its copy (the game posts no Damage message: unattributed):
+#      break_seen -> REQ cause 2 -> the host's judge (ok=1; why=near) -> the host's copy wrecked (via=wreck) ->
+#      req_done. The host stands 22 m behind the guest, both cameras on the jeep: frames d12p-placed / d12p-blast-NN /
+#      d12p-after (the wreck on both screens).
+#   4. D11: the guest's real iDroid path to LOADOUT (Tab, 3, Enter, S S, Enter): inactive, refused, the toast; the
+#      host's LOADOUT active and its selection opens.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# NEVER: step=error, viewer_changed, faults; a second credit for one vehicle on one copy; via=wreck on the guest.
+labsetting world_vehicle_break=1
+labsetting world_vehicle_credit=1
+labsetting world_loadout_block=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug clear_enemies 100
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_gone; step=on; mission=30020; role=host; wreck=0' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30020; role=guest; wreck=0' 30
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=1; loadout=1; gone=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=1; loadout=1; gone=1' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+host run relief_census d14p_a
+guest run relief_census d14p_a
+# 1. D14: the guest's own Fulton of 25608 from its lab boot spot.
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+host run vehicle_state_status 25608
+both capture d14p-guest-before
+logmark both
+guest hold e 1500 nowait
+wait 700
+guest capture d14p-guest-hold
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst d14p-guest-lift 6 500
+waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=(FultonInfo|Fulton); cause=1; att=local' 15
+waitlog guest 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25608; res=[0-9]+; via=own; role=guest; mission=30020' 20
+waitlog guest 'event=vehicle_gone; step=lost; id=25608; cause=1; role=guest' 40
+waitlog host 'event=vehicle_rules; step=credit_seize; id=25608; role=host; mission=30020' 15
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=seize; src=req; ok=1' 10
+waitlog host 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25608; res=[0-9]+; via=receiver; role=host; mission=30020' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 15
+wait 1500
+both capture d14p-guest-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# 2. D14: the host's own Fulton of 25610 from its goto_vehicle door spot.
+host debug teleport -98.408 -0.750 75.200 106
+guest debug teleport -98.408 -0.750 73.667 106
+wait 4000
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host run vehicle_state_status 25610
+host expect vstate;id=25610;alive=1;.*name=veh_lv_0002
+guest run vehicle_state_status 25610
+both capture d14p-host-before
+logmark both
+host hold e 1500 nowait
+wait 700
+host capture d14p-host-hold
+host hold e 1500
+host hold e 1500
+host release
+host burst d14p-host-lift 6 500
+waitlog host 'event=vehicle_gone; step=watch; id=25610; m=(FultonInfo|Fulton); cause=1; att=' 15
+waitlog host 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25610; res=[0-9]+; via=own; role=host; mission=30020' 20
+waitlog host 'event=vehicle_gone; step=tx; id=25610; cause=1; actor=0;' 40
+waitlog guest 'event=vehicle_rules; step=credit_seize; id=25610; role=guest; mission=30020' 15
+waitlog guest 'event=vehicle_gone; step=applied; id=25610; via=seize; src=rx; ok=1' 10
+waitlog guest 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25610; res=[0-9]+; via=receiver; role=guest; mission=30020' 10
+wait 1500
+both capture d14p-host-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run relief_census d14p_b
+guest run relief_census d14p_b
+# 3. D12: the guest's C4 on the next jeep (three charges from its goto spot), the host 22 m behind it.
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+placebehind host guest 22 0
+wait 2500
+host run vehicle_state_status
+guest run vehicle_state_status
+guest debug slot support 2
+wait 2000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+wait 1000
+both capture d12p-placed
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press e
+guest release
+both burst d12p-blast 4 500
+waitlog guest 'event=vehicle_rules; step=break_seen; id=256[0-9][0-9]' 15
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=256[0-9][0-9]; cause=2; sent=1' 15
+waitlog host 'event=vehicle_rules; step=break_judge; id=256[0-9][0-9]; rid=[0-9]+; ok=1; why=near;' 15
+waitlog host 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=wreck; src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=256[0-9][0-9]; result=gone' 15
+wait 1500
+both capture d12p-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run vehicle_state_status
+guest run vehicle_state_status
+# 4. D11: the guest's real iDroid path to LOADOUT, then the host's.
+logmark both
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11p-guest-loadout
+guest press enter
+wait 500
+guest capture d11p-guest-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+wait 1200
+guest press tab
+wait 2500
+host press tab
+wait 2500
+host press 3
+wait 2500
+host press enter
+wait 2000
+host press s
+wait 800
+host press s
+wait 800
+host capture d11p-host-loadout
+host press enter
+wait 2500
+host capture d11p-host-loadout-open
+host press escape
+wait 1500
+host press tab
+wait 2500
+both capture d11p-closed
+host run relief_census d14p_c
+guest run relief_census d14p_c
+host run vehicle_gone_status
+guest run vehicle_gone_status
+state

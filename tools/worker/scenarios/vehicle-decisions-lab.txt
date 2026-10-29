@@ -1,0 +1,192 @@
+# The user's vehicle decisions of 2026-10-29 in the lab (docs/vehicles-companions-design.md section 10 D11, D12, D14;
+# results in section 8.9; lua/coop/world_vehicle_rules.lua). Africa, africa-jeep seed (Masa Village, veh_lv_0000 =
+# 25608 beside the guest's lab boot spot), every vehicle key named (the three new keys are off unless named):
+#   A  census: each copy's Mother Base vehicle resources and GMP before anything (relief_census d14a); the lab lever
+#      relief_seize stock installs world_relief.lua's logging of TppTerminal.OnFulton / OnFultonVehicle /
+#      AddTempResource (it changes nothing: the stock seize runs).
+#   B  D14, the guest Fultons 25608 by hand (hold E at its boot spot, the stock prompt): the guest's own engine credits
+#      it (credit; via=own); its REQ_VEHICLE_GONE reaches the host, whose receiver removes its copy with Seize
+#      {"Instant"} (credit_seize; applied; via=seize; src=req) and its own engine credits it too (credit; via=receiver).
+#   C  D14, the host Fultons veh_lv_0002 (25610) by hand from its goto_vehicle door spot: the guest's receiver Seize
+#      credits it on the guest's copy (via=receiver), the host's own engine on the host's (via=own).
+#   D  census d14b: before the commit, the counts are unchanged (temporary resources).
+#   E  D12, the guest breaks the next jeep on its copy only (lab lever vehicle_life nearest 0: SetBodyLife 0, the
+#      engine's own destruction, as a C4 would; no attribution): break_seen -> REQ cause 2 -> the host's judge
+#      (break_judge; ok=1; why=near) -> the host's copy wrecked (applied; via=wreck; src=req) -> req_done. Frames
+#      d12-before / d12-wreck-NN / d12-after on both screens.
+#   G  the mission end (lab goto to 30010): the temporary resources commit; census d14c on both: each copy +2 of its
+#      light-vehicle resource (its own Fulton and the receiver credit of the other's).
+#   F  D11 in 30010: the guest's real iDroid path to LOADOUT (Tab, 3 MISSIONS, Enter SUPPLY DROP, S S LOADOUT, Enter):
+#      LOADOUT inactive, step=refused and the toast; the host's LOADOUT active and its selection opens.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# NEVER: step=error, viewer_changed, faults; a second credit for one vehicle on one copy; a credit for index 0.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting world_vehicle_break=1
+labsetting world_vehicle_credit=1
+labsetting world_loadout_block=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=1; loadout=1; gone=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=1; loadout=1; gone=1' 30
+waitlog host 'event=vehicle_rules; step=credit_hook; ok=1' 10
+waitlog guest 'event=vehicle_rules; step=credit_hook; ok=1' 10
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+host debug clear_enemies 100
+wait 1500
+# A. Census before; world_relief.lua's credit logging (lab lever, the stock seize unchanged).
+host run relief_seize stock
+guest run relief_seize stock
+host run relief_census d14a
+guest run relief_census d14a
+# B. D14: the guest's own Fulton of 25608 from its lab boot spot (the stock prompt "hold E: Fulton").
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+host run vehicle_state_status 25608
+both capture d14-guest-before
+logmark both
+guest hold e 1500 nowait
+wait 700
+guest capture d14-guest-hold
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst d14-guest-lift 6 500
+waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=(FultonInfo|Fulton); cause=1; att=local' 15
+waitlog guest 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25608; res=[0-9]+; via=own; role=guest; mission=30020' 20
+waitlog guest 'event=vehicle_gone; step=lost; id=25608; cause=1; role=guest' 40
+waitlog host 'event=vehicle_rules; step=credit_seize; id=25608; role=host; mission=30020' 15
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=seize; src=req; ok=1' 10
+waitlog host 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25608; res=[0-9]+; via=receiver; role=host; mission=30020' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 10
+wait 1500
+both capture d14-guest-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# C. D14: the host's own Fulton of 25610 from its goto_vehicle door spot, the guest close behind.
+host debug teleport -98.408 -0.750 75.200 106
+guest debug teleport -98.408 -0.750 73.667 106
+wait 4000
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host run vehicle_state_status 25610
+host expect vstate;id=25610;alive=1;.*name=veh_lv_0002
+guest run vehicle_state_status 25610
+both capture d14-host-before
+logmark both
+host hold e 1500 nowait
+wait 700
+host capture d14-host-hold
+host hold e 1500
+host hold e 1500
+host release
+host burst d14-host-lift 6 500
+waitlog host 'event=vehicle_gone; step=watch; id=25610; m=(FultonInfo|Fulton); cause=1; att=' 15
+waitlog host 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25610; res=[0-9]+; via=own; role=host; mission=30020' 20
+waitlog host 'event=vehicle_gone; step=tx; id=25610; cause=1; actor=0;' 40
+waitlog guest 'event=vehicle_rules; step=credit_seize; id=25610; role=guest; mission=30020' 15
+waitlog guest 'event=vehicle_gone; step=applied; id=25610; via=seize; src=rx; ok=1' 10
+waitlog guest 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25610; res=[0-9]+; via=receiver; role=guest; mission=30020' 10
+wait 1500
+both capture d14-host-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# D. Census before the commit (temporary resources only).
+host run relief_census d14b
+guest run relief_census d14b
+# E. D12: the guest breaks the next jeep on its copy only (no attribution); the host judges and wrecks its copy.
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+placebehind host guest 12 0
+wait 3000
+host run vehicle_state_status
+guest run vehicle_state_status
+both capture d12-before
+logmark both
+guest run vehicle_life nearest 0
+guest expect vehicle_life;id=256[0-9][0-9];life=0;
+both burst d12-wreck 4 600
+waitlog guest 'event=vehicle_rules; step=break_seen; id=256[0-9][0-9]' 10
+waitlog guest 'event=vehicle_gone; step=watch; id=256[0-9][0-9]; m=VehicleBroken; cause=2; att=none' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=256[0-9][0-9]; cause=2; sent=1' 10
+waitlog host 'event=vehicle_rules; step=break_judge; id=256[0-9][0-9]; rid=[0-9]+; ok=1; why=near;' 10
+waitlog host 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=wreck; src=req; ok=1' 10
+waitlog host 'event=vehicle_gone; step=tx; id=256[0-9][0-9]; cause=2; actor=1;' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=256[0-9][0-9]; result=gone' 10
+wait 1500
+both capture d12-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run vehicle_state_status
+guest run vehicle_state_status
+# G. The mission end commits the temporary resources: census on both after the travel.
+logmark both
+host worldtrigger goto=30010 goto_lz=1
+waitmission host 30010 300
+waitmission guest 30010 180
+waitgameplay host 150
+waitgameplay guest 150
+host debug time 43200
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 60
+host run relief_census d14c
+guest run relief_census d14c
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# F. D11: the guest's real iDroid path to LOADOUT, then the host's.
+logmark both
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11-guest-loadout
+guest press enter
+wait 500
+guest capture d11-guest-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+wait 1200
+guest press tab
+wait 2500
+host press tab
+wait 2500
+host press 3
+wait 2500
+host press enter
+wait 2000
+host press s
+wait 800
+host press s
+wait 800
+host capture d11-host-loadout
+host press enter
+wait 2500
+host capture d11-host-loadout-open
+host press escape
+wait 1500
+host press tab
+wait 2500
+both capture d11-closed
+host run vehicle_gone_status
+guest run vehicle_gone_status
+state
