@@ -1165,7 +1165,32 @@ try {
     Assert-True (Test-Path -LiteralPath $sourceZipPath -PathType Leaf) 'the source zip DDT-source-<version>.zip is written next to the player zip'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $runs[0].FullName -File -Filter '*.zip' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') "DDT-source-$packageVersion.zip,DiamondDogsTogether-$packageVersion.zip" 'two release assets: the player zip and the source zip'
     $sourceAssetName = [IO.Path]::GetFileName($sourceZipPath)
-    Assert-True ($sourceAssetName -cnotmatch '^(DiamondDogsTogether-|mgs-coop-friend-)' -and $sourceAssetName.ToLowerInvariant().Contains('source')) 'the update check can never take the source zip for the update (prefix and "source" rule, core_update.cpp)'
+    Assert-True ($sourceAssetName -cnotmatch '^(DiamondDogsTogether-|mgs-coop-friend-)') 'no updater takes the source zip for the update (the 0.14.3 prefix rule; from 0.14.4 the exact names, core_update.cpp)'
+    # tools/check-release.ps1 (read only): a GitHub release is ready only with both zips, as built.
+    # A saved `gh release view --json tagName,isDraft,assets` answer stands in for GitHub here.
+    $checkRelease = Join-Path $projectRoot 'tools/check-release.ps1'
+    $releaseFx = Join-Path $fixture 'release-check'
+    $null = New-Item -ItemType Directory -Path $releaseFx -Force
+    $playerAsset = [ordered]@{ name = "DiamondDogsTogether-$packageVersion.zip"; size = (Get-Item -LiteralPath $zipPath).Length; digest = 'sha256:' + (Get-Sha256 $zipPath).ToLowerInvariant() }
+    $sourceAsset = [ordered]@{ name = $sourceAssetName; size = (Get-Item -LiteralPath $sourceZipPath).Length; digest = 'sha256:' + (Get-Sha256 $sourceZipPath).ToLowerInvariant() }
+    function Write-ReleaseAnswer([string]$Name, [string]$Tag, [object[]]$Assets) {
+        $path = Join-Path $releaseFx "$Name.json"
+        [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject ([ordered]@{ tagName = $Tag; isDraft = $true; assets = @($Assets) }) -Depth 5), [Text.UTF8Encoding]::new($false))
+        return $path
+    }
+    $tagName = "v$packageVersion"
+    $okAnswer = Write-ReleaseAnswer 'both' $tagName @($sourceAsset, $playerAsset)
+    $okText = (& $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson $okAnswer) -join ' '
+    Assert-True ($okText.Contains("DiamondDogsTogether-$packageVersion.zip") -and $okText.Contains($sourceAssetName) -and $okText.Contains('matching the local files')) 'check-release: both zips as built, the release is ready'
+    Assert-Throws { & $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson (Write-ReleaseAnswer 'player-only' $tagName @($playerAsset)) } "$sourceAssetName is not attached" 'check-release: the player zip alone is refused (no source offered)'
+    Assert-Throws { & $checkRelease -Version $packageVersion -ReleaseJson (Write-ReleaseAnswer 'source-only' $tagName @($sourceAsset)) } "DiamondDogsTogether-$packageVersion.zip is not attached" 'check-release: the source zip alone is refused'
+    $short = [ordered]@{ name = $playerAsset.name; size = $playerAsset.size - 1; digest = $playerAsset.digest }
+    Assert-Throws { & $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson (Write-ReleaseAnswer 'short' $tagName @($short, $sourceAsset)) } 'bytes' 'check-release: an upload of another size is refused'
+    $otherHash = [ordered]@{ name = $sourceAsset.name; size = $sourceAsset.size; digest = 'sha256:' + ('0' * 64) }
+    Assert-Throws { & $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson (Write-ReleaseAnswer 'hash' $tagName @($playerAsset, $otherHash)) } 'SHA-256' 'check-release: an upload with another SHA-256 is refused'
+    $decoy = [ordered]@{ name = "DiamondDogsTogether-$packageVersion-debug.zip"; size = 1 }
+    Assert-Throws { & $checkRelease -Version $packageVersion -ReleaseJson (Write-ReleaseAnswer 'decoy' $tagName @($playerAsset, $sourceAsset, $decoy)) } 'looks like a player zip too' 'check-release: a second DiamondDogsTogether-*.zip is refused (the 0.14.3 updater might take it)'
+    Assert-Throws { & $checkRelease -Version $packageVersion -ReleaseJson (Write-ReleaseAnswer 'tag' 'v0.0.1' @($playerAsset, $sourceAsset)) } "not $tagName" 'check-release: another tag is refused'
     Assert-Equal @(Get-ChildItem -LiteralPath $pkg -File -Recurse -Force | Where-Object { $_.Name -like '*source*' }).Count 0 'the player package holds no source archive'
     Assert-Equal (Get-Sha256 (Join-Path $pkg 'DiamondDogsTogether.exe')) (Get-Sha256 $fakeLauncher) 'the receipt launcher is packaged'
     Assert-Equal (Get-Sha256 (Join-Path $pkg 'dinput8.dll')) (Get-Sha256 $fakeLoader) 'the receipt loader is packaged'

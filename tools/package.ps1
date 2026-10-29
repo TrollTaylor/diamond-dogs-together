@@ -309,7 +309,7 @@ if($Friend) {
     Write-Output ("SHA-256: " + (Get-Sha256Hex $zipPath) + "; loader " + $buildInfo.loader_sha256 + "; launcher " + $buildInfo.launcher_sha256)
     Write-Output "Prepared source: $sourceZip"
     Write-Output ("Source SHA-256: " + (Get-Sha256Hex $sourceZip) + "; files " + $sourceRows.Count)
-    Write-Output "Upload BOTH zips to the GitHub release v$version."
+    Write-Output "Upload BOTH zips to the GitHub release v$version, then check it before publishing: pwsh -NoProfile -File tools/check-release.ps1 -Version $version -PackageDir `"$(Split-Path -Parent $zipPath)`""
     Write-Output 'No game installation, game launch or tests were performed.'
     return
 }
