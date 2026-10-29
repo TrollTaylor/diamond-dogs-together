@@ -22,6 +22,10 @@ if(WIN32 AND MSVC AND TARGET mgs_imgui)
     native/launcher/resources/ddt_launcher.rc
     native/launcher/resources/ddt_launcher.manifest)
   set_target_properties(ddt_launcher PROPERTIES OUTPUT_NAME DiamondDogsTogether)
+  # rc.exe reads the icon and the emblem itself; the dependency scan only sees
+  # #include files, so without this a regenerated icon would not rebuild the exe.
+  set_source_files_properties(native/launcher/resources/ddt_launcher.rc PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/native/launcher/resources/ddt_launcher.ico;${CMAKE_CURRENT_SOURCE_DIR}/native/launcher/resources/ddt_logo.png")
   target_include_directories(ddt_launcher PRIVATE native/launcher/resources third_party/imgui)
   target_compile_options(ddt_launcher PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /WX /utf-8>)
   target_compile_definitions(ddt_launcher PRIVATE UNICODE _UNICODE)
@@ -32,6 +36,25 @@ if(WIN32 AND MSVC AND TARGET mgs_imgui)
   target_link_libraries(launcher_ui_tests PRIVATE ddt_launcher_logic)
   target_compile_options(launcher_ui_tests PRIVATE /W4 /WX /utf-8)
   add_test(NAME launcher_ui_tests COMMAND launcher_ui_tests)
+  # The app icon is the logo at every size, and the built exe embeds exactly that icon.
+  add_executable(launcher_icon_tests tests/launcher_icon_tests.cpp)
+  target_include_directories(launcher_icon_tests PRIVATE native/launcher/resources)
+  target_compile_options(launcher_icon_tests PRIVATE /W4 /WX /utf-8)
+  target_compile_definitions(launcher_icon_tests PRIVATE UNICODE _UNICODE)
+  target_link_libraries(launcher_icon_tests PRIVATE windowscodecs ole32 user32 gdi32)
+  add_dependencies(launcher_icon_tests ddt_launcher)
+  add_test(NAME launcher_icon_tests COMMAND launcher_icon_tests
+           "${CMAKE_CURRENT_SOURCE_DIR}/native/launcher/resources/ddt_launcher.ico"
+           "${CMAKE_CURRENT_SOURCE_DIR}/native/launcher/resources/ddt_logo.png"
+           "${CMAKE_CURRENT_SOURCE_DIR}/docs/readme/logo.png" $<TARGET_FILE:ddt_launcher>)
+  # The committed icon and emblem are exactly what the generator makes from the logo
+  # (pixels, not bytes: PNG bytes can differ between zlib builds). Needs Python 3.8
+  # or later (the generator uses itertools.accumulate(initial=)).
+  find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME launcher_assets_current
+             COMMAND Python3::Interpreter -I "${CMAKE_CURRENT_SOURCE_DIR}/tools/launcher/make_launcher_assets.py" --check)
+  endif()
   # The exe itself: the built-in self-test, and every page rendered once
   # (hidden window, WARP fallback without a GPU) into the build folder.
   add_test(NAME ddt_launcher_selftest COMMAND ddt_launcher --selftest)

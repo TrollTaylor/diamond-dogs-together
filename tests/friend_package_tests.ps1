@@ -1223,7 +1223,9 @@ try {
                 'native/launcher/runtime_dat.cpp', 'native/launcher/core/core_model.cpp', 'native/launcher/assets/mgs_coop_four_player_controller.fpkd.bin',
                 'native/launcher/assets/mgs_coop_two_player_scarf_controller.fpkd.bin', 'native/launcher/resources/ddt_launcher.rc', 'native/launcher/resources/ddt_launcher.ico',
                 'lua/coop/character.lua', 'cmake/launcher_gui.cmake', 'third_party/imgui/imgui.cpp', 'third_party/dynamite/LICENSE', 'tools/package.ps1', 'tools/dev/Play-LocalCoop.ps1',
-                'tests/fixtures/partner-lab/e0-host.log', 'tools/archive_probe/main.go', 'tools/archive_probe/go.mod', 'tools/archive_probe/go.sum') + $incSources) {
+                'tests/fixtures/partner-lab/e0-host.log', 'tools/archive_probe/main.go', 'tools/archive_probe/go.mod', 'tools/archive_probe/go.sum',
+                # The icon's source image: tools/launcher/make_launcher_assets.py and the launcher icon CTests read it.
+                'docs/readme/logo.png') + $incSources) {
             Assert-True ($sourceNames -ccontains $relative) "source.zip holds $relative"
             $row = @($sourceRows | Where-Object { $_.path -ceq $relative })
             Assert-True ($row.Count -eq 1 -and $row[0].sha256 -ceq (Get-Sha256 (Join-Path $projectRoot $relative))) "source-files.json lists $relative with its hash"
@@ -1246,11 +1248,11 @@ try {
         $dependency = Join-Path $fixture 'junction-package-dependency'
         $junction = Join-Path $linkedRoot 'third_party\minhook'
         foreach ($path in @($linkedRoot, $dependency, $junction)) { Assert-InFixture $path }
-        foreach ($dir in @('native','lua','tests','tools\worker','third_party','cmake','docs')) {
+        foreach ($dir in @('native','lua','tests','tools\worker','third_party','cmake','docs\readme')) {
             $null = New-Item -ItemType Directory -Path (Join-Path $linkedRoot $dir) -Force
         }
         $null = New-Item -ItemType Directory -Path (Join-Path $dependency 'src'), (Join-Path $dependency 'include') -Force
-        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','tools\package.ps1','tools\package-readme-player.txt','tools\worker\WorkerSource.psm1')) {
+        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','docs\readme\logo.png','tools\package.ps1','tools\package-readme-player.txt','tools\worker\WorkerSource.psm1')) {
             [IO.File]::Copy((Join-Path $projectRoot $file), (Join-Path $linkedRoot $file), $false)
         }
         [IO.File]::WriteAllText((Join-Path $linkedRoot 'docs\fixture.md'), '# Owned source-only package fixture', $utf8)
