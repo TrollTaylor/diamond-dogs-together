@@ -207,13 +207,15 @@ function C.lever(a, id, A, mission)
  end
  local s, n = G.s, tonumber(a[3])
  if a[2] == "dog_state" and #a == 2 then
-  -- The guest reads by re-arming (a guest's arm 0 is a disarm); the host reads its own record.
+  -- An armed guest reads by re-arming (a guest's arm 0 is a disarm); a disarmed guest (guard off) and the host read
+  -- with arm 0, which answers the live record (review 2026-10-29: the last arm's reply was stale).
   local r
-  if W.host then r = G.call(0, 0, 0, 0) elseif s.armed then r = G.call(s.armMode or 1, s.armByte or 0, 0, 0) else r = s.reply end
+  if not W.host and s.armed then r = G.call(s.armMode or 1, s.armByte or 0, 0, 0) else r = G.call(0, 0, 0, 0) end
   if not r then return false, "dog_state;receipt=none" end
-  return true, fmt("dog_state;role=%s;ready=%s;reason=%s;armed=%s;life=%s;max=%s;stun=%s;state=%s;byte=%s;drops=%s;hits=%s;applied=%s;kills=%s;restores=%d",
+  return true, fmt("dog_state;role=%s;ready=%s;reason=%s;armed=%s;life=%s;max=%s;stun=%s;state=%s;byte=%s;drops=%s;hits=%s;applied=%s;kills=%s;restores=%d;installed=%s;fresh=%s",
    W.host and "host" or "guest", tostring(r.ready), tostring(r.reason), tostring(s.armed and 1 or r.armed), tostring(r.life), tostring(r.max),
-   tostring(r.stun), tostring(r.state), tostring(r.byte), tostring(r.drops), tostring(r.hits), tostring(r.applied), tostring(r.kills), s.restores or 0)
+   tostring(r.stun), tostring(r.state), tostring(r.byte), tostring(r.drops), tostring(r.hits), tostring(r.applied), tostring(r.kills), s.restores or 0,
+   tostring(r.installed), tostring(r.fresh))
  end
  if W.mode ~= 1 then return false, "lab_only" end
  if (a[2] == "dog_life" or a[2] == "dog_stun") and #a == 3 and n and n >= 0 and n <= 100 and n == floor(n) then

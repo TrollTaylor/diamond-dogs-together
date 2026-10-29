@@ -1,0 +1,56 @@
+# D7 review fix (2026-10-29; docs/vehicles-companions-design.md 8.10): the play default. companion_host_owned is off
+# unless named, and since the review the dog guard's two vtable slots are installed only under that key, so a default
+# play session touches neither slot on either PC (before the fix both PCs patched them whenever the partner gate passed:
+# 1713b0a1, f7033e2e). The host's save deploys D-Dog (afgh-ledge), the guest's own save D-Horse (afgh-horse); with the
+# key off each copy keeps its own buddy (stock). The host's camp is alerted near the host's dog (stock damage path).
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-guard-play-off.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+#        -Mode play -WanSim bad
+# Expected: both copies dog_guard=off;reason=key_off;slots=0 (and no dog_guard=installed); dog_state installed=0 on both;
+# the host's dog out (kdog); frames po-dog, po-fight-* on both.
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 240
+waitgameplay guest 240
+waitlog host 'dog_guard=off;reason=key_off;slots=0' 5
+waitlog guest 'dog_guard=off;reason=key_off;slots=0' 5
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug teleport 796.0 341.5 1633.5 95
+wait 3000
+placebehind guest host 8 -4
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 3000
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 5000
+host run buddy_status
+host expect kdog
+host run companion_lab dog_state
+host expect ^dog_state;role=host;ready=false;reason=admission;.*;installed=0;
+guest run companion_lab dog_state
+guest expect ^dog_state;role=guest;ready=false;reason=admission;.*;installed=0;
+both capture po-dog
+# --- a guard alert near the host's dog: the stock damage and life paths on both PCs -----------------------------------
+host debug teleport 796.0 341.5 1633.5 275
+wait 3000
+placebehind guest host 3 2
+wait 3000
+host run cp_phase nearest alert
+host expect ^submitted_phase;
+wait 15000
+both capture po-fight-1
+wait 20000
+both capture po-fight-2
+host run buddy_status
+host run companion_lab dog_state
+host expect ;installed=0;
+host run cp_phase nearest sneak
+host run companion_status
+guest run companion_status
+state
