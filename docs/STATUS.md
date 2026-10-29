@@ -1,7 +1,59 @@
+## October 28, 2026: Host fixes proven in the hidden worker (items 2, 3, 4, 6), one more fix
+
+Hidden private-desktop worker only (no visible fallback), research build, native gun stage, copied lab saves, low
+graphics, `MGS_GAME_LUA_DIR` unset, under the verify lock. Every run below closed with the baseline restored and the
+real saves unchanged; run folders are in `C:\Users\taylo\mgs-coop-run-archive\africa\<id>`. Runs at `e7fb9ac` used
+receipt `20261029-002820-43e3a1fd...`, runs at `3fd064a` receipt `20261029-005424-54e9c13c...`. The four scenarios
+carry the run lines in their headers.
+
+- **Item 4 (box as the downed posture), `downed-boxed-friendly-fire.txt`: proven for the session's order.** The
+  guest's rifle downs the standing host, then the host boxes (the 2026-10-23 order: down=1 at h12188, cbox 0.5 s
+  later). `ce66a0bf`, `44e5a233` (`e7fb9ac`) and `a5f30e31` (`3fd064a`): `controls_pending_prone` for about 3.5 s,
+  then `partner_status=local; st=0x4` and `downed_control=observed;command=1;reason=downed;posture=box;generation=4`;
+  `downed_status` down=1 cause=1 lock=1 at once and 8 s later (past the 6 s deadline that latched the session); no
+  `controls_timeout*` line and no `step=refused` in any run. The guest revived the boxed host (`44e5a233`,
+  `a5f30e31`), and in `a5f30e31` a third down re-armed under generation 5 with `posture=box` and held past 8 s.
+  - The first version's revive held E for about 2.6 s, under the host's 3 s grant (`world_downed` HOLD); the scenario
+    now renews the hold five times (the `coop-carry-wounded.txt` timing).
+  - **Not staged: a host boxed before the shots.** The box stops most rifle rounds: a prone guest 6 m away landed 5
+    hits (`44e5a233`, 3090/7800 HP) and a crouched guest 4 m away, reticle on the box, about 3 hits from two
+    magazines (`a5f30e31`, 5274/7800). The boxed-from-the-first-lock case stays unit-test-only
+    (`downed_player_tests`, `DownedPosture`).
+- **Item 3 (vars_change, benign item changes, mission strip), `partner-box-bump-vars.txt` (play rehearsal): proven,
+  plus one defect fixed.** A box dash (w+shift; the session's body 1 ran at 3.5 m/s in its box) reproduced the
+  collision (`downed_defense ... attack=85` both ways). On the guest's copy its own box broke inside body 1's job:
+  `partner_input=vars_change; verdict=benign; ...; fields=ammoStockCounts[15]:8>7` (`5ceb4985`, `6041f5e5`,
+  `0c8f1ab0`), and no `ammo_leak` or `fire_reload_off` on either copy. In `0c8f1ab0` the guest's copy then showed
+  the host's shots (body 1's magazine 3, 2, 1, 0) and its reload (8).
+  - **Fixed, `3fd064a`:** in `5ceb4985` the support lane, which checks digests of the same block in the same window,
+    still logged `partner_support=stock_check; reason=stock_leak` and `partner_support=refused;
+    reason=stock_leak_mission_latched` (as the session did at h10254): no partner throws for the rest of the mission
+    after a box bump. `partner_ammo_leak::SupportJobLeak` and `AfterJob`'s verdict now keep an item-only job from
+    latching the lane; an ammo write still latches it (`partner_defer_tests`, failing first; `partner_ammo_leak_tests`).
+    `6041f5e5` and `0c8f1ab0`: the same benign bump, no support stock line.
+  - Not seen in the worker: a weapon or ammo field moved by a bump (no `verdict=leak`), so the mission-scoped strip
+    (`scope=mission`, cleared at MissionStart) is unit-test-only (`partner_driver_tests`).
+- **Item 2 (late manifest), `partner-equip-late-manifest.txt` (play rehearsal): the staged half proven, `c07b8136`.**
+  The host continued while the guest was at its boot screens: `equip_preload=refused; reason=no_manifest; ...;
+  source=none`; the guest's manifest came from its title, then `equip_preload=late_manifest; mission=30010;
+  preload=refused; source=none; preloaded=0; remote_base=0,46,9; covered=0/2; guns=next_load; link_epoch=3`. The
+  scenario gained `title guest 240` (titlemenu stops at the title). The writer still bound slot 1 (46) on the host,
+  probably because the host's own loadout carries base 46; `guns=next_load` counts preloaded ids only. **The
+  predicted preload (`source=predicted`) stays unit-test-only:** it needs a guest that exits after a handoff and
+  relinks to the same host process, which the worker cannot stage.
+- **Item 6 (downed owner from body 0), new `downed-partner-unrealized.txt`: proven, `20d41b16`.** The host rode
+  D-Horse; the guest's copy hid and unrealized body 1 (`partner_mount=unrealize; ...; op=clear_allactive`, probe
+  `ids=0000,ffff; parts=3,0`) for 12.9 s. Every guest `downed_status` during the ride read `ready=1;armed=1;down=0;
+  ...;reason=alive`, and the guest logged no `downed_control` line (the session logged `reason=player` 15x in the same
+  window). The old build was not re-run; the before side is the 2026-10-23 guest log.
+- **Still unproven in a game:** the box revive and posture over a network with latency (the runs are loopback); a
+  boxed-first down; a bump that moves a weapon or ammo field; the predicted preload after a real relaunch.
+- CTest at `3fd064a`: fast 290/290, full 305/305.
+
 ## October 28, 2026: Host fixes (two-PC test 2026-10-23 items 2, 3, 4, 6 of the host-log pass)
 
-Branch `wp/host-fixes` from `dev/oct7-continue` `916708f`. Code and fixtures only: **no game run**; the three new
-hidden-worker scenarios are written and validated by `worker_session_tests` but not run. One commit per item.
+Branch `wp/host-fixes` from `dev/oct7-continue` `916708f`. Code and fixtures only at `e7fb9ac` (no game run then; the
+hidden-worker proof is the section above). One commit per item.
 
 - **Item 6, `08f73d6`: the local player's downed protection while body 1 is unrealized.** `Live()` required both
   bodies realized and loaded, so while `partner_mount` / the ride hides had unrealized body 1 (the host's horse ride

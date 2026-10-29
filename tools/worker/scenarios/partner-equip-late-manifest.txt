@@ -19,7 +19,7 @@
 # Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
 # unset, no build running in any worktree, under the shared verify lock, one worker session.
 # Run (play rehearsal, the gun stage; the relaunch scenario's counters):
-#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/partner-equip-late-manifest.txt
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -GraphicsQuality low -ScenarioPath tools/worker/scenarios/partner-equip-late-manifest.txt
 # Expected (host):
 #   equip_preload=refused; reason=no_manifest; ...; manifest=0; source=none at its 30010 allocation
 #   then, once the guest is at its title: equip_preload=late_manifest; mission=30010; preload=refused; source=none;
@@ -29,6 +29,14 @@
 # If the guest's boot screens already sent a manifest (link up and a loadout readable before its title), the host's
 # preload is authorized with source=remote and no late_manifest line follows: report it (the staging did not hold).
 # Captures: host-alone, guest-arrived.
+# Result c07b8136 (wp/host-fixes e7fb9ac, research build, play rehearsal, gun stage, lab seed; closed, baseline
+# restored, real saves unchanged; "title guest" added: titlemenu stops at the guest's title): the host's 30010
+# allocation logged equip_preload=refused; reason=no_manifest; ...; manifest=0; source=none; the guest's manifest came
+# from its title (partner_equip=manifest; ...; sender_epoch=1; link_epoch=3), then equip_preload=late_manifest;
+# mission=30010; preload=refused; source=none; preloaded=0; remote_base=0,46,9; covered=0/2; guns=next_load;
+# link_epoch=3. The guest's own allocation preloaded the host's bases (source=remote). The writer still bound the
+# guest's slot 1 (46) on the host, probably because the host's own loadout carries base 46 (resident without a preload);
+# slot 2 (9) refused stock_optional_dict. guns=next_load counts preloaded ids only.
 labsetting partner_act_log=1
 labsetting host link_session_skew=2
 titlemenu host 240
@@ -38,6 +46,7 @@ waitlog host 'equip_preload=(refused|authorized); .*source=' 60
 host capture host-alone
 titlemenu guest 240
 waitlog host 'equip_preload=late_manifest; .*guns=(next_load|this_load);' 240
+title guest 240
 waitgameplay guest 240
 waitlog guest 'equip_preload=(refused|authorized); .*source=' 60
 both debug godmode 1

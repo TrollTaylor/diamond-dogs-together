@@ -1,0 +1,92 @@
+# Two-PC test 2026-10-23 item 6 (docs/two-pc-test-2026-10-23.md, "Host fixes" in docs/STATUS.md): while the host rode
+# a horse, the guest's copy hid and unrealized body 1 (partner_mount=unrealize; op=clear_allactive, g16621), and every
+# downed poll of the guest returned downed_control=refused; ...; reason=player (15x, g16628..16758): Live() required both
+# bodies realized, so lethal damage in that window would have been a plain game over. wp/host-fixes (08f73d6) judges
+# the live local owner from body 0 (detail::LiveBodies): an unrealized body 1 is absent, a realized one must be id 1.
+# This scenario stages the window: the host rides D-Horse (partner-mount.txt Part 2) while the guest's copy hides and
+# unrealizes body 1, and reads the guest's downed owner during the ride.
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
+# unset, no build running in any worktree, under the shared verify lock, one worker session.
+# Run (lab saves deploy D-Dog; horse_spawn switches the host's buddy with the stock CallBuddy):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/downed-partner-unrealized.txt
+# Before the fix (dev/oct7-continue 916708f): from partner_mount=unrealize until partner_lua=event=allactive_set the
+#   guest logs downed_control=refused;command=0;reason=player (1/s) and downed_status ends reason=player.
+# Expected (guest):
+#   partner_mount=hide; mount=horse; act=121; ... and partner_mount=unrealize; mount=horse; ...; op=clear_allactive
+#   downed_status during the ride: ready=1; armed=1; down=0 and a reason other than player (the owner stays live)
+#   NO downed_control=refused;command=0;reason=player between the unrealize and partner_mount=end
+#   partner_mount=end; mount=horse after the dismount, then partner_realized=1
+# Captures: horse-before, horse-riding, horse-ride (no partner body on the guest), horse-off.
+# Result 20d41b16 (wp/host-fixes e7fb9ac, research build, gun stage, lab seed; closed, baseline restored, real saves
+# unchanged): the guest logged partner_mount=hide; mount=horse; act=121 and partner_mount=unrealize; ...;
+# op=clear_allactive, its probe read ids=0000,ffff; parts=3,0 (body 1 unrealized) for 12.9 s until partner_mount=end
+# and partner_realized=1. Every downed_status during the ride read ready=1;armed=1;down=0;...;reason=alive, and the
+# guest logged no downed_control line at all (the session logged reason=player 15x in the same window). The old build
+# was not re-run; the before side is the 2026-10-23 guest log (g16628..16758).
+labsetting host partner_native_mount=off
+labsetting guest partner_native_mount=hide
+labsetting partner_act_log=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug clear_enemies 100
+resetpose host
+stance host stand
+placebehind guest host 7 2
+wait 3000
+guest run downed_status
+guest expect ^downed;ready=1;armed=1;down=0;.*reason=(?!player)
+# --- The host rides D-Horse; the guest's copy hides and unrealizes body 1. ----------------------------------------
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656
+host run goto_horse
+wait 2000
+host debug clear_enemies 100
+placebehind guest host 4 8
+wait 2500
+guest mouse -250 0
+wait 800
+guest capture horse-before
+host press e 150
+wait 2000
+host run horse_status
+host require localMounted=1
+waitlog guest 'partner_mount=unrealize; mount=horse;' 15
+wait 1500
+guest run downed_status
+guest expect ^downed;ready=1;armed=1;down=0;.*reason=(?!player)
+guest capture horse-riding
+host hold w 1500 nowait
+guest burst horse-ride 4 300
+host release
+wait 1500
+guest run downed_status
+guest expect ^downed;ready=1;armed=1;down=0;.*reason=(?!player)
+host hold w 1500 nowait
+wait 1600
+host release
+wait 1500
+guest run downed_status
+guest expect ^downed;ready=1;armed=1;down=0;.*reason=(?!player)
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+waitlog guest 'partner_mount=end; mount=horse;' 15
+wait 2000
+guest capture horse-off
+guest run downed_status
+guest expect ^downed;ready=1;armed=1;down=0;.*reason=(?!player)
+state

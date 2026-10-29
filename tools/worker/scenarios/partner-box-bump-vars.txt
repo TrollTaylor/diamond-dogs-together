@@ -9,7 +9,7 @@
 # Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
 # unset, no build running in any worktree, under the shared verify lock, one worker session.
 # Run (play rehearsal, the gun stage: the strip is play-only; the lab save carries box 468 at item sub 1):
-#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/partner-box-bump-vars.txt
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -GraphicsQuality low -ScenarioPath tools/worker/scenarios/partner-box-bump-vars.txt
 # Expected (host and guest):
 #   both boxed: partner_status=local; st=0x4 and the peer's partner_cbox=entered; act=77|78
 #   after the bumps, any partner_input=vars_change line names its fields; verdict=benign only with item fields
@@ -17,10 +17,26 @@
 #     partner_weapon=fire_reload_off; a verdict=leak line (any weapon/ammo field) is followed by
 #     partner_weapon=fire_reload_off; reason=ammo_leak; ...; scope=mission (report the fields: that is a real leak)
 #   NEVER scope=process
-#   the partner's shots still show after the bump (partner_native_gun ...; fire=live on the viewer while the peer fires)
+#   after a benign vars_change NO partner_support=stock_check; ...; reason=stock_leak and NO partner_support=refused;
+#     ...; reason=stock_leak_mission_latched (3fd064a: the support lane checks the same block in the same window)
+#   the partner's shots still show after the bump on the copy that saw the benign change: body 1's partner_native_gun
+#     magazine falls while the host fires
 # No collision is guaranteed: a run without a downed_defense=sample;...;attack=85 line did not reproduce the bump
 # (report it; the fixture tests partner_ammo_leak_tests / partner_defer_tests are then the only proof).
-# Captures: boxes-before, bump-1, bump-2, after-fire.
+# Captures: boxes-before, bump-1, bump-2, after-unbox, host-fire burst, after-host-fire.
+# Results (wp/host-fixes, research build, play rehearsal, gun stage, lab seed; every run closed, baseline restored,
+# real saves unchanged). Bump 1 is a box dash (w+shift; the session's body 1 ran at 3.5 m/s in its box):
+#   5ceb4985 (e7fb9ac): the dash reproduced the collision (host downed_defense target=0 attacker=1 attack=85; the
+#     host left its box, st=0x0, its box count stayed 8). On the guest's copy its own box broke inside body 1's job:
+#     partner_input=vars_change; verdict=benign; elements=1; members=0x2000; ...; fields=ammoStockCounts[15]:8>7, and
+#     NO ammo_leak and NO fire_reload_off on either copy; the host still showed the guest's shots (body 1's magazine
+#     21>14). But the support lane latched: partner_support=stock_check; reason=stock_leak, then partner_support=
+#     refused; reason=stock_leak_mission_latched (the session's h10254 too); fixed in 3fd064a. Bump 2 (a walk) moved
+#     nothing.
+#   6041f5e5 (3fd064a): the same benign line and no support stock line. The after-fire check was void: the guest,
+#     placed behind the host and facing it, fired and downed the host (hence the host-only fire below).
+#   0c8f1ab0 (3fd064a, this file): the same benign line (guest), no ammo_leak, fire_reload_off or support stock line on
+#     either copy; on the guest's copy body 1 fired (magazine 3>2>1>0) and reloaded (8) while the host fired.
 labsetting partner_act_log=1
 title 200
 waitgameplay host 120
@@ -51,13 +67,22 @@ waitlog guest 'partner_cbox=entered; act=7[78];' 15
 waitlog host 'partner_cbox=entered; act=7[78];' 15
 wait 1000
 both capture boxes-before
-# --- The boxed guest walks into the boxed host (placed 3 m behind it, facing it), twice. --------------------------
-guest hold w 1500
-guest hold w 1500
-guest hold w 1500
+# --- Bump 1: the boxed guest dashes into the boxed host (placed 3 m behind it, facing it). In the session body 1 ----
+# --- ran into the host at 3.5 m/s in its box (partner_body act=77; speed_mmps=3520) and the host left its box. ------
+guest hold w+shift 1500
+guest hold w+shift 1000
 guest release
 wait 1500
 both capture bump-1
+host run items
+guest run items
+# --- Bump 2: both box again (out and in), the guest walks into the host. -------------------------------------------
+host run slot item 0
+guest run slot item 0
+wait 2000
+host run slot item 1
+guest run slot item 1
+wait 2500
 placebehind guest host 3
 wait 2500
 guest hold w 1500
@@ -66,16 +91,26 @@ guest hold w 1500
 guest release
 wait 1500
 both capture bump-2
-# --- Out of the boxes (sub 0), then the guest fires: the host's copy must still show the partner's shots. --------
+host run items
+guest run items
+# --- Out of the boxes (sub 0), then the host fires forward, away from the guest behind it: the guest's copy, whose own
+# --- box broke (the benign vars_change), must still show the partner's shots (body 1's magazine falls). The guest
+# --- never fires here: placed behind the host it faces the host, and its rifle downed the host in run 6041f5e5. The
+# --- host keeps its current weapon (key 1 selects slot 0, base 0, a stand-in, in the lab save).
 host run slot item 0
 guest run slot item 0
 wait 2500
 placebehind guest host 4 3
 wait 2500
-guest press 1 120
+both capture after-unbox
+host hold rmb+lmb 1500
+guest burst host-fire 3 300
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
 wait 1500
-guest hold rmb+lmb 1500
-guest release
-wait 1500
-both capture after-fire
+both capture after-host-fire
+host run support
+guest run support
 state
