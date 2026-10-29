@@ -38,7 +38,7 @@ The only conflict was in this file: both branches add a 2026-10-28 section at th
 - `generate_equip_writer_pins.py --check`: 118 gates and 10 fact groups match.
 - `generate_soldier_warp_contract.py --check`: 19 sites and 10 slots match.
 - `generate_nametag_contract.py --check`: 24 sites match.
-- `generate_downed_damage_contract.py --check` stops on a missing `docs/evidence/downed-damage-2026-10-10.json`. That file was removed in the repo cleanup `a06a24e`, so this is not related to these merges.
+- `generate_downed_damage_contract.py --check`: 57 sites match. Its evidence file `docs/evidence/downed-damage-2026-10-10.json` had been removed in the repo cleanup `a06a24e` and is restored from history.
 
 **Still open for the next two-PC test**
 - Every fix above over a real Steam link with latency.
