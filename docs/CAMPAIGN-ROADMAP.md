@@ -12,7 +12,7 @@ As of 0.14.3 (2026-10-28: version bump `a0653b5`, package built at `a4c18fa`). T
 - [ ] **Sync enemy perception.** Either player can be spotted, and the enemy reacts to the right player on both PCs.
 - [~] **Sync hold-ups, interrogation and CQC** on enemies. The hold-up state is shared (no hands-up pose); interrogation and CQC are not.
 - [ ] **Sync prisoners and hostages:** position, carry, extraction.
-- [ ] **Sync enemy helicopters, tanks and walker gears.** (Enemy trucks, reinforcement vehicles and parked vehicles are in section 3.)
+- [ ] **Sync enemy helicopters and walker gears.** (Enemy trucks, convoys, reinforcement APCs and tanks, side-op armor and parked vehicles are in section 3.)
 - [ ] **Sync animals** (and their capture).
 - [ ] **Sync destructibles and gimmicks:** AA radars, comms, generators, mines, gates, lights. Only the design exists (`world-sync-design.md`).
 - [ ] **Sync pickups and resources:** materials, diamonds, plants, posters, intel files, item boxes. Each pickup happens once.
@@ -23,40 +23,46 @@ As of 0.14.3 (2026-10-28: version bump `a0653b5`, package built at `a4c18fa`). T
 ## 2. Players and partner body
 - [x] **On foot:** movement, stances, aim, reload, weapon switch and throws.
 - [x] **Downed, revive, sleep and carry** between players (0.14.3: the box counts as downed).
-- [x] **Guest character:** story (Quiet or Ocelot), Ocelot, a DD soldier or the avatar.
+- [x] **Guest character:** story (Quiet or Ocelot), Ocelot, a DD soldier or the avatar can be picked. The avatar still shows as Snake on the partner's screen (see "Avatar" below).
 - [x] **Partner name tag, friendly crosshair, CO-OP status line and toasts.**
 - [x] **Body safety:** sea deaths, ledge and carry falls.
 - [~] **Traversal.** Ladders, vaults and climbing onto ledges work. Pipes and wall climbing are built but not yet seen on film; wall cracks are missing.
 - [~] **Gear and gestures.** The cardboard box, pickup, held C4 and Hand of Jehuty show. Hand signs and knocking are built but not yet seen on film. Still missing: box exit motion, C4 placing and mines in online play.
 - [ ] **Bionic arms:** stun, rocket and the others, beyond Hand of Jehuty.
 - [~] **Show what the partner throws and Fultons.** Grenades and empty magazines show. Decoys, smoke and mines do not; the partner's Fulton balloon is unchecked.
-- [ ] **Avatar** shown correctly on the partner's screen.
+- [ ] **Avatar** shown correctly on the partner's screen (today the partner sees Snake).
 - [ ] **Shared marking:** enemies marked by one player show for both; iDroid map markers.
 - [ ] **Reflex mode policy:** off, or synchronized for both players.
 - [ ] **Partner damage from enemies** reconciled. Today each PC counts only its own player's hits.
 
 ## 3. Vehicles and companions
 
-Design and milestones M1-M11: [vehicles-companions-design.md](vehicles-companions-design.md).
+Design, scope table, experiments and milestones M1-M13: [vehicles-companions-design.md](vehicles-companions-design.md)
+(revision 2). Nothing in this section is built yet; the design asks the user ten questions (D1-D10) first, among them
+whether the guest may also bring a companion (D5), whether the shared horse may be moved by the partner's riding (D4),
+and which vehicle items are in scope now (D6).
 
 Vehicles:
 - [x] **Driving** world vehicles: the partner is seated by name or by id, with smooth movement and tilt.
 - [x] **Jeep back seats** for a passenger, with the passenger camera.
-- [~] **Sortie vehicle on both screens, chosen by the host only** (M3). Today it exists only on the chooser's PC; the partner sees the driver without it.
-- [ ] **Vehicle losses shared:** Fulton and destruction (M4). Built (VEHICLE_GONE), off by default.
+- [ ] **Sortie vehicle on both screens, chosen by the host only** (M3). Today it exists only on the chooser's PC; since 0.14.3 the partner at least sees the driver (standing at seat height) without it. Its Fulton or destruction and the mission-end reward must also happen once.
+- [~] **Vehicle losses shared:** Fulton and destruction (M4). Built (VEHICLE_GONE) and proven in the hidden worker for losses on the guest's PC, a removal and the engine's own Fulton, which the host then applies (`075c1ea4`, parts A and D); off by default; the hold while someone sits in it and a manual Fulton are untested.
+- [ ] **Vehicle damage shared** short of destruction: body damage, wheels, burning (M4).
 - [ ] **Parked and pushed vehicles** kept in place by the host (M4).
-- [ ] **Enemy-driven trucks and reinforcement vehicles** (APCs, tanks) shown where the host has them (M8).
+- [ ] **Enemy-driven vehicles:** trucks, convoys, reinforcement APCs and tanks, and side-op armored vehicles and tanks, shown where the host has them (M8, needs enemy sync in play).
 - [ ] **More passenger seats:** jeep front seat, truck cab, truck bed, inside APCs and tanks (M6).
-- [ ] **Aim and shoot as a passenger** (M7).
-- [~] **Helicopter.** Host-led travel works. Riding together visibly and the door gun are missing.
+- [ ] **Aim and shoot from vehicles:** as a passenger (M7); the driver's vehicle weapons (tank cannon and machine gun, APC guns) and mounted gun positions (M13, later).
+- [~] **Helicopter.** Host-led travel works. Riding together visibly (M12, research first) and the door gun (M13) are missing.
 
 Companions:
-- [ ] **The host owns the buddy:** the guest's PC loads the host's buddy with its look; the guest cannot pick or call one; Quiet is locked while the guest plays her (M1).
-- [~] **D-Dog** on both screens, following the host only (M2). Today the guest's own dog follows the host's, and it goes missing when the guest has no buddy or another one, and in Mother Base.
-- [ ] **Quiet** as in the normal game, synced (M5).
-- [ ] **D-Walker,** one each when the host brings D-Walker (M9). Today the partner's walker is missing and its rider hidden.
-- [ ] **D-Horse:** the host's horse on both screens, ridden by either player (M10). Today a riding partner is hidden.
-- [ ] **D-Horse for two:** one steers, the other rides behind and shoots (M11).
+- [ ] **One companion per session, the host's** (M1, decision D5): the guest's PC loads the host's buddy with its look; the guest cannot pick, call, order or dismiss one; the guest's own save keeps its own buddy.
+- [ ] **Quiet only when the guest is not playing her** (M1): not offered to the host in sortie prep, removed if out when the guest joins, and the Mother Base cell Quiet hidden.
+- [~] **D-Dog** on both screens, following the host only (M2). Today the guest's own dog follows the host's, and it goes missing when the guest has no buddy or another one, and in Mother Base. The dog's attack at the right guard and its enemy marks on the guest's screen wait for enemy sync in play and shared marking.
+- [ ] **Quiet** as in the normal game, synced (M5). Her shots' results are shared; the mirror on the guest's PC must never fire on its own.
+- [ ] **Companions safe on the guest's PC:** the guest's copy of a companion never attacks on its own and is not hurt by the guest's (unsynced) guards (M1-M10).
+- [ ] **D-Walker,** one each when the host brings D-Walker (M9, decision D2). Today the partner's walker is missing and its rider hidden.
+- [ ] **D-Horse:** the host's horse on both screens, ridden by either player (M10, decision D4). Today a riding partner is hidden.
+- [ ] **D-Horse for two:** one steers, the other rides behind and shoots, in either order (M11). Blocked on finding a way to place a horse every frame.
 - [ ] **Buddy story events:** Quiet's arc, D-Dog growing up, bond levels.
 
 ## 4. Missions
@@ -111,8 +117,8 @@ Companions:
 - [x] **Developer testing:** the hidden background worker, fast test boot, save seeds and parallel tests.
 
 ## Suggested order
-1. **Two-PC check of 0.14.3:** ship it to both PCs and run the next two-PC test (the 2026-10-23 bugs are fixed but not tested on two PCs).
-2. **Vehicles and companions, cheapest first:** the host owns the buddy (M1), D-Dog (M2), the sortie vehicle (M3), vehicle losses and parked vehicles (M4). Then Quiet, seats and passenger shooting (M5-M7); the walker and the shared horse (M9-M11) after their experiments.
+1. **Two-PC check of 0.14.3:** ship it to both PCs and run the next two-PC test (the 2026-10-23 bugs are fixed but not tested on two PCs). This is a suggestion: the user may start step 2 in parallel (decision D9 in the design).
+2. **Vehicles and companions, cheapest first** (the user's first priority, 2026-10-28): the host owns the buddy and the Quiet lock (M1), D-Dog stage 1 (M2), the sortie vehicle (M3), vehicle losses, damage and parked vehicles (M4). Then Quiet, seats and passenger shooting (M5-M7); the walker and the shared horse (M9-M11) after their experiments. The dog's and Quiet's full combat sync (stage 2) and enemy-driven vehicles (M8) come after step 4.
 3. **One story mission end to end:** pick an open-world Chapter 1 mission (for example episode 3 or 4). Sync mission load, objectives, enemies, extraction and results.
 4. **Enemy AI sync** (positions in play, and perception). Every mission depends on it, and so do enemy-driven vehicles (M8).
 5. **Cutscenes** and radio.
