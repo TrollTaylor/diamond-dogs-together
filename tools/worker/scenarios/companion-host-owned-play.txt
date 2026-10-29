@@ -44,12 +44,13 @@ guest expect host_only;companion=host_owned
 wait 400
 guest capture m1p-refused-toast
 host run horse_spawn
-waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=call; kind=horse; have=dog;' 90
+# Since the review fixes (2026-10-29) the guest's copy shows no horse (no hold until M10): its mirror dog is sent away.
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile_skip; reason=no_hold; kind=horse;' 90
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=delete; kind=none; have=dog;' 90
 wait 5000
 host run buddy_status
 host expect khorse
 guest run buddy_status
-guest expect khorse
 guest expect own=1
 both capture m1p-reconcile-horse
 host mouse 500 0

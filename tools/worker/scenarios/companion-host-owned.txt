@@ -51,21 +51,22 @@ guest expect host_only;companion=host_owned
 wait 400
 guest capture m1-refused-toast
 waitlog guest 'world_lua=event=companion; role=guest; step=refused; path=f9_horse_spawn;' 20
-# Reconcile (K16): the host swaps to D-Horse 5 m in front of it; the guest follows with its own buddy block, 4 m in
-# front of the guest (between it and the host).
+# Reconcile (K16): the host swaps to D-Horse 5 m in front of it.
 host run companion_lab call_here horse
 host expect call_here;kind=horse;result=true;
-waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=call; kind=horse;' 60
+# Since the review fixes (2026-10-29) the guest's copy has no hold for a horse (M10), so it shows none: reconcile_skip,
+# then its mirror dog is sent away (the M1 run 489b3c6f called a horse 4 m in front of the guest).
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile_skip; reason=no_hold; kind=horse;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=delete; kind=none; have=dog;' 60
 wait 5000
 host run buddy_status
 host expect khorse
 guest run buddy_status
-guest expect khorse
 both capture m1-reconcile-horse
 # Back to the dog (the guest reconciles again), so the checkpoint and the mission exit below write while the host's
 # dog is live on the guest's copy: the E3 read-back in run C then tells D8 (b) from a copy of the host's vars.
 host run companion_lab call_here dog
-waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=call; kind=dog; have=horse;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=(call|load); kind=dog; have=none;' 60
 wait 4000
 guest run buddy_status
 guest expect kdog
