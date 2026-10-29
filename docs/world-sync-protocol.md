@@ -1054,6 +1054,20 @@ companion it can hold (the dog): the seeds' `buddyType` and
 `buddyTypeMissionStart` read none on the guest for any other kind, and the
 reconcile sends a mirror away instead of calling one. No wire change.
 
+**D7 dog guard (2026-10-29, `docs/vehicles-companions-design.md` 6.12, 8.9).** COMPANION_POSE `state` (its ninth Lua
+field) and COMPANION `state` (its tenth), both sent 0 until now, carry the host dog's **state byte**: bit 7 valid, bits
+5-6 state (0 normal, 1 stunned or asleep, 2 down), bits 0-4 life in 31ths (0 only when down). The host reads it from
+its own dog's native life record with every COMPANION_POSE read and sends a changed byte at once. **No wire change**:
+the ops, body sizes and field ranges (`U8()`) are unchanged, so no version bump; an older host sends 0, which a new
+guest reads as "not valid" (its guard still drops hits but follows nothing), and an older guest ignores the field. The
+guest's native guard (`native/dog_guard.cpp`, receipt `MGS_COOP_DOG_GUARD_V1`, armed by `world_companion_guard.lua`
+while its copy of the host's dog is loaded and paired) drops every hit on that copy and applies the byte: life, asleep,
+and once the host's dog is down, the copy's own stock death. Review 2026-10-29 (`docs/vehicles-companions-design.md`
+8.10; local receipt only, still no wire change): the guard's slots are installed only on a PC running
+`companion_host_owned`; the receipt's arm field takes 2 (a hold): through a link loss (UNPAIRED, link down, a lower
+level or another epoch) an armed lease is held drop-only, with no byte followed and no lab op, until the session or the
+mission ends, and a hold never starts the guard; the reply carries the record only when under a second old.
+
 | World op | Name | Direction | Fields | Queue | Body bytes |
 |---:|---|---|---|---|---:|
 | 0x27 | BUDDY_STATE | H->G | sequence, kind, present, x/y/z mm, heading mrad, sender tick (+ native age ms) | world | 24 |
