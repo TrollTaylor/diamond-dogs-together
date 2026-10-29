@@ -1,3 +1,64 @@
+## October 29, 2026: M1, the host owns the companion (branch `wp/companion-host`, lab key, play default off)
+
+Branch `wp/companion-host` from `wp/companions` `068852c` (the vehicles and companions design). Not merged, not pushed.
+Milestone M1 of `docs/vehicles-companions-design.md` (section 9), with the experiments E1, E3 (save part), E4 and E20
+(section 8.1 has every result, the static reads and the frame names). Decisions D5 (a), D1 (a) and D8 (b) of
+2026-10-28 apply. Everything is behind the new lab key `companion_host_owned=0|1` (CFG `r[16]`, lab and play, default
+off). Two-PC: not tested.
+
+**What it does (with the key on).**
+- The host's buddy is the session's one companion. The follow seeds carry the host's buddy vars (type, start status
+  and position, every look var, and the four `*MissionStart` copies that a new mission loads); the guest applies them
+  before its `Load`, so its copy loads the host's buddy. The guest keeps its own buddy vars and every
+  `TppSave.SaveVarsToSlot` writes those (D8 b); a solo load gives them back.
+- The host sends COMPANION (op 48, kind only for now) on change and every 5 s; a guest whose loaded buddy differs
+  calls the host's kind with its own block after 8 s (15 s to send one away), 4 m in front of its player.
+- The guest cannot call, change or dismiss a companion: the Lua entry points refuse another type, the F9 summon is
+  host-only, `PlayerPad.CALL` is masked while the host has a companion out (the call menu and whistle; also Knock and
+  Sonar; released in a CQC hold), and the disable byte covers every type that is neither the host's nor loaded. Each
+  refusal shows a toast (NOTE 13).
+- A guest who plays Quiet sends CHARACTER (op 56) before the sortie; the host disables buddy Quiet, sends a Quiet already
+  out away, rewrites a Quiet sortie and its `buddyTypeMissionStart` to none (its own save keeps her), and both copies
+  refuse the Mother Base cell Quiet (`TppStory.CanArrivalQuietInMB`).
+- Attribution is id-aware: a companion that stands for the partner's counts as `mirror`, is logged
+  (`event=mirror_engaged`) and never forwarded.
+- Lab levers: `debug seed_buddy <horse|walker|quiet|dog|none>`, `companion_status`, `companion_cell [goto]`,
+  `companion_lab call_here [kind]` (host), `companion_lab quiet_out` (host).
+
+**Hidden-worker runs** (loopback, research build, native gun stage, copied lab saves, low graphics; each closed with the
+baseline restored and the real saves unchanged; archived under `%USERPROFILE%\mgs-coop-run-archive\companions`).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `489b3c6f` | run A, `companion-host-owned.txt` (`afgh-ledge` / `afgh-horse`) | Pass, no expectation failed. The guest loads the host's dog (`loaded; kind=dog; source=seed`) and keeps its horse; the dog on the host's screen; the call menu on the host's screen and none on the guest's; the F9 refusal toast; reconcile to D-Horse and back, a horse on both screens; every guest save writes its own horse while the dog is live |
+| `fa397547` | run C, `companion-host-owned-mb.txt` (`africa-jeep` / run A's guest save) | Pass, no expectation failed. Mother Base: the dog on both screens; the guest's save read back with its own horse (E3); the cell quest refused on both copies (`mbquiet_hidden; stock=true`); D-Walker developed in the lab save |
+| `b993af09` | run B, `companion-host-owned-quiet.txt` (`afgh-quiet` / `afgh-ledge`) | Pass with three scenario errors (fixed). The Quiet lock: Quiet sent away in the helicopter, the seeds carry none, the host's toast, no buddy Quiet on either screen, the empty cell on both screens. Found the host's sortie copy coming back as Quiet (fixed in `ae4c3e9`) |
+| `de43726a` | `companion-host-owned-quiet-play.txt`, `-Mode play -WanSim bad` | Pass with three scenario errors (fixed). The late-join lock in play: `delete_buddy`, `sortie_rewrite`, `start_rewrite`; no buddy Quiet on either screen |
+| `b83c9f7a` | `companion-host-owned-play.txt`, `-Mode play -WanSim bad` (`afgh-ledge` / `afgh-horse`) | Pass, no expectation failed. The guest loads the host's dog through the seeds in play (held 4 cm from the host dog's pose), the CALL mask (frames: the host's call menu, none on the guest's), the F9 refusal toast, the reconcile to the host's F9 horse. Night, both players on one spot: no frame shows the companion |
+
+Earlier runs of the same branch, superseded: `dd4c61ff`, `a4296449` (seeds and E4 census), `8ad7a986` (the guest loaded
+its own buddy from `buddyTypeMissionStart`), `6306df68` (logs passed, frames showed no companion), `9e8f22a7` (a host
+warp made the guest send its dog away; the cell warp landed in the sea).
+
+**Seeds** (`D:\mgs-coop-seeds`): `afgh-horse` (guest), `afgh-quiet` (host), `mb-quiet-cell` (both, beside the cell),
+`mb-walker` (host, D-Walker deployed). The last two are not boot-checked yet.
+
+**Commits** on `068852c`: `51bf9ec` (M1 behind the key), `61191a8`, `1d56c01`, `7ffdbad`, `c7b38d7`, `5b1cf10`,
+`88307b9` (reconcile debounce, cell warp, framing levers, log lines), `b6628b1`, `ae4c3e9` (the sortie copy rewrite),
+and the docs commit.
+
+**The play default stays off.** The guest's copy now runs a real buddy AI for the host's companion. E3's engagement
+part (M2), E15 and E19 have not run, so nothing yet shows that it never acts or gets hurt on its own on the guest's
+copy; decision D7 waits for them. Two-PC: not tested.
+
+**Open.** The iDroid buddy request and the host's sortie-prep and iDroid buddy lists were not reached in the worker
+(E4); the locked-companion save case (E3); the guest's Quiet body cannot be filmed in the worker (its guest copy
+refuses the Quiet reset bypass with `body_hash` at every load since before M1); with the key on the guest has no Knock
+and no Sonar while the host's companion is out.
+
+**Checks.** `pwsh -File tools/build.ps1 -Fast` 292/292 after each change; `pwsh -File tools/build.ps1` (Debug, build id `0.14.3+ae4c3e9`, with only these docs and the two play scenarios
+changed on top): 307/307 passed, 104 s.
+
 ## October 28, 2026: 0.14.3 (Africa guns, free-roam vehicle fallback, host-log fixes)
 
 **Package (2026-10-28):** `dist/DiamondDogsTogether-0.14.3-20261029T023814Z-d15f739d/DiamondDogsTogether-0.14.3.zip` (10,222,077 bytes), SHA-256 `E199D144DDDD444B3C313F322796CB89EE6C27BB8331D549853BC55AEFA7A965`, built by `tools/package.ps1 -Friend` from the clean tree at `a4c18fa` with Release receipt `20261029-023457-0c5320d4b721440382a548fdbf8679c6` (passed, 296 audited tests). `DiamondDogsTogether.exe` SHA-256 `3A2A81FB3E2645EE808EFE1E825A592B1F535E78819F95381BA4EC28A21921A9` and `dinput8.dll` `324AF4748F9DCCD4765BA801A5E3A071C9D71EB938793469D25FFFCA577E9F89`, both build id `0.14.3+a4c18fa`. Its `source.zip` holds 1,337 files, among them all 17 `native/*.inc` loader fragments.

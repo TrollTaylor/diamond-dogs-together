@@ -1,6 +1,9 @@
-# M1 play rehearsal of run B (the Quiet lock, late-join path): both Continue into 30010; the host's save deploys
-# Quiet (afgh-quiet), the guest plays Quiet, so on pairing the host's Quiet is sent away (delete_buddy) and the
-# type disabled. -Mode play -WanSim bad; the key named (its play default stays off).
+# M1 play rehearsal of run B (the Quiet lock, late-join path; -Mode play -WanSim bad). The host's save deploys Quiet
+# (afgh-quiet), the guest plays Quiet. Play's title Continue lands both in the helicopter (40010) with the host's Quiet
+# out: on pairing she is sent away there (delete_buddy) and the type disabled; the continue into 30010 rewrites the
+# sortie (sortie_rewrite) so the seeds carry none; the host's save keeps its Quiet (D8 b), so 30010 loads her again on
+# the host and the first tick sends her away (delete_buddy, start_rewrite). Run de43726a. The key is named; its play
+# default stays off.
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned-quiet-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-ledge
 #        -Mode play -WanSim bad
@@ -14,14 +17,14 @@ waitlog host 'world_lua=event=companion; role=host; step=character; guest_code=6
 waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=disable_type; guest_char=quiet;' 60
 waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=delete_buddy; guest_char=quiet;' 90
 waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=start_rewrite; guest_char=quiet;' 30
-# The guest Continued with its own dog (a title load is not a co-op travel): it keeps it for its saves and sends it
-# away 15 s after the host's kind went none (the reconcile's debounce for none).
-waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=delete; kind=none;' 90
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=sortie_rewrite; guest_char=quiet;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=none; source=seed; mission=30010;' 90
 wait 4000
+# No buddy, so no buddy block in 30010 (buddy_block_inactive): vars_type=0 on both, the host's own Quiet kept.
 host run buddy_status
-host expect knone
+host expect vars_type=0_own=3
 guest run buddy_status
-guest expect knone
+guest expect vars_type=0
 host run companion_status
 guest run companion_status
 both capture m1p-quiet-sent-away

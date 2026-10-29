@@ -1,8 +1,9 @@
-# M1 play rehearsal (-Mode play -WanSim bad; docs/vehicles-companions-design.md section 9 M1): both copies Continue
-# into 30010 from the title (no boot, no sortie: the late-join path). The host's save deploys D-Dog (afgh-ledge),
-# the guest's own save D-Horse (afgh-horse); the guest reconciles to the host's dog and keeps its own horse for its
-# saves; the CALL mask and the F9 refusal; the host swaps to D-Horse and the guest follows. The key is named
-# (its play default stays off: decision D7 waits for E3's engagement part, E15 and E19).
+# M1 play rehearsal of run A (-Mode play -WanSim bad; docs/vehicles-companions-design.md section 9 M1). The host's save
+# deploys D-Dog (afgh-ledge), the guest's own save D-Horse (afgh-horse). Play's title Continue lands both in the
+# helicopter (40010), where they pair; the host's continue into 30010 is a co-op travel, so the guest loads the host's
+# dog from the seeds and keeps its horse for its saves (run de43726a took this path). Then the CALL mask, the F9
+# refusal and the host's own F9 swap to D-Horse, which the guest follows. The key is named; its play default stays off
+# (decision D7 waits for E3's engagement part, E15 and E19). No lab levers, no placebehind.
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
 #        -Mode play -WanSim bad
@@ -12,22 +13,30 @@ labsetting coop_hud=compact
 title 200
 waitgameplay host 240
 waitgameplay guest 240
-waitlog guest 'world_lua=event=companion; role=guest; step=own_kept; why=reconcile; own=horse;' 120
-waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=(call|load); kind=dog;' 120
-wait 8000
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 120
+waitlog guest 'world_lua=event=companion; role=guest; step=own_kept; why=seed; own=horse;' 120
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed; mission=30010;' 120
 host run buddy_status
 host expect kdog
 guest run buddy_status
 guest expect kdog
 guest expect own=1
-both capture m1p-dog
-placebehind guest host 7 2
 wait 3000
+both capture m1p-dog
+host mouse 500 0
+guest mouse 500 0
+wait 800
 both capture m1p-dog-2
+host mouse 500 0
+guest mouse 500 0
+wait 800
+both capture m1p-dog-3
 waitlog guest 'world_lua=event=companion; role=guest; step=guard; path=call_menu; via=pad_mask;' 30
+host hold q 1500 nowait
 guest hold q 1500 nowait
 wait 700
-guest capture m1p-guest-callmenu
+both capture m1p-callmenu
+host release
 guest release
 wait 1000
 guest run horse_spawn
@@ -35,9 +44,18 @@ guest expect host_only;companion=host_owned
 wait 400
 guest capture m1p-refused-toast
 host run horse_spawn
-waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=call; kind=horse;' 90
-wait 6000
+waitlog guest 'world_lua=event=companion; role=guest; step=reconcile; via=call; kind=horse; have=dog;' 90
+wait 5000
+host run buddy_status
+host expect khorse
 guest run buddy_status
 guest expect khorse
+guest expect own=1
 both capture m1p-reconcile-horse
+host mouse 500 0
+guest mouse 500 0
+wait 800
+both capture m1p-reconcile-horse-2
+host run companion_status
+guest run companion_status
 state
