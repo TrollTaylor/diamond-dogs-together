@@ -1,7 +1,7 @@
-# M1 proof, run C (Mother Base; docs/vehicles-companions-design.md section 9 M1, experiments E1 MB, E3 check, E20).
+# M1 proof, run C (Mother Base; docs/vehicles-companions-design.md section 9 M1, experiments E1 MB, E3 read-back, E20).
 # The host deploys D-Dog (africa-jeep: its helicopter is 40020, as is the guest's after run A); the guest's save is
-# run A's guest save (its own buddy must still be the horse: E3); the guest plays Quiet, so the Mother Base cell
-# Quiet is hidden on both copies (E20); companion_host_owned=1.
+# run A's guest save, written while the host's dog was live there (its own buddy must still be the horse: E3); the
+# guest plays Quiet, so the Mother Base cell Quiet is refused on both copies (E20); companion_host_owned=1.
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned-mb.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed africa-jeep -GuestSaveSeedRun <run A>
 labsetting companion_host_owned=1
@@ -18,33 +18,31 @@ host expect kdog
 guest run buddy_status
 guest expect kdog
 guest expect own=1
-wait 3000
+# LAB framing (as run A): the host turns to its camera, its dog is called and warped 5 m in front of it, the guest
+# stands 8 m behind the host.
+host press w 500
+wait 1500
+placebehind guest host 8 1
+wait 2000
+host run companion_lab call_here
+host expect call_here;kind=dog;result=true;warp=1
+wait 4000
+host run buddy_status
+guest run buddy_status
 both capture m1-mb-dog
-# E20: the cell Quiet (quest mtbs_wait_quiet) is not activated on either copy.
+wait 2000
+both capture m1-mb-dog-2
+# E20: the cell Quiet (quest mtbs_wait_quiet) is refused on both copies near the Medical platform (run 9e8f22a7 logged
+# mbquiet_hidden only there); the cell frames are in companion-host-owned-quiet.txt (run B).
+host run companion_cell goto
+guest run companion_cell goto
+wait 8000
 waitlog host 'world_lua=event=companion; role=host; step=mbquiet_hidden;' 60
 waitlog guest 'world_lua=event=companion; role=guest; step=mbquiet_hidden;' 60
-host run companion_cell
-guest run companion_cell
-host run companion_cell goto
-wait 4000
-guest run companion_cell goto
-wait 6000
-host run companion_cell
-guest run companion_cell
-host run companion_cell goto
-guest run companion_cell goto
-wait 6000
-both capture m1-mb-quiet-cell
-host mouse 600 0
-guest mouse 600 0
-wait 800
-both capture m1-mb-quiet-cell-2
-host mouse 600 0
-guest mouse 600 0
-wait 800
-both capture m1-mb-quiet-cell-3
-host run position
-guest run position
-host worldtrigger world_probe=shared_checkpoint
-wait 6000
+host run companion_status
+guest run companion_status
+# Seeds (section 9): is D-Walker developed in the lab save? The lever reports obtained= and takes a checkpoint; when
+# true, this run's host save becomes the afgh-walker seed (Save-WorkerSeed -Roles host).
+host run seed_buddy walker
+host run companion_status
 state

@@ -256,6 +256,13 @@ local function vector(x, y, z)
  local ok, v = pcall(Vector3, x, y, z)
  return ok and v or nil
 end
+-- d m in front of this copy's player (forward sin/cos of playerRotY) and its yaw in radians.
+function C.front(d)
+ local px, py, pz, r = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ"), W.get(vars, "playerRotY")
+ if type(px) ~= "number" or type(py) ~= "number" or type(pz) ~= "number" then return nil end
+ local yaw = (((type(r) == "number" and r or 0) + 180) % 360 - 180) * math.pi / 180
+ return {px + d * math.sin(yaw), py, pz + d * math.cos(yaw), yaw}
+end
 local function reconcile(now)
  local h = C.host
  if not h or now - h.at > 15000 or not W.inGame() or W.get(DemoDaemon, "IsDemoPlaying") and DemoDaemon.IsDemoPlaying() then
@@ -264,17 +271,23 @@ local function reconcile(now)
  if C.expect and C.expect.mission == W.mission and not C.expect.done then return end
  local want, have = fromWire(h.kind), active()
  if want == nil or have == nil or want == have then C.mismatchAt = nil; return end
+ -- Never a second Quiet beside a guest who plays her (the host's lock keeps her away anyway).
+ if want == BT("QUIET") and C.selfQuiet then
+  if C.skipLogged ~= W.mission then C.skipLogged = W.mission; L("step=reconcile_skip;reason=self_quiet;") end
+  return
+ end
  C.mismatchAt = C.mismatchAt or now
- if now - C.mismatchAt < 3000 or now < (C.fixAt or 0) then return end
+ -- 8 s (15 s to send one away): a host warp, death or cluster change drops its kind for a few
+ -- seconds (run 9e8f22a7: none for 3.5 s after a warp across Mother Base).
+ if now - C.mismatchAt < (want == BT("NONE") and 15000 or 8000) or now < (C.fixAt or 0) then return end
  C.fixAt = now + 5000
  C.keep("reconcile")
  local x, y, z, yaw = h.x, h.y, h.z, h.yaw
  if not h.present or (x == 0 and y == 0 and z == 0) then
-  local px, py, pz, r = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ"), W.get(vars, "playerRotY")
-  if type(px) ~= "number" or type(py) ~= "number" or type(pz) ~= "number" then return end
-  yaw = ((type(r) == "number" and r or 0) + 180) % 360 - 180
-  yaw = yaw * math.pi / 180
-  x, y, z = px + 4 * math.cos(yaw), py, pz - 4 * math.sin(yaw)
+  -- M1 sends the kind only: 4 m in front of this player, where its camera sees the companion arrive.
+  local p = C.front(4)
+  if not p then return end
+  x, y, z, yaw = p[1], p[2], p[3], p[4]
  end
  local via, ok = "call", false
  C.token = true
@@ -419,7 +432,10 @@ function C.install()
    local r = {pcall(save, ...)}
    C.restore(live)
    C.saves = (C.saves or 0) + 1
-   if C.saves <= 3 or C.saves % 50 == 0 then
+   -- The first three, then one line per save burst (5 s), so a checkpoint's write shows.
+   local now = W.now()
+   if C.saves <= 3 or now - (C.saveLogAt or -1e9) >= 5000 then
+    C.saveLogAt = now
     L(fmt("step=save_own;slot=%s;own=%s;live=%s;n=%d;", tostring((...)), typeName(own.buddyType), typeName(live.buddyType), C.saves))
    end
    if not r[1] then error(r[2], 0) end
@@ -432,7 +448,12 @@ function C.install()
   TppStory.CanArrivalQuietInMB = function(n, ...)
    if n ~= true and W.companionOn == true and W.get(vars, "missionCode") == 30050 and
     ((W.host and C.guestQuiet) or (not W.host and C.selfQuiet)) then
-    if not C.cellLogged then C.cellLogged = true; L("step=mbquiet_hidden;") end
+    if not C.cellLogged then
+     -- The stock answer (true: she would be in her cell now), read once for the log.
+     local ok, stock = pcall(arrival, n, ...)
+     C.cellLogged = true
+     L("step=mbquiet_hidden;stock=" .. (ok and tostring(stock) or "error") .. ";")
+    end
     return false
    end
    return arrival(n, ...)
@@ -475,6 +496,7 @@ function C.cellPos()
  end)
  if good and type(x) == "number" and type(y) == "number" and type(z) == "number" then return {x, y, z}, "plnt0" end
 end
+local SEED = {none = "NONE", horse = "HORSE", dog = "DOG", quiet = "QUIET", walker = "WALKER_GEAR"}
 -- debug_buddy.lua routes companion_status, seed_buddy <kind> and companion_cell [goto] here.
 function C.lever(a, id, A, mission)
  if a[1] == "companion_status" and #a == 1 then return true, C.status() end
@@ -484,20 +506,36 @@ function C.lever(a, id, A, mission)
   local p, src = C.cellPos()
   if not p then return false, "cell_unavailable" end
   if #a == 1 then return true, fmt("cell;src=%s;pos=%.2f,%.2f,%.2f", src, p[1], p[2], p[3]) end
-  -- Beside the radio, 2.5 m east facing west (the cell's open side is not known statically).
-  return A.warp({p[1] + (src == "radio" and 2.5 or 0), p[2] + (src == "radio" and 0 or 1), p[3], src == "radio" and -90 or 0}, id)
+  -- Inside the cell: 0.8 m from the radio toward the Medical plant's centre, on the radio's floor
+  -- (2.5 m east of it was the sea: run 9e8f22a7 ended MISSION FAILED). Before the radio locator
+  -- loads: 1 m above the plant's centre.
+  if src == "radio" then
+   local c = C.cellCentre
+   local dx, dz = c and c[1] - p[1] or 0, c and c[3] - p[3] or 1
+   local d = math.sqrt(dx * dx + dz * dz)
+   if d < 0.01 then dx, dz, d = 0, 1, 1 end
+   return A.warp({p[1] + 0.8 * dx / d, p[2] + 0.05, p[3] + 0.8 * dz / d, math.deg(math.atan2(-dx, -dz))}, id)
+  end
+  C.cellCentre = p
+  return A.warp({p[1], p[2] + 1, p[3], 0}, id)
  end
- -- Lab: the host recalls its own companion 4 m to its right (the stock CallBuddy of the loaded
- -- type: a recall), so both cameras can frame it.
- if a[1] == "companion_lab" and a[2] == "call_here" and #a == 2 then
+ -- Lab: the host calls its companion (the loaded type, or <kind>: a swap) 5 m in front of it, a
+ -- dog also warped there (4 m to the side was off both cameras: runs 6306df68, 9e8f22a7).
+ if a[1] == "companion_lab" and a[2] == "call_here" and (#a == 2 or #a == 3) then
   if W.mode ~= 1 or not W.host then return false, "host_lab_only" end
-  local t, px, py, pz, r = active(), W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ"), W.get(vars, "playerRotY")
-  if not t or t == BT("NONE") or type(px) ~= "number" or type(py) ~= "number" or type(pz) ~= "number" then return false, "call_here_none" end
-  local yaw = (((type(r) == "number" and r or 0) + 180) % 360 - 180) * math.pi / 180
+  local t, p = active(), C.front(5)
+  if #a == 3 then t = SEED[a[3]] and BT(SEED[a[3]]) end
+  if not t or t == BT("NONE") or not p then return false, "call_here_none" end
+  local v = vector(p[1], p[2], p[3])
   C.token = true
-  local ok, res = pcall(TBC("CallBuddy"), t, vector(px + 4 * math.cos(yaw), py, pz - 4 * math.sin(yaw)), yaw)
+  local ok, res = pcall(TBC("CallBuddy"), t, v, p[4])
   C.token = nil
-  return ok and res ~= false, fmt("call_here;kind=%s;result=%s", typeName(t), tostring(res))
+  local warp = 0
+  if ok and res ~= false and t == BT("DOG") then
+   local okId, dog = pcall(W.get(GameObject, "GetGameObjectIdByIndex"), "TppBuddyDog2", 0)
+   if okId and dog == 9728 and pcall(W.get(GameObject, "SendCommand"), dog, {id = "SetWarpPosition", pos = v}) then warp = 1 end
+  end
+  return ok and res ~= false, fmt("call_here;kind=%s;result=%s;warp=%d", typeName(t), tostring(res), warp)
  end
  -- Lab: the late-join case on the host (Quiet already out when the lock applies): the lock is
  -- lifted, Quiet called beside the host, and 8 s later the tick sends her away (delete_buddy).
@@ -516,7 +554,6 @@ function C.lever(a, id, A, mission)
  end
  return false, "companion_args"
 end
-local SEED = {none = "NONE", horse = "HORSE", dog = "DOG", quiet = "QUIET", walker = "WALKER_GEAR"}
 function C.seedLever(kind)
  if W.mode ~= 1 then return false, "lab_only" end
  local t = SEED[kind] and BT(SEED[kind])

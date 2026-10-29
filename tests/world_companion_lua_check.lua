@@ -58,6 +58,8 @@ local function Fixture(role, o)
     env.TppSave = {SaveVarsToSlot = function(slot) c.saves[#c.saves + 1] = {slot = slot, buddyType = env.vars.buddyType,
         eye = env.vars.buddyDogEyeType, start = env.vars.buddyTypeMissionStart} end}
     env.TppStory = {CanArrivalQuietInMB = function() return true end}
+    env.GameObject = {GetGameObjectIdByIndex = function(name, i) return name == 'TppBuddyDog2' and i == 0 and 9728 or 65535 end,
+        SendCommand = function(id, cmd) rec('SendCommand', id, cmd.id, cmd.pos); return true end}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
     env.TppMission = {Load = function(m) rec('load', m, env.vars.buddyType) end, UpdateCheckPoint = function() rec('checkpoint'); return true end}
     env.e = {}
@@ -138,6 +140,12 @@ c.env.TppSave.SaveVarsToSlot(3)
 check(c.saves[1].buddyType == HORSE and c.saves[1].eye == 1 and c.saves[1].start == HORSE, 'the save slot gets the guest own buddy')
 check(c.env.vars.buddyType == DOG and c.env.vars.buddyDogEyeType == 3, 'vars are the host values again after the save')
 check(c.find('step=save_own;slot=3;own=horse;live=dog;n=1;'), 'the save policy is logged')
+-- The save line: the first three, then one per 5 s burst (a checkpoint after the mission start is visible).
+c.env.TppSave.SaveVarsToSlot(0); c.env.TppSave.SaveVarsToSlot(1); c.env.TppSave.SaveVarsToSlot(6)
+check(c.find('n=3;') and not c.find('n=4;'), 'a burst after the first three is not logged within 5 s')
+c.time = c.time + 5000
+c.env.TppSave.SaveVarsToSlot(0)
+check(c.find('step=save_own;slot=0;own=horse;live=dog;n=5;') and c.saves[5].buddyType == HORSE, 'the next burst after 5 s is logged')
 -- The load is confirmed once the block has the host's dog.
 c.W.mission = 30010
 for _, f in ipairs(c.W.startHooks) do f() end
@@ -183,8 +191,11 @@ check(c.find('step=guard;path=idroid_swap;via=disable_type;allowed=dog;'), 'the 
 -- Reconcile: the host changes to D-Horse; after 3 s the guest calls a horse (original, no refusal).
 c.W.handlers[48]({2, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
 c.tick(500)
-check(not c.find('step=reconcile;'), 'no reconcile before 3 s of mismatch')
 c.time = c.time + 3500
+c.W.handlers[48]({3, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
+c.tick(200)
+check(not c.find('step=reconcile;'), 'no reconcile before 8 s of mismatch (a host warp drops its kind for seconds)')
+c.time = c.time + 5000
 c.W.handlers[48]({3, 0, 2, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, c.time)
 c.tick(200)
 check(c.active == HORSE and c.find('step=reconcile;via=call;kind=horse;have=dog;ok=1;'), 'reconcile by CallBuddy to the host kind')
@@ -193,6 +204,28 @@ for _, v in ipairs(c.calls) do if v[1] == 'UnsetDisableBuddyType' and v[2] == HO
 check(unset and not c.C.mine[HORSE], 'the new host kind is enabled again before the reconcile')
 for _, f in ipairs(c.W.stopHooks) do f(true) end
 check(c.C.mine == nil, 'mission end clears the guest bits')
+-- The host's Quiet never comes to a guest who plays her.
+c.W.handlers[48]({4, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
+c.time = c.time + 20000
+c.W.handlers[48]({5, 0, 4, 0, 1, 0, 0, 0, 0, 0, 0, 0}, c.time)
+c.tick(200)
+check(c.active == HORSE and c.find('step=reconcile_skip;reason=self_quiet;'), 'no buddy Quiet beside the guest Quiet')
+-- Without the host's pose (M1 sends kind only) the guest calls the host's kind 4 m in front of its player
+-- (playerPos 1,2,3, rotY 0: z + 4), where its camera sees it arrive.
+do
+    local g = Fixture(2)
+    follow(g, values)
+    g.active = DOG
+    g.tick()
+    g.W.handlers[48]({1, 0, 2, 0, 1, 0, 0, 0, 0, 0, 0, 0}, g.time)
+    g.tick(200)
+    g.time = g.time + 8500
+    g.W.handlers[48]({2, 0, 2, 0, 1, 0, 0, 0, 0, 0, 0, 0}, g.time)
+    g.tick(200)
+    local p
+    for _, v in ipairs(g.calls) do if v[1] == 'CallBuddy' and v[2] == HORSE then p = v[3] end end
+    check(p and p.x == 1 and p.y == 2 and p.z == 7, 'the reconcile without a host pose calls 4 m in front of the guest')
+end
 -- A solo Load gives the guest its own buddy back.
 c.F.current = nil
 c.env.TppMission.Load(30020)
@@ -220,7 +253,7 @@ check(c.called('DeleteBuddy') == 1 and c.find('step=quiet_lock;via=delete_buddy;
 -- The Mother Base cell Quiet is hidden on the host copy (and not for the asset query with true).
 c.env.vars.missionCode = 30050
 check(c.env.TppStory.CanArrivalQuietInMB() == false and c.env.TppStory.CanArrivalQuietInMB(true) == true, 'cell Quiet hidden')
-check(c.find('event=companion;role=host;step=mbquiet_hidden;'), 'mbquiet_hidden logged')
+check(c.find('event=companion;role=host;step=mbquiet_hidden;stock=true;'), 'mbquiet_hidden logged with the stock answer (she would be there)')
 -- The host sends its kind.
 local kind
 for _, t in ipairs(c.tx) do if t.op == 48 then kind = t.v[3] end end
@@ -254,4 +287,24 @@ check(ok and msg:find('seed_buddy;kind=walker;vars_type=4;checkpoint=1;', 1, tru
     c.C.own.buddyTypeMissionStart == WALKER and c.env.vars.buddyTypeMissionStart == WALKER, 'seed lever (live and sortie copy)')
 c.W.mode = 2
 check(not c.C.seedLever('horse'), 'the seed lever is lab only')
+-- Lab framing lever (host): the loaded companion 5 m in front of the host (playerPos 1,2,3, rotY 0: z + 5); a dog is
+-- also warped there (SetWarpPosition on TppBuddyDog2 index 0); with a kind it swaps to that kind (CallBuddy).
+c = Fixture(1, {buddyType = DOG, active = DOG})
+local A = {}
+ok, msg = c.C.lever({'companion_lab', 'call_here'}, 1, A, 30010)
+local call, warp
+for _, v in ipairs(c.calls) do
+    if v[1] == 'CallBuddy' then call = v end
+    if v[1] == 'SendCommand' and v[3] == 'SetWarpPosition' then warp = v end
+end
+check(ok and msg == 'call_here;kind=dog;result=true;warp=1' and call and call[2] == DOG and call[3].x == 1 and call[3].z == 8,
+    'call_here: the dog 5 m in front of the host')
+check(warp and warp[2] == 9728 and warp[4].x == 1 and warp[4].z == 8, 'call_here warps the dog there')
+ok, msg = c.C.lever({'companion_lab', 'call_here', 'horse'}, 2, A, 30010)
+check(ok and msg == 'call_here;kind=horse;result=true;warp=0' and c.active == HORSE, 'call_here <kind> swaps the host companion')
+check(not c.C.lever({'companion_lab', 'call_here', 'bogus'}, 3, A, 30010), 'call_here refuses an unknown kind')
+c.W.mode = 2
+check(not c.C.lever({'companion_lab', 'call_here'}, 4, A, 30010), 'call_here is lab only')
+c = Fixture(2, {active = DOG})
+check(not c.C.lever({'companion_lab', 'call_here'}, 1, A, 30010), 'call_here is host only')
 print('world_companion_lua_check: ' .. checks .. ' checks passed')
