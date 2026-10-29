@@ -2215,6 +2215,22 @@ void TestUpdateLeftovers() {
         CHECK(NamesWith(f.game, L".ddt-").empty() && NamesWith(f.paths.mod, L".ddt-").empty());
         CHECK(Has(ReadText(f.paths.launcher_log), "update=leftovers_cleaned; count=3"));
     }
+    // The process ended between two moves (the exe is first in the zip): the new
+    // exe is in, the other files are still old with their *.ddt-new beside them.
+    // The leftovers go, and the window refuses the mixed folder with what to do.
+    {
+        Fixture g(L"update-half-done");
+        g.WritePackage("0.0.1");   // package.json is still the other version's
+        WriteText(g.game + L"\\DiamondDogsTogether.exe", "NEW-LAUNCHER");
+        WriteText(g.game + L"\\DiamondDogsTogether.exe.old", "OLD-LAUNCHER");
+        WriteText(g.paths.loader + L".ddt-new", "new loader, never moved in");
+        WriteText(g.paths.package_json + L".ddt-new", "{\"product\":\"mgs-coop-local-package\",\"version\":\"9.9.9\"}");
+        auto m = MakeRealModelWithEnv(g.game, g.env);
+        CHECK(NamesWith(g.game, L".ddt-").empty() && NamesWith(g.paths.mod, L".ddt-").empty());
+        CHECK(m->phase() == Phase::error);
+        CHECK(Has(m->last_error(), "different Diamond Dogs Together versions") && Has(m->last_error(), "Extract the whole zip"));
+        CHECK(Has(ReadText(g.paths.launcher_log), "update=leftovers_cleaned; count=2"));
+    }
 }
 
 // The player reads one plain sentence; the detail goes to launcher.log.
