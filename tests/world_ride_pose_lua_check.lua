@@ -273,6 +273,108 @@ do
     check(#placed == before + 1 and placed[#placed].id == 4000, 'the passenger keeps placing the driver track on its copy')
     check(#sent == 0, 'the passenger streams nothing for that vehicle')
 end
+-- Bug 2 of the two-PC test of 2026-10-23 (docs/two-pc-test-2026-10-23.md): the host's relief vehicle 25600 existed
+-- only on his copy. The guest's RIDE_FAST track still sent SetPosition (and a refused tilt write) every frame into the
+-- missing id, and ride_fast claimed applied=1157. Each track now asks IsAlive at most every 500 ms; while it is not
+-- true and GetPosition does not answer either (no instance here) the frame is skipped (no tilt write, no SetPosition)
+-- and counted as absent=N on the ride_fast line. A wreck (IsAlive false, still in the pool) is placed as before.
+do
+    local api, logs, alive, asked, writes = W.api, {}, {[25600] = false, [4000] = true, [4001] = false}, {}, 0
+    local pooled, askedPos = {[25600] = false, [4000] = true, [4001] = true}, {}
+    local placedAbsent = 0
+    W.api = {
+        send = function(id, cmd)
+            if cmd.id == 'IsAlive' then asked[id] = (asked[id] or 0) + 1; return alive[id] end
+            if cmd.id == 'GetPosition' then
+                askedPos[id] = (askedPos[id] or 0) + 1
+                if pooled[id] then return {x = 1, y = 2, z = 3} end
+                return nil
+            end
+            if cmd.id == 'SetPosition' then
+                placed[#placed + 1] = {id = id, x = cmd.position.x, rotY = cmd.rotY}
+                if id == 25600 and not alive[id] then placedAbsent = placedAbsent + 1 end
+            end
+            return true
+        end,
+        buddyVector = function(px, py, pz) return {x = px, y = py, z = pz} end
+    }
+    W.receipt = function(source)
+        if source:find(' -- write ', 1, true) then writes = writes + 1; return true end
+        return nil
+    end
+    W.log = function(text) logs[#logs + 1] = text end
+    env.Tpp = {IsVehicle = function(id) return id == 4000 or id == 4001 or id == 25600 end}
+    env.PlayerInfo = {OrCheckStatus = function() return false end}
+    W.paired = true
+    R.fast.tracks, R.fast.closed, R.fast.send.id, R.fast.localId = {}, {}, nil, nil
+    R.fast.applied, R.fast.absent, R.fast.sent, R.fast.logAt = 0, 0, 0, 0
+    R.tiltOff = nil
+    clock = clock + 5000
+    local t0 = 300000
+    W.handlers[44]({t0, 3, 25600, 0, 0, 0, 0})
+    W.handlers[45]({t0, 25600, 10, 10})
+    local before = #placed
+    for i = 1, 40 do
+        clock = clock + 50
+        W.handlers[44]({t0 + i * 50, 3, 25600, i * 1000, 0, 0, i})
+        W.handlers[45]({t0 + i * 50, 25600, 10 + i, 10 - i})
+        W.tick()
+    end
+    check(placedAbsent == 0 and #placed == before and writes == 0,
+        'an id this copy lacks: no SetPosition and no tilt write while IsAlive is false')
+    check(R.fast.applied == 0 and R.fast.absent == 40, 'absent frames are counted, not applied')
+    check(asked[25600] >= 4 and asked[25600] <= 5, 'IsAlive is asked at most every 500 ms per track (2 s: ' .. tostring(asked[25600]) .. ')')
+    check(askedPos[25600] == asked[25600], 'GetPosition is asked only after an IsAlive that is not true')
+    local line
+    for _, l in ipairs(logs) do if l:find('event=ride_fast;', 1, true) then line = l end end
+    check(line ~= nil and line:find(';applied=0;', 1, true) and line:find(';absent=[1-9][0-9]*$') ~= nil,
+        'the ride_fast line reports absent=N next to applied=0: ' .. tostring(line))
+    -- The vehicle exists here again (spawned, or the viewer came near): placement resumes after the next check.
+    alive[25600] = true
+    local resumed = false
+    for i = 41, 56 do
+        clock = clock + 50
+        W.handlers[44]({t0 + i * 50, 3, 25600, i * 1000, 0, 0, i})
+        W.tick()
+        if #placed > before then resumed = true; break end
+    end
+    check(resumed and placed[#placed].id == 25600 and R.fast.applied >= 1, 'present again: placed within one check interval')
+    check(R.fast.absent == 40, 'no absent frame counted once it is alive (the check was due on that frame)')
+    -- A present vehicle is placed every frame as before (IsAlive true), with its own track's check.
+    R.fast.tracks = {}
+    local t1 = 400000
+    W.handlers[44]({t1, 3, 4000, 0, 0, 0, 0})
+    for i = 1, 4 do
+        clock = clock + 50
+        W.handlers[44]({t1 + i * 50, 3, 4000, i * 1000, 0, 0, 0})
+    end
+    local b4 = #placed
+    W.tick()
+    check(#placed == b4 + 1 and placed[#placed].id == 4000, 'a vehicle this copy has is placed as before')
+    check(askedPos[4000] == nil, 'a live vehicle is never asked GetPosition')
+    -- A wreck here (IsAlive false, still in the pool: GetPosition answers) is placed as before, like the native seat
+    -- gate's absent (the pool bit only). Hidden run 7561ab63: the guest's copy of the jeep was wrecked in a crash there
+    -- only; skipping it left the seated driver behind (refused far, then partner_ride=hide; reason=ride).
+    R.fast.tracks = {}
+    local absentBefore, t2 = R.fast.absent, 500000
+    W.handlers[44]({t2, 3, 4001, 0, 0, 0, 0})
+    for i = 1, 4 do
+        clock = clock + 50
+        W.handlers[44]({t2 + i * 50, 3, 4001, i * 1000, 0, 0, 0})
+    end
+    local b5 = #placed
+    for i = 5, 8 do
+        clock = clock + 50
+        W.handlers[44]({t2 + i * 50, 3, 4001, i * 1000, 0, 0, 0})
+        W.tick()
+    end
+    local onlyWreck = #placed > b5
+    for k = b5 + 1, #placed do if placed[k].id ~= 4001 then onlyWreck = false end end
+    check(onlyWreck and R.fast.absent == absentBefore and asked[4001] == 1 and askedPos[4001] == 1,
+        'a wreck here (IsAlive false, GetPosition answers) is placed as before, not absent (placed ' ..
+        tostring(#placed - b5) .. ', absent ' .. tostring(R.fast.absent - absentBefore) .. ')')
+    W.api, W.receipt, W.log = api, nil, nil
+end
 -- User decision 2026-10-22 (docs/mounts.md "RIDE_BODY and the viewer's own buddy"): the partner's RIDE_BODY stream
 -- never places the viewer's own D-Horse / D-Walker. Before 0.13.5 the viewer's idle horse leapt and hung in the air
 -- around the partner (hidden runs b264ad58, 251abcef, bfd6fcc4, fbde3dcc).

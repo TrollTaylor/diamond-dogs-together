@@ -477,7 +477,8 @@ inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
 // rides a seat this copy cannot play because the vehicle is missing or
-// unrealized here (Mother Base by id: local_read, unrealized): body 1 stays
+// unrealized here (Mother Base by id: absent, local_read, unrealized; free roam:
+// absent only, SeatFallbackHere): body 1 stays
 // realized and visible, Warped to the remote's streamed seated pose every tick,
 // instead of hidden. Never for a vehicle that exists here (a pending request or
 // the viewer's DM is retried, not Warped), never into the viewer's vehicle.
@@ -673,7 +674,7 @@ struct Mission {
         const char* byid_reason;
         std::uint8_t remote_category, local_category;
         // 0.13.6 online ride. fallback_want: the start's by-id reason that shows
-        // body 1 without a seat (local_read, unrealized) once the release ran;
+        // body 1 without a seat (absent, local_read, unrealized) once the release ran;
         // fallback_reason: why the fallback phase holds; exit_quiet: the exit
         // left the fallback (nothing of ours plays on body 1: no stop);
         // body_gone: the exit found body 1 unrealized (no stop either);

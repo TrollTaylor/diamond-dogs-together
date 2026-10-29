@@ -95,11 +95,17 @@ partner_ride_census; who=remote; id=25600; ref=ok; type=0x14; cat=1; var=4; real
   `partner_ride=refused; reason=packet_or_session` once). `RemoteCategory` returns a category only
   for a live addendum describing exactly the stored ride (revision, vehicle, seat).
 - **Offer** (`SeatByIdGate`, at the seat start and again at the write): both hooks, the ride still
-  this (vehicle, seat), a live addendum (`no_ext`), its category for this ride
+  this (vehicle, seat), this copy has a vehicle with that id (`absent`: the read refused `live`, the
+  index's pool bit clear, or `index`, past the pool; read first, so an absent id is `absent` with or
+  without the addendum), a live addendum (`no_ext`), its category for this ride
   (`remote_category`), not the viewer's own vehicle (`local_vehicle`), this copy's same id readable
-  (`local_read`), realized (`unrealized`) and of the same category (`category`). The offer sets
-  RIDE_SEAT entry bit 4 (`partner::seat_entry::by_id`); a refusal keeps today's behaviour (Lua
-  refuses `no_name`, the ride hides) and is logged `partner_ride_seat=byid; ...; offer=0; reason=..`.
+  (`local_read`: any other refusal of the read chain), realized (`unrealized`) and of the same
+  category (`category`). The offer sets RIDE_SEAT entry bit 4 (`partner::seat_entry::by_id`); a
+  refusal keeps today's behaviour (Lua refuses `no_name`, the ride hides) and is logged
+  `partner_ride_seat=byid; ...; offer=0; reason=..`, except the visible fallback
+  (docs/anim-round1-seat.md "Fallback"): Mother Base shows body 1 without a seat for `absent`,
+  `local_read` and `unrealized`, free roam for `absent` only (the Africa fix, the two-PC test of
+  2026-10-23 bug 2: the other player's relief vehicle 25600 existed only on his copy).
 - **Mission scope**: seat mode runs in 30010/30020 (authored locators) and, with
   `partner_ride_seat_id=1` only (the default), in Mother Base 30050 (`SeatCapableMission`): MB has no
   `veh_lv_`/`veh_trc_` name, so there it seats only an offered id; a refused offer in 30050 is refused
@@ -152,8 +158,15 @@ seat-mode hide of a live vehicle ride, once per reason).
   `partner_vehicle::TiltRefusal` on two equal reads (key, contract blocks + thresholds re-verified,
   runtime thread, peer, type 50, not the viewer's own vehicle, realized, body chain ok,
   `identity` body == record, finite, |angle| <= 1570 mrad) and writes the two floats.
+  Since the Africa fix (`R.present`) each track first asks the vehicle's `IsAlive` (at most every
+  500 ms): while this copy has no vehicle with that id (the answer is not true and `GetPosition`
+  does not answer either: the pool bit is clear) the frame writes no tilt and sends no SetPosition,
+  and counts as `absent`. A wreck (`IsAlive` false, still in the pool, `GetPosition` answers) is
+  placed as before (hidden run `7561ab63`: skipping a wreck on one copy left the seated driver
+  behind, refused `far`, then hidden).
 - Log lines: `partner_ride_tilt=read|write|refused; ...`, the world log's
-  `event=ride_fast; ...; tilt_sent=..; tilt_written=..`.
+  `event=ride_fast; ...; tilt_sent=..; tilt_written=..; absent=..` (`applied` counts SetPosition
+  calls that did not answer false; `state=absent` while the newest track is absent).
 - Known limit: a large move (>= 1 m or >= 0.1 rad, e.g. after a relay burst) still takes 0xBA9710's
   yaw-only branch for one frame.
 
