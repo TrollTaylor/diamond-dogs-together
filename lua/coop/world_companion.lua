@@ -255,10 +255,8 @@ function C.allowed() return C.shown(C.hostType()) end
 -- Host: the Quiet lock while the guest plays Quiet; COMPANION on change and every 5 s.
 local function hostTick(now)
  local Q, S = BT("QUIET"), TppBuddyService
- -- The lock outlives a short unpair (a mission change unpairs for a few seconds, run dd4c61ff).
- if W.paired then C.unpairedAt = nil end
- local held = C.guestQuiet and (W.paired or now - (C.unpairedAt or now) < 10000)
- if held and Q then
+ -- The lock lasts the session (sessionTick: a mission change unpairs for a few seconds, run dd4c61ff).
+ if C.guestQuiet == true and Q then
   if C.quietDisabled ~= W.mission then
    local is, set = W.get(S, "IsDisableBuddyType"), W.get(S, "SetDisableBuddyType")
    local okIs, already = false, false
@@ -353,6 +351,7 @@ local function reconcile(now)
   C.skipLogged = W.mission * 8 + h.kind
   L(fmt("step=reconcile_skip;reason=%s;kind=%s;", why(raw), typeName(raw)))
  end
+ if want ~= nil and want == have then C.mismatchAt, C.fixWant, C.fixN, C.fixQuit = nil, nil, nil, nil end
  if want == nil or have == nil or want == have then C.mismatchAt = nil; return end
  C.mismatchAt = C.mismatchAt or now
  -- 8 s (15 s to send one away): a host warp, death or cluster change drops its kind for a few
@@ -365,8 +364,17 @@ local function reconcile(now)
   if C.waitLogged ~= W.mission then C.waitLogged = W.mission; L(fmt("step=reconcile_wait;kind=%s;reason=no_pose;", typeName(want))) end
   return
  end
- C.fixAt = now + 5000
- C.keep("reconcile")
+ -- Six tries, 5 s apart and doubling (a block that cannot load the kind: E19's dead dog, run
+ -- dc761c98), then one summary line; only with the guest's own snapshot (a CallBuddy writes
+ -- vars.buddyType, which its saves must not keep; review 2026-10-29).
+ if C.fixWant ~= want then C.fixWant, C.fixN, C.fixQuit = want, 0, nil end
+ if C.fixN >= 6 then
+  if not C.fixQuit then C.fixQuit = true; L(fmt("step=reconcile_gave_up;kind=%s;have=%s;tries=%d;", typeName(want), typeName(have), C.fixN)) end
+  return
+ end
+ C.fixN = C.fixN + 1
+ C.fixAt = now + math.min(60000, 5000 * 2 ^ (C.fixN - 1))
+ if not C.keep("reconcile") then return end
  local via, ok = "call", false
  C.token = true
  if want == BT("NONE") then
@@ -435,15 +443,46 @@ local function guestTick(now)
  end
  if W.paired then guardTypes(now); reconcile(now) end
 end
+-- The session ends 10 s after a link-session or level-0 unpair, else after 120 s alone in game (a
+-- mission change re-pairs within seconds), while no host transition is pending. The host forgets
+-- the guest's character (the lock lifts); the guest sends the host's companion away (never a
+-- release to its own AI) and gets its own buddy vars back (D8 b). Review 2026-10-29.
+function C.endSession(why)
+ L(fmt("step=session_end;why=%s;", why))
+ C.peer, C.host, C.hostKind, C.guestQuiet, C.guestChar, C.aloneAt, C.unpairedAt, C.unpairWhy = nil, nil, nil, nil, nil, nil, nil, nil
+ if W.host then return end
+ local B, have = W.buddy, active()
+ if type(B) == "table" and type(B.clearOwnership) == "function" and type(B.s) == "table" then pcall(B.clearOwnership, B.s) end
+ if C.own and have and have ~= BT("NONE") then
+  C.token = true
+  local ok = pcall(TBC("DeleteBuddy"))
+  C.token = nil
+  L(fmt("step=session_end;via=delete;kind=%s;ok=%d;", typeName(have), ok and 1 or 0))
+ end
+ C.release("session_end")
+ C.mask(false); C.unguard(); C.expect = nil
+end
+local function sessionTick(now)
+ if W.paired then C.aloneAt, C.unpairedAt, C.unpairWhy = nil, nil, nil; return end
+ if not C.peer and not C.guestQuiet and not C.own then return end
+ C.aloneAt = C.aloneAt or now
+ local short = C.unpairedAt and (C.unpairWhy == 1 or C.unpairWhy == 5)
+ if now - (short and C.unpairedAt or C.aloneAt) < (short and 10000 or 120000) then return end
+ local F = W.follow
+ if F.current or F.queue[1] then return end
+ C.endSession(short and "unpaired" or "alone")
+end
 function C.tick(now)
  if not C.on() then if C.masked then C.mask(false) end if C.mine then C.unguard() end return end
  if now < (C.nextTick or 0) then return end
  C.nextTick = now + 100
+ pcall(sessionTick, now)
  local ok, err = pcall(W.host and hostTick or guestTick, now)
  if not ok and now >= (C.errAt or 0) then C.errAt = now + 10000; L("step=error;msg=" .. string.sub(tostring(err), 1, 80)) end
 end
 W.startHooks[#W.startHooks + 1] = function()
  C.nextTick, C.txAt, C.txKind, C.deleteAt, C.fixAt, C.mismatchAt, C.host, C.hostKind = nil, nil, nil, nil, nil, nil, nil, nil
+ C.fixWant, C.fixN, C.fixQuit = nil, nil, nil
  C.masked, C.cellLogged, C.hookLines, C.startAt, C.stageLock = nil, nil, 0, nil, nil
  if C.expect and C.expect.mission == W.mission then C.expect.deadline = W.now() + 30000 else C.expect = nil end
  if C.on() and not W.host then C.charAt = nil end
@@ -452,8 +491,8 @@ W.pairedHooks[#W.pairedHooks + 1] = function() C.charAt, C.txAt, C.pairedAt = ni
 -- The host's deploy waits for the guest's CHARACTER (world_follow.lua F.hold; at most 10 s after
 -- pairing), so its sortie seeds know the Quiet lock (review 2026-10-29).
 W.follow.waitPeer = function(now) return W.host and C.on() and W.paired and not C.peer and now - (C.pairedAt or now) < 10000 end
-W.unpairedHooks[#W.unpairedHooks + 1] = function()
- C.host, C.hostKind, C.unpairedAt = nil, nil, W.now()
+W.unpairedHooks[#W.unpairedHooks + 1] = function(reason)
+ C.host, C.hostKind, C.unpairedAt, C.unpairWhy = nil, nil, W.now(), reason
  pcall(C.mask, false)
  pcall(C.unguard)
 end
@@ -554,8 +593,8 @@ function C.install()
  local arrival = W.get(TppStory, "CanArrivalQuietInMB")
  if type(arrival) == "function" then
   TppStory.CanArrivalQuietInMB = function(n, ...)
-   if n ~= true and W.companionOn == true and W.get(vars, "missionCode") == 30050 and
-    ((W.host and C.guestQuiet) or (not W.host and C.selfQuiet)) then
+   if n ~= true and W.get(vars, "missionCode") == 30050 and
+    ((W.host and C.on() and C.guestQuiet == true) or (not W.host and C.live() and C.selfQuiet)) then
     if not C.cellLogged then
      -- The stock answer (true: she would be in her cell now), read once for the log.
      local ok, stock = pcall(arrival, n, ...)

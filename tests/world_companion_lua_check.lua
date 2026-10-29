@@ -47,11 +47,11 @@ local function Fixture(role, o)
         ResetPadMask = function(t) c.masks[#c.masks + 1] = {'reset', t} end}
     local function rec(name, ...) c.calls[#c.calls + 1] = {name, ...} end
     env.TppBuddy2BlockController = {
-        CallBuddy = function(t, p, yaw) rec('CallBuddy', t, p, yaw); c.active = t; return true end,
+        CallBuddy = function(t, p, yaw) rec('CallBuddy', t, p, yaw); if c.loadFails then return false end; c.active = t; return true end,
         CallBuddyWithHalo = function(t) rec('CallBuddyWithHalo', t); return true end,
         ReserveCallBuddy = function(t, s, p, yaw) rec('ReserveCallBuddy', t, s, p, yaw) end,
         DeleteBuddy = function() rec('DeleteBuddy'); c.active = NONE end,
-        Load = function() rec('Load'); c.block = true end,
+        Load = function() rec('Load'); if not c.loadFails then c.block = true end end,
         GetActiveBuddyType = function() return c.active end,
         IsBlockActive = function() return c.block end}
     env.TppBuddyService = {IsDisableBuddyType = function() return false end,
@@ -508,6 +508,125 @@ check(c.env.TppStory.CanArrivalQuietInMB() == false, 'the guest copy hides the c
 c = Fixture(2, {on = false})
 c.env.vars.missionCode = 30050
 check(c.env.TppStory.CanArrivalQuietInMB() == true, 'off: the retail answer')
+-- Review 2026-10-29 (minor 4): the guest's character is forgotten when the session ends (10 s after a link-session or
+-- level-0 unpair; 120 s alone in game otherwise), and the cell Quiet hide needs the module live: never a solo host or a
+-- solo guest playing Quiet.
+do
+    local h = Fixture(1, {buddyType = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.tick()
+    h.env.vars.missionCode = 30050
+    check(h.env.TppStory.CanArrivalQuietInMB() == false, 'co-op with a Quiet guest: the cell Quiet is hidden')
+    h.W.paired = false
+    for _, f in ipairs(h.W.unpairedHooks) do f(1) end
+    h.tick(200)
+    check(h.C.guestQuiet == true, 'kept through a short unpair')
+    h.time = h.time + 11000
+    h.tick(200)
+    check(h.C.guestQuiet == nil and h.find('step=session_end;why=unpaired;') and not h.C.live(), 'forgotten 10 s after the unpair')
+    check(h.env.TppStory.CanArrivalQuietInMB() == true, 'the host alone sees its cell Quiet again')
+    -- A mission change (W.begin resets paired, no unpair event) keeps the session for up to 120 s alone.
+    h = Fixture(1, {buddyType = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.W.paired = false
+    h.tick(200)
+    h.time = h.time + 60000; h.tick(200)
+    check(h.C.guestQuiet == true and h.C.live(), 'a mission change: still the session after 60 s alone')
+    h.time = h.time + 61000; h.tick(200)
+    check(h.C.guestQuiet == nil and h.find('step=session_end;why=alone;'), 'ended after 120 s alone')
+    h.W.paired = true
+    h.W.handlers[56]({2, 6, 1})
+    check(h.C.guestQuiet == true and h.C.live(), 'a new pairing learns it again')
+    -- Off, or the guest alone: the retail answer.
+    local g = Fixture(2, {peer = false})
+    g.env.vars.missionCode = 30050
+    check(g.env.TppStory.CanArrivalQuietInMB() == true, 'a guest playing Quiet without a host session: the retail answer')
+    h = Fixture(1, {buddyType = QUIET})
+    h.W.handlers[56]({1, 6, 1})
+    h.W.companionOn = false
+    h.env.vars.missionCode = 30050
+    check(h.env.TppStory.CanArrivalQuietInMB() == true, 'the key off: the retail answer')
+end
+-- Review 2026-10-29 (minors 5, 6): the reconcile needs the guest's own snapshot (else a CallBuddy would write the host's
+-- type into the guest's saves), backs off and gives up; the end of the session sends the host's companion away and gives
+-- the guest its own buddy vars back (D8 b), never a release to the guest's AI.
+do
+    local g = Fixture(2)
+    g.env.vars.buddyDogEyeType = nil
+    g.W.handlers[48]({1, 0, 1, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, g.time)
+    g.tick(200)
+    g.time = g.time + 8500
+    g.W.handlers[48]({2, 0, 1, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, g.time)
+    g.tick(200)
+    check(g.find('step=own_refused;key=buddyDogEyeType;') and g.called('CallBuddy') == 0 and g.called('ReserveCallBuddy') == 0,
+        'no own snapshot: no reconcile call')
+    g = Fixture(2, {block = false})
+    g.loadFails = true
+    local seq = 1
+    for _ = 1, 600 do
+        seq = seq + 1
+        g.W.handlers[48]({seq, 0, 1, 0, 1, 10000, 0, 20000, 0, 0, 0, 0}, g.time)
+        g.tick(1000)
+    end
+    local tries = 0
+    for _, l in ipairs(g.logs) do if l:find('step=reconcile;', 1, true) then tries = tries + 1 end end
+    check(tries == 6 and g.find('step=reconcile_gave_up;kind=dog;have=none;tries=6;'), 'six tries over ten minutes, then one summary line')
+    local gaveUp = 0
+    for _, l in ipairs(g.logs) do if l:find('reconcile_gave_up', 1, true) then gaveUp = gaveUp + 1 end end
+    check(gaveUp == 1, 'the summary once')
+    -- Session end on the guest: the host's dog deleted (the module's own call), own vars back, no mask.
+    g = Fixture(2)
+    follow(g, values)
+    g.active = DOG
+    g.tick()
+    local released
+    g.W.buddy = {s = {owned = true}, clearOwnership = function(s) s.owned = nil; released = true end}
+    g.W.paired = false
+    for _, f in ipairs(g.W.unpairedHooks) do f(1) end
+    g.F.current = nil
+    g.tick(200)
+    check(g.called('DeleteBuddy') == 0, 'nothing before the grace')
+    g.time = g.time + 11000
+    g.tick(200)
+    check(g.called('DeleteBuddy') == 1 and g.active == NONE and g.find('step=session_end;why=unpaired;'), 'the host dog is sent away')
+    check(not g.find('step=refused;path=lua_DeleteBuddy;'), 'by the module itself (not refused)')
+    check(g.env.vars.buddyType == HORSE and g.env.vars.buddyDogEyeType == 1 and not g.C.own and g.find('step=own_restored;why=session_end;own=horse;'),
+        'the guest own buddy vars are back')
+    check(released and g.W.buddy.s.owned == nil, 'world_buddy forgets the mirror (no release to the guest AI)')
+    check(not g.C.live(), 'the agreement ends with the session')
+    -- A mission-change unpair (remote_mission) waits 120 s, and longer while a host transition is pending (the guest
+    -- follows).
+    g = Fixture(2)
+    follow(g, values)
+    g.active = DOG
+    g.W.paired = false
+    for _, f in ipairs(g.W.unpairedHooks) do f(2) end
+    g.time = g.time + 11000
+    g.tick(200)
+    check(g.called('DeleteBuddy') == 0 and g.C.own, 'a mission change keeps the session past 10 s')
+    g.time = g.time + 120000
+    g.tick(200)
+    check(g.called('DeleteBuddy') == 0 and g.C.own, 'a pending follow keeps the session')
+    g.F.current = nil
+    g.tick(200)
+    check(g.called('DeleteBuddy') == 1 and g.find('step=session_end;why=alone;'), 'then it ends')
+end
+-- Review 2026-10-29 (minor 10): companion_cell goto (a warp into the Quiet cell) is lab only; the read-only report is not.
+do
+    local h = Fixture(1)
+    h.env.vars.missionCode = 30050
+    h.env.Tpp = {GetLocator = function() return {1, 2, 3} end}
+    local warped
+    local A2 = {warp = function(p) warped = p; return true, 'warp' end}
+    h.W.mode = 2
+    local ok2, msg2 = h.C.lever({'companion_cell', 'goto'}, 1, A2, 30050)
+    check(not ok2 and msg2 == 'lab_only' and warped == nil, 'companion_cell goto refused in play')
+    ok2, msg2 = h.C.lever({'companion_cell'}, 2, A2, 30050)
+    check(ok2 and msg2:find('cell;src=radio;', 1, true), 'the read-only cell report stays')
+    h.W.mode = 1
+    ok2 = h.C.lever({'companion_cell', 'goto'}, 3, A2, 30050)
+    check(ok2 and warped, 'lab: the warp')
+end
 -- Seed lever (lab): vars.buddyType and a checkpoint; the own copy follows when kept.
 c = Fixture(2)
 follow(c, values)

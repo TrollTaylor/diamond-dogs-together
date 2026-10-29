@@ -298,6 +298,7 @@ function C.lever(a, id, A, mission)
  if a[1] == "seed_buddy" and #a == 2 then return C.seedLever(a[2]) end
  if a[1] == "companion_cell" and (#a == 1 or (#a == 2 and a[2] == "goto")) then
   if mission ~= 30050 then return false, "cell_mission" end
+  if #a == 2 and W.mode ~= 1 then return false, "lab_only" end
   local p, src = C.cellPos()
   if not p then return false, "cell_unavailable" end
   if #a == 1 then return true, fmt("cell;src=%s;pos=%.2f,%.2f,%.2f", src, p[1], p[2], p[3]) end
