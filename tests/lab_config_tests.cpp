@@ -1406,17 +1406,18 @@ int main() {
             Check(coPlay.mode == mgscoop::LabMode::play && coPlay.companion_host_owned && coPlay.play_refused == 0 && coPlay.invalid_values == 0,
                   "companion_host_owned=1 parses in play with no refusal bit");
             Check(!coBad.companion_host_owned && coBad.invalid_values == 1 && coBad.unknown_keys == 0, "an invalid companion_host_owned keeps it off");
-            // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): on by default in lab, gun profile and play since
-            // its FRAME proof (hidden run d18e8fa0) and play rehearsal (40c09484); a named 0 opts out, a named 1 parses in
-            // lab and play with no refusal bit.
+            // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): off by default again in lab, gun profile and play
+            // (the review of 2026-10-29: the play rehearsal covered no drive, mission end or removal at the defaults, a guest
+            // Fulton was double-credited with VEHICLE_GONE off, and D11 is pending); a named 1 parses in lab and play with no
+            // refusal bit, a named 0 keeps it off.
             const auto rePlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_relief=1\n");
             const auto reLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=1\n");
             const auto reOff = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=0\n");
             const auto reBad = Lab("enabled=1\nrole=host\nworld_relief=2\n");
-            Check(def.world_relief && vehicleGun.world_relief && vehiclePlayDefault.world_relief && !def.world_relief_given &&
+            Check(!def.world_relief && !vehicleGun.world_relief && !vehiclePlayDefault.world_relief && !def.world_relief_given &&
                       !vehiclePlayDefault.world_relief_given,
-                  "world_relief defaults on (lab, gun profile, play)");
+                  "world_relief defaults off (lab, gun profile, play)");
             Check(reLab.world_relief && reLab.world_relief_given && reLab.invalid_values == 0 && reLab.unknown_keys == 0,
                   "world_relief=1 parses in lab");
             Check(!reOff.world_relief && reOff.world_relief_given && reOff.invalid_values == 0, "a named 0 keeps it off");

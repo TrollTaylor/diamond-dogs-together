@@ -1,6 +1,6 @@
 # M3 proof, lab, heavy relief vehicles on both copies (docs/vehicles-companions-design.md section 8.4; route A).
-# world_relief and world_vehicle_gone are not named: world_relief runs at its default (on since 5a6bac8) and
-# VEHICLE_GONE at its own (off). The host alone arms type 9 (west tank; no free roam loads a tank body) for its sortie
+# world_relief is named (its default is off again since the review of 2026-10-29; it was on from 5a6bac8 when run
+# 1a5c1fa0 ran this scenario with no key named) and world_vehicle_gone is not: VEHICLE_GONE runs at its default (off). The host alone arms type 9 (west tank; no free roam loads a tank body) for its sortie
 # to Africa 30020 (goto_lz=0, savannahEast_N); the seeds carry it to the guest, whose own engine draws the same tank
 # (run fc6f1f01 drew it on the host only: the guest's lever was refused there). The 30020 mission end runs with the
 # tank alive on both copies and VEHICLE_GONE off: the host's stock seize credits it (tnkW +1 at the next census), the
@@ -10,6 +10,7 @@
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-heavy.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab
+labsetting world_relief=1
 labsetting nametag=1
 labsetting coop_hud=compact
 boot 30010 828.18 338.20 1630.51 95

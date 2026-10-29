@@ -431,7 +431,7 @@ $script:LabPartnerKeys = @(
     # session's one companion (lab and play, default 0 until proven; written only when set).
     @{ Key = 'companion_host_owned'; Json = 'companion_host_owned'; Kind = 'bool' },
     # M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): the host's relief vehicle on both
-    # copies (lab and play, default 1 since runs d18e8fa0 and 40c09484; written only when set).
+    # copies (lab and play, default 0: on from 5a6bac8 until the review of 2026-10-29; written only when set).
     @{ Key = 'world_relief'; Json = 'world_relief'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }

@@ -147,7 +147,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    M1: companion_host_owned=0|1, the host's buddy is the session's companion (lab and
                                    play, default 0; docs/vehicles-companions-design.md 6.1);
                                    M3: world_relief=0|1, the host's sortie vehicle on both copies (lab and play,
-                                   default 1; docs/vehicles-companions-design.md 6.3)
+                                   default 0; docs/vehicles-companions-design.md 6.3)
 
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
 or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the
