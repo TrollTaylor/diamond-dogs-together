@@ -16,6 +16,8 @@
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-gone.txt
 #        -PartnerProfile native -NativeStage gun -SaveSeed lab
+# Order since 2026-10-28 (M4 / E5): C first on J1 (075c1ea4 never seated the guest in C), then A on J2, B on J3, D on
+# J4 and the new E (a real player Fulton attempt on J5); the J numbers below are the parts' own jeeps in that order.
 # Expected (world_lua lines read "event=vehicle_gone; step=...", ';' expanded to '; '):
 #   both   event=vehicle_gone; step=on; mission=30010; role=host|guest (the key reached Lua as CFG r[15])
 #   A (guest loses jeep J1 -> the host's copy loses it too):
@@ -69,14 +71,46 @@ stance host stand
 stance guest stand
 placebehind host guest 6 -0.7
 wait 4000
-# A: both beside the nearest authored jeep J1; the guest loses it (synced).
+# C (first since 2026-10-28, E5): the guest boards the nearest jeep J1 (the jeep coop-vehicle-seat.txt boards from
+# this goto spot; hidden run 075c1ea4 left the guest on a slope beside J3 and never seated it), then the host comes to
+# the same spot and loses J1 (synced): the guest holds the removal until it gets off.
+host run vehicle_gone_status
+host expect vgone;on=1;role=host;gone=none
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+guest press e 150
+wait 3000
+guest run vehicle_seats
+guest expect vehicle;id=256[0-9][0-9]
+host debug goto_vehicle jeep
+wait 3000
+host run vehicle_remove nearest sync
+host expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=1;alive=0
+waitlog host 'event=vehicle_gone; step=tx; id=256[0-9][0-9]; cause=3; actor=2; rid=0; seq=[0-9]+; sent=1' 10
+waitlog guest 'event=vehicle_gone; step=rx; id=256[0-9][0-9]; seq=[0-9]+; cause=3; actor=2; rid=0' 10
+waitlog guest 'event=vehicle_gone; step=hold; id=256[0-9][0-9]; src=rx; reason=(local_rider|occupied)' 10
+wait 3000
+both capture hold-guest-seated
+guest run vehicle_seats
+guest expect vehicle;id=256[0-9][0-9]
+guest press e 150
+wait 3500
+waitlog guest 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=(locator|index); src=rx; ok=1' 15
+wait 1500
+both capture hold-applied
+guest run vehicle_gone_status
+guest expect vgone;on=1;role=guest;gone=.*held=none
+both debug heal
+both debug godmode 1
+wait 1500
+# A: both beside the next jeep J2; the guest loses it (synced).
 host debug goto_vehicle jeep
 guest debug goto_vehicle jeep
 wait 4000
 host debug clear_enemies 100
 wait 1500
-host run vehicle_gone_status
-host expect vgone;on=1;role=host;gone=none
 both capture gone-a-before
 guest run vehicle_remove nearest sync
 guest expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=1;alive=0
@@ -88,10 +122,10 @@ waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=256[0-9][0-9]; 
 wait 1500
 both capture gone-a-after
 host run vehicle_gone_status
-host expect vgone;on=1;role=host;gone=256[0-9][0-9];
+host expect vgone;on=1;role=host;gone=256[0-9][0-9],256[0-9][0-9];
 guest run vehicle_gone_status
-guest expect vgone;on=1;role=guest;gone=256[0-9][0-9];
-# B: the next jeep J2; only the guest's copy loses it, then the host drives his copy.
+guest expect vgone;on=1;role=guest;gone=256[0-9][0-9],256[0-9][0-9];
+# B: the next jeep J3; only the guest's copy loses it, then the host drives his copy.
 host debug goto_vehicle jeep
 guest debug goto_vehicle jeep
 wait 4000
@@ -102,7 +136,7 @@ guest expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=0;alive=0
 guest run vehicle_gone_status
 guest expect gone=.*256[0-9][0-9]L
 host run vehicle_gone_status
-host expect vgone;on=1;role=host;gone=256[0-9][0-9];held
+host expect vgone;on=1;role=host;gone=256[0-9][0-9],256[0-9][0-9];held
 both capture diverge-before
 host press e 150
 wait 3000
@@ -124,40 +158,14 @@ both capture diverge-stopped
 host press e 150
 wait 3000
 both capture diverge-exited
-# The host's copy still has J2 (he stands beside it): remove it there too (this copy only), so part C's
-# goto_vehicle jeep picks the same J3 on both copies.
+# The host's copy still has J2 (he stands beside it): remove it there too (this copy only), so part D's
+# goto_vehicle jeep picks the same J4 on both copies.
 host run vehicle_remove nearest
 host expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=0;alive=0
 state
 both debug heal
 both debug godmode 1
 wait 1500
-# C: the next jeep J3; the guest boards it, then the host loses it (synced): the guest holds it until it gets off.
-guest debug goto_vehicle jeep
-host debug goto_vehicle jeep
-wait 4000
-host debug clear_enemies 100
-wait 1500
-guest press e 150
-wait 3000
-guest run vehicle_seats
-guest expect vehicle;id=256[0-9][0-9]
-host run vehicle_remove nearest sync
-host expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=1;alive=0
-waitlog host 'event=vehicle_gone; step=tx; id=256[0-9][0-9]; cause=3; actor=2; rid=0; seq=[0-9]+; sent=1' 10
-waitlog guest 'event=vehicle_gone; step=rx; id=256[0-9][0-9]; seq=[0-9]+; cause=3; actor=2; rid=0' 10
-waitlog guest 'event=vehicle_gone; step=hold; id=256[0-9][0-9]; src=rx; reason=(local_rider|occupied)' 10
-wait 3000
-both capture hold-guest-seated
-guest run vehicle_seats
-guest expect vehicle;id=256[0-9][0-9]
-guest press e 150
-wait 3500
-waitlog guest 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=(locator|index); src=rx; ok=1' 15
-wait 1500
-both capture hold-applied
-guest run vehicle_gone_status
-guest expect vgone;on=1;role=guest;gone=.*held=none
 # D: the next jeep J4; the engine's own vehicle Fulton on the guest's copy, read back by the module's watch.
 both debug heal
 guest debug goto_vehicle jeep
@@ -182,4 +190,27 @@ both capture fulton-after
 # (J1, J2L, J3, J4) tie them to J4.
 host run vehicle_gone_status
 host expect vgone;on=1;role=host;gone=(256[0-9][0-9]L?,){3}256[0-9][0-9]L?;held=none
+# E (E5 2026-10-28): a real player Fulton of a jeep by the guest (no lever): hold the action key beside the next
+# jeep J5. A seed without the cargo Fulton (or a press that boards instead) shows no Fulton: then the lines below
+# time out and the frames show the guest seated or standing; the lever form of D stays the detection proof.
+both debug heal
+guest debug goto_vehicle jeep
+host debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+both capture pfulton-before
+guest hold e 1500
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst pfulton-lift 6 500
+waitlog guest 'event=vehicle_gone; step=watch; id=256[0-9][0-9]; m=FultonInfo; cause=1; att=local' 20
+waitlog guest 'event=vehicle_gone; step=lost; id=256[0-9][0-9]; cause=1; role=guest' 40
+waitlog host 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=(locator|index); src=req; ok=1' 15
+wait 1500
+both capture pfulton-after
+guest run vehicle_seats
+host run vehicle_gone_status
+guest run vehicle_gone_status
 state
