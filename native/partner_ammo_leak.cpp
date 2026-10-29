@@ -111,4 +111,8 @@ bool StripsFireReload(bool play_mode, const MissionLeaks& mission) noexcept {
     return play_mode && (mission.shot_leaks || mission.ammo_leaks || mission.mag_leak_off);
 }
 
+bool SupportJobLeak(bool digest_changed, Verdict job) noexcept {
+    return digest_changed && job != Verdict::benign;
+}
+
 }  // namespace mgscoop::partner_ammo_leak

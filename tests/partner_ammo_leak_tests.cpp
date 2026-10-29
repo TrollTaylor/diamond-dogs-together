@@ -131,6 +131,15 @@ int main() {
               al::StripsFireReload(true, {0, 0, true}),
           "a shot leak, an ammo leak or the mirror's own leak stop strips FIRE and RELOAD in play");
     Check(!al::StripsFireReload(false, {3, 3, true}), "the lab only counts");
+
+    // The support lane's per-job stock check reads bytes of this same block in
+    // the same job window (hidden run 5ceb4985: the guest's own box broke in a
+    // box-on-box bump, ammoStockCounts[15] 8>7, verdict benign, and the lane
+    // still latched stock_leak_mission_latched for the mission).
+    Check(!al::SupportJobLeak(true, al::Verdict::benign), "an item-only job is never a support stock leak");
+    Check(al::SupportJobLeak(true, al::Verdict::leak) && al::SupportJobLeak(true, al::Verdict::none),
+          "a weapon/ammo change, or a digest change the block compare did not see, still latches");
+    Check(!al::SupportJobLeak(false, al::Verdict::leak), "no digest change, no support leak");
     std::printf("%u partner ammo leak checks; no game calls\n", checks);
     return 0;
 }

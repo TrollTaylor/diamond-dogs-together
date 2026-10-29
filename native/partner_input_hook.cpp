@@ -2228,7 +2228,8 @@ void SupportGapCheck(const pi::Injection& j,std::uint32_t slot_before,const std:
         unsigned(g.viewer_prev.mode),unsigned(g.viewer_prev.state),g.other_jobs)))g_log(line);
 }
 void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,std::uint32_t slot_before,
-                  const std::uint16_t (&slot_words_before)[8],std::uint32_t ammo_before) noexcept {
+                  const std::uint16_t (&slot_words_before)[8],std::uint32_t ammo_before,
+                  partner_ammo_leak::Verdict job) noexcept {
     SupportRec240Check(a,j);
     const auto after=ReadSupportDigest();const auto ammo_after=ReadAmmoDigest();
     std::uint16_t slot_words[8]{};const auto slot_after=ReadSupportSlotDigest(&slot_words);
@@ -2242,9 +2243,13 @@ void SupportCheck(const pi::Arm& a,const pi::Injection& j,std::uint32_t before,s
         std::memcpy(g_support_episode_words,slot_words_before,sizeof(g_support_episode_words));
         SupportLine("armed",j,"throw",handle);}
     partner_support_policy::StockLatch latch{g_support_leak!=0};
-    // Per job (no viewer job runs inside body 1's job): the full tables.
+    // Per job (no viewer job runs inside body 1's job): the full tables. Both
+    // digests cover bytes of AfterJob's weapon/ammo block in this same window:
+    // a job whose block change was the viewer's own item stock only (its box
+    // broken in a bump; hidden run 5ceb4985) is no support stock leak.
     bool changed=partner_support_policy::CheckStock(latch,before!=0,after!=0,before,after);
     changed=partner_support_policy::CheckStock(latch,ammo_before!=0,ammo_after!=0,ammo_before,ammo_after)||changed;
+    changed=partner_ammo_leak::SupportJobLeak(changed,job);
     // Across the episode (it spans viewer frames): only the slot-3 stock words.
     const bool episode_changed=partner_support_policy::CheckStock(latch,g_support_episode && g_support_episode_stock!=0,
         slot_after!=0,g_support_episode_stock,slot_after);
@@ -2511,7 +2516,11 @@ void VarsChangeLine(const partner_ammo_leak::Diff& d, partner_ammo_leak::Verdict
             static_cast<long>(g_ammo_benign))))
         g_log(line);
 }
-void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_before, const AmmoBlock& block_before) noexcept {
+// `job`: this window's weapon/ammo block verdict (none when unchanged or
+// unread), for the support lane's stock check of the same window.
+void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_before, const AmmoBlock& block_before,
+              partner_ammo_leak::Verdict& job) noexcept {
+    job = partner_ammo_leak::Verdict::none;
     const std::uint32_t shots = ReadShotCount();
     if (shots_before != 0xFFFFFFFFu && shots != 0xFFFFFFFFu && shots != shots_before) {
         InterlockedIncrement(&g_shot_leaks);
@@ -2529,6 +2538,7 @@ void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_b
         const partner_ammo_leak::Verdict verdict =
             partner_ammo_leak::Classify(diff) == partner_ammo_leak::Verdict::benign ? partner_ammo_leak::Verdict::benign
                                                                                      : partner_ammo_leak::Verdict::leak;
+        job = verdict;
         if (verdict == partner_ammo_leak::Verdict::benign) {
             InterlockedIncrement(&g_ammo_benign);
         } else {
@@ -3470,8 +3480,10 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     PadCensusPost(a);  // read-only, lab key partner_placed_census
     PlaceMirrorPost(a);
     LookProbe(a, j);
-    AfterJob(a, shots_before, ammo_before, ammo_block_before);
-    if(a.native_support || g_support_episode)SupportCheck(a,j,support_before,support_slot_before,support_words_before,ammo_before);
+    partner_ammo_leak::Verdict job_verdict = partner_ammo_leak::Verdict::none;
+    AfterJob(a, shots_before, ammo_before, ammo_block_before, job_verdict);
+    if(a.native_support || g_support_episode)
+        SupportCheck(a,j,support_before,support_slot_before,support_words_before,ammo_before,job_verdict);
     if(a.native_placed)PlacedCheck(a,j,body_mode_before,placed_before);
     if(a.native_arm)ArmCheck(a,j,arm_before);
     timing=native_work_timing::Begin(native_work_timing::Kind::pose_post);

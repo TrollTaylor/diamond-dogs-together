@@ -2200,6 +2200,24 @@ void TestJobWindow() {
         Check(run() && hs.native.ammo_leaks == ammo_leaks + 2 && hs.native.ammo_benign == benign + 1,
               "an item change in the same job never masks an ammo leak");
         s_item = s_ammo = false;
+        // Item 3 (hidden run 5ceb4985): the support lane checks the same block in the same window. The viewer's own
+        // box breaking in a bump (ammoStockCounts[15] 8>7) latched it off for the mission; an item-only job never
+        // does, an ammo write in body 1's job still does.
+        {
+            pi::Arm support = a;
+            support.native_support = true;
+            hk::PublishArm(support);
+            Check(!hk::NativeSupportLatchedOff(), "support lane: not latched before the item job");
+            s_item = true;
+            Check(run() && hs.native.ammo_benign == benign + 2 && !hk::NativeSupportLatchedOff(),
+                  "item 3: an item-only job never latches the support lane (stock_leak_mission_latched)");
+            s_item = false;
+            s_ammo = true;
+            Check(run() && hs.native.ammo_leaks == ammo_leaks + 3 && hk::NativeSupportLatchedOff(),
+                  "an ammo write in body 1's job still latches the support lane for the mission");
+            s_ammo = false;
+            hk::PublishArm(a);
+        }
         s_shoot = true;
         s_reload = true;
         Check(run() && hs.native.shot_leaks == leaks + 1 && hs.native.shot_count == 8 && hs.native.reload_drains == reloads + 1,

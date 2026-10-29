@@ -93,4 +93,13 @@ struct MissionLeaks {
 };
 bool StripsFireReload(bool play_mode, const MissionLeaks& mission) noexcept;
 
+// The support lane's per-job stock check (partner_input_hook SupportCheck: the
+// digests of ammoStockCounts at vars+0x614 and of this whole block) reads bytes
+// of this block in the same job window. A digest change is a support stock
+// leak unless that job's block change was benign: the viewer's own item stock
+// (hidden run 5ceb4985: the guest's own box broke in a box-on-box bump,
+// ammoStockCounts[15] 8>7, and the lane latched stock_leak_mission_latched for
+// the mission). `none` (the compare saw no change or was unread) stays a leak.
+bool SupportJobLeak(bool digest_changed, Verdict job) noexcept;
+
 }  // namespace mgscoop::partner_ammo_leak
