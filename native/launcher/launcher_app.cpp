@@ -363,7 +363,8 @@ void LauncherUi::WrongFolderPage() {
 void LauncherUi::SetupStatus() {
     // While an update downloads or installs the setup waits (the update replaces its files); the new window
     // after the restart gets co-op ready by itself.
-    const bool updating = ui::UpdateInProgress(model_.update_info());
+    const UpdateInfo setup_uinfo = model_.update_info();
+    const bool updating = ui::UpdateInProgress(setup_uinfo);
     if (setup_view_ == ui::SetupView::preparing) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         Spinner(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 6.5f, col::kAccent, time_);
@@ -371,8 +372,7 @@ void LauncherUi::SetupStatus() {
         Text("Getting co-op ready...", col::kText, kBody, GetFonts().semibold, -1.0f);
         ImGui::SameLine(0.0f, Px(10.0f));
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + Px(2.0f));
-        Text(updating ? "It continues once the update has finished." : "This takes about a minute the first time.", col::kTextFaint,
-             kSmall, nullptr, -1.0f);
+        Text(ui::PreparingNote(setup_uinfo).c_str(), col::kTextFaint, kSmall, nullptr, -1.0f);
         Gap(4.0f);
         return;
     }

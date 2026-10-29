@@ -500,6 +500,13 @@ void TestCommandLine() {
     Check(ui::UpdatedNote(plain).empty(), "no note without an update");
     u.status = UpdateStatus::up_to_date;
     Check(ui::UpdatedNote(u) == "Updated to version 0.14.4.", "the same short note in every phase (no setup step to ask for)");
+    // The small line next to "Getting co-op ready...": what the wait is (no "the first time" right after an update).
+    UpdateInfo fresh;
+    Check(ui::PreparingNote(fresh) == "This takes about a minute the first time.", "the first start");
+    Check(ui::PreparingNote(u) == "This takes about a minute after an update.", "right after a self-update");
+    u.status = UpdateStatus::downloading;
+    Check(ui::PreparingNote(u) == "It continues once the update has finished.", "an update is in progress: the setup waits for it");
+    u.status = UpdateStatus::up_to_date;
 
     // About > Source code: the release page of this version (both zips are there).
     Check(ui::ReleasePageUrl("0.14.4+48ce7da") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4",

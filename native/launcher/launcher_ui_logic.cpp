@@ -494,6 +494,12 @@ std::string UpdatedNote(const UpdateInfo& info) {
     return "Updated to version " + info.updated_to + ".";
 }
 
+std::string PreparingNote(const UpdateInfo& info) {
+    if (UpdateInProgress(info)) return "It continues once the update has finished.";
+    if (!info.updated_to.empty()) return "This takes about a minute after an update.";
+    return "This takes about a minute the first time.";
+}
+
 std::string ReleasePageUrl(const std::string& version) {
     const std::string releases = "https://github.com/TrollTaylor/diamond-dogs-together/releases";
     const std::string plain = version.substr(0, version.find('+'));
