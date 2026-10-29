@@ -35,6 +35,9 @@ struct Config {
     // 0.13.6 online-vehicle-gone: lab.ini world_vehicle_gone (lab and play): CFG
     // r[15] = 1 turns on the Lua VEHICLE_GONE module (lua/coop/world_vehicle.lua).
     bool vehicle_gone = false;
+    // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
+    // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.
+    bool vehicle_state = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

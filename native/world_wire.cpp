@@ -137,6 +137,15 @@ constexpr OpSpec kOps[] = {
     {op::req_vehicle_gone, "REQ_VEHICLE_GONE", 1, Dir::guest_to_host, Wire::reliable, 3, true, false, 7, 0, 0, 18,
      {Rid(), U16(25600, 26111), U8(1, 3), U8(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000)}},
+    // VEHICLE_STATE (M4, docs/vehicles-companions-design.md 6.4): seq, TppVehicle2 id (the host's
+    // pool slot), locator hash (StrCode32 of veh_lv_/veh_trc_/veh_wav_NNNN, 0 unnamed), vehicle
+    // type (255 unknown), flags (1 alive, 2 sweep, 4 refresh), xyz mm, yaw mrad, body life (the
+    // engine's u16), the state word (the engine's own ene_veh_state encoding, 0x3FF bits), the
+    // zero-life parts mask (life block words 1..11 that read 0: bits 1..11). 32 bytes: the
+    // largest body an outbound queue entry holds (OutEntry, kOpHeaderSize + 32).
+    {op::vehicle_state, "VEHICLE_STATE", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 12, 0, 0, 32,
+     {U16(1), U16(25600, 26111), U32(), U8(), U8(0, 7), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-31416, 31416), U16(), U16(0, 0x3FF), U16(0, 0xFFE)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

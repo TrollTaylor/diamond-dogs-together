@@ -15,8 +15,10 @@
 //        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
 //        phase 2 P2-1; r[14] the WS4 attacker census 0|1 (lab key
 //        partner_placed_census, lab only), also from HandleCfg; r[15] the
-//        0.13.6 VEHICLE_GONE module 0|1 (lab key world_vehicle_gone, lab and
-//        play), also from HandleCfg; Lua treats a missing value as 0)
+//        vehicle modules bitmask 0..3 (lab and play), also from HandleCfg:
+//        bit 1 the 0.13.6 VEHICLE_GONE module (lab key world_vehicle_gone),
+//        bit 2 the M4 VEHICLE_STATE module (lab key world_vehicle_state);
+//        Lua treats a missing value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U

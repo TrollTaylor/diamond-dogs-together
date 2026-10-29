@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 53, "53 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone and local ops)");
+    Check(count == 54, "54 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, vehicle state and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -1676,6 +1676,67 @@ void VehicleGone() {
     Check(levelReject && levelReject->v[0] == 9 && levelReject->v[2] == world::reject::level && levelReject->v[3] == 25604,
           "a level-2 host rejects a vehicle request with REJECT 10");
 }
+
+// M4 (docs/vehicles-companions-design.md 6.4): VEHICLE_STATE 0x33, the host's state of a vehicle nobody drives.
+void VehicleState() {
+    const auto* st = world::FindOp(op::vehicle_state);
+    Check(op::vehicle_state == 0x33 && st, "VEHICLE_STATE 0x33 exists");
+    Check(st->queue == 1 && st->wire == world::Wire::reliable && st->level == 3 && !st->lab_only && !st->request &&
+              st->dir == world::Dir::host_to_guest && st->lua == 12 && st->native == 0 && st->rx == 0 && st->body == 32,
+          "VEHICLE_STATE: world queue, reliable, level 3, play too, host to guest, 12 fields, 32 bytes (the largest outbound queue entry)");
+    Check(!world::FindOp(0x30) && !world::FindOp(0x31) && !world::FindOp(0x32), "0x30..0x32 stay free for the companion ops");
+    Setup(3, 3, true);
+    Pair(30020, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    // seq, id, locator hash, type, flags, x, y, z, yaw, life, state word, zero-parts mask
+    Check(Tx(g_host, op::vehicle_state, {1, 25608, 3523830114LL, 1, 1, -653010, 1200, 877730, 1083, 3000, 1, 0}, 101) ==
+              world::TxStatus::ok,
+          "the host sends the Masa Village jeep's state");
+    Check(Tx(g_guest, op::vehicle_state, {1, 25608, 0, 1, 1, 0, 0, 0, 0, 3000, 1, 0}, 101) == world::TxStatus::wrong_role,
+          "only the host sends vehicle state");
+    Check(Tx(g_host, op::vehicle_state, {2, 25599, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {2, 26112, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {0, 25608, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {2, 25608, 0, 1, 8, 0, 0, 0, 0, 0, 1, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {2, 25608, 0, 1, 1, 0, 0, 0, 31417, 0, 1, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {2, 25608, 0, 1, 1, 0, 0, 0, 0, 65536, 1, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {2, 25608, 0, 1, 1, 0, 0, 0, 0, 0, 0x400, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {2, 25608, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0xFFF}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vehicle_state, {2, 25608, 0, 1, 1, 1000000001, 0, 0, 0, 0, 1, 0}, 101) == world::TxStatus::bad_args,
+          "id class bounds, seq 1.., flags 0..7, yaw, life u16, state word 0x3FF, parts mask up to 0xFFE, position");
+    Check(Tx(g_host, op::vehicle_state, {2, 26111, 4294967295LL, 255, 7, 1000000000, -1000000000, 0, -31416, 65535, 0x3FF, 0xFFE}, 101) ==
+              world::TxStatus::ok,
+          "the field bounds encode");
+    Exchange(102);
+    Check(!Find(Drain(g_guest, 1, 103), op::vehicle_state), "VEHICLE_STATE never rides the control queue");
+    auto rx = Drain(g_guest, 3, 104);
+    Check(rx.size() == 2 && rx[0].op == op::vehicle_state && rx[0].count == 12 && rx[0].v[0] == 1 && rx[0].v[1] == 25608 &&
+              rx[0].v[2] == 3523830114LL && rx[0].v[3] == 1 && rx[0].v[4] == 1 && rx[0].v[5] == -653010 && rx[0].v[6] == 1200 &&
+              rx[0].v[7] == 877730 && rx[0].v[8] == 1083 && rx[0].v[9] == 3000 && rx[0].v[10] == 1 && rx[0].v[11] == 0 &&
+              rx[1].v[1] == 26111 && rx[1].v[2] == 4294967295LL && rx[1].v[8] == -31416 && rx[1].v[9] == 65535 &&
+              rx[1].v[11] == 0xFFE,
+          "the guest's world queue delivers each VEHICLE_STATE in order with its exact fields");
+    // Another host epoch is purged on the guest.
+    world::Op old{};
+    old.code = op::vehicle_state;
+    old.epoch = static_cast<std::uint16_t>(g_guest.epoch() + 1);
+    old.count = 12;
+    const std::int64_t oldValues[12] = {3, 25608, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0};
+    for (unsigned i = 0; i < 12; ++i) old.v[i] = oldValues[i];
+    std::uint8_t packet[96]{};
+    world::WriteBundleHeader(packet, 1);
+    const auto oldSize = world::EncodeOp(old, packet + world::kBundleHeaderSize, sizeof(packet) - world::kBundleHeaderSize);
+    Check(oldSize == world::kOpHeaderSize + 32, "a stale state encodes");
+    g_guest.OnReliable(packet, oldSize + world::kBundleHeaderSize, 105);
+    Check(!Find(Drain(g_guest, 3, 106), op::vehicle_state), "a VEHICLE_STATE of another host epoch is purged");
+    g_host.LocalMissionEnd(107);
+    Check(Tx(g_host, op::vehicle_state, {4, 25608, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0}, 108) == world::TxStatus::not_paired, "unpaired: not sent");
+    Setup(2, 2, true);
+    Pair(30020, 200);
+    Check(Tx(g_host, op::vehicle_state, {1, 25608, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0}, 201) == world::TxStatus::disabled,
+          "VEHICLE_STATE needs world level 3");
+}
 } // namespace
 
 int main() {
@@ -1698,6 +1759,7 @@ int main() {
     RideFast();
     RideTilt();
     VehicleGone();
+    VehicleState();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

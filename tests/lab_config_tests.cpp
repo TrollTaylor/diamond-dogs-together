@@ -1392,6 +1392,20 @@ int main() {
                   "world_vehicle_gone=1 parses in play with no refusal bit");
             Check(!vgBad.world_vehicle_gone && vgBad.invalid_values == 1 && vgBad.unknown_keys == 0, "an invalid world_vehicle_gone keeps it off");
         }
+        // M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): world_vehicle_state likewise (default off, lab and play).
+        {
+            const auto vsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_state=1\n");
+            const auto vsLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_vehicle_state=1\n");
+            const auto vsBad = Lab("enabled=1\nrole=host\nworld_vehicle_state=2\n");
+            Check(!def.world_vehicle_state && !vehicleGun.world_vehicle_state && !vehiclePlayDefault.world_vehicle_state,
+                  "world_vehicle_state defaults off (lab, gun profile, play)");
+            Check(vsLab.world_vehicle_state && !vsLab.world_vehicle_gone && vsLab.invalid_values == 0 && vsLab.unknown_keys == 0,
+                  "world_vehicle_state=1 parses in lab (independent of world_vehicle_gone)");
+            Check(vsPlay.mode == mgscoop::LabMode::play && vsPlay.world_vehicle_state && vsPlay.play_refused == 0 && vsPlay.invalid_values == 0,
+                  "world_vehicle_state=1 parses in play with no refusal bit");
+            Check(!vsBad.world_vehicle_state && vsBad.invalid_values == 1 && vsBad.unknown_keys == 0, "an invalid world_vehicle_state keeps it off");
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {

@@ -177,6 +177,70 @@ void TestReader() {
     Check(none.refusal && std::strcmp(none.refusal, "image") == 0, "no image refuses");
 }
 
+// M4 VEHICLE_STATE: the life block through the object's vt+0x98 (0xB2DD00, pinned bytes) and
+// the engine's ene_veh_state word (StoreToSVars 0xB35C90..0xB35D62).
+constexpr std::uintptr_t kLife = 0x1000E000;
+void LifeWorld(Memory& m) {
+    m.Put<std::uintptr_t>(kImage + v::kObjectVtRva + 0x98, kImage + v::kLifeFnRva);
+    for (unsigned i = 0; i < sizeof(v::kLifeFnBytes); ++i) m.Put<std::uint8_t>(kImage + v::kLifeFnRva + i, v::kLifeFnBytes[i]);
+    m.Put<std::uintptr_t>(kObject + 0x150, kLife);
+    m.Fill(kLife, 8 * 0x18);
+    // Index 0 (25600): body 3000, four parts of 1000, one broken part (word 3), words 6..11 unused (0).
+    const std::uint16_t words[12] = {3000, 1000, 1000, 0, 1000, 1000, 0, 0, 0, 0, 0, 0};
+    for (unsigned i = 0; i < 12; ++i) m.Put<std::uint16_t>(kLife + 2 * i, words[i]);
+    m.Put<std::uint16_t>(kLife + 0x18, 777);  // index 1 starts 0x18 further
+}
+void TestLife() {
+    Check(v::SvState(0, 0) == 1 && v::SvState(0x40000, 0) == 0 && v::SvState(0x80000, 0) == 0 && v::SvState(0, 0x4000) == 3 &&
+              v::SvState(0x8, 0) == 5 && v::SvState(0x200, 0) == 0x11 && v::SvState(0x4000, 0) == 0x201 && v::SvState(0x7E08, 0x4000) == 0x3F7 &&
+              v::SvState(0x800004, 0) == 1 && v::SvState(0x100, 0) == 1,
+          "SvState: bit 0 not 0xC0000, bit 1 rec+0x7C bit 14, bit 2 bit 3, bits 4..9 bits 9..14; other bits ignored");
+    Memory m = World();
+    LifeWorld(m);
+    m.Put<std::uint32_t>(kRecords + 0x70, 0x00000208);
+    m.Put<std::uint16_t>(kRecords + 0x7C, 0x4000);
+    v::Read r{};
+    v::ReadVehicle(m, kImage, kId, r);
+    Check(!r.refusal && r.unit.flags70 == 0x208 && r.unit.flags7c == 0x4000, "the unit carries rec+0x70 and rec+0x7C");
+    v::Life life{};
+    v::ReadLife(m, r, life);
+    Check(!life.refusal && life.words[0] == 3000 && life.words[1] == 1000 && life.words[3] == 0 && life.parts == 4 &&
+              life.zero == ((1u << 3) | 0xFC0u) && life.state == (1 | 2 | 4 | 0x10),
+          "the body life (word 0), the parts above 0, the zero-parts mask (bits 1..11) and the state word");
+    // Index 1 reads 0x18 further (the vt+0x98 stride: index * 3 * 4 * 2).
+    m.Put<std::uint32_t>(kBitmap, 0x3);
+    m.Fill(kRecords + 0x80, 0x80);
+    v::Read r1{};
+    v::ReadVehicle(m, kImage, kId + 1, r1);
+    v::Life l1{};
+    v::ReadLife(m, r1, l1);
+    Check(!r1.refusal && !l1.refusal && l1.words[0] == 777 && l1.state == 1, "index 1's block is 0x18 bytes on");
+    struct Case { const char* why; void (*mutate)(Memory&); };
+    const Case cases[] = {
+        {"life_fn", [](Memory& mm) { mm.Put<std::uintptr_t>(kImage + v::kObjectVtRva + 0x98, kImage + v::kLifeFnRva + 1); }},
+        {"life_fn", [](Memory& mm) { mm.Erase(kImage + v::kObjectVtRva + 0x98, 8); }},
+        {"life_code", [](Memory& mm) { mm.Put<std::uint8_t>(kImage + v::kLifeFnRva + 9, 0x58); }},
+        {"life_code", [](Memory& mm) { mm.Erase(kImage + v::kLifeFnRva + 23, 1); }},
+        {"life_base", [](Memory& mm) { mm.Put<std::uintptr_t>(kObject + 0x150, 0); }},
+        {"life_read", [](Memory& mm) { mm.Erase(kLife + 22, 1); }},
+    };
+    for (const Case& k : cases) {
+        Memory w = World();
+        LifeWorld(w);
+        k.mutate(w);
+        v::Read out{};
+        v::ReadVehicle(w, kImage, kId, out);
+        v::Life l{};
+        v::ReadLife(w, out, l);
+        Check(!out.refusal && l.refusal && std::strcmp(l.refusal, k.why) == 0 && l.words[0] == 0, k.why);
+    }
+    v::Read dead{};
+    v::ReadVehicle(m, kImage, kId + 2, dead);
+    v::Life dl{};
+    v::ReadLife(m, dead, dl);
+    Check(dl.refusal && std::strcmp(dl.refusal, "live") == 0, "a unit read refusal carries over");
+}
+
 void TestCensus() {
     Memory m = World();
     v::Read r{};
@@ -461,6 +525,7 @@ void TestSeatTarget() {
 int main() {
     TestReader();
     TestCensus();
+    TestLife();
     TestTiltGates();
     TestWriteTilt();
     TestVerifyImage();

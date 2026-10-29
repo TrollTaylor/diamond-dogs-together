@@ -3,7 +3,8 @@
 do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,integer,fmt=A.get,A.call,A.integer,string.format
- local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true,vehicle_remove=true,vehicle_gone_status=true,goto_partner_vehicle=true,vehicle_door=true}};D.vehicle=V
+ local V={handles={vehicle_seats=true,vehicle_names=true,seat_dm=true,vehicle_remove=true,vehicle_gone_status=true,goto_partner_vehicle=true,vehicle_door=true,
+  vehicle_push=true,vehicle_life=true,vehicle_state_status=true}};D.vehicle=V
  function V.stop()V.last=nil end -- No native state or borrowed objects; only the last door target.
  local function name(v)return type(v)=="string" and #v>0 and #v<=64 and v:match("^[%w_]+$")~=nil end
  local function context()
@@ -156,6 +157,12 @@ do
   if a[1]=="vehicle_remove" and a[2]=="nearest" and (#a==2 or #a==3 and (a[3]=="sync" or a[3]=="fulton")) then return G.lever(a[3]~=nil,a[3]=="fulton") end
   return false,"vehicle_args"
  end
+ -- M4 (world_vehicle_state.lua checks the arguments): vehicle_push, vehicle_life (lab only), vehicle_state_status.
+ local function state(a)
+  local S=get(get(e,"MgsCoopWorld"),"vehicleState")
+  if type(S)~="table" or type(S.lever)~="function" then return false,"vehicle_state_unavailable" end
+  return S.lever(a)
+ end
  -- G4 truck test levers (docs/native-puppet.md "Truck test levers"; lab.ini debug_vehicle_door=1, lab only: the
  -- native receipt refuses otherwise). door(): this copy's stock door spot of one vehicle (mm, mrad). goto_vehicle
  -- truck (debug_player.lua) warps to a door of the nearest truck whose driver seat is free, goto_partner_vehicle to
@@ -261,7 +268,8 @@ do
  end
  function V.run(a,id)
   local f=a[1]=="vehicle_names" and names or a[1]=="seat_dm" and seatDm or a[1]=="goto_partner_vehicle" and gotoPartner or
-   a[1]=="vehicle_door" and doorReport or (a[1]=="vehicle_remove" or a[1]=="vehicle_gone_status") and gone or read
+   a[1]=="vehicle_door" and doorReport or (a[1]=="vehicle_remove" or a[1]=="vehicle_gone_status") and gone or
+   (a[1]=="vehicle_push" or a[1]=="vehicle_life" or a[1]=="vehicle_state_status") and state or read
   local ok,yes,why=pcall(f,a,id)
   if not ok then return false,"vehicle_binding" end
   return yes,why

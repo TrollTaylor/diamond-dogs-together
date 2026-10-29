@@ -239,6 +239,8 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
     // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op (lab and play, default off).
     else if (Equals(key, "world_vehicle_gone")) ok = ParseBool(value, result.world_vehicle_gone);
+    // M4: the VEHICLE_STATE world op (lab and play, default off).
+    else if (Equals(key, "world_vehicle_state")) ok = ParseBool(value, result.world_vehicle_state);
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {

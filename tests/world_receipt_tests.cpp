@@ -92,6 +92,13 @@ void Cfg() {
     r.vehicle_gone = 1;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1") == 0,
           "the VEHICLE_GONE module flag is r[15]");
+    // M4 (lab key world_vehicle_state): r[15] is the vehicle modules bitmask, bit 2 VEHICLE_STATE.
+    r.vehicle_gone = 2;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,2") == 0,
+          "VEHICLE_STATE alone is r[15] = 2");
+    r.vehicle_gone = 3;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,3") == 0,
+          "both vehicle modules are r[15] = 3");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255") == 0 &&
               std::strlen(out) < world::reply_capacity,

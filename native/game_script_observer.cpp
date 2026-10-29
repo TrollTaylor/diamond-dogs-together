@@ -1454,6 +1454,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.log = Log;
     world.placed_census = labc.partner_placed_census && labc.mode == mgscoop::LabMode::lab;
     world.vehicle_gone = labc.world_vehicle_gone;
+    world.vehicle_state = labc.world_vehicle_state;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -3137,6 +3138,14 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             // give_item (Lua refuses it outside mode=lab too); in the lab it goes on to Lua below.
             debug::Result(pending.id, 0, "vehicle_remove=refused;reason=lab_only");
             LogFormat("debug_menu=vehicle_remove; id=%u; ok=0; reason=lab_only\r\n", pending.id);
+        } else if (pending.id && (std::strncmp(pending.text, "vehicle_push", 12) == 0 && (pending.text[12] == 0 || pending.text[12] == ' ') ||
+                                  std::strncmp(pending.text, "vehicle_life", 12) == 0 && (pending.text[12] == 0 || pending.text[12] == ' ')) &&
+                   !(mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab && offline_enabled && lab::SavesRedirected())) {
+            // M4 VEHICLE_STATE lab levers (debug_vehicle.lua "vehicle_push <id> <dx> <dz>", "vehicle_life <id> <life>"):
+            // they move / damage a vehicle of the running copy only, so they are refused outside the one-PC lab like
+            // vehicle_remove (Lua refuses them outside mode=lab too); in the lab they go on to Lua below.
+            debug::Result(pending.id, 0, "vehicle_lever=refused;reason=lab_only");
+            LogFormat("debug_menu=vehicle_lever; id=%u; ok=0; reason=lab_only\r\n", pending.id);
         } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {
             // Read-only: the in-game status line as the overlay last drew it.
             char status[161]{};
@@ -4310,6 +4319,81 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
     if (!vd::FormatAnswer(answer, reply, sizeof(reply))) return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }
+// M4 VEHICLE_STATE (lua/coop/world_vehicle_state.lua, docs/vehicles-companions-design.md 6.4; lab.ini
+// world_vehicle_state=1, lab and play): read-only body life and state words of this copy's TppVehicle2 pool.
+//   return 'MGS_COOP_VEHICLE_LIFE_V1' -- <first id 25600..26111> <n 1..32>
+//   -> return {c=<pool count>,[id]={life,zero,parts,state},...}   (ids in the pool only)
+//   -> return {refused='<reason>'}   (key off, gate, runtime, mission, request, or the first id's chain refusal)
+// life is the block's word 0 (SetBodyLife), zero the bits 1..11 of the words that read 0, parts the words
+// above 0, state the engine's own ene_veh_state word (partner_vehicle::SvState). Every read goes through
+// ReadProcessMemory (partner_vehicle::ReadLive / ReadLifeLive): it never faults and never writes.
+struct VehicleLifeLog { std::uint32_t mission; const char* last; unsigned n; } vehicle_life_log{0, nullptr, 0};
+bool SelectVehicleLifeReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace v = mgscoop::partner_vehicle;
+    constexpr char prefix[] = "return 'MGS_COOP_VEHICLE_LIFE_V1' -- ";
+    if (!buffer || size <= sizeof(prefix) - 1 || size > 96 || std::memcmp(buffer, prefix, sizeof(prefix) - 1) != 0) return false;
+    world_quiet = true;
+    static char reply[2048]{};
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    if (vehicle_life_log.mission != partner_mission) vehicle_life_log = VehicleLifeLog{partner_mission, nullptr, 0};
+    const auto refuse = [&](const char* why) noexcept {
+        if (vehicle_life_log.last != why) {
+            vehicle_life_log.last = why;
+            LogFormat("vehicle_life=refused; reason=%s\r\n", why);
+        }
+        if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply), "return {refused='%s'}", why))) return finish("return {refused='format'}");
+        return finish(reply);
+    };
+    const char* cursor = buffer + sizeof(prefix) - 1;
+    const char* end = buffer + size;
+    unsigned first = 0, n = 0;
+    auto parsed = std::from_chars(cursor, end, first);
+    if (parsed.ec != std::errc() || parsed.ptr == cursor || parsed.ptr == end || *parsed.ptr != ' ') return refuse("request");
+    cursor = parsed.ptr + 1;
+    parsed = std::from_chars(cursor, end, n);
+    if (parsed.ec != std::errc() || parsed.ptr != end || first < 25600 || first > 26111 || n < 1 || n > 32) return refuse("request");
+    const auto& config = mgscoop::GetLabConfig();
+    if (!config.world_vehicle_state) return refuse("off");
+    if (!game_base || !partner_gate_ok) return refuse("gate");
+    unsigned short mission = 0;
+    if (!OnRuntimeThread() || mission_terminating || !ReadMission(mission) || mission != partner_mission) return refuse("runtime");
+    if (mission != 30010 && mission != 30020 && mission != 30050) return refuse("mission");
+    std::size_t used = 0;
+    const auto put = [&](const char* format, auto... args) noexcept {
+        if (used >= sizeof(reply)) return false;
+        const int w = std::snprintf(reply + used, sizeof(reply) - used, format, args...);
+        if (w < 0 || static_cast<std::size_t>(w) >= sizeof(reply) - used) return false;
+        used += static_cast<std::size_t>(w);
+        return true;
+    };
+    unsigned count = 0, listed = 0;
+    const char* firstRefusal = nullptr;
+    bool ok = put("return {");
+    for (unsigned id = first; ok && id < first + n && id <= 26111; ++id) {
+        v::Read r{};
+        v::ReadLive(game_base, static_cast<std::uint16_t>(id), r);
+        if (!count && r.unit.count) count = r.unit.count;
+        if (r.refusal) {
+            // "live" / "index": no vehicle in this slot (or past the pool); anything else names the chain.
+            if (!firstRefusal && std::strcmp(r.refusal, "live") != 0 && std::strcmp(r.refusal, "index") != 0) firstRefusal = r.refusal;
+            continue;
+        }
+        v::Life life{};
+        v::ReadLifeLive(r, life);
+        if (life.refusal) {
+            if (!firstRefusal) firstRefusal = life.refusal;
+            continue;
+        }
+        ok = put("[%u]={%u,%u,%u,%u},", id, unsigned(life.words[0]), unsigned(life.zero), unsigned(life.parts), unsigned(life.state));
+        ++listed;
+    }
+    if (!listed && firstRefusal) return refuse(firstRefusal);
+    if (!ok || !put("c=%u}", count)) return refuse("format");
+    vehicle_life_log.last = nullptr;
+    if (++vehicle_life_log.n <= 2 || vehicle_life_log.n % 2000 == 0)
+        LogFormat("vehicle_life=read; first=%u; n=%u; listed=%u; count=%u; reads=%u\r\n", first, n, listed, count, vehicle_life_log.n);
+    return finish(reply);
+}
 bool SelectBuddyCapacityReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
     constexpr char prefix[]="return 'MGS_COOP_BUDDY_CAPACITY_V1' -- ";
@@ -4980,6 +5064,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleDoorReceipt(buffer, size, replacement)) return true;
+    if (SelectVehicleLifeReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;

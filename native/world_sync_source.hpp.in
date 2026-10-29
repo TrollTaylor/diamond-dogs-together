@@ -76,3 +76,7 @@ constexpr char world_place_guest_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_SOURCE@
 )MGS_WORLD";
+// M4 VEHICLE_STATE (spliced last, after world_vehicle.lua whose helpers it uses).
+constexpr char world_vehicle_state_source[] = R"MGS_WORLD(
+@MGS_WORLD_VEHICLE_STATE_SOURCE@
+)MGS_WORLD";

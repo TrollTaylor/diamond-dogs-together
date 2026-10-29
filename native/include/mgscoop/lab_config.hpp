@@ -702,6 +702,11 @@ struct LabConfig {
     // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
     // default off until hidden-run frames prove the receiver's Despawn.
     bool world_vehicle_gone = false;
+    // world_vehicle_state=0|1 (M4, docs/vehicles-companions-design.md 6.4): the
+    // host-authoritative VEHICLE_STATE world op for parked / pushed / left vehicles
+    // and their body life, CFG r[15] bit 2 for Lua. Lab and play (not a play
+    // refusal); default off until hidden-run frames on both copies prove it.
+    bool world_vehicle_state = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is
