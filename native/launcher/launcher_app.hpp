@@ -84,6 +84,7 @@ private:
     ui::Page page_ = ui::Page::play;
     ui::SetupView setup_view_ = ui::SetupView::none;   // this frame's automatic setup view
     ui::PlayTab play_tab_ = ui::PlayTab::host;   // the chosen Play tab
+    bool local_check_shown_ = false;             // last frame showed the second folder's check
     Role session_role_ = Role::host;
 
     // Play

@@ -95,6 +95,10 @@ PlayTab ShownPlayTab(PlayTab chosen, bool debug, bool local_test_active) {
 
 bool CanStartLocalTest(Phase phase, const LocalTestCheck& check) { return CanStartSession(phase) && check.ok; }
 
+bool LocalCheckVisible(Page page, PlayTab shown_tab, bool debug) {
+    return debug && ((page == Page::play && shown_tab == PlayTab::local_test) || page == Page::settings);
+}
+
 CharacterChoice ChoiceOf(Character character) {
     switch (character) {
     case Character::story: return CharacterChoice::story;
@@ -226,6 +230,11 @@ SetupView GetSetupView(Phase phase, const SetupSummary& summary) {
     return SetupView::none;
 }
 
+bool CanStartUpdate(Phase phase, SetupView setup) {
+    if (SessionActive(phase) || phase == Phase::not_in_game_folder || phase == Phase::setting_up) return false;
+    return setup != SetupView::preparing;
+}
+
 namespace {
 const char* const kSceneNames[static_cast<int>(Scene::count)] = {
     "01-play-preparing",       "02-play-setup-failed",   "03-wrong-folder",      "04-play-host",
@@ -235,6 +244,7 @@ const char* const kSceneNames[static_cast<int>(Scene::count)] = {
     "17-tools-result",         "18-tools-uninstall-confirm", "19-tools-about",   "20-settings",
     "21-tools-in-game",        "22-uninstall-report",    "23-settings-debug-no-folder", "24-settings-debug-folder",
     "25-play-local-no-folder", "26-play-local-ready",    "27-play-local-running",  "28-ingame-local-test",
+    "29-play-update-preparing",
 };
 }  // namespace
 

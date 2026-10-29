@@ -80,6 +80,7 @@ public:
     std::string local_test_folder() const override;
     void set_local_test_folder(const std::string& folder) override;
     LocalTestCheck check_local_test() const override;
+    void refresh_local_test() override;   // nothing to do: the mock computes its check live
     bool start_local_test(std::string& error_out) override;
     LocalTestView local_test() const override;
     void arrange_local_test() override;

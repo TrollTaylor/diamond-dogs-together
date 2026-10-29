@@ -151,9 +151,15 @@ public:
     // The second game folder ("" = none chosen), persisted.
     virtual std::string local_test_folder() const = 0;
     virtual void set_local_test_folder(const std::string& folder) = 0;
+    // The last check of the second folder (kept: it reads that copy's 166 MB game
+    // exe); refresh_local_test() checks again (the Local test tab or Settings >
+    // Debug coming into view, Check again on the tab). recheck() refreshes it too.
     virtual LocalTestCheck check_local_test() const = 0;
+    virtual void refresh_local_test() = 0;
     // Prepares both folders and starts both games; the phase becomes in_game
-    // (session_role() host) until both games have exited and both folders are restored.
+    // (session_role() host) until both games have exited and the test files in
+    // both folders are put back. A failed start that leaves a game running also
+    // returns false but keeps the stopped run (local_test().active and failed).
     virtual bool start_local_test(std::string& error_out) = 0;
     virtual LocalTestView local_test() const = 0;
     virtual void arrange_local_test() = 0;   // places both game windows again

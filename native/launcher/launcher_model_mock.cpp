@@ -392,7 +392,7 @@ bool MockModel::uninstall(std::string& report_out, std::string& error_out) {
     }
     report_out =
         "Co-op is turned off and the mod's loader is removed from your game folder.\n"
-        "Your own saves match the backup made during setup.\n"
+        "Your own saves match the backup made when co-op was set up.\n"
         "Kept: your co-op save and the backups in the mgs-coop folder.\n"
         "To remove everything, delete DiamondDogsTogether.exe and the mgs-coop folder.";
     // Like the real model: the loader is gone, so co-op can't start (and is not set up again by itself).
@@ -415,7 +415,8 @@ void MockModel::tick() {
             local_active_ = false;
             local_last_ = LocalTestView{};
             local_last_.headline = "Local test ended";
-            local_last_.detail = "Local test ended. Both game folders returned to their previous setup.";
+            local_last_.detail =
+                "Local test ended. The test settings in both folders were put back; the second folder keeps this version's co-op files.";
             SetPhase(Phase::ready);
         }
         return;
@@ -535,6 +536,8 @@ void MockModel::check_for_updates() {
 }
 
 void MockModel::start_update() {
+    // Like the real model: not while co-op gets ready, a game runs or a local test runs.
+    if (ui::SessionActive(phase_) || phase_ == Phase::setting_up || phase_ == Phase::not_in_game_folder) return;
     update_info_.status = UpdateStatus::downloading;
 }
 
@@ -564,6 +567,8 @@ LocalTestCheck MockModel::check_local_test() const {
         return {false, "There is no mgsvtpp.exe in that folder. Choose a separate MGSV game folder (a full copy of the game)."};
     return {true, "Ready. This version's co-op loader and runtime file are copied into it when the test starts."};
 }
+
+void MockModel::refresh_local_test() {}
 
 bool MockModel::start_local_test(std::string& error_out) {
     const LocalTestCheck check = check_local_test();

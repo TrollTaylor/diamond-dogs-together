@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <regex>
 
 #include "core_install.hpp"
@@ -678,8 +680,66 @@ bool GuestHasOlderPackageLoader(const InstancePaths& guest, const std::string& l
     return false;
 }
 
+// The SHA-256 a package.json lists for `target` ("" when it lists none, or not exactly one).
+std::string PackageRowSha256(const InstancePaths& paths, const std::string& target) {
+    std::string text, sha;
+    json::Value v;
+    if (!ReadSmallFile(paths.package_json, text, 1u << 20) || !json::Parse(text, v)) return {};
+    int rows = 0;
+    if (const json::Value* files = v.Find("files"); files && files->is_array())
+        for (const json::Value& row : files->Elements())
+            if (row.Str("target") == target) {
+                ++rows;
+                sha = UpperAscii(row.Str("sha256"));
+            }
+    return rows == 1 && IsUpperHex64(sha) ? sha : std::string();
+}
+
+// The second copy's mgsvtpp.exe is 166 MB: its hash is kept for this process while the file's size, last write
+// time and identity (volume and file index) stay the same; a rewritten or replaced file is hashed again.
+bool CachedLargeFileSha256(const std::wstring& path, std::string& hex) {
+    struct Entry {
+        std::uint64_t size = 0, write = 0, index = 0;
+        std::uint32_t volume = 0;
+        std::string hex;
+    };
+    static std::mutex mutex;
+    static std::map<std::string, Entry> cache;
+    hex.clear();
+    HANDLE h = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION info{};
+    const bool got = GetFileInformationByHandle(h, &info) != 0;
+    CloseHandle(h);
+    if (!got || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    Entry e;
+    e.size = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+    e.write = (static_cast<std::uint64_t>(info.ftLastWriteTime.dwHighDateTime) << 32) | info.ftLastWriteTime.dwLowDateTime;
+    e.index = (static_cast<std::uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
+    e.volume = info.dwVolumeSerialNumber;
+    const std::string key = LowerAscii(Utf8(FullPath(path)));
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto it = cache.find(key);
+        if (it != cache.end() && it->second.size == e.size && it->second.write == e.write && it->second.index == e.index &&
+            it->second.volume == e.volume) {
+            hex = it->second.hex;
+            return true;
+        }
+    }
+    std::uint64_t hashed = 0;
+    if (!Sha256FileHex(path, hex, &hashed)) return false;
+    if (hashed != e.size) return true;   // changed while it was read: right now, but not kept
+    e.hex = hex;
+    std::lock_guard<std::mutex> lock(mutex);
+    cache[key] = e;
+    return true;
+}
+
 struct GuestPlan {
     bool copy_loader = false, update_loader = false, copy_runtime = false;
+    bool update_launcher = false;   // its own DiamondDogsTogether.exe would not match the package.json copied in
 };
 
 // "" when the second folder can be used; `plan` says what the start copies in.
@@ -699,7 +759,7 @@ std::string GuestProblem(Env& env, const std::wstring& host_in, const std::wstri
     const std::string path_problem = GamePathProblem(guest);
     if (!path_problem.empty()) return "That folder cannot be used: " + path_problem;
     std::string hex;
-    if (!Sha256FileHex(g.exe, hex) || hex != UpperAscii(Hooks().exe_sha256))
+    if (!CachedLargeFileSha256(g.exe, hex) || hex != UpperAscii(Hooks().exe_sha256))
         return "mgsvtpp.exe in that folder is not the supported Steam version 1.0.15.4 (unmodified). Verify that copy's game files.";
     if (!IsFile(g.steam_api) || !Sha256FileHex(g.steam_api, hex) || hex != UpperAscii(Hooks().steam_api_sha256))
         return "steam_api64.dll in that folder is not the original file shipped with the game. Verify that copy's game files.";
@@ -707,21 +767,37 @@ std::string GuestProblem(Env& env, const std::wstring& host_in, const std::wstri
     for (const char* name : kDeveloperMarkers)
         if (PathExists(JoinPath2(g.mod, Wide(name))))
             return std::string(name) + " in that folder's mgs-coop belongs to a developer test. Finish that test first.";
-    const PackageInfo package = ReadPackage(GetInstancePaths(host));
+    const InstancePaths h = GetInstancePaths(host);
+    const PackageInfo package = ReadPackage(h);
     if (!package.ok) return package.problem;
     if (!IsFile(g.loader)) {
         plan.copy_loader = true;
     } else {
         if (HasReparsePoint(g.loader, guest) || !Sha256FileHex(g.loader, hex)) return "dinput8.dll in that folder cannot be read.";
         if (hex != package.loader_sha256) {
-            if (IsFile(g.record))
-                return "That folder's dinput8.dll is a co-op loader managed by the developer tools (probe-install.json). Update it with "
-                       "tools\\package-install.ps1 (or Play-Offline-Coop.bat) first.";
-            if (!GuestHasOlderPackageLoader(g, hex))
+            // An earlier Diamond Dogs Together's loader (that folder's own package.json lists it, as after extracting an
+            // older zip there) is updated, also when the developer tools recorded it in probe-install.json: that record
+            // stays exactly as it is, as after any drag-and-drop update. A loader only those tools own is not replaced.
+            if (!GuestHasOlderPackageLoader(g, hex)) {
+                if (IsFile(g.record))
+                    return "That folder's dinput8.dll is a co-op loader managed by the developer tools (probe-install.json). Update it with "
+                           "tools\\package-install.ps1 (or Play-Offline-Coop.bat) first.";
                 return "That folder has a dinput8.dll that is not from Diamond Dogs Together (another mod?). It is never replaced: "
                        "remove it from that folder yourself, then try again.";
+            }
             plan.update_loader = true;
         }
+    }
+    // That folder's own launcher must match the package.json copied in with the loader (else it would refuse to
+    // start there): it is updated too, from this folder's launcher when that is the one this package.json lists.
+    const std::wstring guest_launcher = JoinPath2(guest, L"DiamondDogsTogether.exe");
+    if ((plan.copy_loader || plan.update_loader) && IsFile(guest_launcher)) {
+        if (HasReparsePoint(guest_launcher, guest) || !Sha256FileHex(guest_launcher, hex))
+            return "DiamondDogsTogether.exe in that folder cannot be read.";
+        const std::string want = PackageRowSha256(h, "DiamondDogsTogether.exe");
+        std::string own;
+        if (!want.empty() && hex != want && Sha256FileHex(JoinPath2(host, L"DiamondDogsTogether.exe"), own) && own == want)
+            plan.update_launcher = true;
     }
     std::string dat_error;
     if (!IsFile(g.archive) || !RuntimeArchiveValid(g, nullptr, dat_error)) plan.copy_runtime = true;
@@ -741,7 +817,8 @@ LocalFolderCheck CheckLocalTestFolder(Env& env, const std::wstring& host, const 
     c.message = "Ready.";
     if (!copied.empty())
         c.message += " This version's " + Join(copied, " and ") + (copied.size() > 1 ? " are" : " is") + " copied into it when the test starts.";
-    if (plan.update_loader) c.message += " Its older Diamond Dogs Together loader is updated to this version's.";
+    if (plan.update_loader || plan.update_launcher)
+        c.message += " Its older Diamond Dogs Together files are updated to this version (the old ones are kept in mgs-coop\\install-backups).";
     return c;
 }
 
@@ -1112,6 +1189,18 @@ bool LocalSessionOwnerLive(Env& env, const json::Value& session) {
     return AliveAt(env, helper, session.Str("watchdog_start_utc"));
 }
 
+namespace {
+// The run's journal is this run's and says it is finished (state "off"); nothing else is checked.
+bool LocalJournalFinished(const std::wstring& run_dir, const std::string& id) {
+    const std::wstring path = JoinPath2(run_dir, L"session.json");
+    if (AnyReparse(run_dir) || !IsFile(path) || FileSizeOrZero(path) > kMaxJournalBytes) return false;
+    std::string text;
+    json::Value v;
+    return ReadSmallFile(path, text, kMaxJournalBytes) && json::Parse(text, v) && v.is_object() && v.Int("v", 0) == 1 &&
+           v.Str("product") == kLocalSessionProduct && v.Str("id") == id && v.Str("state") == "off";
+}
+}  // namespace
+
 bool RecoverLocalSessions(Env& env, const std::wstring& root_in, std::vector<std::string>& recovered, std::string& error) {
     recovered.clear();
     error.clear();
@@ -1172,6 +1261,9 @@ bool RecoverLocalSessions(Env& env, const std::wstring& root_in, std::vector<std
                 error = "Filesystem links are not supported here.";
                 return false;
             }
+            // A finished run has nothing to restore: it never blocks a later test, also when its second
+            // folder was moved or deleted since (the strict check below requires both folders).
+            if (LocalJournalFinished(JoinPath2(runs, d.name), Utf8(d.name))) continue;
             json::Value s;
             if (!ReadLocalSession(JoinPath2(runs, d.name), s, error)) {
                 if (error.empty()) continue;   // no journal there
@@ -1283,23 +1375,55 @@ bool InstallIntoGuest(Env& env, const InstancePaths& host, const InstancePaths& 
             error = "This game folder's dinput8.dll is not this package's. Extract the whole zip into the game folder again.";
             return false;
         }
-        if (plan.update_loader) {
-            // The earlier version's loader and package.json are kept in install-backups.
-            const std::wstring aside = UniquePath(JoinPath2(JoinPath2(guest.mod, L"install-backups"), L"local-test-" + Wide(StampNow(env))), L"");
-            if (!CreateDirectories(aside) || !MovePath(guest.loader, JoinPath2(aside, L"dinput8.dll"), error)) {
-                if (error.empty()) error = "The older loader could not be set aside.";
+        // This version's launcher (when it is updated), loader and package.json, in that order (the launcher is
+        // the one most likely to be in use). Whatever they replace is kept first, in the second folder's
+        // mgs-coop\install-backups\local-test-<time>; a failed copy puts back what was already replaced.
+        std::vector<std::pair<std::wstring, std::wstring>> copies;   // (this folder's file, the second folder's)
+        if (plan.update_launcher)
+            copies.push_back({JoinPath2(host.game, L"DiamondDogsTogether.exe"), JoinPath2(guest.game, L"DiamondDogsTogether.exe")});
+        copies.push_back({host.loader, guest.loader});
+        copies.push_back({host.package_json, guest.package_json});
+        std::wstring aside;
+        std::vector<std::pair<std::wstring, std::wstring>> kept;   // (the second folder's file, its backup)
+        for (const auto& c : copies) {
+            if (!IsFile(c.second) || FileHash(c.second) == FileHash(c.first)) continue;
+            if (aside.empty()) {
+                aside = UniquePath(JoinPath2(JoinPath2(guest.mod, L"install-backups"), L"local-test-" + Wide(StampNow(env))), L"");
+                if (!CreateDirectories(aside) || HasReparsePoint(aside, guest.game)) {
+                    error = "The second folder's mgs-coop\\install-backups folder could not be created.";
+                    return false;
+                }
+            }
+            const std::wstring backup = JoinPath2(aside, LeafOf(c.second));
+            if (!CopyFileChecked(c.second, backup, false, error) || FileHash(backup) != FileHash(c.second)) {
+                if (error.empty()) error = "Could not keep a copy of " + Utf8(c.second) + "; nothing was replaced.";
                 return false;
             }
-            if (IsFile(guest.package_json) && !CopyFileChecked(guest.package_json, JoinPath2(aside, L"package.json"), false, error)) return false;
+            kept.push_back({c.second, backup});
         }
-        if (!CopyFileChecked(host.loader, guest.loader, false, error)) return false;
+        std::vector<std::wstring> replaced;
+        for (const auto& c : copies) {
+            if (IsFile(c.second) && FileHash(c.second) == FileHash(c.first)) continue;
+            std::string copy_error;
+            if (!CopyFileChecked(c.first, c.second, true, copy_error) || FileHash(c.second) != FileHash(c.first)) {
+                for (const auto& k : kept)
+                    if (std::find(replaced.begin(), replaced.end(), k.first) != replaced.end()) {
+                        std::string ignored;
+                        CopyFileChecked(k.second, k.first, true, ignored);
+                    }
+                error = "Could not copy " + Utf8(LeafOf(c.first)) + " into the second folder" + (copy_error.empty() ? "" : " (" + copy_error + ")") +
+                        ". Is a program from that folder running? Its earlier files are back in place.";
+                return false;
+            }
+            replaced.push_back(c.second);
+        }
         std::string hex;
         if (!Sha256FileHex(guest.loader, hex) || hex != package.loader_sha256) {
             error = "The co-op loader copied into the second folder does not match this package.";
             return false;
         }
-        if (!CopyFileChecked(host.package_json, guest.package_json, true, error)) return false;
-        LauncherLog(env, host, std::string("local_test=guest_loader; action=") + (plan.update_loader ? "updated" : "copied"));
+        LauncherLog(env, host, std::string("local_test=guest_loader; action=") + (plan.update_loader ? "updated" : "copied") +
+                                   "; launcher=" + (plan.update_launcher ? "updated" : "kept") + "; kept=" + std::to_string(kept.size()));
     }
     if (plan.copy_runtime) {
         std::string dat_error;
@@ -1387,8 +1511,9 @@ bool LocalTestRun::Start(const LocalTestRequest& request, std::string& error) {
         const std::wstring local = JoinPath2(dest, L"287700\\local");
         if (!IsFile(JoinPath2(local, L"TPP_GAME_DATA0")) && !IsFile(JoinPath2(local, L"TPP_GAME_DATA1"))) {
             if (PathExists(dest))
-                return Fail("[" + role + "] Incomplete local test save copy. Keep it for recovery and choose another test folder; no existing "
-                                        "save files were replaced.",
+                return Fail("[" + role + "] The local test save copy " + Utf8(dest) +
+                                " is incomplete. It was kept for recovery: move it out of the mgs-coop folder, then try again. No save "
+                                "files were replaced.",
                             error);
             const std::wstring temp = dest + L".seed-" + Wide(RandomHex(16));
             if (!CreateDirectories(temp)) return Fail("[" + role + "] The local test save copy could not be created.", error);
@@ -1490,7 +1615,18 @@ bool LocalTestRun::Start(const LocalTestRequest& request, std::string& error) {
             const std::string why = !ok ? "[" + role + "] MGSV could not be started: " + launch_error
                                         : "[" + role + "] The launched process did not match this game copy.";
             if (!AnyGameRunningIn(env, paths_[0].game) && !AnyGameRunningIn(env, paths_[1].game)) return undo(why);
-            return Fail(why + " Quit both games; the hidden helper restores both folders after they exit.", error);
+            // A game is still running (one this test started and could not close, or the unverified one): the run
+            // stays, stopped, and puts both folders back itself once both games have exited (Poll); the helper does
+            // it if this window is closed first.
+            running_ = true;
+            next_poll_ms_ = 0;
+            status_.active = true;
+            status_.failed = true;
+            stop_reason_ = why;
+            status_.headline = "Local test stopped";
+            status_.detail = why + " Quit both games; the test settings in both folders are put back after both have exited.";
+            LauncherLog(env, paths_[0], std::string("local_test=stopped; reason=start_failed; role=") + role);
+            return Fail(status_.detail, error);
         }
         g.pid = pid;
         g.start_ms = start;
@@ -1565,8 +1701,11 @@ void LocalTestRun::Finish() {
     running_ = false;
     status_.active = false;
     LauncherLog(*env_, paths_[0], "local_test=ended; state=" + r.state + "; kept=" + std::to_string(r.kept.size()));
-    const std::string ended = r.kept.empty() ? "Local test ended. Both game folders returned to their previous setup."
-                                             : "Local test ended. Files changed during the test were kept for review: " + Join(r.kept, ", ") + ".";
+    // Only the test's settings files come back; the co-op files copied into the second folder at the start stay.
+    const std::string ended = r.kept.empty()
+                                  ? "Local test ended. The test settings in both folders were put back; the second folder keeps this version's "
+                                    "co-op files."
+                                  : "Local test ended. Files changed during the test were kept for review: " + Join(r.kept, ", ") + ".";
     status_.headline = status_.failed ? "Local test stopped" : "Local test ended";
     status_.detail = status_.failed ? stop_reason_ + " " + ended : ended;
 }
@@ -1632,7 +1771,7 @@ bool LocalTestRun::Poll() {
     status_.host_link = texts[0];
     if (status_.failed) {
         status_.headline = "Local test stopped";
-        status_.detail = stop_reason_ + " Both folders are restored after the games exit.";
+        status_.detail = stop_reason_ + " The test settings in both folders are put back after both games have exited.";
     } else {
         status_.headline = games_[0].safe && games_[1].safe ? "Local test running" : "Starting both games...";
         status_.detail = "Host: " + status_.host_line + ". Guest: " + status_.guest_line + ".";

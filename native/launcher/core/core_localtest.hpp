@@ -5,8 +5,12 @@
 //
 //  - two MGSV copies on this PC: this game folder hosts (Snake), a second game
 //    folder joins (Quiet), linked over loopback (lab.ini mode=lab, loopback=1);
-//  - the mod is installed in the second copy from this package (the loader and
-//    the checked runtime file; an unrelated loader is never replaced);
+//  - the mod is installed in the second copy from this package (the loader,
+//    package.json and the checked runtime file; an earlier Diamond Dogs
+//    Together's loader and launcher are updated, the replaced files kept in
+//    its mgs-coop\install-backups\local-test-<time>; probe-install.json is
+//    never changed; a loader only the developer tools own, or an unrelated
+//    one, is never replaced). These copies stay after the test;
 //  - only separate local-test save copies are used (mgs-coop\local-test-saves,
 //    seeded from this folder's co-op copy, never from Steam's userdata), with
 //    their TPP_GRAPHICS_CONFIG set to a window of the computed layout;
@@ -210,7 +214,9 @@ public:
 
     // Checks, installs into the second folder, recovers older runs, makes the
     // save copies, journals and writes the files, starts the helper and both
-    // games. On failure nothing stays switched on and `error` says why.
+    // games. On failure `error` says why and nothing stays switched on, except
+    // when a game it started is still running: then the run stays (Status()
+    // active and failed) and Poll() puts both folders back after both exit.
     bool Start(const LocalTestRequest& request, std::string& error);
     // false once the run is over (both games gone and the files restored, or never started).
     bool Poll();

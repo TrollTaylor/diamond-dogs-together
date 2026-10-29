@@ -275,7 +275,8 @@ public:
     }
 
     void start_setup() override {
-        if (phase_ != Phase::needs_setup) return;
+        if (phase_ != Phase::needs_setup || UpdateBusy()) return;
+        auto_paused_ = false;
         if (setup_thread_.joinable()) setup_thread_.join();
         {
             std::lock_guard<std::mutex> lock(shared_->m);
@@ -453,7 +454,13 @@ public:
             std::lock_guard<std::mutex> lock(shared_->m);
             shared_->setup_failed_once = false;
         }
+        // Co-op is not set up again by itself in this window (2026-10-29 review: when the loader could not be
+        // deleted, the folder would otherwise look like a first start and be set up again at once).
+        auto_paused_ = true;
         Recheck();
+        if (phase_ == Phase::needs_setup)
+            Fail("Co-op was switched off, but dinput8.dll could not be removed (see the Uninstall report on the Tools page). Delete it "
+                 "yourself, or press Check again to set co-op up again.");
         return true;
     }
 
@@ -461,8 +468,10 @@ public:
         const std::int64_t now = env_->NowMs();
         // The setup runs by itself (2026-10-29: no Setup page, no button) whenever
         // it is needed: the first start, after an update, a missing runtime file.
-        // After a failed attempt it waits for start_setup() ("Try again").
-        if (phase_ == Phase::needs_setup && auto_setup_ && !SetupFailedOnce()) {
+        // After a failed attempt it waits for start_setup() ("Try again"); after an
+        // Uninstall in this window for Check again; never while an update downloads
+        // or installs (that replaces the files the setup reads).
+        if (phase_ == Phase::needs_setup && auto_setup_ && !auto_paused_ && !SetupFailedOnce() && !UpdateBusy()) {
             Log("setup=auto");
             start_setup();
         }
@@ -536,7 +545,9 @@ public:
             std::lock_guard<std::mutex> lock(shared_->m);
             shared_->setup_failed_once = false;
         }
+        auto_paused_ = false;   // Check again: the player's own choice to set co-op up again
         Recheck();
+        RefreshLocalCheck();
     }
 
     Role session_role() const override { return role_; }
@@ -575,6 +586,9 @@ UpdateInfo update_info() const override {
     }
 
     void start_update() override {
+        // Never while co-op gets ready (the update replaces the files the setup reads, and the restart would cut
+        // it off half-way) or while a game or a local test runs. A failed setup does not block it.
+        if (!UpdateAllowed()) return;
         {
             std::lock_guard<std::mutex> lock(update_mutex_);
             if (update_info_.status != UpdateStatus::available &&
@@ -683,21 +697,23 @@ UpdateInfo update_info() const override {
         request.guest_root = Wide(settings_.local_guest);
         request.hud = hud_;
         if (!run->Start(request, error_out)) {
+            if (run->Status().active) {
+                // A game it started is still running: this window keeps the stopped run and puts both folders
+                // back once both games have exited (the helper only takes over when the window closes).
+                AdoptLocalRun(std::move(run));
+                Log("local_test=start_failed; run=" + local_->run_id());
+                return false;
+            }
             Log("local_test=refused");
             RefreshLocalCheck();
             return false;
         }
-        ResetSession();
-        local_ = std::move(run);
-        local_view_ = LocalTestView{};
-        stage_ = Stage::local_test;
-        phase_ = Phase::in_game;
-        role_ = Role::host;
-        last_error_.clear();
-        next_poll_ = 0;
+        AdoptLocalRun(std::move(run));
         Log("local_test=started; run=" + local_->run_id());
-        UpdateLink(env_->NowMs());
         return true;
+    }
+    void refresh_local_test() override {
+        if (stage_ == Stage::none) RefreshLocalCheck();
     }
     LocalTestView local_test() const override {
         if (!local_) return local_view_;
@@ -744,7 +760,19 @@ private:
         std::string error;
         if (IsDir(paths_.mod) && phase_ != Phase::not_in_game_folder) SaveSettings(paths_, settings_, error);
     }
-    // The second folder's check is cached: it hashes that copy's mgsvtpp.exe.
+    void AdoptLocalRun(std::unique_ptr<LocalTestRun> run) {
+        ResetSession();
+        local_ = std::move(run);
+        local_view_ = LocalTestView{};
+        stage_ = Stage::local_test;
+        phase_ = Phase::in_game;
+        role_ = Role::host;
+        last_error_.clear();
+        next_poll_ = 0;
+        UpdateLink(env_->NowMs());
+    }
+    // The second folder's check is kept until refresh_local_test(), Check again, a settings change or the end of a
+    // run (it hashes that copy's mgsvtpp.exe, which CheckLocalTestFolder caches by size, time and file).
     void RefreshLocalCheck() {
         local_check_ = LocalFolderCheck{};
         if (!settings_.debug || settings_.local_guest.empty() || phase_ == Phase::not_in_game_folder) return;
@@ -768,6 +796,18 @@ private:
     bool SetupFailedOnce() const {
         std::lock_guard<std::mutex> lock(shared_->m);
         return shared_->setup_failed_once;
+    }
+    // An update is being downloaded, installed or restarted into.
+    bool UpdateBusy() const {
+        std::lock_guard<std::mutex> lock(update_mutex_);
+        return update_info_.status == UpdateStatus::downloading || update_info_.status == UpdateStatus::applying ||
+               update_info_.status == UpdateStatus::ready_to_restart;
+    }
+    // Update now may start: no setup running or about to start by itself, no game and no local test.
+    bool UpdateAllowed() const {
+        if (stage_ != Stage::none || phase_ == Phase::not_in_game_folder || phase_ == Phase::setting_up) return false;
+        if (phase_ == Phase::needs_setup && auto_setup_ && !auto_paused_ && !SetupFailedOnce()) return false;
+        return true;
     }
 
     bool ReadyFor(std::string& error) {
@@ -864,8 +904,14 @@ private:
             // A local two-window test whose launcher and helper are gone: restore its files from the journal.
             std::vector<std::string> recovered;
             std::string why;
-            if (RecoverLocalSessions(*env_, paths_.game, recovered, why)) Log("local_test=recovered; runs=" + std::to_string(recovered.size()));
-            else Log("local_test=recovery_refused");
+            if (RecoverLocalSessions(*env_, paths_.game, recovered, why)) {
+                Log("local_test=recovered; runs=" + std::to_string(recovered.size()));
+            } else {
+                // Its lab.ini and the other test files are still active here: Host / Join would refuse them anyway.
+                Log("local_test=recovery_refused");
+                return Fail("A local two-window test's settings are still switched on in this folder. " + why +
+                            " Then press Check again.");
+            }
         }
         RemoveStaleHandoff(*env_, paths_);
         const PackageInfo package = ReadPackage(paths_);
@@ -1367,6 +1413,8 @@ private:
     bool exit_if_busy_ = false;
     bool no_launch_ = false;
     bool auto_setup_ = true;   // --write-session runs the setup itself (its setup=start line)
+    // After an Uninstall in this window co-op is set up again only when the player asks (Check again, Try again).
+    bool auto_paused_ = false;
     InstancePaths paths_;
     std::shared_ptr<Shared> shared_ = std::make_shared<Shared>();
     std::thread setup_thread_;

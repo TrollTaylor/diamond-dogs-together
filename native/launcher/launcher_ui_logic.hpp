@@ -44,6 +44,9 @@ const char* PlayTabLabel(PlayTab tab);  // "Host" | "Join" | "Local test"
 PlayTab ShownPlayTab(PlayTab chosen, bool debug, bool local_test_active);
 // "Start local test" can be pressed.
 bool CanStartLocalTest(Phase phase, const LocalTestCheck& check);
+// The second folder's check is on screen (the Local test tab, or Settings with
+// Debug mode on); the GUI refreshes it when it comes into view.
+bool LocalCheckVisible(Page page, PlayTab shown_tab, bool debug);
 
 // ---- Character picker ------------------------------------------------------
 enum class CharacterChoice { story, ocelot, dd_soldier, avatar };
@@ -102,6 +105,12 @@ SetupSummary SummarizeSetup(const std::vector<SetupStep>& steps);
 enum class SetupView { none, preparing, failed };
 SetupView GetSetupView(Phase phase, const SetupSummary& summary);
 
+// ---- Update ----------------------------------------------------------------
+// "Update now" can be pressed: not while co-op gets ready by itself (installing
+// the update and restarting would cut the setup off), during a game or a local
+// test, or in the wrong folder. A failed setup does not block it.
+bool CanStartUpdate(Phase phase, SetupView setup);
+
 // ---- Redraw pacing ---------------------------------------------------------
 // How long the message loop may wait for input before the next frame. Input
 // always wakes it; this only paces the model's tick() and progress updates.
@@ -140,6 +149,7 @@ enum class Scene {
     play_local_ready,
     play_local_running,
     ingame_local_test,
+    play_update_preparing,   // an update is out while co-op gets ready: Update now waits
     count
 };
 int SceneCount();

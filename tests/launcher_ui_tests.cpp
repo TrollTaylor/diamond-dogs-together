@@ -165,10 +165,44 @@ void TestDebugGating() {
     Check(m.local_test().active && !m.link().headline.empty(), "both games running");
     m.advance(200.0);
     m.tick();
-    Check(m.phase() == Phase::ready && !m.local_test().active && m.local_test().detail.find("previous setup") != std::string::npos,
-          "both games closed: both folders restored");
+    Check(m.phase() == Phase::ready && !m.local_test().active && m.local_test().detail.find("were put back") != std::string::npos &&
+              m.local_test().detail.find("previous setup") == std::string::npos,
+          "both games closed: the test settings are put back (the copied co-op files stay)");
     m.set_debug(false);
     Check(!m.check_local_test().ok, "Debug off again");
+
+    // The second folder's check is refreshed when the Local test tab or Settings > Debug comes into view.
+    Check(ui::LocalCheckVisible(Page::play, ui::PlayTab::local_test, true) && ui::LocalCheckVisible(Page::settings, ui::PlayTab::host, true),
+          "the Local test tab and Settings with Debug on show the check");
+    Check(!ui::LocalCheckVisible(Page::settings, ui::PlayTab::local_test, false) && !ui::LocalCheckVisible(Page::play, ui::PlayTab::host, true) &&
+              !ui::LocalCheckVisible(Page::tools, ui::PlayTab::local_test, true) && !ui::LocalCheckVisible(Page::in_game, ui::PlayTab::local_test, true),
+          "nowhere else");
+}
+
+void TestUpdateGate() {
+    // Update now waits while co-op gets ready by itself (the restart would cut the setup off) and during a game.
+    Check(ui::CanStartUpdate(Phase::ready, ui::SetupView::none) && ui::CanStartUpdate(Phase::error, ui::SetupView::none),
+          "update when ready, or when co-op can't start");
+    Check(ui::CanStartUpdate(Phase::needs_setup, ui::SetupView::failed), "update after a failed setup (it may fix it)");
+    Check(!ui::CanStartUpdate(Phase::setting_up, ui::SetupView::preparing) && !ui::CanStartUpdate(Phase::needs_setup, ui::SetupView::preparing),
+          "no update while co-op gets ready");
+    Check(!ui::CanStartUpdate(Phase::launching, ui::SetupView::none) && !ui::CanStartUpdate(Phase::in_game, ui::SetupView::none) &&
+              !ui::CanStartUpdate(Phase::after_game, ui::SetupView::none),
+          "no update during a game or a local test");
+    Check(!ui::CanStartUpdate(Phase::not_in_game_folder, ui::SetupView::none), "no update in the wrong folder");
+    // The mock model refuses it the same way.
+    MockOptions o;
+    o.scenario = MockScenario::first_run;
+    MockModel m(o);
+    m.use_manual_clock(0.0);
+    UpdateInfo available;
+    available.status = UpdateStatus::available;
+    available.latest_version = "99.0.0";
+    m.set_mock_update_info(available);
+    m.tick();
+    Check(m.phase() == Phase::setting_up, "the mock's setup runs by itself");
+    m.start_update();
+    Check(m.update_info().status == UpdateStatus::available, "mock: no update while co-op gets ready");
 }
 
 void TestScenes() {
@@ -500,6 +534,7 @@ int main() {
     TestSetupView();
     TestScenes();
     TestDebugGating();
+    TestUpdateGate();
     TestCharactersAndHud();
     TestJoinCode();
     TestJoinField();
