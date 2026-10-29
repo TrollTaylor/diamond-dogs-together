@@ -1,4 +1,4 @@
-# M3 follow-up experiments, round 2, part 2 (docs/vehicles-companions-design.md section 8.1).
+# M3 follow-up experiments, round 2, part 2 (docs/vehicles-companions-design.md section 8.5).
 # (a) Seed afgh-relief-lv (run 612afff7): both copies Continue into the 30010 enemyBase_S LZ checkpoint; the host's
 #     save holds relief type 2 (east LV), the guest's none: the situation of a host who continues (or a guest who
 #     joins) with a sortie vehicle already out, as in the 2026-10-23 two-PC session in Africa.

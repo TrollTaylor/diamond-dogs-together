@@ -1,4 +1,4 @@
-# M3 proof, lab, heavy relief vehicles on both copies (docs/vehicles-companions-design.md section 8.4; route A).
+# M3 proof, lab, heavy relief vehicles on both copies (docs/vehicles-companions-design.md section 8.6; route A).
 # world_relief is named (its default is off again since the review of 2026-10-29; it was on from 5a6bac8 when run
 # 1a5c1fa0 ran this scenario with no key named) and world_vehicle_gone is not: VEHICLE_GONE runs at its default (off). The host alone arms type 9 (west tank; no free roam loads a tank body) for its sortie
 # to Africa 30020 (goto_lz=0, savannahEast_N); the seeds carry it to the guest, whose own engine draws the same tank

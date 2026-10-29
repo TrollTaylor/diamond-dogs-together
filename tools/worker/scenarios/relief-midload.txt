@@ -1,4 +1,4 @@
-# M3 follow-up experiments, round 2 (docs/vehicles-companions-design.md section 8.1).
+# M3 follow-up experiments, round 2 (docs/vehicles-companions-design.md section 8.5).
 # (a) Sortie-prep reach: the host boots into its ACC (40010); frames show what the ACC offers the hidden worker and
 #     whether a Tab press (the iDroid key) opens the menu that a scripted sortie-prep selection would need. Tab is
 #     pressed twice so the copy is back where it started before the lab goto.

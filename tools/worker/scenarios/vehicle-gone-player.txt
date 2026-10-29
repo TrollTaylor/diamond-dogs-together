@@ -1,4 +1,4 @@
-# M4 / E5 follow-up (docs/vehicles-companions-design.md 8.1), lab: the guest's own destruction and Fulton of a jeep,
+# M4 / E5 follow-up (docs/vehicles-companions-design.md 8.8), lab: the guest's own destruction and Fulton of a jeep,
 # both through REQ_VEHICLE_GONE, with VEHICLE_STATE on (lab keys world_vehicle_gone=1 and world_vehicle_state=1 on
 # both copies). Africa (30020, africa-jeep seed).
 #   1. Wreck by the guest's hand: right after the boot the guest stands at its boot spot facing the Masa Village jeep

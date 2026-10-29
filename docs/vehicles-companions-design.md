@@ -1514,7 +1514,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     'world_lua=event=companion; role=host; step=mbquiet_hidden;'` *(new)*, `both capture m1-mb-quiet-cell`.
   - Rehearsal: Runs A and B with `-Mode play -WanSim bad` (`title`, `waitgameplay`). Exit: a two-PC session.
 - **Status (2026-10-29): built on `wp/companion-host` behind `companion_host_owned`; play default off.** Results and
-  run ids in 8.1.
+  run ids in 8.1. Integrated on `dev/oct7-continue` (merge `23c2cac`, 2026-10-29; unreleased; no hidden run of the
+  integrated head).
   - Proven in the hidden worker, logs on both copies: the buddy keys in the follow seeds (34 keys, 40 values, with the
     MissionStart copies); the guest loads the host's buddy in free roam and Mother Base and keeps its own for its saves
     (D8 b, read back in a later session); the reconcile to the host's kind (8 s debounce, 15 s for none); the CALL pad
@@ -1571,7 +1572,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   - Repeat in 30050 (`mb-ladder`, `both capture m2-mb-dog`) and the `-Mode play -WanSim bad` rehearsal.
   - Exit: a two-PC session.
 - **Status (2026-10-29): built on `wp/companion-host` behind `companion_host_owned` (M1's key); play default off;
-  E19 fails, so D7 is open for the user.** Results and run ids in 8.2.
+  E19 fails, so D7 is open for the user.** Results and run ids in 8.2 and 8.3. Integrated on `dev/oct7-continue`
+  (merge `23c2cac`; unreleased).
   - Built: COMPANION_POSE (op 57, datagram, 10 Hz moving / 2 Hz idle) and COMPANION_ACK (op 49, 1 Hz); the guest holds
     its copy of the host's dog with the stop-AI form of `LuaAiStayAndSnarl` placed by its own `warp=1` every 100 ms,
     led by the sample's age, plus the stock `SetWarpPosition` beyond 15 m and for a dog drifting over 1 m off an
@@ -1615,8 +1617,13 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   play refuses `worldtrigger` and the Fulton levers, so no hidden play rehearsal can drive a mission end or a removal
   yet, and the earlier rehearsals (`40c09484`, `98e4af59`) covered only the arrival and the refusal. The flip needs
   such a rehearsal (or the user's two-PC session) and the user's D11.
-  - **Integration:** `wp/relief` contains M1 (the merge `d911f0c` of `wp/companion-host` `e08dc20`). Integrate
-    `wp/companion-host` first, or accept M1 together with M3.
+  - **Integration:** `wp/relief` contains M1 (the merge `d911f0c` of `wp/companion-host` `e08dc20`). Done in that
+    order on `dev/oct7-continue` (2026-10-29): `wp/companion-host` (`23c2cac`), then `wp/relief` (`c5d0de0`), then
+    `wp/vehicle-state` (`bf24931`); unreleased, no hidden run of the integrated head. Since M4, VEHICLE_GONE is on by
+    default in play at 30010 and 30020, so a play session that names `world_relief=1` takes the VEHICLE_GONE-on
+    removal path (lab `cbc30b91`); the VEHICLE_GONE-off path (`host_none`, lab `5c35644d`) is the lab's and any
+    session that names `world_vehicle_gone=0` [I: the composition of the two modules is fixture- and lab-proven,
+    not run in play].
   - Proven in the hidden worker with frames on both copies: the host's choice drawn by both copies at the same spot
     (types 1, 2, 5 and 9, the default and the FOVA_1 paint), in lab and in play; the host seated in it on the guest's screen
     while driving; the guest's real iDroid vehicle request refused with the toast; one mission-end credit (the
@@ -1710,7 +1717,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
 - **Status (2026-10-29, branch `wp/vehicle-state`, after the M4 review): built and proven in hidden runs, lab and
   play; VEHICLE_GONE and VEHICLE_STATE on by default in play at 30010 and 30020 (`482eb74`, narrowed by `c423b53`);
   Mother Base and the wreck parity lab only; not two-PC tested.** Details and run ids in section 8.8 and
-  `docs/STATUS.md` (M4, M4 review fixes).
+  `docs/STATUS.md` (M4, M4 review fixes). Integrated on `dev/oct7-continue` (merge `bf24931`, 2026-10-29; unreleased;
+  no hidden run of the integrated head). There, index 0 stays refused by VEHICLE_GONE and skipped by VEHICLE_STATE
+  unless `world_relief` is named (M3 then owns it).
   - Play default [O]: the project rule (a FRAME on both copies and a passing `-Mode play -WanSim bad` rehearsal) is
     now met for every path that acts in play at 30010 and 30020 with no vehicle key named: VEHICLE_GONE's Fultons
     (`e44516d7`) and its destruction as a Despawn (`b31a1b65`, frames on both; `4bbbfde4`); VEHICLE_STATE's pose
@@ -1910,6 +1919,27 @@ The original questions:
   the guest's own engine for a relief vehicle (index 0) [I]; what it does while the host's is live there is [U]; a
   copy of another type is removed by the reconcile after 10 s without a credit and the host's loaded again [fixture].
 
+- **D12 (new, M4). A vehicle the guest destroys.** The game posts no `Damage` message for a vehicle hit (`35ba7929`),
+  so the guest's request never starts: a jeep the guest destroys stays a wreck on the guest's PC only and intact on
+  the host's (`72366eb5`). (a) A native hook on the vehicle damage path (static research first); (b) a heuristic: the
+  local player fired near the vehicle within N s; (c) forward every unattributed guest-side break to the host. Until
+  you decide, it stays as in 0.13.6.
+- **D13 (new, M4). The M4 play defaults.** VEHICLE_GONE (Fulton, and a destruction shown as a disappearance) and
+  VEHICLE_STATE (pose and body life) are on by default in play in Afghanistan and Africa (`482eb74`, narrowed by
+  `c423b53`); the project rule is met for those paths (section 9 M4). The wreck parity and Mother Base stay lab only.
+  Confirm, or turn them off in play until a two-PC session.
+- **D14 (new, M4). Fulton rewards for world vehicles.** Today only the Fultoning player's save is paid and gets the
+  vehicle; the other copy only removes it. Keep, or credit both co-op saves (like the soldier Fulton decision D1 of
+  world sync)?
+- **D15 (new, M4). The guest bailing out of a rolling jeep** [I, not run]: the guest's copy would be moved back to
+  where the host's copy stopped once the guest stands 3.5 m clear. Accept, or hold VEHICLE_STATE longer after a
+  guest's get-off?
+
+Open after the integration (2026-10-29; behaviour to confirm, not new decisions): with `companion_host_owned` on, the
+guest's PC shows no host D-Horse, D-Walker or Quiet until M10, M9 and M5 add their holds (M1 had drawn a horse, in the
+wrong place); while the host's Quiet is parked, a host who actively picks "none" at sortie prep is saved as Quiet (the
+code cannot tell that choice from the lock's NONE).
+
 Things the user should know (not decisions): D-Dog "completely" has two stages (6.2): stage 1 (M2) gives one dog that
 follows the host on both screens and synced results; the dog's attack at the right guard and its marks on the guest's
 screen wait for enemy sync in play and shared marking. The same holds for Quiet's shots. The two-rider horse depends on
@@ -1954,6 +1984,19 @@ scripts and the exe before editing.
 | Seat-aim tree is an uncommitted 0.13.5 tree | Accepted | `git status` there shows the changed files on `cc973a8` [O]. E8 is a port onto `wp/companions` with the contract regenerated |
 | Roadmap: dropped and misstated lines | Accepted | See the roadmap: weapons and mounted guns, vehicle damage re-added; sortie vehicle `[ ]`; vehicle losses `[~]`; avatar qualified; tank overlap removed |
 | Process note: two-PC check placed first without asking | Accepted | D9 |
+
+### Integration of M1-M4 (2026-10-29, `dev/oct7-continue`)
+
+Merges (merge commits only): `8843d20` (`wp/companions`, this design), `23c2cac` (`wp/companion-host`, M1 + M2 + the
+review fixes), `c5d0de0` (`wp/relief`, M3 + its review fixes), `bf24931` (`wp/vehicle-state`, M4 + its review fixes).
+No world-op number was shared, so none changed: COMPANION 0x30, COMPANION_ACK 0x31, VEHICLE_STATE 0x33, VEHICLE_SPAWN
+0x34, CHARACTER 0x38, COMPANION_POSE 0x39 (59 ops); 0x32 and 0x35-0x37 stay reserved (section 5). CFG: r[15] the
+vehicle modules bitmask, r[16] the companion module, r[17] the relief module. World chunk order: `world_vehicle`,
+`world_vehicle_state`, `world_companion`, `world_companion_dog`, `world_relief`, `world_relief_sync`. One worker
+`logmark` implementation (`wp/vehicle-state`'s; `wp/relief`'s fixture checks kept). Section 8 renumbered (see the note
+there). `debug_vehicle.lua` was condensed to stay within the 16000-byte literal check in its CRLF form (15838 bytes).
+Full CTest 311/311 and the five contract `--check` scripts pass on `bf24931`. No hidden run of the integrated head
+(the task's rule asked for one only if an op number changed); the modules' composition in game is [I].
 
 ### Review of M3 (2026-10-29, branch `wp/relief` at `c282538`)
 

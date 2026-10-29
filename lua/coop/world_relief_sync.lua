@@ -9,7 +9,7 @@
 --            writes them (D8 b); its live vars get them back at its next solo TppMission.Load.
 --   state    the host sends VEHICLE_SPAWN (op 52, reliable) in free roam on change and every 5 s. A
 --            guest copy whose mission never had index 0 while the host's has it (a host continue, a
---            late join) writes the host's carry and calls Vehicle.LoadCarry mid mission (section 8.3);
+--            late join) writes the host's carry and calls Vehicle.LoadCarry mid mission (section 8.5);
 --            the load can draw it at the mission's drop point instead (run 8a81f776), so one that
 --            appears more than 3 m from the host's pose is set there (SetPosition), as is one parked
 --            more than 20 m off; one the host lacks for 15 s, or of another type, is removed (no

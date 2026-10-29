@@ -1,3 +1,120 @@
+## 2026-10-29: vehicles and companions M1-M4 integrated (`dev/oct7-continue`, unreleased, not two-PC tested)
+
+Milestones M1-M4 of `docs/vehicles-companions-design.md` are merged into `dev/oct7-continue` with merge commits only:
+`8843d20` (`wp/companions`, the design and roadmap), `23c2cac` (`wp/companion-host` `b4c1558`: M1, M2 and their
+review fixes), `c5d0de0` (`wp/relief` `6c6c67f`: M3 and its review fixes) and `bf24931` (`wp/vehicle-state` `c0d1b89`:
+M4 and its review fixes). Nothing was pushed or released. The per-branch sections below keep their own detail; this
+section is the summary that the reviews and fix passes leave standing.
+
+**Integration.**
+- World ops: no number was shared, so none changed. COMPANION 0x30 (48), COMPANION_ACK 0x31 (49), VEHICLE_STATE 0x33
+  (51), VEHICLE_SPAWN 0x34 (52), CHARACTER 0x38 (56), COMPANION_POSE 0x39 (57): 59 ops; 0x32 and 0x35-0x37 stay
+  reserved for the design (`docs/world-sync-protocol.md` section 14). Native, Lua constants, receipts, tests and the
+  protocol doc agree (new protocol section 18 for VEHICLE_SPAWN).
+- CFG: r[15] the vehicle modules bitmask (1 VEHICLE_GONE, 2 VEHICLE_STATE, 4 the wreck parity), r[16] the companion
+  module, r[17] the relief module (17 values).
+- World chunks, in order: `world_vehicle`, `world_vehicle_state`, `world_companion`, `world_companion_dog`,
+  `world_relief`, `world_relief_sync` (bootstrap, source header, `host_trial_patch_check`, `lua_checks`).
+- Worker `logmark`: one implementation (`wp/vehicle-state` `4bf9613`, which reuses the log reader's bounds); the
+  `wp/relief` fixture checks (`c95998a`) run against it.
+- `debug_vehicle.lua` holds both lever sets; two comment blocks were condensed so its CRLF form passes the
+  16000-byte check (15838 bytes now; little headroom). Close to the 32000-byte world-chunk limit (LF):
+  `world_relief_sync.lua` 29946, `world_companion.lua` 29397. M5 should put Quiet's hold in its own chunk.
+- Design section 8 renumbered: companion 8.1-8.3, relief 8.4-8.7 (were 8.2-8.5), M4 8.8 (was 8.1); references in
+  the design, this file, the scenarios and `world_relief_sync.lua` updated.
+- Checks on `bf24931`: `pwsh -File tools/build.ps1` 311/311 (Debug, `ctest -j`), `-Fast` 296/296; the contract checks
+  `generate_partner_contract.py`, `generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`,
+  `generate_nametag_contract.py` and `generate_downed_damage_contract.py` `--check` all pass. **No hidden run of the
+  integrated head**: no op number changed, so the integration task called for none; that the four modules compose in
+  game is [I] (fixture- and composed-chunk-tested only). On the docs commit after it, full CTest 311/311 again; one
+  full run before that failed  check 259 ("the exiting token keeps the timer armed") under
+  parallel load, then passed 5 of 5 alone and in the next full run (no file it covers changed in these merges).
+
+**Final defaults** (lab.ini keys; a named value always wins):
+
+| Key | Module | Lab | Play | Why |
+|---|---|---|---|---|
+| `companion_host_owned` | M1 + M2 (CFG r[16]) | off | off | E19 fails for the dog (D7 open); the key also covers Quiet (E15 not run); no play rehearsal of the review fixes |
+| `world_relief` | M3 (CFG r[17]) | off | off | No play rehearsal of a drive, a mission end or a removal is possible in the worker (play refuses the levers); D11 open |
+| `world_vehicle_gone` | M4 VEHICLE_GONE (r[15] bit 1) | off | **on** at 30010 / 30020 | FRAME on both copies and passing `-Mode play -WanSim bad` rehearsals with no key named (`e44516d7`, `b31a1b65`); Mother Base lab only |
+| `world_vehicle_state` | M4 VEHICLE_STATE (r[15] bit 2) | off | **on** at 30010 / 30020 | FRAME on both copies (`3585869d` lab; `b31a1b65` play after-frame) and play rehearsals `4bbbfde4`, `b31a1b65` (`-WanSim bad`, no key named); Mother Base lab only |
+| `world_vehicle_wreck` | M4 wreck parity (r[15] bit 4) | off | off | No play rehearsal of a destruction with it; the receiver's blast was never measured with live guards |
+
+**M1, the host owns the companion** (lab key `companion_host_owned`, play default off).
+- Proven [O] (logs on both copies, frames): the host's buddy loaded on the guest's copy with its look, the guest's
+  call menu off and the refusal toasts (`489b3c6f`, `fa397547`; play rehearsal of the pre-fix build `b83c9f7a`); the
+  Mother Base cell Quiet hidden (`b993af09`, `de43726a`); after the review fixes: no Quiet ever loaded on the host
+  under the lock, the host's dog kept through a checkpoint Continue and a trip to 30020 (`74d5ba7e`, `9165baeb`), a
+  host horse never shown on the guest's copy (frames on both, `9165baeb`, `b651b42c`), key agreement `step=peer;
+  on=1` on both copies at pairing.
+- Unproven: the stage hook's own effect in game [I]; the session end, the deploy wait for CHARACTER and the reconcile
+  backoff in game (fixtures); the iDroid buddy request and dismiss refusals (a dismiss is NONE, not covered by the
+  disable byte); the host's sortie-prep and iDroid buddy lists; an E20 control frame; whether a walker pilot sets
+  `vars.playerVehicleGameObjectId` [U]; seeds `mb-quiet-cell` and `mb-walker` not boot-checked; a play rehearsal of
+  the fixes.
+
+**M2, D-Dog synced and following the host** (same key, play default off).
+- Proven [O]: the guest's copy shows one dog, the host's, held at the host dog's pose and never released to the
+  guest's AI (frames on both screens: `ffb2d7ab`, `d937191f` with the older hold, `994d252f` at Mother Base, and
+  `b651b42c` with the shipped hold); E3 passes (84-176 s within 1.4-1.5 m of a guard in combat, no engagement:
+  `4cd88ea2`, `d937191f`, `dc761c98`); the dog stays with the host with the guest 40 m away (2-23 cm) and with the
+  host in the helicopter (`994d252f`, after `allactive_set`); D8 (b) keeps the guest's own dead/flag vars.
+- Corrected by the review: not every window stays in band (`994d252f` had run windows of 626 and 703 cm and a walk
+  window of 768 cm, cause [U]; walk windows of 3.11 m in `d937191f` and 3.21 m in `033193d3`); "the rest of the
+  mission" after a guest-side death is [I].
+- **E19 fails** [O]: guards on the guest's PC kill the guest's copy (`dc761c98`); `SetDisableDamage` does not
+  protect it; the lab repair reloaded it once (`033193d3`, logs only).
+- Unproven: the dog's takedown commit/apply (the call menu's "Get it" took nobody down twice); the walk/run/dash
+  legs on the shipped hold; the Mother Base run leg; a play rehearsal.
+
+**M3, the sortie vehicle on both copies** (lab key `world_relief`, default off since `4d18561`).
+- Proven [O] (lab, logs and frames on both copies): relief types 1, 2 (`d18e8fa0`), 5, 9 (`1a5c1fa0`), 3
+  (`5c35644d`) and the FOVA_1 paint (`1914e76c`) drawn at the same spot; the host seated in it on the guest's screen
+  (`d18e8fa0`); the guest's VEHICLES request refused with the toast (`d18e8fa0`, `5c35644d`; in play `40c09484`,
+  `98e4af59`); one mission-end credit, the host's (`5c35644d`, phase-scoped waitlogs); the host's Fulton removing it on
+  both copies (VEHICLE_GONE on `d18e8fa0`; off, through `host_none` 15 s later, `5c35644d`); the guest's Fulton
+  credited once, on the host (`5c35644d` VEHICLE_GONE off, `cbc30b91` on); continue (`1914e76c`, `40c09484`) and late
+  join (`d3b23cca`); the arrival in play with `-WanSim bad` (`40c09484`, `98e4af59`).
+- Refuted earlier and not counted: the `d18e8fa0` / `1a5c1fa0` expectations for the mission-end skip and the Fulton
+  removals (they matched earlier phases' lines; `5c35644d` proved them again with logmarks).
+- Unproven: a destruction of the relief vehicle [I]; types 4, 6, 7, 8 and 10; REJECT 8 while the host rides it, the
+  reload after a refusal or timeout, the guard across a real link drop and the LOADOUT lever (fixtures); D8 (b) save
+  content read from disk [U]; the heavy, continue and late scenarios re-run with logmarks; any play rehearsal of a
+  drive, a mission end or a removal. Since the integration VEHICLE_GONE is on in play, so a play session that names
+  `world_relief=1` takes the VEHICLE_GONE-on removal path (`cbc30b91`, lab) [I in play].
+
+**M4, vehicle losses, damage and parked vehicles** (VEHICLE_GONE and VEHICLE_STATE on in play at 30010 / 30020).
+- Proven [O]: each player's own Fulton by hand in play over `-WanSim bad` (`e44516d7`, frames on both); the removal
+  held while the guest sits in the jeep (`92720b75`); a host C4 destruction becomes a disappearance on the guest's
+  copy in play (`4bbbfde4`, `b31a1b65`, frames `play-c4-placed` to `play-destroyed-after` on both); VEHICLE_STATE's
+  first pose applied in play after the host's bail (`b31a1b65`, `moved=1; d_mm=7970`, frame `play-bail-both`); body
+  life host-authoritative both ways (`4bbbfde4`: the guest's own hits put back from 1602 to 2270); the push lever and
+  the near-player hold framed on both screens (`3585869d`, lab); the wreck with its key named (`0edadbe2`,
+  `3585869d`, lab lever). The integration pass looked at the `b31a1b65` pair frames `play-bail-both` and
+  `play-destroyed-after`: the jeep at the same building on both screens, then the burning wreck on the host's screen
+  and no jeep on the guest's.
+- Unproven: the wreck parity in play and its blast with live guards; Mother Base (no 30050 run); a physical shove;
+  the guest bailing out of a rolling jeep [I]; `player_near` and the seated-rider hold in play (lab only); change to
+  apply latency against R7's 2 s (tx to apply 16..334 ms only); a far, unrealized receiver's wreck fallback; Fulton
+  rewards against save resources; a jeep the guest destroys is not requested (no vehicle `Damage` message,
+  `35ba7929`; the split shown in `72366eb5`).
+
+**Open user decisions** (`docs/vehicles-companions-design.md` section 10): D7 for the dog (E19 fails; hide, show and
+accept, repair, keep in the lab, or a native damage guard); D11 the guest's LOADOUT drop (block, or allow a loadout
+without a vehicle); D13 the M4 play defaults (confirm on in Afghanistan and Africa, or off until a two-PC session);
+D12 a vehicle the guest destroys (native hook, heuristic, or forward every unattributed break); D14 Fulton rewards for
+world vehicles; D15 the guest's bail. To confirm: with the companion key on, the guest's PC shows no host D-Horse,
+D-Walker or Quiet until M10, M9 and M5; a host who picks "none" while their Quiet is parked is saved as Quiet.
+
+**Needs the two-PC Steam session** (M1-M3 count as done only after one; M4 has never run on two PCs):
+- At the defaults (no key named): either player's Fulton of a world jeep, a host destruction (C4) and a drive-and-leave
+  in Afghanistan or Africa, on both screens; the host's bail out of a rolling jeep.
+- With `companion_host_owned=1` on both PCs: the host's dog on both screens, the guest's call, iDroid request and
+  dismiss refused, the host's sortie-prep buddy list with a guest who plays Quiet, the dog's "Get it" takedown with
+  real controls, and what the guest sees when their guards kill the dog (D7).
+- With `world_relief=1` on both PCs: the host's sortie-prep vehicle on both screens, a drive, a mission end (one
+  credit), a Fulton by each player, and the guest's LOADOUT drop (D11).
+
 ## October 29, 2026: M4 review fixes (branch `wp/vehicle-state`, unreleased; hidden-run proven in lab and play, not two-PC tested)
 
 An independent review of the M4 branch (`243e1a8`) returned **fix_first**: four major findings (the index-0 refusal ran after the new wreck path; the wreck parity reached play with no play rehearsal of a destruction; the play-default flip covered Mother Base with no run there and was rehearsed only with the keys named; the guest applied body life downwards only) and six minor ones. Each was checked against the code and the run logs before it was fixed; all ten held. Design: `docs/vehicles-companions-design.md` section 8.8 ("M4 review") and section 9 M4; wire and Lua contract: `docs/world-sync-protocol.md` sections 16-17.

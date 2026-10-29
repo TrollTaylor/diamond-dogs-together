@@ -230,7 +230,7 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 
 | Receipt | Source | Reply | Threads |
 |---|---|---|---|
-| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait,handoff,lock,census,vehicle_gone` (15 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Join-fix phase 2: r[12] the save handoff code (0 none/off/host, 1 wait_host, 2 receiving, 3 staged or countdown, 4 exiting, 5 kept, 6 failed or refused; Lua `pending` = 1..4, `busy` = 2..4) and r[13] the travel lock (1 when it may apply: the effective `lab.ini` `travel_lock`, the F9 unlock not set, guest role; else 0), both filled by `world_link::HandleCfg` after the core from the save handoff's published state. r[14] the WS4 attacker census 0/1 (lab key `partner_placed_census`, lab only) and r[15] the vehicle modules bitmask 0..3 (bit 1 the 0.13.6 VEHICLE_GONE module, lab key `world_vehicle_gone`, section 16; bit 2 the M4 VEHICLE_STATE module, lab key `world_vehicle_state`, section 17; lab and play), also from `HandleCfg`. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader and a missing r[12]..r[15] as 0) | query any; start runtime, not terminating |
+| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session,remote_mission,remote_level,wait,handoff,lock,census,vehicle_gone,companion,relief` (17 values; the first eight are unchanged: mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe. r[9] the partner's mission, 0 unknown: no link, no HELLO yet, or the partner between its MISSION_END and its next READY/HELLO; r[10] its HELLO world level 0..3, 0 unknown; r[11] the raw pair-wait code 0..10, section 3, never `settling`. Join-fix phase 2: r[12] the save handoff code (0 none/off/host, 1 wait_host, 2 receiving, 3 staged or countdown, 4 exiting, 5 kept, 6 failed or refused; Lua `pending` = 1..4, `busy` = 2..4) and r[13] the travel lock (1 when it may apply: the effective `lab.ini` `travel_lock`, the F9 unlock not set, guest role; else 0), both filled by `world_link::HandleCfg` after the core from the save handoff's published state. r[14] the WS4 attacker census 0/1 (lab key `partner_placed_census`, lab only) and r[15] the vehicle modules bitmask 0..7 (bit 1 the 0.13.6 VEHICLE_GONE module, lab key `world_vehicle_gone`, section 16; bit 2 the M4 VEHICLE_STATE module, lab key `world_vehicle_state`, section 17; bit 4 VEHICLE_GONE's wreck parity, lab key `world_vehicle_wreck`; lab and play), r[16] the M1 host-owned companion module 0/1 (lab key `companion_host_owned`, lab and play; section 15) and r[17] the M3 sortie vehicle module 0/1 (lab key `world_relief`, lab and play; section 18), also from `HandleCfg`. Both phases fill them; Lua treats a missing r[9]/r[11] as an older loader and a missing r[12]..r[17] (or an out-of-range r[15]) as 0) | query any; start runtime, not terminating |
 | TX | `return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>` | `return 1` / `return 0,<reason>`: 1 syntax, 2 unknown_op, 3 bad_args, 4 wrong_role, 5 not_paired, 6 queue_full, 7 disabled, 8 lab_only | runtime; MISSION_END also termination |
 | RX | `return 'MGS_COOP_WORLD_RX_V1' -- <mask>` (1 control; 3 control, world, U slots) | `return queue,op,v...` or empty `return 0,0,flags,qctrl,qworld,epoch` (flags 1 link, 2 paired, 4 resync_needed, 8 level0) | runtime |
 | LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; 0.13.6: a token bucket of 600 lines refilled at 20 lines/s, the old 200 per 10 s on average with room for a mission arrival's burst; the dropped count is logged as `world=log_cap; dropped=` before the next admitted line) | runtime or termination |
@@ -1488,3 +1488,52 @@ met by an earlier line; `vehicle-state-play-host.txt` (play, no key named: the
 host's bail and a C4 destruction). Hidden runs: docs/STATUS.md M4 (`d407f115`,
 `0edadbe2`, `e235bda6`, `d9b48fcb`) and M4 review fixes (`3585869d`, `4bbbfde4`,
 `b31a1b65`).
+
+## 18. Sortie vehicle (M3, docs/vehicles-companions-design.md 6.3)
+
+The host's sortie (relief) vehicle, TppVehicle2 index 0 (25600), is drawn by each
+copy's own engine from the host's choice (route A). Lab.ini `world_relief=0|1`
+(lab and play, not a play refusal; **0 in lab and play** unless named: it was 1
+from `5a6bac8` until the M3 review reverted it in `4d18561`), carried to Lua as
+CFG **r[17]** (`world_link::HandleCfg`; a missing value is 0); the module is
+`lua/coop/world_relief_sync.lua`, after `world_relief.lua` (the E2/E17/E18 lab
+levers) at the end of the world chunks.
+
+- **Seeds.** The follow seeds always carry the host's relief carry vars
+  (`reliefVehicleCarryType`, `...Attitude[4]`, `...Life[12]`, `...Ammo[3]`,
+  `...State`) and the ten paint presets (`userPresetVehiclePaintType`), key class
+  `relief` (`world_follow_seed.lua`); the guest applies them before its
+  `TppMission.Load` only with the key on and keeps its own values for its saves
+  (D8 b, a `TppSave.SaveVarsToSlot` wrapper; its live vars come back at its next
+  solo load).
+- **VEHICLE_SPAWN 0x34** (host to guest, world queue, reliable, level 3, lab and
+  play; 11 fields, 31 bytes): seq, the host's mission, id 25600..26111 (M3 sends
+  25600), cause 1..3 (1 relief; 2 drop and 3 reinforce reserved), the carry type
+  (whole u32), the paint preset of that type, flags 0..3 (1 alive, 2 the pose is
+  the carry attitude), xyz mm and yaw mrad (the carry attitude, or the live pose
+  0.5 m up). Sent in free roam on change and every 5 s. A guest copy without the
+  host's index 0 (a continue, a late join) writes the host's carry and calls
+  `Vehicle.LoadCarry` mid mission; one more than 3 m from the host's pose, or
+  parked more than 20 m off, is placed there; one the host lacks for 15 s, or of
+  another type, is removed without a credit (`why=host_none`).
+- **Losses.** With VEHICLE_GONE on (section 16), the receiver removes index 0
+  with `Seize {"Instant"}` and a one-time skip of its `TppTerminal.OnFulton` for
+  25600, never `Despawn` (VEHICLE_GONE's own `index0` refusal still applies with
+  `world_relief` off). A guest-side loss of index 0 is REQ_VEHICLE_GONE for 25600
+  whatever `world_vehicle_gone` says; the host removes its own with the stock
+  `Seize {"Fulton"}` (credited once, on the host) or, for a destruction,
+  quietly; REJECT 8 while the host rides it. The guest's mission-end
+  `TppMission.SeizeReliefVehicleOn*` is skipped (one Mother Base credit, the
+  host's).
+- **Refusals.** The guest's iDroid VEHICLES drop is inactive in co-op free roam
+  (NOTE 13 a 4, toast); the LOADOUT drop (NOTE 13 a 5) only with the lab lever
+  `relief_lab loadout on` until the user decides D11.
+- **Since the integration (2026-10-29).** VEHICLE_GONE is on by default in play
+  at 30010 and 30020 (section 16, M4), so a play session that names
+  `world_relief=1` runs the VEHICLE_GONE-on removal path (lab run `cbc30b91`); the
+  VEHICLE_GONE-off path (the reconcile's `host_none`, lab run `5c35644d`) applies
+  in the lab and wherever `world_vehicle_gone=0` is named.
+
+Tests: `world_wire_tests` (VehicleSpawnOp), `world_receipt_tests` (r[17]),
+`world_relief_lua_check`, `world_relief_sync_lua_check`, `lab_config_tests`,
+`lab_ini_check`. Hidden runs: docs/STATUS.md M3 and M3 review fixes.

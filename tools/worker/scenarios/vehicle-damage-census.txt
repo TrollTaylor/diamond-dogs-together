@@ -1,4 +1,4 @@
-# M4 diagnostic (docs/vehicles-companions-design.md 8.1): does the game post a GameObject "Damage" message for a
+# M4 diagnostic (docs/vehicles-companions-design.md 8.8): does the game post a GameObject "Damage" message for a
 # TppVehicle2 hit, and which argument names the attacker? VEHICLE_GONE asks the host for a guest's destroyed vehicle
 # only when a local Damage on it came within 10 s before VehicleBroken (lua/coop/world_vehicle.lua V.observe, a2 the
 # attacker, as for soldiers). Hidden run 5179b50b: the guest's five rounds hit veh_lv_0000 (life 2260 -> 2230), but

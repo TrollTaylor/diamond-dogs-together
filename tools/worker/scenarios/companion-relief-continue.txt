@@ -1,4 +1,4 @@
-# M3 proof, lab, the continue / late-join case (docs/vehicles-companions-design.md section 9 M3, section 8.3).
+# M3 proof, lab, the continue / late-join case (docs/vehicles-companions-design.md section 9 M3, section 8.5).
 # Seed afgh-relief-lv (run 612afff7): both copies Continue into the 30010 enemyBase_S LZ checkpoint; the host's save
 # holds relief type 2 (east LV) with the vehicle out, the guest's holds none. The host sends VEHICLE_SPAWN; the
 # guest's copy, whose mission started without index 0, writes the host's carry and calls Vehicle.LoadCarry mid
