@@ -135,7 +135,7 @@ wait 1000
 both capture drv-seated
 host run vehicle_seats
 guest run vehicle_seats
-guest hold w 2000 nowait
+guest hold w 1500 nowait
 host burst drv-pass 6 250
 guest release
 guest hold w+a 800 nowait
