@@ -483,7 +483,7 @@ void LauncherUi::PlayPage(Phase phase) {
         EndCard();
         Gap(4.0f);
     } else if (banner == ui::PlayBanner::updated) {
-        Message(Icon::check, col::kGood, ui::UpdatedNote(play_uinfo, phase), kBody);
+        Message(Icon::check, col::kGood, ui::UpdatedNote(play_uinfo), kBody);
         Gap(4.0f);
     }
     // Host | Join, and Local test with Settings > Debug mode on (or while one runs).

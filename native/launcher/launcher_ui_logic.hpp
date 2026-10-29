@@ -221,9 +221,9 @@ bool UpdateInProgress(const UpdateInfo& info);
 enum class PlayBanner { none, available, failed, downloading, installing, updated };
 PlayBanner PlayBannerFor(const UpdateInfo& info);
 // "Updated to version X." right after a self-update ("" otherwise). An update
-// always needs the one-time setup again (the install record names the
-// version), so before the setup the note says that too.
-std::string UpdatedNote(const UpdateInfo& info, Phase phase);
+// always needs the setup again (the install record names the version); it runs
+// by itself and Play shows it on its own line, so the note does not mention it.
+std::string UpdatedNote(const UpdateInfo& info);
 
 // The GitHub release page of a version ("0.14.4" or "0.14.4+abc1234"): the
 // player zip and its source zip (DDT-source-<version>.zip) are both there.

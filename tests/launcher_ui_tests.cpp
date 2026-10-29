@@ -481,15 +481,12 @@ void TestCommandLine() {
     u.download_url = "http://127.0.0.1:1/DiamondDogsTogether-0.14.5.zip";
     Check(ui::PlayBannerFor(u) == ui::PlayBanner::available, "an even newer update comes first");
 
-    // "Updated to version X." where the new window opens: the setup after an update, then Play / Tools.
+    // "Updated to version X." on Play, where the new window opens, and on Tools. There is no setup for the player to
+    // do: Play's own "Getting co-op ready..." line (or its failure card) covers the automatic setup after an update.
     UpdateInfo plain;
-    Check(ui::UpdatedNote(plain, Phase::ready).empty(), "no note without an update");
+    Check(ui::UpdatedNote(plain).empty(), "no note without an update");
     u.status = UpdateStatus::up_to_date;
-    Check(ui::UpdatedNote(u, Phase::ready) == "Updated to version 0.14.4.", "after the update, ready");
-    const std::string before_setup = ui::UpdatedNote(u, Phase::needs_setup);
-    Check(before_setup.rfind("Updated to version 0.14.4.", 0) == 0 && before_setup.find("once more") != std::string::npos,
-          "after the update the setup is needed again, and the note says so");
-    Check(ui::UpdatedNote(u, Phase::setting_up) == before_setup, "also while it runs");
+    Check(ui::UpdatedNote(u) == "Updated to version 0.14.4.", "the same short note in every phase (no setup step to ask for)");
 
     // About > Source code: the release page of this version (both zips are there).
     Check(ui::ReleasePageUrl("0.14.4+48ce7da") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4",

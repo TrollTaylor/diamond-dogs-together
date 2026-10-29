@@ -487,11 +487,9 @@ PlayBanner PlayBannerFor(const UpdateInfo& info) {
     return info.updated_to.empty() ? PlayBanner::none : PlayBanner::updated;
 }
 
-std::string UpdatedNote(const UpdateInfo& info, Phase phase) {
+std::string UpdatedNote(const UpdateInfo& info) {
     if (info.updated_to.empty()) return {};
-    std::string note = "Updated to version " + info.updated_to + ".";
-    if (phase == Phase::needs_setup || phase == Phase::setting_up) note += " Set up co-op once more for this version.";
-    return note;
+    return "Updated to version " + info.updated_to + ".";
 }
 
 std::string ReleasePageUrl(const std::string& version) {
