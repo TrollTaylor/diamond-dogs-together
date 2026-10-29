@@ -198,7 +198,7 @@ do
   function W.reset()
     W.active, W.observing, W.isStarted, W.failed, W.paired, W.w1 = false, false, false, false, false, false
     W.eff, W.epoch, W.rid, W.flags, W.obsCount, W.badAt = 0, 0, 0, 0, 0, nil
-    W.census, W.censusKills, W.censusDamage, W.vehicleGoneOn = false, 0, 0, false
+    W.census, W.censusKills, W.censusDamage, W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = false, 0, 0, false, false, false
     W.companionOn = false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
@@ -212,8 +212,11 @@ do
     W.level, W.role, W.epoch, W.probeId, W.mode = r[1], r[2], r[5] or 0, r[6] or 0, r[7] or 0
     -- WS4 step 0 (lab key partner_placed_census): r[14] asks for the event=obs_att lines.
     W.census = r[14] == 1
-    -- 0.13.6 online-vehicle-gone (lab key world_vehicle_gone): r[15] turns on world_vehicle.lua.
-    W.vehicleGoneOn = r[15] == 1
+    -- r[15] the vehicle modules bitmask: bit 1 (lab key world_vehicle_gone, 0.13.6) world_vehicle.lua,
+    -- bit 2 (lab key world_vehicle_state, M4) world_vehicle_state.lua, bit 4 (lab key world_vehicle_wreck,
+    -- M4 review) VEHICLE_GONE's wreck parity for a destroyed vehicle.
+    local vm = type(r[15]) == "number" and r[15] >= 0 and r[15] <= 7 and floor(r[15]) == r[15] and r[15] or 0
+    W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = vm % 2 == 1, vm % 4 >= 2, vm >= 4
     -- M1 host-owned companion (lab key companion_host_owned): r[16] turns on world_companion.lua.
     W.companionOn = r[16] == 1
     W.host = W.role == 1

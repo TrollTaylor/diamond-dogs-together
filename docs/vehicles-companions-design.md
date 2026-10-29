@@ -213,10 +213,10 @@ AI follows the guest, which is why `world_buddy.lua` holds the guest's dog [O].
   both would credit it to Mother Base resources [I]: a double reward unless the guest's seize is suppressed (E18).
   Whether the sortie's GMP cost is also charged on the guest's replay is [U] (E18).
 - **The chosen relief type is `vars.reliefVehicleCarryType`** (low byte 1..10; 0 none) with
-  `vars.reliefVehicleCarryAttitude[0..3]` (x, y, z, rotY) [O, E2, section 8.2; resolves `unk_59943e57`]: the vehicle
+  `vars.reliefVehicleCarryAttitude[0..3]` (x, y, z, rotY) [O, E2, section 8.4; resolves `unk_59943e57`]: the vehicle
   manager's SetRelief writes them at the sortie and `Vehicle.LoadCarry` reads them at the next mission start; the
   sortie loadout buffers do not hold the choice.
-- **A mid-mission `Vehicle.LoadCarry()` spawns it** [O, section 8.3]: with the carry vars written, the call gives
+- **A mid-mission `Vehicle.LoadCarry()` spawns it** [O, section 8.5]: with the carry vars written, the call gives
   index 0 within 8 s, at the same pose on each copy, in a free-roam mission that started without it.
 - **Index 0 cannot be spawned, respawned or despawned from Lua** [O]: `ParseLuaSpawnIndex` `0x140B304E0` rejects 0 and
   indices at or above the pool count (callers in Spawn `0xB31E70`, Respawn `0xB31710`, Despawn `0xB30AF0`), and
@@ -253,6 +253,20 @@ AI follows the guest, which is why `world_buddy.lua` holds the guest's dog [O].
   [I]: `SetVehicleType`, `SetBodyLife`, `SetBodyDamageRate`, `SetWheelDamageRate`, `GetState`. Class commands: `Spawn`,
   `Respawn`, `Despawn`, `IsAlive`, `StoreToSVars`, `RestoreFromSVars`, `RegisterConvoy`. A read of body life or wheel
   damage is [U].
+- **M4 read of the dispatcher (capstone, 2026-10-28)** [O]: the instance dispatcher `0x140B2B710` compares exactly 21
+  command hashes (plus the `Seize` options); `SetBodyLife` (`0x3BA5A795`, handler `0xB2BC69`, key `life`) writes a u16 through the object's vt+0x98 =
+  `0xB2DD00` (`*(object+0x150) + index*0x18`, 12 u16), `SetBodyDamageRate` (`0x198238FA`, key `rate`) and
+  `SetWheelDamageRate` (`0xB8BD1B91`) write per-index float rates, `GetState` (`0x8770E528`) answers two bits
+  (`V+8[index*32+0x1E] & 0x80`, rec+0x70 & 0x18000), and none of the 21 reads a life [O]. `StoreToSVars` (class
+  `0xB99AB5A1` -> `0xB35BC0`) copies all 12 words into svars `ene_veh_life` and encodes `ene_veh_state` from rec+0x70
+  (bits 3, 9..14 and `0xC0000`) and rec+0x7C bit 14 [O]; Spawn/Respawn take `bodyLife` / `wheelLife` (`0xB2FFA6`,
+  `0xB325CE`) [O]. So word 0 is the body life [O] and words 1..11 the wheel / part lives [I]. M4 reads the block
+  natively (read-only receipt `MGS_COOP_VEHICLE_LIFE_V1`, docs/world-sync-protocol.md section 17); the seven other
+  hashes are unnamed (`0x558A8535` writes a byte at `[obj+0x160][idx]`, `0x29AC74C7` / `0xEA883EE6` set / clear bits at
+  `[obj+0x180][idx]`, `0x26A17EF3` / `0xF13DF67E` clear / set rec+0x7C bit 13, `0x84692F8D` `speed` -> V vt+0x78,
+  `0xE51E5C9B` V vt+0x80 = `0x16F8240`, which clears a per-index move slot) [O]; no wheel or burning write exists [I].
+  `VehicleBroken` (`0x82AAD646`) is posted only by one state-update function (immediates at `0x1416FA899`,
+  `0x1416FAA7C`, `0x1416FAD5D`), never by `SetBodyLife` itself [O].
 - Messages [O]: `VehicleBroken`, `VehicleAction` (GOT_IN, GOT_OUT, FELL_OFF), `PlacedIntoVehicle`, `VehicleDisappeared`.
 - Checkpoints store all vehicle state in svars `ene_veh_*` (`TppEnemy.lua:1185-1193, 1321-1351`) [O].
 - The exe has a "Vehicle Synchronizer" memory tag (presumably FOB/MGO) [O string `0x22889C8`]; project rules exclude
@@ -342,12 +356,12 @@ a field change is a new op, never a resized old one.
 | 50 | MOUNT_FAST | both | U | 20 Hz while ridden | sender tick, kind 1 horse / 2 walker, slot, xyz mm, heading mrad, gait | RIDE_FAST's track machinery (100 ms render delay, extrapolation, stale rules) keyed by (kind, slot) instead of a per-copy id |
 | 44 | RIDE_FAST | both | U | 20 Hz | unchanged | **Also sent by the host** for AI-driven vehicles near the guest (F8), 10 Hz |
 | 51 | VEHICLE_STATE | H->G | R | on change (>0.5 m, >5 deg, damage or state change), at most 2 Hz per vehicle; on pairing a rate-limited sweep (4 vehicles per 250 ms) | vehicle id, locator hash (0 if unnamed), type, flags (alive, broken, npc-ridden, player-ridden, relief, burning), xyz mm, yaw mrad, body life per mille, wheel damage bits (read API [U]) | New |
-| 52 | VEHICLE_SPAWN | H->G | R | as built in M3: on change and every 5 s in free roam (one 31-byte op on the reliable world channel, so it shares the head-of-line exposure of kill and alert ops under loss [I]) | as built: seq, the host's mission, id 25600, cause (1 relief; 2 drop, 3 reinforce reserved), the host's carry type, paint, flags (alive, carry pose), xyz mm (the carry attitude, or the live pose 0.5 m up), yaw mrad | New; M3 uses it for index 0 only (the guest's reconcile, section 8.4) |
+| 52 | VEHICLE_SPAWN | H->G | R | as built in M3: on change and every 5 s in free roam (one 31-byte op on the reliable world channel, so it shares the head-of-line exposure of kill and alert ops under loss [I]) | as built: seq, the host's mission, id 25600, cause (1 relief; 2 drop, 3 reinforce reserved), the host's carry type, paint, flags (alive, carry pose), xyz mm (the carry attitude, or the live pose 0.5 m up), yaw mrad | New; M3 uses it for index 0 only (the guest's reconcile, section 8.6) |
 | 53 | REINFORCE | H->G | R | per event | cp hash, step (load, appear, cancel), reinforce type, coloring | New |
 | 54 | SEAT | both | R | per event | seq, target (vehicle id, or horse slot with a horse flag), seat, role, action (claim, grant, deny, release) | New; host arbitrates |
 | 55 | COMPANION_CMD | G->H | R | per press | kind, order id | Only if decision D1 is "forwarded" |
 | 56 | CHARACTER | G->H | R | at pairing, and on change | the guest's resolved character (story resolved locally), Quiet flag | New, unless HELLO can carry it (HELLO's spare fields [U]); must arrive before the host's `sendSeeds` (F1.4) |
-| 46/47 | VEHICLE_GONE / REQ | as today | R | per event | unchanged | Turned on by default after E5; index 0 per E17. With `world_relief` on, REQ_VEHICLE_GONE for 25600 is the relief module's (a guest-side loss of the host's sortie vehicle, sent whatever `world_vehicle_gone` says; section 8.4 review) |
+| 46/47 | VEHICLE_GONE / REQ | as today | R | per event | unchanged | Turned on by default after E5; index 0 per E17. With `world_relief` on, REQ_VEHICLE_GONE for 25600 is the relief module's (a guest-side loss of the host's sortie vehicle, sent whatever `world_vehicle_gone` says; section 8.7, the review) |
 
 **Ids.** Vehicle ids are per-copy pool slots and are not assigned in spawn-list order (3.6) [O]. VEHICLE_STATE
 carries the locator hash, the type and the position; the guest applies it only to the vehicle that the locator names,
@@ -710,6 +724,11 @@ Static steps use capstone on the exe file (header).
 | E21 | Body 1 can natively mount the shared horse (`mounts.md` section 7 step 4) | Research only: the ACTION start for instance 1 (the F3 icon path) and the ride component for idx 1 | Records feasibility for F10's fallback |
 | E22 | Both players can ride the support heli visibly | Research: the heli's seats and player states (`stateHeliIdle`, `stateHeliRideOn`), today's acts 97..108 hide, whether body 1 can be DM-seated in the heli | Records a design for M12 |
 
+Numbering (integration on `dev/oct7-continue`, 2026-10-29): the three branches numbered their results on their own.
+`wp/companion-host`'s 8.1-8.3 keep their numbers, `wp/relief`'s 8.2-8.5 are now 8.4-8.7 and `wp/vehicle-state`'s 8.1
+is now 8.8. References in this file and in `docs/STATUS.md` were updated; commit messages and run notes keep the
+branch numbers.
+
 ### 8.1 Results of the M1 experiments (2026-10-29, branch `wp/companion-host`)
 
 Hidden-worker runs on loopback: research build, native gun stage, copied saves, low graphics, `companion_host_owned=1`;
@@ -806,351 +825,6 @@ checked: `own_kept; why=quiet_lock; own=quiet`, `own=3` in `b993af09`), `mb-quie
 cell spot; host own Quiet, guest own dog; not booted yet), `mb-walker` (host, from `fa397547`: `seed_buddy walker` read
 `obtained=true; sortie=true`, so D-Walker is developed in the lab save; Mother Base location, `buddyTypeMissionStart`
 WALKER_GEAR, so `boot 30010 ...` sorties the walker; not booted yet). It stands in for the planned `afgh-walker`.
-### 8.2 Results: E2, E17, E18 (sortie vehicle, 2026-10-29, `wp/relief`)
-
-Lab levers and a census in `lua/coop/world_relief.lua` (debug `relief_census`, `relief_arm`, `relief_seize`,
-`relief_remove`, `relief_face`; every lever but the census refuses outside lab mode, and its game hooks install only
-with the first lever). Scenarios `tools/worker/scenarios/relief-e2.txt`, `relief-e17.txt`, `relief-coop.txt`. Four
-hidden runs (all closed with the baseline restored and the real saves unchanged); frames as JPEG in the session
-scratch folder `complete/frames/relief/`. The shared Ghidra server refused again (WinError 10061) [O]; static reads
-are capstone on the exe (notes in the session scratch `companions/relief/notes-static.md`).
-
-**E2: passes [O].**
-- Static [O]: `vars` base `[0x142C16920]`; `reliefVehicleCarryType` vars+0x2D34 (u32 slot: low byte the relief type,
-  byte 1 written at realize by `0x140B34E69`), `reliefVehicleCarryAttitude` vars+0x2D38 (4 floats), Life +0x2D48, Ammo
-  +0x2D60, State +0x2D66; `userPresetVehiclePaintType` vars+0x1BB1 (10). The vehicle manager (singleton
-  `[0x142C20730]`, getter `0x140A27A50`, vtable `0x1422AC8E0`) embeds the relief record at +0x30 (flags +0x58, type
-  +0x5B = the ReliefBlock's record byte +0x2B, paint +0x5C; vtable +0x100 hands the block `mgr+0x30`). vtable +0x78
-  `0x140A28980` (SetRelief) writes the record and the carry vars; vtable +0x58 `0x140A29320` (RequestRelief) is what
-  `Vehicle.LoadCarry` (`0x140A27FB0`) calls with the carry type and pose, after clearing the low byte in 40010 /
-  40020 / 40050. The paint is `userPresetVehiclePaintType` of that type, re-read at every request (`0x140A27270` ->
-  `0x140A28AF0`). Type t loads pack t of the vector `0x142C36A00` built by `0x140B3A1E0`: 1 west_lv, 2 east_lv, 3
-  west_trc, 4 east_trc, 5 west_wav_machinegun, 6 west_wav_cannon, 7 east_wav, 8 east_wav_rocket, 9 west_tnk, 10
-  east_tnk. The UI calls SetRelief (`0x1416BC4B0`, from a loadout-delivery path) with loadout vehicle id 0x0D..0x16
-  mapped by `0x14095D230` (0x0D->2, 0x0E->1, 0x0F->4, 0x10->3, 0x11->7, 0x12->5, 0x13->8, 0x14->6, 0x15->10, 0x16->9).
-- Real choice [O, run `5874afcd`, seed `coop-relief-30020` (decision D10: the launcher's co-op save copy,
-  `<game>\mgs-coop\coop-saves` per `native/launcher/core/core_paths.cpp`, copied read-only)]: the host's 2026-10-23
-  save continues in 30020 with `reliefVehicleCarryType=514` (type 2, east LV), carry pose (263.57, 1.56, -228.88), and
-  25600 alive with `GetVehicleType` 2 at (263.56, -5.52, -228.88) (frame `host-relief-coop-continue`: the jeep). The
-  current sortie loadout slot bytes are identical to the lab save's, so the choice is not in `sortieLoadoutInfoU8buf`.
-  `GetVehicleType` answers 1 for the west LV and 2 for the east LV [O], the enum order of the exe strings [I].
-- Lever [O]: `relief_arm` writing the carry vars at the ACC sortie (`TppMission.SelectNextMissionHeliStartRoute`, where
-  the sortie prep's SetRelief writes) reproduces the choice. A write at the destination's mission start did nothing
-  (run `698e67cf`: the game's `Vehicle` table refuses writes; `InitializeForNewMission` runs on the loading thread,
-  whose world logs are dropped).
-- Route A emulated on both copies [O, runs `fafd3fdd`, `9f01d603`]: with the lever on both copies (as a seed would
-  give the guest the host's choice), each copy's own engine loaded the same pack and placed its own 25600 at the same
-  spot: type 1 at (1226.94, 19.43, -127.08) at the 30020 savannahEast_N LZ and type 2 at (-347.95, 315.86, 763.58) at
-  the 30010 enemyBase_S LZ, identical to 0.01 m on both copies in both runs; frames `fafd3fdd-*-relief-arrival1` and
-  `9f01d603-*-relief-e17-quiet-before` show the jeep on both screens. The LZ drop point overrides the armed pose
-  (`AdjustFromDropPoint`; the carry attitude reads the LZ point after arrival). Without the lever on the guest (run
-  `5874afcd`) the guest's copy had no index 0 (today's state).
-
-**E18: passes [O].**
-- At the 30020 mission end with 25600 alive on both copies (run `fafd3fdd`): the host's stock
-  `SeizeReliefVehicleOnClear` ran (`step=seize; alive=1`), then `OnFultonVehicle(25600, ..., 14)` and
-  `AddTempResource(14)`, and the host's `4wdWest` went 1 -> 2 at the next mission; the guest's wrapper skipped it
-  (`step=seize_skipped; alive=1`), no credit line, its `4wdWest` stayed 1. GMP 313850 on both copies throughout.
-- Unsuppressed, both copies credit [O host, I guest baseline]: in run `5874afcd` the guest (no wrapper) ran its own
-  stock seize and showed `4wdEast=1` at the next mission, as the host did (both started 0 from the same save).
-- Charge: no lever spawn changed GMP on either copy, and the guest never runs the sortie prep (world follow replays
-  the host's sortie) [O]; the host's real sortie-prep charge is not observable in the worker [U].
-- `SeizeReliefVehicleOnClear` also runs at the ACC's mission clear (twice per lab goto), with `alive=0` [O].
-
-**E17: passes with `Seize{"Instant"}` plus a skip of the receiver's `TppTerminal.OnFulton` for 25600 [O].**
-- `Instant` (run `fafd3fdd`), `FadeOut` (run `9f01d603`, the guest's copy) and `Fulton` (run `9f01d603`, the host's
-  copy), each without DirectAccount / CheckFultonType (the `Seize` parser `0x140B2B8FD`: method Fulton / FadeOut
-  `0xEDCE2762` / Instant `0x85D95BDF`; flags CheckFultonType 1, CheckFarFromPlayer 2, DirectAccount 4), all remove index
-  0 from that copy only (gone within 8 s; frame `9f01d603-guest-relief-e17-fadeout-after` has no jeep while
-  `9f01d603-host-relief-e17-fadeout-after` still has the host's), and all run the stock credit path: `Fulton` (att
-  none), `FultonInfo` and `Neutralize` (att local), `TppTerminal.OnFulton` -> `OnFultonVehicle` -> `AddTempResource`.
-  That temporary credit is real: after the guest's FadeOut its `4wdWest` went 1 -> 2 at the next mission end.
-- `relief_remove instant quiet` (run `9f01d603`): the guest's copy skipped its `TppTerminal.OnFulton` for 25600
-  (`step=credit_skipped`), no `OnFultonVehicle` / `AddTempResource`, resources unchanged, 25600 gone after 8 s and 20 s
-  (frame `9f01d603-guest-relief-e17-quiet-after`). That no commit follows at the mission end is [I] (no temp
-  resource was added).
-- The receiver's own removal still logs `Neutralize` of 25600 with `att=local` [O]: VEHICLE_GONE's guest observer
-  must not take it for a guest loss.
-- A warp next to the vehicle at its height (`relief_goto`, run `fafd3fdd`) put both players under the enemyBase_S
-  slope: both fell, were downed and the session ended in a shared game over. `relief_face` (a turn in place) replaced it.
-
-**Route decision: route A** (the same relief vehicle spawned by each copy's own engine from the host's choice). It
-covers all ten relief types, including the APC, the tank and the other faction's jeep that route B cannot draw, keeps
-the id 25600 on both copies, and its two costs are solved: the guest's mission-end seize is skipped (E18) and a
-removal on the receiver is `Seize{"Instant"}` with its `OnFulton` skipped (E17). Not run: relief types 3..10 [I from
-the pack vector], a non-zero paint preset, a guest continue with its own 25600, and the seed path itself (M3).
-Round 2 (section 8.3) adds the continue and late-join case, a mid-mission `Vehicle.LoadCarry()` with the host's carry
-values (proven on both copies), and shows that the pack draws bodies the location does not load (the east jeep in
-Africa on both copies, a tank on the host's copy). Route A stands.
-
-### 8.3 Results, round 2: the ACC, a mid-mission load, the seed and a tank (2026-10-29, `wp/relief`)
-
-New lab lever `relief_load <type> <x> <y> <z> <rotY>` in `world_relief.lua` (lab, free roam, index 0 absent, nothing
-armed; refused otherwise): it writes `reliefVehicleCarryType` and `reliefVehicleCarryAttitude` and calls
-`Vehicle.LoadCarry()` at once. Scenarios `relief-midload.txt` (run `612afff7`, seed `lab`) and `relief-continue.txt`
-(run `fc6f1f01`, seed `afgh-relief-lv`). Both runs closed with the baseline restored and the real saves unchanged;
-frames `612afff7-*-relief-r2-*` and `fc6f1f01-*-relief-r2-*` in the session scratch folder `complete/frames/relief/`.
-These two runs use up the task's budget of six hidden runs.
-
-- **Sortie-prep reach: partly [O, `612afff7`].** `boot 40010` leaves both copies in the ACC
-  (`lab_boot=place; step=gameplay; mission=40010; via=acc`; frame `host-relief-r2-acc-0`: Snake seated in the heli,
-  no menu). `press tab` opens the iDroid on its MAP tab (frame `acc-tab`: MOTHER BASE / MAP / MISSIONS, tabs switched
-  with keys 1 and 3, GMP 313850); a second Tab closes it (`acc-tab2`). The MISSIONS tab, where a sortie prep starts,
-  needs key 3, and the worker's virtual keys do not include it (`Invoke-WorkerScenario.ps1:273`,
-  `Send-WorkerCommand.ps1:49`, `native/worker_scenario.cpp:17`: w a s d enter space escape e r shift ctrl 1 2 f c q x z
-  tab lmb rmb). A scripted sortie-prep selection therefore needs key 3 added to those three lists plus a menu path of
-  about ten steps [U]; it was not tried further. Nothing in M3 depends on it: `relief_arm` writes what SetRelief
-  writes, and seed `coop-relief-30020` holds a real choice. The host's real sortie-prep GMP charge stays [U].
-- **A mid-mission load spawns index 0 [O, `612afff7`].** In 30020 at the savannahEast_N LZ, with no relief vehicle on
-  either copy (`ct=512; t=0; alive=0`), the host's `relief_load 2 1227.17 25.84 -127.05 -1.571` (the carry attitude
-  the engine itself used at this LZ in `fafd3fdd` and `9f01d603`) gave 25600 alive, `GetVehicleType` 2, at
-  (1227.24, 19.43, -127.05) within 8 s, `ct=514` (byte 1 set at realize), while the guest's copy still had none
-  (frame `host-relief-r2-midload-host`: the jeep). The guest's own `relief_load` with the same values, 23 s later,
-  gave the same vehicle at the identical pose (to 0.01 m) within 8 s; frames `host-relief-r2-midload-both` and
-  `guest-relief-r2-midload-both` show the jeep on both screens. No error, no crash, GMP unchanged on both copies. This
-  is the path for a guest continue or a late join (M3 item 6): a copy whose mission started without the relief
-  vehicle gets it mid mission from the host's carry values.
-- **The pack brings bodies the location lacks [O].** The east jeep (type 2) drew in Africa, whose free roam loads only
-  the west light vehicle and truck (`612afff7`, both copies). The west tank (type 9) drew at the same Africa LZ on the
-  host's copy (`fc6f1f01`: 25600 alive, `GetVehicleType` 7, at (1227.19, 19.40, -127.03), carry life 4500 in nine
-  slots, ammo 100 / 500; frame `fc6f1f01-host-relief-r2-tank`). No free roam loads a tank body, so route B could draw
-  neither. The guest's tank was not tested: its lever was refused (last bullet). `GetVehicleType` numbers are not
-  relief types (type 9 answers 7).
-- **E18 with a mid-loaded vehicle [O, `612afff7`].** At the 30020 mission end the host's stock seize credited it
-  (`OnFultonVehicle(25600, ..., 13)`, `AddTempResource 13`; the host's `4wdEast` 1 -> 2 at the next census); the
-  guest's was skipped (`seize_skipped; alive=1`; its `4wdEast` stayed 1). GMP 313850 on both throughout.
-- **Seed `afgh-relief-lv` [O].** From run `612afff7`: the host alone armed type 2 at the ACC sortie to 30010
-  (`goto_lz=1`, enemyBase_S). The host's mission-start checkpoint holds `ct=514; cp=-347.97,321.89,763.57,2.488` with
-  25600 at (-347.95, 315.86, 763.58) (frame `612afff7-host-relief-r2-seed-arrival`); the guest's holds none
-  (`ct=512; alive=0`). Run `fc6f1f01` booted it with `boot fast`: the host's Continue restored the jeep at
-  (-347.97, 315.85, 763.60) (frame `fc6f1f01-host-relief-r2-continue-load`, at night because the time command was
-  refused).
-- **Harness limit [O, `fc6f1f01`; also `5874afcd`].** After `boot fast` the guest's copy reloads (the continue
-  alignment; frame `fc6f1f01-guest-relief-r2-continue`: the loading tips) and then waits on the "Space: Resume Game"
-  page (frame `guest-relief-r2-continue-load`). Until the next travel every guest debug command is refused with
-  `SEND_REFUSED: Debug actions require a fresh owned gameplay mission generation`, so the guest's load from the seed
-  values and the guest's tank lever never ran in `fc6f1f01`. A scenario that continues needs `guest press space`
-  after `boot fast` [U], or a host-led travel first. The host's commands were refused for the first ~20 s too.
-
-### 8.4 Results: M3 built, route A (2026-10-29, `wp/relief`)
-
-M3 is built in `lua/coop/world_relief_sync.lua` on top of M1's seed infrastructure (merge of `e08dc20`, commit
-`d911f0c`), behind the lab key `world_relief=0|1` (CFG `r[17]`, lab and play). The key was off by default while the
-proof ran, on by default from `5a6bac8`, and is **off by default again since `4d18561`** (the review of 2026-10-29,
-section 8.5: the play rehearsals behind the flip covered no drive, mission end or removal, a guest Fulton was credited
-twice with VEHICLE_GONE off, and D11 was shipped undecided). Hidden-worker runs on loopback: research build,
-native gun stage, copied saves, low graphics; each run closed with the baseline restored and the real saves unchanged.
-Evidence: each copy's `script-observer.log` sliced at the session offsets (in the archived run folder
-`%USERPROFILE%\mgs-coop-run-archive\companions\<run>`), and frames saved as JPEG in the session scratch folder
-`complete/frames/relief/` as `<run8>-<role>-<label>.jpg`.
-
-| Run | Scenario, seed | Result |
-|---|---|---|
-| `25b9c0ae` | `companion-relief.txt`, `lab` (build `b622340`) | Every expectation met but one, a wrong expectation (`seize_skipped; alive=1`: VEHICLE_GONE had already removed the guest's copy; now `alive=[01]`). Superseded by `d18e8fa0` |
-| `1914e76c` | `companion-relief-continue.txt`, `afgh-relief-lv` | Every expectation met. The continue through the seeds, the guest's real iDroid vehicle request refused with its toast, a non-zero paint on both copies |
-| `8a81f776` | `companion-relief-late.txt`, `afgh-relief-lv` | Every expectation met. Found: a mid-mission `Vehicle.LoadCarry` draws index 0 at the mission's drop point, not at the written pose (fixed in `c818a5a`, `6358845`) |
-| `d3b23cca` | `companion-relief-late.txt` after the fix | Every expectation met. The late-loaded jeep is placed at the host's pose (0.25 m) |
-| `b7d65be9` | `companion-relief-play.txt`, `-Mode play -WanSim bad`, `coop-relief-30020` / `lab` | Scenario error: the host's save is in Africa and the guest's in Afghanistan, so the two titles landed in different helicopters (40020, 40010) and never paired. The scenario now uses `afgh-relief-lv` for both |
-| **`d18e8fa0`** | **`companion-relief.txt`, `lab`, at `1f3acd8`** (`world_vehicle_gone=1` named) | **The M3 FRAME proof. No expectation failed**, but the guest's mission-end seize-skip expectation matched its boot-travel line and the three Fulton-removal expectations matched the mission-end lines (waitlog read from the session start; section 8.5): those phases rest on reading the slice, where the real lines are. Arrival in Africa (type 2), the drive, the guest's real iDroid request, the mission end, the arrival in Afghanistan (type 1), the host's Fulton. Superseded as the proof by `5c35644d` |
-| **`40c09484`** | **`companion-relief-play.txt`, `-Mode play -WanSim bad`, `afgh-relief-lv`** | **The play rehearsal. No expectation failed.** Paired in the helicopter, the seeds in play, the same jeep at the same spot on both copies, the guest's real iDroid request refused with its toast |
-| **`98e4af59`** | **`companion-relief-play-default.txt`, `-Mode play -WanSim bad`, host `coop-relief-30020` (D10), guest `africa-jeep`** | **The default in play while it was on. No expectation failed.** Arrival and refusal only (no drive, mission end or removal; the host's frames show grass). Neither `world_relief` nor `world_vehicle_gone` named (the session's lab settings: `nametag`, `coop_hud` only); `relief_sync; on=1` on both; the real sortie-prep jeep of the user's 2026-10-23 two-PC save on both copies; the refusal and its toast |
-| **`1a5c1fa0`** | **`companion-relief-heavy.txt`, `lab`, keys at their defaults (`world_relief` on then)** | **No expectation failed.** The west tank (type 9) in Africa and the west wheeled APC (type 5) in Afghanistan on both copies; the mission end with the tank alive on both and VEHICLE_GONE off: one credit (the host's). The guest's `seize_skipped` expectation matched its boot line (`alive=0`); the `alive=1` line of the tank's mission end is in the slice (`guest.log:2983`), not checked by the harness |
-
-**The host's choice spawns the same vehicle on both copies [O, `d18e8fa0`].**
-- The host alone arms type 2 (east LV) for its sortie (`relief_arm`, which writes what the sortie prep's SetRelief
-  writes, at the ACC sortie). Its seed line `step=seed; type=2; ct=2; cp=1227.17,25.84,-127.05,-1.571; mission=30020`
-  goes with the follow seeds; the guest logs `step=seed_apply; type=2; ct=2; paint=0; kind=6; mission=30020` (after
-  `step=own_kept; why=seed; own_type=0` at the first seed, D8 b). Both copies log `step=arrived; type=2; vt=2;
-  paint=0; x=1227.17; y=25.84; z=-127.05; yaw=-1.571; mission=30020` (host `source=carry`, guest `source=seed`), and
-  `relief_census` reads 25600 at (1227.24, 19.43, -127.05) on both once it has settled. Frames
-  `d18e8fa0-host-m3-relief-arrival` and `d18e8fa0-guest-m3-relief-arrival`: the east jeep behind the same tree on both
-  screens. Africa's free roam never loads that body.
-- The second sortie (type 1, west LV, 30010 enemyBase_S LZ): both copies `arrived; type=1; vt=1; x=-347.97; y=321.89;
-  z=763.57; yaw=2.488` and census (-347.96, 315.91, 763.41) on both; frames `d18e8fa0-*-m3-relief-arrival2`: the west
-  jeep in the same place on both screens. Afghanistan's free roam never loads that body.
-- Paint (`1914e76c`): the host arms type 2 with `Vehicle.paintType.FOVA_1` (5; the census reads FOVA_0..2 = 4, 5, 6 and
-  NONE = 0); the seeds carry the preset; both copies log `step=arrived; type=2; vt=2; paint=5` and read the preset
-  array `p=5,0,0,...`. Frames `1914e76c-*-m3-relief-paint`: the same tan camouflage jeep on both screens (the default
-  paint of `d18e8fa0` is olive green).
-- In play (`40c09484`, `-WanSim bad`, link 176-181 ms): both copies pair in the Afghanistan helicopter (40010); the
-  host's continue is a co-op travel (`step=seed; type=2; ct=514; cp=-347.97,321.89,763.57,2.488; mission=30010`); the
-  guest applies it (`seed_apply; type=2; ct=514; kind=4`) and both log `arrived; type=2; vt=2; x=-347.95; y=315.86;
-  z=763.58; yaw=2.495` (host `source=carry`, guest `source=seed`); census host (-347.97, 763.60), guest
-  (-347.95, 763.58). Frames `40c09484-host-m3p-relief-2` (the jeep at the right edge, at night) and
-  `40c09484-guest-m3p-relief-3` (the jeep beside the host).
-- Continue (`1914e76c`, seed `afgh-relief-lv`, lab): the guest applies the host's carry before its own continue load and
-  its engine restores the jeep: guest (-347.95, 315.86, 763.58), host (-347.97, 315.85, 763.60); frames
-  `1914e76c-*-m3-relief-continue`.
-- The default in play (`98e4af59`, `-WanSim bad`, no key named): the host's save is the launcher's co-op save copy
-  (seed `coop-relief-30020`, decision D10: the user's own sortie-prep choice, type 2, left out in 30020 in the
-  2026-10-23 two-PC session), the guest's a lab save in Africa without one. Both pair in the Africa helicopter (40020);
-  the host's continue carries `step=seed; type=2; ct=514; cp=263.57,1.56,-228.88,-0.524; mission=30020`, the guest
-  applies it (`seed_apply; kind=4`) and both log `arrived; type=2; vt=2; x=263.56; y=-5.52; z=-228.88; yaw=-0.521`
-  (host `source=carry`, guest `source=seed`); `relief_status` reads `on=1` on both. Frame
-  `98e4af59-guest-m3d-relief`: the jeep beside the guest at night; the host's four frames look down at the grass
-  (no jeep in view: the host's copy is shown by its census and the `40c09484` frames).
-- Heavy vehicles (`1a5c1fa0`, lab, keys at their defaults): the host alone arms type 9 (west tank) for Africa; the
-  guest applies `seed_apply; type=9; ct=9` and both log `arrived; type=9; vt=7` at the drop point and census
-  (1227.19, -127.03) with life 4500 in nine slots and ammo 100 / 500 on both. Then type 5 (west wheeled APC with the
-  machine gun) for 30010: both `arrived; type=5; vt=5` and census (-347.87 / -347.86, 763.54), life 2800, ammo 500.
-  Frames `1a5c1fa0-*-m3-relief-tank` and `-apc`: the same tank behind the same bush and the same APC on both
-  screens. No free roam loads either body, so only the relief pack draws them (route B could not).
-
-**The host drives it; the guest sees the host seated [O, `d18e8fa0`].** The guest's copy seats the host by id in its
-own 25600 (`partner_ride_seat=byid; vehicle=25600; seat=0; offer=1; reason=none`, then `confirmed`), never
-`reason=absent`, and the get-off ends it (`exit; vehicle=25600; seat=0; reason=foot; via=getoff`). Frames
-`d18e8fa0-guest-m3-relief-boarded` and `-drive-01..08`: the host in the driver's seat as the jeep drives past the guest.
-After the drive both copies read the jeep at (1170.70, 15.63, -131.43).
-
-**Guest vehicle requests are refused with a toast [O, `d18e8fa0`, `40c09484`, `1914e76c`].** While paired in free roam
-the guest's iDroid items `MSN_DROP_VEHICLE` and `MSN_DROP_LOADOUT` are inactive (`TppUiCommand.SetMbTopMenuItemActive`,
-re-applied every 2 s while the iDroid is closed; `step=guard; path=idroid_drop; via=menu_inactive`). The worker walks
-the guest's real path: Tab (MAP), key 3 (MISSIONS, a new worker key), Enter (SUPPLY DROP), S S S (VEHICLES), Enter.
-The stock Terminal message `MbDvcActSelectNonActiveMenu` (arg `StrCode32("MSN_DROP_VEHICLE")`) logs `step=refused;
-path=idroid_drop_vehicle; via=menu_inactive` and shows the toast "Only the host can bring or request a vehicle in
-co-op." (`hud=toast; kind=world_note; code=13; a=4; on=1`). Frames `d18e8fa0-guest-m3-request-refused` and
-`40c09484-guest-m3p-request-refused`: LOADOUT and VEHICLES marked inactive, VEHICLES selected, the toast at the top
-right. The host's items are unchanged. The guest never runs the sortie prep (world follow), so its own sortie choice
-never spawns [O]. In these runs the LOADOUT drop was refused too, because a loadout delivery can carry a vehicle
-(SetRelief `0x1416BC4B0`, section 8.2), even when the guest's loadout holds none; since `c7c1ed3` that block is the lab
-lever `relief_lab loadout on` only, until the user decides D11 (frame `5c35644d-vs-d18e8fa0-guest-idroid-loadout`).
-
-**One mission-end credit [O, `d18e8fa0`].** At the 30020 mission end the host's stock `SeizeReliefVehicleOnClear`
-Fultons its index 0 (`step=seize; alive=1`, then `OnFulton(25600, 0, 0, 13)`, `OnFultonVehicle`, `AddTempResource 13`;
-the host's `4wdE` 1 -> 2 at the next census). That Fulton is a host loss to VEHICLE_GONE (`step=lost; id=25600;
-cause=1`): the guest's copy removes its index 0 quietly (`step=remove; via=seize_instant; why=vehicle_gone; ok=1`,
-`step=credit_skipped; fn=OnFulton`, `vehicle_gone; step=applied; ... ms=283`) and then skips its own seize
-(`step=seize_skipped; alive=0`); its `4wdE` stays 1. Without VEHICLE_GONE the guest's skip meets the vehicle alive
-(`alive=1`): in `1a5c1fa0` (VEHICLE_GONE off, its default) the host's seize credits the tank (`AddTempResource 22`;
-the host's `tnkW` 0 -> 1 at the next census) and the guest's skip logs `seize_skipped; alive=1` (its `tnkW` stays 0;
-read in the slice, see the table), and in `5c35644d` the same for the east jeep, checked by phase-scoped waitlogs
-(section 8.5).
-GMP 313850 on both copies throughout. The guest never runs the sortie prep, so it is
-never charged [O]; the host's real sortie-prep charge stays [U] (no lever charges it).
-
-**The host's Fulton removes it on both copies, credited once [O, `d18e8fa0` with `world_vehicle_gone=1`; `5c35644d`
-with it off, section 8.5].** In 30010 the host Fultons its index 0 (lab
-lever `vehicle_remove nearest fulton`: the engine's own Seize Fulton): host `OnFulton(25600, 0, 0, 14)` and
-`AddTempResource 14`, `vehicle_gone; step=lost; id=25600`; the guest removes its copy with `Seize{"Instant"}`
-(`step=remove; via=seize_instant; why=vehicle_gone`, `credit_skipped`, `vehicle_gone; step=applied; id=25600;
-via=seize_instant; ms=250`), where VEHICLE_GONE refused `index0` before. Census `gone`: `alive=0` on both. Frames
-`d18e8fa0-*-m3-relief-gone`, taken from the same spot as `-arrival2`: no jeep on either screen. The receiver's own
-removal is never taken for a guest loss (no `vehicle_gone; step=watch` on the guest). A destruction takes the same
-path (VEHICLE_GONE cause 2) [I; not run: the worker has no lever that destroys a vehicle]. VEHICLE_GONE itself
-(`world_vehicle_gone`) is still off by default; without it the guest's reconcile removes a copy the host lacks after
-15 s (`why=host_none`): fixture only when this was written, run in `5c35644d` since (section 8.5). The guest's own
-Fulton of index 0 was not handled at all here: with VEHICLE_GONE off it credited the guest's Mother Base and the
-host's seize credited it again (the review, section 8.5) [I; fixed and run since].
-
-**Late join and a moved vehicle [O, `8a81f776`, `d3b23cca`].**
-- In `8a81f776` the guest's continue did not bring the jeep through the seeds (its continue reload ran without them);
-  the host's VEHICLE_SPAWN did: `step=host_state; alive=1; type=2`, then after 10 s `step=load; why=host_has; type=2;
-  ct=514; write=1; call=1; x=-347.97; y=321.89; z=763.57; yaw=2.488` and `step=arrived; ... source=load` at the carry
-  pose (the host's jeep stood on it).
-- Then the host drove the jeep 25 m from the Africa drop point and left it; the guest's lab lever `relief_lab forget`
-  removed the guest's copy (as a guest that joins late never had one) and the reconcile loaded it again from
-  VEHICLE_SPAWN with the host's live pose (`x=1201.73; y=18.91; z=-128.63`), but the engine drew it at the drop point
-  (1227.17, 25.59, -127.05): a mid-mission `Vehicle.LoadCarry` ignores the written attitude when the relief record
-  already holds that type [O effect; I cause]. Frame `8a81f776-guest-m3-relief-lateload`: no jeep beside the host.
-- Fix (`c818a5a`, `6358845`, tests first): after a load, a vehicle that appears more than 3 m from the host's
-  VEHICLE_SPAWN pose is set there with the RIDE_FAST placement (`SetPosition{position, rotY}`; `step=placed;
-  why=load`); a parked copy more than 20 m off is placed the same way (`why=far`) instead of being removed and
-  reloaded. Run `d3b23cca` (the same scenario, at `c818a5a`): the host's jeep at (1201.63, 16.91, -128.66) after the
-  drive; the guest's reload drawn at the drop point and at once `step=placed; why=load; ok=1`; the guest's census then
-  reads (1201.48, 16.89, -128.86), 0.25 m from the host's. Frame `d3b23cca-guest-m3-relief-lateload`: the jeep beside
-  the host on the guest's screen. `6358845` (any loaded vehicle more than 3 m off is placed, whatever the carry flag)
-  has fixture tests only.
-- The reload never sends a VEHICLE_GONE request for the copy it replaces (the guest's own removal is marked gone
-  first), so the host's vehicle stays.
-
-**D8 (b) [O logs; fixture].** As built (like M1), the guest's own values are what every save writes while the host's
-are live, and its live vars get them back at its next solo `TppMission.Load`, not at unpair or the session's end:
-restoring them mid mission would leave them unlike the vehicle its copy has drawn. A paint preset the guest changes
-during a session is not kept [I]. Every guest save while the host's carry is live writes the guest's own values
-(`step=save_own; own_type=0; live_type=2`, `d18e8fa0` and `40c09484`), and a solo load gives them back
-(`own_restored; why=solo`, fixture test). The host's paint preset reaches the guest's vars but never its save. The save
-contents were not read back from disk in these runs [U].
-
-**Not shown.** Relief types 3, 4, 6..8 and 10 on both copies (types 1, 2, 5 and 9 ran); a destruction of index 0; the guest's iDroid loadout item selected (inactive in the frames; its refusal
-shares the path of the vehicle item); the host's real sortie-prep selection and GMP charge [U]; route C (the host's
-in-mission drop) [U]; a two-PC session.
-
-### 8.5 Review of M3 and the fixes (2026-10-29, `wp/relief`)
-
-An independent review of `wp/relief` at `c282538` (the review log in section 11) found the code sound on route A but
-the default flip unproven. Checked first, then fixed with tests written first:
-
-- **The default is off again (`4d18561`).** The play rehearsals behind `5a6bac8` covered only the arrival and the
-  refusal, and `40c09484` named `world_vehicle_gone=1`, which is not a default. Play refuses `worldtrigger` and the
-  Fulton levers [O, `world_goto.lua:31`, `world_relief.lua:293`, `world_vehicle.lua:483`], so a hidden play rehearsal
-  cannot drive a mission end or a removal yet.
-- **A guest-side loss of index 0 is the host's to credit (`c7c1ed3`).** With VEHICLE_GONE off (its default), the guest's
-  stock `TppTerminal.OnFulton` credited a guest Fulton of 25600 on the guest's Mother Base, nothing told the host, and
-  the host's mission-end seize credited it again [O code; I effect, not run before the fix]. Now a co-op guest's
-  `OnFulton` never credits 25600 (`credit_skipped; why=guest_fulton`, `own_removal` or `quiet`); its own Fulton, or a
-  destruction by its player (`Dead` with `att=local`, `VehicleBroken` within 10 s of a local hit), sends
-  REQ_VEHICLE_GONE for 25600 whatever `world_vehicle_gone` says (`step=lost_tx`, once paired; again after 20 s without
-  RECEIVED); VEHICLE_GONE never watches index 0 on the guest while relief is on, and the guest marks it gone so the
-  host's announcement removes nothing else. The host (`step=lost_rx`) runs its own stock `Seize {"Fulton"}` for a Fulton
-  (`step=host_fulton`; its stock `OnFulton` credits it once) or `Seize {"Instant"}` for a destruction (no credit), and
-  refuses with REJECT 8 while it rides the vehicle (`step=lost_refused`). The guest ends the request when the host's
-  VEHICLE_SPAWN says `alive=0` (`step=lost_done`); after a refusal or 45 s without a host loss (`step=lost_timeout`) its
-  reconcile loads the host's vehicle again.
-- **Reconcile (`c7c1ed3`).** A copy removed because the host had none (`host_none`) is loaded again when the host's comes
-  back; placements have their own budget (6), loads and removals keep 3, reset when the host's state changes. The dead
-  `cause == 2` exemption in the VEHICLE_GONE receiver wrapper is gone (index 0 is removed quietly for any cause until
-  M4 sets a wreck rule).
-- **Refusal (`c7c1ed3`).** The guest's VEHICLES drop stays inactive while the link drops inside the co-op mission (the
-  final stop or a solo load activate it again; active is the state `TppTerminal.SetUp` leaves, `package-10.lua:675-686`
-  [O]); a mission's first guard pass applies even with the iDroid open. The LOADOUT block is the lab lever
-  `relief_lab loadout on|off`, off by default, until the user decides D11.
-- **The harness (`c95998a`).** `waitlog` read each log from the session start, so in `d18e8fa0` and `1a5c1fa0` the
-  mission-end and Fulton-removal expectations were met by earlier phases' lines (the guest's boot-travel
-  `seize_skipped; alive=0` at t_ms 175869764; the phase-D lines at 176035214..262 for the three phase-E waitlogs; in
-  `1a5c1fa0` the boot line at 178929715) [O, the reviewer's reading, rechecked in `slice-d18e8fa0` and `slice-1a5c1fa0`]. The real lines are
-  in the slices, so those behaviours rest on reading them, not on the harness. New worker step `logmark
-  <host|guest|both>`: later waitlogs of that role read from its last complete line at the mark. The seize, remove and
-  credit lines now name their mission.
-
-| Run | Scenario, seed | Result |
-|---|---|---|
-| **`5c35644d`** | **`companion-relief.txt` at `c95998a`, `lab`, `world_relief=1`, VEHICLE_GONE off (default)** | **The M3 FRAME proof; all 38 expectations met, each after its phase's `logmark`.** Closed, baseline restored, real saves unchanged |
-| **`cbc30b91`** | **`companion-relief-guest-fulton.txt`, `lab`, `world_relief=1`, `world_vehicle_gone=1`** | **All 18 expectations met.** The guest's Fulton with VEHICLE_GONE on: one request, one credit (the host's), nothing removed twice. Closed, baseline restored, real saves unchanged |
-
-**Run `5c35644d`, phase by phase [O, slices `slice-5c35644d`, frames `complete/frames/relief/5c35644d-*`].**
-- A, Africa type 2 (east LV): both copies `arrived; type=2; vt=2; x=1227.17; y=25.84; z=-127.05; mission=30020` (host
-  `source=carry`, guest `source=seed`); census (1227.24, 19.43, -127.05) on both; the guest's `guard; ... items=1`.
-- B, the host drives it: the guest logs `partner_ride_seat=confirmed; vehicle=25600; seat=0` and the get-off `exit`;
-  frame `guest-m3-relief-drive-02`: the host in the driver's seat of the jeep.
-- C, the guest's real iDroid path: `refused; path=idroid_drop_vehicle` and `hud=toast; code=13; a=4`; frame
-  `guest-m3-request-refused`: VEHICLES selected and marked inactive, LOADOUT not marked (compare
-  `5c35644d-vs-d18e8fa0-guest-idroid-loadout`, where `d18e8fa0` marked both), the toast at the top right.
-- D, the 30020 mission end with the jeep alive on both and VEHICLE_GONE off: host `seize; fn=SeizeReliefVehicleOnClear;
-  alive=1; mission=30020`, `OnFultonVehicle`, `AddTempResource 13`; guest `seize_skipped; ...; alive=1; mission=30020`.
-- E, Afghanistan type 1 (west LV): both `arrived; type=1; x=-347.97; y=321.89; z=763.57; mission=30010`; frames
-  `*-m3-relief-arrival2`: the jeep at the same spot on both screens.
-- F, **the guest Fultons its copy** (lab lever `relief_remove fulton`: the stock `Seize {"Fulton"}`, which ran the
-  guest's stock `OnFulton(25600, 0, 0, 14)`): guest `credit_skipped; fn=OnFulton; why=guest_fulton; mission=30010`
-  and `lost_tx; rid=2; cause=1; try=1; sent=1`; host `lost_rx; rid=2; cause=1`, `host_fulton; ok=1`, its own
-  `OnFulton`, `OnFultonVehicle` and `AddTempResource 14` 33 ms later, `state_tx; alive=0` 3.1 s later; guest
-  `host_state; alive=0` and `lost_done; rid=2; ms=3203`. The guest's log has no `OnFultonVehicle` or `AddTempResource`
-  line in the whole session. Frames `*-m3-relief-gone`, from the same spot as `-arrival2`: no jeep on either screen.
-- G, Africa type 3 (west truck; first run of that type): both `arrived; type=3; vt=3` at the drop point; frames
-  `*-m3-relief-arrival3`: the truck on both screens. The census after the 30010 end reads host `4wdE=2; 4wdW=2`
-  (start 1, 1: the D and F credits) and guest `4wdE=1; 4wdW=1`; GMP 313850 on both throughout. **The host Fultons its
-  own** (`relief_remove fulton`): host `OnFulton`, `AddTempResource 16`, `state_tx; alive=0`; the guest logs
-  `host_state; alive=0; type=3` and 15.05 s later `remove; via=seize_instant; why=host_none; ok=1; mission=30020` and
-  `credit_skipped; why=quiet` (no credit): the reconcile path at the VEHICLE_GONE default. Frames `*-m3-relief-gone2`:
-  no truck on either screen.
-
-**Run `cbc30b91` [O, slices `slice-cbc30b91`, frames `cbc30b91-*`, grid `cbc30b91-grid-arrival-gone`].** VEHICLE_GONE on. The east jeep at the Africa drop point on both copies (`arrived; type=2; x=1227.17; z=-127.05`). The guest Fultons its copy: guest `credit_skipped; why=guest_fulton; mission=30020`, `lost_tx; rid=3`, and no `vehicle_gone; step=watch` or `step=req` for 25600 (VEHICLE_GONE's own guest path stayed out); host `lost_rx; rid=3`, `host_fulton; ok=1`, its VEHICLE_GONE `watch; id=25600; m=Fulton; att=none`, the stock `OnFulton`, `OnFultonVehicle` and `AddTempResource 13`, then `vehicle_gone; step=lost; id=25600` and `tx` 3.2 s later; guest `vehicle_gone; step=rx; id=25600` and nothing more (no `remove`, no `matched`: it was marked gone), `host_state; alive=0` and `lost_done; rid=3; ms=3269`; `vehicle_gone_status` on both `gone=25600; req=0`. After the travel to 30010 the census reads host `4wdE` 1 -> 2, guest `4wdE` 1. Frames: the jeep behind the same tree on both screens, then gone on both.
-
-Not covered by these runs: a player's own Fulton or destruction of index 0 (the worker has the stock Seize lever only
-[I that the player's Fulton runs the same `OnFulton`, `TppTerminal.lua` FultonInfo -> `OnFulton`]); the refusal guard
-across a real link drop; the host refusing while it rides the vehicle and the guest's reload after a refusal, a
-timeout or a returning `host_none` (fixtures); the D8 (b) save contents read back from disk; a play rehearsal of a
-drive, a mission end and a removal.
-
 ### 8.2 Results of the M2 experiments (2026-10-29, branch `wp/companion-host`)
 
 Hidden-worker runs on loopback as in 8.1 (research build, native gun stage, copied saves, low graphics,
@@ -1245,6 +919,551 @@ the Continue): no expectation failed, closed clean; the 30020 frames are at nigh
 (`companion-host-dog-guestview.txt`, same seeds, the guest's view): no expectation failed, closed clean. All three are
 archived under `%USERPROFILE%\mgs-coop-run-archive\companions\<run>`; frames as JPEG in the session scratch folder
 `complete/frames/companion-host/` as `<run4>-<role>-<label>.jpg`.
+### 8.4 Results: E2, E17, E18 (sortie vehicle, 2026-10-29, `wp/relief`)
+
+Lab levers and a census in `lua/coop/world_relief.lua` (debug `relief_census`, `relief_arm`, `relief_seize`,
+`relief_remove`, `relief_face`; every lever but the census refuses outside lab mode, and its game hooks install only
+with the first lever). Scenarios `tools/worker/scenarios/relief-e2.txt`, `relief-e17.txt`, `relief-coop.txt`. Four
+hidden runs (all closed with the baseline restored and the real saves unchanged); frames as JPEG in the session
+scratch folder `complete/frames/relief/`. The shared Ghidra server refused again (WinError 10061) [O]; static reads
+are capstone on the exe (notes in the session scratch `companions/relief/notes-static.md`).
+
+**E2: passes [O].**
+- Static [O]: `vars` base `[0x142C16920]`; `reliefVehicleCarryType` vars+0x2D34 (u32 slot: low byte the relief type,
+  byte 1 written at realize by `0x140B34E69`), `reliefVehicleCarryAttitude` vars+0x2D38 (4 floats), Life +0x2D48, Ammo
+  +0x2D60, State +0x2D66; `userPresetVehiclePaintType` vars+0x1BB1 (10). The vehicle manager (singleton
+  `[0x142C20730]`, getter `0x140A27A50`, vtable `0x1422AC8E0`) embeds the relief record at +0x30 (flags +0x58, type
+  +0x5B = the ReliefBlock's record byte +0x2B, paint +0x5C; vtable +0x100 hands the block `mgr+0x30`). vtable +0x78
+  `0x140A28980` (SetRelief) writes the record and the carry vars; vtable +0x58 `0x140A29320` (RequestRelief) is what
+  `Vehicle.LoadCarry` (`0x140A27FB0`) calls with the carry type and pose, after clearing the low byte in 40010 /
+  40020 / 40050. The paint is `userPresetVehiclePaintType` of that type, re-read at every request (`0x140A27270` ->
+  `0x140A28AF0`). Type t loads pack t of the vector `0x142C36A00` built by `0x140B3A1E0`: 1 west_lv, 2 east_lv, 3
+  west_trc, 4 east_trc, 5 west_wav_machinegun, 6 west_wav_cannon, 7 east_wav, 8 east_wav_rocket, 9 west_tnk, 10
+  east_tnk. The UI calls SetRelief (`0x1416BC4B0`, from a loadout-delivery path) with loadout vehicle id 0x0D..0x16
+  mapped by `0x14095D230` (0x0D->2, 0x0E->1, 0x0F->4, 0x10->3, 0x11->7, 0x12->5, 0x13->8, 0x14->6, 0x15->10, 0x16->9).
+- Real choice [O, run `5874afcd`, seed `coop-relief-30020` (decision D10: the launcher's co-op save copy,
+  `<game>\mgs-coop\coop-saves` per `native/launcher/core/core_paths.cpp`, copied read-only)]: the host's 2026-10-23
+  save continues in 30020 with `reliefVehicleCarryType=514` (type 2, east LV), carry pose (263.57, 1.56, -228.88), and
+  25600 alive with `GetVehicleType` 2 at (263.56, -5.52, -228.88) (frame `host-relief-coop-continue`: the jeep). The
+  current sortie loadout slot bytes are identical to the lab save's, so the choice is not in `sortieLoadoutInfoU8buf`.
+  `GetVehicleType` answers 1 for the west LV and 2 for the east LV [O], the enum order of the exe strings [I].
+- Lever [O]: `relief_arm` writing the carry vars at the ACC sortie (`TppMission.SelectNextMissionHeliStartRoute`, where
+  the sortie prep's SetRelief writes) reproduces the choice. A write at the destination's mission start did nothing
+  (run `698e67cf`: the game's `Vehicle` table refuses writes; `InitializeForNewMission` runs on the loading thread,
+  whose world logs are dropped).
+- Route A emulated on both copies [O, runs `fafd3fdd`, `9f01d603`]: with the lever on both copies (as a seed would
+  give the guest the host's choice), each copy's own engine loaded the same pack and placed its own 25600 at the same
+  spot: type 1 at (1226.94, 19.43, -127.08) at the 30020 savannahEast_N LZ and type 2 at (-347.95, 315.86, 763.58) at
+  the 30010 enemyBase_S LZ, identical to 0.01 m on both copies in both runs; frames `fafd3fdd-*-relief-arrival1` and
+  `9f01d603-*-relief-e17-quiet-before` show the jeep on both screens. The LZ drop point overrides the armed pose
+  (`AdjustFromDropPoint`; the carry attitude reads the LZ point after arrival). Without the lever on the guest (run
+  `5874afcd`) the guest's copy had no index 0 (today's state).
+
+**E18: passes [O].**
+- At the 30020 mission end with 25600 alive on both copies (run `fafd3fdd`): the host's stock
+  `SeizeReliefVehicleOnClear` ran (`step=seize; alive=1`), then `OnFultonVehicle(25600, ..., 14)` and
+  `AddTempResource(14)`, and the host's `4wdWest` went 1 -> 2 at the next mission; the guest's wrapper skipped it
+  (`step=seize_skipped; alive=1`), no credit line, its `4wdWest` stayed 1. GMP 313850 on both copies throughout.
+- Unsuppressed, both copies credit [O host, I guest baseline]: in run `5874afcd` the guest (no wrapper) ran its own
+  stock seize and showed `4wdEast=1` at the next mission, as the host did (both started 0 from the same save).
+- Charge: no lever spawn changed GMP on either copy, and the guest never runs the sortie prep (world follow replays
+  the host's sortie) [O]; the host's real sortie-prep charge is not observable in the worker [U].
+- `SeizeReliefVehicleOnClear` also runs at the ACC's mission clear (twice per lab goto), with `alive=0` [O].
+
+**E17: passes with `Seize{"Instant"}` plus a skip of the receiver's `TppTerminal.OnFulton` for 25600 [O].**
+- `Instant` (run `fafd3fdd`), `FadeOut` (run `9f01d603`, the guest's copy) and `Fulton` (run `9f01d603`, the host's
+  copy), each without DirectAccount / CheckFultonType (the `Seize` parser `0x140B2B8FD`: method Fulton / FadeOut
+  `0xEDCE2762` / Instant `0x85D95BDF`; flags CheckFultonType 1, CheckFarFromPlayer 2, DirectAccount 4), all remove index
+  0 from that copy only (gone within 8 s; frame `9f01d603-guest-relief-e17-fadeout-after` has no jeep while
+  `9f01d603-host-relief-e17-fadeout-after` still has the host's), and all run the stock credit path: `Fulton` (att
+  none), `FultonInfo` and `Neutralize` (att local), `TppTerminal.OnFulton` -> `OnFultonVehicle` -> `AddTempResource`.
+  That temporary credit is real: after the guest's FadeOut its `4wdWest` went 1 -> 2 at the next mission end.
+- `relief_remove instant quiet` (run `9f01d603`): the guest's copy skipped its `TppTerminal.OnFulton` for 25600
+  (`step=credit_skipped`), no `OnFultonVehicle` / `AddTempResource`, resources unchanged, 25600 gone after 8 s and 20 s
+  (frame `9f01d603-guest-relief-e17-quiet-after`). That no commit follows at the mission end is [I] (no temp
+  resource was added).
+- The receiver's own removal still logs `Neutralize` of 25600 with `att=local` [O]: VEHICLE_GONE's guest observer
+  must not take it for a guest loss.
+- A warp next to the vehicle at its height (`relief_goto`, run `fafd3fdd`) put both players under the enemyBase_S
+  slope: both fell, were downed and the session ended in a shared game over. `relief_face` (a turn in place) replaced it.
+
+**Route decision: route A** (the same relief vehicle spawned by each copy's own engine from the host's choice). It
+covers all ten relief types, including the APC, the tank and the other faction's jeep that route B cannot draw, keeps
+the id 25600 on both copies, and its two costs are solved: the guest's mission-end seize is skipped (E18) and a
+removal on the receiver is `Seize{"Instant"}` with its `OnFulton` skipped (E17). Not run: relief types 3..10 [I from
+the pack vector], a non-zero paint preset, a guest continue with its own 25600, and the seed path itself (M3).
+Round 2 (section 8.5) adds the continue and late-join case, a mid-mission `Vehicle.LoadCarry()` with the host's carry
+values (proven on both copies), and shows that the pack draws bodies the location does not load (the east jeep in
+Africa on both copies, a tank on the host's copy). Route A stands.
+
+### 8.5 Results, round 2: the ACC, a mid-mission load, the seed and a tank (2026-10-29, `wp/relief`)
+
+New lab lever `relief_load <type> <x> <y> <z> <rotY>` in `world_relief.lua` (lab, free roam, index 0 absent, nothing
+armed; refused otherwise): it writes `reliefVehicleCarryType` and `reliefVehicleCarryAttitude` and calls
+`Vehicle.LoadCarry()` at once. Scenarios `relief-midload.txt` (run `612afff7`, seed `lab`) and `relief-continue.txt`
+(run `fc6f1f01`, seed `afgh-relief-lv`). Both runs closed with the baseline restored and the real saves unchanged;
+frames `612afff7-*-relief-r2-*` and `fc6f1f01-*-relief-r2-*` in the session scratch folder `complete/frames/relief/`.
+These two runs use up the task's budget of six hidden runs.
+
+- **Sortie-prep reach: partly [O, `612afff7`].** `boot 40010` leaves both copies in the ACC
+  (`lab_boot=place; step=gameplay; mission=40010; via=acc`; frame `host-relief-r2-acc-0`: Snake seated in the heli,
+  no menu). `press tab` opens the iDroid on its MAP tab (frame `acc-tab`: MOTHER BASE / MAP / MISSIONS, tabs switched
+  with keys 1 and 3, GMP 313850); a second Tab closes it (`acc-tab2`). The MISSIONS tab, where a sortie prep starts,
+  needs key 3, and the worker's virtual keys do not include it (`Invoke-WorkerScenario.ps1:273`,
+  `Send-WorkerCommand.ps1:49`, `native/worker_scenario.cpp:17`: w a s d enter space escape e r shift ctrl 1 2 f c q x z
+  tab lmb rmb). A scripted sortie-prep selection therefore needs key 3 added to those three lists plus a menu path of
+  about ten steps [U]; it was not tried further. Nothing in M3 depends on it: `relief_arm` writes what SetRelief
+  writes, and seed `coop-relief-30020` holds a real choice. The host's real sortie-prep GMP charge stays [U].
+- **A mid-mission load spawns index 0 [O, `612afff7`].** In 30020 at the savannahEast_N LZ, with no relief vehicle on
+  either copy (`ct=512; t=0; alive=0`), the host's `relief_load 2 1227.17 25.84 -127.05 -1.571` (the carry attitude
+  the engine itself used at this LZ in `fafd3fdd` and `9f01d603`) gave 25600 alive, `GetVehicleType` 2, at
+  (1227.24, 19.43, -127.05) within 8 s, `ct=514` (byte 1 set at realize), while the guest's copy still had none
+  (frame `host-relief-r2-midload-host`: the jeep). The guest's own `relief_load` with the same values, 23 s later,
+  gave the same vehicle at the identical pose (to 0.01 m) within 8 s; frames `host-relief-r2-midload-both` and
+  `guest-relief-r2-midload-both` show the jeep on both screens. No error, no crash, GMP unchanged on both copies. This
+  is the path for a guest continue or a late join (M3 item 6): a copy whose mission started without the relief
+  vehicle gets it mid mission from the host's carry values.
+- **The pack brings bodies the location lacks [O].** The east jeep (type 2) drew in Africa, whose free roam loads only
+  the west light vehicle and truck (`612afff7`, both copies). The west tank (type 9) drew at the same Africa LZ on the
+  host's copy (`fc6f1f01`: 25600 alive, `GetVehicleType` 7, at (1227.19, 19.40, -127.03), carry life 4500 in nine
+  slots, ammo 100 / 500; frame `fc6f1f01-host-relief-r2-tank`). No free roam loads a tank body, so route B could draw
+  neither. The guest's tank was not tested: its lever was refused (last bullet). `GetVehicleType` numbers are not
+  relief types (type 9 answers 7).
+- **E18 with a mid-loaded vehicle [O, `612afff7`].** At the 30020 mission end the host's stock seize credited it
+  (`OnFultonVehicle(25600, ..., 13)`, `AddTempResource 13`; the host's `4wdEast` 1 -> 2 at the next census); the
+  guest's was skipped (`seize_skipped; alive=1`; its `4wdEast` stayed 1). GMP 313850 on both throughout.
+- **Seed `afgh-relief-lv` [O].** From run `612afff7`: the host alone armed type 2 at the ACC sortie to 30010
+  (`goto_lz=1`, enemyBase_S). The host's mission-start checkpoint holds `ct=514; cp=-347.97,321.89,763.57,2.488` with
+  25600 at (-347.95, 315.86, 763.58) (frame `612afff7-host-relief-r2-seed-arrival`); the guest's holds none
+  (`ct=512; alive=0`). Run `fc6f1f01` booted it with `boot fast`: the host's Continue restored the jeep at
+  (-347.97, 315.85, 763.60) (frame `fc6f1f01-host-relief-r2-continue-load`, at night because the time command was
+  refused).
+- **Harness limit [O, `fc6f1f01`; also `5874afcd`].** After `boot fast` the guest's copy reloads (the continue
+  alignment; frame `fc6f1f01-guest-relief-r2-continue`: the loading tips) and then waits on the "Space: Resume Game"
+  page (frame `guest-relief-r2-continue-load`). Until the next travel every guest debug command is refused with
+  `SEND_REFUSED: Debug actions require a fresh owned gameplay mission generation`, so the guest's load from the seed
+  values and the guest's tank lever never ran in `fc6f1f01`. A scenario that continues needs `guest press space`
+  after `boot fast` [U], or a host-led travel first. The host's commands were refused for the first ~20 s too.
+
+### 8.6 Results: M3 built, route A (2026-10-29, `wp/relief`)
+
+M3 is built in `lua/coop/world_relief_sync.lua` on top of M1's seed infrastructure (merge of `e08dc20`, commit
+`d911f0c`), behind the lab key `world_relief=0|1` (CFG `r[17]`, lab and play). The key was off by default while the
+proof ran, on by default from `5a6bac8`, and is **off by default again since `4d18561`** (the review of 2026-10-29,
+section 8.7: the play rehearsals behind the flip covered no drive, mission end or removal, a guest Fulton was credited
+twice with VEHICLE_GONE off, and D11 was shipped undecided). Hidden-worker runs on loopback: research build,
+native gun stage, copied saves, low graphics; each run closed with the baseline restored and the real saves unchanged.
+Evidence: each copy's `script-observer.log` sliced at the session offsets (in the archived run folder
+`%USERPROFILE%\mgs-coop-run-archive\companions\<run>`), and frames saved as JPEG in the session scratch folder
+`complete/frames/relief/` as `<run8>-<role>-<label>.jpg`.
+
+| Run | Scenario, seed | Result |
+|---|---|---|
+| `25b9c0ae` | `companion-relief.txt`, `lab` (build `b622340`) | Every expectation met but one, a wrong expectation (`seize_skipped; alive=1`: VEHICLE_GONE had already removed the guest's copy; now `alive=[01]`). Superseded by `d18e8fa0` |
+| `1914e76c` | `companion-relief-continue.txt`, `afgh-relief-lv` | Every expectation met. The continue through the seeds, the guest's real iDroid vehicle request refused with its toast, a non-zero paint on both copies |
+| `8a81f776` | `companion-relief-late.txt`, `afgh-relief-lv` | Every expectation met. Found: a mid-mission `Vehicle.LoadCarry` draws index 0 at the mission's drop point, not at the written pose (fixed in `c818a5a`, `6358845`) |
+| `d3b23cca` | `companion-relief-late.txt` after the fix | Every expectation met. The late-loaded jeep is placed at the host's pose (0.25 m) |
+| `b7d65be9` | `companion-relief-play.txt`, `-Mode play -WanSim bad`, `coop-relief-30020` / `lab` | Scenario error: the host's save is in Africa and the guest's in Afghanistan, so the two titles landed in different helicopters (40020, 40010) and never paired. The scenario now uses `afgh-relief-lv` for both |
+| **`d18e8fa0`** | **`companion-relief.txt`, `lab`, at `1f3acd8`** (`world_vehicle_gone=1` named) | **The M3 FRAME proof. No expectation failed**, but the guest's mission-end seize-skip expectation matched its boot-travel line and the three Fulton-removal expectations matched the mission-end lines (waitlog read from the session start; section 8.7): those phases rest on reading the slice, where the real lines are. Arrival in Africa (type 2), the drive, the guest's real iDroid request, the mission end, the arrival in Afghanistan (type 1), the host's Fulton. Superseded as the proof by `5c35644d` |
+| **`40c09484`** | **`companion-relief-play.txt`, `-Mode play -WanSim bad`, `afgh-relief-lv`** | **The play rehearsal. No expectation failed.** Paired in the helicopter, the seeds in play, the same jeep at the same spot on both copies, the guest's real iDroid request refused with its toast |
+| **`98e4af59`** | **`companion-relief-play-default.txt`, `-Mode play -WanSim bad`, host `coop-relief-30020` (D10), guest `africa-jeep`** | **The default in play while it was on. No expectation failed.** Arrival and refusal only (no drive, mission end or removal; the host's frames show grass). Neither `world_relief` nor `world_vehicle_gone` named (the session's lab settings: `nametag`, `coop_hud` only); `relief_sync; on=1` on both; the real sortie-prep jeep of the user's 2026-10-23 two-PC save on both copies; the refusal and its toast |
+| **`1a5c1fa0`** | **`companion-relief-heavy.txt`, `lab`, keys at their defaults (`world_relief` on then)** | **No expectation failed.** The west tank (type 9) in Africa and the west wheeled APC (type 5) in Afghanistan on both copies; the mission end with the tank alive on both and VEHICLE_GONE off: one credit (the host's). The guest's `seize_skipped` expectation matched its boot line (`alive=0`); the `alive=1` line of the tank's mission end is in the slice (`guest.log:2983`), not checked by the harness |
+
+**The host's choice spawns the same vehicle on both copies [O, `d18e8fa0`].**
+- The host alone arms type 2 (east LV) for its sortie (`relief_arm`, which writes what the sortie prep's SetRelief
+  writes, at the ACC sortie). Its seed line `step=seed; type=2; ct=2; cp=1227.17,25.84,-127.05,-1.571; mission=30020`
+  goes with the follow seeds; the guest logs `step=seed_apply; type=2; ct=2; paint=0; kind=6; mission=30020` (after
+  `step=own_kept; why=seed; own_type=0` at the first seed, D8 b). Both copies log `step=arrived; type=2; vt=2;
+  paint=0; x=1227.17; y=25.84; z=-127.05; yaw=-1.571; mission=30020` (host `source=carry`, guest `source=seed`), and
+  `relief_census` reads 25600 at (1227.24, 19.43, -127.05) on both once it has settled. Frames
+  `d18e8fa0-host-m3-relief-arrival` and `d18e8fa0-guest-m3-relief-arrival`: the east jeep behind the same tree on both
+  screens. Africa's free roam never loads that body.
+- The second sortie (type 1, west LV, 30010 enemyBase_S LZ): both copies `arrived; type=1; vt=1; x=-347.97; y=321.89;
+  z=763.57; yaw=2.488` and census (-347.96, 315.91, 763.41) on both; frames `d18e8fa0-*-m3-relief-arrival2`: the west
+  jeep in the same place on both screens. Afghanistan's free roam never loads that body.
+- Paint (`1914e76c`): the host arms type 2 with `Vehicle.paintType.FOVA_1` (5; the census reads FOVA_0..2 = 4, 5, 6 and
+  NONE = 0); the seeds carry the preset; both copies log `step=arrived; type=2; vt=2; paint=5` and read the preset
+  array `p=5,0,0,...`. Frames `1914e76c-*-m3-relief-paint`: the same tan camouflage jeep on both screens (the default
+  paint of `d18e8fa0` is olive green).
+- In play (`40c09484`, `-WanSim bad`, link 176-181 ms): both copies pair in the Afghanistan helicopter (40010); the
+  host's continue is a co-op travel (`step=seed; type=2; ct=514; cp=-347.97,321.89,763.57,2.488; mission=30010`); the
+  guest applies it (`seed_apply; type=2; ct=514; kind=4`) and both log `arrived; type=2; vt=2; x=-347.95; y=315.86;
+  z=763.58; yaw=2.495` (host `source=carry`, guest `source=seed`); census host (-347.97, 763.60), guest
+  (-347.95, 763.58). Frames `40c09484-host-m3p-relief-2` (the jeep at the right edge, at night) and
+  `40c09484-guest-m3p-relief-3` (the jeep beside the host).
+- Continue (`1914e76c`, seed `afgh-relief-lv`, lab): the guest applies the host's carry before its own continue load and
+  its engine restores the jeep: guest (-347.95, 315.86, 763.58), host (-347.97, 315.85, 763.60); frames
+  `1914e76c-*-m3-relief-continue`.
+- The default in play (`98e4af59`, `-WanSim bad`, no key named): the host's save is the launcher's co-op save copy
+  (seed `coop-relief-30020`, decision D10: the user's own sortie-prep choice, type 2, left out in 30020 in the
+  2026-10-23 two-PC session), the guest's a lab save in Africa without one. Both pair in the Africa helicopter (40020);
+  the host's continue carries `step=seed; type=2; ct=514; cp=263.57,1.56,-228.88,-0.524; mission=30020`, the guest
+  applies it (`seed_apply; kind=4`) and both log `arrived; type=2; vt=2; x=263.56; y=-5.52; z=-228.88; yaw=-0.521`
+  (host `source=carry`, guest `source=seed`); `relief_status` reads `on=1` on both. Frame
+  `98e4af59-guest-m3d-relief`: the jeep beside the guest at night; the host's four frames look down at the grass
+  (no jeep in view: the host's copy is shown by its census and the `40c09484` frames).
+- Heavy vehicles (`1a5c1fa0`, lab, keys at their defaults): the host alone arms type 9 (west tank) for Africa; the
+  guest applies `seed_apply; type=9; ct=9` and both log `arrived; type=9; vt=7` at the drop point and census
+  (1227.19, -127.03) with life 4500 in nine slots and ammo 100 / 500 on both. Then type 5 (west wheeled APC with the
+  machine gun) for 30010: both `arrived; type=5; vt=5` and census (-347.87 / -347.86, 763.54), life 2800, ammo 500.
+  Frames `1a5c1fa0-*-m3-relief-tank` and `-apc`: the same tank behind the same bush and the same APC on both
+  screens. No free roam loads either body, so only the relief pack draws them (route B could not).
+
+**The host drives it; the guest sees the host seated [O, `d18e8fa0`].** The guest's copy seats the host by id in its
+own 25600 (`partner_ride_seat=byid; vehicle=25600; seat=0; offer=1; reason=none`, then `confirmed`), never
+`reason=absent`, and the get-off ends it (`exit; vehicle=25600; seat=0; reason=foot; via=getoff`). Frames
+`d18e8fa0-guest-m3-relief-boarded` and `-drive-01..08`: the host in the driver's seat as the jeep drives past the guest.
+After the drive both copies read the jeep at (1170.70, 15.63, -131.43).
+
+**Guest vehicle requests are refused with a toast [O, `d18e8fa0`, `40c09484`, `1914e76c`].** While paired in free roam
+the guest's iDroid items `MSN_DROP_VEHICLE` and `MSN_DROP_LOADOUT` are inactive (`TppUiCommand.SetMbTopMenuItemActive`,
+re-applied every 2 s while the iDroid is closed; `step=guard; path=idroid_drop; via=menu_inactive`). The worker walks
+the guest's real path: Tab (MAP), key 3 (MISSIONS, a new worker key), Enter (SUPPLY DROP), S S S (VEHICLES), Enter.
+The stock Terminal message `MbDvcActSelectNonActiveMenu` (arg `StrCode32("MSN_DROP_VEHICLE")`) logs `step=refused;
+path=idroid_drop_vehicle; via=menu_inactive` and shows the toast "Only the host can bring or request a vehicle in
+co-op." (`hud=toast; kind=world_note; code=13; a=4; on=1`). Frames `d18e8fa0-guest-m3-request-refused` and
+`40c09484-guest-m3p-request-refused`: LOADOUT and VEHICLES marked inactive, VEHICLES selected, the toast at the top
+right. The host's items are unchanged. The guest never runs the sortie prep (world follow), so its own sortie choice
+never spawns [O]. In these runs the LOADOUT drop was refused too, because a loadout delivery can carry a vehicle
+(SetRelief `0x1416BC4B0`, section 8.4), even when the guest's loadout holds none; since `c7c1ed3` that block is the lab
+lever `relief_lab loadout on` only, until the user decides D11 (frame `5c35644d-vs-d18e8fa0-guest-idroid-loadout`).
+
+**One mission-end credit [O, `d18e8fa0`].** At the 30020 mission end the host's stock `SeizeReliefVehicleOnClear`
+Fultons its index 0 (`step=seize; alive=1`, then `OnFulton(25600, 0, 0, 13)`, `OnFultonVehicle`, `AddTempResource 13`;
+the host's `4wdE` 1 -> 2 at the next census). That Fulton is a host loss to VEHICLE_GONE (`step=lost; id=25600;
+cause=1`): the guest's copy removes its index 0 quietly (`step=remove; via=seize_instant; why=vehicle_gone; ok=1`,
+`step=credit_skipped; fn=OnFulton`, `vehicle_gone; step=applied; ... ms=283`) and then skips its own seize
+(`step=seize_skipped; alive=0`); its `4wdE` stays 1. Without VEHICLE_GONE the guest's skip meets the vehicle alive
+(`alive=1`): in `1a5c1fa0` (VEHICLE_GONE off, its default) the host's seize credits the tank (`AddTempResource 22`;
+the host's `tnkW` 0 -> 1 at the next census) and the guest's skip logs `seize_skipped; alive=1` (its `tnkW` stays 0;
+read in the slice, see the table), and in `5c35644d` the same for the east jeep, checked by phase-scoped waitlogs
+(section 8.7).
+GMP 313850 on both copies throughout. The guest never runs the sortie prep, so it is
+never charged [O]; the host's real sortie-prep charge stays [U] (no lever charges it).
+
+**The host's Fulton removes it on both copies, credited once [O, `d18e8fa0` with `world_vehicle_gone=1`; `5c35644d`
+with it off, section 8.7].** In 30010 the host Fultons its index 0 (lab
+lever `vehicle_remove nearest fulton`: the engine's own Seize Fulton): host `OnFulton(25600, 0, 0, 14)` and
+`AddTempResource 14`, `vehicle_gone; step=lost; id=25600`; the guest removes its copy with `Seize{"Instant"}`
+(`step=remove; via=seize_instant; why=vehicle_gone`, `credit_skipped`, `vehicle_gone; step=applied; id=25600;
+via=seize_instant; ms=250`), where VEHICLE_GONE refused `index0` before. Census `gone`: `alive=0` on both. Frames
+`d18e8fa0-*-m3-relief-gone`, taken from the same spot as `-arrival2`: no jeep on either screen. The receiver's own
+removal is never taken for a guest loss (no `vehicle_gone; step=watch` on the guest). A destruction takes the same
+path (VEHICLE_GONE cause 2) [I; not run: the worker has no lever that destroys a vehicle]. VEHICLE_GONE itself
+(`world_vehicle_gone`) is still off by default; without it the guest's reconcile removes a copy the host lacks after
+15 s (`why=host_none`): fixture only when this was written, run in `5c35644d` since (section 8.7). The guest's own
+Fulton of index 0 was not handled at all here: with VEHICLE_GONE off it credited the guest's Mother Base and the
+host's seize credited it again (the review, section 8.7) [I; fixed and run since].
+
+**Late join and a moved vehicle [O, `8a81f776`, `d3b23cca`].**
+- In `8a81f776` the guest's continue did not bring the jeep through the seeds (its continue reload ran without them);
+  the host's VEHICLE_SPAWN did: `step=host_state; alive=1; type=2`, then after 10 s `step=load; why=host_has; type=2;
+  ct=514; write=1; call=1; x=-347.97; y=321.89; z=763.57; yaw=2.488` and `step=arrived; ... source=load` at the carry
+  pose (the host's jeep stood on it).
+- Then the host drove the jeep 25 m from the Africa drop point and left it; the guest's lab lever `relief_lab forget`
+  removed the guest's copy (as a guest that joins late never had one) and the reconcile loaded it again from
+  VEHICLE_SPAWN with the host's live pose (`x=1201.73; y=18.91; z=-128.63`), but the engine drew it at the drop point
+  (1227.17, 25.59, -127.05): a mid-mission `Vehicle.LoadCarry` ignores the written attitude when the relief record
+  already holds that type [O effect; I cause]. Frame `8a81f776-guest-m3-relief-lateload`: no jeep beside the host.
+- Fix (`c818a5a`, `6358845`, tests first): after a load, a vehicle that appears more than 3 m from the host's
+  VEHICLE_SPAWN pose is set there with the RIDE_FAST placement (`SetPosition{position, rotY}`; `step=placed;
+  why=load`); a parked copy more than 20 m off is placed the same way (`why=far`) instead of being removed and
+  reloaded. Run `d3b23cca` (the same scenario, at `c818a5a`): the host's jeep at (1201.63, 16.91, -128.66) after the
+  drive; the guest's reload drawn at the drop point and at once `step=placed; why=load; ok=1`; the guest's census then
+  reads (1201.48, 16.89, -128.86), 0.25 m from the host's. Frame `d3b23cca-guest-m3-relief-lateload`: the jeep beside
+  the host on the guest's screen. `6358845` (any loaded vehicle more than 3 m off is placed, whatever the carry flag)
+  has fixture tests only.
+- The reload never sends a VEHICLE_GONE request for the copy it replaces (the guest's own removal is marked gone
+  first), so the host's vehicle stays.
+
+**D8 (b) [O logs; fixture].** As built (like M1), the guest's own values are what every save writes while the host's
+are live, and its live vars get them back at its next solo `TppMission.Load`, not at unpair or the session's end:
+restoring them mid mission would leave them unlike the vehicle its copy has drawn. A paint preset the guest changes
+during a session is not kept [I]. Every guest save while the host's carry is live writes the guest's own values
+(`step=save_own; own_type=0; live_type=2`, `d18e8fa0` and `40c09484`), and a solo load gives them back
+(`own_restored; why=solo`, fixture test). The host's paint preset reaches the guest's vars but never its save. The save
+contents were not read back from disk in these runs [U].
+
+**Not shown.** Relief types 3, 4, 6..8 and 10 on both copies (types 1, 2, 5 and 9 ran); a destruction of index 0; the guest's iDroid loadout item selected (inactive in the frames; its refusal
+shares the path of the vehicle item); the host's real sortie-prep selection and GMP charge [U]; route C (the host's
+in-mission drop) [U]; a two-PC session.
+
+### 8.7 Review of M3 and the fixes (2026-10-29, `wp/relief`)
+
+An independent review of `wp/relief` at `c282538` (the review log in section 11) found the code sound on route A but
+the default flip unproven. Checked first, then fixed with tests written first:
+
+- **The default is off again (`4d18561`).** The play rehearsals behind `5a6bac8` covered only the arrival and the
+  refusal, and `40c09484` named `world_vehicle_gone=1`, which is not a default. Play refuses `worldtrigger` and the
+  Fulton levers [O, `world_goto.lua:31`, `world_relief.lua:293`, `world_vehicle.lua:483`], so a hidden play rehearsal
+  cannot drive a mission end or a removal yet.
+- **A guest-side loss of index 0 is the host's to credit (`c7c1ed3`).** With VEHICLE_GONE off (its default), the guest's
+  stock `TppTerminal.OnFulton` credited a guest Fulton of 25600 on the guest's Mother Base, nothing told the host, and
+  the host's mission-end seize credited it again [O code; I effect, not run before the fix]. Now a co-op guest's
+  `OnFulton` never credits 25600 (`credit_skipped; why=guest_fulton`, `own_removal` or `quiet`); its own Fulton, or a
+  destruction by its player (`Dead` with `att=local`, `VehicleBroken` within 10 s of a local hit), sends
+  REQ_VEHICLE_GONE for 25600 whatever `world_vehicle_gone` says (`step=lost_tx`, once paired; again after 20 s without
+  RECEIVED); VEHICLE_GONE never watches index 0 on the guest while relief is on, and the guest marks it gone so the
+  host's announcement removes nothing else. The host (`step=lost_rx`) runs its own stock `Seize {"Fulton"}` for a Fulton
+  (`step=host_fulton`; its stock `OnFulton` credits it once) or `Seize {"Instant"}` for a destruction (no credit), and
+  refuses with REJECT 8 while it rides the vehicle (`step=lost_refused`). The guest ends the request when the host's
+  VEHICLE_SPAWN says `alive=0` (`step=lost_done`); after a refusal or 45 s without a host loss (`step=lost_timeout`) its
+  reconcile loads the host's vehicle again.
+- **Reconcile (`c7c1ed3`).** A copy removed because the host had none (`host_none`) is loaded again when the host's comes
+  back; placements have their own budget (6), loads and removals keep 3, reset when the host's state changes. The dead
+  `cause == 2` exemption in the VEHICLE_GONE receiver wrapper is gone (index 0 is removed quietly for any cause until
+  M4 sets a wreck rule).
+- **Refusal (`c7c1ed3`).** The guest's VEHICLES drop stays inactive while the link drops inside the co-op mission (the
+  final stop or a solo load activate it again; active is the state `TppTerminal.SetUp` leaves, `package-10.lua:675-686`
+  [O]); a mission's first guard pass applies even with the iDroid open. The LOADOUT block is the lab lever
+  `relief_lab loadout on|off`, off by default, until the user decides D11.
+- **The harness (`c95998a`).** `waitlog` read each log from the session start, so in `d18e8fa0` and `1a5c1fa0` the
+  mission-end and Fulton-removal expectations were met by earlier phases' lines (the guest's boot-travel
+  `seize_skipped; alive=0` at t_ms 175869764; the phase-D lines at 176035214..262 for the three phase-E waitlogs; in
+  `1a5c1fa0` the boot line at 178929715) [O, the reviewer's reading, rechecked in `slice-d18e8fa0` and `slice-1a5c1fa0`]. The real lines are
+  in the slices, so those behaviours rest on reading them, not on the harness. New worker step `logmark
+  <host|guest|both>`: later waitlogs of that role read from its last complete line at the mark. The seize, remove and
+  credit lines now name their mission.
+
+| Run | Scenario, seed | Result |
+|---|---|---|
+| **`5c35644d`** | **`companion-relief.txt` at `c95998a`, `lab`, `world_relief=1`, VEHICLE_GONE off (default)** | **The M3 FRAME proof; all 38 expectations met, each after its phase's `logmark`.** Closed, baseline restored, real saves unchanged |
+| **`cbc30b91`** | **`companion-relief-guest-fulton.txt`, `lab`, `world_relief=1`, `world_vehicle_gone=1`** | **All 18 expectations met.** The guest's Fulton with VEHICLE_GONE on: one request, one credit (the host's), nothing removed twice. Closed, baseline restored, real saves unchanged |
+
+**Run `5c35644d`, phase by phase [O, slices `slice-5c35644d`, frames `complete/frames/relief/5c35644d-*`].**
+- A, Africa type 2 (east LV): both copies `arrived; type=2; vt=2; x=1227.17; y=25.84; z=-127.05; mission=30020` (host
+  `source=carry`, guest `source=seed`); census (1227.24, 19.43, -127.05) on both; the guest's `guard; ... items=1`.
+- B, the host drives it: the guest logs `partner_ride_seat=confirmed; vehicle=25600; seat=0` and the get-off `exit`;
+  frame `guest-m3-relief-drive-02`: the host in the driver's seat of the jeep.
+- C, the guest's real iDroid path: `refused; path=idroid_drop_vehicle` and `hud=toast; code=13; a=4`; frame
+  `guest-m3-request-refused`: VEHICLES selected and marked inactive, LOADOUT not marked (compare
+  `5c35644d-vs-d18e8fa0-guest-idroid-loadout`, where `d18e8fa0` marked both), the toast at the top right.
+- D, the 30020 mission end with the jeep alive on both and VEHICLE_GONE off: host `seize; fn=SeizeReliefVehicleOnClear;
+  alive=1; mission=30020`, `OnFultonVehicle`, `AddTempResource 13`; guest `seize_skipped; ...; alive=1; mission=30020`.
+- E, Afghanistan type 1 (west LV): both `arrived; type=1; x=-347.97; y=321.89; z=763.57; mission=30010`; frames
+  `*-m3-relief-arrival2`: the jeep at the same spot on both screens.
+- F, **the guest Fultons its copy** (lab lever `relief_remove fulton`: the stock `Seize {"Fulton"}`, which ran the
+  guest's stock `OnFulton(25600, 0, 0, 14)`): guest `credit_skipped; fn=OnFulton; why=guest_fulton; mission=30010`
+  and `lost_tx; rid=2; cause=1; try=1; sent=1`; host `lost_rx; rid=2; cause=1`, `host_fulton; ok=1`, its own
+  `OnFulton`, `OnFultonVehicle` and `AddTempResource 14` 33 ms later, `state_tx; alive=0` 3.1 s later; guest
+  `host_state; alive=0` and `lost_done; rid=2; ms=3203`. The guest's log has no `OnFultonVehicle` or `AddTempResource`
+  line in the whole session. Frames `*-m3-relief-gone`, from the same spot as `-arrival2`: no jeep on either screen.
+- G, Africa type 3 (west truck; first run of that type): both `arrived; type=3; vt=3` at the drop point; frames
+  `*-m3-relief-arrival3`: the truck on both screens. The census after the 30010 end reads host `4wdE=2; 4wdW=2`
+  (start 1, 1: the D and F credits) and guest `4wdE=1; 4wdW=1`; GMP 313850 on both throughout. **The host Fultons its
+  own** (`relief_remove fulton`): host `OnFulton`, `AddTempResource 16`, `state_tx; alive=0`; the guest logs
+  `host_state; alive=0; type=3` and 15.05 s later `remove; via=seize_instant; why=host_none; ok=1; mission=30020` and
+  `credit_skipped; why=quiet` (no credit): the reconcile path at the VEHICLE_GONE default. Frames `*-m3-relief-gone2`:
+  no truck on either screen.
+
+**Run `cbc30b91` [O, slices `slice-cbc30b91`, frames `cbc30b91-*`, grid `cbc30b91-grid-arrival-gone`].** VEHICLE_GONE on. The east jeep at the Africa drop point on both copies (`arrived; type=2; x=1227.17; z=-127.05`). The guest Fultons its copy: guest `credit_skipped; why=guest_fulton; mission=30020`, `lost_tx; rid=3`, and no `vehicle_gone; step=watch` or `step=req` for 25600 (VEHICLE_GONE's own guest path stayed out); host `lost_rx; rid=3`, `host_fulton; ok=1`, its VEHICLE_GONE `watch; id=25600; m=Fulton; att=none`, the stock `OnFulton`, `OnFultonVehicle` and `AddTempResource 13`, then `vehicle_gone; step=lost; id=25600` and `tx` 3.2 s later; guest `vehicle_gone; step=rx; id=25600` and nothing more (no `remove`, no `matched`: it was marked gone), `host_state; alive=0` and `lost_done; rid=3; ms=3269`; `vehicle_gone_status` on both `gone=25600; req=0`. After the travel to 30010 the census reads host `4wdE` 1 -> 2, guest `4wdE` 1. Frames: the jeep behind the same tree on both screens, then gone on both.
+
+Not covered by these runs: a player's own Fulton or destruction of index 0 (the worker has the stock Seize lever only
+[I that the player's Fulton runs the same `OnFulton`, `TppTerminal.lua` FultonInfo -> `OnFulton`]); the refusal guard
+across a real link drop; the host refusing while it rides the vehicle and the guest's reload after a refusal, a
+timeout or a returning `host_none` (fixtures); the D8 (b) save contents read back from disk; a play rehearsal of a
+drive, a mission end and a removal.
+
+### 8.8 Results: E5 and M4, vehicle losses, damage and parked vehicles (2026-10-28/29, branch `wp/vehicle-state`)
+
+**E5 (2026-10-28, branch `wp/vehicle-state`): passed for the hold and the engine's Fulton; the player's own Fulton
+was not reproduced; a wreck replaces Despawn for destroyed vehicles.** Hidden runs (lab, research build, gun stage;
+each Closed, BaselineRestored, RealSavesUnchanged, no `step=error`, fault or `viewer_changed`; frames in the session
+scratch folder `complete/frames/vehicle-state/`):
+- `92720b75` (`coop-vehicle-gone.txt` reordered: C first on J1, then A, B, D, and a new E; Wakh Sind, lab seed).
+  **C passed** [O]: the guest sat in J1 = 25608 (`vehicle;id=25608;seats=4;riders=0,9728,...;localSeat=1`: the guest
+  drives, D-Dog 9728 rides along) while the host lost it (`vehicle_remove nearest sync` -> host `step=tx; id=25608;
+  cause=3; actor=2`); the guest logged `step=rx`, `step=hold; reason=local_rider`, after its get-off `step=hold;
+  reason=occupied` (D-Dog still in the seat for 2.5 s) and then `step=applied; id=25608; via=locator; src=rx; ok=1`.
+  Frames `hold-guest-seated` (guest: seated in the jeep the host's copy no longer has; host: the jeep gone, the guest
+  standing at seat height, the 0.14.3 fallback) and `hold-applied` (gone on both). A (25615) and D (the engine's
+  own Fulton of 25617: `watch; m=Seize` -> `obs; m=Fulton` -> `lost` 3.2 s later -> host `applied; src=req` ->
+  `req_done`) passed again. B did not reproduce: the host did not board J3 from its goto spot (`vehicle_not_riding`),
+  so its divergence lines never came (B was proven in `075c1ea4`). **E (the player's own Fulton) not reproduced** [O]:
+  the guest held E 4.5 s beside J5 at its goto spot; it neither boarded nor Fultoned (frames `pfulton-*`, no
+  `FultonInfo`); whether the lab seed has the cargo Fulton, and which input starts it, is [U]. The real-Fulton
+  evidence stays the 2026-10-22 two-PC friend log (`obs; m=FultonInfo; ent=0; id=25603; att=local`) [O] plus the
+  stock `Seize` readback proven twice (`075c1ea4`, `92720b75`) [O].
+- `d407f115` (`vehicle-state.txt`, Africa, `africa-jeep` seed): **`SetBodyLife{life=0}` is the engine's own
+  destruction** [O]. On the guest's copy alone: `vehicle_life 25608 0` -> `obs; m=VehicleBroken; id=25608` at once,
+  IsAlive false, the life word reads 65535 and the state word 0x3F7 (every StoreToSVars bit), frames
+  `m4-guest-life0-*`: the jeep explodes and burns on the guest's screen only. The guest did not request it (no local
+  Damage within 10 s, as designed). Then the host's `vehicle_life 25608 0` broke the host's copy (`VehicleBroken` ->
+  `vehicle_gone step=watch; cause=2` -> `lost` -> `tx`), and the guest answered `step=absent; reason=wreck`: both
+  copies held a wreck. Both wrecks then left the pool on both copies (GetPosition no longer answers) about 20 s later.
+  Body life 200 (of 2300) shows no smoke or fire on either copy and leaves the state word at 1 [O], so the burning
+  state is not a pure function of the life word [I].
+- `0edadbe2` (`vehicle-state.txt`, build `2a3d97d`, wreck parity on): **the receiver's wreck passed** [O]. The host's
+  `vehicle_life 25608 0` -> host `watch; m=VehicleBroken; cause=2; att=none` -> `lost` -> `tx; cause=2; actor=0` ->
+  guest `rx` -> `applied; id=25608; via=wreck; src=rx; ok=1; ms=116`; frames `m4-wreck-01..04`: the explosion and the
+  fire at the same jeep on both screens, and both copies then read `alive=0; life=0; busy=gone_here`. The guest's own
+  `vehicle_life nearest 0` (25610) wrecked only the guest's copy: its two shots had missed (life stayed 2300), so no
+  local Damage preceded the break and no request went out (as designed), and the host's next refresh of 25610 was
+  refused `absent` there. That split stays until a real loss (`docs/world-sync-protocol.md` section 17, "Not
+  covered").
+- `a50214f7` (`vehicle-gone-player.txt`): stopped at `placebehind` right after the guest's 990 m warp (`viewer landing
+  starts without a valid partner pose`) before any vehicle step; the scenario now teleports both copies (`2464f4e`).
+- `46b8fc12` (`vehicle-gone-player.txt`, build `2464f4e`): **the player's Fulton again not reproduced; diagnosed**
+  [O]. Frame `pf-before` at the spot beside veh_lv_0002 (25610) shows only `E: get in` and no Fulton prompt, so the
+  3 s E hold boarded the jeep (`partner_status=local; names=on_vehicle; vehicle=25610; seat=0`; frames `pf-lift-*`:
+  the guest in the driver's seat). No `FultonInfo`, so no `watch` line. The host logged `vehicle_state step=skip;
+  reason=partner_ride; id=25610` at once (VEHICLE_STATE stayed off the guest's ride). The seated guest's next
+  `teleport` and `goto_vehicle` answered `warp_readback_timeout`, and the host's `placebehind` then stopped the run
+  (`viewer landing lost its scene or valid partner pose`; Closed, BaselineRestored, RealSavesUnchanged). This is a
+  scenario input failure, not a mod defect. The same coordinates showed the Fulton prompt in `0edadbe2` (frame
+  `m4-req-before`, reached by `goto_vehicle jeep`); what hides it is [U]. The guest's lab boot spot beside
+  veh_lv_0000 showed it in both `d407f115` and `0edadbe2` (frame `m4-start`, "hold E: Fulton 100%, x24").
+- `e235bda6` (`vehicle-state-play.txt`, **play, `-WanSim bad`**, lab seed, 30010, build `d6f54f1`): VEHICLE_STATE's
+  lines all passed [O]: `step=on; lrrp=6` on both, `sweep` -> `sweep_done; sent=13; pool=23`, the guest `same` for all
+  26 received states; the guest drove J1 = 25608 (`vehicle;id=25608;...;localSeat=1`) -> host `skip;
+  reason=partner_ride` -> after the get-off `resume` -> `tx; why=moved; d_mm=14235` -> guest `hold; reason=occupied`
+  (D-Dog still seated) and then every later state within 2 mm of the guest's own pose; the host's shots and the
+  guards' fire -> 10 `tx; why=life` (2300 -> 592) -> each `applied; moved=0; ... life=` on the guest 115..301 ms
+  later (median 127 ms). The host's C4 did not destroy the jeep (no `VehicleBroken`; life stayed 592), so the play
+  wreck lines never came. Shutdown reported `Forced=True` (as `59cfc415` and `de949f80` did). Frames
+  `play-left` show the guest beside the jeep on the guest's screen only (the host stood at the 30010 ledge, out of
+  sight); `play-damaged` shows the parked jeep on the host's screen.
+- `e44516d7` (`vehicle-gone-play.txt`, **play, `-WanSim bad`**, `africa-jeep` seed, build `2464f4e` plus the
+  scenario): **each player's own Fulton by hand passed, both directions; every expectation met** [O]. Guest:
+  teleported to its lab boot spot beside veh_lv_0000 (25608), frame `gp-guest-before` shows the stock prompt "hold E:
+  Fulton 100%, x24"; the E hold -> `obs; m=FultonInfo; id=25608; att=local` -> `watch; m=FultonInfo; cause=1;
+  att=local` -> `lost` 3.0 s later -> `req; cause=1` -> host `rx_req` -> `applied; id=25608; via=locator; src=req;
+  ok=1` (132 ms after the request) -> guest `req_done; result=gone; ms=250`. Frames: `gp-guest-hold` (the guest
+  kneels at the jeep), `gp-guest-lift-01` (the balloon lifts it; "Fulton Recovery Expenses: [GMP -10000]" on the
+  guest's copy), `gp-guest-after` on both screens (no jeep; the host's `gp-guest-before` / `gp-guest-after` show it
+  there and then gone). Host: `goto_vehicle jeep` to the door spot of veh_lv_0002 (25610), frame `gp-host-before`
+  shows the same prompt; the E hold -> `obs; m=Fulton; att=none` and `m=FultonInfo; att=local` -> `watch; m=Fulton;
+  cause=1` -> VEHICLE_STATE `skip; reason=own_watch` -> `lost` 3.0 s later -> `tx; cause=1; actor=0` -> guest `rx` ->
+  `applied; id=25610; via=locator; src=rx; ok=1` 116 ms later; frames `gp-host-lift-02` (the jeep in the air on the
+  host's screen) and `gp-host-after` on both (gone). Both copies end with `gone=25608,25610`. VEHICLE_STATE ran
+  alongside (`sweep_done; sent=14`, 54 refreshes, 69 `same` on the guest, no `applied`). **K27** [O]: the host's
+  first `clear_enemies` ran inside the pairing sweep (PAIRED 158995745 -> `sweep_done` 159000617); its four kills
+  committed at 158998978..159011 (`cause=8`, align `discovered`) and applied on the guest at 158999300..341
+  (`src=resync`, `result=ok`): 322..330 ms. Eight kills outside the sweep: commit -> `apply; src=outcome` 299 ms.
+  Lab without WanSim (`46b8fc12`): 215..230 ms. The sweep (14 reliable ops in about 5 s) adds no visible delay [I].
+  Shutdown `Forced=True` again. Which spots offer the vehicle Fulton prompt: the guest's lab boot spot (three runs)
+  and the `goto_vehicle` door spot of 25610 (two runs) did; a teleport to those door-spot coordinates did not
+  (`46b8fc12`) [O]; why is [U].
+- `d9b48fcb` (`vehicle-state-play.txt` without its C4 part, **play, `-WanSim bad`**, lab seed, build `7a33ffa`): every
+  expectation met, `Forced=False` [O]. Sweep `sent=13; pool=23` and 26 `same`; the guest drove J1 = 25608 ->
+  host `skip; reason=partner_ride` -> `resume` -> `tx; why=moved; d_mm=13969` -> guest `hold; reason=occupied` (D-Dog);
+  frame `play-left-both`: the jeep where the guest left it in Wialo Village on both screens (the host 7 m behind the
+  guest), `vehicle_state_status 25608` 577238,318956,1171541 (host) and 577229,318958,1171543 (guest): 9 mm apart, yaw
+  equal. The host's shots -> `tx; why=life; life=2270` -> guest `applied; moved=0; d_mm=9; life=2270; was=2300` 125 ms
+  later; both copies then read life 2270 (frames `play-damaged`). The guest's state word stays 3 against the host's 1
+  after its drive (bit 2; not written, no write exists) [O].
+- `5179b50b` (`vehicle-gone-player.txt` revised, lab, build `57d9195`). **The guest's Fulton by hand of 25610 from its
+  `goto_vehicle` door spot passed** [O]: `watch; m=FultonInfo; att=local` -> `lost` 3.2 s later -> `req` -> host
+  `applied; id=25610; via=locator; src=req; ok=1` -> `req_done; ms=66`; frames `pf-hold`, `pf-lift-*`, `pf-after` on
+  both screens. **The guest's own destruction was not requested** [O]: its five rounds from the boot spot hit
+  veh_lv_0000 (life 2260 -> 2230), its lever break 2 s later posted `obs; m=VehicleBroken; att=none`, and no `watch`
+  started (no local hit recorded), so the guest's copy holds a wreck (frames `gw-*`) and the host's jeep stays intact.
+- `35ba7929` (`vehicle-damage-census.txt`, lab, build `02d1e95`, the WS4 attacker census on): **the game posts no
+  GameObject `Damage` message for a vehicle hit by gunfire** [O]. The census logged the four soldiers' `Damage`
+  (a1=79, a2=65535, a3=4) on both copies but nothing for 25608, although the guest's rounds took its life from 2260 to
+  2230. VehicleBroken carries only `(id, Start|End)` (`TppHero.lua:248`, `TppEnemy.lua:2072`, extracted) [O]. So the
+  0.13.6 rule "VehicleBroken within 10 s of a local Damage" never attributes a guest's destruction by gunfire [O];
+  explosives are untested [U]. An attribution that does not rely on that message (a native hook on the vehicle damage
+  path, or the local player's own fire near the vehicle) is the next step; until then the guest's destruction stays a
+  split, as in 0.13.6 (`7561ab63`) [O].
+
+Decision (E5 pass rule, D7 not needed): **E5 passed for removals the host decides and for Fultons** [O]. The hold under
+a seated rider (`92720b75` C), the engine's Fulton (`075c1ea4`, `92720b75` D) and each player's own Fulton by hand
+(`e44516d7` in play over `-WanSim bad`; the guest's also in the lab, `5179b50b`) remove the vehicle on both copies. A
+destroyed vehicle can be wrecked on the receiver with `SetBodyLife{life=0}` instead of Despawn (`0edadbe2`, lab, a
+lever-made destruction on the host); a Fulton stays a Despawn (there is no balloon on the receiver). A destruction on
+the guest's copy is not requested (`35ba7929`, above), which leaves today's split. The play defaults of VEHICLE_GONE
+and VEHICLE_STATE flipped on (`482eb74`; section 9 M4). **Amended after the M4 review (below):** the wreck rode on
+VEHICLE_STATE's key and so reached play with no play rehearsal of a destruction and an unmeasured blast on the
+receiver; it now has its own key `world_vehicle_wreck`, off in lab and play unless named, so in play a destroyed
+vehicle is a Despawn on the receiver; and both play defaults cover 30010 and 30020 only (Mother Base is lab only).
+
+**M4 review (2026-10-29, verdict fix_first) and fixes (`c423b53`, `4bf9613`, `0dfac60`, `c98ad98`, `57fc2f7`).** An
+independent review of `243e1a8` found four major and six minor problems; each was checked against the code and the
+sliced run logs before it was fixed, and all held [O]:
+- *Index 0 after the wreck:* `V.remove` returned `wreck` before the `id % 512 == 0` refusal, so a destroyed 25600 (the
+  relief vehicle) was wrecked on the receiver (rx and req; the reviewer's fixture probe). Index 0 is now refused first.
+- *Wreck parity in play without a rehearsal:* it rode on `W.vehicleStateOn`, which `482eb74` turned on in play, while
+  its only play attempt (`e235bda6`) never destroyed the jeep and its blast on the receiver (it knocked the guest down
+  in `5179b50b`) was never measured with live guards. It now has its own key `world_vehicle_wreck` (CFG r[15] bit 4),
+  off in lab and play unless named; in play a destroyed vehicle is a Despawn on the receiver. A wreck that does not
+  take falls back to the Despawn (`step=fallback`).
+- *The play flip:* Mother Base was in both modules' missions with no 30050 run (and the never-run index Despawn); both
+  modules are now lab only there (`step=off; reason=mb_lab_only` in play), and a named VEHICLE_STATE match must lie
+  within 40 m (`far`). The rehearsals had named the keys; `4bbbfde4` (below) names none.
+- *Body life downwards only:* guest-only hits added up between states (`e235bda6`: the guest's copy 102 below the
+  host's), so its copy would reach 0 first, a split nothing repairs. Life is now host-authoritative both ways, and a
+  host life of 0 is written as 1 (destruction is VEHICLE_GONE's).
+- Minor: a failed placement now logs `refused; place_failed` (it logged `same`); `player_near` also holds when the
+  local player is within 3.5 m of the vehicle's current spot; waitlog read from the session start, so several
+  post-event expectations were met by earlier lines: the worker's new `logmark` step, a line per host change (`f=1`)
+  and after each hold; the roadmap's `[x]` for pushed vehicles is `[~]` (a lab-lever push, then framed on the guest's
+  screen only; `3585869d` frames it on both, still with the lever); the README no longer promises a destruction parity that play had not shown.
+
+Claims corrected [O]: `d9b48fcb` showed VEHICLE_STATE's non-interference with a drive and leave (the guest's stats
+`applied=1; moved=0`, the one apply a life), not a pose it applied: the shared left pose is RIDE_FAST's last
+placement. "Every expectation met" in `d9b48fcb`, `e235bda6` and `0edadbe2` was log-reviewed, not expectation-proven,
+for the post-drive lines: the guest's `(same|applied)` matched the pre-drive sweep line (`t_ms=160308032`,
+`151330449`) and `0edadbe2`'s post-drive host `tx` matched the push tx (`seq=16`). A host-side destruction becoming a
+wreck on the guest's copy was shown only with the lab lever (`0edadbe2`).
+
+Hidden runs after the fixes (lab or play as stated; copied saves, research build, gun stage, low graphics; each
+Closed, BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line):
+- `72366eb5` (`vehicle-state.txt`, lab, `africa-jeep`, build `0dfac60`; 8 expectation failures, all after the drive).
+  `step=on; wreck=1` on both copies. The push (`tx; d_mm=3000` -> guest `applied; moved=1; err_mm=0` 16 ms later),
+  the guest push put back by the refresh (`f=5`) and **the near-player hold** passed [O]: with the guest at the jeep's
+  door the host's 2 m push gave guest `hold; id=25608; here=25608; reason=player_near` 32 ms after the host's `tx`, and
+  `applied; moved=1; d_mm=2000` once the guest was moved clear, 2.2 s later (frames `m4-near-held` on the guest's
+  screen: the guest at the door; the host's camera faced away). That push had left the jeep against the watchtower:
+  on the guest's drive its copy broke (`obs; m=VehicleBroken; att=none` on the guest's copy only; frame `m4-stopped`:
+  the guest on foot, no jeep) while the host's stayed intact, the expected split for a guest-side destruction (no
+  request). Every later part found no jeep on the guest's copy (refused `absent`, `vehicle_not_alive`, the host's
+  wreck answered `absent; no_instance`). The scenario now pushes back towards the boot spot (`57fc2f7`).
+- `4bbbfde4` (`vehicle-state-play.txt`, **play, `-WanSim bad`, no vehicle key named**, lab seed, build `c98ad98`;
+  **every expectation met**, 0 failures, each post-event one after a `logmark`; shutdown `Forced=True` as in
+  `e235bda6` and `e44516d7`). `vehicle_state` and `vehicle_gone` `step=on` on both copies with `wreck=0`, sweep
+  `sent=13`. Drive and leave: `skip; partner_ride` -> `resume` -> `tx; why=moved; d_mm=13969` -> guest `hold;
+  occupied` (D-Dog) -> `same; d_mm=0; f=1`, readbacks 9 mm apart, frame `play-left-both` (the jeep where the guest left
+  it on both screens). The host's shots: `tx; why=life; life=2270` -> guest `applied; life=2270; was=2300` 151 ms
+  later. **The guest's own shots** took its copy alone to 1602; the host's refresh put it back (`applied; moved=0;
+  life=2270; was=1602; f=5`; two more host changes before the C4 went off, life 2194 and 2116 from a cause not
+  identified, met the guest's copy below them and raised it again, `was=1979`, `was=2023`).
+  **A real destruction in play**: the host's C4 -> `watch; m=VehicleBroken; cause=2; att=none` -> `lost` -> `tx;
+  cause=2` -> guest `rx` -> `applied; id=25608; via=locator; src=rx; ok=1` 132 ms after the tx; readbacks: host
+  `alive=0; life=0` (the wreck), guest `alive=0; pos=0,0,0` (no instance); frames `play-c4-placed` (the jeep on both
+  screens), `play-destroyed` (smoke and the burning wreck on the host's screen; the guest's camera had turned away
+  from the spot).
+- `3585869d` (`vehicle-state.txt`, lab, `africa-jeep`, build `57fc2f7`, the Lua of `c98ad98`; **every expectation
+  met**, 36, each post-event one after a `logmark`; `Forced=False`). `step=on; wreck=1` on both copies, sweep
+  `sent=14`, the guest `same` for 25608 at the start. **The lever push framed on both screens** [O]: `tx; d_mm=3000`
+  -> guest `applied; moved=1; err_mm=0` 17 ms later, readbacks 2 mm apart; frames `m4-before-push` / `m4-pushed` (the
+  jeep moves 3 m on the host's screen and on the guest's). The guest's own push (`m4-guest-pushed`: moved on the
+  guest's screen only) put back by the refresh 7.8 s later (`applied; moved=1; d_mm=2997; f=5`, `m4-corrected`: the
+  same spot on both again). The near-player hold: with the guest at the jeep's door the host's 2 m push gave guest
+  `hold; reason=player_near` 32 ms after the tx (`m4-near-held`: moved on the host's screen, unmoved beside the
+  guest on the guest's) and `applied; moved=1; d_mm=2000` 2.0 s later once the guest stood clear (`m4-near-applied`,
+  the same spot on both), readbacks 2 mm apart. The guest's drive and leave: `skip; partner_ride` -> `resume` -> `tx;
+  why=moved; d_mm=25750` -> guest `hold; occupied` -> `same; d_mm=1; f=1` (readbacks 1 mm apart; frame `m4-left` on
+  the guest's screen, the host's camera faced the jeep's old spot). Body life: the host's shots `tx; why=life;
+  life=2270` -> guest `applied; life=2270; was=2300` 33 ms later; the guest-only lever drop to 1500 put back by the
+  refresh 8.5 s later (`life=2270; was=1500; f=5`); the host's lever 200 -> guest `life=200`. The wreck with the key
+  named: the host's lever `vehicle_life 25608 0` -> `watch; m=VehicleBroken; cause=2` -> `tx` -> guest `applied;
+  via=wreck; src=rx; ok=1` 149 ms after the tx; frames `m4-wreck-01` / `-03` (fire and smoke at the jeep on both
+  screens, godmode on); readbacks `alive=0; life=0` on both, 2 mm apart.
+- `e20f76bc` (`vehicle-state-play-host.txt`, play, build `7d82def`): stopped at its first `placebehind` (`viewer landing
+  starts without a valid partner pose`: only the host had made the 800 m warp to the jeep); both players now go to the
+  jeep first (`5b7522a`).
+- `b31a1b65` (`vehicle-state-play-host.txt`, **play, `-WanSim bad`, no vehicle key named**, lab seed, build `5b7522a`;
+  **every expectation met**, `Forced=False`). The host boards J1 and dives out with the throttle held: host `skip;
+  reason=local_rider` (the first in any host log) -> `skip; reason=occupied` (D-Dog stayed in) -> `resume` 3.9 s after
+  the host's get-off -> `tx; why=moved; d_mm=18590` -> guest `applied; id=25608; from=25608; moved=1; d_mm=7970;
+  err_mm=0; dyaw=258` 334 ms later [O]: the guest's copy had stopped where RIDE_FAST last put it and the host's rolled
+  8 m on, so this is a real divergence corrected in play, the first `moved=1` in any play run. Readbacks 46 mm apart
+  afterwards; frame `play-bail-both` (the jeep at the same spot by the same building on both screens; the guest's 18 m
+  spot faced a wall during the bail, so the divergence itself is logs only). The C4 part: `play-c4-placed` (the jeep
+  behind sandbags on the guest's screen) -> host `watch; m=VehicleBroken; cause=2` -> `tx` -> guest `applied;
+  via=locator; src=rx; ok=1` 151 ms after the tx -> `play-destroyed` / `play-destroyed-after` (the burning, overturned
+  wreck on the host's screen, nothing at that spot and no explosion on the guest's) [O].
 
 ## 9. Milestones
 
@@ -1261,9 +1480,9 @@ booting it and reading `buddy_status` `vars_type=` (not by `run horse_spawn`, wh
 `debug_buddy.lua:70, 208-212`):
 - `afgh-horse`, `afgh-walker`: from `afgh-ledge` (the walker seed needs D-Walker developed in the lab save [U]);
 - `afgh-quiet`: from `quiet-recruited`, after host-led travel to 30010;
-- `afgh-relief-lv`: **built** (run `612afff7`, section 8.3): 30010 enemyBase_S LZ, the host's save with relief type 2
+- `afgh-relief-lv`: **built** (run `612afff7`, section 8.5): 30010 enemyBase_S LZ, the host's save with relief type 2
   (east jeep) at the LZ, the guest's without (the continue / late-join case). Boot it with `boot fast` (a
-  `boot <mission>` passes the ACC, whose LoadCarry clears the carry) and press Space on the guest (section 8.3). The
+  `boot <mission>` passes the ACC, whose LoadCarry clears the carry) and press Space on the guest (section 8.5). The
   real D10 choice is seed `coop-relief-30020` (30020, both roles from the same save);
 - `mb-quiet-cell`: a spot beside the Quiet cell, captured in E20.
 
@@ -1389,8 +1608,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
 ### M3. The sortie vehicle on both copies
 
 - **Status (2026-10-29): built on `wp/relief` (route A), lab key `world_relief=0|1` (CFG `r[17]`, lab and play),
-  off by default** (on from `5a6bac8` until the review of 2026-10-29 reverted it in `4d18561`, section 8.5). In
-  `lua/coop/world_relief_sync.lua` on M1's seed infrastructure; results, run ids and frames in sections 8.4 and 8.5.
+  off by default** (on from `5a6bac8` until the review of 2026-10-29 reverted it in `4d18561`, section 8.7). In
+  `lua/coop/world_relief_sync.lua` on M1's seed infrastructure; results, run ids and frames in sections 8.6 and 8.7.
   The lab FRAME proof is now `companion-relief.txt` run `5c35644d` (phase-scoped waitlogs, VEHICLE_GONE off; every
   expectation met), with `companion-relief-guest-fulton.txt` run `cbc30b91` for VEHICLE_GONE on. The play default stays off:
   play refuses `worldtrigger` and the Fulton levers, so no hidden play rehearsal can drive a mission end or a removal
@@ -1411,7 +1630,7 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     replayed-sortie write of the experiments is not needed); (2) the guest's mission-end seize skipped
     (`step=seize_skipped`); (3) D8 (b) through a `TppSave.SaveVarsToSlot` wrapper and a solo-load restore
     (`own_kept`, `save_own`, `own_restored`; the live vars come back at the next solo load, not at unpair: section
-    8.4); (3b) a guest-side loss of index 0 (its Fulton, or a destruction by its player) is REQ_VEHICLE_GONE for 25600
+    8.6); (3b) a guest-side loss of index 0 (its Fulton, or a destruction by its player) is REQ_VEHICLE_GONE for 25600
     whatever `world_vehicle_gone` says, the co-op guest's `OnFulton` never credits it, the host Fultons its own (its
     stock credit) or removes it quietly, and refuses while it rides it (`c7c1ed3`); (4) VEHICLE_GONE removes index 0 on the receiver with `Seize{"Instant"}`
     and the one-time `OnFulton` skip (the receiver's own removal is marked gone, so it is never taken for a guest
@@ -1429,7 +1648,7 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     vehicle comes back (fixtures); the host's real sortie-prep selection and GMP charge [U]; a mid-mission load of a
     heavy type; route C; a play rehearsal of a drive, a mission end and a removal; a two-PC session (the exit; M3 does
     not count as done before it).
-  - Before the build: E2, E17 and E18 passed and **route A** was chosen (section 8.2); round 2 (section 8.3) proved
+  - Before the build: E2, E17 and E18 passed and **route A** was chosen (section 8.4); round 2 (section 8.5) proved
     the mid-mission load for a continue or late join and built seed `afgh-relief-lv`.
 - Scope: F3 route A; guest vehicle requests refused.
 - What M3 needs (route A): (1) seed keys `reliefVehicleCarryType` (the whole u32), `reliefVehicleCarryAttitude[0..3]`
@@ -1444,7 +1663,7 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   its own applied removal (`Neutralize` of 25600 arrives with `att=local`). (5) Refusals (E4): the guest's iDroid
   `MSN_DROP_VEHICLE` and `MSN_DROP_LOADOUT` (a loadout delivery can carry a vehicle through SetRelief); candidates
   `TppUiCommand.SetMbTopMenuItemActive(menu, false)` [I] or a Lua wrapper; the guest never runs the sortie prep [O].
-  (6) Continue and late join (section 8.3): when the guest's copy is in free roam without index 0 while the host's
+  (6) Continue and late join (section 8.5): when the guest's copy is in free roam without index 0 while the host's
   has it (a host continue, a guest join or rejoin mid mission), the host sends its `reliefVehicleCarryType` and
   `reliefVehicleCarryAttitude` (a reliable op or the pairing seeds) and the guest's copy writes them and calls
   `Vehicle.LoadCarry()` [O, `relief_load`, run `612afff7`: the same pose to 0.01 m], after snapshotting its own carry
@@ -1453,7 +1672,7 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   (7) The host's in-mission drop (route C, D6 later) may use the same call [I]; the drop's parachute path is untested.
 - Depends on: E2, E17, E18 (done), M1 (seeds), E4.
 - Proof `companion-relief.txt`: the hidden worker opens the iDroid in the ACC, and key 3 (a worker key since M3)
-  reaches its MISSIONS tab, but the sortie prep itself is not scripted (section 8.3), so the host's choice comes from the
+  reaches its MISSIONS tab, but the sortie prep itself is not scripted (section 8.5), so the host's choice comes from the
   lab lever `host run relief_arm <type> ...` on the host only (seeds carry it to the guest), or from seed
   `coop-relief-30020` (decision D10; a real choice, type 2, saved in 30020, ACC 40020; the ACC clears the carry, so a
   sortie from it needs the lever again); `boot 30010 828.18 338.20 1630.51 95`, then `host worldtrigger goto=30020
@@ -1488,6 +1707,59 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   - Under `-WanSim bad`: a kill during the pairing sweep -> the gap between host `event=commit` and guest `event=apply`
     for that `ent` is recorded (K27).
 - Rehearsal `-Mode play -WanSim bad` before VEHICLE_GONE's play default flips.
+- **Status (2026-10-29, branch `wp/vehicle-state`, after the M4 review): built and proven in hidden runs, lab and
+  play; VEHICLE_GONE and VEHICLE_STATE on by default in play at 30010 and 30020 (`482eb74`, narrowed by `c423b53`);
+  Mother Base and the wreck parity lab only; not two-PC tested.** Details and run ids in section 8.8 and
+  `docs/STATUS.md` (M4, M4 review fixes).
+  - Play default [O]: the project rule (a FRAME on both copies and a passing `-Mode play -WanSim bad` rehearsal) is
+    now met for every path that acts in play at 30010 and 30020 with no vehicle key named: VEHICLE_GONE's Fultons
+    (`e44516d7`) and its destruction as a Despawn (`b31a1b65`, frames on both; `4bbbfde4`); VEHICLE_STATE's pose
+    (frames on both in the lab, `3585869d`; in play `b31a1b65`, `moved=1`, the after-frame on both) and body life both
+    ways (frames `3585869d`; play `4bbbfde4`, `e235bda6`, `d9b48fcb`). Its holds acted in play as `occupied`,
+    `local_rider` and `partner_ride`; `player_near` and VEHICLE_GONE's seated-rider hold are lab-proven only
+    (`3585869d`, `92720b75`). The wreck parity has its own key `world_vehicle_wreck` (off in lab and play unless
+    named) and Mother Base is lab only (no hidden run covered 30050), so neither is in the play default.
+  - VEHICLE_GONE [O]: `coop-vehicle-gone.txt` A, C (the hold while the guest sits in the jeep) and D in `92720b75`
+    (B in `075c1ea4`); each player's own Fulton by hand in play over `-WanSim bad` (`e44516d7`, frames on both
+    screens) and the guest's in the lab (`5179b50b`); **a real destruction in play** (`4bbbfde4`, `b31a1b65`: the
+    host's C4 -> `watch; m=VehicleBroken; cause=2` -> `tx` -> guest `applied; via=locator; src=rx; ok=1` 132 / 151 ms
+    later; readbacks `alive=0` on both copies, the guest's with no instance; `b31a1b65` frames `play-c4-placed` ->
+    `play-destroyed-after`: the burning wreck on the host's screen, nothing at that spot on the guest's); the
+    receiver's wreck with the key named (`0edadbe2`, `3585869d`, lever-made, frames `m4-wreck-*` on both). Index 0
+    is refused before any removal form (fixture tests; no relief vehicle in a hidden run). Not working: a jeep the
+    guest destroys is not requested, because the game posts no `Damage` message for a vehicle hit (`5179b50b`,
+    `35ba7929`); run `72366eb5` shows the resulting split in the lab (the guest's copy broke on a drive, the host's
+    stayed intact) [O].
+  - VEHICLE_STATE [O]: the push lever, framed on both screens (`3585869d`; earlier `d407f115`, `0edadbe2`,
+    `72366eb5` on the guest's screen), and the host's correction of a guest push; the near-player hold (`72366eb5`,
+    `3585869d`: the guest at the jeep's door, the host's push -> guest `hold; reason=player_near`, applied 2.0..2.2 s
+    later once the guest stood clear); drive and leave with no state against RIDE_FAST (`skip; reason=partner_ride`
+    -> `resume` -> `tx; why=moved` -> guest `hold; occupied` -> `same; f=1`) in play (`4bbbfde4`, after a logmark;
+    `d9b48fcb`, log-reviewed) and the lab (`3585869d`): VEHICLE_STATE keeps out of the way and then confirms the pose
+    that RIDE_FAST's last placement left (readbacks 1..9 mm apart; frame `play-left-both`); **the host's bail in
+    play** (`b31a1b65`): the host dives out of the rolling jeep, its copy rolls 8 m past where the guest's stopped
+    (RIDE_FAST's last placement), and the host's `skip; local_rider` -> `skip; occupied` (D-Dog) -> `resume` -> `tx;
+    why=moved` gives guest `applied; moved=1; d_mm=7970; err_mm=0` 334 ms later, the first pose VEHICLE_STATE applied
+    in play (frame `play-bail-both`: the same spot on both screens; readbacks 46 mm apart); body life both ways in
+    play (`4bbbfde4`: the host's shots `life=2270; was=2300` 151 ms after the host's change; the guest's own shots took
+    its copy to 1602, and the host's refresh put it back, `life=2270; was=1602; f=5`).
+  - Damage parity is the body life only [O]. Wheel and part lives are read and sent (the zero mask) but not written:
+    the 21-hash instance dispatcher has no wheel or burning write (3.6) [O]. Fire is not a function of the life word
+    (life 200 shows none, `d407f115`) [O], so burning is not synced [I]; what a life raise does on a copy that burns
+    is [U].
+  - K27 [O]: kills inside the pairing sweep, `-WanSim bad`: 322..330 ms commit -> apply via `src=resync`; outside it
+    299 ms via `src=outcome` (`e44516d7`): different delivery paths, so "no visible delay" stays [I].
+  - Open: a two-PC session; a destruction the guest causes stays on the guest's copy (no attribution, above) [O]; the
+    wreck parity in play needs a play rehearsal of a real destruction and a lab run with live guards and godmode off
+    that shows no extra guest-side kills or chain wrecks (its blast knocked the guest down in `5179b50b`) [U], and its
+    fallback on a far, unrealized receiver copy has not run [U]; Mother Base needs a 30050 hidden run (the cluster
+    jeeps by name, the index Despawn) [U]; a physical shove (player or vehicle collision) was never tested, only the
+    lever and the host's bail [U]; the guest's bail out of a rolling jeep would bring its jeep back to where the
+    host's copy stopped once the guest stands 3.5 m clear [I], not run; change -> apply latency against R7's 2 s is
+    measured only from tx (16..334 ms; the scan adds up to about 1.6 s, and a seated D-Dog holds the host's send: 4.2 s
+    from the host's get-off to the guest's apply in `b31a1b65`) [I]; Fulton rewards against save resources [U]; why a
+    teleport beside a jeep hides the Fulton prompt [U]; AI-driven, LRRP and reinforcement vehicles are M8; the relief
+    vehicle (index 0) is M3 / E17.
 
 ### M5. Quiet synced
 
@@ -1630,7 +1902,7 @@ The original questions:
   drive the menu, may the work use a co-op save you share (launcher Tools > Share save) as a seed? It would be copied
   into the seed library and never written back.
 - **D11 (new, M3). The guest's LOADOUT supply drop.** A loadout delivery can carry a vehicle (SetRelief
-  `0x1416BC4B0`, section 8.2), so M3 could make the guest's iDroid LOADOUT drop inactive in co-op free roam, like
+  `0x1416BC4B0`, section 8.4), so M3 could make the guest's iDroid LOADOUT drop inactive in co-op free roam, like
   VEHICLES, even when the guest's loadout holds no vehicle. (a) Block it (built behind the lab lever
   `relief_lab loadout on`; off by default since the review of 2026-10-29, which found it shipped on before you
   decided). (b) Allow a loadout without a vehicle (needs the loadout's vehicle slot read before the drop: research).
@@ -1686,7 +1958,7 @@ scripts and the exe before editing.
 ### Review of M3 (2026-10-29, branch `wp/relief` at `c282538`)
 
 An independent review of M3 found the code sound on route A but the default flip unproven. Each point was checked against
-the code and the archived slices before changing anything (section 8.5 has the runs that followed).
+the code and the archived slices before changing anything (section 8.7 has the runs that followed).
 
 | Review point | Verdict | Check and change |
 |---|---|---|
@@ -1698,5 +1970,5 @@ the code and the archived slices before changing anything (section 8.5 has the r
 | Minor: dead `cause == 2` branch in the VEHICLE_GONE receiver wrapper | Accepted | `V.consider` calls `V.remove(q.id)` [O]. The branch and its comment are gone; the receiver removes index 0 quietly for any cause until M4 sets a wreck rule |
 | Minor: D8 (b) restores at the next solo load, not at unpair or session end | Accepted as a documented deviation | M1 does the same (`world_companion.lua` `C.release("solo")` only) [O]. Restoring the live vars mid mission would leave them unlike the vehicle drawn on that copy; saves write the guest's own values while the host's are live (the guarantee D8 b asks for), and the live vars return at the next solo `TppMission.Load`. A paint preset the guest changes during a session is lost [I; the guest never runs the sortie prep in co-op, where presets are chosen] |
 | Minor: the refusal guard re-enables the items during unpaired gaps; forces them active; does nothing while the iDroid is open | Partly accepted | Unpaired gaps: fixed, the item stays inactive in the co-op mission until the final stop or a solo load. "Forces active": `TppTerminal._SetUpDvcMenu` and `SetUpDvcMenuAll` call `InitAllMbTopMenuItemActive(true)` and every story list names both drop items `active=true` (the extracted `TppTerminal`, `package-10.lua:675-686`) [O], so active is the state its `SetUp` leaves; a mission script calling `SetActiveTerminalMenu` was not looked for [U]. iDroid open: a mission's first pass now applies even while it is open |
-| Minor: comments and docs drifted (default, 2 m lift, Fulton parity at defaults, VEHICLE_SPAWN rate) | Accepted | Corrected in the module, `world_wire.cpp`, section 5 (rate as built), section 8.4, STATUS and the roadmap |
+| Minor: comments and docs drifted (default, 2 m lift, Fulton parity at defaults, VEHICLE_SPAWN rate) | Accepted | Corrected in the module, `world_wire.cpp`, section 5 (rate as built), section 8.6, STATUS and the roadmap |
 | Minor: merging `wp/relief` also brings M1 (`d911f0c`) | Accepted | Integration note in section 9 M3 and STATUS: integrate `wp/companion-host` first, or accept M1 with M3 |

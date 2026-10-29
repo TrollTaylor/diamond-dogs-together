@@ -76,6 +76,11 @@ constexpr char world_place_guest_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_SOURCE@
 )MGS_WORLD";
+// M4 VEHICLE_STATE (after world_vehicle.lua whose helpers it uses).
+constexpr char world_vehicle_state_source[] = R"MGS_WORLD(
+@MGS_WORLD_VEHICLE_STATE_SOURCE@
+)MGS_WORLD";
+// M1 host-owned companion (lab key companion_host_owned, CFG r[16]).
 constexpr char world_companion_source[] = R"MGS_WORLD(
 @MGS_WORLD_COMPANION_SOURCE@
 )MGS_WORLD";

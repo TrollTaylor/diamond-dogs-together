@@ -92,13 +92,29 @@ void Cfg() {
     r.vehicle_gone = 1;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,0,0") == 0,
           "the VEHICLE_GONE module flag is r[15]");
+    // M4 (lab key world_vehicle_state): r[15] is the vehicle modules bitmask, bit 2 VEHICLE_STATE.
+    r.vehicle_gone = 2;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,2,0,0") == 0,
+          "VEHICLE_STATE alone is r[15] = 2");
+    r.vehicle_gone = 3;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,3,0,0") == 0,
+          "both vehicle modules are r[15] = 3");
+    // M4 review: bit 4 the wreck parity key (world_vehicle_wreck); world_link::HandleCfg composes r[15] with
+    // world::VehicleModules (gone, state, wreck).
+    Check(world::VehicleModules(false, false, false) == 0 && world::VehicleModules(true, false, false) == 1 &&
+              world::VehicleModules(false, true, false) == 2 && world::VehicleModules(true, true, false) == 3 &&
+              world::VehicleModules(false, false, true) == 4 && world::VehicleModules(true, true, true) == 7,
+          "r[15] bits: 1 VEHICLE_GONE, 2 VEHICLE_STATE, 4 the wreck parity");
+    r.vehicle_gone = world::VehicleModules(true, true, true);
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,0,0") == 0,
+          "both vehicle modules and the wreck key are r[15] = 7");
     // M1 host-owned companion (lab key companion_host_owned, lab and play): r[16] the companion module.
     r.companion = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,1,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,0") == 0,
           "the host-owned companion module flag is r[16]");
     // M3 sortie vehicle (lab key world_relief, lab and play): r[17] the relief module.
     r.relief = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,1,1") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1") == 0,
           "the sortie vehicle module flag is r[17]");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
     r.relief = 255;

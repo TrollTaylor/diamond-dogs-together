@@ -1,0 +1,96 @@
+# M4 / E5 follow-up (docs/vehicles-companions-design.md 8.1), lab: the guest's own destruction and Fulton of a jeep,
+# both through REQ_VEHICLE_GONE, with VEHICLE_STATE on (lab keys world_vehicle_gone=1 and world_vehicle_state=1 on
+# both copies). Africa (30020, africa-jeep seed).
+#   1. Wreck by the guest's hand: right after the boot the guest stands at its boot spot facing the Masa Village jeep
+#      veh_lv_0000 (25608; frame m4-start of d407f115 / 0edadbe2 shows the jeep filling the guest's view), fires five
+#      rounds into it (a local Damage) and then its lever vehicle_life 25608 0 within 10 s (the engine's own
+#      destruction, E5): guest watch; m=VehicleBroken; cause=2; att=local -> req; cause=2 -> the host wrecks its copy
+#      on request (via=wreck; src=req, M4 wreck parity) -> req_done. Run 0edadbe2 tried this from a goto spot and its
+#      shots missed (life stayed 2300).
+#   2. The guest's Fulton of veh_lv_0002 (25610) by hand from its goto_vehicle door spot (the play rehearsal e44516d7
+#      Fultoned 25610 from the same door spot; run 46b8fc12's teleport to those coordinates showed only "E: get in").
+# History: 92720b75 part E (a Wakh Sind jeep under a roof: no prompt); a50214f7 (stopped at placebehind after the
+# 990 m warp); 46b8fc12 (the hold boarded 25610). The guest's Fulton of 25608 and the host's of 25610 by hand are
+# proven in play by vehicle-gone-play.txt (e44516d7).
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run (lab):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-gone-player.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Expected (world_lua lines, ';' expanded to '; '):
+#   Wreck   guest vehicle_state lever life=0 -> vehicle_gone step=watch; id=25608; m=VehicleBroken; cause=2; att=local
+#           -> lost -> req; cause=2 -> host rx_req -> applied; id=25608; via=wreck; src=req; ok=1 -> guest req_done;
+#           result=gone; frames gw-before, gw-NN (a wreck on both screens)
+#   Fulton  guest obs; m=FultonInfo; ...; id=25610; att=local -> watch -> lost -> req; cause=1 -> host applied;
+#           id=25610; via=locator; src=req; ok=1 -> guest req_done; frames pf-before, pf-hold, pf-lift-NN, pf-after
+# NEVER: step=error, viewer_changed, faults; a removal on the host before the guest's request.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_state; step=on; mission=30020; role=host; named=[0-9]+; lrrp=7' 30
+waitlog guest 'event=vehicle_state; step=on; mission=30020; role=guest; named=[0-9]+; lrrp=7' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+both capture gw-before
+# 1. The guest's own destruction of 25608 (five rounds, then the lever within 10 s).
+guest hold rmb 1500 nowait
+wait 800
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+guest release
+wait 500
+guest run vehicle_state_status 25608
+guest run vehicle_life 25608 0
+guest expect vehicle_life;id=25608;life=0;
+waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=VehicleBroken; cause=2; att=local' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=2; sent=1' 10
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=wreck; src=req; ok=1' 15
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 15
+both burst gw 4 1000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# 2. The guest's Fulton of 25610 from its goto_vehicle door spot, the host 9.8 m away facing it (both teleported
+#    first: placebehind needs a valid partner pose right after the 990 m warp, run a50214f7).
+guest debug teleport -98.408 -0.750 75.200 106
+host debug teleport -98.408 -0.750 73.667 106
+wait 4000
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25610
+guest expect vstate;id=25610;alive=1;.*name=veh_lv_0002
+host run vehicle_state_status 25610
+both capture pf-before
+guest hold e 1500 nowait
+wait 700
+guest capture pf-hold
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst pf-lift 6 500
+waitlog guest 'event=vehicle_gone; step=watch; id=25610; m=(FultonInfo|Fulton); cause=1; att=local' 15
+waitlog guest 'event=vehicle_gone; step=lost; id=25610; cause=1; role=guest' 40
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25610; cause=1; sent=1' 5
+waitlog host 'event=vehicle_gone; step=applied; id=25610; via=(locator|index); src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25610; result=gone' 10
+wait 1500
+both capture pf-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+guest run vehicle_seats
+state

@@ -75,6 +75,11 @@ inline constexpr std::uint8_t vehicle_gone = 0x2E, req_vehicle_gone = 0x2F;
 // result and error, 1 Hz) and COMPANION_POSE (57, the host's companion pose stream: a
 // datagram, 10 Hz while it moves, 2 Hz idle; the latest by sender tick wins).
 inline constexpr std::uint8_t companion = 0x30, character = 0x38, companion_ack = 0x31, companion_pose = 0x39;
+// M4 (docs/vehicles-companions-design.md section 5 / 6.4): VEHICLE_STATE (51), the host's state
+// of a vehicle nobody drives (pose, body life, state bits); applied by the guest's Lua only with
+// the lab.ini key world_vehicle_state=1 (CFG r[15] bit 2). 0x32 stays reserved for the design's
+// mount op (M10).
+inline constexpr std::uint8_t vehicle_state = 0x33;
 // M3 sortie vehicle (docs/vehicles-companions-design.md section 5 / 6.3, route A): VEHICLE_SPAWN
 // (52), the host's relief vehicle (index 0) and its carry; applied by the guest's Lua only with
 // the lab.ini key world_relief=1 (CFG r[17]).
@@ -224,8 +229,11 @@ struct CfgReply {
     // WS4 step 0 (lab key partner_placed_census): r[14] 1 asks the Lua observer for the
     // event=obs_att attacker census lines, else 0; filled only by world_link::HandleCfg.
     std::uint8_t census;
-    // 0.13.6 online-vehicle-gone: r[15] 1 turns on lua/coop/world_vehicle.lua (lab key
-    // world_vehicle_gone, lab and play), else 0; filled only by world_link::HandleCfg.
+    // r[15] the vehicle modules bitmask, filled only by world_link::HandleCfg: bit 1
+    // (0.13.6 online-vehicle-gone) turns on lua/coop/world_vehicle.lua (lab key
+    // world_vehicle_gone), bit 2 (M4) lua/coop/world_vehicle_state.lua (lab key
+    // world_vehicle_state), bit 4 (M4 review) VEHICLE_GONE's wreck parity (lab key
+    // world_vehicle_wreck); all lab and play; 0 none (world::VehicleModules).
     std::uint8_t vehicle_gone;
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): r[16] 1 turns on
     // lua/coop/world_companion.lua (lab key companion_host_owned), else 0; filled only by

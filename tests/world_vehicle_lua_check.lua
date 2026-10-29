@@ -64,6 +64,14 @@ local function Fixture(role, on, mode)
                 c.seized[#c.seized + 1] = {id = target, options = cmd.options}
                 return nil
             end
+            if cmd.id == 'SetBodyLife' then
+                -- The engine's own destruction (hidden run d407f115): a wreck, still in the pool.
+                -- c.wreckFails: a SetBodyLife 0 that does not destroy (e.g. a far, unrealized copy; untested in game).
+                c.lifeSet = c.lifeSet or {}
+                c.lifeSet[#c.lifeSet + 1] = {id = target, life = cmd.life}
+                if cmd.life == 0 and not c.wreckFails then v.alive = false end
+                return nil
+            end
             if cmd.id == 'GetPosition' then return vector(v), 0 end
             if cmd.id == 'GetVehicleType' then return v.type, 0 end
             if cmd.id == 'GetRiderId' then
@@ -246,6 +254,92 @@ check(#g.despawns == 1 and g.despawns[1].locator == 'veh_lv_0003' and g.despawns
 check(g:has('step=applied;id=25603;via=locator;src=rx;ok=1') and g.V.gone[25603], 'applied and read back')
 g.H[46]({2, 25611, 1, 0, 0, 1, 300000, 1000, 300000})
 check(#g.despawns == 2 and g.despawns[2].index == 11 and g.despawns[2].locator == nil, 'an unnamed (sortie) vehicle by its pool index')
+-- M4 wreck parity (E5), behind its own key since the M4 review (W.vehicleWreckOn: CFG r[15] bit 4, lab key
+-- world_vehicle_wreck, off in lab and play unless named): a destroyed vehicle (cause 2) becomes a wreck here
+-- (SetBodyLife 0, read back IsAlive false); a Fulton (cause 1) is still a Despawn; without the key a destroyed one
+-- is a Despawn as in 0.13.6, also with VEHICLE_STATE on (2a3d97d tied the wreck to VEHICLE_STATE, which 482eb74
+-- turned on in play: wreck parity, blast included, reached play with no play rehearsal; review finding 2).
+do
+    local w = Fixture('guest')
+    w.W.vehicleWreckOn = true
+    w:add(25608, 100, 100, 1, 'veh_lv_0000')
+    w:add(25609, 200, 200, 1, 'veh_lv_0001')
+    w.H[46]({1, 25608, 2, 0, 0, 1, 100000, 1000, 100000})
+    check(#w.despawns == 0 and w.lifeSet and #w.lifeSet == 1 and w.lifeSet[1].id == 25608 and w.lifeSet[1].life == 0 and
+        not w.pool[25608].alive and not w.pool[25608].released and w:has('step=applied;id=25608;via=wreck;src=rx;ok=1'),
+        'a destroyed vehicle becomes a wreck (SetBodyLife 0), read back')
+    w.H[46]({2, 25609, 1, 0, 0, 1, 200000, 1000, 200000})
+    check(#w.despawns == 1 and w.despawns[1].locator == 'veh_lv_0001' and #w.lifeSet == 1, 'a Fultoned vehicle is still despawned')
+    local h = Fixture('host')
+    h.W.vehicleWreckOn = true
+    h:add(25610, 300, 300, 1, 'veh_lv_0002')
+    h.H[47]({9, 25610, 2, 1, 300000, 1000, 300000})
+    check(#h.despawns == 0 and h.lifeSet and h.lifeSet[1].id == 25610 and h:has('step=applied;id=25610;via=wreck;src=req;ok=1'),
+        'the host wrecks its copy for a guest\'s destroyed request')
+    local o = Fixture('guest')
+    o:add(25608, 100, 100, 1, 'veh_lv_0000')
+    o.H[46]({1, 25608, 2, 0, 0, 1, 100000, 1000, 100000})
+    check(#o.despawns == 1 and not o.lifeSet, 'without the wreck key a destroyed vehicle is despawned (0.13.6)')
+    o = Fixture('guest')
+    o.W.vehicleStateOn = true
+    o:add(25608, 100, 100, 1, 'veh_lv_0000')
+    o.H[46]({1, 25608, 2, 0, 0, 1, 100000, 1000, 100000})
+    check(#o.despawns == 1 and not o.lifeSet and o:has('step=applied;id=25608;via=locator;src=rx;ok=1'),
+        'VEHICLE_STATE alone (the play default) never wrecks: a destroyed vehicle is despawned')
+    -- Never index 0 (the relief vehicle, M3 / E17), not even as a wreck, on the rx and the req path (review finding 1:
+    -- 2a3d97d returned "wreck" before the index-0 refusal, so a destroyed 25600 was wrecked on the receiver).
+    local z = Fixture('guest')
+    z.W.vehicleWreckOn, z.W.vehicleStateOn = true, true
+    z:add(25600, 5, 5, 1)
+    z.H[46]({1, 25600, 2, 0, 0, 1, 5000, 1000, 5000})
+    check(z.pool[25600].alive and not z.lifeSet and #z.despawns == 0 and z:has('step=refused;id=25600;src=rx;reason=index0') and
+        not z.V.gone[25600], 'guest: a destroyed index 0 is refused (index0), never wrecked')
+    local y = Fixture('host')
+    y.W.vehicleWreckOn, y.W.vehicleStateOn = true, true
+    y:add(25600, 5, 5, 1)
+    y.H[47]({9, 25600, 2, 1, 5000, 1000, 5000})
+    local rj = y:sent(4)
+    check(y.pool[25600].alive and not y.lifeSet and #y.despawns == 0 and y:has('step=refused;id=25600;src=req;reason=index0') and
+        #rj == 1 and rj[1][2] == 9 and rj[1][4] == 8 and #y:sent(46) == 0, 'host: a guest\'s destroyed request for index 0 gets REJECT 8, never a wreck')
+    -- A wreck that does not take (IsAlive still true READ_MS after SetBodyLife 0) falls back to the Despawn; with no
+    -- Despawn form for it the id is not marked gone, so a re-sent announcement retries it (review finding 9).
+    local f = Fixture('guest')
+    f.W.vehicleWreckOn, f.wreckFails = true, true
+    f:add(25608, 100, 100, 1, 'veh_lv_0000')
+    f.H[46]({1, 25608, 2, 0, 0, 1, 100000, 1000, 100000})
+    check(f.pool[25608].alive and #f.lifeSet == 1 and #f.despawns == 0 and not f:has('step=applied'), 'a wreck is read back for up to 2 s')
+    f:poll(1000); f:poll(1100)
+    check(f.pool[25608].released and #f.despawns == 1 and f.despawns[1].locator == 'veh_lv_0000' and
+        f:has('step=applied;id=25608;via=wreck;src=rx;ok=0') and f:has('step=fallback;id=25608;from=wreck;via=locator;ok=1'),
+        'a wreck still alive after 2 s: ok=0, then the Despawn by its locator')
+    f:poll()
+    check(f:has('step=applied;id=25608;via=locator;src=rx;ok=1') and f.V.gone[25608] == true, 'the fallback Despawn is read back like any other')
+    local n = Fixture('guest')
+    n.W.mission, n.W.vehicleWreckOn, n.wreckFails = 30010, true, true
+    n:add(25611, 300, 300, 1)
+    n.H[46]({1, 25611, 2, 0, 0, 1, 300000, 1000, 300000})
+    n:poll(1000); n:poll(1100)
+    check(n.pool[25611].alive and not n.V.gone[25611] and n:has('step=fallback;id=25611;from=wreck;via=no_locator;ok=0'),
+        'no Despawn form (unnamed outside Mother Base): not marked gone here')
+    n.wreckFails = false
+    n.H[46]({1, 25611, 2, 0, 0, 1, 300000, 1000, 300000})
+    check(not n.pool[25611].alive and n:has('step=applied;id=25611;via=wreck;src=rx;ok=1'), 'the re-sent announcement retries it')
+end
+-- Mother Base (30050) runs only in the lab since the M4 review: no hidden run covered it there (finding 3); in play
+-- the module stays off at 30050 (one step=off line) and on at 30010 / 30020.
+do
+    local p = Fixture('guest', true, 2)
+    p:add(25603, 210.9, 290.1, 1, 'veh_lv_0003')
+    p.H[46]({1, 25603, 1, 0, 0, 1, 210900, 1000, 290100})
+    p.V.observe('FultonInfo', 25603, 'local')
+    check(not p.V.on() and p.pool[25603].alive and #p.despawns == 0 and next(p.V.watch) == nil and p:has('step=off;mission=30050;reason=mb_lab_only') and
+        not p:has('step=on;'), 'play at Mother Base: off (step=off; reason=mb_lab_only), nothing removed or watched')
+    p.W.mission = 30020
+    for _, f in ipairs(p.W.startHooks) do f() end
+    check(p.V.on() and p:has('step=on;mission=30020;role=guest;wreck=0'), 'play in Africa: on (step=on names the wreck key: off)')
+    local l = Fixture('guest', true, 1)
+    check(l.V.on() and l:has('step=on;mission=30050;role=guest'), 'lab at Mother Base: on')
+end
 g:add(25600, 5, 5, 1)
 g.H[46]({3, 25600, 1, 0, 0, 1, 5000, 1000, 5000})
 check(#g.despawns == 2 and g.pool[25600].alive and g:has('step=refused;id=25600;src=rx;reason=index0'), 'index 0 (the relief vehicle) is refused')
@@ -623,5 +717,20 @@ if arg[2] then
     check(W.vehicleGoneOn == false and not W.vehicleGone.on() and W.M.VehicleBroken == nil, 'CFG r[15] = 0 (and an older loader without it): off')
     W = Composed(nil, 1)
     check(W.vehicleGoneOn == false, 'a missing r[15] is off')
+    -- r[15] bit 4 (M4 review): the wreck parity key, independent of the two modules.
+    W = Composed(4, 1)
+    check(W.vehicleWreckOn == true and W.vehicleGoneOn == false and W.vehicleStateOn == false, 'CFG r[15] = 4: the wreck key alone')
+    W = Composed(5, 1)
+    check(W.vehicleWreckOn == true and W.vehicleGoneOn == true and W.vehicleStateOn == false, 'CFG r[15] = 5: VEHICLE_GONE with wreck parity')
+    W = Composed(3, 1)
+    check(W.vehicleWreckOn == false and W.vehicleGoneOn == true and W.vehicleStateOn == true, 'CFG r[15] = 3 (the play default): no wreck parity')
+    W = Composed(7, 1)
+    check(W.vehicleWreckOn and W.vehicleGoneOn and W.vehicleStateOn, 'CFG r[15] = 7: all three')
+    local _, logs7 = Composed(7, 1)
+    local on7 = false
+    for _, l in ipairs(logs7) do if l:find('event=vehicle_gone;step=on;mission=30050;role=host;wreck=1', 1, true) then on7 = true end end
+    check(on7, 'step=on names the wreck key (wreck=1)')
+    W = Composed(8, 1)
+    check(not W.vehicleWreckOn and not W.vehicleGoneOn and not W.vehicleStateOn, 'an out-of-range r[15] (8) is off')
 end
 print('world_vehicle_lua_check: ' .. checks .. ' checks PASS')

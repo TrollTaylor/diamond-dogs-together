@@ -699,9 +699,26 @@ struct LabConfig {
     WorldProbe world_probe = WorldProbe::none;
     // world_vehicle_gone=0|1 (0.13.6 online-vehicle-gone, docs/world-sync-protocol.md
     // section 16): the host-authoritative VEHICLE_GONE world op for Fultoned and
-    // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
-    // default off until hidden-run frames prove the receiver's Despawn.
+    // destroyed vehicles, CFG r[15] bit 1 for Lua. Lab and play (not a play refusal).
+    // M4: off in the lab unless named (scenarios name it), on in play unless named
+    // (lab FRAMEs 92720b75 / 0edadbe2; play rehearsal e44516d7, -WanSim bad: each
+    // player's own Fulton removed the jeep on both copies); a named value records _given.
     bool world_vehicle_gone = false;
+    bool world_vehicle_gone_given = false;
+    // world_vehicle_state=0|1 (M4, docs/vehicles-companions-design.md 6.4): the
+    // host-authoritative VEHICLE_STATE world op for parked / pushed / left vehicles
+    // and their body life, CFG r[15] bit 2 for Lua. Lab and play (not a play
+    // refusal); off in the lab unless named, on in play unless named (lab FRAMEs
+    // d407f115 / 0edadbe2; play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
+    bool world_vehicle_state = false;
+    bool world_vehicle_state_given = false;
+    // world_vehicle_wreck=0|1 (M4 review): VEHICLE_GONE's wreck parity, CFG r[15] bit 4
+    // for Lua: a destroyed vehicle (cause 2) becomes a wreck on the receiver through
+    // SetBodyLife{life=0} (the engine's own destruction, blast included) instead of a
+    // Despawn. Lab and play (not a play refusal), off in both unless named: its only
+    // play rehearsal (e235bda6) never destroyed the jeep, and the receiver's blast was
+    // never measured with live guards. Lab FRAME 0edadbe2.
+    bool world_vehicle_wreck = false;
     // companion_host_owned=0|1 (docs/vehicles-companions-design.md 6.1, M1): the host's
     // buddy is the session's one companion. The follow seeds carry the host's buddy vars
     // and the guest loads them (its own are kept for its saves); guest buddy calls, the

@@ -41,6 +41,12 @@ struct Config {
     // M3 sortie vehicle: lab.ini world_relief (lab and play): CFG r[17] = 1 turns on the Lua
     // relief module (lua/coop/world_relief_sync.lua).
     bool relief = false;
+    // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
+    // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.
+    bool vehicle_state = false;
+    // M4 review: lab.ini world_vehicle_wreck (lab and play): CFG r[15] bit 4, VEHICLE_GONE's
+    // wreck parity for a destroyed vehicle (else a Despawn).
+    bool vehicle_wreck = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

@@ -27,7 +27,9 @@ volatile LONG g_pumping = 0;
 LogFn g_log = nullptr;
 bool g_lab_triggers = false;
 bool g_placed_census = false;  // WS4 step 0: CFG r[14] (lab key partner_placed_census, lab only)
-bool g_vehicle_gone = false;   // 0.13.6 online-vehicle-gone: CFG r[15] (lab key world_vehicle_gone, lab and play)
+bool g_vehicle_gone = false;   // 0.13.6 online-vehicle-gone: CFG r[15] bit 1 (lab key world_vehicle_gone, lab and play)
+bool g_vehicle_state = false;  // M4 VEHICLE_STATE: CFG r[15] bit 2 (lab key world_vehicle_state, lab and play)
+bool g_vehicle_wreck = false;  // M4 review: CFG r[15] bit 4, VEHICLE_GONE's wreck parity (lab key world_vehicle_wreck)
 bool g_companion = false;      // M1 host-owned companion: CFG r[16] (lab key companion_host_owned, lab and play)
 bool g_relief = false;         // M3 sortie vehicle: CFG r[17] (lab key world_relief, lab and play)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
@@ -217,6 +219,8 @@ void Configure(const Config& config) noexcept {
     g_vehicle_gone = config.vehicle_gone;
     g_companion = config.companion;
     g_relief = config.relief;
+    g_vehicle_state = config.vehicle_state;
+    g_vehicle_wreck = config.vehicle_wreck;
     if (g_lab_triggers && config.directory &&
         FAILED(StringCchPrintfW(g_trigger_path, ARRAYSIZE(g_trigger_path) - 4, L"%s\\mgs-coop\\world.trigger", config.directory)))
         g_trigger_path[0] = 0;
@@ -280,8 +284,9 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     reply.lock = save_handoff::LockAllowed();
     // WS4 step 0: r[14] the attacker census (lab only, read-only logging).
     reply.census = g_placed_census ? 1 : 0;
-    // 0.13.6 online-vehicle-gone: r[15] the VEHICLE_GONE module (lab and play).
-    reply.vehicle_gone = g_vehicle_gone ? 1 : 0;
+    // r[15] the vehicle modules (lab and play): bit 1 VEHICLE_GONE (0.13.6
+    // online-vehicle-gone), bit 2 VEHICLE_STATE (M4), bit 4 the wreck parity (M4 review).
+    reply.vehicle_gone = world::VehicleModules(g_vehicle_gone, g_vehicle_state, g_vehicle_wreck);
     // M1: r[16] the host-owned companion module (lab and play).
     reply.companion = g_companion ? 1 : 0;
     // M3: r[17] the sortie vehicle module (lab and play).

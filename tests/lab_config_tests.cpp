@@ -1379,14 +1379,22 @@ int main() {
                   !vehiclePlayOff.partner_ride_seat_id && vehiclePlayOff.invalid_values == 0 && vehiclePlayOff.play_refused == 0,
               "play: seat id and tilt on by default, an explicit 0 keeps each off");
         // 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): world_vehicle_gone is off by default in
-        // every profile, parses in lab and play (no play refusal), and an invalid value keeps it off.
+        // the lab (scenarios name it) and on by default in play since M4 (play rehearsal e44516d7, -WanSim bad: each
+        // player's own Fulton removed the jeep on both copies); it parses in lab and play (no play refusal), a named 0
+        // keeps it off in play, and an invalid value keeps it off.
         {
             const auto vgPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_gone=1\n");
+            const auto vgPlayOff = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                       "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_gone=0\n");
             const auto vgLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_vehicle_gone=1\n");
             const auto vgBad = Lab("enabled=1\nrole=host\nworld_vehicle_gone=2\n");
-            Check(!def.world_vehicle_gone && !vehicleGun.world_vehicle_gone && !vehiclePlayDefault.world_vehicle_gone,
-                  "world_vehicle_gone defaults off (lab, gun profile, play)");
+            Check(!def.world_vehicle_gone && !vehicleGun.world_vehicle_gone, "world_vehicle_gone defaults off in the lab (plain, gun profile)");
+            Check(vehiclePlayDefault.mode == mgscoop::LabMode::play && vehiclePlayDefault.world_vehicle_gone && vehiclePlayDefault.play_refused == 0,
+                  "world_vehicle_gone defaults on in play (M4, play rehearsal e44516d7)");
+            Check(vgPlayOff.mode == mgscoop::LabMode::play && !vgPlayOff.world_vehicle_gone && vgPlayOff.world_vehicle_state &&
+                      vgPlayOff.invalid_values == 0,
+                  "a named world_vehicle_gone=0 keeps it off in play (VEHICLE_STATE stays on)");
             Check(vgLab.world_vehicle_gone && vgLab.invalid_values == 0 && vgLab.unknown_keys == 0, "world_vehicle_gone=1 parses in lab");
             Check(vgPlay.mode == mgscoop::LabMode::play && vgPlay.world_vehicle_gone && vgPlay.play_refused == 0 && vgPlay.invalid_values == 0,
                   "world_vehicle_gone=1 parses in play with no refusal bit");
@@ -1429,6 +1437,46 @@ int main() {
             Check(!reBadPlay.world_relief && reBadPlay.invalid_values == 1, "an invalid world_relief keeps it off in play too");
             const auto reLater = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=0\nworld_relief=1\n");
             Check(reLater.world_relief && reLater.world_relief_given, "a later world_relief=1 wins");
+        }
+        // M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): world_vehicle_state likewise (off by default in the
+        // lab, on by default in play after the lab FRAMEs and the play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
+        {
+            const auto vsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_state=1\n");
+            const auto vsPlayOff = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                       "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_state=0\n");
+            const auto vsLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_vehicle_state=1\n");
+            const auto vsBad = Lab("enabled=1\nrole=host\nworld_vehicle_state=2\n");
+            Check(!def.world_vehicle_state && !vehicleGun.world_vehicle_state, "world_vehicle_state defaults off in the lab (plain, gun profile)");
+            Check(vehiclePlayDefault.mode == mgscoop::LabMode::play && vehiclePlayDefault.world_vehicle_state && vehiclePlayDefault.play_refused == 0,
+                  "world_vehicle_state defaults on in play (M4)");
+            Check(vsPlayOff.mode == mgscoop::LabMode::play && !vsPlayOff.world_vehicle_state && vsPlayOff.world_vehicle_gone &&
+                      vsPlayOff.invalid_values == 0,
+                  "a named world_vehicle_state=0 keeps it off in play (VEHICLE_GONE stays on)");
+            Check(vsLab.world_vehicle_state && !vsLab.world_vehicle_gone && vsLab.invalid_values == 0 && vsLab.unknown_keys == 0,
+                  "world_vehicle_state=1 parses in lab (independent of world_vehicle_gone)");
+            Check(vsPlay.mode == mgscoop::LabMode::play && vsPlay.world_vehicle_state && vsPlay.play_refused == 0 && vsPlay.invalid_values == 0,
+                  "world_vehicle_state=1 parses in play with no refusal bit");
+            Check(!vsBad.world_vehicle_state && vsBad.invalid_values == 1 && vsBad.unknown_keys == 0, "an invalid world_vehicle_state keeps it off");
+        }
+        // M4 review (finding 2): VEHICLE_GONE's wreck parity has its own key, world_vehicle_wreck (CFG r[15] bit 4), off
+        // in the lab and in play unless named: its only play rehearsal (e235bda6) never destroyed the jeep, and the
+        // receiver's blast was never measured with live guards. Before the review it rode on world_vehicle_state.
+        {
+            const auto vwPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nworld_vehicle_wreck=1\n");
+            const auto vwLab = Lab("enabled=1\nrole=guest\nworld=3\nworld_vehicle_gone=1\nworld_vehicle_wreck=1\n");
+            const auto vwBad = Lab("enabled=1\nrole=host\nworld_vehicle_wreck=2\n");
+            Check(!def.world_vehicle_wreck && !vehicleGun.world_vehicle_wreck, "world_vehicle_wreck defaults off in the lab (plain, gun profile)");
+            Check(vehiclePlayDefault.mode == mgscoop::LabMode::play && !vehiclePlayDefault.world_vehicle_wreck &&
+                      vehiclePlayDefault.world_vehicle_gone && vehiclePlayDefault.world_vehicle_state,
+                  "world_vehicle_wreck defaults off in play (the vehicle modules stay on)");
+            Check(vwLab.world_vehicle_wreck && vwLab.world_vehicle_gone && !vwLab.world_vehicle_state && vwLab.invalid_values == 0 &&
+                      vwLab.unknown_keys == 0,
+                  "world_vehicle_wreck=1 parses in lab (independent of world_vehicle_state)");
+            Check(vwPlay.mode == mgscoop::LabMode::play && vwPlay.world_vehicle_wreck && vwPlay.play_refused == 0 && vwPlay.invalid_values == 0,
+                  "world_vehicle_wreck=1 parses in play with no refusal bit (a future play rehearsal names it)");
+            Check(!vwBad.world_vehicle_wreck && vwBad.invalid_values == 1 && vwBad.unknown_keys == 0, "an invalid world_vehicle_wreck keeps it off");
         }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.

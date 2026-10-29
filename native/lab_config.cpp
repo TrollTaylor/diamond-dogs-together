@@ -237,8 +237,18 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
 // the gun profile in lab and play).
 bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
-    // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op (lab and play, default off).
-    else if (Equals(key, "world_vehicle_gone")) ok = ParseBool(value, result.world_vehicle_gone);
+    // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op (lab and play; off in the lab, on in play unless named).
+    else if (Equals(key, "world_vehicle_gone")) {
+        ok = ParseBool(value, result.world_vehicle_gone);
+        if (ok) result.world_vehicle_gone_given = true;
+    }
+    // M4: the VEHICLE_STATE world op (lab and play; off in the lab, on in play unless named).
+    else if (Equals(key, "world_vehicle_state")) {
+        ok = ParseBool(value, result.world_vehicle_state);
+        if (ok) result.world_vehicle_state_given = true;
+    }
+    // M4 review: VEHICLE_GONE's wreck parity (lab and play; off in both unless named).
+    else if (Equals(key, "world_vehicle_wreck")) ok = ParseBool(value, result.world_vehicle_wreck);
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
@@ -902,6 +912,16 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     // 5. The weapons keys follow the native gun profile unless named (last:
     // after any expansion that sets partner_drive / partner_native_gun).
     ResolveWeaponDefaults(result);
+    // 6. M4 vehicles (docs/vehicles-companions-design.md section 9 M4): VEHICLE_GONE and
+    // VEHICLE_STATE run in play unless named (lab FRAMEs on both copies; play rehearsals
+    // e44516d7 and d9b48fcb with -WanSim bad); the lab keeps them off unless named, so a
+    // lab scenario opts in (labsetting world_vehicle_gone=1 / world_vehicle_state=1).
+    // world_vehicle_wreck has no play default (off unless named, M4 review); the Lua
+    // modules run at Mother Base only in the lab (no hidden run covered 30050).
+    if (result.mode == LabMode::play) {
+        if (!result.world_vehicle_gone_given) result.world_vehicle_gone = true;
+        if (!result.world_vehicle_state_given) result.world_vehicle_state = true;
+    }
     out = result;
     return true;
 }

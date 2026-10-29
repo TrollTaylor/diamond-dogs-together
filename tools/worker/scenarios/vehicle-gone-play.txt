@@ -1,0 +1,97 @@
+# M4 play rehearsal of VEHICLE_GONE (docs/vehicles-companions-design.md section 9 M4; docs/world-sync-protocol.md
+# section 16) in mode=play over -WanSim bad, with no lab lever: each player Fultons a jeep by hand (hold E beside it,
+# the stock prompt "hold E: Fulton"). VEHICLE_STATE is on too (both modules as they would ship together). Africa,
+# africa-jeep seed: the save continues beside the Masa Village jeep veh_lv_0000 (25608).
+#   1. K27: a host kill right at gameplay, inside or next to the pairing sweep: host event=commit -> guest event=apply.
+#   2. The guest's own Fulton of 25608 from the spot where the lab boot puts the guest (hidden runs d407f115 and
+#      0edadbe2 showed the stock prompt "hold E: Fulton 100%, x24" there in frame m4-start; the teleport spot beside
+#      veh_lv_0002 of run 46b8fc12 showed only "E: get in", so its hold boarded the jeep): REQ_VEHICLE_GONE -> the
+#      host removes its copy -> req_done.
+#   3. The host's own Fulton of veh_lv_0002 (25610), reached as hidden run 0edadbe2 reached it (goto_vehicle jeep,
+#      whose door spot showed the Fulton prompt in frame m4-req-before): VEHICLE_GONE -> the guest removes its copy.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-gone-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# Expected (world_lua lines, ';' expanded to '; '):
+#   guest  obs; m=FultonInfo; ...; id=25608; att=local -> vehicle_gone step=watch; id=25608; m=FultonInfo; cause=1;
+#          att=local -> lost -> req; cause=1 -> host rx_req -> applied; id=25608; via=locator; src=req; ok=1 ->
+#          guest req_done; result=gone; frames gp-guest-before / gp-guest-hold / gp-guest-lift-NN / gp-guest-after
+#   host   obs; m=FultonInfo; ...; id=25610; att=local -> watch -> lost -> tx; cause=1; actor=0 -> guest rx ->
+#          applied; id=25610; via=locator; src=rx; ok=1; frames gp-host-before / gp-host-hold / gp-host-lift-NN /
+#          gp-host-after
+# NEVER: step=error, viewer_changed, faults; a removal on a copy before the loss on the other.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug clear_enemies 100
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_gone; step=on; mission=30020; role=host' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30020; role=guest' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+host run vehicle_state_status
+guest run vehicle_state_status
+# 2. The guest's own Fulton of 25608: both copies at their lab boot spots (the guest's shows the Fulton prompt).
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+host run vehicle_state_status 25608
+both capture gp-guest-before
+guest hold e 1500 nowait
+wait 700
+guest capture gp-guest-hold
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst gp-guest-lift 6 500
+waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=(FultonInfo|Fulton); cause=1; att=local' 15
+waitlog guest 'event=vehicle_gone; step=lost; id=25608; cause=1; role=guest' 40
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=(locator|index); src=req; ok=1' 15
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 15
+wait 1500
+both capture gp-guest-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+guest run vehicle_seats
+# 3. The host's own Fulton of 25610 from its goto_vehicle door spot, the guest 9 m behind (both by teleport after
+#    the 990 m warp: placebehind needs a valid partner pose right after it, run a50214f7).
+host debug teleport -98.408 -0.750 75.200 106
+guest debug teleport -98.408 -0.750 73.667 106
+wait 4000
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host run vehicle_state_status 25610
+host expect vstate;id=25610;alive=1;.*name=veh_lv_0002
+guest run vehicle_state_status 25610
+both capture gp-host-before
+host hold e 1500 nowait
+wait 700
+host capture gp-host-hold
+host hold e 1500
+host hold e 1500
+host release
+host burst gp-host-lift 6 500
+waitlog host 'event=vehicle_gone; step=watch; id=25610; m=(FultonInfo|Fulton); cause=1; att=' 15
+waitlog host 'event=vehicle_gone; step=lost; id=25610; cause=1; role=host' 40
+waitlog host 'event=vehicle_gone; step=tx; id=25610; cause=1; actor=0;' 5
+waitlog guest 'event=vehicle_gone; step=applied; id=25610; via=(locator|index); src=rx; ok=1' 15
+wait 1500
+both capture gp-host-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run vehicle_seats
+host run vehicle_state_status
+guest run vehicle_state_status
+state
