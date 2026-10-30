@@ -428,7 +428,7 @@ local SEAT = 54
 W.OP.SEAT = SEAT
 local S = {seq = 0, next = 0, claimAt = {}, granted = {}, toastAt = 0, off = nil, n = {claim = 0, grant = 0, deny = 0, yield = 0}}
 R.seat = S
-local SEAT_TICK, CLAIM_MS, WANT_MS, HOST_WANT_MS, GRANT_MS, DENY_MS, TOAST_MS = 200, 500, 600, 1000, 3000, 3000, 3000
+local SEAT_TICK, CLAIM_MS, WANT_MS, HOST_WANT_MS, GRANT_MS, DENY_MS, TOAST_MS, OFF_MS = 200, 500, 600, 1000, 3000, 3000, 3000, 10000
 S.CLAIM_MS, S.HOST_WANT_MS, S.GRANT_MS, S.DENY_MS = CLAIM_MS, HOST_WANT_MS, GRANT_MS, DENY_MS
 local CLAIM, GRANT, DENY = 1, 2, 3
 local function seatLog(text) if type(W.log) == "function" then pcall(W.log, "event=seat;" .. text) end end
@@ -452,16 +452,17 @@ end
 local function wants(r, vehicle, ms)
     return r and r.on == 1 and r.want == vehicle and integer(r.age, 0, ms)
 end
--- The native answer is read once per pairing first: off (the key, or no board) stays off until the next pairing.
+-- Off (the key, or the board not installed yet) is read again every OFF_MS; logged once per pairing.
 function S.step(now)
-    if S.off or now < S.next then return end
+    if now < S.next then return end
     S.next = now + SEAT_TICK
     local r = S.board("poll")
     if not r or r.on ~= 1 then
-        S.off = true
-        seatLog("state=off")
+        S.next = now + OFF_MS
+        if not S.off then S.off = true; seatLog("state=off") end
         return
     end
+    if S.off then S.off = nil; seatLog("state=on") end
     S.on = true
     if W.host then
         -- A vehicle granted to the guest stays yielded while the guest keeps claiming it.
@@ -527,7 +528,7 @@ function W.tick(...)
     end
     if tick then tick(...) end
     R.send(now)
-    if W.paired and W.eff and W.eff >= 3 then S.step(now) else S.off, S.granted = nil, {} end
+    if W.paired and W.eff and W.eff >= 3 then S.step(now) else S.off, S.granted, S.next = nil, {}, 0 end
     if W.paired and W.eff and W.eff >= 3 then
         R.fastSend(now)
         R.fastApply(now)

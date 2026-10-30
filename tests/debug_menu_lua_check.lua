@@ -979,6 +979,7 @@ check(g:send('goto_vehicle truck')[3] == 'door_stub', 'a bare truck delegates to
 check(g:send('goto_vehicle truck a b c')[3] == 'command_args' and g:send('goto_vehicle jeep 60')[3] == 'command_args',
     'only truck and sortie take up to two door arguments')
 check(g:send('goto_vehicle sortie a b c')[3] == 'command_args', 'M6: sortie takes at most two door arguments')
+check(tostring(g:send('goto_vehicle sortie driver')[3]):find('^vehicle_none') ~= nil, 'M6: sortie door arguments pass the door guard (no unnamed vehicle here)')
 g.D.vehicle.gotoTruck = function() return false, 'door_lab_only' end
 check(g:send('goto_vehicle truck')[3] == 'door_lab_only', 'a door refusal is the result')
 check(g:send('goto_partner_vehicle')[3] == 'goto_partner_vehicle_routed' and g:send('vehicle_door partner')[3] == 'vehicle_door_routed',

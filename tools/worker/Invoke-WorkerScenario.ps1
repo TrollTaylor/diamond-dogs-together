@@ -93,6 +93,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                      every 6 s presses E only for a verified helicopter state,
                                      otherwise escape then enter to try skipping a cutscene
   placebehind <viewer> <target> <back_m> [side_m]
+                                     (back_m 1..40; or 0..40 with |side_m| 1..40, e.g. beside a seated driver: M6)
                                      teleport viewer behind (and to the right of) target, facing it,
                                      with a 3 m upward margin; require fresh position to settle within 3 s
   state                            print both roles' mission / gameplay-ready state
@@ -337,7 +338,8 @@ foreach($line in $steps){
         '^boot$' {$t[0] -ceq 'boot' -and $t.Count -ge 2}
         '^waitmission$' {$t.Count -in 4,5 -and $t[1] -cin 'host','guest' -and $t[2] -cin '30010','30020','30050','40010','40020','40050' -and [int]$t[3] -ge 5 -and [int]$t[3] -le 400 -and ($t.Count -eq 4 -or $t[4] -ceq 'only')}
         '^waitgameplay$' {$t.Count -eq 3 -and $t[1] -in 'host','guest' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
-        '^placebehind$' {$t.Count -in 4,5 -and $t[1] -in 'host','guest' -and $t[2] -in 'host','guest' -and $t[1] -ne $t[2] -and [double]$t[3] -ge 1 -and [double]$t[3] -le 40}
+        '^placebehind$' {$t.Count -in 4,5 -and $t[1] -in 'host','guest' -and $t[2] -in 'host','guest' -and $t[1] -ne $t[2] -and [double]$t[3] -le 40 -and
+            ([double]$t[3] -ge 1 -or ($t.Count -eq 5 -and [double]$t[3] -ge 0 -and [Math]::Abs([double]$t[4]) -ge 1 -and [Math]::Abs([double]$t[4]) -le 40))}
         '^stance$' {$t.Count -eq 3 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'stand','crouch','prone'}
         '^heldcapture$' {$t.Count -eq 6 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'host','guest' -and
             (Test-ScenarioKeys $t[3]) -and (Test-ScenarioLabel $t[4]) -and [int]$t[5] -ge 1 -and [int]$t[5] -le 5}

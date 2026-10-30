@@ -173,7 +173,7 @@ do
         local ok3, msg3 = V.gotoTruck(a, id)
         if ok3 ~= nil then return ok3, msg3 end
       end
-      if #a > 2 then return false, "door_unavailable" end
+      if #a > 2 and a[2] ~= "sortie" then return false, "door_unavailable" end
       local me, best, bestD, bestName = A.pose(), nil, nil, nil
       local names = {}
       if a[2] == "sortie" then

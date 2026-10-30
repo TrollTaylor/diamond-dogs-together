@@ -482,7 +482,9 @@ off.S.step(1400)
 check(#off.tx == 0 and off.has('event=seat;state=off') and #off.logs == 1, 'key off on this copy: one state=off line, nothing sent')
 off.on = 1
 off.S.step(2000)
-check(#off.tx == 0 and #off.logs == 1, 'off stays off for the pairing (one read)')
+check(#off.tx == 0 and #off.logs == 1, 'off is read again only after 10 s')
+off.S.step(11100)
+check(off.has('event=seat;state=on') and #off.tx == 1 and off.tx[1][3] == 25608, 'the board installed later: on, and the claim goes out')
 -- Host.
 local hs = seatEnv(true)
 hs.want, hs.age = 25608, 300

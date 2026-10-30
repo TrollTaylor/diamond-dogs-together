@@ -1,0 +1,118 @@
+# M6 play rehearsal (docs/vehicles-companions-design.md section 9 M6): -Mode play -WanSim bad, the shipped play
+# defaults plus the M6 keys named (partner_ride_front=1, partner_ride_race=1; both are lab and play keys, off unless
+# named). Play refuses the lab levers (boot, debug_vehicle_door, relief_load), so this covers the light vehicle's front
+# seat in both roles and the seat race at the Wakh Sind jeep; the truck cab needs the sortie truck (lab only) and is
+# not rehearsed here. The passenger reaches the front right door with placebehind <passenger> <driver> 0 1.8 (beside the
+# seated driver, 1.8 m to the right): the stock nearest search then offers seat 1.
+# Expected as in coop-vehicle-passenger-m6.txt (jeep halves and race), with no board_uncertain, no
+# pass_camera state=refused and the stock get-off in both roles.
+# Run (play):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed afgh-ledge
+labsetting partner_ride_front=1
+labsetting partner_ride_race=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host press e 150
+wait 3000
+host run vehicle_seats
+host require vehicle;id=
+host hold s 1500
+host release
+wait 1500
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 15
+placebehind guest host 0 1.8
+wait 3000
+both capture m6p-jeep-1-beside
+guest press e 150
+wait 4000
+waitlog guest 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=1;' 15
+waitlog guest 'partner_ride=pass_camera; state=connect; vehicle=256[0-9][0-9]; seat=1; reason=handle' 5
+wait 1000
+both capture m6p-jeep-1-seated
+host hold w 1500 nowait
+both burst m6p-jeep-1-drive 6 150
+host release
+host hold w+a 1500 nowait
+guest burst m6p-jeep-1-drive-g 6 150
+host release
+wait 1500
+guest press e 150
+guest burst m6p-jeep-1-exit 6 300
+wait 3000
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=256[0-9][0-9]; seat=1; reason=stock; ok=1' 10
+both capture m6p-jeep-1-exited
+host press e 150
+wait 3000
+state
+both debug heal
+guest debug goto_vehicle jeep
+wait 2000
+placebehind host guest 12 0
+wait 5000
+guest press e 150
+wait 3000
+guest run vehicle_seats
+guest require vehicle;id=
+guest hold s 1500
+guest release
+wait 1500
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 15
+placebehind host guest 0 1.8
+wait 3000
+host press e 150
+wait 4000
+waitlog host 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=1;' 15
+wait 1000
+both capture m6p-jeep-1r-seated
+guest hold w 1500 nowait
+both burst m6p-jeep-1r-drive 6 150
+guest release
+guest hold w+d 1500 nowait
+host burst m6p-jeep-1r-drive-h 6 150
+guest release
+wait 1500
+host press e 150
+host burst m6p-jeep-1r-exit 6 300
+wait 3000
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=off' 5
+both capture m6p-jeep-1r-exited
+guest press e 150
+wait 3000
+state
+host debug goto_vehicle jeep
+wait 1500
+placebehind guest host 1 1.2
+wait 3500
+waitlog guest 'world_lua=event=seat; action=deny; vehicle=256[0-9][0-9]; role=guest; set=1' 10
+waitlog host 'world_lua=event=seat; action=deny; vehicle=256[0-9][0-9]; role=host; why=host_first' 5
+both capture m6p-race-before
+both press e 150
+wait 4000
+host run vehicle_seats
+host expect vehicle;id=
+guest run vehicle_seats
+guest expect vehicle_not_riding
+both capture m6p-race
+host press e 150
+wait 3000
+state
