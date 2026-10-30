@@ -80,6 +80,11 @@ struct RaceState {
     std::uint16_t grant;          // the granted vehicle while live (0xFFFF none)
     std::uint32_t grant_left_ms;
     std::uint32_t holds;          // answers refused by the hold (process lifetime)
+    // Seats on (design 8.21 R6): the vehicle whose ride icon site C last refused (a deny or a hold; 0xFFFF none)
+    // and how long ago (0xFFFFFFFF none). While it is fresh only that vehicle's stock Fulton prompt is left on E:
+    // Lua withholds the Fulton action (world_ride_pose.lua S.guard).
+    std::uint16_t refused;
+    std::uint32_t refused_age_ms;
 };
 void ReadRace(RaceState& out) noexcept;
 bool Installed() noexcept;

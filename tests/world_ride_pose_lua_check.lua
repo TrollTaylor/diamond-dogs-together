@@ -441,7 +441,7 @@ local function seatEnv(host)
         if h then c.hold = tonumber(h) end
         if c.on ~= 1 then return {ok = true, on = 0} end
         return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = c.hits,
-            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0}
+            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0, ref = c.ref or 65535, rage = c.rage or -1}
     end
     local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
     env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
@@ -451,7 +451,7 @@ local function seatEnv(host)
     local f = assert(loadfile(arg[1]))
     setfenv(f, env)
     f()
-    c.W, c.R, c.S = W, W.ridePose, W.ridePose.seat
+    c.W, c.R, c.S, c.env = W, W.ridePose, W.ridePose.seat, env
     function c.drive(id) c.driving = id; env.vars.playerVehicleGameObjectId = id or 65535 end
     function c.has(p) for _, l in ipairs(c.logs) do if l:find(p, 1, true) then return true end end return false end
     function c.count(p) local n = 0 for _, l in ipairs(c.cmds) do if l == p then n = n + 1 end end return n end
@@ -567,4 +567,70 @@ hoff.on = 0
 hoff.W.handlers[54]({1, 25608, 0, 2, 1})
 check(#hoff.tx == 0, 'a host with the key off never answers (the guest goes stock after its timeout)')
 
+-- Seats on (design 8.21 R6): while the native board refused this copy's ride icon for an empty vehicle (a live deny,
+-- or the guest's hold before the host's grant) within GUARD_MS, only that vehicle's stock Fulton prompt is left on E and
+-- holding E would Fulton it: the Fulton action is withheld (PlayerDisableAction.FULTON), polled every tick. Only a bit
+-- this module added is removed again (world_revive_input.lua's rule), so a mission's own Fulton lock is kept.
+local fg = seatEnv(false)
+fg.env.vars.playerDisableActionFlag = 4
+fg.env.PlayerDisableAction = {FULTON = 8}
+fg.S.step(1000)
+fg.S.guard(1000)
+check(fg.env.vars.playerDisableActionFlag == 4 and not fg.has('action=fulton'), 'no refusal: the Fulton action stays available')
+fg.ref, fg.rage = 25608, 0
+fg.S.guard(1010)
+check(fg.env.vars.playerDisableActionFlag == 12 and fg.has('event=seat;action=fulton;on=1;vehicle=25608'),
+    'a refused ride icon withholds the Fulton action (other bits kept), logged')
+fg.S.guard(1020)
+local fultonLines = 0
+for _, l in ipairs(fg.logs) do if l:find('action=fulton', 1, true) then fultonLines = fultonLines + 1 end end
+check(fg.env.vars.playerDisableActionFlag == 12 and fultonLines == 1, 'withholding is idempotent and logged once')
+fg.rage = 350
+fg.S.guard(1360)
+check(fg.env.vars.playerDisableActionFlag == 12, 'inside 400 ms of the last refusal: still withheld')
+fg.rage = 450
+fg.S.guard(1460)
+check(fg.env.vars.playerDisableActionFlag == 4 and fg.has('event=seat;action=fulton;on=0;vehicle=25608'),
+    'no refusal for 400 ms (the grant came, or the player walked off): the Fulton action is back')
+fg.env.vars.playerDisableActionFlag = 8
+fg.rage = 0
+fg.S.guard(1600)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is not doubled')
+fg.rage = 900
+fg.S.guard(2500)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is never removed')
+fg.env.vars.playerDisableActionFlag = 0
+fg.rage = 0
+fg.S.guard(2600)
+check(fg.env.vars.playerDisableActionFlag == 8, 'refused again: withheld')
+fg.env.vars.playerDisableActionFlag = 0
+fg.S.guard(2610)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission overwrite while refused is withheld again')
+local polls = fg.count('poll')
+local noop = function() end
+fg.R.refresh, fg.R.send, fg.R.fastSend, fg.R.fastApply = noop, noop, noop, noop
+fg.W.tick()
+check(fg.count('poll') > polls, 'the world tick runs the guard every tick (not only every 200 ms seat step)')
+fg.W.paired = false
+fg.W.tick()
+check(fg.env.vars.playerDisableActionFlag == 0, 'unpaired: the withheld Fulton action comes back at once')
+local fo = seatEnv(false)
+fo.on = 0
+fo.env.vars.playerDisableActionFlag = 4
+fo.env.PlayerDisableAction = {FULTON = 8}
+fo.ref, fo.rage = 25608, 0
+fo.S.guard(1000)
+check(fo.env.vars.playerDisableActionFlag == 4, 'the board off (key off): never withheld')
+local fh = seatEnv(true)
+fh.env.vars.playerDisableActionFlag = 0
+fh.env.PlayerDisableAction = {FULTON = 8}
+fh.ref, fh.rage = 25608, 10
+fh.S.guard(1000)
+check(fh.env.vars.playerDisableActionFlag == 8, "the host's own refusal (a yielded vehicle) withholds it too")
+local fn = seatEnv(false)
+fn.env.vars.playerDisableActionFlag = 0
+fn.env.PlayerDisableAction = nil
+fn.ref, fn.rage = 25608, 0
+fn.S.guard(1000)
+check(fn.env.vars.playerDisableActionFlag == 0, 'no PlayerDisableAction table: nothing written')
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

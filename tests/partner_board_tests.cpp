@@ -787,14 +787,21 @@ void TestRace() {
     Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "site A: the stock nearest search even while denied");
     pb::ReadRace(rs);
     Check(rs.deny == 25608 && rs.deny_left_ms == 3000 && rs.hits == 0, "the deny is live for 3 s");
+    Check(rs.refused == pb::kVehicleUnknown && rs.refused_age_ms == 0xFFFFFFFFu, "seats on: no refusal yet (no Fulton guard)");
     Check(!C(unit), "denied: site C answers false (no ride icon)");
     pb::ReadRace(rs);
     Check(rs.hits == 1 && rs.want == 25608, "counted; the denied player still wants it (host_first stays true for the host)");
+    Check(rs.refused == 25608 && rs.refused_age_ms == 0, "seats on: the refused vehicle and when (Lua withholds its Fulton)");
+    g.now = 1350;
+    pb::ReadRace(rs);
+    Check(rs.refused == 25608 && rs.refused_age_ms == 50, "the refusal ages");
+    g.now = 1300;
     g.driver_result = 1;
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "denied: phase 1 takes the no-seat exit");
     Check(C(other), "another vehicle is not denied");
     pb::ReadRace(rs);
     Check(rs.hits == 2, "site B's deny counted");
+    Check(rs.refused == 25608, "a pass and site B's backstop leave the last site C refusal (the prompt is site C's)");
     // The guest's hold (review R1): no driver's seat of an empty vehicle without the host's grant.
     pb::RaceDeny(pb::kVehicleUnknown, 0);
     pb::RaceHold(2000);
@@ -803,6 +810,7 @@ void TestRace() {
     Check(!C(unit), "held: no ride icon for an ungranted vehicle");
     pb::ReadRace(rs);
     Check(rs.holds == 1 && rs.want == 25608 && rs.hits == 2, "a hold is counted apart from the deny; the want is recorded");
+    Check(rs.refused == 25608 && rs.refused_age_ms == 0, "a hold refusal is a refusal too (the guest's Fulton is withheld)");
     g.driver_result = 0;
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "held: phase 1 never seats the guest as the driver of the wanted vehicle");
     Check(pb::detail::SiteBForTest(other, pos) == 0, "site B holds only the vehicle site C saw (no want for it: stock)");
@@ -851,6 +859,81 @@ void TestRace() {
     pb::ReadRace(rs);
     Check(rs.deny == pb::kVehicleUnknown && rs.grant == pb::kVehicleUnknown, "a non-vehicle id is never denied or granted");
     pb::detail::ResetForTest();
+}
+
+// Seats on (8.21's residual of D16): the driver's D-Dog jumps into seat 1 after the passenger sat there (the
+// handshake said free). The driver's copy then draws the peer's seat-1 ride in a free back seat (3, then 2), latched
+// for that ride, so two bodies are never drawn in one seat; any other case keeps the peer's own seat.
+void TestDrawSeat() {
+    const auto in = [](std::uint16_t r1, std::uint16_t r2 = 0xFFFF, std::uint16_t r3 = 0xFFFF) {
+        pb::DrawSeatIn d{};
+        d.vehicle_ride = true;
+        d.vehicle = 25608;
+        d.seat = 1;
+        d.local_drives = true;
+        d.riders_ok = true;
+        d.rider[0] = 0;
+        d.rider[1] = r1;
+        d.rider[2] = r2;
+        d.rider[3] = r3;
+        return d;
+    };
+    Check(pb::kBuddyDogType == 19 && (9728 >> 9) == pb::kBuddyDogType, "the D-Dog's id 0x2600 | index is type 19 (TppBuddyDog2)");
+    pb::DrawSeatIn d = in(9728);
+    pb::DrawSeatOut o = pb::DrawSeat(d);
+    Check(o.seat == 3 && o.moved && Same(o.reason, "dog"), "the driver's dog in seat 1: the peer is drawn in the back right seat");
+    d = in(9728, 0xFFFF, 1194);
+    o = pb::DrawSeat(d);
+    Check(o.seat == 2 && o.moved && Same(o.reason, "dog"), "the back right seat taken: the back left seat");
+    d = in(9728, 1195, 1194);
+    o = pb::DrawSeat(d);
+    Check(o.seat == 1 && !o.moved && Same(o.reason, "full"), "no free back seat: seat 1 (logged as full)");
+    d = in(0xFFFF);
+    o = pb::DrawSeat(d);
+    Check(o.seat == 1 && !o.moved && Same(o.reason, "free"), "seat 1 free on this copy: seat 1");
+    d = in(1194);
+    o = pb::DrawSeat(d);
+    Check(o.seat == 1 && !o.moved && Same(o.reason, "other"), "a soldier in seat 1 is not moved for (the handshake keeps boarders out)");
+    d = in(9728);
+    d.riders_ok = false;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 1 && !o.moved && Same(o.reason, "unread"), "unread riders: the peer's own seat");
+    d = in(9728);
+    d.local_drives = false;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 1 && !o.moved && Same(o.reason, "none"), "only the copy that drives the vehicle moves the drawing");
+    d = in(9728);
+    d.seat = 2;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 2 && !o.moved && Same(o.reason, "none"), "a back seat is drawn where the peer sits");
+    d = in(9728);
+    d.vehicle_ride = false;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 1 && !o.moved && Same(o.reason, "none"), "no vehicle ride: unchanged");
+    // Latched for the ride: no hop back when the dog leaves, kept while unread; a taken latched seat decides again.
+    d = in(0xFFFF);
+    d.latched_vehicle = 25608;
+    d.latched_seat = 3;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 3 && o.moved && Same(o.reason, "latched"), "the dog left seat 1: the peer stays in the back seat for this ride");
+    d.riders_ok = false;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 3 && o.moved && Same(o.reason, "latched"), "latched while the riders are unread");
+    d = in(0xFFFF, 0xFFFF, 9728);
+    d.latched_vehicle = 25608;
+    d.latched_seat = 3;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 1 && !o.moved && Same(o.reason, "free"), "the latched seat is taken now (the dog moved there): decided again");
+    d = in(9728);
+    d.latched_vehicle = 25609;
+    d.latched_seat = 2;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 3 && Same(o.reason, "dog"), "a latch for another vehicle is ignored");
+    d = in(9728);
+    d.latched_vehicle = 25608;
+    d.latched_seat = 1;
+    o = pb::DrawSeat(d);
+    Check(o.seat == 3 && Same(o.reason, "dog"), "only a back seat latches");
 }
 
 // Review R1/R2: site C is installed only with the race key, after A and B; its operand is masked like theirs.
@@ -992,6 +1075,7 @@ int main() {
     TestSeatOneInstall();
     TestSeatOneLocalPassenger();
     TestRace();
+    TestDrawSeat();
     TestRaceInstall();
     TestRemapWanted();
     TestSeatRequest();

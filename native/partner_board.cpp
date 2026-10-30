@@ -57,6 +57,8 @@ std::atomic<std::uint64_t> g_deny{kVehicleUnknown};
 std::atomic<std::uint64_t> g_grant{kVehicleUnknown};
 std::atomic<std::uint64_t> g_hold{0};
 std::atomic<std::uint32_t> g_race_hits{0}, g_hold_hits{0};
+// Seats on (8.21 R6): site C's last refusal (vehicle | ms << 32; the Fulton guard reads its age).
+std::atomic<std::uint64_t> g_refused{kVehicleUnknown};
 volatile LONG g_race_tried = 0;
 const char* g_race_refusal = nullptr;
 void* g_stub_c = nullptr;
@@ -236,6 +238,8 @@ bool SiteC(void* action, std::uint32_t body, void* unit, std::uint16_t id, char*
         const RaceVerdict v = RaceDecide(RaceFor(vehicle, now));
         if (v == RaceVerdict::deny) g_race_hits.fetch_add(1, std::memory_order_relaxed);
         if (v == RaceVerdict::hold) g_hold_hits.fetch_add(1, std::memory_order_relaxed);
+        if (v != RaceVerdict::pass)
+            g_refused.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
         result = v == RaceVerdict::pass;
     }
     SetLastError(error);
@@ -423,6 +427,7 @@ void ResetForTest() noexcept {
     g_hold.store(0);
     g_race_hits.store(0);
     g_hold_hits.store(0);
+    g_refused.store(kVehicleUnknown);
     g_race_tried = 0;
     g_race_refusal = nullptr;
     g_stub_c = nullptr;
@@ -655,6 +660,9 @@ void ReadRace(RaceState& out) noexcept {
     out.hold_left_ms = out.hold ? hold_until - now : 0;
     out.hits = g_race_hits.load(std::memory_order_relaxed);
     out.holds = g_hold_hits.load(std::memory_order_relaxed);
+    const std::uint64_t refused = g_refused.load(std::memory_order_acquire);
+    out.refused = static_cast<std::uint16_t>(refused & 0xFFFFu);
+    out.refused_age_ms = out.refused == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(refused >> 32);
 }
 
 bool Installed() noexcept { return g_installed != 0; }

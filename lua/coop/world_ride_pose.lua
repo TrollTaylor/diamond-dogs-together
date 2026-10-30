@@ -413,20 +413,13 @@ W.handlers[FAST] = function(v)
     end
     R.trackPush(track, now, v[1], v[4], v[5], v[6], v[7])
 end
--- M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT; lab.ini partner_ride_race=1 on both
--- copies, lab and play, off unless named): SEAT (op 54: seq, TppVehicle2 id, seat 0, role 1 host / 2 guest,
--- action 1 claim / 2 grant / 3 deny) keeps two players from both taking the driver's seat of one empty vehicle.
--- The native board (MGS_COOP_BOARD_SEAT_V1, site C) records the empty vehicle whose driver's seat the local
--- pre-query's final answer offers (want: a usable door, review R2) and refuses the ride icon for a denied one
--- or, on the guest, for one without a live grant (the hold: review R1, no window of one round trip). The guest
--- refreshes its hold lease every step (HOLD_MS) and claims its want every CLAIM_MS; the host denies a claim
--- for a vehicle it drives or wants itself (its want within HOST_WANT_MS: ties go to the host), unless it
--- granted that vehicle within GRANT_MS (a live grant sticks while the guest keeps claiming), and grants the
--- rest, yielding the granted vehicle at once for GRANT_MS (its own native deny). A granted guest gets GRANT_MS
--- of native grant (its ride icon); a denied guest DENY_MS of deny and a toast (NOTE 13 a=6); a host that
--- tries a yielded vehicle NOTE 13 a=7. A host that never answers (0.14.4 skips op 54 by its length, or its key
--- is off) leaves a claim unanswered: after ANSWER_MS the guest drops its hold (stock) until an answer comes.
--- Once the winner drives, the peer-driver policy decides (the loser may take a passenger seat).
+-- M6 seat races (design 4 rule 3, 5 SEAT; protocol 21; partner_ride_race, on with the gun profile): SEAT (op 54:
+-- seq, TppVehicle2 id, seat 0, role 1 host / 2 guest, action 1 claim / 2 grant / 3 deny) keeps two players from both
+-- driving one empty vehicle. Native site C records the want (the pre-query's final answer) and refuses the ride icon
+-- for a denied vehicle or, on the guest, one without a live grant (the hold). The guest holds (HOLD_MS lease) and
+-- claims its want; the host denies one it drives or wants (ties to the host) unless granted within GRANT_MS, else
+-- grants and yields it. NOTE 13 a=6: the denied guest; a=7: the host tried a yielded one. A claim unanswered for
+-- ANSWER_MS (0.14.4, key off): the guest goes stock. Once the winner drives, the peer-driver policy decides.
 local SEAT = 54
 W.OP.SEAT = SEAT
 local S = {seq = 0, next = 0, claimAt = {}, granted = {}, gotGrant = {}, toastAt = 0, off = nil,
@@ -457,9 +450,30 @@ end
 local function wants(r, vehicle, ms)
     return r and r.on == 1 and r.want == vehicle and integer(r.age, 0, ms)
 end
+-- Seats on (8.21 R6): while site C refuses the ride icon, E offers only the vehicle's Fulton: FULTON is withheld while
+-- it refused within GUARD_MS (receipt ref / rage, every tick); only a bit added here is removed (revive's rule).
+local GUARD_MS = 400
+local function fultonFlag(on)
+    local ok, f, b = pcall(function() return vars.playerDisableActionFlag, PlayerDisableAction.FULTON end)
+    if not ok or not integer(f, 0, 2147483647) or not integer(b, 1, 1073741824) then S.fAdded = nil; return end
+    local set = math.floor(f / b) % 2 == 1
+    local v = on and not set and f + b or not on and S.fAdded and set and f - b
+    if not on then S.fAdded = nil end
+    if v and pcall(function() vars.playerDisableActionFlag = v end) and on then S.fAdded = true end
+end
+function S.guard()
+    local r = not S.off and S.board("poll")
+    local id = r and r.on == 1 and seatVehicle(r.ref) and integer(r.rage, 0, GUARD_MS) and r.ref or nil
+    fultonFlag(id ~= nil)
+    if id == S.fulton then return end
+    S.n.fLog = (S.n.fLog or 0) + 1
+    if S.n.fLog <= 20 then seatLog(string.format("action=fulton;on=%d;vehicle=%d", id and 1 or 0, id or S.fulton)) end
+    S.fulton = id
+end
 -- Unpaired, or the world link below level 3: no hold survives (it would keep the guest from any driver's seat).
 function S.reset()
     if S.held then S.board("hold 0") end
+    if S.fulton or S.fAdded then S.off = true; S.guard() end
     S.off, S.granted, S.gotGrant, S.next, S.held, S.ask, S.silent, S.hitsSeen = nil, {}, {}, 0, nil, nil, nil, nil
 end
 -- Off (the key, or the board not installed yet) is read again every OFF_MS; logged once per pairing.
@@ -571,7 +585,7 @@ function W.tick(...)
     end
     if tick then tick(...) end
     R.send(now)
-    if W.paired and W.eff and W.eff >= 3 then S.step(now) else S.reset() end
+    if W.paired and W.eff and W.eff >= 3 then S.step(now); S.guard(now) else S.reset() end
     if W.paired and W.eff and W.eff >= 3 then
         R.fastSend(now)
         R.fastApply(now)

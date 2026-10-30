@@ -1456,6 +1456,18 @@ struct Driver {
     std::uint16_t seat_rider_vehicle, seat_rider_value;
     bool seat_rider_read;
     std::uint64_t seat_rider_ms;
+    // Seats on (docs/vehicles-companions-design.md 8.25, D16's residual): the seat this copy draws the peer's seat-1
+    // ride in while its own D-Dog took seat 1 of the vehicle its player drives (partner_board::DrawSeat), latched per
+    // ride, and the rider[1..3] read behind it (every kSeatRiderMs while that ride lasts).
+    struct SeatDraw {
+        std::uint16_t vehicle = 0xFFFF;  // the latched ride's vehicle (0xFFFF: the peer's own seat is drawn)
+        std::uint8_t seat = 0xFF;        // the latched back seat
+        std::uint16_t read_vehicle = 0xFFFF;
+        std::uint64_t read_ms = 0;
+        bool riders_ok = false;
+        std::uint16_t rider[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+        bool logged = false;             // a seat_draw line is out for the latch (one release line follows)
+    } seat_draw;
     std::uint16_t local_vehicle;
     // F1 vehicles: the local player as a stock back-seat passenger (the native
     // report; Lua says foot for act 0x6E), kept apart from local_vehicle (the
