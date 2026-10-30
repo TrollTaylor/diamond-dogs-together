@@ -564,7 +564,17 @@ try {
             $file = Join-Path $fixture 'play-seat-gun-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_gun=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_gun'])|$($m['partner_seat_gun_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '1|1|0x0|0/0' 'native: a named seat gun runs in play'
+            # Seats on (docs/vehicles-companions-design.md 8.25): Play-Coop never names the seat keys; play defaults the jeep's
+            # front seat, the truck cab and the seat race on with the gun profile; a named 0 is each one's off switch.
+            Assert-True (!$hostIni.Contains('partner_ride_front') -and !$guestIni.Contains('partner_ride_cab') -and
+                !$clipsIni.Contains('partner_ride_race')) 'Play-Coop lab.ini never names the seat keys'
+            $n = Invoke-IniCheck lab (Join-Path $fixture 'play-host-lab.ini')
+            Assert-Equal "$($n['partner_ride_front'])|$($n['partner_ride_cab'])|$($n['partner_ride_race'])|$($n['partner_ride_front_given'])|$($n['partner_ride_cab_given'])|$($n['partner_ride_race_given'])" '1|1|1|0|0|0' 'native: play defaults the front seat, the cab and the seat race on'
+            $file = Join-Path $fixture 'play-seats-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_front=0`npartner_ride_cab=0`npartner_ride_race=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_front'])|$($m['partner_ride_cab'])|$($m['partner_ride_race'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0|0|0x0|0/0' 'native: each seat key named 0 turns it off in play'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
+            Assert-Equal "$($n['partner_ride_front'])|$($n['partner_ride_cab'])|$($n['partner_ride_race'])" '1|1|1' 'native: play guest defaults the seats on'
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'
             Assert-Equal "$($n['partner_ride_census'])|$($n['partner_ride_seat_id'])|$($n['partner_ride_tilt'])" '0|1|1' 'native: play guest admits the seat by id and RIDE_TILT by default, no census'
