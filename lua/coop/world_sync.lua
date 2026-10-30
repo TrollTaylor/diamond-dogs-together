@@ -365,8 +365,9 @@ do
     if not h then
       -- 0.13.6: an unmapped id may be a vehicle (world_vehicle.lua; its own errors stay its own).
       if W.vehicleGone then pcall(W.vehicleGone.observe, kind, a0, class2, a1) end
-      -- M2 (E19): or this copy's dog (world_buddy.lua W.companionHurt; companion_host_owned only).
-      if W.companionHurt then pcall(W.companionHurt, kind, a0, class2) end
+      -- M2 (E19): or this copy's dog (world_buddy.lua W.companionHurt; companion_host_owned only). The raw attacker
+      -- id too: the stock dying penalty's player test (world_companion_guard.lua, the heroism given back).
+      if W.companionHurt then pcall(W.companionHurt, kind, a0, class2, att) end
       return
     end
     if kind == "ChangePhase" then
