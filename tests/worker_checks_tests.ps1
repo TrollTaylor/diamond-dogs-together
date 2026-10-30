@@ -168,7 +168,7 @@ try {
 
     # Detached controller fixtures share the exact six-argument PowerShell
     # contract. Names, script paths, interpreter flags and arity stay explicit.
-    $psNames=@('build_profile_tests','worker_session_tests','local_coop_windows_tests')
+    $psNames=@('build_profile_tests','worker_session_tests','local_coop_windows_tests','worker_coverage_tests')
     $psInventory=[pscustomobject]@{tests=@($psNames|ForEach-Object {
         [pscustomobject]@{name=$_;command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture ('tests\'+$_+'.ps1')));properties=@()}
     })}

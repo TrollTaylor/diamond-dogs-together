@@ -18,7 +18,7 @@ set(MGS_SLOW_TESTS
   # PowerShell suites
   lab_scripts_tests friend_package_tests worker_session_tests local_coop_session_tests local_coop_windows_tests
   build_profile_tests worker_loading_tests probe_install_recovery mgo_unique_rest_session_tests
-  mgo_standing_cycle_session_tests mgo_standing_frame_policy_tests
+  mgo_standing_cycle_session_tests mgo_standing_frame_policy_tests worker_coverage_tests
   # over ~10 s (real sockets with timers; the launcher core end to end; real helper processes)
   link_udp_tests ddt_core_tests ddt_local_watch_process
   # the game folder and the GPU
@@ -33,6 +33,11 @@ set(MGS_TEST_RESOURCE_LOCKS
 
 function(mgs_label_tests)
   get_property(_mgs_tests DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY TESTS)
+  # Every registered test name, one per line: worker_coverage_tests checks that the Release receipt
+  # (tools/worker/Invoke-WorkerChecks.ps1 Assert-WorkerCoverage) audits or excludes each one (M7 review: a new
+  # test missing from Get-WorkerTests failed only at tools/package.ps1 -Friend).
+  string(JOIN "\n" _mgs_names ${_mgs_tests})
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ctest-test-names.txt" "${_mgs_names}\n")
   set(_mgs_fast 0)
   set(_mgs_slow 0)
   foreach(_mgs_test IN LISTS _mgs_tests)
