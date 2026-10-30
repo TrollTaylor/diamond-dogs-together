@@ -1207,14 +1207,14 @@ if(WIN32)
     # FriendCommon.psm1 and the local two-window test). The test needs
     # PowerShell 7; it runs the developer scripts under Windows PowerShell 5.1
     # (what Play-Offline-Coop.bat uses) when available.
-    # Three shards: the package part, the local two-window test (which builds that package itself when the package part
-    # runs in another shard), and the pure and handoff parts.
-    mgs_add_test_shards(friend_package_tests 3 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
+    # Two shards: the package part (with the local two-window test, which copies its package), and the rest. The local
+    # test on its own shard (building that package again) was slower: its installs wait for the shared install turn.
+    mgs_add_test_shards(friend_package_tests 2 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
   else()
     # Keep the gap visible: CTest lists the suite as skipped instead of omitting it.
     message(WARNING "PowerShell 7 (pwsh) not found: lab_scripts_tests (tools/lab scripts, guest install path) and friend_package_tests will be reported as SKIPPED, not run.")
     mgs_add_test_shards(lab_scripts_tests 7 SKIPPED)
-    mgs_add_test_shards(friend_package_tests 3 SKIPPED)
+    mgs_add_test_shards(friend_package_tests 2 SKIPPED)
     add_test(NAME build_profile_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(build_profile_tests PROPERTIES SKIP_RETURN_CODE 1)
     mgs_add_test_shards(worker_session_tests 2 SKIPPED)
