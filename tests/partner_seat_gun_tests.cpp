@@ -40,6 +40,13 @@ int main() {
     // --- The stock nodes and blends (StateGunHoldStart 0x1075A50, the GunHold imm64s at 0x1070B4C / 0x10721CD).
     Check(sg::kGunHoldStart == 0x50130AE2E584ULL && sg::kGunHold == 0xAA0EA22A5E0EULL, "the stock gun-hold nodes");
     Check(sg::kStartBlend == 0.0f, "the stock raise passes 0.0f to SetCurrentNode");
+    // The generated contract pins the same nodes at their stock sites (seat_gun_assertions) and the rate fields the
+    // hook writes (0x108E7D0's stores, the record chain the rates mirror uses).
+    Check(sg::kGunHoldStart == c::seat_gun_node_start && sg::kGunHold == c::seat_gun_node_hold, "the contract's seat gun nodes");
+    Check(c::rate_aim_pitch == 0x5c && c::rate_aim_yaw == 0x60 && c::rate_rec_stride == 0x88 && c::ps_rates == 0x260 &&
+              c::rate_sp_vtable_rva == 0x23ad380 && c::rate_rec_vtable_rva == 0x23ad2b0 && c::rate_hold_type == 0x58,
+          "the contract's rate record fields and vtables (the hook's constants)");
+    Check(sizeof(c::seat_gun_blocks) / sizeof(c::seat_gun_blocks[0]) == 2 && c::seat_gun_blocks[0] == 0x10721a9, "the seat gun blocks");
     Check(sg::kPitchRangeDeg == c::aim_range_deg[0][0] && sg::kYawRangeDeg == c::aim_range_deg[0][1],
           "the default class's seat range is the contract's aim range row 0");
 

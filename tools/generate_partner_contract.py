@@ -990,6 +990,20 @@ SEAT_AIM_SITES = [
     (0x108CDE0, 'c3c682d403000005c3', 'UpdateAttackType (3/3): the act-99 (heli door) posture 5'),
 ]
 SITES += SEAT_AIM_SITES
+# --- M7 seat gun (partner_seat_gun; docs/native-puppet.md "Seat gun"): the partner's raised gun on the DM-seated body 1.
+# The gesture hook puts body 1's graph 2 on GunHoldStart (the stock raise: SetCurrentNode(cs, id, 2, 0x50130AE2E584,
+# 0.0f, 0), SEAT_AIM_SITES 0x1075A23) and, at its motion end, on GunHold 0xAA0EA22A5E0E, the node the stock gun-hold
+# state enters (0x10721B3 through vt+0x190 with 8.0f, right after it stores the gun record's hold type +0x268 into
+# rate record +0x58), and writes body 1's aim rates +0x5C / +0x60 (the stores of 0x108E7D0, partner_aim_sites).
+SEAT_GUN_SITES = [
+    (0x10721A9, '488b8960020000488b01ff100fb68e68020000f30f100520890801894858498b450849b90e5e2aa20eaa0000f30f11442420488b4878'
+     '41b802000000418bd7488b8938020000488b01ff9090010000',
+     'the gun-hold enter: rate record = *(PS+0x260) vt+0 (id); +0x58 = gunRec+0x268; cs vt+0x190(id, 2, GunHold '
+     '0xAA0EA22A5E0E, 8.0f)'),
+    (0x1070B4A, '49b90e5e2aa20eaa00004c8bc6418bd4498bcdf30f117c2420e81893feff81a6c4030000ffffff7f',
+     'the other GunHold entry: 0x1059E80(.., GunHold 0xAA0EA22A5E0E, ..), then gunRec+0x3C4 &= 0x7FFFFFFF'),
+]
+SITES += SEAT_GUN_SITES
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -2564,6 +2578,35 @@ def seat_aim_assertions():
     return out
 
 
+def seat_gun_assertions():
+    """M7 seat gun: the two graph-2 nodes the gesture hook requests are the stock gun-hold nodes, each imm64 found only at
+    its stock sites in the code sections (GunHoldStart once, in StateGunHoldStart; GunHold twice), and the hold's aim
+    rates are the fields 0x108E7D0 stores (+0x5C r5c, +0x60 r60) of the rate record the hook writes (vtables pinned)."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+
+    def imm64_hits(value):
+        needle = struct.pack('<Q', value)
+        hits = []
+        for sec in pe.sections:
+            if sec.Name.rstrip(b'\0').decode() not in ('.text', '.xtext'):
+                continue
+            data = sec.get_data()
+            i = data.find(needle)
+            while i >= 0:
+                hits.append(sec.VirtualAddress + i)
+                i = data.find(needle, i + 1)
+        return sorted(hits)
+    need(imm64_hits(0x50130AE2E584) == [0x1075A25], f'GunHoldStart only in StateGunHoldStart: {[hex(x) for x in imm64_hits(0x50130AE2E584)]}')
+    need(imm64_hits(0xAA0EA22A5E0E) == [0x1070B4C, 0x10721CD], f'GunHold at its two stock sites: {[hex(x) for x in imm64_hits(0xAA0EA22A5E0E)]}')
+    need(rd(0x108EC17, 10).hex() == 'f30f117f60f30f11475c', '0x108E7D0 stores r60 (+0x60) and r5c (+0x5C)')
+    need(struct.unpack('<f', rd(0x20FAAE4, 4))[0] == 8.0, 'the stock GunHold blend 8.0f (0x20FAAE4)')
+    return out
+
+
 # (call site, X vtable offset) of every census-found X call taking rec+0x240 (docs/anim-round2-throws.md "Other X
 # calls"). Only the five vt+0x160 sites (and vt+0x38 before 0x1062696) are audited; the others are not.
 # REC240_X_CALLS_BY_HAND load rcx before the census window. REC240_X_METHODS: the method in both concrete X vtables.
@@ -2994,6 +3037,7 @@ failures += ui_filter_assertions()
 failures += gesture_assertions()
 failures += gesture_lever_assertions()
 failures += seat_aim_assertions()
+failures += seat_gun_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -3448,6 +3492,14 @@ w('inline constexpr std::uint32_t flag_w0_armed=0x1000000, flag_w6_c2=0x4, flag_
 w('inline constexpr std::uint16_t act_ride_passenger=0x6e, act_ride_driver=0x6f, act_ride_getoff=0x70, act_heli_attack=0x63, act_horse_ride=0x79;')
 w('inline constexpr std::uint8_t upper_gun_hold=2, posture_heli=5, posture_horse=3;')
 w('inline constexpr std::uintptr_t seat_aim_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_AIM_SITES) + '};')
+w('// --- M7 seat gun (partner_seat_gun; docs/native-puppet.md "Seat gun") -----------------------------------------------')
+w('// The stock gun-hold nodes the gesture hook requests on the DM-seated body 1 (graph 2): GunHoldStart (StateGunHoldStart')
+w('// 0x1075A50, SetCurrentNode with 0.0f) and GunHold (the gun-hold enter 0x10721CB, 0x1070B4A); the hold writes body 1\'s')
+w('// aim rates rate_aim_pitch / rate_aim_yaw of its own rate record (stride rate_rec_stride, vtables rate_sp_vtable_rva /')
+w('// rate_rec_vtable_rva); the gun-hold enter stores the gun record\'s hold type +0x268 into rate record +0x58 first.')
+w('inline constexpr std::uint64_t seat_gun_node_start=0x50130ae2e584, seat_gun_node_hold=0xaa0ea22a5e0e;')
+w('inline constexpr std::size_t rate_hold_type=0x58, gun_hold_type=0x268;')
+w('inline constexpr std::uintptr_t seat_gun_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_GUN_SITES) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
 w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')
