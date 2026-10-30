@@ -10,8 +10,9 @@ the profile's newest passed receipt when the source snapshot, the test inputs (`
 `native/`, `lua/`, `tests/`, `tools/`, JSON fixtures and scenarios included), flags, cache options and built programs are
 unchanged (`-FreshChecks` opts out; never Release: the release gate always runs in full).
 **Measured [O]** (`-j 16`): full CTest 111-115 s -> 51 s (59-62 s while another checkout's suite runs); fast 12.4 s ->
-9.0 s; Research preflight 102 s -> 29 s fresh (38-57 s after a change), 1.0 s reused (receipt `20261030-153053-6f920a53688744e79806b86c4637a4d3`
-in `D:/mgs-coop-wt/launcher-setup/build/worker-runs`; an added `tests/fixtures` file refused live).
+9.0 s; Research preflight 102 s -> 29 s fresh (38-57 s after a change), 1.0 s reused (receipt `20261030-153053`; an
+added `tests/fixtures` file refused live). Hidden run `13d9ff4d1af14149a3e3da2b1bc600ab` (`boot-30020.txt`) started from
+that reused receipt: both copies at gameplay in 30020, frames on both, saves and baseline restored.
 **Rules (AGENTS.md):** iterate with the affected tests (`ctest -R`, `--case`, `-Part`, `-Fast`), the full suite once
 before merging; a lab-script change also runs the plain `tests/lab_scripts_tests.ps1` once (only it chains the dry parts
 through a real Start/Stop; at the current costs install and e2e share shard 7). **Not reached:** the full suite under
