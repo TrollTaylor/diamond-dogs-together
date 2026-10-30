@@ -3158,34 +3158,12 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
 // another owner) and the per-boarding episode lines; after the report ends the stock
 // get-off / FinishState clear it, else our own handle is cleared after kReleaseMs. Never
 // for the driver (stock) or body 1; nothing is written while the mission terminates.
-// Design 8.34 (review of 8.33): the seated aim view never outlives the mission. MissionEnd, Stop and MissionStart (before
-// its reset) write the raise back through the P it was applied with (the ticks return before TickPassCamera while the
-// mission ends; WriteRaise writes only while the entry is still ours); the ownership is dropped either way.
-void RaiseRevert(Driver& d, const Hooks& h, const char* reason) noexcept {
-    namespace pc = partner_pass_camera;
-    auto& c = d.mission.pass_camera;
-    if (!c.raise.applied) return;
-    const int index = c.raise.index;
-    bool ok = false;
-    if (h.pass_camera_raise_write && c.raise_p) {
-        pp::State st{};
-        st.P = c.raise_p;
-        ok = h.pass_camera_raise_write(h.context, st, index, false, pc::kRaiseM);
-    }
-    pc::RaiseForget(c.raise, ok);
-    c.raise_p = 0;
-    EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                "partner_ride=pass_camera; state=view; event=restore; reason=%s; ok=%u; index=%d; applies=%u; restores=%u; abandoned=%u\r\n",
-                reason, ok ? 1u : 0u, index, c.raise.applies, c.raise.restores, c.raise.abandoned);
-}
-
 void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pc = partner_pass_camera;
     Mission& m = d.mission;
     auto& c = m.pass_camera;
     if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
-    // A terminating mission writes nothing here (Tick returns before this call anyway); the raise is written back by
-    // RaiseRevert from MissionEnd / Stop / MissionStart (design 8.34).
+    // A terminating mission writes nothing here (Tick returns before this call anyway).
     if (terminating) return;
     if (!d.pass_camera_install_tried) {
         d.pass_camera_install_tried = true;
@@ -3250,42 +3228,8 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         plan = h.pass_camera_connect(h.context, st, lp.vehicle, false, cam);  // off: our own handle cleared (ReleasePlan)
     else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing || c.turn.pending))
         h.pass_camera_read(h.context, st, cam);
-    // Design 8.33 (mode view): the seated aim view. While the local passenger is seated (an armed boarding) the aim
-    // module's entry for the camera's variant raises the aim camera kRaiseM over the shoulder; the constructor's entry is
-    // written back when the boarding ends, the mode changes, the variant changes or the mission latches / terminates.
+    // Design 8.33 / 8.37 (mode view): the get-off camera turn below.
     const bool view = pc::Views(mode);
-    // Seats 1 and 2 only (seat 3 aims across the jeep: its view is clear, 37b94432-guest-k3-aim).
-    const bool raise_want = view && armed && pc::ViewSeat(arm.seat);
-    if (d.pass_camera_installed && h.pass_camera_raise_read && h.pass_camera_raise_write &&
-        (c.raise.applied || c.raise.refused || raise_want)) {
-        pc::RaiseView rv{};
-        h.pass_camera_raise_read(h.context, st, rv);
-        const char* why = "none";
-        const pc::RaiseWrite rw = pc::RaisePlan(c.raise, raise_want, rv, pc::kRaiseM, why);
-        const int index = rw == pc::RaiseWrite::restore ? c.raise.index : rv.index;
-        bool ok = false;
-        if (rw != pc::RaiseWrite::none) ok = h.pass_camera_raise_write(h.context, st, index, rw == pc::RaiseWrite::apply, pc::kRaiseM);
-        const unsigned retries = c.raise.retries + 1u;
-        const bool abandoned = pc::RaiseDone(c.raise, rw, index, ok);
-        if (rw == pc::RaiseWrite::apply && ok) c.raise_p = st.P;
-        const bool refusal = std::strcmp(why, "variant") == 0 || std::strcmp(why, "module") == 0 || std::strcmp(why, "other_owner") == 0 ||
-                             std::strcmp(why, "entry") == 0 || std::strcmp(why, "lost") == 0;
-        // A failed restore is retried every tick: its line once (the first failure) and when it is given up.
-        const bool retry_quiet = rw == pc::RaiseWrite::restore && !ok && !abandoned && retries > 1u;
-        if ((rw != pc::RaiseWrite::none && !retry_quiet) || (refusal && why != c.raise_logged)) {
-            if (refusal) c.raise_logged = why;
-            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                        "partner_ride=pass_camera; state=view; event=%s; vehicle=%u; seat=%u; reason=%s; ok=%u; variant=%d; index=%d; "
-                        "flag=%u; raise_cm=%d; target_cm=%d; applies=%u; restores=%u; retries=%u; abandoned=%u\r\n",
-                        rw == pc::RaiseWrite::apply ? "apply" : rw == pc::RaiseWrite::restore ? (abandoned ? "abandon" : "restore") : "refused",
-                        unsigned(lp.vehicle), unsigned(lp.seat), why, ok ? 1u : 0u, rv.variant, index, unsigned(rv.flag),
-                        static_cast<int>(pc::kRaiseM * 100.0f),
-                        rv.target_ok && std::isfinite(rv.target[1]) && std::fabs(rv.target[1]) < 2.0e7f ? static_cast<int>(rv.target[1] * 100.0f)
-                                                                                                         : INT32_MIN,
-                        c.raise.applies, c.raise.restores, c.raise.retries, c.raise.abandoned);
-        }
-        if (!raise_want) c.raise_logged = nullptr;
-    }
     if (aim_out.event != pc::AimEvent::none)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                     "partner_ride=pass_camera; state=aim; event=%s; vehicle=%u; seat=%u; mode=%s; gun=%u; f3c0=0x%x; plan=%s; cam1f0=0x%llx; "
@@ -6552,7 +6496,6 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     // The seat dwords never outlive a mission (a missed MissionEnd included).
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_start");
-    RaiseRevert(d, h, "mission_start");  // design 8.34: before the Mission reset forgets the ownership
     // Gestures: a new hook epoch (a running gesture is dropped without a write).
     WithdrawGesture(d, h);
     PublishDisarmed(d, h);
@@ -6642,7 +6585,6 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_end");
-    RaiseRevert(d, h, "mission_end");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
     d.mission.seat.armed = false;
@@ -6708,7 +6650,6 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
-    RaiseRevert(d, h, "stop");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
     m.seat.armed = false;

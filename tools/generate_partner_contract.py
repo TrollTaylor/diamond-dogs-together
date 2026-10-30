@@ -927,16 +927,7 @@ PASS_CAMERA_SITES = [
     (0x112106E, 'f30f1187700200000f28c7e88c4f8e00410f28e8410f28c8410f28d9410fc6c8c9410fc6e8d2f30f118774020000440f298f90000000',
      'PlayerCamera vt+0x88 0x1120B00: writes the look pitch CAM+0x270 and yaw +0x274 (atan2 of its direction) with the '
      'rotation CAM+0x90 (the shot guard holds the rotation too)'),
-    # Design 8.33 (mode view): the aim module's variant entry (the seated aim view) and the stock rotation request (the
-    # camera after a get-off).
-    (0x12BD4D4, '488b41088b9004020000c1ea02f6c20174104883c1e0e8f1eaffff',
-     'aim module update 0x12BD4D0: while CAM+0x204 bit 2, FUN_1412BBFE0(module - 0x20) (the object the entry lives in)'),
-    (0x12BC015, '80bb740100000074744c8b432833c0488d0d45881101418b90440300003911740dffc04883c10483f80972f1eb4f8bc848c1e105',
-     'aim module FUN_1412BBFE0 after its parameter load: when obj+0x174, k = the index of CAM+0x344 in the 9 ids at '
-     '0x23D4870 (none: nothing), the entry obj+0x50 + 0x20 k'),
-    (0x12BC049, '0f28441950410f588050010000410f298050010000488b4328f30f10441960f30f588034020000f30f118034020000f30f10441964488b4328'
-     'f30f5980dc020000f30f1180dc020000',
-     'aim module: CAM+0x150 += entry[0..3] (the target offset), CAM+0x234 += entry+0x10, CAM+0x2DC *= entry+0x14'),
+    # Design 8.33 / 8.37 (mode view): the stock rotation request (the camera after a get-off).
     (0x111A920, '448b81380d000041f7c001100000754d8b8104020000c1e809a80175404183c802448981380d0000',
      'PlayerCamera vt+0xE0 0x111A920 (RequestToSetCameraRotation): refused while CAM+0xD38 & 0x1001 or CAM+0x204 bit 9; '
      'CAM+0xD38 |= 2'),
@@ -944,10 +935,6 @@ PASS_CAMERA_SITES = [
      'PlayerCamera vt+0xE0: CAM+0xD80..0xD94 = the six request fields (interp, 0.4, 0.8, 0x400126, pitch, yaw)'),
 ]
 SITES += PASS_CAMERA_SITES
-# Design 8.33: the aim module's variant ids (CAM+0x344 values, .rdata 0x23D4870, read by 0x12BC024), checked here.
-PASS_CAM_AIM_VARIANTS = [0x0, 0x1, 0x2, 0x21, 0x20, 0x1F, 0x22, 0x19, 0x35]
-if list(struct.unpack('<9i', rd(0x23D4870, 36))) != PASS_CAM_AIM_VARIANTS:
-    raise SystemExit('aim module variant ids at 0x23d4870 changed')
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
 # vehicle for the lab's goto levers. RideVehicle CanExec 0x1246650 switches on GetVehicleType 0x55E7F0 (table
 # 0x1246EC8: types 3/4, the trucks, -> 0x1246B13; 1/2 -> 0x1246CBB, no gate): the seat world matrices 0xB7AF90(unit,
@@ -3608,14 +3595,9 @@ w('// guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab tr
 w('inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;')
 w('// Design 8.28: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.')
 w('inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;')
-w('// Design 8.33 (mode view): the aim module object (module - 0x20) holds the flag +0x174 and 9 entries at +0x50 (stride 0x20:')
-w('// offset[4], +0x10 distance, +0x14 scale) for the variants CAM+0x344 listed at 0x23d4870 (sites 0x12bc015 / 0x12bc049);')
-w('// the stock rotation request (0x111a920 / 0x111a948): CAM+0xd38 |= 2 and CAM+0xd80..0xd94 unless CAM+0xd38 & 0x1001 or')
+w('// Design 8.33 / 8.37 (mode view): the stock rotation request (0x111a920 / 0x111a948): CAM+0xd38 |= 2 and CAM+0xd80..0xd94')
+w('// unless CAM+0xd38 & 0x1001 or')
 w('// CAM+0x204 bit 9; the Lua binding 0x9daf90 passes the flags 0x400126.')
-w('inline constexpr std::size_t pass_cam_aim_obj=0x20, pass_cam_aim_flag=0x174, pass_cam_aim_table=0x50, pass_cam_aim_stride=0x20, pass_cam_variant=0x344;')
-w('inline constexpr std::uintptr_t pass_cam_aim_variants_rva=0x23d4870;')
-w('inline constexpr unsigned pass_cam_aim_variants=' + str(len(PASS_CAM_AIM_VARIANTS)) + ';')
-w('inline constexpr std::int32_t pass_cam_aim_variant_ids[]={' + ','.join(f'0x{v:x}' for v in PASS_CAM_AIM_VARIANTS) + '};')
 w('inline constexpr std::size_t pass_cam_request_flags=0xd38, pass_cam_request=0xd80;')
 w('inline constexpr std::uint32_t pass_cam_request_busy=0x1001, pass_cam_lock_bit=0x200, pass_cam_request_flags_value=0x400126;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')

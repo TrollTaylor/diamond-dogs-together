@@ -251,8 +251,9 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
 // stays clear, but in seat 2 the collision pulls the camera into the passenger (cam at the pivot, the aim target
 // 0-1 m away) and the gun refuses to fire (gun mode 15; runs 17fce0b7, 43e5b981), so drop is not the default. The lab
 // lever "passcam off|connect|aim|drop|lab|status" overrides the key on this copy (lab only).
-// view (design 8.33) is aim plus the seated aim view (the aim camera raised over the shoulder while seated) and the camera
-// turned behind the player after a get-off (the parts at the end of this file).
+// view (design 8.33 / 8.37) is aim plus the camera turned behind the player after a get-off from seat 1 or 2 (the end of
+// this file). The seated aim raise of 8.33 was inert in game (8.35: the aim module's parameter record rewrites
+// CAM+0x150..0x15C every tick) and is gone (8.37).
 enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 inline const char* ModeName(Mode m) noexcept {
     return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : m == Mode::view ? "view" : "aim";
@@ -613,140 +614,9 @@ inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aimi
     return !last_ms || now_ms < last_ms || now_ms - last_ms >= every;
 }
 
-// --- The seated aim view (mode view; design 8.33) -------------------------------------------------------------------
-// [O] runs 37b94432 / 299de3e1 / 1f81de65: the seated aim camera sits ~1.19 m behind and ~0.10 m above the body root, at
-// the side panel's height: seat 1 sees its own leg, seat 2 the jeep's panel (seat 3, aiming across, is clear). [O] The
-// aim module (vtable 0x23D4D20; its object is the module - 0x20: Update 0x12BD4D0 -> FUN_1412BBFE0) loads its parameter
-// set 0xB8A0BF169F98 for the variant CAM+0x344 on every update, then, when obj+0x174 is set, adds the entry
-// obj+0x50 + 0x20 k (k: the index of CAM+0x344 in the stock list 0x23D4870, 9 ids) to the target offset CAM+0x150..0x15C,
-// its +0x10 to the distance CAM+0x234 and multiplies CAM+0x2DC by its +0x14 (0x12BC015..0x12BC08A, pinned). The target
-// offset is blended into CAM+0x140 (PlayerCamera_SetRotationAndAngles 0x1121704), the offset the position solve 0x1121D30
-// turns by the camera's rotation. The constructor (0x12BB250) leaves every entry (0, 0, 0, 0, 0, 1.0) and the flag 0.
-// Mode view writes the entry of the current variant to (0, kRaiseM, 0, 0, 0, 1.0) and then the flag 1 while the local
-// passenger is seated in seat 1 or 2 (an armed boarding; seat 3 aims across the jeep and its view is clear): the aim
-// camera rises over the shoulder. It writes the constructor's values back (the flag first, only while the entry is still
-// ours) when the boarding ends, the mode changes or the variant changes (TickPassCamera, retried while the camera or the
-// module is not found), and at MissionEnd / Stop / MissionStart (the driver's RaiseRevert: the ticks stop before
-// TickPassCamera while a mission ends). Never over a set flag or an entry that is not the constructor's (another owner:
-// refused for the boarding). The aim module calls FUN_1412BBFE0 only while CAM+0x204 bit 2 is set (0x12BD4D4).
-// [I] the parameter load rewrites CAM+0x150 every update (the stock add would grow otherwise; the load's target is an
-// indirect call, unresolved): RaisePlan restores and refuses the boarding (reason grow) once |CAM+0x150 y| passes
-// kRaiseLimitM, and the lab trace's off field (CAM+0x140) shows it.
-inline constexpr std::size_t kAimObj = 0x20;
-inline constexpr std::size_t kAimFlag = 0x174;
-inline constexpr std::size_t kAimTable = 0x50, kAimStride = 0x20;
-inline constexpr std::size_t kCamVariant = 0x344;
-inline constexpr std::uintptr_t kAimVariantsRva = 0x23D4870;
-inline constexpr unsigned kAimVariants = 9;
-inline constexpr float kRaiseM = 0.60f;
-inline constexpr float kRaiseLimitM = 2.5f;          // |CAM+0x150 y| past this while ours: the offset grows (restore)
-inline constexpr std::uint32_t kRaiseRetryMax = 600;  // failed restores (no camera / module / not ours) before giving up
-inline constexpr std::size_t kCamAimTarget = 0x150;  // the target offset (x, y, z, w) the entry is added to
-// The seats whose aim view is raised and whose get-off turns the camera: seat 1 (front) and seat 2 (left back).
+// The seats whose get-off turns the camera (mode view): seat 1 (front) and seat 2 (left back). Seat 3 (the right back
+// seat) leaves the camera behind the player, looking forward (299de3e1).
 inline bool ViewSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
-struct RaiseView {
-    bool ok = false;            // the local PlayerCamera was read
-    bool module = false;        // an aim module (kAimModuleVtableRva) is among CAM+0xBD0[0..5]
-    std::uint8_t flag = 0;      // obj+0x174
-    std::int32_t variant = -1;  // CAM+0x344
-    int index = -1;             // its index in the stock list (-1: none)
-    float entry[6]{};           // obj+0x50 + 0x20 index: offset x, y, z, w, distance, scale
-    bool target_ok = false;     // CAM+0x150..0x15C (the target offset the entry is added to) was read
-    float target[4]{};
-};
-inline bool EntryStock(const float* e) noexcept {
-    return e && e[0] == 0.0f && e[1] == 0.0f && e[2] == 0.0f && e[3] == 0.0f && e[4] == 0.0f && e[5] == 1.0f;
-}
-inline bool EntryRaised(const float* e, float raise) noexcept {
-    return e && e[0] == 0.0f && e[1] == raise && e[2] == 0.0f && e[3] == 0.0f && e[4] == 0.0f && e[5] == 1.0f;
-}
-// The index of a variant in the stock list (-1: none).
-inline int VariantIndex(const std::int32_t* ids, unsigned n, std::int32_t variant) noexcept {
-    if (!ids) return -1;
-    for (unsigned i = 0; i < n; ++i)
-        if (ids[i] == variant) return static_cast<int>(i);
-    return -1;
-}
-enum class RaiseWrite : std::uint8_t { none, apply, restore };
-struct Raise {
-    bool applied = false;
-    int index = -1;                 // the entry written
-    const char* refused = nullptr;  // latched for the boarding (other_owner, entry, lost, grow)
-    std::uint32_t applies = 0, restores = 0;
-    std::uint32_t retries = 0;      // failed restores of the current ownership
-    std::uint32_t abandoned = 0;    // ownerships given up (kRaiseRetryMax failed restores, or the teardown's last try failed)
-};
-// One tick. `want`: mode view and an armed boarding (the local passenger seated). Reasons (static): end, camera, module,
-// variant, other_owner, entry, lost, held, apply, restore_variant, refused, grow.
-inline RaiseWrite RaisePlan(Raise& r, bool want, const RaiseView& v, float raise, const char*& reason) noexcept {
-    if (r.applied) {
-        if (!want) { reason = "end"; return RaiseWrite::restore; }
-        if (!v.ok || !v.module) { reason = "camera"; return RaiseWrite::none; }
-        if (v.index != r.index) { reason = "restore_variant"; return RaiseWrite::restore; }
-        if (v.target_ok && !(v.target[1] <= kRaiseLimitM && v.target[1] >= -kRaiseLimitM)) {
-            // [I] guard: the target offset grows (the parameter load does not rewrite it): ours goes, the boarding refuses.
-            r.refused = reason = "grow";
-            return RaiseWrite::restore;
-        }
-        if (v.flag == 0 || !EntryRaised(v.entry, raise)) {
-            // Someone else changed the entry or the flag: ours is gone; nothing is written again this boarding.
-            r.applied = false;
-            r.index = -1;
-            r.refused = "lost";
-            reason = "lost";
-            return RaiseWrite::none;
-        }
-        reason = "held";
-        return RaiseWrite::none;
-    }
-    if (!want) {
-        r.refused = nullptr;
-        reason = "end";
-        return RaiseWrite::none;
-    }
-    if (r.refused) { reason = "refused"; return RaiseWrite::none; }
-    if (!v.ok) { reason = "camera"; return RaiseWrite::none; }
-    if (!v.module) { reason = "module"; return RaiseWrite::none; }
-    if (v.index < 0) { reason = "variant"; return RaiseWrite::none; }
-    if (v.flag != 0) { r.refused = reason = "other_owner"; return RaiseWrite::none; }
-    if (!EntryStock(v.entry)) { r.refused = reason = "entry"; return RaiseWrite::none; }
-    reason = "apply";
-    return RaiseWrite::apply;
-}
-// The driver's bookkeeping after the write (ok: the native write succeeded). A failed restore keeps the ownership and is
-// retried on later ticks (the camera or the module not found this tick, a death or swap camera [I]) up to kRaiseRetryMax;
-// then it is given up (abandoned). An SEH fault also latches the mission (the driver's fault check); MissionEnd / Stop /
-// MissionStart try once more (RaiseForget after). Returns true when this call gave the ownership up.
-inline bool RaiseDone(Raise& r, RaiseWrite w, int index, bool ok) noexcept {
-    if (w == RaiseWrite::apply && ok) {
-        r.applied = true;
-        r.index = index;
-        r.retries = 0;
-        ++r.applies;
-    } else if (w == RaiseWrite::restore) {
-        if (ok) {
-            r.applied = false;
-            r.index = -1;
-            r.retries = 0;
-            ++r.restores;
-        } else if (++r.retries >= kRaiseRetryMax) {
-            r.applied = false;
-            r.index = -1;
-            r.retries = 0;
-            ++r.abandoned;
-            return true;
-        }
-    }
-    return false;
-}
-// The teardown's last try is done (ok or not): nothing is ours any more.
-inline void RaiseForget(Raise& r, bool ok) noexcept {
-    if (!r.applied) return;
-    r.applied = false;
-    r.index = -1;
-    r.retries = 0;
-    if (ok) ++r.restores; else ++r.abandoned;
-}
 
 // --- The camera after a get-off (mode view; design 8.33) ------------------------------------------------------------
 // [O] runs 37b94432 / 1f81de65 / 83defaeb: after the stock get-off from seat 1 (and seat 2) the camera is left on the

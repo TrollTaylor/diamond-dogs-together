@@ -775,134 +775,18 @@ void TestViewMode() {
           "view parses, is named and equals the lab_config value");
     Check(pc::Guards(pc::Mode::view) && pc::Views(pc::Mode::view) && !pc::Views(pc::Mode::aim) && !pc::Views(pc::Mode::drop) &&
               !pc::DropsWhileAiming(pc::Mode::view),
-          "view keeps the shot guard and the handle; only view raises and turns");
+          "view keeps the shot guard and the handle; only view turns");
     char r[160]{};
     bool ok = false;
     pc::detail::ResetForTest();
     Check(pc::HandleCommand("passcam view", true, r, sizeof(r), ok) && ok && pc::Override() == 4 && std::strstr(r, "passcam=view"),
           "the lab lever takes view");
     pc::detail::ResetForTest();
-    Check(c::pass_cam_aim_variants == 9 && c::pass_cam_aim_variant_ids[0] == 0 && c::pass_cam_aim_variant_ids[3] == 0x21 &&
-              c::pass_cam_aim_variant_ids[8] == 0x35 && pc::VariantIndex(c::pass_cam_aim_variant_ids, 9, 0x22) == 6 &&
-              pc::VariantIndex(c::pass_cam_aim_variant_ids, 9, 7) == -1 && pc::VariantIndex(nullptr, 9, 0) == -1,
-          "the variant ids of 0x23D4870 and their index");
-    Check(pc::kAimObj == 0x20 && pc::kAimFlag == 0x174 && pc::kAimTable == 0x50 && pc::kAimStride == 0x20 && pc::kCamVariant == 0x344 &&
-              pc::kCamRequest == 0xD80 && pc::kCamRequestFlags == 0xD38,
-          "the offsets of the pinned sites");
+    Check(pc::kCamRequest == 0xD80 && pc::kCamRequestFlags == 0xD38, "the offsets of the pinned request sites");
 }
 
-void TestRaisePlan() {
-    const float stock[6] = {0, 0, 0, 0, 0, 1.0f};
-    const float raised[6] = {0, pc::kRaiseM, 0, 0, 0, 1.0f};
-    pc::RaiseView v{};
-    v.ok = v.module = true;
-    v.variant = 0;
-    v.index = 0;
-    std::memcpy(v.entry, stock, sizeof(stock));
-    pc::Raise r{};
-    const char* why = nullptr;
-    Check(pc::RaisePlan(r, false, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "end"), "not seated: nothing");
-    Check(pc::RaisePlan(r, true, v, pc::kRaiseM, why) == pc::RaiseWrite::apply && Same(why, "apply"), "seated: apply");
-    pc::RaiseDone(r, pc::RaiseWrite::apply, 0, true);
-    Check(r.applied && r.index == 0 && r.applies == 1, "applied to entry 0");
-    v.flag = 1;
-    std::memcpy(v.entry, raised, sizeof(raised));
-    Check(pc::RaisePlan(r, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "held"), "held while seated");
-    pc::RaiseView gone{};
-    Check(pc::RaisePlan(r, true, gone, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "camera") && r.applied,
-          "an unread camera keeps the state (no write)");
-    v.variant = 1;
-    v.index = 1;
-    Check(pc::RaisePlan(r, true, v, pc::kRaiseM, why) == pc::RaiseWrite::restore && Same(why, "restore_variant"),
-          "a changed variant restores the entry written");
-    pc::RaiseDone(r, pc::RaiseWrite::restore, 0, true);
-    Check(!r.applied && r.index == -1 && r.restores == 1, "restored");
-    v.flag = 0;
-    std::memcpy(v.entry, stock, sizeof(stock));
-    Check(pc::RaisePlan(r, true, v, pc::kRaiseM, why) == pc::RaiseWrite::apply, "the new variant is applied");
-    pc::RaiseDone(r, pc::RaiseWrite::apply, 1, true);
-    Check(pc::RaisePlan(r, false, v, pc::kRaiseM, why) == pc::RaiseWrite::restore && Same(why, "end"), "the boarding ended: restore");
-    pc::RaiseDone(r, pc::RaiseWrite::restore, 1, true);
-    Check(!r.applied && r.restores == 2, "restored at the end");
-    // Refusals.
-    pc::Raise o{};
-    v.flag = 1;
-    Check(pc::RaisePlan(o, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "other_owner") && Same(o.refused, "other_owner"),
-          "a set flag is another owner's: refused");
-    v.flag = 0;
-    Check(pc::RaisePlan(o, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "refused"), "latched for the boarding");
-    Check(pc::RaisePlan(o, false, v, pc::kRaiseM, why) == pc::RaiseWrite::none && o.refused == nullptr, "the latch ends with the boarding");
-    pc::Raise e{};
-    v.entry[1] = 0.3f;
-    Check(pc::RaisePlan(e, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "entry"), "an entry that is not the constructor's");
-    pc::Raise n{};
-    std::memcpy(v.entry, stock, sizeof(stock));
-    v.index = -1;
-    Check(pc::RaisePlan(n, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "variant") && n.refused == nullptr,
-          "a variant outside the list: nothing (retried)");
-    v.index = 0;
-    v.module = false;
-    Check(pc::RaisePlan(n, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "module"), "no aim module: nothing");
-    // Someone else rewrote our entry: never written again this boarding, and never restored over theirs.
-    pc::Raise l{};
-    v.module = true;
-    Check(pc::RaisePlan(l, true, v, pc::kRaiseM, why) == pc::RaiseWrite::apply, "apply");
-    pc::RaiseDone(l, pc::RaiseWrite::apply, 0, true);
-    v.flag = 1;
-    v.entry[1] = 0.25f;
-    Check(pc::RaisePlan(l, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "lost") && !l.applied,
-          "a changed entry is lost, not restored");
-    Check(pc::RaisePlan(l, false, v, pc::kRaiseM, why) == pc::RaiseWrite::none, "and not restored at the end");
-    // A failed apply leaves nothing applied.
-    pc::Raise f{};
-    pc::RaiseDone(f, pc::RaiseWrite::apply, 0, false);
-    Check(!f.applied && f.applies == 0, "a failed apply is not applied");
-    // Design 8.34: a failed restore keeps the ownership (retried) up to kRaiseRetryMax, then gives it up once.
-    pc::Raise q{};
-    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
-    Check(!pc::RaiseDone(q, pc::RaiseWrite::restore, 2, false) && q.applied && q.index == 2 && q.retries == 1 && q.restores == 0,
-          "a failed restore is kept for a retry");
-    Check(!pc::RaiseDone(q, pc::RaiseWrite::restore, 2, true) && !q.applied && q.retries == 0 && q.restores == 1, "the retry lands");
-    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
-    bool gave_up = false;
-    for (std::uint32_t i = 0; i < pc::kRaiseRetryMax; ++i) gave_up = pc::RaiseDone(q, pc::RaiseWrite::restore, 2, false);
-    Check(gave_up && !q.applied && q.index == -1 && q.abandoned == 1, "given up after kRaiseRetryMax failed restores");
-    // The teardown's last try: forgotten either way.
-    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
-    pc::RaiseForget(q, false);
-    Check(!q.applied && q.abandoned == 2, "teardown: a failed last try is abandoned");
-    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
-    pc::RaiseForget(q, true);
-    Check(!q.applied && q.restores == 2, "teardown: restored");
-    pc::RaiseForget(q, true);
-    Check(q.restores == 2 && q.abandoned == 2, "teardown: nothing when nothing is ours");
-    // Design 8.34 [I] guard: the target offset grows past kRaiseLimitM while ours: restored, the boarding refused.
-    pc::Raise g{};
-    v = pc::RaiseView{};
-    v.ok = v.module = true;
-    v.index = 0;
-    std::memcpy(v.entry, stock, sizeof(stock));
-    v.target_ok = true;
-    v.target[1] = 0.7f;
-    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::apply, "grow: apply");
-    pc::RaiseDone(g, pc::RaiseWrite::apply, 0, true);
-    v.flag = 1;
-    std::memcpy(v.entry, raised, sizeof(raised));
-    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "held"), "grow: a sane offset is held");
-    v.target[1] = pc::kRaiseLimitM + 0.1f;
-    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::restore && Same(why, "grow") && Same(g.refused, "grow"),
-          "grow: restored and refused");
-    pc::RaiseDone(g, pc::RaiseWrite::restore, 0, true);
-    v.flag = 0;
-    std::memcpy(v.entry, stock, sizeof(stock));
-    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "refused"), "grow: not applied again this boarding");
-    v.target[1] = -1.0e9f;
-    pc::Raise gn{};
-    pc::RaiseDone(gn, pc::RaiseWrite::apply, 0, true);
-    v.flag = 1;
-    std::memcpy(v.entry, raised, sizeof(raised));
-    Check(pc::RaisePlan(gn, true, v, pc::kRaiseM, why) == pc::RaiseWrite::restore && Same(why, "grow"), "grow: either sign");
-    // Seats 1 and 2 are raised; seat 3 (clear view) and the driver never.
+void TestViewSeat() {
+    // Seats 1 and 2 turn the camera after a get-off; seat 3 (the camera stays behind) and the driver never.
     Check(pc::ViewSeat(1) && pc::ViewSeat(2) && !pc::ViewSeat(3) && !pc::ViewSeat(0) && !pc::ViewSeat(0xFF), "the view seats");
 }
 
@@ -983,47 +867,11 @@ void TestTurnStep() {
           "the request's own gate (0x111A920)");
 }
 
-// The native writes on a synthetic camera: the aim module's object, the request fields.
-void TestRaiseAndTurnWrites() {
+// The native write on a synthetic camera: the request fields.
+void TestTurnWrites() {
     pc::detail::ResetForTest();
     Chain k;
-    alignas(16) static unsigned char aim_obj[0x200];
-    std::memset(aim_obj, 0, sizeof(aim_obj));
-    for (unsigned i = 0; i < 9; ++i) Chain::Put<float>(aim_obj, pc::kAimTable + pc::kAimStride * i + 0x14, 1.0f);
-    Chain::Put<std::uintptr_t>(aim_obj, pc::kAimObj, Chain::kBase + pc::kAimModuleVtableRva);
-    Chain::Put<std::uintptr_t>(k.cam, pc::kCamModules + 16, Chain::A(aim_obj + pc::kAimObj));
-    Chain::Put<std::int32_t>(k.cam, pc::kCamVariant, 0x21);
-    pc::RaiseView v{};
-    Check(pc::ReadRaise(k.Base(), k.P(), v) && v.ok && v.module && v.variant == 0x21 && v.index == 3 && v.flag == 0 && pc::EntryStock(v.entry),
-          "the aim module found by its vtable; variant 0x21 is entry 3");
-    Check(pc::WriteRaise(k.Base(), k.P(), 3, true, pc::kRaiseM), "apply");
-    float y = 0.0f, scale = 0.0f;
-    std::memcpy(&y, aim_obj + pc::kAimTable + pc::kAimStride * 3 + 4, 4);
-    std::memcpy(&scale, aim_obj + pc::kAimTable + pc::kAimStride * 3 + 0x14, 4);
-    Check(aim_obj[pc::kAimFlag] == 1 && y == pc::kRaiseM && scale == 1.0f, "entry 3 = (0, raise, 0, 0, 0, 1) and the flag set");
-    Check(pc::ReadRaise(k.Base(), k.P(), v) && v.flag == 1 && pc::EntryRaised(v.entry, pc::kRaiseM), "read back raised");
-    Check(pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 0 && pc::ReadRaise(k.Base(), k.P(), v) &&
-              pc::EntryStock(v.entry),
-          "restore: the flag cleared, the constructor's entry");
-    // Design 8.34: a restore writes only over our own entry (the teardown may run late).
-    Check(!pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 0, "restore: nothing when the flag is not ours");
-    Check(pc::WriteRaise(k.Base(), k.P(), 3, true, pc::kRaiseM), "apply again");
-    Chain::Put<float>(aim_obj, pc::kAimTable + pc::kAimStride * 3 + 4, 0.25f);
-    Check(!pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 1, "restore: another owner's entry is left");
-    Chain::Put<float>(aim_obj, pc::kAimTable + pc::kAimStride * 3 + 4, pc::kRaiseM);
-    Check(pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 0, "restore: ours again, written back");
-    // The target offset CAM+0x150 is read with the entry.
-    Chain::Put<float>(k.cam, pc::kCamAimTarget + 4, 0.35f);
-    Check(pc::ReadRaise(k.Base(), k.P(), v) && v.target_ok && v.target[1] == 0.35f, "the target offset is read");
-    Check(!pc::WriteRaise(k.Base(), k.P(), 9, true, pc::kRaiseM) && !pc::WriteRaise(k.Base(), k.P(), -1, true, pc::kRaiseM),
-          "an index outside the list is refused");
     pc::Stats st{};
-    pc::ReadStats(st);
-    Check(st.raises == 4 && st.faults == 0 && st.writes == 0, "four entry writes counted (the refused restores are not)");
-    // No aim module: read ok, module false; write refused.
-    Chain::Put<std::uintptr_t>(k.cam, pc::kCamModules + 16, 0);
-    Check(pc::ReadRaise(k.Base(), k.P(), v) && v.ok && !v.module && v.index == -1, "no aim module");
-    Check(!pc::WriteRaise(k.Base(), k.P(), 3, true, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 0, "nothing written without the module");
     // The rotation request: the stock fields and gate.
     Chain::Put<std::uint32_t>(k.cam, pc::kCamRequestFlags, 0x40);
     Check(pc::RequestTurn(k.Base(), k.P(), 0.12f, -1.5f, 0.4f) == nullptr, "the request is made");
@@ -1043,7 +891,7 @@ void TestRaiseAndTurnWrites() {
     pc::ReadStats(st);
     Check(st.turns == 1, "one request counted");
     Chain::Put<std::uintptr_t>(k.cam, 0, Chain::kBase + 0x10);
-    Check(Same(pc::RequestTurn(k.Base(), k.P(), 0.1f, 0.2f, 0.4f), "camera") && !pc::ReadRaise(k.Base(), k.P(), v),
+    Check(Same(pc::RequestTurn(k.Base(), k.P(), 0.1f, 0.2f, 0.4f), "camera"),
           "not a PlayerCamera: refused");
     pc::detail::ResetForTest();
 }
@@ -1070,9 +918,9 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 18,
-          "eighteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation; 8.33: the aim module's "
-          "variant entry and the rotation request)");
+    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 15,
+          "fifteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation; 8.33: the rotation "
+          "request; 8.37: the aim module's variant entry is no longer pinned)");
     bool pinned = false, solve = false, collision = false;
     for (const auto& s : c::vtable_slots)
         if (s.vtable_rva == c::cam_vtable_rva && s.offset == 0xA8 && s.target_rva == 0x1121D30) solve = true;
@@ -1103,7 +951,7 @@ void TestVerifyAndInstall() {
         g_lines.clear();
         Image img;
         Check(pc::Install(img.base, img.span, &Log) == nullptr && pc::Installed(), "installed on the synthetic image");
-        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=18"), "the install line");
+        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=15"), "the install line");
         Check(pc::Install(img.base, img.span, &Log) == nullptr && g_lines.size() == 1, "a second install is a no-op");
         pc::detail::ResetForTest();
     }
@@ -1142,9 +990,9 @@ int main() {
     TestReadViewAndLever();
     TestWritePitchAndModeVtable();
     TestViewMode();
-    TestRaisePlan();
+    TestViewSeat();
     TestTurnStep();
-    TestRaiseAndTurnWrites();
+    TestTurnWrites();
     TestVerifyAndInstall();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);
     return 0;

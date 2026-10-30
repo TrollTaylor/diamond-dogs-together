@@ -7510,44 +7510,17 @@ void TestSeatShotDriver() {
     }
 }
 
-// Design 8.33 (mode view; review fixes 8.34): the seated aim view's driver wiring. The raise is applied for seats 1 and 2
-// only (seat 3's view is clear), written back when the boarding ends, retried while a restore cannot find the camera, and
-// written back by MissionEnd, Stop and MissionStart (the ticks stop before TickPassCamera while the mission ends).
-struct PassRaiseFake {
-    mgscoop::partner_pass_camera::RaiseView view{};
-    struct W { int index; bool on; };
-    std::vector<W> writes;
-    bool write_ok = true;
+// Design 8.33 / 8.37 (mode view): the get-off camera turn's driver wiring (the seated raise is gone, 8.37).
+struct PassViewFake {
     std::vector<float> turns;
 } g_raise;
-bool HookRaiseRead(void*, const pp::State&, mgscoop::partner_pass_camera::RaiseView& out) noexcept {
-    out = g_raise.view;
-    return out.ok;
-}
-bool HookRaiseWrite(void*, const pp::State&, int index, bool on, float raise) noexcept {
-    g_raise.writes.push_back({index, on});
-    if (!g_raise.write_ok) return false;
-    auto& v = g_raise.view;
-    v.flag = on ? 1 : 0;
-    for (float& e : v.entry) e = 0.0f;
-    v.entry[1] = on ? raise : 0.0f;
-    v.entry[5] = 1.0f;
-    return true;
-}
 const char* HookRaiseTurn(void*, const pp::State&, float, float yaw, float) noexcept {
     g_raise.turns.push_back(yaw);
     return nullptr;
 }
 void ViewSetup(Session& s) {
     GuardSetup(s, mgscoop::PartnerPassCamera::view);
-    g_raise = PassRaiseFake{};
-    auto& v = g_raise.view;
-    v.ok = v.module = true;
-    v.variant = 0x21;
-    v.index = 3;
-    v.entry[5] = 1.0f;
-    s.hooks.pass_camera_raise_read = HookRaiseRead;
-    s.hooks.pass_camera_raise_write = HookRaiseWrite;
+    g_raise = PassViewFake{};
     s.hooks.pass_camera_turn = HookRaiseTurn;
     s.hooks.vehicle_read = HookVehicleRead;
     auto jeep = VehicleRead(25608, 0x20);
@@ -7556,68 +7529,17 @@ void ViewSetup(Session& s) {
     g_pass.cam = PassCam(0, 0);
 }
 std::uint64_t pc_handle(std::uint16_t vehicle) { return mgscoop::partner_pass_camera::ConnectHandle(vehicle); }
-unsigned RaiseWrites(bool on) {
-    unsigned n = 0;
-    for (const auto& w : g_raise.writes) n += w.on == on ? 1u : 0u;
-    return n;
-}
 
 void TestPassCameraViewDriver() {
     namespace pb = mgscoop::partner_board;
     {
-        // Seat 2: applied once while seated, written back when the boarding ends.
+        // Design 8.37: no aim-module entry is written any more; MissionEnd / Stop / MissionStart log no view restore.
         Session s(0);
         ViewSetup(s);
         g_board.lp = BoardPassenger(25608, 2);
-        Check(s.Tick(0) && RaiseWrites(true) == 1 && g_raise.writes[0].index == 3 && g_raise.view.flag == 1,
-              "view: seat 2 applies the raise");
-        Check(s.fake.Containing("partner_ride=pass_camera; state=view; event=apply; vehicle=25608; seat=2;") == 1, "view: the apply line");
-        Check(s.Tick(0) && RaiseWrites(true) == 1 && RaiseWrites(false) == 0, "view: held while seated");
-        g_board.lp = pb::LocalPassenger{};
-        g_board.lp.reason = "act";
-        Check(s.Tick(0) && RaiseWrites(false) == 1 && g_raise.view.flag == 0, "view: the get-off writes the entry back");
-    }
-    {
-        // Seat 3 (the right back seat aims across the jeep, its view is clear): never raised.
-        Session s(0);
-        ViewSetup(s);
-        g_board.lp = BoardPassenger(25608, 3);
-        Check(s.Tick(0) && s.Tick(0) && g_raise.writes.empty(), "view: seat 3 is never raised");
-    }
-    {
-        // A restore that cannot find the camera (no fault) keeps the ownership and is retried.
-        Session s(0);
-        ViewSetup(s);
-        g_board.lp = BoardPassenger(25608, 2);
-        Check(s.Tick(0) && RaiseWrites(true) == 1, "retry: applied");
-        g_board.lp = pb::LocalPassenger{};
-        g_board.lp.reason = "act";
-        g_raise.write_ok = false;
-        Check(s.Tick(0) && RaiseWrites(false) == 1 && g_raise.view.flag == 1, "retry: the first restore fails");
-        g_raise.write_ok = true;
-        Check(s.Tick(0) && RaiseWrites(false) == 2 && g_raise.view.flag == 0, "retry: the restore is retried and lands");
-        Check(s.Tick(0) && RaiseWrites(false) == 2, "retry: nothing after it landed");
-    }
-    {
-        // MissionEnd, Stop and MissionStart write the raise back (the tick returns before TickPassCamera then).
-        for (int which = 0; which < 3; ++which) {
-            Session s(0);
-            ViewSetup(s);
-            g_board.lp = BoardPassenger(25608, 2);
-            Check(s.Tick(0) && RaiseWrites(true) == 1, "teardown: applied");
-            const char* reason = which == 0 ? "mission_end" : which == 1 ? "stop" : "mission_start";
-            if (which == 0) pd::MissionEnd(s.driver, s.hooks);
-            else if (which == 1) pd::Stop(s.driver, s.hooks, mgscoop::PartnerTeardown::keep, true);
-            else pd::MissionStart(s.driver, s.hooks, 30020);
-            Check(RaiseWrites(false) == 1 && g_raise.view.flag == 0 && !s.driver.mission.pass_camera.raise.applied,
-                  "teardown: the raise is written back");
-            Check(s.fake.Containing((std::string("partner_ride=pass_camera; state=view; event=restore; reason=") + reason).c_str()) == 1,
-                  "teardown: the restore line names the teardown");
-            if (which == 0) {
-                pd::Stop(s.driver, s.hooks, mgscoop::PartnerTeardown::keep, true);
-                Check(RaiseWrites(false) == 1, "teardown: written back once");
-            }
-        }
+        Check(s.Tick(0) && s.Tick(0), "view: seated");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(s.fake.Containing("state=view;") == 0, "view: no raise lines");
     }
     {
         // Design 8.34: the get-off turn arms only on an observed get-off (act 0x70) from seat 1 or 2, waits for the stock
@@ -7711,7 +7633,7 @@ void TestPassCameraViewDriver() {
         }
     }
     {
-        // Mode aim: the raise and turn hooks are never called.
+        // Mode aim: the turn hook is never called.
         Session s(0);
         ViewSetup(s);
         s.driver.settings.pass_camera = mgscoop::PartnerPassCamera::aim;
@@ -7720,7 +7642,7 @@ void TestPassCameraViewDriver() {
         g_board.lp = pb::LocalPassenger{};
         g_board.lp.reason = "act";
         for (int i = 0; i < 4; ++i) Check(s.Tick(0, 1000), "aim: on foot");
-        Check(g_raise.writes.empty() && g_raise.turns.empty(), "aim: no raise, no turn");
+        Check(g_raise.turns.empty(), "aim: no turn");
     }
 }
 
