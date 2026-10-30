@@ -149,7 +149,8 @@ if($exe) { $buildInfo.launcher_sha256=(Get-FileHash -LiteralPath $exe -Algorithm
 $sourceScope=@('native','lua','tools','tests','third_party','cmake','docs','CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md')
 # Files git neither tracks nor ignores in those folders (0.14.4 review): a scratch file left in the checkout (notes, a
 # run's JSON with a join code or a local path) must never reach the public source zip. .git is $false when this is not
-# a git checkout (an unpacked source zip has no such notion); .files are relative paths with backslashes. MinHook is a
+# a git checkout (an unpacked source zip has no such notion; a checkout whose git cannot be run is refused, below);
+# .files are relative paths with backslashes. MinHook is a
 # submodule whose files the superproject never lists; a MinHook copied in as a plain folder is the dependency itself
 # (the Release receipt pins its files), so it is left to that check. git's output is read as UTF-8 (any file name).
 function Get-UntrackedSourceFiles {
@@ -166,8 +167,17 @@ function Get-UntrackedSourceFiles {
         } finally { $p.Dispose() }
     }
     $none=[pscustomobject]@{git=$false;files=[string[]]@()}
-    try { $inside=& $run @('rev-parse','--is-inside-work-tree') } catch { return $none }   # no git at all
-    if($inside.exit -ne 0 -or $inside.out.Trim() -cne 'true') { return $none }
+    # Fails closed (0.14.4 review, round 2): with a .git entry at the root (a folder, or a worktree's file) this is a
+    # git checkout, and git must answer; git missing from PATH (or any other failure to run it) must never mean "nothing
+    # untracked". Without one (an unpacked source zip) there is nothing to ask.
+    $checkout=Test-Path -LiteralPath (Join-Path $projectRoot '.git')
+    $refuse={ param([string]$Why) throw "This is a git checkout, but $Why; the files git does not track cannot be listed, so nothing is packaged. Make git work here (put it on PATH), then package again." }
+    try { $inside=& $run @('rev-parse','--is-inside-work-tree') }
+    catch { if($checkout) { & $refuse "git could not be run ($($_.Exception.Message))" }; return $none }
+    if($inside.exit -ne 0 -or $inside.out.Trim() -cne 'true') {
+        if($checkout) { & $refuse "git does not see a work tree here (exit $($inside.exit))" }
+        return $none
+    }
     $listed=& $run (@('-c','core.quotepath=off','ls-files','-z','--others','--exclude-standard','--')+$sourceScope)
     if($listed.exit -ne 0) { throw 'git could not list the untracked files of the checkout.' }
     $files=[string[]]@($listed.out.Split([char]0,[StringSplitOptions]::RemoveEmptyEntries) |

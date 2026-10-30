@@ -1468,6 +1468,18 @@ try {
         $null = & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
         $logged = Get-FixtureRun $dist
         Assert-True ($logged.names -cnotcontains 'tools/run.log' -and $logged.package.build.source_dirty -eq $true) 'an untracked unpublished file is left out and counts as dirty'
+        # 0.14.4 review, round 2: the refusal fails closed. A git checkout (a .git entry at the root) whose git cannot be
+        # run (here: not on PATH) packages nothing, rather than publishing an untracked note without a word.
+        [IO.File]::WriteAllText($note, 'scratch: a join code and C:\Users\someone\path', $utf8)
+        $savedPath = $env:PATH
+        try {
+            $env:PATH = (@($savedPath.Split([IO.Path]::PathSeparator) | Where-Object { $_ -and !(Test-Path -LiteralPath (Join-Path $_ 'git.exe') -PathType Leaf) }) -join [IO.Path]::PathSeparator)
+            Assert-True ($null -eq (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) 'the fixture hides git'
+            $dist = Join-Path $fixture 'git-package-dist-no-git'
+            Assert-Throws { & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist } 'This is a git checkout, but git could not be run' 'a git checkout without a working git packages nothing (no silent untracked file)'
+            Assert-True (!(Test-Path -LiteralPath $dist) -or @(Get-ChildItem -LiteralPath $dist -Force).Count -eq 0) 'that refusal comes before anything is staged'
+        } finally { $env:PATH = $savedPath }
+        Remove-Item -LiteralPath $note
     }
 
     # The repository keeps no player scripts: the PowerShell player tooling was
