@@ -1695,9 +1695,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // only the free back seats of a light vehicle; trucks and the rest block. A named
     // block or off still wins.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
-    // The passenger camera (design 8.25): aim (the handle and the shot guard) unless named, in lab and play: the view
-    // held through a seated shot (lab 43e5b981) and back at the aim after it (lab 17fce0b7); see STATUS for the play
-    // rehearsal. A named connect is 0.14.4.
+    // The passenger camera (design 8.25 / 8.26): aim (the handle and the shot guard) unless named, in lab and play: the
+    // view held through a seated shot (lab 7e79996f, play rehearsal 06aa3fc6; the review fixes: see STATUS). A named
+    // connect is 0.14.4.
     if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::aim;
     // M6 seat 1 (the light vehicle's front seat, the truck cab seat): off unless named, in lab
     // and play, until a hidden-run FRAME on both copies and a -Mode play -WanSim bad rehearsal.
@@ -1786,8 +1786,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.debug_vehicle_door = false;
         // G5 stays lab-only (the unrealize of the other ride hides is unproven in a FRAME).
         c.partner_native_unrealize_all = false;
-        // The passenger camera's trace is a lab measurement (read-only); its mode runs in play.
+        // The passenger camera's trace is a lab measurement (read-only); its mode runs in play, except drop (a lab option:
+        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.26).
         c.partner_pass_camera_trace = false;
+        if (c.partner_pass_camera == PartnerPassCamera::drop) c.partner_pass_camera = PartnerPassCamera::aim;
     }
 }
 

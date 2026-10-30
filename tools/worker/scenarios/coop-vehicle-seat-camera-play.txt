@@ -1,5 +1,5 @@
 # Design 8.25 play rehearsal: the back-seat passenger's aim camera at the shipped defaults (partner_pass_camera
-# unnamed = aim: the jeep's ignore-collision handle dropped while the passenger aims, and the shot guard). No labsetting
+# unnamed = aim: the jeep's ignore-collision handle kept for the whole ride, and the shot guard). No labsetting
 # line. africa-jeep (30020, veh_lv_0000 = 25608). The guest drives; the host boards back seat 2 from the driver's side
 # and aims across the jeep the way a player does right after boarding, fires three single shots, releases; the guest
 # drives a little and the host aims and fires once more while the jeep moves; the host gets off. Then the roles

@@ -371,7 +371,11 @@ inline bool QuatOk(const float* q) noexcept {
     return n > 0.9f && n < 1.1f;
 }
 // The world up-pitch of a camera rotation (rad, positive looks up): forward = q (0, 0, 1) q*.
-inline float UpPitch(const float*) noexcept { return 0.0f; }  // STUB
+inline float UpPitch(const float* q) noexcept {
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float fx = 2.0f * (x * z + w * y), fy = 2.0f * (y * z - w * x), fz = 1.0f - 2.0f * (x * x + y * y);
+    return std::atan2(fy, std::sqrt(fx * fx + fz * fz));
+}
 // The world yaw of a camera rotation (rad; the body yaw's convention atan2(fx, fz)).
 inline float WorldYaw(const float* q) noexcept {
     const float x = q[0], y = q[1], z = q[2], w = q[3];
@@ -379,7 +383,13 @@ inline float WorldYaw(const float* q) noexcept {
 }
 // q turned down by `down` rad about its own right axis (q * qx(down), normalized): the up-pitch drops by `down`, the yaw
 // and roll stay (exact without roll).
-inline void PitchDown(const float* q, float, float* out) noexcept { for (unsigned i = 0; i < 4; ++i) out[i] = q[i]; }  // STUB
+inline void PitchDown(const float* q, float down, float* out) noexcept {
+    const float s = std::sin(0.5f * down), c = std::cos(0.5f * down);
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float r[4] = {w * s + x * c, y * c + z * s, z * c - y * s, w * c - x * s};
+    const float n = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
+    for (unsigned i = 0; i < 4; ++i) out[i] = n > 0.0f ? r[i] / n : q[i];
+}
 struct GuardIn {
     bool on = false;          // mode aim / drop and an armed boarding (the local back-seat passenger)
     bool aiming = false;      // GunAims
@@ -442,7 +452,73 @@ inline float GuardCorrect(Guard& g, const GuardIn& in, bool rot_now, float up_no
 } // namespace detail
 // One tick. Not on (another mode, not armed, the angles unread or not finite): the state resets (a window closes without
 // a line; the counters stay).
-inline GuardOut GuardStep(Guard&, const GuardIn&) noexcept { return GuardOut{}; }  // STUB (failing-first)
+inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
+    GuardOut o{};
+    if (!in.on || !in.ang_ok || !std::isfinite(in.pitch) || !std::isfinite(in.yaw)) {
+        g.ref_ok = g.up_ok = false;
+        g.last_fire_ms = 0;
+        g.active = false;
+        return o;
+    }
+    const bool rot_now = QuatOk(in.rot);
+    const float up_now = rot_now ? UpPitch(in.rot) : 0.0f;
+    if (!in.aiming || !in.aim_module) {
+        // Not aiming in the aim camera: nothing is written; an open window closes now.
+        if (g.active) {
+            g.active = false;
+            o.event = GuardEvent::close;
+            o.end = GuardEnd::aim_end;
+        }
+        g.ref_ok = g.up_ok = false;
+        g.last_fire_ms = 0;
+        return o;
+    }
+    if (in.firing) g.last_fire_ms = in.now_ms ? in.now_ms : 1;
+    const bool window = g.last_fire_ms != 0 && (in.firing || in.now_ms < g.last_fire_ms || in.now_ms - g.last_fire_ms < kGuardHoldMs);
+    if (!window) {
+        bool settled = false;
+        if (g.active) {
+            g.last_yaw = in.yaw;
+            if (g.ref_ok) detail::GuardCorrect(g, in, rot_now, up_now, kSettleUp, o);
+            settled = o.write || o.write_rot;
+            if (settled) {
+                ++g.settles;
+                ++g.window_writes;
+            }
+            o.settle = settled;
+            g.active = false;
+            o.event = GuardEvent::close;
+            o.end = GuardEnd::hold;
+        }
+        g.last_fire_ms = 0;
+        // The reference follows the player's aim (after a settle: the settled values).
+        if (!(settled && o.write)) g.ref_pitch = in.pitch;
+        if (!(settled && o.write_rot)) g.ref_up = up_now;
+        g.ref_ok = true;
+        g.up_ok = rot_now;
+        return o;
+    }
+    if (!g.ref_ok) {
+        // A shot with no aimed tick before it: its first tick is the reference.
+        g.ref_ok = true;
+        g.ref_pitch = in.pitch;
+        g.up_ok = rot_now;
+        g.ref_up = up_now;
+    }
+    if (!g.active) {
+        g.active = true;
+        g.window_writes = 0;
+        g.window_max = 0.0f;
+        g.open_yaw = in.yaw;
+        ++g.windows;
+        o.event = GuardEvent::open;
+    }
+    g.last_yaw = in.yaw;
+    const float pull = detail::GuardCorrect(g, in, rot_now, up_now, kKickUp, o);
+    if (pull > g.window_max) g.window_max = pull;
+    if (o.write || o.write_rot) ++g.window_writes;
+    return o;
+}
 // The yaw the open (or last) window moved (rad, wrapped): the player's turn and the vehicle's, which pass.
 inline float WindowYaw(const Guard& g) noexcept { return WrapPi(g.last_yaw - g.open_yaw); }
 
