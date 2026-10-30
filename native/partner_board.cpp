@@ -238,14 +238,16 @@ bool ReadSeat(const char* seat, std::uint8_t& out) noexcept {
 // Site C 0x1246A4F (partner_ride_race only): RideVehicle CanExec's call of the pre-query. The original
 // runs first with the caller's arguments and last error; its final answer (true, seat 0/1) on a vehicle
 // without a peer-driver policy is the want; a deny or an ungranted hold answers false (CanExec false: no
-// ride icon; *seat is left as the pre-query wrote it, CanExec reads it only after true).
+// ride icon; *seat is left as the pre-query wrote it, CanExec reads it only after true). The vehicle the
+// peer drives is marked for the Fulton guard whatever the pre-query answered (8.26: a block vehicle, full
+// back seats or a taken cab offer no seat, and its stock Fulton prompt would be left).
 bool SiteC(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat) noexcept {
     const bool ok = g_prequery(action, body, unit, id, seat);
-    if (!ok || !g_race.load(std::memory_order_acquire)) return ok;
+    if (!g_race.load(std::memory_order_acquire)) return ok;
     const DWORD error = GetLastError();
     std::uint8_t answer = kNoSeat;
     const std::uint32_t now = NowLow();
-    const std::uint16_t vehicle = ReadSeat(seat, answer) && answer <= kFrontSeat ? RaceVehicle(unit, now) : kVehicleUnknown;
+    const std::uint16_t vehicle = ok && ReadSeat(seat, answer) && answer <= kFrontSeat ? RaceVehicle(unit, now) : kVehicleUnknown;
     bool result = ok;
     if (vehicle != kVehicleUnknown) {
         g_want.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);

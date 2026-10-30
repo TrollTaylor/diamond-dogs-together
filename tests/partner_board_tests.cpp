@@ -848,7 +848,9 @@ void TestRace() {
     g.now = 3450;
     Check(!C(unit), "the pre-query refused at the peer's vehicle");
     pb::ReadRace(rs);
-    Check(rs.guard_age_ms == 50, "no door answer: no new guard mark");
+    Check(rs.guard == 25608 && rs.guard_age_ms == 0,
+          "review fix (8.26): no seat for this player at the peer's vehicle (block, full, a taken cab): marked all the same "
+          "(only that vehicle's Fulton prompt would be left)");
     pf.ok = true;
     Policy(pb::Mode::off);
     pb::RaceHold(0);
