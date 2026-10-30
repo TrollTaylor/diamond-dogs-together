@@ -17,7 +17,10 @@
 // *(PS+0x260): +0x5C pitch r5c, +0x60 yaw r60; the gun states' 0x108E7D0 writes them from the aim point, and the
 // gun-hold enter sets +0x58 from the gun record right before GunHold, 0x10721C4) from the remote's v6 world aim
 // direction relative to body 1's seated yaw, by the inverse of 0x108EC55 for the default class (75 deg pitch, 90 deg
-// yaw: partner_player_contract aim_range_deg[0]). The originals are put back when the hold ends.
+// yaw: partner_player_contract aim_range_deg[0]). The originals are put back when the hold ends with body 1 unchanged
+// (the driver's release, a lost lease, another owner of graph 2); they are dropped without a write when the hook's
+// epoch changes (MissionStart, MissionEnd, and Stop, which only Lua's OnTerminate sends: body 1 is being torn down),
+// after an uncertain update (no write at all for the rest of the epoch) and after a fault.
 #include <cmath>
 #include <cstdint>
 

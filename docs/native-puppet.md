@@ -709,32 +709,37 @@ M7): shooting as a back-seat passenger, and the partner's raised gun in its
 seat on the driver's screen. Key `partner_seat_gun=0|1` (`_given`): **off
 unless named, in lab and play** (a named 1 runs in play too, no refusal bit);
 the body-1 half needs `partner_native_gesture` (the hook). **Status: built and
-run (eight hidden runs, 8.20); the hold runs but the partner's gun does not
-show, and no seated shot was seen to land. Stays off.**
+run (eight hidden runs, 8.20; the review's fix round, 8.21); the hold runs but
+the partner's gun does not show, and no seated shot landed in six runs
+(the same method killed on foot). Stays off.**
 
 **The local passenger (E8, run `6fc3098b` with the census).** A stock
-back-seat passenger raises and fires its own gun with no patch: once the seat
+back-seat passenger aims and fires its own gun with no patch (the logs and
+the HUD's magazine; no frame shows the raised gun): once the seat
 loop runs the passenger phase clears flag 0xC3 (`armed=1; c3=0`), RMB gives
 upper act 2 with gun modes 6 / 7 (`posture=0`), a shot upper act 3 / mode 9,
 an empty magazine a reload (upper 5 / mode 11); the act stays 0x6E and the
-passenger camera handle `0x88000000000064xx`. The aim self-check never latches
-(`RideGate`). Found in the runs:
+passenger camera handle `0x88000000000064xx`. The aim self-check is not run
+while riding (`RideGate`), so it cannot latch. Found in the runs:
 - the seated body faces into the jeep (seat 2: the jeep's yaw - 90 deg, seat
   3: + 90 deg), and the aim range (+-90 deg) is measured from it: a passenger
   shoots across the jeep, forward or back, never out of its own side;
 - the aim camera sits behind the passenger: from seat 3 aiming left it is over
   the passenger's head; from seat 2 aiming right it stood outside the jeep and
-  looked through its body (the passenger camera skips the jeep's collision);
+  looked through its body (probably this mod's passenger camera, which skips
+  the jeep's collision [I]);
 - the passenger camera keeps the direction the player faced when boarding,
-  and boarding needs the player to face the jeep;
+  and boarding seems to need the player to face the jeep (one run, [I]);
 - at each shot the aim swung to the top of its range (sent pitch -74.7 deg,
   `r5c` 0) and the camera to the sky (bursts in `d3409f57`, single shots in
-  `a3f7c4e1`); in `6fc3098b` the bursts put the camera inside the passenger's
-  own head. Cause [U];
-- no seated shot was seen to land on a sleeping guard 8-16 m away (`a3f7c4e1`:
-  the reticle red on him before the shots); the on-foot control of
-  `d7cf5a4b` missed too, so the test method is not reliable and a seated hit
-  is [U].
+  `a3f7c4e1`); in `6fc3098b` the bursts filled the view with a tan surface,
+  probably the jeep's panel through the camera's collision skip [U]. Cause of
+  the swing [U];
+- no seated shot landed on a sleeping guard 8-16 m away in six runs
+  (`a3f7c4e1`: the reticle red on him before the shots), while the same
+  lever-aimed method killed him on foot in `6e0edd8b` (the guest had not
+  boarded); `d7cf5a4b`'s on-foot control had its reticle on empty ground and
+  tested nothing. Seated shots appear not to land; why is [U].
 
 **The partner (E9, design A).** On the driver's copy the DM seat chain owns
 body 1 (graph 0 `stateVehicle*Loop`; act 0x8B, upper act 0, flag 0xC3 set,
@@ -772,14 +777,21 @@ the wire (`Encode` / `Decode` refuse them):
 - while a gun kind runs it writes body 1's aim rates (+0x5C `r5c`, +0x60 `r60`
   of body 1's own rate record `*(PS1+0x260)`: interface vtable `0x23AD380`,
   record vtable `0x23AD2B0`, re-resolved every update; the fields `0x108E7D0`
-  stores) and puts the originals back when it ends. A record with another
-  vtable, a moved record or a non-finite rate is never written.
+  stores) and puts the originals back when the hold ends with body 1
+  unchanged (the driver's release, a lost lease, another owner of graph 2).
+  An epoch change (MissionStart, MissionEnd, and `Stop`, which only Lua's
+  `OnTerminate` sends: body 1 is being torn down) drops them without a write,
+  as it drops a running gesture without stateNull; after an uncertain update
+  or a fault nothing is written. A record with another vtable, a moved record
+  or a non-finite rate is never written.
 
 Runs: `d40e4126` started no hold (the seat-owned branch returned before
-`TickGesture`; fixed). From `30a6a21a` on, 20 holds in five runs on both
-copies ran `hold` -> `submit; ...; kind=gun_start` -> `applied; ...; ok=1` ->
+`TickGesture`; fixed). From `30a6a21a` on, 30 holds (on both copies in
+`30a6a21a`, `03ceff68`, `d3409f57`, `a3f7c4e1`; the host only in `d7cf5a4b`)
+ran `hold` -> `submit; ...; kind=gun_start` -> `applied; ...; ok=1` ->
 `rates; ok=1` (read back on body 1) -> `release` -> `ended; via=end;
-cause=release; null=1`, with no `uncertain` or fault line. The raise never
+cause=release; null=1`, with no `uncertain` or fault line; none ended by the
+gate, the lease or an epoch, and the rate restore was never logged [I]. The raise never
 reached its motion end (up to 5.6 s), so `gun_hold` was never requested. **The
 frames show no change**: the seated partner keeps its gun on its back in the
 same pose during the holds (`30a6a21a-host-m7-partner-gun-01..03` against
@@ -792,8 +804,12 @@ drives) is [U] (design D16 in the design doc).
 report) sends its seated aim direction on the v6 input frame
 (`partner_aim::GunDirSeated`: `GunDir` with the standing set in place of the
 seated stance byte), logged `aim_dir=valid; reason=seat`. The self-check
-(`CheckStep`) never runs while the local player rides, so a seated aim never
-latches it.
+(`CheckStep`) never runs while the local player rides, so the seated
+direction is not checked (and cannot latch it); it is not validated either:
+roughly the lever's aim in `a3f7c4e1`, about 10 deg low in `d3409f57`, near
+-75 deg at each shot. A receiver that relies on it needs a seated check first.
+Driver-level tests: `partner_driver_tests` `TestSeatGunDriver` and
+`TestSeatGunSender` (the review's fix round, design doc 8.21).
 
 **Pins.** `SEAT_GUN_SITES` (the gun-hold enter's +0x58 store and GunHold
 request, the other GunHold entry) and `seat_gun_assertions` (GunHoldStart's
