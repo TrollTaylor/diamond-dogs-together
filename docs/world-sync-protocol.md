@@ -1805,8 +1805,9 @@ Op `0x36` SEAT (54, the code the design reserved for it), both directions, relia
 play, never a request; 5 fields, 7 bytes: `seq` (u16 1..), `id` (u16 25600..26111, the sender's TppVehicle2 id),
 `seat` (u8 0..3; 0, the driver's, is the only one raced today), `role` (u8 1 host / 2 guest: the sender), `action`
 (u8 1 claim / 2 grant / 3 deny). Sent and applied by `lua/coop/world_ride_pose.lua` (`R.seat`) only while the
-native board answers `MGS_COOP_BOARD_SEAT_V1` with `on=1`, which needs lab.ini `partner_ride_race=1` (off in lab
-and play unless named), the board installed and its site C live (`partner_board=race; result=ok; c=0x1246a4f`).
+native board answers `MGS_COOP_BOARD_SEAT_V1` with `on=1`, which needs `partner_ride_race` (on with the native gun
+profile in lab and play since the seats-on round, design 8.25; a named 0 turns it off), the board installed and its
+site C live (`partner_board=race; result=ok; c=0x1246a4f`).
 The wire format did not change in the review round of 2026-10-30 (design 8.21); the rules below did.
 
 - **Want (review R2).** Site C, RideVehicle CanExec's call of the ride pre-query `0x1245820` at `0x1246A4F`
@@ -1832,15 +1833,22 @@ The wire format did not change in the review round of 2026-10-30 (design 8.21); 
   hold (`state=silent; vehicle=..`, `hold 0`: stock) until any answer comes (`state=answered`).
 - **Loser.** Once the winner drives, the peer-driver policy decides as before (passenger or block), so the loser can
   still take a passenger seat.
-- **Not covered.** A deny or a hold leaves the vehicle's stock Fulton prompt (holding E there can Fulton the vehicle;
-  never seen in the runs [I]); passenger seats are not raced (the board never offers the peer's seat); a CanExec check
-  after the pre-query (a tilted vehicle's limits, the truck door distance) can still refuse an icon whose want was
-  recorded [I].
+- **Fulton guard (seats on, design 8.25).** Site C marks the vehicle whose ride icon it refuses (a deny or a hold),
+  and a door of the vehicle the peer drives (its passenger icon shows there beside the stock Fulton prompt of the
+  vehicle the partner sits in). While a mark is under 400 ms old (`ref` / `rage` of the receipt, polled every tick)
+  `R.seat.guard` withholds the Fulton action (`vars.playerDisableActionFlag` gains `PlayerDisableAction.FULTON`;
+  only a bit it added is removed again, as `world_revive_input.lua` does): `event=seat; action=fulton; on=1|0;
+  vehicle=..`. Play `92f2d2f9`: no Fulton prompt while denied (E held about 3 s, the jeep still there) and none beside
+  the ride icon at the host-driven jeep.
+- **Not covered.** Passenger seats are not raced (the board never offers the peer's seat); a CanExec check after the
+  pre-query (a tilted vehicle's limits, the truck door distance) can still refuse an icon whose want was recorded
+  [I]: the other player is then denied (or the host yields) while that player stays there, at most about 1 s (the
+  host's want) or 3 s (a grant) after it leaves; the toast says to wait (design 8.25).
 
 `MGS_COOP_BOARD_SEAT_V1` (`native/game_script_observer.cpp`, parser `partner_board::ParseSeatRequest`, unit-tested):
 `poll | clear | deny <id> <ms> | grant <id> <ms> | hold <ms>` (id 25600..26111, deny / grant 1..5000 ms, hold
 0..5000 ms, single spaces, digits only); answer `{ok=true,on=1,want=,age=,deny=,left=,hits=,hold=,grant=,gleft=,
-holds=}` or `{ok=true,on=0}`.
+holds=,ref=,rage=}` (`ref` / `rage`: the Fulton guard's vehicle and its age, -1 none) or `{ok=true,on=0}`.
 
 **Compatibility.** A partner whose op table lacks 0x36 (0.14.4 and older) skips it by its length (`unknown_op`,
 section 3): the guest's claims go unanswered, its hold drops after 1.5 s and nothing is denied (the stock
