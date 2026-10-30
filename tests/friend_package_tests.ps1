@@ -564,6 +564,14 @@ try {
             $file = Join-Path $fixture 'play-seat-aim-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_aim=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_aim'])|$($m['partner_seat_aim_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat aim census is forced off in play'
+            # M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): Play-Coop never names the key and play defaults it
+            # ON (the gun profile, design 8.33); a named 0 opts out in play.
+            Assert-True (!$hostIni.Contains('partner_seat_shot') -and !$guestIni.Contains('partner_seat_shot') -and
+                !$clipsIni.Contains('partner_seat_shot')) 'Play-Coop lab.ini never names partner_seat_shot'
+            Assert-Equal "$($n['partner_seat_shot'])|$($n['partner_seat_shot_given'])" '1|0' 'native: play defaults the seat shot on'
+            $file = Join-Path $fixture 'play-seat-shot-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_shot=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_shot'])|$($m['partner_seat_shot_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat shot 0 opts out in play'
             # M7 seat gun (docs/native-puppet.md "Seat gun"): Play-Coop never names the key and play defaults it off; a named
             # 1 runs in play (recorded as named, no refusal bit) until the play default flips after its proof.
             Assert-True (!$hostIni.Contains('partner_seat_gun') -and !$guestIni.Contains('partner_seat_gun') -and
