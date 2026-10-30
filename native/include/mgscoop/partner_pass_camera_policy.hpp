@@ -341,8 +341,10 @@ struct View {
 //  - reference: while aiming (in the aim module) and not firing, the angle pitch and the world up-pitch and yaw of
 //    CAM+0x90 (the stock aim camera keeps its world yaw while the jeep turns: run a64c40d4);
 //  - the player's look input, per axis (the effective right stick, which carries the mouse: x the yaw, y the pitch):
-//    for kLookLatchMs that axis's references follow the camera, the other axis stays held (run 049aa5ed: following
-//    both axes for 150 ms after a mouse turn let the pull lift the view 20-23 deg);
+//    on its tick that axis's references follow the camera, the other axis stays held; a world yaw jump above kYawJump
+//    counts as x input. No latch: following both axes for 150 ms after a mouse turn let the pull lift the view 20-23
+//    deg (run 049aa5ed), and a 60 ms latch let it take back each mouse step of a burst (d60dbb48); the camera applies
+//    the mouse on the tick its input shows (the trace);
 //  - window: from the first firing tick until kGuardHoldMs after the last one. The angle pitch going down moves its
 //    reference down (the player's aim), and the world reference by as much as the world also went down (a bump of the
 //    vehicle alone moves neither). An angle pitch more than kKickUp above its reference is written back to it
@@ -361,9 +363,8 @@ inline constexpr float kKickUp = 0.05f, kSettleUp = 0.01f;
 inline constexpr float kKickYaw = 0.035f, kSettleYaw = 0.01f;
 // The player's own look input (the effective right stick, which carries the mouse: PP+0x474 / +0x47C with PP+0x488
 // bit 1, the PP update 0x1207157; run 049aa5ed: look=-3600 milli on a mouse step of -60): above kLookInput on a tick,
-// that axis follows the camera for kLookLatchMs (a few ticks: the camera may apply the input a tick later).
+// that axis follows the camera on that tick.
 inline constexpr float kLookInput = 0.02f;
-inline constexpr std::uint64_t kLookLatchMs = 60;
 // A world yaw jump bigger than any pull in one tick (the pull moved it at most ~0.03 rad per tick: a64c40d4, d60dbb48)
 // counts as the player's input (a mouse frame the driver's tick did not sample).
 inline constexpr float kYawJump = 0.05f;
@@ -436,7 +437,6 @@ struct Guard {
     float ref_yaw = 0.0f;     // the world yaw reference of CAM+0x90 (with ref_up)
     bool prev_ok = false;
     float prev_yaw = 0.0f;    // the world yaw CAM+0x90 had after the last tick (as written, or as read)
-    std::uint64_t last_look_x_ms = 0, last_look_y_ms = 0;  // the last tick with the player's look input per axis
     std::uint32_t look_ticks = 0;     // window ticks that followed the player's input (the open window)
     std::uint64_t last_fire_ms = 0;
     bool active = false;              // a shot window is open
@@ -514,7 +514,8 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
     GuardOut o{};
     if (!in.on || !in.ang_ok || !std::isfinite(in.pitch) || !std::isfinite(in.yaw)) {
         g.ref_ok = g.up_ok = false;
-        g.last_fire_ms = g.last_look_x_ms = g.last_look_y_ms = 0;
+        g.last_fire_ms = 0;
+        g.prev_ok = false;
         g.active = false;
         return o;
     }
@@ -528,15 +529,19 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
             o.end = GuardEnd::aim_end;
         }
         g.ref_ok = g.up_ok = false;
-        g.last_fire_ms = g.last_look_x_ms = g.last_look_y_ms = 0;
+        g.last_fire_ms = 0;
+        g.prev_ok = false;
         return o;
     }
     if (in.firing) g.last_fire_ms = in.now_ms ? in.now_ms : 1;
-    if (in.look_x) g.last_look_x_ms = in.now_ms ? in.now_ms : 1;
-    if (in.look_y) g.last_look_y_ms = in.now_ms ? in.now_ms : 1;
     const bool window = g.last_fire_ms != 0 && (in.firing || in.now_ms < g.last_fire_ms || in.now_ms - g.last_fire_ms < kGuardHoldMs);
-    const auto latched = [&](std::uint64_t at) noexcept { return at != 0 && (in.now_ms < at || in.now_ms - at < kLookLatchMs); };
-    const bool follow_x = latched(g.last_look_x_ms), follow_y = latched(g.last_look_y_ms);
+    const bool jump = g.prev_ok && rot_now && std::fabs(WrapPi(WorldYaw(in.rot) - g.prev_yaw)) > kYawJump;
+    const bool follow_x = in.look_x || jump, follow_y = in.look_y;
+    // The world yaw CAM+0x90 is left with after this tick (as written, or as read): the next tick's jump test.
+    const auto leave = [&](const GuardOut& out) noexcept {
+        g.prev_ok = rot_now;
+        if (rot_now) g.prev_yaw = WorldYaw(out.write_rot ? out.rot : in.rot);
+    };
     if (!window) {
         bool settled = false;
         if (g.active) {
@@ -567,6 +572,7 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
                 g.ref_yaw = WorldYaw(in.rot);
             }
         }
+        leave(o);
         return o;
     }
     if (!g.ref_ok) detail::GuardFollow(g, in, rot_now, up_now);  // a shot with no aimed tick: its first tick is the reference
@@ -588,6 +594,7 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
     const float pull = detail::GuardCorrect(g, in, rot_now, up_now, kKickUp, kKickYaw, o);
     if (pull > g.window_max) g.window_max = pull;
     if (o.write || o.write_rot) ++g.window_writes;
+    leave(o);
     return o;
 }
 // The yaw the open (or last) window moved (rad, wrapped): the player's turn and the vehicle's, which pass.
