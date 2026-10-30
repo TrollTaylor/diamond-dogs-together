@@ -5,6 +5,11 @@
 // The previous holder releases the mutex when main returns, before its process
 // teardown closes the sockets of its global transports, so the new holder also
 // waits until every port of its range binds exclusively again.
+// gate (optional): the name of an older, wider lock this one replaced. After its
+// own mutex the lock also waits for the gate's mutex, probes its ports while it
+// holds it and then lets it go, so a run of the older code (which holds the gate
+// for its whole run) is never overlapped, and one that starts later waits for the
+// ports bound here through its own probe.
 #pragma once
 
 #include <winsock2.h>
@@ -17,21 +22,15 @@ namespace mgscoop::test {
 
 class MachinePortLock {
 public:
-    MachinePortLock(const wchar_t* name, std::uint16_t first_port, std::uint16_t last_port) noexcept
+    MachinePortLock(const wchar_t* name, std::uint16_t first_port, std::uint16_t last_port,
+                    const wchar_t* gate = nullptr) noexcept
         : handle_(CreateMutexW(nullptr, FALSE, name)) {
-        if (handle_) {
-            // An exited holder leaves the mutex abandoned; that still hands it over.
-            const DWORD result = WaitForSingleObject(handle_, 300000);
-            owned_ = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
-        }
-        if (!owned_) std::fprintf(stderr, "port lock %ls not acquired within 300 s; running anyway\n", name);
-        WSADATA data{};
-        if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return;
-        const ULONGLONG deadline = GetTickCount64() + 30000;
-        for (unsigned port = first_port; port <= last_port; ++port) {
-            while (!Free(static_cast<std::uint16_t>(port)) && GetTickCount64() < deadline) Sleep(50);
-        }
-        WSACleanup();
+        owned_ = Acquire(handle_, name, L"lock");
+        const HANDLE gate_handle = gate ? CreateMutexW(nullptr, FALSE, gate) : nullptr;
+        const bool gate_owned = gate && Acquire(gate_handle, gate, L"gate");
+        WaitPortsFree(first_port, last_port);
+        if (gate_owned) ReleaseMutex(gate_handle);
+        if (gate_handle) CloseHandle(gate_handle);
     }
     ~MachinePortLock() {
         if (owned_) ReleaseMutex(handle_);
@@ -41,6 +40,25 @@ public:
     MachinePortLock& operator=(const MachinePortLock&) = delete;
 
 private:
+    static bool Acquire(HANDLE handle, const wchar_t* name, const wchar_t* what) noexcept {
+        bool owned = false;
+        if (handle) {
+            // An exited holder leaves the mutex abandoned; that still hands it over.
+            const DWORD result = WaitForSingleObject(handle, 300000);
+            owned = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
+        }
+        if (!owned) std::fprintf(stderr, "port %ls %ls not acquired within 300 s; running anyway\n", what, name);
+        return owned;
+    }
+    static void WaitPortsFree(std::uint16_t first_port, std::uint16_t last_port) noexcept {
+        WSADATA data{};
+        if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return;
+        const ULONGLONG deadline = GetTickCount64() + 30000;
+        for (unsigned port = first_port; port <= last_port; ++port) {
+            while (!Free(static_cast<std::uint16_t>(port)) && GetTickCount64() < deadline) Sleep(50);
+        }
+        WSACleanup();
+    }
     static bool Free(std::uint16_t port) noexcept {
         const SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (s == INVALID_SOCKET) return true;

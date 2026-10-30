@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 #include "mgscoop/link_session.hpp"
 #include "mgscoop/partner_net.hpp"
@@ -58,9 +59,13 @@ constexpr std::uint32_t kLoopback = 0x7F000001u;
 // Each case binds its own fixed ports (48220-48261 in all) and holds its own machine-wide lock while it runs
 // (tests/test_port_lock.hpp), so the CTest shards of this fixture (cmake/test_shards.cmake) and the shards of other
 // checkouts run at the same time unless they share a case.
+// The one mutex a link_udp_tests built before the per-case locks holds over the whole range for its entire run. Until
+// every checkout has the per-case locks, each lock also passes through it (the gate of MachinePortLock), so old-code
+// and new-code runs of different checkouts never bind the same port (LegacyRangeGate).
+constexpr const wchar_t* kLegacyRangeLock = L"Local\\mgs-coop-test-ports-link_udp_tests";
 struct PortLock {
     PortLock(const wchar_t* name, std::uint16_t first, std::uint16_t last)
-        : lock((std::wstring(L"Local\\mgs-coop-test-ports-link_udp_tests-") + name).c_str(), first, last) {}
+        : lock((std::wstring(L"Local\\mgs-coop-test-ports-link_udp_tests-") + name).c_str(), first, last, kLegacyRangeLock) {}
     mgscoop::test::MachinePortLock lock;
 };
 
@@ -844,6 +849,28 @@ void PartnerNetV2() {
     RemoveDirectoryW((dir + L"\\mgs-coop").c_str());
     RemoveDirectoryW(dir.c_str());
 }
+// Mixed checkouts (test-speed review): a link_udp_tests built before the per-case locks holds one mutex over the whole
+// 48220-48261 range for its entire run. A per-case lock waits for that mutex too, so this run never binds a port such an
+// older run is using. The case holds the older mutex on another thread and times a port-less lock.
+void LegacyRangeGate() {
+    const HANDLE legacy = CreateMutexW(nullptr, FALSE, kLegacyRangeLock);
+    const HANDLE held = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Check(legacy && held, "the legacy range mutex and an event");
+    std::thread holder([&] {
+        const DWORD result = WaitForSingleObject(legacy, 300000);
+        SetEvent(held);
+        Sleep(400);
+        if (result == WAIT_OBJECT_0 || result == WAIT_ABANDONED) ReleaseMutex(legacy);
+    });
+    WaitForSingleObject(held, 300000);
+    const std::uint64_t start = NowMs();
+    { const PortLock gate(L"LegacyRangeGate", 1, 0); }   // no ports: only the locks
+    const std::uint64_t waited = NowMs() - start;
+    holder.join();
+    CloseHandle(held);
+    CloseHandle(legacy);
+    Check(waited >= 300, "a per-case port lock waits while an older link_udp_tests holds the whole-range mutex");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -855,6 +882,7 @@ int main(int argc, char** argv) {
         {"WrongSecret", WrongSecret, 640},
         {"Impairments", Impairments, 2520},
         {"PartnerNetV2", PartnerNetV2, 19140},
+        {"LegacyRangeGate", LegacyRangeGate, 420},
     };
     std::vector<const mgscoop::test::TestCase*> selected;
     bool listed = false;
