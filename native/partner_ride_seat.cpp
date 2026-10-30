@@ -82,6 +82,8 @@ const Site& SiteFor(SiteId id) noexcept {
 
 std::uint32_t SeatDword(std::uint8_t seat) noexcept { return c::ride_seat_base | (static_cast<std::uint32_t>(seat & 3u) << 24); }
 
+std::uint8_t AnchorSeat(std::uint8_t seat) noexcept { return seat; }
+
 const char* VerifyImage(const unsigned char* base, std::size_t span) noexcept {
     if (!base) return "base";
     for (const std::uintptr_t rva : c::ride_seat_blocks) {
