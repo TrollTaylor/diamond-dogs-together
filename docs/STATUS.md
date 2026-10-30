@@ -1,3 +1,25 @@
+## October 29, 2026: 0.14.4 (vehicles in Afghanistan and Africa, the vehicle decisions, launcher polish)
+
+**Package (2026-10-29):** `dist/DiamondDogsTogether-0.14.4-20261030T004356Z-a5bd9d1b/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `89f8d93` (the version bump) with Release receipt `20261030-003929-a54b029ae1e5453fb2853f94263a8b66` (passed, 298 audited tests). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.4+89f8d93` and are the receipt's own files.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.4.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,079,270 | `B8FA85DC26884DC271ABCEB7D5E8D54F002DEE065F610529C1B9522AB031B0BC` |
+| `DDT-source-0.14.4.zip` (1,410 source files plus `source-files.json`) | 8,307,874 | `09A62E4BF0A3A3AA475F602CD0D46B352DB831DE37DC049ECBD8BDFD6B03486B` |
+| `DiamondDogsTogether.exe` | 2,368,000 | `0D376486315C54AA3AC173656B6D06C31130674EFE608C5E1E1F01A676E2D2B8` |
+| `dinput8.dll` | 7,060,992 | `8D9D1CA4751E39BED6D0E5F9280FD51A41C532FBEEEB582A10295272ACFABF3C` |
+
+- **Package audit:** 34/34 (both zips present; the player zip holds exactly its 9 files and no source or script; exe and dll are the receipt's; `package.json` version 0.14.4, every `files[]` hash and `source_archive` match; every source file is in the source zip with its hash and matches the tree at `89f8d93`; `tools/check-release.ps1` accepts a simulated draft release carrying both zips). Build id strings `0.14.4+89f8d93` in both programs; no personal path or e-mail in either zip.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.24.0): the exe, the dll and both zips "found no threats"; no detection recorded and the four hashes unchanged after the scans. (A Debug build of the merged launcher was flagged once during the launcher work, see the launcher polish section below; this Release build was not.)
+- **To release:** upload **both** zips to the GitHub release `v0.14.4`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.14.4 -PackageDir dist/DiamondDogsTogether-0.14.4-20261030T004356Z-a5bd9d1b` before publishing. Nothing was pushed, tagged or released by the packaging.
+
+Branch `dev/oct7-continue`. Releases everything since 0.14.3 (`48ce7da`); none of it is two-PC tested yet. Proof runs are in the sections below.
+- **Vehicles in Afghanistan and Africa free roam (on in play at 30010 / 30020):** M4 VEHICLE_GONE (a Fulton or a host destruction removes the vehicle on both copies) and VEHICLE_STATE (a parked vehicle keeps the host's pose and body life on both), D11 `world_loadout_block` (the guest's LOADOUT and VEHICLES drops refused), D12 `world_vehicle_break` (the host judges and wrecks a vehicle the guest destroys, or despawns it with a player within 15 m), D14 `world_vehicle_credit` (a Fultoned world vehicle credited on both co-op saves). Mother Base vehicle sync and the wreck parity stay lab only.
+- **Off by default:** `companion_host_owned` (M1, M2 and the D7 dog guard) and `world_relief` (M3, the sortie vehicle on both copies).
+- **Launcher** (merge `ffaea6b` of `wp/launcher-polish`): the logo at every icon size, a restart after an update (`--after-update` handshake, rollback), automatic setup with no Setup page, Settings > Debug mode with Play > Local test (two windows), and the source as its own `DDT-source-<version>.zip` release asset.
+- **Version.** 0.14.4 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.4 and still 0.14.3; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.14.5", "0.14.4")` (0.14.4 > 0.14.3 was already checked).
+- **Checks at the bump commit `89f8d93`:** `pwsh -File tools/build.ps1 -Fast` 301/301; `pwsh -File tools/build.ps1` (Debug) 317/317.
+
 ## 2026-10-29: the user's vehicle and companion decisions (D7, D11-D15) integrated (`dev/oct7-continue`, unreleased, not two-PC tested)
 
 Both decision tracks are merged into `dev/oct7-continue` with merge commits only (local, nothing pushed, tagged or
