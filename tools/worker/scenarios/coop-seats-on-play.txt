@@ -5,7 +5,7 @@
 # (seat 1 door 574.36,1157.5 facing 96; seat 0 door 577.20,1157.19 facing -84).
 #   A0 the Fulton guard while denied: the host stands at the driver's door (its want), the guest at the right door is
 #      held / denied (no ride icon): event=seat; action=fulton; on=1 and no Fulton prompt in its frame; the guest
-#      holds E for 2 s and the jeep is still there, nobody in it.
+#      holds E for about 3 s (heldcapture) and the jeep is still there, nobody in it.
 #   A  the race inside one round trip, before any deny exists: both arrive at the two front doors and press E at once;
 #      the guest's hold refuses its icon before any answer; the host drives, the guest stays on foot.
 #   B  the guest boards seat 1 beside the host's driving (the guard keeps the Fulton prompt off at the partner's
@@ -46,11 +46,7 @@ wait 3000
 waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
 waitlog guest 'world_lua=event=seat; action=fulton; on=1; vehicle=25608' 5
 guest capture s1-guard-denied
-guest hold e 2000 nowait
-wait 1000
-guest capture s1-guard-hold
-wait 1500
-guest release
+heldcapture guest guest e s1-guard-hold 2
 wait 1500
 guest run vehicle_census 8 1
 guest expect vehicle_census;first=8;n=1;found=1;25608:2:4
