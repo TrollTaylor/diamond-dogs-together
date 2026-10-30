@@ -633,6 +633,9 @@ inline constexpr float kTurnPitch = 0.12f, kTurnInterp = 0.4f;
 inline constexpr float kTurnSpeed = 0.4f, kTurnBlend = 0.8f;  // the Lua binding's two constants (0x2104860, 0x20C5CB0)
 inline constexpr std::uint32_t kTurnFlags = 0x400126;
 inline constexpr std::uint64_t kTurnMs = 6000, kTurnCheckMs = 900;
+// Design 8.37: an on-foot aim while the turn is pending holds it; after the aim the request waits kTurnSettleMs (and while
+// the aim camera module is still the mode), within kTurnAfterAimMs of the aim's end (past kTurnMs if need be); an aim
+// still held kTurnAimMaxMs after the get-off drops it.
 inline constexpr std::uint64_t kTurnSettleMs = 300, kTurnAfterAimMs = 3000, kTurnAimMaxMs = 20000;
 inline constexpr std::size_t kCamRequestFlags = 0xD38, kCamRequest = 0xD80;
 inline constexpr std::uint32_t kRequestBusy = 0x1001, kRequestBit = 2, kCamLockBit = 1u << 9;
@@ -658,6 +661,8 @@ inline void TurnArm(Turn& t, std::uint16_t vehicle, std::uint8_t seat, std::uint
     t.vehicle = vehicle;
     t.seat = seat;
     t.since_ms = now_ms ? now_ms : 1;
+    t.aimed = false;
+    t.aim_end_ms = 0;
 }
 // The stock get-off cleared the handle: the get-off ran (the request follows once no VehicleCamera is active).
 inline void TurnStockClear(Turn& t) noexcept {
@@ -671,13 +676,15 @@ inline bool TurnCancel(Turn& t) noexcept {
     if (was) ++t.expired;
     return was;
 }
-// One tick. Reasons (static): check, seated, timeout, look, aiming, wait, stock, request. look / aiming: the player's own
-// camera input this tick (the effective right stick or mouse above kLookInput; the local gun aiming on foot). Design 8.36:
-// the player who looks or aims while the turn is pending (under the stock get-off or after it) has the camera: the turn
-// is dropped, never requested over their input.
+// One tick. Reasons (static): check, seated, timeout, look, aiming, settle, wait, stock, request. look: the player's own
+// camera input this tick (the effective right stick or mouse above kLookInput); aiming: the local gun aiming on foot;
+// aim_cam: the aim camera module is the camera's mode (read while settling after an aim). Design 8.36: a look while the
+// turn is pending (under the stock get-off or after it, aiming or not) gives the player the camera: the turn is dropped.
+// Design 8.37: an aim holds it (hold on the first aiming tick, never a request while aiming); after the aim, the request
+// follows kTurnSettleMs later once the aim module let go, with the stock get-off's own conditions, within kTurnAfterAimMs
+// of the aim's end. A re-boarding drops it first.
 inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason, bool look = false,
                         bool aiming = false, bool aim_cam = false) noexcept {
-    (void)aim_cam;
     reason = "none";
     if (t.check_ms && now_ms >= t.check_ms) {
         t.check_ms = 0;
@@ -687,8 +694,24 @@ inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t n
     if (!t.pending) return TurnAct::none;
     const std::uint64_t age = now_ms >= t.since_ms ? now_ms - t.since_ms : 0;
     if (seated) { t.pending = false; ++t.expired; reason = "seated"; return TurnAct::expire; }
-    if (age >= kTurnMs) { t.pending = false; ++t.expired; reason = "timeout"; return TurnAct::expire; }
-    if (aiming || look) { t.pending = false; ++t.expired; reason = aiming ? "aiming" : "look"; return TurnAct::expire; }
+    if (look) { t.pending = false; ++t.expired; reason = "look"; return TurnAct::expire; }
+    if (aiming) {
+        if (age >= kTurnAimMaxMs) { t.pending = false; ++t.expired; reason = "timeout"; return TurnAct::expire; }
+        if (cam.ok && StockModule(cam)) t.seen_stock = true;
+        const bool first = !t.aimed;
+        t.aimed = true;
+        t.aim_end_ms = 0;
+        reason = "aiming";
+        return first ? TurnAct::hold : TurnAct::none;
+    }
+    if (t.aimed && !t.aim_end_ms) t.aim_end_ms = now_ms ? now_ms : 1;
+    const bool after_aim = t.aimed && now_ms >= t.aim_end_ms && now_ms - t.aim_end_ms < kTurnAfterAimMs;
+    if (age >= kTurnMs && !after_aim) { t.pending = false; ++t.expired; reason = "timeout"; return TurnAct::expire; }
+    if (t.aimed && (now_ms < t.aim_end_ms || now_ms - t.aim_end_ms < kTurnSettleMs || aim_cam)) {
+        if (cam.ok && StockModule(cam)) t.seen_stock = true;
+        reason = "settle";
+        return TurnAct::none;
+    }
     if (!cam.ok) { reason = "wait"; return TurnAct::none; }
     if (StockModule(cam)) { t.seen_stock = true; reason = "stock"; return TurnAct::none; }
     if (!t.seen_stock && !t.stock_clear) { reason = "wait"; return TurnAct::none; }

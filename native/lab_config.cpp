@@ -1700,10 +1700,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // only the free back seats of a light vehicle; trucks and the rest block. A named
     // block or off still wins.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
-    // The passenger camera (design 8.27 / 8.28): aim (the handle and the shot guard) unless named, in lab and play: the
-    // view held through a seated shot (lab 7e79996f, play rehearsal 06aa3fc6; the review fixes: see STATUS). A named
-    // connect is 0.14.4.
-    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::aim;
+    // The passenger camera (design 8.27 / 8.28 / 8.37): view (the handle, the shot guard and the get-off turn) unless named,
+    // in lab and play: the view held through a seated shot (lab 7e79996f, play rehearsal 06aa3fc6) and the camera turned
+    // behind the player after a seat-1 / seat-2 get-off (design 8.37). A named aim drops the turn; connect is 0.14.4.
+    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::view;
     // M6 seat 1 (the light vehicle's front seat, the truck cab seat) and the seat races (SEAT op 54) follow the gun
     // profile since the seats-on round (docs/vehicles-companions-design.md 8.25: the lab FRAME proofs of 8.20 / 8.21 and
     // the play rehearsals of 8.25 / 8.26 at these defaults); the truck cab in lab only (play forces it off below unless
@@ -1799,11 +1799,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // truck and the host-in-cab role ran only in the lab); a named 1 runs in play.
         if (!c.partner_ride_cab_given) c.partner_ride_cab = false;
         // The passenger camera's trace is a lab measurement (read-only); its mode runs in play, except drop (a lab option:
-        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981) and view (design 8.33/8.34: unproven in a FRAME and in a
-        // play rehearsal), which run as aim (design 8.28).
+        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.28). View runs in play (8.37).
         c.partner_pass_camera_trace = false;
-        if (c.partner_pass_camera == PartnerPassCamera::drop || c.partner_pass_camera == PartnerPassCamera::view)
-            c.partner_pass_camera = PartnerPassCamera::aim;
+        if (c.partner_pass_camera == PartnerPassCamera::drop) c.partner_pass_camera = PartnerPassCamera::aim;
     }
 }
 

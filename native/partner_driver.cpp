@@ -3381,9 +3381,10 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         break;
     }
     if (c.turn.pending || c.turn.check_ms) {
-        // Design 8.36: the player's own camera input while the turn is pending (on foot): the effective right stick or
-        // mouse above kLookInput (as the shot guard reads it), or the local gun aiming. Either drops the turn.
-        bool turn_look = false, turn_aim = false;
+        // Design 8.36 / 8.37: the player's own camera input while the turn is pending (on foot): the effective right stick
+        // or mouse above kLookInput (as the shot guard reads it) drops the turn; the local gun aiming holds it, and after
+        // the aim the request waits while the aim camera module is still the mode.
+        bool turn_look = false, turn_aim = false, turn_aim_cam = false;
         unsigned turn_gun = 0;
         if (c.turn.pending && !lp.valid) {
             partner_input::PadRaw turn_raw{};
@@ -3396,9 +3397,11 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                 turn_aim = pc::GunAims(turn_ar.gun_ok[0], turn_ar.gun_state[0], turn_ar.gun_flags[0]);
                 turn_gun = turn_ar.gun_ok[0] ? turn_ar.gun_state[0] : 0xFFu;
             }
+            if (c.turn.aimed && !turn_aim && h.pass_camera_mvt)
+                turn_aim_cam = h.pass_camera_mvt(h.context, st) == pc::kAimModuleVtableRva;
         }
         const char* why = "none";
-        const pc::TurnAct ta = pc::TurnStep(c.turn, lp.valid, cam, now, why, turn_look, turn_aim);
+        const pc::TurnAct ta = pc::TurnStep(c.turn, lp.valid, cam, now, why, turn_look, turn_aim, turn_aim_cam);
         const unsigned age = static_cast<unsigned>(pc::ClampMs(now >= c.turn.since_ms ? now - c.turn.since_ms : 0));
         if (ta == pc::TurnAct::request) {
             partner_vehicle::Read vr{};
@@ -3409,10 +3412,15 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
             pc::TurnDone(c.turn, refusal == nullptr, yaw, now);
             EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                         "partner_ride=pass_camera; state=turn; event=%s; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; yaw_mrad=%d; "
-                        "pitch_mrad=%d; cmode=%d; requests=%u\r\n",
+                        "pitch_mrad=%d; cmode=%d; requests=%u; aimed=%u\r\n",
                         refusal ? "refused" : "request", unsigned(c.turn.vehicle), unsigned(c.turn.seat), refusal ? refusal : "made", age,
                         c.turn.seen_stock ? 1u : 0u, static_cast<int>(std::lround(yaw * 1000.0f)),
-                        static_cast<int>(std::lround(pc::kTurnPitch * 1000.0f)), cam.mode, c.turn.requests);
+                        static_cast<int>(std::lround(pc::kTurnPitch * 1000.0f)), cam.mode, c.turn.requests, c.turn.aimed ? 1u : 0u);
+        } else if (ta == pc::TurnAct::hold) {
+            // Design 8.37: the player aims on foot: the turn waits for the aim's end (once per pending turn).
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=hold; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
         } else if (ta == pc::TurnAct::expire) {
             EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                         "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",

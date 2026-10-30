@@ -220,11 +220,11 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
 // The passenger camera (partner_pass_camera, docs/native-puppet.md "Passenger camera", design 8.27 / 8.28), with
 // partner_ride_board=passenger: off (never connected: the stock collision for the whole ride), connect (the
-// vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard; the default),
+// vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard),
 // drop (the shot guard, and the handle dropped while the local passenger aims and briefly after: a lab option, it
 // blocks the seat-2 gun; play runs it as aim). Values equal partner_pass_camera::Mode.
-// view (design 8.33): aim plus the seated aim view (the aim camera raised over the shoulder while seated) and the
-// camera turned behind the player after a get-off.
+// view (design 8.33 / 8.37; the default in lab and play): aim plus the camera turned behind the player after a seat-1 or
+// seat-2 get-off (held through an on-foot aim, dropped by a look).
 enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
 // ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
@@ -610,10 +610,10 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
-    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (aim unless
+    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (view unless
     // named); a named value records _given; an invalid value refuses (named, the default kept). The lab trace
     // (partner_pass_camera_trace=1: the local camera, gun and body while seated, design 8.27) is lab only, default 0.
-    PartnerPassCamera partner_pass_camera = PartnerPassCamera::aim;
+    PartnerPassCamera partner_pass_camera = PartnerPassCamera::view;
     bool partner_pass_camera_given = false;
     bool partner_pass_camera_trace = false;
     // M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6; partner_board): with
