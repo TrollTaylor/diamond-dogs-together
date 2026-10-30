@@ -2337,6 +2337,84 @@ passed [O].
 Not in this smoke: D12's crew rule (its rehearsals at the shipped defaults are `34d5744d` and `98d84a21`), the D11 window
 before PAIRED, a dog death, the launcher. No defect found.
 
+### 8.20 Results: E6 and M6 seat 1, the seat races (2026-10-30, branch `wp/seats`)
+
+Branch `wp/seats` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/vehicle-state`. Static reads with the local
+Ghidra project (headless `DecompileAddrs.java`, read-only; raw output in the session scratch `m6m7/seats/re/`) and
+capstone; hidden runs below. Marks: [O] observed, [I] inferred, [U] unproven.
+
+**E6, static** [O unless marked]:
+- Phase 1 (`0x141251200`) keeps the searched seat in the low nibble of `+0x57` (the vehicle type in the high nibble).
+  `0x141251834` `cmp al,2; jb` passes seat 0 to TryToRide `0xCB9470` for seats 0 and 1; `0x141251894` `cmp al,2;
+  setb; add al,2` selects the driver phase 3 for seats 0/1 and the passenger phase 2 (`0x1250CF0`) for 2 and up.
+- The passenger phase plays a GetOn by (type, seat): light vehicles seat 1 `stateVehicleGetOnFrontRight`
+  (`0x00f3b0882fd1`), 2 / 3 the back GetOns; trucks (types 3, 4) seat 1 `stateTruckGetOnFrontRight`
+  (`0x8a991a913969`). Its loop state comes from `0x14124B2D0`: light seat 1 `0xc920302ab94f` (unnamed) then
+  `stateVehicleFrontRightLoop`, seats 2 / 3 the back loops; trucks get the unbound hash (no loop state). Its update
+  (case 0) leaves for the get-off phase 6 when `rider[seat]` is no longer the player.
+- The passenger's per-frame placement (case 8, `0x141259B80`) uses the seat matrix `0xB7AF90(unit, out, seat)`, and
+  `0xB799C0` maps seat 1 to seat 0 while `rider[1]` holds a player id (`0xB79A3F`): without a remap skip a seat-1
+  passenger would sit in the driver's seat [I from the code; the skip was on in every run].
+- Seat count `0xA27CC0` = category `+0x1B7` + attachment `+0xB5`; the seat matrix of a seat at or above the count
+  returns a constant default matrix (no out-of-bounds read), so a seat index 2 / 3 on a truck draws in the wrong place
+  rather than faulting.
+- The ride pre-query `0x1245820` searches seats 0..min(count-1, 1) and keeps the result only if a door bit maps to it.
+- `vars.vehicleGameObjectIdOnPlayerOnCargo` is `vars + 0x114` (u16, declared at `0x140998985`).
+- Census (`vehicle_census`, run `f49c167d`, both copies, 30010): the six trucks `25602..25607` answer `GetVehicleType` 4
+  and two seats, each with two soldiers (`riders=1194,1195` ...: the LRRP crews); the thirteen light vehicles
+  `25608..25620` type 2 with four seats.
+
+**The lever (lab keys `partner_ride_front`, `partner_ride_cab`).** Site B sets both phase-1 immediates to 1 only for
+the phase-1 call it steers to seat 1 (both sites run after site B in the same call) and back to 2 for every other call,
+so a stock seat 1 (the driver by the right door) stays the driver; the remap `jne` at `0xB79A43` is a `jmp` for the
+process once seat 1 is installed (`partner_board=seat_one; result=ok; ...; remap=0xb79a40`). Contract: the three dwords
+and their blocks are pinned (`board_seat1_*`, `board_remap_*`, `board_seat1_blocks`); `vehicle_door` accepts the
+remap's `jmp`.
+
+**Hidden runs** (lab unless marked; research worker build, native gun stage; seed `afgh-ledge`, 30010; slices and
+JPEG frames in the session scratch `complete/frames/seats/<run8>/`, looked at for every claim below; run folders
+archived under `%USERPROFILE%\mgs-coop-run-archive\m6m7\`). An earlier start of the first run stopped in the worker
+checks (`Source changed during worker checks`: the tree was edited while they ran); no game started.
+
+| Run | Build | Scenario | Result |
+|---|---|---|---|
+| `f49c167d` | `0c9f93f` | `coop-vehicle-passenger-m6.txt` (first form) | Jeep seat 1 in both roles passed (lines below); the first half's jeep did not move under the host's W (its drive frames are stationary); the truck half stopped: the LRRP truck the host reached coasted 23 m once `clear_enemies` took its driver (`gate=far; d3=23.13`) |
+| `3c748d46` | `387c6b0` | the same, reworked (back out first; the sortie truck) | Jeep seat 1 in both roles passed again with the jeep moving; SEAT denied the guest standing by the jeep the host took; the truck part stopped at `goto_vehicle sortie` (`door_unavailable`, a lever bug, fixed in `5bcdc9f`) after the guest's copy loaded the sortie truck 10 s after the census asked |
+
+- **Light vehicle front seat (1), both roles [O, `f49c167d` and `3c748d46`].** Both copies:
+  `partner_board=seat_one; result=ok; reason=none; front=1; cab=1; remap=0xb79a40; sites=0x1251834,0x1251894`. The
+  guest beside the host-driven Wakh Sind jeep (25608, type 2, four seats) at its front right door
+  (`goto_partner_vehicle passenger 60`): `partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1; n=1;
+  type=2; seats=4`, `local_passenger; vehicle=25608; seat=1; state=on; via=p120`, `board_seated; ...; seat=1; ms=0`,
+  `pass_camera; state=connect; vehicle=25608; seat=1; reason=handle; plan=connect; ...; cam1f0=0x8800000000006408;
+  cam200=1; mode=0`; the host `partner_ride_seat=confirmed; vehicle=25608; seat=1; state=0xf3b0882fd1` (the GetOn of
+  the front right seat); after the stock get-off `local_passenger; ...; state=off; reason=act` and `pass_camera;
+  state=release; ...; reason=stock; ok=1`. The reverse (the guest drives, the host boards seat 1) logged the same
+  lines with the roles swapped. No `board_uncertain`, no `pass_camera; state=refused`, no `viewer_changed` on either copy.
+- **Frames [O].** `m6-jeep-1-seated` on both copies: the guest in the front right seat beside the driving host, on
+  the guest's own screen (its camera outside the jeep) and on the host's; `m6-jeep-1-drive-NN` / `-drive-g-NN`
+  (`3c748d46`): the street and the crates change behind the jeep on both screens while the guest stays seated;
+  `m6-jeep-1-exit-NN`: the stock GetOffFrontRight (the passenger climbs out over the right side); the reverse
+  `m6-jeep-1r-seated`, `-drive-NN` (both screens moving), `-exit-NN`. So the stock passenger phase runs on seat 1 and,
+  with the remap skipped, places the passenger at the front right seat, not the driver's.
+- **D-Dog in seat 1 [O].** `vehicle_seats` on the driver's copy reads `riders=0,9728,...`: the driver's own D-Dog
+  (`9728`, `TppBuddyDog2`) rides in seat 1 on its owner's copy. The seat-1 partner body is drawn there too: frame
+  `m6-jeep-1-seated` (host) shows the dog's white back under the guest's body, and `m6-jeep-1r-drive-NN` (guest) the
+  guest's dog under the host's body. The passenger's own copy has no dog in that seat (its dog runs beside the jeep).
+  Nothing on the passenger's copy can see the driver's dog today.
+- **Seat race, incidental [O, `3c748d46`].** The guest, standing by the jeep the host was about to take, claimed it
+  (`world_lua=event=seat; action=claim; vehicle=25608; role=guest; age=17`); the host's own want answered
+  (`event=seat; action=deny; vehicle=25608; role=host; why=host_first`, then `why=host_drives` once it sat); the guest
+  set its native deny (`event=seat; action=deny; vehicle=25608; role=guest; set=1`) about 60 ms after each claim, and
+  still boarded seat 1 under the passenger policy once the host drove (the deny applies to the stock verdict only).
+  Both copies logged `state=off` once before their board installed, then the claims ran (`5bcdc9f` reads the board
+  again every 10 s while it answers off).
+- **Census [O, both copies, 30010].** Trucks `25602..25607`: type 4, two seats, each with two soldiers
+  (`riders=1194,1195`, ... `1204,1205`); light vehicles `25608..25620`: type 2, four seats; the sortie truck
+  (relief type 4) `25600`: type 4, two seats.
+
+<!-- M6-TRUCK-RESULTS -->
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

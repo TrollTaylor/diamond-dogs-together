@@ -12,7 +12,9 @@
 # Seat race (SEAT op 54, partner_ride_race=1): both at the empty truck's two cab doors; the guest's claim meets the
 #   host's own want (ties go to the host): guest event=seat; action=deny; vehicle=25600; role=guest; set=1 and host
 #   event=seat; action=deny; ...; why=host_first; both press E: the host drives, the guest stays on foot (m6-race).
-# Census (E6): relief_load of the tank (9) and the wheeled armoured vehicle (5) at the same spot, vehicle_census 0 1.
+# The sortie truck stands nose to a building at that attitude (run b66c7031: W pushed it into the wall and tilted it),
+#   so both drivers reverse (S) for the moving frames.
+# Census (E6; run b66c7031 refused relief_ridden 3 s after the host's get-off): relief_load of the tank (9) and the wheeled armoured vehicle (5) at the same spot, vehicle_census 0 1.
 # Run (lab):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6-truck.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
@@ -52,7 +54,7 @@ host press e 150
 wait 3500
 host run vehicle_seats
 host require vehicle;id=25600
-host hold w 1500
+host hold s 1500
 host release
 wait 2500
 guest run goto_partner_vehicle passenger 60
@@ -67,10 +69,10 @@ waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
 waitlog host 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
 wait 1000
 both capture m6-truck-1-seated
-host hold w 1500 nowait
+host hold s 1500 nowait
 both burst m6-truck-1-drive 6 150
 host release
-host hold w+a 1500 nowait
+host hold s+a 1500 nowait
 guest burst m6-truck-1-drive-g 6 150
 host release
 wait 1500
@@ -93,7 +95,7 @@ guest press e 150
 wait 3500
 guest run vehicle_seats
 guest require vehicle;id=25600
-guest hold w 1500
+guest hold s 1500
 guest release
 wait 2500
 waitlog host 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger' 10
@@ -107,10 +109,10 @@ waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
 waitlog guest 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
 wait 1000
 both capture m6-truck-1r-seated
-guest hold w 1500 nowait
+guest hold s 1500 nowait
 both burst m6-truck-1r-drive 6 150
 guest release
-guest hold w+d 1500 nowait
+guest hold s+d 1500 nowait
 host burst m6-truck-1r-drive-h 6 150
 guest release
 wait 1500
@@ -137,6 +139,9 @@ guest expect vehicle_not_riding
 both capture m6-race
 wait 2000
 host press e 150
+wait 5000
+host run vehicle_seats
+placebehind host guest 15 0
 wait 3000
 host run relief_remove instant
 wait 3000
