@@ -1150,7 +1150,28 @@ try {
     Assert-Throws { & $packageScript -Friend -CheckReceipt $stalePath -OutputRoot $distFx } 'Release source does not match check receipt' 'real package admission rejects stale source receipt'
     Assert-True (-not (Test-Path -LiteralPath $distFx)) 'every refusal comes before staging'
 
-    $null = & $packageScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptPath -OutputRoot $distFx
+    # The real tree's package must not depend on what the developer has left untracked (0.14.4 review, round 2: full
+    # CTest went red while a new scenario or test file was not yet committed). For this one run, the child gits (2.31+,
+    # GIT_CONFIG_COUNT/KEY/VALUE) take an excludes file of this fixture that names exactly the tree's untracked files in
+    # the published folders, so package.ps1 does not refuse them; tools/package.ps1 itself has no way around its
+    # refusal, which the git fixture below checks.
+    function Invoke-IgnoringTreeUntracked([scriptblock]$Body) {
+        $exclude = Join-Path $fixture 'real-tree-untracked.exclude'
+        [IO.File]::WriteAllText($exclude, '')
+        $saved = [ordered]@{}
+        foreach ($name in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0') { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+        try {
+            $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.excludesFile'; $env:GIT_CONFIG_VALUE_0 = $exclude
+            $untracked = @(& git -C $projectRoot -c core.quotepath=off ls-files --others --exclude-standard -- native lua tools tests third_party cmake docs CMakeLists.txt README.md THIRD_PARTY_NOTICES.md 2>$null)
+            $patterns = @($untracked | Where-Object { $_ } | ForEach-Object { '/' + ($_ -replace '([\\*?\[\]!#])', '\$1') })
+            [IO.File]::WriteAllText($exclude, (($patterns -join "`n") + "`n"))
+            if ($patterns.Count) { Write-Host "friend_package_tests: the real tree's package run ignores $($patterns.Count) untracked file(s), e.g. $($untracked[0])" }
+            & $Body
+        } finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        }
+    }
+    Invoke-IgnoringTreeUntracked { $null = & $packageScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptPath -OutputRoot $distFx }
     $runs = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $runs.Count 1 'one package run folder'
     Assert-True ($runs[0].Name -cmatch ('^DiamondDogsTogether-' + [regex]::Escape($packageVersion) + '-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$')) "package run folder name: $($runs[0].Name)"
