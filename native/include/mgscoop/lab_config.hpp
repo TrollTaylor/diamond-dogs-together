@@ -220,9 +220,9 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
 // The passenger camera (partner_pass_camera, docs/native-puppet.md "Passenger camera", design 8.25), with
 // partner_ride_board=passenger: off (never connected: the stock collision for the whole ride), connect (the
-// vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connected, but dropped while the local
-// passenger aims and briefly after). Values equal partner_pass_camera::Mode.
-enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2 };
+// vehicle's ignore-collision handle for the whole ride, 0.14.4), drop (connected, but dropped while the local
+// passenger aims and briefly after), aim (drop plus the shot guard). Values equal partner_pass_camera::Mode.
+enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3 };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
 // ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
 // foot), hide (the viewer also hides body 1 while the remote's act is a horse

@@ -184,7 +184,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # M7: the seat gun (lab and play, default 0)
     'partner_seat_gun=1','partner_seat_gun=0','guest:partner_seat_gun=1','host:partner_seat_gun=0',
     # Design 8.25: the passenger camera's mode (lab and play) and its lab trace
-    'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=aim','guest:partner_pass_camera=aim',
+    'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','guest:partner_pass_camera=aim',
     'partner_pass_camera_trace=1','host:partner_pass_camera_trace=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',

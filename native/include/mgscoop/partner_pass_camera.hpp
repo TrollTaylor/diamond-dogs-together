@@ -48,12 +48,20 @@ struct Stats {
     std::uint32_t writes;   // handle writes (set)
     std::uint32_t clears;   // our handle cleared
     std::uint32_t faults;   // SEH-caught writes
+    std::uint32_t angles;   // shot-guard angle writes (design 8.25)
 };
 void ReadStats(Stats& out) noexcept;
 
 // Design 8.25: the lab trace's read of the local camera (partner_pass_camera_policy View: CAM+0xE0, +0x90,
 // +0x268..0x274, +0x204, +0xD38). Reads only, under SEH; false when the camera is not the PlayerCamera.
 bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept;
+// The current mode's module vtable rva (CAM+0xBD0[CAM+0x340]; 0 when unread): the trace's mvt.
+std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept;
+
+// Design 8.25, the shot guard (mode aim): writes the local camera's look pitch to CAM+0x268 / +0x270 and its yaw to
+// CAM+0x26C / +0x274 (the stock look update's order). Only to the PlayerCamera (vtable checked), under SEH; false on a
+// fault (counted in Stats::faults: the driver latches the mission) or an unread camera. Counted in Stats::angles.
+bool WriteAngles(const void* base, std::uintptr_t P, float pitch, float yaw) noexcept;
 
 // The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode
 // override (-1: none, else a Mode). HandleCommand is false for any other text; for a passcam command it fills

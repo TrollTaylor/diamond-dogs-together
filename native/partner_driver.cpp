@@ -3127,15 +3127,16 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     }
     // Design 8.25: the effective mode (the key; on a lab copy the passcam lever's override wins).
     pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
-    const char* mode_source = "key";
+    bool lever = false;
     const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
-    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::aim)) {
+    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::drop)) {
         mode = static_cast<pc::Mode>(override_mode);
-        mode_source = "lever";
+        lever = true;
     }
-    if (c.mode_logged != static_cast<std::uint8_t>(mode) + 1u) {
-        c.mode_logged = static_cast<std::uint8_t>(static_cast<unsigned>(mode) + 1u);
-        EmitBoard(m, h, "partner_ride=pass_camera; state=mode; mode=%s; source=%s; trace=%u\r\n", pc::ModeName(mode), mode_source,
+    const std::uint8_t mode_key = static_cast<std::uint8_t>((static_cast<unsigned>(mode) + 1u) | (lever ? 0x80u : 0u));
+    if (c.mode_logged != mode_key) {
+        c.mode_logged = mode_key;
+        EmitBoard(m, h, "partner_ride=pass_camera; state=mode; mode=%s; source=%s; trace=%u\r\n", pc::ModeName(mode), lever ? "lever" : "key",
                   d.settings.pass_camera_trace ? 1u : 0u);
     }
     pc::ArmIn ai{};
@@ -3149,15 +3150,19 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     ai.off = mode == pc::Mode::off;
     const char* arm_reason = "none";
     const pc::Arm arm = pc::ArmFor(ai, arm_reason);
-    // The local gun (k = 0) while seated: the aim drop's input and the trace's.
+    // The local gun (k = 0) while seated: the aim drop's and the shot guard's input, and the trace's.
     const bool trace = d.settings.pass_camera_trace && !d.settings.play_mode && h.pass_camera_view != nullptr;
+    const bool armed = arm.armed && d.pass_camera_installed;
     pp::AimRead aim_read{};
     const bool aim_ok = lp.valid && (arm.armed || trace) && h.read_aim && h.read_aim(h.context, st, aim_read);
     const bool aiming = aim_ok && pc::GunAims(aim_read.gun_ok[0], aim_read.gun_state[0], aim_read.gun_flags[0]);
-    const pc::AimOut aim_out = pc::AimStep(c.aim, mode, arm.armed && d.pass_camera_installed, aiming, now);
+    const bool firing = aim_ok && pc::GunFires(aim_read.gun_ok[0], aim_read.gun_state[0]);
+    const pc::AimOut aim_out = pc::AimStep(c.aim, mode, armed, aiming, now);
     pc::Camera cam{};
     const char* plan = "none";
     if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, aim_out.want, cam);
+    else if (d.pass_camera_installed && ai.off && lp.valid && !ai.uncertain)
+        plan = h.pass_camera_connect(h.context, st, lp.vehicle, false, cam);  // off: our own handle cleared (ReleasePlan)
     else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
     if (aim_out.event != pc::AimEvent::none)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
@@ -3166,6 +3171,27 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                     pc::AimEventName(aim_out.event), unsigned(arm.vehicle), unsigned(arm.seat), pc::ModeName(mode),
                     unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), plan ? plan : "none",
                     static_cast<unsigned long long>(cam.connect), cam.on, cam.mode, c.aim.drops, c.aim.restores);
+    // The shot guard (mode aim): the look angles held near the aimed reference from the first firing tick until
+    // kGuardHoldMs after the last one (partner_pass_camera_policy GuardStep).
+    const bool guard_on = armed && mode == pc::Mode::aim && h.pass_camera_view && h.pass_camera_angles;
+    pc::View gv{};
+    const bool gv_need = guard_on && (aiming || firing || c.guard.active || c.guard.last_fire_ms != 0);
+    const bool gv_ok = gv_need && h.pass_camera_view(h.context, st, gv) && gv.ok;
+    const pc::GuardOut go = pc::GuardStep(c.guard, guard_on && (gv_ok || !gv_need), aiming, firing, gv_ok || !gv_need,
+                                          gv_ok ? gv.ang[2] : 0.0f, gv_ok ? gv.ang[3] : 0.0f, now);
+    bool guard_written = false;
+    if (go.write) guard_written = h.pass_camera_angles(h.context, st, go.pitch, go.yaw);
+    if (go.event == pc::GuardEvent::open)
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=guard; event=open; vehicle=%u; seat=%u; gun=%u; ref_mrad=%d,%d; now_mrad=%d,%d; windows=%u\r\n",
+                    unsigned(arm.vehicle), unsigned(arm.seat), unsigned(aim_read.gun_state[0]), static_cast<int>(c.guard.ref_pitch * 1000.0f),
+                    static_cast<int>(c.guard.ref_yaw * 1000.0f), gv_ok ? static_cast<int>(gv.ang[2] * 1000.0f) : 0,
+                    gv_ok ? static_cast<int>(gv.ang[3] * 1000.0f) : 0, c.guard.windows);
+    else if (go.event == pc::GuardEvent::close)
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=guard; event=close; vehicle=%u; seat=%u; writes=%u; max_pull_mrad=%d; total_writes=%u\r\n",
+                    unsigned(arm.vehicle), unsigned(arm.seat), c.guard.window_writes, static_cast<int>(c.guard.window_max * 1000.0f),
+                    c.guard.writes);
     if (aiming) c.trace_aim_ms = now ? now : 1;
     if (trace && lp.valid && pc::TraceDue(c.trace_ms, c.trace_aim_ms, aiming, now)) {
         c.trace_ms = now ? now : 1;
@@ -3176,18 +3202,21 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         const float* body = aim_read.body[0];
         const float* tgt = aim_read.q10[0];
         const float* apt = aim_read.aimpt[0];
+        const unsigned long long mvt = h.pass_camera_mvt ? static_cast<unsigned long long>(h.pass_camera_mvt(h.context, st)) : 0ull;
         EmitNativeN(h, c.trace_cap, pc::kTraceCap, "partner_pass_camera_trace",
-                    "partner_ride=pass_camera; state=trace; seat=%u; mode=%s; aim=%u; gun=%u; f3c0=0x%x; h=%u; view=%u; cam_cm=%d,%d,%d; "
-                    "body_cm=%d,%d,%d; byaw_cdeg=%d; ang_mrad=%d,%d,%d,%d; rot=%d,%d,%d,%d; tgt_cm=%d,%d,%d; apt_cm=%d,%d,%d; r5c=%d; r60=%d; "
-                    "f204=0x%x; d38=0x%x; cmode=%d\r\n",
-                    unsigned(lp.seat), pc::ModeName(mode), aiming ? 1u : 0u, unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]),
+                    "partner_ride=pass_camera; state=trace; ms=%llu; seat=%u; mode=%s; aim=%u; gun=%u; f3c0=0x%x; h=%u; view=%u; cam_cm=%d,%d,%d; "
+                    "body_cm=%d,%d,%d; byaw_cdeg=%d; ang_mrad=%d,%d,%d,%d; tgt_cm=%d,%d,%d; apt_cm=%d,%d,%d; r5c=%d; r60=%d; "
+                    "f204=0x%x; d38=0x%x; cmode=%d; mvt=0x%llx; gw=%u; off=%d,%d,%d,%d; piv=%d,%d,%d,%d; sc=%d,%d\r\n",
+                    static_cast<unsigned long long>(now), unsigned(lp.seat), pc::ModeName(mode), aiming ? 1u : 0u,
+                    unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]),
                     cam.ok && cam.connect != 0 ? 1u : 0u, view_ok ? 1u : 0u, cm(v.pos[0] - body[0]), cm(v.pos[1] - body[1]),
                     cm(v.pos[2] - body[2]), cm(body[0]), cm(body[1]), cm(body[2]),
                     aim_read.body_ok[0] ? static_cast<int>(aim_read.body_yaw[0] * 5729.578f) : INT32_MIN, milli(v.ang[0]), milli(v.ang[1]),
-                    milli(v.ang[2]), milli(v.ang[3]), milli(v.rot[0]), milli(v.rot[1]), milli(v.rot[2]), milli(v.rot[3]),
-                    cm(tgt[0] - v.pos[0]), cm(tgt[1] - v.pos[1]), cm(tgt[2] - v.pos[2]), cm(apt[0] - v.pos[0]), cm(apt[1] - v.pos[1]),
+                    milli(v.ang[2]), milli(v.ang[3]), cm(tgt[0] - v.pos[0]), cm(tgt[1] - v.pos[1]), cm(tgt[2] - v.pos[2]), cm(apt[0] - v.pos[0]), cm(apt[1] - v.pos[1]),
                     cm(apt[2] - v.pos[2]), aim_read.rate_ok[0] ? milli(aim_read.r5c[0]) : INT32_MIN,
-                    aim_read.rate_ok[0] ? milli(aim_read.r60[0]) : INT32_MIN, v.flags, v.requests, cam.mode);
+                    aim_read.rate_ok[0] ? milli(aim_read.r60[0]) : INT32_MIN, v.flags, v.requests, cam.mode, mvt, guard_written ? 1u : 0u,
+                    milli(v.off[0]), milli(v.off[1]), milli(v.off[2]), milli(v.off[3]), milli(v.piv[0]), milli(v.piv[1]), milli(v.piv[2]),
+                    milli(v.piv[3]), milli(v.sc[0]), milli(v.sc[1]));
     }
     pc::StepIn in{};
     in.passenger = lp.valid;

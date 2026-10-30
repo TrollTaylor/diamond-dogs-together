@@ -1,20 +1,21 @@
 # Design 8.25 (docs/vehicles-companions-design.md; docs/native-puppet.md "Passenger camera"): the back-seat
-# passenger's aim camera, the A/B of the passenger camera's ignore-collision handle. The host drives the africa-jeep
-# (veh_lv_0000 = 25608) and stays still; the guest rides back seat 3 (goto_vehicle jeep right: the right side), then
-# back seat 2 (goto_vehicle jeep: the driver's, left side). In each seat the lab lever "passcam" switches the
-# guest's passenger camera live: connect (0.14.4: the handle for the whole ride), off (never connected: the stock
-# collision), aim (connected, dropped while the guest aims and 0.6 s after). Each variant: the camera turned across
-# the jeep (enemy_cam_turn 0 5: the seated body's facing, 5 deg down), RMB held, three single LMB shots, release.
-# Then, with aim, the camera turned out of the passenger's own side (enemy_cam_turn 180) and along the jeep (90)
-# before an aim: what the stock aim range does there (design 8.22: +-90 deg around the body's facing).
-# partner_pass_camera_trace=1 logs the guest's camera every 100 ms while it aims (and 4 s after), else every 1 s:
-#   partner_ride=pass_camera; state=trace; seat=..; mode=..; aim=..; gun=..; f3c0=..; h=<handle held>; cam_cm=<camera
-#   minus body>; body_cm; byaw_cdeg; ang_mrad=<CAM+0x268..0x274>; rot=<CAM+0x90 x1000>; tgt_cm=<the aim target minus
-#   the camera>; apt_cm=<the gun's aim point minus the camera>; r5c; r60; f204; d38; cmode
-# Expected (lab): guest partner_ride=pass_camera; state=mode; mode=connect|off|aim; source=lever; with aim
-#   state=aim; event=drop at each aim and event=restore 0.6 s after it ended; debug_menu=passcam; ok=1.
-# Frames (look at them): s3-seated, s3{c,o,a}-aim / -shot1..3 / -after / -after2, s3a-out, s3a-along; the same for
-# seat 2 (s2...); the host's (driver's) frames at each aim and third shot.
+# passenger's aim camera. The host drives the africa-jeep (veh_lv_0000 = 25608) and stays still; the guest rides back
+# seat 3 (goto_vehicle jeep right: the right side), then back seat 2 (goto_vehicle jeep: the driver's, left side), and
+# in each seat aims the way a player does right after boarding: RMB with the camera where boarding left it (across the
+# jeep, the seated body's facing), three single LMB shots, release. The lab lever "passcam" picks the guest's passenger
+# camera live: aim (the candidate: the handle dropped while aiming plus the shot guard), drop (the handle dropped, no
+# guard: the A/B of the guard), connect (0.14.4: the handle for the whole ride). With aim in seat 3, the camera is also
+# turned while aiming (mouse) toward the passenger's own side: what the stock aim range (+-90 deg around the seated
+# facing) does there.
+# Run 4f1a072f (this file's first version) found the shot's pull to the sky with the handle held or dropped alike and
+# that the camera's look angles turn vehicle-relative at the aim (so the Lua camera levers aim wrong after it): this
+# version turns the camera only with the mouse.
+# partner_pass_camera_trace=1 logs the guest's camera every 100 ms while it aims (and 4 s after), else every 1 s.
+# Expected (lab): guest partner_ride=pass_camera; state=mode; mode=aim|drop|connect; source=lever; with aim and drop
+#   state=aim; event=drop at each aim and event=restore 0.6 s after it ended; with aim state=guard; event=open at the
+#   first shot and event=close; writes=..; max_pull_mrad=.. after the last; debug_menu=passcam; ok=1.
+# Frames (look at them): s3-seated, s3a-aim / -shot1..3 / -after / -after2, s3a-turn1 / -turn2, s3d-* (drop), then
+# seat 2: s2-seated, s2a-*, s2c-* (connect); the host's (driver's) frames at each aim and third shot.
 # Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-camera.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
@@ -42,74 +43,9 @@ waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; stat
 waitlog guest 'partner_ride=pass_camera; state=connect; vehicle=256[0-9][0-9]; seat=3;' 10
 wait 1000
 both capture s3-seated
-# Seat 3, connect (0.14.4).
-guest debug passcam connect
-waitlog guest 'partner_ride=pass_camera; state=mode; mode=connect; source=lever' 5
-guest run enemy_cam_turn 0 5
-guest expect ^cam_turn;
-wait 800
-guest hold rmb 1500 nowait
-wait 700
-both capture s3c-aim
-guest press lmb 120
-wait 300
-guest capture s3c-shot1
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-guest capture s3c-shot2
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-both capture s3c-shot3
-guest release
-wait 1000
-guest capture s3c-after
-wait 1500
-guest capture s3c-after2
-guest press r 150
-wait 3000
-# Seat 3, off (the stock collision).
-guest debug passcam off
-waitlog guest 'partner_ride=pass_camera; state=mode; mode=off; source=lever' 5
-wait 1000
-guest capture s3o-idle
-guest run enemy_cam_turn 0 5
-guest expect ^cam_turn;
-wait 800
-guest hold rmb 1500 nowait
-wait 700
-both capture s3o-aim
-guest press lmb 120
-wait 300
-guest capture s3o-shot1
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-guest capture s3o-shot2
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-both capture s3o-shot3
-guest release
-wait 1000
-guest capture s3o-after
-wait 1500
-guest capture s3o-after2
-guest press r 150
-wait 3000
-# Seat 3, aim (the drop while aiming).
+# Seat 3, aim (the drop and the shot guard).
 guest debug passcam aim
 waitlog guest 'partner_ride=pass_camera; state=mode; mode=aim; source=lever' 5
-wait 1000
-guest capture s3a-idle
-guest run enemy_cam_turn 0 5
-guest expect ^cam_turn;
-wait 800
 guest hold rmb 1500 nowait
 wait 700
 both capture s3a-aim
@@ -117,6 +53,7 @@ waitlog guest 'partner_ride=pass_camera; state=aim; event=drop; vehicle=256[0-9]
 guest press lmb 120
 wait 300
 guest capture s3a-shot1
+waitlog guest 'partner_ride=pass_camera; state=guard; event=open; vehicle=256[0-9][0-9]; seat=3;' 3
 guest hold rmb 1500 nowait
 wait 200
 guest press lmb 120
@@ -130,33 +67,60 @@ both capture s3a-shot3
 guest release
 wait 1000
 guest capture s3a-after
+waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=256[0-9][0-9]; seat=3;' 3
 waitlog guest 'partner_ride=pass_camera; state=aim; event=restore; vehicle=256[0-9][0-9]; seat=3; mode=aim;' 3
 wait 1500
 guest capture s3a-after2
 guest press r 150
 wait 3000
-# Seat 3, aim: the aim range out of the own side and along the jeep.
-guest run enemy_cam_turn 180 0
-guest expect ^cam_turn;
-wait 900
-guest capture s3a-out-idle
+# Seat 3, aim: the camera turned toward the passenger's own side while aiming.
 guest hold rmb 1500 nowait
-wait 900
-guest capture s3a-out
-guest release
-wait 1200
-guest run enemy_cam_turn 90 0
-guest expect ^cam_turn;
-wait 900
+wait 600
+guest mouse 1500 0
+wait 500
+guest capture s3a-turn1
 guest hold rmb 1500 nowait
-wait 900
-guest capture s3a-along
+guest mouse 1500 0
+wait 600
+guest capture s3a-turn2
 guest release
-wait 1200
+wait 1500
+guest capture s3a-turn-after
+# Seat 3, drop (no guard).
+guest debug passcam drop
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=drop; source=lever' 5
+guest mouse -1500 0
+wait 300
+guest mouse -1500 0
+wait 800
+guest hold rmb 1500 nowait
+wait 700
+guest capture s3d-aim
+guest press lmb 120
+wait 300
+guest capture s3d-shot1
+guest hold rmb 1500 nowait
+wait 200
+guest press lmb 120
+wait 300
+guest capture s3d-shot2
+guest hold rmb 1500 nowait
+wait 200
+guest press lmb 120
+wait 300
+guest capture s3d-shot3
+guest release
+wait 1000
+guest capture s3d-after
+wait 1500
+guest capture s3d-after2
+guest press r 150
+wait 3000
 # --- Seat 2 (the guest gets off and boards from the driver's side) ------------------------------------------------
 guest press e 150
 wait 4000
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=off' 10
+guest debug passcam aim
 guest debug goto_vehicle jeep
 wait 3000
 waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
@@ -165,76 +129,7 @@ wait 3500
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=2; state=on' 5
 wait 1500
 both capture s2-seated
-# Seat 2, connect (0.14.4).
-guest debug passcam connect
-waitlog guest 'partner_ride=pass_camera; state=mode; mode=connect; source=lever' 5
-wait 1000
-guest capture s2c-idle
-guest run enemy_cam_turn 0 5
-guest expect ^cam_turn;
-wait 800
-guest hold rmb 1500 nowait
-wait 700
-both capture s2c-aim
-guest press lmb 120
-wait 300
-guest capture s2c-shot1
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-guest capture s2c-shot2
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-both capture s2c-shot3
-guest release
-wait 1000
-guest capture s2c-after
-wait 1500
-guest capture s2c-after2
-guest press r 150
-wait 3000
-# Seat 2, off.
-guest debug passcam off
-waitlog guest 'partner_ride=pass_camera; state=mode; mode=off; source=lever' 5
-wait 1000
-guest capture s2o-idle
-guest run enemy_cam_turn 0 5
-guest expect ^cam_turn;
-wait 800
-guest hold rmb 1500 nowait
-wait 700
-both capture s2o-aim
-guest press lmb 120
-wait 300
-guest capture s2o-shot1
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-guest capture s2o-shot2
-guest hold rmb 1500 nowait
-wait 200
-guest press lmb 120
-wait 300
-both capture s2o-shot3
-guest release
-wait 1000
-guest capture s2o-after
-wait 1500
-guest capture s2o-after2
-guest press r 150
-wait 3000
 # Seat 2, aim.
-guest debug passcam aim
-waitlog guest 'partner_ride=pass_camera; state=mode; mode=aim; source=lever' 5
-wait 1000
-guest capture s2a-idle
-guest run enemy_cam_turn 0 5
-guest expect ^cam_turn;
-wait 800
 guest hold rmb 1500 nowait
 wait 700
 both capture s2a-aim
@@ -255,29 +150,31 @@ both capture s2a-shot3
 guest release
 wait 1000
 guest capture s2a-after
-waitlog guest 'partner_ride=pass_camera; state=aim; event=restore; vehicle=256[0-9][0-9]; seat=2; mode=aim;' 3
+waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=256[0-9][0-9]; seat=2;' 3
 wait 1500
 guest capture s2a-after2
 guest press r 150
 wait 3000
-# Seat 2, aim: out of the own side and along the jeep.
-guest run enemy_cam_turn 180 0
-guest expect ^cam_turn;
-wait 900
-guest capture s2a-out-idle
+# Seat 2, connect (0.14.4).
+guest debug passcam connect
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=connect; source=lever' 5
+wait 1000
 guest hold rmb 1500 nowait
-wait 900
-guest capture s2a-out
-guest release
-wait 1200
-guest run enemy_cam_turn -90 0
-guest expect ^cam_turn;
-wait 900
+wait 700
+both capture s2c-aim
+guest press lmb 120
+wait 300
+guest capture s2c-shot1
 guest hold rmb 1500 nowait
-wait 900
-guest capture s2a-along
+wait 200
+guest press lmb 120
+wait 300
+both capture s2c-shot3
 guest release
-wait 1200
+wait 1000
+guest capture s2c-after
+wait 1500
+guest capture s2c-after2
 guest debug passcam lab
 guest press e 150
 wait 4000

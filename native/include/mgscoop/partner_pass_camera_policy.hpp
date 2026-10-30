@@ -33,6 +33,7 @@
 // camera then orbits the seated passenger without hitting the jeep. The stock
 // get-off (VehicleCamera Deactivate) and FinishState clear it; a handle of ours
 // still there kReleaseMs after the report ended is cleared by the driver.
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -243,20 +244,25 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
 }
 
 // --- The aim camera (docs/vehicles-companions-design.md 8.25) ------------------
-// partner_pass_camera=off|connect|aim (lab and play): off never connects (the stock collision for the whole ride, the
-// A/B baseline); connect keeps the handle for the whole ride (0.14.4); aim keeps it except while the local passenger
-// aims and kAimHoldMs after: the stock collision then keeps the shoulder (aim) camera out of the jeep's body, which with
-// the handle stood outside the jeep and looked through it (8.22 / 8.24 frames). The lab lever "passcam
-// off|connect|aim|lab|status" overrides the key on this copy (lab only).
-enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2 };
-inline const char* ModeName(Mode m) noexcept { return m == Mode::off ? "off" : m == Mode::connect ? "connect" : "aim"; }
+// partner_pass_camera=off|connect|drop|aim (lab and play): off never connects (and clears our handle: the stock
+// collision for the whole ride); connect keeps the handle for the whole ride (0.14.4); drop keeps it except while the
+// local passenger aims and kAimHoldMs after: the stock collision then keeps the shoulder (aim) camera out of the jeep's
+// body, which with the handle stood outside the jeep and looked through it (8.22 / 8.24 frames, run 4f1a072f seat 2);
+// aim is drop plus the shot guard below. The lab lever "passcam off|connect|drop|aim|lab|status" overrides the key on
+// this copy (lab only).
+enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3 };
+inline const char* ModeName(Mode m) noexcept {
+    return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : "aim";
+}
 inline bool ParseMode(const char* text, std::size_t n, Mode& out) noexcept {
     if (!text) return false;
     if (n == 3 && std::memcmp(text, "off", 3) == 0) { out = Mode::off; return true; }
     if (n == 7 && std::memcmp(text, "connect", 7) == 0) { out = Mode::connect; return true; }
+    if (n == 4 && std::memcmp(text, "drop", 4) == 0) { out = Mode::drop; return true; }
     if (n == 3 && std::memcmp(text, "aim", 3) == 0) { out = Mode::aim; return true; }
     return false;
 }
+inline bool DropsWhileAiming(Mode m) noexcept { return m == Mode::drop || m == Mode::aim; }
 // The local gun aims: the qualified gun record's aim flag (rec+0x3C0 bit 18, partner_input GunFlag::Aiming) or its
 // current mode in the aim / fire / reload family (partner_seat_aim census, run 6fc3098b: RMB 6 / 7, RMB+LMB 9 / 10,
 // an empty magazine 11 / 12).
@@ -277,8 +283,8 @@ struct AimOut {
     bool want = true;          // the driver keeps (connects) the handle this tick
     AimEvent event = AimEvent::none;
 };
-// One tick of an armed boarding (`armed`: ArmFor granted it). Mode aim drops the handle from the first aiming tick
-// until kAimHoldMs after the last one; connect and off never drop (off never arms). Not armed: the state resets (a
+// One tick of an armed boarding (`armed`: ArmFor granted it). Modes drop and aim drop the handle from the first aiming
+// tick until kAimHoldMs after the last one; connect and off never drop (off never arms). Not armed: the state resets (a
 // drop never outlives the boarding; the counters stay).
 inline AimOut AimStep(AimDrop& s, Mode mode, bool armed, bool aiming, std::uint64_t now_ms) noexcept {
     AimOut o{};
@@ -288,7 +294,8 @@ inline AimOut AimStep(AimDrop& s, Mode mode, bool armed, bool aiming, std::uint6
         return o;
     }
     if (aiming) s.last_aim_ms = now_ms ? now_ms : 1;
-    const bool hold = mode == Mode::aim && s.last_aim_ms != 0 && (aiming || now_ms < s.last_aim_ms || now_ms - s.last_aim_ms < kAimHoldMs);
+    const bool hold =
+        DropsWhileAiming(mode) && s.last_aim_ms != 0 && (aiming || now_ms < s.last_aim_ms || now_ms - s.last_aim_ms < kAimHoldMs);
     if (hold && !s.dropped) {
         s.dropped = true;
         ++s.drops;
@@ -308,11 +315,101 @@ inline AimOut AimStep(AimDrop& s, Mode mode, bool armed, bool aiming, std::uint6
 // (written by the look updates, e.g. vt+0xF0 0x111F830 adds to +0x270 / +0x274 and copies them to +0x268 / +0x26C),
 // the flag words CAM+0x204 and CAM+0xD38 (bit 2: a pending recoil request, vt+0xF8 0x111A710 -> CAM+0xDB0).
 inline constexpr std::size_t kCamRot = 0x90, kCamPos = 0xE0, kCamAngles = 0x268, kCamFlags = 0x204, kCamRequests = 0xD38;
+// Also the position solve's inputs (0x1121D30 reads them): the offset CAM+0x140..0x14C, CAM+0x180..0x18C and its
+// scales CAM+0x254 / +0x258 (the trace's off / piv / sc fields: where the aim camera sits relative to its pivot).
+inline constexpr std::size_t kCamOffset = 0x140, kCamPivot = 0x180, kCamScale = 0x254;
 struct View {
     bool ok = false;
     float pos[3]{}, rot[4]{}, ang[4]{};
+    float off[4]{}, piv[4]{}, sc[2]{};
     std::uint32_t flags = 0, requests = 0;
 };
+// --- The shot guard (mode aim; design 8.25) --------------------------------------
+// [O] run 4f1a072f (trace, seats 3 and 2, the handle held or dropped alike): a seated passenger's shot (gun mode 9 / 10)
+// drives the camera's look pitch CAM+0x270 from the aimed value to the top of its range (-1.221 rad, 70 deg up) in
+// about 0.5 s (an exponential approach, also pulling the yaw CAM+0x274 by up to 0.3 rad per shot), and nothing brings
+// it back: the view goes to the sky and stays pitched up after the aim. Its source is not found [U] (not the recoil
+// request vt+0xF8, a random shake; not our handle). The guard keeps the player's own aim: while the passenger aims and
+// does not fire, the look angles are its reference; from the first firing tick until kGuardHoldMs after the last one,
+// a pitch more than kKickUp above (or kKickDown below) the reference, or a yaw more than kKickYaw beside it, is written
+// back to that bound (CAM+0x268 / +0x270 the pitch, +0x26C / +0x274 the yaw, the stock look update's order:
+// 0x111FCB1). Pitch: negative looks up.
+inline constexpr std::size_t kCamPitch = 0x270, kCamYaw = 0x274, kCamPitchPrev = 0x268, kCamYawPrev = 0x26C;
+inline constexpr float kKickUp = 0.05f, kKickDown = 0.03f, kKickYaw = 0.035f;
+inline constexpr std::uint64_t kGuardHoldMs = 350;
+inline constexpr float kPi = 3.14159265f;
+inline float WrapPi(float a) noexcept {
+    while (a > kPi) a -= 2.0f * kPi;
+    while (a < -kPi) a += 2.0f * kPi;
+    return a;
+}
+inline bool GunFires(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 9 || mode == 10); }
+struct Guard {
+    bool ref_ok = false;
+    float ref_pitch = 0.0f, ref_yaw = 0.0f;
+    std::uint64_t last_fire_ms = 0;
+    bool active = false;             // a shot window is open
+    std::uint32_t window_writes = 0;  // writes in the open window
+    float window_max = 0.0f;          // the largest pull away from the reference seen in it (rad)
+    std::uint32_t windows = 0, writes = 0;
+};
+enum class GuardEvent : std::uint8_t { none, open, close };
+struct GuardOut {
+    bool write = false;
+    float pitch = 0.0f, yaw = 0.0f;  // the values to write (write only)
+    GuardEvent event = GuardEvent::none;
+};
+// One tick. `on`: mode aim, an armed boarding, the angles read (ang_ok). Not on: the state resets (a window closes
+// without a line; the counters stay).
+inline GuardOut GuardStep(Guard& g, bool on, bool aiming, bool firing, bool ang_ok, float pitch, float yaw,
+                          std::uint64_t now_ms) noexcept {
+    GuardOut o{};
+    if (!on || !ang_ok || !std::isfinite(pitch) || !std::isfinite(yaw)) {
+        g.ref_ok = false;
+        g.last_fire_ms = 0;
+        g.active = false;
+        return o;
+    }
+    if (firing) g.last_fire_ms = now_ms ? now_ms : 1;
+    const bool window = g.last_fire_ms != 0 && (firing || now_ms < g.last_fire_ms || now_ms - g.last_fire_ms < kGuardHoldMs);
+    if (!window) {
+        if (g.active) {
+            g.active = false;
+            o.event = GuardEvent::close;
+        }
+        g.last_fire_ms = 0;
+        g.ref_ok = aiming;
+        if (aiming) { g.ref_pitch = pitch; g.ref_yaw = yaw; }
+        return o;
+    }
+    if (!g.ref_ok) {
+        // A shot with no aimed tick before it: its first tick is the reference.
+        g.ref_ok = true;
+        g.ref_pitch = pitch;
+        g.ref_yaw = yaw;
+    }
+    if (!g.active) {
+        g.active = true;
+        g.window_writes = 0;
+        g.window_max = 0.0f;
+        ++g.windows;
+        o.event = GuardEvent::open;
+    }
+    const float dp = pitch - g.ref_pitch, dy = WrapPi(yaw - g.ref_yaw);
+    const float pull = std::fabs(dp) > std::fabs(dy) ? std::fabs(dp) : std::fabs(dy);
+    if (pull > g.window_max) g.window_max = pull;
+    const float p = dp < -kKickUp ? g.ref_pitch - kKickUp : dp > kKickDown ? g.ref_pitch + kKickDown : pitch;
+    const float y = dy > kKickYaw ? WrapPi(g.ref_yaw + kKickYaw) : dy < -kKickYaw ? WrapPi(g.ref_yaw - kKickYaw) : yaw;
+    if (p != pitch || y != yaw) {
+        o.write = true;
+        o.pitch = p;
+        o.yaw = y;
+        ++g.window_writes;
+        ++g.writes;
+    }
+    return o;
+}
+
 inline constexpr std::uint64_t kTraceAimMs = 100, kTraceIdleMs = 1000, kTraceAfterMs = 4000;
 inline constexpr unsigned kTraceCap = 1500;
 // The cadence: every kTraceAimMs while aiming or within kTraceAfterMs after, else every kTraceIdleMs while seated.

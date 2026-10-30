@@ -267,7 +267,7 @@ int main() {
             const auto profile = Lab(gun + mode);
             Check(profile.partner_pass_camera == kPassCameraDefault && !profile.partner_pass_camera_given && !profile.partner_pass_camera_trace,
                   "the shipped camera mode in lab and play, no trace");
-            for (const char* value : {"off", "connect", "aim"}) {
+            for (const char* value : {"off", "connect", "drop", "aim"}) {
                 const auto named = Lab(gun + mode + "partner_pass_camera=" + value + "\npartner_pass_camera_trace=1\n");
                 Check(std::strcmp(mgscoop::PartnerPassCameraName(named.partner_pass_camera), value) == 0 && named.partner_pass_camera_given &&
                           named.partner_pass_camera_trace == lab && named.invalid_values == 0 && named.unknown_keys == 0 &&

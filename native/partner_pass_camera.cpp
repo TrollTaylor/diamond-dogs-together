@@ -23,13 +23,16 @@ static_assert(c::p_local_id == kPLocalId && c::q_act == kQAct && c::board_p_unit
               "player offsets");
 static_assert(c::cam_connect == kCamConnect && c::cam_connect_on == kCamConnectOn && c::pass_cam_target == kCamTarget, "connect fields");
 static_assert(c::pass_cam_mode == kCamMode && c::pass_cam_prev_mode == kCamPrevMode && c::pass_cam_modules == kCamModules, "mode fields");
+static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c::pass_cam_pitch_prev == kCamPitchPrev &&
+                  c::pass_cam_yaw_prev == kCamYawPrev && c::pass_cam_eye == kCamPos && kCamAngles == kCamPitchPrev,
+              "the look angles and the eye (design 8.25)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
 volatile LONG g_install_tried = 0;
 volatile LONG g_installed = 0;
 const char* g_refusal = nullptr;
 LogFn g_log = nullptr;
-std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0};
+std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0};
 volatile LONG g_override = -1;  // the lab lever's Mode, -1 none
 
 void LogFormat(const char* format, ...) noexcept {
@@ -109,6 +112,7 @@ void ResetForTest() noexcept {
     g_writes.store(0);
     g_clears.store(0);
     g_faults.store(0);
+    g_angles.store(0);
     g_override = -1;
 }
 } // namespace detail
@@ -184,6 +188,34 @@ void ReadStats(Stats& out) noexcept {
     out.writes = g_writes.load(std::memory_order_relaxed);
     out.clears = g_clears.load(std::memory_order_relaxed);
     out.faults = g_faults.load(std::memory_order_relaxed);
+    out.angles = g_angles.load(std::memory_order_relaxed);
+}
+
+std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t cam = LocalCamera(b, P);
+    std::int32_t mode = -1;
+    std::uintptr_t module = 0, vt = 0;
+    if (!cam || !ReadValue(cam + kCamMode, mode) || mode < 0 || mode >= static_cast<std::int32_t>(kModuleCount) ||
+        !ReadValue(cam + kCamModules + 8u * static_cast<unsigned>(mode), module) || !module || !ReadValue(module, vt) || vt < b)
+        return 0;
+    return vt - b;
+}
+
+bool WriteAngles(const void* base, std::uintptr_t P, float pitch, float yaw) noexcept {
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!cam) return false;
+    __try {
+        *reinterpret_cast<volatile float*>(cam + kCamPitch) = pitch;
+        *reinterpret_cast<volatile float*>(cam + kCamYaw) = yaw;
+        *reinterpret_cast<volatile float*>(cam + kCamPitchPrev) = pitch;
+        *reinterpret_cast<volatile float*>(cam + kCamYawPrev) = yaw;
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_angles.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept {
@@ -195,6 +227,9 @@ bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept {
         if (!ReadValue(cam + kCamPos + 4u * i, v.pos[i])) return false;
     for (unsigned i = 0; i < 4; ++i)
         if (!ReadValue(cam + kCamRot + 4u * i, v.rot[i]) || !ReadValue(cam + kCamAngles + 4u * i, v.ang[i])) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!ReadValue(cam + kCamOffset + 4u * i, v.off[i]) || !ReadValue(cam + kCamPivot + 4u * i, v.piv[i])) return false;
+    if (!ReadValue(cam + kCamScale, v.sc[0]) || !ReadValue(cam + kCamScale + 4u, v.sc[1])) return false;
     if (!ReadValue(cam + kCamFlags, v.flags) || !ReadValue(cam + kCamRequests, v.requests)) return false;
     v.ok = true;
     out = v;
@@ -218,7 +253,7 @@ bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacit
     const int value = Override();
     if (result && capacity) {
         if (refusal)
-            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|aim|lab|status", refusal);
+            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|drop|aim|lab|status", refusal);
         else
             StringCchPrintfA(result, capacity, "passcam=%s; override=%s; writes=%u; clears=%u; faults=%u",
                              value < 0 ? "lab" : ModeName(static_cast<Mode>(value)), value < 0 ? "none" : "set",

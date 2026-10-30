@@ -305,15 +305,19 @@ void TestReadCamera() {
 void TestModeAndAim() {
     pc::Mode m{};
     Check(pc::ParseMode("off", 3, m) && m == pc::Mode::off && pc::ParseMode("connect", 7, m) && m == pc::Mode::connect &&
-              pc::ParseMode("aim", 3, m) && m == pc::Mode::aim,
-          "the three modes parse");
-    for (const char* bad : {"", "on", "Aim", "aim2", "connected", "lab"})
+              pc::ParseMode("aim", 3, m) && m == pc::Mode::aim && pc::ParseMode("drop", 4, m) && m == pc::Mode::drop,
+          "the four modes parse");
+    for (const char* bad : {"", "on", "Aim", "aim2", "connected", "lab", "dro", "drops"})
         Check(!pc::ParseMode(bad, std::strlen(bad), m), "anything else refuses");
     Check(Same(pc::ModeName(pc::Mode::off), "off") && Same(pc::ModeName(pc::Mode::connect), "connect") &&
-              Same(pc::ModeName(pc::Mode::aim), "aim"),
+              Same(pc::ModeName(pc::Mode::aim), "aim") && Same(pc::ModeName(pc::Mode::drop), "drop"),
           "mode names");
-    Check(static_cast<int>(pc::Mode::off) == 0 && static_cast<int>(pc::Mode::connect) == 1 && static_cast<int>(pc::Mode::aim) == 2,
+    Check(static_cast<int>(pc::Mode::off) == 0 && static_cast<int>(pc::Mode::connect) == 1 && static_cast<int>(pc::Mode::aim) == 2 &&
+              static_cast<int>(pc::Mode::drop) == 3,
           "the values the lab key and the lever share");
+    Check(pc::DropsWhileAiming(pc::Mode::drop) && pc::DropsWhileAiming(pc::Mode::aim) && !pc::DropsWhileAiming(pc::Mode::connect) &&
+              !pc::DropsWhileAiming(pc::Mode::off),
+          "drop and aim drop the handle while aiming");
     // ArmFor: mode off never arms (reported once a passenger is seated).
     pc::ArmIn in{};
     in.passenger_mode = true; in.installed = true; in.passenger = true; in.vehicle = 25608; in.seat = 2; in.off = true;
@@ -366,6 +370,61 @@ void TestAimStep() {
     pc::AimDrop z{};
     o = pc::AimStep(z, pc::Mode::aim, true, true, 0);
     Check(!o.want && z.last_aim_ms == 1, "an aim at clock 0");
+    // drop drops like aim.
+    pc::AimDrop dr{};
+    o = pc::AimStep(dr, pc::Mode::drop, true, true, 2000);
+    Check(!o.want && o.event == pc::AimEvent::drop, "drop: the aim drops the handle");
+}
+
+// The shot guard (run 4f1a072f: a seated shot pulls the look pitch from 0.087 to -1.221 rad within 0.5 s).
+void TestGuard() {
+    pc::Guard g{};
+    // Aiming, not firing: the reference follows the player's own aim; nothing is written.
+    pc::GuardOut o = pc::GuardStep(g, true, true, false, true, 0.087f, 1.576f, 1000);
+    Check(!o.write && o.event == pc::GuardEvent::none && g.ref_ok && g.ref_pitch == 0.087f && g.ref_yaw == 1.576f, "aimed: the reference");
+    o = pc::GuardStep(g, true, true, false, true, 0.10f, 1.60f, 1050);
+    Check(!o.write && g.ref_pitch == 0.10f && g.ref_yaw == 1.60f, "the player's own turn moves the reference");
+    // The shot: a window opens; a small kick stays, the pull up is written back to the bound.
+    o = pc::GuardStep(g, true, true, true, true, 0.08f, 1.61f, 1100);
+    Check(!o.write && o.event == pc::GuardEvent::open && g.active && g.windows == 1, "the shot opens a window; a 1 deg kick stays");
+    o = pc::GuardStep(g, true, true, true, true, -0.331f, 1.62f, 1200);
+    Check(o.write && std::fabs(o.pitch - (0.10f - pc::kKickUp)) < 1e-6f && o.yaw == 1.62f, "the pull up is held at kKickUp");
+    o = pc::GuardStep(g, true, true, true, true, 0.20f, 1.70f, 1250);
+    Check(o.write && std::fabs(o.pitch - (0.10f + pc::kKickDown)) < 1e-6f && std::fabs(o.yaw - (1.60f + pc::kKickYaw)) < 1e-6f,
+          "a pull down and sideways are held too");
+    o = pc::GuardStep(g, true, true, true, true, 0.10f, 1.40f, 1260);
+    Check(o.write && std::fabs(o.yaw - (1.60f - pc::kKickYaw)) < 1e-6f && g.ref_pitch == 0.10f, "the reference stays during the window");
+    // Between shots (aiming, not firing) inside the hold: still held, the reference unchanged.
+    o = pc::GuardStep(g, true, true, false, true, -0.9f, 1.60f, 1260 + pc::kGuardHoldMs - 1);
+    Check(o.write && g.active && g.ref_pitch == 0.10f, "within kGuardHoldMs after the last shot: still held");
+    // The hold over: the window closes, the reference follows again.
+    o = pc::GuardStep(g, true, true, false, true, 0.05f, 1.60f, 1260 + pc::kGuardHoldMs);
+    Check(!o.write && o.event == pc::GuardEvent::close && !g.active && g.ref_pitch == 0.05f && g.window_writes == 4 &&
+              std::fabs(g.window_max - 1.0f) < 1e-5f && g.writes == 4,
+          "the window closes with its writes and largest pull");
+    // A shot with no aimed tick before it: its first tick is the reference.
+    pc::Guard f{};
+    o = pc::GuardStep(f, true, false, true, true, 0.3f, -2.0f, 5000);
+    Check(!o.write && o.event == pc::GuardEvent::open && f.ref_pitch == 0.3f && f.ref_yaw == -2.0f, "a first-tick reference");
+    // The yaw wraps at +-pi.
+    o = pc::GuardStep(f, true, true, true, true, 0.3f, 3.0f, 5050);
+    Check(o.write && std::fabs(o.yaw - (-2.0f - pc::kKickYaw)) < 1e-5f, "-2.0 to 3.0 rad is 1.28 rad the short way round: held");
+    pc::Guard w{};
+    pc::GuardStep(w, true, true, false, true, 0.0f, 3.12f, 6000);
+    o = pc::GuardStep(w, true, true, true, true, 0.0f, -3.13f, 6050);
+    Check(!o.write, "3.12 to -3.13 rad is 0.03 rad across the wrap: a kick");
+    o = pc::GuardStep(w, true, true, true, true, 0.0f, -3.0f, 6100);
+    Check(o.write && std::fabs(o.yaw - pc::WrapPi(3.12f + pc::kKickYaw)) < 1e-5f, "past the wrap: held at the bound, wrapped");
+    // Off (another mode, the get-off, an unread camera): the state resets, nothing is written.
+    o = pc::GuardStep(w, false, true, true, true, 1.0f, 1.0f, 6200);
+    Check(!o.write && !w.active && !w.ref_ok && w.last_fire_ms == 0, "off: reset");
+    o = pc::GuardStep(w, true, true, true, false, 1.0f, 1.0f, 6300);
+    Check(!o.write && !w.ref_ok, "unread angles: nothing");
+    o = pc::GuardStep(w, true, true, true, true, std::nanf(""), 1.0f, 6400);
+    Check(!o.write && !w.ref_ok, "a NaN angle: nothing");
+    Check(pc::GunFires(true, 9) && pc::GunFires(true, 10) && !pc::GunFires(true, 7) && !pc::GunFires(false, 9), "firing is gun mode 9 / 10");
+    Check(pc::kKickUp <= 0.06f && pc::kKickYaw <= 0.04f && pc::kGuardHoldMs >= 200 && pc::kGuardHoldMs <= 600,
+          "at most about 3 deg of kick, a hold shorter than a shot cycle");
 }
 
 void TestTraceDue() {
@@ -389,10 +448,15 @@ void TestReadViewAndLever() {
     }
     Chain::Put<std::uint32_t>(k.cam, pc::kCamFlags, 0x400001u);
     Chain::Put<std::uint32_t>(k.cam, pc::kCamRequests, 4u);
+    Chain::Put<float>(k.cam, pc::kCamOffset + 4, 0.6f);
+    Chain::Put<float>(k.cam, pc::kCamPivot + 8, -1.2f);
+    Chain::Put<float>(k.cam, pc::kCamScale + 4, 0.75f);
     pc::View v{};
     Check(pc::ReadView(k.Base(), k.P(), v) && v.ok && v.pos[0] == pos[0] && v.pos[2] == pos[2] && v.rot[3] == rot[3] &&
-              v.ang[1] == ang[1] && v.ang[3] == ang[3] && v.flags == 0x400001u && v.requests == 4u,
-          "the trace reads the position, rotation, look angles and flag words");
+              v.ang[1] == ang[1] && v.ang[3] == ang[3] && v.flags == 0x400001u && v.requests == 4u && v.off[1] == 0.6f &&
+              v.piv[2] == -1.2f && v.sc[1] == 0.75f,
+          "the trace reads the position, rotation, look angles, the solve's offsets and the flag words");
+    Check(pc::kCamOffset == 0x140 && pc::kCamPivot == 0x180 && pc::kCamScale == 0x254, "the solve's input offsets");
     Check(pc::kCamPos == 0xE0 && pc::kCamRot == 0x90 && pc::kCamAngles == 0x268 && pc::kCamFlags == 0x204 && pc::kCamRequests == 0xD38,
           "the trace offsets");
     Chain::Put<std::uintptr_t>(k.cam, 0, Chain::kBase + 0x10);
@@ -416,8 +480,51 @@ void TestReadViewAndLever() {
     Check(pc::HandleCommand("passcam bogus", true, r, sizeof(r), ok) && !ok && std::strstr(r, "reason=args") && pc::Override() == 2,
           "bad arguments refuse");
     Check(pc::HandleCommand("passcam", true, r, sizeof(r), ok) && !ok, "no argument refuses");
+    Check(pc::HandleCommand("passcam drop", true, r, sizeof(r), ok) && ok && pc::Override() == 3 && std::strstr(r, "passcam=drop"), "drop");
     Check(pc::HandleCommand("passcam lab", true, r, sizeof(r), ok) && ok && pc::Override() == -1 && std::strstr(r, "passcam=lab; override=none"),
           "lab clears the override");
+    pc::detail::ResetForTest();
+}
+
+void TestWriteAnglesAndModeVtable() {
+    pc::detail::ResetForTest();
+    Chain k;
+    Check(pc::WriteAngles(k.Base(), k.P(), -0.05f, 1.6f) && k.Get<float>(pc::kCamPitch) == -0.05f && k.Get<float>(pc::kCamPitchPrev) == -0.05f &&
+              k.Get<float>(pc::kCamYaw) == 1.6f && k.Get<float>(pc::kCamYawPrev) == 1.6f,
+          "the guard writes the pitch to +0x270 / +0x268 and the yaw to +0x274 / +0x26C");
+    Check(pc::kCamPitch == 0x270 && pc::kCamYaw == 0x274 && pc::kCamPitchPrev == 0x268 && pc::kCamYawPrev == 0x26C &&
+              c::pass_cam_pitch == pc::kCamPitch && c::pass_cam_yaw == pc::kCamYaw && c::pass_cam_eye == pc::kCamPos,
+          "the look-angle offsets match the contract");
+    pc::Stats st{};
+    pc::ReadStats(st);
+    Check(st.angles == 1 && st.faults == 0 && st.writes == 0, "one angle write counted (not a handle write)");
+    // The current mode's module vtable: the fallback module at index 5.
+    Check(pc::ModeVtable(k.Base(), k.P()) == 0x23B29E0, "the trace's mvt: the fallback module");
+    k.Mode(3);
+    Check(pc::ModeVtable(k.Base(), k.P()) == c::pass_cam_module_vtable_rva, "the VehicleCamera");
+    k.Mode(6);
+    Check(pc::ModeVtable(k.Base(), k.P()) == 0, "no module: 0");
+    // Not a PlayerCamera: nothing written.
+    Chain::Put<float>(k.cam, pc::kCamPitch, 0.5f);
+    Chain::Put<std::uintptr_t>(k.cam, 0, Chain::kBase + 0x10);
+    Check(!pc::WriteAngles(k.Base(), k.P(), 0.0f, 0.0f) && k.Get<float>(pc::kCamPitch) == 0.5f, "not a PlayerCamera: nothing written");
+    {
+        // A camera page that faults on write: counted as a fault (the driver latches the mission).
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        auto* page = static_cast<unsigned char*>(VirtualAlloc(nullptr, si.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Check(page != nullptr, "fixture page");
+        unsigned char player[0x400]{};
+        Chain::Put<std::uintptr_t>(player, pc::kPCam, reinterpret_cast<std::uintptr_t>(page));
+        Chain::Put<std::uintptr_t>(page, 0, Chain::kBase + c::cam_vtable_rva);
+        DWORD old = 0;
+        Check(VirtualProtect(page, si.dwPageSize, PAGE_READONLY, &old) != 0, "read-only camera page");
+        Check(!pc::WriteAngles(reinterpret_cast<const void*>(Chain::kBase), reinterpret_cast<std::uintptr_t>(player), 0.0f, 0.0f),
+              "a faulting angle write reports false");
+        pc::ReadStats(st);
+        Check(st.faults == 1 && st.angles == 1, "the fault is counted");
+        VirtualFree(page, 0, MEM_RELEASE);
+    }
     pc::detail::ResetForTest();
 }
 
@@ -443,7 +550,7 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 10, "ten passenger camera blocks are pinned");
+    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 12, "twelve passenger camera blocks are pinned (8.25: the look angles, the eye)");
     bool pinned = false, solve = false, collision = false;
     for (const auto& s : c::vtable_slots)
         if (s.vtable_rva == c::cam_vtable_rva && s.offset == 0xA8 && s.target_rva == 0x1121D30) solve = true;
@@ -474,7 +581,7 @@ void TestVerifyAndInstall() {
         g_lines.clear();
         Image img;
         Check(pc::Install(img.base, img.span, &Log) == nullptr && pc::Installed(), "installed on the synthetic image");
-        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=10"), "the install line");
+        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=12"), "the install line");
         Check(pc::Install(img.base, img.span, &Log) == nullptr && g_lines.size() == 1, "a second install is a no-op");
         pc::detail::ResetForTest();
     }
@@ -502,8 +609,10 @@ int main() {
     TestReadCamera();
     TestModeAndAim();
     TestAimStep();
+    TestGuard();
     TestTraceDue();
     TestReadViewAndLever();
+    TestWriteAnglesAndModeVtable();
     TestVerifyAndInstall();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);
     return 0;

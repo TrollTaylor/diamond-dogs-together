@@ -1079,6 +1079,14 @@ bool PartnerPassCameraView(void*, const pp::State& state, mgscoop::partner_pass_
     return mgscoop::partner_pass_camera::ReadView(game_base, state.P, out);
 }
 int PartnerPassCameraOverride(void*) noexcept { return mgscoop::partner_pass_camera::Override(); }
+bool PartnerPassCameraAngles(void*, const pp::State& state, float pitch, float yaw) noexcept {
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
+    return mgscoop::partner_pass_camera::WriteAngles(game_base, state.P, pitch, yaw);
+}
+std::uintptr_t PartnerPassCameraMvt(void*, const pp::State& state) noexcept {
+    if (!game_base || !partner_gate_ok) return 0;
+    return mgscoop::partner_pass_camera::ModeVtable(game_base, state.P);
+}
 // WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
 // native type-12 support runs in the one-PC lab, and in two-PC play only while
 // link v2 is connected. Both observer gates use it. After a link drop the guard
@@ -1175,7 +1183,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
-    PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride};
+    PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraAngles,
+    PartnerPassCameraMvt};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
