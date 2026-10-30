@@ -1016,15 +1016,19 @@ SEAT_GUN_SITES = [
      'the other GunHold entry: 0x1059E80(.., GunHold 0xAA0EA22A5E0E, ..), then gunRec+0x3C4 &= 0x7FFFFFFF'),
 ]
 SITES += SEAT_GUN_SITES
-# --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot"): the RequestBullet hook forwards a copy
-# of a seated passenger's record with its start moved past the ridden vehicle. The record layout the copy relies on, the
-# pellet loop that re-uses the caller's record, why the jeep is hit (the hit loop skips only the shooter's own
-# character), and where the shot's target and origin come from (the static study m6m7b/shoot2).
+# --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot (S1)"): the RequestBullet hook forwards a
+# copy of a seated passenger's record with its start moved past the ridden vehicle. SEAT_SHOT_SITES (in the partner's
+# code gate) are what the hook relies on: the record layout the copy reads and the pellet loop that re-uses the caller's
+# record. SEAT_SHOT_FACTS are the static study's reasons for S1 (m6m7b/shoot2: why the jeep is hit, where the shot's
+# target and origin come from): checked here against the executable, never in the gate, so a mismatch in them could
+# never switch the partner off (design 8.31).
 SEAT_SHOT_SITES = [
     (0xD32690, '0f28024c8bc10f29010f284a100f2949108b42208941208b42248941240fb74228668941280fb7422a6689412a0fb7422c6689412c'
      '0fb7422e6689412e0fb642308841300fb64231884131',
      'the bullet slot copy: start +0x00 and direction +0x10 (movaps), then +0x20..+0x31 field by field (S1 copies 0x34)'),
     (0x130342E, '0f294f10', 'the pellet loop: each pellet direction stored into the same record +0x10 before the slot call'),
+]
+SEAT_SHOT_FACTS = [
     (0xD2DC60, '48c1e83b83e00f488945e883f80375648bc383e01f3c090f94c08844244484c07452e8c913edff488d542470448bc3488b8898000000'
      '488b89e8010000488b01ff5018410fb747246639442470',
      'the bullet hit loop: only the shooter\'s own character is skipped (type 3, sub 9, id == bullet+0x24); a vehicle hits'),
@@ -2701,15 +2705,23 @@ REC240_X_CALLS = [
 
 
 def seat_shot_assertions():
-    """M7 S1: the shoot call reaches GunShotOriginDir, the pellet store is right before the pinned pellet-loop slot call,
-    and RequestBullet hands the caller's record to the pinned copy."""
+    """M7 S1: the static facts (SEAT_SHOT_FACTS, read from the executable, not gated), the shoot call reaches
+    GunShotOriginDir, the pellet store is followed directly by the slot call inside a loop that jumps back above the
+    store (every pellet re-uses the record), and RequestBullet hands the caller's record to the pinned copy."""
     out = []
 
     def need(cond, what):
         if not cond:
             out.append(what)
+    for rva, expected, what in SEAT_SHOT_FACTS:
+        need(section_of(rva) == '.xtext' and rd(rva, len(expected) // 2).hex() == expected, f'{rva:#x} {what}')
     need(0x1041219 + struct.unpack('<i', rd(0x1041215, 4))[0] == 0x1044FF0, 'shoot calls GunShotOriginDir 0x1044FF0 at 0x1041214')
-    need(0x1303432 == 0x130342E + 4, 'the pellet direction store sits right before the pellet-loop slot call 0x1303432')
+    # 0x130342E movaps [rdi+0x10],xmm1; 0x1303432 mov rcx,[rsi+0xa8]; mov rax,[rcx]; call [rax] (the slot, rdx = rdi);
+    # inc r13d; cmp r13d,6; jb back above the store.
+    need(rd(0x130342E, 0x19) == bytes.fromhex('0f294f10488b8ea8000000488b01ff1041ffc54183fd060f82'),
+         'the pellet store 0x130342E runs straight into the slot call 0x130343C and the loop bound (6)')
+    need(0x130344B + struct.unpack('<i', rd(0x1303447, 4))[0] < 0x130342E,
+         'the pellet loop 0x1303445 jumps back above the store: each pellet re-uses the same record')
     need(0xD32CC1 + struct.unpack('<i', rd(0xD32CBD, 4))[0] == 0xD32690, 'RequestBullet copies the record with 0xD32690')
     return out
 
@@ -3607,8 +3619,8 @@ w('// rate_rec_vtable_rva); the gun-hold enter stores the gun record\'s hold typ
 w('inline constexpr std::uint64_t seat_gun_node_start=0x50130ae2e584, seat_gun_node_hold=0xaa0ea22a5e0e;')
 w('inline constexpr std::size_t rate_hold_type=0x58, gun_hold_type=0x268;')
 w('inline constexpr std::uintptr_t seat_gun_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_GUN_SITES) + '};')
-w('// --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot"): the bullet record copy, the pellet')
-w('// loop, the hit loop\'s owner skip, the shot target and the camera\'s aim-target writer, the shot origin call.')
+w('// --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot (S1)"): the gated pins are the bullet')
+w('// record copy and the pellet loop; the static facts behind S1 are generator checks (SEAT_SHOT_FACTS), not gated.')
 w('inline constexpr std::uintptr_t seat_shot_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_SHOT_SITES) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')

@@ -448,7 +448,7 @@ struct Hooks {
     std::uintptr_t (*pass_camera_mvt)(void* context, const partner_player::State& state) noexcept = nullptr;
     // The shot guard's rotation write (partner_pass_camera::WriteRotation). May be null (the pitch only).
     bool (*pass_camera_rotation)(void* context, const partner_player::State& state, const float (&rot)[4]) noexcept = nullptr;
-    // M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot"): publish / withdraw the local
+    // M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot (S1)"): publish / withdraw the local
     // seated passenger for the fire filter's RequestBullet hook (partner_fire_filter::PublishSeatShot / WithdrawSeatShot),
     // its counters and last plan (ReadSeatShot), the lab lever's override (-1 none). Any null: nothing is published.
     void (*seat_shot_publish)(void* context, const partner_seat_shot::Pub& pub) noexcept = nullptr;

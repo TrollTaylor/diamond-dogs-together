@@ -1,5 +1,5 @@
 #pragma once
-// M7 seated shots, S1 (docs/native-puppet.md "Seat shot"; docs/vehicles-companions-design.md 8.27). Pure part: the
+// M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; docs/vehicles-companions-design.md 8.30, 8.31). Pure part: the
 // ridden vehicle's box, the plan that moves one bullet's start past it, and the lab lever's parser. No game code.
 //
 // Why (static study m6m7b/shoot2, [O] = read in mgsvtpp.exe 1.0.15.4, contract-pinned in
@@ -20,8 +20,10 @@
 // The vehicle frame (the record of partner_vehicle: +0x20 position, +0x2C yaw): forward = (sin yaw, 0, cos yaw), right
 // = (-cos yaw, 0, sin yaw) (lua debug goto_vehicle's passenger side, yaw - pi/2), up = +y. The record's position is
 // near the ground: the partner_vehicle_door answers put the jeep's front seats 0.75-0.83 m above it and 0.3 m behind
-// it (25608), the truck's cab seats 1.59 m above it and 0.93 m ahead of it (25602). The boxes are generous on purpose:
-// a start past a bigger box only skips cover within it, and the target clamp keeps every hit at or before the target.
+// it (25608), the truck's cab seats 1.59 m above it and 0.93 m ahead of it (25602). The light box hugs the jeep (about
+// 5 cm a side, 8.31): a start past a bigger box would skip a wall or rock the jeep stands against, and a smaller one only
+// leaves the start inside the jeep (the stock shot). The target clamp keeps every hit at or before the target. A start
+// outside the box is never moved: the seated muzzle is always inside, so the pose is stale or wrong.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -53,7 +55,7 @@ inline Class ClassFor(std::uint8_t category, std::uint8_t seat) noexcept {
 struct BoxSpec {
     float fwd, up, half_fwd, half_side, half_up;
 };
-inline constexpr BoxSpec kLightBox{-0.2f, 1.0f, 2.5f, 1.15f, 1.25f};  // 5.0 x 2.3 x 2.5 m (jeep ~4.2 x 1.9 m)
+inline constexpr BoxSpec kLightBox{-0.2f, 1.0f, 2.2f, 1.0f, 1.25f};   // 4.4 x 2.0 x 2.5 m (jeep ~4.2 x 1.9 m [I])
 inline constexpr BoxSpec kTruckBox{-0.5f, 1.6f, 4.2f, 1.45f, 1.9f};   // 8.4 x 2.9 x 3.8 m
 inline const BoxSpec* SpecFor(Class c) noexcept {
     return c == Class::light ? &kLightBox : c == Class::truck ? &kTruckBox : nullptr;
@@ -62,7 +64,7 @@ inline const BoxSpec* SpecFor(Class c) noexcept {
 inline constexpr float kExitPadM = 0.05f;     // the start lands this far past the box
 inline constexpr float kTargetGapM = 0.3f;    // and never closer than this to the aim target
 inline constexpr float kMaxShiftM = 9.0f;     // no exit of these boxes is farther (sanity)
-inline constexpr std::uint64_t kFreshMs = 500;  // an older publication is stale (the driver publishes every tick)
+inline constexpr std::uint64_t kFreshMs = 50;  // older is stale (published every tick; 20 m/s is 1 m in 50 ms)
 inline constexpr std::size_t kRecordBytes = 0x34;  // RequestBullet's slot copy 0xD32690 reads +0x00..+0x32
 inline constexpr std::size_t kPos = 0x00, kDir = 0x10;  // record +0x00 start (x, y, z, w), +0x10 direction
 
@@ -82,8 +84,8 @@ struct Pub {
 
 struct Plan {
     // shift (moved and applied) | census (would move; apply off) | class | nonfinite | dir | miss (the line does
-    // not cross the box ahead) | clear (the target comes before the box) | far | target (no target read) | near
-    // (the target is inside the box: nothing left to move).
+    // not cross the box ahead) | outside (the start is not inside the box: a stale or wrong pose) | far | target (no
+    // target read) | near (the target is inside the box: nothing left to move).
     const char* result = "unset";
     bool move = false;              // the copy's start changes (shift only)
     bool inside = false;            // the start was inside the box
@@ -160,9 +162,9 @@ inline Plan PlanShot(const Pub& p, const float start[3], const float dir[3]) noe
     if (!RayBox(o, out.d_local, h, t_in, t_out)) { out.result = "miss"; return out; }
     out.inside = t_in <= 0.0f;
     out.exit = t_out;
+    if (!out.inside) { out.result = "outside"; return out; }
     if (t_out > kMaxShiftM) { out.result = "far"; return out; }
     if (out.dist < 0.0f) { out.result = "target"; return out; }
-    if (t_in > 0.0f && t_in >= out.dist - kTargetGapM) { out.result = "clear"; return out; }
     float t = t_out + kExitPadM;
     if (t > out.dist - kTargetGapM) t = out.dist - kTargetGapM;
     if (!(t > 0.01f)) { out.result = "near"; return out; }

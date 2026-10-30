@@ -1,4 +1,4 @@
-# M7 seated shots, S1 A/B through the jeep (docs/native-puppet.md "Seat shot"; design 8.29 results): in run 0af9baa3
+# M7 seated shots, S1 A/B through the jeep (docs/native-puppet.md "Seat shot (S1)"; design 8.30): in run 0af9baa3
 # (coop-vehicle-seat-shot-s1.txt) the first S1-off seated shot killed a guard lying 8.6 m out across the jeep, so the
 # line from seat 3's muzzle (on the jeep's centre line, 1.37 m up) cleared the far side there. This run aims a line
 # that must cross the jeep's side: the guest in back seat 2 (left rear, facing right) shoots a guard lying 2.4 m out on

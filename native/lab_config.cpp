@@ -1731,7 +1731,7 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
-    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot"): off unless named, in lab and play, until a FRAME proof
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): off unless named, in lab and play, until a FRAME proof
     // on both copies and a play rehearsal; a named 1 runs in play too.
     if (!c.partner_seat_shot_given) c.partner_seat_shot = false;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in

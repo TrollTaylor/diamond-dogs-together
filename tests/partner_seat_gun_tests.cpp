@@ -338,11 +338,16 @@ int main() {
             n.target[0] = 100.0f + 15.0f;
             q = ss::PlanShot(n, s2, d2);
             Check(Is(q.result, "outside") && !q.move && !q.inside, "S1 plan: a start outside the box (target beyond it): outside");
-            // The jeep moved 3 m on since the publication (the box 3 m behind the real one): the muzzle left the old box.
+            // The jeep moved 4 m on since the publication (200 ms at 20 m/s; the old box 4 m behind the real one) and the
+            // passenger shoots backwards: the old box lies ahead along the line (it would have moved the start 5.5 m back,
+            // through whatever stands there). The muzzle (0.8 m behind the box centre) is outside the old box: no move.
+            // Up to 3 m it stays inside: kFreshMs keeps a pose within ~1 m.
             n = p;
-            n.pos[2] = 200.0f - 3.0f;
-            q = ss::PlanShot(n, start, dir);
-            Check(Is(q.result, "outside") && !q.move, "S1 plan: a box 3 m behind the muzzle (a stale pose): outside");
+            n.pos[2] = 200.0f - 4.0f;
+            n.target[0] = start[0]; n.target[1] = start[1]; n.target[2] = start[2] - 15.0f;
+            const float back[3] = {0, 0, -1};
+            q = ss::PlanShot(n, start, back);
+            Check(Is(q.result, "outside") && !q.move && q.exit > 5.0f, "S1 plan: an old box ahead along the line (a stale pose): outside");
         }
         // Refusals: no class, no target, a zero or non-finite direction, a line that misses the box.
         {

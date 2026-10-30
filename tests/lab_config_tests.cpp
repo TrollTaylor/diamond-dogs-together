@@ -557,7 +557,7 @@ int main() {
                   "an invalid seat gun value refuses");
         }
     }
-    // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot"): off by default with or without the gun
+    // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): off by default with or without the gun
     // profile, in lab and play (until its proof); a named 1 runs in lab AND play (no refusal bit).
     {
         Check(!LabConfig{}.partner_seat_shot && !LabConfig{}.partner_seat_shot_given && !Lab("").partner_seat_shot, "seat shot defaults off");

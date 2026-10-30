@@ -1,4 +1,4 @@
-# M7 seated shots, S1 (docs/native-puppet.md "Seat shot"; design 8.27): the local seated passenger's bullets start where
+# M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; design 8.30): the local seated passenger's bullets start where
 # their line leaves the ridden vehicle's box. africa-jeep (veh_lv_0000 = 25608), lab, partner_seat_shot unnamed (off):
 # the lab copy still plans every seated shot (partner_seat_shot=shot; result=census lines); the lab lever seatshot on
 # turns S1 on for that copy.

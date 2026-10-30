@@ -3482,7 +3482,7 @@ std::uint8_t RemoteCurrentSlot(const Mission& m, std::uint32_t equip) noexcept {
 // mirror's gun record, the 1 Hz partner_fire line, the read-only census, the
 // loadout manifest this copy sends and the apply verdict of the received one.
 // `ready`: the lazy-install preconditions of the native drive hold.
-// --- M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot") -------------------------------
+// --- M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot (S1)") -------------------------------
 // Every tick in passenger mode: while this copy's own player sits in a passenger seat (the local passenger report) of a
 // light vehicle or a truck cab and the fire filter's RequestBullet hook is live, publish the ridden vehicle's record
 // (position, yaw), the seat and this copy's aim target Q+0x10[local] for the hook; withdraw otherwise. The key (lab: the

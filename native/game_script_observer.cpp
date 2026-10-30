@@ -2740,7 +2740,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 debug_quiet = true;
                 return true;
             }
-            // "seatshot on|off|lab|status" (M7 S1's live A/B switch, lab only; docs/native-puppet.md "Seat shot").
+            // "seatshot on|off|lab|status" (M7 S1's live A/B switch, lab only; docs/native-puppet.md "Seat shot (S1)").
             {
                 int next = -1;
                 if (mgscoop::partner_seat_shot::HandleCommand(pending.text, mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab,

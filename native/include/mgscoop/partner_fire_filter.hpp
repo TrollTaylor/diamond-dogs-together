@@ -164,7 +164,7 @@ struct CensusTotals {
 };
 void ReadCensusTotals(CensusTotals& out) noexcept;  // the slot check uses the base Install saw
 
-// --- M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot") ---
+// --- M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot (S1)") ---
 // The driver publishes the local seated passenger every tick (a seqlock; PublishSeatShot stamps pub.ms with the
 // hook's clock) and withdraws it when the report ends. Hook, for a request whose owner is the published owner (type
 // bits 0, never the armed instance) and a publication at most kFreshMs old: copies the record's first kRecordBytes,
